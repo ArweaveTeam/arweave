@@ -37,6 +37,7 @@ parse_config() ->
 		max_propagation_peers = 8,
 		max_block_propagation_peers = 60,
 		tx_validators = 3,
+		post_tx_timeout = 50,
 		max_emitters = 4,
 		tx_propagation_parallelization = undefined,
 		sync_jobs = 10,

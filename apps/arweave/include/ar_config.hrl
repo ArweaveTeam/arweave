@@ -70,7 +70,12 @@
 -define(MAX_PARALLEL_WALLET_LIST_REQUESTS, 1).
 -define(MAX_PARALLEL_POST_CHUNK_REQUESTS, 100).
 -define(MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS, 10).
--define(MAX_PARALLEL_POST_TX_REQUESTS, 100).
+
+%% The number of parallel tx validation processes.
+-define(MAX_PARALLEL_POST_TX_REQUESTS, 20).
+%% The time in seconds to wait for the available tx validation process before dropping the
+%% POST /tx request.
+-define(DEFAULT_POST_TX_TIMEOUT, 20).
 
 %% The maximum number of chunks per second the node attempts to pack or unpack.
 -ifdef(DEBUG).
@@ -78,9 +83,6 @@
 -else.
 -define(DEFAULT_PACKING_RATE, 15).
 -endif.
-
-%% How many processes to spawn for validating pushed and fetched transactions.
--define(DEFAULT_TX_VALIDATOR_COUNT, 10).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -99,7 +101,8 @@
 	io_threads = ?NUM_IO_MINING_THREADS,
 	stage_one_hashing_threads = ?NUM_STAGE_ONE_HASHING_PROCESSES,
 	stage_two_hashing_threads = ?NUM_STAGE_TWO_HASHING_PROCESSES,
-	tx_validators = ?DEFAULT_TX_VALIDATOR_COUNT,
+	tx_validators,
+	post_tx_timeout = ?DEFAULT_POST_TX_TIMEOUT,
 	max_emitters = ?NUM_EMITTER_PROCESSES,
 	tx_propagation_parallelization, % DEPRECATED.
 	sync_jobs = ?DEFAULT_SYNC_JOBS,

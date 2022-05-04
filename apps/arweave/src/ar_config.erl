@@ -140,6 +140,12 @@ parse_options([{<<"tx_validators">>, Value} | Rest], Config)
 parse_options([{<<"tx_validators">>, Value} | _], _) ->
 	{error, {bad_type, tx_validators, number}, Value};
 
+parse_options([{<<"post_tx_timeout">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ post_tx_timeout = Value });
+parse_options([{<<"post_tx_timeout">>, Value} | _], _) ->
+	{error, {bad_type, post_tx_timeout, number}, Value};
+
 parse_options([{<<"tx_propagation_parallelization">>, Value} | Rest], Config)
 		when is_integer(Value) ->
 	parse_options(Rest, Config#config{ tx_propagation_parallelization = Value });

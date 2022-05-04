@@ -79,7 +79,6 @@ init([]) ->
 		?CHILD(ar_header_sync, worker),
 		?CHILD(ar_data_sync, worker),
 		?CHILD(ar_tx_emitter_sup, supervisor),
-		?CHILD(ar_tx_validator_sup, supervisor),
 		?CHILD(ar_node_sup, supervisor),
 		?CHILD(ar_webhook_sup, supervisor),
 		?CHILD(ar_poller, worker)
