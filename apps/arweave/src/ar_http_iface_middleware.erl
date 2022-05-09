@@ -916,6 +916,11 @@ handle(<<"GET">>, [<<"block">>, Type, ID, Field], Req, _Pid)
 			process_request(get_block, [Type, ID, Field], Req)
 	end;
 
+%% Return the balance of the given wallet at the given block.
+handle(<<"GET">>, [<<"block">>, <<"height">>, Height, <<"wallet">>, Addr, <<"balance">>], Req,
+		_Pid) ->
+	handle_get_block_wallet_balance(Height, Addr, Req);
+
 %% Return the current block.
 %% GET request to endpoint /block/current.
 handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid) ->
@@ -2219,6 +2224,67 @@ process_request(get_block, [Type, ID, Field], Req) ->
 			end;
 		_ ->
 			{421, #{}, <<"Subfield block querying is disabled on this node.">>, Req}
+	end.
+
+handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			CurrentHeight = ar_node:get_height(),
+			try binary_to_integer(EncodedHeight) of
+				Height when Height < 0 ->
+					{400, #{}, jiffy:encode(#{ error => invalid_height }), Req};
+				Height when Height > CurrentHeight ->
+					{404, #{}, jiffy:encode(#{ error => block_not_found }), Req};
+				Height ->
+					case ar_block_index:get_element_by_height(Height) of
+						not_found ->
+							{404, #{}, jiffy:encode(#{ error => block_not_found }), Req};
+						{H, _, _} ->
+							B =
+								case ar_block_cache:get(block_cache, H) of
+									not_found ->
+										ar_storage:read_block(H);
+									B2 ->
+										B2
+								end,
+							case B of
+								unavailable ->
+									{404, #{}, jiffy:encode(#{ error => block_not_found }),
+											Req};
+								#block{ wallet_list = RootHash } ->
+									case ar_util:safe_decode(EncodedAddr) of
+										{ok, Addr} ->
+											handle_get_block_wallet_balance2(Addr, RootHash,
+													Req);
+										{error, invalid} ->
+											{400, #{}, jiffy:encode(#{
+													error => invalid_address }), Req}
+									end
+							end
+					end
+			catch _:_ ->
+				{400, #{}, jiffy:encode(#{ error => invalid_height }), Req}
+			end
+	end.
+
+handle_get_block_wallet_balance2(Addr, RootHash, Req) ->
+	case ar_wallets:get_balance(RootHash, Addr) of
+		{error, not_found} ->
+			handle_get_block_wallet_balance3(Addr, RootHash, Req);
+		Balance when is_integer(Balance) ->
+			{200, #{}, integer_to_binary(Balance), Req};
+		_Error ->
+			{500, #{}, <<>>, Req}
+	end.
+
+handle_get_block_wallet_balance3(Addr, RootHash, Req) ->
+	case ar_storage:read_account(Addr, RootHash) of
+		not_found ->
+			{404, #{}, jiffy:encode(#{ error => account_data_not_found }), Req};
+		{Balance, _LastTX} ->
+			{200, #{}, integer_to_binary(Balance), Req}
 	end.
 
 process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->

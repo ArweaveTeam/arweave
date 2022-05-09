@@ -10,7 +10,8 @@
 		delete_blacklisted_tx/1, get_free_space/1, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
 		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
-		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1]).
+		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1,
+		read_account/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -145,6 +146,68 @@ read_block(BH) ->
 							{block, ar_util:encode(BH)},
 							{reason, kv_storage_not_initialized}]),
 					unavailable
+			end
+	end.
+
+%% @doc Read the account information (balance and last tx ID) for the given address and
+%% root hash of the account tree. Return {0, <<>>} if the given address does not belong
+%% to the tree. The balance may be also 0 when the address exists in the tree. Return
+%% not_found if some of the files with the account data are missing.
+read_account(Addr, RootHash) ->
+	%% Unfortunately, we do not have an easy access to the information about how many
+	%% accounts there were in the given tree so we perform the binary search starting
+	%% from the number in the latest block.
+	Size = ar_wallets:get_size(),
+	MaxFileCount = Size div ?WALLET_LIST_CHUNK_SIZE + 1,
+	{ok, Config} = application:get_env(arweave, config),
+	read_account(Addr, RootHash, 0, MaxFileCount, Config#config.data_dir, false).
+
+read_account(_Addr, _RootHash, Left, Right, _DataDir, _RightFileFound) when Left == Right ->
+	not_found;
+read_account(Addr, RootHash, Left, Right, DataDir, RightFileFound) ->
+	Pos = Left + (Right - Left) div 2,
+	Filepath = wallet_list_chunk_relative_filepath(Pos * ?WALLET_LIST_CHUNK_SIZE, RootHash),
+	case filelib:is_file(filename:join(DataDir, Filepath)) of
+		false ->
+			read_account(Addr, RootHash, Left, Pos, DataDir, false);
+		true ->
+			{ok, L} = ar_storage:read_term(Filepath),
+			read_account2(Addr, RootHash, Pos, Left, Right, DataDir, L, RightFileFound)
+	end.
+
+read_account2(Addr, _RootHash, _Pos, _Left, _Right, _DataDir, [last, {LargestAddr, _} | _L],
+		_RightFileFound) when Addr > LargestAddr ->
+	{0, <<>>};
+read_account2(Addr, RootHash, Pos, Left, Right, DataDir, [last | L], RightFileFound) ->
+	read_account2(Addr, RootHash, Pos, Left, Right, DataDir, L, RightFileFound);
+read_account2(Addr, RootHash, Pos, _Left, Right, DataDir, [{LargestAddr, _} | _L],
+		RightFileFound) when Addr > LargestAddr ->
+	case Pos + 1 == Right of
+		true ->
+			case RightFileFound of
+				true ->
+					{0, <<>>};
+				false ->
+					not_found
+			end;
+		false ->
+			read_account(Addr, RootHash, Pos, Right, DataDir, RightFileFound)
+	end;
+read_account2(Addr, RootHash, Pos, Left, _Right, DataDir, L, _RightFileFound) ->
+	case Addr < element(1, lists:last(L)) of
+		true ->
+			case Pos == Left of
+				true ->
+					{0, <<>>};
+				false ->
+					read_account(Addr, RootHash, Left, Pos, DataDir, true)
+			end;
+		false ->
+			case lists:search(fun({Addr2, _}) -> Addr2 == Addr end, L) of
+				{value, {Addr, Data}} ->
+					Data;
+				false ->
+					{0, <<>>}
 			end
 	end.
 
