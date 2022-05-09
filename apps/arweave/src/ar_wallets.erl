@@ -5,7 +5,7 @@
 -module(ar_wallets).
 
 -export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
-		apply_block/2, add_wallets/4, set_current/3]).
+		apply_block/2, add_wallets/4, set_current/3, get_size/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
@@ -68,6 +68,10 @@ set_current(RootHash, Height, PruneDepth) when is_binary(RootHash) ->
 	Call = {set_current, RootHash, Height, PruneDepth},
 	gen_server:call(?MODULE, Call, infinity).
 
+%% @doc Return the number of accounts in the latest state.
+get_size() ->
+	gen_server:call(?MODULE, get_size, infinity).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -102,6 +106,9 @@ handle_call({get_chunk, RootHash, Cursor}, _From, DAG) ->
 			{NextCursor, Range} = get_account_tree_range(Tree, Cursor),
 			{reply, {ok, {NextCursor, Range}}, DAG}
 	end;
+
+handle_call(get_size, _From, DAG) ->
+	{reply, ar_patricia_tree:size(ar_diff_dag:get_sink(DAG)), DAG};
 
 handle_call({get_balance, Address}, _From, DAG) ->
 	case ar_patricia_tree:get(Address, ar_diff_dag:get_sink(DAG)) of

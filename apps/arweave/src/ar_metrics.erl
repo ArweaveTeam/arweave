@@ -493,6 +493,8 @@ name_route([<<"block2">>, <<"height">>, _Height]) ->
 	"/block2/height/{height}";
 name_route([<<"block">>, _Type, _IDBin, _Field]) ->
 	"/block/{type}/{id_bin}/{field}";
+name_route([<<"block">>, <<"height">>, _Height, <<"wallet">>, _Addr, <<"balance">>]) ->
+	"/block/height/{height}/wallet/{addr}/balance";
 name_route([<<"block">>, <<"current">>]) ->
 	"/block/current";
 
