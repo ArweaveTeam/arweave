@@ -31,7 +31,7 @@ end()).
 %% Recall bytes are only picked from the subspace up to the size
 %% of the weave at the block of the depth defined by this constant.
 -ifdef(DEBUG).
--define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 2).
+-define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 3).
 -else.
 -define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 50).
 -endif.
