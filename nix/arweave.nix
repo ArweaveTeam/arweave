@@ -43,16 +43,16 @@ let
 
   erlang-rocksdb = buildRebar rec {
     name = "erlang-rocksdb";
-    version = "165d441f543c6be97e2f0df136628a736cabe85f";
+    version = "ed4d05d58d174485f883b5cd3e057c64d9e7ff3a";
     beamDeps = [ beamPackages.pc ];
     nativeBuildInputs = [ pkgs.cmake ];
     buildInputs = [ pkgs.getconf ];
     configurePhase = "true";
     src = fetchFromGitLab {
-      owner = "hlolli";
+      owner = "arweave1";
       repo = name;
       rev = version;
-      sha256 = "sha256-UjodnCNETaVwZd8dShJsPHIbePQkujo2wZNKZrRYnro=";
+      sha256 = "1avgvqwnk780db6z2l66dk73ly3abvh2qqf357al60bzky4545yv";
     };
     postInstall = ''
       mv $out/lib/erlang/lib/erlang-rocksdb-${version} $out/lib/erlang/lib/rocksdb-1.6.0
