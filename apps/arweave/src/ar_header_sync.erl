@@ -13,8 +13,17 @@
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 
 %%% This module syncs block and transaction headers and maintains a persisted record of synced
-%%% headers. Headers are synced from latest to earliest. Includes a migration process that
-%%% moves data to v2 index for blocks written prior to the 2.1 update.
+%%% headers. Headers are synced from latest to earliest.
+
+-record(state, {
+	db,
+	block_index,
+	height,
+	sync_record,
+	retry_queue,
+	retry_record,
+	sync_disk_space
+}).
 
 %%%===================================================================
 %%% Public interface.
@@ -49,7 +58,7 @@ init([]) ->
 	ok = ar_events:subscribe(tx),
 	{ok, Config} = application:get_env(arweave, config),
 	{ok, DB} = ar_kv:open("ar_header_sync_db"),
-	{SyncRecord, LastHeight, CurrentBI} =
+	{SyncRecord, Height, CurrentBI} =
 		case ar_storage:read_term(header_sync_state) of
 			not_found ->
 				{ar_intervals:new(), -1, []};
@@ -67,46 +76,42 @@ init([]) ->
 	gen_server:cast(?MODULE, store_sync_state),
 	ets:insert(?MODULE, {synced_blocks, ar_intervals:sum(SyncRecord)}),
 	{ok,
-		#{
-			db => DB,
-			sync_record => SyncRecord,
-			last_height => LastHeight,
-			block_index => CurrentBI,
-			queue => queue:new(),
-			last_picked => LastHeight,
-			disk_full => false,
-			sync_disk_space => have_free_space()
+		#state{
+			db = DB,
+			sync_record = SyncRecord,
+			height = Height,
+			block_index = CurrentBI,
+			retry_queue = queue:new(),
+			retry_record = ar_intervals:new(),
+			sync_disk_space = have_free_space()
 		}}.
 
 handle_cast({join, Height, RecentBI, Blocks}, State) ->
-	#{
-		db := DB,
-		last_height := LastHeight,
-		block_index := CurrentBI,
-		sync_record := SyncRecord
-	} = State,
+	#state{ db = DB, height = PrevHeight, block_index = CurrentBI,
+			sync_record = SyncRecord, retry_record = RetryRecord } = State,
 	State2 =
-		State#{
-			last_height => Height,
-			block_index => lists:sublist(RecentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS),
-			last_picked => Height
+		State#state{
+			height = Height,
+			block_index = lists:sublist(RecentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS)
 		},
 	State3 =
-		case {CurrentBI, ar_block_index:get_intersection(LastHeight, CurrentBI)} of
+		case {CurrentBI, ar_block_index:get_intersection(PrevHeight, CurrentBI)} of
 			{[], _} ->
 				State2;
-			{_, {LastHeight, _}} ->
+			{_, {PrevHeight, _}} ->
 				State2;
 			{_, no_intersection} ->
 				throw(last_stored_block_index_has_no_intersection_with_the_new_one);
 			{_, {IntersectionHeight, _}} ->
-				S = State2#{ sync_record => ar_intervals:cut(SyncRecord, IntersectionHeight) },
+				S = State2#state{
+						sync_record = ar_intervals:cut(SyncRecord, IntersectionHeight),
+						retry_record = ar_intervals:cut(RetryRecord, IntersectionHeight) },
 				ok = store_sync_state(S),
 				%% Delete from the kv store only after the sync record is saved - no matter
 				%% what happens to the process, if a height is in the record, it must be present
 				%% in the kv store.
 				ok = ar_kv:delete_range(DB, << (IntersectionHeight + 1):256 >>,
-						<< (LastHeight + 1):256 >>),
+						<< (PrevHeight + 1):256 >>),
 				S
 		end,
 	State4 =
@@ -122,17 +127,14 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 	{noreply, State4};
 
 handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
-	#{
-		db := DB,
-		sync_record := SyncRecord,
-		block_index := CurrentBI,
-		last_height := CurrentHeight
-	} = State,
-	BaseHeight = get_base_height(CurrentBI, CurrentHeight, RecentBI),
-	State2 = State#{
-		sync_record => ar_intervals:cut(SyncRecord, BaseHeight),
-		block_index => RecentBI,
-		last_height => Height
+	#state{ db = DB, sync_record = SyncRecord, retry_record = RetryRecord,
+			block_index = CurrentBI, height = PrevHeight } = State,
+	BaseHeight = get_base_height(CurrentBI, PrevHeight, RecentBI),
+	State2 = State#state{
+		sync_record = ar_intervals:cut(SyncRecord, BaseHeight),
+		retry_record = ar_intervals:cut(RetryRecord, BaseHeight),
+		block_index = RecentBI,
+		height = Height
 	},
 	State3 = element(2, add_block(B, State2)),
 	case store_sync_state(State3) of
@@ -141,17 +143,22 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 			%% what happens to the process, if a height is in the record, it must be present
 			%% in the kv store.
 			ok = ar_kv:delete_range(DB, << (BaseHeight + 1):256 >>,
-					<< (CurrentHeight + 1):256 >>),
-			{noreply, State3#{ disk_full => false }};
-		{error, enospc} ->
-			{noreply, State#{ disk_full => true }}
+					<< (PrevHeight + 1):256 >>),
+			{noreply, State3};
+		Error ->
+			?LOG_WARNING([{event, failed_to_store_state},
+					{reason, io_lib:format("~p", [Error])}]),
+			{noreply, State}
 	end;
 
-handle_cast({add_historical_block, _, _, _, _, _}, #{ sync_disk_space := false } = State) ->
+handle_cast({add_historical_block, _, _, _, _, _},
+		#state{ sync_disk_space = false } = State) ->
+	gen_server:cast(?MODULE, process_item),
 	{noreply, State};
 handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
 	case add_block(B, State) of
 		{ok, State2} ->
+			gen_server:cast(?MODULE, process_item),
 			{noreply, State2};
 		{_Error, State2} ->
 			gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, Backoff}),
@@ -164,14 +171,11 @@ handle_cast({add_block, B}, State) ->
 handle_cast(check_space_alarm, State) ->
 	case have_free_space() of
 		false ->
-			Msg =
-				"The node has stopped syncing headers - the available disk space is"
-				" less than ~s. Add more disk space if you wish to store more headers.~n",
+			Msg = "The node has stopped syncing headers - the available disk space is"
+					" less than ~s. Add more disk space if you wish to store more headers.~n",
 			ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_HEADERS_BUFFER_SIZE)]),
-			?LOG_INFO([
-				{event, ar_header_sync_stopped_syncing},
-				{reason, little_disk_space_left}
-			]);
+			?LOG_INFO([{event, ar_header_sync_stopped_syncing},
+					{reason, little_disk_space_left}]);
 		true ->
 			ok
 	end,
@@ -182,35 +186,27 @@ handle_cast(check_space, State) ->
 	ar_util:cast_after(ar_disksup:get_disk_space_check_frequency(), ?MODULE, check_space),
 	case have_free_space() of
 		true ->
-			{noreply, State#{ sync_disk_space => true }};
+			{noreply, State#state{ sync_disk_space = true }};
 		false ->
-			{noreply, State#{ sync_disk_space => false }}
+			{noreply, State#state{ sync_disk_space = false }}
 	end;
 
-handle_cast(process_item, #{ sync_disk_space := false } = State) ->
+handle_cast(process_item, #state{ sync_disk_space = false } = State) ->
 	ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, ?MODULE, process_item),
 	{noreply, State};
-handle_cast(process_item, State) ->
-	#{ queue := Queue, sync_record := SyncRecord,
-			last_picked := LastPicked, last_height := LastHeight } = State,
+handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecord } = State) ->
 	prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
-	UpdatedQueue = process_item(Queue),
-	case pick_unsynced_block(LastPicked, SyncRecord) of
+	Queue2 = process_item(Queue),
+	State2 = State#state{ retry_queue = Queue2 },
+	case pick_unsynced_block(State) of
 		nothing_to_sync ->
-			LastPicked2 =
-				case queue:is_empty(UpdatedQueue) of
-					true ->
-						LastHeight;
-					false ->
-						LastPicked
-				end,
-			{noreply, State#{ queue => UpdatedQueue, last_picked => LastPicked2 }};
+			{noreply, State2};
 		Height ->
 			case ar_node:get_block_index_entry(Height) of
 				not_joined ->
-					{noreply, State#{ queue => UpdatedQueue }};
+					{noreply, State2};
 				not_found ->
-					{noreply, State#{ queue => UpdatedQueue }};
+					{noreply, State2};
 				{H, _WeaveSize, TXRoot} ->
 					%% Before 2.0, to compute a block hash, the complete wallet list
 					%% and all the preceding hashes were required. Getting a wallet list
@@ -224,18 +220,18 @@ handle_cast(process_item, State) ->
 							false ->
 								not_set
 						end,
-					{noreply, State#{
-						queue => enqueue({block, {H, H2, TXRoot}}, UpdatedQueue),
-						last_picked => Height
-					}}
+					{noreply, State2#state{
+							retry_queue = enqueue({block, {H, H2, TXRoot}}, Queue2),
+							retry_record = ar_intervals:add(RetryRecord, Height, Height - 1) }}
 			end
 	end;
 
-handle_cast({failed_to_get_block, H, H2, TXRoot, Backoff}, #{ queue := Queue } = State) ->
+handle_cast({failed_to_get_block, H, H2, TXRoot, Backoff},
+		#state{ retry_queue = Queue } = State) ->
 	Backoff2 = update_backoff(Backoff),
 	Queue2 = enqueue({block, {H, H2, TXRoot}}, Backoff2, Queue),
 	gen_server:cast(?MODULE, process_item),
-	{noreply, State#{ queue => Queue2 }};
+	{noreply, State#state{ retry_queue = Queue2 }};
 
 handle_cast({remove_tx, TXID}, State) ->
 	{ok, _Size} = ar_storage:delete_blacklisted_tx(TXID),
@@ -246,9 +242,11 @@ handle_cast(store_sync_state, State) ->
 	ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, ?MODULE, store_sync_state),
 	case store_sync_state(State) of
 		ok ->
-			{noreply, State#{ disk_full => false }};
-		{error, enospc} ->
-			{noreply, State#{ disk_full => true }}
+			{noreply, State};
+		Error ->
+			?LOG_WARNING([{event, failed_to_store_state},
+					{reason, io_lib:format("~p", [Error])}]),
+			{noreply, State}
 	end;
 
 handle_cast(Msg, State) ->
@@ -259,12 +257,13 @@ handle_call(_Msg, _From, State) ->
 	{reply, not_implemented, State}.
 
 handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
-	#{ db := DB, sync_record := SyncRecord } = State,
+	#state{ db = DB, sync_record = SyncRecord, retry_record = RetryRecord } = State,
 	case ar_storage:get_tx_confirmation_data(TXID) of
 		{ok, {Height, _BH}} ->
 			?LOG_DEBUG([{event, mark_block_with_blacklisted_tx_for_resyncing},
 					{tx, ar_util:encode(TXID)}, {height, Height}]),
-			State2 = State#{ sync_record => ar_intervals:delete(SyncRecord, Height,
+			State2 = State#state{ sync_record = ar_intervals:delete(SyncRecord, Height,
+					Height - 1), retry_record = ar_intervals:delete(RetryRecord, Height,
 					Height - 1) },
 			ok = store_sync_state(State2),
 			ok = ar_kv:delete(DB, << Height:256 >>),
@@ -287,11 +286,8 @@ handle_info({'DOWN', _,  process, _, normal}, State) ->
 handle_info({'DOWN', _,  process, _, noproc}, State) ->
 	{noreply, State};
 handle_info({'DOWN', _,  process, _, Reason}, State) ->
-	?LOG_WARNING([
-		{event, header_sync_job_failed},
-		{reason, io_lib:format("~p", [Reason])},
-		{action, spawning_another_one}
-	]),
+	?LOG_WARNING([{event, header_sync_job_failed}, {reason, io_lib:format("~p", [Reason])},
+			{action, spawning_another_one}]),
 	gen_server:cast(?MODULE, process_item),
 	{noreply, State};
 
@@ -307,7 +303,7 @@ handle_info(Info, State) ->
 
 terminate(Reason, State) ->
 	?LOG_INFO([{event, ar_header_sync_terminate}, {reason, Reason}]),
-	#{ db := DB } = State,
+	#state{ db = DB } = State,
 	ar_kv:close(DB).
 
 %%%===================================================================
@@ -315,7 +311,7 @@ terminate(Reason, State) ->
 %%%===================================================================
 
 store_sync_state(State) ->
-	#{ sync_record := SyncRecord, last_height := LastHeight, block_index := BI } = State,
+	#state{ sync_record = SyncRecord, height = LastHeight, block_index = BI } = State,
 	SyncedCount = ar_intervals:sum(SyncRecord),
 	prometheus_gauge:set(synced_blocks, SyncedCount),
 	ets:insert(?MODULE, {synced_blocks, SyncedCount}),
@@ -329,7 +325,7 @@ get_base_height([{H, _, _} | CurrentBI], CurrentHeight, RecentBI) ->
 			CurrentHeight
 	end.
 
-add_block(B, #{ sync_disk_space := false } = State) ->
+add_block(B, #state{ sync_disk_space = false } = State) ->
 	case ar_storage:update_confirmation_index(B) of
 		ok ->
 			{ok, State};
@@ -338,8 +334,8 @@ add_block(B, #{ sync_disk_space := false } = State) ->
 				{reason, io_lib:format("~p", [Error])}]),
 			{Error, State}
 	end;
-add_block(B, State) ->
-	#{ db := DB, sync_record := SyncRecord } = State,
+add_block(B, #state{ db = DB, sync_record = SyncRecord,
+		retry_record = RetryRecord } = State) ->
 	#block{ indep_hash = H, previous_block = PrevH, height = Height } = B,
 	case ar_storage:write_full_block(B, B#block.txs) of
 		ok ->
@@ -348,8 +344,9 @@ add_block(B, State) ->
 					{ok, State};
 				false ->
 					ok = ar_kv:put(DB, << Height:256 >>, term_to_binary({H, PrevH})),
-					UpdatedSyncRecord = ar_intervals:add(SyncRecord, Height, Height - 1),
-					{ok, State#{ sync_record => UpdatedSyncRecord }}
+					SyncRecord2 = ar_intervals:add(SyncRecord, Height, Height - 1),
+					RetryRecord2 = ar_intervals:delete(RetryRecord, Height, Height - 1),
+					{ok, State#state{ sync_record = SyncRecord2, retry_record = RetryRecord2 }}
 			end;
 		{error, Reason} ->
 			?LOG_WARNING([{event, failed_to_store_block}, {block, ar_util:encode(H)},
@@ -363,25 +360,21 @@ have_free_space() ->
 		andalso ar_storage:get_free_space(?ROCKS_DB_DIR) > ?DISK_HEADERS_BUFFER_SIZE
 			andalso ar_storage:get_free_space(?CHUNK_DIR) > ?DISK_HEADERS_BUFFER_SIZE.
 
-%% @doc Pick the biggest height smaller than LastPicked from outside the sync record.
-pick_unsynced_block(LastPicked, SyncRecord) ->
-	case ar_intervals:is_empty(SyncRecord) of
+%% @doc Return the latest height we have not synced or put in the retry queue yet.
+%% Return 'nothing_to_sync' if everything is either synced or in the retry queue.
+pick_unsynced_block(#state{ height = Height, sync_record = SyncRecord,
+		retry_record = RetryRecord }) ->
+	Union = ar_intervals:union(SyncRecord, RetryRecord),
+	case ar_intervals:is_empty(Union) of
 		true ->
-			case LastPicked - 1 >= 0 of
-				true ->
-					LastPicked - 1;
-				false ->
-					nothing_to_sync
-			end;
+			Height;
 		false ->
-			case ar_intervals:take_largest(SyncRecord) of
-				{{_End, -1}, _SyncRecord2} ->
+			case ar_intervals:take_largest(Union) of
+				{{End, _Start}, _Union2} when Height > End ->
+					Height;
+				{{_End, -1}, _Union2} ->
 					nothing_to_sync;
-				{{_End, Start}, SyncRecord2} when Start >= LastPicked ->
-					pick_unsynced_block(LastPicked, SyncRecord2);
-				{{End, _Start}, _SyncRecord2} when LastPicked - 1 > End ->
-					LastPicked - 1;
-				{{_End, Start}, _SyncRecord2} ->
+				{{_End, Start}, _Union2} ->
 					Start
 			end
 	end.
@@ -398,11 +391,11 @@ process_item(Queue) ->
 		{empty, _Queue} ->
 			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item),
 			Queue;
-		{{value, {Item, {BackoffTimestamp, _} = Backoff}}, UpdatedQueue}
+		{{value, {Item, {BackoffTimestamp, _} = Backoff}}, Queue2}
 				when BackoffTimestamp > Now ->
 			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item),
-			enqueue(Item, Backoff, UpdatedQueue);
-		{{value, {{block, {H, H2, TXRoot}}, Backoff}}, UpdatedQueue} ->
+			enqueue(Item, Backoff, Queue2);
+		{{value, {{block, {H, H2, TXRoot}}, Backoff}}, Queue2} ->
 			monitor(process, spawn(
 				fun() ->
 					process_flag(trap_exit, true),
@@ -412,21 +405,19 @@ process_item(Queue) ->
 									Backoff});
 						{ok, B} ->
 							gen_server:cast(?MODULE, {add_historical_block, B, H, H2, TXRoot,
-									Backoff}),
-							ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE,
-									process_item)
+									Backoff})
 					end
 				end
 			)),
-			UpdatedQueue
+			Queue2
 	end.
 
 enqueue(Item, Backoff, Queue) ->
 	queue:in({Item, Backoff}, Queue).
 
 update_backoff({_Timestamp, Interval}) ->
-	UpdatedInterval = min(?MAX_BACKOFF_INTERVAL_S, Interval * 2),
-	{os:system_time(second) + UpdatedInterval, UpdatedInterval}.
+	Interval2 = min(?MAX_BACKOFF_INTERVAL_S, Interval * 2),
+	{os:system_time(second) + Interval2, Interval2}.
 
 download_block(H, H2, TXRoot) ->
 	Peers = ar_peers:get_peers(),

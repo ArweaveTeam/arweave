@@ -403,6 +403,7 @@ handle_info(wallets_ready, State) ->
 	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
 	B = hd(Blocks),
 	Height = B#block.height,
+	ar_disk_cache:write_block(B),
 	ar_header_sync:join(Height, RecentBI, Blocks),
 	ar_data_sync:join(RecentBI, B#block.packing_2_5_threshold,
 			B#block.strict_data_split_threshold),
