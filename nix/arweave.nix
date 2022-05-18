@@ -323,7 +323,7 @@ let
 
       export ERL_EPMD_ADDRESS=127.0.0.1
 
-      erl +A100 +SDio100 +Bi -pa $(echo $ROOT_DIR/lib/*/ebin) \
+      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $ROOT_DIR/lib/*/ebin) \
        -config $ROOT_DIR/config/sys.config \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
