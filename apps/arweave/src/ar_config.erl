@@ -187,6 +187,17 @@ parse_options([{<<"requests_per_minute_limit">>, L} | Rest], Config) when is_int
 parse_options([{<<"requests_per_minute_limit">>, L} | _], _) ->
 	{error, {bad_type, requests_per_minute_limit, number}, L};
 
+parse_options([{<<"requests_per_minute_limit_by_ip">>, Object} | Rest], Config)
+		when is_tuple(Object) ->
+	case parse_requests_per_minute_limit_by_ip(Object) of
+		{ok, ParsedMap} ->
+			parse_options(Rest, Config#config{ requests_per_minute_limit_by_ip = ParsedMap });
+		error ->
+			{error, bad_requests_per_minute_limit_by_ip, Object}
+	end;
+parse_options([{<<"requests_per_minute_limit_by_ip">>, Object} | _], _) ->
+	{error, {bad_type, requests_per_minute_limit_by_ip, object}, Object};
+
 parse_options([{<<"load_mining_key">>, DataDir} | Rest], Config) when is_binary(DataDir) ->
 	parse_options(Rest, Config#config{ load_key = binary_to_list(DataDir) });
 parse_options([{<<"load_mining_key">>, DataDir} | _], _) ->
@@ -322,7 +333,7 @@ parse_options([{<<"webhooks">>, Webhooks} | _], _) ->
 	{error, {bad_type, webhooks, array}, Webhooks};
 
 parse_options([{<<"semaphores">>, Semaphores} | Rest], Config) when is_tuple(Semaphores) ->
-	case parse_semaphores(Semaphores, Config#config.semaphores) of
+	case parse_atom_number_map(Semaphores, Config#config.semaphores) of
 		{ok, ParsedSemaphores} ->
 			parse_options(Rest, Config#config{ semaphores = ParsedSemaphores });
 		error ->
@@ -424,19 +435,37 @@ parse_webhook_events([Event | Rest], Events) ->
 parse_webhook_events([], Events) ->
 	{ok, lists:reverse(Events)}.
 
-parse_semaphores({[Semaphore | Semaphores]}, ParsedSemaphores) when is_tuple(Semaphore) ->
-	parse_semaphores({Semaphores}, parse_semaphore(Semaphore, ParsedSemaphores));
-parse_semaphores({[]}, ParsedSemaphores) ->
-	{ok, ParsedSemaphores};
-parse_semaphores(_, _) ->
+parse_atom_number_map({[Pair | Pairs]}, Parsed) when is_tuple(Pair) ->
+	parse_atom_number_map({Pairs}, parse_atom_number(Pair, Parsed));
+parse_atom_number_map({[]}, Parsed) ->
+	{ok, Parsed};
+parse_atom_number_map(_, _) ->
 	error.
 
-parse_semaphore({Name, Number}, ParsedSemaphores)
-		when is_binary(Name), is_number(Number) ->
-	maps:put(binary_to_existing_atom(Name), Number, ParsedSemaphores);
-parse_semaphore({Unknown, _N}, ParsedSemaphores) ->
-	?LOG_WARNING([
-		{event, configured_semaphore_bad_type},
-		{semaphore, io_lib:format("~p", [Unknown])}
-	]),
-	ParsedSemaphores.
+parse_atom_number({Name, Number}, Parsed) when is_binary(Name), is_number(Number) ->
+	maps:put(binary_to_atom(Name), Number, Parsed);
+parse_atom_number({Key, Value}, Parsed) ->
+	?LOG_WARNING([{event, parse_config_bad_type},
+		{key, io_lib:format("~p", [Key])}, {value, iolib:format("~p", [Value])}]),
+	Parsed.
+
+parse_requests_per_minute_limit_by_ip(Input) ->
+	parse_requests_per_minute_limit_by_ip(Input, #{}).
+
+parse_requests_per_minute_limit_by_ip({[{IP, Object} | Pairs]}, Parsed) ->
+	case ar_util:safe_parse_peer(IP) of
+		{error, invalid} ->
+			error;
+		{ok, {A, B, C, D, _Port}} ->
+			case parse_atom_number_map(Object, #{}) of
+				error ->
+					error;
+				{ok, ParsedMap} ->
+					parse_requests_per_minute_limit_by_ip({Pairs},
+							maps:put({A, B, C, D}, ParsedMap, Parsed))
+			end
+	end;
+parse_requests_per_minute_limit_by_ip({[]}, Parsed) ->
+	{ok, Parsed};
+parse_requests_per_minute_limit_by_ip(_, _) ->
+	error.

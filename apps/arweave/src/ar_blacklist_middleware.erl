@@ -108,7 +108,7 @@ decrement_ip_addr(IpAddr, Req) ->
 	end.
 
 update_ip_addr(IpAddr, Req, Diff) ->
-	{PathKey, Limit}  = get_key_limit(Req),
+	{PathKey, Limit}  = get_key_limit(IpAddr, Req),
 	%% Divide by 2 as the throttle period is 30 seconds.
 	RequestLimit = Limit div 2,
 	Key = {rate_limit, IpAddr, PathKey},
@@ -133,6 +133,8 @@ requesting_ip_addr(Req) ->
 
 peer_to_ip_addr({A, B, C, D, _}) -> {A, B, C, D}.
 
-get_key_limit(Req) ->
+get_key_limit(IPAddr, Req) ->
 	Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	?RPM_BY_PATH(Path)().
+	{ok, Config} = application:get_env(arweave, config),
+	Map = maps:get(IPAddr, Config#config.requests_per_minute_limit_by_ip, #{}),
+	?RPM_BY_PATH(Path, Map)().

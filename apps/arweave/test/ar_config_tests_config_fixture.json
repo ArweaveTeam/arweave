@@ -32,6 +32,14 @@
   "header_sync_jobs": 1,
   "disk_pool_jobs": 2,
   "requests_per_minute_limit": 2500,
+  "requests_per_minute_limit_by_ip": {
+      "127.0.0.1": {
+          "chunk": 100000,
+          "data_sync_record": 1,
+          "recent_hash_list_diff": 200000,
+          "default": 100
+      }
+  },
   "load_mining_key": "some_key_file",
   "transaction_blacklists": [
     "some_blacklist_1",

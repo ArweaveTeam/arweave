@@ -44,6 +44,14 @@ parse_config() ->
 		header_sync_jobs = 1,
 		disk_pool_jobs = 2,
 		requests_per_minute_limit = 2500,
+		requests_per_minute_limit_by_ip = #{
+			{127, 0, 0, 1} := #{
+				chunk := 100000,
+				data_sync_record := 1,
+				recent_hash_list_diff := 200000,
+				default := 100
+			}
+		},
 		load_key = "some_key_file",
 		disk_space = 44 * 1024 * 1024 * 1024,
 		disk_space_check_frequency = 10 * 1000,
