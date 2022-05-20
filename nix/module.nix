@@ -170,6 +170,38 @@ in
       description = "A rate limiter to prevent the node from receiving too many http requests over 1 minute period.";
     };
 
+    requestsPerMinuteLimitByIp = mkOption {
+      type = types.listOf (types.submodule {
+        options = {
+          ip = mkOption {
+            type = types.str;
+            description = ''
+              ip address of client to rate limit
+            '';
+          };
+          chunkLimit = mkOption {
+            type = types.int;
+            description = ''
+              rate of chunk data requests over 1 minute period to limit
+            '';
+          };
+          dataSyncRecordLimit = mkOption {
+            type = types.int;
+            description = ''
+              rate of sync_data_record requests over 1 minute period to limit
+            '';
+          };
+          defaultLimit = mkOption {
+            type = types.int;
+            description = ''
+              the default rate of requests over 1 minute period to limit
+            '';
+          };
+        };
+      });
+      default = [];
+      description = "A rate limiter to prevent the node from receiving too many http requests over 1 minute period.";
+    };
   };
 
   config = mkIf cfg.enable (
@@ -197,6 +229,15 @@ in
               arql = 10;
               gateway_arql = 10;
             };
+            requests_per_minute_limit = cfg.requestsPerMinuteLimit;
+
+            requests_per_minute_limit_by_ip = lib.lists.foldr (ipObj: acc: acc // {
+              "${ipObj.ip}" = {
+                chunk = ipObj.chunkLimit;
+                data_sync_record = ipObj.dataSyncRecordLimit;
+                default = ipObj.defaultLimit;
+              };
+            }) {} cfg.requestsPerMinuteLimitByIp;
           });
     in {
       systemd.services.arweave = {
@@ -211,9 +252,8 @@ in
           Type = "forking";
           KillMode = "none";
           ExecStartPre = "${pkgs.bash}/bin/bash -c '(${pkgs.procps}/bin/pkill epmd || true) && (${pkgs.procps}/bin/pkill screen || true) && sleep 5 || true'";
-          ExecStart = "${pkgs.screen}/bin/screen -dmS arweave ${cfg.package}/bin/start-nix config_file ${configFile} requests_per_minute_limit ${cfg.requestsPerMinuteLimit} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
+          ExecStart = "${pkgs.screen}/bin/screen -dmS arweave ${cfg.package}/bin/start-nix config_file ${configFile} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
           ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.procps}/bin/pkill beam || true; sleep 15'";
-          TimeoutStopSec = 15;
           RestartKillSignal = "SIGINT";
         };
       };
