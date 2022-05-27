@@ -64,8 +64,14 @@ start_http_iface_listener(Config) ->
 
 stop() ->
 	cowboy:stop_listener(ar_http_iface_listener),
-	cowboy:stop_listener(ar_http_gateway_listener),
-	cowboy:stop_listener(ar_https_gateway_listener).
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.gateway_domain of
+		Domain when is_binary(Domain) ->
+			cowboy:stop_listener(ar_http_gateway_listener),
+			cowboy:stop_listener(ar_https_gateway_listener);
+		_ ->
+			ok
+	end.
 
 start_gateway_listeners(Config) ->
 	case Config#config.gateway_domain of

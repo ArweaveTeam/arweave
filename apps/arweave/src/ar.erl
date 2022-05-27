@@ -456,6 +456,7 @@ start(normal, _Args) ->
 	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
 	logger:set_application_level(arweave, Level),
 	%% Start the Prometheus metrics subsystem.
+	prometheus_registry:register_collector(prometheus_ranch_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
 	%% Register custom metrics.
 	ar_metrics:register(Config#config.metrics_dir),
