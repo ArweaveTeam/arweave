@@ -202,6 +202,12 @@ in
       default = [];
       description = "A rate limiter to prevent the node from receiving too many http requests over 1 minute period.";
     };
+
+    maxConnections = mkOption {
+      type = types.int;
+      default = 1024;
+      description = "Maximum allowed TCP connections.";
+    };
   };
 
   config = mkIf cfg.enable (
@@ -230,6 +236,7 @@ in
               gateway_arql = 10;
             };
             requests_per_minute_limit = cfg.requestsPerMinuteLimit;
+            max_connections = cfg.maxConnections;
 
             requests_per_minute_limit_by_ip = lib.lists.foldr (ipObj: acc: acc // {
               "${ipObj.ip}" = {
