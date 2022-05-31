@@ -218,6 +218,20 @@ let
     '';
   };
 
+  prometheus_ranch = buildRebar rec {
+    name = "prometheus_ranch";
+    version = "05f7aad57e53a88319cd64e7a2379a381aad087d";
+
+    buildInputs = [ prometheus ];
+
+    src = fetchFromGitHub {
+      owner = "ArweaveTeam";
+      rev = version;
+      repo = name;
+      sha256 = "sha256-F2Q+XellyTTZlQndQlcIusxwhO1zlCArXE7UP1kVfB0=";
+    };
+  };
+
   rebar3_archive_plugin = buildRebar rec {
     name = "rebar3_archive_plugin";
     version = "0.0.2";
@@ -276,12 +290,12 @@ let
 
   ranch = buildRebar rec {
     name = "ranch";
-    version = "a692f44567034dacf5efcaa24a24183788594eb7";
+    version = "ebf216e91ef2ae54d378234062db949d95f01c0d";
     src = fetchFromGitHub {
       owner = "ninenines";
       repo = name;
       rev = version;
-      sha256 = "03naawrq8qpv9al915didl4aicinj79f067isc21dbir0lhn1lgn";
+      sha256 = "sha256-Uchp4bE39rWSprNYYdVDE9uk0IZWznsLt9it5dYZQNQ=";
     };
   };
 
@@ -366,9 +380,10 @@ in beamPackages.rebar3Relx {
     meck
     cowboy
     prometheus
-    prometheus_process_collector
     prometheus_cowboy
     prometheus_httpd
+    prometheus_process_collector
+    prometheus_ranch
   ];
 
   buildInputs = with pkgs; [
