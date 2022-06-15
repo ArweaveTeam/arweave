@@ -21,6 +21,17 @@ export ERL_EPMD_ADDRESS=127.0.0.1
 while true; do
     echo Launching Erlang Virtual Machine...
     if
+        # +MBas aobf: emulator Memory Binary Allocation Strategy set to Address Order Best Fit
+        #                   https://www.erlang.org/doc/man/erts_alloc.html#strategy
+        # +MBlmbcs 512: emulator Memory Binary Largest (mseg_alloc) MultiBlock Carrier Size in kilobytes
+        #                   https://www.erlang.org/doc/man/erts_alloc.html#mseg_mbc_sizes
+        # +A100: emulator number of threads in the Async long thread pool for linked in drivers; mostly unused
+        # +SDio100: emulator Scheduler thread count for Dirty I/O, 100 threads for file access
+        # +Bi: emulator Break handling: Ignore break signals
+        # -pa `./rebar3 path`: PAths to add to the beginning of the code path (./rebar3 path is run to output them)
+        # -config config/sys.config: config.Config file for the application
+        # -args_file config/vm.args.dev: read config/vm.args.dev as additional command line parameters
+        # -run ar main: call ar:main() on launch
         erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +Bi -pa `./rebar3 path` \
             -config config/sys.config -args_file config/vm.args.dev \
             -run ar main $RANDOMX_JIT "$@"
