@@ -83,10 +83,16 @@ in
       '';
     };
 
+    maxDiskPoolBufferMb = mkOption {
+      type = types.int;
+      default = 2000;
+      description = "Max disk-pool buffer size in mb.";
+    };
+
     maxDiskPoolDataRootBufferMb = mkOption {
       type = types.int;
       default = 500;
-      description = "Max disk-pool buffer size in mb.";
+      description = "Max disk-pool data-root buffer size in mb.";
     };
 
     maxMiners = mkOption {
@@ -217,6 +223,7 @@ in
             metrics_dir = cfg.metricsDir;
             transaction_blacklists = cfg.transactionBlacklists;
             transaction_whitelists = cfg.transactionWhitelists;
+            max_disk_pool_buffer_mb = cfg.maxDiskPoolBufferMb;
             max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
             max_miners = cfg.maxMiners;
             disable = cfg.featuresDisable;
