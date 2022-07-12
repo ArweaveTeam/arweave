@@ -10,8 +10,7 @@
 
 -export([start_link/0, start_taking_down/0, is_tx_blacklisted/1, is_byte_blacklisted/1,
 		get_next_not_blacklisted_byte/1, notify_about_removed_tx/1,
-		notify_about_removed_tx_data/3, norify_about_orphaned_tx/1, notify_about_added_tx/3,
-		store_state/0]).
+		norify_about_orphaned_tx/1, notify_about_added_tx/3, store_state/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -111,10 +110,6 @@ notify_about_removed_tx(TXID) ->
 %% @doc Notify the server about the orphaned tx caused by the fork.
 norify_about_orphaned_tx(TXID) ->
 	gen_server:cast(?MODULE, {orphaned_tx, TXID}).
-
-%% @doc Notify the server about the removed transaction data.
-notify_about_removed_tx_data(TXID, End, Start) ->
-	gen_server:cast(?MODULE, {removed_tx_data, TXID, End, Start}).
 
 %% @doc Notify the server about the added transaction.
 notify_about_added_tx(TXID, End, Start) ->
@@ -235,15 +230,6 @@ handle_cast({orphaned_tx, TXID}, State) ->
 	end,
 	{noreply, State};
 
-handle_cast({removed_tx_data, TXID, End, Start}, State) ->
-	case ets:lookup(ar_tx_blacklist, TXID) of
-		[{TXID, End, Start}] ->
-			ets:delete(ar_tx_blacklist_pending_data, TXID),
-			{noreply, request_data_takedown(State)};
-		_ ->
-			{noreply, State}
-	end;
-
 handle_cast({added_tx, TXID, End, Start}, State) ->
 	case ets:lookup(ar_tx_blacklist, TXID) of
 		[{TXID}] ->
@@ -262,6 +248,30 @@ handle_cast({added_tx, TXID, End, Start}, State) ->
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
+
+handle_info({removed_range, Ref}, State) ->
+	case erlang:get(Ref) of
+		undefined ->
+			{noreply, State};
+		{range, {Start, End}} ->
+			erlang:erase(Ref),
+			case ets:lookup(ar_tx_blacklist, {End, Start}) of
+				[{{End, Start}}] ->
+					ets:delete(ar_tx_blacklist_pending_data, {End, Start}),
+					{noreply, request_data_takedown(State)};
+				_ ->
+					{noreply, State}
+			end;
+		{tx, {TXID, Start, End}} ->
+			erlang:erase(Ref),
+			case ets:lookup(ar_tx_blacklist, TXID) of
+				[{TXID, End, Start}] ->
+					ets:delete(ar_tx_blacklist_pending_data, TXID),
+					{noreply, request_data_takedown(State)};
+				_ ->
+					{noreply, State}
+			end
+	end;
 
 handle_info({event, tx, {ready_for_unblacklisting, TXID}}, State) ->
 	?LOG_DEBUG([{event, unblacklisting_transaction}, {tx, ar_util:encode(TXID)}]),
@@ -340,54 +350,75 @@ refresh_blacklist(Whitelist) ->
 refresh_blacklist(Whitelist, Blacklist) ->
 	Removed =
 		sets:fold(
-			fun(TXID, Acc) ->
-				case not sets:is_element(TXID, Whitelist)
-						andalso not ets:member(ar_tx_blacklist, TXID) of
-					true ->
-						[TXID | Acc];
-					false ->
-						Acc
-				end
+			fun	(TXID, Acc) when is_binary(TXID) ->
+					case not sets:is_element(TXID, Whitelist)
+							andalso not ets:member(ar_tx_blacklist, TXID) of
+						true ->
+							[TXID | Acc];
+						false ->
+							Acc
+					end;
+				({End, Start}, Acc) ->
+					case ets:member(ar_tx_blacklist, {End, Start}) of
+						true ->
+							Acc;
+						false ->
+							[{End, Start} | Acc]
+					end
 			end,
 			[],
 			Blacklist
 		),
 	Restored =
 		ets:foldl(
-			fun(Entry, Acc) ->
-				TXID = element(1, Entry),
-				case sets:is_element(TXID, Whitelist)
-						orelse not sets:is_element(TXID, Blacklist) of
-					true ->
-						[TXID | Acc];
-					false ->
-						Acc
-				end
+			fun	({End, Start}, Acc) ->
+					case sets:is_element({End, Start}, Blacklist) of
+						true ->
+							Acc;
+						false ->
+							[{End, Start} | Acc]
+					end;
+				(Entry, Acc) ->
+					TXID = element(1, Entry),
+					case sets:is_element(TXID, Whitelist)
+							orelse not sets:is_element(TXID, Blacklist) of
+						true ->
+							[TXID | Acc];
+						false ->
+							Acc
+					end
 			end,
 			[],
 			ar_tx_blacklist
 		),
 	lists:foreach(
-		fun(TXID) ->
-			ets:insert(ar_tx_blacklist, [{TXID}]),
-			ets:insert(ar_tx_blacklist_pending_headers, [{TXID}]),
-			ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
-			ets:delete(ar_tx_blacklist_pending_restore_headers, TXID)
+		fun	(TXID) when is_binary(TXID) ->
+				ets:insert(ar_tx_blacklist, [{TXID}]),
+				ets:insert(ar_tx_blacklist_pending_headers, [{TXID}]),
+				ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
+				ets:delete(ar_tx_blacklist_pending_restore_headers, TXID);
+			({End, Start}) ->
+				ets:insert(ar_tx_blacklist, [{{End, Start}}]),
+				ets:insert(ar_tx_blacklist_pending_data, [{{End, Start}}])
 		end,
 		Removed
 	),
 	lists:foreach(
-		fun(TXID) ->
-			ets:insert(ar_tx_blacklist_pending_restore_headers, [{TXID}]),
-			case ets:lookup(ar_tx_blacklist, TXID) of
-				[{TXID}] ->
-					ok;
-				[{TXID, End, Start}] ->
-					restore_offsets(End, Start)
-			end,
-			ets:delete(ar_tx_blacklist, TXID),
-			ets:delete(ar_tx_blacklist_pending_data, TXID),
-			ets:delete(ar_tx_blacklist_pending_headers, TXID)
+		fun	(TXID) when is_binary(TXID) ->
+				ets:insert(ar_tx_blacklist_pending_restore_headers, [{TXID}]),
+				case ets:lookup(ar_tx_blacklist, TXID) of
+					[{TXID}] ->
+						ok;
+					[{TXID, End, Start}] ->
+						restore_offsets(End, Start)
+				end,
+				ets:delete(ar_tx_blacklist, TXID),
+				ets:delete(ar_tx_blacklist_pending_data, TXID),
+				ets:delete(ar_tx_blacklist_pending_headers, TXID);
+			({End, Start}) ->
+				restore_offsets(End, Start),
+				ets:delete(ar_tx_blacklist, {End, Start}),
+				ets:delete(ar_tx_blacklist_pending_data, {End, Start})
 		end,
 		Restored
 	),
@@ -418,16 +449,32 @@ load_from_file(File) ->
 
 parse_binary(Binary) ->
 	lists:filtermap(
-		fun(TXID) ->
-			case TXID of
+		fun(Line) ->
+			case Line of
 				<<>> ->
 					false;
-				TXIDEncoded ->
-					case ar_util:safe_decode(TXIDEncoded) of
+				TXIDOrRange ->
+					case ar_util:safe_decode(TXIDOrRange) of
 						{error, invalid} ->
-							false;
-						{ok, Decoded} ->
-							{true, Decoded}
+							case binary:split(TXIDOrRange, <<",">>, [global]) of
+								[StartBin, EndBin] ->
+									case {catch binary_to_integer(StartBin),
+											catch binary_to_integer(EndBin)} of
+										{Start, End} when is_integer(Start),
+												is_integer(End), End > Start, Start >= 0 ->
+											{true, {End, Start}};
+										_ ->
+											?LOG_WARNING([{event, failed_to_parse_line},
+													{line, Line}]),
+											false
+									end;
+								_ ->
+									?LOG_WARNING([{event, failed_to_parse_line},
+											{line, Line}]),
+									false
+							end;
+						{ok, TXID} ->
+							{true, TXID}
 					end
 			end
 		end,
@@ -492,7 +539,7 @@ request_data_takedown(State) ->
 	case ets:first(ar_tx_blacklist_pending_data) of
 		'$end_of_table' ->
 			State;
-		TXID ->
+		TXID when is_binary(TXID)  ->
 			case ets:lookup(ar_tx_blacklist, TXID) of
 				[{TXID}] ->
 					case ar_data_sync:get_tx_offset(TXID) of
@@ -505,7 +552,9 @@ request_data_takedown(State) ->
 					end;
 				[{TXID, End, Start}] ->
 					blacklist_offsets(TXID, End, Start, State)
-			end
+			end;
+		{End, Start} ->
+			blacklist_offsets(End, Start, State)
 	end.
 
 store_state() ->
@@ -527,9 +576,20 @@ store_state() ->
 restore_offsets(End, Start) ->
 	ar_ets_intervals:delete(ar_tx_blacklist_offsets, End, Start).
 
+blacklist_offsets(End, Start, State) ->
+	ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
+	Ref = make_ref(),
+	erlang:put(Ref, {range, {Start, End}}),
+	ar_data_sync:request_data_removal(Start, End, Ref, self()),
+	State#ar_tx_blacklist_state{
+		data_takedown_request_timestamp = os:system_time(millisecond)
+	}.
+
 blacklist_offsets(TXID, End, Start, State) ->
 	ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
-	ar_data_sync:request_tx_data_removal(TXID),
+	Ref = make_ref(),
+	erlang:put(Ref, {tx, {TXID, Start, End}}),
+	ar_data_sync:request_tx_data_removal(TXID, Ref, self()),
 	State#ar_tx_blacklist_state{
 		data_takedown_request_timestamp = os:system_time(millisecond)
 	}.

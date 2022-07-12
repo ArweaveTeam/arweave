@@ -79,7 +79,7 @@ test_uses_blacklists() ->
 					ok
 			end,
 			slave_mine(),
-			upload_data([TX], GoodTXIDs, DataTrees),
+			upload_data([TX], DataTrees),
 			wait_until_height(Height)
 		end,
 		lists:zip(TXs, lists:seq(1, length(TXs)))
@@ -96,7 +96,9 @@ test_uses_blacklists() ->
 	ok = file:write_file(lists:nth(4, BlacklistFiles), io_lib:format("~s~n~s",
 			[ar_util:encode(hd(GoodTXIDs)), ar_util:encode(V1TX#tx.id)])),
 	[UnblacklistedOffsets, WhitelistOffsets | BadOffsets2] = BadOffsets,
-	RestoredOffsets = [UnblacklistedOffsets, WhitelistOffsets],
+	RestoredOffsets = [UnblacklistedOffsets, WhitelistOffsets] ++
+			[lists:nth(6, lists:reverse(BadOffsets))],
+	BadOffsets3 = BadOffsets2 -- [lists:nth(6, lists:reverse(BadOffsets))],
 	[_UnblacklistedTXID, _WhitelistTXID | BadTXIDs2] = BadTXIDs,
 	%% Expect the transaction data to be resynced.
 	assert_present_offsets(RestoredOffsets),
@@ -107,8 +109,8 @@ test_uses_blacklists() ->
 	%% Expect the previously blacklisted transactions to stay blacklisted.
 	assert_present_txs(BadTXIDs2), % V2 headers must not be removed.
 	assert_removed_txs(BadV1TXIDs),
-	assert_removed_offsets(BadOffsets2),
-	assert_does_not_accept_offsets(BadOffsets2),
+	assert_removed_offsets(BadOffsets3),
+	assert_does_not_accept_offsets(BadOffsets3),
 	%% Blacklist the last transaction. Fork the weave. Assert the blacklisted offsets are moved.
 	disconnect_from_slave(),
 	TX = sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -141,8 +143,19 @@ setup() ->
 	BadTXIDs = [lists:nth(1, TXIDs), lists:nth(3, TXIDs)],
 	V1TX = sign_v1_tx(Wallet, #{ data => random_v1_data(3 * ?DATA_CHUNK_SIZE),
 			last_tx => get_tx_anchor(slave) }),
-	BlacklistFiles = create_files([V1TX#tx.id | BadTXIDs]),
-	BadTXIDs2 = [lists:nth(5, TXIDs), lists:nth(7, TXIDs)],
+	DataSizes = [TX#tx.data_size || TX <- TXs],
+	[S1, S2, S3, S4, S5, S6, S7, S8 | _] = DataSizes,
+	BadOffsets = [S1, S1 + S2 + S3, % Blacklisted in the file.
+			S1 + S2 + S3 + S4 + S5,
+			S1 + S2 + S3 + S4 + S5 + S6 + S7], % Blacklisted in the endpoint.
+	BlacklistFiles = create_files([V1TX#tx.id | BadTXIDs],
+			[{S1 + S2 + S3 + ?DATA_CHUNK_SIZE, S1 + S2 + S3 + ?DATA_CHUNK_SIZE * 2},
+				{S1 + S2 + S3 + S4 + S5, S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 5},
+				% This one just repeats the range of a blacklisted tx:
+				{S1 + S2 + S3 + S4 + S5 + S6, S1 + S2 + S3 + S4 + S5 + S6 + S7}
+			]),
+	BadTXIDs2 = [lists:nth(5, TXIDs), lists:nth(7, TXIDs)], % The endpoint.
+	BadTXIDs3 = [lists:nth(4, TXIDs), lists:nth(6, TXIDs)], % Ranges.
 	Routes = [{"/[...]", ar_tx_blacklist_tests, BadTXIDs2}],
 	{ok, _PID} =
 		slave_call(cowboy, start_clear, [
@@ -150,10 +163,7 @@ setup() ->
 			[{port, 1985}],
 			#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 		]),
-	GoodTXIDs = TXIDs -- (BadTXIDs ++ BadTXIDs2),
-	DataSizes = [TX#tx.data_size || TX <- TXs],
-	[S1, S2, S3, S4, S5, S6, S7, S8 | _] = DataSizes,
-	BadOffsets = [S1, S1 + S2 + S3, S1 + S2 + S3 + S4 + S5, S1 + S2 + S3 + S4 + S5 + S6 + S7],
+	GoodTXIDs = TXIDs -- (BadTXIDs ++ BadTXIDs2 ++ BadTXIDs3),
 	BadOffsets2 =
 		lists:map(
 			fun(TXOffset) ->
@@ -164,6 +174,12 @@ setup() ->
 			end,
 			BadOffsets
 		),
+	BadOffsets3 = BadOffsets2 ++ [S1 + S2 + S3 + ?DATA_CHUNK_SIZE * 2,
+			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE,
+			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 2,
+			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 3,
+			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 4,
+			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 5], % Blacklisted as a range.
 	GoodOffsets = [
 		S1 + S2, S1 + S2 + S3 + S4, S1 + S2 + S3 + S4 + S5 + S6,
 		S1 + S2 + S3 + S4 + S5 + S6 + S7 + S8
@@ -172,7 +188,7 @@ setup() ->
 		lists:map(
 			fun(TXOffset) ->
 				%% Every TX in this test consists of 10 chunks.
-				[TXOffset - ?DATA_CHUNK_SIZE * I || I <- lists:seq(0, 9)]
+				[TXOffset - ?DATA_CHUNK_SIZE * I || I <- lists:seq(0, 9)] -- BadOffsets3
 			end,
 			GoodOffsets
 		),
@@ -182,10 +198,10 @@ setup() ->
 		Wallet,
 		TXs,
 		GoodTXIDs,
-		BadTXIDs ++ BadTXIDs2,
+		BadTXIDs ++ BadTXIDs2 ++ BadTXIDs3,
 		V1TX,
 		GoodOffsets2,
-		BadOffsets2,
+		BadOffsets3,
 		DataTrees
 	}.
 
@@ -217,7 +233,7 @@ create_txs(Wallet) ->
 		lists:seq(1, 10)
 	).
 
-create_files(BadTXIDs) ->
+create_files(BadTXIDs, [{Start1, End1}, {Start2, End2}, {Start3, End3}]) ->
 	Files = [
 		{random_filename(), <<>>},
 		{random_filename(), <<"bad base64url ">>},
@@ -225,10 +241,12 @@ create_files(BadTXIDs) ->
 		{random_filename(),
 			list_to_binary(
 				io_lib:format(
-					"~s\nbad base64url \n~s\n~s\n",
-					lists:map(fun ar_util:encode/1, BadTXIDs)
+					"~s\nbad base64url \n~s\n~s\n~B,~B\n",
+					lists:map(fun ar_util:encode/1, BadTXIDs) ++ [Start1, End1]
 				)
-			)}
+			)},
+		{random_filename(), list_to_binary(io_lib:format("~B,~B\n~B,~B",
+				[Start2, End2, Start3, End3]))}
 	],
 	lists:foreach(
 		fun
@@ -255,7 +273,7 @@ encode_chunk(Proof) ->
 		offset => integer_to_binary(maps:get(offset, Proof))
 	}).
 
-upload_data(TXs, GoodTXIDs, DataTrees) ->
+upload_data(TXs, DataTrees) ->
 	lists:foreach(
 		fun(TX) ->
 			#tx{
@@ -266,14 +284,7 @@ upload_data(TXs, GoodTXIDs, DataTrees) ->
 			{DataTree, Chunks} = maps:get(TXID, DataTrees),
 			ChunkOffsets = lists:zip(Chunks,
 					lists:seq(?DATA_CHUNK_SIZE, 10 * ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE)),
-			UploadChunks =
-				case lists:member(TXID, GoodTXIDs) of
-					true ->
-						ChunkOffsets;
-					false ->
-						[{Chunk, O} || {Chunk, O} <- ChunkOffsets,
-							O rem (2 * ?DATA_CHUNK_SIZE) == 0]
-				end,
+			UploadChunks = ChunkOffsets,
 			lists:foreach(
 				fun({Chunk, Offset}) ->
 					DataPath = ar_merkle:generate_path(DataRoot, Offset - 1, DataTree),
@@ -343,7 +354,6 @@ assert_removed_txs(BadTXIDs) ->
 	).
 
 assert_present_offsets(GoodOffsets) ->
-	?debugFmt("Waiting until these offsets are stored: ~p.", [GoodOffsets]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -352,6 +362,7 @@ assert_present_offsets(GoodOffsets) ->
 						{ok, {{<<"200">>, _}, _, _, _, _}} ->
 							true;
 						_ ->
+							?debugFmt("Waiting until the end offset ~B is stored.", [Offset]),
 							false
 					end
 				end,
@@ -363,7 +374,6 @@ assert_present_offsets(GoodOffsets) ->
 	).
 
 assert_removed_offsets(BadOffsets) ->
-	?debugFmt("Waiting until these offsets are removed: ~p.", [BadOffsets]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -372,6 +382,7 @@ assert_removed_offsets(BadOffsets) ->
 						{ok, {{<<"404">>, _}, _, _, _, _}} ->
 							true;
 						_ ->
+							?debugFmt("Waiting until the end offset ~B is removed.", [Offset]),
 							false
 					end
 				end,

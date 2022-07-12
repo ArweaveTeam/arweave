@@ -5,7 +5,8 @@
 -export([start_link/0, join/3, add_tip_block/4, add_block/2, is_chunk_proof_ratio_attractive/3,
 		add_chunk/1, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_tx_data/1, get_tx_data/2, get_tx_offset/1, has_data_root/2,
-		request_tx_data_removal/1, sync_interval/2, record_disk_pool_chunks_count/0]).
+		request_tx_data_removal/3, request_data_removal/4, sync_interval/2,
+		record_disk_pool_chunks_count/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([update_disk_pool_data_roots/0]).
@@ -207,8 +208,12 @@ add_block(B, SizeTaggedTXs) ->
 	gen_server:cast(?MODULE, {add_block, B, SizeTaggedTXs}).
 
 %% @doc Request the removal of the transaction data.
-request_tx_data_removal(TXID) ->
-	gen_server:cast(?MODULE, {remove_tx_data, TXID}).
+request_tx_data_removal(TXID, Ref, ReplyTo) ->
+	gen_server:cast(?MODULE, {remove_tx_data, TXID, Ref, ReplyTo}).
+
+%% @doc Request the removal of the given byte range.
+request_data_removal(Start, End, Ref, ReplyTo) ->
+	gen_server:cast(?MODULE, {remove_range, End, Start + 1, Ref, ReplyTo}).
 
 %% @doc Make our best attempt to sync the given interval. There is no
 %% guarantee the interval will be eventually synced.
@@ -670,13 +675,13 @@ handle_cast({process_disk_pool_chunk_offset, MayConclude, TXArgs, Args, Iterator
 	process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 			Args, State);
 
-handle_cast({remove_tx_data, TXID}, State) ->
+handle_cast({remove_tx_data, TXID, Ref, From}, State) ->
 	#sync_data_state{ tx_index = TXIndex } = State,
 	case ar_kv:get(TXIndex, TXID) of
 		{ok, Value} ->
 			{End, Size} = binary_to_term(Value),
 			Start = End - Size,
-			gen_server:cast(?MODULE, {remove_tx_data, TXID, Size, End, Start + 1}),
+			gen_server:cast(?MODULE, {remove_range, End, Start + 1, Ref, From}),
 			{noreply, State};
 		not_found ->
 			?LOG_WARNING([
@@ -693,10 +698,10 @@ handle_cast({remove_tx_data, TXID}, State) ->
 			{noreply, State}
 	end;
 
-handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) when Cursor > End ->
-	ar_tx_blacklist:notify_about_removed_tx_data(TXID, End, End - TXSize),
+handle_cast({remove_range, End, Cursor, Ref, From}, State) when Cursor > End ->
+	From ! {removed_range, Ref},
 	{noreply, State};
-handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
+handle_cast({remove_range, End, Cursor, Ref, From}, State) ->
 	#sync_data_state{ chunks_index = ChunksIndex,
 			strict_data_split_threshold = StrictDataSplitThreshold,
 			recently_processed_disk_pool_offsets = RecentlyProcessedOffsets } = State,
@@ -705,7 +710,7 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 			<< AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >> = Key,
 			case AbsoluteEndOffset > End of
 				true ->
-					ar_tx_blacklist:notify_about_removed_tx_data(TXID, End, End - TXSize),
+					From ! {removed_range, Ref},
 					{noreply, State};
 				false ->
 					{_, _, _, _, _, ChunkSize} = binary_to_term(Chunk),
@@ -724,7 +729,7 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 					ok = ar_chunk_storage:delete(PaddedOffset),
 					ok = ar_kv:delete(ChunksIndex, Key),
 					gen_server:cast(?MODULE,
-						{remove_tx_data, TXID, TXSize, End, AbsoluteEndOffset + 1}),
+							{remove_range, End, AbsoluteEndOffset + 1, Ref, From}),
 					{noreply, State#sync_data_state{
 							recently_processed_disk_pool_offsets = maps:remove(
 									AbsoluteEndOffset, RecentlyProcessedOffsets) }}
@@ -736,10 +741,10 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 			PrefixSpaceSize =
 				trunc(math:pow(2, ?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
 			NextCursor = ((Cursor div PrefixSpaceSize) + 2) * PrefixSpaceSize,
-			gen_server:cast(?MODULE, {remove_tx_data, TXID, TXSize, End, NextCursor}),
+			gen_server:cast(?MODULE, {remove_range, End, NextCursor, Ref, From}),
 			{noreply, State};
 		{error, Reason} ->
-			?LOG_ERROR([{event, tx_data_removal_aborted_since_failed_to_query_chunk},
+			?LOG_ERROR([{event, data_removal_aborted_since_failed_to_query_chunk},
 					{offset, Cursor}, {reason, Reason}]),
 			{noreply, State}
 	end;
