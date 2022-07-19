@@ -70,7 +70,16 @@ in
       default = [ ];
       example = [ "/user/arweave/blacklist.txt" ];
       description = ''
-        List of paths to textfiles containing blacklisted txids
+        List of paths to textfiles containing blacklisted txids and/or byte ranges
+      '';
+    };
+
+    transactionBlacklistURLs = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "http://example.org/blacklist.txt" ];
+      description = ''
+        List of URLs of the endpoints serving blacklisted txids and/or byte ranges
       '';
     };
 
@@ -223,6 +232,7 @@ in
             metrics_dir = cfg.metricsDir;
             transaction_blacklists = cfg.transactionBlacklists;
             transaction_whitelists = cfg.transactionWhitelists;
+            transaction_blacklist_urls = cfg.transactionBlacklistURLs;
             max_disk_pool_buffer_mb = cfg.maxDiskPoolBufferMb;
             max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
             max_miners = cfg.maxMiners;
