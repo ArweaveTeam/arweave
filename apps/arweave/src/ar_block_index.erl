@@ -1,7 +1,7 @@
 -module(ar_block_index).
 
--export([init/1, update/2, member/1, get_list/1, get_element_by_height/1,
-		get_block_bounds/2, get_intersection/2, get_intersection/1]).
+-export([init/1, update/2, member/1, get_list/1, get_list_by_hash/1, get_element_by_height/1,
+		get_block_bounds/1, get_block_bounds/2, get_intersection/2, get_intersection/1]).
 
 %%%===================================================================
 %%% Public interface.
@@ -30,6 +30,11 @@ member(H) ->
 get_list(Height) ->
 	get_list([], ets:first(block_index), -1, Height).
 
+%% @doc Return the list of {H, WeaveSize, TXRoot} triplets up to the block with the given
+%% hash H (including) sorted from latest to earliest.
+get_list_by_hash(H) ->
+	get_list_by_hash([], ets:first(block_index), -1, H).
+
 %% @doc Return the {H, WeaveSize, TXRoot} triplet for the given Height or not_found.
 get_element_by_height(Height) ->
 	case catch ets:slot(block_index, Height) of
@@ -50,16 +55,19 @@ get_block_bounds(Offset, BI) ->
 	%% are deeper than that.
 	case get_block_bounds2(Offset, BI) of
 		not_found ->
-			{WeaveSize, Height, _H, TXRoot} = Key = ets:next(block_index, {Offset, n, n, n}),
-			case Height of
-				0 ->
-					{0, WeaveSize, TXRoot};
-				_ ->
-					{PrevWeaveSize, _, _, _} = ets:prev(block_index, Key),
-					{PrevWeaveSize, WeaveSize, TXRoot}
-			end;
+			get_block_bounds(Offset);
 		Element ->
 			Element
+	end.
+
+get_block_bounds(Offset) ->
+	{WeaveSize, Height, _H, TXRoot} = Key = ets:next(block_index, {Offset, n, n, n}),
+	case Height of
+		0 ->
+			{0, WeaveSize, TXRoot};
+		_ ->
+			{PrevWeaveSize, _, _, _} = ets:prev(block_index, Key),
+			{PrevWeaveSize, WeaveSize, TXRoot}
 	end.
 
 %% @doc Return {Height, {H, WeaveSize, TXRoot}} with the  triplet present in both
@@ -105,8 +113,29 @@ get_list(BI, '$end_of_table', _Height, _MaxHeight) ->
 	BI;
 get_list(BI, _Elem, Height, MaxHeight) when Height >= MaxHeight ->
 	BI;
-get_list(BI, {WeaveSize, _Height, H, TXRoot} = Key, Height, MaxHeight) ->
-	get_list([{H, WeaveSize, TXRoot} | BI], ets:next(block_index, Key), Height + 1, MaxHeight).
+get_list(BI, {WeaveSize, NextHeight, H, TXRoot} = Key, Height, MaxHeight)
+		when NextHeight == Height + 1 ->
+	get_list([{H, WeaveSize, TXRoot} | BI], ets:next(block_index, Key), Height + 1, MaxHeight);
+get_list(_BI, _Key, _Height, MaxHeight) ->
+	%% An extremely unlikely race condition should have occured where some blocks were
+	%% orphaned right after we passed some of them here, and new blocks have been added
+	%% right before we reached the end of the table.
+	get_list(MaxHeight).
+
+get_list_by_hash(BI, '$end_of_table', _Height, _H) ->
+	BI;
+get_list_by_hash(BI, {WeaveSize, NextHeight, H, TXRoot}, Height, H)
+		when NextHeight == Height + 1 ->
+	[{H, WeaveSize, TXRoot} | BI];
+get_list_by_hash(BI, {WeaveSize, NextHeight, H, TXRoot} = Key, Height, H2)
+		when NextHeight == Height + 1 ->
+	get_list_by_hash([{H, WeaveSize, TXRoot} | BI], ets:next(block_index, Key), Height + 1,
+			H2);
+get_list_by_hash(_BI, _Key, _Height, H) ->
+	%% An extremely unlikely race condition should have occured where some blocks were
+	%% orphaned right after we passed some of them here, and new blocks have been added
+	%% right before we reached the end of the table.
+	get_list_by_hash(H).
 
 get_block_bounds2(Offset, [{_, WeaveSize2, TXRoot}, {_, WeaveSize1, _} | _])
 		when Offset >= WeaveSize1, Offset < WeaveSize2 ->

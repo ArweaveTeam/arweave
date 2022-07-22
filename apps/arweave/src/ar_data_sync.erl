@@ -261,11 +261,13 @@ init([]) ->
 	%% are recorded here after we failed to find them. The motivation
 	%% is to prevent missing intervals from slowing down the syncing process.
 	ar_ets_intervals:init_from_gb_set(ar_data_sync_skip_intervals, SyncRecord),
+	DiskPoolThreshold = get_disk_pool_threshold(CurrentBI),
+	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = WeaveSize,
 		disk_pool_cursor = first,
-		disk_pool_threshold = get_disk_pool_threshold(CurrentBI),
+		disk_pool_threshold = DiskPoolThreshold,
 		packing_2_5_threshold = Packing_2_5_Threshold,
 		repacking_cursor = 0,
 		strict_data_split_threshold = StrictDataSplitThreshold,
@@ -308,11 +310,13 @@ handle_cast({join, RecentBI, Packing_2_5_Threshold, StrictDataSplitThreshold}, S
 			ar_sync_record:cut(Offset, ?MODULE),
 			reset_orphaned_data_roots_disk_pool_timestamps(OrphanedDataRoots)
 	end,
+	DiskPoolThreshold = get_disk_pool_threshold(RecentBI),
+	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
 	State2 =
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = lists:sublist(RecentBI, ?TRACK_CONFIRMATIONS),
-			disk_pool_threshold = get_disk_pool_threshold(RecentBI),
+			disk_pool_threshold = DiskPoolThreshold,
 			packing_2_5_threshold = Packing_2_5_Threshold,
 			strict_data_split_threshold = StrictDataSplitThreshold
 		},
@@ -359,10 +363,12 @@ handle_cast({add_tip_block, Packing_2_5_Threshold, StrictDataSplitThreshold, Blo
 	reset_orphaned_data_roots_disk_pool_timestamps(OrphanedDataRoots),
 	ar_chunk_storage:cut(BlockStartOffset),
 	ar_sync_record:cut(BlockStartOffset, ?MODULE),
+	DiskPoolThreshold = get_disk_pool_threshold(BI),
+	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
 	State2 = State#sync_data_state{
 		weave_size = WeaveSize,
 		block_index = BI,
-		disk_pool_threshold = get_disk_pool_threshold(BI),
+		disk_pool_threshold = DiskPoolThreshold,
 		packing_2_5_threshold = Packing_2_5_Threshold,
 		strict_data_split_threshold = StrictDataSplitThreshold
 	},
@@ -1028,6 +1034,8 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB, IsBuck
 				{K, Root, _, P, _, S} = binary_to_term(Value),
 				case C - SeekOffset >= S of
 					true ->
+						invalidate_bad_data_record(SeekOffset - 1, C - S,
+								StrictDataSplitThreshold, ChunksIndex, 1),
 						{error, chunk_not_found};
 					false ->
 						{ok, C, K, Root, P, S}
@@ -1040,6 +1048,8 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB, IsBuck
 			{ok, O, ChunkDataKey, Root2, P2, S2} ->
 				case read_chunk(O, ChunkDataDB, ChunkDataKey) of
 					not_found ->
+						invalidate_bad_data_record(SeekOffset - 1, O,
+								StrictDataSplitThreshold, ChunksIndex, 2),
 						{error, chunk_not_found};
 					{error, reason} ->
 						?LOG_ERROR([{event, failed_to_read_chunk}, {reason, reason}]),
@@ -1055,30 +1065,96 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB, IsBuck
 						end
 				end
 		end,
-	case ReadChunkResult of
-		{error, Reason3} ->
-			{error, Reason3};
-		{ok, {Chunk, DataPath}, ChunkOffset, TXRoot, ChunkSize, TXPath} ->
+	ValidateChunk =
+		case ReadChunkResult of
+			{error, Reason3} ->
+				{error, Reason3};
+			{ok, {Chunk, DataPath}, ChunkOffset, TXRoot, ChunkSize, TXPath} ->
+				case validate_served_chunk({ChunkOffset, DataPath, TXPath, TXRoot, ChunkSize,
+						StrictDataSplitThreshold, ChunksIndex}) of
+					true ->
+						{ok, {Chunk, DataPath}, ChunkOffset, TXRoot, ChunkSize, TXPath};
+					false ->
+						{error, chunk_not_found}
+				end
+		end,
+	case ValidateChunk of
+		{error, Reason4} ->
+			{error, Reason4};
+		{ok, {Chunk2, DataPath2}, ChunkOffset2, TXRoot2, ChunkSize2, TXPath2} ->
 			PackResult =
 				case {Pack, Packing == StoredPacking} of
 					{false, true} ->
-						{ok, Chunk};
+						{ok, Chunk2};
 					{false, false} ->
 						{error, chunk_not_found};
 					{true, true} ->
-						{ok, Chunk};
+						{ok, Chunk2};
 					{true, false} ->
-						{ok, Unpacked} = ar_packing_server:unpack(StoredPacking, ChunkOffset,
-								TXRoot, Chunk, ChunkSize),
-						ar_packing_server:pack(Packing, ChunkOffset, TXRoot, Unpacked)
+						{ok, Unpacked} = ar_packing_server:unpack(StoredPacking, ChunkOffset2,
+								TXRoot2, Chunk2, ChunkSize2),
+						ar_packing_server:pack(Packing, ChunkOffset2, TXRoot2, Unpacked)
 				end,
 			case PackResult of
 				{ok, PackedChunk} ->
-					Proof = #{ tx_root => TXRoot, chunk => PackedChunk, data_path => DataPath,
-							tx_path => TXPath },
+					Proof = #{ tx_root => TXRoot2, chunk => PackedChunk,
+							data_path => DataPath2, tx_path => TXPath2 },
 					{ok, Proof};
 				Error ->
 					Error
+			end
+	end.
+
+invalidate_bad_data_record(Start, End, StrictDataSplitThreshold, ChunksIndex, Case) ->
+	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
+	case End > T of
+		true ->
+			%% Do not invalidate fresh records - a reorg may be in progress.
+			ok;
+		false ->
+			PaddedEnd = get_chunk_padded_offset(End, StrictDataSplitThreshold),
+			?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Case},
+					{range_start, Start}, {range_end, PaddedEnd}]),
+			ok = ar_sync_record:delete(PaddedEnd, Start, ?MODULE),
+			ok = ar_kv:delete(ChunksIndex, << End:?OFFSET_KEY_BITSIZE >>)
+	end.
+
+validate_served_chunk(Args) ->
+	{Offset, DataPath, TXPath, TXRoot, ChunkSize, StrictDataSplitThreshold,
+			ChunksIndex} = Args,
+	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
+	case Offset > T orelse not ar_node:is_joined() of
+		true ->
+			true;
+		false ->
+			case ar_block_index:get_block_bounds(Offset - 1) of
+				{BlockStart, BlockEnd, TXRoot} ->
+					{_Strict, ValidateDataPathFun} =
+						case BlockStart >= StrictDataSplitThreshold of
+							true ->
+								{true, fun ar_merkle:validate_path_strict_data_split/4};
+							false ->
+								{false, fun ar_merkle:validate_path_strict_borders/4}
+						end,
+					BlockSize = BlockEnd - BlockStart,
+					ChunkOffset = Offset - BlockStart - 1,
+					case validate_proof2({TXRoot, ChunkOffset, BlockSize, DataPath, TXPath,
+							ChunkSize, ValidateDataPathFun}) of
+						true ->
+							true;
+						false ->
+							StartOffset = Offset - ChunkSize,
+							invalidate_bad_data_record(StartOffset, Offset,
+									StrictDataSplitThreshold, ChunksIndex, 3),
+							false
+					end;
+				{_BlockStart, _BlockEnd, TXRoot2} ->
+					?LOG_WARNING([{event, stored_chunk_invalid_tx_root},
+							{byte, Offset - 1}, {tx_root, ar_util:encode(TXRoot2)},
+							{stored_tx_root, ar_util:encode(TXRoot)}]),
+					invalidate_bad_data_record(Offset - ChunkSize, Offset,
+							StrictDataSplitThreshold, ChunksIndex, 4),
+					false
 			end
 	end.
 
@@ -1873,6 +1949,22 @@ validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataP
 									ChunkID},
 							{need_unpacking, AbsoluteEndOffset, ChunkArgs, Args}
 					end
+			end
+	end.
+
+validate_proof2(Args) ->
+	{TXRoot, Offset, BlockSize, DataPath, TXPath, ChunkSize, ValidateDataPathFun} = Args,
+	case ar_merkle:validate_path(TXRoot, Offset, BlockSize, TXPath) of
+		false ->
+			false;
+		{DataRoot, TXStartOffset, TXEndOffset} ->
+			TXSize = TXEndOffset - TXStartOffset,
+			ChunkOffset = Offset - TXStartOffset,
+			case ValidateDataPathFun(DataRoot, ChunkOffset, TXSize, DataPath) of
+				false ->
+					false;
+				{_ChunkID, ChunkStartOffset, ChunkEndOffset} ->
+					ChunkEndOffset - ChunkStartOffset == ChunkSize
 			end
 	end.
 
