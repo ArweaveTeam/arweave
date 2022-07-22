@@ -404,9 +404,9 @@ handle_info(wallets_ready, State) ->
 	B = hd(Blocks),
 	Height = B#block.height,
 	ar_disk_cache:write_block(B),
-	ar_header_sync:join(Height, RecentBI, Blocks),
 	ar_data_sync:join(RecentBI, B#block.packing_2_5_threshold,
 			B#block.strict_data_split_threshold),
+	ar_header_sync:join(Height, RecentBI, Blocks),
 	ar_tx_blacklist:start_taking_down(),
 	Current = element(1, hd(RecentBI)),
 	ar_block_cache:initialize_from_list(block_cache, Blocks),
@@ -980,17 +980,6 @@ apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) 
 		start,
 		lists:reverse([B | PrevBlocks])
 	),
-	ar_data_sync:add_tip_block(B#block.packing_2_5_threshold,
-			B#block.strict_data_split_threshold, BlockTXPairs,
-			lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
-	ar_header_sync:add_tip_block(B, lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
-	lists:foreach(
-		fun(PrevB) ->
-			ar_header_sync:add_block(PrevB),
-			ar_disk_cache:write_block(PrevB)
-		end,
-		tl(lists:reverse(PrevBlocks))
-	),
 	ar_disk_cache:write_block(B),
 	BlockTXs = B#block.txs,
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
@@ -1012,6 +1001,17 @@ apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) 
 	AddedBIElements = tl(lists:reverse([block_index_entry(B)
 			| [block_index_entry(PrevB) || PrevB <- PrevBlocks]])),
 	ar_block_index:update(AddedBIElements, NOrphaned),
+	ar_data_sync:add_tip_block(B#block.packing_2_5_threshold,
+			B#block.strict_data_split_threshold, BlockTXPairs,
+			lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
+	ar_header_sync:add_tip_block(B, lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
+	lists:foreach(
+		fun(PrevB) ->
+			ar_header_sync:add_block(PrevB),
+			ar_disk_cache:write_block(PrevB)
+		end,
+		tl(lists:reverse(PrevBlocks))
+	),
 	maybe_store_block_index(B),
 	ets:insert(node_state, [
 		{recent_block_index,	lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},

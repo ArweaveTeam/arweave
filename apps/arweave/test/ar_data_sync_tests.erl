@@ -9,7 +9,7 @@
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, sign_tx/2,
 		sign_v1_tx/2, wait_until_height/1, slave_wait_until_height/1, post_and_mine/2,
-		get_tx_anchor/1, disconnect_from_slave/0, join_on_master/0,
+		get_tx_anchor/1, disconnect_from_slave/0, rejoin_on_master/0,
 		assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
 		assert_wait_until_receives_txs/1, slave_mine/0, read_block_when_stored/1,
 		get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
@@ -704,7 +704,7 @@ test_syncs_after_joining(Split) ->
 	),
 	SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
 	slave_wait_until_syncs_chunks(SlaveProofs2),
-	_Slave2 = join_on_master(),
+	_Slave2 = rejoin_on_master(),
 	slave_wait_until_height(3),
 	connect_to_slave(),
 	slave_wait_until_syncs_chunks(MasterProofs2),
@@ -1289,7 +1289,7 @@ wait_until_syncs_chunks(Peer, Proofs) ->
 								tx_path => ar_util:decode(maps:get(tx_path, Proof)),
 								data_path => ar_util:decode(maps:get(data_path, Proof))
 							},
-							compare_proofs(FetchedProof, ExpectedProof);
+							compare_proofs(FetchedProof, ExpectedProof, EndOffset);
 						_ ->
 							false
 					end
@@ -1301,12 +1301,11 @@ wait_until_syncs_chunks(Peer, Proofs) ->
 		Proofs
 	).
 
-compare_proofs(
-	#{ chunk := C, data_path := D, tx_path := T },
-	#{ chunk := C, data_path := D, tx_path := T }
-) ->
+compare_proofs(#{ chunk := C, data_path := D, tx_path := T },
+		#{ chunk := C, data_path := D, tx_path := T }, _EndOffset) ->
 	true;
-compare_proofs(_, _) ->
+compare_proofs(_, _, EndOffset) ->
+	?debugFmt("Proof mismatch for ~B.", [EndOffset]),
 	false.
 
 hash(Parts) when is_list(Parts) ->
