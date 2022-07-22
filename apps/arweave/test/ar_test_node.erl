@@ -9,7 +9,8 @@
 		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
 		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, sign_tx/1, sign_tx/2,
 		sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, get_tx_anchor/0,
-		get_tx_anchor/1, join/1, join_on_slave/0, join_on_master/0,
+		get_tx_anchor/1, join/1, rejoin/1, join_on_slave/0, rejoin_on_slave/0,
+		join_on_master/0, rejoin_on_master/0,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
 		get_balance/1, test_with_mocked_functions/2,
 		get_tx_price/1, post_and_mine/2, read_block_when_stored/1,
@@ -48,7 +49,7 @@ start(B0, RewardAddr, Config) ->
 	%% is passed here where we want to erase the previous storage and at the same time
 	%% keep the genesis data to start a new weave.
 	WalletList = read_wallet_list(B0#block.wallet_list),
-	stop(),
+	clean_up_and_stop(),
 	write_genesis_files(Config#config.data_dir, B0, WalletList),
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = true,
@@ -75,11 +76,15 @@ read_wallet_list(RootHash) ->
 			Tree
 	end.
 
+clean_up_and_stop() ->
+	Config = stop(),
+	os:cmd("rm -r " ++ Config#config.data_dir ++ "/*").
+
 stop() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:stop(arweave),
 	ok = ar:stop_dependencies(),
-	os:cmd("rm -r " ++ Config#config.data_dir ++ "/*").
+	Config.
 
 write_genesis_files(DataDir, B0, WalletList) ->
 	BH = B0#block.indep_hash,
@@ -119,9 +124,23 @@ write_genesis_files(DataDir, B0, WalletList) ->
 join_on_slave() ->
 	join(slave_peer()).
 
+rejoin_on_slave() ->
+	join(slave_peer(), true).
+
+rejoin(Peer) ->
+	join(Peer, true).
+
 join(Peer) ->
+	join(Peer, false).
+
+join(Peer, Rejoin) ->
 	{ok, Config} = application:get_env(arweave, config),
-	stop(),
+	case Rejoin of
+		true ->
+			stop();
+		false ->
+			clean_up_and_stop()
+	end,
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = false,
 		peers = [Peer]
@@ -131,6 +150,9 @@ join(Peer) ->
 
 join_on_master() ->
 	slave_call(ar_test_node, join, [master_peer()]).
+
+rejoin_on_master() ->
+	slave_call(ar_test_node, rejoin, [master_peer()]).
 
 connect_to_slave() ->
 	%% Unblock connections possibly blocked in the prior test code.

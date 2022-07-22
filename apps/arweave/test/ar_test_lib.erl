@@ -219,7 +219,7 @@ read_block_when_stored(H) ->
 			end
 		end,
 		100,
-		5000
+		10000
 	),
 	case MaybeB of
 		{ok, B} ->

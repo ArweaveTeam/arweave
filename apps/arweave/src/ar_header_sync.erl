@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, join/3, add_tip_block/2, add_block/1, request_tx_removal/1]).
+-export([start_link/0, join/3, add_tip_block/2, add_block/1, request_tx_removal/1,
+		remove_block/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -47,6 +48,11 @@ add_block(B) ->
 %% @doc Remove the given transaction.
 request_tx_removal(TXID) ->
 	gen_server:cast(?MODULE, {remove_tx, TXID}).
+
+%% @doc Remove the block header with the given Height from the record. The process
+%% will therefore re-sync it later (if there is available disk space).
+remove_block(Height) ->
+	gen_server:cast(?MODULE, {remove_block, Height}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -117,7 +123,6 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 	State4 =
 		lists:foldl(
 			fun(B, S) ->
-				ar_data_sync:add_block(B, B#block.size_tagged_txs),
 				element(2, add_block(B, S))
 			end,
 			State3,
@@ -161,7 +166,8 @@ handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
 			gen_server:cast(?MODULE, process_item),
 			{noreply, State2};
 		{_Error, State2} ->
-			gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, Backoff}),
+			gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, B#block.height,
+					Backoff}),
 			{noreply, State2}
 	end;
 
@@ -221,15 +227,15 @@ handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecor
 								not_set
 						end,
 					{noreply, State2#state{
-							retry_queue = enqueue({block, {H, H2, TXRoot}}, Queue2),
+							retry_queue = enqueue({block, {H, H2, TXRoot, Height}}, Queue2),
 							retry_record = ar_intervals:add(RetryRecord, Height, Height - 1) }}
 			end
 	end;
 
-handle_cast({failed_to_get_block, H, H2, TXRoot, Backoff},
+handle_cast({failed_to_get_block, H, H2, TXRoot, Height, Backoff},
 		#state{ retry_queue = Queue } = State) ->
 	Backoff2 = update_backoff(Backoff),
-	Queue2 = enqueue({block, {H, H2, TXRoot}}, Backoff2, Queue),
+	Queue2 = enqueue({block, {H, H2, TXRoot, Height}}, Backoff2, Queue),
 	gen_server:cast(?MODULE, process_item),
 	{noreply, State#state{ retry_queue = Queue2 }};
 
@@ -237,6 +243,12 @@ handle_cast({remove_tx, TXID}, State) ->
 	{ok, _Size} = ar_storage:delete_blacklisted_tx(TXID),
 	ar_tx_blacklist:notify_about_removed_tx(TXID),
 	{noreply, State};
+
+handle_cast({remove_block, Height}, State) ->
+	?LOG_INFO([{event, removing_block_record}, {height, Height}]),
+	#state{ db = DB, sync_record = Record } = State,
+	ok = ar_kv:delete(DB, << Height:256 >>),
+	{noreply, State#state{ sync_record = ar_intervals:delete(Record, Height, Height - 1) }};
 
 handle_cast(store_sync_state, State) ->
 	ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, ?MODULE, store_sync_state),
@@ -325,7 +337,21 @@ get_base_height([{H, _, _} | CurrentBI], CurrentHeight, RecentBI) ->
 			CurrentHeight
 	end.
 
-add_block(B, #state{ sync_disk_space = false } = State) ->
+add_block(B, State) ->
+	case check_fork(B#block.height, B#block.indep_hash, B#block.tx_root) of
+		false ->
+			{ok, State};
+		true ->
+			case B#block.height == 0 andalso ?NETWORK_NAME == "arweave.N.1" of
+				true ->
+					ok;
+				false ->
+					ar_data_sync:add_block(B, B#block.size_tagged_txs)
+			end,
+			add_block2(B, State)
+	end.
+
+add_block2(B, #state{ sync_disk_space = false } = State) ->
 	case ar_storage:update_confirmation_index(B) of
 		ok ->
 			{ok, State};
@@ -334,7 +360,7 @@ add_block(B, #state{ sync_disk_space = false } = State) ->
 				{reason, io_lib:format("~p", [Error])}]),
 			{Error, State}
 	end;
-add_block(B, #state{ db = DB, sync_record = SyncRecord,
+add_block2(B, #state{ db = DB, sync_record = SyncRecord,
 		retry_record = RetryRecord } = State) ->
 	#block{ indep_hash = H, previous_block = PrevH, height = Height } = B,
 	case ar_storage:write_full_block(B, B#block.txs) of
@@ -395,20 +421,25 @@ process_item(Queue) ->
 				when BackoffTimestamp > Now ->
 			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item),
 			enqueue(Item, Backoff, Queue2);
-		{{value, {{block, {H, H2, TXRoot}}, Backoff}}, Queue2} ->
-			monitor(process, spawn(
-				fun() ->
-					process_flag(trap_exit, true),
-					case download_block(H, H2, TXRoot) of
-						{error, _Reason} ->
-							gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot,
-									Backoff});
-						{ok, B} ->
-							gen_server:cast(?MODULE, {add_historical_block, B, H, H2, TXRoot,
-									Backoff})
-					end
-				end
-			)),
+		{{value, {{block, {H, H2, TXRoot, Height}}, Backoff}}, Queue2} ->
+			case check_fork(Height, H, TXRoot) of
+				false ->
+					ok;
+				true ->
+					monitor(process, spawn(
+						fun() ->
+							process_flag(trap_exit, true),
+							case download_block(H, H2, TXRoot) of
+								{error, _Reason} ->
+									gen_server:cast(?MODULE, {failed_to_get_block, H, H2,
+											TXRoot, Height, Backoff});
+								{ok, B} ->
+									gen_server:cast(?MODULE, {add_historical_block, B, H, H2,
+											TXRoot, Backoff})
+							end
+						end
+					))
+			end,
 			Queue2
 	end.
 
@@ -418,6 +449,23 @@ enqueue(Item, Backoff, Queue) ->
 update_backoff({_Timestamp, Interval}) ->
 	Interval2 = min(?MAX_BACKOFF_INTERVAL_S, Interval * 2),
 	{os:system_time(second) + Interval2, Interval2}.
+
+check_fork(Height, H, TXRoot) ->
+	case Height < ar_fork:height_2_0() of
+		true ->
+			true;
+		false ->
+			case ar_node:get_block_index_entry(Height) of
+				not_joined ->
+					false;
+				not_found ->
+					false;
+				{H, _WeaveSize, TXRoot} ->
+					true;
+				_ ->
+					false
+			end
+	end.
 
 download_block(H, H2, TXRoot) ->
 	Peers = ar_peers:get_peers(),
@@ -468,18 +516,11 @@ download_txs(Peers, B, TXRoot) ->
 	case ar_http_iface_client:get_txs(Peers, #{}, B) of
 		{ok, TXs} ->
 			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-			SizeTaggedDataRoots =
-				[{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+			SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 			{Root, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 			case Root of
 				TXRoot ->
-					case B#block.height == 0 andalso ?NETWORK_NAME == "arweave.N.1" of
-						true ->
-							{ok, B#block{ txs = TXs }};
-						false ->
-							ar_data_sync:add_block(B, SizeTaggedTXs),
-							{ok, B#block{ txs = TXs }}
-					end;
+					{ok, B#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs }};
 				_ ->
 					?LOG_WARNING([
 						{event, ar_header_sync_block_tx_root_mismatch},
