@@ -465,7 +465,7 @@
 %% Log the "No foreign blocks received" message after so many time in milliseconds
 %% has passed without new blocks.
 -ifdef(DEBUG).
--define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
+-define(FOREIGN_BLOCK_ALERT_TIME, 10 * 1000).
 -else.
 -define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
 -endif.
