@@ -5,8 +5,8 @@ let
   gitignoreSrc = fetchFromGitHub {
     owner = "hercules-ci";
     repo = "gitignore.nix";
-    rev = "211907489e9f198594c0eb0ca9256a1949c9d412";
-    sha256 = "sha256-qHu3uZ/o9jBHiA3MEKHJ06k7w4heOhA+4HCSIvflRxo=";
+    rev = "f2ea0f8ff1bce948ccb6b893d15d5ea3efaf1364";
+    sha256 = "sha256-wk38v/mbLsOo6+IDmmH1H0ADR87iq9QTTD1BP9X2Ags=";
   };
 
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
