@@ -20,6 +20,7 @@ open_without_column_families(Name, Opts) ->
 	ok = filelib:ensure_dir(Filename ++ "/"),
 	LogDir = filename:join([RocksDBDir, "logs", Name]),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
+	may_be_repair(Filename),
 	rocksdb:open(Filename, [{create_if_missing, true}, {db_log_dir, LogDir}] ++ Opts).
 
 open(Name, CFDescriptors) ->
@@ -33,6 +34,7 @@ open(Name, CFDescriptors) ->
 		{create_missing_column_families, true},
 		{db_log_dir, LogDir}
 	],
+	may_be_repair(Filename),
 	case rocksdb:open(Filename, Opts, CFDescriptors) of
 		{ok, DB, CFs} ->
 			{ok, DB, CFs};
@@ -48,6 +50,17 @@ repair(Name) ->
 
 create_column_family(DB, Name, Opts) ->
 	rocksdb:create_column_family(DB, Name, Opts).
+
+may_be_repair(Filepath) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(repair_rocksdb, Config#config.enable) of
+		true ->
+			ar:console("Repairing ~s.~n", [Filepath]),
+			Reply = rocksdb:repair(Filepath, []),
+			ar:console("Result: ~p.~n", [Reply]);
+		_ ->
+			ok
+	end.
 
 close(DB) ->
 	rocksdb:close(DB).
