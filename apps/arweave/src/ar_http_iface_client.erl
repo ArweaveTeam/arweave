@@ -77,14 +77,26 @@ send_block_binary(Peer, H, Payload, RecallByte) ->
 	%% 2.6. Since the fork 2.6 blocks have a "recall_byte" field.
 	Headers2 = case RecallByte of undefined -> Headers; _ ->
 			[{<<"arweave-recall-byte">>, integer_to_binary(RecallByte)} | Headers] end,
-	ar_http:req(#{
+	Reply = ar_http:req(#{
 		method => post,
 		peer => Peer,
 		path => "/block2",
 		headers => Headers2,
 		body => Payload,
 		timeout => 20 * 1000
-	}).
+	}),
+	case Reply of
+		{ok, {{<<"200">>, _}, _, _, _, _}} ->
+			Reply;
+		{ok, {{<<"208">>, _}, _, _, _, _}} ->
+			Reply;
+		_ ->
+			?LOG_WARNING(
+				"event: failed_to_send_block, peer: ~ts, block: ~ts, reply: ~p",
+				[ar_util:format_peer(Peer), binary_to_list(ar_util:encode(H)), Reply]
+			),
+			Reply
+	end.
 
 %% @doc Request to be added as a peer to a remote host.
 add_peer(Peer) ->
