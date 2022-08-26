@@ -22,6 +22,14 @@
 
 %% @doc Send a JSON-encoded transaction to the given Peer.
 send_tx_json(Peer, TXID, Bin) ->
+	case is_testnet_peer(Peer) of
+		false ->
+			ok;
+		true ->
+			send_tx_json2(Peer, TXID, Bin)
+	end.
+
+send_tx_json2(Peer, TXID, Bin) ->
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -34,6 +42,14 @@ send_tx_json(Peer, TXID, Bin) ->
 
 %% @doc Send a binary-encoded transaction to the given Peer.
 send_tx_binary(Peer, TXID, Bin) ->
+	case is_testnet_peer(Peer) of
+		false ->
+			ok;
+		true ->
+			send_tx_binary2(Peer, TXID, Bin)
+	end.
+
+send_tx_binary2(Peer, TXID, Bin) ->
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -46,6 +62,14 @@ send_tx_binary(Peer, TXID, Bin) ->
 
 %% @doc Announce a block to Peer.
 send_block_announcement(Peer, Announcement) ->
+	case is_testnet_peer(Peer) of
+		false ->
+			ok;
+		true ->
+			send_block_announcement2(Peer, Announcement)
+	end.
+
+send_block_announcement2(Peer, Announcement) ->
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -57,6 +81,25 @@ send_block_announcement(Peer, Announcement) ->
 
 %% @doc Send the given JSON-encoded block to the given peer.
 send_block_json(Peer, H, Payload) ->
+	case is_testnet_peer(Peer) of
+		false ->
+			ok;
+		true ->
+			send_block_json2(Peer, H, Payload)
+	end.
+
+-ifdef(DEBUG).
+is_testnet_peer(_Peer) ->
+	true.
+-else.
+is_testnet_peer(Peer) ->
+	Domains = ["testnet-1.arweave.net", "testnet-2.arweave.net", "testnet-3.arweave.net",
+			"testnet-4.arweave.net", "testnet-5.arweave.net"],
+	Peers = [ar_util:parse_peer(Domain) || Domain <- Domains],
+	lists:member(Peer, Peers).
+-endif.
+
+send_block_json2(Peer, H, Payload) ->
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -72,6 +115,14 @@ send_block_binary(Peer, H, Payload) ->
 	send_block_binary(Peer, H, Payload, undefined).
 
 send_block_binary(Peer, H, Payload, RecallByte) ->
+	case is_testnet_peer(Peer) of
+		false ->
+			ok;
+		true ->
+			send_block_binary2(Peer, H, Payload, RecallByte)
+	end.
+
+send_block_binary2(Peer, H, Payload, RecallByte) ->
 	Headers = [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
 	%% The way of informing the recipient about the recall byte used before the fork
 	%% 2.6. Since the fork 2.6 blocks have a "recall_byte" field.
