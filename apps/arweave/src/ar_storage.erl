@@ -243,7 +243,6 @@ delete_blacklisted_tx(Hash) ->
 					TX = parse_tx_kv_binary(V),
 					case TX#tx.format == 1 andalso TX#tx.data_size > 0 of
 						true ->
-							ar_data_sync:request_tx_data_removal(Hash),
 							case ar_kv:delete(DB, Hash) of
 								ok ->
 									{ok, byte_size(V)};
@@ -260,7 +259,6 @@ delete_blacklisted_tx(Hash) ->
 						{Status, Filename} ->
 							case Status of
 								migrated_v1 ->
-									ar_data_sync:request_tx_data_removal(Hash),
 									case file:read_file_info(Filename) of
 										{ok, FileInfo} ->
 											case file:delete(Filename) of
