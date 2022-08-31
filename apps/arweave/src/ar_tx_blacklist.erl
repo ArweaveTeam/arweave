@@ -547,7 +547,12 @@ request_data_takedown(State) ->
 							Start = End - Size,
 							ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
 							blacklist_offsets(TXID, End, Start, State);
-						{error, _Reason} ->
+						{error, Reason} ->
+							?LOG_WARNING([{event, failed_to_find_blocklisted_tx_in_the_index},
+									{tx, ar_util:encode(TXID)},
+									{reason, io_lib:format("~p", [Reason])}]),
+							ets:delete(ar_tx_blacklist_pending_data, TXID),
+							ets:delete(ar_tx_blacklist, TXID),
 							State
 					end;
 				[{TXID, End, Start}] ->
