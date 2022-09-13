@@ -233,7 +233,7 @@ send_to_worker(Peer, {JSON, B}, W) ->
 									%% we made trustless in the 2.6 release).
 									ok;
 								false ->
-									ar_http_iface_client:send_block_json(Peer, H, JSON)
+									send_and_log(Peer, H, Height, json, JSON, n)
 							end;
 						TXs2 ->
 							PoA = case MissingChunk of true -> B#block.poa;
@@ -243,14 +243,34 @@ send_to_worker(Peer, {JSON, B}, W) ->
 									_ -> B#block.poa2 end,
 							Bin = ar_serialize:block_to_binary(B#block{ txs = TXs2,
 									poa = PoA, poa2 = PoA2 }),
-							ar_http_iface_client:send_block_binary(Peer, H, Bin,
-									B#block.recall_byte)
+							send_and_log(Peer, H, Height, binary, Bin, B#block.recall_byte)
 					end
 				end,
 			gen_server:cast(W, {send_block2, Peer, SendAnnouncementFun, SendFun, 1, self()});
 		false ->
-			SendFun = fun() -> ar_http_iface_client:send_block_json(Peer, H, JSON) end,
+			SendFun = fun() -> send_and_log(Peer, H, Height, json, JSON, n) end,
 			gen_server:cast(W, {send_block, SendFun, 1, self()})
+	end.
+
+send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Reply =
+		case Format of
+			json ->
+				ar_http_iface_client:send_block_json(Peer, H, Bin);
+			binary ->
+				ar_http_iface_client:send_block_binary(Peer, H, Bin, RecallByte)
+		end,
+	case lists:member(Peer, Config#config.block_gossip_peers) of
+		true ->
+			?LOG_INFO([{event, sent_block_to_block_gossip_peer},
+				{format, Format},
+				{height, Height},
+				{block, ar_util:encode(H)},
+				{peer, ar_util:format_peer(Peer)},
+				{reply, ar_metrics:get_status_class(Reply)}]);
+		false ->
+			ok
 	end.
 
 block_to_json(B) ->

@@ -70,7 +70,7 @@ send_block_json(Peer, H, Payload) ->
 		headers => add_header(<<"arweave-block-hash">>, ar_util:encode(H), p2p_headers()),
 		body => Payload,
 		connect_timeout => 5000,
-		timeout => 20 * 1000
+		timeout => 120 * 1000
 	}).
 
 %% @doc Send the given binary-encoded block to the given peer.
