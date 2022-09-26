@@ -45,27 +45,25 @@ $ cd arweave
 Increase the [open file
 limits](https://docs.arweave.org/info/mining/mining-guide#preparation-file-descriptors-limit).
 
+## Join the 2.6 testnet
+
+Follow the instructions from the previous section, then check out the branch:
+
+```
+git checkout testnet/2.6
+```
+
+Create an empty `wallets` folder in your data directory and put your wallet JSON there.
+
 Run in the development mode:
 
 ```sh
-./arweave-server peer 188.166.200.45 peer 188.166.192.169 peer 163.47.11.64 peer 139.59.51.59 peer 138.197.232.192
+./arweave-server data_dir [your_data_dir] peer testnet-1.arweave.net peer testnet-3.arweave.net
+peer testnet-5.arweave.net storage_module 53,1099511627776,[your_wallet_addr] mining_addr [your_wallet_addr] mine debug
 ```
 
-Make a production build:
-
-```sh
-$ ./rebar3 as prod tar
-```
-
-You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
-
-Make a testnet build:
-
-```sh
-$ ./rebar3 as testnet tar
-```
-
-The tarball is created at `_build/testnet/rel/arweave/arweave-x.y.z.tar.gz`.
+The node will create a `storage_module_1099511627776_53_[your_wallet_addr]` folder in the
+data directory and attempt to sync and pack using the specified address the 54th TiB of the weave there. The testnet was forked off the mainnet so it may also download the chunks from the mainnet peers.
 
 # Contributing
 
