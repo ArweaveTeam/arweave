@@ -45,6 +45,13 @@ $ cd arweave
 Increase the [open file
 limits](https://docs.arweave.org/info/mining/mining-guide#preparation-file-descriptors-limit).
 
+If you use ext4, tune it for large directories:
+
+```
+tune2fs -O large_dir [fs]
+```
+where `[fs]` is the name of the file system on the disk with your data directory (`Filesystem` from `df -h`) - e.g., `/dev/sda2`.
+
 ## Join the 2.6 testnet
 
 Follow the instructions from the previous section, then check out the branch:
