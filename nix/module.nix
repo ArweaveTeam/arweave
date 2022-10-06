@@ -110,6 +110,15 @@ in
       '';
     };
 
+    featuresEnable = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "repair_rocksdb" ];
+      description = ''
+        List of features to enable.
+      '';
+    };
+
     headerSyncJobs = mkOption {
       type = types.int;
       default = 10;
@@ -227,6 +236,7 @@ in
             max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
             max_miners = cfg.maxMiners;
             disable = cfg.featuresDisable;
+            enable = cfg.featuresEnable;
             header_sync_jobs = cfg.headerSyncJobs;
             sync_jobs = cfg.syncJobs;
             disk_pool_jobs = cfg.diskPoolJobs;
