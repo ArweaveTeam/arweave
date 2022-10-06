@@ -236,7 +236,7 @@ in
             max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
             max_miners = cfg.maxMiners;
             disable = cfg.featuresDisable;
-            enable = cfg.featuresEnable;
+            features_enable = cfg.featuresEnable;
             header_sync_jobs = cfg.headerSyncJobs;
             sync_jobs = cfg.syncJobs;
             disk_pool_jobs = cfg.diskPoolJobs;
