@@ -57,6 +57,15 @@ in
       '';
     };
 
+    storageModules = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "0,1000000000000,unpacked" "1,1000000000000,unpacked" ];
+      description = ''
+        List of configured storage modules.
+      '';
+    };
+
     metricsDir = mkOption {
       type = types.path;
       default = "/var/lib/arweave/metrics";
@@ -280,6 +289,7 @@ in
     let configFile =
           pkgs.writeText "config.json" (builtins.toJSON {
             data_dir = cfg.dataDir;
+            storage_modules = cfg.storageModules;
             metrics_dir = cfg.metricsDir;
             start_from_block_index = cfg.startFromBlockIndex;
             transaction_blacklists = cfg.transactionBlacklists;
