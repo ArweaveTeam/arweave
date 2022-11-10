@@ -57,6 +57,14 @@ in
       '';
     };
 
+    logDir = mkOption {
+      type = types.path;
+      default = "/var/lib/arweave/logs";
+      description = ''
+        Logging directory path.
+      '';
+    };
+
     storageModules = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -289,6 +297,7 @@ in
     let configFile =
           pkgs.writeText "config.json" (builtins.toJSON {
             data_dir = cfg.dataDir;
+            log_dir = cfg.logDir;
             storage_modules = cfg.storageModules;
             metrics_dir = cfg.metricsDir;
             start_from_block_index = cfg.startFromBlockIndex;

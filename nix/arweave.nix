@@ -395,7 +395,6 @@ in beamPackages.rebar3Relx {
 
     sed -i -e 's|{b64fast,.*|{b64fast, "0.2.2"},|g' rebar.config
     sed -i -e 's|{graphql,.*|{graphql_erl, "0.16.1"},|g' rebar.config
-    sed -i -e 's|"logs/"|"/var/lib/arweave/logs/"|g' apps/arweave/src/ar.erl
   '';
 
   installPhase = ''
