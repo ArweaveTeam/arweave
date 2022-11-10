@@ -304,6 +304,7 @@ let
         -s ar shutdown arweave@127.0.0.1 -s init stop
     '';
   };
+
   startScript = pkgs.writeTextFile {
     name = "start-nix";
     text = ''
@@ -327,10 +328,6 @@ let
        -config $ROOT_DIR/config/sys.config \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
-
-      # not the best practice: this assumes that no other epmd task are necessary
-      # on the flipside, a zombied epmd causes arweave to fail to start next time
-      sleep 20 && ${pkgs.procps}/bin/pkill epmd || true
     '';
   };
 
