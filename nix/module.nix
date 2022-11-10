@@ -274,21 +274,32 @@ in
             }) {} cfg.requestsPerMinuteLimitByIp;
           });
     in {
-      systemd.services.arweave = {
-        description = "Arweave Node Service";
+
+      systemd.services.arweave-screen = {
+        description = "A Service for starting Screen process";
         after = [ "network.target" ];
         environment = {};
         wantedBy = [ "multi-user.target" ];
         serviceConfig = {
           User = cfg.user;
           Group = cfg.group;
-          WorkingDirectory = "${cfg.package}";
           Type = "forking";
-          KillMode = "none";
-          ExecStartPre = "${pkgs.bash}/bin/bash -c '(${pkgs.procps}/bin/pkill epmd || true) && (${pkgs.procps}/bin/pkill screen || true) && sleep 5 || true'";
-          ExecStart = "${pkgs.screen}/bin/screen -dmS arweave ${cfg.package}/bin/start-nix config_file ${configFile} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
-          ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.procps}/bin/pkill beam || true; sleep 15'";
-          RestartKillSignal = "SIGINT";
+          ExecStart = "${pkgs.screen}/bin/screen -s ${pkgs.bash}/bin/bash -dmS arweave";
+        };
+      };
+
+      systemd.services.arweave = {
+        description = "Arweave Node Service";
+        after = [ "arweave-screen.service" ];
+        environment = {};
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          User = cfg.user;
+          Group = cfg.group;
+          WorkingDirectory = "${cfg.package}";
+          Type = "exec";
+          ExecStart = "${pkgs.screen}/bin/screen -S arweave -p 0 -X arweave-start \"${cfg.package}/bin/start-nix config_file ${configFile} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}^M\"";
+          ExecStop = "${pkgs.screen}/bin/screen -S arweave -p 0 -X arweave-stop \"${cfg.package}/bin/stop-nix^M\"";
         };
       };
     });
