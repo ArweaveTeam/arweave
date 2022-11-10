@@ -17,7 +17,7 @@ open(DataDirRelativePath) ->
 
 open(DataDirRelativePath, CFDescriptors) ->
 	Filepath = filename:join(get_data_dir(), DataDirRelativePath),
-	LogDir = filename:join(["logs", ?ROCKS_DB_DIR, filename:basename(Filepath)]),
+	LogDir = filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
 	ok = filelib:ensure_dir(Filepath ++ "/"),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
 	Opts = [
@@ -36,7 +36,7 @@ open(DataDirRelativePath, CFDescriptors) ->
 open_without_column_families(DataDirRelativePath, Opts) ->
 	Filepath = filename:join(get_data_dir(), DataDirRelativePath),
 	ok = filelib:ensure_dir(Filepath ++ "/"),
-	LogDir = filename:join(["logs", ?ROCKS_DB_DIR, filename:basename(Filepath)]),
+	LogDir = filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
 	may_be_repair(Filepath),
 	rocksdb:open(Filepath, [{create_if_missing, true}, {db_log_dir, LogDir}] ++ Opts).
@@ -231,6 +231,10 @@ count(DB) ->
 get_data_dir() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.data_dir.
+
+get_base_log_dir() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.log_dir.
 
 get_range2(Iterator, Map) ->
 	case rocksdb:iterator_move(Iterator, next) of

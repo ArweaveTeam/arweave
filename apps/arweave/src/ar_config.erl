@@ -90,6 +90,11 @@ parse_options([{<<"data_dir">>, DataDir} | Rest], Config) when is_binary(DataDir
 parse_options([{<<"data_dir">>, DataDir} | _], _) ->
 	{error, {bad_type, data_dir, string}, DataDir};
 
+parse_options([{<<"log_dir">>, Dir} | Rest], Config) when is_binary(Dir) ->
+	parse_options(Rest, Config#config{ log_dir = binary_to_list(Dir) });
+parse_options([{<<"log_dir">>, Dir} | _], _) ->
+	{error, {bad_type, log_dir, string}, Dir};
+
 parse_options([{<<"metrics_dir">>, MetricsDir} | Rest], Config) when is_binary(MetricsDir) ->
 	parse_options(Rest, Config#config { metrics_dir = binary_to_list(MetricsDir) });
 parse_options([{<<"metrics_dir">>, MetricsDir} | _], _) ->

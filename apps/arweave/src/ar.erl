@@ -121,6 +121,9 @@ show_help() ->
 						"This port must be accessible by remote peers."},
 			{"data_dir",
 				"The directory for storing the weave and the wallets (when generated)."},
+			{"log_dir", "The directory for logs. If the \"debug\" flag is set, the debug logs "
+					"are written to logs/debug_logs/. The RocksDB logs are written to "
+					"logs/rocksdb/."},
 			{"metrics_dir", "The directory for persisted metrics."},
 			{"storage_module", "A storage module is responsible for syncronizing and storing "
 					"a particular data range. The data and metadata related to the module "
@@ -346,6 +349,8 @@ parse_cli_args(["port", Port | Rest], C) ->
 	parse_cli_args(Rest, C#config{ port = list_to_integer(Port) });
 parse_cli_args(["data_dir", DataDir | Rest], C) ->
 	parse_cli_args(Rest, C#config{ data_dir = DataDir });
+parse_cli_args(["log_dir", Dir | Rest], C) ->
+	parse_cli_args(Rest, C#config{ log_dir = Dir });
 parse_cli_args(["metrics_dir", MetricsDir | Rest], C) ->
 	parse_cli_args(Rest, C#config{ metrics_dir = MetricsDir });
 parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
@@ -474,9 +479,9 @@ start(Port) when is_integer(Port) ->
 	start(#config{ port = Port });
 start(Config) ->
 	%% Start the logging system.
-	filelib:ensure_dir(?LOG_DIR ++ "/"),
-	warn_if_single_scheduler(),
 	ok = application:set_env(arweave, config, Config),
+	filelib:ensure_dir(Config#config.log_dir ++ "/"),
+	warn_if_single_scheduler(),
 	{ok, _} = application:ensure_all_started(arweave, permanent).
 
 start(normal, _Args) ->
@@ -494,7 +499,7 @@ start(normal, _Args) ->
 	logger:set_handler_config(default, level, error),
 	%% Configure logging to the logfile.
 	LoggerConfigDisk = #{
-		file => lists:flatten("logs/" ++ atom_to_list(node())),
+		file => lists:flatten(filename:join(Config#config.log_dir, atom_to_list(node()))),
 		type => wrap,
 		max_no_files => 10,
 		max_no_bytes => 51418800 % 10 x 5MB
@@ -507,7 +512,8 @@ start(normal, _Args) ->
 				info;
 			true ->
 				DebugLoggerConfigDisk = #{
-					file => lists:flatten("debug_logs/" ++ atom_to_list(node())),
+					file => lists:flatten(filename:join([Config#config.log_dir, "debug_logs",
+							atom_to_list(node())])),
 					type => wrap,
 					max_no_files => 20,
 					max_no_bytes => 51418800 % 10 x 5MB

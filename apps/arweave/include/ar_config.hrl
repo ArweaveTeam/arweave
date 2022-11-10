@@ -100,6 +100,7 @@
 	peers = [],
 	block_gossip_peers = [],
 	data_dir = ".",
+	log_dir = ?LOG_DIR,
 	metrics_dir = ?METRICS_DIR,
 	polling = ?DEFAULT_POLLING_INTERVAL, % Polling frequency in seconds.
 	block_pollers = ?DEFAULT_BLOCK_POLLERS,

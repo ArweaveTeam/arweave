@@ -14,6 +14,7 @@
   "mine": true,
   "port": 1985,
   "data_dir": "some_data_dir",
+  "log_dir": "log_dir",
   "metrics_dir": "metrics_dir",
   "storage_modules": ["0,unpacked", "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
             "100,unpacked", "0,1,unpacked",
