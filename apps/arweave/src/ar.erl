@@ -5,9 +5,9 @@
 
 -behaviour(application).
 
--export([main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0, tests/0,
-		tests/1, tests/2, test_ipfs/0, docs/0, start_for_tests/0, shutdown/1,
-		console/1, console/2]).
+-export([main/0, main/1, create_wallet/0, create_wallet/1, start/0, start/1, start/2, stop/1,
+		stop_dependencies/0, tests/0, tests/1, tests/2, test_ipfs/0, docs/0,
+		start_for_tests/0, shutdown/1, console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -661,6 +661,27 @@ set_mining_address(#config{ mining_addr = Addr }) ->
 		_Key ->
 			ok
 	end.
+
+create_wallet([DataDir]) ->
+	case filelib:is_dir(DataDir) of
+		false ->
+			create_wallet_fail();
+		true ->
+			ok = application:set_env(arweave, config, #config{ data_dir = DataDir }),
+			W = ar_wallet:new_keyfile({?RSA_SIGN_ALG, 65537}),
+			Addr = ar_wallet:to_address(W),
+			ar:console("Created a wallet with address ~s.~n", [ar_util:encode(Addr)]),
+			erlang:halt()
+	end;
+create_wallet(_) ->
+	create_wallet_fail().
+
+create_wallet() ->
+	create_wallet_fail().
+
+create_wallet_fail() ->
+	io:format("Usage: ./bin/create-wallet [data_dir]~n"),
+	erlang:halt().
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).

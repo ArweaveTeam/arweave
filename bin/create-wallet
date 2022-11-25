@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+cd "$SCRIPT_DIR/.."
+
+echo Building dependencies...
+./rebar3 compile
+
+erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +Bi -pa `./rebar3 path` \
+	-config config/sys.config -args_file config/vm.args.dev \
+	-run ar create_wallet "$@"
+
