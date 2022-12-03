@@ -54,6 +54,23 @@ where `[fs]` is the name of the file system on the disk with your data directory
 
 ## Join the 2.6 testnet
 
+### Upgrade
+
+The testnet has been restarted on December 6th. If you have been running a testnet node,
+you need to rejoin:
+- stop the node (`./bin/stop`);
+- create an empty `storage_modules` folder inside your `[data_dir]` and create
+links there to your `[data_dir]/storage_module_*` folders, e.g.:
+
+```
+ln -s [data_dir]/storage_module_1099511627776_53_[your_wallet_addr] [data_dir]/storage_modules/storage_module_1099511627776_53_[your_wallet_addr]
+```
+(make sure you use absolute paths);
+- update the branch - `git fetch --all; git checkout -f origin/testnet/2.6`;
+- remove `[data_dir]/header_sync_state`, `[data_dir]/data_sync_state`, `[data_dir]/rocksdb/ar_header_sync_db`, and `[data_dir]/rocksdb/ar_storage_block_db`.
+
+### From Scratch
+
 Follow the instructions from the previous section, then check out the branch:
 
 ```
@@ -69,7 +86,7 @@ Run in the development mode:
 peer testnet-5.arweave.net storage_module 53,1099511627776,[your_wallet_addr] mining_addr [your_wallet_addr] mine debug
 ```
 
-The node will create a `storage_module_1099511627776_53_[your_wallet_addr]` folder in the
+The node will create a `storage_modules/storage_module_1099511627776_53_[your_wallet_addr]` folder in the
 data directory and attempt to sync and pack using the specified address the 54th TiB of the weave there. The testnet was forked off the mainnet so it may also download the chunks from the mainnet peers.
 
 # Contributing

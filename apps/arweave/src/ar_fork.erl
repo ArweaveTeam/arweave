@@ -87,5 +87,5 @@ height_2_6() ->
 	0.
 -else.
 height_2_6() ->
-	infinity.
+	1072170.
 -endif.
