@@ -4,7 +4,8 @@ on:
     branches: ["**"]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on:
+      labels: ubuntu-latest-16-cores
     steps:
       - uses: actions/checkout@v2.3.4
         with:
