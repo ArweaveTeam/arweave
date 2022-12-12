@@ -1,4 +1,4 @@
--module(ar_chunk_storage_sup).
+-module(ar_nonce_limiter_server_sup).
 
 -behaviour(supervisor).
 
@@ -22,16 +22,17 @@ start_link() ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
-	ConfiguredWorkers = lists:map(
-		fun(StorageModule) ->
-			StoreID = ar_storage_module:id(StorageModule),
-			Name = list_to_atom("ar_chunk_storage_" ++ StoreID),
-			{Name, {ar_chunk_storage, start_link, [Name, StoreID]}, permanent,
+	Workers = lists:map(
+		fun(Peer) ->
+			Name = list_to_atom("ar_nonce_limiter_server_worker_"
+					++ peer_to_snake_case_list(Peer)),
+			{Name, {ar_nonce_limiter_server_worker, start_link, [Name, Peer]}, permanent,
 					?SHUTDOWN_TIMEOUT, worker, [Name]}
 		end,
-		Config#config.storage_modules
+		Config#config.nonce_limiter_client_peers
 	),
-	Workers = [{ar_chunk_storage_default, {ar_chunk_storage, start_link,
-			[ar_chunk_storage_default, "default"]}, permanent, ?SHUTDOWN_TIMEOUT, worker,
-			[ar_chunk_storage_default]} | ConfiguredWorkers],
 	{ok, {{one_for_one, 5, 10}, Workers}}.
+
+peer_to_snake_case_list({A, B, C, D, Port}) ->
+	integer_to_list(A) ++ "_" ++ integer_to_list(B) ++ "_" ++ integer_to_list(C) ++ "_"
+			++ integer_to_list(D) ++ "_" ++ integer_to_list(Port).

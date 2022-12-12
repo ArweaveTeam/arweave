@@ -360,6 +360,31 @@
 	checkpoints = []
 }).
 
+%% @doc A VDF session.
+-record(vdf_session, {
+	step_number,
+	seed,
+	last_step_checkpoints_map = #{},
+	steps,
+	prev_session_key,
+	upper_bound,
+	next_upper_bound
+}).
+
+%% @doc The format of the nonce limiter update provided by the configured trusted peer.
+-record(nonce_limiter_update, {
+	session_key,
+	session,
+	checkpoints,
+	is_partial = true
+}).
+
+%% @doc The format of the response to nonce limiter updates by configured trusted peers.
+-record(nonce_limiter_update_response, {
+	session_found = true,
+	step_number
+}).
+
 %% @doc A compact announcement of a new block gossiped to peers. Peers
 %% who have not received this block yet and decide to receive it from us,
 %% should reply with a #block_announcement_response.

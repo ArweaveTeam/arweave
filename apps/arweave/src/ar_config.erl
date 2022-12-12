@@ -406,7 +406,8 @@ parse_options([{<<"disk_pool_data_root_expiration_time">>, D} | Rest], Config)
 parse_options([{<<"max_disk_pool_buffer_mb">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ max_disk_pool_buffer_mb= D });
 
-parse_options([{<<"max_disk_pool_data_root_buffer_mb">>, D} | Rest], Config) when is_integer(D) ->
+parse_options([{<<"max_disk_pool_data_root_buffer_mb">>, D} | Rest], Config)
+		when is_integer(D) ->
 	parse_options(Rest, Config#config{ max_disk_pool_data_root_buffer_mb = D });
 
 parse_options([{<<"randomx_bulk_hashing_iterations">>, D} | Rest], Config) when is_integer(D) ->
@@ -426,6 +427,27 @@ parse_options([{<<"max_nonce_limiter_last_step_validation_thread_count">>, D} | 
 		when is_integer(D) ->
 	parse_options(Rest,
 			Config#config{ max_nonce_limiter_last_step_validation_thread_count = D });
+
+parse_options([{<<"vdf_server_trusted_peer">>, <<>>} | Rest], Config) ->
+	parse_options(Rest, Config);
+parse_options([{<<"vdf_server_trusted_peer">>, Peer} | Rest], Config) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ParsedPeer} ->
+			parse_options(Rest,
+					Config#config{ nonce_limiter_server_trusted_peer = ParsedPeer });
+		{error, _} ->
+			{error, bad_vdf_server_trusted_peer, Peer}
+	end;
+
+parse_options([{<<"vdf_client_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
+	case parse_peers(Peers, []) of
+		{ok, ParsedPeers} ->
+			parse_options(Rest, Config#config{ nonce_limiter_client_peers = ParsedPeers });
+		error ->
+			{error, bad_vdf_client_peers, Peers}
+	end;
+parse_options([{<<"vdf_client_peers">>, Peers} | _], _) ->
+	{error, {bad_type, vdf_client_peers, array}, Peers};
 
 parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ debug = B });

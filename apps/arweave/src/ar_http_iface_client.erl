@@ -11,7 +11,8 @@
 		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
 		get_block_index/1, get_block_index/2, get_sync_record/1, get_sync_record/3,
 		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
-		get_recent_hash_list/1, get_recent_hash_list_diff/1, get_price_history/3]).
+		get_recent_hash_list/1, get_recent_hash_list_diff/1, get_price_history/3,
+		push_nonce_limiter_update/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -420,7 +421,8 @@ get_recent_hash_list_diff(Peer) ->
 				timeout => 10 * 1000,
 				connect_timeout => 1000,
 				%%        PrevH H    Len        TXID
-				limit => (48 + (48 + 2 + 1000 * 32) * 49), % 1570498 bytes, very pessimistic case.
+				limit => (48 + (48 + 2 + 1000 * 32) * 49), % 1570498 bytes,
+															% very pessimistic case.
 				body => iolist_to_binary(ReverseHL),
 				headers => p2p_headers()
 			}), HL, Peer);
@@ -480,6 +482,27 @@ get_price_history([Peer | Peers], B, ExpectedPriceHistoryHashes) ->
 	end;
 get_price_history([], _B, _PriceHistoryHashes) ->
 	not_found.
+
+push_nonce_limiter_update(Peer, Update) ->
+	Body = ar_serialize:nonce_limiter_update_to_binary(Update),
+	case ar_http:req(#{
+				peer => Peer,
+				method => post,
+				path => "/vdf",
+				body => Body,
+				timeout => 2000,
+				limit => 100,
+				headers => p2p_headers()
+			}) of
+		{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
+			ok;
+		{ok, {{<<"202">>, _}, _, ResponseBody, _, _}} ->
+			ar_serialize:binary_to_nonce_limiter_update_response(ResponseBody);
+		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
+			{error, {Status, ResponseBody}};
+		Reply ->
+			Reply
+	end.
 
 validate_price_history_hashes(_PriceHistory, []) ->
 	true;

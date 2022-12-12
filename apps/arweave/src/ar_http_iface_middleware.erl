@@ -14,7 +14,6 @@
 -define(HANDLER_TIMEOUT, 55000).
 
 -define(MAX_SERIALIZED_RECENT_HASH_LIST_DIFF, 2400). % 50 * 48.
-
 -define(MAX_SERIALIZED_MISSING_TX_INDICES, 125). % Every byte encodes 8 positions.
 
 %%%===================================================================
@@ -514,7 +513,8 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 							{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
 						]
 					),
-					KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
+					KeyPair = ar_wallet:load_keyfile(
+							ar_wallet:wallet_filepath(WalletAccessCode)),
 					UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
 					Data = UnsignedTX#tx.data,
 					DataSize = byte_size(Data),
@@ -1136,9 +1136,12 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 %% Return the current block hieght, or 500.
 handle(Method, [<<"height">>], Req, _Pid)
 		when (Method == <<"GET">>) or (Method == <<"HEAD">>) ->
-	case ar_node:get_height() of
-		-1 -> not_joined(Req);
-		H -> {200, #{}, integer_to_binary(H), Req}
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			H = ar_node:get_height(),
+			{200, #{}, integer_to_binary(H), Req}
 	end;
 
 %% If we are given a hash with no specifier (block, tx, etc), assume that
@@ -1146,6 +1149,16 @@ handle(Method, [<<"height">>], Req, _Pid)
 %% Optionally allow a file extension.
 handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
 	handle(<<"GET">>, [<<"tx">>, Hash, <<"data.", MaybeExt/binary>>], Req, Pid);
+
+%% Accept a nonce limiter (VDF) update from a configured peer, if any.
+%% POST request to /vdf.
+handle(<<"POST">>, [<<"vdf">>], Req, Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_post_vdf(Req, Pid)
+	end;
 
 %% Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
@@ -2464,6 +2477,31 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 							{ok, TX, Req}
 					end
 			end
+	end.
+
+handle_post_vdf(Req, Pid) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Peer = ar_http_util:arweave_peer(Req),
+	case Config#config.nonce_limiter_server_trusted_peer == Peer of
+		false ->
+			{400, #{}, <<>>, Req};
+		true ->
+			handle_post_vdf2(Req, Pid)
+	end.
+
+handle_post_vdf2(Req, Pid) ->
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			{ok, Update} = ar_serialize:binary_to_nonce_limiter_update(Body),
+			case ar_nonce_limiter:apply_external_update(Update) of
+				ok ->
+					{200, #{}, <<>>, Req2};
+				#nonce_limiter_update_response{} = Response ->
+					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+					{202, #{}, Bin, Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
 	end.
 
 read_complete_body(Req, Pid) ->

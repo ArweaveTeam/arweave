@@ -690,6 +690,9 @@ handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
 		blocks_missing_txs => sets:del_element(BH, Set)
 	}};
 
+handle_info({'EXIT', _PID, normal}, State) ->
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
 	{noreply, State}.

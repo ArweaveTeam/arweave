@@ -224,10 +224,11 @@ handle_info({'DOWN', Ref,  process, _, Reason},
 handle_info({event, nonce_limiter, {computed_output, _}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{noreply, State};
-handle_info({event, nonce_limiter, {computed_output, Args} = Task},
+handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
-	StepNumber = element(4, Args),
+	{Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output, _Checkpoints} = Args,
 	true = is_integer(StepNumber),
+	Task = {computed_output, {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
 	{noreply, State#state{ task_queue = Q2 }};

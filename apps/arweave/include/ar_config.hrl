@@ -169,6 +169,8 @@
 			= ?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
 	max_nonce_limiter_last_step_validation_thread_count
 			= ?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
+	nonce_limiter_server_trusted_peer = not_set,
+	nonce_limiter_client_peers = [],
 	debug = false
 }).
 

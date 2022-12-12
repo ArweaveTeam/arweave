@@ -277,13 +277,19 @@ show_help() ->
 			{"packing_rate", io_lib:format(
 				"The maximum number of chunks per second to pack or unpack. "
 				"Default: ~B.", [?DEFAULT_PACKING_RATE])},
-			{"max_nonce_limiter_validation_thread_count", io_lib:format("\tThe maximum number "
-					"of threads used for nonce limiter validation. Default: ~B",
+			{"max_vdf_validation_thread_count", io_lib:format("\tThe maximum number "
+					"of threads used for VDF validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
-			{"max_nonce_limiter_last_step_validation_thread_count", io_lib:format(
-					"\tThe maximum number of threads used for nonce limiter last step "
+			{"max_vdf_last_step_validation_thread_count", io_lib:format(
+					"\tThe maximum number of threads used for VDF last step "
 					"validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT])},
+			{"vdf_server_trusted_peer", "If the option is set, we expect the given "
+					"peer to push VDF updates to us; we will thus not compute VDF outputs "
+					"ourselves. Recommended on CPUs without hardware extensions for computing"
+					" SHA-2. We will nevertheless validate VDF chains in blocks."},
+			{"vdf_client_peer", "If the option is set, the node will push VDF updates "
+					"to this peer. You can specify several vdf_client_peer options."},
 			{"debug",
 				"Enable extended logging."
 			}
@@ -461,12 +467,29 @@ parse_cli_args(["disk_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ disk_cache_size = list_to_integer(Num) });
 parse_cli_args(["packing_rate", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ packing_rate = list_to_integer(Num) });
-parse_cli_args(["max_nonce_limiter_validation_thread_count", Num | Rest], C) ->
+parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
-parse_cli_args(["max_nonce_limiter_last_step_validation_thread_count", Num | Rest], C) ->
+parse_cli_args(["max_vdf_last_step_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			max_nonce_limiter_last_step_validation_thread_count = list_to_integer(Num) });
+parse_cli_args(["vdf_server_trusted_peer", Peer | Rest], C) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			parse_cli_args(Rest, C#config{ nonce_limiter_server_trusted_peer = ValidPeer });
+		{error, _} ->
+			io:format("Peer ~p is invalid.~n", [Peer]),
+			erlang:halt()
+	end;
+parse_cli_args(["vdf_client_peer", Peer | Rest],
+		C = #config{ nonce_limiter_client_peers = Ps }) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [ValidPeer | Ps] });
+		{error, _} ->
+			io:format("Peer ~p is invalid.~n", [Peer]),
+			parse_cli_args(Rest, C)
+	end;
 parse_cli_args(["debug" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ debug = true });
 parse_cli_args([Arg | _Rest], _O) ->
