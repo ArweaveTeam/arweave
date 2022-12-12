@@ -65,6 +65,7 @@ init([]) ->
 	load_mempool(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
+	validate_trusted_peers(Config),
 	StateLookup =
 		case {Config#config.start_from_block_index, Config#config.init} of
 			{false, false} ->
@@ -132,6 +133,96 @@ init([]) ->
 		missing_txs_lookup_processes => #{},
 		task_queue => gb_sets:new()
 	}}.
+
+validate_trusted_peers(#config{ peers = [] }) ->
+	ok;
+validate_trusted_peers(Config) ->
+	Peers = Config#config.peers,
+	ValidPeers = filter_valid_peers(Peers),
+	case ValidPeers of
+		[] ->
+			erlang:halt();
+		_ ->
+			application:set_env(arweave, config, Config#config{ peers = ValidPeers }),
+			case lists:member(time_syncing, Config#config.disable) of
+				false ->
+					validate_clock_sync(ValidPeers);
+				true ->
+					ok
+			end
+	end.
+
+%% @doc Verify peers are on the same network as us.
+filter_valid_peers(Peers) ->
+	lists:filter(
+		fun(Peer) ->
+			case ar_http_iface_client:get_info(Peer, name) of
+				info_unavailable ->
+					io:format("~n\tPeer ~s is not available.~n~n",
+							[ar_util:format_peer(Peer)]),
+					false;
+				<<?NETWORK_NAME>> ->
+					true;
+				_ ->
+					io:format(
+						"~n\tPeer ~s does not belong to the network ~s.~n~n",
+						[ar_util:format_peer(Peer), ?NETWORK_NAME]
+					),
+					false
+			end
+		end,
+		Peers
+	).
+
+%% @doc Validate our clocks are in sync with the trusted peers' clocks.
+validate_clock_sync(Peers) ->
+	ValidatePeerClock = fun(Peer) ->
+		case ar_http_iface_client:get_time(Peer, 5 * 1000) of
+			{ok, {RemoteTMin, RemoteTMax}} ->
+				LocalT = os:system_time(second),
+				Tolerance = ?JOIN_CLOCK_TOLERANCE,
+				case LocalT of
+					T when T < RemoteTMin - Tolerance ->
+						log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
+						false;
+					T when T < RemoteTMin - Tolerance div 2 ->
+						log_peer_clock_diff(Peer, RemoteTMin - T),
+						true;
+					T when T > RemoteTMax + Tolerance ->
+						log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
+						false;
+					T when T > RemoteTMax + Tolerance div 2 ->
+						log_peer_clock_diff(Peer, T - RemoteTMax),
+						true;
+					_ ->
+						true
+				end;
+			{error, Err} ->
+				ar:console(
+					"Failed to get time from peer ~s: ~p.",
+					[ar_util:format_peer(Peer), Err]
+				),
+				false
+		end
+	end,
+	Responses = ar_util:pmap(ValidatePeerClock, [P || P <- Peers, not is_pid(P)]),
+	case lists:all(fun(R) -> R end, Responses) of
+		true ->
+			ok;
+		false ->
+			io:format(
+				"~n\tInvalid peers. A valid peer must be part of the"
+				" network ~s and its clock must deviate from ours by no"
+				" more than ~B seconds.~n", [?NETWORK_NAME, ?JOIN_CLOCK_TOLERANCE]
+			),
+			erlang:halt()
+	end.
+
+log_peer_clock_diff(Peer, Diff) ->
+	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
+	WarningArgs = [ar_util:format_peer(Peer), Diff],
+	io:format(Warning, WarningArgs),
+	?LOG_WARNING(Warning, WarningArgs).
 
 load_mempool() ->
 	case ar_storage:read_term(mempool) of

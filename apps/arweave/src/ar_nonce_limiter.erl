@@ -958,7 +958,7 @@ test_applies_validated_steps() ->
 	assert_validate(B8, B4, valid).
 
 reorg_after_join_test_() ->
-	{timeout, 60, fun test_reorg_after_join/0}.
+	{timeout, 120, fun test_reorg_after_join/0}.
 
 test_reorg_after_join() ->
 	[B0] = ar_weave:init(),

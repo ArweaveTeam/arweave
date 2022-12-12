@@ -220,7 +220,11 @@ get_fun_msg_pair(send_tx_binary) ->
 					{{<<"429">>, <<"Too Many Requests">>}, _,
 						<<"Too Many Requests">>, _, _}} ->
 					too_many_requests;
-				_ -> ok
+				{ok, _} ->
+					ok;
+				{error, Error} ->
+					?debugFmt("Unexpected response: ~p.~n", [Error]),
+					?assert(false)
 			end
 		end
 	, too_many_requests}.
