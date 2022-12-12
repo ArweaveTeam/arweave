@@ -91,6 +91,7 @@ init([]) ->
 		?CHILD(ar_header_sync, worker),
 		?CHILD_SUP(ar_data_sync_sup, supervisor),
 		?CHILD(ar_global_sync_record, worker),
+		?CHILD_SUP(ar_nonce_limiter_server_sup, supervisor),
 		?CHILD(ar_nonce_limiter, worker),
 		?CHILD(ar_mining_server, worker),
 		?CHILD_SUP(ar_tx_emitter_sup, supervisor),

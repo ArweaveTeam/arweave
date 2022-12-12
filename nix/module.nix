@@ -21,6 +21,24 @@ in
       '';
     };
 
+    vdfServerTrustedPeer = mkOption {
+      type = types.str;
+      default = "";
+      example = [ "http://domain-or-ip.com:1984" ];
+      description = ''
+        A trusted peer to fetch VDF outputs from
+      '';
+    };
+
+    vdfClientPeer = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "http://domain-or-ip.com:1984" ];
+      description = ''
+        List of peers to serve VDF updates to
+      '';
+    };
+
     package = mkOption {
       type = types.package;
       default = pkgs.arweave;
@@ -259,6 +277,7 @@ in
             disk_pool_jobs = cfg.diskPoolJobs;
             debug = cfg.debug;
             packing_rate = cfg.packingRate;
+            vdf_server_trusted_peer = cfg.vdfServerTrustedPeer;
             semaphores = {
               get_chunk = cfg.maxParallelGetChunkRequests;
               get_and_pack_chunk = cfg.maxParallelGetAndPackChunkRequests;
@@ -294,7 +313,7 @@ in
           Type = "forking";
           KillMode = "none";
           ExecStartPre = "${pkgs.bash}/bin/bash -c '(${pkgs.procps}/bin/pkill epmd || true) && (${pkgs.procps}/bin/pkill screen || true) && sleep 5 || true'";
-          ExecStart = "${pkgs.screen}/bin/screen -dmS arweave ${cfg.package}/bin/start-nix config_file ${configFile} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
+          ExecStart = "${pkgs.screen}/bin/screen -dmS arweave ${cfg.package}/bin/start-nix config_file ${configFile} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["vdf_client_peer" p]) cfg.vdfClientPeer)}";
           ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.procps}/bin/pkill beam || true; sleep 15'";
           RestartKillSignal = "SIGINT";
         };

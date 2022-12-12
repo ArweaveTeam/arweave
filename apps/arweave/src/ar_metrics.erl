@@ -492,5 +492,8 @@ name_route([<<"block">>, _Type, _IDBin, _Field]) ->
 name_route([<<"block">>, <<"current">>]) ->
 	"/block/current";
 
+name_route([<<"vdf">>]) ->
+	"/vdf";
+
 name_route(_) ->
 	undefined.

@@ -36,7 +36,7 @@ end).
 		[<<"data_sync_record">> | _] ->
 			{data_sync_record,	maps:get(data_sync_record, LimitByIP, 40)};
 		[<<"recent_hash_list_diff">> | _] ->
-			{recent_hash_list_diff,	maps:get(recent_hash_list_diff, LimitByIP, 60)};
+			{recent_hash_list_diff,	maps:get(recent_hash_list_diff, LimitByIP, 240)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}
 	end
