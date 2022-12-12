@@ -21,6 +21,7 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_peers,
 		ar_node,
 		ar_mine_vdf_tests,
 		ar_vdf_tests,
