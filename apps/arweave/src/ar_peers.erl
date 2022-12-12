@@ -38,6 +38,11 @@
 %% The number of failed requests in a row we tolerate before dropping the peer.
 -define(TOLERATE_FAILURE_COUNT, 20).
 
+%% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
+%% we remove the peer from the first slot.
+-define(DEFAULT_PEER_PORT_MAP, {empty_slot, empty_slot, empty_slot, empty_slot, empty_slot,
+		empty_slot, empty_slot, empty_slot, empty_slot, empty_slot}).
+
 -record(performance, {
 	bytes = 0,
 	time = 0,
@@ -178,6 +183,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({add_peer, Peer, Release}, State) ->
+	may_be_rotate_peer_ports(Peer),
 	case ets:lookup(?MODULE, {peer, Peer}) of
 		[{_, #performance{ release = Release }}] ->
 			ok;
@@ -229,6 +235,7 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, peer, {made_request, Peer, Release}}, State) ->
+	may_be_rotate_peer_ports(Peer),
 	case ets:lookup(?MODULE, {peer, Peer}) of
 		[{_, #performance{ release = Release }}] ->
 			ok;
@@ -363,8 +370,10 @@ load_peers() ->
 			load_peers(Records),
 			TotalRating =
 				ets:foldl(
-					fun({{peer, _Peer}, Performance}, Acc) ->
-						Acc + Performance#performance.rating
+					fun	({{peer_ip, _IP}, _}, Acc) ->
+							Acc;
+						({{peer, _Peer}, Performance}, Acc) ->
+							Acc + Performance#performance.rating
 					end,
 					0,
 					?MODULE
@@ -387,6 +396,7 @@ load_peer({Peer, Performance}) ->
 			?LOG_DEBUG([{event, peer_unavailable}, {peer, ar_util:format_peer(Peer)}]),
 			ok;
 		<<?NETWORK_NAME>> ->
+			may_be_rotate_peer_ports(Peer),
 			case Performance of
 				{performance, Bytes, Time, Transfers, Failures, Rating} ->
 					%% For compatibility with a few nodes already storing the records
@@ -403,6 +413,61 @@ load_peer({Peer, Performance}) ->
 					{peer, ar_util:format_peer(Peer)}, {network, Network}]),
 			ok
 	end.
+
+may_be_rotate_peer_ports(Peer) ->
+	{IP, Port} = get_ip_port(Peer),
+	case ets:lookup(?MODULE, {peer_ip, IP}) of
+		[] ->
+			ets:insert(?MODULE, {{peer_ip, IP},
+					{erlang:setelement(1, ?DEFAULT_PEER_PORT_MAP, Port), 1}});
+		[{_, {PortMap, Position}}] ->
+			case is_in_port_map(Port, PortMap) of
+				{true, _} ->
+					ok;
+				false ->
+					MaxSize = erlang:size(?DEFAULT_PEER_PORT_MAP),
+					case Position < MaxSize of
+						true ->
+							ets:insert(?MODULE, {{peer_ip, IP},
+									{erlang:setelement(Position + 1, PortMap, Port),
+									Position + 1}});
+						false ->
+							RemovedPeer = construct_peer(IP, element(1, PortMap)),
+							PortMap2 = shift_port_map_left(PortMap),
+							PortMap3 = erlang:setelement(MaxSize, PortMap2, Port),
+							ets:insert(?MODULE, {{peer_ip, IP}, {PortMap3, MaxSize}}),
+							remove_peer(RemovedPeer)
+					end
+			end
+	end.
+
+get_ip_port({A, B, C, D, Port}) ->
+	{{A, B, C, D}, Port}.
+
+construct_peer({A, B, C, D}, Port) ->
+	{A, B, C, D, Port}.
+
+is_in_port_map(Port, PortMap) ->
+	is_in_port_map(Port, PortMap, erlang:size(PortMap), 1).
+
+is_in_port_map(_Port, _PortMap, Max, N) when N > Max ->
+	false;
+is_in_port_map(Port, PortMap, Max, N) ->
+	case element(N, PortMap) == Port of
+		true ->
+			{true, N};
+		false ->
+			is_in_port_map(Port, PortMap, Max, N + 1)
+	end.
+
+shift_port_map_left(PortMap) ->
+	shift_port_map_left(PortMap, erlang:size(PortMap), 1).
+
+shift_port_map_left(PortMap, Max, N) when N == Max ->
+	erlang:setelement(N, PortMap, empty_slot);
+shift_port_map_left(PortMap, Max, N) ->
+	PortMap2 = erlang:setelement(N, PortMap, element(N + 1, PortMap)),
+	shift_port_map_left(PortMap2, Max, N + 1).
 
 ping_peers(Peers) when length(Peers) < 100 ->
 	ar_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);
@@ -485,6 +550,7 @@ update_rating(Peer, TimeDelta, Size) ->
 	Performance2 = Performance#performance{ bytes = Bytes2, time = Time2,
 			rating = Rating2 = Bytes2 / (Time2 + 1), failures = 0, transfers = N + 1 },
 	Total2 = Total - Rating + Rating2,
+	may_be_rotate_peer_ports(Peer),
 	ets:insert(?MODULE, [{{peer, Peer}, Performance2}, {rating_total, Total2}]).
 
 get_or_init_performance(Peer) ->
@@ -508,12 +574,39 @@ remove_peer(RemovedPeer) ->
 	Performance = get_or_init_performance(RemovedPeer),
 	ets:insert(?MODULE, {rating_total, Total - Performance#performance.rating}),
 	ets:delete(?MODULE, {peer, RemovedPeer}),
-	case ets:lookup(?MODULE, peers) of
+	remove_peer_port(RemovedPeer).
+
+remove_peer_port(Peer) ->
+	{IP, Port} = get_ip_port(Peer),
+	case ets:lookup(?MODULE, {peer_ip, IP}) of
 		[] ->
 			ok;
-		[{_, Peers}] ->
-			Peers2 = [Peer || Peer <- Peers, Peer /= RemovedPeer],
-			ets:insert(?MODULE, {peers, Peers2})
+		[{_, {PortMap, Position}}] ->
+			case is_in_port_map(Port, PortMap) of
+				false ->
+					ok;
+				{true, N} ->
+					PortMap2 = erlang:setelement(N, PortMap, empty_slot),
+					case is_port_map_empty(PortMap2) of
+						true ->
+							ets:delete(?MODULE, {peer_ip, IP});
+						false ->
+							ets:insert(?MODULE, {{peer_ip, IP}, {PortMap2, Position}})
+					end
+			end
+	end.
+
+is_port_map_empty(PortMap) ->
+	is_port_map_empty(PortMap, erlang:size(PortMap), 1).
+
+is_port_map_empty(_PortMap, Max, N) when N > Max ->
+	true;
+is_port_map_empty(PortMap, Max, N) ->
+	case element(N, PortMap) of
+		empty_slot ->
+			is_port_map_empty(PortMap, Max, N + 1);
+		_ ->
+			false
 	end.
 
 store_peers() ->
@@ -542,5 +635,89 @@ issue_warning(Peer) ->
 			remove_peer(Peer);
 		false ->
 			Performance2 = Performance#performance{ failures = Failures + 1 },
+			may_be_rotate_peer_ports(Peer),
 			ets:insert(?MODULE, {{peer, Peer}, Performance2})
 	end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+rotate_peer_ports_test() ->
+	Peer = {2, 2, 2, 2, 1},
+	may_be_rotate_peer_ports(Peer),
+	[{_, {PortMap, 1}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(1, element(1, PortMap)),
+	remove_peer(Peer),
+	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})),
+	may_be_rotate_peer_ports(Peer),
+	Peer2 = {2, 2, 2, 2, 2},
+	may_be_rotate_peer_ports(Peer2),
+	[{_, {PortMap2, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(1, element(1, PortMap2)),
+	?assertEqual(2, element(2, PortMap2)),
+	remove_peer(Peer),
+	[{_, {PortMap3, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(empty_slot, element(1, PortMap3)),
+	?assertEqual(2, element(2, PortMap3)),
+	Peer3 = {2, 2, 2, 2, 3},
+	Peer4 = {2, 2, 2, 2, 4},
+	Peer5 = {2, 2, 2, 2, 5},
+	Peer6 = {2, 2, 2, 2, 6},
+	Peer7 = {2, 2, 2, 2, 7},
+	Peer8 = {2, 2, 2, 2, 8},
+	Peer9 = {2, 2, 2, 2, 9},
+	Peer10 = {2, 2, 2, 2, 10},
+	Peer11 = {2, 2, 2, 2, 11},
+	may_be_rotate_peer_ports(Peer3),
+	may_be_rotate_peer_ports(Peer4),
+	may_be_rotate_peer_ports(Peer5),
+	may_be_rotate_peer_ports(Peer6),
+	may_be_rotate_peer_ports(Peer7),
+	may_be_rotate_peer_ports(Peer8),
+	may_be_rotate_peer_ports(Peer9),
+	may_be_rotate_peer_ports(Peer10),
+	[{_, {PortMap4, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(empty_slot, element(1, PortMap4)),
+	?assertEqual(2, element(2, PortMap4)),
+	?assertEqual(10, element(10, PortMap4)),
+	may_be_rotate_peer_ports(Peer8),
+	may_be_rotate_peer_ports(Peer9),
+	may_be_rotate_peer_ports(Peer10),
+	[{_, {PortMap5, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(empty_slot, element(1, PortMap5)),
+	?assertEqual(2, element(2, PortMap5)),
+	?assertEqual(3, element(3, PortMap5)),
+	?assertEqual(9, element(9, PortMap5)),
+	?assertEqual(10, element(10, PortMap5)),
+	may_be_rotate_peer_ports(Peer11),
+	[{_, {PortMap6, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(element(2, PortMap5), element(1, PortMap6)),
+	?assertEqual(3, element(2, PortMap6)),
+	?assertEqual(4, element(3, PortMap6)),
+	?assertEqual(5, element(4, PortMap6)),
+	?assertEqual(11, element(10, PortMap6)),
+	may_be_rotate_peer_ports(Peer11),
+	[{_, {PortMap7, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(element(2, PortMap5), element(1, PortMap7)),
+	?assertEqual(3, element(2, PortMap7)),
+	?assertEqual(4, element(3, PortMap7)),
+	?assertEqual(5, element(4, PortMap7)),
+	?assertEqual(11, element(10, PortMap7)),
+	remove_peer(Peer4),
+	[{_, {PortMap8, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(empty_slot, element(3, PortMap8)),
+	?assertEqual(3, element(2, PortMap8)),
+	?assertEqual(5, element(4, PortMap8)),
+	remove_peer(Peer2),
+	remove_peer(Peer3),
+	remove_peer(Peer5),
+	remove_peer(Peer6),
+	remove_peer(Peer7),
+	remove_peer(Peer8),
+	remove_peer(Peer9),
+	remove_peer(Peer10),
+	[{_, {PortMap9, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+	?assertEqual(11, element(10, PortMap9)),
+	remove_peer(Peer11),
+	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})).
