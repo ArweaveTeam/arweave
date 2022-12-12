@@ -57,6 +57,8 @@ register(MetricsDir) ->
 		{help, "The size of the back-off queue for the block and transaction headers "
 				"the node failed to sync and will retry later."}
 	]),
+	prometheus_gauge:new([{name, outbound_connections},
+			{help, "The current number of the open outbound network connections"}]),
 
 	%% SQLite.
 	prometheus_histogram:new([

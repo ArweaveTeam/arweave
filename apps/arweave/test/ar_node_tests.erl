@@ -477,7 +477,7 @@ test_multi_node_mining_reward() ->
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test_() ->
-	{timeout, 30, fun() ->
+	{timeout, 60, fun() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
@@ -557,7 +557,7 @@ test_wallet_transaction() ->
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test_() ->
-	{timeout, 30, fun() ->
+	{timeout, 60, fun() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),

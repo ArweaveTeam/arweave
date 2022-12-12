@@ -55,6 +55,7 @@ start_http_iface_listener(Config) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
 	TransportOpts = #{
+		keepalive => true,
 		max_connections => Config#config.max_connections,
 		socket_opts => [{port, Config#config.port}]
 	},
@@ -114,6 +115,8 @@ protocol_opts(List) ->
 		case proplists:lookup(http_iface, List) of
 			{http_iface, HttpIfaceEnv} ->
 				#{
+					inactivity_timeout => 120000,
+					idle_timeout => 30000,
 					middlewares => ?HTTP_IFACE_MIDDLEWARES,
 					env => HttpIfaceEnv,
 					metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,

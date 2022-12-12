@@ -76,6 +76,7 @@ init([]) ->
 		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),
 		?CHILD_SUP(ar_events_sup, supervisor),
+		?CHILD_SUP(ar_http_sup, supervisor),
 		?CHILD(ar_arql_db, worker),
 		?CHILD(ar_storage, worker),
 		?CHILD(ar_peers, worker),
