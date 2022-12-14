@@ -8,7 +8,7 @@
 -module(ar_ets_intervals).
 
 -export([init_from_gb_set/2, add/3, delete/3, cut/2, is_inside/2, get_interval_with_byte/2,
-		get_next_interval_outside/3, get_next_interval/3]).
+		get_next_interval_outside/3, get_next_interval/3, get_intersection_size/3]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -161,6 +161,8 @@ get_next_interval_outside(Table, Offset, RightBound) ->
 %% @doc Return the lowest interval inside the recorded set of intervals with the
 %% end offset strictly above the given offset, and with the right bound at most RightBound.
 %% Return not_found if there are no such intervals.
+get_next_interval(_Table, Offset, RightBound) when Offset >= RightBound ->
+	not_found;
 get_next_interval(Table, Offset, RightBound) ->
 	case ets:next(Table, Offset) of
 		'$end_of_table' ->
@@ -174,6 +176,31 @@ get_next_interval(Table, Offset, RightBound) ->
 				[] ->
 					%% The key should have been just removed, unlucky timing.
 					get_next_interval(Table, Offset, RightBound)
+			end
+	end.
+
+%% @doc Return the size of the intesection between the stored intervals and the given range.
+get_intersection_size(Table, End, Start) when End > Start ->
+	case ets:next(Table, Start) of
+		'$end_of_table' ->
+			0;
+		Offset when Offset >= End ->
+			case ets:lookup(Table, Offset) of
+				[] ->
+					%% An extremely unlikely race condition: just retry.
+					get_intersection_size(Table, End, Start);
+				[{_, Start2}] when Start2 >= End ->
+					0;
+				[{_, Start2}] ->
+					End - max(Start, Start2)
+			end;
+		Offset ->
+			case ets:lookup(Table, Offset) of
+				[] ->
+					%% An extremely unlikely race condition: just retry.
+					get_intersection_size(Table, End, Start);
+				[{_, Start2}] ->
+					Offset - max(Start, Start2) + get_intersection_size(Table, End, Offset)
 			end
 	end.
 

@@ -1,7 +1,8 @@
 %%% @doc The module with utilities for performing computations on fractions.
 -module(ar_fraction).
 
--export([pow/2, natural_exponent/2, factorial/1, minimum/2, maximum/2, multiply/2, reduce/2]).
+-export([pow/2, natural_exponent/2, factorial/1, minimum/2, maximum/2, multiply/2, reduce/2,
+		add/2]).
 
 %%%===================================================================
 %%% Types.
@@ -34,6 +35,8 @@ pow(X, N) ->
 %% @doc Compute the X's power of e by summing up the terms of the Taylor series where
 %% the last term is a multiple of X to the power of P.
 -spec natural_exponent(X::fraction(), P::integer()) -> fraction().
+natural_exponent({0, _Divisor}, _P) ->
+	{1, 1};
 natural_exponent(X, P) ->
 	{natural_exponent_dividend(X, P, 0, 1), natural_exponent_divisor(X, P)}.
 
@@ -65,9 +68,16 @@ multiply({Dividend1, Divisor1}, {Dividend2, Divisor2}) ->
 %% @doc Reduce the fraction until both the divisor and dividend are smaller than
 %% or equal to Max. Return at most Max or at least 1 / Max.
 -spec reduce(D::fraction(), Max::integer()) -> fraction().
+reduce({0, Divisor}, _Max) ->
+	{0, Divisor};
 reduce({Dividend, Divisor}, Max) ->
 	GCD = gcd(Dividend, Divisor),
 	reduce2({Dividend div GCD, Divisor div GCD}, Max).
+
+%% @doc Return the sum of two fractions.
+-spec add(A::fraction(), B::integer()) -> fraction().
+add({Dividend1, Divisor1}, {Dividend2, Divisor2}) ->
+	{Dividend1 * Divisor2 + Dividend2 * Divisor1, Divisor1 * Divisor2}.
 
 %%%===================================================================
 %%% Private functions.

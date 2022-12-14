@@ -3,8 +3,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, put/2, open_files/0, get/1, has_chunk/1, close_files/0, cut/1, delete/1,
-		repair_chunk/2]).
+-export([start_link/2, put/2, put/3, open_files/1, get/1, get/2, get_range/2, get_range/3,
+		close_file/2, close_files/1, cut/2, delete/1, delete/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -15,7 +15,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	file_index
+	file_index,
+	store_id
 }).
 
 %%%===================================================================
@@ -23,13 +24,19 @@
 %%%===================================================================
 
 %% @doc Start the server.
-start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Name, StoreID) ->
+	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
 
 %% @doc Store the chunk under the given end offset,
 %% bytes Offset - ?DATA_CHUNK_SIIZE, Offset - ?DATA_CHUNK_SIIZE + 1, .., Offset - 1.
 put(Offset, Chunk) ->
-	case catch gen_server:call(?MODULE, {put, Offset, Chunk}) of
+	put(Offset, Chunk, "default").
+
+%% @doc Store the chunk under the given end offset,
+%% bytes Offset - ?DATA_CHUNK_SIIZE, Offset - ?DATA_CHUNK_SIIZE + 1, .., Offset - 1.
+put(Offset, Chunk, StoreID) ->
+	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	case catch gen_server:call(GenServerID, {put, Offset, Chunk}) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -38,157 +45,198 @@ put(Offset, Chunk) ->
 
 %% @doc Open all the storage files. The subsequent calls to get/1 in the
 %% caller process will use the opened file descriptors.
-open_files() ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
+open_files(StoreID) ->
 	ets:foldl(
-		fun({Key, Filename}, _) ->
-			case erlang:get({cfile, Key}) of
-				undefined ->
-					Filepath = filename:join([DataDir, ?CHUNK_DIR, Filename]),
-					case file:open(Filepath, [read, raw, binary]) of
-						{ok, F} ->
-							erlang:put({cfile, Key}, F);
-						_ ->
-							ok
-					end;
-				_ ->
-					ok
-			end
+		fun ({{Key, ID}, Filepath}, _) when ID == StoreID ->
+				case erlang:get({cfile, Key}) of
+					undefined ->
+						case file:open(Filepath, [read, raw, binary]) of
+							{ok, F} ->
+								erlang:put({cfile, Key}, F);
+							_ ->
+								ok
+						end;
+					_ ->
+						ok
+				end;
+			(_, _) ->
+				ok
 		end,
 		ok,
 		chunk_storage_file_index
 	).
 
-%% @doc Return {absolute end offset, chunk} for the chunk containing the given byte.
+%% @doc Return {AbsoluteEndOffset, Chunk} for the chunk containing the given byte.
 get(Byte) ->
-	case ar_sync_record:get_interval(Byte + 1, ?MODULE) of
+	get(Byte, "default").
+
+%% @doc Return {AbsoluteEndOffset, Chunk} for the chunk containing the given byte.
+get(Byte, StoreID) ->
+	case ar_sync_record:get_interval(Byte + 1, ?MODULE, StoreID) of
 		not_found ->
 			not_found;
 		{_End, IntervalStart} ->
 			Start = Byte - (Byte - IntervalStart) rem ?DATA_CHUNK_SIZE,
 			LeftBorder = Start - Start rem ?CHUNK_GROUP_SIZE,
-			get(Byte, Start, LeftBorder)
+			case get(Byte, Start, LeftBorder, StoreID, 1) of
+				[] ->
+					not_found;
+				[{EndOffset, Chunk}] ->
+					{EndOffset, Chunk}
+			end
 	end.
 
-%% @doc Return true if the storage contains the given byte.
-has_chunk(Byte) ->
-	ar_sync_record:is_recorded(Byte + 1, ?MODULE).
+%% @doc Return a list of {AbsoluteEndOffset, Chunk} pairs for the stored chunks
+%% inside the given range. The given interval does not have to cover every chunk
+%% completely - we return all chunks at the intersection with the range.
+get_range(Start, Size) ->
+	get_range(Start, Size, "default").
+
+%% @doc Return a list of {AbsoluteEndOffset, Chunk} pairs for the stored chunks
+%% inside the given range. The given interval does not have to cover every chunk
+%% completely - we return all chunks at the intersection with the range. The
+%% very last chunk might be outside of the interval - its start offset is
+%% at most Start + Size + ?DATA_CHUNK_SIZE - 1.
+get_range(Start, Size, StoreID) ->
+	case ar_sync_record:get_next_synced_interval(Start, infinity, ?MODULE, StoreID) of
+		{_End, IntervalStart} when Start + Size > IntervalStart ->
+			Start2 = max(Start, IntervalStart),
+			Size2 = Start + Size - Start2,
+			BucketStart = Start2 - (Start2 - IntervalStart) rem ?DATA_CHUNK_SIZE,
+			LeftBorder = BucketStart - BucketStart rem ?CHUNK_GROUP_SIZE,
+			End = Start2 + Size2,
+			LastBucketStart = (End - 1) - ((End - 1)- IntervalStart) rem ?DATA_CHUNK_SIZE,
+			case LastBucketStart >= LeftBorder + ?CHUNK_GROUP_SIZE of
+				false ->
+					ChunkCount = (LastBucketStart - BucketStart) div ?DATA_CHUNK_SIZE + 1,
+					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCount);
+				true ->
+					SizeBeforeBorder = LeftBorder + ?CHUNK_GROUP_SIZE - BucketStart,
+					ChunkCountBeforeBorder = SizeBeforeBorder div ?DATA_CHUNK_SIZE
+							+ case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of 0 -> 0; _ -> 1 end,
+					StartAfterBorder = BucketStart + ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE,
+					SizeAfterBorder = Size2 - ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE
+							+ (Start2 - BucketStart),
+					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCountBeforeBorder)
+						++ get_range(StartAfterBorder, SizeAfterBorder, StoreID)
+			end;
+		_ ->
+			[]
+	end.
+
+%% @doc Close the file with the given Key.
+close_file(Key, StoreID) ->
+	case erlang:erase({cfile, {Key, StoreID}}) of
+		undefined ->
+			ok;
+		F ->
+			file:close(F)
+	end.
 
 %% @doc Close the files opened by open_files/1.
-close_files() ->
-	close_files(erlang:get_keys()).
+close_files(StoreID) ->
+	close_files(erlang:get_keys(), StoreID).
 
 %% @doc Soft-delete everything above the given end offset.
-cut(Offset) ->
-	gen_server:cast(?MODULE, {cut, Offset}).
+cut(Offset, StoreID) ->
+	ar_sync_record:cut(Offset, ?MODULE, StoreID).
 
 %% @doc Remove the chunk with the given end offset.
 delete(Offset) ->
-	gen_server:call(?MODULE, {delete, Offset}, 10000).
+	delete(Offset, "default").
 
-%% @doc Recover from the bugs in 2.1 where either recently stored chunks would
-%% not be recorded in the sync record on shutdown because the server was not set
-%% up to trap exit signals or recent chunks would be removed from the storage
-%% after a chain reorg but stay recorded as synced.
-repair_chunk(Offset, DataPath) ->
-	gen_server:call(?MODULE, {repair_chunk, Offset, DataPath}, infinity).
+%% @doc Remove the chunk with the given end offset.
+delete(Offset, StoreID) ->
+	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	case catch gen_server:call(GenServerID, {delete, Offset}, 20000) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([]) ->
+init(StoreID) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
-	ok = filelib:ensure_dir(filename:join(DataDir, ?CHUNK_DIR) ++ "/"),
-	FileIndex = read_state(),
-	maps:map(
-		fun(Key, Filename) ->
-			ets:insert(chunk_storage_file_index, {Key, Filename})
+	Dir =
+		case StoreID of
+			"default" ->
+				DataDir;
+			_ ->
+				filename:join([DataDir, "storage_modules", StoreID])
+		end,
+	ok = filelib:ensure_dir(Dir ++ "/"),
+	ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
+	FileIndex = read_file_index(Dir),
+	FileIndex2 = maps:map(
+		fun(Key, Filepath) ->
+			Filepath2 =
+				case {StoreID, catch binary_to_integer(Filepath)} of
+					{_, {'EXIT', _}} ->
+						Filepath;
+					{"default", Num} when is_integer(Num) ->
+						filename:join([DataDir, ?CHUNK_DIR, Filepath])
+				end,
+			ets:insert(chunk_storage_file_index, {{Key, StoreID}, Filepath2}),
+			Filepath2
 		end,
 		FileIndex
 	),
-	{ok, _} =
-		timer:apply_interval(
-			?STORE_CHUNK_STORAGE_STATE_FREQUENCY_MS,
-			gen_server,
-			cast,
-			[?MODULE, store_state]
-		),
-	{ok, #state{ file_index = FileIndex }}.
-
-handle_cast(store_state, State) ->
-	store_state(State),
-	{noreply, State};
-
-handle_cast({cut, Offset}, State) ->
-	ok = ar_sync_record:cut(Offset, ?MODULE),
-	{noreply, State};
+	{ok, #state{ file_index = FileIndex2, store_id = StoreID }}.
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
 handle_call({put, Offset, Chunk}, _From, State) when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
-	#state{ file_index = FileIndex } = State,
+	#state{ file_index = FileIndex, store_id = StoreID } = State,
 	Key = get_key(Offset),
 	{Reply, FileIndex2} =
-		case store_chunk(Key, Offset, Chunk, FileIndex) of
-			{ok, Filename} ->
-				ok = ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE, ?MODULE),
-				ets:insert(chunk_storage_file_index, {Key, Filename}),
-				{ok, maps:put(Key, Filename, FileIndex)};
-			Error ->
-				{Error, FileIndex}
+		case store_chunk(Key, Offset, Chunk, FileIndex, StoreID) of
+			{ok, Filepath} ->
+				case ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
+					ok ->
+						ets:insert(chunk_storage_file_index, {{Key, StoreID}, Filepath}),
+						{ok, maps:put(Key, Filepath, FileIndex)};
+					Error ->
+						{Error, FileIndex}
+				end;
+			Error2 ->
+				{Error2, FileIndex}
 		end,
 	{reply, Reply, State#state{ file_index = FileIndex2 }};
 
 handle_call({delete, Offset}, _From, State) ->
-	#state{	file_index = FileIndex } = State,
+	#state{	file_index = FileIndex, store_id = StoreID } = State,
 	Key = get_key(Offset),
-	Filename = filename(Key, FileIndex),
-	ok = ar_sync_record:delete(Offset, Offset - ?DATA_CHUNK_SIZE, ?MODULE),
-	case delete_chunk(Offset, Key, Filename) of
+	Filepath = filepath(Key, FileIndex, StoreID),
+	case ar_sync_record:delete(Offset, Offset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
 		ok ->
-			{reply, ok, State};
+			case delete_chunk(Offset, Key, Filepath) of
+				ok ->
+					{reply, ok, State};
+				Error2 ->
+					{reply, Error2, State}
+			end;
 		Error ->
 			{reply, Error, State}
 	end;
 
-handle_call({repair_chunk, Offset, DataPath}, _From, State) ->
-	Start = Offset - ?DATA_CHUNK_SIZE,
-	LeftBorder = Start - Start rem ?CHUNK_GROUP_SIZE,
-	case get(Offset - 1, Start, LeftBorder) of
-		not_found ->
-			{reply, {ok, removed}, State};
-		{Offset, Chunk} ->
-			case binary:match(DataPath, crypto:hash(sha256, Chunk)) of
-				nomatch ->
-					{reply, {ok, removed}, State};
-				_ ->
-					ok = ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE, ?MODULE),
-					{reply, {ok, synced}, State}
-			end;
-		_ ->
-			{reply, {ok, removed}, State}
-	end;
-
-handle_call(reset, _, #state{ file_index = FileIndex }) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	DataDir = "data_test_master",
-	ChunkDir = filename:join(DataDir, ?CHUNK_DIR),
+handle_call(reset, _, #state{ store_id = StoreID, file_index = FileIndex } = State) ->
 	maps:map(
-		fun(_Key, Filename) ->
-			file:delete(filename:join(ChunkDir, Filename))
+		fun(_Key, Filepath) ->
+			file:delete(Filepath)
 		end,
 		FileIndex
 	),
-	ok = ar_sync_record:cut(0, ?MODULE),
+	ok = ar_sync_record:cut(0, ?MODULE, StoreID),
 	erlang:erase(),
-	{reply, ok, #state{ file_index = #{} }};
+	{reply, ok, State#state{ file_index = #{} }};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -202,9 +250,8 @@ handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {info, io_lib:format("~p", [Info])}]),
 	{noreply, State}.
 
-terminate(_Reason, State) ->
+terminate(_Reason, _State) ->
 	sync_and_close_files(),
-	store_state(State),
 	ok.
 
 %%%===================================================================
@@ -215,23 +262,28 @@ get_key(Offset) ->
 	StartOffset = Offset - ?DATA_CHUNK_SIZE,
 	StartOffset - StartOffset rem ?CHUNK_GROUP_SIZE.
 
-store_chunk(Key, Offset, Chunk, FileIndex) ->
-	Filename = filename(Key, FileIndex),
-	{ok, Config} = application:get_env(arweave, config),
-	Dir = filename:join(Config#config.data_dir, ?CHUNK_DIR),
-	Filepath = filename:join(Dir, Filename),
-	store_chunk(Key, Offset, Chunk, Filename, Filepath).
+store_chunk(Key, Offset, Chunk, FileIndex, StoreID) ->
+	Filepath = filepath(Key, FileIndex, StoreID),
+	store_chunk(Key, Offset, Chunk, Filepath).
 
-filename(Key, FileIndex) ->
+filepath(Key, FileIndex, StoreID) ->
 	case maps:get(Key, FileIndex, not_found) of
 		not_found ->
-			integer_to_binary(Key);
-		Filename ->
-			Filename
+			{ok, Config} = application:get_env(arweave, config),
+			DataDir = Config#config.data_dir,
+			Name = integer_to_binary(Key),
+			case StoreID of
+				"default" ->
+					filename:join([DataDir, ?CHUNK_DIR, Name]);
+				_ ->
+					filename:join([DataDir, "storage_modules", StoreID, ?CHUNK_DIR, Name])
+			end;
+		Filepath ->
+			Filepath
 	end.
 
-store_chunk(Key, Offset, Chunk, Filename, Filepath) ->
-	case erlang:get({write_handle, Filename}) of
+store_chunk(Key, Offset, Chunk, Filepath) ->
+	case erlang:get({write_handle, Filepath}) of
 		undefined ->
 			case file:open(Filepath, [read, write, raw]) of
 				{error, Reason} = Error ->
@@ -243,14 +295,14 @@ store_chunk(Key, Offset, Chunk, Filename, Filepath) ->
 					]),
 					Error;
 				{ok, F} ->
-					erlang:put({write_handle, Filename}, F),
-					store_chunk2(Key, Offset, Chunk, Filename, Filepath, F)
+					erlang:put({write_handle, Filepath}, F),
+					store_chunk2(Key, Offset, Chunk, Filepath, F)
 			end;
 		F ->
-			store_chunk2(Key, Offset, Chunk, Filename, Filepath, F)
+			store_chunk2(Key, Offset, Chunk, Filepath, F)
 	end.
 
-store_chunk2(Key, Offset, Chunk, Filename, Filepath, F) ->
+store_chunk2(Key, Offset, Chunk, Filepath, F) ->
 	StartOffset = Offset - ?DATA_CHUNK_SIZE,
 	LeftChunkBorder = StartOffset - StartOffset rem ?DATA_CHUNK_SIZE,
 	ChunkOffset = StartOffset - LeftChunkBorder,
@@ -276,13 +328,10 @@ store_chunk2(Key, Offset, Chunk, Filename, Filepath, F) ->
 			]),
 			Error;
 		ok ->
-			{ok, Filename}
+			{ok, Filepath}
 	end.
 
-delete_chunk(Offset, Key, Filename) ->
-	{ok, Config} = application:get_env(arweave, config),
-	Dir = filename:join(Config#config.data_dir, ?CHUNK_DIR),
-	Filepath = filename:join(Dir, Filename),
+delete_chunk(Offset, Key, Filepath) ->
 	case file:open(Filepath, [read, write, raw]) of
 		{ok, F} ->
 			StartOffset = Offset - ?DATA_CHUNK_SIZE,
@@ -309,55 +358,50 @@ delete_chunk(Offset, Key, Filename) ->
 			Error
 	end.
 
-get(Byte, Start, Key) ->
-	case erlang:get({cfile, Key}) of
+get(Byte, Start, Key, StoreID, ChunkCount) ->
+	case erlang:get({cfile, {Key, StoreID}}) of
 		undefined ->
-			case ets:lookup(chunk_storage_file_index, Key) of
+			case ets:lookup(chunk_storage_file_index, {Key, StoreID}) of
 				[] ->
-					not_found;
-				[{_, Filename}] ->
-					read_chunk(Byte, Start, Key, Filename)
+					[];
+				[{_, Filepath}] ->
+					read_chunk(Byte, Start, Key, Filepath, ChunkCount)
 			end;
 		File ->
-			read_chunk2(Byte, Start, Key, File)
+			read_chunk2(Byte, Start, Key, File, ChunkCount)
 	end.
 
-read_chunk(Byte, Start, Key, Filename) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	Filepath = filename:join([DataDir, ?CHUNK_DIR, Filename]),
+read_chunk(Byte, Start, Key, Filepath, ChunkCount) ->
 	case file:open(Filepath, [read, raw, binary]) of
 		{error, enoent} ->
-			not_found;
+			[];
 		{error, Reason} ->
 			?LOG_ERROR([
 				{event, failed_to_open_chunk_file},
 				{byte, Byte},
 				{reason, io_lib:format("~p", [Reason])}
 			]),
-			not_found;
+			[];
 		{ok, File} ->
-			Result = read_chunk2(Byte, Start, Key, File),
+			Result = read_chunk2(Byte, Start, Key, File, ChunkCount),
 			file:close(File),
 			Result
 	end.
 
-read_chunk2(Byte, Start, Key, File) ->
+read_chunk2(Byte, Start, Key, File, ChunkCount) ->
 	LeftChunkBorder = Start - Start rem ?DATA_CHUNK_SIZE,
 	RelativeOffset = LeftChunkBorder - Key,
 	Position = RelativeOffset + ?OFFSET_SIZE * RelativeOffset div ?DATA_CHUNK_SIZE,
-	read_chunk3(Byte, Position, LeftChunkBorder, File).
+	read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount).
 
-read_chunk3(Byte, Position, LeftChunkBorder, File) ->
-	case file:pread(File, Position, ?DATA_CHUNK_SIZE + ?OFFSET_SIZE) of
-		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, Chunk/binary >>} ->
+read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount) ->
+	case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
+		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
 			case is_offset_valid(Byte, LeftChunkBorder, ChunkOffset) of
 				true ->
-					EndOffset =
-						LeftChunkBorder + (ChunkOffset rem ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
-					{EndOffset, Chunk};
+					split_binary(Bin, LeftChunkBorder, 1);
 				false ->
-					not_found
+					[]
 			end;
 		{error, Reason} ->
 			?LOG_ERROR([
@@ -366,10 +410,20 @@ read_chunk3(Byte, Position, LeftChunkBorder, File) ->
 				{position, Position},
 				{reason, io_lib:format("~p", [Reason])}
 			]),
-			not_found;
+			[];
 		eof ->
-			not_found
+			[]
 	end.
+
+split_binary(<< 0:?OFFSET_BIT_SIZE, _ZeroChunk:?DATA_CHUNK_SIZE/binary, Rest/binary >>,
+		LeftChunkBorder, N) ->
+	split_binary(Rest, LeftChunkBorder, N + 1);
+split_binary(<< ChunkOffset:?OFFSET_BIT_SIZE, Chunk:?DATA_CHUNK_SIZE/binary, Rest/binary >>,
+		LeftChunkBorder, N) ->
+	EndOffset = LeftChunkBorder + (ChunkOffset rem ?DATA_CHUNK_SIZE) + (?DATA_CHUNK_SIZE * N),
+	[{EndOffset, Chunk} | split_binary(Rest, LeftChunkBorder, N + 1)];
+split_binary(<<>>, _LeftChunkBorder, _N) ->
+	[].
 
 is_offset_valid(_Byte, _LeftChunkBorder, 0) ->
 	%% 0 is interpreted as "data has not been written yet".
@@ -378,35 +432,29 @@ is_offset_valid(Byte, LeftChunkBorder, ChunkOffset) ->
 	 Diff = Byte - (LeftChunkBorder + ChunkOffset rem ?DATA_CHUNK_SIZE),
 	 Diff >= 0 andalso Diff < ?DATA_CHUNK_SIZE.
 
-close_files([{cfile, Key} | Keys]) ->
+close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
 	file:close(erlang:get({cfile, Key})),
-	close_files(Keys);
-close_files([_ | Keys]) ->
-	close_files(Keys);
-close_files([]) ->
+	close_files(Keys, StoreID);
+close_files([_ | Keys], StoreID) ->
+	close_files(Keys, StoreID);
+close_files([], _StoreID) ->
 	ok.
 
-read_state() ->
-	case ar_storage:read_term(chunk_storage_index) of
-		{ok, {SyncRecord, FileIndex}} ->
-			ok = ar_sync_record:set(SyncRecord, ?MODULE),
-			FileIndex;
-		{ok, FileIndex} ->
-			FileIndex;
-		not_found ->
-			#{}
-	end.
-
-store_state(#state{ file_index = FileIndex }) ->
-	case ar_storage:write_term(chunk_storage_index, FileIndex) of
-		{error, Reason} ->
-			?LOG_ERROR([
-				{event, chunk_storage_failed_to_persist_state},
-				{reason, io_lib:format("~p", [Reason])}
-			]);
-		ok ->
-			ok
-	end.
+read_file_index(Dir) ->
+	ChunkDir = filename:join(Dir, ?CHUNK_DIR),
+	{ok, Filenames} = file:list_dir(ChunkDir),
+	lists:foldl(
+		fun(Filename, Acc) ->
+			case catch list_to_integer(Filename) of
+				Key when is_integer(Key) ->
+					maps:put(Key, filename:join(ChunkDir, Filename), Acc);
+				_ ->
+					Acc
+			end
+		end,
+		#{},
+		Filenames
+	).
 
 sync_and_close_files() ->
 	sync_and_close_files(erlang:get_keys()).
@@ -429,7 +477,7 @@ well_aligned_test_() ->
 	{timeout, 20, fun test_well_aligned/0}.
 
 test_well_aligned() ->
-	clear(),
+	clear("default"),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -445,6 +493,16 @@ test_well_aligned() ->
 	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE),
 	assert_get(C2, ?DATA_CHUNK_SIZE),
+	?assertEqual([{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
+			ar_chunk_storage:get_range(0, 2 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
+			ar_chunk_storage:get_range(1, 2 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
+			ar_chunk_storage:get_range(1, 2 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual([{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
+			ar_chunk_storage:get_range(0, 3 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
+			ar_chunk_storage:get_range(0, ?DATA_CHUNK_SIZE + 1)),
 	ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C3),
 	assert_get(C2, ?DATA_CHUNK_SIZE),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE),
@@ -457,14 +515,18 @@ test_well_aligned() ->
 	assert_get(C3, 3 * ?DATA_CHUNK_SIZE),
 	ar_chunk_storage:delete(?DATA_CHUNK_SIZE),
 	assert_get(not_found, ?DATA_CHUNK_SIZE),
+	?assertEqual([], ar_chunk_storage:get_range(0, ?DATA_CHUNK_SIZE)),
 	assert_get(C2, 2 * ?DATA_CHUNK_SIZE),
-	assert_get(C3, 3 * ?DATA_CHUNK_SIZE).
+	assert_get(C3, 3 * ?DATA_CHUNK_SIZE),
+	?assertEqual([{2 * ?DATA_CHUNK_SIZE, C2}, {3 * ?DATA_CHUNK_SIZE, C3}],
+			ar_chunk_storage:get_range(0, 4 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([], ar_chunk_storage:get_range(7 * ?DATA_CHUNK_SIZE, 13 * ?DATA_CHUNK_SIZE)).
 
 not_aligned_test_() ->
 	{timeout, 20, fun test_not_aligned/0}.
 
 test_not_aligned() ->
-	clear(),
+	clear("default"),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -506,13 +568,32 @@ test_not_aligned() ->
 	ar_chunk_storage:delete(4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2),
 	assert_get(not_found, 4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2),
 	assert_get(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
-	assert_get(C1, 3 * ?DATA_CHUNK_SIZE + 7).
+	assert_get(C1, 3 * ?DATA_CHUNK_SIZE + 7),
+	?assertEqual([{3 * ?DATA_CHUNK_SIZE + 7, C1}],
+			ar_chunk_storage:get_range(2 * ?DATA_CHUNK_SIZE + 7, 2 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{3 * ?DATA_CHUNK_SIZE + 7, C1}],
+			ar_chunk_storage:get_range(2 * ?DATA_CHUNK_SIZE + 6, 2 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{3 * ?DATA_CHUNK_SIZE + 7, C1},
+			{5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, C2}],
+			%% The end offset of the second chunk is bigger than Start + Size but
+			%% it is included because Start + Size is bigger than the start offset
+			%% of the bucket where the last chunk is placed.
+			ar_chunk_storage:get_range(2 * ?DATA_CHUNK_SIZE + 7, 2 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual([{3 * ?DATA_CHUNK_SIZE + 7, C1},
+			{5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, C2}],
+			ar_chunk_storage:get_range(2 * ?DATA_CHUNK_SIZE + 7, 3 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{3 * ?DATA_CHUNK_SIZE + 7, C1},
+			{5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, C2}],
+			ar_chunk_storage:get_range(2 * ?DATA_CHUNK_SIZE + 7 - 1, 3 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{3 * ?DATA_CHUNK_SIZE + 7, C1},
+			{5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, C2}],
+			ar_chunk_storage:get_range(2 * ?DATA_CHUNK_SIZE, 4 * ?DATA_CHUNK_SIZE)).
 
 cross_file_aligned_test_() ->
 	{timeout, 20, fun test_cross_file_aligned/0}.
 
 test_cross_file_aligned() ->
-	clear(),
+	clear("default"),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	ar_chunk_storage:put(?CHUNK_GROUP_SIZE, C1),
@@ -524,6 +605,12 @@ test_cross_file_aligned() ->
 	ar_chunk_storage:put(?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE, C2),
 	assert_get(C2, ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE),
 	assert_get(C1, ?CHUNK_GROUP_SIZE),
+	?assertEqual([{?CHUNK_GROUP_SIZE, C1}, {?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE, C2}],
+			ar_chunk_storage:get_range(?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE,
+					2 * ?DATA_CHUNK_SIZE)),
+	?assertEqual([{?CHUNK_GROUP_SIZE, C1}, {?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE, C2}],
+			ar_chunk_storage:get_range(?CHUNK_GROUP_SIZE - 2 * ?DATA_CHUNK_SIZE - 1,
+					4 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(not_found, ar_chunk_storage:get(0)),
 	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE - 1)),
 	ar_chunk_storage:delete(?CHUNK_GROUP_SIZE),
@@ -536,7 +623,7 @@ cross_file_not_aligned_test_() ->
 	{timeout, 20, fun test_cross_file_not_aligned/0}.
 
 test_cross_file_not_aligned() ->
-	clear(),
+	clear("default"),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -550,6 +637,10 @@ test_cross_file_not_aligned() ->
 	ar_chunk_storage:put(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2, C3),
 	assert_get(C2, 2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2),
 	assert_get(C3, 2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
+	?assertEqual([{2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2, C3},
+			{2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2, C2}],
+			ar_chunk_storage:get_range(2 * ?CHUNK_GROUP_SIZE
+					- ?DATA_CHUNK_SIZE div 2 - ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2)),
 	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE + 1)),
 	?assertEqual(
 		not_found,
@@ -569,10 +660,12 @@ test_cross_file_not_aligned() ->
 	ar_chunk_storage:delete(100 * ?CHUNK_GROUP_SIZE + 1),
 	ar_chunk_storage:put(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2, C1),
 	assert_get(C1, 2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
-	?assertEqual(not_found, ar_chunk_storage:get(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2)).
+	?assertEqual(not_found,
+			ar_chunk_storage:get(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2)).
 
-clear() ->
-	ok = gen_server:call(?MODULE, reset).
+clear(StoreID) ->
+	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	ok = gen_server:call(GenServerID, reset).
 
 assert_get(Expected, Offset) ->
 	ExpectedResult =

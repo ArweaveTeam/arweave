@@ -114,12 +114,7 @@ handle_cast(Msg, State) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({event, block, {new, _B, #{ source := ar_poller }}}, State) ->
-	%% ar_poller often fetches blocks when the network already knows about them
-	%% so do not gossip.
-	{noreply, State};
-
-handle_info({event, block, {new, B, #{ recall_byte := RecallByte }}}, State) ->
+handle_info({event, block, {new, B, _}}, State) ->
 	#state{ block_propagation_queue = Q, workers = Workers } = State,
 	case ar_block_cache:get(block_cache, B#block.previous_block) of
 		not_found ->
@@ -130,14 +125,19 @@ handle_info({event, block, {new, B, #{ recall_byte := RecallByte }}}, State) ->
 			TrustedPeers = ar_peers:get_trusted_peers(),
 			SpecialPeers = Config#config.block_gossip_peers,
 			Peers = ((SpecialPeers ++ ar_peers:get_peers()) -- TrustedPeers) ++ TrustedPeers,
-			JSON = block_to_json(B),
-			Q2 = enqueue_block(Peers, B#block.height, {JSON, B, RecallByte}, Q),
+			JSON =
+				case B#block.height >= ar_fork:height_2_6() of
+					true ->
+						none;
+					false ->
+						block_to_json(B)
+				end,
+			Q2 = enqueue_block(Peers, B#block.height, {JSON, B}, Q),
 			[gen_server:cast(?MODULE, {may_be_send_block, W}) || W <- maps:keys(Workers)],
 			{noreply, State#state{ block_propagation_queue = Q2 }}
 	end;
 
-handle_info({event, block, {mined, _B, _TXs, _CurrentBH, _RecallByte}}, State) ->
-	%% This event is handled by ar_node_worker. Ignore it.
+handle_info({event, block, _}, State) ->
 	{noreply, State};
 
 handle_info({worker_sent_block, W},
@@ -192,22 +192,23 @@ dequeue(Q) ->
 			gb_sets:take_smallest(Q)
 	end.
 
-send_to_worker(Peer, {JSON, B, RecallByte}, W) ->
-	#block{ indep_hash = H, previous_block = PrevH, txs = TXs } = B,
+send_to_worker(Peer, {JSON, B}, W) ->
+	#block{ height = Height, indep_hash = H, previous_block = PrevH, txs = TXs } = B,
 	Release = ar_peers:get_peer_release(Peer),
-	case Release >= 52 of
+	case Release >= 52 orelse Height >= ar_fork:height_2_6() of
 		true ->
 			SendAnnouncementFun =
 				fun() ->
 					Announcement = #block_announcement{ indep_hash = H,
 							previous_block = PrevH,
-							recall_byte = RecallByte,
+							recall_byte = B#block.recall_byte,
+							recall_byte2 = B#block.recall_byte2,
 							tx_prefixes = [ar_node_worker:tx_id_prefix(ID)
 									|| #tx{ id = ID } <- TXs] },
 					ar_http_iface_client:send_block_announcement(Peer, Announcement)
 				end,
 			SendFun =
-				fun(MissingChunk, MissingTXs) ->
+				fun(MissingChunk, MissingChunk2, MissingTXs) ->
 					%% Some transactions might be absent from our mempool. We still gossip
 					%% this block further and search for the missing transactions afterwads
 					%% (the process is initiated by ar_node_worker). We are gradually moving
@@ -218,13 +219,25 @@ send_to_worker(Peer, {JSON, B, RecallByte}, W) ->
 					%% in ar_node_worker.
 					case determine_included_transactions(TXs, MissingTXs) of
 						missing ->
-							ar_http_iface_client:send_block_json(Peer, H, JSON);
+							case Height >= ar_fork:height_2_6() of
+								true ->
+									%% POST /block is not supported after 2.6.
+									%% The recipient would have to download this block
+									%% along with its transactions via ar_poller (which
+									%% we made trustless in the 2.6 release).
+									ok;
+								false ->
+									ar_http_iface_client:send_block_json(Peer, H, JSON)
+							end;
 						TXs2 ->
 							PoA = case MissingChunk of true -> B#block.poa;
 									false -> #poa{} end,
+							PoA2 = case MissingChunk2 of false -> #poa{};
+									_ -> B#block.poa2 end,
 							Bin = ar_serialize:block_to_binary(B#block{ txs = TXs2,
-									poa = PoA }),
-							ar_http_iface_client:send_block_binary(Peer, H, Bin, RecallByte)
+									poa = PoA, poa2 = PoA2 }),
+							ar_http_iface_client:send_block_binary(Peer, H, Bin,
+									B#block.recall_byte)
 					end
 				end,
 			gen_server:cast(W, {send_block2, Peer, SendAnnouncementFun, SendFun, 1, self()});

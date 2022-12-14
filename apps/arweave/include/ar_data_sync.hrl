@@ -1,12 +1,3 @@
-%% The size in bytes of a portion of the disk space reserved to account for the lag
-%% between getting close to no available space and receiving the information about it.
-%% The node would only sync data if it has at least so much of the available space.
--ifdef(DEBUG).
--define(DISK_DATA_BUFFER_SIZE, 30 * 1024 * 1024).
--else.
--define(DISK_DATA_BUFFER_SIZE, 20 * 1024 * 1024 * 1024). % >15 GiB ~5 mins of syncing at 60 MiB/s
--endif.
-
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
 
@@ -23,14 +14,7 @@
 %% joins the network or a chain reorg occurs, it uses its record about
 %% the last ?TRACK_CONFIRMATIONS blocks and the new block index to
 %% determine the orphaned portion of the weave.
--define(TRACK_CONFIRMATIONS, ?STORE_BLOCKS_BEHIND_CURRENT * 2).
-
-%% Try to have so many spread out continuous intervals.
--ifdef(DEBUG).
--define(SYNCED_INTERVALS_TARGET, 2).
--else.
--define(SYNCED_INTERVALS_TARGET, 500).
--endif.
+-define(TRACK_CONFIRMATIONS, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
 
 %% The upper size limit for a serialized chunk with its proof
 %% as it travels around the network.
@@ -71,10 +55,6 @@
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 
-%% The maximum number of chunks to scheduler for packing/unpacking.
-%% A bigger number means more memory allocated for the chunks not packed/unpacked yet.
--define(PACKING_BUFFER_SIZE, 1000).
-
 %% The maximum number of intervals to schedule for syncing. Should be big enough so
 %% that many sync jobs cannot realistically process it completely before the process
 %% that collects intervals fills it up.
@@ -104,12 +84,13 @@
 	%% The current weave size. The upper limit for the absolute chunk end offsets.
 	weave_size,
 	%% A reference to the on-disk key-value storage mapping
-	%% AbsoluteChunkEndOffset => {ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize}
-	%% for all synced chunks.
+	%% AbsoluteChunkEndOffset
+	%%   => {ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize}
 	%%
-	%% Chunks themselves and their DataPaths are stored separately because the offsets
-	%% may change after a reorg. However, after the offset falls below DiskPoolThreshold,
-	%% the chunk is packed for mining and recorded in the fast storage under the offset key.
+	%% Chunks themselves and their DataPaths are stored separately (in chunk_data_db)
+	%% because the offsets may change after a reorg. However, after the offset falls below
+	%% DiskPoolThreshold, the chunk is packed for mining and recorded in the fast storage
+	%% under the offset key.
 	%%
 	%% The index is used to look up the chunk by a random offset when a peer
 	%% asks for it and to look up chunks of a transaction.
@@ -151,48 +132,39 @@
 	%% the first one. Not stored.
 	disk_pool_cursor,
 	%% The weave offset for the disk pool - chunks above this offset are stored there.
-	disk_pool_threshold,
+	disk_pool_threshold = 0,
 	%% A reference to the on-disk key value storage mapping
 	%% TXID => {AbsoluteTXEndOffset, TXSize}.
-	%% It is used to serve transaction data by TXID.
+	%% Is used to serve transaction data by TXID.
 	tx_index,
 	%% A reference to the on-disk key value storage mapping
-	%% AbsoluteTXStartOffset => TXID. It is used to cleanup orphaned transactions from tx_index.
+	%% AbsoluteTXStartOffset => TXID. Is used to cleanup orphaned transactions from tx_index.
 	tx_offset_index,
 	%% A reference to the on-disk key value storage mapping
-	%% << Timestamp:256, DataPathHash/binary >> of the chunks to chunk data.
-	%% The motivation to not store chunk data directly in the chunks_index is to save the
-	%% space by not storing identical chunks placed under different offsets several time
-	%% and to be able to quickly move chunks from the disk pool to the on-chain storage.
+	%% << Timestamp:256, DataPathHash/binary >> to raw chunk data (possibly packed).
+	%%
+	%% Is used to store disk pool chunks (their global offsets cannot be determined with
+	%% certainty yet).
+	%%
 	%% The timestamp prefix is used to make the written entries sorted from the start,
 	%% to minimize the LSTM compaction overhead.
 	chunk_data_db,
 	%% A reference to the on-disk key value storage mapping migration names to their stages.
 	migrations_index,
-	%% A flag indicating whether the disk is full. If true, we avoid writing anything to it.
-	disk_full = false,
-	%% A flag indicating whether there is sufficient disk space for syncing more data.
-	sync_disk_space = true,
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},
-	%% Chunks above the threshold are packed because the protocol requires them to be packed.
-	packing_2_5_threshold,
 	%% The end offset of the last interval possibly scheduled for repacking or 0.
 	repacking_cursor,
-	%% If true, the node does not pack incoming data or re-pack already stored data.
-	packing_disabled = false,
-	%% Chunks above the threshold must comply to stricter splitting rules.
-	strict_data_split_threshold,
+	%% If true, the node repacks 2.5-packed data in the default storage with 2.6 packing.
+	repack_legacy_storage = false,
 	%% The queue with unique {Start, End, Peer} triplets. Sync jobs are taking intervals
 	%% from this queue and syncing them.
-	sync_intervals_queue = queue:new(),
+	sync_intervals_queue = gb_sets:new(),
 	%% A compact set of non-overlapping intervals containing all the intervals from the
 	%% sync intervals queue. We use it to quickly check which intervals have been queued
 	%% already and avoid syncing the same interval twice.
 	sync_intervals_queue_intervals = ar_intervals:new(),
-	%% The number of chunks currently being downloaded and processed.
-	sync_buffer_size = 0,
 	%% A key marking the beginning of a full disk pool scan.
 	disk_pool_full_scan_start_key = none,
 	%% The timestamp of the beginning of a full disk pool scan. Used to measure
@@ -208,5 +180,15 @@
 	%% disk pool jobs to avoid double-processing.
 	currently_processed_disk_pool_keys = sets:new(),
 	%% A flag used to temporarily pause all disk pool jobs.
-	disk_pool_scan_pause = false
+	disk_pool_scan_pause = false,
+	%% The mining address the chunks are packed with in 2.6.
+	mining_address,
+	%% The identifier of the storage module the process is responsible for.
+	store_id,
+	%% The identifier of the ETS table storing the intervals to skip when syncing.
+	skip_intervals_table,
+	%% The start offset of the range the module is responsible for.
+	range_start = -1,
+	%% The end offset of the range the module is responsible for.
+	range_end = -1
 }).

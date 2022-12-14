@@ -18,17 +18,26 @@ validate(TX) ->
 					{'==', '$1', wallet_list},
 					{'==', '$1', recent_txs_map},
 					{'==', '$1', block_anchors},
-					{'==', '$1', usd_to_ar_rate}}], ['$_']}]
+					{'==', '$1', usd_to_ar_rate},
+					{'==', '$1', price_per_gib_minute},
+					{'==', '$1', kryder_plus_rate_multiplier},
+					{'==', '$1', denomination},
+					{'==', '$1', redenomination_height}}], ['$_']}]
 		),
 	Height = proplists:get_value(height, Props),
 	WL = proplists:get_value(wallet_list, Props),
 	RecentTXMap = proplists:get_value(recent_txs_map, Props),
 	BlockAnchors = proplists:get_value(block_anchors, Props),
 	USDToARRate = proplists:get_value(usd_to_ar_rate, Props),
+	PricePerGiBMinute = proplists:get_value(price_per_gib_minute, Props),
+	KryderPlusRateMultiplier = proplists:get_value(kryder_plus_rate_multiplier, Props),
+	Denomination = proplists:get_value(denomination, Props),
+	RedenominationHeight = proplists:get_value(redenomination_height, Props),
 	Wallets = ar_wallets:get(WL, ar_tx:get_addresses([TX])),
 	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
-	Result = ar_tx_replay_pool:verify_tx({TX, USDToARRate, Height, BlockAnchors, RecentTXMap,
-			MempoolTXs, Wallets}),
+	Result = ar_tx_replay_pool:verify_tx({TX, USDToARRate, PricePerGiBMinute,
+			KryderPlusRateMultiplier, Denomination, Height, RedenominationHeight, BlockAnchors,
+			RecentTXMap, MempoolTXs, Wallets}),
 	Result2 =
 		case {Result, TX#tx.format == 2 andalso byte_size(TX#tx.data) /= 0} of
 			{valid, true} ->

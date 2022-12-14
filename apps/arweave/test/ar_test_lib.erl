@@ -282,7 +282,7 @@ sign_tx_v1(Wallet, TXParams) ->
 	sign_tx2(Wallet, TXParams, fun ar_tx:sign_v1/2).
 
 sign_tx2(Wallet, TXParams, SignFunction) ->
-	{_, Pub} = Wallet,
+	{_, {_, Owner}} = Wallet,
 	Data = maps:get(data, TXParams, <<>>),
 	DataSize = maps:get(data_size, TXParams, byte_size(Data)),
 	Reward = case maps:get(reward, TXParams, none) of
@@ -293,7 +293,7 @@ sign_tx2(Wallet, TXParams, SignFunction) ->
 	end,
 	SignFunction(
 		(ar_tx:new())#tx {
-			owner = Pub,
+			owner = Owner,
 			reward = Reward,
 			data = Data,
 			target = maps:get(target, TXParams, <<>>),

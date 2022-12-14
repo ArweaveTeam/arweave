@@ -7,14 +7,8 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [
-	start/3,
-	sign_tx/3,
-	get_tx_anchor/1,
-	assert_post_tx_to_master/1,
-	wait_until_height/1,
-	read_block_when_stored/1
-]).
+-import(ar_test_node, [start/3, sign_tx/3, assert_post_tx_to_master/1,
+		wait_until_height/1, read_block_when_stored/1]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -35,7 +29,7 @@ handle([<<"block">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
 webhooks_test_() ->
-	{timeout, 30, fun test_webhooks/0}.
+	{timeout, 120, fun test_webhooks/0}.
 
 test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
@@ -51,7 +45,7 @@ test_webhooks() ->
 			events = [block]
 		}
 	]},
-	start(B0, unclaimed, Config2),
+	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()), Config2),
 	%% Setup a server that would be listening for the webhooks and registering
 	%% them in the ETS table.
 	ets:new(?MODULE, [named_table, set, public]),
@@ -64,7 +58,7 @@ test_webhooks() ->
 	TXs =
 		lists:map(
 			fun(Height) ->
-				SignedTX = sign_tx(master, Wallet, #{ last_tx => get_tx_anchor(master) }),
+				SignedTX = sign_tx(master, Wallet, #{}),
 				assert_post_tx_to_master(SignedTX),
 				ar_node:mine(),
 				wait_until_height(Height),
@@ -72,7 +66,7 @@ test_webhooks() ->
 			end,
 			lists:seq(1, 10)
 		),
-	UnconfirmedTX = sign_tx(master, Wallet, #{ last_tx => get_tx_anchor(master) }),
+	UnconfirmedTX = sign_tx(master, Wallet, #{}),
 	assert_post_tx_to_master(UnconfirmedTX),
 	lists:foreach(
 		fun(Height) ->

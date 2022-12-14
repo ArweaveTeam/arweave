@@ -3,6 +3,7 @@
 -export([register/1, store/1, label_http_path/1, get_status_class/1]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 -define(ENDPOINTS, ["info", "block", "block_announcement", "block2", "tx", "tx2",
@@ -131,8 +132,9 @@ register(MetricsDir) ->
 	]),
 	prometheus_gauge:new([
 		{name, v2_index_data_size_by_packing},
-		{labels, [packing]},
-		{help, "The size (in bytes) of the data stored and indexed. Groupped by packing."}
+		{labels, [store_id, packing]},
+		{help, "The size (in bytes) of the data stored and indexed. Groupped by "
+				"store ID and packing."}
 	]),
 
 	%% Disk pool.
@@ -140,7 +142,7 @@ register(MetricsDir) ->
 		{name, pending_chunks_size},
 		{
 			help,
-			"The total size in bytes of stored pending chunks."
+			"The total size in bytes of stored pending and seeded chunks."
 		}
 	]),
 	prometheus_gauge:new([
@@ -166,6 +168,7 @@ register(MetricsDir) ->
 		{name, arweave_block_height},
 		{help, "Block height"}
 	]),
+	prometheus_gauge:new([{name, block_time}, {help, "Block time"}]),
 	prometheus_histogram:new([
 		{name, fork_recovery_depth},
 		{buckets, lists:seq(1, 50)},
@@ -213,6 +216,95 @@ register(MetricsDir) ->
 			"The per second average rate of the number of tried solution candidates "
 			"computed over the last block time."}
 	]),
+	prometheus_gauge:new([
+		{name, mining_server_chunk_cache_size},
+		{help, "The number of chunks fetched during mining and not processed yet."}
+	]),
+	prometheus_histogram:new([
+		{name, vdf_step_time_milliseconds},
+		{buckets, [100, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2500, 3000, 3500, 4000,
+				4500, 5000, 5500, 6000, 6500, 7000, 7500, 8000, 8500, 9000, 9500, 10000, 15000,
+				20000, 30000]},
+		{labels, []},
+		{help, "The time in milliseconds it took to compute a VDF step."}
+	]),
+
+	%% Economic metrics.
+	prometheus_gauge:new([
+		{name, average_network_hash_rate},
+		{help, io_lib:format("The average network hash rate measured over the latest ~B "
+				"blocks.", [?PRICE_HISTORY_BLOCKS])}
+	]),
+	prometheus_gauge:new([
+		{name, average_block_reward},
+		{help, io_lib:format("The average block reward in Winston computed from the latest ~B "
+				"blocks.", [?PRICE_HISTORY_BLOCKS])}
+	]),
+	prometheus_gauge:new([
+		{name, expected_block_reward},
+		{help, "The block reward required to sustain 20 replicas of the present weave"
+				" as currently estimated by the protocol."}
+	]),
+	prometheus_gauge:new([
+		{name, price_per_gibibyte_minute},
+		{help, "The price of storing 1 GiB for one minute as currently estimated by "
+				"the protocol."}
+	]),
+	prometheus_gauge:new([
+		{name, legacy_price_per_gibibyte_minute},
+		{help, "The price of storing 1 GiB for one minute as estimated by the previous ("
+				"USD to AR benchmark-based) version of the protocol."}
+	]),
+	prometheus_gauge:new([
+		{name, endowment_pool},
+		{help, "The amount of Winston in the endowment pool."}
+	]),
+	prometheus_gauge:new([
+		{name, available_supply},
+		{help, "The total supply minus the endowment, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, debt_supply},
+		{help, "The amount of Winston emitted when the endowment pool was not sufficiently"
+				" large to compensate mining."}
+	]),
+	prometheus_gauge:new([
+		{name, network_hashrate},
+		{help, "An estimation of the network hash rate based on the mining difficulty "
+				"of the latest block."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden},
+		{help, "The legacy (2.5) estimation of the cost of storing the current weave "
+				"assuming the 0.5% storage costs decline rate, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden_10_usd_ar},
+		{help, "The legacy (2.5) estimation of the cost of storing the current weave "
+				"assuming the 0.5% storage costs decline rate and 10 $/AR, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden_200_years},
+		{help, "The legacy (2.5) estimation of the cost of storing the current weave for "
+				"200 years assuming the 0.5% storage costs decline rate, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden_200_years_10_usd_ar},
+		{help, "The legacy (2.5) estimation of the cost of storing the current weave for "
+				"200 years assuming the 0.5% storage costs decline rate and 10 $/AR, "
+				"in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, expected_minimum_200_years_storage_costs_decline_rate},
+		{help, "The expected minimum decline rate sufficient to subsidize storage of "
+				"the current weave for 200 years according to the legacy (2.5) estimations."}
+	]),
+	prometheus_gauge:new([
+		{name, expected_minimum_200_years_storage_costs_decline_rate_10_usd_ar},
+		{help, "The expected minimum decline rate sufficient to subsidize storage of "
+				"the current weave for 200 years according to the legacy (2.6) estimations"
+				"and assuming 10 $/AR."}
+	]),
 
 	%% Packing.
 	prometheus_histogram:new([
@@ -230,7 +322,17 @@ register(MetricsDir) ->
 	prometheus_counter:new([
 		{name, validating_unpacked_spora},
 		{help, "The number of SPoRA solutions based on unpacked chunks entered validation."}
-	]).
+	]),
+	prometheus_counter:new([
+		{name, validating_packed_2_6_spora},
+		{help, "The number of SPoRA solutions based on chunks packed for 2.6 entered "
+				"validation."}
+	]),
+
+	prometheus_gauge:new([{name, packing_buffer_size},
+			{help, "The number of chunks in the packing server queue."}]),
+	prometheus_gauge:new([{name, sync_buffer_size}, {labels, [store_id]},
+			{help, "The number of chunks scheduled for downloading."}]).
 
 %% @doc Store the given metric in a file.
 store(Name) ->
@@ -333,6 +435,24 @@ name_route([<<"price">>, _SizeInBytes]) ->
 	"/price/{bytes}";
 name_route([<<"price">>, _SizeInBytes, _Addr]) ->
 	"/price/{bytes}/{address}";
+
+name_route([<<"price2">>, _SizeInBytes]) ->
+	"/price2/{bytes}";
+name_route([<<"price2">>, _SizeInBytes, _Addr]) ->
+	"/price2/{bytes}/{address}";
+
+name_route([<<"v2price">>, _SizeInBytes]) ->
+	"/v2price/{bytes}";
+name_route([<<"v2price">>, _SizeInBytes, _Addr]) ->
+	"/v2price/{bytes}/{address}";
+
+name_route([<<"optimistic_price">>, _SizeInBytes]) ->
+	"/optimistic_price/{bytes}";
+name_route([<<"optimistic_price">>, _SizeInBytes, _Addr]) ->
+	"/optimistic_price/{bytes}/{address}";
+
+name_route([<<"price_history">>, _BH]) ->
+	"/price_history/{block_hash}";
 
 name_route([<<"wallet">>, _Addr, <<"balance">>]) ->
 	"/wallet/{addr}/balance";

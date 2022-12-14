@@ -6,6 +6,7 @@
 
 -export([init/1]).
 
+-include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
@@ -24,12 +25,12 @@ init([]) ->
 	Children = lists:map(
 		fun(Num) ->
 			Name = list_to_atom("ar_tx_emitter_worker_" ++ integer_to_list(Num)),
-			{Name, {ar_tx_emitter_worker, start_link, [Name]}, permanent, 30000, worker,
-					[ar_tx_emitter_worker]}
+			{Name, {ar_tx_emitter_worker, start_link, [Name]}, permanent, ?SHUTDOWN_TIMEOUT,
+					worker, [ar_tx_emitter_worker]}
 		end,
 		lists:seq(1, Config#config.max_emitters)
 	),
 	Workers = [element(1, El) || El <- Children],
 	Children2 = [{ar_tx_emitter, {ar_tx_emitter, start_link, [ar_tx_emitter, Workers]},
-			permanent, 30000, worker, [ar_tx_emitter]} | Children],
+			permanent, ?SHUTDOWN_TIMEOUT, worker, [ar_tx_emitter]} | Children],
 	{ok, {{one_for_one, 5, 10}, Children2}}.

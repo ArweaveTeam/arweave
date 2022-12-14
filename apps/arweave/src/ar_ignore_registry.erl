@@ -8,11 +8,15 @@
 %%% @end
 -module(ar_ignore_registry).
 
--export([add/1, add_temporary/2, remove_temporary/1, member/1]).
+-export([add/1, remove/1, add_temporary/2, remove_temporary/1, member/1]).
 
 %% @doc Put a permanent ID record into the registry.
 add(ID) ->
 	ets:insert(ignored_ids, {ID, permanent}).
+
+%% @doc Remove a permanent ID record from the registry.
+remove(ID) ->
+	catch ets:delete_object(ignored_ids, {ID, permanent}).
 
 %% @doc Put a temporary ID record into the registry.
 %% The record expires after Timeout milliseconds.

@@ -1,49 +1,71 @@
 -module(ar_test_node).
 
--export([start/1, start/2, start/3, slave_start/1, slave_start/2, wait_until_joined/0,
-		connect_to_slave/0, disconnect_from_slave/0, slave_call/3, slave_call/4,
-		slave_add_tx/1, slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
-		assert_slave_wait_until_height/1, wait_until_block_block_index/1,
-		assert_wait_until_block_block_index/1, wait_until_receives_txs/1,
+-export([start/0, start/1, start/2, start/3, start/4, slave_start/0, slave_start/1,
+		slave_start/2, slave_start/3, wait_until_joined/0,
+		get_tx_price/1, get_tx_price/2, get_tx_price/3,
+		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
+		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
+		get_balance/1, get_balance/2, get_balance_by_address/2,
+		stop/0, slave_stop/0, connect_to_slave/0, disconnect_from_slave/0,
+		slave_call/3, slave_call/4,
+		slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
+		assert_slave_wait_until_height/1, wait_until_block_index/1,
+		assert_wait_until_block_index/1, assert_slave_wait_until_block_index/1,
+		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
 		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
-		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, sign_tx/1, sign_tx/2,
-		sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, get_tx_anchor/0,
+		assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
+		get_tx_anchor/0,
 		get_tx_anchor/1, join/1, rejoin/1, join_on_slave/0, rejoin_on_slave/0,
 		join_on_master/0, rejoin_on_master/0,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
-		get_balance/1, test_with_mocked_functions/2,
-		get_tx_price/1, post_and_mine/2, read_block_when_stored/1,
+		test_with_mocked_functions/2,
+		post_and_mine/2, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3, assert_get_tx_data_master/2,
 		assert_get_tx_data_slave/2, assert_data_not_found_master/1,
 		assert_data_not_found_slave/1, post_tx_json_to_master/1,
-		post_tx_json_to_slave/1, master_peer/0, slave_peer/0]).
+		post_tx_json_to_slave/1, master_peer/0, slave_peer/0,
+		wait_until_syncs_genesis_data/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-slave_start(MaybeB) ->
-	Slave = slave_call(?MODULE, start, [MaybeB]),
-	slave_wait_until_joined(),
-	Slave.
+%% May occasionally take quite long on a slow CI server, expecially in tests
+%% with height >= 20 (2 difficulty retargets).
+-define(WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT, 180000).
+-define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 30000).
 
-slave_start(B0, RewardAddr) ->
-	Slave = slave_call(?MODULE, start, [B0, RewardAddr]),
-	slave_wait_until_joined(),
-	Slave.
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
-start(no_block) ->
-	[B0] = ar_weave:init([]),
-	start(B0, unclaimed, element(2, application:get_env(arweave, config)));
+%% @doc Start a fresh master node.
+start() ->
+	[B0] = ar_weave:init(),
+	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+			element(2, application:get_env(arweave, config))).
+
+%% @doc Start a fresh master node with the given genesis block.
 start(B0) ->
-	start(B0, unclaimed, element(2, application:get_env(arweave, config))).
+	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+			element(2, application:get_env(arweave, config))).
 
+%% @doc Start a fresh master node with the given genesis block and mining address.
 start(B0, RewardAddr) ->
 	start(B0, RewardAddr, element(2, application:get_env(arweave, config))).
 
+%% @doc Start a fresh master node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
+	%% Configure the storage modules to cover 200 MiB of the weave.
+	StorageModules = lists:flatten([[{20 * 1024 * 1024, N, {spora_2_6, RewardAddr}},
+			{20 * 1024 * 1024, N, spora_2_5}] || N <- lists:seq(0, 8)]),
+	start(B0, RewardAddr, Config, StorageModules).
+
+%% @doc Start a fresh master node with the given genesis block, mining address, config,
+%% and storage modules.
+start(B0, RewardAddr, Config, StorageModules) ->
 	%% Currently, ar_weave:init stores the wallet tree on disk. Tests call ar_weave:init,
 	%% it returns the block header (which does not contain the wallet tree), the block header
 	%% is passed here where we want to erase the previous storage and at the same time
@@ -55,18 +77,202 @@ start(B0, RewardAddr, Config) ->
 		start_from_block_index = true,
 		peers = [],
 		mining_addr = RewardAddr,
+		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
-		header_sync_jobs = 4,
-		enable = [search_in_rocksdb_when_mining, serve_arql, serve_wallet_txs,
-			serve_wallet_deposits, arql_tags_index, serve_tx_data_without_limits],
+		sync_jobs = 2,
+		packing_rate = 20,
+		disk_pool_jobs = 2,
+		header_sync_jobs = 2,
+		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
+				double_check_nonce_limiter, legacy_storage_repacking],
+		mining_server_chunk_cache_size_limit = 4,
 		debug = true
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
+	wait_until_syncs_genesis_data(),
 	{whereis(ar_node_worker), B0}.
 
+%% @doc Start a fresh slave node.
+slave_start() ->
+	Slave = slave_call(?MODULE, start, [], 20000),
+	slave_wait_until_joined(),
+	slave_wait_until_syncs_genesis_data(),
+	Slave.
+
+%% @doc Start a fresh slave node with the given genesis block.
+slave_start(B) ->
+	Slave = slave_call(?MODULE, start, [B], 20000),
+	slave_wait_until_joined(),
+	slave_wait_until_syncs_genesis_data(),
+	Slave.
+
+%% @doc Start a fresh slave node with the given genesis block and mining address.
+slave_start(B0, RewardAddr) ->
+	Slave = slave_call(?MODULE, start, [B0, RewardAddr], 20000),
+	slave_wait_until_joined(),
+	slave_wait_until_syncs_genesis_data(),
+	Slave.
+
+%% @doc Start a fresh slave node with the given genesis block, mining address, and config.
+slave_start(B0, RewardAddr, Config) ->
+	Slave = slave_call(?MODULE, start, [B0, RewardAddr, Config], 20000),
+	slave_wait_until_joined(),
+	slave_wait_until_syncs_genesis_data(),
+	Slave.
+
+%% @doc Wait until the master node joins the network (initializes the state).
+wait_until_joined() ->
+	ar_util:do_until(
+		fun() -> ar_node:is_joined() end,
+		100,
+		60 * 1000
+	 ).
+
+%% @doc Fetch the fee estimation and the denomination (call GET /price2/[size])
+%% from the slave node.
+get_tx_price(DataSize) ->
+	get_tx_price(slave, DataSize).
+
+%% @doc Fetch the fee estimation and the denomination (call GET /price2/[size])
+%% from the given node.
+get_tx_price(Node, DataSize) ->
+	get_tx_price(Node, DataSize, <<>>).
+
+%% @doc Fetch the fee estimation and the denomination (call GET /price2/[size]/[addr])
+%% from the given node.
+get_tx_price(Node, DataSize, Target) ->
+	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
+	{_, _, _, _, Port} = Peer,
+	Path = "/price/" ++ integer_to_list(DataSize) ++ "/"
+			++ binary_to_list(ar_util:encode(Target)),
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => Path,
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	Fee = binary_to_integer(Reply),
+	Path2 = "/price2/" ++ integer_to_list(DataSize) ++ "/"
+			++ binary_to_list(ar_util:encode(Target)),
+	{ok, {{<<"200">>, _}, _, Reply2, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => Path2,
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	Map = jiffy:decode(Reply2, [return_maps]),
+	case binary_to_integer(maps:get(<<"fee">>, Map)) of
+		Fee ->
+			{Fee, maps:get(<<"denomination">>, Map)};
+		Fee2 ->
+			?assert(false, io_lib:format("Fee mismatch, expected: ~B, got: ~B.", [Fee, Fee2]))
+	end.
+
+%% @doc Fetch the optimistic fee estimation (call GET /price/[size]) from the slave node.
+get_optimistic_tx_price(DataSize) ->
+	get_optimistic_tx_price(slave, DataSize).
+
+%% @doc Fetch the optimistic fee estimation (call GET /price/[size]) from the given node.
+get_optimistic_tx_price(Node, DataSize) ->
+	get_optimistic_tx_price(Node, DataSize, <<>>).
+
+%% @doc Fetch the optimistic fee estimation (call GET /price/[size]/[addr]) from the given
+%% node.
+get_optimistic_tx_price(Node, DataSize, Target) ->
+	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
+	{_, _, _, _, Port} = Peer,
+	Path = "/optimistic_price/" ++ integer_to_list(DataSize) ++ "/"
+			++ binary_to_list(ar_util:encode(Target)),
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => Path,
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	binary_to_integer(maps:get(<<"fee">>, jiffy:decode(Reply, [return_maps]))).
+
+%% @doc Return a signed format=2 transaction with the minimum required fee fetched from
+%% GET /price/0 on the slave node.
+sign_tx(Wallet) ->
+	sign_tx(slave, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
+
+%% @doc Return a signed format=2 transaction with properties from the given Args map.
+%% If the fee is not in Args, fetch it from GET /price/{data_size}
+%% or GET /price/{data_size}/{target} (if the target is specified) on the slave node.
+sign_tx(Wallet, Args) ->
+	sign_tx(slave, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
+
+%% @doc Like sign_tx/2, but use the given Node to fetch the fee estimation and
+%% block anchor from.
+sign_tx(Node, Wallet, Args) ->
+	sign_tx(Node, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
+
+%% @doc Like sign_tx/1 but return a format=1 transaction.
+sign_v1_tx(Wallet) ->
+	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_v1/2).
+
+%% @doc Like sign_tx/2 but return a format=1 transaction.
+sign_v1_tx(Wallet, TXParams) ->
+	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign_v1/2).
+
+%% @doc Like sign_tx/3 but return a format=1 transaction.
+sign_v1_tx(Node, Wallet, Args) ->
+	sign_tx(Node, Wallet, Args, fun ar_tx:sign_v1/2).
+
+%% @doc Return the current balance of the account with the given public key.
+%% Request it from the slave node.
+get_balance(Pub) ->
+	get_balance_by_address(slave, ar_wallet:to_address(Pub)).
+
+%% @doc Return the current balance of the account with the given public key.
+%% Request it from the given node.
+get_balance(Node, Pub) ->
+	get_balance_by_address(Node, ar_wallet:to_address(Pub)).
+
+%% @doc Return the current balance of the given account (request it from the given node).
+get_balance_by_address(Node, Address) ->
+	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
+	Port = element(5, Peer),
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	Balance = binary_to_integer(Reply),
+	B =
+		case Node of
+			master ->
+				ar_node:get_current_block();
+			slave ->
+				slave_call(ar_node, get_current_block, [])
+		end,
+	{ok, {{<<"200">>, _}, _, Reply2, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/wallet_list/" ++ binary_to_list(ar_util:encode(B#block.wallet_list))
+					++ "/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	case binary_to_integer(Reply2) of
+		Balance ->
+			Balance;
+		Balance2 ->
+			?assert(false, io_lib:format("Expected: ~B, got: ~B.~n", [Balance, Balance2]))
+	end.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
 read_wallet_list(RootHash) ->
-	case ar_rpc:call(master, ar_storage, read_wallet_list, [RootHash], 10000) of
+	case rpc:call('master@127.0.0.1', ar_storage, read_wallet_list, [RootHash], 10000) of
 		{ok, Tree} ->
 			Tree;
 		_ ->
@@ -78,21 +284,22 @@ read_wallet_list(RootHash) ->
 
 clean_up_and_stop() ->
 	Config = stop(),
-	os:cmd("rm -r " ++ Config#config.data_dir ++ "/*").
-
-stop() ->
-	{ok, Config} = application:get_env(arweave, config),
-	ok = application:stop(arweave),
-	ok = ar:stop_dependencies(),
-	Config.
+	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
+	lists:foreach(
+		fun	("wallets") ->
+				ok;
+			(Entry) ->
+				file:del_dir_r(filename:join(Config#config.data_dir, Entry))
+		end,
+		Entries
+	).
 
 write_genesis_files(DataDir, B0, WalletList) ->
 	BH = B0#block.indep_hash,
 	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
 	ok = filelib:ensure_dir(BlockDir ++ "/"),
-	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".json"),
-	BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B0)),
-	ok = file:write_file(BlockFilepath, BlockJSON),
+	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
+	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
 	TXDir = filename:join(DataDir, ?TX_DIR),
 	ok = filelib:ensure_dir(TXDir ++ "/"),
 	lists:foreach(
@@ -105,11 +312,11 @@ write_genesis_files(DataDir, B0, WalletList) ->
 		B0#block.txs
 	),
 	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIJSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
+	BIBin = term_to_binary({BI, B0#block.price_history}),
 	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
 	ok = filelib:ensure_dir(HashListDir ++ "/"),
-	BIFilepath = filename:join(HashListDir, <<"last_block_index.json">>),
-	ok = file:write_file(BIFilepath, BIJSON),
+	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_price_history.bin">>),
+	ok = file:write_file(BIFilepath, BIBin),
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
 	ok = filelib:ensure_dir(WalletListDir ++ "/"),
 	RootHash = B0#block.wallet_list,
@@ -120,6 +327,63 @@ write_genesis_files(DataDir, B0, WalletList) ->
 			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false, WalletList)
 		),
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
+
+insert_root(Params) ->
+	case {maps:get(data, Params, <<>>), maps:get(data_root, Params, <<>>)} of
+		{<<>>, _} ->
+			Params;
+		{Data, <<>>} ->
+			TX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
+			Params#{ data_root => TX#tx.data_root };
+		_ ->
+			Params
+	end.
+
+sign_tx(Node, Wallet, Args, SignFun) ->
+	{_, {_, Pub}} = Wallet,
+	Data = maps:get(data, Args, <<>>),
+	DataSize = maps:get(data_size, Args, byte_size(Data)),
+	Format = maps:get(format, Args, 1),
+	{Fee, Denomination} = get_tx_price(Node, DataSize, maps:get(target, Args, <<>>)),
+	Fee2 =
+		case {Format, maps:get(reward, Args, none)} of
+			{1, none} ->
+				%% Make sure the v1 tx is not malleable by assigning a fee with only
+				%% the first digit being non-zero.
+				FirstDigit = binary_to_integer(binary:part(integer_to_binary(Fee), {0, 1})),
+				Len = length(integer_to_list(Fee)),
+				Fee3 = trunc((FirstDigit + 1) * math:pow(10, Len - 1)),
+				Fee3;
+			{_, none} ->
+				Fee;
+			{_, AssignedFee} ->
+				AssignedFee
+		end,
+	SignFun(
+		(ar_tx:new())#tx{
+			owner = Pub,
+			reward = Fee2,
+			data = Data,
+			target = maps:get(target, Args, <<>>),
+			quantity = maps:get(quantity, Args, 0),
+			tags = maps:get(tags, Args, []),
+			last_tx = maps:get(last_tx, Args, get_tx_anchor(Node)),
+			data_size = DataSize,
+			data_root = maps:get(data_root, Args, <<>>),
+			format = Format,
+			denomination = maps:get(denomination, Args, Denomination)
+		},
+		Wallet
+	).
+
+stop() ->
+	{ok, Config} = application:get_env(arweave, config),
+	application:stop(arweave),
+	ok = ar:stop_dependencies(),
+	Config.
+
+slave_stop() ->
+	slave_call(ar_test_node, stop, [], 20000).
 
 join_on_slave() ->
 	join(slave_peer()).
@@ -141,23 +405,32 @@ join(Peer, Rejoin) ->
 		false ->
 			clean_up_and_stop()
 	end,
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	StorageModulePacking = case ar_fork:height_2_6() of infinity -> spora_2_5;
+			_ -> {spora_2_6, RewardAddr} end,
+	%% Configure the storage modules to cover 100 MiB of the weave.
+	StorageModules = [{20 * 1024 * 1024, N, StorageModulePacking} || N <- lists:seq(0, 4)],
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = false,
+		mining_addr = RewardAddr,
+		storage_modules = StorageModules,
 		peers = [Peer]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	whereis(ar_node_worker).
 
 join_on_master() ->
-	slave_call(ar_test_node, join, [master_peer()]).
+	slave_call(ar_test_node, join, [master_peer()], 20000).
 
 rejoin_on_master() ->
-	slave_call(ar_test_node, rejoin, [master_peer()]).
+	slave_call(ar_test_node, rejoin, [master_peer()], 20000).
 
 connect_to_slave() ->
 	%% Unblock connections possibly blocked in the prior test code.
 	ar_peers:unblock_connections(),
 	slave_call(ar_peers, unblock_connections, []),
+	ar_poller:resume(),
+	slave_call(ar_poller, resume, []),
 	%% Make requests to the nodes to make them discover each other.
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
@@ -191,27 +464,70 @@ connect_to_slave() ->
 	).
 
 disconnect_from_slave() ->
+	ar_poller:pause(),
+	slave_call(ar_poller, pause, []),
 	ar_peers:block_connections(),
 	slave_call(ar_peers, block_connections, []).
 
 slave_call(Module, Function, Args) ->
-	slave_call(Module, Function, Args, 60000).
+	slave_call(Module, Function, Args, 10000).
 
 slave_call(Module, Function, Args, Timeout) ->
-	ar_rpc:call(slave, Module, Function, Args, Timeout).
-
-slave_add_tx(TX) ->
-	slave_call(ar_node, add_tx, [TX]).
+	Key = rpc:async_call('slave@127.0.0.1', Module, Function, Args),
+	Result = ar_util:do_until(
+		fun() ->
+			case rpc:nb_yield(Key) of
+				timeout ->
+					false;
+				{value, Reply} ->
+					{ok, Reply}
+			end
+		end,
+		200,
+		Timeout
+	),
+	case Result of
+		{error, timeout} ->
+			?debugFmt("Timed out waiting for the rpc reply; module: ~p, function: ~p, "
+					"args: ~p.~n", [Module, Function, Args]);
+		_ ->
+			ok
+	end,
+	?assertMatch({ok, _}, Result),
+	element(2, Result).
 
 slave_mine() ->
 	slave_call(ar_node, mine, []).
 
-wait_until_joined() ->
-	ar_util:do_until(
-		fun() -> ar_node:is_joined() end,
-		100,
-		60 * 1000
-	 ).
+wait_until_syncs_genesis_data() ->
+	WeaveSize = (ar_node:get_current_block())#block.weave_size,
+	wait_until_syncs_genesis_data(0, WeaveSize).
+
+wait_until_syncs_genesis_data(Offset, WeaveSize) when Offset >= WeaveSize ->
+	ok;
+wait_until_syncs_genesis_data(Offset, WeaveSize) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Packing_2_6 = {spora_2_6, Config#config.mining_addr},
+	true = ar_util:do_until(
+		fun() ->
+			IsRecorded =
+				case ar_fork:height_2_6() > 0 of
+					true ->
+						ar_sync_record:is_recorded(Offset + 1, {ar_data_sync, spora_2_5});
+					false ->
+						ar_sync_record:is_recorded(Offset + 1, {ar_data_sync, Packing_2_6})
+				end,
+			case IsRecorded of
+				{{true, _}, _} ->
+					true;
+				_ ->
+					false
+			end
+		end,
+		200,
+		10000
+	),
+	wait_until_syncs_genesis_data(Offset + ?DATA_CHUNK_SIZE, WeaveSize).
 
 slave_wait_until_joined() ->
 	ar_util:do_until(
@@ -219,6 +535,9 @@ slave_wait_until_joined() ->
 		100,
 		60 * 1000
 	 ).
+
+slave_wait_until_syncs_genesis_data() ->
+	ok = slave_call(ar_test_node, wait_until_syncs_genesis_data, [], 60000).
 
 wait_until_height(TargetHeight) ->
 	{ok, BI} = ar_util:do_until(
@@ -231,22 +550,30 @@ wait_until_height(TargetHeight) ->
 			end
 		end,
 		100,
-		60 * 1000
+		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
 	),
 	BI.
 
 slave_wait_until_height(TargetHeight) ->
-	slave_call(?MODULE, wait_until_height, [TargetHeight]).
+	slave_call(?MODULE, wait_until_height, [TargetHeight],
+			?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500).
 
 assert_slave_wait_until_height(TargetHeight) ->
-	BI = slave_call(?MODULE, wait_until_height, [TargetHeight]),
-	?assert(is_list(BI)),
+	BI = slave_call(?MODULE, wait_until_height, [TargetHeight],
+			?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500),
+	?assert(is_list(BI), iolist_to_binary(io_lib:format("Got ~p.", [BI]))),
 	BI.
 
-assert_wait_until_block_block_index(BI) ->
-	?assertEqual(ok, wait_until_block_block_index(BI)).
+assert_wait_until_block_index(BI) ->
+	?assertEqual(ok, wait_until_block_index(BI)).
 
-wait_until_block_block_index(BI) ->
+assert_slave_wait_until_block_index(BI) ->
+	?assertEqual(ok, slave_wait_until_block_index(BI)).
+
+slave_wait_until_block_index(BI) ->
+	slave_call(?MODULE, wait_until_block_index, [BI]).
+
+wait_until_block_index(BI) ->
 	ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks() of
@@ -275,11 +602,12 @@ wait_until_receives_txs(TXs) ->
 			end
 		end,
 		100,
-		60 * 1000
+		?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT
 	).
 
 assert_slave_wait_until_receives_txs(TXs) ->
-	?assertEqual(ok, slave_call(?MODULE, wait_until_receives_txs, [TXs])).
+	?assertEqual(ok, slave_call(?MODULE, wait_until_receives_txs, [TXs],
+			?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT + 500)).
 
 assert_post_tx_to_slave(TX) ->
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(TX).
@@ -353,61 +681,6 @@ post_tx_json(JSON, Peer) ->
 		headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}],
 		body => JSON
 	}).
-
-sign_tx(Wallet) ->
-	sign_tx(slave, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
-
-sign_tx(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, insert_root(TXParams#{ format => 2 }), fun ar_tx:sign/2).
-
-sign_tx(Node, Wallet, TXParams) ->
-	sign_tx(Node, Wallet, insert_root(TXParams#{ format => 2 }), fun ar_tx:sign/2).
-
-insert_root(Params) ->
-	case {maps:get(data, Params, <<>>), maps:get(data_root, Params, <<>>)} of
-		{<<>>, _} ->
-			Params;
-		{Data, <<>>} ->
-			TX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
-			Params#{ data_root => TX#tx.data_root };
-		_ ->
-			Params
-	end.
-
-sign_v1_tx(Wallet) ->
-	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_v1/2).
-
-sign_v1_tx(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign_v1/2).
-
-sign_v1_tx(Node, Wallet, TXParams) ->
-	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign_v1/2).
-
-sign_tx(Node, Wallet, TXParams, SignFun) ->
-	{_, Pub} = Wallet,
-	Data = maps:get(data, TXParams, <<>>),
-	DataSize = maps:get(data_size, TXParams, byte_size(Data)),
-	Reward = case maps:get(reward, TXParams, none) of
-		none ->
-			get_tx_price(Node, DataSize, maps:get(target, TXParams, <<>>));
-		AssignedReward ->
-			AssignedReward
-	end,
-	SignFun(
-		(ar_tx:new())#tx {
-			owner = Pub,
-			reward = Reward,
-			data = Data,
-			target = maps:get(target, TXParams, <<>>),
-			quantity = maps:get(quantity, TXParams, 0),
-			tags = maps:get(tags, TXParams, []),
-			last_tx = maps:get(last_tx, TXParams, <<>>),
-			data_size = DataSize,
-			data_root = maps:get(data_root, TXParams, <<>>),
-			format = maps:get(format, TXParams, 1)
-		},
-		Wallet
-	).
 
 get_tx_anchor() ->
 	get_tx_anchor(slave).
@@ -488,19 +761,6 @@ get_tx_confirmations(master, TXID) ->
 			-1
 	end.
 
-get_balance(Pub) ->
-	Peer = slave_peer(),
-	{_, _, _, _, Port} = Peer,
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
-					++ "/balance",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		}),
-	binary_to_integer(Reply).
-
 test_with_mocked_functions(Functions, TestFun) ->
 	{
 		foreach,
@@ -533,50 +793,19 @@ test_with_mocked_functions(Functions, TestFun) ->
 				Mocked
 			)
 		end,
-		[
-			{timeout, 120, TestFun}
-		]
+		[{timeout, 900, TestFun}]
 	}.
-
-get_tx_price(DataSize) ->
-	get_tx_price(slave, DataSize, <<>>).
-
-get_tx_price(Node, DataSize, Target) ->
-	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
-	{_, _, _, _, Port} = Peer,
-	Path = "/price/" ++ integer_to_list(DataSize) ++ "/"
-			++ binary_to_list(ar_util:encode(Target)),
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => Path,
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		}),
-	binary_to_integer(Reply).
 
 post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 	CurrentHeight = case Miner of
 		{slave, _MiningNode} ->
 			Height = slave_call(ar_node, get_height, []),
 			lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, TXs),
-			case AwaitOn of
-				{master, _} ->
-					assert_wait_until_receives_txs(TXs);
-				_ ->
-					ok
-			end,
 			slave_mine(),
 			Height;
 		{master, _MiningNode} ->
 			Height = ar_node:get_height(),
 			lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
-			case AwaitOn of
-				{slave, _} ->
-					assert_slave_wait_until_receives_txs(TXs);
-				_ ->
-					ok
-			end,
 			ar_node:mine(),
 			Height
 	end,
@@ -586,7 +815,7 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 			read_block_when_stored(H, true);
 		{slave, _AwaitNode} ->
 			[{H, _, _} | _] = slave_wait_until_height(CurrentHeight + 1),
-			slave_call(ar_test_node, read_block_when_stored, [H, true])
+			slave_call(ar_test_node, read_block_when_stored, [H, true], 20000)
 	end.
 
 read_block_when_stored(H) ->
@@ -615,7 +844,7 @@ read_block_when_stored(H, IncludeTXs) ->
 							end
 						end,
 						200,
-						10000
+						30000
 					)
 			end
 		end,
@@ -678,12 +907,13 @@ assert_get_tx_data(Peer, TXID, ExpectedData) ->
 					true;
 				{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
 					false;
-				UnexpectedResponse ->
-					?debugFmt("Got unexpected response: ~p.", [UnexpectedResponse]),
+				_UnexpectedResponse ->
+					?debugFmt("Got unexpected tx data response. TXID: ~s. Peer: ~s.~n",
+							[ar_util:encode(TXID), ar_util:format_peer(Peer)]),
 					false
 			end
 		end,
-		100,
+		200,
 		120 * 1000
 	),
 	{ok, {{<<"200">>, _}, _, OffsetJSON, _, _}}
@@ -719,7 +949,8 @@ get_tx_data_in_chunks_traverse_forward(Offset, Start, Peer, Bin) ->
 					path => "/chunk/" ++ integer_to_list(Start + 1) }),
 	Map = jiffy:decode(JSON, [return_maps]),
 	Chunk = ar_util:decode(maps:get(<<"chunk">>, Map)),
-	get_tx_data_in_chunks_traverse_forward(Offset, Start + byte_size(Chunk), Peer, [Chunk | Bin]).
+	get_tx_data_in_chunks_traverse_forward(Offset, Start + byte_size(Chunk), Peer,
+			[Chunk | Bin]).
 
 assert_data_not_found_master(TXID) ->
 	assert_data_not_found(master_peer(), TXID).

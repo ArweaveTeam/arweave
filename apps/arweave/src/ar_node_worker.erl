@@ -6,15 +6,17 @@
 
 %%% @doc The server responsible for processing blocks and transactions and
 %%% maintaining the node state. Blocks are prioritized over transactions.
-%%% @end
 -module(ar_node_worker).
 
--export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1]).
-
--export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1,
+-export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,
 		tx_id_prefix/1]).
 
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+		tx_mempool_size/1]).
+-export([set_reward_addr/1]).
+
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
@@ -32,6 +34,7 @@
 %%% Public interface.
 %%%===================================================================
 
+%% @doc Start the server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -45,13 +48,16 @@ tx_id_prefix(TXID) ->
 is_mempool_or_block_cache_tx(TXID) ->
 	ets:match_object(tx_prefixes, {tx_id_prefix(TXID), TXID}) /= [].
 
+set_reward_addr(Addr) ->
+	gen_server:call(?MODULE, {set_reward_addr, Addr}).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init([]) ->
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe([tx, block]),
+	[ok, ok, ok, ok] = ar_events:subscribe([tx, block, nonce_limiter, miner]),
 	%% Initialize RandomX.
 	ar_randomx_state:start(),
 	ar_randomx_state:start_block_polling(),
@@ -59,38 +65,34 @@ init([]) ->
 	load_mempool(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
-	BI =
+	StateLookup =
 		case {Config#config.start_from_block_index, Config#config.init} of
 			{false, false} ->
 				not_joined;
 			{true, _} ->
-				case ar_storage:read_block_index() of
+				case ar_storage:read_block_index_and_price_history() of
 					{error, enoent} ->
 						io:format(
 							"~n~n\tBlock index file is not found. "
 							"If you want to start from a block index copied "
 							"from another node, place it in "
-							"<data_dir>/hash_lists/last_block_index.json~n~n"
+							"<data_dir>/hash_lists/last_block_index_and_price_history.bin~n~n"
 						),
+						timer:sleep(1000),
 						erlang:halt();
-					BI2 ->
-						BI2
+					Result ->
+						Result
 				end;
 			{false, true} ->
 				Config2 = Config#config{ init = false },
 				application:set_env(arweave, config, Config2),
-				ar_weave:init(
-					ar_util:genesis_wallets(),
-					ar_retarget:switch_to_linear_diff(Config#config.diff),
-					0,
-					ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
-				)
+				ar_weave:init([], ar_retarget:switch_to_linear_diff(Config#config.diff))
 		end,
-	case {BI, Config#config.auto_join} of
+	case {StateLookup, Config#config.auto_join} of
 		{not_joined, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
-		{BI, true} ->
-			start_from_block_index(BI);
+		{{BI, PriceHistory}, true} ->
+			start_from_block_index(BI, PriceHistory);
 		{_, false} ->
 			do_nothing
 	end,
@@ -106,35 +108,35 @@ init([]) ->
 		Map
 	),
 	%% May be start mining.
-	IOThreads =
-		case Config#config.mine of
-			true ->
-				gen_server:cast(self(), automine),
-				start_io_threads();
-			_ ->
-				[]
-		end,
-	gen_server:cast(self(), process_task_queue),
+	case Config#config.mine of
+		true ->
+			gen_server:cast(?MODULE, automine);
+		_ ->
+			ok
+	end,
+	gen_server:cast(?MODULE, process_task_queue),
 	ets:insert(node_state, [
 		{is_joined,						false},
 		{hash_list_2_0_for_1_0_blocks,	read_hash_list_2_0_for_1_0_blocks()}
 	]),
 	%% Start the HTTP server.
 	ok = ar_http_iface_server:start(),
+	gen_server:cast(?MODULE, refresh_timestamp),
 	{ok, #{
-		miner => undefined,
+		miner_2_5 => undefined,
+		miner_2_6 => undefined,
+		io_threads => [],
 		automine => false,
 		tags => [],
-		reward_addr => Config#config.mining_addr,
 		blocks_missing_txs => sets:new(),
 		missing_txs_lookup_processes => #{},
-		task_queue => gb_sets:new(),
-		io_threads => IOThreads
+		task_queue => gb_sets:new()
 	}}.
 
 load_mempool() ->
 	case ar_storage:read_term(mempool) of
-		{ok, {TXs, _MempoolSize}} ->
+		{ok, {SerializedTXs, _MempoolSize}} ->
+			TXs = maps:map(fun(_, {TX, St}) -> {deserialize_tx(TX), St} end, SerializedTXs),
 			Map =
 				maps:map(
 					fun(TXID, {TX, Status}) ->
@@ -155,7 +157,8 @@ load_mempool() ->
 				maps:fold(
 					fun(TXID, {TX, Status}, Acc) ->
 						Timestamp = get_or_create_tx_timestamp(TXID),
-						gb_sets:add_element({{ar_tx:utility(TX), Timestamp}, TXID, Status}, Acc)
+						gb_sets:add_element({{ar_tx:utility(TX), Timestamp},
+								TXID, Status}, Acc)
 					end,
 					gb_sets:new(),
 					TXs
@@ -166,7 +169,8 @@ load_mempool() ->
 							Acc;
 						(TXID, {TX, _Status}, Acc) ->
 							Timestamp = get_or_create_tx_timestamp(TXID),
-							gb_sets:add_element({{ar_tx:utility(TX), Timestamp}, TXID}, Acc)
+							gb_sets:add_element({{ar_tx:utility(TX), Timestamp},
+									TXID}, Acc)
 					end,
 					gb_sets:new(),
 					TXs
@@ -194,6 +198,12 @@ load_mempool() ->
 			])
 	end.
 
+deserialize_tx(Bin) when is_binary(Bin) ->
+	{ok, TX} = ar_serialize:binary_to_tx(Bin),
+	TX;
+deserialize_tx(TX) ->
+	ar_storage:migrate_tx_record(TX).
+
 start_tx_mining_timer(TX) ->
 	%% Calling with ar_node_worker: allows to mock calculate_delay/1 in tests.
 	erlang:send_after(ar_node_worker:calculate_delay(tx_propagated_size(TX)), ?MODULE,
@@ -212,21 +222,8 @@ calculate_delay(Bytes) ->
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
 
-start_io_threads() ->
-	%% Start the IO mining processes. The mining server and the hashing
-	%% processes are historically restarted every round, but the IO
-	%% processes keep the database files open for better performance so
-	%% we do not want to restart them.
-	{ok, Config} = application:get_env(arweave, config),
-	ets:insert(mining_state, {session, {make_ref(), os:system_time(second), not_set, not_set}}),
-	SearchInRocksDB = lists:member(search_in_rocksdb_when_mining, Config#config.enable),
-	[spawn_link(
-		fun() ->
-			process_flag(trap_exit, true),
-			ar_chunk_storage:open_files(),
-			ar_mine:io_thread(SearchInRocksDB)
-		end)
-		|| _ <- lists:seq(1, Config#config.io_threads)].
+handle_call({set_reward_addr, Addr}, _From, State) ->
+	{reply, ok, State#{ reward_addr => Addr }}.
 
 handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
 	RunTask =
@@ -265,10 +262,203 @@ handle_info({join, BI, Blocks}, State) ->
 	{ok, _} = ar_wallets:start_link([{blocks, Blocks},
 			{peers, ar_peers:get_trusted_peers()}]),
 	ar_block_index:init(BI),
+	Blocks2 = lists:sublist(Blocks, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
+	Blocks3 = may_be_initialize_nonce_limiter(Blocks2, BI),
+	Blocks4 =
+		case length(Blocks) >= ?SEARCH_SPACE_UPPER_BOUND_DEPTH of
+			true ->
+				Blocks3 ++ lists:nthtail(?SEARCH_SPACE_UPPER_BOUND_DEPTH, Blocks);
+			false ->
+				Blocks3
+		end,
+	ar_events:send(node_state, {initializing, Blocks4}),
 	ets:insert(node_state, [
 		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
-		{joined_blocks,			Blocks}
+		{joined_blocks,			Blocks4}
 	]),
+	{noreply, State};
+
+handle_info(wallets_ready, State) ->
+	[{_, Joined}] = ets:lookup(node_state, is_joined),
+	ets:insert(node_state, {account_tree_initialized}),
+	case ets:member(node_state, nonce_limiter_initialized) andalso not Joined of
+		true ->
+			handle_initialized(State);
+		false ->
+			ok
+	end,
+	{noreply, State};
+
+handle_info({event, nonce_limiter, initialized}, State) ->
+	[{_, Joined}] = ets:lookup(node_state, is_joined),
+	ets:insert(node_state, {nonce_limiter_initialized}),
+	case ets:member(node_state, account_tree_initialized) andalso not Joined of
+		true ->
+			handle_initialized(State);
+		false ->
+			ok
+	end,
+	{noreply, State};
+
+handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
+	?LOG_WARNING([{event, received_block_with_invalid_nonce_limiter_chain},
+			{block, ar_util:encode(H)}, {code, Code}]),
+	ar_block_cache:remove(block_cache, H),
+	gen_server:cast(?MODULE, apply_block),
+	{noreply, State};
+
+handle_info({event, nonce_limiter, {valid, H}}, State) ->
+	ar_block_cache:mark_nonce_limiter_validated(block_cache, H),
+	gen_server:cast(?MODULE, apply_block),
+	{noreply, State};
+
+handle_info({event, nonce_limiter, _}, State) ->
+	{noreply, State};
+
+handle_info({event, miner, {found_solution, _Args}},
+		#{ automine := false, miner_2_6 := undefined } = State) ->
+	{noreply, State};
+handle_info({event, miner, {found_solution, Args}}, State) ->
+	{SolutionH, SolutionPreimage, PartitionNumber, Nonce, IntervalNumber,
+			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
+			RecallByte, RecallByte2, PoA1, PoA2, RewardKey} = Args,
+	[{_, PrevH}] = ets:lookup(node_state, current),
+	[{_, PrevWeaveSize}] = ets:lookup(node_state, weave_size),
+	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
+	Now = os:system_time(second),
+	MaxDeviation = ar_block:get_max_timestamp_deviation(),
+	Timestamp =
+		case Now < PrevTimestamp - MaxDeviation of
+			true ->
+				?LOG_WARNING([{event, clock_out_of_sync},
+						{previous_block, ar_util:encode(PrevH)},
+						{previous_block_timestamp, PrevTimestamp},
+						{our_time, Now},
+						{max_allowed_deviation, MaxDeviation}]),
+				PrevTimestamp - MaxDeviation;
+			false ->
+				Now
+		end,
+	Diff = get_current_diff(Timestamp),
+	PassesDiffCheck = binary:decode_unsigned(SolutionH, big) > Diff,
+	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
+			output = NonceLimiterOutput, last_step_checkpoints = LastStepCheckpoints,
+			prev_output = TipNonceLimiterInfo#nonce_limiter_info.output },
+	PassesTimelineCheck = PassesDiffCheck andalso
+			ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo, TipNonceLimiterInfo),
+	#nonce_limiter_info{ next_seed = PrevNextSeed,
+			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
+	PassesSeedCheck = PassesTimelineCheck andalso
+			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
+	HaveCheckpoints =
+		case PassesSeedCheck of
+			false ->
+				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block}]),
+				false;
+			true ->
+				case PrevStepNumber == StepNumber of
+					true ->
+						TipNonceLimiterInfo#nonce_limiter_info.checkpoints;
+					false ->
+						ar_nonce_limiter:get_checkpoints(PrevStepNumber, StepNumber,
+								PrevNextSeed)
+				end
+		end,
+	case HaveCheckpoints of
+		false ->
+			{noreply, State};
+		not_found ->
+			?LOG_WARNING([{event, did_not_find_checkpoints_for_mined_block},
+					{seed, ar_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
+					{step_number, StepNumber}]),
+			{noreply, State};
+		[NonceLimiterOutput | _] = Checkpoints ->
+			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound}
+					= ar_nonce_limiter:get_seed_data(StepNumber, TipNonceLimiterInfo,
+							PrevH, PrevWeaveSize),
+			NonceLimiterInfo2 = NonceLimiterInfo#nonce_limiter_info{ seed = Seed,
+					next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
+					next_partition_upper_bound = NextPartitionUpperBound,
+					checkpoints = Checkpoints },
+			PrevB = ar_block_cache:get(block_cache, PrevH),
+			Height = PrevB#block.height + 1,
+			{Rate, ScheduledRate} = ar_pricing:recalculate_usd_to_ar_rate(PrevB),
+			{PricePerGiBMinute, ScheduledPricePerGiBMinute} =
+					ar_pricing:recalculate_price_per_gib_minute(PrevB),
+			Denomination = PrevB#block.denomination,
+			{Denomination2, RedenominationHeight2} = ar_pricing:may_be_redenominate(PrevB),
+			PricePerGiBMinute2 = ar_pricing:redenominate(PricePerGiBMinute, Denomination,
+					Denomination2),
+			ScheduledPricePerGiBMinute2 = ar_pricing:redenominate(ScheduledPricePerGiBMinute,
+					Denomination, Denomination2),
+			UnsignedB = pack_block_with_transactions(#block{
+				nonce = Nonce,
+				previous_block = PrevH,
+				timestamp = Timestamp,
+				last_retarget =
+					case ar_retarget:is_retarget_height(Height) of
+						true -> Timestamp;
+						false -> PrevB#block.last_retarget
+					end,
+				diff = Diff,
+				height = Height,
+				hash = SolutionH,
+				hash_list_merkle = ar_block:compute_hash_list_merkle(PrevB),
+				reward_addr = ar_wallet:to_address(RewardKey),
+				tags = [],
+				cumulative_diff =
+					ar_difficulty:next_cumulative_diff(PrevB#block.cumulative_diff, Diff,
+							Height),
+				poa = PoA1,
+				usd_to_ar_rate = Rate,
+				scheduled_usd_to_ar_rate = ScheduledRate,
+				packing_2_5_threshold = 0,
+				strict_data_split_threshold = PrevB#block.strict_data_split_threshold,
+				hash_preimage = SolutionPreimage,
+				recall_byte = RecallByte,
+				previous_solution_hash = PrevB#block.hash,
+				partition_number = PartitionNumber,
+				nonce_limiter_info = NonceLimiterInfo2,
+				poa2 = PoA2,
+				recall_byte2 = RecallByte2,
+				reward_key = element(2, RewardKey),
+				price_per_gib_minute = PricePerGiBMinute2,
+				scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute2,
+				denomination = Denomination2,
+				redenomination_height = RedenominationHeight2
+			}, PrevB),
+			SignedH = ar_block:generate_signed_hash(UnsignedB),
+			Signature = ar_wallet:sign(element(1, RewardKey),
+					<< SignedH/binary, (PrevB#block.hash)/binary >>),
+			H = ar_block:indep_hash2(SignedH, Signature),
+			B = UnsignedB#block{ indep_hash = H, signature = Signature },
+			ar_watchdog:mined_block(H, Height, PrevH),
+			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
+					{txs, length(B#block.txs)}]),
+			PrevBlocks = [PrevB],
+			[{_, RecentBI}] = ets:lookup(node_state, recent_block_index),
+			RecentBI2 = [block_index_entry(B) | RecentBI],
+			[{_, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
+			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
+			ar_block_cache:add(block_cache, B),
+			ar_ignore_registry:add(B#block.indep_hash),
+			State2 = apply_validated_block(State, B, PrevBlocks, [], RecentBI2, BlockTXPairs2),
+			%% Won't be received by itself, but we should let know all "block" subscribers.
+			ar_events:send(block, {new, B, #{ source => miner }}),
+			{noreply, State2};
+		_Checkpoints ->
+			?LOG_ERROR([{event, bad_checkpoints},
+					{prev_block, ar_util:encode(PrevH)},
+					{step_number, StepNumber},
+					{prev_step_number, PrevStepNumber},
+					{prev_next_seed, ar_util:encode(PrevNextSeed)},
+					{output, ar_util:encode(NonceLimiterOutput)}]),
+			{noreply, State}
+	end;
+
+handle_info({event, miner, _}, State) ->
 	{noreply, State};
 
 handle_info({tx_ready_for_mining, TX}, State) ->
@@ -278,36 +468,36 @@ handle_info({tx_ready_for_mining, TX}, State) ->
 
 handle_info({event, block, {new, Block, _Source}}, State)
 		when length(Block#block.txs) > ?BLOCK_TX_COUNT_LIMIT ->
-	?LOG_WARNING([
-		{event, received_block_with_too_many_txs},
-		{block, ar_util:encode(Block#block.indep_hash)},
-		{txs, length(Block#block.txs)}
-	]),
+	?LOG_WARNING([{event, received_block_with_too_many_txs},
+			{block, ar_util:encode(Block#block.indep_hash)}, {txs, length(Block#block.txs)}]),
 	{noreply, State};
 
-handle_info({event, block, {new, Block, _Source}}, State) ->
+handle_info({event, block, {new, B, _Source}}, State) ->
+	H = B#block.indep_hash,
 	%% Record the block in the block cache. Schedule an application of the
 	%% earliest not validated block from the longest chain, if any.
-	case ar_block_cache:get(block_cache, Block#block.indep_hash) of
+	case ar_block_cache:get(block_cache, H) of
 		not_found ->
-			case ar_block_cache:get(block_cache, Block#block.previous_block) of
+			case ar_block_cache:get(block_cache, B#block.previous_block) of
 				not_found ->
 					%% The cache should have been just pruned and this block is old.
+					?LOG_WARNING([{event, block_cache_missing_block},
+							{previous_block, ar_util:encode(B#block.previous_block)},
+							{previous_height, B#block.height - 1},
+							{block, ar_util:encode(H)}]),
 					{noreply, State};
-				_ ->
-					ar_block_cache:add(block_cache, Block),
-					ar_ignore_registry:add(Block#block.indep_hash),
-					gen_server:cast(self(), apply_block),
+				_PrevB ->
+					ar_block_cache:add(block_cache, B),
+					gen_server:cast(?MODULE, apply_block),
 					{noreply, State}
 			end;
 		_ ->
-			ar_ignore_registry:add(Block#block.indep_hash),
 			%% The block's already received from a different peer or
 			%% fetched by ar_poller.
 			{noreply, State}
 	end;
 
-handle_info({event, block, {mined, Block, TXs, CurrentBH, RecallByte}}, State) ->
+handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 	case ets:lookup(node_state, recent_block_index) of
 		[{recent_block_index, [{CurrentBH, _, _} | _] = RecentBI}] ->
 			[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
@@ -315,7 +505,8 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH, RecallByte}}, State) -
 			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
 					Block#block.height),
 			B = Block#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
-			ar_watchdog:mined_block(B#block.indep_hash, B#block.height),
+			ar_watchdog:mined_block(B#block.indep_hash, B#block.height,
+					B#block.previous_block),
 			?LOG_INFO([{event, mined_block},
 					{indep_hash, ar_util:encode(B#block.indep_hash)}, {txs, length(TXs)}]),
 			PrevBlocks = [ar_block_cache:get(block_cache, Current)],
@@ -323,10 +514,9 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH, RecallByte}}, State) -
 			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
 			ar_block_cache:add(block_cache, B),
 			ar_ignore_registry:add(B#block.indep_hash),
-			State2 = apply_validated_block(State, B, PrevBlocks, 0, RecentBI2, BlockTXPairs2),
+			State2 = apply_validated_block(State, B, PrevBlocks, [], RecentBI2, BlockTXPairs2),
 			%% Won't be received by itself, but we should let know all "block" subscribers.
-			ar_events:send(block, {new, Block#block{ txs = TXs }, #{ source => miner,
-					recall_byte => RecallByte }}),
+			ar_events:send(block, {new, Block#block{ txs = TXs }, #{ source => miner }}),
 			{noreply, State2};
 		_ ->
 			?LOG_INFO([{event, ignore_mined_block}, {reason, accepted_foreign_block}]),
@@ -398,47 +588,6 @@ handle_info({event, tx, {dropped, DroppedTX, Reason}}, State) ->
 handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
-handle_info(wallets_ready, State) ->
-	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
-	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
-	B = hd(Blocks),
-	Height = B#block.height,
-	ar_disk_cache:write_block(B),
-	ar_data_sync:join(RecentBI, B#block.packing_2_5_threshold,
-			B#block.strict_data_split_threshold),
-	ar_header_sync:join(Height, RecentBI, Blocks),
-	ar_tx_blacklist:start_taking_down(),
-	Current = element(1, hd(RecentBI)),
-	ar_block_cache:initialize_from_list(block_cache, Blocks),
-	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
-	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
-	{Rate, ScheduledRate} =
-		case Height >= ar_fork:height_2_5() of
-			true ->
-				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
-			false ->
-				{?INITIAL_USD_TO_AR((Height + 1))(), ?INITIAL_USD_TO_AR((Height + 1))()}
-		end,
-	ar:console("Joined the Arweave network successfully.~n"),
-	?LOG_INFO([{event, joined_the_network}]),
-	ets:insert(node_state, [
-		{is_joined,				true},
-		{current,				Current},
-		{wallet_list,			B#block.wallet_list},
-		{height,				B#block.height},
-		{reward_pool,			B#block.reward_pool},
-		{diff,					B#block.diff},
-		{cumulative_diff,		B#block.cumulative_diff},
-		{last_retarget,			B#block.last_retarget},
-		{weave_size,			B#block.weave_size},
-		{block_txs_pairs,		BlockTXPairs},
-		{block_anchors,			BlockAnchors},
-		{recent_txs_map,		RecentTXMap},
-		{usd_to_ar_rate,		Rate},
-		{scheduled_usd_to_ar_rate, ScheduledRate}
-	]),
-	{noreply, reset_miner(State)};
-
 handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
 	#{
 		blocks_missing_txs := Set,
@@ -454,11 +603,11 @@ handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
 	{noreply, State}.
 
-terminate(Reason, #{ miner := Miner }) ->
+terminate(Reason, #{ miner_2_5 := Miner_2_5 }) ->
 	ar_http_iface_server:stop(),
 	case ets:lookup(node_state, is_joined) of
 		[{_, true}] ->
-			case Miner of
+			case Miner_2_5 of
 				undefined -> do_nothing;
 				PID -> ar_mine:stop(PID)
 			end,
@@ -476,11 +625,7 @@ terminate(Reason, #{ miner := Miner }) ->
 		_ ->
 			ok
 	end,
-	?LOG_INFO([
-		{event, ar_node_worker_terminated},
-		{module, ?MODULE},
-		{reason, Reason}
-	]).
+	?LOG_INFO([{event, ar_node_worker_terminated}, {reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.
@@ -498,6 +643,76 @@ record_mempool_size_metrics({HeaderSize, DataSize}) ->
 	prometheus_gauge:set(mempool_header_size_bytes, HeaderSize),
 	prometheus_gauge:set(mempool_data_size_bytes, DataSize).
 
+may_be_initialize_nonce_limiter([#block{ height = Height } = B | Blocks], BI) ->
+	case Height + 1 == ar_fork:height_2_6() of
+		true ->
+			{Seed, PartitionUpperBound, _TXRoot} = ar_node:get_nth_or_last(
+					?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI),
+			Output = crypto:hash(sha256, Seed),
+			NextSeed = B#block.indep_hash,
+			NextPartitionUpperBound = B#block.weave_size,
+			Info = #nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
+					partition_upper_bound = PartitionUpperBound,
+					next_partition_upper_bound = NextPartitionUpperBound },
+			[B#block{ nonce_limiter_info = Info } | Blocks];
+		false ->
+			[B | may_be_initialize_nonce_limiter(Blocks, tl(BI))]
+	end;
+may_be_initialize_nonce_limiter([], _BI) ->
+	[].
+
+handle_initialized(State) ->
+	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
+	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
+	B = hd(Blocks),
+	Height = B#block.height,
+	ar_disk_cache:write_block(B),
+	ar_data_sync:join(RecentBI),
+	ar_header_sync:join(Height, RecentBI, Blocks),
+	ar_tx_blacklist:start_taking_down(),
+	Current = element(1, hd(RecentBI)),
+	ar_block_cache:initialize_from_list(block_cache,
+			lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT)),
+	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
+	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
+	{Rate, ScheduledRate} =
+		case Height >= ar_fork:height_2_5() of
+			true ->
+				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
+			false ->
+				{?INITIAL_USD_TO_AR((Height + 1))(), ?INITIAL_USD_TO_AR((Height + 1))()}
+		end,
+	ets:insert(node_state, [
+		{is_joined,				true},
+		{current,				Current},
+		{timestamp,				B#block.timestamp},
+		{nonce_limiter_info,	B#block.nonce_limiter_info},
+		{wallet_list,			B#block.wallet_list},
+		{height,				Height},
+		{hash,					B#block.hash},
+		{reward_pool,			B#block.reward_pool},
+		{diff,					B#block.diff},
+		{cumulative_diff,		B#block.cumulative_diff},
+		{last_retarget,			B#block.last_retarget},
+		{weave_size,			B#block.weave_size},
+		{block_txs_pairs,		BlockTXPairs},
+		{block_anchors,			BlockAnchors},
+		{recent_txs_map,		RecentTXMap},
+		{usd_to_ar_rate,		Rate},
+		{scheduled_usd_to_ar_rate, ScheduledRate},
+		{price_per_gib_minute, B#block.price_per_gib_minute},
+		{kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
+		{denomination, B#block.denomination},
+		{redenomination_height, B#block.redenomination_height},
+		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
+	]),
+	ar_events:send(node_state, {initialized, B}),
+	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
+	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
+	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+	ar:console("Joined the Arweave network successfully.~n"),
+	?LOG_INFO([{event, joined_the_network}]),
+	{noreply, may_be_reset_miner(State)}.
 
 handle_task(apply_block, State) ->
 	apply_block(State);
@@ -507,9 +722,14 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
 		not_found ->
 			%% The block should have been pruned while we were fetching the missing txs.
 			{noreply, State};
-		{B, not_validated} ->
-			ar_block_cache:add(block_cache, B#block{ txs = TXs }),
-			gen_server:cast(self(), apply_block),
+		{B, {not_validated, _}} ->
+			case ar_block_cache:get(block_cache, B#block.previous_block) of
+				not_found ->
+					ok;
+				_ ->
+					ar_block_cache:add(block_cache, B#block{ txs = TXs })
+			end,
+			gen_server:cast(?MODULE, apply_block),
 			{noreply, State};
 		{_B, _AnotherStatus} ->
 			%% The transactions should have been received and the block validated while
@@ -517,15 +737,8 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
 			{noreply, State}
 	end;
 
-handle_task(mine, #{ io_threads := IOThreads } = State) ->
-	IOThreads2 =
-		case IOThreads of
-			[] ->
-				start_io_threads();
-			_ ->
-				IOThreads
-		end,
-	{noreply, start_mining(State#{ io_threads => IOThreads2 })};
+handle_task(mine, State) ->
+	{noreply, start_mining(State)};
 
 handle_task(automine, State) ->
 	{noreply, start_mining(State#{ automine => true })};
@@ -542,6 +755,12 @@ handle_task({filter_mempool, Iterator}, State) ->
 			[{wallet_list, WalletList}] = ets:lookup(node_state, wallet_list),
 			[{height, Height}] = ets:lookup(node_state, height),
 			[{usd_to_ar_rate, Rate}] = ets:lookup(node_state, usd_to_ar_rate),
+			[{price_per_gib_minute, Price}] = ets:lookup(node_state, price_per_gib_minute),
+			[{kryder_plus_rate_multiplier, KryderPlusRateMultiplier}] = ets:lookup(node_state,
+					kryder_plus_rate_multiplier),
+			[{denomination, Denomination}] = ets:lookup(node_state, denomination),
+			[{redenomination_height, RedenominationHeight}] = ets:lookup(node_state,
+					redenomination_height),
 			[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 			[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
 			[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
@@ -549,8 +768,10 @@ handle_task({filter_mempool, Iterator}, State) ->
 			InvalidTXs =
 				lists:foldl(
 					fun(TX, Acc) ->
-						case ar_tx_replay_pool:verify_tx({TX, Rate, Height, BlockAnchors,
-								RecentTXMap, #{}, Wallets}, do_not_verify_signature) of
+						case ar_tx_replay_pool:verify_tx({TX, Rate, Price,
+								KryderPlusRateMultiplier, Denomination, Height,
+								RedenominationHeight, BlockAnchors, RecentTXMap, #{}, Wallets},
+								do_not_verify_signature) of
 							valid ->
 								Acc;
 							{invalid, _Reason} ->
@@ -570,6 +791,14 @@ handle_task({filter_mempool, Iterator}, State) ->
 			end,
 			{noreply, State}
 	end;
+
+handle_task(refresh_timestamp, #{ miner_2_6 := undefined } = State) ->
+	{noreply, State};
+handle_task(refresh_timestamp, State) ->
+	Diff = get_current_diff(),
+	ar_mining_server:set_difficulty(Diff),
+	ar_util:cast_after(?MINING_TIMESTAMP_REFRESH_INTERVAL, ?MODULE, refresh_timestamp),
+	{noreply, State};
 
 handle_task(Msg, State) ->
 	?LOG_ERROR([
@@ -732,78 +961,54 @@ take_mempool_chunk(Iterator, Size, Taken) ->
 			end
 	end.
 
-apply_block(#{ blocks_missing_txs := BlocksMissingTXs } = State) ->
+apply_block(State) ->
 	case ar_block_cache:get_earliest_not_validated_from_longest_chain(block_cache) of
 		not_found ->
 			%% Nothing to do - we are at the longest known chain already.
 			{noreply, State};
-		{B, PrevBlocks} ->
-			case sets:is_element(B#block.indep_hash, BlocksMissingTXs) of
-				true ->
-					%% We do not have some of the transactions from this block,
-					%% searching for them at the moment.
-					{noreply, State};
-				false ->
-					apply_block(State, B, PrevBlocks)
-			end
+		{B, [PrevB | _PrevBlocks], {{not_validated, awaiting_nonce_limiter_validation},
+				_Timestamp}} ->
+			request_nonce_limiter_validation(B, PrevB),
+			{noreply, State};
+		{_B, _PrevBlocks, {{not_validated, nonce_limiter_validation_scheduled}, _Timestamp}} ->
+			%% Waiting until the nonce limiter chain is validated.
+			{noreply, State};
+		{B, PrevBlocks, {{not_validated, nonce_limiter_validated}, Timestamp}} ->
+			apply_block(B, PrevBlocks, Timestamp, State);
+		{B, PrevBlocks, {{not_validated, awaiting_validation}, Timestamp}} ->
+			%% Pre-2.6 blocks.
+			apply_block(B, PrevBlocks, Timestamp, State)
 	end.
 
-apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
+apply_block(B, PrevBlocks, Timestamp, State) ->
+	#{ blocks_missing_txs := BlocksMissingTXs } = State,
+	case sets:is_element(B#block.indep_hash, BlocksMissingTXs) of
+		true ->
+			%% We do not have some of the transactions from this block,
+			%% searching for them at the moment.
+			{noreply, State};
+		false ->
+			apply_block2(B, PrevBlocks, Timestamp, State)
+	end.
+
+apply_block2(BShadow, PrevBlocks, Timestamp, State) ->
 	#{ blocks_missing_txs := BlocksMissingTXs,
 			missing_txs_lookup_processes := MissingTXsLookupProcesses } = State,
-	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
-	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
 	[{tx_statuses, Mempool}] = ets:lookup(node_state, tx_statuses),
-	Timestamp = erlang:timestamp(),
 	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs, Mempool),
 	case MissingTXIDs of
 		[] ->
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-					BShadow#block.height),
+			Height = BShadow#block.height,
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, Height),
 			B = BShadow#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
-			PrevWalletList = PrevB#block.wallet_list,
-			PrevRewardPool = PrevB#block.reward_pool,
-			PrevHeight = PrevB#block.height,
-			Rate = ar_pricing:usd_to_ar_rate(PrevB),
-			case validate_wallet_list(B, PrevWalletList, PrevRewardPool, Rate, PrevHeight) of
-				error ->
-					BH = B#block.indep_hash,
-					ar_block_cache:remove(block_cache, BH),
-					{noreply, State};
-				{ok, RootHash} ->
-					B2 = B#block{ wallet_list = RootHash },
-					Wallets = ar_wallets:get(PrevWalletList,
-							[B#block.reward_addr | ar_tx:get_addresses(B#block.txs)]),
-					{NOrphaned, RecentBI2} = update_block_index(B, PrevBlocks, RecentBI),
-					BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
-					BlockTXPairs3 = tl(BlockTXPairs2),
-					{BlockAnchors, RecentTXMap} =
-						get_block_anchors_and_recent_txs_map(BlockTXPairs3),
-					RecentBI3 = tl(RecentBI2),
-					SearchSpaceUpperBound = ar_mine:get_search_space_upper_bound(RecentBI3),
-					case ar_node_utils:validate(B2, PrevB, Wallets, BlockAnchors, RecentTXMap,
-							RecentBI3, SearchSpaceUpperBound) of
-						{invalid, Reason} ->
-							?LOG_WARNING([{event, received_invalid_block},
-									{validation_error, Reason}]),
-							BH = B#block.indep_hash,
-							ar_block_cache:remove(block_cache, BH),
-							gen_server:cast(self(), apply_block),
-							{noreply, State};
-						valid ->
-							State2 = apply_validated_block(State, B2, PrevBlocks, NOrphaned,
-									RecentBI2, BlockTXPairs2),
-							ar_watchdog:foreign_block(B#block.indep_hash),
-							record_processing_time(Timestamp),
-							{noreply, State2}
-				end
-			end;
+			apply_block3(B, PrevBlocks, Timestamp, State);
 		_ ->
 			?LOG_INFO([{event, missing_txs_for_block}, {count, length(MissingTXIDs)}]),
 			Self = self(),
 			monitor(
 				process,
-				PID = spawn(fun() -> process_flag(trap_exit, true), get_missing_txs_and_retry(BShadow, Mempool, Self) end)
+				PID = spawn(fun() -> process_flag(trap_exit, true),
+						get_missing_txs_and_retry(BShadow, Mempool, Self) end)
 			),
 			BH = BShadow#block.indep_hash,
 			{noreply, State#{
@@ -811,6 +1016,67 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 				missing_txs_lookup_processes => maps:put(PID, BH, MissingTXsLookupProcesses)
 			}}
 	end.
+
+apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
+	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
+	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
+	RootHash = PrevB#block.wallet_list,
+	TXs = B#block.txs,
+	Accounts = ar_wallets:get(RootHash, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
+	{Orphans, RecentBI2} = update_block_index(B, PrevBlocks, RecentBI),
+	BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
+	BlockTXPairs3 = tl(BlockTXPairs2),
+	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs3),
+	RecentBI3 = tl(RecentBI2),
+	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI3),
+	case ar_node_utils:validate(B, PrevB, Accounts, BlockAnchors, RecentTXMap,
+			PartitionUpperBound) of
+		{invalid, Reason} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, Reason},
+					{h, ar_util:encode(B#block.indep_hash)}]),
+			ar_events:send(block, {rejected, Reason, B#block.indep_hash, no_peer}),
+			BH = B#block.indep_hash,
+			ar_block_cache:remove(block_cache, BH),
+			gen_server:cast(?MODULE, apply_block),
+			{noreply, State};
+		valid ->
+			case validate_wallet_list(B, PrevB) of
+				error ->
+					BH = B#block.indep_hash,
+					ar_block_cache:remove(block_cache, BH),
+					gen_server:cast(?MODULE, apply_block),
+					{noreply, State};
+				{ok, RootHash2} ->
+					B2 = B#block{ wallet_list = RootHash2 },
+					B3 =
+						case B#block.height >= ar_fork:height_2_6() of
+							true ->
+								PriceHistory = PrevB#block.price_history,
+								Reward = B#block.reward,
+								HashRate = ar_difficulty:get_hash_rate(B#block.diff),
+								Denomination2 = B#block.denomination,
+								PriceHistory2 = [{HashRate, Reward, Denomination2}
+										| PriceHistory],
+								Len = ?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
+								PriceHistory3 = lists:sublist(PriceHistory2, Len),
+								B2#block{ price_history = PriceHistory3 };
+							false ->
+								B2
+						end,
+					State2 = apply_validated_block(State, B3, PrevBlocks, Orphans, RecentBI2,
+							BlockTXPairs2),
+					ar_watchdog:foreign_block(B#block.indep_hash),
+					record_processing_time(Timestamp),
+					{noreply, State2}
+			end
+	end.
+
+request_nonce_limiter_validation(#block{ indep_hash = H } = B, PrevB) ->
+	Info = B#block.nonce_limiter_info,
+	PrevInfo = ar_nonce_limiter:get_or_init_nonce_limiter_info(PrevB),
+	ar_nonce_limiter:request_validation(H, Info, PrevInfo),
+	ar_block_cache:mark_nonce_limiter_validation_scheduled(block_cache, H).
 
 pick_txs(TXIDs, TXs) ->
 	lists:foldr(
@@ -838,19 +1104,89 @@ pick_txs(TXIDs, TXs) ->
 		TXIDs
 	).
 
+pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) ->
+	#block{ price_history = PriceHistory } = PrevB,
+	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
+	Rate = ar_pricing:usd_to_ar_rate(PrevB),
+	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
+	Denomination = PrevB#block.denomination,
+	Denomination2 = B#block.denomination,
+	KryderPlusRateMultiplier = PrevB#block.kryder_plus_rate_multiplier,
+	RedenominationHeight = PrevB#block.redenomination_height,
+	Accounts = ar_wallets:get(PrevB#block.wallet_list, ar_tx:get_addresses(TXs)),
+	[{_, BlockAnchors}] = ets:lookup(node_state, block_anchors),
+	[{_, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
+	ValidTXs = ar_tx_replay_pool:pick_txs_to_mine({BlockAnchors, RecentTXMap, Height - 1,
+			RedenominationHeight, Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
+			Denomination, B#block.timestamp, Accounts, TXs}),
+	BlockSize =
+		lists:foldl(
+			fun(TX, Acc) ->
+				Acc + ar_tx:get_weave_size_increase(TX, Height)
+			end,
+			0,
+			ValidTXs
+		),
+	WeaveSize = PrevB#block.weave_size + BlockSize,
+	{Reward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch2,
+			KryderPlusRateMultiplier2} =
+		case ar_pricing:is_v2_pricing_height(Height) of
+			true ->
+				ar_pricing:get_miner_reward_endowment_pool_debt_supply({
+						PrevB#block.reward_pool, PrevB#block.debt_supply, ValidTXs, WeaveSize,
+						Height, PricePerGiBMinute,
+						PrevB#block.kryder_plus_rate_multiplier_latch,
+						PrevB#block.kryder_plus_rate_multiplier, Denomination});
+			false ->
+				{Reward2, EndowmentPool2} = ar_pricing:get_miner_reward_and_endowment_pool({
+						PrevB#block.reward_pool, ValidTXs, B#block.reward_addr, WeaveSize,
+						Height, B#block.timestamp, Rate}),
+				{Reward2, EndowmentPool2, 0, 0, 1}
+		end,
+	Reward3 = ar_pricing:redenominate(Reward, Denomination, Denomination2),
+	EndowmentPool3 = ar_pricing:redenominate(EndowmentPool, Denomination, Denomination2),
+	DebtSupply2 = ar_pricing:redenominate(DebtSupply, Denomination, Denomination2),
+	RewardAddr = B#block.reward_addr,
+	Addresses = [RewardAddr | ar_tx:get_addresses(ValidTXs)],
+	Accounts2 = ar_wallets:get(PrevB#block.wallet_list, Addresses),
+	Accounts3 = ar_node_utils:apply_txs(Accounts2, Denomination, ValidTXs),
+	Accounts4 = ar_node_utils:apply_mining_reward(Accounts3, RewardAddr, Reward, Denomination),
+	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts4, Height,
+			Denomination2),
+	HashRate = ar_difficulty:get_hash_rate(Diff),
+	PriceHistory2 = lists:sublist([{HashRate, Reward3, Denomination2} | PriceHistory],
+			?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+	PriceHistory3 = lists:sublist([{HashRate, Reward3, Denomination2} | PriceHistory],
+			?PRICE_HISTORY_BLOCKS),
+	B#block{
+		wallet_list = RootHash,
+		tx_root = ar_block:generate_tx_root_for_block(ValidTXs, Height),
+		reward_pool = EndowmentPool3,
+		weave_size = WeaveSize,
+		block_size = BlockSize,
+		reward = Reward3,
+		txs = ValidTXs,
+		size_tagged_txs = ar_block:generate_size_tagged_list_from_txs(ValidTXs, Height),
+		price_history = PriceHistory2,
+		price_history_hash = ar_block:price_history_hash(PriceHistory3),
+		debt_supply = DebtSupply2,
+		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch2,
+		kryder_plus_rate_multiplier = KryderPlusRateMultiplier2
+	}.
+
 update_block_index(B, PrevBlocks, BI) ->
 	#block{ indep_hash = H } = lists:last(PrevBlocks),
-	{NOrphaned, Base} = drop_and_count_orphans(BI, H),
-	{NOrphaned, [block_index_entry(B) |
+	{Orphans, Base} = get_orphans(BI, H),
+	{Orphans, [block_index_entry(B) |
 		[block_index_entry(PrevB) || PrevB <- PrevBlocks] ++ Base]}.
 
-drop_and_count_orphans(BI, H) ->
-	drop_and_count_orphans(BI, H, 0).
+get_orphans(BI, H) ->
+	get_orphans(BI, H, []).
 
-drop_and_count_orphans([{H, _, _} | BI], H, N) ->
-	{N, BI};
-drop_and_count_orphans([_ | BI], H, N) ->
-	drop_and_count_orphans(BI, H, N + 1).
+get_orphans([{H, _, _} | BI], H, Orphans) ->
+	{Orphans, BI};
+get_orphans([{OrphanH, _, _} | BI], H, Orphans) ->
+	get_orphans(BI, H, [OrphanH | Orphans]).
 
 block_index_entry(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
@@ -867,19 +1203,45 @@ update_block_txs_pairs2(B, [#block{ indep_hash = H }], BP) ->
 block_txs_pair(B) ->
 	{B#block.indep_hash, B#block.size_tagged_txs}.
 
-validate_wallet_list(B, WalletList, RewardPool, Rate, Height) ->
-	case ar_wallets:apply_block(B, WalletList, RewardPool, Rate, Height) of
+validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
+	case ar_wallets:apply_block(B, PrevB) of
+		{error, invalid_denomination} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_denomination}, {h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_denomination, H, no_peer}),
+			error;
 		{error, invalid_reward_pool} ->
-			?LOG_WARNING([
-				{event, received_invalid_block},
-				{validation_error, invalid_reward_pool}
-			]),
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_reward_pool}, {h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_reward_pool, H, no_peer}),
+			error;
+		{error, invalid_miner_reward} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_miner_reward}, {h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_miner_reward, H, no_peer}),
+			error;
+		{error, invalid_debt_supply} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_debt_supply}, {h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_debt_supply, H, no_peer}),
+			error;
+		{error, invalid_kryder_plus_rate_multiplier_latch} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_kryder_plus_rate_multiplier_latch},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_kryder_plus_rate_multiplier_latch, H,
+					no_peer}),
+			error;
+		{error, invalid_kryder_plus_rate_multiplier} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_kryder_plus_rate_multiplier},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_kryder_plus_rate_multiplier, H, no_peer}),
 			error;
 		{error, invalid_wallet_list} ->
-			?LOG_WARNING([
-				{event, received_invalid_block},
-				{validation_error, invalid_wallet_list}
-			]),
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_wallet_list}, {h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_wallet_list, H, no_peer}),
 			error;
 		{ok, RootHash} ->
 			{ok, RootHash}
@@ -929,20 +1291,30 @@ get_missing_txs_and_retry(H, TXIDs, Mempool, Worker, Peers, TXs, TotalSize) ->
 			get_missing_txs_and_retry(H, Rest, Mempool, Worker, Peers, TXs2, TotalSize2)
 	end.
 
-apply_validated_block(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) ->
+apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	[{_, CDiff}] = ets:lookup(node_state, cumulative_diff),
-	case B#block.cumulative_diff =< CDiff of
+	B2 =
+		case B#block.height + 1 == ar_fork:height_2_6() of
+			true ->
+				Info = ar_nonce_limiter:get_or_init_nonce_limiter_info(B, RecentBI),
+				B3 = B#block{ nonce_limiter_info = Info },
+				ar_events:send(node_state, {validated_pre_fork_2_6_block, B3}),
+				B3;
+			_ ->
+				B
+		end,
+	case B2#block.cumulative_diff =< CDiff of
 		true ->
 			%% The block is from the longest fork, but not the latest known block from there.
-			ar_block_cache:add_validated(block_cache, B),
-			gen_server:cast(self(), apply_block),
-			log_applied_block(B),
+			ar_block_cache:add_validated(block_cache, B2),
+			gen_server:cast(?MODULE, apply_block),
+			log_applied_block(B2),
 			State;
 		false ->
-			apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs)
+			apply_validated_block2(State, B2, PrevBlocks, Orphans, RecentBI, BlockTXPairs)
 	end.
 
-apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) ->
+apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	[{current, CurrentH}] = ets:lookup(node_state, current),
 	PruneDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	BH = B#block.indep_hash,
@@ -957,24 +1329,24 @@ apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) 
 	%% Thefore, it is possible (although not likely) that there are blocks above the new tip,
 	%% for which we trigger a block application here, in order not to wait for the next
 	%% arrived or fetched block to trigger it.
-	gen_server:cast(self(), apply_block),
+	gen_server:cast(?MODULE, apply_block),
 	log_applied_block(B),
 	log_tip(B),
 	maybe_report_n_confirmations(B, RecentBI),
-	record_fork_depth(NOrphaned),
+	prometheus_gauge:set(block_time, B#block.timestamp - (hd(PrevBlocks))#block.timestamp),
+	record_economic_metrics(B, hd(PrevBlocks)),
+	record_fork_depth(Orphans),
 	return_orphaned_txs_to_mempool(CurrentH, (lists:last(PrevBlocks))#block.indep_hash),
 	lists:foldl(
 		fun (CurrentB, start) ->
 				CurrentB;
-			(CurrentB, CurrentPrevB) ->
-				PrevWallets = CurrentPrevB#block.wallet_list,
+			(CurrentB, _CurrentPrevB) ->
 				Wallets = CurrentB#block.wallet_list,
-				Addr = CurrentB#block.reward_addr,
 				Height = CurrentB#block.height,
 				%% Use a twice bigger depth than the depth requested on join to serve
 				%% the wallet trees to the joining nodes.
-				ok =
-					ar_wallets:set_current(PrevWallets, Wallets, Addr, Height, PruneDepth * 2),
+				PruneDepth2 = PruneDepth * 2,
+				ok = ar_wallets:set_current(Wallets, Height, PruneDepth2),
 				CurrentB
 		end,
 		start,
@@ -1000,9 +1372,8 @@ apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) 
 		end,
 	AddedBIElements = tl(lists:reverse([block_index_entry(B)
 			| [block_index_entry(PrevB) || PrevB <- PrevBlocks]])),
-	ar_block_index:update(AddedBIElements, NOrphaned),
-	ar_data_sync:add_tip_block(B#block.packing_2_5_threshold,
-			B#block.strict_data_split_threshold, BlockTXPairs,
+	ar_block_index:update(AddedBIElements, length(Orphans)),
+	ar_data_sync:add_tip_block(BlockTXPairs,
 			lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
 	ar_header_sync:add_tip_block(B, lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
 	lists:foreach(
@@ -1016,20 +1387,65 @@ apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) 
 	ets:insert(node_state, [
 		{recent_block_index,	lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
 		{current,				B#block.indep_hash},
+		{timestamp,				B#block.timestamp},
 		{wallet_list,			B#block.wallet_list},
 		{height,				B#block.height},
+		{hash,					B#block.hash},
 		{reward_pool,			B#block.reward_pool},
 		{diff,					B#block.diff},
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
+		{nonce_limiter_info,	B#block.nonce_limiter_info},
 		{block_txs_pairs,		BlockTXPairs},
 		{block_anchors,			BlockAnchors},
 		{recent_txs_map,		RecentTXMap},
 		{usd_to_ar_rate,		Rate},
-		{scheduled_usd_to_ar_rate, ScheduledRate}
+		{scheduled_usd_to_ar_rate, ScheduledRate},
+		{price_per_gib_minute, B#block.price_per_gib_minute},
+		{kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
+		{denomination, B#block.denomination},
+		{redenomination_height, B#block.redenomination_height},
+		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
 	]),
-	reset_miner(State).
+	ar_events:send(node_state, {new_tip, B, hd(PrevBlocks)}),
+	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
+	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
+	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+	may_be_reset_miner(State).
+
+get_checkpoint_block(RecentBI) ->
+	get_checkpoint_block(RecentBI, 1).
+
+get_checkpoint_block([{H, _, _}], _N) ->
+	%% The genesis block.
+	ar_block_cache:get(block_cache, H);
+get_checkpoint_block([{H, _, _} | BI], N) ->
+	 B = ar_block_cache:get(block_cache, H),
+	 get_checkpoint_block(BI, N + 1, B).
+
+get_checkpoint_block([{H, _, _}], _N, B) ->
+	%% The genesis block.
+	case ar_block_cache:get(block_cache, H) of
+		not_found ->
+			B;
+		B2 ->
+			B2
+	end;
+get_checkpoint_block([{H, _, _} | _], N, B) when N == ?STORE_BLOCKS_BEHIND_CURRENT ->
+	case ar_block_cache:get(block_cache, H) of
+		not_found ->
+			B;
+		B2 ->
+			B2
+	end;
+get_checkpoint_block([{H, _, _} | BI], N, B) ->
+	case ar_block_cache:get(block_cache, H) of
+		not_found ->
+			B;
+		B2 ->
+			get_checkpoint_block(BI, N + 1, B2)
+	end.
 
 log_applied_block(B) ->
 	?LOG_INFO([
@@ -1039,11 +1455,8 @@ log_applied_block(B) ->
 	]).
 
 log_tip(B) ->
-	?LOG_INFO([
-		{event, new_tip_block},
-		{indep_hash, ar_util:encode(B#block.indep_hash)},
-		{height, B#block.height}
-	]).
+	?LOG_INFO([{event, new_tip_block}, {indep_hash, ar_util:encode(B#block.indep_hash)},
+			{height, B#block.height}]).
 
 maybe_report_n_confirmations(B, BI) ->
 	N = 10,
@@ -1060,15 +1473,95 @@ maybe_store_block_index(B) ->
 	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
 		0 ->
 			BI = ar_node:get_block_index(),
-			spawn(fun() -> ar_storage:write_block_index(BI) end);
+			spawn(fun() -> ar_storage:write_block_index_and_price_history(BI,
+					B#block.price_history) end);
 		_ ->
 			ok
 	end.
 
-record_fork_depth(0) ->
+record_fork_depth(Orphans) ->
+	record_fork_depth(Orphans, 0).
+
+record_fork_depth([], 0) ->
 	ok;
-record_fork_depth(Depth) ->
-	prometheus_histogram:observe(fork_recovery_depth, Depth).
+record_fork_depth([], N) ->
+	prometheus_histogram:observe(fork_recovery_depth, N),
+	ok;
+record_fork_depth([H | Orphans], N) ->
+	?LOG_INFO([{event, orphaning_block}, {block, ar_util:encode(H)}]),
+	record_fork_depth(Orphans, N + 1).
+
+record_economic_metrics(B, PrevB) ->
+	case B#block.height >= ar_fork:height_2_5() of
+		false ->
+			ok;
+		true ->
+			record_economic_metrics2(B, PrevB)
+	end.
+
+record_economic_metrics2(B, PrevB) ->
+	prometheus_gauge:set(network_hashrate, ar_difficulty:get_hash_rate(B#block.diff)),
+	prometheus_gauge:set(endowment_pool, B#block.reward_pool),
+	Period_200_Years = 200 * 365 * 24 * 60 * 60,
+	Burden = ar_pricing:get_storage_cost(B#block.weave_size, B#block.timestamp,
+			B#block.usd_to_ar_rate, B#block.height),
+	case B#block.height >= ar_fork:height_2_6() of
+		true ->
+			#block{ price_history = PriceHistory } = B,
+			PriceHistorySize = length(PriceHistory),
+			AverageHashRate = ar_util:safe_divide(lists:sum([HR
+					|| {HR, _, _} <- PriceHistory]), PriceHistorySize),
+			prometheus_gauge:set(average_network_hash_rate, AverageHashRate),
+			AverageBlockReward = ar_util:safe_divide(lists:sum([R
+					|| {_, R, _} <- PriceHistory]), PriceHistorySize),
+			prometheus_gauge:set(average_block_reward, AverageBlockReward),
+			prometheus_gauge:set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
+			Args = {PrevB#block.reward_pool, PrevB#block.debt_supply, B#block.txs,
+					B#block.weave_size, B#block.height, PrevB#block.price_per_gib_minute,
+					PrevB#block.kryder_plus_rate_multiplier_latch,
+					PrevB#block.kryder_plus_rate_multiplier, PrevB#block.denomination},
+			{ExpectedBlockReward,
+					_, _, _, _} = ar_pricing:get_miner_reward_endowment_pool_debt_supply(Args),
+			prometheus_gauge:set(expected_block_reward, ExpectedBlockReward),
+			LegacyPricePerGibibyte = ar_pricing:get_storage_cost(1024 * 1024 * 1024,
+					os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),
+			prometheus_gauge:set(legacy_price_per_gibibyte_minute, LegacyPricePerGibibyte),
+			prometheus_gauge:set(available_supply,
+					?TOTAL_SUPPLY - B#block.reward_pool + B#block.debt_supply),
+			prometheus_gauge:set(debt_supply, B#block.debt_supply);
+		false ->
+			ok
+	end,
+	%% 2.5 metrics:
+	prometheus_gauge:set(network_burden, Burden),
+	Burden_10_USD_AR = ar_pricing:get_storage_cost(B#block.weave_size, B#block.timestamp,
+			{1, 10}, B#block.height),
+	prometheus_gauge:set(network_burden_10_usd_ar, Burden_10_USD_AR),
+	Burden_200_Years = Burden - ar_pricing:get_storage_cost(B#block.weave_size,
+			B#block.timestamp + Period_200_Years, B#block.usd_to_ar_rate, B#block.height),
+	prometheus_gauge:set(network_burden_200_years, Burden_200_Years),
+	Burden_200_Years_10_USD_AR = Burden_10_USD_AR - ar_pricing:get_storage_cost(
+			B#block.weave_size, B#block.timestamp + Period_200_Years, {1, 10}, B#block.height),
+	prometheus_gauge:set(network_burden_200_years_10_usd_ar, Burden_200_Years_10_USD_AR),
+	case catch ar_pricing:get_expected_min_decline_rate(B#block.timestamp,
+			Period_200_Years, B#block.reward_pool, B#block.weave_size, B#block.usd_to_ar_rate,
+			B#block.height) of
+		{'EXIT', _} ->
+			?LOG_ERROR([{event, failed_to_compute_expected_min_decline_rate}]);
+		{RateDivisor, RateDividend} ->
+			prometheus_gauge:set(expected_minimum_200_years_storage_costs_decline_rate,
+					ar_util:safe_divide(RateDivisor, RateDividend))
+	end,
+	case catch ar_pricing:get_expected_min_decline_rate(B#block.timestamp,
+			Period_200_Years, B#block.reward_pool, B#block.weave_size, {1, 10},
+			B#block.height) of
+		{'EXIT', _} ->
+			?LOG_ERROR([{event, failed_to_compute_expected_min_decline_rate2}]);
+		{RateDivisor2, RateDividend2} ->
+			prometheus_gauge:set(
+					expected_minimum_200_years_storage_costs_decline_rate_10_usd_ar,
+					ar_util:safe_divide(RateDivisor2, RateDividend2))
+	end.
 
 return_orphaned_txs_to_mempool(H, H) ->
 	ok;
@@ -1082,33 +1575,95 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 	end, TXs),
 	return_orphaned_txs_to_mempool(PrevH, BaseH).
 
-%% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
-reset_miner(#{ miner := undefined, automine := false } = StateIn) ->
-	StateIn;
-reset_miner(#{ miner := undefined, automine := true } = StateIn) ->
-	start_mining(StateIn);
-reset_miner(#{ miner := Pid, automine := false } = StateIn) ->
+%% @doc Stop the current mining session and optionally start a new one,
+%% depending on the automine setting.
+may_be_reset_miner(#{ miner_2_5 := Miner_2_5, miner_2_6 := Miner_2_6,
+		automine := false } = State) ->
+	case Miner_2_5 of
+		undefined ->
+			ok;
+		_ ->
+			ar_mine:stop(Miner_2_5)
+	end,
+	case Miner_2_6 of
+		undefined ->
+			ok;
+		_ ->
+			ar_mining_server:pause()
+	end,
+	State#{ miner_2_5 => undefined, miner_2_6 => undefined };
+may_be_reset_miner(#{ miner_2_5 := undefined } = State) ->
+	start_mining(State);
+may_be_reset_miner(#{ miner_2_5 := Pid } = State) ->
 	ar_mine:stop(Pid),
-	StateIn#{ miner => undefined };
-reset_miner(#{ miner := Pid, automine := true } = StateIn) ->
-	ar_mine:stop(Pid),
-	start_mining(StateIn#{ miner => undefined }).
+	start_mining(State#{ miner_2_5 => undefined }).
 
-%% @doc Force a node to start mining, update state.
-start_mining(StateIn) ->
-	#{ reward_addr := RewardAddr, tags := Tags, io_threads := IOThreads } = StateIn,
+start_mining(State) ->
+	[{height, Height}] = ets:lookup(node_state, height),
+	case Height + 1 >= ar_fork:height_2_6() of
+		true ->
+			Diff = get_current_diff(),
+			case maps:get(miner_2_6, State) of
+				undefined ->
+					ar_mining_server:start_mining({Diff}),
+					State#{ miner_2_6 => running };
+				_ ->
+					ar_mining_server:set_difficulty(Diff),
+					State
+			end;
+		false ->
+			start_2_5_mining(State)
+	end.
+
+get_current_diff() ->
+	get_current_diff(os:system_time(second)).
+
+get_current_diff(TS) ->
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', height},
+					{'==', '$1', diff},
+					{'==', '$1', last_retarget},
+					{'==', '$1', timestamp}}], ['$_']}]
+		),
+	Height = proplists:get_value(height, Props),
+	Diff = proplists:get_value(diff, Props),
+	LastRetarget = proplists:get_value(last_retarget, Props),
+	PrevTS = proplists:get_value(timestamp, Props),
+	ar_retarget:maybe_retarget(Height + 1, Diff, TS, LastRetarget, PrevTS).
+
+start_2_5_mining(State) ->
+	State2 = may_be_start_2_5_io_threads(State),
+	#{ tags := Tags, io_threads := IOThreads } = State2,
 	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
 	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
 	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 	[{current, Current}] = ets:lookup(node_state, current),
 	ar_watchdog:started_hashing(),
 	B = ar_block_cache:get(block_cache, Current),
-	SearchSpaceUpperBound = ar_mine:get_search_space_upper_bound(RecentBI),
+	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI),
+	{ok, Config} = application:get_env(arweave, config),
+	RewardAddr = maps:get(reward_addr, State2, Config#config.mining_addr),
 	Miner = ar_mine:start({B, collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
-			RewardAddr, Tags, BlockAnchors, RecentTXMap, SearchSpaceUpperBound,
-			RecentBI, IOThreads}),
+			RewardAddr, Tags, BlockAnchors, RecentTXMap, PartitionUpperBound, IOThreads}),
 	?LOG_INFO([{event, started_mining}]),
-	StateIn#{ miner => Miner }.
+	State2#{ miner_2_5 => Miner }.
+
+may_be_start_2_5_io_threads(#{ io_threads := IOThreads } = State) ->
+	IOThreads2 =
+		case IOThreads of
+			[] ->
+				start_2_5_io_threads();
+			_ ->
+				IOThreads
+		end,
+	State#{ io_threads => IOThreads2 }.
+
+start_2_5_io_threads() ->
+	ar_mine:start_io_threads().
 
 collect_mining_transactions(Limit) ->
 	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
@@ -1167,13 +1722,25 @@ read_hash_list_2_0_for_1_0_blocks() ->
 			[]
 	end.
 
-start_from_block_index([#block{} = GenesisB]) ->
+start_from_block_index([#block{} = GenesisB], PriceHistory) ->
 	BI = [ar_util:block_index_entry_from_block(GenesisB)],
-	ar_randomx_state:init(BI, []),
-	self() ! {join, BI, [GenesisB]};
-start_from_block_index(BI) ->
-	ar_randomx_state:init(BI, []),
-	self() ! {join, BI, read_recent_blocks(BI)}.
+	case ar_fork:height_2_6() of
+		0 ->
+			ok;
+		_ ->
+			ar_randomx_state:init(BI, [])
+	end,
+	self() ! {join, BI, [GenesisB#block{ price_history = PriceHistory }]};
+start_from_block_index(BI, PriceHistory) ->
+	case length(BI) - 1 - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_6() of
+		true ->
+			ok;
+		_ ->
+			ar_randomx_state:init(BI, [])
+	end,
+	Blocks = read_recent_blocks(BI),
+	Blocks2 = ar_join:set_price_history(Blocks, PriceHistory),
+	self() ! {join, BI, Blocks2}.
 
 read_recent_blocks(not_joined) ->
 	[];
@@ -1189,7 +1756,8 @@ read_recent_blocks2([{BH, _, _} | BI]) ->
 	[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | read_recent_blocks2(BI)].
 
 dump_mempool(TXs, MempoolSize) ->
-	case ar_storage:write_term(mempool, {TXs, MempoolSize}) of
+	SerializedTXs = maps:map(fun(_, {TX, St}) -> {ar_serialize:tx_to_binary(TX), St} end, TXs),
+	case ar_storage:write_term(mempool, {SerializedTXs, MempoolSize}) of
 		ok ->
 			ok;
 		{error, Reason} ->

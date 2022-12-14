@@ -1,18 +1,8 @@
 %%% @doc An implementation of a tree closely resembling a merkle patricia tree.
 -module(ar_patricia_tree).
 
--export([
-	new/0,
-	insert/3,
-	get/2,
-	size/1,
-	compute_hash/2,
-	foldr/3,
-	is_empty/1,
-	from_proplist/1,
-	delete/2,
-	get_range/2, get_range/3
-]).
+-export([new/0, insert/3, get/2, size/1, compute_hash/2, foldr/3, is_empty/1, from_proplist/1,
+		delete/2, get_range/2, get_range/3]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -113,7 +103,8 @@ insert(Key, Value, Tree, Level, Parent) ->
 								Size
 						end,
 					UpdatedNode = {NodeParent, NodeChildren, no_hash, NodeSuffix, {v, Value}},
-					invalidate_hash(NodeParent, Tree#{ KeyPrefix => UpdatedNode, size => Size2 });
+					invalidate_hash(NodeParent,
+							Tree#{ KeyPrefix => UpdatedNode, size => Size2 });
 				{_, _, true} when KeySuffix > NodeSuffix ->
 					insert(Key, Value, Tree, Level + byte_size(NodeSuffix) + 1, KeyPrefix);
 				{_, true, _} when KeySuffix < NodeSuffix ->
@@ -324,8 +315,10 @@ delete(Key, Tree, Level) ->
 										true ->
 											delete2(KeyPrefix, Parent, Tree2);
 										false ->
-											Node2 = {Parent, Children, no_hash, Suffix, no_value},
-											invalidate_hash(Parent, Tree2#{ KeyPrefix => Node2 })
+											Node2 = {Parent, Children, no_hash, Suffix,
+													no_value},
+											invalidate_hash(Parent,
+													Tree2#{ KeyPrefix => Node2 })
 									end
 							end
 					end
@@ -429,7 +422,8 @@ get_next_start_from_sibling(Key, Parent, Tree) ->
 			{_, NextSiblingChildren, _, _, MaybeValue} = NextSibling,
 			case MaybeValue of
 				no_value ->
-					get_next_start_from_children(NextSiblingKey, Key, NextSiblingChildren, Tree);
+					get_next_start_from_children(NextSiblingKey, Key, NextSiblingChildren,
+							Tree);
 				{v, _} ->
 					{{NextSiblingKey, NextSibling}, Tree}
 			end
@@ -540,7 +534,8 @@ trie_test() ->
 	?assertEqual(3, get(<<"aab">>, T6)),
 	?assertEqual(2, get(<<"ab">>, T6)),
 	?assertEqual(4, get(<<"abc">>, T6)),
-	?assertEqual([{<<"abc">>, 4}, {<<"ab">>, 2}, {<<"aab">>, 3}], get_range(<<"aab">>, 20, T6)),
+	?assertEqual([{<<"abc">>, 4}, {<<"ab">>, 2}, {<<"aab">>, 3}],
+			get_range(<<"aab">>, 20, T6)),
 	?assertEqual([{<<"abc">>, 4}], get_range(<<"abc">>, 20, T6)),
 	?assertEqual([{<<"abc">>, 4}, {<<"ab">>, 2}], get_range(<<"ab">>, 20, T6)),
 	?assertEqual(
@@ -559,7 +554,8 @@ trie_test() ->
 	?assertEqual(3, get(<<"aab">>, T7)),
 	?assertEqual(4, get(<<"abc">>, T7)),
 	?assertEqual(4, get(<<"bcdefj">>, T7)),
-	?assertEqual([{<<"bcdefj">>, 4}, {<<"abc">>, 4}, {<<"ab">>, 2}], get_range(<<"ab">>, 3, T7)),
+	?assertEqual([{<<"bcdefj">>, 4}, {<<"abc">>, 4}, {<<"ab">>, 2}],
+			get_range(<<"ab">>, 3, T7)),
 	?assertEqual([], get_range(0, T7)),
 	%% a -> a -> a -> 1
 	%%           b -> 3
@@ -634,7 +630,8 @@ trie_test() ->
 	),
 	?assertEqual(H10, ar_deep_hash:hash([H10_1, H10_2])),
 	{H10_2_1, _} = compute_hash(insert(<<"bab">>, 7, new()), HashFun),
-	{H10_2_2, _} = compute_hash(insert(<<"bcdbcd">>, 6, insert(<<"bcdefj">>, 4, new())), HashFun),
+	{H10_2_2, _} = compute_hash(insert(<<"bcdbcd">>, 6,
+			insert(<<"bcdefj">>, 4, new())), HashFun),
 	?assertEqual(H10_2, ar_deep_hash:hash([H10_2_1, H10_2_2])),
 	?assertNotEqual(H10, element(1, compute_hash(delete(<<"ab">>, T10), HashFun))),
 	%% a -> a -> a -> 1
@@ -782,13 +779,9 @@ trie_test() ->
 	?assertNotEqual(H18, H17),
 	?assertEqual([{<<>>, empty}], get_range(<<>>, 1, T18)),
 	?assertEqual([{<<>>, empty}], get_range(1, T18)),
-	?assertEqual(
-		[
-			{<<"bcdefj">>, 4}, {<<"bcdbc">>, 10}, {<<"bab">>, 7}, {<<"baa">>, 9}, {<<"abc">>, 4},
-			{<<"ab">>, 2}, {<<"aab">>, 3}, {<<>>, empty}
-		],
-		get_range(<<>>, 20, T18)
-	),
+	?assertEqual([{<<"bcdefj">>, 4}, {<<"bcdbc">>, 10}, {<<"bab">>, 7}, {<<"baa">>, 9},
+			{<<"abc">>, 4}, {<<"ab">>, 2}, {<<"aab">>, 3}, {<<>>, empty}],
+			get_range(<<>>, 20, T18)),
 	?assertEqual(
 		[
 			{<<"bcdefj">>, 4},
@@ -830,10 +823,10 @@ trie_test() ->
 	?assertNotEqual(
 		element(1,
 			compute_hash(insert(<<"aab">>, 1, insert(<<"aaa">>, 1, insert(<<"a">>, 2, new()))),
-				HashFun)),
+					HashFun)),
 		element(1,
-			compute_hash(insert(<<"aab">>, 1, insert(<<"aaa">>, 1, insert(<<"aa">>, 2, new()))),
-				HashFun))
+			compute_hash(insert(<<"aab">>, 1, insert(<<"aaa">>, 1,
+					insert(<<"aa">>, 2, new()))), HashFun))
 	).
 
 stochastic_test() ->

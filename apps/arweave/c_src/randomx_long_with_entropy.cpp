@@ -11,6 +11,24 @@
 // can improve performance for less memcpy (has almost no impact because randomx is too long 99+%)
 
 extern "C" {
+	void randomx_calculate_hash_long(randomx_vm *machine, const unsigned char *input, const size_t inputSize, unsigned char *output, const int randomxProgramCount) {
+		assert(machine != nullptr);
+		assert(inputSize == 0 || input != nullptr);
+		assert(output != nullptr);
+		alignas(16) uint64_t tempHash[8];
+		int blakeResult = blake2b(tempHash, sizeof(tempHash), input, inputSize, nullptr, 0);
+		assert(blakeResult == 0);
+		machine->initScratchpad(&tempHash);
+		machine->resetRoundingMode();
+		for (int chain = 0; chain < randomxProgramCount - 1; ++chain) {
+			machine->run(&tempHash);
+			blakeResult = blake2b(tempHash, sizeof(tempHash), machine->getRegisterFile(), sizeof(randomx::RegisterFile), nullptr, 0);
+			assert(blakeResult == 0);
+		}
+		machine->run(&tempHash);
+		machine->getFinalResult(output, RANDOMX_HASH_SIZE);
+	}
+
 	void randomx_calculate_hash_long_with_entropy(randomx_vm *machine, const unsigned char *input, const size_t inputSize, unsigned char *output, unsigned char *outputEntropy, const int randomxProgramCount) {
 		assert(machine != nullptr);
 		assert(inputSize == 0 || input != nullptr);

@@ -17,7 +17,7 @@
 %% The tolerance used in the inflation schedule tests.
 -define(DEFAULT_TOLERANCE_PERCENT, 0.001).
 
-%% Height at which the 1.5.0.0 fork takes affect.
+%% Height at which the 1.5.0.0 fork takes effect.
 -ifdef(DEBUG).
 %% The inflation tests serve as a documentation of how rewards are computed.
 %% Therefore, we keep the mainnet value in these tests. Other tests have
@@ -28,7 +28,7 @@
 -endif.
 
 %% BLOCK_PER_YEAR macro prior to 1.5.0.0 release.
--define(PRE_15_BLOCK_PER_YEAR, 525600 / (?TARGET_TIME/60) ).
+-define(PRE_15_BLOCK_PER_YEAR, 525600 / (?TARGET_TIME / 60) ).
 
 %% The number of extra tokens to grant for blocks between the 1.5.0.0 release
 %% and the end of year one.

@@ -9,7 +9,7 @@
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
--include_lib("arweave/include/ar_mine.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 -define(HANDLER_TIMEOUT, 55000).
 
@@ -62,21 +62,23 @@ loop(TimeoutRef) ->
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
 			{stop, RepliedReq};
 		{read_complete_body, From, Req, SizeLimit} ->
-			Term = ar_http_req:body(Req, SizeLimit),
-			From ! {read_complete_body, Term},
+			case catch ar_http_req:body(Req, SizeLimit) of
+				Term ->
+					From ! {read_complete_body, Term}
+			end,
 			loop(TimeoutRef);
 		{read_body_chunk, From, Req, Size, Timeout} ->
-			Term = ar_http_req:read_body_chunk(Req, Size, Timeout),
-			From ! {read_body_chunk, Term},
+			case catch ar_http_req:read_body_chunk(Req, Size, Timeout) of
+				Term ->
+					From ! {read_body_chunk, Term}
+			end,
 			loop(TimeoutRef);
 		{timeout, HandlerPid, InitialReq} ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
-			?LOG_WARNING([
-				{event, handler_timeout},
-				{method, cowboy_req:method(InitialReq)},
-				{path, cowboy_req:path(InitialReq)}
-			]),
+			?LOG_WARNING([{event, handler_timeout},
+					{method, cowboy_req:method(InitialReq)},
+					{path, cowboy_req:path(InitialReq)}]),
 			RepliedReq = cowboy_req:reply(500, #{}, <<"Handler timeout">>, InitialReq),
 			{stop, RepliedReq}
 	end.
@@ -104,7 +106,9 @@ handle(Peer, Req, Pid) ->
 		{Status, Hdrs, Body, HandledReq} ->
 			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
 		{Status, Body, HandledReq} ->
-			{Status, ?CORS_HEADERS, Body, HandledReq}
+			{Status, ?CORS_HEADERS, Body, HandledReq};
+		{error, timeout} ->
+			{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
 -ifdef(TESTNET).
@@ -249,15 +253,19 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 										bad_query ->
 											{400, #{}, <<"Invalid query.">>, Req2};
 										sqlite_parser_stack_overflow ->
-											{400, #{}, <<"The query nesting depth is too big.">>, Req2};
-										{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
+											{400, #{},
+												<<"The query nesting depth is too big.">>, Req2};
+										{'EXIT', {timeout,
+												{gen_server, call, [ar_arql_db, _]}}} ->
 											{503, #{}, <<"ArQL unavailable.">>, Req2}
 									end;
 								{error, _} ->
 									{400, #{}, <<"Invalid ARQL query.">>, Req2}
 							end;
 						{error, body_size_too_large} ->
-							{413, #{}, <<"Payload too large">>, Req}
+							{413, #{}, <<"Payload too large">>, Req};
+						{error, timeout} ->
+							{500, #{}, <<"Handler timeout">>, Req}
 					end
 			end;
 		false ->
@@ -292,7 +300,7 @@ handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
 			not_joined(Req);
 		true ->
 			ok = ar_semaphore:acquire(get_sync_record, infinity),
-			case ar_sync_record:get_serialized_sync_buckets(ar_data_sync) of
+			case ar_global_sync_record:get_serialized_sync_buckets() of
 				{ok, Binary} ->
 					{200, #{}, Binary, Req};
 				{error, not_initialized} ->
@@ -316,7 +324,7 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 			end,
 			ok = ar_semaphore:acquire(get_sync_record, infinity),
 			Options = #{ format => Format, random_subset => true },
-			case ar_sync_record:get_record(Options, ar_data_sync) of
+			case ar_global_sync_record:get_serialized_sync_record(Options) of
 				{ok, Binary} ->
 					{200, #{}, Binary, Req};
 				{error, timeout} ->
@@ -434,46 +442,8 @@ handle(<<"POST">>, [<<"block_announcement">>], Req, Pid) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case catch ar_serialize:binary_to_block_announcement(Body) of
-				{ok, #block_announcement{ indep_hash = H, previous_block = PrevH,
-						tx_prefixes = Prefixes, recall_byte = RecallByte }} ->
-					case ar_ignore_registry:member(H) of
-						true ->
-							{208, #{}, <<>>, Req};
-						false ->
-							case ar_node:get_block_shadow_from_cache(PrevH) of
-								not_found ->
-									{412, #{}, <<>>, Req};
-								_ ->
-									Indices = collect_missing_tx_indices(Prefixes),
-									MissingChunk =
-										case RecallByte of
-											undefined ->
-												true;
-											_ ->
-												prometheus_counter:inc(
-														block_announcement_reported_chunks),
-												case ar_sync_record:is_recorded(RecallByte + 1,
-														ar_data_sync) of
-													{true, spora_2_5} ->
-														false;
-													_ ->
-														prometheus_counter:inc(
-															block_announcement_missing_chunks),
-														true
-												end
-										end,
-									prometheus_counter:inc(
-											block_announcement_reported_transactions,
-											length(Prefixes)),
-									prometheus_counter:inc(
-											block_announcement_missing_transactions,
-											length(Indices)),
-									Response = #block_announcement_response{
-											missing_chunk = MissingChunk,
-											missing_tx_indices = Indices },
-									{200, #{}, ar_serialize:block_announcement_response_to_binary(Response), Req2}
-							end
-					end;
+				{ok, Announcement} ->
+					handle_block_announcement(Announcement, Req2);
 				{'EXIT', _Reason} ->
 					{400, #{}, <<>>, Req2};
 				{error, _Reason} ->
@@ -499,9 +469,9 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
-			{{_, PubKey}, _} = ar_wallet:new_keyfile(WalletAccessCode),
+			{_, Pub} = ar_wallet:new_keyfile(?DEFAULT_KEY_TYPE, WalletAccessCode),
 			ResponseProps = [
-				{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(PubKey))},
+				{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(Pub))},
 				{<<"wallet_access_code">>, WalletAccessCode}
 			],
 			{200, #{}, ar_serialize:jsonify({ResponseProps}), Req};
@@ -539,7 +509,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					FullTxProps = lists:append(
 						proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
 						[
-							{<<"id">>, ar_util:encode(<<"id placeholder">>)},
+							{<<"id">>, ar_util:encode(crypto:strong_rand_bytes(32))},
 							{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
 							{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
 						]
@@ -571,7 +541,9 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 							{Status, Headers, ErrBody, Req2}
 					end;
 				{error, body_size_too_large} ->
-					{413, #{}, <<"Payload too large">>, Req}
+					{413, #{}, <<"Payload too large">>, Req};
+				{error, timeout} ->
+					{500, #{}, <<"Handler timeout">>, Req}
 			end;
 		{true, {reject, {Status, Headers, Body}}} ->
 			{Status, Headers, Body, Req}
@@ -603,29 +575,181 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req, _Pid) ->
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
 				Size ->
-					Fee = estimate_tx_fee(Size, no_wallet),
+					{Fee, _Denomination} = estimate_tx_fee(Size, <<>>),
 					{200, #{}, integer_to_binary(Fee), Req}
 			end
 	end;
 
-%% Return the estimated transaction fee not including a new wallet fee.
-%% GET request to endpoint /price/{bytes}/{address}.
-handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
+%% Return the estimated transaction fee not (including a new wallet fee) along with the
+%% denomination code.
+%% GET request to endpoint /price2/{bytes}.
+handle(<<"GET">>, [<<"price2">>, SizeInBytesBinary], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+				Size ->
+					{Fee, Denomination} = estimate_tx_fee(Size, <<>>),
+					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+							denomination => Denomination }), Req}
+			end
+	end;
+
+%% Return the optimistic transaction fee not (including a new wallet fee) along with the
+%% denomination code.
+%% GET request to endpoint /optimistic_price/{bytes}.
+handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+				Size ->
+					{Fee, Denomination} = estimate_tx_fee(Size, <<>>, optimistic),
+					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+							denomination => Denomination }), Req}
+			end
+	end;
+
+%% Return the estimated transaction fee (including a new wallet fee if the given address
+%% is not found in the account tree).
+%% GET request to endpoint /price/{bytes}/{address}.
+handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+					EncodedAddr) of
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
-				{ok, AddrOK} ->
+				{ok, Addr} ->
 					case catch binary_to_integer(SizeInBytesBinary) of
 						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+									Req};
 						Size ->
-							Fee = estimate_tx_fee(Size, AddrOK),
+							{Fee, _Denomination} = estimate_tx_fee(Size, Addr),
 							{200, #{}, integer_to_binary(Fee), Req}
 					end
+			end
+	end;
+
+%% Return the estimated transaction fee (including a new wallet fee if the given address
+%% is not found in the account tree) along with the denomination code.
+%% GET request to endpoint /price2/{bytes}/{address}.
+handle(<<"GET">>, [<<"price2">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+					EncodedAddr) of
+				{error, invalid} ->
+					{400, #{}, <<"Invalid address.">>, Req};
+				{ok, Addr} ->
+					case catch binary_to_integer(SizeInBytesBinary) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+									Req};
+						Size ->
+							{Fee, Denomination} = estimate_tx_fee(Size, Addr),
+							{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+									denomination => Denomination }), Req}
+					end
+			end
+	end;
+
+%% Return the estimated transaction fee (including a new wallet fee if the given address
+%% is not found in the account tree) along with the denomination code.
+%% GET request to endpoint /optimistic_price/{bytes}/{address}.
+handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+					EncodedAddr) of
+				{error, invalid} ->
+					{400, #{}, <<"Invalid address.">>, Req};
+				{ok, Addr} ->
+					case catch binary_to_integer(SizeInBytesBinary) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+									Req};
+						Size ->
+							{Fee, Denomination} = estimate_tx_fee(Size, Addr, optimistic),
+							{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+									denomination => Denomination }), Req}
+					end
+			end
+	end;
+
+%% Return the estimated transaction fee not including a new wallet fee. The fee is estimated
+%% using the new pricing scheme.
+%% GET request to endpoint /v2price/{bytes}.
+handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+				Size ->
+					Fee = estimate_tx_fee_v2(Size, <<>>),
+					{200, #{}, integer_to_binary(Fee), Req}
+			end
+	end;
+
+%% Return the estimated transaction fee (including a new wallet fee if the given address
+%% is not found in the account tree). The fee is estimated using the new pricing scheme.
+%% GET request to endpoint /v2price/{bytes}/{address}.
+handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+					EncodedAddr) of
+				{error, invalid} ->
+					{400, #{}, <<"Invalid address.">>, Req};
+				{ok, Addr} ->
+					case catch binary_to_integer(SizeInBytesBinary) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+									Req};
+						Size ->
+							Fee = estimate_tx_fee_v2(Size, Addr),
+							{200, #{}, integer_to_binary(Fee), Req}
+					end
+			end
+	end;
+
+handle(<<"GET">>, [<<"price_history">>, EncodedBH], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_util:safe_decode(EncodedBH) of
+				{ok, BH} ->
+					Fork_2_6 = ar_fork:height_2_6(),
+					case ar_block_cache:get_block_and_status(block_cache, BH) of
+						{#block{ height = Height, price_history = PriceHistory }, Status}
+								when (Status == on_chain orelse Status == validated),
+									Height >= Fork_2_6 ->
+							{200, #{}, ar_serialize:price_history_to_binary(PriceHistory),
+									Req};
+						_ ->
+							{404, #{}, <<>>, Req}
+					end;
+				{error, invalid} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req}
 			end
 	end;
 
@@ -678,8 +802,8 @@ handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
 				BI3 = lists:sublist(BI2, ToHeight - FromHeight + 1),
 				{200, #{},
 					ar_serialize:jsonify(
-						ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI3, Req))
-					), Req}
+						ar_serialize:block_index_to_json_struct(
+							format_bi_for_peer(BI3, Req))), Req}
 			catch _:_ ->
 				{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
 			end
@@ -707,7 +831,8 @@ handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
 				{ok, Body, Req2} ->
 					case decode_recent_hash_list(Body) of
 						{ok, ReverseHL} ->
-							BlockTXPairs = ar_node:get_block_txs_pairs(),
+							BlockTXPairs = ar_block_cache:get_longest_chain_block_txs_pairs(
+									block_cache),
 							case get_recent_hash_list_diff(ReverseHL,
 									lists:reverse(BlockTXPairs)) of
 								no_intersection ->
@@ -756,7 +881,8 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid
 	end;
 
 %% Return the balance of the given address from the wallet tree with the given root hash.
-handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req, _Pid) ->
+handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req,
+		_Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -1196,6 +1322,9 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 	end.
 
 estimate_tx_fee(Size, Addr) ->
+	estimate_tx_fee(Size, Addr, pessimistic).
+
+estimate_tx_fee(Size, Addr, Type) ->
 	Props =
 		ets:select(
 			node_state,
@@ -1204,28 +1333,85 @@ estimate_tx_fee(Size, Addr) ->
 					{'==', '$1', height},
 					{'==', '$1', wallet_list},
 					{'==', '$1', usd_to_ar_rate},
-					{'==', '$1', scheduled_usd_to_ar_rate}}], ['$_']}]
+					{'==', '$1', scheduled_usd_to_ar_rate},
+					{'==', '$1', price_per_gib_minute},
+					{'==', '$1', denomination},
+					{'==', '$1', scheduled_price_per_gib_minute},
+					{'==', '$1', kryder_plus_rate_multiplier}}], ['$_']}]
 		),
 	Height = proplists:get_value(height, Props),
 	CurrentRate = proplists:get_value(usd_to_ar_rate, Props),
 	ScheduledRate = proplists:get_value(scheduled_usd_to_ar_rate, Props),
-	%% Of the two rates - the currently active one and the one scheduled to be
-	%% used soon - pick the one that leads to a higher fee in AR to make sure the
-	%% transaction does not become underpaid.
-	Rate = ar_fraction:maximum(CurrentRate, ScheduledRate),
+	CurrentPricePerGiBMinute =  proplists:get_value(price_per_gib_minute, Props),
+	Denomination = proplists:get_value(denomination, Props),
+	ScheduledPricePerGiBMinute = proplists:get_value(scheduled_price_per_gib_minute, Props),
+	KryderPlusRateMultiplier = proplists:get_value(kryder_plus_rate_multiplier, Props),
+	Rate =
+		case Type of
+			pessimistic ->
+				%% Of the two rates - the currently active one and the one scheduled to be
+				%% used soon - pick the one that leads to a higher fee in AR to make sure the
+				%% transaction does not become underpaid.
+				ar_fraction:maximum(CurrentRate, ScheduledRate);
+			optimistic ->
+				ar_fraction:minimum(CurrentRate, ScheduledRate)
+		end,
+	PricePerGiBMinute =
+		case Type of
+			pessimistic ->
+				max(CurrentPricePerGiBMinute, ScheduledPricePerGiBMinute);
+			optimistic ->
+				min(CurrentPricePerGiBMinute, ScheduledPricePerGiBMinute)
+		end,
 	RootHash = proplists:get_value(wallet_list, Props),
-	PaidSize = ar_tx:get_weave_size_increase(Size, Height + 1),
-	estimate_tx_fee(PaidSize, Rate, Height + 1, Addr, RootHash).
-
-estimate_tx_fee(Size, Rate, Height, Addr, RootHash) ->
+	Accounts =
+		case Addr of
+			<<>> ->
+				#{};
+			_ ->
+				ar_wallets:get(RootHash, Addr)
+		end,
+	Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
 	Timestamp = os:system_time(second),
-	case Addr of
-		no_wallet ->
-			ar_tx:get_tx_fee(Size, Rate, Height, Timestamp);
-		_ ->
-			Wallets = ar_wallets:get(RootHash, Addr),
-			ar_tx:get_tx_fee(Size, Rate, Height, Wallets, Addr, Timestamp)
-	end.
+	Args = {Size2, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Timestamp,
+			Accounts, Height + 1},
+	Denomination2 =
+		case Height >= ar_fork:height_2_6() of
+			true ->
+				Denomination;
+			false ->
+				0
+		end,
+	{ar_tx:get_tx_fee(Args), Denomination2}.
+
+estimate_tx_fee_v2(Size, Addr) ->
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', height},
+					{'==', '$1', wallet_list},
+					{'==', '$1', price_per_gib_minute},
+					{'==', '$1', scheduled_price_per_gib_minute},
+					{'==', '$1', kryder_plus_rate_multiplier}}], ['$_']}]
+		),
+	Height = proplists:get_value(height, Props),
+	CurrentPricePerGiBMinute = proplists:get_value(price_per_gib_minute, Props),
+	ScheduledPricePerGiBMinute = proplists:get_value(scheduled_price_per_gib_minute, Props),
+	KryderPlusRateMultiplier = proplists:get_value(kryder_plus_rate_multiplier, Props),
+	PricePerGiBMinute = max(CurrentPricePerGiBMinute, ScheduledPricePerGiBMinute),
+	RootHash = proplists:get_value(wallet_list, Props),
+	Accounts =
+		case Addr of
+			<<>> ->
+				#{};
+			_ ->
+				ar_wallets:get(RootHash, Addr)
+		end,
+	Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
+	Args = {Size2, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height + 1},
+	ar_tx:get_tx_fee2(Args).
 
 handle_get_wallet_txs(Addr, EarliestTXID) ->
 	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
@@ -1307,12 +1493,11 @@ handle_get_block(H, Req, Pid, Encoding) ->
 					%% include the requested transactions without doing disk lookups.
 					case read_complete_body(Req, Pid, ?MAX_SERIALIZED_MISSING_TX_INDICES) of
 						{ok, Body, Req2} ->
-							case parse_missing_tx_indices(Body) of
+							case ar_util:parse_list_indices(Body) of
 								error ->
 									{400, #{}, <<>>, Req2};
 								Indices ->
-									SortedTXs = lists:sort(B#block.txs),
-									Map = collect_missing_transactions(SortedTXs, Indices),
+									Map = collect_missing_transactions(B#block.txs, Indices),
 									TXs2 = [maps:get(TX#tx.id, Map, TX#tx.id)
 											|| TX <- B#block.txs],
 									handle_get_block3(B#block{ txs = TXs2 }, Req2, binary)
@@ -1350,23 +1535,6 @@ handle_get_block3(B, Req, Encoding) ->
 		end,
 	{200, #{}, Bin, Req}.
 
-parse_missing_tx_indices(Input) ->
-	parse_missing_tx_indices(Input, 0).
-
-parse_missing_tx_indices(<< 0:1, Rest/bitstring >>, N) ->
-	parse_missing_tx_indices(Rest, N + 1);
-parse_missing_tx_indices(<< 1:1, Rest/bitstring >>, N) ->
-	case parse_missing_tx_indices(Rest, N + 1) of
-		error ->
-			error;
-		Indices ->
-			[N | Indices]
-	end;
-parse_missing_tx_indices(<<>>, _N) ->
-	[];
-parse_missing_tx_indices(_BadInput, _N) ->
-	error.
-
 collect_missing_transactions(TXs, Indices) ->
 	collect_missing_transactions(TXs, Indices, 0).
 
@@ -1394,18 +1562,20 @@ handle_post_tx({Req, Pid, Encoding}) ->
 							{400, #{}, <<"Invalid hash.">>, Req2};
 						{error, tx_already_processed, _TXID, Req2} ->
 							{208, #{}, <<"Transaction already processed.">>, Req2};
+						{error, invalid_signature_type, Req2} ->
+							{400, #{}, <<"Invalid signature type.">>, Req2};
 						{error, invalid_json, Req2} ->
 							{400, #{}, <<"Invalid JSON.">>, Req2};
 						{error, body_size_too_large, Req2} ->
 							{413, #{}, <<"Payload too large">>, Req2};
-						{ok, TX} ->
+						{ok, TX, Req2} ->
 							Peer = ar_http_util:arweave_peer(Req),
-							case handle_post_tx(Req, Peer, TX) of
+							case handle_post_tx(Req2, Peer, TX) of
 								ok ->
-									{200, #{}, <<"OK">>, Req};
+									{200, #{}, <<"OK">>, Req2};
 								{error_response, {Status, Headers, Body}} ->
 									ar_ignore_registry:remove_temporary(TX#tx.id),
-									{Status, Headers, Body, Req}
+									{Status, Headers, Body, Req2}
 							end
 					end
 			end
@@ -1474,7 +1644,7 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 				etf
 		end,
 	Options = #{ start => Start, limit => Limit, format => Format },
-	case ar_sync_record:get_record(Options, ar_data_sync) of
+	case ar_global_sync_record:get_serialized_sync_record(Options) of
 		{ok, Binary} ->
 			{200, #{}, Binary, Req};
 		{error, timeout} ->
@@ -1495,6 +1665,22 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								unpacked;
 							<<"spora_2_5">> ->
 								spora_2_5;
+							<< Type:10/binary, Addr:44/binary >>
+									when Type == <<"spora_2_6_">> ->
+								case ar_util:safe_decode(Addr) of
+									{ok, DecodedAddr} ->
+										{spora_2_6, DecodedAddr};
+									_ ->
+										any
+								end;
+							<< Type:10/binary, Addr:44/binary >>
+									when Type == <<"spora_2_6_">> ->
+								case ar_util:safe_decode(Addr) of
+									{ok, DecodedAddr} ->
+										{spora_2_6, DecodedAddr};
+									_ ->
+										any
+								end;
 							_ ->
 								any
 						end,
@@ -1509,13 +1695,13 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 						case ar_sync_record:is_recorded(Offset, ar_data_sync) of
 							false ->
 								{none, {reply, {404, #{}, <<>>, Req}}};
-							{true, RequestedPacking} ->
+							{{true, RequestedPacking}, _StoreID} ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{RequestedPacking, ok};
-							{true, Packing} when RequestedPacking == any ->
+							{{true, Packing}, _StoreID} when RequestedPacking == any ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{Packing, ok};
-							{true, _} ->
+							{{true, _}, _StoreID} ->
 								ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
 								{RequestedPacking, ok}
 						end,
@@ -1644,7 +1830,10 @@ handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
 	end;
 handle_post_chunk(validate_proof, Proof, Req) ->
 	Parent = self(),
-	spawn(fun() -> Parent ! ar_data_sync:add_chunk(Proof) end),
+	#{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
+			data_root := DataRoot } = Proof,
+	spawn(fun() ->
+			Parent ! ar_data_sync:add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) end),
 	receive
 		ok ->
 			{200, #{}, <<>>, Req};
@@ -1770,6 +1959,64 @@ val_for_key(K, L) ->
 		{K, V} -> V
 	end.
 
+handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = PrevH,
+		tx_prefixes = Prefixes, recall_byte = RecallByte, recall_byte2 = RecallByte2 }, Req) ->
+	case ar_ignore_registry:member(H) of
+		true ->
+			{208, #{}, <<>>, Req};
+		false ->
+			case ar_node:get_block_shadow_from_cache(PrevH) of
+				not_found ->
+					{412, #{}, <<>>, Req};
+				#block{ height = Height } ->
+					Indices = collect_missing_tx_indices(Prefixes),
+					MissingChunk =
+						case RecallByte of
+							undefined ->
+								true;
+							_ ->
+								prometheus_counter:inc(block_announcement_reported_chunks),
+								case {ar_sync_record:is_recorded(RecallByte + 1,
+										ar_data_sync), Height + 1 >= ar_fork:height_2_6()} of
+									{{{true, spora_2_5}, _StoreID}, false} ->
+										false;
+									{{{true, _}, _StoreID}, true} ->
+										false;
+									_ ->
+										prometheus_counter:inc(
+												block_announcement_missing_chunks),
+										true
+								end
+						end,
+					MissingChunk2 =
+						case RecallByte2 of
+							undefined ->
+								undefined;
+							_ ->
+								prometheus_counter:inc(block_announcement_reported_chunks),
+								case {ar_sync_record:is_recorded(RecallByte2 + 1,
+										ar_data_sync), Height + 1 >= ar_fork:height_2_6()} of
+									{_, false} ->
+										undefined;
+									{{{true, _}, _}, true} ->
+										false;
+									_ ->
+										prometheus_counter:inc(
+												block_announcement_missing_chunks),
+										true
+								end
+						end,
+					prometheus_counter:inc(block_announcement_reported_transactions,
+							length(Prefixes)),
+					prometheus_counter:inc(block_announcement_missing_transactions,
+							length(Indices)),
+					Response = #block_announcement_response{ missing_chunk = MissingChunk,
+							missing_tx_indices = Indices, missing_chunk2 = MissingChunk2 },
+					{200, #{}, ar_serialize:block_announcement_response_to_binary(Response),
+							Req}
+			end
+	end.
+
 collect_missing_tx_indices(Prefixes) ->
 	collect_missing_tx_indices(Prefixes, [], 0).
 
@@ -1783,32 +2030,39 @@ collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
 			collect_missing_tx_indices(Prefixes, Indices, N + 1)
 	end.
 
-%% @doc Handle multiple steps of POST /block. First argument is a subcommand,
-%% second the argument for that subcommand.
 post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-	OrigPeer = ar_http_util:arweave_peer(Req),
-	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
+	Peer = ar_http_util:arweave_peer(Req),
+	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
-			case ar_node:is_joined() of
-				true ->
-					post_block(check_block_hash_header, OrigPeer, {Req, Pid, Encoding},
-									ReceiveTimestamp);
-				false ->
-					%% The node is not ready to validate and accept blocks.
-					%% If the network adopts this block, ar_poller will catch up.
-					{503, #{}, <<"Not joined.">>, Req}
-			end;
+			post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp);
 		banned ->
 			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
 	end.
 
-post_block(check_block_hash_header, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-	%% Look up the block hash in the "already processing/processed" registry
-	%% for POST /block. We are gradually moving to using POST /block2 - its handler
-	%% does the check in post_block_process_announcement/4.
+post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
+	case ar_node:is_joined() of
+		true ->
+			ConfirmedHeight = ar_node:get_height() - ?STORE_BLOCKS_BEHIND_CURRENT,
+			case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
+				{json, true} ->
+					%% We gesticulate it explicitly here that POST /block is not
+					%% supported after the 2.6 fork. However, this check is not strictly
+					%% necessary because ar_serialize:json_struct_to_block/1 fails
+					%% unless the block height is smaller than the fork 2.6 height.
+					{400, #{}, <<>>, Req};
+				_ ->
+					post_block(check_block_hash_header, Peer, {Req, Pid, Encoding},
+							ReceiveTimestamp)
+			end;
+		false ->
+			%% The node is not ready to validate and accept blocks.
+			%% If the network adopts this block, ar_poller will catch up.
+			{503, #{}, <<"Not joined.">>, Req}
+	end;
+post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
 		not_set ->
-			post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp);
+			post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp);
 		EncodedBH ->
 			case ar_util:safe_decode(EncodedBH) of
 				{ok, BH} when byte_size(BH) =< 48 ->
@@ -1816,14 +2070,14 @@ post_block(check_block_hash_header, OrigPeer, {Req, Pid, Encoding}, ReceiveTimes
 						true ->
 							{208, #{}, <<"Block already processed.">>, Req};
 						false ->
-							post_block(read_body, OrigPeer, {Req, Pid, Encoding},
+							post_block(read_body, Peer, {Req, Pid, Encoding},
 									ReceiveTimestamp)
 					end;
 				_ ->
-					post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp)
+					post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp)
 			end
 	end;
-post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
+post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case decode_block(Body, Encoding) of
@@ -1833,165 +2087,47 @@ post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 					ReadBodyTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp),
 					erlang:put(read_body_time, ReadBodyTime),
 					erlang:put(body_size, byte_size(term_to_binary(BShadow))),
-					case byte_size(BShadow#block.indep_hash) > 48 of
-						true ->
-							{400, #{}, <<"Invalid block.">>, Req2};
-						false ->
-							post_block(check_indep_hash_processed, {BShadow, OrigPeer}, Req2,
-									ReceiveTimestamp)
-					end
+					post_block(check_transactions_are_present, {BShadow, Peer}, Req2,
+							ReceiveTimestamp)
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req}
 	end;
-post_block(check_indep_hash_processed, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
-	case ar_ignore_registry:member(BShadow#block.indep_hash) of
-		true ->
-			{208, #{}, <<"Block already processed.">>, Req};
-		false ->
-			post_block(check_transactions_are_present, {BShadow, OrigPeer}, Req,
-					ReceiveTimestamp)
-	end;
-post_block(check_transactions_are_present, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
+post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestamp) ->
 	case erlang:get(post_block2) of
 		true ->
 			case get_missing_tx_identifiers(BShadow#block.txs) of
 				[] ->
-					post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
+					post_block(enqueue_block, {BShadow, Peer}, Req, ReceiveTimestamp);
 				{error, tx_list_too_long} ->
 					{400, #{}, <<>>, Req};
 				MissingTXIDs ->
 					{418, #{}, encode_txids(MissingTXIDs), Req}
 			end;
 		_ -> % POST /block; do not reject for backwards-compatibility
-			post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp)
+			post_block(enqueue_block, {BShadow, Peer}, Req, ReceiveTimestamp)
 	end;
-post_block(may_be_fetch_chunk, {#block{ poa = #poa{ chunk = <<>> } } = BShadow, OrigPeer},
-		Req, ReceiveTimestamp) ->
-	case cowboy_req:header(<<"arweave-recall-byte">>, Req, not_set) of
-		not_set ->
-			post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
-		Bin ->
-			case catch binary_to_integer(Bin) of
-				{'EXIT', _} ->
-					post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
-				RecallByte ->
-					case ar_data_sync:get_chunk(RecallByte + 1, #{ pack => false,
-							packing => spora_2_5, bucket_based_offset => true }) of
-						{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
-							erlang:put(fetched_chunk, true),
-							post_block(check_indep_hash, {BShadow#block{
-									poa = #poa{ chunk = Chunk, data_path = DataPath,
-											tx_path = TXPath } }, OrigPeer}, Req,
-											ReceiveTimestamp);
-						_ ->
-							{419, #{}, <<>>, Req}
-					end
-			end
-	end;
-post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
-	post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
-post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
-	BH = BShadow#block.indep_hash,
-	PrevH = BShadow#block.previous_block,
-	case ar_node:get_block_shadow_from_cache(PrevH) of
-		not_found ->
-			%% We have not seen the previous block yet - might happen if two
-			%% successive blocks are distributed at the same time. Do not
-			%% ban the peer as the block might be valid. If the network adopts
-			%% this block, ar_poller will catch up.
-			{412, #{}, <<>>, Req};
-		#block{ height = PrevHeight } = PrevB ->
-			case BShadow#block.height == PrevHeight + 1 of
-				false ->
-					{400, #{}, <<"Invalid block.">>, Req};
-				true ->
-					case catch compute_hash(BShadow) of
-						{BDS, BH} ->
-							ar_ignore_registry:add_temporary(BH, 5000),
-							post_block(
-								check_timestamp,
-								{BShadow, OrigPeer, BDS, PrevB},
-								Req,
-								ReceiveTimestamp
-							);
-						_ ->
-							post_block_reject_warn(BShadow, check_indep_hash, OrigPeer),
-							{400, #{}, <<"Invalid Block Hash">>, Req}
-					end
-			end
-	end;
-post_block(check_timestamp, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp) ->
-	%% Verify the timestamp of the block shadow.
-	case ar_block:verify_timestamp(BShadow) of
-		false ->
-			post_block_reject_warn(
-				BShadow,
-				check_timestamp,
-				OrigPeer,
-				[{block_time, BShadow#block.timestamp},
-				 {current_time, os:system_time(seconds)}]
-			),
-			ar_ignore_registry:remove_temporary(BShadow#block.indep_hash),
-			%% If the network actually applies this block, but we received it
-			%% late for some reason, ar_poller will fetch and apply it.
-			{400, #{}, <<"Invalid timestamp.">>, Req};
-		true ->
-			post_block(check_difficulty, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp)
-	end;
-%% The min difficulty check is filtering out blocks from smaller networks, e.g.
-%% testnets. Therefore, we don't want to log when this check or any check above
-%% rejects the block because there are potentially a lot of rejections.
-post_block(check_difficulty, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp) ->
-	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
-		true ->
-			post_block(check_pow, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp);
-		_ ->
-			ar_ignore_registry:remove_temporary(BShadow#block.indep_hash),
-			{400, #{}, <<"Difficulty too low">>, Req}
-	end;
-%% Note! Checking PoW should be as cheap as possible. All slow steps should
-%% be after the PoW check to reduce the possibility of doing a DOS attack on
-%% the network.
-post_block(check_pow, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp) ->
-	#block{ indep_hash = PrevH } = PrevB,
-	MaybeValid =
-		case ar_node:get_recent_search_space_upper_bound_by_prev_h(PrevH) of
-			not_found ->
-				{reply, {412, #{}, <<>>, Req}};
-			SearchSpaceUpperBound ->
-				validate_spora_pow(BShadow, PrevB, BDS, SearchSpaceUpperBound)
+post_block(enqueue_block, {B, Peer}, Req, Timestamp) ->
+	B2 =
+		case B#block.height >= ar_fork:height_2_6() of
+			true ->
+				B;
+			false ->
+				case cowboy_req:header(<<"arweave-recall-byte">>, Req, not_set) of
+					not_set ->
+						B;
+					ByteBin ->
+						case catch binary_to_integer(ByteBin) of
+							RecallByte when is_integer(RecallByte) ->
+								B#block{ recall_byte = RecallByte };
+							_ ->
+								B
+						end
+				end
 		end,
-	case MaybeValid of
-		{reply, Reply} ->
-			Reply;
-		{true, RecallByte} ->
-			post_block(post_block, {BShadow, OrigPeer, RecallByte}, Req, ReceiveTimestamp);
-		false ->
-			post_block_reject_warn(BShadow, check_pow, OrigPeer),
-			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
-			{400, #{}, <<"Invalid Block Proof of Work">>, Req}
-	end;
-post_block(post_block, {BShadow, OrigPeer, RecallByte}, Req, ReceiveTimestamp) ->
-	record_block_pre_validation_time(ReceiveTimestamp),
-	?LOG_INFO([{event, ar_http_iface_handler_accepted_block},
-			{indep_hash, ar_util:encode(BShadow#block.indep_hash)}]),
-	%% Include all transactions found in the mempool in place of the corresponding
-	%% transaction identifiers so that we can gossip them to peers who miss them
-	%% along with the block.
-	B = BShadow#block{ txs = include_transactions(BShadow#block.txs) },
-	ar_events:send(block, {new, B, #{ source => {peer, OrigPeer},
-			recall_byte => RecallByte }}),
-	ar_events:send(peer, {gossiped_block, OrigPeer, erlang:get(read_body_time),
-			erlang:get(body_size)}),
-	prometheus_counter:inc(block2_received_transactions,
-			count_received_transactions(BShadow#block.txs)),
-	case erlang:get(fetched_chunk) of
-		true ->
-			prometheus_counter:inc(block2_fetched_chunks);
-		_ ->
-			ok
-	end,
+	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
+	ar_block_pre_validator:pre_validate(B2, Peer, Timestamp, erlang:get(read_body_time),
+			erlang:get(body_size)),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->
@@ -2016,114 +2152,6 @@ get_missing_tx_identifiers([TXID | TXIDs], MissingTXIDs, N) ->
 			get_missing_tx_identifiers(TXIDs, [TXID | MissingTXIDs], N + 1)
 	end.
 
-compute_hash(B) ->
-	BDS = ar_block:generate_block_data_segment(B),
-	Hash = B#block.hash,
-	Nonce = B#block.nonce,
-	{BDS, ar_weave:indep_hash(BDS, Hash, Nonce, B#block.poa)}.
-
-validate_spora_pow(B, PrevB, BDS, SearchSpaceUpperBound) ->
-	#block{ height = PrevHeight, indep_hash = PrevH } = PrevB,
-	#block{ height = Height, nonce = Nonce, timestamp = Timestamp,
-			poa = #poa{ chunk = Chunk } = SPoA } = B,
-	Root = ar_block:compute_hash_list_merkle(PrevB),
-	case {Root, PrevHeight + 1} == {B#block.hash_list_merkle, Height} of
-		false ->
-			false;
-		true ->
-			{H0, Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height),
-			{ComputeSolutionHash, RecallByte} =
-				case ar_mine:pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
-					{error, weave_size_too_small} ->
-						case SPoA == #poa{} of
-							false ->
-								{false, undefined};
-							true ->
-								{ar_mine:spora_solution_hash(PrevH, Timestamp, H0, <<>>,
-										Height), undefined}
-						end;
-					{ok, Byte} ->
-						PackingThreshold = ar_block:get_packing_threshold(PrevB,
-								SearchSpaceUpperBound),
-						case verify_packing_threshold(B, PackingThreshold) of
-							false ->
-								{false, Byte};
-							true ->
-								case Byte >= PackingThreshold of
-									true ->
-										{ar_mine:spora_solution_hash_with_entropy(
-												PrevH, Timestamp, H0, Chunk, Entropy,
-												Height), Byte};
-									false ->
-										{ar_mine:spora_solution_hash(PrevH, Timestamp,
-												H0, Chunk, Height), Byte}
-								end
-						end
-				end,
-			case ComputeSolutionHash of
-				false ->
-					false;
-				SolutionHash ->
-					case ar_mine:validate(SolutionHash, B#block.diff, Height)
-							andalso SolutionHash == B#block.hash of
-						false ->
-							false;
-						true ->
-							{true, RecallByte}
-					end
-			end
-	end.
-
-verify_packing_threshold(_B, undefined) ->
-	true;
-verify_packing_threshold(#block{ packing_2_5_threshold = PackingThreshold }, PackingThreshold) ->
-	true;
-verify_packing_threshold(_, _) ->
-	false.
-
-post_block_reject_warn(BShadow, Step, Peer) ->
-	?LOG_WARNING([
-		{event, post_block_rejected},
-		{hash, ar_util:encode(BShadow#block.indep_hash)},
-		{step, Step},
-		{peer, ar_util:format_peer(Peer)}
-	]).
-
-post_block_reject_warn(BShadow, Step, Peer, Params) ->
-	?LOG_WARNING([
-		{event, post_block_rejected},
-		{hash, ar_util:encode(BShadow#block.indep_hash)},
-		{step, Step},
-		{params, Params},
-		{peer, ar_util:format_peer(Peer)}
-	]).
-
-record_block_pre_validation_time(ReceiveTimestamp) ->
-	TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,
-	prometheus_histogram:observe(block_pre_validation_time, TimeMs).
-
-include_transactions([#tx{} = TX | TXs]) ->
-	[TX | include_transactions(TXs)];
-include_transactions([]) ->
-	[];
-include_transactions([TXID | TXs]) ->
-	case ets:lookup(node_state, {tx, TXID}) of
-		[] ->
-			[TXID | include_transactions(TXs)];
-		[{_, TX}] ->
-			[TX | include_transactions(TXs)]
-	end.
-
-count_received_transactions(TXs) ->
-	count_received_transactions(TXs, 0).
-
-count_received_transactions([#tx{} | TXs], N) ->
-	count_received_transactions(TXs, N + 1);
-count_received_transactions([_ | TXs], N) ->
-	count_received_transactions(TXs, N);
-count_received_transactions([], N) ->
-	N.
-
 decode_recent_hash_list(<<>>) ->
 	{ok, []};
 decode_recent_hash_list(<< H:48/binary, Rest/binary >>) ->
@@ -2136,9 +2164,14 @@ decode_recent_hash_list(<< H:48/binary, Rest/binary >>) ->
 decode_recent_hash_list(_Rest) ->
 	error.
 
-get_recent_hash_list_diff([H | HL], [{H, _TXIDs} | BlockTXPairs]) ->
-	get_recent_hash_list_diff(HL, BlockTXPairs, H);
-get_recent_hash_list_diff(_, _) ->
+get_recent_hash_list_diff([H | HL], BlockTXPairs) ->
+	case lists:dropwhile(fun({BH, _TXIDs}) -> BH /= H end, BlockTXPairs) of
+		[] ->
+			get_recent_hash_list_diff(HL, BlockTXPairs);
+		Tail ->
+			get_recent_hash_list_diff(HL, tl(Tail), H)
+	end;
+get_recent_hash_list_diff([], _BlockTXPairs) ->
 	no_intersection.
 
 get_recent_hash_list_diff([H | HL], [{H, _SizeTaggedTXs} | BlockTXPairs], _PrevH) ->
@@ -2146,19 +2179,13 @@ get_recent_hash_list_diff([H | HL], [{H, _SizeTaggedTXs} | BlockTXPairs], _PrevH
 get_recent_hash_list_diff(_HL, BlockTXPairs, PrevH) ->
 	<< PrevH/binary, (get_recent_hash_list_diff(BlockTXPairs))/binary >>.
 
-get_recent_hash_list_diff([{H, SizeTaggedTXs} | BlockTXPairs]) ->
-	{Len, TXIDs} = get_txids_from_size_tagged_txs(SizeTaggedTXs),
+get_recent_hash_list_diff([{H, TXIDs} | BlockTXPairs]) ->
+	Len = length(TXIDs),
 	<< H:48/binary, Len:16,
 			(iolist_to_binary([TXID || TXID <- TXIDs]))/binary,
 			(get_recent_hash_list_diff(BlockTXPairs))/binary >>;
 get_recent_hash_list_diff([]) ->
 	<<>>.
-
-get_txids_from_size_tagged_txs([{{TXID, _}, _} | SizeTaggedTXs]) ->
-	{N, L} = get_txids_from_size_tagged_txs(SizeTaggedTXs),
-	{N + 1, [TXID | L]};
-get_txids_from_size_tagged_txs([]) ->
-	{0, []}.
 
 %% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
@@ -2274,8 +2301,8 @@ process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
 wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 	SerializedWallets =
 		lists:map(
-			fun({Addr, {Balance, LastTX}}) ->
-				ar_serialize:wallet_to_json_struct({Addr, Balance, LastTX})
+			fun({Addr, Value}) ->
+				ar_serialize:wallet_to_json_struct(Addr, Value)
 			end,
 			Wallets
 		),
@@ -2352,7 +2379,9 @@ post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
 					post_tx_parse_id(parse_binary, {TXID, Req2, Body, Timestamp})
 			end;
 		{error, body_size_too_large} ->
-			{error, body_size_too_large, Req}
+			{error, body_size_too_large, Req};
+		{error, timeout} ->
+			{error, timeout}
 	end;
 post_tx_parse_id(parse_json, {TXID, Req, Body, Timestamp}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
@@ -2364,6 +2393,15 @@ post_tx_parse_id(parse_json, {TXID, Req, Body, Timestamp}) ->
 					ar_ignore_registry:remove_temporary(TXID)
 			end,
 			{error, invalid_json, Req};
+		{error, invalid_signature_type} ->
+            case TXID of
+                not_set ->
+                    noop;
+                _ ->
+                    ar_ignore_registry:remove_temporary(TXID),
+					ar_tx_db:put_error_codes(TXID, [<<"invalid_signature_type">>])
+            end,
+            {error, invalid_signature_type, Req};
 		{error, _} ->
 			case TXID of
 				not_set ->
@@ -2406,7 +2444,7 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	TXID = TX#tx.id,
 	case MaybeTXID of
 		TXID ->
-			{ok, TX};
+			{ok, TX, Req};
 		MaybeNotSet ->
 			case MaybeNotSet of
 				not_set ->
@@ -2423,7 +2461,7 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 							{error, tx_already_processed, TXID, Req};
 						false ->
 							ar_ignore_registry:add_temporary(TXID, 5000),
-							{ok, TX}
+							{ok, TX, Req}
 					end
 			end
 	end.
@@ -2434,11 +2472,27 @@ read_complete_body(Req, Pid) ->
 read_complete_body(Req, Pid, SizeLimit) ->
 	Pid ! {read_complete_body, self(), Req, SizeLimit},
 	receive
-		{read_complete_body, Term} -> Term
+		{read_complete_body, {'EXIT', timeout}} ->
+			?LOG_WARNING([{event, body_read_cowboy_timeout}, {method, cowboy_req:method(Req)},
+					{path, cowboy_req:path(Req)}]),
+			{error, timeout};
+		{read_complete_body, Term} ->
+			Term
 	end.
 
 read_body_chunk(Req, Pid, Size, Timeout) ->
 	Pid ! {read_body_chunk, self(), Req, Size, Timeout},
 	receive
-		{read_body_chunk, Term} -> Term
+		{read_body_chunk, {'EXIT', timeout}} ->
+			Peer = ar_http_util:arweave_peer(Req),
+			?LOG_DEBUG([{event, body_read_cowboy_timeout}, {method, cowboy_req:method(Req)},
+					{path, cowboy_req:path(Req)}, {peer, ar_util:format_peer(Peer)}]),
+			{error, timeout};
+		{read_body_chunk, Term} ->
+			Term
+	after Timeout ->
+		Peer = ar_http_util:arweave_peer(Req),
+		?LOG_DEBUG([{event, body_read_timeout}, {method, cowboy_req:method(Req)},
+				{path, cowboy_req:path(Req)}, {peer, ar_util:format_peer(Peer)}]),
+		{error, timeout}
 	end.

@@ -13,6 +13,7 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 %% ===================================================================
@@ -33,7 +34,7 @@ init([]) ->
 			(Hook) when is_record(Hook, config_webhook) ->
 				Handler = {ar_webhook, Hook#config_webhook.url},
 				{Handler, {ar_webhook, start_link, [Hook]},
-					permanent, 30000, worker, [ar_webhook]};
+					permanent, ?SHUTDOWN_TIMEOUT, worker, [ar_webhook]};
 			(Hook) ->
 				?LOG_ERROR([{event, failed_to_parse_webhook_config},
 					{webhook_config, io_lib:format("~p", [Hook])}])

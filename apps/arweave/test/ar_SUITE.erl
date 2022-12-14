@@ -271,9 +271,8 @@ write_genesis_files(DataDir, B0, WalletList) ->
 	%% Write genesis block.
 	BH = B0#block.indep_hash,
 	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
-	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".json"),
-	BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B0)),
-	ok = file:write_file(BlockFilepath, BlockJSON),
+	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
+	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
 	%% Write genesis transactions.
 	TXDir = filename:join(DataDir, ?TX_DIR),
 	lists:foreach(
@@ -287,10 +286,10 @@ write_genesis_files(DataDir, B0, WalletList) ->
 	),
 	%% Write block index.
 	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIJSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
+	BIBin = term_to_binary({BI, B0#block.price_history}),
 	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
-	BIFilepath = filename:join(HashListDir, <<"last_block_index.json">>),
-	ok = file:write_file(BIFilepath, BIJSON),
+	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_price_history.bin">>),
+	ok = file:write_file(BIFilepath, BIBin),
 	%% Write accounts.
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
 	RootHash = B0#block.wallet_list,

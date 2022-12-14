@@ -4,5 +4,3 @@
 -define(OFFSET_BIT_SIZE, (?OFFSET_SIZE * 8)).
 
 -define(CHUNK_DIR, "chunk_storage").
-
--define(STORE_CHUNK_STORAGE_STATE_FREQUENCY_MS, 120000).
