@@ -234,21 +234,35 @@ get_earliest_not_validated_from_longest_chain(Tab) ->
 			end
 	end.
 
-%% @doc Return the list of {BH, TXIDs} pairs corresponding to the top up to
-%% ?STORE_BLOCKS_BEHIND_CURRENT blocks of the longest chain (not necessarily
-%% fully validated yet).
+%% @doc Return the list of {BH, TXIDs} pairs corresponding to the top up to the
+%% ?STORE_BLOCKS_BEHIND_CURRENT blocks of the longest chain and the number of blocks
+%% in this list that are not on chain yet.
 get_longest_chain_block_txs_pairs(Tab) ->
 	[{_, {_CDiff, H}}] = ets:lookup(Tab, max_cdiff),
-	get_longest_chain_block_txs_pairs(Tab, H, ?STORE_BLOCKS_BEHIND_CURRENT, none, none, []).
+	get_longest_chain_block_txs_pairs(Tab, H, ?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0).
 
-get_longest_chain_block_txs_pairs(_Tab, _H, 0, _PrevStatus, _PrevH, Pairs) ->
-	lists:reverse(Pairs);
-get_longest_chain_block_txs_pairs(Tab, H, N, PrevStatus, PrevH, Pairs) ->
+get_longest_chain_block_txs_pairs(_Tab, _H, 0, _PrevStatus, _PrevH, Pairs, NotOnChainCount) ->
+	{lists:reverse(Pairs), NotOnChainCount};
+get_longest_chain_block_txs_pairs(Tab, H, N, PrevStatus, PrevH, Pairs, NotOnChainCount) ->
 	case ets:lookup(Tab, {block, H}) of
 		[{_, {B, Status, _Timestamp, _Children}}] ->
-			get_longest_chain_block_txs_pairs(Tab, B#block.previous_block, N - 1,
-					Status, H,
-					[{B#block.indep_hash, [tx_id(TX) || TX <- B#block.txs]} | Pairs]);
+			case PrevStatus == on_chain andalso Status /= on_chain of
+				true ->
+					%% A reorg should have happened in the meantime - an unlikely
+					%% event, retry.
+					get_longest_chain_block_txs_pairs(Tab);
+				false ->
+					NotOnChainCount2 =
+						case Status of
+							on_chain ->
+								NotOnChainCount;
+							_ ->
+								NotOnChainCount + 1
+						end,
+					Pairs2 = [{B#block.indep_hash, [tx_id(TX) || TX <- B#block.txs]} | Pairs],
+					get_longest_chain_block_txs_pairs(Tab, B#block.previous_block, N - 1,
+							Status, H, Pairs2, NotOnChainCount2)
+			end;
 		[] ->
 			case PrevStatus of
 				on_chain ->
@@ -259,7 +273,7 @@ get_longest_chain_block_txs_pairs(Tab, H, N, PrevStatus, PrevH, Pairs) ->
 							get_longest_chain_block_txs_pairs(Tab);
 						[_] ->
 							%% Pairs already contains the deepest block of the cache.
-							lists:reverse(Pairs)
+							{lists:reverse(Pairs), NotOnChainCount}
 					end;
 				_ ->
 					%% The block has been invalidated -
@@ -405,6 +419,7 @@ remove2(Tab, H) ->
 		[{_, {#block{ hash = SolutionH, txs = TXs, height = Height }, _Status, _Timestamp,
 				Children}}] ->
 			ets:delete(Tab, {block, H}),
+			ar_ignore_registry:remove(H),
 			remove_tx_prefixes(TXs),
 			remove_solution(Tab, H, SolutionH),
 			ets:insert(Tab, {links, gb_sets:del_element({Height, H}, Set)}),

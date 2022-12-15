@@ -11,7 +11,7 @@
 		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
 		get_block_index/1, get_block_index/2, get_sync_record/1, get_sync_record/3,
 		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
-		get_recent_hash_list/1, get_recent_hash_list_diff/1, get_price_history/3,
+		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_price_history/3,
 		push_nonce_limiter_update/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -471,27 +471,20 @@ get_recent_hash_list(Peer) ->
 		headers => p2p_headers()
 	})).
 
-get_recent_hash_list_diff(Peer) ->
-	case ets:lookup(node_state, is_joined) of
-		[{_, true}] ->
-			HL = [H || {H, _TXIDs} <- ar_block_cache:get_longest_chain_block_txs_pairs(
-					block_cache)],
-			ReverseHL = lists:reverse(HL),
-			handle_get_recent_hash_list_diff_response(ar_http:req(#{
-				peer => Peer,
-				method => get,
-				path => "/recent_hash_list_diff",
-				timeout => 10 * 1000,
-				connect_timeout => 1000,
-				%%        PrevH H    Len        TXID
-				limit => (48 + (48 + 2 + 1000 * 32) * 49), % 1570498 bytes,
-															% very pessimistic case.
-				body => iolist_to_binary(ReverseHL),
-				headers => p2p_headers()
-			}), HL, Peer);
-		_ ->
-			{error, node_state_not_initialized}
-	end.
+get_recent_hash_list_diff(Peer, HL) ->
+	ReverseHL = lists:reverse(HL),
+	handle_get_recent_hash_list_diff_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/recent_hash_list_diff",
+		timeout => 10 * 1000,
+		connect_timeout => 1000,
+		%%        PrevH H    Len        TXID
+		limit => (48 + (48 + 2 + 1000 * 32) * 49), % 1570498 bytes,
+													% very pessimistic case.
+		body => iolist_to_binary(ReverseHL),
+		headers => p2p_headers()
+	}), HL, Peer).
 
 %% @doc Fetch the price history from one of the given peers. The price history
 %% must contain ?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT elements or
@@ -758,11 +751,26 @@ parse_recent_hash_list_diff(<< H:48/binary, Len:16, TXIDs:(32 * Len)/binary, Res
 		when Len =< ?BLOCK_TX_COUNT_LIMIT ->
 	case ar_block_cache:get(block_cache, H) of
 		not_found ->
-			{ok, {H, parse_txids(TXIDs)}};
+			case count_blocks_on_top(Rest) of
+				{ok, N} ->
+					{ok, {H, parse_txids(TXIDs), N}};
+				Error ->
+					Error
+			end;
 		_ ->
 			parse_recent_hash_list_diff(Rest)
 	end;
 parse_recent_hash_list_diff(_Input) ->
+	{error, invalid_input}.
+
+count_blocks_on_top(Bin) ->
+	count_blocks_on_top(Bin, 0).
+
+count_blocks_on_top(<<>>, N) ->
+	{ok, N};
+count_blocks_on_top(<< _H:48/binary, Len:16, _TXIDs:(32 * Len)/binary, Rest/binary >>, N) ->
+	count_blocks_on_top(Rest, N + 1);
+count_blocks_on_top(_Bin, _N) ->
 	{error, invalid_input}.
 
 parse_txids(<< TXID:32/binary, Rest/binary >>) ->

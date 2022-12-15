@@ -30,6 +30,12 @@
 
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
 
+-ifdef(DEBUG).
+-define(BLOCK_INDEX_HEAD_LEN, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
+-else.
+-define(BLOCK_INDEX_HEAD_LEN, 10000).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -364,7 +370,7 @@ handle_info({join, BI, Blocks}, State) ->
 		end,
 	ar_events:send(node_state, {initializing, Blocks4}),
 	ets:insert(node_state, [
-		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
+		{recent_block_index,	lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN)},
 		{joined_blocks,			Blocks4}
 	]),
 	{noreply, State};
@@ -1158,7 +1164,6 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 						end,
 					State2 = apply_validated_block(State, B3, PrevBlocks, Orphans, RecentBI2,
 							BlockTXPairs2),
-					ar_watchdog:foreign_block(B#block.indep_hash),
 					record_processing_time(Timestamp),
 					{noreply, State2}
 			end
@@ -1465,9 +1470,9 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	AddedBIElements = tl(lists:reverse([block_index_entry(B)
 			| [block_index_entry(PrevB) || PrevB <- PrevBlocks]])),
 	ar_block_index:update(AddedBIElements, length(Orphans)),
-	ar_data_sync:add_tip_block(BlockTXPairs,
-			lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
-	ar_header_sync:add_tip_block(B, lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
+	RecentBI2 = lists:sublist(RecentBI, ?BLOCK_INDEX_HEAD_LEN),
+	ar_data_sync:add_tip_block(BlockTXPairs, RecentBI2),
+	ar_header_sync:add_tip_block(B, RecentBI2),
 	lists:foreach(
 		fun(PrevB) ->
 			ar_header_sync:add_block(PrevB),
@@ -1477,7 +1482,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	),
 	maybe_store_block_index(B),
 	ets:insert(node_state, [
-		{recent_block_index,	lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
+		{recent_block_index,	RecentBI2},
 		{current,				B#block.indep_hash},
 		{timestamp,				B#block.timestamp},
 		{wallet_list,			B#block.wallet_list},

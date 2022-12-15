@@ -485,7 +485,7 @@ read_tx2(ID) ->
 								{ok, Data} ->
 									TX#tx{ data = Data };
 								Error ->
-									?LOG_ERROR([{event, error_reading_tx_from_kv_storage},
+									?LOG_WARNING([{event, error_reading_tx_from_kv_storage},
 											{tx, ar_util:encode(ID)},
 											{error, io_lib:format("~p", [Error])}]),
 									unavailable

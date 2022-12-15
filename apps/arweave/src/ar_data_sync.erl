@@ -454,7 +454,7 @@ handle_cast({join, RecentBI}, State) ->
 	State2 =
 		State#sync_data_state{
 			weave_size = WeaveSize,
-			block_index = lists:sublist(RecentBI, ?TRACK_CONFIRMATIONS),
+			block_index = RecentBI,
 			disk_pool_threshold = DiskPoolThreshold
 		},
 	store_sync_state(State2),
@@ -485,8 +485,8 @@ handle_cast({add_tip_block, BlockTXPairs, BI},
 	ar_events:send(data_sync, {cut, BlockStartOffset}),
 	DiskPoolThreshold = get_disk_pool_threshold(BI),
 	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
-	State2 = State#sync_data_state{ weave_size = WeaveSize, block_index = BI,
-			disk_pool_threshold = DiskPoolThreshold },
+	State2 = State#sync_data_state{ weave_size = WeaveSize,
+			block_index = BI, disk_pool_threshold = DiskPoolThreshold },
 	store_sync_state(State2),
 	{noreply, State2};
 

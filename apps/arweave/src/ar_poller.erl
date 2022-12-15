@@ -84,7 +84,8 @@ handle_cast(collect_peers, State) ->
 	#state{ worker_count = N, workers = Workers } = State,
 	TrustedPeers = lists:sublist(ar_peers:get_trusted_peers(), N div 3),
 	Peers = ar_peers:get_peers(),
-	PickedPeers = TrustedPeers ++ lists:sublist(Peers, N - length(TrustedPeers)),
+	PickedPeers = TrustedPeers ++ lists:sublist((Peers -- TrustedPeers),
+			N - length(TrustedPeers)),
 	start_polling_peers(Workers, PickedPeers),
 	ar_util:cast_after(?COLLECT_PEERS_FREQUENCY_MS, ?MODULE, collect_peers),
 	{noreply, State};
