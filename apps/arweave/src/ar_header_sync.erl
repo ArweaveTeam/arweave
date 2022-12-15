@@ -86,7 +86,7 @@ init([]) ->
 			db = DB,
 			sync_record = SyncRecord,
 			height = Height,
-			block_index = lists:sublist(CurrentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS),
+			block_index = CurrentBI,
 			retry_queue = queue:new(),
 			retry_record = ar_intervals:new(),
 			sync_disk_space = have_free_space()
@@ -98,15 +98,9 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 	State2 =
 		State#state{
 			height = Height,
-			block_index = lists:sublist(RecentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS)
-		},
-	StartHeight =
-		case length(CurrentBI) < ?HEADER_SYNC_TRACK_CONFIRMATIONS of
-			true ->
-				0;
-			false ->
-				PrevHeight - ?HEADER_SYNC_TRACK_CONFIRMATIONS + 1
-		end,
+			block_index = RecentBI
+		 },
+	StartHeight = PrevHeight - length(CurrentBI) + 1,
 	State3 =
 		case {CurrentBI, ar_block_index:get_intersection(StartHeight, CurrentBI)} of
 			{[], _} ->
@@ -145,7 +139,7 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 	State2 = State#state{
 		sync_record = ar_intervals:cut(SyncRecord, BaseHeight),
 		retry_record = ar_intervals:cut(RetryRecord, BaseHeight),
-		block_index = lists:sublist(RecentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS),
+		block_index = RecentBI,
 		height = Height
 	},
 	State3 = element(2, add_block(B, State2)),

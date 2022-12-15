@@ -59,19 +59,40 @@ handle_cast({poll, _Ref}, #state{ peer = undefined } = State) ->
 	{noreply, State#state{ pause = true }};
 handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 		polling_frequency_ms = FrequencyMs } = State) ->
-	case ar_http_iface_client:get_recent_hash_list_diff(Peer) of
+	CurrentHeight = ar_node:get_height(),
+	{L, NotOnChain} = ar_block_cache:get_longest_chain_block_txs_pairs(block_cache),
+	HL = [H || {H, _TXIDs} <- L],
+	case NotOnChain >= 5 of
+		true ->
+			slow_block_application_warning(NotOnChain);
+		false ->
+			ok
+	end,
+	case ar_http_iface_client:get_recent_hash_list_diff(Peer, HL) of
 		{ok, in_sync} ->
 			ar_util:cast_after(FrequencyMs, self(), {poll, Ref}),
 			{noreply, State};
-		{ok, {H, TXIDs}} ->
+		{ok, {H, TXIDs, BlocksOnTop}} ->
 			case ar_ignore_registry:member(H) of
 				true ->
 					ok;
 				false ->
+					case BlocksOnTop >= 5 of
+						true ->
+							warning(Peer, behind);
+						false ->
+							ok
+					end,
 					ar_ignore_registry:add_temporary(H, 1000),
 					Indices = get_missing_tx_indices(TXIDs),
 					case ar_http_iface_client:get_block(Peer, H, Indices) of
-						{B, Time, Size} ->
+						{#block{ height = Height } = B, Time, Size} ->
+							case Height =< CurrentHeight - 5 of
+								true ->
+									warning(Peer, fork);
+								false ->
+									ok
+							end,
 							case collect_missing_transactions(B#block.txs) of
 								{ok, TXs} ->
 									B2 = B#block{ txs = TXs },
@@ -96,10 +117,16 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 			end,
 			ar_util:cast_after(FrequencyMs, self(), {poll, Ref}),
 			{noreply, State};
-		{error, node_state_not_initialized} ->
-			{noreply, State};
+		{error, not_found} ->
+			case CurrentHeight >= ar_fork:height_2_6() of
+				true ->
+					warning(Peer, stuck_or_deep_fork);
+				false ->
+					ok
+			end,
+			{noreply, State#state{ pause = true }};
 		{error, Reason} ->
-			case ar_node:get_height() >= ar_fork:height_2_6() of
+			case CurrentHeight >= ar_fork:height_2_6() of
 				true ->
 					ar_events:send(peer,
 							{bad_response, {Peer, recent_hash_list_diff, Reason}}),
@@ -170,6 +197,36 @@ get_missing_tx_indices([TXID | TXIDs], N) ->
 			get_missing_tx_indices(TXIDs, N + 1);
 		false ->
 			[N | get_missing_tx_indices(TXIDs, N + 1)]
+	end.
+
+slow_block_application_warning(N) ->
+	ar_mining_server:pause_performance_reports(60000),
+	io:format(os:cmd(clear)),
+	ar:console("WARNING: there are more than ~B not yet validated blocks on the longest chain."
+			" Please, double-check if you are in sync with the network and make sure your "
+			"CPU computes VDF fast enough or you are connected to a VDF server.~n~n", [N]).
+
+warning(Peer, Event) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(Peer, Config#config.peers) of
+		false ->
+			ok;
+		true ->
+			ar_mining_server:pause_performance_reports(60000),
+			EventMessage =
+				case Event of
+					behind ->
+						"is 5 or more blocks ahead of us";
+					fork ->
+						"is on a fork branching off of our fork 5 or more blocks behind";
+					stuck_or_deep_fork ->
+						"is either far ahead or on a different long fork"
+				end,
+			io:format(os:cmd(clear)),
+			ar:console("WARNING: peer ~s ~s. "
+					"Please, double-check if you are in sync with the network and "
+					"make sure your CPU computes VDF fast enough or you are connected "
+					"to a VDF server.~n~n", [ar_util:format_peer(Peer), EventMessage])
 	end.
 
 collect_missing_transactions([#tx{} = TX | TXs]) ->

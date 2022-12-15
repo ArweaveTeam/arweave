@@ -1,6 +1,3 @@
-%% The number of recent blocks tracked, used for erasing the orphans.
--define(HEADER_SYNC_TRACK_CONFIRMATIONS, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
-
 %% The frequency of processing items in the queue.
 -ifdef(DEBUG).
 -define(PROCESS_ITEM_INTERVAL_MS, 1000).

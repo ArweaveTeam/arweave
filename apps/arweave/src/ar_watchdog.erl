@@ -8,8 +8,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, started_hashing/0, block_received_n_confirmations/2, mined_block/3,
-		foreign_block/1]).
+-export([start_link/0, started_hashing/0, block_received_n_confirmations/2, mined_block/3]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -18,7 +17,6 @@
 
 -record(state, {
 	mined_blocks,
-	no_foreign_blocks_timer,
 	miner_logging = false
 }).
 
@@ -34,9 +32,6 @@ block_received_n_confirmations(BH, Height) ->
 
 mined_block(BH, Height, PrevH) ->
 	gen_server:cast(?MODULE, {mined_block, BH, Height, PrevH}).
-
-foreign_block(BH) ->
-	gen_server:cast(?MODULE, {foreign_block, BH}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -66,12 +61,7 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	MinerLogging = not lists:member(miner_logging, Config#config.disable),
-	{ok, Timer} = timer:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), no_foreign_blocks),
-	State = #state{
-		mined_blocks = maps:new(),
-		miner_logging = MinerLogging,
-		no_foreign_blocks_timer = Timer
-	},
+	State = #state{ mined_blocks = maps:new(), miner_logging = MinerLogging },
 	{ok, State}.
 
 %%--------------------------------------------------------------------
@@ -144,33 +134,9 @@ handle_cast({mined_block, BH, Height, _PrevH}, State) ->
 	State1 = State#state{ mined_blocks = MinedBlocks#{ Height => BH } },
 	{noreply, State1};
 
-handle_cast({foreign_block, _BH}, #state{ no_foreign_blocks_timer = Timer } = State) ->
-	{ok, cancel} = timer:cancel(Timer),
-	{ok, Timer2} = timer:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), no_foreign_blocks),
-	{noreply, State#state{ no_foreign_blocks_timer = Timer2 }};
-
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {message, Msg}]),
 	{noreply, State}.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%									 {noreply, State, Timeout} |
-%%									 {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
-handle_info(no_foreign_blocks, State) ->
-	Message =
-		"No foreign blocks received from the network or found by trusted peers. "
-		"Please check your internet connection and the logs for errors.",
-	?LOG_WARNING([{event, no_blocks_received}, {time, ?FOREIGN_BLOCK_ALERT_TIME div 1000}]),
-	ar:console("~s~n", [Message]),
-	{ok, Timer} = timer:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), no_foreign_blocks),
-	{noreply, State#state{ no_foreign_blocks_timer = Timer }};
 
 handle_info({'EXIT', _Pid, normal}, State) ->
 	%% Gun sets monitors on the spawned processes, so thats the reason why we

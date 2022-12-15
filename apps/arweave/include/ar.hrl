@@ -619,14 +619,6 @@
 %% for signing transactions.
 -define(INTERNAL_API_SECRET_MIN_LEN, 16).
 
-%% Log the "No foreign blocks received" message after so many time in milliseconds
-%% has passed without new blocks.
--ifdef(DEBUG).
--define(FOREIGN_BLOCK_ALERT_TIME, 10 * 1000).
--else.
--define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
--endif.
-
 %% The frequency of issuing a reminder to the console and the logfile
 %% about the insufficient disk space, in milliseconds.
 -define(DISK_SPACE_WARNING_FREQUENCY, 24 * 60 * 60 * 1000).

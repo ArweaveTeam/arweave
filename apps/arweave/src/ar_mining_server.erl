@@ -3,7 +3,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, pause/0, start_mining/1, set_difficulty/1]).
+-export([start_link/0, pause/0, start_mining/1, set_difficulty/1,
+		pause_performance_reports/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -33,7 +34,9 @@
 	session						= #mining_session{},
 	diff						= infinity,
 	partitions					= sets:new(),
-	task_queue					= gb_sets:new()
+	task_queue					= gb_sets:new(),
+	pause_performance_reports	= false,
+	pause_performance_reports_timeout
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -62,6 +65,10 @@ start_mining(Args) ->
 %% Also, a mining session may (in practice, almost always will) span several blocks.
 set_difficulty(Diff) ->
 	gen_server:cast(?MODULE, {set_difficulty, Diff}).
+
+%% @doc Stop logging performance reports for the given number of milliseconds.
+pause_performance_reports(Time) ->
+	gen_server:cast(?MODULE, {pause_performance_reports, Time}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -148,6 +155,17 @@ handle_cast(report_performance,
 		#state{ session = #mining_session{ partition_upper_bound = undefined } } = State) ->
 	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
 	{noreply, State};
+handle_cast(report_performance, #state{ pause_performance_reports = true,
+			pause_performance_reports_timeout = Timeout } = State) ->
+	Now = os:system_time(millisecond),
+	case Now > Timeout of
+		true ->
+			gen_server:cast(?MODULE, report_performance),
+			{noreply, State#state{ pause_performance_reports = false }};
+		false ->
+			ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
+			{noreply, State}
+	end;
 handle_cast(report_performance, #state{ io_threads = IOThreads, session = Session } = State) ->
 	#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,
 	Max = max(0, PartitionUpperBound div ?PARTITION_SIZE - 1),
@@ -204,6 +222,12 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 	end,
 	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
 	{noreply, State};
+
+handle_cast({pause_performance_reports, Time}, State) ->
+	Now = os:system_time(millisecond),
+	Timeout = Now + Time,
+	{noreply, State#state{ pause_performance_reports = true,
+			pause_performance_reports_timeout = Timeout }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),

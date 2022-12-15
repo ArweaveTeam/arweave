@@ -10,12 +10,6 @@
 %% filter lookup can narrow the search down to a single table.
 -define(OFFSET_KEY_PREFIX_BITSIZE, 232).
 
-%% The number of block confirmations to track. When the node
-%% joins the network or a chain reorg occurs, it uses its record about
-%% the last ?TRACK_CONFIRMATIONS blocks and the new block index to
-%% determine the orphaned portion of the weave.
--define(TRACK_CONFIRMATIONS, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
-
 %% The upper size limit for a serialized chunk with its proof
 %% as it travels around the network.
 %%
@@ -78,7 +72,7 @@
 
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
-	%% The last ?TRACK_CONFIRMATIONS entries of the block index.
+	%% The last entries of the block index.
 	%% Used to determine orphaned data upon startup or chain reorg.
 	block_index,
 	%% The current weave size. The upper limit for the absolute chunk end offsets.
