@@ -5,13 +5,15 @@
 
 -behaviour(application).
 
--export([main/0, main/1, create_wallet/0, create_wallet/1, start/0, start/1, start/2, stop/1,
-		stop_dependencies/0, tests/0, tests/1, tests/2, test_ipfs/0, docs/0,
-		start_for_tests/0, shutdown/1, console/1, console/2]).
+-export([main/0, main/1, create_wallet/0, create_wallet/1, benchmark_vdf_command/0, start/0,
+		start/1, start/2, stop/1, stop_dependencies/0, tests/0, tests/1, tests/2, test_ipfs/0,
+		docs/0, start_for_tests/0, shutdown/1, console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_vdf.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% A list of the modules to test.
@@ -506,6 +508,12 @@ start(Config) ->
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
+	case Config#config.nonce_limiter_server_trusted_peer of
+		not_set ->
+			benchmark_vdf();
+		_ ->
+			ok
+	end,
 	{ok, _} = application:ensure_all_started(arweave, permanent).
 
 start(normal, _Args) ->
@@ -621,6 +629,23 @@ create_wallet() ->
 create_wallet_fail() ->
 	io:format("Usage: ./bin/create-wallet [data_dir]~n"),
 	erlang:halt().
+
+benchmark_vdf_command() ->
+	benchmark_vdf(),
+	erlang:halt().
+
+benchmark_vdf() ->
+	Input = crypto:strong_rand_bytes(32),
+	{Time, _} = timer:tc(fun() -> ar_vdf:compute2(1, Input, ?VDF_DIFFICULTY) end),
+	io:format("~n~nVDF step computed in ~.2f seconds.~n~n", [Time / 1000000]),
+	case Time > 1250000 of
+		true ->
+			io:format("WARNING: your VDF computation speed is low - consider fetching "
+					"VDF outputs from an external source (see vdf_server_trusted_peer "
+					"and vdf_client_peer command line parameters).~n~n");
+		false ->
+			ok
+	end.
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
