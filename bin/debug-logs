@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+LOGS_DIR="$(cd $SCRIPT_DIR/../logs/debug_logs/ && pwd -P)"
+
+ls -1 -t $LOGS_DIR \
+    | grep -F -v '(?!.*(idx|siz))' \
+    | grep -v slave \
+    | head -1 \
+    | xargs -I % tail -n 500 "$@" "$LOGS_DIR/%"
