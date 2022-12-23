@@ -26,6 +26,11 @@ struct state {
 	randomx_cache*    cachePtr;
 };
 
+struct wrap_randomx_vm {
+	randomx_flags     flags;
+	randomx_vm*       vmPtr;
+};
+
 const int ARWEAVE_INPUT_DATA_SIZE = 48;
 const int ARWEAVE_HASH_SIZE = 48;
 const int SPORA_SUBSPACES_COUNT = 1024;
@@ -59,6 +64,7 @@ static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv*, int, const 
 
 static ERL_NIF_TERM release_state_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
+static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM solution_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM ok_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM ok_tuple2(ErlNifEnv*, ERL_NIF_TERM, ERL_NIF_TERM);

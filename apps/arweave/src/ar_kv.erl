@@ -4,50 +4,53 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--export([open/1, open/2, open_without_column_families/2,
-		repair/1, create_column_family/3, close/1, put/3,
-		get/2, get_next_by_prefix/4, get_next/2,
-		cyclic_iterator_move/2, get_prev/2, get_range/2,
-		get_range/3, delete/2, delete_range/3, destroy/1,
-		count/1]).
+-export([open/1, open/2, open_without_column_families/2, close/1, put/3, get/2,
+		get_next_by_prefix/4, get_next/2, cyclic_iterator_move/2, get_prev/2, get_range/2,
+		get_range/3, delete/2, delete_range/3, destroy/1, count/1]).
 
-open(Name) ->
-	open_without_column_families(Name, []).
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
-open_without_column_families(Name, Opts) ->
-	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
-	Filename = filename:join(RocksDBDir, Name),
-	ok = filelib:ensure_dir(Filename ++ "/"),
-	LogDir = filename:join([RocksDBDir, "logs", Name]),
-	ok = filelib:ensure_dir(LogDir ++ "/"),
-	rocksdb:open(Filename, [{create_if_missing, true}, {db_log_dir, LogDir}] ++ Opts).
+open(DataDirRelativePath) ->
+	open_without_column_families(DataDirRelativePath, []).
 
-open(Name, CFDescriptors) ->
-	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
-	LogDir = filename:join([RocksDBDir, "logs", Name]),
-	Filename = filename:join(RocksDBDir, Name),
-	ok = filelib:ensure_dir(Filename ++ "/"),
+open(DataDirRelativePath, CFDescriptors) ->
+	Filepath = filename:join(get_data_dir(), DataDirRelativePath),
+	LogDir = filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
+	ok = filelib:ensure_dir(Filepath ++ "/"),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
 	Opts = [
 		{create_if_missing, true},
 		{create_missing_column_families, true},
 		{db_log_dir, LogDir}
 	],
-	case rocksdb:open(Filename, Opts, CFDescriptors) of
+	may_be_repair(Filepath),
+	case rocksdb:open(Filepath, Opts, CFDescriptors) of
 		{ok, DB, CFs} ->
 			{ok, DB, CFs};
 		Error ->
 			Error
 	end.
 
-repair(Name) ->
-	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
-	Filename = filename:join(RocksDBDir, Name),
-	ok = filelib:ensure_dir(Filename ++ "/"),
-	rocksdb:repair(Filename, []).
+open_without_column_families(DataDirRelativePath, Opts) ->
+	Filepath = filename:join(get_data_dir(), DataDirRelativePath),
+	ok = filelib:ensure_dir(Filepath ++ "/"),
+	LogDir = filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
+	ok = filelib:ensure_dir(LogDir ++ "/"),
+	may_be_repair(Filepath),
+	rocksdb:open(Filepath, [{create_if_missing, true}, {db_log_dir, LogDir}] ++ Opts).
 
-create_column_family(DB, Name, Opts) ->
-	rocksdb:create_column_family(DB, Name, Opts).
+may_be_repair(Filepath) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(repair_rocksdb, Config#config.enable) of
+		true ->
+			ar:console("Repairing ~s.~n", [Filepath]),
+			Reply = rocksdb:repair(Filepath, []),
+			ar:console("Result: ~p.~n", [Reply]);
+		_ ->
+			ok
+	end.
 
 close(DB) ->
 	rocksdb:close(DB).
@@ -229,6 +232,10 @@ get_data_dir() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.data_dir.
 
+get_base_log_dir() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.log_dir.
+
 get_range2(Iterator, Map) ->
 	case rocksdb:iterator_move(Iterator, next) of
 		{ok, Key, Value} ->
@@ -266,7 +273,8 @@ test_rocksdb_iterator() ->
 		{optimize_filters_for_hits, true},
 		{max_open_files, 1000000}
 	],
-	{ok, DB0, [_DefaultCF0, CF0]} = ar_kv:open("test_db", [{"default", Opts}, {"test", Opts}]),
+	{ok, DB0, [_DefaultCF0, CF0]} = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
+			[{"default", Opts}, {"test", Opts}]),
 	SmallerPrefix = crypto:strong_rand_bytes(29),
 	<< O1:232 >> = SmallerPrefix,
 	BiggerPrefix = << (O1 + 1):232 >>,
@@ -302,7 +310,8 @@ test_rocksdb_iterator() ->
 		{target_file_size_base, 256 * 1024 * 1024},
 		{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}
 	],
-	{ok, DB, [_DefaultCF, CF]} = ar_kv:open("test_db", [{"default", Opts2}, {"test", Opts2}]),
+	{ok, DB, [_DefaultCF, CF]} = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
+			[{"default", Opts2}, {"test", Opts2}]),
 	%% Store new data enough for new SST files to be created.
 	lists:foreach(
 		fun(Suffix) ->
@@ -322,7 +331,8 @@ test_rocksdb_iterator() ->
 	assert_iteration(DB, CF, SmallerPrefix, BiggerPrefix, Suffixes),
 	%% Close the database to make sure the new data is flushed.
 	ar_kv:close(DB),
-	{ok, DB1, [_DefaultCF1, CF1]} = ar_kv:open("test_db", [{"default", Opts2}, {"test", Opts2}]),
+	{ok, DB1, [_DefaultCF1, CF1]} = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
+			[{"default", Opts2}, {"test", Opts2}]),
 	assert_iteration(DB1, CF1, SmallerPrefix, BiggerPrefix, Suffixes),
 	destroy("test_db").
 

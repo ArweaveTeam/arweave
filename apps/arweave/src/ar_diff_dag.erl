@@ -5,19 +5,9 @@
 %%% apply them in the reverse order.
 -module(ar_diff_dag).
 
--export([
-	new/3,
-	get_sink/1,
-	is_sink/2,
-	is_node/2,
-	add_node/5,
-	update_leaf_source/3,
-	update_sink/3,
-	get_metadata/2,
-	reconstruct/3,
-	move_sink/4,
-	filter/2
-]).
+-export([new/3, get_sink/1, is_sink/2, is_node/2, add_node/5, update_leaf_source/3,
+		update_sink/3, get_metadata/2, get_sink_metadata/1, reconstruct/3, move_sink/4,
+		filter/2]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -77,7 +67,8 @@ update_leaf_source(DAG, ID, UpdateFun) ->
 			Sources2 = maps:remove(ID, Sources),
 			Set = sets:add_element(NewID, sets:del_element(ID, maps:get(SinkID, Sources))),
 			Sources3 = Sources2#{ SinkID => Set },
-			{Sinks2#{ NewID => {SinkID, UpdatedDiff, {Counter, UpdatedMetadata}} }, Sink, Sources3}
+			{Sinks2#{ NewID => {SinkID, UpdatedDiff, {Counter, UpdatedMetadata}} }, Sink,
+					Sources3}
 	end.
 
 %% @doc Update the sink via the given function of an entity and a metadata, which
@@ -108,10 +99,16 @@ update_sink({Sinks, ID, Sources}, ID, UpdateFun) ->
 update_sink(_DAG, ID, _Fun) ->
 	error({badkey, ID}).
 
-%% @doc Return metadata stored at the given node.
-%% If the node with the given identifier does not exist, the call fails with a badkey exception.
+%% @doc Return metadata stored at the given node. If the node with the given identifier
+%% does not exist, the call fails with a badkey exception.
 get_metadata(DAG, ID) ->
 	element(2, element(3, maps:get(ID, element(1, DAG)))).
+
+%% @doc Return metadata stored at the sink node. If the node with the given identifier
+%% does not exist, the call fails with a badkey exception.
+get_sink_metadata(DAG) ->
+	ID = element(2, DAG),
+	get_metadata(DAG, ID).
 
 %% @doc Reconstruct the entity corresponding to the given node using
 %% the given diff application function - a function of a diff and an entity.

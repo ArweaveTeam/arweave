@@ -3,150 +3,133 @@
 %% with this file, You can obtain one at
 %% https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 
+%%% @doc The module periodically asks peers about their recent blocks and downloads
+%%% the missing ones. It serves the following purposes:
+%%%
+%%% - allows following the network in the absence of a public IP;
+%%% - protects the node from lagging behind when there are networking issues.
+
 -module(ar_poller).
+
 -behaviour(gen_server).
 
--export([start_link/0]).
+-export([start_link/2, pause/0, resume/0]).
 
--export([
-	init/1,
-	handle_cast/2, handle_call/3
-]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
-%%% This module fetches blocks from trusted peers in case the node is not in the
-%%% public network or hasn't received blocks for some other reason.
+%% The frequency of choosing the peers to poll.
+-ifdef(DEBUG).
+-define(COLLECT_PEERS_FREQUENCY_MS, 2000).
+-else.
+-define(COLLECT_PEERS_FREQUENCY_MS, 1000 * 15).
+-endif.
+
+-record(state, {
+	workers,
+	worker_count,
+	pause = false
+}).
 
 %%%===================================================================
 %%% Public API.
 %%%===================================================================
 
-start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Name, Workers) ->
+	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
+
+%% @doc Put polling on pause.
+pause() ->
+	gen_server:cast(?MODULE, pause).
+
+%% @doc Resume paused polling.
+resume() ->
+	gen_server:cast(?MODULE, resume).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([]) ->
-	?LOG_INFO([{event, ar_poller_start}]),
-	{ok, Config} = application:get_env(arweave, config),
-	{ok, _} = schedule_polling(Config#config.polling * 1000),
-	{ok, #{
-		last_seen_height => -1,
-		interval => Config#config.polling
-	}}.
+init(Workers) ->
+	process_flag(trap_exit, true),
+	[ok, ok] = ar_events:subscribe([block, node_state]),
+	case ar_node:is_joined() of
+		true ->
+			handle_node_state_initialized();
+		false ->
+			ok
+	end,
+	{ok, #state{ workers = Workers, worker_count = length(Workers) }}.
 
-handle_cast(poll_block, State) ->
-	#{
-		last_seen_height := LastSeenHeight,
-		interval := Interval
-	} = State,
-	{NewLastSeenHeight, NeedPoll} =
-		case ar_node:get_height() of
-			-1 ->
-				%% Wait until the node joins the network or starts from a hash list.
-				{-1, false};
-			Height when LastSeenHeight == -1 ->
-				{Height, true};
-			Height when Height > LastSeenHeight ->
-				%% Skip this poll if the block has been already received by other means.
-				%% Under normal circumstances, we never poll.
-				{Height, false};
-			_ ->
-				{LastSeenHeight, true}
-		end,
-	NewState =
-		case NeedPoll of
-			true ->
-				{ok, Config} = application:get_env(arweave, config),
-				case fetch_block(Config#config.peers, NewLastSeenHeight + 1) of
-					ok ->
-						%% Check if we have missed more than one block.
-						%% For instance, we could have missed several blocks
-						%% if it took some time to join the network.
-						{ok, _} = schedule_polling(2000),
-						State#{ last_seen_height => NewLastSeenHeight + 1 };
-					{error, _} ->
-						{ok, _} = schedule_polling(Interval * 1000),
-						State#{ last_seen_height => NewLastSeenHeight }
-				end;
-			false ->
-				Delay = case NewLastSeenHeight of -1 -> 200; _ -> Interval * 1000 end,
-				{ok, _} = schedule_polling(Delay),
-				State#{ last_seen_height => NewLastSeenHeight }
-		end,
-	{noreply, NewState}.
+handle_call(Request, _From, State) ->
+	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	{reply, ok, State}.
 
-handle_call(_Request, _From, State) ->
+handle_cast(pause, #state{ workers = Workers } = State) ->
+	[gen_server:cast(W, pause) || W <- Workers],
+	{noreply, State#state{ pause = true }};
+
+handle_cast(resume, #state{ pause = false } = State) ->
+	{noreply, State};
+handle_cast(resume, #state{ workers = Workers } = State) ->
+	[gen_server:cast(W, resume) || W <- Workers],
+	gen_server:cast(?MODULE, collect_peers),
+	{noreply, State#state{ pause = false }};
+
+handle_cast(collect_peers, #state{ pause = true } = State) ->
+	{noreply, State};
+handle_cast(collect_peers, State) ->
+	#state{ worker_count = N, workers = Workers } = State,
+	TrustedPeers = lists:sublist(ar_peers:get_trusted_peers(), N div 3),
+	Peers = ar_peers:get_peers(),
+	PickedPeers = TrustedPeers ++ lists:sublist(Peers, N - length(TrustedPeers)),
+	start_polling_peers(Workers, PickedPeers),
+	ar_util:cast_after(?COLLECT_PEERS_FREQUENCY_MS, ?MODULE, collect_peers),
+	{noreply, State};
+
+handle_cast(Msg, State) ->
+	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
+handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
+	case ar_ignore_registry:member(B#block.indep_hash) of
+		false ->
+			?LOG_INFO([{event, fetched_block_for_validation},
+					{block, ar_util:encode(B#block.indep_hash)},
+					{peer, ar_util:format_peer(Peer)}]);
+		true ->
+			ok
+	end,
+	ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp(), Time, Size),
+	{noreply, State};
+handle_info({event, block, _}, State) ->
+	{noreply, State};
+
+handle_info({event, node_state, {initialized, _B}}, State) ->
+	handle_node_state_initialized(),
+	{noreply, State};
+
+handle_info({event, node_state, _}, State) ->
+	{noreply, State};
+
+handle_info(Info, State) ->
+	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
+	{noreply, State}.
+
+terminate(_Reason, _State) ->
+	ok.
+
 %%%===================================================================
-%%% Internal functions.
+%%% Private functions.
 %%%===================================================================
 
-schedule_polling(Interval) ->
-	timer:apply_after(Interval, gen_server, cast, [self(), poll_block]).
+handle_node_state_initialized() ->
+	gen_server:cast(?MODULE, collect_peers).
 
-fetch_block(Peers, Height) ->
-	case ar_http_iface_client:get_block_shadow(Peers, Height) of
-		unavailable ->
-			{error, block_not_found};
-		{Peer, BShadow, _Time, _Size} ->
-			Timestamp = erlang:timestamp(),
-			case fetch_previous_blocks(Peer, BShadow, Timestamp) of
-				ok ->
-					ok;
-				Error ->
-					Error
-			end
-	end.
-
-fetch_previous_blocks(Peer, BShadow, ReceiveTimestamp) ->
-	HL = ar_node:get_block_anchors(),
-	case fetch_previous_blocks2(Peer, BShadow, HL) of
-		{ok, FetchedBlocks} ->
-			submit_fetched_blocks(FetchedBlocks, Peer, ReceiveTimestamp),
-			submit_fetched_blocks([BShadow], Peer, ReceiveTimestamp);
-		{error, _} = Error ->
-			Error
-	end.
-
-fetch_previous_blocks2(Peer, FetchedBShadow, BehindCurrentHL) ->
-	fetch_previous_blocks2(Peer, FetchedBShadow, BehindCurrentHL, []).
-
-fetch_previous_blocks2(_Peer, _FetchedBShadow, _BehindCurrentHL, FetchedBlocks)
-		when length(FetchedBlocks) >= ?STORE_BLOCKS_BEHIND_CURRENT ->
-	{error, failed_to_reconstruct_block_hash_list};
-fetch_previous_blocks2(Peer, FetchedBShadow, BehindCurrentHL, FetchedBlocks) ->
-	PrevH = FetchedBShadow#block.previous_block,
-	case lists:dropwhile(fun(H) -> H /= PrevH end, BehindCurrentHL) of
-		[PrevH | _] ->
-			{ok, FetchedBlocks};
-		_ ->
-			case ar_http_iface_client:get_block_shadow([Peer], PrevH) of
-				unavailable ->
-					{error, previous_block_not_found};
-				{_Peer, PrevBShadow, _Time, _Size} ->
-					fetch_previous_blocks2(
-						Peer,
-						PrevBShadow,
-						BehindCurrentHL,
-						[PrevBShadow | FetchedBlocks]
-					)
-			end
-	end.
-
-submit_fetched_blocks([B | Blocks], Peer, ReceiveTimestamp) ->
-	?LOG_INFO([
-		{event, ar_poller_fetched_block},
-		{block, ar_util:encode(B#block.indep_hash)},
-		{height, B#block.height}
-	]),
-	%% Won't be broadcasted.
-	ar_events:send(block, {new, B, #{ source => ar_poller }}),
-	submit_fetched_blocks(Blocks, Peer, ReceiveTimestamp);
-submit_fetched_blocks([], _Peer, _ReceiveTimestamp) ->
+start_polling_peers([W | Workers], [Peer | Peers]) ->
+	gen_server:cast(W, {set_peer, Peer}),
+	start_polling_peers(Workers, Peers);
+start_polling_peers(_Workers, []) ->
 	ok.

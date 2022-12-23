@@ -1,4 +1,4 @@
-%%% @doc Tracks the availavility and performance of the network peers.
+%%% @doc Tracks the availability and performance of the network peers.
 -module(ar_peers).
 
 -behaviour(gen_server).
@@ -166,7 +166,7 @@ discover_peers() ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(peer),
+	[ok, ok] = ar_events:subscribe([peer, block]),
 	load_peers(),
 	gen_server:cast(?MODULE, rank_peers),
 	gen_server:cast(?MODULE, ping_peers),
@@ -281,19 +281,26 @@ handle_info({event, peer, {served_chunk, Peer, TimeDelta, Size}}, State) ->
 	{noreply, State};
 
 handle_info({event, peer, {bad_response, {Peer, _Type, _Reason}}}, State) ->
-	Performance = get_or_init_performance(Peer),
-	Failures = Performance#performance.failures,
-	case Failures + 1 > ?TOLERATE_FAILURE_COUNT of
-		true ->
-			remove_peer(Peer);
-		false ->
-			Performance2 = Performance#performance{ failures = Failures + 1 },
-			ets:insert(?MODULE, {{peer, Peer}, Performance2})
-	end,
+	issue_warning(Peer),
 	{noreply, State};
 
 handle_info({event, peer, {banned, BannedPeer}}, State) ->
 	remove_peer(BannedPeer),
+	{noreply, State};
+
+handle_info({event, block, {rejected, failed_to_fetch_first_chunk, _H, Peer}}, State) ->
+	issue_warning(Peer),
+	{noreply, State};
+
+handle_info({event, block, {rejected, failed_to_fetch_second_chunk, _H, Peer}}, State) ->
+	issue_warning(Peer),
+	{noreply, State};
+
+handle_info({event, block, {rejected, failed_to_fetch_chunk, _H, Peer}}, State) ->
+	issue_warning(Peer),
+	{noreply, State};
+
+handle_info({event, block, _}, State) ->
 	{noreply, State};
 
 handle_info({'EXIT', _, normal}, State) ->
@@ -350,23 +357,52 @@ load_peers() ->
 	case ar_storage:read_term(peers) of
 		not_found ->
 			ok;
-		{ok, {TotalRating, Records}} ->
+		{ok, {_TotalRating, Records}} ->
+			?LOG_INFO([{event, polling_saved_peers}]),
+			ar:console("Polling saved peers...~n"),
+			load_peers(Records),
+			TotalRating =
+				ets:foldl(
+					fun({{peer, _Peer}, Performance}, Acc) ->
+						Acc + Performance#performance.rating
+					end,
+					0,
+					?MODULE
+				),
 			ets:insert(?MODULE, {rating_total, TotalRating}),
-			load_peers(Records)
+			?LOG_INFO([{event, polled_saved_peers}]),
+			ar:console("Polled saved peers.~n")
 	end.
 
-load_peers([]) ->
-	ok;
-load_peers([{Peer, {performance, Bytes, Time, Transfers, Failures, Rating}} | Peers]) ->
-	%% For compatibility with a few nodes already storing the records
-	%% without the release field.
-	ets:insert(?MODULE, {{peer, Peer}, #performance{ bytes = Bytes,
-			time = Time, transfers = Transfers, failures = Failures,
-			rating = Rating, release = -1 }}),
-	load_peers(Peers);
-load_peers([{Peer, Performance} | Peers]) ->
-	ets:insert(?MODULE, {{peer, Peer}, Performance}),
-	load_peers(Peers).
+load_peers(Peers) when length(Peers) < 20 ->
+	ar_util:pmap(fun load_peer/1, Peers);
+load_peers(Peers) ->
+	{Peers2, Peers3} = lists:split(20, Peers),
+	ar_util:pmap(fun load_peer/1, Peers2),
+	load_peers(Peers3).
+
+load_peer({Peer, Performance}) ->
+	case ar_http_iface_client:get_info(Peer, name) of
+		info_unavailable ->
+			?LOG_DEBUG([{event, peer_unavailable}, {peer, ar_util:format_peer(Peer)}]),
+			ok;
+		<<?NETWORK_NAME>> ->
+			case Performance of
+				{performance, Bytes, Time, Transfers, Failures, Rating} ->
+					%% For compatibility with a few nodes already storing the records
+					%% without the release field.
+					ets:insert(?MODULE, {{peer, Peer}, #performance{ bytes = Bytes,
+							time = Time, transfers = Transfers, failures = Failures,
+							rating = Rating, release = -1 }});
+				_ ->
+					ets:insert(?MODULE, {{peer, Peer}, Performance})
+			end,
+			ok;
+		Network ->
+			?LOG_DEBUG([{event, peer_from_the_wrong_network},
+					{peer, ar_util:format_peer(Peer)}, {network, Network}]),
+			ok
+	end.
 
 ping_peers(Peers) when length(Peers) < 100 ->
 	ar_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);
@@ -496,4 +532,15 @@ store_peers() ->
 					?MODULE
 				),
 			ar_storage:write_term(peers, {Total, Records})
+	end.
+
+issue_warning(Peer) ->
+	Performance = get_or_init_performance(Peer),
+	Failures = Performance#performance.failures,
+	case Failures + 1 > ?TOLERATE_FAILURE_COUNT of
+		true ->
+			remove_peer(Peer);
+		false ->
+			Performance2 = Performance#performance{ failures = Failures + 1 },
+			ets:insert(?MODULE, {{peer, Peer}, Performance2})
 	end.

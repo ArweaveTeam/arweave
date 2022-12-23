@@ -1,8 +1,9 @@
 -module(ar_config).
 
--export([parse/1]).
+-export([parse/1, parse_storage_module/1]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
@@ -15,10 +16,24 @@ parse(Config) when is_binary(Config) ->
 		{error, _} -> {error, bad_json, Config}
 	end.
 
+parse_storage_module(IOList) ->
+	Bin = iolist_to_binary(IOList),
+	case binary:split(Bin, <<",">>, [global]) of
+		[PartitionNumberBin, PackingBin] ->
+			PartitionNumber = binary_to_integer(PartitionNumberBin),
+			true = PartitionNumber >= 0,
+			parse_storage_module(PartitionNumber, ?PARTITION_SIZE, PackingBin);
+		[RangeNumberBin, RangeSizeBin, PackingBin] ->
+			RangeNumber = binary_to_integer(RangeNumberBin),
+			true = RangeNumber >= 0,
+			RangeSize = binary_to_integer(RangeSizeBin),
+			true = RangeSize >= 0,
+			parse_storage_module(RangeNumber, RangeSize, PackingBin)
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
 
 parse_options({KVPairs}) when is_list(KVPairs) ->
 	parse_options(KVPairs, #config{});
@@ -75,15 +90,35 @@ parse_options([{<<"data_dir">>, DataDir} | Rest], Config) when is_binary(DataDir
 parse_options([{<<"data_dir">>, DataDir} | _], _) ->
 	{error, {bad_type, data_dir, string}, DataDir};
 
+parse_options([{<<"log_dir">>, Dir} | Rest], Config) when is_binary(Dir) ->
+	parse_options(Rest, Config#config{ log_dir = binary_to_list(Dir) });
+parse_options([{<<"log_dir">>, Dir} | _], _) ->
+	{error, {bad_type, log_dir, string}, Dir};
+
 parse_options([{<<"metrics_dir">>, MetricsDir} | Rest], Config) when is_binary(MetricsDir) ->
 	parse_options(Rest, Config#config { metrics_dir = binary_to_list(MetricsDir) });
 parse_options([{<<"metrics_dir">>, MetricsDir} | _], _) ->
 	{error, {bad_type, metrics_dir, string}, MetricsDir};
 
+parse_options([{<<"storage_modules">>, L} | Rest], Config) when is_list(L) ->
+	try
+		StorageModules = [parse_storage_module(Bin) || Bin <- L],
+		parse_options(Rest, Config#config{ storage_modules = StorageModules })
+	catch _:_ ->
+		{error, {bad_format, storage_modules, "an array of \"[number],[address]\""}, L}
+	end;
+parse_options([{<<"storage_modules">>, Bin} | _], _) ->
+	{error, {bad_type, storage_modules, array}, Bin};
+
 parse_options([{<<"polling">>, Frequency} | Rest], Config) when is_integer(Frequency) ->
 	parse_options(Rest, Config#config{ polling = Frequency });
 parse_options([{<<"polling">>, Opt} | _], _) ->
 	{error, {bad_type, polling, number}, Opt};
+
+parse_options([{<<"block_pollers">>, N} | Rest], Config) when is_integer(N) ->
+	parse_options(Rest, Config#config{ block_pollers = N });
+parse_options([{<<"block_pollers">>, Opt} | _], _) ->
+	{error, {bad_type, block_pollers, number}, Opt};
 
 parse_options([{<<"no_auto_join">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ auto_join = false });
@@ -97,12 +132,16 @@ parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 parse_options([{<<"diff">>, Diff} | _], _) ->
 	{error, {bad_type, diff, number}, Diff};
 
-parse_options([{<<"mining_addr">>, <<"unclaimed">>} | Rest], Config) ->
-	parse_options(Rest, Config#config{ mining_addr = unclaimed });
 parse_options([{<<"mining_addr">>, Addr} | Rest], Config) when is_binary(Addr) ->
-	case ar_util:safe_decode(Addr) of
-		{ok, D} -> parse_options(Rest, Config#config{ mining_addr = D });
-		{error, _} -> {error, bad_mining_addr, Addr}
+	case Config#config.mining_addr of
+		not_set ->
+			case ar_util:safe_decode(Addr) of
+				{ok, D} when byte_size(D) == 32 ->
+					parse_options(Rest, Config#config{ mining_addr = D });
+				_ -> {error, bad_mining_addr, Addr}
+			end;
+		_ ->
+			{error, at_most_one_mining_addr_is_supported, Addr}
 	end;
 parse_options([{<<"mining_addr">>, Addr} | _], _) ->
 	{error, {bad_type, mining_addr, string}, Addr};
@@ -116,6 +155,17 @@ parse_options([{<<"io_threads">>, IOThreads} | Rest], Config) when is_integer(IO
 	parse_options(Rest, Config#config{ io_threads = IOThreads });
 parse_options([{<<"io_threads">>, IOThreads} | _], _) ->
 	{error, {bad_type, io_threads, number}, IOThreads};
+
+parse_options([{<<"hashing_threads">>, Threads} | Rest], Config) when is_integer(Threads) ->
+	parse_options(Rest, Config#config{ hashing_threads = Threads });
+parse_options([{<<"hashing_threads">>, Threads} | _], _) ->
+	{error, {bad_type, hashing_threads, number}, Threads};
+
+parse_options([{<<"mining_server_chunk_cache_size_limit">>, Limit} | Rest], Config)
+		when is_integer(Limit) ->
+	parse_options(Rest, Config#config{ mining_server_chunk_cache_size_limit = Limit });
+parse_options([{<<"mining_server_chunk_cache_size_limit">>, Limit} | _], _) ->
+	{error, {bad_type, mining_server_chunk_cache_size_limit, number}, Limit};
 
 parse_options([{<<"stage_one_hashing_threads">>, HashingThreads} | Rest], Config)
 		when is_integer(HashingThreads) ->
@@ -197,11 +247,6 @@ parse_options([{<<"requests_per_minute_limit_by_ip">>, Object} | Rest], Config)
 	end;
 parse_options([{<<"requests_per_minute_limit_by_ip">>, Object} | _], _) ->
 	{error, {bad_type, requests_per_minute_limit_by_ip, object}, Object};
-
-parse_options([{<<"load_mining_key">>, DataDir} | Rest], Config) when is_binary(DataDir) ->
-	parse_options(Rest, Config#config{ load_key = binary_to_list(DataDir) });
-parse_options([{<<"load_mining_key">>, DataDir} | _], _) ->
-	{error, {bad_type, load_mining_key, string}, DataDir};
 
 parse_options([{<<"transaction_blacklists">>, TransactionBlacklists} | Rest], Config)
 		when is_list(TransactionBlacklists) ->
@@ -373,6 +418,15 @@ parse_options([{<<"disk_cache_size_mb">>, D} | Rest], Config) when is_integer(D)
 parse_options([{<<"packing_rate">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ packing_rate = D });
 
+parse_options([{<<"max_nonce_limiter_validation_thread_count">>, D} | Rest], Config)
+		when is_integer(D) ->
+	parse_options(Rest, Config#config{ max_nonce_limiter_validation_thread_count = D });
+
+parse_options([{<<"max_nonce_limiter_last_step_validation_thread_count">>, D} | Rest], Config)
+		when is_integer(D) ->
+	parse_options(Rest,
+			Config#config{ max_nonce_limiter_last_step_validation_thread_count = D });
+
 parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ debug = B });
 
@@ -380,6 +434,16 @@ parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
 	{ok, Config}.
+
+parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
+	Packing =
+		case PackingBin of
+			<<"unpacked">> ->
+				unpacked;
+			MiningAddr when byte_size(MiningAddr) == 43 ->
+				{spora_2_6, ar_util:decode(MiningAddr)}
+		end,
+	{RangeSize, RangeNumber, Packing}.
 
 safe_map(Fun, List) ->
 	try

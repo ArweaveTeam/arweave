@@ -4,17 +4,11 @@
 %%% @end
 -module(ar_retarget).
 
--export([
-	is_retarget_height/1,
-	maybe_retarget/5,
-	calculate_difficulty/5,
-	validate_difficulty/2,
-	switch_to_linear_diff/1,
-	switch_to_linear_diff_pre_fork_2_5/1
-]).
+-export([is_retarget_height/1, maybe_retarget/5, calculate_difficulty/5, validate_difficulty/2,
+		switch_to_linear_diff/1, switch_to_linear_diff_pre_fork_2_5/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_mine.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -36,34 +30,42 @@
 		)
 	).
 
+%% @doc The unconditional difficulty reduction coefficient applied at the
+%% first 2.5 block.
+-define(DIFF_DROP_2_5, 2).
+
+%% @doc The unconditional difficulty reduction coefficient applied at the
+%% first 2.6 block.
+-define(INITIAL_DIFF_DROP_2_6, 100).
+
+%% @doc The additional difficulty reduction coefficient applied every 10 minutes at the
+%% first 2.6 block.
+-define(DIFF_DROP_2_6, 2).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Checls if the given height is a retarget height.
-%% Reteurns true if so, otherwise returns false.
-%% @end
+%% @doc Return true if the given height is a retarget height.
 is_retarget_height(Height) ->
 	?IS_RETARGET_HEIGHT(Height).
 
-%% @doc Maybe set a new difficulty and last retarget, if the block is at
-%% an appropriate retarget height, else returns the current diff
-%% @end
 maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) when ?IS_RETARGET_HEIGHT(Height) ->
 	calculate_difficulty(CurDiff, TS, LastRetargetTS, Height, PrevTS);
 maybe_retarget(_Height, CurDiff, _TS, _LastRetargetTS, _PrevTS) ->
 	CurDiff.
 
-%% @doc Calculate a new difficulty, given an old difficulty and the period
-%% since the last retarget occcurred.
-%% @end
 calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_1_7 = ar_fork:height_1_7(),
 	Fork_1_8 = ar_fork:height_1_8(),
 	Fork_1_9 = ar_fork:height_1_9(),
 	Fork_2_4 = ar_fork:height_2_4(),
 	Fork_2_5 = ar_fork:height_2_5(),
+	Fork_2_6 = ar_fork:height_2_6(),
 	case Height of
+		_ when Height == Fork_2_6 ->
+			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS,
+					?INITIAL_DIFF_DROP_2_6, ?DIFF_DROP_2_6);
 		_ when Height > Fork_2_5 ->
 			calculate_difficulty(OldDiff, TS, Last, Height);
 		_ when Height == Fork_2_5 ->
@@ -84,7 +86,7 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 			calculate_difficulty_before_1_8(OldDiff, TS, Last, Height)
 	end.
 
-%% @doc Validate that a new block has an appropriate difficulty.
+%% @doc Assert the new block has an appropriate difficulty.
 validate_difficulty(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
 	(NewB#block.diff ==
 		calculate_difficulty(OldB#block.diff, NewB#block.timestamp, OldB#block.last_retarget,
@@ -95,7 +97,6 @@ validate_difficulty(NewB, OldB) ->
 
 %% @doc The number a hash must be greater than, to give the same odds of success
 %% as the old-style Diff (number of leading zeros in the bitstring).
-%% @end
 switch_to_linear_diff(Diff) ->
 	?MAX_DIFF - ar_fraction:pow(2, 256 - Diff).
 
@@ -108,7 +109,7 @@ switch_to_linear_diff_pre_fork_2_5(Diff) ->
 
 calculate_difficulty(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
-	ActualTime = TS - Last,
+	ActualTime = max(TS - Last, ar_block:get_max_timestamp_deviation()),
 	case ActualTime < ?RETARGET_TOLERANCE_UPPER_BOUND
 			andalso ActualTime > ?RETARGET_TOLERANCE_LOWER_BOUND of
 		true ->
@@ -125,11 +126,17 @@ calculate_difficulty(OldDiff, TS, Last, Height) ->
 	end.
 
 calculate_difficulty_at_2_5(OldDiff, TS, Last, Height, PrevTS) ->
+	calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, ?DIFF_DROP_2_5,
+			?DIFF_DROP_2_5).
+
+calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, InitialCoeff, Coeff) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
-	ActualTime = TS - Last,
+	ActualTime = max(TS - Last, ar_block:get_max_timestamp_deviation()),
 	Step = 10 * 60,
-	%% Drop the difficulty 2x right away, then drop extra 2x for every 10 minutes passed.
-	ActualTime2 = ActualTime * 2 * ar_fraction:pow(2, max(TS - PrevTS, 0) div Step),
+	%% Drop the difficulty InitialCoeff times right away, then drop extra Coeff times
+	%% for every 10 minutes passed.
+	ActualTime2 = ActualTime * InitialCoeff
+			* ar_fraction:pow(Coeff, max(TS - PrevTS, 0) div Step),
 	MaxDiff = ?MAX_DIFF,
 	MinDiff = ar_mine:min_difficulty(Height),
 	DiffInverse = (MaxDiff - OldDiff) * ActualTime2 div TargetTime,
@@ -255,7 +262,7 @@ simple_retarget_test_() ->
 		),
 		true = ar_util:do_until(
 			fun() ->
-				[BH|_] = ar_node:get_blocks(),
+				[BH | _] = ar_node:get_blocks(),
 				B = ar_storage:read_block(BH),
 				B#block.diff > B0#block.diff
 			end,

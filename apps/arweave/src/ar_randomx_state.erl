@@ -174,9 +174,15 @@ poll_new_blocks(State) ->
 			State;
 		true ->
 			Height = ar_node:get_height(),
-			NewState = handle_new_height(State, Height),
-			timer:send_after(?RANDOMX_STATE_POLL_INTERVAL * 1000, poll_new_blocks),
-			NewState
+			case Height - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_6() of
+				true ->
+					self() ! reset,
+					State;
+				_ ->
+					NewState = handle_new_height(State, Height),
+					timer:send_after(?RANDOMX_STATE_POLL_INTERVAL * 1000, poll_new_blocks),
+					NewState
+			end
 	end.
 
 handle_new_height(State, CurrentHeight) ->
@@ -268,7 +274,6 @@ init(Server, SwapHeight, Threads) ->
 %% dependent hash from the block at the previous swap height. If RandomX is used
 %% already by the first ?RANDOMX_KEY_SWAP_FREQ blocks, then a hardcoded key is
 %% used since there is no old enough block to fetch the key from.
-%% @end
 randomx_key(SwapHeight) when SwapHeight < ?RANDOMX_KEY_SWAP_FREQ ->
 	{ok, <<"Arweave Genesis RandomX Key">>};
 randomx_key(SwapHeight) ->
@@ -306,15 +311,25 @@ get_block(Height, BI, Peers) when is_integer(Height) ->
 	get_block(BH, Peers).
 
 get_block(BH, Peers) ->
+	get_block2(BH, Peers, 5).
+
+get_block2(_BH, _Peers, 0) ->
+	unavailable;
+get_block2(BH, Peers, RetryCount) ->
 	case ar_storage:read_block(BH) of
 		B when is_record(B, block) ->
 			{ok, B};
 		unavailable ->
 			case ar_http_iface_client:get_block_shadow(Peers, BH) of
 				unavailable ->
-					unavailable;
+					?LOG_WARNING([{event, failed_to_get_randomx_key_block},
+							{block, ar_util:encode(BH)},
+							{peers, string:join([ar_util:format_peer(Peer) || Peer <- Peers],
+									", ")}]),
+					timer:sleep(2000),
+					get_block2(BH, Peers, RetryCount - 1);
 				{Peer, B, Time, Size} ->
-					case ar_weave:indep_hash(B) of
+					case ar_block:indep_hash(B) of
 						BH ->
 							ar_events:send(peer, {served_block, Peer, Time, Size}),
 							{ok, B};

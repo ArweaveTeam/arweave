@@ -47,6 +47,12 @@ in
       '';
     };
 
+    startFromBlockIndex = mkOption {
+      type = types.bool;
+      default = false;
+      description = "If set, starts from the locally stored state.";
+    };
+
     debug = mkOption {
       type = types.bool;
       default = false;
@@ -95,10 +101,28 @@ in
       description = "Max disk-pool data-root buffer size in mb.";
     };
 
-    maxMiners = mkOption {
+    blockPollers = mkOption {
       type = types.int;
-      default = 0;
-      description = "Max amount of miners to spawn, 0 means no mining will be performed.";
+      default = 10;
+      description = "The number of block polling jobs.";
+    };
+
+    polling = mkOption {
+      type = types.int;
+      default = 2;
+      description = "The frequency of block polling, in seconds.";
+    };
+
+    txValidators = mkOption {
+      type = types.int;
+      default = 10;
+      description = "The number of transaction validation jobs.";
+    };
+
+    packingRate = mkOption {
+      type = types.int;
+      default = 30;
+      description = "The maximum number of chunks the node will pack per second.";
     };
 
     featuresDisable = mkOption {
@@ -221,16 +245,20 @@ in
           pkgs.writeText "config.json" (builtins.toJSON {
             data_dir = cfg.dataDir;
             metrics_dir = cfg.metricsDir;
+            start_from_block_index = cfg.startFromBlockIndex;
             transaction_blacklists = cfg.transactionBlacklists;
             transaction_whitelists = cfg.transactionWhitelists;
             max_disk_pool_buffer_mb = cfg.maxDiskPoolBufferMb;
             max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
-            max_miners = cfg.maxMiners;
+            block_pollers = cfg.blockPollers;
+            polling = cfg.polling;
+            tx_validators = cfg.txValidators;
             disable = cfg.featuresDisable;
             header_sync_jobs = cfg.headerSyncJobs;
             sync_jobs = cfg.syncJobs;
             disk_pool_jobs = cfg.diskPoolJobs;
             debug = cfg.debug;
+            packing_rate = cfg.packingRate;
             semaphores = {
               get_chunk = cfg.maxParallelGetChunkRequests;
               get_and_pack_chunk = cfg.maxParallelGetAndPackChunkRequests;

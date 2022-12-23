@@ -3,12 +3,16 @@
 
 %%% A collection of record structures used throughout the Arweave server.
 
-%% How nodes identify they are on the same network.
+%% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
--define(NETWORK_NAME, "arweave.N.1").
+	-ifdef(DEBUG).
+		-define(NETWORK_NAME, "arweave.localtest").
+	-else.
+		-define(NETWORK_NAME, "arweave.N.1").
+	-endif.
 -endif.
 
-%% Current release number of the arweave client software.
+%% The current release number of the arweave client software.
 %% @deprecated Not used apart from being included in the /info response.
 -define(CLIENT_VERSION, 5).
 
@@ -40,11 +44,17 @@
 
 -define(MERKLE_HASH_ALG, sha384).
 
--define(HASH_SZ, 256).
+-define(RSA_SIGN_ALG, rsa).
+-define(RSA_PRIV_KEY_SZ, 4096).
 
--define(SIGN_ALG, rsa).
+-define(ECDSA_SIGN_ALG, ecdsa).
+-define(ECDSA_TYPE_BYTE, <<2>>).
 
--define(PRIV_KEY_SZ, 4096).
+-define(EDDSA_SIGN_ALG, eddsa).
+-define(EDDSA_TYPE_BYTE, <<3>>).
+
+%% The default key type used by transactions that do not specify a signature type.
+-define(DEFAULT_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
 
 %% The difficulty a new weave is started with.
 -define(DEFAULT_DIFF, 6).
@@ -99,7 +109,7 @@
 -endif.
 
 %% How long to wait before giving up on test(s).
--define(TEST_TIMEOUT, 30 * 60).
+-define(TEST_TIMEOUT, 60 * 60).
 
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
@@ -174,8 +184,8 @@
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
 
 %% Number of seconds an IP address should be completely banned from doing
-%% HTTP requests after posting a block with bad PoW.
--define(BAD_POW_BAN_TIME, 24 * 60 * 60).
+%% HTTP requests after posting an invalid block.
+-define(BAD_BLOCK_BAN_TIME, 24 * 60 * 60).
 
 %% Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
@@ -312,15 +322,42 @@
 %% picked as recall chunks and therefore equally incentivize the storage.
 -define(PADDING_NODE_DATA_ROOT, <<>>).
 
-%% @doc A succinct proof of access to a recall byte found in a TX.
+%% @doc A chunk with the proofs of its presence in the weave at a particular offset.
 -record(poa, {
-	option = 1,			% The recall byte option chosen, a sequence number.
-	tx_path = <<>>,		% The path through the Merkle tree of transactions' `data_root`s,
-						% from the `data_root` being proven to the corresponding `tx_root`.
-	data_path = <<>>,	% The path through the Merkle tree of identifiers of chunks of the
-						% corresponding transaction, from the chunk being proven to the
-						% corresponding `data_root`.
-	chunk = <<>>		% The data chunk.
+	%% DEPRECATED. Not used since the fork 2.4.
+	option = 1,
+	%% The path through the Merkle tree of transactions' "data_root"s.
+	%% Proofs the inclusion of the "data_root" in the corresponding "tx_root"
+	%% under the particular offset.
+	tx_path = <<>>,
+	%% The path through the Merkle tree of the identifiers of the chunks
+	%% of the corresponding transaction. Proofs the inclusion of the chunk
+	%% in the corresponding "data_root" under a particular offset.
+	data_path = <<>>,
+	chunk = <<>>
+}).
+
+%% @doc The information which simplifies validation of the nonce limiting procedures.
+-record(nonce_limiter_info, {
+	%% The output of the latest step - the source of the entropy for the mining nonces.
+	output = <<>>,
+	%% The output of the latest step of the previous block.
+	prev_output = <<>>,
+	%% The hash of the latest block mined below the current reset line.
+	seed = <<>>,
+	%% The hash of the latest block mined below the future reset line.
+	next_seed = <<>>,
+	%% The weave size of the latest block mined below the current reset line.
+	partition_upper_bound = 0,
+	%% The weave size of the latest block mined below the future reset line.
+	next_partition_upper_bound = 0,
+	%% The global sequence number of the nonce limiter step at which the block was found.
+	global_step_number = 1,
+	%% ?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT evenly spaced out outputs of the last
+	%% step of the nonce limiting process.
+	last_step_checkpoints = [],
+	%% The checkpoints of the nonce limiting process.
+	checkpoints = []
 }).
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers
@@ -330,114 +367,212 @@
 	indep_hash,
 	previous_block,
 	recall_byte,
-	tx_prefixes = [] % 8 byte prefixes of transaction identifiers.
+	tx_prefixes = [], % 8 byte prefixes of transaction identifiers.
+	recall_byte2
 }).
 
 %% @doc A reply to a block announcement when we are willing to receive this
 %% block from the announcing peer.
 -record(block_announcement_response, {
 	missing_chunk = false,
-	missing_tx_indices = [] % Missing transactions' indices, 0 =<, =< 999.
+	missing_tx_indices = [], % Missing transactions' indices, 0 =<, =< 999.
+	missing_chunk2
 }).
 
-%% @doc A full block - the txs field is a list of tx records, or a block shadow -
-%% the txs field is a list of transaction identifiers.
-%% @end
+%% @doc A block (txs is a list of tx records) or a block shadow (txs is a list of
+%% transaction identifiers).
 -record(block, {
-	nonce,									% The nonce chosen to solve the mining problem.
-	previous_block,							% `indep_hash` of the previous block in the weave.
-	timestamp = os:system_time(seconds),	% POSIX time of block discovery.
-	last_retarget,							% POSIX time of the last difficulty retarget.
-	diff,									% Mining difficulty, the number `hash` must be
-											% greater than.
-	height,									% How many blocks have passed since the genesis block.
-	hash,									% Mining solution hash of the block, must satisfy the
-											% mining difficulty.
-	indep_hash,								% The block identifier.
-	txs = [],								% A list of tx records in full blocks, or a list of TX
-											% identifiers in block shadows.
-	tx_root,								% Merkle root of the tree of Merkle roots of
-											% block's transactions' data.
-	tx_tree = [],							% The Merkle tree of Merkle roots of block's
-											% transactions' data. Used internally, not gossiped.
-	hash_list = unset,						% The list of the block identifiers of the last
-											% ?STORE_BLOCKS_BEHIND_CURRENT blocks.
-	hash_list_merkle,						% The Merkle root of the block index - the list of
-											% {`indep_hash`, `weave_size`, `tx_root`} triplets
-											% describing the past blocks not including this one.
-	wallet_list = unset,					% The root hash of the Merkle Patricia Tree containing
-											% all wallet (account) balances and the identifiers
-											% of the last transactions posted by them, if any.
-    reward_addr = unclaimed,				% The address (SHA2-256 hash of the public key) of
-											% the miner or the atom 'unclaimed'.
-    tags,									% Miner-specified tags to store with the block.
-	reward_pool,							% The number of Winston in the endowment pool.
-	weave_size,								% The total byte size of transactions' data in the
-											% weave including this block.
-	block_size,								% The total byte size of transactions' data inside
-											% this block.
-	cumulative_diff,						% The sum of the average number of hashes computed
-											% by the network to produce the past blocks including
-											% this one.
-	size_tagged_txs = unset,				% The list of {{`tx_id`, `data_root`}, `offset`}.
-											% Used internally, not gossiped.
-	poa = #poa{},							% The proof of access.
-	usd_to_ar_rate,							% The estimated USD to AR conversion rate used
-											% in the pricing calculations.
-											% A tuple {Dividend, Divisor}.
-	scheduled_usd_to_ar_rate,				% The estimated USD to AR conversion rate scheduled
-											% to be used a bit later, used to compute the
-											% necessary fee for the currently signed txs.
-											% A tuple {Dividend, Divisor}.
-	packing_2_5_threshold,					% The offset on the weave separting the data which
-											% has to be packed for mining after the fork 2.5
-											% from the data which does not have to be packed yet.
-											% It is set to the weave_size of the 50th previous
-											% block at the hard fork block and moves down at a
-											% speed of ?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND
-											% chunks/s. The motivation behind the threshold is a
-											% smooth transition to the new algorithm - big miners
-											% who might not want to adopt the new algorithm are
-											% still incentivized to upgrade and stay in the
-											% network for some time.
-	strict_data_split_threshold				% The offset on the weave separating the data which
-											% has to be split according to the stricter rules
-											% introduced in the fork 2.5 from the historical
-											% data. The new rules require all chunk sizes to
-											% be 256 KiB excluding the last or the only chunks
-											% of the corresponding transactions and the second
-											% last chunks of their transactions where they
-											% exceed 256 KiB in size when combined with the
-											% following (last) chunk. Furthermore, the new
-											% chunks may not be smaller than their Merkle proofs
-											% unless they are the last chunks.
-											% The motivation is to be able to put all chunks
-											% into 256 KiB buckets. It makes all chunks equally
-											% attractive because they have equal chances of
-											% being chosen as recall chunks. Moreover,
-											% every chunk costs the same in terms of storage
-											% and computation expenditure when packed (smaller
-											% chunks are simply padded before packing).
+	%% The nonce chosen to solve the mining problem.
+	nonce,
+	%% `indep_hash` of the previous block in the weave.
+	previous_block = <<>>,
+	%% POSIX time of block discovery.
+	timestamp,
+	%% POSIX time of the last difficulty retarget.
+	last_retarget,
+	%% Mining difficulty, the number `hash` must be greater than.
+	diff,
+	height = 0,
+	%% Mining solution hash.
+	hash = <<>>,
+	%% The block identifier.
+	indep_hash,
+	%% The list of transaction identifiers or transactions (tx records).
+	txs = [],
+	%% The Merkle root of the tree of Merkle roots of block's transactions' data.
+	tx_root = <<>>,
+	%% The Merkle tree of Merkle roots of block's transactions' data. Used internally,
+	%% not gossiped.
+	tx_tree = [],
+	%% Deprecated. Not used, not gossiped.
+	hash_list = unset,
+	%% The Merkle root of the block index - the list of
+	%% {`indep_hash`, `weave_size`, `tx_root`} triplets describing the past blocks
+	%% excluding this one.
+	hash_list_merkle = <<>>,
+	%% The root hash of the Merkle Patricia Tree containing all wallet (account) balances and
+	%% the identifiers of the last transactions posted by them, if any
+	wallet_list,
+	%% The mining address. Before the fork 2.6, either the atom 'unclaimed' or
+	%% a SHA2-256 hash of the RSA PSS public key. In 2.6, 'unclaimed' is not supported.
+    reward_addr = unclaimed,
+	%% Miner-specified tags (a list of strings) to store with the block.
+    tags = [],
+	%% The number of Winston in the endowment pool.
+	reward_pool,
+	%% The total number of bytes whose storage is incentivized.
+	weave_size,
+	%% The total number of bytes added to the storage incentivization by this block.
+	block_size,
+	%% The sum of the average number of hashes computed by the network to produce the past
+	%% blocks including this one.
+	cumulative_diff,
+	%% The list of {{`tx_id`, `data_root`}, `offset`} pairs. Used internally, not gossiped.
+	size_tagged_txs = unset,
+	%% The first proof of access.
+	poa = #poa{},
+	%% The estimated USD to AR conversion rate used in the pricing calculations.
+	%% A tuple {Dividend, Divisor}.
+	%% Used until the transition to the new fee calculation method is complete.
+	usd_to_ar_rate,
+	%% The estimated USD to AR conversion rate scheduled to be used a bit later, used to
+	%% compute the necessary fee for the currently signed txs. A tuple {Dividend, Divisor}.
+	%% Used until the transition to the new fee calculation method is complete.
+	scheduled_usd_to_ar_rate,
+	%% The offset on the weave separting the data which has to be packed for mining after the
+	%% fork 2.5 from the data which does not have to be packed yet. It is set to the
+	%% weave_size of the 50th previous block at the hard fork block and moves down at a speed
+	%% of ?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND chunks/s. The motivation behind the
+	%% threshold is a smooth transition to the new algorithm - big miners who might not want
+	%% to adopt the new algorithm are still incentivized to upgrade and stay in the network
+	%% for some time.
+	packing_2_5_threshold,
+	%% The offset on the weave separating the data which has to be split according to the
+	%% stricter rules introduced in the fork 2.5 from the historical data. The new rules
+	%% require all chunk sizes to be 256 KiB excluding the last or the only chunks of the
+	%% corresponding transactions and the second last chunks of their transactions where they
+	%% exceed 256 KiB in size when combined with the following (last) chunk. Furthermore, the
+	%% new chunks may not be smaller than their Merkle proofs unless they are the last chunks.
+	%% The motivation is to be able to put all chunks into 256 KiB buckets. It makes all
+	%% chunks equally attractive because they have equal chances of being chosen as recall
+	%% chunks. Moreover, every chunk costs the same in terms of storage and computation
+	%% expenditure when packed (smaller chunks are simply padded before packing).
+	strict_data_split_threshold,
+
+	%%
+	%% The fields below were added at the fork 2.6.
+	%%
+
+	%% A part of the solution hash preimage. Used for the initial solution validation
+	%% without a data chunk.
+	hash_preimage = <<>>,
+	%% The absolute recall offset.
+	recall_byte,
+	%% The total amount of winston the miner receives for this block.
+	reward = 0,
+	%% The solution hash of the previous block.
+	previous_solution_hash = <<>>,
+	%% The sequence number of the mining partition where the block was found.
+	partition_number,
+	%% The nonce limiter information.
+	nonce_limiter_info = #nonce_limiter_info{},
+	%% The second proof of access (empty when the solution was found with only one chunk).
+	poa2 = #poa{},
+	%% The absolute second recall offset.
+	recall_byte2,
+	%% The block signature.
+	signature = <<>>,
+	%% {KeyType, PubKey} - the public key the block was signed with.
+	%% The only supported KeyType is currently {rsa, 65537}.
+	reward_key,
+	%% The estimated number of Winstons it costs the network to store one gibibyte
+	%% for one minute.
+	price_per_gib_minute = 0,
+	%% The updated estimation of the number of Winstons it costs the network to store
+	%% one gibibyte for one minute.
+	scheduled_price_per_gib_minute = 0,
+	%% The recursive hash of the network hash rates and block rewards of the
+	%% latest ?PRICE_HISTORY_BLOCKS blocks.
+	price_history_hash,
+	%% The network hash rates and block rewards from the latest
+	%% ?PRICE_HISTORY_BLOCKS blocks. Used internally, not gossiped.
+	price_history = [],
+	%% The total number of Winston emitted when the endowment was not sufficient
+	%% to compensate mining.
+	debt_supply = 0,
+	%% An additional multiplier for the transaction fees doubled every time the
+	%% endowment pool becomes empty.
+	kryder_plus_rate_multiplier = 1,
+	%% A lock controlling the updates of kryder_plus_rate_multiplier. It is set to 1
+	%% after the update and back to 0 when the endowment pool is bigger than
+	%% ?RESET_KRYDER_PLUS_LATCH_THRESHOLD (redenominated according to the denomination
+	%% used at the time).
+	kryder_plus_rate_multiplier_latch = 0,
+	%% The code for the denomination of AR in base units.
+	%% 1 is the default which corresponds to the original denomination of 1^12 base units.
+	%% Every time the available supply falls below ?REDENOMINATION_THRESHOLD,
+	%% the denomination is multiplied by 1000, the code is incremented.
+	%% Transaction denomination code must not exceed the block's denomination code.
+	denomination = 1,
+	%% The biggest known redenomination height (0 means there were no redenominations yet).
+	redenomination_height = 0
 }).
 
 %% @doc A transaction.
 -record(tx, {
-	format = 1,			% 1 or 2.
-	id = <<>>,			% The transaction identifier.
-	last_tx = <<>>,		% Either the identifier of the previous transaction from the same
-						% wallet or the identifier of one of the last ?MAX_TX_ANCHOR_DEPTH blocks.
-	owner =	<<>>,		% The public key the transaction is signed with.
-	tags = [],			% A list of arbitrary key-value pairs. Keys and values are binaries.
-	target = <<>>,		% The address of the recipient, if any. The SHA2-256 hash of the public key.
-	quantity = 0,		% The amount of Winstons to send to the recipient, if any.
-	data = <<>>,		% The data to upload, if any. For v2 transactions, the field is
-						% optional - a fee is charged based on the `data_size` field,
-						% data may be uploaded any time later in chunks.
-	data_size = 0,		% Size in bytes of the transaction data.
-	data_tree = [],		% The Merkle tree of data chunks. Used internally, not gossiped.
-	data_root = <<>>,	% The Merkle root of the Merkle tree of data chunks.
-	signature = <<>>,	% The signature.
-	reward = 0			% The fee in Winstons.
+	%% 1 or 2.
+	format = 1,
+	%% The transaction identifier.
+	id = <<>>,
+	%% Either the identifier of the previous transaction from
+	%% the same wallet or the identifier of one of the
+	%% last ?MAX_TX_ANCHOR_DEPTH blocks.
+	last_tx = <<>>,
+	%% The public key the transaction is signed with.
+	owner =	<<>>,
+	%% A list of arbitrary key-value pairs. Keys and values are binaries.
+	tags = [],
+	%% The address of the recipient, if any. The SHA2-256 hash of the public key.
+	target = <<>>,
+	%% The amount of Winstons to send to the recipient, if any.
+	quantity = 0,
+	%% The data to upload, if any. For v2 transactions, the field is optional - a fee
+	%% is charged based on the "data_size" field, data itself may be uploaded any time
+	%% later in chunks.
+	data = <<>>,
+	%% Size in bytes of the transaction data.
+	data_size = 0,
+	%% Deprecated. Not used, not gossiped.
+	data_tree = [],
+	%% The Merkle root of the Merkle tree of data chunks.
+	data_root = <<>>,
+	%% The signature.
+	signature = <<>>,
+	%% The fee in Winstons.
+	reward = 0,
+
+	%% The code for the denomination of AR in base units.
+	%%
+	%% 1 corresponds to the original denomination of 1^12 base units.
+	%% Every time the available supply falls below ?REDENOMINATION_THRESHOLD,
+	%% the denomination is multiplied by 1000, the code is incremented.
+	%%
+	%% 0 is the default denomination code. It is treated as the denomination code of the
+	%% current block. We do NOT default to 1 because we want to distinguish between the
+	%% transactions with the explicitly assigned denomination (the denomination then becomes
+	%% a part of the signature preimage) and transactions signed the way they were signed
+	%% before the upgrade. The motivation is to keep supporting legacy client libraries after
+	%% redenominations and at the same time protect users from an attack where
+	%% a post-redenomination transaction is included in a pre-redenomination block. The attack
+	%% is prevented by forbidding inclusion of transactions with denomination=0 in the 100
+	%% blocks preceding the redenomination block.
+	%%
+	%% Transaction denomination code must not exceed the block's denomination code.
+	denomination = 0,
+
+	%% The type of signature this transaction was signed with. A system field,
+	%% not used by the protocol yet.
+	signature_type = ?DEFAULT_KEY_TYPE
 }).
 
 %% A macro to convert AR into Winstons.
@@ -448,9 +583,6 @@
 
 %% Convert a v2.0 block index into an old style block hash list.
 -define(BI_TO_BHL(BI), ([BH || {BH, _, _} <- BI])).
-
-%% A macro to return whether a value is an address.
--define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).
 
 %% Pattern matches on ok-tuple and returns the value.
 -define(OK(Tuple), begin (case (Tuple) of {ok, SuccessValue} -> (SuccessValue) end) end).

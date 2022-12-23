@@ -1,6 +1,5 @@
 %%% @doc Module responsible for managing and testing the inflation schedule of 
 %%% the Arweave main network.
-%%% @end
 -module(ar_inflation).
 
 -export([calculate/1, calculate_post_15_y1_extra/0]).
@@ -15,12 +14,19 @@
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
-%% @end
-calculate(Height) when Height =< ?FORK_15_HEIGHT ->
-	pre_15_calculate(Height);
-calculate(Height) when Height =< ?BLOCKS_PER_YEAR ->
-    calculate_base(Height) + ?POST_15_Y1_EXTRA;
+-ifdef(DEBUG).
+calculate(_Height) ->
+	10.
+-else.
 calculate(Height) ->
+	calculate2(Height).
+-endif.
+
+calculate2(Height) when Height =< ?FORK_15_HEIGHT ->
+	pre_15_calculate(Height);
+calculate2(Height) when Height =< ?BLOCKS_PER_YEAR ->
+    calculate_base(Height) + ?POST_15_Y1_EXTRA;
+calculate2(Height) ->
 	case Height >= ar_fork:height_2_5() of
 		true ->
 			calculate_base(Height);
@@ -30,7 +36,6 @@ calculate(Height) ->
 
 %% @doc Calculate the value used in the ?POST_15_Y1_EXTRA macro.
 %% The value is memoized to avoid frequent large computational load.
-%% @end
 calculate_post_15_y1_extra() ->
     Pre15 = erlang:trunc(sum_rewards(fun calculate/1, 0, ?FORK_15_HEIGHT)),
     Base = erlang:trunc(sum_rewards(fun calculate_base/1, 0, ?FORK_15_HEIGHT)),
@@ -166,7 +171,7 @@ is_in_tolerance(X, Y, TolerancePercent) ->
 
 %% @doc Count the total inflation rewards for a given year.
 year_sum_rewards(YearNum) ->
-    year_sum_rewards(YearNum, fun calculate/1).
+    year_sum_rewards(YearNum, fun calculate2/1).
 year_sum_rewards(YearNum, Fun) ->
     sum_rewards(
         Fun,

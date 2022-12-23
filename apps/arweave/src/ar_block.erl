@@ -1,140 +1,40 @@
 -module(ar_block).
 
--export([block_field_size_limit/1, verify_dep_hash/2, verify_timestamp/1, verify_height/2,
-		verify_last_retarget/2, verify_previous_block/2, verify_block_hash_list/2,
-		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
-		verify_tx_root/1, hash_wallet_list/2, hash_wallet_list/3,
-		hash_wallet_list_without_reward_wallet/2, generate_block_data_segment/1,
-		generate_block_data_segment/2, generate_block_data_segment/3,
-		generate_block_data_segment_base/1, generate_hash_list_for_block/2,
+-export([block_field_size_limit/1, verify_timestamp/2,
+		get_max_timestamp_deviation/0, verify_last_retarget/2, verify_weave_size/3,
+		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
+		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
+		indep_hash/1, indep_hash/2, indep_hash2/2, price_history_hash/1,
+		generate_signed_hash/1, verify_signature/2,
+		generate_block_data_segment/1, generate_block_data_segment/2,
+		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
+		hash_wallet_list/1, generate_hash_list_for_block/2,
 		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
-		compute_hash_list_merkle/2, compute_hash_list_merkle/1,
-		test_wallet_list_performance/1, poa_to_list/1, shift_packing_2_5_threshold/1,
-		get_packing_threshold/2]).
+		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
+		get_packing_threshold/2, validate_price_history_hash/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_block.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-hash_wallet_list(Height, RewardAddr, WalletList) ->
-	case Height >= ar_fork:height_2_0() of
-		true ->
-			case Height < ar_fork:height_2_2() of
-				true ->
-					{hash_wallet_list_pre_2_2(RewardAddr, WalletList), WalletList};
-				false ->
-					ar_patricia_tree:compute_hash(
-						WalletList,
-						fun(Addr, {Balance, LastTX}) ->
-							ar_deep_hash:hash([Addr, binary:encode_unsigned(Balance), LastTX])
-						end
-					)
-			end
-	end.
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
-hash_wallet_list_pre_2_2(RewardAddr, WalletList) ->
-	{RewardWallet, NoRewardWalletListHash} =
-		hash_wallet_list_without_reward_wallet(RewardAddr, WalletList),
-	hash_wallet_list(RewardWallet, NoRewardWalletListHash).
-
-hash_wallet_list_without_reward_wallet(RewardAddr, WalletList) ->
-	RewardWallet =
-		case ar_patricia_tree:get(RewardAddr, WalletList) of
-			not_found ->
-				unclaimed;
-			{Balance, LastTX} ->
-				{RewardAddr, Balance, LastTX}
-		end,
-	NoRewardWLH = ar_deep_hash:hash(
-		ar_patricia_tree:foldr(
-			fun(A, {B, Anchor}, Acc) ->
-				case A == RewardAddr of
-					true ->
-						Acc;
-					false ->
-						[[A, binary:encode_unsigned(B), Anchor] | Acc]
-				end
-			end,
-			[],
-			WalletList
-		)
-	),
-	{RewardWallet, NoRewardWLH}.
-
-hash_wallet_list(RewardWallet, NoRewardWalletListHash) ->
-	ar_deep_hash:hash([
-		NoRewardWalletListHash,
-		case RewardWallet of
-			unclaimed ->
-				<<"unclaimed">>;
-			{Address, Balance, Anchor} ->
-				[Address, binary:encode_unsigned(Balance), Anchor]
-		end
-	]).
-
-%% @doc Generate the TX tree and set the TX root for a block.
-generate_tx_tree(B) ->
-	SizeTaggedTXs = generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
-	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
-	generate_tx_tree(B, SizeTaggedDataRoots).
-
-generate_tx_tree(B, SizeTaggedDataRoots) ->
-	{Root, Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-	B#block{ tx_tree = Tree, tx_root = Root }.
-
-generate_size_tagged_list_from_txs(TXs, Height) ->
-	lists:reverse(
-		element(2,
-			lists:foldl(
-				fun(TX, {Pos, List}) ->
-					DataSize = TX#tx.data_size,
-					End = Pos + DataSize,
-					case Height >= ar_fork:height_2_5() of
-						true ->
-							Padding = ar_tx:get_weave_size_increase(DataSize, Height) - DataSize,
-							%% Encode the padding information in the Merkle tree.
-							case Padding > 0 of
-								true ->
-									PaddingRoot = ?PADDING_NODE_DATA_ROOT,
-									{End + Padding, [{{padding, PaddingRoot}, End + Padding},
-											{{TX#tx.id, get_tx_data_root(TX)}, End} | List]};
-								false ->
-									{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
-							end;
-						false ->
-							{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
-					end
-				end,
-				{0, []},
-				lists:sort(TXs)
-			)
-		)
-	).
-
-%% @doc Find the appropriate block hash list for a block, from a block index.
-generate_hash_list_for_block(_BlockOrHash, []) -> [];
-generate_hash_list_for_block(B, BI) when ?IS_BLOCK(B) ->
-	generate_hash_list_for_block(B#block.indep_hash, BI);
-generate_hash_list_for_block(Hash, BI) ->
-	do_generate_hash_list_for_block(Hash, BI).
-
-do_generate_hash_list_for_block(_, []) ->
-	error(cannot_generate_hash_list);
-do_generate_hash_list_for_block(IndepHash, [{IndepHash, _, _} | BI]) -> ?BI_TO_BHL(BI);
-do_generate_hash_list_for_block(IndepHash, [_ | Rest]) ->
-	do_generate_hash_list_for_block(IndepHash, Rest).
-
-%% @doc Given a block checks that the lengths conform to the specified limits.
-block_field_size_limit(B = #block { reward_addr = unclaimed }) ->
-	block_field_size_limit(B#block { reward_addr = <<>> });
+%% @doc Check whether the block fields conform to the specified size limits.
+block_field_size_limit(B = #block{ reward_addr = unclaimed }) ->
+	block_field_size_limit(B#block{ reward_addr = <<>> });
 block_field_size_limit(B) ->
-	DiffBytesLimit = case ar_fork:height_1_8() of
-		H when B#block.height >= H ->
-			78;
-		_ ->
-			10
-	end,
+	DiffBytesLimit =
+		case ar_fork:height_1_8() of
+			Height when B#block.height >= Height ->
+				78;
+			_ ->
+				10
+		end,
 	{ChunkSize, DataPathSize} =
 		case B#block.poa of
 			POA when is_record(POA, poa) ->
@@ -144,15 +44,17 @@ block_field_size_limit(B) ->
 				};
 			_ -> {0, 0}
 		end,
+	RewardAddrCheck = byte_size(B#block.reward_addr) =< 32,
 	Check = (byte_size(B#block.nonce) =< 512) and
 		(byte_size(B#block.previous_block) =< 48) and
 		(byte_size(integer_to_binary(B#block.timestamp)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
-		(byte_size(integer_to_binary(B#block.last_retarget)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
+		(byte_size(integer_to_binary(B#block.last_retarget))
+				=< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
 		(byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
 		(byte_size(integer_to_binary(B#block.height)) =< 20) and
 		(byte_size(B#block.hash) =< 48) and
 		(byte_size(B#block.indep_hash) =< 48) and
-		(byte_size(B#block.reward_addr) =< 32) and
+		RewardAddrCheck and
 		validate_tags_size(B) and
 		(byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
 		(byte_size(integer_to_binary(B#block.block_size)) =< 64) and
@@ -182,38 +84,66 @@ block_field_size_limit(B) ->
 	end,
 	Check.
 
-validate_tags_size(B) ->
-	case B#block.height >= ar_fork:height_2_5() of
-		true ->
-			Tags = B#block.tags,
-			validate_tags_length(Tags, 0) andalso byte_size(list_to_binary(Tags)) =< 2048;
+%% @doc Verify the block timestamp is not too far in the future nor too far in
+%% the past. We calculate the maximum reasonable clock difference between any
+%% two nodes. This is a simplification since there is a chaining effect in the
+%% network which we don't take into account. Instead, we assume two nodes can
+%% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
+%% other.
+verify_timestamp(#block{ timestamp = Timestamp }, #block{ timestamp = PrevTimestamp }) ->
+	MaxNodesClockDeviation = get_max_timestamp_deviation(),
+	case Timestamp >= PrevTimestamp - MaxNodesClockDeviation of
 		false ->
-			byte_size(list_to_binary(B#block.tags)) =< 2048
+			false;
+		true ->
+			CurrentTime = os:system_time(seconds),
+			Timestamp =< CurrentTime + MaxNodesClockDeviation
 	end.
 
-validate_tags_length(_, N) when N > 2048 ->
-	false;
-validate_tags_length([_ | Tags], N) ->
-	validate_tags_length(Tags, N + 1);
-validate_tags_length([], _) ->
-	true.
+%% @doc Return the largest possible value by which the previous block's timestamp
+%% may exceed the next block's timestamp.
+get_max_timestamp_deviation() ->
+	?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX.
 
-compute_hash_list_merkle(B, BI) ->
-	NewHeight = B#block.height + 1,
-	Fork_2_0 = ar_fork:height_2_0(),
-	case NewHeight of
-		_ when NewHeight < ?FORK_1_6 ->
-			<<>>;
-		?FORK_1_6 ->
-			ar_unbalanced_merkle:hash_list_to_merkle_root(B#block.hash_list);
-		_ when NewHeight < Fork_2_0 ->
-			ar_unbalanced_merkle:root(B#block.hash_list_merkle, B#block.indep_hash);
-		Fork_2_0 ->
-			ar_unbalanced_merkle:block_index_to_merkle_root(BI);
-		_ ->
-			compute_hash_list_merkle(B)
+%% @doc Verify the retarget timestamp on NewB is correct.
+verify_last_retarget(NewB, OldB) ->
+	case ar_retarget:is_retarget_height(NewB#block.height) of
+		true ->
+			NewB#block.last_retarget == NewB#block.timestamp;
+		false ->
+			NewB#block.last_retarget == OldB#block.last_retarget
 	end.
 
+%% @doc Verify the new weave size is computed correctly given the previous block
+%% and the list of transactions of the new block.
+verify_weave_size(NewB, OldB, TXs) ->
+	BlockSize = lists:foldl(
+		fun(TX, Acc) ->
+			Acc + ar_tx:get_weave_size_increase(TX, NewB#block.height)
+		end,
+		0,
+		TXs
+	),
+	(NewB#block.height < ar_fork:height_2_6() orelse BlockSize == NewB#block.block_size)
+			andalso NewB#block.weave_size == OldB#block.weave_size + BlockSize.
+
+%% @doc Verify the new cumulative difficulty is computed correctly.
+verify_cumulative_diff(NewB, OldB) ->
+	NewB#block.cumulative_diff ==
+		ar_difficulty:next_cumulative_diff(
+			OldB#block.cumulative_diff,
+			NewB#block.diff,
+			NewB#block.height
+		).
+
+%% @doc Verify the root of the new block tree is computed correctly.
+verify_block_hash_list_merkle(NewB, CurrentB) ->
+	true = NewB#block.height > ar_fork:height_2_0(),
+	NewB#block.hash_list_merkle == ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle,
+			{CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
+			fun ar_unbalanced_merkle:hash_block_index_entry/1).
+
+%% @doc Compute the root of the new block tree given the previous block.
 compute_hash_list_merkle(B) ->
 	ar_unbalanced_merkle:root(
 		B#block.hash_list_merkle,
@@ -221,50 +151,155 @@ compute_hash_list_merkle(B) ->
 		fun ar_unbalanced_merkle:hash_block_index_entry/1
 	).
 
-%% @doc Generate a block data segment.
-%% Block data segment is combined with a nonce to compute a PoW hash.
-%% Also, it is combined with a nonce and the corresponding PoW hash
-%% to produce the independent hash.
-%% @end
+%% @doc Compute "h0" - a cryptographic hash used as a source of entropy when choosing
+%% two recall ranges on the weave as unlocked by the given nonce limiter output.
+compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr) ->
+	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
+	ar_mine_randomx:hash_fast(RandomXStateRef, << NonceLimiterOutput:32/binary,
+			PartitionNumber:256, Seed:32/binary, MiningAddr/binary >>).
+
+%% @doc Compute "h1" - a cryptographic hash which is either the hash of a solution not
+%% involving the second chunk or a carrier of the information about the first chunk
+%% used when computing the solution hash off the second chunk.
+compute_h1(H0, Nonce, Chunk) ->
+	Preimage = crypto:hash(sha256, << H0:32/binary, Nonce:64, Chunk/binary >>),
+	{compute_solution_h(H0, Preimage), Preimage}.
+
+%% @doc Compute "h2" - the hash of a solution involving the second chunk.
+compute_h2(H1, Chunk, H0) ->
+	Preimage = crypto:hash(sha256, << H1:32/binary, Chunk/binary >>),
+	{compute_solution_h(H0, Preimage), Preimage}.
+
+%% @doc Compute the solution hash from the preimage and H0.
+compute_solution_h(H0, Preimage) ->
+	crypto:hash(sha256, << H0:32/binary, Preimage/binary >>).
+
+%% @doc Compute the block identifier (also referred to as "independent hash").
+indep_hash(B) ->
+	case B#block.height >= ar_fork:height_2_6() of
+		true ->
+			H = ar_block:generate_signed_hash(B),
+			indep_hash2(H, B#block.signature);
+		false ->
+			BDS = ar_block:generate_block_data_segment(B),
+			indep_hash(BDS, B)
+	end.
+
+%% @doc Compute the hash signed by the block producer.
+generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
+		nonce = Nonce, height = Height, diff = Diff, cumulative_diff = CDiff,
+		last_retarget = LastRetarget, hash = Hash, block_size = BlockSize,
+		weave_size = WeaveSize, tx_root = TXRoot, wallet_list = WalletList,
+		hash_list_merkle = HashListMerkle, reward_pool = RewardPool,
+		packing_2_5_threshold = Packing_2_5_Threshold, reward_addr = Addr,
+		reward_key = RewardKey, strict_data_split_threshold = StrictChunkThreshold,
+		usd_to_ar_rate = {RateDividend, RateDivisor},
+		scheduled_usd_to_ar_rate = {ScheduledRateDividend, ScheduledRateDivisor},
+		tags = Tags, txs = TXs,
+		reward = Reward, hash_preimage = HashPreimage, recall_byte = RecallByte,
+		partition_number = PartitionNumber, recall_byte2 = RecallByte2,
+		nonce_limiter_info = NonceLimiterInfo,
+		previous_solution_hash = PreviousSolutionHash,
+		price_per_gib_minute = PricePerGiBMinute,
+		scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
+		price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
+		kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
+		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
+		denomination = Denomination, redenomination_height = RedenominationHeight }) ->
+	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
+	Nonce2 = binary:encode_unsigned(Nonce),
+	%% The only block where reward_address may be unclaimed
+	%% is the genesis block of a new weave.
+	Addr2 = case Addr of unclaimed -> <<>>; _ -> Addr end,
+	RewardKey2 = case RewardKey of undefined -> undefined; {_Type, Pub} -> Pub end,
+	#nonce_limiter_info{ output = Output, global_step_number = N, seed = Seed,
+			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
+			next_partition_upper_bound = NextPartitionUpperBound,
+			checkpoints = Checkpoints, prev_output = PrevOutput,
+			last_step_checkpoints = LastStepCheckpoints } = NonceLimiterInfo,
+	Segment = << (encode_bin(PrevH, 8))/binary, (encode_int(TS, 8))/binary,
+			(encode_bin(Nonce2, 16))/binary, (encode_int(Height, 8))/binary,
+			(encode_int(Diff, 16))/binary, (encode_int(CDiff, 16))/binary,
+			(encode_int(LastRetarget, 8))/binary, (encode_bin(Hash, 8))/binary,
+			(encode_int(BlockSize, 16))/binary, (encode_int(WeaveSize, 16))/binary,
+			(encode_bin(Addr2, 8))/binary, (encode_bin(TXRoot, 8))/binary,
+			(encode_bin(WalletList, 8))/binary,
+			(encode_bin(HashListMerkle, 8))/binary, (encode_int(RewardPool, 8))/binary,
+			(encode_int(Packing_2_5_Threshold, 8))/binary,
+			(encode_int(StrictChunkThreshold, 8))/binary, (encode_int(RateDividend, 8))/binary,
+			(encode_int(RateDivisor, 8))/binary, (encode_int(ScheduledRateDividend, 8))/binary,
+			(encode_int(ScheduledRateDivisor, 8))/binary,
+			(encode_bin_list(Tags, 16, 16))/binary,
+			(encode_bin_list([GetTXID(TX) || TX <- TXs], 16, 8))/binary,
+			(encode_int(Reward, 8))/binary,
+			(encode_int(RecallByte, 16))/binary, (encode_bin(HashPreimage, 8))/binary,
+			(encode_int(RecallByte2, 16))/binary, (encode_bin(RewardKey2, 16))/binary,
+			(encode_int(PartitionNumber, 8))/binary, Output:32/binary, N:64,
+			Seed:48/binary, NextSeed:48/binary, PartitionUpperBound:256,
+			NextPartitionUpperBound:256, (encode_bin(PrevOutput, 8))/binary,
+			(length(Checkpoints)):16, (iolist_to_binary(Checkpoints))/binary,
+			(length(LastStepCheckpoints)):16, (iolist_to_binary(LastStepCheckpoints))/binary,
+			(encode_bin(PreviousSolutionHash, 8))/binary,
+			(encode_int(PricePerGiBMinute, 8))/binary,
+			(encode_int(ScheduledPricePerGiBMinute, 8))/binary,
+			PriceHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
+			KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8, Denomination:24,
+			(encode_int(RedenominationHeight, 8))/binary >>,
+	crypto:hash(sha384, Segment).
+
+%% @doc Compute the block identifier from the signed hash and block signature.
+indep_hash2(SignedH, Signature) ->
+	crypto:hash(sha384, << SignedH:32/binary, Signature/binary >>).
+
+%% @doc Compute the block identifier of a pre-2.6 block.
+indep_hash(BDS, B) ->
+	case B#block.height >= ar_fork:height_2_4() of
+		true ->
+			ar_deep_hash:hash([BDS, B#block.hash, B#block.nonce,
+					ar_block:poa_to_list(B#block.poa)]);
+		false ->
+			ar_deep_hash:hash([BDS, B#block.hash, B#block.nonce])
+	end.
+
+price_history_hash(PriceHistory) ->
+	price_history_hash(PriceHistory, [ar_serialize:encode_int(length(PriceHistory), 8)]).
+
+price_history_hash([], IOList) ->
+	crypto:hash(sha256, iolist_to_binary(IOList));
+price_history_hash([{HashRate, Reward, Denomination} | PriceHistory], IOList) ->
+	HashRateBin = ar_serialize:encode_int(HashRate, 8),
+	RewardBin = ar_serialize:encode_int(Reward, 8),
+	DenominationBin = << Denomination:24 >>,
+	price_history_hash(PriceHistory, [HashRateBin, RewardBin, DenominationBin | IOList]).
+
+%% @doc Verify the block signature.
+verify_signature(SignedH,
+		#block{ signature = Signature, reward_key = {?DEFAULT_KEY_TYPE, Pub} = RewardKey,
+				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH })
+		when byte_size(Signature) == 512, byte_size(Pub) == 512 ->
+	ar_wallet:to_address(RewardKey) == RewardAddr andalso
+			ar_wallet:verify(RewardKey, << SignedH/binary, PrevSolutionH/binary >>, Signature);
+verify_signature(_SignedH, _B) ->
+	false.
+
+%% @doc Generate a block data segment for a pre-2.6 block. It is combined with a nonce
+%% when computing a solution candidate.
 generate_block_data_segment(B) ->
-	generate_block_data_segment(
-		generate_block_data_segment_base(B),
-		B
-	).
+	generate_block_data_segment(generate_block_data_segment_base(B), B).
 
+%% @doc Generate a pre-2.6 block data segment given the computed "base".
 generate_block_data_segment(BDSBase, B) ->
-	generate_block_data_segment(
+	Props = [
 		BDSBase,
-		B#block.hash_list_merkle,
-		#{
-			timestamp => B#block.timestamp,
-			last_retarget => B#block.last_retarget,
-			diff => B#block.diff,
-			cumulative_diff => B#block.cumulative_diff,
-			reward_pool => B#block.reward_pool,
-			wallet_list => B#block.wallet_list
-		}
-	).
-
-generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
-	#{
-		timestamp := Timestamp,
-		last_retarget := LastRetarget,
-		diff := Diff,
-		cumulative_diff := CDiff,
-		reward_pool := RewardPool,
-		wallet_list := WalletListHash
-	} = TimeDependentParams,
-	ar_deep_hash:hash([
-		BDSBase,
-		integer_to_binary(Timestamp),
-		integer_to_binary(LastRetarget),
-		integer_to_binary(Diff),
-		integer_to_binary(CDiff),
-		integer_to_binary(RewardPool),
-		WalletListHash,
-		BlockIndexMerkle
-	]).
+		integer_to_binary(B#block.timestamp),
+		integer_to_binary(B#block.last_retarget),
+		integer_to_binary(B#block.diff),
+		integer_to_binary(B#block.cumulative_diff),
+		integer_to_binary(B#block.reward_pool),
+		B#block.wallet_list,
+		B#block.hash_list_merkle
+	],
+	ar_deep_hash:hash(Props).
 
 %% @doc Generate a hash, which is used to produce a block data segment
 %% when combined with the time-dependent parameters, which frequently
@@ -274,15 +309,15 @@ generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
 %% as the last step - it was used before the fork 2.4 to allow verifiers to quickly
 %% validate PoW against the current state. After the fork 2.4, the hash of the
 %% previous block prefixes the solution hash preimage of the new block.
-%% @end
 generate_block_data_segment_base(B) ->
+	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
 	case B#block.height >= ar_fork:height_2_4() of
 		true ->
 			Props = [
 				integer_to_binary(B#block.height),
 				B#block.previous_block,
 				B#block.tx_root,
-				lists:map(fun ar_weave:tx_id/1, B#block.txs),
+				lists:map(GetTXID, B#block.txs),
 				integer_to_binary(B#block.block_size),
 				integer_to_binary(B#block.weave_size),
 				case B#block.reward_addr of
@@ -317,7 +352,7 @@ generate_block_data_segment_base(B) ->
 				integer_to_binary(B#block.height),
 				B#block.previous_block,
 				B#block.tx_root,
-				lists:map(fun ar_weave:tx_id/1, B#block.txs),
+				lists:map(GetTXID, B#block.txs),
 				integer_to_binary(B#block.block_size),
 				integer_to_binary(B#block.weave_size),
 				case B#block.reward_addr of
@@ -330,6 +365,106 @@ generate_block_data_segment_base(B) ->
 				poa_to_list(B#block.poa)
 			])
 	end.
+
+%% @doc Return {RecallRange1Start, RecallRange2Start} - the start offsets
+%% of the two recall ranges.
+get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
+	RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
+	RecallRange1Start = PartitionNumber * ?PARTITION_SIZE
+			+ RecallRange1Offset rem min(?PARTITION_SIZE, PartitionUpperBound),
+	RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
+	{RecallRange1Start, RecallRange2Start}.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+validate_tags_size(B) ->
+	case B#block.height >= ar_fork:height_2_5() of
+		true ->
+			Tags = B#block.tags,
+			validate_tags_length(Tags, 0) andalso byte_size(list_to_binary(Tags)) =< 2048;
+		false ->
+			byte_size(list_to_binary(B#block.tags)) =< 2048
+	end.
+
+validate_tags_length(_, N) when N > 2048 ->
+	false;
+validate_tags_length([_ | Tags], N) ->
+	validate_tags_length(Tags, N + 1);
+validate_tags_length([], _) ->
+	true.
+
+encode_int(N, S) -> ar_serialize:encode_int(N, S).
+encode_bin(N, S) -> ar_serialize:encode_bin(N, S).
+encode_bin_list(L, LS, ES) -> ar_serialize:encode_bin_list(L, LS, ES).
+
+hash_wallet_list(WalletList) ->
+	ar_patricia_tree:compute_hash(WalletList,
+		fun	(Addr, {Balance, LastTX}) ->
+				EncodedBalance = binary:encode_unsigned(Balance),
+				ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
+			(Addr, {Balance, LastTX, Denomination}) ->
+				Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
+						(ar_serialize:encode_int(Balance, 8))/binary,
+						(ar_serialize:encode_bin(LastTX, 8))/binary,
+						(ar_serialize:encode_int(Denomination, 8))/binary >>,
+				crypto:hash(sha384, Preimage)
+		end
+	).
+
+%% @doc Generate the TX tree and set the TX root for a block.
+generate_tx_tree(B) ->
+	SizeTaggedTXs = generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
+	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+	generate_tx_tree(B, SizeTaggedDataRoots).
+
+generate_tx_tree(B, SizeTaggedDataRoots) ->
+	{Root, Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
+	B#block{ tx_tree = Tree, tx_root = Root }.
+
+generate_size_tagged_list_from_txs(TXs, Height) ->
+	lists:reverse(
+		element(2,
+			lists:foldl(
+				fun(TX, {Pos, List}) ->
+					DataSize = TX#tx.data_size,
+					End = Pos + DataSize,
+					case Height >= ar_fork:height_2_5() of
+						true ->
+							Padding = ar_tx:get_weave_size_increase(DataSize, Height)
+									- DataSize,
+							%% Encode the padding information in the Merkle tree.
+							case Padding > 0 of
+								true ->
+									PaddingRoot = ?PADDING_NODE_DATA_ROOT,
+									{End + Padding, [{{padding, PaddingRoot}, End + Padding},
+											{{TX#tx.id, get_tx_data_root(TX)}, End} | List]};
+								false ->
+									{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
+							end;
+						false ->
+							{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
+					end
+				end,
+				{0, []},
+				lists:sort(TXs)
+			)
+		)
+	).
+
+%% @doc Find the appropriate block hash list for a block, from a block index.
+generate_hash_list_for_block(_BlockOrHash, []) -> [];
+generate_hash_list_for_block(B, BI) when ?IS_BLOCK(B) ->
+	generate_hash_list_for_block(B#block.indep_hash, BI);
+generate_hash_list_for_block(Hash, BI) ->
+	do_generate_hash_list_for_block(Hash, BI).
+
+do_generate_hash_list_for_block(_, []) ->
+	error(cannot_generate_hash_list);
+do_generate_hash_list_for_block(IndepHash, [{IndepHash, _, _} | BI]) -> ?BI_TO_BHL(BI);
+do_generate_hash_list_for_block(IndepHash, [_ | Rest]) ->
+	do_generate_hash_list_for_block(IndepHash, Rest).
 
 encode_tags(B) ->
 	case B#block.height >= ar_fork:height_2_5() of
@@ -363,16 +498,15 @@ get_packing_threshold(B, SearchSpaceUpperBound) ->
 			end
 	end.
 
-%% @doc Move the fork 2.5 packing threshold
+%% @doc Move the fork 2.5 packing threshold.
 shift_packing_2_5_threshold(0) ->
 	0;
 shift_packing_2_5_threshold(Threshold) ->
 	Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * (?TARGET_TIME),
 	max(0, Threshold - Shift).
 
-%% @doc Verify the dependent hash of a given block is valid
-verify_dep_hash(NewB, BDSHash) ->
-	NewB#block.hash == BDSHash.
+validate_price_history_hash(H, PriceHistory) ->
+	H == ar_block:price_history_hash(lists:sublist(PriceHistory, ?PRICE_HISTORY_BLOCKS)).
 
 verify_tx_root(B) ->
 	B#block.tx_root == generate_tx_root_for_block(B).
@@ -397,80 +531,14 @@ get_tx_data_root(#tx{ format = 2, data_root = DataRoot }) ->
 get_tx_data_root(TX) ->
 	(ar_tx:generate_chunk_tree(TX))#tx.data_root.
 
-%% @doc Verify the block timestamp is not too far in the future nor too far in
-%% the past. We calculate the maximum reasonable clock difference between any
-%% two nodes. This is a simplification since there is a chaining effect in the
-%% network which we don't take into account. Instead, we assume two nodes can
-%% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
-%% other.
-verify_timestamp(B) ->
-	CurrentTime = os:system_time(seconds),
-	MaxNodesClockDeviation = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
-	(
-		B#block.timestamp =< CurrentTime + MaxNodesClockDeviation
-		andalso
-		B#block.timestamp >= CurrentTime - lists:sum([
-			?MINING_TIMESTAMP_REFRESH_INTERVAL,
-			?MAX_BLOCK_PROPAGATION_TIME,
-			MaxNodesClockDeviation
-		])
-	).
-
-%% @doc Verify the height of the new block is the one higher than the current height.
-verify_height(NewB, OldB) ->
-	NewB#block.height == (OldB#block.height + 1).
-
-%% @doc Verify the retarget timestamp on NewB is correct.
-verify_last_retarget(NewB, OldB) ->
-	case ar_retarget:is_retarget_height(NewB#block.height) of
-		true ->
-			NewB#block.last_retarget == NewB#block.timestamp;
-		false ->
-			NewB#block.last_retarget == OldB#block.last_retarget
-	end.
-
-%% @doc Verify that the previous_block hash of the new block is the indep_hash
-%% of the current block.
-%% @end
-verify_previous_block(NewB, OldB) ->
-	OldB#block.indep_hash == NewB#block.previous_block.
-
-%% @doc Verify that the new block's hash_list is the current block's
-%% hash_list + indep_hash, until ?FORK_1_6.
-%% @end
-verify_block_hash_list(NewB, OldB) when NewB#block.height < ?FORK_1_6 ->
-	NewB#block.hash_list == [OldB#block.indep_hash | OldB#block.hash_list];
-verify_block_hash_list(_NewB, _OldB) -> true.
-
-verify_weave_size(NewB, OldB, TXs) ->
-	NewB#block.weave_size == lists:foldl(
-		fun(TX, Acc) ->
-			Acc + ar_tx:get_weave_size_increase(TX, NewB#block.height)
-		end,
-		OldB#block.weave_size,
-		TXs
-	).
-
-%% @doc Ensure that after the 1.6 release cumulative difficulty is enforced.
-verify_cumulative_diff(NewB, OldB) ->
-	NewB#block.cumulative_diff ==
-		ar_difficulty:next_cumulative_diff(
-			OldB#block.cumulative_diff,
-			NewB#block.diff,
-			NewB#block.height
-		).
-
-verify_block_hash_list_merkle(NewB, CurrentB) ->
-	true = NewB#block.height > ar_fork:height_2_0(),
-	NewB#block.hash_list_merkle == ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle,
-			{CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
-			fun ar_unbalanced_merkle:hash_block_index_entry/1).
-
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
-hash_list_gen_test() ->
+hash_list_gen_test_() ->
+	{timeout, 20, fun test_hash_list_gen/0}.
+
+test_hash_list_gen() ->
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
 	ar_node:mine(),
@@ -480,7 +548,8 @@ hash_list_gen_test() ->
 	BI2 = ar_test_node:wait_until_height(2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	?assertEqual([B0#block.indep_hash], generate_hash_list_for_block(B1, BI2)),
-	?assertEqual([H || {H, _, _} <- BI1], generate_hash_list_for_block(B2#block.indep_hash, BI2)).
+	?assertEqual([H || {H, _, _} <- BI1],
+			generate_hash_list_for_block(B2#block.indep_hash, BI2)).
 
 generate_size_tagged_list_from_txs_test() ->
 	Fork_2_5 = ar_fork:height_2_5(),
@@ -511,7 +580,7 @@ generate_size_tagged_list_from_txs_test() ->
 					#tx{ id = <<"5">>, format = 2 },
 					#tx{ id = <<"6">>, format = 2, data_size = 262144 }], Fork_2_5)).
 
-test_wallet_list_performance(Length) ->
+test_wallet_list_performance(Length, Denominations) ->
 	io:format("# ~B wallets~n", [Length]),
 	io:format("============~n"),
 	WL = [random_wallet() || _ <- lists:seq(1, Length)],
@@ -519,7 +588,23 @@ test_wallet_list_performance(Length) ->
 		timer:tc(
 			fun() ->
 				lists:foldl(
-					fun({A, B, LastTX}, Acc) -> ar_patricia_tree:insert(A, {B, LastTX}, Acc) end,
+					fun({A, B, LastTX}, Acc) ->
+						case Denominations of
+							default ->
+								ar_patricia_tree:insert(A, {B, LastTX}, Acc);
+							new ->
+								ar_patricia_tree:insert(A, {B, LastTX,
+										1 + rand:uniform(10)}, Acc);
+							mixed ->
+								case rand:uniform(2) == 1 of
+									true ->
+										ar_patricia_tree:insert(A, {B, LastTX}, Acc);
+									false ->
+										ar_patricia_tree:insert(A, {B, LastTX,
+												1 + rand:uniform(10)}, Acc)
+								end
+						end
+					end,
 					ar_patricia_tree:new(),
 					WL
 				)
@@ -536,17 +621,19 @@ test_wallet_list_performance(Length) ->
 		),
 	io:format("serialization                   | ~f seconds~n", [Time2 / 1000000]),
 	io:format("                                | ~B bytes~n", [byte_size(Binary)]),
+	ComputeHashFun =
+		fun	(Addr, {Balance, LastTX}) ->
+				EncodedBalance = binary:encode_unsigned(Balance),
+				ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
+			(Addr, {Balance, LastTX, Denomination}) ->
+				Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
+						(ar_serialize:encode_int(Balance, 8))/binary,
+						(ar_serialize:encode_bin(LastTX, 8))/binary,
+						(ar_serialize:encode_int(Denomination, 8))/binary >>,
+				crypto:hash(sha384, Preimage)
+		end,
 	{Time3, {_, T2}} =
-		timer:tc(
-			fun() ->
-				ar_patricia_tree:compute_hash(
-					T1,
-					fun(A, {B, L}) ->
-						ar_deep_hash:hash([A, binary:encode_unsigned(B), L])
-					end
-				)
-			end
-		),
+		timer:tc(fun() -> ar_patricia_tree:compute_hash(T1, ComputeHashFun) end),
 	io:format("root hash from scratch          | ~f seconds~n", [Time3 / 1000000]),
 	{Time4, T3} =
 		timer:tc(
@@ -562,16 +649,7 @@ test_wallet_list_performance(Length) ->
 		),
 	io:format("2000 inserts                    | ~f seconds~n", [Time4 / 1000000]),
 	{Time5, _} =
-		timer:tc(
-			fun() ->
-				ar_patricia_tree:compute_hash(
-					T3,
-					fun(A, {B, L}) ->
-						ar_deep_hash:hash([A, binary:encode_unsigned(B), L])
-					end
-				)
-			end
-		),
+		timer:tc(fun() -> ar_patricia_tree:compute_hash(T3, ComputeHashFun) end),
 	io:format("recompute hash after 2k inserts | ~f seconds~n", [Time5 / 1000000]),
 	{Time6, T4} =
 		timer:tc(
@@ -582,16 +660,7 @@ test_wallet_list_performance(Length) ->
 		),
 	io:format("1 insert                        | ~f seconds~n", [Time6 / 1000000]),
 	{Time7, _} =
-		timer:tc(
-			fun() ->
-				ar_patricia_tree:compute_hash(
-					T4,
-					fun(A, {B, L}) ->
-						ar_deep_hash:hash([A, binary:encode_unsigned(B), L])
-					end
-				)
-			end
-		),
+		timer:tc(fun() -> ar_patricia_tree:compute_hash(T4, ComputeHashFun) end),
 	io:format("recompute hash after 1 insert   | ~f seconds~n", [Time7 / 1000000]).
 
 random_wallet() ->

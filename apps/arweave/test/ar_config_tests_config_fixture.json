@@ -14,13 +14,20 @@
   "mine": true,
   "port": 1985,
   "data_dir": "some_data_dir",
+  "log_dir": "log_dir",
   "metrics_dir": "metrics_dir",
+  "storage_modules": ["0,unpacked", "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
+            "100,unpacked", "0,1,unpacked",
+            "14,1000000000000,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"],
   "polling": 10,
+  "block_pollers": 100,
   "no_auto_join": true,
   "diff": 42,
   "mining_addr": "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
   "max_miners": 43,
   "io_threads": 43,
+  "hashing_threads": 17,
+  "mining_server_chunk_cache_size_limit": 3,
   "stage_one_hashing_threads": 27,
   "stage_two_hashing_threads": 37,
   "max_propagation_peers": 8,
@@ -40,7 +47,6 @@
           "default": 100
       }
   },
-  "load_mining_key": "some_key_file",
   "transaction_blacklists": [
     "some_blacklist_1",
     "some_blacklist_2"
@@ -99,5 +105,7 @@
     "arql": 3,
     "gateway_arql": 3
   },
-  "packing_rate": 20
+  "packing_rate": 20,
+  "max_nonce_limiter_validation_thread_count": 2,
+  "max_nonce_limiter_last_step_validation_thread_count": 3
 }

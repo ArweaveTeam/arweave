@@ -3,7 +3,6 @@
 %%% The module should be used to verify transactions on-edge, validate
 %%% new blocks' transactions, pick transactions to include into a block, and
 %%% remove no longer valid transactions from the mempool after accepting a new block.
-%%% @end
 -module(ar_tx_replay_pool).
 
 -export([verify_tx/1, verify_tx/2, verify_block_txs/1, pick_txs_to_mine/1]).
@@ -22,39 +21,34 @@ verify_tx(Args) ->
 	verify_tx(Args, verify_signature).
 
 verify_tx(Args, VerifySignature) ->
-	{TX, Rate, Height, BlockAnchors, RecentTXMap, Mempool, WalletList} = Args,
-	verify_tx2({TX, Rate, Height, os:system_time(seconds), WalletList, BlockAnchors, RecentTXMap,
-			Mempool, VerifySignature}).
+	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			RedenominationHeight, BlockAnchors, RecentTXMap, Mempool, WalletList} = Args,
+	verify_tx2({TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			RedenominationHeight, os:system_time(seconds), WalletList, BlockAnchors,
+			RecentTXMap, Mempool, VerifySignature}).
 
 %% @doc Verify the transactions are valid for the block taken into account
 %% the given current difficulty and height, the previous blocks' wallet list,
 %% and recent weave transactions.
-%% @end
 verify_block_txs(Args) ->
-	{TXs, Rate, Height, Timestamp, WalletList, BlockAnchors, RecentTXMap} = Args,
-	verify_block_txs(
-		TXs,
-		{Rate, Height, Timestamp, WalletList, BlockAnchors, RecentTXMap, maps:new(), 0, 0}
-	).
+	{TXs, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			RedenominationHeight, Timestamp, WalletList, BlockAnchors, RecentTXMap} = Args,
+	verify_block_txs(TXs, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+			Height, RedenominationHeight, Timestamp, WalletList, BlockAnchors, RecentTXMap,
+			maps:new(), 0, 0}).
 
 verify_block_txs([], _Args) ->
 	valid;
 verify_block_txs([TX | TXs], Args) ->
-	{Rate, Height, Timestamp, Wallets, BlockAnchors, RecentTXMap, Mempool, C, Size} = Args,
-	case verify_tx2({
-		TX,
-		Rate,
-		Height,
-		Timestamp,
-		Wallets,
-		BlockAnchors,
-		RecentTXMap,
-		Mempool,
-		verify_signature
-	}) of
+	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap, Mempool, C,
+			Size} = Args,
+	case verify_tx2({TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+			Height, RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
+			Mempool, verify_signature}) of
 		valid ->
 			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
-			NewWallets = ar_node_utils:apply_tx(Wallets, TX, Height),
+			NewWallets = ar_node_utils:apply_tx(Wallets, Denomination, TX),
 			NewSize =
 				case TX of
 					#tx{ format = 1 } ->
@@ -72,20 +66,9 @@ verify_block_txs([TX | TXs], Args) ->
 				{true, _, true} ->
 					invalid;
 				_ ->
-					verify_block_txs(
-						TXs,
-						{
-							Rate,
-							Height,
-							Timestamp,
-							NewWallets,
-							BlockAnchors,
-							RecentTXMap,
-							NewMempool,
-							NewCount,
-							NewSize
-						}
-					)
+					verify_block_txs(TXs, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
+							Denomination, Height, RedenominationHeight, Timestamp, NewWallets,
+							BlockAnchors, RecentTXMap, NewMempool, NewCount, NewSize})
 			end;
 		{invalid, _} ->
 			invalid
@@ -98,32 +81,24 @@ verify_block_txs([TX | TXs], Args) ->
 %% exceed the block size limit. Before a valid subset of transactions is chosen,
 %% transactions are sorted from highest to lowest utility and then from oldest
 %% block anchors to newest.
-%% @end
 pick_txs_to_mine(Args) ->
-	{BlockAnchors, RecentTXMap, Height, Rate, Timestamp, Wallets, TXs} = Args,
-	pick_txs_under_size_limit(
-		sort_txs_by_utility_and_anchor(TXs, BlockAnchors),
-		{
-			Rate,
-			Height,
-			Timestamp,
-			Wallets,
-			BlockAnchors,
-			RecentTXMap,
-			maps:new(),
-			0,
-			0
-		}
-	).
+	{BlockAnchors, RecentTXMap, Height, RedenominationHeight, Rate, PricePerGiBMinute,
+			KryderPlusRateMultiplier, Denomination, Timestamp, Wallets, TXs} = Args,
+	pick_txs_under_size_limit(sort_txs_by_utility_and_anchor(TXs, BlockAnchors),
+			{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
+			maps:new(), 0, 0}).
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
 verify_tx2(Args) ->
-	{TX, Rate, Height, Timestamp, FloatingWallets, BlockAnchors, RecentTXMap, Mempool,
-			VerifySignature} = Args,
-	case ar_tx:verify(TX, Rate, Height, FloatingWallets, Timestamp, VerifySignature) of
+	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			RedenominationHeight, Timestamp, FloatingWallets, BlockAnchors, RecentTXMap,
+			Mempool, VerifySignature} = Args,
+	case ar_tx:verify(TX, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+			RedenominationHeight, Height, FloatingWallets, Timestamp}, VerifySignature) of
 		true ->
 			verify_anchor(TX, Height, FloatingWallets, BlockAnchors, RecentTXMap, Mempool);
 		false ->
@@ -188,12 +163,15 @@ verify_tx_in_mempool(TX, Mempool) ->
 pick_txs_under_size_limit([], _Args) ->
 	[];
 pick_txs_under_size_limit([TX | TXs], Args) ->
-	{Rate, Height, Timestamp, Wallets, BlockAnchors, RecentTXMap, Mempool, Size, Count} = Args,
-	case verify_tx2({TX, Rate, Height, Timestamp, Wallets, BlockAnchors, RecentTXMap, Mempool,
-			verify_signature}) of
+	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap, Mempool, Size,
+			Count} = Args,
+	case verify_tx2({TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+			Height, RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
+			Mempool, verify_signature}) of
 		valid ->
 			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
-			NewWallets = ar_node_utils:apply_tx(Wallets, TX, Height),
+			NewWallets = ar_node_utils:apply_tx(Wallets, Denomination, TX),
 			NewSize =
 				case TX of
 					#tx{ format = 1 } ->
@@ -206,51 +184,20 @@ pick_txs_under_size_limit([TX | TXs], Args) ->
 			SizeExceedsLimit = NewSize > ?BLOCK_TX_DATA_SIZE_LIMIT,
 			case CountExceedsLimit orelse SizeExceedsLimit of
 				true ->
-					pick_txs_under_size_limit(
-						TXs,
-						{
-							Rate,
-							Height,
-							Timestamp,
-							Wallets,
-							BlockAnchors,
-							RecentTXMap,
-							Mempool,
-							Size,
-							Count
-						}
-					);
+					pick_txs_under_size_limit(TXs, {Rate, PricePerGiBMinute,
+							KryderPlusRateMultiplier, Denomination, Height,
+							RedenominationHeight, Timestamp, Wallets, BlockAnchors,
+							RecentTXMap, Mempool, Size, Count});
 				false ->
-					[TX | pick_txs_under_size_limit(
-						TXs,
-						{
-							Rate,
-							Height,
-							Timestamp,
-							NewWallets,
-							BlockAnchors,
-							RecentTXMap,
-							NewMempool,
-							NewSize,
-							NewCount
-						}
-					)]
+					[TX | pick_txs_under_size_limit(TXs, {Rate, PricePerGiBMinute,
+							KryderPlusRateMultiplier, Denomination, Height,
+							RedenominationHeight, Timestamp, NewWallets, BlockAnchors,
+							RecentTXMap, NewMempool, NewSize, NewCount})]
 			end;
 		{invalid, _} ->
-			pick_txs_under_size_limit(
-				TXs,
-				{
-					Rate,
-					Height,
-					Timestamp,
-					Wallets,
-					BlockAnchors,
-					RecentTXMap,
-					Mempool,
-					Size,
-					Count
-				}
-			)
+			pick_txs_under_size_limit(TXs, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
+					Denomination, Height, RedenominationHeight, Timestamp, Wallets,
+					BlockAnchors, RecentTXMap, Mempool, Size, Count})
 	end.
 
 sort_txs_by_utility_and_anchor(TXs, BHL) ->

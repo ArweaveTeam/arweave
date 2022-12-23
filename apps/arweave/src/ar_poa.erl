@@ -1,21 +1,20 @@
 %%% @doc This module implements all mechanisms required to validate a proof of access
 %%% for a chunk of data received from the network.
-%%% @end
 -module(ar_poa).
 
--export([validate_pre_fork_2_5/4, validate/6, get_padded_offset/2]).
+-export([validate_pre_fork_2_5/4, validate/1, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
-
--define(MIN_MAX_OPTION_DEPTH, 100).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 %% @doc Validate a proof of access.
-validate(BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, StrictDataSplitThreshold) ->
+validate(Args) ->
+	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, StrictDataSplitThreshold,
+			Packing} = Args,
 	#poa{ chunk = Chunk } = SPoA,
 	TXPath = SPoA#poa.tx_path,
 	RecallBucketOffset =
@@ -46,9 +45,15 @@ validate(BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, StrictDataSpli
 				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
 					ChunkSize = ChunkEndOffset - ChunkStartOffset,
 					AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-					case ar_packing_server:unpack(spora_2_5, AbsoluteEndOffset, TXRoot, Chunk,
+					case Packing of
+						{spora_2_6, _} ->
+							prometheus_counter:inc(validating_packed_2_6_spora);
+						spora_2_5 ->
+							prometheus_counter:inc(validating_packed_spora)
+					end,
+					case ar_packing_server:unpack(Packing, AbsoluteEndOffset, TXRoot, Chunk,
 							ChunkSize) of
-						{error, invalid_packed_size} ->
+						{error, _} ->
 							false;
 						{ok, Unpacked} ->
 							ChunkID == ar_tx:generate_chunk_id(Unpacked)

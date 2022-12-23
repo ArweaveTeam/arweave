@@ -41,6 +41,7 @@ start_link(Name, Workers) ->
 %%%===================================================================
 
 init(Workers) ->
+	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, process_chunk),
 	{ok, #state{ workers = queue:from_list(Workers), currently_emitting = sets:new() }}.
 

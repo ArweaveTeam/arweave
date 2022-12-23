@@ -1,8 +1,6 @@
 -module(ar_join).
 
--export([
-	start/1
-]).
+-export([start/1, set_price_history/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -19,6 +17,15 @@
 %% @doc Start a process that will attempt to download the block index and the latest blocks.
 start(Peers) ->
 	spawn(fun() -> process_flag(trap_exit, true), start2(Peers) end).
+
+%% @doc Add the corresponding price history to every block record. We keep
+%% the price histories in the block cache and use them to validate blocks applied on top.
+set_price_history([], _PriceHistory) ->
+	[];
+set_price_history(Blocks, []) ->
+	Blocks;
+set_price_history([B | Blocks], PriceHistory) ->
+	[B#block{ price_history = PriceHistory } | set_price_history(Blocks, tl(PriceHistory))].
 
 %%%===================================================================
 %%% Private functions.
@@ -50,6 +57,7 @@ get_block_index(Peers, Retries) ->
 						" Consider changing the peers.~n"
 					),
 					?LOG_ERROR([{event, failed_to_fetch_block_index}]),
+					timer:sleep(1000),
 					erlang:halt()
 			end;
 		BI ->
@@ -87,6 +95,7 @@ get_block(Peers, H, Retries) ->
 						{event, failed_to_fetch_joining_block},
 						{block, ar_util:encode(H)}
 					]),
+					timer:sleep(1000),
 					erlang:halt()
 			end
 	end.
@@ -119,17 +128,24 @@ get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries) ->
 						{event, failed_to_fetch_joining_tx},
 						{block, ar_util:encode(TXID)}
 					]),
+					timer:sleep(1000),
 					erlang:halt()
 			end
 	end.
 
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
-	ar_randomx_state:init(BI, Peers),
+	case B#block.height - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_6() of
+		true ->
+			ok;
+		_ ->
+			ar_randomx_state:init(BI, Peers)
+	end,
 	ar:console("Downloading the block trail.~n", []),
 	Blocks = get_block_and_trail(Peers, B, BI),
 	ar:console("Downloaded the block trail successfully.~n", []),
-	ar_node_worker ! {join, BI, Blocks},
+	Blocks2 = may_be_set_price_history(Blocks, Peers),
+	ar_node_worker ! {join, BI, Blocks2},
 	join_peers(Peers).
 
 %% @doc Get a block, and its 2 * ?MAX_TX_ANCHOR_DEPTH previous blocks.
@@ -140,7 +156,6 @@ do_join(Peers, B, BI) ->
 %% can validate transactions even if it enters a ?MAX_TX_ANCHOR_DEPTH-deep
 %% fork recovery (which is the deepest fork recovery possible) immediately after
 %% joining the network.
-%% @end
 get_block_and_trail(Peers, B, BI) ->
 	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
@@ -157,6 +172,26 @@ get_block_and_trail(Peers, H) ->
 	B = get_block(Peers, H),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
 	B#block{ size_tagged_txs = SizeTaggedTXs }.
+
+may_be_set_price_history([#block{ height = Height } | _] = Blocks, Peers) ->
+	Fork_2_6 = ar_fork:height_2_6(),
+	case Height >= Fork_2_6 of
+		true ->
+			Len = min(Height - Fork_2_6 + 1, ?STORE_BLOCKS_BEHIND_CURRENT),
+			L = [B#block.price_history_hash || B <- lists:sublist(Blocks, Len)],
+			case ar_http_iface_client:get_price_history(Peers, hd(Blocks), L) of
+				{ok, PriceHistory} ->
+					set_price_history(Blocks, PriceHistory);
+				_ ->
+					ar:console("Failed to fetch the price history for the block ~s from "
+							"any of the peers. Consider changing the peers.~n",
+							[ar_util:encode((hd(Blocks))#block.indep_hash)]),
+					timer:sleep(1000),
+					erlang:halt()
+			end;
+		false ->
+			Blocks
+	end.
 
 join_peers(Peers) ->
 	lists:foreach(

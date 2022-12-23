@@ -7,8 +7,8 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [slave_start/1, start/3, connect_to_slave/0, get_tx_anchor/1,
-		sign_tx/2, sign_v1_tx/2, random_v1_data/1, slave_call/3, assert_post_tx_to_slave/1,
+-import(ar_test_node, [slave_start/1, start/3, connect_to_slave/0, get_tx_anchor/1, sign_tx/2,
+		sign_v1_tx/2, random_v1_data/1, slave_call/3, assert_post_tx_to_slave/1,
 		assert_post_tx_to_master/1, slave_mine/0, wait_until_height/1,
 		assert_slave_wait_until_height/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		disconnect_from_slave/0, assert_wait_until_receives_txs/1]).
@@ -51,10 +51,13 @@ test_uses_blacklists() ->
 	} = setup(),
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	{_, _} =
-		start(B0, unclaimed, (element(2, application:get_env(arweave, config)))#config{
+		start(B0, RewardAddr,
+				(element(2, application:get_env(arweave, config)))#config{
 			transaction_blacklist_files = BlacklistFiles,
 			transaction_whitelist_files = [WhitelistFile],
+			sync_jobs = 10,
 			transaction_blacklist_urls = [
 				%% Serves empty body.
 				"http://localhost:1985/empty",
@@ -121,16 +124,15 @@ test_uses_blacklists() ->
 	assert_present_offsets([[WeaveSize]]),
 	ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),
 	assert_removed_offsets([[WeaveSize]]),
-	connect_to_slave(),
 	TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
 			last_tx => get_tx_anchor(slave) }),
 	assert_post_tx_to_slave(TX2),
-	assert_wait_until_receives_txs([TX2]),
 	slave_mine(),
 	assert_slave_wait_until_height(length(TXs) + 1),
 	assert_post_tx_to_slave(TX),
 	slave_mine(),
 	assert_slave_wait_until_height(length(TXs) + 2),
+	connect_to_slave(),
 	[{_, WeaveSize2, _} | _] = wait_until_height(length(TXs) + 2),
 	assert_removed_offsets([[WeaveSize2]]),
 	assert_present_offsets([[WeaveSize]]),
@@ -142,17 +144,19 @@ setup() ->
 	TXIDs = [TX#tx.id || TX <- TXs],
 	BadTXIDs = [lists:nth(1, TXIDs), lists:nth(3, TXIDs)],
 	V1TX = sign_v1_tx(Wallet, #{ data => random_v1_data(3 * ?DATA_CHUNK_SIZE),
-			last_tx => get_tx_anchor(slave) }),
+			last_tx => get_tx_anchor(slave), reward => ?AR(10000) }),
 	DataSizes = [TX#tx.data_size || TX <- TXs],
+	S0 = B0#block.block_size,
 	[S1, S2, S3, S4, S5, S6, S7, S8 | _] = DataSizes,
-	BadOffsets = [S1, S1 + S2 + S3, % Blacklisted in the file.
+	BadOffsets = [S0 + O || O <- [S1, S1 + S2 + S3, % Blacklisted in the file.
 			S1 + S2 + S3 + S4 + S5,
-			S1 + S2 + S3 + S4 + S5 + S6 + S7], % Blacklisted in the endpoint.
+			S1 + S2 + S3 + S4 + S5 + S6 + S7]], % Blacklisted in the endpoint.
 	BlacklistFiles = create_files([V1TX#tx.id | BadTXIDs],
-			[{S1 + S2 + S3 + ?DATA_CHUNK_SIZE, S1 + S2 + S3 + ?DATA_CHUNK_SIZE * 2},
-				{S1 + S2 + S3 + S4 + S5, S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 5},
+			[{S0 + S1 + S2 + S3 + ?DATA_CHUNK_SIZE, S0 + S1 + S2 + S3 + ?DATA_CHUNK_SIZE * 2},
+				{S0 + S1 + S2 + S3 + S4 + S5,
+						S0 + S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 5},
 				% This one just repeats the range of a blacklisted tx:
-				{S1 + S2 + S3 + S4 + S5 + S6, S1 + S2 + S3 + S4 + S5 + S6 + S7}
+				{S0 + S1 + S2 + S3 + S4 + S5 + S6, S0 + S1 + S2 + S3 + S4 + S5 + S6 + S7}
 			]),
 	BadTXIDs2 = [lists:nth(5, TXIDs), lists:nth(7, TXIDs)], % The endpoint.
 	BadTXIDs3 = [lists:nth(4, TXIDs), lists:nth(6, TXIDs)], % Ranges.
@@ -174,16 +178,14 @@ setup() ->
 			end,
 			BadOffsets
 		),
-	BadOffsets3 = BadOffsets2 ++ [S1 + S2 + S3 + ?DATA_CHUNK_SIZE * 2,
+	BadOffsets3 = BadOffsets2 ++ [S0 + O || O <- [S1 + S2 + S3 + ?DATA_CHUNK_SIZE * 2,
 			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE,
 			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 2,
 			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 3,
 			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 4,
-			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 5], % Blacklisted as a range.
-	GoodOffsets = [
-		S1 + S2, S1 + S2 + S3 + S4, S1 + S2 + S3 + S4 + S5 + S6,
-		S1 + S2 + S3 + S4 + S5 + S6 + S7 + S8
-	],
+			S1 + S2 + S3 + S4 + S5 + ?DATA_CHUNK_SIZE * 5]], % Blacklisted as a range.
+	GoodOffsets = [S0 + O || O <- [S1 + S2, S1 + S2 + S3 + S4, S1 + S2 + S3 + S4 + S5 + S6,
+			S1 + S2 + S3 + S4 + S5 + S6 + S7 + S8]],
 	GoodOffsets2 =
 		lists:map(
 			fun(TXOffset) ->
@@ -207,7 +209,7 @@ setup() ->
 
 setup_slave() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100000000), <<>>}]),
 	slave_start(B0),
 	{B0, Wallet}.
 
@@ -226,7 +228,8 @@ create_txs(Wallet) ->
 				),
 				{DataRoot, DataTree} = ar_merkle:generate_tree(SizedChunkIDs),
 				TX = sign_tx(Wallet, #{ format => 2, data_root => DataRoot,
-						data_size => 10 * ?DATA_CHUNK_SIZE, last_tx => get_tx_anchor(slave) }),
+						data_size => 10 * ?DATA_CHUNK_SIZE, last_tx => get_tx_anchor(slave),
+						reward => ?AR(10000), denomination => 1 }),
 				{[TX | TXs], maps:put(TX#tx.id, {DataTree, Chunks}, DataTrees)}
 		end,
 		{[], #{}},

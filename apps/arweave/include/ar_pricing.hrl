@@ -1,40 +1,165 @@
-%%% @doc Pricing macros.
+%% @doc Pricing macros.
 
-%% The base wallet generation fee in USD, defined as a fraction.
-%% The amount in AR depends on the current difficulty and height.
--define(WALLET_GEN_FEE_USD, {1, 10}).
+%% For a new account, we charge the fee equal to the price of uploading
+%% this number of bytes. The fee is about 0.1$ at the time.
+-define(NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, 20000000).
 
 %% The target number of replications.
+-ifdef(DEBUG).
+-define(N_REPLICATIONS, fun(_MACRO_Height) -> 2 end).
+-else.
 -define(N_REPLICATIONS, fun(MACRO_Height) ->
 	MACRO_Forks = {
-		ar_fork:height_2_5()
+		ar_fork:height_2_5(),
+		ar_fork:height_2_6()
 	},
 	case MACRO_Forks of
-		{MACRO_Fork_2_5} when MACRO_Height >= MACRO_Fork_2_5 ->
+		{_MACRO_Fork_2_5, MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_6 ->
+			20;
+		{MACRO_Fork_2_5, _MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_5 ->
 			45;
 		_ ->
 			10
 	end
 end).
+-endif.
 
-%% An approximation of the natural logarithm of ?USD_PER_GBY_DECAY_ANNUAL (0.995),
+%% The miner always gets ?MINER_FEE_SHARE of the transaction fee, even
+%% when the fee is bigger than the required minimum.
+-ifdef(DEBUG).
+%% Give a smaller share to miners in tests, to slow down the fee growth a bit. Block rewards
+%% are recorded in the price history, and the history is used for re-estimating the fees so
+%% uploading transactions quickly pushes the prices up.
+-define(MINER_FEE_SHARE, {1, 20001}).
+-else.
+-define(MINER_FEE_SHARE, {1, 21}).
+-endif.
+
+%% Every transaction fee has to be at least
+%% X + X * ?MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE
+%% where X is the amount sent to the endowment pool.
+-ifdef(DEBUG).
+%% Give a smaller share to miners in tests, to slow down the fee growth a bit. Block rewards
+%% are recorded in the price history, and the history is used for re-estimating the fees so
+%% uploading transactions quickly pushes the prices up.
+-define(MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE, {1, 20000}).
+-else.
+-define(MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE, {1, 20}).
+-endif.
+
+%% The fixed USD to AR rate used after the fork 2.6 until the automatic transition to the new
+%% pricing scheme is complete. We fix the rate because the network difficulty is expected
+%% fluctuate a lot around the fork.
+-define(FORK_2_6_PRE_TRANSITION_USD_TO_AR_RATE, {1, 10}).
+
+%% The number of blocks which have to pass since the 2.6 fork before we
+%% start mixing in the new fee calculation method.
+-ifdef(DEBUG).
+	-define(PRICE_2_6_TRANSITION_START, 2).
+-else.
+	-ifdef(FORKS_RESET).
+		-define(PRICE_2_6_TRANSITION_START, 0).
+	-else.
+		-define(PRICE_2_6_TRANSITION_START, (30 * 24 * 3 * 30)). % ~3 months.
+	-endif.
+-endif.
+
+%% The number of blocks following the 2.6 + ?PRICE_2_6_TRANSITION_START block where the tx fee
+%% computation is transitioned to the new calculation method.
+%% Let TransitionStart = fork 2.6 height + ?PRICE_2_6_TRANSITION_START.
+%% Let A = height - TransitionStart + 1.
+%% Let B = TransitionStart + ?PRICE_2_6_TRANSITION_BLOCKS - (height + 1).
+%% Then tx fee = tx fee old * B / (A + B) + tx fee new * A / (A + B).
+-ifdef(DEBUG).
+	-define(PRICE_2_6_TRANSITION_BLOCKS, 2).
+-else.
+	-ifdef(FORKS_RESET).
+		-define(PRICE_2_6_TRANSITION_BLOCKS, 0).
+	-else.
+		-define(PRICE_2_6_TRANSITION_BLOCKS, (30 * 24 * 15 * 30)). % ~15 months.
+	-endif.
+-endif.
+
+%% The number of recent blocks contributing data points to the continuous estimation
+%% of the average price of storing a byte for a minute.
+-ifdef(DEBUG).
+-define(PRICE_HISTORY_BLOCKS, 3).
+-else.
+-define(PRICE_HISTORY_BLOCKS, (30 * 24 * 30)).
+-endif.
+
+%% The prices are re-estimated every so many blocks.
+-ifdef(DEBUG).
+-define(PRICE_ADJUSTMENT_FREQUENCY, 2).
+-else.
+-define(PRICE_ADJUSTMENT_FREQUENCY, 50).
+-endif.
+
+%% An approximation of the natural logarithm of ?PRICE_DECAY_ANNUAL (0.995),
 %% expressed as a decimal fraction, with the precision of math:log.
--define(LN_USD_PER_GBY_DECAY_ANNUAL, {-5012541823544286, 1000000000000000000}).
+-ifdef(DEBUG).
+%% Reduce fees in tests somewhat, to slow down their growth a bit. Block rewards
+%% are recorded in the price history, and the history is used for re-estimating the fees so
+%% uploading transactions quickly pushes the prices up.
+-define(LN_PRICE_DECAY_ANNUAL, {-5012541823544286 * 100, 1000000000000000000}).
+-else.
+-define(LN_PRICE_DECAY_ANNUAL, {-5012541823544286, 1000000000000000000}).
+-endif.
 
-%% Decay rate of the storage cost in GB/year, expressed as a decimal fraction.
--define(USD_PER_GBY_DECAY_ANNUAL, {995, 1000}). % 0.995, i.e., 0.5% annual decay rate.
-
-%% The estimated historical price of storing 1 GB of data for the year 2018,
-%% expressed as a decimal fraction.
--define(USD_PER_GBY_2018, {1045, 1000000}). % 0.001045
-
-%% The estimated historical price of storing 1 GB of data for the year 2019,
-%% expressed as a decimal fraction.
--define(USD_PER_GBY_2019, {925, 1000000}). % 0.000925
+%% The assumed annual decay rate of the Arweave prices, expressed as a decimal fraction.
+-define(PRICE_DECAY_ANNUAL, {995, 1000}). % 0.995, i.e., 0.5% annual decay rate.
 
 %% The precision of computing the natural exponent as a decimal fraction,
 %% expressed as the maximal power of the argument in the Taylor series.
 -define(TX_PRICE_NATURAL_EXPONENT_DECIMAL_FRACTION_PRECISION, 9).
+
+%% When/if the endowment fund runs empty, we increase storage fees and lock a "Kryder+ rate
+%% multiplier latch" to make sure we do not increase the fees several times while the
+%% endowment size remains low. Once the endowment is bigger than this constant again,
+%% we open the latch (and will increase the fees again when/if the endowment is empty).
+%% The value is redenominated according the denomination used at the time.
+-ifdef(DEBUG).
+-define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 1000000000).
+-else.
+-define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 10000000000000000).
+-endif.
+
+%% The total supply, in Winston (the sum of genesis balances + the total emission).
+%% Does NOT include the additional emission which may start in the far future if and when
+%% the endowment pool runs empty.
+-ifdef(DEBUG).
+	%% The debug constant is not always actually equal to the sum of genesis balances plust
+	%% the total emission. We just set a relatively low value so that we can reproduce
+	%% autoredenomination in tests.
+	-define(TOTAL_SUPPLY, 15000000000).
+-else.
+	-ifdef(FORKS_RESET).
+		%% This value should be ideally adjusted if the genesis balances
+		%% of a new weave differ from those in mainnet.
+		-define(TOTAL_SUPPLY, 66000015859279336957).
+	-else.
+		-define(TOTAL_SUPPLY, 66000015859279336957).
+	-endif.
+-endif.
+
+%% Re-denominate AR (multiply by 1000) when the available supply falls below this
+%% number of units.
+-ifdef(DEBUG).
+-define(REDENOMINATION_THRESHOLD, 13500000000).
+-else.
+-define(REDENOMINATION_THRESHOLD, 1000000000000000000).
+-endif.
+
+%% The number of blocks which has to pass after we assign the redenomination height before
+%% the redenomination occurs. Transactions without an explicitly assigned denomination are
+%% not allowed in these blocks. The motivation is to protect the legacy libraries' users from
+%% an attack where a post-redenomination transaction is included in a pre-redenomination
+%% block, potentially charging the user a thousand times the intended fee or transfer amount.
+-ifdef(DEBUG).
+-define(REDENOMINATION_DELAY_BLOCKS, 2).
+-else.
+-define(REDENOMINATION_DELAY_BLOCKS, 100).
+-endif.
 
 %% USD to AR exchange rates by height defined together with INITIAL_USD_TO_AR_HEIGHT
 %% and INITIAL_USD_TO_AR_DIFF. The protocol uses these constants to estimate the
@@ -85,29 +210,40 @@ end).
 	Forks = {
 		ar_fork:height_1_9(),
 		ar_fork:height_2_2(),
-		ar_fork:height_2_5()
+		ar_fork:height_2_5(),
+		ar_fork:height_2_6()
 	},
 	%% In case the fork heights are reset to 0 (e.g. on testnets),
 	%% set the initial height to 1 - the height where the inflation
 	%% emission essentially begins.
 	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
+		{_Fork_1_9, _Fork_2_2, _Fork_2_5, Fork_2_6} when Height >= Fork_2_6 ->
+			max(Fork_2_6, 1);
+		{_Fork_1_9, _Fork_2_2, Fork_2_5, _Fork_2_6} when Height >= Fork_2_5 ->
 			max(Fork_2_5, 1);
-		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
+		{_Fork_1_9, Fork_2_2, _Fork_2_5, _Fork_2_6} when Height >= Fork_2_2 ->
 			max(Fork_2_2, 1);
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6} when Height < Fork_1_9 ->
 			max(ar_fork:height_1_8(), 1);
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6} ->
 			max(Fork_1_9, 1)
 	end
 end).
 
-%% The USD to AR rate is re-estimated every so many blocks.
--ifdef(DEBUG).
--define(USD_TO_AR_ADJUSTMENT_FREQUENCY, 10).
--else.
--define(USD_TO_AR_ADJUSTMENT_FREQUENCY, 50).
--endif.
+%% The base wallet generation fee in USD, defined as a fraction.
+%% The amount in AR depends on the current difficulty and height.
+%% Used until the transition to the new fee calculation method is complete.
+-define(WALLET_GEN_FEE_USD, {1, 10}).
+
+%% The estimated historical price of storing 1 GB of data for the year 2018,
+%% expressed as a decimal fraction.
+%% Used until the transition to the new fee calculation method is complete.
+-define(USD_PER_GBY_2018, {1045, 1000000}). % 0.001045
+
+%% The estimated historical price of storing 1 GB of data for the year 2019,
+%% expressed as a decimal fraction.
+%% Used until the transition to the new fee calculation method is complete.
+-define(USD_PER_GBY_2019, {925, 1000000}). % 0.000925
 
 %% The largest possible multiplier for a one-step increase of the USD to AR Rate.
 -define(USD_TO_AR_MAX_ADJUSTMENT_UP_MULTIPLIER, {1005, 1000}).
@@ -122,9 +258,14 @@ end).
 -define(USD_TO_AR_FRACTION_REDUCTION_LIMIT, 1000000).
 -endif.
 
-%% Mining reward as a proportion of the estimated transaction storage costs,
-%% defined as a fraction.
+%% Every transaction fee has to be at least X + X * ?MINING_REWARD_MULTIPLIER
+%% where X is the amount sent to the endowment pool.
+%% Used until the transition to the new fee calculation method is complete.
+-ifdef(DEBUG).
+-define(MINING_REWARD_MULTIPLIER, {2, 10000}).
+-else.
 -define(MINING_REWARD_MULTIPLIER, {2, 10}).
+-endif.
 
 %% The USD to AR exchange rate for a new chain, e.g. a testnet.
 -define(NEW_WEAVE_USD_TO_AR_RATE, ?INITIAL_USD_TO_AR_PRE_FORK_2_5).

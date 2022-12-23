@@ -4,25 +4,10 @@
 %%% following, and uncle blocks.
 -module(ar_wallets).
 
--export([
-	start_link/1,
-	get/1,
-	get/2,
-	get_chunk/2,
-	get_balance/1, get_balance/2,
-	get_last_tx/1,
-	apply_block/5,
-	add_wallets/4,
-	update_wallets/4,
-	set_current/5
-]).
+-export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
+		apply_block/2, add_wallets/4, set_current/3]).
 
--export([
-	init/1,
-	handle_call/3,
-	handle_cast/2,
-	terminate/2
-]).
+-export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_header_sync.hrl").
@@ -38,7 +23,6 @@ start_link(Args) ->
 
 %% @doc Return the map mapping the given addresses to the corresponding wallets
 %% from the latest wallet tree.
-%% @end
 get(Address) when is_binary(Address) ->
 	ar_wallets:get([Address]);
 get(Addresses) ->
@@ -46,7 +30,6 @@ get(Addresses) ->
 
 %% @doc Return the map mapping the given addresses to the corresponding wallets
 %% from the wallet tree with the given root hash.
-%% @end
 get(RootHash, Address) when is_binary(Address) ->
 	get(RootHash, [Address]);
 get(RootHash, Addresses) ->
@@ -55,7 +38,6 @@ get(RootHash, Addresses) ->
 %% @doc Return the map containing the wallets, up to ?WALLET_LIST_CHUNK_SIZE, starting
 %% from the given cursor (first or an address). The wallets are picked in the ascending
 %% alphabetical order, from the tree with the given root hash.
-%% @end
 get_chunk(RootHash, Cursor) ->
 	gen_server:call(?MODULE, {get_chunk, RootHash, Cursor}, infinity).
 
@@ -71,30 +53,19 @@ get_balance(RootHash, Address) ->
 get_last_tx(Address) ->
 	gen_server:call(?MODULE, {get_last_tx, Address}, infinity).
 
-%% @doc Compute and cache the wallet tree for the given new block, provided with
-%% the previous block's wallet tree root hash, reward pool, USD to AR exchange rate,
-%% and height. Return the root hash of the new wallet tree.
-%% @end
-apply_block(NewB, RootHash, RewardPool, Rate, Height) ->
-	gen_server:call(?MODULE, {apply_block, NewB, RootHash, RewardPool, Rate, Height}, infinity).
+%% @doc Compute and cache the account tree for the given new block and its previous block.
+apply_block(B, PrevB) ->
+	gen_server:call(?MODULE, {apply_block, B, PrevB}, infinity).
 
 %% @doc Cache the wallets to be upserted into the tree with the given root hash. Return
 %% the root hash of the new wallet tree.
-%% @end
-add_wallets(RootHash, Wallets, RewardAddr, Height) ->
-	gen_server:call(?MODULE, {add_wallets, RootHash, Wallets, RewardAddr, Height}, infinity).
-
-%% @doc Update the wallets in the tree with the given root hash. Effectively, erase
-%% the given root hash from cache. Return the root hash of the updated wallet tree.
-%% @end
-update_wallets(RootHash, Wallets, RewardAddr, Height) ->
-	gen_server:call(?MODULE, {update_wallets, RootHash, Wallets, RewardAddr, Height}, infinity).
+add_wallets(RootHash, Wallets, Height, Denomination) ->
+	gen_server:call(?MODULE, {add_wallets, RootHash, Wallets, Height, Denomination}, infinity).
 
 %% @doc Make the wallet tree with the given root hash "the current tree". The current tree
 %% is used by get/1, get_balance/1, and get_last_tx/1.
-%% @end
-set_current(PrevRootHash, RootHash, RewardAddr, Height, PruneDepth) when is_binary(RootHash) ->
-	Call = {set_current, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth},
+set_current(RootHash, Height, PruneDepth) when is_binary(RootHash) ->
+	Call = {set_current, RootHash, Height, PruneDepth},
 	gen_server:call(?MODULE, Call, infinity).
 
 %%%===================================================================
@@ -133,28 +104,38 @@ handle_call({get_chunk, RootHash, Cursor}, _From, DAG) ->
 	end;
 
 handle_call({get_balance, Address}, _From, DAG) ->
-	{reply,
-		case ar_patricia_tree:get(Address, ar_diff_dag:get_sink(DAG)) of
-			not_found ->
-				0;
-			{B, _LastTX} ->
-				B
-		end,
-	DAG};
+	case ar_patricia_tree:get(Address, ar_diff_dag:get_sink(DAG)) of
+		not_found ->
+			{reply, 0, DAG};
+		Entry ->
+			Denomination = ar_diff_dag:get_sink_metadata(DAG),
+			case Entry of
+				{Balance, _LastTX} ->
+					{reply, ar_pricing:redenominate(Balance, 1, Denomination), DAG};
+				{Balance, _LastTX, BaseDenomination} ->
+					{reply, ar_pricing:redenominate(Balance, BaseDenomination, Denomination),
+							DAG}
+			end
+	end;
 
 handle_call({get_balance, RootHash, Address}, _From, DAG) ->
 	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
 		{error, _} = Error ->
 			{reply, Error, DAG};
 		Tree ->
-			{reply,
-				case ar_patricia_tree:get(Address, Tree) of
-					not_found ->
-						0;
-					{B, _LastTX} ->
-						B
-				end,
-			DAG}
+			case ar_patricia_tree:get(Address, Tree) of
+				not_found ->
+					{reply, 0, DAG};
+				Entry ->
+					Denomination = ar_diff_dag:get_metadata(DAG, RootHash),
+					case Entry of
+						{Balance, _LastTX} ->
+							{reply, ar_pricing:redenominate(Balance, 1, Denomination), DAG};
+						{Balance, _LastTX, BaseDenomination} ->
+							{reply, ar_pricing:redenominate(Balance, BaseDenomination,
+									Denomination), DAG}
+					end
+			end
 	end;
 
 handle_call({get_last_tx, Address}, _From, DAG) ->
@@ -163,49 +144,24 @@ handle_call({get_last_tx, Address}, _From, DAG) ->
 			not_found ->
 				<<>>;
 			{_Balance, LastTX} ->
+				LastTX;
+			{_Balance, LastTX, _Denomination} ->
 				LastTX
 		end,
 	DAG};
 
-handle_call({apply_block, NewB, RootHash, RewardPool, Rate, Height}, _From, DAG) ->
-	{Reply, UpdatedDAG} = apply_block(DAG, NewB, RootHash, RewardPool, Rate, Height),
-	{reply, Reply, UpdatedDAG};
+handle_call({apply_block, B, PrevB}, _From, DAG) ->
+	{Reply, DAG2} = apply_block(B, PrevB, DAG),
+	{reply, Reply, DAG2};
 
-handle_call({add_wallets, RootHash, Wallets, RewardAddr, Height}, _From, DAG) ->
+handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, DAG) ->
 	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
-	{UpdatedRootHash, NoRewardWalletHash} =
-		compute_hash(Tree, Wallets, not_set, Height, RewardAddr),
-	UpdatedDAG = maybe_add_node(DAG, UpdatedRootHash, RootHash, Wallets, NoRewardWalletHash),
-	{reply, {ok, UpdatedRootHash}, UpdatedDAG};
+	RootHash2 = compute_hash(Tree, Wallets, Height),
+	DAG2 = maybe_add_node(DAG, RootHash2, RootHash, Wallets, Denomination),
+	{reply, {ok, RootHash2}, DAG2};
 
-handle_call({update_wallets, RootHash, Wallets, RewardAddr, Height}, _From, DAG) ->
-	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
-	NoRewardWalletHash = ar_diff_dag:get_metadata(DAG, RootHash),
-	{UpdatedRootHash, UpdatedNoRewardWalletHash} =
-		compute_hash(Tree, Wallets, NoRewardWalletHash, Height, RewardAddr),
-	case UpdatedRootHash of
-		RootHash ->
-			{reply, {ok, RootHash}, DAG};
-		_ ->
-			Meta = UpdatedNoRewardWalletHash,
-			UpdatedDAG =
-				case ar_diff_dag:is_sink(DAG, RootHash) of
-					true ->
-						maybe_add_node(DAG, UpdatedRootHash, RootHash, Wallets, Meta);
-					false ->
-						ar_diff_dag:update_leaf_source(
-							DAG,
-							RootHash,
-							fun(Diff, _Meta) ->
-								{UpdatedRootHash, maps:merge(Diff, Wallets), Meta}
-							end
-						)
-				end,
-			{reply, {ok, UpdatedRootHash}, UpdatedDAG}
-	end;
-
-handle_call({set_current, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth}, _From, DAG) ->
-	{reply, ok, set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth)}.
+handle_call({set_current, RootHash, Height, PruneDepth}, _, DAG) ->
+	{reply, ok, set_current(DAG, RootHash, Height, PruneDepth)}.
 
 handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
@@ -217,7 +173,7 @@ handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 			{NextCursor, Range} = ar_storage:get_wallet_list_range(Tree, Cursor),
 			StoredRange = case NextCursor of last -> [last | Range]; _ -> Range end,
 			StoreFun =
-				case ar_storage:get_free_space(".") > ?DISK_HEADERS_BUFFER_SIZE of
+				case ar_storage:get_sufficient_space_for_headers() > 0 of
 					false ->
 						fun ar_disk_cache:write_wallet_list_chunk/3;
 					true ->
@@ -238,31 +194,24 @@ handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 
 handle_cast({init, Blocks, Peers}, _) ->
 	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
-	{DAG3, LastB, PrevWalletList} = lists:foldl(
+	{DAG3, LastB} = lists:foldl(
 		fun (B, start) ->
 				Tree = get_tree(B, Peers),
-				{RootHash, UpdatedTree} =
-					ar_block:hash_wallet_list(B#block.height, B#block.reward_addr, Tree),
+				{RootHash, UpdatedTree} = ar_block:hash_wallet_list(Tree),
 				RootHash = B#block.wallet_list,
-				DAG = ar_diff_dag:new(RootHash, UpdatedTree, not_set),
-				{DAG, B, <<>>};
-			(B, {DAG, PreviousB, _}) ->
-				RewardPool = PreviousB#block.reward_pool,
-				Height = PreviousB#block.height,
-				RootHash = PreviousB#block.wallet_list,
+				DAG = ar_diff_dag:new(RootHash, UpdatedTree, B#block.denomination),
+				{DAG, B};
+			(B, {DAG, PrevB}) ->
 				ExpectedRootHash = B#block.wallet_list,
-				Rate = ar_pricing:usd_to_ar_rate(PreviousB),
-				{{ok, ExpectedRootHash}, DAG2} =
-					apply_block(DAG, B, RootHash, RewardPool, Rate, Height),
-				{DAG2, B, PreviousB#block.wallet_list}
+				{{ok, ExpectedRootHash}, DAG2} = apply_block(B, PrevB, DAG),
+				{DAG2, B}
 		end,
 		start,
 		lists:reverse(lists:sublist(Blocks, InitialDepth))
 	),
-	RewardAddr = LastB#block.reward_addr,
 	WalletList = LastB#block.wallet_list,
 	LastHeight = LastB#block.height,
-	DAG4 = set_current(DAG3, PrevWalletList, WalletList, RewardAddr, LastHeight, InitialDepth),
+	DAG4 = set_current(DAG3, WalletList, LastHeight, InitialDepth),
 	ar_node_worker ! wallets_ready,
 	{noreply, DAG4};
 
@@ -323,56 +272,75 @@ load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N) ->
 			load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N)
 	end.
 
-apply_block(DAG, NewB, RootHash, RewardPool, Rate, Height) ->
-	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
-	TXs = NewB#block.txs,
-	Wallets = get_map(Tree, [NewB#block.reward_addr | ar_tx:get_addresses(TXs)]),
-	{NewRewardPool, UpdatedWallets} =
-		ar_node_utils:update_wallets(NewB, Wallets, RewardPool,	Rate, Height),
-	case NewB#block.reward_pool of
-		NewRewardPool ->
-			RewardAddr = NewB#block.reward_addr,
-			UpdatedTree = apply_diff(UpdatedWallets, Tree),
-			{UpdatedRootHash, _} =
-				ar_block:hash_wallet_list(Height + 1, RewardAddr, UpdatedTree),
-			case NewB#block.wallet_list == UpdatedRootHash
-						orelse NewB#block.height < ar_fork:height_2_2() of
-				true ->
-					UpdatedDAG =
-						maybe_add_node(DAG, UpdatedRootHash, RootHash, UpdatedWallets, not_set),
-					{{ok, UpdatedRootHash}, UpdatedDAG};
-				false ->
-					{{error, invalid_wallet_list}, DAG}
-			end;
+apply_block(B, PrevB, DAG) ->
+	Denomination2 = B#block.denomination,
+	RedenominationHeight2 = B#block.redenomination_height,
+	case ar_pricing:may_be_redenominate(PrevB) of
+		{Denomination2, RedenominationHeight2} ->
+			apply_block2(B, PrevB, DAG);
 		_ ->
-			{{error, invalid_reward_pool}, DAG}
+			{{error, invalid_denomination}, DAG}
 	end.
 
-set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth) ->
+apply_block2(B, PrevB, DAG) ->
+	RootHash = PrevB#block.wallet_list,
+	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
+	TXs = B#block.txs,
+	Accounts = get_map(Tree, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
+	EndowmentPool = PrevB#block.reward_pool,
+	Rate = ar_pricing:usd_to_ar_rate(PrevB),
+	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
+	KryderPlusRateMultiplierLatch = PrevB#block.kryder_plus_rate_multiplier_latch,
+	KryderPlusRateMultiplier = PrevB#block.kryder_plus_rate_multiplier,
+	Denomination = PrevB#block.denomination,
+	DebtSupply = PrevB#block.debt_supply,
+	Args2 = {B, Accounts, EndowmentPool, DebtSupply, Rate, PricePerGiBMinute,
+			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination},
+	{EndowmentPool2, MinerReward, DebtSupply2, KryderPlusRateMultiplierLatch2,
+			KryderPlusRateMultiplier2, Accounts2} = ar_node_utils:update_accounts(Args2),
+	Denomination2 = B#block.denomination,
+	EndowmentPool3 = ar_pricing:redenominate(EndowmentPool2, Denomination, Denomination2),
+	MinerReward2 = ar_pricing:redenominate(MinerReward, Denomination, Denomination2),
+	DebtSupply3 = ar_pricing:redenominate(DebtSupply2, Denomination, Denomination2),
+	case {B#block.reward_pool == EndowmentPool3, B#block.reward == MinerReward2,
+			B#block.debt_supply == DebtSupply3,
+			B#block.kryder_plus_rate_multiplier_latch == KryderPlusRateMultiplierLatch2,
+			B#block.kryder_plus_rate_multiplier == KryderPlusRateMultiplier2,
+			B#block.height >= ar_fork:height_2_6()} of
+		{false, _, _, _, _, _} ->
+			{{error, invalid_reward_pool}, DAG};
+		{true, false, _, _, _, true} ->
+			{{error, invalid_miner_reward}, DAG};
+		{true, true, false, _, _, true} ->
+			{{error, invalid_debt_supply}, DAG};
+		{true, true, true, false, _, true} ->
+			{{error, invalid_kryder_plus_rate_multiplier_latch}, DAG};
+		{true, true, true, true, false, true} ->
+			{{error, invalid_kryder_plus_rate_multiplier}, DAG};
+		_ ->
+			Tree2 = apply_diff(Accounts2, Tree),
+			{RootHash2, _} = ar_block:hash_wallet_list(Tree2),
+			case B#block.wallet_list == RootHash2 of
+				true ->
+					DAG2 = maybe_add_node(DAG, RootHash2, RootHash, Accounts2, Denomination2),
+					{{ok, RootHash2}, DAG2};
+				false ->
+					{{error, invalid_wallet_list}, DAG}
+			end
+	end.
+
+set_current(DAG, RootHash, Height, PruneDepth) ->
 	UpdatedDAG = ar_diff_dag:update_sink(
 		ar_diff_dag:move_sink(DAG, RootHash, fun apply_diff/2, fun reverse_diff/2),
 		RootHash,
 		fun(Tree, Meta) ->
-			{RootHash, UpdatedTree} = ar_block:hash_wallet_list(Height, RewardAddr, Tree),
+			{RootHash, UpdatedTree} = ar_block:hash_wallet_list(Tree),
 			{RootHash, UpdatedTree, Meta}
 		end
 	),
 	Tree = ar_diff_dag:get_sink(UpdatedDAG),
-	case Height >= ar_fork:height_2_2() of
-		true ->
-			gen_server:cast(self(), {write_wallet_list_chunk, RootHash, first, 0});
-		false ->
-			IsRewardAddrNew =
-				case PrevRootHash of
-					<<>> ->
-						false;
-					_ ->
-						PrevTree =
-							ar_diff_dag:reconstruct(UpdatedDAG, PrevRootHash, fun apply_diff/2),
-						ar_patricia_tree:get(RewardAddr, PrevTree) == not_found
-				end,
-			ok = ar_storage:write_wallet_list(RootHash, RewardAddr, IsRewardAddrNew, Tree)
-	end,
+	true = Height >= ar_fork:height_2_2(),
+	gen_server:cast(self(), {write_wallet_list_chunk, RootHash, first, 0}),
 	prometheus_gauge:set(wallet_list_size, ar_patricia_tree:size(Tree)),
 	ar_diff_dag:filter(UpdatedDAG, PruneDepth).
 
@@ -381,7 +349,9 @@ apply_diff(Diff, Tree) ->
 		fun (Addr, remove, Acc) ->
 				ar_patricia_tree:delete(Addr, Acc);
 			(Addr, {Balance, LastTX}, Acc) ->
-				ar_patricia_tree:insert(Addr, {Balance, LastTX}, Acc)
+				ar_patricia_tree:insert(Addr, {Balance, LastTX}, Acc);
+			(Addr, {Balance, LastTX, Denomination}, Acc) ->
+				ar_patricia_tree:insert(Addr, {Balance, LastTX, Denomination}, Acc)
 		end,
 		Tree,
 		Diff
@@ -414,31 +384,10 @@ get_map(Tree, Addresses) ->
 		Addresses
 	).
 
-compute_hash(Tree, Diff, NoRewardRootHash, Height, RewardAddr) ->
-	UpdatedTree = apply_diff(Diff, Tree),
-	case Height >= ar_fork:height_2_2() of
-		true ->
-			H = element(1, ar_block:hash_wallet_list(Height, RewardAddr, UpdatedTree)),
-			{H, NoRewardRootHash};
-		false ->
-			compute_hash_pre_fork_2_2(UpdatedTree, Diff, NoRewardRootHash, RewardAddr)
-	end.
-
-compute_hash_pre_fork_2_2(Tree, Changes, NoRewardRootHash, RewardAddr) ->
-	case NoRewardRootHash /= not_set andalso map_size(maps:without([RewardAddr], Changes)) == 0 of
-		true ->
-			RewardWallet =
-				case maps:get(RewardAddr, Changes, not_found) of
-					not_found ->
-						unclaimed;
-					{Balance, LastTX} ->
-						{RewardAddr, Balance, LastTX}
-				end,
-			{ar_block:hash_wallet_list(RewardWallet, NoRewardRootHash), NoRewardRootHash};
-		false ->
-			{RW, WLH} = ar_block:hash_wallet_list_without_reward_wallet(RewardAddr, Tree),
-			{ar_block:hash_wallet_list(RW, WLH), WLH}
-	end.
+compute_hash(Tree, Diff, Height) ->
+	Tree2 = apply_diff(Diff, Tree),
+	true = Height >= ar_fork:height_2_2(),
+	element(1, ar_block:hash_wallet_list(Tree2)).
 
 maybe_add_node(DAG, RootHash, RootHash, _Wallets, _Metadata) ->
 	%% The wallet list has not changed - there are no transactions

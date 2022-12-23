@@ -1,14 +1,5 @@
 %% The number of recent blocks tracked, used for erasing the orphans.
--define(HEADER_SYNC_TRACK_CONFIRMATIONS, 100).
-
-%% The size in bytes of a portion of the disk space.
-%% The node stops syncing historical headers when the remaining
-%% disk space is smaller than this amount.
--ifdef(DEBUG).
--define(DISK_HEADERS_BUFFER_SIZE, 20 * 1024 * 1024).
--else.
--define(DISK_HEADERS_BUFFER_SIZE, 20 * 1024 * 1024 * 1024).
--endif.
+-define(HEADER_SYNC_TRACK_CONFIRMATIONS, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
 
 %% The frequency of processing items in the queue.
 -ifdef(DEBUG).
@@ -28,10 +19,18 @@
 -endif.
 
 %% The initial value for the exponential backoff for failing requests.
+-ifdef(DEBUG).
+-define(INITIAL_BACKOFF_INTERVAL_S, 1).
+-else.
 -define(INITIAL_BACKOFF_INTERVAL_S, 30).
+-endif.
 
 %% The maximum exponential backoff interval for failing requests.
+-ifdef(DEBUG).
+-define(MAX_BACKOFF_INTERVAL_S, 2).
+-else.
 -define(MAX_BACKOFF_INTERVAL_S, 2 * 60 * 60).
+-endif.
 
 %% The frequency of storing the server state on disk.
 -define(STORE_HEADER_STATE_FREQUENCY_MS, 30000).

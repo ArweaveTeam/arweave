@@ -1,5 +1,6 @@
 -module(ar_config_tests).
 
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -25,13 +26,22 @@ parse_config() ->
 		],
 		block_gossip_peers = [{159,203,158,108,1984}, {150,150,150,150, 1983}],
 		data_dir = "some_data_dir",
+		log_dir = "log_dir",
 		metrics_dir = "metrics_dir",
+		storage_modules = [{?PARTITION_SIZE, 0, unpacked},
+				{?PARTITION_SIZE, 2, {spora_2_6, ExpectedMiningAddr}},
+				{?PARTITION_SIZE, 100, unpacked},
+				{1, 0, unpacked},
+				{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}}],
 		polling = 10,
+		block_pollers = 100,
 		auto_join = false,
 		diff = 42,
 		mining_addr = ExpectedMiningAddr,
 		max_miners = 43,
 		io_threads = 43,
+		hashing_threads = 17,
+		mining_server_chunk_cache_size_limit = 3,
 		stage_one_hashing_threads = 27,
 		stage_two_hashing_threads = 37,
 		max_propagation_peers = 8,
@@ -52,7 +62,6 @@ parse_config() ->
 				default := 100
 			}
 		},
-		load_key = "some_key_file",
 		disk_space = 44 * 1024 * 1024 * 1024,
 		disk_space_check_frequency = 10 * 1000,
 		start_from_block_index = true,
@@ -90,7 +99,9 @@ parse_config() ->
 			gateway_arql := 3,
 			get_sync_record := 10
 		},
-		packing_rate = 20
+		packing_rate = 20,
+		max_nonce_limiter_validation_thread_count = 2,
+		max_nonce_limiter_last_step_validation_thread_count = 3
 	}, ParsedConfig).
 
 config_fixture() ->

@@ -4,14 +4,16 @@ on:
     branches: ["**"]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on:
+      labels: ubuntu-latest-16-cores
     steps:
       - uses: actions/checkout@v2.3.4
         with:
           submodules: "recursive"
-      - uses: gleam-lang/setup-erlang@v1.1.3
+      - uses: erlef/setup-beam@v1
         with:
-          otp-version: "24.1"
+          otp-version: "24.3"
+          rebar3-version: "3.20.0"
       - name: Install linux dependencies
         run: sudo apt-get install -y sqlite3 libgmp-dev
       - name: Start empd

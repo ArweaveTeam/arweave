@@ -1,8 +1,8 @@
 %%% @doc The module with utilities for transaction creation, signing and verification.
 -module(ar_tx).
 
--export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, sign_v1/2, sign_v1/3, verify/5,
-		verify/6, verify_tx_id/2, tags_to_list/1, get_tx_fee/4, get_tx_fee/6, check_last_tx/2,
+-export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, sign_v1/2, sign_v1/3, verify/2,
+		verify/3, verify_tx_id/2, tags_to_list/1, get_tx_fee/1, get_tx_fee2/1, check_last_tx/2,
 		generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
 		chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
 		get_addresses/1, get_weave_size_increase/2, utility/1]).
@@ -26,7 +26,6 @@
 
 %% @doc A helper for preparing transactions for signing. Used in tests.
 %% Should be moved to a testing module.
-%% @end
 new() ->
 	#tx{ id = crypto:strong_rand_bytes(32) }.
 new(Data) ->
@@ -46,7 +45,9 @@ new(Data, Reward, Last) ->
 		data_size = byte_size(Data),
 		reward = Reward
 	}.
-new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
+new({SigType, PubKey}, Reward, Qty, Last) ->
+	new(ar_wallet:to_address(PubKey, SigType), Reward, Qty, Last, SigType);
+new(Dest, Reward, Qty, Last) ->
 	#tx{
 		id = crypto:strong_rand_bytes(32),
 		last_tx = Last,
@@ -55,51 +56,58 @@ new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
 		data = <<>>,
 		data_size = 0,
 		reward = Reward
-	};
-new(Dest, Reward, Qty, Last) ->
-	%% Convert wallets to addresses before building transactions.
-	new(ar_wallet:to_address(Dest), Reward, Qty, Last).
+	}.
+new(Dest, Reward, Qty, Last, SigType) ->
+	#tx{
+		id = crypto:strong_rand_bytes(32),
+		last_tx = Last,
+		quantity = Qty,
+		target = Dest,
+		data = <<>>,
+		data_size = 0,
+		reward = Reward,
+		signature_type = SigType
+	}.
 
 %% @doc Cryptographically sign (claim ownership of) a v2 transaction.
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
-%% @end
-sign(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = PubKey })).
+sign(TX, {PrivKey, PubKey = {KeyType, Owner}}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner,
+			signature_type = KeyType })).
 
-sign(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = PubKey })).
+sign(TX, PrivKey, PubKey = {KeyType, Owner}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner,
+			signature_type = KeyType })).
 
 %% @doc Cryptographically sign (claim ownership of) a v1 transaction.
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
-%% @end
-sign_v1(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
+sign_v1(TX, {PrivKey, PubKey = {_, Owner}}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = Owner })).
 
-sign_v1(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
+sign_v1(TX, PrivKey, PubKey = {_, Owner}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = Owner })).
 
 %% @doc Verify whether a transaction is valid.
 %% Signature verification can be optionally skipped, useful for
 %% repeatedly checking mempool transactions' validity.
-%% @end
-verify(TX, Rate, Height, Wallets, Timestamp) ->
-	verify(TX, Rate, Height, Wallets, Timestamp, verify_signature).
+verify(TX, Args) ->
+	verify(TX, Args, verify_signature).
 
 -ifdef(DEBUG).
-verify(#tx { signature = <<>> }, _, _, _, _, _) -> true;
-verify(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
-	do_verify(TX, Rate, Height, Wallets, Timestamp, VerifySignature).
+verify(#tx{ signature = <<>> }, _Args, _VerifySignature) ->
+	true;
+verify(TX, Args, VerifySignature) ->
+	do_verify(TX, Args, VerifySignature).
 -else.
-verify(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
-	do_verify(TX, Rate, Height, Wallets, Timestamp, VerifySignature).
+verify(TX, Args, VerifySignature) ->
+	do_verify(TX, Args, VerifySignature).
 -endif.
 
 %% @doc Verify the given transaction actually has the given identifier.
 %% Compute the signature data segment, verify the signature, and check
 %% whether its SHA2-256 hash equals the expected identifier.
-%% @end
 verify_tx_id(ExpectedID, #tx{ format = 1, id = ID } = TX) ->
 	ExpectedID == ID andalso verify_signature_v1(TX, verify_signature) andalso verify_hash(TX);
 verify_tx_id(ExpectedID, #tx{ format = 2, id = ID } = TX) ->
@@ -109,29 +117,33 @@ tags_to_list(Tags) ->
 	[[Name, Value] || {Name, Value} <- Tags].
 
 -ifdef(DEBUG).
-check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> -> true;
+check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> ->
+	true;
 check_last_tx(WalletList, _TX) when map_size(WalletList) == 0 ->
 	true;
 check_last_tx(WalletList, TX) ->
-	Addr = ar_wallet:to_address(TX#tx.owner),
+	Addr = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
 	case maps:get(Addr, WalletList, not_found) of
 		not_found ->
 			false;
 		{_Balance, LastTX} ->
+			LastTX == TX#tx.last_tx;
+		{_Balance, LastTX, _Denomination} ->
 			LastTX == TX#tx.last_tx
 	end.
 -else.
 %% @doc Check if the given transaction anchors one of the wallets - its last_tx
 %% matches the last transaction made from the wallet.
-%% @end
 check_last_tx(WalletList, _TX) when map_size(WalletList) == 0 ->
 	true;
 check_last_tx(WalletList, TX) ->
-	Addr = ar_wallet:to_address(TX#tx.owner),
+	Addr = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
 	case maps:get(Addr, WalletList, not_found) of
 		not_found ->
 			false;
 		{_Balance, LastTX} ->
+			LastTX == TX#tx.last_tx;
+		{_Balance, LastTX, _Denomination} ->
 			LastTX == TX#tx.last_tx
 	end.
 -endif.
@@ -139,7 +151,6 @@ check_last_tx(WalletList, TX) ->
 %% @doc Split the tx data into chunks and compute the Merkle tree from them.
 %% Used to compute the Merkle roots of v1 transactions' data and to compute
 %% Merkle proofs for v2 transactions when their data is uploaded without proofs.
-%% @end
 generate_chunk_tree(TX) ->
 	generate_chunk_tree(TX,
 		sized_chunks_to_sized_chunk_ids(
@@ -151,7 +162,7 @@ generate_chunk_tree(TX) ->
 
 generate_chunk_tree(TX, ChunkIDSizes) ->
 	{Root, Tree} = ar_merkle:generate_tree(ChunkIDSizes),
-	TX#tx { data_tree = Tree, data_root = Root }.
+	TX#tx{ data_tree = Tree, data_root = Root }.
 
 %% @doc Generate a chunk ID used to construct the Merkle tree from the tx data chunks.
 generate_chunk_id(Chunk) ->
@@ -160,7 +171,6 @@ generate_chunk_id(Chunk) ->
 %% @doc Split the binary into chunks. Used for computing the Merkle roots of
 %% v1 transactions' data and computing Merkle proofs for v2 transactions' when
 %% their data is uploaded without proofs.
-%% @end
 chunk_binary(ChunkSize, Bin) when byte_size(Bin) < ChunkSize ->
 	[Bin];
 chunk_binary(ChunkSize, Bin) ->
@@ -183,7 +193,8 @@ chunks_to_size_tagged_chunks(Chunks) ->
 		)
 	).
 
-%% @doc Convert a list of chunk, byte offset tuples to the list of chunk ID, byte offset tuples.
+%% @doc Convert a list of chunk, byte offset tuples to
+%% the list of chunk ID, byte offset tuples.
 sized_chunks_to_sized_chunk_ids(SizedChunks) ->
 	[{ar_tx:generate_chunk_id(Chunk), Size} || {Chunk, Size} <- SizedChunks].
 
@@ -238,89 +249,112 @@ get_wallet_fee_pre_fork_2_4(Diff, Height) ->
 
 %% @doc Generate the data segment to be signed for a given v2 TX.
 signature_data_segment_v2(TX) ->
-	ar_deep_hash:hash([
-		<<(integer_to_binary(TX#tx.format))/binary>>,
-		<<(TX#tx.owner)/binary>>,
-		<<(TX#tx.target)/binary>>,
-		<<(list_to_binary(integer_to_list(TX#tx.quantity)))/binary>>,
-		<<(list_to_binary(integer_to_list(TX#tx.reward)))/binary>>,
-		<<(TX#tx.last_tx)/binary>>,
+	List = [
+		<< (integer_to_binary(TX#tx.format))/binary >>,
+		<< (TX#tx.owner)/binary >>,
+		<< (TX#tx.target)/binary >>,
+		<< (list_to_binary(integer_to_list(TX#tx.quantity)))/binary >>,
+		<< (list_to_binary(integer_to_list(TX#tx.reward)))/binary >>,
+		<< (TX#tx.last_tx)/binary >>,
 		tags_to_list(TX#tx.tags),
-		<<(integer_to_binary(TX#tx.data_size))/binary>>,
-		<<(TX#tx.data_root)/binary>>
-	]).
+		<< (integer_to_binary(TX#tx.data_size))/binary >>,
+		<< (TX#tx.data_root)/binary >>
+	],
+	List2 =
+		case TX#tx.denomination > 0 of
+			true ->
+				[<< (integer_to_binary(TX#tx.denomination))/binary >> | List];
+			false ->
+				List
+		end,
+	ar_deep_hash:hash(List2).
 
 %% @doc Generate the data segment to be signed for a given v1 TX.
-signature_data_segment_v1(T) ->
-	<<
-		(T#tx.owner)/binary,
-		(T#tx.target)/binary,
-		(T#tx.data)/binary,
-		(list_to_binary(integer_to_list(T#tx.quantity)))/binary,
-		(list_to_binary(integer_to_list(T#tx.reward)))/binary,
-		(T#tx.last_tx)/binary,
-		(tags_to_binary(T#tx.tags))/binary
-	>>.
+signature_data_segment_v1(TX) ->
+	case TX#tx.denomination > 0 of
+		true ->
+			ar_deep_hash:hash([
+				<< (integer_to_binary(TX#tx.denomination))/binary >>,
+				<< (TX#tx.owner)/binary >>,
+				<< (TX#tx.target)/binary >>,
+				<< (list_to_binary(integer_to_list(TX#tx.quantity)))/binary >>,
+				<< (list_to_binary(integer_to_list(TX#tx.reward)))/binary >>,
+				<< (TX#tx.last_tx)/binary >>,
+				tags_to_list(TX#tx.tags)
+			]);
+		false ->
+			<<
+				(TX#tx.owner)/binary,
+				(TX#tx.target)/binary,
+				(TX#tx.data)/binary,
+				(list_to_binary(integer_to_list(TX#tx.quantity)))/binary,
+				(list_to_binary(integer_to_list(TX#tx.reward)))/binary,
+				(TX#tx.last_tx)/binary,
+				(tags_to_binary(TX#tx.tags))/binary
+			>>
+	end.
 
-sign(TX, PrivKey, PubKey, SignatureDataSegment) ->
-	NewTX = TX#tx{ owner = PubKey },
+sign(TX, PrivKey, {KeyType, Owner}, SignatureDataSegment) ->
+	NewTX = TX#tx{ owner = Owner, signature_type = KeyType },
 	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
-	NewTX#tx {
-		signature = Sig, id = ID
-	}.
+	NewTX#tx{ id = ID, signature = Sig }.
 
-do_verify(#tx{ format = 1 } = TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
-	do_verify_v1(TX, Rate, Height, Wallets, Timestamp, VerifySignature);
-do_verify(#tx{ format = 2 } = TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
+do_verify(#tx{ format = 1 } = TX, Args, VerifySignature) ->
+	do_verify_v1(TX, Args, VerifySignature);
+do_verify(#tx{ format = 2 } = TX, Args, VerifySignature) ->
+	{_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
+			_RedenominationHeight, Height, _Accounts, _Timestamp} = Args,
 	case Height < ar_fork:height_2_0() of
 		true ->
 			collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]);
 		false ->
-			do_verify_v2(TX, Rate, Height, Wallets, Timestamp, VerifySignature)
+			do_verify_v2(TX, Args, VerifySignature)
 	end;
-do_verify(TX, _Rate, _Height, _Wallets, _Timestamp, _VerifySignature) ->
+do_verify(TX, _Args, _VerifySignature) ->
 	collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]).
 
 get_addresses([], Addresses) ->
 	sets:to_list(Addresses);
 get_addresses([TX | TXs], Addresses) ->
-	Source = ar_wallet:to_address(TX#tx.owner),
+	Source = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
 	WithSource = sets:add_element(Source, Addresses),
 	WithDest = sets:add_element(TX#tx.target, WithSource),
 	get_addresses(TXs, WithDest).
 
-do_verify_v1(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
+do_verify_v1(TX, Args, VerifySignature) ->
+	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, RedenominationHeight,
+			Height, Accounts, Timestamp} = Args,
 	Fork_1_8 = ar_fork:height_1_8(),
 	LastTXCheck = case Height of
 		H when H >= Fork_1_8 ->
 			true;
 		_ ->
-			check_last_tx(Wallets, TX)
+			check_last_tx(Accounts, TX)
 	end,
-	Checks = [
-		{"quantity_negative",
-		 TX#tx.quantity >= 0},
-		{"same_owner_as_target",
-		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
-		{"tx_too_cheap",
-		 is_tx_fee_sufficient(TX, Rate, Height, Wallets, TX#tx.target, Timestamp)},
-		{"tx_fields_too_large",
-		 tx_field_size_limit_v1(TX, Height)},
-		{"last_tx_not_valid",
-		 LastTXCheck},
-		{"tx_id_not_valid",
-		 verify_hash(TX)},
-		{"overspend",
-		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
-		{"tx_signature_not_valid",
-		 verify_signature_v1(TX, VerifySignature, Height)},
-		{"tx_malleable",
-		 verify_malleability(TX, Rate, Height, Wallets, Timestamp)},
-		{"no_target",
-		 verify_target_length(TX, Height)}
-	],
-	collect_validation_results(TX#tx.id, Checks).
+	case verify_denomination(TX, Denomination, Height, RedenominationHeight) of
+		false ->
+			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
+		true ->
+			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+			FeeArgs = {TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+					Height, Accounts, TX#tx.target, Timestamp},
+			Checks = [
+				{"quantity_negative", TX#tx.quantity >= 0},
+				{"same_owner_as_target", (From =/= TX#tx.target)},
+				{"tx_too_cheap", is_tx_fee_sufficient(FeeArgs)},
+				{"tx_fields_too_large", tx_field_size_limit_v1(TX, Height, Denomination)},
+				{"last_tx_not_valid", LastTXCheck},
+				{"tx_id_not_valid", verify_hash(TX)},
+				{"overspend", validate_overspend(TX,
+						ar_node_utils:apply_tx(Accounts, Denomination, TX))},
+				{"tx_signature_not_valid", verify_signature_v1(TX, VerifySignature, Height)},
+				{"tx_malleable", verify_malleability({TX, Rate, PricePerGiBMinute,
+						KryderPlusRateMultiplier, Denomination, Height, Accounts, Timestamp})},
+				{"invalid_target_length", verify_target_length(TX, Height)}
+			],
+			collect_validation_results(TX#tx.id, Checks)
+	end.
 
 collect_validation_results(TXID, Checks) ->
 	KeepFailed = fun
@@ -337,33 +371,35 @@ collect_validation_results(TXID, Checks) ->
 			false
 	end.
 
-do_verify_v2(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
-	Checks = [
-		{"quantity_negative",
-		 TX#tx.quantity >= 0},
-		{"same_owner_as_target",
-		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
-		{"tx_too_cheap",
-		 is_tx_fee_sufficient(TX, Rate, Height, Wallets, TX#tx.target, Timestamp)},
-		{"tx_fields_too_large",
-		 tx_field_size_limit_v2(TX, Height)},
-		{"tx_id_not_valid",
-		 verify_hash(TX)},
-		{"overspend",
-		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
-		{"tx_signature_not_valid",
-		 verify_signature_v2(TX, VerifySignature, Height)},
-		{"tx_data_size_negative",
-		 TX#tx.data_size >= 0},
-		{"tx_data_size_data_root_mismatch",
-		 (TX#tx.data_size == 0) == (TX#tx.data_root == <<>>)},
-		{"no_target",
-		 verify_target_length(TX, Height)}
-	],
-	collect_validation_results(TX#tx.id, Checks).
+do_verify_v2(TX, Args, VerifySignature) ->
+	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, RedenominationHeight,
+			Height, Accounts, Timestamp} = Args,
+	case verify_denomination(TX, Denomination, Height, RedenominationHeight) of
+		false ->
+			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
+		true ->
+			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+			FeeArgs = {TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+					Height, Accounts, TX#tx.target, Timestamp},
+			Checks = [
+				{"quantity_negative", TX#tx.quantity >= 0},
+				{"same_owner_as_target", (From =/= TX#tx.target)},
+				{"tx_too_cheap", is_tx_fee_sufficient(FeeArgs)},
+				{"tx_fields_too_large", tx_field_size_limit_v2(TX, Height, Denomination)},
+				{"tx_id_not_valid", verify_hash(TX)},
+				{"overspend", validate_overspend(TX,
+						ar_node_utils:apply_tx(Accounts, Denomination, TX))},
+				{"tx_signature_not_valid", verify_signature_v2(TX, VerifySignature, Height)},
+				{"tx_data_size_negative", TX#tx.data_size >= 0},
+				{"tx_data_size_data_root_mismatch",
+						(TX#tx.data_size == 0) == (TX#tx.data_root == <<>>)},
+				{"invalid_target_length", verify_target_length(TX, Height)}
+			],
+			collect_validation_results(TX#tx.id, Checks)
+	end.
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
-tx_field_size_limit_v1(TX, Height) ->
+tx_field_size_limit_v1(TX, Height, Denomination) ->
 	LastTXLimit =
 		case Height >= ar_fork:height_1_8() of
 			true ->
@@ -371,24 +407,31 @@ tx_field_size_limit_v1(TX, Height) ->
 			false ->
 				32
 		end,
+	MaxDigits =
+		case Height + 1 >= ar_fork:height_2_6() of
+			true ->
+				30 + (Denomination - 1) * 3;
+			false ->
+				21
+		end,
 	(byte_size(TX#tx.id) =< 32) andalso
 	(byte_size(TX#tx.last_tx) =< LastTXLimit) andalso
 	(byte_size(TX#tx.owner) =< 512) andalso
 	validate_tags_size(TX, Height) andalso
-	(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) andalso
+	(byte_size(integer_to_binary(TX#tx.quantity)) =< MaxDigits) andalso
 	(byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)) andalso
 	(byte_size(TX#tx.signature) =< 512) andalso
-	(byte_size(integer_to_binary(TX#tx.reward)) =< 21).
+	(byte_size(integer_to_binary(TX#tx.reward)) =< MaxDigits).
 
 %% @doc Verify that the transactions ID is a hash of its signature.
-verify_hash(#tx {signature = Sig, id = ID}) ->
-	ID == crypto:hash(?HASH_ALG, <<Sig/binary>>).
+verify_hash(#tx{ signature = Sig, id = ID }) ->
+	ID == crypto:hash(?HASH_ALG, << Sig/binary >>).
 
 verify_signature_v1(_TX, do_not_verify_signature) ->
 	true;
 verify_signature_v1(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
-	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
+	ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v1(_TX, do_not_verify_signature, _Height) ->
 	true;
@@ -396,46 +439,56 @@ verify_signature_v1(TX, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
 	case Height >= ar_fork:height_2_4() of
 		true ->
-			ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature);
+			ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment,
+					TX#tx.signature);
 		false ->
-			ar_wallet:verify_pre_fork_2_4(TX#tx.owner, SignatureDataSegment, TX#tx.signature)
+			ar_wallet:verify_pre_fork_2_4({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment,
+					TX#tx.signature)
 	end.
 
-verify_malleability(TX, Rate, Height, Wallets, Timestamp) ->
+verify_malleability(Args) ->
+	{TX, _Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination, Height,
+			_Accounts, _Timestamp} = Args,
 	case Height + 1 >= ar_fork:height_2_4() of
 		false ->
 			true;
 		true ->
-			Target = TX#tx.target,
-			case {byte_size(Target), TX#tx.quantity > 0} of
-				{TargetSize, true} when TargetSize /= 32 ->
+			case TX#tx.denomination > 0 of
+				true ->
+					%% The signtaure preimage is constructed differently for v1 transactions
+					%% with the explicitly set denomination.
+					true;
+				false ->
+					verify_malleability2(Args)
+			end
+	end.
+
+verify_malleability2(Args) ->
+	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height, Accounts,
+			Timestamp} = Args,
+	Target = TX#tx.target,
+	case {byte_size(Target), TX#tx.quantity > 0} of
+		{TargetSize, true} when TargetSize /= 32 ->
+			false;
+		{TargetSize, false} when TargetSize > 0 ->
+			false;
+		_ ->
+			case ends_with_digit(TX#tx.data) of
+				true ->
 					false;
-				{TargetSize, false} when TargetSize > 0 ->
-					false;
-				_ ->
-					case ends_with_digit(TX#tx.data) of
+				false ->
+					Fee = TX#tx.reward,
+					case Fee < 10 of
 						true ->
-							false;
+							true;
 						false ->
-							Fee = TX#tx.reward,
-							case Fee < 10 of
-								true ->
-									true;
-								false ->
-									not is_tx_fee_sufficient(
-										TX#tx{
-											reward =
-												list_to_integer(
-													tl(integer_to_list(TX#tx.reward))
-												)
-										},
-										Rate,
-										Height,
-										Wallets,
-										Target,
-										Timestamp
-									)
-							end
+							TruncatedReward = ar_pricing:redenominate(list_to_integer(
+									tl(integer_to_list(TX#tx.reward))),
+									TX#tx.denomination,
+									Denomination),
+							not is_tx_fee_sufficient({TX#tx{ reward = TruncatedReward },
+									Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
+									Denomination, Height, Accounts, Target, Timestamp})
 					end
 			end
 	end.
@@ -448,23 +501,25 @@ ends_with_digit(Data) ->
 
 verify_signature_v2(_TX, do_not_verify_signature) ->
 	true;
-verify_signature_v2(TX, verify_signature) ->
+verify_signature_v2(TX = #tx{ signature_type = SigType }, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
-	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
+	ar_wallet:verify({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v2(_TX, do_not_verify_signature, _Height) ->
 	true;
 verify_signature_v2(TX, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
+	Wallet = {{?RSA_SIGN_ALG, 65537}, TX#tx.owner},
 	case Height >= ar_fork:height_2_4() of
 		true ->
-			ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature);
+			ar_wallet:verify(Wallet, SignatureDataSegment, TX#tx.signature);
 		false ->
-			ar_wallet:verify_pre_fork_2_4(TX#tx.owner, SignatureDataSegment, TX#tx.signature)
+			ar_wallet:verify_pre_fork_2_4({{?RSA_SIGN_ALG, 65537}, TX#tx.owner},
+					SignatureDataSegment, TX#tx.signature)
 	end.
 
-validate_overspend(TX, Wallets) ->
-	From = ar_wallet:to_address(TX#tx.owner),
+validate_overspend(TX, Accounts) ->
+	From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
 	Addresses = case TX#tx.target of
 		<<>> ->
 			[From];
@@ -473,10 +528,14 @@ validate_overspend(TX, Wallets) ->
 	end,
 	lists:all(
 		fun(Addr) ->
-			case maps:get(Addr, Wallets, not_found) of
-				{0, Last} when byte_size(Last) == 0 ->
+			case maps:get(Addr, Accounts, not_found) of
+				{0, LastTX} when byte_size(LastTX) == 0 ->
+					false;
+				{0, LastTX, _Denomination} when byte_size(LastTX) == 0 ->
 					false;
 				{Quantity, _} when Quantity < 0 ->
+					false;
+				{Quantity, _, _Denomination} when Quantity < 0 ->
 					false;
 				not_found ->
 					false;
@@ -487,29 +546,72 @@ validate_overspend(TX, Wallets) ->
 		Addresses
 	).
 
-%% @doc Ensure that transaction fee is sufficiently big.
-is_tx_fee_sufficient(TX, Rate, Height, Wallets, Addr, Timestamp) ->
-	Size = get_weave_size_increase(TX, Height + 1),
-	TX#tx.reward >= get_tx_fee(Size, Rate, Height + 1, Wallets, Addr, Timestamp).
+is_tx_fee_sufficient(Args) ->
+	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height, Accounts,
+			Addr, Timestamp} = Args,
+	DataSize = get_weave_size_increase(TX, Height + 1),
+	MinimumRequiredFee = get_tx_fee({DataSize, Rate, PricePerGiBMinute,
+			KryderPlusRateMultiplier, Addr, Timestamp, Accounts, Height + 1}),
+	Fee = TX#tx.reward,
+	ar_pricing:redenominate(Fee, TX#tx.denomination, Denomination) >= MinimumRequiredFee.
 
-%% @doc Calculate the minimum required transaction fee, including a wallet fee,
-%% if `Addr` is not in `Wallets`.
-%% @end
-get_tx_fee(DataSize, Rate, Height, Wallets, Addr, Timestamp) ->
-	true = Height >= ar_fork:height_2_4(),
-	IncludesWalletFee = Addr /= <<>> andalso maps:get(Addr, Wallets, not_found) == not_found,
-	case IncludesWalletFee of
-		true ->
-			WalletFee = ar_pricing:usd_to_ar(?WALLET_GEN_FEE_USD, Rate, Height),
-			WalletFee + ar_pricing:get_tx_fee(DataSize, Timestamp, Rate, Height);
+get_tx_fee(Args) ->
+	{DataSize, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Timestamp, Accounts,
+			Height} = Args,
+	Fork_2_6 = ar_fork:height_2_6(),
+	Args2 = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
+	case Height >= Fork_2_6 of
 		false ->
-			ar_pricing:get_tx_fee(DataSize, Timestamp, Rate, Height)
+			get_tx_fee_pre_fork_2_6(Args2);
+		true ->
+			Args3 = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
+					Height},
+			case ar_pricing:is_v2_pricing_height(Height) of
+				true ->
+					get_tx_fee2(Args3);
+				false ->
+					TransitionStart = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
+					TransitionEnd = TransitionStart + ?PRICE_2_6_TRANSITION_BLOCKS,
+					case Height >= TransitionStart of
+						true ->
+							Fee1 = get_tx_fee_pre_fork_2_6(Args2),
+							Fee2 = get_tx_fee2(Args3),
+							Interval1 = Height - TransitionStart + 1,
+							Interval2 = TransitionEnd - (Height + 1),
+							(Fee1 * Interval2 + Fee2 * Interval1) div (Interval1 + Interval2);
+						false ->
+							get_tx_fee_pre_fork_2_6(Args2)
+					end
+			end
 	end.
 
-%% @doc Calculate the minimum required transaction fee, assuming no wallet fee.
-get_tx_fee(DataSize, Rate, Height, Timestamp) ->
+get_tx_fee2(Args) ->
+	{DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height} = Args,
+	Args2 = {DataSize + ?TX_SIZE_BASE, PricePerGiBMinute, KryderPlusRateMultiplier, Height},
+	UploadFee = ar_pricing:get_tx_fee(Args2),
+	case Addr == <<>> orelse maps:is_key(Addr, Accounts) of
+		true ->
+			UploadFee;
+		false ->
+			NewAccountFee = get_new_account_fee(PricePerGiBMinute, KryderPlusRateMultiplier,
+					Height),
+			UploadFee + NewAccountFee
+	end.
+
+get_new_account_fee(BytePerMinutePrice, KryderPlusRateMultiplier, Height) ->
+	Args = {?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, BytePerMinutePrice,
+			KryderPlusRateMultiplier, Height},
+	ar_pricing:get_tx_fee(Args).
+
+get_tx_fee_pre_fork_2_6({DataSize, Rate, Height, Accounts, Addr, Timestamp}) ->
 	true = Height >= ar_fork:height_2_4(),
-	ar_pricing:get_tx_fee(DataSize, Timestamp, Rate, Height).
+	case Addr == <<>> orelse maps:is_key(Addr, Accounts) of
+		true ->
+			ar_pricing:get_tx_fee(DataSize, Timestamp, Rate, Height);
+		false ->
+			WalletFee = ar_pricing:usd_to_ar(?WALLET_GEN_FEE_USD, Rate, Height),
+			WalletFee + ar_pricing:get_tx_fee(DataSize, Timestamp, Rate, Height)
+	end.
 
 verify_target_length(TX, Height) ->
 	case Height >= ar_fork:height_2_4() of
@@ -520,16 +622,36 @@ verify_target_length(TX, Height) ->
 			byte_size(TX#tx.target) =< 32
 	end.
 
-tx_field_size_limit_v2(TX, Height) ->
+verify_denomination(TX, Denomination, Height, RedenominationHeight) ->
+	case Height + 1 >= ar_fork:height_2_6() of
+		false ->
+			TX#tx.denomination == 0;
+		true ->
+			case TX#tx.denomination of
+				0 ->
+					Height == 0 orelse Height > RedenominationHeight;
+				_ ->
+					TX#tx.denomination > 0 andalso TX#tx.denomination =< Denomination
+			end
+	end.
+
+tx_field_size_limit_v2(TX, Height, Denomination) ->
+	MaxDigits =
+		case Height + 1 >= ar_fork:height_2_6() of
+			true ->
+				30 + (Denomination - 1) * 3;
+			false ->
+				21
+		end,
 	(byte_size(TX#tx.id) =< 32) andalso
-	(byte_size(TX#tx.last_tx) =< 48) andalso
-	(byte_size(TX#tx.owner) =< 512) andalso
-	validate_tags_size(TX, Height) andalso
-	(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) andalso
-	(byte_size(integer_to_binary(TX#tx.data_size)) =< 21) andalso
-	(byte_size(TX#tx.signature) =< 512) andalso
-	(byte_size(integer_to_binary(TX#tx.reward)) =< 21) andalso
-	(byte_size(TX#tx.data_root) =< 32).
+			(byte_size(TX#tx.last_tx) =< 48) andalso
+			(byte_size(TX#tx.owner) =< 512) andalso
+			validate_tags_size(TX, Height) andalso
+			(byte_size(integer_to_binary(TX#tx.quantity)) =< MaxDigits) andalso
+			(byte_size(integer_to_binary(TX#tx.data_size)) =< 21) andalso
+			(byte_size(TX#tx.signature) =< 512) andalso
+			(byte_size(integer_to_binary(TX#tx.reward)) =< MaxDigits) andalso
+			(byte_size(TX#tx.data_root) =< 32).
 
 validate_tags_size(TX, Height) ->
 	case Height >= ar_fork:height_2_5() of
@@ -567,6 +689,7 @@ sign_tx_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(1)),
 	{Priv, Pub} = ar_wallet:new(),
 	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
+	PricePerGiBMinute = 1,
 	Timestamp = os:system_time(seconds),
 	ValidTXs = [
 		sign_v1(NewTX, Priv, Pub),
@@ -574,7 +697,7 @@ sign_tx_test() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			Wallets =
+			Accounts =
 				lists:foldl(
 					fun(Addr, Acc) ->
 						maps:put(Addr, {?AR(10), <<>>}, Acc)
@@ -582,8 +705,10 @@ sign_tx_test() ->
 					#{},
 					ar_tx:get_addresses([TX])
 				),
-			?assert(verify(TX, Rate, 0, Wallets, Timestamp), ar_util:encode(TX#tx.id)),
-			?assert(verify(TX, Rate, 1, Wallets, Timestamp), ar_util:encode(TX#tx.id))
+			Args1 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
+			?assert(verify(TX, Args1), ar_util:encode(TX#tx.id)),
+			Args2 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
+			?assert(verify(TX, Args2), ar_util:encode(TX#tx.id))
 		end,
 		ValidTXs
 	),
@@ -605,7 +730,7 @@ sign_tx_test() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			Wallets =
+			Accounts =
 				lists:foldl(
 					fun(Addr, Acc) ->
 						maps:put(Addr, {?AR(10), <<>>}, Acc)
@@ -613,8 +738,10 @@ sign_tx_test() ->
 					#{},
 					ar_tx:get_addresses([TX])
 				),
-			?assert(not verify(TX, Rate, 0, Wallets, Timestamp), ar_util:encode(TX#tx.id)),
-			?assert(not verify(TX, Rate, 1, Wallets, Timestamp), ar_util:encode(TX#tx.id))
+			Args3 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
+			?assert(not verify(TX, Args3), ar_util:encode(TX#tx.id)),
+			Args4 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
+			?assert(not verify(TX, Args4), ar_util:encode(TX#tx.id))
 		end,
 		InvalidTXs
 	).
@@ -630,7 +757,7 @@ test_sign_and_verify_chunked() ->
 	{Priv, Pub} = ar_wallet:new(),
 	UnsignedTX =
 		generate_chunk_tree(
-			#tx {
+			#tx{
 				format = 2,
 				data = TXData,
 				data_size = byte_size(TXData),
@@ -640,41 +767,40 @@ test_sign_and_verify_chunked() ->
 	SignedTX = sign(UnsignedTX#tx{ data = <<>> }, Priv, Pub),
 	Height = 0,
 	Rate = {1, 3},
+	PricePerGiBMinute = 200,
 	Timestamp = os:system_time(seconds),
 	Address = ar_wallet:to_address(Pub),
-	?assert(
-		verify(
-			SignedTX,
-			Rate,
-			Height,
-			maps:from_list([{Address, {?AR(100), <<>>}}]),
-			Timestamp
-		)
-	).
+	Args = {Rate, PricePerGiBMinute, 1, 1, 0, Height,
+			maps:from_list([{Address, {?AR(100), <<>>}}]), Timestamp},
+	?assert(verify(SignedTX, Args)).
 
 %% Ensure that a forged transaction does not pass verification.
 forge_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
 	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
+	PricePerGiBMinute = 400,
 	Height = 0,
-	InvalidSignTX = (sign_v1(NewTX, Priv, Pub))#tx {
+	InvalidSignTX = (sign_v1(NewTX, Priv, Pub))#tx{
 		data = <<"FAKE DATA">>
 	},
 	Timestamp = os:system_time(seconds),
-	?assert(not verify(InvalidSignTX, Rate, Height, #{}, Timestamp)).
+	Args = {Rate, PricePerGiBMinute, 1, 1, 0, Height, #{}, Timestamp},
+	?assert(not verify(InvalidSignTX, Args)).
 
 %% Ensure that transactions above the minimum tx cost are accepted.
 is_tx_fee_sufficient_test() ->
 	ValidTX = new(<<"TEST DATA">>, ?AR(10)),
 	InvalidTX = new(<<"TEST DATA">>, 1),
 	Rate = {1, 5},
-	Height = 123,
+	PricePerGiBMinute = 2,
+	Height = 2,
 	Timestamp = os:system_time(seconds),
-	?assert(is_tx_fee_sufficient(ValidTX, Rate, Height, #{}, <<"non-existing-addr">>, Timestamp)),
+	?assert(is_tx_fee_sufficient({ValidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
+			<<"non-existing-addr">>, Timestamp})),
 	?assert(
-		not is_tx_fee_sufficient(InvalidTX, Rate, Height, #{}, <<"non-existing-addr">>, Timestamp)
-	).
+		not is_tx_fee_sufficient({InvalidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
+				<<"non-existing-addr">>, Timestamp})).
 
 %% Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
@@ -703,20 +829,6 @@ test_check_last_tx() ->
 		),
 	false = check_last_tx(WalletList, SignedTX3),
 	true = check_last_tx(WalletList, SignedTX2).
-
-tx_fee_test() ->
-	{_, Pub1} = ar_wallet:new(),
-	{_, Pub2} = ar_wallet:new(),
-	Addr1 = ar_wallet:to_address(Pub1),
-	Addr2 = ar_wallet:to_address(Pub2),
-	WalletList = maps:from_list([{Addr1, {1000, <<>>}}]),
-	Size = 1000,
-	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
-	Height = ar_fork:height_2_4(),
-	Timestamp = os:system_time(seconds),
-	TXFee = get_tx_fee(Size, Rate, Height, Timestamp),
-	?assertEqual(TXFee, get_tx_fee(Size, Rate, Height, WalletList, Addr1, Timestamp)),
-	?assert(get_tx_fee(Size, Rate, Height, WalletList, Addr2, Timestamp) > TXFee).
 
 generate_and_validate_even_chunk_tree_test() ->
 	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 7),
@@ -747,7 +859,7 @@ test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
 	Chunk = binary:part(Data, ChunkStart, min(?DATA_CHUNK_SIZE, byte_size(Data) - ChunkStart)),
 	#tx{ data_root = DataRoot, data_tree = DataTree } =
 		ar_tx:generate_chunk_tree(
-			#tx {
+			#tx{
 				data = Data,
 				data_size = byte_size(Data)
 			}

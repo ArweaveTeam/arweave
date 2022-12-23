@@ -10,11 +10,10 @@
 }).
 
 %% The polling frequency in seconds.
--ifdef(DEBUG).
--define(DEFAULT_POLLING_INTERVAL, 5).
--else.
--define(DEFAULT_POLLING_INTERVAL, 60).
--endif.
+-define(DEFAULT_POLLING_INTERVAL, 2).
+
+%% The number of processes periodically searching for the latest blocks.
+-define(DEFAULT_BLOCK_POLLERS, 10).
 
 %% The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
@@ -27,27 +26,27 @@
 %% The number of disk pool jobs to run. Disk pool jobs scan the disk pool to index
 %% no longer pending or orphaned chunks, pack chunks with a sufficient number of confirmations,
 %% or remove the abandoned ones.
--ifdef(DEBUG).
--define(DEFAULT_DISK_POOL_JOBS, 50).
--else.
--define(DEFAULT_DISK_POOL_JOBS, 100).
--endif.
+-define(DEFAULT_DISK_POOL_JOBS, 20).
 
 %% The number of header sync jobs to run. Each job picks the latest not synced
 %% block header and downloads it from peers.
 -define(DEFAULT_HEADER_SYNC_JOBS, 1).
 
 %% The default expiration time for a data root in the disk pool.
--define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
+-define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 30 * 60).
 
-%% The default size limit for unconfirmed chunks, per data root.
+%% The default size limit for unconfirmed and seeded chunks, per data root.
+-ifdef(DEBUG).
 -define(DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 50).
+-else.
+-define(DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 10000).
+-endif.
 
-%% The default total size limit for unconfirmed chunks.
+%% The default total size limit for unconfirmed and seeded chunks.
 -ifdef(DEBUG).
 -define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 100).
 -else.
--define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 2000).
+-define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 100000).
 -endif.
 
 %% The default frequency of checking for the available disk space.
@@ -58,6 +57,9 @@
 
 -define(NUM_STAGE_TWO_HASHING_PROCESSES,
 	max(1, (3 * erlang:system_info(schedulers_online) div 4))).
+
+-define(NUM_HASHING_PROCESSES,
+	max(1, (erlang:system_info(schedulers_online) - 1))).
 
 -define(NUM_IO_MINING_THREADS, 10).
 
@@ -78,11 +80,17 @@
 -define(DEFAULT_POST_TX_TIMEOUT, 20).
 
 %% The maximum number of chunks per second the node attempts to pack or unpack.
--ifdef(DEBUG).
 -define(DEFAULT_PACKING_RATE, 50).
--else.
--define(DEFAULT_PACKING_RATE, 15).
--endif.
+
+%% The default value for the maximum number of threads used for nonce limiter chain
+%% validation.
+-define(DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
+		max(1, (erlang:system_info(schedulers_online) div 2))).
+
+%% The default value for the maximum number of threads used for nonce limiter chain
+%% last step validation.
+-define(DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
+		max(1, (erlang:system_info(schedulers_online) - 1))).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -92,15 +100,23 @@
 	peers = [],
 	block_gossip_peers = [],
 	data_dir = ".",
+	log_dir = ?LOG_DIR,
 	metrics_dir = ?METRICS_DIR,
 	polling = ?DEFAULT_POLLING_INTERVAL, % Polling frequency in seconds.
+	block_pollers = ?DEFAULT_BLOCK_POLLERS,
 	auto_join = true,
 	diff = ?DEFAULT_DIFF,
 	mining_addr = not_set,
 	max_miners = 0, % DEPRECATED.
+	%% Only takes affect until the 2.6 fork when packing_2_6_threshold reaches 0.
 	io_threads = ?NUM_IO_MINING_THREADS,
+	%% Only takes affect until the 2.6 fork when packing_2_6_threshold reaches 0.
 	stage_one_hashing_threads = ?NUM_STAGE_ONE_HASHING_PROCESSES,
+	%% Only takes affect until the 2.6 fork when packing_2_6_threshold reaches 0.
 	stage_two_hashing_threads = ?NUM_STAGE_TWO_HASHING_PROCESSES,
+	%% Takes effect since the 2.6 fork, once packing_2_6_threshold reaches 0.
+	hashing_threads = ?NUM_HASHING_PROCESSES,
+	mining_server_chunk_cache_size_limit,
 	tx_validators,
 	post_tx_timeout = ?DEFAULT_POST_TX_TIMEOUT,
 	max_emitters = ?NUM_EMITTER_PROCESSES,
@@ -111,6 +127,7 @@
 	load_key = not_set,
 	disk_space,
 	disk_space_check_frequency = ?DISK_SPACE_CHECK_FREQUENCY_MS,
+	storage_modules = [],
 	start_from_block_index = false,
 	internal_api_secret = not_set,
 	enable = [],
@@ -148,6 +165,10 @@
 	},
 	disk_cache_size = ?DISK_CACHE_SIZE,
 	packing_rate = ?DEFAULT_PACKING_RATE,
+	max_nonce_limiter_validation_thread_count
+			= ?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
+	max_nonce_limiter_last_step_validation_thread_count
+			= ?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
 	debug = false
 }).
 

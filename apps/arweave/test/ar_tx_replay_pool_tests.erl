@@ -168,40 +168,25 @@ verify_block_txs_test() ->
 			expected_result := ExpectedResult
 		}) ->
 			Rate = {1, 4},
+			PricePerGiBMinute = 2000,
+			KryderPlusRateMultiplier = 1,
+			Denomination = 1,
+			RedenominationHeight = 0,
 			Wallets = maps:from_list([{A, {B, LTX}} || {A, B, LTX} <- WL]),
+			?debugFmt("~s:~n", [Title]),
 			?assertEqual(
 				ExpectedResult,
-				ar_tx_replay_pool:verify_block_txs({
-					TXs,
-					Rate,
-					Height,
-					Timestamp,
-					Wallets,
-					BlockAnchors,
-					RecentTXMap
-				}),
-				Title
-			),
-			PickedTXs = ar_tx_replay_pool:pick_txs_to_mine({
-				BlockAnchors,
-				RecentTXMap,
-				Height,
-				Rate,
-				Timestamp,
-				Wallets,
-				TXs
-			}),
+				ar_tx_replay_pool:verify_block_txs({TXs, Rate, PricePerGiBMinute,
+						KryderPlusRateMultiplier, Denomination, Height, RedenominationHeight,
+						Timestamp, Wallets, BlockAnchors, RecentTXMap}), Title),
+			PickedTXs = ar_tx_replay_pool:pick_txs_to_mine({BlockAnchors, RecentTXMap, Height,
+					RedenominationHeight, Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
+					Denomination, Timestamp, Wallets, TXs}),
 			?assertEqual(
 				valid,
-				ar_tx_replay_pool:verify_block_txs({
-					PickedTXs,
-					Rate,
-					Height,
-					Timestamp,
-					Wallets,
-					BlockAnchors,
-					RecentTXMap
-				}),
+				ar_tx_replay_pool:verify_block_txs({PickedTXs, Rate, PricePerGiBMinute,
+						KryderPlusRateMultiplier, Denomination, Height, RedenominationHeight,
+						Timestamp, Wallets, BlockAnchors, RecentTXMap}),
 				lists:flatten(
 					io_lib:format("Verifyng after picking_txs_to_mine: ~s:", [Title])
 				)
@@ -215,11 +200,11 @@ make_tx_chain(Key, Height, Timestamp) ->
 	TX2 = tx(Key, fee(Height, Timestamp), TX1#tx.id),
 	[TX1, TX2].
 
-tx(Key = {_, Pub}, Reward, Anchor) ->
+tx(Key = {_, {_, Owner}}, Reward, Anchor) ->
 	ar_tx:sign(
-		#tx {
+		#tx{
 			format = 2,
-			owner = Pub,
+			owner = Owner,
 			reward = Reward,
 			last_tx = Anchor
 		},
@@ -230,4 +215,4 @@ wallet({_, Pub}, Balance) ->
 	{ar_wallet:to_address(Pub), Balance, <<>>}.
 
 fee(Height, Timestamp) ->
-	ar_tx:get_tx_fee(0, {1, 4}, Height, Timestamp).
+	ar_tx:get_tx_fee({0, {1, 4}, 2000, 1, <<>>, Timestamp, #{}, Height + 1}).
