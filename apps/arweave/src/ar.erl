@@ -509,7 +509,12 @@ start(Config) ->
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
-	benchmark_vdf(),
+	case Config#config.nonce_limiter_server_trusted_peer of
+		not_set ->
+			benchmark_vdf();
+		_ ->
+			ok
+	end,
 	{ok, _} = application:ensure_all_started(arweave, permanent).
 
 start(normal, _Args) ->
