@@ -94,10 +94,21 @@ is_testnet_peer(_Peer) ->
 	true.
 -else.
 is_testnet_peer(Peer) ->
-	Domains = ["testnet-1.arweave.net", "testnet-2.arweave.net", "testnet-3.arweave.net",
-			"testnet-4.arweave.net", "testnet-5.arweave.net"],
-	Peers = [ar_util:parse_peer(Domain) || Domain <- Domains],
-	lists:member(Peer, Peers).
+	case ets:lookup(node_state, {is_testnet_peer, Peer}) of
+		[{_, TrueOrFalse}] ->
+			TrueOrFalse;
+		[] ->
+			case ar_http_iface_client:get_info(Peer, name) of
+				<<"arweave.2.6.testnet">> ->
+					ets:insert(node_state, {{is_testnet_peer, Peer}, true}),
+					true;
+				Network when is_binary(Network) ->
+					ets:insert(node_state, {{is_testnet_peer, Peer}, false}),
+					false;
+				_ ->
+					false
+			end
+	end.
 -endif.
 
 send_block_json2(Peer, H, Payload) ->
