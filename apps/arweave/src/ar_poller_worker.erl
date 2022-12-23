@@ -203,12 +203,12 @@ slow_block_application_warning(N) ->
 			"CPU computes VDF fast enough or you are connected to a VDF server.~n~n", [N]).
 
 warning(Peer, Event) ->
-	ar_mining_server:pause_performance_reports(60000),
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(Peer, Config#config.peers) of
 		false ->
 			ok;
 		true ->
+			ar_mining_server:pause_performance_reports(60000),
 			EventMessage =
 				case Event of
 					behind ->
