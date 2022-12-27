@@ -917,10 +917,16 @@ test_rejects_blocks_with_invalid_miner_reward() ->
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
-	BI = ar_test_node:assert_slave_wait_until_height(1),
-	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
+	ar_test_node:assert_slave_wait_until_height(1),
+	B1 = slave_call(ar_node, get_current_block, []),
 	B2 = sign_block(B1#block{ reward = 0 }, Key),
-	post_block(B2, invalid_miner_reward).
+	post_block(B2, invalid_price_history_hash),
+	HashRate = ar_difficulty:get_hash_rate(B2#block.diff),
+	PriceHistory = tl(B2#block.price_history),
+	B3 = sign_block(B2#block{
+			price_history_hash = ar_block:price_history_hash([{HashRate, 0, 1} | PriceHistory])
+			}, Key),
+	post_block(B3, invalid_miner_reward).
 
 rejects_blocks_with_invalid_wallet_list_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -949,7 +955,7 @@ post_block(B, ExpectedResults) ->
 await_post_block(#block{ indep_hash = H } = B, ExpectedResults) ->
 	Peer = ar_test_node:master_peer(),
 	PostGossipFailureCodes = [invalid_denomination, invalid_reward_pool,
-			invalid_miner_reward, invalid_debt_supply,
+			invalid_miner_reward, invalid_debt_supply, invalid_price_history_hash,
 			invalid_kryder_plus_rate_multiplier_latch, invalid_kryder_plus_rate_multiplier,
 			invalid_wallet_list],
 	receive

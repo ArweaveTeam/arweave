@@ -131,7 +131,7 @@ update_account(Addr, Balance, LastTX, 1, Accounts) ->
 update_account(Addr, Balance, LastTX, Denomination, Accounts) ->
 	maps:put(Addr, {Balance, LastTX, Denomination}, Accounts).
 
-update_recipient_balance(Accounts, _Denomination, #tx { quantity = 0 }) ->
+update_recipient_balance(Accounts, _Denomination, #tx{ quantity = 0 }) ->
 	Accounts;
 update_recipient_balance(Accounts, Denomination,
 		#tx{
@@ -282,17 +282,7 @@ validate_block(difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 		false ->
 			{invalid, invalid_difficulty};
 		true ->
-			validate_block(may_be_usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors,
-					RecentTXMap})
-	end;
-
-validate_block(may_be_usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
-	#block{ height = Height } = NewB,
-	case Height >= ar_fork:height_2_5() of
-		true ->
-			validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
-		false ->
-			validate_block(wallet_list, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
+			validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
 
 validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
@@ -318,7 +308,7 @@ validate_block(denomination, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) -
 					{invalid, invalid_denomination}
 			end;
 		false ->
-			validate_block(wallet_list, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
+			validate_block(txs, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
 
 validate_block(price_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
@@ -347,6 +337,22 @@ validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors, RecentT
 		false ->
 			{invalid, invalid_price_per_gib_minute};
 		true ->
+			validate_block(txs, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
+	end;
+
+validate_block(txs, {NewB = #block{ timestamp = Timestamp, height = Height, txs = TXs },
+		OldB, Wallets, BlockAnchors, RecentTXMap}) ->
+	Rate = ar_pricing:usd_to_ar_rate(OldB),
+	PricePerGiBMinute = OldB#block.price_per_gib_minute,
+	KryderPlusRateMultiplier = OldB#block.kryder_plus_rate_multiplier,
+	Denomination = OldB#block.denomination,
+	RedenominationHeight = OldB#block.redenomination_height,
+	Args = {TXs, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height - 1,
+			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap},
+	case ar_tx_replay_pool:verify_block_txs(Args) of
+		invalid ->
+			{invalid, invalid_txs};
+		valid ->
 			validate_block(wallet_list, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
 
@@ -371,34 +377,18 @@ validate_block(wallet_list, {#block{ txs = TXs } = NewB, OldB, Accounts, BlockAn
 				true ->
 					%% The field size limits in 2.6 are naturally asserted in
 					%% ar_serialize:binary_to_block/1.
-					validate_block(txs, {NewB, OldB, Accounts, BlockAnchors, RecentTXMap});
+					validate_block(tx_root, {NewB, OldB});
 				false ->
 					validate_block(block_field_sizes, {NewB, OldB, Accounts, BlockAnchors,
 							RecentTXMap})
 			end
 	end;
 
-validate_block(block_field_sizes, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
+validate_block(block_field_sizes, {NewB, OldB, _Wallets, _BlockAnchors, _RecentTXMap}) ->
 	case ar_block:block_field_size_limit(NewB) of
 		false ->
 			{invalid, invalid_field_size};
 		true ->
-			validate_block(txs, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
-	end;
-
-validate_block(txs, {NewB = #block{ timestamp = Timestamp, height = Height, txs = TXs },
-		OldB, Wallets, BlockAnchors, RecentTXMap}) ->
-	Rate = ar_pricing:usd_to_ar_rate(OldB),
-	PricePerGiBMinute = OldB#block.price_per_gib_minute,
-	KryderPlusRateMultiplier = OldB#block.kryder_plus_rate_multiplier,
-	Denomination = OldB#block.denomination,
-	RedenominationHeight = OldB#block.redenomination_height,
-	Args = {TXs, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height - 1,
-			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap},
-	case ar_tx_replay_pool:verify_block_txs(Args) of
-		invalid ->
-			{invalid, invalid_txs};
-		valid ->
 			validate_block(tx_root, {NewB, OldB})
 	end;
 
@@ -564,19 +554,22 @@ test_block_validation(Fork) ->
 					B#block{ diff = PrevB#block.diff - 1 }, PrevB, Wallets, BlockAnchors,
 					RecentTXMap})),
 	?assertEqual({invalid, invalid_usd_to_ar_rate},
-			validate_block(may_be_usd_to_ar_rate, {
+			validate_block(usd_to_ar_rate, {
 					B#block{ usd_to_ar_rate = {0, 0} }, PrevB, Wallets, BlockAnchors,
 					RecentTXMap})),
 	?assertEqual({invalid, invalid_usd_to_ar_rate},
-			validate_block(may_be_usd_to_ar_rate, {
+			validate_block(usd_to_ar_rate, {
 					B#block{ scheduled_usd_to_ar_rate = {0, 0} }, PrevB, Wallets, BlockAnchors,
 					RecentTXMap})),
 	?assertEqual({invalid, invalid_txs},
 			validate_block(txs, {B#block{ txs = [#tx{ signature = <<1>> }] }, PrevB, Wallets,
 					BlockAnchors, RecentTXMap})),
-	?assertEqual({invalid, invalid_wallet_list},
+	?assertEqual({invalid, invalid_txs},
 			validate(B#block{ txs = [TX#tx{ reward = ?AR(201) }] }, PrevB, Wallets,
 					BlockAnchors, RecentTXMap, PartitionUpperBound)),
+		?assertEqual({invalid, invalid_wallet_list},
+			validate_block(wallet_list, {B#block{ txs = [TX#tx{ reward = ?AR(201) }] }, PrevB,
+					Wallets, BlockAnchors, RecentTXMap})),
 	?assertEqual({invalid, invalid_tx_root},
 			validate_block(tx_root, {
 				InvDataRootB#block{ indep_hash = ar_block:indep_hash(InvDataRootB) }, PrevB})),

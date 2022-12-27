@@ -1078,8 +1078,7 @@ apply_block(State) ->
 		{B, PrevBlocks, {{not_validated, nonce_limiter_validated}, Timestamp}} ->
 			apply_block(B, PrevBlocks, Timestamp, State);
 		{B, PrevBlocks, {{not_validated, awaiting_validation}, Timestamp}} ->
-			%% The 2.6 repacking is not complete yet. Therefore, there are no
-			%% nonce limiters.
+			%% Pre-2.6 blocks.
 			apply_block(B, PrevBlocks, Timestamp, State)
 	end.
 
@@ -1124,34 +1123,34 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
 	RootHash = PrevB#block.wallet_list,
-	case validate_wallet_list(B, PrevB) of
-		error ->
+	TXs = B#block.txs,
+	Accounts = ar_wallets:get(RootHash, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
+	{Orphans, RecentBI2} = update_block_index(B, PrevBlocks, RecentBI),
+	BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
+	BlockTXPairs3 = tl(BlockTXPairs2),
+	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs3),
+	RecentBI3 = tl(RecentBI2),
+	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI3),
+	case ar_node_utils:validate(B, PrevB, Accounts, BlockAnchors, RecentTXMap,
+			PartitionUpperBound) of
+		{invalid, Reason} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, Reason},
+					{h, ar_util:encode(B#block.indep_hash)}]),
+			ar_events:send(block, {rejected, Reason, B#block.indep_hash, no_peer}),
 			BH = B#block.indep_hash,
 			ar_block_cache:remove(block_cache, BH),
 			gen_server:cast(?MODULE, apply_block),
 			{noreply, State};
-		{ok, RootHash2} ->
-			B2 = B#block{ wallet_list = RootHash2 },
-			Wallets = ar_wallets:get(RootHash,
-					[B#block.reward_addr | ar_tx:get_addresses(B#block.txs)]),
-			{Orphans, RecentBI2} = update_block_index(B, PrevBlocks, RecentBI),
-			BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
-			BlockTXPairs3 = tl(BlockTXPairs2),
-			{BlockAnchors, RecentTXMap} =
-				get_block_anchors_and_recent_txs_map(BlockTXPairs3),
-			RecentBI3 = tl(RecentBI2),
-			PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI3),
-			case ar_node_utils:validate(B2, PrevB, Wallets, BlockAnchors, RecentTXMap,
-					PartitionUpperBound) of
-				{invalid, Reason} ->
-					?LOG_WARNING([{event, received_invalid_block},
-							{validation_error, Reason},
-							{h, ar_util:encode(B#block.indep_hash)}]),
+		valid ->
+			case validate_wallet_list(B, PrevB) of
+				error ->
 					BH = B#block.indep_hash,
 					ar_block_cache:remove(block_cache, BH),
 					gen_server:cast(?MODULE, apply_block),
 					{noreply, State};
-				valid ->
+				{ok, RootHash2} ->
+					B2 = B#block{ wallet_list = RootHash2 },
 					B3 =
 						case B#block.height >= ar_fork:height_2_6() of
 							true ->
