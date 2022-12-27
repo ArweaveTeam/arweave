@@ -331,7 +331,6 @@ assert_present_txs(GoodTXIDs) ->
 assert_removed_txs(BadTXIDs) ->
 	?debugFmt("Waiting until these txids are removed: ~p.",
 			[[ar_util:encode(TXID) || TXID <- BadTXIDs]]),
-	[{_, TXDB}] = ets:lookup(ar_storage, tx_db),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -340,7 +339,7 @@ assert_removed_txs(BadTXIDs) ->
 							%% Do not use ar_storage:read_tx because the
 							%% transaction is temporarily kept in the disk cache,
 							%% even when blacklisted.
-							andalso ar_kv:get(TXDB, TXID) == not_found
+							andalso ar_kv:get(tx_db, TXID) == not_found
 				end,
 				BadTXIDs
 			)

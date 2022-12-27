@@ -39,8 +39,7 @@
 	sync_record_by_id,
 	%% A map {ID, Type} => Intervals.
 	sync_record_by_id_type,
-	%% A reference to the on-disk key-value storage holding sync records
-	%% and a write ahead log.
+	%% The name of the WAL store.
 	state_db,
 	%% The identifier of the storage module.
 	store_id,
@@ -240,14 +239,15 @@ init(StoreID) ->
 			_ ->
 				filename:join(["storage_modules", StoreID, ?ROCKS_DB_DIR, "ar_sync_record_db"])
 		end,
-	{ok, StateDB} = ar_kv:open_without_column_families(Dir, []),
+	StateDB = {sync_record, StoreID},
+	ok = ar_kv:open(Dir, StateDB),
 	{SyncRecordByID, SyncRecordByIDType, WAL} = read_sync_records(StateDB),
 	initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
 	initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
 	gen_server:cast(self(), store_state),
 	{ok, #state{
-		store_id = StoreID,
 		state_db = StateDB,
+		store_id = StoreID,
 		sync_record_by_id = SyncRecordByID,
 		sync_record_by_id_type = SyncRecordByIDType,
 		wal = WAL
@@ -375,10 +375,9 @@ handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
-terminate(Reason, #state{ state_db = StateDB } = State) ->
+terminate(Reason, State) ->
 	?LOG_INFO([{event, terminate}, {reason, io_lib:format("~p", [Reason])}]),
-	store_state(State),
-	ar_kv:close(StateDB).
+	store_state(State).
 
 %%%===================================================================
 %%% Private functions.

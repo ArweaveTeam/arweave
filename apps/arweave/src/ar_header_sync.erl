@@ -17,7 +17,6 @@
 %%% headers. Headers are synced from latest to earliest.
 
 -record(state, {
-	db,
 	block_index,
 	height,
 	sync_record,
@@ -63,7 +62,7 @@ init([]) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(tx),
 	{ok, Config} = application:get_env(arweave, config),
-	{ok, DB} = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_header_sync_db")),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_header_sync_db"), ?MODULE),
 	{SyncRecord, Height, CurrentBI} =
 		case ar_storage:read_term(header_sync_state) of
 			not_found ->
@@ -83,7 +82,6 @@ init([]) ->
 	ets:insert(?MODULE, {synced_blocks, ar_intervals:sum(SyncRecord)}),
 	{ok,
 		#state{
-			db = DB,
 			sync_record = SyncRecord,
 			height = Height,
 			block_index = CurrentBI,
@@ -93,7 +91,7 @@ init([]) ->
 		}}.
 
 handle_cast({join, Height, RecentBI, Blocks}, State) ->
-	#state{ db = DB, height = PrevHeight, block_index = CurrentBI,
+	#state{ height = PrevHeight, block_index = CurrentBI,
 			sync_record = SyncRecord, retry_record = RetryRecord } = State,
 	State2 =
 		State#state{
@@ -117,7 +115,7 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 				%% Delete from the kv store only after the sync record is saved - no matter
 				%% what happens to the process, if a height is in the record, it must be
 				%% present in the kv store.
-				ok = ar_kv:delete_range(DB, << (IntersectionHeight + 1):256 >>,
+				ok = ar_kv:delete_range(?MODULE, << (IntersectionHeight + 1):256 >>,
 						<< (PrevHeight + 1):256 >>),
 				S
 		end,
@@ -133,7 +131,7 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 	{noreply, State4};
 
 handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
-	#state{ db = DB, sync_record = SyncRecord, retry_record = RetryRecord,
+	#state{ sync_record = SyncRecord, retry_record = RetryRecord,
 			block_index = CurrentBI, height = PrevHeight } = State,
 	BaseHeight = get_base_height(CurrentBI, PrevHeight, RecentBI),
 	State2 = State#state{
@@ -148,7 +146,7 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 			%% Delete from the kv store only after the sync record is saved - no matter
 			%% what happens to the process, if a height is in the record, it must be present
 			%% in the kv store.
-			ok = ar_kv:delete_range(DB, << (BaseHeight + 1):256 >>,
+			ok = ar_kv:delete_range(?MODULE, << (BaseHeight + 1):256 >>,
 					<< (PrevHeight + 1):256 >>),
 			{noreply, State3};
 		Error ->
@@ -247,8 +245,8 @@ handle_cast({remove_tx, TXID}, State) ->
 
 handle_cast({remove_block, Height}, State) ->
 	?LOG_INFO([{event, removing_block_record}, {height, Height}]),
-	#state{ db = DB, sync_record = Record } = State,
-	ok = ar_kv:delete(DB, << Height:256 >>),
+	#state{ sync_record = Record } = State,
+	ok = ar_kv:delete(?MODULE, << Height:256 >>),
 	{noreply, State#state{ sync_record = ar_intervals:delete(Record, Height, Height - 1) }};
 
 handle_cast(store_sync_state, State) ->
@@ -270,7 +268,7 @@ handle_call(_Msg, _From, State) ->
 	{reply, not_implemented, State}.
 
 handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
-	#state{ db = DB, sync_record = SyncRecord, retry_record = RetryRecord } = State,
+	#state{ sync_record = SyncRecord, retry_record = RetryRecord } = State,
 	case ar_storage:get_tx_confirmation_data(TXID) of
 		{ok, {Height, _BH}} ->
 			?LOG_DEBUG([{event, mark_block_with_blacklisted_tx_for_resyncing},
@@ -279,7 +277,7 @@ handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
 					Height - 1), retry_record = ar_intervals:delete(RetryRecord, Height,
 					Height - 1) },
 			ok = store_sync_state(State2),
-			ok = ar_kv:delete(DB, << Height:256 >>),
+			ok = ar_kv:delete(?MODULE, << Height:256 >>),
 			ar_events:send(tx, {ready_for_unblacklisting, TXID}),
 			{noreply, State2};
 		not_found ->
@@ -311,13 +309,11 @@ handle_info({_Ref, _Atom}, State) ->
 	{noreply, State};
 
 handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
+	?LOG_ERROR([{event, unhandled_info}, {message, Info}]),
 	{noreply, State}.
 
-terminate(Reason, State) ->
-	?LOG_INFO([{event, ar_header_sync_terminate}, {reason, Reason}]),
-	#state{ db = DB } = State,
-	ar_kv:close(DB).
+terminate(Reason, _State) ->
+	?LOG_INFO([{event, ar_header_sync_terminate}, {reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.
@@ -368,8 +364,7 @@ add_block2(B, #state{ sync_disk_space = false } = State) ->
 				{reason, io_lib:format("~p", [Error])}]),
 			{Error, State}
 	end;
-add_block2(B, #state{ db = DB, sync_record = SyncRecord,
-		retry_record = RetryRecord } = State) ->
+add_block2(B, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = State) ->
 	#block{ indep_hash = H, previous_block = PrevH, height = Height } = B,
 	case ar_storage:write_full_block(B, B#block.txs) of
 		ok ->
@@ -377,7 +372,7 @@ add_block2(B, #state{ db = DB, sync_record = SyncRecord,
 				true ->
 					{ok, State};
 				false ->
-					ok = ar_kv:put(DB, << Height:256 >>, term_to_binary({H, PrevH})),
+					ok = ar_kv:put(?MODULE, << Height:256 >>, term_to_binary({H, PrevH})),
 					SyncRecord2 = ar_intervals:add(SyncRecord, Height, Height - 1),
 					RetryRecord2 = ar_intervals:delete(RetryRecord, Height, Height - 1),
 					{ok, State#state{ sync_record = SyncRecord2, retry_record = RetryRecord2 }}
