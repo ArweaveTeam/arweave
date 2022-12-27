@@ -21,12 +21,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
--record(state, {
-	tx_confirmation_db,
-	tx_db,
-	block_db,
-	price_history_db
-}).
+-record(state, {}).
 
 %%%===================================================================
 %%% Public interface.
@@ -61,11 +56,10 @@ update_confirmation_index(B) ->
 	end.
 
 put_tx_confirmation_data(B) ->
-	[{_, TXConfirmationDB}] = ets:lookup(?MODULE, tx_confirmation_db),
 	Data = term_to_binary({B#block.height, B#block.indep_hash}),
 	lists:foldl(
 		fun	(TX, ok) ->
-				ar_kv:put(TXConfirmationDB, TX#tx.id, Data);
+				ar_kv:put(tx_confirmation_db, TX#tx.id, Data);
 			(_TX, Acc) ->
 				Acc
 		end,
@@ -76,8 +70,7 @@ put_tx_confirmation_data(B) ->
 %% @doc Return {BlockHeight, BlockHash} belonging to the block where
 %% the given transaction was included.
 get_tx_confirmation_data(TXID) ->
-	[{_, TXConfirmationDB}] = ets:lookup(?MODULE, tx_confirmation_db),
-	case ar_kv:get(TXConfirmationDB, TXID) of
+	case ar_kv:get(tx_confirmation_db, TXID) of
 		{ok, Binary} ->
 			{ok, binary_to_term(Binary)};
 		not_found ->
@@ -125,28 +118,20 @@ read_block(BH) ->
 			%% node is out of disk space.
 			read_block_from_file(Filename, Encoding);
 		_ ->
-			case catch ets:lookup(?MODULE, block_db) of
-				[{_, DB}] ->
-					case ar_kv:get(DB, BH) of
-						not_found ->
-							case lookup_block_filename(BH) of
-								unavailable ->
-									unavailable;
-								{Filename, Encoding} ->
-									read_block_from_file(Filename, Encoding)
-							end;
-						{ok, V} ->
-							parse_block_kv_binary(V);
-						{error, Reason} ->
-							?LOG_WARNING([{event, error_reading_block_from_kv_storage},
-									{block, ar_util:encode(BH)},
-									{error, io_lib:format("~p", [Reason])}])
+			case ar_kv:get(block_db, BH) of
+				not_found ->
+					case lookup_block_filename(BH) of
+						unavailable ->
+							unavailable;
+						{Filename, Encoding} ->
+							read_block_from_file(Filename, Encoding)
 					end;
-				_ ->
-					?LOG_WARNING([{event, cannot_read_block},
+				{ok, V} ->
+					parse_block_kv_binary(V);
+				{error, Reason} ->
+					?LOG_WARNING([{event, error_reading_block_from_kv_storage},
 							{block, ar_util:encode(BH)},
-							{reason, kv_storage_not_initialized}]),
-					unavailable
+							{error, io_lib:format("~p", [Reason])}])
 			end
 	end.
 
@@ -236,48 +221,43 @@ delete_wallet_list_chunks(Position, RootHash, BytesRemoved) ->
 %% bytes does not include the migrated v1 data. The removal of migrated v1 data is requested
 %% from ar_data_sync asynchronously. The v2 headers are not removed.
 delete_blacklisted_tx(Hash) ->
-	case ets:lookup(?MODULE, tx_db) of
-		[{_, DB}] ->
-			case ar_kv:get(DB, Hash) of
-				{ok, V} ->
-					TX = parse_tx_kv_binary(V),
-					case TX#tx.format == 1 andalso TX#tx.data_size > 0 of
-						true ->
-							ar_data_sync:request_tx_data_removal(Hash),
-							case ar_kv:delete(DB, Hash) of
-								ok ->
-									{ok, byte_size(V)};
+	case ar_kv:get(tx_db, Hash) of
+		{ok, V} ->
+			TX = parse_tx_kv_binary(V),
+			case TX#tx.format == 1 andalso TX#tx.data_size > 0 of
+				true ->
+					case ar_kv:delete(tx_db, Hash) of
+						ok ->
+							{ok, byte_size(V)};
+						Error ->
+							Error
+					end;
+				_ ->
+					{ok, 0}
+			end;
+		{error, _} = DBError ->
+			DBError;
+		not_found ->
+			case lookup_tx_filename(Hash) of
+				{Status, Filename} ->
+					case Status of
+						migrated_v1 ->
+							case file:read_file_info(Filename) of
+								{ok, FileInfo} ->
+									case file:delete(Filename) of
+										ok ->
+											{ok, FileInfo#file_info.size};
+										Error ->
+											Error
+									end;
 								Error ->
 									Error
 							end;
 						_ ->
 							{ok, 0}
 					end;
-				{error, _} = DBError ->
-					DBError;
-				not_found ->
-					case lookup_tx_filename(Hash) of
-						{Status, Filename} ->
-							case Status of
-								migrated_v1 ->
-									ar_data_sync:request_tx_data_removal(Hash),
-									case file:read_file_info(Filename) of
-										{ok, FileInfo} ->
-											case file:delete(Filename) of
-												ok ->
-													{ok, FileInfo#file_info.size};
-												Error ->
-													Error
-											end;
-										Error ->
-											Error
-									end;
-								_ ->
-									{ok, 0}
-							end;
-						unavailable ->
-							{ok, 0}
-					end
+				unavailable ->
+					{ok, 0}
 			end
 	end.
 
@@ -393,19 +373,14 @@ write_tx(#tx{ format = Format, id = TXID } = TX) ->
 	end.
 
 write_tx_header(TX) ->
-	case ets:lookup(?MODULE, tx_db) of
-		[{_, DB}] ->
-			TX2 =
-				case TX#tx.format of
-					1 ->
-						TX;
-					_ ->
-						TX#tx{ data = <<>> }
-				end,
-			ar_kv:put(DB, TX#tx.id, ar_serialize:tx_to_binary(TX2));
-		_ ->
-			{error, not_initialized}
-	end.
+	TX2 =
+		case TX#tx.format of
+			1 ->
+				TX;
+			_ ->
+				TX#tx{ data = <<>> }
+		end,
+	ar_kv:put(tx_db, TX#tx.id, ar_serialize:tx_to_binary(TX2)).
 
 write_tx_data(ExpectedDataRoot, Data, TXID) ->
 	Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, Data),
@@ -471,33 +446,26 @@ read_tx(ID) ->
 	end.
 
 read_tx2(ID) ->
-	case catch ets:lookup(?MODULE, tx_db) of
-		[{_, DB}] ->
-			case ar_kv:get(DB, ID) of
-				not_found ->
-					read_tx_from_file(ID);
-				{ok, Binary} ->
-					TX = parse_tx_kv_binary(Binary),
-					case TX#tx.format == 1 andalso TX#tx.data_size > 0
-							andalso byte_size(TX#tx.data) == 0 of
-						true ->
-							case read_tx_data_from_kv_storage(TX#tx.id) of
-								{ok, Data} ->
-									TX#tx{ data = Data };
-								Error ->
-									?LOG_WARNING([{event, error_reading_tx_from_kv_storage},
-											{tx, ar_util:encode(ID)},
-											{error, io_lib:format("~p", [Error])}]),
-									unavailable
-							end;
-						_ ->
-							TX
-					end
-			end;
-		_ ->
-			?LOG_WARNING([{event, cannot_read_transaction}, {tx, ar_util:encode(ID)},
-					{reason, kv_storage_not_initialized}]),
-			unavailable
+	case ar_kv:get(tx_db, ID) of
+		not_found ->
+			read_tx_from_file(ID);
+		{ok, Binary} ->
+			TX = parse_tx_kv_binary(Binary),
+			case TX#tx.format == 1 andalso TX#tx.data_size > 0
+					andalso byte_size(TX#tx.data) == 0 of
+				true ->
+					case read_tx_data_from_kv_storage(TX#tx.id) of
+						{ok, Data} ->
+							TX#tx{ data = Data };
+						Error ->
+							?LOG_WARNING([{event, error_reading_tx_from_kv_storage},
+									{tx, ar_util:encode(ID)},
+									{error, io_lib:format("~p", [Error])}]),
+							unavailable
+					end;
+				_ ->
+					TX
+			end
 	end.
 
 read_tx_from_disk_cache(ID) ->
@@ -845,20 +813,14 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	ensure_directories(Config#config.data_dir),
-	{ok, DB} = ar_kv:open_without_column_families(
-			filename:join(?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"), []),
-	{ok, TXDB} = ar_kv:open_without_column_families(
-			filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), []),
-	{ok, BlockDB} = ar_kv:open_without_column_families(
-			filename:join(?ROCKS_DB_DIR, "ar_storage_block_db"), []),
-	{ok, PriceHistoryDB} = ar_kv:open_without_column_families(
-			filename:join(?ROCKS_DB_DIR, "price_history_db"), []),
-	ets:insert(?MODULE, [{tx_confirmation_db, DB}, {tx_db, TXDB}, {block_db, BlockDB},
-			{price_history_db, PriceHistoryDB}]),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"),
+			tx_confirmation_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), tx_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_block_db"), block_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "price_history_db"), price_history_db),
 	ets:insert(?MODULE, [{same_disk_storage_modules_total_size,
 			get_same_disk_storage_modules_total_size()}]),
-	{ok, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = BlockDB,
-			price_history_db = PriceHistoryDB }}.
+	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -872,12 +834,7 @@ handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
-terminate(_Reason, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = BlockDB,
-		price_history_db = PriceHistoryDB }) ->
-	ar_kv:close(DB),
-	ar_kv:close(TXDB),
-	ar_kv:close(BlockDB),
-	ar_kv:close(PriceHistoryDB),
+terminate(_Reason, _State) ->
 	ok.
 
 %%%===================================================================
@@ -893,32 +850,22 @@ write_block(B) ->
 		_ ->
 			do_nothing
 	end,
-	case ets:lookup(?MODULE, block_db) of
-		[{_, DB}] ->
-			TXIDs = lists:map(fun(TXID) when is_binary(TXID) -> TXID;
-					(#tx{ id = TXID }) -> TXID end, B#block.txs),
-			case ar_kv:put(DB, B#block.indep_hash, ar_serialize:block_to_binary(B#block{
-					txs = TXIDs })) of
-				ok ->
-					update_price_history(B);
-				Error ->
-					Error
-			end;
-		_ ->
-			{error, not_initialized}
+	TXIDs = lists:map(fun(TXID) when is_binary(TXID) -> TXID;
+			(#tx{ id = TXID }) -> TXID end, B#block.txs),
+	case ar_kv:put(block_db, B#block.indep_hash, ar_serialize:block_to_binary(B#block{
+			txs = TXIDs })) of
+		ok ->
+			update_price_history(B);
+		Error ->
+			Error
 	end.
 
 update_price_history(B) ->
 	case B#block.height >= ar_fork:height_2_6() of
 		true ->
-			case ets:lookup(?MODULE, price_history_db) of
-				[] ->
-					{error, not_initialized};
-				[{_, PriceHistoryDB}] ->
-					HashRate = ar_difficulty:get_hash_rate(B#block.diff),
-					Bin = term_to_binary({HashRate, B#block.reward}),
-					ar_kv:put(PriceHistoryDB, B#block.indep_hash, Bin)
-			end;
+			HashRate = ar_difficulty:get_hash_rate(B#block.diff),
+			Bin = term_to_binary({HashRate, B#block.reward}),
+			ar_kv:put(price_history_db, B#block.indep_hash, Bin);
 		false ->
 			ok
 	end.

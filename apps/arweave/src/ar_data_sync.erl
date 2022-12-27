@@ -60,11 +60,10 @@ is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
 add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
-	[{_, DataRootIndex}] = ets:lookup(ar_data_sync_state, {data_root_index, "default"}),
+	DataRootIndex = {data_root_index, "default"},
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
-	[{_, DiskPoolChunksIndex}] = ets:lookup(ar_data_sync_state,
-			{disk_pool_chunks_index, "default"}),
-	[{_, ChunkDataDB}] = ets:lookup(ar_data_sync_state, {chunk_data_db, "default"}),
+	DiskPoolChunksIndex = {disk_pool_chunks_index, "default"},
+	ChunkDataDB = {chunk_data_db, "default"},
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
 	DataRootOffsetReply = get_data_root_offset(DataRootKey, "default"),
 	DataRootInDiskPool = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
@@ -299,12 +298,8 @@ get_tx_data(TXID, SizeLimit) ->
 
 %% @doc Return the global end offset and size for the given transaction.
 get_tx_offset(TXID) ->
-	case ets:lookup(ar_data_sync_state, {tx_index, "default"}) of
-		[] ->
-			{error, not_joined};
-		[{_, TXIndex}] ->
-			get_tx_offset(TXIndex, TXID)
-	end.
+	TXIndex = {tx_index, "default"},
+	get_tx_offset(TXIndex, TXID).
 
 %% @doc Return true if the given {DataRoot, DataSize} is in the mempool
 %% or in the index.
@@ -328,7 +323,7 @@ add_block(B, SizeTaggedTXs) ->
 
 %% @doc Request the removal of the transaction data.
 request_tx_data_removal(TXID, Ref, ReplyTo) ->
-	[{_, TXIndex}] = ets:lookup(ar_data_sync_state, {tx_index, "default"}),
+	TXIndex = {tx_index, "default"},
 	case ar_kv:get(TXIndex, TXID) of
 		{ok, Value} ->
 			{End, Size} = binary_to_term(Value),
@@ -462,16 +457,16 @@ handle_cast({join, RecentBI}, State) ->
 
 handle_cast({add_tip_block, BlockTXPairs, BI},
 		State) ->
-	#sync_data_state{ tx_index = TXIndex, tx_offset_index = TXOffsetIndex, store_id = StoreID,
-			weave_size = CurrentWeaveSize, block_index = CurrentBI } = State,
+	#sync_data_state{ store_id = StoreID, weave_size = CurrentWeaveSize,
+			block_index = CurrentBI } = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
 	{ok, OrphanedDataRoots} = remove_orphaned_data(State, BlockStartOffset, CurrentWeaveSize),
 	{WeaveSize, AddedDataRoots} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
 			({_BH, SizeTaggedTXs}, {StartOffset, CurrentAddedDataRoots}) ->
-				{ok, DataRoots} = add_block_data_roots(State, SizeTaggedTXs, StartOffset),
-				ok = update_tx_index(TXIndex, TXOffsetIndex, SizeTaggedTXs, StartOffset),
+				{ok, DataRoots} = add_block_data_roots(SizeTaggedTXs, StartOffset, StoreID),
+				ok = update_tx_index(SizeTaggedTXs, StartOffset, StoreID),
 				{StartOffset + element(2, lists:last(SizeTaggedTXs)),
 					sets:union(CurrentAddedDataRoots, DataRoots)}
 		end,
@@ -1003,7 +998,8 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
-	{reply, add_block(B, SizeTaggedTXs, State), State};
+	#sync_data_state{ store_id = StoreID } = State,
+	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -1086,13 +1082,8 @@ handle_info(Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, State) ->
-	#sync_data_state{ chunks_index = {DB, _}, chunk_data_db = ChunkDataDB,
-			disk_pool_chunks_index = DiskPoolIndexDB } = State,
 	?LOG_INFO([{event, terminate}, {reason, io_lib:format("~p", [Reason])}]),
-	store_sync_state(State),
-	ar_kv:close(DB),
-	ar_kv:close(DiskPoolIndexDB),
-	ar_kv:close(ChunkDataDB).
+	store_sync_state(State).
 
 %%%===================================================================
 %%% Private functions.
@@ -1126,15 +1117,10 @@ get_chunk(Offset, Pack, Packing, StoredPacking, Options, StoreID) ->
 					get_chunk_from_fast_storage(Offset, Pack, Packing, StoredPacking, StoreID)
 			end;
 		false ->
-			case ets:lookup(ar_data_sync_state, {chunks_index, StoreID}) of
-				[] ->
-					{error, not_joined};
-				[{_, ChunksIndex}] ->
-					[{_, ChunkDataDB}] = ets:lookup(ar_data_sync_state,
-							{chunk_data_db, StoreID}),
-					get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
-							maps:get(bucket_based_offset, Options, true), StoreID)
-			end
+			ChunksIndex = {chunks_index, StoreID},
+			ChunkDataDB = {chunk_data_db, StoreID},
+			get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
+					maps:get(bucket_based_offset, Options, true), StoreID)
 	end.
 
 get_chunk_from_fast_storage(Offset, Pack, Packing, StoredPacking, StoreID) ->
@@ -1405,7 +1391,7 @@ get_tx_data(Start, End, Chunks) ->
 
 get_data_root_offset(DataRootKey, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
-	[{_, DataRootIndex}] = ets:lookup(ar_data_sync_state, {data_root_index, StoreID}),
+	DataRootIndex = {data_root_index, StoreID},
 	case ar_kv:get_prev(DataRootIndex, << DataRoot:32/binary,
 			(ar_serialize:encode_int(TXSize, 8))/binary, <<"a">>/binary >>) of
 		none ->
@@ -1476,66 +1462,45 @@ init_kv(StoreID) ->
 			_ ->
 				filename:join(["storage_modules", StoreID, ?ROCKS_DB_DIR])
 		end,
-	{ok, DB, [_, CF1, CF2, CF3, CF4, CF5, CF6, CF7]} =
-		ar_kv:open(filename:join(Dir, "ar_data_sync_db"), ColumnFamilyDescriptors),
-	{ok, ChunkDataDB} =
-		ar_kv:open_without_column_families(
-			filename:join(Dir, "ar_data_sync_chunk_db"), [
-				{max_open_files, 10000},
-				{max_background_compactions, 8},
-				{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
-				{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
-				%% 10 files in L1 to make L1 == L0 as recommended by the
-				%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-				{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}
-			]
-		),
-	{ok, DiskPoolIndexDB} =
-		ar_kv:open_without_column_families(
-			filename:join(Dir, "ar_data_sync_disk_pool_chunks_index_db"), [
-				{max_open_files, 1000},
-				{max_background_compactions, 8},
-				{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
-				{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
-				%% 10 files in L1 to make L1 == L0 as recommended by the
-				%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-				{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}
-			] ++ BloomFilterOpts
-		),
-	{ok, DataRootIndexDB} =
-		ar_kv:open_without_column_families(
-			filename:join(Dir, "ar_data_sync_data_root_index_db"), [
-				{max_open_files, 100},
-				{max_background_compactions, 8},
-				{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
-				{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
-				%% 10 files in L1 to make L1 == L0 as recommended by the
-				%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-				{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}
-			] ++ BloomFilterOpts
-		),
-	State = #sync_data_state{
-		chunks_index = {DB, CF1},
-		data_root_index = DataRootIndexDB,
-		data_root_index_old = {DB, CF2},
-		data_root_offset_index = {DB, CF3},
-		tx_index = {DB, CF4},
-		tx_offset_index = {DB, CF5},
-		disk_pool_chunks_index_old = {DB, CF6},
-		disk_pool_chunks_index = DiskPoolIndexDB,
-		migrations_index = {DB, CF7},
-		chunk_data_db = ChunkDataDB
-	},
-	ets:insert(ar_data_sync_state, [
-		{{chunks_index, StoreID}, {DB, CF1}},
-		{{data_root_index, StoreID}, DataRootIndexDB},
-		{{data_root_offset_index, StoreID}, {DB, CF3}},
-		{{tx_index, StoreID}, {DB, CF4}},
-		{{tx_offset_index, StoreID}, {DB, CF5}},
-		{{disk_pool_chunks_index, StoreID}, DiskPoolIndexDB},
-		{{chunk_data_db, StoreID}, ChunkDataDB}
-	]),
-	State.
+	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_db"), ColumnFamilyDescriptors, [],
+			[{?MODULE, StoreID}, {chunks_index, StoreID}, {data_root_index_old, StoreID},
+			{data_root_offset_index, StoreID}, {tx_index, StoreID}, {tx_offset_index, StoreID},
+			{disk_pool_chunks_index_old, StoreID}, {migrations_index, StoreID}]),
+	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_chunk_db"), [{max_open_files, 10000},
+			{max_background_compactions, 8},
+			{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
+			{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
+			%% 10 files in L1 to make L1 == L0 as recommended by the
+			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
+			{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}], {chunk_data_db, StoreID}),
+	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_disk_pool_chunks_index_db"), [
+			{max_open_files, 1000}, {max_background_compactions, 8},
+			{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
+			{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
+			%% 10 files in L1 to make L1 == L0 as recommended by the
+			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
+			{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}] ++ BloomFilterOpts,
+			{disk_pool_chunks_index, StoreID}),
+	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_data_root_index_db"), [
+			{max_open_files, 100}, {max_background_compactions, 8},
+			{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
+			{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
+			%% 10 files in L1 to make L1 == L0 as recommended by the
+			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
+			{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}] ++ BloomFilterOpts,
+			{data_root_index, StoreID}),
+	#sync_data_state{
+		chunks_index = {chunks_index, StoreID},
+		data_root_index = {data_root_index, StoreID},
+		data_root_index_old = {data_root_index_old, StoreID},
+		data_root_offset_index = {data_root_offset_index, StoreID},
+		chunk_data_db = {chunk_data_db, StoreID},
+		tx_index = {tx_index, StoreID},
+		tx_offset_index = {tx_offset_index, StoreID},
+		disk_pool_chunks_index = {disk_pool_chunks_index, StoreID},
+		disk_pool_chunks_index_old = {disk_pool_chunks_index_old, StoreID},
+		migrations_index = {migrations_index, StoreID}
+	}.
 
 may_be_run_sync_jobs() ->
 	case ar_node:is_joined() of
@@ -1630,7 +1595,7 @@ data_root_key_v2(DataRoot, TXSize, Offset) ->
 			(ar_serialize:encode_int(Offset, 8))/binary >>.
 
 record_disk_pool_chunks_count() ->
-	[{_, DB}] = ets:lookup(ar_data_sync_state, {disk_pool_chunks_index, "default"}),
+	DB = {disk_pool_chunks_index, "default"},
 	case ar_kv:count(DB) of
 		Count when is_integer(Count) ->
 			prometheus_gauge:set(disk_pool_chunks_count, Count);
@@ -1844,17 +1809,16 @@ shift_block_index(TXRoot, _BlockStart, WeaveSize, Height, _ResyncBlocks,
 shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) ->
 	{bad_key, [Height | ResyncBlocks]}.
 
-add_block(#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
-		SizeTaggedTXs, State) ->
-	#sync_data_state{ tx_index = TXIndex, tx_offset_index = TXOffsetIndex,
-			data_root_offset_index = DRI } = State,
+add_block(B, SizeTaggedTXs, StoreID) ->
+	#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
 	case ar_block_index:get_element_by_height(B#block.height) of
 		{H, WeaveSize, TXRoot} ->
 			BlockStart = B#block.weave_size - B#block.block_size,
-			case ar_kv:get(DRI, << BlockStart:?OFFSET_KEY_BITSIZE >>) of
+			case ar_kv:get({data_root_offset_index, StoreID},
+					<< BlockStart:?OFFSET_KEY_BITSIZE >>) of
 				not_found ->
-					{ok, _} = add_block_data_roots(State, SizeTaggedTXs, BlockStart),
-					ok = update_tx_index(TXIndex, TXOffsetIndex, SizeTaggedTXs, BlockStart),
+					{ok, _} = add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
+					ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
 					ok;
 				_ ->
 					ok
@@ -1863,9 +1827,9 @@ add_block(#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B
 			ok
 	end.
 
-update_tx_index(_TXIndex, _TXOffsetIndex, [], _BlockStartOffset) ->
+update_tx_index([], _BlockStartOffset, _StoreID) ->
 	ok;
-update_tx_index(TXIndex, TXOffsetIndex, SizeTaggedTXs, BlockStartOffset) ->
+update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 	lists:foldl(
 		fun ({_, Offset}, Offset) ->
 				Offset;
@@ -1875,10 +1839,10 @@ update_tx_index(TXIndex, TXOffsetIndex, SizeTaggedTXs, BlockStartOffset) ->
 				AbsoluteEndOffset = BlockStartOffset + TXEndOffset,
 				TXSize = TXEndOffset - PreviousOffset,
 				AbsoluteStartOffset = AbsoluteEndOffset - TXSize,
-				case ar_kv:put(TXOffsetIndex, << AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>,
-						TXID) of
+				case ar_kv:put({tx_offset_index, StoreID},
+						<< AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>, TXID) of
 					ok ->
-						case ar_kv:put(TXIndex, TXID,
+						case ar_kv:put({tx_index, StoreID}, TXID,
 								term_to_binary({AbsoluteEndOffset, TXSize})) of
 							ok ->
 								ar_tx_blacklist:notify_about_added_tx(TXID, AbsoluteEndOffset,
@@ -1900,10 +1864,9 @@ update_tx_index(TXIndex, TXOffsetIndex, SizeTaggedTXs, BlockStartOffset) ->
 	),
 	ok.
 
-add_block_data_roots(_State, [], _CurrentWeaveSize) ->
+add_block_data_roots([], _CurrentWeaveSize, _StoreID) ->
 	{ok, sets:new()};
-add_block_data_roots(State, SizeTaggedTXs, CurrentWeaveSize) ->
-	#sync_data_state{ data_root_offset_index = DataRootOffsetIndex } = State,
+add_block_data_roots(SizeTaggedTXs, CurrentWeaveSize, StoreID) ->
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	{BlockSize, DataRootIndexKeySet, Args} = lists:foldl(
@@ -1926,11 +1889,12 @@ add_block_data_roots(State, SizeTaggedTXs, CurrentWeaveSize) ->
 	),
 	case BlockSize > 0 of
 		true ->
-			ok = ar_kv:put(DataRootOffsetIndex, << CurrentWeaveSize:?OFFSET_KEY_BITSIZE >>,
+			ok = ar_kv:put({data_root_offset_index, StoreID},
+					<< CurrentWeaveSize:?OFFSET_KEY_BITSIZE >>,
 					term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
 			lists:foreach(
 				fun({DataRoot, TXSize, TXOffset, TXPath}) ->
-					ok = update_data_root_index(State, DataRoot, TXSize, TXOffset, TXPath)
+					ok = update_data_root_index(DataRoot, TXSize, TXOffset, TXPath, StoreID)
 				end,
 				Args
 			);
@@ -1939,10 +1903,9 @@ add_block_data_roots(State, SizeTaggedTXs, CurrentWeaveSize) ->
 	end,
 	{ok, DataRootIndexKeySet}.
 
-update_data_root_index(State, DataRoot, TXSize, AbsoluteTXStartOffset, TXPath) ->
-	#sync_data_state{ data_root_index = DataRootIndex } = State,
-	ar_kv:put(DataRootIndex, data_root_key_v2(DataRoot, TXSize, AbsoluteTXStartOffset),
-			TXPath).
+update_data_root_index(DataRoot, TXSize, AbsoluteTXStartOffset, TXPath, StoreID) ->
+	ar_kv:put({data_root_index, StoreID},
+			data_root_key_v2(DataRoot, TXSize, AbsoluteTXStartOffset), TXPath).
 
 add_block_data_roots_to_disk_pool(DataRootKeySet) ->
 	sets:fold(
