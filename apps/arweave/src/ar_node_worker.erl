@@ -409,6 +409,11 @@ handle_info({event, nonce_limiter, {valid, H}}, State) ->
 	gen_server:cast(?MODULE, apply_block),
 	{noreply, State};
 
+handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
+	ar_block_cache:remove(block_cache, H),
+	gen_server:cast(?MODULE, apply_block),
+	{noreply, State};
+
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
 
