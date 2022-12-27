@@ -100,6 +100,10 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 									ar_events:send(block, {discovered, Peer, B2, Time, Size}),
 									ok;
 								failed ->
+									?LOG_WARNING([{event, failed_to_get_block_txs_from_peer},
+											{block, ar_util:encode(H)},
+											{peer, ar_util:format_peer(Peer)},
+											{tx_count, length(B#block.txs)}]),
 									ok
 							end;
 						Error ->
