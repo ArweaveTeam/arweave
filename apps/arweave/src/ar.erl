@@ -293,8 +293,9 @@ show_help() ->
 			{"vdf_client_peer", "If the option is set, the node will push VDF updates "
 					"to this peer. You can specify several vdf_client_peer options."},
 			{"debug",
-				"Enable extended logging."
-			}
+				"Enable extended logging."},
+			{"run_defragmentation",
+				"Run defragmentation of chunk storage files"}
 		]
 	),
 	erlang:halt().
@@ -494,6 +495,8 @@ parse_cli_args(["vdf_client_peer", Peer | Rest],
 	end;
 parse_cli_args(["debug" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ debug = true });
+parse_cli_args(["run_defragmentation" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ run_defragmentation = true });
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -585,6 +588,7 @@ start(normal, _Args) ->
 		true  -> app_ipfs:start_pinning()
 	end,
 	set_mining_address(Config),
+	ar_chunk_storage:run_defragmentation(),
 	%% Start Arweave.
 	ar_sup:start_link().
 

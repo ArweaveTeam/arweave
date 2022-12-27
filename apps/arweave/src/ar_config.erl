@@ -452,6 +452,9 @@ parse_options([{<<"vdf_client_peers">>, Peers} | _], _) ->
 parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ debug = B });
 
+parse_options([{<<"run_defragmentation">>, B} | Rest], Config) when is_boolean(B) ->
+	parse_options(Rest, Config#config{ run_defragmentation = B });
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
