@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/2, put/2, put/3, open_files/1, get/1, get/2, get_range/2, get_range/3,
-		close_file/2, close_files/1, cut/2, delete/1, delete/2]).
+		close_file/2, close_files/1, cut/2, delete/1, delete/2, run_defragmentation/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -150,6 +150,10 @@ delete(Offset) ->
 delete(Offset, StoreID) ->
 	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
 	gen_server:call(GenServerID, {delete, Offset}, 10000).
+
+%% @doc Run defragmentation of chunk files if enabled
+run_defragmentation() ->
+	pending_implementation.
 
 %%%===================================================================
 %%% Generic server callbacks.

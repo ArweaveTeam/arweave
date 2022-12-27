@@ -171,7 +171,8 @@
 			= ?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
 	nonce_limiter_server_trusted_peer = not_set,
 	nonce_limiter_client_peers = [],
-	debug = false
+	debug = false,
+	run_defragmentation = false
 }).
 
 -endif.
