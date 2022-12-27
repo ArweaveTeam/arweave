@@ -681,7 +681,7 @@ accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp) ->
 	ar_events:send(block, {new, B, #{ source => {peer, Peer} }}),
 	ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
 	record_block_pre_validation_time(Timestamp),
-	?LOG_INFO([{event, accepted_block},
+	?LOG_INFO([{event, accepted_block}, {height, B#block.height},
 			{indep_hash, ar_util:encode(B#block.indep_hash)}]).
 
 pre_validate_may_be_fetch_chunk(#block{ recall_byte = RecallByte,

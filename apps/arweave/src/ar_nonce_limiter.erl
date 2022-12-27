@@ -181,13 +181,34 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 						case is_integer(EntropyResetPoint) of
 							true when EntropyResetPoint > StartStepNumber ->
 								SeedH = crypto:hash(sha256, Seed),
-								verify(StartStepNumber, PrevOutput2, Groups, EntropyResetPoint,
-										SeedH, ThreadCount);
+								catch verify(StartStepNumber, PrevOutput2, Groups,
+										EntropyResetPoint, SeedH, ThreadCount);
 							_ ->
-								verify_no_reset(StartStepNumber, PrevOutput2, Groups,
+								catch verify_no_reset(StartStepNumber, PrevOutput2, Groups,
 										ThreadCount)
 						end,
 					case Result of
+						{'EXIT', Exc} ->
+							ErrorID = ar_util:encode(crypto:strong_rand_bytes(16)),
+							?LOG_ERROR([{event, nonce_limiter_validation_failed},
+									{block, ar_util:encode(H)},
+									{start_step_number, StartStepNumber},
+									{error_id, ErrorID},
+									{prev_output, ar_util:encode(PrevOutput2)},
+									{exception, io_lib:format("~p", [Exc])}]),
+							Dump =
+								case is_integer(EntropyResetPoint)
+										andalso EntropyResetPoint > StartStepNumber of
+									true ->
+										SeedH2 = crypto:hash(sha256, Seed),
+										{StartStepNumber, PrevOutput2, Groups,
+												EntropyResetPoint, SeedH2, ThreadCount};
+									false ->
+										{StartStepNumber, PrevOutput2, Groups, ThreadCount}
+								end,
+							file:write_file("error_dump_" ++ binary_to_list(ErrorID),
+									term_to_binary(Dump)),
+							ar_events:send(nonce_limiter, {validation_error, H});
 						false ->
 							ar_events:send(nonce_limiter, {invalid, H, 3});
 						{true, Steps2} ->
@@ -202,6 +223,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			ErrorID = ar_util:encode(crypto:strong_rand_bytes(16)),
 			file:write_file("error_dump_" ++ binary_to_list(ErrorID),
 					term_to_binary(Data)),
+			ar_events:send(nonce_limiter, {validation_error, H}),
 			?LOG_ERROR([{event, unexpected_error_during_nonce_limiter_validation},
 					{error_id, ErrorID}])
 	end;
