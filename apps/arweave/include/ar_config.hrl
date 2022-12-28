@@ -172,7 +172,8 @@
 	nonce_limiter_server_trusted_peer = not_set,
 	nonce_limiter_client_peers = [],
 	debug = false,
-	run_defragmentation = false
+	run_defragmentation = false,
+	defragmentation_trigger_threshold = 1_500_000_000
 }).
 
 -endif.
