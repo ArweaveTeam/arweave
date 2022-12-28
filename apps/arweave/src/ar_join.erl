@@ -65,7 +65,13 @@ get_block_index(Peers, Retries) ->
 	end.
 
 get_block(Peers, H) ->
-	get_block(Peers, H, 10).
+	case ar_storage:read_block(H) of
+		unavailable ->
+			get_block(Peers, H, 10);
+		BShadow ->
+			Mempool = ar_node:get_pending_txs([as_map, id_only]),
+			get_block(Peers, BShadow, Mempool, BShadow#block.txs, [], 10)
+	end.
 
 get_block(Peers, H, Retries) ->
 	ar:console("Downloading joining block ~s.~n", [ar_util:encode(H)]),
