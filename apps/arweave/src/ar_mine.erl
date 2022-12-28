@@ -776,7 +776,7 @@ log_spora_performance() ->
 	RecallByteRate = RecallBytes / (Time / 1000000),
 	Rate = SPoRAs / (Time / 1000000),
 	ReadRate = KiBs / 1024 / (Time / 1000000),
-	prometheus_histogram:observe(mining_rate, Rate),
+	prometheus_gauge:set(mining_rate, erlang:trunc(Rate)),
 	?LOG_INFO([{event, stopped_mining}, {recall_bytes_computed, RecallByteRate},
 			{miner_sporas_per_second, Rate}, {miner_read_mibibytes_per_second, ReadRate},
 			{round_time_seconds, Time div 1000000}]),
