@@ -215,6 +215,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 			Str = io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
 					" ~.2f h/s; current: ~.2f MiB/s, ~B h/s.~n", [Avg, Avg * 4,
 					Current / 4, Current]),
+			prometheus_gauge:set(mining_rate, Current),
 			IOList2 = [Str | [IOList | ["~n"]]],
 			ar:console(iolist_to_binary(IOList2));
 		false ->
