@@ -157,7 +157,15 @@ delete(Offset, StoreID) ->
 
 %% @doc Run defragmentation of chunk files if enabled
 run_defragmentation() ->
-	pending_implementation.
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.run_defragmentation of
+		false ->
+			ok;
+		true ->
+			Files = files_to_defrag(Config#config.storage_modules,
+									Config#config.data_dir),
+			defrag_files(Files)
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -472,6 +480,32 @@ sync_and_close_files([_ | Keys]) ->
 	sync_and_close_files(Keys);
 sync_and_close_files([]) ->
 	ok.
+
+files_to_defrag(StorageModules, DataDir) ->
+	%% TODO: This gets all files, but it is missing a filter based on file
+	%%       size so it is not included if it hasn't grown beyond a threshold
+	lists:flatmap(fun (StorageModule) ->
+		StorageId = ar_storage_module:id(StorageModule),
+		Dir =
+			case StorageId of
+				"default" ->
+					DataDir;
+				_ ->
+					filename:join([DataDir, "storage_modules", StorageId])
+			end,
+		StorageIndex = read_file_index(Dir),
+		maps:values(StorageIndex)
+	end, StorageModules).
+
+defrag_files([]) ->
+	ok;
+defrag_files([Filepath | Rest]) ->
+	ar:console("Defragmenting file: ~ts~n", [Filepath]),
+	%% TODO: Actually defragment file, what you see here is an initial idea on
+	%% 		 how it can be done, but this should be validated first
+	%% DefragCmd = io_lib:format("rsync --sparse ~ts ~ts", [Filepath, Filepath]),
+	%% os:cmd(DefragCmd),
+	defrag_files(Rest).
 
 %%%===================================================================
 %%% Tests.
