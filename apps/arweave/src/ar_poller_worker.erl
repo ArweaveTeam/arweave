@@ -204,7 +204,9 @@ slow_block_application_warning(N) ->
 	io:format(os:cmd(clear)),
 	ar:console("WARNING: there are more than ~B not yet validated blocks on the longest chain."
 			" Please, double-check if you are in sync with the network and make sure your "
-			"CPU computes VDF fast enough or you are connected to a VDF server.~n~n", [N]).
+			"CPU computes VDF fast enough or you are connected to a VDF server."
+			"~nThe node may be still mining, but console performance reports are temporarily "
+			"paused.~n~n", [N]).
 
 warning(Peer, Event) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -226,7 +228,9 @@ warning(Peer, Event) ->
 			ar:console("WARNING: peer ~s ~s. "
 					"Please, double-check if you are in sync with the network and "
 					"make sure your CPU computes VDF fast enough or you are connected "
-					"to a VDF server.~n~n", [ar_util:format_peer(Peer), EventMessage])
+					"to a VDF server.~nThe node may be still mining, but console performance "
+					"reports are temporarily paused.~n~n",
+					[ar_util:format_peer(Peer), EventMessage])
 	end.
 
 collect_missing_transactions([#tx{} = TX | TXs]) ->
