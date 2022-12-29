@@ -405,11 +405,13 @@ handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
 	{noreply, State};
 
 handle_info({event, nonce_limiter, {valid, H}}, State) ->
+	?LOG_INFO([{event, vdf_validation_successful}, {block, ar_util:encode(H)}]),
 	ar_block_cache:mark_nonce_limiter_validated(block_cache, H),
 	gen_server:cast(?MODULE, apply_block),
 	{noreply, State};
 
 handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
+	?LOG_WARNING([{event, vdf_validation_error}, {block, ar_util:encode(H)}]),
 	ar_block_cache:remove(block_cache, H),
 	gen_server:cast(?MODULE, apply_block),
 	{noreply, State};
