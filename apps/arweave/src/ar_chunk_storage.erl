@@ -512,11 +512,13 @@ files_to_defrag(StorageModules, DataDir, ByteSizeThreshold) ->
 defrag_files([]) ->
 	ok;
 defrag_files([Filepath | Rest]) ->
-	ar:console("Defragmenting file: ~ts~n", [Filepath]),
-	%% TODO: Actually defragment file, what you see here is an initial idea on
-	%% 		 how it can be done, but this should be validated first
-	%% DefragCmd = io_lib:format("rsync --sparse ~ts ~ts", [Filepath, Filepath]),
-	%% os:cmd(DefragCmd),
+	?LOG_DEBUG([{event, defragmenting_file}, {file, Filepath}]),
+	TmpFilepath = Filepath ++ ".tmp",
+	DefragCmd = io_lib:format("rsync --sparse --quiet ~ts ~ts", [Filepath, TmpFilepath]),
+	MoveDefragCmd = io_lib:format("mv ~ts ~ts", [TmpFilepath, Filepath]),
+	%% We expect nothing to be returned on successful calls
+	[] = os:cmd(DefragCmd),
+	[] = os:cmd(MoveDefragCmd),
 	defrag_files(Rest).
 
 %%%===================================================================
