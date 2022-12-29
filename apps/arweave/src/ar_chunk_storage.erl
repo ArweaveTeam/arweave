@@ -13,6 +13,7 @@
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -record(state, {
 	file_index,
@@ -158,8 +159,11 @@ run_defragmentation() ->
 		false ->
 			ok;
 		true ->
+			ar:console("Defragmentation threshold ~B bytes~n",
+					   [Config#config.defragmentation_trigger_threshold]),
 			Files = files_to_defrag(Config#config.storage_modules,
-									Config#config.data_dir),
+									Config#config.data_dir,
+									Config#config.defragmentation_trigger_threshold),
 			defrag_files(Files)
 	end.
 
@@ -473,21 +477,37 @@ sync_and_close_files([_ | Keys]) ->
 sync_and_close_files([]) ->
 	ok.
 
-files_to_defrag(StorageModules, DataDir) ->
-	%% TODO: This gets all files, but it is missing a filter based on file
-	%%       size so it is not included if it hasn't grown beyond a threshold
-	lists:flatmap(fun (StorageModule) ->
-		StorageId = ar_storage_module:id(StorageModule),
-		Dir =
-			case StorageId of
-				"default" ->
-					DataDir;
-				_ ->
-					filename:join([DataDir, "storage_modules", StorageId])
-			end,
-		StorageIndex = read_file_index(Dir),
-		maps:values(StorageIndex)
-	end, StorageModules).
+files_to_defrag(StorageModules, DataDir, ByteSizeThreshold) ->
+	%% TODO: This gets all files that are at least of ByteSizeThreshold,
+	%% 		 but it is missing a filter based on file size growth so it is not
+	%% 	     included if it hasn't grown beyond a threshold
+	AllFiles = lists:flatmap(
+		fun (StorageModule) ->
+			StorageId = ar_storage_module:id(StorageModule),
+			Dir =
+				case StorageId of
+					"default" ->
+						DataDir;
+					_ ->
+						filename:join([DataDir, "storage_modules", StorageId])
+				end,
+			StorageIndex = read_file_index(Dir),
+			maps:values(StorageIndex)
+		end, StorageModules),
+	lists:filter(
+		fun (Filepath) ->
+			case file:read_file_info(Filepath) of
+				{ok, #file_info{size = Size}} ->
+					Size >= ByteSizeThreshold;
+				{error, Reason} ->
+					?LOG_ERROR([
+						{event, failed_to_read_chunk_file_info},
+						{file, Filepath},
+						{reason, io_lib:format("~p", [Reason])}
+					]),
+					false
+			end
+		end, AllFiles).
 
 defrag_files([]) ->
 	ok;
