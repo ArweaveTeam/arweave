@@ -114,13 +114,25 @@ wallet_filepath(Wallet) ->
 	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(Wallet), ".json"]),
 	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
+wallet_filepath2(Wallet) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Filename = lists:flatten([binary_to_list(Wallet), ".json"]),
+	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
+
 %% @doc Read the keyfile for the the key with the given address from disk.
-%% Return not_found if arweave_keyfile_[addr].json is not found in [data_dir]/?WALLET_DIR.
+%% Return not_found if arweave_keyfile_[addr].json or [addr].json is not found
+%% in [data_dir]/?WALLET_DIR.
 load_key(Addr) ->
 	Path = wallet_filepath(ar_util:encode(Addr)),
 	case filelib:is_file(Path) of
 		false ->
-			not_found;
+			Path2 = wallet_filepath2(ar_util:encode(Addr)),
+			case filelib:is_file(Path2) of
+				false ->
+					not_found;
+				true ->
+					load_keyfile(Path2)
+			end;
 		true ->
 			load_keyfile(Path)
 	end.
