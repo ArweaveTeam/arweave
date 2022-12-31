@@ -402,19 +402,19 @@ handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
 			{block, ar_util:encode(H)}, {code, Code}]),
 	ar_block_cache:remove(block_cache, H),
 	gen_server:cast(?MODULE, apply_block),
-	{noreply, State};
+	{noreply, State#{ nonce_limiter_validation_scheduled => false }};
 
 handle_info({event, nonce_limiter, {valid, H}}, State) ->
 	?LOG_INFO([{event, vdf_validation_successful}, {block, ar_util:encode(H)}]),
 	ar_block_cache:mark_nonce_limiter_validated(block_cache, H),
 	gen_server:cast(?MODULE, apply_block),
-	{noreply, State};
+	{noreply, State#{ nonce_limiter_validation_scheduled => false }};
 
 handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
 	?LOG_WARNING([{event, vdf_validation_error}, {block, ar_util:encode(H)}]),
 	ar_block_cache:remove(block_cache, H),
 	gen_server:cast(?MODULE, apply_block),
-	{noreply, State};
+	{noreply, State#{ nonce_limiter_validation_scheduled => false }};
 
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
@@ -1075,8 +1075,13 @@ apply_block(State) ->
 			{noreply, State};
 		{B, [PrevB | _PrevBlocks], {{not_validated, awaiting_nonce_limiter_validation},
 				_Timestamp}} ->
-			request_nonce_limiter_validation(B, PrevB),
-			{noreply, State};
+			case maps:get(nonce_limiter_validation_scheduled, State, false) of
+				true ->
+					{noreply, State};
+				false ->
+					request_nonce_limiter_validation(B, PrevB),
+					{noreply, State#{ nonce_limiter_validation_scheduled => true }}
+			end;
 		{_B, _PrevBlocks, {{not_validated, nonce_limiter_validation_scheduled}, _Timestamp}} ->
 			%% Waiting until the nonce limiter chain is validated.
 			{noreply, State};
