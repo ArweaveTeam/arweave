@@ -128,8 +128,6 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 		{error, Reason} ->
 			case CurrentHeight >= ar_fork:height_2_6() of
 				true ->
-					ar_events:send(peer,
-							{bad_response, {Peer, recent_hash_list_diff, Reason}}),
 					?LOG_WARNING([{event, failed_to_get_recent_hash_list_diff},
 							{peer, ar_util:format_peer(Peer)},
 							{reason, io_lib:format("~p", [Reason])}]);
