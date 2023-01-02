@@ -18,6 +18,12 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 
+-ifdef(DEBUG).
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 200).
+-else.
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5000).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -506,7 +512,8 @@ handle_cast(collect_sync_intervals, State) ->
 						fun() ->
 							find_peer_intervals(Start, min(End, DiskPoolThreshold),
 									StoreID, SkipIntervalsTable, Self),
-							ar_util:cast_after(500, Self, collect_sync_intervals)
+							ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, Self,
+									collect_sync_intervals)
 						end
 					))
 			end
@@ -563,11 +570,19 @@ handle_cast(sync_interval, State) ->
 			ar_util:cast_after(500, self(), sync_interval),
 			{noreply, State};
 		false ->
-			{{Start, End, _Peer} = Interval, Q2} = gb_sets:take_smallest(Q),
-			gen_server:cast(self(), {sync_chunk, [Interval], loop}),
-			{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
-					sync_intervals_queue_intervals = ar_intervals:delete(QIntervals, End,
-							Start) }}
+			{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
+			End2 = Start + 10 * ?DATA_CHUNK_SIZE,
+			{Q3, I2, End3} =
+				case End > End2 of
+					true ->
+						{gb_sets:add_element({End2, End, Peer}, Q2),
+								ar_intervals:delete(QIntervals, End2, Start), End2};
+					false ->
+						{Q2, ar_intervals:delete(QIntervals, End, Start), End}
+				end,
+			gen_server:cast(self(), {sync_chunk, [{Start, End3, Peer}], loop}),
+			{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
+					sync_intervals_queue_intervals = I2 }}
 	end;
 
 handle_cast({sync_chunk, [{Byte, RightBound, _} | SubIntervals], Loop}, State)
@@ -2057,14 +2072,15 @@ find_subintervals(Left, Right, StoreID, TID, Self) ->
 	LeftBound = Left - Left rem ?NETWORK_DATA_BUCKET_SIZE,
 	Peers = ar_data_discovery:get_bucket_peers(Bucket),
 	RightBound = min(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right),
-	Results =
-		ar_util:pmap(
-			fun(Peer) ->
-				UnsyncedIntervals = get_next_unsynced_intervals(Left, RightBound, StoreID),
-				case ar_intervals:is_empty(UnsyncedIntervals) of
-					true ->
-						found;
-					false ->
+	UnsyncedIntervals = get_next_unsynced_intervals(Left, RightBound, StoreID),
+	case ar_intervals:is_empty(UnsyncedIntervals) of
+		true ->
+			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, TID,
+					Self);
+		false ->
+			Results =
+				ar_util:pmap(
+					fun(Peer) ->
 						case get_peer_intervals(Peer, Left, UnsyncedIntervals) of
 							{ok, Intervals} ->
 								gen_server:cast(Self, {enqueue_intervals, Peer, Intervals}),
@@ -2080,23 +2096,23 @@ find_subintervals(Left, Right, StoreID, TID, Self) ->
 										{reason, io_lib:format("~p", [Reason])}]),
 								not_found
 						end
-				end
+					end,
+					Peers
+				),
+			case lists:any(fun(Result) -> Result == found end, Results) of
+				false ->
+					temporarily_exclude_interval_from_syncing(Left, Right, TID, Self);
+				true ->
+					ok
 			end,
-			Peers
-		),
-	case lists:any(fun(Result) -> Result == found end, Results) of
-		false ->
-			temporarily_exclude_interval_from_syncing(Left, Right, TID, Self);
-		true ->
-			ok
-	end,
-	find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, TID, Self).
+			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, TID, Self)
+	end.
 
 get_peer_intervals(Peer, Left, SoughtIntervals) ->
 	%% A guess. A bigger limit may result in unnecesarily large response. A smaller
 	%% limit may be too small to fetch all the synced intervals from the requested range,
 	%% in case the peer's sync record is too choppy.
-	Limit = min(2000, ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
+	Limit = min(1000, ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
 	case ar_http_iface_client:get_sync_record(Peer, Left + 1, Limit) of
 		{ok, PeerIntervals} ->
 			{ok, ar_intervals:intersection(PeerIntervals, SoughtIntervals)};

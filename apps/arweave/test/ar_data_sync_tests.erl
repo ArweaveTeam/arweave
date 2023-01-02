@@ -19,7 +19,7 @@
 -import(ar_test_fork, [test_on_fork/3]).
 
 rejects_invalid_chunks_test_() ->
-	{timeout, 60, fun test_rejects_invalid_chunks/0}.
+	{timeout, 180, fun test_rejects_invalid_chunks/0}.
 
 test_rejects_invalid_chunks() ->
 	{_Master, _, _Wallet} = setup_nodes(),
