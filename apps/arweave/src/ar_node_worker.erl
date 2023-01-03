@@ -547,7 +547,6 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			[{_, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
 			ar_block_cache:add(block_cache, B),
-			ar_ignore_registry:add(B#block.indep_hash),
 			State2 = apply_validated_block(State, B, PrevBlocks, [], RecentBI2, BlockTXPairs2),
 			%% Won't be received by itself, but we should let know all "block" subscribers.
 			ar_events:send(block, {new, B, #{ source => miner }}),
@@ -617,7 +616,6 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 			RecentBI2 = [block_index_entry(B) | RecentBI],
 			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
 			ar_block_cache:add(block_cache, B),
-			ar_ignore_registry:add(B#block.indep_hash),
 			State2 = apply_validated_block(State, B, PrevBlocks, [], RecentBI2, BlockTXPairs2),
 			%% Won't be received by itself, but we should let know all "block" subscribers.
 			ar_events:send(block, {new, Block#block{ txs = TXs }, #{ source => miner }}),
