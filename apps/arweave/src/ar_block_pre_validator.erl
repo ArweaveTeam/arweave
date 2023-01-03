@@ -156,10 +156,6 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_info({event, block, {mined, #block{ indep_hash = H }, _TXs, _CurrentBH}}, State) ->
-	ar_ignore_registry:add(H),
-	{noreply, State};
-
 handle_info({event, block, _}, State) ->
 	{noreply, State};
 
@@ -677,7 +673,6 @@ pre_validate_nonce_limiter(B, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 	end.
 
 accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp) ->
-	ar_ignore_registry:add(B#block.indep_hash),
 	ar_events:send(block, {new, B, #{ source => {peer, Peer} }}),
 	ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
 	record_block_pre_validation_time(Timestamp),
@@ -717,7 +712,6 @@ pre_validate_pow(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 			ok;
 		{true, RecallByte} ->
 			H = B#block.indep_hash,
-			ar_ignore_registry:add(H),
 			%% Include all transactions found in the mempool in place of the
 			%% corresponding transaction identifiers so that we can gossip them to
 			%% peers who miss them along with the block.

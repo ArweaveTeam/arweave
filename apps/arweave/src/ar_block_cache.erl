@@ -58,6 +58,7 @@ add(Tab,
 			false -> {not_validated, awaiting_validation} end,
 	case ets:lookup(Tab, {block, H}) of
 		[] ->
+			ar_ignore_registry:add(H),
 			SolutionSet =
 				case ets:lookup(Tab, {solution, SolutionH}) of
 					[] ->
@@ -165,7 +166,6 @@ add_validated(Tab, B) ->
 		[{_, {_PrevB, {not_validated, _}, _Timestamp, _Children}}] ->
 			error(previous_block_not_validated);
 		[{_, {PrevB, PrevStatus, PrevTimestamp, PrevChildren}}] ->
-			ar_ignore_registry:add(H),
 			case ets:lookup(Tab, {block, H}) of
 				[] ->
 					CDiff = B#block.cumulative_diff,
