@@ -161,10 +161,13 @@ run_defragmentation() ->
 		true ->
 			ar:console("Defragmentation threshold ~B bytes~n",
 					   [Config#config.defragmentation_trigger_threshold]),
+			Sizes = read_chunks_sizes(Config#config.data_dir),
 			Files = files_to_defrag(Config#config.storage_modules,
 									Config#config.data_dir,
-									Config#config.defragmentation_trigger_threshold),
-			defrag_files(Files)
+									Config#config.defragmentation_trigger_threshold,
+									Sizes),
+			ok = defrag_files(Files),
+			ok = update_sizes_file(Files, Sizes)
 	end.
 
 %%%===================================================================
@@ -477,10 +480,7 @@ sync_and_close_files([_ | Keys]) ->
 sync_and_close_files([]) ->
 	ok.
 
-files_to_defrag(StorageModules, DataDir, ByteSizeThreshold) ->
-	%% TODO: This gets all files that are at least of ByteSizeThreshold,
-	%% 		 but it is missing a filter based on file size growth so it is not
-	%% 	     included if it hasn't grown beyond a threshold
+files_to_defrag(StorageModules, DataDir, ByteSizeThreshold, Sizes) ->
 	AllFiles = lists:flatmap(
 		fun (StorageModule) ->
 			StorageId = ar_storage_module:id(StorageModule),
@@ -498,7 +498,9 @@ files_to_defrag(StorageModules, DataDir, ByteSizeThreshold) ->
 		fun (Filepath) ->
 			case file:read_file_info(Filepath) of
 				{ok, #file_info{size = Size}} ->
-					Size >= ByteSizeThreshold;
+					LastSize = maps:get(Filepath, Sizes, 1),
+					Growth = (Size - LastSize) / LastSize,
+					Size >= ByteSizeThreshold andalso Growth > 0.1;
 				{error, Reason} ->
 					?LOG_ERROR([
 						{event, failed_to_read_chunk_file_info},
@@ -516,6 +518,51 @@ defrag_files([Filepath | Rest]) ->
 	DefragCmd = io_lib:format("dd if=~ts of=~ts conv=notrunc bs=1048576", [Filepath, Filepath]),
 	os:cmd(DefragCmd),
 	defrag_files(Rest).
+
+update_sizes_file([], Sizes) ->
+	{ok, Config} = application:get_env(arweave, config),
+	SizesFile = filename:join(Config#config.data_dir, "chunks_sizes"),
+	case file:open(SizesFile, [write, raw]) of
+		{error, Reason} ->
+			?LOG_ERROR([
+				{event, failed_to_open_chunk_sizes_file},
+				{file, SizesFile},
+				{reason, io_lib:format("~p", [Reason])}
+			]),
+			error;
+		{ok, F} ->
+			SizesBinary = erlang:term_to_binary(Sizes),
+			ok = file:write(F, SizesBinary),
+			file:close(F)
+	end;
+update_sizes_file([Filepath | Rest], Sizes) ->
+	case file:read_file_info(Filepath) of
+		{ok, #file_info{size = Size}} ->
+			update_sizes_file(Rest, Sizes#{Filepath => Size});
+		{error, Reason} ->
+			?LOG_ERROR([
+				{event, failed_to_read_chunk_file_info},
+				{file, Filepath},
+				{reason, io_lib:format("~p", [Reason])}
+			]),
+			error
+	end.
+
+read_chunks_sizes(DataDir) ->
+	SizesFile = filename:join(DataDir, "chunks_sizes"),
+	case file:read_file(SizesFile) of
+		{ok, Content} ->
+			erlang:binary_to_term(Content);
+		{error, enoent} ->
+			#{};
+		{error, Reason} ->
+			?LOG_ERROR([
+				{event, failed_to_read_chunk_sizes_file},
+				{file, SizesFile},
+				{reason, io_lib:format("~p", [Reason])}
+			]),
+			error
+	end.
 
 %%%===================================================================
 %%% Tests.
