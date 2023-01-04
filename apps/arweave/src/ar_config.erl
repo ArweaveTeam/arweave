@@ -455,7 +455,8 @@ parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
 parse_options([{<<"run_defragmentation">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ run_defragmentation = B });
 
-parse_options([{<<"defragmentation_trigger_threshold">>, D} | Rest], Config) when is_integer(D) ->
+parse_options([{<<"defragmentation_trigger_threshold">>, D} | Rest], Config)
+		when is_integer(D) ->
 	parse_options(Rest, Config#config{ defragmentation_trigger_threshold = D });
 
 parse_options([Opt | _], _) ->
