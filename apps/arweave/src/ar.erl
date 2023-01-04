@@ -295,9 +295,9 @@ show_help() ->
 			{"debug",
 				"Enable extended logging."},
 			{"run_defragmentation",
-				"Run defragmentation of chunk storage files"},
+				"Run defragmentation of chunk storage files."},
 			{"defragmentation_trigger_threshold",
-				"File size threshold in bytes for it to be considered for defragmentation"}
+				"File size threshold in bytes for it to be considered for defragmentation."}
 		]
 	),
 	erlang:halt().

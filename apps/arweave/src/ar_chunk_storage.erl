@@ -163,7 +163,7 @@ run_defragmentation() ->
 		false ->
 			ok;
 		true ->
-			ar:console("Defragmentation threshold ~B bytes~n",
+			ar:console("Defragmentation threshold: ~B bytes.~n",
 					   [Config#config.defragmentation_trigger_threshold]),
 			Sizes = read_chunks_sizes(Config#config.data_dir),
 			Files = files_to_defrag(Config#config.storage_modules,
@@ -171,7 +171,8 @@ run_defragmentation() ->
 									Config#config.defragmentation_trigger_threshold,
 									Sizes),
 			ok = defrag_files(Files),
-			ok = update_sizes_file(Files, Sizes)
+			SizesAfterDefragmentation = read_chunks_sizes(Config#config.data_dir),
+			ok = update_sizes_file(Files, SizesAfterDefragmentation)
 	end.
 
 %%%===================================================================
@@ -523,8 +524,11 @@ defrag_files([]) ->
 	ok;
 defrag_files([Filepath | Rest]) ->
 	?LOG_DEBUG([{event, defragmenting_file}, {file, Filepath}]),
-	DefragCmd = io_lib:format("dd if=~ts of=~ts conv=notrunc bs=1048576", [Filepath, Filepath]),
+	ar:console("Defragmenting ~s...~n", [Filepath]),
+	DefragCmd = io_lib:format("dd if=~ts of=~ts conv=notrunc bs=1048576", [Filepath,
+			Filepath]),
 	os:cmd(DefragCmd),
+	ar:console("Defragmented ~s...~n", [Filepath]),
 	defrag_files(Rest).
 
 update_sizes_file([], Sizes) ->
@@ -787,3 +791,31 @@ assert_get(Expected, Offset) ->
 	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 + 1)),
 	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 - 1)),
 	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 3)).
+
+defrag_command_test() ->
+	RandomID = crypto:strong_rand_bytes(16),
+	Filepath = "test_defrag_" ++ binary_to_list(ar_util:encode(RandomID)),
+	{ok, F} = file:open(Filepath, [binary, write]),
+	{O1, C1} = {236, crypto:strong_rand_bytes(262144)},
+	{O2, C2} = {262144, crypto:strong_rand_bytes(262144)},
+	{O3, C3} = {262143, crypto:strong_rand_bytes(262144)},
+	file:pwrite(F, 1, <<"a">>),
+	file:pwrite(F, 1000, <<"b">>),
+	file:pwrite(F, 1000000, <<"cde">>),
+	file:pwrite(F, 10000001, << O1:24, C1/binary, O2:24, C2/binary >>),
+	file:pwrite(F, 30000001, << O3:24, C3/binary >>),
+	file:close(F),
+	defrag_files([Filepath]),
+	{ok, F2} = file:open(Filepath, [binary, read]),
+	?assertEqual({ok, <<0>>}, file:pread(F2, 0, 1)),
+	?assertEqual({ok, <<"a">>}, file:pread(F2, 1, 1)),
+	?assertEqual({ok, <<0>>}, file:pread(F2, 2, 1)),
+	?assertEqual({ok, <<"b">>}, file:pread(F2, 1000, 1)),
+	?assertEqual({ok, <<"c">>}, file:pread(F2, 1000000, 1)),
+	?assertEqual({ok, <<"cde">>}, file:pread(F2, 1000000, 3)),
+	?assertEqual({ok, C1}, file:pread(F2, 10000001 + 3, 262144)),
+	?assertMatch({ok, << O1:24, _/binary >>}, file:pread(F2, 10000001, 10)),
+	?assertMatch({ok, << O1:24, C1:262144/binary, O2:24, C2:262144/binary,
+			0:((262144 + 3) * 2 * 8) >>}, file:pread(F2, 10000001, (262144 + 3) * 4)),
+	?assertMatch({ok, << O3:24, C3:262144/binary >>},
+			file:pread(F2, 30000001, 262144 + 3 + 100)). % End of file => +100 is ignored.
