@@ -106,7 +106,9 @@ parse_config() ->
 		nonce_limiter_client_peers = [{2, 3, 6, 7, 1984}, {4, 7, 3, 1, 1983},
 				{3, 3, 3, 3, 1984}],
 		run_defragmentation = true,
-		defragmentation_trigger_threshold = 1_000
+		defragmentation_trigger_threshold = 1_000,
+		block_throttle_by_ip_interval = 5_000,
+		block_throttle_by_solution_interval = 12_000
 	}, ParsedConfig).
 
 config_fixture() ->

@@ -459,6 +459,14 @@ parse_options([{<<"defragmentation_trigger_threshold">>, D} | Rest], Config)
 		when is_integer(D) ->
 	parse_options(Rest, Config#config{ defragmentation_trigger_threshold = D });
 
+parse_options([{<<"block_throttle_by_ip_interval">>, D} | Rest], Config)
+		when is_integer(D) ->
+	parse_options(Rest, Config#config{ block_throttle_by_ip_interval = D });
+
+parse_options([{<<"block_throttle_by_solution_interval">>, D} | Rest], Config)
+		when is_integer(D) ->
+	parse_options(Rest, Config#config{ block_throttle_by_solution_interval = D });
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

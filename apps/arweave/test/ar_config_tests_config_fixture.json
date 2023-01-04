@@ -111,5 +111,7 @@
   "vdf_server_trusted_peer": "127.0.0.1",
   "vdf_client_peers": ["2.3.6.7:1984", "4.7.3.1:1983", "3.3.3.3"],
   "run_defragmentation": true,
-  "defragmentation_trigger_threshold": 1000
+  "defragmentation_trigger_threshold": 1000,
+  "block_throttle_by_ip_interval": 5000,
+  "block_throttle_by_solution_interval": 12000
 }

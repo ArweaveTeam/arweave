@@ -131,6 +131,18 @@ in
       description = "The frequency of block polling, in seconds.";
     };
 
+    blockThrottleByIPInterval = mkOption {
+      type = types.int;
+      default = 1000;
+      description = "";
+    };
+
+    blockThrottleBySolutionInterval = mkOption {
+      type = types.int;
+      default = 2000;
+      description = "";
+    };
+
     txValidators = mkOption {
       type = types.int;
       default = 10;
@@ -256,6 +268,7 @@ in
       default = 1024;
       description = "Maximum allowed TCP connections.";
     };
+
   };
 
   config = mkIf cfg.enable (
@@ -278,6 +291,8 @@ in
             debug = cfg.debug;
             packing_rate = cfg.packingRate;
             vdf_server_trusted_peer = cfg.vdfServerTrustedPeer;
+            block_throttle_by_ip_interval = cfg.blockThrottleByIPInterval;
+            block_throttle_by_solution_interval = cfg.blockThrottleBySolutionInterval;
             semaphores = {
               get_chunk = cfg.maxParallelGetChunkRequests;
               get_and_pack_chunk = cfg.maxParallelGetAndPackChunkRequests;

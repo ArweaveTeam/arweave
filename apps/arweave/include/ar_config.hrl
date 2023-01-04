@@ -92,6 +92,20 @@
 -define(DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
 		max(1, (erlang:system_info(schedulers_online) - 1))).
 
+%% Accept a block from the given IP only once in so many milliseconds.
+-ifdef(DEBUG).
+-define(DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS, 10).
+-else.
+-define(DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS, 1000).
+-endif.
+
+%% Accept a block with the given solution hash only once in so many milliseconds.
+-ifdef(DEBUG).
+-define(DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS, 10).
+-else.
+-define(DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS, 2000).
+-endif.
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -173,7 +187,9 @@
 	nonce_limiter_client_peers = [],
 	debug = false,
 	run_defragmentation = false,
-	defragmentation_trigger_threshold = 1_500_000_000
+	defragmentation_trigger_threshold = 1_500_000_000,
+	block_throttle_by_ip_interval = ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
+	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS
 }).
 
 -endif.

@@ -298,7 +298,15 @@ show_help() ->
 			{"run_defragmentation",
 				"Run defragmentation of chunk storage files."},
 			{"defragmentation_trigger_threshold",
-				"File size threshold in bytes for it to be considered for defragmentation."}
+				"File size threshold in bytes for it to be considered for defragmentation."},
+			{"block_throttle_by_ip_interval (number)",
+					io_lib:format("The number of milliseconds that have to pass before "
+							"we accept another block from the same IP address. Default: ~B.",
+							[?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS])},
+			{"block_throttle_by_solution_interval (number)",
+					io_lib:format("The number of milliseconds that have to pass before "
+							"we accept another block with the same solution hash. "
+							"Default: ~B.", [?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS])}
 		]
 	),
 	erlang:halt().
@@ -502,6 +510,11 @@ parse_cli_args(["run_defragmentation" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ run_defragmentation = true });
 parse_cli_args(["defragmentation_trigger_threshold", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ defragmentation_trigger_threshold = list_to_integer(Num) });
+parse_cli_args(["block_throttle_by_ip_interval", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ block_throttle_by_ip_interval = list_to_integer(Num) });
+parse_cli_args(["block_throttle_by_solution_interval", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{
+			block_throttle_by_solution_interval = list_to_integer(Num) });
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
