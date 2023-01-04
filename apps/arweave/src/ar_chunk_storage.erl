@@ -525,9 +525,12 @@ defrag_files([]) ->
 defrag_files([Filepath | Rest]) ->
 	?LOG_DEBUG([{event, defragmenting_file}, {file, Filepath}]),
 	ar:console("Defragmenting ~s...~n", [Filepath]),
-	DefragCmd = io_lib:format("dd if=~ts of=~ts conv=notrunc bs=1048576", [Filepath,
-			Filepath]),
-	os:cmd(DefragCmd),
+	TmpFilepath = Filepath ++ ".tmp",
+	DefragCmd = io_lib:format("rsync --sparse --quiet ~ts ~ts", [Filepath, TmpFilepath]),
+	MoveDefragCmd = io_lib:format("mv ~ts ~ts", [TmpFilepath, Filepath]),
+	%% We expect nothing to be returned on successful calls.
+	[] = os:cmd(DefragCmd),
+	[] = os:cmd(MoveDefragCmd),
 	ar:console("Defragmented ~s...~n", [Filepath]),
 	defrag_files(Rest).
 
