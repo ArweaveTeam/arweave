@@ -60,7 +60,7 @@ end).
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_TRANSITION_START, 0).
 	-else.
-		-define(PRICE_2_6_TRANSITION_START, (30 * 24 * 3 * 30)). % ~3 months.
+		-define(PRICE_2_6_TRANSITION_START, 18370). % (30 * 24 * 3 * 30)). % ~3 months.
 	-endif.
 -endif.
 
