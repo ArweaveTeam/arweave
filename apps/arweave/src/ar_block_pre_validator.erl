@@ -7,6 +7,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
 -record(state, {
@@ -16,26 +17,14 @@
 	size = 0,
 	%% The map IP => the timestamp of the last block from this IP.
 	ip_timestamps = #{},
+	throttle_by_ip_interval,
 	%% The map SolutionHash => the timestamp of the last block with this solution hash.
-	hash_timestamps = #{}
+	hash_timestamps = #{},
+	throttle_by_solution_interval
 }).
 
 %% The maximum size in bytes the blocks enqueued for pre-validation can occupy.
 -define(MAX_PRE_VALIDATION_QUEUE_SIZE, (200 * 1024 * 1024)).
-
-%% Accept a block from the given IP only once in so many milliseconds.
--ifdef(DEBUG).
--define(THROTTLE_BY_IP_INTERVAL_MS, 10).
--else.
--define(THROTTLE_BY_IP_INTERVAL_MS, 1000).
--endif.
-
-%% Accept a block with the given solution hash only once in so many milliseconds.
--ifdef(DEBUG).
--define(THROTTLE_BY_SOLUTION_HASH_INTERVAL_MS, 10).
--else.
--define(THROTTLE_BY_SOLUTION_HASH_INTERVAL_MS, 2000).
--endif.
 
 %%%===================================================================
 %%% Public interface.
@@ -67,10 +56,16 @@ init([]) ->
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, pre_validate),
 	ok = ar_events:subscribe(block),
-	{ok, #state{}}.
+	{ok, Config} = application:get_env(arweave, config),
+	ThrottleBySolutionInterval = Config#config.block_throttle_by_solution_interval,
+	ThrottleByIPInterval = Config#config.block_throttle_by_ip_interval,
+	{ok, #state{ throttle_by_ip_interval = ThrottleByIPInterval,
+			throttle_by_solution_interval = ThrottleBySolutionInterval }}.
 
 handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTimestamps,
-			hash_timestamps = HashTimestamps } = State) ->
+			hash_timestamps = HashTimestamps,
+			throttle_by_ip_interval = ThrottleByIPInterval,
+			throttle_by_solution_interval = ThrottleBySolutionInterval } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
 			ar_util:cast_after(50, ?MODULE, pre_validate),
@@ -79,13 +74,14 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			{{_, {B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime, BodySize}},
 					Q2} = gb_sets:take_largest(Q),
 			Size2 = Size - BodySize,
-			ThrottleByIPResult = throttle_by_ip(Peer, IPTimestamps),
+			ThrottleByIPResult = throttle_by_ip(Peer, IPTimestamps, ThrottleByIPInterval),
 			{IPTimestamps3, HashTimestamps3} =
 				case ThrottleByIPResult of
 					false ->
 						{IPTimestamps, HashTimestamps};
 					{true, IPTimestamps2} ->
-						case throttle_by_solution_hash(B#block.hash, HashTimestamps) of
+						case throttle_by_solution_hash(B#block.hash, HashTimestamps,
+								ThrottleBySolutionInterval) of
 							{true, HashTimestamps2} ->
 								Info = B#block.nonce_limiter_info,
 								StepNumber = Info#nonce_limiter_info.global_step_number,
@@ -126,23 +122,25 @@ handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime
 		end,
 	{noreply, State#state{ pqueue = Q3, size = Size3 }};
 
-handle_cast({may_be_remove_ip_timestamp, IP}, #state{ ip_timestamps = Timestamps } = State) ->
+handle_cast({may_be_remove_ip_timestamp, IP}, #state{ ip_timestamps = Timestamps,
+		throttle_by_ip_interval = ThrottleInterval } = State) ->
 	Now = os:system_time(millisecond),
 	case maps:get(IP, Timestamps, not_set) of
 		not_set ->
 			{noreply, State};
-		Timestamp when Timestamp < Now - ?THROTTLE_BY_IP_INTERVAL_MS ->
+		Timestamp when Timestamp < Now - ThrottleInterval ->
 			{noreply, State#state{ ip_timestamps = maps:remove(IP, Timestamps) }};
 		_ ->
 			{noreply, State}
 	end;
 
-handle_cast({may_be_remove_h_timestamp, H}, #state{ hash_timestamps = Timestamps } = State) ->
+handle_cast({may_be_remove_h_timestamp, H}, #state{ hash_timestamps = Timestamps,
+		throttle_by_solution_interval = ThrottleInterval } = State) ->
 	Now = os:system_time(millisecond),
 	case maps:get(H, Timestamps, not_set) of
 		not_set ->
 			{noreply, State};
-		Timestamp when Timestamp < Now - ?THROTTLE_BY_SOLUTION_HASH_INTERVAL_MS ->
+		Timestamp when Timestamp < Now - ThrottleInterval ->
 			{noreply, State#state{ hash_timestamps = maps:remove(H, Timestamps) }};
 		_ ->
 			{noreply, State}
@@ -842,15 +840,14 @@ drop_tail(Q, Size) ->
 			BodySize}}, Q2} = gb_sets:take_smallest(Q),
 	drop_tail(Q2, Size - BodySize).
 
-throttle_by_ip(Peer, Timestamps) ->
+throttle_by_ip(Peer, Timestamps, ThrottleInterval) ->
 	IP = get_ip(Peer),
 	Now = os:system_time(millisecond),
-	ar_util:cast_after(?THROTTLE_BY_IP_INTERVAL_MS * 2, ?MODULE,
-			{may_be_remove_ip_timestamp, IP}),
+	ar_util:cast_after(ThrottleInterval * 2, ?MODULE, {may_be_remove_ip_timestamp, IP}),
 	case maps:get(IP, Timestamps, not_set) of
 		not_set ->
 			{true, maps:put(IP, Now, Timestamps)};
-		Timestamp when Timestamp < Now - ?THROTTLE_BY_IP_INTERVAL_MS ->
+		Timestamp when Timestamp < Now - ThrottleInterval ->
 			{true, maps:put(IP, Now, Timestamps)};
 		_ ->
 			false
@@ -859,14 +856,13 @@ throttle_by_ip(Peer, Timestamps) ->
 get_ip({A, B, C, D, _Port}) ->
 	{A, B, C, D}.
 
-throttle_by_solution_hash(H, Timestamps) ->
+throttle_by_solution_hash(H, Timestamps, ThrottleInterval) ->
 	Now = os:system_time(millisecond),
-	ar_util:cast_after(?THROTTLE_BY_SOLUTION_HASH_INTERVAL_MS * 2, ?MODULE,
-			{may_be_remove_h_timestamp, H}),
+	ar_util:cast_after(ThrottleInterval * 2, ?MODULE, {may_be_remove_h_timestamp, H}),
 	case maps:get(H, Timestamps, not_set) of
 		not_set ->
 			{true, maps:put(H, Now, Timestamps)};
-		Timestamp when Timestamp < Now - ?THROTTLE_BY_SOLUTION_HASH_INTERVAL_MS ->
+		Timestamp when Timestamp < Now - ThrottleInterval ->
 			{true, maps:put(H, Now, Timestamps)};
 		_ ->
 			false
