@@ -6,7 +6,7 @@
 		get_current_step_number/1, get_seed_data/4, get_last_step_checkpoints/3,
 		get_checkpoints/3, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
-		apply_external_update/1, get_session/1]).
+		apply_external_update/2, get_session/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -26,7 +26,8 @@
 	worker,
 	worker_monitor_ref,
 	autocompute = true,
-	computing = false
+	computing = false,
+	last_external_update = {not_set, 0}
 }).
 
 %%%===================================================================
@@ -280,8 +281,8 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, RecentBI) ->
 	end.
 
 %% @doc Apply the nonce limiter update provided by the configured trusted peer.
-apply_external_update(Update) ->
-	gen_server:call(?MODULE, {apply_external_update, Update}, infinity).
+apply_external_update(Update, Peer) ->
+	gen_server:call(?MODULE, {apply_external_update, Update, Peer}, infinity).
 
 %% @doc Return the nonce limiter session with the given key.
 get_session(SessionKey) ->
@@ -303,10 +304,10 @@ init([]) ->
 		end,
 	{ok, Config} = application:get_env(arweave, config),
 	State2 =
-		case Config#config.nonce_limiter_server_trusted_peer of
-			not_set ->
+		case Config#config.nonce_limiter_server_trusted_peers of
+			[] ->
 				State;
-			_Peer ->
+			_Peers ->
 				State#state{ autocompute = false }
 		end,
 	{ok, start_worker(State2)}.
@@ -367,54 +368,15 @@ handle_call(get_steps, _From, State) ->
 	#vdf_session{ step_number = StepNumber } = maps:get(SessionKey, SessionByKey),
 	{reply, get_steps(1, StepNumber, SessionKey, State), State};
 
-handle_call({apply_external_update, Update}, _From, State) ->
-	#state{ session_by_key = SessionByKey } = State,
-	#nonce_limiter_update{ session_key = {NextSeed, IntervalNumber} = SessionKey,
-			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
-					step_number = StepNumber, steps = [Output | _] } = Session,
-			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
-	case maps:get(SessionKey, SessionByKey, not_found) of
-		not_found ->
-			case IsPartial of
-				true ->
-					%% Inform the peer we have not initialized the corresponding session yet.
-					{reply, #nonce_limiter_update_response{ session_found = false }, State};
-				false ->
-					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
-					{reply, ok, State#state{ session_by_key = SessionByKey2 }}
-			end;
-		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
-				last_step_checkpoints_map = Map } = CurrentSession ->
-			case CurrentStepNumber + 1 == StepNumber of
-				true ->
-					Map2 = maps:put(StepNumber, Checkpoints, Map),
-					CurrentSession2 = CurrentSession#vdf_session{ step_number = StepNumber,
-							last_step_checkpoints_map = Map2,
-							steps = [Output | CurrentSteps] },
-					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
-					Args = {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output,
-							Checkpoints},
-					ar_events:send(nonce_limiter, {computed_output, Args}),
-					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
-				false ->
-					case CurrentStepNumber >= StepNumber of
-						true ->
-							%% Inform the peer we are ahead.
-							{reply, #nonce_limiter_update_response{
-											step_number = CurrentStepNumber }, State};
-						false ->
-							case IsPartial of
-								true ->
-									%% Inform the peer we miss some steps.
-									{reply, #nonce_limiter_update_response{
-											step_number = CurrentStepNumber }, State};
-								false ->
-									SessionByKey2 = maps:put(SessionKey, Session,
-											SessionByKey),
-									{reply, ok, State#state{ session_by_key = SessionByKey2 }}
-							end
-					end
-			end
+handle_call({apply_external_update, Update, Peer}, _From, State) ->
+	#state{ last_external_update = {Peer2, Time} } = State,
+	Now = os:system_time(millisecond),
+	case Peer /= Peer2 andalso Now - Time < 1000 of
+		true ->
+			{reply, #nonce_limiter_update_response{ postpone = 5 }, State};
+		false ->
+			State2 = State#state{ last_external_update = {Peer, Now} },
+			apply_external_update2(Update, State2)
 	end;
 
 handle_call({get_session, SessionKey}, _From, State) ->
@@ -941,6 +903,56 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 			undefined
 	end.
 
+apply_external_update2(Update, State) ->
+	#state{ session_by_key = SessionByKey } = State,
+	#nonce_limiter_update{ session_key = {NextSeed, IntervalNumber} = SessionKey,
+			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
+					step_number = StepNumber, steps = [Output | _] } = Session,
+			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
+	case maps:get(SessionKey, SessionByKey, not_found) of
+		not_found ->
+			case IsPartial of
+				true ->
+					%% Inform the peer we have not initialized the corresponding session yet.
+					{reply, #nonce_limiter_update_response{ session_found = false }, State};
+				false ->
+					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
+					{reply, ok, State#state{ session_by_key = SessionByKey2 }}
+			end;
+		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
+				last_step_checkpoints_map = Map } = CurrentSession ->
+			case CurrentStepNumber + 1 == StepNumber of
+				true ->
+					Map2 = maps:put(StepNumber, Checkpoints, Map),
+					CurrentSession2 = CurrentSession#vdf_session{ step_number = StepNumber,
+							last_step_checkpoints_map = Map2,
+							steps = [Output | CurrentSteps] },
+					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
+					Args = {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output,
+							Checkpoints},
+					ar_events:send(nonce_limiter, {computed_output, Args}),
+					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
+				false ->
+					case CurrentStepNumber >= StepNumber of
+						true ->
+							%% Inform the peer we are ahead.
+							{reply, #nonce_limiter_update_response{
+											step_number = CurrentStepNumber }, State};
+						false ->
+							case IsPartial of
+								true ->
+									%% Inform the peer we miss some steps.
+									{reply, #nonce_limiter_update_response{
+											step_number = CurrentStepNumber }, State};
+								false ->
+									SessionByKey2 = maps:put(SessionKey, Session,
+											SessionByKey),
+									{reply, ok, State#state{ session_by_key = SessionByKey2 }}
+							end
+					end
+			end
+	end.
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -1062,7 +1074,7 @@ test_reorg_after_join() ->
 	ar_test_node:wait_until_height(2).
 
 reorg_after_join2_test_() ->
-	{timeout, 60, fun test_reorg_after_join2/0}.
+	{timeout, 120, fun test_reorg_after_join2/0}.
 
 test_reorg_after_join2() ->
 	[B0] = ar_weave:init(),

@@ -23,11 +23,11 @@ in
     };
 
     vdfServerTrustedPeer = mkOption {
-      type = types.str;
-      default = "";
+      type = types.listOf types.str;
+      default = [ ];
       example = [ "http://domain-or-ip.com:1984" ];
       description = ''
-        A trusted peer to fetch VDF outputs from
+        List of trusted peers to fetch VDF outputs from
       '';
     };
 
@@ -330,7 +330,6 @@ in
             disk_pool_jobs = cfg.diskPoolJobs;
             debug = cfg.debug;
             packing_rate = cfg.packingRate;
-            vdf_server_trusted_peer = cfg.vdfServerTrustedPeer;
             block_throttle_by_ip_interval = cfg.blockThrottleByIPInterval;
             block_throttle_by_solution_interval = cfg.blockThrottleBySolutionInterval;
             semaphores = {
@@ -383,10 +382,11 @@ in
             command = "${cfg.package}/bin/start-nix config_file ${configFile}";
             peers = "${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
             vdf-peers = "${builtins.concatStringsSep " " (builtins.concatMap (p: ["vdf_client_peer" p]) cfg.vdfClientPeer)}";
+            vdf-server-peers = "${builtins.concatStringsSep " " (builtins.concatMap (p: ["vdf_server_trusted_peer" p]) cfg.vdfServerTrustedPeer)}";
           in pkgs.writeScriptBin "arweave-start" ''
           #!${pkgs.bash}/bin/bash
           ${pkgs.screen}/bin/screen -S arweave -p 0 -X stuff "^C^M" || true
-          ${pkgs.screen}/bin/screen -S arweave -p 0 -X stuff '${command} ${peers} ${vdf-peers}^M'
+          ${pkgs.screen}/bin/screen -S arweave -p 0 -X stuff '${command} ${peers} ${vdf-peers} ${vdf-server-peers}^M'
           sleep 5
           until [[ "$(${pkgs.procps}/bin/ps -C epmd &> /dev/null)" -ne 0 ]]
           do

@@ -431,13 +431,26 @@ parse_options([{<<"max_nonce_limiter_last_step_validation_thread_count">>, D} | 
 parse_options([{<<"vdf_server_trusted_peer">>, <<>>} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"vdf_server_trusted_peer">>, Peer} | Rest], Config) ->
+	#config{ nonce_limiter_server_trusted_peers = Peers } = Config,
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ParsedPeer} ->
-			parse_options(Rest,
-					Config#config{ nonce_limiter_server_trusted_peer = ParsedPeer });
+			Peers2 = [ParsedPeer | Peers],
+			parse_options(Rest, Config#config{ nonce_limiter_server_trusted_peers = Peers2 });
 		{error, _} ->
 			{error, bad_vdf_server_trusted_peer, Peer}
 	end;
+
+parse_options([{<<"vdf_server_trusted_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
+	#config{ nonce_limiter_server_trusted_peers = CurrentPeers } = Config,
+	case parse_peers(Peers, []) of
+		{ok, ParsedPeers} ->
+			Peers2 = CurrentPeers ++ ParsedPeers,
+			parse_options(Rest, Config#config{ nonce_limiter_server_trusted_peers = Peers2 });
+		error ->
+			{error, bad_vdf_server_trusted_peers, Peers}
+	end;
+parse_options([{<<"vdf_server_trusted_peers">>, Peers} | _], _) ->
+	{error, {bad_type, vdf_server_trusted_peers, array}, Peers};
 
 parse_options([{<<"vdf_client_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
 	case parse_peers(Peers, []) of

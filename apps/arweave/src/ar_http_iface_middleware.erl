@@ -2483,18 +2483,18 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 handle_post_vdf(Req, Pid) ->
 	{ok, Config} = application:get_env(arweave, config),
 	Peer = ar_http_util:arweave_peer(Req),
-	case Config#config.nonce_limiter_server_trusted_peer == Peer of
+	case lists:member(Peer, Config#config.nonce_limiter_server_trusted_peers) of
 		false ->
 			{400, #{}, <<>>, Req};
 		true ->
-			handle_post_vdf2(Req, Pid)
+			handle_post_vdf2(Req, Pid, Peer)
 	end.
 
-handle_post_vdf2(Req, Pid) ->
+handle_post_vdf2(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			{ok, Update} = ar_serialize:binary_to_nonce_limiter_update(Body),
-			case ar_nonce_limiter:apply_external_update(Update) of
+			case ar_nonce_limiter:apply_external_update(Update, Peer) of
 				ok ->
 					{200, #{}, <<>>, Req2};
 				#nonce_limiter_update_response{} = Response ->
