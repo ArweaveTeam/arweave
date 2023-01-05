@@ -337,24 +337,27 @@ parse_32b_list(<< El:32/binary, Rest/binary >>) ->
 	[El | parse_32b_list(Rest)].
 
 nonce_limiter_update_response_to_binary(#nonce_limiter_update_response{
-		session_found = SessionFound, step_number = StepNumber }) ->
+		session_found = SessionFound, step_number = StepNumber, postpone = Postpone }) ->
+	PostponeBin = case Postpone of 0 -> <<>>; _ -> << Postpone:8 >> end,
 	case SessionFound of
 		true ->
-			<< 1:8, (encode_int(StepNumber, 8))/binary >>;
+			<< 1:8, (encode_int(StepNumber, 8))/binary, PostponeBin/binary >>;
 		false ->
-			<< 0:8, (encode_int(StepNumber, 8))/binary >>
+			<< 0:8, (encode_int(StepNumber, 8))/binary, PostponeBin/binary >>
 	end.
 
 binary_to_nonce_limiter_update_response(<< SessionFound:8, StepNumberSize:8,
-		StepNumber:(StepNumberSize * 8) >>) ->
+		StepNumber:(StepNumberSize * 8), MayBePostponeBin/binary >>)
+		when byte_size(MayBePostponeBin) == 0; byte_size(MayBePostponeBin) == 1 ->
 	StepNumber2 = case StepNumberSize of 0 -> undefined; _ -> StepNumber end,
+	Postpone = case MayBePostponeBin of <<>> -> 0; << N:8 >> -> N end,
 	case SessionFound of
 		0 ->
 			{ok, #nonce_limiter_update_response{ session_found = false,
-					step_number = StepNumber2 }};
+					step_number = StepNumber2, postpone = Postpone }};
 		1 ->
 			{ok, #nonce_limiter_update_response{ session_found = true,
-					step_number = StepNumber2 }};
+					step_number = StepNumber2, postpone = Postpone }};
 		_ ->
 			{error, invalid1}
 	end;

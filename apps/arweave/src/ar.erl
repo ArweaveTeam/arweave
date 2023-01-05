@@ -288,9 +288,11 @@ show_help() ->
 					"validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT])},
 			{"vdf_server_trusted_peer", "If the option is set, we expect the given "
-					"peer to push VDF updates to us; we will thus not compute VDF outputs "
+					"peer(s) to push VDF updates to us; we will thus not compute VDF outputs "
 					"ourselves. Recommended on CPUs without hardware extensions for computing"
-					" SHA-2. We will nevertheless validate VDF chains in blocks."},
+					" SHA-2. We will nevertheless validate VDF chains in blocks. Also, we "
+					"recommend you specify at least two trusted peers to aim for shorter "
+					"mining downtime."},
 			{"vdf_client_peer", "If the option is set, the node will push VDF updates "
 					"to this peer. You can specify several vdf_client_peer options."},
 			{"debug",
@@ -488,9 +490,11 @@ parse_cli_args(["max_vdf_last_step_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			max_nonce_limiter_last_step_validation_thread_count = list_to_integer(Num) });
 parse_cli_args(["vdf_server_trusted_peer", Peer | Rest], C) ->
+	#config{ nonce_limiter_server_trusted_peers = Peers } = C,
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ nonce_limiter_server_trusted_peer = ValidPeer });
+			Peers2 = [ValidPeer | Peers],
+			parse_cli_args(Rest, C#config{ nonce_limiter_server_trusted_peers = Peers2 });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			erlang:halt()
@@ -529,8 +533,8 @@ start(Config) ->
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
-	case Config#config.nonce_limiter_server_trusted_peer of
-		not_set ->
+	case Config#config.nonce_limiter_server_trusted_peers of
+		[] ->
 			benchmark_vdf();
 		_ ->
 			ok

@@ -382,7 +382,8 @@
 %% @doc The format of the response to nonce limiter updates by configured trusted peers.
 -record(nonce_limiter_update_response, {
 	session_found = true,
-	step_number
+	step_number,
+	postpone = 0
 }).
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers

@@ -9,7 +9,8 @@
 -include_lib("arweave/include/ar.hrl").
 
 -record(state, {
-	peer
+	peer,
+	pause_until = 0
 }).
 
 %%%===================================================================
@@ -38,34 +39,13 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	#state{ peer = Peer } = State,
-	{Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output, Checkpoints} = Args,
-	Update = #nonce_limiter_update{ session_key = {NextSeed, IntervalNumber},
-			is_partial = true, checkpoints = Checkpoints,
-			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
-					step_number = StepNumber, steps = [Output] } },
-	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
-		ok ->
-			ok;
-		{ok, Response} ->
-			case Response#nonce_limiter_update_response.session_found of
-				false ->
-					push_session(Update, Peer);
-				true ->
-					CurrentStepNumber = Response#nonce_limiter_update_response.step_number,
-					case CurrentStepNumber >= StepNumber - 1 of
-						true ->
-							ok;
-						false ->
-							push_session(Update, Peer)
-					end
-			end;
-		{error, Error} ->
-			?LOG_WARNING([{event, failed_to_push_nonce_limiter_update_to_peer},
-					{peer, ar_util:format_peer(Peer)},
-					{reason, io_lib:format("~p", [Error])}])
-	end,
-	{noreply, State};
+	#state{ peer = Peer, pause_until = Timestamp } = State,
+	case os:system_time(second) < Timestamp of
+		true ->
+			{noreply, State};
+		false ->
+			{noreply, push_update(Args, Peer, State)}
+	end;
 
 handle_info({event, nonce_limiter, _Args}, State) ->
 	{noreply, State};
@@ -80,6 +60,43 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+push_update(Args, Peer, State) ->
+	{Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output, Checkpoints} = Args,
+	Update = #nonce_limiter_update{ session_key = {NextSeed, IntervalNumber},
+			is_partial = true, checkpoints = Checkpoints,
+			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
+					step_number = StepNumber, steps = [Output] } },
+	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
+		ok ->
+			State;
+		{ok, Response} ->
+			Postpone = Response#nonce_limiter_update_response.postpone,
+			case Postpone > 0 of
+				true ->
+					Now = os:system_time(second),
+					State#state{ pause_until = Now + Postpone };
+				false ->
+					case Response#nonce_limiter_update_response.session_found of
+						false ->
+							push_session(Update, Peer);
+						true ->
+							StepNumber2 = Response#nonce_limiter_update_response.step_number,
+							case StepNumber2 >= StepNumber - 1 of
+								true ->
+									ok;
+								false ->
+									push_session(Update, Peer)
+							end
+					end,
+					State
+			end;
+		{error, Error} ->
+			?LOG_WARNING([{event, failed_to_push_nonce_limiter_update_to_peer},
+					{peer, ar_util:format_peer(Peer)},
+					{reason, io_lib:format("~p", [Error])}]),
+			State
+	end.
 
 push_session(Update, Peer) ->
 	SessionKey = Update#nonce_limiter_update.session_key,

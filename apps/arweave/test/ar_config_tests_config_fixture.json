@@ -109,6 +109,7 @@
   "max_nonce_limiter_validation_thread_count": 2,
   "max_nonce_limiter_last_step_validation_thread_count": 3,
   "vdf_server_trusted_peer": "127.0.0.1",
+  "vdf_server_trusted_peers": ["2.3.4.5", "6.7.8.9:1982"],
   "vdf_client_peers": ["2.3.6.7:1984", "4.7.3.1:1983", "3.3.3.3"],
   "run_defragmentation": true,
   "defragmentation_trigger_threshold": 1000,
