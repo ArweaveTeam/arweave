@@ -437,6 +437,9 @@ handle_cast({join, RecentBI}, State) ->
 		{_, {_H, Offset, _TXRoot}} ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
+			{ok, Config} = application:get_env(arweave, config),
+			[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:id(Module)),
+					{cut, Offset}) || Module <- Config#config.storage_modules],
 			ar_chunk_storage:cut(Offset, StoreID),
 			ar_sync_record:cut(Offset, ?MODULE, StoreID),
 			ar_events:send(data_sync, {cut, Offset}),
@@ -454,6 +457,30 @@ handle_cast({join, RecentBI}, State) ->
 		},
 	store_sync_state(State2),
 	{noreply, State2};
+
+handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
+		range_end = End } = State) ->
+	case ar_sync_record:get_next_synced_interval(Start, End, ?MODULE, StoreID) of
+		not_found ->
+			ok;
+		_Interval ->
+			{ok, Config} = application:get_env(arweave, config),
+			case lists:member(remove_orphaned_storage_module_data, Config#config.enable) of
+				false ->
+					ar:console("The storage module ~s contains some orphaned data above the "
+							"weave offset ~B. Make sure you are joining the network through "
+							"trusted in-sync peers and restart with "
+							"`enable remove_orphaned_storage_module_data`.~n",
+							[StoreID, Start]),
+					timer:sleep(2000),
+					erlang:halt();
+				true ->
+					ok = remove_chunks_index_range(Start, End, State),
+					ok = ar_chunk_storage:cut(Start, StoreID),
+					ok = ar_sync_record:cut(Start, ?MODULE, StoreID)
+			end
+	end,
+	{noreply, State};
 
 handle_cast({add_tip_block, BlockTXPairs, BI},
 		State) ->
