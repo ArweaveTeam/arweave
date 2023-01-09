@@ -9,10 +9,17 @@
 %%% Represents a process that handles downloading the block index and the latest
 %%% blocks from the trusted peers, to initialize the node state.
 
+%% The number of block index elements to fetch per request.
+%% Must not exceed ?MAX_BLOCK_INDEX_RANGE_SIZE defined in ar_http_iface_middleware.erl.
+-ifdef(DEBUG).
+-define(REQUEST_BLOCK_INDEX_RANGE_SIZE, 2).
+-else.
+-define(REQUEST_BLOCK_INDEX_RANGE_SIZE, 10000).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
-
 
 %% @doc Start a process that will attempt to download the block index and the latest blocks.
 start(Peers) ->
@@ -36,11 +43,12 @@ start2([]) ->
 start2(Peers) ->
 	ar:console("Joining the Arweave network...~n"),
 	[{H, _, _} | _ ] = BI = get_block_index(Peers, ?REJOIN_RETRIES),
+	ar:console("Downloaded the block index successfully.~n", []),
 	B = get_block(Peers, H),
 	do_join(Peers, B, BI).
 
 get_block_index(Peers, Retries) ->
-	case ar_http_iface_client:get_block_index(Peers) of
+	case get_block_index(Peers) of
 		unavailable ->
 			case Retries > 0 of
 				true ->
@@ -62,6 +70,53 @@ get_block_index(Peers, Retries) ->
 			end;
 		BI ->
 			BI
+	end.
+
+get_block_index([]) ->
+	unavailable;
+get_block_index([Peer | Peers]) ->
+	case get_block_index2(Peer) of
+		unavailable ->
+			get_block_index(Peers);
+		BI ->
+			BI
+	end.
+
+get_block_index2(Peer) ->
+	Height = ar_http_iface_client:get_info(Peer, height),
+	get_block_index2(Peer, 0, Height, []).
+
+get_block_index2(Peer, Start, Height, BI) ->
+	N = ?REQUEST_BLOCK_INDEX_RANGE_SIZE,
+	case ar_http_iface_client:get_block_index(Peer, min(Start, Height - 1),
+			min(Height, Start + N - 1)) of
+		{ok, Range} when length(Range) < N ->
+			case Start of
+				0 ->
+					Range;
+				_ ->
+					case lists:last(Range) == hd(BI) of
+						true ->
+							Range ++ tl(BI);
+						false ->
+							unavailable
+					end
+			end;
+		{ok, Range} when length(Range) == N ->
+			case Start of
+				0 ->
+					get_block_index2(Peer, Start + N - 1, Height, Range);
+				_ ->
+					case lists:last(Range) == hd(BI) of
+						true ->
+							get_block_index2(Peer, Start + N - 1, Height,
+									Range ++ tl(BI));
+						false ->
+							unavailable
+					end
+			end;
+		_ ->
+			unavailable
 	end.
 
 get_block(Peers, H) ->

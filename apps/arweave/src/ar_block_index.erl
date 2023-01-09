@@ -1,7 +1,7 @@
 -module(ar_block_index).
 
 -export([init/1, update/2, member/1, get_list/1, get_list_by_hash/1, get_element_by_height/1,
-		get_block_bounds/1, get_intersection/2, get_intersection/1]).
+		get_block_bounds/1, get_intersection/2, get_intersection/1, get_range/2]).
 
 %%%===================================================================
 %%% Public interface.
@@ -83,6 +83,19 @@ get_intersection(BI) ->
 	get_intersection2({H, WeaveSize}, tl(lists:reverse(BI)),
 			ets:next(block_index, {WeaveSize - 1, n, n, n})).
 
+%% @doc Return the list of {H, WeaveSize, TXRoot} for blocks with Height >= Start, =< End,
+%% sorted from the largest height to the smallest.
+get_range(Start, End) when Start > End ->
+	[];
+get_range(Start, End) ->
+	case catch ets:slot(block_index, Start) of
+		[{{WeaveSize, _Height, H, TXRoot} = Entry}] ->
+			lists:reverse([{H, WeaveSize, TXRoot}
+				| get_range2(Start + 1, End, ets:next(block_index, Entry))]);
+		_ ->
+			{error, invalid_start}
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -156,3 +169,10 @@ get_intersection3({WeaveSize, _, H, TXRoot} = Key, [{H, WeaveSize, TXRoot} | BI]
 	get_intersection3(ets:next(block_index, Key), BI, {H, WeaveSize, TXRoot});
 get_intersection3(_, _, {H, WeaveSize, TXRoot}) ->
 	{H, WeaveSize, TXRoot}.
+
+get_range2(Start, End, _Elem) when Start > End ->
+	[];
+get_range2(_Start, _End, '$end_of_table') ->
+	[];
+get_range2(Start, End, {WeaveSize, _Height, H, TXRoot} = Elem) ->
+	[{H, WeaveSize, TXRoot} | get_range2(Start + 1, End, ets:next(block_index, Elem))].

@@ -9,7 +9,7 @@
 		get_block/3, get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2,
 		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
 		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
-		get_block_index/1, get_block_index/2, get_sync_record/1, get_sync_record/3,
+		get_block_index/3, get_sync_record/1, get_sync_record/3,
 		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_price_history/3,
 		push_nonce_limiter_update/2]).
@@ -229,78 +229,51 @@ get_wallet_list(Peer, H) ->
 		_ -> unavailable
 	end.
 
-get_block_index([]) ->
-	unavailable;
-get_block_index(Peers) ->
-	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	Encoding = case ar_peers:get_peer_release(Peer) >= 42 of true -> binary;
-			false -> json end,
-	ar:console("Downloading block index from ~s.~n", [ar_util:format_peer(Peer)]),
-	Reply =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => case Encoding of json -> "/block_index";
-					binary -> "/block_index2" end,
-			timeout => 300 * 1000,
-			headers => p2p_headers()
-		}),
-	case Reply of
+get_block_index(Peer, Start, End) ->
+	get_block_index(Peer, Start, End, binary).
+
+get_block_index(Peer, Start, End, Encoding) ->
+	StartList = integer_to_list(Start),
+	EndList = integer_to_list(End),
+	Root = case Encoding of binary -> "/block_index2/"; json -> "/block_index/" end,
+	case ar_http:req(#{
+				method => get,
+				peer => Peer,
+				path => Root ++ StartList ++ "/" ++ EndList,
+				timeout => 20000,
+				connect_timeout => 5000,
+				headers => p2p_headers()
+			}) of
+		{ok, {{<<"400">>, _}, _, <<"Request type not found.">>, _, _}}
+				when Encoding == binary ->
+			get_block_index(Peer, Start, End, json);
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			Decoded =
-				case Encoding of
-					json ->
-						catch ar_serialize:json_struct_to_block_index(
-								ar_serialize:dejsonify(Body));
-					binary ->
-						catch ar_serialize:binary_to_block_index(Body)
-				end,
-			case Decoded of
-				{'EXIT', Reason} ->
-					ar:console("Failed to parse block index.~n", []),
-					?LOG_WARNING([
-						{event, failed_to_parse_block_index_from_peer},
-						{peer, ar_util:format_peer(Peer)},
-						{reason, io_lib:format("~p", [Reason])}
-					]),
-					get_block_index(Peers -- [Peer]);
-				{error, Reason} ->
-					ar:console("Failed to parse block index.~n", []),
-					?LOG_WARNING([
-						{event, failed_to_parse_block_index_from_peer},
-						{peer, ar_util:format_peer(Peer)},
-						{reason, io_lib:format("~p", [Reason])}
-					]),
-					get_block_index(Peers -- [Peer]);
+			case decode_block_index(Body, Encoding) of
 				{ok, BI} ->
-					ar:console("Downloaded block index successfully.~n", []),
-					BI;
-				BI ->
-					ar:console("Downloaded block index successfully.~n", []),
-					BI
+					{ok, BI};
+				Error ->
+					?LOG_WARNING([{event, failed_to_decode_block_index_range}, Error]),
+					Error
 			end;
-		_ ->
-			ar:console("Failed to download block index.~n", []),
-			?LOG_WARNING([
-				{event, failed_to_fetch_block_index_from_peer},
-				{peer, ar_util:format_peer(Peer)},
-				{reply, io_lib:format("~p", [Reply])}
-			]),
-			get_block_index(Peers -- [Peer])
+		Error ->
+			?LOG_WARNING([{event, failed_to_fetch_block_index_range},
+					{error, io_lib:format("~p", [Error])}]),
+			{error, Error}
 	end.
 
-get_block_index(Peer, Hash) ->
-	Response =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => "/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/hash_list",
-			headers => p2p_headers()
-		}),
-	case Response of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			ar_serialize:dejsonify(ar_serialize:json_struct_to_block_index(Body));
-		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
+decode_block_index(Bin, binary) ->
+	ar_serialize:binary_to_block_index(Bin);
+decode_block_index(Bin, json) ->
+	case ar_serialize:json_decode(Bin) of
+		{ok, Struct} ->
+			case catch ar_serialize:json_struct_to_block_index(Struct) of
+				{'EXIT', _} = Exc ->
+					{error, Exc};
+				BI ->
+					{ok, BI}
+			end;
+		Error ->
+			Error
 	end.
 
 get_sync_record(Peer) ->

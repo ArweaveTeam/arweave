@@ -22,6 +22,20 @@ end).
 			{data_sync_record, maps:get(data_sync_record, LimitByIP, 1000)};
 		[<<"recent_hash_list_diff">> | _] ->
 			{recent_hash_list_diff,	maps:get(recent_hash_list_diff, LimitByIP, 120)};
+		[<<"hash_list">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 10)};
+		[<<"hash_list2">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 10)};
+		[<<"block_index">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 10)};
+		[<<"block_index2">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 10)};
+		[<<"wallet_list">>] ->
+			{wallet_list, maps:get(wallet_list, LimitByIP, 10)};
+		[<<"block">>, _Type, _ID, <<"wallet_list">>] ->
+			{wallet_list, maps:get(wallet_list, LimitByIP, 60)};
+		[<<"block">>, _Type, ID, <<"hash_list">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 10)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}
 	end
@@ -37,6 +51,20 @@ end).
 			{data_sync_record,	maps:get(data_sync_record, LimitByIP, 40)};
 		[<<"recent_hash_list_diff">> | _] ->
 			{recent_hash_list_diff,	maps:get(recent_hash_list_diff, LimitByIP, 240)};
+		[<<"hash_list">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 2)};
+		[<<"hash_list2">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 2)};
+		[<<"block_index">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 2)};
+		[<<"block_index2">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 2)};
+		[<<"wallet_list">>] ->
+			{wallet_list, maps:get(wallet_list, LimitByIP, 2)};
+		[<<"block">>, _Type, _ID, <<"wallet_list">>] ->
+			{wallet_list, maps:get(wallet_list, LimitByIP, 2)};
+		[<<"block">>, _Type, ID, <<"hash_list">>] ->
+			{block_index, maps:get(block_index, LimitByIP, 2)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}
 	end

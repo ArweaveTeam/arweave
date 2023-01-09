@@ -476,6 +476,12 @@ name_route([<<"wallet_list">>, _Root, _Addr, <<"balance">>]) ->
 
 name_route([<<"block_index">>, _From, _To]) ->
 	"/block_index/{from}/{to}";
+name_route([<<"block_index2">>, _From, _To]) ->
+	"/block_index2/{from}/{to}";
+name_route([<<"hash_list">>, _From, _To]) ->
+	"/hash_list/{from}/{to}";
+name_route([<<"hash_list2">>, _From, _To]) ->
+	"/hash_list2/{from}/{to}";
 
 name_route([<<"block">>, <<"hash">>, _IndepHash]) ->
 	"/block/hash/{indep_hash}";
