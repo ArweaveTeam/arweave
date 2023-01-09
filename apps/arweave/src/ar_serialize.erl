@@ -659,10 +659,12 @@ binary_to_tx(_Rest) ->
 	{error, invalid_input7}.
 
 block_announcement_to_binary(#block_announcement{ indep_hash = H,
-		previous_block = PrevH, tx_prefixes = L, recall_byte = O, recall_byte2 = O2 }) ->
+		previous_block = PrevH, tx_prefixes = L, recall_byte = O, recall_byte2 = O2,
+		solution_hash = SolutionH }) ->
 	<< H:48/binary, PrevH:48/binary, (encode_int(O, 8))/binary,
 			(encode_tx_prefixes(L))/binary, (case O2 of undefined -> <<>>;
-					_ -> encode_int(O2, 8) end)/binary >>.
+					_ -> encode_int(O2, 8) end)/binary,
+			(encode_solution_hash(SolutionH))/binary >>.
 
 encode_tx_prefixes(L) ->
 	<< (length(L)):16, (encode_tx_prefixes(L, []))/binary >>.
@@ -672,36 +674,43 @@ encode_tx_prefixes([], Encoded) ->
 encode_tx_prefixes([Prefix | Prefixes], Encoded) ->
 	encode_tx_prefixes(Prefixes, [<< Prefix:8/binary >> | Encoded]).
 
+encode_solution_hash(undefined) ->
+	<<>>;
+encode_solution_hash(H) ->
+	<< H:32/binary >>.
+
 binary_to_block_announcement(<< H:48/binary, PrevH:48/binary,
 		RecallByteSize:8, RecallByte:(RecallByteSize * 8), N:16, Rest/binary >>) ->
 	RecallByte2 = case RecallByteSize of 0 -> undefined; _ -> RecallByte end,
-	case parse_tx_prefixes_and_recall_byte2(N, Rest) of
+	case parse_tx_prefixes_and_recall_byte2_and_solution_hash(N, Rest) of
 		{error, Reason} ->
 			{error, Reason};
-		{ok, {Prefixes, RecallByte3}} ->
+		{ok, {Prefixes, RecallByte3, SolutionH}} ->
 			{ok, #block_announcement{ indep_hash = H, previous_block = PrevH,
 					recall_byte = RecallByte2, tx_prefixes = Prefixes,
-					recall_byte2 = RecallByte3 }}
+					recall_byte2 = RecallByte3, solution_hash = SolutionH }}
 	end;
 binary_to_block_announcement(_Rest) ->
 	{error, invalid_input}.
 
-parse_tx_prefixes_and_recall_byte2(N, Bin) ->
-	parse_tx_prefixes_and_recall_byte2(N, Bin, []).
+parse_tx_prefixes_and_recall_byte2_and_solution_hash(N, Bin) ->
+	parse_tx_prefixes_and_recall_byte2_and_solution_hash(N, Bin, []).
 
-parse_tx_prefixes_and_recall_byte2(0, Rest, Prefixes) ->
+parse_tx_prefixes_and_recall_byte2_and_solution_hash(0, Rest, Prefixes) ->
 	case Rest of
 		<<>> ->
-			{ok, {Prefixes, undefined}};
-		<< RecallByte2Size:8, RecallByte2:(RecallByte2Size * 8) >> ->
-			{ok, {Prefixes, RecallByte2}};
+			{ok, {Prefixes, undefined, undefined}};
+		<< RecallByte2Size:8, RecallByte2:(RecallByte2Size * 8), SolutionH:32/binary >> ->
+			{ok, {Prefixes, RecallByte2, SolutionH}};
+		<< SolutionH:32/binary >> ->
+			{ok, {Prefixes, undefined, SolutionH}};
 		_ ->
-			{error, invalid_recall_byte2_input}
+			{error, invalid_recall_byte2_and_solution_hash_input}
 	end;
-parse_tx_prefixes_and_recall_byte2(N, << Prefix:8/binary, Rest/binary >>, Prefixes)
-		when N > 0 ->
-	parse_tx_prefixes_and_recall_byte2(N - 1, Rest, [Prefix | Prefixes]);
-parse_tx_prefixes_and_recall_byte2(_N, _Rest, _Prefixes) ->
+parse_tx_prefixes_and_recall_byte2_and_solution_hash(N, << Prefix:8/binary, Rest/binary >>,
+		Prefixes) when N > 0 ->
+	parse_tx_prefixes_and_recall_byte2_and_solution_hash(N - 1, Rest, [Prefix | Prefixes]);
+parse_tx_prefixes_and_recall_byte2_and_solution_hash(_N, _Rest, _Prefixes) ->
 	{error, invalid_tx_prefixes_input}.
 
 binary_to_block_announcement_response(<< ChunkMissing:8, Rest/binary >>)
@@ -1476,10 +1485,12 @@ block_announcement_to_binary_test() ->
 			|| _ <- lists:seq(1, 1000)] },
 	?assertEqual({ok, A4}, binary_to_block_announcement(
 			block_announcement_to_binary(A4))),
-	A5 = A#block_announcement{ recall_byte2 = 1 },
+	A5 = A#block_announcement{ recall_byte2 = 1,
+			solution_hash = crypto:strong_rand_bytes(32) },
 	?assertEqual({ok, A5}, binary_to_block_announcement(
 			block_announcement_to_binary(A5))),
-	A6 = A#block_announcement{ recall_byte2 = 1, recall_byte = 2 },
+	A6 = A#block_announcement{ recall_byte2 = 1, recall_byte = 2,
+			solution_hash = crypto:strong_rand_bytes(32) },
 	?assertEqual({ok, A6}, binary_to_block_announcement(
 			block_announcement_to_binary(A6))).
 

@@ -2040,7 +2040,8 @@ val_for_key(K, L) ->
 	end.
 
 handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = PrevH,
-		tx_prefixes = Prefixes, recall_byte = RecallByte, recall_byte2 = RecallByte2 }, Req) ->
+		tx_prefixes = Prefixes, recall_byte = RecallByte, recall_byte2 = RecallByte2,
+		solution_hash = SolutionH }, Req) ->
 	case ar_ignore_registry:member(H) of
 		true ->
 			{208, #{}, <<>>, Req};
@@ -2050,9 +2051,24 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 					{412, #{}, <<>>, Req};
 				#block{ height = Height } ->
 					Indices = collect_missing_tx_indices(Prefixes),
-					MissingChunk =
-						case RecallByte of
+					IsSolutionHashKnown =
+						case SolutionH of
 							undefined ->
+								false;
+							_ ->
+								case ar_block_cache:get_by_solution_hash(block_cache,
+										SolutionH) of
+									not_found ->
+										false;
+									_ ->
+										true
+								end
+						end,
+					MissingChunk =
+						case {IsSolutionHashKnown, RecallByte} of
+							{true, _} ->
+								false;
+							{false, undefined} ->
 								true;
 							_ ->
 								prometheus_counter:inc(block_announcement_reported_chunks),
@@ -2069,8 +2085,10 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 								end
 						end,
 					MissingChunk2 =
-						case RecallByte2 of
-							undefined ->
+						case {IsSolutionHashKnown, RecallByte2} of
+							{true, _} ->
+								false;
+							{false, undefined} ->
 								undefined;
 							_ ->
 								prometheus_counter:inc(block_announcement_reported_chunks),
