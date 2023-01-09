@@ -394,7 +394,8 @@
 	previous_block,
 	recall_byte,
 	tx_prefixes = [], % 8 byte prefixes of transaction identifiers.
-	recall_byte2
+	recall_byte2,
+	solution_hash
 }).
 
 %% @doc A reply to a block announcement when we are willing to receive this

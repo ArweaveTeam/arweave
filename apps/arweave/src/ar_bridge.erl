@@ -193,9 +193,12 @@ dequeue(Q) ->
 	end.
 
 send_to_worker(Peer, {JSON, B}, W) ->
-	#block{ height = Height, indep_hash = H, previous_block = PrevH, txs = TXs } = B,
+	#block{ height = Height, indep_hash = H, previous_block = PrevH, txs = TXs,
+			hash = SolutionH } = B,
 	Release = ar_peers:get_peer_release(Peer),
-	case Release >= 52 orelse Height >= ar_fork:height_2_6() of
+	Fork_2_6 = ar_fork:height_2_6(),
+	SolutionH2 = case Height >= ar_fork:height_2_6() of true -> SolutionH; _ -> undefined end,
+	case Release >= 52 orelse Height >= Fork_2_6 of
 		true ->
 			SendAnnouncementFun =
 				fun() ->
@@ -203,6 +206,7 @@ send_to_worker(Peer, {JSON, B}, W) ->
 							previous_block = PrevH,
 							recall_byte = B#block.recall_byte,
 							recall_byte2 = B#block.recall_byte2,
+							solution_hash = SolutionH2,
 							tx_prefixes = [ar_node_worker:tx_id_prefix(ID)
 									|| #tx{ id = ID } <- TXs] },
 					ar_http_iface_client:send_block_announcement(Peer, Announcement)
