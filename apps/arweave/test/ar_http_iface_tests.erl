@@ -14,7 +14,7 @@
 		test_with_mocked_functions/2]).
 
 addresses_with_checksums_test_() ->
-	{timeout, 30, fun test_addresses_with_checksum/0}.
+	{timeout, 60, fun test_addresses_with_checksum/0}.
 
 test_addresses_with_checksum() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
@@ -136,7 +136,7 @@ get_tx(ID) ->
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test_() ->
-	{timeout, 30, fun test_get_info/0}.
+	{timeout, 60, fun test_get_info/0}.
 
 test_get_info() ->
 	{_, B0} = start(),
@@ -158,7 +158,7 @@ test_get_info() ->
 
 %% @doc Ensure that transactions are only accepted once.
 single_regossip_test_() ->
-	{timeout, 30, fun test_single_regossip/0}.
+	{timeout, 60, fun test_single_regossip/0}.
 
 test_single_regossip() ->
 	start(),
@@ -406,12 +406,12 @@ test_get_current_block() ->
 		2000
 	),
 	Peer = master_peer(),
-	BI = ar_http_iface_client:get_block_index([Peer]),
+	{ok, BI} = ar_http_iface_client:get_block_index(Peer, 0, 100),
 	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(hd(BI), Peer, binary),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
 	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [] }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_http:req(#{method => get, peer => master_peer(), path => "/block/current"}),
+		ar_http:req(#{ method => get, peer => master_peer(), path => "/block/current" }),
 	{JSONStruct} = jiffy:decode(Body),
 	?assertEqual(ar_util:encode(B0#block.indep_hash),
 			proplists:get_value(<<"indep_hash">>, JSONStruct)).

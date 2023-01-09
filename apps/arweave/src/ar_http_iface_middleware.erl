@@ -16,6 +16,8 @@
 -define(MAX_SERIALIZED_RECENT_HASH_LIST_DIFF, 2400). % 50 * 48.
 -define(MAX_SERIALIZED_MISSING_TX_INDICES, 125). % Every byte encodes 8 positions.
 
+-define(MAX_BLOCK_INDEX_RANGE_SIZE, 10000).
+
 %%%===================================================================
 %%% Cowboy handler callbacks.
 %%%===================================================================
@@ -764,12 +766,19 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			BI = ar_node:get_block_index(),
-			{200, #{},
-				ar_serialize:jsonify(
-					ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI, Req))
-				),
-			Req}
+			case ar_node:get_height() >= ar_fork:height_2_6() of
+				true ->
+					{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
+				false ->
+					BI = ar_node:get_block_index(),
+					{200, #{},
+						ar_serialize:jsonify(
+							ar_serialize:block_index_to_json_struct(
+								format_bi_for_peer(BI, Req)
+							)
+						),
+					Req}
+			end
 	end;
 
 %% Return the current binary-encoded block index held by the node.
@@ -780,12 +789,24 @@ handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			BI = ar_node:get_block_index(),
-			Bin = ar_serialize:block_index_to_binary(BI),
-			{200, #{}, Bin, Req}
+			case ar_node:get_height() >= ar_fork:height_2_6() of
+				true ->
+					{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
+				false ->
+					BI = ar_node:get_block_index(),
+					Bin = ar_serialize:block_index_to_binary(BI),
+					{200, #{}, Bin, Req}
+			end
 	end;
 
 handle(<<"GET">>, [<<"hash_list">>, From, To], Req, _Pid) ->
+	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
+
+handle(<<"GET">>, [<<"hash_list2">>, From, To], Req, _Pid) ->
+	handle(<<"GET">>, [<<"block_index2">>, From, To], Req, _Pid);
+
+handle(<<"GET">>, [<<"block_index2">>, From, To], Req, _Pid) ->
+	erlang:put(encoding, binary),
 	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
 
 handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
@@ -794,16 +815,21 @@ handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
+			Props =
+				ets:select(
+					node_state,
+					[{{'$1', '$2'},
+						[{'or',
+							{'==', '$1', height},
+							{'==', '$1', recent_block_index}}], ['$_']}]
+				),
+			Height = proplists:get_value(height, Props),
+			RecentBI = proplists:get_value(recent_block_index, Props),
 			try
-				FromHeight = binary_to_integer(From),
-				ToHeight = binary_to_integer(To),
-				{Height, BI} = ar_node:get_block_index_and_height(),
-				{_, BI2} = lists:split(Height - ToHeight, BI),
-				BI3 = lists:sublist(BI2, ToHeight - FromHeight + 1),
-				{200, #{},
-					ar_serialize:jsonify(
-						ar_serialize:block_index_to_json_struct(
-							format_bi_for_peer(BI3, Req))), Req}
+				Start = binary_to_integer(From),
+				End = binary_to_integer(To),
+				Encoding = case erlang:get(encoding) of undefined -> json; Enc -> Enc end,
+				handle_get_block_index_range(Start, End, Height, RecentBI, Req, Encoding)
 			catch _:_ ->
 				{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
 			end
@@ -1176,6 +1202,46 @@ format_bi_for_peer(BI, Req) ->
 	case cowboy_req:header(<<"x-block-format">>, Req, <<"2">>) of
 		<<"2">> -> ?BI_TO_BHL(BI);
 		_ -> BI
+	end.
+
+handle_get_block_index_range(Start, _End, _CurrentHeight, _RecentBI, Req, _Encoding)
+		when Start < 0 ->
+	{400, #{}, jiffy:encode(#{ error => negative_start }), Req};
+handle_get_block_index_range(Start, End, _CurrentHeight, _RecentBI, Req, _Encoding)
+		when Start > End ->
+	{400, #{}, jiffy:encode(#{ error => start_bigger_than_end }), Req};
+handle_get_block_index_range(Start, End, _CurrentHeight, _RecentBI, Req, _Encoding)
+		when End - Start + 1 > ?MAX_BLOCK_INDEX_RANGE_SIZE ->
+	{400, #{}, jiffy:encode(#{ error => range_too_big,
+			max_range_size => ?MAX_BLOCK_INDEX_RANGE_SIZE }), Req};
+handle_get_block_index_range(Start, _End, CurrentHeight, _RecentBI, Req, _Encoding)
+		when Start > CurrentHeight ->
+	{400, #{}, jiffy:encode(#{ error => start_too_big }), Req};
+handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding) ->
+	CheckpointHeight = CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT + 1,
+	RecentRange =
+		case End >= CheckpointHeight of
+			true ->
+				Top = min(CurrentHeight, End),
+				Range1 = lists:nthtail(CurrentHeight - Top, RecentBI),
+				lists:sublist(Range1, min(Top - Start + 1,
+						?STORE_BLOCKS_BEHIND_CURRENT - (CurrentHeight - Top)));
+			false ->
+				[]
+		end,
+	Range =
+		case Start < CheckpointHeight of
+			true ->
+				RecentRange ++ ar_block_index:get_range(Start, min(End, CheckpointHeight - 1));
+			false ->
+				RecentRange
+		end,
+	case Encoding of
+		binary ->
+			{200, #{}, ar_serialize:block_index_to_binary(Range), Req};
+		json ->
+			{200, #{}, ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(
+					format_bi_for_peer(Range, Req))), Req}
 	end.
 
 sendfile(Filename) ->
@@ -2210,9 +2276,14 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 			{404, #{}, <<"Not Found.">>, Req};
 		B ->
 			ok = ar_semaphore:acquire(get_block_index, infinity),
-			CurrentBI = ar_node:get_block_index(),
-			HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
-			{200, #{}, ar_serialize:jsonify(lists:map(fun ar_util:encode/1, HL)), Req}
+			case ar_node:get_height() >= ar_fork:height_2_6() of
+				true ->
+					{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
+				false ->
+					CurrentBI = ar_node:get_block_index(),
+					HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
+					{200, #{}, ar_serialize:jsonify(lists:map(fun ar_util:encode/1, HL)), Req}
+			end
 	end;
 %% @doc Return the wallet list associated with a block.
 process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
@@ -2224,8 +2295,8 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 		B ->
 			{ok, Config} = application:get_env(arweave, config),
 			case {B#block.height >= ar_fork:height_2_2(),
-					lists:member(serve_wallet_lists, Config#config.disable)} of
-				{true, true} ->
+					lists:member(serve_wallet_lists, Config#config.enable)} of
+				{true, false} ->
 					{400, #{},
 						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
 						Req};
