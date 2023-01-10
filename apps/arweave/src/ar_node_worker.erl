@@ -1215,7 +1215,8 @@ pick_txs(TXIDs, TXs) ->
 
 pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) ->
 	#block{ price_history = PriceHistory } = PrevB,
-	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
+	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT, PrevB#block.wallet_list,
+			PrevB#block.denomination),
 	Rate = ar_pricing:usd_to_ar_rate(PrevB),
 	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
 	Denomination = PrevB#block.denomination,
@@ -1756,7 +1757,8 @@ start_2_5_mining(State) ->
 	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	{ok, Config} = application:get_env(arweave, config),
 	RewardAddr = maps:get(reward_addr, State2, Config#config.mining_addr),
-	Miner = ar_mine:start({B, collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
+	Miner = ar_mine:start({B, collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT,
+			B#block.wallet_list, 1),
 			RewardAddr, Tags, BlockAnchors, RecentTXMap, PartitionUpperBound, IOThreads}),
 	?LOG_INFO([{event, started_mining}]),
 	State2#{ miner_2_5 => Miner }.
@@ -1774,13 +1776,13 @@ may_be_start_2_5_io_threads(#{ io_threads := IOThreads } = State) ->
 start_2_5_io_threads() ->
 	ar_mine:start_io_threads().
 
-collect_mining_transactions(Limit) ->
+collect_mining_transactions(Limit, RootHash, Denomination) ->
 	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-	collect_mining_transactions(Limit, Set, []).
+	collect_mining_transactions(Limit, Set, [], #{}, RootHash, Denomination, sets:new()).
 
-collect_mining_transactions(0, _Set, TXs) ->
+collect_mining_transactions(0, _Set, TXs, _Accounts, _RootHash, _Denomination, _PickedIDs) ->
 	TXs;
-collect_mining_transactions(Limit, Set, TXs) ->
+collect_mining_transactions(Limit, Set, TXs, Accounts, RootHash, Denomination, PickedIDs) ->
 	case gb_sets:is_empty(Set) of
 		true ->
 			TXs;
@@ -1789,10 +1791,75 @@ collect_mining_transactions(Limit, Set, TXs) ->
 			case Status of
 				ready_for_mining ->
 					[{_, TX}] = ets:lookup(node_state, {tx, TXID}),
-					collect_mining_transactions(Limit - 1, Set2, [TX | TXs]);
+					case apply_picked_tx(TX, Accounts, RootHash, Denomination, PickedIDs) of
+						{ok, Accounts2} ->
+							PickedIDs2 = sets:add_element(TXID, PickedIDs),
+							collect_mining_transactions(Limit - 1, Set2, [TX | TXs],
+									Accounts2, RootHash, Denomination, PickedIDs2);
+						error ->
+							collect_mining_transactions(Limit, Set2, TXs, Accounts, RootHash,
+									Denomination, PickedIDs)
+					end;
 				_ ->
-					collect_mining_transactions(Limit, Set2, TXs)
+					collect_mining_transactions(Limit, Set2, TXs, Accounts, RootHash,
+							Denomination, PickedIDs)
 			end
+	end.
+
+-ifdef(DEBUG).
+	apply_picked_tx(#tx{ signature = <<>> } = TX, Accounts, RootHash, Denomination,
+			PickedIDs) ->
+		{ok, Accounts};
+	apply_picked_tx(TX, Accounts, RootHash, Denomination, PickedIDs) ->
+		apply_picked_tx2(TX, Accounts, RootHash, Denomination, PickedIDs).
+-else.
+	apply_picked_tx(TX, Accounts, RootHash, Denomination, PickedIDs) ->
+		apply_picked_tx2(TX, Accounts, RootHash, Denomination, PickedIDs).
+-endif.
+
+apply_picked_tx2(TX, Accounts, RootHash, Denomination, PickedIDs) ->
+	case sets:is_element(TX#tx.last_tx, PickedIDs) of
+		true ->
+			error;
+		false ->
+			apply_picked_tx2(TX, Accounts, RootHash, Denomination)
+	end.
+
+apply_picked_tx2(TX, Accounts, RootHash, Denomination) ->
+	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Spent = TX#tx.reward + TX#tx.quantity,
+	LastTX = TX#tx.last_tx,
+	TXDenomination = TX#tx.denomination,
+	TXID = TX#tx.id,
+	case maps:get(Origin, Accounts, not_found) of
+		{Balance, LastTX2} when byte_size(LastTX) == 48 orelse LastTX == LastTX2 ->
+			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
+			Spent2 = ar_pricing:redenominate(Spent, TXDenomination, Denomination),
+			case Spent2 > Balance2 of
+				true ->
+					error;
+				_ ->
+					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination} }}
+			end;
+		{Balance, LastTX2, AccountDenomination}
+				when byte_size(LastTX) == 48 orelse LastTX == LastTX2 ->
+			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
+			Spent2 = ar_pricing:redenominate(Spent, TXDenomination, Denomination),
+			case Spent2 > Balance2 of
+				true ->
+					error;
+				_ ->
+					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination} }}
+			end;
+		not_found ->
+			case ar_wallets:get(RootHash, Origin) of
+				#{ Origin := Value } ->
+					apply_picked_tx2(TX, Accounts#{ Origin => Value }, RootHash, Denomination);
+				_ ->
+					error
+			end;
+		_ ->
+			error
 	end.
 
 record_processing_time(StartTimestamp) ->
