@@ -7,7 +7,7 @@
 		binary_to_block_announcement_response/1, block_announcement_response_to_binary/1,
 		tx_to_binary/1, binary_to_tx/1,
 		poa_to_binary/1, binary_to_poa/1,
-		block_index_to_binary/1, binary_to_block_index/1,
+		block_index_to_binary/1, binary_to_block_index/1, encode_double_signing_proof/1,
 		json_struct_to_poa/1, poa_to_json_struct/1,
 		tx_to_json_struct/1, json_struct_to_tx/1, json_struct_to_v1_tx/1,
 		etf_to_wallet_chunk_response/1, wallet_list_to_json_struct/3,
@@ -120,27 +120,12 @@ binary_to_block(_Bin) ->
 
 %% @doc Convert a block record into a JSON struct.
 block_to_json_struct(
-	#block{
-		nonce = Nonce,
-		previous_block = PrevHash,
-		timestamp = TimeStamp,
-		last_retarget = LastRetarget,
-		diff = Diff,
-		height = Height,
-		hash = Hash,
-		indep_hash = IndepHash,
-		txs = TXs,
-		tx_root = TXRoot,
-		wallet_list = WalletList,
-		reward_addr = RewardAddr,
-		tags = Tags,
-		reward_pool = RewardPool,
-		weave_size = WeaveSize,
-		block_size = BlockSize,
-		cumulative_diff = CDiff,
-		hash_list_merkle = MR,
-		poa = POA
-	} = B) ->
+	#block{ nonce = Nonce, previous_block = PrevHash, timestamp = TimeStamp,
+			last_retarget = LastRetarget, diff = Diff, height = Height, hash = Hash,
+			indep_hash = IndepHash, txs = TXs, tx_root = TXRoot, wallet_list = WalletList,
+			reward_addr = RewardAddr, tags = Tags, reward_pool = RewardPool,
+			weave_size = WeaveSize, block_size = BlockSize, cumulative_diff = CDiff,
+			hash_list_merkle = MR, poa = POA } = B) ->
 	{JSONDiff, JSONCDiff} =
 		case Height >= ar_fork:height_1_8() of
 			true ->
@@ -206,7 +191,8 @@ block_to_json_struct(
 		case Height >= ar_fork:height_2_5() of
 			true ->
 				{RateDividend, RateDivisor} = B#block.usd_to_ar_rate,
-				{ScheduledRateDividend, ScheduledRateDivisor} = B#block.scheduled_usd_to_ar_rate,
+				{ScheduledRateDividend,
+						ScheduledRateDivisor} = B#block.scheduled_usd_to_ar_rate,
 				[
 					{usd_to_ar_rate,
 						[integer_to_binary(RateDividend), integer_to_binary(RateDivisor)]},
@@ -231,6 +217,21 @@ block_to_json_struct(
 				KryderPlusRateMultiplierLatch = B#block.kryder_plus_rate_multiplier_latch,
 				Denomination = B#block.denomination,
 				RedenominationHeight = B#block.redenomination_height,
+				DoubleSigningProof =
+					case B#block.double_signing_proof of
+						undefined ->
+							{[]};
+						{Key, Sig1, CDiff1, PrevCDiff1, Preimage1, Sig2, CDiff2,
+								PrevCDiff2, Preimage2} ->
+							{[{pub_key, ar_util:encode(Key)}, {sig1, ar_util:encode(Sig1)},
+									{cdiff1, integer_to_binary(CDiff1)},
+									{prev_cdiff1, integer_to_binary(PrevCDiff1)},
+									{preimage1, ar_util:encode(Preimage1)},
+									{sig2, ar_util:encode(Sig2)},
+									{cdiff2, integer_to_binary(CDiff2)},
+									{prev_cdiff2, integer_to_binary(PrevCDiff2)},
+									{preimage2, ar_util:encode(Preimage2)}]}
+					end,
 				JSONElements6 =
 					[{hash_preimage, ar_util:encode(B#block.hash_preimage)},
 							{recall_byte, integer_to_binary(B#block.recall_byte)},
@@ -253,7 +254,8 @@ block_to_json_struct(
 							{kryder_plus_rate_multiplier_latch,
 									integer_to_binary(KryderPlusRateMultiplierLatch)},
 							{denomination, integer_to_binary(Denomination)},
-							{redenomination_height, RedenominationHeight} | JSONElements4],
+							{redenomination_height, RedenominationHeight},
+							{double_signing_proof, DoubleSigningProof} | JSONElements4],
 				case B#block.recall_byte2 of
 					undefined ->
 						JSONElements6;
@@ -270,16 +272,17 @@ price_history_to_binary(PriceHistory) ->
 
 price_history_to_binary([], IOList) ->
 	iolist_to_binary(IOList);
-price_history_to_binary([{HashRate, Reward, Denomination} | PriceHistory], IOList) ->
-	price_history_to_binary(PriceHistory, [ar_serialize:encode_int(HashRate, 8),
+price_history_to_binary([{Addr, HashRate, Reward, Denomination} | PriceHistory], IOList) ->
+	price_history_to_binary(PriceHistory, [Addr, ar_serialize:encode_int(HashRate, 8),
 			ar_serialize:encode_int(Reward, 8), << Denomination:24 >> | IOList]).
 
 binary_to_price_history(Bin) ->
 	binary_to_price_history(Bin, []).
 
-binary_to_price_history(<< HashRateSize:8, HashRate:(HashRateSize * 8), RewardSize:8,
-		Reward:(RewardSize * 8), Denomination:24, Rest/binary >>, PriceHistory) ->
-	binary_to_price_history(Rest, [{HashRate, Reward, Denomination} | PriceHistory]);
+binary_to_price_history(<< Addr:32/binary, HashRateSize:8, HashRate:(HashRateSize * 8),
+		RewardSize:8, Reward:(RewardSize * 8), Denomination:24, Rest/binary >>,
+		PriceHistory) ->
+	binary_to_price_history(Rest, [{Addr, HashRate, Reward, Denomination} | PriceHistory]);
 binary_to_price_history(<<>>, PriceHistory) ->
 	{ok, PriceHistory};
 binary_to_price_history(_Rest, _PriceHistory) ->
@@ -364,6 +367,16 @@ binary_to_nonce_limiter_update_response(<< SessionFound:8, StepNumberSize:8,
 binary_to_nonce_limiter_update_response(_Bin) ->
 	{error, invalid2}.
 
+encode_double_signing_proof(undefined) ->
+	<< 0:8 >>;
+encode_double_signing_proof(Proof) ->
+	{Key, Sig1, CDiff1, PrevCDiff1, Preimage1, Sig2, CDiff2, PrevCDiff2, Preimage2} = Proof,
+	<< 1:8, Key:512/binary, Sig1:512/binary,
+		(ar_serialize:encode_int(CDiff1, 16))/binary,
+		(ar_serialize:encode_int(PrevCDiff1, 16))/binary, Preimage1:64/binary,
+		Sig2:512/binary, (ar_serialize:encode_int(CDiff2, 16))/binary,
+		(ar_serialize:encode_int(PrevCDiff2, 16))/binary, Preimage2:64/binary >>.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -378,7 +391,8 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 			price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
 			kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 			kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
-			denomination = Denomination, redenomination_height = RedenominationHeight } = B) ->
+			denomination = Denomination, redenomination_height = RedenominationHeight,
+			double_signing_proof = DoubleSigningProof } = B) ->
 	RewardKey = case B#block.reward_key of undefined -> <<>>; {_Type, Key} -> Key end,
 	case Height >= ar_fork:height_2_6() of
 		false ->
@@ -395,7 +409,8 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 				(encode_int(ScheduledPricePerGiBMinute, 8))/binary,
 				PriceHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
 				KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8,
-				Denomination:24, (encode_int(RedenominationHeight, 8))/binary >>
+				Denomination:24, (encode_int(RedenominationHeight, 8))/binary,
+				(encode_double_signing_proof(DoubleSigningProof))/binary >>
 	end.
 
 encode_nonce_limiter_info(#nonce_limiter_info{ output = Output, global_step_number = N,
@@ -518,31 +533,40 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 		PriceHistoryHash:32/binary, DebtSupplySize:8, DebtSupply:(DebtSupplySize * 8),
 		KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8,
 		Denomination:24, RedenominationHeightSize:8,
-		RedenominationHeight:(RedenominationHeightSize * 8) >>) ->
-	%% The only block where recall_byte may be undefined is the genesis block of a new weave.
-	RecallByte_2 = case RecallByteSize of 0 -> undefined; _ -> RecallByte end,
-	Height = B#block.height,
-	Nonce = binary:decode_unsigned(B#block.nonce, big),
-	NonceLimiterInfo = #nonce_limiter_info{ output = NonceLimiterOutput,
-			prev_output = PrevOutput, global_step_number = GlobalStepNumber, seed = Seed,
-			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
-			next_partition_upper_bound = NextPartitionUpperBound,
-			last_step_checkpoints = parse_checkpoints(LastCheckpoints, Height),
-			checkpoints = parse_checkpoints(Checkpoints, Height) },
-	RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
-	{ok, B#block{ hash_preimage = HashPreimage, recall_byte = RecallByte_2,
-			reward = Reward, nonce = Nonce, recall_byte2 = RecallByte2_2,
-			previous_solution_hash = PreviousSolutionHash,
-			signature = Sig, partition_number = PartitionNumber,
-			reward_key = {{?RSA_SIGN_ALG, 65537}, RewardKey},
-			nonce_limiter_info = NonceLimiterInfo,
-			poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
-			price_per_gib_minute = PricePerGiBMinute,
-			scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
-			price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
-			kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
-			kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
-			denomination = Denomination, redenomination_height = RedenominationHeight }};
+		RedenominationHeight:(RedenominationHeightSize * 8),
+		Rest/binary >>) ->
+	case parse_double_signing_proof(Rest) of
+		{error, _} = Error ->
+			Error;
+		{ok, DoubleSigningProof} ->
+			%% The only block where recall_byte may be undefined is the genesis block
+			%% of a new weave.
+			RecallByte_2 = case RecallByteSize of 0 -> undefined; _ -> RecallByte end,
+			Height = B#block.height,
+			Nonce = binary:decode_unsigned(B#block.nonce, big),
+			NonceLimiterInfo = #nonce_limiter_info{ output = NonceLimiterOutput,
+					prev_output = PrevOutput, global_step_number = GlobalStepNumber,
+					seed = Seed, next_seed = NextSeed,
+					partition_upper_bound = PartitionUpperBound,
+					next_partition_upper_bound = NextPartitionUpperBound,
+					last_step_checkpoints = parse_checkpoints(LastCheckpoints, Height),
+					checkpoints = parse_checkpoints(Checkpoints, Height) },
+			RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
+			{ok, B#block{ hash_preimage = HashPreimage, recall_byte = RecallByte_2,
+					reward = Reward, nonce = Nonce, recall_byte2 = RecallByte2_2,
+					previous_solution_hash = PreviousSolutionHash,
+					signature = Sig, partition_number = PartitionNumber,
+					reward_key = {{?RSA_SIGN_ALG, 65537}, RewardKey},
+					nonce_limiter_info = NonceLimiterInfo,
+					poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
+					price_per_gib_minute = PricePerGiBMinute,
+					scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
+					price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
+					kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
+					kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
+					denomination = Denomination, redenomination_height = RedenominationHeight,
+					double_signing_proof = DoubleSigningProof }}
+	end;
 parse_block_2_6_fields(_B, _Rest) ->
 	{error, invalid_input4}.
 
@@ -586,6 +610,18 @@ parse_block_transactions(N, << Size:24, Bin:Size/binary, Rest/binary >>, TXs)
 	end;
 parse_block_transactions(_N, _Rest, _TXs) ->
 	{error, invalid_transactions2_input}.
+
+parse_double_signing_proof(<< 0:8 >>) ->
+	{ok, undefined};
+parse_double_signing_proof(<< 1:8, Key:512/binary, Sig1:512/binary,
+		CDiff1Size:16, CDiff1:(CDiff1Size * 8),
+		PrevCDiff1Size:16, PrevCDiff1:(PrevCDiff1Size * 8),
+		Preimage1:64/binary, Sig2:512/binary, CDiff2Size:16, CDiff2:(CDiff2Size * 8),
+		PrevCDiff2Size:16, PrevCDiff2:(PrevCDiff2Size * 8),
+		Preimage2:64/binary >>) ->
+	{ok, {Key, Sig1, CDiff1, PrevCDiff1, Preimage1, Sig2, CDiff2, PrevCDiff2, Preimage2}};
+parse_double_signing_proof(_Bin) ->
+	{error, invalid_double_signing_proof_input}.
 
 parse_tx(<< TXID:32/binary >>) ->
 	{ok, TXID};
@@ -1149,9 +1185,10 @@ etf_to_wallet_chunk_response_unsafe(ETF) ->
 		fun	({Addr, {Balance, LastTX}})
 						when is_binary(Addr), is_binary(LastTX), is_integer(Balance) ->
 				ok;
-			({Addr, {Balance, LastTX, Denomination}})
+			({Addr, {Balance, LastTX, Denomination, MiningPermission}})
 						when is_binary(Addr), is_binary(LastTX), is_integer(Balance),
-								is_integer(Denomination), Denomination > 1 ->
+								is_integer(Denomination), Denomination > 1,
+								is_boolean(MiningPermission) ->
 				ok
 		end,
 		Wallets
@@ -1188,9 +1225,10 @@ wallet_list_to_json_struct(RewardAddr, IsRewardAddrNew, WL) ->
 wallet_to_json_struct(Address, {Balance, LastTX}) ->
 	{[{address, ar_util:encode(Address)}, {balance, list_to_binary(integer_to_list(Balance))},
 			{last_tx, ar_util:encode(LastTX)}]};
-wallet_to_json_struct(Address, {Balance, LastTX, Denomination}) ->
+wallet_to_json_struct(Address, {Balance, LastTX, Denomination, MiningPermission}) ->
 	{[{address, ar_util:encode(Address)}, {balance, list_to_binary(integer_to_list(Balance))},
-			{last_tx, ar_util:encode(LastTX)}, {denomination, Denomination}]}.
+			{last_tx, ar_util:encode(LastTX)}, {denomination, Denomination},
+			{mining_permission, MiningPermission}]}.
 
 %% @doc Convert parsed JSON from fields into a valid wallet list.
 json_struct_to_wallet_list(JSON) when is_binary(JSON) ->
@@ -1213,7 +1251,9 @@ json_struct_to_wallet({Wallet}) ->
 		undefined ->
 			{Address, {Balance, LastTX}};
 		Denomination when is_integer(Denomination), Denomination > 1 ->
-			{Address, {Balance, LastTX, Denomination}}
+			MiningPermission = find_value(<<"mining_permission">>, Wallet),
+			true = is_boolean(MiningPermission),
+			{Address, {Balance, LastTX, Denomination, MiningPermission}}
 	end.
 
 %% @doc Find the value associated with a key in parsed a JSON structure list.

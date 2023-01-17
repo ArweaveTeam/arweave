@@ -235,9 +235,12 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 					reward_key = element(2, Wallet), recall_byte = RecallByte, nonce = 0,
 					recall_byte2 = undefined, poa = #poa{ chunk = Chunk, data_path = DataPath,
 							tx_path = TXPath } },
+			PrevCDiff = PrevB#block.cumulative_diff,
 			SignedH = ar_block:generate_signed_hash(B3),
-			Signature = ar_wallet:sign(element(1, Wallet),
-					<< SignedH/binary, PrevSolutionH/binary >>),
+			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
+					(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
+					SignedH/binary >>,
+			Signature = ar_wallet:sign(element(1, Wallet), SignaturePreimage),
 			B3#block{ indep_hash = ar_block:indep_hash2(SignedH, Signature),
 					signature = Signature };
 		false ->

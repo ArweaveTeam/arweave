@@ -163,6 +163,7 @@ single_regossip_test_() ->
 test_single_regossip() ->
 	start(),
 	slave_start(),
+	disconnect_from_slave(),
 	TX = ar_tx:new(),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -186,7 +187,10 @@ test_single_regossip() ->
 	).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
-node_blacklisting_get_spammer_test() ->
+node_blacklisting_get_spammer_test_() ->
+	{timeout, 10, fun test_node_blacklisting_get_spammer/0}.
+
+test_node_blacklisting_get_spammer() ->
 	{ok, Config} = application:get_env(arweave, config),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
 	node_blacklisting_test_frame(
@@ -197,7 +201,10 @@ node_blacklisting_get_spammer_test() ->
 	).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
-node_blacklisting_post_spammer_test() ->
+node_blacklisting_post_spammer_test_() ->
+	{timeout, 10, fun test_node_blacklisting_post_spammer/0}.
+
+test_node_blacklisting_post_spammer() ->
 	{ok, Config} = application:get_env(arweave, config),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_tx_binary),
 	NErrors = 11,
@@ -630,6 +637,7 @@ test_rejects_invalid_blocks_pre_fork_2_6() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
 	start(B0),
 	{_Slave, _} = slave_start(B0),
+	disconnect_from_slave(),
 	slave_mine(),
 	Peer = {127, 0, 0, 1, 1984},
 	BI = ar_test_node:assert_slave_wait_until_height(1),
@@ -660,6 +668,7 @@ test_rejects_invalid_blocks() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	{_Slave, _} = slave_start(B0),
+	disconnect_from_slave(),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
@@ -688,7 +697,7 @@ test_rejects_invalid_blocks() ->
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
 			nonce_limiter_info = Info1#nonce_limiter_info{
-				global_step_number = 100000 } }, Key),
+				global_step_number = 100000 } }, B0, Key),
 	post_block(B3, invalid_nonce_limiter_global_step_number),
 	%% Nonce limiter output lower than that of the previous block.
 	B4 = sign_block(B1#block{ previous_block = B1#block.indep_hash,
@@ -696,13 +705,14 @@ test_rejects_invalid_blocks() ->
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
 			height = B1#block.height + 1,
-			nonce_limiter_info = Info1#nonce_limiter_info{ global_step_number = 1 } }, Key),
+			nonce_limiter_info = Info1#nonce_limiter_info{ global_step_number = 1 } },
+			B1, Key),
 	post_block(B4, invalid_nonce_limiter_global_step_number),
 	B1SolutionH = B1#block.hash,
 	B1SolutionNum = binary:decode_unsigned(B1SolutionH),
 	B5 = sign_block(B1#block{ previous_block = B1#block.indep_hash,
 			height = B1#block.height + 1,
-			hash = binary:encode_unsigned(B1SolutionNum - 1) }, Key),
+			hash = binary:encode_unsigned(B1SolutionNum - 1) }, B1, Key),
 	post_block(B5, invalid_nonce_limiter_global_step_number),
 	%% Correct hash, but invalid PoW.
 	InvalidKey = ar_wallet:new(),
@@ -711,7 +721,7 @@ test_rejects_invalid_blocks() ->
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
-			reward_key = element(2, InvalidKey) }, element(1, InvalidKey)),
+			reward_key = element(2, InvalidKey) }, B0, element(1, InvalidKey)),
 	timer:sleep(100 * 2), % ?THROTTLE_BY_IP_INTERVAL_MS * 2
 	post_block(B6, [invalid_hash_preimage, invalid_pow]),
 	?assertMatch({ok, {{<<"403">>, _}, _,
@@ -726,19 +736,19 @@ test_rejects_invalid_blocks() ->
 			%% a "quick pow" step which is quick to validate and somewhat expensive to
 			%% forge).
 			hash = crypto:strong_rand_bytes(32),
-			poa = (B1#block.poa)#poa{ chunk = <<"a">> } }, Key),
+			poa = (B1#block.poa)#poa{ chunk = <<"a">> } }, B0, Key),
 	post_block(B7, invalid_pow),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
 			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),
 	ar_blacklist_middleware:reset(),
-	B8 = sign_block(B1#block{ last_retarget = 100000 }, Key),
+	B8 = sign_block(B1#block{ last_retarget = 100000 }, B0, Key),
 	post_block(B8, invalid_last_retarget),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
 			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),
 	ar_blacklist_middleware:reset(),
-	B9 = sign_block(B1#block{ diff = 100000 }, Key),
+	B9 = sign_block(B1#block{ diff = 100000 }, B0, Key),
 	post_block(B9, invalid_difficulty),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
@@ -748,13 +758,13 @@ test_rejects_invalid_blocks() ->
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
-			nonce = 100 }, Key),
+			nonce = 100 }, B0, Key),
 	post_block(B10, invalid_nonce),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
 			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),
 	ar_blacklist_middleware:reset(),
-	B11_1 = sign_block(B1#block{ partition_number = 1 }, Key),
+	B11_1 = sign_block(B1#block{ partition_number = 1 }, B0, Key),
 	%% We might get invalid_hash_preimage occasionally, because the partition number
 	%% changes H0 which changes the solution hash which may happen to be lower than
 	%% the difficulty.
@@ -763,7 +773,7 @@ test_rejects_invalid_blocks() ->
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
-			partition_number = 1 }, Key),
+			partition_number = 1 }, B0, Key),
 	post_block(B11, [invalid_partition_number, invalid_hash_preimage]),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
@@ -771,7 +781,7 @@ test_rejects_invalid_blocks() ->
 	ar_blacklist_middleware:reset(),
 	B12 = sign_block(B1#block{
 			nonce_limiter_info = (B1#block.nonce_limiter_info)#nonce_limiter_info{
-					last_step_checkpoints = [crypto:strong_rand_bytes(32)] } }, Key),
+					last_step_checkpoints = [crypto:strong_rand_bytes(32)] } }, B0, Key),
 	%% Reset the node to the genesis block.
 	start(B0),
 	ok = ar_events:subscribe(block),
@@ -780,7 +790,7 @@ test_rejects_invalid_blocks() ->
 			<<"IP address blocked due to previous request.">>, _, _}},
 			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),
 	ar_blacklist_middleware:reset(),
-	B13 = sign_block(B1#block{ poa = (B1#block.poa)#poa{ data_path = <<>> } }, Key),
+	B13 = sign_block(B1#block{ poa = (B1#block.poa)#poa{ data_path = <<>> } }, B0, Key),
 	post_block(B13, invalid_poa),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
@@ -791,7 +801,7 @@ test_rejects_invalid_blocks() ->
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
 			nonce_limiter_info = (B1#block.nonce_limiter_info)#nonce_limiter_info{
-					next_seed = crypto:strong_rand_bytes(48) } }, Key),
+					next_seed = crypto:strong_rand_bytes(48) } }, B0, Key),
 	post_block(B14, invalid_nonce_limiter_seed_data),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
@@ -802,7 +812,7 @@ test_rejects_invalid_blocks() ->
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
 			nonce_limiter_info = (B1#block.nonce_limiter_info)#nonce_limiter_info{
-					partition_upper_bound = 10000000 } }, Key),
+					partition_upper_bound = 10000000 } }, B0, Key),
 	post_block(B15, invalid_nonce_limiter_seed_data),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
@@ -813,7 +823,7 @@ test_rejects_invalid_blocks() ->
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
 			nonce_limiter_info = (B1#block.nonce_limiter_info)#nonce_limiter_info{
-					next_partition_upper_bound = 10000000 } }, Key),
+					next_partition_upper_bound = 10000000 } }, B0, Key),
 	post_block(B16, invalid_nonce_limiter_seed_data),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
@@ -828,14 +838,101 @@ test_rejects_blocks_with_invalid_denomination() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	B2 = sign_block(B1#block{ denomination = 0 }, Key),
+	B2 = sign_block(B1#block{ denomination = 0 }, B0, Key),
 	post_block(B2, invalid_denomination).
+
+rejects_blocks_with_invalid_double_signing_proof_test_() ->
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+		fun test_rejects_blocks_with_invalid_double_signing_proof/0).
+
+test_rejects_blocks_with_invalid_double_signing_proof() ->
+	Key0 = ar_wallet:new(),
+	Addr0 = ar_wallet:to_address(Key0),
+	[B0] = ar_weave:init([{Addr0, ?AR(1000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
+	start(B0),
+	slave_start(B0),
+	disconnect_from_slave(),
+	{ok, Config} = slave_call(application, get_env, [arweave, config]),
+	ok = ar_events:subscribe(block),
+	{Key, _} = FullKey = slave_call(ar_wallet, load_key, [Config#config.mining_addr]),
+	TX0 = sign_tx(Key0, #{ target => ar_wallet:to_address(Key), quantity => ?AR(10) }),
+	assert_post_tx_to_slave(TX0),
+	assert_post_tx_to_master(TX0),
+	slave_mine(),
+	BI = ar_test_node:assert_slave_wait_until_height(1),
+	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
+	Random512 = crypto:strong_rand_bytes(512),
+	Random64 = crypto:strong_rand_bytes(64),
+	InvalidProof = {Random512, Random512, 2, 1, Random64, Random512, 3, 2, Random64},
+	B2 = sign_block(B1#block{ double_signing_proof = InvalidProof }, B0, Key),
+	post_block(B2, invalid_double_signing_proof_same_signature),
+	Random512_2 = crypto:strong_rand_bytes(512),
+	InvalidProof_2 = {Random512, Random512, 2, 1, Random64, Random512_2, 3, 2, Random64},
+	B2_2 = sign_block(B1#block{ double_signing_proof = InvalidProof_2 }, B0, Key),
+	post_block(B2_2, invalid_double_signing_proof_cdiff),
+	CDiff = B1#block.cumulative_diff,
+	PrevCDiff = B0#block.cumulative_diff,
+	SignedH = ar_block:generate_signed_hash(B1),
+	Preimage1 = << (B0#block.hash)/binary, SignedH/binary >>,
+	Preimage2 = << (B0#block.hash)/binary, (crypto:strong_rand_bytes(32))/binary >>,
+	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
+					(ar_serialize:encode_int(PrevCDiff, 16))/binary, Preimage2/binary >>,
+	Signature2 = ar_wallet:sign(Key, SignaturePreimage),
+	%% We cannot ban ourselves.
+	InvalidProof2 = {element(3, Key), B1#block.signature, CDiff, PrevCDiff, Preimage1,
+			Signature2, CDiff, PrevCDiff, Preimage2},
+	B3 = sign_block(B1#block{ double_signing_proof = InvalidProof2 }, B0, Key),
+	post_block(B3, invalid_double_signing_proof_same_address),
+	slave_mine(),
+	BI2 = ar_test_node:assert_slave_wait_until_height(2),
+	{ok, MasterConfig} = application:get_env(arweave, config),
+	Key2 = element(1, ar_wallet:load_key(MasterConfig#config.mining_addr)),
+	Preimage3 = << (B0#block.hash)/binary, (crypto:strong_rand_bytes(32))/binary >>,
+	Preimage4 = << (B0#block.hash)/binary, (crypto:strong_rand_bytes(32))/binary >>,
+	SignaturePreimage3 = << (ar_serialize:encode_int(CDiff, 16))/binary,
+					(ar_serialize:encode_int(PrevCDiff, 16))/binary, Preimage3/binary >>,
+	SignaturePreimage4 = << (ar_serialize:encode_int(CDiff, 16))/binary,
+					(ar_serialize:encode_int(PrevCDiff, 16))/binary, Preimage4/binary >>,
+	Signature3 = ar_wallet:sign(Key, SignaturePreimage3),
+	Signature4 = ar_wallet:sign(Key, SignaturePreimage4),
+	%% The account address is not in the price history.
+	InvalidProof3 = {element(3, Key2), Signature3, CDiff, PrevCDiff, Preimage3,
+			Signature4, CDiff, PrevCDiff, Preimage4},
+	B5 = sign_block(B1#block{ double_signing_proof = InvalidProof3 }, B0, Key),
+	post_block(B5, invalid_double_signing_proof_not_in_price_history),
+	connect_to_slave(),
+	wait_until_height(2),
+	B6 = slave_call(ar_storage, read_block, [hd(BI2)]),
+	B7 = sign_block(B6, B1, Key),
+	post_block(B7, valid),
+	ar_node:mine(),
+	BI3 = assert_slave_wait_until_height(3),
+	B8 = slave_call(ar_storage, read_block, [hd(BI3)]),
+	?assertNotEqual(undefined, B8#block.double_signing_proof),
+	RewardAddr = B8#block.reward_addr,
+	BannedAddr = ar_wallet:to_address(Key),
+	Accounts = ar_wallets:get(B8#block.wallet_list, [BannedAddr, RewardAddr]),
+	?assertMatch(#{ BannedAddr := {_, _, 1, false}, RewardAddr := {_, _} }, Accounts),
+	%% The banned address may still use their accounts for transfers/uploads.
+	Key3 = ar_wallet:new(),
+	Target = ar_wallet:to_address(Key3),
+	TX1 = sign_tx(FullKey, #{ last_tx => <<>>, quantity => 1, target => Target }),
+	TX2 = sign_tx(FullKey, #{ last_tx => get_tx_anchor(), data => <<"a">> }),
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, [TX1, TX2]),
+	ar_node:mine(),
+	BI4 = assert_slave_wait_until_height(4),
+	B9 = slave_call(ar_storage, read_block, [hd(BI4)]),
+	Accounts2 = ar_wallets:get(B9#block.wallet_list, [BannedAddr, Target]),
+	TXID = TX2#tx.id,
+	?assertEqual(2, length(B9#block.txs)),
+	?assertMatch(#{ Target := {1, <<>>}, BannedAddr := {_, TXID, 1, false} }, Accounts2).
 
 rejects_blocks_with_invalid_kryder_plus_rate_multiplier_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -845,13 +942,14 @@ test_rejects_blocks_with_invalid_kryder_plus_rate_multiplier() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	B2 = sign_block(B1#block{ kryder_plus_rate_multiplier = 0 }, Key),
+	B2 = sign_block(B1#block{ kryder_plus_rate_multiplier = 0 }, B0, Key),
 	post_block(B2, invalid_kryder_plus_rate_multiplier).
 
 rejects_blocks_with_invalid_kryder_plus_rate_multiplier_latch_test_() ->
@@ -862,13 +960,14 @@ test_rejects_blocks_with_invalid_kryder_plus_rate_multiplier_latch() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	B2 = sign_block(B1#block{ kryder_plus_rate_multiplier_latch = 2 }, Key),
+	B2 = sign_block(B1#block{ kryder_plus_rate_multiplier_latch = 2 }, B0, Key),
 	post_block(B2, invalid_kryder_plus_rate_multiplier_latch).
 
 rejects_blocks_with_invalid_endowment_pool_test_() ->
@@ -879,13 +978,14 @@ test_rejects_blocks_with_invalid_endowment_pool() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	B2 = sign_block(B1#block{ reward_pool = 2 }, Key),
+	B2 = sign_block(B1#block{ reward_pool = 2 }, B0, Key),
 	post_block(B2, invalid_reward_pool).
 
 rejects_blocks_with_invalid_debt_supply_test_() ->
@@ -896,13 +996,14 @@ test_rejects_blocks_with_invalid_debt_supply() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	B2 = sign_block(B1#block{ debt_supply = 100000000 }, Key),
+	B2 = sign_block(B1#block{ debt_supply = 100000000 }, B0, Key),
 	post_block(B2, invalid_debt_supply).
 
 rejects_blocks_with_invalid_miner_reward_test_() ->
@@ -913,19 +1014,21 @@ test_rejects_blocks_with_invalid_miner_reward() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
 	ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_node, get_current_block, []),
-	B2 = sign_block(B1#block{ reward = 0 }, Key),
+	B2 = sign_block(B1#block{ reward = 0 }, B0, Key),
 	post_block(B2, invalid_price_history_hash),
 	HashRate = ar_difficulty:get_hash_rate(B2#block.diff),
 	PriceHistory = tl(B2#block.price_history),
+	Addr = B2#block.reward_addr,
 	B3 = sign_block(B2#block{
-			price_history_hash = ar_block:price_history_hash([{HashRate, 0, 1} | PriceHistory])
-			}, Key),
+			price_history_hash = ar_block:price_history_hash([{Addr, HashRate, 0, 1}
+					| PriceHistory]) }, B0, Key),
 	post_block(B3, invalid_miner_reward).
 
 rejects_blocks_with_invalid_wallet_list_test_() ->
@@ -936,25 +1039,36 @@ test_rejects_blocks_with_invalid_wallet_list() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	B2 = sign_block(B1#block{ wallet_list = crypto:strong_rand_bytes(32) }, Key),
+	B2 = sign_block(B1#block{ wallet_list = crypto:strong_rand_bytes(32) }, B0, Key),
 	post_block(B2, invalid_wallet_list).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
-	post_block(B, [ExpectedResult]);
+	post_block(B, [ExpectedResult], ar_test_node:master_peer());
 post_block(B, ExpectedResults) ->
-	Peer = ar_test_node:master_peer(),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B)),
-	await_post_block(B, ExpectedResults).
+	post_block(B, ExpectedResults, ar_test_node:master_peer()).
 
-await_post_block(#block{ indep_hash = H } = B, ExpectedResults) ->
-	Peer = ar_test_node:master_peer(),
-	PostGossipFailureCodes = [invalid_denomination, invalid_reward_pool,
+post_block(B, ExpectedResults, Peer) ->
+	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B)),
+	await_post_block(B, ExpectedResults, Peer).
+
+await_post_block(B, ExpectedResults) ->
+	await_post_block(B, ExpectedResults, ar_test_node:master_peer()).
+
+await_post_block(#block{ indep_hash = H } = B, ExpectedResults, Peer) ->
+	PostGossipFailureCodes = [invalid_denomination,
+			invalid_double_signing_proof_same_signature, invalid_double_signing_proof_cdiff,
+			invalid_double_signing_proof_same_address,
+			invalid_double_signing_proof_not_in_price_history,
+			invalid_double_signing_proof_already_banned,
+			invalid_double_signing_proof_invalid_signature,
+			mining_address_banned, invalid_account_anchors, invalid_reward_pool,
 			invalid_miner_reward, invalid_debt_supply, invalid_price_history_hash,
 			invalid_kryder_plus_rate_multiplier_latch, invalid_kryder_plus_rate_multiplier,
 			invalid_wallet_list],
@@ -993,10 +1107,12 @@ await_post_block(#block{ indep_hash = H } = B, ExpectedResults) ->
 					[ExpectedResults])))
 	end.
 
-sign_block(B, Key) ->
+sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, Key) ->
 	SignedH = ar_block:generate_signed_hash(B),
-	Signature = ar_wallet:sign(Key,
-			<< SignedH/binary, (B#block.previous_solution_hash)/binary >>),
+	PrevCDiff = PrevB#block.cumulative_diff,
+	Signature = ar_wallet:sign(Key, << (ar_serialize:encode_int(CDiff, 16))/binary,
+		(ar_serialize:encode_int(PrevCDiff, 16))/binary,
+		(B#block.previous_solution_hash)/binary, SignedH/binary >>),
 	H = ar_block:indep_hash2(SignedH, Signature),
 	B#block{ indep_hash = H, signature = Signature }.
 
@@ -1009,6 +1125,7 @@ test_add_external_block_with_invalid_timestamp_pre_fork_2_6() ->
 	[B0] = ar_weave:init(),
 	start(B0),
 	{_Slave, _} = slave_start(B0),
+	disconnect_from_slave(),
 	slave_mine(),
 	BI = assert_slave_wait_until_height(1),
 	Peer = {127, 0, 0, 1, 1984},
@@ -1063,6 +1180,7 @@ test_add_external_block_with_invalid_timestamp() ->
 	[B0] = ar_weave:init(),
 	start(B0),
 	{_Slave, _} = slave_start(B0),
+	disconnect_from_slave(),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	slave_mine(),
@@ -1074,7 +1192,7 @@ test_add_external_block_with_invalid_timestamp() ->
 	%% Expect the timestamp too far from the future to be rejected.
 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
-	B2 = update_block_timestamp(B1, TooFarFutureTimestamp, Key),
+	B2 = update_block_timestamp(B1, B0, TooFarFutureTimestamp, Key),
 	ok = ar_events:subscribe(block),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B2)),
 	H = B2#block.indep_hash,
@@ -1086,12 +1204,12 @@ test_add_external_block_with_invalid_timestamp() ->
 	end,
 	%% Expect the timestamp from the future within the tolerance interval to be accepted.
 	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
-	B3 = update_block_timestamp(B1, OkFutureTimestamp, Key),
+	B3 = update_block_timestamp(B1, B0, OkFutureTimestamp, Key),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B3)),
 	%% Expect the timestamp too far behind the previous timestamp to be rejected.
 	PastTimestampTolerance = lists:sum([?JOIN_CLOCK_TOLERANCE * 2, ?CLOCK_DRIFT_MAX]),
 	TooFarPastTimestamp = B0#block.timestamp - PastTimestampTolerance - 1,
-	B4 = update_block_timestamp(B1, TooFarPastTimestamp, Key),
+	B4 = update_block_timestamp(B1, B0, TooFarPastTimestamp, Key),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B4)),
 	H2 = B4#block.indep_hash,
 	receive
@@ -1102,7 +1220,7 @@ test_add_external_block_with_invalid_timestamp() ->
 					"(invalid_timestamp).")
 	end,
 	OkPastTimestamp = B0#block.timestamp - PastTimestampTolerance + 1,
-	B5 = update_block_timestamp(B1, OkPastTimestamp, Key),
+	B5 = update_block_timestamp(B1, B0, OkPastTimestamp, Key),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B5)).
 
 update_block_timestamp_pre_2_6(B, Timestamp) ->
@@ -1119,8 +1237,8 @@ update_block_timestamp_pre_2_6(B, Timestamp) ->
 			H0, Chunk, Entropy, Height)) },
 	B3#block{ indep_hash = ar_block:indep_hash(B3) }.
 
-update_block_timestamp(B, Timestamp, Key) ->
-	sign_block(B#block{ timestamp = Timestamp }, Key).
+update_block_timestamp(B, PrevB, Timestamp, Key) ->
+	sign_block(B#block{ timestamp = Timestamp }, PrevB, Key).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test_() ->
@@ -1130,6 +1248,7 @@ test_add_tx_and_get_last() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	{_Node, _} = start(B0),
+	disconnect_from_slave(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
@@ -1210,6 +1329,7 @@ test_get_tx_status() ->
 	[B0] = ar_weave:init(),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
 	assert_post_tx_to_master(TX),
 	FetchStatus = fun() ->
@@ -1609,9 +1729,9 @@ test_resigned_solution() ->
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ tags = [<<"tag1">>] }, Key),
+	B2 = sign_block(B#block{ tags = [<<"tag1">>] }, B0, Key),
 	post_block(B2, [valid]),
-	B3 = sign_block(B#block{ tags = [<<"tag2">>] }, Key),
+	B3 = sign_block(B#block{ tags = [<<"tag2">>] }, B0, Key),
 	post_block(B3, [valid]),
 	assert_slave_wait_until_height(2),
 	B4 = slave_call(ar_node, get_current_block, []),
@@ -1628,12 +1748,12 @@ test_resigned_solution() ->
 			true ->
 				sign_block(B4#block{
 						hash_list_merkle = ar_block:compute_hash_list_merkle(B2),
-						previous_block = B2H }, Key);
+						previous_block = B2H }, B2, Key);
 			false ->
 				sign_block(B4#block{ previous_block = B2H,
 						hash_list_merkle = ar_block:compute_hash_list_merkle(B2),
 						nonce_limiter_info = Info4#nonce_limiter_info{ next_seed = B2H } },
-						Key)
+						B2, Key)
 		end,
 	B5H = B5#block.indep_hash,
 	post_block(B5, [valid]),
@@ -1651,6 +1771,7 @@ test_get_recent_hash_list_diff() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
 	start(B0),
 	slave_start(B0),
+	disconnect_from_slave(),
 	{ok, {{<<"404">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => get,
 		peer => master_peer(), path => "/recent_hash_list_diff",
 		headers => [], body => <<>> }),

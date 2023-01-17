@@ -128,7 +128,7 @@ check_last_tx(WalletList, TX) ->
 			false;
 		{_Balance, LastTX} ->
 			LastTX == TX#tx.last_tx;
-		{_Balance, LastTX, _Denomination} ->
+		{_Balance, LastTX, _Denomination, _MiningPermission} ->
 			LastTX == TX#tx.last_tx
 	end.
 -else.
@@ -143,7 +143,7 @@ check_last_tx(WalletList, TX) ->
 			false;
 		{_Balance, LastTX} ->
 			LastTX == TX#tx.last_tx;
-		{_Balance, LastTX, _Denomination} ->
+		{_Balance, LastTX, _Denomination, _MiningPermission} ->
 			LastTX == TX#tx.last_tx
 	end.
 -endif.
@@ -531,11 +531,11 @@ validate_overspend(TX, Accounts) ->
 			case maps:get(Addr, Accounts, not_found) of
 				{0, LastTX} when byte_size(LastTX) == 0 ->
 					false;
-				{0, LastTX, _Denomination} when byte_size(LastTX) == 0 ->
+				{0, LastTX, _Denomination, _MiningPermission} when byte_size(LastTX) == 0 ->
 					false;
 				{Quantity, _} when Quantity < 0 ->
 					false;
-				{Quantity, _, _Denomination} when Quantity < 0 ->
+				{Quantity, _, _Denomination, _MiningPermission} when Quantity < 0 ->
 					false;
 				not_found ->
 					false;

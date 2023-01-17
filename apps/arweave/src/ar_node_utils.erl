@@ -1,7 +1,7 @@
 %%% @doc Different utility functions for node and node worker.
 -module(ar_node_utils).
 
--export([apply_mining_reward/4, apply_tx/3, apply_txs/4, update_accounts/1, validate/6]).
+-export([apply_mining_reward/4, apply_tx/3, apply_txs/4, update_accounts/3, validate/6]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -41,29 +41,45 @@ apply_txs(Accounts, Denomination, TXs, Height) ->
 			WL
 	end.
 
-%% @doc Update the accounts by applying the new transactions and the mining reward.
-%% Return the new endowment pool, the miner reward, and updated accounts. It is sufficient
-%% to provide the source and the destination accounts of the transactions and the miner's
-%% account.
-update_accounts(Args) ->
-	{B, Accounts, EndowmentPool, DebtSupply, Rate, PricePerGiBMinute,
-			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination} = Args,
+%% @doc Distribute transaction fees across accounts and the endowment pool,
+%% reserve a reward for the current miner, release the reserved reward to the corresponding
+%% miner. If a double-signing proof is provided, ban the account and assign a
+%% reward to the prover.
+update_accounts(B, PrevB, Accounts) ->
+	EndowmentPool = PrevB#block.reward_pool,
+	Rate = ar_pricing:usd_to_ar_rate(PrevB),
+	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
+	KryderPlusRateMultiplierLatch = PrevB#block.kryder_plus_rate_multiplier_latch,
+	KryderPlusRateMultiplier = PrevB#block.kryder_plus_rate_multiplier,
+	Denomination = PrevB#block.denomination,
+	DebtSupply = PrevB#block.debt_supply,
 	TXs = B#block.txs,
 	{MinerReward, EndowmentPool2, DebtSupply2, KryderPlusRateMultiplierLatch2,
-			KryderPlusRateMultiplier2} =
+			KryderPlusRateMultiplier2} = Args =
 		get_miner_reward_and_endowment_pool({EndowmentPool, DebtSupply, TXs,
 				B#block.reward_addr, B#block.weave_size, B#block.height, B#block.timestamp,
 				Rate, PricePerGiBMinute, KryderPlusRateMultiplierLatch,
 				KryderPlusRateMultiplier, Denomination}),
-	Accounts2 = apply_mining_reward(apply_txs(Accounts, Denomination, TXs, B#block.height),
-			B#block.reward_addr, MinerReward, Denomination),
-	{EndowmentPool2, MinerReward, DebtSupply2, KryderPlusRateMultiplierLatch2,
-			KryderPlusRateMultiplier2, Accounts2}.
+	Accounts2 = apply_txs(Accounts, Denomination, TXs, B#block.height),
+	case B#block.height >= ar_fork:height_2_6() of
+		false ->
+			Accounts3 = apply_mining_reward(Accounts2, B#block.reward_addr, MinerReward,
+					Denomination),
+			case validate_account_anchors(Accounts3, B#block.txs) of
+				true ->
+					{ok, {EndowmentPool2, MinerReward, DebtSupply2,
+							KryderPlusRateMultiplierLatch2, KryderPlusRateMultiplier2,
+							Accounts3}};
+				false ->
+					{error, invalid_account_anchors}
+			end;
+		true ->
+			update_accounts2(B, PrevB, Accounts2, Args)
+	end.
 
-%% @doc Validate a block. The block has been already partially validated before gossip so
-%% we only validate here what we did not validate then. Also, we do not validate the
-%% nonce limiter chain here. Finally, the 'wallet_list', 'reward_pool', and 'reward' fields
-%% are validated in ar_node_worker:validate_wallet_list/5.
+%% @doc Perform the last stage of block validation. The majority of the checks
+%% are made in ar_block_pre_validator.erl, ar_nonce_limiter.erl, and
+%% ar_node_utils:update_accounts/3.
 validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 	?LOG_INFO([{event, validating_block}, {hash, ar_util:encode(NewB#block.indep_hash)}]),
 	case timer:tc(
@@ -90,14 +106,20 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 add_amount_to_account(Accounts, Addr, Amount, Denomination) ->
 	case maps:get(Addr, Accounts, not_found) of
 		not_found ->
-			update_account(Addr, Amount, <<>>, Denomination, Accounts);
+			update_account(Addr, Amount, <<>>, Denomination, true, Accounts);
 		{Balance, LastTX} ->
 			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
-			update_account(Addr, Balance2 + Amount, LastTX, Denomination, Accounts);
-		{Balance, LastTX, AccountDenomination} ->
+			update_account(Addr, Balance2 + Amount, LastTX, Denomination, true, Accounts);
+		{Balance, LastTX, AccountDenomination, MiningPermission} ->
 			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
-			update_account(Addr, Balance2 + Amount, LastTX, Denomination, Accounts)
+			update_account(Addr, Balance2 + Amount, LastTX, Denomination, MiningPermission,
+					Accounts)
 	end.
+
+update_account(Addr, Balance, LastTX, 1, true, Accounts) ->
+	maps:put(Addr, {Balance, LastTX}, Accounts);
+update_account(Addr, Balance, LastTX, Denomination, MiningPermission, Accounts) ->
+	maps:put(Addr, {Balance, LastTX, Denomination, MiningPermission}, Accounts).
 
 apply_tx2(Accounts, Denomination, TX) ->
 	update_recipient_balance(update_sender_balance(Accounts, Denomination, TX), Denomination,
@@ -117,19 +139,15 @@ update_sender_balance(Accounts, Denomination,
 		{Balance, _LastTX} ->
 			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
 			Spent = ar_pricing:redenominate(Qty + Reward, TXDenomination, Denomination),
-			update_account(Addr, Balance2 - Spent, ID, Denomination, Accounts);
-		{Balance, _LastTX, AccountDenomination} ->
+			update_account(Addr, Balance2 - Spent, ID, Denomination, true, Accounts);
+		{Balance, _LastTX, AccountDenomination, MiningPermission} ->
 			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
 			Spent = ar_pricing:redenominate(Qty + Reward, TXDenomination, Denomination),
-			update_account(Addr, Balance2 - Spent, ID, Denomination, Accounts);
+			update_account(Addr, Balance2 - Spent, ID, Denomination, MiningPermission,
+					Accounts);
 		_ ->
 			Accounts
 	end.
-
-update_account(Addr, Balance, LastTX, 1, Accounts) ->
-	maps:put(Addr, {Balance, LastTX}, Accounts);
-update_account(Addr, Balance, LastTX, Denomination, Accounts) ->
-	maps:put(Addr, {Balance, LastTX, Denomination}, Accounts).
 
 update_recipient_balance(Accounts, _Denomination, #tx{ quantity = 0 }) ->
 	Accounts;
@@ -142,22 +160,18 @@ update_recipient_balance(Accounts, Denomination,
 	case maps:get(To, Accounts, not_found) of
 		not_found ->
 			Qty2 = ar_pricing:redenominate(Qty, TXDenomination, Denomination),
-			update_account(To, Qty2, <<>>, Denomination, Accounts);
+			update_account(To, Qty2, <<>>, Denomination, true, Accounts);
 		{Balance, LastTX} ->
 			Qty2 = ar_pricing:redenominate(Qty, TXDenomination, Denomination),
 			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
-			update_account(To, Balance2 + Qty2, LastTX, Denomination, Accounts);
-		{Balance, LastTX, AccountDenomination} ->
+			update_account(To, Balance2 + Qty2, LastTX, Denomination, true, Accounts);
+		{Balance, LastTX, AccountDenomination, MiningPermission} ->
 			Qty2 = ar_pricing:redenominate(Qty, TXDenomination, Denomination),
 			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
-			update_account(To, Balance2 + Qty2, LastTX, Denomination, Accounts)
+			update_account(To, Balance2 + Qty2, LastTX, Denomination, MiningPermission,
+					Accounts)
 	end.
 
-do_validate(NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
-	validate_block(weave_size, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
-			PartitionUpperBound}).
-
-%% @doc Return the miner reward and the new endowment pool.
 get_miner_reward_and_endowment_pool(Args) ->
 	{EndowmentPool, DebtSupply, TXs, RewardAddr, WeaveSize, Height, Timestamp, Rate,
 			PricePerGiBMinute, KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier,
@@ -173,6 +187,229 @@ get_miner_reward_and_endowment_pool(Args) ->
 					EndowmentPool, TXs, RewardAddr, WeaveSize, Height, Timestamp, Rate}),
 			{MinerReward, EndowmentPool2, 0, 0, 1}
 	end.
+
+validate_account_anchors(Accounts, TXs) ->
+	not lists:any(fun(TX) -> is_wallet_invalid(TX, Accounts) end, TXs).
+
+update_accounts2(B, PrevB, Accounts, Args) ->
+	case is_account_banned(B#block.reward_addr, Accounts) of
+		true ->
+			{error, mining_address_banned};
+		false ->
+			update_accounts3(B, PrevB, Accounts, Args)
+	end.
+
+is_account_banned(Addr, Accounts) ->
+	case maps:get(Addr, Accounts, not_found) of
+		not_found ->
+			false;
+		{_, _} ->
+			false;
+		{_, _, _, MiningPermission} ->
+			not MiningPermission
+	end.
+
+update_accounts3(B, PrevB, Accounts, Args) ->
+	PriceHistory = lists:sublist(PrevB#block.price_history, ?PRICE_HISTORY_BLOCKS),
+	case may_be_apply_double_signing_proof(B, Accounts, PrevB#block.denomination,
+			PriceHistory) of
+		{ok, Accounts2} ->
+			update_accounts4(B, PrevB, Accounts2, Args, PriceHistory);
+		Error ->
+			Error
+	end.
+
+may_be_apply_double_signing_proof(#block{ double_signing_proof = undefined }, Accounts,
+		_Denomination, _PriceHistory) ->
+	{ok, Accounts};
+may_be_apply_double_signing_proof(#block{
+		double_signing_proof = {_Pub, Sig, _, _, _, Sig, _, _, _} }, _Accounts,
+		_Denomination, _PriceHistory) ->
+	{error, invalid_double_signing_proof_same_signature};
+may_be_apply_double_signing_proof(B, Accounts, Denomination, PriceHistory) ->
+	{_Pub, _Signature1, CDiff1, PrevCDiff1, _Preimage1, _Signature2, CDiff2, PrevCDiff2,
+			_Preimage2} = B#block.double_signing_proof,
+	case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1) of
+		false ->
+			{error, invalid_double_signing_proof_cdiff};
+		true ->
+			may_be_apply_double_signing_proof2(B, Accounts, Denomination, PriceHistory)
+	end.
+
+may_be_apply_double_signing_proof2(B, Accounts, Denomination, PriceHistory) ->
+	{Pub, _Signature1, _CDiff1, _PrevCDiff1, _Preimage1, _Signature2, _CDiff2, _PrevCDiff2,
+			_Preimage2} = B#block.double_signing_proof,
+	Key = {?DEFAULT_KEY_TYPE, Pub},
+	case B#block.reward_key == Key of
+		true ->
+			{error, invalid_double_signing_proof_same_address};
+		false ->
+			Addr = ar_wallet:to_address(Key),
+			case is_account_banned(Addr, Accounts) of
+				true ->
+					{error, invalid_double_signing_proof_already_banned};
+				false ->
+					case is_in_price_history(Addr, PriceHistory) of
+						false ->
+							{error, invalid_double_signing_proof_not_in_price_history};
+						true ->
+							may_be_apply_double_signing_proof3(B, Accounts, Denomination)
+					end
+			end
+	end.
+
+is_in_price_history(_Addr, []) ->
+	false;
+is_in_price_history(Addr, [{Addr, _, _, _} | _]) ->
+	true;
+is_in_price_history(Addr, [_ | PriceHistory]) ->
+	is_in_price_history(Addr, PriceHistory).
+
+may_be_apply_double_signing_proof3(B, Accounts, Denomination) ->
+	{Pub, Signature1, CDiff1, PrevCDiff1, Preimage1, Signature2, CDiff2, PrevCDiff2,
+			Preimage2} = B#block.double_signing_proof,
+	EncodedCDiff1 = ar_serialize:encode_int(CDiff1, 16),
+	EncodedPrevCDiff1 = ar_serialize:encode_int(PrevCDiff1, 16),
+	SignaturePreimage1 = << EncodedCDiff1/binary, EncodedPrevCDiff1/binary,
+			Preimage1/binary >>,
+	Key = {?DEFAULT_KEY_TYPE, Pub},
+	Addr = ar_wallet:to_address(Key),
+	case ar_wallet:verify(Key, SignaturePreimage1, Signature1) of
+		false ->
+			{error, invalid_double_signing_proof_invalid_signature};
+		true ->
+			EncodedCDiff2 = ar_serialize:encode_int(CDiff2, 16),
+			EncodedPrevCDiff2 = ar_serialize:encode_int(PrevCDiff2, 16),
+			SignaturePreimage2 = << EncodedCDiff2/binary,
+					EncodedPrevCDiff2/binary, Preimage2/binary >>,
+			case ar_wallet:verify(Key, SignaturePreimage2, Signature2) of
+				false ->
+					{error, invalid_double_signing_proof_invalid_signature};
+				true ->
+					{ok, ban_account(Addr, Accounts, Denomination)}
+			end
+	end.
+
+ban_account(Addr, Accounts, Denomination) ->
+	case maps:get(Addr, Accounts, not_found) of
+		not_found ->
+			maps:put(Addr, {1, <<>>, Denomination, false}, Accounts);
+		{Balance, LastTX} ->
+			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
+			maps:put(Addr, {Balance2 + 1, LastTX, Denomination, false}, Accounts);
+		{Balance, LastTX, AccountDenomination, _MiningPermission} ->
+			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
+			maps:put(Addr, {Balance2 + 1, LastTX, Denomination, false}, Accounts)
+	end.
+
+update_accounts4(B, PrevB, Accounts, Args, PriceHistory) ->
+	Denomination = PrevB#block.denomination,
+	case length(PriceHistory) >= ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE of
+		false ->
+			update_accounts5(B, PrevB, Accounts, Args, PriceHistory);
+		true ->
+			Sample = lists:nthtail(?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE - 1,
+					PriceHistory),
+			Sample2 = lists:sublist(Sample, ?PAYOUT_SAMPLE_WINDOW_SIZE),
+			{Addr, _HashRate, Reward, RewardDenomination} = hd(Sample2),
+			case is_account_banned(Addr, Accounts) of
+				true ->
+					update_accounts5(B, PrevB, Accounts, Args, PriceHistory);
+				false ->
+					Reward2 = ar_pricing:redenominate(Reward, RewardDenomination,
+							Denomination),
+					{Dividend, Divisor} = ?MINER_MINIMAL_REWARD_SHARE,
+					{Min, MinDenomination} = get_minimal_reward(Sample2),
+					Min2 = ar_pricing:redenominate(Min, MinDenomination, Denomination),
+					PaidReward = min(Reward2, Min2 + Min2 * Dividend div Divisor),
+					Accounts2 = apply_mining_reward(Accounts, Addr, PaidReward, Denomination),
+					{MinerReward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch,
+							KryderPlusRateMultiplier} = Args,
+					EndowmentPool2 = EndowmentPool + Reward2 - PaidReward,
+					Args2 = {MinerReward, EndowmentPool2, DebtSupply,
+							KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier},
+					update_accounts5(B, PrevB, Accounts2, Args2, PriceHistory)
+			end
+	end.
+
+update_accounts5(B, PrevB, Accounts, Args, PriceHistory) ->
+	{MinerReward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch,
+			KryderPlusRateMultiplier} = Args,
+	case B#block.double_signing_proof of
+		undefined ->
+			update_accounts6(B, Accounts, Args);
+		Proof ->
+			Denomination = PrevB#block.denomination,
+			BannedAddr = ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}),
+			{Sum, SumDenomination} = get_reward_sum(BannedAddr, PriceHistory),
+			Sum2 = ar_pricing:redenominate(Sum, SumDenomination, Denomination) - 1,
+			{Dividend, Divisor} = ?MINER_MINIMAL_REWARD_SHARE,
+			Sample = lists:sublist(PriceHistory, ?PAYOUT_SAMPLE_WINDOW_SIZE),
+			{Min, MinDenomination} = get_minimal_reward(Sample),
+			Min2 = ar_pricing:redenominate(Min, MinDenomination, Denomination),
+			ProverReward = min(Min2 * Dividend div Divisor, Sum2),
+			{MinerReward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch,
+					KryderPlusRateMultiplier} = Args,
+			EndowmentPool2 = EndowmentPool + Sum2 - ProverReward,
+			Accounts2 = apply_mining_reward(Accounts, B#block.reward_addr, ProverReward,
+					Denomination),
+			Args2 = {MinerReward, EndowmentPool2, DebtSupply, KryderPlusRateMultiplierLatch,
+					KryderPlusRateMultiplier},
+			update_accounts6(B, Accounts2, Args2)
+	end.
+
+get_minimal_reward(PriceHistory) ->
+	get_minimal_reward(
+			%% Make sure to traverse in the order of not decreasing denomination.
+			lists:reverse(PriceHistory), infinity, 1).
+
+get_minimal_reward([], Min, Denomination) ->
+	{Min, Denomination};
+get_minimal_reward([{_Addr, _HashRate, Reward, RewardDenomination} | PriceHistory], Min,
+		Denomination) ->
+	Min2 =
+		case Min of
+			infinity ->
+				infinity;
+			_ ->
+				ar_pricing:redenominate(Min, Denomination, RewardDenomination)
+		end,
+	case Reward < Min2 of
+		true ->
+			get_minimal_reward(PriceHistory, Reward, RewardDenomination);
+		false ->
+			get_minimal_reward(PriceHistory, Min, Denomination)
+	end.
+
+get_reward_sum(Addr, PriceHistory) ->
+	get_reward_sum(Addr,
+			%% Make sure to traverse in the order of not decreasing denomination.
+			lists:reverse(PriceHistory), 0, 1).
+
+get_reward_sum(_Addr, [], Sum, Denomination) ->
+	{Sum, Denomination};
+get_reward_sum(Addr, [{Addr, _HashRate, Reward, RewardDenomination} | PriceHistory],
+		Sum, Denomination) ->
+	Sum2 = ar_pricing:redenominate(Sum, Denomination, RewardDenomination),
+	Sum3 = Sum2 + Reward,
+	get_reward_sum(Addr, PriceHistory, Sum3, RewardDenomination);
+get_reward_sum(Addr, [_ | PriceHistory], Sum, Denomination) ->
+	get_reward_sum(Addr, PriceHistory, Sum, Denomination).
+
+update_accounts6(B, Accounts, Args) ->
+	{MinerReward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch,
+			KryderPlusRateMultiplier} = Args,
+	case validate_account_anchors(Accounts, B#block.txs) of
+		true ->
+			{ok, {EndowmentPool, MinerReward, DebtSupply, KryderPlusRateMultiplierLatch,
+					KryderPlusRateMultiplier, Accounts}};
+		false ->
+			{error, invalid_account_anchors}
+	end.
+
+do_validate(NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
+	validate_block(weave_size, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
+			PartitionUpperBound}).
 
 validate_block(weave_size, {#block{ txs = TXs } = NewB, OldB, Wallets, BlockAnchors,
 		RecentTXMap, PartitionUpperBound}) ->
@@ -316,8 +553,9 @@ validate_block(price_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXM
 			denomination = Denomination } = NewB,
 	#block{ price_history = PriceHistory } = OldB,
 	HashRate = ar_difficulty:get_hash_rate(Diff),
-	PriceHistory2 = lists:sublist([{HashRate, Reward, Denomination} | PriceHistory],
-			?PRICE_HISTORY_BLOCKS),
+	RewardAddr = NewB#block.reward_addr,
+	PriceHistory2 = lists:sublist([{RewardAddr, HashRate, Reward, Denomination}
+			| PriceHistory], ?PRICE_HISTORY_BLOCKS),
 	case ar_block:price_history_hash(PriceHistory2) of
 		PriceHistoryHash ->
 			validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
@@ -341,39 +579,19 @@ validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors, RecentT
 	end;
 
 validate_block(txs, {NewB = #block{ timestamp = Timestamp, height = Height, txs = TXs },
-		OldB, Wallets, BlockAnchors, RecentTXMap}) ->
+		OldB, Accounts, BlockAnchors, RecentTXMap}) ->
 	Rate = ar_pricing:usd_to_ar_rate(OldB),
 	PricePerGiBMinute = OldB#block.price_per_gib_minute,
 	KryderPlusRateMultiplier = OldB#block.kryder_plus_rate_multiplier,
 	Denomination = OldB#block.denomination,
 	RedenominationHeight = OldB#block.redenomination_height,
 	Args = {TXs, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height - 1,
-			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap},
+			RedenominationHeight, Timestamp, Accounts, BlockAnchors, RecentTXMap},
 	case ar_tx_replay_pool:verify_block_txs(Args) of
 		invalid ->
 			{invalid, invalid_txs};
 		valid ->
-			validate_block(wallet_list, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
-	end;
-
-validate_block(wallet_list, {#block{ txs = TXs } = NewB, OldB, Accounts, BlockAnchors,
-		RecentTXMap}) ->
-	RewardPool = OldB#block.reward_pool,
-	Height = OldB#block.height,
-	Rate = ar_pricing:usd_to_ar_rate(OldB),
-	PricePerGiBMinute = OldB#block.price_per_gib_minute,
-	KryderPlusRateMultiplierLatch = OldB#block.kryder_plus_rate_multiplier_latch,
-	KryderPlusRateMultiplier = OldB#block.kryder_plus_rate_multiplier,
-	Denomination = OldB#block.denomination,
-	DebtSupply = OldB#block.debt_supply,
-	Args = {NewB, Accounts, RewardPool, DebtSupply, Rate, PricePerGiBMinute,
-			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination},
-	{_, _, _, _, _, Accounts2} = update_accounts(Args),
-	case lists:any(fun(TX) -> is_wallet_invalid(TX, Accounts2) end, TXs) of
-		true ->
-			{invalid, invalid_wallet_list};
-		false ->
-			case Height + 1 >= ar_fork:height_2_6() of
+			case Height >= ar_fork:height_2_6() of
 				true ->
 					%% The field size limits in 2.6 are naturally asserted in
 					%% ar_serialize:binary_to_block/1.
@@ -437,7 +655,7 @@ is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
 				_ ->
 					false
 			end;
-		{Balance, LastTX, _Denomination} when Balance >= 0 ->
+		{Balance, LastTX, _Denomination, _MiningPermission} when Balance >= 0 ->
 			case Balance of
 				0 ->
 					byte_size(LastTX) == 0;
@@ -458,7 +676,7 @@ is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
 				_ ->
 					false
 			end;
-		{Balance, LastTX, _Denomination} when Balance >= 0 ->
+		{Balance, LastTX, _Denomination, _MiningPermission} when Balance >= 0 ->
 			case Balance of
 				0 ->
 					byte_size(LastTX) == 0;
@@ -512,6 +730,7 @@ test_block_validation(Fork) ->
 	Wallets = #{ ar_wallet:to_address(Pub) => {?AR(200), <<>>} },
 	?assertEqual(valid, validate(B, PrevB, Wallets, BlockAnchors, RecentTXMap,
 			PartitionUpperBound)),
+	?assertMatch({ok, _}, update_accounts(B, PrevB, Wallets)),
 	?assertEqual({invalid, invalid_weave_size},
 			validate(B#block{ weave_size = PrevB#block.weave_size + 1 }, PrevB, Wallets,
 					BlockAnchors, RecentTXMap, PartitionUpperBound)),
@@ -567,9 +786,8 @@ test_block_validation(Fork) ->
 	?assertEqual({invalid, invalid_txs},
 			validate(B#block{ txs = [TX#tx{ reward = ?AR(201) }] }, PrevB, Wallets,
 					BlockAnchors, RecentTXMap, PartitionUpperBound)),
-		?assertEqual({invalid, invalid_wallet_list},
-			validate_block(wallet_list, {B#block{ txs = [TX#tx{ reward = ?AR(201) }] }, PrevB,
-					Wallets, BlockAnchors, RecentTXMap})),
+	?assertEqual({error, invalid_account_anchors},
+			update_accounts(B#block{ txs = [TX#tx{ reward = ?AR(201) }] }, PrevB, Wallets)),
 	?assertEqual({invalid, invalid_tx_root},
 			validate_block(tx_root, {
 				InvDataRootB#block{ indep_hash = ar_block:indep_hash(InvDataRootB) }, PrevB})),
@@ -642,3 +860,83 @@ get_chunk(Byte) ->
 		tx_path := TXPath
 	} = ar_serialize:json_map_to_chunk_proof(jiffy:decode(JSON, [return_maps])),
 	#poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath, option = 1 }.
+
+update_accounts_rejects_same_signature_in_double_signing_proof_test() ->
+	?assert(?PAYOUT_SAMPLE_WINDOW_SIZE == 2),
+	?assert(?PRICE_HISTORY_BLOCKS == 3),
+	?assert(?MINER_MINIMAL_REWARD_SHARE == {1, 5}),
+	Accounts = #{},
+	Key = ar_wallet:new(),
+	Pub = element(2, element(2, Key)),
+	Random = crypto:strong_rand_bytes(64),
+	Preimage = << (ar_serialize:encode_int(1, 16))/binary,
+			(ar_serialize:encode_int(1, 16))/binary, Random/binary >>,
+	Sig1 = ar_wallet:sign(element(1, Key), Preimage),
+	% TODO same signature twice not allowed
+	DoubleSigningProof = {Pub, Sig1, 1, 1, Random, Sig1, 1, 1, Random},
+	BannedAddr = ar_wallet:to_address(Key),
+	ProverKey = ar_wallet:new(),
+	RewardAddr = ar_wallet:to_address(ProverKey),
+	B = #block{ timestamp = os:system_time(second), reward_addr = RewardAddr, weave_size = 1,
+			double_signing_proof = DoubleSigningProof },
+	Reward = 12,
+	PrevB = #block{ price_history = [{RewardAddr, 0, Reward, 1}, {BannedAddr, 0, 10, 1}],
+			usd_to_ar_rate = {1, 5}, reward_pool = 0 },
+	?assertEqual({error, invalid_double_signing_proof_same_signature},
+			update_accounts(B, PrevB, Accounts)).
+
+update_accounts_receives_released_reward_and_prover_reward_test() ->
+	?assert(?PAYOUT_SAMPLE_WINDOW_SIZE == 2),
+	?assert(?PRICE_HISTORY_BLOCKS == 3),
+	?assert(?MINER_MINIMAL_REWARD_SHARE == {1, 5}),
+	Accounts = #{},
+	Key = ar_wallet:new(),
+	Pub = element(2, element(2, Key)),
+	Random = crypto:strong_rand_bytes(64),
+	Preimage = << (ar_serialize:encode_int(1, 16))/binary,
+			(ar_serialize:encode_int(1, 16))/binary, Random/binary >>,
+	Sig1 = ar_wallet:sign(element(1, Key), Preimage),
+	Sig2 = ar_wallet:sign(element(1, Key), Preimage),
+	DoubleSigningProof = {Pub, Sig1, 1, 1, Random, Sig2, 1, 1, Random},
+	BannedAddr = ar_wallet:to_address(Key),
+	ProverKey = ar_wallet:new(),
+	RewardAddr = ar_wallet:to_address(ProverKey),
+	B = #block{ timestamp = os:system_time(second), reward_addr = RewardAddr, weave_size = 1,
+			double_signing_proof = DoubleSigningProof },
+	Reward = 12,
+	ProverReward = 2, % 1/5 of min(10, 12)
+	PrevB = #block{ price_history = [{RewardAddr, 0, Reward, 1}, {BannedAddr, 0, 10, 1}],
+			usd_to_ar_rate = {1, 5}, reward_pool = 0 },
+	{ok, {_EndowmentPool2, _MinerReward, _DebtSupply2,
+			_KryderPlusRateMultiplierLatch2, _KryderPlusRateMultiplier2, Accounts2}} =
+			update_accounts(B, PrevB, Accounts),
+	?assertEqual({ProverReward + Reward, <<>>}, maps:get(RewardAddr, Accounts2)),
+	?assertEqual({1, <<>>, 1, false}, maps:get(BannedAddr, Accounts2)).
+
+update_accounts_does_not_let_banned_account_take_reward_test() ->
+	?assert(?PAYOUT_SAMPLE_WINDOW_SIZE == 2),
+	?assert(?PRICE_HISTORY_BLOCKS == 3),
+	?assert(?MINER_MINIMAL_REWARD_SHARE == {1, 5}),
+	Accounts = #{},
+	Key = ar_wallet:new(),
+	Pub = element(2, element(2, Key)),
+	Random = crypto:strong_rand_bytes(64),
+	Preimage = << (ar_serialize:encode_int(1, 16))/binary,
+			(ar_serialize:encode_int(1, 16))/binary, Random/binary >>,
+	Sig1 = ar_wallet:sign(element(1, Key), Preimage),
+	Sig2 = ar_wallet:sign(element(1, Key), Preimage),
+	DoubleSigningProof = {Pub, Sig1, 1, 1, Random, Sig2, 1, 1, Random},
+	BannedAddr = ar_wallet:to_address(Key),
+	ProverKey = ar_wallet:new(),
+	RewardAddr = ar_wallet:to_address(ProverKey),
+	B = #block{ timestamp = os:system_time(second), reward_addr = RewardAddr, weave_size = 1,
+			double_signing_proof = DoubleSigningProof },
+	Reward = 12,
+	ProverReward = 2, % 1/5 of min(10, 12)
+	PrevB = #block{ price_history = [{BannedAddr, 0, Reward, 1}, {BannedAddr, 0, 10, 1}],
+			usd_to_ar_rate = {1, 5}, reward_pool = 0 },
+	{ok, {_EndowmentPool2, _MinerReward, _DebtSupply2,
+			_KryderPlusRateMultiplierLatch2, _KryderPlusRateMultiplier2, Accounts2}} =
+			update_accounts(B, PrevB, Accounts),
+	?assertEqual({ProverReward, <<>>}, maps:get(RewardAddr, Accounts2)),
+	?assertEqual({1, <<>>, 1, false}, maps:get(BannedAddr, Accounts2)).

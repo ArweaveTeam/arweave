@@ -203,7 +203,7 @@ pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
 
 pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer, Timestamp, ReadBodyTime,
 		BodySize) ->
-	case catch compute_hash(B) of
+	case catch compute_hash(B, PrevB#block.cumulative_diff) of
 		{ok, {BDS, H}} ->
 			ar_ignore_registry:add_temporary(H, 5000),
 			pre_validate_timestamp(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize);
@@ -249,8 +249,12 @@ pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime
 							partition_upper_bound = UpperBound,
 							last_step_checkpoints = LastStepCheckpoints } } = B,
 			Fork_2_6 = ar_fork:height_2_6(),
+			H = B#block.indep_hash,
+			CDiff = B#block.cumulative_diff,
+			PrevCDiff = PrevB#block.cumulative_diff,
 			GetCachedSolution =
-				case ar_node:get_block_from_cache_by_solution_hash(SolutionH) of
+				case ar_block_cache:get_by_solution_hash(block_cache, SolutionH, H,
+						CDiff, PrevCDiff) of
 					not_found ->
 						not_found;
 					#block{ height = Height, hash = SolutionH, nonce = Nonce,
@@ -262,6 +266,7 @@ pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime
 									global_step_number = StepNumber },
 							poa2 = PoA2, recall_byte2 = RecallByte2 } = CacheB
 								when Height >= Fork_2_6 ->
+						may_be_report_double_signing(B, PrevB#block.cumulative_diff, CacheB),
 						LastStepPrevOutput = get_last_step_prev_output(B),
 						LastStepPrevOutput2 = get_last_step_prev_output(CacheB),
 						case LastStepPrevOutput == LastStepPrevOutput2 of
@@ -300,6 +305,25 @@ pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime
 					pre_validate_nonce_limiter_global_step_number(B3, BDS, PrevB, true, Peer,
 							Timestamp, ReadBodyTime, BodySize)
 			end
+	end.
+
+may_be_report_double_signing(B, PrevCDiff, B2) ->
+	#block{ reward_key = {_, Key}, signature = Signature1, cumulative_diff = CDiff1,
+			previous_solution_hash = PreviousSolutionH1 } = B,
+	#block{ reward_key = {_, Key}, signature = Signature2, cumulative_diff = CDiff2,
+			prev_cumulative_diff = PrevCDiff2,
+			previous_solution_hash = PreviousSolutionH2 } = B2,
+	case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff) of
+		true ->
+			Preimage1 = << PreviousSolutionH1/binary,
+					(ar_block:generate_signed_hash(B))/binary >>,
+			Preimage2 = << PreviousSolutionH2/binary,
+					(ar_block:generate_signed_hash(B2))/binary >>,
+			Proof = {Key, Signature1, CDiff1, PrevCDiff, Preimage1, Signature2, CDiff2,
+					PrevCDiff2, Preimage2},
+			ar_events:send(block, {double_signing, Proof});
+		false ->
+			ok
 	end.
 
 get_last_step_prev_output(B) ->
@@ -729,14 +753,14 @@ pre_validate_pow(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 			ok
 	end.
 
-compute_hash(B) ->
+compute_hash(B, PrevCDiff) ->
 	case B#block.height >= ar_fork:height_2_6() of
 		false ->
 			BDS = ar_block:generate_block_data_segment(B),
 			{ok, {BDS, ar_block:indep_hash(BDS, B)}};
 		true ->
 			SignedH = ar_block:generate_signed_hash(B),
-			case ar_block:verify_signature(SignedH, B) of
+			case ar_block:verify_signature(SignedH, PrevCDiff, B) of
 				false ->
 					{error, invalid_signature};
 				true ->

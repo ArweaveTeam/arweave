@@ -34,7 +34,7 @@ init([]) ->
 	{ok, {{one_for_one, 5, 10}, [
 		%% Events: new, ready_for_mining, dropped.
 		?CHILD(ar_events, tx, worker),
-		%% Events: discovered, rejected, new, mined.
+		%% Events: discovered, rejected, new, mined, double_signing.
 		?CHILD(ar_events, block, worker),
 		%% Events: unpack_request, unpacked, repack_request, packed.
 		?CHILD(ar_events, chunk, worker),
