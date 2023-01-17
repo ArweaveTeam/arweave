@@ -497,6 +497,8 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 					Denomination2),
 			ScheduledPricePerGiBMinute2 = ar_pricing:redenominate(ScheduledPricePerGiBMinute,
 					Denomination, Denomination2),
+			CDiff = ar_difficulty:next_cumulative_diff(PrevB#block.cumulative_diff, Diff,
+					Height),
 			UnsignedB = pack_block_with_transactions(#block{
 				nonce = Nonce,
 				previous_block = PrevH,
@@ -512,9 +514,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				hash_list_merkle = ar_block:compute_hash_list_merkle(PrevB),
 				reward_addr = ar_wallet:to_address(RewardKey),
 				tags = [],
-				cumulative_diff =
-					ar_difficulty:next_cumulative_diff(PrevB#block.cumulative_diff, Diff,
-							Height),
+				cumulative_diff = CDiff,
 				poa = PoA1,
 				usd_to_ar_rate = Rate,
 				scheduled_usd_to_ar_rate = ScheduledRate,
@@ -531,11 +531,15 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				price_per_gib_minute = PricePerGiBMinute2,
 				scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute2,
 				denomination = Denomination2,
-				redenomination_height = RedenominationHeight2
+				redenomination_height = RedenominationHeight2,
+				double_signing_proof = may_be_get_double_signing_proof(PrevB, State)
 			}, PrevB),
 			SignedH = ar_block:generate_signed_hash(UnsignedB),
-			Signature = ar_wallet:sign(element(1, RewardKey),
-					<< SignedH/binary, (PrevB#block.hash)/binary >>),
+			PrevCDiff = PrevB#block.cumulative_diff,
+			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
+					(ar_serialize:encode_int(PrevCDiff, 16))/binary, (PrevB#block.hash)/binary,
+					SignedH/binary >>,
+			Signature = ar_wallet:sign(element(1, RewardKey), SignaturePreimage),
 			H = ar_block:indep_hash2(SignedH, Signature),
 			B = UnsignedB#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
@@ -568,6 +572,18 @@ handle_info({tx_ready_for_mining, TX}, State) ->
 	add_tx_to_mempool(TX, ready_for_mining),
 	ar_events:send(tx, {ready_for_mining, TX}),
 	{noreply, State};
+
+handle_info({event, block, {double_signing, Proof}}, State) ->
+	Map = maps:get(double_signing_proofs, State, #{}),
+	Key = element(1, Proof),
+	Addr = ar_wallet:to_address({?DEFAULT_KEY_TYPE, Key}),
+	case is_map_key(Addr, Map) of
+		true ->
+			{noreply, State};
+		false ->
+			Map2 = maps:put(Addr, {os:system_time(second), Proof}, Map),
+			{noreply, State#{ double_signing_proofs => Map2 }}
+	end;
 
 handle_info({event, block, {new, Block, _Source}}, State)
 		when length(Block#block.txs) > ?BLOCK_TX_COUNT_LIMIT ->
@@ -1157,24 +1173,24 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 					ar_block_cache:remove(block_cache, BH),
 					gen_server:cast(?MODULE, apply_block),
 					{noreply, State};
-				{ok, RootHash2} ->
-					B2 = B#block{ wallet_list = RootHash2 },
-					B3 =
+				ok ->
+					B2 =
 						case B#block.height >= ar_fork:height_2_6() of
 							true ->
 								PriceHistory = PrevB#block.price_history,
 								Reward = B#block.reward,
 								HashRate = ar_difficulty:get_hash_rate(B#block.diff),
 								Denomination2 = B#block.denomination,
-								PriceHistory2 = [{HashRate, Reward, Denomination2}
+								Addr = B#block.reward_addr,
+								PriceHistory2 = [{Addr, HashRate, Reward, Denomination2}
 										| PriceHistory],
 								Len = ?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
 								PriceHistory3 = lists:sublist(PriceHistory2, Len),
-								B2#block{ price_history = PriceHistory3 };
+								B#block{ price_history = PriceHistory3 };
 							false ->
-								B2
+								B
 						end,
-					State2 = apply_validated_block(State, B3, PrevBlocks, Orphans, RecentBI2,
+					State2 = apply_validated_block(State, B2, PrevBlocks, Orphans, RecentBI2,
 							BlockTXPairs2),
 					record_processing_time(Timestamp),
 					{noreply, State2}
@@ -1213,6 +1229,49 @@ pick_txs(TXIDs, TXs) ->
 		TXIDs
 	).
 
+may_be_get_double_signing_proof(PrevB, State) ->
+	PriceHistory = lists:sublist(PrevB#block.price_history, ?PRICE_HISTORY_BLOCKS),
+	Proofs = maps:get(double_signing_proofs, State, #{}),
+	RootHash = PrevB#block.wallet_list,
+	may_be_get_double_signing_proof2(maps:iterator(Proofs), RootHash, PriceHistory).
+
+may_be_get_double_signing_proof2(Iterator, RootHash, PriceHistory) ->
+	case maps:next(Iterator) of
+		none ->
+			undefined;
+		{Addr, {_Timestamp, Proof2}, Iterator2} ->
+			case is_in_price_history(Addr, PriceHistory) of
+				false ->
+					may_be_get_double_signing_proof2(Iterator2, RootHash, PriceHistory);
+				true ->
+					Accounts = ar_wallets:get(RootHash, [Addr]),
+					case is_account_banned(Addr, Accounts) of
+						true ->
+							may_be_get_double_signing_proof2(Iterator2, RootHash,
+									PriceHistory);
+						false ->
+							Proof2
+					end
+			end
+	end.
+
+is_in_price_history(_Addr, []) ->
+	false;
+is_in_price_history(Addr, [{Addr, _, _, _} | _]) ->
+	true;
+is_in_price_history(Addr, [_ | PriceHistory]) ->
+	is_in_price_history(Addr, PriceHistory).
+
+is_account_banned(Addr, Map) ->
+	case maps:get(Addr, Map, not_found) of
+		not_found ->
+			false;
+		{_, _} ->
+			false;
+		{_, _, _, MiningPermission} ->
+			not MiningPermission
+	end.
+
 pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) ->
 	#block{ price_history = PriceHistory } = PrevB,
 	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT, PrevB#block.wallet_list,
@@ -1223,7 +1282,23 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 	Denomination2 = B#block.denomination,
 	KryderPlusRateMultiplier = PrevB#block.kryder_plus_rate_multiplier,
 	RedenominationHeight = PrevB#block.redenomination_height,
-	Accounts = ar_wallets:get(PrevB#block.wallet_list, ar_tx:get_addresses(TXs)),
+	Addresses = [B#block.reward_addr | ar_tx:get_addresses(TXs)],
+	Addresses2 =
+		case length(PriceHistory) >= ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE of
+			true ->
+				[element(1, lists:nth(?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE,
+						PriceHistory)) | Addresses];
+			false ->
+				Addresses
+		end,
+	Addresses3 =
+		case B#block.double_signing_proof of
+			undefined ->
+				Addresses2;
+			Proof ->
+				[ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}) | Addresses2]
+		end,
+	Accounts = ar_wallets:get(PrevB#block.wallet_list, Addresses3),
 	[{_, BlockAnchors}] = ets:lookup(node_state, block_anchors),
 	[{_, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 	ValidTXs = ar_tx_replay_pool:pick_txs_to_mine({BlockAnchors, RecentTXMap, Height - 1,
@@ -1238,49 +1313,31 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 			ValidTXs
 		),
 	WeaveSize = PrevB#block.weave_size + BlockSize,
-	{Reward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch2,
-			KryderPlusRateMultiplier2} =
-		case ar_pricing:is_v2_pricing_height(Height) of
-			true ->
-				ar_pricing:get_miner_reward_endowment_pool_debt_supply({
-						PrevB#block.reward_pool, PrevB#block.debt_supply, ValidTXs, WeaveSize,
-						Height, PricePerGiBMinute,
-						PrevB#block.kryder_plus_rate_multiplier_latch,
-						PrevB#block.kryder_plus_rate_multiplier, Denomination});
-			false ->
-				{Reward2, EndowmentPool2} = ar_pricing:get_miner_reward_and_endowment_pool({
-						PrevB#block.reward_pool, ValidTXs, B#block.reward_addr, WeaveSize,
-						Height, B#block.timestamp, Rate}),
-				{Reward2, EndowmentPool2, 0, 0, 1}
-		end,
-	Reward3 = ar_pricing:redenominate(Reward, Denomination, Denomination2),
-	EndowmentPool3 = ar_pricing:redenominate(EndowmentPool, Denomination, Denomination2),
+	B2 = B#block{ txs = ValidTXs, block_size = BlockSize, weave_size = WeaveSize,
+			tx_root = ar_block:generate_tx_root_for_block(ValidTXs, Height),
+			size_tagged_txs = ar_block:generate_size_tagged_list_from_txs(ValidTXs, Height) },
+	{ok, {EndowmentPool, Reward, DebtSupply, KryderPlusRateMultiplierLatch,
+			KryderPlusRateMultiplier2, Accounts2}} = ar_node_utils:update_accounts(B2, PrevB,
+					Accounts),
+	Reward2 = ar_pricing:redenominate(Reward, Denomination, Denomination2),
+	EndowmentPool2 = ar_pricing:redenominate(EndowmentPool, Denomination, Denomination2),
 	DebtSupply2 = ar_pricing:redenominate(DebtSupply, Denomination, Denomination2),
-	RewardAddr = B#block.reward_addr,
-	Addresses = [RewardAddr | ar_tx:get_addresses(ValidTXs)],
-	Accounts2 = ar_wallets:get(PrevB#block.wallet_list, Addresses),
-	Accounts3 = ar_node_utils:apply_txs(Accounts2, Denomination, ValidTXs),
-	Accounts4 = ar_node_utils:apply_mining_reward(Accounts3, RewardAddr, Reward, Denomination),
-	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts4, Height,
+	RewardAddr = B2#block.reward_addr,
+	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
 			Denomination2),
 	HashRate = ar_difficulty:get_hash_rate(Diff),
-	PriceHistory2 = lists:sublist([{HashRate, Reward3, Denomination2} | PriceHistory],
-			?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-	PriceHistory3 = lists:sublist([{HashRate, Reward3, Denomination2} | PriceHistory],
-			?PRICE_HISTORY_BLOCKS),
-	B#block{
+	PriceHistory2 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
+			| PriceHistory], ?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+	PriceHistory3 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
+			| PriceHistory], ?PRICE_HISTORY_BLOCKS),
+	B2#block{
 		wallet_list = RootHash,
-		tx_root = ar_block:generate_tx_root_for_block(ValidTXs, Height),
-		reward_pool = EndowmentPool3,
-		weave_size = WeaveSize,
-		block_size = BlockSize,
-		reward = Reward3,
-		txs = ValidTXs,
-		size_tagged_txs = ar_block:generate_size_tagged_list_from_txs(ValidTXs, Height),
+		reward_pool = EndowmentPool2,
+		reward = Reward2,
 		price_history = PriceHistory2,
 		price_history_hash = ar_block:price_history_hash(PriceHistory3),
 		debt_supply = DebtSupply2,
-		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch2,
+		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier2
 	}.
 
@@ -1320,6 +1377,58 @@ validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
 					{validation_error, invalid_denomination}, {h, ar_util:encode(H)}]),
 			ar_events:send(block, {rejected, invalid_denomination, H, no_peer}),
 			error;
+		{error, mining_address_banned} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, mining_address_banned}, {h, ar_util:encode(H)},
+					{mining_address, ar_util:encode(B#block.reward_addr)}]),
+			ar_events:send(block, {rejected, mining_address_banned, H, no_peer}),
+			error;
+		{error, invalid_double_signing_proof_same_signature} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_double_signing_proof_same_signature},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_double_signing_proof_same_signature, H,
+					no_peer}),
+			error;
+		{error, invalid_double_signing_proof_cdiff} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_double_signing_proof_cdiff},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_double_signing_proof_cdiff, H, no_peer}),
+			error;
+		{error, invalid_double_signing_proof_same_address} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_double_signing_proof_same_address},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_double_signing_proof_same_address, H,
+					no_peer}),
+			error;
+		{error, invalid_double_signing_proof_not_in_price_history} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_double_signing_proof_not_in_price_history},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected,
+					invalid_double_signing_proof_not_in_price_history, H, no_peer}),
+			error;
+		{error, invalid_double_signing_proof_already_banned} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_double_signing_proof_already_banned},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected,
+					invalid_double_signing_proof_already_banned, H, no_peer}),
+			error;
+		{error, invalid_double_signing_proof_invalid_signature} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_double_signing_proof_invalid_signature},
+					{h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected,
+					invalid_double_signing_proof_invalid_signature, H, no_peer}),
+			error;
+		{error, invalid_account_anchors} ->
+			?LOG_WARNING([{event, received_invalid_block},
+					{validation_error, invalid_account_anchors}, {h, ar_util:encode(H)}]),
+			ar_events:send(block, {rejected, invalid_account_anchors, H, no_peer}),
+			error;
 		{error, invalid_reward_pool} ->
 			?LOG_WARNING([{event, received_invalid_block},
 					{validation_error, invalid_reward_pool}, {h, ar_util:encode(H)}]),
@@ -1353,8 +1462,8 @@ validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
 					{validation_error, invalid_wallet_list}, {h, ar_util:encode(H)}]),
 			ar_events:send(block, {rejected, invalid_wallet_list, H, no_peer}),
 			error;
-		{ok, RootHash} ->
-			{ok, RootHash}
+		{ok, _RootHash2} ->
+			ok
 	end.
 
 get_missing_txs_and_retry(#block{ txs = TXIDs }, _Mempool, _Worker)
@@ -1620,10 +1729,10 @@ record_economic_metrics2(B, PrevB) ->
 			#block{ price_history = PriceHistory } = B,
 			PriceHistorySize = length(PriceHistory),
 			AverageHashRate = ar_util:safe_divide(lists:sum([HR
-					|| {HR, _, _} <- PriceHistory]), PriceHistorySize),
+					|| {_, HR, _, _} <- PriceHistory]), PriceHistorySize),
 			prometheus_gauge:set(average_network_hash_rate, AverageHashRate),
 			AverageBlockReward = ar_util:safe_divide(lists:sum([R
-					|| {_, R, _} <- PriceHistory]), PriceHistorySize),
+					|| {_, _, R, _} <- PriceHistory]), PriceHistorySize),
 			prometheus_gauge:set(average_block_reward, AverageBlockReward),
 			prometheus_gauge:set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
 			Args = {PrevB#block.reward_pool, PrevB#block.debt_supply, B#block.txs,
@@ -1839,9 +1948,9 @@ apply_picked_tx2(TX, Accounts, RootHash, Denomination) ->
 				true ->
 					error;
 				_ ->
-					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination} }}
+					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination, true} }}
 			end;
-		{Balance, LastTX2, AccountDenomination}
+		{Balance, LastTX2, AccountDenomination, MiningPermission}
 				when byte_size(LastTX) == 48 orelse LastTX == LastTX2 ->
 			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
 			Spent2 = ar_pricing:redenominate(Spent, TXDenomination, Denomination),
@@ -1849,7 +1958,8 @@ apply_picked_tx2(TX, Accounts, RootHash, Denomination) ->
 				true ->
 					error;
 				_ ->
-					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination} }}
+					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination,
+							MiningPermission} }}
 			end;
 		not_found ->
 			case ar_wallets:get(RootHash, Origin) of
@@ -1916,7 +2026,8 @@ start_from_block_index(BI, PriceHistory) ->
 	end,
 	Blocks = read_recent_blocks(BI),
 	Blocks2 = ar_join:set_price_history(Blocks, PriceHistory),
-	self() ! {join, BI, Blocks2}.
+	Blocks3 = ar_join:set_prev_cumulative_diff(Blocks2),
+	self() ! {join, BI, Blocks3}.
 
 read_recent_blocks(not_joined) ->
 	[];

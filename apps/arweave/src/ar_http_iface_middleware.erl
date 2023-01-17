@@ -2056,13 +2056,7 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 							undefined ->
 								false;
 							_ ->
-								case ar_block_cache:get_by_solution_hash(block_cache,
-										SolutionH) of
-									not_found ->
-										false;
-									_ ->
-										true
-								end
+								ar_block_cache:is_known_solution_hash(block_cache, SolutionH)
 						end,
 					MissingChunk =
 						case {IsSolutionHashKnown, RecallByte} of

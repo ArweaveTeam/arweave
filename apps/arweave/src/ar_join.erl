@@ -1,6 +1,6 @@
 -module(ar_join).
 
--export([start/1, set_price_history/2]).
+-export([start/1, set_price_history/2, set_prev_cumulative_diff/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -33,6 +33,15 @@ set_price_history(Blocks, []) ->
 	Blocks;
 set_price_history([B | Blocks], PriceHistory) ->
 	[B#block{ price_history = PriceHistory } | set_price_history(Blocks, tl(PriceHistory))].
+
+%% @doc Add the previous cumulative difficulty to every block but the last one.
+%% The previous cumulative difficulty is looked up when a potential double-signing
+%% is detected.
+set_prev_cumulative_diff([B, PrevB | Blocks]) ->
+	[B#block{ prev_cumulative_diff = PrevB#block.cumulative_diff }
+			| set_prev_cumulative_diff([PrevB | Blocks])];
+set_prev_cumulative_diff([B]) ->
+	[B].
 
 %%%===================================================================
 %%% Private functions.
@@ -206,7 +215,8 @@ do_join(Peers, B, BI) ->
 	Blocks = get_block_and_trail(Peers, B, BI),
 	ar:console("Downloaded the block trail successfully.~n", []),
 	Blocks2 = may_be_set_price_history(Blocks, Peers),
-	ar_node_worker ! {join, BI, Blocks2},
+	Blocks3 = set_prev_cumulative_diff(Blocks2),
+	ar_node_worker ! {join, BI, Blocks3},
 	join_peers(Peers).
 
 %% @doc Get a block, and its 2 * ?MAX_TX_ANCHOR_DEPTH previous blocks.

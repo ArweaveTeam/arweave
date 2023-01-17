@@ -1,6 +1,7 @@
 -module(ar_node_tests).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -454,12 +455,22 @@ mining_reward_test_() ->
 	test_on_fork(height_2_6, 0, fun test_mining_reward/0).
 
 test_mining_reward() ->
-	{_Priv1, Pub1} = ar_wallet:new_keyfile({eddsa, ed25519}),
+	{_Priv1, Pub1} = ar_wallet:new_keyfile(),
 	[B0] = ar_weave:init(),
-	{_Node1, _} = start(B0, ar_wallet:to_address(Pub1)),
+	{_Node1, _} = start(B0, MiningAddr = ar_wallet:to_address(Pub1)),
 	ar_node:mine(),
 	wait_until_height(1),
-	?assert(ar_node:get_balance(Pub1) > 0).
+	B1 = ar_node:get_current_block(),
+	[{MiningAddr, _, Reward, 1}, _] = B1#block.price_history,
+	?assertEqual(0, ar_node:get_balance(Pub1)),
+	lists:foreach(
+		fun(Height) ->
+			ar_node:mine(),
+			wait_until_height(Height + 1)
+		end,
+		lists:seq(1, ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE)
+	),
+	?assertEqual(Reward, ar_node:get_balance(Pub1)).
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
@@ -469,11 +480,21 @@ test_multi_node_mining_reward() ->
 	{_Priv1, Pub1} = slave_call(ar_wallet, new_keyfile, []),
 	[B0] = ar_weave:init(),
 	start(B0),
-	slave_start(B0, ar_wallet:to_address(Pub1)),
+	slave_start(B0, MiningAddr = ar_wallet:to_address(Pub1)),
 	connect_to_slave(),
 	slave_mine(),
 	wait_until_height(1),
-	?assert(ar_node:get_balance(Pub1) > 0).
+	B1 = ar_node:get_current_block(),
+	[{MiningAddr, _, Reward, 1}, _] = B1#block.price_history,
+	?assertEqual(0, ar_node:get_balance(Pub1)),
+	lists:foreach(
+		fun(Height) ->
+			ar_node:mine(),
+			wait_until_height(Height + 1)
+		end,
+		lists:seq(1, ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE)
+	),
+	?assertEqual(Reward, ar_node:get_balance(Pub1)).
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test_() ->

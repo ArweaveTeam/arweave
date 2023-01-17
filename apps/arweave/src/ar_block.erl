@@ -5,7 +5,7 @@
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
 		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2, price_history_hash/1,
-		generate_signed_hash/1, verify_signature/2,
+		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
 		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
 		hash_wallet_list/1, generate_hash_list_for_block/2,
@@ -205,7 +205,8 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
-		denomination = Denomination, redenomination_height = RedenominationHeight }) ->
+		denomination = Denomination, redenomination_height = RedenominationHeight,
+		double_signing_proof = DoubleSigningProof }) ->
 	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
 	Nonce2 = binary:encode_unsigned(Nonce),
 	%% The only block where reward_address may be unclaimed
@@ -244,8 +245,9 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			(encode_int(ScheduledPricePerGiBMinute, 8))/binary,
 			PriceHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
 			KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8, Denomination:24,
-			(encode_int(RedenominationHeight, 8))/binary >>,
-	crypto:hash(sha384, Segment).
+			(encode_int(RedenominationHeight, 8))/binary,
+			(ar_serialize:encode_double_signing_proof(DoubleSigningProof))/binary >>,
+	crypto:hash(sha256, Segment).
 
 %% @doc Compute the block identifier from the signed hash and block signature.
 indep_hash2(SignedH, Signature) ->
@@ -266,20 +268,24 @@ price_history_hash(PriceHistory) ->
 
 price_history_hash([], IOList) ->
 	crypto:hash(sha256, iolist_to_binary(IOList));
-price_history_hash([{HashRate, Reward, Denomination} | PriceHistory], IOList) ->
+price_history_hash([{Addr, HashRate, Reward, Denomination} | PriceHistory], IOList) ->
 	HashRateBin = ar_serialize:encode_int(HashRate, 8),
 	RewardBin = ar_serialize:encode_int(Reward, 8),
 	DenominationBin = << Denomination:24 >>,
-	price_history_hash(PriceHistory, [HashRateBin, RewardBin, DenominationBin | IOList]).
+	price_history_hash(PriceHistory, [Addr, HashRateBin, RewardBin, DenominationBin | IOList]).
 
 %% @doc Verify the block signature.
-verify_signature(SignedH,
+verify_signature(BlockPreimage, PrevCDiff,
 		#block{ signature = Signature, reward_key = {?DEFAULT_KEY_TYPE, Pub} = RewardKey,
-				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH })
+				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
+				cumulative_diff = CDiff })
 		when byte_size(Signature) == 512, byte_size(Pub) == 512 ->
+	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
+			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
+			BlockPreimage/binary >>,
 	ar_wallet:to_address(RewardKey) == RewardAddr andalso
-			ar_wallet:verify(RewardKey, << SignedH/binary, PrevSolutionH/binary >>, Signature);
-verify_signature(_SignedH, _B) ->
+			ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
+verify_signature(_BlockPreimage, _PrevCDiff, _B) ->
 	false.
 
 %% @doc Generate a block data segment for a pre-2.6 block. It is combined with a nonce
@@ -404,11 +410,19 @@ hash_wallet_list(WalletList) ->
 		fun	(Addr, {Balance, LastTX}) ->
 				EncodedBalance = binary:encode_unsigned(Balance),
 				ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
-			(Addr, {Balance, LastTX, Denomination}) ->
+			(Addr, {Balance, LastTX, Denomination, MiningPermission}) ->
+				MiningPermissionBin =
+					case MiningPermission of
+						true ->
+							<<1>>;
+						false ->
+							<<0>>
+					end,
 				Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
 						(ar_serialize:encode_int(Balance, 8))/binary,
 						(ar_serialize:encode_bin(LastTX, 8))/binary,
-						(ar_serialize:encode_int(Denomination, 8))/binary >>,
+						(ar_serialize:encode_int(Denomination, 8))/binary,
+						MiningPermissionBin/binary >>,
 				crypto:hash(sha384, Preimage)
 		end
 	).
@@ -625,11 +639,19 @@ test_wallet_list_performance(Length, Denominations) ->
 		fun	(Addr, {Balance, LastTX}) ->
 				EncodedBalance = binary:encode_unsigned(Balance),
 				ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
-			(Addr, {Balance, LastTX, Denomination}) ->
+			(Addr, {Balance, LastTX, Denomination, MiningPermission}) ->
+				MiningPermissionBin =
+					case MiningPermission of
+						true ->
+							<<1>>;
+						false ->
+							<<0>>
+					end,
 				Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
 						(ar_serialize:encode_int(Balance, 8))/binary,
 						(ar_serialize:encode_bin(LastTX, 8))/binary,
-						(ar_serialize:encode_int(Denomination, 8))/binary >>,
+						(ar_serialize:encode_int(Denomination, 8))/binary,
+						MiningPermissionBin/binary >>,
 				crypto:hash(sha384, Preimage)
 		end,
 	{Time3, {_, T2}} =

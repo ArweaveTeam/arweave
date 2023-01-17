@@ -6,7 +6,8 @@
 		mark_nonce_limiter_validation_scheduled/2, add_validated/2,
 		mark_tip/2, get/2, get_earliest_not_validated_from_longest_chain/1,
 		get_longest_chain_block_txs_pairs/1,
-		get_block_and_status/2, remove/2, prune/2, get_by_solution_hash/2]).
+		get_block_and_status/2, remove/2, prune/2, get_by_solution_hash/5,
+		is_known_solution_hash/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -75,12 +76,13 @@ add(Tab,
 					Children}}] = ets:lookup(Tab, {block, PrevH}),
 			C2 = case CDiff > MaxCDiff of true -> {CDiff, H}; false -> C end,
 			Set2 = gb_sets:insert({Height, H}, Set),
+			B2 = B#block{ prev_cumulative_diff = PrevB#block.cumulative_diff },
 			ets:insert(Tab, [
 				{max_cdiff, C2},
 				{links, Set2},
 				{{solution, SolutionH}, SolutionSet3},
 				{tip, Tip},
-				{{block, H}, {B, Status, erlang:timestamp(), sets:new()}},
+				{{block, H}, {B2, Status, erlang:timestamp(), sets:new()}},
 				{{block, PrevH},
 						{PrevB, PrevStatus, PrevTimestamp, sets:add_element(H, Children)}}
 			]);
@@ -344,22 +346,52 @@ prune(Tab, Depth) ->
 			{block, Tip}),
 	prune(Tab, Depth, Height).
 
-%% @doc Return a block from the block cache with the given solution hash.
-%% Return not_found if one is not found. If there are several blocks with the
-%% same solution hash, one of them is returned, the choice is not defined.
-get_by_solution_hash(Tab, SolutionH) ->
+%% @doc Return true if there is at least one block in the cache with the given solution hash.
+is_known_solution_hash(Tab, SolutionH) ->
+	case ets:lookup(Tab, {solution, SolutionH}) of
+		[] ->
+			false;
+		[{_, _Set}] ->
+			true
+	end.
+
+%% @doc Return a block from the block cache meeting the following requirements:
+%% - hash == SolutionH;
+%% - indep_hash /= H.
+%%
+%% If there are several blocks, choose one with the same cumulative difficulty
+%% or CDiff > PrevCDiff2 and CDiff2 > PrevCDiff (double-signing). If there are no
+%% such blocks, return any other block matching the conditions above. Return not_found
+%% if there are no blocks matching those conditions.
+get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff) ->
 	case ets:lookup(Tab, {solution, SolutionH}) of
 		[] ->
 			not_found;
 		[{_, Set}] ->
-			H = hd(sets:to_list(Set)),
-			case get(Tab, H) of
-				not_found ->
-					%% An extremely unlikely race condition - simply retry.
-					get_by_solution_hash(Tab, SolutionH);
-				B ->
-					B
-			end
+			get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff, sets:to_list(Set), none)
+	end.
+
+get_by_solution_hash(_Tab, _SolutionH, _H, _CDiff, _PrevCDiff, [], B) ->
+	case B of
+		none ->
+			not_found;
+		_ ->
+			B
+	end;
+get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff, [H | L], B) ->
+	get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff, L, B);
+get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff, [H2 | L], _B) ->
+	case get(Tab, H2) of
+		not_found ->
+			%% An extremely unlikely race condition - simply retry.
+			get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff);
+		#block{ cumulative_diff = CDiff } = B2 ->
+			B2;
+		#block{ cumulative_diff = CDiff2, prev_cumulative_diff = PrevCDiff2 } = B2
+				when CDiff2 > PrevCDiff, CDiff > PrevCDiff2 ->
+			B2;
+		B2 ->
+			get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff, L, B2)
 	end.
 
 %%%===================================================================
@@ -416,11 +448,9 @@ remove2(Tab, H) ->
 	case ets:lookup(Tab, {block, H}) of
 		not_found ->
 			ok;
-		[{_, {#block{ hash = SolutionH, txs = TXs, height = Height }, _Status, _Timestamp,
-				Children}}] ->
+		[{_, {#block{ hash = SolutionH, height = Height }, _Status, _Timestamp, Children}}] ->
 			ets:delete(Tab, {block, H}),
 			ar_ignore_registry:remove(H),
-			remove_tx_prefixes(TXs),
 			remove_solution(Tab, H, SolutionH),
 			ets:insert(Tab, {links, gb_sets:del_element({Height, H}, Set)}),
 			sets:fold(
@@ -431,15 +461,6 @@ remove2(Tab, H) ->
 				Children
 			)
 	end.
-
-remove_tx_prefixes([]) ->
-	ok;
-remove_tx_prefixes([#tx{ id = TXID } | TXs]) ->
-	ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
-	remove_tx_prefixes(TXs);
-remove_tx_prefixes([TXID | TXs]) ->
-	ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
-	remove_tx_prefixes(TXs).
 
 remove_solution(Tab, H, SolutionH) ->
 	[{_, SolutionSet}] = ets:lookup(Tab, {solution, SolutionH}),
@@ -486,7 +507,7 @@ prune(Tab, Depth, TipHeight) ->
 					ets:insert(Tab, {links, Set2}),
 					%% The lowest block must be on-chain by construction.
 					[{_, {B, on_chain, _Timestamp, Children}}] = ets:lookup(Tab, {block, H}),
-					#block{ hash = SolutionH, txs = TXs } = B,
+					#block{ hash = SolutionH } = B,
 					sets:fold(
 						fun(Child, ok) ->
 							[{_, {_, Status, _, _}}] = ets:lookup(Tab, {block, Child}),
@@ -502,7 +523,6 @@ prune(Tab, Depth, TipHeight) ->
 					),
 					remove_solution(Tab, H, SolutionH),
 					ets:delete(Tab, {block, H}),
-					remove_tx_prefixes(TXs),
 					ar_ignore_registry:remove(H),
 					prune(Tab, Depth, TipHeight)
 			end
@@ -525,13 +545,18 @@ test_block_cache(Fork) ->
 	ets:new(bcache_test, [set, named_table]),
 	new(bcache_test, B1 = random_block(0)),
 	?assertEqual(not_found, get(bcache_test, crypto:strong_rand_bytes(48))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, crypto:strong_rand_bytes(32))),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, crypto:strong_rand_bytes(32),
+			crypto:strong_rand_bytes(32), 1, 1)),
 	?assertEqual(B1, get(bcache_test, block_id(B1))),
-	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash)),
+	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash,
+			crypto:strong_rand_bytes(32), 1, 1)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash,
+			B1#block.indep_hash, 1, 1)),
 	add(bcache_test, B1#block{ txs = [crypto:strong_rand_bytes(32)] }),
 	%% Not updated because the block is on chain.
 	?assertEqual(B1#block{ txs = [] }, get(bcache_test, block_id(B1))),
-	?assertEqual(B1#block{ txs = [] }, get_by_solution_hash(bcache_test, B1#block.hash)),
+	?assertEqual(B1#block{ txs = [] }, get_by_solution_hash(bcache_test, B1#block.hash,
+			crypto:strong_rand_bytes(32), 1, 1)),
 	add(bcache_test, B1),
 	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(bcache_test)),
 	add(bcache_test, B2 = on_top(random_block(1), B1)),
@@ -542,28 +567,40 @@ test_block_cache(Fork) ->
 	TXID = crypto:strong_rand_bytes(32),
 	add(bcache_test, B2#block{ txs = [TXID] }),
 	?assertEqual(B2#block{ txs = [TXID] }, get(bcache_test, block_id(B2))),
-	?assertEqual(B2#block{ txs = [TXID] }, get_by_solution_hash(bcache_test, B2#block.hash)),
+	?assertEqual(B2#block{ txs = [TXID] }, get_by_solution_hash(bcache_test, B2#block.hash,
+			crypto:strong_rand_bytes(32), 1, 1)),
+	?assertEqual(B2#block{ txs = [TXID] }, get_by_solution_hash(bcache_test, B2#block.hash,
+			B1#block.indep_hash, 1, 1)),
 	remove(bcache_test, block_id(B2)),
 	?assertEqual(not_found, get(bcache_test, block_id(B2))),
 	remove(bcache_test, block_id(B2)),
 	?assertEqual(B1, get(bcache_test, block_id(B1))),
 	add(bcache_test, B2),
 	add(bcache_test, B1_2 = (on_top(random_block(2), B1))#block{ hash = B1#block.hash }),
-	?assert(lists:member(get_by_solution_hash(bcache_test, B1#block.hash), [B1, B1_2])),
+	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash, B1_2#block.indep_hash,
+			1, 1)),
+	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash,
+			crypto:strong_rand_bytes(32), B1#block.cumulative_diff, 1)),
+	?assertEqual(B1_2, get_by_solution_hash(bcache_test, B1#block.hash,
+			crypto:strong_rand_bytes(32), B1_2#block.cumulative_diff, 1)),
+	?assert(lists:member(get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 1, 1),
+			[B1, B1_2])),
 	mark_tip(bcache_test, block_id(B2)),
 	?assertEqual(B1_2, get(bcache_test, block_id(B1_2))),
 	remove(bcache_test, block_id(B1_2)),
 	?assertEqual(not_found, get(bcache_test, block_id(B1_2))),
-	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash)),
+	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash,
+			crypto:strong_rand_bytes(32), 0, 0)),
 	prune(bcache_test, 1),
 	?assertEqual(B1, get(bcache_test, block_id(B1))),
-	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash)),
+	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash,
+			crypto:strong_rand_bytes(32), 0, 0)),
 	prune(bcache_test, 0),
 	?assertEqual(not_found, get(bcache_test, block_id(B1))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 0, 0)),
 	prune(bcache_test, 0),
 	?assertEqual(not_found, get(bcache_test, block_id(B1_2))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1_2#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1_2#block.hash, <<>>, 0, 0)),
 	new(bcache_test, B1),
 	add(bcache_test, B1_2),
 	add(bcache_test, B2),
@@ -592,29 +629,29 @@ test_block_cache(Fork) ->
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B1))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 0, 0)),
 	mark_tip(bcache_test, block_id(B2_3)),
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B2))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B2#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B2#block.hash, <<>>, 0, 0)),
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B3))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B3#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B3#block.hash, <<>>, 0, 0)),
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B4))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash, <<>>, 0, 0)),
 	prune(bcache_test, 1),
 	?assertEqual(B2_2, get(bcache_test, block_id(B2_2))),
-	?assertEqual(B2_2, get_by_solution_hash(bcache_test, B2_2#block.hash)),
+	?assertEqual(B2_2, get_by_solution_hash(bcache_test, B2_2#block.hash, <<>>, 0, 0)),
 	prune(bcache_test, 1),
 	?assertEqual(B2_3, get(bcache_test, block_id(B2_3))),
-	?assertEqual(B2_3, get_by_solution_hash(bcache_test, B2_3#block.hash)),
+	?assertEqual(B2_3, get_by_solution_hash(bcache_test, B2_3#block.hash, <<>>, 0, 0)),
 	remove(bcache_test, block_id(B3)),
 	?assertEqual(not_found, get(bcache_test, block_id(B3))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B3#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B3#block.hash, <<>>, 0, 0)),
 	remove(bcache_test, block_id(B3)),
 	?assertEqual(not_found, get(bcache_test, block_id(B4))),
-	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash)),
+	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash, <<>>, 0, 0)),
 	new(bcache_test, B11 = random_block(0)),
 	add(bcache_test, on_top(random_block(1), B11)),
 	add_validated(bcache_test, B13 = on_top(random_block(1), B11)),
@@ -683,4 +720,5 @@ block_id(#block{ indep_hash = H }) ->
 	H.
 
 on_top(B, PrevB) ->
-	B#block{ previous_block = PrevB#block.indep_hash, height = PrevB#block.height + 1 }.
+	B#block{ previous_block = PrevB#block.indep_hash, height = PrevB#block.height + 1,
+			prev_cumulative_diff = PrevB#block.cumulative_diff }.

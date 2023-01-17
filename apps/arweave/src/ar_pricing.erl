@@ -51,7 +51,7 @@ is_v2_pricing_height(Height) ->
 get_price_per_gib_minute(PriceHistory, Denomination2) ->
 	{HashRateTotal, RewardTotal} =
 		lists:foldl(
-			fun({HashRate, Reward, Denomination}, {Acc1, Acc2}) ->
+			fun({_Addr, HashRate, Reward, Denomination}, {Acc1, Acc2}) ->
 				Reward2 = redenominate(Reward, Denomination, Denomination2),
 				{Acc1 + HashRate, Acc2 + Reward2}
 			end,
@@ -192,7 +192,8 @@ get_initial_current_and_scheduled_price_per_gib_minute(B) ->
 	HashRate = ar_difficulty:get_hash_rate(Diff),
 	Reward = ar_inflation:calculate(B#block.height),
 	Denomination = 1,
-	Price = get_price_per_gib_minute([{HashRate, Reward, Denomination}], Denomination),
+	Price = get_price_per_gib_minute([{B#block.reward_addr, HashRate, Reward, Denomination}],
+			Denomination),
 	{Price, Price}.
 
 recalculate_price_per_gib_minute2(B) ->

@@ -24,8 +24,8 @@
 end).
 -endif.
 
-%% The miner always gets ?MINER_FEE_SHARE of the transaction fee, even
-%% when the fee is bigger than the required minimum.
+%% The miners always receive ?MINER_FEE_SHARE of the transaction fees, even
+%% when the fees are bigger than the required minimum.
 -ifdef(DEBUG).
 %% Give a smaller share to miners in tests, to slow down the fee growth a bit. Block rewards
 %% are recorded in the price history, and the history is used for re-estimating the fees so
@@ -34,6 +34,29 @@ end).
 -else.
 -define(MINER_FEE_SHARE, {1, 21}).
 -endif.
+
+%% When a block is mined, a reward is reserved; the amount depends on the fees of
+%% the included transactions and the current inflation.
+%% After ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE blocks,
+%% the reserved reward is released to the miner. However, miners do not always receive
+%% the entire reserved reward. They receive the minimal reward across the latest
+%% ?PAYOUT_SAMPLE_WINDOW_SIZE reserved rewards plus at most ?MINER_MINIMAL_REWARD_SHARE of it.
+%% The cap serves as a protection against consensus instability caused by large transaction
+%% fees - a very large transaction may make the expected reward of pursuing a fork "stealing"
+%% this transaction higher than the expected reward of continuing the existing fork.
+%% Also, the window is used for determining the reward for providing a double-signing proof.
+-ifdef(DEBUG).
+-define(PAYOUT_SAMPLE_WINDOW_SIZE, 2).
+-else.
+-define(PAYOUT_SAMPLE_WINDOW_SIZE, 100).
+-endif.
+
+%% The miner receives the smallest reward associated with the last
+%% ?PAYOUT_SAMPLE_WINDOW_SIZE blocks (the last block is the miner's block) plus
+%% at most this share of it. The cap serves as a protection against consensus instability
+%% caused by large transaction fees. Additionally, if a miner provides a proof of
+%% double-signing, they receive at most this share of the minimal reward computed this way.
+-define(MINER_MINIMAL_REWARD_SHARE, {1, 5}).
 
 %% Every transaction fee has to be at least
 %% X + X * ?MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE
@@ -81,7 +104,7 @@ end).
 -endif.
 
 %% The number of recent blocks contributing data points to the continuous estimation
-%% of the average price of storing a byte for a minute.
+%% of the average price of storing a gibibyte for a minute.
 -ifdef(DEBUG).
 -define(PRICE_HISTORY_BLOCKS, 3).
 -else.

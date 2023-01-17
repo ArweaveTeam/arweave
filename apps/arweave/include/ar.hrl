@@ -542,7 +542,11 @@
 	%% Transaction denomination code must not exceed the block's denomination code.
 	denomination = 1,
 	%% The biggest known redenomination height (0 means there were no redenominations yet).
-	redenomination_height = 0
+	redenomination_height = 0,
+	%% The proof of signing the same block several times or extending two equal forks.
+	double_signing_proof,
+	%% The cumulative difficulty of the previous block. Used internally, not gossiped.
+	prev_cumulative_diff
 }).
 
 %% @doc A transaction.

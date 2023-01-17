@@ -716,8 +716,8 @@ get_wallet_key(T) ->
 
 get_wallet_value({_, Balance, LastTX}) ->
 	{Balance, LastTX};
-get_wallet_value({_, Balance, LastTX, Denomination}) ->
-	{Balance, LastTX, Denomination}.
+get_wallet_value({_, Balance, LastTX, Denomination, MiningPermission}) ->
+	{Balance, LastTX, Denomination, MiningPermission}.
 
 read_wallet_list_chunk(RootHash) ->
 	read_wallet_list_chunk(RootHash, 0, ar_patricia_tree:new()).
@@ -864,7 +864,8 @@ update_price_history(B) ->
 	case B#block.height >= ar_fork:height_2_6() of
 		true ->
 			HashRate = ar_difficulty:get_hash_rate(B#block.diff),
-			Bin = term_to_binary({HashRate, B#block.reward}),
+			Addr = B#block.reward_addr,
+			Bin = term_to_binary({Addr, HashRate, B#block.reward}),
 			ar_kv:put(price_history_db, B#block.indep_hash, Bin);
 		false ->
 			ok

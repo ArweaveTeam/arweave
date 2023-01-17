@@ -13,8 +13,7 @@
 		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
 		get_recent_txs_map/0, mine/0, add_tx/1, get_mempool_size/0,
 		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
-		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2,
-		get_block_from_cache_by_solution_hash/1]).
+		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -302,12 +301,6 @@ get_nth_or_last(N, BI) ->
 
 get_partition_upper_bound(BI) ->
 	element(2, get_nth_or_last(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI)).
-
-%% @doc Return a block from the block cache with the given solution hash.
-%% Return not_found if one is not found. If there are several blocks with the
-%% same solution hash, one of them is returned, the choice is not defined.
-get_block_from_cache_by_solution_hash(H) ->
-	ar_block_cache:get_by_solution_hash(block_cache, H).
 
 get_recent_partition_upper_bound_by_prev_h(H, Diff) ->
 	case ar_block_cache:get_block_and_status(block_cache, H) of

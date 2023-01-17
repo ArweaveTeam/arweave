@@ -112,7 +112,7 @@ handle_call({get_balance, Address}, _From, DAG) ->
 			case Entry of
 				{Balance, _LastTX} ->
 					{reply, ar_pricing:redenominate(Balance, 1, Denomination), DAG};
-				{Balance, _LastTX, BaseDenomination} ->
+				{Balance, _LastTX, BaseDenomination, _MiningPermission} ->
 					{reply, ar_pricing:redenominate(Balance, BaseDenomination, Denomination),
 							DAG}
 			end
@@ -131,7 +131,7 @@ handle_call({get_balance, RootHash, Address}, _From, DAG) ->
 					case Entry of
 						{Balance, _LastTX} ->
 							{reply, ar_pricing:redenominate(Balance, 1, Denomination), DAG};
-						{Balance, _LastTX, BaseDenomination} ->
+						{Balance, _LastTX, BaseDenomination, _MiningPermission} ->
 							{reply, ar_pricing:redenominate(Balance, BaseDenomination,
 									Denomination), DAG}
 					end
@@ -145,7 +145,7 @@ handle_call({get_last_tx, Address}, _From, DAG) ->
 				<<>>;
 			{_Balance, LastTX} ->
 				LastTX;
-			{_Balance, LastTX, _Denomination} ->
+			{_Balance, LastTX, _Denomination, _MiningPermission} ->
 				LastTX
 		end,
 	DAG};
@@ -286,26 +286,44 @@ apply_block2(B, PrevB, DAG) ->
 	RootHash = PrevB#block.wallet_list,
 	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
 	TXs = B#block.txs,
-	Accounts = get_map(Tree, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
-	EndowmentPool = PrevB#block.reward_pool,
-	Rate = ar_pricing:usd_to_ar_rate(PrevB),
-	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
-	KryderPlusRateMultiplierLatch = PrevB#block.kryder_plus_rate_multiplier_latch,
-	KryderPlusRateMultiplier = PrevB#block.kryder_plus_rate_multiplier,
+	RewardAddr = B#block.reward_addr,
+	Addresses = [RewardAddr | ar_tx:get_addresses(TXs)],
+	PriceHistory = PrevB#block.price_history,
+	Addresses2 =
+		case length(PriceHistory) >= ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE of
+			true ->
+				[element(1, lists:nth(?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE,
+						PriceHistory)) | Addresses];
+			false ->
+				Addresses
+		end,
+	Addresses3 =
+		case B#block.double_signing_proof of
+			undefined ->
+				Addresses2;
+			Proof ->
+				[ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}) | Addresses2]
+		end,
+	Accounts = get_map(Tree, Addresses3),
+	case ar_node_utils:update_accounts(B, PrevB, Accounts) of
+		{ok, Args} ->
+			apply_block2(B, PrevB, Args, Tree, DAG);
+		Error ->
+			{Error, DAG}
+	end.
+
+apply_block2(B, PrevB, Args, Tree, DAG) ->
+	{EndowmentPool, MinerReward, DebtSupply, KryderPlusRateMultiplierLatch,
+			KryderPlusRateMultiplier, Accounts} = Args,
 	Denomination = PrevB#block.denomination,
-	DebtSupply = PrevB#block.debt_supply,
-	Args2 = {B, Accounts, EndowmentPool, DebtSupply, Rate, PricePerGiBMinute,
-			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination},
-	{EndowmentPool2, MinerReward, DebtSupply2, KryderPlusRateMultiplierLatch2,
-			KryderPlusRateMultiplier2, Accounts2} = ar_node_utils:update_accounts(Args2),
 	Denomination2 = B#block.denomination,
-	EndowmentPool3 = ar_pricing:redenominate(EndowmentPool2, Denomination, Denomination2),
+	EndowmentPool2 = ar_pricing:redenominate(EndowmentPool, Denomination, Denomination2),
 	MinerReward2 = ar_pricing:redenominate(MinerReward, Denomination, Denomination2),
-	DebtSupply3 = ar_pricing:redenominate(DebtSupply2, Denomination, Denomination2),
-	case {B#block.reward_pool == EndowmentPool3, B#block.reward == MinerReward2,
-			B#block.debt_supply == DebtSupply3,
-			B#block.kryder_plus_rate_multiplier_latch == KryderPlusRateMultiplierLatch2,
-			B#block.kryder_plus_rate_multiplier == KryderPlusRateMultiplier2,
+	DebtSupply2 = ar_pricing:redenominate(DebtSupply, Denomination, Denomination2),
+	case {B#block.reward_pool == EndowmentPool2, B#block.reward == MinerReward2,
+			B#block.debt_supply == DebtSupply2,
+			B#block.kryder_plus_rate_multiplier_latch == KryderPlusRateMultiplierLatch,
+			B#block.kryder_plus_rate_multiplier == KryderPlusRateMultiplier,
 			B#block.height >= ar_fork:height_2_6()} of
 		{false, _, _, _, _, _} ->
 			{{error, invalid_reward_pool}, DAG};
@@ -318,11 +336,12 @@ apply_block2(B, PrevB, DAG) ->
 		{true, true, true, true, false, true} ->
 			{{error, invalid_kryder_plus_rate_multiplier}, DAG};
 		_ ->
-			Tree2 = apply_diff(Accounts2, Tree),
+			Tree2 = apply_diff(Accounts, Tree),
 			{RootHash2, _} = ar_block:hash_wallet_list(Tree2),
 			case B#block.wallet_list == RootHash2 of
 				true ->
-					DAG2 = maybe_add_node(DAG, RootHash2, RootHash, Accounts2, Denomination2),
+					RootHash = PrevB#block.wallet_list,
+					DAG2 = maybe_add_node(DAG, RootHash2, RootHash, Accounts, Denomination2),
 					{{ok, RootHash2}, DAG2};
 				false ->
 					{{error, invalid_wallet_list}, DAG}
@@ -350,8 +369,9 @@ apply_diff(Diff, Tree) ->
 				ar_patricia_tree:delete(Addr, Acc);
 			(Addr, {Balance, LastTX}, Acc) ->
 				ar_patricia_tree:insert(Addr, {Balance, LastTX}, Acc);
-			(Addr, {Balance, LastTX, Denomination}, Acc) ->
-				ar_patricia_tree:insert(Addr, {Balance, LastTX, Denomination}, Acc)
+			(Addr, {Balance, LastTX, Denomination, MiningPermission}, Acc) ->
+				ar_patricia_tree:insert(Addr,
+						{Balance, LastTX, Denomination, MiningPermission}, Acc)
 		end,
 		Tree,
 		Diff

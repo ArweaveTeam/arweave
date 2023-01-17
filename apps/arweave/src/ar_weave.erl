@@ -61,11 +61,14 @@ init(WalletList, Diff) ->
 	B1 =
 		case ar_fork:height_2_6() > 0 of
 			false ->
+				RewardKey = element(2, ar_wallet:new()),
+				RewardAddr = ar_wallet:to_address(RewardKey),
 				HashRate = ar_difficulty:get_hash_rate(Diff),
-				PriceHistory = [{HashRate, 10, 1}],
+				PriceHistory = [{RewardAddr, HashRate, 10, 1}],
 				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(PriceHistory, 1),
-				B0#block{ nonce = 0, recall_byte = 0, partition_number = 0,
-						reward_key = {{?RSA_SIGN_ALG, 65537}, <<>>}, reward_addr = <<>>,
+				B0#block{ hash = crypto:strong_rand_bytes(32),
+						nonce = 0, recall_byte = 0, partition_number = 0,
+						reward_key = RewardKey, reward_addr = RewardAddr,
 						reward = 10,
 						recall_byte2 = 0, nonce_limiter_info = #nonce_limiter_info{
 								output = crypto:strong_rand_bytes(32),
