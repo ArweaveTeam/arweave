@@ -8,8 +8,6 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--export([timer/1]).
-
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -183,39 +181,44 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 				sets:new(), % A storage module may be smaller than a partition.
 				IOThreads
 			))),
-	{IOList, Seconds, Sum, Current} =
+	Now = erlang:monotonic_time(millisecond),
+	{IOList, MaxPartitionTime, PartitionsSum, MaxCurrentTime, CurrentsSum} =
 		lists:foldr(
-			fun(Partition, {Acc1, Acc2, Acc3, Acc4} = Acc) ->
+			fun(Partition, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
 				case ets:lookup(?MODULE, {performance, Partition}) of
 					[] ->
 						Acc;
-					[{_, 0, _Sum, _Tmp, _Current}] ->
-						Acc;
-					[{_, PartitionSeconds, PartitionSum, _Tmp, PartitionCurrent}] ->
-						PartitionAvg = PartitionSum / PartitionSeconds / 4,
-						PartitionCurrent2 = PartitionCurrent / 4,
+					[{_, PartitionStart, PartitionTotal, CurrentStart, CurrentTotal}] ->
+						ets:update_counter(?MODULE,
+										   {performance, Partition},
+										   [{4, 0, -1, Now}, {5, 0, -1, 0}]),
+						PartitionTimeLapse = (Now - PartitionStart) / 1000,
+						PartitionAvg = PartitionTotal / PartitionTimeLapse / 4,
+						CurrentTimeLapse = (Now - CurrentStart) / 1000,
+						CurrentAvg = CurrentTotal / CurrentTimeLapse / 4,
 						?LOG_INFO([{event, mining_partition_performance_report},
 								{partition, Partition}, {avg, PartitionAvg},
-								{current, PartitionCurrent2}]),
+								{current, CurrentAvg}]),
 						{[io_lib:format("Partition ~B avg: ~.2f MiB/s, current: ~.2f MiB/s.~n",
-								[Partition, PartitionAvg, PartitionCurrent2]) | Acc1],
-								max(Acc2, PartitionSeconds), Acc3 + PartitionSum,
-								Acc4 + PartitionCurrent}
+								[Partition, PartitionAvg, CurrentAvg]) | Acc1],
+								max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
+								max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal}
 				end
 			end,
-			{[], 0, 0, 0},
+			{[], 0, 0, 0, 0},
 			Partitions
 		),
-	case Seconds > 0 of
+	case MaxPartitionTime > 0 of
 		true ->
-			Avg = Sum / Seconds / 4,
-			?LOG_INFO([{event, mining_performance_report}, {total_avg_mibps, Avg},
-					{total_avg_hps, Avg * 4}, {total_current_mibps, Current / 4},
-					{total_current_hps, Current}]),
+			TotalAvg = PartitionsSum / MaxPartitionTime / 4,
+			TotalCurrent = CurrentsSum / MaxCurrentTime / 4,
+			?LOG_INFO([{event, mining_performance_report}, {total_avg_mibps, TotalAvg},
+					{total_avg_hps, TotalAvg * 4}, {total_current_mibps, TotalCurrent},
+					{total_current_hps, TotalCurrent * 4}]),
 			Str = io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
-					" ~.2f h/s; current: ~.2f MiB/s, ~B h/s.~n", [Avg, Avg * 4,
-					Current / 4, Current]),
-			prometheus_gauge:set(mining_rate, Current),
+					" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s.~n", [TotalAvg, TotalAvg * 4,
+					TotalCurrent, TotalCurrent * 4]),
+			prometheus_gauge:set(mining_rate, TotalCurrent),
 			IOList2 = [Str | [IOList | ["~n"]]],
 			ar:console(iolist_to_binary(IOList2));
 		false ->
@@ -375,7 +378,6 @@ start_io_thread(PartitionNumber, ReplicaID, StoreID,
 			true ->
 				Set;
 			false ->
-				timer:apply_interval(1000, ?MODULE, timer, [PartitionNumber]),
 				sets:add_element(PartitionNumber, Set)
 		end,
 	Thread =
@@ -403,17 +405,6 @@ start_io_thread(PartitionNumber, ReplicaID, StoreID,
 			{mining_addr, ar_util:encode(ReplicaID)}, {store_id, StoreID}]),
 	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2,
 			partitions = Set2 }.
-
-%% @doc Track the number of seconds passed and the current performance.
-timer(PartitionNumber) ->
-	case ets:lookup(?MODULE, {performance, PartitionNumber}) of
-		[] ->
-			ok;
-		[{_Key, _Seconds, _Sum, Tmp, _Current}] ->
-			ets:update_counter(?MODULE, {performance, PartitionNumber},
-					[{2, 1}, {3, Tmp}, {4, -Tmp}, {5, 0, -1, Tmp}])
-
-	end.
 
 start_hashing_thread(State) ->
 	#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs,
@@ -457,7 +448,7 @@ io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
 		stop ->
 			io_thread(PartitionNumber, ReplicaID, StoreID);
 		reset_performance_counters ->
-			ets:insert(?MODULE, [{{performance, PartitionNumber}, 0, 0, 0, 0}]),
+			ets:insert(?MODULE, [{{performance, PartitionNumber}, erlang:monotonic_time(millisecond), 0, erlang:monotonic_time(millisecond), 0}]),
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{read_recall_range, {SessionRef, From, RecallRangeStart, H0,
 				NonceLimiterOutput, CorrelationRef}} ->
@@ -598,8 +589,10 @@ read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutpu
 read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
 		ReplicaID, From, Nonce, NonceMax, [{_EndOffset, Chunk} | ChunkOffsets], Ref,
 		CorrelationRef) ->
-	ets:update_counter(?MODULE, {performance, PartitionNumber}, [{4, 1}],
-			{{performance, PartitionNumber}, 0, 0, 1, 0}),
+	ets:update_counter(?MODULE, {performance, PartitionNumber}, [{3, 1}, {5, 1}],
+			{{performance, PartitionNumber},
+			 erlang:monotonic_time(millisecond), 1,
+			 erlang:monotonic_time(millisecond), 1}),
 	From ! {Type, {H0, PartitionNumber, Nonce, NonceLimiterOutput, ReplicaID, Chunk,
 			CorrelationRef, Ref}},
 	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
