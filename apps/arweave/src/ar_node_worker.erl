@@ -33,7 +33,7 @@
 -ifdef(DEBUG).
 -define(BLOCK_INDEX_HEAD_LEN, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
 -else.
--define(BLOCK_INDEX_HEAD_LEN, 10000).
+-define(BLOCK_INDEX_HEAD_LEN, 30000).
 -endif.
 
 %%%===================================================================
