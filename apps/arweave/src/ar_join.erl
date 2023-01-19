@@ -88,7 +88,7 @@ get_block_index2(Peer) ->
 
 get_block_index2(Peer, Start, Height, BI) ->
 	N = ?REQUEST_BLOCK_INDEX_RANGE_SIZE,
-	case ar_http_iface_client:get_block_index(Peer, min(Start, Height - 1),
+	case ar_http_iface_client:get_block_index(Peer, min(Start, Height),
 			min(Height, Start + N - 1)) of
 		{ok, Range} when length(Range) < N ->
 			case Start of
