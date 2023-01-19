@@ -430,13 +430,10 @@ handle_cast({move_data_root_index, Cursor, N}, State) ->
 	{noreply, State};
 
 handle_cast({join, RecentBI}, State) ->
-	#sync_data_state{ block_index = CurrentBI, weave_size = CurrentWeaveSize,
-			store_id = StoreID } = State,
+	#sync_data_state{ block_index = CurrentBI, store_id = StoreID } = State,
 	[{_, WeaveSize, _} | _] = RecentBI,
 	case {CurrentBI, ar_block_index:get_intersection(CurrentBI)} of
 		{[], _} ->
-			ok;
-		{_, {_, CurrentWeaveSize, _}} ->
 			ok;
 		{_, no_intersection} ->
 			throw(last_stored_block_index_has_no_intersection_with_the_new_one);
@@ -488,8 +485,7 @@ handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 	end,
 	{noreply, State};
 
-handle_cast({add_tip_block, BlockTXPairs, BI},
-		State) ->
+handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	#sync_data_state{ store_id = StoreID, weave_size = CurrentWeaveSize,
 			block_index = CurrentBI } = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),

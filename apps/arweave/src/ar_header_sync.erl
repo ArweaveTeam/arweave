@@ -103,8 +103,6 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 		case {CurrentBI, ar_block_index:get_intersection(StartHeight, CurrentBI)} of
 			{[], _} ->
 				State2;
-			{_, {PrevHeight, _}} ->
-				State2;
 			{_, no_intersection} ->
 				throw(last_stored_block_index_has_no_intersection_with_the_new_one);
 			{_, {IntersectionHeight, _}} ->
