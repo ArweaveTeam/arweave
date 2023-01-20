@@ -191,7 +191,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 					[{_, PartitionStart, PartitionTotal, CurrentStart, CurrentTotal}] ->
 						ets:update_counter(?MODULE,
 										   {performance, Partition},
-										   [{4, 0, -1, Now}, {5, 0, -1, 0}]),
+										   [{4, -1, Now, Now}, {5, 0, -1, 0}]),
 						PartitionTimeLapse = (Now - PartitionStart) / 1000,
 						PartitionAvg = PartitionTotal / PartitionTimeLapse / 4,
 						CurrentTimeLapse = (Now - CurrentStart) / 1000,
