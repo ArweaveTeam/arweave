@@ -69,7 +69,7 @@
 -define(LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, 25).
 
 %% The maximum number of one-step checkpoints the block header may include.
--define(NONCE_LIMITER_MAX_CHECKPOINTS_COUNT, 7200).
+-define(NONCE_LIMITER_MAX_CHECKPOINTS_COUNT, 10800).
 
 %% The minimum difficulty allowed.
 -ifndef(SPORA_MIN_DIFFICULTY).
