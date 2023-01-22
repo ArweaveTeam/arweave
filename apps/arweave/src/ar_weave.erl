@@ -30,9 +30,9 @@ init(WalletList, Diff) ->
 	TX = create_genesis_tx(Key),
 	WalletList2 = WalletList ++ [{ar_wallet:to_address(Key), 0, TX#tx.id}],
 	TXs = [TX],
-	WL = ar_patricia_tree:from_proplist([{A, {B, LTX}} || {A, B, LTX} <- WalletList2]),
-	WLH = element(1, ar_block:hash_wallet_list(WL)),
-	ok = ar_storage:write_wallet_list(WLH, WL),
+	AccountTree = ar_patricia_tree:from_proplist([{A, {B, LTX}}
+			|| {A, B, LTX} <- WalletList2]),
+	WLH = element(1, ar_block:hash_wallet_list(AccountTree)),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, 0),
 	BlockSize = case SizeTaggedTXs of [] -> 0; _ -> element(2, lists:last(SizeTaggedTXs)) end,
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
@@ -56,7 +56,8 @@ init(WalletList, Diff) ->
 			usd_to_ar_rate = ?NEW_WEAVE_USD_TO_AR_RATE,
 			scheduled_usd_to_ar_rate = ?NEW_WEAVE_USD_TO_AR_RATE,
 			packing_2_5_threshold = 0,
-			strict_data_split_threshold = BlockSize
+			strict_data_split_threshold = BlockSize,
+			account_tree = AccountTree
 		},
 	B1 =
 		case ar_fork:height_2_6() > 0 of

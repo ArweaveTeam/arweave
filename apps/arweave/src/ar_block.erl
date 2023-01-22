@@ -654,7 +654,7 @@ test_wallet_list_performance(Length, Denominations) ->
 						MiningPermissionBin/binary >>,
 				crypto:hash(sha384, Preimage)
 		end,
-	{Time3, {_, T2}} =
+	{Time3, {_, T2, _}} =
 		timer:tc(fun() -> ar_patricia_tree:compute_hash(T1, ComputeHashFun) end),
 	io:format("root hash from scratch          | ~f seconds~n", [Time3 / 1000000]),
 	{Time4, T3} =
@@ -670,7 +670,7 @@ test_wallet_list_performance(Length, Denominations) ->
 			end
 		),
 	io:format("2000 inserts                    | ~f seconds~n", [Time4 / 1000000]),
-	{Time5, _} =
+	{Time5, _, _} =
 		timer:tc(fun() -> ar_patricia_tree:compute_hash(T3, ComputeHashFun) end),
 	io:format("recompute hash after 2k inserts | ~f seconds~n", [Time5 / 1000000]),
 	{Time6, T4} =
@@ -681,7 +681,7 @@ test_wallet_list_performance(Length, Denominations) ->
 			end
 		),
 	io:format("1 insert                        | ~f seconds~n", [Time6 / 1000000]),
-	{Time7, _} =
+	{Time7, _, _} =
 		timer:tc(fun() -> ar_patricia_tree:compute_hash(T4, ComputeHashFun) end),
 	io:format("recompute hash after 1 insert   | ~f seconds~n", [Time7 / 1000000]).
 

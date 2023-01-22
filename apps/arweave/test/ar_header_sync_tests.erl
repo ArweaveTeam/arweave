@@ -83,7 +83,6 @@ test_syncs_headers() ->
 			ets:insert(test_syncs_header, {height, Height + 1}),
 			unavailable == ar_storage:read_block(NoSpaceH)
 				andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
-				andalso ar_storage:read_wallet_list(NoSpaceB#block.wallet_list) == not_found
 		end,
 		100,
 		10000

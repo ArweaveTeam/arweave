@@ -8,7 +8,7 @@
 -behaviour(gen_server).
 
 -export([lookup_block_filename/1, lookup_tx_filename/1, write_block/1, write_block_shadow/1,
-		lookup_wallet_list_chunk_filename/2, write_wallet_list_chunk/3, reset/0]).
+		reset/0]).
 
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
 		code_change/3]).
@@ -115,36 +115,6 @@ write_txs([TX | TXs]) ->
 			Reply
 	end.
 
-lookup_wallet_list_chunk_filename(RootHash, Position) when is_binary(RootHash) ->
-	WalletListPath = case get(ar_disk_cache_path) of
-		undefined ->
-			{ok, Config} = application:get_env(arweave, config),
-			Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
-			put(ar_disk_cache_path, Path),
-			filename:join(Path, ?DISK_CACHE_WALLET_LIST_DIR);
-		Path ->
-			filename:join(Path, ?DISK_CACHE_WALLET_LIST_DIR)
-	end,
-	Name = binary_to_list(ar_util:encode(RootHash))
-		++ "-" ++ integer_to_list(Position)
-		++ "-" ++ integer_to_list(?WALLET_LIST_CHUNK_SIZE)
-		++ ".bin",
-	Filename = filename:join(WalletListPath, Name),
-	case ar_storage:is_file(Filename) of
-		true ->
-			{ok, Filename};
-		_ ->
-			unavailable
-	end.
-
-write_wallet_list_chunk(RootHash, Range, Position) ->
-	case catch gen_server:call(?MODULE, {write_wallet_list_chunk, RootHash, Range, Position}) of
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			{error, timeout};
-		Reply ->
-			Reply
-	end.
-
 reset() ->
 	gen_server:call(?MODULE, reset).
 
@@ -215,23 +185,6 @@ init([]) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({write_wallet_list_chunk, RootHash, Range, Position}, _From, State) ->
-	Name = binary_to_list(ar_util:encode(RootHash))
-		++ "-" ++ integer_to_list(Position)
-		++ "-" ++ integer_to_list(?WALLET_LIST_CHUNK_SIZE),
-	Binary = term_to_binary(Range),
-	File = filename:join(get_wallet_list_path(), Name ++ ".bin"),
-	Size = byte_size(Binary),
-	case ar_storage:write_file_atomic(File, Binary) of
-		ok ->
-			gen_server:cast(?MODULE, {record_written_data, Size}),
-			{reply, ok, State};
-		{error, Reason} = Error ->
-			?LOG_ERROR([{event, failed_to_store_wallet_list_chunk_in_disk_cache},
-				{reason, io_lib:format("~p", [Reason])}]),
-			{reply, Error, State}
-	end;
-
 handle_call(reset, _From, State) ->
 	Path = State#state.path,
 	?LOG_DEBUG([{event, reset_disk_cache}, {path, Path}]),
@@ -344,11 +297,6 @@ get_tx_path() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
 	filename:join(Path, ?DISK_CACHE_TX_DIR).
-
-get_wallet_list_path() ->
-	{ok, Config} = application:get_env(arweave, config),
-	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
-	filename:join(Path, ?DISK_CACHE_WALLET_LIST_DIR).
 
 write_tx(TX) ->
 	Name = binary_to_list(ar_util:encode(TX#tx.id)) ++ ".json",
