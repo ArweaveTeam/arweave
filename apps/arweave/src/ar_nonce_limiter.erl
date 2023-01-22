@@ -161,34 +161,49 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			SessionKey}, infinity),
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	Buffer = steps_to_buffer(lists:reverse(Checkpoints)),
-	Group = {?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, length(Checkpoints), Buffer},
+	CheckpointLen = length(Checkpoints),
+	Group = {?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, CheckpointLen, Buffer},
 	ReversedSteps = lists:reverse(Steps),
-	case exclude_computed_steps_from_checkpoints([Group], ReversedSteps) of
+	BeforeCheckpointsLen = StepNumber - PrevStepNumber - CheckpointLen,
+	{Shift, PrevOutput2, ReversedSteps2} =
+		case BeforeCheckpointsLen > 0 of
+			false ->
+				{0, PrevOutput, ReversedSteps};
+			true ->
+				case length(ReversedSteps) >= BeforeCheckpointsLen of
+					false ->
+						{0, PrevOutput, ReversedSteps};
+					true ->
+						{BeforeCheckpointsLen, lists:nth(BeforeCheckpointsLen, ReversedSteps),
+								lists:nthtail(BeforeCheckpointsLen, ReversedSteps)}
+				end
+		end,
+	case exclude_computed_steps_from_checkpoints([Group], ReversedSteps2) of
 		invalid ->
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
-		{[], Shift} when PrevStepNumber + Shift == StepNumber ->
+		{[], Shift2} when PrevStepNumber + Shift + Shift2 == StepNumber ->
 			Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
 					Steps},
 			gen_server:cast(?MODULE, {validated_steps, Args}),
 			spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
-		{[_Group], Shift} when PrevStepNumber + Shift >= StepNumber ->
+		{[_Group], Shift2} when PrevStepNumber + Shift + Shift2 >= StepNumber ->
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
-		{[_Group] = Groups, Shift} when PrevStepNumber + Shift < StepNumber ->
-			PrevOutput2 = case Shift of 0 -> PrevOutput;
-					_ -> lists:nth(Shift, ReversedSteps) end,
+		{[_Group] = Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber ->
+			PrevOutput3 = case Shift2 of 0 -> PrevOutput2;
+					_ -> lists:nth(Shift2, ReversedSteps2) end,
 			spawn(
 				fun() ->
-					StartStepNumber = PrevStepNumber + Shift,
+					StartStepNumber = PrevStepNumber + Shift + Shift2,
 					{ok, Config} = application:get_env(arweave, config),
 					ThreadCount = Config#config.max_nonce_limiter_validation_thread_count,
 					Result =
 						case is_integer(EntropyResetPoint) of
 							true when EntropyResetPoint > StartStepNumber ->
 								SeedH = crypto:hash(sha256, Seed),
-								catch verify(StartStepNumber, PrevOutput2, Groups,
+								catch verify(StartStepNumber, PrevOutput3, Groups,
 										EntropyResetPoint, SeedH, ThreadCount);
 							_ ->
-								catch verify_no_reset(StartStepNumber, PrevOutput2, Groups,
+								catch verify_no_reset(StartStepNumber, PrevOutput3, Groups,
 										ThreadCount)
 						end,
 					case Result of
@@ -198,17 +213,17 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 									{block, ar_util:encode(H)},
 									{start_step_number, StartStepNumber},
 									{error_id, ErrorID},
-									{prev_output, ar_util:encode(PrevOutput2)},
+									{prev_output, ar_util:encode(PrevOutput3)},
 									{exception, io_lib:format("~p", [Exc])}]),
 							Dump =
 								case is_integer(EntropyResetPoint)
 										andalso EntropyResetPoint > StartStepNumber of
 									true ->
 										SeedH2 = crypto:hash(sha256, Seed),
-										{StartStepNumber, PrevOutput2, Groups,
+										{StartStepNumber, PrevOutput3, Groups,
 												EntropyResetPoint, SeedH2, ThreadCount};
 									false ->
-										{StartStepNumber, PrevOutput2, Groups, ThreadCount}
+										{StartStepNumber, PrevOutput3, Groups, ThreadCount}
 								end,
 							file:write_file("error_dump_" ++ binary_to_list(ErrorID),
 									term_to_binary(Dump)),
@@ -1029,7 +1044,7 @@ test_applies_validated_steps() ->
 	{ok, Output4, _} = compute(4, Output3),
 	B3 = test_block(4, Output4, Seed, NextSeed, [], [Output4, Output3]),
 	assert_validate(B3, B2, valid),
-	assert_validate(B3, B1, {invalid, 2}),
+	assert_validate(B3, B1, valid),
 	{ok, Output5, _} = compute(5, mix_seed(Output4, NextSeed)),
 	B4 = test_block(5, Output5, NextSeed, NextSeed2, [], [Output5]),
 	[step() || _ <- lists:seq(1, 6)],
@@ -1040,7 +1055,7 @@ test_applies_validated_steps() ->
 	assert_validate(B4, B4, {invalid, 1}),
 	% 5, 6, 7, 8, 9, 10
 	B5 = test_block(10, <<>>, NextSeed, NextSeed2, [], [<<>>]),
-	assert_validate(B5, B4, {invalid, 2}),
+	assert_validate(B5, B4, {invalid, 3}),
 	B6 = test_block(10, <<>>, NextSeed, NextSeed2, [],
 			% Steps 10, 9, 8, 7, 6.
 			[<<>> | lists:sublist(get_steps(), 4)]),

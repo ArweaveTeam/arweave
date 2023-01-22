@@ -865,7 +865,6 @@ update_accounts_rejects_same_signature_in_double_signing_proof_test() ->
 	Preimage = << (ar_serialize:encode_int(1, 16))/binary,
 			(ar_serialize:encode_int(1, 16))/binary, Random/binary >>,
 	Sig1 = ar_wallet:sign(element(1, Key), Preimage),
-	% TODO same signature twice not allowed
 	DoubleSigningProof = {Pub, Sig1, 1, 1, Random, Sig1, 1, 1, Random},
 	BannedAddr = ar_wallet:to_address(Key),
 	ProverKey = ar_wallet:new(),
