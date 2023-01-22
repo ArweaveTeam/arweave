@@ -99,7 +99,7 @@ handle_call({get_chunk, RootHash, Cursor}, _From, DAG) ->
 		{error, not_found} ->
 			{reply, {error, root_hash_not_found}, DAG};
 		Tree ->
-			{NextCursor, Range} = ar_storage:get_wallet_list_range(Tree, Cursor),
+			{NextCursor, Range} = get_account_tree_range(Tree, Cursor),
 			{reply, {ok, {NextCursor, Range}}, DAG}
 	end;
 
@@ -163,41 +163,14 @@ handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, DAG) 
 handle_call({set_current, RootHash, Height, PruneDepth}, _, DAG) ->
 	{reply, ok, set_current(DAG, RootHash, Height, PruneDepth)}.
 
-handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
-	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
-		{error, not_found} ->
-			%% Blocks were mined too fast or IO is too slow - the root hash has been
-			%% pruned from DAG.
-			ok;
-		Tree ->
-			{NextCursor, Range} = ar_storage:get_wallet_list_range(Tree, Cursor),
-			StoredRange = case NextCursor of last -> [last | Range]; _ -> Range end,
-			StoreFun =
-				case ar_storage:get_sufficient_space_for_headers() > 0 of
-					false ->
-						fun ar_disk_cache:write_wallet_list_chunk/3;
-					true ->
-						fun ar_storage:write_wallet_list_chunk/3
-				end,
-			case {StoreFun(RootHash, StoredRange, Position), NextCursor} of
-				{ok, last} ->
-					ok;
-				{ok, _} ->
-					NextPosition = Position + ?WALLET_LIST_CHUNK_SIZE,
-					Cast = {write_wallet_list_chunk, RootHash, NextCursor, NextPosition},
-					gen_server:cast(self(), Cast);
-				{{error, _Reason}, _} ->
-					ok
-			end
-	end,
-	{noreply, DAG};
-
 handle_cast({init, Blocks, Peers}, _) ->
 	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	{DAG3, LastB} = lists:foldl(
 		fun (B, start) ->
 				Tree = get_tree(B, Peers),
-				{RootHash, UpdatedTree} = ar_block:hash_wallet_list(Tree),
+				{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
+				gen_server:cast(ar_storage, {store_account_tree_update, B#block.height,
+						RootHash, UpdateMap}),
 				RootHash = B#block.wallet_list,
 				DAG = ar_diff_dag:new(RootHash, UpdatedTree, B#block.denomination),
 				{DAG, B};
@@ -337,7 +310,7 @@ apply_block2(B, PrevB, Args, Tree, DAG) ->
 			{{error, invalid_kryder_plus_rate_multiplier}, DAG};
 		_ ->
 			Tree2 = apply_diff(Accounts, Tree),
-			{RootHash2, _} = ar_block:hash_wallet_list(Tree2),
+			{RootHash2, _, _} = ar_block:hash_wallet_list(Tree2),
 			case B#block.wallet_list == RootHash2 of
 				true ->
 					RootHash = PrevB#block.wallet_list,
@@ -353,13 +326,14 @@ set_current(DAG, RootHash, Height, PruneDepth) ->
 		ar_diff_dag:move_sink(DAG, RootHash, fun apply_diff/2, fun reverse_diff/2),
 		RootHash,
 		fun(Tree, Meta) ->
-			{RootHash, UpdatedTree} = ar_block:hash_wallet_list(Tree),
+			{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
+			gen_server:cast(ar_storage, {store_account_tree_update, Height, RootHash,
+					UpdateMap}),
 			{RootHash, UpdatedTree, Meta}
 		end
 	),
 	Tree = ar_diff_dag:get_sink(UpdatedDAG),
 	true = Height >= ar_fork:height_2_2(),
-	gen_server:cast(self(), {write_wallet_list_chunk, RootHash, first, 0}),
 	prometheus_gauge:set(wallet_list_size, ar_patricia_tree:size(Tree)),
 	ar_diff_dag:filter(UpdatedDAG, PruneDepth).
 
@@ -403,6 +377,21 @@ get_map(Tree, Addresses) ->
 		#{},
 		Addresses
 	).
+
+get_account_tree_range(Tree, Cursor) ->
+	Range =
+		case Cursor of
+			first ->
+				ar_patricia_tree:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
+			_ ->
+				ar_patricia_tree:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
+		end,
+	case length(Range) of
+		?WALLET_LIST_CHUNK_SIZE + 1 ->
+			{element(1, hd(Range)), tl(Range)};
+		_ ->
+			{last, Range}
+	end.
 
 compute_hash(Tree, Diff, Height) ->
 	Tree2 = apply_diff(Diff, Tree),

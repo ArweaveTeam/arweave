@@ -386,7 +386,8 @@ test_get_block_by_hash() ->
 	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(B0#block.indep_hash,
 			master_peer(), binary),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [] }, B1).
+	?assertEqual(B0#block{ size_tagged_txs = unset, account_tree = undefined, txs = TXIDs,
+			price_history = [] }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test_() ->
@@ -399,7 +400,8 @@ test_get_block_by_height() ->
 	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(0, master_peer(),
 			binary),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [] }, B1).
+	?assertEqual(B0#block{ size_tagged_txs = unset, account_tree = undefined, txs = TXIDs,
+			price_history = [] }, B1).
 
 get_current_block_test_() ->
 	{timeout, 30, fun test_get_current_block/0}.
@@ -416,7 +418,8 @@ test_get_current_block() ->
 	{ok, BI} = ar_http_iface_client:get_block_index(Peer, 0, 100),
 	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(hd(BI), Peer, binary),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [] }, B1),
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [],
+			account_tree = undefined }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{ method => get, peer => master_peer(), path => "/block/current" }),
 	{JSONStruct} = jiffy:decode(Body),

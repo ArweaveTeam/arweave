@@ -7,7 +7,7 @@
 
 -export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0,
 		get_current_block/0, is_in_block_index/1, get_block_index_and_height/0,
-		get_height/0, get_balance/1, get_last_tx/1, get_wallet_list_chunk/2,
+		get_height/0, get_balance/1, get_last_tx/1,
 		get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
 		get_ready_for_mining_txs/1, get_current_usd_to_ar_rate/0, get_current_block_hash/0,
 		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
@@ -269,11 +269,6 @@ get_last_tx(MaybeRSAPub) when byte_size(MaybeRSAPub) == 512 ->
 	get_last_tx(ar_wallet:to_rsa_address(MaybeRSAPub));
 get_last_tx(Addr) ->
 	{ok, ar_wallets:get_last_tx(Addr)}.
-
-%% @doc Return a chunk of wallets from the tree with the given root hash starting
-%% from the Cursor address.
-get_wallet_list_chunk(RootHash, Cursor) ->
-	ar_wallets:get_chunk(RootHash, Cursor).
 
 %% @doc Trigger a node to start mining a block.
 mine() ->

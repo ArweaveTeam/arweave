@@ -2381,7 +2381,7 @@ process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
 		{_, {error, invalid}} ->
 			{400, #{}, <<"Invalid root hash.">>, Req};
 		{{ok, RootHash}, {ok, Cursor}} ->
-			case ar_node:get_wallet_list_chunk(RootHash, Cursor) of
+			case ar_wallets:get_chunk(RootHash, Cursor) of
 				{ok, {NextCursor, Wallets}} ->
 					SerializeFn = case cowboy_req:header(<<"content-type">>, Req) of
 						<<"application/json">> -> fun wallet_list_chunk_to_json/1;

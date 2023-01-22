@@ -234,8 +234,7 @@ start_master_application(Config) ->
 	ar_storage:ensure_directories(ApplicationConfig#config.data_dir),
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0 | _] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
-	{ok, WalletList} = ar_storage:read_wallet_list(B0#block.wallet_list),
-	write_genesis_files(ApplicationConfig#config.data_dir, B0, WalletList),
+	write_genesis_files(ApplicationConfig#config.data_dir, B0),
 	ar_test_lib:start_test_application(),
 	lists:append([{wallet, Wallet}, {'B0', B0}], Config).
 
@@ -265,7 +264,7 @@ stop_slave_application(Config) ->
 	Slave = ?config(slave, Config),
 	ct_rpc:call(Slave, ar_test_lib, stop_test_application, []).
 
-write_genesis_files(DataDir, B0, WalletList) ->
+write_genesis_files(DataDir, B0) ->
 	%% Make sure all required directories exist.
 	ar_storage:ensure_directories(DataDir),
 	%% Write genesis block.
@@ -297,6 +296,7 @@ write_genesis_files(DataDir, B0, WalletList) ->
 		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
 	WalletListJSON =
 		ar_serialize:jsonify(
-			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false, WalletList)
+			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
+					B0#block.account_tree)
 		),
 	ok = file:write_file(WalletListFilepath, WalletListJSON).

@@ -66,13 +66,8 @@ start(B0, RewardAddr, Config) ->
 %% @doc Start a fresh master node with the given genesis block, mining address, config,
 %% and storage modules.
 start(B0, RewardAddr, Config, StorageModules) ->
-	%% Currently, ar_weave:init stores the wallet tree on disk. Tests call ar_weave:init,
-	%% it returns the block header (which does not contain the wallet tree), the block header
-	%% is passed here where we want to erase the previous storage and at the same time
-	%% keep the genesis data to start a new weave.
-	WalletList = read_wallet_list(B0#block.wallet_list),
 	clean_up_and_stop(),
-	write_genesis_files(Config#config.data_dir, B0, WalletList),
+	write_genesis_files(Config#config.data_dir, B0),
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = true,
 		peers = [],
@@ -271,17 +266,6 @@ get_balance_by_address(Node, Address) ->
 %%% Private functions.
 %%%===================================================================
 
-read_wallet_list(RootHash) ->
-	case rpc:call('master@127.0.0.1', ar_storage, read_wallet_list, [RootHash], 10000) of
-		{ok, Tree} ->
-			Tree;
-		_ ->
-			%% The tree is supposed to be stored by either of the nodes - the one
-			%% where ar_weave:init was called.
-			{ok, Tree} = slave_call(ar_storage, read_wallet_list, [RootHash]),
-			Tree
-	end.
-
 clean_up_and_stop() ->
 	Config = stop(),
 	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
@@ -294,7 +278,7 @@ clean_up_and_stop() ->
 		Entries
 	).
 
-write_genesis_files(DataDir, B0, WalletList) ->
+write_genesis_files(DataDir, B0) ->
 	BH = B0#block.indep_hash,
 	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
 	ok = filelib:ensure_dir(BlockDir ++ "/"),
@@ -324,7 +308,8 @@ write_genesis_files(DataDir, B0, WalletList) ->
 		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
 	WalletListJSON =
 		ar_serialize:jsonify(
-			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false, WalletList)
+			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
+					B0#block.account_tree)
 		),
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
 

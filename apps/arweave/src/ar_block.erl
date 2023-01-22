@@ -654,7 +654,7 @@ test_wallet_list_performance(Length, Denominations) ->
 						MiningPermissionBin/binary >>,
 				crypto:hash(sha384, Preimage)
 		end,
-	{Time3, {_, T2}} =
+	{Time3, {_, T2, _}} =
 		timer:tc(fun() -> ar_patricia_tree:compute_hash(T1, ComputeHashFun) end),
 	io:format("root hash from scratch          | ~f seconds~n", [Time3 / 1000000]),
 	{Time4, T3} =

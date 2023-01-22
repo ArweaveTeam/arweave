@@ -1589,7 +1589,7 @@ test_block_roundtrip() ->
 	TXIDs = [TX#tx.id || TX <- B#block.txs],
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
-	?assertEqual(B#block{ txs = TXIDs, size_tagged_txs = [] },
+	?assertEqual(B#block{ txs = TXIDs, size_tagged_txs = [], account_tree = undefined },
 			BRes#block{ hash_list = B#block.hash_list, size_tagged_txs = [] }).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
@@ -1610,7 +1610,7 @@ tx_roundtrip_test() ->
 
 wallet_list_roundtrip_test() ->
 	[B] = ar_weave:init(),
-	{ok, WL} = ar_storage:read_wallet_list(B#block.wallet_list),
+	WL = B#block.account_tree,
 	JSONWL = jsonify(wallet_list_to_json_struct(B#block.reward_addr, false, WL)),
 	ExpectedWL = ar_patricia_tree:foldr(fun(K, V, Acc) -> [{K, V} | Acc] end, [], WL),
 	ActualWL = ar_patricia_tree:foldr(

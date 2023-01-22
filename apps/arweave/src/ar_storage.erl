@@ -4,8 +4,8 @@
 
 -export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
 		read_tx/1, read_tx_data/1, update_confirmation_index/1, get_tx_confirmation_data/1,
-		get_wallet_list_range/2, read_wallet_list/1, write_wallet_list/4, write_wallet_list/2,
-		write_wallet_list_chunk/3, write_block_index/1, write_block_index_and_price_history/2,
+		read_wallet_list/1, write_wallet_list/2,
+		write_block_index/1, write_block_index_and_price_history/2,
 		read_block_index/0, read_block_index_and_price_history/0,
 		delete_blacklisted_tx/1, get_sufficient_space_for_headers/0, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
@@ -172,48 +172,6 @@ lookup_block_filename(H) ->
 				false ->
 					unavailable
 			end
-	end.
-
-delete_wallet_list(RootHash) ->
-	WalletListFile = wallet_list_filepath(RootHash),
-	case filelib:is_file(WalletListFile) of
-		true ->
-			case file:read_file_info(WalletListFile) of
-				{ok, FileInfo} ->
-					case file:delete(WalletListFile) of
-						ok ->
-							{ok, FileInfo#file_info.size};
-						Error ->
-							Error
-					end;
-				Error ->
-					Error
-			end;
-		false ->
-			delete_wallet_list_chunks(0, RootHash, 0)
-	end.
-
-delete_wallet_list_chunks(Position, RootHash, BytesRemoved) ->
-	WalletListChunkFile = wallet_list_chunk_filepath(Position, RootHash),
-	case filelib:is_file(WalletListChunkFile) of
-		true ->
-			case file:read_file_info(WalletListChunkFile) of
-				{ok, FileInfo} ->
-					case file:delete(WalletListChunkFile) of
-						ok ->
-							delete_wallet_list_chunks(
-								Position + ?WALLET_LIST_CHUNK_SIZE,
-								RootHash,
-								BytesRemoved + FileInfo#file_info.size
-							);
-						Error ->
-							Error
-					end;
-				Error ->
-					Error
-			end;
-		false ->
-			{ok, BytesRemoved}
 	end.
 
 %% @doc Delete the blacklisted tx with the given hash from disk. Return {ok, BytesRemoved} if
@@ -600,48 +558,10 @@ write_block_index_and_price_history(BI, PriceHistory) ->
 			Error
 	end.
 
-write_wallet_list(RootHash, Tree) ->
-	write_wallet_list_chunks(RootHash, Tree, first, 0).
-
-write_wallet_list_chunks(RootHash, Tree, Cursor, Position) ->
-	{NextCursor, Range} = get_wallet_list_range(Tree, Cursor),
-	StoredRange = case NextCursor of last -> [last | Range]; _ -> Range end,
-	case {write_wallet_list_chunk(RootHash, StoredRange, Position), NextCursor} of
-		{ok, last} ->
-			ok;
-		{ok, _} ->
-			NextPosition = Position + ?WALLET_LIST_CHUNK_SIZE,
-			write_wallet_list_chunks(RootHash, Tree, NextCursor, NextPosition);
-		{{error, _Reason} = Error, _} ->
-			Error
-	end.
-
-write_wallet_list_chunk(RootHash, Range, Position) ->
-	{ok, Config} = application:get_env(arweave, config),
-	Name = wallet_list_chunk_relative_filepath(Position, RootHash),
-	case write_term(Config#config.data_dir, Name, Range, do_not_override) of
-		ok ->
-			ok;
-		{error, Reason} = Error ->
-			?LOG_ERROR([
-				{event, failed_to_write_wallet_list_chunk},
-				{reason, Reason}
-			]),
-			Error
-	end.
-
-%% Write a block hash list to disk for retrieval later.
-write_wallet_list(ID, RewardAddr, IsRewardAddrNew, WalletList) ->
-	JSON = ar_serialize:jsonify(
-		ar_serialize:wallet_list_to_json_struct(RewardAddr, IsRewardAddrNew, WalletList)
-	),
-	Filepath = wallet_list_filepath(ID),
-	case filelib:is_file(Filepath) of
-		true ->
-			ok;
-		false ->
-			write_file_atomic(Filepath, JSON)
-	end.
+write_wallet_list(Height, Tree) ->
+	{RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
+	store_account_tree_update(Height, RootHash, UpdateMap),
+	RootHash.
 
 %% @doc Read a list of block hashes from the disk.
 read_block_index() ->
@@ -672,25 +592,35 @@ read_block_index_and_price_history() ->
 			Error
 	end.
 
-get_wallet_list_range(Tree, Cursor) ->
-	Range =
-		case Cursor of
-			first ->
-				ar_patricia_tree:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
-			_ ->
-				ar_patricia_tree:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
-		end,
-	case length(Range) of
-		?WALLET_LIST_CHUNK_SIZE + 1 ->
-			{element(1, hd(Range)), tl(Range)};
-		_ ->
-			{last, Range}
-	end.
-
 %% @doc Read a given wallet list (by hash) from the disk.
 read_wallet_list(<<>>) ->
 	{ok, ar_patricia_tree:new()};
 read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
+	Key = term_to_binary({WalletListHash, root}),
+	read_wallet_list(ar_kv:get(account_tree_db, Key), ar_patricia_tree:new(), [],
+			WalletListHash).
+
+read_wallet_list({ok, Bin}, Tree, Keys, RootHash) ->
+	case binary_to_term(Bin) of
+		{Key, Value} ->
+			Tree2 = ar_patricia_tree:insert(Key, Value, Tree),
+			case Keys of
+				[] ->
+					{ok, Tree2};
+				[{H, Prefix} | Keys2] ->
+					Key2 = term_to_binary({H, Prefix}),
+					read_wallet_list(ar_kv:get(account_tree_db, Key2), Tree2, Keys2, RootHash)
+			end;
+		[{H, Prefix} | Hs] ->
+			Key2 = term_to_binary({H, Prefix}),
+			read_wallet_list(ar_kv:get(account_tree_db, Key2), Tree, Hs ++ Keys, RootHash)
+	end;
+read_wallet_list(not_found, _Tree, _Keys, RootHash) ->
+	read_wallet_list_from_chunk_files(RootHash);
+read_wallet_list(Error, _Tree, _Keys, _RootHash) ->
+	Error.
+
+read_wallet_list_from_chunk_files(WalletListHash) when is_binary(WalletListHash) ->
 	case read_wallet_list_chunk(WalletListHash) of
 		not_found ->
 			Filename = wallet_list_filepath(WalletListHash),
@@ -707,7 +637,7 @@ read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 		{error, _Reason} = Error ->
 			Error
 	end;
-read_wallet_list(WL) when is_list(WL) ->
+read_wallet_list_from_chunk_files(WL) when is_list(WL) ->
 	{ok, ar_patricia_tree:from_proplist([{get_wallet_key(T), get_wallet_value(T)}
 			|| T <- WL])}.
 
@@ -723,24 +653,19 @@ read_wallet_list_chunk(RootHash) ->
 	read_wallet_list_chunk(RootHash, 0, ar_patricia_tree:new()).
 
 read_wallet_list_chunk(RootHash, Position, Tree) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Filename =
-		case ar_disk_cache:lookup_wallet_list_chunk_filename(RootHash, Position) of
-			{ok, Name} ->
-				Name;
-			_ ->
-				{ok, Config} = application:get_env(arweave, config),
-				binary_to_list(iolist_to_binary([
-					Config#config.data_dir,
-					"/",
-					?WALLET_LIST_DIR,
-					"/",
-					ar_util:encode(RootHash),
-					"-",
-					integer_to_binary(Position),
-					"-",
-					integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
-				]))
-		end,
+		binary_to_list(iolist_to_binary([
+			Config#config.data_dir,
+			"/",
+			?WALLET_LIST_DIR,
+			"/",
+			ar_util:encode(RootHash),
+			"-",
+			integer_to_binary(Position),
+			"-",
+			integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
+		])),
 	case read_term(".", Filename) of
 		{ok, Chunk} ->
 			{NextPosition, Wallets} =
@@ -818,6 +743,7 @@ init([]) ->
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), tx_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_block_db"), block_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "price_history_db"), price_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "account_tree_db"), account_tree_db),
 	ets:insert(?MODULE, [{same_disk_storage_modules_total_size,
 			get_same_disk_storage_modules_total_size()}]),
 	{ok, #state{}}.
@@ -825,6 +751,10 @@ init([]) ->
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
+
+handle_cast({store_account_tree_update, Height, RootHash, Map}, State) ->
+	store_account_tree_update(Height, RootHash, Map),
+	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -1039,24 +969,6 @@ block_index_and_price_history_filepath() ->
 wallet_list_filepath(Hash) when is_binary(Hash) ->
 	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
 
-wallet_list_chunk_filepath(Position, RootHash) when is_binary(RootHash) ->
-	{ok, Config} = application:get_env(arweave, config),
-	filename:join(
-		Config#config.data_dir,
-		wallet_list_chunk_relative_filepath(Position, RootHash)
-	).
-
-wallet_list_chunk_relative_filepath(Position, RootHash) ->
-	binary_to_list(iolist_to_binary([
-		?WALLET_LIST_DIR,
-		"/",
-		ar_util:encode(RootHash),
-		"-",
-		integer_to_binary(Position),
-		"-",
-		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
-	])).
-
 write_file_atomic(Filename, Data) ->
 	SwapFilename = Filename ++ ".swp",
 	case file:open(SwapFilename, [write, raw]) of
@@ -1096,7 +1008,8 @@ write_term(Dir, Name, Term, Override) ->
 				ok ->
 					ok;
 				{error, Reason} = Error ->
-					?LOG_ERROR([{event, failed_to_write_term}, {name, Name}, {reason, Reason}]),
+					?LOG_ERROR([{event, failed_to_write_term}, {name, Name},
+							{reason, Reason}]),
 					Error
 			end
 	end.
@@ -1124,6 +1037,42 @@ delete_term(Name) ->
 	DataDir = Config#config.data_dir,
 	file:delete(filename:join(DataDir, atom_to_list(Name))).
 
+store_account_tree_update(Height, RootHash, Map) ->
+	?LOG_INFO([{event, storing_account_tree_update}, {updated_key_count, map_size(Map)},
+			{height, Height}, {root_hash, ar_util:encode(RootHash)}]),
+	maps:map(
+		fun(Key, Value) ->
+			DBKey = term_to_binary(Key),
+			case ar_kv:get(account_tree_db, DBKey) of
+				not_found ->
+					case ar_kv:put(account_tree_db, DBKey, term_to_binary(Value)) of
+						ok ->
+							ok;
+						{error, Reason} ->
+							?LOG_ERROR([{event, failed_to_store_account_tree_key},
+									{key_hash, ar_util:encode(element(1, Key))},
+									{key_prefix, case element(2, Key) of root -> root;
+											Prefix -> ar_util:encode(Prefix) end},
+									{height, Height},
+									{root_hash, ar_util:encode(RootHash)},
+									{reason, io_lib:format("~p", [Reason])}])
+					end;
+				{ok, _} ->
+					ok;
+				{error, Reason} ->
+					?LOG_ERROR([{event, failed_to_read_account_tree_key},
+							{key_hash, ar_util:encode(element(1, Key))},
+							{key_prefix, case element(2, Key) of root -> root;
+									Prefix -> ar_util:encode(Prefix) end},
+							{height, Height},
+							{root_hash, ar_util:encode(RootHash)},
+							{reason, io_lib:format("~p", [Reason])}])
+			end
+		end,
+		Map
+	),
+	?LOG_INFO([{event, stored_account_tree}]).
+
 %% @doc Test block storage.
 store_and_retrieve_block_test_() ->
 	{timeout, 60, fun test_store_and_retrieve_block/0}.
@@ -1137,10 +1086,10 @@ test_store_and_retrieve_block() ->
 	FetchedB02 = read_block(B0#block.height, [{B0#block.indep_hash, B0#block.weave_size,
 			B0#block.tx_root}]),
 	FetchedB03 = FetchedB02#block{ txs = [tx_id(TX) || TX <- FetchedB02#block.txs] },
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [] },
-			FetchedB01),
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [] },
-			FetchedB03),
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [],
+			account_tree = undefined }, FetchedB01),
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [],
+			account_tree = undefined }, FetchedB03),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
 	ar_node:mine(),
@@ -1179,7 +1128,7 @@ store_and_retrieve_wallet_list_test() ->
 	Addr = ar_wallet:to_address(TX#tx.owner, {?RSA_SIGN_ALG, 65537}),
 	write_block(B0),
 	ExpectedWL = ar_patricia_tree:from_proplist([{Addr, {0, TX#tx.id}}]),
-	{WalletListHash, _} = ar_block:hash_wallet_list(ExpectedWL),
+	WalletListHash = write_wallet_list(0, ExpectedWL),
 	{ok, ActualWL} = read_wallet_list(WalletListHash),
 	assert_wallet_trees_equal(ExpectedWL, ActualWL).
 
@@ -1200,26 +1149,9 @@ read_wallet_list_chunks_test() ->
 	lists:foreach(
 		fun(TestCase) ->
 			Tree = ar_patricia_tree:from_proplist(TestCase),
-			{RootHash, _} = ar_block:hash_wallet_list(Tree),
-			%% Chunked write.
-			ok = write_wallet_list(RootHash, Tree),
+			RootHash = write_wallet_list(0, Tree),
 			{ok, ReadTree} = read_wallet_list(RootHash),
-			assert_wallet_trees_equal(Tree, ReadTree),
-			?assertEqual(true, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
-			?assertMatch({ok, _}, delete_wallet_list(RootHash)),
-			?assertEqual({ok, 0}, delete_wallet_list(RootHash)),
-			?assertEqual(not_found, read_wallet_list(RootHash)),
-			?assertEqual(false, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
-			%% Not chunked write - wallets before the fork 2.2.
-			ok = write_wallet_list(RootHash, unclaimed, false, Tree),
-			?assertEqual(false, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
-			?assertEqual(true, filelib:is_file(wallet_list_filepath(RootHash))),
-			{ok, ReadTree2} = read_wallet_list(RootHash),
-			assert_wallet_trees_equal(Tree, ReadTree2),
-			?assertMatch({ok, _}, delete_wallet_list(RootHash)),
-			?assertEqual({ok, 0}, delete_wallet_list(RootHash)),
-			?assertEqual(false, filelib:is_file(wallet_list_filepath(RootHash))),
-			?assertEqual(not_found, read_wallet_list(RootHash))
+			assert_wallet_trees_equal(Tree, ReadTree)
 		end,
 		TestCases
 	).

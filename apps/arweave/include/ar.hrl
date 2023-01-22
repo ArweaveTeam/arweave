@@ -485,6 +485,8 @@
 	%% chunks. Moreover, every chunk costs the same in terms of storage and computation
 	%% expenditure when packed (smaller chunks are simply padded before packing).
 	strict_data_split_threshold,
+	%% Used internally by tests.
+	account_tree,
 
 	%%
 	%% The fields below were added at the fork 2.6.

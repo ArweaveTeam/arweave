@@ -37,9 +37,9 @@ size(Tree) ->
 %% Each key value pair is hashed via the provided hash function. The hashes of the siblings
 %% are combined using ar_deep_hash:hash/1. The keys are traversed in the alphabetical order.
 compute_hash(#{ size := 0 } = Tree, _HashFun) ->
-	{<<>>, Tree};
+	{<<>>, Tree, #{}};
 compute_hash(Tree, HashFun) ->
-	compute_hash(Tree, HashFun, root).
+	compute_hash(Tree, HashFun, root, #{}).
 
 %% @doc Traverse the keys in the reversed alphabetical order iteratively applying
 %% the given function of a key, a value, and an accumulator.
@@ -213,7 +213,7 @@ get(Key, Tree, Level) ->
 			end
 	end.
 
-compute_hash(Tree, HashFun, KeyPrefix) ->
+compute_hash(Tree, HashFun, KeyPrefix, UpdateMap) ->
 	{Parent, Children, Hash, Suffix, MaybeValue} = maps:get(KeyPrefix, Tree),
 	case Hash of
 		no_hash ->
@@ -225,35 +225,46 @@ compute_hash(Tree, HashFun, KeyPrefix) ->
 					NewTree = Tree#{
 						KeyPrefix => {Parent, gb_sets:new(), NewHash, Suffix, {v, Value}}
 					},
-					{NewHash, NewTree};
+					UpdateMap2 = maps:put({NewHash, KeyPrefix}, {Key, Value}, UpdateMap),
+					{NewHash, NewTree, UpdateMap2};
 				false ->
-					{Hashes, UpdatedTree} = gb_sets_foldr(
-						fun(Child, {HashesAcc, TreeAcc}) ->
-							{ChildHash, TreeAcc2} = compute_hash(TreeAcc, HashFun, Child),
-							{[ChildHash | HashesAcc], TreeAcc2}
+					{Hashes, UpdatedTree, UpdateMap2} = gb_sets_foldr(
+						fun(Child, {HashesAcc, TreeAcc, UpdateMapAcc}) ->
+							{ChildHash, TreeAcc2, UpdateMapAcc2} = compute_hash(TreeAcc,
+									HashFun, Child, UpdateMapAcc),
+							{[{ChildHash, Child} | HashesAcc], TreeAcc2, UpdateMapAcc2}
 						end,
-						{[], Tree},
+						{[], Tree, UpdateMap},
 						Children
 					),
-					NewHash =
+					{NewHash, UpdateMap3} =
 						case MaybeValue of
 							{v, Value} ->
 								Key = << KeyPrefix/binary, Suffix/binary >>,
-								ar_deep_hash:hash([HashFun(Key, Value) | Hashes]);
+								NewHash2 = HashFun(Key, Value),
+								Hashes2 = [H || {H, _} <- Hashes],
+								NewHash3 = ar_deep_hash:hash([NewHash2 | Hashes2]),
+								{NewHash3, UpdateMap2#{ {NewHash2, KeyPrefix} => {Key, Value},
+										{NewHash3, KeyPrefix} => [{NewHash2, KeyPrefix}
+												| Hashes] }};
 							no_value ->
 								case Hashes of
-									[SingleHash] ->
-										SingleHash;
+									[{SingleHash, _}] ->
+										{SingleHash, UpdateMap2#{
+												{SingleHash, KeyPrefix} => Hashes }};
 									_ ->
-										ar_deep_hash:hash(Hashes)
+										Hashes2 = [H || {H, _} <- Hashes],
+										NewHash2 = ar_deep_hash:hash(Hashes2),
+										{NewHash2, UpdateMap2#{
+												{NewHash2, KeyPrefix} => Hashes }}
 								end
 						end,
 					{NewHash, UpdatedTree#{
 						KeyPrefix => {Parent, Children, NewHash, Suffix, MaybeValue}
-					}}
+					}, UpdateMap3}
 			end;
 		_ ->
-			{Hash, Tree}
+			{Hash, Tree, UpdateMap}
 	end.
 
 foldr(Fun, Acc, Tree, KeyPrefix) ->
@@ -459,8 +470,8 @@ trie_test() ->
 	T2 = insert(<<"aaa">>, 1, T1_3),
 	?assertEqual(false, is_empty(T2)),
 	?assertEqual(1, ar_patricia_tree:size(T2)),
-	{H2, T2_2} = compute_hash(T2, HashFun),
-	{H2_2, _} = compute_hash(T2_2, HashFun),
+	{H2, T2_2, _} = compute_hash(T2, HashFun),
+	{H2_2, _, _} = compute_hash(T2_2, HashFun),
 	?assertEqual(H2, H2_2),
 	?assertEqual(1, get(<<"aaa">>, T2)),
 	?assertEqual([], get_range(<<>>, 1, T2)),
@@ -470,16 +481,16 @@ trie_test() ->
 	%%       b -> 2
 	T3 = insert(<<"aab">>, 2, T2),
 	?assertEqual(2, ar_patricia_tree:size(T3)),
-	{H3, _} = compute_hash(T3, HashFun),
+	{H3, _, _} = compute_hash(T3, HashFun),
 	?assertNotEqual(H2, H3),
-	{H3_2, _} = compute_hash(insert(<<"aaa">>, 1, insert(<<"aab">>, 2, new())), HashFun),
+	{H3_2, _, _} = compute_hash(insert(<<"aaa">>, 1, insert(<<"aab">>, 2, new())), HashFun),
 	?assertEqual(H3, H3_2),
-	{H3_3, _} =
+	{H3_3, _, _} =
 		compute_hash(
 			insert(<<"aaa">>, 1, insert(<<"aab">>, 2, insert(<<"a">>, 3, new()))),
 			HashFun
 		),
-	{H3_4, _} = compute_hash(insert(<<"a">>, 3, T3), HashFun),
+	{H3_4, _, _} = compute_hash(insert(<<"a">>, 3, T3), HashFun),
 	?assertEqual(H3_3, H3_4),
 	?assertEqual(1, get(<<"aaa">>, T3)),
 	?assertEqual(2, get(<<"aab">>, T3)),
@@ -496,7 +507,7 @@ trie_test() ->
 	?assertEqual([], get_range(<<"b">>, 2, T3)),
 	T4 = insert(<<"aab">>, 3, T3),
 	?assertEqual(2, ar_patricia_tree:size(T4)),
-	{H4, _} = compute_hash(T4, HashFun),
+	{H4, _, _} = compute_hash(T4, HashFun),
 	?assertNotEqual(H3, H4),
 	?assertEqual(1, get(<<"aaa">>, T4)),
 	?assertEqual(3, get(<<"aab">>, T4)),
@@ -506,17 +517,17 @@ trie_test() ->
 	T5 = insert(<<"ab">>, 2, T4),
 	?assertEqual(3, ar_patricia_tree:size(T5)),
 	?assertEqual(1, gb_sets:size(element(2, maps:get(root, T5)))),
-	{H5, _} = compute_hash(T5, HashFun),
+	{H5, _, _} = compute_hash(T5, HashFun),
 	?assertNotEqual(H4, H5),
-	{H5_2, _} =
+	{H5_2, _, _} =
 		compute_hash(
 			insert(<<"aab">>, 3, insert(<<"aaa">>, 1, insert(<<"ab">>, 2, new()))),
 			HashFun
 		),
 	?assertEqual(H5, H5_2),
-	{_H5_3, T5_2} = compute_hash(insert(<<"aaa">>, 1, new()), HashFun),
-	{_H5_4, T5_3} = compute_hash(insert(<<"ab">>, 2, T5_2), HashFun),
-	{H5_5, _T5_4} = compute_hash(insert(<<"aab">>, 3, T5_3), HashFun),
+	{_H5_3, T5_2, _} = compute_hash(insert(<<"aaa">>, 1, new()), HashFun),
+	{_H5_4, T5_3, _} = compute_hash(insert(<<"ab">>, 2, T5_2), HashFun),
+	{H5_5, _T5_4, _} = compute_hash(insert(<<"aab">>, 3, T5_3), HashFun),
 	?assertEqual(H5, H5_5),
 	?assertEqual(1, get(<<"aaa">>, T5)),
 	?assertEqual(3, get(<<"aab">>, T5)),
@@ -617,20 +628,20 @@ trie_test() ->
 		],
 		get_range(7, T10)
 	),
-	{H10, _} = compute_hash(T10, HashFun),
-	{H10_1, _} = compute_hash(
+	{H10, _, _} = compute_hash(T10, HashFun),
+	{H10_1, _, _} = compute_hash(
 		insert(
 			<<"ab">>, 2,
 				insert(<<"abc">>, 4, insert(<<"aab">>, 3, insert(<<"aaa">>, 1, new())))),
 		HashFun
 	),
-	{H10_2, _} = compute_hash(
+	{H10_2, _, _} = compute_hash(
 		insert(<<"bcdefj">>, 4, insert(<<"bab">>, 7, insert(<<"bcdbcd">>, 6, new()))),
 		HashFun
 	),
 	?assertEqual(H10, ar_deep_hash:hash([H10_1, H10_2])),
-	{H10_2_1, _} = compute_hash(insert(<<"bab">>, 7, new()), HashFun),
-	{H10_2_2, _} = compute_hash(insert(<<"bcdbcd">>, 6,
+	{H10_2_1, _, _} = compute_hash(insert(<<"bab">>, 7, new()), HashFun),
+	{H10_2_2, _, _} = compute_hash(insert(<<"bcdbcd">>, 6,
 			insert(<<"bcdefj">>, 4, new())), HashFun),
 	?assertEqual(H10_2, ar_deep_hash:hash([H10_2_1, H10_2_2])),
 	?assertNotEqual(H10, element(1, compute_hash(delete(<<"ab">>, T10), HashFun))),
@@ -677,12 +688,12 @@ trie_test() ->
 		],
 		foldr(fun(K, V, Acc) -> [{K, V} | Acc] end, [], T12)
 	),
-	{H12, _} = compute_hash(T12, HashFun),
+	{H12, _, _} = compute_hash(T12, HashFun),
 	T13 = from_proplist([
 		{<<"bcdbcd">>, 6}, {<<>>, empty}, {<<"ab">>, 2}, {<<"baa">>, 8}, {<<"aab">>, 3},
 		{<<"bab">>, 7}, {<<"aaa">>, 1}, {<<"abc">>, 4}, {<<"bcdefj">>, 4}
 	]),
-	{H13, _} = compute_hash(T13, HashFun),
+	{H13, _, _} = compute_hash(T13, HashFun),
 	?assertEqual(H12, H13),
 	?assertEqual(1, get(<<"aaa">>, T13)),
 	?assertEqual(3, get(<<"aab">>, T13)),
@@ -726,7 +737,7 @@ trie_test() ->
 	%%        bc -> 10
 	%%              d -> 6
 	%% <<>> -> empty
-	{H15, T15_2} = compute_hash(T15, HashFun),
+	{H15, T15_2, _} = compute_hash(T15, HashFun),
 	T16 = delete(<<"baa">>, T15_2),
 	?assertEqual(1, get(<<"aaa">>, T16)),
 	?assertEqual(3, get(<<"aab">>, T16)),
@@ -737,7 +748,7 @@ trie_test() ->
 	?assertEqual(not_found, get(<<"baa">>, T16)),
 	?assertEqual(10, get(<<"bcdbc">>, T16)),
 	?assertEqual(empty, get(<<>>, T16)),
-	{H16, T16_2} = compute_hash(T16, HashFun),
+	{H16, T16_2, _} = compute_hash(T16, HashFun),
 	?assertNotEqual(H16, H15),
 	%% a -> a -> a -> 1
 	%%           b -> 3
@@ -756,7 +767,7 @@ trie_test() ->
 	?assertEqual(7, get(<<"bab">>, T17)),
 	?assertEqual(10, get(<<"bcdbc">>, T17)),
 	?assertEqual(empty, get(<<>>, T17)),
-	{H17, T17_2} = compute_hash(T17, HashFun),
+	{H17, T17_2, _} = compute_hash(T17, HashFun),
 	?assertNotEqual(H17, H16),
 	%% a -> a -> b -> 3
 	%%      b -> 2
@@ -767,7 +778,7 @@ trie_test() ->
 	%%        bc -> 10
 	%% <<>> -> empty
 	T18 = insert(<<"baa">>, 9, delete(<<"aaa">>, T17_2)),
-	{H18, _} = compute_hash(T18, HashFun),
+	{H18, _, _} = compute_hash(T18, HashFun),
 	?assertEqual(not_found, get(<<"aaa">>, T18)),
 	?assertEqual(3, get(<<"aab">>, T18)),
 	?assertEqual(4, get(<<"abc">>, T18)),
@@ -852,14 +863,14 @@ stochastic_test() ->
 							Tree1 = delete(K, Tree),
 							M = maps:remove(K, Map),
 							compare_with_map(Tree1, M),
-							{H1, _} = compute_hash(Tree1, SHA256Fun),
+							{H1, _, _} = compute_hash(Tree1, SHA256Fun),
 							Tree2 = from_proplist(Permutation -- [{K, V}]),
-							{H2, _} = compute_hash(Tree2, SHA256Fun),
+							{H2, _, _} = compute_hash(Tree2, SHA256Fun),
 							?assertEqual(H1, H2, [{tree1, Tree1}, {tree2, Tree2}])
 						end,
 						Permutation
 					),
-					{H, _} = compute_hash(Tree, SHA256Fun),
+					{H, _, _} = compute_hash(Tree, SHA256Fun),
 					case Acc of
 						start ->
 							do_not_assert;
