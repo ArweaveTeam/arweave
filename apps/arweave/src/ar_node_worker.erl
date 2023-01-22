@@ -221,6 +221,7 @@ validate_clock_sync(Peers) ->
 				" network ~s and its clock must deviate from ours by no"
 				" more than ~B seconds.~n", [?NETWORK_NAME, ?JOIN_CLOCK_TOLERANCE]
 			),
+			timer:sleep(1000),
 			erlang:halt()
 	end.
 
