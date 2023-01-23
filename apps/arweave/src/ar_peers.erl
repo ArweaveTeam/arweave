@@ -350,11 +350,18 @@ discover_peers([Peer | Peers]) ->
 				false ->
 					ok;
 				true ->
-					case ar_http_iface_client:get_info(Peer, release) of
-						{<<"release">>, Release} when is_integer(Release) ->
-							gen_server:cast(?MODULE, {add_peer, Peer, Release});
-						_ ->
-							ok
+					case ar_http_iface_client:get_info(Peer) of
+						info_unavailable ->
+							ok;
+						Info ->
+							{name, Network} = lists:keyfind(name, 1, Info),
+							{release, Release} = lists:keyfind(release, 1, Info),
+							case Network == <<?NETWORK_NAME>> of
+								true ->
+									gen_server:cast(?MODULE, {add_peer, Peer, Release});
+								_ ->
+									ok
+							end
 					end
 			end
 	end,

@@ -106,6 +106,9 @@
 -define(DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS, 2000).
 -endif.
 
+-define(DEFAULT_CM_POLL_INTERVAL, 60000).
+-define(DEFAULT_CM_STAT_INTERVAL, 60000).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -196,7 +199,13 @@
 	defragmentation_trigger_threshold = 1_500_000_000,
 	defragmentation_modules = [],
 	block_throttle_by_ip_interval = ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
-	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS
+	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
+	coordinated_mining = false,
+	coordinated_mining_secret = not_set,
+	cm_exit_peer = not_set,
+	cm_peers = [],
+	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
+	cm_stat_interval = ?DEFAULT_CM_STAT_INTERVAL
 }).
 
 -endif.

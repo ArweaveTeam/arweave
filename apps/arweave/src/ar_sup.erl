@@ -100,11 +100,11 @@ init([]) ->
 		?CHILD(ar_nonce_limiter, worker),
 		?CHILD(ar_mining_server, worker),
 		?CHILD(ar_process_sampler, worker),
+		?CHILD(ar_coordination, worker),
 		?CHILD_SUP(ar_tx_emitter_sup, supervisor),
 		?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
 		?CHILD_SUP(ar_poller_sup, supervisor),
 		?CHILD_SUP(ar_node_sup, supervisor),
 		?CHILD_SUP(ar_webhook_sup, supervisor)
 	],
-
 	{ok, {{one_for_one, 5, 10}, Children}}.
