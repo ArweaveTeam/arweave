@@ -389,6 +389,10 @@ is_chunk_cache_full() ->
 			not_initialized
 	end.
 
+-ifdef(DEBUG).
+is_disk_space_sufficient(_StoreID) ->
+	true.
+-else.
 %% @doc Return true if we have sufficient disk space to write new data for the
 %% given StoreID. Return not_initialized if there is no information yet.
 is_disk_space_sufficient(StoreID) ->
@@ -400,6 +404,7 @@ is_disk_space_sufficient(StoreID) ->
 		_ ->
 			not_initialized
 	end.
+-endif.
 
 get_chunk_by_byte(ChunksIndex, Byte) ->
 	Chunk = ar_kv:get_next_by_prefix(ChunksIndex, ?OFFSET_KEY_PREFIX_BITSIZE,
@@ -690,7 +695,7 @@ handle_cast(sync_data2, #sync_data_state{
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
 	ar_util:cast_after(2000, self(), collect_peer_intervals),
 	{noreply, State};
-%% @doc Check to see if a neighboring storge_module may have already synced one of our
+%% @doc Check to see if a neighboring storage_module may have already synced one of our
 %% unsynced intervals
 handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,

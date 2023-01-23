@@ -27,7 +27,7 @@
 
 %% The time to wait until the next full disk pool scan.
 -ifdef(DEBUG).
--define(DISK_POOL_SCAN_DELAY_MS, 1000).
+-define(DISK_POOL_SCAN_DELAY_MS, 2000).
 -else.
 -define(DISK_POOL_SCAN_DELAY_MS, 10000).
 -endif.

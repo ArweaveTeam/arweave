@@ -6,6 +6,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
@@ -1347,6 +1348,100 @@ handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
 			handle_get_vdf(Req, get_previous_session)
 	end;
 
+handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_coordinated_mining_partition_table(Req)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+% If somebody want to make GUI, monitoring tool
+handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					{ok, {LastPeerResponse}} = ar_coordination:get_public_state(),
+					Peers = maps:fold(fun(Peer, Value, Acc) ->
+						{AliveStatus, PartitionList} = Value,
+						Table = lists:map(
+							fun	(ListValue) ->
+								{Bucket, BucketSize, Addr} = ListValue,
+								{[
+									{bucket, Bucket},
+									{bucketsize, BucketSize},
+									{addr, ar_util:encode(Addr)}
+								]}
+							end,
+							PartitionList
+						),
+						Val = {[
+							{peer, list_to_binary(ar_util:format_peer(Peer))},
+							{alive, AliveStatus},
+							{partition_table, Table}
+						]},
+						[Val | Acc]
+						end,
+						[],
+						LastPeerResponse
+					),
+				{200, #{}, ar_serialize:jsonify(Peers), Req}
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+%% TODO: endpoint description
+%% POST request to endpoint /coordinated_mining/h1
+handle(<<"POST">>, [<<"coordinated_mining">>, <<"h1">>], Req, Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_mining_h1(Req, Pid)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+%% TODO: endpoint description
+%% POST request to endpoint /coordinated_mining/h1
+handle(<<"POST">>, [<<"coordinated_mining">>, <<"h2">>], Req, Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_mining_h2(Req, Pid)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+handle(<<"POST">>, [<<"coordinated_mining">>, <<"publish">>], Req, Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_mining_cm_publish(Req, Pid)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
 %% Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, Req, _Pid) ->
@@ -2113,6 +2208,33 @@ log_internal_api_reject(Msg, Req) ->
 		?LOG_WARNING("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
 	end).
 
+check_cm_api_secret(Req) ->
+	Reject = fun(Msg) ->
+		log_cm_api_reject(Msg, Req),
+		%% Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
+		timer:sleep(rand:uniform(1000) + 1000),
+		{reject,
+			{421, #{}, <<"Coodrinated mining API disabled or invalid CM API secret in request.">>}}
+	end,
+	{ok, Config} = application:get_env(arweave, config),
+	case {Config#config.coordinated_mining_secret,
+			cowboy_req:header(<<"x-cm-api-secret">>, Req)} of
+		{not_set, _} ->
+			Reject("Request to disabled CM API");
+		{Secret, Secret} when is_binary(Secret) ->
+			pass;
+		_ ->
+			Reject("Invalid secret for CM API request")
+	end.
+
+log_cm_api_reject(Msg, Req) ->
+	spawn(fun() ->
+		Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+		{IpAddr, _Port} = cowboy_req:peer(Req),
+		BinIpAddr = list_to_binary(inet:ntoa(IpAddr)),
+		?LOG_WARNING("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
+	end).
+
 %% @doc Convert a blocks field with the given label into a string.
 block_field_to_string(<<"timestamp">>, Res) -> integer_to_list(Res);
 block_field_to_string(<<"last_retarget">>, Res) -> integer_to_list(Res);
@@ -2373,16 +2495,8 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 						end
 				end
 		end,
-	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	BodyReadTime = ar_http_req:body_read_time(Req),
-	case ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp) of
-		ok ->
-			ar_peers:rate_gossiped_data(Peer, block,
-				erlang:convert_time_unit(BodyReadTime, native, microsecond),
-				byte_size(term_to_binary(B)));
-		_ ->
-			ok
-	end,
+	ar_block_pre_validator:pre_validate(B2, Peer, Timestamp, erlang:get(read_body_time),
+			erlang:get(body_size)),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->
@@ -2869,6 +2983,42 @@ handle_get_vdf2(Req, Call) ->
 			{200, #{}, ar_serialize:nonce_limiter_update_to_binary(Update), Req}
 	end.
 
+handle_coordinated_mining_partition_table(Req) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Partition_dict = lists:foldl(fun(Module, Dict) ->
+		{BucketSize, Bucket, {spora_2_6, Addr}} = Module,
+		MinPartitionId = Bucket*BucketSize div ?PARTITION_SIZE,
+		MaxPartitionId = (Bucket+1)*BucketSize div ?PARTITION_SIZE,
+		PartitionList = lists:seq(MinPartitionId, MaxPartitionId),
+		lists:foldl(fun(PartitionId, Dict2) ->
+			AddrDict = maps:get(PartitionId, Dict2, #{}),
+			AddrDict2 = maps:put(Addr, true, AddrDict),
+			maps:put(PartitionId, AddrDict2, Dict2)
+		end, Dict, PartitionList)
+	end, #{}, Config#config.storage_modules),
+	Right_bound = lists:max(lists:map(fun({BucketSize, Bucket, {spora_2_6, _Addr}}) ->
+		(Bucket+1)*BucketSize
+	end, Config#config.storage_modules)),
+	Right_bound_partition_id = Right_bound div ?PARTITION_SIZE,
+	CheckPartitionList = lists:seq(0, Right_bound_partition_id),
+	Table = lists:foldr(fun(PartitionId, Acc) ->
+		case maps:find(PartitionId, Partition_dict) of
+			{ok, AddrDict} ->
+				maps:fold(fun(Addr, _, Acc2) ->
+					NewEntity = {[
+						{bucket, PartitionId},
+						{bucketsize, ?PARTITION_SIZE},
+						{addr, ar_util:encode(Addr)}
+						% TODO range start, end for less requests (better check before send)
+					]},
+					[NewEntity | Acc2]
+				end, Acc, AddrDict);
+			_ ->
+				Acc
+		end
+	end, [], CheckPartitionList),
+	{200, #{}, ar_serialize:jsonify(Table), Req}.
+
 read_complete_body(Req, Pid) ->
 	read_complete_body(Req, Pid, ?MAX_BODY_SIZE).
 
@@ -2898,4 +3048,58 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 		?LOG_DEBUG([{event, body_read_timeout}, {method, cowboy_req:method(Req)},
 				{path, cowboy_req:path(Req)}, {peer, ar_util:format_peer(Peer)}]),
 		{error, timeout}
+	end.
+
+% TODO binary protocol after debug
+handle_mining_h1(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					{Candidate, H1List} = ar_serialize:json_struct_to_h2_inputs(JSON),
+					ar_coordination:compute_h2(Peer, Candidate, H1List),
+					{200, #{}, <<>>, Req};
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
+	end.
+
+handle_mining_h2(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					Candidate = ar_serialize:json_struct_to_candidate(JSON),
+					?LOG_INFO([
+						{event, h2_received},
+						{json, JSON}
+					]),
+					ar_coordination:post_solution(Peer, Candidate),
+					{200, #{}, <<>>, Req};
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
+	end.
+
+handle_mining_cm_publish(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					Solution = ar_serialize:json_struct_to_solution(JSON),
+					ar:console("Block candidate from ~p ~n", [ar_util:format_peer(Peer)]),
+					ar_mining_server:post_solution(Solution),
+					{200, #{}, <<>>, Req};
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
 	end.

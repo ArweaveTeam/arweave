@@ -1,6 +1,7 @@
 -module(ar_weave).
 
--export([init/0, init/1, init/2, create_mainnet_genesis_txs/0, add_mainnet_v1_genesis_txs/0]).
+-export([init/0, init/1, init/2, init/3, create_mainnet_genesis_txs/0,
+		add_mainnet_v1_genesis_txs/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -24,10 +25,14 @@ init() ->
 init(WalletList) ->
 	init(WalletList, 1).
 
-%% @doc Create a genesis block with the given accounts and difficulty.
 init(WalletList, Diff) ->
+	Size = 262144 * 3, % Matches ?STRICT_DATA_SPLIT_THRESHOLD in tests.
+	init(WalletList, Diff, Size).
+
+%% @doc Create a genesis block with the given accounts and difficulty.
+init(WalletList, Diff, GenesisDataSize) ->
 	Key = ar_wallet:new_keyfile(),
-	TX = create_genesis_tx(Key),
+	TX = create_genesis_tx(Key, GenesisDataSize),
 	WalletList2 = WalletList ++ [{ar_wallet:to_address(Key), 0, TX#tx.id}],
 	TXs = [TX],
 	AccountTree = ar_patricia_tree:from_proplist([{A, {B, LTX}}
@@ -38,7 +43,6 @@ init(WalletList, Diff) ->
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{TXRoot, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	Timestamp = os:system_time(second),
-	true = BlockSize == (3 * 262144), % Matches ?STRICT_DATA_SPLIT_THRESHOLD in tests.
 	B0 =
 		#block{
 			nonce = <<>>,
@@ -109,9 +113,8 @@ get_initial_block_time_history() ->
 	[{120, 1, 1}].
 -endif.
 
-create_genesis_tx(Key) ->
+create_genesis_tx(Key, Size) ->
 	{_, {_, Pk}} = Key,
-	Size = 262144 * 3, % Matches ?STRICT_DATA_SPLIT_THRESHOLD in tests.
 	UnsignedTX =
 		(ar_tx:new())#tx{
 			owner = Pk,

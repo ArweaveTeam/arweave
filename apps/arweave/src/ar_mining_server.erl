@@ -1,16 +1,20 @@
 %%% @doc The 2.6 mining server.
 -module(ar_mining_server).
+% TODO Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput -> #vdf
 
 -behaviour(gen_server).
 
--export([start_link/0, pause/0, start_mining/1, set_difficulty/1,
-		set_merkle_rebase_threshold/1, pause_performance_reports/1]).
+-export([start_link/0, pause/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
+		pause_performance_reports/1, compute_h2_for_peer/2,
+		prepare_and_post_solution/1, post_solution/1,
+		get_recall_bytes/4, is_session_valid/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -record(mining_session, {
@@ -19,20 +23,15 @@
 	next_seed,
 	start_interval_number,
 	partition_upper_bound,
-	step_number_by_output = #{},
 	chunk_cache = #{},
 	chunk_cache_size_limit = infinity
 }).
 
 -record(state, {
-	io_threads					= #{},
-	io_thread_monitor_refs		= #{},
 	hashing_threads				= queue:new(),
 	hashing_thread_monitor_refs = #{},
 	session						= #mining_session{},
 	diff						= infinity,
-	merkle_rebase_threshold		= infinity,
-	partitions					= sets:new(),
 	task_queue					= gb_sets:new(),
 	pause_performance_reports	= false,
 	pause_performance_reports_timeout
@@ -57,6 +56,26 @@ pause() ->
 start_mining(Args) ->
 	gen_server:cast(?MODULE, {start_mining, Args}).
 
+%% @doc Callback from ar_mining_io when a chunk is read
+recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
+	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
+recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
+	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
+recall_chunk(skipped, undefined, Nonce, Candidate) ->
+	signal_cache_cleanup(Nonce, Candidate).
+
+%% @doc Callback from the hashing threads when a hash is computed
+computed_hash(computed_h0, H0, undefined, Candidate) ->
+	add_task(computed_h0, Candidate#mining_candidate{ h0 = H0 });
+computed_hash(computed_h1, H1, Preimage, Candidate) ->
+	add_task(computed_h1, Candidate#mining_candidate{ h1 = H1, preimage = Preimage });
+computed_hash(computed_h2, H2, Preimage, Candidate) ->
+	add_task(computed_h2, Candidate#mining_candidate{ h2 = H2, preimage = Preimage }).
+
+%% @doc Compute H2 for a remote peer (used in coordinated mining).
+compute_h2_for_peer(Candidate, H1List) ->
+	gen_server:cast(?MODULE, {compute_h2_for_peer, generate_cache_ref(Candidate), H1List}).
+
 %% @doc Set the new mining difficulty. We do not recalculate it inside the mining
 %% server because we want to completely detach the mining server from the block
 %% ordering. The previous block is chosen only after the mining solution is found (if
@@ -72,6 +91,23 @@ set_merkle_rebase_threshold(Threshold) ->
 pause_performance_reports(Time) ->
 	gen_server:cast(?MODULE, {pause_performance_reports, Time}).
 
+prepare_and_post_solution(Candidate) ->
+	gen_server:cast(?MODULE, {prepare_and_post_solution, Candidate}).
+
+post_solution(Solution) ->
+	gen_server:cast(?MODULE, {post_solution, Solution}).
+
+%% @doc Returns true if the mining candidate belongs to a valid mining session. Always assume
+%% that a coordinated mining candidate is valid (its session_ref is not_set)
+is_session_valid(_SessionRef, #mining_candidate{ session_ref = not_set }) ->
+	true;
+is_session_valid(undefined, _Candidate) ->
+	false; 
+is_session_valid(SessionRef, #mining_candidate{ session_ref = SessionRef }) ->
+	true;
+is_session_valid(_SessionRef, _Candidate) ->
+	false.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -80,61 +116,34 @@ init([]) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	{ok, Config} = application:get_env(arweave, config),
-	MiningAddr = Config#config.mining_addr,
-	State =
-		lists:foldl(
-			fun	({BucketSize, Bucket, {spora_2_6, Addr}} = M, Acc) when Addr == MiningAddr ->
-					Start = Bucket * BucketSize,
-					End = (Bucket + 1) * BucketSize,
-					StoreID = ar_storage_module:id(M),
-					start_io_threads(Start, End, MiningAddr, StoreID, Acc);
-				(_Module, Acc) ->
-					Acc
-			end,
-			#state{},
-			Config#config.storage_modules
-		),
-	State2 =
-		ar_intervals:fold(
-			fun({End, Start}, Acc) ->
-				start_io_threads(Start, End, MiningAddr, "default", Acc)
-			end,
-			State,
-			ar_sync_record:get(ar_data_sync, "default")
-		),
 	ar_chunk_storage:open_files("default"),
 	gen_server:cast(?MODULE, handle_task),
 	gen_server:cast(?MODULE, report_performance),
 	ets:insert(?MODULE, {chunk_cache_size, 0}),
 	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
-	{ok, lists:foldl(fun(_, Acc) -> start_hashing_thread(Acc) end, State2,
-			lists:seq(1, Config#config.hashing_threads))}.
+	State = lists:foldl(
+		fun(_, Acc) -> start_hashing_thread(Acc) end,
+		#state{},
+		lists:seq(1, Config#config.hashing_threads)
+	),
+	{ok, State}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast(pause, #state{ io_threads = IOThreads,
-		hashing_threads = HashingThreads } = State) ->
+handle_cast(pause, #state{ hashing_threads = HashingThreads } = State) ->
 	[Thread ! stop || Thread <- queue:to_list(HashingThreads)],
-	[Thread ! stop || Thread <- maps:values(IOThreads)],
+	ar_mining_io:stop(),
+	prometheus_gauge:set(mining_rate, 0),
 	{noreply, State#state{ diff = infinity, session = #mining_session{} }};
 
 handle_cast({start_mining, Args}, State) ->
 	{Diff, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
-	#state{ hashing_threads = HashingThreads, io_threads = IOThreads } = State,
-	Ref = make_ref(),
-	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
-	[Thread ! {new_mining_session, Ref} || Thread <- maps:values(IOThreads)],
-	[Thread ! reset_performance_counters || Thread <- maps:values(IOThreads)],
-	CacheSizeLimit = get_chunk_cache_size_limit(State),
-	log_chunk_cache_size_limit(CacheSizeLimit),
-	ets:insert(?MODULE, {chunk_cache_size, 0}),
-	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
-	Session = #mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit },
-	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold,
-			session = Session }};
+	Session = reset_mining_session(State),
+	ar_mining_io:reset_performance_counters(),
+	{noreply, State#state{ diff = Diff, session = Session }};
 
 handle_cast({set_difficulty, _Diff},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
@@ -142,9 +151,18 @@ handle_cast({set_difficulty, _Diff},
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
 
-handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
-	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
-
+handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
+	#state{ session = #mining_session{ ref = SessionRef }, task_queue = Q } = State,
+	case is_session_valid(SessionRef, Candidate) of
+		true ->
+			StepNumber = Candidate#mining_candidate.step_number,
+			Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
+			prometheus_gauge:inc(mining_server_task_queue_len),
+			{noreply, State#state{ task_queue = Q2 }};
+		false ->
+			{noreply, State}
+	end;
+	
 handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
@@ -157,6 +175,46 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			gen_server:cast(?MODULE, handle_task),
 			handle_task(Task, State#state{ task_queue = Q2 })
 	end;
+
+handle_cast({compute_h2_for_peer, Candidate, H1List}, State) ->
+	#state{ session = Session } = State,
+	#mining_session{ chunk_cache = Map } = Session,
+	#mining_candidate{
+		h0 = H0,
+		partition_number = PartitionNumber,
+		partition_upper_bound = PartitionUpperBound
+	} = Candidate,
+	
+	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+			PartitionNumber, PartitionUpperBound),
+	Range2Exists = ar_mining_io:read_recall_range(chunk2, Candidate, RecallRange2Start),
+	case Range2Exists of
+		true ->
+			reserve_cache_space(),
+			Map2 = cache_h1_list(Candidate, H1List, Map),
+			Session2 = Session#mining_session{ chunk_cache = Map2 },
+			{noreply, State#state{ session = Session2 }};
+		false ->
+			%% This can happen if the remote peer has an outdated partition table
+			{noreply, State}
+	end;
+
+handle_cast({prepare_and_post_solution, Candidate}, State) ->
+	prepare_and_post_solution(Candidate, State),
+	{noreply, State};
+
+handle_cast({post_solution, Solution}, State) ->
+	post_solution(Solution, State),
+	{noreply, State};
+
+handle_cast({may_be_remove_chunk_from_cache, _Args},
+		#state{ session = #mining_session{ ref = undefined } } = State) ->
+	{noreply, State};
+handle_cast({may_be_remove_chunk_from_cache, _Args} = Task,
+		#state{ task_queue = Q } = State) ->
+	Q2 = gb_sets:insert({priority(may_be_remove_chunk_from_cache), make_ref(), Task}, Q),
+	prometheus_gauge:inc(mining_server_task_queue_len),
+	{noreply, State#state{ task_queue = Q2 }};
 
 handle_cast(report_performance,
 		#state{ session = #mining_session{ partition_upper_bound = undefined } } = State) ->
@@ -173,38 +231,25 @@ handle_cast(report_performance, #state{ pause_performance_reports = true,
 			ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
 			{noreply, State}
 	end;
-handle_cast(report_performance, #state{ io_threads = IOThreads, session = Session } = State) ->
-	#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,
-	Max = max(0, PartitionUpperBound div ?PARTITION_SIZE - 1),
-	Partitions =
-		lists:sort(sets:to_list(
-			maps:fold(
-				fun({Partition, _, StoreID}, _, Acc) ->
-					case Partition > Max of
-						true ->
-							Acc;
-						_ ->
-							sets:add_element({Partition, StoreID}, Acc)
-					end
-				end,
-				sets:new(), % A storage module may be smaller than a partition.
-				IOThreads
-			))),
+handle_cast(report_performance, #state{ session = Session } = State) ->
+	#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,	
+	Partitions = ar_mining_io:get_partitions(PartitionUpperBound),
 	Now = erlang:monotonic_time(millisecond),
 	VdfSpeed = vdf_speed(Now),
 	{IOList, MaxPartitionTime, PartitionsSum, MaxCurrentTime, CurrentsSum} =
 		lists:foldr(
-			fun({Partition, StoreID}, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
+			fun({Partition, _ReplicaID, StoreID}, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
 				case ets:lookup(?MODULE, {performance, Partition}) of
 					[] ->
 						Acc;
-					[{_, PartitionStart, _, CurrentStart, _}] when Now - PartitionStart =:= 0
-															orelse Now - CurrentStart  =:= 0 ->
+					[{_, PartitionStart, _, CurrentStart, _}]
+							when Now - PartitionStart =:= 0
+								orelse Now - CurrentStart =:= 0 ->
 						Acc;
 					[{_, PartitionStart, PartitionTotal, CurrentStart, CurrentTotal}] ->
 						ets:update_counter(?MODULE,
-										   {performance, Partition},
-										   [{4, -1, Now, Now}, {5, 0, -1, 0}]),
+										{performance, Partition},
+										[{4, -1, Now, Now}, {5, 0, -1, 0}]),
 						PartitionTimeLapse = (Now - PartitionStart) / 1000,
 						PartitionAvg = PartitionTotal / PartitionTimeLapse / 4,
 						CurrentTimeLapse = (Now - CurrentStart) / 1000,
@@ -224,7 +269,8 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 								{[io_lib:format("Partition ~B avg: ~.2f MiB/s, "
 										"current: ~.2f MiB/s, "
 										"optimum: ~.2f MiB/s, ~.2f MiB/s (full weave).~n",
-									[Partition, PartitionAvg, CurrentAvg, Optimal / 2, Optimal]) | Acc1],
+									[Partition, PartitionAvg, CurrentAvg, Optimal / 2,
+											Optimal]) | Acc1],
 									max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
 									max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal}
 						end
@@ -251,7 +297,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s; VDF: ~.2f s.~n",
 						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed])
 				end,
-			prometheus_gauge:set(mining_rate, TotalCurrent),
+			prometheus_gauge:set(mining_rate, TotalCurrent * 4),
 			IOList2 = [Str | [IOList | ["~n"]]],
 			ar:console(iolist_to_binary(IOList2));
 		false ->
@@ -270,13 +316,10 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_info({'DOWN', Ref,  process, _, Reason},
-		#state{ io_thread_monitor_refs = IOThreadRefs,
-				hashing_thread_monitor_refs = HashingThreadRefs } = State) ->
-	case {maps:is_key(Ref, IOThreadRefs), maps:is_key(Ref, HashingThreadRefs)} of
-		{true, _} ->
-			{noreply, handle_io_thread_down(Ref, Reason, State)};
-		{_, true} ->
+handle_info({'DOWN', Ref, process, _, Reason},
+		#state{ hashing_thread_monitor_refs = HashingThreadRefs } = State) ->
+	case maps:is_key(Ref, HashingThreadRefs) of
+		true ->
 			{noreply, handle_hashing_thread_down(Ref, Reason, State)};
 		_ ->
 			{noreply, State}
@@ -298,7 +341,8 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 			{performance, nonce_limiter},
 			[{3, 1}],
 			{{performance, nonce_limiter}, erlang:monotonic_time(millisecond), 0}),
-	Task = {computed_output, {SessionKey, Session, Output, PartitionUpperBound}},
+	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
+	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
 	prometheus_gauge:inc(mining_server_task_queue_len),
@@ -306,154 +350,18 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
 
-handle_info({io_thread_recall_range_chunk, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_info({io_thread_recall_range_chunk, Args} = Task,
-		#state{ task_queue = Q,
-				session = #mining_session{ step_number_by_output = Map } } = State) ->
-	case maps:get(element(4, Args), Map, not_found) of
-		not_found ->
-			{noreply, State};
-		StepNumber ->
-			Q2 = gb_sets:insert({priority(io_thread_recall_range_chunk, StepNumber),
-					make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
-			{noreply, State#state{ task_queue = Q2 }}
-	end;
-
-handle_info({io_thread_recall_range2_chunk, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_info({io_thread_recall_range2_chunk, Args} = Task,
-		#state{ task_queue = Q,
-				session = #mining_session{ step_number_by_output = Map } } = State) ->
-	case maps:get(element(4, Args), Map, not_found) of
-		not_found ->
-			{noreply, State};
-		StepNumber ->
-			Q2 = gb_sets:insert({priority(io_thread_recall_range2_chunk, StepNumber),
-					make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
-			{noreply, State#state{ task_queue = Q2 }}
-	end;
-
-handle_info({mining_thread_computed_h0, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_info({mining_thread_computed_h0, Args} = Task,
-		#state{ task_queue = Q,
-				session = #mining_session{ step_number_by_output = Map } } = State) ->
-	case maps:get(element(4, Args), Map, not_found) of
-		not_found ->
-			{noreply, State};
-		StepNumber ->
-			Q2 = gb_sets:insert({priority(mining_thread_computed_h0, StepNumber), make_ref(),
-					Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
-			{noreply, State#state{ task_queue = Q2 }}
-	end;
-
-handle_info({mining_thread_computed_h1, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_info({mining_thread_computed_h1, Args} = Task,
-		#state{ task_queue = Q,
-				session = #mining_session{ step_number_by_output = Map } } = State) ->
-	case maps:get(element(4, Args), Map, not_found) of
-		not_found ->
-			{noreply, State};
-		StepNumber ->
-			Q2 = gb_sets:insert({priority(mining_thread_computed_h1, StepNumber), make_ref(),
-					Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
-			{noreply, State#state{ task_queue = Q2 }}
-	end;
-
-handle_info({may_be_remove_chunk_from_cache, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_info({may_be_remove_chunk_from_cache, _Args} = Task,
-		#state{ task_queue = Q } = State) ->
-	Q2 = gb_sets:insert({priority(may_be_remove_chunk_from_cache), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
-	{noreply, State#state{ task_queue = Q2 }};
-
-handle_info({mining_thread_computed_h2, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_info({mining_thread_computed_h2, Args} = Task,
-		#state{ task_queue = Q,
-				session = #mining_session{ step_number_by_output = Map } } = State) ->
-	case maps:get(element(4, Args), Map, not_found) of
-		not_found ->
-			{noreply, State};
-		StepNumber ->
-			Q2 = gb_sets:insert({priority(mining_thread_computed_h2, StepNumber),
-					make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
-			{noreply, State#state{ task_queue = Q2 }}
-	end;
 
 handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
-terminate(_Reason, State) ->
-	#state{ io_threads = IOThreads, hashing_threads = HashingThreads } = State,
+terminate(_Reason, #state{ hashing_threads = HashingThreads } = State) ->
 	[Thread ! stop || Thread <- queue:to_list(HashingThreads)],
-	[Thread ! stop || Thread <- maps:values(IOThreads)],
 	ok.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-start_io_threads(Start, End, _ReplicaID, _StoreID, State) when Start >= End ->
-	State;
-start_io_threads(Start, End, ReplicaID, StoreID, State) ->
-	PartitionNumber = Start div ?PARTITION_SIZE,
-	State2 = start_io_thread(PartitionNumber, ReplicaID, StoreID, State),
-	start_io_threads(Start + ?PARTITION_SIZE, End, ReplicaID, StoreID, State2).
-
-start_io_thread(PartitionNumber, ReplicaID, StoreID, #state{ io_threads = Threads } = State)
-		when is_map_key({PartitionNumber, ReplicaID, StoreID}, Threads) ->
-	State;
-start_io_thread(PartitionNumber, ReplicaID, StoreID,
-		#state{ io_threads = Threads, io_thread_monitor_refs = Refs,
-				partitions = Set, session = #mining_session{ ref = SessionRef } } = State) ->
-	Set2 =
-		case sets:is_element(PartitionNumber, Set) of
-			true ->
-				Set;
-			false ->
-				sets:add_element(PartitionNumber, Set)
-		end,
-	Thread =
-		spawn(
-			fun() ->
-				case StoreID of
-					"default" ->
-						ok;
-					_ ->
-						ar_chunk_storage:open_files(StoreID)
-				end,
-				io_thread(PartitionNumber, ReplicaID, StoreID)
-			end
-		),
-	Ref = monitor(process, Thread),
-	Threads2 = maps:put({PartitionNumber, ReplicaID, StoreID}, Thread, Threads),
-	Refs2 = maps:put(Ref, {PartitionNumber, ReplicaID, StoreID}, Refs),
-	case SessionRef of
-		undefined ->
-			ok;
-		_ ->
-			Thread ! {new_mining_session, SessionRef}
-	end,
-	?LOG_INFO([{event, started_io_mining_thread}, {partition_number, PartitionNumber},
-			{mining_addr, ar_util:encode(ReplicaID)}, {store_id, StoreID}]),
-	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2,
-			partitions = Set2 }.
 
 start_hashing_thread(State) ->
 	#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs,
@@ -470,15 +378,6 @@ start_hashing_thread(State) ->
 	end,
 	State#state{ hashing_threads = Threads2, hashing_thread_monitor_refs = Refs2 }.
 
-handle_io_thread_down(Ref, Reason,
-		#state{ io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
-	?LOG_WARNING([{event, mining_io_thread_down}, {reason, io_lib:format("~p", [Reason])}]),
-	ThreadID = {PartitionNumber, ReplicaID, StoreID} = maps:get(Ref, Refs),
-	Refs2 = maps:remove(Ref, Refs),
-	Threads2 = maps:remove(ThreadID, Threads),
-	start_io_thread(PartitionNumber, ReplicaID, StoreID,
-			State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }).
-
 handle_hashing_thread_down(Ref, Reason,
 		#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs } = State) ->
 	?LOG_WARNING([{event, mining_hashing_thread_down},
@@ -489,57 +388,12 @@ handle_hashing_thread_down(Ref, Reason,
 	start_hashing_thread(State#state{ hashing_threads = Threads2,
 			hashing_thread_monitor_refs = Refs2 }).
 
-io_thread(PartitionNumber, ReplicaID, StoreID) ->
-	io_thread(PartitionNumber, ReplicaID, StoreID, not_set).
-
-io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
-	receive
-		%% Prioritize stop and new_mining_session message before any read_recall_range messages,
-		%% this ensures we don't continue to process previously queued read_recall_range messages
-		%% after a mining session change
-		stop ->
-			io_thread(PartitionNumber, ReplicaID, StoreID);
-		{new_mining_session, Ref} ->
-			io_thread(PartitionNumber, ReplicaID, StoreID, Ref)
-	after 0 ->
-		receive
-			stop ->
-				io_thread(PartitionNumber, ReplicaID, StoreID);
-			{new_mining_session, Ref} ->
-				io_thread(PartitionNumber, ReplicaID, StoreID, Ref);
-			reset_performance_counters ->
-				ets:insert(?MODULE, [{{performance, PartitionNumber},
-						erlang:monotonic_time(millisecond), 0,
-						erlang:monotonic_time(millisecond), 0}]),
-				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
-			{read_recall_range, {SessionRef, From, PartitionNumber2, RecallRangeStart, H0,
-					NonceLimiterOutput, CorrelationRef}} ->
-				read_recall_range(io_thread_recall_range_chunk, H0, PartitionNumber2,
-						RecallRangeStart, NonceLimiterOutput, ReplicaID, StoreID, From,
-						SessionRef, CorrelationRef),
-				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
-			{read_recall_range, _} ->
-				%% Clear the message queue from the requests from the outdated mining session.
-				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
-			{read_recall_range2, {SessionRef, From, PartitionNumber2, RecallRangeStart, H0,
-					NonceLimiterOutput, CorrelationRef}} ->
-				read_recall_range(io_thread_recall_range2_chunk, H0, PartitionNumber2,
-						RecallRangeStart, NonceLimiterOutput, ReplicaID, StoreID, From,
-						SessionRef, CorrelationRef),
-				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
-			{read_recall_range2, _} ->
-				%% Clear the message queue from the requests from the outdated mining session.
-				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef)
-		end
-	end.
-
-get_chunk_cache_size_limit(State) ->
+get_chunk_cache_size_limit() ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.mining_server_chunk_cache_size_limit of
 		undefined ->
-			#state{ io_threads = IOThreads } = State,
-			ThreadCount = map_size(IOThreads),
-			Free = proplists:get_value(total_memory,
+			ThreadCount = ar_mining_io:get_thread_count(),
+			Free = proplists:get_value(free_memory,
 					memsup:get_system_memory_data(), 2000000000),
 			Bytes = min(Free * 0.7 / 3, ?RECALL_RANGE_SIZE
 				* 2 % Two ranges per output.
@@ -584,86 +438,6 @@ count_nonce_limiter_tasks(Q) ->
 			end
 	end.
 
-read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-		ReplicaID, StoreID, From, SessionRef, CorrelationRef) ->
-	Size = ?RECALL_RANGE_SIZE,
-	Intervals = get_packed_intervals(RecallRangeStart, RecallRangeStart + Size,
-			ReplicaID, StoreID, ar_intervals:new()),
-	ChunkOffsets = ar_chunk_storage:get_range(RecallRangeStart, Size, StoreID),
-	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	?LOG_DEBUG([{event, mining_debug_read_recall_range},
-			{found_chunks, length(ChunkOffsets)},
-			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
-	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
-	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-			ReplicaID, From, 0, NonceMax, ChunkOffsets2, SessionRef, CorrelationRef).
-
-get_packed_intervals(Start, End, ReplicaID, "default" = StoreID, Intervals) ->
-	Packing = {spora_2_6, ReplicaID},
-	case ar_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, StoreID) of
-		not_found ->
-			Intervals;
-		{Right, Left} ->
-			get_packed_intervals(Right, End, ReplicaID, StoreID,
-					ar_intervals:add(Intervals, Right, Left))
-	end;
-get_packed_intervals(_Start, _End, _ReplicaID, _StoreID, _Intervals) ->
-	no_interval_check_implemented_for_non_default_store.
-
-filter_by_packing([], _Intervals, _StoreID) ->
-	[];
-filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = StoreID) ->
-	case ar_intervals:is_inside(Intervals, EndOffset) of
-		false ->
-			filter_by_packing(ChunkOffsets, Intervals, StoreID);
-		true ->
-			[{EndOffset, Chunk} | filter_by_packing(ChunkOffsets, Intervals, StoreID)]
-	end;
-filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
-	ChunkOffsets.
-
-read_recall_range(_Type, _H0, _PartitionNumber, _RecallRangeStart, _NonceLimiterOutput,
-		_ReplicaID, _From, Nonce, NonceMax, _ChunkOffsets, _Ref, _CorrelationRef)
-			when Nonce > NonceMax ->
-	ok;
-read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-		ReplicaID, From, Nonce, NonceMax, [], Ref, CorrelationRef) ->
-	%% Two recall ranges are processed asynchronously so we need to make sure chunks
-	%% do not remain in the chunk cache.
-	ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
-	prometheus_gauge:dec(mining_server_chunk_cache_size),
-	signal_cache_cleanup(Nonce, CorrelationRef, Ref, From),
-	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-			ReplicaID, From, Nonce + 1, NonceMax, [], Ref, CorrelationRef);
-read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-		ReplicaID, From, Nonce, NonceMax, [{EndOffset, Chunk} | ChunkOffsets], Ref,
-		CorrelationRef)
-		%% Only 256 KiB chunks are supported at this point.
-		when RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
-	ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
-	prometheus_gauge:dec(mining_server_chunk_cache_size),
-	signal_cache_cleanup(Nonce, CorrelationRef, Ref, From),
-	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-			ReplicaID, From, Nonce + 1, NonceMax, [{EndOffset, Chunk} | ChunkOffsets], Ref,
-			CorrelationRef);
-read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-		ReplicaID, From, Nonce, NonceMax, [{EndOffset, _Chunk} | ChunkOffsets], Ref,
-		CorrelationRef)
-		when RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE >= EndOffset ->
-	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-			ReplicaID, From, Nonce, NonceMax, ChunkOffsets, Ref, CorrelationRef);
-read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-		ReplicaID, From, Nonce, NonceMax, [{_EndOffset, Chunk} | ChunkOffsets], Ref,
-		CorrelationRef) ->
-	ets:update_counter(?MODULE, {performance, PartitionNumber}, [{3, 1}, {5, 1}],
-			{{performance, PartitionNumber},
-			 erlang:monotonic_time(millisecond), 1,
-			 erlang:monotonic_time(millisecond), 1}),
-	From ! {Type, {H0, PartitionNumber, Nonce, NonceLimiterOutput, ReplicaID, Chunk,
-			CorrelationRef, Ref}},
-	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
-		ReplicaID, From, Nonce + 1, NonceMax, ChunkOffsets, Ref, CorrelationRef).
-
 hashing_thread() ->
 	hashing_thread(not_set).
 
@@ -671,124 +445,82 @@ hashing_thread(SessionRef) ->
 	receive
 		stop ->
 			hashing_thread();
-		{compute_h0, {SessionRef, From, Output, PartitionNumber, Seed, PartitionUpperBound,
-				ReplicaID}} ->
-			H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, ReplicaID),
-			From ! {mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBound,
-					Output, ReplicaID, SessionRef}},
+		{compute_h0, Candidate} ->
+			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
+				true ->
+					#mining_candidate{
+						mining_address = MiningAddress, nonce_limiter_output = Output,
+						partition_number = PartitionNumber, seed = Seed } = Candidate,
+					H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress),
+					ar_mining_server:computed_hash(computed_h0, H0, undefined, Candidate);
+				false ->
+					ok %% Clear the message queue of requests from outdated mining sessions
+			end,
 			hashing_thread(SessionRef);
-		{compute_h1, {SessionRef, From, H0, PartitionNumber, Nonce, NonceLimiterOutput,
-				ReplicaID, Chunk, CorrelationRef}} ->
-			{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk),
-			From ! {mining_thread_computed_h1, {H0, PartitionNumber, Nonce,
-					NonceLimiterOutput, ReplicaID, Chunk, H1, Preimage, CorrelationRef,
-					SessionRef}},
+		{compute_h1, Candidate} ->
+			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
+				true ->
+					#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
+					{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk1),
+					ar_mining_server:computed_hash(computed_h1, H1, Preimage, Candidate);
+				false ->
+					ok %% Clear the message queue of requests from outdated mining sessions
+			end,
 			hashing_thread(SessionRef);
-		{compute_h1, _} ->
-			 %% Clear the message queue from the requests from the outdated mining session.
-			 hashing_thread(SessionRef);
-		{compute_h2, {SessionRef, From, H0, PartitionNumber, Nonce, NonceLimiterOutput,
-				ReplicaID, Chunk1, Chunk2, H1}} ->
-			{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
-			From ! {mining_thread_computed_h2, {H0, PartitionNumber, Nonce,
-					NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, H2, Preimage, SessionRef}},
+		{compute_h2, Candidate} ->
+			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
+				true ->
+					#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2 } = Candidate,
+					{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
+					ar_mining_server:computed_hash(computed_h2, H2, Preimage, Candidate);
+				false ->
+					ok %% Clear the message queue of requests from outdated mining sessions
+			end,
 			hashing_thread(SessionRef);
-		{compute_h2, _} ->
-			 %% Clear the message queue from the requests from the outdated mining session.
-			 hashing_thread(SessionRef);
 		{new_mining_session, Ref} ->
 			hashing_thread(Ref)
 	end.
 
-distribute_output(Seed, PartitionUpperBound, Output, Iterator, Distributed, Ref, State) ->
-	distribute_output(Seed, PartitionUpperBound, Output, Iterator, Distributed, Ref, State, 0).
+distribute_output(Partitions, Candidate, Distributed, State) ->
+	distribute_output(Partitions, Candidate, Distributed, State, 0).
 
-distribute_output(Seed, PartitionUpperBound, Output, Iterator, Distributed, Ref, State, N) ->
-	MaxPartitionNumber = max(0, PartitionUpperBound div ?PARTITION_SIZE - 1),
-	case maps:next(Iterator) of
-		none ->
-			{N, State};
-		{{PartitionNumber, ReplicaID, _StoreID}, _Thread, Iterator2}
-				when PartitionNumber =< MaxPartitionNumber,
-					not is_map_key({PartitionNumber, ReplicaID}, Distributed) ->
+distribute_output([], _Candidate, _Distributed, State, N) ->
+	{N, State};
+distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
+		Candidate, Distributed, State, N) ->
+	case maps:is_key({PartitionNumber, MiningAddress}, Distributed) of
+		true ->
+			distribute_output(Partitions, Candidate, Distributed, State, N);
+		false ->
 			#state{ hashing_threads = Threads } = State,
 			{Thread, Threads2} = pick_hashing_thread(Threads),
-			Thread ! {compute_h0, {Ref, self(), Output, PartitionNumber, Seed,
-					PartitionUpperBound, ReplicaID}},
+			Thread ! {compute_h0,
+				Candidate#mining_candidate{
+					partition_number = PartitionNumber,
+					mining_address = MiningAddress
+				}},
 			State2 = State#state{ hashing_threads = Threads2 },
-			Distributed2 = maps:put({PartitionNumber, ReplicaID}, sent, Distributed),
-			distribute_output(Seed, PartitionUpperBound, Output, Iterator2, Distributed2, Ref,
-					State2, N + 1);
-		{_Key, _Thread, Iterator2} ->
-			distribute_output(Seed, PartitionUpperBound, Output, Iterator2, Distributed, Ref,
-					State, N)
+			Distributed2 = maps:put({PartitionNumber, MiningAddress}, sent, Distributed),
+			distribute_output(Partitions, Candidate, Distributed2, State2, N + 1)
 	end.
-
-get_partition_number_by_offset(Offset) ->
-	Offset div ?PARTITION_SIZE.
-
-find_thread(PartitionNumber, ReplicaID, RangeEnd, RangeStart, Threads) ->
-	Keys = find_thread2(PartitionNumber, ReplicaID, maps:iterator(Threads)),
-	case find_thread3(Keys, RangeEnd, RangeStart, 0, not_found) of
-		not_found ->
-			not_found;
-		Key ->
-			maps:get(Key, Threads)
-	end.
-
-find_thread2(PartitionNumber, ReplicaID, Iterator) ->
-	case maps:next(Iterator) of
-		none ->
-			[];
-		{{PartitionNumber, ReplicaID, _StoreID} = Key, _Thread, Iterator2} ->
-			[Key | find_thread2(PartitionNumber, ReplicaID, Iterator2)];
-		{_Key, _Thread, Iterator2} ->
-			find_thread2(PartitionNumber, ReplicaID, Iterator2)
-	end.
-
-find_thread3([Key | Keys], RangeEnd, RangeStart, Max, MaxKey) ->
-	{_PartitionNumber, _ReplicaID, StoreID} = Key,
-	I = ar_sync_record:get_intersection_size(RangeEnd, RangeStart, ar_chunk_storage, StoreID),
-	case I > Max of
-		true ->
-			find_thread3(Keys, RangeEnd, RangeStart, I, Key);
-		false ->
-			find_thread3(Keys, RangeEnd, RangeStart, Max, MaxKey)
-	end;
-find_thread3([], _RangeEnd, _RangeStart, _Max, MaxKey) ->
-	MaxKey.
 
 reserve_cache_space() ->
 	NonceMax = max(0, ((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1)),
 	ets:update_counter(?MODULE, chunk_cache_size, {2, NonceMax + 1}),
 	prometheus_gauge:inc(mining_server_chunk_cache_size, NonceMax + 1).
 
-signal_cache_cleanup(CorrelationRef, SessionRef, PID) ->
-	NonceMax = max(0, ((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1)),
-	signal_cache_cleanup(0, NonceMax, CorrelationRef, SessionRef, PID).
-
-signal_cache_cleanup(Nonce, NonceMax, _CorrelationRef, _SessionRef, _PID)
-		when Nonce > NonceMax ->
-	ok;
-signal_cache_cleanup(Nonce, NonceMax, CorrelationRef, SessionRef, PID) ->
-	signal_cache_cleanup(Nonce, CorrelationRef, SessionRef, PID),
-	signal_cache_cleanup(Nonce + 1, NonceMax, CorrelationRef, SessionRef, PID).
-
-signal_cache_cleanup(Nonce, CorrelationRef, SessionRef, PID) ->
-	PID ! {may_be_remove_chunk_from_cache, {Nonce, CorrelationRef, SessionRef}}.
-
 priority(may_be_remove_chunk_from_cache) ->
 	0.
 
-priority(mining_thread_computed_h2, StepNumber) ->
+priority(computed_h2, StepNumber) ->
 	{1, -StepNumber};
-priority(mining_thread_computed_h1, StepNumber) ->
+priority(computed_h1, StepNumber) ->
 	{2, -StepNumber};
-priority(io_thread_recall_range2_chunk, StepNumber) ->
+priority(chunk2, StepNumber) ->
 	{3, -StepNumber};
-priority(io_thread_recall_range_chunk, StepNumber) ->
+priority(chunk1, StepNumber) ->
 	{4, -StepNumber};
-priority(mining_thread_computed_h0, StepNumber) ->
+priority(computed_h0, StepNumber) ->
 	{5, -StepNumber};
 priority(nonce_limiter_computed_output, StepNumber) ->
 	{6, -StepNumber}.
@@ -801,11 +533,8 @@ handle_task({computed_output, Args},
 		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
-	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
-	{SessionKey,
-		#vdf_session{ seed = Seed, step_number = StepNumber } = VDFSession,
-		Output, PartitionUpperBound} = Args,
-	{NextSeed, StartIntervalNumber} = SessionKey,
+	#state{ session = Session } = State,
+	{{NextSeed, StartIntervalNumber}, Seed, StepNumber, Output, PartitionUpperBound} = Args,
 	#mining_session{ next_seed = CurrentNextSeed,
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = Session,
@@ -819,370 +548,520 @@ handle_task({computed_output, Args}, State) ->
 						"next entropy nonce: ~s, interval number: ~B.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
 						StartIntervalNumber]),
-				?LOG_INFO("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
-						"next entropy nonce: ~s, interval number: ~B.~n",
-						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
-						StartIntervalNumber]),
-				Ref2 = make_ref(),
-				[Thread ! {new_mining_session, Ref2} || Thread <- queue:to_list(Threads)],
-				[Thread ! {new_mining_session, Ref2} || Thread <- maps:values(IOThreads)],
-				CacheSizeLimit = get_chunk_cache_size_limit(State),
-				log_chunk_cache_size_limit(CacheSizeLimit),
-				ets:insert(?MODULE, {chunk_cache_size, 0}),
-				prometheus_gauge:set(mining_server_chunk_cache_size, 0),
-				#mining_session{ ref = Ref2, seed = Seed, next_seed = NextSeed,
+				NewSession = reset_mining_session(State),
+				NewSession#mining_session{ seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
-						partition_upper_bound = PartitionUpperBound,
-						chunk_cache_size_limit = CacheSizeLimit }
+						partition_upper_bound = PartitionUpperBound }
 		end,
-	#mining_session{ step_number_by_output = Map } = Session2,
-	Map2 = maps:put(Output, StepNumber, Map),
-	Session3 = Session2#mining_session{ step_number_by_output = Map2 },
-	Ref = Session3#mining_session.ref,
-	Iterator = maps:iterator(IOThreads),
-	{N, State2} = distribute_output(Seed, PartitionUpperBound, Output, Iterator, #{}, Ref,
-			State),
-	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
-		{step_number, StepNumber}, {output, ar_util:encode(Output)},
-		{start_interval_number, StartIntervalNumber},
-		{vdf_difficulty, VDFSession#vdf_session.vdf_difficulty},
-		{next_vdf_difficulty, VDFSession#vdf_session.next_vdf_difficulty}]),
-	{noreply, State2#state{ session = Session3 }};
+	Ref = Session2#mining_session.ref,
+	Partitions = ar_mining_io:get_partitions(PartitionUpperBound),
+	Candidate = #mining_candidate{
+		session_ref = Ref,
+		seed = Seed,
+		next_seed = NextSeed,
+		start_interval_number = StartIntervalNumber,
+		step_number = StepNumber,
+		nonce_limiter_output = Output,
+		partition_upper_bound = PartitionUpperBound
+	},
+	{N, State2} = distribute_output(Partitions, Candidate, #{}, State),
+	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N}]),
+	{noreply, State2#state{ session = Session2 }};
 
-handle_task({io_thread_recall_range_chunk, {H0, PartitionNumber, Nonce, NonceLimiterOutput,
-		ReplicaID, Chunk, CorrelationRef, Ref}},
-		#state{ session = #mining_session{ ref = Ref } } = State) ->
-	#state{ hashing_threads = Threads } = State,
-	{Thread, Threads2} = pick_hashing_thread(Threads),
-	Thread ! {compute_h1, {Ref, self(), H0, PartitionNumber, Nonce, NonceLimiterOutput,
-			ReplicaID, Chunk, CorrelationRef}},
-	{noreply, State#state{ hashing_threads = Threads2 }};
-handle_task({io_thread_recall_range_chunk, _Args}, State) ->
-	{noreply, State};
-
-handle_task({io_thread_recall_range2_chunk, {H0, PartitionNumber, Nonce,
-		NonceLimiterOutput, ReplicaID, Chunk, CorrelationRef, Ref}},
-		#state{ session = #mining_session{ ref = Ref } } = State) ->
-	#state{ session = Session, hashing_threads = Threads } = State,
-	#mining_session{ chunk_cache = Map } = Session,
-	case maps:take({CorrelationRef, Nonce}, Map) of
-		{do_not_cache, Map2} ->
-			Session2 = Session#mining_session{ chunk_cache = Map2 },
-			ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
-			prometheus_gauge:dec(mining_server_chunk_cache_size),
-			{noreply, State#state{ session = Session2 }};
-		error ->
-			Map2 = maps:put({CorrelationRef, Nonce}, Chunk, Map),
-			Session2 = Session#mining_session{ chunk_cache = Map2 },
-			{noreply, State#state{ session = Session2 }};
-		{{Chunk1, H1}, Map2} ->
-			Session2 = Session#mining_session{ chunk_cache = Map2 },
-			ets:update_counter(?MODULE, chunk_cache_size, {2, -2}),
-			prometheus_gauge:dec(mining_server_chunk_cache_size, 2),
-			{Thread, Threads2} = pick_hashing_thread(Threads),
-			Thread ! {compute_h2, {Ref, self(), H0, PartitionNumber, Nonce,
-					NonceLimiterOutput, ReplicaID, Chunk1, Chunk, H1}},
-			{noreply, State#state{ hashing_threads = Threads2, session = Session2 }}
-	end;
-handle_task({io_thread_recall_range2_chunk, _Args}, State) ->
-	{noreply, State};
-
-handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBound,
-		Output, ReplicaID, Ref}} = Task, #state{ task_queue = Q,
-		session = #mining_session{ ref = Ref, chunk_cache_size_limit = Limit,
-		step_number_by_output = Map } } = State) ->
-	[{_, Size}] = ets:lookup(?MODULE, chunk_cache_size),
-	case Size > Limit of
+handle_task({chunk1, Candidate}, State) ->
+	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
 		true ->
-			case maps:get(Output, Map, not_found) of
-				not_found ->
-					?LOG_DEBUG([{event, mining_debug_output_not_found_in_step_map}]),
-					{noreply, State};
-				StepNumber ->
-					Q2 = gb_sets:insert({priority(mining_thread_computed_h0, StepNumber),
-							make_ref(), Task}, Q),
-					prometheus_gauge:inc(mining_server_task_queue_len),
-					{noreply, State#state{ task_queue = Q2 }}
+			#state{ hashing_threads = Threads } = State,
+			{Thread, Threads2} = pick_hashing_thread(Threads),
+			Thread ! {compute_h1, Candidate},
+			{noreply, State#state{ hashing_threads = Threads2 }};
+		false ->
+			{noreply, State}
+	end;
+
+handle_task({chunk2, Candidate}, State) ->
+	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
+		true ->
+			#state{ session = Session, hashing_threads = Threads } = State,
+			#mining_session{ chunk_cache = Map } = Session,
+			#mining_candidate{ chunk2 = Chunk2 } = Candidate,
+			case cycle_chunk_cache(Candidate, {chunk2, Chunk2}, Map) of
+				{{chunk1, Chunk1, H1}, Map2} ->
+					{Thread, Threads2} = pick_hashing_thread(Threads),
+					Thread ! {compute_h2, Candidate#mining_candidate{ chunk1 = Chunk1, h1 = H1 } },
+					Session2 = Session#mining_session{ chunk_cache = Map2 },
+					{noreply, State#state{ session = Session2, hashing_threads = Threads2 }};
+				{{chunk1, H1}, Map2} ->
+					{Thread, Threads2} = pick_hashing_thread(Threads),
+					Thread ! {compute_h2, Candidate#mining_candidate{ h1 = H1 } },
+					Session2 = Session#mining_session{ chunk_cache = Map2 },
+					{noreply, State#state{ session = Session2, hashing_threads = Threads2 }};
+				{_, Map2} ->
+					Session2 = Session#mining_session{ chunk_cache = Map2 },
+					{noreply, State#state{ session = Session2 }}
 			end;
 		false ->
-			#state{ io_threads = Threads } = State,
-			{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-					PartitionNumber, PartitionUpperBound),
-			CorrelationRef = make_ref(),
-			Range1End = RecallRange1Start + ?RECALL_RANGE_SIZE,
-			case find_thread(PartitionNumber, ReplicaID, Range1End, RecallRange1Start,
-					Threads) of
-				not_found ->
-					?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
-							{range_start, RecallRange1Start},
-							{range_end, Range1End}]),
-					%% We have a storage module smaller than the partition size which
-					%% partially covers this partition but does not include this range.
-					ok;
-				Thread1 ->
-					reserve_cache_space(),
-					Thread1 ! {read_recall_range, {Ref, self(), PartitionNumber,
-							RecallRange1Start, H0, Output, CorrelationRef}},
-					PartitionNumber2 = get_partition_number_by_offset(RecallRange2Start),
-					Range2End = RecallRange2Start + ?RECALL_RANGE_SIZE,
-					case find_thread(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start,
-							Threads) of
-						not_found ->
-							signal_cache_cleanup(CorrelationRef, Ref, self());
-						Thread2 ->
+			{noreply, State}
+	end;
+
+handle_task({computed_h0, Candidate}, State) ->
+	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
+		true ->
+			#state{ session = #mining_session{ chunk_cache_size_limit = Limit } } = State,
+			[{_, Size}] = ets:lookup(?MODULE, chunk_cache_size),
+			case Size > Limit of
+				true ->
+					%% Re-add the task so that it can bd executed later once some cache space frees up.
+					add_task(computed_h0, Candidate);
+				false ->
+					#mining_candidate{ h0 = H0, partition_number = PartitionNumber,
+						partition_upper_bound = PartitionUpperBound } = Candidate,
+					{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+							PartitionNumber, PartitionUpperBound),
+					PartitionNumber2 = ?PARTITION_NUMBER(RecallRange2Start),
+					Candidate2 = Candidate#mining_candidate{ partition_number2 = PartitionNumber2 },
+					Candidate3 = generate_cache_ref(Candidate2),
+
+					Range1Exists = ar_mining_io:read_recall_range(
+							chunk1, Candidate3, RecallRange1Start),
+					case Range1Exists of
+						true ->
 							reserve_cache_space(),
-							Thread2 ! {read_recall_range2, {Ref, self(), PartitionNumber,
-									RecallRange2Start, H0, Output, CorrelationRef}}
+							Range2Exists = ar_mining_io:read_recall_range(
+									chunk2, Candidate3, RecallRange2Start),
+							case Range2Exists of
+								true -> reserve_cache_space();
+								false -> signal_cache_cleanup(Candidate3)
+							end;
+						false ->
+							?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
+								{range_start, RecallRange1Start},
+								{range_end, RecallRange1Start + ?RECALL_RANGE_SIZE}]),
+							ok
 					end
-			end,
-			{noreply, State}
-	end;
-handle_task({mining_thread_computed_h0, _Args}, State) ->
+			end;
+		false ->
+			ok
+	end,
 	{noreply, State};
 
-handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, NonceLimiterOutput,
-		ReplicaID, Chunk, H1, Preimage, CorrelationRef, Ref}},
-		#state{ session = #mining_session{ ref = Ref } } = State) ->
-	#state{ session = Session, diff = Diff, hashing_threads = Threads } = State,
-	#mining_session{ chunk_cache = Map } = Session,
-	case binary:decode_unsigned(H1, big) > Diff of
+handle_task({computed_h1, Candidate}, State) ->
+	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
 		true ->
-			Args = {PartitionNumber, Nonce, H0, NonceLimiterOutput, ReplicaID, Chunk,
-					not_set, H1, Preimage, Ref},
-			Map3 =
-					case maps:take({CorrelationRef, Nonce}, Map) of
+			#state{ session = Session, diff = Diff, hashing_threads = Threads } = State,
+			#mining_session{ chunk_cache = Map } = Session,
+			#mining_candidate{ h1 = H1, chunk1 = Chunk1 } = Candidate,
+			case binary:decode_unsigned(H1, big) > Diff of
+				true ->
+					#state{ session = Session } = State,
+					Map2 = evict_chunk_cache(Candidate, Map),
+					Session2 = Session#mining_session{ chunk_cache = Map2 },
+					State2 = State#state{ session = Session2 },
+					prepare_and_post_solution(Candidate, State2),
+					{noreply, State2};
+				false ->
+					{ok, Config} = application:get_env(arweave, config),
+					case cycle_chunk_cache(Candidate, {chunk1, Chunk1, H1}, Map) of
+						{cached, Map2} ->
+							%% Chunk2 hasn't been read yet, so we cache Chunk1 and wait for
+							%% Chunk2 to be read.
+							Session2 = Session#mining_session{ chunk_cache = Map2 },
+							{noreply, State#state{ session = Session2 }};
 						{do_not_cache, Map2} ->
-							ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
-							prometheus_gauge:dec(mining_server_chunk_cache_size),
-							Map2;
-						{_, Map2} ->
-							ets:update_counter(?MODULE, chunk_cache_size, {2, -2}),
-							prometheus_gauge:dec(mining_server_chunk_cache_size, 2),
-							Map2;
-						error ->
-							ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
-							prometheus_gauge:dec(mining_server_chunk_cache_size),
-							maps:put({CorrelationRef, Nonce}, do_not_cache, Map)
-					end,
-			Session2 = Session#mining_session{ chunk_cache = Map3 },
-			State2 = State#state{ session = Session2 },
-			{noreply, prepare_solution(Args, State2)};
-		false ->
-			case maps:take({CorrelationRef, Nonce}, Map) of
-				{do_not_cache, Map2} ->
-					ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
-					prometheus_gauge:dec(mining_server_chunk_cache_size),
-					Session2 = Session#mining_session{ chunk_cache = Map2 },
-					{noreply, State#state{ session = Session2 }};
-				error ->
-					Map2 = maps:put({CorrelationRef, Nonce}, {Chunk, H1}, Map),
-					Session2 = Session#mining_session{ chunk_cache = Map2 },
-					{noreply, State#state{ session = Session2 }};
-				{Chunk2, Map2} ->
-					{Thread, Threads2} = pick_hashing_thread(Threads),
-					Thread ! {compute_h2, {Ref, self(), H0, PartitionNumber, Nonce,
-							NonceLimiterOutput, ReplicaID, Chunk, Chunk2, H1}},
-					Session2 = Session#mining_session{ chunk_cache = Map2 },
-					ets:update_counter(?MODULE, chunk_cache_size, {2, -2}),
-					prometheus_gauge:dec(mining_server_chunk_cache_size, 2),
-					{noreply, State#state{ session = Session2, hashing_threads = Threads2 }}
-			end
-	end;
-handle_task({mining_thread_computed_h1, _Args}, State) ->
-	{noreply, State};
-
-handle_task({may_be_remove_chunk_from_cache, {Nonce, CorrelationRef, Ref}},
-			#state{ session = #mining_session{ ref = Ref } = Session } = State) ->
-	#mining_session{ chunk_cache = Map } = Session,
-	case maps:take({CorrelationRef, Nonce}, Map) of
-		error ->
-			Map2 = maps:put({CorrelationRef, Nonce}, do_not_cache, Map),
-			Session2 = Session#mining_session{ chunk_cache = Map2 },
-			{noreply, State#state{ session = Session2 }};
-		{do_not_cache, Map2} ->
-			Session2 = Session#mining_session{ chunk_cache = Map2 },
-			{noreply, State#state{ session = Session2 }};
-		{_, Map2} ->
-			Session2 = Session#mining_session{ chunk_cache = Map2 },
-			ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
-			prometheus_gauge:dec(mining_server_chunk_cache_size),
-			{noreply, State#state{ session = Session2 }}
-	end;
-handle_task({may_be_remove_chunk_from_cache, _Args}, State) ->
-	{noreply, State};
-
-handle_task({mining_thread_computed_h2, {H0, PartitionNumber, Nonce, NonceLimiterOutput,
-		ReplicaID, Chunk1, Chunk2, H2, Preimage, Ref}},
-		#state{ diff = Diff, session = #mining_session{ ref = Ref } } = State) ->
-	case binary:decode_unsigned(H2, big) > Diff of
-		true ->
-			Args = {PartitionNumber, Nonce, H0, NonceLimiterOutput, ReplicaID,
-					Chunk1, Chunk2, H2, Preimage, Ref},
-			{noreply, prepare_solution(Args, State)};
+							%% This node does not store Chunk2. If we're part of a coordinated
+							%% mining set, we can try one of our peers, otherwise we're done.
+							case Config#config.coordinated_mining of
+								false ->
+									ok;
+								true ->
+									ar_coordination:computed_h1(Candidate, Diff)
+							end,
+							Session2 = Session#mining_session{ chunk_cache = Map2 },
+							{noreply, State#state{ session = Session2 }};
+						{{chunk2, Chunk2}, Map2} ->
+							%% Chunk2 has already been read, so we can compute H2 now.
+							{Thread, Threads2} = pick_hashing_thread(Threads),
+							Thread ! {compute_h2, Candidate#mining_candidate{ chunk2 = Chunk2 }},
+							Session2 = Session#mining_session{ chunk_cache = Map2 },
+							{noreply, State#state{ session = Session2, hashing_threads = Threads2 }}
+					end
+			end;
 		false ->
 			{noreply, State}
 	end;
-handle_task({mining_thread_computed_h2, _Args}, State) ->
-	{noreply, State}.
 
-prepare_solution(Args, #state{ session = #mining_session{ ref = Ref } } = State)
-		when element(10, Args) /= Ref ->
-	State;
-prepare_solution(Args, State) ->
-	{_PartitionNumber, _Nonce, _H0, _NonceLimiterOutput, ReplicaID, _Chunk1, _Chunk2, _H,
-			_Preimage, _Ref} = Args,
-	case ar_wallet:load_key(ReplicaID) of
-		not_found ->
-			?LOG_WARNING([{event, mined_block_but_no_mining_key_found},
-					{mining_address, ar_util:encode(ReplicaID)}]),
-			State;
-		Key ->
-			prepare_solution(Args, State, Key)
+handle_task({computed_h2, Candidate}, State) ->
+	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
+		true ->
+			#mining_candidate{
+				chunk2 = Chunk2, h0 = H0, h2 = H2, mining_address = MiningAddress,
+				nonce = Nonce, partition_number = PartitionNumber, 
+				partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
+			} = Candidate,
+			case binary:decode_unsigned(H2, big) > get_difficulty(State, Candidate) of
+				true ->
+					case Peer of
+						not_set ->
+							prepare_and_post_solution(Candidate, State);
+						_ ->
+							{_RecallByte1, RecallByte2} = get_recall_bytes(
+									H0, PartitionNumber, Nonce, PartitionUpperBound),
+							PoA2 = read_poa(RecallByte2, Chunk2, MiningAddress),
+							case PoA2 of
+								error ->
+									?LOG_WARNING([{event,
+											mined_block_but_failed_to_read_second_chunk_proof},
+											{recall_byte2, RecallByte2},
+											{mining_address, ar_util:encode(MiningAddress)}]),
+									ar:console("WARNING: we found a solution but failed to read "
+											"the proof for the second chunk. See logs for more "
+											"details.~n");
+								_ ->
+									ar_coordination:computed_h2(
+										Candidate#mining_candidate{ poa2 = PoA2 })
+							end
+					end;
+				false ->
+					ok
+			end;
+		false ->
+			ok
+	end,
+	{noreply, State};
+
+handle_task({may_be_remove_chunk_from_cache, {Nonce, Candidate}}, State) ->
+	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
+		true ->
+			#state{ session = Session } = State,
+			#mining_session{ chunk_cache = Map } = Session,
+			Map2 = evict_chunk_cache(Candidate#mining_candidate{ nonce = Nonce }, Map),
+			Session2 = Session#mining_session{ chunk_cache = Map2 },
+			{noreply, State#state{ session = Session2 }};
+		false ->
+			{noreply, State}
 	end.
 
-prepare_solution(Args, State, Key) ->
-	{PartitionNumber, Nonce, H0, _NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, _H,
-			_Preimage, _Ref} = Args,
-	#state{ session = Session } = State,
-	#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,
+add_task(TaskType, Candidate) ->
+	gen_server:cast(?MODULE, {add_task, {TaskType, Candidate}}).
+
+signal_cache_cleanup(Candidate) ->
+	NonceMax = max(0, ((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1)),
+	signal_cache_cleanup(0, NonceMax, Candidate).
+
+signal_cache_cleanup(Nonce, NonceMax, _Candidate)
+		when Nonce > NonceMax ->
+	ok;
+signal_cache_cleanup(Nonce, NonceMax, Candidate) ->
+	signal_cache_cleanup(Nonce, Candidate),
+	signal_cache_cleanup(Nonce + 1, NonceMax, Candidate).
+
+signal_cache_cleanup(Nonce, Candidate) ->
+	gen_server:cast(?MODULE, {may_be_remove_chunk_from_cache, {Nonce, Candidate}}).
+
+%% @doc The chunk_cache stores either the first or second chunk for a given nonce. This is because
+%% we process both the first and second recall ranges in parallel and don't know
+%% which data will be available first. The function manages that shared cache slot by either
+%% caching data if its the first to arrive, or "popping" data that was previously cached. The
+%% caller is responsible for taking the appropriate action based on the return value.
+%%
+%% do_not_cache is a special value used to prevent unnecessary data from being cached once a
+%% solution has been found for a given nonce.
+cycle_chunk_cache(#mining_candidate{ cache_ref = CacheRef, nonce = Nonce }, Data, Cache)
+		when CacheRef /= not_set ->
+	case maps:take({CacheRef, Nonce}, Cache) of
+		{do_not_cache, Cache2} ->
+			ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
+			prometheus_gauge:dec(mining_server_chunk_cache_size),
+			{do_not_cache, Cache2};
+		error ->
+			Cache2 = maps:put({CacheRef, Nonce}, Data, Cache),
+			{cached, Cache2};
+		{CachedData, Cache2} ->
+			ets:update_counter(?MODULE, chunk_cache_size, {2, -2}),
+			prometheus_gauge:dec(mining_server_chunk_cache_size, 2),
+			{CachedData, Cache2}
+	end.
+
+evict_chunk_cache(#mining_candidate{ cache_ref = CacheRef, nonce = Nonce }, Cache)
+		when CacheRef /= not_set ->
+	case maps:take({CacheRef, Nonce}, Cache) of
+		{do_not_cache, Cache2} ->
+			ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
+			prometheus_gauge:dec(mining_server_chunk_cache_size),
+			Cache2;
+		{_, Cache2} ->
+			ets:update_counter(?MODULE, chunk_cache_size, {2, -2}),
+			prometheus_gauge:dec(mining_server_chunk_cache_size, 2),
+			Cache2;
+		error ->
+			ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
+			prometheus_gauge:dec(mining_server_chunk_cache_size),
+			maps:put({CacheRef, Nonce}, do_not_cache, Cache)
+	end.
+
+cache_h1_list(_Candidate, [], Cache) ->
+	Cache;
+cache_h1_list(
+		#mining_candidate{ cache_ref = CacheRef } = Candidate,
+		[ {H1, Nonce} | H1List ], Cache) when CacheRef /= not_set ->
+	Cache2 = maps:put({CacheRef, Nonce}, {chunk1, H1}, Cache),
+	cache_h1_list(Candidate, H1List, Cache2).
+
+generate_cache_ref(Candidate) ->
+	#mining_candidate{
+		partition_number = PartitionNumber, partition_number2 = PartitionNumber2,
+		partition_upper_bound = PartitionUpperBound } = Candidate,
+	CacheRef = {PartitionNumber, PartitionNumber2, PartitionUpperBound, make_ref()},
+	Candidate#mining_candidate{ cache_ref = CacheRef }.
+
+prepare_and_post_solution(Candidate, State) ->
+	Solution = prepare_solution(Candidate, State),
+	post_solution(Solution, State).
+
+prepare_solution(Candidate, State) ->
+	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
+		true ->
+			#mining_candidate{
+				mining_address = MiningAddress, next_seed = NextSeed, nonce = Nonce,
+				nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
+				partition_upper_bound = PartitionUpperBound, poa2 = PoA2, preimage = Preimage,
+				seed = Seed, start_interval_number = StartIntervalNumber, step_number = StepNumber
+			} = Candidate,
+			
+			Solution = #mining_solution{
+				mining_address = MiningAddress,
+				next_seed = NextSeed,
+				nonce = Nonce,
+				nonce_limiter_output = NonceLimiterOutput,
+				partition_number = PartitionNumber,
+				partition_upper_bound = PartitionUpperBound,
+				poa2 = PoA2,
+				preimage = Preimage,
+				seed = Seed,
+				start_interval_number = StartIntervalNumber,
+				step_number = StepNumber
+			},
+			prepare_solution(last_step_checkpoints, Candidate, Solution);
+		false ->
+			error
+	end.
+	
+prepare_solution(last_step_checkpoints, Candidate, Solution) ->
+	#mining_candidate{
+		next_seed = NextSeed, start_interval_number = StartIntervalNumber,
+		step_number = StepNumber } = Candidate,
+	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
+			StepNumber, NextSeed, StartIntervalNumber),
+	case LastStepCheckpoints of
+		not_found ->
+			error;
+		_ ->
+			prepare_solution(steps, Candidate, Solution#mining_solution{
+				last_step_checkpoints = LastStepCheckpoints })
+	end;
+
+prepare_solution(steps, Candidate, Solution) ->
+	#mining_candidate{ step_number = StepNumber } = Candidate,
+	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+	#nonce_limiter_info{ global_step_number = PrevStepNumber,
+		next_seed = PrevNextSeed } = TipNonceLimiterInfo,
+	case StepNumber > PrevStepNumber of
+		true ->
+			Steps = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
+			case Steps of
+				not_found ->
+					?LOG_WARNING([{event, found_solution_but_failed_to_find_checkpoints},
+							{start_step_number, PrevStepNumber},
+							{next_step_number, StepNumber},
+							{next_seed, ar_util:encode(PrevNextSeed)}]),
+					ar:console("WARNING: found a solution but failed to find checkpoints, "
+							"start step number: ~B, end step number: ~B, next_seed: ~s.",
+							[PrevStepNumber, StepNumber, PrevNextSeed]),
+					error;
+				_ ->
+					prepare_solution(proofs, Candidate, Solution#mining_solution{ steps = Steps })
+			end;
+		false ->
+			?LOG_WARNING([{event, found_solution_but_stale_step_number},
+							{start_step_number, PrevStepNumber},
+							{next_step_number, StepNumber},
+							{next_seed, ar_util:encode(PrevNextSeed)}]),
+			error
+	end;
+
+prepare_solution(proofs, Candidate, Solution) ->
+	#mining_candidate{
+		h0 = H0, h1 = H1, h2 = H2, nonce = Nonce, partition_number = PartitionNumber,
+		partition_upper_bound = PartitionUpperBound } = Candidate,
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 			PartitionUpperBound),
-	Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
-	case ar_data_sync:get_chunk(RecallByte1 + 1, Options) of
-		{ok, #{ chunk := Chunk1, tx_path := TXPath1, data_path := DataPath1 }} ->
-			PoA1 = #poa{ option = 1, chunk = Chunk1, tx_path = TXPath1,
-					data_path = DataPath1 },
-			PoA2 =
-				case Chunk2 of
-					not_set ->
-						#poa{};
-					_ ->
-						case ar_data_sync:get_chunk(RecallByte2 + 1, Options) of
-							{ok, #{ chunk := Chunk2, tx_path := TXPath2,
-									data_path := DataPath2 }} ->
-								#poa{ option = 1, chunk = Chunk2, tx_path = TXPath2,
-									data_path = DataPath2 };
-							_ ->
-								error
-						end
-				end,
-			case PoA2 of
-				error ->
-					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
-							{recall_byte2, RecallByte2},
-							{mining_address, ar_util:encode(ReplicaID)}]),
-					State;
-				_ ->
-					RecallByte22 = case Chunk2 of not_set -> undefined; _ -> RecallByte2 end,
-					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, PoA2)
-			end;
-		_ ->
+	case { H1, H2 } of
+		{not_set, not_set} ->
+			error;
+		{H1, not_set} ->
+			prepare_solution(poa1, Candidate, Solution#mining_solution{
+				solution_hash = H1, recall_byte1 = RecallByte1, poa2 = #poa{} });
+		{_, H2} ->
+			prepare_solution(poa2, Candidate, Solution#mining_solution{
+				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2 })
+	end;
+
+prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution ) ->
+	#mining_solution{
+		mining_address = MiningAddress, partition_number = PartitionNumber,
+		recall_byte1 = RecallByte1 } = Solution,
+	#mining_candidate{
+		chunk1 = Chunk1, h0 = H0, nonce = Nonce,
+		partition_upper_bound = PartitionUpperBound } = Candidate,
+	case read_poa(RecallByte1, Chunk1, MiningAddress) of
+		error ->
 			{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
 					PartitionNumber, PartitionUpperBound),
 			?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
-					{recall_byte, RecallByte1},
-					{recall_range_start, RecallRange1Start},
+					{recall_byte1, RecallByte1},
+					{recall_range_start1, RecallRange1Start},
 					{nonce, Nonce},
 					{partition, PartitionNumber},
-					{mining_address, ar_util:encode(ReplicaID)}]),
-			State
-	end.
-
-prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
-	{PartitionNumber, Nonce, _H0, NonceLimiterOutput, ReplicaID, _Chunk1, _Chunk2, H,
-			Preimage, _Ref} = Args,
-	#state{ diff = Diff, session = Session,
-			merkle_rebase_threshold = RebaseThreshold } = State,
-	#mining_session{ seed = Seed, next_seed = NextSeed,
-			start_interval_number = StartIntervalNumber,
-			partition_upper_bound = PartitionUpperBound,
-			step_number_by_output = #{ NonceLimiterOutput := StepNumber } } = Session,
-	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
-			StepNumber, NextSeed, StartIntervalNumber),
-	case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID, Nonce,
-			PoA1, PoA2, Diff, PartitionUpperBound, RebaseThreshold}) of
+					{mining_address, ar_util:encode(MiningAddress)}]),
+			ar:console("WARNING: we have mined a block but failed to fetch "
+					"the chunk proofs required for publishing it. "
+					"Check logs for more details~n"),
+			error;
+		PoA1 ->
+			Solution#mining_solution{ poa1 = PoA1 }
+	end;
+prepare_solution(poa2, Candidate, #mining_solution{ poa2 = not_set } = Solution) ->
+	#mining_solution{ mining_address = MiningAddress, partition_number = PartitionNumber,
+		recall_byte2 = RecallByte2 } = Solution,
+	#mining_candidate{
+		chunk2 = Chunk2, h0 = H0, nonce = Nonce,
+		partition_upper_bound = PartitionUpperBound } = Candidate,
+	case read_poa(RecallByte2, Chunk2, MiningAddress) of
 		error ->
-			?LOG_INFO([{event, failed_to_validate_solution},
+			{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+					PartitionNumber, PartitionUpperBound),
+			?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
+					{recall_byte2, RecallByte2},
+					{recall_range_start2, RecallRange2Start},
+					{nonce, Nonce},
+					{partition, PartitionNumber},
+					{mining_address, ar_util:encode(MiningAddress)}]),
+			ar:console("WARNING: we have mined a block but failed to fetch "
+					"the chunk proofs required for publishing it. "
+					"Check logs for more details~n"),
+			error;
+		PoA2 ->
+			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
+	end;
+prepare_solution(poa2, Candidate, #mining_solution{ poa1 = not_set } = Solution) ->
+	prepare_solution(poa1, Candidate, Solution);
+prepare_solution(_, _Candidate, Solution) ->
+	Solution.
+
+post_solution(error, _State) ->
+	error;
+post_solution(Solution, State) ->
+	{ok, Config} = application:get_env(arweave, config),
+	post_solution(Config#config.cm_exit_peer, Solution, State).
+post_solution(not_set, Solution, State) ->
+	#state{ diff = Diff } = State,
+	#mining_solution{
+		mining_address = MiningAddress, nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+		solution_hash = H, step_number = StepNumber } = Solution,
+	case validate_solution(Solution, Diff) of
+		error ->
+			?LOG_WARNING([{event, failed_to_validate_solution},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
-					{mining_address, ar_util:encode(ReplicaID)},
+					{mining_address, ar_util:encode(MiningAddress)},
 					{recall_byte1, RecallByte1},
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:encode(H)},
 					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-			State;
+			ar:console("WARNING: we failed to validate our solution. Check logs for more "
+					"details~n");
 		false ->
-			?LOG_INFO([{event, found_invalid_solution}, {partition, PartitionNumber},
+			?LOG_WARNING([{event, found_invalid_solution},
+					{partition, PartitionNumber},
 					{step_number, StepNumber},
-					{mining_address, ar_util:encode(ReplicaID)},
+					{mining_address, ar_util:encode(MiningAddress)},
 					{recall_byte1, RecallByte1},
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:encode(H)},
 					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-			State;
-		{true, PoACache, PoA2Cache} ->
-			SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
-					NextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
-					RecallByte1, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, Key,
-					RebaseThreshold},
-			?LOG_INFO([{event, found_mining_solution},
-					{partition, PartitionNumber}, {step_number, StepNumber},
-					{mining_address, ar_util:encode(ReplicaID)},
-					{recall_byte1, RecallByte1}, {recall_byte2, RecallByte2},
-					{solution_h, ar_util:encode(H)},
-					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-			ar_events:send(miner, {found_solution, SolutionArgs}),
-			State
+			ar:console("WARNING: the solution we found is invalid. Check logs for more "
+					"details~n");
+		true ->
+			ar_events:send(miner, {found_solution, Solution})
+	end;
+post_solution(ExitPeer, Solution, _State) ->
+	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
+		{ok, _} ->
+			ok;
+		{error, Reason} ->
+			?LOG_WARNING([{event, found_solution_but_failed_to_reach_exit_node},
+					{reason, io_lib:format("~p", [Reason])}]),
+			ar:console("We found a solution but failed to reach the exit node, "
+					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end.
 
-validate_solution(Args) ->
-	{NonceLimiterOutput, PartitionNumber, Seed, RewardAddr, Nonce, PoA1, PoA2, Diff,
-			PartitionUpperBound, RebaseThreshold} = Args,
-	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, RewardAddr),
+
+read_poa(RecallByte, Chunk, MiningAddress) ->
+	PoA = read_poa(RecallByte, MiningAddress),
+	case {Chunk, PoA} of
+		{_, error} -> error;
+		{not_set, _} -> PoA;
+		{Chunk, #poa{ chunk = Chunk }} -> PoA;
+		_ -> error
+	end.
+read_poa(RecallByte, MiningAddress) ->
+	Options = #{ pack => true, packing => {spora_2_6, MiningAddress} },
+	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
+		{ok, #{ chunk := Chunk, tx_path := TXPath, data_path := DataPath }} ->
+			#poa{ option = 1, chunk = Chunk, tx_path = TXPath, data_path = DataPath };
+		_ ->
+			error
+	end.
+
+validate_solution(Solution, Diff) ->
+	#mining_solution{
+		mining_address = MiningAddress, nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber, partition_upper_bound = PartitionUpperBound,
+		poa1 = PoA1, poa2 = PoA2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+		seed = Seed } = Solution,
+	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress),
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
-
-	RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE,
-	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
-	BlockSize1 = BlockEnd1 - BlockStart1,
-	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-			?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, RewardAddr}, RebaseThreshold,
-			not_set}) of
-		{true, ChunkID} ->
-			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
-					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, RewardAddr}, RebaseThreshold},
-					ChunkID},
-			case binary:decode_unsigned(H1, big) > Diff of
-				true ->
-					{true, PoACache, undefined};
+	case binary:decode_unsigned(H1, big) > Diff of
+		true ->
+			%% validates RecallByte1
+			RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE, 
+			{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
+			BlockSize1 = BlockEnd1 - BlockStart1,
+			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
+					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}});
+		false ->
+			{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
+			case binary:decode_unsigned(H2, big) > Diff of
 				false ->
-					{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
-					case binary:decode_unsigned(H2, big) > Diff of
-						false ->
-							false;
-						true ->
-							RecallByte2 = RecallRange2Start + Nonce * ?DATA_CHUNK_SIZE,
-							{BlockStart2, BlockEnd2, TXRoot2} =
-									ar_block_index:get_block_bounds(RecallByte2),
-							BlockSize2 = BlockEnd2 - BlockStart2,
-							case ar_poa:validate({BlockStart2, RecallByte2, TXRoot2,
-									BlockSize2, PoA2, ?STRICT_DATA_SPLIT_THRESHOLD,
-									{spora_2_6, RewardAddr}, RebaseThreshold, not_set}) of
-								{true, Chunk2ID} ->
-									PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2,
-											BlockSize2, ?STRICT_DATA_SPLIT_THRESHOLD,
-											{spora_2_6, RewardAddr}, RebaseThreshold},
-											Chunk2ID},
-									{true, PoACache, PoA2Cache};
-								Result2 ->
-									Result2
-							end
-					end
-			end;
-		Result ->
-			Result
+					false;
+				true ->
+					%% validates RecallByte2
+					RecallByte2 = RecallRange2Start + Nonce * ?DATA_CHUNK_SIZE, 
+					{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
+							RecallByte2),
+					BlockSize2 = BlockEnd2 - BlockStart2,
+					ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2, PoA2,
+							?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}})
+			end
 	end.
+
+get_difficulty(State, #mining_candidate{ cm_diff = not_set }) ->
+	State#state.diff;
+get_difficulty(_State, #mining_candidate{ cm_diff = Diff }) ->
+	Diff.
 
 get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
@@ -1216,28 +1095,21 @@ vdf_speed(Now) ->
 			undefined;
 		[{_, VdfStart, VdfCount}] ->
 			ets:update_counter(?MODULE,
-							   {performance, nonce_limiter},
-							   [{2, -1, Now, Now}, {3, 0, -1, 0}]),
+							{performance, nonce_limiter},
+							[{2, -1, Now, Now}, {3, 0, -1, 0}]),
 			VdfLapse = (Now - VdfStart) / 1000,
 			VdfLapse / VdfCount
 	end.
 
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-
-read_recall_range_test() ->
-	H0 = crypto:strong_rand_bytes(32),
-	Output = crypto:strong_rand_bytes(32),
+reset_mining_session(State) ->
+	#state{ hashing_threads = HashingThreads } = State,
 	Ref = make_ref(),
-	ReplicaID = crypto:strong_rand_bytes(32),
-	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	ChunkOffsets = [{?DATA_CHUNK_SIZE, Chunk}],
-	CorrelationRef = make_ref(),
-	read_recall_range(type, H0, 0, 0, Output, ReplicaID, self(), 0, 1, ChunkOffsets, Ref,
-		CorrelationRef),
-	receive {type, {H0, 0, 0, Output, ReplicaID, Chunk, CorrelationRef, Ref}} ->
-		ok
-	after 1000 ->
-		?assert(false, "Did not receive the expected message.")
-	end.
+	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
+	ar_mining_io:reset(Ref),
+	CacheSizeLimit = get_chunk_cache_size_limit(),
+	log_chunk_cache_size_limit(CacheSizeLimit),
+	ets:insert(?MODULE, {chunk_cache_size, 0}),
+	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
+	ar_coordination:reset_mining_session(),
+	#mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit }.
+

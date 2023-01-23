@@ -864,6 +864,7 @@ read_tx_data(TX) ->
 write_wallet_list(Height, Tree) ->
 	{RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
 	store_account_tree_update(Height, RootHash, UpdateMap),
+	erlang:garbage_collect(),
 	RootHash.
 
 %% @doc Read a given wallet list (by hash) from the disk.
@@ -1035,6 +1036,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast({store_account_tree_update, Height, RootHash, Map}, State) ->
 	store_account_tree_update(Height, RootHash, Map),
+	erlang:garbage_collect(),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
