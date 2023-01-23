@@ -182,6 +182,7 @@ enqueue_block(Peers, Height, BlockData, Q) ->
 enqueue_block([], _Height, _BlockData, Q, _N) ->
 	Q;
 enqueue_block([Peer | Peers], Height, BlockData, Q, N) ->
+	{_JSON, Block} = BlockData,
 	Priority = {N, Height},
 	enqueue_block(Peers, Height, BlockData,
 			gb_sets:add_element({Priority, Peer, BlockData}, Q), N + 1).

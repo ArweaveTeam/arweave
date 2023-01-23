@@ -14,7 +14,8 @@
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
 		get_block_time_history/3,
 		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
-		get_previous_vdf_session/1]).
+		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/3, cm_h2_send/2,
+		cm_publish_send/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -566,16 +567,52 @@ validate_reward_history_hashes(RewardHistory, [H | ExpectedRewardHistoryHashes])
 			false
 	end.
 
-validate_block_time_history_hashes(_BlockTimeHistory, []) ->
-	true;
-validate_block_time_history_hashes(BlockTimeHistory, [H | ExpectedBlockTimeHistoryHashes]) ->
-	case ar_block:validate_block_time_history_hash(H, BlockTimeHistory) of
-		true ->
-			validate_block_time_history_hashes(tl(BlockTimeHistory),
-					ExpectedBlockTimeHistoryHashes);
-		false ->
-			false
-	end.
+get_cm_partition_table(Peer) ->
+	handle_cm_partition_table_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/coordinated_mining/partition_table",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers()
+	})).
+
+% TODO binary protocol after debug
+cm_h1_send(Peer, Candidate, H1List) ->
+	Json = ar_serialize:h2_inputs_to_json_struct(Candidate, H1List),
+	handle_cm_noop_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => "/coordinated_mining/h1",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers(),
+		body => ar_serialize:jsonify({Json})
+	})).
+
+cm_h2_send(Peer, Candidate) ->
+	Json = ar_serialize:candidate_to_json_struct(Candidate),
+	handle_cm_noop_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => "/coordinated_mining/h2",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers(),
+		body => ar_serialize:jsonify({Json})
+	})).
+
+cm_publish_send(Peer, Solution) ->
+	Json = ar_serialize:solution_to_json_struct(Solution),
+	handle_cm_noop_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => "/coordinated_mining/publish",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers(),
+		body => ar_serialize:jsonify({Json})
+	})).
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);
@@ -1076,10 +1113,60 @@ handle_tx_response(Peer, _Encoding, Response) ->
 	ar_peers:issue_warning(Peer, tx, Response),
 	{error, Response}.
 
+handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch jiffy:decode(Body) of
+		{'EXIT', Error} ->
+			?LOG_WARNING([{event, failed_to_parse_cm_partition_table},
+				{error, io_lib:format("~p", [Error])}]),
+			{error, invalid_json};
+		L when is_list(L) ->
+			lists:foldr(
+				fun	(_, {error, Reason}) ->
+						{error, Reason};
+					(Partition, {ok, Acc}) ->
+						case Partition of
+							{[
+								{<<"bucket">>, Bucket},
+								{<<"bucketsize">>, BucketSize},
+								{<<"addr">>, EncodedAddr}
+							]} ->
+								DecodedPartition = {
+									Bucket,
+									BucketSize,
+									ar_util:decode(EncodedAddr)
+								},
+								{ok, [DecodedPartition | Acc]};
+							_ ->
+								?LOG_WARNING([{event, failed_to_parse_cm_partition_table},
+									{reason, invalid_partition},
+									{txid, io_lib:format("~p", [Partition])}]),
+								{error, invalid_partition}
+						end
+				end,
+				{ok, []},
+				L
+			);
+		NotList ->
+			?LOG_WARNING([{event, failed_to_parse_cm_partition_table}, {reason, invalid_format},
+				{reply, io_lib:format("~p", [NotList])}]),
+			{error, invalid_format}
+	end;
+handle_cm_partition_table_response(Response) ->
+	{error, Response}.
+
+handle_cm_noop_response({ok, {{<<"200">>, _}, _, _Body, _, _}}) ->
+	{ok, []};
+handle_cm_noop_response(Response) ->
+	{error, Response}.
+
 p2p_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	[{<<"X-P2p-Port">>, integer_to_binary(Config#config.port)},
 			{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}].
+
+cm_p2p_headers() ->
+	{ok, Config} = application:get_env(arweave, config),
+	[{<<"x-cm-api-secret">>, Config#config.coordinated_mining_secret} | p2p_headers()].
 
 %% @doc Return values for keys - or error if any key is missing.
 safe_get_vals(Keys, Props) ->

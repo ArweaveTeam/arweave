@@ -21,10 +21,13 @@
 		reward_history_to_binary/1, binary_to_reward_history/1,
 		block_time_history_to_binary/1, binary_to_block_time_history/1,
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
-		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
+		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
+		candidate_to_json_struct/1, h2_inputs_to_json_struct/2, solution_to_json_struct/1,
+		json_struct_to_candidate/1, json_struct_to_h2_inputs/1, json_struct_to_solution/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -852,10 +855,9 @@ parse_tx_prefixes_and_recall_byte2_and_solution_hash(_N, _Rest, _Prefixes) ->
 
 binary_to_block_announcement_response(<< ChunkMissing:8, Rest/binary >>)
 		when ChunkMissing == 1 orelse ChunkMissing == 0 ->
-	ChunkMissing2 = case ChunkMissing of 1 -> true; _ -> false end,
 	case parse_missing_tx_indices_and_missing_chunk2(Rest) of
 		{ok, {Indices, MissingChunk2}} ->
-			{ok, #block_announcement_response{ missing_chunk = ChunkMissing2,
+			{ok, #block_announcement_response{ missing_chunk = ar_util:int_to_bool(ChunkMissing),
 					missing_tx_indices = Indices, missing_chunk2 = MissingChunk2 }};
 		{error, Reason} ->
 			{error, Reason}
@@ -1228,6 +1230,15 @@ json_struct_to_poa({JSONStruct}) ->
 		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct))
 	}.
 
+% FIXME. remove [{return_maps, true}] in ar_http_iface_middleware and make code uniform
+json_struct_to_poa_from_map(JSONStruct) ->
+	#poa{
+		option = binary_to_integer(maps:get(<<"option">>, JSONStruct)),
+		tx_path = ar_util:decode(maps:get(<<"tx_path">>, JSONStruct)),
+		data_path = ar_util:decode(maps:get(<<"data_path">>, JSONStruct)),
+		chunk = ar_util:decode(maps:get(<<"chunk">>, JSONStruct))
+	}.
+
 %% @doc Convert parsed JSON tx fields from a HTTP request into a
 %% transaction record.
 json_struct_to_tx(JSONTX) when is_binary(JSONTX) ->
@@ -1545,217 +1556,198 @@ binary_to_signature_type(List) ->
 		_ -> {?RSA_SIGN_ALG, 65537}
 	end.
 
-%%% Tests: ar_serialize
+candidate_to_json_struct(
+	#mining_candidate{
+		cm_diff = Diff,
+		h0 = H0,
+		h1 = H1,
+		h2 = H2,
+		mining_address = MiningAddress,
+		nonce = Nonce,
+		next_seed = NextSeed,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		partition_number2 = PartitionNumber2,
+		partition_upper_bound = PartitionUpperBound,
+		poa2 = PoA2,
+		preimage = Preimage,
+		seed = Seed,
+		start_interval_number = StartIntervalNumber,
+		step_number = StepNumber
+	}) ->
+	JSON = [
+		{cm_diff, integer_to_binary(Diff)},
+		{mining_address, ar_util:encode(MiningAddress)},
+		{h0, ar_util:encode(H0)},
+		{partition_number, integer_to_binary(PartitionNumber)},
+		{partition_number2, integer_to_binary(PartitionNumber2)},
+		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
+		{seed, ar_util:encode(Seed)},
+		{next_seed, ar_util:encode(NextSeed)},
+		{start_interval_number, integer_to_binary(StartIntervalNumber)},
+		{step_number, integer_to_binary(StepNumber)},
+		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}
+	],
 
-block_to_binary_test_() ->
-	%% Set the mainnet values here because we are using the mainnet fixtures.
-	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_1_6, fun() -> 95000 end},
-			{ar_fork, height_1_7, fun() -> 235200 end},
-			{ar_fork, height_1_8, fun() -> 269510 end},
-			{ar_fork, height_1_9, fun() -> 315700 end},
-			{ar_fork, height_2_0, fun() -> 422250 end},
-			{ar_fork, height_2_2, fun() -> 552180 end},
-			{ar_fork, height_2_3, fun() -> 591140 end},
-			{ar_fork, height_2_4, fun() -> 633720 end},
-			{ar_fork, height_2_5, fun() -> 812970 end},
-			{ar_fork, height_2_6, fun() -> infinity end}],
-		fun test_block_to_binary/0).
+	JSON2 = encode_if_set(JSON, h1, H1, fun ar_util:encode/1),
+	JSON3 = encode_if_set(JSON2, h2, H2, fun ar_util:encode/1),
+	JSON4 = encode_if_set(JSON3, nonce, Nonce, fun integer_to_binary/1),
+	JSON5 = encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1),
+	encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1).
 
-test_block_to_binary() ->
-	{ok, Cwd} = file:get_cwd(),
-	BlockFixtureDir = filename:join(Cwd, "./apps/arweave/test/fixtures/blocks"),
-	TXFixtureDir = filename:join(Cwd, "./apps/arweave/test/fixtures/txs"),
-	{ok, BlockFixtures} = file:list_dir(BlockFixtureDir),
-	test_block_to_binary([filename:join(BlockFixtureDir, Name)
-			|| Name <- BlockFixtures], TXFixtureDir).
+h2_inputs_to_json_struct(Candidate, H1List) ->
+	EncodedH1List = lists:map(fun ({H1, Nonce}) ->
+		{[
+			{h1, ar_util:encode(H1)},
+			{nonce, Nonce}
+		]}
+	end,
+	H1List),
 
-test_block_to_binary([], _TXFixtureDir) ->
-	ok;
-test_block_to_binary([Fixture | Fixtures], TXFixtureDir) ->
-	{ok, Bin} = file:read_file(Fixture),
-	B = ar_storage:migrate_block_record(binary_to_term(Bin)),
-	?debugFmt("Block ~s, height ~B.~n", [ar_util:encode(B#block.indep_hash),
-			B#block.height]),
-	test_block_to_binary(B),
-	RandomTags = [crypto:strong_rand_bytes(rand:uniform(2))
-			|| _ <- lists:seq(1, rand:uniform(1024))],
-	B2 = B#block{ tags = RandomTags },
-	test_block_to_binary(B2),
-	B3 = B#block{ reward_addr = unclaimed },
-	test_block_to_binary(B3),
-	{ok, TXFixtures} = file:list_dir(TXFixtureDir),
-	TXs =
-		lists:foldl(
-			fun(TXFixture, Acc) ->
-				{ok, TXBin} = file:read_file(filename:join(TXFixtureDir, TXFixture)),
-				TX = ar_storage:migrate_tx_record(binary_to_term(TXBin)),
-				maps:put(TX#tx.id, TX, Acc)
-			end,
-			#{},
-			TXFixtures),
-	BlockTXs = [maps:get(TXID, TXs) || TXID <- B#block.txs],
-	B4 = B#block{ txs = BlockTXs },
-	test_block_to_binary(B4),
-	BlockTXs2 = [case rand:uniform(2) of 1 -> TX#tx.id; _ -> TX end
-			|| TX <- BlockTXs],
-	B5 = B#block{ txs = BlockTXs2 },
-	test_block_to_binary(B5),
-	TXIDs = [TX#tx.id || TX <- BlockTXs],
-	B6 = B#block{ txs = TXIDs },
-	test_block_to_binary(B6),
-	test_block_to_binary(Fixtures, TXFixtureDir).
+	H1ListJSON = [{h1_list, EncodedH1List}],
+	CandidateJSON = candidate_to_json_struct(Candidate),
 
-test_block_to_binary(B) ->
-	{ok, B2} = binary_to_block(block_to_binary(B)),
-	?assertEqual(B#block{ txs = [] }, B2#block{ txs = [] }),
-	?assertEqual(true, compare_txs(B#block.txs, B2#block.txs)),
-	lists:foreach(
-		fun	(TX) when is_record(TX, tx)->
-				?assertEqual({ok, TX}, binary_to_tx(tx_to_binary(TX)));
-			(_TXID) ->
-				ok
-		end,
-		B#block.txs
-	).
+	CandidateJSON ++ H1ListJSON.
 
-compare_txs([TXID | TXs], [#tx{ id = TXID } | TXs2]) ->
-	compare_txs(TXs, TXs2);
-compare_txs([#tx{ id = TXID } | TXs], [TXID | TXs2]) ->
-	compare_txs(TXs, TXs2);
-compare_txs([TXID | TXs], [TXID | TXs2]) ->
-	compare_txs(TXs, TXs2);
-compare_txs([], []) ->
-	true;
-compare_txs(_TXs, _TXs2) ->
-	false.
+json_struct_to_candidate(JSON) ->
+	Diff = binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
+	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
+	H1 = decode_if_set(JSON, <<"h1">>, fun ar_util:decode/1, not_set),
+	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),
+	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
+	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	Nonce = decode_if_set(JSON, <<"nonce">>, fun binary_to_integer/1, not_set),
+	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
+	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
+	PartitionNumber2 = binary_to_integer(maps:get(<<"partition_number2">>, JSON)),
+	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
+	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
+	Preimage = decode_if_set(JSON, <<"preimage">>, fun ar_util:decode/1, not_set),
+	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
+	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
+	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 
-block_announcement_to_binary_test() ->
-	A = #block_announcement{ indep_hash = crypto:strong_rand_bytes(48),
-			previous_block = crypto:strong_rand_bytes(48) },
-	?assertEqual({ok, A}, binary_to_block_announcement(
-			block_announcement_to_binary(A))),
-	A2 = A#block_announcement{ recall_byte = 0 },
-	?assertEqual({ok, A2}, binary_to_block_announcement(
-			block_announcement_to_binary(A2))),
-	A3 = A#block_announcement{ recall_byte = 1000000000000000000000 },
-	?assertEqual({ok, A3}, binary_to_block_announcement(
-			block_announcement_to_binary(A3))),
-	A4 = A3#block_announcement{ tx_prefixes = [crypto:strong_rand_bytes(8)
-			|| _ <- lists:seq(1, 1000)] },
-	?assertEqual({ok, A4}, binary_to_block_announcement(
-			block_announcement_to_binary(A4))),
-	A5 = A#block_announcement{ recall_byte2 = 1,
-			solution_hash = crypto:strong_rand_bytes(32) },
-	?assertEqual({ok, A5}, binary_to_block_announcement(
-			block_announcement_to_binary(A5))),
-	A6 = A#block_announcement{ recall_byte2 = 1, recall_byte = 2,
-			solution_hash = crypto:strong_rand_bytes(32) },
-	?assertEqual({ok, A6}, binary_to_block_announcement(
-			block_announcement_to_binary(A6))).
+	#mining_candidate{
+		cm_diff = Diff,
+		h0 = H0,
+		h1 = H1,
+		h2 = H2,
+		mining_address = MiningAddress,
+		next_seed = NextSeed,
+		nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		partition_number2 = PartitionNumber2,
+		partition_upper_bound = PartitionUpperBound,
+		poa2 = PoA2,
+		preimage = Preimage,
+		seed = Seed,
+		start_interval_number = StartIntervalNumber,
+		step_number = StepNumber
+	}.
 
-block_announcement_response_to_binary_test() ->
-	A = #block_announcement_response{},
-	?assertEqual({ok, A}, binary_to_block_announcement_response(
-			block_announcement_response_to_binary(A))),
-	A2 = A#block_announcement_response{ missing_chunk = true,
-			missing_tx_indices = lists:seq(0, 999) },
-	?assertEqual({ok, A2}, binary_to_block_announcement_response(
-			block_announcement_response_to_binary(A2))),
-	A3 = A#block_announcement_response{ missing_chunk = true, missing_chunk2 = false,
-			missing_tx_indices = lists:seq(0, 1) },
-	?assertEqual({ok, A3}, binary_to_block_announcement_response(
-			block_announcement_response_to_binary(A3))),
-	A4 = A#block_announcement_response{ missing_chunk2 = true,
-			missing_tx_indices = [731] },
-	?assertEqual({ok, A4}, binary_to_block_announcement_response(
-			block_announcement_response_to_binary(A4))).
+json_struct_to_h2_inputs(JSON) ->
+	Candidate = json_struct_to_candidate(JSON),
+	H1List = lists:map(fun (JsonElement) ->
+		H1 = ar_util:decode(maps:get(<<"h1">>, JsonElement)),
+		Nonce = maps:get(<<"nonce">>, JsonElement),
+		{H1, Nonce}
+	end, maps:get(<<"h1_list">>, JSON, [])),
 
-poa_to_binary_test() ->
-	Proof = #{ chunk => crypto:strong_rand_bytes(1), data_path => <<>>,
-			tx_path => <<>>, packing => unpacked },
-	?assertEqual({ok, Proof}, binary_to_poa(poa_to_binary(Proof))),
-	Proof2 = Proof#{ chunk => crypto:strong_rand_bytes(256 * 1024) },
-	?assertEqual({ok, Proof2}, binary_to_poa(poa_to_binary(Proof2))),
-	Proof3 = Proof2#{ data_path => crypto:strong_rand_bytes(1024),
-			packing => spora_2_5, tx_path => crypto:strong_rand_bytes(1024) },
-	?assertEqual({ok, Proof3}, binary_to_poa(poa_to_binary(Proof3))),
-	Proof4 = Proof3#{ packing => {spora_2_6, crypto:strong_rand_bytes(33)} },
-	?assertEqual({ok, Proof4}, binary_to_poa(poa_to_binary(Proof4))).
+	{Candidate, H1List}.
 
-block_index_to_binary_test() ->
-	lists:foreach(
-		fun(BI) ->
-			?assertEqual({ok, BI}, binary_to_block_index(block_index_to_binary(BI)))
-		end,
-		[[], [{crypto:strong_rand_bytes(48), rand:uniform(1000),
-				crypto:strong_rand_bytes(32)}],
-			[{crypto:strong_rand_bytes(48), 0, <<>>}],
-			[{crypto:strong_rand_bytes(48), rand:uniform(1000),
-				crypto:strong_rand_bytes(32)} || _ <- lists:seq(1, 1000)]]).
+solution_to_json_struct(
+	#mining_solution{
+		last_step_checkpoints = LastStepCheckpoints,
+		mining_address = MiningAddress,
+		next_seed = NextSeed,
+		nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		partition_upper_bound = PartitionUpperBound,
+		poa1 = PoA1,
+		poa2 = PoA2,
+		preimage = Preimage,
+		recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
+		seed = Seed,
+		solution_hash = SolutionHash,
+		start_interval_number = StartIntervalNumber,
+		step_number = StepNumber,
+		steps = Steps
+	}) ->
+	JSON = [
+		{last_step_checkpoints, ar_util:encode(iolist_to_binary(LastStepCheckpoints))},
+		{mining_address, ar_util:encode(MiningAddress)},
+		{nonce, Nonce},
+		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
+		{next_seed, ar_util:encode(NextSeed)},
+		{partition_number, integer_to_binary(PartitionNumber)},
+		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
+		{poa1, poa_to_json_struct(PoA1)},
+		{poa2, poa_to_json_struct(PoA2)},
+		{preimage, ar_util:encode(Preimage)},
+		{recall_byte1, integer_to_binary(RecallByte1)},
+		{seed, ar_util:encode(Seed)},
+		{solution_hash, ar_util:encode(SolutionHash)},
+		{start_interval_number, integer_to_binary(StartIntervalNumber)},
+		{step_number, integer_to_binary(StepNumber)},
+		{steps, ar_util:encode(iolist_to_binary(Steps))}
+	],
+	encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1).
 
-%% @doc Convert a new block into JSON and back, ensure the result is the same.
-block_roundtrip_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_6, fun() -> infinity end},
-			{ar_fork, height_2_6_8, fun() -> infinity end},
-			{ar_fork, height_2_7, fun() -> infinity end}],
-		fun test_block_roundtrip/0).
+json_struct_to_solution(JSON) ->
+	LastStepCheckpoints = parse_checkpoints(
+		ar_util:decode(maps:get(<<"last_step_checkpoints">>, JSON)), 1),
+	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
+	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	Nonce = maps:get(<<"nonce">>, JSON),
+	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
+	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
+	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
+	PoA1 = json_struct_to_poa_from_map(maps:get(<<"poa1">>, JSON)),
+	PoA2 = json_struct_to_poa_from_map(maps:get(<<"poa2">>, JSON)),
+	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
+	RecallByte1 = binary_to_integer(maps:get(<<"recall_byte1">>, JSON)),
+	RecallByte2 = decode_if_set(JSON, <<"recall_byte2">>, fun binary_to_integer/1, undefined),
+	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
+	SolutionHash = ar_util:decode(maps:get(<<"solution_hash">>, JSON)),
+	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
+	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
+	Steps = parse_checkpoints(
+		ar_util:decode(maps:get(<<"steps">>, JSON)), 1),
 
-test_block_roundtrip() ->
-	[B] = ar_weave:init(),
-	TXIDs = [TX#tx.id || TX <- B#block.txs],
-	JSONStruct = jsonify(block_to_json_struct(B)),
-	BRes = json_struct_to_block(JSONStruct),
-	?assertEqual(B#block{ txs = TXIDs, size_tagged_txs = [], account_tree = undefined },
-			BRes#block{ hash_list = B#block.hash_list, size_tagged_txs = [] }).
+	#mining_solution{
+		last_step_checkpoints = LastStepCheckpoints,
+		mining_address = MiningAddress,
+		next_seed = NextSeed,
+		nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		partition_upper_bound = PartitionUpperBound,
+		poa1 = PoA1,
+		poa2 = PoA2,
+		preimage = Preimage,
+		recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
+		seed = Seed,
+		solution_hash = SolutionHash,
+		start_interval_number = StartIntervalNumber,
+		step_number = StepNumber,
+		steps = Steps
+	}.
 
-%% @doc Convert a new TX into JSON and back, ensure the result is the same.
-tx_roundtrip_test() ->
-	TXBase = ar_tx:new(<<"test">>),
-	TX =
-		TXBase#tx{
-			format = 2,
-			tags = [{<<"Name1">>, <<"Value1">>}],
-			data_root = << 0:256 >>,
-			signature_type = ?DEFAULT_KEY_TYPE
-		},
-	JsonTX = jsonify(tx_to_json_struct(TX)),
-	?assertEqual(
-		TX,
-		json_struct_to_tx(JsonTX)
-	).
+encode_if_set(JSON, _JSONProperty, not_set, _Encoder) ->
+	JSON;
+encode_if_set(JSON, _JSONProperty, undefined, _Encoder) ->
+	JSON;
+encode_if_set(JSON, JSONProperty, Value, Encoder) ->
+	[{JSONProperty, Encoder(Value)} | JSON].
 
-wallet_list_roundtrip_test_() ->
-	{timeout, 30, fun test_wallet_list_roundtrip/0}.
-
-test_wallet_list_roundtrip() ->
-	[B] = ar_weave:init(),
-	WL = B#block.account_tree,
-	JSONWL = jsonify(wallet_list_to_json_struct(B#block.reward_addr, false, WL)),
-	ExpectedWL = ar_patricia_tree:foldr(fun(K, V, Acc) -> [{K, V} | Acc] end, [], WL),
-	ActualWL = ar_patricia_tree:foldr(
-		fun(K, V, Acc) -> [{K, V} | Acc] end, [], json_struct_to_wallet_list(JSONWL)
-	),
-	?assertEqual(ExpectedWL, ActualWL).
-
-block_index_roundtrip_test_() ->
-	{timeout, 10, fun test_block_index_roundtrip/0}.
-
-test_block_index_roundtrip() ->
-	[B] = ar_weave:init(),
-	HL = [B#block.indep_hash, B#block.indep_hash],
-	JSONHL = jsonify(block_index_to_json_struct(HL)),
-	HL = json_struct_to_block_index(dejsonify(JSONHL)),
-	BI = [{B#block.indep_hash, 1, <<"Root">>}, {B#block.indep_hash, 2, <<>>}],
-	JSONBI = jsonify(block_index_to_json_struct(BI)),
-	BI = json_struct_to_block_index(dejsonify(JSONBI)).
-
-query_roundtrip_test() ->
-	Query = {'equals', <<"TestName">>, <<"TestVal">>},
-	QueryJSON = ar_serialize:jsonify(
-		ar_serialize:query_to_json_struct(
-			Query
-		)
-	),
-	?assertEqual({ok, Query}, ar_serialize:json_struct_to_query(QueryJSON)).
+decode_if_set(JSON, JSONProperty, Decoder, Default) ->
+	case maps:get(JSONProperty, JSON, not_found) of
+		not_found ->
+			Default;
+		EncodedValue ->
+			Decoder(EncodedValue)
+	end.

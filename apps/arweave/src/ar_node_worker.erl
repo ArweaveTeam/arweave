@@ -19,7 +19,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(DEBUG).
@@ -87,11 +87,37 @@ init([]) ->
 	ar_mempool:load_from_disk(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
-	validate_trusted_peers(Config),
-	StartFromLocalState = Config#config.start_from_latest_state orelse
-			Config#config.start_from_block /= undefined,
-	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
-		{false, false, true} ->
+	case Config#config.start_from_block_index of
+		false ->
+			validate_trusted_peers(Config);
+		_ ->
+			ok
+	end,
+	StateLookup =
+		case {Config#config.start_from_block_index, Config#config.init} of
+			{false, false} ->
+				not_joined;
+			{true, _} ->
+				case ar_storage:read_block_index_and_reward_history() of
+					{error, enoent} ->
+						io:format(
+							"~n~n\tBlock index file is not found. "
+							"If you want to start from a block index copied "
+							"from another node, place it in "
+							"<data_dir>/hash_lists/last_block_index_and_reward_history.bin~n~n"
+						),
+						timer:sleep(1000),
+						erlang:halt();
+					Result ->
+						Result
+				end;
+			{false, true} ->
+				Config2 = Config#config{ init = false },
+				application:set_env(arweave, config, Config2),
+				ar_weave:init([], ar_retarget:switch_to_linear_diff(Config#config.diff))
+		end,
+	case {StateLookup, Config#config.auto_join} of
+		{not_joined, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
 			case ar_storage:read_block_index() of
@@ -451,14 +477,28 @@ handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
 
-handle_info({event, miner, {found_solution, _Args}},
+handle_info({event, miner, {found_solution, _Solution}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
-handle_info({event, miner, {found_solution, Args}}, State) ->
-	{SolutionH, SolutionPreimage, PartitionNumber, Nonce, IntervalNumber,
-			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
-			RecallByte, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, RewardKey,
-			MerkleRebaseThreshold} = Args,
+handle_info({event, miner, {found_solution, Solution}}, State) ->
+	#mining_solution{ 
+		last_step_checkpoints = LastStepCheckpoints,
+		mining_address = MiningAddress,
+		next_seed = NonceLimiterNextSeed,
+		nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		poa1 = PoA1,
+		poa2 = PoA2,
+		preimage = SolutionPreimage,
+		recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
+		solution_hash = SolutionH,
+		start_interval_number = IntervalNumber,
+		step_number = StepNumber,
+		steps = SuppliedSteps
+	} = Solution,
+
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
 	Now = os:system_time(second),
@@ -475,21 +515,40 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			false ->
 				Now
 		end,
+
+	%% Load key
+	RewardKey = case ar_wallet:load_key(MiningAddress) of
+		not_found ->
+			?LOG_WARNING([{event, mined_block_but_no_mining_key_found}, {node, node()},
+					{mining_address, ar_util:encode(MiningAddress)}]),
+			ar:console("WARNING. Can't find key ~w~n", [ar_util:encode(MiningAddress)]),
+			not_found;
+		Key ->
+			Key
+	end,
+	PassesKeyCheck = RewardKey =/= not_found,
+
+	%% Check solution difficulty
 	Diff = get_current_diff(Timestamp),
-	PassesDiffCheck = binary:decode_unsigned(SolutionH, big) > Diff,
+	PassesDiffCheck = PassesKeyCheck andalso binary:decode_unsigned(SolutionH, big) > Diff,
+
+	%% Check that solution is laster than the previous solution on the timeline
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
 			output = NonceLimiterOutput,
 			prev_output = TipNonceLimiterInfo#nonce_limiter_info.output },
 	PassesTimelineCheck = PassesDiffCheck andalso
 			ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo, TipNonceLimiterInfo),
+
+	%% Check solution seed
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck = PassesTimelineCheck andalso
 			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
-	PrevB = ar_block_cache:get(block_cache, PrevH),
-	CorrectRebaseThreshold =
+
+	%% Check steps and step checkpoints
+	HaveSteps =
 		case PassesSeedCheck of
 			false ->
 				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
@@ -512,7 +571,17 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed)
 		end,
-	case HaveSteps of
+	HaveSteps2 =
+		case HaveSteps of
+			not_found ->
+				% TODO verify
+				SuppliedSteps;
+			_ ->
+				HaveSteps
+		end,
+
+	%% Pack, build, and sign block
+	case HaveSteps2 of
 		false ->
 			{noreply, State};
 		not_found ->
@@ -585,12 +654,11 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				packing_2_5_threshold = 0,
 				strict_data_split_threshold = PrevB#block.strict_data_split_threshold,
 				hash_preimage = SolutionPreimage,
-				recall_byte = RecallByte,
+				recall_byte = RecallByte1,
 				previous_solution_hash = PrevB#block.hash,
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
 				poa2 = PoA2,
-				poa2_cache = PoA2Cache,
 				recall_byte2 = RecallByte2,
 				reward_key = element(2, RewardKey),
 				price_per_gib_minute = PricePerGiBMinute2,
@@ -628,13 +696,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
 			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
-					{solution, ar_util:encode(SolutionH)}, {height, Height},
-					{txs, length(B#block.txs)},
-					{chunks, 
-						case B#block.recall_byte2 of
-							undefined -> 1;
-							_ -> 2
-						end}]),
+					{solution, ar_util:encode(SolutionH)}, {txs, length(B#block.txs)}]),
 			PrevBlocks = [PrevB],
 			[{_, RecentBI}] = ets:lookup(node_state, recent_block_index),
 			RecentBI2 = [block_index_entry(B) | RecentBI],
@@ -716,8 +778,8 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 			B = Block#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
 			ar_watchdog:mined_block(B#block.indep_hash, B#block.height,
 					B#block.previous_block),
-			?LOG_INFO([{event, mined_block},
-					{indep_hash, ar_util:encode(B#block.indep_hash)}, {txs, length(TXs)}]),
+			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(B#block.indep_hash)},
+				{solution, ar_util:encode(B#block.hash)}, {txs, length(TXs)}]),
 			PrevBlocks = [ar_block_cache:get(block_cache, Current)],
 			RecentBI2 = [block_index_entry(B) | RecentBI],
 			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
@@ -1710,17 +1772,20 @@ may_be_reset_miner(State) ->
 	start_mining(State).
 
 start_mining(State) ->
-	Diff = get_current_diff(),
-	[{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
-			merkle_rebase_support_threshold),
-	case maps:get(miner_2_6, State) of
-		undefined ->
-			ar_mining_server:start_mining({Diff, MerkleRebaseThreshold}),
-			State#{ miner_2_6 => running };
-		_ ->
-			ar_mining_server:set_difficulty(Diff),
-			ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),
-			State
+	[{height, Height}] = ets:lookup(node_state, height),
+	case Height + 1 >= ar_fork:height_2_6() of
+		true ->
+			Diff = get_current_diff(),
+			case maps:get(miner_2_6, State) of
+				undefined ->
+					ar_mining_server:start_mining({Diff}),
+					State#{ miner_2_6 => running };
+				_ ->
+					ar_mining_server:set_difficulty(Diff),
+					State
+			end;
+		false ->
+			start_2_5_mining(State)
 	end.
 
 get_current_diff() ->
