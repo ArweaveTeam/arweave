@@ -2,23 +2,24 @@
 
 -behaviour(gen_server).
 
+% TODO reset_mining_session/1 -> reset_mining_session/0
 -export([
-	start_link/0, computed_h1/2, compute_h2/3, computed_h2/1, post_solution/2,
-	reset_mining_session/0, get_public_state/0, compute_h2_on_peer/0, poll_loop/0, stat_loop/0
+	start_link/0, computed_h1/1, check_partition/2, reset_mining_session/1, get_state/0, get_public_state/0, call_remote_peer/0,
+	compute_h2/2, computed_h2/1, poll_loop/0, stat_loop/0
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_mining.hrl").
 
 -record(state, {
 	last_peer_response = #{},
 	timer_poll,
 	timer_stat,
 	peers_by_partition = #{},
-	peer_requests = #{},
+	diff_addr_h0_pn_pub_to_req_list_map = #{},
+	% key = {Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}
 	peer_io_stat = #{},
 	timer
 }).
@@ -34,13 +35,7 @@
 }).
 
 -define(START_DELAY, 1000).
-
--ifdef(DEBUG).
--define(BATCH_SIZE_LIMIT, 2).
--else.
 -define(BATCH_SIZE_LIMIT, 400).
--endif.
-
 -define(BATCH_TIMEOUT_MS, 20).
 
 %%%===================================================================
@@ -48,9 +43,15 @@
 %%%===================================================================
 % TODO call/cast -> call
 
+
 %% @doc Start the gen_server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% Helper function to see state while testing
+%% TODO Remove it
+get_state() ->
+	gen_server:call(?MODULE, get_state).
 
 %% Helper function to see state while testing and later for monitoring API
 get_public_state() ->
@@ -58,26 +59,30 @@ get_public_state() ->
 
 %% @doc An H1 has been generated. Store it to send it later to a
 %% coordinated mining peer
-computed_h1(Candidate, Diff) ->
-	gen_server:cast(?MODULE, {computed_h1, Candidate, Diff}).
+computed_h1({CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, MiningSession}) ->
+	gen_server:cast(?MODULE, {computed_h1, CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, MiningSession}).
 
-compute_h2_on_peer() ->
-	gen_server:cast(?MODULE, compute_h2_on_peer).
+call_remote_peer() ->
+	gen_server:cast(?MODULE, call_remote_peer).
+
+%% @doc Check if there is a peer with PartitionNumber2 and prepare the
+%% coordination to send requests
+check_partition(PartitionNumber2, Addr) ->
+	gen_server:call(
+		?MODULE,
+		{check_partition, PartitionNumber2, Addr}
+	).
 
 %% @doc Mining session has changed. Reset it and discard any intermediate value
-reset_mining_session() ->
-	gen_server:call(?MODULE, {reset_mining_session}).
+reset_mining_session(Ref) ->
+	gen_server:call(?MODULE, {reset_mining_session, Ref}).
 
-%% @doc Compute h2 for a remote peer
-compute_h2(Peer, Candidate, H1List) ->
-	gen_server:cast(?MODULE, {compute_h2,
-		Candidate#mining_candidate{ cm_lead_peer = Peer }, H1List}).
+%% @doc Compute h2 from a remote peer
+compute_h2(Peer, H2Materials) ->
+	gen_server:cast(?MODULE, {compute_h2, Peer, H2Materials}).
 
-computed_h2(Candidate) ->
-	gen_server:cast(?MODULE, {computed_h2, Candidate}).
-
-post_solution(Peer, Candidate) ->
-	ar_mining_server:prepare_and_post_solution(Candidate).
+computed_h2(Args) ->
+	gen_server:cast(?MODULE, {computed_h2, Args}).
 
 poll_loop() ->
 	gen_server:call(?MODULE, poll_loop).
@@ -93,7 +98,7 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	
-	{ok, TRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, compute_h2_on_peer, []),
+	{ok, TRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, call_remote_peer, []),
 	State = #state{
 		last_peer_response = #{},
 		timer = TRef
@@ -104,7 +109,7 @@ init([]) ->
 		true ->
 			case Config#config.cm_exit_peer of
 				not_set ->
-					ar:console("CRITICAL WARNING. cm_exit_peer is not set. Coordinated mining will not produce final solution.~n");
+					io:format("CRITICAL WARNING. cm_exit_peer is not set. Coordinated mining will not produce final solution.~n");
 				_ ->
 					ok
 			end,
@@ -118,14 +123,44 @@ init([]) ->
 	end,
 	{ok, State2}.
 
+%% Helper callback to see state while testing
+%% TODO Remove it
+handle_call(get_state, _From, State) ->
+	{reply, {ok, State}, State};
+
+% TODO remove
+handle_call(
+	{check_partition, PartitionNumber2, Addr},
+	_From,
+	State
+) ->
+	% BUG. Argument should be not partition number, but offset
+	case maps:find(PartitionNumber2, State#state.peers_by_partition) of
+		{ok, PeerList} ->
+			lists:foldl(
+				fun (Val, Res) ->
+					case Val of
+						{_Peer, _PartitionStart, _PartitionEnd, Addr} ->
+							true;
+						_ ->
+							Res
+					end
+				end,
+				false,
+				PeerList
+			);
+		_ ->
+			{reply, false, State}
+	end;
+
 %% Helper function to see state while testing and later for monitoring API
 handle_call(get_public_state, _From, State) ->
 	PublicState = {State#state.last_peer_response},
 	{reply, {ok, PublicState}, State};
 
-handle_call({reset_mining_session}, _From, State) ->
+handle_call({reset_mining_session, _MiningSession}, _From, State) ->
 	{reply, ok, State#state{
-		peer_requests = #{}
+		diff_addr_h0_pn_pub_to_req_list_map = #{}
 	}};
 
 handle_call(poll_loop, _From, State) ->
@@ -138,12 +173,12 @@ handle_call(poll_loop, _From, State) ->
 	{reply, {ok}, NewState2};
 
 handle_call(stat_loop, _From, State) ->
-	ar:console("Coordinated mining stat~n", []),
+	io:format("Coordinated mining stat~n", []),
 	% TODO print IO stat in header
-	ar:console("~21s | ~5s | ~13s | ~13s | ~13s ~n", ["peer", "alive",
+	io:format("~21s | ~5s | ~13s | ~13s | ~13s ~n", ["peer", "alive",
 		"h1 I/O total", "h1 per second", "h2 I/O total"
 	]),
-	ar:console("~21s | ~5s | ~s~n", ["", "", "partition list"]),
+	io:format("~21s | ~5s | ~s~n", ["", "", "partition list"]),
 	{ok, Config} = application:get_env(arweave, config),
 	% TODO print self
 	% self alive == is_joined
@@ -151,7 +186,7 @@ handle_call(stat_loop, _From, State) ->
 		{AliveStatus, PartitionList} = Value,
 		IOStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
 		% 21 enough for IPv4 111.111.111.111:11111
-		ar:console("~21s | ~5s | ~6B/~6B | ~6B/~6B | ~6B/~6B ~n", [
+		io:format("~21s | ~5s | ~6B/~6B | ~6B/~6B | ~6B/~6B ~n", [
 			list_to_binary(ar_util:format_peer(Peer)), AliveStatus,
 			IOStat#peer_io_stat.h1_in_counter, IOStat#peer_io_stat.h1_out_counter,
 			% TODO make float
@@ -162,7 +197,7 @@ handle_call(stat_loop, _From, State) ->
 		lists:foreach(
 			fun	(ListValue) ->
 				{Bucket, BucketSize, Addr} = ListValue,
-				ar:console("~21s | ~5s | ~5B ~20B ~s~n", ["", "", Bucket, BucketSize, ar_util:encode(Addr)]),
+				io:format("~21s | ~5s | ~5B ~20B ~s~n", ["", "", Bucket, BucketSize, ar_util:encode(Addr)]),
 				ok
 			end,
 			PartitionList
@@ -194,60 +229,33 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 
-handle_cast({computed_h1, Candidate, Diff}, State) ->
-	#mining_candidate{
-		cache_ref = CacheRef,
-		h1 = H1,
-		nonce = Nonce
-	} = Candidate,
-	#state{peer_requests = PeerRequests} = State,
-	%% prepare Candidate to be shared with a remote miner.
-	%% 1. Add the current difficulty (the remote peer will use this instead of its local difficulty)
-	%% 2. Remove any data that's not needed by the peer. This cuts down on the volume of data
-	%%    shared.
-	%% 3. The peer field will be set to this peer's address by the remote miner
-	DefaultCandidate = Candidate#mining_candidate{
-		chunk1 = not_set,
-		chunk2 = not_set,
-		cm_diff = Diff,
-		cm_lead_peer = not_set,
-		h1 = not_set,
-		h2 = not_set,
-		nonce = not_set,
-		poa2 = not_set,		
-		preimage = not_set,
-		session_ref = not_set
-	},
-	{ShareableCandidate, H1List} = maps:get(
-			CacheRef, PeerRequests,
-			{DefaultCandidate, []}),
-	H1List2 = [{H1, Nonce} | H1List],
-	PeerRequests2 = maps:put(CacheRef, {ShareableCandidate, H1List2}, PeerRequests),
-	case length(H1List2) >= ?BATCH_SIZE_LIMIT of
+handle_cast({computed_h1, _CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, _MiningSession}, State) ->
+	#state{diff_addr_h0_pn_pub_to_req_list_map = DiffAddrH0PNPUBToReqListMap} = State,
+	OldList = maps:get({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}, DiffAddrH0PNPUBToReqListMap, []),
+	NewList = OldList ++ [{H1, Nonce}],
+	NewAH0ReqListMap = maps:put({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}, NewList, DiffAddrH0PNPUBToReqListMap),
+	case length(NewList) >= ?BATCH_SIZE_LIMIT of
 		true ->
-			compute_h2_on_peer();
+			% NOTE should save first, then call applied
+			call_remote_peer();
 		false ->
 			ok
 	end,
-	{noreply, State#state{peer_requests = PeerRequests2}};
+	{noreply, State#state{diff_addr_h0_pn_pub_to_req_list_map = NewAH0ReqListMap}};
 
-handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests} = State)
-  		when map_size(PeerRequests) == 0 ->
-	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, compute_h2_on_peer, []),
+handle_cast(call_remote_peer, #state{diff_addr_h0_pn_pub_to_req_list_map = DiffAddrH0PNPUBToReqListMap} = State) when map_size(DiffAddrH0PNPUBToReqListMap) == 0 ->
+	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, call_remote_peer, []),
 	{noreply, State#state{timer = NewTRef}};
 
-handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRef} = State) ->
+handle_cast(call_remote_peer, #state{diff_addr_h0_pn_pub_to_req_list_map = DiffAddrH0PNPUBToReqListMap, timer = TRef} = State) ->
 	timer:cancel(TRef),
 	NewPeerIOStat = maps:fold(
-		fun	(_CacheRef, {Candidate, H1List}, Acc) ->
-			#mining_candidate{ 
-				partition_number2 = PartitionNumber2,
-				mining_address = MiningAddress } = Candidate,
-			case maps:find(PartitionNumber2, State#state.peers_by_partition) of
+		fun	({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}, ReqList, Acc) ->
+			case maps:find(PartitionNumber, State#state.peers_by_partition) of
 				{ok, List} ->
-					{Peer, _PartitionStart, _PartitionEnd, MiningAddress} = lists:last(List),
-					ar_http_iface_client:cm_h1_send(Peer, Candidate, H1List),
-					H1Count = length(H1List),
+					{Peer, _PartitionStart, _PartitionEnd, Addr} = lists:last(List),
+					ar_http_iface_client:cm_h1_send(Peer, {Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReqList}),
+					H1Count = length(ReqList),
 					OldStat = maps:get(Peer, Acc, #peer_io_stat{}),
 					NewStat = OldStat#peer_io_stat{
 						h1_out_counter = OldStat#peer_io_stat.h1_out_counter + H1Count,
@@ -259,11 +267,11 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRe
 			end
 		end,
 		State#state.peer_io_stat,
-		PeerRequests
+		DiffAddrH0PNPUBToReqListMap
 	),
-	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, compute_h2_on_peer, []),
+	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, call_remote_peer, []),
 	NewState = State#state{
-		peer_requests = #{},
+		diff_addr_h0_pn_pub_to_req_list_map = #{},
 		timer = NewTRef,
 		peer_io_stat = NewPeerIOStat
 	},
@@ -271,14 +279,14 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRe
 
 handle_cast({reset_mining_session, _MiningSession}, State) ->
 	{noreply, State#state{
-		peer_requests = #{}
+		diff_addr_h0_pn_pub_to_req_list_map = #{}
 	}};
 
-handle_cast({compute_h2, Candidate, H1List}, State) ->
-	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
-	ar_mining_server:compute_h2_for_peer(Candidate, H1List),
+handle_cast({compute_h2, Peer, H2Materials}, State) ->
+	ar_mining_server:remote_compute_h2(Peer, H2Materials),
+	{_Diff, _Addr, _H0, _PartitionNumber, _PartitionUpperBound, ReqList} = H2Materials,
 	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
-	H1Count = length(H1List),
+	H1Count = length(ReqList),
 	NewStat = OldStat#peer_io_stat{
 		h1_in_counter = OldStat#peer_io_stat.h1_in_counter + H1Count,
 		h1_in_counter_ps = OldStat#peer_io_stat.h1_in_counter_ps + H1Count
@@ -289,9 +297,9 @@ handle_cast({compute_h2, Candidate, H1List}, State) ->
 	},
 	{noreply, NewState};
 
-handle_cast({computed_h2, Candidate}, State) ->
-	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
-	ar_http_iface_client:cm_h2_send(Peer, Candidate),
+handle_cast({computed_h2, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, Peer}}, State) ->
+	io:format("DEBUG computed_h2~n"),
+	ar_http_iface_client:cm_h2_send(Peer, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}),
 	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
 	NewStat = OldStat#peer_io_stat{
 		h2_out_counter = OldStat#peer_io_stat.h2_out_counter + 1
@@ -320,11 +328,13 @@ terminate(_Reason, _State) ->
 add_mining_peer({Peer, StorageModules}, State) ->
 	MiningPeers =
 		lists:foldl(
-			fun({PartitionId, PartitionSize, PackingAddr}, Acc) ->
+			fun({PartitionSize, PartitionId, PackingAddr}, Acc) ->
 				%% Allowing the case of same partition handled by different peers
 				% TODO range start, range end
 				NewElement = {Peer, 0, PartitionSize, PackingAddr},
 				Acc2 = case maps:get(PartitionId, Acc, none) of
+					% BUG. Partition numbers in hash are for partitions with 4TB size
+					% PartitionId in request if size != 4TB can be other id
 					L when is_list(L) ->
 						case lists:member(NewElement, L) of
 							true ->
@@ -395,3 +405,5 @@ refresh([Peer | Peers], State) ->
 			end
 	end,
 	refresh(Peers, NewState).
+
+

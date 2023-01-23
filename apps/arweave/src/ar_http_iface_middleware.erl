@@ -2989,38 +2989,16 @@ handle_get_vdf2(Req, Call) ->
 
 handle_coordinated_mining_partition_table(Req) ->
 	{ok, Config} = application:get_env(arweave, config),
-	Partition_dict = lists:foldl(fun(Module, Dict) ->
-		{BucketSize, Bucket, {spora_2_6, Addr}} = Module,
-		MinPartitionId = Bucket*BucketSize div ?PARTITION_SIZE,
-		MaxPartitionId = (Bucket+1)*BucketSize div ?PARTITION_SIZE,
-		PartitionList = lists:seq(MinPartitionId, MaxPartitionId),
-		lists:foldl(fun(PartitionId, Dict2) ->
-			AddrDict = maps:get(PartitionId, Dict2, #{}),
-			AddrDict2 = maps:put(Addr, true, AddrDict),
-			maps:put(PartitionId, AddrDict2, Dict2)
-		end, Dict, PartitionList)
-	end, #{}, Config#config.storage_modules),
-	Right_bound = lists:max(lists:map(fun({BucketSize, Bucket, {spora_2_6, _Addr}}) ->
-		(Bucket+1)*BucketSize
-	end, Config#config.storage_modules)),
-	Right_bound_partition_id = Right_bound div ?PARTITION_SIZE,
-	CheckPartitionList = lists:seq(0, Right_bound_partition_id),
-	Table = lists:foldr(fun(PartitionId, Acc) ->
-		case maps:find(PartitionId, Partition_dict) of
-			{ok, AddrDict} ->
-				maps:fold(fun(Addr, _, Acc2) ->
-					NewEntity = {[
-						{bucket, PartitionId},
-						{bucketsize, ?PARTITION_SIZE},
-						{addr, ar_util:encode(Addr)}
-						% TODO range start, end for less requests (better check before send)
-					]},
-					[NewEntity | Acc2]
-				end, Acc, AddrDict);
-			_ ->
-				Acc
-		end
-	end, [], CheckPartitionList),
+	Table = lists:map(
+		fun	({BucketSize, Bucket, {spora_2_6, Addr}}) ->
+			{[
+				{bucket, Bucket},
+				{bucketsize, BucketSize},
+				{addr, ar_util:encode(Addr)}
+			]}
+		end,
+		Config#config.storage_modules
+	),
 	{200, #{}, ar_serialize:jsonify(Table), Req}.
 
 read_complete_body(Req, Pid) ->
@@ -3061,8 +3039,8 @@ handle_mining_h1(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					{Candidate, H1List} = ar_serialize:json_struct_to_h2_inputs(JSON),
-					ar_coordination:compute_h2(Peer, Candidate, H1List),
+					H2Materials = ar_serialize:json_map_to_remote_h2_materials(JSON),
+					ar_coordination:compute_h2(Peer, H2Materials),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
@@ -3077,12 +3055,35 @@ handle_mining_h2(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					Candidate = ar_serialize:json_struct_to_candidate(JSON),
-					?LOG_INFO([
-						{event, h2_received},
-						{json, JSON}
-					]),
-					ar_coordination:post_solution(Peer, Candidate),
+					Solution = ar_serialize:json_struct_to_remote_solution(JSON),
+					{_Diff, ReplicaID, H0, _H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, NonceLimiterOutput} = Solution,
+					{ok, Config} = application:get_env(arweave, config),
+					case Config#config.cm_exit_peer of
+						not_set ->
+							?LOG_WARNING([{event, mined_block_but_no_mining_key_found},
+									{mining_address, ar_util:encode(ReplicaID)}]);
+						_ ->
+							ar:console("Possible solution from ~p ~n", [ar_util:format_peer(Peer)]),
+							{RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound),
+							% extract chunk1 (PoA1)
+							Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
+							case ar_data_sync:get_chunk(RecallByte1 + 1, Options) of
+								{ok, #{ chunk := Chunk1, tx_path := TXPath1, data_path := DataPath1 }} ->
+									PoA1 = #poa{ option = 1, chunk = Chunk1, tx_path = TXPath1,
+											data_path = DataPath1 },
+									ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer, {PartitionNumber,
+										Nonce, H0, NonceLimiterOutput, ReplicaID, RecallByte1, RecallByte2, PoA1, PoA2, H2, Preimage, PartitionUpperBound});
+								_ ->
+									{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
+											PartitionNumber, PartitionUpperBound),
+									?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
+											{recall_byte, RecallByte1},
+											{recall_range_start, RecallRange1Start},
+											{nonce, Nonce},
+											{partition, PartitionNumber},
+											{mining_address, ar_util:encode(ReplicaID)}])
+							end
+					end,
 					{200, #{}, <<>>, Req};
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
@@ -3097,9 +3098,9 @@ handle_mining_cm_publish(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					Solution = ar_serialize:json_struct_to_solution(JSON),
+					InjectSolution = ar_serialize:json_struct_to_remote_final_solution(JSON),
 					ar:console("Block candidate from ~p ~n", [ar_util:format_peer(Peer)]),
-					ar_mining_server:post_solution(Solution),
+					ar_mining_server:cm_exit_prepare_solution(InjectSolution),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}

@@ -14,7 +14,7 @@
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
 		get_block_time_history/3,
 		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
-		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/3, cm_h2_send/2,
+		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
 		cm_publish_send/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -577,6 +577,54 @@ validate_block_time_history_hashes(BlockTimeHistory, [H | ExpectedBlockTimeHisto
 		false ->
 			false
 	end.
+get_cm_partition_table(Peer) ->
+	handle_cm_partition_table_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/coordinated_mining/partition_table",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers()
+	})).
+
+% TODO binary protocol after debug
+cm_h1_send(Peer, Materials) ->
+	Json = ar_serialize:remote_h2_materials_to_json_map(Materials),
+	handle_cm_noop_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => "/coordinated_mining/h1",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers(),
+		body => ar_serialize:jsonify({Json})
+	})).
+
+cm_h2_send(Peer, Solution) ->
+	Json = ar_serialize:remote_solution_to_json_struct(Solution),
+	handle_cm_noop_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => "/coordinated_mining/h2",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers(),
+		body => ar_serialize:jsonify({Json})
+	})).
+
+cm_publish_send(Peer, Solution) ->
+	io:format("DEBUG cm_publish_send~n"),
+	Json = ar_serialize:remote_final_solution_to_json_struct(Solution),
+	io:format("DEBUG cm_publish_send 1~n"),
+	handle_cm_noop_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => "/coordinated_mining/publish",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		headers => cm_p2p_headers(),
+		body => ar_serialize:jsonify({Json})
+	})).
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);
@@ -994,8 +1042,10 @@ process_get_info(Props) ->
 		{ok, [NetworkName, ClientVersion, Height, Blocks, Peers]} ->
 			ReleaseNumber =
 				case lists:keyfind(<<"release">>, 1, Props) of
-					false -> 0;
-					R -> R
+					{<<"release">>, R} when is_integer(R) ->
+						R;
+					_ ->
+						0
 				end,
 			[
 				{name, NetworkName},
