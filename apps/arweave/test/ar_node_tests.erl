@@ -193,35 +193,37 @@ persisted_mempool_test_() ->
 			fun(_Size) -> 5000 end}], fun test_persisted_mempool/0).
 
 test_persisted_mempool() ->
-	{_, Pub} = Wallet = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
-	start(B0),
-	slave_start(B0),
-	disconnect_from_slave(),
-	SignedTX = ar_test_node:sign_tx(Wallet,
-			#{ last_tx => ar_test_node:get_tx_anchor(master) }),
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_master(SignedTX,
-			false),
-	true = ar_util:do_until(
-		fun() ->
-			maps:is_key(SignedTX#tx.id, ar_node:get_pending_txs([as_map]))
-		end,
-		100,
-		1000
-	),
-	ok = application:stop(arweave),
-	ok = ar:stop_dependencies(),
-	%% Rejoin the network.
-	%% Expect the pending transactions to be picked up and distributed.
-	{ok, Config} = application:get_env(arweave, config),
-	ok = application:set_env(arweave, config, Config#config{
-		start_from_block_index = false,
-		peers = [slave_peer()]
-	}),
-	{ok, _} = application:ensure_all_started(arweave, permanent),
-	ar_test_node:wait_until_joined(),
-	assert_slave_wait_until_receives_txs([SignedTX]),
-	ar_node:mine(),
-	[{H, _, _} | _] = assert_slave_wait_until_height(1),
-	B = ar_test_node:read_block_when_stored(H),
-	?assertEqual([SignedTX#tx.id], B#block.txs).
+	{timeout, 60, fun() ->
+		{_, Pub} = Wallet = ar_wallet:new(),
+		[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
+		start(B0),
+		slave_start(B0),
+		disconnect_from_slave(),
+		SignedTX = ar_test_node:sign_tx(Wallet,
+				#{ last_tx => ar_test_node:get_tx_anchor(master) }),
+		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_master(SignedTX,
+				false),
+		true = ar_util:do_until(
+			fun() ->
+				maps:is_key(SignedTX#tx.id, ar_node:get_pending_txs([as_map]))
+			end,
+			100,
+			1000
+		),
+		ok = application:stop(arweave),
+		ok = ar:stop_dependencies(),
+		%% Rejoin the network.
+		%% Expect the pending transactions to be picked up and distributed.
+		{ok, Config} = application:get_env(arweave, config),
+		ok = application:set_env(arweave, config, Config#config{
+			start_from_block_index = false,
+			peers = [slave_peer()]
+		}),
+		{ok, _} = application:ensure_all_started(arweave, permanent),
+		ar_test_node:wait_until_joined(),
+		assert_slave_wait_until_receives_txs([SignedTX]),
+		ar_node:mine(),
+		[{H, _, _} | _] = assert_slave_wait_until_height(1),
+		B = ar_test_node:read_block_when_stored(H),
+		?assertEqual([SignedTX#tx.id], B#block.txs).
+	end}.
