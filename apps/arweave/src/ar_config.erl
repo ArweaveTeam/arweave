@@ -527,6 +527,44 @@ parse_options([{<<"p3">>, {P3Config}} | Rest], Config) ->
 			P3Config}
 	end;
 
+parse_options([{<<"coordinated_mining">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ coordinated_mining = true });
+parse_options([{<<"coordinated_mining">>, false} | Rest], Config) ->
+	parse_options(Rest, Config);
+parse_options([{<<"coordinated_mining">>, Opt} | _], _) ->
+	{error, {bad_type, coordinated_mining, boolean}, Opt};
+
+parse_options([{<<"coordinated_mining_secret">>, CMSecret} | Rest], Config) when is_binary(CMSecret), byte_size(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	parse_options(Rest, Config#config{ coordinated_mining_secret = CMSecret });
+parse_options([{<<"coordinated_mining_secret">>, CMSecret} | _], _) ->
+	{error, {bad_type, coordinated_mining_secret, string}, CMSecret};
+
+parse_options([{<<"cm_poll_interval">>, CMPollInterval} | Rest], Config) when is_integer(CMPollInterval) ->
+	parse_options(Rest, Config#config{ cm_poll_interval = CMPollInterval });
+parse_options([{<<"cm_poll_interval">>, CMPollInterval} | _], _) ->
+	{error, {bad_type, cm_poll_interval, number}, CMPollInterval};
+
+parse_options([{<<"cm_stat_interval">>, CMStatInterval} | Rest], Config) when is_integer(CMStatInterval) ->
+	parse_options(Rest, Config#config{ cm_stat_interval = CMStatInterval });
+parse_options([{<<"cm_stat_interval">>, CMStatInterval} | _], _) ->
+	{error, {bad_type, cm_stat_interval, number}, CMStatInterval};
+
+parse_options([{<<"cm_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
+	case parse_peers(Peers, []) of
+		{ok, ParsedPeers} ->
+			parse_options(Rest, Config#config{ cm_peers = ParsedPeers });
+		error ->
+			{error, bad_peers, Peers}
+	end;
+
+parse_options([{<<"cm_exit_peer">>, Peer} | Rest], Config) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ParsedPeer} ->
+			parse_options(Rest, Config#config{ cm_exit_peer = ParsedPeer });
+		{error, _} ->
+			{error, bad_cm_exit_peer, Peer}
+	end;
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

@@ -318,7 +318,13 @@ show_help() ->
 							"Default: ~B.", [?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS])},
 			{"defragment_module",
 				"Run defragmentation of the chunk storage files from the given storage module."
-				" Assumes the run_defragmentation flag is provided."}
+				" Assumes the run_defragmentation flag is provided."},
+			{"coordinated_mining", "Enable coordinated mining (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."},
+			{"coordinated_mining_secret", "Coordinated mining secret for authenticated requests between private peers (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."},
+			{"cm_poll_interval", io_lib:format("Coordinated mining interval for poll other nodes partition tables (default ~B).", [?DEFAULT_CM_POLL_INTERVAL])},
+			{"cm_stat_interval", io_lib:format("Coordinated mining interval for print statistics (default ~B).", [?DEFAULT_CM_STAT_INTERVAL])},
+			{"cm_peer (IP:port)", "Coordinated mining peer (or set of peers) (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."},
+			{"cm_exit_peer (IP:port)", "Coordinated mining exit peer which will publish solution (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."}
 		]
 	),
 	erlang:halt().
@@ -551,6 +557,35 @@ parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
 		io:format("~ndefragment_module value must be in the [number],[address] format.~n~n"),
 		erlang:halt()
 	end;
+parse_cli_args(["coordinated_mining" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ coordinated_mining = true });
+parse_cli_args(["coordinated_mining_secret", CMSecret | Rest], C)
+		when length(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	parse_cli_args(Rest, C#config{ coordinated_mining_secret = list_to_binary(CMSecret) });
+parse_cli_args(["coordinated_mining_secret", _ | _], _) ->
+	io:format("~nThe coordinated_mining_secret must be at least ~B characters long.~n~n",
+			[?INTERNAL_API_SECRET_MIN_LEN]),
+	erlang:halt();
+parse_cli_args(["cm_poll_interval", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ cm_poll_interval = list_to_integer(Num) });
+parse_cli_args(["cm_stat_interval", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ cm_stat_interval = list_to_integer(Num) });
+parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			parse_cli_args(Rest, C#config{ cm_peers = [ValidPeer|Ps] });
+		{error, _} ->
+			io:format("Peer ~p is invalid.~n", [Peer]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			parse_cli_args(Rest, C#config{ cm_exit_peer = ValidPeer });
+		{error, _} ->
+			io:format("Peer ~p is invalid.~n", [Peer]),
+			parse_cli_args(Rest, C)
+	end;
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -675,16 +710,21 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 	set_mining_address(C2);
 set_mining_address(#config{ mine = false }) ->
 	ok;
-set_mining_address(#config{ mining_addr = Addr }) ->
+set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer }) ->
 	case ar_wallet:load_key(Addr) of
 		not_found ->
-			ar:console("~nThe mining key for the address ~s was not found."
-				" Make sure you placed the file in [data_dir]/~s (the node is looking for"
-				" [data_dir]/~s/[mining_addr].json or "
-				"[data_dir]/~s/arweave_keyfile_[mining_addr].json file)."
-				" Do not specify \"mining_addr\" if you want one to be generated.~n~n",
-				[ar_util:encode(Addr), ?WALLET_DIR, ?WALLET_DIR, ?WALLET_DIR]),
-			erlang:halt();
+			case CmExitPeer of
+				not_set ->
+					ar:console("~nThe mining key for the address ~s was not found."
+						" Make sure you placed the file in [data_dir]/~s (the node is looking for"
+						" [data_dir]/~s/[mining_addr].json or "
+						"[data_dir]/~s/arweave_keyfile_[mining_addr].json file)."
+						" Do not specify \"mining_addr\" if you want one to be generated.~n~n",
+						[ar_util:encode(Addr), ?WALLET_DIR, ?WALLET_DIR, ?WALLET_DIR]),
+					erlang:halt();
+				_ ->
+					ok
+			end;
 		_Key ->
 			ok
 	end.
