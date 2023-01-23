@@ -16,10 +16,12 @@
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
 -ifdef(DEBUG).
--define(PARTITION_SIZE, 1800000).
+-define(PARTITION_SIZE, 2097152). % 8 * 256 * 1024
 -else.
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.
+
+-define(PARTITION_NUMBER(Offset), (Offset div ?PARTITION_SIZE)).
 
 %% The size of a recall range. The first range is randomly chosen from the given
 %% mining partition. The second range is chosen from the entire weave.
