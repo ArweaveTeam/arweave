@@ -19,7 +19,10 @@
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
 		reward_history_to_binary/1, binary_to_reward_history/1,
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
-		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
+		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
+		json_map_to_remote_h2_materials/1, remote_h2_materials_to_json_map/1,
+		json_struct_to_remote_solution/1, remote_solution_to_json_struct/1,
+		json_struct_to_remote_final_solution/1, remote_final_solution_to_json_struct/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
@@ -1121,6 +1124,15 @@ json_struct_to_poa({JSONStruct}) ->
 		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct))
 	}.
 
+% FIXME. remove [{return_maps, true}] in ar_http_iface_middleware and make code uniform
+json_struct_to_poa_from_map(JSONStruct) ->
+	#poa{
+		option = binary_to_integer(maps:get(<<"option">>, JSONStruct)),
+		tx_path = ar_util:decode(maps:get(<<"tx_path">>, JSONStruct)),
+		data_path = ar_util:decode(maps:get(<<"data_path">>, JSONStruct)),
+		chunk = ar_util:decode(maps:get(<<"chunk">>, JSONStruct))
+	}.
+
 %% @doc Convert parsed JSON tx fields from a HTTP request into a
 %% transaction record.
 json_struct_to_tx(JSONTX) when is_binary(JSONTX) ->
@@ -1437,6 +1449,142 @@ binary_to_signature_type(List) ->
 		%% For backwards-compatibility.
 		_ -> {?RSA_SIGN_ALG, 65537}
 	end.
+
+json_map_to_remote_h2_materials(JSON) ->
+	Diff = binary_to_integer(maps:get(<<"diff">>, JSON)),
+	Addr = ar_util:decode(maps:get(<<"addr">>, JSON)),
+	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
+	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
+	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
+	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
+	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
+	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
+	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
+	ReqList = lists:map(fun (JsonElement) ->
+		H1 = ar_util:decode(maps:get(<<"h1">>, JsonElement)),
+		Nonce = maps:get(<<"nonce">>, JsonElement),
+		{H1, Nonce}
+	end, maps:get(<<"req_list">>, JSON, [])),
+	{Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReqList}.
+
+remote_h2_materials_to_json_map({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReqList}) ->
+	ReqList2 = lists:map(fun ({H1, Nonce}) ->
+		{[
+			{h1, ar_util:encode(H1)},
+			{nonce, Nonce}
+		]}
+	end,
+	ReqList),
+	[
+		{diff, integer_to_binary(Diff)},
+		{addr, ar_util:encode(Addr)},
+		{h0, ar_util:encode(H0)},
+		{partition_number, integer_to_binary(PartitionNumber)},
+		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
+		{seed, ar_util:encode(Seed)},
+		{next_seed, ar_util:encode(NextSeed)},
+		{start_interval_number, integer_to_binary(StartIntervalNumber)},
+		{step_number, integer_to_binary(StepNumber)},
+		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
+		{req_list, ReqList2}
+	].
+
+% TODO json_map_to_remote_h2_materials + remote_h2_materials_to_json_map test
+
+json_struct_to_remote_solution(JSON) ->
+	Diff = binary_to_integer(maps:get(<<"diff">>, JSON)),
+	Addr = ar_util:decode(maps:get(<<"addr">>, JSON)),
+	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
+	H1 = ar_util:decode(maps:get(<<"h1">>, JSON)),
+	Nonce = maps:get(<<"nonce">>, JSON),
+	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
+	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
+	PoA2 = json_struct_to_poa_from_map(maps:get(<<"poa2">>, JSON)),
+	H2 = ar_util:decode(maps:get(<<"h2">>, JSON)),
+	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
+	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
+	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
+	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
+	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
+	{Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}.
+
+remote_solution_to_json_struct({Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}) ->
+	[
+		{diff, integer_to_binary(Diff)},
+		{addr, ar_util:encode(Addr)},
+		{h0, ar_util:encode(H0)},
+		{h1, ar_util:encode(H1)},
+		{nonce, Nonce},
+		{partition_number, integer_to_binary(PartitionNumber)},
+		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
+		{poa2, poa_to_json_struct(PoA2)},
+		{h2, ar_util:encode(H2)},
+		{preimage, ar_util:encode(Preimage)},
+		{seed, ar_util:encode(Seed)},
+		{next_seed, ar_util:encode(NextSeed)},
+		{start_interval_number, integer_to_binary(StartIntervalNumber)},
+		{step_number, integer_to_binary(StepNumber)},
+		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}
+	].
+
+% TODO json_struct_to_remote_solution + remote_solution_to_json_struct test
+
+json_struct_to_remote_final_solution(JSON) ->
+	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
+	Nonce = maps:get(<<"nonce">>, JSON),
+	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
+	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
+	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
+	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
+	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
+	ReplicaID = ar_util:decode(maps:get(<<"addr">>, JSON)),
+	PoA1 = json_struct_to_poa_from_map(maps:get(<<"poa1">>, JSON)),
+	PoA2 = case maps:get(<<"poa2">>, JSON, not_found) of
+		not_found ->
+			not_set;
+		EncPoA2 ->
+			json_struct_to_poa_from_map(EncPoA2)
+	end,
+	H2 = ar_util:decode(maps:get(<<"h2">>, JSON)),
+	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
+	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
+	{PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound}.
+
+remote_final_solution_to_json_struct({PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound}) ->
+	io:format("DEBUG remote_final_solution_to_json_struct 0~n"),
+	Res = [
+		{partition_number, integer_to_binary(PartitionNumber)},
+		{nonce, Nonce},
+		{h0, ar_util:encode(H0)},
+		{seed, ar_util:encode(Seed)},
+		{next_seed, ar_util:encode(NextSeed)},
+		{start_interval_number, integer_to_binary(StartIntervalNumber)},
+		{step_number, integer_to_binary(StepNumber)},
+		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
+		{addr, ar_util:encode(ReplicaID)},
+		{poa1, poa_to_json_struct(PoA1)},
+		{h2, ar_util:encode(H2)},
+		{preimage, ar_util:encode(Preimage)},
+		{partition_upper_bound, integer_to_binary(PartitionUpperBound)}
+	],
+	io:format("DEBUG remote_final_solution_to_json_struct 1~n"),
+	case PoA2 of
+		not_set ->
+			io:format("DEBUG remote_final_solution_to_json_struct 2.1~n"),
+			Res;
+		_ ->
+			% Res ++ [{poa2, poa_to_json_struct(PoA2)}]
+			io:format("DEBUG remote_final_solution_to_json_struct 2.2~n"),
+			Res2 = Res ++ [{poa2, poa_to_json_struct(PoA2)}],
+			io:format("DEBUG remote_final_solution_to_json_struct 2.3~n"),
+			%io:format("DEBUG remote_final_solution_to_json_struct 2.3 ~p~n", [Res2]),
+			Res2
+	end.
+
+% TODO json_struct_to_remote_final_solution + remote_final_solution_to_json_struct test
 
 %%% Tests: ar_serialize
 

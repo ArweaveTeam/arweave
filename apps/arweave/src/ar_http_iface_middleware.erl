@@ -1324,6 +1324,100 @@ handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
 			handle_get_vdf(Req, get_previous_session)
 	end;
 
+handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_coordinated_mining_partition_table(Req)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+% If somebody want to make GUI, monitoring tool
+handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					{ok, {LastPeerResponse}} = ar_coordination:get_public_state(),
+					Peers = maps:fold(fun(Peer, Value, Acc) ->
+						{AliveStatus, PartitionList} = Value,
+						Table = lists:map(
+							fun	(ListValue) ->
+								{Bucket, BucketSize, Addr} = ListValue,
+								{[
+									{bucket, Bucket},
+									{bucketsize, BucketSize},
+									{addr, ar_util:encode(Addr)}
+								]}
+							end,
+							PartitionList
+						),
+						Val = {[
+							{peer, list_to_binary(ar_util:format_peer(Peer))},
+							{alive, AliveStatus},
+							{partition_table, Table}
+						]},
+						[Val | Acc]
+						end,
+						[],
+						LastPeerResponse
+					),
+				{200, #{}, ar_serialize:jsonify(Peers), Req}
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+%% TODO: endpoint description
+%% POST request to endpoint /coordinated_mining/h1
+handle(<<"POST">>, [<<"coordinated_mining">>, <<"h1">>], Req, Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_mining_h1(Req, Pid)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+%% TODO: endpoint description
+%% POST request to endpoint /coordinated_mining/h1
+handle(<<"POST">>, [<<"coordinated_mining">>, <<"h2">>], Req, Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_mining_h2(Req, Pid)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
+handle(<<"POST">>, [<<"coordinated_mining">>, <<"publish">>], Req, Pid) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					handle_mining_cm_publish(Req, Pid)
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end;
+
 %% Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, Req, _Pid) ->
@@ -2098,6 +2192,33 @@ log_internal_api_reject(Msg, Req) ->
 		?LOG_WARNING("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
 	end).
 
+check_cm_api_secret(Req) ->
+	Reject = fun(Msg) ->
+		log_cm_api_reject(Msg, Req),
+		%% Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
+		timer:sleep(rand:uniform(1000) + 1000),
+		{reject,
+			{421, #{}, <<"Coodrinated mining API disabled or invalid CM API secret in request.">>}}
+	end,
+	{ok, Config} = application:get_env(arweave, config),
+	case {Config#config.coordinated_mining_secret,
+			cowboy_req:header(<<"x-cm-api-secret">>, Req)} of
+		{not_set, _} ->
+			Reject("Request to disabled CM API");
+		{Secret, Secret} when is_binary(Secret) ->
+			pass;
+		_ ->
+			Reject("Invalid secret for CM API request")
+	end.
+
+log_cm_api_reject(Msg, Req) ->
+	spawn(fun() ->
+		Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+		{IpAddr, _Port} = cowboy_req:peer(Req),
+		BinIpAddr = list_to_binary(inet:ntoa(IpAddr)),
+		?LOG_WARNING("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
+	end).
+
 %% @doc Convert a blocks field with the given label into a string.
 block_field_to_string(<<"timestamp">>, Res) -> integer_to_list(Res);
 block_field_to_string(<<"last_retarget">>, Res) -> integer_to_list(Res);
@@ -2857,6 +2978,20 @@ handle_get_vdf2(Req, Call) ->
 			{200, #{}, ar_serialize:nonce_limiter_update_to_binary(Update), Req}
 	end.
 
+handle_coordinated_mining_partition_table(Req) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Table = lists:map(
+		fun	({BucketSize, Bucket, {spora_2_6, Addr}}) ->
+			{[
+				{bucket, Bucket},
+				{bucketsize, BucketSize},
+				{addr, ar_util:encode(Addr)}
+			]}
+		end,
+		Config#config.storage_modules
+	),
+	{200, #{}, ar_serialize:jsonify(Table), Req}.
+
 read_complete_body(Req, Pid) ->
 	read_complete_body(Req, Pid, ?MAX_BODY_SIZE).
 
@@ -2886,4 +3021,81 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 		?LOG_DEBUG([{event, body_read_timeout}, {method, cowboy_req:method(Req)},
 				{path, cowboy_req:path(Req)}, {peer, ar_util:format_peer(Peer)}]),
 		{error, timeout}
+	end.
+
+% TODO binary protocol after debug
+handle_mining_h1(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					H2Materials = ar_serialize:json_map_to_remote_h2_materials(JSON),
+					ar_coordination:compute_h2(Peer, H2Materials),
+					{200, #{}, <<>>, Req};
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
+	end.
+
+handle_mining_h2(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					Solution = ar_serialize:json_struct_to_remote_solution(JSON),
+					{_Diff, ReplicaID, H0, _H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, NonceLimiterOutput} = Solution,
+					{ok, Config} = application:get_env(arweave, config),
+					case Config#config.cm_exit_peer of
+						not_set ->
+							?LOG_WARNING([{event, mined_block_but_no_mining_key_found},
+									{mining_address, ar_util:encode(ReplicaID)}]);
+						_ ->
+							ar:console("Possible solution from ~p ~n", [ar_util:format_peer(Peer)]),
+							{RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound),
+							% extract chunk1 (PoA1)
+							Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
+							case ar_data_sync:get_chunk(RecallByte1 + 1, Options) of
+								{ok, #{ chunk := Chunk1, tx_path := TXPath1, data_path := DataPath1 }} ->
+									PoA1 = #poa{ option = 1, chunk = Chunk1, tx_path = TXPath1,
+											data_path = DataPath1 },
+									ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer, {PartitionNumber,
+										Nonce, H0, NonceLimiterOutput, ReplicaID, RecallByte1, RecallByte2, PoA1, PoA2, H2, Preimage, PartitionUpperBound});
+								_ ->
+									{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
+											PartitionNumber, PartitionUpperBound),
+									?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
+											{recall_byte, RecallByte1},
+											{recall_range_start, RecallRange1Start},
+											{nonce, Nonce},
+											{partition, PartitionNumber},
+											{mining_address, ar_util:encode(ReplicaID)}])
+							end
+					end,
+					{200, #{}, <<>>, Req};
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
+	end.
+
+handle_mining_cm_publish(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					InjectSolution = ar_serialize:json_struct_to_remote_final_solution(JSON),
+					ar:console("Block candidate from ~p ~n", [ar_util:format_peer(Peer)]),
+					ar_mining_server:cm_exit_prepare_solution(InjectSolution),
+					{200, #{}, <<>>, Req};
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
 	end.
