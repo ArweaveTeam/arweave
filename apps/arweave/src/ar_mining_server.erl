@@ -188,6 +188,9 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 				case ets:lookup(?MODULE, {performance, Partition}) of
 					[] ->
 						Acc;
+					[{_, PartitionStart, _, CurrentStart, _}] when Now - PartitionStart =:= 0
+															orelse Now - CurrentStart  =:= 0 ->
+						Acc;
 					[{_, PartitionStart, PartitionTotal, CurrentStart, CurrentTotal}] ->
 						ets:update_counter(?MODULE,
 										   {performance, Partition},
