@@ -170,21 +170,22 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 	Partitions =
 		lists:sort(sets:to_list(
 			maps:fold(
-				fun({Partition, _, _}, _, Acc) ->
+				fun({Partition, _, StoreID}, _, Acc) ->
 					case Partition > Max of
 						true ->
 							Acc;
 						_ ->
-							sets:add_element(Partition, Acc)
+							sets:add_element({Partition, StoreID}, Acc)
 					end
 				end,
 				sets:new(), % A storage module may be smaller than a partition.
 				IOThreads
 			))),
 	Now = erlang:monotonic_time(millisecond),
+	VdfSpeed = vdf_speed(Now),
 	{IOList, MaxPartitionTime, PartitionsSum, MaxCurrentTime, CurrentsSum} =
 		lists:foldr(
-			fun(Partition, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
+			fun({Partition, StoreID}, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
 				case ets:lookup(?MODULE, {performance, Partition}) of
 					[] ->
 						Acc;
@@ -196,13 +197,25 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 						PartitionAvg = PartitionTotal / PartitionTimeLapse / 4,
 						CurrentTimeLapse = (Now - CurrentStart) / 1000,
 						CurrentAvg = CurrentTotal / CurrentTimeLapse / 4,
+						Optimal = optimal_performance(StoreID, VdfSpeed),
 						?LOG_INFO([{event, mining_partition_performance_report},
 								{partition, Partition}, {avg, PartitionAvg},
 								{current, CurrentAvg}]),
-						{[io_lib:format("Partition ~B avg: ~.2f MiB/s, current: ~.2f MiB/s.~n",
-								[Partition, PartitionAvg, CurrentAvg]) | Acc1],
-								max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
-								max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal}
+						case Optimal of
+							undefined ->
+								{[io_lib:format("Partition ~B avg: ~.2f MiB/s, "
+										"current: ~.2f MiB/s.~n",
+									[Partition, PartitionAvg, CurrentAvg]) | Acc1],
+									max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
+									max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal};
+							_ ->
+								{[io_lib:format("Partition ~B avg: ~.2f MiB/s, "
+										"current: ~.2f MiB/s, "
+										"estimated optimum: ~.2f MiB/s.~n",
+									[Partition, PartitionAvg, CurrentAvg, Optimal]) | Acc1],
+									max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
+									max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal}
+						end
 				end
 			end,
 			{[], 0, 0, 0, 0},
@@ -215,9 +228,17 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 			?LOG_INFO([{event, mining_performance_report}, {total_avg_mibps, TotalAvg},
 					{total_avg_hps, TotalAvg * 4}, {total_current_mibps, TotalCurrent},
 					{total_current_hps, TotalCurrent * 4}]),
-			Str = io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
-					" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s.~n", [TotalAvg, TotalAvg * 4,
-					TotalCurrent, TotalCurrent * 4]),
+			Str =
+				case VdfSpeed of
+					undefined ->
+						io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
+								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s.~n",
+						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4]);
+					_ ->
+						io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
+								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s; VDF: ~.2f s.~n",
+						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed])
+				end,
 			prometheus_gauge:set(mining_rate, TotalCurrent),
 			IOList2 = [Str | [IOList | ["~n"]]],
 			ar:console(iolist_to_binary(IOList2));
@@ -256,6 +277,10 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
 	{Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output, _Checkpoints} = Args,
 	true = is_integer(StepNumber),
+	ets:update_counter(?MODULE,
+					  {performance, nonce_limiter},
+					  [{3, 1}],
+					  {{performance, nonce_limiter}, erlang:monotonic_time(millisecond), 0}),
 	Task = {computed_output, {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
@@ -1078,6 +1103,31 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 pick_hashing_thread(Threads) ->
 	{{value, Thread}, Threads2} = queue:out(Threads),
 	{Thread, queue:in(Thread, Threads2)}.
+
+optimal_performance(_StoreID, undefined) ->
+	undefined;
+optimal_performance("default", _VdfSpeed) ->
+	undefined;
+optimal_performance(StoreID, VdfSpeed) ->
+	PartitionSize = ar_storage_module:get_size(StoreID),
+	case prometheus_gauge:value(v2_index_data_size_by_packing, [StoreID, spora_2_6]) of
+		undefined -> 0.0;
+		StorageSize -> (200 / VdfSpeed) * (StorageSize / PartitionSize)
+	end.
+
+vdf_speed(Now) ->
+	case ets:lookup(?MODULE, {performance, nonce_limiter}) of
+		[] ->
+			undefined;
+		[{_, Now, _}] ->
+			undefined;
+		[{_, VdfStart, VdfCount}] ->
+			ets:update_counter(?MODULE,
+							   {performance, nonce_limiter},
+							   [{2, -1, Now, Now}, {3, 0, -1, 0}]),
+			VdfLapse = (Now - VdfStart) / 1000,
+			VdfLapse / VdfCount
+	end.
 
 %%%===================================================================
 %%% Tests.

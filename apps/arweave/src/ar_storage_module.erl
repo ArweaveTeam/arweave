@@ -1,6 +1,6 @@
 -module(ar_storage_module).
 
--export([id/1, get_range/1, get_packing/1, get/2, get_all/1, get_all/2]).
+-export([id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -66,6 +66,20 @@ get_packing(ID, [Module | Modules]) ->
 			Packing;
 		false ->
 			get_packing(ID, Modules)
+	end.
+
+%% @doc Return the bucket size configured for the given module.
+get_size(ID) ->
+	{ok, Config} = application:get_env(arweave, config),
+	get_size(ID, Config#config.storage_modules).
+
+get_size(ID, [Module | Modules]) ->
+	case ar_storage_module:id(Module) == ID of
+		true ->
+			{BucketSize, _Bucket, _Packing} = Module,
+			BucketSize;
+		false ->
+			get_size(ID, Modules)
 	end.
 
 %% @doc Return a configured storage module covering the given Offset, preferably
