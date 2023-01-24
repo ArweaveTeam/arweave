@@ -170,12 +170,12 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 	Partitions =
 		lists:sort(sets:to_list(
 			maps:fold(
-				fun({Partition, _, _}, _, Acc) ->
+				fun({Partition, _, StoreID}, _, Acc) ->
 					case Partition > Max of
 						true ->
 							Acc;
 						_ ->
-							sets:add_element(Partition, Acc)
+							sets:add_element({Partition, StoreID}, Acc)
 					end
 				end,
 				sets:new(), % A storage module may be smaller than a partition.
@@ -184,7 +184,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 	Now = erlang:monotonic_time(millisecond),
 	{IOList, MaxPartitionTime, PartitionsSum, MaxCurrentTime, CurrentsSum} =
 		lists:foldr(
-			fun(Partition, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
+			fun({Partition, StoreID}, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
 				case ets:lookup(?MODULE, {performance, Partition}) of
 					[] ->
 						Acc;
@@ -196,11 +196,13 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 						PartitionAvg = PartitionTotal / PartitionTimeLapse / 4,
 						CurrentTimeLapse = (Now - CurrentStart) / 1000,
 						CurrentAvg = CurrentTotal / CurrentTimeLapse / 4,
+						Optimal = optimal_performance(StoreID),
 						?LOG_INFO([{event, mining_partition_performance_report},
 								{partition, Partition}, {avg, PartitionAvg},
 								{current, CurrentAvg}]),
-						{[io_lib:format("Partition ~B avg: ~.2f MiB/s, current: ~.2f MiB/s.~n",
-								[Partition, PartitionAvg, CurrentAvg]) | Acc1],
+						{[io_lib:format("Partition ~B avg: ~.2f MiB/s, current: ~.2f MiB/s, "
+										"estimated optimal: ~.2f MiB/s.~n",
+								[Partition, PartitionAvg, CurrentAvg, Optimal]) | Acc1],
 								max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
 								max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal}
 				end
@@ -1078,6 +1080,13 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 pick_hashing_thread(Threads) ->
 	{{value, Thread}, Threads2} = queue:out(Threads),
 	{Thread, queue:in(Thread, Threads2)}.
+
+optimal_performance(StoreID) ->
+	VdfSpeed = persistent_term:get(vdf_speed_ms) / 1000,
+	case prometheus_gauge:value(v2_index_data_size_by_packing, [StoreID, spora_2_6]) of
+		undefined -> 0;
+		StorageSize -> (100 / VdfSpeed) * (StorageSize / ?PARTITION_SIZE)
+	end.
 
 %%%===================================================================
 %%% Tests.

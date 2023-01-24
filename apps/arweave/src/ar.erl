@@ -665,6 +665,7 @@ benchmark_vdf_command() ->
 benchmark_vdf() ->
 	Input = crypto:strong_rand_bytes(32),
 	{Time, _} = timer:tc(fun() -> ar_vdf:compute2(1, Input, ?VDF_DIFFICULTY) end),
+	persistent_term:put(vdf_speed_ms, Time / 1000),
 	io:format("~n~nVDF step computed in ~.2f seconds.~n~n", [Time / 1000000]),
 	case Time > 1250000 of
 		true ->
