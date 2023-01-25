@@ -480,6 +480,16 @@ parse_options([{<<"block_throttle_by_solution_interval">>, D} | Rest], Config)
 		when is_integer(D) ->
 	parse_options(Rest, Config#config{ block_throttle_by_solution_interval = D });
 
+parse_options([{<<"defragment_modules">>, L} | Rest], Config) when is_list(L) ->
+	try
+		DefragModules = [parse_storage_module(Bin) || Bin <- L],
+		parse_options(Rest, Config#config{ defragmentation_modules = DefragModules })
+	catch _:_ ->
+		{error, {bad_format, defragment_modules, "an array of \"[number],[address]\""}, L}
+	end;
+parse_options([{<<"defragment_modules">>, Bin} | _], _) ->
+	{error, {bad_type, defragment_modules, array}, Bin};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
