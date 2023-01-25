@@ -48,7 +48,7 @@ is_v2_pricing_height(Height) ->
 %% network hash rates and block rewards. The total reward used in calculations
 %% is at least 1 Winston, even if all block rewards from the given history are 0.
 %% Also, the returned price is always at least 1 Winston.
-get_price_per_gib_minute(PriceHistory, Denomination2) ->
+get_price_per_gib_minute(RewardHistory, Denomination2) ->
 	{HashRateTotal, RewardTotal} =
 		lists:foldl(
 			fun({_Addr, HashRate, Reward, Denomination}, {Acc1, Acc2}) ->
@@ -56,7 +56,7 @@ get_price_per_gib_minute(PriceHistory, Denomination2) ->
 				{Acc1 + HashRate, Acc2 + Reward2}
 			end,
 			{0, 0},
-			PriceHistory
+			RewardHistory
 		),
 	%% 2 recall ranges per partition per second.
 	SolutionsPerPartitionPerSecond = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
@@ -91,10 +91,10 @@ get_miner_reward_endowment_pool_debt_supply(Args) ->
 	{EndowmentPool, DebtSupply, TXs, WeaveSize, Height, GiBMinutePrice,
 			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination} = Args,
 	Inflation = redenominate(ar_inflation:calculate(Height), 1, Denomination),
-	{EndowmentPoolFeeShare, MinerFeeShare} = distribute_transaction_fees2(TXs, Denomination),
-	EndowmentPool2 = EndowmentPool + EndowmentPoolFeeShare,
-	BaseReward = Inflation + MinerFeeShare,
 	ExpectedReward = (?N_REPLICATIONS(Height)) * WeaveSize * GiBMinutePrice * 2 div (?GiB),
+	{EndowmentPoolFeeShare, MinerFeeShare} = distribute_transaction_fees2(TXs, Denomination),
+	BaseReward = Inflation + MinerFeeShare,
+	EndowmentPool2 = EndowmentPool + EndowmentPoolFeeShare,
 	case BaseReward >= ExpectedReward of
 		true ->
 			{BaseReward, EndowmentPool2, DebtSupply, KryderPlusRateMultiplierLatch,
@@ -197,15 +197,15 @@ get_initial_current_and_scheduled_price_per_gib_minute(B) ->
 	{Price, Price}.
 
 recalculate_price_per_gib_minute2(B) ->
-	#block{ height = PrevHeight, price_history = PriceHistory,
+	#block{ height = PrevHeight, reward_history = RewardHistory,
 			denomination = Denomination, price_per_gib_minute = Price,
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
 	case is_price_adjustment_height(PrevHeight + 1) of
 		false ->
 			{Price, ScheduledPrice};
 		true ->
-			PriceHistory2 = lists:sublist(PriceHistory, ?PRICE_HISTORY_BLOCKS),
-			Price2 = min(Price * 2, get_price_per_gib_minute(PriceHistory2, Denomination)),
+			RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
+			Price2 = min(Price * 2, get_price_per_gib_minute(RewardHistory2, Denomination)),
 			Price3 = max(Price div 2, Price2),
 			{ScheduledPrice, Price3}
 	end.

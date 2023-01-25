@@ -493,7 +493,7 @@ mines_format_2_txs_without_size_limit() ->
 	?assert(TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT).
 
 rejects_txs_with_outdated_anchors_test_() ->
-	{timeout, 120, fun() ->
+	{timeout, 180, fun() ->
 		%% Post a transaction anchoring the block at ?MAX_TX_ANCHOR_DEPTH + 1.
 		%%
 		%% Expect the transaction to be rejected.

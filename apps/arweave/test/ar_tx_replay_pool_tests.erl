@@ -5,7 +5,10 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-verify_block_txs_test() ->
+verify_block_txs_test_() ->
+	{timeout, 10, fun test_verify_block_txs/0}.
+
+test_verify_block_txs() ->
 	Key1 = ar_wallet:new(),
 	Key2 = ar_wallet:new(),
 	RandomBlockAnchors =

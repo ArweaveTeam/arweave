@@ -349,11 +349,11 @@ add_block(B, State) ->
 add_block2(B, #state{ sync_disk_space = false } = State) ->
 	case ar_storage:update_confirmation_index(B) of
 		ok ->
-			case ar_storage:update_price_history(B) of
+			case ar_storage:update_reward_history(B) of
 				ok ->
 					{ok, State};
 				Error ->
-					?LOG_ERROR([{event, failed_to_record_price_history_update},
+					?LOG_ERROR([{event, failed_to_record_reward_history_update},
 							{reason, io_lib:format("~p", [Error])}]),
 					{Error, State}
 			end;

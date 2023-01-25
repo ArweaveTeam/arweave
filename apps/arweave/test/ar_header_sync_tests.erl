@@ -21,7 +21,7 @@ syncs_headers_test_() ->
 
 test_syncs_headers() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
 	{_Master, _} = start(B0),
 	post_random_blocks(Wallet, ?MAX_TX_ANCHOR_DEPTH + 5, B0),
 	join_on_master(),

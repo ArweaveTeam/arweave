@@ -733,7 +733,7 @@ handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
 			end
 	end;
 
-handle(<<"GET">>, [<<"price_history">>, EncodedBH], Req, _Pid) ->
+handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -742,10 +742,10 @@ handle(<<"GET">>, [<<"price_history">>, EncodedBH], Req, _Pid) ->
 				{ok, BH} ->
 					Fork_2_6 = ar_fork:height_2_6(),
 					case ar_block_cache:get_block_and_status(block_cache, BH) of
-						{#block{ height = Height, price_history = PriceHistory }, Status}
+						{#block{ height = Height, reward_history = RewardHistory }, Status}
 								when (Status == on_chain orelse Status == validated),
 									Height >= Fork_2_6 ->
-							{200, #{}, ar_serialize:price_history_to_binary(PriceHistory),
+							{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory),
 									Req};
 						_ ->
 							{404, #{}, <<>>, Req}

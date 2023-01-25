@@ -54,7 +54,10 @@ assert_clear_error_codes(TXID) ->
 	?assert(not_found == get_error_codes(TXID)),
 	ok.
 
-tx_db_test() ->
+tx_db_test_() ->
+	{timeout, 10, fun test_tx_db/0}.
+
+test_tx_db() ->
 	{_, Pub1 = {_, Owner1}} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
 	Wallets = [

@@ -285,9 +285,9 @@ write_genesis_files(DataDir, B0) ->
 	),
 	%% Write block index.
 	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIBin = term_to_binary({BI, B0#block.price_history}),
+	BIBin = term_to_binary({BI, B0#block.reward_history}),
 	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
-	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_price_history.bin">>),
+	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
 	ok = file:write_file(BIFilepath, BIBin),
 	%% Write accounts.
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),

@@ -461,14 +461,14 @@ test_mining_reward() ->
 	ar_node:mine(),
 	wait_until_height(1),
 	B1 = ar_node:get_current_block(),
-	[{MiningAddr, _, Reward, 1}, _] = B1#block.price_history,
+	[{MiningAddr, _, Reward, 1}, _] = B1#block.reward_history,
 	?assertEqual(0, ar_node:get_balance(Pub1)),
 	lists:foreach(
 		fun(Height) ->
 			ar_node:mine(),
 			wait_until_height(Height + 1)
 		end,
-		lists:seq(1, ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE)
+		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
 	),
 	?assertEqual(Reward, ar_node:get_balance(Pub1)).
 
@@ -485,14 +485,14 @@ test_multi_node_mining_reward() ->
 	slave_mine(),
 	wait_until_height(1),
 	B1 = ar_node:get_current_block(),
-	[{MiningAddr, _, Reward, 1}, _] = B1#block.price_history,
+	[{MiningAddr, _, Reward, 1}, _] = B1#block.reward_history,
 	?assertEqual(0, ar_node:get_balance(Pub1)),
 	lists:foreach(
 		fun(Height) ->
 			ar_node:mine(),
 			wait_until_height(Height + 1)
 		end,
-		lists:seq(1, ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE)
+		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
 	),
 	?assertEqual(Reward, ar_node:get_balance(Pub1)).
 

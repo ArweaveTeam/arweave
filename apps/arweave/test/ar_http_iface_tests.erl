@@ -387,7 +387,7 @@ test_get_block_by_hash() ->
 			master_peer(), binary),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
 	?assertEqual(B0#block{ size_tagged_txs = unset, account_tree = undefined, txs = TXIDs,
-			price_history = [] }, B1).
+			reward_history = [] }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test_() ->
@@ -401,7 +401,7 @@ test_get_block_by_height() ->
 			binary),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
 	?assertEqual(B0#block{ size_tagged_txs = unset, account_tree = undefined, txs = TXIDs,
-			price_history = [] }, B1).
+			reward_history = [] }, B1).
 
 get_current_block_test_() ->
 	{timeout, 30, fun test_get_current_block/0}.
@@ -418,7 +418,7 @@ test_get_current_block() ->
 	{ok, BI} = ar_http_iface_client:get_block_index(Peer, 0, 100),
 	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(hd(BI), Peer, binary),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [],
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
 			account_tree = undefined }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{ method => get, peer => master_peer(), path => "/block/current" }),
@@ -905,11 +905,11 @@ test_rejects_blocks_with_invalid_double_signing_proof() ->
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, Preimage4/binary >>,
 	Signature3 = ar_wallet:sign(Key, SignaturePreimage3),
 	Signature4 = ar_wallet:sign(Key, SignaturePreimage4),
-	%% The account address is not in the price history.
+	%% The account address is not in the reward history.
 	InvalidProof3 = {element(3, Key2), Signature3, CDiff, PrevCDiff, Preimage3,
 			Signature4, CDiff, PrevCDiff, Preimage4},
 	B5 = sign_block(B1#block{ double_signing_proof = InvalidProof3 }, B0, Key),
-	post_block(B5, invalid_double_signing_proof_not_in_price_history),
+	post_block(B5, invalid_double_signing_proof_not_in_reward_history),
 	connect_to_slave(),
 	wait_until_height(2),
 	B6 = slave_call(ar_storage, read_block, [hd(BI2)]),
@@ -1025,13 +1025,13 @@ test_rejects_blocks_with_invalid_miner_reward() ->
 	ar_test_node:assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_node, get_current_block, []),
 	B2 = sign_block(B1#block{ reward = 0 }, B0, Key),
-	post_block(B2, invalid_price_history_hash),
+	post_block(B2, invalid_reward_history_hash),
 	HashRate = ar_difficulty:get_hash_rate(B2#block.diff),
-	PriceHistory = tl(B2#block.price_history),
+	RewardHistory = tl(B2#block.reward_history),
 	Addr = B2#block.reward_addr,
 	B3 = sign_block(B2#block{
-			price_history_hash = ar_block:price_history_hash([{Addr, HashRate, 0, 1}
-					| PriceHistory]) }, B0, Key),
+			reward_history_hash = ar_block:reward_history_hash([{Addr, HashRate, 0, 1}
+					| RewardHistory]) }, B0, Key),
 	post_block(B3, invalid_miner_reward).
 
 rejects_blocks_with_invalid_wallet_list_test_() ->
@@ -1068,11 +1068,11 @@ await_post_block(#block{ indep_hash = H } = B, ExpectedResults, Peer) ->
 	PostGossipFailureCodes = [invalid_denomination,
 			invalid_double_signing_proof_same_signature, invalid_double_signing_proof_cdiff,
 			invalid_double_signing_proof_same_address,
-			invalid_double_signing_proof_not_in_price_history,
+			invalid_double_signing_proof_not_in_reward_history,
 			invalid_double_signing_proof_already_banned,
 			invalid_double_signing_proof_invalid_signature,
 			mining_address_banned, invalid_account_anchors, invalid_reward_pool,
-			invalid_miner_reward, invalid_debt_supply, invalid_price_history_hash,
+			invalid_miner_reward, invalid_debt_supply, invalid_reward_history_hash,
 			invalid_kryder_plus_rate_multiplier_latch, invalid_kryder_plus_rate_multiplier,
 			invalid_wallet_list],
 	receive
