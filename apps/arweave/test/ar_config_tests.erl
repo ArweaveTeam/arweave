@@ -108,6 +108,13 @@ parse_config() ->
 				{3, 3, 3, 3, 1984}],
 		run_defragmentation = true,
 		defragmentation_trigger_threshold = 1_000,
+		defragmentation_modules = [
+			{?PARTITION_SIZE, 0, unpacked},
+			{?PARTITION_SIZE, 2, {spora_2_6, ExpectedMiningAddr}},
+			{?PARTITION_SIZE, 100, unpacked},
+			{1, 0, unpacked},
+			{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}}
+		],
 		block_throttle_by_ip_interval = 5_000,
 		block_throttle_by_solution_interval = 12_000
 	}, ParsedConfig).

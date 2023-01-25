@@ -188,6 +188,7 @@
 	debug = false,
 	run_defragmentation = false,
 	defragmentation_trigger_threshold = 1_500_000_000,
+	defragmentation_modules = [],
 	block_throttle_by_ip_interval = ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
 	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS
 }).

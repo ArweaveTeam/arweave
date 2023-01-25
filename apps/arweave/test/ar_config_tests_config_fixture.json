@@ -113,6 +113,13 @@
   "vdf_client_peers": ["2.3.6.7:1984", "4.7.3.1:1983", "3.3.3.3"],
   "run_defragmentation": true,
   "defragmentation_trigger_threshold": 1000,
+  "defragment_modules": [
+    "0,unpacked",
+    "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
+    "100,unpacked",
+    "0,1,unpacked",
+    "14,1000000000000,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+  ],
   "block_throttle_by_ip_interval": 5000,
   "block_throttle_by_solution_interval": 12000
 }
