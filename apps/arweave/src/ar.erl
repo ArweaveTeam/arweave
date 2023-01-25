@@ -308,7 +308,10 @@ show_help() ->
 			{"block_throttle_by_solution_interval (number)",
 					io_lib:format("The number of milliseconds that have to pass before "
 							"we accept another block with the same solution hash. "
-							"Default: ~B.", [?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS])}
+							"Default: ~B.", [?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS])},
+			{"defragment_module",
+				"Run defragmentation of the chunk storage files from the given storage module."
+				" Assumes the run_defragmentation flag is provided."}
 		]
 	),
 	erlang:halt().
@@ -519,6 +522,16 @@ parse_cli_args(["block_throttle_by_ip_interval", Num | Rest], C) ->
 parse_cli_args(["block_throttle_by_solution_interval", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			block_throttle_by_solution_interval = list_to_integer(Num) });
+parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
+	DefragModules = C#config.defragmentation_modules,
+	try
+		DefragModule = ar_config:parse_storage_module(DefragModuleString),
+		DefragModules2 = [DefragModule | DefragModules],
+		parse_cli_args(Rest, C#config{ defragmentation_modules = DefragModules2 })
+	catch _:_ ->
+		io:format("~ndefragment_module value must be in the [number],[address] format.~n~n"),
+		erlang:halt()
+	end;
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
