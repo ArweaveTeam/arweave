@@ -77,13 +77,13 @@ init([]) ->
 			{false, false} ->
 				not_joined;
 			{true, _} ->
-				case ar_storage:read_block_index_and_price_history() of
+				case ar_storage:read_block_index_and_reward_history() of
 					{error, enoent} ->
 						io:format(
 							"~n~n\tBlock index file is not found. "
 							"If you want to start from a block index copied "
 							"from another node, place it in "
-							"<data_dir>/hash_lists/last_block_index_and_price_history.bin~n~n"
+							"<data_dir>/hash_lists/last_block_index_and_reward_history.bin~n~n"
 						),
 						timer:sleep(1000),
 						erlang:halt();
@@ -98,8 +98,8 @@ init([]) ->
 	case {StateLookup, Config#config.auto_join} of
 		{not_joined, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
-		{{BI, PriceHistory}, true} ->
-			start_from_block_index(BI, PriceHistory);
+		{{BI, RewardHistory}, true} ->
+			start_from_block_index(BI, RewardHistory);
 		{_, false} ->
 			do_nothing
 	end,
@@ -1175,16 +1175,16 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 					B2 =
 						case B#block.height >= ar_fork:height_2_6() of
 							true ->
-								PriceHistory = PrevB#block.price_history,
+								RewardHistory = PrevB#block.reward_history,
 								Reward = B#block.reward,
 								HashRate = ar_difficulty:get_hash_rate(B#block.diff),
 								Denomination2 = B#block.denomination,
 								Addr = B#block.reward_addr,
-								PriceHistory2 = [{Addr, HashRate, Reward, Denomination2}
-										| PriceHistory],
-								Len = ?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
-								PriceHistory3 = lists:sublist(PriceHistory2, Len),
-								B#block{ price_history = PriceHistory3 };
+								RewardHistory2 = [{Addr, HashRate, Reward, Denomination2}
+										| RewardHistory],
+								Len = ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
+								RewardHistory3 = lists:sublist(RewardHistory2, Len),
+								B#block{ reward_history = RewardHistory3 };
 							false ->
 								B
 						end,
@@ -1228,37 +1228,37 @@ pick_txs(TXIDs, TXs) ->
 	).
 
 may_be_get_double_signing_proof(PrevB, State) ->
-	PriceHistory = lists:sublist(PrevB#block.price_history, ?PRICE_HISTORY_BLOCKS),
+	RewardHistory = lists:sublist(PrevB#block.reward_history, ?REWARD_HISTORY_BLOCKS),
 	Proofs = maps:get(double_signing_proofs, State, #{}),
 	RootHash = PrevB#block.wallet_list,
-	may_be_get_double_signing_proof2(maps:iterator(Proofs), RootHash, PriceHistory).
+	may_be_get_double_signing_proof2(maps:iterator(Proofs), RootHash, RewardHistory).
 
-may_be_get_double_signing_proof2(Iterator, RootHash, PriceHistory) ->
+may_be_get_double_signing_proof2(Iterator, RootHash, RewardHistory) ->
 	case maps:next(Iterator) of
 		none ->
 			undefined;
 		{Addr, {_Timestamp, Proof2}, Iterator2} ->
-			case is_in_price_history(Addr, PriceHistory) of
+			case is_in_reward_history(Addr, RewardHistory) of
 				false ->
-					may_be_get_double_signing_proof2(Iterator2, RootHash, PriceHistory);
+					may_be_get_double_signing_proof2(Iterator2, RootHash, RewardHistory);
 				true ->
 					Accounts = ar_wallets:get(RootHash, [Addr]),
 					case is_account_banned(Addr, Accounts) of
 						true ->
 							may_be_get_double_signing_proof2(Iterator2, RootHash,
-									PriceHistory);
+									RewardHistory);
 						false ->
 							Proof2
 					end
 			end
 	end.
 
-is_in_price_history(_Addr, []) ->
+is_in_reward_history(_Addr, []) ->
 	false;
-is_in_price_history(Addr, [{Addr, _, _, _} | _]) ->
+is_in_reward_history(Addr, [{Addr, _, _, _} | _]) ->
 	true;
-is_in_price_history(Addr, [_ | PriceHistory]) ->
-	is_in_price_history(Addr, PriceHistory).
+is_in_reward_history(Addr, [_ | RewardHistory]) ->
+	is_in_reward_history(Addr, RewardHistory).
 
 is_account_banned(Addr, Map) ->
 	case maps:get(Addr, Map, not_found) of
@@ -1271,7 +1271,7 @@ is_account_banned(Addr, Map) ->
 	end.
 
 pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) ->
-	#block{ price_history = PriceHistory } = PrevB,
+	#block{ reward_history = RewardHistory } = PrevB,
 	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
 	Rate = ar_pricing:usd_to_ar_rate(PrevB),
 	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
@@ -1281,10 +1281,9 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 	RedenominationHeight = PrevB#block.redenomination_height,
 	Addresses = [B#block.reward_addr | ar_tx:get_addresses(TXs)],
 	Addresses2 =
-		case length(PriceHistory) >= ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE of
+		case length(RewardHistory) >= ?REWARD_HISTORY_BLOCKS of
 			true ->
-				[element(1, lists:nth(?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE,
-						PriceHistory)) | Addresses];
+				[element(1, lists:nth(?REWARD_HISTORY_BLOCKS, RewardHistory)) | Addresses];
 			false ->
 				Addresses
 		end,
@@ -1323,16 +1322,16 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
 			Denomination2),
 	HashRate = ar_difficulty:get_hash_rate(Diff),
-	PriceHistory2 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
-			| PriceHistory], ?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-	PriceHistory3 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
-			| PriceHistory], ?PRICE_HISTORY_BLOCKS),
+	RewardHistory2 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
+			| RewardHistory], ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+	RewardHistory3 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
+			| RewardHistory], ?REWARD_HISTORY_BLOCKS),
 	B2#block{
 		wallet_list = RootHash,
 		reward_pool = EndowmentPool2,
 		reward = Reward2,
-		price_history = PriceHistory2,
-		price_history_hash = ar_block:price_history_hash(PriceHistory3),
+		reward_history = RewardHistory2,
+		reward_history_hash = ar_block:reward_history_hash(RewardHistory3),
 		debt_supply = DebtSupply2,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier2
@@ -1400,12 +1399,12 @@ validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
 			ar_events:send(block, {rejected, invalid_double_signing_proof_same_address, H,
 					no_peer}),
 			error;
-		{error, invalid_double_signing_proof_not_in_price_history} ->
+		{error, invalid_double_signing_proof_not_in_reward_history} ->
 			?LOG_WARNING([{event, received_invalid_block},
-					{validation_error, invalid_double_signing_proof_not_in_price_history},
+					{validation_error, invalid_double_signing_proof_not_in_reward_history},
 					{h, ar_util:encode(H)}]),
 			ar_events:send(block, {rejected,
-					invalid_double_signing_proof_not_in_price_history, H, no_peer}),
+					invalid_double_signing_proof_not_in_reward_history, H, no_peer}),
 			error;
 		{error, invalid_double_signing_proof_already_banned} ->
 			?LOG_WARNING([{event, received_invalid_block},
@@ -1689,8 +1688,8 @@ maybe_store_block_index(B) ->
 	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
 		0 ->
 			BI = ar_node:get_block_index(),
-			spawn(fun() -> ar_storage:write_block_index_and_price_history(BI,
-					B#block.price_history) end);
+			spawn(fun() -> ar_storage:write_block_index_and_reward_history(BI,
+					B#block.reward_history) end);
 		_ ->
 			ok
 	end.
@@ -1723,13 +1722,13 @@ record_economic_metrics2(B, PrevB) ->
 			B#block.usd_to_ar_rate, B#block.height),
 	case B#block.height >= ar_fork:height_2_6() of
 		true ->
-			#block{ price_history = PriceHistory } = B,
-			PriceHistorySize = length(PriceHistory),
+			#block{ reward_history = RewardHistory } = B,
+			RewardHistorySize = length(RewardHistory),
 			AverageHashRate = ar_util:safe_divide(lists:sum([HR
-					|| {_, HR, _, _} <- PriceHistory]), PriceHistorySize),
+					|| {_, HR, _, _} <- RewardHistory]), RewardHistorySize),
 			prometheus_gauge:set(average_network_hash_rate, AverageHashRate),
 			AverageBlockReward = ar_util:safe_divide(lists:sum([R
-					|| {_, _, R, _} <- PriceHistory]), PriceHistorySize),
+					|| {_, _, R, _} <- RewardHistory]), RewardHistorySize),
 			prometheus_gauge:set(average_block_reward, AverageBlockReward),
 			prometheus_gauge:set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
 			Args = {PrevB#block.reward_pool, PrevB#block.debt_supply, B#block.txs,
@@ -1938,7 +1937,7 @@ read_hash_list_2_0_for_1_0_blocks() ->
 			[]
 	end.
 
-start_from_block_index([#block{} = GenesisB], PriceHistory) ->
+start_from_block_index([#block{} = GenesisB], RewardHistory) ->
 	BI = [ar_util:block_index_entry_from_block(GenesisB)],
 	case ar_fork:height_2_6() of
 		0 ->
@@ -1946,8 +1945,8 @@ start_from_block_index([#block{} = GenesisB], PriceHistory) ->
 		_ ->
 			ar_randomx_state:init(BI, [])
 	end,
-	self() ! {join, BI, [GenesisB#block{ price_history = PriceHistory }]};
-start_from_block_index(BI, PriceHistory) ->
+	self() ! {join, BI, [GenesisB#block{ reward_history = RewardHistory }]};
+start_from_block_index(BI, RewardHistory) ->
 	case length(BI) - 1 - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_6() of
 		true ->
 			ok;
@@ -1955,7 +1954,7 @@ start_from_block_index(BI, PriceHistory) ->
 			ar_randomx_state:init(BI, [])
 	end,
 	Blocks = read_recent_blocks(BI),
-	Blocks2 = ar_join:set_price_history(Blocks, PriceHistory),
+	Blocks2 = ar_join:set_reward_history(Blocks, RewardHistory),
 	Blocks3 = ar_join:set_prev_cumulative_diff(Blocks2),
 	self() ! {join, BI, Blocks3}.
 

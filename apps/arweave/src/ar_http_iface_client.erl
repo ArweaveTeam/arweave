@@ -11,7 +11,7 @@
 		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
 		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
-		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_price_history/3,
+		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
 		push_nonce_limiter_update/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -470,57 +470,57 @@ get_recent_hash_list_diff(Peer, HL) ->
 		headers => p2p_headers()
 	}), HL, Peer).
 
-%% @doc Fetch the price history from one of the given peers. The price history
-%% must contain ?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT elements or
-%% one per every block since the fork 2.6 block, whatever is smaller. The price history
-%% hashes are validated against the given ExpectedPriceHistoryHashes. Return not_found
-%% if we fail to fetch a price history of the expected length from any of the peers.
-get_price_history([Peer | Peers], B, ExpectedPriceHistoryHashes) ->
+%% @doc Fetch the reward history from one of the given peers. The reward history
+%% must contain ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT elements or
+%% one per every block since the fork 2.6 block, whatever is smaller. The reward history
+%% hashes are validated against the given ExpectedRewardHistoryHashes. Return not_found
+%% if we fail to fetch a reward history of the expected length from any of the peers.
+get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 	#block{ height = Height, indep_hash = H } = B,
 	Fork_2_6 = ar_fork:height_2_6(),
 	true = Height >= Fork_2_6,
 	ExpectedLength = min(Height - Fork_2_6 + 1,
-			?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-	true = length(ExpectedPriceHistoryHashes) == min(Height - Fork_2_6 + 1,
+			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+	true = length(ExpectedRewardHistoryHashes) == min(Height - Fork_2_6 + 1,
 			?STORE_BLOCKS_BEHIND_CURRENT),
-	SizeLimit = (33 * 2) * (?PRICE_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+	SizeLimit = (33 * 2) * (?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 	case ar_http:req(#{
 				peer => Peer,
 				method => get,
-				path => "/price_history/" ++ binary_to_list(ar_util:encode(H)),
+				path => "/reward_history/" ++ binary_to_list(ar_util:encode(H)),
 				timeout => 30000,
 				limit => SizeLimit,
 				headers => p2p_headers()
 			}) of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			case ar_serialize:binary_to_price_history(Body) of
-				{ok, PriceHistory} when length(PriceHistory) == ExpectedLength ->
-					case validate_price_history_hashes(PriceHistory,
-							ExpectedPriceHistoryHashes) of
+			case ar_serialize:binary_to_reward_history(Body) of
+				{ok, RewardHistory} when length(RewardHistory) == ExpectedLength ->
+					case validate_reward_history_hashes(RewardHistory,
+							ExpectedRewardHistoryHashes) of
 						true ->
-							{ok, PriceHistory};
+							{ok, RewardHistory};
 						false ->
-							?LOG_WARNING([{event, received_invalid_price_history},
+							?LOG_WARNING([{event, received_invalid_reward_history},
 									{peer, ar_util:format_peer(Peer)}]),
-							get_price_history(Peers, B, ExpectedPriceHistoryHashes)
+							get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 					end;
 				{ok, L} ->
-					?LOG_WARNING([{event, received_price_history_of_unexpected_length},
+					?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
 							{expected_length, ExpectedLength}, {received_length, length(L)},
 							{peer, ar_util:format_peer(Peer)}]),
-					get_price_history(Peers, B, ExpectedPriceHistoryHashes);
+					get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
 				{error, _} ->
-					?LOG_WARNING([{event, failed_to_parse_price_history},
+					?LOG_WARNING([{event, failed_to_parse_reward_history},
 							{peer, ar_util:format_peer(Peer)}]),
-					get_price_history(Peers, B, ExpectedPriceHistoryHashes)
+					get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 			end;
 		Reply ->
-			?LOG_WARNING([{event, failed_to_fetch_price_history},
+			?LOG_WARNING([{event, failed_to_fetch_reward_history},
 					{peer, ar_util:format_peer(Peer)},
 					{reply, io_lib:format("~p", [Reply])}]),
-			get_price_history(Peers, B, ExpectedPriceHistoryHashes)
+			get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 	end;
-get_price_history([], _B, _PriceHistoryHashes) ->
+get_reward_history([], _B, _RewardHistoryHashes) ->
 	not_found.
 
 push_nonce_limiter_update(Peer, Update) ->
@@ -544,12 +544,12 @@ push_nonce_limiter_update(Peer, Update) ->
 			Reply
 	end.
 
-validate_price_history_hashes(_PriceHistory, []) ->
+validate_reward_history_hashes(_RewardHistory, []) ->
 	true;
-validate_price_history_hashes(PriceHistory, [H | ExpectedPriceHistoryHashes]) ->
-	case ar_block:validate_price_history_hash(H, PriceHistory) of
+validate_reward_history_hashes(RewardHistory, [H | ExpectedRewardHistoryHashes]) ->
+	case ar_block:validate_reward_history_hash(H, RewardHistory) of
 		true ->
-			validate_price_history_hashes(tl(PriceHistory), ExpectedPriceHistoryHashes);
+			validate_reward_history_hashes(tl(RewardHistory), ExpectedRewardHistoryHashes);
 		false ->
 			false
 	end.

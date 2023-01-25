@@ -231,12 +231,12 @@ register(MetricsDir) ->
 	prometheus_gauge:new([
 		{name, average_network_hash_rate},
 		{help, io_lib:format("The average network hash rate measured over the latest ~B "
-				"blocks.", [?PRICE_HISTORY_BLOCKS])}
+				"blocks.", [?REWARD_HISTORY_BLOCKS])}
 	]),
 	prometheus_gauge:new([
 		{name, average_block_reward},
 		{help, io_lib:format("The average block reward in Winston computed from the latest ~B "
-				"blocks.", [?PRICE_HISTORY_BLOCKS])}
+				"blocks.", [?REWARD_HISTORY_BLOCKS])}
 	]),
 	prometheus_gauge:new([
 		{name, expected_block_reward},
@@ -451,8 +451,8 @@ name_route([<<"optimistic_price">>, _SizeInBytes]) ->
 name_route([<<"optimistic_price">>, _SizeInBytes, _Addr]) ->
 	"/optimistic_price/{bytes}/{address}";
 
-name_route([<<"price_history">>, _BH]) ->
-	"/price_history/{block_hash}";
+name_route([<<"reward_history">>, _BH]) ->
+	"/reward_history/{block_hash}";
 
 name_route([<<"wallet">>, _Addr, <<"balance">>]) ->
 	"/wallet/{addr}/balance";

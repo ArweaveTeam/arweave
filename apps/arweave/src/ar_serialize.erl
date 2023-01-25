@@ -17,7 +17,7 @@
 		query_to_json_struct/1, json_struct_to_query/1,
 		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1, encode_int/2, encode_bin/2,
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
-		price_history_to_binary/1, binary_to_price_history/1,
+		reward_history_to_binary/1, binary_to_reward_history/1,
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
 
@@ -247,7 +247,7 @@ block_to_json_struct(
 							{price_per_gib_minute, integer_to_binary(PricePerGiBMinute)},
 							{scheduled_price_per_gib_minute,
 									integer_to_binary(ScheduledPricePerGiBMinute)},
-							{price_history_hash, ar_util:encode(B#block.price_history_hash)},
+							{reward_history_hash, ar_util:encode(B#block.reward_history_hash)},
 							{debt_supply, integer_to_binary(DebtSupply)},
 							{kryder_plus_rate_multiplier,
 									integer_to_binary(KryderPlusRateMultiplier)},
@@ -267,26 +267,26 @@ block_to_json_struct(
 		end,
 	{JSONElements5}.
 
-price_history_to_binary(PriceHistory) ->
-	price_history_to_binary(PriceHistory, []).
+reward_history_to_binary(RewardHistory) ->
+	reward_history_to_binary(RewardHistory, []).
 
-price_history_to_binary([], IOList) ->
+reward_history_to_binary([], IOList) ->
 	iolist_to_binary(IOList);
-price_history_to_binary([{Addr, HashRate, Reward, Denomination} | PriceHistory], IOList) ->
-	price_history_to_binary(PriceHistory, [Addr, ar_serialize:encode_int(HashRate, 8),
+reward_history_to_binary([{Addr, HashRate, Reward, Denomination} | RewardHistory], IOList) ->
+	reward_history_to_binary(RewardHistory, [Addr, ar_serialize:encode_int(HashRate, 8),
 			ar_serialize:encode_int(Reward, 8), << Denomination:24 >> | IOList]).
 
-binary_to_price_history(Bin) ->
-	binary_to_price_history(Bin, []).
+binary_to_reward_history(Bin) ->
+	binary_to_reward_history(Bin, []).
 
-binary_to_price_history(<< Addr:32/binary, HashRateSize:8, HashRate:(HashRateSize * 8),
+binary_to_reward_history(<< Addr:32/binary, HashRateSize:8, HashRate:(HashRateSize * 8),
 		RewardSize:8, Reward:(RewardSize * 8), Denomination:24, Rest/binary >>,
-		PriceHistory) ->
-	binary_to_price_history(Rest, [{Addr, HashRate, Reward, Denomination} | PriceHistory]);
-binary_to_price_history(<<>>, PriceHistory) ->
-	{ok, PriceHistory};
-binary_to_price_history(_Rest, _PriceHistory) ->
-	{error, invalid_price_history}.
+		RewardHistory) ->
+	binary_to_reward_history(Rest, [{Addr, HashRate, Reward, Denomination} | RewardHistory]);
+binary_to_reward_history(<<>>, RewardHistory) ->
+	{ok, RewardHistory};
+binary_to_reward_history(_Rest, _RewardHistory) ->
+	{error, invalid_reward_history}.
 
 nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
@@ -388,7 +388,7 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 			poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 			recall_byte2 = RecallByte2, price_per_gib_minute = PricePerGiBMinute,
 			scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
-			price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
+			reward_history_hash = RewardHistoryHash, debt_supply = DebtSupply,
 			kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 			kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 			denomination = Denomination, redenomination_height = RedenominationHeight,
@@ -407,7 +407,7 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 				(encode_bin(TXPath, 24))/binary, (encode_bin(DataPath, 24))/binary,
 				(encode_int(PricePerGiBMinute, 8))/binary,
 				(encode_int(ScheduledPricePerGiBMinute, 8))/binary,
-				PriceHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
+				RewardHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
 				KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8,
 				Denomination:24, (encode_int(RedenominationHeight, 8))/binary,
 				(encode_double_signing_proof(DoubleSigningProof))/binary >>
@@ -530,7 +530,7 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 		PricePerGiBMinuteSize:8, PricePerGiBMinute:(PricePerGiBMinuteSize * 8),
 		ScheduledPricePerGiBMinuteSize:8,
 		ScheduledPricePerGiBMinute:(ScheduledPricePerGiBMinuteSize * 8),
-		PriceHistoryHash:32/binary, DebtSupplySize:8, DebtSupply:(DebtSupplySize * 8),
+		RewardHistoryHash:32/binary, DebtSupplySize:8, DebtSupply:(DebtSupplySize * 8),
 		KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8,
 		Denomination:24, RedenominationHeightSize:8,
 		RedenominationHeight:(RedenominationHeightSize * 8),
@@ -561,7 +561,7 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 					poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 					price_per_gib_minute = PricePerGiBMinute,
 					scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
-					price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
+					reward_history_hash = RewardHistoryHash, debt_supply = DebtSupply,
 					kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 					kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 					denomination = Denomination, redenomination_height = RedenominationHeight,
@@ -1609,7 +1609,10 @@ wallet_list_roundtrip_test() ->
 	),
 	?assertEqual(ExpectedWL, ActualWL).
 
-block_index_roundtrip_test() ->
+block_index_roundtrip_test_() ->
+	{timeout, 10, fun test_block_index_roundtrip/0}.
+
+test_block_index_roundtrip() ->
 	[B] = ar_weave:init(),
 	HL = [B#block.indep_hash, B#block.indep_hash],
 	JSONHL = jsonify(block_index_to_json_struct(HL)),

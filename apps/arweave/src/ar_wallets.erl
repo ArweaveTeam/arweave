@@ -268,12 +268,11 @@ apply_block2(B, PrevB, DAG) ->
 	TXs = B#block.txs,
 	RewardAddr = B#block.reward_addr,
 	Addresses = [RewardAddr | ar_tx:get_addresses(TXs)],
-	PriceHistory = PrevB#block.price_history,
+	RewardHistory = PrevB#block.reward_history,
 	Addresses2 =
-		case length(PriceHistory) >= ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE of
+		case length(RewardHistory) >= ?REWARD_HISTORY_BLOCKS of
 			true ->
-				[element(1, lists:nth(?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE,
-						PriceHistory)) | Addresses];
+				[element(1, lists:nth(?REWARD_HISTORY_BLOCKS, RewardHistory)) | Addresses];
 			false ->
 				Addresses
 		end,

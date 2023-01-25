@@ -65,8 +65,8 @@ init(WalletList, Diff) ->
 				RewardKey = element(2, ar_wallet:new()),
 				RewardAddr = ar_wallet:to_address(RewardKey),
 				HashRate = ar_difficulty:get_hash_rate(Diff),
-				PriceHistory = [{RewardAddr, HashRate, 10, 1}],
-				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(PriceHistory, 1),
+				RewardHistory = [{RewardAddr, HashRate, 10, 1}],
+				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(RewardHistory, 1),
 				B0#block{ hash = crypto:strong_rand_bytes(32),
 						nonce = 0, recall_byte = 0, partition_number = 0,
 						reward_key = RewardKey, reward_addr = RewardAddr,
@@ -79,8 +79,9 @@ init(WalletList, Diff) ->
 								next_partition_upper_bound = BlockSize },
 							price_per_gib_minute = PricePerGiBMinute,
 							scheduled_price_per_gib_minute = PricePerGiBMinute,
-							price_history = PriceHistory,
-							price_history_hash = ar_block:price_history_hash(PriceHistory) };
+							reward_history = RewardHistory,
+							reward_history_hash = ar_block:reward_history_hash(RewardHistory)
+						};
 			true ->
 				B0
 		end,

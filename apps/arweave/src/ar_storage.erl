@@ -5,13 +5,13 @@
 -export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
 		read_tx/1, read_tx_data/1, update_confirmation_index/1, get_tx_confirmation_data/1,
 		read_wallet_list/1, write_wallet_list/2,
-		write_block_index/1, write_block_index_and_price_history/2,
-		read_block_index/0, read_block_index_and_price_history/0,
+		write_block_index/1, write_block_index_and_reward_history/2,
+		read_block_index/0, read_block_index_and_reward_history/0,
 		delete_blacklisted_tx/1, get_sufficient_space_for_headers/0, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
 		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
 		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1,
-		migrate_tx_record/1, migrate_block_record/1, update_price_history/1, read_account/2]).
+		migrate_tx_record/1, migrate_block_record/1, update_reward_history/1, read_account/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -672,16 +672,16 @@ write_block_index(BI) ->
 			Error
 	end.
 
-%% @doc Write the given block index and price history data to disk. Read when a
+%% @doc Write the given block index and reward history data to disk. Read when a
 %% node starts with the start_from_block_index flag.
-write_block_index_and_price_history(BI, PriceHistory) ->
-	?LOG_INFO([{event, writing_block_index_and_price_history_to_disk}]),
-	File = block_index_and_price_history_filepath(),
-	case write_file_atomic(File, term_to_binary({BI, PriceHistory})) of
+write_block_index_and_reward_history(BI, RewardHistory) ->
+	?LOG_INFO([{event, writing_block_index_and_reward_history_to_disk}]),
+	File = block_index_and_reward_history_filepath(),
+	case write_file_atomic(File, term_to_binary({BI, RewardHistory})) of
 		ok ->
 			ok;
 		{error, Reason} = Error ->
-			?LOG_ERROR([{event, failed_to_write_block_index_and_price_history_to_disk},
+			?LOG_ERROR([{event, failed_to_write_block_index_and_reward_history_to_disk},
 					{reason, Reason}]),
 			Error
 	end.
@@ -711,9 +711,9 @@ read_block_index() ->
 			Error
 	end.
 
-%% @doc Read the latest stored block index and price history data from disk.
-read_block_index_and_price_history() ->
-	case file:read_file(block_index_and_price_history_filepath()) of
+%% @doc Read the latest stored block index and reward history data from disk.
+read_block_index_and_reward_history() ->
+	case file:read_file(block_index_and_reward_history_filepath()) of
 		{ok, Binary} ->
 			binary_to_term(Binary, [safe]);
 		Error ->
@@ -870,7 +870,7 @@ init([]) ->
 			tx_confirmation_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), tx_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_block_db"), block_db),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "price_history_db"), price_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "account_tree_db"), account_tree_db),
 	ets:insert(?MODULE, [{same_disk_storage_modules_total_size,
 			get_same_disk_storage_modules_total_size()}]),
@@ -913,18 +913,18 @@ write_block(B) ->
 	case ar_kv:put(block_db, B#block.indep_hash, ar_serialize:block_to_binary(B#block{
 			txs = TXIDs })) of
 		ok ->
-			update_price_history(B);
+			update_reward_history(B);
 		Error ->
 			Error
 	end.
 
-update_price_history(B) ->
+update_reward_history(B) ->
 	case B#block.height >= ar_fork:height_2_6() of
 		true ->
 			HashRate = ar_difficulty:get_hash_rate(B#block.diff),
 			Addr = B#block.reward_addr,
 			Bin = term_to_binary({Addr, HashRate, B#block.reward}),
-			ar_kv:put(price_history_db, B#block.indep_hash, Bin);
+			ar_kv:put(reward_history_db, B#block.indep_hash, Bin);
 		false ->
 			ok
 	end.
@@ -1091,8 +1091,8 @@ tx_data_filename(TXID) ->
 block_index_filepath() ->
 	filepath([?HASH_LIST_DIR, <<"last_block_index.json">>]).
 
-block_index_and_price_history_filepath() ->
-	filepath([?HASH_LIST_DIR, <<"last_block_index_and_price_history.bin">>]).
+block_index_and_reward_history_filepath() ->
+	filepath([?HASH_LIST_DIR, <<"last_block_index_and_reward_history.bin">>]).
 
 wallet_list_filepath(Hash) when is_binary(Hash) ->
 	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
@@ -1214,9 +1214,9 @@ test_store_and_retrieve_block() ->
 	FetchedB02 = read_block(B0#block.height, [{B0#block.indep_hash, B0#block.weave_size,
 			B0#block.tx_root}]),
 	FetchedB03 = FetchedB02#block{ txs = [tx_id(TX) || TX <- FetchedB02#block.txs] },
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [],
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
 			account_tree = undefined }, FetchedB01),
-	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, price_history = [],
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
 			account_tree = undefined }, FetchedB03),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),

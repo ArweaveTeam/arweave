@@ -4,7 +4,7 @@
 		get_max_timestamp_deviation/0, verify_last_retarget/2, verify_weave_size/3,
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
 		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
-		indep_hash/1, indep_hash/2, indep_hash2/2, price_history_hash/1,
+		indep_hash/1, indep_hash/2, indep_hash2/2, reward_history_hash/1,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
 		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
@@ -12,7 +12,7 @@
 		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
 		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
-		get_packing_threshold/2, validate_price_history_hash/2]).
+		get_packing_threshold/2, validate_reward_history_hash/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -202,7 +202,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		previous_solution_hash = PreviousSolutionHash,
 		price_per_gib_minute = PricePerGiBMinute,
 		scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
-		price_history_hash = PriceHistoryHash, debt_supply = DebtSupply,
+		reward_history_hash = RewardHistoryHash, debt_supply = DebtSupply,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		denomination = Denomination, redenomination_height = RedenominationHeight,
@@ -243,7 +243,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			(encode_bin(PreviousSolutionHash, 8))/binary,
 			(encode_int(PricePerGiBMinute, 8))/binary,
 			(encode_int(ScheduledPricePerGiBMinute, 8))/binary,
-			PriceHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
+			RewardHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
 			KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8, Denomination:24,
 			(encode_int(RedenominationHeight, 8))/binary,
 			(ar_serialize:encode_double_signing_proof(DoubleSigningProof))/binary >>,
@@ -263,16 +263,16 @@ indep_hash(BDS, B) ->
 			ar_deep_hash:hash([BDS, B#block.hash, B#block.nonce])
 	end.
 
-price_history_hash(PriceHistory) ->
-	price_history_hash(PriceHistory, [ar_serialize:encode_int(length(PriceHistory), 8)]).
+reward_history_hash(RewardHistory) ->
+	reward_history_hash(RewardHistory, [ar_serialize:encode_int(length(RewardHistory), 8)]).
 
-price_history_hash([], IOList) ->
+reward_history_hash([], IOList) ->
 	crypto:hash(sha256, iolist_to_binary(IOList));
-price_history_hash([{Addr, HashRate, Reward, Denomination} | PriceHistory], IOList) ->
+reward_history_hash([{Addr, HashRate, Reward, Denomination} | RewardHistory], IOList) ->
 	HashRateBin = ar_serialize:encode_int(HashRate, 8),
 	RewardBin = ar_serialize:encode_int(Reward, 8),
 	DenominationBin = << Denomination:24 >>,
-	price_history_hash(PriceHistory, [Addr, HashRateBin, RewardBin, DenominationBin | IOList]).
+	reward_history_hash(RewardHistory, [Addr, HashRateBin, RewardBin, DenominationBin | IOList]).
 
 %% @doc Verify the block signature.
 verify_signature(BlockPreimage, PrevCDiff,
@@ -519,8 +519,8 @@ shift_packing_2_5_threshold(Threshold) ->
 	Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * (?TARGET_TIME),
 	max(0, Threshold - Shift).
 
-validate_price_history_hash(H, PriceHistory) ->
-	H == ar_block:price_history_hash(lists:sublist(PriceHistory, ?PRICE_HISTORY_BLOCKS)).
+validate_reward_history_hash(H, RewardHistory) ->
+	H == ar_block:reward_history_hash(lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS)).
 
 verify_tx_root(B) ->
 	B#block.tx_root == generate_tx_root_for_block(B).

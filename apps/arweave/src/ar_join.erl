@@ -1,6 +1,6 @@
 -module(ar_join).
 
--export([start/1, set_price_history/2, set_prev_cumulative_diff/1]).
+-export([start/1, set_reward_history/2, set_prev_cumulative_diff/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -25,14 +25,14 @@
 start(Peers) ->
 	spawn(fun() -> process_flag(trap_exit, true), start2(Peers) end).
 
-%% @doc Add the corresponding price history to every block record. We keep
-%% the price histories in the block cache and use them to validate blocks applied on top.
-set_price_history([], _PriceHistory) ->
+%% @doc Add the corresponding reward history to every block record. We keep
+%% the reward histories in the block cache and use them to validate blocks applied on top.
+set_reward_history([], _RewardHistory) ->
 	[];
-set_price_history(Blocks, []) ->
+set_reward_history(Blocks, []) ->
 	Blocks;
-set_price_history([B | Blocks], PriceHistory) ->
-	[B#block{ price_history = PriceHistory } | set_price_history(Blocks, tl(PriceHistory))].
+set_reward_history([B | Blocks], RewardHistory) ->
+	[B#block{ reward_history = RewardHistory } | set_reward_history(Blocks, tl(RewardHistory))].
 
 %% @doc Add the previous cumulative difficulty to every block but the last one.
 %% The previous cumulative difficulty is looked up when a potential double-signing
@@ -214,7 +214,7 @@ do_join(Peers, B, BI) ->
 	ar:console("Downloading the block trail.~n", []),
 	Blocks = get_block_and_trail(Peers, B, BI),
 	ar:console("Downloaded the block trail successfully.~n", []),
-	Blocks2 = may_be_set_price_history(Blocks, Peers),
+	Blocks2 = may_be_set_reward_history(Blocks, Peers),
 	Blocks3 = set_prev_cumulative_diff(Blocks2),
 	ar_node_worker ! {join, BI, Blocks3},
 	join_peers(Peers).
@@ -244,17 +244,17 @@ get_block_and_trail(Peers, H) ->
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
 	B#block{ size_tagged_txs = SizeTaggedTXs }.
 
-may_be_set_price_history([#block{ height = Height } | _] = Blocks, Peers) ->
+may_be_set_reward_history([#block{ height = Height } | _] = Blocks, Peers) ->
 	Fork_2_6 = ar_fork:height_2_6(),
 	case Height >= Fork_2_6 of
 		true ->
 			Len = min(Height - Fork_2_6 + 1, ?STORE_BLOCKS_BEHIND_CURRENT),
-			L = [B#block.price_history_hash || B <- lists:sublist(Blocks, Len)],
-			case ar_http_iface_client:get_price_history(Peers, hd(Blocks), L) of
-				{ok, PriceHistory} ->
-					set_price_history(Blocks, PriceHistory);
+			L = [B#block.reward_history_hash || B <- lists:sublist(Blocks, Len)],
+			case ar_http_iface_client:get_reward_history(Peers, hd(Blocks), L) of
+				{ok, RewardHistory} ->
+					set_reward_history(Blocks, RewardHistory);
 				_ ->
-					ar:console("Failed to fetch the price history for the block ~s from "
+					ar:console("Failed to fetch the reward history for the block ~s from "
 							"any of the peers. Consider changing the peers.~n",
 							[ar_util:encode((hd(Blocks))#block.indep_hash)]),
 					timer:sleep(1000),

@@ -26,49 +26,30 @@ end).
 
 %% The miners always receive ?MINER_FEE_SHARE of the transaction fees, even
 %% when the fees are bigger than the required minimum.
--ifdef(DEBUG).
-%% Give a smaller share to miners in tests, to slow down the fee growth a bit. Block rewards
-%% are recorded in the price history, and the history is used for re-estimating the fees so
-%% uploading transactions quickly pushes the prices up.
--define(MINER_FEE_SHARE, {1, 20001}).
--else.
 -define(MINER_FEE_SHARE, {1, 21}).
--endif.
 
-%% When a block is mined, a reward is reserved; the amount depends on the fees of
-%% the included transactions and the current inflation.
-%% After ?PRICE_HISTORY_BLOCKS - ?PAYOUT_SAMPLE_WINDOW_SIZE blocks,
-%% the reserved reward is released to the miner. However, miners do not always receive
-%% the entire reserved reward. They receive the minimal reward across the latest
-%% ?PAYOUT_SAMPLE_WINDOW_SIZE reserved rewards plus at most ?MINER_MINIMAL_REWARD_SHARE of it.
-%% The cap serves as a protection against consensus instability caused by large transaction
-%% fees - a very large transaction may make the expected reward of pursuing a fork "stealing"
-%% this transaction higher than the expected reward of continuing the existing fork.
-%% Also, the window is used for determining the reward for providing a double-signing proof.
+%% The miner takes at most 1/?MINER_FEE_SHARE_CAP of the base block reward from every
+%% transaction fee.
+-define(MINER_FEE_SHARE_CAP, 900).
+
+%% When a double-signing proof is provided, we reward the prover with the
+%% ?DOUBLE_SIGNING_PROVER_REWARD_SHARE of the minimum reward among the preceding
+%% ?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE blocks.
 -ifdef(DEBUG).
--define(PAYOUT_SAMPLE_WINDOW_SIZE, 2).
+-define(DOUBLE_SIGNING_REWARD_SAMPLE_SIZE, 2).
 -else.
--define(PAYOUT_SAMPLE_WINDOW_SIZE, 100).
+-define(DOUBLE_SIGNING_REWARD_SAMPLE_SIZE, 100).
 -endif.
 
-%% The miner receives the smallest reward associated with the last
-%% ?PAYOUT_SAMPLE_WINDOW_SIZE blocks (the last block is the miner's block) plus
-%% at most this share of it. The cap serves as a protection against consensus instability
-%% caused by large transaction fees. Additionally, if a miner provides a proof of
-%% double-signing, they receive at most this share of the minimal reward computed this way.
--define(MINER_MINIMAL_REWARD_SHARE, {1, 5}).
+%% When a double-signing proof is provided, we reward the prover with the
+%% ?DOUBLE_SIGNING_PROVER_REWARD_SHARE of the minimum reward among the preceding
+%% ?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE blocks.
+-define(DOUBLE_SIGNING_PROVER_REWARD_SHARE, {1, 2}).
 
 %% Every transaction fee has to be at least
 %% X + X * ?MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE
 %% where X is the amount sent to the endowment pool.
--ifdef(DEBUG).
-%% Give a smaller share to miners in tests, to slow down the fee growth a bit. Block rewards
-%% are recorded in the price history, and the history is used for re-estimating the fees so
-%% uploading transactions quickly pushes the prices up.
--define(MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE, {1, 20000}).
--else.
 -define(MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE, {1, 20}).
--endif.
 
 %% The fixed USD to AR rate used after the fork 2.6 until the automatic transition to the new
 %% pricing scheme is complete. We fix the rate because the network difficulty is expected
@@ -104,11 +85,12 @@ end).
 -endif.
 
 %% The number of recent blocks contributing data points to the continuous estimation
-%% of the average price of storing a gibibyte for a minute.
+%% of the average price of storing a gibibyte for a minute. Also, the reward history
+%% is used to tracking the reserved mining rewards.
 -ifdef(DEBUG).
--define(PRICE_HISTORY_BLOCKS, 3).
+-define(REWARD_HISTORY_BLOCKS, 3).
 -else.
--define(PRICE_HISTORY_BLOCKS, (30 * 24 * 30)).
+-define(REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
 -endif.
 
 %% The prices are re-estimated every so many blocks.
@@ -120,14 +102,7 @@ end).
 
 %% An approximation of the natural logarithm of ?PRICE_DECAY_ANNUAL (0.995),
 %% expressed as a decimal fraction, with the precision of math:log.
--ifdef(DEBUG).
-%% Reduce fees in tests somewhat, to slow down their growth a bit. Block rewards
-%% are recorded in the price history, and the history is used for re-estimating the fees so
-%% uploading transactions quickly pushes the prices up.
--define(LN_PRICE_DECAY_ANNUAL, {-5012541823544286 * 100, 1000000000000000000}).
--else.
 -define(LN_PRICE_DECAY_ANNUAL, {-5012541823544286, 1000000000000000000}).
--endif.
 
 %% The assumed annual decay rate of the Arweave prices, expressed as a decimal fraction.
 -define(PRICE_DECAY_ANNUAL, {995, 1000}). % 0.995, i.e., 0.5% annual decay rate.
@@ -142,7 +117,7 @@ end).
 %% we open the latch (and will increase the fees again when/if the endowment is empty).
 %% The value is redenominated according the denomination used at the time.
 -ifdef(DEBUG).
--define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 1000000000).
+-define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 100000000000).
 -else.
 -define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 10000000000000000).
 -endif.
@@ -154,7 +129,7 @@ end).
 	%% The debug constant is not always actually equal to the sum of genesis balances plust
 	%% the total emission. We just set a relatively low value so that we can reproduce
 	%% autoredenomination in tests.
-	-define(TOTAL_SUPPLY, 15000000000).
+	-define(TOTAL_SUPPLY, 1500000000000).
 -else.
 	-ifdef(FORKS_RESET).
 		%% This value should be ideally adjusted if the genesis balances
@@ -168,7 +143,7 @@ end).
 %% Re-denominate AR (multiply by 1000) when the available supply falls below this
 %% number of units.
 -ifdef(DEBUG).
--define(REDENOMINATION_THRESHOLD, 13500000000).
+-define(REDENOMINATION_THRESHOLD, 1350000000000).
 -else.
 -define(REDENOMINATION_THRESHOLD, 1000000000000000000).
 -endif.
