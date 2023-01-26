@@ -192,8 +192,14 @@ pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
 				true ->
 					case B#block.height >= ar_fork:height_2_6() of
 						true ->
-							pre_validate_indep_hash(B, PrevB, Peer, Timestamp, ReadBodyTime,
-									BodySize);
+							PrevCDiff = B#block.previous_cumulative_diff,
+							case PrevB#block.cumulative_diff == PrevCDiff of
+								true ->
+									pre_validate_indep_hash(B, PrevB, Peer, Timestamp,
+											ReadBodyTime, BodySize);
+								false ->
+									ok
+							end;
 						false ->
 							pre_validate_may_be_fetch_chunk(B, PrevB, Peer, Timestamp,
 									ReadBodyTime, BodySize)
@@ -266,7 +272,7 @@ pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime
 									global_step_number = StepNumber },
 							poa2 = PoA2, recall_byte2 = RecallByte2 } = CacheB
 								when Height >= Fork_2_6 ->
-						may_be_report_double_signing(B, PrevB#block.cumulative_diff, CacheB),
+						may_be_report_double_signing(B, CacheB),
 						LastStepPrevOutput = get_last_step_prev_output(B),
 						LastStepPrevOutput2 = get_last_step_prev_output(CacheB),
 						case LastStepPrevOutput == LastStepPrevOutput2 of
@@ -307,11 +313,12 @@ pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime
 			end
 	end.
 
-may_be_report_double_signing(B, PrevCDiff, B2) ->
+may_be_report_double_signing(B, B2) ->
 	#block{ reward_key = {_, Key}, signature = Signature1, cumulative_diff = CDiff1,
-			previous_solution_hash = PreviousSolutionH1 } = B,
+			previous_solution_hash = PreviousSolutionH1,
+			previous_cumulative_diff = PrevCDiff } = B,
 	#block{ reward_key = {_, Key}, signature = Signature2, cumulative_diff = CDiff2,
-			prev_cumulative_diff = PrevCDiff2,
+			previous_cumulative_diff = PrevCDiff2,
 			previous_solution_hash = PreviousSolutionH2 } = B2,
 	case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff) of
 		true ->

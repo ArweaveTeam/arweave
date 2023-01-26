@@ -206,7 +206,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		denomination = Denomination, redenomination_height = RedenominationHeight,
-		double_signing_proof = DoubleSigningProof }) ->
+		double_signing_proof = DoubleSigningProof, previous_cumulative_diff = PrevCDiff }) ->
 	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
 	Nonce2 = binary:encode_unsigned(Nonce),
 	%% The only block where reward_address may be unclaimed
@@ -246,7 +246,8 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			RewardHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
 			KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8, Denomination:24,
 			(encode_int(RedenominationHeight, 8))/binary,
-			(ar_serialize:encode_double_signing_proof(DoubleSigningProof))/binary >>,
+			(ar_serialize:encode_double_signing_proof(DoubleSigningProof))/binary,
+			(encode_int(PrevCDiff, 16))/binary >>,
 	crypto:hash(sha256, Segment).
 
 %% @doc Compute the block identifier from the signed hash and block signature.

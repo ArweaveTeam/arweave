@@ -516,6 +516,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				reward_addr = ar_wallet:to_address(RewardKey),
 				tags = [],
 				cumulative_diff = CDiff,
+				previous_cumulative_diff = PrevB#block.cumulative_diff,
 				poa = PoA1,
 				usd_to_ar_rate = Rate,
 				scheduled_usd_to_ar_rate = ScheduledRate,
@@ -2026,8 +2027,7 @@ start_from_block_index(BI, RewardHistory) ->
 	end,
 	Blocks = read_recent_blocks(BI),
 	Blocks2 = ar_join:set_reward_history(Blocks, RewardHistory),
-	Blocks3 = ar_join:set_prev_cumulative_diff(Blocks2),
-	self() ! {join, BI, Blocks3}.
+	self() ! {join, BI, Blocks2}.
 
 read_recent_blocks(not_joined) ->
 	[];

@@ -76,13 +76,12 @@ add(Tab,
 					Children}}] = ets:lookup(Tab, {block, PrevH}),
 			C2 = case CDiff > MaxCDiff of true -> {CDiff, H}; false -> C end,
 			Set2 = gb_sets:insert({Height, H}, Set),
-			B2 = B#block{ prev_cumulative_diff = PrevB#block.cumulative_diff },
 			ets:insert(Tab, [
 				{max_cdiff, C2},
 				{links, Set2},
 				{{solution, SolutionH}, SolutionSet3},
 				{tip, Tip},
-				{{block, H}, {B2, Status, erlang:timestamp(), sets:new()}},
+				{{block, H}, {B, Status, erlang:timestamp(), sets:new()}},
 				{{block, PrevH},
 						{PrevB, PrevStatus, PrevTimestamp, sets:add_element(H, Children)}}
 			]);
@@ -387,7 +386,7 @@ get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff, [H2 | L], _B) ->
 			get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff);
 		#block{ cumulative_diff = CDiff } = B2 ->
 			B2;
-		#block{ cumulative_diff = CDiff2, prev_cumulative_diff = PrevCDiff2 } = B2
+		#block{ cumulative_diff = CDiff2, previous_cumulative_diff = PrevCDiff2 } = B2
 				when CDiff2 > PrevCDiff, CDiff > PrevCDiff2 ->
 			B2;
 		B2 ->
@@ -721,4 +720,4 @@ block_id(#block{ indep_hash = H }) ->
 
 on_top(B, PrevB) ->
 	B#block{ previous_block = PrevB#block.indep_hash, height = PrevB#block.height + 1,
-			prev_cumulative_diff = PrevB#block.cumulative_diff }.
+			previous_cumulative_diff = PrevB#block.cumulative_diff }.

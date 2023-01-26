@@ -704,6 +704,7 @@ test_rejects_invalid_blocks() ->
 	post_block(B3, invalid_nonce_limiter_global_step_number),
 	%% Nonce limiter output lower than that of the previous block.
 	B4 = sign_block(B1#block{ previous_block = B1#block.indep_hash,
+			previous_cumulative_diff = B1#block.cumulative_diff,
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
@@ -714,6 +715,7 @@ test_rejects_invalid_blocks() ->
 	B1SolutionH = B1#block.hash,
 	B1SolutionNum = binary:decode_unsigned(B1SolutionH),
 	B5 = sign_block(B1#block{ previous_block = B1#block.indep_hash,
+			previous_cumulative_diff = B1#block.cumulative_diff,
 			height = B1#block.height + 1,
 			hash = binary:encode_unsigned(B1SolutionNum - 1) }, B1, Key),
 	post_block(B5, invalid_nonce_limiter_global_step_number),

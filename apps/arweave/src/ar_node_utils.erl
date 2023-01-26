@@ -847,7 +847,10 @@ get_chunk(Byte) ->
 	} = ar_serialize:json_map_to_chunk_proof(jiffy:decode(JSON, [return_maps])),
 	#poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath, option = 1 }.
 
-update_accounts_rejects_same_signature_in_double_signing_proof_test() ->
+update_accounts_rejects_same_signature_in_double_signing_proof_test_() ->
+	{timeout, 10, fun test_update_accounts_rejects_same_signature_in_double_signing_proof/0}.
+
+test_update_accounts_rejects_same_signature_in_double_signing_proof() ->
 	Accounts = #{},
 	Key = ar_wallet:new(),
 	Pub = element(2, element(2, Key)),
@@ -867,7 +870,10 @@ update_accounts_rejects_same_signature_in_double_signing_proof_test() ->
 	?assertEqual({error, invalid_double_signing_proof_same_signature},
 			update_accounts(B, PrevB, Accounts)).
 
-update_accounts_receives_released_reward_and_prover_reward_test() ->
+update_accounts_receives_released_reward_and_prover_reward_test_() ->
+	{timeout, 10, fun test_update_accounts_receives_released_reward_and_prover_reward/0}.
+
+test_update_accounts_receives_released_reward_and_prover_reward() ->
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
 	?assert(?REWARD_HISTORY_BLOCKS == 3),
 	?assert(?DOUBLE_SIGNING_PROVER_REWARD_SHARE == {1, 2}),
@@ -895,7 +901,10 @@ update_accounts_receives_released_reward_and_prover_reward_test() ->
 	?assertEqual({ProverReward + Reward, <<>>}, maps:get(RewardAddr, Accounts2)),
 	?assertEqual({1, <<>>, 1, false}, maps:get(BannedAddr, Accounts2)).
 
-update_accounts_does_not_let_banned_account_take_reward_test() ->
+update_accounts_does_not_let_banned_account_take_reward_test_() ->
+	{timeout, 10, fun test_update_accounts_does_not_let_banned_account_take_reward/0}.
+
+test_update_accounts_does_not_let_banned_account_take_reward() ->
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
 	?assert(?REWARD_HISTORY_BLOCKS == 3),
 	?assert(?DOUBLE_SIGNING_PROVER_REWARD_SHARE == {1, 2}),
