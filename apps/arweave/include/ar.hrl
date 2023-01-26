@@ -547,8 +547,8 @@
 	redenomination_height = 0,
 	%% The proof of signing the same block several times or extending two equal forks.
 	double_signing_proof,
-	%% The cumulative difficulty of the previous block. Used internally, not gossiped.
-	prev_cumulative_diff
+	%% The cumulative difficulty of the previous block.
+	previous_cumulative_diff = 0
 }).
 
 %% @doc A transaction.

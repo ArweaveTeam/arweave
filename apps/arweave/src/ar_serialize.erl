@@ -125,7 +125,7 @@ block_to_json_struct(
 			indep_hash = IndepHash, txs = TXs, tx_root = TXRoot, wallet_list = WalletList,
 			reward_addr = RewardAddr, tags = Tags, reward_pool = RewardPool,
 			weave_size = WeaveSize, block_size = BlockSize, cumulative_diff = CDiff,
-			hash_list_merkle = MR, poa = POA } = B) ->
+			hash_list_merkle = MR, poa = POA, previous_cumulative_diff = PrevCDiff } = B) ->
 	{JSONDiff, JSONCDiff} =
 		case Height >= ar_fork:height_1_8() of
 			true ->
@@ -255,7 +255,9 @@ block_to_json_struct(
 									integer_to_binary(KryderPlusRateMultiplierLatch)},
 							{denomination, integer_to_binary(Denomination)},
 							{redenomination_height, RedenominationHeight},
-							{double_signing_proof, DoubleSigningProof} | JSONElements4],
+							{double_signing_proof, DoubleSigningProof},
+							{previous_cumulative_diff, integer_to_binary(PrevCDiff)}
+							| JSONElements4],
 				case B#block.recall_byte2 of
 					undefined ->
 						JSONElements6;
@@ -392,7 +394,8 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 			kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 			kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 			denomination = Denomination, redenomination_height = RedenominationHeight,
-			double_signing_proof = DoubleSigningProof } = B) ->
+			double_signing_proof = DoubleSigningProof,
+			previous_cumulative_diff = PrevCDiff } = B) ->
 	RewardKey = case B#block.reward_key of undefined -> <<>>; {_Type, Key} -> Key end,
 	case Height >= ar_fork:height_2_6() of
 		false ->
@@ -410,6 +413,7 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 				RewardHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
 				KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8,
 				Denomination:24, (encode_int(RedenominationHeight, 8))/binary,
+				(encode_int(PrevCDiff, 16))/binary,
 				(encode_double_signing_proof(DoubleSigningProof))/binary >>
 	end.
 
@@ -534,6 +538,7 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 		KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8,
 		Denomination:24, RedenominationHeightSize:8,
 		RedenominationHeight:(RedenominationHeightSize * 8),
+		PrevCDiffSize:16, PrevCDiff:(PrevCDiffSize * 8),
 		Rest/binary >>) ->
 	case parse_double_signing_proof(Rest) of
 		{error, _} = Error ->
@@ -565,7 +570,8 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 					kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 					kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 					denomination = Denomination, redenomination_height = RedenominationHeight,
-					double_signing_proof = DoubleSigningProof }}
+					double_signing_proof = DoubleSigningProof,
+					previous_cumulative_diff = PrevCDiff }}
 	end;
 parse_block_2_6_fields(_B, _Rest) ->
 	{error, invalid_input4}.
