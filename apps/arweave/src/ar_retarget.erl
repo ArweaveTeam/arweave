@@ -36,7 +36,7 @@
 
 %% @doc The unconditional difficulty reduction coefficient applied at the
 %% first 2.6 block.
--define(INITIAL_DIFF_DROP_2_6, 100).
+-define(INITIAL_DIFF_DROP_2_6, 1000).
 
 %% @doc The additional difficulty reduction coefficient applied every 10 minutes at the
 %% first 2.6 block.
