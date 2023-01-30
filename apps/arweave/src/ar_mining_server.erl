@@ -182,6 +182,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 				IOThreads
 			))),
 	Now = erlang:monotonic_time(millisecond),
+	VdfSpeed = vdf_speed(Now),
 	{IOList, MaxPartitionTime, PartitionsSum, MaxCurrentTime, CurrentsSum} =
 		lists:foldr(
 			fun({Partition, StoreID}, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
@@ -199,7 +200,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 						PartitionAvg = PartitionTotal / PartitionTimeLapse / 4,
 						CurrentTimeLapse = (Now - CurrentStart) / 1000,
 						CurrentAvg = CurrentTotal / CurrentTimeLapse / 4,
-						Optimal = optimal_performance(StoreID),
+						Optimal = optimal_performance(StoreID, VdfSpeed),
 						?LOG_INFO([{event, mining_partition_performance_report},
 								{partition, Partition}, {avg, PartitionAvg},
 								{current, CurrentAvg}]),
@@ -221,8 +222,8 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 					{total_avg_hps, TotalAvg * 4}, {total_current_mibps, TotalCurrent},
 					{total_current_hps, TotalCurrent * 4}]),
 			Str = io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
-					" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s.~n", [TotalAvg, TotalAvg * 4,
-					TotalCurrent, TotalCurrent * 4]),
+								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s. VDF speed ~.2f~n",
+					[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed]),
 			prometheus_gauge:set(mining_rate, TotalCurrent),
 			IOList2 = [Str | [IOList | ["~n"]]],
 			ar:console(iolist_to_binary(IOList2));
@@ -261,6 +262,10 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
 	{Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output, _Checkpoints} = Args,
 	true = is_integer(StepNumber),
+	ets:update_counter(?MODULE,
+					  {performance, nonce_limiter},
+					  [{3, 1}],
+					  {{performance, nonce_limiter}, erlang:monotonic_time(millisecond), 0}),
 	Task = {computed_output, {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
@@ -1084,12 +1089,26 @@ pick_hashing_thread(Threads) ->
 	{{value, Thread}, Threads2} = queue:out(Threads),
 	{Thread, queue:in(Thread, Threads2)}.
 
-optimal_performance(StoreID) ->
-	VdfSpeed = persistent_term:get(vdf_speed_ms) / 1000,
+optimal_performance(_StoreID, undefined) ->
+	0;
+optimal_performance(StoreID, VdfSpeed) ->
 	case prometheus_gauge:value(v2_index_data_size_by_packing, [StoreID, spora_2_6]) of
 		undefined -> 0;
 		StorageSize -> (100 / VdfSpeed) * (StorageSize / ?PARTITION_SIZE)
 	end.
+
+vdf_speed(Now) ->
+	case ets:lookup(?MODULE, {performance, nonce_limiter}) of
+		[{_, Now, _}] ->
+			undefined;
+		[{_, VdfStart, VdfCount}] ->
+			ets:update_counter(?MODULE,
+							   {performance, nonce_limiter},
+							   [{2, -1, Now, Now}, {3, 0, -1, 0}]),
+			VdfLapse = (Now - VdfStart) / 1000,
+			VdfCount / VdfLapse
+	end.
+
 
 %%%===================================================================
 %%% Tests.
