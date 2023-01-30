@@ -222,7 +222,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 					{total_avg_hps, TotalAvg * 4}, {total_current_mibps, TotalCurrent},
 					{total_current_hps, TotalCurrent * 4}]),
 			Str = io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
-								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s. VDF speed ~.2f~n",
+								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s. VDF ~.2f~n/sec",
 					[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed]),
 			prometheus_gauge:set(mining_rate, TotalCurrent),
 			IOList2 = [Str | [IOList | ["~n"]]],
@@ -1090,15 +1090,20 @@ pick_hashing_thread(Threads) ->
 	{Thread, queue:in(Thread, Threads2)}.
 
 optimal_performance(_StoreID, undefined) ->
-	0;
+	0.0;
+optimal_performance("default", _) ->
+	0.0;
 optimal_performance(StoreID, VdfSpeed) ->
+	PartitionSize = ar_storage_module:get_size(StoreID),
 	case prometheus_gauge:value(v2_index_data_size_by_packing, [StoreID, spora_2_6]) of
-		undefined -> 0;
-		StorageSize -> (100 / VdfSpeed) * (StorageSize / ?PARTITION_SIZE)
+		undefined -> 0.0;
+		StorageSize -> (200 / VdfSpeed) * (StorageSize / PartitionSize)
 	end.
 
 vdf_speed(Now) ->
 	case ets:lookup(?MODULE, {performance, nonce_limiter}) of
+		[] ->
+			undefined;
 		[{_, Now, _}] ->
 			undefined;
 		[{_, VdfStart, VdfCount}] ->
