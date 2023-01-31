@@ -90,7 +90,7 @@ end).
 -ifdef(DEBUG).
 -define(REWARD_HISTORY_BLOCKS, 3).
 -else.
--define(REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
+-define(REWARD_HISTORY_BLOCKS, (30 * 24)).
 -endif.
 
 %% The prices are re-estimated every so many blocks.
