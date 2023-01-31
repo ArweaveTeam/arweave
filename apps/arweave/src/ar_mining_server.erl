@@ -1124,6 +1124,8 @@ vdf_speed(Now) ->
 			undefined;
 		[{_, Now, _}] ->
 			undefined;
+		[{_, _Now, 0}] ->
+			undefined;
 		[{_, VdfStart, VdfCount}] ->
 			ets:update_counter(?MODULE,
 							   {performance, nonce_limiter},
