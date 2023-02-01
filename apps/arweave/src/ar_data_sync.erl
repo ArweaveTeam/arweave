@@ -146,13 +146,15 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						end;
 					{error, Reason} ->
 						?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
-								{reason, io_lib:format("~p", [Reason])}]),
+								{reason, io_lib:format("~p", [Reason])},
+								{data_path_hash, ar_util:encode(DataPathHash)},
+								{data_root, ar_util:encode(DataRoot)},
+								{relative_offset, EndOffset2}]),
 						{error, failed_to_store_chunk}
 				end
 		end,
 	case CheckSynced of
 		synced ->
-			?LOG_DEBUG([{event, chunk_already_synced}, {data_root, ar_util:encode(DataRoot)}]),
 			ok;
 		{error, _} = Error4 ->
 			Error4;
@@ -162,7 +164,10 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			case ar_kv:put(ChunkDataDB, ChunkDataKey, term_to_binary({Chunk, DataPath})) of
 				{error, Reason2} ->
 					?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
-						{reason, io_lib:format("~p", [Reason2])}]),
+						{reason, io_lib:format("~p", [Reason2])},
+						{data_path_hash, ar_util:encode(DataPathHash2)},
+						{data_root, ar_util:encode(DataRoot)},
+						{relative_offset, EndOffset3}]),
 					{error, failed_to_store_chunk};
 				ok ->
 					DiskPoolChunkValue = term_to_binary({EndOffset3, ChunkSize, DataRoot,
@@ -171,9 +176,16 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							DiskPoolChunkValue) of
 						{error, Reason3} ->
 							?LOG_WARNING([{event, failed_to_record_chunk_in_disk_pool},
-								{reason, io_lib:format("~p", [Reason3])}]),
+								{reason, io_lib:format("~p", [Reason3])},
+								{data_path_hash, ar_util:encode(DataPathHash2)},
+								{data_root, ar_util:encode(DataRoot)},
+								{relative_offset, EndOffset3}]),
 							{error, failed_to_store_chunk};
 						ok ->
+							?LOG_DEBUG([{event, stored_chunk_in_disk_pool},
+									{data_path_hash, ar_util:encode(DataPathHash2)},
+									{data_root, ar_util:encode(DataRoot)},
+									{relative_offset, EndOffset3}]),
 							ets:insert(ar_disk_pool_data_roots,
 									{DataRootKey, DiskPoolDataRootValue2}),
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
@@ -690,17 +702,17 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, RightBound, Pr
 					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte},
 			case maps:is_key({AbsoluteOffset, unpacked}, PackingMap) of
 				true ->
-					?LOG_DEBUG([{event, fetched_chunk_already_being_packed},
-							{offset, AbsoluteOffset}, {byte, Byte}]),
 					Byte2 = get_chunk_padded_offset(AbsoluteOffset) + 1,
 					decrement_sync_buffer_size(StoreID),
 					gen_server:cast(self(), {sync_chunk, [{Byte2, RightBound, Peer}
 							| SubIntervals], Loop}),
 					{noreply, State};
 				false ->
-					?LOG_DEBUG([{event, schedule_fetched_chunk_unpacking},
-							{offset, AbsoluteOffset}]),
 					ar_events:send(chunk, {unpack_request, AbsoluteOffset, ChunkArgs}),
+					?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
+							{data_path_hash, ar_util:encode(crypto:hash(sha256, DataPath))},
+							{data_root, ar_util:encode(DataRoot)},
+							{absolute_end_offset, AbsoluteOffset}]),
 					ar_util:cast_after(600000, self(),
 							{expire_unpack_fetched_chunk_request, {AbsoluteOffset, unpacked}}),
 					{noreply, State#sync_data_state{
@@ -866,11 +878,26 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 handle_cast({expire_repack_chunk_request, Key}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:get(Key, PackingMap, not_found) of
-		{pack_fetched_chunk, _} ->
+		{pack_fetched_chunk, {_, DataPath, Offset, DataRoot, _}} ->
+			DataPathHash = crypto:hash(sha256, DataPath),
+			?LOG_DEBUG([{event, expired_repack_fetched_chunk_request},
+					{data_path_hash, ar_util:encode(DataPathHash)},
+					{data_root, ar_util:encode(DataRoot)},
+					{relative_offset, Offset}]),
 			{noreply, State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) }};
-		{pack_disk_pool_chunk, _, _} ->
+		{pack_disk_pool_chunk, _, {_, DataPath, Offset, DataRoot, _}} ->
+			DataPathHash = crypto:hash(sha256, DataPath),
+			?LOG_DEBUG([{event, expired_pack_disk_pool_chunk_request},
+					{data_path_hash, ar_util:encode(DataPathHash)},
+					{data_root, ar_util:encode(DataRoot)},
+					{relative_offset, Offset}]),
 			{noreply, State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) }};
-		{repack_stored_chunk, _, _} ->
+		{repack_stored_chunk, _, _, {DataRoot, DataPath, _, Offset}} ->
+			DataPathHash = crypto:hash(sha256, DataPath),
+			?LOG_DEBUG([{event, expired_repack_stored_chunk_request},
+					{data_path_hash, ar_util:encode(DataPathHash)},
+					{data_root, ar_util:encode(DataRoot)},
+					{relative_offset, Offset}]),
 			{noreply, State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) }};
 		_ ->
 			{noreply, State}
@@ -1067,17 +1094,15 @@ handle_info({event, chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
-	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
+	#sync_data_state{ packing_map = PackingMap } = State,
 	Packing = element(1, ChunkArgs),
 	Key = {Offset, Packing},
 	case maps:get(Key, PackingMap, not_found) of
 		{pack_fetched_chunk, Args} when element(1, Args) == Packing ->
-			?LOG_DEBUG([{event, storing_packed_fetched_chunk}, {offset, Offset}]),
 			State2 = State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) },
 			store_chunk(ChunkArgs, Args, State2),
 			{noreply, State2};
 		{pack_disk_pool_chunk, ChunkDataKey, Args} when element(1, Args) == Packing ->
-			?LOG_DEBUG([{event, storing_packed_disk_pool_chunk}, {offset, Offset}]),
 			State2 = State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) },
 			case store_chunk(ChunkArgs, Args, State2) of
 				ok ->
@@ -1089,9 +1114,6 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 			end;
 		{repack_stored_chunk, ExpectedPacking, PreviousPacking, Args}
 				when ExpectedPacking == Packing ->
-			?LOG_DEBUG([{event, storing_repacked_stored_chunk}, {offset, Offset},
-					{packing, format_packing(Packing)},
-					{store_id, StoreID}]),
 			store_repacked_chunk(ChunkArgs, PreviousPacking, Args,
 					State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) });
 		_ ->
@@ -1224,8 +1246,11 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
 						invalidate_bad_data_record(SeekOffset - 1, O, ChunksIndex,
 								StoreID, 1),
 						{error, chunk_not_found};
-					{error, reason} ->
-						?LOG_ERROR([{event, failed_to_read_chunk}, {reason, reason}]),
+					{error, Reason3} ->
+						?LOG_ERROR([{event, failed_to_read_chunk},
+								{reason, io_lib:format("~p", [Reason3])},
+								{chunk_data_key, ar_util:encode(ChunkDataKey)},
+								{absolute_end_offset, Offset}]),
 						{error, failed_to_read_chunk};
 					{ok, ChunkData} ->
 						case ar_sync_record:is_recorded(Offset, StoredPacking, ?MODULE,
@@ -1241,8 +1266,8 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
 		end,
 	ValidateChunk =
 		case ReadChunkResult of
-			{error, Reason3} ->
-				{error, Reason3};
+			{error, Reason4} ->
+				{error, Reason4};
 			{ok, {Chunk, DataPath}, ChunkOffset, TXRoot, ChunkSize, TXPath} ->
 				case validate_served_chunk({ChunkOffset, DataPath, TXPath, TXRoot, ChunkSize,
 						ChunksIndex, StoreID}) of
@@ -1254,8 +1279,8 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
 				end
 		end,
 	case ValidateChunk of
-		{error, Reason4} ->
-			{error, Reason4};
+		{error, Reason5} ->
+			{error, Reason5};
 		{ok, {Chunk2, DataPath2}, ChunkOffset2, TXRoot2, ChunkSize2, TXPath2, ChunkID2} ->
 			PackResult =
 				case {Pack, Packing == StoredPacking} of
@@ -1407,7 +1432,9 @@ get_tx_offset(TXIndex, TXID) ->
 		not_found ->
 			{error, not_found};
 		{error, Reason} ->
-			?LOG_ERROR([{event, failed_to_read_tx_offset}, {reason, Reason}]),
+			?LOG_ERROR([{event, failed_to_read_tx_offset},
+					{reason, io_lib:format("~p", [Reason])},
+					{tx, ar_util:encode(TXID)}]),
 			{error, failed_to_read_offset}
 	end.
 
@@ -1886,12 +1913,14 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 								TXEndOffset;
 							{error, Reason} ->
 								?LOG_ERROR([{event, failed_to_update_tx_index},
-										{reason, Reason}]),
+										{reason, io_lib:format("~p", [Reason])},
+										{tx, ar_util:encode(TXID)}]),
 								TXEndOffset
 						end;
 					{error, Reason} ->
 						?LOG_ERROR([{event, failed_to_update_tx_offset_index},
-								{reason, Reason}]),
+								{reason, io_lib:format("~p", [Reason])},
+								{tx, ar_util:encode(TXID)}]),
 						TXEndOffset
 				end
 		end,
@@ -2343,14 +2372,17 @@ update_chunks_index2(Args, State) ->
 					ok;
 				{error, Reason} ->
 					?LOG_ERROR([{event, failed_to_update_sync_record}, {reason, Reason},
-							{chunk, ar_util:encode(ChunkDataKey)}, {offset, AbsoluteOffset},
+							{chunk, ar_util:encode(ChunkDataKey)},
+							{absolute_end_offset, AbsoluteOffset},
+							{data_root, ar_util:encode(DataRoot)},
 							{store_id, StoreID}]),
 					{error, Reason}
 			end;
 		{error, Reason} ->
 			?LOG_ERROR([{event, failed_to_update_chunk_index}, {reason, Reason},
-					{chunk, ar_util:encode(ChunkDataKey)}, {offset, AbsoluteOffset},
-					{store_id, StoreID}]),
+					{chunk_data_key, ar_util:encode(ChunkDataKey)},
+					{data_root, ar_util:encode(DataRoot)},
+					{absolute_end_offset, AbsoluteOffset}, {store_id, StoreID}]),
 			{error, Reason}
 	end.
 
@@ -2373,6 +2405,10 @@ add_chunk_to_disk_pool(Args, State) ->
 					PassedStrictValidation},
 			case ar_kv:put(DiskPoolChunksIndex, DiskPoolChunkKey, term_to_binary(Value)) of
 				ok ->
+					?LOG_DEBUG([{event, added_fetched_chunk_to_disk_pool},
+							{data_path_hash, ar_util:encode(DataPathHash)},
+							{data_root, ar_util:encode(DataRoot)},
+							{relative_offset, ChunkOffset}]),
 					ok;
 				Error ->
 					Error
@@ -2401,7 +2437,7 @@ process_invalid_fetched_chunk(Peer, Byte, State) ->
 
 process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	{Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
+	{Packing, UnpackedChunk, _AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
 			ChunkEndOffset, Strict, Peer, Byte} = Args,
 	decrement_sync_buffer_size(StoreID),
@@ -2414,8 +2450,6 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 			#sync_data_state{ store_id = StoreID } = State,
 			case ar_sync_record:is_recorded(Byte + 1, ?MODULE, StoreID) of
 				{true, _} ->
-					?LOG_DEBUG([{event, unpacked_fetched_chunk_already_synced},
-							{offset, AbsoluteEndOffset}]),
 					%% The chunk has been synced by another job already.
 					{noreply, State};
 				false ->
@@ -2434,8 +2468,6 @@ pack_and_store_fetched_chunk(Args, State) ->
 	DataPathHash = crypto:hash(sha256, DataPath),
 	case AbsoluteOffset > DiskPoolThreshold of
 		true ->
-			?LOG_DEBUG([{event, storing_fetched_chunk_in_disk_pool},
-					{offset, AbsoluteOffset}]),
 			ChunkDataKey = get_chunk_data_key(DataPathHash),
 			Write = write_disk_pool_chunk(ChunkDataKey, UnpackedChunk, DataPath, State),
 			case Write of
@@ -2450,16 +2482,18 @@ pack_and_store_fetched_chunk(Args, State) ->
 								ok ->
 									{noreply, State};
 								{error, Reason} ->
-									log_failed_to_store_chunk(Reason, Offset, DataRoot,
-											StoreID),
+									log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset,
+											DataRoot, DataPathHash, StoreID),
 									{noreply, State}
 							end;
 						{error, Reason} ->
-							log_failed_to_store_chunk(Reason, Offset, DataRoot, StoreID),
+							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
+									DataPathHash, StoreID),
 							{noreply, State}
 					end;
 				{error, Reason} ->
-					log_failed_to_store_chunk(Reason, Offset, DataRoot, StoreID),
+					log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
+							DataPathHash, StoreID),
 					{noreply, State}
 			end;
 		false ->
@@ -2475,9 +2509,6 @@ pack_and_store_fetched_chunk(Args, State) ->
 				end,
 			case PackingStatus of
 				{ready, {StoredPacking, StoredChunk}} ->
-					?LOG_DEBUG([{event, storing_fetched_chunk}, {offset, AbsoluteOffset},
-							{required_packing, format_packing(RequiredPacking)},
-							{packing, format_packing(Packing)}]),
 					ChunkArgs = {StoredPacking, StoredChunk, AbsoluteOffset, TXRoot,
 							ChunkSize},
 					store_chunk(ChunkArgs, {StoredPacking, DataPath, Offset, DataRoot, TXPath},
@@ -2488,13 +2519,14 @@ pack_and_store_fetched_chunk(Args, State) ->
 						true ->
 							{noreply, State};
 						false ->
-							?LOG_DEBUG([{event, schedule_fetched_chunk_repacking},
-									{offset, AbsoluteOffset}, {got_packing,
-											format_packing(Packing)},
-									{need_packing, format_packing(RequiredPacking)}]),
 							ar_events:send(chunk, {repack_request, AbsoluteOffset,
 									{RequiredPacking, unpacked, UnpackedChunk, AbsoluteOffset,
 									TXRoot, ChunkSize}}),
+							?LOG_DEBUG([{event, requested_fetched_chunk_repacking},
+									{data_path_hash, ar_util:encode(DataPathHash)},
+									{data_root, ar_util:encode(DataRoot)},
+									{absolute_end_offset, AbsoluteOffset},
+									{relative_offset, Offset}]),
 							ar_util:cast_after(600000, self(),
 									{expire_repack_chunk_request,
 											{AbsoluteOffset, RequiredPacking}}),
@@ -2515,12 +2547,11 @@ format_packing(Atom) ->
 store_chunk(ChunkArgs, Args, State) ->
 	#sync_data_state{ store_id = StoreID, chunks_index = ChunksIndex } = State,
 	{Packing, _Chunk, AbsoluteOffset, _TXRoot, ChunkSize} = ChunkArgs,
-	{_, _DataPath, _Offset, DataRoot, _TXPath} = Args,
+	{_, DataPath, Offset, DataRoot, _TXPath} = Args,
+	DataPathHash = crypto:hash(sha256, DataPath),
 	PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
 	StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
 	TargetStoreIDs = get_target_store_ids(PaddedOffset, Packing, ChunkSize),
-	?LOG_DEBUG([{event, storing_chunk}, {offset, AbsoluteOffset},
-			{packing, format_packing(element(1, ChunkArgs))}, {store_ids, TargetStoreIDs}]),
 	case lists:member(StoreID, TargetStoreIDs) of
 		true ->
 			store_chunk2(ChunkArgs, Args, State);
@@ -2529,14 +2560,14 @@ store_chunk(ChunkArgs, Args, State) ->
 					{store_chunk, ChunkArgs, Args}) || TargetStoreID <- TargetStoreIDs],
 			case ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE, StoreID) of
 				{error, Reason} ->
-					log_failed_to_remove_moved_chunk(Reason, AbsoluteOffset, DataRoot,
-							StoreID, TargetStoreIDs),
+					log_failed_to_remove_moved_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
+							DataPathHash, StoreID, TargetStoreIDs),
 					{error, Reason};
 				ok ->
 					case ar_kv:delete(ChunksIndex, << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>) of
 						{error, Reason} ->
-							log_failed_to_remove_moved_chunk(Reason, AbsoluteOffset, DataRoot,
-									StoreID, TargetStoreIDs),
+							log_failed_to_remove_moved_chunk(Reason, AbsoluteOffset, Offset,
+									DataRoot, DataPathHash, StoreID, TargetStoreIDs),
 							{error, Reason};
 						ok ->
 							ok
@@ -2558,9 +2589,11 @@ store_chunk2(ChunkArgs, Args, State) ->
 	{_Packing, DataPath, Offset, DataRoot, TXPath} = Args,
 	PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
 	StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+	DataPathHash = crypto:hash(sha256, DataPath),
 	case ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE, StoreID) of
 		{error, Reason} ->
-			log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot, StoreID),
+			log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash,
+					StoreID),
 			{error, Reason};
 		ok ->
 			DataPathHash = crypto:hash(sha256, DataPath),
@@ -2571,27 +2604,42 @@ store_chunk2(ChunkArgs, Args, State) ->
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
 							DataRoot, TXPath, ChunkSize, Packing}, State) of
 						ok ->
+							?LOG_DEBUG([{event, stored_chunk},
+									{absolute_end_offset, AbsoluteOffset},
+									{relative_offset, Offset},
+									{data_path_hash, ar_util:encode(DataPathHash)},
+									{data_root, ar_util:encode(DataRoot)},
+									{store_id, StoreID}]),	
 							ok;
 						{error, Reason} ->
-							log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot,
-									StoreID),
+							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
+									DataPathHash, StoreID),
 							{error, Reason}
 					end;
 				{error, Reason} ->
-					log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot, StoreID),
+					log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
+							DataPathHash, StoreID),
 					{error, Reason}
 			end
 	end.
 
-log_failed_to_remove_moved_chunk(Reason, Offset, DataRoot, StoreID, TargetStoreIDs) ->
+log_failed_to_remove_moved_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash,
+		StoreID, TargetStoreIDs) ->
 	?LOG_ERROR([{event, failed_to_remove_moved_chunk}, {reason, io_lib:format("~p", [Reason])},
 			{origin_store_id, StoreID}, {target_store_ids, TargetStoreIDs},
-			{absolute_chunk_offset, Offset}, {data_root, ar_util:encode(DataRoot)}]).
+			{absolute_end_offset, AbsoluteOffset},
+			{relative_offset, Offset},
+			{data_root, ar_util:encode(DataRoot)},
+			{data_path_hash, ar_util:encode(DataPathHash)}]).
 
-log_failed_to_store_chunk(Reason, Offset, DataRoot, StoreID) ->
-	?LOG_ERROR([{event, failed_to_store_chunk}, {reason, io_lib:format("~p", [Reason])},
-			{store_id, StoreID}, {absolute_chunk_offset, Offset},
-			{data_root, ar_util:encode(DataRoot)}]).
+log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
+	?LOG_ERROR([{event, failed_to_store_chunk},
+			{reason, io_lib:format("~p", [Reason])},
+			{absolute_end_offset, AbsoluteOffset, Offset},
+			{relative_offset, Offset},
+			{data_path_hash, ar_util:encode(DataPathHash)},
+			{data_root, ar_util:encode(DataRoot)},
+			{store_id, StoreID}]).
 
 cache_recently_processed_offset(Offset, ChunkDataKey, State) ->
 	#sync_data_state{ recently_processed_disk_pool_offsets = Map } = State,
@@ -2641,8 +2689,12 @@ process_disk_pool_item(State, Key, Value) ->
 			%% The chunk was either orphaned or never made it to the chain.
 			case ets:member(ar_data_sync_state, move_data_root_index_migration_complete) of
 				true ->
-					?LOG_DEBUG([{event, disk_pool_chunk_data_root_expired}]),
 					ok = ar_kv:delete(DiskPoolChunksIndex, Key),
+					?LOG_DEBUG([{event, removed_chunk_from_disk_pool},
+							{reason, disk_pool_chunk_data_root_expired},
+							{data_path_hash, ar_util:encode(DataPathHash)},
+							{data_doot, ar_util:encode(DataRoot)},
+							{relative_offset, Offset}]),
 					ok = ar_kv:delete(ChunkDataDB, ChunkDataKey),
 					decrease_occupied_disk_pool_size(ChunkSize, DataRootKey);
 				false ->
@@ -2696,14 +2748,16 @@ parse_disk_pool_chunk(Bin) ->
 delete_disk_pool_chunk(Iterator, Args, State) ->
 	#sync_data_state{ chunks_index = ChunksIndex, chunk_data_db = ChunkDataDB,
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
-	{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, DiskPoolKey, _} = Args,
+	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey, _} = Args,
 	case data_root_index_next_v2(Iterator, 10) of
 		none ->
-			?LOG_DEBUG([{event, removing_disk_pool_chunk},
-					{key, ar_util:encode(DiskPoolKey)},
-					{data_doot, ar_util:encode(DataRoot)}]),
 			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
 			ok = ar_kv:delete(ChunkDataDB, ChunkDataKey),
+			?LOG_DEBUG([{event, removed_chunk_from_disk_pool},
+					{reason, rotation},
+					{data_path_hash, ar_util:encode(DataPathHash)},
+					{data_doot, ar_util:encode(DataRoot)},
+					{relative_offset, Offset}]),
 			DataRootKey = data_root_index_get_key(Iterator),
 			decrease_occupied_disk_pool_size(ChunkSize, DataRootKey);
 		{TXArgs, Iterator2} ->
@@ -2745,7 +2799,7 @@ deregister_currently_processed_disk_pool_key(Key, State) ->
 process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 		Args, State) ->
 	#sync_data_state{ disk_pool_threshold = DiskPoolThreshold } = State,
-	{_, _, _, DataRoot, _, _, _, PassedStrictValidation} = Args,
+	{Offset, _, _, DataRoot, DataPathHash, _, _, PassedStrictValidation} = Args,
 	case AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD orelse PassedStrictValidation of
 		false ->
 			%% When we accept chunks into the disk pool, we do not know where they will
@@ -2754,7 +2808,10 @@ process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConc
 			%% ?STRICT_DATA_SPLIT_THRESHOLD.
 			%% Instead we note down whether the chunk passes the strict validation and take it
 			%% into account here where the chunk is associated with a global weave offset.
-			?LOG_INFO([{event, disk_pool_chunk_from_bad_split}, {offset, AbsoluteOffset},
+			?LOG_INFO([{event, disk_pool_chunk_from_bad_split},
+					{absolute_end_offset, AbsoluteOffset},
+					{relative_offset, Offset},
+					{data_path_hash, ar_util:encode(DataPathHash)},
 					{data_root, ar_util:encode(DataRoot)}]),
 			gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 					MayConclude, Args}),
@@ -2782,18 +2839,27 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 			gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, false, Args}),
 			{noreply, State};
 		false ->
-			?LOG_DEBUG([{event, record_disk_pool_chunk}, {offset, AbsoluteOffset},
-					{chunk_data_key, ar_util:encode(element(5, Args))}]),
-			{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, Key, _} = Args,
+			{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _} = Args,
 			case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey,
 					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, State) of
 				ok ->
+					?LOG_DEBUG([{event, indexed_disk_pool_chunk},
+							{data_path_hash, ar_util:encode(DataPathHash)},
+							{data_root, ar_util:encode(DataRoot)},
+							{absolute_end_offset, AbsoluteOffset},
+							{relative_offset, Offset},
+							{chunk_data_key, ar_util:encode(element(5, Args))}]),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, false,
 							Args}),
 					{noreply, State};
 				{error, Reason} ->
-					?LOG_WARNING([{event, failed_to_update_chunks_index},
-							{reason, io_lib:format("~p", [Reason])}]),
+					?LOG_WARNING([{event, failed_to_index_disk_pool_chunk},
+							{reason, io_lib:format("~p", [Reason])},
+							{data_path_hash, ar_util:encode(DataPathHash)},
+							{data_root, ar_util:encode(DataRoot)},
+							{absolute_end_offset, AbsoluteOffset},
+							{relative_offset, Offset},
+							{chunk_data_key, ar_util:encode(element(5, Args))}]),
 					gen_server:cast(self(), process_disk_pool_item),
 					{noreply, deregister_currently_processed_disk_pool_key(Key, State)}
 			end
@@ -2802,7 +2868,7 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 		Args, State) ->
 	#sync_data_state{ chunk_data_db = ChunkDataDB, store_id = StoreID } = State,
-	{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, Key, _} = Args,
+	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _} = Args,
 	Packings = get_required_packings(AbsoluteOffset, ChunkSize),
 	CheckHaveStorageModules =
 		case Packings of
@@ -2834,20 +2900,9 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 			false ->
 				case is_recently_processed_offset(AbsoluteOffset, ChunkDataKey, State) of
 					true ->
-						State4 = cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey,
-								State),
-						?LOG_DEBUG([{event, chunk_already_moved_from_disk_pool},
-								{offset, AbsoluteOffset},
-								{chunk_data_key, ar_util:encode(element(5, Args))},
-								{data_root, ar_util:encode(DataRoot)}]),
 						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 								MayConclude, Args}),
-						{noreply, State4};
-					{error, Reason} ->
-						?LOG_WARNING([{event, failed_to_read_chunks_index},
-								{reason, io_lib:format("~p", [Reason])}]),
-						gen_server:cast(self(), process_disk_pool_item),
-						{noreply, deregister_currently_processed_disk_pool_key(Key, State)};
+						{noreply, State};
 					false ->
 						false
 				end
@@ -2858,14 +2913,23 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 		false ->
 			case read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey, StoreID) of
 				not_found ->
-					?LOG_WARNING([{event, disk_pool_chunk_not_found}, {offset, AbsoluteOffset},
+					?LOG_ERROR([{event, disk_pool_chunk_not_found},
+							{data_path_hash, ar_util:encode(DataPathHash)},
+							{data_root, ar_util:encode(DataRoot)},
+							{absolute_end_offset, AbsoluteOffset},
+							{relative_offset, Offset},
 							{chunk_data_key, ar_util:encode(element(5, Args))}]),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 							MayConclude, Args}),
 					{noreply, State};
 				{error, Reason2} ->
 					?LOG_ERROR([{event, failed_to_read_disk_pool_chunk},
-							{reason, io_lib:format("~p", [Reason2])}]),
+							{reason, io_lib:format("~p", [Reason2])},
+							{data_path_hash, ar_util:encode(DataPathHash)},
+							{data_root, ar_util:encode(DataRoot)},
+							{absolute_end_offset, AbsoluteOffset},
+							{relative_offset, Offset},
+							{chunk_data_key, ar_util:encode(element(5, Args))}]),
 					gen_server:cast(self(), process_disk_pool_item),
 					{noreply, deregister_currently_processed_disk_pool_key(Key, State)};
 				{ok, {Chunk, DataPath}} ->
@@ -2897,6 +2961,10 @@ request_packing([Packing | Packings], Args, State) ->
 					ChunkDataKey} = Args,
 			ar_events:send(chunk, {repack_request, AbsoluteOffset, {Packing, unpacked, Chunk,
 					AbsoluteOffset, TXRoot, ChunkSize}}),
+			?LOG_DEBUG([{event, requested_disk_pool_chunk_packing},
+					{data_path_hash, ar_util:encode(element(5, Args))},
+					{data_root, ar_util:encode(DataRoot)},
+					{absolute_end_offset, AbsoluteOffset}]),
 			ar_util:cast_after(600000, self(), {expire_repack_chunk_request,
 					{AbsoluteOffset, Packing}}),
 			PackingArgs = {pack_disk_pool_chunk, ChunkDataKey, {Packing, DataPath, Offset,
@@ -2914,13 +2982,12 @@ process_unpacked_chunk(ChunkArgs, Args, State) ->
 	{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot, _Chunk, ChunkID,
 			_ChunkEndOffset, _Strict, Peer, Byte} = Args,
 	{_Packing, Chunk, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
-	?LOG_DEBUG([{event, validating_unpacked_fetched_chunk}, {offset, AbsoluteEndOffset}]),
 	case validate_chunk_id_size(Chunk, ChunkID, ChunkSize) of
 		false ->
-			?LOG_DEBUG([{event, invalid_unpacked_fetched_chunk}, {offset, AbsoluteEndOffset}]),
+			?LOG_DEBUG([{event, invalid_unpacked_fetched_chunk},
+					{absolute_end_offset, AbsoluteEndOffset}]),
 			process_invalid_fetched_chunk(Peer, Byte, State);
 		true ->
-			?LOG_DEBUG([{event, valid_unpacked_fetched_chunk}, {offset, AbsoluteEndOffset}]),
 			process_valid_fetched_chunk(ChunkArgs, Args, State)
 	end.
 
@@ -2956,13 +3023,18 @@ store_repacked_chunk(ChunkArgs, PreviousPacking, Args, State) ->
 		true ->
 			PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
 			StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+			{DataRoot, DataPath, TXPath, RelativeOffset} = Args,
+			DataPathHash = crypto:hash(sha256, DataPath),
 			case ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE, StoreID) of
 				{error, Reason} ->
-					?LOG_ERROR([{event, failed_to_reset_sync_record_before_updating},
-							{reason, io_lib:format("~p", [Reason])}, {store_id, StoreID}]);
+					?LOG_ERROR([{event, failed_to_reset_sync_record_before_storing_chunk},
+							{reason, io_lib:format("~p", [Reason])},
+							{absolute_end_offset, AbsoluteOffset},
+							{data_path_hash, ar_util:encode(DataPathHash)},
+							{data_root, ar_util:encode(DataRoot)},
+							{store_id, StoreID}]);
 				ok ->
 					TargetStoreIDs = get_target_store_ids(PaddedOffset, Packing, ChunkSize),
-					{DataRoot, DataPath, TXPath, RelativeOffset} = Args,
 					Args2 = {Packing, DataPath, RelativeOffset, DataRoot, TXPath},
 					[gen_server:cast(list_to_atom("ar_data_sync_" ++ TargetStoreID),
 							{store_chunk, ChunkArgs, Args2})
@@ -2974,15 +3046,26 @@ store_repacked_chunk(ChunkArgs, PreviousPacking, Args, State) ->
 								{error, Reason} ->
 									?LOG_ERROR([{event, failed_to_record_repacked_chunk},
 											{reason, io_lib:format("~p", [Reason])},
+											{absolute_end_offset, AbsoluteOffset},
+											{data_path_hash, ar_util:encode(DataPathHash)},
+											{data_root, ar_util:encode(DataRoot)},
 											{store_id, StoreID}]);
 								ok ->
+									?LOG_DEBUG([{event, stored_repacked_chunk},
+											{absolute_end_offset, AbsoluteOffset},
+											{data_path_hash, ar_util:encode(DataPathHash)},
+											{data_root, ar_util:encode(DataRoot)},
+											{store_id, StoreID}]),
 									ar_events:send(data_sync, {add_range, StartOffset,
 											PaddedOffset, StoreID}),
 									ok
 							end;
 						{error, Reason} ->
-							?LOG_ERROR([{event, failed_to_write_repacked_chunk},
+							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 									{reason, io_lib:format("~p", [Reason])},
+									{absolute_end_offset, AbsoluteOffset},
+									{data_path_hash, ar_util:encode(DataPathHash)},
+									{data_root, ar_util:encode(DataRoot)},
 									{store_id, StoreID}])
 					end
 			end
