@@ -186,6 +186,8 @@ read_account(Error, _Addr, _Keys) ->
 
 get_matching_keys(_Addr, []) ->
 	[];
+get_matching_keys(Addr, [{_H, <<>>} | Keys]) ->
+	get_matching_keys(Addr, Keys);
 get_matching_keys(Addr, [{H, Prefix} | Keys]) ->
 	case binary:match(Addr, Prefix) of
 		{0, _} ->
