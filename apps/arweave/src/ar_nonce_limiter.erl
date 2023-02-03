@@ -323,6 +323,7 @@ init([]) ->
 			[] ->
 				State;
 			_Peers ->
+				gen_server:cast(?MODULE, check_external_vdf_server_input),
 				State#state{ autocompute = false }
 		end,
 	{ok, start_worker(State2)}.
@@ -401,6 +402,23 @@ handle_call({get_session, SessionKey}, _From, State) ->
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
+
+handle_cast(check_external_vdf_server_input,
+		#state{ last_external_update = {_, 0} } = State) ->
+	ar_util:cast_after(1000, ?MODULE, check_external_vdf_server_input),
+	{noreply, State};
+handle_cast(check_external_vdf_server_input,
+		#state{ last_external_update = {_, Time} } = State) ->
+	Now = os:system_time(millisecond),
+	case Now - Time > 2000 of
+		true ->
+			?LOG_WARNING([{event, no_message_from_any_vdf_servers},
+					{last_message_seconds_ago, (Now - Time) div 1000}]),
+			ar_util:cast_after(30000, ?MODULE, check_external_vdf_server_input);
+		false ->
+			ar_util:cast_after(1000, ?MODULE, check_external_vdf_server_input)
+	end,
+	{noreply, State};
 
 handle_cast(initialized, State) ->
 	gen_server:cast(?MODULE, schedule_step),
