@@ -1553,9 +1553,11 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	log_applied_block(B),
 	log_tip(B),
 	maybe_report_n_confirmations(B, RecentBI),
-	prometheus_gauge:set(block_time, B#block.timestamp - (hd(PrevBlocks))#block.timestamp),
-	record_economic_metrics(B, hd(PrevBlocks)),
+	PrevB = hd(PrevBlocks),
+	prometheus_gauge:set(block_time, B#block.timestamp - PrevB#block.timestamp),
+	record_economic_metrics(B, PrevB),
 	record_fork_depth(Orphans),
+	record_vdf_metrics(B, PrevB),
 	return_orphaned_txs_to_mempool(CurrentH, (lists:last(PrevBlocks))#block.indep_hash),
 	lists:foldl(
 		fun (CurrentB, start) ->
@@ -1591,15 +1593,15 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 				{?INITIAL_USD_TO_AR((Height + 1))(), ?INITIAL_USD_TO_AR((Height + 1))()}
 		end,
 	AddedBIElements = tl(lists:reverse([block_index_entry(B)
-			| [block_index_entry(PrevB) || PrevB <- PrevBlocks]])),
+			| [block_index_entry(PrevB2) || PrevB2 <- PrevBlocks]])),
 	ar_block_index:update(AddedBIElements, length(Orphans)),
 	RecentBI2 = lists:sublist(RecentBI, ?BLOCK_INDEX_HEAD_LEN),
 	ar_data_sync:add_tip_block(BlockTXPairs, RecentBI2),
 	ar_header_sync:add_tip_block(B, RecentBI2),
 	lists:foreach(
-		fun(PrevB) ->
-			ar_header_sync:add_block(PrevB),
-			ar_disk_cache:write_block(PrevB)
+		fun(PrevB3) ->
+			ar_header_sync:add_block(PrevB3),
+			ar_disk_cache:write_block(PrevB3)
 		end,
 		tl(lists:reverse(PrevBlocks))
 	),
@@ -1628,7 +1630,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		{redenomination_height, B#block.redenomination_height},
 		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
 	]),
-	ar_events:send(node_state, {new_tip, B, hd(PrevBlocks)}),
+	ar_events:send(node_state, {new_tip, B, PrevB}),
 	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
@@ -1781,6 +1783,18 @@ record_economic_metrics2(B, PrevB) ->
 			prometheus_gauge:set(
 					expected_minimum_200_years_storage_costs_decline_rate_10_usd_ar,
 					ar_util:safe_divide(RateDivisor2, RateDividend2))
+	end.
+
+record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
+	case Height >= ar_fork:height_2_6() of
+		true ->
+			#nonce_limiter_info{ global_step_number = StepNumber }
+					= B#block.nonce_limiter_info,
+			#nonce_limiter_info{ global_step_number = PrevBStepNumber }
+					= PrevB#block.nonce_limiter_info,
+			prometheus_gauge:set(block_vdf_time, StepNumber - PrevBStepNumber);
+		false ->
+			ok
 	end.
 
 return_orphaned_txs_to_mempool(H, H) ->
