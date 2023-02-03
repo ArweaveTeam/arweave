@@ -226,6 +226,10 @@ register(MetricsDir) ->
 		{labels, []},
 		{help, "The time in milliseconds it took to compute a VDF step."}
 	]),
+	prometheus_gauge:new([
+		{name, vdf_step},
+		{help, "The current VDF step."}
+	]),
 
 	%% Economic metrics.
 	prometheus_gauge:new([
