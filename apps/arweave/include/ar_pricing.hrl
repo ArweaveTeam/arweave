@@ -2,7 +2,7 @@
 
 %% For a new account, we charge the fee equal to the price of uploading
 %% this number of bytes. The fee is about 0.1$ at the time.
--define(NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, 20000000).
+-define(NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, 20_000_000).
 
 %% The target number of replications.
 -ifdef(DEBUG).
@@ -113,9 +113,9 @@ end).
 %% we open the latch (and will increase the fees again when/if the endowment is empty).
 %% The value is redenominated according the denomination used at the time.
 -ifdef(DEBUG).
--define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 100000000000).
+-define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 100_000_000_000).
 -else.
--define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 10000000000000000).
+-define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 10_000_000_000_000_000).
 -endif.
 
 %% The total supply, in Winston (the sum of genesis balances + the total emission).
@@ -132,7 +132,7 @@ end).
 		%% of a new weave differ from those in mainnet.
 		-define(TOTAL_SUPPLY, 66000015859279336957).
 	-else.
-		-define(TOTAL_SUPPLY, 66000015859279336957).
+		-define(TOTAL_SUPPLY, 66_000_015_859_279_336_957).
 	-endif.
 -endif.
 
@@ -141,7 +141,7 @@ end).
 -ifdef(DEBUG).
 -define(REDENOMINATION_THRESHOLD, 1350000000000).
 -else.
--define(REDENOMINATION_THRESHOLD, 1000000000000000000).
+-define(REDENOMINATION_THRESHOLD, 1000_000_000_000_000_000).
 -endif.
 
 %% The number of blocks which has to pass after we assign the redenomination height before
