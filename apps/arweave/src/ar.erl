@@ -678,7 +678,7 @@ benchmark_vdf() ->
 	Input = crypto:strong_rand_bytes(32),
 	{Time, _} = timer:tc(fun() -> ar_vdf:compute2(1, Input, ?VDF_DIFFICULTY) end),
 	io:format("~n~nVDF step computed in ~.2f seconds.~n~n", [Time / 1000000]),
-	case Time > 1250000 of
+	case Time > 1150000 of
 		true ->
 			io:format("WARNING: your VDF computation speed is low - consider fetching "
 					"VDF outputs from an external source (see vdf_server_trusted_peer "
