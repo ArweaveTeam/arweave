@@ -1189,11 +1189,14 @@ etf_to_wallet_chunk_response_unsafe(ETF) ->
 	true = is_binary(NextCursor) orelse NextCursor == last,
 	lists:foreach(
 		fun	({Addr, {Balance, LastTX}})
-						when is_binary(Addr), is_binary(LastTX), is_integer(Balance) ->
+						when is_binary(Addr), is_binary(LastTX), is_integer(Balance),
+							Balance >= 0 ->
 				ok;
 			({Addr, {Balance, LastTX, Denomination, MiningPermission}})
 						when is_binary(Addr), is_binary(LastTX), is_integer(Balance),
-								is_integer(Denomination), Denomination > 1,
+								Balance >= 0,
+								is_integer(Denomination),
+								Denomination > 0,
 								is_boolean(MiningPermission) ->
 				ok
 		end,
@@ -1252,11 +1255,12 @@ json_struct_to_wallet_list(WalletsStruct) ->
 json_struct_to_wallet({Wallet}) ->
 	Address = ar_util:decode(find_value(<<"address">>, Wallet)),
 	Balance = binary_to_integer(find_value(<<"balance">>, Wallet)),
+	true = Balance >= 0,
 	LastTX = ar_util:decode(find_value(<<"last_tx">>, Wallet)),
 	case find_value(<<"denomination">>, Wallet) of
 		undefined ->
 			{Address, {Balance, LastTX}};
-		Denomination when is_integer(Denomination), Denomination > 1 ->
+		Denomination when is_integer(Denomination), Denomination > 0 ->
 			MiningPermission = find_value(<<"mining_permission">>, Wallet),
 			true = is_boolean(MiningPermission),
 			{Address, {Balance, LastTX, Denomination, MiningPermission}}
