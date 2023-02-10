@@ -489,7 +489,8 @@ handle_cast({validated_steps, Args}, State) ->
 			SessionByKey3 = maps:put(NextSessionKey, Session3, SessionByKey2),
 			may_be_set_vdf_step_metric(NextSessionKey, CurrentSessionKey,
 					Session3#vdf_session.step_number),
-			Sessions2 = gb_sets:add_element(NextSessionKey, Sessions),
+			Sessions2 = gb_sets:add_element({element(2, NextSessionKey),
+					element(1, NextSessionKey)}, Sessions),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;
 
@@ -670,7 +671,7 @@ apply_base_block(B, State) ->
 			steps = [Output], upper_bound = UpperBound, next_upper_bound = NextUpperBound,
 			seed = Seed },
 	SessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
-	Sessions = gb_sets:from_list([SessionKey]),
+	Sessions = gb_sets:from_list([{StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY, NextSeed}]),
 	SessionByKey = #{ SessionKey => Session },
 	State#state{ current_session_key = SessionKey, sessions = Sessions,
 			session_by_key = SessionByKey }.
@@ -764,16 +765,17 @@ apply_tip2(B, PrevB, State) ->
 			State#state{ current_session_key = SessionKey };
 		false ->
 			SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
-			Sessions2 = gb_sets:add_element(SessionKey, Sessions),
+			Sessions2 = gb_sets:add_element({element(2, SessionKey), element(1, SessionKey)},
+					Sessions),
 			State#state{ current_session_key = SessionKey, sessions = Sessions2,
 					session_by_key = SessionByKey2 }
 	end.
 
 prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
-	{{_NextSeed, Interval} = Key, Sessions2} = gb_sets:take_smallest(Sessions),
-	case BaseInterval > Interval of
+	{{Interval, NextSeed}, Sessions2} = gb_sets:take_smallest(Sessions),
+	case BaseInterval > Interval + 10 of
 		true ->
-			SessionByKey2 = maps:remove(Key, SessionByKey),
+			SessionByKey2 = maps:remove({NextSeed, Interval}, SessionByKey),
 			prune_old_sessions(Sessions2, SessionByKey2, BaseInterval);
 		false ->
 			{Sessions, SessionByKey}
@@ -945,7 +947,8 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 	end.
 
 apply_external_update2(Update, State) ->
-	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
+	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey,
+			sessions = Sessions } = State,
 	#nonce_limiter_update{ session_key = {NextSeed, IntervalNumber} = SessionKey,
 			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
 					step_number = StepNumber, steps = [Output | _] } = Session,
@@ -958,8 +961,11 @@ apply_external_update2(Update, State) ->
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
 					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
+					Sessions2 = gb_sets:add_element({element(2, SessionKey),
+							element(1, SessionKey)}, Sessions),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
-					{reply, ok, State#state{ session_by_key = SessionByKey2 }}
+					{reply, ok, State#state{ session_by_key = SessionByKey2,
+							sessions = Sessions2 }}
 			end;
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
 				last_step_checkpoints_map = Map } = CurrentSession ->
