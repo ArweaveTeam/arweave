@@ -87,5 +87,5 @@ height_2_6() ->
 	0.
 -else.
 height_2_6() ->
-	infinity.
+	1132210. % Targeting 2023-03-06 14:00 UTC
 -endif.
