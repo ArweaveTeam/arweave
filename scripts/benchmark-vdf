@@ -5,5 +5,8 @@ set -e
 SCRIPT_DIR="$(dirname "$0")"
 cd "$SCRIPT_DIR/.."
 
+export ERL_EPMD_ADDRESS=127.0.0.1
+export NODE_NAME='arweave@127.0.0.1'
+
 "bin/arweave" foreground +MBas aobf +MBlmbcs 512 +Ktrue +A20 +SDio20 +sbwtvery_long
 +sbwtdcpuvery_long +sbwtdiovery_long +swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -run ar benchmark_vdf_command
