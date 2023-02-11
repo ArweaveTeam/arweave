@@ -94,7 +94,8 @@ init([]) ->
 		?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
 		?CHILD_SUP(ar_poller_sup, supervisor),
 		?CHILD_SUP(ar_node_sup, supervisor),
-		?CHILD_SUP(ar_webhook_sup, supervisor)
+		?CHILD_SUP(ar_webhook_sup, supervisor),
+		?CHILD(ar_p3, worker)
 	],
 
 	{ok, {{one_for_one, 5, 10}, Children}}.
