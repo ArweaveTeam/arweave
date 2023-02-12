@@ -562,7 +562,7 @@ start(normal, _Args) ->
 		chars_limit => 16256,
 		max_size => 8128,
 		depth => 256,
-		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
+		template => [time," [",level,"] ",mfa,":",line," ",msg,"\n"]
 	},
 	logger:set_handler_config(default, formatter, {logger_formatter, LoggerFormatterConsole}),
 	logger:set_handler_config(default, level, error),
@@ -597,7 +597,7 @@ start(normal, _Args) ->
 		depth => 256,
 		legacy_header => false,
 		single_line => true,
-		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
+		template => [time," [",level,"] ",mfa,":",line," ",msg,"\n"]
 	},
 	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
 	logger:set_application_level(arweave, Level),
