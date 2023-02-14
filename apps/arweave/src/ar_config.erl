@@ -516,6 +516,19 @@ parse_options([{<<"defragment_modules">>, L} | Rest], Config) when is_list(L) ->
 parse_options([{<<"defragment_modules">>, Bin} | _], _) ->
 	{error, {bad_type, defragment_modules, array}, Bin};
 
+parse_options([{<<"services">>, ServicesConfig} | Rest], Config) ->
+	try
+		?LOG_ERROR("ServicesConfig: ~p", [ServicesConfig]),
+		Services = ar_p3_config:parse_services(ServicesConfig),
+		parse_options(Rest, Config#config{ services = Services })
+	catch _:_ ->
+		{error,
+			{bad_format, services, "an array of supported endpoints and rates"},
+			ServicesConfig}
+	end;
+
+
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
@@ -530,6 +543,7 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 				{spora_2_6, ar_util:decode(MiningAddr)}
 		end,
 	{RangeSize, RangeNumber, Packing}.
+
 
 safe_map(Fun, List) ->
 	try
