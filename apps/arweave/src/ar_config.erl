@@ -518,12 +518,11 @@ parse_options([{<<"defragment_modules">>, Bin} | _], _) ->
 
 parse_options([{<<"services">>, ServicesConfig} | Rest], Config) ->
 	try
-		?LOG_ERROR("ServicesConfig: ~p", [ServicesConfig]),
 		Services = ar_p3_config:parse_services(ServicesConfig),
 		parse_options(Rest, Config#config{ services = Services })
-	catch _:_ ->
+	catch error:Reason ->
 		{error,
-			{bad_format, services, "an array of supported endpoints and rates"},
+			{bad_format, services, Reason},
 			ServicesConfig}
 	end;
 
