@@ -1,4 +1,4 @@
--module(ar_p3_tests).
+-module(ar_p3_config_tests).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
