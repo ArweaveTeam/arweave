@@ -1614,7 +1614,10 @@ tx_roundtrip_test() ->
 		json_struct_to_tx(JsonTX)
 	).
 
-wallet_list_roundtrip_test() ->
+wallet_list_roundtrip_test_() ->
+	{timeout, 30, fun test_wallet_list_roundtrip/0}.
+
+test_wallet_list_roundtrip() ->
 	[B] = ar_weave:init(),
 	WL = B#block.account_tree,
 	JSONWL = jsonify(wallet_list_to_json_struct(B#block.reward_addr, false, WL)),

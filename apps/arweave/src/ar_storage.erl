@@ -1252,7 +1252,10 @@ store_and_retrieve_block_block_index_test() ->
 	ReadBI = read_block_index(),
 	?assertEqual(BI, ReadBI).
 
-store_and_retrieve_wallet_list_test() ->
+store_and_retrieve_wallet_list_test_() ->
+	{timeout, 20, fun test_store_and_retrieve_wallet_list/0}.
+
+test_store_and_retrieve_wallet_list() ->
 	[B0] = ar_weave:init(),
 	[TX] = B0#block.txs,
 	Addr = ar_wallet:to_address(TX#tx.owner, {?RSA_SIGN_ALG, 65537}),

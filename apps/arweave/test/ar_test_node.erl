@@ -19,7 +19,7 @@
 		get_tx_anchor/1, join/1, rejoin/1, join_on_slave/0, rejoin_on_slave/0,
 		join_on_master/0, rejoin_on_master/0,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
-		test_with_mocked_functions/2,
+		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
 		post_and_mine/2, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3, assert_get_tx_data_master/2,
@@ -36,6 +36,8 @@
 %% with height >= 20 (2 difficulty retargets).
 -define(WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT, 180000).
 -define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 30000).
+%% Sometimes takes a while on a slow machine
+-define(SLAVE_START_TIMEOUT, 40000).
 
 %%%===================================================================
 %%% Public interface.
@@ -90,28 +92,28 @@ start(B0, RewardAddr, Config, StorageModules) ->
 
 %% @doc Start a fresh slave node.
 slave_start() ->
-	Slave = slave_call(?MODULE, start, [], 20000),
+	Slave = slave_call(?MODULE, start, [], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
 	slave_wait_until_syncs_genesis_data(),
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block.
 slave_start(B) ->
-	Slave = slave_call(?MODULE, start, [B], 20000),
+	Slave = slave_call(?MODULE, start, [B], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
 	slave_wait_until_syncs_genesis_data(),
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block and mining address.
 slave_start(B0, RewardAddr) ->
-	Slave = slave_call(?MODULE, start, [B0, RewardAddr], 20000),
+	Slave = slave_call(?MODULE, start, [B0, RewardAddr], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
 	slave_wait_until_syncs_genesis_data(),
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block, mining address, and config.
 slave_start(B0, RewardAddr, Config) ->
-	Slave = slave_call(?MODULE, start, [B0, RewardAddr, Config], 20000),
+	Slave = slave_call(?MODULE, start, [B0, RewardAddr, Config], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
 	slave_wait_until_syncs_genesis_data(),
 	Slave.
@@ -473,8 +475,8 @@ slave_call(Module, Function, Args, Timeout) ->
 	),
 	case Result of
 		{error, timeout} ->
-			?debugFmt("Timed out waiting for the rpc reply; module: ~p, function: ~p, "
-					"args: ~p.~n", [Module, Function, Args]);
+			?debugFmt("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
+					"args: ~p.~n", [Timeout, Module, Function, Args]);
 		_ ->
 			ok
 	end,
@@ -746,9 +748,8 @@ get_tx_confirmations(master, TXID) ->
 			-1
 	end.
 
-test_with_mocked_functions(Functions, TestFun) ->
+mock_functions(Functions) ->
 	{
-		foreach,
 		fun() ->
 			lists:foldl(
 				fun({Module, Fun, Mock}, Mocked) ->
@@ -777,8 +778,23 @@ test_with_mocked_functions(Functions, TestFun) ->
 				noop,
 				Mocked
 			)
-		end,
+		end
+	}.
+
+test_with_mocked_functions(Functions, TestFun) ->
+	{Setup, Cleanup} = mock_functions(Functions),
+	{
+		foreach,
+		Setup, Cleanup,
 		[{timeout, 900, TestFun}]
+	}.
+
+test_with_mocked_functions(Functions, TestFun, Fixture) ->
+	{Setup, Cleanup} = mock_functions(Functions),
+	{
+		foreach,
+		Setup, Cleanup,
+		[{timeout, 900, {with, Fixture, [TestFun]}}]
 	}.
 
 post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->

@@ -4,7 +4,7 @@
 %%% @end
 -module(ar_retarget).
 
--export([is_retarget_height/1, maybe_retarget/5, calculate_difficulty/5, validate_difficulty/2,
+-export([is_retarget_height/1, is_retarget_block/1, maybe_retarget/5, calculate_difficulty/5, validate_difficulty/2,
 		switch_to_linear_diff/1, switch_to_linear_diff_pre_fork_2_5/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -50,10 +50,17 @@
 is_retarget_height(Height) ->
 	?IS_RETARGET_HEIGHT(Height).
 
-maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) when ?IS_RETARGET_HEIGHT(Height) ->
-	calculate_difficulty(CurDiff, TS, LastRetargetTS, Height, PrevTS);
-maybe_retarget(_Height, CurDiff, _TS, _LastRetargetTS, _PrevTS) ->
-	CurDiff.
+%% @doc Return true if the given block is a retarget block.
+is_retarget_block(Block) ->
+	?IS_RETARGET_BLOCK(Block).
+
+maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) ->
+	case ar_retarget:is_retarget_height(Height) of
+		true ->
+			calculate_difficulty(CurDiff, TS, LastRetargetTS, Height, PrevTS);
+		false ->
+			CurDiff
+	end.
 
 calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_1_7 = ar_fork:height_1_7(),
@@ -87,13 +94,17 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	end.
 
 %% @doc Assert the new block has an appropriate difficulty.
-validate_difficulty(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
-	(NewB#block.diff ==
-		calculate_difficulty(OldB#block.diff, NewB#block.timestamp, OldB#block.last_retarget,
-				NewB#block.height, OldB#block.timestamp));
 validate_difficulty(NewB, OldB) ->
-	(NewB#block.diff == OldB#block.diff) and
-		(NewB#block.last_retarget == OldB#block.last_retarget).
+	case ar_retarget:is_retarget_block(NewB) of
+		true ->
+			(NewB#block.diff ==
+				calculate_difficulty(
+					OldB#block.diff, NewB#block.timestamp, OldB#block.last_retarget,
+					NewB#block.height, OldB#block.timestamp));
+		false ->
+			(NewB#block.diff == OldB#block.diff) and
+				(NewB#block.last_retarget == OldB#block.last_retarget)
+	end.
 
 %% @doc The number a hash must be greater than, to give the same odds of success
 %% as the old-style Diff (number of leading zeros in the bitstring).

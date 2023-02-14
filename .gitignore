@@ -1,6 +1,8 @@
 *.beam
 *.log
 *.dat
+.vscode
+slave.out
 .arweave.plt
 testlog
 apps/arweave/priv/tls

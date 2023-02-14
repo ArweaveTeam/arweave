@@ -550,7 +550,7 @@ is_tx_fee_sufficient(Args) ->
 	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height, Accounts,
 			Addr, Timestamp} = Args,
 	DataSize = get_weave_size_increase(TX, Height + 1),
-	MinimumRequiredFee = get_tx_fee({DataSize, Rate, PricePerGiBMinute,
+	MinimumRequiredFee = ar_tx:get_tx_fee({DataSize, Rate, PricePerGiBMinute,
 			KryderPlusRateMultiplier, Addr, Timestamp, Accounts, Height + 1}),
 	Fee = TX#tx.reward,
 	ar_pricing:redenominate(Fee, TX#tx.denomination, Denomination) >= MinimumRequiredFee.
