@@ -11,11 +11,9 @@
 -export([validate_config/1]).
 
 start_link() ->
-	?LOG_ERROR("start_link"),
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-	?LOG_ERROR("init"),
 	process_flag(trap_exit, true),
 	
 	{ok, Config} = application:get_env(arweave, config),
@@ -30,22 +28,18 @@ validate_config(Config) ->
 	end.
 
 handle_call(Request, From, State) ->
-	?LOG_ERROR("handle_call Request: ~p, From: ~p, State: ~p", [Request, From, State]),
 	Reply = State,
 	{reply, Reply, State}.
 
 handle_cast(Message, State) ->
-	?LOG_ERROR("handle_cast Message: ~p, State: ~p", [Message, State]),
 	NewState = State,
 	{noreply, NewState}.
 
 handle_info(Info, State) ->
-	?LOG_ERROR("handle_info Info: ~p, State: ~p", [Info, State]),
 	NewState = State,
 	{noreply, NewState}.
 
 terminate(Reason, State) ->
-	?LOG_ERROR("terminate Reason: ~p, State: ~p", [Reason, State]),
 	ok.
 
 validate_service(ServiceConfig) when is_record(ServiceConfig, p3_service) ->
@@ -84,7 +78,7 @@ validate_ar(_) ->
 
 validate_ar_price(Price) ->
 	try
-		binary_to_integer(Price),
+		_ = binary_to_integer(Price),
 		true
 	catch error:badarg ->	
 		false
