@@ -19,13 +19,6 @@ init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
 	validate_config(Config).
 
-validate_config(Config) ->
-	case lists:all(fun validate_service/1, Config#config.services) of
-		true ->
-			{ok, Config#config.services};
-		false ->
-			{stop, "Error validating services"}
-	end.
 
 handle_call(Request, From, State) ->
 	Reply = State,
@@ -41,6 +34,15 @@ handle_info(Info, State) ->
 
 terminate(Reason, State) ->
 	ok.
+
+
+validate_config(Config) ->
+	case lists:all(fun validate_service/1, Config#config.services) of
+		true ->
+			{ok, Config#config.services};
+		false ->
+			{stop, "Error validating services"}
+	end.
 
 validate_service(ServiceConfig) when is_record(ServiceConfig, p3_service) ->
 	validate_endpoint(ServiceConfig#p3_service.endpoint) andalso
