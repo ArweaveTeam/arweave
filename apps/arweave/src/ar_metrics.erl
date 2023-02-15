@@ -1,16 +1,10 @@
 -module(ar_metrics).
 
--export([register/1, store/1, label_http_path/1, get_status_class/1]).
+-export([register/1, store/1, get_status_class/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_config.hrl").
-
--define(ENDPOINTS, ["info", "block", "block_announcement", "block2", "tx", "tx2",
-		"queue", "recent_hash_list", "recent_hash_list_diff", "tx_anchor", "arql", "time",
-		"chunk", "chunk2", "data_sync_record", "sync_buckets", "wallet", "unsigned_tx",
-		"peers", "hash_list", "block_index", "block_index2", "wallet_list", "height",
-		"metrics"]).
 
 %%%===================================================================
 %%% Public interface.
@@ -430,9 +424,7 @@ store(Name) ->
 	{ok, Config} = application:get_env(arweave, config),
 	ar_storage:write_term(Config#config.metrics_dir, Name, prometheus_gauge:value(Name)).
 
-%% @doc Return the HTTP path label for cowboy_requests_total and gun_requests_total metrics.
-label_http_path(Path) ->
-	name_route(split_path(Path)).
+
 
 %% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total
 %% metrics.

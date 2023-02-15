@@ -6,9 +6,12 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_p3.hrl").
 
--export([start_link/0]).
+-export([start_link/0, request/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([validate_config/1]).
+
+request(Method, SplitPath, Req) ->
+	gen_server:call(?MODULE, {request, Method, SplitPath, Req}).
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -20,9 +23,10 @@ init([]) ->
 	validate_config(Config).
 
 
-handle_call(Request, From, State) ->
-	Reply = State,
-	{reply, Reply, State}.
+handle_call({request, Method, SplitPath, Req}, _From, State) ->
+	?LOG_ERROR("Request: ~p ~p ~p", [Method, SplitPath, Req]),
+	?LOG_ERROR("State: ~p", [State]),
+	{reply, {true, ok}, State}.
 
 handle_cast(Message, State) ->
 	NewState = State,
@@ -52,8 +56,15 @@ validate_service(ServiceConfig) when is_record(ServiceConfig, p3_service) ->
 validate_service(_) ->
 	false.
 
+validate_endpoint(undefined) ->
+	false;
 validate_endpoint(Endpoint) ->
-	lists:member(Endpoint, ?P3_ENDPOINTS).
+	case ar_http_iface_server:label_http_path(Endpoint) of
+		undefined ->
+			false;
+		_ ->
+			true
+	end.
 
 validate_mod_seq(ModSeq) ->
 	is_integer(ModSeq).

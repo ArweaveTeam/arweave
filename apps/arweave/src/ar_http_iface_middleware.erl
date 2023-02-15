@@ -85,6 +85,7 @@ loop(TimeoutRef) ->
 	end.
 
 handle(Req, Pid) ->
+	?LOG_ERROR("Handling request: ~p", [Req]),
 	Peer = ar_http_util:arweave_peer(Req),
 	handle(Peer, Req, Pid).
 
@@ -103,14 +104,33 @@ handle(Peer, Req, Pid) ->
 		_ ->
 			do_nothing
 	end,
-	case handle4(Method, SplitPath, Req, Pid) of
-		{Status, Hdrs, Body, HandledReq} ->
-			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
-		{Status, Body, HandledReq} ->
-			{Status, ?CORS_HEADERS, Body, HandledReq};
-		{error, timeout} ->
-			{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
+	case ar_p3:request(Method, SplitPath, Req) of
+		{true, _} ->
+			case handle4(Method, SplitPath, Req, Pid) of
+				{Status, Hdrs, Body, HandledReq} ->
+					{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
+				{Status, Body, HandledReq} ->
+					{Status, ?CORS_HEADERS, Body, HandledReq};
+				{error, timeout} ->
+					{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
+			end;
+		{false, P3Status} ->
+			{p3_to_http_status(P3Status), #{}, <<>>, Req}
 	end.
+
+p3_to_http_status(Atom) ->
+	case Atom of
+		invalid_header ->
+			400;
+		insufficient_funds ->
+			402;
+		invalid_mod_seq ->
+			428;
+		too_many_requests ->
+			429
+	end.
+	
+
 
 -ifdef(TESTNET).
 handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->

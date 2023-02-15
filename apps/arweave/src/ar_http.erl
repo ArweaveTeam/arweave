@@ -276,7 +276,7 @@ reply_error([PendingRequest | PendingRequests], Reason) ->
 
 record_response_status(Method, Path, Response) ->
 	prometheus_counter:inc(gun_requests_total, [method_to_list(Method),
-			ar_metrics:label_http_path(list_to_binary(Path)),
+			ar_http_iface_server:label_http_path(list_to_binary(Path)),
 			ar_metrics:get_status_class(Response)]).
 
 method_to_list(get) ->
@@ -401,14 +401,14 @@ log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
 download_metric(Data, #{path := Path}) ->
 	prometheus_counter:inc(
 		http_client_downloaded_bytes_total,
-		[ar_metrics:label_http_path(list_to_binary(Path))],
+		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
 		byte_size(Data)
 	).
 
 upload_metric(#{method := post, path := Path, body := Body}) ->
 	prometheus_counter:inc(
 		http_client_uploaded_bytes_total,
-		[ar_metrics:label_http_path(list_to_binary(Path))],
+		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
 		byte_size(Body)
 	);
 upload_metric(_) ->
