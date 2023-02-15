@@ -543,7 +543,6 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 		end,
 	{RangeSize, RangeNumber, Packing}.
 
-
 safe_map(Fun, List) ->
 	try
 		{ok, lists:map(Fun, List)}

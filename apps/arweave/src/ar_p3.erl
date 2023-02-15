@@ -48,7 +48,6 @@ terminate(Reason, State) ->
 	?LOG_ERROR("terminate Reason: ~p, State: ~p", [Reason, State]),
 	ok.
 
-
 validate_service(ServiceConfig) when is_record(ServiceConfig, p3_service) ->
 	validate_endpoint(ServiceConfig#p3_service.endpoint) andalso
 	validate_mod_seq(ServiceConfig#p3_service.mod_seq) andalso
