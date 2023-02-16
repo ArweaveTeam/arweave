@@ -133,7 +133,14 @@ show_help() ->
 					"are stored in a dedicated folder "
 					"([data_dir]/storage_modules/storage_module_[partition_number]_[packing]/"
 					") where packing is either a mining address or \"unpacked\"."
-					" Example: storage_module 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI."},
+					" Example: storage_module 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI. "
+					"To configure a module of a custom size, set "
+					"storage_module [number],[size_in_bytes],[packing]. For instance, "
+					"storage_module "
+					"22,1000000000000,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI will be "
+					"syncing the weave data between the offsets 22 TB and 23 TB. Make sure "
+					"the corresponding disk contains some extra space for the proofs and "
+					"other metadata, about 10% of the configured size."},
 			{"polling (num)", lists:flatten(
 					io_lib:format(
 						"Ask some peers about new blocks every N seconds. Default is ~p.",
@@ -166,6 +173,10 @@ show_help() ->
 			{"hashing_threads (num)", io_lib:format("The number of hashing processes to spawn."
 					" Takes effect starting from the fork 2.6 block."
 					" Default is ~B.", [?NUM_HASHING_PROCESSES])},
+			{"data_cache_size_limit (num)", "The approximate maximum number of data chunks "
+					"kept in memory by the syncing processes."},
+			{"packing_cache_size_limit (num)", "The approximate maximum number of data chunks "
+					"kept in memory by the packing process."},
 			{"mining_server_chunk_cache_size_limit (num)", "The mining server will not read "
 					"new data unless the number of already fetched unprocessed chunks does "
 					"not exceed this number. When omitted, it is determined based on the "
@@ -231,9 +242,12 @@ show_help() ->
 											 "considered whitelisted."},
 			{"transaction_whitelist_url", "An HTTP endpoint serving a transaction whitelist."},
 			{"disk_space (num)",
-				"Max size (in GB) for the disk partition containing "
-				"the Arweave data directory (blocks, txs, etc) when "
-				"the miner stops writing files to disk."},
+				"The maximum amount (in GiB) of the used disk space on the partition "
+				"containing the Arweave data directory (blocks, txs, etc) when "
+				"the miner stops writing header files. The option does NOT apply to "
+				"storage modules - the node always attempts to sync the storage "
+				"module completely. Make sure to place storage modules on disks with the "
+				"sufficient available space."},
 			{"disk_space_check_frequency (num)",
 				io_lib:format(
 					"The frequency in seconds of requesting the information "
@@ -414,6 +428,12 @@ parse_cli_args(["io_threads", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ io_threads = list_to_integer(Num) });
 parse_cli_args(["hashing_threads", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ hashing_threads = list_to_integer(Num) });
+parse_cli_args(["data_cache_size_limit", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{
+			data_cache_size_limit = list_to_integer(Num) });
+parse_cli_args(["packing_cache_size_limit", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{
+			packing_cache_size_limit = list_to_integer(Num) });
 parse_cli_args(["mining_server_chunk_cache_size_limit", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			mining_server_chunk_cache_size_limit = list_to_integer(Num) });

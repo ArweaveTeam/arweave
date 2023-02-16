@@ -829,10 +829,10 @@ handle_initialized(State) ->
 		{redenomination_height, B#block.redenomination_height},
 		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
 	]),
-	ar_events:send(node_state, {initialized, B}),
-	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+	ar_events:send(node_state, {initialized, B}),
+	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	ar:console("Joined the Arweave network successfully.~n"),
 	?LOG_INFO([{event, joined_the_network}]),
 	{noreply, may_be_reset_miner(State)}.
@@ -1630,10 +1630,10 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		{redenomination_height, B#block.redenomination_height},
 		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
 	]),
-	ar_events:send(node_state, {new_tip, B, PrevB}),
-	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+	ar_events:send(node_state, {new_tip, B, PrevB}),
+	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	may_be_reset_miner(State).
 
 get_checkpoint_block(RecentBI) ->

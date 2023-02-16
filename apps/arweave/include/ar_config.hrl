@@ -131,6 +131,8 @@
 	%% Takes effect since the fork 2.6.
 	hashing_threads = ?NUM_HASHING_PROCESSES,
 	mining_server_chunk_cache_size_limit,
+	packing_cache_size_limit,
+	data_cache_size_limit,
 	tx_validators,
 	post_tx_timeout = ?DEFAULT_POST_TX_TIMEOUT,
 	max_emitters = ?NUM_EMITTER_PROCESSES,

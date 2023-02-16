@@ -338,7 +338,7 @@ register(MetricsDir) ->
 
 	prometheus_gauge:new([{name, packing_buffer_size},
 			{help, "The number of chunks in the packing server queue."}]),
-	prometheus_gauge:new([{name, sync_buffer_size}, {labels, [store_id]},
+	prometheus_gauge:new([{name, chunk_cache_size},
 			{help, "The number of chunks scheduled for downloading."}]).
 
 %% @doc Store the given metric in a file.

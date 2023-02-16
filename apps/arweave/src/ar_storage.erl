@@ -269,19 +269,20 @@ read_account2(Addr, RootHash, Pos, Left, _Right, DataDir, L, _RightFileFound) ->
 get_sufficient_space_for_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
-	{_, KByteSize, CapacityKByteSize} = get_disk_data(DataDir),
+	{_, TotalKByteSize, AvailableKByteSize} = get_disk_data(DataDir),
 	FreeDiskSpace =
 		case Config#config.disk_space of
 			undefined ->
-				CapacityKByteSize * 1024;
-			Limit ->
-				max(0, Limit - (KByteSize - CapacityKByteSize) * 1024)
+				AvailableKByteSize * 1024;
+			ConfiguredMaxUsedSize ->
+				UsedKByteSize = TotalKByteSize - AvailableKByteSize,
+				max(0, ConfiguredMaxUsedSize - UsedKByteSize * 1024)
 		end,
 	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
 	DiskCacheSize = Config#config.disk_cache_size * 1048576,
 	[{_, SameDriveStorageModulesTotalSize}] = ets:lookup(?MODULE,
 			same_disk_storage_modules_total_size),
-	BufferSize = 50000000000,
+	BufferSize = 5000000000,
 	ReservedSpaceSize = max(BufferSize,
 			SameDriveStorageModulesTotalSize + DiskPoolSize + DiskCacheSize + BufferSize),
 	max(0, FreeDiskSpace - ReservedSpaceSize).

@@ -41,7 +41,7 @@
 
 %% How long to keep the offsets of the recently processed "matured" chunks in a cache.
 %% We use the cache to quickly skip matured chunks when scanning the disk pool.
--define(CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS, 3 * 60 * 60 * 1000).
+-define(CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS, 30 * 60 * 1000).
 
 %% The frequency of removing expired data roots from the disk pool.
 -define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
@@ -148,10 +148,6 @@
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},
-	%% The end offset of the last interval possibly scheduled for repacking or 0.
-	repacking_cursor,
-	%% If true, the node repacks 2.5-packed data in the default storage with 2.6 packing.
-	repack_legacy_storage = false,
 	%% The queue with unique {Start, End, Peer} triplets. Sync jobs are taking intervals
 	%% from this queue and syncing them.
 	sync_intervals_queue = gb_sets:new(),
@@ -184,5 +180,12 @@
 	%% The start offset of the range the module is responsible for.
 	range_start = -1,
 	%% The end offset of the range the module is responsible for.
-	range_end = -1
+	range_end = -1,
+	%% The list of {StoreID, {Start, End}} - the ranges we want to copy
+	%% from the other storage modules (possibly, (re)packing the data in the process).
+	unsynced_intervals_from_other_storage_modules = [],
+	%% The list of identifiers of the non-default storage modules intersecting with the given
+	%% storage module to be searched for missing data before attempting to sync the data
+	%% from the network.
+	other_storage_modules_with_unsynced_intervals = []
 }).

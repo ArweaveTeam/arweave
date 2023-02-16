@@ -506,11 +506,13 @@ get_chunk_cache_size_limit(State) ->
 		undefined ->
 			#state{ io_threads = IOThreads } = State,
 			ThreadCount = map_size(IOThreads),
-			Free = proplists:get_value(free_memory, memsup:get_system_memory_data(), infinity),
-			Bytes = min(Free, ?RECALL_RANGE_SIZE
+			Free = proplists:get_value(free_memory,
+					memsup:get_system_memory_data(), 2000000000),
+			Bytes = min(Free / 3, ?RECALL_RANGE_SIZE
 				* 2 % Two ranges per output.
 				* ThreadCount),
-			Bytes div ?DATA_CHUNK_SIZE;
+			Limit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
+			Limit - Limit rem 100 + 100;
 		N ->
 			N
 	end.
