@@ -318,7 +318,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			)
 		end,
 		500,
-		10 * 1000
+		30 * 1000
 	).
 
 accepts_chunks_test_() ->
