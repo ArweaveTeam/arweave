@@ -17,10 +17,6 @@
 %% The key to initialize the RandomX state from, for RandomX packing.
 -define(RANDOMX_PACKING_KEY, <<"default arweave 2.5 pack key">>).
 
-%% The approximate maximum number of chunks to schedule for packing/unpacking.
-%% A bigger number means more memory allocated for the chunks not packed/unpacked yet.
--define(PACKING_BUFFER_SIZE, 1000).
-
 -record(state, {
 	workers,
 	repack_map = maps:new()
@@ -55,8 +51,9 @@ unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 %% @doc Return true if the packing server buffer is considered full, to apply
 %% some back-pressure on the pack/4 and unpack/5 callers.
 is_buffer_full() ->
+	[{_, Limit}] = ets:lookup(?MODULE, buffer_size_limit),
 	case ets:lookup(?MODULE, buffer_size) of
-		[{_, Size}] when Size > ?PACKING_BUFFER_SIZE ->
+		[{_, Size}] when Size > Limit ->
 			true;
 		_ ->
 			false
@@ -99,6 +96,19 @@ init([]) ->
 			|| _ <- lists:seq(1, SpawnSchedulers)]),
 	ok = ar_events:subscribe(chunk),
 	ets:insert(?MODULE, {buffer_size, 0}),
+	{ok, Config} = application:get_env(arweave, config),
+	MaxSize =
+		case Config#config.packing_cache_size_limit of
+			undefined ->
+				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
+						2000000000),
+				Limit2 = erlang:ceil(Free / 3 / 262144),
+				Limit3 = Limit2 - Limit2 rem 100 + 100,
+				Limit3;
+			Limit ->
+				Limit
+		end,
+	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
 	{ok, #state{ workers = Workers }}.
 

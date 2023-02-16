@@ -161,6 +161,18 @@ parse_options([{<<"hashing_threads">>, Threads} | Rest], Config) when is_integer
 parse_options([{<<"hashing_threads">>, Threads} | _], _) ->
 	{error, {bad_type, hashing_threads, number}, Threads};
 
+parse_options([{<<"data_cache_size_limit">>, Limit} | Rest], Config)
+		when is_integer(Limit) ->
+	parse_options(Rest, Config#config{ data_cache_size_limit = Limit });
+parse_options([{<<"data_cache_size_limit">>, Limit} | _], _) ->
+	{error, {bad_type, data_cache_size_limit, number}, Limit};
+
+parse_options([{<<"packing_cache_size_limit">>, Limit} | Rest], Config)
+		when is_integer(Limit) ->
+	parse_options(Rest, Config#config{ packing_cache_size_limit = Limit });
+parse_options([{<<"packing_cache_size_limit">>, Limit} | _], _) ->
+	{error, {bad_type, packing_cache_size_limit, number}, Limit};
+
 parse_options([{<<"mining_server_chunk_cache_size_limit">>, Limit} | Rest], Config)
 		when is_integer(Limit) ->
 	parse_options(Rest, Config#config{ mining_server_chunk_cache_size_limit = Limit });
