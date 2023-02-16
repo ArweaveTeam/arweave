@@ -244,12 +244,12 @@ basic_validate_test() ->
 
 all_endpoints_validate_test() ->
 	Endpoints = [
-		<<"/tx/ready_for_mining">>, <<"/info">>, <<"/time">>, <<"/tx/pending">>,
+		<<"/info">>, <<"/time">>, <<"/tx/pending">>,
 		<<"/queue">>, <<"/tx/{hash}/status">>, <<"/tx/{hash}">>, <<"/tx2/{hash}">>,
 		<<"/unconfirmed_tx/{hash}">>, <<"/unconfirmed_tx2/{hash}">>, <<"/arql">>,
-		<<"/tx/{hash}/data.{extension}">>, <<"/sync_buckets">>, <<"/data_sync_record">>,
+		<<"/tx/{hash}/data.{ext}">>, <<"/sync_buckets">>, <<"/data_sync_record">>,
 		<<"/data_sync_record/{start}/{limit}">>, <<"/chunk/{offset}">>, <<"/chunk2/{offset}">>,
-		<<"/tx/{id}/offset">>, <<"/chunk">>, <<"/block_announcement">>, <<"/block">>,
+		<<"/tx/{hash}/offset">>, <<"/chunk">>, <<"/block_announcement">>, <<"/block">>,
 		<<"/block2">>, <<"/wallet">>, <<"/tx">>, <<"/tx2">>, <<"/unsigned_tx">>, <<"/peers">>,
 		<<"/price/{bytes}">>, <<"/price2/{bytes}">>, <<"/optimistic_price/{bytes}">>,
 		<<"/price/{bytes}/{address}">>, <<"/price2/{bytes}/{address}">>,
@@ -259,15 +259,15 @@ all_endpoints_validate_test() ->
 		<<"/block_index/{from}/{to}">>, <<"/block_index2/{from}/{to}">>, 
 		<<"/recent_hash_list">>, <<"/recent_hash_list_diff">>, <<"/wallet_list">>,
 		<<"/wallet_list/{root_hash}">>, <<"/wallet_list/{root_hash}/{cursor}">>,
-		<<"/wallet_list/{root_hash}/{address}/balance">>, <<"/peers">>,
-		<<"/wallet/{address}/balance">>, <<"/wallet/{address}/last_tx">>, <<"/tx_anchor">>,
-		<<"/wallet/{address}/txs">>, <<"/wallet/{address}/txs/{earliest_tx}">>,
-		<<"/wallet/{address}/deposits">>, <<"/wallet/{address}/deposits/{earliest_deposit}">>,
-		<<"/block/height/{height}">>, <<"/block/hash/{hash}">>, <<"/block2/height/{height}">>,
-		<<"/block2/hash/{hash}">>, <<"/block/height/{height}/{field}">>,
-		<<"/block/hash/{hash}/{field}">>, 
-		<<"/block/height/{height}/wallet/{address}/balance">>, <<"/block/current">>,
-		<<"/current_block">>, <<"/tx/{hash}/{field}">>, <<"/height">>, <<"/vdf">>
+		<<"/wallet_list/{root_hash}/{addr}/balance">>, <<"/peers">>,
+		<<"/wallet/{addr}/balance">>, <<"/wallet/{addr}/last_tx">>, <<"/tx_anchor">>,
+		<<"/wallet/{addr}/txs">>, <<"/wallet/{addr}/txs/{earliest_tx}">>,
+		<<"/wallet/{addr}/deposits">>, <<"/wallet/{addr}/deposits/{earliest_deposit}">>,
+		<<"/block/height/{height}">>, <<"/block/hash/{indep_hash}">>,
+		<<"/block2/height/{height}">>, <<"/block2/hash/{indep_hash}">>,
+		<<"/block/{type}/{id_bin}/{field}">>,
+		<<"/block/height/{height}/wallet/{addr}/balance">>, <<"/block/current">>,
+		<<"/tx/{hash}/{field}">>, <<"/height">>, <<"/vdf">>
 	],
 	lists:foreach(
 		fun(Endpoint) ->

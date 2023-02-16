@@ -245,7 +245,7 @@ name_route([<<"tx">>, _Hash, << "data.", _/binary >>]) ->
 name_route([<<"tx">>, _Hash, << "offset" >>]) ->
 	"/tx/{hash}/offset";
 name_route([<<"tx">>, _Hash, _Field]) ->
-	"/tx/hash/field";
+	"/tx/{hash}/{field}";
 
 name_route([<<"chunk">>, _Offset]) ->
 	"/chunk/{offset}";

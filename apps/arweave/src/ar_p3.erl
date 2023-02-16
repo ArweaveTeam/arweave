@@ -59,11 +59,17 @@ validate_service(_) ->
 validate_endpoint(undefined) ->
 	false;
 validate_endpoint(Endpoint) ->
+	EndpointString = binary_to_list(Endpoint),
 	case ar_http_iface_server:label_http_path(Endpoint) of
 		undefined ->
 			false;
-		_ ->
-			true
+		Label when Label == EndpointString ->
+			true;
+		Label when Label /= EndpointString ->
+			io:format(
+				"Endpoint ~p is not a valid P3 service. Closest valid match: ~p",
+				[EndpointString, Label]),
+			false
 	end.
 
 validate_mod_seq(ModSeq) ->
