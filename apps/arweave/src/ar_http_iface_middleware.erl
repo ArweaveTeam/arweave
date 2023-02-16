@@ -85,7 +85,6 @@ loop(TimeoutRef) ->
 	end.
 
 handle(Req, Pid) ->
-	?LOG_ERROR("Handling request: ~p", [Req]),
 	Peer = ar_http_util:arweave_peer(Req),
 	handle(Peer, Req, Pid).
 
