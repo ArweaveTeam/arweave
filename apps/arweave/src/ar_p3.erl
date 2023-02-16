@@ -24,8 +24,6 @@ init([]) ->
 
 
 handle_call({request, Method, SplitPath, Req}, _From, State) ->
-	?LOG_ERROR("Request: ~p ~p ~p", [Method, SplitPath, Req]),
-	?LOG_ERROR("State: ~p", [State]),
 	{reply, {true, ok}, State}.
 
 handle_cast(Message, State) ->
