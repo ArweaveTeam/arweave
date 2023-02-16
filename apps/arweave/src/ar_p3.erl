@@ -41,15 +41,17 @@ terminate(Reason, State) ->
 
 
 validate_config(Config) ->
-	case lists:all(fun validate_service/1, Config#config.services) of
+	case lists:all(fun validate_service/1, maps:to_list(Config#config.services)) of
 		true ->
 			{ok, Config#config.services};
 		false ->
 			{stop, "Error validating services"}
 	end.
 
-validate_service(ServiceConfig) when is_record(ServiceConfig, p3_service) ->
+validate_service({Endpoint, ServiceConfig}) when is_record(ServiceConfig, p3_service) ->
+	validate_endpoint(Endpoint) andalso
 	validate_endpoint(ServiceConfig#p3_service.endpoint) andalso
+	Endpoint == ServiceConfig#p3_service.endpoint andalso
 	validate_mod_seq(ServiceConfig#p3_service.mod_seq) andalso
 	validate_rates(ServiceConfig#p3_service.rates);
 

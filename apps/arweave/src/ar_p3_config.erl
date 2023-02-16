@@ -37,7 +37,14 @@
 %% @doc Parse a list of services:
 %% "services": [ {service}, {service}, ... ]
 parse_services(ServicesConfig) when is_list(ServicesConfig) ->
-	[parse_service(Service, #p3_service{}) || {Service} <- ServicesConfig];
+	Services = [parse_service(ServiceConfig, #p3_service{}) || {ServiceConfig} <- ServicesConfig],
+	lists:foldl(
+		fun(Service, Acc) -> 
+			maps:put(Service#p3_service.endpoint, Service, Acc)
+		end,
+		#{},
+		Services
+	);
 
 parse_services(ServicesConfig) ->
 	erlang:error(
