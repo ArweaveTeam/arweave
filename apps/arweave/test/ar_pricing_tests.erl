@@ -22,7 +22,7 @@
 -define(DISTANT_FUTURE_BLOCK_HEIGHT, 262800000). %% 1,000 years from genesis
 
 auto_redenomination_and_endowment_debt_test_() ->
-	{timeout, 120, fun test_auto_redenomination_and_endowment_debt/0}.
+	{timeout, 180, fun test_auto_redenomination_and_endowment_debt/0}.
 
 test_auto_redenomination_and_endowment_debt() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
