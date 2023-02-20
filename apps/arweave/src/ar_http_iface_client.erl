@@ -107,7 +107,7 @@ get_block(Peer, H, TXIndices) ->
 				peer => Peer,
 				path => "/block2/hash/" ++ binary_to_list(ar_util:encode(H)),
 				headers => p2p_headers(),
-				connect_timeout => 500,
+				connect_timeout => 1000,
 				timeout => 15 * 1000,
 				body => ar_util:encode_list_indices(TXIndices),
 				limit => ?MAX_BODY_SIZE
