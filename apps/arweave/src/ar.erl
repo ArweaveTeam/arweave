@@ -649,7 +649,7 @@ start(normal, _Args) ->
 set_mining_address(#config{ mining_addr = not_set } = C) ->
 	W = ar_wallet:get_or_create_wallet([{?RSA_SIGN_ALG, 65537}]),
 	Addr = ar_wallet:to_address(W),
-	ar:console("Setting the mining address to ~s.~n", [ar_util:encode(Addr)]),
+	ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
 	C2 = C#config{ mining_addr = Addr },
 	application:set_env(arweave, config, C2),
 	set_mining_address(C2);
