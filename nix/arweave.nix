@@ -335,7 +335,7 @@ let
 in beamPackages.rebar3Relx {
 
   pname = "arweave";
-  version = "2.5.1-rc";
+  version = "2.6.0";
   src = gitignoreSource ../.;
   profile = "prod";
   releaseType = "release";
