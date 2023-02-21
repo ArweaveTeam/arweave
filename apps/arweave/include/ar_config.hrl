@@ -80,7 +80,7 @@
 -define(DEFAULT_POST_TX_TIMEOUT, 20).
 
 %% The maximum number of chunks per second the node attempts to pack or unpack.
--define(DEFAULT_PACKING_RATE, 200).
+-define(DEFAULT_PACKING_RATE, 50).
 
 %% The default value for the maximum number of threads used for nonce limiter chain
 %% validation.

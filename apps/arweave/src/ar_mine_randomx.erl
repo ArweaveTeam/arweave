@@ -139,24 +139,30 @@ randomx_decrypt_chunk(RandomxState, Key, Chunk, Size) ->
 randomx_encrypt_chunk_2_6(_State, Key, Chunk) ->
 	Options = [{encrypt, true}, {padding, zero}],
 	IV = binary:part(Key, {0, 16}),
-	crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options).
+	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
 
 randomx_decrypt_chunk_2_6(_State, Key, Chunk, _Size) ->
 	Options = [{encrypt, false}],
 	IV = binary:part(Key, {0, 16}),
-	crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options).
+	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
 -else.
 randomx_encrypt_chunk_2_6(RandomxState, Key, Chunk) ->
-	{ok, OutChunk} =
-		randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
-				large_pages(), hardware_aes()),
-	OutChunk.
+	case randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
+				large_pages(), hardware_aes()) of
+		{error, Error} ->
+			{exception, Error};
+		Reply ->
+			Reply
+	end.
 
 randomx_decrypt_chunk_2_6(RandomxState, Key, Chunk, Size) ->
-	{ok, OutChunk} =
-		randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, Size, ?RANDOMX_PACKING_ROUNDS_2_6,
-				jit(), large_pages(), hardware_aes()),
-	OutChunk.
+	case randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, Size, ?RANDOMX_PACKING_ROUNDS_2_6,
+				jit(), large_pages(), hardware_aes()) of
+		{error, Error} ->
+			{exception, Error};
+		Reply ->
+			Reply
+	end.
 -endif.
 
 -ifdef(DEBUG).

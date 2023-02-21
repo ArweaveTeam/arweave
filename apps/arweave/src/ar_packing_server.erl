@@ -103,7 +103,7 @@ init([]) ->
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
-				Limit2 = erlang:ceil(Free / 3 / 262144),
+				Limit2 = erlang:ceil(Free * 0.9 / 3 / 262144),
 				Limit3 = Limit2 - Limit2 rem 100 + 100,
 				Limit3;
 			Limit ->
@@ -234,7 +234,11 @@ worker(ThrottleDelay, RandomXStateRef) ->
 				{error, invalid_chunk_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}])
+					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}]);
+				{exception, Error} ->
+					?LOG_ERROR([{event, failed_to_unpack_chunk},
+							{absolute_end_offset, AbsoluteOffset},
+							{error, io_lib:format("~p", [Error])}])
 			end,
 			decrement_buffer_size(),
 			worker(ThrottleDelay, RandomXStateRef);
@@ -251,7 +255,11 @@ worker(ThrottleDelay, RandomXStateRef) ->
 							timer:sleep(ThrottleDelay)
 					end;
 				{error, invalid_unpacked_size} ->
-					?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}])
+					?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}]);
+				{exception, Error} ->
+					?LOG_ERROR([{event, failed_to_pack_chunk},
+							{absolute_end_offset, AbsoluteOffset},
+							{error, io_lib:format("~p", [Error])}])
 			end,
 			decrement_buffer_size(),
 			worker(ThrottleDelay, RandomXStateRef)
@@ -293,10 +301,15 @@ pack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, RandomXStateRef, Exter
 			%% more weave replicas per invested dollar.
 			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
 					RewardAddr/binary >>),
-			{ok, prometheus_histogram:observe_duration(packing_duration_milliseconds,
+			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[pack, External], fun() ->
 							ar_mine_randomx:randomx_encrypt_chunk_2_6(RandomXStateRef, Key,
-									pad_chunk(Chunk)) end), was_not_already_packed}
+									pad_chunk(Chunk)) end) of
+				{ok, Packed} ->
+					{ok, Packed, was_not_already_packed};
+				Error ->
+					Error
+			end
 	end.
 
 pad_chunk(Chunk) ->
@@ -346,22 +359,27 @@ unpack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, ChunkSize,
 		_ ->
 			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
 					RewardAddr/binary >>),
-			Unpacked = prometheus_histogram:observe_duration(packing_duration_milliseconds,
+			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[unpack, External], fun() ->
 							ar_mine_randomx:randomx_decrypt_chunk_2_6(RandomXStateRef, Key,
-									Chunk, ?DATA_CHUNK_SIZE) end),
-			Padding = binary:part(Unpacked, ChunkSize, PackedSize - ChunkSize),
-			case Padding of
-				<<>> ->
-					{ok, Unpacked, was_not_already_unpacked};
-				_ ->
-					case is_zero(Padding) of
-						false ->
-							{error, invalid_padding};
-						true ->
-							{ok, binary:part(Unpacked, 0, ChunkSize), was_not_already_unpacked}
-					end
-			end
+									Chunk, ?DATA_CHUNK_SIZE) end) of
+			{ok, Unpacked} ->
+				Padding = binary:part(Unpacked, ChunkSize, PackedSize - ChunkSize),
+				case Padding of
+					<<>> ->
+						{ok, Unpacked, was_not_already_unpacked};
+					_ ->
+						case is_zero(Padding) of
+							false ->
+								{error, invalid_padding};
+							true ->
+								{ok, binary:part(Unpacked, 0, ChunkSize),
+										was_not_already_unpacked}
+						end
+				end;
+			Error ->
+					Error
+		end
 	end.
 
 is_zero(<< 0:8, Rest/binary >>) ->
