@@ -1046,6 +1046,16 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 		LastStepCheckpoints ->
 			case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID,
 					Nonce, PoA1, PoA2, Diff, PartitionUpperBound}) of
+				error ->
+					?LOG_INFO([{event, failed_to_validate_solution},
+							{partition, PartitionNumber},
+							{step_number, StepNumber},
+							{mining_address, ar_util:encode(ReplicaID)},
+							{recall_byte1, RecallByte1},
+							{recall_byte2, RecallByte2},
+							{solution_h, ar_util:encode(H)},
+							{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+					State;
 				false ->
 					?LOG_INFO([{event, found_invalid_solution}, {partition, PartitionNumber},
 							{step_number, StepNumber},

@@ -172,6 +172,9 @@ validate_spoa(Args) ->
 		false ->
 			case ar_poa:validate({BlockStart, RecallByte, TXRoot, BlockEnd - BlockStart, SPoA,
 					StrictDataSplitThreshold, spora_2_5}) of
+				error ->
+					?LOG_ERROR([{event, failed_to_validate_proof_of_access}]),
+					error;
 				false ->
 					{false, SolutionHash};
 				true ->
@@ -547,6 +550,8 @@ server(
 									PrevH, PartitionUpperBound,
 									B#block.strict_data_split_threshold,
 									SPoA}) of
+								error ->
+									server(S);
 								{true, Hash, _HashPreimage} ->
 									B2 =
 										B#block{

@@ -1159,6 +1159,11 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI3),
 	case ar_node_utils:validate(B, PrevB, Accounts, BlockAnchors, RecentTXMap,
 			PartitionUpperBound) of
+		error ->
+			?LOG_WARNING([{event, failed_to_validate_block},
+					{h, ar_util:encode(B#block.indep_hash)}]),
+			gen_server:cast(?MODULE, apply_block),
+			{noreply, State};
 		{invalid, Reason} ->
 			?LOG_WARNING([{event, received_invalid_block},
 					{validation_error, Reason},

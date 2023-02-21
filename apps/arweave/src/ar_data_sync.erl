@@ -419,7 +419,7 @@ init("default" = StoreID) ->
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
-				Limit2 = erlang:ceil(Free / 3 / 262144),
+				Limit2 = erlang:ceil(Free * 0.9 / 3 / 262144),
 				Limit3 = Limit2 - Limit2 rem 100 + 100,
 				ar:console("~nSetting the data chunk cache size limit to ~B chunks. "
 						"Once the data is synced, "
@@ -1280,11 +1280,19 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
 						U = case StoredPacking of unpacked -> Chunk2; _ -> none end,
 						{ok, {Chunk2, U, ChunkID2}};
 					{true, false} ->
-						{ok, Unpacked} = ar_packing_server:unpack(StoredPacking, ChunkOffset2,
-								TXRoot2, Chunk2, ChunkSize2),
-						{ok, Packed} = ar_packing_server:pack(Packing, ChunkOffset2, TXRoot2,
-								Unpacked),
-						{ok, {Packed, Unpacked, ChunkID2}}
+						case ar_packing_server:unpack(StoredPacking, ChunkOffset2,
+								TXRoot2, Chunk2, ChunkSize2) of
+							{exception, Error2} ->
+								{error, Error2};
+							{ok, Unpacked} ->
+								case ar_packing_server:pack(Packing, ChunkOffset2, TXRoot2,
+										Unpacked) of
+									{exception, Error3} ->
+										{error, Error3};
+									{ok, Packed} ->
+										{ok, {Packed, Unpacked, ChunkID2}}
+								end
+						end
 				end,
 			case PackResult of
 				{ok, {PackedChunk, none, _ChunkID3}} ->
