@@ -116,7 +116,7 @@ emailing us at team@arweave.org.
 
 
 For more information about the Arweave project visit [https://www.arweave.org](https://www.arweave.org/)
-or have a look at our [yellow paper](https://www.arweave.org/files/arweave-yellowpaper.pdf).
+or have a look at our [yellow paper](https://yellow-paper.arweave.dev).
 
 # License
 
