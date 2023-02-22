@@ -167,13 +167,24 @@ let
     '';
   };
 
-  prometheus = buildRebar rec {
-    name = "prometheus";
-    version = "4.6.0";
+  quantile_estimator = buildRebar rec {
+    name = "quantile_estimator";
+    version = "0.2.1";
     src = fetchHex {
       inherit version;
       pkg = name;
-      sha256 = "sha256-SQX9KZL4A47M16oM0i9AY37WGMC+0fdcBarOwVt1Rd4=";
+      sha256 = "sha256-KCqKMjyiqEXJ5veH0WY0j3dsHUpB7eYwRtctQi49qUY=";
+    };
+  };
+
+  prometheus = buildRebar rec {
+    name = "prometheus";
+    version = "4.10.0";
+    buildInputs = [ quantile_estimator ];
+    src = fetchHex {
+      inherit version;
+      pkg = name;
+      sha256 = "sha256-Kpm7bc6F4jjHI2/eawBk+YNNxCDdvZYqrE6io8PVk4Q=";
     };
   };
 
@@ -362,6 +373,7 @@ in beamPackages.rebar3Relx {
     cowlib
     meck
     cowboy
+    quantile_estimator
     prometheus
     prometheus_process_collector
     prometheus_cowboy
