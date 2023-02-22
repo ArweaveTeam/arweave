@@ -21,6 +21,7 @@ hash_lists
 wallet_lists
 wallets
 logs
+!bin/logs
 ebin
 metrics_master
 metrics_slave
