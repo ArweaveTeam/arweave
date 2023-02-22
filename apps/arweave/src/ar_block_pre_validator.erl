@@ -657,6 +657,9 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp, ReadBod
 	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, B#block.poa,
 			?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, B#block.reward_addr}})
 				andalso RecallByte1 == B#block.recall_byte of
+		error ->
+			?LOG_ERROR([{event, failed_to_validate_proof_of_access},
+					{block, ar_util:encode(B#block.indep_hash)}]);
 		false ->
 			post_block_reject_warn(B, check_poa, Peer),
 			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
@@ -676,6 +679,9 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp, ReadBod
 							B#block.poa2, ?STRICT_DATA_SPLIT_THRESHOLD,
 							{spora_2_6, B#block.reward_addr}})
 								andalso RecallByte2 == B#block.recall_byte2 of
+						error ->
+							?LOG_ERROR([{event, failed_to_validate_proof_of_access},
+									{block, ar_util:encode(B#block.indep_hash)}]);
 						false ->
 							post_block_reject_warn(B, check_poa2, Peer),
 							ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),

@@ -25,7 +25,6 @@ execute(Req, Env) ->
 
 start() ->
 	?LOG_INFO([{event, ar_blacklist_middleware_start}]),
-	ets:new(ar_blacklist_middleware, [set, public, named_table]),
 	{ok, _} =
 		timer:apply_after(
 			?BAN_CLEANUP_INTERVAL,

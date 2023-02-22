@@ -55,6 +55,8 @@ validate(Args) ->
 							ChunkSize) of
 						{error, _} ->
 							false;
+						{exception, _} ->
+							error;
 						{ok, Unpacked} ->
 							ChunkID == ar_tx:generate_chunk_id(Unpacked)
 					end

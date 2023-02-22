@@ -451,7 +451,9 @@ handle(<<"POST">>, [<<"block_announcement">>], Req, Pid) ->
 					{400, #{}, <<>>, Req2}
 			end;
 		{error, body_size_too_large} ->
-			{400, #{}, <<>>, Req}
+			{400, #{}, <<>>, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end;
 
 %% Accept a JSON-encoded block with Base64Url encoded fields.
@@ -870,6 +872,8 @@ handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
 						error ->
 							{400, #{}, <<>>, Req2}
 					end;
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req};
 				{error, body_size_too_large} ->
 					{413, #{}, <<"Payload too large">>, Req}
 			end
@@ -1654,6 +1658,8 @@ handle_post_tx({Req, Pid, Encoding}) ->
 							{400, #{}, <<"Invalid JSON.">>, Req2};
 						{error, body_size_too_large, Req2} ->
 							{413, #{}, <<"Payload too large">>, Req2};
+						{error, timeout} ->
+							{503, #{}, <<>>, Req};
 						{ok, TX, Req2} ->
 							Peer = ar_http_util:arweave_peer(Req),
 							case handle_post_tx(Req2, Peer, TX) of

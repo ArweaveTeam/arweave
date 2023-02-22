@@ -40,6 +40,7 @@ start_link() ->
 init([]) ->
 	%% These ETS tables should belong to the supervisor.
 	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_blacklist_middleware, [set, public, named_table]),
 	ets:new(ar_storage, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_randomx_state_key_blocks, [set, public, named_table]),
 	ets:new(ar_randomx_state_key_heights, [ordered_set, public, named_table]),

@@ -169,7 +169,7 @@ handle_info({gun_up, _, http}, State) ->
 	{noreply, State};
 
 handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {info, Info}]),
+	?LOG_WARNING([{event, unhandled_info}, {info, Info}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->

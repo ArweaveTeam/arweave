@@ -506,11 +506,13 @@ get_chunk_cache_size_limit(State) ->
 		undefined ->
 			#state{ io_threads = IOThreads } = State,
 			ThreadCount = map_size(IOThreads),
-			Free = proplists:get_value(free_memory, memsup:get_system_memory_data(), infinity),
-			Bytes = min(Free, ?RECALL_RANGE_SIZE
+			Free = proplists:get_value(free_memory,
+					memsup:get_system_memory_data(), 2000000000),
+			Bytes = min(Free / 3, ?RECALL_RANGE_SIZE
 				* 2 % Two ranges per output.
 				* ThreadCount),
-			Bytes div ?DATA_CHUNK_SIZE;
+			Limit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
+			Limit - Limit rem 100 + 100;
 		N ->
 			N
 	end.
@@ -1044,6 +1046,16 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 		LastStepCheckpoints ->
 			case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID,
 					Nonce, PoA1, PoA2, Diff, PartitionUpperBound}) of
+				error ->
+					?LOG_INFO([{event, failed_to_validate_solution},
+							{partition, PartitionNumber},
+							{step_number, StepNumber},
+							{mining_address, ar_util:encode(ReplicaID)},
+							{recall_byte1, RecallByte1},
+							{recall_byte2, RecallByte2},
+							{solution_h, ar_util:encode(H)},
+							{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+					State;
 				false ->
 					?LOG_INFO([{event, found_invalid_solution}, {partition, PartitionNumber},
 							{step_number, StepNumber},

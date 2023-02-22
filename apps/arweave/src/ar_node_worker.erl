@@ -829,10 +829,10 @@ handle_initialized(State) ->
 		{redenomination_height, B#block.redenomination_height},
 		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
 	]),
-	ar_events:send(node_state, {initialized, B}),
-	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+	ar_events:send(node_state, {initialized, B}),
+	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	ar:console("Joined the Arweave network successfully.~n"),
 	?LOG_INFO([{event, joined_the_network}]),
 	{noreply, may_be_reset_miner(State)}.
@@ -1159,6 +1159,11 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI3),
 	case ar_node_utils:validate(B, PrevB, Accounts, BlockAnchors, RecentTXMap,
 			PartitionUpperBound) of
+		error ->
+			?LOG_WARNING([{event, failed_to_validate_block},
+					{h, ar_util:encode(B#block.indep_hash)}]),
+			gen_server:cast(?MODULE, apply_block),
+			{noreply, State};
 		{invalid, Reason} ->
 			?LOG_WARNING([{event, received_invalid_block},
 					{validation_error, Reason},
@@ -1630,10 +1635,10 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		{redenomination_height, B#block.redenomination_height},
 		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
 	]),
-	ar_events:send(node_state, {new_tip, B, PrevB}),
-	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+	ar_events:send(node_state, {new_tip, B, PrevB}),
+	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
 	may_be_reset_miner(State).
 
 get_checkpoint_block(RecentBI) ->

@@ -490,6 +490,8 @@ validate_block(spora, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
 	StrictDataSplitThreshold = NewB#block.strict_data_split_threshold,
 	case ar_mine:validate_spora({BDS, Nonce, Timestamp, Height, Diff, PrevH,
 			PartitionUpperBound, StrictDataSplitThreshold, POA}) of
+		error ->
+			error;
 		{false, Hash} ->
 			{invalid, invalid_spora};
 		{false, _} ->

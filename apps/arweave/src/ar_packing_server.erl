@@ -12,14 +12,10 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% The packing latency as it is chosen for the protocol.
--define(PACKING_LATENCY_MS, 300).
+-define(PACKING_LATENCY_MS, 60).
 
 %% The key to initialize the RandomX state from, for RandomX packing.
 -define(RANDOMX_PACKING_KEY, <<"default arweave 2.5 pack key">>).
-
-%% The approximate maximum number of chunks to schedule for packing/unpacking.
-%% A bigger number means more memory allocated for the chunks not packed/unpacked yet.
--define(PACKING_BUFFER_SIZE, 1000).
 
 -record(state, {
 	workers,
@@ -55,8 +51,9 @@ unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 %% @doc Return true if the packing server buffer is considered full, to apply
 %% some back-pressure on the pack/4 and unpack/5 callers.
 is_buffer_full() ->
+	[{_, Limit}] = ets:lookup(?MODULE, buffer_size_limit),
 	case ets:lookup(?MODULE, buffer_size) of
-		[{_, Size}] when Size > ?PACKING_BUFFER_SIZE ->
+		[{_, Size}] when Size > Limit ->
 			true;
 		_ ->
 			false
@@ -79,13 +76,14 @@ init([]) ->
 	PackingRate = Config#config.packing_rate,
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
 	SchedulersRequired = ceil(PackingRate / (1000 / (?PACKING_LATENCY_MS))),
+	MaxRate = Schedulers * 1000 / (?PACKING_LATENCY_MS),
 	case SchedulersRequired > Schedulers of
 		true ->
-			log_insufficient_core_count(Schedulers, PackingRate);
+			log_insufficient_core_count(Schedulers, PackingRate, MaxRate);
 		false ->
-			ok
+			log_packing_rate(PackingRate, MaxRate)
 	end,
-	ar:console("Initialising RandomX dataset for fast packing. Key: ~p. "
+	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "
 			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
 	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
 	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
@@ -99,6 +97,19 @@ init([]) ->
 			|| _ <- lists:seq(1, SpawnSchedulers)]),
 	ok = ar_events:subscribe(chunk),
 	ets:insert(?MODULE, {buffer_size, 0}),
+	{ok, Config} = application:get_env(arweave, config),
+	MaxSize =
+		case Config#config.packing_cache_size_limit of
+			undefined ->
+				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
+						2000000000),
+				Limit2 = erlang:ceil(Free * 0.9 / 3 / 262144),
+				Limit3 = Limit2 - Limit2 rem 100 + 100,
+				Limit3;
+			Limit ->
+				Limit
+		end,
+	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
 	{ok, #state{ workers = Workers }}.
 
@@ -181,11 +192,18 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-log_insufficient_core_count(Schedulers, PackingRate) ->
-	ar:console("The number of cores on your machine (~B) is not sufficient for
-		packing ~B chunks per second.~n", [Schedulers, PackingRate]),
+log_insufficient_core_count(Schedulers, PackingRate, Max) ->
+	ar:console("~nThe number of cores on your machine (~B) is not sufficient for "
+		"packing ~B chunks per second. Estimated maximum rate: ~.2f chunks/s.~n",
+		[Schedulers, PackingRate, Max]),
 	?LOG_WARNING([{event, insufficient_core_count_to_sustain_desired_packing_rate},
 			{cores, Schedulers}, {packing_rate, PackingRate}]).
+
+log_packing_rate(PackingRate, Max) ->
+	ar:console("~nThe node is configured to pack around ~B chunks per second. "
+			"To increase the packing rate, start with `packing_rate [number]`. "
+			"Estimated maximum rate: ~.2f chunks/s.~n",
+			[PackingRate, Max]).
 
 calculate_throttle_delay(SpawnSchedulers, PackingRate) ->
 	Load = PackingRate / (SpawnSchedulers * (1000 / (?PACKING_LATENCY_MS))),
@@ -216,7 +234,11 @@ worker(ThrottleDelay, RandomXStateRef) ->
 				{error, invalid_chunk_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}])
+					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}]);
+				{exception, Error} ->
+					?LOG_ERROR([{event, failed_to_unpack_chunk},
+							{absolute_end_offset, AbsoluteOffset},
+							{error, io_lib:format("~p", [Error])}])
 			end,
 			decrement_buffer_size(),
 			worker(ThrottleDelay, RandomXStateRef);
@@ -233,7 +255,11 @@ worker(ThrottleDelay, RandomXStateRef) ->
 							timer:sleep(ThrottleDelay)
 					end;
 				{error, invalid_unpacked_size} ->
-					?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}])
+					?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}]);
+				{exception, Error} ->
+					?LOG_ERROR([{event, failed_to_pack_chunk},
+							{absolute_end_offset, AbsoluteOffset},
+							{error, io_lib:format("~p", [Error])}])
 			end,
 			decrement_buffer_size(),
 			worker(ThrottleDelay, RandomXStateRef)
@@ -273,11 +299,17 @@ pack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, RandomXStateRef, Exter
 			%% the 2.6 mining mechanics, puts a relatively low cap on the performance
 			%% of a single dataset replica, essentially incentivizing miners to create
 			%% more weave replicas per invested dollar.
-			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary, RewardAddr/binary >>),
-			{ok, prometheus_histogram:observe_duration(packing_duration_milliseconds,
+			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
+					RewardAddr/binary >>),
+			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[pack, External], fun() ->
 							ar_mine_randomx:randomx_encrypt_chunk_2_6(RandomXStateRef, Key,
-									pad_chunk(Chunk)) end), was_not_already_packed}
+									pad_chunk(Chunk)) end) of
+				{ok, Packed} ->
+					{ok, Packed, was_not_already_packed};
+				Error ->
+					Error
+			end
 	end.
 
 pad_chunk(Chunk) ->
@@ -327,22 +359,27 @@ unpack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, ChunkSize,
 		_ ->
 			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
 					RewardAddr/binary >>),
-			Unpacked = prometheus_histogram:observe_duration(packing_duration_milliseconds,
+			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[unpack, External], fun() ->
 							ar_mine_randomx:randomx_decrypt_chunk_2_6(RandomXStateRef, Key,
-									Chunk, ?DATA_CHUNK_SIZE) end),
-			Padding = binary:part(Unpacked, ChunkSize, PackedSize - ChunkSize),
-			case Padding of
-				<<>> ->
-					{ok, Unpacked, was_not_already_unpacked};
-				_ ->
-					case is_zero(Padding) of
-						false ->
-							{error, invalid_padding};
-						true ->
-							{ok, binary:part(Unpacked, 0, ChunkSize), was_not_already_unpacked}
-					end
-			end
+									Chunk, ?DATA_CHUNK_SIZE) end) of
+			{ok, Unpacked} ->
+				Padding = binary:part(Unpacked, ChunkSize, PackedSize - ChunkSize),
+				case Padding of
+					<<>> ->
+						{ok, Unpacked, was_not_already_unpacked};
+					_ ->
+						case is_zero(Padding) of
+							false ->
+								{error, invalid_padding};
+							true ->
+								{ok, binary:part(Unpacked, 0, ChunkSize),
+										was_not_already_unpacked}
+						end
+				end;
+			Error ->
+					Error
+		end
 	end.
 
 is_zero(<< 0:8, Rest/binary >>) ->

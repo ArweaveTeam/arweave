@@ -488,33 +488,42 @@ slave_mine() ->
 
 wait_until_syncs_genesis_data() ->
 	WeaveSize = (ar_node:get_current_block())#block.weave_size,
-	wait_until_syncs_genesis_data(0, WeaveSize).
-
-wait_until_syncs_genesis_data(Offset, WeaveSize) when Offset >= WeaveSize ->
-	ok;
-wait_until_syncs_genesis_data(Offset, WeaveSize) ->
+	wait_until_syncs_genesis_data(0, WeaveSize, any),
+	%% Once the data is stored in the disk pool, make the storage modules
+	%% copy the missing data over from each other. This procedure is executed on startup
+	%% but the disk pool did not have any data at the time.
 	{ok, Config} = application:get_env(arweave, config),
-	Packing_2_6 = {spora_2_6, Config#config.mining_addr},
+	[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:id(Module)),
+			sync_data) || Module <- Config#config.storage_modules],
+	wait_until_syncs_genesis_data(0, WeaveSize, spora_2_5),
+	wait_until_syncs_genesis_data(0, WeaveSize, {spora_2_6, Config#config.mining_addr}).
+
+wait_until_syncs_genesis_data(Offset, WeaveSize, _Packing) when Offset >= WeaveSize ->
+	ok;
+wait_until_syncs_genesis_data(Offset, WeaveSize, Packing) ->
 	true = ar_util:do_until(
 		fun() ->
-			IsRecorded =
-				case ar_fork:height_2_6() > 0 of
-					true ->
-						ar_sync_record:is_recorded(Offset + 1, {ar_data_sync, spora_2_5});
-					false ->
-						ar_sync_record:is_recorded(Offset + 1, {ar_data_sync, Packing_2_6})
-				end,
-			case IsRecorded of
-				{{true, _}, _} ->
-					true;
+			case Packing of
+				any ->
+					case ar_sync_record:is_recorded(Offset + 1, ar_data_sync) of
+						false ->
+							false;
+						_ ->
+							true
+					end;
 				_ ->
-					false
+					case ar_sync_record:is_recorded(Offset + 1, {ar_data_sync, Packing}) of
+						{{true, _}, _} ->
+							true;
+						_ ->
+							false
+					end
 			end
 		end,
 		200,
 		10000
 	),
-	wait_until_syncs_genesis_data(Offset + ?DATA_CHUNK_SIZE, WeaveSize).
+	wait_until_syncs_genesis_data(Offset + ?DATA_CHUNK_SIZE, WeaveSize, Packing).
 
 slave_wait_until_joined() ->
 	ar_util:do_until(
