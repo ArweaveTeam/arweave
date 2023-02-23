@@ -706,7 +706,7 @@ test_find_external_tx(_) ->
 	{ok, FoundTXID} =
 		ar_util:do_until(
 			fun() ->
-				case ar_http_iface_client:get_tx([master_peer()], TX#tx.id, maps:new()) of
+				case ar_http_iface_client:get_tx([master_peer()], TX#tx.id) of
 					not_found ->
 						false;
 					TX ->

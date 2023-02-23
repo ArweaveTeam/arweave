@@ -3,8 +3,10 @@
 *.dat
 .vscode
 slave.out
+*.code-workspace
 .arweave.plt
 testlog
+debug_logs
 apps/arweave/priv/tls
 apps/arweave/priv/*.so
 _build

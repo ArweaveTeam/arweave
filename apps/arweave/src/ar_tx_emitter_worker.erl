@@ -31,10 +31,10 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
-	case ets:lookup(node_state, {tx, TXID}) of
-		[] ->
+	case ar_mempool:get_tx(TXID) of
+		not_found ->
 			ok;
-		[{_, TX}] ->
+		TX ->
 			StartedAt = erlang:timestamp(),
 			TrustedPeers = ar_peers:get_trusted_peers(),
 			PropagatedTX = tx_to_propagated_tx(TX, Peer, TrustedPeers),

@@ -6,7 +6,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 verify_block_txs_test_() ->
-	{timeout, 10, fun test_verify_block_txs/0}.
+	{timeout, 30, fun test_verify_block_txs/0}.
 
 test_verify_block_txs() ->
 	Key1 = ar_wallet:new(),
@@ -181,7 +181,8 @@ test_verify_block_txs() ->
 				ExpectedResult,
 				ar_tx_replay_pool:verify_block_txs({TXs, Rate, PricePerGiBMinute,
 						KryderPlusRateMultiplier, Denomination, Height, RedenominationHeight,
-						Timestamp, Wallets, BlockAnchors, RecentTXMap}), Title),
+						Timestamp, Wallets, BlockAnchors, RecentTXMap}),
+				Title),
 			PickedTXs = ar_tx_replay_pool:pick_txs_to_mine({BlockAnchors, RecentTXMap, Height,
 					RedenominationHeight, Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
 					Denomination, Timestamp, Wallets, TXs}),

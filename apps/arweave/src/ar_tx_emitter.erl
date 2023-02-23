@@ -53,22 +53,16 @@ handle_cast(process_chunk, State) ->
 	#state{ workers = Q, currently_emitting = Emitting } = State,
 	TrustedPeers = ar_peers:get_trusted_peers(),
 	Peers = (ar_peers:get_peers() -- TrustedPeers) ++ TrustedPeers,
-	case ets:lookup(node_state, tx_propagation_queue) of
-		[] ->
-			ar_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk),
-			{noreply, State};
-		[{tx_propagation_queue, Set}] ->
-			{ok, Config} = application:get_env(arweave, config),
-			{Q2, Emitting2} = emit(Set, Q, Emitting, Peers,
-					Config#config.max_propagation_peers, ?CHUNK_SIZE),
-			case sets:is_empty(Emitting2) of
-				true ->
-					ar_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk);
-				false ->
-					ok
-			end,
-			{noreply, State#state{ workers = Q2, currently_emitting = Emitting2 }}
-	end;
+	{ok, Config} = application:get_env(arweave, config),
+	{Q2, Emitting2} = emit(ar_mempool:get_propagation_queue(), Q, Emitting, Peers,
+			Config#config.max_propagation_peers, ?CHUNK_SIZE),
+	case sets:is_empty(Emitting2) of
+		true ->
+			ar_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk);
+		false ->
+			ok
+	end,
+	{noreply, State#state{ workers = Q2, currently_emitting = Emitting2 }};
 
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),

@@ -786,10 +786,10 @@ include_transactions([#tx{} = TX | TXs]) ->
 include_transactions([]) ->
 	[];
 include_transactions([TXID | TXs]) ->
-	case ets:lookup(node_state, {tx, TXID}) of
-		[] ->
+	case ar_mempool:get_tx(TXID) of
+		not_found ->
 			[TXID | include_transactions(TXs)];
-		[{_, TX}] ->
+		TX ->
 			[TX | include_transactions(TXs)]
 	end.
 

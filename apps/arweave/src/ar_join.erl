@@ -124,16 +124,14 @@ get_block(Peers, H) ->
 		unavailable ->
 			get_block(Peers, H, 10);
 		BShadow ->
-			Mempool = ar_node:get_pending_txs([as_map, id_only]),
-			get_block(Peers, BShadow, Mempool, BShadow#block.txs, [], 10)
+			get_block(Peers, BShadow, BShadow#block.txs, [], 10)
 	end.
 
 get_block(Peers, H, Retries) ->
 	ar:console("Downloading joining block ~s.~n", [ar_util:encode(H)]),
 	case ar_http_iface_client:get_block_shadow(Peers, H) of
 		{_Peer, #block{} = BShadow, _Time, _Size} ->
-			Mempool = ar_node:get_pending_txs([as_map, id_only]),
-			get_block(Peers, BShadow, Mempool, BShadow#block.txs, [], Retries);
+			get_block(Peers, BShadow, BShadow#block.txs, [], Retries);
 		_ ->
 			case Retries > 0 of
 				true ->
@@ -161,12 +159,12 @@ get_block(Peers, H, Retries) ->
 			end
 	end.
 
-get_block(_Peers, BShadow, _Mempool, [], TXs, _Retries) ->
+get_block(_Peers, BShadow, [], TXs, _Retries) ->
 	BShadow#block{ txs = lists:reverse(TXs) };
-get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries) ->
-	case ar_http_iface_client:get_tx(Peers, TXID, Mempool) of
+get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
+	case ar_http_iface_client:get_tx(Peers, TXID) of
 		#tx{} = TX ->
-			get_block(Peers, BShadow, Mempool, TXIDs, [TX | TXs], Retries);
+			get_block(Peers, BShadow, TXIDs, [TX | TXs], Retries);
 		_ ->
 			case Retries > 0 of
 				true ->
@@ -179,7 +177,7 @@ get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries) ->
 						{tx, ar_util:encode(TXID)}
 					]),
 					timer:sleep(1000),
-					get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries - 1);
+					get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries - 1);
 				false ->
 					ar:console(
 						"Failed to fetch a joining tx ~s from any of the peers. Giving up.."

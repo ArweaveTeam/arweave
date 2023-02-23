@@ -511,7 +511,7 @@ download_block(Peers, H, H2, TXRoot) ->
 	end.
 
 download_txs(Peers, B, TXRoot) ->
-	case ar_http_iface_client:get_txs(Peers, #{}, B) of
+	case ar_http_iface_client:get_txs(Peers, B) of
 		{ok, TXs} ->
 			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
 			SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],

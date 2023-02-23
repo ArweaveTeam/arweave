@@ -4,7 +4,8 @@
 %%% @end
 -module(ar_retarget).
 
--export([is_retarget_height/1, is_retarget_block/1, maybe_retarget/5, calculate_difficulty/5, validate_difficulty/2,
+-export([is_retarget_height/1, is_retarget_block/1, maybe_retarget/5,
+		calculate_difficulty/5, validate_difficulty/2,
 		switch_to_linear_diff/1, switch_to_linear_diff_pre_fork_2_5/1]).
 
 -include_lib("arweave/include/ar.hrl").

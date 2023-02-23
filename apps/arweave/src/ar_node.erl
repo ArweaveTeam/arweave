@@ -7,9 +7,8 @@
 
 -export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0,
 		get_current_block/0, is_in_block_index/1, get_block_index_and_height/0,
-		get_height/0, get_balance/1, get_last_tx/1,
-		get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
-		get_ready_for_mining_txs/1, get_current_usd_to_ar_rate/0, get_current_block_hash/0,
+		get_height/0, get_balance/1, get_last_tx/1, get_ready_for_mining_txs/0,
+		get_current_usd_to_ar_rate/0, get_current_block_hash/0,
 		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
 		get_recent_txs_map/0, mine/0, add_tx/1, get_mempool_size/0,
 		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
@@ -83,84 +82,18 @@ merge([Elem | BI], BI2) ->
 merge([], BI) ->
 	BI.
 
-%% @doc Get pending transactions.
-get_pending_txs() ->
-	get_pending_txs([]).
-
-get_pending_txs(Opts) ->
-	case {lists:member(as_map, Opts), lists:member(id_only, Opts)} of
-		{true, false} ->
-			[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-			maps:map(
-				fun(TXID, _Value) ->
-					[{{tx, TXID}, TX}] = ets:lookup(node_state, {tx, TXID}),
-					TX
-				end,
-				Map
-			);
-		{true, true} ->
-			[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-			Map;
-		{false, true} ->
-			[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-			gb_sets:fold(
-				fun({_Utility, TXID, _Status}, Acc) ->
-					[TXID | Acc]
-				end,
-				[],
-				Set
-			);
-		{false, false} ->
-			[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-			gb_sets:fold(
-				fun({_Utility, TXID, _Status}, Acc) ->
-					[{{tx, TXID}, TX}] = ets:lookup(node_state, {tx, TXID}),
-					[TX | Acc]
-				end,
-				[],
-				Set
-			)
-	end.
-
-%% @doc Return true if a tx with the given identifier is pending.
-is_a_pending_tx(TXID) ->
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	maps:is_key(TXID, Map).
-
 %% @doc Get the list of being mined or ready to be mined transactions.
 %% The list does _not_ include transactions waiting for network propagation.
 get_ready_for_mining_txs() ->
-	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
 	gb_sets:fold(
 		fun
 			({_Utility, TXID, ready_for_mining}, Acc) ->
-				[{{tx, TXID}, TX}] = ets:lookup(node_state, {tx, TXID}),
-				[TX | Acc];
+				[TXID | Acc];
 			(_, Acc) ->
 				Acc
 		end,
 		[],
-		Set
-	).
-
-get_ready_for_mining_txs(Opts) ->
-	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-	OnlyID = lists:member(id_only, Opts),
-	gb_sets:fold(
-		fun
-			({_Utility, TXID, ready_for_mining}, Acc) ->
-				case OnlyID of
-					true ->
-						[TXID | Acc];
-					false ->
-						[{{tx, TXID}, TX}] = ets:lookup(node_state, {tx, TXID}),
-						[TX | Acc]
-				end;
-			(_, Acc) ->
-				Acc
-		end,
-		[],
-		Set
+		ar_mempool:get_priority_set()
 	).
 
 %% @doc Return true if the given block hash is found in the block index.

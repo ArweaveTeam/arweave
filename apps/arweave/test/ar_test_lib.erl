@@ -136,7 +136,7 @@ wait_for_txs(Node, TXs) ->
 wait_for_txs(TXs) ->
 	ok = ar_util:do_until(
 		fun() ->
-			MinedTXIDs = [TX#tx.id || TX <- ar_node:get_ready_for_mining_txs()],
+			MinedTXIDs = ar_node:get_ready_for_mining_txs(),
 			case lists:all(fun(TX) -> lists:member(TX#tx.id, MinedTXIDs) end, TXs) of
 				true ->
 					ok;

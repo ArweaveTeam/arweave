@@ -8,7 +8,8 @@
 	slave_mine/0, join_on_slave/0, assert_wait_until_receives_txs/1,
 	wait_until_height/1, assert_slave_wait_until_height/1,
 	slave_call/3, assert_wait_until_block_index/1, post_tx_to_slave/1,
-	post_tx_to_slave/2, post_tx_to_master/1, assert_post_tx_to_slave/1,
+	post_tx_to_slave/2, post_tx_to_master/1,
+	assert_post_tx_to_slave/1, assert_post_tx_to_slave/2,
 	assert_post_tx_to_master/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2,
 	sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1, get_tx_confirmations/2,
 	disconnect_from_slave/0, read_block_when_stored/1, random_v1_data/1, slave_peer/0]).
@@ -69,8 +70,8 @@ keeps_txs_after_new_block_test_() ->
 returns_error_when_txs_exceed_balance_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
 		fun() ->
-			{B0, TXs, ExceedBalanceTX} = BuildTXSetFun(),
-			returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX)
+			{B0, TXs} = BuildTXSetFun(),
+			returns_error_when_txs_exceed_balance(B0, TXs)
 		end
 	end,
 	[
@@ -154,7 +155,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 
 keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Post the transactions from the first set to a node but do not gossip them.
-	%% Post transactiongs from the second set to both nodes.
+	%% Post transactions from the second set to both nodes.
 	%% Mine a block with transactions from the second set on a different node
 	%% and gossip it to the node with transactions.
 	%%
@@ -176,7 +177,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 		end,
 		SecondTXSet ++ FirstTXSet
 	),
-	?assertEqual([], slave_call(ar_node, get_pending_txs, [])),
+	?assertEqual([], slave_call(ar_mempool, get_all_txids, [])),
 	%% Post transactions from the second set to slave.
 	lists:foreach(
 		fun(TX) ->
@@ -205,26 +206,37 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 		lists:sort((read_block_when_stored(hd(BI2)))#block.txs)
 	).
 
-returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
+returns_error_when_txs_exceed_balance(B0, TXs) ->
 	{_Master, _} = start(B0),
 	{_Slave, _} = slave_start(B0),
+
 	connect_to_slave(),
-	%% Post the given transactions that do not exceed the balance.
-	lists:foreach(
-		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+
+	%% Expect the post for all TXs (including the balance exceeding one) to
+	%% succeed. However immeidately after adding each TX to the mempool,
+	%% we'll check whether any balances are exceeded and eject the TXs that
+	%% exceed the balance. The ordering used is {Utility, TXID} - so TXs with
+	%% the same Utility but with a lower alphanumeric ID will be ejected first.
+	SortedTXs = lists:sort(
+		fun (TX1, TX2) ->
+			% Sort in reverse order - "biggest" first.
+			{ar_tx:utility(TX1), TX1#tx.id} > {ar_tx:utility(TX2), TX2#tx.id}
 		end,
 		TXs
 	),
-	%% Expect the balance exceeding transactions to be included
-	%% into the mempool cause it can be potentially included by
-	%% other nodes.
-	assert_post_tx_to_slave(ExceedBalanceTX),
-	assert_wait_until_receives_txs(TXs),
+	ExceedBalanceTX = lists:last(SortedTXs),
+	BelowBalanceTXs = lists:droplast(SortedTXs),
+	lists:foreach(
+		fun(TX) ->
+			assert_post_tx_to_slave(TX, false)
+		end,
+		TXs
+	),
+	assert_wait_until_receives_txs(BelowBalanceTXs),
 	%% Expect only the first two to be included into the block.
 	slave_mine(),
 	SlaveBI = assert_slave_wait_until_height(1),
-	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
+	TXIDs = lists:map(fun(TX) -> TX#tx.id end, BelowBalanceTXs),
 	?assertEqual(
 		lists:sort(TXIDs),
 		lists:sort((slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
@@ -244,7 +256,6 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
-	?debugFmt("TX: ~s Reply: ~p~n", [ar_util:encode(ExceedBalanceTX#tx.id), Body]),
 	?assertEqual({ok, ["overspend"]}, slave_call(ar_tx_db, get_error_codes,
 			[ExceedBalanceTX#tx.id])).
 
@@ -546,7 +557,7 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
 
 drops_v2_txs_exceeding_mempool_limit_test_() ->
-	{timeout, 120, fun drops_v2_txs_exceeding_mempool_limit/0}.
+	{timeout, 180, fun drops_v2_txs_exceeding_mempool_limit/0}.
 
 drops_v2_txs_exceeding_mempool_limit() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -635,7 +646,7 @@ joins_network_successfully() ->
 			assert_slave_wait_until_height(Height),
 			ar_util:do_until(
 				fun() ->
-					slave_call(ar_node, get_pending_txs, []) == []
+					slave_call(ar_mempool, get_all_txids, []) == []
 				end,
 				200,
 				1000
@@ -858,9 +869,9 @@ block_anchor_txs_spending_balance_plus_one_more() ->
 			reward => ?AR(10), last_tx => B0#block.indep_hash }),
 	TX2 = sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(10), last_tx => B0#block.indep_hash }),
-	ExceedBalanceTX = sign_v1_tx(Key, #{ denomination => 1,
+	TX3 = sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(1), last_tx => B0#block.indep_hash }),
-	{B0, [TX1, TX2], ExceedBalanceTX}.
+	{B0, [TX1, TX2, TX3]}.
 
 mixed_anchor_txs_spending_balance_plus_one_more() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -872,9 +883,9 @@ mixed_anchor_txs_spending_balance_plus_one_more() ->
 			last_tx => B0#block.indep_hash }),
 	TX4 = sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(3), last_tx => B0#block.indep_hash }),
-	ExceedBalanceTX = sign_v1_tx(Key, #{ denomination => 1,
+	TX5 = sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(1), last_tx => B0#block.indep_hash }),
-	{B0, [TX1, TX2, TX3, TX4], ExceedBalanceTX}.
+	{B0, [TX1, TX2, TX3, TX4, TX5]}.
 
 grouped_txs() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),

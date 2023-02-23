@@ -122,7 +122,7 @@ handle4(<<"GET">>, [<<"tx">>, <<"ready_for_mining">>], Req, _Pid) ->
 			ar_serialize:jsonify(
 				lists:map(
 					fun ar_util:encode/1,
-					ar_node:get_ready_for_mining_txs([id_only])
+					ar_node:get_ready_for_mining_txs()
 				)
 			),
 	Req};
@@ -181,7 +181,7 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
 						%% Should encode
 						lists:map(
 							fun ar_util:encode/1,
-							ar_node:get_pending_txs([id_only])
+							ar_mempool:get_all_txids()
 						)
 					),
 			Req}
@@ -1329,8 +1329,10 @@ handle_get_unconfirmed_tx(Hash, Req, Encoding) ->
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
 		{ok, TXID} ->
-			case ets:lookup(node_state, {tx, TXID}) of
-				[{_, TX}] ->
+			case ar_mempool:get_tx(TXID) of
+				not_found ->
+					handle_get_tx(Hash, Req, Encoding);
+				TX ->
 					Body =
 						case Encoding of
 							json ->
@@ -1338,9 +1340,7 @@ handle_get_unconfirmed_tx(Hash, Req, Encoding) ->
 							binary ->
 								ar_serialize:tx_to_binary(TX)
 						end,
-					{200, #{}, Body, Req};
-				[] ->
-					handle_get_tx(Hash, Req, Encoding)
+					{200, #{}, Body, Req}
 			end
 	end.
 
@@ -1982,9 +1982,9 @@ block_field_to_string(<<"scheduled_usd_to_ar_rate">>, Res) -> ar_serialize:jsoni
 block_field_to_string(<<"poa">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(_, Res) -> Res.
 
-%% @doc Return true if ID is a pending tx.
-is_a_pending_tx(ID) ->
-	ar_node:is_a_pending_tx(ID).
+%% @doc Return true if TXID is a pending tx.
+is_a_pending_tx(TXID) ->
+	ar_mempool:has_tx(TXID).
 
 decode_block(JSON, json) ->
 	try
@@ -2514,7 +2514,7 @@ is_tx_already_processed(TXID) ->
 		true ->
 			true;
 		false ->
-			ets:member(node_state, {tx, TXID})
+			ar_mempool:has_tx(TXID)
 	end.
 
 post_tx_parse_id({Req, Pid, Encoding}) ->

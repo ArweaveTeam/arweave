@@ -11,8 +11,7 @@
 -export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,
 		tx_id_prefix/1]).
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-		tx_mempool_size/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -68,7 +67,7 @@ init([]) ->
 	ar_randomx_state:start(),
 	ar_randomx_state:start_block_polling(),
 	%% Read persisted mempool.
-	load_mempool(),
+	ar_mempool:load_from_disk(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
 	validate_trusted_peers(Config),
@@ -104,15 +103,14 @@ init([]) ->
 			do_nothing
 	end,
 	%% Add pending transactions from the persisted mempool to the propagation queue.
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	maps:map(
-		fun (_TXID, ready_for_mining) ->
-				ok;
-			(TXID, waiting) ->
-				[{_, TX}] = ets:lookup(node_state, {tx, TXID}),
-				start_tx_mining_timer(TX)
+	gb_sets:filter(
+		fun ({_Utility, _TXID, ready_for_mining}) ->
+				false;
+			({_Utility, TXID, waiting}) ->
+				start_tx_mining_timer(ar_mempool:get_tx(TXID)),
+				true
 		end,
-		Map
+		ar_mempool:get_priority_set()
 	),
 	%% May be start mining.
 	case Config#config.mine of
@@ -230,77 +228,6 @@ log_peer_clock_diff(Peer, Diff) ->
 	WarningArgs = [ar_util:format_peer(Peer), Diff],
 	io:format(Warning, WarningArgs),
 	?LOG_WARNING(Warning, WarningArgs).
-
-load_mempool() ->
-	case ar_storage:read_term(mempool) of
-		{ok, {SerializedTXs, _MempoolSize}} ->
-			TXs = maps:map(fun(_, {TX, St}) -> {deserialize_tx(TX), St} end, SerializedTXs),
-			Map =
-				maps:map(
-					fun(TXID, {TX, Status}) ->
-						ets:insert(node_state, {{tx, TXID}, TX}),
-						ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
-						Status
-					end,
-					TXs
-				),
-			MempoolSize = maps:fold(
-				fun(_, {TX, _}, Acc) ->
-					increase_mempool_size(Acc, TX)
-				end,
-				{0, 0},
-				TXs
-			),
-			Set =
-				maps:fold(
-					fun(TXID, {TX, Status}, Acc) ->
-						Timestamp = get_or_create_tx_timestamp(TXID),
-						gb_sets:add_element({{ar_tx:utility(TX), Timestamp},
-								TXID, Status}, Acc)
-					end,
-					gb_sets:new(),
-					TXs
-				),
-			PropagationQueue =
-				maps:fold(
-					fun	(_TXID, {_TX, ready_for_mining}, Acc) ->
-							Acc;
-						(TXID, {TX, _Status}, Acc) ->
-							Timestamp = get_or_create_tx_timestamp(TXID),
-							gb_sets:add_element({{ar_tx:utility(TX), Timestamp},
-									TXID}, Acc)
-					end,
-					gb_sets:new(),
-					TXs
-				),
-			ets:insert(node_state, [
-				{mempool_size, MempoolSize},
-				{tx_statuses, Map},
-				{tx_priority_set, Set},
-				{tx_propagation_queue, PropagationQueue}
-			]);
-		not_found ->
-			ets:insert(node_state, [
-				{mempool_size, {0, 0}},
-				{tx_statuses, #{}},
-				{tx_priority_set, gb_sets:new()},
-				{tx_propagation_queue, gb_sets:new()}
-			]);
-		{error, Error} ->
-			?LOG_ERROR([{event, failed_to_load_mempool}, {reason, Error}]),
-			ets:insert(node_state, [
-				{mempool_size, {0, 0}},
-				{tx_statuses, #{}},
-				{tx_priority_set, gb_sets:new()},
-				{tx_propagation_queue, gb_sets:new()}
-			])
-	end.
-
-deserialize_tx(Bin) when is_binary(Bin) ->
-	{ok, TX} = ar_serialize:binary_to_tx(Bin),
-	TX;
-deserialize_tx(TX) ->
-	ar_storage:migrate_tx_record(TX).
 
 start_tx_mining_timer(TX) ->
 	%% Calling with ar_node_worker: allows to mock calculate_delay/1 in tests.
@@ -571,7 +498,7 @@ handle_info({event, miner, _}, State) ->
 	{noreply, State};
 
 handle_info({tx_ready_for_mining, TX}, State) ->
-	add_tx_to_mempool(TX, ready_for_mining),
+	ar_mempool:add_tx(TX, ready_for_mining),
 	ar_events:send(tx, {ready_for_mining, TX}),
 	{noreply, State};
 
@@ -648,30 +575,11 @@ handle_info({event, block, _}, State) ->
 
 %% Add the new waiting transaction to the server state.
 handle_info({event, tx, {new, TX, _Source}}, State) ->
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	TXID = TX#tx.id,
-	case maps:is_key(TXID, Map) of
+	case ar_mempool:has_tx(TXID) of
 		false ->
-			[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-			Map2 = maps:put(TX#tx.id, waiting, Map),
-			[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-			[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
-			Timestamp = get_or_create_tx_timestamp(TXID),
-			Utility = ar_tx:utility(TX),
-			Set2 = gb_sets:add_element({{Utility, Timestamp}, TXID, waiting}, Set),
-			Q2 = gb_sets:add_element({{Utility, Timestamp}, TXID}, Q),
-			MempoolSize2 = increase_mempool_size(MempoolSize, TX),
-			ets:insert(node_state, {{tx, TXID}, TX}),
-			ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
-			{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2,
-					MempoolSize2),
-			ets:insert(node_state, [
-				{tx_statuses, Map3},
-				{mempool_size, MempoolSize3},
-				{tx_priority_set, Set3},
-				{tx_propagation_queue, Q3}
-			]),
-			case maps:is_key(TXID, Map3) of
+			ar_mempool:add_tx(TX, waiting),
+			case ar_mempool:has_tx(TXID) of
 				true ->
 					start_tx_mining_timer(TX);
 				false ->
@@ -685,24 +593,12 @@ handle_info({event, tx, {new, TX, _Source}}, State) ->
 	end;
 
 handle_info({event, tx, {emitting_scheduled, Utility, TXID}}, State) ->
-	[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
-	ets:insert(node_state, {tx_propagation_queue, gb_sets:del_element({Utility, TXID}, Q)}),
+	ar_mempool:del_from_propagation_queue(Utility, TXID),
 	{noreply, State};
 
 %% Add the transaction to the mining pool, to be included in the mined block.
 handle_info({event, tx, {ready_for_mining, TX}}, State) ->
-	add_tx_to_mempool(TX, ready_for_mining),
-	{noreply, State};
-
-%% Remove dropped transactions.
-handle_info({event, tx, {dropped, DroppedTX, Reason}}, State) ->
-	?LOG_DEBUG("Drop TX ~p from pool with reason: ~p",
-			[ar_util:encode(DroppedTX#tx.id), Reason]),
-	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-	[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
-	drop_txs([DroppedTX], Map, Set, Q, MempoolSize),
+	ar_mempool:add_tx(TX, ready_for_mining),
 	{noreply, State};
 
 handle_info({event, tx, _}, State) ->
@@ -735,14 +631,13 @@ terminate(Reason, #{ miner_2_5 := Miner_2_5 }) ->
 				PID -> ar_mine:stop(PID)
 			end,
 			[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-			[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 			Mempool =
-				maps:map(
-					fun(TXID, Status) ->
-						[{{tx, TXID}, TX}] = ets:lookup(node_state, {tx, TXID}),
-						{TX, Status}
+				gb_sets:fold(
+					fun({_Utility, TXID, Status}, Acc) ->
+						maps:put(TXID, {ar_mempool:get_tx(TXID), Status}, Acc)
 					end,
-					Map
+					#{},
+					ar_mempool:get_priority_set()	
 				),
 			dump_mempool(Mempool, MempoolSize);
 		_ ->
@@ -866,15 +761,12 @@ handle_task(mine, State) ->
 handle_task(automine, State) ->
 	{noreply, start_mining(State#{ automine => true })};
 
-handle_task({filter_mempool, Iterator}, State) ->
-	{ok, List, NextIterator} = take_mempool_chunk(Iterator, ?FILTER_MEMPOOL_CHUNK_SIZE),
+handle_task({filter_mempool, Mempool}, State) ->
+	{ok, List, RemainingMempool} = ar_mempool:take_chunk(Mempool, ?FILTER_MEMPOOL_CHUNK_SIZE),
 	case List of
 		[] ->
 			{noreply, State};
 		_ ->
-			[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-			[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-			[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
 			[{wallet_list, WalletList}] = ets:lookup(node_state, wallet_list),
 			[{height, Height}] = ets:lookup(node_state, height),
 			[{usd_to_ar_rate, Rate}] = ets:lookup(node_state, usd_to_ar_rate),
@@ -884,7 +776,6 @@ handle_task({filter_mempool, Iterator}, State) ->
 			[{denomination, Denomination}] = ets:lookup(node_state, denomination),
 			[{redenomination_height, RedenominationHeight}] = ets:lookup(node_state,
 					redenomination_height),
-			[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 			[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
 			[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 			Wallets = ar_wallets:get(WalletList, ar_tx:get_addresses(List)),
@@ -893,24 +784,23 @@ handle_task({filter_mempool, Iterator}, State) ->
 					fun(TX, Acc) ->
 						case ar_tx_replay_pool:verify_tx({TX, Rate, Price,
 								KryderPlusRateMultiplier, Denomination, Height,
-								RedenominationHeight, BlockAnchors, RecentTXMap, #{}, Wallets},
+								RedenominationHeight, BlockAnchors, RecentTXMap, sets:new(), Wallets},
 								do_not_verify_signature) of
 							valid ->
 								Acc;
 							{invalid, _Reason} ->
-								may_be_drop_from_disk_pool(TX),
 								[TX | Acc]
 						end
 					end,
 					[],
 					List
 				),
-			drop_txs(InvalidTXs, Map, Set, Q, MempoolSize),
-			case NextIterator of
-				none ->
+			ar_mempool:drop_txs(InvalidTXs),
+			case RemainingMempool of
+				[] ->
 					scan_complete;
 				_ ->
-					gen_server:cast(self(), {filter_mempool, NextIterator})
+					gen_server:cast(self(), {filter_mempool, RemainingMempool})
 			end,
 			{noreply, State}
 	end;
@@ -947,142 +837,6 @@ get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
 		{[], #{}},
 		lists:sublist(BlockTXPairs, ?MAX_TX_ANCHOR_DEPTH)
 	).
-
-get_or_create_tx_timestamp(TXID) ->
-	case ets:lookup(node_state, {tx_timestamp, TXID}) of
-		[] ->
-			Timestamp = -os:system_time(microsecond),
-			ets:insert(node_state, {{tx_timestamp, TXID}, Timestamp}),
-			Timestamp;
-		[{_, Timestamp}] ->
-			Timestamp
-	end.
-
-increase_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX) ->
-	{HeaderSize, DataSize} = tx_mempool_size(TX),
-	{MempoolHeaderSize + HeaderSize, MempoolDataSize + DataSize}.
-
-tx_mempool_size(#tx{ format = 1, data = Data }) ->
-	{?TX_SIZE_BASE + byte_size(Data), 0};
-tx_mempool_size(#tx{ format = 2, data = Data }) ->
-	{?TX_SIZE_BASE, byte_size(Data)}.
-
-may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
-		when MempoolHeaderSize > ?MEMPOOL_HEADER_SIZE_LIMIT ->
-	{{Utility, TXID, _Status}, Set2} = gb_sets:take_smallest(Set),
-	[{_, TX}] = ets:lookup(node_state, {tx, TXID}),
-	MempoolSize2 = decrease_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX),
-	Map2 = maps:remove(TXID, Map),
-	Q2 = gb_sets:del_element({Utility, TXID}, Q),
-	may_be_drop_from_disk_pool(TX),
-	ets:delete(node_state, {tx, TXID}),
-	ets:delete(node_state, {tx_timestamp, TXID}),
-	ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID}),
-	may_be_drop_low_priority_txs(Map2, Set2, Q2, MempoolSize2);
-may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
-		when MempoolDataSize > ?MEMPOOL_DATA_SIZE_LIMIT ->
-	may_be_drop_low_priority_txs(Map, gb_sets:iterator(Set), Set, Q,
-			{MempoolHeaderSize, MempoolDataSize});
-may_be_drop_low_priority_txs(Map, Set, Q, MempoolSize) ->
-	{Map, Set, Q, MempoolSize}.
-
-may_be_drop_low_priority_txs(Map, Iterator, Set, Q, {MempoolHeaderSize, MempoolDataSize})
-		when MempoolDataSize > ?MEMPOOL_DATA_SIZE_LIMIT ->
-	{{Utility, TXID, _Status} = Element, Iterator2} = gb_sets:next(Iterator),
-	[{_, TX}] = ets:lookup(node_state, {tx, TXID}),
-	case TX#tx.format == 2 andalso byte_size(TX#tx.data) > 0 of
-		true ->
-			MempoolSize2 = decrease_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX),
-			Map2 = maps:remove(TXID, Map),
-			Set2 = gb_sets:del_element(Element, Set),
-			Q2 = gb_sets:del_element({Utility, TXID}, Q),
-			may_be_drop_from_disk_pool(TX),
-			ets:delete(node_state, {tx, TXID}),
-			ets:delete(node_state, {tx_timestamp, TXID}),
-			ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID}),
-			may_be_drop_low_priority_txs(Map2, Iterator2, Set2, Q2, MempoolSize2);
-		false ->
-			may_be_drop_low_priority_txs(Map, Iterator2, Set, Q,
-					{MempoolHeaderSize, MempoolDataSize})
-	end;
-may_be_drop_low_priority_txs(Map, _Iterator, Set, Q, MempoolSize) ->
-	{Map, Set, Q, MempoolSize}.
-
-decrease_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX) ->
-	{HeaderSize, DataSize} = tx_mempool_size(TX),
-	{MempoolHeaderSize - HeaderSize, MempoolDataSize - DataSize}.
-
-may_be_drop_from_disk_pool(#tx{ format = 1 }) ->
-	ok;
-may_be_drop_from_disk_pool(TX) ->
-	ar_data_sync:maybe_drop_data_root_from_disk_pool(TX#tx.data_root, TX#tx.data_size,
-			TX#tx.id).
-
-drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize) ->
-	drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize, true).
-
-drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize, RemoveTXPrefixes) ->
-	{TXs2, Set2, Q2, DroppedTXMap} =
-		lists:foldl(
-			fun(TX, {Acc, SetAcc, QAcc, DroppedAcc}) ->
-				case maps:take(TX#tx.id, Acc) of
-					{Status, Map} ->
-						ar_events:send(tx, {dropped, TX, removed_from_mempool}),
-						TXID = TX#tx.id,
-						Timestamp = get_or_create_tx_timestamp(TXID),
-						Utility = ar_tx:utility(TX),
-						Priority = {{Utility, Timestamp}, TXID, Status},
-						SetAcc2 = gb_sets:del_element(Priority, SetAcc),
-						QAcc2 = gb_sets:del_element({{Utility, Timestamp}, TXID}, QAcc),
-						{Map, SetAcc2, QAcc2, maps:put(TXID, TX, DroppedAcc)};
-					error ->
-						{Acc, SetAcc, QAcc, DroppedAcc}
-				end
-			end,
-			{TXs, Set, Q, maps:new()},
-			DroppedTXs
-		),
-	{DroppedHeaderSize, DroppedDataSize} = calculate_mempool_size(DroppedTXMap),
-	{MempoolHeaderSize, MempoolDataSize} = MempoolSize,
-	DecreasedMempoolSize =
-		{MempoolHeaderSize - DroppedHeaderSize, MempoolDataSize - DroppedDataSize},
-	ets:insert(node_state, [
-		{mempool_size, DecreasedMempoolSize},
-		{tx_statuses, TXs2},
-		{tx_priority_set, Set2},
-		{tx_propagation_queue, Q2}
-	]),
-	maps:map(
-		fun(TXID, _) ->
-			ets:delete(node_state, {tx, TXID}),
-			ets:delete(node_state, {tx_timestamp, TXID}),
-			case RemoveTXPrefixes of
-				true ->
-					ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID});
-				false ->
-					ok
-			end
-		end,
-		DroppedTXMap
-	).
-
-take_mempool_chunk(Iterator, Size) ->
-	take_mempool_chunk(Iterator, Size, []).
-
-take_mempool_chunk(Iterator, 0, Taken) ->
-	{ok, Taken, Iterator};
-take_mempool_chunk(Iterator, Size, Taken) ->
-	case maps:next(Iterator) of
-		none ->
-			{ok, Taken, none};
-		{TXID, _Status, NextIterator} ->
-			case ets:lookup(node_state, {tx, TXID}) of
-				[{_, TX}] ->
-					take_mempool_chunk(NextIterator, Size - 1, [TX | Taken]);
-				[] ->
-					take_mempool_chunk(NextIterator, Size, Taken)
-			end
-	end.
 
 apply_block(State) ->
 	case ar_block_cache:get_earliest_not_validated_from_longest_chain(block_cache) of
@@ -1122,8 +876,7 @@ apply_block(B, PrevBlocks, Timestamp, State) ->
 apply_block2(BShadow, PrevBlocks, Timestamp, State) ->
 	#{ blocks_missing_txs := BlocksMissingTXs,
 			missing_txs_lookup_processes := MissingTXsLookupProcesses } = State,
-	[{tx_statuses, Mempool}] = ets:lookup(node_state, tx_statuses),
-	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs, Mempool),
+	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs),
 	case MissingTXIDs of
 		[] ->
 			Height = BShadow#block.height,
@@ -1136,7 +889,7 @@ apply_block2(BShadow, PrevBlocks, Timestamp, State) ->
 			monitor(
 				process,
 				PID = spawn(fun() -> process_flag(trap_exit, true),
-						get_missing_txs_and_retry(BShadow, Mempool, Self) end)
+						get_missing_txs_and_retry(BShadow, Self) end)
 			),
 			BH = BShadow#block.indep_hash,
 			{noreply, State#{
@@ -1210,13 +963,14 @@ request_nonce_limiter_validation(#block{ indep_hash = H } = B, PrevB) ->
 	ar_nonce_limiter:request_validation(H, Info, PrevInfo),
 	ar_block_cache:mark_nonce_limiter_validation_scheduled(block_cache, H).
 
-pick_txs(TXIDs, TXs) ->
+pick_txs(TXIDs) ->
+	Mempool = sets:from_list(ar_mempool:get_all_txids()),
 	lists:foldr(
 		fun (TX, {Found, Missing}) when is_record(TX, tx) ->
 				{[TX | Found], Missing};
 			(TXID, {Found, Missing}) ->
-				case maps:get(TXID, TXs, tx_not_in_mempool) of
-					tx_not_in_mempool ->
+				case sets:is_element(TXID, Mempool) of
+					false ->
 						%% This disk read should almost never be useful. Presumably,
 						%% the only reason to find some of these transactions on disk
 						%% is they had been written prior to the call, what means they are
@@ -1227,9 +981,8 @@ pick_txs(TXIDs, TXs) ->
 							TX ->
 								{[TX | Found], Missing}
 						end;
-					_Status ->
-						[{{tx, _}, TX}] = ets:lookup(node_state, {tx, TXID}),
-						{[TX | Found], Missing}
+					true ->
+						{[ar_mempool:get_tx(TXID) | Found], Missing}
 				end
 		end,
 		{[], []},
@@ -1281,8 +1034,7 @@ is_account_banned(Addr, Map) ->
 
 pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) ->
 	#block{ reward_history = RewardHistory } = PrevB,
-	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT, PrevB#block.wallet_list,
-			PrevB#block.denomination),
+	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
 	Rate = ar_pricing:usd_to_ar_rate(PrevB),
 	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
 	Denomination = PrevB#block.denomination,
@@ -1472,21 +1224,21 @@ validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
 			ok
 	end.
 
-get_missing_txs_and_retry(#block{ txs = TXIDs }, _Mempool, _Worker)
+get_missing_txs_and_retry(#block{ txs = TXIDs }, _Worker)
 		when length(TXIDs) > 1000 ->
 	?LOG_WARNING([{event, ar_node_worker_downloaded_txs_count_exceeds_limit}]),
 	ok;
-get_missing_txs_and_retry(BShadow, Mempool, Worker) ->
-	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs, Mempool,
+get_missing_txs_and_retry(BShadow, Worker) ->
+	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs,
 			Worker, ar_peers:get_peers(), [], 0).
 
-get_missing_txs_and_retry(_H, _TXIDs, _Mempool, _Worker, _Peers, _TXs, TotalSize)
+get_missing_txs_and_retry(_H, _TXIDs, _Worker, _Peers, _TXs, TotalSize)
 		when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
 	?LOG_WARNING([{event, ar_node_worker_downloaded_txs_exceed_block_size_limit}]),
 	ok;
-get_missing_txs_and_retry(H, [], _Mempool, Worker, _Peers, TXs, _TotalSize) ->
+get_missing_txs_and_retry(H, [], Worker, _Peers, TXs, _TotalSize) ->
 	gen_server:cast(Worker, {cache_missing_txs, H, lists:reverse(TXs)});
-get_missing_txs_and_retry(H, TXIDs, Mempool, Worker, Peers, TXs, TotalSize) ->
+get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
 	Split = min(5, length(TXIDs)),
 	{Bulk, Rest} = lists:split(Split, TXIDs),
 	Fetch =
@@ -1503,7 +1255,7 @@ get_missing_txs_and_retry(H, TXIDs, Mempool, Worker, Peers, TXs, TotalSize) ->
 			{TXs, TotalSize},
 			ar_util:pmap(
 				fun(TXID) ->
-					ar_http_iface_client:get_tx(Peers, TXID, Mempool)
+					ar_http_iface_client:get_tx(Peers, TXID)
 				end,
 				Bulk
 			)
@@ -1513,7 +1265,7 @@ get_missing_txs_and_retry(H, TXIDs, Mempool, Worker, Peers, TXs, TotalSize) ->
 			?LOG_WARNING([{event, ar_node_worker_failed_to_fetch_missing_tx}]),
 			ok;
 		{TXs2, TotalSize2} ->
-			get_missing_txs_and_retry(H, Rest, Mempool, Worker, Peers, TXs2, TotalSize2)
+			get_missing_txs_and_retry(H, Rest, Worker, Peers, TXs2, TotalSize2)
 	end.
 
 apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
@@ -1581,13 +1333,8 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	),
 	ar_disk_cache:write_block(B),
 	BlockTXs = B#block.txs,
-	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-	[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
-	drop_txs(BlockTXs, Map, Set, Q, MempoolSize, false),
-	[{tx_statuses, Map2}] = ets:lookup(node_state, tx_statuses),
-	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
+	ar_mempool:drop_txs(BlockTXs, false, false),
+	gen_server:cast(self(), {filter_mempool, ar_mempool:get_all_txids()}),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
 	Height = B#block.height,
 	{Rate, ScheduledRate} =
@@ -1810,7 +1557,7 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 		ar_events:send(tx, {ready_for_mining, TX}),
 		%% Add it to the mempool here even though have triggered an event - processes
 		%% do not handle their own events.
-		add_tx_to_mempool(TX, ready_for_mining)
+		ar_mempool:add_tx(TX, ready_for_mining)
 	end, TXs),
 	return_orphaned_txs_to_mempool(PrevH, BaseH).
 
@@ -1886,8 +1633,7 @@ start_2_5_mining(State) ->
 	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	{ok, Config} = application:get_env(arweave, config),
 	RewardAddr = maps:get(reward_addr, State2, Config#config.mining_addr),
-	Miner = ar_mine:start({B, collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT,
-			B#block.wallet_list, 1),
+	Miner = ar_mine:start({B, collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
 			RewardAddr, Tags, BlockAnchors, RecentTXMap, PartitionUpperBound, IOThreads}),
 	?LOG_INFO([{event, started_mining}]),
 	State2#{ miner_2_5 => Miner }.
@@ -1905,13 +1651,12 @@ may_be_start_2_5_io_threads(#{ io_threads := IOThreads } = State) ->
 start_2_5_io_threads() ->
 	ar_mine:start_io_threads().
 
-collect_mining_transactions(Limit, RootHash, Denomination) ->
-	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-	collect_mining_transactions(Limit, Set, [], #{}, RootHash, Denomination, sets:new()).
+collect_mining_transactions(Limit) ->
+	collect_mining_transactions(Limit, ar_mempool:get_priority_set(), []).
 
-collect_mining_transactions(0, _Set, TXs, _Accounts, _RootHash, _Denomination, _PickedIDs) ->
+collect_mining_transactions(0, _Set, TXs) ->
 	TXs;
-collect_mining_transactions(Limit, Set, TXs, Accounts, RootHash, Denomination, PickedIDs) ->
+collect_mining_transactions(Limit, Set, TXs) ->
 	case gb_sets:is_empty(Set) of
 		true ->
 			TXs;
@@ -1919,92 +1664,16 @@ collect_mining_transactions(Limit, Set, TXs, Accounts, RootHash, Denomination, P
 			{{_Utility, TXID, Status}, Set2} = gb_sets:take_largest(Set),
 			case Status of
 				ready_for_mining ->
-					[{_, TX}] = ets:lookup(node_state, {tx, TXID}),
-					case apply_picked_tx(TX, Accounts, RootHash, Denomination, PickedIDs) of
-						{ok, Accounts2} ->
-							PickedIDs2 = sets:add_element(TXID, PickedIDs),
-							collect_mining_transactions(Limit - 1, Set2, [TX | TXs],
-									Accounts2, RootHash, Denomination, PickedIDs2);
-						error ->
-							collect_mining_transactions(Limit, Set2, TXs, Accounts, RootHash,
-									Denomination, PickedIDs)
-					end;
+					TX = ar_mempool:get_tx(TXID),
+					collect_mining_transactions(Limit - 1, Set2, [TX | TXs]);
 				_ ->
-					collect_mining_transactions(Limit, Set2, TXs, Accounts, RootHash,
-							Denomination, PickedIDs)
+					collect_mining_transactions(Limit, Set2, TXs)
 			end
-	end.
-
--ifdef(DEBUG).
-	apply_picked_tx(#tx{ signature = <<>> } = TX, Accounts, RootHash, Denomination,
-			PickedIDs) ->
-		{ok, Accounts};
-	apply_picked_tx(TX, Accounts, RootHash, Denomination, PickedIDs) ->
-		apply_picked_tx2(TX, Accounts, RootHash, Denomination, PickedIDs).
--else.
-	apply_picked_tx(TX, Accounts, RootHash, Denomination, PickedIDs) ->
-		apply_picked_tx2(TX, Accounts, RootHash, Denomination, PickedIDs).
--endif.
-
-apply_picked_tx2(TX, Accounts, RootHash, Denomination, PickedIDs) ->
-	case sets:is_element(TX#tx.last_tx, PickedIDs) of
-		true ->
-			error;
-		false ->
-			apply_picked_tx2(TX, Accounts, RootHash, Denomination)
-	end.
-
-apply_picked_tx2(TX, Accounts, RootHash, Denomination) ->
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
-	Spent = TX#tx.reward + TX#tx.quantity,
-	LastTX = TX#tx.last_tx,
-	TXDenomination = TX#tx.denomination,
-	TXID = TX#tx.id,
-	case maps:get(Origin, Accounts, not_found) of
-		{Balance, LastTX2} when byte_size(LastTX) == 48 orelse LastTX == LastTX2 ->
-			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
-			Spent2 = ar_pricing:redenominate(Spent, TXDenomination, Denomination),
-			case Spent2 > Balance2 of
-				true ->
-					error;
-				_ ->
-					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination, true} }}
-			end;
-		{Balance, LastTX2, AccountDenomination, MiningPermission}
-				when byte_size(LastTX) == 48 orelse LastTX == LastTX2 ->
-			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
-			Spent2 = ar_pricing:redenominate(Spent, TXDenomination, Denomination),
-			case Spent2 > Balance2 of
-				true ->
-					error;
-				_ ->
-					{ok, Accounts#{ Origin => {Balance2 - Spent2, TXID, Denomination,
-							MiningPermission} }}
-			end;
-		not_found ->
-			case ar_wallets:get(RootHash, Origin) of
-				#{ Origin := Value } ->
-					apply_picked_tx2(TX, Accounts#{ Origin => Value }, RootHash, Denomination);
-				_ ->
-					error
-			end;
-		_ ->
-			error
 	end.
 
 record_processing_time(StartTimestamp) ->
 	ProcessingTime = timer:now_diff(erlang:timestamp(), StartTimestamp) / 1000000,
 	prometheus_histogram:observe(block_processing_time, ProcessingTime).
-
-calculate_mempool_size(TXs) ->
-	maps:fold(
-		fun(_TXID, TX, {HeaderAcc, DataAcc}) ->
-			{HeaderSize, DataSize} = tx_mempool_size(TX),
-			{HeaderSize + HeaderAcc, DataSize + DataAcc}
-		end,
-		{0, 0},
-		TXs
-	).
 
 priority(apply_block) ->
 	{1, 1};
@@ -2070,32 +1739,3 @@ dump_mempool(TXs, MempoolSize) ->
 			?LOG_ERROR([{event, failed_to_dump_mempool}, {reason, Reason}])
 	end.
 
-add_tx_to_mempool(#tx{ id = TXID } = TX, Status) ->
-	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
-	[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
-	Timestamp = get_or_create_tx_timestamp(TXID),
-	Utility = {ar_tx:utility(TX), Timestamp},
-	{MempoolSize2, Set2, Q2} =
-		case maps:get(TXID, Map, not_found) of
-			not_found ->
-				ets:insert(node_state, {{tx, TXID}, TX}),
-				ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
-				{increase_mempool_size(MempoolSize, TX),
-						gb_sets:add_element({Utility, TXID, Status}, Set),
-						gb_sets:add_element({Utility, TXID}, Q)};
-			PrevStatus ->
-				{MempoolSize, gb_sets:add_element({Utility, TXID, Status},
-						gb_sets:del_element({Utility, TXID, PrevStatus}, Set)), Q}
-		end,
-	Map2 = maps:put(TX#tx.id, Status, Map),
-	{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2,
-			MempoolSize2),
-	ets:insert(node_state, [
-		{tx_statuses, Map3},
-		{mempool_size, MempoolSize3},
-		{tx_priority_set, Set3},
-		{tx_propagation_queue, Q3}
-	]),
-	ok.

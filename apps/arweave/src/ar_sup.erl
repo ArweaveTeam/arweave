@@ -13,6 +13,7 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
 
 -define(CHILD(I, Type), {I, {I, start_link, []}, permanent, ?SHUTDOWN_TIMEOUT, Type, [I]}).
@@ -74,7 +75,7 @@ init([]) ->
 	ets:new(node_state, [set, public, named_table]),
 	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
-	{ok, {{one_for_one, 5, 10}, [
+	Children = [
 		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),
 		?CHILD_SUP(ar_events_sup, supervisor),
@@ -102,4 +103,6 @@ init([]) ->
 		?CHILD_SUP(ar_poller_sup, supervisor),
 		?CHILD_SUP(ar_node_sup, supervisor),
 		?CHILD_SUP(ar_webhook_sup, supervisor)
-	]}}.
+	],
+
+	{ok, {{one_for_one, 5, 10}, Children}}.

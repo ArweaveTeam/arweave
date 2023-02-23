@@ -3,6 +3,18 @@
 
 %%% A collection of record structures used throughout the Arweave server.
 
+%% Helper macro used to print records with their fields and values.
+%% Output is a list of tuples where each tuple is a field and value.
+%% From this old mailing list post:
+%% https://erlang.org/pipermail/erlang-questions/2008-March/033336.html
+%% example: ?REC_INFO(tx, TX)
+-define(REC_INFO(RecordName,Record),
+	lists:zip(record_info(fields,RecordName), tl(tuple_to_list(Record)))).
+
+%% True if arweave was launched with -setcookie=test
+%% (e.g. bin/test or bin/shell)
+-define(IS_TEST, erlang:get_cookie() == test).
+
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
 	-ifdef(DEBUG).

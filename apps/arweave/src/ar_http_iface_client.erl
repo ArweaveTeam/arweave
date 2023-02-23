@@ -6,7 +6,7 @@
 
 -export([send_block_json/3, send_block_binary/3, send_block_binary/4, send_tx_json/3,
 		send_tx_binary/3, send_block_announcement/2, get_block_shadow/2, get_block_shadow/3,
-		get_block/3, get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2,
+		get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peer/2, get_tx_data/2,
 		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
 		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
@@ -702,50 +702,45 @@ get_height(Peer) ->
 		{ok, {{<<"500">>, _}, _, _, _, _}} -> not_joined
 	end.
 
-get_txs(Peers, MempoolTXs, B) ->
+get_txs(Peers, B) ->
 	case B#block.txs of
 		TXIDs when length(TXIDs) > ?BLOCK_TX_COUNT_LIMIT ->
 			?LOG_ERROR([{event, downloaded_txs_count_exceeds_limit}]),
 			{error, txs_count_exceeds_limit};
 		TXIDs ->
-			get_txs(B#block.height, Peers, MempoolTXs, TXIDs, [], 0)
+			get_txs(B#block.height, Peers, TXIDs, [], 0)
 	end.
 
-get_txs(_Height, _Peers, _MempoolTXs, [], TXs, _TotalSize) ->
+get_txs(_Height, _Peers, [], TXs, _TotalSize) ->
 	{ok, lists:reverse(TXs)};
-get_txs(Height, Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
+get_txs(Height, Peers, [TXID | Rest], TXs, TotalSize) ->
 	Fork_2_0 = ar_fork:height_2_0(),
-	case get_tx(Peers, TXID, MempoolTXs) of
+	case get_tx(Peers, TXID) of
 		#tx{ format = 2 } = TX ->
-			get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
+			get_txs(Height, Peers, Rest, [TX | TXs], TotalSize);
 		#tx{} = TX when Height < Fork_2_0 ->
-			get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
+			get_txs(Height, Peers, Rest, [TX | TXs], TotalSize);
 		#tx{ format = 1 } = TX ->
 			case TotalSize + TX#tx.data_size of
 				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
 					?LOG_ERROR([{event, downloaded_txs_exceed_block_size_limit}]),
 					{error, txs_exceed_block_size_limit};
 				NewTotalSize ->
-					get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
+					get_txs(Height, Peers, Rest, [TX | TXs], NewTotalSize)
 			end;
 		_ ->
 			{error, tx_not_found}
 	end.
 
 %% @doc Retreive a tx by ID from the memory pool, disk, or a remote peer.
-get_tx(_Peers, #tx{} = TX, _MempoolTXs) ->
+get_tx(_Peers, #tx{} = TX) ->
 	TX;
-get_tx(Peers, TXID, MempoolTXs) ->
-	case maps:get(TXID, MempoolTXs, not_in_mempool) of
-		not_in_mempool ->
+get_tx(Peers, TXID) ->
+	case ar_mempool:get_tx(TXID) of
+		not_found ->
 			get_tx_from_disk_or_peer(Peers, TXID);
-		_Status ->
-			case ets:lookup(node_state, {tx, TXID}) of
-				[{_, TX}] ->
-					TX;
-				_ ->
-					get_tx_from_disk_or_peer(Peers, TXID)
-			end
+		TX ->
+			TX
 	end.
 
 get_tx_from_disk_or_peer(Peers, TXID) ->

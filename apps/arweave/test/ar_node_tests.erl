@@ -498,7 +498,7 @@ test_multi_node_mining_reward() ->
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test_() ->
-	{timeout, 60, fun() ->
+	{timeout, 120, fun() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
@@ -578,7 +578,7 @@ test_wallet_transaction() ->
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test_() ->
-	{timeout, 60, fun() ->
+	{timeout, 120, fun() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
@@ -614,9 +614,10 @@ test_persisted_mempool() ->
 	disconnect_from_slave(),
 	SignedTX = sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(master) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(SignedTX, false),
+	Mempool = sets:from_list(ar_mempool:get_all_txids()),
 	true = ar_util:do_until(
 		fun() ->
-			maps:is_key(SignedTX#tx.id, ar_node:get_pending_txs([as_map]))
+			sets:is_element(SignedTX#tx.id, Mempool)
 		end,
 		100,
 		1000

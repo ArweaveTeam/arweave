@@ -190,7 +190,7 @@ get_missing_tx_indices(TXIDs) ->
 get_missing_tx_indices([], _N) ->
 	[];
 get_missing_tx_indices([TXID | TXIDs], N) ->
-	case ets:member(node_state, {tx, TXID}) of
+	case ar_mempool:has_tx(TXID) of
 		true ->
 			get_missing_tx_indices(TXIDs, N + 1);
 		false ->
@@ -239,10 +239,10 @@ collect_missing_transactions([#tx{} = TX | TXs]) ->
 			{ok, [TX | TXs2]}
 	end;
 collect_missing_transactions([TXID | TXs]) ->
-	case ets:lookup(node_state, {tx, TXID}) of
-		[] ->
+	case ar_mempool:get_tx(TXID) of
+		not_found ->
 			failed;
-		[{_, TX}] ->
+		TX ->
 			collect_missing_transactions([TX | TXs])
 	end;
 collect_missing_transactions([]) ->

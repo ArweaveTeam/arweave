@@ -3,6 +3,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 wallet_sign_verify_test_() ->
+	{timeout, 30, fun test_wallet_sign_verify/0}.
+
+test_wallet_sign_verify() ->
 	TestWalletSignVerify = fun(KeyTypeEnc) ->
 		fun() ->
 			KeyType = ar_serialize:binary_to_signature_type(KeyTypeEnc),

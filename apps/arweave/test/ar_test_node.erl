@@ -14,7 +14,7 @@
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
 		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
-		assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
+		assert_post_tx_to_slave/1, assert_post_tx_to_slave/2, assert_post_tx_to_master/1,
 		get_tx_anchor/0,
 		get_tx_anchor/1, join/1, rejoin/1, join_on_slave/0, rejoin_on_slave/0,
 		join_on_master/0, rejoin_on_master/0,
@@ -589,7 +589,7 @@ assert_wait_until_receives_txs(TXs) ->
 wait_until_receives_txs(TXs) ->
 	ar_util:do_until(
 		fun() ->
-			MinedTXIDs = [TX#tx.id || TX <- ar_node:get_ready_for_mining_txs()],
+			MinedTXIDs = ar_node:get_ready_for_mining_txs(),
 			case lists:all(fun(TX) -> lists:member(TX#tx.id, MinedTXIDs) end, TXs) of
 				true ->
 					ok;
@@ -606,7 +606,10 @@ assert_slave_wait_until_receives_txs(TXs) ->
 			?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT + 500)).
 
 assert_post_tx_to_slave(TX) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(TX).
+	assert_post_tx_to_slave(TX, true).
+
+assert_post_tx_to_slave(TX, Wait) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(TX, Wait).
 
 assert_post_tx_to_master(TX) ->
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(TX).

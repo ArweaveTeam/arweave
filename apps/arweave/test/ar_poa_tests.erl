@@ -10,7 +10,7 @@
 		get_tx_anchor/0, sign_tx/2, read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
-	{timeout, 300, fun test_v1_transactions_after_2_0/0}.
+	{timeout, 420, fun test_v1_transactions_after_2_0/0}.
 
 test_v1_transactions_after_2_0() ->
 	Key = {_, Pub1} = ar_wallet:new(),

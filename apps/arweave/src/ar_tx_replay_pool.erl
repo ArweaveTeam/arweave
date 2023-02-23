@@ -112,7 +112,7 @@ verify_anchor(TX, Height, FloatingWallets, BlockAnchors, RecentTXMap, Mempool) -
 			%% since current nodes can accept blocks with a chain of last_tx
 			%% references. The check would still fail on edge pre 1.8 since
 			%% TX is validated against a previous blocks' wallet list then.
-			case maps:is_key(TX#tx.last_tx, Mempool) of
+			case sets:is_element(TX#tx.last_tx, Mempool) of
 				true ->
 					{invalid, last_tx_in_mempool};
 				false ->
@@ -153,7 +153,7 @@ verify_tx_in_weave(TX, RecentTXMap, Mempool) ->
 	end.
 
 verify_tx_in_mempool(TX, Mempool) ->
-	case maps:is_key(TX#tx.id, Mempool) of
+	case sets:is_element(TX#tx.id, Mempool) of
 		true ->
 			{invalid, tx_already_in_mempool};
 		false ->
