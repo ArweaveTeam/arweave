@@ -784,7 +784,7 @@ handle_task({filter_mempool, Mempool}, State) ->
 					fun(TX, Acc) ->
 						case ar_tx_replay_pool:verify_tx({TX, Rate, Price,
 								KryderPlusRateMultiplier, Denomination, Height,
-								RedenominationHeight, BlockAnchors, RecentTXMap, sets:new(), Wallets},
+								RedenominationHeight, BlockAnchors, RecentTXMap, #{}, Wallets},
 								do_not_verify_signature) of
 							valid ->
 								Acc;
@@ -964,13 +964,13 @@ request_nonce_limiter_validation(#block{ indep_hash = H } = B, PrevB) ->
 	ar_block_cache:mark_nonce_limiter_validation_scheduled(block_cache, H).
 
 pick_txs(TXIDs) ->
-	Mempool = sets:from_list(ar_mempool:get_all_txids()),
+	Mempool = ar_mempool:get_map(),
 	lists:foldr(
 		fun (TX, {Found, Missing}) when is_record(TX, tx) ->
 				{[TX | Found], Missing};
 			(TXID, {Found, Missing}) ->
-				case sets:is_element(TXID, Mempool) of
-					false ->
+				case maps:get(TXID, Mempool, tx_not_in_mempool) of
+					tx_not_in_mempool ->
 						%% This disk read should almost never be useful. Presumably,
 						%% the only reason to find some of these transactions on disk
 						%% is they had been written prior to the call, what means they are
@@ -981,7 +981,7 @@ pick_txs(TXIDs) ->
 							TX ->
 								{[TX | Found], Missing}
 						end;
-					true ->
+					_Status ->
 						{[ar_mempool:get_tx(TXID) | Found], Missing}
 				end
 		end,

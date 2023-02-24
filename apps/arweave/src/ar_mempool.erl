@@ -3,7 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 
 -export([reset/0, load_from_disk/0, add_tx/2, drop_txs/1, drop_txs/3,
-		get_all_txids/0, take_chunk/2, get_tx/1, has_tx/1, 
+		get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, has_tx/1, 
 		get_priority_set/0, get_last_tx_map/0, get_origin_tx_map/0,
 		get_propagation_queue/0, del_from_propagation_queue/2]).
 
@@ -168,6 +168,15 @@ drop_txs(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
 		{last_tx_map, LastTXMap2},
 		{origin_tx_map, OriginTXMap2}
 	]).
+
+get_map() ->
+	gb_sets:fold(
+		fun({_Utility, TXID, Status}, Acc) ->
+			Acc#{TXID => Status}
+		end,
+		#{},
+		get_priority_set()
+	).
 
 get_all_txids() ->
 	gb_sets:fold(

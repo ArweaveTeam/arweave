@@ -34,10 +34,10 @@ validate(TX) ->
 	Denomination = proplists:get_value(denomination, Props),
 	RedenominationHeight = proplists:get_value(redenomination_height, Props),
 	Wallets = ar_wallets:get(WL, ar_tx:get_addresses([TX])),
-	MempoolTXs = sets:from_list(ar_mempool:get_all_txids()),
+	Mempool = ar_mempool:get_map(),
 	Result = ar_tx_replay_pool:verify_tx({TX, USDToARRate, PricePerGiBMinute,
 			KryderPlusRateMultiplier, Denomination, Height, RedenominationHeight, BlockAnchors,
-			RecentTXMap, MempoolTXs, Wallets}),
+			RecentTXMap, Mempool, Wallets}),
 	Result2 =
 		case {Result, TX#tx.format == 2 andalso byte_size(TX#tx.data) /= 0} of
 			{valid, true} ->

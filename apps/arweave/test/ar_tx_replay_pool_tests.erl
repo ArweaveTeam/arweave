@@ -192,7 +192,7 @@ test_verify_block_txs() ->
 						KryderPlusRateMultiplier, Denomination, Height, RedenominationHeight,
 						Timestamp, Wallets, BlockAnchors, RecentTXMap}),
 				lists:flatten(
-					io_lib:format("Verifyng after picking_txs_to_mine: ~s:", [Title])
+					io_lib:format("Verifying after picking_txs_to_mine: ~s:", [Title])
 				)
 			)
 		end,

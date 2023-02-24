@@ -567,14 +567,14 @@ validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors, RecentT
 	end;
 
 validate_block(txs, {NewB = #block{ timestamp = Timestamp, height = Height, txs = TXs },
-		OldB, Accounts, BlockAnchors, RecentTXMap}) ->
+		OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	Rate = ar_pricing:usd_to_ar_rate(OldB),
 	PricePerGiBMinute = OldB#block.price_per_gib_minute,
 	KryderPlusRateMultiplier = OldB#block.kryder_plus_rate_multiplier,
 	Denomination = OldB#block.denomination,
 	RedenominationHeight = OldB#block.redenomination_height,
 	Args = {TXs, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height - 1,
-			RedenominationHeight, Timestamp, Accounts, BlockAnchors, RecentTXMap},
+			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap},
 	case ar_tx_replay_pool:verify_block_txs(Args) of
 		invalid ->
 			{invalid, invalid_txs};
@@ -585,7 +585,7 @@ validate_block(txs, {NewB = #block{ timestamp = Timestamp, height = Height, txs 
 					%% ar_serialize:binary_to_block/1.
 					validate_block(tx_root, {NewB, OldB});
 				false ->
-					validate_block(block_field_sizes, {NewB, OldB, Accounts, BlockAnchors,
+					validate_block(block_field_sizes, {NewB, OldB, Wallets, BlockAnchors,
 							RecentTXMap})
 			end
 	end;

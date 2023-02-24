@@ -614,10 +614,10 @@ test_persisted_mempool() ->
 	disconnect_from_slave(),
 	SignedTX = sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(master) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(SignedTX, false),
-	Mempool = sets:from_list(ar_mempool:get_all_txids()),
+	Mempool = ar_mempool:get_map(),
 	true = ar_util:do_until(
 		fun() ->
-			sets:is_element(SignedTX#tx.id, Mempool)
+			maps:is_key(SignedTX#tx.id, Mempool)
 		end,
 		100,
 		1000

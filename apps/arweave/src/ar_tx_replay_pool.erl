@@ -20,29 +20,40 @@
 verify_tx(Args) ->
 	verify_tx(Args, verify_signature).
 
-verify_tx(Args, VerifySignature) ->
-	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
-			RedenominationHeight, BlockAnchors, RecentTXMap, Mempool, WalletList} = Args,
+verify_tx({TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+		   RedenominationHeight, BlockAnchors, RecentTXMap, Mempool, Wallets},
+		   VerifySignature) when
+		is_record(TX, tx),
+		is_list(BlockAnchors),
+		is_map(RecentTXMap),
+		is_map(Wallets),
+		is_map(Mempool) ->
 	verify_tx2({TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
-			RedenominationHeight, os:system_time(seconds), WalletList, BlockAnchors,
+			RedenominationHeight, os:system_time(seconds), Wallets, BlockAnchors,
 			RecentTXMap, Mempool, VerifySignature}).
 
 %% @doc Verify the transactions are valid for the block taken into account
 %% the given current difficulty and height, the previous blocks' wallet list,
 %% and recent weave transactions.
-verify_block_txs(Args) ->
-	{TXs, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
-			RedenominationHeight, Timestamp, WalletList, BlockAnchors, RecentTXMap} = Args,
-	verify_block_txs(TXs, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
-			Height, RedenominationHeight, Timestamp, WalletList, BlockAnchors, RecentTXMap,
-			maps:new(), 0, 0}).
+verify_block_txs(
+			{TXs, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			 RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap}) ->
+	verify_block_txs(TXs,
+			{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+			 Height, RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
+			 maps:new(), 0, 0}).
 
 verify_block_txs([], _Args) ->
 	valid;
-verify_block_txs([TX | TXs], Args) ->
-	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
-			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap, Mempool, C,
-			Size} = Args,
+verify_block_txs([TX | TXs],
+			{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			 RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
+			 Mempool, C, Size}) when
+		is_record(TX, tx),
+		is_map(Wallets),
+		is_list(BlockAnchors),
+		is_map(RecentTXMap),
+		is_map(Mempool) ->
 	case verify_tx2({TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 			Height, RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
 			Mempool, verify_signature}) of
@@ -66,9 +77,10 @@ verify_block_txs([TX | TXs], Args) ->
 				{true, _, true} ->
 					invalid;
 				_ ->
-					verify_block_txs(TXs, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
-							Denomination, Height, RedenominationHeight, Timestamp, NewWallets,
-							BlockAnchors, RecentTXMap, NewMempool, NewCount, NewSize})
+					verify_block_txs(TXs, 
+							{Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
+							 Denomination, Height, RedenominationHeight, Timestamp, NewWallets,
+							 BlockAnchors, RecentTXMap, NewMempool, NewCount, NewSize})
 			end;
 		{invalid, _} ->
 			invalid
@@ -97,6 +109,7 @@ verify_tx2(Args) ->
 	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
 			RedenominationHeight, Timestamp, FloatingWallets, BlockAnchors, RecentTXMap,
 			Mempool, VerifySignature} = Args,
+	
 	case ar_tx:verify(TX, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 			RedenominationHeight, Height, FloatingWallets, Timestamp}, VerifySignature) of
 		true ->
@@ -105,14 +118,19 @@ verify_tx2(Args) ->
 			{invalid, tx_verification_failed}
 	end.
 
-verify_anchor(TX, Height, FloatingWallets, BlockAnchors, RecentTXMap, Mempool) ->
+verify_anchor(TX, Height, FloatingWallets, BlockAnchors, RecentTXMap, Mempool) when
+		is_record(TX, tx),
+		is_map(FloatingWallets),
+		is_list(BlockAnchors),
+		is_map(RecentTXMap),
+		is_map(Mempool) ->
 	ShouldContinue = case ar_fork:height_1_8() of
 		H when Height >= H ->
 			%% Only verify after fork 1.8 otherwise it causes a soft fork
 			%% since current nodes can accept blocks with a chain of last_tx
 			%% references. The check would still fail on edge pre 1.8 since
 			%% TX is validated against a previous blocks' wallet list then.
-			case sets:is_element(TX#tx.last_tx, Mempool) of
+			case maps:is_key(TX#tx.last_tx, Mempool) of
 				true ->
 					{invalid, last_tx_in_mempool};
 				false ->
@@ -153,7 +171,7 @@ verify_tx_in_weave(TX, RecentTXMap, Mempool) ->
 	end.
 
 verify_tx_in_mempool(TX, Mempool) ->
-	case sets:is_element(TX#tx.id, Mempool) of
+	case maps:is_key(TX#tx.id, Mempool) of
 		true ->
 			{invalid, tx_already_in_mempool};
 		false ->
@@ -162,10 +180,16 @@ verify_tx_in_mempool(TX, Mempool) ->
 
 pick_txs_under_size_limit([], _Args) ->
 	[];
-pick_txs_under_size_limit([TX | TXs], Args) ->
-	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
-			RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap, Mempool, Size,
-			Count} = Args,
+pick_txs_under_size_limit(
+			[TX | TXs],
+			{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
+			 RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
+			 Mempool, Size, Count}) when
+		is_record(TX, tx),
+		is_map(Wallets),
+		is_list(BlockAnchors),
+		is_map(RecentTXMap),
+		is_map(Mempool) ->
 	case verify_tx2({TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 			Height, RedenominationHeight, Timestamp, Wallets, BlockAnchors, RecentTXMap,
 			Mempool, verify_signature}) of
