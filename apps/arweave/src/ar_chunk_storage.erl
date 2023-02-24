@@ -172,8 +172,7 @@ run_defragmentation() ->
 									Config#config.defragmentation_trigger_threshold,
 									Sizes),
 			ok = defrag_files(Files),
-			SizesAfterDefragmentation = read_chunks_sizes(Config#config.data_dir),
-			ok = update_sizes_file(Files, SizesAfterDefragmentation)
+			ok = update_sizes_file(Files, #{})
 	end.
 
 %%%===================================================================
@@ -492,22 +491,24 @@ sync_and_close_files([]) ->
 
 files_to_defrag(StorageModules, DataDir, ByteSizeThreshold, Sizes) ->
 	AllFiles = lists:flatmap(
-		fun (StorageModule) ->
-			StorageId = ar_storage_module:id(StorageModule),
+		fun(StorageModule) ->
+			StoreID = ar_storage_module:id(StorageModule),
 			Dir =
-				case StorageId of
+				case StoreID of
 					"default" ->
 						DataDir;
 					_ ->
-						filename:join([DataDir, "storage_modules", StorageId])
+						filename:join([DataDir, "storage_modules", StoreID])
 				end,
+			ok = filelib:ensure_dir(Dir ++ "/"),
+			ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
 			StorageIndex = read_file_index(Dir),
 			maps:values(StorageIndex)
 		end, StorageModules),
 	lists:filter(
-		fun (Filepath) ->
+		fun(Filepath) ->
 			case file:read_file_info(Filepath) of
-				{ok, #file_info{size = Size}} ->
+				{ok, #file_info{ size = Size }} ->
 					LastSize = maps:get(Filepath, Sizes, 1),
 					Growth = (Size - LastSize) / LastSize,
 					Size >= ByteSizeThreshold andalso Growth > 0.1;
@@ -553,8 +554,8 @@ update_sizes_file([], Sizes) ->
 	end;
 update_sizes_file([Filepath | Rest], Sizes) ->
 	case file:read_file_info(Filepath) of
-		{ok, #file_info{size = Size}} ->
-			update_sizes_file(Rest, Sizes#{Filepath => Size});
+		{ok, #file_info{ size = Size }} ->
+			update_sizes_file(Rest, Sizes#{ Filepath => Size });
 		{error, Reason} ->
 			?LOG_ERROR([
 				{event, failed_to_read_chunk_file_info},
