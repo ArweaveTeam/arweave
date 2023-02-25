@@ -79,7 +79,7 @@ get(ID, Type, StoreID) ->
 %% given ID. Store the changes on disk before returning ok.
 add(End, Start, ID, StoreID) ->
 	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
-	case catch gen_server:call(GenServerID, {add, End, Start, ID}, 20000) of
+	case catch gen_server:call(GenServerID, {add, End, Start, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -91,7 +91,7 @@ add(End, Start, ID, StoreID) ->
 %% returning ok.
 add(End, Start, Type, ID, StoreID) ->
 	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
-	case catch gen_server:call(GenServerID, {add, End, Start, Type, ID}, 20000) of
+	case catch gen_server:call(GenServerID, {add, End, Start, Type, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -103,7 +103,7 @@ add(End, Start, Type, ID, StoreID) ->
 %% returning ok.
 delete(End, Start, ID, StoreID) ->
 	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
-	case catch gen_server:call(GenServerID, {delete, End, Start, ID}, 20000) of
+	case catch gen_server:call(GenServerID, {delete, End, Start, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -115,7 +115,7 @@ delete(End, Start, ID, StoreID) ->
 %% before returning ok.
 cut(Offset, ID, StoreID) ->
 	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
-	case catch gen_server:call(GenServerID, {cut, Offset, ID}, 20000) of
+	case catch gen_server:call(GenServerID, {cut, Offset, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->

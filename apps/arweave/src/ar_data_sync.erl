@@ -419,14 +419,18 @@ init("default" = StoreID) ->
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
-				Limit2 = erlang:ceil(Free * 0.9 / 3 / 262144),
+				Limit2 = erlang:ceil(Free * 0.5 / 3 / 262144),
 				Limit3 = Limit2 - Limit2 rem 100 + 100,
 				ar:console("~nSetting the data chunk cache size limit to ~B chunks. "
 						"Once the data is synced, "
 						"we recommend you start the node with `data_cache_size_limit ~B "
 						"packing_cache_size_limit ~B mining_server_chunk_cache_size_limit ~B` "
-						"for better mining performance.~n", [Limit3, Limit3 div 2,
-								Limit3 div 2, Limit3 * 2]),
+						"for better mining performance. The node estimates the available "
+						"memory conservatively so in theory you may speed up syncing or "
+						"mining while not running into issues by further increasing "
+						"data_cache_size_limit and packing_cache_size_limit and "
+						"mining_server_chunk_cache_size_limit accordingly.~n",
+						[Limit3, Limit3 div 2, Limit3 div 2, Limit3 * 2]),
 				Limit3;
 			Limit2 ->
 				Limit2

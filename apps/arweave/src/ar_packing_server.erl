@@ -113,7 +113,7 @@ init([]) ->
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
-				Limit2 = erlang:ceil(Free * 0.9 / 3 / 262144),
+				Limit2 = erlang:ceil(Free * 0.5 / 3 / 262144),
 				Limit3 = Limit2 - Limit2 rem 100 + 100,
 				Limit3;
 			Limit ->
