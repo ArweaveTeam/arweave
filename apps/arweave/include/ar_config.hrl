@@ -79,9 +79,6 @@
 %% POST /tx request.
 -define(DEFAULT_POST_TX_TIMEOUT, 20).
 
-%% The maximum number of chunks per second the node attempts to pack or unpack.
--define(DEFAULT_PACKING_RATE, 50).
-
 %% The default value for the maximum number of threads used for nonce limiter chain
 %% validation.
 -define(DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
@@ -180,7 +177,7 @@
 		post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS
 	},
 	disk_cache_size = ?DISK_CACHE_SIZE,
-	packing_rate = ?DEFAULT_PACKING_RATE,
+	packing_rate,
 	max_nonce_limiter_validation_thread_count
 			= ?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
 	max_nonce_limiter_last_step_validation_thread_count

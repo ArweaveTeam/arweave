@@ -73,16 +73,26 @@ init([]) ->
 	erlang:put(zero_chunk, ZeroChunk),
 	ets:insert(?MODULE, {zero_chunk, ZeroChunk}),
 	{ok, Config} = application:get_env(arweave, config),
-	PackingRate = Config#config.packing_rate,
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
-	SchedulersRequired = ceil(PackingRate / (1000 / (?PACKING_LATENCY_MS))),
 	MaxRate = Schedulers * 1000 / (?PACKING_LATENCY_MS),
-	case SchedulersRequired > Schedulers of
-		true ->
-			log_insufficient_core_count(Schedulers, PackingRate, MaxRate);
-		false ->
-			log_packing_rate(PackingRate, MaxRate)
-	end,
+	{PackingRate, SchedulersRequired} =
+		case Config#config.packing_rate of
+			undefined ->
+				ChosenRate = max(1, ceil(MaxRate / 3)),
+				ChosenRate2 = ChosenRate - ChosenRate rem 10 + 10,
+				log_packing_rate(ChosenRate2, MaxRate),
+				SchedulersRequired2 = ceil(ChosenRate2 / (1000 / (?PACKING_LATENCY_MS))),
+				{ChosenRate2, SchedulersRequired2};
+			ConfiguredRate ->
+				SchedulersRequired2 = ceil(ConfiguredRate / (1000 / (?PACKING_LATENCY_MS))),
+				case SchedulersRequired2 > Schedulers of
+					true ->
+						log_insufficient_core_count(Schedulers, ConfiguredRate, MaxRate);
+					false ->
+						log_packing_rate(ConfiguredRate, MaxRate)
+				end,
+				{ConfiguredRate, SchedulersRequired2}
+		end,
 	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "
 			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
 	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),

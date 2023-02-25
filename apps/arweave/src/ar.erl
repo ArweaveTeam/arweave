@@ -290,9 +290,9 @@ show_help() ->
 					[?DISK_CACHE_SIZE]
 				)
 			)},
-			{"packing_rate", io_lib:format(
+			{"packing_rate",
 				"The maximum number of chunks per second to pack or unpack. "
-				"Default: ~B.", [?DEFAULT_PACKING_RATE])},
+				"The default value is determined based on the number of CPU cores."},
 			{"max_vdf_validation_thread_count", io_lib:format("\tThe maximum number "
 					"of threads used for VDF validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
