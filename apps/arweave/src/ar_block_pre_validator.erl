@@ -376,6 +376,7 @@ pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, SolutionResigned, P
 			ar_ignore_registry:remove_temporary(B#block.indep_hash),
 			ok;
 		true ->
+			prometheus_gauge:set(block_vdf_advance, StepNumber - CurrentStepNumber),
 			pre_validate_previous_solution_hash(B, BDS, PrevB, SolutionResigned, Peer,
 					Timestamp, ReadBodyTime, BodySize)
 	end.

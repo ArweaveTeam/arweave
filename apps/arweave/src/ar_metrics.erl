@@ -176,6 +176,11 @@ register(MetricsDir) ->
 		{name, block_vdf_time},
 		{help, "The number of the VDF steps between two consequent blocks."}
 	]),
+	prometheus_gauge:new([
+		{name, block_vdf_advance},
+		{help, "The number of the VDF steps a received block is ahead of our current step."}
+	]),
+
 	prometheus_histogram:new([
 		{name, fork_recovery_depth},
 		{buckets, lists:seq(1, 50)},
