@@ -1,6 +1,7 @@
 -module(ar_storage_module).
 
--export([id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2]).
+-export([id/1, get_by_id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1,
+		get_all/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -39,6 +40,21 @@ id({BucketSize, Bucket, Packing}) ->
 		end,
 	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
 			[BucketSize, Bucket, PackingString]))).
+
+%% @doc Return the storage module with the given identifier or not_found.
+get_by_id(ID) ->
+	{ok, Config} = application:get_env(arweave, config),
+	get_by_id(ID, Config#config.storage_modules).
+
+get_by_id(_ID, []) ->
+	not_found;
+get_by_id(ID, [Module | Modules]) ->
+	case ar_storage_module:id(Module) == ID of
+		true ->
+			Module;
+		false ->
+			get_by_id(ID, Modules)
+	end.
 
 %% @doc Return {StartOffset, EndOffset} the given module is responsible for.
 get_range(ID) ->

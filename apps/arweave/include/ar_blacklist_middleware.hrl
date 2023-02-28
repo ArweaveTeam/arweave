@@ -34,7 +34,7 @@ end).
 			{wallet_list, maps:get(wallet_list, LimitByIP, 10)};
 		[<<"block">>, _Type, _ID, <<"wallet_list">>] ->
 			{wallet_list, maps:get(wallet_list, LimitByIP, 60)};
-		[<<"block">>, _Type, ID, <<"hash_list">>] ->
+		[<<"block">>, _Type, _ID, <<"hash_list">>] ->
 			{block_index, maps:get(block_index, LimitByIP, 10)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}
@@ -63,7 +63,7 @@ end).
 			{wallet_list, maps:get(wallet_list, LimitByIP, 2)};
 		[<<"block">>, _Type, _ID, <<"wallet_list">>] ->
 			{wallet_list, maps:get(wallet_list, LimitByIP, 2)};
-		[<<"block">>, _Type, ID, <<"hash_list">>] ->
+		[<<"block">>, _Type, _ID, <<"hash_list">>] ->
 			{block_index, maps:get(block_index, LimitByIP, 2)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}

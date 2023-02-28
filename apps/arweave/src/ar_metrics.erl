@@ -134,9 +134,9 @@ register(MetricsDir) ->
 	]),
 	prometheus_gauge:new([
 		{name, v2_index_data_size_by_packing},
-		{labels, [store_id, packing]},
-		{help, "The size (in bytes) of the data stored and indexed. Groupped by "
-				"store ID and packing."}
+		{labels, [store_id, packing, partition_size, partition_index]},
+		{help, "The size (in bytes) of the data stored and indexed. Groupped by the "
+				"store ID, packing, partition size, and partition index."}
 	]),
 
 	%% Disk pool.

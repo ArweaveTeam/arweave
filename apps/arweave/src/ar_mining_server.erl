@@ -1124,8 +1124,9 @@ optimal_performance(_StoreID, undefined) ->
 optimal_performance("default", _VdfSpeed) ->
 	undefined;
 optimal_performance(StoreID, VdfSpeed) ->
-	PartitionSize = ar_storage_module:get_size(StoreID),
-	case prometheus_gauge:value(v2_index_data_size_by_packing, [StoreID, spora_2_6]) of
+	{PartitionSize, PartitionIndex, _Packing} = ar_storage_module:get_by_id(StoreID),
+	case prometheus_gauge:value(v2_index_data_size_by_packing, [StoreID, spora_2_6,
+			PartitionSize, PartitionIndex]) of
 		undefined -> 0.0;
 		StorageSize -> (200 / VdfSpeed) * (StorageSize / PartitionSize)
 	end.

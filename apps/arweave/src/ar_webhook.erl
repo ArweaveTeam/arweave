@@ -181,7 +181,8 @@ call_webhook(URL, Headers, Entity, Event) ->
 	do_call_webhook(URL, Headers, Entity, Event, 0).
 
 do_call_webhook(URL, Headers, Entity, Event, N) when N < ?NUMBER_OF_TRIES ->
-	{ok, {_Scheme, _UserInfo, Host, Port, Path, Query}} = http_uri:parse(URL),
+	#{ host := Host, port := Port, path := Path } = Map = uri_string:parse(URL),
+	Query = maps:get(query, Map, <<>>),
 	case catch
 		ar_http:req(#{
 			method => post,

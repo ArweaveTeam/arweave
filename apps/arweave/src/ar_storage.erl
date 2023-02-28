@@ -30,7 +30,8 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-write_full_block(#block{ height = 0 } = BShadow, TXs) when ?NETWORK_NAME == "arweave.N.1" ->
+-if(?NETWORK_NAME == "arweave.N.1").
+write_full_block(#block{ height = 0 } = BShadow, TXs) ->
 	%% Genesis transactions are stored in data/genesis_txs; they are part of the repository.
 	write_full_block2(BShadow, TXs);
 write_full_block(BShadow, TXs) ->
@@ -45,6 +46,25 @@ write_full_block(BShadow, TXs) ->
 		Error ->
 			Error
 	end.
+-else.
+write_full_block(BShadow, TXs) ->
+	case update_confirmation_index(BShadow#block{ txs = TXs }) of
+		ok ->
+			case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
+				ok ->
+					write_full_block2(BShadow, TXs);
+				Error ->
+					Error
+			end;
+		Error ->
+			Error
+	end.
+-endif.
+
+is_blacklisted(#tx{ format = 2 }) ->
+	false;
+is_blacklisted(#tx{ id = TXID }) ->
+	ar_tx_blacklist:is_tx_blacklisted(TXID).
 
 update_confirmation_index(B) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -931,11 +951,6 @@ update_reward_history(B) ->
 		false ->
 			ok
 	end.
-
-is_blacklisted(#tx{ format = 2 }) ->
-	false;
-is_blacklisted(#tx{ id = TXID }) ->
-	ar_tx_blacklist:is_tx_blacklisted(TXID).
 
 write_full_block2(BShadow, TXs) ->
 	case write_block(BShadow) of
