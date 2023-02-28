@@ -65,7 +65,7 @@ get_seed_data(StepNumber, NonceLimiterInfo, NextSeedOption, NextUpperBoundOption
 	#nonce_limiter_info{ global_step_number = N, seed = Seed, next_seed = NextSeed,
 			partition_upper_bound = PartitionUpperBound,
 			next_partition_upper_bound = NextPartitionUpperBound } = NonceLimiterInfo,
-	true = StepNumber >= N,
+	true = StepNumber > N,
 	case get_entropy_reset_point(N, StepNumber) of
 		none ->
 			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound};
