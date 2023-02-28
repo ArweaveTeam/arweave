@@ -20,7 +20,6 @@
 -define(P3_TIMEOUT_HEADER, <<"timeout">>).
 -define(P3_SIGNATURE_HEADER, <<"signature">>).
 
-
 -record(p3_service, {
 	endpoint,
 	mod_seq,

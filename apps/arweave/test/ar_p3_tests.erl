@@ -100,7 +100,6 @@ test_checksum_request() ->
 				})}, [], Config),
 		"Invalid checksum").
 
-
 test_bad_headers() ->
 	Wallet = {PrivKey, PubKey} = ar_wallet:new(),
 	Address = ar_wallet:to_address(Wallet),

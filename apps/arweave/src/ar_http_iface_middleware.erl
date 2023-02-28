@@ -126,8 +126,6 @@ p3_to_http_status(Atom) ->
 		stale_mod_seq ->
 			428
 	end.
-	
-
 
 -ifdef(TESTNET).
 handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->

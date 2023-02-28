@@ -329,6 +329,5 @@ name_route([<<"balance">>, _Addr, _Network, _Token]) ->
 name_route([<<"rates">>]) ->
 	"/rates";
 
-
 name_route(_) ->
 	undefined.

@@ -527,8 +527,6 @@ parse_options([{<<"p3">>, {P3Config}} | Rest], Config) ->
 			P3Config}
 	end;
 
-
-
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

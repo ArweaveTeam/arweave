@@ -9,7 +9,6 @@
 -import(ar_test_node, [start/3]).
 -import(ar_p3_tests, [raw_request/2, http_request/1]).
 
-
 -export([sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, empty_p3_config/0]).
 
 -define (DEPOSIT_ADDRESS, "BHAWuomQUIL18WON2LjqjDF4YuRDcmhme7wvFW2BDiU").
@@ -43,7 +42,6 @@ empty_p3_parse_test() ->
 	{ok, ParsedConfig} = ar_config:parse(Config),
 	ExpectedConfig = empty_p3_config(),
 	?assertEqual(ExpectedConfig, ParsedConfig#config.p3).
-
 
 basic_parse_test() ->
 	Config = <<"{
@@ -193,7 +191,6 @@ bad_payments_token_error_test() ->
 	}">>,
 	?assertMatch(
 		{error, {bad_format, p3, _}, _}, ar_config:parse(Config)).
-
 
 no_service_list_parse_error_test() ->
 	Config = <<"{
@@ -699,7 +696,6 @@ bad_rate_type_validate_test() ->
 	?assertMatch(
 		{stop, _},
 	 	ar_p3_config:validate_config(config_fixture(P3Config))).
-
 
 %% ------------------------------------------------------------------
 %% @doc the rates_endpoint_test_ tests the /rates endpoint response.
