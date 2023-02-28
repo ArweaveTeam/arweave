@@ -419,7 +419,7 @@ init("default" = StoreID) ->
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
-				Limit2 = erlang:ceil(Free * 0.5 / 3 / 262144),
+				Limit2 = erlang:ceil(Free * 0.1 / 3 / 262144),
 				Limit3 = Limit2 - Limit2 rem 100 + 100,
 				ar:console("~nSetting the data chunk cache size limit to ~B chunks. "
 						"Once the data is synced, "
