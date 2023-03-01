@@ -570,14 +570,18 @@ handle_cast(sync_data2, #sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [{StoreID, Range} | Intervals]
 		} = State) ->
 	gen_server:cast(list_to_atom("ar_data_sync_" ++ StoreID),
-			{get_range, Range, OriginStoreID}),
+			{get_ranges, [Range], OriginStoreID, false}),
 	gen_server:cast(self(), sync_data2),
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals }};
 
-handle_cast({get_range, {Start, End}, _OriginStoreID}, State) when Start >= End ->
+handle_cast({get_ranges, [], _OriginStoreID, _SkipSmall}, State) ->
 	{noreply, State};
-handle_cast({get_range, {Start, End}, OriginStoreID} = Cast, State) ->
+handle_cast({get_ranges, [{Start, End} | Ranges], OriginStoreID, SkipSmall}, State)
+		when Start >= End ->
+	gen_server:cast(self(), {get_ranges, Ranges, OriginStoreID, SkipSmall}),
+	{noreply, State};
+handle_cast({get_ranges, [{Start, End} | Ranges], OriginStoreID, SkipSmall} = Cast, State) ->
 	#sync_data_state{ store_id = StoreID, chunks_index = ChunksIndex,
 			chunk_data_db = ChunkDataDB } = State,
 	case is_chunk_cache_full() of
@@ -592,7 +596,8 @@ handle_cast({get_range, {Start, End}, OriginStoreID} = Cast, State) ->
 					PrefixSpaceSize = trunc(math:pow(2,
 							?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
 					Start2 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
-					gen_server:cast(self(), {get_range, {Start2, End}, OriginStoreID});
+					gen_server:cast(self(), {get_ranges, [{Start2, End} | Ranges],
+							OriginStoreID, SkipSmall});
 				{error, Reason} ->
 					?LOG_ERROR([{event, failed_to_query_chunk_metadata},
 							{offset, Start + 1}, {reason, io_lib:format("~p", [Reason])}]);
@@ -602,19 +607,34 @@ handle_cast({get_range, {Start, End}, OriginStoreID} = Cast, State) ->
 					<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
 					{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset,
 							ChunkSize} = binary_to_term(Metadata),
-					case read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey, StoreID) of
+					Skip = SkipSmall andalso AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
+							andalso ChunkSize < ?DATA_CHUNK_SIZE,
+					ReadChunk =
+						case Skip of
+							true ->
+								skip;
+							false ->
+								read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey, StoreID)
+						end,
+					case ReadChunk of
+						skip ->
+							gen_server:cast(self(), {get_ranges,
+									[{Start + ChunkSize, End} | Ranges], OriginStoreID,
+									SkipSmall});
 						not_found ->
 							invalidate_bad_data_record(Start, AbsoluteOffset, ChunksIndex,
 									StoreID, 1),
-							gen_server:cast(self(), {get_range, {Start + ChunkSize, End},
-									OriginStoreID});
+							gen_server:cast(self(), {get_ranges,
+									[{Start + ChunkSize, End} | Ranges], OriginStoreID,
+									SkipSmall});
 						{error, Error} ->
 							?LOG_ERROR([{event, failed_to_read_chunk},
 									{absolute_end_offset, AbsoluteOffset},
 									{chunk_data_key, ar_util:encode(ChunkDataKey)},
 									{reason, io_lib:format("~p", [Error])}]),
-							gen_server:cast(self(), {get_range, {Start + ChunkSize, End},
-									OriginStoreID});
+							gen_server:cast(self(), {get_ranges,
+									[{Start + ChunkSize, End} | Ranges], OriginStoreID,
+									SkipSmall});
 						{ok, {Chunk, DataPath}} ->
 							case ar_sync_record:is_recorded(AbsoluteOffset, ?MODULE,
 									StoreID) of
@@ -636,15 +656,17 @@ handle_cast({get_range, {Start, End}, OriginStoreID} = Cast, State) ->
 											UnpackedChunk, StoreID, ChunkDataKey},
 									gen_server:cast(list_to_atom("ar_data_sync_"
 											++ OriginStoreID), {pack_and_store_chunk, Args}),
-									gen_server:cast(self(), {get_range,
-											{Start + ChunkSize, End}, OriginStoreID});
+									gen_server:cast(self(), {get_ranges,
+											[{Start + ChunkSize, End} | Ranges],
+											OriginStoreID, SkipSmall});
 								Reply ->
 									?LOG_ERROR([{event, chunk_record_not_found},
 											{absolute_end_offset, AbsoluteOffset},
 											{ar_sync_record_reply,
 													io_lib:format("~p", [Reply])}]),
-									gen_server:cast(self(), {get_range,
-											{Start + ChunkSize, End}, OriginStoreID})
+									gen_server:cast(self(), {get_ranges,
+											[{Start + ChunkSize, End} | Ranges],
+											OriginStoreID, SkipSmall})
 							end
 					end
 			end
@@ -988,12 +1010,32 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 					%% The order is important - in case the VM crashes,
 					%% we will not report false positives to peers,
 					%% and the chunk can still be removed upon retry.
-					ok = ar_sync_record:delete(PaddedOffset, PaddedStartOffset, ?MODULE,
-							StoreID),
-					ok = ar_chunk_storage:delete(PaddedOffset, StoreID),
-					ok = ar_kv:delete(ChunksIndex, Key),
-					NextCursor = AbsoluteEndOffset + 1,
-					gen_server:cast(self(), {remove_range, End, NextCursor, Ref, PID}),
+					RemoveFromSyncRecord = ar_sync_record:delete(PaddedOffset,
+							PaddedStartOffset, ?MODULE, StoreID),
+					RemoveFromChunkStorage =
+						case RemoveFromSyncRecord of
+							ok ->
+								ar_chunk_storage:delete(PaddedOffset, StoreID);
+							Error ->
+								Error
+						end,
+					RemoveFromChunksIndex =
+						case RemoveFromChunkStorage of
+							ok ->
+								ar_kv:delete(ChunksIndex, Key);
+							Error2 ->
+								Error2
+						end,
+					case RemoveFromChunksIndex of
+						ok ->
+							NextCursor = AbsoluteEndOffset + 1,
+							gen_server:cast(self(), {remove_range, End, NextCursor, Ref, PID});
+						{error, Reason} ->
+							?LOG_ERROR([{event,
+									data_removal_aborted_since_failed_to_remove_chunk},
+									{offset, Cursor},
+									{reason, io_lib:format("~p", [Reason])}])
+					end,
 					{noreply, State}
 			end;
 		{error, invalid_iterator} ->
@@ -1007,7 +1049,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 			{noreply, State};
 		{error, Reason} ->
 			?LOG_ERROR([{event, data_removal_aborted_since_failed_to_query_chunk},
-					{offset, Cursor}, {reason, Reason}]),
+					{offset, Cursor}, {reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State}
 	end;
 
@@ -1063,6 +1105,12 @@ handle_info({event, node_state, {initialized, _B}},
 	case lists:member(legacy_storage_repacking, Config#config.enable) of
 		true ->
 			request_default_storage_2_5_repacking(DiskPoolThreshold);
+		false ->
+			ok
+	end,
+	case lists:member(legacy_storage_unpacked_packing, Config#config.enable) of
+		true ->
+			request_default_unpacked_packing(DiskPoolThreshold);
 		false ->
 			ok
 	end,
@@ -1324,10 +1372,30 @@ invalidate_bad_data_record(Start, End, ChunksIndex, StoreID, Case) ->
 		false ->
 			PaddedEnd = get_chunk_padded_offset(End),
 			PaddedStart = get_chunk_padded_offset(Start),
+			PaddedStart2 =
+				case PaddedStart == PaddedEnd of
+					true ->
+						PaddedEnd - ?DATA_CHUNK_SIZE;
+					false ->
+						PaddedStart
+				end,
 			?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Case},
-					{range_start, PaddedStart}, {range_end, PaddedEnd}]),
-			ok = ar_sync_record:delete(PaddedEnd, PaddedStart, ?MODULE, StoreID),
-			ok = ar_kv:delete(ChunksIndex, << End:?OFFSET_KEY_BITSIZE >>)
+					{range_start, PaddedStart2}, {range_end, PaddedEnd}]),
+			case ar_sync_record:delete(PaddedEnd, PaddedStart2, ?MODULE, StoreID) of
+				ok ->
+					case ar_kv:delete(ChunksIndex, << End:?OFFSET_KEY_BITSIZE >>) of
+						ok ->
+							ok;
+						Error2 ->
+							?LOG_WARNING([{event, failed_to_remove_chunks_index_key},
+									{absolute_end_offset, End},
+									{error, io_lib:format("~p", [Error2])}])
+					end;
+				Error ->
+					?LOG_WARNING([{event, failed_to_remove_sync_record_range},
+							{range_end, PaddedEnd}, {range_start, PaddedStart2},
+							{error, io_lib:format("~p", [Error])}])
+			end
 	end.
 
 validate_served_chunk(Args) ->
@@ -2048,16 +2116,27 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 	end.
 
 request_default_storage_2_5_repacking(RightBound) ->
-	request_default_storage_2_5_repacking(0, RightBound).
+	request_default_storage_2_5_repacking(0, RightBound, []).
 
-request_default_storage_2_5_repacking(Cursor, RightBound) ->
+request_default_storage_2_5_repacking(Cursor, RightBound, Ranges) ->
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, spora_2_5, ?MODULE,
 			"default") of
 		not_found ->
-			ok;
+			gen_server:cast(ar_data_sync_default, {get_ranges, Ranges, "default", true});
 		{End, Start} ->
-			gen_server:cast(ar_data_sync_default, {get_range, {Start, End}, "default"}),
-			request_default_storage_2_5_repacking(End, RightBound)
+			request_default_storage_2_5_repacking(End, RightBound, Ranges ++ [{Start, End}])
+	end.
+
+request_default_unpacked_packing(RightBound) ->
+	request_default_unpacked_packing(0, RightBound, []).
+
+request_default_unpacked_packing(Cursor, RightBound, Ranges) ->
+	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, unpacked, ?MODULE,
+			"default") of
+		not_found ->
+			gen_server:cast(ar_data_sync_default, {get_ranges, Ranges, "default", true});
+		{End, Start} ->
+			request_default_unpacked_packing(End, RightBound, Ranges ++ [{Start, End}])
 	end.
 
 find_peer_intervals(Start, End, StoreID, SkipIntervalsTable, Self) ->
