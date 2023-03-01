@@ -508,7 +508,7 @@ get_chunk_cache_size_limit(State) ->
 			ThreadCount = map_size(IOThreads),
 			Free = proplists:get_value(free_memory,
 					memsup:get_system_memory_data(), 2000000000),
-			Bytes = min(Free * 0.1 / 3, ?RECALL_RANGE_SIZE
+			Bytes = min(Free * 0.7 / 3, ?RECALL_RANGE_SIZE
 				* 2 % Two ranges per output.
 				* ThreadCount),
 			Limit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
@@ -518,7 +518,7 @@ get_chunk_cache_size_limit(State) ->
 	end.
 
 log_chunk_cache_size_limit(N) ->
-	ar:console("Setting the chunk cache size limit to ~B chunks.~n", [N]),
+	ar:console("~nSetting the chunk cache size limit to ~B chunks.~n", [N]),
 	?LOG_INFO([{event, setting_chunk_cache_size_limit}, {limit, N}]).
 
 may_be_warn_about_lag({computed_output, _Args}, Q) ->
