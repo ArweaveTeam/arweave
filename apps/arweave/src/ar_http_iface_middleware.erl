@@ -1593,7 +1593,9 @@ handle_get_block(H, Req, Pid, Encoding) ->
 									handle_get_block3(B#block{ txs = TXs2 }, Req2, binary)
 							end;
 						{error, body_size_too_large} ->
-							{413, #{}, <<"Payload too large">>, Req}
+							{413, #{}, <<"Payload too large">>, Req};
+						{error, timeout} ->
+							{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 					end;
 				_ ->
 					handle_get_block3(B, Req, Encoding)
@@ -1869,7 +1871,9 @@ parse_chunk(Req, Pid) ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
 handle_post_chunk(Proof, Req) ->
@@ -2195,7 +2199,9 @@ post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 							ReceiveTimestamp)
 			end;
 		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end;
 post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestamp) ->
 	case erlang:get(post_block2) of
@@ -2660,7 +2666,9 @@ handle_post_vdf2(Req, Pid, Peer) ->
 					{202, #{}, Bin, Req2}
 			end;
 		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
 read_complete_body(Req, Pid) ->
