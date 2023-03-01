@@ -2134,9 +2134,13 @@ request_default_unpacked_packing(Cursor, RightBound, Ranges) ->
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, unpacked, ?MODULE,
 			"default") of
 		not_found ->
-			gen_server:cast(ar_data_sync_default, {get_ranges, Ranges, "default", true});
+			Ranges2 = lists:reverse(Ranges),
+			gen_server:cast(ar_data_sync_default, {get_ranges, Ranges2, "default", true});
+		{End, Start} when End - Start < ?DATA_CHUNK_SIZE,
+				End =< ?STRICT_DATA_SPLIT_THRESHOLD ->
+			request_default_unpacked_packing(End, RightBound, Ranges);
 		{End, Start} ->
-			request_default_unpacked_packing(End, RightBound, Ranges ++ [{Start, End}])
+			request_default_unpacked_packing(End, RightBound, [{Start, End} | Ranges])
 	end.
 
 find_peer_intervals(Start, End, StoreID, SkipIntervalsTable, Self) ->
