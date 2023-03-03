@@ -512,7 +512,7 @@ replay_attack_test_() ->
 		assert_slave_wait_until_height(1),
 		?assertEqual(?AR(8999), slave_call(ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(1000), slave_call(ar_node, get_balance, [Pub2])),
-		ar_node:add_tx(SignedTX),
+		ar_events:send(tx, {ready_for_mining, SignedTX}),
 		wait_until_receives_txs([SignedTX]),
 		ar_node:mine(),
 		assert_slave_wait_until_height(2),

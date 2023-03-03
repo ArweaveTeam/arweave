@@ -110,7 +110,7 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 			% mempool has previously been validated.
 			drop_txs(find_clashing_txs(TX)),
 			drop_txs(find_overspent_txs(TX)),
-			drop_txs(find_low_priority_txs(gb_sets:iterator(PrioritySet), MempoolSize));
+			drop_txs(find_low_priority_txs());
 		false ->
 			noop
 	end,
@@ -384,7 +384,8 @@ may_be_drop_from_disk_pool(TX) ->
 	ar_data_sync:maybe_drop_data_root_from_disk_pool(TX#tx.data_root, TX#tx.data_size,
 			TX#tx.id).
 
-
+find_low_priority_txs() ->
+	find_low_priority_txs(gb_sets:iterator(get_priority_set()), get_mempool_size()).
 find_low_priority_txs(Iterator, {MempoolHeaderSize, MempoolDataSize})
 		when
 			MempoolHeaderSize > ?MEMPOOL_HEADER_SIZE_LIMIT;

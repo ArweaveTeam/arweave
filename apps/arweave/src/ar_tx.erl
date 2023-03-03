@@ -685,7 +685,9 @@ tags_to_binary(Tags) ->
 %%% Tests.
 %%%===================================================================
 
-sign_tx_test() ->
+sign_tx_test_() ->
+	{timeout, 30, fun test_sign_tx/0}.
+test_sign_tx() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(1)),
 	{Priv, Pub} = ar_wallet:new(),
 	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
@@ -775,7 +777,11 @@ test_sign_and_verify_chunked() ->
 	?assert(verify(SignedTX, Args)).
 
 %% Ensure that a forged transaction does not pass verification.
-forge_test() ->
+
+forge_test_() ->
+	{timeout, 30, fun test_forge/0}.
+
+test_forge() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
 	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,

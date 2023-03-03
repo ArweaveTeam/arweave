@@ -40,7 +40,8 @@ add_tx_test_() ->
 					{with, GenesisData, [fun test_overspent_tx/1]},
 					{with, GenesisData, [fun test_mixed_deposit_spend_tx_old_address/1]},
 					{with, GenesisData, [fun test_mixed_deposit_spend_tx_new_address/1]},
-					{with, GenesisData, [fun test_clash_and_overspend_tx/1]}
+					{with, GenesisData, [fun test_clash_and_overspend_tx/1]},
+					{with, GenesisData, [fun test_clash_and_low_priority_tx/1]}
 				]
 			}
 		end
@@ -397,6 +398,33 @@ test_clash_and_overspend_tx({{_, {_, Owner}}, LastTXID, _OtherKey, _B0}) ->
 	ar_mempool:add_tx(TX3, waiting),
 	ar_mempool:add_tx(TX4, waiting),
 	assertMempoolTXIDs([TX4#tx.id, TX1#tx.id], Test1).
+
+%% @doc Test that the right TXs are dropped when the mempool max data size is reached due to
+%% clashing TXs. Only the clashing TXs should be dropped.
+test_clash_and_low_priority_tx({{_, {_, Owner}}, LastTXID, _OtherKey, _B0}) ->
+	%% Add 9x Format 2 transactions each with a data size slightly larger than
+	%% 1/10 the MEMPOOL_DATA_SIZE_LIMIT. This puts us close to exceeding the
+	%% data size limit
+	NumTransactions = 9,
+	DataSize = (?MEMPOOL_DATA_SIZE_LIMIT div (NumTransactions+1)) + 1,
+	{ExpectedTXIDs, HighestReward, LowestReward} =
+		add_transactions(NumTransactions, 2, Owner, DataSize),
+
+	TX1 = tx(2, Owner, HighestReward+1, <<>>, crypto:strong_rand_bytes(32), LastTXID),
+	ar_mempool:add_tx(TX1, waiting),
+
+	ExpectedMempoolSize = {(NumTransactions+1) * ?TX_SIZE_BASE, NumTransactions * DataSize},
+
+	assertMempoolTXIDs([TX1#tx.id] ++ ExpectedTXIDs, "Mempool is below the data size limit"),
+	assertMempoolSize(ExpectedMempoolSize),
+
+	ClashTX = tx(
+		2, Owner, LowestReward-1, crypto:strong_rand_bytes(DataSize),
+		crypto:strong_rand_bytes(32), LastTXID),
+	ar_mempool:add_tx(ClashTX, waiting),
+
+	assertMempoolTXIDs([TX1#tx.id] ++ ExpectedTXIDs, "Clashing TX dropped"),
+	assertMempoolSize(ExpectedMempoolSize).
 
 add_transactions(NumTransactions, Format, Owner, DataSize) ->
 	HighestReward = NumTransactions+2,

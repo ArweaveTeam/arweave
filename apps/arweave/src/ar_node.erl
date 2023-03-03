@@ -10,7 +10,7 @@
 		get_height/0, get_balance/1, get_last_tx/1, get_ready_for_mining_txs/0,
 		get_current_usd_to_ar_rate/0, get_current_block_hash/0,
 		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
-		get_recent_txs_map/0, mine/0, add_tx/1, get_mempool_size/0,
+		get_recent_txs_map/0, mine/0, get_mempool_size/0,
 		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
 		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2]).
 
@@ -206,10 +206,6 @@ get_last_tx(Addr) ->
 %% @doc Trigger a node to start mining a block.
 mine() ->
 	gen_server:cast(ar_node_worker, mine).
-
-%% @doc Add a transaction to the memory pool, ready for mining.
-add_tx(TX)->
-	ar_events:send(tx, {ready_for_mining, TX}).
 
 get_recent_partition_upper_bound_by_prev_h(H) ->
 	get_recent_partition_upper_bound_by_prev_h(H, 0).
