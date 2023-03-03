@@ -1086,6 +1086,36 @@ handle_cast(store_sync_state, State) ->
 handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
 	{noreply, remove_recently_processed_disk_pool_offset(Offset, ChunkDataKey, State)};
 
+handle_cast({request_default_storage_2_5_repacking, Cursor, RightBound}, State) ->
+	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, spora_2_5, ?MODULE,
+			"default") of
+		not_found ->
+			ok;
+		{End, Start} ->
+			gen_server:cast(ar_data_sync_default, {get_ranges, [{Start, End}], "default",
+					true}),
+			gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking,
+					End, RightBound})
+	end,
+	{noreply, State};
+
+handle_cast({request_default_unpacked_packing, Cursor, RightBound}, State) ->
+	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, unpacked, ?MODULE,
+			"default") of
+		not_found ->
+			ok;
+		{End, Start} when End - Start < ?DATA_CHUNK_SIZE,
+				End =< ?STRICT_DATA_SPLIT_THRESHOLD ->
+			gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, End,
+					RightBound});
+		{End, Start} ->
+			gen_server:cast(ar_data_sync_default, {get_ranges, [{Start, End}], "default",
+					true}),
+			gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, End,
+					RightBound})
+	end,
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -2116,32 +2146,11 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 	end.
 
 request_default_storage_2_5_repacking(RightBound) ->
-	request_default_storage_2_5_repacking(0, RightBound, []).
-
-request_default_storage_2_5_repacking(Cursor, RightBound, Ranges) ->
-	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, spora_2_5, ?MODULE,
-			"default") of
-		not_found ->
-			gen_server:cast(ar_data_sync_default, {get_ranges, Ranges, "default", true});
-		{End, Start} ->
-			request_default_storage_2_5_repacking(End, RightBound, Ranges ++ [{Start, End}])
-	end.
+	gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking, 0,
+			RightBound}).
 
 request_default_unpacked_packing(RightBound) ->
-	request_default_unpacked_packing(0, RightBound, []).
-
-request_default_unpacked_packing(Cursor, RightBound, Ranges) ->
-	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, unpacked, ?MODULE,
-			"default") of
-		not_found ->
-			Ranges2 = lists:reverse(Ranges),
-			gen_server:cast(ar_data_sync_default, {get_ranges, Ranges2, "default", true});
-		{End, Start} when End - Start < ?DATA_CHUNK_SIZE,
-				End =< ?STRICT_DATA_SPLIT_THRESHOLD ->
-			request_default_unpacked_packing(End, RightBound, Ranges);
-		{End, Start} ->
-			request_default_unpacked_packing(End, RightBound, [{Start, End} | Ranges])
-	end.
+	gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, 0, RightBound}).
 
 find_peer_intervals(Start, End, StoreID, SkipIntervalsTable, Self) ->
 	case get_next_unsynced_interval(Start, End, StoreID, SkipIntervalsTable) of
