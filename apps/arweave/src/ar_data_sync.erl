@@ -602,7 +602,7 @@ handle_cast({get_ranges, [{Start, End} | Ranges], OriginStoreID, SkipSmall} = Ca
 					?LOG_ERROR([{event, failed_to_query_chunk_metadata},
 							{offset, Start + 1}, {reason, io_lib:format("~p", [Reason])}]);
 				{ok, << Offset:?OFFSET_KEY_BITSIZE >>, _} when Offset > End ->
-					ok;
+					gen_server:cast(self(), {get_ranges, Ranges, OriginStoreID, SkipSmall});
 				{ok, Key, Metadata} ->
 					<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
 					{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset,
