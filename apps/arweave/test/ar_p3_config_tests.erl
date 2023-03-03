@@ -9,7 +9,9 @@
 -import(ar_test_node, [start/3]).
 -import(ar_p3_tests, [raw_request/2, http_request/1]).
 
--export([sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, empty_p3_config/0]).
+-export([
+	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
+	empty_p3_config/0]).
 
 -define (DEPOSIT_ADDRESS, "BHAWuomQUIL18WON2LjqjDF4YuRDcmhme7wvFW2BDiU").
 -define (DEPOSIT_ADDRESS_CHECKSUM, "ToOiTg").
@@ -821,8 +823,10 @@ config_fixture(P3Config) ->
 sample_p3_config() ->
 	sample_p3_config(ar_util:decode(<<?DEPOSIT_ADDRESS>>)).
 sample_p3_config(Address) ->
-	sample_p3_config(Address, 0, 2).
-sample_p3_config(Address, MinimumBalance, Confirmations) when
+	sample_p3_config(Address, 0, 2, 1000).
+sample_p3_config(Address, MinimumBalance, Confirmations) ->
+	sample_p3_config(Address, MinimumBalance, Confirmations, 1000).
+sample_p3_config(Address, MinimumBalance, Confirmations, Rate) when
 		is_integer(MinimumBalance),
 		is_integer(Confirmations) ->
 	#p3_config{
@@ -839,7 +843,7 @@ sample_p3_config(Address, MinimumBalance, Confirmations) when
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{
-					?ARWEAVE_AR => 1000
+					?ARWEAVE_AR => Rate
 				}
 			},
 			<<"/chunk/{offset}">> => #p3_service{

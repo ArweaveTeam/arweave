@@ -41,7 +41,7 @@ handle_call({request, Req}, _From, State) ->
 			{reply, {false, insufficient_funds}, State};
 		{error, stale_mod_seq} ->
 			{reply, {false, stale_mod_seq}, State};
-		{error, _} ->
+		{error, _Error} ->
 			{reply, {false, invalid_header}, State}
 	end;
 

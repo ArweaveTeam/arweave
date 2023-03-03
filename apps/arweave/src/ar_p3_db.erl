@@ -156,7 +156,7 @@ post_deposit2(_Account, Amount, _TXID) when Amount =< 0 ->
 post_deposit2(Account, Amount, TXID) ->
 	post_transaction(Account, Amount, TXID, undefined).
 
-post_charge2(_Account, Amount, _Minimum, _Request) when Amount =< 0 ->
+post_charge2(_Account, Amount, _Minimum, _Request) when Amount < 0 ->
 	{error, invalid_amount};
 post_charge2(_Account, _Amount, Minimum, _Request) when not is_integer(Minimum) ->
 	{error, invalid_minimum};

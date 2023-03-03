@@ -11,13 +11,15 @@
 	start/1, start/3, slave_start/1, slave_start/3, master_peer/0, slave_peer/0, connect_to_slave/0,
 	sign_tx/2, assert_post_tx_to_master/1, wait_until_height/1]).
 -import(ar_p3_config_tests, [
-	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, empty_p3_config/0]).
+	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
+	empty_p3_config/0]).
 
 ar_p3_test_() ->
 	[
 		{timeout, 30, fun test_not_found/0},
 		{timeout, 30, fun test_bad_headers/0},
 		{timeout, 30, fun test_valid_request/0},
+		{timeout, 30, fun test_zero_rate/0},
 		{timeout, 30, fun test_checksum_request/0},
 		{timeout, 30, fun test_bad_config/0},
 		{timeout, 30, fun test_balance_endpoint/0},
@@ -66,6 +68,33 @@ test_valid_request() ->
 					?P3_ADDRESS_HEADER => EncodedAddress
 				})}, [], Config),
 		"Missing 'modSeq' header").
+
+test_zero_rate() ->
+	Wallet = {PrivKey, PubKey} = ar_wallet:new(),
+	Address = ar_wallet:to_address(Wallet),
+	EncodedAddress = ar_util:encode(Address),
+	{ok, _Account} = ar_p3_db:get_or_create_account(
+		Address,
+		PubKey,
+		?ARWEAVE_AR
+	),
+	ZeroRateConfig = sample_p3_config(crypto:strong_rand_bytes(32), 0, 2, 0),
+	?assertEqual(
+		{reply, {true, ok}, ZeroRateConfig},
+		ar_p3:handle_call({request, 
+			signed_request(<<"GET">>, <<"/time">>, PrivKey,
+				#{
+					?P3_ENDPOINT_HEADER => <<"/time">>,
+					?P3_ADDRESS_HEADER => EncodedAddress,
+					?P3_MOD_SEQ_HEADER => integer_to_binary(1)
+				})}, [], ZeroRateConfig),
+		"Signed request should succeed"),
+	?assertEqual(
+		{reply, {false, invalid_header}, ZeroRateConfig},
+		ar_p3:handle_call({request, 
+			raw_request(<<"GET">>, <<"/time">>)}, [], ZeroRateConfig),
+		"Unsigned request should fail").
+
 
 test_checksum_request() ->
 	Wallet = {PrivKey, PubKey} = ar_wallet:new(),
