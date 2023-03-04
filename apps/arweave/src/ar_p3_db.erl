@@ -80,11 +80,11 @@ handle_call({get_account, Address}, _From, State) ->
 	end;
 
 handle_call({get_transaction, Address, Id}, _From, State) ->
-	case safe_get({p3_tx, Address}, term_to_binary(Id), not_found) of
+	case get_transaction2(Address, Id) of
 		not_found ->
 			{reply, {error, not_found}, State};
 		Transaction ->
-			{reply, {ok, binary_to_term(Transaction)}, State}
+			{reply, {ok, Transaction}, State}
 	end;
 
 handle_call({post_deposit, Address, Amount, TXID}, _From, State) ->
@@ -177,22 +177,44 @@ request_label(#{ method := Method, path := Path })
 request_label(_) ->
 	{error, invalid_request}.
 
+
+get_transaction2(Address, Id) ->
+	case safe_get({p3_tx, Address}, term_to_binary(Id), not_found) of
+		not_found ->
+			not_found;
+		Transaction ->
+			binary_to_term(Transaction)
+	end.
+
 post_transaction(Account, Amount, TXID, Request)
   		when is_integer(Amount) ->
 	Address = Account#p3_account.address,
-	Transaction = #p3_transaction{
-		account = Address,
-		amount = Amount,
-		txid = TXID,
-		request = Request,
-		timestamp = os:system_time(microsecond)
-	},
-	Id = Account#p3_account.count + 1,
-	ok = ar_kv:put({p3_tx, Address}, term_to_binary(Id), term_to_binary(Transaction)),
-	ok = put_account(Account#p3_account{
-		count = Id,
-		balance = Account#p3_account.balance + Amount}
-	),	
+
+	Id = case TXID of
+		undefined ->
+			Account#p3_account.count + 1;
+		_ ->
+			TXID
+	end,
+
+	Transaction = case get_transaction2(Address, Id) of
+		not_found ->
+			P3Tx = #p3_transaction{
+				account = Address,
+				amount = Amount,
+				txid = TXID,
+				request = Request,
+				timestamp = os:system_time(microsecond)
+			},
+			ok = ar_kv:put({p3_tx, Address}, term_to_binary(Id), term_to_binary(P3Tx)),
+			ok = put_account(Account#p3_account{
+				count = Account#p3_account.count + 1,
+				balance = Account#p3_account.balance + Amount}
+			),
+			P3Tx;
+		P3Tx ->
+			P3Tx
+	end,
 	{ok, {Id, Transaction}};
 post_transaction(_Account, _Amount, _TXID, _Request) ->
 	{error, invalid_amount}.

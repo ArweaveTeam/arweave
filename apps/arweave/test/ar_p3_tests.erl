@@ -8,7 +8,9 @@
 -export([raw_request/2, raw_request/3, http_request/1]).
 
 -import(ar_test_node, [
-	start/1, start/3, slave_start/1, slave_start/3, master_peer/0, slave_peer/0, connect_to_slave/0,
+	start/1, start/3, stop/0, slave_start/1, slave_start/3, master_peer/0, slave_peer/0,
+	connect_to_slave/0, disconnect_from_slave/0, assert_post_tx_to_slave/1,
+	slave_mine/0, assert_slave_wait_until_height/1,
 	sign_tx/2, assert_post_tx_to_master/1, wait_until_height/1]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
@@ -24,6 +26,7 @@ ar_p3_test_() ->
 		{timeout, 30, fun test_bad_config/0},
 		{timeout, 30, fun test_balance_endpoint/0},
 		{timeout, 120, fun e2e_deposit_before_charge/0}
+		% {timeout, 120, fun e2e_restart_p3_service/0}
 	].
 
 test_not_found() ->
@@ -388,7 +391,8 @@ test_balance_endpoint() ->
 		{<<"200">>, <<"0">>},
 		get_balance(crypto:strong_rand_bytes(32), <<"arweave">>, <<"AR">>)),
 
-	{ok, {1, _}} = ar_p3_db:post_deposit(Address, 10, crypto:strong_rand_bytes(32)),
+	TXID = crypto:strong_rand_bytes(32),
+	{ok, {TXID, _}} = ar_p3_db:post_deposit(Address, 10, TXID),
 	?assertEqual(
 		{<<"200">>, <<"10">>},
 		get_balance(Address, <<"arweave">>, <<"AR">>)),
@@ -596,6 +600,54 @@ e2e_deposit_before_charge() ->
 	?assertEqual(
 		{<<"200">>, <<"0">>}, get_balance(Sender2Address),
 		"No balance change expected").
+
+e2e_restart_p3_service() ->
+	Wallet1 = {Priv1, Pub1} = ar_wallet:new(),
+	Wallet2 = {Priv2, Pub2} = ar_wallet:new(),
+	{_, Pub3} = ar_wallet:new(),
+	{_, Pub4} = ar_wallet:new(),
+	RewardAddress = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Sender1Address = ar_wallet:to_address(Pub1),
+	EncodedSender1Address = ar_util:encode(Sender1Address),
+	Sender2Address = ar_wallet:to_address(Pub2),
+	EncodedSender2Address = ar_util:encode(Sender2Address),
+	DepositAddress = ar_wallet:to_address(Pub3),
+	OtherAddress = ar_wallet:to_address(Pub4),
+	[B0] = ar_weave:init([
+		{Sender1Address, ?AR(10000), <<>>},
+		{Sender2Address, ?AR(10000), <<>>},
+		{DepositAddress, ?AR(10000), <<>>}
+	]),
+	{ok, BaseConfig} = application:get_env(arweave, config),
+	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
+	start(B0, RewardAddress, Config),
+	slave_start(B0),
+	connect_to_slave(),
+	disconnect_from_slave(),
+	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+	assert_post_tx_to_slave(TX1),
+	slave_mine(),
+	assert_slave_wait_until_height(1),
+	slave_mine(),
+	assert_slave_wait_until_height(2),
+
+	% ?debugMsg("Casting...."),
+	% gen_server:cast(ar_p3, stop),
+	% ?debugMsg("Waiting...."),
+
+	?debugMsg("Connecting...."),
+	connect_to_slave(),
+	?debugMsg("Stopping...."),
+	start(B0, RewardAddress, Config),
+	connect_to_slave(),
+
+	wait_until_height(2),
+
+	timer:sleep(20000),
+
+	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)).
+
+
 
 %% ------------------------------------------------------------------
 %% Private helper functions

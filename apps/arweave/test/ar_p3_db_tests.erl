@@ -12,9 +12,11 @@ ar_p3_db_test_() ->
 		{timeout, 30, fun test_account/0},
 	 	{timeout, 30, fun test_account_errors/0},
 	 	{timeout, 30, fun test_deposit/0},
+		{timeout, 30, fun test_double_deposit/0},
 	 	{timeout, 30, fun test_concurrent_deposits/0},
 	 	{timeout, 30, fun test_deposit_errors/0},
 		{timeout, 30, fun test_charge/0},
+		{timeout, 30, fun test_double_charge/0},
 		{timeout, 30, fun test_concurrent_charges/0},
 	 	{timeout, 30, fun test_charge_errors/0}
 	].
@@ -107,14 +109,14 @@ test_deposit() ->
 
 	%% Post Tx1 to Account1
 	TXID1 = crypto:strong_rand_bytes(32),
-	{ok, {1, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, TXID1),
+	{ok, {TXID1, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, TXID1),
 	?assertEqual(Address1, Deposit1#p3_transaction.account),
 	?assertEqual(10, Deposit1#p3_transaction.amount),
 	?assertEqual(TXID1, Deposit1#p3_transaction.txid),
 	?assertEqual(undefined, Deposit1#p3_transaction.request),
 	?assert(Deposit1#p3_transaction.timestamp > TestStart),
 
-	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, 1)),
+	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, TXID1)),
 
 	{ok, Account1A} = ar_p3_db:get_account(Address1),
 	?assertEqual(1, Account1A#p3_account.count),
@@ -124,25 +126,25 @@ test_deposit() ->
 
 	%% Post Tx2 to Account1
 	TXID2 = crypto:strong_rand_bytes(32),
-	{ok, {2, Deposit2}} = ar_p3_db:post_deposit(Address1, 5, TXID2),
+	{ok, {TXID2, Deposit2}} = ar_p3_db:post_deposit(Address1, 5, TXID2),
 	?assertEqual(Address1, Deposit2#p3_transaction.account),
 	?assertEqual(5, Deposit2#p3_transaction.amount),
 	?assertEqual(TXID2, Deposit2#p3_transaction.txid),
 	?assertEqual(undefined, Deposit2#p3_transaction.request),
 	?assert(Deposit2#p3_transaction.timestamp > Deposit1#p3_transaction.timestamp),
 
-	?assertEqual({ok, Deposit2}, ar_p3_db:get_transaction(Address1, 2)),
+	?assertEqual({ok, Deposit2}, ar_p3_db:get_transaction(Address1, TXID2)),
 
-	%% Post Tx1 to Account2
+	%% Post Tx3 to Account2
 	TXID3 = crypto:strong_rand_bytes(32),
-	{ok, {1, Deposit3}} = ar_p3_db:post_deposit(Address2, 7, TXID3),
+	{ok, {TXID3, Deposit3}} = ar_p3_db:post_deposit(Address2, 7, TXID3),
 	?assertEqual(Address2, Deposit3#p3_transaction.account),
 	?assertEqual(7, Deposit3#p3_transaction.amount),
 	?assertEqual(TXID3, Deposit3#p3_transaction.txid),
 	?assertEqual(undefined, Deposit3#p3_transaction.request),
 	?assert(Deposit3#p3_transaction.timestamp > Deposit2#p3_transaction.timestamp),
 
-	?assertEqual({ok, Deposit3}, ar_p3_db:get_transaction(Address2, 1)),
+	?assertEqual({ok, Deposit3}, ar_p3_db:get_transaction(Address2, TXID3)),
 
 	{ok, Account1B} = ar_p3_db:get_account(Address1),
 	?assertEqual(2, Account1B#p3_account.count),
@@ -177,9 +179,43 @@ test_deposit() ->
 	?assertEqual(2, Account1C#p3_account.count),
 	?assert(Account1C#p3_account.timestamp >= TestStart),
 
-	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, 1)),
-	?assertEqual({ok, Deposit2}, ar_p3_db:get_transaction(Address1, 2)),
-	?assertEqual({ok, Deposit3}, ar_p3_db:get_transaction(Address2, 1)).
+	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, TXID1)),
+	?assertEqual({ok, Deposit2}, ar_p3_db:get_transaction(Address1, TXID2)),
+	?assertEqual({ok, Deposit3}, ar_p3_db:get_transaction(Address2, TXID3)).
+
+test_double_deposit() ->
+	TestStart = erlang:system_time(microsecond),
+	Wallet1 = {_, PubKey1} = ar_wallet:new(),
+	Address1 = ar_wallet:to_address(Wallet1),
+	{ok, _} = ar_p3_db:get_or_create_account(
+			Address1,
+			PubKey1,
+			?ARWEAVE_AR),
+
+	%% Post Tx1 to Account1
+	TXID1 = crypto:strong_rand_bytes(32),
+	{ok, {TXID1, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, TXID1),
+
+	?assertEqual(
+		{ok, {TXID1, Deposit1}},
+		ar_p3_db:post_deposit(Address1, 10, TXID1),
+		"Posting the same transaction twice should just return the first one"),
+
+	?assertEqual(Address1, Deposit1#p3_transaction.account),
+	?assertEqual(10, Deposit1#p3_transaction.amount),
+	?assertEqual(TXID1, Deposit1#p3_transaction.txid),
+	?assertEqual(undefined, Deposit1#p3_transaction.request),
+	?assert(Deposit1#p3_transaction.timestamp > TestStart),
+
+	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, TXID1)),
+
+	{ok, Account1A} = ar_p3_db:get_account(Address1),
+	?assertEqual(1, Account1A#p3_account.count),
+
+	{ok, Balance1} = ar_p3_db:get_balance(Address1),
+	?assertEqual(10, Balance1).
+
+	
 
 test_deposit_errors() ->
 	Wallet = {_, PubKey} = ar_wallet:new(),
@@ -266,8 +302,9 @@ test_charge() ->
 
 	?assertEqual(-20, element(2, ar_p3_db:get_balance(Address1))),
 
-	{ok, {2, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, crypto:strong_rand_bytes(32)),
-	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, 2)),
+	DepositTXID = crypto:strong_rand_bytes(32),
+	{ok, {DepositTXID, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, DepositTXID),
+	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, DepositTXID)),
 
 	?assertEqual(-10, element(2, ar_p3_db:get_balance(Address1))),
 
@@ -292,6 +329,45 @@ test_charge() ->
 	?assertEqual({ok, Charge2}, ar_p3_db:get_transaction(Address1, 3)),
 
 	?assertEqual(-15, element(2, ar_p3_db:get_balance(Address1))).
+
+test_double_charge() ->
+	TestStart = erlang:system_time(microsecond),
+	Wallet1 = {_, PubKey1} = ar_wallet:new(),
+	Address1 = ar_wallet:to_address(Wallet1),
+	{ok, _} = ar_p3_db:get_or_create_account(
+			Address1,
+			PubKey1,
+			?ARWEAVE_AR),
+
+	Request = raw_request(<<"GET">>, <<"/time">>),
+
+	{ok, {1, Charge1}} = ar_p3_db:post_charge(
+		Address1,
+		10,
+		-20,
+		Request),
+	?assertEqual(Address1, Charge1#p3_transaction.account),
+	?assertEqual(-10, Charge1#p3_transaction.amount),
+	?assertEqual(undefined, Charge1#p3_transaction.txid),
+	?assertEqual(<<"GET /time">>, Charge1#p3_transaction.request),
+	?assert(Charge1#p3_transaction.timestamp > TestStart),
+	?assertEqual({ok, Charge1}, ar_p3_db:get_transaction(Address1, 1)),
+
+	?assertEqual(-10, element(2, ar_p3_db:get_balance(Address1))),
+
+	{ok, {2, Charge2}} = ar_p3_db:post_charge(
+		Address1,
+		10,
+		-20,
+		Request),
+	?assertEqual(Address1, Charge2#p3_transaction.account),
+	?assertEqual(-10, Charge2#p3_transaction.amount),
+	?assertEqual(undefined, Charge2#p3_transaction.txid),
+	?assertEqual(<<"GET /time">>, Charge2#p3_transaction.request),
+	?assert(Charge2#p3_transaction.timestamp > Charge1#p3_transaction.timestamp),
+	?assertEqual({ok, Charge2}, ar_p3_db:get_transaction(Address1, 2)),
+
+	?assertEqual(-20, element(2, ar_p3_db:get_balance(Address1))).
 
 test_charge_errors() ->
 	Wallet = {_, PubKey} = ar_wallet:new(),
