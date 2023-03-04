@@ -568,7 +568,7 @@ pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer, Timest
 		false ->
 			case SolutionResigned of
 				true ->
-					accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp);
+					accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, false);
 				false ->
 					pre_validate_may_be_fetch_first_chunk(B, PrevB, PartitionUpperBound, Peer,
 							Timestamp, ReadBodyTime, BodySize)
@@ -699,17 +699,24 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp, ReadBod
 pre_validate_nonce_limiter(B, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 	PrevOutput = get_last_step_prev_output(B),
 	case ar_nonce_limiter:validate_last_step_checkpoints(B, PrevB, PrevOutput) of
+		{false, cache_mismatch} ->
+			ar_ignore_registry:add(B#block.indep_hash),
+			post_block_reject_warn(B, check_nonce_limiter, Peer),
+			ar_events:send(block, {rejected, invalid_nonce_limiter, B#block.indep_hash, Peer}),
+			ok;
 		false ->
 			post_block_reject_warn(B, check_nonce_limiter, Peer),
 			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_nonce_limiter, B#block.indep_hash, Peer}),
 			ok;
+		{true, cache_match} ->
+			accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, true);
 		true ->
-			accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp)
+			accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, false)
 	end.
 
-accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp) ->
-	ar_events:send(block, {new, B, #{ source => {peer, Peer} }}),
+accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, Gossip) ->
+	ar_events:send(block, {new, B, #{ source => {peer, Peer}, gossip => Gossip }}),
 	ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
 	record_block_pre_validation_time(Timestamp),
 	?LOG_INFO([{event, accepted_block}, {height, B#block.height},

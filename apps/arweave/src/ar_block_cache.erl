@@ -246,6 +246,14 @@ get_longest_chain_block_txs_pairs(_Tab, _H, 0, _PrevStatus, _PrevH, Pairs, NotOn
 	{lists:reverse(Pairs), NotOnChainCount};
 get_longest_chain_block_txs_pairs(Tab, H, N, PrevStatus, PrevH, Pairs, NotOnChainCount) ->
 	case ets:lookup(Tab, {block, H}) of
+		[{_, {B, {not_validated, awaiting_nonce_limiter_validation}, _Timestamp,
+				_Children}}] ->
+			get_longest_chain_block_txs_pairs(Tab, B#block.previous_block,
+					?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0);
+		[{_, {B, {not_validated, nonce_limiter_validation_scheduled}, _Timestamp,
+				_Children}}] ->
+			get_longest_chain_block_txs_pairs(Tab, B#block.previous_block,
+					?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0);
 		[{_, {B, Status, _Timestamp, _Children}}] ->
 			case PrevStatus == on_chain andalso Status /= on_chain of
 				true ->

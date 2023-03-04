@@ -6,7 +6,8 @@
 		get_current_step_number/1, get_seed_data/4, get_last_step_checkpoints/3,
 		get_checkpoints/3, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
-		apply_external_update/2, get_session/1]).
+		apply_external_update/2, get_session/1, get_entropy_reset_point/2,
+		verify_no_reset/4, compute/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -107,7 +108,7 @@ validate_last_step_checkpoints(#block{
 	case gen_server:call(?MODULE,
 			{get_last_step_checkpoints, StepNumber, SessionKey}, infinity) of
 		LastStepCheckpoints ->
-			true;
+			{true, cache_match};
 		not_found ->
 			PrevOutput2 =
 				case get_entropy_reset_point(PrevBStepNumber, StepNumber) of
@@ -128,7 +129,7 @@ validate_last_step_checkpoints(#block{
 					false
 			end;
 		_ ->
-			false
+			{false, cache_mismatch}
 	end;
 validate_last_step_checkpoints(_B, _PrevB, _PrevOutput) ->
 	false.
