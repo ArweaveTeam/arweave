@@ -51,9 +51,8 @@ handle_call({get_balance, Address, Asset}, _From, State) ->
 handle_call({get_rates_json}, _From, State) ->
 	{reply, ar_p3_config:get_json(State), State}.
 
-handle_cast(Message, State) ->
-	NewState = State,
-	{noreply, NewState}.
+handle_cast(stop, State) ->
+	{stop, normal, State}.
 
 handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 	NumConfirmations = ar_p3_config:get_payments_value(
@@ -236,13 +235,13 @@ concat(Elements) ->
 %%--------------------------------------------------------------------
 get_block_txs(Height) ->
 	BlockHash = ar_block_index:get_element_by_height(Height),
-	Block = case ar_block_cache:get(block_cache, BlockHash) of
+	case ar_block_cache:get(block_cache, BlockHash) of
 		not_found ->
-			ar_storage:read_block(BlockHash);
+			B = ar_storage:read_block(BlockHash),
+			ar_storage:read_tx(B#block.txs);
 		B ->
-			B
-	end,
-	Block#block.txs.
+			B#block.txs
+	end.
 
 scan_block_for_deposits(BlockHeight, DepositAddress) when BlockHeight >= 0 ->
 	apply_deposits(get_block_txs(BlockHeight), DepositAddress);
@@ -251,8 +250,7 @@ scan_block_for_deposits(_, _) ->
 
 apply_deposits([], _DepositAddress) ->
 	ok;
-apply_deposits([TXID|TXs], DepositAddress) ->
-	TX = ar_storage:read_tx(TXID),
+apply_deposits([TX|TXs], DepositAddress) ->
 	case TX#tx.target == DepositAddress of
 		true ->
 			apply_deposit(TX);
