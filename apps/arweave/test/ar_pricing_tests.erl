@@ -13,7 +13,8 @@
 		slave_call/3, slave_mine/0, sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/3,
 		get_tx_price/3, get_tx_price/2, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, post_tx_to_master/1,
-		get_balance/2, wait_until_height/1, assert_slave_wait_until_height/1, get_tx_anchor/0,
+		get_balance/2, get_reserved_balance/2, wait_until_height/1,
+		assert_slave_wait_until_height/1, get_tx_anchor/0,
 		get_tx_anchor/1, get_balance/1, test_with_mocked_functions/2,
 		read_block_when_stored/1]).
 
@@ -44,12 +45,14 @@ test_auto_redenomination_and_endowment_debt() ->
 	{ok, Config} = application:get_env(arweave, config),
 	{_, MinerPub} = ar_wallet:load_key(Config#config.mining_addr),
 	?assertEqual(0, get_balance(master, MinerPub)),
+	?assertEqual(0, get_reserved_balance(master, Config#config.mining_addr)),
 	ar_node:mine(),
 	_BI1 = wait_until_height(1),
 	assert_slave_wait_until_height(1),
 	?assertEqual(0, get_balance(master, MinerPub)),
 	B1 = ar_node:get_current_block(),
 	?assertEqual(10, B1#block.reward),
+	?assertEqual(10, get_reserved_balance(master, B1#block.reward_addr)),
 	?assertEqual(1, hash_rate(B1)),
 	MinerAddr = ar_wallet:to_address(MinerPub),
 	?assertEqual([{MinerAddr, 1, 10, 1}, {B0#block.reward_addr, 1, 10, 1}],
@@ -62,6 +65,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual(0, get_balance(master, MinerPub)),
 	B2 = ar_node:get_current_block(),
 	?assertEqual(10, B2#block.reward),
+	?assertEqual(20, get_reserved_balance(master, B2#block.reward_addr)),
 	?assertEqual(B1#block.price_per_gib_minute, B2#block.price_per_gib_minute),
 	?assertEqual(B2#block.scheduled_price_per_gib_minute, B2#block.price_per_gib_minute),
 	?assertEqual([{MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1},
@@ -72,6 +76,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual(0, get_balance(master, MinerPub)),
 	B3 = ar_node:get_current_block(),
 	?assertEqual(10, B3#block.reward),
+	?assertEqual(30, get_reserved_balance(master, B3#block.reward_addr)),
 	?assertEqual(B3#block.price_per_gib_minute, B2#block.price_per_gib_minute),
 	?assertEqual(B3#block.scheduled_price_per_gib_minute,
 			B2#block.scheduled_price_per_gib_minute),
@@ -92,6 +97,7 @@ test_auto_redenomination_and_endowment_debt() ->
 			* 2 % minutes
 			* 3 div (4 * 1024), % weave_size / GiB
 	?assertEqual(ExpectedReward4, B4#block.reward),
+	?assertEqual(ExpectedReward4 + 20, get_reserved_balance(master, B4#block.reward_addr)),
 	?assertEqual(10, get_balance(master, MinerPub)),
 	?assertEqual(ExpectedReward4 - 10, B4#block.debt_supply),
 	?assertEqual(1, B4#block.kryder_plus_rate_multiplier_latch),

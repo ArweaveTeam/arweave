@@ -5,7 +5,7 @@
 		get_tx_price/1, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
-		get_balance/1, get_balance/2, get_balance_by_address/2,
+		get_balance/1, get_balance/2, get_reserved_balance/2, get_balance_by_address/2,
 		stop/0, slave_stop/0, connect_to_slave/0, disconnect_from_slave/0,
 		slave_call/3, slave_call/4,
 		slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
@@ -263,6 +263,19 @@ get_balance_by_address(Node, Address) ->
 		Balance2 ->
 			?assert(false, io_lib:format("Expected: ~B, got: ~B.~n", [Balance, Balance2]))
 	end.
+
+get_reserved_balance(Node, Address) ->
+	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
+	Port = element(5, Peer),
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(Address))
+					++ "/reserved_rewards_total",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	binary_to_integer(Reply).
 
 %%%===================================================================
 %%% Private functions.

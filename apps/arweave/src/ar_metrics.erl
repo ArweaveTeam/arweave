@@ -472,6 +472,8 @@ name_route([<<"wallet">>, _Addr, <<"balance">>]) ->
 	"/wallet/{addr}/balance";
 name_route([<<"wallet">>, _Addr, <<"last_tx">>]) ->
 	"/wallet/{addr}/last_tx";
+name_route([<<"wallet">>, _Addr, <<"reserved_rewards_total">>]) ->
+	"/wallet/{addr}/reserved_rewards_total";
 name_route([<<"wallet">>, _Addr, <<"txs">>]) ->
 	"/wallet/{addr}/txs";
 name_route([<<"wallet">>, _Addr, <<"txs">>, _EarliestTX]) ->

@@ -951,15 +951,29 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
 				{ok, AddrOK} ->
-					%% ar_node:get_balance/2 can time out which is not suitable for this
-					%% use-case. It would be better if it never timed out so that Cowboy
-					%% would handle the timeout instead.
 					case ar_node:get_balance(AddrOK) of
 						node_unavailable ->
 							{503, #{}, <<"Internal timeout.">>, Req};
 						Balance ->
 							{200, #{}, integer_to_binary(Balance), Req}
 					end
+			end
+	end;
+
+%% Return the sum of reserved mining rewards of the given account.
+%% GET request to endpoint /wallet/{wallet_address}/reserved_rewards_total.
+handle(<<"GET">>, [<<"wallet">>, Addr, <<"reserved_rewards_total">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+				{ok, AddrOK} when byte_size(AddrOK) == 32 ->
+					B = ar_node:get_current_block(),
+					Sum = get_reward_sum(AddrOK, B#block.reward_history, B#block.denomination),
+					{200, #{}, integer_to_binary(Sum), Req};
+				_ ->
+					{400, #{}, <<"Invalid address.">>, Req}
 			end
 	end;
 
@@ -2493,6 +2507,19 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 				wallets => SerializedWallets
 			})
 	end.
+
+get_reward_sum(Addr, L, Denomination) ->
+	get_reward_sum(Addr, L, Denomination, ?REWARD_HISTORY_BLOCKS, 0).
+
+get_reward_sum(_Addr, _L, _Denomination, 0, Sum) ->
+	Sum;
+get_reward_sum(_Addr, [], _Denomination, _N, Sum) ->
+	Sum;
+get_reward_sum(Addr, [{Addr, _HashRate, Reward, RDenomination} | L], Denomination, N, Sum) ->
+	Reward2 = ar_pricing:redenominate(Reward, RDenomination, Denomination),
+	get_reward_sum(Addr, L, Denomination, N - 1, Sum + Reward2);
+get_reward_sum(Addr, [_ | L], Denomination, N, Sum) ->
+	get_reward_sum(Addr, L, Denomination, N - 1, Sum).
 
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->
