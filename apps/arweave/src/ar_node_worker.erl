@@ -810,7 +810,8 @@ handle_task(refresh_timestamp, #{ miner_2_6 := undefined } = State) ->
 handle_task(refresh_timestamp, State) ->
 	Diff = get_current_diff(),
 	ar_mining_server:set_difficulty(Diff),
-	ar_util:cast_after(?MINING_TIMESTAMP_REFRESH_INTERVAL, ?MODULE, refresh_timestamp),
+	ar_util:cast_after((?MINING_TIMESTAMP_REFRESH_INTERVAL) * 1000, ?MODULE,
+			refresh_timestamp),
 	{noreply, State};
 
 handle_task(Msg, State) ->
