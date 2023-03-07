@@ -214,9 +214,13 @@ get_or_try_to_create_account(DecodedAddress) ->
 	end.
 
 try_to_create_account(DecodedAddress) ->
-	{error, not_found}.
-	% PublicKey = ok,
-	% ar_p3_db:create_account(DecodedAddress, PublicKey).
+	case ar_storage:read_tx(ar_wallets:get_last_tx(DecodedAddress)) of
+		unavailable ->
+			{error, not_found};
+		TX ->
+			PublicKey = {TX#tx.signature_type, TX#tx.owner},
+			ar_p3_db:get_or_create_account(DecodedAddress, PublicKey, ?ARWEAVE_AR)
+	end.
 
 validate_price(Account, Req) ->
 	Price = cowboy_req:header(?P3_PRICE_HEADER, Req, ?ARWEAVE_AR),

@@ -26,7 +26,7 @@ ar_p3_test_() ->
 		{timeout, 30, fun test_bad_config/0},
 		{timeout, 30, fun test_balance_endpoint/0},
 		{timeout, 120, fun e2e_deposit_before_charge/0},
-		% {timeout, 120, fun e2e_charge_before_deposit/0},
+		{timeout, 120, fun e2e_charge_before_deposit/0},
 		{timeout, 600, fun e2e_restart_p3_service/0}
 	].
 
@@ -455,7 +455,7 @@ e2e_deposit_before_charge() ->
 	ar_node:mine(),
 	wait_until_height(3),
 
-	timer:sleep(5000),
+	timer:sleep(1000),
 
 	?assertEqual({<<"200">>, <<"1900">>}, get_balance(Sender1Address)),
 	?assertEqual({<<"200">>, <<"1000">>}, get_balance(Sender2Address)),
@@ -620,6 +620,22 @@ e2e_charge_before_deposit() ->
 	start(B0, RewardAddress, Config),
 	slave_start(B0),
 	connect_to_slave(),
+
+		?assertMatch(
+		{ok, {{<<"400">>, _}, _, _, _, _}},
+		http_request(
+			signed_request(<<"GET">>, <<"/time">>, Priv1,
+				#{
+					?P3_ENDPOINT_HEADER => <<"/time">>,
+					?P3_ADDRESS_HEADER => EncodedAddress1
+				}
+			)
+		),
+		"Address has no transactions, so account can't be created"
+	),
+
+	?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
+
 	TX1 = sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
 	assert_post_tx_to_master(TX1),
 	
@@ -640,7 +656,39 @@ e2e_charge_before_deposit() ->
 			)
 		),
 		"Requesting P3 endpoint before deposit"
-	).
+	),
+
+	?assertEqual({<<"200">>, <<"-1000">>}, get_balance(Address1)),
+
+	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+	assert_post_tx_to_master(TX2),
+	
+	ar_node:mine(),
+	wait_until_height(3),
+
+	ar_node:mine(),
+	wait_until_height(4),
+
+	timer:sleep(1000),
+
+	?assertEqual({<<"200">>, <<"200">>}, get_balance(Address1)),
+
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		http_request(
+			signed_request(<<"GET">>, <<"/time">>, Priv1,
+				#{
+					?P3_ENDPOINT_HEADER => <<"/time">>,
+					?P3_ADDRESS_HEADER => EncodedAddress1
+				}
+			)
+		),
+		"Requesting P3 endpoint after deposit"
+	),
+
+	?assertEqual({<<"200">>, <<"-800">>}, get_balance(Address1)).
+
+
 
 %% @doc Test that nodes correctly scan old blocks that came in while they were offline.
 e2e_restart_p3_service() ->
