@@ -18,7 +18,8 @@ ar_p3_db_test_() ->
 		{timeout, 30, fun test_charge/0},
 		{timeout, 30, fun test_double_charge/0},
 		{timeout, 30, fun test_concurrent_charges/0},
-	 	{timeout, 30, fun test_charge_errors/0}
+	 	{timeout, 30, fun test_charge_errors/0},
+		{timeout, 30, fun test_scan_height/0}
 	].
 
 test_account() ->
@@ -441,6 +442,27 @@ test_charge_errors() ->
 			5,
 			0,
 			Request)).
+
+test_scan_height() ->
+	%% Reset database
+	ar_kv:delete(ar_p3_state_db, <<"scan_height">>),
+
+	?assertEqual(0, ar_p3_db:get_scan_height()),
+	?assertEqual({ok, 100}, ar_p3_db:set_scan_height(100)),
+	?assertEqual({error, invalid_height}, ar_p3_db:set_scan_height(90)),
+	?assertEqual(100, ar_p3_db:get_scan_height()),
+	?assertEqual({ok, 101}, ar_p3_db:set_scan_height(101)),
+	?assertEqual(101, ar_p3_db:get_scan_height()),
+	?assertEqual({error, invalid_height}, ar_p3_db:set_scan_height(200.5)),
+	?assertEqual({error, invalid_height}, ar_p3_db:set_scan_height(-200)),
+
+	%% Test that the DB is correctly persisted and reloaded.
+	gen_server:cast(ar_p3_db, stop),
+	%% Wait for gen_server to restart
+	timer:sleep(3000),
+	?assertEqual(101, ar_p3_db:get_scan_height()).
+
+
 
 %% @doc ar_p3_db relies on the fact that a gen_server will process incoming messages
 %% synchronously and sequentially. Because of this we can spam a bunch of deposits and be

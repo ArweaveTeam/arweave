@@ -8,7 +8,7 @@
 
 -export([
 	get_or_create_account/3, get_account/1, get_transaction/2, get_balance/1, get_balance/2,
-	post_deposit/3, post_charge/4]).
+	post_deposit/3, post_charge/4, get_scan_height/0, set_scan_height/1]).
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 %%%===================================================================
@@ -54,11 +54,20 @@ post_deposit(Address, Amount, TXID) ->
 post_charge(Address, Amount, Minimum, Request) ->
 	validated_call(Address, {post_charge, Address, Amount, Minimum, Request}).
 
+set_scan_height(Height) ->
+	gen_server:call(?MODULE, {set_scan_height, Height}).
+
+get_scan_height() ->
+	gen_server:call(?MODULE, {get_scan_height}).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 init([]) ->
 	process_flag(trap_exit, true),
+	%% Database for general P3 state data (e.g. last scanned block height)
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_p3_ledger_db"),
+			ar_p3_state_db),
 	{ok, #{}}.
 
 handle_call({get_or_create_account, Address, PublicKey, Asset}, _From, State) ->
@@ -101,10 +110,16 @@ handle_call({post_charge, Address, Amount, Minimum, Request}, _From, State) ->
 			{reply, {error, not_found}, State};
 		Account ->
 			{reply, post_charge2(Account, Amount, Minimum, Request), State}
-	end.
+	end;
 
-handle_cast(_Message, State) ->
-	{noreply, State}.
+handle_call({set_scan_height, Height}, _From, State) ->
+	{reply, set_scan_height2(Height), State};
+
+handle_call({get_scan_height}, _From, State) ->
+	{reply, get_scan_height2(), State}.
+
+handle_cast(stop, State) ->
+	{stop, normal, State}.
 
 handle_info(_Message, State) ->
 	{noreply, State}.
@@ -218,6 +233,26 @@ post_transaction(Account, Amount, TXID, Request)
 	{ok, {Id, Transaction}};
 post_transaction(_Account, _Amount, _TXID, _Request) ->
 	{error, invalid_amount}.
+
+set_scan_height2(Height) when
+		is_integer(Height), Height >= 0 ->
+	case get_scan_height2() < Height of
+		true ->
+			ar_kv:put(ar_p3_state_db, <<"scan_height">>, term_to_binary(Height)),
+			{ok, Height};
+		false ->
+			{error, invalid_height}
+	end;
+set_scan_height2(_) ->
+	{error, invalid_height}.
+
+get_scan_height2() ->
+	case safe_get(ar_p3_state_db, <<"scan_height">>, not_found) of
+		not_found ->
+			0;
+		Height ->
+			binary_to_term(Height)
+	end.
 
 validate_address(<<>>) ->
 	false;

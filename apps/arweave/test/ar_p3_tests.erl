@@ -10,8 +10,8 @@
 -import(ar_test_node, [
 	start/1, start/3, stop/0, slave_start/1, slave_start/3, master_peer/0, slave_peer/0,
 	connect_to_slave/0, disconnect_from_slave/0, assert_post_tx_to_slave/1,
-	slave_mine/0, assert_slave_wait_until_height/1,
-	sign_tx/2, assert_post_tx_to_master/1, wait_until_height/1]).
+	slave_mine/0, assert_slave_wait_until_height/1, join_on_slave/0, rejoin_on_slave/0,
+	sign_tx/2, assert_post_tx_to_master/1, wait_until_height/1, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
 	empty_p3_config/0]).
@@ -25,8 +25,9 @@ ar_p3_test_() ->
 		{timeout, 30, fun test_checksum_request/0},
 		{timeout, 30, fun test_bad_config/0},
 		{timeout, 30, fun test_balance_endpoint/0},
-		{timeout, 120, fun e2e_deposit_before_charge/0}
-		% {timeout, 120, fun e2e_restart_p3_service/0}
+		{timeout, 120, fun e2e_deposit_before_charge/0},
+		% {timeout, 120, fun e2e_charge_before_deposit/0},
+		{timeout, 600, fun e2e_restart_p3_service/0}
 	].
 
 test_not_found() ->
@@ -601,53 +602,115 @@ e2e_deposit_before_charge() ->
 		{<<"200">>, <<"0">>}, get_balance(Sender2Address),
 		"No balance change expected").
 
-e2e_restart_p3_service() ->
+e2e_charge_before_deposit() ->
 	Wallet1 = {Priv1, Pub1} = ar_wallet:new(),
 	Wallet2 = {Priv2, Pub2} = ar_wallet:new(),
 	{_, Pub3} = ar_wallet:new(),
 	{_, Pub4} = ar_wallet:new(),
 	RewardAddress = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	Sender1Address = ar_wallet:to_address(Pub1),
-	EncodedSender1Address = ar_util:encode(Sender1Address),
-	Sender2Address = ar_wallet:to_address(Pub2),
-	EncodedSender2Address = ar_util:encode(Sender2Address),
+	Address1 = ar_wallet:to_address(Pub1),
+	EncodedAddress1 = ar_util:encode(Address1),
+	Address2 = ar_wallet:to_address(Pub2),
 	DepositAddress = ar_wallet:to_address(Pub3),
-	OtherAddress = ar_wallet:to_address(Pub4),
+	[B0] = ar_weave:init([
+		{Address1, ?AR(10000), <<>>}
+	]),
+	{ok, BaseConfig} = application:get_env(arweave, config),
+	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -2000, 2) },
+	start(B0, RewardAddress, Config),
+	slave_start(B0),
+	connect_to_slave(),
+	TX1 = sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
+	assert_post_tx_to_master(TX1),
+	
+	ar_node:mine(),
+	wait_until_height(1),
+
+	ar_node:mine(),
+	wait_until_height(2),
+
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		http_request(
+			signed_request(<<"GET">>, <<"/time">>, Priv1,
+				#{
+					?P3_ENDPOINT_HEADER => <<"/time">>,
+					?P3_ADDRESS_HEADER => EncodedAddress1
+				}
+			)
+		),
+		"Requesting P3 endpoint before deposit"
+	).
+
+%% @doc Test that nodes correctly scan old blocks that came in while they were offline.
+e2e_restart_p3_service() ->
+	Wallet1 = {_, Pub1} = ar_wallet:new(),
+	{_, Pub3} = ar_wallet:new(),
+	RewardAddress = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Sender1Address = ar_wallet:to_address(Pub1),
+	DepositAddress = ar_wallet:to_address(Pub3),
 	[B0] = ar_weave:init([
 		{Sender1Address, ?AR(10000), <<>>},
-		{Sender2Address, ?AR(10000), <<>>},
 		{DepositAddress, ?AR(10000), <<>>}
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
 	start(B0, RewardAddress, Config),
 	slave_start(B0),
-	connect_to_slave(),
+	join_on_slave(),
 	disconnect_from_slave(),
-	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+
+	%% This deposit will be too old and will not be scanned when the master node comes back up.
+	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
 	assert_post_tx_to_slave(TX1),
+
 	slave_mine(),
 	assert_slave_wait_until_height(1),
+
 	slave_mine(),
 	assert_slave_wait_until_height(2),
 
-	% ?debugMsg("Casting...."),
-	% gen_server:cast(ar_p3, stop),
-	% ?debugMsg("Waiting...."),
+	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
+	assert_post_tx_to_slave(TX2),
+	slave_mine(),
+	assert_slave_wait_until_height(3),
 
-	?debugMsg("Connecting...."),
-	connect_to_slave(),
-	?debugMsg("Stopping...."),
-	start(B0, RewardAddress, Config),
-	connect_to_slave(),
+	%% Stop the master node. The slave will continue to mine. When the master comes back up
+	%% it should correctly scan all the blocks missed since disconnectin
+	%% (up to ?MAX_BLOCK_SCAN blocks)
+	stop(),
 
-	wait_until_height(2),
+	slave_mine(),
+	assert_slave_wait_until_height(4),
 
-	timer:sleep(20000),
+	rejoin_on_slave(),
+	?assertEqual(0, ar_p3_db:get_scan_height(),
+		"Node hasn't seen any blocks yet: scan height 0"),
 
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)).
+	%% Nodes only scan for P3 depostics when a new block is received, so the balance will be 0
+	%% until the next block comes in.
+	wait_until_height(4),
+	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
+	?assertEqual(0, ar_p3_db:get_scan_height(),
+		"Node has seen blocks, but hasn't received a new_tip event yet: scan height 0"),
 
+	slave_mine(),
+	assert_slave_wait_until_height(5),
+	wait_until_height(5),
+	%% allow time for the new_tip event to be processed
+	timer:sleep(1000),
+	?assertEqual(5, ar_p3_db:get_scan_height(),
+		"Node has received a new_tip event: scan height 5"),
 
+	%% We should have scanned the second deposit, and omitted the first deposit since it
+	%% occurred before ?MAX_BLOCK_SCAN blocks in the past.
+	?assertEqual({<<"200">>, <<"500">>}, get_balance(Sender1Address)),
+
+	disconnect_from_slave(),
+	stop(),
+	rejoin_on_slave(),
+	?assertEqual(5, ar_p3_db:get_scan_height(),
+		"Restarting node should not have reset scan height db: scan height 5").
 
 %% ------------------------------------------------------------------
 %% Private helper functions

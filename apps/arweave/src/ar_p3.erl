@@ -9,6 +9,12 @@
 -export([start_link/0, allow_request/1, get_balance/3, get_rates_json/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
+-ifdef(TEST).
+-define(MAX_BLOCK_SCAN, 4).
+-else.
+-define(MAX_BLOCK_SCAN, 200).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -63,7 +69,7 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 		{undefined, _} -> ok;
 		{_, undefined} -> ok;
 		{NumConfirmations, DepositAddress} ->
-			scan_block_for_deposits(B#block.height - NumConfirmations + 1, DepositAddress)
+			scan_blocks_for_deposits(B#block.height - NumConfirmations + 1, DepositAddress)
 	end,
 	{noreply, State};
 
@@ -183,7 +189,7 @@ validate_signature(DecodedAddress, Req) ->
 	end.
 
 validate_signature(DecodedAddress, DecodedSignature, Req) ->
-	case ar_p3_db:get_account(DecodedAddress) of
+	case get_or_try_to_create_account(DecodedAddress) of
 		{ok, Account} ->
 			PubKey = Account#p3_account.public_key,
 			Message = build_message(Req),
@@ -193,9 +199,24 @@ validate_signature(DecodedAddress, DecodedSignature, Req) ->
 				false ->
 					{error, invalid_signature}
 			end;
-		_ ->
+		Error ->
 			{error, invalid_signature}
 	end.
+
+get_or_try_to_create_account(DecodedAddress) ->
+	case ar_p3_db:get_account(DecodedAddress) of
+		{ok, Account} ->
+			{ok, Account};
+		{error, not_found} ->
+			try_to_create_account(DecodedAddress);
+		Error ->
+			Error
+	end.
+
+try_to_create_account(DecodedAddress) ->
+	{error, not_found}.
+	% PublicKey = ok,
+	% ar_p3_db:create_account(DecodedAddress, PublicKey).
 
 validate_price(Account, Req) ->
 	Price = cowboy_req:header(?P3_PRICE_HEADER, Req, ?ARWEAVE_AR),
@@ -233,20 +254,52 @@ concat(Elements) ->
 %%
 %% Scan the block chain for new deposits and apply them.
 %%--------------------------------------------------------------------
+scan_blocks_for_deposits(LastConfirmedBlockHeight, DepositAddress) ->
+	LastScannedBlockHeight = ar_p3_db:get_scan_height(),
+	case LastConfirmedBlockHeight > LastScannedBlockHeight of
+		true ->
+			%% Scan all blocks since the last one we scanned. Unless it's been a while
+			%% since we scanned, in which case cap the the history of blocks scanned to
+			%% ?MAX_BLOCK_SCAN.
+			ScanBlockHeight = max(
+				LastScannedBlockHeight,
+				LastConfirmedBlockHeight - ?MAX_BLOCK_SCAN
+			) + 1,
+			case scan_block_for_deposits(ScanBlockHeight, DepositAddress) of
+				unavailable ->
+					%% If we can't get the block, we'll try again later.
+					ok;
+				_ ->
+					{ok, _} = ar_p3_db:set_scan_height(ScanBlockHeight),
+					scan_blocks_for_deposits(LastConfirmedBlockHeight, DepositAddress)
+			end;
+		false ->
+			ok
+	end.
+
+scan_block_for_deposits(BlockHeight, DepositAddress) when BlockHeight >= 0 ->
+	case get_block_txs(BlockHeight) of
+		unavailable ->
+			unavailable;
+		TXs ->
+			apply_deposits(TXs, DepositAddress)
+	end;
+scan_block_for_deposits(_, _) ->
+	ok.
+
 get_block_txs(Height) ->
 	BlockHash = ar_block_index:get_element_by_height(Height),
 	case ar_block_cache:get(block_cache, BlockHash) of
 		not_found ->
-			B = ar_storage:read_block(BlockHash),
-			ar_storage:read_tx(B#block.txs);
+			case ar_storage:read_block(BlockHash) of
+				unavailable ->
+					unavailable;
+				B ->
+					ar_storage:read_tx(B#block.txs)
+			end;
 		B ->
 			B#block.txs
 	end.
-
-scan_block_for_deposits(BlockHeight, DepositAddress) when BlockHeight >= 0 ->
-	apply_deposits(get_block_txs(BlockHeight), DepositAddress);
-scan_block_for_deposits(_, _) ->
-	ok.
 
 apply_deposits([], _DepositAddress) ->
 	ok;
