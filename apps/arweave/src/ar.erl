@@ -514,14 +514,7 @@ parse_cli_args(["max_vdf_last_step_validation_thread_count", Num | Rest], C) ->
 			max_nonce_limiter_last_step_validation_thread_count = list_to_integer(Num) });
 parse_cli_args(["vdf_server_trusted_peer", Peer | Rest], C) ->
 	#config{ nonce_limiter_server_trusted_peers = Peers } = C,
-	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
-			Peers2 = [ValidPeer | Peers],
-			parse_cli_args(Rest, C#config{ nonce_limiter_server_trusted_peers = Peers2 });
-		{error, _} ->
-			io:format("Peer ~p is invalid.~n", [Peer]),
-			erlang:halt()
-	end;
+	parse_cli_args(Rest, C#config{ nonce_limiter_server_trusted_peers = [Peer | Peers] });
 parse_cli_args(["vdf_client_peer", RawPeer | Rest],
 		C = #config{ nonce_limiter_client_peers = Peers }) ->
 	parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [RawPeer | Peers] });

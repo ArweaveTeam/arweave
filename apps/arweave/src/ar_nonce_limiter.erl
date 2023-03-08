@@ -7,7 +7,7 @@
 		get_checkpoints/3, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_entropy_reset_point/2,
-		verify_no_reset/4, compute/2]).
+		verify_no_reset/4, compute/2, resolve_remote_server_raw_peers/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -324,10 +324,32 @@ init([]) ->
 			[] ->
 				State;
 			_Peers ->
+				resolve_remote_server_raw_peers(),
 				gen_server:cast(?MODULE, check_external_vdf_server_input),
 				State#state{ autocompute = false }
 		end,
 	{ok, start_worker(State2)}.
+
+resolve_remote_server_raw_peers() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Peers = resolve_remote_server_raw_peers(Config#config.nonce_limiter_server_trusted_peers),
+	ets:insert(?MODULE, {remote_servers, Peers}),
+	timer:apply_after(10000, ?MODULE, resolve_remote_server_raw_peers, []).
+
+resolve_remote_server_raw_peers(RawPeers) ->
+	resolve_remote_server_raw_peers(RawPeers, []).
+
+resolve_remote_server_raw_peers([], Peers) ->
+	Peers;
+resolve_remote_server_raw_peers([RawPeer | RawPeers], Peers) ->
+	case ar_util:safe_parse_peer(RawPeer) of
+		{ok, Peer} ->
+			resolve_remote_server_raw_peers(RawPeers, [Peer | Peers]);
+		{error, Reason} ->
+			?LOG_WARNING([{event, failed_to_resolve_vdf_server_peer},
+					{reason, io_lib:format("~p", [Reason])}]),
+			resolve_remote_server_raw_peers(RawPeers, Peers)
+	end.
 
 get_blocks() ->
 	B = ar_node:get_current_block(),

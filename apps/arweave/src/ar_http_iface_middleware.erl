@@ -2672,13 +2672,17 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	end.
 
 handle_post_vdf(Req, Pid) ->
-	{ok, Config} = application:get_env(arweave, config),
-	Peer = ar_http_util:arweave_peer(Req),
-	case lists:member(Peer, Config#config.nonce_limiter_server_trusted_peers) of
-		false ->
+	case ets:lookup(ar_nonce_limiter, remote_servers) of
+		[] ->
 			{400, #{}, <<>>, Req};
-		true ->
-			handle_post_vdf2(Req, Pid, Peer)
+		[{remote_servers, Peers}] ->
+			Peer = ar_http_util:arweave_peer(Req),
+			case lists:member(Peer, Peers) of
+				false ->
+					{400, #{}, <<>>, Req};
+				true ->
+					handle_post_vdf2(Req, Pid, Peer)
+			end
 	end.
 
 handle_post_vdf2(Req, Pid, Peer) ->
