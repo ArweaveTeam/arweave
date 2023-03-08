@@ -8,7 +8,8 @@
 %%% @end
 -module(ar_ignore_registry).
 
--export([add/1, remove/1, add_temporary/2, remove_temporary/1, member/1]).
+-export([add/1, remove/1, add_temporary/2, remove_temporary/1, member/1,
+		permanent_member/1]).
 
 %% @doc Put a permanent ID record into the registry.
 add(ID) ->
@@ -36,4 +37,13 @@ member(ID) ->
 			false;
 		_ ->
 			true
+	end.
+
+%% @doc Check if there is a permanent record in the registry.
+permanent_member(ID) ->
+	case ets:lookup(ignored_ids, ID) of
+		[{ID, permanent}] ->
+			true;
+		_ ->
+			false
 	end.

@@ -74,36 +74,45 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			{{_, {B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime, BodySize}},
 					Q2} = gb_sets:take_largest(Q),
 			Size2 = Size - BodySize,
-			ThrottleByIPResult = throttle_by_ip(Peer, IPTimestamps, ThrottleByIPInterval),
-			{IPTimestamps3, HashTimestamps3} =
-				case ThrottleByIPResult of
-					false ->
-						{IPTimestamps, HashTimestamps};
-					{true, IPTimestamps2} ->
-						case throttle_by_solution_hash(B#block.hash, HashTimestamps,
-								ThrottleBySolutionInterval) of
-							{true, HashTimestamps2} ->
-								Info = B#block.nonce_limiter_info,
-								StepNumber = Info#nonce_limiter_info.global_step_number,
-								?LOG_INFO([{event, processing_block},
-										{peer, ar_util:format_peer(Peer)},
-										{height, B#block.height},
-										{step_number, StepNumber},
-										{block, ar_util:encode(B#block.indep_hash)},
-										{miner_address, ar_util:encode(B#block.reward_addr)},
-										{previous_block,
-												ar_util:encode(PrevB#block.indep_hash)}]),
-								pre_validate_nonce_limiter_seed_data(B, PrevB,
-										SolutionResigned, Peer, Timestamp, ReadBodyTime,
-										BodySize),
-								{IPTimestamps2, HashTimestamps2};
+			case ar_ignore_registry:permanent_member(B#block.indep_hash) of
+				true ->
+					gen_server:cast(?MODULE, pre_validate),
+					{noreply, State#state{ pqueue = Q2, size = Size2 }};
+				false ->
+					ThrottleByIPResult = throttle_by_ip(Peer, IPTimestamps,
+							ThrottleByIPInterval),
+					{IPTimestamps3, HashTimestamps3} =
+						case ThrottleByIPResult of
 							false ->
-								{IPTimestamps2, HashTimestamps}
-						end
-				end,
-			gen_server:cast(?MODULE, pre_validate),
-			{noreply, State#state{ pqueue = Q2, size = Size2, ip_timestamps = IPTimestamps3,
-					hash_timestamps = HashTimestamps3 }}
+								{IPTimestamps, HashTimestamps};
+							{true, IPTimestamps2} ->
+								case throttle_by_solution_hash(B#block.hash, HashTimestamps,
+										ThrottleBySolutionInterval) of
+									{true, HashTimestamps2} ->
+										Info = B#block.nonce_limiter_info,
+										StepNumber
+											= Info#nonce_limiter_info.global_step_number,
+										?LOG_INFO([{event, processing_block},
+												{peer, ar_util:format_peer(Peer)},
+												{height, B#block.height},
+												{step_number, StepNumber},
+												{block, ar_util:encode(B#block.indep_hash)},
+												{miner_address,
+														ar_util:encode(B#block.reward_addr)},
+												{previous_block,
+													ar_util:encode(PrevB#block.indep_hash)}]),
+										pre_validate_nonce_limiter_seed_data(B, PrevB,
+												SolutionResigned, Peer, Timestamp,
+												ReadBodyTime, BodySize),
+										{IPTimestamps2, HashTimestamps2};
+									false ->
+										{IPTimestamps2, HashTimestamps}
+								end
+						end,
+					gen_server:cast(?MODULE, pre_validate),
+					{noreply, State#state{ pqueue = Q2, size = Size2,
+							ip_timestamps = IPTimestamps3, hash_timestamps = HashTimestamps3 }}
+			end
 	end;
 
 handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime, BodySize}},
@@ -214,8 +223,14 @@ pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer, Timestamp, Re
 			ar_ignore_registry:add_temporary(H, 5000),
 			pre_validate_timestamp(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize);
 		{ok, H} ->
-			ar_ignore_registry:add_temporary(H, 5000),
-			pre_validate_timestamp(B, none, PrevB, Peer, Timestamp, ReadBodyTime, BodySize);
+			case ar_ignore_registry:permanent_member(H) of
+				true ->
+					ok;
+				false ->
+					ar_ignore_registry:add_temporary(H, 5000),
+					pre_validate_timestamp(B, none, PrevB, Peer, Timestamp, ReadBodyTime,
+							BodySize)
+			end;
 		{error, invalid_signature} ->
 			post_block_reject_warn(B, check_signature, Peer),
 			ar_events:send(block, {rejected, invalid_signature, B#block.indep_hash, Peer}),
