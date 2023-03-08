@@ -185,6 +185,7 @@
 	nonce_limiter_server_trusted_peers = [],
 	nonce_limiter_client_peers = [],
 	debug = false,
+	repair_rocksdb = [],
 	run_defragmentation = false,
 	defragmentation_trigger_threshold = 1_500_000_000,
 	defragmentation_modules = [],

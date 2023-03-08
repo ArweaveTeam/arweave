@@ -218,7 +218,9 @@ terminate(_Reason, _State) ->
 
 may_be_repair(Filepath) ->
 	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(repair_rocksdb, Config#config.enable) of
+	Enabled = lists:member(repair_rocksdb, Config#config.enable)
+			orelse lists:member(filename:absname(Filepath), Config#config.repair_rocksdb),
+	case Enabled of
 		true ->
 			ar:console("Repairing ~s.~n", [Filepath]),
 			Reply = rocksdb:repair(Filepath, []),

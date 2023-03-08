@@ -477,6 +477,10 @@ parse_options([{<<"vdf_client_peers">>, Peers} | _], _) ->
 parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ debug = B });
 
+parse_options([{<<"repair_rocksdb">>, L} | Rest], Config) ->
+	parse_options(Rest, Config#config{
+			repair_rocksdb = [filename:absname(binary_to_list(El)) || El <- L] });
+
 parse_options([{<<"run_defragmentation">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ run_defragmentation = B });
 
