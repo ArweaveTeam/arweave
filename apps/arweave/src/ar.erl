@@ -522,15 +522,9 @@ parse_cli_args(["vdf_server_trusted_peer", Peer | Rest], C) ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			erlang:halt()
 	end;
-parse_cli_args(["vdf_client_peer", Peer | Rest],
-		C = #config{ nonce_limiter_client_peers = Ps }) ->
-	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [ValidPeer | Ps] });
-		{error, _} ->
-			io:format("Peer ~p is invalid.~n", [Peer]),
-			parse_cli_args(Rest, C)
-	end;
+parse_cli_args(["vdf_client_peer", RawPeer | Rest],
+		C = #config{ nonce_limiter_client_peers = Peers }) ->
+	parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [RawPeer | Peers] });
 parse_cli_args(["debug" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ debug = true });
 parse_cli_args(["repair_rocksdb", Path | Rest], #config{ repair_rocksdb = L } = C) ->

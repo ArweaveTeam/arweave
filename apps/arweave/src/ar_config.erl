@@ -465,12 +465,7 @@ parse_options([{<<"vdf_server_trusted_peers">>, Peers} | _], _) ->
 	{error, {bad_type, vdf_server_trusted_peers, array}, Peers};
 
 parse_options([{<<"vdf_client_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
-	case parse_peers(Peers, []) of
-		{ok, ParsedPeers} ->
-			parse_options(Rest, Config#config{ nonce_limiter_client_peers = ParsedPeers });
-		error ->
-			{error, bad_vdf_client_peers, Peers}
-	end;
+	parse_options(Rest, Config#config{ nonce_limiter_client_peers = Peers });
 parse_options([{<<"vdf_client_peers">>, Peers} | _], _) ->
 	{error, {bad_type, vdf_client_peers, array}, Peers};
 

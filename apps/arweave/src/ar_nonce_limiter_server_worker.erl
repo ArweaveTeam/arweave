@@ -10,6 +10,7 @@
 
 -record(state, {
 	peer,
+	raw_peer,
 	pause_until = 0
 }).
 
@@ -18,26 +19,41 @@
 %%%===================================================================
 
 %% @doc Start the server.
-start_link(Name, Peer) ->
-	gen_server:start_link({local, Name}, ?MODULE, Peer, []).
+start_link(Name, RawPeer) ->
+	gen_server:start_link({local, Name}, ?MODULE, RawPeer, []).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init(Peer) ->
+init(RawPeer) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
-	{ok, #state{ peer = Peer }}.
+	gen_server:cast(self(), resolve_raw_peer),
+	{ok, #state{ raw_peer = RawPeer }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
+handle_cast(resolve_raw_peer, #state{ raw_peer = RawPeer } = State) ->
+	case ar_util:safe_parse_peer(RawPeer) of
+		{ok, Peer} ->
+			ar_util:cast_after(15000, self(), resolve_raw_peer),
+			{noreply, State#state{ peer = Peer }};
+		{error, Reason} ->
+			?LOG_WARNING([{event, failed_to_resolve_vdf_client_peer},
+					{reason, io_lib:format("~p", [Reason])}]),
+			ar_util:cast_after(30000, self(), resolve_raw_peer),
+			{noreply, State}
+	end;
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
+handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) ->
+	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	#state{ peer = Peer, pause_until = Timestamp } = State,
 	case os:system_time(second) < Timestamp of

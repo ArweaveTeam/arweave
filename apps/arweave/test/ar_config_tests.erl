@@ -106,8 +106,7 @@ parse_config() ->
 		max_nonce_limiter_last_step_validation_thread_count = 3,
 		nonce_limiter_server_trusted_peers = [{127, 0, 0, 1, 1984}, {2, 3, 4, 5, 1984},
 				{6, 7, 8, 9, 1982}],
-		nonce_limiter_client_peers = [{2, 3, 6, 7, 1984}, {4, 7, 3, 1, 1983},
-				{3, 3, 3, 3, 1984}],
+		nonce_limiter_client_peers = [<<"2.3.6.7:1984">>, <<"4.7.3.1:1983">>, <<"3.3.3.3">>],
 		run_defragmentation = true,
 		defragmentation_trigger_threshold = 1_000,
 		defragmentation_modules = [
