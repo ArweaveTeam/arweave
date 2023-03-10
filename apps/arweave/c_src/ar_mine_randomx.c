@@ -52,6 +52,7 @@ static void state_dtor(ErlNifEnv* envPtr, void* objPtr)
 	release_randomx(statePtr);
 	if (statePtr->lockPtr != NULL) {
 		enif_rwlock_destroy(statePtr->lockPtr);
+		statePtr->lockPtr = NULL;
 	}
 }
 
