@@ -50,7 +50,7 @@ static void state_dtor(ErlNifEnv* envPtr, void* objPtr)
 	struct state *statePtr = (struct state*) objPtr;
 
 	release_randomx(statePtr);
-	if (statePtr->lockPtr == NULL) {
+	if (statePtr->lockPtr != NULL) {
 		enif_rwlock_destroy(statePtr->lockPtr);
 	}
 }
