@@ -50,7 +50,9 @@ static void state_dtor(ErlNifEnv* envPtr, void* objPtr)
 	struct state *statePtr = (struct state*) objPtr;
 
 	release_randomx(statePtr);
-	enif_rwlock_destroy(statePtr->lockPtr);
+	if (statePtr->lockPtr == NULL) {
+		enif_rwlock_destroy(statePtr->lockPtr);
+	}
 }
 
 static void release_randomx(struct state *statePtr)
@@ -230,12 +232,15 @@ static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, struct state *statePtr, const
 {
 	if (statePtr->lockPtr != NULL) {
 		enif_rwlock_destroy(statePtr->lockPtr);
+		statePtr->lockPtr = NULL;
 	}
 	if (statePtr->cachePtr != NULL) {
 		randomx_release_cache(statePtr->cachePtr);
+		statePtr->cachePtr = NULL;
 	}
 	if (statePtr->datasetPtr != NULL) {
 		randomx_release_dataset(statePtr->datasetPtr);
+		statePtr->datasetPtr = NULL;
 	}
 	enif_release_resource(statePtr);
 	return error(envPtr, reason);
