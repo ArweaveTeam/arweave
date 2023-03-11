@@ -731,6 +731,7 @@ pre_validate_nonce_limiter(B, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 	end.
 
 accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, Gossip) ->
+	ar_ignore_registry:add(B#block.indep_hash),
 	ar_events:send(block, {new, B, #{ source => {peer, Peer}, gossip => Gossip }}),
 	ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
 	record_block_pre_validation_time(Timestamp),
