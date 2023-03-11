@@ -151,6 +151,9 @@ show_help() ->
 					"How many peer polling jobs to run. Default is ~p.",
 					[?DEFAULT_BLOCK_POLLERS])},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
+			{"join_workers (num)", io_lib:format("The number of workers fetching the recent "
+					"blocks and transactions simultaneously when joining the network. "
+					"Default: ~B. ", [?DEFAULT_JOIN_WORKERS])},
 			{"mining_addr (addr)",
 				io_lib:format(
 				"The address mining rewards should be credited to. If the \"mine\" flag"
@@ -408,6 +411,8 @@ parse_cli_args(["block_pollers", N | Rest], C) ->
 	parse_cli_args(Rest, C#config{ block_pollers = list_to_integer(N) });
 parse_cli_args(["no_auto_join" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ auto_join = false });
+parse_cli_args(["join_workers", N | Rest], C) ->
+	parse_cli_args(Rest, C#config{ join_workers = list_to_integer(N) });
 parse_cli_args(["mining_addr", Addr | Rest], C) ->
 	case C#config.mining_addr of
 		not_set ->

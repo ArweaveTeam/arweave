@@ -194,20 +194,21 @@ get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
 
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
-	case B#block.height - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_6() of
-		true ->
-			ok;
-		_ ->
-			ar_randomx_state:init(BI, Peers)
-	end,
 	ar:console("Downloading the block trail.~n", []),
-	Blocks = get_block_and_trail(Peers, B, BI),
+	{ok, Config} = application:get_env(arweave, config),
+	WorkerQ = queue:from_list([spawn(fun() -> worker() end)
+			|| _ <- lists:seq(1, Config#config.join_workers)]),
+	PeerQ = queue:from_list(Peers),
+	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
+	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
+			| get_block_trail(WorkerQ, PeerQ, Trail, 30)],
 	ar:console("Downloaded the block trail successfully.~n", []),
 	Blocks2 = may_be_set_reward_history(Blocks, Peers),
 	ar_node_worker ! {join, BI, Blocks2},
 	join_peers(Peers).
 
-%% @doc Get a block, and its 2 * ?MAX_TX_ANCHOR_DEPTH previous blocks.
+%% @doc Get the 2 * ?MAX_TX_ANCHOR_DEPTH blocks preceding the head block.
 %% If the block list is shorter than 2 * ?MAX_TX_ANCHOR_DEPTH, simply
 %% get all existing blocks.
 %%
@@ -215,22 +216,145 @@ do_join(Peers, B, BI) ->
 %% can validate transactions even if it enters a ?MAX_TX_ANCHOR_DEPTH-deep
 %% fork recovery (which is the deepest fork recovery possible) immediately after
 %% joining the network.
-get_block_and_trail(Peers, B, BI) ->
-	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
-	[B#block{ size_tagged_txs = SizeTaggedTXs } | get_block_and_trail(Peers, Trail)].
+get_block_trail(_WorkerQ, _PeerQ, [], _Retries) ->
+	[];
+get_block_trail(WorkerQ, PeerQ, Trail, Retries) ->
+	{WorkerQ2, PeerQ2} = request_blocks(Trail, WorkerQ, PeerQ),
+	FetchState = #{ awaiting_block_count => length(Trail) },
+	get_block_trail_loop(WorkerQ2, PeerQ2, Retries, Trail, FetchState).
 
-get_block_and_trail(Peers, Trail) when length(Trail) < 10 ->
-	ar_util:pmap(fun({H, _, _}) -> get_block_and_trail(Peers, H) end, Trail);
-get_block_and_trail(Peers, Trail) when is_list(Trail) ->
-	{Chunk, Trail2} = lists:split(10, Trail),
-	ar_util:pmap(fun({H, _, _}) -> get_block_and_trail(Peers, H) end, Chunk)
-			++ get_block_and_trail(Peers, Trail2);
+request_blocks([], WorkerQ, PeerQ) ->
+	{WorkerQ, PeerQ};
+request_blocks([{H, _, _} | Trail], WorkerQ, PeerQ) ->
+	{{value, W}, WorkerQ2} = queue:out(WorkerQ),
+	{{value, Peer}, PeerQ2} = queue:out(PeerQ),
+	W ! {get_block_shadow, H, Peer, self()},
+	request_blocks(Trail, queue:in(W, WorkerQ2), queue:in(Peer, PeerQ2)).
 
-get_block_and_trail(Peers, H) ->
-	B = get_block(Peers, H),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
-	B#block{ size_tagged_txs = SizeTaggedTXs }.
+get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
+	receive
+		{block_response, H, {_, #block{} = BShadow, _, _}} ->
+			ar_disk_cache:write_block_shadow(BShadow),
+			TXCount = length(BShadow#block.txs),
+			FetchState2 = maps:put(H, {BShadow, #{}, TXCount}, FetchState),
+			AwaitingBlockCount = maps:get(awaiting_block_count, FetchState2),
+			AwaitingBlockCount2 =
+				case TXCount of
+					0 ->
+						?LOG_INFO([{event, join_remaining_blocks_to_fetch},
+							{remaining_blocks_count, AwaitingBlockCount - 1}]),
+						AwaitingBlockCount - 1;
+					_ ->
+						AwaitingBlockCount
+				end,
+			FetchState3 = maps:put(awaiting_block_count, AwaitingBlockCount2, FetchState2),
+			{WorkerQ2, PeerQ2} = request_txs(H, BShadow#block.txs, WorkerQ, PeerQ),
+			case AwaitingBlockCount2 of
+				0 ->
+					get_blocks(Trail, FetchState3);
+				_ ->
+					get_block_trail_loop(WorkerQ2, PeerQ2, Retries, Trail, FetchState3)
+			end;
+		{block_response, H, Response} ->
+			case Retries > 0 of
+				true ->
+					ar:console("Failed to fetch a joining block ~s."
+							" Retrying..~n", [ar_util:encode(H)]),
+					?LOG_WARNING([
+						{event, failed_to_fetch_joining_block},
+						{block, ar_util:encode(H)},
+						{response, io_lib:format("~p", [Response])}
+					]),
+					timer:sleep(1000),
+					{WorkerQ2, PeerQ2} = request_block(H, WorkerQ, PeerQ),
+					get_block_trail_loop(WorkerQ2, PeerQ2, Retries - 1, Trail, FetchState);
+				false ->
+					ar:console(
+						"Failed to fetch a joining block ~s. Giving up.."
+						" Consider changing the peers.~n", [ar_util:encode(H)]
+					),
+					?LOG_ERROR([
+						{event, failed_to_fetch_joining_block},
+						{block, ar_util:encode(H)},
+						{response, io_lib:format("~p", [Response])}
+					]),
+					timer:sleep(1000),
+					erlang:halt()
+			end;
+		{tx_response, H, TXID, #tx{} = TX} ->
+			ar_disk_cache:write_tx(TX),
+			{BShadow, TXMap, AwaitingTXCount} = maps:get(H, FetchState),
+			TXMap2 = maps:put(TXID, TX, TXMap),
+			AwaitingTXCount2 = AwaitingTXCount - 1,
+			FetchState2 = maps:put(H, {BShadow, TXMap2, AwaitingTXCount2}, FetchState),
+			AwaitingBlockCount = maps:get(awaiting_block_count, FetchState2),
+			AwaitingBlockCount2 =
+				case AwaitingTXCount2 of
+					0 ->
+						?LOG_INFO([{event, join_remaining_blocks_to_fetch},
+								{remaining_blocks_count, AwaitingBlockCount - 1}]),
+						AwaitingBlockCount - 1;
+					_ ->
+						AwaitingBlockCount
+				end,
+			FetchState3 = maps:put(awaiting_block_count, AwaitingBlockCount2, FetchState2),
+			case AwaitingBlockCount2 of
+				0 ->
+					get_blocks(Trail, FetchState3);
+				_ ->
+					get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState3)
+			end;
+		{tx_response, H, TXID, Response} ->
+			case Retries > 0 of
+				true ->
+					ar:console("Failed to fetch a joining transaction ~s. Retrying..~n",
+							[ar_util:encode(TXID)]),
+					?LOG_WARNING([{event, failed_to_fetch_joining_tx},
+							{block, ar_util:encode(H)},
+							{tx, ar_util:encode(TXID)},
+							{response, io_lib:format("~p", [Response])}]),
+					timer:sleep(1000),
+					{WorkerQ2, PeerQ2} = request_tx(H, TXID, WorkerQ, PeerQ),
+					get_block_trail_loop(WorkerQ2, PeerQ2, Retries - 1, Trail, FetchState);
+				false ->
+					ar:console(
+						"Failed to fetch a joining tx ~s. Giving up.."
+						" Consider changing the peers.~n", [ar_util:encode(TXID)]
+					),
+					?LOG_ERROR([{event, failed_to_fetch_joining_tx},
+							{block, ar_util:encode(H)},
+							{tx, ar_util:encode(TXID)},
+							{response, io_lib:format("~p", [Response])}]),
+					timer:sleep(1000),
+					erlang:halt()
+			end
+	end.
+
+request_txs(_H, [], WorkerQ, PeerQ) ->
+	{WorkerQ, PeerQ};
+request_txs(H, [TXID | TXIDs], WorkerQ, PeerQ) ->
+	{WorkerQ2, PeerQ2} = request_tx(H, TXID, WorkerQ, PeerQ),
+	request_txs(H, TXIDs, WorkerQ2, PeerQ2).
+
+request_tx(H, TXID, WorkerQ, PeerQ) ->
+	{{value, W}, WorkerQ2} = queue:out(WorkerQ),
+	{{value, Peer}, PeerQ2} = queue:out(PeerQ),
+	W ! {get_tx, H, TXID, Peer, self()},
+	{queue:in(W, WorkerQ2), queue:in(Peer, PeerQ2)}.
+
+get_blocks([], _FetchState) ->
+	[];
+get_blocks([{H, _, _} | Trail], FetchState) ->
+	{B, TXMap, _} = maps:get(H, FetchState),
+	TXs = [maps:get(TXID, TXMap) || TXID <- B#block.txs],
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
+	[B#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs } | get_blocks(Trail, FetchState)].
+
+request_block(H, WorkerQ, PeerQ) ->
+	{{value, W}, WorkerQ2} = queue:out(WorkerQ),
+	{{value, Peer}, PeerQ2} = queue:out(PeerQ),
+	W ! {get_block_shadow, H, Peer, self()},
+	{queue:in(W, WorkerQ2), queue:in(Peer, PeerQ2)}.
 
 may_be_set_reward_history([#block{ height = Height } | _] = Blocks, Peers) ->
 	Fork_2_6 = ar_fork:height_2_6(),
@@ -259,6 +383,16 @@ join_peers(Peers) ->
 		end,
 		Peers
 	).
+
+worker() ->
+	receive
+		{get_block_shadow, H, Peer, From} ->
+			From ! {block_response, H, ar_http_iface_client:get_block_shadow([Peer], H)},
+			worker();
+		{get_tx, H, TXID, Peer, From} ->
+			From ! {tx_response, H, TXID, ar_http_iface_client:get_tx(Peer, TXID)},
+			worker()
+	end.
 
 %%%===================================================================
 %%% Tests.

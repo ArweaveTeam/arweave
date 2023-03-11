@@ -753,8 +753,15 @@ get_tx_from_disk_or_peer(Peers, TXID) ->
 
 get_tx_from_remote_peer([], _TXID) ->
 	not_found;
-get_tx_from_remote_peer(Peers, TXID) ->
+get_tx_from_remote_peer(Peers, TXID) when is_list(Peers) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	case get_tx_from_remote_peer(Peer, TXID) of
+		#tx{} = TX ->
+			TX;
+		_ ->
+			get_tx_from_remote_peer(Peers -- [Peer], TXID)
+	end;
+get_tx_from_remote_peer(Peer, TXID) ->
 	Release = ar_peers:get_peer_release(Peer),
 	Encoding = case Release >= 52 of true -> binary; _ -> json end,
 	case handle_tx_response(Peer, Encoding,
@@ -768,8 +775,6 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			limit => ?MAX_BODY_SIZE
 		})
 	) of
-		not_found ->
-			get_tx_from_remote_peer(Peers -- [Peer], TXID);
 		{ok, #tx{} = TX, Time, Size} ->
 			case ar_tx:verify_tx_id(TXID, TX) of
 				false ->
@@ -779,11 +784,13 @@ get_tx_from_remote_peer(Peers, TXID) ->
 						{tx, ar_util:encode(TXID)}
 					]),
 					ar_events:send(peer, {bad_response, {Peer, tx, invalid}}),
-					get_tx_from_remote_peer(Peers -- [Peer], TXID);
+					{error, invalid_tx};
 				true ->
 					ar_events:send(peer, {served_tx, Peer, Time, Size}),
 					TX
-			end
+			end;
+		Error ->
+			Error
 	end.
 
 get_tx_path(TXID, json) ->
@@ -950,9 +957,9 @@ handle_block_response(Peer, _Encoding, Response) ->
 
 %% @doc Process the response of a GET /unconfirmed_tx call.
 handle_tx_response(_Peer, _Encoding, {ok, {{<<"404">>, _}, _, _, _, _}}) ->
-	not_found;
+	{error, not_found};
 handle_tx_response(_Peer, _Encoding, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
-	not_found;
+	{error, bad_request};
 handle_tx_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 	DecodeFun = case Encoding of json -> fun ar_serialize:json_struct_to_tx/1;
 			binary -> fun ar_serialize:binary_to_tx/1 end,
@@ -977,14 +984,14 @@ handle_tx_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) 
 			end;
 		{'EXIT', Reason} ->
 			ar_events:send(peer, {bad_response, {Peer, tx, Reason}}),
-			not_found;
+			{error, Reason};
 		Reply ->
 			ar_events:send(peer, {bad_response, {Peer, tx, Reply}}),
-			not_found
+			Reply
 	end;
 handle_tx_response(Peer, _Encoding, Response) ->
 	ar_events:send(peer, {bad_response, {Peer, tx, Response}}),
-	not_found.
+	{error, Response}.
 
 p2p_headers() ->
 	{ok, Config} = application:get_env(arweave, config),

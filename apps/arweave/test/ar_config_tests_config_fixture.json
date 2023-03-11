@@ -22,6 +22,7 @@
   "polling": 10,
   "block_pollers": 100,
   "no_auto_join": true,
+  "join_workers": 9,
   "diff": 42,
   "mining_addr": "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
   "max_miners": 43,

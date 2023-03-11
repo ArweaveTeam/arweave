@@ -36,6 +36,7 @@ parse_config() ->
 		polling = 10,
 		block_pollers = 100,
 		auto_join = false,
+		join_workers = 9,
 		diff = 42,
 		mining_addr = ExpectedMiningAddr,
 		max_miners = 43,

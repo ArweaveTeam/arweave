@@ -15,6 +15,9 @@
 %% The number of processes periodically searching for the latest blocks.
 -define(DEFAULT_BLOCK_POLLERS, 10).
 
+%% The number of processes fetching the recent blocks and transactions on join.
+-define(DEFAULT_JOIN_WORKERS, 10).
+
 %% The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
 -ifdef(DEBUG).
@@ -116,6 +119,7 @@
 	polling = ?DEFAULT_POLLING_INTERVAL, % Polling frequency in seconds.
 	block_pollers = ?DEFAULT_BLOCK_POLLERS,
 	auto_join = true,
+	join_workers = ?DEFAULT_JOIN_WORKERS,
 	diff = ?DEFAULT_DIFF,
 	mining_addr = not_set,
 	max_miners = 0, % DEPRECATED.

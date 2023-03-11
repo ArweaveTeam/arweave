@@ -127,6 +127,11 @@ parse_options([{<<"no_auto_join">>, false} | Rest], Config) ->
 parse_options([{<<"no_auto_join">>, Opt} | _], _) ->
 	{error, {bad_type, no_auto_join, boolean}, Opt};
 
+parse_options([{<<"join_workers">>, N} | Rest], Config) when is_integer(N)->
+	parse_options(Rest, Config#config{ join_workers = N });
+parse_options([{<<"join_workers">>, Opt} | _], _) ->
+	{error, {bad_type, join_workers, number}, Opt};
+
 parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 	parse_options(Rest, Config#config{ diff = Diff });
 parse_options([{<<"diff">>, Diff} | _], _) ->
