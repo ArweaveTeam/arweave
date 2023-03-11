@@ -142,11 +142,15 @@ mix_seed(PrevOutput, Seed) ->
 %% Assume the seeds are correct and the first block is above the second one
 %% according to the protocol.
 %% Emit {nonce_limiter, {invalid, H, ErrorCode}} or {nonce_limiter, {valid, H}}.
+request_validation(H, Info, PrevInfo) ->
+	request_validation(H, Info, PrevInfo, 2).
+
 request_validation(H, #nonce_limiter_info{ global_step_number = N },
-		#nonce_limiter_info{ global_step_number = N }) ->
+		#nonce_limiter_info{ global_step_number = N }, _RemoteServerWaitSeconds) ->
 	spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 1}) end);
 request_validation(H, #nonce_limiter_info{ output = Output,
-		checkpoints = [Output | _] = Checkpoints } = Info, PrevInfo) ->
+		checkpoints = [Output | _] = Checkpoints } = Info, PrevInfo,
+		RemoteServerWaitSeconds) ->
 	#nonce_limiter_info{ output = PrevOutput, next_seed = PrevNextSeed,
 			global_step_number = PrevStepNumber } = PrevInfo,
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
@@ -179,6 +183,14 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 								lists:nthtail(BeforeCheckpointsLen, ReversedSteps)}
 				end
 		end,
+	{ok, Config} = application:get_env(arweave, config),
+	UseRemoteServers =
+		case Config#config.nonce_limiter_server_trusted_peers of
+			[] ->
+				false;
+			_ ->
+				true
+		end,
 	case exclude_computed_steps_from_checkpoints([Group], ReversedSteps2) of
 		invalid ->
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
@@ -189,6 +201,11 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
 		{[_Group], Shift2} when PrevStepNumber + Shift + Shift2 >= StepNumber ->
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
+		{[_Group] = _Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber,
+				UseRemoteServers == true, RemoteServerWaitSeconds > 0 ->
+			spawn(fun() ->
+				timer:sleep(1000),
+				request_validation(H, Info, PrevInfo, RemoteServerWaitSeconds - 1) end);
 		{[_Group] = Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber ->
 			PrevOutput3 = case Shift2 of 0 -> PrevOutput2;
 					_ -> lists:nth(Shift2, ReversedSteps2) end,
@@ -247,7 +264,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			?LOG_ERROR([{event, unexpected_error_during_nonce_limiter_validation},
 					{error_id, ErrorID}])
 	end;
-request_validation(H, _Info, _PrevInfo) ->
+request_validation(H, _Info, _PrevInfo, _RemoteServerWaitSeconds) ->
 	spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 4}) end).
 
 %% @doc Reset the state and stop computing steps automatically. Used in tests.
