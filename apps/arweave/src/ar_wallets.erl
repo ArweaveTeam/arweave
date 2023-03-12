@@ -83,7 +83,7 @@ init([{blocks, []}, {peers, _Peers}]) ->
 	{ok, DAG};
 init([{blocks, Blocks}, {peers, Peers}]) ->
 	process_flag(trap_exit, true),
-	gen_server:cast(?MODULE, {init, Blocks, Peers}), 
+	gen_server:cast(?MODULE, {init, Blocks, Peers}),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
 	{ok, DAG}.
 
@@ -234,7 +234,7 @@ get_tree(B, Peers) ->
 load_wallet_tree_from_peers(_ID, _Peers, Acc, last, _) ->
 	{ok, Acc};
 load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N) ->
-	io:format(os:cmd(clear)),
+	ar_util:terminal_clear(),
 	ar:console("Downloading the wallet tree, chunk ~B.~n", [N]),
 	case ar_http_iface_client:get_wallet_list_chunk(Peers, ID, Cursor) of
 		{ok, {NextCursor, Chunk}} ->

@@ -5,7 +5,7 @@
 		genesis_wallets/0, pmap/2, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
-		take_every_nth/2, safe_divide/2]).
+		take_every_nth/2, safe_divide/2, terminal_clear/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -290,4 +290,13 @@ encode_list_indices_test() ->
 		0,
 		[[], [0], [1], [999], [0, 1], lists:seq(0, 999), lists:seq(0, 999, 2),
 			lists:seq(1, 999, 3)]
+	).
+
+%% @doc os aware way of clearing a terminal
+terminal_clear() ->
+	io:format(
+		case os:type() == "darwin" of
+			true -> "\e[H\e[J";
+			false ->  os:cmd(clear)
+		end
 	).

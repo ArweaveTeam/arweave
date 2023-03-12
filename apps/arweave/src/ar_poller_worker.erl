@@ -199,7 +199,7 @@ get_missing_tx_indices([TXID | TXIDs], N) ->
 
 slow_block_application_warning(N) ->
 	ar_mining_server:pause_performance_reports(60000),
-	io:format(os:cmd(clear)),
+	ar_util:terminal_clear(),
 	ar:console("WARNING: there are more than ~B not yet validated blocks on the longest chain."
 			" Please, double-check if you are in sync with the network and make sure your "
 			"CPU computes VDF fast enough or you are connected to a VDF server."
@@ -222,7 +222,7 @@ warning(Peer, Event) ->
 					stuck_or_deep_fork ->
 						"is either far ahead or on a different long fork"
 				end,
-			io:format(os:cmd(clear)),
+			ar_util:terminal_clear(),
 			ar:console("WARNING: peer ~s ~s. "
 					"Please, double-check if you are in sync with the network and "
 					"make sure your CPU computes VDF fast enough or you are connected "
