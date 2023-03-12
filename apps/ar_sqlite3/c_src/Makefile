@@ -17,10 +17,14 @@ C_SRC_OUTPUT ?= $(CURDIR)/../priv/$(PROJECT)_driver
 
 UNAME_SYS := $(shell uname -s)
 ifeq ($(UNAME_SYS), Darwin)
+	OSX_CPU_ARCH ?= x86_64
+	ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M1"),)
+	  OSX_CPU_ARCH = arm64
+	endif
 	CC ?= cc
-	CFLAGS ?= -O3 -std=c99 -arch x86_64 -Wall -Wmissing-prototypes
-	CXXFLAGS ?= -O3 -arch x86_64 -Wall
-	LDFLAGS ?= -arch x86_64 -flat_namespace -undefined suppress
+	CFLAGS ?= -O3 -std=c99 -arch $(OSX_CPU_ARCH) -Wall -Wmissing-prototypes
+	CXXFLAGS ?= -O3 -arch $(OSX_CPU_ARCH) -Wall
+	LDFLAGS ?= -arch $(OSX_CPU_ARCH) -flat_namespace -undefined suppress
 else ifeq ($(UNAME_SYS), FreeBSD)
 	CC ?= cc
 	CFLAGS ?= -O3 -std=c99 -Wall -Wmissing-prototypes
