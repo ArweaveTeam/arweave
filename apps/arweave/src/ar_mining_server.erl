@@ -476,20 +476,22 @@ io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
 		stop ->
 			io_thread(PartitionNumber, ReplicaID, StoreID);
 		reset_performance_counters ->
-			ets:insert(?MODULE, [{{performance, PartitionNumber}, erlang:monotonic_time(millisecond), 0, erlang:monotonic_time(millisecond), 0}]),
+			ets:insert(?MODULE, [{{performance, PartitionNumber},
+					erlang:monotonic_time(millisecond), 0,
+					erlang:monotonic_time(millisecond), 0}]),
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
-		{read_recall_range, {SessionRef, From, RecallRangeStart, H0,
+		{read_recall_range, {SessionRef, From, PartitionNumber2, RecallRangeStart, H0,
 				NonceLimiterOutput, CorrelationRef}} ->
-			read_recall_range(io_thread_recall_range_chunk, H0, PartitionNumber,
+			read_recall_range(io_thread_recall_range_chunk, H0, PartitionNumber2,
 					RecallRangeStart, NonceLimiterOutput, ReplicaID, StoreID, From,
 					SessionRef, CorrelationRef),
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{read_recall_range, _} ->
 			%% Clear the message queue from the requests from the outdated mining session.
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
-		{read_recall_range2, {SessionRef, From, RecallRangeStart, H0,
+		{read_recall_range2, {SessionRef, From, PartitionNumber2, RecallRangeStart, H0,
 				NonceLimiterOutput, CorrelationRef}} ->
-			read_recall_range(io_thread_recall_range2_chunk, H0, PartitionNumber,
+			read_recall_range(io_thread_recall_range2_chunk, H0, PartitionNumber2,
 					RecallRangeStart, NonceLimiterOutput, ReplicaID, StoreID, From,
 					SessionRef, CorrelationRef),
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
@@ -855,13 +857,13 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 			case find_thread(PartitionNumber, ReplicaID, Range1End, RecallRange1Start,
 					Threads) of
 				not_found ->
-					?LOG_WARNING([{event, no_io_thread_covering_given_partition_running},
-							{partition, PartitionNumber},
-							{replica, ar_util:encode(ReplicaID)}]);
+					%% We have a storage module smaller than the partition size which
+					%% partially covers this partition but does not include this range.
+					ok;
 				Thread1 ->
 					reserve_cache_space(),
-					Thread1 ! {read_recall_range, {Ref, self(), RecallRange1Start, H0, Output,
-							CorrelationRef}},
+					Thread1 ! {read_recall_range, {Ref, self(), PartitionNumber,
+							RecallRange1Start, H0, Output, CorrelationRef}},
 					PartitionNumber2 = get_partition_number_by_offset(RecallRange2Start),
 					Range2End = RecallRange2Start + ?RECALL_RANGE_SIZE,
 					case find_thread(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start,
@@ -870,8 +872,8 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 							signal_cache_cleanup(CorrelationRef, Ref, self());
 						Thread2 ->
 							reserve_cache_space(),
-							Thread2 ! {read_recall_range2, {Ref, self(), RecallRange2Start, H0,
-									Output, CorrelationRef}}
+							Thread2 ! {read_recall_range2, {Ref, self(), PartitionNumber2,
+									RecallRange2Start, H0, Output, CorrelationRef}}
 					end
 			end,
 			{noreply, State}
