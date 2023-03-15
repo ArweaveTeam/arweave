@@ -95,7 +95,6 @@ handle_info({gun_up, PID, Protocol}, #state{ status_by_pid = StatusByPID } = Sta
 					{peer, ar_util:format_peer(Peer)}]),
 			[gen_server:reply(ReplyTo, {ok, PID}) || {ReplyTo, _} <- PendingRequests],
 			StatusByPID2 = maps:put(PID, {connected, MonitorRef, Peer}, StatusByPID),
-			prometheus_gauge:inc(outbound_connections),
 			{noreply, State#state{ status_by_pid = StatusByPID2 }};
 		{connected, _MonitorRef, Peer} ->
 			?LOG_WARNING([{event, gun_up_pid_already_exists},
@@ -125,7 +124,6 @@ handle_info({gun_error, PID, Reason},
 				{connecting, PendingRequests} ->
 					reply_error(PendingRequests, Reason2);
 				connected ->
-					prometheus_gauge:dec(outbound_connections),
 					ok
 			end,
 			gun:shutdown(PID),
@@ -154,7 +152,6 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
 				{connecting, PendingRequests} ->
 					reply_error(PendingRequests, Reason2);
 				_ ->
-					prometheus_gauge:dec(outbound_connections),
 					ok
 			end,
 			?LOG_DEBUG([{event, connection_down}, {protocol, Protocol},
@@ -176,7 +173,6 @@ handle_info({'DOWN', _Ref, process, PID, Reason},
 				{connecting, PendingRequests} ->
 					reply_error(PendingRequests, Reason);
 				_ ->
-					prometheus_gauge:dec(outbound_connections),
 					ok
 			end,
 			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
@@ -211,38 +207,8 @@ reply_error([], _Reason) ->
 	ok;
 reply_error([PendingRequest | PendingRequests], Reason) ->
 	ReplyTo = element(1, PendingRequest),
-	Args = element(2, PendingRequest),
-	Method = maps:get(method, Args),
-	Path = maps:get(path, Args),
-	record_response_status(Method, Path, {error, Reason}),
 	gen_server:reply(ReplyTo, {error, Reason}),
 	reply_error(PendingRequests, Reason).
-
-record_response_status(Method, Path, Response) ->
-	prometheus_counter:inc(gun_requests_total, [method_to_list(Method),
-			ar_metrics:label_http_path(list_to_binary(Path)),
-			ar_metrics:get_status_class(Response)]).
-
-method_to_list(get) ->
-	"GET";
-method_to_list(post) ->
-	"POST";
-method_to_list(put) ->
-	"PUT";
-method_to_list(head) ->
-	"HEAD";
-method_to_list(delete) ->
-	"DELETE";
-method_to_list(connect) ->
-	"CONNECT";
-method_to_list(options) ->
-	"OPTIONS";
-method_to_list(trace) ->
-	"TRACE";
-method_to_list(patch) ->
-	"PATCH";
-method_to_list(_) ->
-	"unknown".
 
 request(PID, Args) ->
 	Timer = inet:start_timer(maps:get(timeout, Args, ?HTTP_REQUEST_SEND_TIMEOUT)),
@@ -252,9 +218,6 @@ request(PID, Args) ->
 			counter => 0, acc => [], start => os:system_time(microsecond),
 			is_peer_request => maps:get(is_peer_request, Args, true) },
 	Response = await_response(maps:merge(Args, ResponseArgs)),
-	Method = maps:get(method, Args),
-	Path = maps:get(path, Args),
-	record_response_status(Method, Path, Response),
 	inet:stop_timer(Timer),
 	Response.
 
@@ -274,11 +237,10 @@ merge_headers(HeadersA, HeadersB) ->
 
 await_response(Args) ->
 	#{ pid := PID, stream_ref := Ref, timer := Timer, start := Start, limit := Limit,
-			counter := Counter, acc := Acc, method := Method, path := Path } = Args,
+			counter := Counter, acc := Acc } = Args,
 	case gun:await(PID, Ref, inet:timeout(Timer)) of
 		{response, fin, Status, Headers} ->
 			End = os:system_time(microsecond),
-			upload_metric(Args),
 			{ok, {{integer_to_binary(Status), <<>>}, Headers, <<>>, Start, End}};
 		{response, nofin, Status, Headers} ->
 			await_response(Args#{ status => Status, headers => Headers });
@@ -300,20 +262,15 @@ await_response(Args) ->
 		{data, fin, Data} ->
 			End = os:system_time(microsecond),
 			FinData = iolist_to_binary([Acc | Data]),
-			download_metric(FinData, Args),
-			upload_metric(Args),
 			{ok, {gen_code_rest(maps:get(status, Args)), maps:get(headers, Args), FinData,
 					Start, End}};
 		{error, timeout} = Response ->
-			record_response_status(Method, Path, Response),
 			log(warn, gun_await_process_down, Args, Response),
 			Response;
 		{error, Reason} = Response when is_tuple(Reason) ->
-			record_response_status(Method, Path, Response),
 			log(warn, gun_await_process_down, Args, Reason),
 			Response;
 		Response ->
-			record_response_status(Method, Path, Response),
 			log(warn, gun_await_unknown, Args, Response),
 			Response
 	end.
@@ -340,22 +297,6 @@ log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
 		_ ->
 			ok
 	end.
-
-download_metric(Data, #{path := Path}) ->
-	prometheus_counter:inc(
-		http_client_downloaded_bytes_total,
-		[ar_metrics:label_http_path(list_to_binary(Path))],
-		byte_size(Data)
-	).
-
-upload_metric(#{method := post, path := Path, body := Body}) ->
-	prometheus_counter:inc(
-		http_client_uploaded_bytes_total,
-		[ar_metrics:label_http_path(list_to_binary(Path))],
-		byte_size(Body)
-	);
-upload_metric(_) ->
-	ok.
 
 gen_code_rest(200) ->
 	{<<"200">>, <<"OK">>};
