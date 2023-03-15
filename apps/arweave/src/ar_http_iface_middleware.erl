@@ -103,29 +103,57 @@ handle(Peer, Req, Pid) ->
 		_ ->
 			do_nothing
 	end,
-	case ar_p3:allow_request(Req) of
-		{true, _} ->
-			case handle4(Method, SplitPath, Req, Pid) of
-				{Status, Hdrs, Body, HandledReq} ->
-					{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
-				{Status, Body, HandledReq} ->
-					{Status, ?CORS_HEADERS, Body, HandledReq};
-				{error, timeout} ->
-					{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
-			end;
+	%% We break the P3 handling into two steps:
+	%% 1. Before the request is processed, ar_p3:allow_request validates the header and
+	%%    checks that the client has suffcient balance
+	%% 2. After the request is processed, handle_p3_response applies the charge (and returns
+	%%    an error status if there is no longer sufficient balance)
+	Response2 = case ar_p3:allow_request(Req) of
+		{true, P3Data} ->
+			Response = handle4(Method, SplitPath, Req, Pid),
+			handle_p3_response(Response, Req, P3Data);
 		{false, P3Status} ->
-			{p3_to_http_status(P3Status), #{}, <<>>, Req}
+			p3_error_response(P3Status, Req)
+	end,
+	%% Add CORS headers to the response
+	case Response2 of
+		{Status, Hdrs, Body, HandledReq} ->
+			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
+		{Status, Body, HandledReq} ->
+			{Status, ?CORS_HEADERS, Body, HandledReq};
+		{error, timeout} ->
+			{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
-p3_to_http_status(Atom) ->
-	case Atom of
+%% @doc If a P3 request was successful (200 status), apply the P3 charge.
+handle_p3_response(Response, Req, P3Data) ->
+	Status = element(1, Response),
+	case {Status, P3Data} of
+		{200, not_p3_service} ->
+			Response;
+		{200, _} ->
+			case ar_p3:apply_charge(Req, P3Data) of
+				{ok, _} ->
+					Response;
+				{error, _Error} ->
+					p3_error_response(insufficient_funds, Req)
+			end;
+		_ ->
+			Response
+	end.
+	
+p3_error_response(P3Status, Req) ->
+	Status = case P3Status of
 		invalid_header ->
 			400;
 		insufficient_funds ->
 			402;
 		stale_mod_seq ->
-			428
-	end.
+			428;
+		_ ->
+			400
+	end,
+	{Status, jiffy:encode(#{ error => P3Status }), Req}.
 
 -ifdef(TESTNET).
 handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->

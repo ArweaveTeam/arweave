@@ -287,7 +287,7 @@ test_charge() ->
 			PubKey1,
 			?ARWEAVE_AR),
 
-	Request = raw_request(<<"GET">>, <<"/time">>),
+	Request = raw_request(<<"GET">>, <<"/price/1000">>),
 
 	{ok, {1, Charge1}} = ar_p3_db:post_charge(
 		Address1,
@@ -297,7 +297,7 @@ test_charge() ->
 	?assertEqual(Address1, Charge1#p3_transaction.account),
 	?assertEqual(-20, Charge1#p3_transaction.amount),
 	?assertEqual(undefined, Charge1#p3_transaction.txid),
-	?assertEqual(<<"GET /time">>, Charge1#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge1#p3_transaction.request),
 	?assert(Charge1#p3_transaction.timestamp > TestStart),
 	?assertEqual({ok, Charge1}, ar_p3_db:get_transaction(Address1, 1)),
 
@@ -325,7 +325,7 @@ test_charge() ->
 	?assertEqual(Address1, Charge2#p3_transaction.account),
 	?assertEqual(-5, Charge2#p3_transaction.amount),
 	?assertEqual(undefined, Charge2#p3_transaction.txid),
-	?assertEqual(<<"GET /time">>, Charge2#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge2#p3_transaction.request),
 	?assert(Charge2#p3_transaction.timestamp > TestStart),
 	?assertEqual({ok, Charge2}, ar_p3_db:get_transaction(Address1, 3)),
 
@@ -340,7 +340,7 @@ test_double_charge() ->
 			PubKey1,
 			?ARWEAVE_AR),
 
-	Request = raw_request(<<"GET">>, <<"/time">>),
+	Request = raw_request(<<"GET">>, <<"/price/1000">>),
 
 	{ok, {1, Charge1}} = ar_p3_db:post_charge(
 		Address1,
@@ -350,7 +350,7 @@ test_double_charge() ->
 	?assertEqual(Address1, Charge1#p3_transaction.account),
 	?assertEqual(-10, Charge1#p3_transaction.amount),
 	?assertEqual(undefined, Charge1#p3_transaction.txid),
-	?assertEqual(<<"GET /time">>, Charge1#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge1#p3_transaction.request),
 	?assert(Charge1#p3_transaction.timestamp > TestStart),
 	?assertEqual({ok, Charge1}, ar_p3_db:get_transaction(Address1, 1)),
 
@@ -364,7 +364,7 @@ test_double_charge() ->
 	?assertEqual(Address1, Charge2#p3_transaction.account),
 	?assertEqual(-10, Charge2#p3_transaction.amount),
 	?assertEqual(undefined, Charge2#p3_transaction.txid),
-	?assertEqual(<<"GET /time">>, Charge2#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge2#p3_transaction.request),
 	?assert(Charge2#p3_transaction.timestamp > Charge1#p3_transaction.timestamp),
 	?assertEqual({ok, Charge2}, ar_p3_db:get_transaction(Address1, 2)),
 
@@ -378,7 +378,7 @@ test_charge_errors() ->
 		PubKey,
 		?ARWEAVE_AR
 	),
-	Request = raw_request(<<"GET">>, <<"/time">>),
+	Request = raw_request(<<"GET">>, <<"/price/1000">>),
 	?assertEqual(
 		{error, not_found},
 		ar_p3_db:post_charge(
@@ -427,7 +427,7 @@ test_charge_errors() ->
 			Address3,
 			5,
 			-10,
-			#{ method => "GET", path => <<"/time">> })),
+			#{ method => "GET", path => <<"/price/1000">> })),
 	?assertEqual(
 		{error, invalid_minimum},
 		ar_p3_db:post_charge(
@@ -499,7 +499,7 @@ test_concurrent_charges() ->
 			Address,
 			PubKey1,
 			?ARWEAVE_AR),
-	Request = raw_request(<<"GET">>, <<"/time">>),
+	Request = raw_request(<<"GET">>, <<"/price/1000">>),
 	ar_p3_db:post_deposit(Address, 10, crypto:strong_rand_bytes(32)),
 	NumThreads = 100,
 	ar_util:pmap(

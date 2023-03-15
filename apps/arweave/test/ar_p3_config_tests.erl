@@ -57,7 +57,7 @@ basic_parse_test() ->
 			},
 			\"services\": [
 				{
-					\"endpoint\": \"/time\",
+					\"endpoint\": \"/price/{bytes}\",
 					\"mod_seq\": 1,
 					\"rate_type\": \"request\",
 					\"rates\": {
@@ -91,7 +91,7 @@ checksum_parse_test() ->
 			},
 			\"services\": [
 				{
-					\"endpoint\": \"/time\",
+					\"endpoint\": \"/price/{bytes}\",
 					\"mod_seq\": 1,
 					\"rate_type\": \"request\",
 					\"rates\": {
@@ -198,7 +198,7 @@ no_service_list_parse_error_test() ->
 	Config = <<"{
 		\"p3\": {
 			\"services\": {
-				\"endpoint\": \"/time\",
+				\"endpoint\": \"/price/{bytes}\",
 				\"mod_seq\": 1,
 				\"rate_type\": \"request\",
 				\"rates\": {
@@ -214,7 +214,7 @@ bad_service_token_parse_error_test() ->
 	Config = <<"{
 		\"p3\": {
 			\"services\": [{
-				\"endpoint\": \"/time\",
+				\"endpoint\": \"/price/{bytes}\",
 				\"mod_seq\": 1,
 				\"invalid\": \"value\",
 				\"rate_type\": \"request\",
@@ -231,7 +231,7 @@ modseq_not_integer_parse_error_test() ->
 	Config = <<"{
 		\"p3\": {
 			\"services\": [{
-				\"endpoint\": \"/time\",
+				\"endpoint\": \"/price/{bytes}\",
 				\"mod_seq\": \"a\",
 				\"rate_type\": \"request\",
 				\"rates\": {
@@ -247,7 +247,7 @@ bad_rates_token_parse_error_test() ->
 	Config = <<"{
 		\"p3\": {
 			\"services\": [{
-				\"endpoint\": \"/time\",
+				\"endpoint\": \"/price/{bytes}\",
 				\"mod_seq\": 1,
 				\"rate_type\": \"request\",
 				\"rates\": {
@@ -290,8 +290,8 @@ basic_validate_test() ->
 			}
 		},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{
@@ -316,8 +316,8 @@ empty_payments_validate_test() ->
 	P3Config = #p3_config{
 			payments = #{},
 			services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{
@@ -512,8 +512,8 @@ bad_endpoint_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"https://mydomain.com/time">> => #p3_service{
-				endpoint = <<"https://mydomain.com/time">>,
+			<<"https://mydomain.com/price/{bytes}">> => #p3_service{
+				endpoint = <<"https://mydomain.com/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{
@@ -530,8 +530,8 @@ no_mod_seq_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				rate_type = <<"request">>,
 				rates = #{
 					?ARWEAVE_AR => 100000
@@ -547,8 +547,8 @@ bad_mod_seq_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = "1",
 				rate_type = <<"request">>,
 				rates = #{
@@ -565,8 +565,8 @@ no_rates_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>
 			}
@@ -580,8 +580,8 @@ bad_rates_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = 100000
@@ -596,8 +596,8 @@ invalid_rates_asset_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{
@@ -614,8 +614,8 @@ bad_rates_price_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{
@@ -632,8 +632,8 @@ string_rates_price_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{
@@ -650,8 +650,8 @@ no_rate_type_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rates = #{
 					?ARWEAVE_AR => 100000
@@ -667,8 +667,8 @@ string_rate_type_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = "request",
 				rates = #{
@@ -685,8 +685,8 @@ bad_rate_type_validate_test() ->
 	P3Config = #p3_config{
 		payments = #{},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"invalid">>,
 				rates = #{
@@ -787,7 +787,7 @@ test_rates_endpoint() ->
 						}
 					},
 					<<"modSeq">> => 1,
-					<<"endpoint">> => <<"/time">>
+					<<"endpoint">> => <<"/price/{bytes}">>
 				},
 				#{
 					<<"rates">> => #{
@@ -838,8 +838,8 @@ sample_p3_config(Address, MinimumBalance, Confirmations, Rate) when
 			}
 		},
 		services = #{
-			<<"/time">> => #p3_service{
-				endpoint = <<"/time">>,
+			<<"/price/{bytes}">> => #p3_service{
+				endpoint = <<"/price/{bytes}">>,
 				mod_seq = 1,
 				rate_type = <<"request">>,
 				rates = #{

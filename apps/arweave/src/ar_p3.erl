@@ -6,7 +6,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_p3.hrl").
 
--export([start_link/0, allow_request/1, get_balance/3, get_rates_json/0]).
+-export([start_link/0, allow_request/1, apply_charge/2, get_balance/3, get_rates_json/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -ifdef(TEST).
@@ -20,6 +20,9 @@
 %%%===================================================================
 allow_request(Req) ->
 	gen_server:call(?MODULE, {request, Req}).
+
+apply_charge(Req, {Account, ServiceConfig}) ->
+	gen_server:call(?MODULE, {charge, Req, Account, ServiceConfig}).
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -41,8 +44,8 @@ init([]) ->
 
 handle_call({request, Req}, _From, State) ->
 	case handle_request(Req, State) of
-		{ok, _} ->
-			{reply, {true, ok}, State};
+		{ok, P3Data} ->
+			{reply, {true, P3Data}, State};
 		{error, insufficient_funds} ->
 			{reply, {false, insufficient_funds}, State};
 		{error, stale_mod_seq} ->
@@ -50,6 +53,9 @@ handle_call({request, Req}, _From, State) ->
 		{error, _Error} ->
 			{reply, {false, invalid_header}, State}
 	end;
+
+handle_call({charge, Req, Account, ServiceConfig}, _From, State) ->
+	{reply, handle_charge(Req, Account, State, ServiceConfig), State};
 
 handle_call({get_balance, Address, Asset}, _From, State) ->
 	{reply, ar_p3_db:get_balance(Address, Asset), State};
@@ -89,29 +95,33 @@ terminate(Reason, State) ->
 %% Handle a web request and decide whether a charge is required and if
 %% so, levy that charge
 %%--------------------------------------------------------------------
+
 handle_request(Req, P3Config) when
 		is_record(P3Config, p3_config) ->
 	case ar_p3_config:get_service_config(P3Config, Req) of
 		undefined ->
 			{ok, not_p3_service};
 		ServiceConfig ->
-			validate_request(Req, P3Config, ServiceConfig)
+			validate_request(Req, ServiceConfig)
 	end.
 
-validate_request(Req, P3Config, ServiceConfig) when
+handle_charge(Req, Account, P3Config, ServiceConfig) when
+		is_record(Account, p3_account),
+		is_record(P3Config, p3_config),
 		is_record(ServiceConfig, p3_service) ->
-	case validate_header(Req, ServiceConfig) of
-		{ok, Account} ->
-			apply_charge(Account, Req, P3Config, ServiceConfig);
+	case validate_asset(Account, P3Config, ServiceConfig) of
+		{ok, {MinimumBalance, Amount}} ->
+			ar_p3_db:post_charge(Account#p3_account.address, Amount, MinimumBalance, Req);
 		Error ->
 			Error
 	end.
 
-apply_charge(Account, Req, P3Config, ServiceConfig) when
-		is_record(Account, p3_account) ->
-	case validate_asset(Account, P3Config, ServiceConfig) of
-		{ok, {MinimumBalance, Amount}} ->
-			ar_p3_db:post_charge(Account#p3_account.address, Amount, MinimumBalance, Req);
+validate_request(Req, ServiceConfig) when
+		is_record(ServiceConfig, p3_service) ->
+	case validate_header(Req, ServiceConfig) of
+		{ok, Account} ->
+			% XXX TODO: need to check sufficient balance here
+			{ok, {Account, ServiceConfig}};
 		Error ->
 			Error
 	end.
