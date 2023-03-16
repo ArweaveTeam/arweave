@@ -385,6 +385,8 @@ in
             vdf-server-peers = "${builtins.concatStringsSep " " (builtins.concatMap (p: ["vdf_server_trusted_peer" p]) cfg.vdfServerTrustedPeer)}";
           in pkgs.writeScriptBin "arweave-start" ''
           #!${pkgs.bash}/bin/bash
+          ${pkgs.procps}/bin/pkill epmd || true # prevent zombies
+          ${arweave-service-pre-start}/bin/arweave-pre-start # another sanity check that screen is running
           ${pkgs.screen}/bin/screen -S arweave -p 0 -X stuff "^C^M" || true
           ${pkgs.screen}/bin/screen -S arweave -p 0 -X stuff '${command} ${peers} ${vdf-peers} ${vdf-server-peers}^M'
           sleep 5
@@ -417,7 +419,6 @@ in
 
       systemd.services.arweave-screen = {
         description = "A Service for starting Screen process";
-        after = [ "network.target" ];
         environment = {};
         wantedBy = [ "multi-user.target" ];
         serviceConfig = {
