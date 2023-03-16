@@ -15,11 +15,17 @@
 -define(MAX_BLOCK_SCAN, 200).
 -endif.
 
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 allow_request(Req) ->
-	gen_server:call(?MODULE, {allow_request, Req}).
+	case catch gen_server:call(?MODULE, {allow_request, Req}) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 reverse_charge(Transaction) when
 		is_record(Transaction, p3_transaction),

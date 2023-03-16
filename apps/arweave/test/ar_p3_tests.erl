@@ -18,6 +18,7 @@
 
 ar_p3_test_() ->
 	[
+		{timeout, 30, mocked_test_timeout()},
 		{timeout, 30, fun test_not_found/0},
 		{timeout, 30, fun test_bad_headers/0},
 		{timeout, 30, fun test_valid_request/0},
@@ -453,6 +454,12 @@ test_reverse_charge() ->
 	ar_p3:reverse_charge(Charge2),
 	?assertEqual({ok, 0}, ar_p3_db:get_balance(Address1)).
 
+mocked_test_timeout() ->
+	ar_test_node:test_with_mocked_functions([{ar_p3_config, get_service_config, fun(_, _) -> timer:sleep(10000) end}],
+		fun test_timeout/0).
+
+test_timeout() ->
+	?assertEqual({error, timeout}, ar_p3:allow_request(raw_request(<<"GET">>, <<"/price/1000">>))).
 
 e2e_deposit_before_charge() ->
 	Wallet1 = {Priv1, Pub1} = ar_wallet:new(),

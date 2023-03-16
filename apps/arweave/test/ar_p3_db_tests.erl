@@ -9,6 +9,7 @@
 
 ar_p3_db_test_() ->
 	[
+		{timeout, 30, mocked_test_timeout()},
 		{timeout, 30, fun test_account/0},
 	 	{timeout, 30, fun test_account_errors/0},
 	 	{timeout, 30, fun test_deposit/0},
@@ -22,6 +23,19 @@ ar_p3_db_test_() ->
 		{timeout, 30, fun test_reverse/0},
 		{timeout, 30, fun test_scan_height/0}
 	].
+
+mocked_test_timeout() ->
+	ar_test_node:test_with_mocked_functions([{ar_kv, open, fun(_, _, _, _) -> timer:sleep(10000) end}],
+		fun test_timeout/0).
+
+test_timeout() ->
+	{_, Pub} = ar_wallet:new(),
+	Address = ar_wallet:to_address(Pub),
+	?assertEqual({error, timeout}, ar_p3_db:get_or_create_account(
+		Address,
+		Pub,
+		?ARWEAVE_AR
+	)).
 
 test_account() ->
 	TestStart = erlang:system_time(microsecond),

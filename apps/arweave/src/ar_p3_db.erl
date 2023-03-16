@@ -295,7 +295,12 @@ validate_address(_Address) ->
 validated_call(Address, Message) ->
 	case validate_address(Address) of
 		true ->
-			gen_server:call(?MODULE, Message);
+			case catch gen_server:call(?MODULE, Message) of
+				{'EXIT', {timeout, {gen_server, call, _}}} ->
+					{error, timeout};
+				Reply ->
+					Reply
+			end;
 		false ->
 			{error, invalid_address}
 	end.
