@@ -19,14 +19,9 @@ ar_p3_db_test_() ->
 		{timeout, 30, fun test_double_charge/0},
 		{timeout, 30, fun test_concurrent_charges/0},
 	 	{timeout, 30, fun test_charge_errors/0},
+		{timeout, 30, fun test_reverse/0},
 		{timeout, 30, fun test_scan_height/0}
 	].
-% XXX Test:
-% reverse valid txid
-% reverse valid request
-% reverse with invalid Transcation
-% revserse with invalid Address
-
 
 test_account() ->
 	TestStart = erlang:system_time(microsecond),
@@ -443,6 +438,50 @@ test_charge_errors() ->
 			5,
 			0,
 			Request)).
+
+test_reverse() ->
+	Wallet1 = {_, PubKey1} = ar_wallet:new(),
+	Wallet2 = {_, PubKey2} = ar_wallet:new(),
+	Address1 = ar_wallet:to_address(Wallet1),
+	Address2 = ar_wallet:to_address(Wallet2),
+	{ok, _} = ar_p3_db:get_or_create_account(
+			Address1,
+			PubKey1,
+			?ARWEAVE_AR),
+	{ok, _} = ar_p3_db:get_or_create_account(
+			Address2,
+			PubKey2,
+			?ARWEAVE_AR),
+
+	TXID1 = crypto:strong_rand_bytes(32),
+	{ok, Deposit1} = ar_p3_db:post_deposit(Address1, 10, TXID1),
+	?assertEqual({ok, 10}, ar_p3_db:get_balance(Address1)),
+	{ok, Reverse1} = ar_p3_db:reverse_transaction(Address1, Deposit1#p3_transaction.id),
+	?assertEqual(Address1, Reverse1#p3_transaction.account),
+	?assertEqual(-10, Reverse1#p3_transaction.amount),
+	?assertEqual(2, Reverse1#p3_transaction.id),
+	?assertEqual(<<"REVERSE:", TXID1/binary>>, Reverse1#p3_transaction.description),
+	?assert(Reverse1#p3_transaction.timestamp > Deposit1#p3_transaction.timestamp),
+	?assertEqual({ok, 0}, ar_p3_db:get_balance(Address1)),
+
+
+	Request = raw_request(<<"GET">>, <<"/price/1000">>),
+	{ok, Charge1} = ar_p3_db:post_charge(
+		Address1,
+		20,
+		-20,
+		Request),
+	?assertEqual({ok, -20}, ar_p3_db:get_balance(Address1)),
+	{ok, Reverse2} = ar_p3_db:reverse_transaction(Address1, Charge1#p3_transaction.id),
+	?assertEqual(Address1, Reverse2#p3_transaction.account),
+	?assertEqual(20, Reverse2#p3_transaction.amount),
+	?assertEqual(4, Reverse2#p3_transaction.id),
+	?assertEqual(<<"REVERSE:3">>, Reverse2#p3_transaction.description),
+	?assert(Reverse2#p3_transaction.timestamp > Charge1#p3_transaction.timestamp),
+	?assertEqual({ok, 0}, ar_p3_db:get_balance(Address1)),
+
+	?assertEqual({error, not_found}, ar_p3_db:reverse_transaction(Address1, 100)),
+	?assertEqual({error, not_found}, ar_p3_db:reverse_transaction(Address2, Reverse2)).
 
 test_scan_height() ->
 	%% Reset database
