@@ -76,7 +76,9 @@ end).
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_TRANSITION_BLOCKS, 0).
 	-else.
-		-define(PRICE_2_6_TRANSITION_BLOCKS, (30 * 24 * 12 * 30)). % ~12 months.
+		-ifndef(PRICE_2_6_TRANSITION_BLOCKS).
+			-define(PRICE_2_6_TRANSITION_BLOCKS, (30 * 24 * 12 * 30)). % ~12 months.
+		-endif.
 	-endif.
 -endif.
 
@@ -86,7 +88,9 @@ end).
 -ifdef(DEBUG).
 -define(REWARD_HISTORY_BLOCKS, 3).
 -else.
+-ifndef(REWARD_HISTORY_BLOCKS).
 -define(REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
+-endif.
 -endif.
 
 %% The prices are re-estimated every so many blocks.

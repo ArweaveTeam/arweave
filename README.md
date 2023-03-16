@@ -22,7 +22,7 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 
 - OpenSSL 1.1.1+
 - OpenSSL development headers
-- GCC or Clang (GCC 8 recommended)
+- GCC or Clang (GCC 8+ recommended)
 - Erlang OTP v24, with OpenSSL support
 - GNU Make
 - CMake (CMake version > 3.10.0)
@@ -32,8 +32,10 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 To install the dependencies on Ubuntu 22 (recommended), run:
 
 ```sh
-sudo apt install erlang-base erlang libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
+sudo apt install libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
 ```
+
+On some systems you might need to install `libncurses-dev`.
 
 Download the repo:
 
@@ -59,13 +61,24 @@ $ ./rebar3 as prod tar
 
 You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
 
-Make a testnet build:
+### Testnet
+
+To make a testnet build, run:
 
 ```sh
 $ ./rebar3 as testnet tar
 ```
 
 The tarball is created at `_build/testnet/rel/arweave/arweave-x.y.z.tar.gz`.
+
+You can join the public testnet now:
+
+```
+./bin/start peer testnet-1.arweave.net peer testnet-2.arweave.net peer peer testnet-3.arweave.net
+```
+
+We recommed you do not use your mainnet mining address on testnet. Also, do not join the
+testnet from the mainnet machine.
 
 # Contributing
 

@@ -62,14 +62,18 @@
 -ifdef(DEBUG).
 -define(NONCE_LIMITER_RESET_FREQUENCY, 5).
 -else.
+-ifndef(NONCE_LIMITER_RESET_FREQUENCY).
 -define(NONCE_LIMITER_RESET_FREQUENCY, (10 * 120)).
+-endif.
 -endif.
 
 %% The number of last-step checkpoints every block must include.
 -define(LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, 25).
 
 %% The maximum number of one-step checkpoints the block header may include.
+-ifndef(NONCE_LIMITER_MAX_CHECKPOINTS_COUNT).
 -define(NONCE_LIMITER_MAX_CHECKPOINTS_COUNT, 10800).
+-endif.
 
 %% The minimum difficulty allowed.
 -ifndef(SPORA_MIN_DIFFICULTY).
