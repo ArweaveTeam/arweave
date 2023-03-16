@@ -8,7 +8,8 @@
 
 -export([
 	get_or_create_account/3, get_account/1, get_transaction/2, get_balance/1, get_balance/2,
-	post_deposit/3, post_charge/4, get_scan_height/0, set_scan_height/1]).
+	post_deposit/3, post_charge/4, reverse_transaction/2,
+	get_scan_height/0, set_scan_height/1]).
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 %%%===================================================================
@@ -53,6 +54,9 @@ post_deposit(Address, Amount, TXID) ->
 
 post_charge(Address, Amount, Minimum, Request) ->
 	validated_call(Address, {post_charge, Address, Amount, Minimum, Request}).
+
+reverse_transaction(Address, Id) ->
+	validated_call(Address, {reverse_transaction, Address, Id}).
 
 set_scan_height(Height) ->
 	gen_server:call(?MODULE, {set_scan_height, Height}).
@@ -101,7 +105,7 @@ handle_call({post_deposit, Address, Amount, TXID}, _From, State) ->
 		not_found ->
 			{reply, {error, not_found}, State};
 		Account ->
-			{reply, post_deposit2(Account, Amount, TXID), State}
+			{reply, post_tx_transaction(Account, Amount, TXID), State}
 	end;
 	
 handle_call({post_charge, Address, Amount, Minimum, Request}, _From, State) ->
@@ -109,7 +113,19 @@ handle_call({post_charge, Address, Amount, Minimum, Request}, _From, State) ->
 		not_found ->
 			{reply, {error, not_found}, State};
 		Account ->
-			{reply, post_charge2(Account, Amount, Minimum, Request), State}
+			{reply, post_request_transaction(Account, Amount, Minimum, Request), State}
+	end;
+
+handle_call({reverse_transaction, Address, Id}, _From, State) ->
+	Account = get_account2(Address),
+	Transaction = get_transaction2(Address, Id),
+	case {Account, Transaction} of
+		{not_found, _} ->
+			{reply, {error, not_found}, State};
+		{_, not_found} ->
+			{reply, {error, not_found}, State};
+		_ ->
+			{reply, post_reverse_transaction(Account, Transaction), State}
 	end;
 
 handle_call({set_scan_height, Height}, _From, State) ->
@@ -166,32 +182,11 @@ put_account(Account) ->
 	Address = Account#p3_account.address,
 	ar_kv:put({p3_account, Address}, Address, term_to_binary(Account)).
 
-post_deposit2(_Account, Amount, _TXID) when Amount =< 0 ->
-	{error, invalid_amount};
-post_deposit2(Account, Amount, TXID) ->
-	post_transaction(Account, Amount, TXID, undefined).
-
-post_charge2(_Account, Amount, _Minimum, _Request) when Amount < 0 ->
-	{error, invalid_amount};
-post_charge2(_Account, _Amount, Minimum, _Request) when not is_integer(Minimum) ->
-	{error, invalid_minimum};
-post_charge2(Account, Amount, Minimum, _Request)
-  		when Account#p3_account.balance - Amount < Minimum ->
-	{error, insufficient_funds};
-post_charge2(Account, Amount, _Minimum, Request) ->
-	case request_label(Request) of
-		{ok, RequestLabel} ->
-			post_transaction(Account, -Amount, undefined, RequestLabel);
-		Error ->
-			Error
-	end.
-
 request_label(#{ method := Method, path := Path })
   		when is_bitstring(Method), is_bitstring(Path) ->
 	{ok, <<Method/bitstring, " ", Path/bitstring>>};
 request_label(_) ->
 	{error, invalid_request}.
-
 
 get_transaction2(Address, Id) ->
 	case safe_get({p3_tx, Address}, term_to_binary(Id), not_found) of
@@ -201,37 +196,73 @@ get_transaction2(Address, Id) ->
 			binary_to_term(Transaction)
 	end.
 
-post_transaction(Account, Amount, TXID, Request)
+get_next_id(Account) ->
+	Account#p3_account.count + 1.
+
+post_tx_transaction(_Account, _Amount, undefined) ->
+	{error, invalid_txid};
+post_tx_transaction(_Account, Amount, _TXID)  when Amount =< 0 ->
+	{error, invalid_amount};
+post_tx_transaction(Account, Amount, TXID) ->
+	post_transaction(Account, TXID, Amount, TXID).
+
+post_request_transaction(_Account, _Amount, _Minimum, undefined) ->
+	{error, invalid_request};
+post_request_transaction(_Account, Amount, _Minimum, _Request) when Amount < 0 ->
+	{error, invalid_amount};
+post_request_transaction(_Account, _Amount, Minimum, _Request) when not is_integer(Minimum) ->
+	{error, invalid_minimum};
+post_request_transaction(Account, Amount, Minimum, _Request)
+  		when Account#p3_account.balance - Amount < Minimum ->
+	{error, insufficient_funds};
+post_request_transaction(Account, Amount, _Minimum, Request) ->
+	case request_label(Request) of
+		{ok, RequestLabel} ->
+			post_transaction(Account, get_next_id(Account), -Amount, RequestLabel);
+		Error ->
+			Error
+	end.
+
+post_reverse_transaction(Account, Transaction) ->
+	BinaryId = case Transaction#p3_transaction.id of
+		Id when is_integer(Id) ->
+			integer_to_binary(Id);
+		Id when is_list(Id) ->
+			list_to_binary(Id);
+		Id when is_binary(Id) ->
+			Id
+	end,
+	Description = <<"REVERSE:", BinaryId/binary>>,
+	post_transaction(
+		Account,
+		get_next_id(Account),
+		-Transaction#p3_transaction.amount,
+		Description).
+
+post_transaction(Account, Id, Amount, Description)
   		when is_integer(Amount) ->
 	Address = Account#p3_account.address,
 
-	Id = case TXID of
-		undefined ->
-			Account#p3_account.count + 1;
-		_ ->
-			TXID
-	end,
-
-	Transaction = case get_transaction2(Address, Id) of
+	Transaction2 = case get_transaction2(Address, Id) of
 		not_found ->
-			P3Tx = #p3_transaction{
+			Transaction = #p3_transaction{
+				id = Id,
 				account = Address,
 				amount = Amount,
-				txid = TXID,
-				request = Request,
+				description = Description,
 				timestamp = os:system_time(microsecond)
 			},
-			ok = ar_kv:put({p3_tx, Address}, term_to_binary(Id), term_to_binary(P3Tx)),
+			ok = ar_kv:put({p3_tx, Address}, term_to_binary(Id), term_to_binary(Transaction)),
 			ok = put_account(Account#p3_account{
 				count = Account#p3_account.count + 1,
 				balance = Account#p3_account.balance + Amount}
 			),
-			P3Tx;
-		P3Tx ->
-			P3Tx
+			Transaction;
+		Transaction ->
+			Transaction
 	end,
-	{ok, {Id, Transaction}};
-post_transaction(_Account, _Amount, _TXID, _Request) ->
+	{ok, Transaction2};
+post_transaction(_Account, _Id, _Amount, _Description) ->
 	{error, invalid_amount}.
 
 set_scan_height2(Height) when

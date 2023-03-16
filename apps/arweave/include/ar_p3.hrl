@@ -48,10 +48,10 @@
 }).
 
 -record(p3_transaction, {
+	id,
 	account,
 	amount,
-	txid,
-	request,
+	description,
 	timestamp
 }).
 

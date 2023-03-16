@@ -104,19 +104,24 @@ handle(Peer, Req, Pid) ->
 			do_nothing
 	end,
 	%% We break the P3 handling into two steps:
-	%% 1. Before the request is processed, ar_p3:allow_request validates the header and
-	%%    checks that the client has suffcient balance
-	%% 2. After the request is processed, handle_p3_response applies the charge (and returns
-	%%    an error status if there is no longer sufficient balance)
+	%% 1. Before the request is processed, ar_p3:allow_request checks whether this is a
+	%%    P3 request and if so it validates the header and applies the charge
+	%% 2. After the request is processed, handle_p3_response checks if the requet failed,
+	%%	  if so it reverses the charge
+	%%
+	%% This two-step process is needed to ensure clients aren't charged for failed requests.
 	Response2 = case ar_p3:allow_request(Req) of
 		{true, P3Data} ->
 			Response = handle4(Method, SplitPath, Req, Pid),
-			handle_p3_response(Response, Req, P3Data);
+			handle_p3_error(Response, P3Data),
+			Response;
 		{false, P3Status} ->
 			p3_error_response(P3Status, Req)
 	end,
-	%% Add CORS headers to the response
-	case Response2 of
+	add_cors_headers(Req, Response2).
+
+add_cors_headers(Req, Response) ->
+	case Response of
 		{Status, Hdrs, Body, HandledReq} ->
 			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
 		{Status, Body, HandledReq} ->
@@ -125,22 +130,17 @@ handle(Peer, Req, Pid) ->
 			{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
-%% @doc If a P3 request was successful (200 status), apply the P3 charge.
-handle_p3_response(Response, Req, P3Data) ->
+handle_p3_error(Response, P3Data) ->
 	Status = element(1, Response),
 	case {Status, P3Data} of
-		{200, not_p3_service} ->
-			Response;
-		{200, _} ->
-			case ar_p3:apply_charge(Req, P3Data) of
-				{ok, _} ->
-					Response;
-				{error, _Error} ->
-					p3_error_response(insufficient_funds, Req)
-			end;
+		{_, not_p3_service} ->
+			do_nothing;
+		_ when Status >= 400 ->
+			{ok, _} = ar_p3:reverse_charge(P3Data);
 		_ ->
-			Response
-	end.
+			do_nothing
+	end,
+	ok.
 	
 p3_error_response(P3Status, Req) ->
 	Status = case P3Status of

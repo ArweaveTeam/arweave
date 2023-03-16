@@ -21,6 +21,12 @@ ar_p3_db_test_() ->
 	 	{timeout, 30, fun test_charge_errors/0},
 		{timeout, 30, fun test_scan_height/0}
 	].
+% XXX Test:
+% reverse valid txid
+% reverse valid request
+% reverse with invalid Transcation
+% revserse with invalid Address
+
 
 test_account() ->
 	TestStart = erlang:system_time(microsecond),
@@ -110,11 +116,11 @@ test_deposit() ->
 
 	%% Post Tx1 to Account1
 	TXID1 = crypto:strong_rand_bytes(32),
-	{ok, {TXID1, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, TXID1),
+	{ok, Deposit1} = ar_p3_db:post_deposit(Address1, 10, TXID1),
 	?assertEqual(Address1, Deposit1#p3_transaction.account),
 	?assertEqual(10, Deposit1#p3_transaction.amount),
-	?assertEqual(TXID1, Deposit1#p3_transaction.txid),
-	?assertEqual(undefined, Deposit1#p3_transaction.request),
+	?assertEqual(TXID1, Deposit1#p3_transaction.id),
+	?assertEqual(TXID1, Deposit1#p3_transaction.description),
 	?assert(Deposit1#p3_transaction.timestamp > TestStart),
 
 	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, TXID1)),
@@ -127,22 +133,22 @@ test_deposit() ->
 
 	%% Post Tx2 to Account1
 	TXID2 = crypto:strong_rand_bytes(32),
-	{ok, {TXID2, Deposit2}} = ar_p3_db:post_deposit(Address1, 5, TXID2),
+	{ok, Deposit2} = ar_p3_db:post_deposit(Address1, 5, TXID2),
 	?assertEqual(Address1, Deposit2#p3_transaction.account),
 	?assertEqual(5, Deposit2#p3_transaction.amount),
-	?assertEqual(TXID2, Deposit2#p3_transaction.txid),
-	?assertEqual(undefined, Deposit2#p3_transaction.request),
+	?assertEqual(TXID2, Deposit2#p3_transaction.id),
+	?assertEqual(TXID2, Deposit2#p3_transaction.description),
 	?assert(Deposit2#p3_transaction.timestamp > Deposit1#p3_transaction.timestamp),
 
 	?assertEqual({ok, Deposit2}, ar_p3_db:get_transaction(Address1, TXID2)),
 
 	%% Post Tx3 to Account2
 	TXID3 = crypto:strong_rand_bytes(32),
-	{ok, {TXID3, Deposit3}} = ar_p3_db:post_deposit(Address2, 7, TXID3),
+	{ok, Deposit3} = ar_p3_db:post_deposit(Address2, 7, TXID3),
 	?assertEqual(Address2, Deposit3#p3_transaction.account),
 	?assertEqual(7, Deposit3#p3_transaction.amount),
-	?assertEqual(TXID3, Deposit3#p3_transaction.txid),
-	?assertEqual(undefined, Deposit3#p3_transaction.request),
+	?assertEqual(TXID3, Deposit3#p3_transaction.id),
+	?assertEqual(TXID3, Deposit3#p3_transaction.description),
 	?assert(Deposit3#p3_transaction.timestamp > Deposit2#p3_transaction.timestamp),
 
 	?assertEqual({ok, Deposit3}, ar_p3_db:get_transaction(Address2, TXID3)),
@@ -195,17 +201,16 @@ test_double_deposit() ->
 
 	%% Post Tx1 to Account1
 	TXID1 = crypto:strong_rand_bytes(32),
-	{ok, {TXID1, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, TXID1),
+	{ok, Deposit1} = ar_p3_db:post_deposit(Address1, 10, TXID1),
 
 	?assertEqual(
-		{ok, {TXID1, Deposit1}},
+		{ok, Deposit1},
 		ar_p3_db:post_deposit(Address1, 10, TXID1),
 		"Posting the same transaction twice should just return the first one"),
 
 	?assertEqual(Address1, Deposit1#p3_transaction.account),
 	?assertEqual(10, Deposit1#p3_transaction.amount),
-	?assertEqual(TXID1, Deposit1#p3_transaction.txid),
-	?assertEqual(undefined, Deposit1#p3_transaction.request),
+	?assertEqual(TXID1, Deposit1#p3_transaction.description),
 	?assert(Deposit1#p3_transaction.timestamp > TestStart),
 
 	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, TXID1)),
@@ -289,22 +294,21 @@ test_charge() ->
 
 	Request = raw_request(<<"GET">>, <<"/price/1000">>),
 
-	{ok, {1, Charge1}} = ar_p3_db:post_charge(
+	{ok, Charge1} = ar_p3_db:post_charge(
 		Address1,
 		20,
 		-20,
 		Request),
 	?assertEqual(Address1, Charge1#p3_transaction.account),
 	?assertEqual(-20, Charge1#p3_transaction.amount),
-	?assertEqual(undefined, Charge1#p3_transaction.txid),
-	?assertEqual(<<"GET /price/1000">>, Charge1#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge1#p3_transaction.description),
 	?assert(Charge1#p3_transaction.timestamp > TestStart),
 	?assertEqual({ok, Charge1}, ar_p3_db:get_transaction(Address1, 1)),
 
 	?assertEqual(-20, element(2, ar_p3_db:get_balance(Address1))),
 
 	DepositTXID = crypto:strong_rand_bytes(32),
-	{ok, {DepositTXID, Deposit1}} = ar_p3_db:post_deposit(Address1, 10, DepositTXID),
+	{ok, Deposit1} = ar_p3_db:post_deposit(Address1, 10, DepositTXID),
 	?assertEqual({ok, Deposit1}, ar_p3_db:get_transaction(Address1, DepositTXID)),
 
 	?assertEqual(-10, element(2, ar_p3_db:get_balance(Address1))),
@@ -317,15 +321,14 @@ test_charge() ->
 			-20,
 			Request)),
 
-	{ok, {3, Charge2}} = ar_p3_db:post_charge(
+	{ok, Charge2} = ar_p3_db:post_charge(
 		Address1,
 		5,
 		-20,
 		Request),
 	?assertEqual(Address1, Charge2#p3_transaction.account),
 	?assertEqual(-5, Charge2#p3_transaction.amount),
-	?assertEqual(undefined, Charge2#p3_transaction.txid),
-	?assertEqual(<<"GET /price/1000">>, Charge2#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge2#p3_transaction.description),
 	?assert(Charge2#p3_transaction.timestamp > TestStart),
 	?assertEqual({ok, Charge2}, ar_p3_db:get_transaction(Address1, 3)),
 
@@ -342,29 +345,27 @@ test_double_charge() ->
 
 	Request = raw_request(<<"GET">>, <<"/price/1000">>),
 
-	{ok, {1, Charge1}} = ar_p3_db:post_charge(
+	{ok, Charge1} = ar_p3_db:post_charge(
 		Address1,
 		10,
 		-20,
 		Request),
 	?assertEqual(Address1, Charge1#p3_transaction.account),
 	?assertEqual(-10, Charge1#p3_transaction.amount),
-	?assertEqual(undefined, Charge1#p3_transaction.txid),
-	?assertEqual(<<"GET /price/1000">>, Charge1#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge1#p3_transaction.description),
 	?assert(Charge1#p3_transaction.timestamp > TestStart),
 	?assertEqual({ok, Charge1}, ar_p3_db:get_transaction(Address1, 1)),
 
 	?assertEqual(-10, element(2, ar_p3_db:get_balance(Address1))),
 
-	{ok, {2, Charge2}} = ar_p3_db:post_charge(
+	{ok, Charge2} = ar_p3_db:post_charge(
 		Address1,
 		10,
 		-20,
 		Request),
 	?assertEqual(Address1, Charge2#p3_transaction.account),
 	?assertEqual(-10, Charge2#p3_transaction.amount),
-	?assertEqual(undefined, Charge2#p3_transaction.txid),
-	?assertEqual(<<"GET /price/1000">>, Charge2#p3_transaction.request),
+	?assertEqual(<<"GET /price/1000">>, Charge2#p3_transaction.description),
 	?assert(Charge2#p3_transaction.timestamp > Charge1#p3_transaction.timestamp),
 	?assertEqual({ok, Charge2}, ar_p3_db:get_transaction(Address1, 2)),
 
@@ -513,6 +514,3 @@ test_concurrent_charges() ->
 	{ok, Account} = ar_p3_db:get_account(Address),
 	?assertEqual(0, Account#p3_account.balance),
 	?assertEqual(11, Account#p3_account.count).
-
-% XXX TODO: test creating an account without a public key to verify that "use before deposit"
-% feature

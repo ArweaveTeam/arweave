@@ -18,16 +18,16 @@
 
 ar_p3_test_() ->
 	[
-		% {timeout, 30, fun test_not_found/0},
-		% {timeout, 30, fun test_bad_headers/0},
-		% {timeout, 30, fun test_valid_request/0},
-		% {timeout, 30, fun test_zero_rate/0},
-		% {timeout, 30, fun test_checksum_request/0},
-		{timeout, 30, fun test_bad_config/0}
-		% {timeout, 30, fun test_balance_endpoint/0},
-		% {timeout, 120, fun e2e_deposit_before_charge/0},
-		% {timeout, 120, fun e2e_charge_before_deposit/0},
-		% {timeout, 600, fun e2e_restart_p3_service/0}
+		{timeout, 30, fun test_not_found/0},
+		{timeout, 30, fun test_bad_headers/0},
+		{timeout, 30, fun test_valid_request/0},
+		{timeout, 30, fun test_zero_rate/0},
+		{timeout, 30, fun test_checksum_request/0},
+		{timeout, 30, fun test_bad_config/0},
+		{timeout, 30, fun test_balance_endpoint/0},
+		{timeout, 120, fun e2e_deposit_before_charge/0},
+		{timeout, 120, fun e2e_charge_before_deposit/0},
+		{timeout, 600, fun e2e_restart_p3_service/0}
 	].
 
 test_not_found() ->
@@ -307,25 +307,22 @@ test_bad_config() ->
 	Wallet = {PrivKey, PubKey} = ar_wallet:new(),
 	Address = ar_wallet:to_address(Wallet),
 	EncodedAddress = ar_util:encode(Address),
-	{ok, Account} = ar_p3_db:get_or_create_account(
+	{ok, _Account} = ar_p3_db:get_or_create_account(
 		Address,
 		PubKey,
 		?ARWEAVE_AR
 	),
 	Config = sample_p3_config(),
-	ServiceConfig = maps:get(<<"/price/{bytes}">>, Config#p3_config.services),
 
 	NoPaymentsConfig = Config#p3_config{ payments = #{} },
 	?assertEqual(
-		{reply, {false, invalid_config}, NoPaymentsConfig},
-		ar_p3:handle_call({charge, 
+		{reply, {false, invalid_header}, NoPaymentsConfig},
+		ar_p3:handle_call({request, 
 			signed_request(<<"GET">>, <<"/price/1000">>, PrivKey,
 				#{
 					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
 					?P3_ADDRESS_HEADER => EncodedAddress
-				}),
-				Account, ServiceConfig
-			}, [], NoPaymentsConfig),
+				})}, [], NoPaymentsConfig),
 		"Empty payments config"),
 
 	MismatchedPaymentsConfig = Config#p3_config{ payments = #{
@@ -401,7 +398,7 @@ test_balance_endpoint() ->
 		get_balance(crypto:strong_rand_bytes(32), <<"arweave">>, <<"AR">>)),
 
 	TXID = crypto:strong_rand_bytes(32),
-	{ok, {TXID, _}} = ar_p3_db:post_deposit(Address, 10, TXID),
+	{ok, _} = ar_p3_db:post_deposit(Address, 10, TXID),
 	?assertEqual(
 		{<<"200">>, <<"10">>},
 		get_balance(Address, <<"arweave">>, <<"AR">>)),
