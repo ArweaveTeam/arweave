@@ -21,8 +21,10 @@
 allow_request(Req) ->
 	gen_server:call(?MODULE, {allow_request, Req}).
 
-reverse_charge({Address, Id}) ->
-	gen_server:call(?MODULE, {reverse_charge, Address, Id}).
+reverse_charge(Transaction) when
+		is_record(Transaction, p3_transaction),
+		Transaction#p3_transaction.amount =< 0 ->
+	gen_server:call(?MODULE, {reverse_charge, Transaction}).
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -44,8 +46,8 @@ init([]) ->
 
 handle_call({allow_request, Req}, _From, State) ->
 	case handle_request(Req, State) of
-		{ok, _} ->
-			{reply, {true, ok}, State};
+		{ok, P3Data} ->
+			{reply, {true, P3Data}, State};
 		{error, insufficient_funds} ->
 			{reply, {false, insufficient_funds}, State};
 		{error, stale_mod_seq} ->
@@ -54,8 +56,14 @@ handle_call({allow_request, Req}, _From, State) ->
 			{reply, {false, invalid_header}, State}
 	end;
 
-handle_call({reverse_charge, Address, Id}, _From, State) ->
-	{reply, ar_p3_db:reverse_transaction(Address, Id), State};
+handle_call({reverse_charge, Transaction}, _From, State) ->
+	{
+		reply,
+	 	ar_p3_db:reverse_transaction(
+			Transaction#p3_transaction.address, 
+			Transaction#p3_transaction.id),
+		State
+	}; 
 
 handle_call({get_balance, Address, Asset}, _From, State) ->
 	{reply, ar_p3_db:get_balance(Address, Asset), State};

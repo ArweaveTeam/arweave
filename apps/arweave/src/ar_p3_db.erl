@@ -247,7 +247,7 @@ post_transaction(Account, Id, Amount, Description)
 		not_found ->
 			Transaction = #p3_transaction{
 				id = Id,
-				account = Address,
+				address = Address,
 				amount = Amount,
 				description = Description,
 				timestamp = os:system_time(microsecond)

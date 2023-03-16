@@ -49,7 +49,7 @@
 
 -record(p3_transaction, {
 	id,
-	account,
+	address,
 	amount,
 	description,
 	timestamp
