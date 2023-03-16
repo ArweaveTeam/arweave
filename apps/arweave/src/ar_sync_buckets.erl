@@ -107,7 +107,9 @@ deserialize(SerializedBuckets) ->
 				Map
 			)}};
 		{'EXIT', Reason} ->
-			{error, Reason}
+			{error, Reason};
+		_ ->
+			{error, invalid_format}
 	end.
 
 %% @doc Apply the given function of two arguments (Bucket, Share) to each
