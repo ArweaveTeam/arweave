@@ -367,7 +367,7 @@ init("default" = StoreID) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
-	[ok, ok] = ar_events:subscribe([node_state, chunk]),
+	[ok, ok, ok] = ar_events:subscribe([node_state, chunk, disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
 	move_data_root_index(State),
@@ -433,7 +433,7 @@ init("default" = StoreID) ->
 init(StoreID) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe([node_state, chunk]),
+	[ok, ok, ok] = ar_events:subscribe([node_state, chunk, disksup]),
 	State = init_kv(StoreID),
 	SkipIntervalsTable = ets:new(sync_record_type, [ordered_set, public]),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
@@ -581,100 +581,29 @@ handle_cast({get_ranges, [{Start, End} | Ranges], OriginStoreID, SkipSmall}, Sta
 		when Start >= End ->
 	gen_server:cast(self(), {get_ranges, Ranges, OriginStoreID, SkipSmall}),
 	{noreply, State};
-handle_cast({get_ranges, [{Start, End} | Ranges], OriginStoreID, SkipSmall} = Cast, State) ->
-	#sync_data_state{ store_id = StoreID, chunks_index = ChunksIndex,
-			chunk_data_db = ChunkDataDB } = State,
+handle_cast({get_ranges, Ranges, OriginStoreID, SkipSmall} = Cast, State) ->
 	case is_chunk_cache_full() of
 		true ->
 			ar_util:cast_after(200, self(), Cast);
 		false ->
-			case get_chunk_by_byte(ChunksIndex, Start + 1) of
-				{error, invalid_iterator} ->
-					%% get_chunk_by_byte looks for a key with the same prefix or the next
-					%% prefix. Therefore, if there is no such key, it does not make sense to
-					%% look for any key smaller than the prefix + 2 in the next iteration.
-					PrefixSpaceSize = trunc(math:pow(2,
-							?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
-					Start2 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
-					gen_server:cast(self(), {get_ranges, [{Start2, End} | Ranges],
-							OriginStoreID, SkipSmall});
-				{error, Reason} ->
-					?LOG_ERROR([{event, failed_to_query_chunk_metadata},
-							{offset, Start + 1}, {reason, io_lib:format("~p", [Reason])}]);
-				{ok, << Offset:?OFFSET_KEY_BITSIZE >>, _} when Offset > End ->
-					gen_server:cast(self(), {get_ranges, Ranges, OriginStoreID, SkipSmall});
-				{ok, Key, Metadata} ->
-					<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
-					{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset,
-							ChunkSize} = binary_to_term(Metadata),
-					Skip = SkipSmall andalso AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
-							andalso ChunkSize < ?DATA_CHUNK_SIZE,
-					ReadChunk =
-						case Skip of
-							true ->
-								skip;
-							false ->
-								read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey, StoreID)
-						end,
-					case ReadChunk of
-						skip ->
-							gen_server:cast(self(), {get_ranges,
-									[{Start + ChunkSize, End} | Ranges], OriginStoreID,
-									SkipSmall});
-						not_found ->
-							invalidate_bad_data_record(Start, AbsoluteOffset, ChunksIndex,
-									StoreID, 1),
-							gen_server:cast(self(), {get_ranges,
-									[{Start + ChunkSize, End} | Ranges], OriginStoreID,
-									SkipSmall});
-						{error, Error} ->
-							?LOG_ERROR([{event, failed_to_read_chunk},
-									{absolute_end_offset, AbsoluteOffset},
-									{chunk_data_key, ar_util:encode(ChunkDataKey)},
-									{reason, io_lib:format("~p", [Error])}]),
-							gen_server:cast(self(), {get_ranges,
-									[{Start + ChunkSize, End} | Ranges], OriginStoreID,
-									SkipSmall});
-						{ok, {Chunk, DataPath}} ->
-							case ar_sync_record:is_recorded(AbsoluteOffset, ?MODULE,
-									StoreID) of
-								{true, Packing} ->
-									increment_chunk_cache_size(),
-									?LOG_DEBUG([{event, copying_chunk},
-											{origin_store_id, StoreID},
-											{target_store_id, OriginStoreID},
-											{absolute_end_offset, AbsoluteOffset}]),
-									UnpackedChunk =
-										case Packing of
-											unpacked ->
-												Chunk;
-											_ ->
-												none
-										end,
-									Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
-											Packing, RelativeOffset, ChunkSize, Chunk,
-											UnpackedChunk, StoreID, ChunkDataKey},
-									gen_server:cast(list_to_atom("ar_data_sync_"
-											++ OriginStoreID), {pack_and_store_chunk, Args}),
-									gen_server:cast(self(), {get_ranges,
-											[{Start + ChunkSize, End} | Ranges],
-											OriginStoreID, SkipSmall});
-								Reply ->
-									?LOG_ERROR([{event, chunk_record_not_found},
-											{absolute_end_offset, AbsoluteOffset},
-											{ar_sync_record_reply,
-													io_lib:format("~p", [Reply])}]),
-									gen_server:cast(self(), {get_ranges,
-											[{Start + ChunkSize, End} | Ranges],
-											OriginStoreID, SkipSmall})
-							end
-					end
+			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, OriginStoreID}) of
+				[{_, false}] ->
+					ar_util:cast_after(30000, self(), Cast);
+				_ ->
+					get_ranges(Ranges, OriginStoreID, SkipSmall, State)
 			end
 	end,
 	{noreply, State};
 
-handle_cast({pack_and_store_chunk, Args}, State) ->
-	pack_and_store_chunk(Args, State);
+handle_cast({pack_and_store_chunk, Args} = Cast,
+			#sync_data_state{ store_id = StoreID } = State) ->
+	case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+		[{_, false}] ->
+			ar_util:cast_after(30000, self(), Cast),
+			{noreply, State};
+		_ ->
+			pack_and_store_chunk(Args, State)
+	end;
 
 %% Pick a leftmost unsynced interval from the range configured for this process (skip
 %% the intervals we failed to find recently, if any), compute the intersection with
@@ -687,20 +616,25 @@ handle_cast(collect_peer_intervals, State) ->
 		false ->
 			ar_util:cast_after(1000, self(), collect_peer_intervals);
 		true ->
-			case gb_sets:size(Q) > ?SYNC_INTERVALS_MAX_QUEUE_SIZE
-					orelse Start >= DiskPoolThreshold of
-				true ->
-					ar_util:cast_after(500, self(), collect_peer_intervals);
-				false ->
-					Self = self(),
-					monitor(process, spawn(
-						fun() ->
-							find_peer_intervals(Start, min(End, DiskPoolThreshold),
-									StoreID, SkipIntervalsTable, Self),
-							ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, Self,
-									collect_peer_intervals)
-						end
-					))
+			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+				[{_, false}] ->
+					ar_util:cast_after(30000, self(), collect_peer_intervals);
+				_ ->
+					case gb_sets:size(Q) > ?SYNC_INTERVALS_MAX_QUEUE_SIZE
+							orelse Start >= DiskPoolThreshold of
+						true ->
+							ar_util:cast_after(500, self(), collect_peer_intervals);
+						false ->
+							Self = self(),
+							monitor(process, spawn(
+								fun() ->
+									find_peer_intervals(Start, min(End, DiskPoolThreshold),
+											StoreID, SkipIntervalsTable, Self),
+									ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS,
+											Self, collect_peer_intervals)
+								end
+							))
+					end
 			end
 	end,
 	{noreply, State};
@@ -749,25 +683,31 @@ handle_cast({re_include_interval_for_syncing, Left, Right}, State) ->
 
 handle_cast(sync_interval, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
-			sync_intervals_queue_intervals = QIntervals } = State,
+			sync_intervals_queue_intervals = QIntervals, store_id = StoreID } = State,
 	case gb_sets:is_empty(Q) of
 		true ->
 			ar_util:cast_after(500, self(), sync_interval),
 			{noreply, State};
 		false ->
-			{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-			End2 = Start + 10 * ?DATA_CHUNK_SIZE,
-			{Q3, I2, End3} =
-				case End > End2 of
-					true ->
-						{gb_sets:add_element({End2, End, Peer}, Q2),
-								ar_intervals:delete(QIntervals, End2, Start), End2};
-					false ->
-						{Q2, ar_intervals:delete(QIntervals, End, Start), End}
-				end,
-			gen_server:cast(self(), {sync_chunk, [{Start, End3, Peer}], loop}),
-			{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
-					sync_intervals_queue_intervals = I2 }}
+			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+				[{_, false}] ->
+					ar_util:cast_after(30000, self(), sync_interval),
+					{noreply, State};
+				_ ->
+					{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
+					End2 = Start + 10 * ?DATA_CHUNK_SIZE,
+					{Q3, I2, End3} =
+						case End > End2 of
+							true ->
+								{gb_sets:add_element({End2, End, Peer}, Q2),
+										ar_intervals:delete(QIntervals, End2, Start), End2};
+							false ->
+								{Q2, ar_intervals:delete(QIntervals, End, Start), End}
+						end,
+					gen_server:cast(self(), {sync_chunk, [{Start, End3, Peer}], loop}),
+					{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
+							sync_intervals_queue_intervals = I2 }}
+			end
 	end;
 
 handle_cast({sync_chunk, [{Byte, RightBound, _} | SubIntervals], Loop}, State)
@@ -780,12 +720,32 @@ handle_cast({sync_chunk, [], loop}, State) ->
 handle_cast({sync_chunk, [], do_not_loop}, State) ->
 	{noreply, State};
 handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop} = Cast, State) ->
-	#sync_data_state{ skip_intervals_table = TID } = State,
-	case is_chunk_cache_full() of
-		true ->
-			ar_util:cast_after(1000, self(), Cast),
-			{noreply, State};
+	#sync_data_state{ skip_intervals_table = TID, store_id = StoreID } = State,
+	IsChunkCacheFull =
+		case is_chunk_cache_full() of
+			true ->
+				ar_util:cast_after(1000, self(), Cast),
+				true;
+			false ->
+				false
+		end,
+	IsDiskSpaceSufficient =
+		case IsChunkCacheFull of
+			false ->
+				case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+					[{_, false}] ->
+						ar_util:cast_after(30000, self(), Cast),
+						false;
+					_ ->
+						true
+				end;
+			true ->
+				false
+		end,
+	case IsDiskSpaceSufficient of
 		false ->
+			{noreply, State};
+		true ->
 			Byte2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Byte + 1),
 			case Byte2 > Byte + 1 of
 				true ->
@@ -1181,6 +1141,68 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({event, chunk, _}, State) ->
+	{noreply, State};
+
+handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, _Bytes}},
+		#sync_data_state{ store_id = StoreID } = State) ->
+	case Percentage < 1 of
+		true ->
+			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+				[{_, false}] ->
+					ok;
+				_ ->
+					log_insufficient_disk_space(StoreID)
+			end,
+			ets:insert(ar_data_sync_state, {{is_disk_space_sufficient, StoreID}, false});
+		false ->
+			case Percentage > 5 of
+				true ->
+					case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+						[{_, false}] ->
+							log_sufficient_disk_space(StoreID);
+						_ ->
+							ok
+					end,
+					ets:insert(ar_data_sync_state,
+							{{is_disk_space_sufficient, StoreID}, true});
+				false ->
+					ok
+			end
+	end,
+	{noreply, State};
+handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, Bytes}},
+		#sync_data_state{ store_id = StoreID } = State) ->
+	{ok, Config} = application:get_env(arweave, config),
+	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
+	DiskCacheSize = Config#config.disk_cache_size * 1048576,
+	BufferSize = 10_000_000_000,
+	case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of
+		true ->
+			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+				[{_, false}] ->
+					ok;
+				_ ->
+					log_insufficient_disk_space(StoreID)
+			end,
+			ets:insert(ar_data_sync_state, {{is_disk_space_sufficient, StoreID}, false});
+		false ->
+			case Bytes > DiskPoolSize + DiskCacheSize + BufferSize of
+				true ->
+					case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+						[{_, false}] ->
+							log_sufficient_disk_space(StoreID);
+						_ ->
+							ok
+					end,
+					ets:insert(ar_data_sync_state,
+							{{is_disk_space_sufficient, StoreID}, true});
+				false ->
+					ok
+			end
+	end,
+	{noreply, State};
+
+handle_info({event, disksup, _}, State) ->
 	{noreply, State};
 
 handle_info({'EXIT', _PID, normal}, State) ->
@@ -2145,6 +2167,92 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 			end
 	end.
 
+get_ranges([{Start, End} | Ranges], OriginStoreID, SkipSmall, State) ->
+	#sync_data_state{ store_id = StoreID, chunks_index = ChunksIndex,
+			chunk_data_db = ChunkDataDB } = State,
+	case get_chunk_by_byte(ChunksIndex, Start + 1) of
+		{error, invalid_iterator} ->
+			%% get_chunk_by_byte looks for a key with the same prefix or the next
+			%% prefix. Therefore, if there is no such key, it does not make sense to
+			%% look for any key smaller than the prefix + 2 in the next iteration.
+			PrefixSpaceSize = trunc(math:pow(2,
+					?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
+			Start2 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
+			gen_server:cast(self(), {get_ranges, [{Start2, End} | Ranges], OriginStoreID,
+					SkipSmall});
+		{error, Reason} ->
+			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
+					{reason, io_lib:format("~p", [Reason])}]);
+		{ok, << Offset:?OFFSET_KEY_BITSIZE >>, _} when Offset > End ->
+			gen_server:cast(self(), {get_ranges, Ranges, OriginStoreID, SkipSmall});
+		{ok, Key, Metadata} ->
+			<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
+			{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset,
+					ChunkSize} = binary_to_term(Metadata),
+			Skip = SkipSmall andalso AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
+					andalso ChunkSize < ?DATA_CHUNK_SIZE,
+			ReadChunk =
+				case Skip of
+					true ->
+						skip;
+					false ->
+						read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey, StoreID)
+				end,
+			case ReadChunk of
+				skip ->
+					gen_server:cast(self(), {get_ranges,
+							[{Start + ChunkSize, End} | Ranges], OriginStoreID,
+							SkipSmall});
+				not_found ->
+					invalidate_bad_data_record(Start, AbsoluteOffset, ChunksIndex,
+							StoreID, 1),
+					gen_server:cast(self(), {get_ranges,
+							[{Start + ChunkSize, End} | Ranges], OriginStoreID,
+							SkipSmall});
+				{error, Error} ->
+					?LOG_ERROR([{event, failed_to_read_chunk},
+							{absolute_end_offset, AbsoluteOffset},
+							{chunk_data_key, ar_util:encode(ChunkDataKey)},
+							{reason, io_lib:format("~p", [Error])}]),
+					gen_server:cast(self(), {get_ranges,
+							[{Start + ChunkSize, End} | Ranges], OriginStoreID,
+							SkipSmall});
+				{ok, {Chunk, DataPath}} ->
+					case ar_sync_record:is_recorded(AbsoluteOffset, ?MODULE,
+							StoreID) of
+						{true, Packing} ->
+							increment_chunk_cache_size(),
+							?LOG_DEBUG([{event, copying_chunk},
+									{origin_store_id, StoreID},
+									{target_store_id, OriginStoreID},
+									{absolute_end_offset, AbsoluteOffset}]),
+							UnpackedChunk =
+								case Packing of
+									unpacked ->
+										Chunk;
+									_ ->
+										none
+								end,
+							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
+									Packing, RelativeOffset, ChunkSize, Chunk,
+									UnpackedChunk, StoreID, ChunkDataKey},
+							gen_server:cast(list_to_atom("ar_data_sync_"
+									++ OriginStoreID), {pack_and_store_chunk, Args}),
+							gen_server:cast(self(), {get_ranges,
+									[{Start + ChunkSize, End} | Ranges],
+									OriginStoreID, SkipSmall});
+						Reply ->
+							?LOG_ERROR([{event, chunk_record_not_found},
+									{absolute_end_offset, AbsoluteOffset},
+									{ar_sync_record_reply,
+											io_lib:format("~p", [Reply])}]),
+							gen_server:cast(self(), {get_ranges,
+									[{Start + ChunkSize, End} | Ranges],
+									OriginStoreID, SkipSmall})
+					end
+			end
+	end.
+
 request_default_storage_2_5_repacking(RightBound) ->
 	gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking, 0,
 			RightBound}).
@@ -3078,6 +3186,17 @@ validate_chunk_id_size(Chunk, ChunkID, ChunkSize) ->
 		true ->
 			ChunkSize == byte_size(Chunk)
 	end.
+
+log_sufficient_disk_space(StoreID) ->
+	ar:console("~nThe node has detected available disk space and resumed syncing data "
+			"into the storage module ~s.~n", [StoreID]),
+	?LOG_INFO([{event, storage_module_resumed_syncing}, {storage_module, StoreID}]).
+
+log_insufficient_disk_space(StoreID) ->
+	ar:console("~nThe node has stopped syncing data into the storage module ~s due to "
+			"the insufficient disk space.~n", [StoreID]),
+	?LOG_INFO([{event, storage_module_stopped_syncing},
+			{reason, insufficient_disk_space}, {storage_module, StoreID}]).
 
 data_root_index_iterator_v2(DataRootKey, TXStartOffset, DataRootIndex) ->
 	{DataRootKey, TXStartOffset, TXStartOffset, DataRootIndex, 1}.

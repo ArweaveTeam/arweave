@@ -48,14 +48,9 @@ test_syncs_headers() ->
 		end,
 		lists:reverse(lists:seq(0, ?MAX_TX_ANCHOR_DEPTH + 5))
 	),
-	%% Set disk_space to 0 to make the node use the disk cache.
-	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(
-		arweave,
-		config,
-		Config#config{ disk_space = 0 }
-	),
-	timer:sleep(Config#config.disk_space_check_frequency),
+	%% Throw the event to simulate running out of disk space.
+	ar_disksup:pause(),
+	ar_events:send(disksup, {remaining_disk_space, "default", true, 0, 0}),
 	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
 	NoSpaceTX = sign_v1_tx(master, Wallet,
 		#{ data => random_v1_data(10 * 1024), last_tx => get_tx_anchor() }),
@@ -94,7 +89,7 @@ test_syncs_headers() ->
 	?assertMatch(#block{}, LatestB),
 	?assertMatch(#tx{}, ar_storage:read_tx(lists:nth(1, LatestB#block.txs))),
 	?assertMatch({ok, _}, ar_storage:read_wallet_list(LatestB#block.wallet_list)),
-	application:set_env(arweave, config, Config).
+	ar_disksup:resume().
 
 post_random_blocks(Wallet, TargetHeight, B0) ->
 	lists:foldl(

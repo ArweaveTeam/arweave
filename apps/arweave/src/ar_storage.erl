@@ -7,7 +7,7 @@
 		read_wallet_list/1, write_wallet_list/2,
 		write_block_index/1, write_block_index_and_reward_history/2,
 		read_block_index/0, read_block_index_and_reward_history/0,
-		delete_blacklisted_tx/1, get_sufficient_space_for_headers/0, lookup_tx_filename/1,
+		delete_blacklisted_tx/1, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
 		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
 		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1,
@@ -284,28 +284,6 @@ read_account2(Addr, RootHash, Pos, Left, _Right, DataDir, L, _RightFileFound) ->
 					{0, <<>>}
 			end
 	end.
-
-%% @doc Return available disk space, in bytes.
-get_sufficient_space_for_headers() ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	{_, TotalKByteSize, AvailableKByteSize} = get_disk_data(DataDir),
-	FreeDiskSpace =
-		case Config#config.disk_space of
-			undefined ->
-				AvailableKByteSize * 1024;
-			ConfiguredMaxUsedSize ->
-				UsedKByteSize = TotalKByteSize - AvailableKByteSize,
-				max(0, ConfiguredMaxUsedSize - UsedKByteSize * 1024)
-		end,
-	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
-	DiskCacheSize = Config#config.disk_cache_size * 1048576,
-	[{_, SameDriveStorageModulesTotalSize}] = ets:lookup(?MODULE,
-			same_disk_storage_modules_total_size),
-	BufferSize = 5000000000,
-	ReservedSpaceSize = max(BufferSize,
-			SameDriveStorageModulesTotalSize + DiskPoolSize + DiskCacheSize + BufferSize),
-	max(0, FreeDiskSpace - ReservedSpaceSize).
 
 lookup_block_filename(H) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -1001,49 +979,6 @@ parse_block_binary(Bin) ->
 			?LOG_WARNING([{event, error_parsing_block_bin},
 					{error, io_lib:format("~p", [Error])}]),
 			unavailable
-	end.
-
-get_disk_data(Dir) ->
-	[DiskData | _] = select_drive(ar_disksup:get_disk_data(), filename:absname(Dir)),
-	DiskData.
-
-select_drive(Disks, []) ->
-	CWD = "/",
-	case
-		Drives = lists:filter(
-			fun({Name, _, _}) ->
-				case Name == CWD of
-					false -> false;
-					true -> true
-				end
-			end,
-			Disks
-		)
-	of
-		[] -> false;
-		Drives ->
-			Drives
-	end;
-select_drive(Disks, CWD) ->
-	try
-		case
-			Drives = lists:filter(
-				fun({Name, _, _}) ->
-					try
-						case string:find(Name, CWD) of
-							nomatch -> false;
-							_ -> true
-						end
-					catch _:_ -> false
-					end
-				end,
-				Disks
-			)
-		of
-			[] -> select_drive(Disks, hd(string:split(CWD, "/", trailing)));
-			Drives -> Drives
-		end
-	catch _:_ -> select_drive(Disks, [])
 	end.
 
 filepath(PathComponents) ->
