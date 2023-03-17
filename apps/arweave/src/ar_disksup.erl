@@ -1,9 +1,9 @@
 %% Erlang OTP disksup copyright note:
 %%
 %% %CopyrightBegin%
-%% 
+%%
 %% Copyright Ericsson AB 1996-2018. All Rights Reserved.
-%% 
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -15,7 +15,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 
@@ -25,23 +25,19 @@
 -module(ar_disksup).
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	get_disk_space_check_frequency/0,
-	get_disk_data/0
-]).
+-export([start_link/0, get_disk_space_check_frequency/0, get_disk_data/0, pause/0, resume/0]).
 
--export([
-	init/1,
-	handle_call/3,
-	handle_cast/2,
-	handle_info/2,
-	terminate/2
-]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar_config.hrl").
 
--record(state, {timeout, os, diskdata = [], port}).
+-record(state, {
+	timeout,
+	os,
+	diskdata = [],
+	port,
+	paused = false
+}).
 
 %%%===================================================================
 %%% Public interface.
@@ -56,6 +52,12 @@ get_disk_space_check_frequency() ->
 
 get_disk_data() ->
 	gen_server:call(?MODULE, get_disk_data, infinity).
+
+pause() ->
+	gen_server:call(?MODULE, pause, infinity).
+
+resume() ->
+	gen_server:call(?MODULE, resume, infinity).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -88,15 +90,26 @@ init([]) ->
 	{ok, #state{ port = Port, os = OS, timeout = get_disk_space_check_frequency() }}.
 
 handle_call(get_disk_data, _From, State) ->
-	{reply, State#state.diskdata, State}.
+	{reply, State#state.diskdata, State};
+
+handle_call(pause, _From, State) ->
+	{reply, ok, State#state{ paused = true }};
+
+handle_call(resume, _From, State) ->
+	{reply, ok, State#state{ paused = false }}.
 
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 
+handle_info(timeout, #state{ paused = true } = State) ->
+	{ok, _Tref} = timer:send_after(State#state.timeout, timeout),
+	{noreply, State};
 handle_info(timeout, State) ->
 	NewDiskData = check_disk_space(State#state.os, State#state.port),
+	ensure_storage_modules_paths(),
+	broadcast_disk_free(State#state.os, State#state.port),
 	{ok, _Tref} = timer:send_after(State#state.timeout, timeout),
-	{noreply, State#state{diskdata = NewDiskData}};
+	{noreply, State#state{ diskdata = NewDiskData }};
 
 handle_info({'EXIT', _Port, Reason}, State) ->
 	{stop, {port_died, Reason}, State#state{ port = not_used }};
@@ -201,6 +214,34 @@ check_disk_space({unix, sunos4}, Port) ->
 check_disk_space({unix, darwin}, Port) ->
 	Result = my_cmd("/bin/df -i -k -t ufs,hfs,apfs", Port),
 	check_disks_susv3(skip_to_eol(Result)).
+
+%% doc: iterates trough storage modules
+broadcast_disk_free({unix, _}, Port) ->
+	Df = find_cmd("df"),
+	[DataDirPathData | StorageModulePaths] = get_storage_modules_paths(),
+	{DataDirID, DataDirPath} = DataDirPathData,
+	DataDirDfResult = my_cmd(Df ++ " -Pa -B1 " ++ DataDirPath ++ "/", Port),
+	[DataDirFs, DataDirBytes, DataDirPercentage] = parse_df_2(DataDirDfResult),
+	ar_events:send(disksup, {
+		remaining_disk_space,
+			DataDirID,
+			true,
+			DataDirPercentage,
+			DataDirBytes
+	}),
+	HandleSmPath = fun({StoreID, StorageModulePath}) ->
+		Result = my_cmd(Df ++ " -Pa -B1 " ++ StorageModulePath ++ "/", Port),
+		[StorageModuleFs, Bytes, Percentage] = parse_df_2(Result),
+		IsDataDirDrive = string:equal(DataDirFs, StorageModuleFs),
+		ar_events:send(disksup, {
+			remaining_disk_space,
+			StoreID, IsDataDirDrive, Percentage, Bytes
+		})
+	end,
+	lists:foreach(HandleSmPath, StorageModulePaths);
+broadcast_disk_free(_, _) ->
+	ar:console("~nWARNING: disk space checks are not supported on your platform. The node "
+			"may stop working if it runs out of space.~n", []).
 
 %% This code works for Linux and FreeBSD as well.
 check_disks_solaris("") ->
@@ -331,3 +372,30 @@ skip_to_eol([$\n | T]) ->
 	T;
 skip_to_eol([_ | T]) ->
 	skip_to_eol(T).
+
+get_storage_modules_paths() ->
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
+	SMDirs = lists:map(
+		fun(StorageModule) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			{StoreID, filename:join([DataDir, "storage_modules", StoreID])}
+		end,
+		Config#config.storage_modules
+	),
+	[{"default", DataDir} | SMDirs].
+
+ensure_storage_modules_paths() ->
+	StoragePaths = get_storage_modules_paths(),
+	EnsurePaths = fun({_, StorageModulePath}) ->
+		filelib:ensure_dir(StorageModulePath ++ "/")
+	end,
+	lists:foreach(EnsurePaths, StoragePaths).
+
+parse_df_2(Input) ->
+	[_, DfInfo] = string:tokens(Input, "\n"),
+	[Filesystem, Total, _, Available, _, _] = string:tokens(DfInfo, " \t"),
+	BytesAvailable = erlang:list_to_integer(Available),
+	TotalCapacity = erlang:list_to_integer(Total),
+	PercentageAvailable = BytesAvailable / TotalCapacity,
+	[Filesystem, BytesAvailable, PercentageAvailable].

@@ -249,13 +249,7 @@ show_help() ->
 											 "If a transaction is in both lists, it is "
 											 "considered whitelisted."},
 			{"transaction_whitelist_url", "An HTTP endpoint serving a transaction whitelist."},
-			{"disk_space (num)",
-				"The maximum amount (in GiB) of the used disk space on the partition "
-				"containing the Arweave data directory (blocks, txs, etc) when "
-				"the miner stops writing header files. The option does NOT apply to "
-				"storage modules - the node always attempts to sync the storage "
-				"module completely. Make sure to place storage modules on disks with the "
-				"sufficient available space."},
+			{"disk_space (num)", "DEPRECATED. Does not take effect anymore."},
 			{"disk_space_check_frequency (num)",
 				io_lib:format(
 					"The frequency in seconds of requesting the information "

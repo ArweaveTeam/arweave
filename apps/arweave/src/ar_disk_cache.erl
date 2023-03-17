@@ -20,7 +20,6 @@
 -define(DISK_CACHE_DIR, "disk_cache").
 -define(DISK_CACHE_BLOCK_DIR, "blocks").
 -define(DISK_CACHE_TX_DIR, "txs").
--define(DISK_CACHE_WALLET_LIST_DIR, "wallet_lists").
 
 %% Internal state definition.
 -record(state, {
@@ -148,10 +147,8 @@ init([]) ->
 	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
 	BlockPath = filename:join(Path, ?DISK_CACHE_BLOCK_DIR),
 	TXPath = filename:join(Path, ?DISK_CACHE_TX_DIR),
-	WalletListPath = filename:join(Path, ?DISK_CACHE_WALLET_LIST_DIR),
 	ok = filelib:ensure_dir(BlockPath ++ "/"),
 	ok = filelib:ensure_dir(TXPath ++ "/"),
-	ok = filelib:ensure_dir(WalletListPath ++ "/"),
 	Size =
 		filelib:fold_files(
 			Path,
@@ -191,10 +188,8 @@ handle_call(reset, _From, State) ->
 	os:cmd("rm -r " ++ Path ++ "/*"),
 	BlockPath = filename:join(Path, ?DISK_CACHE_BLOCK_DIR),
 	TXPath = filename:join(Path, ?DISK_CACHE_TX_DIR),
-	WalletListPath = filename:join(Path, ?DISK_CACHE_WALLET_LIST_DIR),
 	ok = filelib:ensure_dir(BlockPath ++ "/"),
 	ok = filelib:ensure_dir(TXPath ++ "/"),
-	ok = filelib:ensure_dir(WalletListPath ++ "/"),
 	{reply, ok, State#state{ size = 0 }};
 
 handle_call(Request, _From, State) ->

@@ -22,7 +22,7 @@
 	sync_record,
 	retry_queue,
 	retry_record,
-	sync_disk_space
+	is_disk_space_sufficient
 }).
 
 %%%===================================================================
@@ -60,7 +60,7 @@ remove_block(Height) ->
 init([]) ->
 	?LOG_INFO([{event, ar_header_sync_start}]),
 	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(tx),
+	[ok, ok] = ar_events:subscribe([tx, disksup]),
 	{ok, Config} = application:get_env(arweave, config),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_header_sync_db"), ?MODULE),
 	{SyncRecord, Height, CurrentBI} =
@@ -70,8 +70,6 @@ init([]) ->
 			{ok, StoredState} ->
 				StoredState
 		end,
-	gen_server:cast(?MODULE, check_space_alarm),
-	gen_server:cast(?MODULE, check_space),
 	lists:foreach(
 		fun(_) ->
 			gen_server:cast(?MODULE, process_item)
@@ -87,7 +85,7 @@ init([]) ->
 			block_index = CurrentBI,
 			retry_queue = queue:new(),
 			retry_record = ar_intervals:new(),
-			sync_disk_space = have_free_space()
+			is_disk_space_sufficient = true
 		}}.
 
 handle_cast({join, Height, RecentBI, Blocks}, State) ->
@@ -154,7 +152,7 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 	end;
 
 handle_cast({add_historical_block, _, _, _, _, _},
-		#state{ sync_disk_space = false } = State) ->
+		#state{ is_disk_space_sufficient = false } = State) ->
 	gen_server:cast(?MODULE, process_item),
 	{noreply, State};
 handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
@@ -171,30 +169,7 @@ handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
 handle_cast({add_block, B}, State) ->
 	{noreply, element(2, add_block(B, State))};
 
-handle_cast(check_space_alarm, State) ->
-	case have_free_space() of
-		false ->
-			Msg = "The node has stopped syncing headers. Add more disk space "
-					"if you wish to store more headers.~n",
-			ar:console(Msg, []),
-			?LOG_INFO([{event, ar_header_sync_stopped_syncing},
-					{reason, little_disk_space_left}]);
-		true ->
-			ok
-	end,
-	ar_util:cast_after(?DISK_SPACE_WARNING_FREQUENCY, ?MODULE, check_space_alarm),
-	{noreply, State};
-
-handle_cast(check_space, State) ->
-	ar_util:cast_after(ar_disksup:get_disk_space_check_frequency(), ?MODULE, check_space),
-	case have_free_space() of
-		true ->
-			{noreply, State#state{ sync_disk_space = true }};
-		false ->
-			{noreply, State#state{ sync_disk_space = false }}
-	end;
-
-handle_cast(process_item, #state{ sync_disk_space = false } = State) ->
+handle_cast(process_item, #state{ is_disk_space_sufficient = false } = State) ->
 	ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, ?MODULE, process_item),
 	{noreply, State};
 handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecord } = State) ->
@@ -290,6 +265,50 @@ handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
 handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
+handle_info({event, disksup, {remaining_disk_space, "default", true, _Percentage, Bytes}},
+		State) ->
+	{ok, Config} = application:get_env(arweave, config),
+	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
+	DiskCacheSize = Config#config.disk_cache_size * 1048576,
+	BufferSize = 10_000_000_000,
+	case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of
+		true ->
+			case State#state.is_disk_space_sufficient of
+				true ->
+					Msg = "~nThe node has stopped syncing headers. Add more disk space "
+							"if you wish to store more block and transaction headers. "
+							"The node will keep recording account tree updates and "
+							"transaction confirmations - they do not take up a lot of "
+							"space but you need to make sure the remaining disk space "
+							"stays available for the node.~n~n"
+							"The mining performance is not affected.~n",
+					ar:console(Msg, []),
+					?LOG_INFO([{event, ar_header_sync_stopped_syncing},
+							{reason, insufficient_disk_space}]);
+				false ->
+					ok
+			end,
+			{noreply, State#state{ is_disk_space_sufficient = false }};
+		false ->
+			case Bytes > DiskPoolSize + DiskCacheSize + BufferSize of
+				true ->
+					case State#state.is_disk_space_sufficient of
+						true ->
+							ok;
+						false ->
+							Msg = "The available disk space has been detected, "
+									"resuming header syncing.~n",
+							ar:console(Msg, []),
+							?LOG_INFO([{event, ar_header_sync_resumed_syncing}])
+					end,
+					{noreply, State#state{ is_disk_space_sufficient = true }};
+				false ->
+					{noreply, State}
+			end
+	end;
+handle_info({event, disksup, _}, State) ->
+	{noreply, State};
+
 handle_info({'DOWN', _,  process, _, normal}, State) ->
 	{noreply, State};
 handle_info({'DOWN', _,  process, _, noproc}, State) ->
@@ -346,7 +365,7 @@ add_block(B, State) ->
 			add_block2(B, State)
 	end.
 
-add_block2(B, #state{ sync_disk_space = false } = State) ->
+add_block2(B, #state{ is_disk_space_sufficient = false } = State) ->
 	case ar_storage:update_confirmation_index(B) of
 		ok ->
 			case ar_storage:update_reward_history(B) of
@@ -380,9 +399,6 @@ add_block2(B, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = S
 					{height, Height}, {reason, Reason}]),
 			{{error, Reason}, State}
 	end.
-
-have_free_space() ->
-	ar_storage:get_sufficient_space_for_headers() > 0.
 
 %% @doc Return the latest height we have not synced or put in the retry queue yet.
 %% Return 'nothing_to_sync' if everything is either synced or in the retry queue.
