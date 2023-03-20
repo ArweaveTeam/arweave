@@ -276,6 +276,7 @@ handle_info({'DOWN', Ref,  process, _, Reason},
 
 handle_info({event, nonce_limiter, {computed_output, _}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
+	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined}]),
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
@@ -568,6 +569,9 @@ read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutpu
 			ReplicaID, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RecallRangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
+	?LOG_DEBUG([{event, mining_debug_read_recall_range},
+			{found_chunks, length(ChunkOffsets)},
+			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
 	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutput,
 			ReplicaID, From, 0, NonceMax, ChunkOffsets2, SessionRef, CorrelationRef).
@@ -675,10 +679,13 @@ hashing_thread(SessionRef) ->
 	end.
 
 distribute_output(Seed, PartitionUpperBound, Output, Iterator, Distributed, Ref, State) ->
+	distribute_output(Seed, PartitionUpperBound, Output, Iterator, Distributed, Ref, State, 0).
+
+distribute_output(Seed, PartitionUpperBound, Output, Iterator, Distributed, Ref, State, N) ->
 	MaxPartitionNumber = max(0, PartitionUpperBound div ?PARTITION_SIZE - 1),
 	case maps:next(Iterator) of
 		none ->
-			State;
+			{N, State};
 		{{PartitionNumber, ReplicaID, _StoreID}, _Thread, Iterator2}
 				when PartitionNumber =< MaxPartitionNumber,
 					not is_map_key({PartitionNumber, ReplicaID}, Distributed) ->
@@ -689,10 +696,10 @@ distribute_output(Seed, PartitionUpperBound, Output, Iterator, Distributed, Ref,
 			State2 = State#state{ hashing_threads = Threads2 },
 			Distributed2 = maps:put({PartitionNumber, ReplicaID}, sent, Distributed),
 			distribute_output(Seed, PartitionUpperBound, Output, Iterator2, Distributed2, Ref,
-					State2);
+					State2, N + 1);
 		{_Key, _Thread, Iterator2} ->
 			distribute_output(Seed, PartitionUpperBound, Output, Iterator2, Distributed, Ref,
-					State)
+					State, N)
 	end.
 
 get_partition_number_by_offset(Offset) ->
@@ -766,6 +773,7 @@ priority(nonce_limiter_computed_output, StepNumber) ->
 
 handle_task({computed_output, _},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
+	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined}]),
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
@@ -800,7 +808,9 @@ handle_task({computed_output, Args}, State) ->
 	Session3 = Session2#mining_session{ step_number_by_output = Map2 },
 	Ref = Session3#mining_session.ref,
 	Iterator = maps:iterator(IOThreads),
-	State2 = distribute_output(Seed, PartitionUpperBound, Output, Iterator, #{}, Ref, State),
+	{N, State2} = distribute_output(Seed, PartitionUpperBound, Output, Iterator, #{}, Ref,
+			State),
+	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N}]),
 	{noreply, State2#state{ session = Session3 }};
 
 handle_task({io_thread_recall_range_chunk, {H0, PartitionNumber, Nonce, NonceLimiterOutput,
@@ -850,6 +860,7 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 		true ->
 			case maps:get(Output, Map, not_found) of
 				not_found ->
+					?LOG_DEBUG([{event, mining_debug_output_not_found_in_step_map}]),
 					{noreply, State};
 				StepNumber ->
 					Q2 = gb_sets:insert({priority(mining_thread_computed_h0, StepNumber),
@@ -866,6 +877,9 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 			case find_thread(PartitionNumber, ReplicaID, Range1End, RecallRange1Start,
 					Threads) of
 				not_found ->
+					?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
+							{range_start, RecallRange1Start},
+							{range_end, Range1End}]),
 					%% We have a storage module smaller than the partition size which
 					%% partially covers this partition but does not include this range.
 					ok;
