@@ -11,15 +11,21 @@
 -include_lib("eunit/include/eunit.hrl").
 
 execute(Req, Env) ->
-	IpAddr = requesting_ip_addr(Req),
+	IPAddr = requesting_ip_addr(Req),
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(blacklist, Config#config.disable) of
 		true ->
 			{ok, Req, Env};
 		_ ->
-			case increment_ip_addr(IpAddr, Req) of
-				block -> {stop, blacklisted(Req)};
-				pass -> {ok, Req, Env}
+			LocalIPs = [peer_to_ip_addr(Peer) || Peer <- Config#config.local_peers],
+			case lists:member(IPAddr, LocalIPs) of
+				true ->
+					{ok, Req, Env};
+				false ->
+					case increment_ip_addr(IPAddr, Req) of
+						block -> {stop, blacklisted(Req)};
+						pass -> {ok, Req, Env}
+					end
 			end
 	end.
 
@@ -86,38 +92,38 @@ reset() ->
 	true = ets:delete_all_objects(?MODULE),
 	ok.
 
-reset_rate_limit(TableID, IpAddr, Path) ->
+reset_rate_limit(TableID, IPAddr, Path) ->
 	case ets:whereis(?MODULE) of
 		TableID ->
-			ets:delete(?MODULE, {rate_limit, IpAddr, Path});
+			ets:delete(?MODULE, {rate_limit, IPAddr, Path});
 		_ ->
 			table_owner_died
 	end.
 
-increment_ip_addr(IpAddr, Req) ->
+increment_ip_addr(IPAddr, Req) ->
 	case ets:whereis(?MODULE) of 
 		undefined -> pass;
-		_ -> update_ip_addr(IpAddr, Req, 1)
+		_ -> update_ip_addr(IPAddr, Req, 1)
 	end.
 
-decrement_ip_addr(IpAddr, Req) ->
+decrement_ip_addr(IPAddr, Req) ->
 	case ets:whereis(?MODULE) of 
 		undefined -> pass;
-		_ -> update_ip_addr(IpAddr, Req, -1)
+		_ -> update_ip_addr(IPAddr, Req, -1)
 	end.
 
-update_ip_addr(IpAddr, Req, Diff) ->
-	{PathKey, Limit}  = get_key_limit(IpAddr, Req),
+update_ip_addr(IPAddr, Req, Diff) ->
+	{PathKey, Limit}  = get_key_limit(IPAddr, Req),
 	%% Divide by 2 as the throttle period is 30 seconds.
 	RequestLimit = Limit div 2,
-	Key = {rate_limit, IpAddr, PathKey},
+	Key = {rate_limit, IPAddr, PathKey},
 	case ets:update_counter(?MODULE, Key, {2, Diff}, {Key, 0}) of
 		1 ->
 			timer:apply_after(
 				?THROTTLE_PERIOD,
 				?MODULE,
 				reset_rate_limit,
-				[ets:whereis(?MODULE), IpAddr, PathKey]
+				[ets:whereis(?MODULE), IPAddr, PathKey]
 			),
 			pass;
 		Count when Count =< RequestLimit ->
@@ -127,8 +133,8 @@ update_ip_addr(IpAddr, Req, Diff) ->
 	end.
 
 requesting_ip_addr(Req) ->
-	{IpAddr, _} = cowboy_req:peer(Req),
-	IpAddr.
+	{IPAddr, _} = cowboy_req:peer(Req),
+	IPAddr.
 
 peer_to_ip_addr({A, B, C, D, _}) -> {A, B, C, D}.
 

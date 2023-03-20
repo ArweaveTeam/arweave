@@ -118,6 +118,11 @@ show_help() ->
 			{"peer (IP:port)", "Join a network on a peer (or set of peers)."},
 			{"block_gossip_peer (IP:port)", "Optionally specify peer(s) to always"
 					" send blocks to."},
+			{"local_peer (IP:port)", "The local network peer. Local peers do not rate limit "
+					"each other so we recommend you connect all your nodes from the same "
+					"network via this configuration parameter."},
+			{"sync_from_local_peers_only", "If set, the data (not headers) is only synced "
+					"from the local network peers specified via the local_peer parameter."},
 			{"start_from_block_index", "Start the node from the latest stored block index."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
@@ -376,8 +381,18 @@ parse_cli_args(["block_gossip_peer", Peer | Rest],
 			io:format("Peer ~p invalid ~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
+parse_cli_args(["local_peer", Peer | Rest], C = #config{ local_peers = Peers }) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			parse_cli_args(Rest, C#config{ local_peers = [ValidPeer | Peers] });
+		{error, _} ->
+			io:format("Peer ~p is invalid.~n", [Peer]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["sync_from_local_peers_only" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ sync_from_local_peers_only = true });
 parse_cli_args(["transaction_blacklist", File | Rest],
-		C = #config{ transaction_blacklist_files = Files } ) ->
+	C = #config{ transaction_blacklist_files = Files } ) ->
 	parse_cli_args(Rest, C#config{ transaction_blacklist_files = [File | Files] });
 parse_cli_args(["transaction_blacklist_url", URL | Rest],
 		C = #config{ transaction_blacklist_urls = URLs} ) ->

@@ -10,6 +10,7 @@
     "46.101.67.172"
   ],
   "block_gossip_peers": ["159.203.158.108", "150.150.150.150:1983"],
+  "local_peers": ["192.168.2.3", "172.16.10.11:1985"],
   "start_from_block_index": true,
   "mine": true,
   "port": 1985,

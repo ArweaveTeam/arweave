@@ -2253,7 +2253,14 @@ find_subintervals(Left, Right, _StoreID, _TID, _Self) when Left >= Right ->
 find_subintervals(Left, Right, StoreID, TID, Self) ->
 	Bucket = Left div ?NETWORK_DATA_BUCKET_SIZE,
 	LeftBound = Left - Left rem ?NETWORK_DATA_BUCKET_SIZE,
-	Peers = ar_data_discovery:get_bucket_peers(Bucket),
+	{ok, Config} = application:get_env(arweave, config),
+	Peers =
+		case Config#config.sync_from_local_peers_only of
+			true ->
+				Config#config.local_peers;
+			false ->
+				ar_data_discovery:get_bucket_peers(Bucket)
+		end,
 	RightBound = min(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right),
 	UnsyncedIntervals = get_next_unsynced_intervals(Left, RightBound, StoreID),
 	case ar_intervals:is_empty(UnsyncedIntervals) of

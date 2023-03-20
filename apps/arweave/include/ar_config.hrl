@@ -113,6 +113,8 @@
 	mine = false,
 	peers = [],
 	block_gossip_peers = [],
+	local_peers = [],
+	sync_from_local_peers_only = false,
 	data_dir = ".",
 	log_dir = ?LOG_DIR,
 	metrics_dir = ?METRICS_DIR,
