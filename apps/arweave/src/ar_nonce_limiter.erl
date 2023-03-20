@@ -7,7 +7,8 @@
 		get_checkpoints/3, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_entropy_reset_point/2,
-		verify_no_reset/4, compute/2, resolve_remote_server_raw_peers/0]).
+		verify_no_reset/4, compute/2, resolve_remote_server_raw_peers/0,
+		mix_seed/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 

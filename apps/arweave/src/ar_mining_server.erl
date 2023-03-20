@@ -1060,49 +1060,41 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 			start_interval_number = StartIntervalNumber,
 			partition_upper_bound = PartitionUpperBound,
 			step_number_by_output = #{ NonceLimiterOutput := StepNumber } } = Session,
-	case ar_nonce_limiter:get_last_step_checkpoints(StartIntervalNumber, StepNumber,
-			NextSeed) of
-		not_found ->
-			?LOG_WARNING([{event, last_step_checkpoints_not_found},
+	LastStepCheckpoints = ar_nonce_limiter:get_last_step_checkpoints(StartIntervalNumber,
+			StepNumber, NextSeed),
+	case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID, Nonce,
+			PoA1, PoA2, Diff, PartitionUpperBound}) of
+		error ->
+			?LOG_INFO([{event, failed_to_validate_solution},
+					{partition, PartitionNumber},
 					{step_number, StepNumber},
-					{session_start_interval_number, StartIntervalNumber},
-					{next_seed, ar_util:encode(NextSeed)}]),
+					{mining_address, ar_util:encode(ReplicaID)},
+					{recall_byte1, RecallByte1},
+					{recall_byte2, RecallByte2},
+					{solution_h, ar_util:encode(H)},
+					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
 			State;
-		LastStepCheckpoints ->
-			case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID,
-					Nonce, PoA1, PoA2, Diff, PartitionUpperBound}) of
-				error ->
-					?LOG_INFO([{event, failed_to_validate_solution},
-							{partition, PartitionNumber},
-							{step_number, StepNumber},
-							{mining_address, ar_util:encode(ReplicaID)},
-							{recall_byte1, RecallByte1},
-							{recall_byte2, RecallByte2},
-							{solution_h, ar_util:encode(H)},
-							{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-					State;
-				false ->
-					?LOG_INFO([{event, found_invalid_solution}, {partition, PartitionNumber},
-							{step_number, StepNumber},
-							{mining_address, ar_util:encode(ReplicaID)},
-							{recall_byte1, RecallByte1},
-							{recall_byte2, RecallByte2},
-							{solution_h, ar_util:encode(H)},
-							{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-					State;
-				true ->
-					SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
-							NextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
-							RecallByte1, RecallByte2, PoA1, PoA2, Key},
-					?LOG_INFO([{event, found_mining_solution},
-							{partition, PartitionNumber}, {step_number, StepNumber},
-							{mining_address, ar_util:encode(ReplicaID)},
-							{recall_byte1, RecallByte1}, {recall_byte2, RecallByte2},
-							{solution_h, ar_util:encode(H)},
-							{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-					ar_events:send(miner, {found_solution, SolutionArgs}),
-					State
-			end
+		false ->
+			?LOG_INFO([{event, found_invalid_solution}, {partition, PartitionNumber},
+					{step_number, StepNumber},
+					{mining_address, ar_util:encode(ReplicaID)},
+					{recall_byte1, RecallByte1},
+					{recall_byte2, RecallByte2},
+					{solution_h, ar_util:encode(H)},
+					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+			State;
+		true ->
+			SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
+					NextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
+					RecallByte1, RecallByte2, PoA1, PoA2, Key},
+			?LOG_INFO([{event, found_mining_solution},
+					{partition, PartitionNumber}, {step_number, StepNumber},
+					{mining_address, ar_util:encode(ReplicaID)},
+					{recall_byte1, RecallByte1}, {recall_byte2, RecallByte2},
+					{solution_h, ar_util:encode(H)},
+					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+			ar_events:send(miner, {found_solution, SolutionArgs}),
+			State
 	end.
 
 validate_solution(Args) ->

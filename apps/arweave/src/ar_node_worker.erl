@@ -376,7 +376,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 	PassesDiffCheck = binary:decode_unsigned(SolutionH, big) > Diff,
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
-			output = NonceLimiterOutput, last_step_checkpoints = LastStepCheckpoints,
+			output = NonceLimiterOutput,
 			prev_output = TipNonceLimiterInfo#nonce_limiter_info.output },
 	PassesTimelineCheck = PassesDiffCheck andalso
 			ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo, TipNonceLimiterInfo),
@@ -391,13 +391,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block}]),
 				false;
 			true ->
-				case PrevStepNumber == StepNumber of
-					true ->
-						TipNonceLimiterInfo#nonce_limiter_info.checkpoints;
-					false ->
-						ar_nonce_limiter:get_checkpoints(PrevStepNumber, StepNumber,
-								PrevNextSeed)
-				end
+				ar_nonce_limiter:get_checkpoints(PrevStepNumber, StepNumber, PrevNextSeed)
 		end,
 	case HaveCheckpoints of
 		false ->
@@ -411,9 +405,35 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound}
 					= ar_nonce_limiter:get_seed_data(StepNumber, TipNonceLimiterInfo,
 							PrevH, PrevWeaveSize),
+			LastStepCheckpoints2 =
+				case LastStepCheckpoints of
+					not_found ->
+						PrevCheckpointOutput =
+							case Checkpoints of
+								[_, PrevCheckpoint | _] ->
+									PrevCheckpoint;
+								_ ->
+									TipNonceLimiterInfo#nonce_limiter_info.output
+							end,
+						PrevCheckpointOutput2 =
+								case ar_nonce_limiter:get_entropy_reset_point(PrevStepNumber,
+										StepNumber) of
+									StepNumber ->
+										ar_nonce_limiter:mix_seed(PrevCheckpointOutput,
+												PrevNextSeed);
+									_ ->
+										PrevCheckpointOutput
+								end,
+						{ok, NonceLimiterOutput, L} = ar_nonce_limiter:compute(StepNumber,
+								PrevCheckpointOutput2),
+						L;
+					_ ->
+						LastStepCheckpoints
+				end,
 			NonceLimiterInfo2 = NonceLimiterInfo#nonce_limiter_info{ seed = Seed,
 					next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 					next_partition_upper_bound = NextPartitionUpperBound,
+					last_step_checkpoints = LastStepCheckpoints2,
 					checkpoints = Checkpoints },
 			PrevB = ar_block_cache:get(block_cache, PrevH),
 			Height = PrevB#block.height + 1,
