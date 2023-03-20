@@ -228,6 +228,10 @@ register(MetricsDir) ->
 		{name, mining_server_chunk_cache_size},
 		{help, "The number of chunks fetched during mining and not processed yet."}
 	]),
+	prometheus_gauge:new([
+		{name, mining_server_task_queue_len},
+		{help, "The number of items in the mining server task queue."}
+	]),
 	prometheus_histogram:new([
 		{name, vdf_step_time_milliseconds},
 		{buckets, [100, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2500, 3000, 3500, 4000,
