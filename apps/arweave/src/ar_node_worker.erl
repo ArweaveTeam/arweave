@@ -329,6 +329,7 @@ handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
 	?LOG_WARNING([{event, received_block_with_invalid_nonce_limiter_chain},
 			{block, ar_util:encode(H)}, {code, Code}]),
 	ar_block_cache:remove(block_cache, H),
+	ar_ignore_registry:add(H),
 	gen_server:cast(?MODULE, apply_block),
 	{noreply, State#{ nonce_limiter_validation_scheduled => false }};
 
@@ -925,6 +926,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 			ar_events:send(block, {rejected, Reason, B#block.indep_hash, no_peer}),
 			BH = B#block.indep_hash,
 			ar_block_cache:remove(block_cache, BH),
+			ar_ignore_registry:add(BH),
 			gen_server:cast(?MODULE, apply_block),
 			{noreply, State};
 		valid ->
@@ -932,6 +934,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 				error ->
 					BH = B#block.indep_hash,
 					ar_block_cache:remove(block_cache, BH),
+					ar_ignore_registry:add(BH),
 					gen_server:cast(?MODULE, apply_block),
 					{noreply, State};
 				ok ->
