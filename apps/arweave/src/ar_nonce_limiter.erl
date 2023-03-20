@@ -193,6 +193,13 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 		end,
 	case exclude_computed_steps_from_checkpoints([Group], ReversedSteps2) of
 		invalid ->
+			ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
+			ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
+			file:write_file(ErrorDumpFile, term_to_binary({PrevStepNumber, StepNumber,
+					Checkpoints, Steps})),
+			?LOG_WARNING([{event, vdf_validation_failed},
+					{step, exclude_computed_steps_from_checkpoints},
+					{error_dump, ErrorID}]),
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 		{[], Shift2} when PrevStepNumber + Shift + Shift2 == StepNumber ->
 			Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
@@ -200,6 +207,13 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			gen_server:cast(?MODULE, {validated_steps, Args}),
 			spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
 		{[_Group], Shift2} when PrevStepNumber + Shift + Shift2 >= StepNumber ->
+			ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
+			ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
+			file:write_file(ErrorDumpFile, term_to_binary({PrevStepNumber, StepNumber,
+					Checkpoints, Steps, Shift, Shift2})),
+			?LOG_WARNING([{event, vdf_validation_failed},
+					{step, exclude_computed_steps_from_checkpoints_shift},
+					{shift, Shift}, {shift2, Shift2}, {error_dump, ErrorID}]),
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 		{[_Group] = _Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber,
 				UseRemoteServers == true, RemoteServerWaitSeconds > 0 ->
