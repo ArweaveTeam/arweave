@@ -99,6 +99,7 @@ init([]) ->
 		?CHILD_SUP(ar_nonce_limiter_server_sup, supervisor),
 		?CHILD(ar_nonce_limiter, worker),
 		?CHILD(ar_mining_server, worker),
+		?CHILD(ar_process_sampler, worker),
 		?CHILD_SUP(ar_tx_emitter_sup, supervisor),
 		?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
 		?CHILD_SUP(ar_poller_sup, supervisor),
