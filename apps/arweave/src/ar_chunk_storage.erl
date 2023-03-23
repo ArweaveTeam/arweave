@@ -348,6 +348,7 @@ store_chunk2(Key, Offset, Chunk, Filepath, F) ->
 			]),
 			Error;
 		ok ->
+			prometheus_counter:inc(chunks_stored),
 			{ok, Filepath}
 	end.
 

@@ -47,9 +47,9 @@ validate(Args) ->
 					AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
 					case Packing of
 						{spora_2_6, _} ->
-							prometheus_counter:inc(validating_packed_2_6_spora);
+							prometheus_counter:inc(validating_packed_spora, [spora_2_6]);
 						spora_2_5 ->
-							prometheus_counter:inc(validating_packed_spora)
+							prometheus_counter:inc(validating_packed_spora, [spora_2_5])
 					end,
 					case ar_packing_server:unpack(Packing, AbsoluteEndOffset, TXRoot, Chunk,
 							ChunkSize) of
