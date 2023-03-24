@@ -30,6 +30,7 @@
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
 pack(Packing, ChunkOffset, TXRoot, Chunk) ->
 	[{_, RandomXStateRef}] = ets:lookup(?MODULE, randomx_packing_state),
+	record_packing_request(pack, Packing, get_caller()),
 	case pack(Packing, ChunkOffset, TXRoot, Chunk, RandomXStateRef, external) of
 		{ok, Packed, _} ->
 			{ok, Packed};
@@ -41,6 +42,7 @@ pack(Packing, ChunkOffset, TXRoot, Chunk) ->
 %% {error, invalid_packed_size}, {error, invalid_chunk_size}, or {error, invalid_padding}.
 unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 	[{_, RandomXStateRef}] = ets:lookup(?MODULE, randomx_packing_state),
+	record_packing_request(unpack, Packing, get_caller()),
 	case unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, external) of
 		{ok, Unpacked, _} ->
 			{ok, Unpacked};
@@ -97,6 +99,9 @@ init([]) ->
 			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
 	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
 	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
+
+	record_packing_benchmarks(PackingStateRef, MaxRate, PackingRate, Schedulers),
+
 	ar:console("RandomX dataset initialisation complete.~n", []),
 	SpawnSchedulers = min(SchedulersRequired, Schedulers),
 	%% Since the total rate of spawned processes might exceed the desired rate,
@@ -134,9 +139,11 @@ handle_cast(Cast, State) ->
 
 handle_info({event, chunk, {unpack_request, Ref, Args}}, State) ->
 	#state{ workers = Workers } = State,
+	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
 	?LOG_DEBUG([{event, got_unpack_request}, {ref, Ref}]),
 	increment_buffer_size(),
+	record_packing_request(unpack, Packing, unpack_request),
 	Worker ! {unpack, Ref, self(), Args},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 
@@ -154,12 +161,14 @@ handle_info({event, chunk, {repack_request, Ref, Args}}, State) ->
 		{unpacked, _} ->
 			?LOG_DEBUG([{event, sending_for_packing}, {ref, Ref}]),
 			increment_buffer_size(),
+			record_packing_request(pack, RequestedPacking, repack_request),
 			Worker ! {pack, Ref, self(), {RequestedPacking, Chunk, AbsoluteOffset, TXRoot,
 					ChunkSize}},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 		_ ->
 			?LOG_DEBUG([{event, got_pack_request_need_unpacking_first}, {ref, Ref}]),
 			increment_buffer_size(),
+			record_packing_request(unpack, Packing, repack_request),
 			Worker ! {unpack, Ref, self(), {Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize}},
 			%% At first we have to unpack so we have to remember the
 			%% reference for now, to not forget to pack later.
@@ -182,6 +191,7 @@ handle_info({worker, {unpacked, Ref, Args}}, State) ->
 			?LOG_DEBUG([{event, worker_unpacked_chunk_for_packing}, {ref, Ref}]),
 			{_Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 			increment_buffer_size(),
+			record_packing_request(pack, RequestedPacking, unpacked),
 			Worker ! {pack, Ref, self(),
 				{RequestedPacking, Chunk, AbsoluteOffset, TXRoot, ChunkSize}},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2),
@@ -292,7 +302,7 @@ pack(spora_2_5, ChunkOffset, TXRoot, Chunk, RandomXStateRef, External) ->
 			%% packing.
 			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot/binary >>),
 			{ok, prometheus_histogram:observe_duration(packing_duration_milliseconds,
-					[pack, External], fun() ->
+					[pack, spora_2_5, External], fun() ->
 							ar_mine_randomx:randomx_encrypt_chunk(RandomXStateRef, Key,
 									pad_chunk(Chunk)) end), was_not_already_packed}
 	end;
@@ -313,7 +323,7 @@ pack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, RandomXStateRef, Exter
 			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
 					RewardAddr/binary >>),
 			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-					[pack, External], fun() ->
+					[pack, spora_2_6, External], fun() ->
 							ar_mine_randomx:randomx_encrypt_chunk_2_6(RandomXStateRef, Key,
 									pad_chunk(Chunk)) end) of
 				{ok, Packed} ->
@@ -352,7 +362,7 @@ unpack(spora_2_5, ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, Extern
 		true ->
 			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot/binary >>),
 			Unpacked = prometheus_histogram:observe_duration(packing_duration_milliseconds,
-					[unpack, External], fun() ->
+					[unpack, spora_2_5, External], fun() ->
 							ar_mine_randomx:randomx_decrypt_chunk(RandomXStateRef, Key, Chunk,
 									ChunkSize) end),
 			{ok, binary:part(Unpacked, 0, ChunkSize), was_not_already_unpacked}
@@ -371,7 +381,7 @@ unpack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, ChunkSize,
 			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
 					RewardAddr/binary >>),
 			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-					[unpack, External], fun() ->
+					[unpack, spora_2_6, External], fun() ->
 							ar_mine_randomx:randomx_decrypt_chunk_2_6(RandomXStateRef, Key,
 									Chunk, ?DATA_CHUNK_SIZE) end) of
 			{ok, Unpacked} ->
@@ -406,6 +416,9 @@ increment_buffer_size() ->
 decrement_buffer_size() ->
 	ets:update_counter(?MODULE, buffer_size, {2, -1}, {buffer_size, 0}).
 
+%%%===================================================================
+%%% Prometheus metrics
+%%%===================================================================
 record_buffer_size_metric() ->
 	case ets:lookup(?MODULE, buffer_size) of
 		[{_, Size}] ->
@@ -413,6 +426,81 @@ record_buffer_size_metric() ->
 		_ ->
 			ok
 	end.
+
+record_packing_benchmarks(PackingStateRef, MaxRate, PackingRate, Schedulers) ->
+	prometheus_gauge:set(packing_latency_benchmark,
+		[protocol, pack, spora_2_6], ?PACKING_LATENCY_MS),
+	prometheus_gauge:set(packing_latency_benchmark,
+		[protocol, unpack, spora_2_6], ?PACKING_LATENCY_MS),
+	prometheus_gauge:set(packing_rate_benchmark,
+		[protocol], MaxRate),
+	prometheus_gauge:set(packing_rate_benchmark,
+		[configured], PackingRate),
+	prometheus_gauge:set(packing_schedulers,
+		Schedulers),
+
+	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	Key = crypto:hash(sha256, crypto:strong_rand_bytes(256)),
+	Pack = [PackingStateRef, Key, Chunk],
+	Unpack = [PackingStateRef, Key, Chunk, ?DATA_CHUNK_SIZE],
+	%% Run each randomx routine Repetitions times and return the minimum runtime. We use
+	%% minimum rather than average since it more closely approximates the fastest that this
+	%% machine can do the calculation.
+	Repetitions = 5,
+	prometheus_gauge:set(packing_latency_benchmark,
+		[init, pack, spora_2_5],
+		minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk, Pack, Repetitions)),
+	prometheus_gauge:set(packing_latency_benchmark,
+		[init, pack, spora_2_6],
+		minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk_2_6, Pack, Repetitions)),
+	prometheus_gauge:set(packing_latency_benchmark,
+		[init, unpack, spora_2_5],
+		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk, Unpack, Repetitions)),
+	prometheus_gauge:set(packing_latency_benchmark,
+		[init, unpack, spora_2_6],
+		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk_2_6, Unpack, Repetitions)).
+
+
+minimum_run_time(Module, Function, Args, Repetitions) ->
+	minimum_run_time(Module, Function, Args, Repetitions, infinity).
+minimum_run_time(_Module, _Function, _Args, 0, MinTime) ->
+	%% round microseconds to the nearest millisecond
+	(MinTime + 500) div 1000;
+minimum_run_time(Module, Function, Args, Repetitions, MinTime) ->
+	{RunTime, _} = timer:tc(Module, Function, Args),
+	minimum_run_time(Module, Function, Args, Repetitions-1, erlang:min(MinTime, RunTime)).
+
+%% @doc Walk up the stack trace to the parent of the current function. E.g.
+%% example() ->
+%%     get_caller().
+%%
+%% Will return the caller of example/0.
+get_caller() ->
+    {current_stacktrace, CallStack} = process_info(self(), current_stacktrace),
+    calling_function(CallStack).
+calling_function([_, {_, _, _, _}|[{Module, Function, Arity, _}|_]]) ->
+	atom_to_list(Module) ++ ":" ++ atom_to_list(Function) ++ "/" ++ integer_to_list(Arity);
+calling_function(_) ->
+    "unknown".
+
+record_packing_request(Type, Packing, From) when
+	is_atom(Type), is_atom(Packing), is_list(From) ->
+	prometheus_counter:inc(
+		packing_requests,
+		[atom_to_list(Type), atom_to_list(Packing), From]);
+record_packing_request(Type, Packing, From) when
+	is_atom(From) ->
+	record_packing_request(Type, Packing, atom_to_list(From));
+record_packing_request(Type, Packing, From) when
+	not is_atom(Packing) ->
+	PackingAtom = case Packing of
+		{Atom, _} ->
+			Atom;
+		Atom when is_atom(Atom) ->
+			Atom
+	end,
+	record_packing_request(Type, PackingAtom, From).
+
 
 %%%===================================================================
 %%% Tests.

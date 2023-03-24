@@ -325,30 +325,62 @@ register(MetricsDir) ->
 	%% Packing.
 	prometheus_histogram:new([
 		{name, packing_duration_milliseconds},
-		{labels, [type, trigger]},
-		{buckets, lists:seq(1, 200)},
-		{help, "The packing/unpacking time in milliseconds. The type label distinguishes"
-				"packing from unpacking. The trigger label shows whether packing was triggered"
-				"externally (an HTTP request) or internally (during syncing or repacking)."}
+		{labels, [type, packing, trigger]},
+		{buckets, lists:seq(1, 500)},
+		{help, "The packing/unpacking time in milliseconds. The type label can be 'pack' or "
+				"'unpack'. The packing label can be 'spora_2_5' or 'spora_2_6'. "
+				"The trigger label shows where the reqeust was triggered: "
+				"'external' (e.g. an HTTP request) or 'internal' (e.g. during syncing or "
+				"repacking)."}
+	]),
+	prometheus_counter:new([
+		{name, packing_requests},
+		{labels, [type, packing, from]},
+		{help, "The number of packing requests received. The type label can be 'pack' or "
+				"'unpack'. The packing label can be 'spora_2_5', 'spora_2_6', or 'unpacked'. "
+				"The from label show where the request was initiated (e.g. the "
+				"calling function, or message). "}
 	]),
 	prometheus_counter:new([
 		{name, validating_packed_spora},
-		{help, "The number of SPoRA solutions based on packed chunks entered validation."}
+		{labels, [packing]},
+		{help, "The number of SPoRA solutions based on packed chunks entered validation. "
+				"The packing label can be 'spora_2_5' or 'spora_2_6'."}
 	]),
-	prometheus_counter:new([
-		{name, validating_unpacked_spora},
-		{help, "The number of SPoRA solutions based on unpacked chunks entered validation."}
+	prometheus_gauge:new([
+		{name, packing_latency_benchmark},
+		{labels, [benchmark, type, packing]},
+		{help, "The benchmark packing latency. The benchmark label indicates which "
+				"benchmark is being recorded - 'protocol' records the ?PACKING_LATENCY "
+				"value, and 'init' records the latency sampled at node startup. "
+				"The type label can be 'pack' or 'unpack'. The packing label can be "
+				"'spora_2_5' or 'spora_2_6'. The 'packing_duration_milliseconds' metric "
+				"records the actual latency observed during node operation."}
 	]),
-	prometheus_counter:new([
-		{name, validating_packed_2_6_spora},
-		{help, "The number of SPoRA solutions based on chunks packed for 2.6 entered "
-				"validation."}
+	prometheus_gauge:new([
+		{name, packing_rate_benchmark},
+		{labels, [benchmark]},
+		{help, "The benchmark packing rate. The benchmark label indicates which "
+				"benchmark is being recorded - 'protocol' records the maximum rate allowed by "
+				"the protocol, 'configured' records the packing rate configured by the user. "
+				"The 'packing_duration_milliseconds' metric records the actual rate observed "
+				"during node operation."}
+	]),
+	prometheus_gauge:new([
+		{name, packing_schedulers},
+		{help, "The number of schedulers available for packing."}
 	]),
 
 	prometheus_gauge:new([{name, packing_buffer_size},
 			{help, "The number of chunks in the packing server queue."}]),
 	prometheus_gauge:new([{name, chunk_cache_size},
-			{help, "The number of chunks scheduled for downloading."}]).
+			{help, "The number of chunks scheduled for downloading."}]),
+	prometheus_counter:new([{name, chunks_stored},
+			{help, "The counter is incremented every time a chunk is written to "
+					"chunk_storage."}]),
+
+	prometheus_counter:new([{name, process_functions},
+			{help, "Sampling active processes"}, {labels, [process]}]).
 
 %% @doc Store the given metric in a file.
 store(Name) ->
@@ -369,8 +401,20 @@ get_status_class({error, connect_timeout}) ->
 	"connect_timeout";
 get_status_class({error, timeout}) ->
 	"timeout";
+get_status_class({error,{shutdown,timeout}}) ->
+	"shutdown_timeout";
 get_status_class({error, econnrefused}) ->
 	"econnrefused";
+get_status_class({error, {shutdown,econnrefused}}) ->
+	"shutdown_econnrefused";
+get_status_class({error, {shutdown,ehostunreach}}) ->
+	"shutdown_ehostunreach";
+get_status_class({error, {shutdown,normal}}) ->
+	"shutdown_normal";
+get_status_class({error, {closed,_}}) ->
+	"closed";
+get_status_class({error, noproc}) ->
+	"noproc";
 get_status_class(208) ->
 	"already_processed";
 get_status_class(418) ->
