@@ -429,11 +429,7 @@ record_buffer_size_metric() ->
 
 record_packing_benchmarks(PackingStateRef, MaxRate, PackingRate, Schedulers) ->
 	prometheus_gauge:set(packing_latency_benchmark,
-		[protocol, pack, spora_2_5], ?PACKING_LATENCY_MS),
-	prometheus_gauge:set(packing_latency_benchmark,
 		[protocol, pack, spora_2_6], ?PACKING_LATENCY_MS),
-	prometheus_gauge:set(packing_latency_benchmark,
-		[protocol, unpack, spora_2_5], ?PACKING_LATENCY_MS),
 	prometheus_gauge:set(packing_latency_benchmark,
 		[protocol, unpack, spora_2_6], ?PACKING_LATENCY_MS),
 	prometheus_gauge:set(packing_rate_benchmark,
