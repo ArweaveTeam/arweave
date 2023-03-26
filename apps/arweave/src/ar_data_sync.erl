@@ -6,7 +6,9 @@
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_tx_data/1, get_tx_data/2, get_tx_offset/1, has_data_root/2,
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
-		record_chunk_cache_size_metric/0]).
+		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
+		get_chunk_by_byte/2, read_chunk/4, decrement_chunk_cache_size/0,
+		increment_chunk_cache_size/0, get_chunk_padded_offset/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([remove_expired_disk_pool_data_roots/0]).
@@ -19,9 +21,25 @@
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 
 -ifdef(DEBUG).
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 200).
--else.
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5000).
+-else.
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300000).
+-endif.
+
+%% Let at least this many chunks stack up, per storage module, then write them on disk in the
+%% ascending order, to reduce out-of-order disk writes causing fragmentation.
+-ifdef(DEBUG).
+-define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 2).
+-else.
+-define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 200). % ~ 50 MB worth of chunks.
+-endif.
+
+%% If a chunk spends longer than this in the store queue, write it on disk without waiting
+%% for ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD chunks to stack up.
+-ifdef(DEBUG).
+-define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 1000).
+-else.
+-define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 15_000). % 15 seconds.
 -endif.
 
 %%%===================================================================
@@ -359,6 +377,73 @@ request_tx_data_removal(TXID, Ref, ReplyTo) ->
 request_data_removal(Start, End, Ref, ReplyTo) ->
 	remove_range(Start, End, Ref, ReplyTo).
 
+%% @doc Return true if the in-memory data chunk cache is full. Return not_initialized
+%% if there is no information yet.
+is_chunk_cache_full() ->
+	case ets:lookup(ar_data_sync_state, chunk_cache_size_limit) of
+		[{_, Limit}] ->
+			case ets:lookup(ar_data_sync_state, chunk_cache_size) of
+				[{_, Size}] when Size > Limit ->
+					true;
+				_ ->
+					false
+			end;
+		_ ->
+			not_initialized
+	end.
+
+%% @doc Return true if we have sufficient disk space to write new data for the
+%% given StoreID. Return not_initialized if there is no information yet.
+is_disk_space_sufficient(StoreID) ->
+	case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
+		[{_, false}] ->
+			false;
+		[{_, true}] ->
+			true;
+		_ ->
+			not_initialized
+	end.
+
+get_chunk_by_byte(ChunksIndex, Byte) ->
+	ar_kv:get_next_by_prefix(ChunksIndex, ?OFFSET_KEY_PREFIX_BITSIZE, ?OFFSET_KEY_BITSIZE,
+			<< Byte:?OFFSET_KEY_BITSIZE >>).
+
+read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
+	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
+		not_found ->
+			not_found;
+		{ok, Value} ->
+			case binary_to_term(Value) of
+				{Chunk, DataPath} ->
+					{ok, {Chunk, DataPath}};
+				DataPath ->
+					case ar_chunk_storage:get(Offset - 1, StoreID) of
+						not_found ->
+							not_found;
+						{_EndOffset, Chunk} ->
+							{ok, {Chunk, DataPath}}
+					end
+			end;
+		Error ->
+			Error
+	end.
+
+decrement_chunk_cache_size() ->
+	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, -1}, {chunk_cache_size, 0}).
+
+increment_chunk_cache_size() ->
+	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, 1}, {chunk_cache_size, 1}).
+
+%% @doc Return Offset if it is smaller than or equal to ?STRICT_DATA_SPLIT_THRESHOLD.
+%% Otherwise, return the offset of the last byte of the chunk + the size of the padding.
+get_chunk_padded_offset(Offset) ->
+	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
+		true ->
+			ar_poa:get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD);
+		false ->
+			Offset
+	end.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -394,15 +479,13 @@ init("default" = StoreID) ->
 	recalculate_disk_pool_size(DiskPoolDataRoots, State),
 	DiskPoolThreshold = maps:get(disk_pool_threshold, StateMap),
 	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
-	SkipIntervalsTable = ets:new(sync_record_type, [ordered_set, public]),
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),
 		disk_pool_cursor = first,
 		disk_pool_threshold = DiskPoolThreshold,
 		mining_address = Config#config.mining_addr,
-		store_id = StoreID,
-		skip_intervals_table = SkipIntervalsTable
+		store_id = StoreID
 	},
 	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
 			remove_expired_disk_pool_data_roots, []),
@@ -429,26 +512,30 @@ init("default" = StoreID) ->
 	ets:insert(ar_data_sync_state, {chunk_cache_size_limit, Limit}),
 	ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
 	timer:apply_interval(200, ?MODULE, record_chunk_cache_size_metric, []),
+	gen_server:cast(self(), process_store_chunk_queue),
 	{ok, State2};
 init(StoreID) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	[ok, ok, ok] = ar_events:subscribe([node_state, chunk, disksup]),
 	State = init_kv(StoreID),
-	SkipIntervalsTable = ets:new(sync_record_type, [ordered_set, public]),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+	gen_server:cast(self(), process_store_chunk_queue),
+	gen_server:cast(self(), sync_intervals),
 	State2 = State#sync_data_state{
 		store_id = StoreID,
-		skip_intervals_table = SkipIntervalsTable,
 		range_start = RangeStart,
 		range_end = RangeEnd
 	},
-	may_be_run_sync_jobs(),
-	{ok, State2}.
+	{ok, may_be_start_syncing(State2)}.
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
 	{noreply, State};
+
+handle_cast(process_store_chunk_queue, State) ->
+	ar_util:cast_after(200, self(), process_store_chunk_queue),
+	{noreply, process_store_chunk_queue(State)};
 
 handle_cast({join, RecentBI}, State) ->
 	#sync_data_state{ block_index = CurrentBI, store_id = StoreID } = State,
@@ -551,9 +638,7 @@ handle_cast(sync_data, State) ->
 handle_cast(sync_data2, #sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [],
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
-	%% We have copied all the data we could find from the other storage modules
-	%% so we can start searching the network for the missing data, if any.
-	gen_server:cast(self(), collect_peer_intervals),
+	ar_util:cast_after(2000, self(), collect_peer_intervals),
 	{noreply, State};
 handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
@@ -567,80 +652,106 @@ handle_cast(sync_data2, #sync_data_state{
 			other_storage_modules_with_unsynced_intervals = StoreIDs }};
 handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID,
-		unsynced_intervals_from_other_storage_modules = [{StoreID, Range} | Intervals]
+		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
-	gen_server:cast(list_to_atom("ar_data_sync_" ++ StoreID),
-			{get_ranges, [Range], OriginStoreID, false}),
-	gen_server:cast(self(), sync_data2),
+	gen_server:cast(ar_data_sync_worker_master,
+			{read_range, {Start, End, StoreID, OriginStoreID, false}}),
+	ar_util:cast_after(50, self(), sync_data2),
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals }};
 
-handle_cast({get_ranges, [], _OriginStoreID, _SkipSmall}, State) ->
-	{noreply, State};
-handle_cast({get_ranges, [{Start, End} | Ranges], OriginStoreID, SkipSmall}, State)
-		when Start >= End ->
-	gen_server:cast(self(), {get_ranges, Ranges, OriginStoreID, SkipSmall}),
-	{noreply, State};
-handle_cast({get_ranges, Ranges, OriginStoreID, SkipSmall} = Cast, State) ->
-	case is_chunk_cache_full() of
-		true ->
-			ar_util:cast_after(200, self(), Cast);
-		false ->
-			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, OriginStoreID}) of
-				[{_, false}] ->
-					ar_util:cast_after(30000, self(), Cast);
-				_ ->
-					get_ranges(Ranges, OriginStoreID, SkipSmall, State)
-			end
-	end,
+handle_cast({invalidate_bad_data_record, Args}, State) ->
+	invalidate_bad_data_record(Args),
 	{noreply, State};
 
 handle_cast({pack_and_store_chunk, Args} = Cast,
 			#sync_data_state{ store_id = StoreID } = State) ->
-	case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-		[{_, false}] ->
-			ar_util:cast_after(30000, self(), Cast),
-			{noreply, State};
+	case is_disk_space_sufficient(StoreID) of
+		true ->
+			pack_and_store_chunk(Args, State);
 		_ ->
-			pack_and_store_chunk(Args, State)
+			ar_util:cast_after(30000, self(), Cast),
+			{noreply, State}
 	end;
 
-%% Pick a leftmost unsynced interval from the range configured for this process (skip
-%% the intervals we failed to find recently, if any), compute the intersection with
-%% the intervals available by peers, and place the peer-interval pairs in the syncing queue.
+%% Schedule syncing of the unsynced intervals. Choose a peer for each of the intervals.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End, sync_intervals_queue = Q,
-			store_id = StoreID, skip_intervals_table = SkipIntervalsTable,
-			disk_pool_threshold = DiskPoolThreshold } = State,
-	case ar_node:is_joined() of
+			store_id = StoreID, disk_pool_threshold = DiskPoolThreshold } = State,
+	IsJoined =
+		case ar_node:is_joined() of
+			false ->
+				ar_util:cast_after(1000, self(), collect_peer_intervals),
+				false;
+			true ->
+				true
+		end,
+	IsDiskSpaceSufficient =
+		case IsJoined of
+			false ->
+				false;
+			true ->
+				case is_disk_space_sufficient(StoreID) of
+					true ->
+						true;
+					_ ->
+						ar_util:cast_after(30000, self(), collect_peer_intervals),
+						false
+				end
+		end,
+	IsSyncQueueBusy =
+		case IsDiskSpaceSufficient of
+			false ->
+				true;
+			true ->
+				case gb_sets:size(Q) > ?SYNC_INTERVALS_MAX_QUEUE_SIZE of
+					true ->
+						ar_util:cast_after(500, self(), collect_peer_intervals),
+						true;
+					false ->
+						false
+				end
+		end,
+	IsBelowDiskPoolThreshold =
+		case IsSyncQueueBusy of
+			true ->
+				false;
+			false ->
+				case Start >= DiskPoolThreshold of
+					true ->
+						ar_util:cast_after(500, self(), collect_peer_intervals),
+						false;
+					false ->
+						true
+				end
+		end,
+	case IsBelowDiskPoolThreshold of
 		false ->
-			ar_util:cast_after(1000, self(), collect_peer_intervals);
+			ok;
 		true ->
-			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-				[{_, false}] ->
-					ar_util:cast_after(30000, self(), collect_peer_intervals);
-				_ ->
-					case gb_sets:size(Q) > ?SYNC_INTERVALS_MAX_QUEUE_SIZE
-							orelse Start >= DiskPoolThreshold of
-						true ->
-							ar_util:cast_after(500, self(), collect_peer_intervals);
-						false ->
-							Self = self(),
-							monitor(process, spawn(
-								fun() ->
-									find_peer_intervals(Start, min(End, DiskPoolThreshold),
-											StoreID, SkipIntervalsTable, Self),
-									ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS,
-											Self, collect_peer_intervals)
-								end
-							))
-					end
+			{ok, Config} = application:get_env(arweave, config),
+			SyncWorkers = Config#config.sync_jobs,
+			%% We do not want to bother peers if we still have a lot of data scheduled for
+			%% local copying and repacking.
+			case ar_data_sync_worker_master:get_scheduled_task_count() > SyncWorkers * 2 of
+				true ->
+					ar_util:cast_after(1000, self(), collect_peer_intervals);
+				false ->
+					Self = self(),
+					monitor(process, spawn(
+						fun() ->
+							find_peer_intervals(Start, min(End, DiskPoolThreshold), StoreID,
+									Self),
+							ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, Self,
+									collect_peer_intervals)
+						end
+					))
 			end
 	end,
 	{noreply, State};
 
 handle_cast({enqueue_intervals, Peer, Intervals}, State) ->
-	#sync_data_state{ sync_intervals_queue = Q, skip_intervals_table = TID,
+	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	%% Only keep unique intervals. We may get some duplicates for two
 	%% reasons:
@@ -655,7 +766,6 @@ handle_cast({enqueue_intervals, Peer, Intervals}, State) ->
 			fun({End, Start}, {Acc, QIAcc}) ->
 				?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
 						{peer, ar_util:format_peer(Peer)}]),
-				temporarily_exclude_interval_from_syncing(Start, End, TID, self()),
 				{lists:foldl(
 					fun(Start2, Acc2) ->
 						End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
@@ -671,122 +781,44 @@ handle_cast({enqueue_intervals, Peer, Intervals}, State) ->
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 
-handle_cast({exclude_interval_from_syncing, Left, Right}, State) ->
-	#sync_data_state{ skip_intervals_table = TID } = State,
-	temporarily_exclude_interval_from_syncing(Left, Right, TID, self()),
-	{noreply, State};
-
-handle_cast({re_include_interval_for_syncing, Left, Right}, State) ->
-	#sync_data_state{ skip_intervals_table = TID } = State,
-	ar_ets_intervals:delete(TID, Right, Left),
-	{noreply, State};
-
-handle_cast(sync_interval, State) ->
+handle_cast(sync_intervals, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals, store_id = StoreID } = State,
 	case gb_sets:is_empty(Q) of
 		true ->
-			ar_util:cast_after(500, self(), sync_interval),
+			ar_util:cast_after(500, self(), sync_intervals),
 			{noreply, State};
 		false ->
-			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-				[{_, false}] ->
-					ar_util:cast_after(30000, self(), sync_interval),
-					{noreply, State};
+			case is_disk_space_sufficient(StoreID) of
+				true ->
+					ar_util:cast_after(500, self(), sync_intervals),
+					case is_chunk_cache_full() of
+						true ->
+							{noreply, State};
+						false ->
+							{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
+							End2 = Start + 10 * ?DATA_CHUNK_SIZE,
+							{Q3, I2, End3} =
+								case End > End2 of
+									true ->
+										{gb_sets:add_element({End2, End, Peer}, Q2),
+												ar_intervals:delete(QIntervals, End2, Start),
+												End2};
+									false ->
+										{Q2, ar_intervals:delete(QIntervals, End, Start), End}
+								end,
+							gen_server:cast(ar_data_sync_worker_master,
+									{sync_range, {Start, End3, Peer, StoreID}}),
+							{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
+									sync_intervals_queue_intervals = I2 }}
+					end;
 				_ ->
-					{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-					End2 = Start + 10 * ?DATA_CHUNK_SIZE,
-					{Q3, I2, End3} =
-						case End > End2 of
-							true ->
-								{gb_sets:add_element({End2, End, Peer}, Q2),
-										ar_intervals:delete(QIntervals, End2, Start), End2};
-							false ->
-								{Q2, ar_intervals:delete(QIntervals, End, Start), End}
-						end,
-					gen_server:cast(self(), {sync_chunk, [{Start, End3, Peer}], loop}),
-					{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
-							sync_intervals_queue_intervals = I2 }}
-			end
-	end;
-
-handle_cast({sync_chunk, [{Byte, RightBound, _} | SubIntervals], Loop}, State)
-		when Byte >= RightBound ->
-	gen_server:cast(self(), {sync_chunk, SubIntervals, Loop}),
-	{noreply, State};
-handle_cast({sync_chunk, [], loop}, State) ->
-	gen_server:cast(self(), sync_interval),
-	{noreply, State};
-handle_cast({sync_chunk, [], do_not_loop}, State) ->
-	{noreply, State};
-handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop} = Cast, State) ->
-	#sync_data_state{ skip_intervals_table = TID, store_id = StoreID } = State,
-	IsChunkCacheFull =
-		case is_chunk_cache_full() of
-			true ->
-				ar_util:cast_after(1000, self(), Cast),
-				true;
-			false ->
-				false
-		end,
-	IsDiskSpaceSufficient =
-		case IsChunkCacheFull of
-			false ->
-				case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-					[{_, false}] ->
-						ar_util:cast_after(30000, self(), Cast),
-						false;
-					_ ->
-						true
-				end;
-			true ->
-				false
-		end,
-	case IsDiskSpaceSufficient of
-		false ->
-			{noreply, State};
-		true ->
-			Byte2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Byte + 1),
-			case Byte2 > Byte + 1 of
-				true ->
-					temporarily_exclude_interval_from_syncing(Byte, Byte2 - 1, TID, self());
-				false ->
-					ok
-			end,
-			case Byte2 - 1 >= RightBound of
-				true ->
-					gen_server:cast(self(), {sync_chunk, SubIntervals, Loop}),
-					{noreply, State};
-				false ->
-					Self = self(),
-					spawn_link(
-						fun() ->
-							process_flag(trap_exit, true),
-							Fun = case ar_peers:get_peer_release(Peer) >= 42 of
-									true -> fun ar_http_iface_client:get_chunk_binary/3;
-									false -> fun ar_http_iface_client:get_chunk_json/3 end,
-							case Fun(Peer, Byte2, any) of
-								{ok, Proof, Time, TransferSize} ->
-									gen_server:cast(Self, {store_fetched_chunk, Peer, Time,
-											TransferSize, Byte2 - 1, RightBound, Proof,
-											SubIntervals, Loop});
-								{error, Reason} ->
-									?LOG_DEBUG([{event, failed_to_fetch_chunk},
-											{peer, ar_util:format_peer(Peer)},
-											{byte, Byte2},
-											{reason, io_lib:format("~p", [Reason])}]),
-									decrement_chunk_cache_size(),
-									gen_server:cast(Self, {sync_chunk, SubIntervals, Loop})
-							end
-						end
-					),
-					increment_chunk_cache_size(),
+					ar_util:cast_after(30000, self(), sync_intervals),
 					{noreply, State}
 			end
 	end;
 
-handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, RightBound, Proof,
-		SubIntervals, Loop} = Cast, State) ->
+handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1) - 1,
@@ -809,10 +841,7 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, RightBound, Pr
 					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte},
 			case maps:is_key({AbsoluteOffset, unpacked}, PackingMap) of
 				true ->
-					Byte2 = get_chunk_padded_offset(AbsoluteOffset) + 1,
 					decrement_chunk_cache_size(),
-					gen_server:cast(self(), {sync_chunk, [{Byte2, RightBound, Peer}
-							| SubIntervals], Loop}),
 					{noreply, State};
 				false ->
 					case ar_packing_server:is_buffer_full() of
@@ -821,9 +850,6 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, RightBound, Pr
 							{noreply, State};
 						false ->
 							ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
-							gen_server:cast(self(), {sync_chunk,
-									[{get_chunk_padded_offset(AbsoluteOffset) + 1,
-									RightBound, Peer} | SubIntervals], Loop}),
 							ar_events:send(chunk, {unpack_request, AbsoluteOffset, ChunkArgs}),
 							?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
 									{data_path_hash, ar_util:encode(crypto:hash(sha256,
@@ -840,16 +866,12 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, RightBound, Pr
 					end
 			end;
 		false ->
-			gen_server:cast(self(), {sync_chunk, SubIntervals, Loop}),
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkSize, ChunkID} ->
 			ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
-			gen_server:cast(self(), {sync_chunk,
-					[{get_chunk_padded_offset(AbsoluteEndOffset) + 1, RightBound, Peer}
-					| SubIntervals], Loop}),
 			ChunkArgs = {unpacked, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
@@ -1052,8 +1074,8 @@ handle_cast({request_default_storage_2_5_repacking, Cursor, RightBound}, State) 
 		not_found ->
 			ok;
 		{End, Start} ->
-			gen_server:cast(ar_data_sync_default, {get_ranges, [{Start, End}], "default",
-					true}),
+			gen_server:cast(ar_data_sync_worker_master, {read_range, {Start, End,
+					"default", "default", true}}),
 			gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking,
 					End, RightBound})
 	end,
@@ -1069,8 +1091,8 @@ handle_cast({request_default_unpacked_packing, Cursor, RightBound}, State) ->
 			gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, End,
 					RightBound});
 		{End, Start} ->
-			gen_server:cast(ar_data_sync_default, {get_ranges, [{Start, End}], "default",
-					true}),
+			gen_server:cast(ar_data_sync_default, {read_range, {Start, End, "default",
+					"default", true}}),
 			gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, End,
 					RightBound})
 	end,
@@ -1092,13 +1114,15 @@ handle_info({event, node_state, {initialized, _B}},
 		#sync_data_state{ store_id = "default",
 				disk_pool_threshold = DiskPoolThreshold } = State) ->
 	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(legacy_storage_repacking, Config#config.enable) of
+	case lists:member(legacy_storage_repacking, Config#config.enable)
+			andalso Config#config.sync_jobs > 0 of
 		true ->
 			request_default_storage_2_5_repacking(DiskPoolThreshold);
 		false ->
 			ok
 	end,
-	case lists:member(legacy_storage_unpacked_packing, Config#config.enable) of
+	case lists:member(legacy_storage_unpacked_packing, Config#config.enable)
+			andalso Config#config.sync_jobs > 0 of
 		true ->
 			request_default_unpacked_packing(DiskPoolThreshold);
 		false ->
@@ -1106,8 +1130,7 @@ handle_info({event, node_state, {initialized, _B}},
 	end,
 	{noreply, State};
 handle_info({event, node_state, {initialized, _B}}, State) ->
-	run_sync_jobs(),
-	{noreply, State};
+	{noreply, may_be_start_syncing(State)};
 
 handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
 	{noreply, State#sync_data_state{ disk_pool_threshold = Bound }};
@@ -1133,9 +1156,7 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 	case maps:get(Key, PackingMap, not_found) of
 		{pack_chunk, Args} when element(1, Args) == Packing ->
 			State2 = State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) },
-			store_chunk(ChunkArgs, Args, State2),
-			decrement_chunk_cache_size(),
-			{noreply, State2};
+			{noreply, store_chunk(ChunkArgs, Args, State2)};
 		_ ->
 			{noreply, State}
 	end;
@@ -1147,8 +1168,8 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 		#sync_data_state{ store_id = StoreID } = State) ->
 	case Percentage < 0.01 of
 		true ->
-			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-				[{_, false}] ->
+			case is_disk_space_sufficient(StoreID) of
+				false ->
 					ok;
 				_ ->
 					log_insufficient_disk_space(StoreID)
@@ -1157,8 +1178,8 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 		false ->
 			case Percentage > 0.05 of
 				true ->
-					case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-						[{_, false}] ->
+					case is_disk_space_sufficient(StoreID) of
+						false ->
 							log_sufficient_disk_space(StoreID);
 						_ ->
 							ok
@@ -1178,8 +1199,8 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of
 		true ->
-			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-				[{_, false}] ->
+			case is_disk_space_sufficient(StoreID) of
+				false ->
 					ok;
 				_ ->
 					log_insufficient_disk_space(StoreID)
@@ -1188,8 +1209,8 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 		false ->
 			case Bytes > DiskPoolSize + DiskCacheSize + BufferSize of
 				true ->
-					case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
-						[{_, false}] ->
+					case is_disk_space_sufficient(StoreID) of
+						false ->
 							log_sufficient_disk_space(StoreID);
 						_ ->
 							ok
@@ -1325,8 +1346,8 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
 			{ok, O, ChunkDataKey, Root2, P2, S2} ->
 				case read_chunk(O, ChunkDataDB, ChunkDataKey, StoreID) of
 					not_found ->
-						invalidate_bad_data_record(SeekOffset - 1, O, ChunksIndex,
-								StoreID, 1),
+						invalidate_bad_data_record({SeekOffset - 1, O, ChunksIndex,
+								StoreID, 1}),
 						{error, chunk_not_found};
 					{error, Reason3} ->
 						?LOG_ERROR([{event, failed_to_read_chunk},
@@ -1406,8 +1427,8 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
 									data_path => DataPath2, tx_path => TXPath2 },
 							{ok, Proof};
 						false ->
-							invalidate_bad_data_record(ChunkOffset2 - ChunkSize2, ChunkOffset2,
-									ChunksIndex, StoreID, 4),
+							invalidate_bad_data_record({ChunkOffset2 - ChunkSize2,
+									ChunkOffset2, ChunksIndex, StoreID, 4}),
 							{error, chunk_not_found}
 					end;
 				Error ->
@@ -1415,7 +1436,7 @@ get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
 			end
 	end.
 
-invalidate_bad_data_record(Start, End, ChunksIndex, StoreID, Case) ->
+invalidate_bad_data_record({Start, End, ChunksIndex, StoreID, Case}) ->
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case End > T of
 		true ->
@@ -1474,16 +1495,16 @@ validate_served_chunk(Args) ->
 							{true, ChunkID};
 						false ->
 							StartOffset = Offset - ChunkSize,
-							invalidate_bad_data_record(StartOffset, Offset, ChunksIndex,
-									StoreID, 2),
+							invalidate_bad_data_record({StartOffset, Offset, ChunksIndex,
+									StoreID, 2}),
 							false
 					end;
 				{_BlockStart, _BlockEnd, TXRoot2} ->
 					?LOG_WARNING([{event, stored_chunk_invalid_tx_root},
 							{byte, Offset - 1}, {tx_root, ar_util:encode(TXRoot2)},
 							{stored_tx_root, ar_util:encode(TXRoot)}]),
-					invalidate_bad_data_record(Offset - ChunkSize, Offset, ChunksIndex,
-							StoreID, 3),
+					invalidate_bad_data_record({Offset - ChunkSize, Offset, ChunksIndex,
+							StoreID, 3}),
 					false
 			end
 	end.
@@ -1499,40 +1520,6 @@ get_chunk_seek_offset(Offset) ->
 					+ 1;
 		false ->
 			Offset
-	end.
-
-%% @doc Return Offset if it is smaller than or equal to ?STRICT_DATA_SPLIT_THRESHOLD.
-%% Otherwise, return the offset of the last byte of the chunk + the size of the padding.
-get_chunk_padded_offset(Offset) ->
-	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
-		true ->
-			ar_poa:get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD);
-		false ->
-			Offset
-	end.
-
-get_chunk_by_byte(ChunksIndex, Byte) ->
-	ar_kv:get_next_by_prefix(ChunksIndex, ?OFFSET_KEY_PREFIX_BITSIZE, ?OFFSET_KEY_BITSIZE,
-			<< Byte:?OFFSET_KEY_BITSIZE >>).
-
-read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
-	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
-		not_found ->
-			not_found;
-		{ok, Value} ->
-			case binary_to_term(Value) of
-				{Chunk, DataPath} ->
-					{ok, {Chunk, DataPath}};
-				DataPath ->
-					case ar_chunk_storage:get(Offset - 1, StoreID) of
-						not_found ->
-							not_found;
-						{_EndOffset, Chunk} ->
-							{ok, {Chunk, DataPath}}
-					end
-			end;
-		Error ->
-			Error
 	end.
 
 get_tx_offset(TXIndex, TXID) ->
@@ -1676,24 +1663,6 @@ init_kv(StoreID) ->
 		migrations_index = {migrations_index, StoreID}
 	}.
 
-may_be_run_sync_jobs() ->
-	case ar_node:is_joined() of
-		false ->
-			ok;
-		true ->
-			run_sync_jobs()
-	end.
-
-run_sync_jobs() ->
-	gen_server:cast(self(), sync_data),
-	{ok, Config} = application:get_env(arweave, config),
-	lists:foreach(
-		fun(_SyncingJobNumber) ->
-			gen_server:cast(self(), sync_interval)
-		end,
-		lists:seq(1, Config#config.sync_jobs)
-	).
-
 move_disk_pool_index(State) ->
 	move_disk_pool_index(first, State).
 
@@ -1789,6 +1758,26 @@ read_data_sync_state() ->
 			#{ block_index => [], disk_pool_data_roots => #{}, disk_pool_size => 0,
 					weave_size => 0, packing_2_5_threshold => infinity,
 					disk_pool_threshold => 0 }
+	end.
+
+may_be_start_syncing(#sync_data_state{ started_syncing = StartedSyncing } = State) ->
+	case ar_node:is_joined() of
+		false ->
+			State;
+		true ->
+			case StartedSyncing of
+				true ->
+					State;
+				false ->
+					{ok, Config} = application:get_env(arweave, config),
+					case Config#config.sync_jobs > 0 of
+						true ->
+							gen_server:cast(self(), sync_data),
+							State#sync_data_state{ started_syncing = true };
+						false ->
+							State
+					end
+			end
 	end.
 
 recalculate_disk_pool_size(DataRootMap, State) ->
@@ -2167,92 +2156,6 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 			end
 	end.
 
-get_ranges([{Start, End} | Ranges], OriginStoreID, SkipSmall, State) ->
-	#sync_data_state{ store_id = StoreID, chunks_index = ChunksIndex,
-			chunk_data_db = ChunkDataDB } = State,
-	case get_chunk_by_byte(ChunksIndex, Start + 1) of
-		{error, invalid_iterator} ->
-			%% get_chunk_by_byte looks for a key with the same prefix or the next
-			%% prefix. Therefore, if there is no such key, it does not make sense to
-			%% look for any key smaller than the prefix + 2 in the next iteration.
-			PrefixSpaceSize = trunc(math:pow(2,
-					?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
-			Start2 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
-			gen_server:cast(self(), {get_ranges, [{Start2, End} | Ranges], OriginStoreID,
-					SkipSmall});
-		{error, Reason} ->
-			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
-					{reason, io_lib:format("~p", [Reason])}]);
-		{ok, << Offset:?OFFSET_KEY_BITSIZE >>, _} when Offset > End ->
-			gen_server:cast(self(), {get_ranges, Ranges, OriginStoreID, SkipSmall});
-		{ok, Key, Metadata} ->
-			<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
-			{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset,
-					ChunkSize} = binary_to_term(Metadata),
-			Skip = SkipSmall andalso AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
-					andalso ChunkSize < ?DATA_CHUNK_SIZE,
-			ReadChunk =
-				case Skip of
-					true ->
-						skip;
-					false ->
-						read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey, StoreID)
-				end,
-			case ReadChunk of
-				skip ->
-					gen_server:cast(self(), {get_ranges,
-							[{Start + ChunkSize, End} | Ranges], OriginStoreID,
-							SkipSmall});
-				not_found ->
-					invalidate_bad_data_record(Start, AbsoluteOffset, ChunksIndex,
-							StoreID, 1),
-					gen_server:cast(self(), {get_ranges,
-							[{Start + ChunkSize, End} | Ranges], OriginStoreID,
-							SkipSmall});
-				{error, Error} ->
-					?LOG_ERROR([{event, failed_to_read_chunk},
-							{absolute_end_offset, AbsoluteOffset},
-							{chunk_data_key, ar_util:encode(ChunkDataKey)},
-							{reason, io_lib:format("~p", [Error])}]),
-					gen_server:cast(self(), {get_ranges,
-							[{Start + ChunkSize, End} | Ranges], OriginStoreID,
-							SkipSmall});
-				{ok, {Chunk, DataPath}} ->
-					case ar_sync_record:is_recorded(AbsoluteOffset, ?MODULE,
-							StoreID) of
-						{true, Packing} ->
-							increment_chunk_cache_size(),
-							?LOG_DEBUG([{event, copying_chunk},
-									{origin_store_id, StoreID},
-									{target_store_id, OriginStoreID},
-									{absolute_end_offset, AbsoluteOffset}]),
-							UnpackedChunk =
-								case Packing of
-									unpacked ->
-										Chunk;
-									_ ->
-										none
-								end,
-							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
-									Packing, RelativeOffset, ChunkSize, Chunk,
-									UnpackedChunk, StoreID, ChunkDataKey},
-							gen_server:cast(list_to_atom("ar_data_sync_"
-									++ OriginStoreID), {pack_and_store_chunk, Args}),
-							gen_server:cast(self(), {get_ranges,
-									[{Start + ChunkSize, End} | Ranges],
-									OriginStoreID, SkipSmall});
-						Reply ->
-							?LOG_ERROR([{event, chunk_record_not_found},
-									{absolute_end_offset, AbsoluteOffset},
-									{ar_sync_record_reply,
-											io_lib:format("~p", [Reply])}]),
-							gen_server:cast(self(), {get_ranges,
-									[{Start + ChunkSize, End} | Ranges],
-									OriginStoreID, SkipSmall})
-					end
-			end
-	end.
-
 request_default_storage_2_5_repacking(RightBound) ->
 	gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking, 0,
 			RightBound}).
@@ -2260,52 +2163,42 @@ request_default_storage_2_5_repacking(RightBound) ->
 request_default_unpacked_packing(RightBound) ->
 	gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, 0, RightBound}).
 
-find_peer_intervals(Start, End, StoreID, SkipIntervalsTable, Self) ->
-	case get_next_unsynced_interval(Start, End, StoreID, SkipIntervalsTable) of
+find_peer_intervals(Start, End, _StoreID, _Self) when Start >= End ->
+	ok;
+find_peer_intervals(Start, End, StoreID, Self) ->
+	case get_next_unsynced_interval(Start, End, StoreID) of
 		not_found ->
-			[];
+			ok;
 		{Right, Left} ->
-			Left2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Left),
+			Left2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Left + 1),
 			case Left2 >= Right of
 				true ->
-					find_peer_intervals(Right, End, StoreID, SkipIntervalsTable, Self);
+					find_peer_intervals(Left2, End, StoreID, Self);
 				false ->
-					find_subintervals(Left2, End, StoreID, SkipIntervalsTable, Self)
+					find_peer_intervals2(Left2 - 1, Right, End, StoreID, Self)
 			end
 	end.
 
-temporarily_exclude_interval_from_syncing(Left, Right, TID, Self) ->
-	AlreadyExcluded =
-		case ets:next(TID, Left) of
-			'$end_of_table' ->
-				false;
-			Offset ->
-				case ets:lookup(TID, Offset) of
-					[{Offset, StartOffset}] when Offset >= Right, StartOffset =< Left ->
-						true;
-					_ ->
-						false
-				end
-		end,
-	case AlreadyExcluded of
+find_peer_intervals2(Start, _Right, End, _StoreID, _Self) when Start >= End ->
+	ok;
+find_peer_intervals2(Start, Right, End, StoreID, Self) ->
+	Right2 = ar_tx_blacklist:get_next_blacklisted_byte(Start + 1),
+	case Right2 >= Right of
 		true ->
-			ok;
+			find_subintervals(Start, Right, StoreID, Self),
+			find_peer_intervals(Right, End, StoreID, Self);
 		false ->
-			?LOG_DEBUG([{event, exclude_interval_from_syncing}, {left, Left}, {right, Right}]),
-			ar_ets_intervals:add(TID, Right, Left),
-			ar_util:cast_after(?EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, Self,
-					{re_include_interval_for_syncing, Left, Right}),
-			ok
+			find_subintervals(Start, Right2, StoreID, Self),
+			find_peer_intervals(Right2, End, StoreID, Self)
 	end.
 
 %% @doc Return the lowest unsynced interval strictly above the given Offset.
 %% The right bound of the interval is at most RightBound.
 %% Return not_found if there are no such intervals.
 %% Skip the intervals we have recently failed to find.
-get_next_unsynced_interval(Offset, RightBound, _StoreID, _SkipIntervalsTable)
-		when Offset >= RightBound ->
+get_next_unsynced_interval(Offset, RightBound, _StoreID) when Offset >= RightBound ->
 	not_found;
-get_next_unsynced_interval(Offset, RightBound, StoreID, SkipIntervalsTable) ->
+get_next_unsynced_interval(Offset, RightBound, StoreID) ->
 	case ar_sync_record:get_next_synced_interval(Offset, RightBound, ?MODULE, StoreID) of
 		not_found ->
 			{RightBound, Offset};
@@ -2313,25 +2206,9 @@ get_next_unsynced_interval(Offset, RightBound, StoreID, SkipIntervalsTable) ->
 			case Start > Offset of
 				true ->
 					End = min(RightBound, Start),
-					case ets:next(SkipIntervalsTable, Offset) of
-						'$end_of_table' ->
-							{End, Offset};
-						SkipEnd ->
-							case ets:lookup(SkipIntervalsTable, SkipEnd) of
-								[{SkipEnd, SkipStart}] when SkipStart >= End ->
-									{End, Offset};
-								[{SkipEnd, SkipStart}] when SkipStart > Offset ->
-									{SkipStart, Offset};
-								[{SkipEnd, _SkipStart}] when SkipEnd < End ->
-									{End, SkipEnd};
-								_ ->
-									get_next_unsynced_interval(SkipEnd, RightBound, StoreID,
-											SkipIntervalsTable)
-							end
-					end;
+					{End, Offset};
 				_ ->
-					get_next_unsynced_interval(NextOffset, RightBound, StoreID,
-							SkipIntervalsTable)
+					get_next_unsynced_interval(NextOffset, RightBound, StoreID)
 			end
 	end.
 
@@ -2356,9 +2233,9 @@ get_next_unsynced_intervals(Start, RightBound, Intervals, StoreID) ->
 			end
 	end.
 
-find_subintervals(Left, Right, _StoreID, _TID, _Self) when Left >= Right ->
+find_subintervals(Left, Right, _StoreID, _Self) when Left >= Right ->
 	ok;
-find_subintervals(Left, Right, StoreID, TID, Self) ->
+find_subintervals(Left, Right, StoreID, Self) ->
 	Bucket = Left div ?NETWORK_DATA_BUCKET_SIZE,
 	LeftBound = Left - Left rem ?NETWORK_DATA_BUCKET_SIZE,
 	{ok, Config} = application:get_env(arweave, config),
@@ -2373,37 +2250,29 @@ find_subintervals(Left, Right, StoreID, TID, Self) ->
 	UnsyncedIntervals = get_next_unsynced_intervals(Left, RightBound, StoreID),
 	case ar_intervals:is_empty(UnsyncedIntervals) of
 		true ->
-			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, TID,
-					Self);
+			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, Self);
 		false ->
-			Results =
-				ar_util:pmap(
-					fun(Peer) ->
-						case get_peer_intervals(Peer, Left, UnsyncedIntervals) of
-							{ok, Intervals} ->
-								gen_server:cast(Self, {enqueue_intervals, Peer, Intervals}),
-								case ar_intervals:is_empty(Intervals) of
-									true ->
-										not_found;
-									false ->
-										found
-								end;
-							{error, Reason} ->
-								?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
-										{peer, ar_util:format_peer(Peer)},
-										{reason, io_lib:format("~p", [Reason])}]),
-								not_found
-						end
-					end,
-					Peers
-				),
-			case lists:any(fun(Result) -> Result == found end, Results) of
-				false ->
-					temporarily_exclude_interval_from_syncing(Left, Right, TID, Self);
-				true ->
-					ok
-			end,
-			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, TID, Self)
+			ar_util:pmap(
+				fun(Peer) ->
+					case get_peer_intervals(Peer, Left, UnsyncedIntervals) of
+						{ok, Intervals} ->
+							gen_server:cast(Self, {enqueue_intervals, Peer, Intervals}),
+							case ar_intervals:is_empty(Intervals) of
+								true ->
+									not_found;
+								false ->
+									found
+							end;
+						{error, Reason} ->
+							?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+									{peer, ar_util:format_peer(Peer)},
+									{reason, io_lib:format("~p", [Reason])}]),
+							not_found
+					end
+				end,
+				Peers
+			),
+			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, Self)
 	end.
 
 get_peer_intervals(Peer, Left, SoughtIntervals) ->
@@ -2693,10 +2562,8 @@ pack_and_store_chunk(Args, State) ->
 	case PackingStatus of
 		{ready, {StoredPacking, StoredChunk}} ->
 			ChunkArgs = {StoredPacking, StoredChunk, AbsoluteOffset, TXRoot, ChunkSize},
-			store_chunk(ChunkArgs, {StoredPacking, DataPath, Offset, DataRoot, TXPath,
-					OriginStoreID, OriginChunkDataKey}, State),
-			decrement_chunk_cache_size(),
-			{noreply, State};
+			{noreply, store_chunk(ChunkArgs, {StoredPacking, DataPath, Offset, DataRoot,
+					TXPath, OriginStoreID, OriginChunkDataKey}, State)};
 		{need_packing, RequiredPacking} ->
 			case maps:is_key({AbsoluteOffset, RequiredPacking}, PackingMap) of
 				true ->
@@ -2736,7 +2603,36 @@ pack_and_store_chunk(Args, State) ->
 			end
 	end.
 
+process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State) ->
+	State;
+process_store_chunk_queue(State) ->
+	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len } = State,
+	Timestamp = element(2, gb_sets:smallest(Q)),
+	Now = os:system_time(millisecond),
+	case Len > ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
+			orelse Now - Timestamp > ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD of
+		true ->
+			{{_Offset, _Timestamp, _Ref, ChunkArgs, Args}, Q2} = gb_sets:take_smallest(Q),
+			store_chunk2(ChunkArgs, Args, State),
+			decrement_chunk_cache_size(),
+			State2 = State#sync_data_state{ store_chunk_queue = Q2,
+					store_chunk_queue_len = Len - 1 },
+			State2;
+		false ->
+			State
+	end.
+
 store_chunk(ChunkArgs, Args, State) ->
+	%% Let at least N chunks stack up, then write them in the ascending order,
+	%% to reduce out-of-order disk writes causing fragmentation.
+	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len } = State,
+	Now = os:system_time(millisecond),
+	Offset = element(3, ChunkArgs),
+	Q2 = gb_sets:add_element({Offset, Now, make_ref(), ChunkArgs, Args}, Q),
+	State2 = State#sync_data_state{ store_chunk_queue = Q2, store_chunk_queue_len = Len + 1 },
+	process_store_chunk_queue(State2).
+
+store_chunk2(ChunkArgs, Args, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	{Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{_Packing, DataPath, Offset, DataRoot, TXPath, OriginStoreID, OriginChunkDataKey} = Args,
@@ -3253,21 +3149,6 @@ data_root_index_next({Index, Count}, _Limit) ->
 			{Element, Index2} = gb_sets:take_largest(Index),
 			{Element, {Index2, Count + 1}}
 	end.
-
-is_chunk_cache_full() ->
-	[{_, Limit}] = ets:lookup(ar_data_sync_state, chunk_cache_size_limit),
-	case ets:lookup(ar_data_sync_state, chunk_cache_size) of
-		[{_, Size}] when Size > Limit ->
-			true;
-		_ ->
-			false
-	end.
-
-decrement_chunk_cache_size() ->
-	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, -1}, {chunk_cache_size, 0}).
-
-increment_chunk_cache_size() ->
-	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, 1}, {chunk_cache_size, 1}).
 
 record_chunk_cache_size_metric() ->
 	case ets:lookup(ar_data_sync_state, chunk_cache_size) of

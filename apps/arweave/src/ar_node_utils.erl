@@ -680,18 +680,10 @@ is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
 %%% Tests.
 %%%===================================================================
 
-block_validation_test_pre_fork_2_6_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_6, fun() -> infinity end}],
-		fun() -> test_block_validation(fork_2_5) end).
-
 block_validation_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_6, fun() -> 0 end}],
-		fun() -> test_block_validation(fork_2_6) end).
+	{timeout, 30, fun test_block_validation/0}.
 
-test_block_validation(Fork) ->
-	?debugFmt("Testing on fork: ~p", [Fork]),
+test_block_validation() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
 	ar_test_node:start(B0),
@@ -729,33 +721,6 @@ test_block_validation(Fork) ->
 	InvDataRootB = B#block{ tx_root = crypto:strong_rand_bytes(32) },
 	InvBlockIndexRootB = B#block{ hash_list_merkle = crypto:strong_rand_bytes(32) },
 	InvCDiffB = B#block{ cumulative_diff = PrevB#block.cumulative_diff * 1000 },
-	case Fork of
-		fork_2_6 ->
-			ok;
-		_ ->
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(B#block{ diff = PrevB#block.diff - 1 }, PrevB, Wallets,
-							BlockAnchors, RecentTXMap, PartitionUpperBound)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(B#block{ tags = [<<"N">>, <<"V">>] }, PrevB, Wallets,
-							BlockAnchors, RecentTXMap, PartitionUpperBound)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(InvDataRootB#block{
-							indep_hash = ar_block:indep_hash(InvDataRootB) },
-						PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(InvLastRetargetB#block{
-							indep_hash = ar_block:indep_hash(InvLastRetargetB) },
-					PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(
-						InvBlockIndexRootB#block{
-							indep_hash = ar_block:indep_hash(InvBlockIndexRootB) },
-						PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(InvCDiffB#block{ indep_hash = ar_block:indep_hash(InvCDiffB) },
-							PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound))
-	end,
 	?assertEqual({invalid, invalid_difficulty},
 			validate_block(difficulty, {
 					B#block{ diff = PrevB#block.diff - 1 }, PrevB, Wallets, BlockAnchors,
@@ -802,52 +767,7 @@ test_block_validation(Fork) ->
 	[{H2, _, _} | _ ] = ar_test_node:wait_until_height(4),
 	B2 = ar_node:get_block_shadow_from_cache(H2),
 	?assertEqual(valid, validate(B2, B, Wallets, BlockAnchors2, RecentTXMap2,
-			PartitionUpperBound2)),
-	case Fork of
-		fork_2_6 ->
-			ok;
-		_ ->
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(B2#block{ poa = #poa{} }, B, Wallets, BlockAnchors2, RecentTXMap2,
-							PartitionUpperBound2)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(B2#block{ hash = <<>> }, B, Wallets, BlockAnchors2, RecentTXMap2,
-							PartitionUpperBound2)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(B2#block{ hash = B#block.hash }, B, Wallets, BlockAnchors2,
-							RecentTXMap2, PartitionUpperBound2)),
-			PoA = B2#block.poa,
-			FakePoA =
-				case get_chunk(1) of
-					P when P#poa.chunk == PoA#poa.chunk ->
-						get_chunk(1 + 256 * 1024);
-					P ->
-						P
-				end,
-			{FakeH0, FakeEntropy} = ar_mine:spora_h0_with_entropy(
-					ar_block:generate_block_data_segment(B2#block{ poa = FakePoA }),
-					B2#block.nonce, B2#block.height),
-			{FakeSolutionHash, _} = ar_mine:spora_solution_hash_with_entropy(
-					B#block.indep_hash, B2#block.timestamp, FakeH0, FakePoA#poa.chunk,
-					FakeEntropy, B2#block.height),
-			{FakeSolutionHashNoEntropy, _} = ar_mine:spora_solution_hash(B#block.indep_hash,
-					B2#block.timestamp, FakeH0, FakePoA#poa.chunk, B2#block.height),
-			?assertEqual({invalid, invalid_spora},
-					validate(B2#block{ poa = FakePoA, hash = FakeSolutionHash }, B, Wallets,
-							BlockAnchors2, RecentTXMap2, PartitionUpperBound2)),
-			?assertEqual({invalid, invalid_spora_hash},
-					validate(B2#block{ poa = FakePoA, hash = FakeSolutionHashNoEntropy }, B,
-							Wallets, BlockAnchors2, RecentTXMap2, PartitionUpperBound2))
-	end.
-
-get_chunk(Byte) ->
-	{ok, {{<<"200">>, _}, _, JSON, _, _}} = ar_test_node:get_chunk(Byte),
-	#{
-		chunk := Chunk,
-		data_path := DataPath,
-		tx_path := TXPath
-	} = ar_serialize:json_map_to_chunk_proof(jiffy:decode(JSON, [return_maps])),
-	#poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath, option = 1 }.
+			PartitionUpperBound2)).
 
 update_accounts_rejects_same_signature_in_double_signing_proof_test_() ->
 	{timeout, 10, fun test_update_accounts_rejects_same_signature_in_double_signing_proof/0}.

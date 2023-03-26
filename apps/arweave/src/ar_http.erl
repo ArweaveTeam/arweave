@@ -4,6 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, req/1]).
+-export([block_peer_connections/0, unblock_peer_connections/0]). % Only used in tests.
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -22,8 +23,42 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+block_peer_connections() ->
+	ets:insert(?MODULE, {block_peer_connections}),
+	ok.
+
+unblock_peer_connections() ->
+	ets:delete(?MODULE, block_peer_connections),
+	ok.
+
+-ifdef(DEBUG).
+req(#{ peer := {_, _} } = Args) ->
+	req(Args, false);
+req(Args) ->
+	#{ peer := Peer } = Args,
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.port == element(5, Peer) of
+		true ->
+			%% Do not block requests to self.
+			req(Args, false);
+		false ->
+			case ets:lookup(?MODULE, block_peer_connections) of
+				[{_}] ->
+					case lists:keyfind(<<"X-P2p-Port">>, 1, maps:get(headers, Args, [])) of
+						{_, _} ->
+							{error, blocked};
+						_ ->
+							%% Do not block requests made from the test processes.
+							req(Args, false)
+					end;
+				_ ->
+					req(Args, false)
+			end
+	end.
+-else.
 req(Args) ->
 	req(Args, false).
+-endif.
 
 req(Args, ReestablishedConnection) ->
 	#{ peer := Peer, path := Path } = Args,

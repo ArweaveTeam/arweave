@@ -91,7 +91,7 @@ test_rejects_invalid_chunks() ->
 	).
 
 does_not_store_small_chunks_after_2_5_test_() ->
-	test_on_fork(height_2_5, 0, fun test_does_not_store_small_chunks_after_2_5/0).
+	{timeout, 600, fun test_does_not_store_small_chunks_after_2_5/0}.
 
 test_does_not_store_small_chunks_after_2_5() ->
 	Size = ?DATA_CHUNK_SIZE,

@@ -4,7 +4,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/0, start/1, start/2, slave_stop/0, slave_start/0, slave_start/1,
+-import(ar_test_node, [start/1, start/2, slave_stop/0, slave_start/1,
 		slave_start/2, connect_to_slave/0, get_tx_anchor/0, disconnect_from_slave/0,
 		wait_until_height/1, master_peer/0, wait_until_receives_txs/1, sign_tx/2, sign_tx/3,
 		post_tx_json_to_master/1, assert_slave_wait_until_receives_txs/1,
@@ -32,12 +32,7 @@ start_node() ->
 reset_node() ->
 	ar_blacklist_middleware:reset(),
 	slave_call(ar_blacklist_middleware, reset, []),
-	case ar_peers:get_peers() of
-		[] ->
-			connect_to_slave();
-		_ ->
-			ok
-	end.
+	connect_to_slave().
 
 setup_all_post_2_6() ->
 	{Setup, Cleanup} = ar_test_node:mock_functions([
@@ -52,16 +47,16 @@ cleanup_all_post_2_6({Cleanup, Functions}) ->
 
 setup_one_post_2_6() ->
 	reset_node(),
+	Height = slave_height(),
+	[{PrevH, _, _} | _] = wait_until_height(Height),
 	disconnect_from_slave(),
-	slave_call(ar_mine, stop, [miner_2_6]),
-	RemoteHeight = slave_height(),
-	BTip0 = ar_node:get_current_block(),
+	slave_mine(),
+	[{H, _, _} | _] = ar_test_node:assert_slave_wait_until_height(Height + 1),
+	B = slave_call(ar_block_cache, get, [block_cache, H]),
+	PrevB = slave_call(ar_block_cache, get, [block_cache, PrevH]),
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
-	slave_mine(),
-	BI = ar_test_node:assert_slave_wait_until_height(RemoteHeight + 1),
-	BTip1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	{Key, BTip0, BTip1}.
+	{Key, B, PrevB}.
 
 setup_all_batch() ->
 	%% Never retarget the difficulty - this ensures the tests are always
@@ -124,7 +119,7 @@ batch_test_() ->
 			{foreach, fun reset_node/0, [
 				%% ---------------------------------------------------------
 				%% The following tests must be run at a block height of 0.
-				%% ---------------------------------------------------------					
+				%% ---------------------------------------------------------
 				test_register(fun test_get_current_block/1, GenesisData),
 				test_register(fun test_get_height/1, GenesisData),
 				%% ---------------------------------------------------------
@@ -278,21 +273,21 @@ get_tx(ID) ->
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 test_get_info(_) ->
-	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
+	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info(master_peer(), name)),
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER},
-			ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
+			ar_http_iface_client:get_info(master_peer(), release)),
 	?assertEqual(
 		?CLIENT_VERSION,
-		ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, version)),
-	?assertEqual(1, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, peers)),
+		ar_http_iface_client:get_info(master_peer(), version)),
+	?assertEqual(1, ar_http_iface_client:get_info(master_peer(), peers)),
 	ar_util:do_until(
 		fun() ->
-			1 == ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, blocks)
+			1 == ar_http_iface_client:get_info(master_peer(), blocks)
 		end,
 		100,
 		2000
 	),
-	?assertEqual(1, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, height)).
+	?assertEqual(1, ar_http_iface_client:get_info(master_peer(), height)).
 
 %% @doc Ensure that transactions are only accepted once.
 test_single_regossip(_) ->
@@ -300,23 +295,23 @@ test_single_regossip(_) ->
 	TX = ar_tx:new(),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TX#tx.id,
+		ar_http_iface_client:send_tx_json(master_peer(), TX#tx.id,
 				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1983}, TX#tx.id,
-				ar_serialize:tx_to_binary(TX))
+		slave_call(ar_http_iface_client, send_tx_binary, [slave_peer(), TX#tx.id,
+				ar_serialize:tx_to_binary(TX)])
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1983}, TX#tx.id,
-				ar_serialize:tx_to_binary(TX))
+		slave_call(ar_http_iface_client, send_tx_binary, [slave_peer(), TX#tx.id,
+				ar_serialize:tx_to_binary(TX)])
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1983}, TX#tx.id,
-				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
+		slave_call(ar_http_iface_client, send_tx_json, [slave_peer(), TX#tx.id,
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))])
 	).
 
 test_node_blacklisting_get_spammer() ->
@@ -340,13 +335,13 @@ test_node_blacklisting_post_spammer() ->
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
 get_fun_msg_pair(get_info) ->
 	{ fun(_) ->
-			ar_http_iface_client:get_info({127, 0, 0, 1, 1984})
+			ar_http_iface_client:get_info(master_peer())
 		end
 	, info_unavailable};
 get_fun_msg_pair(send_tx_binary) ->
 	{ fun(_) ->
 			InvalidTX = (ar_tx:new())#tx{ owner = <<"key">>, signature = <<"invalid">> },
-			case ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984},
+			case ar_http_iface_client:send_tx_binary(master_peer(),
 					InvalidTX#tx.id, ar_serialize:tx_to_binary(InvalidTX)) of
 				{ok,
 					{{<<"429">>, <<"Too Many Requests">>}, _,
@@ -413,7 +408,7 @@ test_get_balance({B0, _, _, {_, Pub1}}) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet/" ++ Addr ++ "/balance"
 		}),
 	?assertEqual(?AR(10), binary_to_integer(Body)),
@@ -421,7 +416,7 @@ test_get_balance({B0, _, _, {_, Pub1}}) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
 		}),
 	ar_node:mine(),
@@ -429,7 +424,7 @@ test_get_balance({B0, _, _, {_, Pub1}}) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
 		}).
 
@@ -441,7 +436,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
 	{ok, {{<<"404">>, _}, _, <<"Root hash not found.">>, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet_list/" ++ NonExistentRootHash
 		}),
 
@@ -458,7 +453,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
 	{ok, {{<<"200">>, _}, _, Body1, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet_list/" ++ RootHash
 		}),
 	Cursor = maps:get(next_cursor, binary_to_term(Body1)),
@@ -470,7 +465,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet_list/" ++ RootHash ++ "/" ++ ar_util:encode(Cursor)
 		}),
 	?assertEqual(#{
@@ -480,10 +475,10 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
 
 %% @doc Test that heights are returned correctly.
 test_get_height(_) ->
-	0 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}),
+	0 = ar_http_iface_client:get_height(master_peer()),
 	ar_node:mine(),
 	wait_until_height(1),
-	1 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}).
+	1 = ar_http_iface_client:get_height(master_peer()).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 test_get_last_tx_single({_, _, _, {_, StaticPub}}) ->
@@ -491,7 +486,7 @@ test_get_last_tx_single({_, _, _, {_, StaticPub}}) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet/" ++ Addr ++ "/last_tx"
 		}),
 	?assertEqual(<<"TEST_ID">>, ar_util:decode(Body)).
@@ -499,7 +494,7 @@ test_get_last_tx_single({_, _, _, {_, StaticPub}}) ->
 %% @doc Check that we can qickly get the local time from the peer.
 get_time_test() ->
 	Now = os:system_time(second),
-	{ok, {Min, Max}} = ar_http_iface_client:get_time({127, 0, 0, 1, 1984}, 10 * 1000),
+	{ok, {Min, Max}} = ar_http_iface_client:get_time(master_peer(), 10 * 1000),
 	?assert(Min < Now),
 	?assert(Now < Max).
 
@@ -536,41 +531,25 @@ test_get_current_block({B0, _, _, _}) ->
 %% correctly if the block cannot be found.
 test_get_non_existent_block(_) ->
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
-				path => "/block/height/100"}),
+		ar_http:req(#{ method => get, peer => master_peer(), path => "/block/height/100" }),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
-				path => "/block2/height/100"}),
+		ar_http:req(#{ method => get, peer => master_peer(), path => "/block2/height/100" }),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
-				path => "/block/hash/abcd"}),
+		ar_http:req(#{ method => get, peer => master_peer(), path => "/block/hash/abcd" }),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
-				path => "/block2/hash/abcd"}),
+		ar_http:req(#{ method => get, peer => master_peer(), path => "/block2/hash/abcd" }),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/block/height/101/wallet_list"
-		}),
+		ar_http:req(#{ method => get, peer => master_peer(),
+				path => "/block/height/101/wallet_list" }),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/block/hash/abcd/wallet_list"
-		}),
+		ar_http:req(#{ method => get, peer => master_peer(),
+				path => "/block/hash/abcd/wallet_list" }),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/block/height/101/hash_list"
-		}),
+		ar_http:req(#{ method => get, peer => master_peer(),
+				path => "/block/height/101/hash_list" }),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/block/hash/abcd/hash_list"
-		}).
+		ar_http:req(#{ method => get, peer => master_peer(),
+				path => "/block/hash/abcd/hash_list" }).
 
 %% @doc A test for retrieving format=2 transactions from HTTP API.
 test_get_format_2_tx(_) ->
@@ -584,19 +563,19 @@ test_get_format_2_tx(_) ->
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
 	EncodedInvalidTXID = binary_to_list(ar_util:encode(InvalidTXID)),
 	EncodedEmptyTXID = binary_to_list(ar_util:encode(EmptyTXID)),
-	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, ValidTX#tx.id,
+	ar_http_iface_client:send_tx_json(master_peer(), ValidTX#tx.id,
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ValidTX))),
 	{ok, {{<<"400">>, _}, _, <<"The attached data is split in an unknown way.">>, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(InvalidDataRootTX))
 		}),
-	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984},
+	ar_http_iface_client:send_tx_binary(master_peer(),
 			InvalidDataRootTX#tx.id,
 			ar_serialize:tx_to_binary(InvalidDataRootTX#tx{ data = <<>> })),
-	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, EmptyTX#tx.id,
+	ar_http_iface_client:send_tx_binary(master_peer(), EmptyTX#tx.id,
 			ar_serialize:tx_to_binary(EmptyTX)),
 	wait_until_receives_txs([ValidTX, EmptyTX, InvalidDataRootTX]),
 	ar_node:mine(),
@@ -606,7 +585,7 @@ test_get_format_2_tx(_) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ EncodedTXID
 		}),
 	?assertEqual(ValidTX#tx{ 
@@ -619,7 +598,7 @@ test_get_format_2_tx(_) ->
 	{ok, {{<<"200">>, _}, _, InvalidData, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ EncodedInvalidTXID ++ "/data"
 		}),
 	?assertEqual(<<>>, InvalidData),
@@ -627,14 +606,14 @@ test_get_format_2_tx(_) ->
 	{ok, {{<<"200">>, _}, _, <<>>, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ EncodedEmptyTXID ++ "/data"
 		}),
 	%% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.html.
 	{ok, {{<<"200">>, _}, Headers, HTMLData, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ EncodedTXID ++ "/data.html"
 		}),
 	?assertEqual(<<"DATA">>, HTMLData),
@@ -647,7 +626,7 @@ test_get_format_1_tx(_) ->
 	LocalHeight = ar_node:get_height(),
 	TX = #tx{ id = TXID } = ar_tx:new(<<"DATA">>),
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
-	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+	ar_http_iface_client:send_tx_binary(master_peer(), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
 	wait_until_receives_txs([TX]),
 	ar_node:mine(),
@@ -657,7 +636,7 @@ test_get_format_1_tx(_) ->
 			fun() ->
 				case ar_http:req(#{
 					method => get,
-					peer => {127, 0, 0, 1, 1984},
+					peer => master_peer(),
 					path => "/tx/" ++ EncodedTXID
 				}) of
 					{ok, {{<<"404">>, _}, _, _, _, _}} ->
@@ -683,7 +662,7 @@ test_add_external_tx_with_tags(_) ->
 					{<<"TEST_TAG2">>, <<"TEST_VAL2">>}
 				]
 		},
-	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TaggedTX#tx.id,
+	ar_http_iface_client:send_tx_json(master_peer(), TaggedTX#tx.id,
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TaggedTX))),
 	wait_until_receives_txs([TaggedTX]),
 	ar_node:mine(),
@@ -698,7 +677,7 @@ test_add_external_tx_with_tags(_) ->
 test_find_external_tx(_) ->
 	LocalHeight = ar_node:get_height(),
 	TX = ar_tx:new(<<"DATA">>),
-	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+	ar_http_iface_client:send_tx_binary(master_peer(), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
 	wait_until_receives_txs([TX]),
 	ar_node:mine(),
@@ -717,41 +696,6 @@ test_find_external_tx(_) ->
 			5000
 		),
 	?assertEqual(FoundTXID, TX#tx.id).
-
-rejects_invalid_blocks_pre_fork_2_6_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> infinity end}],
-		fun test_rejects_invalid_blocks_pre_fork_2_6/0).
-
-test_rejects_invalid_blocks_pre_fork_2_6() ->
-	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
-	start(B0),
-	{_Slave, _} = slave_start(B0),
-	disconnect_from_slave(),
-	slave_mine(),
-	Peer = {127, 0, 0, 1, 1984},
-	BI = ar_test_node:assert_slave_wait_until_height(1),
-	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
-	%% Try to post an invalid block.
-	InvalidH = crypto:strong_rand_bytes(48),
-	ok = ar_events:subscribe(block),
-	post_block(B1#block{ indep_hash = InvalidH }, invalid_hash),
-	%% Verify the IP address of self is NOT banned in ar_blacklist_middleware.
-	InvalidH2 = crypto:strong_rand_bytes(48),
-	post_block(B1#block{ indep_hash = InvalidH2 }, invalid_hash),
-	%% The valid block with the ID from the failed attempt can still go through.
-	post_block(B1, valid),
-	%% Try to post the same block again.
-	Peer = ar_test_node:master_peer(),
-	?assertMatch({ok, {{<<"208">>, _}, _, _, _, _}}, send_new_block(Peer, B1)),
-	%% Correct hash, but invalid PoW.
-	B2 = B1#block{ reward_addr = crypto:strong_rand_bytes(32) },
-	InvalidH3 = ar_block:indep_hash(B2),
-	timer:sleep(100 * 2), % ?THROTTLE_BY_IP_INTERVAL_MS * 2
-	post_block(B2#block{ indep_hash = InvalidH3 }, invalid_pow),
-	?assertMatch({ok, {{<<"403">>, _}, _,
-			<<"IP address blocked due to previous request.">>, _, _}},
-			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),
-	ar_blacklist_middleware:reset().
 
 rejects_invalid_blocks_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -775,7 +719,7 @@ test_rejects_invalid_blocks() ->
 	%% The valid block with the ID from the failed attempt can still go through.
 	post_block(B1, valid),
 	%% Try to post the same block again.
-	Peer = ar_test_node:master_peer(),
+	Peer = master_peer(),
 	?assertMatch({ok, {{<<"208">>, _}, _, _, _, _}}, send_new_block(Peer, B1)),
 	%% Correct hash, but invalid signature.
 	B2Preimage = B1#block{ signature = <<>> },
@@ -925,10 +869,10 @@ test_rejects_invalid_blocks() ->
 			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),
 	ar_blacklist_middleware:reset().
 
-test_reject_block_invalid_denomination({Key, BTip0, BTip1}) ->
+test_reject_block_invalid_denomination({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	B = sign_block(BTip1#block{ denomination = 0 }, BTip0, Key),
-	post_block(B, invalid_denomination).
+	B2 = sign_block(B#block{ denomination = 0 }, PrevB, Key),
+	post_block(B2, invalid_denomination).
 
 rejects_blocks_with_invalid_double_signing_proof_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -1016,43 +960,42 @@ test_reject_block_invalid_double_signing_proof() ->
 	?assertEqual(2, length(B9#block.txs)),
 	?assertMatch(#{ Target := {1, <<>>}, BannedAddr := {_, TXID, 1, false} }, Accounts2).
 
-test_reject_block_invalid_kryder_plus_rate_multiplier({Key, BTip0, BTip1}) ->
+test_reject_block_invalid_kryder_plus_rate_multiplier({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	B = sign_block(BTip1#block{ kryder_plus_rate_multiplier = 0 }, BTip0, Key),
-	post_block(B, invalid_kryder_plus_rate_multiplier).
+	B2 = sign_block(B#block{ kryder_plus_rate_multiplier = 0 }, PrevB, Key),
+	post_block(B2, invalid_kryder_plus_rate_multiplier).
 
-test_reject_block_invalid_kryder_plus_rate_multiplier_latch({Key, BTip0, BTip1}) ->
+test_reject_block_invalid_kryder_plus_rate_multiplier_latch({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	B = sign_block(BTip1#block{ kryder_plus_rate_multiplier_latch = 2 }, BTip0, Key),
-	post_block(B, invalid_kryder_plus_rate_multiplier_latch).
+	B2 = sign_block(B#block{ kryder_plus_rate_multiplier_latch = 2 }, PrevB, Key),
+	post_block(B2, invalid_kryder_plus_rate_multiplier_latch).
 
-test_reject_block_invalid_endowment_pool({Key, BTip0, BTip1}) ->
+test_reject_block_invalid_endowment_pool({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	B = sign_block(BTip1#block{ reward_pool = 2 }, BTip0, Key),
-	post_block(B, invalid_reward_pool).
+	B2 = sign_block(B#block{ reward_pool = 2 }, PrevB, Key),
+	post_block(B2, invalid_reward_pool).
 
-test_reject_block_invalid_debt_supply({Key, BTip0, BTip1}) ->
+test_reject_block_invalid_debt_supply({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	B = sign_block(BTip1#block{ debt_supply = 100000000 }, BTip0, Key),
-	post_block(B, invalid_debt_supply).
+	B2 = sign_block(B#block{ debt_supply = 100000000 }, PrevB, Key),
+	post_block(B2, invalid_debt_supply).
 
-test_reject_block_invalid_miner_reward({Key, BTip0, _}) ->
+test_reject_block_invalid_miner_reward({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	BTip1 = slave_call(ar_node, get_current_block, []),
-	BTip2 = sign_block(BTip1#block{ reward = 0 }, BTip0, Key),
-	post_block(BTip2, invalid_reward_history_hash),
-	HashRate = ar_difficulty:get_hash_rate(BTip2#block.diff),
-	RewardHistory = tl(BTip2#block.reward_history),
-	Addr = BTip2#block.reward_addr,
-	BTip3 = sign_block(BTip2#block{
+	B2 = sign_block(B#block{ reward = 0 }, PrevB, Key),
+	post_block(B2, invalid_reward_history_hash),
+	HashRate = ar_difficulty:get_hash_rate(B2#block.diff),
+	RewardHistory = tl(B2#block.reward_history),
+	Addr = B2#block.reward_addr,
+	B3 = sign_block(B2#block{
 			reward_history_hash = ar_block:reward_history_hash([{Addr, HashRate, 0, 1}
-					| RewardHistory]) }, BTip0, Key),
-	post_block(BTip3, invalid_miner_reward).
+					| RewardHistory]) }, PrevB, Key),
+	post_block(B3, invalid_miner_reward).
 
-test_reject_block_invalid_wallet_list({Key, BTip0, BTip1}) ->
+test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	B = sign_block(BTip1#block{ wallet_list = crypto:strong_rand_bytes(32) }, BTip0, Key),
-	post_block(B, invalid_wallet_list).
+	B2 = sign_block(B#block{ wallet_list = crypto:strong_rand_bytes(32) }, PrevB, Key),
+	post_block(B2, invalid_wallet_list).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
 	post_block(B, [ExpectedResult], ar_test_node:master_peer());
@@ -1121,67 +1064,12 @@ sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, Key) ->
 	H = ar_block:indep_hash2(SignedH, Signature),
 	B#block{ indep_hash = H, signature = Signature }.
 
-add_external_block_with_invalid_timestamp_pre_fork_2_6_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> infinity end}],
-		fun test_add_external_block_with_invalid_timestamp_pre_fork_2_6/0).
-
-test_add_external_block_with_invalid_timestamp_pre_fork_2_6() ->
-	ar_blacklist_middleware:reset(),
-	[B0] = ar_weave:init(),
-	start(B0),
-	{_Slave, _} = slave_start(B0),
-	disconnect_from_slave(),
-	slave_mine(),
-	BI = assert_slave_wait_until_height(1),
-	Peer = {127, 0, 0, 1, 1984},
-	B1 = (slave_call(ar_storage, read_block, [hd(BI)]))#block{
-			hash_list = [B0#block.indep_hash]
-		},
+test_add_external_block_with_invalid_timestamp({Key, B, PrevB}) ->
+	Peer = master_peer(),
 	%% Expect the timestamp too far from the future to be rejected.
 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
-	B2 = update_block_timestamp_pre_2_6(B1, TooFarFutureTimestamp),
-	ok = ar_events:subscribe(block),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B2)),
-	H = B2#block.indep_hash,
-	receive
-		{event, block, {rejected, invalid_timestamp, H, Peer}} ->
-			ok
-		after 500 ->
-			?assert(false, "Did not receive the rejected block event (invalid_timestamp).")
-	end,
-	%% Expect the timestamp from the future within the tolerance interval to be accepted.
-	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
-	B3 = update_block_timestamp_pre_2_6(B1, OkFutureTimestamp),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B3)),
-	%% Expect the timestamp far from the past to be rejected.
-	PastTimestampTolerance = lists:sum([?JOIN_CLOCK_TOLERANCE * 2, ?CLOCK_DRIFT_MAX]),
-	TooFarPastTimestamp = B0#block.timestamp - PastTimestampTolerance - 3,
-	B4 = update_block_timestamp_pre_2_6(B1, TooFarPastTimestamp),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B4)),
-	H2 = B4#block.indep_hash,
-	receive
-		{event, block, {rejected, invalid_timestamp, H2, Peer}} ->
-			ok
-		after 500 ->
-			?assert(false, "Did not receive the rejected block event (invalid_timestamp).")
-	end,
-	%% Expect the block with a timestamp from the past within the tolerance interval
-	%% to be accepted.
-	OkPastTimestamp = B0#block.timestamp - PastTimestampTolerance + 3,
-	B5 = update_block_timestamp_pre_2_6(B1, OkPastTimestamp),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B5)).
-
-test_add_external_block_with_invalid_timestamp({Key, BTip0, BTip1}) ->
-	Peer = {127, 0, 0, 1, 1984},
-	B0 = BTip0,
-	B1 = BTip1#block{
-			hash_list = [B0#block.indep_hash]
-		},
-	%% Expect the timestamp too far from the future to be rejected.
-	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
-	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
-	B2 = update_block_timestamp(B1, B0, TooFarFutureTimestamp, Key),
+	B2 = update_block_timestamp(B, PrevB, TooFarFutureTimestamp, Key),
 	ok = ar_events:subscribe(block),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B2)),
 	H = B2#block.indep_hash,
@@ -1193,12 +1081,12 @@ test_add_external_block_with_invalid_timestamp({Key, BTip0, BTip1}) ->
 	end,
 	%% Expect the timestamp from the future within the tolerance interval to be accepted.
 	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
-	B3 = update_block_timestamp(B1, B0, OkFutureTimestamp, Key),
+	B3 = update_block_timestamp(B, PrevB, OkFutureTimestamp, Key),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B3)),
 	%% Expect the timestamp too far behind the previous timestamp to be rejected.
 	PastTimestampTolerance = lists:sum([?JOIN_CLOCK_TOLERANCE * 2, ?CLOCK_DRIFT_MAX]),
-	TooFarPastTimestamp = B0#block.timestamp - PastTimestampTolerance - 1,
-	B4 = update_block_timestamp(B1, B0, TooFarPastTimestamp, Key),
+	TooFarPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance - 1,
+	B4 = update_block_timestamp(B, PrevB, TooFarPastTimestamp, Key),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B4)),
 	H2 = B4#block.indep_hash,
 	receive
@@ -1208,23 +1096,9 @@ test_add_external_block_with_invalid_timestamp({Key, BTip0, BTip1}) ->
 			?assert(false, "Did not receive the rejected block event "
 					"(invalid_timestamp).")
 	end,
-	OkPastTimestamp = B0#block.timestamp - PastTimestampTolerance + 1,
-	B5 = update_block_timestamp(B1, B0, OkPastTimestamp, Key),
+	OkPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance + 1,
+	B5 = update_block_timestamp(B, PrevB, OkPastTimestamp, Key),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B5)).
-
-update_block_timestamp_pre_2_6(B, Timestamp) ->
-	#block{
-		height = Height,
-		nonce = Nonce,
-		previous_block = PrevH,
-		poa = #poa{ chunk = Chunk }
-	} = B,
-	B2 = B#block{ timestamp = Timestamp },
-	BDS = ar_block:generate_block_data_segment(B2),
-	{H0, Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height),
-	B3 = B2#block{ hash = element(1, ar_mine:spora_solution_hash_with_entropy(PrevH, Timestamp,
-			H0, Chunk, Entropy, Height)) },
-	B3#block{ indep_hash = ar_block:indep_hash(B3) }.
 
 update_block_timestamp(B, PrevB, Timestamp, Key) ->
 	sign_block(B#block{ timestamp = Timestamp }, PrevB, Key).
@@ -1240,7 +1114,7 @@ test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
 		quantity => ?AR(2),
 		reward => ?AR(1)}),
 	ID = SignedTX#tx.id,
-	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, SignedTX#tx.id,
+	ar_http_iface_client:send_tx_binary(master_peer(), SignedTX#tx.id,
 			ar_serialize:tx_to_binary(SignedTX)),
 	wait_until_receives_txs([SignedTX]),
 	ar_node:mine(),
@@ -1248,7 +1122,7 @@ test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet/"
 					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1)))
 					++ "/last_tx"
@@ -1259,7 +1133,7 @@ test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
 test_get_subfields_of_tx(_) ->
 	LocalHeight = ar_node:get_height(),
 	TX = ar_tx:new(<<"DATA">>),
-	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+	ar_http_iface_client:send_tx_binary(master_peer(), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
 	wait_until_receives_txs([TX]),
 	ar_node:mine(),
@@ -1271,13 +1145,13 @@ test_get_subfields_of_tx(_) ->
 %% @doc Correctly check the status of pending is returned for a pending transaction
 test_get_pending_tx(_) ->
 	TX = ar_tx:new(<<"DATA1">>),
-	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TX#tx.id,
+	ar_http_iface_client:send_tx_json(master_peer(), TX#tx.id,
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	wait_until_receives_txs([TX]),
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id))
 		}),
 	?assertEqual(<<"Pending">>, Body).
@@ -1294,21 +1168,22 @@ test_get_tx_body(_) ->
 	?assertEqual(<<"TEST DATA">>, ar_util:decode(Data)).
 
 test_get_tx_status(_) ->
-	LocalHeight = ar_node:get_height(),
-	RemoteHeight = slave_height(),
+	connect_to_slave(),
+	Height = ar_node:get_height(),
+	assert_slave_wait_until_height(Height),
 	disconnect_from_slave(),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
 	assert_post_tx_to_master(TX),
 	FetchStatus = fun() ->
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
 		})
 	end,
 	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
 	ar_node:mine(),
-	wait_until_height(LocalHeight + 1),
+	wait_until_height(Height + 1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = FetchStatus(),
 	{Res} = ar_serialize:dejsonify(Body),
 	BI = ar_node:get_block_index(),
@@ -1321,7 +1196,7 @@ test_get_tx_status(_) ->
 		maps:from_list(Res)
 	),
 	ar_node:mine(),
-	wait_until_height(LocalHeight + 2),
+	wait_until_height(Height + 2),
 	ar_util:do_until(
 		fun() ->
 			{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
@@ -1337,12 +1212,12 @@ test_get_tx_status(_) ->
 	),
 	%% Create a fork which returns the TX to mempool.
 	slave_mine(),
-	assert_slave_wait_until_height(RemoteHeight + 1),
+	assert_slave_wait_until_height(Height + 1),
 	slave_mine(),
-	assert_slave_wait_until_height(RemoteHeight + 2),
+	assert_slave_wait_until_height(Height + 2),
 	connect_to_slave(),
 	slave_mine(),
-	wait_until_height(LocalHeight + 3),
+	wait_until_height(Height + 3),
 	?assertMatch({ok, {{<<"202">>, _}, _, _, _, _}}, FetchStatus()).
 
 test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
@@ -1352,7 +1227,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet"
 		}),
 	{ok, Config} = application:get_env(arweave, config),
@@ -1361,14 +1236,14 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet",
 			headers => [{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}]
 		}),
 	{ok, {{<<"200">>, <<"OK">>}, _, CreateWalletBody, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/wallet",
 			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}]
 		}),
@@ -1386,7 +1261,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	{ok, {{<<"200">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TopUpTX))
 		}),
@@ -1407,7 +1282,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/unsigned_tx",
 			body => ar_serialize:jsonify({UnsignedTXProps})
 		}),
@@ -1416,7 +1291,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/unsigned_tx",
 			headers => [{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
 			body => ar_serialize:jsonify({UnsignedTXProps})
@@ -1424,7 +1299,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/unsigned_tx",
 			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
 			body => ar_serialize:jsonify({UnsignedTXProps})
@@ -1438,7 +1313,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	{ok, {_, _, GetTXBody, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ binary_to_list(TXID) ++ "/status"
 		}),
 	{GetTXRes} = ar_serialize:dejsonify(GetTXBody),
@@ -1455,7 +1330,7 @@ test_get_error_of_data_limit(_) ->
 	LocalHeight = ar_node:get_height(),
 	Limit = 1460,
 	TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>),
-	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+	ar_http_iface_client:send_tx_binary(master_peer(), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
 	wait_until_receives_txs([TX]),
 	ar_node:mine(),
@@ -1464,21 +1339,17 @@ test_get_error_of_data_limit(_) ->
 	Resp =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, 1984},
+			peer => master_peer(),
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
 			limit => Limit
 		}),
 	?assertEqual({error, too_much_data}, Resp).
 
-send_block2_pre_fork_2_6_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> infinity end}],
-		fun() -> test_send_block2(fork_2_5) end).
-
 send_block2_test_() ->
 	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
-		fun() -> test_send_block2(fork_2_6) end).
+		fun() -> test_send_block2() end).
 
-test_send_block2(Fork) ->
+test_send_block2() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
 	MasterWallet = ar_wallet:new_keyfile(),
@@ -1601,24 +1472,7 @@ test_send_block2(Fork) ->
 					recall_byte = 1024 }) }),
 	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
 			missing_tx_indices = [] }},
-			ar_serialize:binary_to_block_announcement_response(Body6)),
-	case Fork of
-		fork_2_5 ->
-			{H0, _Entropy} = ar_mine:spora_h0_with_entropy(
-					ar_block:generate_block_data_segment(B6), B6#block.nonce, B6#block.height),
-			{_H, PartitionUpperBound} = ar_node:get_recent_partition_upper_bound_by_prev_h(
-					B6#block.previous_block),
-			{ok, RecallByte} = ar_mine:pick_recall_byte(H0, B6#block.previous_block,
-					PartitionUpperBound),
-			{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
-				peer => slave_peer(), path => "/block2",
-				headers => [{<<"arweave-recall-byte">>, integer_to_binary(RecallByte)}],
-				body => ar_serialize:block_to_binary(B6#block{ recall_byte = RecallByte,
-						poa = #poa{} }) }),
-			assert_slave_wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1);
-		_ ->
-			ok
-	end.
+			ar_serialize:binary_to_block_announcement_response(Body6)).
 
 sort_txs_by_block_order(TXs, B) ->
 	TXByID = lists:foldl(fun(TX, Acc) -> maps:put(tx_id(TX), TX, Acc) end, #{}, TXs),
@@ -1733,9 +1587,9 @@ test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	ar_node:mine(),
 	BI1 = wait_until_height(LocalHeight + 1),
 	{B1H, _, _} = hd(BI1),
-	{ok, {{<<"200">>, _}, _, << B0H:48/binary, B1H:48/binary, 0:16 >> , _, _}}
-			= ar_http:req(#{ method => get, peer => master_peer(),
-			path => "/recent_hash_list_diff", headers => [], body => B0H }),
+	{ok, {{<<"200">>, _}, _, << B0H:48/binary, B1H:48/binary, 0:16 >> , _, _}} =
+		ar_http:req(#{ method => get, peer => master_peer(),
+				path => "/recent_hash_list_diff", headers => [], body => B0H }),
 	TXs = [sign_tx(master, Wallet1, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 3)],
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
 	ar_node:mine(),
@@ -1766,7 +1620,7 @@ wait_until_syncs_tx_data(TXID) ->
 		fun() ->
 			case ar_http:req(#{
 				method => get,
-				peer => {127, 0, 0, 1, 1984},
+				peer => master_peer(),
 				path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
 			}) of
 				{ok, {{<<"404">>, _}, _, _, _, _}} ->

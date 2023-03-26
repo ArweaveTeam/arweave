@@ -11,8 +11,6 @@
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1]).
 
--export([block_connections/0, unblock_connections/0]). % Only used in tests.
-
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 %% The frequency in milliseconds of ranking the known peers.
@@ -62,37 +60,19 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-block_connections() ->
-	ets:insert(?MODULE, {block_connections}),
-	ok.
-
-unblock_connections() ->
-	ets:delete(?MODULE, block_connections),
-	ok.
-
 get_peers() ->
-	case ets:member(?MODULE, block_connections) of
-		true ->
+	case catch ets:lookup(?MODULE, peers) of
+		{'EXIT', _} ->
 			[];
-		false ->
-			case catch ets:lookup(?MODULE, peers) of
-				{'EXIT', _} ->
-					[];
-				[] ->
-					[];
-				[{_, Peers}] ->
-					Peers
-			end
+		[] ->
+			[];
+		[{_, Peers}] ->
+			Peers
 	end.
 
 get_trusted_peers() ->
-	case ets:member(?MODULE, block_connections) of
-		true ->
-			[];
-		false ->
-			{ok, Config} = application:get_env(arweave, config),
-			Config#config.peers
-	end.
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.peers.
 
 %% @doc Return true if the given peer has a public IPv4 address.
 %% https://en.wikipedia.org/wiki/Reserved_IP_addresses.

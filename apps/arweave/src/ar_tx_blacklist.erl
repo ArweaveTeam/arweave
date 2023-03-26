@@ -9,8 +9,9 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_taking_down/0, is_tx_blacklisted/1, is_byte_blacklisted/1,
-		get_next_not_blacklisted_byte/1, notify_about_removed_tx/1,
-		norify_about_orphaned_tx/1, notify_about_added_tx/3, store_state/0]).
+		get_next_not_blacklisted_byte/1, get_next_blacklisted_byte/1,
+		notify_about_removed_tx/1, norify_about_orphaned_tx/1, notify_about_added_tx/3,
+		store_state/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -80,10 +81,8 @@ is_tx_blacklisted(TXID) ->
 is_byte_blacklisted(Offset) ->
 	ar_ets_intervals:is_inside(ar_tx_blacklist_offsets, Offset).
 
-%% @doc
-%% Return the smallest not blacklisted byte bigger than or equal to
+%% @doc Return the smallest not blacklisted byte bigger than or equal to
 %% the byte at the given global offset.
-%% @end
 get_next_not_blacklisted_byte(Offset) ->
 	case ets:next(ar_tx_blacklist_offsets, Offset - 1) of
 		'$end_of_table' ->
@@ -100,6 +99,22 @@ get_next_not_blacklisted_byte(Offset) ->
 				[] ->
 					%% The key should have been just removed, unlucky timing.
 					get_next_not_blacklisted_byte(Offset)
+			end
+	end.
+
+%% @doc Return the smallest blacklisted byte bigger than or equal to
+%% the byte at the given global offset.
+get_next_blacklisted_byte(Offset) ->
+	case ets:next(ar_tx_blacklist_offsets, Offset - 1) of
+		'$end_of_table' ->
+			infinity;
+		NextOffset ->
+			case ets:lookup(ar_tx_blacklist_offsets, NextOffset) of
+				[{NextOffset, Start}] ->
+					max(Offset, Start);
+				[] ->
+					%% The key should have been just removed, unlucky timing.
+					get_next_blacklisted_byte(Offset)
 			end
 	end.
 

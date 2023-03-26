@@ -114,15 +114,11 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	?debugFmt("Expecting ~s to be re-mined.~n", [ar_util:encode(TXID)]),
 	?assertEqual([TXID], H4TXIDs).
 
-invalid_block_with_high_cumulative_difficulty_pre_fork_2_6_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> infinity end}],
-		fun() -> test_invalid_block_with_high_cumulative_difficulty(fork_2_5) end).
-
 invalid_block_with_high_cumulative_difficulty_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
-		fun() -> test_invalid_block_with_high_cumulative_difficulty(fork_2_6) end).
+		fun() -> test_invalid_block_with_high_cumulative_difficulty() end).
 
-test_invalid_block_with_high_cumulative_difficulty(Fork) ->
+test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Submit an alternative fork with valid blocks weaker than the tip and
 	%% an invalid block on top, much stronger than the tip. Make sure the node
 	%% ignores the invalid block and continues to build on top of the valid fork.
@@ -144,41 +140,21 @@ test_invalid_block_with_high_cumulative_difficulty(Fork) ->
 	connect_to_slave(),
 	?assertNotEqual(H2, H1),
 	B1 = read_block_when_stored(H2),
-	B2 =
-		case Fork of
-			fork_2_6 ->
-				fake_block_with_strong_cumulative_difficulty(B1, B0, 10000000000000000);
-			fork_2_5 ->
-				fake_pre_2_6_block_with_strong_cumulative_difficulty(B1, 10000000000000000)
-		end,
+	B2 = fake_block_with_strong_cumulative_difficulty(B1, B0, 10000000000000000),
 	B2H = B2#block.indep_hash,
 	?debugFmt("Fake block: ~s.", [ar_util:encode(B2H)]),
 	ok = ar_events:subscribe(block),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
 			ar_http_iface_client:send_block_binary(master_peer(), B2#block.indep_hash,
 					ar_serialize:block_to_binary(B2))),
-	case Fork of
-		fork_2_5 ->
-			receive
-				{event, block, {rejected, Reason, B2H, _Peer2}} ->
-					?assert(false, iolist_to_binary(
-							io_lib:format("Unexpected block rejection: ~p.", [Reason])));
-				{event, block, {new, #block{ indep_hash = B2H }, _Peer3}} ->
-					ok
-			after 5000 ->
-				?assert(false, "Timed out waiting for the node to pre-validate the fake "
-						"block.")
-			end;
-		_ ->
-			receive
-				{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
-					ok;
-				{event, block, {new, #block{ indep_hash = B2H }, _Peer3}} ->
-					?assert(false, "Unexpected block acceptance")
-			after 5000 ->
-				?assert(false, "Timed out waiting for the node to pre-validate the fake "
-						"block.")
-			end
+	receive
+		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
+			ok;
+		{event, block, {new, #block{ indep_hash = B2H }, _Peer3}} ->
+			?assert(false, "Unexpected block acceptance")
+	after 5000 ->
+		?assert(false, "Timed out waiting for the node to pre-validate the fake "
+				"block.")
 	end,
 	[{H1, _, _} | _] = slave_wait_until_height(1),
 	ar_node:mine(),
@@ -187,28 +163,6 @@ test_invalid_block_with_high_cumulative_difficulty(Fork) ->
 	?assertNotEqual(B2#block.indep_hash, H3),
 	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow(1, slave_peer(), binary),
 	?assertEqual(H2, B3#block.indep_hash).
-
-fake_pre_2_6_block_with_strong_cumulative_difficulty(B, CDiff) ->
-	#block{
-	    previous_block = PrevH,
-	    height = Height,
-	    timestamp = Timestamp,
-	    poa = #poa{ chunk = Chunk },
-		diff = Diff
-	} = B,
-	Nonce = crypto:strong_rand_bytes(32),
-	B2 = B#block{ cumulative_diff = CDiff },
-	BDS = ar_block:generate_block_data_segment(B2),
-	{H0, Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height),
-	{H, _Preimage} = ar_mine:spora_solution_hash_with_entropy(PrevH, Timestamp, H0, Chunk,
-			Entropy, Height),
-	case binary:decode_unsigned(H) > Diff of
-		true ->
-			B3 = B2#block{ hash = H, nonce = Nonce },
-			B3#block{ indep_hash = ar_block:indep_hash(B3) };
-		false ->
-			fake_pre_2_6_block_with_strong_cumulative_difficulty(B, CDiff)
-	end.
 
 fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 	#block{

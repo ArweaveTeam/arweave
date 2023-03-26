@@ -49,10 +49,9 @@
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 
-%% The maximum number of intervals to schedule for syncing. Should be big enough so
-%% that many sync jobs cannot realistically process it completely before the process
-%% that collects intervals fills it up.
--define(SYNC_INTERVALS_MAX_QUEUE_SIZE, 10000).
+%% Do not repeat the missing interval collection procedure while there are more than this
+%% number of intervals in the queue.
+-define(SYNC_INTERVALS_MAX_QUEUE_SIZE, 10).
 
 %% The maximum number of chunks currently being downloaded or processed.
 -ifdef(DEBUG).
@@ -65,7 +64,7 @@
 %% If we cannot find an interval by peers, we temporarily exclude
 %% it from the sought ranges to prevent the syncing process from slowing down.
 -ifdef(DEBUG).
--define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 2000).
+-define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 5000).
 -else.
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 10 * 60 * 1000).
 -endif.
@@ -145,6 +144,9 @@
 	chunk_data_db,
 	%% A reference to the on-disk key value storage mapping migration names to their stages.
 	migrations_index,
+	%% A flag indicating the process has started collecting the intervals for syncing.
+	%% We consult the other storage modules first, then search among the network peers.
+	started_syncing = false,
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},
@@ -175,8 +177,6 @@
 	mining_address,
 	%% The identifier of the storage module the process is responsible for.
 	store_id,
-	%% The identifier of the ETS table storing the intervals to skip when syncing.
-	skip_intervals_table,
 	%% The start offset of the range the module is responsible for.
 	range_start = -1,
 	%% The end offset of the range the module is responsible for.
@@ -187,5 +187,11 @@
 	%% The list of identifiers of the non-default storage modules intersecting with the given
 	%% storage module to be searched for missing data before attempting to sync the data
 	%% from the network.
-	other_storage_modules_with_unsynced_intervals = []
+	other_storage_modules_with_unsynced_intervals = [],
+	%% The priority queue of chunks sorted by offset. The motivation is to have chunks
+	%% stack up, per storage module, before writing them on disk so that we can write
+	%% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
+	store_chunk_queue = gb_sets:new(),
+	%% The length of the store chunk queue.
+	store_chunk_queue_len = 0
 }).
