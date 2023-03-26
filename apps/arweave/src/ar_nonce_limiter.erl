@@ -1110,8 +1110,7 @@ get_entropy_reset_point_test() ->
 	?assertEqual(ResetFreq * 4, get_entropy_reset_point(ResetFreq * 3, ResetFreq * 4 + 1)).
 
 applies_validated_steps_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
-			fun test_applies_validated_steps/0).
+	{timeout, 60, fun test_applies_validated_steps/0}.
 
 test_applies_validated_steps() ->
 	reset_and_pause(),
@@ -1200,11 +1199,13 @@ test_reorg_after_join2() ->
 	ar_test_node:join_on_slave(),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(2),
+	ar_test_node:disconnect_from_slave(),
 	ar_test_node:slave_start(B0),
 	ar_test_node:slave_mine(),
 	ar_test_node:assert_slave_wait_until_height(1),
 	ar_test_node:slave_mine(),
 	ar_test_node:assert_slave_wait_until_height(2),
+	ar_test_node:connect_to_slave(),
 	ar_test_node:slave_mine(),
 	ar_test_node:wait_until_height(3).
 

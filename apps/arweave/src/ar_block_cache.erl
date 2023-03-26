@@ -539,16 +539,11 @@ prune(Tab, Depth, TipHeight) ->
 %%% Tests.
 %%%===================================================================
 
-block_cache_pre_fork_2_6_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> infinity end}],
-			fun() -> test_block_cache(fork_2_5) end).
-
 block_cache_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
-			fun() -> test_block_cache(fork_2_6) end).
+			fun() -> test_block_cache() end).
 
-test_block_cache(Fork) ->
-	?debugFmt("Test block cache: fork ~p.", [Fork]),
+test_block_cache() ->
 	ets:new(bcache_test, [set, named_table]),
 	new(bcache_test, B1 = random_block(0)),
 	?assertEqual(not_found, get(bcache_test, crypto:strong_rand_bytes(48))),
@@ -567,8 +562,7 @@ test_block_cache(Fork) ->
 	add(bcache_test, B1),
 	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(bcache_test)),
 	add(bcache_test, B2 = on_top(random_block(1), B1)),
-	ExpectedStatus = case Fork of fork_2_6 -> awaiting_nonce_limiter_validation;
-			_ -> awaiting_validation end,
+	ExpectedStatus = awaiting_nonce_limiter_validation,
 	?assertMatch({B2, [B1], {{not_validated, ExpectedStatus}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	TXID = crypto:strong_rand_bytes(32),
@@ -667,14 +661,6 @@ test_block_cache(Fork) ->
 	%% became the tip so we should not reorganize.
 	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(bcache_test)),
 	add(bcache_test, B14 = on_top(random_block_after_repacking(2), B13)),
-	case B14#block.height >= ar_fork:height_2_6() of
-		true ->
-			test_block_cache_after_fork_2_6(B13, B14);
-		false ->
-			ok
-	end.
-
-test_block_cache_after_fork_2_6(B13, B14) ->
 	?assertMatch({B14, [B13], {{not_validated, awaiting_nonce_limiter_validation}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	mark_nonce_limiter_validation_scheduled(bcache_test, crypto:strong_rand_bytes(48)),

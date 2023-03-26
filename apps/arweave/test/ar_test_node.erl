@@ -140,15 +140,13 @@ get_tx_price(Node, DataSize) ->
 %% from the given node.
 get_tx_price(Node, DataSize, Target) ->
 	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
-	{_, _, _, _, Port} = Peer,
 	Path = "/price/" ++ integer_to_list(DataSize) ++ "/"
 			++ binary_to_list(ar_util:encode(Target)),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
-			path => Path,
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			path => Path
 		}),
 	Fee = binary_to_integer(Reply),
 	Path2 = "/price2/" ++ integer_to_list(DataSize) ++ "/"
@@ -157,8 +155,7 @@ get_tx_price(Node, DataSize, Target) ->
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
-			path => Path2,
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			path => Path2
 		}),
 	Map = jiffy:decode(Reply2, [return_maps]),
 	case binary_to_integer(maps:get(<<"fee">>, Map)) of
@@ -180,15 +177,13 @@ get_optimistic_tx_price(Node, DataSize) ->
 %% node.
 get_optimistic_tx_price(Node, DataSize, Target) ->
 	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
-	{_, _, _, _, Port} = Peer,
 	Path = "/optimistic_price/" ++ integer_to_list(DataSize) ++ "/"
 			++ binary_to_list(ar_util:encode(Target)),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
-			path => Path,
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			path => Path
 		}),
 	binary_to_integer(maps:get(<<"fee">>, jiffy:decode(Reply, [return_maps]))).
 
@@ -233,13 +228,11 @@ get_balance(Node, Pub) ->
 %% @doc Return the current balance of the given account (request it from the given node).
 get_balance_by_address(Node, Address) ->
 	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
-	Port = element(5, Peer),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance"
 		}),
 	Balance = binary_to_integer(Reply),
 	B =
@@ -254,8 +247,7 @@ get_balance_by_address(Node, Address) ->
 			method => get,
 			peer => Peer,
 			path => "/wallet_list/" ++ binary_to_list(ar_util:encode(B#block.wallet_list))
-					++ "/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+					++ "/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance"
 		}),
 	case binary_to_integer(Reply2) of
 		Balance ->
@@ -266,14 +258,12 @@ get_balance_by_address(Node, Address) ->
 
 get_reserved_balance(Node, Address) ->
 	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
-	Port = element(5, Peer),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
 			path => "/wallet/" ++ binary_to_list(ar_util:encode(Address))
-					++ "/reserved_rewards_total",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+					++ "/reserved_rewards_total"
 		}),
 	binary_to_integer(Reply).
 
@@ -427,10 +417,8 @@ rejoin_on_master() ->
 
 connect_to_slave() ->
 	%% Unblock connections possibly blocked in the prior test code.
-	ar_peers:unblock_connections(),
-	slave_call(ar_peers, unblock_connections, []),
-	ar_poller:resume(),
-	slave_call(ar_poller, resume, []),
+	ar_http:unblock_peer_connections(),
+	slave_call(ar_http, unblock_peer_connections, []),
 	%% Make requests to the nodes to make them discover each other.
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
@@ -464,10 +452,8 @@ connect_to_slave() ->
 	).
 
 disconnect_from_slave() ->
-	ar_poller:pause(),
-	slave_call(ar_poller, pause, []),
-	ar_peers:block_connections(),
-	slave_call(ar_peers, block_connections, []).
+	ar_http:block_peer_connections(),
+	slave_call(ar_http, block_peer_connections, []).
 
 slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 10000).
@@ -685,12 +671,10 @@ post_tx_json_to_slave(JSON) ->
 	post_tx_json(JSON, slave_peer()).
 
 post_tx_json(JSON, Peer) ->
-	{_, _, _, _, Port} = Peer,
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
 		path => "/tx",
-		headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}],
 		body => JSON
 	}).
 
@@ -702,8 +686,7 @@ get_tx_anchor(slave) ->
 		ar_http:req(#{
 			method => get,
 			peer => slave_peer(),
-			path => "/tx_anchor",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))}]
+			path => "/tx_anchor"
 		}),
 	ar_util:decode(Reply);
 get_tx_anchor(master) ->
@@ -711,8 +694,7 @@ get_tx_anchor(master) ->
 		ar_http:req(#{
 			method => get,
 			peer => master_peer(),
-			path => "/tx_anchor",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))}]
+			path => "/tx_anchor"
 		}),
 	ar_util:decode(Reply).
 
@@ -726,8 +708,7 @@ get_last_tx(slave, {_, Pub}) ->
 			peer => slave_peer(),
 			path => "/wallet/"
 					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
-					++ "/last_tx",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))}]
+					++ "/last_tx"
 		}),
 	ar_util:decode(Reply);
 get_last_tx(master, {_, Pub}) ->
@@ -737,8 +718,7 @@ get_last_tx(master, {_, Pub}) ->
 			peer => master_peer(),
 			path => "/wallet/"
 					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
-					++ "/last_tx",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))}]
+					++ "/last_tx"
 		}),
 	ar_util:decode(Reply).
 
@@ -747,8 +727,7 @@ get_tx_confirmations(slave, TXID) ->
 		ar_http:req(#{
 			method => get,
 			peer => slave_peer(),
-			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))}]
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status"
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->
@@ -762,8 +741,7 @@ get_tx_confirmations(master, TXID) ->
 		ar_http:req(#{
 			method => get,
 			peer => master_peer(),
-			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))}]
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status"
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->

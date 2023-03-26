@@ -41,6 +41,7 @@ start_link() ->
 init([]) ->
 	%% These ETS tables should belong to the supervisor.
 	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_http, [set, public, named_table]),
 	ets:new(ar_blacklist_middleware, [set, public, named_table]),
 	ets:new(ar_storage, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_randomx_state_key_blocks, [set, public, named_table]),
@@ -54,12 +55,11 @@ init([]) ->
 	ets:new(ar_nonce_limiter, [set, public, named_table]),
 	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_discovery, [ordered_set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_data_sync_worker_master, [set, public, named_table]),
 	ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_mining_server, [set, public, named_table]),
 	ets:new(ar_global_sync_record, [set, public, named_table]),
 	ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_data_sync_skip_intervals, [ordered_set, public, named_table,
-			{read_concurrency, true}]),
 	ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist_pending_headers,

@@ -379,6 +379,9 @@ register(MetricsDir) ->
 			{help, "The counter is incremented every time a chunk is written to "
 					"chunk_storage."}]),
 
+	prometheus_gauge:new([{name, scheduled_sync_tasks},
+			{help, "The number of scheduled syncing tasks."}]),
+
 	prometheus_counter:new([{name, process_functions},
 			{help, "Sampling active processes"}, {labels, [process]}]).
 

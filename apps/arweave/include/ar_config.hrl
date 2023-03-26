@@ -21,9 +21,9 @@
 %% The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
 -ifdef(DEBUG).
--define(DEFAULT_SYNC_JOBS, 50).
+-define(DEFAULT_SYNC_JOBS, 10).
 -else.
--define(DEFAULT_SYNC_JOBS, 100).
+-define(DEFAULT_SYNC_JOBS, 30).
 -endif.
 
 %% The number of disk pool jobs to run. Disk pool jobs scan the disk pool to index
