@@ -201,8 +201,9 @@ do_join(Peers, B, BI) ->
 	PeerQ = queue:from_list(Peers),
 	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
+	Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 10, Acc) end, #{}, Peers),
 	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
-			| get_block_trail(WorkerQ, PeerQ, Trail, 30)],
+			| get_block_trail(WorkerQ, PeerQ, Trail, Retries)],
 	ar:console("Downloaded the block trail successfully.~n", []),
 	Blocks2 = may_be_set_reward_history(Blocks, Peers),
 	ar_node_worker ! {join, BI, Blocks2},
@@ -233,7 +234,7 @@ request_blocks([{H, _, _} | Trail], WorkerQ, PeerQ) ->
 
 get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 	receive
-		{block_response, H, {_, #block{} = BShadow, _, _}} ->
+		{block_response, H, _Peer, {_, #block{} = BShadow, _, _}} ->
 			ar_disk_cache:write_block_shadow(BShadow),
 			TXCount = length(BShadow#block.txs),
 			FetchState2 = maps:put(H, {BShadow, #{}, TXCount}, FetchState),
@@ -255,33 +256,55 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 				_ ->
 					get_block_trail_loop(WorkerQ2, PeerQ2, Retries, Trail, FetchState3)
 			end;
-		{block_response, H, Response} ->
-			case Retries > 0 of
+		{block_response, H, Peer, Response} ->
+			PeerRetries = maps:get(Peer, Retries),
+			case PeerRetries > 0 of
 				true ->
-					ar:console("Failed to fetch a joining block ~s."
-							" Retrying..~n", [ar_util:encode(H)]),
+					ar:console("Failed to fetch a joining block ~s from ~s."
+							" Retrying..~n", [ar_util:encode(H), ar_util:format_peer(Peer)]),
 					?LOG_WARNING([
 						{event, failed_to_fetch_joining_block},
 						{block, ar_util:encode(H)},
+						{peer, ar_util:format_peer(Peer)},
 						{response, io_lib:format("~p", [Response])}
 					]),
 					timer:sleep(1000),
+					Retries2 = maps:put(Peer, PeerRetries - 1, Retries),
 					{WorkerQ2, PeerQ2} = request_block(H, WorkerQ, PeerQ),
-					get_block_trail_loop(WorkerQ2, PeerQ2, Retries - 1, Trail, FetchState);
+					get_block_trail_loop(WorkerQ2, PeerQ2, Retries2, Trail, FetchState);
 				false ->
-					ar:console(
-						"Failed to fetch a joining block ~s. Giving up.."
-						" Consider changing the peers.~n", [ar_util:encode(H)]
-					),
-					?LOG_ERROR([
-						{event, failed_to_fetch_joining_block},
-						{block, ar_util:encode(H)},
-						{response, io_lib:format("~p", [Response])}
-					]),
-					timer:sleep(1000),
-					erlang:halt()
+					case queue:to_list(PeerQ) of
+						[Peer] -> % The last peer left and it is out of attempts.
+							ar:console(
+								"Failed to fetch the joining headers from any of the peers, "
+								"consider trying some other trusted peers.", []),
+							?LOG_ERROR([{event, failed_to_join}]),
+							timer:sleep(1000),
+							erlang:halt();
+						_ ->
+							case queue:member(Peer, PeerQ) of
+								false ->
+									{WorkerQ2, PeerQ2} = request_block(H, WorkerQ, PeerQ),
+									get_block_trail_loop(WorkerQ2, PeerQ2, Retries, Trail,
+											FetchState);
+								true ->
+									PeerQ2 = queue:delete(Peer, PeerQ),
+									ar:console("Failed to fetch a joining block ~s from ~s. "
+											"Removing the peer from the queue..",
+											[ar_util:encode(H), ar_util:format_peer(Peer)]),
+									?LOG_ERROR([
+										{event, failed_to_fetch_joining_block},
+										{block, ar_util:encode(H)},
+										{peer, ar_util:format_peer(Peer)},
+										{response, io_lib:format("~p", [Response])}
+									]),
+									{WorkerQ2, PeerQ3} = request_block(H, WorkerQ, PeerQ2),
+									get_block_trail_loop(WorkerQ2, PeerQ3, Retries, Trail,
+											FetchState)
+							end
+					end
 			end;
-		{tx_response, H, TXID, #tx{} = TX} ->
+		{tx_response, H, TXID, _Peer, #tx{} = TX} ->
 			ar_disk_cache:write_tx(TX),
 			{BShadow, TXMap, AwaitingTXCount} = maps:get(H, FetchState),
 			TXMap2 = maps:put(TXID, TX, TXMap),
@@ -304,29 +327,53 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 				_ ->
 					get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState3)
 			end;
-		{tx_response, H, TXID, Response} ->
-			case Retries > 0 of
+		{tx_response, H, TXID, Peer, Response} ->
+			PeerRetries = maps:get(Peer, Retries),
+			case PeerRetries > 0 of
 				true ->
-					ar:console("Failed to fetch a joining transaction ~s. Retrying..~n",
-							[ar_util:encode(TXID)]),
+					ar:console("Failed to fetch a joining transaction ~s from ~s. "
+							"Retrying..~n", [ar_util:encode(TXID), ar_util:format_peer(Peer)]),
 					?LOG_WARNING([{event, failed_to_fetch_joining_tx},
 							{block, ar_util:encode(H)},
 							{tx, ar_util:encode(TXID)},
+							{peer, ar_util:format_peer(Peer)},
 							{response, io_lib:format("~p", [Response])}]),
 					timer:sleep(1000),
+					Retries2 = maps:put(Peer, PeerRetries - 1, Retries),
 					{WorkerQ2, PeerQ2} = request_tx(H, TXID, WorkerQ, PeerQ),
-					get_block_trail_loop(WorkerQ2, PeerQ2, Retries - 1, Trail, FetchState);
+					get_block_trail_loop(WorkerQ2, PeerQ2, Retries2, Trail, FetchState);
 				false ->
-					ar:console(
-						"Failed to fetch a joining tx ~s. Giving up.."
-						" Consider changing the peers.~n", [ar_util:encode(TXID)]
-					),
-					?LOG_ERROR([{event, failed_to_fetch_joining_tx},
-							{block, ar_util:encode(H)},
-							{tx, ar_util:encode(TXID)},
-							{response, io_lib:format("~p", [Response])}]),
-					timer:sleep(1000),
-					erlang:halt()
+					case queue:to_list(PeerQ) of
+						[Peer] -> % The last peer left and it is out of attempts.
+							ar:console(
+								"Failed to fetch the joining headers from any of the peers, "
+								"consider trying some other trusted peers.", []),
+							?LOG_ERROR([{event, failed_to_join}]),
+							timer:sleep(1000),
+							erlang:halt();
+						_ ->
+							case queue:member(Peer, PeerQ) of
+								false ->
+									{WorkerQ2, PeerQ2} = request_tx(H, TXID, WorkerQ, PeerQ),
+									get_block_trail_loop(WorkerQ2, PeerQ2, Retries, Trail,
+											FetchState);
+								true ->
+									PeerQ2 = queue:delete(Peer, PeerQ),
+									ar:console("Failed to fetch a joining tx ~s from ~s. "
+											"Removing the peer from the queue..",
+											[ar_util:encode(TXID), ar_util:format_peer(Peer)]),
+									?LOG_ERROR([
+										{event, failed_to_fetch_joining_tx},
+										{block, ar_util:encode(H)},
+										{tx, ar_util:encode(TXID)},
+										{peer, ar_util:format_peer(Peer)},
+										{response, io_lib:format("~p", [Response])}
+									]),
+									{WorkerQ2, PeerQ3} = request_tx(H, TXID, WorkerQ, PeerQ2),
+									get_block_trail_loop(WorkerQ2, PeerQ3, Retries, Trail,
+											FetchState)
+							end
+					end
 			end
 	end.
 
@@ -387,10 +434,10 @@ join_peers(Peers) ->
 worker() ->
 	receive
 		{get_block_shadow, H, Peer, From} ->
-			From ! {block_response, H, ar_http_iface_client:get_block_shadow([Peer], H)},
+			From ! {block_response, H, Peer, ar_http_iface_client:get_block_shadow([Peer], H)},
 			worker();
 		{get_tx, H, TXID, Peer, From} ->
-			From ! {tx_response, H, TXID, ar_http_iface_client:get_tx(Peer, TXID)},
+			From ! {tx_response, H, TXID, Peer, ar_http_iface_client:get_tx(Peer, TXID)},
 			worker()
 	end.
 
