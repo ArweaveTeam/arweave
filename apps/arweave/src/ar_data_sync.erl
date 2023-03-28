@@ -1145,7 +1145,7 @@ handle_info({event, chunk, _}, State) ->
 
 handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, _Bytes}},
 		#sync_data_state{ store_id = StoreID } = State) ->
-	case Percentage < 1 of
+	case Percentage < 0.01 of
 		true ->
 			case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
 				[{_, false}] ->
@@ -1155,7 +1155,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 			end,
 			ets:insert(ar_data_sync_state, {{is_disk_space_sufficient, StoreID}, false});
 		false ->
-			case Percentage > 5 of
+			case Percentage > 0.05 of
 				true ->
 					case ets:lookup(ar_data_sync_state, {is_disk_space_sufficient, StoreID}) of
 						[{_, false}] ->
