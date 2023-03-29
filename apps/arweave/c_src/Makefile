@@ -6,6 +6,14 @@ BASEDIR := $(abspath $(CURDIR)/..)
 PROJECT ?= $(notdir $(BASEDIR))
 PROJECT := $(strip $(PROJECT))
 
+ifeq ($(MODE), debug)
+	CFLAGS ?= -O0 -g
+	CXXFLAGS ?= -O0 -g
+else
+	CFLAGS ?= -O3
+	CXXFLAGS ?= -O3
+endif
+
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -s init stop -eval "io:format(\"~ts/erts-~ts/include/\", [code:root_dir(), erlang:system_info(version)]).")
 ERL_INTERFACE_INCLUDE_DIR ?= $(shell erl -noshell -s init stop -eval "io:format(\"~ts\", [code:lib_dir(erl_interface, include)]).")
 ERL_INTERFACE_LIB_DIR ?= $(shell erl -noshell -s init stop -eval "io:format(\"~ts\", [code:lib_dir(erl_interface, lib)]).")
@@ -22,18 +30,18 @@ ifeq ($(UNAME_SYS), Darwin)
 	  OSX_CPU_ARCH = arm64
 	endif
 	CC ?= cc
-	CFLAGS ?= -O3 -std=c99 -arch $(OSX_CPU_ARCH) -finline-functions -Wall -Wmissing-prototypes
-	CXXFLAGS ?= -O3 -arch $(OSX_CPU_ARCH) -finline-functions -Wall
+	CFLAGS += -std=c99 -arch $(OSX_CPU_ARCH) -finline-functions -Wall -Wmissing-prototypes
+	CXXFLAGS += -arch $(OSX_CPU_ARCH) -finline-functions -Wall
 	LDFLAGS ?= -arch $(OSX_CPU_ARCH)
 	LDFLAGS += -flat_namespace -undefined suppress
 else ifeq ($(UNAME_SYS), FreeBSD)
 	CC ?= cc
-	CFLAGS ?= -O3 -std=c99 -finline-functions -Wall -Wmissing-prototypes
-	CXXFLAGS ?= -O3 -finline-functions -Wall
+	CFLAGS += -std=c99 -finline-functions -Wall -Wmissing-prototypes
+	CXXFLAGS += -finline-functions -Wall
 else ifeq ($(UNAME_SYS), Linux)
 	CC ?= gcc
-	CFLAGS ?= -O3 -std=c99 -finline-functions -Wall -Wmissing-prototypes
-	CXXFLAGS ?= -O3 -finline-functions -Wall
+	CFLAGS += -std=c99 -finline-functions -Wall -Wmissing-prototypes
+	CXXFLAGS += -finline-functions -Wall
 endif
 
 ifneq (, $(shell which pkg-config))

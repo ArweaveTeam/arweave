@@ -136,8 +136,22 @@ test_randomx_long(State) ->
 
 test_randomx_pack_unpack(State) ->
 	Root = crypto:strong_rand_bytes(32),
+
+	%% All chunks are padded to 256 KiB on the client side so
+	%% randomx_encrypt_nif should never receive an input of a
+	%% different size. We assert the behaviour here just for
+	%% the extra clarity.
+	?assertEqual(
+		{error, "unable to encrypt an empty chunk"},
+		ar_mine_randomx:randomx_encrypt_chunk_nif(
+			State,
+			crypto:hash(sha256, << 0:256, Root/binary >>),
+			<<>>,
+			1, % RANDOMX_PACKING_ROUNDS
+			0, 0, 0)
+	),
+
 	Cases = [
-		{<<>>, 0, Root},
 		{<<1>>, 1, Root},
 		{<<1>>, 2, Root},
 		{<<0>>, 1, crypto:strong_rand_bytes(32)},
@@ -157,28 +171,14 @@ test_randomx_pack_unpack(State) ->
 			{ok, Packed} = ar_mine_randomx:randomx_encrypt_chunk_nif(State, Key, Chunk,
 					1, % RANDOMX_PACKING_ROUNDS
 					0, 0, 0),
-			ExpectedSize =
-				case byte_size(Chunk) of
-					0 ->
-						%% All chunks are padded to 256 KiB on the client side so
-						%% randomx_encrypt_nif should never receive an input of a
-						%% different size. We assert the behaviour here just for
-						%% the extra clarity.
-						0;
-					_ ->
-						((byte_size(Chunk) - 1) div 64 + 1) * 64
-				end,
+			ExpectedSize = ((byte_size(Chunk) - 1) div 64 + 1) * 64,
 			?assertEqual(ExpectedSize, byte_size(Packed)),
-			case Chunk of
-				<<>> -> ok;
-				_ ->
-					?assertNotEqual(Packed, Chunk),
-					{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_chunk_nif(State, Key,
-							Packed, byte_size(Chunk),
-							1, % RANDOMX_PACKING_ROUNDS
-							0, 0, 0),
-					?assertEqual(Chunk, Unpacked)
-			end
+			?assertNotEqual(Packed, Chunk),
+			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_chunk_nif(State, Key,
+					Packed, byte_size(Chunk),
+					1, % RANDOMX_PACKING_ROUNDS
+					0, 0, 0),
+			?assertEqual(Chunk, Unpacked)
 		end,
 		Cases
 	).

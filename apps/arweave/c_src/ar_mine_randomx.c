@@ -709,6 +709,11 @@ static ERL_NIF_TERM randomx_encrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 
+	size_t outChunkLen = (((inputChunk.size - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
+	if (outChunkLen == 0) {
+		return error(envPtr, "unable to encrypt an empty chunk");
+	}
+
 	enif_rwlock_rlock(statePtr->lockPtr);
 	if (statePtr->isRandomxReleased != 0) {
 		enif_rwlock_runlock(statePtr->lockPtr);
@@ -726,16 +731,15 @@ static ERL_NIF_TERM randomx_encrypt_chunk_nif(
 	if (largePagesEnabled) {
 		flags |= RANDOMX_FLAG_LARGE_PAGES;
 	}
+
 	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
 	if (vmPtr == NULL) {
 		enif_rwlock_runlock(statePtr->lockPtr);
 		return error(envPtr, "randomx_create_vm failed");
 	}
 
-	size_t outChunkLen = (((inputChunk.size - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
 	ERL_NIF_TERM outChunkTerm;
 	unsigned char* outChunk = enif_make_new_binary(envPtr, outChunkLen, &outChunkTerm);
-
 	randomx_encrypt_chunk(vmPtr, inputData.data, inputData.size, inputChunk.data, inputChunk.size, outChunk, randomxRoundCount);
 
 	randomx_destroy_vm(vmPtr);
