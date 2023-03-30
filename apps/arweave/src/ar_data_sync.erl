@@ -1578,7 +1578,9 @@ remove_range(Start, End, Ref, ReplyTo) ->
 						{removed_range, StorageRef} ->
 							Fun(Fun, sets:del_element(StorageRef, StorageRefs))
 					after 10000 ->
-						ok
+						?LOG_DEBUG([{event,
+								waiting_for_data_range_removal_longer_than_ten_seconds}]),
+						Fun(Fun, StorageRefs)
 					end
 			end
 		end,
