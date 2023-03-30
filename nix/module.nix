@@ -208,13 +208,13 @@ in
 
     syncJobs = mkOption {
       type = types.int;
-      default = 100;
+      default = 10;
       description = "The pace for which to sync up with historical data.";
     };
 
     diskPoolJobs = mkOption {
       type = types.int;
-      default = 100;
+      default = 50;
       description = "The number of disk pool jobs to run.";
     };
 
