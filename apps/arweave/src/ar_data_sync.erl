@@ -784,38 +784,76 @@ handle_cast({enqueue_intervals, Peer, Intervals}, State) ->
 handle_cast(sync_intervals, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals, store_id = StoreID } = State,
-	case gb_sets:is_empty(Q) of
+	IsQueueEmpty =
+		case gb_sets:is_empty(Q) of
+			true ->
+				ar_util:cast_after(500, self(), sync_intervals),
+				true;
+			false ->
+				false
+		end,
+	IsDiskSpaceSufficient =
+		case IsQueueEmpty of
+			true ->
+				false;
+			false ->
+				case is_disk_space_sufficient(StoreID) of
+					false ->
+						ar_util:cast_after(30000, self(), sync_intervals),
+						false;
+					true ->
+						true
+				end
+		end,
+	IsChunkCacheFull =
+		case IsDiskSpaceSufficient of
+			false ->
+				true;
+			true ->
+				case is_chunk_cache_full() of
+					true ->
+						ar_util:cast_after(1000, self(), sync_intervals),
+						true;
+					false ->
+						false
+				end
+		end,
+	AreSyncWorkersBusy =
+		case IsChunkCacheFull of
+			true ->
+				true;
+			false ->
+				{ok, Config} = application:get_env(arweave, config),
+				SyncWorkers = Config#config.sync_jobs,
+				ScheduledTasks = ar_data_sync_worker_master:get_scheduled_task_count(),
+				case ScheduledTasks > SyncWorkers * 100 of
+					true ->
+						ar_util:cast_after(200, self(), sync_intervals),
+						true;
+					false ->
+						false
+				end
+		end,
+	case AreSyncWorkersBusy of
 		true ->
-			ar_util:cast_after(500, self(), sync_intervals),
 			{noreply, State};
 		false ->
-			case is_disk_space_sufficient(StoreID) of
-				true ->
-					ar_util:cast_after(500, self(), sync_intervals),
-					case is_chunk_cache_full() of
-						true ->
-							{noreply, State};
-						false ->
-							{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-							End2 = Start + 10 * ?DATA_CHUNK_SIZE,
-							{Q3, I2, End3} =
-								case End > End2 of
-									true ->
-										{gb_sets:add_element({End2, End, Peer}, Q2),
-												ar_intervals:delete(QIntervals, End2, Start),
-												End2};
-									false ->
-										{Q2, ar_intervals:delete(QIntervals, End, Start), End}
-								end,
-							gen_server:cast(ar_data_sync_worker_master,
-									{sync_range, {Start, End3, Peer, StoreID}}),
-							{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
-									sync_intervals_queue_intervals = I2 }}
-					end;
-				_ ->
-					ar_util:cast_after(30000, self(), sync_intervals),
-					{noreply, State}
-			end
+			gen_server:cast(self(), sync_intervals),
+			{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
+			End2 = Start + 10 * ?DATA_CHUNK_SIZE,
+			{Q3, I2, End3} =
+				case End > End2 of
+					true ->
+						{gb_sets:add_element({End2, End, Peer}, Q2),
+								ar_intervals:delete(QIntervals, End2, Start),
+								End2};
+					false ->
+						{Q2, ar_intervals:delete(QIntervals, End, Start), End}
+				end,
+			gen_server:cast(ar_data_sync_worker_master,
+					{sync_range, {Start, End3, Peer, StoreID}}),
+			{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
+					sync_intervals_queue_intervals = I2 }}
 	end;
 
 handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast, State) ->
