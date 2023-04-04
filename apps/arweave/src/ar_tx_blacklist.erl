@@ -9,7 +9,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_taking_down/0, is_tx_blacklisted/1, is_byte_blacklisted/1,
-		get_next_not_blacklisted_byte/1, get_next_blacklisted_byte/1,
+		get_blacklisted_intervals/2, get_next_not_blacklisted_byte/1,
 		notify_about_removed_tx/1, norify_about_orphaned_tx/1, notify_about_added_tx/3,
 		store_state/0]).
 
@@ -102,19 +102,26 @@ get_next_not_blacklisted_byte(Offset) ->
 			end
 	end.
 
-%% @doc Return the smallest blacklisted byte bigger than or equal to
-%% the byte at the given global offset.
-get_next_blacklisted_byte(Offset) ->
-	case ets:next(ar_tx_blacklist_offsets, Offset - 1) of
+%% @doc Return the blacklisted intervals intersecting the given range.
+get_blacklisted_intervals(Start, End) ->
+	get_blacklisted_intervals(Start, End, ar_intervals:new()).
+
+get_blacklisted_intervals(Start, End, Intervals) ->
+	case ets:next(ar_tx_blacklist_offsets, Start) of
 		'$end_of_table' ->
-			infinity;
-		NextOffset ->
-			case ets:lookup(ar_tx_blacklist_offsets, NextOffset) of
-				[{NextOffset, Start}] ->
-					max(Offset, Start);
+			Intervals;
+		Offset ->
+			case ets:lookup(ar_tx_blacklist_offsets, Offset) of
+				[{Offset, Start2}] when Start2 >= End ->
+					Intervals;
+				[{Offset, Start2}] when Offset >= End ->
+					ar_intervals:add(Intervals, End, max(Start2, Start));
+				[{Offset, Start2}] ->
+					get_blacklisted_intervals(Offset, End,
+							ar_intervals:add(Intervals, Offset, max(Start2, Start)));
 				[] ->
 					%% The key should have been just removed, unlucky timing.
-					get_next_blacklisted_byte(Offset)
+					get_blacklisted_intervals(Start, End, Intervals)
 			end
 	end.
 

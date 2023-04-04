@@ -2206,78 +2206,43 @@ request_default_unpacked_packing(RightBound) ->
 find_peer_intervals(Start, End, _StoreID, _Self) when Start >= End ->
 	ok;
 find_peer_intervals(Start, End, StoreID, Self) ->
-	case get_next_unsynced_interval(Start, End, StoreID) of
-		not_found ->
-			ok;
-		{Right, Left} ->
-			Left2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Left + 1),
-			case Left2 >= Right of
-				true ->
-					find_peer_intervals(Left2, End, StoreID, Self);
-				false ->
-					find_peer_intervals2(Left2 - 1, Right, End, StoreID, Self)
-			end
-	end.
-
-find_peer_intervals2(Start, _Right, End, _StoreID, _Self) when Start >= End ->
-	ok;
-find_peer_intervals2(Start, Right, End, StoreID, Self) ->
-	Right2 = ar_tx_blacklist:get_next_blacklisted_byte(Start + 1),
-	case Right2 >= Right of
+	Start2 = Start - Start rem ?NETWORK_DATA_BUCKET_SIZE,
+	End2 = min(Start2 + ?NETWORK_DATA_BUCKET_SIZE, End),
+	UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
+	case ar_intervals:is_empty(UnsyncedIntervals) of
 		true ->
-			find_subintervals(Start, Right, StoreID, Self),
-			find_peer_intervals(Right, End, StoreID, Self);
+			ok;
 		false ->
-			find_subintervals(Start, Right2, StoreID, Self),
-			find_peer_intervals(Right2, End, StoreID, Self)
-	end.
+			find_peer_intervals2(Start, UnsyncedIntervals, Self)
+	end,
+	find_peer_intervals(End2, End, StoreID, Self).
 
-%% @doc Return the lowest unsynced interval strictly above the given Offset.
-%% The right bound of the interval is at most RightBound.
-%% Return not_found if there are no such intervals.
-%% Skip the intervals we have recently failed to find.
-get_next_unsynced_interval(Offset, RightBound, _StoreID) when Offset >= RightBound ->
-	not_found;
-get_next_unsynced_interval(Offset, RightBound, StoreID) ->
-	case ar_sync_record:get_next_synced_interval(Offset, RightBound, ?MODULE, StoreID) of
-		not_found ->
-			{RightBound, Offset};
-		{NextOffset, Start} ->
-			case Start > Offset of
-				true ->
-					End = min(RightBound, Start),
-					{End, Offset};
-				_ ->
-					get_next_unsynced_interval(NextOffset, RightBound, StoreID)
-			end
-	end.
+%% @doc Collect the unsynced intervals between Start and End excluding the blocklisted
+%% intervals.
+get_unsynced_intervals(Start, End, StoreID) ->
+	UnsyncedIntervals = get_unsynced_intervals(Start, End, ar_intervals:new(), StoreID),
+	BlacklistedIntervals = ar_tx_blacklist:get_blacklisted_intervals(Start, End),
+	ar_intervals:outerjoin(BlacklistedIntervals, UnsyncedIntervals).
 
-%% @doc Collect the unsynced intervals between Start and RightBound.
-get_next_unsynced_intervals(Start, RightBound, StoreID) ->
-	get_next_unsynced_intervals(Start, RightBound, ar_intervals:new(), StoreID).
-
-get_next_unsynced_intervals(Start, RightBound, Intervals, _StoreID) when Start >= RightBound ->
+get_unsynced_intervals(Start, End, Intervals, _StoreID) when Start >= End ->
 	Intervals;
-get_next_unsynced_intervals(Start, RightBound, Intervals, StoreID) ->
-	case ar_sync_record:get_next_synced_interval(Start, RightBound, ?MODULE, StoreID) of
+get_unsynced_intervals(Start, End, Intervals, StoreID) ->
+	case ar_sync_record:get_next_synced_interval(Start, End, ?MODULE, StoreID) of
 		not_found ->
-			ar_intervals:add(Intervals, RightBound, Start);
-		{NextOffset, NextStart} ->
-			case NextStart > Start of
+			ar_intervals:add(Intervals, End, Start);
+		{End2, Start2} ->
+			case Start2 > Start of
 				true ->
-					End = min(NextStart, RightBound),
-					get_next_unsynced_intervals(NextOffset, RightBound,
-							ar_intervals:add(Intervals, End, Start), StoreID);
+					End3 = min(Start2, End),
+					get_unsynced_intervals(End2, End,
+							ar_intervals:add(Intervals, End3, Start), StoreID);
 				_ ->
-					get_next_unsynced_intervals(NextOffset, RightBound, Intervals, StoreID)
+					get_unsynced_intervals(End2, End, Intervals, StoreID)
 			end
 	end.
 
-find_subintervals(Left, Right, _StoreID, _Self) when Left >= Right ->
-	ok;
-find_subintervals(Left, Right, StoreID, Self) ->
-	Bucket = Left div ?NETWORK_DATA_BUCKET_SIZE,
-	LeftBound = Left - Left rem ?NETWORK_DATA_BUCKET_SIZE,
+find_peer_intervals2(Start, UnsyncedIntervals, Self) ->
+	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
 	{ok, Config} = application:get_env(arweave, config),
 	Peers =
 		case Config#config.sync_from_local_peers_only of
@@ -2286,33 +2251,30 @@ find_subintervals(Left, Right, StoreID, Self) ->
 			false ->
 				ar_data_discovery:get_bucket_peers(Bucket)
 		end,
-	RightBound = min(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right),
-	UnsyncedIntervals = get_next_unsynced_intervals(Left, RightBound, StoreID),
 	case ar_intervals:is_empty(UnsyncedIntervals) of
 		true ->
-			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, Self);
+			ok;
 		false ->
 			ar_util:pmap(
 				fun(Peer) ->
-					case get_peer_intervals(Peer, Left, UnsyncedIntervals) of
+					case get_peer_intervals(Peer, Start, UnsyncedIntervals) of
 						{ok, Intervals} ->
-							gen_server:cast(Self, {enqueue_intervals, Peer, Intervals}),
 							case ar_intervals:is_empty(Intervals) of
 								true ->
-									not_found;
+									ok;
 								false ->
-									found
+									gen_server:cast(Self, {enqueue_intervals, Peer, Intervals})
 							end;
 						{error, Reason} ->
 							?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
 									{peer, ar_util:format_peer(Peer)},
 									{reason, io_lib:format("~p", [Reason])}]),
-							not_found
+							ok
 					end
 				end,
 				Peers
 			),
-			find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, StoreID, Self)
+			ok
 	end.
 
 get_peer_intervals(Peer, Left, SoughtIntervals) ->
