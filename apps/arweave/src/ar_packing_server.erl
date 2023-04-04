@@ -465,7 +465,7 @@ minimum_run_time(Module, Function, Args, Repetitions) ->
 	minimum_run_time(Module, Function, Args, Repetitions, infinity).
 minimum_run_time(_Module, _Function, _Args, 0, MinTime) ->
 	%% round microseconds to the nearest millisecond
-	(MinTime + 500) div 1000;
+	max(1, (MinTime + 500) div 1000);
 minimum_run_time(Module, Function, Args, Repetitions, MinTime) ->
 	{RunTime, _} = timer:tc(Module, Function, Args),
 	minimum_run_time(Module, Function, Args, Repetitions-1, erlang:min(MinTime, RunTime)).

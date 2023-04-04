@@ -72,6 +72,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	write_genesis_files(Config#config.data_dir, B0),
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = true,
+		auto_join = true,
 		peers = [],
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
@@ -404,6 +405,7 @@ join(Peer, Rejoin) ->
 		start_from_block_index = false,
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
+		auto_join = true,
 		peers = [Peer]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),

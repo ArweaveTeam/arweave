@@ -23,7 +23,7 @@
 
 %% @doc Start a process that will attempt to download the block index and the latest blocks.
 start(Peers) ->
-	spawn(fun() -> process_flag(trap_exit, true), start2(Peers) end).
+	spawn(fun() -> process_flag(trap_exit, true), start2(filter_peers(Peers)) end).
 
 %% @doc Add the corresponding reward history to every block record. We keep
 %% the reward histories in the block cache and use them to validate blocks applied on top.
@@ -38,8 +38,38 @@ set_reward_history([B | Blocks], RewardHistory) ->
 %%% Private functions.
 %%%===================================================================
 
+filter_peers(Peers) ->
+	filter_peers(Peers, []).
+
+filter_peers([Peer | Peers], Peers2) ->
+	case ar_http_iface_client:get_info(Peer, height) of
+		info_unavailable ->
+			?LOG_WARNING([{event, trusted_peer_unavailable},
+					{peer, ar_util:format_peer(Peer)}]),
+			filter_peers(Peers, Peers2);
+		Height ->
+			filter_peers(Peers, [{Height, Peer} | Peers2])
+	end;
+filter_peers([], []) ->
+	[];
+filter_peers([], Peers2) ->
+	MaxHeight = lists:max([Height || {Height, _Peer} <- Peers2]),
+	filter_peers2(Peers2, MaxHeight).
+
+filter_peers2([], _MaxHeight) ->
+	[];
+filter_peers2([{Height, Peer} | Peers], MaxHeight) when MaxHeight - Height >= 5 ->
+	?LOG_WARNING([{event, trusted_peer_five_or_more_blocks_behind},
+			{peer, ar_util:format_peer(Peer)}]),
+	filter_peers2(Peers, MaxHeight);
+filter_peers2([{_Height, Peer} | Peers], MaxHeight) ->
+	[Peer | filter_peers2(Peers, MaxHeight)].
+
 start2([]) ->
-	?LOG_WARNING([{event, not_joining}, {reason, no_peers}]);
+	ar:console("~nTrusted peers are not available.~n", []),
+	?LOG_WARNING([{event, not_joining}, {reason, trusted_peers_not_available}]),
+	timer:sleep(1000),
+	erlang:halt();
 start2(Peers) ->
 	ar:console("Joining the Arweave network...~n"),
 	[{H, _, _} | _ ] = BI = get_block_index(Peers, ?REJOIN_RETRIES),

@@ -758,7 +758,9 @@ start_for_tests(Config) ->
 		peers = [],
 		data_dir = "data_test_master",
 		metrics_dir = "metrics_master",
-		disable = [randomx_jit]
+		disable = [randomx_jit],
+		packing_rate = 20,
+		auto_join = false
 	}).
 
 %% @doc Run the tests for a set of module(s).
