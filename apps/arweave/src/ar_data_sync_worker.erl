@@ -223,6 +223,10 @@ sync_range({Start, End, Peer, TargetStoreID} = Args) ->
 									{store_fetched_chunk, Peer, Time, TransferSize, Start2 - 1,
 									Proof}),
 							sync_range({Start3, End, Peer, TargetStoreID});
+						{error, timeout} ->
+							ar_data_sync:decrement_chunk_cache_size(),
+							ar_util:cast_after(1000, self(), {sync_range, Args}),
+							recast;
 						{error, Reason} ->
 							?LOG_DEBUG([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
