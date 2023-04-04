@@ -76,17 +76,26 @@ init([]) ->
 	ets:insert(?MODULE, {zero_chunk, ZeroChunk}),
 	{ok, Config} = application:get_env(arweave, config),
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
-	MaxRate = Schedulers * 1000 / (?PACKING_LATENCY_MS),
+	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "
+			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
+	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
+	ar:console("RandomX dataset initialisation complete.~n", []),
+	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
+	{ActualRatePack_2_5, ActualRatePack_2_6,
+			ActualRateUnpack_2_5, ActualRateUnpack_2_6} = get_packing_latency(PackingStateRef),
+	PackingLatency = ActualRatePack_2_6,
+	MaxRate = Schedulers * 1000 / PackingLatency,
+	TheoreticalMaxRate = Schedulers * 1000 / (?PACKING_LATENCY_MS),
 	{PackingRate, SchedulersRequired} =
 		case Config#config.packing_rate of
 			undefined ->
-				ChosenRate = max(1, ceil(MaxRate / 3)),
+				ChosenRate = max(1, ceil(2 * MaxRate / 3)),
 				ChosenRate2 = ChosenRate - ChosenRate rem 10 + 10,
 				log_packing_rate(ChosenRate2, MaxRate),
 				SchedulersRequired2 = ceil(ChosenRate2 / (1000 / (?PACKING_LATENCY_MS))),
 				{ChosenRate2, SchedulersRequired2};
 			ConfiguredRate ->
-				SchedulersRequired2 = ceil(ConfiguredRate / (1000 / (?PACKING_LATENCY_MS))),
+				SchedulersRequired2 = ceil(ConfiguredRate / (1000 / PackingLatency)),
 				case SchedulersRequired2 > Schedulers of
 					true ->
 						log_insufficient_core_count(Schedulers, ConfiguredRate, MaxRate);
@@ -95,14 +104,9 @@ init([]) ->
 				end,
 				{ConfiguredRate, SchedulersRequired2}
 		end,
-	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "
-			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
-	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
-	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
-
-	record_packing_benchmarks(PackingStateRef, MaxRate, PackingRate, Schedulers),
-
-	ar:console("RandomX dataset initialisation complete.~n", []),
+	record_packing_benchmarks({TheoreticalMaxRate, PackingRate, Schedulers,
+			ActualRatePack_2_5, ActualRatePack_2_6, ActualRateUnpack_2_5,
+			ActualRateUnpack_2_6}),
 	SpawnSchedulers = min(SchedulersRequired, Schedulers),
 	%% Since the total rate of spawned processes might exceed the desired rate,
 	%% artificially throttle processes uniformly.
@@ -419,6 +423,7 @@ decrement_buffer_size() ->
 %%%===================================================================
 %%% Prometheus metrics
 %%%===================================================================
+
 record_buffer_size_metric() ->
 	case ets:lookup(?MODULE, buffer_size) of
 		[{_, Size}] ->
@@ -427,18 +432,7 @@ record_buffer_size_metric() ->
 			ok
 	end.
 
-record_packing_benchmarks(PackingStateRef, MaxRate, PackingRate, Schedulers) ->
-	prometheus_gauge:set(packing_latency_benchmark,
-		[protocol, pack, spora_2_6], ?PACKING_LATENCY_MS),
-	prometheus_gauge:set(packing_latency_benchmark,
-		[protocol, unpack, spora_2_6], ?PACKING_LATENCY_MS),
-	prometheus_gauge:set(packing_rate_benchmark,
-		[protocol], MaxRate),
-	prometheus_gauge:set(packing_rate_benchmark,
-		[configured], PackingRate),
-	prometheus_gauge:set(packing_schedulers,
-		Schedulers),
-
+get_packing_latency(PackingStateRef) ->
 	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	Key = crypto:hash(sha256, crypto:strong_rand_bytes(256)),
 	Pack = [PackingStateRef, Key, Chunk],
@@ -447,18 +441,32 @@ record_packing_benchmarks(PackingStateRef, MaxRate, PackingRate, Schedulers) ->
 	%% minimum rather than average since it more closely approximates the fastest that this
 	%% machine can do the calculation.
 	Repetitions = 5,
+	{minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk, Pack, Repetitions),
+		minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk_2_6, Pack, Repetitions),
+		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk, Unpack, Repetitions),
+		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk_2_6, Unpack, Repetitions)}.
+
+record_packing_benchmarks({TheoreticalMaxRate, ChosenRate, Schedulers,
+		ActualRatePack_2_5, ActualRatePack_2_6, ActualRateUnpack_2_5,
+		ActualRateUnpack_2_6}) ->
 	prometheus_gauge:set(packing_latency_benchmark,
-		[init, pack, spora_2_5],
-		minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk, Pack, Repetitions)),
+		[protocol, pack, spora_2_6], ?PACKING_LATENCY_MS),
 	prometheus_gauge:set(packing_latency_benchmark,
-		[init, pack, spora_2_6],
-		minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk_2_6, Pack, Repetitions)),
+		[protocol, unpack, spora_2_6], ?PACKING_LATENCY_MS),
+	prometheus_gauge:set(packing_rate_benchmark,
+		[protocol], TheoreticalMaxRate),
+	prometheus_gauge:set(packing_rate_benchmark,
+		[configured], ChosenRate),
+	prometheus_gauge:set(packing_schedulers,
+		Schedulers),
 	prometheus_gauge:set(packing_latency_benchmark,
-		[init, unpack, spora_2_5],
-		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk, Unpack, Repetitions)),
+		[init, pack, spora_2_5], ActualRatePack_2_5),
 	prometheus_gauge:set(packing_latency_benchmark,
-		[init, unpack, spora_2_6],
-		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk_2_6, Unpack, Repetitions)).
+		[init, pack, spora_2_6], ActualRatePack_2_6),
+	prometheus_gauge:set(packing_latency_benchmark,
+		[init, unpack, spora_2_5], ActualRateUnpack_2_5),
+	prometheus_gauge:set(packing_latency_benchmark,
+		[init, unpack, spora_2_6], ActualRateUnpack_2_6).
 
 
 minimum_run_time(Module, Function, Args, Repetitions) ->
