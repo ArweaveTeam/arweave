@@ -102,7 +102,7 @@ process_task_queue(N, State) ->
 	case Task of
 		read_range ->
 			{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
-			End2 = min(Start + 262144, End),
+			End2 = min(Start + 10 * 262144, End),
 			{{value, W}, WorkerQ2} = queue:out(WorkerQ),
 			ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
 			prometheus_gauge:inc(scheduled_sync_tasks),
@@ -121,11 +121,11 @@ process_task_queue(N, State) ->
 			process_task_queue(N - 1, State2);
 		sync_range ->
 			{Start, End, Peer, TargetStoreID} = Args,
-			End2 = min(Start + 262144, End),
+			End2 = min(Start + 200 * 262144, End),
 			{{value, W}, WorkerQ2} = queue:out(WorkerQ),
 			ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
 			prometheus_gauge:inc(scheduled_sync_tasks),
-			gen_server:cast(W, {sync_range, {Start, End2, Peer, TargetStoreID}}),
+			gen_server:cast(W, {sync_range, {Start, End2, Peer, TargetStoreID, 3}}),
 			WorkerQ3 = queue:in(W, WorkerQ2),
 			{Q3, Len2} =
 				case End2 == End of

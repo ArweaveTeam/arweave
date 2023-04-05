@@ -335,7 +335,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 		peer => Peer,
 		method => get,
 		path => get_chunk_path(Offset, Encoding),
-		timeout => 20 * 1000,
+		timeout => 30 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
 		headers => p2p_headers() ++ Headers

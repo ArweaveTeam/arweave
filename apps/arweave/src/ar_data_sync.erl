@@ -26,22 +26,6 @@
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300000).
 -endif.
 
-%% Let at least this many chunks stack up, per storage module, then write them on disk in the
-%% ascending order, to reduce out-of-order disk writes causing fragmentation.
--ifdef(DEBUG).
--define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 2).
--else.
--define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 200). % ~ 50 MB worth of chunks.
--endif.
-
-%% If a chunk spends longer than this in the store queue, write it on disk without waiting
-%% for ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD chunks to stack up.
--ifdef(DEBUG).
--define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 1000).
--else.
--define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 15_000). % 15 seconds.
--endif.
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -2608,18 +2592,33 @@ pack_and_store_chunk(Args, State) ->
 process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State) ->
 	State;
 process_store_chunk_queue(State) ->
-	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len } = State,
+	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len,
+			store_chunk_queue_threshold = Threshold } = State,
 	Timestamp = element(2, gb_sets:smallest(Q)),
 	Now = os:system_time(millisecond),
-	case Len > ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
+	Threshold2 =
+		case Threshold < ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD of
+			true ->
+				Threshold;
+			false ->
+				case Len > Threshold of
+					true ->
+						0;
+					false ->
+						Threshold
+				end
+		end,
+	case Len > Threshold2
 			orelse Now - Timestamp > ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD of
 		true ->
 			{{_Offset, _Timestamp, _Ref, ChunkArgs, Args}, Q2} = gb_sets:take_smallest(Q),
 			store_chunk2(ChunkArgs, Args, State),
 			decrement_chunk_cache_size(),
 			State2 = State#sync_data_state{ store_chunk_queue = Q2,
-					store_chunk_queue_len = Len - 1 },
-			State2;
+					store_chunk_queue_len = Len - 1,
+					store_chunk_queue_threshold = min(Threshold2 + 1,
+							?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD) },
+			process_store_chunk_queue(State2);
 		false ->
 			State
 	end.

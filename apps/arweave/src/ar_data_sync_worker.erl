@@ -58,8 +58,7 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+handle_info(_Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, _State) ->
@@ -170,13 +169,15 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 			end
 	end.
 
-sync_range({Start, End, _Peer, _TargetStoreID}) when Start >= End ->
+sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}) when Start >= End ->
 	ok;
-sync_range({Start, End, Peer, TargetStoreID} = Args) ->
+sync_range({_Start, _End, _Peer, _TargetStoreID, 0}) ->
+	ok;
+sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
 			true ->
-				ar_util:cast_after(1000, self(), {sync_range, Args}),
+				ar_util:cast_after(100, self(), {sync_range, Args}),
 				true;
 			false ->
 				false
@@ -210,7 +211,6 @@ sync_range({Start, End, Peer, TargetStoreID} = Args) ->
 							false ->
 								fun ar_http_iface_client:get_chunk_json/3
 						end,
-					ar_data_sync:increment_chunk_cache_size(),
 					case Fun(Peer, Start2, any) of
 						{ok, #{ chunk := Chunk } = Proof, Time, TransferSize} ->
 							%% In case we fetched a packed small chunk,
@@ -222,17 +222,17 @@ sync_range({Start, End, Peer, TargetStoreID} = Args) ->
 							gen_server:cast(list_to_atom("ar_data_sync_" ++ TargetStoreID),
 									{store_fetched_chunk, Peer, Time, TransferSize, Start2 - 1,
 									Proof}),
-							sync_range({Start3, End, Peer, TargetStoreID});
+							ar_data_sync:increment_chunk_cache_size(),
+							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});
 						{error, timeout} ->
-							ar_data_sync:decrement_chunk_cache_size(),
-							ar_util:cast_after(1000, self(), {sync_range, Args}),
+							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
+							ar_util:cast_after(1000, self(), {sync_range, Args2}),
 							recast;
 						{error, Reason} ->
 							?LOG_DEBUG([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{offset, Start2},
-									{reason, io_lib:format("~p", [Reason])}]),
-							ar_data_sync:decrement_chunk_cache_size()
+									{reason, io_lib:format("~p", [Reason])}])
 					end
 			end
 	end.
