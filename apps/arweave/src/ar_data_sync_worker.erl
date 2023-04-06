@@ -177,7 +177,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
 			true ->
-				ar_util:cast_after(100, self(), {sync_range, Args}),
+				ar_util:cast_after(500, self(), {sync_range, Args}),
 				true;
 			false ->
 				false

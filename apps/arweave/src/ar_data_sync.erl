@@ -8,7 +8,7 @@
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
 		get_chunk_by_byte/2, read_chunk/4, decrement_chunk_cache_size/0,
-		increment_chunk_cache_size/0, get_chunk_padded_offset/1]).
+		increment_chunk_cache_size/0, get_chunk_padded_offset/1, get_chunk_metadata_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([remove_expired_disk_pool_data_roots/0]).
@@ -426,6 +426,26 @@ get_chunk_padded_offset(Offset) ->
 			ar_poa:get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD);
 		false ->
 			Offset
+	end.
+
+%% @doc Return {ok, Map} | {error, Error} where
+%% Map is
+%% AbsoluteEndOffset => {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize}
+%% map with all the chunk metadata found within the given range AbsoluteEndOffset >= Start,
+%% AbsoluteEndOffset =< End. Return the empty map if no metadata is found.
+get_chunk_metadata_range(Start, End, StoreID) ->
+	case ar_kv:get_range({chunks_index, StoreID},
+			<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>) of
+		{ok, Map} ->
+			{ok, maps:fold(
+					fun(K, V, Acc) ->
+						<< Offset:?OFFSET_KEY_BITSIZE >> = K,
+						maps:put(Offset, binary_to_term(V), Acc)
+					end,
+					#{},
+					Map)};
+		Error ->
+			Error
 	end.
 
 %%%===================================================================
@@ -1137,16 +1157,13 @@ handle_info({event, node_state, {initialized, _B}},
 				disk_pool_threshold = DiskPoolThreshold } = State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(legacy_storage_repacking, Config#config.enable)
-			andalso Config#config.sync_jobs > 0 of
+			orelse lists:member(legacy_storage_unpacked_packing, Config#config.enable) of
 		true ->
-			request_default_storage_2_5_repacking(DiskPoolThreshold);
-		false ->
-			ok
-	end,
-	case lists:member(legacy_storage_unpacked_packing, Config#config.enable)
-			andalso Config#config.sync_jobs > 0 of
-		true ->
-			request_default_unpacked_packing(DiskPoolThreshold);
+			Addr = Config#config.mining_addr,
+			Packing = {spora_2_6, Addr},
+			ar:console("Initiating the default storage repacking. The upper bound: ~B. "
+					"The new packing: ~s.~n", [DiskPoolThreshold, ar_util:encode(Addr)]),
+			gen_server:cast(ar_chunk_storage_default, {repack, DiskPoolThreshold, Packing});
 		false ->
 			ok
 	end,
@@ -2179,13 +2196,6 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 							End2, RangeEnd, Intervals2)
 			end
 	end.
-
-request_default_storage_2_5_repacking(RightBound) ->
-	gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking, 0,
-			RightBound}).
-
-request_default_unpacked_packing(RightBound) ->
-	gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, 0, RightBound}).
 
 find_peer_intervals(Start, End, _StoreID, _Self) when Start >= End ->
 	ok;
