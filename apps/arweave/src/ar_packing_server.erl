@@ -6,16 +6,17 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
+%% Only used by ar_bench_packing.erl
+-export([chunk_key_2_5/2, chunk_key_2_6/3]).
+
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
 %% The packing latency as it is chosen for the protocol.
 -define(PACKING_LATENCY_MS, 60).
-
-%% The key to initialize the RandomX state from, for RandomX packing.
--define(RANDOMX_PACKING_KEY, <<"default arweave 2.5 pack key">>).
 
 -record(state, {
 	workers,
@@ -290,6 +291,28 @@ worker(ThrottleDelay, RandomXStateRef) ->
 			worker(ThrottleDelay, RandomXStateRef)
 	end.
 
+chunk_key_2_5(ChunkOffset, TXRoot) -> 
+	%% The presence of the absolute end offset in the key makes sure
+	%% packing of every chunk is unique, even when the same chunk is
+	%% present in the same transaction or across multiple transactions
+	%% or blocks. The presence of the transaction root in the key
+	%% ensures one cannot find data that has certain patterns after
+	%% packing.
+	crypto:hash(sha256, << ChunkOffset:256, TXRoot/binary >>).
+
+chunk_key_2_6(ChunkOffset, TXRoot, RewardAddr) -> 
+	%% The presence of the absolute end offset in the key makes sure
+	%% packing of every chunk is unique, even when the same chunk is
+	%% present in the same transaction or across multiple transactions
+	%% or blocks. The presence of the transaction root in the key
+	%% ensures one cannot find data that has certain patterns after
+	%% packing. The presence of the reward address, combined with
+	%% the 2.6 mining mechanics, puts a relatively low cap on the performance
+	%% of a single dataset replica, essentially incentivizing miners to create
+	%% more weave replicas per invested dollar.
+	crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
+			RewardAddr/binary >>).
+
 pack(unpacked, _ChunkOffset, _TXRoot, Chunk, _RandomXStateRef, _External) ->
 	%% Allows to reuse the same interface for unpacking and repacking.
 	{ok, Chunk, already_packed};
@@ -298,13 +321,7 @@ pack(spora_2_5, ChunkOffset, TXRoot, Chunk, RandomXStateRef, External) ->
 		true ->
 			{error, invalid_unpacked_size};
 		false ->
-			%% The presence of the absolute end offset in the key makes sure
-			%% packing of every chunk is unique, even when the same chunk is
-			%% present in the same transaction or across multiple transactions
-			%% or blocks. The presence of the transaction root in the key
-			%% ensures one cannot find data that has certain patterns after
-			%% packing.
-			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot/binary >>),
+			Key = chunk_key_2_5(ChunkOffset, TXRoot),
 			{ok, prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[pack, spora_2_5, External], fun() ->
 							ar_mine_randomx:randomx_encrypt_chunk(RandomXStateRef, Key,
@@ -315,17 +332,7 @@ pack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, RandomXStateRef, Exter
 		true ->
 			{error, invalid_unpacked_size};
 		false ->
-			%% The presence of the absolute end offset in the key makes sure
-			%% packing of every chunk is unique, even when the same chunk is
-			%% present in the same transaction or across multiple transactions
-			%% or blocks. The presence of the transaction root in the key
-			%% ensures one cannot find data that has certain patterns after
-			%% packing. The presence of the reward address, combined with
-			%% the 2.6 mining mechanics, puts a relatively low cap on the performance
-			%% of a single dataset replica, essentially incentivizing miners to create
-			%% more weave replicas per invested dollar.
-			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
-					RewardAddr/binary >>),
+			Key = chunk_key_2_6(ChunkOffset, TXRoot, RewardAddr),
 			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[pack, spora_2_6, External], fun() ->
 							ar_mine_randomx:randomx_encrypt_chunk_2_6(RandomXStateRef, Key,
@@ -364,7 +371,7 @@ unpack(spora_2_5, ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, Extern
 		false ->
 			{error, invalid_packed_size};
 		true ->
-			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot/binary >>),
+			Key = chunk_key_2_5(ChunkOffset, TXRoot),
 			Unpacked = prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[unpack, spora_2_5, External], fun() ->
 							ar_mine_randomx:randomx_decrypt_chunk(RandomXStateRef, Key, Chunk,
@@ -382,8 +389,7 @@ unpack({spora_2_6, RewardAddr}, ChunkOffset, TXRoot, Chunk, ChunkSize,
 			%% validation does not allow ChunkSize to exceed ?DATA_CHUNK_SIZE.
 			{error, invalid_chunk_size};
 		_ ->
-			Key = crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary,
-					RewardAddr/binary >>),
+			Key = chunk_key_2_6(ChunkOffset, TXRoot, RewardAddr),
 			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 					[unpack, spora_2_6, External], fun() ->
 							ar_mine_randomx:randomx_decrypt_chunk_2_6(RandomXStateRef, Key,

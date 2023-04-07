@@ -10,5 +10,5 @@ echo Building dependencies...
 
 erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +Bi -pa `./rebar3 path` \
 	-config config/sys.config -args_file config/vm.args.dev \
-	-run ar benchmark_vdf_command
+	-run ar benchmark_vdf
 

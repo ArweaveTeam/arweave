@@ -56,6 +56,7 @@ static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv*, int, const ERL_NIF_TERM [])
 
 static ERL_NIF_TERM randomx_encrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_decrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+static ERL_NIF_TERM randomx_reencrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
 static ERL_NIF_TERM hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM hash_light_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
@@ -72,3 +73,4 @@ static ERL_NIF_TERM error_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM error(ErlNifEnv*, const char*);
 static ERL_NIF_TERM make_output_binary(ErlNifEnv*, unsigned char*, size_t);
 static int validate_hash(unsigned char[RANDOMX_HASH_SIZE], unsigned char[RANDOMX_HASH_SIZE]);
+static randomx_flags get_flags(int jitEnabled, int largePagesEnabled, int hardwareAESEnabled);

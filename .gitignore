@@ -11,7 +11,8 @@ apps/arweave/priv/tls
 apps/arweave/priv/*.so
 _build
 .rebar3
-apps/arweave/c_src/*.o
+apps/arweave/c_src/**/*.o
+apps/arweave/c_src/tests/tests
 data_test_master
 data_test_slave
 erl_crash.dump

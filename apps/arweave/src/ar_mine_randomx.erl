@@ -6,6 +6,7 @@
 		bulk_hash_fast/13, hash_fast_verify/3,
 		randomx_encrypt_chunk/3, randomx_encrypt_chunk_2_6/3,
 		randomx_decrypt_chunk/4, randomx_decrypt_chunk_2_6/4,
+		randomx_reencrypt_chunk/5, randomx_reencrypt_chunk_2_6/5,
 		hash_fast_long_with_entropy/2, hash_light_long_with_entropy/2,
 		bulk_hash_fast_long_with_entropy/13,
 		vdf_sha2/2, vdf_parallel_sha_verify_no_reset/4, vdf_parallel_sha_verify/6]).
@@ -15,6 +16,7 @@
 -export([init_light_nif/3, hash_light_nif/5, init_fast_nif/4, hash_fast_nif/5,
 		release_state_nif/1, jit/0, large_pages/0, hardware_aes/0, bulk_hash_fast_nif/13,
 		hash_fast_verify_nif/6, randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
+		randomx_reencrypt_chunk_nif/10,
 		hash_fast_long_with_entropy_nif/6, hash_light_long_with_entropy_nif/6,
 		bulk_hash_fast_long_with_entropy_nif/14,
 		vdf_sha2_nif/5, vdf_parallel_sha_verify_nif/8,
@@ -26,10 +28,6 @@
 -include_lib("arweave/include/ar_vdf.hrl").
 
 -define(RANDOMX_WITH_ENTROPY_ROUNDS, 8).
-
--define(RANDOMX_PACKING_ROUNDS, 8 * (?PACKING_DIFFICULTY)).
-
--define(RANDOMX_PACKING_ROUNDS_2_6, 8 * (?PACKING_DIFFICULTY_2_6)).
 
 %%%===================================================================
 %%% Public interface.
@@ -164,6 +162,20 @@ randomx_decrypt_chunk_2_6(RandomxState, Key, Chunk, Size) ->
 			Reply
 	end.
 -endif.
+
+%% Repack Chunk from SPoRA 2.5 to SPoRA 2.6
+randomx_reencrypt_chunk(RandomxState, UnpackKey, PackKey, Chunk, Size) ->
+	{ok, OutChunk} =
+		randomx_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, Size, ?RANDOMX_PACKING_ROUNDS, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
+				large_pages(), hardware_aes()),
+	OutChunk.
+
+%% Repack Chunk from SPoRA 2.6 to SPoRA 2.6
+randomx_reencrypt_chunk_2_6(RandomxState, UnpackKey, PackKey, Chunk, Size) ->
+	{ok, OutChunk} =
+		randomx_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, Size, ?RANDOMX_PACKING_ROUNDS_2_6, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
+				large_pages(), hardware_aes()),
+	OutChunk.
 
 -ifdef(DEBUG).
 hash_fast_long_with_entropy(FastState, Data) ->
@@ -405,6 +417,11 @@ randomx_encrypt_chunk_nif(_State, _Data, _Chunk, _RoundCount, _JIT, _LargePages,
 randomx_decrypt_chunk_nif(_State, _Data, _Chunk, _OutSize, _RoundCount, _JIT, _LargePages,
 		_HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
+
+randomx_reencrypt_chunk_nif(_State, _DecryptKey, _EncryptKey, _Chunk, _OutSize,
+		_DecryptRoundCount, _EncryptRoundCount, _JIT, _LargePages, _HardwareAES) ->
+	erlang:nif_error(nif_not_loaded).
+
 
 hash_fast_long_with_entropy_nif(_State, _Data, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+# Define the possible argument values
+MB_VALUES=("1024" "1024" "1024" "1024" "1024")
+JIT_VALUES=("1")
+LARGE_PAGES_VALUES=("1")
+HW_AES_VALUES=("1")
+VDF_VALUES=("0")
+TEST_VALUES=("baseline_pack" "baseline_repack_2_5" "baseline_repack_2_6" "nif_repack_2_5" "nif_repack_2_6")
+
+# Loop over all permutations of the argument values
+for MB in "${MB_VALUES[@]}"; do
+    for JIT in "${JIT_VALUES[@]}"; do
+        for LARGE_PAGES in "${LARGE_PAGES_VALUES[@]}"; do
+            for HW_AES in "${HW_AES_VALUES[@]}"; do
+                for VDF in "${VDF_VALUES[@]}"; do
+                    for TEST in "${TEST_VALUES[@]}"; do
+                        # Call bin/script with the current set of arguments
+                        echo ./bin/benchmark-packing test "$TEST" mb "$MB" jit "$JIT" large_pages "$LARGE_PAGES" hw_aes "$HW_AES" vdf "$VDF"
+                        ./bin/benchmark-packing test "$TEST" mb "$MB" jit "$JIT" large_pages "$LARGE_PAGES" hw_aes "$HW_AES" vdf "$VDF"
+                    done
+                done
+            done
+        done
+    done
+done

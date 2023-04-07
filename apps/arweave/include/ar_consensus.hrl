@@ -8,6 +8,10 @@
 %% 360/8 = 45
 -define(PACKING_DIFFICULTY_2_6, 45).
 
+-define(RANDOMX_PACKING_ROUNDS, 8 * (?PACKING_DIFFICULTY)).
+
+-define(RANDOMX_PACKING_ROUNDS_2_6, 8 * (?PACKING_DIFFICULTY_2_6)).
+
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
@@ -109,3 +113,6 @@ end()).
 %% share of the search space is sampled from each of the subspaces.
 %% Must be equal to SPORA_SUBSPACES_COUNT defined in c_src/ar_mine_randomx.h.
 -define(SPORA_SEARCH_SPACE_SUBSPACES_COUNT, 1024).
+
+%% The key to initialize the RandomX state from, for RandomX packing.
+-define(RANDOMX_PACKING_KEY, <<"default arweave 2.5 pack key">>).
