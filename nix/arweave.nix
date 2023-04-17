@@ -367,6 +367,7 @@ let
 
       export BINDIR=$ROOT_DIR/erts/bin
       export EMU="beam"
+      export TERM="dumb"
       BOOTFILE=$(echo $ROOT_DIR/releases/*/start.boot | sed -e "s/\.boot$//")
 
       erlexec -noinput +Bd -boot "$BOOTFILE" \
