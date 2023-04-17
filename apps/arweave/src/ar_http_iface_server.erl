@@ -55,9 +55,11 @@ start_http_iface_listener(Config) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
 	TransportOpts = #{
-		keepalive => true,
 		max_connections => Config#config.max_connections,
-		socket_opts => [{port, Config#config.port}]
+		socket_opts => [
+                  {port, Config#config.port},
+                  {keepalive, true}
+                ]
 	},
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}]),
 	{ok, _} = cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts),
