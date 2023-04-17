@@ -26,7 +26,7 @@ new(Tab, B) ->
 	#block{ indep_hash = H, hash = SolutionH, cumulative_diff = CDiff, height = Height } = B,
 	ets:delete_all_objects(Tab),
 	ar_ignore_registry:add(H),
-	ets:insert(Tab, [
+	insert(Tab, [
 		{max_cdiff, {CDiff, H}},
 		{links, gb_sets:from_list([{Height, H}])},
 		{{solution, SolutionH}, sets:from_list([H])},
@@ -76,7 +76,7 @@ add(Tab,
 					Children}}] = ets:lookup(Tab, {block, PrevH}),
 			C2 = case CDiff > MaxCDiff of true -> {CDiff, H}; false -> C end,
 			Set2 = gb_sets:insert({Height, H}, Set),
-			ets:insert(Tab, [
+			insert(Tab, [
 				{max_cdiff, C2},
 				{links, Set2},
 				{{solution, SolutionH}, SolutionSet3},
@@ -86,7 +86,7 @@ add(Tab,
 						{PrevB, PrevStatus, PrevTimestamp, sets:add_element(H, Children)}}
 			]);
 		[{_, {_B, {not_validated, _} = CurrentStatus, CurrentTimestamp, Children}}] ->
-			ets:insert(Tab, {{block, H}, {B, CurrentStatus, CurrentTimestamp, Children}});
+			insert(Tab, {{block, H}, {B, CurrentStatus, CurrentTimestamp, Children}});
 		_ ->
 			?LOG_WARNING([{event, attempt_to_update_already_validated_cached_block},
 					{h, ar_util:encode(H)}, {height, Height},
@@ -135,7 +135,7 @@ get_fork_length(Tab, Branch) ->
 mark_nonce_limiter_validated(Tab, H) ->
 	case ets:lookup(Tab, {block, H}) of
 		[{_, {B, {not_validated, nonce_limiter_validation_scheduled}, Timestamp, Children}}] ->
-			ets:insert(Tab, {{block, H}, {B,
+			insert(Tab, {{block, H}, {B,
 					{not_validated, nonce_limiter_validated}, Timestamp, Children}});
 		_ ->
 			ok
@@ -147,7 +147,7 @@ mark_nonce_limiter_validated(Tab, H) ->
 mark_nonce_limiter_validation_scheduled(Tab, H) ->
 	case ets:lookup(Tab, {block, H}) of
 		[{_, {B, {not_validated, awaiting_nonce_limiter_validation}, Timestamp, Children}}] ->
-			ets:insert(Tab, {{block, H}, {B,
+			insert(Tab, {{block, H}, {B,
 					{not_validated, nonce_limiter_validation_scheduled}, Timestamp,
 					Children}});
 		_ ->
@@ -182,7 +182,7 @@ add_validated(Tab, B) ->
 					SolutionSet3 = sets:from_list([H | Remaining]),
 					[{_, Set}] = ets:lookup(Tab, links),
 					[{_, C = {MaxCDiff, _H}}] = ets:lookup(Tab, max_cdiff),
-					ets:insert(Tab, [
+					insert(Tab, [
 						{{block, PrevH}, {PrevB, PrevStatus, PrevTimestamp,
 								sets:add_element(H, PrevChildren)}},
 						{{block, H}, {B, validated, erlang:timestamp(), sets:new()}},
@@ -192,13 +192,13 @@ add_validated(Tab, B) ->
 						{{solution, SolutionH}, SolutionSet3}
 					]);
 				[{_, {_B, on_chain, Timestamp, Children}}] ->
-					ets:insert(Tab, [
+					insert(Tab, [
 						{{block, PrevH}, {PrevB, PrevStatus, PrevTimestamp,
 								sets:add_element(H, PrevChildren)}},
 						{{block, H}, {B, on_chain, Timestamp, Children}}
 					]);
 				[{_, {_B, _Status, Timestamp, Children}}] ->
-					ets:insert(Tab, [
+					insert(Tab, [
 						{{block, PrevH}, {PrevB, PrevStatus, PrevTimestamp,
 								sets:add_element(H, PrevChildren)}},
 						{{block, H}, {B, validated, Timestamp, Children}}
@@ -239,8 +239,7 @@ get_earliest_not_validated_from_longest_chain(Tab) ->
 %% ?STORE_BLOCKS_BEHIND_CURRENT blocks of the longest chain and the number of blocks
 %% in this list that are not on chain yet.
 get_longest_chain_block_txs_pairs(Tab) ->
-	[{_, {_CDiff, H}}] = ets:lookup(Tab, max_cdiff),
-	get_longest_chain_block_txs_pairs(Tab, H, ?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0).
+	get_longest_chain_cache(Tab).
 
 get_longest_chain_block_txs_pairs(_Tab, _H, 0, _PrevStatus, _PrevH, Pairs, NotOnChainCount) ->
 	{lists:reverse(Pairs), NotOnChainCount};
@@ -313,7 +312,7 @@ get_block_and_status(Tab, H) ->
 mark_tip(Tab, H) ->
 	case ets:lookup(Tab, {block, H}) of
 		[{_, {B, _Status, Timestamp, Children}}] ->
-			ets:insert(Tab, [
+			insert(Tab, [
 				{tip, H},
 				{{block, H}, {B, on_chain, Timestamp, Children}} |
 				mark_on_chain(Tab, B)
@@ -332,7 +331,7 @@ remove(Tab, H) ->
 			[{_, {PrevB, PrevBStatus, PrevTimestamp, PrevBChildren}}] = ets:lookup(Tab,
 					{block, PrevH}),
 			remove2(Tab, H),
-			ets:insert(Tab, [
+			insert(Tab, [
 				{max_cdiff, case ets:lookup(Tab, {block, H2}) of
 								[] ->
 									find_max_cdiff(Tab);
@@ -405,6 +404,29 @@ get_by_solution_hash(Tab, SolutionH, H, CDiff, PrevCDiff, [H2 | L], _B) ->
 %%% Private functions.
 %%%===================================================================
 
+insert(Tab, Args) ->
+	insert(Tab, Args, true).
+insert(Tab, Args, UpdateCache) ->
+	ets:insert(Tab, Args),
+	case UpdateCache of
+		true ->
+			update_longest_chain_cache(Tab);
+		false ->
+			ok
+	end.
+
+delete(Tab, Args) ->
+	delete(Tab, Args, true).
+delete(Tab, Args, UpdateCache) ->
+	ets:delete(Tab, Args),
+	case UpdateCache of
+		true ->
+			update_longest_chain_cache(Tab);
+		false ->
+			ok
+	end.
+
+
 get_earliest_not_validated(Tab, #block{ previous_block = PrevH } = B, Status, Timestamp) ->
 	[{_, {PrevB, PrevStatus, PrevTimestamp, _Children}}] = ets:lookup(Tab, {block, PrevH}),
 	case PrevStatus of
@@ -456,10 +478,11 @@ remove2(Tab, H) ->
 		not_found ->
 			ok;
 		[{_, {#block{ hash = SolutionH, height = Height }, _Status, _Timestamp, Children}}] ->
-			ets:delete(Tab, {block, H}),
+			%% Don't update the cache here. remove/2 will do it.
+			delete(Tab, {block, H}, false), 
 			ar_ignore_registry:remove(H),
 			remove_solution(Tab, H, SolutionH),
-			ets:insert(Tab, {links, gb_sets:del_element({Height, H}, Set)}),
+			insert(Tab, {links, gb_sets:del_element({Height, H}, Set)}, false),
 			sets:fold(
 				fun(Child, ok) ->
 					remove2(Tab, Child)
@@ -473,10 +496,10 @@ remove_solution(Tab, H, SolutionH) ->
 	[{_, SolutionSet}] = ets:lookup(Tab, {solution, SolutionH}),
 	case sets:size(SolutionSet) of
 		1 ->
-			ets:delete(Tab, {solution, SolutionH});
+			delete(Tab, {solution, SolutionH}, false);
 		_ ->
 			SolutionSet2 = sets:del_element(H, SolutionSet),
-			ets:insert(Tab, {{solution, SolutionH}, SolutionSet2})
+			insert(Tab, {{solution, SolutionH}, SolutionSet2}, false)
 	end.
 
 find_max_cdiff(Tab) ->
@@ -511,7 +534,7 @@ prune(Tab, Depth, TipHeight) ->
 				true ->
 					ok;
 				false ->
-					ets:insert(Tab, {links, Set2}),
+					insert(Tab, {links, Set2}, false),
 					%% The lowest block must be on-chain by construction.
 					[{_, {B, on_chain, _Timestamp, Children}}] = ets:lookup(Tab, {block, H}),
 					#block{ hash = SolutionH } = B,
@@ -529,11 +552,31 @@ prune(Tab, Depth, TipHeight) ->
 						Children
 					),
 					remove_solution(Tab, H, SolutionH),
-					ets:delete(Tab, {block, H}),
+					delete(Tab, {block, H}),
 					ar_ignore_registry:remove(H),
 					prune(Tab, Depth, TipHeight)
 			end
 	end.
+
+update_longest_chain_cache(Tab) ->
+	GetStart = erlang:timestamp(),
+	[{_, {_CDiff, H}}] = ets:lookup(Tab, max_cdiff),
+	Result = get_longest_chain_block_txs_pairs(Tab, H, ?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0),
+	case ets:update_element(Tab, longest_chain, {2, Result}) of
+		true -> ok;
+		false ->
+			%% if insert_new fails it means another process added the longest_chain key
+			%% between when we called update_element here. Extremely unlikely, really only
+			%% possible when the node first starts up, and ultimately not super relevant since
+			%% the cache will likely be refreshed again shortly. So we'll ignore.
+			ets:insert_new(Tab, {longest_chain, Result})
+	end,
+	Result.
+
+get_longest_chain_cache(Tab) ->
+	[{longest_chain, LongestChain}] = ets:lookup(Tab, longest_chain),
+	LongestChain.
+
 
 %%%===================================================================
 %%% Tests.
@@ -545,6 +588,8 @@ block_cache_test_() ->
 
 test_block_cache() ->
 	ets:new(bcache_test, [set, named_table]),
+
+	%% Initialize block_cache from B1
 	new(bcache_test, B1 = random_block(0)),
 	?assertEqual(not_found, get(bcache_test, crypto:strong_rand_bytes(48))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, crypto:strong_rand_bytes(32),
@@ -554,17 +599,29 @@ test_block_cache() ->
 			crypto:strong_rand_bytes(32), 1, 1)),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash,
 			B1#block.indep_hash, 1, 1)),
+	assert_longest_chain([B1], 0),
+
+	%% Re-adding B1 shouldn't change anything - i.e. nothing should be updated because the
+	%% block is already on chain
 	add(bcache_test, B1#block{ txs = [crypto:strong_rand_bytes(32)] }),
-	%% Not updated because the block is on chain.
 	?assertEqual(B1#block{ txs = [] }, get(bcache_test, block_id(B1))),
 	?assertEqual(B1#block{ txs = [] }, get_by_solution_hash(bcache_test, B1#block.hash,
 			crypto:strong_rand_bytes(32), 1, 1)),
+	assert_longest_chain([B1], 0),
+
+	%% Same as above.
 	add(bcache_test, B1),
 	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B1], 0),
+
+	%% Add B2 as not_validated
 	add(bcache_test, B2 = on_top(random_block(1), B1)),
 	ExpectedStatus = awaiting_nonce_limiter_validation,
 	?assertMatch({B2, [B1], {{not_validated, ExpectedStatus}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B1], 0),
+
+	%% Add a TXID to B2, but still don't mark as validated
 	TXID = crypto:strong_rand_bytes(32),
 	add(bcache_test, B2#block{ txs = [TXID] }),
 	?assertEqual(B2#block{ txs = [TXID] }, get(bcache_test, block_id(B2))),
@@ -572,10 +629,19 @@ test_block_cache() ->
 			crypto:strong_rand_bytes(32), 1, 1)),
 	?assertEqual(B2#block{ txs = [TXID] }, get_by_solution_hash(bcache_test, B2#block.hash,
 			B1#block.indep_hash, 1, 1)),
+	assert_longest_chain([B1], 0),
+
+	%% Remove B2
 	remove(bcache_test, block_id(B2)),
 	?assertEqual(not_found, get(bcache_test, block_id(B2))),
+	assert_longest_chain([B1], 0),
+
+	%% Remove B2 again
 	remove(bcache_test, block_id(B2)),
 	?assertEqual(B1, get(bcache_test, block_id(B1))),
+	assert_longest_chain([B1], 0),
+
+	%% Add B and B1_2 creating a fork, with B1_2 at a higher difficulty. Nether are validated.
 	add(bcache_test, B2),
 	add(bcache_test, B1_2 = (on_top(random_block(2), B1))#block{ hash = B1#block.hash }),
 	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash, B1_2#block.indep_hash,
@@ -586,22 +652,39 @@ test_block_cache() ->
 			crypto:strong_rand_bytes(32), B1_2#block.cumulative_diff, 1)),
 	?assert(lists:member(get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 1, 1),
 			[B1, B1_2])),
+	assert_longest_chain([B1], 0),
+
+	%% Even though B2 is marked as a tip, it is still lower difficulty than B1_2 so will
+	%% not be included in the longest chain
 	mark_tip(bcache_test, block_id(B2)),
 	?assertEqual(B1_2, get(bcache_test, block_id(B1_2))),
+	assert_longest_chain([B1], 0),
+
+	%% Remove B1_2, causing B2 to now be the tip of the heaviest chain
 	remove(bcache_test, block_id(B1_2)),
 	?assertEqual(not_found, get(bcache_test, block_id(B1_2))),
 	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash,
 			crypto:strong_rand_bytes(32), 0, 0)),
+	assert_longest_chain([B2, B1], 0),
+
 	prune(bcache_test, 1),
 	?assertEqual(B1, get(bcache_test, block_id(B1))),
 	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash,
 			crypto:strong_rand_bytes(32), 0, 0)),
+	assert_longest_chain([B2, B1], 0),
+
 	prune(bcache_test, 0),
 	?assertEqual(not_found, get(bcache_test, block_id(B1))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2], 0),
+
 	prune(bcache_test, 0),
 	?assertEqual(not_found, get(bcache_test, block_id(B1_2))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1_2#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2], 0),
+
+	%% B1_2->B1 fork is the heaviest, but only B1 is validated. B2_2->B2->B1 is longer but
+	%% has a lower cdiff.
 	new(bcache_test, B1),
 	add(bcache_test, B1_2),
 	add(bcache_test, B2),
@@ -609,60 +692,97 @@ test_block_cache() ->
 	add(bcache_test, B2_2 = on_top(random_block(1), B2)),
 	?assertMatch({B1_2, [B1], {{not_validated, ExpectedStatus}, _Timestamp}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B1], 0),
+
+	%% B2_3->B2_2->B2->B1 is no longer and heavier but only B2->B1 are validated.
 	add(bcache_test, B2_3 = on_top(random_block(3), B2_2)),
 	?assertMatch({B2_2, [B2], {{not_validated, ExpectedStatus}, _Timestamp}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	?assertException(error, invalid_tip, mark_tip(bcache_test, block_id(B2_3))),
+	assert_longest_chain([B2, B1], 0),
+
+	%% Now B2_2->B2->B1 are validated.
 	add_validated(bcache_test, B2_2),
 	?assertEqual({B2_2, validated}, get_block_and_status(bcache_test, B2_2#block.indep_hash)),
 	?assertMatch({B2_3, [B2_2, B2], {{not_validated, ExpectedStatus}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B2_2, B2, B1], 1),
+
+	%% Now the B3->B2->B1 fork is heaviest
 	B3 = on_top(random_block(4), B2),
 	B3ID = block_id(B3),
 	add(bcache_test, B3),
 	add_validated(bcache_test, B3),
 	mark_tip(bcache_test, B3ID),
 	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B3, B2, B1], 0),
+
+	%% B3->B2->B1 fork is still heaviest
 	mark_tip(bcache_test, block_id(B2_2)),
 	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B3, B2, B1], 1),
+
 	add(bcache_test, B4 = on_top(random_block(5), B3)),
 	?assertMatch({B4, [B3, B2], {{not_validated, ExpectedStatus}, _Timestamp}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B3, B2, B1], 1),
+
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B1))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B3, B2], 1),
+
 	mark_tip(bcache_test, block_id(B2_3)),
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B2))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B2#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2_3, B2_2], 0),
+
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B3))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B3#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2_3, B2_2], 0),
+
 	prune(bcache_test, 1),
 	?assertEqual(not_found, get(bcache_test, block_id(B4))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2_3, B2_2], 0),
+
 	prune(bcache_test, 1),
 	?assertEqual(B2_2, get(bcache_test, block_id(B2_2))),
 	?assertEqual(B2_2, get_by_solution_hash(bcache_test, B2_2#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2_3, B2_2], 0),
+
 	prune(bcache_test, 1),
 	?assertEqual(B2_3, get(bcache_test, block_id(B2_3))),
 	?assertEqual(B2_3, get_by_solution_hash(bcache_test, B2_3#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2_3, B2_2], 0),
+
 	remove(bcache_test, block_id(B3)),
 	?assertEqual(not_found, get(bcache_test, block_id(B3))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B3#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2_3, B2_2], 0),
+
 	remove(bcache_test, block_id(B3)),
 	?assertEqual(not_found, get(bcache_test, block_id(B4))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash, <<>>, 0, 0)),
+	assert_longest_chain([B2_3, B2_2], 0),
+
+	
 	new(bcache_test, B11 = random_block(0)),
-	add(bcache_test, on_top(random_block(1), B11)),
+	add(bcache_test, _B12 = on_top(random_block(1), B11)),
 	add_validated(bcache_test, B13 = on_top(random_block(1), B11)),
 	mark_tip(bcache_test, block_id(B13)),
-	%% Although the first block at height 1 was the one added in C12, B13 then
+	%% Although the first block at height 1 was the one added in B12, B13 then
 	%% became the tip so we should not reorganize.
 	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B11], 0),
+
 	add(bcache_test, B14 = on_top(random_block_after_repacking(2), B13)),
 	?assertMatch({B14, [B13], {{not_validated, awaiting_nonce_limiter_validation}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B13, B11], 0),
+
 	mark_nonce_limiter_validation_scheduled(bcache_test, crypto:strong_rand_bytes(48)),
 	mark_nonce_limiter_validated(bcache_test, crypto:strong_rand_bytes(48)),
 	mark_nonce_limiter_validation_scheduled(bcache_test, block_id(B13)),
@@ -670,36 +790,55 @@ test_block_cache() ->
 	?assertEqual({B13, on_chain}, get_block_and_status(bcache_test, block_id(B13))),
 	?assertMatch({B14, {not_validated, awaiting_nonce_limiter_validation}},
 			get_block_and_status(bcache_test, block_id(B14))),
+	assert_longest_chain([B13, B11], 0),
+
 	mark_nonce_limiter_validation_scheduled(bcache_test, block_id(B14)),
 	?assertMatch({B14, {not_validated, nonce_limiter_validation_scheduled}},
 			get_block_and_status(bcache_test, block_id(B14))),
 	?assertMatch({B14, [B13], {{not_validated, nonce_limiter_validation_scheduled}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B13, B11], 0),
+
 	mark_nonce_limiter_validated(bcache_test, block_id(B14)),
 	?assertMatch({B14, {not_validated, nonce_limiter_validated}},
 			get_block_and_status(bcache_test, block_id(B14))),
 	?assertMatch({B14, [B13], {{not_validated, nonce_limiter_validated}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B14, B13, B11], 1),
+
 	add(bcache_test, B15 = on_top(random_block_after_repacking(3), B14)),
 	?assertMatch({B14, [B13], {{not_validated, nonce_limiter_validated}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B14, B13, B11], 1),
+
 	add_validated(bcache_test, B14),
 	?assertMatch({B15, [B14, B13], {{not_validated, awaiting_nonce_limiter_validation}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	?assertMatch({B14, validated}, get_block_and_status(bcache_test, block_id(B14))),
+	assert_longest_chain([B14, B13, B11], 1),
+
 	add(bcache_test, B16 = on_top(random_block_after_repacking(4), B15)),
 	mark_nonce_limiter_validation_scheduled(bcache_test, block_id(B16)),
 	?assertMatch({B15, [B14, B13], {{not_validated, awaiting_nonce_limiter_validation}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B14, B13, B11], 1),
+
 	mark_nonce_limiter_validated(bcache_test, block_id(B16)),
 	?assertMatch({B15, [B14, B13], {{not_validated, awaiting_nonce_limiter_validation}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	?assertMatch({B16, {not_validated, nonce_limiter_validated}},
 			get_block_and_status(bcache_test, block_id(B16))),
+	assert_longest_chain([B14, B13, B11], 1),
+
 	mark_tip(bcache_test, block_id(B14)),
 	?assertEqual({B14, on_chain}, get_block_and_status(bcache_test, block_id(B14))),
 	?assertMatch({B15, [B14], {{not_validated, awaiting_nonce_limiter_validation}, _}},
-			get_earliest_not_validated_from_longest_chain(bcache_test)).
+			get_earliest_not_validated_from_longest_chain(bcache_test)),
+	assert_longest_chain([B14, B13, B11], 0).
+
+assert_longest_chain(Chain, NotOnChainCount) ->
+	ExpectedPairs =  [{B#block.indep_hash, []} || B <- Chain],
+	?assertEqual({ExpectedPairs, NotOnChainCount}, get_longest_chain_block_txs_pairs(bcache_test)).
 
 random_block(CDiff) ->
 	#block{ indep_hash = crypto:strong_rand_bytes(48), height = 0, cumulative_diff = CDiff,
@@ -708,6 +847,11 @@ random_block(CDiff) ->
 random_block_after_repacking(CDiff) ->
 	#block{ indep_hash = crypto:strong_rand_bytes(48), height = 0, cumulative_diff = CDiff,
 			hash = crypto:strong_rand_bytes(32) }.
+
+random_block_with_txs(CDiff, NumTXs) ->
+	TXs = [ #tx{ id = crypto:strong_rand_bytes(32) } || _ <- lists:seq(1, NumTXs)],
+	B = random_block(CDiff),
+	B#block{ txs = TXs }.
 
 block_id(#block{ indep_hash = H }) ->
 	H.
