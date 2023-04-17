@@ -287,12 +287,12 @@ let
 
   ranch = buildRebar rec {
     name = "ranch";
-    version = "a692f44567034dacf5efcaa24a24183788594eb7";
+    version = "2.1.0";
     src = fetchFromGitHub {
       owner = "ninenines";
       repo = name;
       rev = version;
-      sha256 = "03naawrq8qpv9al915didl4aicinj79f067isc21dbir0lhn1lgn";
+      sha256 = "sha256-Uchp4bE39rWSprNYYdVDE9uk0IZWznsLt9it5dYZQNQ=";
     };
   };
 
