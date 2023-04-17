@@ -5,6 +5,52 @@ let
   cfg = config.services.arweave;
   defaultUser = "arweave";
   arweavePkg = pkgs.callPackage ./arweave.nix { inherit pkgs; };
+  generatedConfigFile =
+    pkgs.writeText "config.json" (builtins.toJSON {
+      data_dir = cfg.dataDir;
+      log_dir = cfg.logDir;
+      storage_modules = cfg.storageModules;
+      metrics_dir = cfg.metricsDir;
+      start_from_block_index = cfg.startFromBlockIndex;
+      transaction_blacklists = cfg.transactionBlacklists;
+      transaction_whitelists = cfg.transactionWhitelists;
+      transaction_blacklist_urls = cfg.transactionBlacklistURLs;
+      max_disk_pool_buffer_mb = cfg.maxDiskPoolBufferMb;
+      max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
+      block_pollers = cfg.blockPollers;
+      polling = cfg.polling;
+      tx_validators = cfg.txValidators;
+      disable = cfg.featuresDisable;
+      enable = cfg.featuresEnable;
+      header_sync_jobs = cfg.headerSyncJobs;
+      sync_jobs = cfg.syncJobs;
+      disk_pool_jobs = cfg.diskPoolJobs;
+      debug = cfg.debug;
+      packing_rate = cfg.packingRate;
+      block_throttle_by_ip_interval = cfg.blockThrottleByIPInterval;
+      block_throttle_by_solution_interval = cfg.blockThrottleBySolutionInterval;
+      semaphores = {
+        get_chunk = cfg.maxParallelGetChunkRequests;
+        get_and_pack_chunk = cfg.maxParallelGetAndPackChunkRequests;
+        get_tx_data = cfg.maxParallelGetTxDataRequests;
+        post_chunk = cfg.maxParallelPostChunkRequests;
+        get_block_index = cfg.maxParallelBlockIndexRequests;
+        get_wallet_list = cfg.maxParallelWalletListRequests;
+        get_sync_record = cfg.maxParallelGetSyncRecord;
+        arql = 10;
+        gateway_arql = 10;
+      };
+      requests_per_minute_limit = cfg.requestsPerMinuteLimit;
+      max_connections = cfg.maxConnections;
+
+      requests_per_minute_limit_by_ip = lib.lists.foldr (ipObj: acc: acc // {
+        "${ipObj.ip}" = {
+          chunk = ipObj.chunkLimit;
+          data_sync_record = ipObj.dataSyncRecordLimit;
+          default = ipObj.defaultLimit;
+        };
+      }) {} cfg.requestsPerMinuteLimitByIp;
+    });
 in
 {
   options.services.arweave = {
@@ -305,57 +351,17 @@ in
       description = "Maximum allowed TCP connections.";
     };
 
+    configFile = mkOption {
+      type = types.path;
+      default = generatedConfigFile;
+      internal = true;
+      description = "The generated Arweave config file";
+    };
+
   };
 
   config = mkIf cfg.enable (
-    let configFile =
-          pkgs.writeText "config.json" (builtins.toJSON {
-            data_dir = cfg.dataDir;
-            log_dir = cfg.logDir;
-            storage_modules = cfg.storageModules;
-            metrics_dir = cfg.metricsDir;
-            start_from_block_index = cfg.startFromBlockIndex;
-            transaction_blacklists = cfg.transactionBlacklists;
-            transaction_whitelists = cfg.transactionWhitelists;
-            transaction_blacklist_urls = cfg.transactionBlacklistURLs;
-            max_disk_pool_buffer_mb = cfg.maxDiskPoolBufferMb;
-            max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
-            block_pollers = cfg.blockPollers;
-            polling = cfg.polling;
-            tx_validators = cfg.txValidators;
-            disable = cfg.featuresDisable;
-            enable = cfg.featuresEnable;
-            header_sync_jobs = cfg.headerSyncJobs;
-            sync_jobs = cfg.syncJobs;
-            disk_pool_jobs = cfg.diskPoolJobs;
-            debug = cfg.debug;
-            packing_rate = cfg.packingRate;
-            block_throttle_by_ip_interval = cfg.blockThrottleByIPInterval;
-            block_throttle_by_solution_interval = cfg.blockThrottleBySolutionInterval;
-            semaphores = {
-              get_chunk = cfg.maxParallelGetChunkRequests;
-              get_and_pack_chunk = cfg.maxParallelGetAndPackChunkRequests;
-              get_tx_data = cfg.maxParallelGetTxDataRequests;
-              post_chunk = cfg.maxParallelPostChunkRequests;
-              get_block_index = cfg.maxParallelBlockIndexRequests;
-              get_wallet_list = cfg.maxParallelWalletListRequests;
-              get_sync_record = cfg.maxParallelGetSyncRecord;
-              arql = 10;
-              gateway_arql = 10;
-            };
-            requests_per_minute_limit = cfg.requestsPerMinuteLimit;
-            max_connections = cfg.maxConnections;
-
-            requests_per_minute_limit_by_ip = lib.lists.foldr (ipObj: acc: acc // {
-              "${ipObj.ip}" = {
-                chunk = ipObj.chunkLimit;
-                data_sync_record = ipObj.dataSyncRecordLimit;
-                default = ipObj.defaultLimit;
-              };
-            }) {} cfg.requestsPerMinuteLimitByIp;
-          });
-
-        screen-watchdog = pkgs.writeScriptBin "arweave-watch-screen" ''
+    let screen-watchdog = pkgs.writeScriptBin "arweave-watch-screen" ''
           #!${pkgs.bash}/bin/bash
           while true
           do
@@ -379,7 +385,7 @@ in
 
         arweave-service-start =
           let
-            command = "${cfg.package}/bin/start-nix config_file ${configFile}";
+            command = "${cfg.package}/bin/start-nix config_file ${cfg.configFile}";
             peers = "${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
             vdf-peers = "${builtins.concatStringsSep " " (builtins.concatMap (p: ["vdf_client_peer" p]) cfg.vdfClientPeer)}";
             vdf-server-peers = "${builtins.concatStringsSep " " (builtins.concatMap (p: ["vdf_server_trusted_peer" p]) cfg.vdfServerTrustedPeer)}";
