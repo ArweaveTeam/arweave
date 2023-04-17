@@ -333,10 +333,46 @@ let
         RANDOMX_JIT=
       fi
 
-      export ERL_EPMD_ADDRESS=127.0.0.1
+      : "''${ERL_EPMD_ADDRESS:=127.0.0.1}"
+      export ERL_EPMD_ADDRESS
 
       erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $ROOT_DIR/lib/*/ebin) \
        -config $ROOT_DIR/config/sys.config \
+       -args_file $ROOT_DIR/config/vm.args.dev \
+       -run ar main $RANDOMX_JIT "$@"
+    '';
+  };
+
+  startScriptForeground = pkgs.writeTextFile {
+    name = "start-nix-foreground";
+    text = ''
+      #! ${pkgs.stdenv.shell} -e
+
+      PATH=
+      ROOT_DIR=
+
+      ERL_CRASH_DUMP=$(pwd)/erl_crash.dump
+      cd $ROOT_DIR
+      $ROOT_DIR/bin/check-nofile
+      if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
+        RANDOMX_JIT="disable randomx_jit"
+      else
+        RANDOMX_JIT=
+      fi
+
+      : "''${ERL_EPMD_ADDRESS:=127.0.0.1}"
+      : "''${ERL_EPMD_PATH:=${pkgs.erlang}/bin}"
+      export ERL_EPMD_ADDRESS
+      export ERL_EPMD_PATH
+
+      export BINDIR=$ROOT_DIR/erts/bin
+      export EMU="beam"
+      BOOTFILE=$(echo $ROOT_DIR/releases/*/start.boot | sed -e "s/\.boot$//")
+
+      erlexec -noinput +Bd -boot "$BOOTFILE" \
+       -config $ROOT_DIR/config/sys.config \
+       -mode embedded \
+       +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $ROOT_DIR/lib/*/ebin) \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
     '';
@@ -382,6 +418,7 @@ in beamPackages.rebar3Relx {
 
   buildInputs = with pkgs; [
     darwin.sigtool
+    erlang
     git
     gmp
     beamPackages.pc
@@ -409,18 +446,25 @@ in beamPackages.rebar3Relx {
   installPhase = ''
     mkdir $out; cp -rf ./_build/prod/rel/arweave/* $out
     cp ${startScript.outPath} $out/bin/start-nix
+    cp ${startScriptForeground.outPath} $out/bin/start-nix-foreground
     cp ${stopScript.outPath} $out/bin/stop-nix
 
     chmod +xw $out/bin/start-nix
+    chmod +xw $out/bin/start-nix-foreground
     chmod +xw $out/bin/stop-nix
 
     sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix
-    sed -i -e "s|PATH=|PATH=$PATH|g" $out/bin/start-nix
+    sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix
+
+    sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix-foreground
+    sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix-foreground
 
     sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/stop-nix
-    sed -i -e "s|PATH=|PATH=$PATH|g" $out/bin/stop-nix
+    sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/stop-nix
 
     cp -r ./config $out
+
+    ln -s $out/erts* $out/erts
   '';
 
 }
