@@ -72,6 +72,7 @@
 		ar_node_tests,
 		ar_poa_tests,
 		ar_poller_tests,
+		ar_post_block_tests,
 		ar_pricing_tests,
 		ar_semaphore_tests,
 		ar_tx_blacklist_tests,
