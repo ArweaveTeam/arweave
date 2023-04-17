@@ -6,6 +6,8 @@
 #include <random>
 #include <chrono>
 #include <map>
+#include <mutex>
+#include <thread>
 #include "randomx.h"
 #include "../randomx_long_with_entropy.h"
 
@@ -122,10 +124,17 @@ public:
 
 class Harness {
 public:
-    Harness(size_t bytes_to_write, Packer* packer) {
-        this->bytes_to_write = bytes_to_write;
-        this->packer = packer;
-        this->write_unpacked_data();
+    std::string unpacked_filename = "packing_benchmark.unpacked";
+    std::string packed_A_filename = "packing_benchmark.packedA";
+    std::string packed_B_filename = "packing_benchmark.packedB";
+    Packer *packer = nullptr;
+    int num_chunks = 0;
+    int num_threads = 1;
+
+    Harness(int num_chunks, int num_threads) {
+        this->packer = new Packer("test key 000", true, true, true);
+        this->num_chunks = num_chunks;
+        this->num_threads = num_threads;
     }
 
     ~Harness() {
@@ -140,84 +149,6 @@ public:
         }
     }
 
-    void run_vm_test() {
-        int num_vms = 10000;
-        std::cout << "Create and destroy " << num_vms << " VMs" << std::endl;
-        {
-            Timer t(this, "vm", std::to_string(num_vms));
-            for (int i = 0; i < num_vms; i++) {
-                randomx_vm* vm = this->packer->create_vm();
-                assert(vm != 0);
-                assert(vm != nullptr);
-                this->packer->destroy_vm(vm);
-            }
-        }
-    }
-
-    void run_packing_2_6_no_reuse_test() {
-        int num_chunks = 100;
-        RandomChunk input;
-        Chunk output;
-        {
-            Timer t(this, "packing_2_6_no_reuse", std::to_string(num_chunks));
-            for (int i = 0; i < num_chunks; i++) {
-                randomx_vm* vm = this->packer->create_vm();
-                assert(vm != 0);
-                assert(vm != nullptr);
-                this->packer->pack(vm, RANDOMX_PACKING_ROUNDS_2_6, input, output);
-                this->packer->destroy_vm(vm);
-            }
-        }
-    }
-
-     void run_packing_2_6_with_reuse_test() {
-        int num_chunks = 100;
-        RandomChunk input;
-        Chunk output;
-        randomx_vm* vm = this->packer->create_vm();
-        assert(vm != 0);
-        assert(vm != nullptr);
-        {
-            Timer t(this, "packing_2_6_with_reuse", std::to_string(num_chunks));
-            for (int i = 0; i < num_chunks; i++) {
-                this->packer->pack(vm, RANDOMX_PACKING_ROUNDS_2_6, input, output);
-            }
-        }
-        this->packer->destroy_vm(vm);
-    }
-
-    void run_packing_2_5_no_reuse_test() {
-        int num_chunks = 100;
-        RandomChunk input;
-        Chunk output;
-        {
-            Timer t(this, "packing_2_5_no_reuse", std::to_string(num_chunks));
-            for (int i = 0; i < num_chunks; i++) {
-                randomx_vm* vm = this->packer->create_vm();
-                assert(vm != 0);
-                assert(vm != nullptr);
-                this->packer->pack(vm, RANDOMX_PACKING_ROUNDS_2_5, input, output);
-                this->packer->destroy_vm(vm);
-            }
-        }
-    }
-
-     void run_packing_2_5_with_reuse_test() {
-        int num_chunks = 100;
-        RandomChunk input;
-        Chunk output;
-        randomx_vm* vm = this->packer->create_vm();
-        assert(vm != 0);
-        assert(vm != nullptr);
-        {
-            Timer t(this, "packing_2_5_with_reuse", std::to_string(num_chunks));
-            for (int i = 0; i < num_chunks; i++) {
-                this->packer->pack(vm, RANDOMX_PACKING_ROUNDS_2_5, input, output);
-            }
-        }
-        this->packer->destroy_vm(vm);
-    }
-
     void print_timings(int count) {
         for (const auto& outer : this->timing) {
             std::cout << outer.first << ":" << std::endl;
@@ -225,17 +156,18 @@ public:
                 std::cout << "  " << inner.first << ": " << inner.second / count << " seconds" << std::endl;
             }
         }
-
     }
 
-private:
-    std::string unpacked_filename = "packing_benchmark.unpacked";
-    std::string packed_A_filename = "packing_benchmark.packedA";
-    std::string packed_B_filename = "packing_benchmark.packedB";
-    size_t bytes_to_write = 0;
-    Packer *packer = nullptr;
-
-    std::map<std::string, std::map<std::string, double>> timing;
+    void run_test(const std::string& test_name, void (*test_func)(void*)) {
+        Timer t(this, test_name, "total");
+        std::vector<std::thread> threads;
+        for (int i = 0; i < this->num_threads; i++) {
+            threads.push_back(std::thread(test_func, this));
+        }
+        for (auto& thread : threads) {
+            thread.join();
+        }
+    }
 
     class Timer {
         public:
@@ -250,8 +182,9 @@ private:
             ~Timer() {
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - this->start;
-                this->harness->timing[phase][metric] += elapsed.count();
                 std::cout << elapsed.count() << " seconds" << std::endl;
+                std::lock_guard<std::mutex> lock(this->harness->my_mutex);
+                this->harness->timing[phase][metric] += elapsed.count();
             }
         
         private:
@@ -261,46 +194,70 @@ private:
             std::chrono::high_resolution_clock::time_point start;
     };
 
-    bool write_unpacked_data() {
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<> dis(0, 255);
-
-        // Write bytes_to_write bytes of random binary data to filename
-        std::ofstream ofs(this->unpacked_filename, std::ios::binary);
-        if (!ofs) {
-            std::cerr << "Error: Could not open the file for writing." << std::endl;
-            return false;
-        }
-
-        for (size_t i = 0; i < this->bytes_to_write; ++i) {
-            char random_byte = static_cast<char>(dis(gen));
-            ofs.write(&random_byte, sizeof(random_byte));
-        }
-        return true;
-    }
-
+private:
+    std::mutex my_mutex;
+    std::map<std::string, std::map<std::string, double>> timing;
 };
 
-int main() {
-    std::cout << "Hello, world!" << std::endl;
+void run_vm_test(void* arg) {
+    Harness* harness = (Harness*)arg;
+    int num_vms = (harness->num_chunks * 100) / harness->num_threads;
+    for (int i = 0; i < num_vms; i++) {
+        randomx_vm* vm = harness->packer->create_vm();
+        assert(vm != 0);
+        assert(vm != nullptr);
+        harness->packer->destroy_vm(vm);
+    }
+}
 
-    size_t bytes_to_write = 5 * 1024 * 1024; // 5 MB
-    Packer *packer = new Packer("test key 000", true, true, true);
-    Harness harness(bytes_to_write, packer);
+void run_packing_2_6_test(void* arg) {
+    Harness* harness = (Harness*)arg;
+    int num_chunks = harness->num_chunks / harness->num_threads;
+    for (int i = 0; i < num_chunks; i++) {
+        RandomChunk input;
+        Chunk output;
+        randomx_vm* vm = harness->packer->create_vm();
+        assert(vm != 0);
+        assert(vm != nullptr);
+        harness->packer->pack(vm, RANDOMX_PACKING_ROUNDS_2_6, input, output);
+        harness->packer->destroy_vm(vm);
+    }
+}
 
-    harness.initialize_packer();
-    int count = 5;
+void run_packing_2_5_test(void* arg) {
+    Harness* harness = (Harness*)arg;
+    int num_chunks = harness->num_chunks / harness->num_threads;
+    for (int i = 0; i < num_chunks; i++) {
+        RandomChunk input;
+        Chunk output;
+        randomx_vm* vm = harness->packer->create_vm();
+        assert(vm != 0);
+        assert(vm != nullptr);
+        harness->packer->pack(vm, RANDOMX_PACKING_ROUNDS_2_5, input, output);
+        harness->packer->destroy_vm(vm);
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " num_chunks num_threads" << std::endl;
+        return 1;
+    }
+    int num_chunks = std::stoi(argv[1]);
+    int num_threads = std::stoi(argv[2]);
+    std::cout << "Running tests against " << num_chunks << " chunks across " << num_threads << " threads" << std::endl;
+    Harness *harness = new Harness(num_chunks, num_threads);
+
+    harness->initialize_packer();
+    int count = 3;
     for (int i = 0; i < count; i++) {
-        harness.run_vm_test();
-        harness.run_packing_2_5_with_reuse_test();
-        harness.run_packing_2_5_no_reuse_test();
-        harness.run_packing_2_6_with_reuse_test();
-        harness.run_packing_2_6_no_reuse_test();
+        harness->run_test("vm_test", run_vm_test);
+        harness->run_test("packing_2_5_test", run_packing_2_5_test);
+        harness->run_test("packing_2_6_test", run_packing_2_6_test);
     }
     std::cout << std::endl << "Average Timings" << std::endl;
     std::cout << "========" << std::endl;
-    harness.print_timings(count);
+    harness->print_timings(count);
 
     std::cout << "Done" << std::endl;
     return 0;
