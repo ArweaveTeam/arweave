@@ -30,7 +30,8 @@
 -record(state, {
 	workers,
 	worker_count,
-	pause = false
+	pause = false,
+	in_sync_trusted_peers = sets:new()
 }).
 
 %%%===================================================================
@@ -89,6 +90,44 @@ handle_cast(collect_peers, State) ->
 	start_polling_peers(Workers, PickedPeers),
 	ar_util:cast_after(?COLLECT_PEERS_FREQUENCY_MS, ?MODULE, collect_peers),
 	{noreply, State};
+
+handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
+	#state{ in_sync_trusted_peers = Set } = State,
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(Peer, Config#config.peers) of
+		false ->
+			{noreply, State};
+		true ->
+			{noreply, State#state{ in_sync_trusted_peers = sets:add_element(Peer, Set) }}
+	end;
+
+handle_cast({peer_out_of_sync, Peer}, State) ->
+	#state{ in_sync_trusted_peers = Set } = State,
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(Peer, Config#config.peers) of
+		false ->
+			{noreply, State};
+		true ->
+			Set2 = sets:del_element(Peer, Set),
+			ar_util:cast_after(300000, ?MODULE, {peer_out_of_sync_timeout, Peer}),
+			case {sets:is_empty(Set), sets:is_empty(Set2)} of
+				{false, true} ->
+					ar_mining_server:pause_performance_reports(60000),
+					ar_util:terminal_clear(),
+					TrustedPeersStr = string:join([ar_util:format_peer(Peer2)
+							|| Peer2 <- Config#config.peers], ", "),
+					ar:console("WARNING: The node is out of sync with all of the specified "
+							"trusted peers: ~s.~n~n"
+							"Please, check whether you are in sync with the network and "
+							"make sure your CPU computes VDF fast enough or you are connected "
+							"to a VDF server.~nThe node may be still mining, but console "
+							"performance reports are temporarily paused.~n~n",
+							[TrustedPeersStr]);
+				_ ->
+					ok
+			end,
+			{noreply, State#state{ in_sync_trusted_peers = Set2 }}
+	end;
 
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),

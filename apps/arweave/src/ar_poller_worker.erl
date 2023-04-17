@@ -118,22 +118,12 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 			ar_util:cast_after(FrequencyMs, self(), {poll, Ref}),
 			{noreply, State};
 		{error, not_found} ->
-			case CurrentHeight >= ar_fork:height_2_6() of
-				true ->
-					warning(Peer, stuck_or_deep_fork);
-				false ->
-					ok
-			end,
+			gen_server:cast(ar_poller, {peer_out_of_sync, Peer}),
 			{noreply, State#state{ pause = true }};
 		{error, Reason} ->
-			case CurrentHeight >= ar_fork:height_2_6() of
-				true ->
-					?LOG_WARNING([{event, failed_to_get_recent_hash_list_diff},
-							{peer, ar_util:format_peer(Peer)},
-							{reason, io_lib:format("~p", [Reason])}]);
-				false ->
-					ok
-			end,
+			?LOG_DEBUG([{event, failed_to_get_recent_hash_list_diff},
+					{peer, ar_util:format_peer(Peer)},
+					{reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State#state{ pause = true }}
 	end;
 handle_cast({poll, _Ref}, State) ->
@@ -218,9 +208,7 @@ warning(Peer, Event) ->
 					behind ->
 						"is 5 or more blocks ahead of us";
 					fork ->
-						"is on a fork branching off of our fork 5 or more blocks behind";
-					stuck_or_deep_fork ->
-						"is either far ahead or on a different long fork"
+						"is on a fork branching off of our fork 5 or more blocks behind"
 				end,
 			ar_util:terminal_clear(),
 			ar:console("WARNING: peer ~s ~s. "
