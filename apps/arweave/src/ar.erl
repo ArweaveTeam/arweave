@@ -55,6 +55,7 @@
 		ar_weave,
 
 		%% test modules
+		ar_base32_tests,
 		ar_base64_compatibility_tests,
 		ar_config_tests,
 		ar_data_sync_tests,
@@ -71,7 +72,6 @@
 		ar_node_tests,
 		ar_poa_tests,
 		ar_poller_tests,
-		ar_post_block_tests,
 		ar_pricing_tests,
 		ar_semaphore_tests,
 		ar_tx_blacklist_tests,
