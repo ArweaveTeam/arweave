@@ -382,7 +382,8 @@ handle_cast({cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed, NextSee
 						_ ->
 							PoA2
 					end,
-					prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, FixPoA2)
+					RecallByte22 = case PoA2 of not_set -> undefined; _ -> RecallByte2 end,
+					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, FixPoA2)
 			end,
 			{noreply, NewState};
 		false ->
