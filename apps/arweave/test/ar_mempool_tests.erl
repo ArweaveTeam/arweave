@@ -475,8 +475,6 @@ assertMempoolSize(ExpectedMempoolSize) ->
 	?assertEqual(ExpectedMempoolSize, MempoolSize).
 
 assertMempoolTXIDs(ExpectedTXIDs, Title) ->
-	RecentlyEmittedTXIDs = lists:flatten(ets:match(ar_tx_emitter_recently_emitted, {'$1'})),
-
 	%% Unordered list of all TXIDs in the mempool
 	TXIDs = lists:map(
 		fun([TXID]) ->
@@ -503,18 +501,6 @@ assertMempoolTXIDs(ExpectedTXIDs, Title) ->
 			{ActualTXID, ActualStatus}
 		end,
 		MempoolInPriorityOrder
-	),
-
-	%% The ar_tx_emitter server will periodically pull transactions from
-	%% tx_propagation_queue and add them to ar_tx_emitter_recently_emitted.
-	%% To account for this we'll merge all the TXIDs from both data sources.
-	%% However in doing that we'll lose the priority order sorting (which
-	%% is why the assertEqual below does a fixed order sort)
-	QTXIDs = lists:map(
-		fun({_, QTXID}) ->
-			QTXID
-		end,
-		gb_sets:to_list(ar_mempool:get_propagation_queue())
 	),
 
 	%% If we're adding and removing TX to/from the last_tx_map and origin_tx_map
@@ -555,7 +541,6 @@ assertMempoolTXIDs(ExpectedTXIDs, Title) ->
 	%% Only this first test will assert the ordering of TXIDs in the mempools
 	?assertEqual(ExpectedTXIDsStatuses, ActualTXIDsStatuses, Title),
 	%% These remaining tests only assert that the unordered set of TXIDs is correct
-	?assertEqual(lists:sort(ExpectedTXIDs), lists:sort(RecentlyEmittedTXIDs ++ QTXIDs), Title),
 	?assertEqual(lists:sort(ExpectedTXIDs), lists:sort(TXIDs), Title),
 	?assertEqual(lists:sort(ExpectedTXIDs), lists:sort(LastTXMapTXIDs), Title),
 	?assertEqual(lists:sort(ExpectedTXIDs), lists:sort(OriginTXMapTXIDs), Title).

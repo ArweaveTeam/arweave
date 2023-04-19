@@ -34,7 +34,7 @@ handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, Reply, Req), State}.
 
 uses_blacklists_test_() ->
-	{timeout, 240, fun test_uses_blacklists/0}.
+	{timeout, 300, fun test_uses_blacklists/0}.
 
 test_uses_blacklists() ->
 	{

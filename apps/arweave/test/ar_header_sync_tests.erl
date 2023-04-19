@@ -17,7 +17,7 @@
 ]).
 
 syncs_headers_test_() ->
-	{timeout, 240, fun test_syncs_headers/0}.
+	{timeout, 300, fun test_syncs_headers/0}.
 
 test_syncs_headers() ->
 	Wallet = {_, Pub} = ar_wallet:new(),

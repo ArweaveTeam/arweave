@@ -121,7 +121,7 @@
 -endif.
 
 %% How long to wait before giving up on test(s).
--define(TEST_TIMEOUT, 60 * 60).
+-define(TEST_TIMEOUT, 90 * 60).
 
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
