@@ -308,7 +308,7 @@ handle_info({event, chunk, {packed, Ref, ChunkArgs}},
 			case ar_sync_record:delete(Offset, Offset - ?DATA_CHUNK_SIZE,
 					ar_data_sync, StoreID) of
 				ok ->
-					case handle_store_chunk(Offset - 1, Chunk, FileIndex, StoreID) of
+					case handle_store_chunk(Offset, Chunk, FileIndex, StoreID) of
 						{ok, FileIndex2} ->
 							case ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE,
 									Packing, ar_data_sync, StoreID) of
