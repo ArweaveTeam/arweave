@@ -44,10 +44,22 @@ verify(StartSalt, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
 	RestStepsSize = ?VDF_BYTE_SIZE * (NumHashes - 1),
 	case HashBuffer of
 		<< RestSteps:RestStepsSize/binary, LastStep:?VDF_BYTE_SIZE/binary >> ->
-			case ar_mine_randomx:vdf_parallel_sha_verify_with_reset_nif(StartSaltBinary, PrevOutput,
-					NumHashes - 1, NumCheckpointsBetweenHashes - 1, IterationCount, RestSteps,
-					LastStep, ResetSaltBinary, ResetSeed, ThreadCount) of
+			?LOG_ERROR([{event, ar_vdf_verify_start}, {start_step, StartStepNumber},
+					{step_between_hash_count, StepBetweenHashCount}, {hash_count, HashCount},
+					{reset_step_number, ResetStepNumber}, {thread_count, ThreadCount},
+					{iteration_count, IterationCount}, {pid, self()}]),
+			ar_util:print_stacktrace(),
+			StartTime = erlang:timestamp(),
+			case ar_mine_randomx:vdf_parallel_sha_verify_with_reset_nif(Salt, PrevOutput,
+					HashCount - 1, StepBetweenHashCount - 1, IterationCount, RestSteps,
+					LastStep, ResetSalt, ResetSeed, ThreadCount) of
 				{ok, Steps} ->
+					?LOG_ERROR([{event, ar_vdf_verify_done}, {pid, self()},
+								{duration, timer:now_diff(erlang:timestamp(), StartTime) / 1000000},
+								{event, ar_vdf_verify_start}, {start_step, StartStepNumber},
+					{step_between_hash_count, StepBetweenHashCount}, {hash_count, HashCount},
+					{reset_step_number, ResetStepNumber}, {thread_count, ThreadCount},
+					{iteration_count, IterationCount}]),
 					{true, Steps};
 				_ ->
 					false

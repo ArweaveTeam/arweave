@@ -65,6 +65,7 @@ init([]) ->
 	ets:new(node_state, [set, public, named_table]),
 	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
+	ar_bench_timer:initialize(),
 	Children = [
 		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),

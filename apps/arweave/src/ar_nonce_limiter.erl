@@ -168,7 +168,11 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
-			steps = StepsToValidate } = Info,
+			checkpoints = Checkpoints } = Info,
+	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
+			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
+			{step_count, StepNumber - PrevStepNumber}, {pid, self()}]),
+	ar_util:print_stacktrace(),
 	EntropyResetPoint = get_entropy_reset_point(PrevStepNumber, StepNumber),
 	SessionKey = {PrevNextSeed, PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	%% The steps that fall at the intersection of the PrevStepNumber to StepNumber range
@@ -227,71 +231,66 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 					{start_step_number, StartStepNumber}, {shift2, NumAlreadyComputed},
 					{error_dump, ErrorID}]),
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
-
-		{RemainingStepsToValidate, NumAlreadyComputed}
-		  		when StartStepNumber + NumAlreadyComputed < StepNumber ->
-			case ar_config:use_remote_vdf_server() of
-				true ->
-					%% Wait for our VDF server(s) to validate the reamining steps.
-					spawn(fun() ->
-						timer:sleep(1000),
-						request_validation(H, Info, PrevInfo) end);
-				false ->
-					%% Validate the remaining steps.
-					StartOutput2 = case NumAlreadyComputed of
-							0 -> StartOutput;
-							_ -> lists:nth(NumAlreadyComputed, ComputedSteps)
-					end,
-					spawn(fun() ->
-						StartStepNumber2 = StartStepNumber + NumAlreadyComputed,
-						{ok, Config} = application:get_env(arweave, config),
-						ThreadCount = Config#config.max_nonce_limiter_validation_thread_count,
-						Result =
-							case is_integer(EntropyResetPoint) andalso
-									EntropyResetPoint > StartStepNumber2 of
-								true ->
-									catch verify(StartStepNumber2, StartOutput2,
-											?VDF_CHECKPOINT_COUNT_IN_STEP,
-											RemainingStepsToValidate, EntropyResetPoint,
-											crypto:hash(sha256, Seed), ThreadCount);
-								_ ->
-									catch verify_no_reset(StartStepNumber2, StartOutput2,
-											?VDF_CHECKPOINT_COUNT_IN_STEP,
-											RemainingStepsToValidate, ThreadCount)
-							end,
-						case Result of
-							{'EXIT', Exc} ->
-								ErrorID = dump_error(
-									{StartStepNumber2, StartOutput2,
-									?VDF_CHECKPOINT_COUNT_IN_STEP,
-									RemainingStepsToValidate,
-									EntropyResetPoint, crypto:hash(sha256, Seed),
-									ThreadCount}),
-								?LOG_ERROR([{event, nonce_limiter_validation_failed},
-										{block, ar_util:encode(H)},
-										{start_step_number, StartStepNumber2},
-										{error_id, ErrorID},
-										{prev_output, ar_util:encode(StartOutput2)},
-										{exception, io_lib:format("~p", [Exc])}]),
-								ar_events:send(nonce_limiter, {validation_error, H});
-							false ->
-								ar_events:send(nonce_limiter, {invalid, H, 3});
-							{true, ValidatedSteps} ->
-								AllValidatedSteps = ValidatedSteps ++ SessionSteps,
-								%% The last_step_checkpoints in Info were validated as part
-								%% of an earlier call to
-								%% ar_block_pre_validator:pre_validate_nonce_limiter, so
-								%% we can trust them here.
-								LastStepCheckpoints = Info#nonce_limiter_info.last_step_checkpoints,
-								Args = {StepNumber, SessionKey, NextSessionKey,
-										Seed, UpperBound, NextUpperBound,
-										AllValidatedSteps, LastStepCheckpoints},
-								gen_server:cast(?MODULE, {validated_steps, Args}),
-								ar_events:send(nonce_limiter, {valid, H})
-						end
-					end)
-			end;
-
+		{[_Group] = _Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber,
+				UseRemoteServers == true, RemoteServerWaitSeconds > 0 ->
+			?LOG_INFO([{event, spawn_new_vdf_validation_request},
+					{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
+					{shift, Shift}, {shift2, Shift2},
+					{remote_server_wait_seconds, RemoteServerWaitSeconds},
+					{pid, self()}]),
+			spawn(fun() ->
+				timer:sleep(1000),
+				request_validation(H, Info, PrevInfo, RemoteServerWaitSeconds - 1) end);
+		{[_Group] = Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber ->
+			PrevOutput3 = case Shift2 of 0 -> PrevOutput2;
+					_ -> lists:nth(Shift2, ReversedSteps2) end,
+			spawn(
+				fun() ->
+					StartStepNumber = PrevStepNumber + Shift + Shift2,
+					{ok, Config} = application:get_env(arweave, config),
+					ThreadCount = Config#config.max_nonce_limiter_validation_thread_count,
+					Result =
+						case is_integer(EntropyResetPoint) of
+							true when EntropyResetPoint > StartStepNumber ->
+								SeedH = crypto:hash(sha256, Seed),
+								catch verify(StartStepNumber, PrevOutput3, Groups,
+										EntropyResetPoint, SeedH, ThreadCount);
+							_ ->
+								catch verify_no_reset(StartStepNumber, PrevOutput3, Groups,
+										ThreadCount)
+						end,
+					case Result of
+						{'EXIT', Exc} ->
+							ErrorID = ar_util:encode(crypto:strong_rand_bytes(16)),
+							?LOG_ERROR([{event, nonce_limiter_validation_failed},
+									{block, ar_util:encode(H)},
+									{start_step_number, StartStepNumber},
+									{error_id, ErrorID},
+									{prev_output, ar_util:encode(PrevOutput3)},
+									{exception, io_lib:format("~p", [Exc])}]),
+							Dump =
+								case is_integer(EntropyResetPoint)
+										andalso EntropyResetPoint > StartStepNumber of
+									true ->
+										SeedH2 = crypto:hash(sha256, Seed),
+										{StartStepNumber, PrevOutput3, Groups,
+												EntropyResetPoint, SeedH2, ThreadCount};
+									false ->
+										{StartStepNumber, PrevOutput3, Groups, ThreadCount}
+								end,
+							file:write_file("error_dump_" ++ binary_to_list(ErrorID),
+									term_to_binary(Dump)),
+							ar_events:send(nonce_limiter, {validation_error, H});
+						false ->
+							ar_events:send(nonce_limiter, {invalid, H, 3});
+						{true, Steps2} ->
+							Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound,
+									NextUpperBound, Steps2 ++ Steps},
+							gen_server:cast(?MODULE, {validated_steps, Args}),
+							ar_events:send(nonce_limiter, {valid, H})
+					end
+				end
+			);
 		Data ->
 			ErrorID = dump_error(Data),
 			ar_events:send(nonce_limiter, {validation_error, H}),
@@ -964,8 +963,12 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
+	?LOG_INFO([{event, external_vdf_update},
+			{step_number, StepNumber}, {checkpoints, length(Checkpoints)},
+			{is_partial, IsPartial}]),
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
+			?LOG_INFO([{event, external_vdf_update_session_not_found}, {is_partial, IsPartial}]),
 			case IsPartial of
 				true ->
 					%% Inform the peer we have not initialized the corresponding session yet.
@@ -985,6 +988,9 @@ apply_external_update2(Update, State) ->
 				step_checkpoints_map = Map } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
+					?LOG_INFO([{event, external_vdf_update_new_step},
+							{current_step_number, CurrentStepNumber},
+							{step_number, StepNumber}, {steps, length(CurrentSteps)}]),
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
 					CurrentSession2 = CurrentSession#vdf_session{ step_number = StepNumber,
 							step_checkpoints_map = Map2,
@@ -996,6 +1002,10 @@ apply_external_update2(Update, State) ->
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
+					?LOG_INFO([{event, external_vdf_update_bad_step},
+							{current_step_number, CurrentStepNumber},
+							{step_number, StepNumber}]),
+
 					case CurrentStepNumber >= StepNumber of
 						true ->
 							%% Inform the peer we are ahead.

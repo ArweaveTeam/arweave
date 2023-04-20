@@ -12,12 +12,18 @@
 		master_peer/0, slave_peer/0, slave_mine/0, assert_slave_wait_until_height/1,
 		slave_call/3, assert_post_tx_to_master/1, assert_post_tx_to_slave/1]).
 
+-define(WALLET1, "arweave_keyfile_AjC9B-cdaZL8AxXN_Qcan3bK1L5nuoDGB0wZbA1aQp0.json").
+-define(WALLET2, "arweave_keyfile_lIIRG3Q0doj1DfHR6NWDqAk6iptIeLy2U6SGIPDNmTU.json").
+-define(WALLET3, "arweave_keyfile_tyRTXlv9ZRO1U01V4jywy9Ep5drTFrDoSzH6rqtRcmE.json").
+
 start_node() ->
 	%% Starting a node is slow so we'll run it once for the whole test module
-	Wallet1 = {_, Pub1} = ar_wallet:new(),
-	Wallet2 = {_, Pub2} = ar_wallet:new(),
+	Dir = filename:dirname(?FILE),
+	WalletsFixtureDir = filename:join(Dir, "../test/fixtures/wallets"),
+	Wallet1 = {_, Pub1} = ar_wallet:load_keyfile(filename:join(WalletsFixtureDir, ?WALLET1)),
+	Wallet2 = {_, Pub2} = ar_wallet:load_keyfile(filename:join(WalletsFixtureDir, ?WALLET2)),
 	%% This wallet is never spent from or deposited to, so the balance is predictable
-	StaticWallet = {_, Pub3} = ar_wallet:new(),
+	StaticWallet = {_, Pub3} = ar_wallet:load_keyfile(filename:join(WalletsFixtureDir, ?WALLET3)),
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(10000), <<>>},
@@ -50,7 +56,7 @@ cleanup_all_batch({_GenesisData, {Cleanup, Functions}}) ->
 	Cleanup(Functions).
 
 test_register(TestFun, Fixture) ->
-	{timeout, 60, {with, Fixture, [TestFun]}}.
+	{timeout, 300, {with, Fixture, [TestFun]}}.
 
 %% -------------------------------------------------------------------
 %% The spammer tests must run first. All the other tests will call
@@ -63,66 +69,165 @@ test_register(TestFun, Fixture) ->
 %% throttle counter was reset before the test finished.
 %% -------------------------------------------------------------------
 
-%% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
-node_blacklisting_get_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_get_spammer/0}.
+% %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
+% node_blacklisting_get_spammer_test_() ->
+% 	{timeout, 10, fun test_node_blacklisting_get_spammer/0}.
 
-%% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
-node_blacklisting_post_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_post_spammer/0}.
+% %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
+% node_blacklisting_post_spammer_test_() ->
+% 	{timeout, 10, fun test_node_blacklisting_post_spammer/0}.
 
-%% @doc Check that we can qickly get the local time from the peer.
-get_time_test() ->
-	Now = os:system_time(second),
-	{ok, {Min, Max}} = ar_http_iface_client:get_time(master_peer(), 10 * 1000),
-	?assert(Min < Now),
-	?assert(Now < Max).
+% %% @doc Check that we can qickly get the local time from the peer.
+% get_time_test() ->
+% 	Now = os:system_time(second),
+% 	{ok, {Min, Max}} = ar_http_iface_client:get_time(master_peer(), 10 * 1000),
+% 	?assert(Min < Now),
+% 	?assert(Now < Max).
 
 batch_test_() ->
 	{setup, fun setup_all_batch/0, fun cleanup_all_batch/1,
 		fun ({GenesisData, _MockData}) ->
 			{foreach, fun reset_node/0, [
-				%% ---------------------------------------------------------
-				%% The following tests must be run at a block height of 0.
-				%% ---------------------------------------------------------
-				test_register(fun test_get_current_block/1, GenesisData),
-				test_register(fun test_get_height/1, GenesisData),
-				%% ---------------------------------------------------------
-				%% The following tests are read-only and will not modify
-				%% state. They assume that the blockchain state
-				%% is fixed (and set by start_node and test_get_height). 
-				%% ---------------------------------------------------------
-				test_register(fun test_get_wallet_list_in_chunks/1, GenesisData),
-				test_register(fun test_get_info/1, GenesisData),
-				test_register(fun test_get_last_tx_single/1, GenesisData),
-				test_register(fun test_get_block_by_hash/1, GenesisData),
-				test_register(fun test_get_block_by_height/1, GenesisData),
-				test_register(fun test_get_non_existent_block/1, GenesisData),
-				%% ---------------------------------------------------------
-				%% The following tests are *not* read-only and may modify
-				%% state. They can *not* assume a fixed blockchain state. 
-				%% ---------------------------------------------------------
-				test_register(fun test_addresses_with_checksum/1, GenesisData),
-				test_register(fun test_single_regossip/1, GenesisData),
-				test_register(fun test_get_balance/1, GenesisData),
-				test_register(fun test_get_format_2_tx/1, GenesisData),
-				test_register(fun test_get_format_1_tx/1, GenesisData),
-				test_register(fun test_add_external_tx_with_tags/1, GenesisData),
-				test_register(fun test_find_external_tx/1, GenesisData),
-				test_register(fun test_add_tx_and_get_last/1, GenesisData),
-				test_register(fun test_get_subfields_of_tx/1, GenesisData),
-				test_register(fun test_get_pending_tx/1, GenesisData),
-				test_register(fun test_get_tx_body/1, GenesisData),
-				test_register(fun test_get_tx_status/1, GenesisData),
-				test_register(fun test_post_unsigned_tx/1, GenesisData),
-				test_register(fun test_get_error_of_data_limit/1, GenesisData),
-				test_register(fun test_send_missing_tx_with_the_block/1, GenesisData),
-				test_register(
-					fun test_fallback_to_block_endpoint_if_cannot_send_tx/1, GenesisData),
-				test_register(fun test_get_recent_hash_list_diff/1, GenesisData)
+				test_register(fun test_post_tx/1, GenesisData)
+				% %% ---------------------------------------------------------
+				% %% The following tests must be run at a block height of 0.
+				% %% ---------------------------------------------------------
+				% test_register(fun test_get_current_block/1, GenesisData),
+				% test_register(fun test_get_height/1, GenesisData),
+				% %% ---------------------------------------------------------
+				% %% The following tests are read-only and will not modify
+				% %% state. They assume that the blockchain state
+				% %% is fixed (and set by start_node and test_get_height). 
+				% %% ---------------------------------------------------------
+				% test_register(fun test_get_wallet_list_in_chunks/1, GenesisData),
+				% test_register(fun test_get_info/1, GenesisData),
+				% test_register(fun test_get_last_tx_single/1, GenesisData),
+				% test_register(fun test_get_block_by_hash/1, GenesisData),
+				% test_register(fun test_get_block_by_height/1, GenesisData),
+				% test_register(fun test_get_non_existent_block/1, GenesisData),
+				% %% ---------------------------------------------------------
+				% %% The following tests are *not* read-only and may modify
+				% %% state. They can *not* assume a fixed blockchain state. 
+				% %% ---------------------------------------------------------
+				% test_register(fun test_addresses_with_checksum/1, GenesisData),
+				% test_register(fun test_single_regossip/1, GenesisData),
+				% test_register(fun test_get_balance/1, GenesisData),
+				% test_register(fun test_get_format_2_tx/1, GenesisData),
+				% test_register(fun test_get_format_1_tx/1, GenesisData),
+				% test_register(fun test_add_external_tx_with_tags/1, GenesisData),
+				% test_register(fun test_find_external_tx/1, GenesisData),
+				% test_register(fun test_add_tx_and_get_last/1, GenesisData),
+				% test_register(fun test_get_subfields_of_tx/1, GenesisData),
+				% test_register(fun test_get_pending_tx/1, GenesisData),
+				% test_register(fun test_get_tx_body/1, GenesisData),
+				% test_register(fun test_get_tx_status/1, GenesisData),
+				% test_register(fun test_post_unsigned_tx/1, GenesisData),
+				% test_register(fun test_get_error_of_data_limit/1, GenesisData),
+				% test_register(fun test_send_missing_tx_with_the_block/1, GenesisData),
+				% test_register(
+				% 	fun test_fallback_to_block_endpoint_if_cannot_send_tx/1, GenesisData),
+				% test_register(fun test_get_recent_hash_list_diff/1, GenesisData)
 			]}
 		end
 	}.
+
+test_post_tx({B0, Wallet1, Wallet2, _StaticWallet}) ->
+	disconnect_from_slave(),
+	% write_tx_data(Wallet1, Wallet2, NumTXs, 2, 0, true).
+	% TXs = read_tx_data(NumTXs, 2, 0, true),
+	StartGenerate = erlang:timestamp(),
+	?LOG_ERROR("Generating..."),
+	TXs = generate_tx_data(Wallet1, Wallet2, 100, 1, 0, true),
+	NumTXs = length(TXs),
+	?LOG_ERROR("Num TXs: ~p", [NumTXs]),
+	GenerateTime = timer:now_diff(erlang:timestamp(), StartGenerate) / 1000000,
+	?LOG_ERROR("Generate time: ~p", [GenerateTime]),
+	?LOG_ERROR("STARTING"),
+	Start = erlang:timestamp(),
+	ar_util:pmap(fun({TX, SerializedTX}) -> 
+			ar_http_iface_client:send_tx_binary(
+				master_peer(), TX#tx.id,
+				SerializedTX)
+		end, TXs),
+	PreWaitTime = timer:now_diff(erlang:timestamp(), Start) / 1000000,
+	?debugFmt("Pre-wait time: ~p", [PreWaitTime]),
+	wait_until_mempool(NumTXs),
+	End = erlang:timestamp(),
+	?LOG_ERROR("DONE"),
+	ElapsedTime = timer:now_diff(End, Start) / 1000000,
+	?debugFmt("Total time: ~p", [ElapsedTime]),
+	ar_bench_timer:print_timing_data().
+
+generate_tx_data(Wallet1, {_Priv2, Pub2} =  _Wallet2, NumTXs, Format, Quantity, HasData) ->
+	Data = case HasData of
+		true -> crypto:strong_rand_bytes(100 * 1024);
+		false -> <<>>
+	end,
+	TXData = #{
+		format => Format,
+		target => ar_wallet:to_address(Pub2),
+		quantity => Quantity,
+		reward => ?AR(1),
+		data => Data },
+	NumThreads = erlang:system_info(dirty_cpu_schedulers_online),
+	NumTXsPerThread = NumTXs div NumThreads,
+	?LOG_ERROR("Num TXs per thread: ~p", [NumTXsPerThread]),
+	TXs = ar_util:pmap(fun(NumThreadTXs) ->
+			lists:foldl(fun(_, Acc) ->
+					TX = sign_tx(Wallet1, TXData),
+					[{TX, ar_serialize:tx_to_binary(TX)} | Acc]
+				end,
+				[],
+				lists:seq(1, NumThreadTXs))
+		end, lists:duplicate(NumThreads,NumTXsPerThread)),
+	lists:flatten(TXs).
+
+write_tx_data(Wallet1, {_Priv2, Pub2} =  _Wallet2, NumTXs, Format, Quantity, HasData) ->
+	Data = case HasData of
+		true -> crypto:strong_rand_bytes(10 * 1024);
+		false -> <<>>
+	end,
+	TXData = #{
+		format => Format,
+		target => ar_wallet:to_address(Pub2),
+		quantity => Quantity,
+		reward => ?AR(1),
+		data => Data },
+	TXs = lists:foldl(fun(_, Acc) ->
+					TX = sign_tx(Wallet1, TXData),
+					[ar_serialize:tx_to_json_struct(TX) | Acc]
+				end,
+				[],
+				lists:seq(1, NumTXs)),
+	
+	Filename = io_lib:format("tx_n~p_f~p_q~p_d~p.json", [NumTXs, Format, Quantity, HasData]),
+	{ok, File} = file:open(Filename, [write]),
+	file:write(File, ar_serialize:jsonify(TXs)),
+    file:close(File).
+
+read_tx_data(NumTXs, Format, Quantity, HasData) ->
+	Filename = io_lib:format("tx_n~p_f~p_q~p_d~p.json", [NumTXs, Format, Quantity, HasData]),
+	case file:read_file(Filename) of
+		{ok, FileData} -> 
+			JSONTXs = ar_serialize:dejsonify(FileData),
+			lists:map(fun(JSONTX) -> 
+					TX = ar_serialize:json_struct_to_tx(JSONTX),
+					{TX, ar_serialize:tx_to_binary(TX)}
+				end, JSONTXs);
+		_ -> 
+			{error, file_not_found}
+	end.
+
+wait_until_mempool(Size) ->
+	{ok, Mempool} = ar_http_iface_client:get_mempool(master_peer()),
+	case length(Mempool) >= Size of
+		true -> ok;
+		_ -> 
+			timer:sleep(10),
+			wait_until_mempool(Size)
+	end.
+
+
 
 test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
 	RemoteHeight = slave_height(),

@@ -351,7 +351,7 @@ register(MetricsDir) ->
 	prometheus_histogram:new([
 		{name, packing_duration_milliseconds},
 		{labels, [type, packing, trigger]},
-		{buckets, [1, 5, 10, 50, 100, 500, 1000]},
+		{buckets, lists:seq(1, 500)},
 		{help, "The packing/unpacking time in milliseconds. The type label indicates what "
 				"type of operation was requested either: 'pack' or 'unpack'. The packing "
 				"label differs based on the type. If type is 'unpack' then the packing label "
