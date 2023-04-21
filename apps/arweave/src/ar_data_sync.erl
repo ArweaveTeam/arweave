@@ -1388,12 +1388,21 @@ read_chunk_with_metadata(
 			{error, chunk_not_found};
 		{ok, _, {AbsoluteOffset, _, _, _, _, _, ChunkSize}} 
 				when AbsoluteOffset - SeekOffset >= ChunkSize ->
+			case ar_sync_record:delete(AbsoluteOffset - ChunkSize, SeekOffset - 1, ?MODULE,
+					StoreID) of
+				ok ->
+					?LOG_DEBUG([{event, clean_up_sync_record_false_positive},
+							{left, SeekOffset - 1}, {right, AbsoluteOffset - ChunkSize}]);
+				Err ->
+					?LOG_WARNING([{event, failed_to_clean_up_sync_record},
+							{error, io_lib:format("~p", [Err])}])
+			end,
 			{error, chunk_not_found};
 		{ok, _, {AbsoluteOffset, ChunkDataKey, TXRoot, _, TXPath, _, ChunkSize}} ->
 			case read_chunk(AbsoluteOffset, {chunk_data_db, StoreID}, ChunkDataKey, StoreID) of
 				not_found ->
-					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset, {chunks_index, StoreID},
-							StoreID, 1}),
+					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset,
+							{chunks_index, StoreID}, StoreID, 1}),
 					{error, chunk_not_found};
 				{error, Error} ->
 					?LOG_ERROR([{event, failed_to_read_chunk},
