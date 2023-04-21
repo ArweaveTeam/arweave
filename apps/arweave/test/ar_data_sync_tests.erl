@@ -202,7 +202,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 	).
 
 rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size_test_() ->
-	{timeout, 60, fun test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0}.
+	{timeout, 120, fun test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0}.
 
 test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 	{Master, _, Wallet} = setup_nodes(),

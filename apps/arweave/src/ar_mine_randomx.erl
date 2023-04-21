@@ -4,9 +4,9 @@
 
 -export([init_fast/2, hash_fast/2, init_light/1, hash_light/2, release_state/1,
 		bulk_hash_fast/13, hash_fast_verify/3,
-		randomx_encrypt_chunk/3, randomx_encrypt_chunk_2_6/3,
-		randomx_decrypt_chunk/4, randomx_decrypt_chunk_2_6/4,
-		randomx_reencrypt_chunk/5, randomx_reencrypt_chunk_2_6/5,
+		randomx_encrypt_chunk/4,
+		randomx_decrypt_chunk/5,
+		randomx_reencrypt_chunk/7,
 		hash_fast_long_with_entropy/2, hash_light_long_with_entropy/2,
 		bulk_hash_fast_long_with_entropy/13,
 		vdf_sha2/2, vdf_parallel_sha_verify_no_reset/4, vdf_parallel_sha_verify/6]).
@@ -109,43 +109,107 @@ hash_light(LightState, Data) ->
 	Hash.
 -endif.
 
+packing_rounds(Packing) ->
+	case Packing of
+		spora_2_5 ->
+			?RANDOMX_PACKING_ROUNDS;
+		spora_2_6 ->
+			?RANDOMX_PACKING_ROUNDS_2_6
+	end.
+
+unpad_chunk(spora_2_5, Unpacked, ChunkSize, _PackedSize) ->
+	binary:part(Unpacked, 0, ChunkSize);
+unpad_chunk(spora_2_6, Unpacked, ChunkSize, PackedSize) ->
+	Padding = binary:part(Unpacked, ChunkSize, PackedSize - ChunkSize),
+	case Padding of
+		<<>> ->
+			Unpacked;
+		_ ->
+			case is_zero(Padding) of
+				false ->
+					error;
+				true ->
+					binary:part(Unpacked, 0, ChunkSize)
+			end
+	end.
+
+is_zero(<< 0:8, Rest/binary >>) ->
+	is_zero(Rest);
+is_zero(<<>>) ->
+	true;
+is_zero(_Rest) ->
+	false.
+
+randomx_decrypt_chunk(Packing, RandomxState, Key, Chunk, ChunkSize) ->
+	PackedSize = byte_size(Chunk),
+	%% For spora_2_6 we want to confirm that the padding in the unpacked chunk is all zeros.
+	%% To do that we pass in the maximum chunk size (?DATA_CHUNK_SIZE) to prevent the NIF
+	%% from removing the padding. We can then validate the padding and remove it in
+	%% unpad_chunk/4.
+	Size = case Packing of
+		spora_2_6 ->
+			?DATA_CHUNK_SIZE;
+		_ ->
+			ChunkSize
+	end,
+	case randomx_decrypt_chunk2(RandomxState, Key, Chunk, Size, packing_rounds(Packing)) of
+		{error, Error} ->
+			{exception, Error};
+		{ok, Unpacked} ->
+			%% Validating the padding (for spora_2_6) and then remove it.
+			case unpad_chunk(Packing, Unpacked, ChunkSize, PackedSize) of
+				error ->
+					{error, invalid_padding};
+				UnpackedChunk ->
+					{ok, UnpackedChunk}
+			end
+	end.
+
 -ifdef(DEBUG).
-randomx_encrypt_chunk(_State, Key, Chunk) ->
+
+%% @doc The NIF will add padding to the encrypted chunk, but we have to do it ourselves
+%% when running in DEBUG mode.
+pad_chunk(Chunk) ->
+	pad_chunk(Chunk, byte_size(Chunk)).
+pad_chunk(Chunk, ChunkSize) when ChunkSize == (?DATA_CHUNK_SIZE) ->
+	Chunk;
+pad_chunk(Chunk, ChunkSize) ->
+	Zeros =
+		case erlang:get(zero_chunk) of
+			undefined ->
+				ZeroChunk = << <<0>> || _ <- lists:seq(1, ?DATA_CHUNK_SIZE) >>,
+				%% Cache the zero chunk in the process memory, constructing
+				%% it is expensive.
+				erlang:put(zero_chunk, ZeroChunk),
+				ZeroChunk;
+			ZeroChunk ->
+				ZeroChunk
+		end,
+	PaddingSize = (?DATA_CHUNK_SIZE) - ChunkSize,
+	<< Chunk/binary, (binary:part(Zeros, 0, PaddingSize))/binary >>.
+
+randomx_encrypt_chunk(_Packing, _State, Key, Chunk) ->
 	Options = [{encrypt, true}, {padding, zero}],
 	IV = binary:part(Key, {0, 16}),
-	crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options).
+	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, pad_chunk(Chunk), Options)}.
 
-randomx_decrypt_chunk(_State, Key, Chunk, _Size) ->
+randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize, Rounds) ->
 	Options = [{encrypt, false}],
-	IV = binary:part(Key, {0, 16}),
-	crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options).
--else.
-randomx_encrypt_chunk(RandomxState, Key, Chunk) ->
-	{ok, OutChunk} =
-		randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS, jit(),
-				large_pages(), hardware_aes()),
-	OutChunk.
-
-randomx_decrypt_chunk(RandomxState, Key, Chunk, Size) ->
-	{ok, OutChunk} =
-		randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, Size, ?RANDOMX_PACKING_ROUNDS,
-				jit(), large_pages(), hardware_aes()),
-	OutChunk.
--endif.
-
--ifdef(DEBUG).
-randomx_encrypt_chunk_2_6(_State, Key, Chunk) ->
-	Options = [{encrypt, true}, {padding, zero}],
 	IV = binary:part(Key, {0, 16}),
 	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
 
-randomx_decrypt_chunk_2_6(_State, Key, Chunk, _Size) ->
-	Options = [{encrypt, false}],
-	IV = binary:part(Key, {0, 16}),
-	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
+randomx_reencrypt_chunk(SourcePacking, TargetPacking,
+		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
+	case randomx_decrypt_chunk(SourcePacking, RandomxState, UnpackKey, Chunk, ChunkSize) of
+		{ok, UnpackedChunk} ->
+			{ok, RepackedChunk} = randomx_encrypt_chunk(TargetPacking, RandomxState, PackKey, pad_chunk(UnpackedChunk)),
+			{ok, RepackedChunk, UnpackedChunk};
+		Error ->
+			Error
+	end.
 -else.
-randomx_encrypt_chunk_2_6(RandomxState, Key, Chunk) ->
-	case randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
+randomx_encrypt_chunk(Packing, RandomxState, Key, Chunk) ->
+	case randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, packing_rounds(Packing), jit(),
 				large_pages(), hardware_aes()) of
 		{error, Error} ->
 			{exception, Error};
@@ -153,29 +217,22 @@ randomx_encrypt_chunk_2_6(RandomxState, Key, Chunk) ->
 			Reply
 	end.
 
-randomx_decrypt_chunk_2_6(RandomxState, Key, Chunk, Size) ->
-	case randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, Size, ?RANDOMX_PACKING_ROUNDS_2_6,
-				jit(), large_pages(), hardware_aes()) of
+randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize, Rounds) ->
+	randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, ChunkSize, Rounds,
+				jit(), large_pages(), hardware_aes()).
+
+randomx_reencrypt_chunk(SourcePacking, TargetPacking,
+		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
+	UnpackRounds = packing_rounds(SourcePacking),
+	PackRounds = packing_rounds(TargetPacking),
+	case randomx_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, ChunkSize,
+				UnpackRounds, PackRounds, jit(), large_pages(), hardware_aes()) of
 		{error, Error} ->
 			{exception, Error};
 		Reply ->
 			Reply
 	end.
 -endif.
-
-%% Repack Chunk from SPoRA 2.5 to SPoRA 2.6
-randomx_reencrypt_chunk(RandomxState, UnpackKey, PackKey, Chunk, Size) ->
-	{ok, OutChunk} =
-		randomx_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, Size, ?RANDOMX_PACKING_ROUNDS, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
-				large_pages(), hardware_aes()),
-	OutChunk.
-
-%% Repack Chunk from SPoRA 2.6 to SPoRA 2.6
-randomx_reencrypt_chunk_2_6(RandomxState, UnpackKey, PackKey, Chunk, Size) ->
-	{ok, OutChunk} =
-		randomx_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, Size, ?RANDOMX_PACKING_ROUNDS_2_6, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
-				large_pages(), hardware_aes()),
-	OutChunk.
 
 -ifdef(DEBUG).
 hash_fast_long_with_entropy(FastState, Data) ->
@@ -418,7 +475,7 @@ randomx_decrypt_chunk_nif(_State, _Data, _Chunk, _OutSize, _RoundCount, _JIT, _L
 		_HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
-randomx_reencrypt_chunk_nif(_State, _DecryptKey, _EncryptKey, _Chunk, _OutSize,
+randomx_reencrypt_chunk_nif(_State, _DecryptKey, _EncryptKey, _Chunk, _ChunkSize,
 		_DecryptRoundCount, _EncryptRoundCount, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 

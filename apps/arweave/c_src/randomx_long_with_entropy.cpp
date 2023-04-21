@@ -105,9 +105,10 @@ extern "C" {
 		if (inChunkSize % (2*FEISTEL_BLOCK_LENGTH) == 0) {
 			feistel_encrypt((const unsigned char*)inChunk, inChunkSize, outputEntropy, (unsigned char*)outChunk);
 		} else {
-			size_t inChunkSizeWithPadding = (((inChunkSize - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1)*2*FEISTEL_BLOCK_LENGTH;
+			size_t inChunkSizeWithPadding = feistel_padded_length(inChunkSize);
 			// unsigned char inChunkMax[256*1024] = {0}; // breaks app
 			unsigned char *inChunkMax = (unsigned char*)malloc(inChunkSizeWithPadding);
+			memset(inChunkMax, 0, inChunkSizeWithPadding);
 			memcpy(inChunkMax, inChunk, inChunkSize);
 			feistel_encrypt((const unsigned char*)inChunkMax, inChunkSizeWithPadding, outputEntropy, (unsigned char*)outChunk);
 			free(inChunkMax);

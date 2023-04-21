@@ -103,12 +103,10 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 		{error, Reason} ->
 			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
 					{reason, io_lib:format("~p", [Reason])}]);
-		{ok, << Offset:?OFFSET_KEY_BITSIZE >>, _} when Offset > End ->
+		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}} when AbsoluteOffset > End ->
 			ok;
-		{ok, Key, Metadata} ->
-			<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
-			{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset,
-					ChunkSize} = binary_to_term(Metadata),
+		{ok, _Key, {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
+					RelativeOffset, ChunkSize}} ->
 			Skip = SkipSmall andalso AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
 					andalso ChunkSize < ?DATA_CHUNK_SIZE,
 			ReadChunk =

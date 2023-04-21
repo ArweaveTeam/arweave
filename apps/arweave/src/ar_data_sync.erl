@@ -276,9 +276,16 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 			true ->
 				ar_sync_record:is_recorded(Offset, ?MODULE)
 		end,
+	SeekOffset =
+		case maps:get(bucket_based_offset, Options, true) of
+			true ->
+				get_chunk_seek_offset(Offset);
+			false ->
+				Offset
+		end,
 	case IsRecorded of
 		{{true, StoredPacking}, StoreID} ->
-			get_chunk(Offset, Pack, Packing, StoredPacking, Options, StoreID);
+			get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID);
 		_ ->
 			{error, chunk_not_found}
 	end.
@@ -389,8 +396,20 @@ is_disk_space_sufficient(StoreID) ->
 	end.
 
 get_chunk_by_byte(ChunksIndex, Byte) ->
-	ar_kv:get_next_by_prefix(ChunksIndex, ?OFFSET_KEY_PREFIX_BITSIZE, ?OFFSET_KEY_BITSIZE,
-			<< Byte:?OFFSET_KEY_BITSIZE >>).
+	Chunk = ar_kv:get_next_by_prefix(ChunksIndex, ?OFFSET_KEY_PREFIX_BITSIZE,
+		?OFFSET_KEY_BITSIZE, << Byte:?OFFSET_KEY_BITSIZE >>),
+	case Chunk of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, Key, MetaData} ->
+			<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
+			{
+				ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize
+			} = binary_to_term(MetaData),
+			FullMetaData = {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
+				RelativeOffset, ChunkSize},
+			{ok, Key, FullMetaData}
+	end.
 
 read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
 	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
@@ -1017,51 +1036,47 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 	#sync_data_state{ chunks_index = ChunksIndex, store_id = StoreID } = State,
 	case get_chunk_by_byte(ChunksIndex, Cursor) of
-		{ok, Key, Chunk} ->
-			<< AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >> = Key,
-			case AbsoluteEndOffset > End of
-				true ->
-					PID ! {removed_range, Ref},
-					{noreply, State};
-				false ->
-					{_, _, _, _, _, ChunkSize} = binary_to_term(Chunk),
-					PaddedStartOffset = get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
-					PaddedOffset = get_chunk_padded_offset(AbsoluteEndOffset),
-					%% 1) store updated sync record
-					%% 2) remove chunk
-					%% 3) update chunks_index
-					%%
-					%% The order is important - in case the VM crashes,
-					%% we will not report false positives to peers,
-					%% and the chunk can still be removed upon retry.
-					RemoveFromSyncRecord = ar_sync_record:delete(PaddedOffset,
-							PaddedStartOffset, ?MODULE, StoreID),
-					RemoveFromChunkStorage =
-						case RemoveFromSyncRecord of
-							ok ->
-								ar_chunk_storage:delete(PaddedOffset, StoreID);
-							Error ->
-								Error
-						end,
-					RemoveFromChunksIndex =
-						case RemoveFromChunkStorage of
-							ok ->
-								ar_kv:delete(ChunksIndex, Key);
-							Error2 ->
-								Error2
-						end,
-					case RemoveFromChunksIndex of
-						ok ->
-							NextCursor = AbsoluteEndOffset + 1,
-							gen_server:cast(self(), {remove_range, End, NextCursor, Ref, PID});
-						{error, Reason} ->
-							?LOG_ERROR([{event,
-									data_removal_aborted_since_failed_to_remove_chunk},
-									{offset, Cursor},
-									{reason, io_lib:format("~p", [Reason])}])
-					end,
-					{noreply, State}
-			end;
+		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}} 
+				when AbsoluteOffset > End ->
+			PID ! {removed_range, Ref},
+			{noreply, State};
+		{ok, Key, {AbsoluteOffset, _, _, _, _, _, ChunkSize}} ->
+			PaddedStartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+			PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
+			%% 1) store updated sync record
+			%% 2) remove chunk
+			%% 3) update chunks_index
+			%%
+			%% The order is important - in case the VM crashes,
+			%% we will not report false positives to peers,
+			%% and the chunk can still be removed upon retry.
+			RemoveFromSyncRecord = ar_sync_record:delete(PaddedOffset,
+					PaddedStartOffset, ?MODULE, StoreID),
+			RemoveFromChunkStorage =
+				case RemoveFromSyncRecord of
+					ok ->
+						ar_chunk_storage:delete(PaddedOffset, StoreID);
+					Error ->
+						Error
+				end,
+			RemoveFromChunksIndex =
+				case RemoveFromChunkStorage of
+					ok ->
+						ar_kv:delete(ChunksIndex, Key);
+					Error2 ->
+						Error2
+				end,
+			case RemoveFromChunksIndex of
+				ok ->
+					NextCursor = AbsoluteOffset + 1,
+					gen_server:cast(self(), {remove_range, End, NextCursor, Ref, PID});
+				{error, Reason} ->
+					?LOG_ERROR([{event,
+							data_removal_aborted_since_failed_to_remove_chunk},
+							{offset, Cursor},
+							{reason, io_lib:format("~p", [Reason])}])
+			end,
+			{noreply, State};
 		{error, invalid_iterator} ->
 			%% get_chunk_by_byte looks for a key with the same prefix or the next prefix.
 			%% Therefore, if there is no such key, it does not make sense to look for any
@@ -1308,170 +1323,94 @@ remove_expired_disk_pool_data_roots() ->
 		ar_disk_pool_data_roots
 	).
 
-get_chunk(Offset, Pack, Packing, StoredPacking, Options, StoreID) ->
-	case maps:get(search_fast_storage_only, Options, false) of
-		true ->
-			case maps:get(bucket_based_offset, Options, true) of
-				false ->
-					{error, option_set_not_supported};
-				true ->
-					get_chunk_from_fast_storage(Offset, Pack, Packing, StoredPacking, StoreID)
-			end;
-		false ->
-			ChunksIndex = {chunks_index, StoreID},
-			ChunkDataDB = {chunk_data_db, StoreID},
-			get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
-					maps:get(bucket_based_offset, Options, true), StoreID)
-	end.
-
-get_chunk_from_fast_storage(Offset, Pack, Packing, StoredPacking, StoreID) ->
-	case ar_chunk_storage:get(Offset - 1, StoreID) of
-		not_found ->
-			{error, chunk_not_found};
-		{_Offset, Chunk} ->
-			case ar_sync_record:is_recorded(Offset, StoredPacking, ?MODULE, StoreID) of
-				false ->
-					%% The chunk should have been re-packed
-					%% in the meantime - very unlucky timing.
-					{error, chunk_not_found};
-				true ->
-					case {Pack, Packing == StoredPacking} of
-						{false, true} ->
-							{ok, Chunk};
-						{false, false} ->
-							{error, chunk_not_found};
-						{true, true} ->
-							{ok, Chunk};
-						{true, false} ->
-							{error, option_set_not_supported}
+get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
+	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath} ->
+			ChunkID =
+				case validate_served_chunk({AbsoluteOffset, DataPath, TXPath, TXRoot,
+						ChunkSize, StoreID}) of
+					{true, ID} ->
+						ID;
+					false ->
+						error
+				end,
+			PackResult =
+				case {ChunkID, Packing == StoredPacking, Pack} of
+					{error, _, _} ->
+						%% Chunk was read but could not be validated.
+						{error, chunk_not_found};
+					{_, false, false} ->
+						%% Requested and stored chunk are in different formats,
+						%% and repacking is disabled.
+						{error, chunk_not_found};
+					_ ->
+						ar_packing_server:repack(
+							Packing, StoredPacking, AbsoluteOffset, TXRoot, Chunk, ChunkSize)
+				end,
+			case {PackResult, ChunkID} of
+				{{error, Reason}, _} ->
+					{error, Reason};
+				{{ok, PackedChunk, none}, _} ->
+					%% PackedChunk is the requested format.
+					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
+							data_path => DataPath, tx_path => TXPath },
+					{ok, Proof};
+				{{ok, PackedChunk, _}, none} ->
+					%% PackedChunk is the requested format, but the ChunkID could
+					%% not be determined
+					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
+							data_path => DataPath, tx_path => TXPath,
+							end_offset => AbsoluteOffset },
+					{ok, Proof};
+				{{ok, PackedChunk, MaybeUnpackedChunk}, _} ->
+					case ar_tx:generate_chunk_id(MaybeUnpackedChunk) == ChunkID of
+						true ->
+							Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
+									data_path => DataPath, tx_path => TXPath },
+							{ok, Proof};
+						false ->
+							invalidate_bad_data_record({AbsoluteOffset - ChunkSize,
+								AbsoluteOffset, {chunks_index, StoreID}, StoreID, 4}),
+							{error, chunk_not_found}
 					end
 			end
 	end.
 
-get_chunk(Offset, Pack, Packing, StoredPacking, ChunksIndex, ChunkDataDB,
-		IsBucketBasedOffset, StoreID) ->
-	SeekOffset =
-		case IsBucketBasedOffset of
-			true ->
-				get_chunk_seek_offset(Offset);
-			false ->
-				Offset
-		end,
-	ReadChunkKeyResult =
-		case get_chunk_by_byte(ChunksIndex, SeekOffset) of
-			{error, _} ->
-				{error, chunk_not_found};
-			Reply ->
-				Reply
-		end,
-	CheckOffsetResult =
-		case ReadChunkKeyResult of
-			{error, Reason} ->
-				{error, Reason};
-			{ok, Key, Value} ->
-				<< C:?OFFSET_KEY_BITSIZE >> = Key,
-				{K, Root, _, P, _, S} = binary_to_term(Value),
-				case C - SeekOffset >= S of
-					true ->
-						{error, chunk_not_found};
-					false ->
-						{ok, C, K, Root, P, S}
-				end
-		end,
-	ReadChunkResult =
-		case CheckOffsetResult of
-			{error, Reason2} ->
-				{error, Reason2};
-			{ok, O, ChunkDataKey, Root2, P2, S2} ->
-				case read_chunk(O, ChunkDataDB, ChunkDataKey, StoreID) of
-					not_found ->
-						invalidate_bad_data_record({SeekOffset - 1, O, ChunksIndex,
-								StoreID, 1}),
-						{error, chunk_not_found};
-					{error, Reason3} ->
-						?LOG_ERROR([{event, failed_to_read_chunk},
-								{reason, io_lib:format("~p", [Reason3])},
-								{chunk_data_key, ar_util:encode(ChunkDataKey)},
-								{absolute_end_offset, Offset}]),
-						{error, failed_to_read_chunk};
-					{ok, ChunkData} ->
-						case ar_sync_record:is_recorded(Offset, StoredPacking, ?MODULE,
-								StoreID) of
-							false ->
-								%% The chunk should have been re-packed
-								%% in the meantime - very unlucky timing.
-								{error, chunk_not_found};
-							true ->
-								{ok, ChunkData, O, Root2, S2, P2}
-						end
-				end
-		end,
-	ValidateChunk =
-		case ReadChunkResult of
-			{error, Reason4} ->
-				{error, Reason4};
-			{ok, {Chunk, DataPath}, ChunkOffset, TXRoot, ChunkSize, TXPath} ->
-				case validate_served_chunk({ChunkOffset, DataPath, TXPath, TXRoot, ChunkSize,
-						ChunksIndex, StoreID}) of
-					{true, ChunkID} ->
-						{ok, {Chunk, DataPath}, ChunkOffset, TXRoot, ChunkSize, TXPath,
-								ChunkID};
-					false ->
-						{error, chunk_not_found}
-				end
-		end,
-	case ValidateChunk of
-		{error, Reason5} ->
-			{error, Reason5};
-		{ok, {Chunk2, DataPath2}, ChunkOffset2, TXRoot2, ChunkSize2, TXPath2, ChunkID2} ->
-			PackResult =
-				case {Pack, Packing == StoredPacking} of
-					{false, true} ->
-						U = case StoredPacking of unpacked -> Chunk2; _ -> none end,
-						{ok, {Chunk2, U, ChunkID2}};
-					{false, false} ->
-						{error, chunk_not_found};
-					{true, true} ->
-						U = case StoredPacking of unpacked -> Chunk2; _ -> none end,
-						{ok, {Chunk2, U, ChunkID2}};
-					{true, false} ->
-						case ar_packing_server:unpack(StoredPacking, ChunkOffset2,
-								TXRoot2, Chunk2, ChunkSize2) of
-							{exception, Error2} ->
-								{error, Error2};
-							{ok, Unpacked} ->
-								case ar_packing_server:pack(Packing, ChunkOffset2, TXRoot2,
-										Unpacked) of
-									{exception, Error3} ->
-										{error, Error3};
-									{ok, Packed} ->
-										{ok, {Packed, Unpacked, ChunkID2}}
-								end
-						end
-				end,
-			case PackResult of
-				{ok, {PackedChunk, none, _ChunkID3}} ->
-					Proof = #{ tx_root => TXRoot2, chunk => PackedChunk,
-							data_path => DataPath2, tx_path => TXPath2 },
-					{ok, Proof};
-				{ok, {PackedChunk, _MaybeUnpackedChunk, none}} ->
-					Proof = #{ tx_root => TXRoot2, chunk => PackedChunk,
-							data_path => DataPath2, tx_path => TXPath2,
-							end_offset => ChunkOffset2 },
-					{ok, Proof};
-				{ok, {PackedChunk, MaybeUnpackedChunk, ChunkID3}} ->
-					case ar_tx:generate_chunk_id(MaybeUnpackedChunk) == ChunkID3 of
-						true ->
-							Proof = #{ tx_root => TXRoot2, chunk => PackedChunk,
-									data_path => DataPath2, tx_path => TXPath2 },
-							{ok, Proof};
+%% @doc Read the chunk as well as its metadata.
+%% Response is of the format:
+%% {ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
+read_chunk_with_metadata(
+		Offset, SeekOffset, StoredPacking, StoreID) ->
+	case get_chunk_by_byte({chunks_index, StoreID}, SeekOffset) of
+		{error, _} ->
+			{error, chunk_not_found};
+		{ok, _, {AbsoluteOffset, _, _, _, _, _, ChunkSize}} 
+				when AbsoluteOffset - SeekOffset >= ChunkSize ->
+			{error, chunk_not_found};
+		{ok, _, {AbsoluteOffset, ChunkDataKey, TXRoot, _, TXPath, _, ChunkSize}} ->
+			case read_chunk(AbsoluteOffset, {chunk_data_db, StoreID}, ChunkDataKey, StoreID) of
+				not_found ->
+					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset, {chunks_index, StoreID},
+							StoreID, 1}),
+					{error, chunk_not_found};
+				{error, Error} ->
+					?LOG_ERROR([{event, failed_to_read_chunk},
+							{reason, io_lib:format("~p", [Error])},
+							{chunk_data_key, ar_util:encode(ChunkDataKey)},
+							{absolute_end_offset, Offset}]),
+					{error, failed_to_read_chunk};
+				{ok, {Chunk, DataPath}} ->
+					case ar_sync_record:is_recorded(Offset, StoredPacking, ?MODULE,
+							StoreID) of
 						false ->
-							invalidate_bad_data_record({ChunkOffset2 - ChunkSize2,
-									ChunkOffset2, ChunksIndex, StoreID, 4}),
-							{error, chunk_not_found}
-					end;
-				Error ->
-					Error
+							%% The chunk should have been re-packed
+							%% in the meantime - very unlucky timing.
+							{error, chunk_not_found};
+						true ->
+							{ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
+					end
 			end
 	end.
 
@@ -1511,7 +1450,7 @@ invalidate_bad_data_record({Start, End, ChunksIndex, StoreID, Case}) ->
 	end.
 
 validate_served_chunk(Args) ->
-	{Offset, DataPath, TXPath, TXRoot, ChunkSize, ChunksIndex, StoreID} = Args,
+	{Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID} = Args,
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case Offset > T orelse not ar_node:is_joined() of
 		true ->
@@ -1534,7 +1473,7 @@ validate_served_chunk(Args) ->
 							{true, ChunkID};
 						false ->
 							StartOffset = Offset - ChunkSize,
-							invalidate_bad_data_record({StartOffset, Offset, ChunksIndex,
+							invalidate_bad_data_record({StartOffset, Offset, {chunks_index, StoreID},
 									StoreID, 2}),
 							false
 					end;
@@ -1542,7 +1481,7 @@ validate_served_chunk(Args) ->
 					?LOG_WARNING([{event, stored_chunk_invalid_tx_root},
 							{byte, Offset - 1}, {tx_root, ar_util:encode(TXRoot2)},
 							{stored_tx_root, ar_util:encode(TXRoot)}]),
-					invalidate_bad_data_record({Offset - ChunkSize, Offset, ChunksIndex,
+					invalidate_bad_data_record({Offset - ChunkSize, Offset,  {chunks_index, StoreID},
 							StoreID, 3}),
 					false
 			end

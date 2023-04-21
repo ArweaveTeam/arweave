@@ -174,6 +174,13 @@ test_randomx_long({_Key, State}) ->
 			PrevH, binary:encode_unsigned(PartitionUpperBound, big), PIDs, PIDs, Ref, 2,
 			8, 0, 0, 0).
 
+is_zero(<< 0:8, Rest/binary >>) ->
+	is_zero(Rest);
+is_zero(<<>>) ->
+	true;
+is_zero(_Rest) ->
+	false.
+
 test_randomx_pack_unpack({_Key, State}) ->
 	Root = crypto:strong_rand_bytes(32),
 
@@ -181,15 +188,17 @@ test_randomx_pack_unpack({_Key, State}) ->
 	%% randomx_encrypt_nif should never receive an input of a
 	%% different size. We assert the behaviour here just for
 	%% the extra clarity.
-	?assertEqual(
-		{error, "unable to encrypt an empty chunk"},
+	try
 		ar_mine_randomx:randomx_encrypt_chunk_nif(
 			State,
 			crypto:hash(sha256, << 0:256, Root/binary >>),
 			<<>>,
 			1, % RANDOMX_PACKING_ROUNDS
-			0, 0, 0)
-	),
+			0, 0, 0),
+		?assert(false, "randomx_encrypt_chunk_nif with an empty chunk should have failed")
+	catch error:badarg ->
+		ok
+	end,
 
 	Cases = [
 		{<<1>>, 1, Root},
@@ -207,18 +216,34 @@ test_randomx_pack_unpack({_Key, State}) ->
 	],
 	lists:foreach(
 		fun({Chunk, Offset, TXRoot}) ->
-			Key = crypto:hash(sha256, << Offset:256, TXRoot/binary >>),
-			{ok, Packed} = ar_mine_randomx:randomx_encrypt_chunk_nif(State, Key, Chunk,
+			Key1 = crypto:hash(sha256, << Offset:256, TXRoot/binary >>),
+			Key2 = crypto:strong_rand_bytes(32),
+			{ok, Packed1} = ar_mine_randomx:randomx_encrypt_chunk_nif(State, Key1, Chunk,
 					1, % RANDOMX_PACKING_ROUNDS
+					0, 0, 0),
+			{ok, Packed2} = ar_mine_randomx:randomx_encrypt_chunk_nif(State, Key2, Chunk,
+					2, % RANDOMX_PACKING_ROUNDS
 					0, 0, 0),
 			ExpectedSize = ((byte_size(Chunk) - 1) div 64 + 1) * 64,
-			?assertEqual(ExpectedSize, byte_size(Packed)),
-			?assertNotEqual(Packed, Chunk),
-			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_chunk_nif(State, Key,
-					Packed, byte_size(Chunk),
+			?assertEqual(ExpectedSize, byte_size(Packed1)),
+			?assertNotEqual(Packed1, Chunk),
+			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_chunk_nif(State, Key1,
+					Packed1, byte_size(Packed1),
 					1, % RANDOMX_PACKING_ROUNDS
 					0, 0, 0),
-			?assertEqual(Chunk, Unpacked)
+			
+			Padding = binary:part(Unpacked, byte_size(Chunk), byte_size(Packed1) - byte_size(Chunk)),
+			?assertEqual(true, is_zero(Padding)),
+			Unpadded = binary:part(Unpacked, 0, byte_size(Chunk)),
+			?assertEqual(Chunk, Unpadded),
+
+			{ok, Repacked, Intermediate} = ar_mine_randomx:randomx_reencrypt_chunk_nif(State,
+					Key1, Key2, Packed1, byte_size(Packed1),
+					1, % RANDOMX_PACKING_ROUNDS
+					2, % RANDOMX_PACKING_ROUNDS
+					0, 0, 0),
+			?assertEqual(Packed2, Repacked),
+			?assertEqual(Chunk, binary:part(Intermediate, 0, byte_size(Chunk)))
 		end,
 		Cases
 	).

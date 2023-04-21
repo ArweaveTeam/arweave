@@ -9,6 +9,7 @@ typedef enum {
 
 const int BIG_NUM_SIZE = 32;
 typedef unsigned char bigInt[32];
+const int MAX_CHUNK_SIZE = 256*1024;
 
 struct workerThread {
 	ErlNifTid threadId;
@@ -73,4 +74,3 @@ static ERL_NIF_TERM error_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM error(ErlNifEnv*, const char*);
 static ERL_NIF_TERM make_output_binary(ErlNifEnv*, unsigned char*, size_t);
 static int validate_hash(unsigned char[RANDOMX_HASH_SIZE], unsigned char[RANDOMX_HASH_SIZE]);
-static randomx_flags get_flags(int jitEnabled, int largePagesEnabled, int hardwareAESEnabled);

@@ -327,19 +327,19 @@ register(MetricsDir) ->
 		{name, packing_duration_milliseconds},
 		{labels, [type, packing, trigger]},
 		{buckets, lists:seq(1, 500)},
-		{help, "The packing/unpacking time in milliseconds. The type label can be 'pack' or "
-				"'unpack'. The packing label can be 'spora_2_5' or 'spora_2_6'. "
-				"The trigger label shows where the reqeust was triggered: "
-				"'external' (e.g. an HTTP request) or 'internal' (e.g. during syncing or "
-				"repacking)."}
+		{help, "The packing/unpacking time in milliseconds. The type label can be 'pack', "
+				"'unpack', or 'repack'. The packing label can be 'spora_2_5', 'spora_2_6', "
+				"'spora_2_5_to_spora_2_6', or 'spora_2_6_to_spora_2_6'. The trigger label "
+				"shows where the request was triggered: 'external' (e.g. an HTTP request) or "
+				"'internal' (e.g. during syncing or repacking)."}
 	]),
 	prometheus_counter:new([
 		{name, packing_requests},
 		{labels, [type, packing, from]},
-		{help, "The number of packing requests received. The type label can be 'pack' or "
-				"'unpack'. The packing label can be 'spora_2_5', 'spora_2_6', or 'unpacked'. "
-				"The from label show where the request was initiated (e.g. the "
-				"calling function, or message). "}
+		{help, "The number of packing requests received. The type label can be 'pack', "
+				"'unpack', or 'repack'. The packing label can be 'spora_2_5', 'spora_2_6', "
+				"or 'unpacked'. The from label show where the request was initiated (e.g. "
+				"the calling function, or message)."}
 	]),
 	prometheus_counter:new([
 		{name, validating_packed_spora},

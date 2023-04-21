@@ -104,7 +104,8 @@ generate_input(TotalMegaBytes, Root, RewardAddress) ->
 	{ok, UnpackedFileHandle} = file:open(UnpackedFilename, [read, binary]),
 
 	NumWorkers = erlang:system_info(dirty_cpu_schedulers_online),
-	{ok, RandomXState} = ar_bench_timer:record({init}, fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, 1, 1, NumWorkers]),
+	{ok, RandomXState} = ar_bench_timer:record({init},
+		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, 1, 1, NumWorkers]),
 
 	Spora25Filename = spora_2_5_filename(TotalMegaBytes),
 	io:format("~s", [Spora25Filename]),
@@ -171,38 +172,46 @@ vdf_worker(Input) ->
 run_dirty_benchmark(Test, {_, JIT, LargePages, _} = Permutation, Root, RewardAddress) ->
 	io:format("~ninit~n"),
 	NumWorkers = erlang:system_info(dirty_cpu_schedulers_online),
-	{ok, RandomXState} = ar_bench_timer:record({init}, fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
+	{ok, RandomXState} = ar_bench_timer:record({init},
+		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
 
 	run_dirty_test(Test, Permutation, RandomXState, Root, RewardAddress, NumWorkers).
 
-run_dirty_test(baseline_pack, Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
-	run_dirty_pack_test(baseline_pack, Permutation, RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(baseline_repack_2_5, {TotalMegaBytes, _, _, _} = Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
+run_dirty_test(baseline_pack, Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
+	run_dirty_pack_test(baseline_pack, Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers);
+run_dirty_test(baseline_repack_2_5, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
 	run_dirty_repack_test(
 		spora_2_5_filename(TotalMegaBytes),
 		output_filename(baseline_repack_2_5, Permutation),
 		spora_2_5, spora_2_6, fun baseline_repack_chunks/5,
 		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(baseline_repack_2_6, {TotalMegaBytes, _, _, _} = Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
+run_dirty_test(baseline_repack_2_6, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
 	run_dirty_repack_test(
 		spora_2_6_filename(TotalMegaBytes),
 		output_filename(baseline_repack_2_6, Permutation),
 		spora_2_6, spora_2_6, fun baseline_repack_chunks/5,
 		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(nif_repack_2_5, {TotalMegaBytes, _, _, _} = Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
+run_dirty_test(nif_repack_2_5, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
 	run_dirty_repack_test(
 		spora_2_5_filename(TotalMegaBytes),
 		output_filename(nif_repack_2_5, Permutation),
 		spora_2_5, spora_2_6, fun nif_repack_chunks/5,
 		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(nif_repack_2_6, {TotalMegaBytes, _, _, _} = Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
+run_dirty_test(nif_repack_2_6, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
 	run_dirty_repack_test(
 		spora_2_6_filename(TotalMegaBytes),
 		output_filename(nif_repack_2_6, Permutation),
 		spora_2_6, spora_2_6, fun nif_repack_chunks/5,
 		Permutation, RandomXState, Root, RewardAddress, NumWorkers).
 
-run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
+run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
 	UnpackedFilename = unpacked_filename(TotalMegaBytes),
 	PackedFilename = output_filename(baseline_pack, Permutation),
 	{ok, UnpackedFileHandle} = file:open(UnpackedFilename, [read, binary]),
@@ -299,7 +308,8 @@ baseline_pack_chunks(WorkerID,
 	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
         {ok, UnpackedChunk} ->
-			{ok, PackedChunk} = ar_mine_randomx:randomx_encrypt_chunk_nif(RandomXState, Key, UnpackedChunk, PackingRounds, JIT, LargePages, HardwareAES),
+			{ok, PackedChunk} = ar_mine_randomx:randomx_encrypt_chunk_nif(
+				RandomXState, Key, UnpackedChunk, PackingRounds, JIT, LargePages, HardwareAES),
 			file:pwrite(PackedFileHandle, Offset, PackedChunk),
 			(Size - ChunkSize);
         eof ->
@@ -330,8 +340,12 @@ baseline_repack_chunks(WorkerID,
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
         {ok, PackedChunk} ->
-			{ok, UnpackedChunk} = ar_mine_randomx:randomx_decrypt_chunk_nif(RandomXState, UnpackKey, PackedChunk, ChunkSize, UnpackingRounds, JIT, LargePages, HardwareAES),
-			{ok, RepackedChunk} =ar_mine_randomx:randomx_encrypt_chunk_nif(RandomXState, RepackKey, UnpackedChunk, RepackingRounds, JIT, LargePages, HardwareAES),	
+			{ok, UnpackedChunk} = ar_mine_randomx:randomx_decrypt_chunk_nif(
+				RandomXState, UnpackKey, PackedChunk, ChunkSize, UnpackingRounds,
+				JIT, LargePages, HardwareAES),
+			{ok, RepackedChunk} =ar_mine_randomx:randomx_encrypt_chunk_nif(
+				RandomXState, RepackKey, UnpackedChunk, RepackingRounds,
+				JIT, LargePages, HardwareAES),	
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
         eof ->
@@ -362,7 +376,9 @@ nif_repack_chunks(WorkerID,
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
         {ok, PackedChunk} ->
-			{ok, RepackedChunk} = ar_mine_randomx:randomx_reencrypt_chunk_nif(RandomXState, UnpackKey, RepackKey, PackedChunk, ChunkSize, UnpackingRounds, RepackingRounds, JIT, LargePages, HardwareAES),
+			{ok, RepackedChunk} = ar_mine_randomx:randomx_reencrypt_chunk_nif(
+				RandomXState, UnpackKey, RepackKey, PackedChunk, ChunkSize,
+				UnpackingRounds, RepackingRounds, JIT, LargePages, HardwareAES),
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
         eof ->
@@ -377,15 +393,11 @@ nif_repack_chunks(WorkerID,
 %% Helpers
 %% --------------------------------------------------------------------------------------------
 get_packing_args(spora_2_5, Offset, Root, _RewardAddress) ->
-	{
-		ar_packing_server:chunk_key_2_5(Offset, Root),
-		?RANDOMX_PACKING_ROUNDS
-	};
+	{spora_2_5, Key} = ar_packing_server:chunk_key(spora_2_5, Offset, Root),
+	{Key, ?RANDOMX_PACKING_ROUNDS};
 get_packing_args(spora_2_6, Offset, Root, RewardAddress) ->
-	{
-		ar_packing_server:chunk_key_2_6(Offset, Root, RewardAddress),
-		?RANDOMX_PACKING_ROUNDS_2_6
-	}.
+	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
+	{Key, ?RANDOMX_PACKING_ROUNDS_2_6}.
 
 %% --------------------------------------------------------------------------------------------
 %% Pipelined

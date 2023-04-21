@@ -258,15 +258,74 @@ static ERL_NIF_TERM hash_light_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TE
 	return randomx_hash_nif(envPtr, argc, argv, HASHING_MODE_LIGHT);
 }
 
+static randomx_vm* create_vm(struct state* statePtr,
+		int fullMemEnabled, int jitEnabled, int largePagesEnabled, int hardwareAESEnabled,
+		int* isRandomxReleased) {
+	enif_rwlock_rlock(statePtr->lockPtr);
+	*isRandomxReleased = statePtr->isRandomxReleased;
+	if (statePtr->isRandomxReleased != 0) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return NULL;
+	}
+	
+	randomx_flags flags = RANDOMX_FLAG_DEFAULT;
+	if (fullMemEnabled) {
+		flags |= RANDOMX_FLAG_FULL_MEM;
+	}
+	if (hardwareAESEnabled) {
+		flags |= RANDOMX_FLAG_HARD_AES;
+	}
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
+	}
+
+	randomx_vm *vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	if (vmPtr == NULL) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return NULL;
+	}
+	return vmPtr;
+}
+
+static void destroy_vm(struct state* statePtr, randomx_vm* vmPtr) {
+	randomx_destroy_vm(vmPtr);
+	enif_rwlock_runlock(statePtr->lockPtr);
+}
+
+static ERL_NIF_TERM decrypt_chunk(ErlNifEnv* envPtr,
+		randomx_vm *machine, const unsigned char *input, const size_t inputSize,
+		const unsigned char *inChunk, const size_t inChunkSize, 
+		unsigned char* outChunk, const size_t outChunkSize,
+		const int randomxProgramCount) {
+
+	randomx_decrypt_chunk(
+		machine, input, inputSize, inChunk, inChunkSize, outChunk, randomxProgramCount);
+	return make_output_binary(envPtr, outChunk, outChunkSize);
+}
+
+static ERL_NIF_TERM encrypt_chunk(ErlNifEnv* envPtr,
+		randomx_vm *machine, const unsigned char *input, const size_t inputSize,
+		const unsigned char *inChunk, const size_t inChunkSize,
+		const int randomxProgramCount) {
+	size_t encryptedChunkLen = feistel_padded_length(inChunkSize);
+	ERL_NIF_TERM encryptedChunkTerm;
+	unsigned char* encryptedChunk = enif_make_new_binary(
+										envPtr, encryptedChunkLen, &encryptedChunkTerm);
+	randomx_encrypt_chunk(
+		machine, input, inputSize, inChunk, inChunkSize, encryptedChunk, randomxProgramCount);
+	return encryptedChunkTerm;
+}
+
 static ERL_NIF_TERM randomx_hash_nif(
 	ErlNifEnv* envPtr,
 	int argc,
 	const ERL_NIF_TERM argv[],
 	hashing_mode hashingMode
 ) {
-	randomx_vm *vmPtr = NULL;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	randomx_flags flags;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
 	struct state* statePtr;
 	ErlNifBinary inputData;
@@ -290,33 +349,18 @@ static ERL_NIF_TERM randomx_hash_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	enif_rwlock_rlock(statePtr->lockPtr);
-	if (statePtr->isRandomxReleased != 0) {
-		enif_rwlock_runlock(statePtr->lockPtr);
-		return error(envPtr, "state has been released");
-	}
-
-	flags = RANDOMX_FLAG_DEFAULT;
-	if (hashingMode == HASHING_MODE_FAST) {
-		flags |= RANDOMX_FLAG_FULL_MEM;
-	}
-	if (hardwareAESEnabled) {
-		flags |= RANDOMX_FLAG_HARD_AES;
-	}
-	if (jitEnabled) {
-		flags |= RANDOMX_FLAG_JIT;
-	}
-	if (largePagesEnabled) {
-		flags |= RANDOMX_FLAG_LARGE_PAGES;
-	}
-	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, (hashingMode == HASHING_MODE_FAST), jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
-		enif_rwlock_runlock(statePtr->lockPtr);
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
 		return error(envPtr, "randomx_create_vm failed");
 	}
+
 	randomx_calculate_hash(vmPtr, inputData.data, inputData.size, hashPtr);
-	randomx_destroy_vm(vmPtr);
-	enif_rwlock_runlock(statePtr->lockPtr);
+	
+	destroy_vm(statePtr, vmPtr);
 
 	return ok_tuple(envPtr, make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE));
 }
@@ -604,9 +648,7 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 
 static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
-	randomx_vm *vmPtr = NULL;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	randomx_flags flags;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
 	struct state* statePtr;
 	ErlNifBinary difficulty, inputData;
@@ -637,25 +679,12 @@ static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv* envPtr, int argc, const ERL_
 		return enif_make_badarg(envPtr);
 	}
 
-	enif_rwlock_rlock(statePtr->lockPtr);
-	if (statePtr->isRandomxReleased != 0) {
-		enif_rwlock_runlock(statePtr->lockPtr);
-		return error(envPtr, "state has been released");
-	}
-
-	flags = RANDOMX_FLAG_FULL_MEM;
-	if (hardwareAESEnabled) {
-		flags |= RANDOMX_FLAG_HARD_AES;
-	}
-	if (jitEnabled) {
-		flags |= RANDOMX_FLAG_JIT;
-	}
-	if (largePagesEnabled) {
-		flags |= RANDOMX_FLAG_LARGE_PAGES;
-	}
-	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1, jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
-		enif_rwlock_runlock(statePtr->lockPtr);
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
 		return error(envPtr, "randomx_create_vm failed");
 	}
 
@@ -667,8 +696,8 @@ static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv* envPtr, int argc, const ERL_
 		return solution_tuple(envPtr, hashTerm);
 	}
 
-	randomx_destroy_vm(vmPtr);
-	enif_rwlock_runlock(statePtr->lockPtr);
+	destroy_vm(statePtr, vmPtr);
+
 	return enif_make_atom(envPtr, "false");
 }
 
@@ -678,9 +707,7 @@ static ERL_NIF_TERM randomx_encrypt_chunk_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	randomx_vm *vmPtr = NULL;
 	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	randomx_flags flags;
 	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
@@ -694,7 +721,7 @@ static ERL_NIF_TERM randomx_encrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk)) {
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk) || inputChunk.size == 0) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[3], &randomxRoundCount)) {
@@ -710,30 +737,19 @@ static ERL_NIF_TERM randomx_encrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	size_t outChunkLen = (((inputChunk.size - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
-	if (outChunkLen == 0) {
-		return error(envPtr, "unable to encrypt an empty chunk");
-	}
-
-	enif_rwlock_rlock(statePtr->lockPtr);
-	if (statePtr->isRandomxReleased != 0) {
-		enif_rwlock_runlock(statePtr->lockPtr);
-		return error(envPtr, "state has been released");
-	}
-
-	flags = get_flags(jitEnabled, largePagesEnabled, hardwareAESEnabled);
-	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1, jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
-		enif_rwlock_runlock(statePtr->lockPtr);
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
 		return error(envPtr, "randomx_create_vm failed");
 	}
 
-	ERL_NIF_TERM outChunkTerm;
-	unsigned char* outChunk = enif_make_new_binary(envPtr, outChunkLen, &outChunkTerm);
-	randomx_encrypt_chunk(vmPtr, inputData.data, inputData.size, inputChunk.data, inputChunk.size, outChunk, randomxRoundCount);
+	ERL_NIF_TERM outChunkTerm = encrypt_chunk(envPtr, vmPtr,
+		inputData.data, inputData.size, inputChunk.data, inputChunk.size, randomxRoundCount);
 
-	randomx_destroy_vm(vmPtr);
-	enif_rwlock_runlock(statePtr->lockPtr);
+	destroy_vm(statePtr, vmPtr);
 
 	return ok_tuple(envPtr, outChunkTerm);
 }
@@ -743,9 +759,7 @@ static ERL_NIF_TERM randomx_decrypt_chunk_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	randomx_vm *vmPtr = NULL;
 	int outChunkLen, randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	randomx_flags flags;
 	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
@@ -778,30 +792,26 @@ static ERL_NIF_TERM randomx_decrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	enif_rwlock_rlock(statePtr->lockPtr);
-	if (statePtr->isRandomxReleased != 0) {
-		enif_rwlock_runlock(statePtr->lockPtr);
-		return error(envPtr, "state has been released");
-	}
-
-	flags = get_flags(jitEnabled, largePagesEnabled, hardwareAESEnabled);
-	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1, jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
-		enif_rwlock_runlock(statePtr->lockPtr);
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
 		return error(envPtr, "randomx_create_vm failed");
 	}
-	unsigned char outChunk[256*1024]; // max chunk size, NOTE, second big allocation on stack
-	// NOTE. Decrypt can't use limited outChunkLen, because randomx_decrypt_chunk will unpack padding too, and memory for padding should be allocated
-	// unsigned char *outChunk = (unsigned char*)malloc(outChunkLen);
-	randomx_decrypt_chunk(vmPtr, inputData.data, inputData.size, inputChunk.data, inputChunk.size, outChunk, randomxRoundCount);
 
-	randomx_destroy_vm(vmPtr);
-	enif_rwlock_runlock(statePtr->lockPtr);
+	// NOTE. Because randomx_decrypt_chunk will unpack padding too, decrypt always uses the
+	// full 256KB chunk size. We'll then truncate the output to the correct feistel-padded
+	// outChunkSize.
+	unsigned char outChunk[MAX_CHUNK_SIZE]; 
+	ERL_NIF_TERM decryptedChunkTerm = decrypt_chunk(envPtr, vmPtr,
+		inputData.data, inputData.size, inputChunk.data, inputChunk.size,
+		outChunk, outChunkLen, randomxRoundCount);
 
-	return ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
-	// ERL_NIF_TERM res = ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
-	// free(outChunk);
-	// return res;
+	destroy_vm(statePtr, vmPtr);
+
+	return ok_tuple(envPtr, decryptedChunkTerm);
 }
 
 static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
@@ -809,10 +819,8 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	randomx_vm *vmPtr = NULL;
-	int outChunkLen, decryptRandomxRoundCount, encryptRandomxRoundCount;
+	int chunkSize, decryptRandomxRoundCount, encryptRandomxRoundCount;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	randomx_flags flags;
 	struct state* statePtr;
 	ErlNifBinary decryptKey;
 	ErlNifBinary encryptKey;
@@ -830,10 +838,10 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[2], &encryptKey)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk)) {
+	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) || inputChunk.size == 0) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &outChunkLen)) {
+	if (!enif_get_int(envPtr, argv[4], &chunkSize)) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[5], &decryptRandomxRoundCount)) {
@@ -852,33 +860,34 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	enif_rwlock_rlock(statePtr->lockPtr);
-	if (statePtr->isRandomxReleased != 0) {
-		enif_rwlock_runlock(statePtr->lockPtr);
-		return error(envPtr, "state has been released");
+	size_t reencryptedChunkLen = (((chunkSize - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
+	if (reencryptedChunkLen == 0) {
+		return error(envPtr, "unable to encrypt an empty chunk");
 	}
 
-	flags = get_flags(jitEnabled, largePagesEnabled, hardwareAESEnabled);
-	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1, jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
-		enif_rwlock_runlock(statePtr->lockPtr);
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
 		return error(envPtr, "randomx_create_vm failed");
 	}
-	int chunkSize = 256*1024;
-	unsigned char decryptedChunk[chunkSize]; // max chunk size, NOTE, second big allocation on stack
-	// NOTE. Decrypt can't use limited outChunkLen, because randomx_decrypt_chunk will unpack padding too, and memory for padding should be allocated
-	// unsigned char *outChunk = (unsigned char*)malloc(outChunkLen);
-	randomx_decrypt_chunk(vmPtr, decryptKey.data, decryptKey.size, inputChunk.data, inputChunk.size, decryptedChunk, decryptRandomxRoundCount);
 
-	ERL_NIF_TERM outChunkTerm;
-	unsigned char* outChunk = enif_make_new_binary(envPtr, outChunkLen, &outChunkTerm);
-	randomx_encrypt_chunk(vmPtr, encryptKey.data, encryptKey.size, decryptedChunk, chunkSize, outChunk, encryptRandomxRoundCount);
+	// NOTE. Because randomx_decrypt_chunk will unpack padding too, decrypt always uses the
+	// full 256KB chunk size. We'll then truncate the output to the correct feistel-padded
+	// outChunkSize.
+	unsigned char decryptedChunk[MAX_CHUNK_SIZE]; 
+	ERL_NIF_TERM decryptedChunkTerm = decrypt_chunk(envPtr, vmPtr,
+		decryptKey.data, decryptKey.size, inputChunk.data, inputChunk.size,
+		decryptedChunk, chunkSize, decryptRandomxRoundCount);
 
+	ERL_NIF_TERM reencryptedChunkTerm = encrypt_chunk(envPtr, vmPtr,
+		encryptKey.data, encryptKey.size, decryptedChunk, chunkSize, encryptRandomxRoundCount);
 
-	randomx_destroy_vm(vmPtr);
-	enif_rwlock_runlock(statePtr->lockPtr);
+	destroy_vm(statePtr, vmPtr);
 
-	return ok_tuple(envPtr, outChunkTerm);
+	return ok_tuple2(envPtr, reencryptedChunkTerm, decryptedChunkTerm);
 }
 
 
@@ -899,9 +908,7 @@ static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(
 	const ERL_NIF_TERM argv[],
 	hashing_mode hashingMode
 ) {
-	randomx_vm *vmPtr = NULL;
 	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	randomx_flags flags;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
 	struct state* statePtr;
 	ErlNifBinary inputData;
@@ -928,36 +935,20 @@ static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	enif_rwlock_rlock(statePtr->lockPtr);
-	if (statePtr->isRandomxReleased != 0) {
-		enif_rwlock_runlock(statePtr->lockPtr);
-		return error(envPtr, "state has been released");
-	}
-
-	flags = RANDOMX_FLAG_DEFAULT;
-	if (hashingMode == HASHING_MODE_FAST) {
-		flags |= RANDOMX_FLAG_FULL_MEM;
-	}
-	if (hardwareAESEnabled) {
-		flags |= RANDOMX_FLAG_HARD_AES;
-	}
-	if (jitEnabled) {
-		flags |= RANDOMX_FLAG_JIT;
-	}
-	if (largePagesEnabled) {
-		flags |= RANDOMX_FLAG_LARGE_PAGES;
-	}
-	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, (hashingMode == HASHING_MODE_FAST), jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
-		enif_rwlock_runlock(statePtr->lockPtr);
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
 		return error(envPtr, "randomx_create_vm failed");
 	}
 
 	ERL_NIF_TERM entropyPtrTerm;
 	unsigned char* entropyPtr = enif_make_new_binary(envPtr, RANDOMX_ENTROPY_SIZE, &entropyPtrTerm);
 	randomx_calculate_hash_long_with_entropy(vmPtr, inputData.data, inputData.size, hashPtr, entropyPtr, randomxRoundCount);
-	randomx_destroy_vm(vmPtr);
-	enif_rwlock_runlock(statePtr->lockPtr);
+
+	destroy_vm(statePtr, vmPtr);
 
 	return ok_tuple2(envPtr, make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE), entropyPtrTerm);
 }
@@ -1313,19 +1304,4 @@ static int validate_hash(
 	unsigned char difficulty[RANDOMX_HASH_SIZE]
 ) {
 	return memcmp(hash, difficulty, RANDOMX_HASH_SIZE);
-}
- 
-static randomx_flags get_flags(int jitEnabled, int largePagesEnabled, int hardwareAESEnabled) {
-	randomx_flags flags = RANDOMX_FLAG_DEFAULT;
-	flags |= RANDOMX_FLAG_FULL_MEM;
-	if (hardwareAESEnabled) {
-		flags |= RANDOMX_FLAG_HARD_AES;
-	}
-	if (jitEnabled) {
-		flags |= RANDOMX_FLAG_JIT;
-	}
-	if (largePagesEnabled) {
-		flags |= RANDOMX_FLAG_LARGE_PAGES;
-	}
-	return flags;
 }
