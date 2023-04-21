@@ -56,7 +56,7 @@ verify(StartSalt, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
 				{ok, Steps} ->
 					?LOG_ERROR([{event, ar_vdf_verify_done}, {pid, self()},
 								{duration, timer:now_diff(erlang:timestamp(), StartTime) / 1000000},
-								{event, ar_vdf_verify_start}, {start_step, StartStepNumber},
+					{start_step, StartStepNumber},
 					{step_between_hash_count, StepBetweenHashCount}, {hash_count, HashCount},
 					{reset_step_number, ResetStepNumber}, {thread_count, ThreadCount},
 					{iteration_count, IterationCount}]),

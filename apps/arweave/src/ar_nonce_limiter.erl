@@ -162,7 +162,7 @@ request_validation(H, #nonce_limiter_info{ global_step_number = N },
 		#nonce_limiter_info{ global_step_number = N }) ->
 	spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 1}) end);
 request_validation(H, #nonce_limiter_info{ output = Output,
-		steps = [Output | _] = StepsToValidate } = Info, PrevInfo) ->
+		checkpoints = [Output | _] = Checkpoints } = Info, PrevInfo) ->
 	#nonce_limiter_info{ output = PrevOutput, next_seed = PrevNextSeed,
 			global_step_number = PrevStepNumber } = PrevInfo,
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
@@ -232,15 +232,14 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 					{error_dump, ErrorID}]),
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 		{[_Group] = _Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber,
-				UseRemoteServers == true, RemoteServerWaitSeconds > 0 ->
+				UseRemoteServers == true ->
 			?LOG_INFO([{event, spawn_new_vdf_validation_request},
 					{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
 					{shift, Shift}, {shift2, Shift2},
-					{remote_server_wait_seconds, RemoteServerWaitSeconds},
 					{pid, self()}]),
 			spawn(fun() ->
 				timer:sleep(1000),
-				request_validation(H, Info, PrevInfo, RemoteServerWaitSeconds - 1) end);
+				request_validation(H, Info, PrevInfo) end);
 		{[_Group] = Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber ->
 			PrevOutput3 = case Shift2 of 0 -> PrevOutput2;
 					_ -> lists:nth(Shift2, ReversedSteps2) end,
