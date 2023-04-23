@@ -169,10 +169,6 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
 			checkpoints = Checkpoints } = Info,
-	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
-			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
-			{step_count, StepNumber - PrevStepNumber}, {pid, self()}]),
-	ar_util:print_stacktrace(),
 	EntropyResetPoint = get_entropy_reset_point(PrevStepNumber, StepNumber),
 	SessionKey = {PrevNextSeed, PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	%% The steps that fall at the intersection of the PrevStepNumber to StepNumber range
@@ -182,31 +178,38 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 
 	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
-			{session_key, ar_util:encode(PrevNextSeed)},
-			{next_session_key, ar_util:encode(NextSeed)},
+			{session_key, SessionKey}, {next_session_key, NextSessionKey},
 			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
-			{step_count, StepNumber - PrevStepNumber}, {steps, length(StepsToValidate)},
-			{session_steps, length(SessionSteps)},
-			{pid, self()}]),
+			{step_count, StepNumber - PrevStepNumber}, {pid, self()}]),
+	ar_util:print_stacktrace(),
 
-	%% We need to validate all the steps from PrevStepNumber to StepNumber:
-	%% PrevStepNumber <--------------------------------------------> StepNumber
-	%%     PrevOutput x
-	%%                                      |----------------------| StepsToValidate
-	%%                |-----------------------------------| SessionSteps
-	%%                      StartStepNumber x 
-	%%                          StartOutput x
-	%%                                      |-------------| ComputedSteps
-	%%                                      --------------> NumAlreadyComputed
-	%%                                   StartStepNumber2 x
-	%%                                       StartOutput2 x
-	%%                                                    |--------| RemainingStepsToValidate
-	%%
-	{StartStepNumber, StartOutput, ComputedSteps} =
-		skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput,
-			StepsToValidate, SessionSteps),
-	case exclude_computed_steps_from_steps_to_validate(
-			lists:reverse(StepsToValidate), ComputedSteps) of
+	Buffer = steps_to_buffer(lists:reverse(Checkpoints)),
+	CheckpointLen = length(Checkpoints),
+	Group = {?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, CheckpointLen, Buffer},
+	ReversedSteps = lists:reverse(Steps),
+	BeforeCheckpointsLen = StepNumber - PrevStepNumber - CheckpointLen,
+	{Shift, PrevOutput2, ReversedSteps2} =
+		case BeforeCheckpointsLen > 0 of
+			false ->
+				{0, PrevOutput, ReversedSteps};
+			true ->
+				case length(ReversedSteps) >= BeforeCheckpointsLen of
+					false ->
+						{0, PrevOutput, ReversedSteps};
+					true ->
+						{BeforeCheckpointsLen, lists:nth(BeforeCheckpointsLen, ReversedSteps),
+								lists:nthtail(BeforeCheckpointsLen, ReversedSteps)}
+				end
+		end,
+	{ok, Config} = application:get_env(arweave, config),
+	UseRemoteServers =
+		case Config#config.nonce_limiter_server_trusted_peers of
+			[] ->
+				false;
+			_ ->
+				true
+		end,
+	case exclude_computed_steps_from_checkpoints([Group], ReversedSteps2) of
 		invalid ->
 			ErrorID = dump_error({PrevStepNumber, StepNumber, StepsToValidate, SessionSteps}),
 			?LOG_WARNING([{event, nonce_limiter_validation_failed},
@@ -967,7 +970,7 @@ apply_external_update2(Update, State) ->
 			{is_partial, IsPartial}]),
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
-			?LOG_INFO([{event, external_vdf_update_session_not_found}, {is_partial, IsPartial}]),
+			?LOG_INFO([{event, external_vdf_update_session_not_found}, {session_key, SessionKey}, {is_partial, IsPartial}]),
 			case IsPartial of
 				true ->
 					%% Inform the peer we have not initialized the corresponding session yet.
@@ -987,7 +990,7 @@ apply_external_update2(Update, State) ->
 				step_checkpoints_map = Map } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
-					?LOG_INFO([{event, external_vdf_update_new_step},
+					?LOG_INFO([{event, external_vdf_update_new_step}, {session_key, SessionKey},
 							{current_step_number, CurrentStepNumber},
 							{step_number, StepNumber}, {steps, length(CurrentSteps)}]),
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
@@ -1001,7 +1004,7 @@ apply_external_update2(Update, State) ->
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
-					?LOG_INFO([{event, external_vdf_update_bad_step},
+					?LOG_INFO([{event, external_vdf_update_bad_step}, {session_key, SessionKey}, 
 							{current_step_number, CurrentStepNumber},
 							{step_number, StepNumber}]),
 
