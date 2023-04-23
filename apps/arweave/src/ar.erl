@@ -55,7 +55,6 @@
 		ar_weave,
 
 		%% test modules
-		ar_base32_tests,
 		ar_base64_compatibility_tests,
 		ar_config_tests,
 		ar_data_sync_tests,
