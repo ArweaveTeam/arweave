@@ -90,10 +90,6 @@ void feistel_decrypt_block(const unsigned char *in_left, const unsigned char *in
 	}
 }
 
-size_t feistel_padded_length(const size_t length) {
-	return (((length - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
-}
-
 // feistel_encrypt accepts padded message with 2*FEISTEL_BLOCK_LENGTH = 64 bytes
 // in_key_length == plaintext_len
 // CBC

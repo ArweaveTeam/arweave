@@ -310,12 +310,24 @@ static ERL_NIF_TERM encrypt_chunk(ErlNifEnv* envPtr,
 		randomx_vm *machine, const unsigned char *input, const size_t inputSize,
 		const unsigned char *inChunk, const size_t inChunkSize,
 		const int randomxProgramCount) {
-	size_t encryptedChunkLen = feistel_padded_length(inChunkSize);
 	ERL_NIF_TERM encryptedChunkTerm;
 	unsigned char* encryptedChunk = enif_make_new_binary(
-										envPtr, encryptedChunkLen, &encryptedChunkTerm);
-	randomx_encrypt_chunk(
-		machine, input, inputSize, inChunk, inChunkSize, encryptedChunk, randomxProgramCount);
+										envPtr, MAX_CHUNK_SIZE, &encryptedChunkTerm);
+
+	if (inChunkSize < MAX_CHUNK_SIZE) {
+		unsigned char *paddedInChunk = (unsigned char*)malloc(MAX_CHUNK_SIZE);
+		memset(paddedInChunk, 0, MAX_CHUNK_SIZE);
+		memcpy(paddedInChunk, inChunk, inChunkSize);
+		randomx_encrypt_chunk(
+			machine, input, inputSize, paddedInChunk, MAX_CHUNK_SIZE,
+			encryptedChunk, randomxProgramCount);
+		free(paddedInChunk);	
+	} else {
+		randomx_encrypt_chunk(
+			machine, input, inputSize, inChunk, inChunkSize,
+			encryptedChunk, randomxProgramCount);
+	}
+	
 	return encryptedChunkTerm;
 }
 
@@ -721,7 +733,9 @@ static ERL_NIF_TERM randomx_encrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk) || inputChunk.size == 0) {
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk) ||
+		inputChunk.size == 0 ||
+		inputChunk.size > MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[3], &randomxRoundCount)) {
@@ -841,7 +855,9 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) || inputChunk.size == 0) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &chunkSize)) {
+	if (!enif_get_int(envPtr, argv[4], &chunkSize)  ||
+		chunkSize == 0 ||
+		chunkSize > MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[5], &decryptRandomxRoundCount)) {
@@ -858,11 +874,6 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
 	}
 	if (!enif_get_int(envPtr, argv[9], &hardwareAESEnabled)) {
 		return enif_make_badarg(envPtr);
-	}
-
-	size_t reencryptedChunkLen = (((chunkSize - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
-	if (reencryptedChunkLen == 0) {
-		return error(envPtr, "unable to encrypt an empty chunk");
 	}
 
 	int isRandomxReleased;

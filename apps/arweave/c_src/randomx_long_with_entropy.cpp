@@ -100,19 +100,10 @@ extern "C" {
 	// feistel_encrypt accepts padded message with 2*FEISTEL_BLOCK_LENGTH = 64 bytes
 	RANDOMX_EXPORT void randomx_encrypt_chunk(randomx_vm *machine, const unsigned char *input, const size_t inputSize, const unsigned char *inChunk, const size_t inChunkSize, unsigned char *outChunk, const int randomxProgramCount) {
 		assert(inChunkSize <= RANDOMX_ENTROPY_SIZE);
+		assert(inChunkSize % (2*FEISTEL_BLOCK_LENGTH) == 0);
 		const unsigned char *outputEntropy = randomx_calculate_hash_long_with_entropy_get_entropy(machine, input, inputSize, randomxProgramCount);
 
-		if (inChunkSize % (2*FEISTEL_BLOCK_LENGTH) == 0) {
-			feistel_encrypt((const unsigned char*)inChunk, inChunkSize, outputEntropy, (unsigned char*)outChunk);
-		} else {
-			size_t inChunkSizeWithPadding = feistel_padded_length(inChunkSize);
-			// unsigned char inChunkMax[256*1024] = {0}; // breaks app
-			unsigned char *inChunkMax = (unsigned char*)malloc(inChunkSizeWithPadding);
-			memset(inChunkMax, 0, inChunkSizeWithPadding);
-			memcpy(inChunkMax, inChunk, inChunkSize);
-			feistel_encrypt((const unsigned char*)inChunkMax, inChunkSizeWithPadding, outputEntropy, (unsigned char*)outChunk);
-			free(inChunkMax);
-		}
+		feistel_encrypt((const unsigned char*)inChunk, inChunkSize, outputEntropy, (unsigned char*)outChunk);
 	}
 
 	RANDOMX_EXPORT void randomx_decrypt_chunk(randomx_vm *machine, const unsigned char *input, const size_t inputSize, const unsigned char *inChunk, const size_t inChunkSize, unsigned char *outChunk, const int randomxProgramCount) {

@@ -224,9 +224,10 @@ test_randomx_pack_unpack({_Key, State}) ->
 			{ok, Packed2} = ar_mine_randomx:randomx_encrypt_chunk_nif(State, Key2, Chunk,
 					2, % RANDOMX_PACKING_ROUNDS
 					0, 0, 0),
-			ExpectedSize = ((byte_size(Chunk) - 1) div 64 + 1) * 64,
-			?assertEqual(ExpectedSize, byte_size(Packed1)),
+			?assertEqual(?DATA_CHUNK_SIZE, byte_size(Packed1)),
+			?assertEqual(?DATA_CHUNK_SIZE, byte_size(Packed2)),
 			?assertNotEqual(Packed1, Chunk),
+			?assertNotEqual(Packed2, Chunk),
 			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_chunk_nif(State, Key1,
 					Packed1, byte_size(Packed1),
 					1, % RANDOMX_PACKING_ROUNDS
