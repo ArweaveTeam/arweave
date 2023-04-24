@@ -335,6 +335,7 @@ get_session(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
+	?LOG_ERROR("**** NONCE LIMITER INIT **** ~p", [ar_node:is_joined()]),
 	ok = ar_events:subscribe(node_state),
 	State =
 		case ar_node:is_joined() of

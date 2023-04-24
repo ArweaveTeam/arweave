@@ -52,6 +52,10 @@ cancel(Event) ->
 	gen_server:call(Process, cancel).
 
 send(Event, Value) ->
+	case Event of
+		node -> ?LOG_ERROR("Sending event: ~p", [Event]);
+		_ -> ok
+	end,
 	Process = event_to_process(Event),
 	case whereis(Process) of
 		undefined ->
