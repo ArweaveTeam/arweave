@@ -23,7 +23,7 @@
 -ifdef(DEBUG).
 -define(DEFAULT_SYNC_JOBS, 10).
 -else.
--define(DEFAULT_SYNC_JOBS, 30).
+-define(DEFAULT_SYNC_JOBS, 100).
 -endif.
 
 %% The number of disk pool jobs to run. Disk pool jobs scan the disk pool to index
