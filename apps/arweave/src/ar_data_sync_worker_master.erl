@@ -121,20 +121,12 @@ process_task_queue(N, State) ->
 			process_task_queue(N - 1, State2);
 		sync_range ->
 			{Start, End, Peer, TargetStoreID} = Args,
-			End2 = min(Start + 200 * 262144, End),
 			{{value, W}, WorkerQ2} = queue:out(WorkerQ),
 			ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
 			prometheus_gauge:inc(scheduled_sync_tasks),
-			gen_server:cast(W, {sync_range, {Start, End2, Peer, TargetStoreID, 3}}),
+			gen_server:cast(W, {sync_range, {Start, End, Peer, TargetStoreID, 3}}),
 			WorkerQ3 = queue:in(W, WorkerQ2),
-			{Q3, Len2} =
-				case End2 == End of
-					true ->
-						{Q2, Len - 1};
-					false ->
-						Args2 = {End2, End, Peer, TargetStoreID},
-						{queue:in_r({sync_range, Args2}, Q2), Len}
-				end,
-			State2 = State#state{ workers = WorkerQ3, task_queue = Q3, task_queue_len = Len2 },
+			State2 = State#state{ workers = WorkerQ3, task_queue = Q2,
+					task_queue_len = Len - 1 },
 			process_task_queue(N - 1, State2)
 	end.

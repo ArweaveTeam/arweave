@@ -764,7 +764,7 @@ handle_cast(collect_peer_intervals, State) ->
 					monitor(process, spawn(
 						fun() ->
 							find_peer_intervals(Start, min(End, DiskPoolThreshold), StoreID,
-									Self),
+									Self, #{}),
 							ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, Self,
 									collect_peer_intervals)
 						end
@@ -773,34 +773,12 @@ handle_cast(collect_peer_intervals, State) ->
 	end,
 	{noreply, State};
 
-handle_cast({enqueue_intervals, Peer, Intervals}, State) ->
+handle_cast({enqueue_intervals, []}, State) ->
+	{noreply, State};
+handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	%% Only keep unique intervals. We may get some duplicates for two
-	%% reasons:
-	%% 1) find_peer_intervals might choose the same interval several
-	%%    times in a row even when there are other unsynced intervals
-	%%    to pick because it is probabilistic.
-	%% 2) We ask many peers simultaneously about the same interval
-	%%    to make finding of the relatively rare intervals quicker.
-	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-	{Q2, QIntervals2} =
-		ar_intervals:fold(
-			fun({End, Start}, {Acc, QIAcc}) ->
-				?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
-						{peer, ar_util:format_peer(Peer)}]),
-				{lists:foldl(
-					fun(Start2, Acc2) ->
-						End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
-						gb_sets:add_element({Start2, End2, Peer}, Acc2)
-					end,
-					Acc,
-					lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
-				), ar_intervals:add(QIAcc, End, Start)}
-			end,
-			{Q, QIntervals},
-			OuterJoin
-		),
+	{Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 
@@ -863,19 +841,10 @@ handle_cast(sync_intervals, State) ->
 		false ->
 			gen_server:cast(self(), sync_intervals),
 			{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-			End2 = Start + 10 * ?DATA_CHUNK_SIZE,
-			{Q3, I2, End3} =
-				case End > End2 of
-					true ->
-						{gb_sets:add_element({End2, End, Peer}, Q2),
-								ar_intervals:delete(QIntervals, End2, Start),
-								End2};
-					false ->
-						{Q2, ar_intervals:delete(QIntervals, End, Start), End}
-				end,
+			I2 = ar_intervals:delete(QIntervals, End, Start),
 			gen_server:cast(ar_data_sync_worker_master,
-					{sync_range, {Start, End3, Peer, StoreID}}),
-			{noreply, State#sync_data_state{ sync_intervals_queue = Q3,
+					{sync_range, {Start, End, Peer, StoreID}}),
+			{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 					sync_intervals_queue_intervals = I2 }}
 	end;
 
@@ -2145,19 +2114,20 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 			end
 	end.
 
-find_peer_intervals(Start, End, _StoreID, _Self) when Start >= End ->
+find_peer_intervals(Start, End, _StoreID, _Self, _PeerIntervals) when Start >= End ->
 	ok;
-find_peer_intervals(Start, End, StoreID, Self) ->
+find_peer_intervals(Start, End, StoreID, Self, PeerIntervals) ->
 	Start2 = Start - Start rem ?NETWORK_DATA_BUCKET_SIZE,
 	End2 = min(Start2 + ?NETWORK_DATA_BUCKET_SIZE, End),
 	UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
-	case ar_intervals:is_empty(UnsyncedIntervals) of
-		true ->
-			ok;
-		false ->
-			find_peer_intervals2(Start, UnsyncedIntervals, Self)
-	end,
-	find_peer_intervals(End2, End, StoreID, Self).
+	PeerIntervals2 =
+		case ar_intervals:is_empty(UnsyncedIntervals) of
+			true ->
+				PeerIntervals;
+			false ->
+				find_peer_intervals2(Start, UnsyncedIntervals, Self, PeerIntervals)
+		end,
+	find_peer_intervals(End2, End, StoreID, Self, PeerIntervals2).
 
 %% @doc Collect the unsynced intervals between Start and End excluding the blocklisted
 %% intervals.
@@ -2183,7 +2153,7 @@ get_unsynced_intervals(Start, End, Intervals, StoreID) ->
 			end
 	end.
 
-find_peer_intervals2(Start, UnsyncedIntervals, Self) ->
+find_peer_intervals2(Start, UnsyncedIntervals, Self, PeerIntervals) ->
 	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
 	{ok, Config} = application:get_env(arweave, config),
 	Peers =
@@ -2195,41 +2165,103 @@ find_peer_intervals2(Start, UnsyncedIntervals, Self) ->
 		end,
 	case ar_intervals:is_empty(UnsyncedIntervals) of
 		true ->
-			ok;
+			PeerIntervals;
 		false ->
-			ar_util:pmap(
-				fun(Peer) ->
-					case get_peer_intervals(Peer, Start, UnsyncedIntervals) of
-						{ok, Intervals} ->
-							case ar_intervals:is_empty(Intervals) of
-								true ->
-									ok;
-								false ->
-									gen_server:cast(Self, {enqueue_intervals, Peer, Intervals})
-							end;
-						{error, Reason} ->
-							?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
-									{peer, ar_util:format_peer(Peer)},
-									{reason, io_lib:format("~p", [Reason])}]),
-							ok
-					end
-				end,
-				Peers
-			),
-			ok
+			find_peer_intervals3(Start, UnsyncedIntervals, Self, PeerIntervals, Peers)
 	end.
 
-get_peer_intervals(Peer, Left, SoughtIntervals) ->
-	%% A guess. A bigger limit may result in unnecesarily large response. A smaller
-	%% limit may be too small to fetch all the synced intervals from the requested range,
-	%% in case the peer's sync record is too choppy.
-	Limit = min(1000, ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
-	case ar_http_iface_client:get_sync_record(Peer, Left + 1, Limit) of
-		{ok, PeerIntervals} ->
-			{ok, ar_intervals:intersection(PeerIntervals, SoughtIntervals)};
-		Error ->
-			Error
+find_peer_intervals3(Start, UnsyncedIntervals, Self, PeerIntervals, Peers) ->
+	Intervals =
+		ar_util:pmap(
+			fun(Peer) ->
+				case get_peer_intervals(Peer, Start, UnsyncedIntervals, PeerIntervals) of
+					{ok, Intervals2, PeerIntervals2, Left} ->
+						{Peer, Intervals2, PeerIntervals2, Left};
+					{error, Reason} ->
+						?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+								{peer, ar_util:format_peer(Peer)},
+								{reason, io_lib:format("~p", [Reason])}]),
+						ok
+				end
+			end,
+			Peers
+		),
+	PeerIntervals3 =
+		lists:foldl(
+			fun	({Peer, _, PeerIntervals4, Left2}, Acc) ->
+					case ar_intervals:is_empty(PeerIntervals4) of
+						true ->
+							Acc;
+						false ->
+							Right = element(1, ar_intervals:largest(PeerIntervals4)),
+							maps:put(Peer, {Right, Left2, PeerIntervals4}, Acc)
+					end;
+				(_, Acc) ->
+					Acc
+			end,
+			PeerIntervals,
+			Intervals
+		),
+	EnqueueIntervals =
+		lists:foldl(
+			fun	({Peer, Intervals5, _, _}, Acc) ->
+					case ar_intervals:is_empty(Intervals5) of
+						true ->
+							Acc;
+						false ->
+							[{Peer, Intervals5} | Acc]
+					end;
+				(_, Acc) ->
+					Acc
+			end,
+			[],
+			Intervals
+		),
+	gen_server:cast(Self, {enqueue_intervals, EnqueueIntervals}),
+	PeerIntervals3.
+
+get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
+	Limit = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
+	Right = element(1, ar_intervals:largest(SoughtIntervals)),
+	case maps:get(Peer, CachedIntervals, not_found) of
+		{Right2, Left2, PeerIntervals} when Right2 >= Right, Left2 =< Left ->
+			{ok, ar_intervals:intersection(PeerIntervals, SoughtIntervals), PeerIntervals,
+					Left2};
+		_ ->
+			case ar_http_iface_client:get_sync_record(Peer, Left + 1, Limit) of
+				{ok, PeerIntervals2} ->
+					{ok, ar_intervals:intersection(PeerIntervals2, SoughtIntervals),
+							PeerIntervals2, Left};
+				Error ->
+					Error
+			end
 	end.
+
+enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
+	%% Only keep unique intervals. We may get some duplicates for two
+	%% reasons:
+	%% 1) find_peer_intervals might choose the same interval several
+	%%    times in a row even when there are other unsynced intervals
+	%%    to pick because it is probabilistic.
+	%% 2) We ask many peers simultaneously about the same interval
+	%%    to make finding of the relatively rare intervals quicker.
+	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+	ar_intervals:fold(
+		fun({End, Start}, {Acc, QIAcc}) ->
+			?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
+					{peer, ar_util:format_peer(Peer)}]),
+			{lists:foldl(
+				fun(Start2, Acc2) ->
+					End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
+					gb_sets:add_element({Start2, End2, Peer}, Acc2)
+				end,
+				Acc,
+				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
+			), ar_intervals:add(QIAcc, End, Start)}
+		end,
+		{Q, QIntervals},
+		OuterJoin
+	).
 
 validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathFun) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,

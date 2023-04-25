@@ -23,4 +23,4 @@
 
 %% How many peers with the biggest synced shares in the given bucket to query per bucket
 %% per sync job iteration.
--define(QUERY_BEST_PEERS_COUNT, 30).
+-define(QUERY_BEST_PEERS_COUNT, 15).

@@ -282,7 +282,7 @@ get_sync_record(Peer) ->
 		peer => Peer,
 		method => get,
 		path => "/data_sync_record",
-		timeout => 15 * 1000,
+		timeout => 180 * 1000,
 		connect_timeout => 2000,
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers
@@ -293,8 +293,9 @@ get_sync_record(Peer, Start, Limit) ->
 	handle_sync_record_response(ar_http:req(#{
 		peer => Peer,
 		method => get,
-		path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/" ++ integer_to_list(Limit),
-		timeout => 10 * 1000,
+		path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
+				++ integer_to_list(Limit),
+		timeout => 180 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers
@@ -335,7 +336,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 		peer => Peer,
 		method => get,
 		path => get_chunk_path(Offset, Encoding),
-		timeout => 30 * 1000,
+		timeout => 300 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
 		headers => p2p_headers() ++ Headers

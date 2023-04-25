@@ -202,14 +202,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 				true ->
 					ok;
 				false ->
-					Fun =
-						case ar_peers:get_peer_release(Peer) >= 42 of
-							true ->
-								fun ar_http_iface_client:get_chunk_binary/3;
-							false ->
-								fun ar_http_iface_client:get_chunk_json/3
-						end,
-					case Fun(Peer, Start2, any) of
+					case ar_http_iface_client:get_chunk_binary(Peer, Start2, any) of
 						{ok, #{ chunk := Chunk } = Proof, Time, TransferSize} ->
 							%% In case we fetched a packed small chunk,
 							%% we may potentially skip some chunks by
