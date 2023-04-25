@@ -178,6 +178,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 
 pre_validate_is_peer_banned(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
+	?LOG_ERROR("********** pre_validate_is_peer_banned **********"),
 	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
 			pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize);
@@ -186,6 +187,7 @@ pre_validate_is_peer_banned(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
 	end.
 
 pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
+	?LOG_ERROR("********** pre_validate_previous_block **********"),
 	PrevH = B#block.previous_block,
 	case ar_node:get_block_shadow_from_cache(PrevH) of
 		not_found ->
@@ -193,10 +195,12 @@ pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
 			%% successive blocks are distributed at the same time. Do not
 			%% ban the peer as the block might be valid. If the network adopts
 			%% this block, ar_poller will catch up.
+			?LOG_ERROR("********** NOT FOUND **********"),
 			ok;
 		#block{ height = PrevHeight } = PrevB ->
 			case B#block.height == PrevHeight + 1 of
 				false ->
+					?LOG_ERROR("********** HEIGHT **********"),
 					ok;
 				true ->
 					case B#block.height >= ar_fork:height_2_6() of
@@ -207,6 +211,7 @@ pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
 									pre_validate_indep_hash(B, PrevB, Peer, Timestamp,
 											ReadBodyTime, BodySize);
 								false ->
+									?LOG_ERROR("********** DIFFICULT **********"),
 									ok
 							end;
 						false ->
@@ -218,6 +223,7 @@ pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
 
 pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer, Timestamp, ReadBodyTime,
 		BodySize) ->
+	?LOG_ERROR("********** pre_validate_indep_hash **********"),
 	case catch compute_hash(B, PrevB#block.cumulative_diff) of
 		{ok, {BDS, H}} ->
 			ar_ignore_registry:add_temporary(H, 5000),
@@ -242,6 +248,7 @@ pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer, Timestamp, Re
 	end.
 
 pre_validate_timestamp(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
+	?LOG_ERROR("********** pre_validate_timestamp **********"),
 	#block{ indep_hash = H } = B,
 	case ar_block:verify_timestamp(B, PrevB) of
 		true ->
@@ -256,6 +263,7 @@ pre_validate_timestamp(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) -
 	end.
 
 pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
+	?LOG_ERROR("********** pre_validate_existing_solution_hash **********"),
 	case B#block.height >= ar_fork:height_2_6() of
 		false ->
 			pre_validate_last_retarget(B, BDS, PrevB, false, Peer, Timestamp, ReadBodyTime,
@@ -382,6 +390,11 @@ pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, SolutionResigned, P
 			andalso length(Steps) == ExpectedStepCount
 			andalso PrevOutput == PrevBlockInfo#nonce_limiter_info.output of
 		false ->
+			?LOG_ERROR([{is_ahead, IsAhead}, {step_number, StepNumber},
+					{current_step_number, CurrentStepNumber},
+					{max_distance, MaxDistance}, {checkpoints, length(Checkpoints)},
+					{expected_checkpoint_count, ExpectedCheckpointCount},
+					{prev_output, PrevOutput}, {prev_block_info, PrevBlockInfo#nonce_limiter_info.output}]),
 			post_block_reject_warn(B, check_nonce_limiter_step_number, Peer,
 					[{block_step_number, StepNumber},
 					{current_step_number, CurrentStepNumber}]),
@@ -412,6 +425,7 @@ pre_validate_previous_solution_hash(B, BDS, PrevB, SolutionResigned, Peer, Times
 
 pre_validate_last_retarget(B, BDS, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime,
 		BodySize) ->
+	?LOG_ERROR("********** pre_validate_last_retarget **********"),
 	case B#block.height >= ar_fork:height_2_6() of
 		false ->
 			pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, Timestamp,
@@ -432,6 +446,7 @@ pre_validate_last_retarget(B, BDS, PrevB, SolutionResigned, Peer, Timestamp, Rea
 
 pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime,
 		BodySize) ->
+	?LOG_ERROR("********** pre_validate_difficulty **********"),
 	DiffValid =
 		case B#block.height >= ar_fork:height_2_6() of
 			true ->

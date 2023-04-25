@@ -53,7 +53,7 @@ cancel(Event) ->
 
 send(Event, Value) ->
 	case Event of
-		node -> ?LOG_ERROR("Sending event: ~p", [Event]);
+		block -> ?LOG_ERROR("Sending event: ~p", [Event]);
 		_ -> ok
 	end,
 	Process = event_to_process(Event),

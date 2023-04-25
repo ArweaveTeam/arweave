@@ -177,7 +177,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			SessionKey}, infinity),
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 
-	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
+	?LOG_ERROR([{event, vdf_validation_start}, {block, ar_util:encode(H)},
 			{session_key, SessionKey}, {next_session_key, NextSessionKey},
 			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
 			{step_count, StepNumber - PrevStepNumber}, {pid, self()}]),
@@ -236,7 +236,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 		{[_Group] = _Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber,
 				UseRemoteServers == true ->
-			?LOG_INFO([{event, spawn_new_vdf_validation_request},
+			?LOG_ERROR([{event, spawn_new_vdf_validation_request},
 					{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
 					{shift, Shift}, {shift2, Shift2},
 					{pid, self()}]),
