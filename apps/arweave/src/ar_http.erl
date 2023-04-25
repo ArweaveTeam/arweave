@@ -234,7 +234,7 @@ open_connection(#{ peer := Peer } = Args) ->
 	{IPOrHost, Port} = get_ip_port(Peer),
 	ConnectTimeout = maps:get(connect_timeout, Args,
 			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
-	gun:open(IPOrHost, Port, #{ http_opts => #{ keepalive => 5000 },
+	gun:open(IPOrHost, Port, #{ http_opts => #{ keepalive => 60000 },
 			retry => 0, connect_timeout => ConnectTimeout }).
 
 get_ip_port({_, _} = Peer) ->
