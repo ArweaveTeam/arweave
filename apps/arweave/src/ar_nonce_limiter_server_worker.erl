@@ -57,13 +57,12 @@ handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	?LOG_ERROR("****** WORKER RECEIVED COMPUTED_OUTPUT ******"),
 	#state{ peer = Peer, pause_until = Timestamp } = State,
-	{SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound} = Args,
+	{SessionKey, Session, Output, PartitionUpperBound} = Args,
 	case os:system_time(second) < Timestamp of
 		true ->
 			{noreply, State};
 		false ->
-			{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
-					PartitionUpperBound, Peer, State)}
+			{noreply, push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State)}
 	end;
 
 handle_info({event, nonce_limiter, _Args}, State) ->
@@ -80,11 +79,14 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-push_update(Args, Peer, State) ->
-	{Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output, Checkpoints} = Args,
+push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
+	{NextSeed, IntervalNumber} = SessionKey,
+	Seed = Session#vdf_session.seed,
+	StepNumber = Session#vdf_session.step_number,
+	Checkpoints = maps:get(StepNumber, Session#vdf_session.last_step_checkpoints_map, #{}),
 	Update = #nonce_limiter_update{ session_key = {NextSeed, IntervalNumber},
 			is_partial = true, checkpoints = Checkpoints,
-			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
+			session = #vdf_session{ seed = Seed, upper_bound = PartitionUpperBound,
 					step_number = StepNumber, steps = [Output] } },
 	?LOG_ERROR("*** PUSHING UPDATE TO ~p ***", [Peer]),
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of

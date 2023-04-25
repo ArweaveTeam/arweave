@@ -178,7 +178,8 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 
 	?LOG_ERROR([{event, vdf_validation_start}, {block, ar_util:encode(H)},
-			{session_key, SessionKey}, {next_session_key, NextSessionKey},
+			{session_key, ar_util:encode(PrevNextSeed)},
+			{next_session_key, ar_util:encode(NextSeed)},
 			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
 			{step_count, StepNumber - PrevStepNumber}, {pid, self()}]),
 	ar_util:print_stacktrace(),
@@ -625,9 +626,8 @@ handle_info({computed, Args}, State) ->
 			Session2 = Session#vdf_session{ step_number = StepNumber,
 					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			SessionByKey2 = maps:put(CurrentSessionKey, Session2, SessionByKey),
-			PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
-					PrevSessionKey, PrevSession, Output, UpperBound}}),
+					Output, UpperBound}}),
 			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
 			{noreply, State#state{ session_by_key = SessionByKey2 }}
 	end;
@@ -999,9 +999,8 @@ apply_external_update2(Update, State) ->
 							step_checkpoints_map = Map2,
 							steps = [Output | CurrentSteps] },
 					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
-					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-					trigger_computed_outputs(SessionKey, CurrentSession2, PrevSessionKey,
-							PrevSession, UpperBound, [Output]),
+					Args = {SessionKey, CurrentSession2, Output, UpperBound},
+					ar_events:send(nonce_limiter, {computed_output, Args}),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
