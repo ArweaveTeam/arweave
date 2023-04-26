@@ -306,6 +306,14 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 request_validation(H, _Info, _PrevInfo) ->
 	spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 4}) end).
 
+%% @doc Reset the state and stop computing steps automatically. Used in tests.
+reset_and_pause() ->
+	gen_server:cast(?MODULE, reset_and_pause).
+
+%% @doc Get all steps starting from the latest on the current tip. Used in tests.
+get_steps() ->
+	gen_server:call(?MODULE, get_steps).
+
 get_or_init_nonce_limiter_info(#block{ height = Height, indep_hash = H } = B) ->
 	case Height >= ar_fork:height_2_6() of
 		true ->
@@ -847,33 +855,76 @@ start_worker(State) ->
 	Ref = monitor(process, Worker),
 	State#state{ worker = Worker, worker_monitor_ref = Ref }.
 
-compute(StepNumber, PrevOutput) ->
-	{ok, Output, Checkpoints} = ar_vdf:compute2(StepNumber, PrevOutput, ?VDF_DIFFICULTY),
-	debug_double_check(
-		"compute",
-		{ok, Output, Checkpoints},
-		fun ar_vdf:debug_sha2/2,
-		[StepNumber, PrevOutput]).
+compute(StepNumber, Output) ->
+	{ok, O1, L1} = ar_vdf:compute2(StepNumber, Output, ?VDF_DIFFICULTY),
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(double_check_nonce_limiter, Config#config.enable) of
+		false ->
+			{ok, O1, L1};
+		true ->
+			{ok, O2, L2} = ar_vdf:vdf_sha2(StepNumber, Output),
+			case {O1, L1} == {O2, L2} of
+				true ->
+					{ok, O1, L1};
+				false ->
+					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
+					file:write_file("compute_" ++ binary_to_list(ID),
+							term_to_binary({StepNumber, Output})),
+					?LOG_ERROR([{event, nonce_limiter_compute_mismatch},
+							{report_id, ID}]),
+					{ok, O1, L1}
+			end
+	end.
 
-verify(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ResetStepNumber, ResetSeed, ThreadCount) ->
-	Result = ar_vdf:verify2(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
-			ResetStepNumber, ResetSeed, ThreadCount,
+verify(StartStepNumber, PrevOutput, Groups, ResetStepNumber, ResetSeed, ThreadCount) ->
+	Rep1 = ar_vdf:verify2(StartStepNumber, PrevOutput, Groups,
+			ResetStepNumber - 1, ResetSeed, ThreadCount,
 			?VDF_DIFFICULTY),
-	debug_double_check(
-		"verify",
-		Result,
-		fun ar_vdf:debug_sha_verify/7,
-		[StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ResetStepNumber, ResetSeed, ThreadCount]).
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(double_check_nonce_limiter, Config#config.enable) of
+		false ->
+			Rep1;
+		true ->
+			Rep2 = ar_vdf:debug_sha_verify(StartStepNumber, PrevOutput, Groups,
+					ResetStepNumber, ResetSeed),
+			case Rep1 == Rep2 of
+				true ->
+					Rep1;
+				false ->
+					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
+					file:write_file("verify_" ++ binary_to_list(ID),
+							term_to_binary({StartStepNumber, PrevOutput, Groups,
+									ResetStepNumber, ResetSeed, ThreadCount})),
+					?LOG_ERROR([{event, nonce_limiter_verify_mismatch},
+							{report_id, ID}]),
+					Rep1
+			end
+	end.
 
 verify_no_reset(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ThreadCount) ->
 	Garbage = crypto:strong_rand_bytes(32),
-	Result = ar_vdf:verify2(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, 0,
+	Rep1 = ar_vdf:verify2(StartStepNumber, PrevOutput, Groups, 0,
 			Garbage, ThreadCount, ?VDF_DIFFICULTY),
-	debug_double_check(
-		"verify_no_reset",
-		Result,
-		fun ar_vdf:debug_sha_verify_no_reset/5,
-		[StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ThreadCount]).
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(double_check_nonce_limiter, Config#config.enable) of
+		false ->
+			Rep1;
+		true ->
+			Rep2 = ar_vdf:debug_sha_verify_no_reset(
+				StartStepNumber, PrevOutput, Groups),
+			case Rep1 == Rep2 of
+				true ->
+					Rep1;
+				false ->
+					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
+					file:write_file("verify_no_reset_" ++ binary_to_list(ID),
+							term_to_binary({StartStepNumber, PrevOutput, Groups,
+									ThreadCount})),
+					?LOG_ERROR([{event, nonce_limiter_verify_no_reset_mismatch},
+							{report_id, ID}]),
+					Rep1
+			end
+	end.
 
 worker() ->
 	receive
@@ -1073,14 +1124,6 @@ debug_double_check(Label, Result, Func, Args) ->
 %%% Tests.
 %%%===================================================================
 
-%% @doc Reset the state and stop computing steps automatically. Used in tests.
-reset_and_pause() ->
-	gen_server:cast(?MODULE, reset_and_pause).
-
-%% @doc Get all steps starting from the latest on the current tip. Used in tests.
-get_steps() ->
-	gen_server:call(?MODULE, get_steps).
-
 %% @doc Compute a single step. Used in tests.
 step() ->
 	Self = self(),
@@ -1099,7 +1142,7 @@ step() ->
 			ok
 	end.
 
-exclude_computed_steps_from_steps_to_validate_test() ->
+exclude_computed_steps_from_checkpoints_test() ->
 	C1 = crypto:strong_rand_bytes(32),
 	C2 = crypto:strong_rand_bytes(32),
 	C3 = crypto:strong_rand_bytes(32),
