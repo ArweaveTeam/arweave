@@ -293,6 +293,7 @@ binary_to_reward_history(_Rest, _RewardHistory) ->
 
 nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
+	?LOG_ERROR("CheckpointLength: ~p", [length(Checkpoints)]),
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, Interval:64, IsPartialBin/binary, CheckpointLen:16,

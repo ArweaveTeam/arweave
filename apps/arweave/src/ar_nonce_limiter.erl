@@ -164,7 +164,7 @@ request_validation(H, #nonce_limiter_info{ global_step_number = N },
 request_validation(H, #nonce_limiter_info{ output = Output,
 		checkpoints = [Output | _] = Checkpoints } = Info, PrevInfo) ->
 	#nonce_limiter_info{ output = PrevOutput, next_seed = PrevNextSeed,
-			global_step_number = PrevStepNumber } = PrevInfo,
+			global_step_number = PrevStepNumber, checkpoints = PrevCheckpoints } = PrevInfo,
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
@@ -181,7 +181,8 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			{session_key, ar_util:encode(PrevNextSeed)},
 			{next_session_key, ar_util:encode(NextSeed)},
 			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
-			{step_count, StepNumber - PrevStepNumber}, {pid, self()}]),
+			{step_count, StepNumber - PrevStepNumber}, {checkpoints, length(Checkpoints)},
+			{prev_checkpoints, length(PrevCheckpoints)}, {pid, self()}]),
 	ar_util:print_stacktrace(),
 
 	Buffer = steps_to_buffer(lists:reverse(Checkpoints)),
@@ -223,7 +224,8 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			%% current session
 			LastStepCheckpoints = get_step_checkpoints(StepNumber, SessionKey),
 			Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
-					SessionSteps, LastStepCheckpoints},
+					Steps},
+			?LOG_ERROR("request_validation casting validated_steps 1"),
 			gen_server:cast(?MODULE, {validated_steps, Args}),
 			spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
 
@@ -287,6 +289,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 						false ->
 							ar_events:send(nonce_limiter, {invalid, H, 3});
 						{true, Steps2} ->
+							?LOG_ERROR("request_validation casting validated_steps 2"),
 							Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound,
 									NextUpperBound, Steps2 ++ Steps},
 							gen_server:cast(?MODULE, {validated_steps, Args}),
@@ -546,6 +549,8 @@ handle_cast({validated_steps, Args}, State) ->
 					Session3#vdf_session.step_number),
 			Sessions2 = gb_sets:add_element({element(2, NextSessionKey),
 					element(1, NextSessionKey)}, Sessions),
+			?LOG_ERROR("SENDING validated_output: ~p", [ar_util:encode(element(1, SessionKey))]),
+			ar_events:send(nonce_limiter, {validated_output, {SessionKey, Session2}}),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;
 
@@ -610,8 +615,8 @@ handle_info({computed, Args}, State) ->
 	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
 	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
 	Session = maps:get(CurrentSessionKey, SessionByKey),
-	#vdf_session{ steps = [SessionOutput | _] = Steps,
-			step_checkpoints_map = Map, prev_session_key = PrevSessionKey } = Session,
+	#vdf_session{ steps = [CurrentOutput | _] = Steps,
+			last_step_checkpoints_map = Map } = Session,
 	{NextSeed, IntervalNumber} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
 	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
@@ -977,7 +982,10 @@ apply_external_update2(Update, State) ->
 					%% Inform the peer we have not initialized the corresponding session yet.
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
-					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
+					?LOG_ERROR("apply_external_update NOT FOUND NOT PARTIAL: ~p", [length(Checkpoints)]),
+					Map = maps:put(StepNumber, Checkpoints, Session#vdf_session.last_step_checkpoints_map),
+					Session2 = Session#vdf_session{ last_step_checkpoints_map = Map },
+					SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
 					Sessions2 = gb_sets:add_element({element(2, SessionKey),
 							element(1, SessionKey)}, Sessions),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
@@ -991,6 +999,7 @@ apply_external_update2(Update, State) ->
 				step_checkpoints_map = Map } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
+					?LOG_ERROR("apply_external_update FOUND PARTIAL: ~p", [length(Checkpoints)]),
 					?LOG_INFO([{event, external_vdf_update_new_step}, {session_key, SessionKey},
 							{current_step_number, CurrentStepNumber},
 							{step_number, StepNumber}, {steps, length(CurrentSteps)}]),
@@ -999,8 +1008,8 @@ apply_external_update2(Update, State) ->
 							step_checkpoints_map = Map2,
 							steps = [Output | CurrentSteps] },
 					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
-					Args = {SessionKey, CurrentSession2, Output, UpperBound},
-					ar_events:send(nonce_limiter, {computed_output, Args}),
+					ar_events:send(nonce_limiter, {computed_output,
+							{SessionKey, CurrentSession2, Output, UpperBound}}),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
@@ -1020,7 +1029,10 @@ apply_external_update2(Update, State) ->
 									{reply, #nonce_limiter_update_response{
 											step_number = CurrentStepNumber }, State};
 								false ->
-									SessionByKey2 = maps:put(SessionKey, Session,
+									?LOG_ERROR("apply_external_update FOUND NOT PARTIAL: ~p", [length(Checkpoints)]),
+									Map = maps:put(StepNumber, Checkpoints, Session#vdf_session.last_step_checkpoints_map),
+									Session2 = Session#vdf_session{ last_step_checkpoints_map = Map },
+									SessionByKey2 = maps:put(SessionKey, Session2,
 											SessionByKey),
 									may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey,
 											StepNumber),

@@ -64,6 +64,15 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 		false ->
 			{noreply, push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State)}
 	end;
+handle_info({event, nonce_limiter, {validated_output, Args}}, State) ->
+	?LOG_ERROR("****** WORKER RECEIVED VALIDATED_OUTPUT ******"),
+	%% The validated_output event is sent when a new block comes in that opens a new session.
+	%% The old session is validated and then "closed", we need to push out the this completed
+	%% session ASAP since future VDF updates will be off of the new session.
+	#state{ peer = Peer } = State,
+	{SessionKey, Session} = Args,
+	push_session(SessionKey, Session, Peer),
+	{noreply, State};
 
 handle_info({event, nonce_limiter, _Args}, State) ->
 	{noreply, State};
@@ -79,16 +88,23 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
-	{NextSeed, IntervalNumber} = SessionKey,
-	Seed = Session#vdf_session.seed,
+make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
-	Checkpoints = maps:get(StepNumber, Session#vdf_session.last_step_checkpoints_map, #{}),
-	Update = #nonce_limiter_update{ session_key = {NextSeed, IntervalNumber},
-			is_partial = true, checkpoints = Checkpoints,
-			session = #vdf_session{ seed = Seed, upper_bound = PartitionUpperBound,
-					step_number = StepNumber, steps = [Output] } },
-	?LOG_ERROR("*** PUSHING UPDATE TO ~p ***", [Peer]),
+	Checkpoints = maps:get(StepNumber, Session#vdf_session.last_step_checkpoints_map, []),
+	#nonce_limiter_update{ session_key = SessionKey,
+			is_partial = IsPartial, checkpoints = Checkpoints,
+			session = Session#vdf_session{ last_step_checkpoints_map = #{} } }.
+
+push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
+	?LOG_ERROR("*** PUSHING UPDATE ~p TO ~p ***", [ar_util:encode(element(1, SessionKey)), Peer]),
+	Update = make_nonce_limiter_update(
+		SessionKey,
+		Session#vdf_session{
+			upper_bound = PartitionUpperBound,
+			steps = [Output]
+		},
+		true),
+	StepNumber = Session#vdf_session.step_number,
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			State;
@@ -101,12 +117,6 @@ push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
 				false ->
 					case Response#nonce_limiter_update_response.session_found of
 						false ->
-							case PrevSession of
-								undefined ->
-									ok;
-								_ ->
-									push_session(PrevSessionKey, PrevSession, Peer)
-							end,
 							push_session(SessionKey, Session, Peer);
 						true ->
 							StepNumber2 = Response#nonce_limiter_update_response.step_number,
@@ -127,7 +137,9 @@ push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
 	end.
 
 push_session(SessionKey, Session, Peer) ->
-	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
+	?LOG_ERROR("*** PUSHING SESSION ~p TO ~p ***", [ar_util:encode(element(1, SessionKey)), Peer]),
+	Update = make_nonce_limiter_update(SessionKey, Session, false),
+	?LOG_ERROR("~p", [?REC_INFO(nonce_limiter_update, Update)]),
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			ok;
