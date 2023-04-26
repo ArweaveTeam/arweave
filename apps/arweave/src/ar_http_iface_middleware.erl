@@ -2205,7 +2205,6 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	end.
 
 post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-	?LOG_ERROR("********** post_block(check_joined) **********"),
 	case ar_node:is_joined() of
 		true ->
 			ConfirmedHeight = ar_node:get_height() - ?STORE_BLOCKS_BEHIND_CURRENT,
@@ -2226,7 +2225,6 @@ post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 			{503, #{}, <<"Not joined.">>, Req}
 	end;
 post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-	?LOG_ERROR("********** post_block(check_block_hash_header) **********"),
 	case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
 		not_set ->
 			post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp);
@@ -2245,7 +2243,6 @@ post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp
 			end
 	end;
 post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-	?LOG_ERROR("********** post_block(read_body) **********"),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case decode_block(Body, Encoding) of
@@ -2264,7 +2261,6 @@ post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end;
 post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestamp) ->
-	?LOG_ERROR("********** post_block(check_transactions_are_present) **********"),
 	case erlang:get(post_block2) of
 		true ->
 			case get_missing_tx_identifiers(BShadow#block.txs) of
@@ -2279,7 +2275,6 @@ post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestam
 			post_block(enqueue_block, {BShadow, Peer}, Req, ReceiveTimestamp)
 	end;
 post_block(enqueue_block, {B, Peer}, Req, Timestamp) ->
-	?LOG_ERROR("********** post_block(enqueue_block) **********"),
 	B2 =
 		case B#block.height >= ar_fork:height_2_6() of
 			true ->
