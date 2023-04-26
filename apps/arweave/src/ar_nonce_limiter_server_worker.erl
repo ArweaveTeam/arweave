@@ -89,10 +89,10 @@ terminate(_Reason, _State) ->
 
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
-	Checkpoints = maps:get(StepNumber, Session#vdf_session.last_step_checkpoints_map, []),
+	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
 	#nonce_limiter_update{ session_key = SessionKey,
 			is_partial = IsPartial, checkpoints = Checkpoints,
-			session = Session#vdf_session{ last_step_checkpoints_map = #{} } }.
+			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
 
 push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
 	?LOG_ERROR("*** PUSHING UPDATE ~p TO ~p ***", [ar_util:encode(element(1, SessionKey)), Peer]),

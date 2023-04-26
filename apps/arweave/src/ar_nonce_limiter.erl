@@ -623,7 +623,7 @@ handle_info({computed, Args}, State) ->
 	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
 	Session = maps:get(CurrentSessionKey, SessionByKey),
 	#vdf_session{ steps = [CurrentOutput | _] = Steps,
-			last_step_checkpoints_map = Map } = Session,
+			step_checkpoints_map = Map } = Session,
 	{NextSeed, IntervalNumber} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
 	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
@@ -855,24 +855,24 @@ start_worker(State) ->
 	Ref = monitor(process, Worker),
 	State#state{ worker = Worker, worker_monitor_ref = Ref }.
 
-compute(StepNumber, Output) ->
-	{ok, O1, L1} = ar_vdf:compute2(StepNumber, Output, ?VDF_DIFFICULTY),
+compute(StepNumber, PrevOutput) ->
+	{ok, Output, Checkpoints} = ar_vdf:compute2(StepNumber, PrevOutput, ?VDF_DIFFICULTY),
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(double_check_nonce_limiter, Config#config.enable) of
 		false ->
-			{ok, O1, L1};
+			{ok, Output, Checkpoints};
 		true ->
-			{ok, O2, L2} = ar_vdf:debug_sha2(StepNumber, Output),
-			case {O1, L1} == {O2, L2} of
+			{ok, DebugOutput, DebugCheckpoints} = ar_vdf:debug_sha2(StepNumber, PrevOutput),
+			case {Output, Checkpoints} == {DebugOutput, DebugCheckpoints} of
 				true ->
-					{ok, O1, L1};
+					{ok, Output, Checkpoints};
 				false ->
 					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
 					file:write_file("compute_" ++ binary_to_list(ID),
-							term_to_binary({StepNumber, Output})),
+							term_to_binary({StepNumber, PrevOutput})),
 					?LOG_ERROR([{event, nonce_limiter_compute_mismatch},
 							{report_id, ID}]),
-					{ok, O1, L1}
+					{ok, Output, Checkpoints}
 			end
 	end.
 
@@ -931,7 +931,8 @@ worker() ->
 		{compute, {StepNumber, PrevOutput, UpperBound}, From} ->
 			{ok, Output, Checkpoints} = prometheus_histogram:observe_duration(
 					vdf_step_time_milliseconds, [], fun() -> compute(StepNumber, PrevOutput) end),
-			From ! {computed, {StepNumber, PrevOutput, Output, UpperBound, Checkpoints}},
+			Args2 = {StepNumber, PrevOutput, Output, UpperBound, Checkpoints},
+			From ! {computed, Args2},
 			worker();
 		stop ->
 			ok
@@ -989,9 +990,10 @@ schedule_step(State) ->
 	PrevOutput = hd(Steps),
 	StepNumber = PrevStepNumber + 1,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
-	PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
-		PrevOutput, IntervalStart, StepNumber, NextSeed),
-	UpperBound2 = case get_entropy_reset_point(IntervalStart, StepNumber) of
+	{PrevOutput2, UpperBound2} =
+		case get_entropy_reset_point(IntervalStart, StepNumber) of
+			StepNumber ->
+				{mix_seed(PrevOutput, NextSeed), NextUpperBound};
 			none ->
 				UpperBound;
 			_ ->

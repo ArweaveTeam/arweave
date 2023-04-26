@@ -52,7 +52,7 @@ verify(StartSalt, PrevOutput, [{StepBetweenHashCount, HashCount, BufferHash}],
 			StartTime = erlang:timestamp(),
 			case ar_mine_randomx:vdf_parallel_sha_verify_with_reset_nif(StartSaltBinary, PrevOutput,
 					HashCount - 1, StepBetweenHashCount - 1, IterationCount, RestSteps,
-					LastStep, ResetSalt, ResetSeed, ThreadCount) of
+					LastStep, ResetSaltBinary, ResetSeed, ThreadCount) of
 				{ok, Steps} ->
 					?LOG_ERROR([{event, ar_vdf_verify_done}, {pid, self()},
 								{duration, timer:now_diff(erlang:timestamp(), StartTime) / 1000000},
