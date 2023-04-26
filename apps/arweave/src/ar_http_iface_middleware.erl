@@ -568,6 +568,20 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 		),
 	Req};
 
+%% Return the inflation reward emitted at the given block.
+%% GET request to endpoint /price/{height}.
+handle(<<"GET">>, [<<"inflation">>, EncodedHeight], Req, _Pid) ->
+	case catch binary_to_integer(EncodedHeight) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => height_must_be_an_integer }), Req};
+		Height when Height < 0 ->
+			{400, #{}, jiffy:encode(#{ error => height_must_be_non_negative }), Req};
+		Height when Height > 13000000 -> % An approximate number.
+			{200, #{}, "0", Req};
+		Height ->
+			{200, #{}, integer_to_list(trunc(ar_inflation:calculate(Height))), Req}
+	end;
+
 %% Return the estimated transaction fee not including a new wallet fee.
 %% GET request to endpoint /price/{bytes}.
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req, _Pid) ->
