@@ -1,7 +1,7 @@
 -module(ar_vdf).
 
 -export([compute/3, compute2/3, verify/7, verify2/7,
-		debug_sha_verify_no_reset/3, debug_sha_verify/5, vdf_sha2/2]).
+		debug_sha_verify_no_reset/3, debug_sha_verify/5, debug_sha2/2]).
 
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar.hrl").
@@ -9,7 +9,7 @@
 step_number_to_salt_number(0) ->
 	0;
 step_number_to_salt_number(StepNumber) ->
-	(StepNumber - 1) * 25 + 1.
+	(StepNumber - 1) * ?VDF_CHECKPOINT_COUNT_IN_STEP + 1.
 
 %% default IterationCount = ?VDF_DIFFICULTY
 compute(StartStepNumber, PrevOutput, IterationCount) ->
@@ -140,7 +140,7 @@ hash(N, Salt, Input) ->
 	hash(N - 1, Salt, crypto:hash(sha256, << Salt/binary, Input/binary >>)).
 
 %% @doc An Erlang implementation of ar_vdf:compute2/3. Used in tests.
-vdf_sha2(StepNumber, Output) ->
+debug_sha2(StepNumber, Output) ->
 	Salt = step_number_to_salt_number(StepNumber - 1),
 	{Output2, Checkpoints} =
 		lists:foldl(
@@ -150,7 +150,7 @@ vdf_sha2(StepNumber, Output) ->
 				{H, [H | L]}
 			end,
 			{Output, []},
-			lists:seq(0, 25 - 1)
+			lists:seq(0, ?VDF_CHECKPOINT_COUNT_IN_STEP - 1)
 		),
 	timer:sleep(500),
 	{ok, Output2, Checkpoints}.
@@ -163,13 +163,13 @@ debug_sha_verify_no_reset(StepNumber, Output, Groups) ->
 debug_verify_no_reset(_Salt, _Output, [], Steps) ->
 	{true, Steps};
 debug_verify_no_reset(Salt, Output, [{Size, N, Buffer} | Groups], Steps) ->
-	true = Size == 1 orelse Size rem 25 == 0,
+	true = Size == 1 orelse Size rem ?VDF_CHECKPOINT_COUNT_IN_STEP == 0,
 	{NextOutput, Steps2} =
 		lists:foldl(
 			fun(I, {Acc, S}) ->
 				SaltBinary = << (Salt + I):256 >>,
 				O2 = hash(?VDF_DIFFICULTY, SaltBinary, Acc),
-				S2 = case (Salt + I) rem 25 of 0 -> [O2 | S]; _ -> S end,
+				S2 = case (Salt + I) rem ?VDF_CHECKPOINT_COUNT_IN_STEP of 0 -> [O2 | S]; _ -> S end,
 				{O2, S2}
 			end,
 			{Output, []},
@@ -197,15 +197,15 @@ debug_verify(_StartSalt, _Output, [], _ResetSalt, _ResetSeed, Steps) ->
 	{true, Steps};
 debug_verify(StartSalt, Output, [{Size, N, Buffer} | Groups], ResetSalt,
 		ResetSeed, Steps) ->
-	true = Size rem 25 == 0,
+	true = Size rem ?VDF_CHECKPOINT_COUNT_IN_STEP == 0,
 	{NextOutput, Steps2} =
 		lists:foldl(
 			fun(I, {Acc, S}) ->
 				SaltBinary = << (StartSalt + I):256 >>,
-				case I rem 25 /= 0 of
+				case I rem ?VDF_CHECKPOINT_COUNT_IN_STEP /= 0 of
 					true ->
 						H = hash(?VDF_DIFFICULTY, SaltBinary, Acc),
-						case (StartSalt + I) rem 25 of
+						case (StartSalt + I) rem ?VDF_CHECKPOINT_COUNT_IN_STEP of
 							0 ->
 								{H, [H | S]};
 							_ ->
@@ -220,7 +220,7 @@ debug_verify(StartSalt, Output, [{Size, N, Buffer} | Groups], ResetSalt,
 									Acc
 							end,
 						H = hash(?VDF_DIFFICULTY, SaltBinary, Acc2),
-						case (StartSalt + I) rem 25 of
+						case (StartSalt + I) rem ?VDF_CHECKPOINT_COUNT_IN_STEP of
 							0 ->
 								{H, [H | S]};
 							_ ->

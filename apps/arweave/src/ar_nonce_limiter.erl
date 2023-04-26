@@ -862,7 +862,7 @@ compute(StepNumber, Output) ->
 		false ->
 			{ok, O1, L1};
 		true ->
-			{ok, O2, L2} = ar_vdf:vdf_sha2(StepNumber, Output),
+			{ok, O2, L2} = ar_vdf:debug_sha2(StepNumber, Output),
 			case {O1, L1} == {O2, L2} of
 				true ->
 					{ok, O1, L1};
