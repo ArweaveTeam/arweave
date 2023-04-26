@@ -27,7 +27,6 @@ start_link(Name, RawPeer) ->
 %%%===================================================================
 
 init(RawPeer) ->
-	?LOG_ERROR("****** WORKER INIT ****** ~p", [RawPeer]),
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	gen_server:cast(self(), resolve_raw_peer),

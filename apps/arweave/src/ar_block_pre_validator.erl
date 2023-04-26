@@ -382,11 +382,6 @@ pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, SolutionResigned, P
 			andalso length(Steps) == ExpectedStepCount
 			andalso PrevOutput == PrevBlockInfo#nonce_limiter_info.output of
 		false ->
-			?LOG_ERROR([{is_ahead, IsAhead}, {step_number, StepNumber},
-					{current_step_number, CurrentStepNumber},
-					{max_distance, MaxDistance}, {checkpoints, length(Checkpoints)},
-					{expected_checkpoint_count, ExpectedCheckpointCount},
-					{prev_output, PrevOutput}, {prev_block_info, PrevBlockInfo#nonce_limiter_info.output}]),
 			post_block_reject_warn(B, check_nonce_limiter_step_number, Peer,
 					[{block_step_number, StepNumber},
 					{current_step_number, CurrentStepNumber}]),

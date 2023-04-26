@@ -22,7 +22,6 @@ start_link() ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
-	?LOG_ERROR("****** SUP INIT ***** ~p", [Config#config.nonce_limiter_client_peers]),
 	Workers = lists:map(
 		fun(Peer) ->
 			Name = list_to_atom("ar_nonce_limiter_server_worker_"

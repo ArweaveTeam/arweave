@@ -339,7 +339,6 @@ get_session(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
-	?LOG_ERROR("**** NONCE LIMITER INIT **** ~p", [ar_node:is_joined()]),
 	ok = ar_events:subscribe(node_state),
 	State =
 		case ar_node:is_joined() of
@@ -971,21 +970,14 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
-	?LOG_INFO([{event, external_vdf_update},
-			{step_number, StepNumber}, {checkpoints, length(Checkpoints)},
-			{is_partial, IsPartial}]),
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
-			?LOG_INFO([{event, external_vdf_update_session_not_found}, {session_key, SessionKey}, {is_partial, IsPartial}]),
 			case IsPartial of
 				true ->
 					%% Inform the peer we have not initialized the corresponding session yet.
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
-					?LOG_ERROR("apply_external_update NOT FOUND NOT PARTIAL: ~p", [length(Checkpoints)]),
-					Map = maps:put(StepNumber, Checkpoints, Session#vdf_session.last_step_checkpoints_map),
-					Session2 = Session#vdf_session{ last_step_checkpoints_map = Map },
-					SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
+					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
 					Sessions2 = gb_sets:add_element({element(2, SessionKey),
 							element(1, SessionKey)}, Sessions),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
@@ -999,10 +991,6 @@ apply_external_update2(Update, State) ->
 				step_checkpoints_map = Map } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
-					?LOG_ERROR("apply_external_update FOUND PARTIAL: ~p", [length(Checkpoints)]),
-					?LOG_INFO([{event, external_vdf_update_new_step}, {session_key, SessionKey},
-							{current_step_number, CurrentStepNumber},
-							{step_number, StepNumber}, {steps, length(CurrentSteps)}]),
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
 					CurrentSession2 = CurrentSession#vdf_session{ step_number = StepNumber,
 							step_checkpoints_map = Map2,
@@ -1013,10 +1001,6 @@ apply_external_update2(Update, State) ->
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
-					?LOG_INFO([{event, external_vdf_update_bad_step}, {session_key, SessionKey}, 
-							{current_step_number, CurrentStepNumber},
-							{step_number, StepNumber}]),
-
 					case CurrentStepNumber >= StepNumber of
 						true ->
 							%% Inform the peer we are ahead.
@@ -1029,10 +1013,7 @@ apply_external_update2(Update, State) ->
 									{reply, #nonce_limiter_update_response{
 											step_number = CurrentStepNumber }, State};
 								false ->
-									?LOG_ERROR("apply_external_update FOUND NOT PARTIAL: ~p", [length(Checkpoints)]),
-									Map = maps:put(StepNumber, Checkpoints, Session#vdf_session.last_step_checkpoints_map),
-									Session2 = Session#vdf_session{ last_step_checkpoints_map = Map },
-									SessionByKey2 = maps:put(SessionKey, Session2,
+									SessionByKey2 = maps:put(SessionKey, Session,
 											SessionByKey),
 									may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey,
 											StepNumber),
