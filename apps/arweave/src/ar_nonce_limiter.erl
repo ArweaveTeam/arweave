@@ -622,12 +622,17 @@ handle_info({computed, Args}, State) ->
 	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
 	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
 	Session = maps:get(CurrentSessionKey, SessionByKey),
-	#vdf_session{ steps = [CurrentOutput | _] = Steps,
+	#vdf_session{ steps = [SessionOutput | _] = Steps,
 			step_checkpoints_map = Map } = Session,
 	{NextSeed, IntervalNumber} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
-	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
-			SessionOutput, IntervalStart, StepNumber, NextSeed),
+	SessionOutput2 =
+		case get_entropy_reset_point(IntervalStart, StepNumber) of
+			StepNumber ->
+				mix_seed(SessionOutput, NextSeed);
+			_ ->
+				SessionOutput
+		end,
 	gen_server:cast(?MODULE, schedule_step),
 	case PrevOutput == SessionOutput2 of
 		false ->
@@ -857,82 +862,38 @@ start_worker(State) ->
 
 compute(StepNumber, PrevOutput) ->
 	{ok, Output, Checkpoints} = ar_vdf:compute2(StepNumber, PrevOutput, ?VDF_DIFFICULTY),
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(double_check_nonce_limiter, Config#config.enable) of
-		false ->
-			{ok, Output, Checkpoints};
-		true ->
-			{ok, DebugOutput, DebugCheckpoints} = ar_vdf:debug_sha2(StepNumber, PrevOutput),
-			case {Output, Checkpoints} == {DebugOutput, DebugCheckpoints} of
-				true ->
-					{ok, Output, Checkpoints};
-				false ->
-					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
-					file:write_file("compute_" ++ binary_to_list(ID),
-							term_to_binary({StepNumber, PrevOutput})),
-					?LOG_ERROR([{event, nonce_limiter_compute_mismatch},
-							{report_id, ID}]),
-					{ok, Output, Checkpoints}
-			end
-	end.
+	debug_double_check(
+		"compute",
+		{ok, Output, Checkpoints},
+		fun ar_vdf:debug_sha2/2,
+		[StepNumber, PrevOutput]).
 
 verify(StartStepNumber, PrevOutput, Groups, ResetStepNumber, ResetSeed, ThreadCount) ->
-	Rep1 = ar_vdf:verify2(StartStepNumber, PrevOutput, Groups,
+	Result = ar_vdf:verify2(StartStepNumber, PrevOutput, Groups,
 			ResetStepNumber, ResetSeed, ThreadCount,
 			?VDF_DIFFICULTY),
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(double_check_nonce_limiter, Config#config.enable) of
-		false ->
-			Rep1;
-		true ->
-			Rep2 = ar_vdf:debug_sha_verify(StartStepNumber, PrevOutput, Groups,
-					ResetStepNumber, ResetSeed),
-			case Rep1 == Rep2 of
-				true ->
-					Rep1;
-				false ->
-					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
-					file:write_file("verify_" ++ binary_to_list(ID),
-							term_to_binary({StartStepNumber, PrevOutput, Groups,
-									ResetStepNumber, ResetSeed, ThreadCount})),
-					?LOG_ERROR([{event, nonce_limiter_verify_mismatch},
-							{report_id, ID}]),
-					Rep1
-			end
-	end.
+	debug_double_check(
+		"verify",
+		Result,
+		fun ar_vdf:debug_sha_verify/2,
+		[StartStepNumber, PrevOutput, Groups, ResetStepNumber, ResetSeed, ThreadCount]).
 
 verify_no_reset(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ThreadCount) ->
 	Garbage = crypto:strong_rand_bytes(32),
-	Rep1 = ar_vdf:verify2(StartStepNumber, PrevOutput, Groups, 0,
+	Result = ar_vdf:verify2(StartStepNumber, PrevOutput, Groups, 0,
 			Garbage, ThreadCount, ?VDF_DIFFICULTY),
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(double_check_nonce_limiter, Config#config.enable) of
-		false ->
-			Rep1;
-		true ->
-			Rep2 = ar_vdf:debug_sha_verify_no_reset(
-				StartStepNumber, PrevOutput, Groups),
-			case Rep1 == Rep2 of
-				true ->
-					Rep1;
-				false ->
-					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
-					file:write_file("verify_no_reset_" ++ binary_to_list(ID),
-							term_to_binary({StartStepNumber, PrevOutput, Groups,
-									ThreadCount})),
-					?LOG_ERROR([{event, nonce_limiter_verify_no_reset_mismatch},
-							{report_id, ID}]),
-					Rep1
-			end
-	end.
+	debug_double_check(
+		"verify_no_reset",
+		Result,
+		fun ar_vdf:debug_sha_verify_no_reset/2,
+		[StartStepNumber, PrevOutput, Groups, ThreadCount]).
 
 worker() ->
 	receive
 		{compute, {StepNumber, PrevOutput, UpperBound}, From} ->
 			{ok, Output, Checkpoints} = prometheus_histogram:observe_duration(
 					vdf_step_time_milliseconds, [], fun() -> compute(StepNumber, PrevOutput) end),
-			Args2 = {StepNumber, PrevOutput, Output, UpperBound, Checkpoints},
-			From ! {computed, Args2},
+			From ! {computed, {StepNumber, PrevOutput, Output, UpperBound, Checkpoints}},
 			worker();
 		stop ->
 			ok

@@ -1,7 +1,8 @@
 -module(ar_vdf).
 
 -export([compute/3, compute2/3, verify/7, verify2/7,
-		debug_sha_verify_no_reset/3, debug_sha_verify/5, debug_sha2/2]).
+		debug_sha_verify_no_reset/4, debug_sha_verify/6, debug_sha2/2,
+		step_number_to_salt_number/1]).
 
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar.hrl").
@@ -156,7 +157,7 @@ debug_sha2(StepNumber, Output) ->
 	{ok, Output2, Checkpoints}.
 
 %% @doc An Erlang implementation of ar_vdf:verify/7. Used in tests.
-debug_sha_verify_no_reset(StepNumber, Output, Groups) ->
+debug_sha_verify_no_reset(StepNumber, Output, Groups, _ThreadCount) ->
 	Salt = step_number_to_salt_number(StepNumber),
 	debug_verify_no_reset(Salt, Output, lists:reverse(Groups), []).
 
@@ -187,7 +188,7 @@ debug_verify_no_reset(Salt, Output, [{Size, N, Buffer} | Groups], Steps) ->
 	end.
 
 %% @doc An Erlang implementation of ar_vdf:verify/7. Used in tests.
-debug_sha_verify(StepNumber, Output, Groups, ResetStepNumber, ResetSeed) ->
+debug_sha_verify(StepNumber, Output, Groups, ResetStepNumber, ResetSeed, _ThreadCount) ->
 	StartSalt = step_number_to_salt_number(StepNumber),
 	ResetSalt = step_number_to_salt_number(ResetStepNumber - 1),
 	debug_verify(StartSalt, Output, lists:reverse(Groups), ResetSalt, ResetSeed,
