@@ -878,7 +878,7 @@ compute(StepNumber, Output) ->
 
 verify(StartStepNumber, PrevOutput, Groups, ResetStepNumber, ResetSeed, ThreadCount) ->
 	Rep1 = ar_vdf:verify2(StartStepNumber, PrevOutput, Groups,
-			ResetStepNumber - 1, ResetSeed, ThreadCount,
+			ResetStepNumber, ResetSeed, ThreadCount,
 			?VDF_DIFFICULTY),
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(double_check_nonce_limiter, Config#config.enable) of
