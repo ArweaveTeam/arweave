@@ -778,10 +778,9 @@ handle_task({computed_output, _},
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
-	{SessionKey, VDFSession, Output, PartitionUpperBound} = Args,
+	{SessionKey, #vdf_session{ seed = Seed, step_number = StepNumber },
+		Output, PartitionUpperBound} = Args,
 	{NextSeed, StartIntervalNumber} = SessionKey,
-	Seed = VDFSession#vdf_session.seed,
-	StepNumber = VDFSession#vdf_session.step_number,
 	#mining_session{ next_seed = CurrentNextSeed,
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = Session,

@@ -3,11 +3,11 @@
 -behaviour(gen_server).
 
 -export([start_link/0, is_ahead_on_the_timeline/2, get_current_step_number/0,
-		get_current_step_number/1, get_seed_data/4, get_last_step_checkpoints/3,
+		get_current_step_number/1, get_seed_data/4, get_step_checkpoints/3,
 		get_steps/3, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, 
-		compute/2, resolve_remote_server_raw_peers/0,
+		verify_no_reset/4, compute/2, resolve_remote_server_raw_peers/0,
 		get_entropy_reset_point/2, maybe_add_entropy/4, mix_seed/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -76,8 +76,6 @@ get_seed_data(StepNumber, NonceLimiterInfo, NextSeedOption, NextUpperBoundOption
 %% none found.
 get_step_checkpoints(StepNumber, NextSeed, StartIntervalNumber) ->
 	SessionKey = {NextSeed, StartIntervalNumber},
-	get_step_checkpoints(StepNumber, SessionKey).
-get_step_checkpoints(StepNumber, SessionKey) ->
 	gen_server:call(?MODULE, {get_step_checkpoints, StepNumber, SessionKey}, infinity).
 
 %% @doc Return the steps of the given interval. The steps are chosen
@@ -105,17 +103,13 @@ validate_last_step_checkpoints(#block{
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevBStepNumber } = PrevInfo,
 	SessionKey = {PrevNextSeed, PrevBStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
-	case get_step_checkpoints(StepNumber, SessionKey) of
+	case gen_server:call(?MODULE,
+			{get_step_checkpoints, StepNumber, SessionKey}, infinity) of
 		LastStepCheckpoints ->
 			{true, cache_match};
 		not_found ->
-			PrevOutput2 =
-				case get_entropy_reset_point(PrevBStepNumber, StepNumber) of
-					StepNumber ->
-						mix_seed(PrevOutput, Seed);
-					_ ->
-						PrevOutput
-				end,
+			PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
+				PrevOutput, PrevBStepNumber, StepNumber, Seed),
 			Buffer = iolist_to_binary(lists:reverse(LastStepCheckpoints)),
 			Groups = [{1, ?VDF_CHECKPOINT_COUNT_IN_STEP, Buffer}],
 			PrevStepNumber = StepNumber - 1,
@@ -626,13 +620,8 @@ handle_info({computed, Args}, State) ->
 			step_checkpoints_map = Map } = Session,
 	{NextSeed, IntervalNumber} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
-	SessionOutput2 =
-		case get_entropy_reset_point(IntervalStart, StepNumber) of
-			StepNumber ->
-				mix_seed(SessionOutput, NextSeed);
-			_ ->
-				SessionOutput
-		end,
+	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
+			SessionOutput, IntervalStart, StepNumber, NextSeed),
 	gen_server:cast(?MODULE, schedule_step),
 	case PrevOutput == SessionOutput2 of
 		false ->
@@ -660,37 +649,6 @@ terminate(_Reason, #state{ worker = W }) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-dump_error(Data) ->
-	{ok, Config} = application:get_env(arweave, config),
-	ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
-	ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
-	file:write_file(ErrorDumpFile, term_to_binary(Data)),
-	ErrorID.
-
-%% @doc
-%% PrevStepNumber <------------------------------------------------------> StepNumber
-%%     PrevOutput x
-%%                                                |----------------------| StepsToValidate
-%%                |-------------------------------| NumStepsBefore
-%%                |---------------------------------------------| SessionSteps
-%%
-skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput, StepsToValidate, SessionSteps) ->
-	ComputedSteps = lists:reverse(SessionSteps),
-	%% Number of steps in the PrevStepNumber to StepNumber range that fall before the
-	%% beginning of the StepsToValidate list. To avoid computing these steps we will look for
-	%% them in the current VDF session (i.e. in the SessionSteps list)
-	NumStepsBefore = StepNumber - PrevStepNumber - length(StepsToValidate),
-	case NumStepsBefore > 0 andalso length(ComputedSteps) >= NumStepsBefore of
-		false ->
-			{PrevStepNumber, PrevOutput, ComputedSteps};
-		true ->
-			{
-				PrevStepNumber + NumStepsBefore,
-				lists:nth(NumStepsBefore, ComputedSteps),
-				lists:nthtail(NumStepsBefore, ComputedSteps)
-			}
-	end.
 
 steps_to_buffer([Step | Steps]) ->
 	<< Step/binary, (steps_to_buffer(Steps))/binary >>;
@@ -967,10 +925,9 @@ schedule_step(State) ->
 	PrevOutput = hd(Steps),
 	StepNumber = PrevStepNumber + 1,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
-	{PrevOutput2, UpperBound2} =
-		case get_entropy_reset_point(IntervalStart, StepNumber) of
-			StepNumber ->
-				{mix_seed(PrevOutput, NextSeed), NextUpperBound};
+	PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
+		PrevOutput, IntervalStart, StepNumber, NextSeed),
+	UpperBound2 = case get_entropy_reset_point(IntervalStart, StepNumber) of
 			none ->
 				UpperBound;
 			_ ->
