@@ -891,7 +891,7 @@ verify(StartStepNumber, PrevOutput, Groups, ResetStepNumber, ResetSeed, ThreadCo
 	debug_double_check(
 		"verify",
 		Result,
-		fun ar_vdf:debug_sha_verify/2,
+		fun ar_vdf:debug_sha_verify/6,
 		[StartStepNumber, PrevOutput, Groups, ResetStepNumber, ResetSeed, ThreadCount]).
 
 verify_no_reset(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ThreadCount) ->
@@ -901,7 +901,7 @@ verify_no_reset(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes
 	debug_double_check(
 		"verify_no_reset",
 		Result,
-		fun ar_vdf:debug_sha_verify_no_reset/2,
+		fun ar_vdf:debug_sha_verify_no_reset/4,
 		[StartStepNumber, PrevOutput, Groups, ThreadCount]).
 
 worker() ->
