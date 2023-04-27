@@ -415,10 +415,17 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 								_ ->
 									TipNonceLimiterInfo#nonce_limiter_info.output
 							end,
-						PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
-								PrevOutput, PrevStepNumber, StepNumber, PrevNextSeed),
-						{ok, NonceLimiterOutput, Checkpoints} = ar_nonce_limiter:compute(
-								StepNumber, PrevOutput2),
+						PrevOutput2 =
+								case ar_nonce_limiter:get_entropy_reset_point(PrevStepNumber,
+										StepNumber) of
+									StepNumber ->
+										ar_nonce_limiter:mix_seed(PrevOutput,
+												PrevNextSeed);
+									_ ->
+										PrevOutput
+								end,
+						{ok, NonceLimiterOutput, Checkpoints} = ar_nonce_limiter:compute(StepNumber,
+								PrevOutput2),
 						Checkpoints;
 					_ ->
 						LastStepCheckpoints
