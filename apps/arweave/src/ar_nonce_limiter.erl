@@ -229,6 +229,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 		  		when StartStepNumber + NumAlreadyComputed < StepNumber ->
 			case ar_config:use_remote_vdf_server() of
 				true ->
+					%% Wait for our VDF server(s) to validate the reamining steps.
 					?LOG_ERROR([{event, spawn_new_vdf_validation_request},
 							{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
 							{start_step_number, StartStepNumber},
@@ -238,23 +239,23 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 						timer:sleep(1000),
 						request_validation(H, Info, PrevInfo) end);
 				false ->
+					%% Validate the remaining steps.
 					StartOutput2 = case NumAlreadyComputed of
 							0 -> StartOutput;
 							_ -> lists:nth(NumAlreadyComputed, ComputedSteps)
 					end,
 					spawn(fun() ->
-						StartStepNumber2 = PrevStepNumber + NumAlreadyComputed,
+						StartStepNumber2 = StartStepNumber + NumAlreadyComputed,
 						{ok, Config} = application:get_env(arweave, config),
 						ThreadCount = Config#config.max_nonce_limiter_validation_thread_count,
 						Result =
 							case is_integer(EntropyResetPoint) andalso
 									EntropyResetPoint > StartStepNumber2 of
 								true ->
-									SeedH = crypto:hash(sha256, Seed),
 									catch verify(StartStepNumber2, StartOutput2,
 											?VDF_CHECKPOINT_COUNT_IN_STEP,
 											RemainingStepsToValidate, EntropyResetPoint,
-											SeedH, ThreadCount);
+											crypto:hash(sha256, Seed), ThreadCount);
 								_ ->
 									catch verify_no_reset(StartStepNumber2, StartOutput2,
 											?VDF_CHECKPOINT_COUNT_IN_STEP,
