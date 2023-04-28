@@ -11,10 +11,9 @@
 		sign_tx/3, assert_post_tx_to_master/1, slave_mine/0,
 		assert_slave_wait_until_height/1, slave_call/3,
 		wait_until_height/1, read_block_when_stored/1,
-		create_block/2, sign_block/3, post_block/2]).
+		sign_block/3, post_block/2]).
 
 init(Req, State) ->
-	?LOG_ERROR("****** HELLO"),
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	handle(SplitPath, Req, State).
 
@@ -37,19 +36,16 @@ handle([<<"vdf">>], Req, State) ->
 
 	case ets:lookup(?MODULE, SessionKey) of
 		[{SessionKey, FirstStepNumber, LatestStepNumber}] ->
-			?LOG_ERROR("***VDF FOUND*** ~p / ~p", [ar_util:encode(SessionKey), StepNumber]),
 			?assert(not IsPartial orelse StepNumber == LatestStepNumber+1, "Partial VDF update did not increase by 1"),
 			ets:insert(?MODULE, {SessionKey, FirstStepNumber, StepNumber}),
 			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
 		_ ->
 			case IsPartial of
 				true ->
-					?LOG_ERROR("***VDF NOT FOUND*** ~p / ~p", [ar_util:encode(SessionKey), StepNumber]),
 					Bin = ar_serialize:nonce_limiter_update_response_to_binary(
 						#nonce_limiter_update_response{ session_found = false }),
 					{ok, cowboy_req:reply(202, #{}, Bin, Req), State};
 				false ->
-					?LOG_ERROR("***VDF INITIALIZING*** ~p / ~p", [ar_util:encode(SessionKey), StepNumber]),
 					ets:insert(?MODULE, {SessionKey, StepNumber, StepNumber}),
 					{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
 			end

@@ -20,7 +20,7 @@
 		join_on_master/0, rejoin_on_master/0,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
-		post_and_mine/2, create_block/2, post_block/2, post_block/3, send_new_block/2, 
+		post_and_mine/2, post_block/2, post_block/3, send_new_block/2, 
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3, assert_get_tx_data_master/2,
@@ -825,15 +825,6 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 			[{H, _, _} | _] = slave_wait_until_height(CurrentHeight + 1),
 			slave_call(ar_test_node, read_block_when_stored, [H, true], 20000)
 	end.
-
-create_block(PreviousBlock, TXs) ->
-	Block = PreviousBlock#block{
-				previous_block = PreviousBlock#block.indep_hash,
-				timestamp = os:system_time(second),
-				txs = TXs,
-				height = PreviousBlock#block.height + 1,
-				indep_hash = crypto:strong_rand_bytes(32) },
-	ar_block:generate_tx_tree(Block).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
 	post_block(B, [ExpectedResult], ar_test_node:master_peer());

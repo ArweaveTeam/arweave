@@ -101,9 +101,6 @@ validate_last_step_checkpoints(#block{
 				last_step_checkpoints = [Output | _] = LastStepCheckpoints } }, PrevB,
 				PrevOutput)
 		when length(LastStepCheckpoints) == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
-	?LOG_ERROR("******** VALIDATING LAST STEP CHECKPOINTS: ~p",
-			[LastStepCheckpoints]),
-	ar_util:print_stacktrace(),
 	PrevInfo = get_or_init_nonce_limiter_info(PrevB),
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevBStepNumber } = PrevInfo,
@@ -213,7 +210,6 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 
 		{[], NumAlreadyComputed} when StartStepNumber + NumAlreadyComputed == StepNumber ->
-			?LOG_ERROR("******************** request_validation casting validated_steps 1"),
 			%% We've already computed up to StepNumber, so we can use the checkpoints from the
 			%% current session
 			LastStepCheckpoints = get_step_checkpoints(StepNumber, SessionKey),
@@ -285,14 +281,12 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 							false ->
 								ar_events:send(nonce_limiter, {invalid, H, 3});
 							{true, ValidatedSteps} ->
-								?LOG_ERROR("************ request_validation casting validated_steps 2"),
 								AllValidatedSteps = ValidatedSteps ++ SessionSteps,
 								%% The last_step_checkpoints in Info were validated as part
 								%% of an earlier call to
 								%% ar_block_pre_validator:pre_validate_nonce_limiter, so
 								%% we can trust them here.
 								LastStepCheckpoints = Info#nonce_limiter_info.last_step_checkpoints,
-								?LOG_ERROR("****** CASTING LAST STEP CHECKPOINTS: ~p", [LastStepCheckpoints]),
 								Args = {StepNumber, SessionKey, NextSessionKey,
 										Seed, UpperBound, NextUpperBound,
 										AllValidatedSteps, LastStepCheckpoints},
@@ -550,7 +544,6 @@ handle_cast({validated_steps, Args}, State) ->
 					Session3#vdf_session.step_number),
 			Sessions2 = gb_sets:add_element({element(2, NextSessionKey),
 					element(1, NextSessionKey)}, Sessions),
-			?LOG_ERROR("SENDING validated_output: ~p", [ar_util:encode(element(1, SessionKey))]),
 			ar_events:send(nonce_limiter, {validated_output, {SessionKey, Session2}}),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;

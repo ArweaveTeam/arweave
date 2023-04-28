@@ -94,7 +94,6 @@ make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
 
 push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
-	?LOG_ERROR("*** PUSHING UPDATE ~p TO ~p ***", [ar_util:encode(element(1, SessionKey)), Peer]),
 	Update = make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
@@ -135,7 +134,6 @@ push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
 	end.
 
 push_session(SessionKey, Session, Peer) ->
-	?LOG_ERROR("*** PUSHING SESSION ~p TO ~p ***", [ar_util:encode(element(1, SessionKey)), Peer]),
 	Update = make_nonce_limiter_update(SessionKey, Session, false),
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
