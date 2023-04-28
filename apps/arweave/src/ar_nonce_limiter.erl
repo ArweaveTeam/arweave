@@ -76,6 +76,8 @@ get_seed_data(StepNumber, NonceLimiterInfo, NextSeedOption, NextUpperBoundOption
 %% none found.
 get_step_checkpoints(StepNumber, NextSeed, StartIntervalNumber) ->
 	SessionKey = {NextSeed, StartIntervalNumber},
+	get_step_checkpoints(StepNumber, SessionKey).
+get_step_checkpoints(StepNumber, SessionKey) ->
 	gen_server:call(?MODULE, {get_step_checkpoints, StepNumber, SessionKey}, infinity).
 
 %% @doc Return the steps of the given interval. The steps are chosen
@@ -103,8 +105,7 @@ validate_last_step_checkpoints(#block{
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevBStepNumber } = PrevInfo,
 	SessionKey = {PrevNextSeed, PrevBStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
-	case gen_server:call(?MODULE,
-			{get_step_checkpoints, StepNumber, SessionKey}, infinity) of
+	case get_step_checkpoints(StepNumber, SessionKey) of
 		LastStepCheckpoints ->
 			{true, cache_match};
 		not_found ->
@@ -210,9 +211,12 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 
 		{[], NumAlreadyComputed} when StartStepNumber + NumAlreadyComputed == StepNumber ->
-			?LOG_ERROR("request_validation casting validated_steps 1"),
+			?LOG_ERROR("******************** request_validation casting validated_steps 1"),
+			%% We've already computed up to StepNumber, so we can use the checkpoints from the
+			%% current session
+			LastStepCheckpoints = get_step_checkpoints(StepNumber, SessionKey),
 			Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
-					SessionSteps},
+					SessionSteps, LastStepCheckpoints},
 			gen_server:cast(?MODULE, {validated_steps, Args}),
 			spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
 
@@ -279,11 +283,12 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 							false ->
 								ar_events:send(nonce_limiter, {invalid, H, 3});
 							{true, ValidatedSteps} ->
-								?LOG_ERROR("request_validation casting validated_steps 2"),
+								?LOG_ERROR("************ request_validation casting validated_steps 2"),
 								AllValidatedSteps = ValidatedSteps ++ SessionSteps,
+								LastStepCheckpoints = get_step_checkpoints(StepNumber, NextSessionKey),
 								Args = {StepNumber, SessionKey, NextSessionKey,
 										Seed, UpperBound, NextUpperBound,
-										AllValidatedSteps},
+										AllValidatedSteps, LastStepCheckpoints},
 								gen_server:cast(?MODULE, {validated_steps, Args}),
 								ar_events:send(nonce_limiter, {valid, H})
 						end
@@ -479,8 +484,7 @@ handle_cast({apply_tip, B, PrevB}, State) ->
 	{noreply, apply_tip2(B, PrevB, State)};
 
 handle_cast({validated_steps, Args}, State) ->
-	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps,
-		LastStepCheckpoints} = Args,
+	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps, LastStepCheckpoints } = Args,
 	#state{ session_by_key = SessionByKey, sessions = Sessions,
 			current_session_key = CurrentSessionKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
@@ -491,13 +495,11 @@ handle_cast({validated_steps, Args}, State) ->
 					{next_seed, ar_util:encode(element(1, SessionKey))},
 					{interval, element(2, SessionKey)}]),
 			{noreply, State};
-		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
-				step_checkpoints_map = Map } = Session ->
+		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps, step_checkpoints_map = Map } = Session ->
 			Session2 =
 				case CurrentStepNumber < StepNumber of
 					true ->
-						%% Update the current Session with all the newly validated steps and
-						%% as well as the checkpoints associated with step StepNumber.
+						%% Update the current Session with all the newly validated steps.
 						%% This branch occurs when a block is received that is ahead of us
 						%% in the VDF chain.
 						Steps2 = lists:sublist(Steps, StepNumber - CurrentStepNumber)
@@ -744,14 +746,14 @@ apply_chain(Info, PrevInfo) ->
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
-			steps = Steps } = Info,
+			steps = Steps, last_step_checkpoints = LastStepCheckpoints } = Info,
 	Count = StepNumber - PrevStepNumber,
 	Output = hd(Steps),
 	Count = length(Steps),
 	SessionKey = {PrevNextSeed, PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
-			Steps},
+			Steps, LastStepCheckpoints},
 	gen_server:cast(?MODULE, {validated_steps, Args}).
 
 apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = State) ->

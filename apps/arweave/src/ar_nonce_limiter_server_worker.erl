@@ -54,7 +54,6 @@ handle_cast(Cast, State) ->
 handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) ->
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	?LOG_ERROR("****** WORKER RECEIVED COMPUTED_OUTPUT ******"),
 	#state{ peer = Peer, pause_until = Timestamp } = State,
 	{SessionKey, Session, Output, PartitionUpperBound} = Args,
 	case os:system_time(second) < Timestamp of
@@ -64,7 +63,6 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 			{noreply, push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State)}
 	end;
 handle_info({event, nonce_limiter, {validated_output, Args}}, State) ->
-	?LOG_ERROR("****** WORKER RECEIVED VALIDATED_OUTPUT ******"),
 	%% The validated_output event is sent when a new block comes in that opens a new session.
 	%% The old session is validated and then "closed", we need to push out the this completed
 	%% session ASAP since future VDF updates will be off of the new session.
@@ -90,6 +88,7 @@ terminate(_Reason, _State) ->
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
+	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
 	#nonce_limiter_update{ session_key = SessionKey,
 			is_partial = IsPartial, checkpoints = Checkpoints,
 			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
@@ -138,7 +137,6 @@ push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
 push_session(SessionKey, Session, Peer) ->
 	?LOG_ERROR("*** PUSHING SESSION ~p TO ~p ***", [ar_util:encode(element(1, SessionKey)), Peer]),
 	Update = make_nonce_limiter_update(SessionKey, Session, false),
-	?LOG_ERROR("~p", [?REC_INFO(nonce_limiter_update, Update)]),
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			ok;
