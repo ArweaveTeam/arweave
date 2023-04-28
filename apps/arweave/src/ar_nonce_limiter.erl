@@ -101,6 +101,9 @@ validate_last_step_checkpoints(#block{
 				last_step_checkpoints = [Output | _] = LastStepCheckpoints } }, PrevB,
 				PrevOutput)
 		when length(LastStepCheckpoints) == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
+	?LOG_ERROR("******** VALIDATING LAST STEP CHECKPOINTS: ~p",
+			[LastStepCheckpoints]),
+	ar_util:print_stacktrace(),
 	PrevInfo = get_or_init_nonce_limiter_info(PrevB),
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevBStepNumber } = PrevInfo,
@@ -183,7 +186,6 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
 			{step_count, StepNumber - PrevStepNumber}, {steps, length(StepsToValidate)},
 			{pid, self()}]),
-	ar_util:print_stacktrace(),
 
 	%% We need to validate all the steps from PrevStepNumber to StepNumber:
 	%% PrevStepNumber <--------------------------------------------> StepNumber
@@ -285,7 +287,12 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 							{true, ValidatedSteps} ->
 								?LOG_ERROR("************ request_validation casting validated_steps 2"),
 								AllValidatedSteps = ValidatedSteps ++ SessionSteps,
-								LastStepCheckpoints = get_step_checkpoints(StepNumber, NextSessionKey),
+								%% The last_step_checkpoints in Info were validated as part
+								%% of an earlier call to
+								%% ar_block_pre_validator:pre_validate_nonce_limiter, so
+								%% we can trust them here.
+								LastStepCheckpoints = Info#nonce_limiter_info.last_step_checkpoints,
+								?LOG_ERROR("****** CASTING LAST STEP CHECKPOINTS: ~p", [LastStepCheckpoints]),
 								Args = {StepNumber, SessionKey, NextSessionKey,
 										Seed, UpperBound, NextUpperBound,
 										AllValidatedSteps, LastStepCheckpoints},

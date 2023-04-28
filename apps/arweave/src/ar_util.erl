@@ -324,6 +324,6 @@ print_stacktrace() ->
 				fun(StackTraceEntry, Acc) ->
                 	Acc ++ io_lib:format("  ~p~n", [StackTraceEntry])
                 end, "Stack trace:~n", TrimmedStacktrace),
-			?LOG_INFO(StacktraceString)
+			?LOG_ERROR(StacktraceString)
     end.
 

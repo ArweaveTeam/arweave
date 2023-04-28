@@ -14,6 +14,7 @@
 		create_block/2, sign_block/3, post_block/2]).
 
 init(Req, State) ->
+	?LOG_ERROR("****** HELLO"),
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	handle(SplitPath, Req, State).
 
@@ -55,8 +56,14 @@ handle([<<"vdf">>], Req, State) ->
 	end.
 
 vdf_server_test_() ->
-	% {timeout, 120, fun test_vdf_server_push_fast_block/0},
-	{timeout, 120, fun test_vdf_server_push_slow_block/0}.
+    {foreach,
+		fun() -> ets:new(?MODULE, [named_table, set, public]) end, % setup
+		fun(Tab) -> ets:delete(Tab) end, % cleanup
+		[
+			{timeout, 120, fun test_vdf_server_push_fast_block/0},
+			{timeout, 120, fun test_vdf_server_push_slow_block/0}
+		]
+    }.
 
 %% @doc All vdf_server_test_ tests test a few things
 %% 1. VDF server posts regular VDF updates to the client
@@ -91,7 +98,6 @@ test_vdf_server_push_fast_block() ->
 	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()), Config2),
 
 	%% Setup a server to listen for VDF pushes
-	ets:new(?MODULE, [named_table, set, public]),
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
 		ar_vdf_server_test_listener,
@@ -138,7 +144,6 @@ test_vdf_server_push_slow_block() ->
 	slave_call(ar_http, block_peer_connections, []),
 
 	%% Setup a server to listen for VDF pushes
-	ets:new(?MODULE, [named_table, set, public]),
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
 		ar_vdf_server_test_listener,
