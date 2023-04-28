@@ -182,6 +182,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			{next_session_key, ar_util:encode(NextSeed)},
 			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
 			{step_count, StepNumber - PrevStepNumber}, {steps, length(StepsToValidate)},
+			{session_steps, length(SessionSteps)},
 			{pid, self()}]),
 
 	%% We need to validate all the steps from PrevStepNumber to StepNumber:
@@ -236,6 +237,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 							{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
 							{start_step_number, StartStepNumber},
 							{num_steps_already_computed, NumAlreadyComputed},
+							{remaining_steps_to_validate, RemainingStepsToValidate},
 							{pid, self()}]),
 					spawn(fun() ->
 						timer:sleep(1000),
@@ -500,7 +502,8 @@ handle_cast({validated_steps, Args}, State) ->
 			Session2 =
 				case CurrentStepNumber < StepNumber of
 					true ->
-						%% Update the current Session with all the newly validated steps.
+						%% Update the current Session with all the newly validated steps and
+						%% as well as the checkpoints associated with step StepNumber.
 						%% This branch occurs when a block is received that is ahead of us
 						%% in the VDF chain.
 						Steps2 = lists:sublist(Steps, StepNumber - CurrentStepNumber)
@@ -965,6 +968,9 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
+	?LOG_INFO([{event, apply_external_update2}, {session_key, ar_util:encode(element(1, SessionKey))},
+			{step_number, StepNumber}, {upper_bound, UpperBound},
+			{checkpoints, Checkpoints}, {is_partial, IsPartial}]),
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			case IsPartial of

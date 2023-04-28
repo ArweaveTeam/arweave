@@ -1218,6 +1218,7 @@ handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
 %% Accept a nonce limiter (VDF) update from a configured peer, if any.
 %% POST request to /vdf.
 handle(<<"POST">>, [<<"vdf">>], Req, Pid) ->
+	?LOG_ERROR("*** GOT VDF POST REQUEST ***"),
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
