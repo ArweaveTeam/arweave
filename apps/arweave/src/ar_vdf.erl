@@ -2,7 +2,7 @@
 
 -export([compute/3, compute2/3, verify/8, verify2/8,
 		debug_sha_verify_no_reset/5, debug_sha_verify/7, debug_sha2/2,
-		step_number_to_salt_number/1]).
+		step_number_to_salt_number/1, checkpoint_buffer_to_checkpoints/1]).
 
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar.hrl").
@@ -68,12 +68,12 @@ verify(StartSalt, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
 			false
 	end.
 
-verify2(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ResetStepNumber, ResetSeed, ThreadCount,
-		IterationCount) ->
+verify2(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
+		ResetStepNumber, ResetSeed, ThreadCount, IterationCount) ->
 	StartSalt = step_number_to_salt_number(StartStepNumber),
 	ResetSalt = step_number_to_salt_number(ResetStepNumber - 1),
-	case verify(StartSalt, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ResetSalt, ResetSeed, ThreadCount,
-			IterationCount) of
+	case verify(StartSalt, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
+			ResetSalt, ResetSeed, ThreadCount, IterationCount) of
 		false ->
 			false;
 		{true, CheckpointBuffer} ->

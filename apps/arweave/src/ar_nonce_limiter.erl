@@ -643,7 +643,6 @@ terminate(_Reason, #state{ worker = W }) ->
 
 dump_error(Data) ->
 	{ok, Config} = application:get_env(arweave, config),
-	%%% XXX TODO: ErrorID changed from 16 to 8 bytes for one of the
 	ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
 	ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
 	file:write_file(ErrorDumpFile, term_to_binary(Data)),
