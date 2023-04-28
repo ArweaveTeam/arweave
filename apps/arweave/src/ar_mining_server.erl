@@ -79,18 +79,18 @@ remote_compute_h2(Peer, H2Materials) ->
 %% @doc Process the solution found by the coordinated mining peer.
 cm_exit_prepare_solution({PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber,
 		StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage,
-		PartitionUpperBound}) ->
+		PartitionUpperBound, SuppliedCheckpoints}) ->
 	io:format("DEBUG cm_exit_prepare_solution -1~n"), % TODO
 	gen_server:cast(?MODULE, {cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed,
 			NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1,
-			PoA2, H2, Preimage, PartitionUpperBound, 50});
+			PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints, 50});
 
 cm_exit_prepare_solution({PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber,
 		StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage,
-		PartitionUpperBound, RetryConterLeft}) ->
+		PartitionUpperBound, SuppliedCheckpoints, RetryConterLeft}) ->
 	gen_server:cast(?MODULE, {cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed,
 			NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1,
-			PoA2, H2, Preimage, PartitionUpperBound, RetryConterLeft}).
+			PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints, RetryConterLeft}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -300,7 +300,7 @@ handle_cast({remote_compute_h2, Peer, H2Materials}, State) ->
 
 handle_cast({cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed, NextSeed,
 		StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID,
-		PoA1, PoA2, H2, Preimage, PartitionUpperBound, _RetryConterLeft},
+		PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints, _RetryConterLeft},
 		#state{ diff = Diff, session = #mining_session{ ref = Ref } } = State) ->
 	io:format("DEBUG cm_exit_prepare_solution 1~n"), % TODO
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
@@ -340,7 +340,7 @@ handle_cast({cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed, NextSee
 							PoA2
 					end,
 					RecallByte22 = case PoA2 of not_set -> undefined; _ -> RecallByte2 end,
-					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, FixPoA2)
+					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, FixPoA2, SuppliedCheckpoints)
 			end,
 			{noreply, NewState};
 		false ->
@@ -1259,10 +1259,14 @@ prepare_solution(Args, State) ->
 									{mining_address, ar_util:encode(ReplicaID)}]);
 						_ ->
 							% TODO error handling
+							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+							#nonce_limiter_info{ next_seed = PrevNextSeed,
+								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+							SuppliedCheckpoints = ar_nonce_limiter:get_checkpoints(PrevStepNumber, StepNumber, PrevNextSeed),
 							ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer,
 									{PartitionNumber, Nonce, H0, Seed, NextSeed,
 									StartIntervalNumber, StepNumber, NonceLimiterOutput,
-									ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound})
+									ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints})
 					end;
 				_ ->
 					{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
@@ -1311,7 +1315,7 @@ prepare_solution(Args, State, Key) ->
 					State;
 				_ ->
 					RecallByte22 = case Chunk2 of not_set -> undefined; _ -> RecallByte2 end,
-					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, PoA2)
+					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, PoA2, not_found)
 			end;
 		_ ->
 			{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
@@ -1325,7 +1329,7 @@ prepare_solution(Args, State, Key) ->
 			State
 	end.
 
-prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
+prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, SuppliedCheckpoints) ->
 	{PartitionNumber, Nonce, _H0, Seed, NextSeed, StartIntervalNumber, StepNumber,
 			NonceLimiterOutput, ReplicaID, _Chunk1, _Chunk2, H, Preimage, PartitionUpperBound,
 			_Ref} = Args,
@@ -1357,7 +1361,7 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 			State;
 		true ->
 			SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
-					NextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
+					NextSeed, NonceLimiterOutput, StepNumber, SuppliedCheckpoints, LastStepCheckpoints,
 					RecallByte1, RecallByte2, PoA1, PoA2, Key},
 			?LOG_INFO([{event, found_mining_solution},
 					{partition, PartitionNumber}, {step_number, StepNumber},
