@@ -209,7 +209,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 					{error_dump, ErrorID}]),
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 
-		{none, NumAlreadyComputed} when StartStepNumber + NumAlreadyComputed == StepNumber ->
+		{[], NumAlreadyComputed} when StartStepNumber + NumAlreadyComputed == StepNumber ->
 			?LOG_ERROR("request_validation casting validated_steps 1"),
 			Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
 					SessionSteps},
@@ -681,7 +681,7 @@ exclude_computed_steps_from_steps_to_validate(StepsToValidate, [_Step | Computed
 		when I /= 1 ->
 	exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps, I + 1, NumAlreadyComputed);
 exclude_computed_steps_from_steps_to_validate([Step], [Step | _ComputedSteps], _I, NumAlreadyComputed) ->
-	{none, NumAlreadyComputed + 1};
+	{[], NumAlreadyComputed + 1};
 exclude_computed_steps_from_steps_to_validate([Step | StepsToValidate], [Step | ComputedSteps], _I, NumAlreadyComputed) ->
 	exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps, 1, NumAlreadyComputed + 1);
 exclude_computed_steps_from_steps_to_validate(_StepsToValidate, _ComputedSteps, _I, _NumAlreadyComputed) ->
@@ -1113,8 +1113,8 @@ exclude_computed_steps_from_steps_to_validate_test() ->
 
 test_exclude_computed_steps_from_steps_to_validate([Case | Cases]) ->
 	{Input, Expected, Title} = Case,
-	{Groups, ReversedSteps} = Input,
-	Got = exclude_computed_steps_from_steps_to_validate(Groups, ReversedSteps),
+	{StepsToValidate, ComputedSteps} = Input,
+	Got = exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps),
 	?assertEqual(Expected, Got, Title),
 	test_exclude_computed_steps_from_steps_to_validate(Cases);
 test_exclude_computed_steps_from_steps_to_validate([]) ->
