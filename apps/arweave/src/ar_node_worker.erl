@@ -457,9 +457,8 @@ handle_info({event, miner, {found_solution, _Args}},
 handle_info({event, miner, {found_solution, Args}}, State) ->
 	io:format("DEBUG ar_node_worker 1~n"),
 	{SolutionH, SolutionPreimage, PartitionNumber, Nonce, IntervalNumber,
-			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
-			RecallByte, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, RewardKey,
-			MerkleRebaseThreshold} = Args,
+			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, SuppliedCheckpoints, LastStepCheckpoints,
+			RecallByte, RecallByte2, PoA1, PoA2, RewardKey} = Args,
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
 	Now = os:system_time(second),
@@ -513,8 +512,17 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed)
 		end,
+	HaveSteps2 =
+		case HaveSteps of
+			not_found ->
+				% TODO verify
+				SuppliedCheckpoints;
+			_ ->
+				HaveSteps
+		end,
 	io:format("DEBUG ar_node_worker 2 HaveCheckpoints ~p~n", [HaveSteps]),
-	case HaveSteps of
+	io:format("DEBUG ar_node_worker 2 HaveCheckpoints2 ~p~n", [HaveSteps2]),
+	case HaveSteps2 of
 		false ->
 			{noreply, State};
 		not_found ->

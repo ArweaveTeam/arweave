@@ -1615,9 +1615,11 @@ json_struct_to_remote_solution(JSON) ->
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
-	{Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}.
+	SuppliedCheckpointsEncoded = maps:get(<<"vdf_checkpoints">>, JSON),
+	SuppliedCheckpoints = parse_checkpoints(ar_util:decode(SuppliedCheckpointsEncoded), 1),
+	{Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}.
 
-remote_solution_to_json_struct({Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}) ->
+remote_solution_to_json_struct({Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}) ->
 	[
 		{diff, integer_to_binary(Diff)},
 		{addr, ar_util:encode(Addr)},
@@ -1633,7 +1635,8 @@ remote_solution_to_json_struct({Diff, Addr, H0, H1, Nonce, PartitionNumber, Part
 		{next_seed, ar_util:encode(NextSeed)},
 		{start_interval_number, integer_to_binary(StartIntervalNumber)},
 		{step_number, integer_to_binary(StepNumber)},
-		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}
+		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
+		{vdf_checkpoints, ar_util:encode(iolist_to_binary(SuppliedCheckpoints))}
 	].
 
 % TODO json_struct_to_remote_solution + remote_solution_to_json_struct test
@@ -1658,9 +1661,11 @@ json_struct_to_remote_final_solution(JSON) ->
 	H2 = ar_util:decode(maps:get(<<"h2">>, JSON)),
 	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
 	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
-	{PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound}.
+	SuppliedCheckpointsEncoded = maps:get(<<"vdf_checkpoints">>, JSON),
+	SuppliedCheckpoints = parse_checkpoints(ar_util:decode(SuppliedCheckpointsEncoded), 1),
+	{PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints}.
 
-remote_final_solution_to_json_struct({PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound}) ->
+remote_final_solution_to_json_struct({PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints}) ->
 	io:format("DEBUG remote_final_solution_to_json_struct 0~n"),
 	Res = [
 		{partition_number, integer_to_binary(PartitionNumber)},
@@ -1675,7 +1680,8 @@ remote_final_solution_to_json_struct({PartitionNumber, Nonce, H0, Seed, NextSeed
 		{poa1, poa_to_json_struct(PoA1)},
 		{h2, ar_util:encode(H2)},
 		{preimage, ar_util:encode(Preimage)},
-		{partition_upper_bound, integer_to_binary(PartitionUpperBound)}
+		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
+		{vdf_checkpoints, ar_util:encode(iolist_to_binary(SuppliedCheckpoints))}
 	],
 	io:format("DEBUG remote_final_solution_to_json_struct 1~n"),
 	case PoA2 of
