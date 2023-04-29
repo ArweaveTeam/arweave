@@ -44,7 +44,6 @@ verify(StartSalt, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
 	RestStepsSize = ?VDF_BYTE_SIZE * (NumHashes - 1),
 	case HashBuffer of
 		<< RestSteps:RestStepsSize/binary, LastStep:?VDF_BYTE_SIZE/binary >> ->
-			StartTime = erlang:timestamp(),
 			case ar_mine_randomx:vdf_parallel_sha_verify_with_reset_nif(StartSaltBinary, PrevOutput,
 					NumHashes - 1, NumCheckpointsBetweenHashes - 1, IterationCount, RestSteps,
 					LastStep, ResetSaltBinary, ResetSeed, ThreadCount) of
