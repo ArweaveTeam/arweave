@@ -177,7 +177,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			SessionKey}, infinity),
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 
-	?LOG_ERROR([{event, vdf_validation_start}, {block, ar_util:encode(H)},
+	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
 			{session_key, ar_util:encode(PrevNextSeed)},
 			{next_session_key, ar_util:encode(NextSeed)},
 			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
@@ -233,12 +233,6 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			case ar_config:use_remote_vdf_server() of
 				true ->
 					%% Wait for our VDF server(s) to validate the reamining steps.
-					?LOG_ERROR([{event, spawn_new_vdf_validation_request},
-							{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
-							{start_step_number, StartStepNumber},
-							{num_steps_already_computed, NumAlreadyComputed},
-							{remaining_steps_to_validate, RemainingStepsToValidate},
-							{pid, self()}]),
 					spawn(fun() ->
 						timer:sleep(1000),
 						request_validation(H, Info, PrevInfo) end);
@@ -968,9 +962,6 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
-	?LOG_INFO([{event, apply_external_update2}, {session_key, ar_util:encode(element(1, SessionKey))},
-			{step_number, StepNumber}, {upper_bound, UpperBound},
-			{checkpoints, Checkpoints}, {is_partial, IsPartial}]),
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			case IsPartial of
