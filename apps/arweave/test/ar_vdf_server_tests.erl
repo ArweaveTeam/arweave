@@ -20,8 +20,6 @@ setup() ->
     {Config, SlaveConfig}.
 
 cleanup({Config, SlaveConfig}) ->
-	slave_stop(),
-	stop(),
 	application:set_env(arweave, config, Config),
 	slave_call(application, set_env, [arweave, config, SlaveConfig]),
 	ets:delete(?MODULE).
