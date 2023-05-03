@@ -1,6 +1,6 @@
 -module(ar_config).
 
--export([use_remote_vdf_server/0, parse/1, parse_storage_module/1]).
+-export([use_remote_vdf_server/0, parse/1, parse_storage_module/1, format_config/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -469,8 +469,11 @@ parse_options([{<<"vdf_server_trusted_peer">>, <<>>} | Rest], Config) ->
 parse_options([{<<"vdf_server_trusted_peer">>, Peer} | Rest], Config) ->
 	parse_options(Rest, parse_vdf_server_trusted_peer(Peer, Config));
 
-parse_options([{<<"vdf_server_trusted_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
-	parse_options(Rest, parse_vdf_server_trusted_peers(Peers, Config));
+parse_options([{<<"vdf_server_trusted_peers">>, BinaryPeers} | Rest], Config) when is_list(BinaryPeers) ->
+	#config{ nonce_limiter_server_trusted_peers = CurrentPeers } = Config,
+	StringPeers = [binary_to_list(BinaryPeer) || BinaryPeer <- BinaryPeers],
+	Peers = CurrentPeers ++ StringPeers,
+	parse_options(Rest, Config#config{ nonce_limiter_server_trusted_peers = Peers });
 parse_options([{<<"vdf_server_trusted_peers">>, Peers} | _], _) ->
 	{error, {bad_type, vdf_server_trusted_peers, array}, Peers};
 
@@ -615,17 +618,6 @@ parse_requests_per_minute_limit_by_ip({[]}, Parsed) ->
 parse_requests_per_minute_limit_by_ip(_, _) ->
 	error.
 
-parse_vdf_server_trusted_peers([Peer | Rest], Config) ->
-	Config2 = parse_vdf_server_trusted_peer(Peer, Config),
-	parse_vdf_server_trusted_peers(Rest, Config2);
-parse_vdf_server_trusted_peers([], Config) ->
-	Config.
-
-parse_vdf_server_trusted_peer(Peer, Config) when is_binary(Peer) ->
-	parse_vdf_server_trusted_peer(binary_to_list(Peer), Config);
-parse_vdf_server_trusted_peer(Peer, Config) ->
-	#config{ nonce_limiter_server_trusted_peers = Peers } = Config,
-	Config#config{ nonce_limiter_server_trusted_peers = Peers ++ [Peer] }.
 
 format_config(Config) ->
 	Fields = record_info(fields, config),
@@ -635,34 +627,5 @@ format_config_fields(_Config, [], _Index, Acc) ->
 	string:join(lists:reverse(Acc), "\n");
 format_config_fields(Config, [Field | Rest], Index, Acc) ->
 	FieldValue = erlang:element(Index, Config),
-	%% Wrap formatting in a try/catch just in case - we don't want any issues in formatting
-	%% to cause a crash.
-	FormattedValue = try
-		format_config_value(Field, FieldValue)
-	catch _:_ ->
-		FieldValue
-	end,
-	Line = io_lib:format("~s: ~tp", [atom_to_list(Field), FormattedValue]),
+	Line = io_lib:format("~s: ~tp", [atom_to_list(Field), FieldValue]),
 	format_config_fields(Config, Rest, Index+1, [Line | Acc]).
-
-format_config_value(peers, FieldValue) ->
-	format_peers(FieldValue);
-format_config_value(block_gossip_peers, FieldValue) ->
-	format_peers(FieldValue);
-format_config_value(local_peers, FieldValue) ->
-	format_peers(FieldValue);
-format_config_value(mining_addr, FieldValue) ->
-	format_address(FieldValue);
-format_config_value(storage_modules, FieldValue) ->
-	[format_storage_module(StorageModule) || StorageModule <- FieldValue];
-format_config_value(_, FieldValue) ->
-	FieldValue.
-
-format_peers(Peers) ->
-	[ar_util:format_peer(Peer) || Peer <- Peers].
-format_address(Address) ->
-	ar_util:encode(Address).
-format_storage_module({RangeSize, RangeNumber, {spora_2_6, MiningAddress}}) ->
-	{RangeSize, RangeNumber, {spora_2_6, format_address(MiningAddress)}};
-format_storage_module(StorageModule) ->
-	StorageModule.

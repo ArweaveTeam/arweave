@@ -576,11 +576,7 @@ start(Config) ->
 	%% Start the logging system.
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
-	io:format(
-		"~n****************************************~n"
-		"Launching with config:~n~s~n"
-		"****************************************~n",
-		[ar_config:format_config(Config)]),
+	io:format("~n****************************************~nLaunching with config:~n~s~n****************************************~n", [ar_config:format_config(Config)]),
 	warn_if_single_scheduler(),
 	case Config#config.nonce_limiter_server_trusted_peers of
 		[] ->
