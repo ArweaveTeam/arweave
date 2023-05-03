@@ -59,21 +59,12 @@ register(MetricsDir) ->
 	%%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
 	prometheus_histogram:new([
 		{name, ar_http_request_duration_seconds},
-		{buckets, [0.01, 0.1, 0.5, 1, 5, 10, 30, 60]},
-        {labels, [http_method, route, status_class]},
+		{buckets, [0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120]},
+        {labels, [http_method, route, status_class, peer]},
 		{
 			help,
 			"The total duration of an ar_http:req call. This includes more than just the GUN "
 			"request itself (e.g. establishing a connection, throttling, etc...)"
-		}
-	]),
-	prometheus_histogram:new([
-		{name, http_client_get_chunk_duration_seconds},
-		{buckets, [0.1, 1, 10, 60]},
-        {labels, [status_class, peer]},
-		{
-			help,
-			"The total duration of an HTTP GET chunk request made to a peer."
 		}
 	]),
 
@@ -351,7 +342,7 @@ register(MetricsDir) ->
 	prometheus_histogram:new([
 		{name, packing_duration_milliseconds},
 		{labels, [type, packing, trigger]},
-		{buckets, lists:seq(1, 500)},
+		{buckets, [1, 5, 10, 50, 100, 500, 1000]},
 		{help, "The packing/unpacking time in milliseconds. The type label indicates what "
 				"type of operation was requested either: 'pack' or 'unpack'. The packing "
 				"label differs based on the type. If type is 'unpack' then the packing label "

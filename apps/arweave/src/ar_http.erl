@@ -97,7 +97,8 @@ req(Args, ReestablishedConnection) ->
 			prometheus_histogram:observe(ar_http_request_duration_seconds, [
 					method_to_list(Method),
 					ar_metrics:label_http_path(list_to_binary(Path)),
-					ar_metrics:get_status_class(Response)
+					ar_metrics:get_status_class(Response),
+					ar_util:format_peer(Peer)
 				], EndTime - StartTime)
 	end,	
 	Response.

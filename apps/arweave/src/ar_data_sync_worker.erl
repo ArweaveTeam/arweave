@@ -178,6 +178,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
 			true ->
+				?LOG_ERROR("****** CHUNK CACHE IS FULL, RETRYING IN 500ms"),
 				ar_util:cast_after(500, self(), {sync_range, Args}),
 				true;
 			false ->
@@ -190,6 +191,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 					true ->
 						true;
 					_ ->
+						?LOG_ERROR("****** DISK SPACE IS NOT SUFFICIENT, RETRYING IN 30s"),
 						ar_util:cast_after(30000, self(), {sync_range, Args}),
 						false
 				end;
@@ -203,10 +205,12 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 			Start2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Start + 1),
 			case Start2 - 1 >= End of
 				true ->
+					?LOG_ERROR("****** NO MORE CHUNKS TO SYNC"),
 					ok;
 				false ->
 					case ar_http_iface_client:get_chunk_binary(Peer, Start2, any) of
 						{ok, #{ chunk := Chunk } = Proof, Time, TransferSize} ->
+							?LOG_ERROR("****** GOT CHUNK"),
 							%% In case we fetched a packed small chunk,
 							%% we may potentially skip some chunks by
 							%% continuing with Start2 + byte_size(Chunk) - the skip
@@ -219,13 +223,12 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});
 						{error, timeout} ->
-							?LOG_DEBUG([{event, timeout_fetching_chunk},
-									{peer, ar_util:format_peer(Peer)},
-									{start_offset, Start2}, {end_offset, End}]),
+							?LOG_ERROR("****** TIMEOUT, RETRYING IN 1000ms"),
 							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
 							ar_util:cast_after(1000, self(), {sync_range, Args2}),
 							recast;
 						{error, Reason} ->
+							?LOG_ERROR("****** FAILED TO FETCH CHUNK, NOT RETRYING"),
 							?LOG_ERROR([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{start_offset, Start2}, {end_offset, End},

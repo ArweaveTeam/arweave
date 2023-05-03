@@ -376,6 +376,7 @@ is_chunk_cache_full() ->
 		[{_, Limit}] ->
 			case ets:lookup(ar_data_sync_state, chunk_cache_size) of
 				[{_, Size}] when Size > Limit ->
+					?LOG_ERROR("**** Chunk cache is full: ~p > ~p ****", [Size, Limit]),
 					true;
 				_ ->
 					false
@@ -433,9 +434,11 @@ read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
 	end.
 
 decrement_chunk_cache_size() ->
+	?LOG_ERROR("**** DECREMENT chunk cache size ****"),
 	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, -1}, {chunk_cache_size, 0}).
 
 increment_chunk_cache_size() ->
+	?LOG_ERROR("**** INCREMENT chunk cache size ****"),
 	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, 1}, {chunk_cache_size, 1}).
 
 %% @doc Return Offset if it is smaller than or equal to ?STRICT_DATA_SPLIT_THRESHOLD.
@@ -884,6 +887,7 @@ handle_cast(sync_intervals, State) ->
 	end;
 
 handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast, State) ->
+	?LOG_ERROR("**** Received store_fetched_chunk cast: ~p, ~p", [Time, Byte]),
 	#sync_data_state{ packing_map = PackingMap } = State,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1) - 1,
@@ -900,6 +904,7 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast,
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathFun) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
+			?LOG_ERROR("**** store_fetched_chunk -> need_unpacking"),
 			{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
@@ -931,9 +936,11 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast,
 					end
 			end;
 		false ->
+			?LOG_ERROR("**** store_fetched_chunk -> false"),
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkSize, ChunkID} ->
+			?LOG_ERROR("**** store_fetched_chunk -> ready to process"),
 			ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
@@ -2565,6 +2572,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 			ChunkEndOffset, _Strict, Peer, Byte} = Args,
 	case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
 		false ->
+			?LOG_ERROR("*** not storing chunk: unattractive ratio"),
 			?LOG_WARNING([{event, got_too_big_proof_from_peer},
 					{peer, ar_util:format_peer(Peer)}]),
 			decrement_chunk_cache_size(),
@@ -2573,10 +2581,12 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 			#sync_data_state{ store_id = StoreID } = State,
 			case ar_sync_record:is_recorded(Byte + 1, ?MODULE, StoreID) of
 				{true, _} ->
+					?LOG_ERROR("*** chunk already synced by another job ***"),
 					%% The chunk has been synced by another job already.
 					decrement_chunk_cache_size(),
 					{noreply, State};
 				false ->
+					?LOG_ERROR("*** ready to pack and store"),
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
 					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
 							DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
