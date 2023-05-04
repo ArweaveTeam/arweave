@@ -376,7 +376,6 @@ is_chunk_cache_full() ->
 		[{_, Limit}] ->
 			case ets:lookup(ar_data_sync_state, chunk_cache_size) of
 				[{_, Size}] when Size > Limit ->
-					?LOG_ERROR("**** Chunk cache is full: ~p > ~p ****", [Size, Limit]),
 					true;
 				_ ->
 					false
