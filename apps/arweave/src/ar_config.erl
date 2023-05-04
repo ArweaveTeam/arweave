@@ -469,11 +469,8 @@ parse_options([{<<"vdf_server_trusted_peer">>, <<>>} | Rest], Config) ->
 parse_options([{<<"vdf_server_trusted_peer">>, Peer} | Rest], Config) ->
 	parse_options(Rest, parse_vdf_server_trusted_peer(Peer, Config));
 
-parse_options([{<<"vdf_server_trusted_peers">>, BinaryPeers} | Rest], Config) when is_list(BinaryPeers) ->
-	#config{ nonce_limiter_server_trusted_peers = CurrentPeers } = Config,
-	StringPeers = [binary_to_list(BinaryPeer) || BinaryPeer <- BinaryPeers],
-	Peers = CurrentPeers ++ StringPeers,
-	parse_options(Rest, Config#config{ nonce_limiter_server_trusted_peers = Peers });
+parse_options([{<<"vdf_server_trusted_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
+	parse_options(Rest, parse_vdf_server_trusted_peers(Peers, Config));
 parse_options([{<<"vdf_server_trusted_peers">>, Peers} | _], _) ->
 	{error, {bad_type, vdf_server_trusted_peers, array}, Peers};
 
@@ -618,6 +615,19 @@ parse_requests_per_minute_limit_by_ip({[]}, Parsed) ->
 parse_requests_per_minute_limit_by_ip(_, _) ->
 	error.
 
+parse_vdf_server_trusted_peers([Peer | Rest], Config) ->
+	Config2 = parse_vdf_server_trusted_peer(Peer, Config),
+	parse_vdf_server_trusted_peers(Rest, Config2);
+parse_vdf_server_trusted_peers([Peer], Config) ->
+	parse_vdf_server_trusted_peer(Peer, Config);
+parse_vdf_server_trusted_peers([], Config) ->
+	Config.
+
+parse_vdf_server_trusted_peer(Peer, Config) when is_binary(Peer) ->
+	parse_vdf_server_trusted_peer(binary_to_list(Peer), Config);
+parse_vdf_server_trusted_peer(Peer, Config) ->
+	#config{ nonce_limiter_server_trusted_peers = Peers } = Config,
+	Config#config{ nonce_limiter_server_trusted_peers = Peers ++ [Peer] }.
 
 format_config(Config) ->
 	Fields = record_info(fields, config),
