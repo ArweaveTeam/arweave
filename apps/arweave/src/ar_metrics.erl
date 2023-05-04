@@ -69,6 +69,7 @@ register(MetricsDir) ->
 	]),
 	prometheus_histogram:new([
 		{name, http_client_get_chunk_duration_seconds},
+		{buckets, [0.1, 1, 10, 60]},
         {labels, [status_class, peer]},
 		{
 			help,
