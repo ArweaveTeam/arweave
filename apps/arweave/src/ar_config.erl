@@ -665,6 +665,6 @@ format_peers(Peers) ->
 format_address(Address) ->
 	ar_util:encode(Address).
 format_storage_module({RangeSize, RangeNumber, {spora_2_6, MiningAddress}}) ->
-	{RangeSize, RangeNumber, {spora_2_6, ar_util:encode(MiningAddress)}};
+	{RangeSize, RangeNumber, {spora_2_6, format_address(MiningAddress)}};
 format_storage_module(StorageModule) ->
 	StorageModule.
