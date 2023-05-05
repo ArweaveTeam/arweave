@@ -654,8 +654,8 @@ handle_cast(sync_data, State) ->
 	Intervals = get_unsynced_intervals_from_other_storage_modules(OriginStoreID, "default",
 			RangeStart, min(RangeEnd, DiskPoolThreshold)),
 	gen_server:cast(self(), sync_data2),
-	%% Find all storage_modules that might include the target chunks (e.g. neighboring
-	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
+	%% Find all neighboring storage_modules (those that might share a 100MB overlap with
+	%% StoreId)
 	StorageModules = [ar_storage_module:id(Module)
 			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
 			ar_storage_module:id(Module) /= OriginStoreID],
