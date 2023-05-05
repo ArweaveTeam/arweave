@@ -637,5 +637,34 @@ format_config_fields(_Config, [], _Index, Acc) ->
 	string:join(lists:reverse(Acc), "\n");
 format_config_fields(Config, [Field | Rest], Index, Acc) ->
 	FieldValue = erlang:element(Index, Config),
-	Line = io_lib:format("~s: ~tp", [atom_to_list(Field), FieldValue]),
+	%% Wrap formatting in a try/catch just in case - we don't want any issues in formatting
+	%% to cause a crash.
+	FormattedValue = try
+		format_config_value(Field, FieldValue)
+	catch _:_ ->
+		FieldValue
+	end,
+	Line = io_lib:format("~s: ~tp", [atom_to_list(Field), FormattedValue]),
 	format_config_fields(Config, Rest, Index+1, [Line | Acc]).
+
+format_config_value(peers, FieldValue) ->
+	format_peers(FieldValue);
+format_config_value(block_gossip_peers, FieldValue) ->
+	format_peers(FieldValue);
+format_config_value(local_peers, FieldValue) ->
+	format_peers(FieldValue);
+format_config_value(mining_addr, FieldValue) ->
+	format_address(FieldValue);
+format_config_value(storage_modules, FieldValue) ->
+	[format_storage_module(StorageModule) || StorageModule <- FieldValue];
+format_config_value(_, FieldValue) ->
+	FieldValue.
+
+format_peers(Peers) ->
+	[ar_util:format_peer(Peer) || Peer <- Peers].
+format_address(Address) ->
+	ar_util:encode(Address).
+format_storage_module({RangeSize, RangeNumber, {spora_2_6, MiningAddress}}) ->
+	{RangeSize, RangeNumber, {spora_2_6, ar_util:encode(MiningAddress)}};
+format_storage_module(StorageModule) ->
+	StorageModule.
