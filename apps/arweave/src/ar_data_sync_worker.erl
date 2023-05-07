@@ -30,7 +30,6 @@ start_link(Name) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(data_sync),
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -58,14 +57,6 @@ handle_cast({sync_range, Args}, State) ->
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
-
-handle_info({event, data_sync, {timeout, {sync_range, Peer}}}, State) ->
-	?LOG_ERROR("*** worker ~p handling sync_range timeout for peer ~p", [self(), ar_util:format_peer(Peer)]),
-	purge_messages({sync_range, Peer}),
-	{noreply, State};
-
-handle_info({event, data_sync, _}, State) ->
-	{noreply, State};
 
 handle_info(_Message, State) ->
 	{noreply, State}.
@@ -251,6 +242,7 @@ purge_messages({sync_range, Peer}) ->
 		{'$gen_cast', {sync_range, {_Start, _End, Peer, _TargetStoreID, _RetryCount}}} ->
 			?LOG_ERROR("*** worker ~p purged sync_range message for peer ~p",
 					[self(), ar_util:format_peer(Peer)]),
+			gen_server:cast(ar_data_sync_worker_master, task_completed),
 			purge_messages({sync_range, Peer})
 	after 0 ->
 		ok

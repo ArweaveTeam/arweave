@@ -782,7 +782,7 @@ handle_cast(collect_peer_intervals, State) ->
 	end,
 	{noreply, State};
 
-handle_cast({enqueue_intervals, []}, State) ->
+handle_cast({enqueue_intervals, #{}}, State) ->
 	{noreply, State};
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
@@ -1263,8 +1263,6 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + (BufferSize div 2) of
 		true ->
-			?LOG_ERROR("*** Disk space of ~p is lower than ~p + ~p + ~p div 2 = ~p",
-				[Bytes, DiskPoolSize, DiskCacheSize, BufferSize, (DiskPoolSize + DiskCacheSize + BufferSize div 2)]),
 			case is_disk_space_sufficient(StoreID) of
 				false ->
 					ok;
@@ -2229,20 +2227,26 @@ find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers) -
 			end,
 			Peers
 		),
-	AllPeersIntervals2 =
+	{AllPeersSoughtIntervals, AllPeersIntervals2} =
 		lists:foldl(
-			fun	({Peer, _, PeerIntervals, Left}, Acc) ->
+			fun	(
+				{Peer, SoughtIntervals, PeerIntervals, Left},
+				{AllPeersSoughtIntervals, AllPeersIntervals2}
+			) ->
 					case ar_intervals:is_empty(PeerIntervals) of
 						true ->
-							Acc;
+							{AllPeersSoughtIntervals, AllPeersIntervals2};
 						false ->
 							Right = element(1, ar_intervals:largest(PeerIntervals)),
-							maps:put(Peer, {Right, Left, PeerIntervals}, Acc)
+							{
+								maps:put(Peer, SoughtIntervals, AllPeersSoughtIntervals),
+								maps:put(Peer, {Right, Left, PeerIntervals}, AllPeersIntervals2)
+							}
 					end;
 				(_, Acc) ->
 					Acc
 			end,
-			AllPeersIntervals,
+			{#{}, AllPeersIntervals},
 			Intervals
 		),
 	EnqueueIntervals =
