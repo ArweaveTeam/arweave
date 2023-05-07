@@ -63,7 +63,7 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 		_ ->
 			UniquePeers = sets:to_list(sets:from_list(Peers)),
 			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
-			?LOG_DEBUG([
+			?LOG_ERROR([
 				{event, get_bucket_peers},
 				{bucket, Bucket},
 				{peers, length(Peers)},
@@ -82,7 +82,7 @@ init([]) ->
 	{ok, _} = timer:apply_interval(
 		?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, ?MODULE, collect_peers, []),
 	gen_server:cast(?MODULE, update_network_data_map),
-	ok = ar_events:subscribe(peer),
+	[ok, ok] = ar_events:subscribe([peer, data_sync]),
 	{ok, #state{
 		peer_queue = queue:new(),
 		peers_pending = 0,
@@ -127,6 +127,7 @@ handle_cast(update_network_data_map, State) ->
 	{noreply, State};
 
 handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
+	?LOG_ERROR("*** ar_data_discovery ~p adding peer ~p", [self(), ar_util:format_peer(Peer)]),
 	#state{ network_map = Map } = State,
 	State2 = refresh_expiration_timer(Peer, State),
 	Map2 = maps:put(Peer, SyncBuckets, Map),
@@ -140,6 +141,7 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 	{noreply, State2#state{ network_map = Map2 }};
 
 handle_cast({remove_peer, Peer}, State) ->
+	?LOG_ERROR("*** ar_data_discovery ~p removing peer ~p", [self(), ar_util:format_peer(Peer)]),
 	#state{ network_map = Map, expiration_map = E } = State,
 	Map2 =
 		case maps:take(Peer, Map) of
@@ -174,6 +176,15 @@ handle_info({event, peer, {bad_response, {Peer, _Resource, _Reason}}}, State) ->
 
 handle_info({event, peer, _}, State) ->
 	{noreply, State};
+
+handle_info({event, data_sync, {timeout, {sync_range, Peer}}}, State) ->
+	?LOG_ERROR("*** ar_data_discovery ~p handling sync_range timeout for peer ~p", [self(), ar_util:format_peer(Peer)]),
+	gen_server:cast(?MODULE, {remove_peer, Peer}),
+	{noreply, State};
+
+handle_info({event, data_sync, _}, State) ->
+	{noreply, State};
+
 
 handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),

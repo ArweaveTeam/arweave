@@ -52,7 +52,7 @@ init([]) ->
 		?CHILD(ar_events, miner, worker),
 		%% Events: removed_file.
 		?CHILD(ar_events, chunk_storage, worker),
-		%% Events: add_range, remove_range, cut
+		%% Events: add_range, remove_range, cut, timeout.
 		?CHILD(ar_events, data_sync, worker),
 		%% Used for the testing purposes.
 		?CHILD(ar_events, testing, worker)

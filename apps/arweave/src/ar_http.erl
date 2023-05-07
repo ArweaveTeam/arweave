@@ -359,11 +359,13 @@ await_response(Args) ->
 			{ok, {gen_code_rest(maps:get(status, Args)), maps:get(headers, Args), FinData,
 					Start, End}};
 		{error, timeout} = Response ->
+			?LOG_ERROR("*** await_response timeout, path: ~p", [Path]),
 			record_response_status(Method, Path, Response),
 			gun:cancel(PID, Ref),
 			log(warn, gun_await_process_down, Args, Response),
 			Response;
 		{error, Reason} = Response when is_tuple(Reason) ->
+			?LOG_ERROR("*** await_response error, path: ~p, reason: ~p", [Path, Reason]),
 			record_response_status(Method, Path, Response),
 			log(warn, gun_await_process_down, Args, Reason),
 			Response;

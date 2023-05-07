@@ -30,6 +30,7 @@ start_link(Name) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
+	ok = ar_events:subscribe(data_sync),
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -57,6 +58,14 @@ handle_cast({sync_range, Args}, State) ->
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
+
+handle_info({event, data_sync, {timeout, {sync_range, Peer}}}, State) ->
+	?LOG_ERROR("*** worker ~p handling sync_range timeout for peer ~p", [self(), ar_util:format_peer(Peer)]),
+	purge_messages({sync_range, Peer}),
+	{noreply, State};
+
+handle_info({event, data_sync, _}, State) ->
+	{noreply, State};
 
 handle_info(_Message, State) ->
 	{noreply, State}.
@@ -169,10 +178,10 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 
 sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}) when Start >= End ->
 	ok;
-sync_range({Start, End, Peer, _TargetStoreID, 0}) ->
-	?LOG_DEBUG([{event, sync_range_retries_exhausted},
-				{peer, ar_util:format_peer(Peer)},
-				{start_offset, Start}, {end_offset, End}]),
+sync_range({_Start, _End, Peer, _TargetStoreID, 0}) ->
+	?LOG_ERROR("*** sync_range peer timeout: ~p", [ar_util:format_peer(Peer)]),
+	ar_events:send(data_sync, {timeout, {sync_range, Peer}}),
+	purge_messages({sync_range, Peer}),
 	ok;
 sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	IsChunkCacheFull =
@@ -219,9 +228,15 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});
 						{error, timeout} ->
-							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
-							ar_util:cast_after(1000, self(), {sync_range, Args2}),
-							recast;
+							?LOG_ERROR([{event, timeout_fetching_chunk},
+									{peer, ar_util:format_peer(Peer)},
+									{start_offset, Start2}, {end_offset, End}]),
+							% Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
+							% ar_util:cast_after(1000, self(), {sync_range, Args2}),
+							% recast;
+							ar_events:send(data_sync, {timeout, {sync_range, Peer}}),
+							purge_messages({sync_range, Peer}),
+							ok;
 						{error, Reason} ->
 							?LOG_ERROR([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
@@ -229,4 +244,14 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 									{reason, io_lib:format("~p", [Reason])}])
 					end
 			end
+	end.
+
+purge_messages({sync_range, Peer}) ->
+	receive
+		{sync_range, {_Start, _End, Peer, _TargetStoreID, _RetryCount}} ->
+			?LOG_ERROR("*** worker ~p purged sync_range message for peer ~p",
+					[self(), ar_util:format_peer(Peer)]),
+			purge_messages({sync_range, Peer})
+	after 0 ->
+		ok
 	end.

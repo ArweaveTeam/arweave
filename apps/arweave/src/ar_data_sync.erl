@@ -1263,6 +1263,8 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + (BufferSize div 2) of
 		true ->
+			?LOG_ERROR("*** Disk space of ~p is lower than ~p + ~p + ~p div 2 = ~p",
+				[Bytes, DiskPoolSize, DiskCacheSize, BufferSize, (DiskPoolSize + DiskCacheSize + BufferSize div 2)]),
 			case is_disk_space_sufficient(StoreID) of
 				false ->
 					ok;
@@ -2265,8 +2267,8 @@ find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers) -
 %% @return {ok, Intervals, PeerIntervals, Left} | Error
 %% Intervals: the intersection of the intervals we are looking for and the intervals that
 %%            the peer advertises
-%% PeerIntervals: all of the intervals (up to ?MAX_SHARED_SYNCED_INTERVALS_COUNT total
-%%                intervals) that the peer advertises starting at offset Left.
+%% PeerIntervals: all of the intervals that the peer advertises between
+%%                offset Left and Left+?MAX_SHARED_SYNCED_INTERVALS_COUNT
 get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 	Limit = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
 	Right = element(1, ar_intervals:largest(SoughtIntervals)),
@@ -2284,15 +2286,18 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 			end
 	end.
 
-enqueue_intervals([], _ChunksToEnqueue, {Q, QIntervals}) ->
-	{Q, QIntervals};
-enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) ->
-	{Q2, QIntervals2} = enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}),
-	enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
-
-enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
-	%% Only keep unique intervals. We may get some duplicates for two
-	%% reasons:
+enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
+	%% The outerjoin keeps only unique intervals - only Intervals
+	%% for this Peer that haven't already been added to the queue of
+	%% intervals to sync (QInterval2). This means that the earlier
+	%% a peer is processed, the more likely it is to have its intervals
+	%% synced. This also means our syncing will be lumpy - we'll sync
+	%% a bunch of intervals from Peer1 and then move onto Peer2. It would
+	%% probably be better to sync from a bunch of peers simultaneously to
+	%% limit the load on any 1 peer and also to mitigate the impact of
+	%% a peer going offline or timing out.
+	%%
+	%% We may get some duplicates for two reasons:
 	%% 1) find_peer_intervals might choose the same interval several
 	%%    times in a row even when there are other unsynced intervals
 	%%    to pick because it is probabilistic.
@@ -3151,7 +3156,8 @@ log_insufficient_disk_space(StoreID) ->
 	ar:console("~nThe node has stopped syncing data into the storage module ~s due to "
 			"the insufficient disk space.~n", [StoreID]),
 	?LOG_INFO([{event, storage_module_stopped_syncing},
-			{reason, insufficient_disk_space}, {storage_module, StoreID}]).
+			{reason, insufficient_disk_space}, {storage_module, StoreID}]),
+	ar_util:print_stacktrace().
 
 data_root_index_iterator_v2(DataRootKey, TXStartOffset, DataRootIndex) ->
 	{DataRootKey, TXStartOffset, TXStartOffset, DataRootIndex, 1}.
