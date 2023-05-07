@@ -248,7 +248,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 
 purge_messages({sync_range, Peer}) ->
 	receive
-		{sync_range, {_Start, _End, Peer, _TargetStoreID, _RetryCount}} ->
+		{cast, {sync_range, {_Start, _End, Peer, _TargetStoreID, _RetryCount}}} ->
 			?LOG_ERROR("*** worker ~p purged sync_range message for peer ~p",
 					[self(), ar_util:format_peer(Peer)]),
 			purge_messages({sync_range, Peer})
