@@ -178,8 +178,7 @@ handle_info({event, peer, _}, State) ->
 	{noreply, State};
 
 handle_info({event, data_sync, {timeout, {sync_range, Peer}}}, State) ->
-	?LOG_ERROR("*** ar_data_discovery ~p handling sync_range timeout for peer ~p", [self(), ar_util:format_peer(Peer)]),
-	% gen_server:cast(?MODULE, {remove_peer, Peer}),
+	gen_server:cast(?MODULE, {remove_peer, Peer}),
 	{noreply, State};
 
 handle_info({event, data_sync, _}, State) ->
