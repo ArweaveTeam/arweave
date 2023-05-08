@@ -66,8 +66,12 @@ req(Args, ReestablishedConnection) ->
 	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, infinity) of
 		{ok, PID} ->
 			ar_rate_limiter:throttle(Peer, Path),
+			prometheus_gauge:inc(ar_http_pending_requests,
+				[method_to_list(Method), ar_metrics:label_http_path(list_to_binary(Path))]),
 			case request(PID, Args) of
 				{error, Error} when Error == {shutdown, normal}; Error == noproc ->
+					prometheus_gauge:dec(ar_http_pending_requests,
+						[method_to_list(Method), ar_metrics:label_http_path(list_to_binary(Path))]),
 					case ReestablishedConnection of
 						true ->
 							{error, client_error};
@@ -75,6 +79,8 @@ req(Args, ReestablishedConnection) ->
 							req(Args, true)
 					end;
 				Reply ->
+					prometheus_gauge:dec(ar_http_pending_requests,
+						[method_to_list(Method), ar_metrics:label_http_path(list_to_binary(Path))]),
 					Reply
 			end;
 		{'EXIT', _} ->
