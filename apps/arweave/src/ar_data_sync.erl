@@ -11,7 +11,7 @@
 		increment_chunk_cache_size/0, get_chunk_padded_offset/1, get_chunk_metadata_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
+-export([collect_all_peers_per_chunk/3, aligned_intervals/3, enqueue_intervals/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -787,8 +787,9 @@ handle_cast({enqueue_intervals, #{}}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	
-	{Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
+	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
+	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
+	% {Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 handle_cast(sync_intervals, State) ->
@@ -2264,75 +2265,109 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 			end
 	end.
 
-% collect_all_peers_per_chunk([], QIntervals, PeersPerChunk) ->
-% 	PeersPerChunk;
-% collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChunk) ->
-% 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-% 	ar_intervals:fold(
-% 		fun({End, Start}, _) ->
-% 			maps:fold(
-% 				fun(Start2, _) ->
-% 					Peers = maps:get(Start2, PeersPerChunk, []),
-% 					maps:put(Start2, [Peer | Peers], PeersPerChunk)
-% 				end,
-% 				_,
-% 				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
-% 			)
-% 		end,
-% 		PeersPerChunk,
-% 		OuterJoin
-% 	),
-% 	collect_all_peers_per_chunk(Rest, QIntervals, PeersPerChunk).
-
-enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
-	%% The outerjoin keeps only unique intervals - only Intervals
-	%% for this Peer that haven't already been added to the queue of
-	%% intervals to sync (QInterval2). This means that the earlier
-	%% a peer is processed, the more likely it is to have its intervals
-	%% synced. This also means our syncing will be lumpy - we'll sync
-	%% a bunch of intervals from Peer1 and then move onto Peer2. It would
-	%% probably be better to sync from a bunch of peers simultaneously to
-	%% limit the load on any 1 peer and also to mitigate the impact of
-	%% a peer going offline or timing out.
-	%%
-	%% We may get some duplicates for two reasons:
-	%% 1) find_peer_intervals might choose the same interval several
-	%%    times in a row even when there are other unsynced intervals
-	%%    to pick because it is probabilistic.
-	%% 2) We ask many peers simultaneously about the same interval
-	%%    to make finding of the relatively rare intervals quicker.
+%% @doc Flatten the intervals into chunks and find the list of Peers advertising each chunk.
+%% Note: There may be occasional overlaps/duplicates when peers advertise partial chunks.
+%% Example without overlap/duplicate (assuming ?DATA_CHUNK_SIZE = 5):
+%%   [{peer1, [{30, 20}, {10, 5}]}, {peer2, [{30, 20}]}]
+%%   Resulting map:
+%%   #{
+%%     {5, 10} => [peer1],
+%%     {20, 25} => [peer2, peer1],
+%%     {25, 30} => [peer2, peer1]
+%%   }
+%%
+%% Example with overlap/duplicate:
+%%   [{peer1, [{30, 20}, {10, 5}]}, {peer2, [{30, 23}]}]
+%%   Resulting map:
+%%   #{
+%%     {5, 10} => [peer1],
+%%     {20, 25} => [peer1],
+%%     {20, 23} => [peer2],
+%%     {25, 30} => [peer2, peer1]
+%%   }
+%%
+%% The {20,23} partial chunk exists in the map twice, which will cause that data to be
+%% requested twice. I've deferred handling this case for now - I think the number of
+%% redundant requests will be minimal and handling the case better introduces
+%% complexity that I'm not sure is warranted yet.
+collect_all_peers_per_chunk([], _QIntervals, PeersPerChunk) ->
+	PeersPerChunk;
+collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChunk) ->
 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-	{_, {Q2, QIntervals2}}  = ar_intervals:fold(
-		fun	(_, {0, {QAcc, QIAcc}}) ->
-				{0, {QAcc, QIAcc}};
-			({End, Start}, {ChunksToEnqueue2, {QAcc, QIAcc}}) ->
-				RangeEnd = min(End, Start + (ChunksToEnqueue2 * ?DATA_CHUNK_SIZE)),
-				ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
-				ChunksEnqueued = length(ChunkOffsets),
-				{ChunksToEnqueue2 - ChunksEnqueued,
-					enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
+	PeersPerChunk2 = ar_intervals:fold(
+		fun({End, Start}, Acc) ->
+			lists:foldl(
+				fun({AlignedStart, AlignedEnd}, InnerAcc) ->
+					Peers = maps:get({AlignedStart, AlignedEnd}, InnerAcc, []),
+					maps:put({AlignedStart, AlignedEnd}, [Peer | Peers], InnerAcc)
+				end,
+				Acc,
+				aligned_intervals(Start, End, ?DATA_CHUNK_SIZE)
+			)
 		end,
-		{ChunksToEnqueue, {Q, QIntervals}},
+		PeersPerChunk,
 		OuterJoin
 	),
-	{Q2, QIntervals2}.
+	collect_all_peers_per_chunk(Rest, QIntervals, PeersPerChunk2).
 
-enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
-	?LOG_DEBUG([
-		{event, add_interval_to_sync_queue},
-		{start_offset, RangeStart}, {end_offset, RangeEnd},
-		{num_chunks, length(ChunkOffsets)}, {peer, ar_util:format_peer(Peer)}]),
-	Q2 = lists:foldl(
-		fun(ChunkStart, QAcc) ->
-			gb_sets:add_element(
-				{ChunkStart, min(ChunkStart + ?DATA_CHUNK_SIZE, RangeEnd), Peer},
-				QAcc)
+aligned_intervals(Start, End, StepSize) ->
+    AlignedStart = Start - (Start rem StepSize),
+	aligned_intervals(AlignedStart, Start, End, StepSize, []).
+
+aligned_intervals(AlignedStart, _Start, End, _StepSize, AlignedIntervals) when AlignedStart >= End ->
+	AlignedIntervals;
+aligned_intervals(AlignedStart, Start, End, StepSize, AlignedIntervals) ->
+	AlignedEnd = min(End, AlignedStart + StepSize),
+	Interval = {max(AlignedStart, Start), AlignedEnd},
+	aligned_intervals(AlignedStart + StepSize, AlignedEnd, End, StepSize, AlignedIntervals ++ [Interval]).
+
+
+enqueue_intervals(PeersPerChunk, {Q, QIntervals}) ->
+	maps:fold(
+		fun({Start, End}, Peers, {QAcc, QIntervalsAcc}) ->
+			SelectedPeer = lists:nth(rand:uniform(length(Peers)), Peers),
+			QUpdated = gb_sets:add_element({Start, End, SelectedPeer}, QAcc),
+			QIntervalsUpdated = ar_intervals:add(QIntervalsAcc, End, Start),
+			{QUpdated, QIntervalsUpdated}
 		end,
-		Q,
-		ChunkOffsets
-	),
-	QIntervals2 = ar_intervals:add(QIntervals, RangeEnd, RangeStart),
-	{Q2, QIntervals2}.
+		{Q, QIntervals},
+		PeersPerChunk
+	).
+
+% enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
+% 	%% The outerjoin keeps only unique intervals - only Intervals
+% 	%% for this Peer that haven't already been added to the queue of
+% 	%% intervals to sync (QInterval2). This means that the earlier
+% 	%% a peer is processed, the more likely it is to have its intervals
+% 	%% synced. This also means our syncing will be lumpy - we'll sync
+% 	%% a bunch of intervals from Peer1 and then move onto Peer2. It would
+% 	%% probably be better to sync from a bunch of peers simultaneously to
+% 	%% limit the load on any 1 peer and also to mitigate the impact of
+% 	%% a peer going offline or timing out.
+% 	%%
+% 	%% We may get some duplicates for two reasons:
+% 	%% 1) find_peer_intervals might choose the same interval several
+% 	%%    times in a row even when there are other unsynced intervals
+% 	%%    to pick because it is probabilistic.
+% 	%% 2) We ask many peers simultaneously about the same interval
+% 	%%    to make finding of the relatively rare intervals quicker.
+% 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+% 	ar_intervals:fold(
+% 		fun({End, Start}, {Acc, QIAcc}) ->
+% 			?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
+% 					{peer, ar_util:format_peer(Peer)}]),
+% 			{lists:foldl(
+% 				fun(Start2, Acc2) ->
+% 					End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
+% 					gb_sets:add_element({Start2, End2, Peer}, Acc2)
+% 				end,
+% 				Acc,
+% 				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
+% 			), ar_intervals:add(QIAcc, End, Start)}
+% 		end,
+% 		{Q, QIntervals},
+% 		OuterJoin
+% 	).
 
 
 validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathFun) ->

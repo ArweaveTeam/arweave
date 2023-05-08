@@ -349,8 +349,8 @@ await_response(Args) ->
 				[Status, ar_util:format_peer(Peer), Path]),
 			await_response(Args#{ status => Status, headers => Headers });
 		{data, nofin, Data} ->
-			?LOG_ERROR("*** await_response {data, nofin, Data} peer: ~p, path: ~p", 
-				[ar_util:format_peer(Peer), Path]),
+			?LOG_ERROR("*** await_response {data, nofin, Data} Limit: ~p, Counter: ~p, peer: ~p, path: ~p", 
+				[Limit, Counter, ar_util:format_peer(Peer), Path]),
 			case Limit of
 				infinity ->
 					await_response(Args#{ acc := [Acc | Data] });
