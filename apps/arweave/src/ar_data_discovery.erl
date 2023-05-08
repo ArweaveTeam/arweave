@@ -63,7 +63,7 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 		_ ->
 			UniquePeers = sets:to_list(sets:from_list(Peers)),
 			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
-			?LOG_ERROR([
+			?LOG_DEBUG([
 				{event, get_bucket_peers},
 				{bucket, Bucket},
 				{peers, length(Peers)},

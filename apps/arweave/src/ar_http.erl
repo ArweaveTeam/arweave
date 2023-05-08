@@ -63,17 +63,9 @@ req(Args) ->
 req(Args, ReestablishedConnection) ->
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
-	Connection = catch gen_server:call(?MODULE, {get_connection, Args}, infinity),
-	?LOG_ERROR("*** get_connection for peer ~p took: ~p seconds", [
-		ar_util:format_peer(Peer), 
-		erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, seconds)]),
-	Response = case Connection of
+	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, infinity) of
 		{ok, PID} ->
-			ThrottleTime = erlang:monotonic_time(),
 			ar_rate_limiter:throttle(Peer, Path),
-			?LOG_ERROR("*** throttle for peer ~p took: ~p seconds", [
-			ar_util:format_peer(Peer), 
-			erlang:convert_time_unit(erlang:monotonic_time() - ThrottleTime, native, seconds)]),
 			case request(PID, Args) of
 				{error, Error} when Error == {shutdown, normal}; Error == noproc ->
 					case ReestablishedConnection of
@@ -339,18 +331,12 @@ await_response(Args) ->
 			counter := Counter, acc := Acc, method := Method, path := Path, peer := Peer } = Args,
 	case gun:await(PID, Ref, inet:timeout(Timer)) of
 		{response, fin, Status, Headers} ->
-			?LOG_ERROR("*** await_response {response, fin, ~p, Headers} peer: ~p, path: ~p", 
-				[Status, ar_util:format_peer(Peer), Path]),
 			End = os:system_time(microsecond),
 			upload_metric(Args),
 			{ok, {{integer_to_binary(Status), <<>>}, Headers, <<>>, Start, End}};
 		{response, nofin, Status, Headers} ->
-			?LOG_ERROR("*** await_response {response, nofin, ~p, Headers} peer: ~p, path: ~p", 
-				[Status, ar_util:format_peer(Peer), Path]),
 			await_response(Args#{ status => Status, headers => Headers });
 		{data, nofin, Data} ->
-			?LOG_ERROR("*** await_response {data, nofin, Data} Limit: ~p, Counter: ~p, peer: ~p, path: ~p", 
-				[Limit, Counter, ar_util:format_peer(Peer), Path]),
 			case Limit of
 				infinity ->
 					await_response(Args#{ acc := [Acc | Data] });
@@ -366,8 +352,6 @@ await_response(Args) ->
 					end
 			end;
 		{data, fin, Data} ->
-			?LOG_ERROR("*** await_response {data, fin, Data} peer: ~p, path: ~p", 
-				[ar_util:format_peer(Peer), Path]),
 			End = os:system_time(microsecond),
 			FinData = iolist_to_binary([Acc | Data]),
 			download_metric(FinData, Args),

@@ -2315,11 +2315,11 @@ aligned_intervals(Start, End, StepSize) ->
 	aligned_intervals(AlignedStart, Start, End, StepSize, []).
 
 aligned_intervals(AlignedStart, _Start, End, _StepSize, AlignedIntervals) when AlignedStart >= End ->
-	AlignedIntervals;
+	lists:reverse(AlignedIntervals);
 aligned_intervals(AlignedStart, Start, End, StepSize, AlignedIntervals) ->
 	AlignedEnd = min(End, AlignedStart + StepSize),
 	Interval = {max(AlignedStart, Start), AlignedEnd},
-	aligned_intervals(AlignedStart + StepSize, AlignedEnd, End, StepSize, AlignedIntervals ++ [Interval]).
+	aligned_intervals(AlignedStart + StepSize, AlignedEnd, End, StepSize, [Interval | AlignedIntervals]).
 
 
 enqueue_intervals(PeersPerChunk, {Q, QIntervals}) ->
