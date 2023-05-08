@@ -2264,7 +2264,9 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 			end
 	end.
 
-% collect_all_peers_per_chunk({Peer, Intervals}, QIntervals, PeersPerChunk) ->
+% collect_all_peers_per_chunk([], QIntervals, PeersPerChunk) ->
+% 	PeersPerChunk;
+% collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChunk) ->
 % 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
 % 	ar_intervals:fold(
 % 		fun({End, Start}, _) ->
@@ -2279,7 +2281,8 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 % 		end,
 % 		PeersPerChunk,
 % 		OuterJoin
-% 	).
+% 	),
+% 	collect_all_peers_per_chunk(Rest, QIntervals, PeersPerChunk).
 
 enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
 	%% The outerjoin keeps only unique intervals - only Intervals

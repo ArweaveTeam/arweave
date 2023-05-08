@@ -336,15 +336,21 @@ merge_headers(HeadersA, HeadersB) ->
 
 await_response(Args) ->
 	#{ pid := PID, stream_ref := Ref, timer := Timer, start := Start, limit := Limit,
-			counter := Counter, acc := Acc, method := Method, path := Path } = Args,
+			counter := Counter, acc := Acc, method := Method, path := Path, peer := Peer } = Args,
 	case gun:await(PID, Ref, inet:timeout(Timer)) of
 		{response, fin, Status, Headers} ->
+			?LOG_ERROR("*** await_response {response, fin, ~p, Headers} peer: ~p, path: ~p", 
+				[Status, ar_util:format_peer(Peer), Path]),
 			End = os:system_time(microsecond),
 			upload_metric(Args),
 			{ok, {{integer_to_binary(Status), <<>>}, Headers, <<>>, Start, End}};
 		{response, nofin, Status, Headers} ->
+			?LOG_ERROR("*** await_response {response, nofin, ~p, Headers} peer: ~p, path: ~p", 
+				[Status, ar_util:format_peer(Peer), Path]),
 			await_response(Args#{ status => Status, headers => Headers });
 		{data, nofin, Data} ->
+			?LOG_ERROR("*** await_response {data, nofin, Data} peer: ~p, path: ~p", 
+				[ar_util:format_peer(Peer), Path]),
 			case Limit of
 				infinity ->
 					await_response(Args#{ acc := [Acc | Data] });
@@ -360,6 +366,8 @@ await_response(Args) ->
 					end
 			end;
 		{data, fin, Data} ->
+			?LOG_ERROR("*** await_response {data, fin, Data} peer: ~p, path: ~p", 
+				[ar_util:format_peer(Peer), Path]),
 			End = os:system_time(microsecond),
 			FinData = iolist_to_binary([Acc | Data]),
 			download_metric(FinData, Args),
@@ -367,17 +375,21 @@ await_response(Args) ->
 			{ok, {gen_code_rest(maps:get(status, Args)), maps:get(headers, Args), FinData,
 					Start, End}};
 		{error, timeout} = Response ->
-			?LOG_ERROR("*** await_response timeout, path: ~p", [Path]),
+			?LOG_ERROR("*** await_response {error, timeout} peer: ~p, path: ~p", 
+				[ar_util:format_peer(Peer), Path]),
 			record_response_status(Method, Path, Response),
 			gun:cancel(PID, Ref),
 			log(warn, gun_await_process_down, Args, Response),
 			Response;
 		{error, Reason} = Response when is_tuple(Reason) ->
-			?LOG_ERROR("*** await_response error, path: ~p, reason: ~p", [Path, Reason]),
+			?LOG_ERROR("*** await_response {error, ~p} peer: ~p, path: ~p", 
+				[Reason, ar_util:format_peer(Peer), Path]),
 			record_response_status(Method, Path, Response),
 			log(warn, gun_await_process_down, Args, Reason),
 			Response;
 		Response ->
+			?LOG_ERROR("*** await_response default {~p} peer: ~p, path: ~p", 
+				[Response, ar_util:format_peer(Peer), Path]),
 			record_response_status(Method, Path, Response),
 			log(warn, gun_await_unknown, Args, Response),
 			Response
