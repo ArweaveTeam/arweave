@@ -238,12 +238,13 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	end.
 
 purge_messages({sync_range, Peer}) ->
-	receive
-		{'$gen_cast', {sync_range, {_Start, _End, Peer, _TargetStoreID, _RetryCount}}} ->
-			?LOG_ERROR("*** worker ~p purged sync_range message for peer ~p",
-					[self(), ar_util:format_peer(Peer)]),
-			gen_server:cast(ar_data_sync_worker_master, task_completed),
-			purge_messages({sync_range, Peer})
-	after 0 ->
-		ok
-	end.
+	ok.
+	% receive
+	% 	{'$gen_cast', {sync_range, {_Start, _End, Peer, _TargetStoreID, _RetryCount}}} ->
+	% 		?LOG_ERROR("*** worker ~p purged sync_range message for peer ~p",
+	% 				[self(), ar_util:format_peer(Peer)]),
+	% 		gen_server:cast(ar_data_sync_worker_master, task_completed),
+	% 		purge_messages({sync_range, Peer})
+	% after 0 ->
+	% 	ok
+	% end.

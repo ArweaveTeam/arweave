@@ -63,9 +63,17 @@ req(Args) ->
 req(Args, ReestablishedConnection) ->
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
-	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, infinity) of
+	Connection = catch gen_server:call(?MODULE, {get_connection, Args}, infinity),
+	?LOG_ERROR("*** get_connection for peer ~p took: ~p seconds", [
+		ar_util:format_peer(Peer), 
+		erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, seconds)]),
+	Response = case Connection of
 		{ok, PID} ->
+			ThrottleTime = erlang:monotonic_time(),
 			ar_rate_limiter:throttle(Peer, Path),
+			?LOG_ERROR("*** throttle for peer ~p took: ~p seconds", [
+			ar_util:format_peer(Peer), 
+			erlang:convert_time_unit(erlang:monotonic_time() - ThrottleTime, native, seconds)]),
 			case request(PID, Args) of
 				{error, Error} when Error == {shutdown, normal}; Error == noproc ->
 					case ReestablishedConnection of

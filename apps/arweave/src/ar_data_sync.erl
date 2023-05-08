@@ -787,34 +787,8 @@ handle_cast({enqueue_intervals, #{}}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
-	%% so that:
-	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
-	%% 2. So that we limit the risk of blocking on one particularly slow peer.
-	%%
-	%% We do a probabilistic ditribution:
-	%% 1. We shuffle the peers list so that the ordering differs from call to call
-	%% 2. We cap the number of chunks to enqueue per peer - at roughly 50% more than
-	%%    their "fair" share (i.e. ?DEFAULT_SYNC_BUCKET_SIZE / NumPeers).
-	%%
-	%% The compute overhead of these 2 steps is minimal and results in a pretty good
-	%% distribution of sync requests among peers.
 	
-	%% This is an approximation. The intent is to enqueue one sync_bucket at a time - but
-	%% due to the selection of each peer's intervals, the total number of bytes may be
-	%% less than a full sync_bucket. But for the purposes of distrubiting requests among
-	%% many peers - the approximation is fine (and much cheaper to calculate than taking
-	%% the sum of all the peer intervals).
-	TotalChunksToEnqueue = ?DEFAULT_SYNC_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
-	NumPeers = length(Intervals),
-	%% Allow each Peer to sync slightly more chunks than their strict share - this allows
-	%% us to more reliably sync the full set of requested intervals.
-	ScalingFactor = 1.5,
-	ChunksPerPeer = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
-
-	{Q2, QIntervals2} = enqueue_intervals(
-		ar_util:shuffle_list(Intervals), ChunksPerPeer, {Q, QIntervals}),
-
+	{Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 handle_cast(sync_intervals, State) ->
@@ -2290,6 +2264,23 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 			end
 	end.
 
+% collect_all_peers_per_chunk({Peer, Intervals}, QIntervals, PeersPerChunk) ->
+% 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+% 	ar_intervals:fold(
+% 		fun({End, Start}, _) ->
+% 			maps:fold(
+% 				fun(Start2, _) ->
+% 					Peers = maps:get(Start2, PeersPerChunk, []),
+% 					maps:put(Start2, [Peer | Peers], PeersPerChunk)
+% 				end,
+% 				_,
+% 				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
+% 			)
+% 		end,
+% 		PeersPerChunk,
+% 		OuterJoin
+% 	).
+
 enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
 	%% The outerjoin keeps only unique intervals - only Intervals
 	%% for this Peer that haven't already been added to the queue of
@@ -2339,6 +2330,7 @@ enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 	),
 	QIntervals2 = ar_intervals:add(QIntervals, RangeEnd, RangeStart),
 	{Q2, QIntervals2}.
+
 
 validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathFun) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
