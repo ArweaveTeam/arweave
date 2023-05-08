@@ -895,7 +895,7 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 							signal_cache_cleanup(CorrelationRef, Ref, self());
 						Thread2 ->
 							reserve_cache_space(),
-							Thread2 ! {read_recall_range2, {Ref, self(), PartitionNumber2,
+							Thread2 ! {read_recall_range2, {Ref, self(), PartitionNumber,
 									RecallRange2Start, H0, Output, CorrelationRef}}
 					end
 			end,
