@@ -788,7 +788,6 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
-	?LOG_INFO("PeersPerChunk:"),
 	print_map(PeersPerChunk),
 	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
@@ -1292,7 +1291,28 @@ terminate(Reason, State) ->
 %%%===================================================================
 
 print_map(Map) ->
-	[?LOG_INFO("~p: ~p", [K, V]) || {K, V} <- lists:sort(maps:to_list(Map))].
+    SortedMap = lists:sort(maps:to_list(Map)),
+    print_map(SortedMap, undefined).
+
+print_map([], _) -> ok;
+print_map([{{Start, End}, Value} | Rest], {PrevStart, PrevEnd, PrevValue}) ->
+	%% Check for overlapping ranges
+	case PrevEnd of
+		undefined -> ok; % Skip for the first element
+		PrevEnd when PrevEnd > Start ->
+			?LOG_INFO("PeersPerChunk Overlapping range: {~p, ~p} x {~p, ~p}: ~p x ~p", [PrevStart, PrevEnd, Start, End, PrevValue, Value]);
+		PrevEnd when PrevEnd < Start ->
+			?LOG_INFO("PeersPerChunk Gap between ranges: {~p, ~p} x {~p, ~p}: ~p x ~p", [PrevStart, PrevEnd, Start, End, PrevValue, Value]);
+		_ -> ok
+	end,
+	%% Check for difference less than ?DATA_CHUNK_SIZE
+	if
+		End - Start < ?DATA_CHUNK_SIZE ->
+			?LOG_INFO("PeersPerChunk Range size less than chunk size: {~p, ~p}: ~p", [Start, End, Value]);
+		true -> ok
+	end,
+	%% Continue with the next element
+	print_map(Rest, {Start, End, Value}).
 
 remove_expired_disk_pool_data_roots() ->
 	Now = os:system_time(microsecond),
