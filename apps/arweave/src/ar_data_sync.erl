@@ -788,6 +788,8 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
+	io:format("PeersPerChunk:~n"),
+	print_map(PeersPerChunk),
 	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -1288,6 +1290,9 @@ terminate(Reason, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+print_map(Map) ->
+	[io:format("~p: ~p~n", [K, V]) || {K, V} <- lists:sort(maps:to_list(Map))].
 
 remove_expired_disk_pool_data_roots() ->
 	Now = os:system_time(microsecond),
@@ -2296,12 +2301,15 @@ collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChun
 	PeersPerChunk2 = ar_intervals:fold(
 		fun({End, Start}, Acc) ->
 			lists:foldl(
-				fun({AlignedStart, AlignedEnd}, InnerAcc) ->
+				% fun({AlignedStart, AlignedEnd}, InnerAcc) ->
+				fun(AlignedStart, InnerAcc) ->
+					AlignedEnd = min(AlignedStart + ?DATA_CHUNK_SIZE, End),
 					Peers = maps:get({AlignedStart, AlignedEnd}, InnerAcc, []),
 					maps:put({AlignedStart, AlignedEnd}, [Peer | Peers], InnerAcc)
 				end,
 				Acc,
-				aligned_intervals(Start, End, ?DATA_CHUNK_SIZE)
+				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
+				% aligned_intervals(Start, End, ?DATA_CHUNK_SIZE)
 			)
 		end,
 		PeersPerChunk,
