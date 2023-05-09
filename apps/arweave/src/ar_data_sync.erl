@@ -788,7 +788,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
-	io:format("PeersPerChunk:~n"),
+	?LOG_INFO("PeersPerChunk:"),
 	print_map(PeersPerChunk),
 	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
@@ -1292,7 +1292,7 @@ terminate(Reason, State) ->
 %%%===================================================================
 
 print_map(Map) ->
-	[io:format("~p: ~p~n", [K, V]) || {K, V} <- lists:sort(maps:to_list(Map))].
+	[?LOG_INFO("~p: ~p", [K, V]) || {K, V} <- lists:sort(maps:to_list(Map))].
 
 remove_expired_disk_pool_data_roots() ->
 	Now = os:system_time(microsecond),
