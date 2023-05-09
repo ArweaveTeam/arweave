@@ -787,9 +787,10 @@ handle_cast({enqueue_intervals, []}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
-	% print_map(PeersPerChunk),
-	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
+	% PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
+	% % print_map(PeersPerChunk),
+	% {Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
+	{Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 handle_cast(sync_intervals, State) ->
@@ -2343,52 +2344,52 @@ aligned_intervals(AlignedStart, Start, End, StepSize, AlignedIntervals) ->
 	aligned_intervals(AlignedStart + StepSize, AlignedEnd, End, StepSize, [Interval | AlignedIntervals]).
 
 
-enqueue_intervals(PeersPerChunk, {Q, QIntervals}) ->
-	maps:fold(
-		fun({Start, End}, Peers, {QAcc, QIntervalsAcc}) ->
-			SelectedPeer = lists:nth(rand:uniform(length(Peers)), Peers),
-			QUpdated = gb_sets:add_element({Start, End, SelectedPeer}, QAcc),
-			QIntervalsUpdated = ar_intervals:add(QIntervalsAcc, End, Start),
-			{QUpdated, QIntervalsUpdated}
-		end,
-		{Q, QIntervals},
-		PeersPerChunk
-	).
-
-% enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
-% 	%% The outerjoin keeps only unique intervals - only Intervals
-% 	%% for this Peer that haven't already been added to the queue of
-% 	%% intervals to sync (QInterval2). This means that the earlier
-% 	%% a peer is processed, the more likely it is to have its intervals
-% 	%% synced. This also means our syncing will be lumpy - we'll sync
-% 	%% a bunch of intervals from Peer1 and then move onto Peer2. It would
-% 	%% probably be better to sync from a bunch of peers simultaneously to
-% 	%% limit the load on any 1 peer and also to mitigate the impact of
-% 	%% a peer going offline or timing out.
-% 	%%
-% 	%% We may get some duplicates for two reasons:
-% 	%% 1) find_peer_intervals might choose the same interval several
-% 	%%    times in a row even when there are other unsynced intervals
-% 	%%    to pick because it is probabilistic.
-% 	%% 2) We ask many peers simultaneously about the same interval
-% 	%%    to make finding of the relatively rare intervals quicker.
-% 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-% 	ar_intervals:fold(
-% 		fun({End, Start}, {Acc, QIAcc}) ->
-% 			?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
-% 					{peer, ar_util:format_peer(Peer)}]),
-% 			{lists:foldl(
-% 				fun(Start2, Acc2) ->
-% 					End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
-% 					gb_sets:add_element({Start2, End2, Peer}, Acc2)
-% 				end,
-% 				Acc,
-% 				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
-% 			), ar_intervals:add(QIAcc, End, Start)}
+% enqueue_intervals(PeersPerChunk, {Q, QIntervals}) ->
+% 	maps:fold(
+% 		fun({Start, End}, Peers, {QAcc, QIntervalsAcc}) ->
+% 			SelectedPeer = lists:nth(rand:uniform(length(Peers)), Peers),
+% 			QUpdated = gb_sets:add_element({Start, End, SelectedPeer}, QAcc),
+% 			QIntervalsUpdated = ar_intervals:add(QIntervalsAcc, End, Start),
+% 			{QUpdated, QIntervalsUpdated}
 % 		end,
 % 		{Q, QIntervals},
-% 		OuterJoin
+% 		PeersPerChunk
 % 	).
+
+enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
+	%% The outerjoin keeps only unique intervals - only Intervals
+	%% for this Peer that haven't already been added to the queue of
+	%% intervals to sync (QInterval2). This means that the earlier
+	%% a peer is processed, the more likely it is to have its intervals
+	%% synced. This also means our syncing will be lumpy - we'll sync
+	%% a bunch of intervals from Peer1 and then move onto Peer2. It would
+	%% probably be better to sync from a bunch of peers simultaneously to
+	%% limit the load on any 1 peer and also to mitigate the impact of
+	%% a peer going offline or timing out.
+	%%
+	%% We may get some duplicates for two reasons:
+	%% 1) find_peer_intervals might choose the same interval several
+	%%    times in a row even when there are other unsynced intervals
+	%%    to pick because it is probabilistic.
+	%% 2) We ask many peers simultaneously about the same interval
+	%%    to make finding of the relatively rare intervals quicker.
+	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+	ar_intervals:fold(
+		fun({End, Start}, {Acc, QIAcc}) ->
+			?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
+					{peer, ar_util:format_peer(Peer)}]),
+			{lists:foldl(
+				fun(Start2, Acc2) ->
+					End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
+					gb_sets:add_element({Start2, End2, Peer}, Acc2)
+				end,
+				Acc,
+				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
+			), ar_intervals:add(QIAcc, End, Start)}
+		end,
+		{Q, QIntervals},
+		OuterJoin
+	).
 
 
 validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathFun) ->
