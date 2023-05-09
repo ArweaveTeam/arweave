@@ -3,14 +3,6 @@
 
 %%% A collection of record structures used throughout the Arweave server.
 
-%% Helper macro used to print records with their fields and values.
-%% Output is a list of tuples where each tuple is a field and value.
-%% From this old mailing list post:
-%% https://erlang.org/pipermail/erlang-questions/2008-March/033336.html
-%% example: ?REC_INFO(tx, TX)
--define(REC_INFO(RecordName,Record),
-	lists:zip(record_info(fields,RecordName), tl(tuple_to_list(Record)))).
-
 %% True if arweave was launched with -setcookie=test
 %% (e.g. bin/test or bin/shell)
 -define(IS_TEST, erlang:get_cookie() == test).
@@ -365,18 +357,19 @@
 	next_partition_upper_bound = 0,
 	%% The global sequence number of the nonce limiter step at which the block was found.
 	global_step_number = 1,
-	%% ?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT evenly spaced out outputs of the last
-	%% step of the nonce limiting process.
+	%% ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints from the most recent step in the nonce
+	%% limiter process. 
 	last_step_checkpoints = [],
-	%% The checkpoints of the nonce limiting process.
-	checkpoints = []
+	%% A list of the output of each step of the nonce limiting process. Note: each step
+	%% has ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints, the last of which is that step's output.
+	steps = []
 }).
 
 %% @doc A VDF session.
 -record(vdf_session, {
 	step_number,
 	seed,
-	last_step_checkpoints_map = #{},
+	step_checkpoints_map = #{},
 	steps,
 	prev_session_key,
 	upper_bound,

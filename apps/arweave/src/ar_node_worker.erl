@@ -385,48 +385,41 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck = PassesTimelineCheck andalso
 			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
-	HaveCheckpoints =
+	HaveSteps =
 		case PassesSeedCheck of
 			false ->
 				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block}]),
 				false;
 			true ->
-				ar_nonce_limiter:get_checkpoints(PrevStepNumber, StepNumber, PrevNextSeed)
+				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed)
 		end,
-	case HaveCheckpoints of
+	case HaveSteps of
 		false ->
 			{noreply, State};
 		not_found ->
-			?LOG_WARNING([{event, did_not_find_checkpoints_for_mined_block},
+			?LOG_WARNING([{event, did_not_find_steps_for_mined_block},
 					{seed, ar_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
 					{step_number, StepNumber}]),
 			{noreply, State};
-		[NonceLimiterOutput | _] = Checkpoints ->
+		[NonceLimiterOutput | _] = Steps ->
 			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound}
 					= ar_nonce_limiter:get_seed_data(StepNumber, TipNonceLimiterInfo,
 							PrevH, PrevWeaveSize),
 			LastStepCheckpoints2 =
 				case LastStepCheckpoints of
 					not_found ->
-						PrevCheckpointOutput =
-							case Checkpoints of
-								[_, PrevCheckpoint | _] ->
-									PrevCheckpoint;
+						PrevOutput =
+							case Steps of
+								[_, PrevStepOutput | _] ->
+									PrevStepOutput;
 								_ ->
 									TipNonceLimiterInfo#nonce_limiter_info.output
 							end,
-						PrevCheckpointOutput2 =
-								case ar_nonce_limiter:get_entropy_reset_point(PrevStepNumber,
-										StepNumber) of
-									StepNumber ->
-										ar_nonce_limiter:mix_seed(PrevCheckpointOutput,
-												PrevNextSeed);
-									_ ->
-										PrevCheckpointOutput
-								end,
-						{ok, NonceLimiterOutput, L} = ar_nonce_limiter:compute(StepNumber,
-								PrevCheckpointOutput2),
-						L;
+						PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
+								PrevOutput, PrevStepNumber, StepNumber, PrevNextSeed),
+						{ok, NonceLimiterOutput, Checkpoints} = ar_nonce_limiter:compute(
+								StepNumber, PrevOutput2),
+						Checkpoints;
 					_ ->
 						LastStepCheckpoints
 				end,
@@ -434,7 +427,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 					next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 					next_partition_upper_bound = NextPartitionUpperBound,
 					last_step_checkpoints = LastStepCheckpoints2,
-					checkpoints = Checkpoints },
+					steps = Steps },
 			PrevB = ar_block_cache:get(block_cache, PrevH),
 			Height = PrevB#block.height + 1,
 			{Rate, ScheduledRate} = ar_pricing:recalculate_usd_to_ar_rate(PrevB),
@@ -505,8 +498,8 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			%% Won't be received by itself, but we should let know all "block" subscribers.
 			ar_events:send(block, {new, B, #{ source => miner }}),
 			{noreply, State2};
-		_Checkpoints ->
-			?LOG_ERROR([{event, bad_checkpoints},
+		_Steps ->
+			?LOG_ERROR([{event, bad_steps},
 					{prev_block, ar_util:encode(PrevH)},
 					{step_number, StepNumber},
 					{prev_step_number, PrevStepNumber},

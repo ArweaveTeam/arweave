@@ -8,8 +8,7 @@
 		randomx_decrypt_chunk/5,
 		randomx_reencrypt_chunk/7,
 		hash_fast_long_with_entropy/2, hash_light_long_with_entropy/2,
-		bulk_hash_fast_long_with_entropy/13,
-		vdf_sha2/2, vdf_parallel_sha_verify_no_reset/4, vdf_parallel_sha_verify/6]).
+		bulk_hash_fast_long_with_entropy/13]).
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
@@ -298,112 +297,6 @@ release_state(RandomxState) ->
 			error
 	end.
 -endif.
-
-%% @doc An Erlang implementation of ar_vdf:compute2/3. Used in tests.
-vdf_sha2(StepNumber, Output) ->
-	{Output2, Checkpoints} =
-		lists:foldl(
-			fun(I, {Acc, L}) ->
-				StepNumberBinary = << (StepNumber + I):256 >>,
-				H = hash(?VDF_DIFFICULTY, StepNumberBinary, Acc),
-				{H, [H | L]}
-			end,
-			{Output, []},
-			lists:seq(0, 25 - 1)
-		),
-	timer:sleep(500),
-	{ok, Output2, Checkpoints}.
-
-hash(0, _Salt, Input) ->
-	Input;
-hash(N, Salt, Input) ->
-	hash(N - 1, Salt, crypto:hash(sha256, << Salt/binary, Input/binary >>)).
-
-%% @doc An Erlang implementation of ar_vdf:verify/7. Used in tests.
-vdf_parallel_sha_verify_no_reset(StepNumber, Output, Groups, _TheadCount) ->
-	vdf_debug_verify_no_reset(StepNumber, Output, lists:reverse(Groups), []).
-
-vdf_debug_verify_no_reset(_StepNumber, _Output, [], Steps) ->
-	{true, Steps};
-vdf_debug_verify_no_reset(StepNumber, Output, [{Size, N, Buffer} | Groups], Steps) ->
-	true = Size == 1 orelse Size rem 25 == 0,
-	{NextOutput, Steps2} =
-		lists:foldl(
-			fun(I, {Acc, S}) ->
-				Salt = << (StepNumber + I):256 >>,
-				O2 = hash(?VDF_DIFFICULTY, Salt, Acc),
-				S2 = case (StepNumber + I) rem 25 of 0 -> [O2 | S]; _ -> S end,
-				{O2, S2}
-			end,
-			{Output, []},
-			lists:seq(0, Size - 1)
-		),
-	StepNumber2 = StepNumber + Size,
-	case Buffer of
-		<< NextOutput/binary >> when N == 1 ->
-			vdf_debug_verify_no_reset(StepNumber2, NextOutput, Groups, Steps2 ++ Steps);
-		<< NextOutput:32/binary, Rest/binary >> when N > 0 ->
-			vdf_debug_verify_no_reset(StepNumber2, NextOutput, [{Size, N - 1, Rest} | Groups],
-					Steps2 ++ Steps);
-		_ ->
-			false
-	end.
-
-%% @doc An Erlang implementation of ar_vdf:verify/7. Used in tests.
-vdf_parallel_sha_verify(StepNumber, Output, Groups, ResetStepNumber, ResetSeed,
-		_ThreadCount) ->
-	vdf_debug_verify(StepNumber, Output, lists:reverse(Groups), ResetStepNumber, ResetSeed,
-			[]).
-
-vdf_debug_verify(_StepNumber, _Output, [], _ResetStepNumber, _ResetSeed, Steps) ->
-	{true, Steps};
-vdf_debug_verify(StepNumber, Output, [{Size, N, Buffer} | Groups], ResetStepNumber,
-		ResetSeed, Steps) ->
-	true = Size rem 25 == 0,
-	{NextOutput, Steps2} =
-		lists:foldl(
-			fun(I, {Acc, S}) ->
-				Salt = << (StepNumber + I):256 >>,
-				case I rem 25 /= 0 of
-					true ->
-						H = hash(?VDF_DIFFICULTY, Salt, Acc),
-						case (StepNumber + I) rem 25 of
-							0 ->
-								{H, [H | S]};
-							_ ->
-								{H, S}
-						end;
-					false ->
-						Acc2 =
-							case StepNumber + I == ResetStepNumber of
-								true ->
-									crypto:hash(sha256, << Acc/binary, ResetSeed/binary >>);
-								false ->
-									Acc
-							end,
-						H = hash(?VDF_DIFFICULTY, Salt, Acc2),
-						case (StepNumber + I) rem 25 of
-							0 ->
-								{H, [H | S]};
-							_ ->
-								{H, S}
-						end
-				end
-			end,
-			{Output, []},
-			lists:seq(0, Size - 1)
-		),
-	case Buffer of
-		<< NextOutput/binary >> when N == 1 ->
-			vdf_debug_verify(StepNumber + Size, NextOutput, Groups, ResetStepNumber,
-					ResetSeed, Steps2 ++ Steps);
-		<< NextOutput:32/binary, Rest/binary >> when N > 0 ->
-			vdf_debug_verify(StepNumber + Size, NextOutput,
-					[{Size, N - 1, Rest} | Groups], ResetStepNumber, ResetSeed,
-					Steps2 ++ Steps);
-		_ ->
-			false
-	end.
 
 %%%===================================================================
 %%% Private functions.

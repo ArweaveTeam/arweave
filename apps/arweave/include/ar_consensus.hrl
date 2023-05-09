@@ -71,9 +71,6 @@
 -endif.
 -endif.
 
-%% The number of last-step checkpoints every block must include.
--define(LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, 25).
-
 %% The maximum number of one-step checkpoints the block header may include.
 -ifndef(NONCE_LIMITER_MAX_CHECKPOINTS_COUNT).
 -define(NONCE_LIMITER_MAX_CHECKPOINTS_COUNT, 10800).

@@ -1795,14 +1795,6 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 									_ ->
 										any
 								end;
-							<< Type:10/binary, Addr:44/binary >>
-									when Type == <<"spora_2_6_">> ->
-								case ar_util:safe_decode(Addr) of
-									{ok, DecodedAddr} ->
-										{spora_2_6, DecodedAddr};
-									_ ->
-										any
-								end;
 							_ ->
 								any
 						end,

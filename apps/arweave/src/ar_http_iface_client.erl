@@ -332,7 +332,8 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 			%% last and second last chunks of the transactions when these chunks
 			%% are smaller than 256 KiB.
 			{<<"x-bucket-based-offset">>, <<"true">>}],
-	handle_chunk_response(Encoding, ar_http:req(#{
+	StartTime = erlang:monotonic_time(),
+	Response = ar_http:req(#{
 		peer => Peer,
 		method => get,
 		path => get_chunk_path(Offset, Encoding),
@@ -340,7 +341,16 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 		connect_timeout => 5000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
 		headers => p2p_headers() ++ Headers
-	})).
+	}),
+	prometheus_histogram:observe(
+		http_client_get_chunk_duration_seconds,
+		[
+			ar_metrics:get_status_class(Response),
+			ar_util:format_peer(Peer)
+		],
+		erlang:monotonic_time() - StartTime),
+
+	handle_chunk_response(Encoding, Response).
 
 get_chunk_path(Offset, json) ->
 	"/chunk/" ++ integer_to_binary(Offset);

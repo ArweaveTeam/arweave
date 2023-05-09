@@ -220,7 +220,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							ar_util:cast_after(1000, self(), {sync_range, Args2}),
 							recast;
 						{error, Reason} ->
-							?LOG_DEBUG([{event, failed_to_fetch_chunk},
+							?LOG_ERROR([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{offset, Start2},
 									{reason, io_lib:format("~p", [Reason])}])

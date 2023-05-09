@@ -5,7 +5,7 @@
 		genesis_wallets/0, pmap/2, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
-		take_every_nth/2, safe_divide/2, terminal_clear/0]).
+		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -300,3 +300,18 @@ terminal_clear() ->
 			false ->  os:cmd(clear)
 		end
 	).
+
+print_stacktrace() ->
+    try
+        throw(dummy) %% In OTP21+ try/catch is the recommended way to get the stacktrace
+    catch
+        _: _Exception:Stacktrace ->
+            %% Remove the first element (print_stacktrace call)
+            TrimmedStacktrace = lists:nthtail(1, Stacktrace),
+			StacktraceString = lists:foldl(
+				fun(StackTraceEntry, Acc) ->
+                	Acc ++ io_lib:format("  ~p~n", [StackTraceEntry])
+                end, "Stack trace:~n", TrimmedStacktrace),
+			?LOG_INFO(StacktraceString)
+    end.
+

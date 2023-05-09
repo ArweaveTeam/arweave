@@ -6,7 +6,8 @@
 
 -import(ar_test_node, [start/1, start/2, slave_start/1,
 		slave_start/2, connect_to_slave/0, get_tx_anchor/0, disconnect_from_slave/0,
-		wait_until_height/1, sign_tx/2, sign_tx/3,
+		wait_until_height/1, sign_tx/2, sign_tx/3, post_block/2, post_block/3,
+		send_new_block/2, await_post_block/2, await_post_block/3, sign_block/3,
 		read_block_when_stored/1, read_block_when_stored/2,
 		master_peer/0, slave_peer/0, slave_mine/0, assert_slave_wait_until_height/1,
 		slave_call/3, assert_post_tx_to_master/1, assert_post_tx_to_slave/1,
@@ -362,73 +363,6 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 	B2 = sign_block(B#block{ wallet_list = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_wallet_list).
 
-post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
-	post_block(B, [ExpectedResult], ar_test_node:master_peer());
-post_block(B, ExpectedResults) ->
-	post_block(B, ExpectedResults, ar_test_node:master_peer()).
-
-post_block(B, ExpectedResults, Peer) ->
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B)),
-	await_post_block(B, ExpectedResults, Peer).
-
-await_post_block(B, ExpectedResults) ->
-	await_post_block(B, ExpectedResults, ar_test_node:master_peer()).
-
-await_post_block(#block{ indep_hash = H } = B, ExpectedResults, Peer) ->
-	PostGossipFailureCodes = [invalid_denomination,
-			invalid_double_signing_proof_same_signature, invalid_double_signing_proof_cdiff,
-			invalid_double_signing_proof_same_address,
-			invalid_double_signing_proof_not_in_reward_history,
-			invalid_double_signing_proof_already_banned,
-			invalid_double_signing_proof_invalid_signature,
-			mining_address_banned, invalid_account_anchors, invalid_reward_pool,
-			invalid_miner_reward, invalid_debt_supply, invalid_reward_history_hash,
-			invalid_kryder_plus_rate_multiplier_latch, invalid_kryder_plus_rate_multiplier,
-			invalid_wallet_list],
-	receive
-		{event, block, {rejected, Reason, H, Peer2}} ->
-			case lists:member(Reason, PostGossipFailureCodes) of
-				true ->
-					?assertEqual(no_peer, Peer2);
-				false ->
-					?assertEqual(Peer, Peer2)
-			end,
-			case lists:member(Reason, ExpectedResults) of
-				true ->
-					ok;
-				_ ->
-					?assert(false, iolist_to_binary(io_lib:format("Unexpected "
-							"validation failure: ~p. Expected: ~p.",
-							[Reason, ExpectedResults])))
-			end;
-		{event, block, {new, #block{ indep_hash = H }, #{ source := {peer, Peer} }}} ->
-			case ExpectedResults of
-				[valid] ->
-					ok;
-				_ ->
-					case lists:any(fun(FailureCode) -> not lists:member(FailureCode,
-							PostGossipFailureCodes) end, ExpectedResults) of
-						true ->
-							?assert(false, iolist_to_binary(io_lib:format("Unexpected "
-									"validation success. Expected: ~p.", [ExpectedResults])));
-						false ->
-							await_post_block(B, ExpectedResults)
-					end
-			end
-	after 5000 ->
-			?assert(false, iolist_to_binary(io_lib:format("Timed out. Expected: ~p.",
-					[ExpectedResults])))
-	end.
-
-sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, Key) ->
-	SignedH = ar_block:generate_signed_hash(B),
-	PrevCDiff = PrevB#block.cumulative_diff,
-	Signature = ar_wallet:sign(Key, << (ar_serialize:encode_int(CDiff, 16))/binary,
-		(ar_serialize:encode_int(PrevCDiff, 16))/binary,
-		(B#block.previous_solution_hash)/binary, SignedH/binary >>),
-	H = ar_block:indep_hash2(SignedH, Signature),
-	B#block{ indep_hash = H, signature = Signature }.
-
 test_add_external_block_with_invalid_timestamp({Key, B, PrevB}) ->
 	Peer = master_peer(),
 	%% Expect the timestamp too far from the future to be rejected.
@@ -656,10 +590,6 @@ tx_id(#tx{ id = ID }) ->
 	ID;
 tx_id(ID) ->
 	ID.
-
-send_new_block(Peer, B) ->
-	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
-			ar_serialize:block_to_binary(B)).
 
 slave_height() ->
 	slave_call(ar_node, get_height, []).

@@ -1,5 +1,5 @@
 % 25 checkpoints 40 ms each = 1000 ms
--define(VDF_STEP_COUNT_IN_CHECKPOINT, 25).
+-define(VDF_CHECKPOINT_COUNT_IN_STEP, 25).
 
 -define(VDF_BYTE_SIZE, 32).
 
@@ -9,5 +9,5 @@
 -ifdef(DEBUG).
 -define(VDF_DIFFICULTY, 2).
 -else.
--define(VDF_DIFFICULTY, ?VDF_SHA_1S div ?VDF_STEP_COUNT_IN_CHECKPOINT).
+-define(VDF_DIFFICULTY, ?VDF_SHA_1S div ?VDF_CHECKPOINT_COUNT_IN_STEP).
 -endif.

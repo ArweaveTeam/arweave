@@ -22,6 +22,7 @@
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -316,7 +317,7 @@ binary_to_nonce_limiter_update(<< NextSeed:48/binary, Interval:64, IsPartial:8,
 			StepNumber:64, Seed:48/binary, UpperBoundSize:8, UpperBound:(UpperBoundSize * 8),
 			NextUpperBoundSize:8, NextUpperBound:(NextUpperBoundSize * 8),
 			StepsLen:16, Steps:(StepsLen * 32)/binary, PrevSessionKeyBin/binary >>)
-		when UpperBoundSize > 0, StepsLen > 0, CheckpointLen == 25 ->
+		when UpperBoundSize > 0, StepsLen > 0, CheckpointLen == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
 	NextUpperBound2 = case NextUpperBoundSize of 0 -> undefined; _ -> NextUpperBound end,
 	Update = #nonce_limiter_update{ session_key = {NextSeed, Interval},
 			checkpoints = parse_32b_list(Checkpoints),
@@ -420,14 +421,14 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 encode_nonce_limiter_info(#nonce_limiter_info{ output = Output, global_step_number = N,
 		seed = Seed, next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 		next_partition_upper_bound = NextPartitionUpperBound, prev_output = PrevOutput,
-		last_step_checkpoints = LCheckpoints, checkpoints = Checkpoints }) ->
-	LCheckpointsLen = length(LCheckpoints),
+		last_step_checkpoints = Checkpoints, steps = Steps }) ->
 	CheckpointsLen = length(Checkpoints),
+	StepsLen = length(Steps),
 	<< Output:32/binary, N:64, Seed:48/binary, NextSeed:48/binary,
 			(encode_bin(PrevOutput, 8))/binary,
 			PartitionUpperBound:256, NextPartitionUpperBound:256,
-			LCheckpointsLen:16, (iolist_to_binary(LCheckpoints))/binary,
-			CheckpointsLen:16, (iolist_to_binary(Checkpoints))/binary >>.
+			CheckpointsLen:16, (iolist_to_binary(Checkpoints))/binary,
+			StepsLen:16, (iolist_to_binary(Steps))/binary >>.
 
 encode_int(undefined, SizeBits) ->
 	<< 0:SizeBits >>;
@@ -527,7 +528,7 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 		PrevOutputSize:8, PrevOutput:PrevOutputSize/binary,
 		PartitionUpperBound:256, NextPartitionUpperBound:256,
 		LastCheckpointsLen:16, LastCheckpoints:(LastCheckpointsLen * 32)/binary,
-		CheckpointsLen:16, Checkpoints:(CheckpointsLen * 32)/binary,
+		StepsLen:16, Steps:(StepsLen * 32)/binary,
 		ChunkSize:24, Chunk:ChunkSize/binary, RewardKeySize:16,
 		RewardKey:RewardKeySize/binary, TXPathSize:24, TXPath:TXPathSize/binary,
 		DataPathSize:24, DataPath:DataPathSize/binary,
@@ -555,7 +556,7 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 					partition_upper_bound = PartitionUpperBound,
 					next_partition_upper_bound = NextPartitionUpperBound,
 					last_step_checkpoints = parse_checkpoints(LastCheckpoints, Height),
-					checkpoints = parse_checkpoints(Checkpoints, Height) },
+					steps = parse_checkpoints(Steps, Height) },
 			RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
 			{ok, B#block{ hash_preimage = HashPreimage, recall_byte = RecallByte_2,
 					reward = Reward, nonce = Nonce, recall_byte2 = RecallByte2_2,
@@ -1101,14 +1102,16 @@ poa_to_json_struct(POA) ->
 
 nonce_limiter_info_to_json_struct(#nonce_limiter_info{ output = Output, global_step_number = N,
 		seed = Seed, next_seed = NextSeed, partition_upper_bound = ZoneUpperBound,
-		next_partition_upper_bound = NextZoneUpperBound, last_step_checkpoints = L,
-		checkpoints = C, prev_output = PrevOutput }) ->
+		next_partition_upper_bound = NextZoneUpperBound, last_step_checkpoints = Checkpoints,
+		steps = Steps, prev_output = PrevOutput }) ->
 	{[{output, ar_util:encode(Output)}, {global_step_number, N}, {seed, ar_util:encode(Seed)},
 			{next_seed, ar_util:encode(NextSeed)}, {zone_upper_bound, ZoneUpperBound},
 			{next_zone_upper_bound, NextZoneUpperBound},
 			{prev_output, ar_util:encode(PrevOutput)},
-			{last_step_checkpoints, [ar_util:encode(Elem) || Elem <- L]},
-			{checkpoints, [ar_util:encode(Elem) || Elem <- C]}]}.
+			{last_step_checkpoints, [ar_util:encode(Elem) || Elem <- Checkpoints]},
+			%% Keeping  'checkpoints' as JSON key (rather than 'steps') for backwards
+			%% compatibility.
+			{checkpoints, [ar_util:encode(Elem) || Elem <- Steps]}]}.
 
 json_struct_to_poa({JSONStruct}) ->
 	#poa{

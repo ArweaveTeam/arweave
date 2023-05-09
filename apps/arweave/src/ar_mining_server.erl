@@ -280,13 +280,14 @@ handle_info({event, nonce_limiter, {computed_output, _}},
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
-	{Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output, _Checkpoints} = Args,
+	{SessionKey, Session, Output, PartitionUpperBound} = Args,
+	StepNumber = Session#vdf_session.step_number,
 	true = is_integer(StepNumber),
 	ets:update_counter(?MODULE,
 					  {performance, nonce_limiter},
 					  [{3, 1}],
 					  {{performance, nonce_limiter}, erlang:monotonic_time(millisecond), 0}),
-	Task = {computed_output, {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output}},
+	Task = {computed_output, {SessionKey, Session, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
 	prometheus_gauge:inc(mining_server_task_queue_len),
@@ -777,7 +778,9 @@ handle_task({computed_output, _},
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
-	{Seed, NextSeed, PartitionUpperBound, StepNumber, StartIntervalNumber, Output} = Args,
+	{SessionKey, #vdf_session{ seed = Seed, step_number = StepNumber },
+		Output, PartitionUpperBound} = Args,
+	{NextSeed, StartIntervalNumber} = SessionKey,
 	#mining_session{ next_seed = CurrentNextSeed,
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = Session,
@@ -1060,8 +1063,8 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 			start_interval_number = StartIntervalNumber,
 			partition_upper_bound = PartitionUpperBound,
 			step_number_by_output = #{ NonceLimiterOutput := StepNumber } } = Session,
-	LastStepCheckpoints = ar_nonce_limiter:get_last_step_checkpoints(StartIntervalNumber,
-			StepNumber, NextSeed),
+	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
+			StepNumber, NextSeed, StartIntervalNumber),
 	case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID, Nonce,
 			PoA1, PoA2, Diff, PartitionUpperBound}) of
 		error ->

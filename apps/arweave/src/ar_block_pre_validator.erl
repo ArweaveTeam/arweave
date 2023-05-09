@@ -350,10 +350,10 @@ may_be_report_double_signing(B, B2) ->
 
 get_last_step_prev_output(B) ->
 	#block{ nonce_limiter_info = Info } = B,
-	#nonce_limiter_info{ checkpoints = Checkpoints, prev_output = PrevOutput } = Info,
-	case Checkpoints of
-		[_, PrevCheckpoint | _] ->
-			PrevCheckpoint;
+	#nonce_limiter_info{ steps = Steps, prev_output = PrevOutput } = Info,
+	case Steps of
+		[_, PrevStepOutput | _] ->
+			PrevStepOutput;
 		_ ->
 			PrevOutput
 	end.
@@ -375,11 +375,11 @@ pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, SolutionResigned, P
 		end,
 	IsAhead = ar_nonce_limiter:is_ahead_on_the_timeline(BlockInfo, PrevBlockInfo),
 	MaxDistance = ?NONCE_LIMITER_MAX_CHECKPOINTS_COUNT,
-	ExpectedCheckpointCount = min(MaxDistance, StepNumber - PrevStepNumber),
-	Checkpoints = BlockInfo#nonce_limiter_info.checkpoints,
+	ExpectedStepCount = min(MaxDistance, StepNumber - PrevStepNumber),
+	Steps = BlockInfo#nonce_limiter_info.steps,
 	PrevOutput = BlockInfo#nonce_limiter_info.prev_output,
 	case IsAhead andalso StepNumber - CurrentStepNumber =< MaxDistance
-			andalso length(Checkpoints) == ExpectedCheckpointCount
+			andalso length(Steps) == ExpectedStepCount
 			andalso PrevOutput == PrevBlockInfo#nonce_limiter_info.output of
 		false ->
 			post_block_reject_warn(B, check_nonce_limiter_step_number, Peer,

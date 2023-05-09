@@ -52,6 +52,31 @@ register(MetricsDir) ->
 			"The total number of GUN requests."
 		}
 	]),
+	%% NOTE: the erlang prometheus client looks at the metric name to determine units.
+	%%       If it sees <name>_duration_<unit> it assumes the observed value is in
+	%%       native units and it converts it to <unit> .To query native units, use:
+	%%       erlant:monotonic_time() without any arguments.
+	%%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
+	prometheus_histogram:new([
+		{name, ar_http_request_duration_seconds},
+		{buckets, [0.01, 0.1, 0.5, 1, 5, 10, 30, 60]},
+        {labels, [http_method, route, status_class]},
+		{
+			help,
+			"The total duration of an ar_http:req call. This includes more than just the GUN "
+			"request itself (e.g. establishing a connection, throttling, etc...)"
+		}
+	]),
+	prometheus_histogram:new([
+		{name, http_client_get_chunk_duration_seconds},
+		{buckets, [0.1, 1, 10, 60]},
+        {labels, [status_class, peer]},
+		{
+			help,
+			"The total duration of an HTTP GET chunk request made to a peer."
+		}
+	]),
+
 	prometheus_gauge:new([
 		{name, downloader_queue_size},
 		{help, "The size of the back-off queue for the block and transaction headers "
@@ -326,20 +351,28 @@ register(MetricsDir) ->
 	prometheus_histogram:new([
 		{name, packing_duration_milliseconds},
 		{labels, [type, packing, trigger]},
-		{buckets, lists:seq(1, 500)},
-		{help, "The packing/unpacking time in milliseconds. The type label can be 'pack', "
-				"'unpack', or 'repack'. The packing label can be 'spora_2_5', 'spora_2_6', "
-				"'spora_2_5_to_spora_2_6', or 'spora_2_6_to_spora_2_6'. The trigger label "
-				"shows where the request was triggered: 'external' (e.g. an HTTP request) or "
-				"'internal' (e.g. during syncing or repacking)."}
+		{buckets, [1, 5, 10, 50, 100, 500, 1000]},
+		{help, "The packing/unpacking time in milliseconds. The type label indicates what "
+				"type of operation was requested either: 'pack' or 'unpack'. The packing "
+				"label differs based on the type. If type is 'unpack' then the packing label "
+				"indicates the format of the chunk before being unpacked. If type is 'pack' "
+				"then the packing label indicates the format that the chunk will be packed "
+				"to. In all cases its value can be 'spora_2_5' or 'spora_2_6'. "
+				"The trigger label shows where the request was triggered: "
+				"'external' (e.g. an HTTP request) or 'internal' (e.g. during syncing or "
+				"repacking)."}
 	]),
 	prometheus_counter:new([
 		{name, packing_requests},
 		{labels, [type, packing, from]},
-		{help, "The number of packing requests received. The type label can be 'pack', "
-				"'unpack', or 'repack'. The packing label can be 'spora_2_5', 'spora_2_6', "
-				"or 'unpacked'. The from label show where the request was initiated (e.g. "
-				"the calling function, or message)."}
+		{help, "The number of packing requests received. The type label indicates what "
+				"type of operation was requested either: 'pack' or 'unpack'. The packing "
+				"label differs based on the type. If type is 'unpack' then the packing label "
+				"indicates the format of the chunk before being unpacked. If type is 'pack' "
+				"then the packing label indicates the format that the chunk will be packed "
+				"to. In all cases its value can be 'unpacked', 'spora_2_5', or 'spora_2_6'. "
+				"The from label shows where the request was initiated (e.g. the "
+				"calling function, or message). "}
 	]),
 	prometheus_counter:new([
 		{name, validating_packed_spora},

@@ -3,17 +3,14 @@
 -behaviour(gen_server).
 
 -export([start_link/0, is_ahead_on_the_timeline/2, get_current_step_number/0,
-		get_current_step_number/1, get_seed_data/4, get_last_step_checkpoints/3,
-		get_checkpoints/3, validate_last_step_checkpoints/3, request_validation/3,
+		get_current_step_number/1, get_seed_data/4, get_step_checkpoints/3,
+		get_steps/3, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
-		apply_external_update/2, get_session/1, get_entropy_reset_point/2,
-		verify_no_reset/4, compute/2, resolve_remote_server_raw_peers/0,
-		mix_seed/2]).
+		apply_external_update/2, get_session/1, 
+		compute/2, resolve_remote_server_raw_peers/0,
+		get_entropy_reset_point/2, maybe_add_entropy/4, mix_seed/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
-
-%% The functions used in tests.
--export([reset_and_pause/0, step/0, get_steps/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
@@ -75,19 +72,21 @@ get_seed_data(StepNumber, NonceLimiterInfo, NextSeedOption, NextUpperBoundOption
 			{NextSeed, NextSeedOption, NextPartitionUpperBound, NextUpperBoundOption}
 	end.
 
-%% @doc Return the cached step checkpoints for the given step. Return not_found if
+%% @doc Return the cached checkpoints for the given step. Return not_found if
 %% none found.
-get_last_step_checkpoints(StartIntervalNumber, StepNumber, NextSeed) ->
+get_step_checkpoints(StepNumber, NextSeed, StartIntervalNumber) ->
 	SessionKey = {NextSeed, StartIntervalNumber},
-	gen_server:call(?MODULE, {get_last_step_checkpoints, StepNumber, SessionKey}, infinity).
+	get_step_checkpoints(StepNumber, SessionKey).
+get_step_checkpoints(StepNumber, SessionKey) ->
+	gen_server:call(?MODULE, {get_step_checkpoints, StepNumber, SessionKey}, infinity).
 
-%% @doc Return the checkpoints of the given interval. The checkpoints are chosen
+%% @doc Return the steps of the given interval. The steps are chosen
 %% according to the protocol. Return not_found if the corresponding hash chain is not
 %% computed yet.
-get_checkpoints(StartStepNumber, EndStepNumber, NextSeed)
+get_steps(StartStepNumber, EndStepNumber, NextSeed)
 		when EndStepNumber > StartStepNumber ->
 	SessionKey = {NextSeed, StartStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
-	gen_server:call(?MODULE, {get_checkpoints, StartStepNumber, EndStepNumber, SessionKey},
+	gen_server:call(?MODULE, {get_steps, StartStepNumber, EndStepNumber, SessionKey},
 			infinity).
 
 %% @doc Quickly validate the checkpoints of the latest step.
@@ -101,29 +100,21 @@ validate_last_step_checkpoints(#block{
 				global_step_number = StepNumber, seed = Seed,
 				last_step_checkpoints = [Output | _] = LastStepCheckpoints } }, PrevB,
 				PrevOutput)
-		when length(LastStepCheckpoints) == ?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT ->
+		when length(LastStepCheckpoints) == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
 	PrevInfo = get_or_init_nonce_limiter_info(PrevB),
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevBStepNumber } = PrevInfo,
 	SessionKey = {PrevNextSeed, PrevBStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
-	case gen_server:call(?MODULE,
-			{get_last_step_checkpoints, StepNumber, SessionKey}, infinity) of
+	case get_step_checkpoints(StepNumber, SessionKey) of
 		LastStepCheckpoints ->
 			{true, cache_match};
 		not_found ->
-			PrevOutput2 =
-				case get_entropy_reset_point(PrevBStepNumber, StepNumber) of
-					StepNumber ->
-						mix_seed(PrevOutput, Seed);
-					_ ->
-						PrevOutput
-				end,
-			Buffer = iolist_to_binary(lists:reverse(LastStepCheckpoints)),
-			Groups = [{1, ?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, Buffer}],
+			PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
+				PrevOutput, PrevBStepNumber, StepNumber, Seed),
 			PrevStepNumber = StepNumber - 1,
 			{ok, Config} = application:get_env(arweave, config),
 			ThreadCount = Config#config.max_nonce_limiter_last_step_validation_thread_count,
-			case verify_no_reset(PrevStepNumber, PrevOutput2, Groups, ThreadCount) of
+			case verify_no_reset(PrevStepNumber, PrevOutput2, 1, lists:reverse(LastStepCheckpoints), ThreadCount) of
 				{true, _Steps} ->
 					true;
 				false ->
@@ -135,6 +126,30 @@ validate_last_step_checkpoints(#block{
 validate_last_step_checkpoints(_B, _PrevB, _PrevOutput) ->
 	false.
 
+%% @doc Determine whether StepNumber has passed the entropy reset line. If it has return the
+%% reset line, otherwise return none.
+get_entropy_reset_point(PrevStepNumber, StepNumber) ->
+	ResetLine = (PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY + 1)
+			* ?NONCE_LIMITER_RESET_FREQUENCY,
+	case ResetLine > StepNumber of
+		true ->
+			none;
+		false ->
+			ResetLine
+	end.
+
+%% @doc Conditionally add entropy to PrevOutput if the configured number of steps have
+%% passed. See ?NONCE_LIMITER_RESET_FREQUENCY for more details.
+maybe_add_entropy(PrevOutput, PrevStepNumber, StepNumber, Seed) ->
+	case get_entropy_reset_point(PrevStepNumber, StepNumber) of
+		StepNumber ->
+			mix_seed(PrevOutput, Seed);
+		_ ->
+			PrevOutput
+	end.
+
+%% @doc Add entropy to an earlier VDF output to mitigate the impact of a miner with a
+%% fast VDF compute. See ?NONCE_LIMITER_RESET_FREQUENCY for more details.
 mix_seed(PrevOutput, Seed) ->
 	SeedH = crypto:hash(sha256, Seed),
 	crypto:hash(sha256, << PrevOutput/binary, SeedH/binary >>).
@@ -143,170 +158,148 @@ mix_seed(PrevOutput, Seed) ->
 %% Assume the seeds are correct and the first block is above the second one
 %% according to the protocol.
 %% Emit {nonce_limiter, {invalid, H, ErrorCode}} or {nonce_limiter, {valid, H}}.
-request_validation(H, Info, PrevInfo) ->
-	request_validation(H, Info, PrevInfo, 2).
-
 request_validation(H, #nonce_limiter_info{ global_step_number = N },
-		#nonce_limiter_info{ global_step_number = N }, _RemoteServerWaitSeconds) ->
+		#nonce_limiter_info{ global_step_number = N }) ->
 	spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 1}) end);
 request_validation(H, #nonce_limiter_info{ output = Output,
-		checkpoints = [Output | _] = Checkpoints } = Info, PrevInfo,
-		RemoteServerWaitSeconds) ->
+		steps = [Output | _] = StepsToValidate } = Info, PrevInfo) ->
 	#nonce_limiter_info{ output = PrevOutput, next_seed = PrevNextSeed,
 			global_step_number = PrevStepNumber } = PrevInfo,
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
-			checkpoints = Checkpoints } = Info,
-	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
-			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
-			{step_count, StepNumber - PrevStepNumber}]),
+			steps = StepsToValidate } = Info,
 	EntropyResetPoint = get_entropy_reset_point(PrevStepNumber, StepNumber),
 	SessionKey = {PrevNextSeed, PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
-	Steps = gen_server:call(?MODULE, {get_partial_steps, PrevStepNumber, StepNumber,
+	%% The steps that fall at the intersection of the PrevStepNumber to StepNumber range
+	%% and the SessionKey session.
+	SessionSteps = gen_server:call(?MODULE, {get_session_steps, PrevStepNumber, StepNumber,
 			SessionKey}, infinity),
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
-	Buffer = steps_to_buffer(lists:reverse(Checkpoints)),
-	CheckpointLen = length(Checkpoints),
-	Group = {?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT, CheckpointLen, Buffer},
-	ReversedSteps = lists:reverse(Steps),
-	BeforeCheckpointsLen = StepNumber - PrevStepNumber - CheckpointLen,
-	{Shift, PrevOutput2, ReversedSteps2} =
-		case BeforeCheckpointsLen > 0 of
-			false ->
-				{0, PrevOutput, ReversedSteps};
-			true ->
-				case length(ReversedSteps) >= BeforeCheckpointsLen of
-					false ->
-						{0, PrevOutput, ReversedSteps};
-					true ->
-						{BeforeCheckpointsLen, lists:nth(BeforeCheckpointsLen, ReversedSteps),
-								lists:nthtail(BeforeCheckpointsLen, ReversedSteps)}
-				end
-		end,
-	{ok, Config} = application:get_env(arweave, config),
-	UseRemoteServers =
-		case Config#config.nonce_limiter_server_trusted_peers of
-			[] ->
-				false;
-			_ ->
-				true
-		end,
-	case exclude_computed_steps_from_checkpoints([Group], ReversedSteps2) of
+
+	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
+			{session_key, ar_util:encode(PrevNextSeed)},
+			{next_session_key, ar_util:encode(NextSeed)},
+			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
+			{step_count, StepNumber - PrevStepNumber}, {steps, length(StepsToValidate)},
+			{session_steps, length(SessionSteps)},
+			{pid, self()}]),
+
+	%% We need to validate all the steps from PrevStepNumber to StepNumber:
+	%% PrevStepNumber <--------------------------------------------> StepNumber
+	%%     PrevOutput x
+	%%                                      |----------------------| StepsToValidate
+	%%                |-----------------------------------| SessionSteps
+	%%                      StartStepNumber x 
+	%%                          StartOutput x
+	%%                                      |-------------| ComputedSteps
+	%%                                      --------------> NumAlreadyComputed
+	%%                                   StartStepNumber2 x
+	%%                                       StartOutput2 x
+	%%                                                    |--------| RemainingStepsToValidate
+	%%
+	{StartStepNumber, StartOutput, ComputedSteps} =
+		skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput,
+			StepsToValidate, SessionSteps),
+	case exclude_computed_steps_from_steps_to_validate(
+			lists:reverse(StepsToValidate), ComputedSteps) of
 		invalid ->
-			ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
-			ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
-			file:write_file(ErrorDumpFile, term_to_binary({PrevStepNumber, StepNumber,
-					Checkpoints, Steps})),
-			?LOG_WARNING([{event, vdf_validation_failed},
-					{step, exclude_computed_steps_from_checkpoints},
+			ErrorID = dump_error({PrevStepNumber, StepNumber, StepsToValidate, SessionSteps}),
+			?LOG_WARNING([{event, nonce_limiter_validation_failed},
+					{step, exclude_computed_steps_from_steps_to_validate},
 					{error_dump, ErrorID}]),
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
-		{[], Shift2} when PrevStepNumber + Shift + Shift2 == StepNumber ->
+
+		{[], NumAlreadyComputed} when StartStepNumber + NumAlreadyComputed == StepNumber ->
+			%% We've already computed up to StepNumber, so we can use the checkpoints from the
+			%% current session
+			LastStepCheckpoints = get_step_checkpoints(StepNumber, SessionKey),
 			Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
-					Steps},
+					SessionSteps, LastStepCheckpoints},
 			gen_server:cast(?MODULE, {validated_steps, Args}),
 			spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
-		{[_Group], Shift2} when PrevStepNumber + Shift + Shift2 >= StepNumber ->
-			ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
-			ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
-			file:write_file(ErrorDumpFile, term_to_binary({PrevStepNumber, StepNumber,
-					Checkpoints, Steps, Shift, Shift2})),
-			?LOG_WARNING([{event, vdf_validation_failed},
-					{step, exclude_computed_steps_from_checkpoints_shift},
-					{shift, Shift}, {shift2, Shift2}, {error_dump, ErrorID}]),
+
+		{_, NumAlreadyComputed} when StartStepNumber + NumAlreadyComputed >= StepNumber ->
+			ErrorID = dump_error({PrevStepNumber, StepNumber, StepsToValidate, SessionSteps,
+					StartStepNumber, NumAlreadyComputed}),
+			?LOG_WARNING([{event, nonce_limiter_validation_failed},
+					{step, exclude_computed_steps_from_steps_to_validate_shift},
+					{start_step_number, StartStepNumber}, {shift2, NumAlreadyComputed},
+					{error_dump, ErrorID}]),
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
-		{[_Group] = _Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber,
-				UseRemoteServers == true, RemoteServerWaitSeconds > 0 ->
-			spawn(fun() ->
-				timer:sleep(1000),
-				request_validation(H, Info, PrevInfo, RemoteServerWaitSeconds - 1) end);
-		{[_Group] = Groups, Shift2} when PrevStepNumber + Shift + Shift2 < StepNumber ->
-			PrevOutput3 = case Shift2 of 0 -> PrevOutput2;
-					_ -> lists:nth(Shift2, ReversedSteps2) end,
-			spawn(
-				fun() ->
-					StartStepNumber = PrevStepNumber + Shift + Shift2,
-					{ok, Config} = application:get_env(arweave, config),
-					ThreadCount = Config#config.max_nonce_limiter_validation_thread_count,
-					Result =
-						case is_integer(EntropyResetPoint) of
-							true when EntropyResetPoint > StartStepNumber ->
-								SeedH = crypto:hash(sha256, Seed),
-								catch verify(StartStepNumber, PrevOutput3, Groups,
-										EntropyResetPoint, SeedH, ThreadCount);
-							_ ->
-								catch verify_no_reset(StartStepNumber, PrevOutput3, Groups,
-										ThreadCount)
-						end,
-					case Result of
-						{'EXIT', Exc} ->
-							ErrorID = ar_util:encode(crypto:strong_rand_bytes(16)),
-							?LOG_ERROR([{event, nonce_limiter_validation_failed},
-									{block, ar_util:encode(H)},
-									{start_step_number, StartStepNumber},
-									{error_id, ErrorID},
-									{prev_output, ar_util:encode(PrevOutput3)},
-									{exception, io_lib:format("~p", [Exc])}]),
-							Dump =
-								case is_integer(EntropyResetPoint)
-										andalso EntropyResetPoint > StartStepNumber of
-									true ->
-										SeedH2 = crypto:hash(sha256, Seed),
-										{StartStepNumber, PrevOutput3, Groups,
-												EntropyResetPoint, SeedH2, ThreadCount};
-									false ->
-										{StartStepNumber, PrevOutput3, Groups, ThreadCount}
-								end,
-							file:write_file("error_dump_" ++ binary_to_list(ErrorID),
-									term_to_binary(Dump)),
-							ar_events:send(nonce_limiter, {validation_error, H});
-						false ->
-							ar_events:send(nonce_limiter, {invalid, H, 3});
-						{true, Steps2} ->
-							Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound,
-									NextUpperBound, Steps2 ++ Steps},
-							gen_server:cast(?MODULE, {validated_steps, Args}),
-							ar_events:send(nonce_limiter, {valid, H})
-					end
-				end
-			);
+
+		{RemainingStepsToValidate, NumAlreadyComputed}
+		  		when StartStepNumber + NumAlreadyComputed < StepNumber ->
+			case ar_config:use_remote_vdf_server() of
+				true ->
+					%% Wait for our VDF server(s) to validate the reamining steps.
+					spawn(fun() ->
+						timer:sleep(1000),
+						request_validation(H, Info, PrevInfo) end);
+				false ->
+					%% Validate the remaining steps.
+					StartOutput2 = case NumAlreadyComputed of
+							0 -> StartOutput;
+							_ -> lists:nth(NumAlreadyComputed, ComputedSteps)
+					end,
+					spawn(fun() ->
+						StartStepNumber2 = StartStepNumber + NumAlreadyComputed,
+						{ok, Config} = application:get_env(arweave, config),
+						ThreadCount = Config#config.max_nonce_limiter_validation_thread_count,
+						Result =
+							case is_integer(EntropyResetPoint) andalso
+									EntropyResetPoint > StartStepNumber2 of
+								true ->
+									catch verify(StartStepNumber2, StartOutput2,
+											?VDF_CHECKPOINT_COUNT_IN_STEP,
+											RemainingStepsToValidate, EntropyResetPoint,
+											crypto:hash(sha256, Seed), ThreadCount);
+								_ ->
+									catch verify_no_reset(StartStepNumber2, StartOutput2,
+											?VDF_CHECKPOINT_COUNT_IN_STEP,
+											RemainingStepsToValidate, ThreadCount)
+							end,
+						case Result of
+							{'EXIT', Exc} ->
+								ErrorID = dump_error(
+									{StartStepNumber2, StartOutput2,
+									?VDF_CHECKPOINT_COUNT_IN_STEP,
+									RemainingStepsToValidate,
+									EntropyResetPoint, crypto:hash(sha256, Seed),
+									ThreadCount}),
+								?LOG_ERROR([{event, nonce_limiter_validation_failed},
+										{block, ar_util:encode(H)},
+										{start_step_number, StartStepNumber2},
+										{error_id, ErrorID},
+										{prev_output, ar_util:encode(StartOutput2)},
+										{exception, io_lib:format("~p", [Exc])}]),
+								ar_events:send(nonce_limiter, {validation_error, H});
+							false ->
+								ar_events:send(nonce_limiter, {invalid, H, 3});
+							{true, ValidatedSteps} ->
+								AllValidatedSteps = ValidatedSteps ++ SessionSteps,
+								%% The last_step_checkpoints in Info were validated as part
+								%% of an earlier call to
+								%% ar_block_pre_validator:pre_validate_nonce_limiter, so
+								%% we can trust them here.
+								LastStepCheckpoints = Info#nonce_limiter_info.last_step_checkpoints,
+								Args = {StepNumber, SessionKey, NextSessionKey,
+										Seed, UpperBound, NextUpperBound,
+										AllValidatedSteps, LastStepCheckpoints},
+								gen_server:cast(?MODULE, {validated_steps, Args}),
+								ar_events:send(nonce_limiter, {valid, H})
+						end
+					end)
+			end;
+
 		Data ->
-			ErrorID = ar_util:encode(crypto:strong_rand_bytes(16)),
-			file:write_file("error_dump_" ++ binary_to_list(ErrorID),
-					term_to_binary(Data)),
+			ErrorID = dump_error(Data),
 			ar_events:send(nonce_limiter, {validation_error, H}),
 			?LOG_ERROR([{event, unexpected_error_during_nonce_limiter_validation},
 					{error_id, ErrorID}])
 	end;
-request_validation(H, _Info, _PrevInfo, _RemoteServerWaitSeconds) ->
+request_validation(H, _Info, _PrevInfo) ->
 	spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 4}) end).
-
-%% @doc Reset the state and stop computing steps automatically. Used in tests.
-reset_and_pause() ->
-	gen_server:cast(?MODULE, reset_and_pause).
-
-%% @doc Compute a single step. Used in tests.
-step() ->
-	Self = self(),
-	spawn(
-		fun() ->
-			ok = ar_events:subscribe(nonce_limiter),
-			gen_server:cast(?MODULE, compute_step),
-			receive
-				{event, nonce_limiter, {computed_output, _}} ->
-					Self ! done
-			end
-		end
-	),
-	receive
-		done ->
-			ok
-	end.
-
-%% @doc Get all steps starting from the latest on the current tip. Used in tests.
-get_steps() ->
-	gen_server:call(?MODULE, get_steps).
 
 get_or_init_nonce_limiter_info(#block{ height = Height, indep_hash = H } = B) ->
 	case Height >= ar_fork:height_2_6() of
@@ -410,17 +403,17 @@ handle_call({get_current_step_number, SessionKey}, _From, State) ->
 			{reply, StepNumber, State}
 	end;
 
-handle_call({get_last_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
+handle_call({get_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
 	#state{ session_by_key = SessionByKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			{reply, not_found, State};
 		Session ->
-			Map = Session#vdf_session.last_step_checkpoints_map,
+			Map = Session#vdf_session.step_checkpoints_map,
 			{reply, maps:get(StepNumber, Map, not_found), State}
 	end;
 
-handle_call({get_checkpoints, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->
+handle_call({get_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->
 	case get_steps(StartStepNumber, EndStepNumber, SessionKey, State) of
 		not_found ->
 			{reply, not_found, State};
@@ -429,8 +422,8 @@ handle_call({get_checkpoints, StartStepNumber, EndStepNumber, SessionKey}, _From
 			{reply, lists:sublist(Steps, TakeN), State}
 	end;
 
-handle_call({get_partial_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->
-	{reply, get_partial_steps(StartStepNumber, EndStepNumber, SessionKey, State), State};
+handle_call({get_session_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->
+	{reply, get_session_steps(StartStepNumber, EndStepNumber, SessionKey, State), State};
 
 handle_call(get_steps, _From, #state{ current_session_key = undefined } = State) ->
 	{reply, [], State};
@@ -493,7 +486,7 @@ handle_cast({apply_tip, B, PrevB}, State) ->
 	{noreply, apply_tip2(B, PrevB, State)};
 
 handle_cast({validated_steps, Args}, State) ->
-	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps} = Args,
+	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps, LastStepCheckpoints } = Args,
 	#state{ session_by_key = SessionByKey, sessions = Sessions,
 			current_session_key = CurrentSessionKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
@@ -504,13 +497,20 @@ handle_cast({validated_steps, Args}, State) ->
 					{next_seed, ar_util:encode(element(1, SessionKey))},
 					{interval, element(2, SessionKey)}]),
 			{noreply, State};
-		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps } = Session ->
+		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps, step_checkpoints_map = Map } = Session ->
 			Session2 =
 				case CurrentStepNumber < StepNumber of
 					true ->
+						%% Update the current Session with all the newly validated steps and
+						%% as well as the checkpoints associated with step StepNumber.
+						%% This branch occurs when a block is received that is ahead of us
+						%% in the VDF chain.
 						Steps2 = lists:sublist(Steps, StepNumber - CurrentStepNumber)
 								++ CurrentSteps,
-						Session#vdf_session{ step_number = StepNumber, steps = Steps2 };
+						Map2 = maps:put(StepNumber, LastStepCheckpoints, Map),
+						Session#vdf_session{
+							step_number = StepNumber, steps = Steps2,
+							step_checkpoints_map = Map2 };
 					false ->
 						Session
 				end,
@@ -535,7 +535,7 @@ handle_cast({validated_steps, Args}, State) ->
 						StepNumber3 = min(StepNumber2, SessionEnd),
 						Steps5 = lists:sublist(Steps4, StepNumber3 - SessionStart + 1),
 						#vdf_session{ step_number = StepNumber3, seed = Seed,
-							last_step_checkpoints_map = #{}, steps = Steps5,
+							step_checkpoints_map = #{}, steps = Steps5,
 							upper_bound = UpperBound, next_upper_bound = NextUpperBound,
 							prev_session_key = SessionKey };
 					Session4 ->
@@ -546,6 +546,7 @@ handle_cast({validated_steps, Args}, State) ->
 					Session3#vdf_session.step_number),
 			Sessions2 = gb_sets:add_element({element(2, NextSessionKey),
 					element(1, NextSessionKey)}, Sessions),
+			ar_events:send(nonce_limiter, {validated_output, {SessionKey, Session2}}),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;
 
@@ -608,31 +609,26 @@ handle_info({'DOWN', Ref, process, _, Reason}, #state{ worker_monitor_ref = Ref 
 
 handle_info({computed, Args}, State) ->
 	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
-	{StepNumber, PrevOutput, Output, UpperBound, LastStepCheckpoints} = Args,
+	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
 	Session = maps:get(CurrentSessionKey, SessionByKey),
-	#vdf_session{ steps = [CurrentOutput | _] = Steps, seed = Seed,
-			last_step_checkpoints_map = Map } = Session,
+	#vdf_session{ steps = [SessionOutput | _] = Steps,
+			step_checkpoints_map = Map } = Session,
 	{NextSeed, IntervalNumber} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
-	CurrentOutput2 =
-		case get_entropy_reset_point(IntervalStart, StepNumber) of
-			StepNumber ->
-				mix_seed(CurrentOutput, NextSeed);
-			_ ->
-				CurrentOutput
-		end,
+	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
+			SessionOutput, IntervalStart, StepNumber, NextSeed),
 	gen_server:cast(?MODULE, schedule_step),
-	case PrevOutput == CurrentOutput2 of
+	case PrevOutput == SessionOutput2 of
 		false ->
 			?LOG_INFO([{event, computed_for_outdated_key}]),
 			{noreply, State};
 		true ->
-			Map2 = maps:put(StepNumber, LastStepCheckpoints, Map),
+			Map2 = maps:put(StepNumber, Checkpoints, Map),
 			Session2 = Session#vdf_session{ step_number = StepNumber,
-					last_step_checkpoints_map = Map2, steps = [Output | Steps] },
+					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			SessionByKey2 = maps:put(CurrentSessionKey, Session2, SessionByKey),
-			ar_events:send(nonce_limiter, {computed_output, {Seed, NextSeed, UpperBound,
-					StepNumber, IntervalNumber, Output, LastStepCheckpoints}}),
+			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
+					Output, UpperBound}}),
 			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
 			{noreply, State#state{ session_by_key = SessionByKey2 }}
 	end;
@@ -649,45 +645,50 @@ terminate(_Reason, #state{ worker = W }) ->
 %%% Private functions.
 %%%===================================================================
 
-get_entropy_reset_point(StepNumber, EndStepNumber) ->
-	ResetLine = (StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY + 1)
-			* ?NONCE_LIMITER_RESET_FREQUENCY,
-	case ResetLine > EndStepNumber of
-		true ->
-			none;
+dump_error(Data) ->
+	{ok, Config} = application:get_env(arweave, config),
+	ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
+	ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
+	file:write_file(ErrorDumpFile, term_to_binary(Data)),
+	ErrorID.
+
+%% @doc
+%% PrevStepNumber <------------------------------------------------------> StepNumber
+%%     PrevOutput x
+%%                                                |----------------------| StepsToValidate
+%%                |-------------------------------| NumStepsBefore
+%%                |---------------------------------------------| SessionSteps
+%%
+skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput, StepsToValidate, SessionSteps) ->
+	ComputedSteps = lists:reverse(SessionSteps),
+	%% Number of steps in the PrevStepNumber to StepNumber range that fall before the
+	%% beginning of the StepsToValidate list. To avoid computing these steps we will look for
+	%% them in the current VDF session (i.e. in the SessionSteps list)
+	NumStepsBefore = StepNumber - PrevStepNumber - length(StepsToValidate),
+	case NumStepsBefore > 0 andalso length(ComputedSteps) >= NumStepsBefore of
 		false ->
-			ResetLine
+			{PrevStepNumber, PrevOutput, ComputedSteps};
+		true ->
+			{
+				PrevStepNumber + NumStepsBefore,
+				lists:nth(NumStepsBefore, ComputedSteps),
+				lists:nthtail(NumStepsBefore, ComputedSteps)
+			}
 	end.
 
-steps_to_buffer([Step | Steps]) ->
-	<< Step/binary, (steps_to_buffer(Steps))/binary >>;
-steps_to_buffer([]) ->
-	<<>>.
+exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps) ->
+	exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps, 1, 0).
 
-exclude_computed_steps_from_checkpoints(Groups, Steps) ->
-	exclude_computed_steps_from_checkpoints(Groups, Steps, 0).
-
-exclude_computed_steps_from_checkpoints([], _Steps, Shift) ->
-	{[], Shift};
-exclude_computed_steps_from_checkpoints([{Size, N, Buffer} | Groups], Steps, Shift) ->
-	Skip = Size div ?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT,
-	exclude_computed_steps_from_checkpoints([{Size, N, Buffer} | Groups], Steps, 1, Skip,
-			Shift).
-
-exclude_computed_steps_from_checkpoints(Groups, [], _I, _Skip, Shift) ->
-	{lists:reverse(Groups), Shift};
-exclude_computed_steps_from_checkpoints(Groups, [_Step | Steps], I, Skip, Shift)
-		when I /= Skip ->
-	exclude_computed_steps_from_checkpoints(Groups, Steps, I + 1, Skip, Shift);
-exclude_computed_steps_from_checkpoints([{Size, 1, << Step/binary >>} | Groups],
-		[Step | Steps], _I, _Skip, Shift) ->
-	exclude_computed_steps_from_checkpoints(Groups, Steps,
-			Shift + Size div ?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT);
-exclude_computed_steps_from_checkpoints([{Size, N, << Step:32/binary, Buffer/binary >>}
-		| Groups], [Step | Steps], _I, Skip, Shift) ->
-	exclude_computed_steps_from_checkpoints([{Size, N - 1, Buffer} | Groups], Steps, 1, Skip,
-			Shift + Size div ?LAST_STEP_NONCE_LIMITER_CHECKPOINTS_COUNT);
-exclude_computed_steps_from_checkpoints(_Groups, _Steps, _I, _Skip, _Shift) ->
+exclude_computed_steps_from_steps_to_validate(StepsToValidate, [], _I, NumAlreadyComputed) ->
+	{StepsToValidate, NumAlreadyComputed};
+exclude_computed_steps_from_steps_to_validate(StepsToValidate, [_Step | ComputedSteps], I, NumAlreadyComputed)
+		when I /= 1 ->
+	exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps, I + 1, NumAlreadyComputed);
+exclude_computed_steps_from_steps_to_validate([Step], [Step | _ComputedSteps], _I, NumAlreadyComputed) ->
+	{[], NumAlreadyComputed + 1};
+exclude_computed_steps_from_steps_to_validate([Step | StepsToValidate], [Step | ComputedSteps], _I, NumAlreadyComputed) ->
+	exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps, 1, NumAlreadyComputed + 1);
+exclude_computed_steps_from_steps_to_validate(_StepsToValidate, _ComputedSteps, _I, _NumAlreadyComputed) ->
 	invalid.
 
 handle_initialized([#block{ height = Height } = B | Blocks], State) ->
@@ -722,7 +723,7 @@ apply_base_block(B, State) ->
 			global_step_number = StepNumber,
 			last_step_checkpoints = LastStepCheckpoints } = B#block.nonce_limiter_info,
 	Session = #vdf_session{ step_number = StepNumber,
-			last_step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
+			step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
 			steps = [Output], upper_bound = UpperBound, next_upper_bound = NextUpperBound,
 			seed = Seed },
 	SessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
@@ -739,20 +740,22 @@ apply_chain(#nonce_limiter_info{ global_step_number = StepNumber },
 			[StepNumber, PrevStepNumber]),
 	timer:sleep(1000),
 	erlang:halt();
+%% @doc Apply the pre-validated / trusted nonce_limiter_info. Since the info is trusted
+%% we don't validate it here.
 apply_chain(Info, PrevInfo) ->
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevStepNumber } = PrevInfo,
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
-			checkpoints = Checkpoints } = Info,
+			steps = Steps, last_step_checkpoints = LastStepCheckpoints } = Info,
 	Count = StepNumber - PrevStepNumber,
-	Output = hd(Checkpoints),
-	Count = length(Checkpoints),
+	Output = hd(Steps),
+	Count = length(Steps),
 	SessionKey = {PrevNextSeed, PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	NextSessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
-			Checkpoints},
+			Steps, LastStepCheckpoints},
 	gen_server:cast(?MODULE, {validated_steps, Args}).
 
 apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = State) ->
@@ -790,11 +793,11 @@ apply_tip2(B, PrevB, State) ->
 	SessionKey = {NextSeed, Interval},
 	PrevInterval = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PrevSessionKey = {PrevNextSeed, PrevInterval},
+	PrevSession = maps:get(PrevSessionKey, SessionByKey),
 	ExistingSession = maps:is_key(SessionKey, SessionByKey),
 	Session2 =
 		case maps:get(SessionKey, SessionByKey, not_found) of
 			not_found ->
-				PrevSession = maps:get(PrevSessionKey, SessionByKey),
 				#vdf_session{ steps = Steps, step_number = StepNumber2 } = PrevSession,
 				SessionStart = Interval * ?NONCE_LIMITER_RESET_FREQUENCY,
 				SessionEnd = (Interval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY - 1,
@@ -808,7 +811,7 @@ apply_tip2(B, PrevB, State) ->
 				StepNumber3 = min(StepNumber2, SessionEnd),
 				Steps3 = lists:sublist(Steps2, StepNumber3 - SessionStart + 1),
 				#vdf_session{ step_number = StepNumber3, seed = Seed,
-						last_step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
+						step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
 						steps = Steps3, upper_bound = UpperBound,
 						next_upper_bound = NextUpperBound, prev_session_key = PrevSessionKey };
 			Session ->
@@ -822,6 +825,7 @@ apply_tip2(B, PrevB, State) ->
 			SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
 			Sessions2 = gb_sets:add_element({element(2, SessionKey), element(1, SessionKey)},
 					Sessions),
+			ar_events:send(nonce_limiter, {validated_output, {PrevSessionKey, PrevSession}}),
 			State#state{ current_session_key = SessionKey, sessions = Sessions2,
 					session_by_key = SessionByKey2 }
 	end.
@@ -841,129 +845,85 @@ start_worker(State) ->
 	Ref = monitor(process, Worker),
 	State#state{ worker = Worker, worker_monitor_ref = Ref }.
 
-compute(StepNumber, Output) ->
-	{ok, O1, L1} = ar_vdf:compute2(step_number_to_salt_number(StepNumber - 1), Output,
-			?VDF_DIFFICULTY),
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(double_check_nonce_limiter, Config#config.enable) of
-		false ->
-			{ok, O1, L1};
-		true ->
-			{ok, O2, L2} = ar_mine_randomx:vdf_sha2(step_number_to_salt_number(StepNumber - 1),
-					Output),
-			case {O1, L1} == {O2, L2} of
-				true ->
-					{ok, O1, L1};
-				false ->
-					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
-					file:write_file("compute_" ++ binary_to_list(ID),
-							term_to_binary({StepNumber, Output})),
-					?LOG_ERROR([{event, nonce_limiter_compute_mismatch},
-							{report_id, ID}]),
-					{ok, O1, L1}
-			end
-	end.
+compute(StepNumber, PrevOutput) ->
+	{ok, Output, Checkpoints} = ar_vdf:compute2(StepNumber, PrevOutput, ?VDF_DIFFICULTY),
+	debug_double_check(
+		"compute",
+		{ok, Output, Checkpoints},
+		fun ar_vdf:debug_sha2/2,
+		[StepNumber, PrevOutput]).
 
-verify(StartStepNumber, PrevOutput, Groups, ResetStepNumber, ResetSeed, ThreadCount) ->
-	Rep1 = ar_vdf:verify2(step_number_to_salt_number(StartStepNumber), PrevOutput, Groups,
-			step_number_to_salt_number(ResetStepNumber - 1), ResetSeed, ThreadCount,
+verify(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ResetStepNumber, ResetSeed, ThreadCount) ->
+	Result = ar_vdf:verify2(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
+			ResetStepNumber, ResetSeed, ThreadCount,
 			?VDF_DIFFICULTY),
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(double_check_nonce_limiter, Config#config.enable) of
-		false ->
-			Rep1;
-		true ->
-			Rep2 = ar_mine_randomx:vdf_parallel_sha_verify(
-					step_number_to_salt_number(StartStepNumber), PrevOutput, Groups,
-					step_number_to_salt_number(ResetStepNumber - 1), ResetSeed, ThreadCount),
-			case Rep1 == Rep2 of
-				true ->
-					Rep1;
-				false ->
-					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
-					file:write_file("verify_" ++ binary_to_list(ID),
-							term_to_binary({StartStepNumber, PrevOutput, Groups,
-									ResetStepNumber, ResetSeed, ThreadCount})),
-					?LOG_ERROR([{event, nonce_limiter_verify_mismatch},
-							{report_id, ID}]),
-					Rep1
-			end
-	end.
+	debug_double_check(
+		"verify",
+		Result,
+		fun ar_vdf:debug_sha_verify/7,
+		[StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ResetStepNumber, ResetSeed, ThreadCount]).
 
-verify_no_reset(StartStepNumber, PrevOutput, Groups, ThreadCount) ->
+verify_no_reset(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ThreadCount) ->
 	Garbage = crypto:strong_rand_bytes(32),
-	Rep1 = ar_vdf:verify2(step_number_to_salt_number(StartStepNumber), PrevOutput, Groups, 0,
+	Result = ar_vdf:verify2(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, 0,
 			Garbage, ThreadCount, ?VDF_DIFFICULTY),
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(double_check_nonce_limiter, Config#config.enable) of
-		false ->
-			Rep1;
-		true ->
-			Rep2 = ar_mine_randomx:vdf_parallel_sha_verify_no_reset(
-					step_number_to_salt_number(StartStepNumber), PrevOutput, Groups,
-					ThreadCount),
-			case Rep1 == Rep2 of
-				true ->
-					Rep1;
-				false ->
-					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
-					file:write_file("verify_no_reset_" ++ binary_to_list(ID),
-							term_to_binary({StartStepNumber, PrevOutput, Groups,
-									ThreadCount})),
-					?LOG_ERROR([{event, nonce_limiter_verify_no_reset_mismatch},
-							{report_id, ID}]),
-					Rep1
-			end
-	end.
-
-step_number_to_salt_number(StepNumber) ->
-	(StepNumber - 1) * 25 + 1.
+	debug_double_check(
+		"verify_no_reset",
+		Result,
+		fun ar_vdf:debug_sha_verify_no_reset/5,
+		[StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ThreadCount]).
 
 worker() ->
 	receive
-		{compute, {StepNumber, Output, UpperBound}, From} ->
-			{ok, Output2, Checkpoints} = prometheus_histogram:observe_duration(
-					vdf_step_time_milliseconds, [], fun() -> compute(StepNumber, Output) end),
-			Args2 = {StepNumber, Output, Output2, UpperBound, Checkpoints},
-			From ! {computed, Args2},
+		{compute, {StepNumber, PrevOutput, UpperBound}, From} ->
+			{ok, Output, Checkpoints} = prometheus_histogram:observe_duration(
+					vdf_step_time_milliseconds, [], fun() -> compute(StepNumber, PrevOutput) end),
+			From ! {computed, {StepNumber, PrevOutput, Output, UpperBound, Checkpoints}},
 			worker();
 		stop ->
 			ok
 	end.
 
+%% @doc Get all the steps that fall between StartStepNumber and EndStepNumber, traversing
+%% multiple sessions if needed.
 get_steps(StartStepNumber, EndStepNumber, SessionKey, State) ->
 	#state{ session_by_key = SessionByKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
-		#vdf_session{ step_number = StepNumber, steps = Steps,
+		#vdf_session{ step_number = StepNumber, steps = SessionSteps,
 				prev_session_key = PrevSessionKey }
 				when StepNumber >= EndStepNumber ->
-			Steps2 = lists:nthtail(StepNumber - EndStepNumber, Steps),
-			Count = EndStepNumber - StartStepNumber,
-			SessionCount = length(Steps2),
-			case Count > SessionCount of
+			%% Get the steps within the current session that fall within the StartStepNumber
+			%% and EndStepNumber range.
+			Steps = lists:nthtail(StepNumber - EndStepNumber, SessionSteps),
+			TotalCount = EndStepNumber - StartStepNumber,
+			Count = length(Steps),
+			%% If we haven't found all the steps, recurse into the previous session.
+			case TotalCount > Count of
 				true ->
-					EndStepNumber2 = EndStepNumber - SessionCount,
-					case get_steps(StartStepNumber, EndStepNumber2, PrevSessionKey, State) of
+					case get_steps(StartStepNumber, EndStepNumber - Count,
+							PrevSessionKey, State) of
 						not_found ->
 							not_found;
-						Steps3 ->
-							Steps2 ++ Steps3
+						PrevSteps ->
+							Steps ++ PrevSteps
 					end;
 				false ->
-					lists:sublist(Steps2, Count)
+					lists:sublist(Steps, TotalCount)
 			end;
 		_ ->
 			not_found
 	end.
 
-get_partial_steps(StartStepNumber, EndStepNumber, SessionKey, State) ->
+%% @doc Get all the steps in the current session that fall between
+%% StartStepNumber and EndStepNumber
+get_session_steps(StartStepNumber, EndStepNumber, SessionKey, State) ->
 	#state{ session_by_key = SessionByKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
-		#vdf_session{ step_number = StepNumber, steps = Steps }
+		#vdf_session{ step_number = StepNumber, steps = SessionSteps }
 				when StepNumber > StartStepNumber ->
 			End = min(StepNumber, EndStepNumber),
-			Steps2 = lists:nthtail(StepNumber - End, Steps),
-			lists:sublist(Steps2, End - StartStepNumber);
+			Steps = lists:nthtail(StepNumber - End, SessionSteps),
+			lists:sublist(Steps, End - StartStepNumber);
 		_ ->
 			[]
 	end.
@@ -971,21 +931,20 @@ get_partial_steps(StartStepNumber, EndStepNumber, SessionKey, State) ->
 schedule_step(State) ->
 	#state{ current_session_key = {NextSeed, IntervalNumber} = Key,
 			session_by_key = SessionByKey, worker = Worker } = State,
-	#vdf_session{ step_number = StepNumber, steps = Steps, upper_bound = UpperBound,
+	#vdf_session{ step_number = PrevStepNumber, steps = Steps, upper_bound = UpperBound,
 			next_upper_bound = NextUpperBound } = maps:get(Key, SessionByKey),
 	PrevOutput = hd(Steps),
-	StepNumber2 = StepNumber + 1,
+	StepNumber = PrevStepNumber + 1,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
-	{PrevOutput2, UpperBound2} =
-		case get_entropy_reset_point(IntervalStart, StepNumber2) of
-			StepNumber2 ->
-				{mix_seed(PrevOutput, NextSeed), NextUpperBound};
+	PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
+		PrevOutput, IntervalStart, StepNumber, NextSeed),
+	UpperBound2 = case get_entropy_reset_point(IntervalStart, StepNumber) of
 			none ->
-				{PrevOutput, UpperBound};
+				UpperBound;
 			_ ->
-				{PrevOutput, NextUpperBound}
+				NextUpperBound
 		end,
-	Worker ! {compute, {StepNumber2, PrevOutput2, UpperBound2}, self()},
+	Worker ! {compute, {StepNumber, PrevOutput2, UpperBound2}, self()},
 	State.
 
 get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpperBound) ->
@@ -1004,8 +963,8 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 apply_external_update2(Update, State) ->
 	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey,
 			sessions = Sessions } = State,
-	#nonce_limiter_update{ session_key = {NextSeed, IntervalNumber} = SessionKey,
-			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
+	#nonce_limiter_update{ session_key = SessionKey,
+			session = #vdf_session{ upper_bound = UpperBound,
 					step_number = StepNumber, steps = [Output | _] } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
 	case maps:get(SessionKey, SessionByKey, not_found) of
@@ -1023,17 +982,16 @@ apply_external_update2(Update, State) ->
 							sessions = Sessions2 }}
 			end;
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
-				last_step_checkpoints_map = Map } = CurrentSession ->
+				step_checkpoints_map = Map } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
 					CurrentSession2 = CurrentSession#vdf_session{ step_number = StepNumber,
-							last_step_checkpoints_map = Map2,
+							step_checkpoints_map = Map2,
 							steps = [Output | CurrentSteps] },
 					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
-					Args = {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output,
-							Checkpoints},
-					ar_events:send(nonce_limiter, {computed_output, Args}),
+					ar_events:send(nonce_limiter, {computed_output,
+							{SessionKey, CurrentSession2, Output, UpperBound}}),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
@@ -1067,11 +1025,57 @@ may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber) ->
 			ok
 	end.
 
+debug_double_check(Label, Result, Func, Args) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(double_check_nonce_limiter, Config#config.enable) of
+		false ->
+			Result;
+		true ->
+			Check = apply(Func, Args),
+			case Result == Check of
+				true ->
+					Result;
+				false ->
+					ID = ar_util:encode(crypto:strong_rand_bytes(16)),
+					file:write_file(Label ++ "_" ++ binary_to_list(ID),
+							term_to_binary(Args)),
+					Event = "nonce_limiter_" ++ Label ++ "_mismatch",
+					?LOG_ERROR([{event, list_to_atom(Event)}, {report_id, ID}]),
+					Result
+			end
+	end.
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
-exclude_computed_steps_from_checkpoints_test() ->
+%% @doc Reset the state and stop computing steps automatically. Used in tests.
+reset_and_pause() ->
+	gen_server:cast(?MODULE, reset_and_pause).
+
+%% @doc Get all steps starting from the latest on the current tip. Used in tests.
+get_steps() ->
+	gen_server:call(?MODULE, get_steps).
+
+%% @doc Compute a single step. Used in tests.
+step() ->
+	Self = self(),
+	spawn(
+		fun() ->
+			ok = ar_events:subscribe(nonce_limiter),
+			gen_server:cast(?MODULE, compute_step),
+			receive
+				{event, nonce_limiter, {computed_output, _}} ->
+					Self ! done
+			end
+		end
+	),
+	receive
+		done ->
+			ok
+	end.
+
+exclude_computed_steps_from_steps_to_validate_test() ->
 	C1 = crypto:strong_rand_bytes(32),
 	C2 = crypto:strong_rand_bytes(32),
 	C3 = crypto:strong_rand_bytes(32),
@@ -1079,25 +1083,24 @@ exclude_computed_steps_from_checkpoints_test() ->
 	C5 = crypto:strong_rand_bytes(32),
 	Cases = [
 		{{[], []}, {[], 0}, "Case 1"},
-		{{[{25, 1, C1}], []}, {[{25, 1, C1}], 0}, "Case 2"},
-		{{[{25, 1, C1}], [C1]}, {[], 1}, "Case 3"},
-		{{[{25, 2, << C1/binary, C2/binary >>}], []},
-				{[{25, 2, << C1/binary, C2/binary >>}], 0}, "Case 4"},
-		{{[{25, 2, << C1/binary, C2/binary >>}], [C2]}, invalid, "Case 5"},
-		{{[{25, 2, << C1/binary, C2/binary >>}], [C1]}, {[{25, 1, C2}], 1}, "Case 6"},
-		{{[{25, 2, << C1/binary, C2/binary >>}], [C2, C1]}, invalid, "Case 7"},
-		{{[{25, 2, << C1/binary, C2/binary >>}], [C1, C2]}, {[], 2}, "Case 8"},
-		{{[{25, 2, << C1/binary, C2/binary >>}], [C1, C2, C3, C4, C5]}, {[], 2}, "Case 9"}
+		{{[C1], []}, {[C1], 0}, "Case 2"},
+		{{[C1], [C1]}, {[], 1}, "Case 3"},
+		{{[C1, C2], []}, {[C1, C2], 0}, "Case 4"},
+		{{[C1, C2], [C2]}, invalid, "Case 5"},
+		{{[C1, C2], [C1]}, {[C2], 1}, "Case 6"},
+		{{[C1, C2], [C2, C1]}, invalid, "Case 7"},
+		{{[C1, C2], [C1, C2]}, {[], 2}, "Case 8"},
+		{{[C1, C2], [C1, C2, C3, C4, C5]}, {[], 2}, "Case 9"}
 	],
-	test_exclude_computed_steps_from_checkpoints(Cases).
+	test_exclude_computed_steps_from_steps_to_validate(Cases).
 
-test_exclude_computed_steps_from_checkpoints([Case | Cases]) ->
+test_exclude_computed_steps_from_steps_to_validate([Case | Cases]) ->
 	{Input, Expected, Title} = Case,
-	{Groups, ReversedSteps} = Input,
-	Got = exclude_computed_steps_from_checkpoints(Groups, ReversedSteps),
+	{StepsToValidate, ComputedSteps} = Input,
+	Got = exclude_computed_steps_from_steps_to_validate(StepsToValidate, ComputedSteps),
 	?assertEqual(Expected, Got, Title),
-	test_exclude_computed_steps_from_checkpoints(Cases);
-test_exclude_computed_steps_from_checkpoints([]) ->
+	test_exclude_computed_steps_from_steps_to_validate(Cases);
+test_exclude_computed_steps_from_steps_to_validate([]) ->
 	ok.
 
 get_entropy_reset_point_test() ->
@@ -1128,10 +1131,10 @@ test_applies_validated_steps() ->
 	assert_validate(B2, B1, valid),
 	assert_validate(B2#block{ nonce_limiter_info = #nonce_limiter_info{} }, B1, {invalid, 1}),
 	N2 = B2#block.nonce_limiter_info,
-	assert_validate(B2#block{ nonce_limiter_info = N2#nonce_limiter_info{ checkpoints = [] } },
+	assert_validate(B2#block{ nonce_limiter_info = N2#nonce_limiter_info{ steps = [] } },
 			B1, {invalid, 4}),
 	assert_validate(B2#block{
-			nonce_limiter_info = N2#nonce_limiter_info{ checkpoints = [Output2, Output2] } },
+			nonce_limiter_info = N2#nonce_limiter_info{ steps = [Output2, Output2] } },
 			B1, {invalid, 2}),
 	assert_step_number(2),
 	[step() || _ <- lists:seq(1, 3)],
@@ -1239,8 +1242,8 @@ assert_step_number(N) ->
 	timer:sleep(200),
 	?assert(ar_util:do_until(fun() -> get_current_step_number() == N end, 100, 1000)).
 
-test_block(StepNumber, Output, Seed, NextSeed, LastStepCheckpoints, Checkpoints) ->
+test_block(StepNumber, Output, Seed, NextSeed, LastStepCheckpoints, Steps) ->
 	#block{ indep_hash = crypto:strong_rand_bytes(32),
 			nonce_limiter_info = #nonce_limiter_info{ output = Output,
 					global_step_number = StepNumber, seed = Seed, next_seed = NextSeed,
-					last_step_checkpoints = LastStepCheckpoints, checkpoints = Checkpoints } }.
+					last_step_checkpoints = LastStepCheckpoints, steps = Steps } }.
