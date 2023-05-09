@@ -788,7 +788,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
-	print_map(PeersPerChunk),
+	% print_map(PeersPerChunk),
 	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
