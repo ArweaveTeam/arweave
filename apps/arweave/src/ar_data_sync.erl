@@ -2226,26 +2226,20 @@ find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers) -
 			end,
 			Peers
 		),
-	{AllPeersSoughtIntervals, AllPeersIntervals2} =
+	AllPeersIntervals2 =
 		lists:foldl(
-			fun	(
-				{Peer, SoughtIntervals, PeerIntervals, Left},
-				{AllPeersSoughtIntervals, AllPeersIntervals2}
-			) ->
+			fun	({Peer, _, PeerIntervals, Left}, Acc) ->
 					case ar_intervals:is_empty(PeerIntervals) of
 						true ->
-							{AllPeersSoughtIntervals, AllPeersIntervals2};
+							Acc;
 						false ->
 							Right = element(1, ar_intervals:largest(PeerIntervals)),
-							{
-								maps:put(Peer, SoughtIntervals, AllPeersSoughtIntervals),
-								maps:put(Peer, {Right, Left, PeerIntervals}, AllPeersIntervals2)
-							}
+							maps:put(Peer, {Right, Left, PeerIntervals}, Acc)
 					end;
 				(_, Acc) ->
 					Acc
 			end,
-			{#{}, AllPeersIntervals},
+			AllPeersIntervals,
 			Intervals
 		),
 	EnqueueIntervals =
