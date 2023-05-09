@@ -11,7 +11,7 @@
 		increment_chunk_cache_size/0, get_chunk_padded_offset/1, get_chunk_metadata_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([collect_all_peers_per_chunk/3, aligned_intervals/3, enqueue_intervals/2]).
+-export([collect_all_peers_per_chunk/3, aligned_intervals/3, enqueue_intervals/2, remove_expired_disk_pool_data_roots/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
