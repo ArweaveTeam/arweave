@@ -171,8 +171,8 @@ sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}) when Start >= End -
 	ok;
 sync_range({_Start, _End, Peer, _TargetStoreID, 0}) ->
 	?LOG_ERROR("*** sync_range peer timeout: ~p", [ar_util:format_peer(Peer)]),
-	ar_events:send(data_sync, {timeout, {sync_range, Peer}}),
-	purge_messages({sync_range, Peer}),
+	% ar_events:send(data_sync, {timeout, {sync_range, Peer}}),
+	% purge_messages({sync_range, Peer}),
 	ok;
 sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	IsChunkCacheFull =
@@ -222,12 +222,12 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							?LOG_ERROR([{event, timeout_fetching_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{start_offset, Start2}, {end_offset, End}]),
-							% Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
-							% ar_util:cast_after(1000, self(), {sync_range, Args2}),
-							% recast;
-							ar_events:send(data_sync, {timeout, {sync_range, Peer}}),
-							purge_messages({sync_range, Peer}),
-							ok;
+							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
+							ar_util:cast_after(1000, self(), {sync_range, Args2}),
+							recast;
+							% ar_events:send(data_sync, {timeout, {sync_range, Peer}}),
+							% purge_messages({sync_range, Peer}),
+							% ok;
 						{error, Reason} ->
 							?LOG_ERROR([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},

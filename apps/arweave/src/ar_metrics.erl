@@ -76,12 +76,6 @@ register(MetricsDir) ->
 			"The total duration of an HTTP GET chunk request made to a peer."
 		}
 	]),
-	prometheus_gauge:new([
-		{name, ar_http_pending_requests},
-		{labels, [http_method, route]},
-		{help, "The number of HTTP requests currently in process."}
-	]),
-
 
 	prometheus_gauge:new([
 		{name, downloader_queue_size},
