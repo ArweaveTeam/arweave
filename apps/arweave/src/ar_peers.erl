@@ -77,7 +77,9 @@ get_peers() ->
 			% 	{212, 25, 52, 23, 10019}
 			% ],
 			% lists:filter(fun(Peer) -> not lists:member(Peer, UnwantedPeers) end, Peers)
-			Peers
+			
+			[{89,160,94,126,1984}, {206,83,144,16,1984}]
+			%Peers
 	end.
 
 -if(?NETWORK_NAME == "arweave.N.1").
