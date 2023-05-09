@@ -1292,7 +1292,7 @@ terminate(Reason, State) ->
 
 print_map(Map) ->
     SortedMap = lists:sort(maps:to_list(Map)),
-    print_map(SortedMap, undefined).
+    print_map(SortedMap, {undefined, undefined, undefined}).
 
 print_map([], _) -> ok;
 print_map([{{Start, End}, Value} | Rest], {PrevStart, PrevEnd, PrevValue}) ->
@@ -1302,7 +1302,7 @@ print_map([{{Start, End}, Value} | Rest], {PrevStart, PrevEnd, PrevValue}) ->
 		PrevEnd when PrevEnd > Start ->
 			?LOG_INFO("PeersPerChunk Overlapping range: {~p, ~p} x {~p, ~p}: ~p x ~p", [PrevStart, PrevEnd, Start, End, PrevValue, Value]);
 		PrevEnd when PrevEnd < Start ->
-			?LOG_INFO("PeersPerChunk Gap between ranges: {~p, ~p} x {~p, ~p}: ~p x ~p", [PrevStart, PrevEnd, Start, End, PrevValue, Value]);
+			?LOG_INFO("PeersPerChunk Gap between ranges: {~p, ~p} <-> {~p, ~p}: ~p <-> ~p", [PrevStart, PrevEnd, Start, End, PrevValue, Value]);
 		_ -> ok
 	end,
 	%% Check for difference less than ?DATA_CHUNK_SIZE
