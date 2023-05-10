@@ -284,7 +284,7 @@ handle_cast({reset_mining_session, _MiningSession}, State) ->
 
 handle_cast({compute_h2, Peer, H2Materials}, State) ->
 	ar_mining_server:remote_compute_h2(Peer, H2Materials),
-	{_Diff, _Addr, _H0, _PartitionNumber, _PartitionUpperBound, ReqList} = H2Materials,
+	{_Diff, _Addr, _H0, _PartitionNumber, _PartitionUpperBound, _Seed, _NextSeed, _StartIntervalNumber, _StepNumber, _NonceLimiterOutput, _SuppliedCheckpoints, ReqList} = H2Materials,
 	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
 	H1Count = length(ReqList),
 	NewStat = OldStat#peer_io_stat{
@@ -297,9 +297,9 @@ handle_cast({compute_h2, Peer, H2Materials}, State) ->
 	},
 	{noreply, NewState};
 
-handle_cast({computed_h2, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, Peer}}, State) ->
+handle_cast({computed_h2, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, Peer}}, State) ->
 	io:format("DEBUG computed_h2~n"),
-	ar_http_iface_client:cm_h2_send(Peer, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}),
+	ar_http_iface_client:cm_h2_send(Peer, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}),
 	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
 	NewStat = OldStat#peer_io_stat{
 		h2_out_counter = OldStat#peer_io_stat.h2_out_counter + 1
