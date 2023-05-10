@@ -85,6 +85,9 @@
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000). % 2 seconds.
 -endif.
 
+%% Number of chunks to add to the sync queue per peer, before moving onto the next peer.
+-define(ROUND_ROBIN_SYNC_BATCH_SIZE, 10).
+
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
 	%% The last entries of the block index.

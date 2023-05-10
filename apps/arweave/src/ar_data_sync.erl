@@ -11,7 +11,7 @@
 		increment_chunk_cache_size/0, get_chunk_padded_offset/1, get_chunk_metadata_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([collect_all_peers_per_chunk/3, enqueue_intervals/2, remove_expired_disk_pool_data_roots/0]).
+-export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -787,9 +787,24 @@ handle_cast({enqueue_intervals, []}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
-	print_map(PeersPerChunk),
-	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
+	% PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
+	% print_map(PeersPerChunk),
+	{Q2, QIntervals2} = enqueue_intervals(
+		Intervals, ?ROUND_ROBIN_SYNC_BATCH_SIZE, {Q, QIntervals}),
+	AllIntervals = lists:foldl(fun({_Peer, PeerIntervals}, Acc) ->
+			ar_intervals:union(PeerIntervals, Acc)
+		end, ar_intervals:new(), Intervals),
+	AllIntervalsSum = ar_intervals:sum(AllIntervals),
+	QSum = gb_sets:size(Q),
+	Q2Sum = gb_sets:size(Q2),
+	QIntervalsSum = ar_intervals:sum(QIntervals),
+	QIntervals2Sum = ar_intervals:sum(QIntervals2),
+	?LOG_ERROR([
+		{event, cast_enqueue_intervals},
+		{total_intervals, AllIntervalsSum},
+		{before_queue_size, QSum}, {after_queue_size, Q2Sum}, {queue_size_diff, Q2Sum - QSum},
+ 		{before_queue_intervals, QIntervalsSum}, {after_queue_intervals, QIntervals2Sum},
+		{queue_intervals_diff, QIntervals2Sum - QIntervalsSum}]),
 	% {Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -2309,39 +2324,98 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 %% requested twice. I've deferred handling this case for now - I think the number of
 %% redundant requests will be minimal and handling the case better introduces
 %% complexity that I'm not sure is warranted yet.
-collect_all_peers_per_chunk([], _QIntervals, PeersPerChunk) ->
-	PeersPerChunk;
-collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChunk) ->
-	% OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-	PeersPerChunk2 = ar_intervals:fold(
-		fun({End, Start}, Acc) ->
-			lists:foldl(
-				% fun({AlignedStart, AlignedEnd}, InnerAcc) ->
-				fun(ChunkStart, InnerAcc) ->
-					ChunkEnd = min(ChunkStart + ?DATA_CHUNK_SIZE, End),
-					Peers = maps:get({ChunkStart, ChunkEnd}, InnerAcc, []),
-					maps:put({ChunkStart, ChunkEnd}, [Peer | Peers], InnerAcc)
-				end,
-				Acc,
-				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
-			)
-		end,
-		PeersPerChunk,
-		Intervals
-	),
-	collect_all_peers_per_chunk(Rest, QIntervals, PeersPerChunk2).
+% collect_all_peers_per_chunk([], _QIntervals, PeersPerChunk) ->
+% 	PeersPerChunk;
+% collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChunk) ->
+% 	% OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+% 	PeersPerChunk2 = ar_intervals:fold(
+% 		fun({End, Start}, Acc) ->
+% 			lists:foldl(
+% 				% fun({AlignedStart, AlignedEnd}, InnerAcc) ->
+% 				fun(ChunkStart, InnerAcc) ->
+% 					ChunkEnd = min(ChunkStart + ?DATA_CHUNK_SIZE, End),
+% 					Peers = maps:get({ChunkStart, ChunkEnd}, InnerAcc, []),
+% 					maps:put({ChunkStart, ChunkEnd}, [Peer | Peers], InnerAcc)
+% 				end,
+% 				Acc,
+% 				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
+% 			)
+% 		end,
+% 		PeersPerChunk,
+% 		Intervals
+% 	),
+% 	collect_all_peers_per_chunk(Rest, QIntervals, PeersPerChunk2).
 
-enqueue_intervals(PeersPerChunk, {Q, QIntervals}) ->
-	maps:fold(
-		fun({Start, End}, Peers, {QAcc, QIntervalsAcc}) ->
-			SelectedPeer = lists:nth(rand:uniform(length(Peers)), Peers),
-			QUpdated = gb_sets:add_element({Start, End, SelectedPeer}, QAcc),
-			QIntervalsUpdated = ar_intervals:add(QIntervalsAcc, End, Start),
-			{QUpdated, QIntervalsUpdated}
+% enqueue_intervals(PeersPerChunk, {Q, QIntervals}) ->
+% 	maps:fold(
+% 		fun({Start, End}, Peers, {QAcc, QIntervalsAcc}) ->
+% 			SelectedPeer = lists:nth(rand:uniform(length(Peers)), Peers),
+% 			QUpdated = gb_sets:add_element({Start, End, SelectedPeer}, QAcc),
+% 			QIntervalsUpdated = ar_intervals:add(QIntervalsAcc, End, Start),
+% 			{QUpdated, QIntervalsUpdated}
+% 		end,
+% 		{Q, QIntervals},
+% 		PeersPerChunk
+% 	).
+
+enqueue_intervals([], _, {Q, QIntervals}) ->
+	{Q, QIntervals};
+enqueue_intervals([{Peer, Intervals} | Rest], BatchSize, {Q, QIntervals}) ->
+	{{Peer, RemainingIntervals}, {Q2, QIntervals2}} = enqueue_peer_intervals(Peer, Intervals, BatchSize, {Q, QIntervals}),
+	case ar_intervals:is_empty(RemainingIntervals) of
+		true ->
+			enqueue_intervals(Rest, BatchSize, {Q2, QIntervals2});
+		false ->
+			enqueue_intervals(Rest ++ [{Peer, RemainingIntervals}], BatchSize, {Q2, QIntervals2})
+	end.
+
+enqueue_peer_intervals(Peer, Intervals, NumChunks, {Q, QIntervals}) ->
+	case ar_intervals:is_empty(Intervals) of
+		true ->
+			{{Peer, Intervals}, {Q, QIntervals}};
+		false ->
+			{{E, S}, RemainingIntervals} = ar_intervals:take_smallest(Intervals),
+			NextIntervals = ar_intervals:add(ar_intervals:new(), E, S),
+			OuterJoin = ar_intervals:outerjoin(QIntervals, NextIntervals),
+			{ChunksToEnqueue, {Q2, QIntervals2}} = ar_intervals:fold(
+				fun	(_, {0, {QAcc, QIAcc}}) ->
+						{0, {QAcc, QIAcc}};
+					({End, Start}, {ChunksToEnqueue2, {QAcc, QIAcc}}) ->
+						RangeEnd = min(End, Start + (ChunksToEnqueue2 * ?DATA_CHUNK_SIZE)),
+						ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
+						ChunksEnqueued = length(ChunkOffsets),
+						{ChunksToEnqueue2 - ChunksEnqueued,
+							enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
+				end,
+				{NumChunks, {Q, QIntervals}},
+				OuterJoin
+			),
+			case ChunksToEnqueue of
+				0 ->
+					{{Peer, Intervals}, {Q2, QIntervals2}};
+				_ ->
+					enqueue_peer_intervals(Peer, RemainingIntervals, ChunksToEnqueue, {Q2, QIntervals2})
+			end
+	end.
+
+enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
+	?LOG_DEBUG([
+		{event, add_interval_to_sync_queue},
+		{start_offset, RangeStart}, {end_offset, RangeEnd},
+		{num_chunks, length(ChunkOffsets)}, {peer, ar_util:format_peer(Peer)}]),
+	Q2 = lists:foldl(
+		fun(ChunkStart, QAcc) ->
+			gb_sets:add_element(
+				{ChunkStart, min(ChunkStart + ?DATA_CHUNK_SIZE, RangeEnd), Peer},
+				QAcc)
 		end,
-		{Q, QIntervals},
-		PeersPerChunk
-	).
+		Q,
+		ChunkOffsets
+	),
+	QIntervals2 = ar_intervals:add(QIntervals, RangeEnd, RangeStart),
+	{Q2, QIntervals2}.
+
+
 
 % enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
 % 	%% The outerjoin keeps only unique intervals - only Intervals
