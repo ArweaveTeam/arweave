@@ -790,7 +790,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
 	print_map(PeersPerChunk),
 	{Q2, QIntervals2} = enqueue_intervals(PeersPerChunk, {Q, QIntervals}),
-	{Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
+	% {Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 handle_cast(sync_intervals, State) ->
