@@ -2312,8 +2312,7 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 collect_all_peers_per_chunk([], _QIntervals, PeersPerChunk) ->
 	PeersPerChunk;
 collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChunk) ->
-	?LOG_ERROR("collect_all_peers_per_chunk: ~p", [ar_intervals:is_empty(QIntervals)]),
-	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+	% OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
 	PeersPerChunk2 = ar_intervals:fold(
 		fun({End, Start}, Acc) ->
 			lists:foldl(
@@ -2328,7 +2327,7 @@ collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChun
 			)
 		end,
 		PeersPerChunk,
-		OuterJoin
+		Intervals
 	),
 	collect_all_peers_per_chunk(Rest, QIntervals, PeersPerChunk2).
 
