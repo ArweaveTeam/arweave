@@ -1573,9 +1573,11 @@ json_map_to_remote_h2_materials(JSON) ->
 		Nonce = maps:get(<<"nonce">>, JsonElement),
 		{H1, Nonce}
 	end, maps:get(<<"req_list">>, JSON, [])),
-	{Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReqList}.
+	SuppliedCheckpointsEncoded = maps:get(<<"vdf_checkpoints">>, JSON),
+	SuppliedCheckpoints = parse_checkpoints(ar_util:decode(SuppliedCheckpointsEncoded), 1),
+	{Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList}.
 
-remote_h2_materials_to_json_map({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReqList}) ->
+remote_h2_materials_to_json_map({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList}) ->
 	ReqList2 = lists:map(fun ({H1, Nonce}) ->
 		{[
 			{h1, ar_util:encode(H1)},
@@ -1594,6 +1596,7 @@ remote_h2_materials_to_json_map({Diff, Addr, H0, PartitionNumber, PartitionUpper
 		{start_interval_number, integer_to_binary(StartIntervalNumber)},
 		{step_number, integer_to_binary(StepNumber)},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
+		{vdf_checkpoints, ar_util:encode(iolist_to_binary(SuppliedCheckpoints))},
 		{req_list, ReqList2}
 	].
 
