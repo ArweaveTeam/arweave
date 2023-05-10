@@ -278,7 +278,7 @@ handle_cast({pause_performance_reports, Time}, State) ->
 			pause_performance_reports_timeout = Timeout }};
 
 handle_cast({remote_compute_h2, Peer, H2Materials}, State) ->
-	{Diff, Addr, H0, PartitionNumber, PartitionUpperBound, NonceLimiterOutput,
+	{Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints,
 			ReqList} = H2Materials,
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
@@ -293,7 +293,7 @@ handle_cast({remote_compute_h2, Peer, H2Materials}, State) ->
 			reserve_cache_space(),
 			CorrelationRef = {PartitionNumber2, PartitionUpperBound, make_ref()},
 			Session = {remote, Diff, Addr, H0, PartitionNumber, PartitionUpperBound,
-					RecallRange2Start, NonceLimiterOutput, ReqList, Peer},
+					RecallRange2Start, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList, Peer},
 			Thread ! {remote_read_recall_range2, self(), Session, CorrelationRef}
 	end,
 	{noreply, State};
@@ -468,6 +468,7 @@ handle_info({remote_io_thread_recall_range2_chunk,
 		Session}}, State) ->
 	%% Prevent an accidental pattern match of _H0, _PartitionNumber.
 	{remote, _Diff, _Addr, _H0_, _PartitionNumber_, _PartitionUpperBound, _RecallByte2Start,
+			_Seed, _NextSeed, _StartIntervalNumber, _StepNumber, _NonceLimiterOutput2, _SuppliedCheckpoints,
 			ReqList, _Peer } = Session,
 	#state{ hashing_threads = Threads } = State,
 	%% The accumulator is in fact the un-accumulator here.
@@ -606,6 +607,7 @@ io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{remote_read_recall_range2, From, Session, CorrelationRef} ->
 			{remote, _Diff, Addr, H0, PartitionNumber2, _PartitionUpperBound, RecallRangeStart,
+					_Seed, _NextSeed, _StartIntervalNumber, _StepNumber, _NonceLimiterOutput, _SuppliedCheckpoints,
 					_ReqList, _Peer} = Session,
 			case ReplicaID of
 				Addr ->
@@ -814,7 +816,8 @@ hashing_thread(SessionRef) ->
 			%% Important: here we make http requests inside the hashing thread
 			%% to reduce the latency.
 			{remote, Diff, ReplicaID, H0, PartitionNumber, PartitionUpperBound,
-					_RecallByte2Start, NonceLimiterOutput, _ReqList, Peer } = Session,
+					_RecallByte2Start, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints,
+					_ReqList, Peer } = Session,
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
 			case binary:decode_unsigned(H2, big) > Diff of
 				true ->
@@ -845,9 +848,13 @@ hashing_thread(SessionRef) ->
 									{mining_address, ar_util:encode(ReplicaID)}]),
 							ok;
 						_ ->
+							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+							#nonce_limiter_info{ next_seed = PrevNextSeed,
+								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+							SuppliedCheckpoints = ar_nonce_limiter:get_checkpoints(PrevStepNumber, StepNumber, PrevNextSeed),
 							ar_coordination:computed_h2({Diff, ReplicaID, H0, H1, Nonce,
 									PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage2,
-									NonceLimiterOutput, Peer})
+									Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, Peer})
 					end;
 				false ->
 					ok
