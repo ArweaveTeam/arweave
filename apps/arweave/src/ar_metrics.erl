@@ -485,6 +485,11 @@ name_route([]) ->
 	"/";
 name_route([<<"vdf">>]) ->
 	"/vdf";
+name_route([<<"vdf">>, <<"session">>]) ->
+	"/vdf/session";
+name_route([<<"vdf">>, <<"previous_session">>]) ->
+	"/vdf/previous_session";
+
 name_route([<<"current_block">>]) ->
 	"/current/block";
 name_route([<<_Hash:43/binary, _MaybeExt/binary>>]) ->

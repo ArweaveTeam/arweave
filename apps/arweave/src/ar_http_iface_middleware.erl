@@ -1225,6 +1225,36 @@ handle(<<"POST">>, [<<"vdf">>], Req, Pid) ->
 			handle_post_vdf(Req, Pid)
 	end;
 
+%% Serve an VDF update to a configured VDF client.
+%% GET request to /vdf.
+handle(<<"GET">>, [<<"vdf">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_update)
+	end;
+
+%% Serve the current VDF session to a configured VDF client.
+%% GET request to /vdf.
+handle(<<"GET">>, [<<"vdf">>, <<"session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_session)
+	end;
+
+%% Serve the previous VDF session to a configured VDF client.
+%% GET request to /vdf.
+handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_previous_session)
+	end;
+
 %% Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, Req, _Pid) ->
@@ -2678,20 +2708,26 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	end.
 
 handle_post_vdf(Req, Pid) ->
-	case ets:lookup(ar_nonce_limiter, remote_servers) of
-		[] ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case ets:member(ar_peers, {vdf_server_peer, Peer}) of
+		false ->
 			{400, #{}, <<>>, Req};
-		[{remote_servers, Peers}] ->
-			Peer = ar_http_util:arweave_peer(Req),
-			case lists:member(Peer, Peers) of
-				false ->
-					{400, #{}, <<>>, Req};
-				true ->
-					handle_post_vdf2(Req, Pid, Peer)
-			end
+		true ->
+			handle_post_vdf2(Req, Pid, Peer)
 	end.
 
 handle_post_vdf2(Req, Pid, Peer) ->
+	case ar_config:pull_from_remote_vdf_server() of
+		true ->
+			%% We are pulling the updates - tell the server not to push them.
+			Response = #nonce_limiter_update_response{ postpone = 120 },
+			Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+			{202, #{}, Bin, Req};
+		false ->
+			handle_post_vdf3(Req, Pid, Peer)
+	end.
+
+handle_post_vdf3(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			{ok, Update} = ar_serialize:binary_to_nonce_limiter_update(Body),
@@ -2706,6 +2742,24 @@ handle_post_vdf2(Req, Pid, Peer) ->
 			{413, #{}, <<"Payload too large">>, Req};
 		{error, timeout} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end.
+
+handle_get_vdf(Req, Call) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
+		[] ->
+			{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
+		[{_, RawPeer}] ->
+			handle_get_vdf2(Req, Call, RawPeer)
+	end.
+
+handle_get_vdf2(Req, Call, RawPeer) ->
+	Server = list_to_atom("ar_nonce_limiter_server_worker_" ++ ar_util:peer_to_str(RawPeer)),
+	case gen_server:call(Server, Call) of
+		not_found ->
+			{404, #{}, <<>>, Req};
+		Update ->
+			{200, #{}, ar_serialize:nonce_limiter_update_to_binary(Update), Req}
 	end.
 
 read_complete_body(Req, Pid) ->

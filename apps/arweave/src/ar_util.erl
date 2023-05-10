@@ -1,7 +1,8 @@
 -module(ar_util).
 
 -export([pick_random/1, pick_random/2, encode/1, decode/1, safe_decode/1,
-		parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2,
+		parse_peer/1, peer_to_str/1, parse_port/1, safe_parse_peer/1, format_peer/1,
+		unique/1, count/2,
 		genesis_wallets/0, pmap/2, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
@@ -56,6 +57,14 @@ parse_peer(Str) when is_list(Str) ->
 parse_peer({IP, Port}) ->
 	{A, B, C, D} = parse_peer(IP),
 	{A, B, C, D, parse_port(Port)}.
+
+peer_to_str(Bin) when is_binary(Bin) ->
+	binary_to_list(Bin);
+peer_to_str(Str) when is_list(Str) ->
+	Str;
+peer_to_str({A, B, C, D, Port}) ->
+	integer_to_list(A) ++ "_" ++ integer_to_list(B) ++ "_" ++ integer_to_list(C) ++ "_"
+			++ integer_to_list(D) ++ "_" ++ integer_to_list(Port).
 
 %% @doc Parses a port string into an integer.
 parse_port(Int) when is_integer(Int) -> Int;

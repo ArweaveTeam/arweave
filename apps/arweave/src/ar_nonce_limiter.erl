@@ -343,12 +343,11 @@ init([]) ->
 			_ ->
 				#state{}
 		end,
-	{ok, Config} = application:get_env(arweave, config),
 	State2 =
-		case Config#config.nonce_limiter_server_trusted_peers of
-			[] ->
+		case ar_config:use_remote_vdf_server() of
+			false ->
 				State;
-			_Peers ->
+			true ->
 				resolve_remote_server_raw_peers(),
 				gen_server:cast(?MODULE, check_external_vdf_server_input),
 				State#state{ autocompute = false }
@@ -357,23 +356,19 @@ init([]) ->
 
 resolve_remote_server_raw_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
-	Peers = resolve_remote_server_raw_peers(Config#config.nonce_limiter_server_trusted_peers),
-	ets:insert(?MODULE, {remote_servers, Peers}),
+	resolve_remote_server_raw_peers(Config#config.nonce_limiter_server_trusted_peers),
 	timer:apply_after(10000, ?MODULE, resolve_remote_server_raw_peers, []).
 
-resolve_remote_server_raw_peers(RawPeers) ->
-	resolve_remote_server_raw_peers(RawPeers, []).
-
-resolve_remote_server_raw_peers([], Peers) ->
-	Peers;
-resolve_remote_server_raw_peers([RawPeer | RawPeers], Peers) ->
-	case ar_util:safe_parse_peer(RawPeer) of
-		{ok, Peer} ->
-			resolve_remote_server_raw_peers(RawPeers, [Peer | Peers]);
+resolve_remote_server_raw_peers([]) ->
+	ok;
+resolve_remote_server_raw_peers([RawPeer | RawPeers]) ->
+	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
+		{ok, _Peer} ->
+			resolve_remote_server_raw_peers(RawPeers);
 		{error, Reason} ->
 			?LOG_WARNING([{event, failed_to_resolve_vdf_server_peer},
 					{reason, io_lib:format("~p", [Reason])}]),
-			resolve_remote_server_raw_peers(RawPeers, Peers)
+			resolve_remote_server_raw_peers(RawPeers)
 	end.
 
 get_blocks() ->
@@ -486,7 +481,8 @@ handle_cast({apply_tip, B, PrevB}, State) ->
 	{noreply, apply_tip2(B, PrevB, State)};
 
 handle_cast({validated_steps, Args}, State) ->
-	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps, LastStepCheckpoints } = Args,
+	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps,
+		LastStepCheckpoints} = Args,
 	#state{ session_by_key = SessionByKey, sessions = Sessions,
 			current_session_key = CurrentSessionKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
@@ -497,7 +493,8 @@ handle_cast({validated_steps, Args}, State) ->
 					{next_seed, ar_util:encode(element(1, SessionKey))},
 					{interval, element(2, SessionKey)}]),
 			{noreply, State};
-		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps, step_checkpoints_map = Map } = Session ->
+		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
+				step_checkpoints_map = Map } = Session ->
 			Session2 =
 				case CurrentStepNumber < StepNumber of
 					true ->
@@ -546,7 +543,6 @@ handle_cast({validated_steps, Args}, State) ->
 					Session3#vdf_session.step_number),
 			Sessions2 = gb_sets:add_element({element(2, NextSessionKey),
 					element(1, NextSessionKey)}, Sessions),
-			ar_events:send(nonce_limiter, {validated_output, {SessionKey, Session2}}),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;
 
@@ -612,7 +608,7 @@ handle_info({computed, Args}, State) ->
 	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
 	Session = maps:get(CurrentSessionKey, SessionByKey),
 	#vdf_session{ steps = [SessionOutput | _] = Steps,
-			step_checkpoints_map = Map } = Session,
+			step_checkpoints_map = Map, prev_session_key = PrevSessionKey } = Session,
 	{NextSeed, IntervalNumber} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
 	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
@@ -627,8 +623,9 @@ handle_info({computed, Args}, State) ->
 			Session2 = Session#vdf_session{ step_number = StepNumber,
 					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			SessionByKey2 = maps:put(CurrentSessionKey, Session2, SessionByKey),
+			PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
-					Output, UpperBound}}),
+					PrevSessionKey, PrevSession, Output, UpperBound}}),
 			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
 			{noreply, State#state{ session_by_key = SessionByKey2 }}
 	end;
@@ -825,7 +822,6 @@ apply_tip2(B, PrevB, State) ->
 			SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
 			Sessions2 = gb_sets:add_element({element(2, SessionKey), element(1, SessionKey)},
 					Sessions),
-			ar_events:send(nonce_limiter, {validated_output, {PrevSessionKey, PrevSession}}),
 			State#state{ current_session_key = SessionKey, sessions = Sessions2,
 					session_by_key = SessionByKey2 }
 	end.

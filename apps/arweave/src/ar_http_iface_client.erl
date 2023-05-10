@@ -12,7 +12,8 @@
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
 		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
-		push_nonce_limiter_update/2]).
+		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
+		get_previous_vdf_session/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -475,6 +476,46 @@ push_nonce_limiter_update(Peer, Update) ->
 			ok;
 		{ok, {{<<"202">>, _}, _, ResponseBody, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update_response(ResponseBody);
+		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
+			{error, {Status, ResponseBody}};
+		Reply ->
+			Reply
+	end.
+
+get_vdf_update(Peer) ->
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf",
+			timeout => 2000, headers => p2p_headers()
+			}) of
+		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
+			ar_serialize:binary_to_nonce_limiter_update(Bin);
+		{ok, {{<<"404">>, _}, _, _, _, _}} ->
+			not_found;
+		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
+			{error, {Status, ResponseBody}};
+		Reply ->
+			Reply
+	end.
+
+get_vdf_session(Peer) ->
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/session",
+			timeout => 10000, headers => p2p_headers() }) of
+		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
+			ar_serialize:binary_to_nonce_limiter_update(Bin);
+		{ok, {{<<"404">>, _}, _, _, _, _}} ->
+			not_found;
+		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
+			{error, {Status, ResponseBody}};
+		Reply ->
+			Reply
+	end.
+
+get_previous_vdf_session(Peer) ->
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/previous_session",
+			timeout => 10000, headers => p2p_headers() }) of
+		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
+			ar_serialize:binary_to_nonce_limiter_update(Bin);
+		{ok, {{<<"404">>, _}, _, _, _, _}} ->
+			not_found;
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
 			{error, {Status, ResponseBody}};
 		Reply ->
