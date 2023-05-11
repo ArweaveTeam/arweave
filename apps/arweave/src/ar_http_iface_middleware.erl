@@ -1846,8 +1846,15 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{Packing, ok};
 							{{true, _}, _StoreID} ->
-								ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
-								{RequestedPacking, ok}
+								{ok, Config} = application:get_env(arweave, config),
+								case lists:member(pack_served_chunks, Config#config.enable) of
+									false ->
+										{none, {reply, {404, #{}, <<>>, Req}}};
+									true ->
+										ok = ar_semaphore:acquire(get_and_pack_chunk,
+												infinity),
+										{RequestedPacking, ok}
+								end
 						end,
 					case CheckRecords of
 						{reply, Reply} ->
