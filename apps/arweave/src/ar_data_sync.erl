@@ -11,7 +11,7 @@
 		increment_chunk_cache_size/0, get_chunk_padded_offset/1, get_chunk_metadata_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([enqueue_intervals/2, remove_expired_disk_pool_data_roots/0]).
+-export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -787,10 +787,54 @@ handle_cast({enqueue_intervals, []}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	% PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
-	% print_map(PeersPerChunk),
-	{Q2, QIntervals2} = enqueue_intervals(Intervals, {Q, QIntervals}),
-	% {Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
+	%% When enqueueing intervals, we want to distribute the intervals among many peers. So
+	%% so that:
+	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
+	%% 2. So that we limit the risk of blocking on one particularly slow peer.
+	%%
+	%% A strict round-robin approach is computationaly difficult due to how we handle
+	%% intervals. A round robin requires fairly frequente ar_intervals:intersection calls
+	%% which can overwhelm the CPU and starve the ar_data_sync_worker queues.
+	%%
+	%% Instead we do a probabilistic ditribution:
+	%% 1. We shuffle the peers list so that the ordering differs from call to call
+	%% 2. We shuffle a peer's interval list before iterating. This accounts for any
+	%%    bias among peers that might cause earlier chunks to be more heavily represented. 
+	%%    Without shuffling there's a higher risk that the earlier peers "consume" all the
+	%%    high-incidence chunks and leave later peers without intervals to query.
+	%% 3. We cap the number of chunks to enqueue per peer - at roughly 50% more than
+	%%    their "fair" share (i.e. ?DEFAULT_SYNC_BUCKET_SIZE / NumPeers).
+	%%
+	%% The compute overhead of these 3 steps is minimal and results in a pretty good
+	%% distribution of sync requests among peers.
+	
+	%% This is an approximation. The intent is to enqueue one sync_bucket at a time - but
+	%% due to the selection of each peer's intervals, the total number of bytes may be
+	%% less than a full sync_bucket. But for the purposes of distrubiting requests among
+	%% many peers - the approximation is fine (and much cheaper to calculate than taking
+	%% the sum of all the peer intervals).
+	TotalChunksToEnqueue = ?DEFAULT_SYNC_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
+	NumPeers = length(Intervals),
+	%% Allow each Peer to sync slightly more chunks than their strict share - this allows
+	%% us to more reliably sync the full set of requested intervals.
+	ScalingFactor = 1.5,
+	ChunksPerPeer = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
+
+	{Q2, QIntervals2} = enqueue_intervals(
+		ar_util:shuffle_list(Intervals), ChunksPerPeer, {Q, QIntervals}),
+
+	QSum = gb_sets:size(Q),
+	Q2Sum = gb_sets:size(Q2),
+	QIntervalsSum = ar_intervals:sum(QIntervals),
+	QIntervals2Sum = ar_intervals:sum(QIntervals2),
+	?LOG_ERROR([
+		{event, cast_enqueue_intervals},
+		{total_chunks_to_enqueue, TotalChunksToEnqueue},
+		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
+		{before_queue_size, QSum}, {after_queue_size, Q2Sum}, {queue_size_diff, Q2Sum - QSum},
+ 		{before_queue_intervals, QIntervalsSum}, {after_queue_intervals, QIntervals2Sum},
+		{queue_intervals_diff, QIntervals2Sum - QIntervalsSum}]),
+
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 handle_cast(sync_intervals, State) ->
@@ -2342,35 +2386,6 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 % 		{Q, QIntervals},
 % 		PeersPerChunk
 % 	).
-
-enqueue_intervals([], {Q, QIntervals}) ->
-	{Q, QIntervals};
-enqueue_intervals(Intervals, {Q, QIntervals}) ->
-	AllIntervals = lists:foldl(fun({_Peer, PeerIntervals}, Acc) ->
-			ar_intervals:union(PeerIntervals, Acc)
-		end, ar_intervals:new(), Intervals),
-	AllIntervalsSum = ar_intervals:sum(AllIntervals),
-	TotalChunksToEnqueue = AllIntervalsSum div ?DATA_CHUNK_SIZE,
-	NumPeers = length(Intervals),
-	%% Allow each Peer to sync slightly more chunks than their strict share.
-	ScalingFactor = 1.5,
-	ChunksToEnqueue = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
-
-	{Q2, QIntervals2} = enqueue_intervals(
-		ar_util:shuffle_list(Intervals), ChunksToEnqueue, {Q, QIntervals}),
-
-	QSum = gb_sets:size(Q),
-	Q2Sum = gb_sets:size(Q2),
-	QIntervalsSum = ar_intervals:sum(QIntervals),
-	QIntervals2Sum = ar_intervals:sum(QIntervals2),
-	?LOG_ERROR([
-		{event, cast_enqueue_intervals},
-		{total_intervals, AllIntervalsSum}, {total_chunks_to_enqueue, TotalChunksToEnqueue},
-		{num_peers, NumPeers}, {chunks_to_enqueue, ChunksToEnqueue},
-		{before_queue_size, QSum}, {after_queue_size, Q2Sum}, {queue_size_diff, Q2Sum - QSum},
- 		{before_queue_intervals, QIntervalsSum}, {after_queue_intervals, QIntervals2Sum},
-		{queue_intervals_diff, QIntervals2Sum - QIntervalsSum}]),
-	{Q2, QIntervals2}.
 
 enqueue_intervals([], _ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q, QIntervals};
