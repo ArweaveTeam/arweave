@@ -2350,7 +2350,7 @@ enqueue_intervals(Intervals, {Q, QIntervals}) ->
 			ar_intervals:union(PeerIntervals, Acc)
 		end, ar_intervals:new(), Intervals),
 	AllIntervalsSum = ar_intervals:sum(AllIntervals),
-	ChunksToEnqueue = AllIntervalsSum div length(Intervals),
+	ChunksToEnqueue = AllIntervalsSum div length(Intervals) div ?DATA_CHUNK_SIZE,
 
 	{Q2, QIntervals2} = enqueue_intervals(
 		ar_util:shuffle_list(Intervals), ChunksToEnqueue, {Q, QIntervals}),
