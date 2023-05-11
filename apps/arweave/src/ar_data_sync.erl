@@ -789,22 +789,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 			sync_intervals_queue_intervals = QIntervals } = State,
 	% PeersPerChunk = collect_all_peers_per_chunk(Intervals, QIntervals, #{}),
 	% print_map(PeersPerChunk),
-	{Q2, QIntervals2} = enqueue_intervals(
-		Intervals, ?ROUND_ROBIN_SYNC_BATCH_SIZE, {Q, QIntervals}),
-	AllIntervals = lists:foldl(fun({_Peer, PeerIntervals}, Acc) ->
-			ar_intervals:union(PeerIntervals, Acc)
-		end, ar_intervals:new(), Intervals),
-	AllIntervalsSum = ar_intervals:sum(AllIntervals),
-	QSum = gb_sets:size(Q),
-	Q2Sum = gb_sets:size(Q2),
-	QIntervalsSum = ar_intervals:sum(QIntervals),
-	QIntervals2Sum = ar_intervals:sum(QIntervals2),
-	?LOG_ERROR([
-		{event, cast_enqueue_intervals},
-		{total_intervals, AllIntervalsSum},
-		{before_queue_size, QSum}, {after_queue_size, Q2Sum}, {queue_size_diff, Q2Sum - QSum},
- 		{before_queue_intervals, QIntervalsSum}, {after_queue_intervals, QIntervals2Sum},
-		{queue_intervals_diff, QIntervals2Sum - QIntervalsSum}]),
+	{Q2, QIntervals2} = enqueue_intervals(Intervals, {Q, QIntervals}),
 	% {Q2, QIntervals2} = lists:foldl(fun enqueue_intervals/2, {Q, QIntervals}, Intervals),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -2358,45 +2343,92 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 % 		PeersPerChunk
 % 	).
 
-enqueue_intervals([], _, {Q, QIntervals}) ->
-	{Q, QIntervals};
-enqueue_intervals([{Peer, Intervals} | Rest], BatchSize, {Q, QIntervals}) ->
-	{{Peer, RemainingIntervals}, {Q2, QIntervals2}} = enqueue_peer_intervals(Peer, Intervals, BatchSize, {Q, QIntervals}),
-	case ar_intervals:is_empty(RemainingIntervals) of
-		true ->
-			enqueue_intervals(Rest, BatchSize, {Q2, QIntervals2});
-		false ->
-			enqueue_intervals(Rest ++ [{Peer, RemainingIntervals}], BatchSize, {Q2, QIntervals2})
-	end.
+enqueue_intervals(Intervals, {Q, QIntervals}) ->
+	AllIntervals = lists:foldl(fun({_Peer, PeerIntervals}, Acc) ->
+			ar_intervals:union(PeerIntervals, Acc)
+		end, ar_intervals:new(), Intervals),
+	AllIntervalsSum = ar_intervals:sum(AllIntervals),
+	ChunksToEnqueue = AllIntervalsSum div length(Intervals),
 
-enqueue_peer_intervals(Peer, Intervals, NumChunks, {Q, QIntervals}) ->
-	case ar_intervals:is_empty(Intervals) of
-		true ->
-			{{Peer, Intervals}, {Q, QIntervals}};
-		false ->
-			{{E, S}, RemainingIntervals} = ar_intervals:take_smallest(Intervals),
-			NextIntervals = ar_intervals:add(ar_intervals:new(), E, S),
-			OuterJoin = ar_intervals:outerjoin(QIntervals, NextIntervals),
-			{ChunksToEnqueue, {Q2, QIntervals2}} = ar_intervals:fold(
-				fun	(_, {0, {QAcc, QIAcc}}) ->
-						{0, {QAcc, QIAcc}};
-					({End, Start}, {ChunksToEnqueue2, {QAcc, QIAcc}}) ->
-						RangeEnd = min(End, Start + (ChunksToEnqueue2 * ?DATA_CHUNK_SIZE)),
-						ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
-						ChunksEnqueued = length(ChunkOffsets),
-						{ChunksToEnqueue2 - ChunksEnqueued,
-							enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
-				end,
-				{NumChunks, {Q, QIntervals}},
-				OuterJoin
-			),
-			case ChunksToEnqueue of
-				0 ->
-					{{Peer, Intervals}, {Q2, QIntervals2}};
-				_ ->
-					enqueue_peer_intervals(Peer, RemainingIntervals, ChunksToEnqueue, {Q2, QIntervals2})
-			end
-	end.
+	{Q2, QIntervals2} = enqueue_intervals(
+		ar_util:shuffle_list(Intervals), ChunksToEnqueue, {Q, QIntervals}),
+
+	QSum = gb_sets:size(Q),
+	Q2Sum = gb_sets:size(Q2),
+	QIntervalsSum = ar_intervals:sum(QIntervals),
+	QIntervals2Sum = ar_intervals:sum(QIntervals2),
+	?LOG_ERROR([
+		{event, cast_enqueue_intervals},
+		{total_intervals, AllIntervalsSum}, {chunks_to_enqueue, ChunksToEnqueue},
+		{before_queue_size, QSum}, {after_queue_size, Q2Sum}, {queue_size_diff, Q2Sum - QSum},
+ 		{before_queue_intervals, QIntervalsSum}, {after_queue_intervals, QIntervals2Sum},
+		{queue_intervals_diff, QIntervals2Sum - QIntervalsSum}]),
+	{Q2, QIntervals2}.
+
+enqueue_intervals([], _ChunksToEnqueue, {Q, QIntervals}) ->
+	{Q, QIntervals};
+enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) ->
+	{Q2, QIntervals2} = enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}),
+	enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
+
+enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
+	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+	ShuffledIntervals = ar_util:shuffle_list(ar_intervals:to_list(OuterJoin)),
+	{_, {Q2, QIntervals2}}  = lists:foldl(
+		fun	(_, {0, {QAcc, QIAcc}}) ->
+				{0, {QAcc, QIAcc}};
+			({End, Start}, {ChunksToEnqueue2, {QAcc, QIAcc}}) ->
+				RangeEnd = min(End, Start + (ChunksToEnqueue2 * ?DATA_CHUNK_SIZE)),
+				ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
+				ChunksEnqueued = length(ChunkOffsets),
+				{ChunksToEnqueue2 - ChunksEnqueued,
+					enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
+		end,
+		{ChunksToEnqueue, {Q, QIntervals}},
+		ShuffledIntervals
+	),
+	{Q2, QIntervals2}.
+
+
+% enqueue_intervals([], _, {Q, QIntervals}) ->
+% 	{Q, QIntervals};
+% enqueue_intervals([{Peer, Intervals} | Rest], BatchSize, {Q, QIntervals}) ->
+% 	{{Peer, RemainingIntervals}, {Q2, QIntervals2}} = enqueue_peer_intervals(Peer, Intervals, BatchSize, {Q, QIntervals}),
+% 	case ar_intervals:is_empty(RemainingIntervals) of
+% 		true ->
+% 			enqueue_intervals(Rest, BatchSize, {Q2, QIntervals2});
+% 		false ->
+% 			enqueue_intervals(Rest ++ [{Peer, RemainingIntervals}], BatchSize, {Q2, QIntervals2})
+% 	end.
+
+% enqueue_peer_intervals(Peer, Intervals, NumChunks, {Q, QIntervals}) ->
+% 	case ar_intervals:is_empty(Intervals) of
+% 		true ->
+% 			{{Peer, Intervals}, {Q, QIntervals}};
+% 		false ->
+% 			{{E, S}, RemainingIntervals} = ar_intervals:take_smallest(Intervals),
+% 			NextIntervals = ar_intervals:add(ar_intervals:new(), E, S),
+% 			OuterJoin = ar_intervals:outerjoin(QIntervals, NextIntervals),
+% 			{ChunksToEnqueue, {Q2, QIntervals2}} = ar_intervals:fold(
+% 				fun	(_, {0, {QAcc, QIAcc}}) ->
+% 						{0, {QAcc, QIAcc}};
+% 					({End, Start}, {ChunksToEnqueue2, {QAcc, QIAcc}}) ->
+% 						RangeEnd = min(End, Start + (ChunksToEnqueue2 * ?DATA_CHUNK_SIZE)),
+% 						ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
+% 						ChunksEnqueued = length(ChunkOffsets),
+% 						{ChunksToEnqueue2 - ChunksEnqueued,
+% 							enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
+% 				end,
+% 				{NumChunks, {Q, QIntervals}},
+% 				OuterJoin
+% 			),
+% 			case ChunksToEnqueue of
+% 				0 ->
+% 					{{Peer, Intervals}, {Q2, QIntervals2}};
+% 				_ ->
+% 					enqueue_peer_intervals(Peer, RemainingIntervals, ChunksToEnqueue, {Q2, QIntervals2})
+% 			end
+% 	end.
 
 enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 	?LOG_DEBUG([
