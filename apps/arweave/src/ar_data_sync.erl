@@ -2350,7 +2350,11 @@ enqueue_intervals(Intervals, {Q, QIntervals}) ->
 			ar_intervals:union(PeerIntervals, Acc)
 		end, ar_intervals:new(), Intervals),
 	AllIntervalsSum = ar_intervals:sum(AllIntervals),
-	ChunksToEnqueue = AllIntervalsSum div length(Intervals) div ?DATA_CHUNK_SIZE,
+	TotalChunksToEnqueue = AllIntervalsSum div ?DATA_CHUNK_SIZE,
+	NumPeers = length(Intervals),
+	%% Allow each Peer to sync slightly more chunks than their strict share.
+	ScalingFactor = 1.5,
+	ChunksToEnqueue = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
 
 	{Q2, QIntervals2} = enqueue_intervals(
 		ar_util:shuffle_list(Intervals), ChunksToEnqueue, {Q, QIntervals}),
@@ -2361,7 +2365,8 @@ enqueue_intervals(Intervals, {Q, QIntervals}) ->
 	QIntervals2Sum = ar_intervals:sum(QIntervals2),
 	?LOG_ERROR([
 		{event, cast_enqueue_intervals},
-		{total_intervals, AllIntervalsSum}, {chunks_to_enqueue, ChunksToEnqueue},
+		{total_intervals, AllIntervalsSum}, {total_chunks_to_enqueue, TotalChunksToEnqueue},
+		{num_peers, NumPeers}, {chunks_to_enqueue, ChunksToEnqueue},
 		{before_queue_size, QSum}, {after_queue_size, Q2Sum}, {queue_size_diff, Q2Sum - QSum},
  		{before_queue_intervals, QIntervalsSum}, {after_queue_intervals, QIntervals2Sum},
 		{queue_intervals_diff, QIntervals2Sum - QIntervalsSum}]),
