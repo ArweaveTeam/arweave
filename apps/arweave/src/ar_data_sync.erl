@@ -11,7 +11,7 @@
 		increment_chunk_cache_size/0, get_chunk_padded_offset/1, get_chunk_metadata_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
+-export([enqueue_intervals/2, remove_expired_disk_pool_data_roots/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -2343,6 +2343,8 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 % 		PeersPerChunk
 % 	).
 
+enqueue_intervals([], {Q, QIntervals}) ->
+	{Q, QIntervals};
 enqueue_intervals(Intervals, {Q, QIntervals}) ->
 	AllIntervals = lists:foldl(fun({_Peer, PeerIntervals}, Acc) ->
 			ar_intervals:union(PeerIntervals, Acc)
