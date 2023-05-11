@@ -2395,7 +2395,8 @@ enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) 
 
 enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-	ShuffledIntervals = ar_util:shuffle_list(ar_intervals:to_list(OuterJoin)),
+	% ShuffledIntervals = ar_util:shuffle_list(ar_intervals:to_list(OuterJoin)),
+	ShuffledIntervals = ar_intervals:to_list(OuterJoin),
 	{_, {Q2, QIntervals2}}  = lists:foldl(
 		fun	(_, {0, {QAcc, QIAcc}}) ->
 				{0, {QAcc, QIAcc}};
