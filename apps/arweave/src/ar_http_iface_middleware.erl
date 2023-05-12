@@ -2756,13 +2756,12 @@ handle_get_vdf(Req, Call) ->
 	case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
 		[] ->
 			{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
-		[{_, RawPeer}] ->
-			handle_get_vdf2(Req, Call, RawPeer)
+		[{_, _RawPeer}] ->
+			handle_get_vdf2(Req, Call)
 	end.
 
-handle_get_vdf2(Req, Call, RawPeer) ->
-	Server = list_to_atom("ar_nonce_limiter_server_worker_" ++ ar_util:peer_to_str(RawPeer)),
-	case gen_server:call(Server, Call) of
+handle_get_vdf2(Req, Call) ->
+	case gen_server:call(ar_nonce_limiter_server, Call) of
 		not_found ->
 			{404, #{}, <<>>, Req};
 		Update ->

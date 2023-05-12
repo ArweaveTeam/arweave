@@ -11,11 +11,7 @@
 -record(state, {
 	peer,
 	raw_peer,
-	pause_until = 0,
-	current_session,
-	current_prev_session,
-	current_output,
-	current_partition_upper_bound
+	pause_until = 0
 }).
 
 %%%===================================================================
@@ -35,31 +31,6 @@ init(RawPeer) ->
 	ok = ar_events:subscribe(nonce_limiter),
 	gen_server:cast(self(), resolve_raw_peer),
 	{ok, #state{ raw_peer = RawPeer }}.
-
-handle_call(get_update, _From, #state{ current_output = undefined } = State) ->
-	{reply, not_found, State};
-handle_call(get_update, _From, State) ->
-	#state{ current_output = Output, current_session = {SessionKey, Session},
-			current_partition_upper_bound = PartitionUpperBound } = State,
-	{reply, make_nonce_limiter_update(
-		SessionKey,
-		Session#vdf_session{
-			upper_bound = PartitionUpperBound,
-			steps = [Output]
-		},
-		true), State};
-
-handle_call(get_session, _From, #state{ current_session = undefined } = State) ->
-	{reply, not_found, State};
-handle_call(get_session, _From, State) ->
-	#state{ current_session = {SessionKey, Session} } = State,
-	{reply, make_nonce_limiter_update(SessionKey, Session, false), State};
-
-handle_call(get_previous_session, _From, #state{ current_prev_session = undefined } = State) ->
-	{reply, not_found, State};
-handle_call(get_previous_session, _From, State) ->
-	#state{ current_prev_session = {SessionKey, Session} } = State,
-	{reply, make_nonce_limiter_update(SessionKey, Session, false), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -85,15 +56,12 @@ handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	#state{ peer = Peer, pause_until = Timestamp } = State,
 	{SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound} = Args,
-	State2 = State#state{ current_session = {SessionKey, Session},
-			current_prev_session = {PrevSessionKey, PrevSession},
-			current_output = Output, current_partition_upper_bound = PartitionUpperBound },
 	case os:system_time(second) < Timestamp of
 		true ->
-			{noreply, State2};
+			{noreply, State};
 		false ->
 			{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
-					PartitionUpperBound, Peer, State2)}
+					PartitionUpperBound, Peer, State)}
 	end;
 
 handle_info({event, nonce_limiter, _Args}, State) ->
@@ -110,17 +78,9 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
-	StepNumber = Session#vdf_session.step_number,
-	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
-	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
-	#nonce_limiter_update{ session_key = SessionKey,
-			is_partial = IsPartial, checkpoints = Checkpoints,
-			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
-
 push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound,
 		Peer, State) ->
-	Update = make_nonce_limiter_update(
+	Update = ar_nonce_limiter_server:make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
 			upper_bound = PartitionUpperBound,
@@ -166,7 +126,7 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 	end.
 
 push_session(SessionKey, Session, Peer) ->
-	Update = make_nonce_limiter_update(SessionKey, Session, false),
+	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			ok;

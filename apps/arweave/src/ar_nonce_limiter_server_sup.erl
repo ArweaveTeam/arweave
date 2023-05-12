@@ -31,4 +31,5 @@ init([]) ->
 		end,
 		Config#config.nonce_limiter_client_peers
 	),
-	{ok, {{one_for_one, 5, 10}, Workers}}.
+	Workers2 = [?CHILD(ar_nonce_limiter_server, worker) | Workers],
+	{ok, {{one_for_one, 5, 10}, Workers2}}.
