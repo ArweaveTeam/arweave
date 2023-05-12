@@ -328,7 +328,7 @@ merge_headers(HeadersA, HeadersB) ->
 
 await_response(Args) ->
 	#{ pid := PID, stream_ref := Ref, timer := Timer, start := Start, limit := Limit,
-			counter := Counter, acc := Acc, method := Method, path := Path, peer := Peer } = Args,
+			counter := Counter, acc := Acc, method := Method, path := Path } = Args,
 	case gun:await(PID, Ref, inet:timeout(Timer)) of
 		{response, fin, Status, Headers} ->
 			End = os:system_time(microsecond),
@@ -359,21 +359,15 @@ await_response(Args) ->
 			{ok, {gen_code_rest(maps:get(status, Args)), maps:get(headers, Args), FinData,
 					Start, End}};
 		{error, timeout} = Response ->
-			?LOG_ERROR("*** await_response {error, timeout} peer: ~p, path: ~p", 
-				[ar_util:format_peer(Peer), Path]),
 			record_response_status(Method, Path, Response),
 			gun:cancel(PID, Ref),
 			log(warn, gun_await_process_down, Args, Response),
 			Response;
 		{error, Reason} = Response when is_tuple(Reason) ->
-			?LOG_ERROR("*** await_response {error, ~p} peer: ~p, path: ~p", 
-				[Reason, ar_util:format_peer(Peer), Path]),
 			record_response_status(Method, Path, Response),
 			log(warn, gun_await_process_down, Args, Reason),
 			Response;
 		Response ->
-			?LOG_ERROR("*** await_response default {~p} peer: ~p, path: ~p", 
-				[Response, ar_util:format_peer(Peer), Path]),
 			record_response_status(Method, Path, Response),
 			log(warn, gun_await_unknown, Args, Response),
 			Response

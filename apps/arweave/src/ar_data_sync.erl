@@ -787,7 +787,7 @@ handle_cast({enqueue_intervals, []}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	%% When enqueueing intervals, we want to distribute the intervals among many peers. So
+	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
 	%% so that:
 	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
 	%% 2. So that we limit the risk of blocking on one particularly slow peer.
@@ -814,18 +814,6 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 
 	{Q2, QIntervals2} = enqueue_intervals(
 		ar_util:shuffle_list(Intervals), ChunksPerPeer, {Q, QIntervals}),
-
-	QSum = gb_sets:size(Q),
-	Q2Sum = gb_sets:size(Q2),
-	QIntervalsSum = ar_intervals:sum(QIntervals),
-	QIntervals2Sum = ar_intervals:sum(QIntervals2),
-	?LOG_ERROR([
-		{event, cast_enqueue_intervals},
-		{total_chunks_to_enqueue, TotalChunksToEnqueue},
-		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
-		{before_queue_size, QSum}, {after_queue_size, Q2Sum}, {queue_size_diff, Q2Sum - QSum},
- 		{before_queue_intervals, QIntervalsSum}, {after_queue_intervals, QIntervals2Sum},
-		{queue_intervals_diff, QIntervals2Sum - QIntervalsSum}]),
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -1326,30 +1314,6 @@ terminate(Reason, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-print_map(Map) ->
-    SortedMap = lists:sort(maps:to_list(Map)),
-    print_map(SortedMap, {undefined, undefined, undefined}).
-
-print_map([], _) -> ok;
-print_map([{{Start, End}, Value} | Rest], {PrevStart, PrevEnd, PrevValue}) ->
-	%% Check for overlapping ranges
-	case PrevEnd of
-		undefined -> ok; % Skip for the first element
-		PrevEnd when PrevEnd > Start ->
-			?LOG_INFO("PeersPerChunk Overlapping range: {~p, ~p} x {~p, ~p}: ~p x ~p", [PrevStart, PrevEnd, Start, End, PrevValue, Value]);
-		PrevEnd when PrevEnd < Start ->
-			?LOG_INFO("PeersPerChunk Gap between ranges: {~p, ~p} <-> {~p, ~p}: ~p <-> ~p", [PrevStart, PrevEnd, Start, End, PrevValue, Value]);
-		_ -> ok
-	end,
-	%% Check for difference less than ?DATA_CHUNK_SIZE
-	if
-		End - Start < ?DATA_CHUNK_SIZE ->
-			?LOG_INFO("PeersPerChunk Range size less than chunk size: {~p, ~p}: ~p", [Start, End, Value]);
-		true -> ok
-	end,
-	%% Continue with the next element
-	print_map(Rest, {Start, End, Value}).
 
 remove_expired_disk_pool_data_roots() ->
 	Now = os:system_time(microsecond),
@@ -2327,6 +2291,13 @@ enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) 
 	enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
 
 enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
+	%% Only keep unique intervals. We may get some duplicates for two
+	%% reasons:
+	%% 1) find_peer_intervals might choose the same interval several
+	%%    times in a row even when there are other unsynced intervals
+	%%    to pick because it is probabilistic.
+	%% 2) We ask many peers simultaneously about the same interval
+	%%    to make finding of the relatively rare intervals quicker.
 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
 	{_, {Q2, QIntervals2}}  = ar_intervals:fold(
 		fun	(_, {0, {QAcc, QIAcc}}) ->
@@ -2359,44 +2330,6 @@ enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 	),
 	QIntervals2 = ar_intervals:add(QIntervals, RangeEnd, RangeStart),
 	{Q2, QIntervals2}.
-
-
-
-% enqueue_intervals({Peer, Intervals}, {Q, QIntervals}) ->
-% 	%% The outerjoin keeps only unique intervals - only Intervals
-% 	%% for this Peer that haven't already been added to the queue of
-% 	%% intervals to sync (QInterval2). This means that the earlier
-% 	%% a peer is processed, the more likely it is to have its intervals
-% 	%% synced. This also means our syncing will be lumpy - we'll sync
-% 	%% a bunch of intervals from Peer1 and then move onto Peer2. It would
-% 	%% probably be better to sync from a bunch of peers simultaneously to
-% 	%% limit the load on any 1 peer and also to mitigate the impact of
-% 	%% a peer going offline or timing out.
-% 	%%
-% 	%% We may get some duplicates for two reasons:
-% 	%% 1) find_peer_intervals might choose the same interval several
-% 	%%    times in a row even when there are other unsynced intervals
-% 	%%    to pick because it is probabilistic.
-% 	%% 2) We ask many peers simultaneously about the same interval
-% 	%%    to make finding of the relatively rare intervals quicker.
-% 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-% 	ar_intervals:fold(
-% 		fun({End, Start}, {Acc, QIAcc}) ->
-% 			?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
-% 					{peer, ar_util:format_peer(Peer)}]),
-% 			{lists:foldl(
-% 				fun(Start2, Acc2) ->
-% 					End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
-% 					gb_sets:add_element({Start2, End2, Peer}, Acc2)
-% 				end,
-% 				Acc,
-% 				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
-% 			), ar_intervals:add(QIAcc, End, Start)}
-% 		end,
-% 		{Q, QIntervals},
-% 		OuterJoin
-% 	).
-
 
 validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathFun) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
@@ -3218,8 +3151,7 @@ log_insufficient_disk_space(StoreID) ->
 	ar:console("~nThe node has stopped syncing data into the storage module ~s due to "
 			"the insufficient disk space.~n", [StoreID]),
 	?LOG_INFO([{event, storage_module_stopped_syncing},
-			{reason, insufficient_disk_space}, {storage_module, StoreID}]),
-	ar_util:print_stacktrace().
+			{reason, insufficient_disk_space}, {storage_module, StoreID}]).
 
 data_root_index_iterator_v2(DataRootKey, TXStartOffset, DataRootIndex) ->
 	{DataRootKey, TXStartOffset, TXStartOffset, DataRootIndex, 1}.
