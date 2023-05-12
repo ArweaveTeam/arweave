@@ -2265,8 +2265,8 @@ find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers) -
 %% @return {ok, Intervals, PeerIntervals, Left} | Error
 %% Intervals: the intersection of the intervals we are looking for and the intervals that
 %%            the peer advertises
-%% PeerIntervals: all of the intervals that the peer advertises between
-%%                offset Left and Left+?MAX_SHARED_SYNCED_INTERVALS_COUNT
+%% PeerIntervals: all of the intervals (up to ?MAX_SHARED_SYNCED_INTERVALS_COUNT total
+%%                intervals) that the peer advertises starting at offset Left.
 get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 	Limit = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
 	Right = element(1, ar_intervals:largest(SoughtIntervals)),
