@@ -1,6 +1,7 @@
 -module(ar_config).
 
--export([use_remote_vdf_server/0, parse/1, parse_storage_module/1, format_config/1]).
+-export([use_remote_vdf_server/0, pull_from_remote_vdf_server/0, parse/1,
+		parse_storage_module/1, format_config/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
