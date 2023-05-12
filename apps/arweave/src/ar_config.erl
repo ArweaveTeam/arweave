@@ -19,6 +19,10 @@ use_remote_vdf_server() ->
 			true
 	end.
 
+pull_from_remote_vdf_server() ->
+	{ok, Config} = application:get_env(arweave, config),
+	lists:member(vdf_server_pull, Config#config.enable).
+
 parse(Config) when is_binary(Config) ->
 	case ar_serialize:json_decode(Config) of
 		{ok, JsonValue} -> parse_options(JsonValue);
@@ -618,8 +622,6 @@ parse_requests_per_minute_limit_by_ip(_, _) ->
 parse_vdf_server_trusted_peers([Peer | Rest], Config) ->
 	Config2 = parse_vdf_server_trusted_peer(Peer, Config),
 	parse_vdf_server_trusted_peers(Rest, Config2);
-parse_vdf_server_trusted_peers([Peer], Config) ->
-	parse_vdf_server_trusted_peer(Peer, Config);
 parse_vdf_server_trusted_peers([], Config) ->
 	Config.
 
