@@ -481,7 +481,8 @@ handle_cast({apply_tip, B, PrevB}, State) ->
 	{noreply, apply_tip2(B, PrevB, State)};
 
 handle_cast({validated_steps, Args}, State) ->
-	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps, LastStepCheckpoints } = Args,
+	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps,
+		LastStepCheckpoints} = Args,
 	#state{ session_by_key = SessionByKey, sessions = Sessions,
 			current_session_key = CurrentSessionKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
@@ -492,7 +493,8 @@ handle_cast({validated_steps, Args}, State) ->
 					{next_seed, ar_util:encode(element(1, SessionKey))},
 					{interval, element(2, SessionKey)}]),
 			{noreply, State};
-		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps, step_checkpoints_map = Map } = Session ->
+		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
+				step_checkpoints_map = Map } = Session ->
 			Session2 =
 				case CurrentStepNumber < StepNumber of
 					true ->
@@ -541,7 +543,6 @@ handle_cast({validated_steps, Args}, State) ->
 					Session3#vdf_session.step_number),
 			Sessions2 = gb_sets:add_element({element(2, NextSessionKey),
 					element(1, NextSessionKey)}, Sessions),
-			ar_events:send(nonce_limiter, {validated_output, {SessionKey, Session2}}),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;
 
@@ -607,7 +608,7 @@ handle_info({computed, Args}, State) ->
 	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
 	Session = maps:get(CurrentSessionKey, SessionByKey),
 	#vdf_session{ steps = [SessionOutput | _] = Steps,
-			step_checkpoints_map = Map } = Session,
+			step_checkpoints_map = Map, prev_session_key = PrevSessionKey } = Session,
 	{NextSeed, IntervalNumber} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
 	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
@@ -622,8 +623,9 @@ handle_info({computed, Args}, State) ->
 			Session2 = Session#vdf_session{ step_number = StepNumber,
 					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			SessionByKey2 = maps:put(CurrentSessionKey, Session2, SessionByKey),
+			PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
-					Output, UpperBound}}),
+					PrevSessionKey, PrevSession, Output, UpperBound}}),
 			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
 			{noreply, State#state{ session_by_key = SessionByKey2 }}
 	end;
