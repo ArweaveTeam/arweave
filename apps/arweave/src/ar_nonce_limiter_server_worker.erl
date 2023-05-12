@@ -55,21 +55,17 @@ handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) 
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	#state{ peer = Peer, pause_until = Timestamp } = State,
-	{SessionKey, Session, Output, PartitionUpperBound} = Args,
+	{SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound} = Args,
+	State2 = State#state{ current_session = {SessionKey, Session},
+			current_prev_session = {PrevSessionKey, PrevSession},
+			current_output = Output, current_partition_upper_bound = PartitionUpperBound },
 	case os:system_time(second) < Timestamp of
 		true ->
 			{noreply, State};
 		false ->
-			{noreply, push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State)}
+			{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
+					PartitionUpperBound, Peer, State2)}
 	end;
-handle_info({event, nonce_limiter, {validated_output, Args}}, State) ->
-	%% The validated_output event is sent when a new block comes in that opens a new session.
-	%% The old session is validated and then "closed", we need to push out the this completed
-	%% session ASAP since future VDF updates will be off of the new session.
-	#state{ peer = Peer } = State,
-	{SessionKey, Session} = Args,
-	push_session(SessionKey, Session, Peer),
-	{noreply, State};
 
 handle_info({event, nonce_limiter, _Args}, State) ->
 	{noreply, State};
@@ -93,7 +89,8 @@ make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 			is_partial = IsPartial, checkpoints = Checkpoints,
 			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
 
-push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
+push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound,
+		Peer, State) ->
 	Update = make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
@@ -114,6 +111,12 @@ push_update(SessionKey, Session, Output, PartitionUpperBound, Peer, State) ->
 				false ->
 					case Response#nonce_limiter_update_response.session_found of
 						false ->
+							case PrevSession of
+								undefined ->
+									ok;
+								_ ->
+									push_session(PrevSessionKey, PrevSession, Peer)
+							end,
 							push_session(SessionKey, Session, Peer);
 						true ->
 							StepNumber2 = Response#nonce_limiter_update_response.step_number,
