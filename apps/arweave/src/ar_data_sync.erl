@@ -792,20 +792,12 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
 	%% 2. So that we limit the risk of blocking on one particularly slow peer.
 	%%
-	%% A strict round-robin approach is computationaly difficult due to how we handle
-	%% intervals. A round robin requires fairly frequente ar_intervals:intersection calls
-	%% which can overwhelm the CPU and starve the ar_data_sync_worker queues.
-	%%
-	%% Instead we do a probabilistic ditribution:
+	%% We do a probabilistic ditribution:
 	%% 1. We shuffle the peers list so that the ordering differs from call to call
-	%% 2. We shuffle a peer's interval list before iterating. This accounts for any
-	%%    bias among peers that might cause earlier chunks to be more heavily represented. 
-	%%    Without shuffling there's a higher risk that the earlier peers "consume" all the
-	%%    high-incidence chunks and leave later peers without intervals to query.
-	%% 3. We cap the number of chunks to enqueue per peer - at roughly 50% more than
+	%% 2. We cap the number of chunks to enqueue per peer - at roughly 50% more than
 	%%    their "fair" share (i.e. ?DEFAULT_SYNC_BUCKET_SIZE / NumPeers).
 	%%
-	%% The compute overhead of these 3 steps is minimal and results in a pretty good
+	%% The compute overhead of these 2 steps is minimal and results in a pretty good
 	%% distribution of sync requests among peers.
 	
 	%% This is an approximation. The intent is to enqueue one sync_bucket at a time - but
@@ -2328,65 +2320,6 @@ get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
 			end
 	end.
 
-%% @doc Flatten the intervals into chunks and find the list of Peers advertising each chunk.
-%% Note: There may be occasional overlaps/duplicates when peers advertise partial chunks.
-%% Example without overlap/duplicate (assuming ?DATA_CHUNK_SIZE = 5):
-%%   [{peer1, [{30, 20}, {10, 5}]}, {peer2, [{30, 20}]}]
-%%   Resulting map:
-%%   #{
-%%     {5, 10} => [peer1],
-%%     {20, 25} => [peer2, peer1],
-%%     {25, 30} => [peer2, peer1]
-%%   }
-%%
-%% Example with overlap/duplicate:
-%%   [{peer1, [{30, 20}, {10, 5}]}, {peer2, [{30, 23}]}]
-%%   Resulting map:
-%%   #{
-%%     {5, 10} => [peer1],
-%%     {20, 25} => [peer1],
-%%     {20, 23} => [peer2],
-%%     {25, 30} => [peer2, peer1]
-%%   }
-%%
-%% The {20,23} partial chunk exists in the map twice, which will cause that data to be
-%% requested twice. I've deferred handling this case for now - I think the number of
-%% redundant requests will be minimal and handling the case better introduces
-%% complexity that I'm not sure is warranted yet.
-% collect_all_peers_per_chunk([], _QIntervals, PeersPerChunk) ->
-% 	PeersPerChunk;
-% collect_all_peers_per_chunk([{Peer, Intervals} | Rest], QIntervals, PeersPerChunk) ->
-% 	% OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-% 	PeersPerChunk2 = ar_intervals:fold(
-% 		fun({End, Start}, Acc) ->
-% 			lists:foldl(
-% 				% fun({AlignedStart, AlignedEnd}, InnerAcc) ->
-% 				fun(ChunkStart, InnerAcc) ->
-% 					ChunkEnd = min(ChunkStart + ?DATA_CHUNK_SIZE, End),
-% 					Peers = maps:get({ChunkStart, ChunkEnd}, InnerAcc, []),
-% 					maps:put({ChunkStart, ChunkEnd}, [Peer | Peers], InnerAcc)
-% 				end,
-% 				Acc,
-% 				lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
-% 			)
-% 		end,
-% 		PeersPerChunk,
-% 		Intervals
-% 	),
-% 	collect_all_peers_per_chunk(Rest, QIntervals, PeersPerChunk2).
-
-% enqueue_intervals(PeersPerChunk, {Q, QIntervals}) ->
-% 	maps:fold(
-% 		fun({Start, End}, Peers, {QAcc, QIntervalsAcc}) ->
-% 			SelectedPeer = lists:nth(rand:uniform(length(Peers)), Peers),
-% 			QUpdated = gb_sets:add_element({Start, End, SelectedPeer}, QAcc),
-% 			QIntervalsUpdated = ar_intervals:add(QIntervalsAcc, End, Start),
-% 			{QUpdated, QIntervalsUpdated}
-% 		end,
-% 		{Q, QIntervals},
-% 		PeersPerChunk
-% 	).
-
 enqueue_intervals([], _ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q, QIntervals};
 enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) ->
@@ -2395,9 +2328,7 @@ enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) 
 
 enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-	% ShuffledIntervals = ar_util:shuffle_list(ar_intervals:to_list(OuterJoin)),
-	ShuffledIntervals = ar_intervals:to_list(OuterJoin),
-	{_, {Q2, QIntervals2}}  = lists:foldl(
+	{_, {Q2, QIntervals2}}  = ar_intervals:fold(
 		fun	(_, {0, {QAcc, QIAcc}}) ->
 				{0, {QAcc, QIAcc}};
 			({End, Start}, {ChunksToEnqueue2, {QAcc, QIAcc}}) ->
@@ -2408,50 +2339,9 @@ enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 					enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
 		end,
 		{ChunksToEnqueue, {Q, QIntervals}},
-		ShuffledIntervals
+		OuterJoin
 	),
 	{Q2, QIntervals2}.
-
-
-% enqueue_intervals([], _, {Q, QIntervals}) ->
-% 	{Q, QIntervals};
-% enqueue_intervals([{Peer, Intervals} | Rest], BatchSize, {Q, QIntervals}) ->
-% 	{{Peer, RemainingIntervals}, {Q2, QIntervals2}} = enqueue_peer_intervals(Peer, Intervals, BatchSize, {Q, QIntervals}),
-% 	case ar_intervals:is_empty(RemainingIntervals) of
-% 		true ->
-% 			enqueue_intervals(Rest, BatchSize, {Q2, QIntervals2});
-% 		false ->
-% 			enqueue_intervals(Rest ++ [{Peer, RemainingIntervals}], BatchSize, {Q2, QIntervals2})
-% 	end.
-
-% enqueue_peer_intervals(Peer, Intervals, NumChunks, {Q, QIntervals}) ->
-% 	case ar_intervals:is_empty(Intervals) of
-% 		true ->
-% 			{{Peer, Intervals}, {Q, QIntervals}};
-% 		false ->
-% 			{{E, S}, RemainingIntervals} = ar_intervals:take_smallest(Intervals),
-% 			NextIntervals = ar_intervals:add(ar_intervals:new(), E, S),
-% 			OuterJoin = ar_intervals:outerjoin(QIntervals, NextIntervals),
-% 			{ChunksToEnqueue, {Q2, QIntervals2}} = ar_intervals:fold(
-% 				fun	(_, {0, {QAcc, QIAcc}}) ->
-% 						{0, {QAcc, QIAcc}};
-% 					({End, Start}, {ChunksToEnqueue2, {QAcc, QIAcc}}) ->
-% 						RangeEnd = min(End, Start + (ChunksToEnqueue2 * ?DATA_CHUNK_SIZE)),
-% 						ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
-% 						ChunksEnqueued = length(ChunkOffsets),
-% 						{ChunksToEnqueue2 - ChunksEnqueued,
-% 							enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
-% 				end,
-% 				{NumChunks, {Q, QIntervals}},
-% 				OuterJoin
-% 			),
-% 			case ChunksToEnqueue of
-% 				0 ->
-% 					{{Peer, Intervals}, {Q2, QIntervals2}};
-% 				_ ->
-% 					enqueue_peer_intervals(Peer, RemainingIntervals, ChunksToEnqueue, {Q2, QIntervals2})
-% 			end
-% 	end.
 
 enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 	?LOG_DEBUG([
