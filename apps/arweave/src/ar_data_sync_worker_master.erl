@@ -256,8 +256,7 @@ format_peer(Task, Args) ->
 	case Task of
 		read_range -> "localhost";
 		sync_range ->
-			{_, _, Peer, _} = Args,
-			ar_util:format_peer(Peer)
+			ar_util:format_peer(element(3, Args))
 	end.
 
 %%%===================================================================
