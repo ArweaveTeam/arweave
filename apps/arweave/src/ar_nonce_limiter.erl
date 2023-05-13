@@ -978,7 +978,8 @@ apply_external_update2(Update, State) ->
 							sessions = Sessions2 }}
 			end;
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
-				step_checkpoints_map = Map } = CurrentSession ->
+				step_checkpoints_map = Map,
+				prev_session_key = PrevSessionKey } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
@@ -986,8 +987,10 @@ apply_external_update2(Update, State) ->
 							step_checkpoints_map = Map2,
 							steps = [Output | CurrentSteps] },
 					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
+					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 					ar_events:send(nonce_limiter, {computed_output,
-							{SessionKey, CurrentSession2, Output, UpperBound}}),
+							{SessionKey, CurrentSession2, PrevSessionKey, PrevSession,
+							Output, UpperBound}}),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
