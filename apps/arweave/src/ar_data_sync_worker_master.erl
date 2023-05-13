@@ -83,9 +83,9 @@ handle_cast({task_completed, {read_range, _}}, State) ->
 	{noreply, State};
 
 handle_cast({task_completed, {sync_range, {Peer, Duration}}}, State) ->
-	PeerTasks = complete_sync_range(Peer, Duration, State),
-	State2 = schedule_queued_sync_range(Peer, PeerTasks, State),	
-	{noreply, State2};
+	State2 = complete_sync_range(Peer, Duration, State),
+	State3 = schedule_queued_sync_range(Peer, State2),	
+	{noreply, State3};
 
 
 handle_cast(Cast, State) ->
@@ -161,14 +161,15 @@ enqueue_task(Task, Args, State) ->
 %%--------------------------------------------------------------------
 
 %% @doc If a peer has capacity, take the next task from its	queue and schedule it.
-schedule_queued_sync_range(Peer, PeerTasks, State) ->
+schedule_queued_sync_range(Peer, State) ->
+	PeerTasks = get_peer_tasks(Peer, State),
 	case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
 		true ->
 			case queue:out(PeerTasks#peer_tasks.task_queue) of
 				{{value, {sync_range, Args}}, PeerTaskQueue} ->
 					PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
 					State2 = schedule_sync_range(Peer, PeerTasks2, Args, State),
-					schedule_queued_sync_range(Peer, get_peer_tasks(Peer, State2), State2);
+					schedule_queued_sync_range(Peer, State2);
 				_ ->
 					State
 			end;
@@ -208,13 +209,14 @@ complete_sync_range(Peer, Duration, State) ->
 			max(PeerTasks#peer_tasks.max_active - 1, 8)
 	end,
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
-	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p",
-		[ar_util:format_peer(Peer), ActiveCount, MaxActive, Milliseconds]),
-	PeerTasks#peer_tasks{ active_count = ActiveCount, max_active = MaxActive }.
+	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p -> ~p / ~p",
+		[ar_util:format_peer(Peer), ActiveCount, PeerTasks#peer_tasks.max_active , MaxActive, Milliseconds]),
+	PeerTasks2 = PeerTasks#peer_tasks{ active_count = ActiveCount, max_active = MaxActive },
+	set_peer_tasks(Peer, PeerTasks2, State).
 
 complete_task(Task, Peer) ->
 	ets:update_counter(?MODULE, scheduled_tasks, {2, -1}),
-	prometheus_gauge:dec(sync_tasks, [queued, Task, Peer]).
+	prometheus_gauge:dec(sync_tasks, [scheduled, Task, Peer]).
 
 %%--------------------------------------------------------------------
 %% Helpers
@@ -245,8 +247,8 @@ set_peer_tasks(Peer, PeerTasks, State) ->
 	State#state{ peer_tasks = maps:put(Peer, PeerTasks, State#state.peer_tasks) }.
 
 get_worker(#state{ all_workers = AllWorkerQ } = State) ->
-	{ Worker, AllWorkerQ2 } = cycle_worker(AllWorkerQ),
-	{ Worker, State#state{ all_workers = AllWorkerQ2 } }.
+	{Worker, AllWorkerQ2} = cycle_worker(AllWorkerQ),
+	{Worker, State#state{all_workers = AllWorkerQ2}}.
 
 cycle_worker(WorkerQ) ->
 	{{value, Worker}, WorkerQ2} = queue:out(WorkerQ),
