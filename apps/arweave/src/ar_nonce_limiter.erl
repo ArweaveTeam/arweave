@@ -961,7 +961,8 @@ apply_external_update2(Update, State) ->
 			sessions = Sessions } = State,
 	#nonce_limiter_update{ session_key = SessionKey,
 			session = #vdf_session{ upper_bound = UpperBound,
-					step_number = StepNumber, steps = [Output | _] } = Session,
+					prev_session_key = PrevSessionKey,
+					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
@@ -974,12 +975,14 @@ apply_external_update2(Update, State) ->
 					Sessions2 = gb_sets:add_element({element(2, SessionKey),
 							element(1, SessionKey)}, Sessions),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
+					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
+					trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession,
+							UpperBound, Steps),
 					{reply, ok, State#state{ session_by_key = SessionByKey2,
 							sessions = Sessions2 }}
 			end;
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
-				step_checkpoints_map = Map,
-				prev_session_key = PrevSessionKey } = CurrentSession ->
+				step_checkpoints_map = Map } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
@@ -988,9 +991,8 @@ apply_external_update2(Update, State) ->
 							steps = [Output | CurrentSteps] },
 					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
 					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-					ar_events:send(nonce_limiter, {computed_output,
-							{SessionKey, CurrentSession2, PrevSessionKey, PrevSession,
-							Output, UpperBound}}),
+					trigger_computed_outputs(SessionKey, CurrentSession2, PrevSessionKey,
+							PrevSession, UpperBound, [Output]),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
@@ -1010,6 +1012,12 @@ apply_external_update2(Update, State) ->
 											SessionByKey),
 									may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey,
 											StepNumber),
+									Steps2 = lists:sublist(Steps,
+											StepNumber - CurrentStepNumber),
+									PrevSession = maps:get(PrevSessionKey, SessionByKey,
+											undefined),
+									trigger_computed_outputs(SessionKey, Session,
+											PrevSessionKey, PrevSession, UpperBound, Steps2),
 									{reply, ok, State#state{ session_by_key = SessionByKey2 }}
 							end
 					end
@@ -1023,6 +1031,18 @@ may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber) ->
 		false ->
 			ok
 	end.
+
+trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _PrevSession,
+		_UpperBound, []) ->
+	ok;
+trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound,
+		[Step | Steps]) ->
+	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session, PrevSessionKey,
+			PrevSession, Step, UpperBound}}),
+	#vdf_session{ step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
+	Session2 = Session#vdf_session{ step_number = StepNumber - 1, steps = PrevSteps },
+	trigger_computed_outputs(SessionKey, Session2, PrevSessionKey, PrevSession, UpperBound,
+			Steps).
 
 debug_double_check(Label, Result, Func, Args) ->
 	{ok, Config} = application:get_env(arweave, config),
