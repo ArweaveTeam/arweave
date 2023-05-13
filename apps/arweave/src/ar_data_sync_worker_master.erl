@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, get_scheduled_task_count/0]).
+-export([start_link/2, get_total_task_count/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -37,14 +37,9 @@
 start_link(Name, Workers) ->
 	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
 
-%% @doc Return the number of scheduled tasks.
-get_scheduled_task_count() ->
-	case ets:lookup(?MODULE, scheduled_tasks) of
-		[] ->
-			0;
-		[{_, N}] ->
-			N
-	end.
+%% @doc Return the number of tasks that are queued on the master or active on a worker.
+get_total_task_count() ->
+	get_scheduled_task_count() + get_queued_task_count().
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -54,7 +49,11 @@ init(Workers) ->
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, process_task_queue),
 	{ok, Config} = application:get_env(arweave, config),
-	{ok, #state{ all_workers = queue:from_list(Workers), worker_count = length(Workers), sync_jobs = Config#config.sync_jobs }}.
+	{ok, #state{
+		all_workers = queue:from_list(Workers),
+		worker_count = length(Workers),
+		sync_jobs = Config#config.sync_jobs
+	}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -65,29 +64,27 @@ handle_cast(process_task_queue, #state{ task_queue_len = 0 } = State) ->
 	{noreply, State};
 handle_cast(process_task_queue, #state{ worker_count = WorkerCount } = State) ->
 	ScheduledTaskCount = get_scheduled_task_count(),
-	TaskBudget = max(0, WorkerCount * 1000 - ScheduledTaskCount),
+	TaskBudget = max(0, WorkerCount * 100 - ScheduledTaskCount),
 	ar_util:cast_after(200, ?MODULE, process_task_queue),
 	{noreply, process_task_queue(TaskBudget, State)};
 
 handle_cast({read_range, _Args}, #state{ worker_count = 0 } = State) ->
 	{noreply, State};
-handle_cast({read_range, Args}, #state{ task_queue = Q, task_queue_len = Len } = State) ->
-	{noreply, State#state{ task_queue = queue:in({read_range, Args}, Q),
-			task_queue_len = Len + 1 }};
+handle_cast({read_range, Args}, State) ->
+	{noreply, enqueue_task(read_range, Args, State)};
 
 handle_cast({sync_range, _Args}, #state{ worker_count = 0 } = State) ->
 	{noreply, State};
-handle_cast({sync_range, Args}, #state{ task_queue = Q, task_queue_len = Len } = State) ->
-	{noreply, State#state{ task_queue = queue:in({sync_range, Args}, Q),
-			task_queue_len = Len + 1 }};
+handle_cast({sync_range, Args}, State) ->
+	{noreply, enqueue_task(sync_range, Args, State)};
 
 handle_cast({task_completed, {read_range, _}}, State) ->
-	complete_task(),
+	complete_task(read_range, "localhost"),
 	{noreply, State};
 
 handle_cast({task_completed, {sync_range, {Peer, Duration}}}, State) ->
 	PeerTasks = complete_sync_range(Peer, Duration, State),
-	State2 = send_queued_sync_range(Peer, PeerTasks, State),	
+	State2 = schedule_queued_sync_range(Peer, PeerTasks, State),	
 	{noreply, State2};
 
 
@@ -107,6 +104,9 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+%%--------------------------------------------------------------------
+%% Process main task queue
+%%--------------------------------------------------------------------
 process_task_queue(0, State) ->
 	State;
 process_task_queue(_N, #state{ task_queue_len = 0 } = State) ->
@@ -119,7 +119,7 @@ process_task_queue(N, State) ->
 			{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
 			End2 = min(Start + 10 * 262144, End),
 			{Worker, State2} = get_worker(State),
-			send_task(Worker, Task, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}),
+			schedule_task(Worker, Task, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}),
 			{Q3, Len2} =
 				case End2 == End of
 					true ->
@@ -135,7 +135,7 @@ process_task_queue(N, State) ->
 			PeerTasks = get_peer_tasks(Peer, State),
 			State2 = case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
 				true ->
-					send_sync_range(Peer, PeerTasks, Args, State);
+					schedule_sync_range(Peer, PeerTasks, Args, State);
 				false ->
 					PeerTaskQueue = queue:in({sync_range, Args}, PeerTasks#peer_tasks.task_queue),
 					% ?LOG_ERROR("*** enqueue_sync_range: ~p / ~p",
@@ -147,22 +147,28 @@ process_task_queue(N, State) ->
 			process_task_queue(N - 1, State3)
 	end.
 
-get_peer_tasks(Peer, State) ->
-	 maps:get(Peer, State#state.peer_tasks, #peer_tasks{}).
+%%--------------------------------------------------------------------
+%% Stage 1: add tasks to the main queue or peer-specific queues
+%%--------------------------------------------------------------------
+enqueue_task(Task, Args, State) ->
+	ets:update_counter(?MODULE, queued_tasks, {2, 1}, {queued_tasks, 0}),
+	prometheus_gauge:inc(sync_tasks, [queued, Task, format_peer(Task, Args)]),
+	State#state{ task_queue = queue:in({Task, Args}, State#state.task_queue),
+			task_queue_len = State#state.task_queue_len + 1 }.
 
-set_peer_tasks(Peer, PeerTasks, State) ->
-	State#state{ peer_tasks = maps:put(Peer, PeerTasks, State#state.peer_tasks) }.
+%%--------------------------------------------------------------------
+%% Stage 2: schedule tasks to be run on workers
+%%--------------------------------------------------------------------
 
-send_queued_sync_range(Peer, PeerTasks, State) ->
+%% @doc If a peer has capacity, take the next task from its	queue and schedule it.
+schedule_queued_sync_range(Peer, PeerTasks, State) ->
 	case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
 		true ->
 			case queue:out(PeerTasks#peer_tasks.task_queue) of
 				{{value, {sync_range, Args}}, PeerTaskQueue} ->
-					% ?LOG_ERROR("*** dequeue_sync_range: ~p / ~p",
-					% 			[ar_util:format_peer(Peer), queue:len(PeerTaskQueue)]),
 					PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
-					State2 = send_sync_range(Peer, PeerTasks2, Args, State),
-					send_queued_sync_range(Peer, get_peer_tasks(Peer, State2), State2);
+					State2 = schedule_sync_range(Peer, PeerTasks2, Args, State),
+					schedule_queued_sync_range(Peer, get_peer_tasks(Peer, State2), State2);
 				_ ->
 					State
 			end;
@@ -170,22 +176,29 @@ send_queued_sync_range(Peer, PeerTasks, State) ->
 			State
 	end.
 
-send_sync_range(Peer, PeerTasks, Args, State) ->
+%% @doc Schedule a sync_range task - this task may come from the main queue or a
+%% peer-specific queue.
+schedule_sync_range(Peer, PeerTasks, Args, State) ->
 	{Start, End, Peer, TargetStoreID} = Args,
 	{Worker, State2} = get_worker(State),
-	send_task(Worker, sync_range, {Start, End, Peer, TargetStoreID, 3}),
+	schedule_task(Worker, sync_range, {Start, End, Peer, TargetStoreID, 3}),
 	PeerTasks2 = PeerTasks#peer_tasks{ active_count = PeerTasks#peer_tasks.active_count + 1 },
-	% ?LOG_ERROR("*** send_sync_range: ~p / ~p",
-	% 	[ar_util:format_peer(Peer), PeerTasks2#peer_tasks.active_count]),
 	set_peer_tasks(Peer, PeerTasks2, State2).
 
-send_task(Worker, Task, Args) ->
+%% @doc Schedule a task (either sync_range or read_range) to be run on a worker.
+schedule_task(Worker, Task, Args) ->
 	ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
-	prometheus_gauge:inc(scheduled_sync_tasks),
+	ets:update_counter(?MODULE, queued_tasks, {2, -1}),
+	Peer = format_peer(Task, Args),
+	prometheus_gauge:dec(sync_tasks, [queued, Task, Peer]),
+	prometheus_gauge:inc(sync_tasks, [scheduled, Task, Peer]),
 	gen_server:cast(Worker, {Task, Args}).
 
+%%--------------------------------------------------------------------
+%% Stage 3: record a completed task and perhaps schedule more tasks
+%%--------------------------------------------------------------------
 complete_sync_range(Peer, Duration, State) ->
-	complete_task(),
+	complete_task(sync_range, ar_util:format_peer(Peer)),
 	PeerTasks = get_peer_tasks(Peer, State),
 	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),
 	MaxActive = case Milliseconds < 2000 of
@@ -199,9 +212,37 @@ complete_sync_range(Peer, Duration, State) ->
 		[ar_util:format_peer(Peer), ActiveCount, MaxActive, Milliseconds]),
 	PeerTasks#peer_tasks{ active_count = ActiveCount, max_active = MaxActive }.
 
-complete_task() ->
+complete_task(Task, Peer) ->
 	ets:update_counter(?MODULE, scheduled_tasks, {2, -1}),
-	prometheus_gauge:dec(scheduled_sync_tasks).
+	prometheus_gauge:dec(sync_tasks, [queued, Task, Peer]).
+
+%%--------------------------------------------------------------------
+%% Helpers
+%%--------------------------------------------------------------------
+
+%% @doc Return the number of tasks that have been sent to workers and are not yet complete.
+get_scheduled_task_count() ->
+	case ets:lookup(?MODULE, scheduled_tasks) of
+		[] ->
+			0;
+		[{_, N}] ->
+			N
+	end.
+
+%% @doc Return the number of tasks that are queued on the master.
+get_queued_task_count() ->
+	case ets:lookup(?MODULE, queued_tasks) of
+		[] ->
+			0;
+		[{_, N}] ->
+			N
+	end.
+
+get_peer_tasks(Peer, State) ->
+	 maps:get(Peer, State#state.peer_tasks, #peer_tasks{}).
+
+set_peer_tasks(Peer, PeerTasks, State) ->
+	State#state{ peer_tasks = maps:put(Peer, PeerTasks, State#state.peer_tasks) }.
 
 get_worker(#state{ all_workers = AllWorkerQ } = State) ->
 	{ Worker, AllWorkerQ2 } = cycle_worker(AllWorkerQ),
@@ -210,6 +251,14 @@ get_worker(#state{ all_workers = AllWorkerQ } = State) ->
 cycle_worker(WorkerQ) ->
 	{{value, Worker}, WorkerQ2} = queue:out(WorkerQ),
 	{Worker, queue:in(Worker, WorkerQ2)}.
+
+format_peer(Task, Args) ->
+	case Task of
+		read_range -> "localhost";
+		sync_range ->
+			{_, _, Peer, _} = Args,
+			ar_util:format_peer(Peer)
+	end.
 
 %%%===================================================================
 %%% Tests. Included in the module so they can reference private
