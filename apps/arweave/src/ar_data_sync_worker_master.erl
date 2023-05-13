@@ -14,13 +14,18 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-record(peer_tasks, {
+	task_queue = queue:new(),
+	active_count = 0,
+	max_active = 8
+}).
+
 -record(state, {
 	task_queue = queue:new(),
 	task_queue_len = 0,
 	all_workers = queue:new(),
-	peer_workers = #{},
 	worker_count = 0,
-	workers_per_peer = 8
+	peer_tasks = #{}
 }).
 
 %%%===================================================================
@@ -74,10 +79,21 @@ handle_cast({sync_range, Args}, #state{ task_queue = Q, task_queue_len = Len } =
 	{noreply, State#state{ task_queue = queue:in({sync_range, Args}, Q),
 			task_queue_len = Len + 1 }};
 
-handle_cast(task_completed, State) ->
-	ets:update_counter(?MODULE, scheduled_tasks, {2, -1}),
-	prometheus_gauge:dec(scheduled_sync_tasks),
+handle_cast({task_completed, {read_range, _}}, State) ->
+	complete_task(),
 	{noreply, State};
+
+handle_cast({task_completed, {sync_range, {Peer, Duration}}}, State) ->
+	PeerTasks = complete_sync_range(Peer, Duration, State),
+	State2 = case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
+		true ->
+			send_queued_sync_range(Peer, PeerTasks, State);
+		false ->
+			State
+	end,
+	
+	{noreply, State2};
+
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -100,18 +116,14 @@ process_task_queue(0, State) ->
 process_task_queue(_N, #state{ task_queue_len = 0 } = State) ->
 	State;
 process_task_queue(N, State) ->
-	#state{ task_queue = Q, task_queue_len = Len, all_workers = WorkerQ } = State,
+	#state{ task_queue = Q, task_queue_len = Len } = State,
 	{{value, {Task, Args}}, Q2} = queue:out(Q),
 	case Task of
 		read_range ->
 			{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
 			End2 = min(Start + 10 * 262144, End),
-			{{value, W}, WorkerQ2} = queue:out(WorkerQ),
-			ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
-			prometheus_gauge:inc(scheduled_sync_tasks),
-			gen_server:cast(W, {read_range, {Start, End2, OriginStoreID, TargetStoreID,
-					SkipSmall}}),
-			WorkerQ3 = queue:in(W, WorkerQ2),
+			{Worker, State2} = get_worker(State),
+			send_task(Worker, Task, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}),
 			{Q3, Len2} =
 				case End2 == End of
 					true ->
@@ -120,110 +132,150 @@ process_task_queue(N, State) ->
 						Args2 = {End2, End, OriginStoreID, TargetStoreID, SkipSmall},
 						{queue:in_r({read_range, Args2}, Q2), Len}
 				end,
-			State2 = State#state{ all_workers = WorkerQ3, task_queue = Q3, task_queue_len = Len2 },
-			process_task_queue(N - 1, State2);
+			State3 = State2#state{ task_queue = Q3, task_queue_len = Len2 },
+			process_task_queue(N - 1, State3);
 		sync_range ->
-			{Start, End, Peer, TargetStoreID} = Args,
-			{Worker, State2} = get_peer_worker(Peer, State),
-			ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
-			prometheus_gauge:inc(scheduled_sync_tasks),
-			gen_server:cast(Worker, {sync_range, {Start, End, Peer, TargetStoreID, 3}}),
+			{_Start, _End, Peer, _TargetStoreID} = Args,
+			PeerTasks = get_peer_tasks(Peer, State),
+			State2 = case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
+				true ->
+					send_sync_range(Peer, PeerTasks, Args, State);
+				false ->
+					PeerTaskQueue = queue:in({sync_range, Args}, PeerTasks#peer_tasks.task_queue),
+					% ?LOG_ERROR("*** enqueue_sync_range: ~p / ~p",
+					% 	[ar_util:format_peer(Peer), queue:len(PeerTaskQueue)]),
+					PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
+					set_peer_tasks(Peer, PeerTasks2, State)
+			end,
 			State3 = State2#state{ task_queue = Q2, task_queue_len = Len - 1 },
 			process_task_queue(N - 1, State3)
 	end.
 
-get_peer_worker(Peer, #state{
-			all_workers = AllWorkerQ,
-			peer_workers = PeerWorkers,
-			workers_per_peer = WorkersPerPeer
-		} = State) ->
-	{PeerWorkerQ2, AllWorkerQ2} = case maps:get(Peer, PeerWorkers, undefined) of
-		undefined ->
-			initialize_peer_worker_queue(WorkersPerPeer, Peer, queue:new(), AllWorkerQ);
-		PeerWorkerQ ->
-			{PeerWorkerQ, AllWorkerQ}
-	end,
-	{{value, Worker}, PeerWorkerQ3} = queue:out(PeerWorkerQ2),
-	State2 = State#state{
-		all_workers = AllWorkerQ2,
-		peer_workers = maps:put(Peer, queue:in(Worker, PeerWorkerQ3), PeerWorkers)
-	},
-	{ Worker, State2 }.
+get_peer_tasks(Peer, State) ->
+	 maps:get(Peer, State#state.peer_tasks, #peer_tasks{}).
 
-initialize_peer_worker_queue(0, _Peer, PeerWorkerQ, AllWorkerQ) ->
-	{PeerWorkerQ, AllWorkerQ};
-initialize_peer_worker_queue(N, Peer, PeerWorkerQ, AllWorkerQ) ->
-	{{value, Worker}, AllWorkerQ2} = queue:out(AllWorkerQ),
-	initialize_peer_worker_queue(
-		N-1, Peer, queue:in(Worker, PeerWorkerQ), queue:in(Worker, AllWorkerQ2)).
+set_peer_tasks(Peer, PeerTasks, State) ->
+	State#state{ peer_tasks = maps:put(Peer, PeerTasks, State#state.peer_tasks) }.
+
+send_queued_sync_range(Peer, PeerTasks, State) ->
+	case queue:out(PeerTasks#peer_tasks.task_queue) of
+		{{value, {sync_range, Args}}, PeerTaskQueue} ->
+			% ?LOG_ERROR("*** dequeue_sync_range: ~p / ~p",
+			% 			[ar_util:format_peer(Peer), queue:len(PeerTaskQueue)]),
+			PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
+			send_sync_range(Peer, PeerTasks2, Args, State);
+		_ ->
+			State
+	end.
+
+send_sync_range(Peer, PeerTasks, Args, State) ->
+	{Start, End, Peer, TargetStoreID} = Args,
+	{Worker, State2} = get_worker(State),
+	send_task(Worker, sync_range, {Start, End, Peer, TargetStoreID, 3}),
+	PeerTasks2 = PeerTasks#peer_tasks{ active_count = PeerTasks#peer_tasks.active_count + 1 },
+	% ?LOG_ERROR("*** send_sync_range: ~p / ~p",
+	% 	[ar_util:format_peer(Peer), PeerTasks2#peer_tasks.active_count]),
+	set_peer_tasks(Peer, PeerTasks2, State2).
+
+send_task(Worker, Task, Args) ->
+	ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
+	prometheus_gauge:inc(scheduled_sync_tasks),
+	gen_server:cast(Worker, {Task, Args}).
+
+complete_sync_range(Peer, Duration, State) ->
+	complete_task(),
+	PeerTasks = get_peer_tasks(Peer, State),
+	Milliseconds = erlang:convert_time_unit(Duration, native, milliseconds),
+	MaxActive = case Milliseconds < 2000 of
+		true ->
+			PeerTasks#peer_tasks.max_active + 1;
+		false ->
+			max(PeerTasks#peer_tasks.max_active - 1, 8)
+	end,
+	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
+	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p",
+		[ar_util:format_peer(Peer), ActiveCount, MaxActive]),
+	PeerTasks#peer_tasks{ active_count = ActiveCount, max_active = MaxActive }.
+
+complete_task() ->
+	ets:update_counter(?MODULE, scheduled_tasks, {2, -1}),
+	prometheus_gauge:dec(scheduled_sync_tasks).
+
+get_worker(#state{ all_workers = AllWorkerQ } = State) ->
+	{ Worker, AllWorkerQ2 } = cycle_worker(AllWorkerQ),
+	{ Worker, State#state{ all_workers = AllWorkerQ2 } }.
+
+cycle_worker(WorkerQ) ->
+	{{value, Worker}, WorkerQ2} = queue:out(WorkerQ),
+	{Worker, queue:in(Worker, WorkerQ2)}.
 
 %%%===================================================================
 %%% Tests. Included in the module so they can reference private
 %%% functions.
 %%%===================================================================
 
-get_peer_worker_test_() ->
-	{timeout, 60, fun test_get_peer_worker/0}.
+% get_worker_test_() ->
+% 	{timeout, 60, fun test_get_peer_worker/0}.
 
-test_get_peer_worker() ->
-	Peer1 = {1, 2, 3, 4, 1984},
-	Peer2 = {101, 102, 103, 104, 1984},
-	Peer3 = {201, 202, 203, 204, 1984},
-	Workers = lists:seq(1, 8),
-	State0 = #state{ 
-		all_workers = queue:from_list(Workers),
-		workers_per_peer = 3
-	},
-	{Worker1, State1} = get_peer_worker(Peer1, State0),
-	assert_state(Peer1,
-		1, [4, 5, 6, 7, 8, 1, 2, 3], [2, 3, 1],
-		Worker1, State1),
+% test_get_peer_worker() ->
+% 	Peer1 = {1, 2, 3, 4, 1984},
+% 	Peer2 = {101, 102, 103, 104, 1984},
+% 	Peer3 = {201, 202, 203, 204, 1984},
+% 	Workers = lists:seq(1, 8),
+% 	State0 = #state{ 
+% 		all_workers = queue:from_list(Workers),
+% 		workers_per_peer = 3
+% 	},
+% 	{Worker1, State1} = get_peer_worker(Peer1, State0),
+% 	assert_state(Peer1,
+% 		1, [4, 5, 6, 7, 8, 1, 2, 3], [2, 3, 1],
+% 		Worker1, State1),
 
-	{Worker2, State2} = get_peer_worker(Peer1, State1),
-	assert_state(Peer1,
-		2, [4, 5, 6, 7, 8, 1, 2, 3], [3, 1, 2],
-		Worker2, State2),
+% 	{Worker2, State2} = get_peer_worker(Peer1, State1),
+% 	assert_state(Peer1,
+% 		2, [4, 5, 6, 7, 8, 1, 2, 3], [3, 1, 2],
+% 		Worker2, State2),
 
-	{Worker3, State3} = get_peer_worker(Peer2, State2),
-	assert_state(Peer2,
-		4, [7, 8, 1, 2, 3, 4, 5, 6], [5, 6, 4],
-		Worker3, State3),
+% 	{Worker3, State3} = get_peer_worker(Peer2, State2),
+% 	assert_state(Peer2,
+% 		4, [7, 8, 1, 2, 3, 4, 5, 6], [5, 6, 4],
+% 		Worker3, State3),
 	
-	{Worker4, State4} = get_peer_worker(Peer1, State3),
-	assert_state(Peer1,
-		3, [7, 8, 1, 2, 3, 4, 5, 6], [1, 2, 3],
-		Worker4, State4),
+% 	{Worker4, State4} = get_peer_worker(Peer1, State3),
+% 	assert_state(Peer1,
+% 		3, [7, 8, 1, 2, 3, 4, 5, 6], [1, 2, 3],
+% 		Worker4, State4),
 
-	{Worker5, State5} = get_peer_worker(Peer1, State4),
-	assert_state(Peer1,
-		1, [7, 8, 1, 2, 3, 4, 5, 6], [2, 3, 1],
-		Worker5, State5),
+% 	{Worker5, State5} = get_peer_worker(Peer1, State4),
+% 	assert_state(Peer1,
+% 		1, [7, 8, 1, 2, 3, 4, 5, 6], [2, 3, 1],
+% 		Worker5, State5),
 
-	{Worker6, State6} = get_peer_worker(Peer3, State5),
-	assert_state(Peer3,
-		7, [2, 3, 4, 5, 6, 7, 8, 1], [8, 1, 7],
-		Worker6, State6),
+% 	{Worker6, State6} = get_peer_worker(Peer3, State5),
+% 	assert_state(Peer3,
+% 		7, [2, 3, 4, 5, 6, 7, 8, 1], [8, 1, 7],
+% 		Worker6, State6),
 
-	{Worker7, State7} = get_peer_worker(Peer3, State6),
-	assert_state(Peer3,
-		8, [2, 3, 4, 5, 6, 7, 8, 1], [1, 7, 8],
-		Worker7, State7),
+% 	{Worker7, State7} = get_peer_worker(Peer3, State6),
+% 	assert_state(Peer3,
+% 		8, [2, 3, 4, 5, 6, 7, 8, 1], [1, 7, 8],
+% 		Worker7, State7),
 
-	{Worker8, State8} = get_peer_worker(Peer3, State7),
-	assert_state(Peer3,
-		1, [2, 3, 4, 5, 6, 7, 8, 1], [7, 8, 1],
-		Worker8, State8),
+% 	{Worker8, State8} = get_peer_worker(Peer3, State7),
+% 	assert_state(Peer3,
+% 		1, [2, 3, 4, 5, 6, 7, 8, 1], [7, 8, 1],
+% 		Worker8, State8),
 
-	{Worker9, State9} = get_peer_worker(Peer3, State8),
-	assert_state(Peer3,
-		7, [2, 3, 4, 5, 6, 7, 8, 1], [8, 1, 7],
-		Worker9, State9).
+% 	{Worker9, State9} = get_peer_worker(Peer3, State8),
+% 	assert_state(Peer3,
+% 		7, [2, 3, 4, 5, 6, 7, 8, 1], [8, 1, 7],
+% 		Worker9, State9).
 
-assert_state(Peer, ExpectedWorker, ExpectedAllWorkers, ExpectedPeerWorkers, Worker, State) ->
-	PeerWorkers = maps:get(Peer, State#state.peer_workers, undefined),
-	?assertEqual(ExpectedWorker, Worker),
-	?assertEqual(ExpectedAllWorkers, queue:to_list(State#state.all_workers)),
-	?assertEqual(ExpectedPeerWorkers, queue:to_list(PeerWorkers)).
+% assert_state(Peer, ExpectedWorker, ExpectedAllWorkers, ExpectedPeerWorkers, Worker, State) ->
+% 	PeerWorkers = maps:get(Peer, State#state.peer_workers, undefined),
+% 	?assertEqual(ExpectedWorker, Worker),
+% 	?assertEqual(ExpectedAllWorkers, queue:to_list(State#state.all_workers)),
+% 	?assertEqual(ExpectedPeerWorkers, queue:to_list(PeerWorkers)).
 
 
 % process_task_queue_test_() ->

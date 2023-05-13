@@ -41,16 +41,21 @@ handle_cast({read_range, Args}, State) ->
 		recast ->
 			ok;
 		_ ->
-			gen_server:cast(ar_data_sync_worker_master, task_completed)
+			gen_server:cast(ar_data_sync_worker_master, {task_completed, {read_range, Args}})
 	end,
 	{noreply, State};
 
 handle_cast({sync_range, Args}, State) ->
-	case sync_range(Args) of
+	{_Start, _End, Peer, _TargetStoreID, _RetryCount} = Args,
+	StartTime = erlang:monotonic_time(),
+	SyncResult = sync_range(Args),
+	EndTime = erlang:monotonic_time(),
+	case SyncResult of
 		recast ->
 			ok;
 		_ ->
-			gen_server:cast(ar_data_sync_worker_master, task_completed)
+			gen_server:cast(ar_data_sync_worker_master,
+				{task_completed, {sync_range, {Peer, EndTime-StartTime}}})
 	end,
 	{noreply, State};
 
