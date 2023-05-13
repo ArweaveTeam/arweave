@@ -25,7 +25,8 @@
 	task_queue_len = 0,
 	all_workers = queue:new(),
 	worker_count = 0,
-	peer_tasks = #{}
+	peer_tasks = #{},
+	sync_jobs = 0
 }).
 
 %%%===================================================================
@@ -52,7 +53,8 @@ get_scheduled_task_count() ->
 init(Workers) ->
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, process_task_queue),
-	{ok, #state{ all_workers = queue:from_list(Workers), worker_count = length(Workers) }}.
+	{ok, Config} = application:get_env(arweave, config),
+	{ok, #state{ all_workers = queue:from_list(Workers), worker_count = length(Workers), sync_jobs = Config#config.sync_jobs }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -85,13 +87,7 @@ handle_cast({task_completed, {read_range, _}}, State) ->
 
 handle_cast({task_completed, {sync_range, {Peer, Duration}}}, State) ->
 	PeerTasks = complete_sync_range(Peer, Duration, State),
-	State2 = case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
-		true ->
-			send_queued_sync_range(Peer, PeerTasks, State);
-		false ->
-			State
-	end,
-	
+	State2 = send_queued_sync_range(Peer, PeerTasks, State),	
 	{noreply, State2};
 
 
@@ -158,13 +154,19 @@ set_peer_tasks(Peer, PeerTasks, State) ->
 	State#state{ peer_tasks = maps:put(Peer, PeerTasks, State#state.peer_tasks) }.
 
 send_queued_sync_range(Peer, PeerTasks, State) ->
-	case queue:out(PeerTasks#peer_tasks.task_queue) of
-		{{value, {sync_range, Args}}, PeerTaskQueue} ->
-			% ?LOG_ERROR("*** dequeue_sync_range: ~p / ~p",
-			% 			[ar_util:format_peer(Peer), queue:len(PeerTaskQueue)]),
-			PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
-			send_sync_range(Peer, PeerTasks2, Args, State);
-		_ ->
+	case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
+		true ->
+			case queue:out(PeerTasks#peer_tasks.task_queue) of
+				{{value, {sync_range, Args}}, PeerTaskQueue} ->
+					% ?LOG_ERROR("*** dequeue_sync_range: ~p / ~p",
+					% 			[ar_util:format_peer(Peer), queue:len(PeerTaskQueue)]),
+					PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
+					State2 = send_sync_range(Peer, PeerTasks2, Args, State),
+					send_queued_sync_range(Peer, get_peer_tasks(Peer, State2), State2);
+				_ ->
+					State
+			end;
+		false ->
 			State
 	end.
 
@@ -188,7 +190,7 @@ complete_sync_range(Peer, Duration, State) ->
 	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),
 	MaxActive = case Milliseconds < 2000 of
 		true ->
-			PeerTasks#peer_tasks.max_active + 1;
+			min(PeerTasks#peer_tasks.max_active + 1, State#state.sync_jobs);
 		false ->
 			max(PeerTasks#peer_tasks.max_active - 1, 8)
 	end,
