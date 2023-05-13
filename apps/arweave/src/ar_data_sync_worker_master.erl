@@ -185,7 +185,7 @@ send_task(Worker, Task, Args) ->
 complete_sync_range(Peer, Duration, State) ->
 	complete_task(),
 	PeerTasks = get_peer_tasks(Peer, State),
-	Milliseconds = erlang:convert_time_unit(Duration, native, milliseconds),
+	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),
 	MaxActive = case Milliseconds < 2000 of
 		true ->
 			PeerTasks#peer_tasks.max_active + 1;
@@ -193,8 +193,8 @@ complete_sync_range(Peer, Duration, State) ->
 			max(PeerTasks#peer_tasks.max_active - 1, 8)
 	end,
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
-	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p",
-		[ar_util:format_peer(Peer), ActiveCount, MaxActive]),
+	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p",
+		[ar_util:format_peer(Peer), ActiveCount, MaxActive, Milliseconds]),
 	PeerTasks#peer_tasks{ active_count = ActiveCount, max_active = MaxActive }.
 
 complete_task() ->
