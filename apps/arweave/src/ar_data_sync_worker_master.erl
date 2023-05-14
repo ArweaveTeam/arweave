@@ -219,7 +219,6 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p -> ~p / ~p",
 		[self(), ar_util:format_peer(Peer), ActiveCount, PeerTasks#peer_tasks.max_active ,
 			MaxActive, Milliseconds]),
-	timer:sleep(10),
 	PeerTasks2 = PeerTasks#peer_tasks{ active_count = ActiveCount, max_active = MaxActive },
 	set_peer_tasks(Peer, PeerTasks2, State).
 
