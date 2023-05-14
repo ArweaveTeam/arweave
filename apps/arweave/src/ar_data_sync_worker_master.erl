@@ -219,7 +219,24 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p -> ~p / ~p",
 		[self(), ar_util:format_peer(Peer), ActiveCount, PeerTasks#peer_tasks.max_active ,
 			MaxActive, Milliseconds]),
-	PeerTasks2 = PeerTasks#peer_tasks{ active_count = ActiveCount, max_active = MaxActive },
+	MaxQueue = 3_600_000 div Milliseconds,
+	TaskQueue = case queue:len(PeerTasks#peer_tasks.task_queue) > MaxQueue of
+		true ->
+			%% The peer has a large queue of tasks. Reduce the queue size by removing the
+			%% oldest tasks.
+			{TaskQueue2, _} = queue:split(MaxQueue, PeerTasks#peer_tasks.task_queue),
+			?LOG_ERROR("*** reduce_task_queue: ~p / ~p / ~p -> ~p / ~p / ~p",
+				[self(), ar_util:format_peer(Peer), queue:len(PeerTasks#peer_tasks.task_queue), queue:len(TaskQueue2), MaxQueue, Milliseconds]),
+			TaskQueue2;
+		false ->
+			PeerTasks#peer_tasks.task_queue
+	end,
+
+	PeerTasks2 = PeerTasks#peer_tasks{
+		active_count = ActiveCount,
+		max_active = MaxActive,
+		task_queue = TaskQueue
+	},
 	set_peer_tasks(Peer, PeerTasks2, State).
 
 complete_task(Task, Peer) ->
