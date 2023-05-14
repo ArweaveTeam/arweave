@@ -127,6 +127,7 @@ handle_cast(update_network_data_map, State) ->
 	{noreply, State};
 
 handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
+	?LOG_ERROR("*** XXX add_peer_sync_buckets: ~p", [ar_util:format_peer(Peer)]),
 	#state{ network_map = Map } = State,
 	State2 = refresh_expiration_timer(Peer, State),
 	Map2 = maps:put(Peer, SyncBuckets, Map),
@@ -199,6 +200,7 @@ pick_peers([], _PeerLen, _N) ->
 pick_peers(_Peers, _PeerLen, 0) ->
 	[];
 pick_peers(Peers, PeerLen, N) ->
+	?LOG_ERROR("*** XXX pick_peers: ~p, ~p", [PeerLen, N]),
 	%% N: the target number of peers to pick
 	%% Best: top 20% of the Peers list
 	%% Other: the rest of the Peers list

@@ -769,6 +769,7 @@ handle_cast(collect_peer_intervals, State) ->
 				true ->
 					ar_util:cast_after(1000, self(), collect_peer_intervals);
 				false ->
+					?LOG_ERROR("*** XXX collect_peer_intervals"),
 					Self = self(),
 					monitor(process, spawn(
 						fun() ->
@@ -787,6 +788,7 @@ handle_cast({enqueue_intervals, []}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
+	?LOG_ERROR("*** XXX enqueue_intervals"),
 	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
 	%% so that:
 	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
