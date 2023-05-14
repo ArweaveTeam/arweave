@@ -82,8 +82,8 @@ handle_cast({task_completed, {read_range, _}}, State) ->
 	complete_task(read_range, "localhost"),
 	{noreply, State};
 
-handle_cast({task_completed, {sync_range, {Peer, Duration}}}, State) ->
-	State2 = complete_sync_range(Peer, Duration, State),
+handle_cast({task_completed, {sync_range, {Result, Peer, Duration}}}, State) ->
+	State2 = complete_sync_range(Peer, Result, Duration, State),
 	State3 = schedule_queued_sync_range(Peer, State2),	
 	{noreply, State3};
 
@@ -198,14 +198,21 @@ schedule_task(Worker, Task, Args) ->
 %%--------------------------------------------------------------------
 %% Stage 3: record a completed task and perhaps schedule more tasks
 %%--------------------------------------------------------------------
-complete_sync_range(Peer, Duration, State) ->
+complete_sync_range(Peer, Result, Duration, State) ->
 	complete_task(sync_range, ar_util:format_peer(Peer)),
 	PeerTasks = get_peer_tasks(Peer, State),
 	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),
-	MaxActive = case Milliseconds < 2000 of
-		true ->
+	MaxActive = case {Result, Milliseconds} of
+		{ok, Milliseconds} when Milliseconds < 2000 andalso Milliseconds > 10 ->
+			%% INCREASE max_active
+			%% Successful, fast operation (but not so fast as to preclude a valid GET /chunk
+			%% web request). This is a good peer, increase max_active to allow
+			%% more concurrent requests.
 			min(PeerTasks#peer_tasks.max_active + 1, State#state.sync_jobs);
-		false ->
+		_ ->
+			%% REDUCE max_active
+			%% Either an error or a slow request. Reduce max_active to reduce the load on this
+			%% peer.
 			max(PeerTasks#peer_tasks.max_active - 1, 8)
 	end,
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,

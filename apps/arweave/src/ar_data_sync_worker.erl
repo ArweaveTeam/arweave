@@ -40,8 +40,9 @@ handle_cast({read_range, Args}, State) ->
 	case read_range(Args) of
 		recast ->
 			ok;
-		_ ->
-			gen_server:cast(ar_data_sync_worker_master, {task_completed, {read_range, Args}})
+		ReadResult ->
+			gen_server:cast(ar_data_sync_worker_master,
+				{task_completed, {read_range, {ReadResult, Args}}})
 	end,
 	{noreply, State};
 
@@ -55,7 +56,7 @@ handle_cast({sync_range, Args}, State) ->
 			ok;
 		_ ->
 			gen_server:cast(ar_data_sync_worker_master,
-				{task_completed, {sync_range, {Peer, EndTime-StartTime}}})
+				{task_completed, {sync_range, {SyncResult, Peer, EndTime-StartTime}}})
 	end,
 	{noreply, State};
 
@@ -178,7 +179,7 @@ sync_range({Start, End, Peer, _TargetStoreID, 0}) ->
 	?LOG_DEBUG([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
-	ok;
+	{error, timeout};
 sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
@@ -234,7 +235,8 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							?LOG_ERROR([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{start_offset, Start2}, {end_offset, End},
-									{reason, io_lib:format("~p", [Reason])}])
+									{reason, io_lib:format("~p", [Reason])}]),
+							{error, Reason}
 					end
 			end
 	end.
