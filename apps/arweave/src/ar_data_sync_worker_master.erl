@@ -112,52 +112,53 @@ process_task_queue(0, State) ->
 process_task_queue(_N, #state{ task_queue_len = 0 } = State) ->
 	State;
 process_task_queue(N, State) ->
-	{Task, Args, State2} = dequeue_task(State),
+	#state{ task_queue = Q, task_queue_len = Len } = State,
+	{{value, {Task, Args}}, Q2} = queue:out(Q),
 	case Task of
 		read_range ->
-			State3 = schedule_read_range(Args, State2),
+			{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
+			End2 = min(Start + 10 * 262144, End),
+			{Worker, State2} = get_worker(State),
+			schedule_task(Worker, Task, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}),
+			{Q3, Len2} =
+				case End2 == End of
+					true ->
+						{Q2, Len - 1};
+					false ->
+						Args2 = {End2, End, OriginStoreID, TargetStoreID, SkipSmall},
+						{queue:in_r({read_range, Args2}, Q2), Len}
+				end,
+			State3 = State2#state{ task_queue = Q3, task_queue_len = Len2 },
 			process_task_queue(N - 1, State3);
 		sync_range ->
 			{_Start, _End, Peer, _TargetStoreID} = Args,
-			PeerTasks = get_peer_tasks(Peer, State2),
-			State3 = case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
+			PeerTasks = get_peer_tasks(Peer, State),
+			State2 = case PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active of
 				true ->
-					schedule_sync_range(Peer, PeerTasks, Args, State2);
+					schedule_sync_range(Peer, PeerTasks, Args, State);
 				false ->
 					PeerTaskQueue = queue:in({sync_range, Args}, PeerTasks#peer_tasks.task_queue),
+					% ?LOG_ERROR("*** enqueue_sync_range: ~p / ~p",
+					% 	[ar_util:format_peer(Peer), queue:len(PeerTaskQueue)]),
 					PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
-					set_peer_tasks(Peer, PeerTasks2, State2)
+					set_peer_tasks(Peer, PeerTasks2, State)
 			end,
+			State3 = State2#state{ task_queue = Q2, task_queue_len = Len - 1 },
 			process_task_queue(N - 1, State3)
 	end.
 
 %%--------------------------------------------------------------------
 %% Stage 1: add tasks to the main queue or peer-specific queues
 %%--------------------------------------------------------------------
-push_task(Task, Args, State) ->
-	increment_queued_tasks(Task, format_peer(Task, Args)),
-	State#state{
-		task_queue = queue:in_r({Task, Args}, State#state.task_queue),
-		task_queue_len = State#state.task_queue_len + 1 }.
-	
 enqueue_task(Task, Args, State) ->
-	increment_queued_tasks(Task, format_peer(Task, Args)),
-	State#state{
-		task_queue = queue:in({Task, Args}, State#state.task_queue),
-		task_queue_len = State#state.task_queue_len + 1 }.
-
-dequeue_task(State) ->
-	#state{ task_queue = Q, task_queue_len = Len } = State,
-	{{value, {Task, Args}}, Q2} = queue:out(Q),
-	State2 = State#state{ task_queue = Q2, task_queue_len = Len - 1 },
-	{Task, Args, State2}.
+	ets:update_counter(?MODULE, queued_tasks, {2, 1}, {queued_tasks, 0}),
+	prometheus_gauge:inc(sync_tasks, [queued, Task, format_peer(Task, Args)]),
+	State#state{ task_queue = queue:in({Task, Args}, State#state.task_queue),
+			task_queue_len = State#state.task_queue_len + 1 }.
 
 %%--------------------------------------------------------------------
 %% Stage 2: schedule tasks to be run on workers
 %%--------------------------------------------------------------------
-increment_queued_tasks(Task, FormattedPeer) ->
-	ets:update_counter(?MODULE, queued_tasks, {2, 1}, {queued_tasks, 0}),
-	prometheus_gauge:inc(sync_tasks, [queued, Task, FormattedPeer]).
 
 decrement_queued_tasks(Task, FormattedPeer) ->
 	decrement_queued_tasks(Task, FormattedPeer, 1).
@@ -192,19 +193,6 @@ schedule_sync_range(Peer, PeerTasks, Args, State) ->
 	PeerTasks2 = PeerTasks#peer_tasks{ active_count = PeerTasks#peer_tasks.active_count + 1 },
 	set_peer_tasks(Peer, PeerTasks2, State2).
 
-schedule_read_range(Args, State) ->
-	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
-	End2 = min(Start + 10 * 262144, End),
-	{Worker, State2} = get_worker(State),
-	schedule_task(Worker, read_range, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}),
-	case End2 == End of
-		true ->
-			State2;
-		false ->
-			Args2 = {End2, End, OriginStoreID, TargetStoreID, SkipSmall},
-			push_task(read_range, Args2, State2)
-	end.
-
 %% @doc Schedule a task (either sync_range or read_range) to be run on a worker.
 schedule_task(Worker, Task, Args) ->
 	ets:update_counter(?MODULE, scheduled_tasks, {2, 1}, {scheduled_tasks, 0}),
@@ -220,27 +208,29 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	complete_task(sync_range, ar_util:format_peer(Peer)),
 	PeerTasks = get_peer_tasks(Peer, State),
 	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),
-	{MaxActive2, TaskQueue2} = case {Result, Milliseconds} of
-		{ok, Milliseconds} when Milliseconds > 10 ->
-			EMA = update_ema(Peer, Milliseconds),
-			MaxActive = update_max_active(EMA, PeerTasks#peer_tasks.max_active, State),
-			TaskQueue = update_peer_queue(Peer, PeerTasks#peer_tasks.task_queue, EMA),
-			{MaxActive, TaskQueue};
+	MaxActive = case {Result, Milliseconds} of
+		{ok, Milliseconds} when Milliseconds < 2000 andalso Milliseconds > 10 ->
+			%% INCREASE max_active
+			%% Successful, fast operation (but not so fast as to preclude a valid GET /chunk
+			%% web request). This is a good peer, increase max_active to allow
+			%% more concurrent requests.
+			min(PeerTasks#peer_tasks.max_active + 1, State#state.sync_jobs);
 		_ ->
-			%% Either an error occured or the request was so quick something else must
-			%% have gone wrong. Reduce max_active and don't update anything else.
-			MaxActive = reduce_max_active(PeerTasks#peer_tasks.max_active),
-			{MaxActive, PeerTasks#peer_tasks.task_queue}
+			%% REDUCE max_active
+			%% Either an error or a slow request. Reduce max_active to reduce the load on this
+			%% peer.
+			max(PeerTasks#peer_tasks.max_active - 1, 8)
 	end,
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
-	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p -> ~p / ~p / ~p",
+	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p -> ~p / ~p",
 		[self(), ar_util:format_peer(Peer), ActiveCount, PeerTasks#peer_tasks.max_active ,
-			MaxActive2, Milliseconds, get_ema(Peer)]),
+			MaxActive, Milliseconds]),
+	TaskQueue = reduce_task_queue(Peer, PeerTasks#peer_tasks.task_queue, Milliseconds),
 
 	PeerTasks2 = PeerTasks#peer_tasks{
 		active_count = ActiveCount,
-		max_active = MaxActive2,
-		task_queue = TaskQueue2
+		max_active = MaxActive,
+		task_queue = TaskQueue
 	},
 	set_peer_tasks(Peer, PeerTasks2, State).
 
@@ -270,24 +260,6 @@ get_queued_task_count() ->
 			N
 	end.
 
-get_ema(Peer) ->
-	case ets:lookup(?MODULE, {ema, Peer}) of
-		[] ->
-			0;
-		[{_, EMA}] ->
-			EMA
-	end.
-
-set_ema(Peer, EMA) ->
-	ets:insert(?MODULE, {{ema, Peer}, EMA}).
-
-update_ema(Peer, Milliseconds) ->
-	OldEMA = get_ema(Peer),
-	Alpha = 0.1,
-	NewEMA = Alpha * Milliseconds + (1 - Alpha) * OldEMA,
-	set_ema(Peer, NewEMA),
-	NewEMA.
-
 get_peer_tasks(Peer, State) ->
 	 maps:get(Peer, State#state.peer_tasks, #peer_tasks{}).
 
@@ -309,27 +281,10 @@ format_peer(Task, Args) ->
 			ar_util:format_peer(element(3, Args))
 	end.
 
-update_max_active(EMA, MaxActive, State) ->
-	case EMA of
-		EMA when EMA < 2000 ->
-			%% INCREASE max_active
-			%% Successful, fast operation. This is a good peer, increase max_active to allow
-			%% more concurrent requests.
-			min(MaxActive + 1, State#state.sync_jobs);
-		_ ->
-			%% REDUCE max_active
-			%% Either an error or a slow request. Reduce max_active to reduce the load on this
-			%% peer.
-			reduce_max_active(MaxActive)
-	end.
-
-reduce_max_active(MaxActive) ->
-	max(MaxActive - 1, 8).
-
-update_peer_queue(_Peer, TaskQueue, 0) ->
+reduce_task_queue(_Peer, TaskQueue, 0) ->
 	TaskQueue;
-update_peer_queue(Peer, TaskQueue, EMA) ->
-	MaxQueue = 3_600_000 div EMA,
+reduce_task_queue(Peer, TaskQueue, RequestDuration) ->
+	MaxQueue = 3_600_000 div RequestDuration,
 	case queue:len(TaskQueue) - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
@@ -337,7 +292,7 @@ update_peer_queue(Peer, TaskQueue, EMA) ->
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			decrement_queued_tasks(sync_range, ar_util:format_peer(Peer), TasksToCut),
 			?LOG_ERROR("*** reduce_task_queue: ~p / ~p / ~p -> ~p / ~p / ~p",
-				[self(), ar_util:format_peer(Peer), queue:len(TaskQueue), queue:len(TaskQueue2), MaxQueue, EMA]),
+				[self(), ar_util:format_peer(Peer), queue:len(TaskQueue), queue:len(TaskQueue2), MaxQueue, RequestDuration]),
 			TaskQueue2;
 		_ ->
 			TaskQueue
