@@ -225,19 +225,7 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p -> ~p / ~p",
 		[self(), ar_util:format_peer(Peer), ActiveCount, PeerTasks#peer_tasks.max_active ,
 			MaxActive, Milliseconds]),
-	MaxQueue = 3_600_000 div Milliseconds,
-	TaskQueue = case queue:len(PeerTasks#peer_tasks.task_queue) - MaxQueue of
-		TasksToCut when TasksToCut > 0 ->
-			%% The peer has a large queue of tasks. Reduce the queue size by removing the
-			%% oldest tasks.
-			{TaskQueue2, _} = queue:split(MaxQueue, PeerTasks#peer_tasks.task_queue),
-			decrement_queued_tasks(sync_range, ar_util:format_peer(Peer), TasksToCut),
-			?LOG_ERROR("*** reduce_task_queue: ~p / ~p / ~p -> ~p / ~p / ~p",
-				[self(), ar_util:format_peer(Peer), queue:len(PeerTasks#peer_tasks.task_queue), queue:len(TaskQueue2), MaxQueue, Milliseconds]),
-			TaskQueue2;
-		_ ->
-			PeerTasks#peer_tasks.task_queue
-	end,
+	TaskQueue = reduce_task_queue(Peer, PeerTasks#peer_tasks.task_queue, Milliseconds),
 
 	PeerTasks2 = PeerTasks#peer_tasks{
 		active_count = ActiveCount,
@@ -291,6 +279,23 @@ format_peer(Task, Args) ->
 		read_range -> "localhost";
 		sync_range ->
 			ar_util:format_peer(element(3, Args))
+	end.
+
+reduce_task_queue(_Peer, TaskQueue, 0) ->
+	TaskQueue;
+reduce_task_queue(Peer, TaskQueue, RequestDuration) ->
+	MaxQueue = 3_600_000 div RequestDuration,
+	case queue:len(TaskQueue) - MaxQueue of
+		TasksToCut when TasksToCut > 0 ->
+			%% The peer has a large queue of tasks. Reduce the queue size by removing the
+			%% oldest tasks.
+			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
+			decrement_queued_tasks(sync_range, ar_util:format_peer(Peer), TasksToCut),
+			?LOG_ERROR("*** reduce_task_queue: ~p / ~p / ~p -> ~p / ~p / ~p",
+				[self(), ar_util:format_peer(Peer), queue:len(TaskQueue), queue:len(TaskQueue2), MaxQueue, RequestDuration]),
+			TaskQueue2;
+		_ ->
+			TaskQueue
 	end.
 
 %%%===================================================================
