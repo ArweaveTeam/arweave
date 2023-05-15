@@ -3059,12 +3059,14 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 
 % TODO binary protocol after debug
 handle_mining_h1(Req, Pid) ->
+	io:format("DEBUG handle_mining_h1 1~n"),
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
 					H2Materials = ar_serialize:json_map_to_remote_h2_materials(JSON),
+					io:format("DEBUG handle_mining_h1 2~n"),
 					ar_coordination:compute_h2(Peer, H2Materials),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
