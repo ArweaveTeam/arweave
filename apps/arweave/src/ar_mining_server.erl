@@ -98,6 +98,11 @@ pause_performance_reports(Time) ->
 %% @doc Compute h2 from a remote request.
 remote_compute_h2(Peer, H2Materials) ->
 	gen_server:cast(?MODULE, {remote_compute_h2, Peer, H2Materials}).
+remote_io_thread_recall_range2_chunk(Args) ->
+	io:format("DEBUG remote_io_thread_recall_range2_chunk root~n"),
+	{H0, PartitionNumber, Nonce, _Seed, _NextSeed, _StartIntervalNumber, _StepNumber,
+		NonceLimiterOutput, ReplicaID, Chunk, CorrelationRef, Session} = Args,
+	gen_server:cast(?MODULE, {remote_io_thread_recall_range2_chunk, H0, PartitionNumber, Nonce, NonceLimiterOutput, ReplicaID, Chunk, CorrelationRef, Session}).
 
 %% @doc Process the solution found by the coordinated mining peer.
 cm_exit_prepare_solution({PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber,
@@ -321,23 +326,25 @@ handle_cast({may_be_remove_chunk_from_cache, _Args} = Task,
 	{noreply, State#state{ task_queue = Q2 }};
 
 handle_cast({remote_compute_h2, Peer, H2Materials}, State) ->
-	{Diff, Addr, H0, PartitionNumber, PartitionUpperBound, NonceLimiterOutput,
+	io:format("DEBUG remote_compute_h2 a1~n"),
+	{Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints,
 			ReqList} = H2Materials,
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
-	PartitionNumber2 = get_partition_number_by_offset(RecallRange2Start),
 	Range2End = RecallRange2Start + ?RECALL_RANGE_SIZE,
+	io:format("DEBUG PartitionNumber PartitionNumber2, Addr, Range2End, RecallRange2Start ~p ~p ~p ~p ~p ~n", [PartitionNumber, PartitionNumber2, Addr, Range2End, RecallRange2Start]),
 	case find_thread(PartitionNumber2, Addr, Range2End, RecallRange2Start,
 			State#state.io_threads) of
 		not_found ->
 			%% This can be if calling peer has outdated partition table
 			ok;
 		Thread ->
+			io:format("DEBUG remote_compute_h2 a2~n"),
 			reserve_cache_space(),
-			CorrelationRef = {PartitionNumber2, PartitionUpperBound, make_ref()},
-			Session = {remote, Diff, Addr, H0, PartitionNumber, PartitionUpperBound,
-					RecallRange2Start, NonceLimiterOutput, ReqList, Peer},
-			Thread ! {remote_read_recall_range2, self(), Session, CorrelationRef}
+			CorrelationRef = {PartitionNumber, PartitionNumber2, PartitionUpperBound, make_ref()},
+			Session = {remote, Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound,
+					RecallRange2Start, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList, Peer},
+			Thread ! {remote_read_recall_range2, Thread, Session, CorrelationRef}
 	end,
 	{noreply, State};
 
@@ -376,14 +383,21 @@ handle_cast({cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed, NextSee
 				Key ->
 					{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 							PartitionUpperBound),
-					FixPoA2 = case PoA2 of
+					% FixPoA2 = case PoA2 of
+					% 	not_set ->
+					% 		#poa{};
+					% 	_ ->
+					% 		PoA2
+					% end,
+					% RecallByte22 = case PoA2 of not_set -> undefined; _ -> RecallByte2 end,
+					% prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, FixPoA2, SuppliedCheckpoints)
+					case PoA2 of
 						not_set ->
-							#poa{};
+							io:format("DEBUG IGNORE 1-chunk solution~n"),
+							State;
 						_ ->
-							PoA2
-					end,
-					RecallByte22 = case PoA2 of not_set -> undefined; _ -> RecallByte2 end,
-					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, FixPoA2, SuppliedCheckpoints)
+							prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, SuppliedCheckpoints)
+					end
 			end,
 			{noreply, NewState};
 		false ->
@@ -401,6 +415,37 @@ handle_cast({cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed, NextSee
 			io:format("Note. Block candidate was ignored because low diff~n"), % TODO
 			{noreply, State}
 	end;
+
+%% TODO: This should probably go inside the task_queue, but we don't have a StepNumber so
+%% FIXME. Now we have StepNumber
+%% we can't assing a priority to it
+handle_cast({remote_io_thread_recall_range2_chunk,
+		_H0, _PartitionNumber, Nonce, _NonceLimiterOutput, _ReplicaID, Chunk, CorrelationRef,
+		Session}, State) ->
+	io:format("DEBUG remote_io_thread_recall_range2_chunk h1~n"),
+	%% Prevent an accidental pattern match of _H0, _PartitionNumber.
+	{remote, _Diff, _Addr, _H0_, _PartitionNumber_, _PartitionNumber2, _PartitionUpperBound, _RecallByte2Start,
+			_Seed, _NextSeed, _StartIntervalNumber, _StepNumber, _NonceLimiterOutput2, _SuppliedCheckpoints,
+			ReqList, _Peer } = Session,
+	#state{ hashing_threads = Threads } = State,
+	%% The accumulator is in fact the un-accumulator here.
+	NewThreads = lists:foldl(
+		fun (Value, AccThreads) ->
+			case Value of
+				{H1, Nonce} ->
+					{Thread, Threads2} = pick_hashing_thread(AccThreads),
+					io:format("DEBUG remote_io_thread_recall_range2_chunk h2~n"),
+					Thread ! {remote_compute_h2, {self(), H1, Nonce, Chunk, Session,
+							CorrelationRef}},
+					Threads2;
+				_ ->
+					AccThreads
+			end
+		end,
+		Threads,
+		ReqList
+	),
+	{noreply, State#state{ hashing_threads = NewThreads }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -501,34 +546,6 @@ handle_info({mining_thread_computed_h2, Args} = Task,
 	prometheus_gauge:inc(mining_server_task_queue_len),
 	{noreply, State#state{ task_queue = Q2 }};
 
-%% TODO: This should probably go inside the task_queue, but we don't have a StepNumber so
-%% FIXME. Now we have StepNumber
-%% we can't assing a priority to it
-handle_info({remote_io_thread_recall_range2_chunk,
-		{_H0, _PartitionNumber, Nonce, _NonceLimiterOutput, _ReplicaID, Chunk, CorrelationRef,
-		Session}}, State) ->
-	%% Prevent an accidental pattern match of _H0, _PartitionNumber.
-	{remote, _Diff, _Addr, _H0_, _PartitionNumber_, _PartitionUpperBound, _RecallByte2Start,
-			ReqList, _Peer } = Session,
-	#state{ hashing_threads = Threads } = State,
-	%% The accumulator is in fact the un-accumulator here.
-	NewThreads = lists:foldl(
-		fun (Value, AccThreads) ->
-			case Value of
-				{ok, {H1, Nonce}} ->
-					{Thread, Threads2} = pick_hashing_thread(AccThreads),
-					Thread ! {remote_compute_h2, {self(), H1, Nonce, Chunk, Session,
-							CorrelationRef}},
-					Threads2;
-				_ ->
-					AccThreads
-			end
-		end,
-		Threads,
-		ReqList
-	),
-	{noreply, State#state{ hashing_threads = NewThreads }};
-
 handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
@@ -596,10 +613,17 @@ io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
 			%% Clear the message queue from the requests from the outdated mining session.
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{remote_read_recall_range2, From, Session, CorrelationRef} ->
-			{remote, _Diff, Addr, H0, PartitionNumber2, _PartitionUpperBound, RecallRangeStart,
+			{remote, _Diff, Addr, H0, _PartitionNumber, PartitionNumber2, _PartitionUpperBound, RecallRangeStart,
+					_Seed, _NextSeed, _StartIntervalNumber, _StepNumber, _NonceLimiterOutput, _SuppliedCheckpoints,
 					_ReqList, _Peer} = Session,
+			io:format("remote_read_recall_range2 0~n"),
 			case ReplicaID of
 				Addr ->
+					io:format("remote_read_recall_range2 1~n"),
+					io:format("DEBUG CALL ~p ~n", [{remote_io_thread_recall_range2_chunk, H0,
+							PartitionNumber2, RecallRangeStart, not_provided, not_provided,
+							not_provided, not_provided, not_provided, ReplicaID, StoreID, From,
+							Session, CorrelationRef}]),
 					read_recall_range(remote_io_thread_recall_range2_chunk, H0,
 							PartitionNumber2, RecallRangeStart, not_provided, not_provided,
 							not_provided, not_provided, not_provided, ReplicaID, StoreID, From,
@@ -608,6 +632,10 @@ io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
 						io:format("WARNING recv Addr ~s but ReplicaID ~s ~n",
 								[ar_util:encode(Addr), ar_util:encode(ReplicaID)]) % TODO
 			end,
+			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
+		{remote_io_thread_recall_range2_chunk, Args} ->
+			io:format("DEBUG remote_io_thread_recall_range2_chunk io~n"),
+			remote_io_thread_recall_range2_chunk(Args),
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{read_recall_range2, {SessionRef, From, PartitionNumber2, RecallRangeStart, H0,
 				Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput,
@@ -713,6 +741,9 @@ count_nonce_limiter_tasks(Q) ->
 read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 		StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, StoreID, From,
 		SessionRef, CorrelationRef) ->
+	io:format("FULL DEBUG read_recall_range ~p~n", [{Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
+		StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, StoreID, From,
+		SessionRef, CorrelationRef}]),
 	Size = ?RECALL_RANGE_SIZE,
 	Intervals = get_packed_intervals(RecallRangeStart, RecallRangeStart + Size,
 			ReplicaID, StoreID, ar_intervals:new()),
@@ -722,6 +753,8 @@ read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
+	io:format("FULL DEBUG Intervals ~p~n", [Intervals]),
+	io:format("FULL DEBUG ChunkOffsets2 ~p~n", [length(ChunkOffsets2)]),
 	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 			StartIntervalNumber, StepNumber, NonceLimiterOutput,
 			ReplicaID, From, 0, NonceMax, ChunkOffsets2, SessionRef, CorrelationRef).
@@ -750,14 +783,16 @@ filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = St
 filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
-read_recall_range(_Type, _H0, _PartitionNumber, _RecallRangeStart, _Seed, _NextSeed,
+read_recall_range(Type, _H0, _PartitionNumber, _RecallRangeStart, _Seed, _NextSeed,
 		_StartIntervalNumber, _StepNumber, _NonceLimiterOutput,
 		_ReplicaID, _From, Nonce, NonceMax, _ChunkOffsets, _Ref, _CorrelationRef)
 			when Nonce > NonceMax ->
+	io:format("FULL DEBUG read_recall_range OK ~p~p~n", [Type, Nonce]),
 	ok;
 read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 		StartIntervalNumber, StepNumber, NonceLimiterOutput,
 		ReplicaID, From, Nonce, NonceMax, [], Ref, CorrelationRef) ->
+	io:format("FULL DEBUG read_recall_range 1 ~p~p~n", [Type, Nonce]),
 	%% Two recall ranges are processed asynchronously so we need to make sure chunks
 	%% do not remain in the chunk cache.
 	ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
@@ -772,6 +807,7 @@ read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 		CorrelationRef)
 		%% Only 256 KiB chunks are supported at this point.
 		when RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
+	io:format("FULL DEBUG read_recall_range 2 ~p~p~n", [Type, Nonce]),
 	ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
 	prometheus_gauge:dec(mining_server_chunk_cache_size),
 	signal_cache_cleanup(Nonce, CorrelationRef, Ref, From),
@@ -784,6 +820,7 @@ read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 		ReplicaID, From, Nonce, NonceMax, [{EndOffset, _Chunk} | ChunkOffsets], Ref,
 		CorrelationRef)
 		when RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE >= EndOffset ->
+	io:format("FULL DEBUG read_recall_range 3 ~p~p~n", [Type, Nonce]),
 	read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 			StartIntervalNumber, StepNumber, NonceLimiterOutput,
 			ReplicaID, From, Nonce, NonceMax, ChunkOffsets, Ref, CorrelationRef);
@@ -791,6 +828,7 @@ read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, Seed, NextSeed,
 		StartIntervalNumber, StepNumber, NonceLimiterOutput,
 		ReplicaID, From, Nonce, NonceMax, [{_EndOffset, Chunk} | ChunkOffsets], Ref,
 		CorrelationRef) ->
+	io:format("FULL DEBUG read_recall_range 4 ~p~p~n", [Type, Nonce]),
 	ets:update_counter(?MODULE, {performance, PartitionNumber}, [{3, 1}, {5, 1}],
 			{{performance, PartitionNumber},
 			 erlang:monotonic_time(millisecond), 1,
@@ -837,18 +875,20 @@ hashing_thread(SessionRef) ->
 			 %% Clear the message queue from the requests from the outdated mining session.
 			 hashing_thread(SessionRef);
 		{remote_compute_h2, {_From, H1, Nonce, Chunk2, Session, _CorrelationRef}} ->
-			io:format("DEBUG remote_compute_h2 0~n"), % TODO
+			io:format("DEBUG remote_compute_h2 b0~n"), % TODO
 			%% Important: here we make http requests inside the hashing thread
 			%% to reduce the latency.
-			{remote, Diff, ReplicaID, H0, PartitionNumber, PartitionUpperBound,
-					_RecallByte2Start, NonceLimiterOutput, _ReqList, Peer } = Session,
+			{remote, Diff, ReplicaID, H0, PartitionNumber, _PartitionNumber2, PartitionUpperBound,
+					_RecallByte2Start, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints,
+					_ReqList, Peer } = Session,
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
 			case binary:decode_unsigned(H2, big) > Diff of
 				true ->
-					io:format("DEBUG remote_compute_h2 1~n"), % TODO
+					io:format("DEBUG remote_compute_h2 b1~n"), % TODO
 					Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
 					{_RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 							PartitionUpperBound),
+					% TODO FIXME how can be Chunk2 not_set?
 					PoA2 =
 						case Chunk2 of
 							not_set ->
@@ -872,6 +912,10 @@ hashing_thread(SessionRef) ->
 									{mining_address, ar_util:encode(ReplicaID)}]),
 							ok;
 						_ ->
+							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+							#nonce_limiter_info{ next_seed = PrevNextSeed,
+								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+							SuppliedCheckpoints = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
 							ar_coordination:computed_h2({Diff, ReplicaID, H0, H1, Nonce,
 									PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage2,
 									NonceLimiterOutput, Peer})
@@ -1042,7 +1086,8 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 			#state{ io_threads = Threads } = State,
 			{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 					PartitionNumber, PartitionUpperBound),
-			CorrelationRef = {PartitionNumber, PartitionUpperBound, make_ref()},
+			PartitionNumber2 = get_partition_number_by_offset(RecallRange2Start),
+			CorrelationRef = {PartitionNumber, PartitionNumber2, PartitionUpperBound, make_ref()},
 			Range1End = RecallRange1Start + ?RECALL_RANGE_SIZE,
 			case find_thread(PartitionNumber, ReplicaID, Range1End, RecallRange1Start,
 					Threads) of
@@ -1115,21 +1160,33 @@ handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, Seed, NextS
 			State2 = State#state{ session = Session2 },
 			{noreply, prepare_solution(Args, State2)};
 		false ->
+			% io:format("DEBUG mining_thread_computed_h1 1~n"),
 			{ok, Config} = application:get_env(arweave, config),
 			case maps:take({CorrelationRef, Nonce}, Map) of
 				{do_not_cache, Map2} ->
 					ets:update_counter(?MODULE, chunk_cache_size, {2, -1}),
 					prometheus_gauge:dec(mining_server_chunk_cache_size),
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
+					% io:format("DEBUG mining_thread_computed_h1 2~n"),
 					case Config#config.coordinated_mining of
 						false ->
 							ok;
 						true ->
-							{PartitionNumber2, PartitionUpperBound, _ref} = CorrelationRef,
-							ar_coordination:computed_h1({CorrelationRef, Diff, ReplicaID, H0,
-									H1, Nonce, PartitionNumber2, PartitionUpperBound, Seed,
-									NextSeed, StartIntervalNumber, StepNumber,
-									NonceLimiterOutput, Ref})
+							% io:format("DEBUG mining_thread_computed_h1 3~n"),
+							{_PartitionNumber, PartitionNumber2, PartitionUpperBound, _ref} = CorrelationRef,
+							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+							#nonce_limiter_info{ next_seed = PrevNextSeed,
+								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+							case StepNumber > PrevStepNumber of
+								true ->
+									SuppliedCheckpoints = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
+									ar_coordination:computed_h1({CorrelationRef, Diff, ReplicaID, H0,
+											H1, Nonce, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed,
+											NextSeed, StartIntervalNumber, StepNumber,
+											NonceLimiterOutput, SuppliedCheckpoints, Ref});
+								false ->
+									ok
+							end
 					end,
 					{noreply, State#state{ session = Session2 }};
 				error ->
@@ -1137,11 +1194,20 @@ handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, Seed, NextS
 						false ->
 							ok;
 						true ->
-							{PartitionNumber2, PartitionUpperBound, _ref} = CorrelationRef,
-							ar_coordination:computed_h1({CorrelationRef, Diff, ReplicaID, H0,
-									H1, Nonce, PartitionNumber2, PartitionUpperBound, Seed,
-									NextSeed, StartIntervalNumber, StepNumber,
-									NonceLimiterOutput, Ref})
+							{_PartitionNumber, PartitionNumber2, PartitionUpperBound, _ref} = CorrelationRef,
+							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+							#nonce_limiter_info{ next_seed = PrevNextSeed,
+								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+							case StepNumber > PrevStepNumber of
+								true ->
+									SuppliedCheckpoints = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
+									ar_coordination:computed_h1({CorrelationRef, Diff, ReplicaID, H0,
+											H1, Nonce, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed,
+											NextSeed, StartIntervalNumber, StepNumber,
+											NonceLimiterOutput, SuppliedCheckpoints, Ref});
+								false ->
+									ok
+							end
 					end,
 					{noreply, State};
 				{Chunk2, Map2} ->
@@ -1256,7 +1322,7 @@ prepare_solution(Args, State) ->
 							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 							#nonce_limiter_info{ next_seed = PrevNextSeed,
 								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
-							SuppliedCheckpoints = ar_nonce_limiter:get_checkpoints(PrevStepNumber, StepNumber, PrevNextSeed),
+							SuppliedCheckpoints = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
 							ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer,
 									{PartitionNumber, Nonce, H0, Seed, NextSeed,
 									StartIntervalNumber, StepNumber, NonceLimiterOutput,
@@ -1328,7 +1394,7 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, Supplie
 			NonceLimiterOutput, ReplicaID, _Chunk1, _Chunk2, H, Preimage, PartitionUpperBound,
 			_Ref} = Args,
 	#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold } = State,
-	LastStepCheckpoints = ar_nonce_limiter:get_last_step_checkpoints(
+	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
 			StepNumber, NextSeed, StartIntervalNumber),
 	case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID, Nonce,
 			PoA1, PoA2, Diff, PartitionUpperBound, RebaseThreshold}) of
@@ -1484,6 +1550,7 @@ read_recall_range_test() ->
 	ReplicaID = crypto:strong_rand_bytes(32),
 	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	ChunkOffsets = [{?DATA_CHUNK_SIZE, Chunk}],
+	% TODO FIXME
 	CorrelationRef = make_ref(),
 	read_recall_range(type, H0, 0, 0, <<>>, <<>>, 0, 0, Output, ReplicaID, self(), 0, 1,
 			ChunkOffsets, Ref, CorrelationRef),

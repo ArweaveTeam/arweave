@@ -539,8 +539,8 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			_ ->
 				HaveSteps
 		end,
-	io:format("DEBUG ar_node_worker 2 HaveCheckpoints ~p~n", [HaveSteps]),
-	io:format("DEBUG ar_node_worker 2 HaveCheckpoints2 ~p~n", [HaveSteps2]),
+	io:format("DEBUG ar_node_worker 2 HaveSteps ~p~n", [HaveSteps]),
+	io:format("DEBUG ar_node_worker 2 HaveSteps2 ~p~n", [HaveSteps2]),
 	case HaveSteps2 of
 		false ->
 			{noreply, State};

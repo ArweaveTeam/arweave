@@ -19,7 +19,7 @@
 	timer_stat,
 	peers_by_partition = #{},
 	diff_addr_h0_pn_pub_to_req_list_map = #{},
-	% key = {Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}
+	% key = {Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}
 	peer_io_stat = #{},
 	timer
 }).
@@ -59,8 +59,8 @@ get_public_state() ->
 
 %% @doc An H1 has been generated. Store it to send it later to a
 %% coordinated mining peer
-computed_h1({CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, MiningSession}) ->
-	gen_server:cast(?MODULE, {computed_h1, CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, MiningSession}).
+computed_h1({CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, MiningSession}) ->
+	gen_server:cast(?MODULE, {computed_h1, CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, MiningSession}).
 
 call_remote_peer() ->
 	gen_server:cast(?MODULE, call_remote_peer).
@@ -229,11 +229,12 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 
-handle_cast({computed_h1, _CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, _MiningSession}, State) ->
+handle_cast({computed_h1, _CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, _MiningSession}, State) ->
+	% io:format("DEBUG computed_h1 ~n"),
 	#state{diff_addr_h0_pn_pub_to_req_list_map = DiffAddrH0PNPUBToReqListMap} = State,
-	OldList = maps:get({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}, DiffAddrH0PNPUBToReqListMap, []),
+	OldList = maps:get({Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}, DiffAddrH0PNPUBToReqListMap, []),
 	NewList = OldList ++ [{H1, Nonce}],
-	NewAH0ReqListMap = maps:put({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}, NewList, DiffAddrH0PNPUBToReqListMap),
+	NewAH0ReqListMap = maps:put({Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}, NewList, DiffAddrH0PNPUBToReqListMap),
 	case length(NewList) >= ?BATCH_SIZE_LIMIT of
 		true ->
 			% NOTE should save first, then call applied
@@ -248,13 +249,17 @@ handle_cast(call_remote_peer, #state{diff_addr_h0_pn_pub_to_req_list_map = DiffA
 	{noreply, State#state{timer = NewTRef}};
 
 handle_cast(call_remote_peer, #state{diff_addr_h0_pn_pub_to_req_list_map = DiffAddrH0PNPUBToReqListMap, timer = TRef} = State) ->
+	io:format("DEBUG call_remote_peer 1~n"),
 	timer:cancel(TRef),
 	NewPeerIOStat = maps:fold(
-		fun	({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput}, ReqList, Acc) ->
-			case maps:find(PartitionNumber, State#state.peers_by_partition) of
+		fun	({Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}, ReqList, Acc) ->
+			io:format("DEBUG call_remote_peer 2~n"),
+			io:format("DEBUG PartitionNumber ~p~n", [PartitionNumber2]),
+			case maps:find(PartitionNumber2, State#state.peers_by_partition) of
 				{ok, List} ->
+					io:format("DEBUG call_remote_peer 3~n"),
 					{Peer, _PartitionStart, _PartitionEnd, Addr} = lists:last(List),
-					ar_http_iface_client:cm_h1_send(Peer, {Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReqList}),
+					ar_http_iface_client:cm_h1_send(Peer, {Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList}),
 					H1Count = length(ReqList),
 					OldStat = maps:get(Peer, Acc, #peer_io_stat{}),
 					NewStat = OldStat#peer_io_stat{
@@ -283,8 +288,9 @@ handle_cast({reset_mining_session, _MiningSession}, State) ->
 	}};
 
 handle_cast({compute_h2, Peer, H2Materials}, State) ->
+	io:format("DEBUG compute_h2~n"),
 	ar_mining_server:remote_compute_h2(Peer, H2Materials),
-	{_Diff, _Addr, _H0, _PartitionNumber, _PartitionUpperBound, ReqList} = H2Materials,
+	{_Diff, _Addr, _H0, _PartitionNumber, _PartitionNumber2, _PartitionUpperBound, _Seed, _NextSeed, _StartIntervalNumber, _StepNumber, _NonceLimiterOutput, _SuppliedCheckpoints, ReqList} = H2Materials,
 	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
 	H1Count = length(ReqList),
 	NewStat = OldStat#peer_io_stat{
@@ -328,13 +334,12 @@ terminate(_Reason, _State) ->
 add_mining_peer({Peer, StorageModules}, State) ->
 	MiningPeers =
 		lists:foldl(
-			fun({PartitionSize, PartitionId, PackingAddr}, Acc) ->
+			fun({PartitionId, PartitionSize, PackingAddr}, Acc) ->
 				%% Allowing the case of same partition handled by different peers
 				% TODO range start, range end
 				NewElement = {Peer, 0, PartitionSize, PackingAddr},
+				io:format("DEBUG add_mining_peer PartitionSize, PartitionId, PackingAddr ~p ~p ~p~n", [PartitionSize, PartitionId, PackingAddr]),
 				Acc2 = case maps:get(PartitionId, Acc, none) of
-					% BUG. Partition numbers in hash are for partitions with 4TB size
-					% PartitionId in request if size != 4TB can be other id
 					L when is_list(L) ->
 						case lists:member(NewElement, L) of
 							true ->
@@ -345,6 +350,7 @@ add_mining_peer({Peer, StorageModules}, State) ->
 					none ->
 						maps:put(PartitionId, [NewElement], Acc)
 				end,
+				io:format("DEBUG add_mining_peer Acc2 ~p~n", [Acc2]),
 				Acc2
 			end,
 			State#state.peers_by_partition,
