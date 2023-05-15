@@ -1455,6 +1455,7 @@ json_map_to_remote_h2_materials(JSON) ->
 	Addr = ar_util:decode(maps:get(<<"addr">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
+	PartitionNumber2 = binary_to_integer(maps:get(<<"partition_number2">>, JSON)),
 	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
 	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
@@ -1468,9 +1469,9 @@ json_map_to_remote_h2_materials(JSON) ->
 	end, maps:get(<<"req_list">>, JSON, [])),
 	SuppliedCheckpointsEncoded = maps:get(<<"vdf_checkpoints">>, JSON),
 	SuppliedCheckpoints = parse_checkpoints(ar_util:decode(SuppliedCheckpointsEncoded), 1),
-	{Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList}.
+	{Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList}.
 
-remote_h2_materials_to_json_map({Diff, Addr, H0, PartitionNumber, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList}) ->
+remote_h2_materials_to_json_map({Diff, Addr, H0, PartitionNumber, PartitionNumber2, PartitionUpperBound, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, ReqList}) ->
 	ReqList2 = lists:map(fun ({H1, Nonce}) ->
 		{[
 			{h1, ar_util:encode(H1)},
@@ -1483,6 +1484,7 @@ remote_h2_materials_to_json_map({Diff, Addr, H0, PartitionNumber, PartitionUpper
 		{addr, ar_util:encode(Addr)},
 		{h0, ar_util:encode(H0)},
 		{partition_number, integer_to_binary(PartitionNumber)},
+		{partition_number2, integer_to_binary(PartitionNumber2)},
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{seed, ar_util:encode(Seed)},
 		{next_seed, ar_util:encode(NextSeed)},

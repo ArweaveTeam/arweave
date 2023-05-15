@@ -545,6 +545,7 @@ get_cm_partition_table(Peer) ->
 
 % TODO binary protocol after debug
 cm_h1_send(Peer, Materials) ->
+	io:format("DEBUG cm_h1_send~n"),
 	Json = ar_serialize:remote_h2_materials_to_json_map(Materials),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
