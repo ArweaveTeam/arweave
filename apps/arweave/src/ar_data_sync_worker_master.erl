@@ -168,6 +168,8 @@ cut_peer_queue(_Peer, TaskQueue, 0) ->
 	TaskQueue;
 cut_peer_queue(Peer, TaskQueue, EMA) ->
 	MaxQueue = trunc(?MAX_QUEUE_DURATION / EMA),
+	?LOG_ERROR("*** check max_queue: ~p / ~p / ~p / ~p",
+				[self(), ar_util:format_peer(Peer), queue:len(TaskQueue), MaxQueue]),
 	case queue:len(TaskQueue) - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
@@ -256,8 +258,8 @@ complete_sync_range(Peer, Result, Duration, State) ->
 			{MaxActive, PeerTasks#peer_tasks.task_queue}
 	end,
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
-	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p -> ~p / ~p / ~p",
-		[self(), ar_util:format_peer(Peer), ActiveCount, PeerTasks#peer_tasks.max_active ,
+	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p / ~p -> ~p / ~p / ~p",
+		[self(), ar_util:format_peer(Peer), ActiveCount, queue:length(TaskQueue2), PeerTasks#peer_tasks.max_active ,
 			MaxActive2, Milliseconds, get_ema(Peer)]),
 
 	PeerTasks2 = PeerTasks#peer_tasks{
