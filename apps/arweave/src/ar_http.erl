@@ -65,23 +65,7 @@ req(Args, ReestablishedConnection) ->
 	#{ peer := Peer, path := Path, method := Method } = Args,
 	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, infinity) of
 		{ok, PID} ->
-			ConnectTime = erlang:monotonic_time(),
-			case erlang:convert_time_unit(ConnectTime - StartTime, native, millisecond) of
-				Milliseconds when Milliseconds > 1000 ->
-					?LOG_ERROR("*** delay CONNECT TIME! ~p ~p for ~p", [ar_util:format_peer(Peer),
-							Path, Milliseconds]);
-				_ -> ok
-			end,
-
 			ar_rate_limiter:throttle(Peer, Path),
-
-			case erlang:convert_time_unit(erlang:monotonic_time() - ConnectTime, native, millisecond) of
-				Milliseconds2 when Milliseconds2 > 1000 ->
-					?LOG_ERROR("*** delay THROTTLED! ~p ~p for ~p", [ar_util:format_peer(Peer),
-							Path, Milliseconds2]);
-				_ -> ok
-			end,
-
 			case request(PID, Args) of
 				{error, Error} when Error == {shutdown, normal}; Error == noproc ->
 					case ReestablishedConnection of
