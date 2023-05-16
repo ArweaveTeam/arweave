@@ -247,26 +247,25 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	update_counters(scheduled, sync_range, ar_util:format_peer(Peer), -1),
 	PeerTasks = get_peer_tasks(Peer, State),
 	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),
-	MaxActive2 = case {Result, Milliseconds} of
-		{ok, Milliseconds} when Milliseconds > 10 ->
-			update_ema(Peer, Milliseconds),
-			%% We drive max_active off of Milliseconds rather than EMA because we want
-			%% it to respond quickly by scaling up or down
-			update_max_active(Milliseconds, PeerTasks#peer_tasks.max_active, State);
-		_ ->
-			%% Either an error occured or the request was so quick something else must
-			%% have gone wrong. Reduce max_active and don't update anything else.
-			reduce_max_active(PeerTasks#peer_tasks.max_active)
-	end,
-	TaskQueue = cut_peer_queue(Peer, PeerTasks#peer_tasks.task_queue, get_ema(Peer)),
+
+	IsOK = (Result == ok andalso Milliseconds > 10),
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
-	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p / ~p -> ~p / ~p / ~p",
+	EMA = update_ema(Peer, IsOK, Milliseconds),
+	TaskQueue = cut_peer_queue(Peer, PeerTasks#peer_tasks.task_queue, EMA),
+
+	MaxActive = update_max_active(
+		IsOK, Milliseconds, EMA,
+		State#state.worker_count, ActiveCount, queue:len(TaskQueue),
+		PeerTasks#peer_tasks.max_active
+	),
+	
+	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p / ~p -> ~p / ~p / ~p / ~p",
 		[self(), ar_util:format_peer(Peer), ActiveCount, queue:len(TaskQueue),
-			PeerTasks#peer_tasks.max_active, MaxActive2, Milliseconds, get_ema(Peer)]),
+			PeerTasks#peer_tasks.max_active, MaxActive, Milliseconds, get_ema(Peer), Result]),
 
 	PeerTasks2 = PeerTasks#peer_tasks{
 		active_count = ActiveCount,
-		max_active = MaxActive2,
+		max_active = MaxActive,
 		task_queue = TaskQueue
 	},
 	set_peer_tasks(Peer, PeerTasks2, State).
@@ -304,12 +303,15 @@ get_ema(Peer) ->
 set_ema(Peer, EMA) ->
 	ets:insert(?MODULE, {{ema, Peer}, EMA}).
 
-update_ema(Peer, Milliseconds) ->
-	NewEMA = case get_ema(Peer) of
-		undefined ->
+update_ema(Peer, IsOK, Milliseconds) ->
+	OldEMA = get_ema(Peer),
+	NewEMA = case {IsOK, OldEMA} of
+		{true, undefined} ->
 			Milliseconds / 1.0; %% convert to float
-		OldEMA ->
-			?EMA_ALPHA * Milliseconds + (1 - ?EMA_ALPHA) * OldEMA
+		{true, OldEMA} ->
+			?EMA_ALPHA * Milliseconds + (1 - ?EMA_ALPHA) * OldEMA;
+		_ ->
+			OldEMA
 	end,
 	set_ema(Peer, NewEMA),
 	NewEMA.
@@ -335,22 +337,40 @@ format_peer(Task, Args) ->
 			ar_util:format_peer(element(3, Args))
 	end.
 
-update_max_active(Milliseconds, MaxActive, State) ->
-	case Milliseconds of
-		Milliseconds when Milliseconds < ?DURATION_LOWER_BOUND ->
-			%% INCREASE max_active
-			%% Successful, fast operation. This is a good peer, increase max_active to allow
-			%% more concurrent requests.
-			min(MaxActive + 1, State#state.worker_count);
+update_max_active(
+		IsOK, Milliseconds, EMA, WorkerCount, ActiveCount, QueueLength, MaxActive) ->
+	%% Determine target max_active by:
+	%% 1. Increase max_active when the EMA is less than the threshold
+	%% 2. Decrease max_active if the most recent request was slower than the threshold - this
+	%%    allows us to respond more quickly to a sudden drop in performance
+	%%
+	%% Once we have the target max_active, find the maximum of the currently active tasks
+	%% and queued tasks. The new max_active is the minimum of the target and that value.
+	%% This prevents situations where we have a low number of active tasks and now queue which
+	%% causes each request to complete fast and hikes up the max_active. Then we get a new
+	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
+	TargetMaxActive = case {
+			IsOK, Milliseconds < ?DURATION_LOWER_BOUND, EMA < ?DURATION_LOWER_BOUND} of
+		{false, _, _} ->
+			%% Always reduce if there was an error
+			MaxActive-1;
+		{true, false, _} ->
+			%% Milliseconds > threshold, decrease max_active
+			MaxActive-1;
+		{true, true, true} ->
+			%% Milliseconds < threshold and EMA < threshold, increase max_active.
+			MaxActive+1;
 		_ ->
-			%% REDUCE max_active
-			%% Either an error or a slow request. Reduce max_active to reduce the load on this
-			%% peer.
-			reduce_max_active(MaxActive)
-	end.
+			%% Milliseconds < threshold and EMA > threshold, do  nothing.
+			MaxActive
+	end,
 
-reduce_max_active(MaxActive) ->
-	max(MaxActive - 1, ?MIN_MAX_ACTIVE).
+	%% Can't have more active tasks than workers.
+	WorkerLimitedMaxActive = min(TargetMaxActive, WorkerCount),
+	%% Can't have more active tasks than we have active or queued tasks.
+	TaskLimitedMaxActive = min(WorkerLimitedMaxActive, max(ActiveCount, QueueLength)),
+	%% Can't have less than the minimum.
+	max(TaskLimitedMaxActive, ?MIN_MAX_ACTIVE).
 
 %%%===================================================================
 %%% Tests. Included in the module so they can reference private
@@ -404,19 +424,22 @@ test_counters() ->
 test_ema() ->
 	reset_ets(),
 	?assertEqual(undefined, get_ema("localhost")),
-	EMA1 = update_ema("localhost", 100),
+	EMA1 = update_ema("localhost", true, 100),
 	?assertEqual(100.0, EMA1),
 	?assertEqual(100.0, get_ema("localhost")),
-	EMA2 = update_ema("localhost", 200),
+	EMA2 = update_ema("localhost", true, 200),
 	?assertEqual(110.0, EMA2),
 	?assertEqual(110.0, get_ema("localhost")),
 
 	?assertEqual(undefined, get_ema("1.2.3.4:1984")),
-	EMA3 = update_ema("1.2.3.4:1984", 300),
+	EMA3 = update_ema("1.2.3.4:1984", true, 300),
 	?assertEqual(300.0, EMA3),
 	?assertEqual(300.0, get_ema("1.2.3.4:1984")),
-	EMA4 = update_ema("1.2.3.4:1984", 500),
+	EMA4 = update_ema("1.2.3.4:1984", true, 500),
 	?assertEqual(320.0, EMA4),
+	?assertEqual(320.0, get_ema("1.2.3.4:1984")),
+	EMA5 = update_ema("1.2.3.4:1984", false, 500),
+	?assertEqual(320.0, EMA5),
 	?assertEqual(320.0, get_ema("1.2.3.4:1984")),
 
 	?assertEqual(110.0, get_ema("localhost")).
@@ -437,14 +460,47 @@ test_format_peer() ->
 	?assertEqual("1.2.3.4:1984", format_peer(sync_range, {0, 100, {1, 2, 3, 4, 1984}, 2})).
 
 test_max_active() ->
-	?assertEqual(8, update_max_active(?DURATION_LOWER_BOUND-1, 8, #state{worker_count = 8})),
-	?assertEqual(7, update_max_active(?DURATION_LOWER_BOUND-1, 8, #state{worker_count = 7})),
-	?assertEqual(9, update_max_active(?DURATION_LOWER_BOUND-1, 8, #state{worker_count = 100})),
-	?assertEqual(8, update_max_active(?DURATION_LOWER_BOUND, 9, #state{worker_count = 100})),
-	?assertEqual(?MIN_MAX_ACTIVE,
-		update_max_active(?DURATION_LOWER_BOUND, ?MIN_MAX_ACTIVE, #state{worker_count = 100})),
-	?assertEqual(8, reduce_max_active(9)),
-	?assertEqual(?MIN_MAX_ACTIVE, reduce_max_active(?MIN_MAX_ACTIVE)).
+	FastTime = ?DURATION_LOWER_BOUND - 1,
+	SlowTime = ?DURATION_LOWER_BOUND + 1,
+	?assertEqual(
+		10, update_max_active(true, FastTime, FastTime, 10, 10, 10, 9),
+		"Increase max_active for fast Milliseconds and EMA"),
+	?assertEqual(
+		9, update_max_active(true, FastTime, FastTime, 9, 10, 10, 9),
+		"Limit max_active to number of workers"),
+	?assertEqual(
+		8, update_max_active(true, FastTime, FastTime, 8, 10, 10, 9),
+		"Decrease max_active to number of workers"),
+	?assertEqual(
+		9, update_max_active(true, FastTime, FastTime, 10, 9, 9, 9),
+		"Limit max_active to max(active_count, queue length)"),
+	?assertEqual(
+		10, update_max_active(true, FastTime, FastTime, 10, 10, 9, 9),
+		"Limit max_active to max(active_count, queue length)"),
+	?assertEqual(
+		10, update_max_active(true, FastTime, FastTime, 10, 9, 10, 9),
+		"Limit max_active to max(active_count, queue length)"),
+	?assertEqual(
+		8, update_max_active(true, FastTime, FastTime, 10, 8, 8, 9),
+		"Decrease max_active to max(active_count, queue length)"),
+	?assertEqual(
+		10, update_max_active(true, FastTime, FastTime, 10, 10, 8, 9),
+		"Decrease max_active to max(active_count, queue length)"),
+	?assertEqual(
+		10, update_max_active(true, FastTime, FastTime, 10, 8, 10, 9),
+		"Decrease max_active to max(active_count, queue length)"),
+	?assertEqual(
+		8, update_max_active(false, FastTime, FastTime, 10, 10, 10, 9),
+		"Decrease max_active for error"),
+	?assertEqual(
+		8, update_max_active(true, SlowTime, FastTime, 10, 10, 10, 9),
+		"Decrease max_active for slow Milliseconds"),
+	?assertEqual(
+		9, update_max_active(true, FastTime, SlowTime, 10, 10, 10, 9),
+		"Do nothing for conflicting Milliseconds and EMA"),
+	?assertEqual(
+		?MIN_MAX_ACTIVE, update_max_active(true, SlowTime, FastTime, 9, 9, 9, ?MIN_MAX_ACTIVE),
+		"Can't decrease below ?MIN_MAX_ACTIVE").
 
 test_enqueue_main_task() ->
 	reset_ets(),
