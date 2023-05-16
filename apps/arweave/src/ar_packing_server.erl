@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, pack/4, unpack/5, repack/6, packing_atom/1,
-		 is_buffer_full/0, record_buffer_size_metric/0]).
+		 is_buffer_full/0, packing_rate/0, record_buffer_size_metric/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -73,6 +73,15 @@ is_buffer_full() ->
 			false
 	end.
 
+packing_rate() ->
+	case ets:lookup(?MODULE, packing_rate) of
+		[] ->
+			0;
+		[{_, PackingRate}] ->
+			PackingRate
+	end.
+
+
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -112,6 +121,7 @@ init([]) ->
 				end,
 				{ConfiguredRate, SchedulersRequired2}
 		end,
+	ets:insert(?MODULE, {packing_rate, PackingRate}),
 	record_packing_benchmarks({TheoreticalMaxRate, PackingRate, Schedulers,
 			ActualRatePack_2_5, ActualRatePack_2_6, ActualRateUnpack_2_5,
 			ActualRateUnpack_2_6}),

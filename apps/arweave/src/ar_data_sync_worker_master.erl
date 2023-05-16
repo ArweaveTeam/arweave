@@ -15,8 +15,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(MIN_MAX_ACTIVE, 8).
--define(DURATION_LOWER_BOUND, 3000).
--define(MAX_QUEUE_DURATION, 3_600_000).
+-define(LATENCY_TARGET, 3000).
+-define(MAX_QUEUE_DURATION, 15 * 60 * 1000). %% 15 minutes in milliseconds
 -define(EMA_ALPHA, 0.1).
 
 -record(peer_tasks, {
@@ -30,6 +30,7 @@
 	task_queue_len = 0,
 	all_workers = queue:new(),
 	worker_count = 0,
+	latency_target = 0,
 	peer_tasks = #{}
 }).
 
@@ -53,9 +54,27 @@ init(Workers) ->
 	process_flag(trap_exit, true),
 	reset_counters(queued),
 	gen_server:cast(?MODULE, process_main_queue),
+
+	%% The GET /chunk latency target is set such that we can sync chunks at a rate that will
+	%% saturate the configured packing rate. For example, if:
+	%% WorkerCount = 100
+	%% PackingRate = 50
+	%%
+	%% Then we need need 50 of the 100 concurrent requests to return every second, which means
+	%% the latency target is 2000ms - if each request takes 2 seconds then, on average, half
+	%% of the concurrent requests will return every second.
+	%%
+	%% The user can adjust the this number by changing the packing_rate or sync_jobs
+	%% configuration parameters.
+	WorkerCount = length(Workers),
+	PackingRate = ar_packing_server:packing_rate(),
+	LatencyTarget = trunc((WorkerCount / PackingRate) * 1000),
+	ar:console("~nSync request latency target is: ~pms.~n", [LatencyTarget]),
+
 	{ok, #state{
 		all_workers = queue:from_list(Workers),
-		worker_count = length(Workers)
+		worker_count = WorkerCount,
+		latency_target = LatencyTarget
 	}}.
 
 handle_call(Request, _From, State) ->
@@ -164,14 +183,17 @@ process_peer_queue(Peer, State) ->
 			State
 	end.
 
-cut_peer_queue(_Peer, TaskQueue, undefined) ->
+cut_peer_queue(_Peer, TaskQueue, _MaxActive, undefined) ->
 	TaskQueue;
-cut_peer_queue(_Peer, TaskQueue, 0) ->
+cut_peer_queue(_Peer, TaskQueue, _MaxActive, 0) ->
 	TaskQueue;
-cut_peer_queue(_Peer, TaskQueue, 0.0) ->
+cut_peer_queue(_Peer, TaskQueue, _MaxActive, 0.0) ->
 	TaskQueue;
-cut_peer_queue(Peer, TaskQueue, EMA) ->
-	MaxQueue = trunc(?MAX_QUEUE_DURATION / EMA),
+cut_peer_queue(Peer, TaskQueue, MaxActive, EMA) ->
+	%% MaxQueue is an estimate of how many tasks we need queued to keep us busy for
+	%% ?MAX_QUEUE_DURATION. We use the EMA to estimate how long each task will take, and
+	%% assume MaxActive concurrently executing tasks.
+	MaxQueue = trunc((?MAX_QUEUE_DURATION * MaxActive) / EMA),
 	case queue:len(TaskQueue) - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
@@ -251,12 +273,12 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	IsOK = (Result == ok andalso Milliseconds > 10),
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
 	EMA = update_ema(Peer, IsOK, Milliseconds),
-	TaskQueue = cut_peer_queue(Peer, PeerTasks#peer_tasks.task_queue, EMA),
+	TaskQueue = cut_peer_queue(Peer, PeerTasks#peer_tasks.task_queue, PeerTasks#peer_tasks.max_active, EMA),
 
 	MaxActive = update_max_active(
 		IsOK, Milliseconds, EMA,
-		State#state.worker_count, ActiveCount, queue:len(TaskQueue),
-		PeerTasks#peer_tasks.max_active
+		State#state.worker_count, ActiveCount, queue:len(TaskQueue), 
+		State#state.latency_target, PeerTasks#peer_tasks.max_active
 	),
 	
 	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p / ~p -> ~p / ~p / ~p / ~p",
@@ -338,7 +360,8 @@ format_peer(Task, Args) ->
 	end.
 
 update_max_active(
-		IsOK, Milliseconds, EMA, WorkerCount, ActiveCount, QueueLength, MaxActive) ->
+		IsOK, Milliseconds, EMA, WorkerCount, ActiveCount, QueueLength, LatencyTarget,
+		MaxActive) ->
 	%% Determine target max_active by:
 	%% 1. Increase max_active when the EMA is less than the threshold
 	%% 2. Decrease max_active if the most recent request was slower than the threshold - this
@@ -350,7 +373,7 @@ update_max_active(
 	%% causes each request to complete fast and hikes up the max_active. Then we get a new
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
 	TargetMaxActive = case {
-			IsOK, Milliseconds < ?DURATION_LOWER_BOUND, EMA < ?DURATION_LOWER_BOUND} of
+			IsOK, Milliseconds < LatencyTarget, EMA < LatencyTarget} of
 		{false, _, _} ->
 			%% Always reduce if there was an error
 			MaxActive-1;
@@ -460,46 +483,48 @@ test_format_peer() ->
 	?assertEqual("1.2.3.4:1984", format_peer(sync_range, {0, 100, {1, 2, 3, 4, 1984}, 2})).
 
 test_max_active() ->
-	FastTime = ?DURATION_LOWER_BOUND - 1,
-	SlowTime = ?DURATION_LOWER_BOUND + 1,
+	LatencyTarget = 3000,
+	FastTime = LatencyTarget - 1,
+	SlowTime = LatencyTarget + 1,
 	?assertEqual(
-		10, update_max_active(true, FastTime, FastTime, 10, 10, 10, 9),
+		10, update_max_active(true, FastTime, FastTime, 10, 10, 10, LatencyTarget, 9),
 		"Increase max_active for fast Milliseconds and EMA"),
 	?assertEqual(
-		9, update_max_active(true, FastTime, FastTime, 9, 10, 10, 9),
+		9, update_max_active(true, FastTime, FastTime, 9, 10, 10, LatencyTarget, 9),
 		"Limit max_active to number of workers"),
 	?assertEqual(
-		8, update_max_active(true, FastTime, FastTime, 8, 10, 10, 9),
+		8, update_max_active(true, FastTime, FastTime, 8, 10, 10, LatencyTarget, 9),
 		"Decrease max_active to number of workers"),
 	?assertEqual(
-		9, update_max_active(true, FastTime, FastTime, 10, 9, 9, 9),
+		9, update_max_active(true, FastTime, FastTime, 10, 9, 9, LatencyTarget, 9),
 		"Limit max_active to max(active_count, queue length)"),
 	?assertEqual(
-		10, update_max_active(true, FastTime, FastTime, 10, 10, 9, 9),
+		10, update_max_active(true, FastTime, FastTime, 10, 10, 9, LatencyTarget, 9),
 		"Limit max_active to max(active_count, queue length)"),
 	?assertEqual(
-		10, update_max_active(true, FastTime, FastTime, 10, 9, 10, 9),
+		10, update_max_active(true, FastTime, FastTime, 10, 9, 10, LatencyTarget, 9),
 		"Limit max_active to max(active_count, queue length)"),
 	?assertEqual(
-		8, update_max_active(true, FastTime, FastTime, 10, 8, 8, 9),
+		8, update_max_active(true, FastTime, FastTime, 10, 8, 8, LatencyTarget, 9),
 		"Decrease max_active to max(active_count, queue length)"),
 	?assertEqual(
-		10, update_max_active(true, FastTime, FastTime, 10, 10, 8, 9),
+		10, update_max_active(true, FastTime, FastTime, 10, 10, 8, LatencyTarget, 9),
 		"Decrease max_active to max(active_count, queue length)"),
 	?assertEqual(
-		10, update_max_active(true, FastTime, FastTime, 10, 8, 10, 9),
+		10, update_max_active(true, FastTime, FastTime, 10, 8, 10, LatencyTarget, 9),
 		"Decrease max_active to max(active_count, queue length)"),
 	?assertEqual(
-		8, update_max_active(false, FastTime, FastTime, 10, 10, 10, 9),
+		8, update_max_active(false, FastTime, FastTime, 10, 10, 10, LatencyTarget, 9),
 		"Decrease max_active for error"),
 	?assertEqual(
-		8, update_max_active(true, SlowTime, FastTime, 10, 10, 10, 9),
+		8, update_max_active(true, SlowTime, FastTime, 10, 10, 10, LatencyTarget, 9),
 		"Decrease max_active for slow Milliseconds"),
 	?assertEqual(
-		9, update_max_active(true, FastTime, SlowTime, 10, 10, 10, 9),
+		9, update_max_active(true, FastTime, SlowTime, 10, 10, 10, LatencyTarget, 9),
 		"Do nothing for conflicting Milliseconds and EMA"),
 	?assertEqual(
-		?MIN_MAX_ACTIVE, update_max_active(true, SlowTime, FastTime, 9, 9, 9, ?MIN_MAX_ACTIVE),
+		?MIN_MAX_ACTIVE,
+		update_max_active(true, SlowTime, FastTime, 9, 9, 9, LatencyTarget, ?MIN_MAX_ACTIVE),
 		"Can't decrease below ?MIN_MAX_ACTIVE").
 
 test_enqueue_main_task() ->
@@ -617,7 +642,7 @@ test_complete_sync_range() ->
 	assert_peer_tasks([], 4, 8, Peer2, State3),
 
 	%% Quick task
-	State4 = complete_sync_range(Peer1, ok, (?DURATION_LOWER_BOUND-500) * 1_000_000, State3),
+	State4 = complete_sync_range(Peer1, ok, (?LATENCY_TARGET-500) * 1_000_000, State3),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(8, get_task_count(scheduled)),
 	assert_peer_tasks([], 4, 9, Peer1, State4),
@@ -626,7 +651,7 @@ test_complete_sync_range() ->
 	?assertEqual(undefined, get_ema(Peer2)),
 
 	%% Quick task
-	State5 = complete_sync_range(Peer1, ok, (?DURATION_LOWER_BOUND-1000) * 1_000_000, State4),
+	State5 = complete_sync_range(Peer1, ok, (?LATENCY_TARGET-1000) * 1_000_000, State4),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(7, get_task_count(scheduled)),
 	assert_peer_tasks([], 3, 10, Peer1, State5),
@@ -635,7 +660,7 @@ test_complete_sync_range() ->
 	?assertEqual(undefined, get_ema(Peer2)),
 
 	%% Slow task - but average is still quick
-	State6 = complete_sync_range(Peer1, ok, (?DURATION_LOWER_BOUND+100) * 1_000_000, State5),
+	State6 = complete_sync_range(Peer1, ok, (?LATENCY_TARGET+100) * 1_000_000, State5),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(6, get_task_count(scheduled)),
 	assert_peer_tasks([], 2, 9, Peer1, State6),
@@ -644,7 +669,7 @@ test_complete_sync_range() ->
 	?assertEqual(undefined, get_ema(Peer2)),
 
 	%% Quick task, but hit max
-	State7 = complete_sync_range(Peer1, ok, (?DURATION_LOWER_BOUND-100) * 1_000_000, State6),
+	State7 = complete_sync_range(Peer1, ok, (?LATENCY_TARGET-100) * 1_000_000, State6),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(5, get_task_count(scheduled)),
 	assert_peer_tasks([], 1, 10, Peer1, State7),
@@ -653,7 +678,7 @@ test_complete_sync_range() ->
 	?assertEqual(undefined, get_ema(Peer2)),
 
 	%% Slow task pushes average slow
-	State8 = complete_sync_range(Peer1, ok, (?DURATION_LOWER_BOUND+100_000) * 1_000_000, State7),
+	State8 = complete_sync_range(Peer1, ok, (?LATENCY_TARGET+100_000) * 1_000_000, State7),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(4, get_task_count(scheduled)),
 	assert_peer_tasks([], 0, 9, Peer1, State8),
@@ -671,7 +696,7 @@ test_complete_sync_range() ->
 	?assertEqual(undefined, get_ema(Peer2)),
 
 	%% Error
-	State10 = complete_sync_range(Peer2, {error, timeout}, (?DURATION_LOWER_BOUND-100) * 1_000_000, State9),
+	State10 = complete_sync_range(Peer2, {error, timeout}, (?LATENCY_TARGET-100) * 1_000_000, State9),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(2, get_task_count(scheduled)),
 	assert_peer_tasks([], 0, 9, Peer1, State10),
@@ -680,7 +705,7 @@ test_complete_sync_range() ->
 	?assertEqual(undefined, get_ema(Peer2)),
 
 	%% Slow task, but can't go below 8
-	State11 = complete_sync_range(Peer2, ok, (?DURATION_LOWER_BOUND+100) * 1_000_000, State10),
+	State11 = complete_sync_range(Peer2, ok, (?LATENCY_TARGET+100) * 1_000_000, State10),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(1, get_task_count(scheduled)),
 	assert_peer_tasks([], 0, 9, Peer1, State11),
@@ -689,7 +714,7 @@ test_complete_sync_range() ->
 	?assertEqual(2100.0, get_ema(Peer2)),
 
 	%% Fast task
-	State12 = complete_sync_range(Peer2, ok, (?DURATION_LOWER_BOUND-1000) * 1_000_000, State11),
+	State12 = complete_sync_range(Peer2, ok, (?LATENCY_TARGET-1000) * 1_000_000, State11),
 	?assertEqual(0, get_task_count(queued)),
 	?assertEqual(0, get_task_count(scheduled)),
 	assert_peer_tasks([], 0, 9, Peer1, State12),
