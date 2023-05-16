@@ -15,7 +15,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(MIN_MAX_ACTIVE, 8).
--define(DURATION_LOWER_BOUND, 2000).
+-define(DURATION_LOWER_BOUND, 3000).
 -define(MAX_QUEUE_DURATION, 3_600_000).
 -define(EMA_ALPHA, 0.1).
 
@@ -172,8 +172,6 @@ cut_peer_queue(_Peer, TaskQueue, 0.0) ->
 	TaskQueue;
 cut_peer_queue(Peer, TaskQueue, EMA) ->
 	MaxQueue = trunc(?MAX_QUEUE_DURATION / EMA),
-	?LOG_ERROR("*** check max_queue: ~p / ~p / ~p / ~p",
-				[self(), ar_util:format_peer(Peer), queue:len(TaskQueue), MaxQueue]),
 	case queue:len(TaskQueue) - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
