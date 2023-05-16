@@ -62,7 +62,15 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 			get_bucket_peers(Bucket, Key, [Peer | Peers]);
 		_ ->
 			UniquePeers = sets:to_list(sets:from_list(Peers)),
-			pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT)
+			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
+			?LOG_DEBUG([
+				{event, get_bucket_peers},
+				{bucket, Bucket},
+				{peers, length(Peers)},
+				{unique_peers, length(UniquePeers)},
+				{picked_peers, length(PickedPeers)}
+			]),
+			PickedPeers
 	end.
 
 %%%===================================================================
@@ -191,10 +199,17 @@ pick_peers([], _PeerLen, _N) ->
 pick_peers(_Peers, _PeerLen, 0) ->
 	[];
 pick_peers(Peers, PeerLen, N) ->
+	%% N: the target number of peers to pick
+	%% Best: top 20% of the Peers list
+	%% Other: the rest of the Peers list
 	{Best, Other} = lists:split(max(PeerLen div 5, 1), Peers),
-	TakeBest = max(8 * N div 10, 1),
+	%% TakeBest: Select 80% of N worth of Best - or all of Best if Best is short.
+	TakeBest = max((8 * N) div 10, 1), length(Best),
 	Part1 = ar_util:pick_random(Best, min(length(Best), TakeBest)),
-	Part2 = ar_util:pick_random(Other, min(length(Other), N - TakeBest)),
+	%% TakeOther: rather than strictly take 20% of N, take enough to ensure we're
+	%% getting the full N of picked peers.
+	TakeOther = N - length(Part1),
+	Part2 = ar_util:pick_random(Other, min(length(Other), TakeOther)),
 	Part1 ++ Part2.
 
 collect_peers() ->

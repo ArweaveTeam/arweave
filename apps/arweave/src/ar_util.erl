@@ -6,7 +6,7 @@
 		genesis_wallets/0, pmap/2, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
-		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0]).
+		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -226,6 +226,9 @@ parse_list_indices(<<>>, _N) ->
 	[];
 parse_list_indices(_BadInput, _N) ->
 	error.
+
+shuffle_list(List) ->
+	lists:sort(fun(_,_) -> rand:uniform() < 0.5 end, List).
 
 %%%
 %%% Tests.

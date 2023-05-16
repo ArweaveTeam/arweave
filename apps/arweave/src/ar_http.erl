@@ -360,6 +360,7 @@ await_response(Args) ->
 					Start, End}};
 		{error, timeout} = Response ->
 			record_response_status(Method, Path, Response),
+			gun:cancel(PID, Ref),
 			log(warn, gun_await_process_down, Args, Response),
 			Response;
 		{error, Reason} = Response when is_tuple(Reason) ->

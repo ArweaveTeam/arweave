@@ -338,7 +338,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 		peer => Peer,
 		method => get,
 		path => get_chunk_path(Offset, Encoding),
-		timeout => 300 * 1000,
+		timeout => 120 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
 		headers => p2p_headers() ++ Headers
@@ -594,6 +594,8 @@ handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 					{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
 			end
 	end;
+handle_chunk_response(_Encoding, {error, _} = Response) ->
+	Response;
 handle_chunk_response(_Encoding, Response) ->
 	{error, Response}.
 

@@ -253,7 +253,8 @@ worker(ThrottleDelay, RandomXStateRef) ->
 				{error, invalid_chunk_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}]);
+					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding},
+						{absolute_end_offset, AbsoluteOffset}]);
 				{exception, Error} ->
 					?LOG_ERROR([{event, failed_to_unpack_chunk},
 							{absolute_end_offset, AbsoluteOffset},
@@ -303,7 +304,8 @@ worker(ThrottleDelay, RandomXStateRef) ->
 				{error, invalid_chunk_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}]);
+					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding},
+						{absolute_end_offset, AbsoluteOffset}]);
 				{error, invalid_unpacked_size} ->
 					?LOG_WARNING([{event, got_unpacked_chunk_of_invalid_size}]);
 				{exception, Error} ->
