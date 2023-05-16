@@ -259,7 +259,7 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	end,
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
 	?LOG_ERROR("*** complete_sync_range: ~p / ~p / ~p / ~p / ~p -> ~p / ~p / ~p",
-		[self(), ar_util:format_peer(Peer), ActiveCount, queue:length(TaskQueue2), PeerTasks#peer_tasks.max_active ,
+		[self(), ar_util:format_peer(Peer), ActiveCount, queue:len(TaskQueue2), PeerTasks#peer_tasks.max_active ,
 			MaxActive2, Milliseconds, get_ema(Peer)]),
 
 	PeerTasks2 = PeerTasks#peer_tasks{
