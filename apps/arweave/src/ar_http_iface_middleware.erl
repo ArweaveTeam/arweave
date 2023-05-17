@@ -103,7 +103,7 @@ handle(Peer, Req, Pid) ->
 		_ ->
 			do_nothing
 	end,
-	case ar_p3:request(Method, SplitPath, Req) of
+	case ar_p3:allow_request(Req) of
 		{true, _} ->
 			case handle4(Method, SplitPath, Req, Pid) of
 				{Status, Hdrs, Body, HandledReq} ->
@@ -123,10 +123,8 @@ p3_to_http_status(Atom) ->
 			400;
 		insufficient_funds ->
 			402;
-		invalid_mod_seq ->
-			428;
-		too_many_requests ->
-			429
+		stale_mod_seq ->
+			428
 	end.
 	
 
@@ -1215,6 +1213,19 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 					end
 			end
 	end;
+
+handle(<<"GET">>, [<<"balance">>, Addr, Network, Token], Req, _Pid) ->
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, AddrOK} ->
+			%% The only expected error is due to an invalid address (handled above).
+			{ok, Balance} = ar_p3:get_balance(AddrOK, Network, Token),
+			{200, #{}, integer_to_binary(Balance), Req}
+	end;
+
+handle(<<"GET">>, [<<"rates">>], Req, _Pid) ->
+	{200, #{}, ar_p3:get_rates_json(), Req};
 
 %% Return the current block hieght, or 500.
 handle(Method, [<<"height">>], Req, _Pid)

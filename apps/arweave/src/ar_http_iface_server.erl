@@ -29,7 +29,7 @@
 		"queue", "recent_hash_list", "recent_hash_list_diff", "tx_anchor", "arql", "time",
 		"chunk", "chunk2", "data_sync_record", "sync_buckets", "wallet", "unsigned_tx",
 		"peers", "hash_list", "block_index", "block_index2", "wallet_list", "height",
-		"metrics"]).
+		"metrics", "rates"]).
 
 %%%===================================================================
 %%% Public interface.
@@ -40,8 +40,10 @@ split_path(Path) ->
 
 %% @doc Return the HTTP path label,
 %% Used for cowboy_requests_total and gun_requests_total metrics, as well as P3 handling.
+label_http_path(Path) when is_list(Path) ->
+	name_route(Path);
 label_http_path(Path) ->
-	name_route(split_path(Path)).
+	label_http_path(split_path(Path)).
 
 %%%===================================================================
 %%% Private functions.
@@ -321,6 +323,12 @@ name_route([<<"block">>, <<"height">>, _Height, <<"wallet">>, _Addr, <<"balance"
 	"/block/height/{height}/wallet/{addr}/balance";
 name_route([<<"block">>, <<"current">>]) ->
 	"/block/current";
+
+name_route([<<"balance">>, _Addr, _Network, _Token]) ->
+	"/balance/{address}/{network}/{token}";
+name_route([<<"rates">>]) ->
+	"/rates";
+
 
 name_route(_) ->
 	undefined.

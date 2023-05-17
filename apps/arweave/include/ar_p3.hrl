@@ -4,28 +4,56 @@
 -include_lib("ar.hrl").
 
 -define(P3_RATE_TYPES, [
-		<<"request">>,
-		<<"byte">>
+		<<"request">>
 	]).
 
--record(p3_ar, {
-	price,
-	address
-}).
+-define(TO_P3_ASSET(Network, Token), <<Network/binary, "/", Token/binary>>).
+-define(FROM_P3_ASSET(Asset), list_to_tuple(binary:split(Asset, <<"/">>))).
 
--record(p3_arweave, {
-	ar = #p3_ar{}
-}).
+-define(ARWEAVE_AR, <<"arweave/AR">>).
 
--record(p3_rates, {
-	rate_type,
-	arweave = #p3_arweave{}
-}).
+-define(P3_ENDPOINT_HEADER, <<"endpoint">>).
+-define(P3_ADDRESS_HEADER, <<"address">>).
+-define(P3_MOD_SEQ_HEADER, <<"modseq">>).
+-define(P3_PRICE_HEADER, <<"price">>).
+-define(P3_ANCHOR_HEADER, <<"anchor">>).
+-define(P3_TIMEOUT_HEADER, <<"timeout">>).
+-define(P3_SIGNATURE_HEADER, <<"signature">>).
+
 
 -record(p3_service, {
 	endpoint,
 	mod_seq,
-	rates = #p3_rates{}
+	rate_type,
+	rates = #{}
+}).
+
+-record(p3_payment, {
+	address,
+	minimum_balance = 0,
+	confirmations = 3
+}).
+
+-record(p3_config, {
+	payments = #{},
+	services = #{}
+}).
+
+-record(p3_account, {
+	address,
+	public_key,
+	asset,
+	balance,
+	count,
+	timestamp
+}).
+
+-record(p3_transaction, {
+	account,
+	amount,
+	txid,
+	request,
+	timestamp
 }).
 
 -endif.

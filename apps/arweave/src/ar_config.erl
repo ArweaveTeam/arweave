@@ -6,6 +6,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_p3.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -516,14 +517,14 @@ parse_options([{<<"defragment_modules">>, L} | Rest], Config) when is_list(L) ->
 parse_options([{<<"defragment_modules">>, Bin} | _], _) ->
 	{error, {bad_type, defragment_modules, array}, Bin};
 
-parse_options([{<<"services">>, ServicesConfig} | Rest], Config) ->
+parse_options([{<<"p3">>, {P3Config}} | Rest], Config) ->
 	try
-		Services = ar_p3_config:parse_services(ServicesConfig),
-		parse_options(Rest, Config#config{ services = Services })
+		P3 = ar_p3_config:parse_p3(P3Config, #p3_config{}),
+		parse_options(Rest, Config#config{ p3 = P3 })
 	catch error:Reason ->
 		{error,
-			{bad_format, services, Reason},
-			ServicesConfig}
+			{bad_format, p3, Reason},
+			P3Config}
 	end;
 
 

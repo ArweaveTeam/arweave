@@ -3,9 +3,13 @@
 
 %%% A collection of record structures used throughout the Arweave server.
 
-%% True if arweave was launched with -setcookie=test
-%% (e.g. bin/test or bin/shell)
--define(IS_TEST, erlang:get_cookie() == test).
+%% Helper macro used to print records with their fields and values.
+%% Output is a list of tuples where each tuple is a field and value.
+%% From this old mailing list post:
+%% https://erlang.org/pipermail/erlang-questions/2008-March/033336.html
+%% example: ?REC_INFO(TX, tx)
+-define(REC_INFO(Term, RecordTag),
+	lists:zip(record_info(fields,RecordTag), tl(tuple_to_list(Term)))).
 
 -define(DATA_SIZE(Term), erlang:byte_size(term_to_binary(Term))).
 
