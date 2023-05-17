@@ -63,14 +63,6 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 			{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
 					PartitionUpperBound, Peer, State)}
 	end;
-handle_info({event, nonce_limiter, {validated_output, Args}}, State) ->
-	%% The validated_output event is sent when a new block comes in that opens a new session.
-	%% The old session is validated and then "closed", we need to push out the this completed
-	%% session ASAP since future VDF updates will be off of the new session.
-	#state{ peer = Peer } = State,
-	{SessionKey, Session} = Args,
-	push_session(SessionKey, Session, Peer),
-	{noreply, State};
 
 handle_info({event, nonce_limiter, _Args}, State) ->
 	{noreply, State};
