@@ -56,15 +56,12 @@ handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	#state{ peer = Peer, pause_until = Timestamp } = State,
 	{SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound} = Args,
-	State2 = State#state{ current_session = {SessionKey, Session},
-			current_prev_session = {PrevSessionKey, PrevSession},
-			current_output = Output, current_partition_upper_bound = PartitionUpperBound },
 	case os:system_time(second) < Timestamp of
 		true ->
 			{noreply, State};
 		false ->
 			{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
-					PartitionUpperBound, Peer, State2)}
+					PartitionUpperBound, Peer, State)}
 	end;
 
 handle_info({event, nonce_limiter, _Args}, State) ->
@@ -81,17 +78,9 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
-	StepNumber = Session#vdf_session.step_number,
-	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
-	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
-	#nonce_limiter_update{ session_key = SessionKey,
-			is_partial = IsPartial, checkpoints = Checkpoints,
-			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
-
 push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound,
 		Peer, State) ->
-	Update = make_nonce_limiter_update(
+	Update = ar_nonce_limiter_server:make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
 			upper_bound = PartitionUpperBound,
@@ -137,7 +126,7 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 	end.
 
 push_session(SessionKey, Session, Peer) ->
-	Update = make_nonce_limiter_update(SessionKey, Session, false),
+	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			ok;
