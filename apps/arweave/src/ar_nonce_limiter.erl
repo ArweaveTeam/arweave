@@ -543,6 +543,7 @@ handle_cast({validated_steps, Args}, State) ->
 					Session3#vdf_session.step_number),
 			Sessions2 = gb_sets:add_element({element(2, NextSessionKey),
 					element(1, NextSessionKey)}, Sessions),
+			ar_events:send(nonce_limiter, {validated_output, {SessionKey, Session2}}),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;
 
@@ -823,6 +824,7 @@ apply_tip2(B, PrevB, State) ->
 			SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
 			Sessions2 = gb_sets:add_element({element(2, SessionKey), element(1, SessionKey)},
 					Sessions),
+			ar_events:send(nonce_limiter, {validated_output, {PrevSessionKey, PrevSession}}),
 			State#state{ current_session_key = SessionKey, sessions = Sessions2,
 					session_by_key = SessionByKey2 }
 	end.
