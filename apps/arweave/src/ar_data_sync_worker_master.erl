@@ -158,7 +158,7 @@ dequeue_main_task(State) ->
 %% Stage 1b: peer queue management
 %%--------------------------------------------------------------------
 
-%% @doc If a peer has capacity, take the next task from its	queue and schedule it.
+%% @doc If a peer has capacity, take the next task from its queue and schedule it.
 process_peer_queue(Peer, State) ->
 	case peer_has_capacity(Peer, State) andalso peer_has_queued_tasks(Peer, State) of
 		true ->
@@ -169,6 +169,9 @@ process_peer_queue(Peer, State) ->
 			State
 	end.
 
+%% @doc Cut a peer's queue to store roughly 15 minutes worth of tasks. This prevents
+%% the a slow peer from filling up the ar_data_sync_worker_master queues, stalling the
+%% workers and preventing ar_data_sync from pushing new tasks.
 cut_peer_queue(_Peer, TaskQueue, _MaxActive, undefined) ->
 	TaskQueue;
 cut_peer_queue(_Peer, TaskQueue, _MaxActive, 0) ->
@@ -247,7 +250,8 @@ schedule_task(Worker, Task, Args) ->
 	gen_server:cast(Worker, {Task, Args}).
 
 %%--------------------------------------------------------------------
-%% Stage 3: record a completed task and perhaps schedule more tasks
+%% Stage 3: record a completed task and update related values (i.e.
+%%          EMA, max_active, peer queue length)
 %%--------------------------------------------------------------------
 complete_sync_range(Peer, Result, Duration, State) ->
 	update_counters(scheduled, sync_range, ar_util:format_peer(Peer), -1),
@@ -257,7 +261,8 @@ complete_sync_range(Peer, Result, Duration, State) ->
 	IsOK = (Result == ok andalso Milliseconds > 10),
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
 	EMA = update_ema(Peer, IsOK, Milliseconds),
-	TaskQueue = cut_peer_queue(Peer, PeerTasks#peer_tasks.task_queue, PeerTasks#peer_tasks.max_active, EMA),
+	TaskQueue = cut_peer_queue(
+		Peer, PeerTasks#peer_tasks.task_queue, PeerTasks#peer_tasks.max_active, EMA),
 
 	MaxActive = update_max_active(
 		IsOK, Milliseconds, EMA,
@@ -342,14 +347,14 @@ format_peer(Task, Args) ->
 update_max_active(
 		IsOK, Milliseconds, EMA, WorkerCount, ActiveCount, QueueLength, LatencyTarget,
 		MaxActive) ->
-	%% Determine target max_active by:
+	%% Determine target max_active:
 	%% 1. Increase max_active when the EMA is less than the threshold
 	%% 2. Decrease max_active if the most recent request was slower than the threshold - this
 	%%    allows us to respond more quickly to a sudden drop in performance
 	%%
 	%% Once we have the target max_active, find the maximum of the currently active tasks
 	%% and queued tasks. The new max_active is the minimum of the target and that value.
-	%% This prevents situations where we have a low number of active tasks and now queue which
+	%% This prevents situations where we have a low number of active tasks and no queue which
 	%% causes each request to complete fast and hikes up the max_active. Then we get a new
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
 	TargetMaxActive = case {
@@ -604,7 +609,8 @@ test_process_main_queue() ->
 	State11 = enqueue_main_task(sync_range, {900, 1000, Peer2, StoreID1}, State10),
 	State12 = enqueue_main_task(sync_range, {1000, 1100, Peer2, StoreID1}, State11),
 	%% Will get split into 2 tasks when processed
-	State13 = enqueue_main_task(read_range, {100, 20 * 262144, StoreID1, StoreID2, true}, State12),
+	State13 = enqueue_main_task(
+		read_range, {100, 20 * 262144, StoreID1, StoreID2, true}, State12),
 	?assertEqual(13, get_task_count(queued)),
 	?assertEqual(0, get_task_count(scheduled)),
 
@@ -702,7 +708,8 @@ test_complete_sync_range() ->
 	?assertEqual(undefined, get_ema(Peer2)),
 
 	%% Error
-	State10 = complete_sync_range(Peer2, {error, timeout}, (LatencyTarget-100) * 1_000_000, State9),
+	State10 = complete_sync_range(
+		Peer2, {error, timeout}, (LatencyTarget-100) * 1_000_000, State9),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(5, get_task_count(scheduled)),
 	assert_peer_tasks(ExpectedPeer1Queue, 3, 8, Peer1, State10),
