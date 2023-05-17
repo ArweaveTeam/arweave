@@ -765,7 +765,7 @@ handle_cast(collect_peer_intervals, State) ->
 			SyncWorkers = Config#config.sync_jobs,
 			%% We do not want to bother peers if we still have a lot of data scheduled for
 			%% local copying and repacking.
-			case ar_data_sync_worker_master:get_scheduled_task_count() > SyncWorkers * 2 of
+			case ar_data_sync_worker_master:get_total_task_count() > SyncWorkers * 2 of
 				true ->
 					ar_util:cast_after(1000, self(), collect_peer_intervals);
 				false ->
@@ -861,8 +861,7 @@ handle_cast(sync_intervals, State) ->
 			false ->
 				{ok, Config} = application:get_env(arweave, config),
 				SyncWorkers = Config#config.sync_jobs,
-				ScheduledTasks = ar_data_sync_worker_master:get_scheduled_task_count(),
-				case ScheduledTasks > SyncWorkers * 100 of
+				case ar_data_sync_worker_master:get_total_task_count() > SyncWorkers * 50 of
 					true ->
 						ar_util:cast_after(200, self(), sync_intervals),
 						true;
