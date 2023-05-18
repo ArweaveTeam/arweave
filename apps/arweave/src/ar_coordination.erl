@@ -82,6 +82,7 @@ compute_h2(Peer, H2Materials) ->
 	gen_server:cast(?MODULE, {compute_h2, Peer, H2Materials}).
 
 computed_h2(Args) ->
+	io:format("DEBUG computed_h2 a0~n"),
 	gen_server:cast(?MODULE, {computed_h2, Args}).
 
 poll_loop() ->
@@ -304,8 +305,9 @@ handle_cast({compute_h2, Peer, H2Materials}, State) ->
 	{noreply, NewState};
 
 handle_cast({computed_h2, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, Peer}}, State) ->
-	io:format("DEBUG computed_h2~n"),
+	io:format("DEBUG computed_h2 b0~n"),
 	ar_http_iface_client:cm_h2_send(Peer, {Diff, Addr, H0, H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints}),
+	io:format("DEBUG computed_h2 b1~n"),
 	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
 	NewStat = OldStat#peer_io_stat{
 		h2_out_counter = OldStat#peer_io_stat.h2_out_counter + 1

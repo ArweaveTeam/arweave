@@ -3070,8 +3070,12 @@ handle_mining_h2(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
+					io:format("DEBUG handle_mining_h2 i0~n"),
 					Solution = ar_serialize:json_struct_to_remote_solution(JSON),
-					{_Diff, ReplicaID, H0, _H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, NonceLimiterOutput, PartitionUpperBound, SuppliedCheckpoints} = Solution,
+					io:format("DEBUG handle_mining_h2 i1~n"),
+					{_Diff, ReplicaID, H0, _H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber,
+						NonceLimiterOutput, SuppliedCheckpoints} = Solution,
+					io:format("DEBUG handle_mining_h2 i2~n"),
 					{ok, Config} = application:get_env(arweave, config),
 					case Config#config.cm_exit_peer of
 						not_set ->
@@ -3079,7 +3083,7 @@ handle_mining_h2(Req, Pid) ->
 									{mining_address, ar_util:encode(ReplicaID)}]);
 						_ ->
 							ar:console("Possible solution from ~p ~n", [ar_util:format_peer(Peer)]),
-							{RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound),
+							{RecallByte1, _RecallByte2} = ar_mining_server:get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound),
 							% extract chunk1 (PoA1)
 							Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
 							case ar_data_sync:get_chunk(RecallByte1 + 1, Options) of
@@ -3087,7 +3091,8 @@ handle_mining_h2(Req, Pid) ->
 									PoA1 = #poa{ option = 1, chunk = Chunk1, tx_path = TXPath1,
 											data_path = DataPath1 },
 									ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer, {PartitionNumber,
-										Nonce, H0, NonceLimiterOutput, ReplicaID, RecallByte1, RecallByte2, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints});
+										Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput,
+										ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints});
 								_ ->
 									{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
 											PartitionNumber, PartitionUpperBound),
