@@ -345,8 +345,6 @@ handle_cast({cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed, NextSee
 					io:format("WARNING. Can't find key ~w~n", [ar_util:encode(ReplicaID)]),
 					State;
 				Key ->
-					{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
-							PartitionUpperBound),
 					% FixPoA2 = case PoA2 of
 					% 	not_set ->
 					% 		#poa{};
@@ -360,6 +358,7 @@ handle_cast({cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed, NextSee
 							io:format("DEBUG IGNORE 1-chunk solution~n"),
 							State;
 						_ ->
+							io:format("DEBUG !!! 2-chunk solution !!!~n"),
 							prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, SuppliedCheckpoints)
 					end
 			end,
@@ -898,6 +897,7 @@ hashing_thread(SessionRef) ->
 					_RecallByte2Start, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints,
 					_ReqList, Peer } = Session,
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
+			io:format("Pass H2 ~p~n", [binary:decode_unsigned(H2, big)]),
 			case binary:decode_unsigned(H2, big) > Diff of
 				true ->
 					io:format("DEBUG remote_compute_h2 b1~n"), % TODO
@@ -910,15 +910,18 @@ hashing_thread(SessionRef) ->
 							not_set ->
 								#poa{};
 							_ ->
+								io:format("DEBUG remote_compute_h2 b2~n"),
 								case ar_data_sync:get_chunk(RecallByte2 + 1, Options) of
 									{ok, #{ chunk := Chunk2, tx_path := TXPath2,
 											data_path := DataPath2 }} ->
+										io:format("DEBUG remote_compute_h2 b3~n"),
 										#poa{ option = 1, chunk = Chunk2, tx_path = TXPath2,
 											data_path = DataPath2 };
 									_ ->
 										error
 								end
 						end,
+					io:format("DEBUG remote_compute_h2 b4~n"),
 					case PoA2 of
 						error ->
 							% TODO console
@@ -928,13 +931,11 @@ hashing_thread(SessionRef) ->
 									{mining_address, ar_util:encode(ReplicaID)}]),
 							ok;
 						_ ->
-							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-							#nonce_limiter_info{ next_seed = PrevNextSeed,
-								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
-							SuppliedCheckpoints = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
+							io:format("DEBUG remote_compute_h2 b5~n"),
 							ar_coordination:computed_h2({Diff, ReplicaID, H0, H1, Nonce,
 									PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage2,
-									Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, Peer})
+									Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, Peer}),
+							io:format("DEBUG remote_compute_h2 b6~n")
 					end;
 				false ->
 					ok
