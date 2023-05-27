@@ -364,7 +364,8 @@ updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
 			{ar_pricing, get_miner_reward_and_endowment_pool,
 				fun ar_pricing_tests:get_miner_reward_and_endowment_pool/1},
 			{ar_inflation, calculate, fun(_Height) -> 1 end},
-			{ar_fork, height_2_6, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end}
+			{ar_fork, height_2_6, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end},
+			{ar_fork, height_2_6_8, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end}
 		],
 		fun updates_pool_and_assigns_rewards_correctly_after_burden/0
 	).
