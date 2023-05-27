@@ -83,7 +83,7 @@ end).
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_START, 2).
+	-define(PRICE_2_6_8_TRANSITION_START, 3).
 -else.
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_8_TRANSITION_START, 0).

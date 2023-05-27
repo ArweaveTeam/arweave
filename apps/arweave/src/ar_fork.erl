@@ -5,7 +5,7 @@
 -module(ar_fork).
 
 -export([height_1_6/0, height_1_7/0, height_1_8/0, height_1_9/0, height_2_0/0, height_2_2/0,
-		height_2_3/0, height_2_4/0, height_2_5/0, height_2_6/0]).
+		height_2_3/0, height_2_4/0, height_2_5/0, height_2_6/0, height_2_6_8/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
