@@ -559,31 +559,63 @@ get_tx_fee(Args) ->
 	{DataSize, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Timestamp, Accounts,
 			Height} = Args,
 	Fork_2_6 = ar_fork:height_2_6(),
-	Args2 = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
-	case Height >= Fork_2_6 of
-		false ->
-			get_tx_fee_pre_fork_2_6(Args2);
-		true ->
-			Args3 = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
+	Fork_2_6_8 = ar_fork:height_2_6_8(),
+	PreFork26Args = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
+	V2PricingArgs = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
 					Height},
-			case ar_pricing:is_v2_pricing_height(Height) of
-				true ->
-					get_tx_fee2(Args3);
-				false ->
-					TransitionStart = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
-					TransitionEnd = TransitionStart + ?PRICE_2_6_TRANSITION_BLOCKS,
-					case Height >= TransitionStart of
-						true ->
-							Fee1 = get_tx_fee_pre_fork_2_6(Args2),
-							Fee2 = get_tx_fee2(Args3),
-							Interval1 = Height - TransitionStart + 1,
-							Interval2 = TransitionEnd - (Height + 1),
-							(Fee1 * Interval2 + Fee2 * Interval1) div (Interval1 + Interval2);
-						false ->
-							get_tx_fee_pre_fork_2_6(Args2)
-					end
-			end
+
+	V2PricingHeight = Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START)
+					+ (?PRICE_2_6_8_TRANSITION_BLOCKS),
+
+	TransitionStart_2_6 = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
+	TransitionEnd_2_6 = TransitionStart_2_6 + ?PRICE_2_6_TRANSITION_BLOCKS,
+	TransitionStart_2_6_8 = Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START,
+	TransitionEnd_2_6_8 = TransitionStart_2_6_8 + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+
+	case Height of
+		H when H >= V2PricingHeight ->
+			%% New pricing is fully live
+			get_tx_fee2(V2PricingArgs);
+		H when H >= TransitionStart_2_6_8 ->
+			%% 2.6.8 transition period. Interpolate between a static fee-based pricing and
+			%% new pricing throughout the 2.6.8 transition period
+			get_transition_tx_fee(
+				get_static_2_6_8_tx_fee(DataSize, Addr, Accounts), %% StartFee
+				get_tx_fee2(V2PricingArgs), %% EndFee
+				TransitionStart_2_6_8, 
+				TransitionEnd_2_6_8,
+				Height);
+		H when H >= Fork_2_6_8 ->
+			%% Pre-2.6.8 transition period. Use a static fee-based pricing + new account fee.
+			get_static_2_6_8_tx_fee(DataSize, Addr, Accounts);
+		H when H >= TransitionStart_2_6 ->
+			%% 2.6 transition period. Interpolate between pre-2.6 pricing and new pricing
+			%% throughout the 2.6 transition period
+			get_transition_tx_fee(
+				get_tx_fee_pre_fork_2_6(PreFork26Args), %% StartFee
+				get_tx_fee2(V2PricingArgs), %% EndFee
+				TransitionStart_2_6, 
+				TransitionEnd_2_6,
+				Height);
+		_ ->
+			get_tx_fee_pre_fork_2_6(PreFork26Args)
 	end.
+
+get_static_2_6_8_tx_fee(DataSize, Addr, Accounts) ->
+	UploadFee = (?STATIC_2_6_8_FEE_WINSTON div ?GiB) * (DataSize + ?TX_SIZE_BASE),
+	case Addr == <<>> orelse maps:is_key(Addr, Accounts) of
+		true ->
+			UploadFee;
+		false ->
+			NewAccountFee = (?STATIC_2_6_8_FEE_WINSTON div ?GiB) *
+					?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT,
+			UploadFee + NewAccountFee
+	end.
+
+get_transition_tx_fee(StartFee, EndFee, StartHeight, EndHeight, Height) ->
+	Interval1 = Height - StartHeight + 1,
+	Interval2 = EndHeight - (Height + 1),
+	(StartFee * Interval2 + EndFee * Interval1) div (Interval1 + Interval2).
 
 get_tx_fee2(Args) ->
 	{DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height} = Args,
@@ -907,3 +939,99 @@ get_weave_size_increase_test() ->
 			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5() - 1)),
 	?assertEqual(262144,
 			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5() - 1)).
+
+%% @doc Primarily test the different branches in the ar_tx:get_tx_fee logic. Several
+%% of the pricing constants have test specific values which means the fees asserted here
+%% will not match true mainnet fees. 
+get_tx_fee_test() ->
+	meck:new(ar_fork, [passthrough]),
+	meck:expect(ar_fork, height_2_6, fun() -> 1132210 end),
+	meck:expect(ar_fork, height_2_6_8, fun() -> 1189560 end),
+
+	Addr = crypto:strong_rand_bytes(32),
+
+	%% After the 2.6 transition starts
+	Height3 = ar_fork:height_2_6() + ?PRICE_2_6_TRANSITION_START,
+	test_get_tx_fee(1, Height3, <<>>, 2748223),
+	test_get_tx_fee(2, Height3, <<>>, 2749079),
+	test_get_tx_fee(2 * ?GiB, Height3, <<>>, 1837986144189),
+	%% +new account fee
+	test_get_tx_fee(1, Height3, Addr, 21460170515),
+	test_get_tx_fee(2, Height3, Addr, 21460171371),
+	test_get_tx_fee(2 * ?GiB, Height3, Addr, 1859443566481),
+
+	%% After the 2.6 transition starts, with interpolation. 
+	Height4 = ar_fork:height_2_6() + ?PRICE_2_6_TRANSITION_START + 1,
+	test_get_tx_fee(1, Height4, <<>>, 5284478),
+	test_get_tx_fee(2, Height4, <<>>, 5286124),
+	test_get_tx_fee(2 * ?GiB, Height4, <<>>, 3534209808925),
+	%% +new account fee
+	test_get_tx_fee(1, Height4, Addr, 32920129062),
+	test_get_tx_fee(2, Height4, Addr, 32920130708),
+	test_get_tx_fee(2 * ?GiB, Height4, Addr, 3567124653509),
+
+	%% After the 2.6.8 hard fork
+	Height5 = ar_fork:height_2_6_8(),
+	test_get_tx_fee(1, Height5, <<>>, 2565589),
+	test_get_tx_fee(2, Height5, <<>>, 2566388),
+	test_get_tx_fee(2 * ?GiB, Height5, <<>>, 1715841999542),
+	%% +new account fee
+	test_get_tx_fee(1, Height5, Addr, 15982565589),
+	test_get_tx_fee(2, Height5, Addr, 15982566388),
+	test_get_tx_fee(2 * ?GiB, Height5, Addr, 1731821999542),
+
+	%% After the 2.6.8 hard fork. Second sample to confirm static pricing.
+	Height6 = ar_fork:height_2_6_8() + 1,
+	test_get_tx_fee(1, Height6, <<>>, 2565589),
+	test_get_tx_fee(2, Height6, <<>>, 2566388),
+	test_get_tx_fee(2 * ?GiB, Height6, <<>>, 1715841999542),
+	%% +new account fee
+	test_get_tx_fee(1, Height6, Addr, 15982565589),
+	test_get_tx_fee(2, Height6, Addr, 15982566388),
+	test_get_tx_fee(2 * ?GiB, Height6, Addr, 1731821999542),
+
+	%% After the 2.6.8 transition starts
+	Height7 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
+	test_get_tx_fee(1, Height7, <<>>, 3925033),
+	test_get_tx_fee(2, Height7, <<>>, 3926256),
+	test_get_tx_fee(2 * ?GiB, Height7, <<>>, 2625025904233),
+	%% +new account fee
+	test_get_tx_fee(1, Height7, Addr, 24451347325),
+	test_get_tx_fee(2, Height7, Addr, 24451348548),
+	test_get_tx_fee(2 * ?GiB, Height7, Addr, 2649473326525),
+
+	%% After the 2.6 transition starts, with interpolation
+	Height8 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START + 1,
+	test_get_tx_fee(1, Height8, <<>>, 5284478),
+	test_get_tx_fee(2, Height8, <<>>, 5286124),
+	test_get_tx_fee(2 * ?GiB, Height8, <<>>, 3534209808925),
+	%% +new account fee
+	test_get_tx_fee(1, Height8, Addr, 32920129062),
+	test_get_tx_fee(2, Height8, Addr, 32920130708),
+	test_get_tx_fee(2 * ?GiB, Height8, Addr, 3567124653509),
+
+	%% V2Pricing
+	Height9 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+	test_get_tx_fee(1, Height9, <<>>, 5284478),
+	test_get_tx_fee(2, Height9, <<>>, 5286124),
+	test_get_tx_fee(2 * ?GiB, Height9, <<>>, 3534209808925),
+	%% +new account fee
+	test_get_tx_fee(1, Height9, Addr, 32920129062),
+	test_get_tx_fee(2, Height9, Addr, 32920130708),
+	test_get_tx_fee(2 * ?GiB, Height9, Addr, 3567124653509),
+
+	meck:unload(ar_fork).
+
+
+test_get_tx_fee(DataSize, Height, Addr, ExpectedFee) ->
+	Rate = {1, 10},
+	PricePerGiBMinute = 8025,
+	KryderPlusRateMultiplier = 1, 
+	Timestamp = os:system_time(seconds),
+	Accounts = #{},
+
+	?assertEqual(ExpectedFee, 
+		ar_tx:get_tx_fee({DataSize, Rate, PricePerGiBMinute,
+			KryderPlusRateMultiplier, Addr, Timestamp, Accounts, Height})).
+
+	

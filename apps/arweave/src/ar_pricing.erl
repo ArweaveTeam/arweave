@@ -18,9 +18,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% The number of bytes in a gibibyte.
--define(GiB, 1024 * 1024 * 1024).
-
 %%%===================================================================
 %%% Types.
 %%%===================================================================
@@ -39,10 +36,10 @@
 %% @doc Return true if the given height is a height where the transition to the
 %% new pricing algorithm is complete.
 is_v2_pricing_height(Height) ->
-	Fork_2_6 = ar_fork:height_2_6(),
-	Height >= Fork_2_6 % First check just this because it may be infinity.
-			andalso Height >= Fork_2_6 + (?PRICE_2_6_TRANSITION_START)
-					+ (?PRICE_2_6_TRANSITION_BLOCKS).
+	Fork_2_6_8 = ar_fork:height_2_6_8(),
+	Height >= Fork_2_6_8 % First check just this because it may be infinity.
+			andalso Height >= Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START)
+					+ (?PRICE_2_6_8_TRANSITION_BLOCKS).
 
 %% @doc Return the price per gibibyte minute estimated from the given history of
 %% network hash rates and block rewards. The total reward used in calculations
