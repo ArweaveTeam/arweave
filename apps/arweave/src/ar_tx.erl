@@ -608,7 +608,7 @@ get_static_2_6_8_tx_fee(Args) ->
 		true ->
 			UploadFee;
 		false ->
-			NewAccountFee = (?STATIC_2_6_8_FEE_WINSTON div 1024) * ?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT,
+			NewAccountFee = (?STATIC_2_6_8_FEE_WINSTON div ?GiB) * ?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT,
 			UploadFee + NewAccountFee
 	end.
 
