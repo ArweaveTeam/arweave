@@ -36,7 +36,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	slave_start(B0),
 	connect_to_slave(),
 	?assert(?PRICE_2_6_TRANSITION_START == 2),
-	?assert(?PRICE_2_6_TRANSITION_BLOCKS == 20),
+	?assert(?PRICE_2_6_TRANSITION_BLOCKS == 2),
 	?assert(?PRICE_ADJUSTMENT_FREQUENCY == 2),
 	?assert(?REDENOMINATION_DELAY_BLOCKS == 2),
 	?assert(?REWARD_HISTORY_BLOCKS == 3),

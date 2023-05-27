@@ -74,7 +74,7 @@ end).
 %% Let B = TransitionStart + ?PRICE_2_6_TRANSITION_BLOCKS - (height + 1).
 %% Then tx fee = tx fee old * B / (A + B) + tx fee new * A / (A + B).
 -ifdef(DEBUG).
-	-define(PRICE_2_6_TRANSITION_BLOCKS, 20).
+	-define(PRICE_2_6_TRANSITION_BLOCKS, 2).
 -else.
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_TRANSITION_BLOCKS, 0).
@@ -96,7 +96,7 @@ end).
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 20).
+	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 2).
 -else.
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_8_TRANSITION_BLOCKS, 0).
@@ -268,8 +268,6 @@ end).
 %% expressed as a decimal fraction.
 %% Used until the transition to the new fee calculation method is complete.
 -define(USD_PER_GBY_2019, {925, 1000000}). % 0.000925
-
--define(STATIC_2_6_8_FEE_WINSTON, 858_000_000_000).
 
 %% The largest possible multiplier for a one-step increase of the USD to AR Rate.
 -define(USD_TO_AR_MAX_ADJUSTMENT_UP_MULTIPLIER, {1005, 1000}).
