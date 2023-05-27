@@ -604,9 +604,13 @@ get_tx_fee(Args) ->
 get_static_2_6_8_tx_fee(Args) ->
 	{DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height} = Args,
 	UploadFee = (?STATIC_2_6_8_FEE_WINSTON div ?GiB) * (DataSize + ?TX_SIZE_BASE),
-	NewAccountFee = get_new_account_fee(Addr, Accounts, PricePerGiBMinute,
-			KryderPlusRateMultiplier, Height),
-	UploadFee + NewAccountFee.
+	case Addr == <<>> orelse maps:is_key(Addr, Accounts) of
+		true ->
+			UploadFee;
+		false ->
+			NewAccountFee = 0, %%% XXX TODO,
+			UploadFee + NewAccountFee
+	end.
 
 get_transition_tx_fee(StartFee, EndFee, StartHeight, EndHeight, Height) ->
 	Interval1 = Height - StartHeight + 1,
@@ -617,19 +621,19 @@ get_tx_fee2(Args) ->
 	{DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height} = Args,
 	Args2 = {DataSize + ?TX_SIZE_BASE, PricePerGiBMinute, KryderPlusRateMultiplier, Height},
 	UploadFee = ar_pricing:get_tx_fee(Args2),
-	NewAccountFee = get_new_account_fee(Addr, Accounts, PricePerGiBMinute,
-			KryderPlusRateMultiplier, Height),
-	UploadFee + NewAccountFee.
-
-get_new_account_fee(Addr, Accounts, BytePerMinutePrice, KryderPlusRateMultiplier, Height) ->
 	case Addr == <<>> orelse maps:is_key(Addr, Accounts) of
 		true ->
-			0;
+			UploadFee;
 		false ->
-			Args = {?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, BytePerMinutePrice,
-				KryderPlusRateMultiplier, Height},
-			ar_pricing:get_tx_fee(Args)
+			NewAccountFee = get_new_account_fee(PricePerGiBMinute, KryderPlusRateMultiplier,
+					Height),
+			UploadFee + NewAccountFee
 	end.
+
+get_new_account_fee(BytePerMinutePrice, KryderPlusRateMultiplier, Height) ->
+	Args = {?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, BytePerMinutePrice,
+			KryderPlusRateMultiplier, Height},
+	ar_pricing:get_tx_fee(Args).
 
 get_tx_fee_pre_fork_2_6({DataSize, Rate, Height, Accounts, Addr, Timestamp}) ->
 	true = Height >= ar_fork:height_2_4(),
