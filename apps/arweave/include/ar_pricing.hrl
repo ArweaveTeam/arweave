@@ -1,5 +1,8 @@
 %% @doc Pricing macros.
 
+%% The number of bytes in a gibibyte.
+-define(GiB, (1024 * 1024 * 1024)).
+
 %% For a new account, we charge the fee equal to the price of uploading
 %% this number of bytes. The fee is about 0.1$ at the time.
 -define(NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, 20_000_000).
@@ -71,7 +74,7 @@ end).
 %% Let B = TransitionStart + ?PRICE_2_6_TRANSITION_BLOCKS - (height + 1).
 %% Then tx fee = tx fee old * B / (A + B) + tx fee new * A / (A + B).
 -ifdef(DEBUG).
-	-define(PRICE_2_6_TRANSITION_BLOCKS, 2).
+	-define(PRICE_2_6_TRANSITION_BLOCKS, 20).
 -else.
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_TRANSITION_BLOCKS, 0).
@@ -83,7 +86,7 @@ end).
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_START, 3).
+	-define(PRICE_2_6_8_TRANSITION_START, 2).
 -else.
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_8_TRANSITION_START, 0).
@@ -93,7 +96,7 @@ end).
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 2).
+	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 20).
 -else.
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_8_TRANSITION_BLOCKS, 0).

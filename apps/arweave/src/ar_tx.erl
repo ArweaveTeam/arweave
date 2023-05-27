@@ -572,6 +572,11 @@ get_tx_fee(Args) ->
 	TransitionStart_2_6_8 = Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START,
 	TransitionEnd_2_6_8 = TransitionStart_2_6_8 + ?PRICE_2_6_8_TRANSITION_BLOCKS,
 
+	%% div the fee (in winstons) by the number of bytes in a GiB rather than the DataSize
+	%% so that we can ignore/truncate any fractions (since we don't care about fractional
+	%% winstons, but we do care about factional GiBs).
+	StaticFee = (?STATIC_2_6_8_FEE_WINSTON div ?GiB) * (DataSize + ?TX_SIZE_BASE),
+
 	case Height of
 		H when H >= V2PricingHeight ->
 			get_tx_fee2(Args3);
@@ -579,13 +584,13 @@ get_tx_fee(Args) ->
 			%% For 2.6.8 the fee at the start of the transition period is
 			%% the 2.6 transition fee in effect when the 2.6.8 fork occured.
 			get_transition_tx_fee(
-				?STATIC_2_6_8_FEE_WINSTON, %% StartFee
+				StaticFee, %% StartFee
 				get_tx_fee2(Args3), %% EndFee
 				TransitionStart_2_6_8, 
 				TransitionEnd_2_6_8,
 				Height);
 		H when H >= Fork_2_6_8 ->
-			?STATIC_2_6_8_FEE_WINSTON;
+			StaticFee;
 		H when H >= TransitionStart_2_6 ->
 			get_transition_tx_fee(
 				get_tx_fee_pre_fork_2_6(Args2), %% StartFee
@@ -924,3 +929,75 @@ get_weave_size_increase_test() ->
 			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5() - 1)),
 	?assertEqual(262144,
 			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5() - 1)).
+
+%% @doc Primarily test the different branches in the ar_tx:get_tx_fee logic. The actual
+%% fees that are computed are not reliable since they use some test-only constants that
+%% are not representative of real-world values.
+get_tx_fee_test() ->
+	meck:new(ar_fork, [passthrough]),
+	meck:expect(ar_fork, height_2_6, fun() -> 10 end),
+	meck:expect(ar_fork, height_2_6_8, fun() -> 20 end),
+
+	%% Before the 2.6 Fork
+	test_get_tx_fee(1, 1, 430360),
+	test_get_tx_fee(2, 1, 430494),
+	test_get_tx_fee(2 * ?GiB, 1, 287820791619),
+
+	%% Before the 2.6 transition starts
+	Height2 = ar_fork:height_2_6() + 1,
+	test_get_tx_fee(1, Height2, 430360),
+	test_get_tx_fee(2, Height2, 430494),
+	test_get_tx_fee(2 * ?GiB, Height2, 287820791619),
+
+	%% After the 2.6 transition starts
+	Height3 = ar_fork:height_2_6() + ?PRICE_2_6_TRANSITION_START,
+	test_get_tx_fee(1, Height3, 408907),
+	test_get_tx_fee(2, Height3, 409035),
+	test_get_tx_fee(2 * ?GiB, Height3, 273473792035),
+
+	%% After the 2.6 transition starts, with interpolation
+	Height4 = ar_fork:height_2_6() + ?PRICE_2_6_TRANSITION_START + 5,
+	test_get_tx_fee(1, Height4, 301647),
+	test_get_tx_fee(2, Height4, 301740),
+	test_get_tx_fee(2 * ?GiB, Height4, 201738794118),
+
+	%% After the 2.6.8 hard fork
+	Height5 = ar_fork:height_2_6_8(),
+	test_get_tx_fee(1, Height5, 2565589),
+	test_get_tx_fee(2, Height5, 2566388),
+	test_get_tx_fee(2 * ?GiB, Height5, 1715841999542),
+
+	%% After the 2.6.8 transition starts
+	Height6 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
+	test_get_tx_fee(1, Height6, 2437375),
+	test_get_tx_fee(2, Height6, 2438134),
+	test_get_tx_fee(2 * ?GiB, Height6, 1630093939562),
+
+	%% After the 2.6 transition starts, with interpolation
+	Height7 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START + 5,
+	test_get_tx_fee(1, Height7, 1796307),
+	test_get_tx_fee(2, Height7, 1796866),
+	test_get_tx_fee(2 * ?GiB, Height7, 1201353639665),
+
+	%% V2Pricing
+	Height8 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+	test_get_tx_fee(1, Height8, 1317),
+	test_get_tx_fee(2, Height8, 1317),
+	test_get_tx_fee(2 * ?GiB, Height8, 880799952),
+
+	meck:unload(ar_fork).
+
+
+test_get_tx_fee(DataSize, Height, ExpectedFee) ->
+	Rate = {1, 5},
+	PricePerGiBMinute = 2,
+	KryderPlusRateMultiplier = 1, 
+	Addr = <<>>,
+	Timestamp = os:system_time(seconds),
+	Accounts = #{},
+
+	?assertEqual(ExpectedFee, 
+		ar_tx:get_tx_fee({DataSize, Rate, PricePerGiBMinute,
+			KryderPlusRateMultiplier, Addr, Timestamp, Accounts, Height})).
+
+	

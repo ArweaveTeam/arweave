@@ -100,5 +100,5 @@ height_2_6_8() ->
 	0.
 -else.
 height_2_6_8() ->
-	1189000. % Targeting 2023-05-29 16:00 UTC
+	1189720. % Targeting 2023-05-30 16:00 UTC
 -endif.
