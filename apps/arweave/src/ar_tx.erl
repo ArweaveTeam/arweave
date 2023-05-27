@@ -559,6 +559,7 @@ get_tx_fee(Args) ->
 	{DataSize, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Timestamp, Accounts,
 			Height} = Args,
 	Fork_2_6 = ar_fork:height_2_6(),
+	Fork_2_6_8 = ar_fork:height_2_6_8(),
 	Args2 = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
 	case Height >= Fork_2_6 of
 		false ->
@@ -568,22 +569,46 @@ get_tx_fee(Args) ->
 					Height},
 			case ar_pricing:is_v2_pricing_height(Height) of
 				true ->
+					%% Height >= Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START + ?PRICE_2_6_8_TRANSITION_BLOCKS)
 					get_tx_fee2(Args3);
 				false ->
-					TransitionStart = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
-					TransitionEnd = TransitionStart + ?PRICE_2_6_TRANSITION_BLOCKS,
-					case Height >= TransitionStart of
-						true ->
-							Fee1 = get_tx_fee_pre_fork_2_6(Args2),
-							Fee2 = get_tx_fee2(Args3),
-							Interval1 = Height - TransitionStart + 1,
-							Interval2 = TransitionEnd - (Height + 1),
-							(Fee1 * Interval2 + Fee2 * Interval1) div (Interval1 + Interval2);
-						false ->
+					TransitionStart_2_6 = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
+					TransitionEnd_2_6 = TransitionStart_2_6 + ?PRICE_2_6_TRANSITION_BLOCKS,
+					TransitionStart_2_6_8 = Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START,
+					TransitionEnd_2_6_8 = TransitionStart_2_6_8 + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+					case Height of 
+						H when H >= TransitionStart_2_6_8 ->
+							%% For 2.6.8 the fee at the start of the transition period is
+							%% the 2.6 transition fee in effect when the 2.6.8 fork occured.
+							StartFee = get_transition_tx_fee(
+								get_tx_fee_pre_fork_2_6(Args2), %% StartFee
+								get_tx_fee2(Args3), %% EndFee
+								TransitionStart_2_6, 
+								TransitionEnd_2_6,
+								TransitionStart_2_6_8),
+							get_transition_tx_fee(
+								StartFee,
+								get_tx_fee2(Args3), %% EndFee
+								TransitionStart_2_6_8, 
+								TransitionEnd_2_6_8,
+								Height);
+						H when H >= TransitionStart_2_6 ->
+							get_transition_tx_fee(
+								get_tx_fee_pre_fork_2_6(Args2), %% StartFee
+								get_tx_fee2(Args3), %% EndFee
+								TransitionStart_2_6, 
+								TransitionEnd_2_6,
+								Height);
+						_ ->
 							get_tx_fee_pre_fork_2_6(Args2)
 					end
 			end
 	end.
+
+get_transition_tx_fee(StartFee, EndFee, StartHeight, EndHeight, Height) ->
+	Interval1 = Height - StartHeight + 1,
+	Interval2 = EndHeight - (Height + 1),
+	(StartFee * Interval2 + EndFee * Interval1) div (Interval1 + Interval2).
 
 get_tx_fee2(Args) ->
 	{DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height} = Args,

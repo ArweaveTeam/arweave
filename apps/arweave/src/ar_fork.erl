@@ -94,3 +94,11 @@ height_2_6() ->
 			1132210. % Targeting 2023-03-06 14:00 UTC
 	-endif.
 -endif.
+
+-ifdef(FORKS_RESET).
+height_2_6_8() ->
+	0.
+-else.
+height_2_6_8() ->
+	1189272. % XXX TODO: set this.
+-endif.

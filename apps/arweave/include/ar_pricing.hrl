@@ -82,6 +82,29 @@ end).
 	-endif.
 -endif.
 
+-ifdef(DEBUG).
+	-define(PRICE_2_6_8_TRANSITION_START, 2).
+-else.
+	-ifdef(FORKS_RESET).
+		-define(PRICE_2_6_8_TRANSITION_START, 0).
+	-else.
+		-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 30 * 9)). % ~9 months;
+	-endif.
+-endif.
+
+-ifdef(DEBUG).
+	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 2).
+-else.
+	-ifdef(FORKS_RESET).
+		-define(PRICE_2_6_8_TRANSITION_BLOCKS, 0).
+	-else.
+		-ifndef(PRICE_2_6_8_TRANSITION_BLOCKS).
+			-define(PRICE_2_6_8_TRANSITION_BLOCKS, (30 * 24 * 12 * 30)). % ~12 months.
+		-endif.
+	-endif.
+-endif.
+
+
 %% The number of recent blocks contributing data points to the continuous estimation
 %% of the average price of storing a gibibyte for a minute. Also, the reward history
 %% is used to tracking the reserved mining rewards.
