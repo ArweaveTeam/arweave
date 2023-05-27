@@ -91,7 +91,7 @@ end).
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_8_TRANSITION_START, 0).
 	-else.
-		-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 30 * 3)). % ~3 months;
+		-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 30 * 4)). % ~4 months;
 	-endif.
 -endif.
 
@@ -268,6 +268,8 @@ end).
 %% expressed as a decimal fraction.
 %% Used until the transition to the new fee calculation method is complete.
 -define(USD_PER_GBY_2019, {925, 1000000}). % 0.000925
+
+-define(STATIC_2_6_8_FEE_WINSTON, 858_000_000_000).
 
 %% The largest possible multiplier for a one-step increase of the USD to AR Rate.
 -define(USD_TO_AR_MAX_ADJUSTMENT_UP_MULTIPLIER, {1005, 1000}).
