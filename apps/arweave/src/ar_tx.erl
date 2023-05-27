@@ -574,10 +574,11 @@ get_tx_fee(Args) ->
 
 	case Height of
 		H when H >= V2PricingHeight ->
+			%% New pricing is fully live
 			get_tx_fee2(V2PricingArgs);
 		H when H >= TransitionStart_2_6_8 ->
-			%% For 2.6.8 the fee at the start of the transition period is
-			%% the 2.6 transition fee in effect when the 2.6.8 fork occured.
+			%% 2.6.8 transition period. Interpolate between pre-2.6 pricing and new pricing
+			%% throughout the 2.6.8 transition period
 			get_transition_tx_fee(
 				get_tx_fee_pre_fork_2_6(PreFork26Args), %% StartFee
 				get_tx_fee2(V2PricingArgs), %% EndFee
@@ -585,8 +586,11 @@ get_tx_fee(Args) ->
 				TransitionEnd_2_6_8,
 				Height);
 		H when H >= Fork_2_6_8 ->
+			%% Pre-2.6.8 transition period. Use pre-2.6 pricing.
 			get_tx_fee_pre_fork_2_6(PreFork26Args);
 		H when H >= TransitionStart_2_6 ->
+			%% 2.6 transition period. Interpolate between pre-2.6 pricing and new pricing
+			%% throughout the 2.6 transition period
 			get_transition_tx_fee(
 				get_tx_fee_pre_fork_2_6(PreFork26Args), %% StartFee
 				get_tx_fee2(V2PricingArgs), %% EndFee
