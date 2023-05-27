@@ -585,7 +585,7 @@ get_tx_fee(Args) ->
 								get_tx_fee2(Args3), %% EndFee
 								TransitionStart_2_6, 
 								TransitionEnd_2_6,
-								TransitionStart_2_6_8),
+								Fork_2_6_8),
 							get_transition_tx_fee(
 								StartFee,
 								get_tx_fee2(Args3), %% EndFee
