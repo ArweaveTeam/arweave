@@ -717,228 +717,228 @@ tags_to_binary(Tags) ->
 %%% Tests.
 %%%===================================================================
 
-% sign_tx_test_() ->
-% 	{timeout, 30, fun test_sign_tx/0}.
-% test_sign_tx() ->
-% 	NewTX = new(<<"TEST DATA">>, ?AR(1)),
-% 	{Priv, Pub} = ar_wallet:new(),
-% 	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
-% 	PricePerGiBMinute = 1,
-% 	Timestamp = os:system_time(seconds),
-% 	ValidTXs = [
-% 		sign_v1(NewTX, Priv, Pub),
-% 		sign(generate_chunk_tree(NewTX#tx{ format = 2 }), Priv, Pub)
-% 	],
-% 	lists:foreach(
-% 		fun(TX) ->
-% 			Accounts =
-% 				lists:foldl(
-% 					fun(Addr, Acc) ->
-% 						maps:put(Addr, {?AR(10), <<>>}, Acc)
-% 					end,
-% 					#{},
-% 					ar_tx:get_addresses([TX])
-% 				),
-% 			Args1 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
-% 			?assert(verify(TX, Args1), ar_util:encode(TX#tx.id)),
-% 			Args2 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
-% 			?assert(verify(TX, Args2), ar_util:encode(TX#tx.id))
-% 		end,
-% 		ValidTXs
-% 	),
-% 	InvalidTXs = [
-% 		sign(
-% 			generate_chunk_tree( % a quantity with empty target
-% 				NewTX#tx{ format = 2, quantity = 1 }
-% 			),
-% 			Priv,
-% 			Pub
-% 		),
-% 		sign_v1(
-% 			generate_chunk_tree( % a target without quantity
-% 				NewTX#tx{ format = 1, target = crypto:strong_rand_bytes(32) }
-% 			),
-% 			Priv,
-% 			Pub
-% 		)
-% 	],
-% 	lists:foreach(
-% 		fun(TX) ->
-% 			Accounts =
-% 				lists:foldl(
-% 					fun(Addr, Acc) ->
-% 						maps:put(Addr, {?AR(10), <<>>}, Acc)
-% 					end,
-% 					#{},
-% 					ar_tx:get_addresses([TX])
-% 				),
-% 			Args3 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
-% 			?assert(not verify(TX, Args3), ar_util:encode(TX#tx.id)),
-% 			Args4 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
-% 			?assert(not verify(TX, Args4), ar_util:encode(TX#tx.id))
-% 		end,
-% 		InvalidTXs
-% 	).
+sign_tx_test_() ->
+	{timeout, 30, fun test_sign_tx/0}.
+test_sign_tx() ->
+	NewTX = new(<<"TEST DATA">>, ?AR(1)),
+	{Priv, Pub} = ar_wallet:new(),
+	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
+	PricePerGiBMinute = 1,
+	Timestamp = os:system_time(seconds),
+	ValidTXs = [
+		sign_v1(NewTX, Priv, Pub),
+		sign(generate_chunk_tree(NewTX#tx{ format = 2 }), Priv, Pub)
+	],
+	lists:foreach(
+		fun(TX) ->
+			Accounts =
+				lists:foldl(
+					fun(Addr, Acc) ->
+						maps:put(Addr, {?AR(10), <<>>}, Acc)
+					end,
+					#{},
+					ar_tx:get_addresses([TX])
+				),
+			Args1 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
+			?assert(verify(TX, Args1), ar_util:encode(TX#tx.id)),
+			Args2 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
+			?assert(verify(TX, Args2), ar_util:encode(TX#tx.id))
+		end,
+		ValidTXs
+	),
+	InvalidTXs = [
+		sign(
+			generate_chunk_tree( % a quantity with empty target
+				NewTX#tx{ format = 2, quantity = 1 }
+			),
+			Priv,
+			Pub
+		),
+		sign_v1(
+			generate_chunk_tree( % a target without quantity
+				NewTX#tx{ format = 1, target = crypto:strong_rand_bytes(32) }
+			),
+			Priv,
+			Pub
+		)
+	],
+	lists:foreach(
+		fun(TX) ->
+			Accounts =
+				lists:foldl(
+					fun(Addr, Acc) ->
+						maps:put(Addr, {?AR(10), <<>>}, Acc)
+					end,
+					#{},
+					ar_tx:get_addresses([TX])
+				),
+			Args3 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
+			?assert(not verify(TX, Args3), ar_util:encode(TX#tx.id)),
+			Args4 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
+			?assert(not verify(TX, Args4), ar_util:encode(TX#tx.id))
+		end,
+		InvalidTXs
+	).
 
-% sign_and_verify_chunked_test_() ->
-% 	{timeout, 60, fun test_sign_and_verify_chunked/0}.
+sign_and_verify_chunked_test_() ->
+	{timeout, 60, fun test_sign_and_verify_chunked/0}.
 
-% sign_and_verify_chunked_pre_fork_2_5_test_() ->
-% 	ar_test_fork:test_on_fork(height_2_5, infinity, fun test_sign_and_verify_chunked/0).
+sign_and_verify_chunked_pre_fork_2_5_test_() ->
+	ar_test_fork:test_on_fork(height_2_5, infinity, fun test_sign_and_verify_chunked/0).
 
-% test_sign_and_verify_chunked() ->
-% 	TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
-% 	{Priv, Pub} = ar_wallet:new(),
-% 	UnsignedTX =
-% 		generate_chunk_tree(
-% 			#tx{
-% 				format = 2,
-% 				data = TXData,
-% 				data_size = byte_size(TXData),
-% 				reward = ?AR(100)
-% 			}
-% 		),
-% 	SignedTX = sign(UnsignedTX#tx{ data = <<>> }, Priv, Pub),
-% 	Height = 0,
-% 	Rate = {1, 3},
-% 	PricePerGiBMinute = 200,
-% 	Timestamp = os:system_time(seconds),
-% 	Address = ar_wallet:to_address(Pub),
-% 	Args = {Rate, PricePerGiBMinute, 1, 1, 0, Height,
-% 			maps:from_list([{Address, {?AR(100), <<>>}}]), Timestamp},
-% 	?assert(verify(SignedTX, Args)).
+test_sign_and_verify_chunked() ->
+	TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
+	{Priv, Pub} = ar_wallet:new(),
+	UnsignedTX =
+		generate_chunk_tree(
+			#tx{
+				format = 2,
+				data = TXData,
+				data_size = byte_size(TXData),
+				reward = ?AR(100)
+			}
+		),
+	SignedTX = sign(UnsignedTX#tx{ data = <<>> }, Priv, Pub),
+	Height = 0,
+	Rate = {1, 3},
+	PricePerGiBMinute = 200,
+	Timestamp = os:system_time(seconds),
+	Address = ar_wallet:to_address(Pub),
+	Args = {Rate, PricePerGiBMinute, 1, 1, 0, Height,
+			maps:from_list([{Address, {?AR(100), <<>>}}]), Timestamp},
+	?assert(verify(SignedTX, Args)).
 
-% %% Ensure that a forged transaction does not pass verification.
+%% Ensure that a forged transaction does not pass verification.
 
-% forge_test_() ->
-% 	{timeout, 30, fun test_forge/0}.
+forge_test_() ->
+	{timeout, 30, fun test_forge/0}.
 
-% test_forge() ->
-% 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
-% 	{Priv, Pub} = ar_wallet:new(),
-% 	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
-% 	PricePerGiBMinute = 400,
-% 	Height = 0,
-% 	InvalidSignTX = (sign_v1(NewTX, Priv, Pub))#tx{
-% 		data = <<"FAKE DATA">>
-% 	},
-% 	Timestamp = os:system_time(seconds),
-% 	Args = {Rate, PricePerGiBMinute, 1, 1, 0, Height, #{}, Timestamp},
-% 	?assert(not verify(InvalidSignTX, Args)).
+test_forge() ->
+	NewTX = new(<<"TEST DATA">>, ?AR(10)),
+	{Priv, Pub} = ar_wallet:new(),
+	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
+	PricePerGiBMinute = 400,
+	Height = 0,
+	InvalidSignTX = (sign_v1(NewTX, Priv, Pub))#tx{
+		data = <<"FAKE DATA">>
+	},
+	Timestamp = os:system_time(seconds),
+	Args = {Rate, PricePerGiBMinute, 1, 1, 0, Height, #{}, Timestamp},
+	?assert(not verify(InvalidSignTX, Args)).
 
-% %% Ensure that transactions above the minimum tx cost are accepted.
-% is_tx_fee_sufficient_test() ->
-% 	ValidTX = new(<<"TEST DATA">>, ?AR(10)),
-% 	InvalidTX = new(<<"TEST DATA">>, 1),
-% 	Rate = {1, 5},
-% 	PricePerGiBMinute = 2,
-% 	Height = 2,
-% 	Timestamp = os:system_time(seconds),
-% 	?assert(is_tx_fee_sufficient({ValidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
-% 			<<"non-existing-addr">>, Timestamp})),
-% 	?assert(
-% 		not is_tx_fee_sufficient({InvalidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
-% 				<<"non-existing-addr">>, Timestamp})).
+%% Ensure that transactions above the minimum tx cost are accepted.
+is_tx_fee_sufficient_test() ->
+	ValidTX = new(<<"TEST DATA">>, ?AR(10)),
+	InvalidTX = new(<<"TEST DATA">>, 1),
+	Rate = {1, 5},
+	PricePerGiBMinute = 2,
+	Height = 2,
+	Timestamp = os:system_time(seconds),
+	?assert(is_tx_fee_sufficient({ValidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
+			<<"non-existing-addr">>, Timestamp})),
+	?assert(
+		not is_tx_fee_sufficient({InvalidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
+				<<"non-existing-addr">>, Timestamp})).
 
-% %% Ensure that the check_last_tx function only validates transactions in which
-% %% last tx field matches that expected within the wallet list.
-% check_last_tx_test_() ->
-% 	{timeout, 60, fun test_check_last_tx/0}.
+%% Ensure that the check_last_tx function only validates transactions in which
+%% last tx field matches that expected within the wallet list.
+check_last_tx_test_() ->
+	{timeout, 60, fun test_check_last_tx/0}.
 
-% check_last_tx_pre_fork_2_5_test_() ->
-% 	ar_test_fork:test_on_fork(height_2_4, infinity, fun test_check_last_tx/0).
+check_last_tx_pre_fork_2_5_test_() ->
+	ar_test_fork:test_on_fork(height_2_4, infinity, fun test_check_last_tx/0).
 
-% test_check_last_tx() ->
-% 	{_Priv1, Pub1} = ar_wallet:new(),
-% 	{Priv2, Pub2} = ar_wallet:new(),
-% 	{Priv3, Pub3} = ar_wallet:new(),
-% 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-% 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
-% 	TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
-% 	SignedTX2 = sign_v1(TX2, Priv2, Pub2),
-% 	SignedTX3 = sign_v1(TX3, Priv3, Pub3),
-% 	WalletList =
-% 		maps:from_list(
-% 			[
-% 				{ar_wallet:to_address(Pub1), {1000, <<>>}},
-% 				{ar_wallet:to_address(Pub2), {2000, TX#tx.id}},
-% 				{ar_wallet:to_address(Pub3), {3000, <<>>}}
-% 			]
-% 		),
-% 	false = check_last_tx(WalletList, SignedTX3),
-% 	true = check_last_tx(WalletList, SignedTX2).
+test_check_last_tx() ->
+	{_Priv1, Pub1} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
+	{Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
+	TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
+	SignedTX2 = sign_v1(TX2, Priv2, Pub2),
+	SignedTX3 = sign_v1(TX3, Priv3, Pub3),
+	WalletList =
+		maps:from_list(
+			[
+				{ar_wallet:to_address(Pub1), {1000, <<>>}},
+				{ar_wallet:to_address(Pub2), {2000, TX#tx.id}},
+				{ar_wallet:to_address(Pub3), {3000, <<>>}}
+			]
+		),
+	false = check_last_tx(WalletList, SignedTX3),
+	true = check_last_tx(WalletList, SignedTX2).
 
-% generate_and_validate_even_chunk_tree_test() ->
-% 	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 7),
-% 	lists:map(
-% 		fun(ChallengeLocation) ->
-% 			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
-% 		end,
-% 		[
-% 			0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1,
-% 			7 * ?DATA_CHUNK_SIZE - 1
-% 		]
-% 	).
+generate_and_validate_even_chunk_tree_test() ->
+	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 7),
+	lists:map(
+		fun(ChallengeLocation) ->
+			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
+		end,
+		[
+			0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1,
+			7 * ?DATA_CHUNK_SIZE - 1
+		]
+	).
 
-% generate_and_validate_uneven_chunk_tree_test() ->
-% 	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 4 + 10),
-% 	lists:map(
-% 		fun(ChallengeLocation) ->
-% 			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
-% 		end,
-% 		[
-% 			0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1,
-% 			4 * ?DATA_CHUNK_SIZE + 9
-% 		]
-% 	).
+generate_and_validate_uneven_chunk_tree_test() ->
+	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 4 + 10),
+	lists:map(
+		fun(ChallengeLocation) ->
+			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
+		end,
+		[
+			0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1,
+			4 * ?DATA_CHUNK_SIZE + 9
+		]
+	).
 
-% test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
-% 	ChunkStart = ChallengeLocation - ChallengeLocation rem ?DATA_CHUNK_SIZE,
-% 	Chunk = binary:part(Data, ChunkStart, min(?DATA_CHUNK_SIZE, byte_size(Data) - ChunkStart)),
-% 	#tx{ data_root = DataRoot, data_tree = DataTree } =
-% 		ar_tx:generate_chunk_tree(
-% 			#tx{
-% 				data = Data,
-% 				data_size = byte_size(Data)
-% 			}
-% 		),
-% 	DataPath =
-% 		ar_merkle:generate_path(
-% 			DataRoot,
-% 			ChallengeLocation,
-% 			DataTree
-% 		),
-% 	RealChunkID = ar_tx:generate_chunk_id(Chunk),
-% 	{PathChunkID, StartOffset, EndOffset} =
-% 		ar_merkle:validate_path(DataRoot, ChallengeLocation, byte_size(Data), DataPath),
-% 	{PathChunkID, StartOffset, EndOffset} =
-% 		ar_merkle:validate_path_strict_data_split(DataRoot, ChallengeLocation, byte_size(Data),
-% 				DataPath),
-% 	{PathChunkID, StartOffset, EndOffset} =
-% 		ar_merkle:validate_path_strict_borders(DataRoot, ChallengeLocation, byte_size(Data),
-% 				DataPath),
-% 	?assertEqual(RealChunkID, PathChunkID),
-% 	?assert(ChallengeLocation >= StartOffset),
-% 	?assert(ChallengeLocation < EndOffset).
+test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
+	ChunkStart = ChallengeLocation - ChallengeLocation rem ?DATA_CHUNK_SIZE,
+	Chunk = binary:part(Data, ChunkStart, min(?DATA_CHUNK_SIZE, byte_size(Data) - ChunkStart)),
+	#tx{ data_root = DataRoot, data_tree = DataTree } =
+		ar_tx:generate_chunk_tree(
+			#tx{
+				data = Data,
+				data_size = byte_size(Data)
+			}
+		),
+	DataPath =
+		ar_merkle:generate_path(
+			DataRoot,
+			ChallengeLocation,
+			DataTree
+		),
+	RealChunkID = ar_tx:generate_chunk_id(Chunk),
+	{PathChunkID, StartOffset, EndOffset} =
+		ar_merkle:validate_path(DataRoot, ChallengeLocation, byte_size(Data), DataPath),
+	{PathChunkID, StartOffset, EndOffset} =
+		ar_merkle:validate_path_strict_data_split(DataRoot, ChallengeLocation, byte_size(Data),
+				DataPath),
+	{PathChunkID, StartOffset, EndOffset} =
+		ar_merkle:validate_path_strict_borders(DataRoot, ChallengeLocation, byte_size(Data),
+				DataPath),
+	?assertEqual(RealChunkID, PathChunkID),
+	?assert(ChallengeLocation >= StartOffset),
+	?assert(ChallengeLocation < EndOffset).
 
-% get_weave_size_increase_test() ->
-% 	?assertEqual(0, get_weave_size_increase(#tx{}, ar_fork:height_2_5())),
-% 	?assertEqual(262144,
-% 			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5())),
-% 	?assertEqual(262144,
-% 			get_weave_size_increase(#tx{ data_size = 256 }, ar_fork:height_2_5())),
-% 	?assertEqual(262144,
-% 			get_weave_size_increase(#tx{ data_size = 256 * 1024 - 1 }, ar_fork:height_2_5())),
-% 	?assertEqual(262144,
-% 			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5())),
-% 	?assertEqual(2 * 262144,
-% 			get_weave_size_increase(#tx{ data_size = 256 * 1024 + 1}, ar_fork:height_2_5())),
-% 	?assertEqual(0,
-% 			get_weave_size_increase(#tx{ data_size = 0 }, ar_fork:height_2_5() - 1)),
-% 	?assertEqual(1,
-% 			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5() - 1)),
-% 	?assertEqual(262144,
-% 			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5() - 1)).
+get_weave_size_increase_test() ->
+	?assertEqual(0, get_weave_size_increase(#tx{}, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 }, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 - 1 }, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5())),
+	?assertEqual(2 * 262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 + 1}, ar_fork:height_2_5())),
+	?assertEqual(0,
+			get_weave_size_increase(#tx{ data_size = 0 }, ar_fork:height_2_5() - 1)),
+	?assertEqual(1,
+			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5() - 1)),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5() - 1)).
 
 %% @doc Primarily test the different branches in the ar_tx:get_tx_fee logic. Several
 %% of the pricing constants have test specific values which means the fees asserted here
