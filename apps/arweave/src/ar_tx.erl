@@ -560,9 +560,10 @@ get_tx_fee(Args) ->
 			Height} = Args,
 	Fork_2_6 = ar_fork:height_2_6(),
 	Fork_2_6_8 = ar_fork:height_2_6_8(),
-	Args2 = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
-	Args3 = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
+	PreFork26Args = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
+	V2PricingArgs = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
 					Height},
+	StaticFeeArgs = {DataSize, Rate, Height, Accounts, Addr, ar_fork:timestamp_2_6_8()},
 
 	V2PricingHeight = Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START)
 					+ (?PRICE_2_6_8_TRANSITION_BLOCKS),
@@ -572,34 +573,29 @@ get_tx_fee(Args) ->
 	TransitionStart_2_6_8 = Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START,
 	TransitionEnd_2_6_8 = TransitionStart_2_6_8 + ?PRICE_2_6_8_TRANSITION_BLOCKS,
 
-	%% div the fee (in winstons) by the number of bytes in a GiB rather than the DataSize
-	%% so that we can ignore/truncate any fractions (since we don't care about fractional
-	%% winstons, but we do care about factional GiBs).
-	StaticFee = (?STATIC_2_6_8_FEE_WINSTON div ?GiB) * (DataSize + ?TX_SIZE_BASE),
-
 	case Height of
 		H when H >= V2PricingHeight ->
-			get_tx_fee2(Args3);
+			get_tx_fee2(V2PricingArgs);
 		H when H >= TransitionStart_2_6_8 ->
 			%% For 2.6.8 the fee at the start of the transition period is
 			%% the 2.6 transition fee in effect when the 2.6.8 fork occured.
 			get_transition_tx_fee(
-				StaticFee, %% StartFee
-				get_tx_fee2(Args3), %% EndFee
+				get_tx_fee_pre_fork_2_6(StaticFeeArgs), %% StartFee
+				get_tx_fee2(V2PricingArgs), %% EndFee
 				TransitionStart_2_6_8, 
 				TransitionEnd_2_6_8,
 				Height);
 		H when H >= Fork_2_6_8 ->
-			StaticFee;
+			get_tx_fee_pre_fork_2_6(StaticFeeArgs);
 		H when H >= TransitionStart_2_6 ->
 			get_transition_tx_fee(
-				get_tx_fee_pre_fork_2_6(Args2), %% StartFee
-				get_tx_fee2(Args3), %% EndFee
+				get_tx_fee_pre_fork_2_6(PreFork26Args), %% StartFee
+				get_tx_fee2(V2PricingArgs), %% EndFee
 				TransitionStart_2_6, 
 				TransitionEnd_2_6,
 				Height);
 		_ ->
-			get_tx_fee_pre_fork_2_6(Args2)
+			get_tx_fee_pre_fork_2_6(PreFork26Args)
 	end.
 
 get_transition_tx_fee(StartFee, EndFee, StartHeight, EndHeight, Height) ->
