@@ -596,7 +596,9 @@ get_tx_fee(Args) ->
 				get_tx_fee2(V2PricingArgs), %% EndFee
 				TransitionStart_2_6, 
 				TransitionEnd_2_6,
-				Height)
+				Height);
+		_ ->
+			get_tx_fee_pre_fork_2_6(PreFork26Args)
 	end.
 
 get_transition_tx_fee(StartFee, EndFee, StartHeight, EndHeight, Height) ->

@@ -19,6 +19,7 @@
 		read_block_when_stored/1]).
 
 -define(HUGE_WEAVE_SIZE, 1000000000000000).
+-define(DISTANT_FUTURE_BLOCK_HEIGHT, 262800000). %% 1,000 years from genesis
 
 auto_redenomination_and_endowment_debt_test_() ->
 	{timeout, 120, fun test_auto_redenomination_and_endowment_debt/0}.
@@ -348,7 +349,8 @@ assert_new_account_fee() ->
 
 updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
 	test_with_mocked_functions(
-		[{ar_fork, height_2_6, fun() -> infinity end}],
+		[{ar_fork, height_2_6, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end},
+		 {ar_fork, height_2_6_8, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end}],
 		fun updates_pool_and_assigns_rewards_correctly_before_burden/0
 	).
 
@@ -362,13 +364,15 @@ updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
 			{ar_pricing, get_miner_reward_and_endowment_pool,
 				fun ar_pricing_tests:get_miner_reward_and_endowment_pool/1},
 			{ar_inflation, calculate, fun(_Height) -> 1 end},
-			{ar_fork, height_2_6, fun() -> infinity end}
+			{ar_fork, height_2_6, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end}
 		],
 		fun updates_pool_and_assigns_rewards_correctly_after_burden/0
 	).
 
 unclaimed_rewards_go_to_endowment_pool_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> infinity end}],
+	ar_test_node:test_with_mocked_functions([
+		{ar_fork, height_2_6, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end},
+		{ar_fork, height_2_6_8, fun() -> ?DISTANT_FUTURE_BLOCK_HEIGHT end}],
 		fun test_unclaimed_rewards_go_to_endowment_pool/0).
 
 get_miner_reward_and_endowment_pool(Args) ->
