@@ -100,5 +100,5 @@ height_2_6_8() ->
 	0.
 -else.
 height_2_6_8() ->
-	1189272. % XXX TODO: set this.
+	1189000. % Targeting 2023-05-29 16:00 UTC
 -endif.

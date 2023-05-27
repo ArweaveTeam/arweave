@@ -561,48 +561,40 @@ get_tx_fee(Args) ->
 	Fork_2_6 = ar_fork:height_2_6(),
 	Fork_2_6_8 = ar_fork:height_2_6_8(),
 	Args2 = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
-	case Height >= Fork_2_6 of
-		false ->
-			get_tx_fee_pre_fork_2_6(Args2);
-		true ->
-			Args3 = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
+	Args3 = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
 					Height},
-			case ar_pricing:is_v2_pricing_height(Height) of
-				true ->
-					%% Height >= Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START + ?PRICE_2_6_8_TRANSITION_BLOCKS)
-					get_tx_fee2(Args3);
-				false ->
-					TransitionStart_2_6 = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
-					TransitionEnd_2_6 = TransitionStart_2_6 + ?PRICE_2_6_TRANSITION_BLOCKS,
-					TransitionStart_2_6_8 = Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START,
-					TransitionEnd_2_6_8 = TransitionStart_2_6_8 + ?PRICE_2_6_8_TRANSITION_BLOCKS,
-					case Height of 
-						H when H >= TransitionStart_2_6_8 ->
-							%% For 2.6.8 the fee at the start of the transition period is
-							%% the 2.6 transition fee in effect when the 2.6.8 fork occured.
-							StartFee = get_transition_tx_fee(
-								get_tx_fee_pre_fork_2_6(Args2), %% StartFee
-								get_tx_fee2(Args3), %% EndFee
-								TransitionStart_2_6, 
-								TransitionEnd_2_6,
-								Fork_2_6_8),
-							get_transition_tx_fee(
-								StartFee,
-								get_tx_fee2(Args3), %% EndFee
-								TransitionStart_2_6_8, 
-								TransitionEnd_2_6_8,
-								Height);
-						H when H >= TransitionStart_2_6 ->
-							get_transition_tx_fee(
-								get_tx_fee_pre_fork_2_6(Args2), %% StartFee
-								get_tx_fee2(Args3), %% EndFee
-								TransitionStart_2_6, 
-								TransitionEnd_2_6,
-								Height);
-						_ ->
-							get_tx_fee_pre_fork_2_6(Args2)
-					end
-			end
+
+	V2PricingHeight = Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START)
+					+ (?PRICE_2_6_8_TRANSITION_BLOCKS),
+
+	TransitionStart_2_6 = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
+	TransitionEnd_2_6 = TransitionStart_2_6 + ?PRICE_2_6_TRANSITION_BLOCKS,
+	TransitionStart_2_6_8 = Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START,
+	TransitionEnd_2_6_8 = TransitionStart_2_6_8 + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+
+	case Height of
+		H when H >= V2PricingHeight ->
+			get_tx_fee2(Args3);
+		H when H >= TransitionStart_2_6_8 ->
+			%% For 2.6.8 the fee at the start of the transition period is
+			%% the 2.6 transition fee in effect when the 2.6.8 fork occured.
+			get_transition_tx_fee(
+				?STATIC_2_6_8_FEE_WINSTON, %% StartFee
+				get_tx_fee2(Args3), %% EndFee
+				TransitionStart_2_6_8, 
+				TransitionEnd_2_6_8,
+				Height);
+		H when H >= Fork_2_6_8 ->
+			?STATIC_2_6_8_FEE_WINSTON;
+		H when H >= TransitionStart_2_6 ->
+			get_transition_tx_fee(
+				get_tx_fee_pre_fork_2_6(Args2), %% StartFee
+				get_tx_fee2(Args3), %% EndFee
+				TransitionStart_2_6, 
+				TransitionEnd_2_6,
+				Height);
+		_ ->
+			get_tx_fee_pre_fork_2_6(Args2)
 	end.
 
 get_transition_tx_fee(StartFee, EndFee, StartHeight, EndHeight, Height) ->
