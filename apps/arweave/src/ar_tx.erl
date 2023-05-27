@@ -628,7 +628,7 @@ get_new_account_fee(Addr, Accounts, BytePerMinutePrice, KryderPlusRateMultiplier
 		false ->
 			Args = {?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, BytePerMinutePrice,
 				KryderPlusRateMultiplier, Height},
-		ar_pricing:get_tx_fee(Args)
+			ar_pricing:get_tx_fee(Args)
 	end.
 
 get_tx_fee_pre_fork_2_6({DataSize, Rate, Height, Accounts, Addr, Timestamp}) ->
