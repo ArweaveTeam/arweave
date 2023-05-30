@@ -99,6 +99,11 @@ height_2_6() ->
 height_2_6_8() ->
 	0.
 -else.
-height_2_6_8() ->
-	1189560. % Targeting 2023-05-30 16:00 UTC
+	-ifdef(TESTNET).
+		height_2_6_8() ->
+			1189000.
+	-else.
+		height_2_6_8() ->
+			1189560. % Targeting 2023-05-30 16:00 UTC
+	-endif.
 -endif.
