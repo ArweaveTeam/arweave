@@ -74,7 +74,7 @@ The tarball is created at `_build/testnet/rel/arweave/arweave-x.y.z.tar.gz`.
 You can join the public testnet now:
 
 ```
-./bin/start peer testnet-1.arweave.net peer testnet-2.arweave.net peer peer testnet-3.arweave.net
+./bin/start peer testnet-1.arweave.net peer testnet-2.arweave.net peer testnet-3.arweave.net
 ```
 
 We recommed you do not use your mainnet mining address on testnet. Also, do not join the
