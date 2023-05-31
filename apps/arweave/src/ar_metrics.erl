@@ -419,7 +419,11 @@ register(MetricsDir) ->
 					"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
 
 	prometheus_counter:new([{name, process_functions},
-			{help, "Sampling active processes"}, {labels, [process]}]).
+			{labels, [process]},
+			{help, "Sampling active functions. The 'process' label is a fully qualified "
+					"function name with the format 'process~module:function/arith'"}]),
+	prometheus_gauge:new([{name, process_memory},
+			{help, "Sampling active process memory usage."}, {labels, [process]}]).
 
 %% @doc Store the given metric in a file.
 store(Name) ->

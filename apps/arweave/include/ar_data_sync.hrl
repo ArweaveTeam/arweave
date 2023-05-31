@@ -49,10 +49,6 @@
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 
-%% Do not repeat the missing interval collection procedure while there are more than this
-%% number of intervals in the queue.
--define(SYNC_INTERVALS_MAX_QUEUE_SIZE, 10).
-
 %% The maximum number of chunks currently being downloaded or processed.
 -ifdef(DEBUG).
 -define(SYNC_BUFFER_SIZE, 100).
@@ -213,5 +209,7 @@
 	%% The threshold controlling the brief accumuluation of the chunks in the queue before
 	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
 	%% fragmentation.
-	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
+	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
+	%% Cache mapping peers to /data_sync_record responses
+	all_peers_intervals = #{}
 }).

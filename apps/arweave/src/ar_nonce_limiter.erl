@@ -562,7 +562,8 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_info({event, node_state, {initializing, Blocks}}, State) ->
+handle_info({event, node_state, initializing}, State) ->
+	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
 	{noreply, handle_initialized(lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT), State)};
 
 handle_info({event, node_state, {validated_pre_fork_2_6_block, B}}, State) ->
@@ -1141,7 +1142,8 @@ test_applies_validated_steps() ->
 	NextSeed2 = crypto:strong_rand_bytes(32),
 	InitialOutput = crypto:strong_rand_bytes(32),
 	B1 = test_block(1, InitialOutput, Seed, NextSeed, [], []),
-	ar_events:send(node_state, {initializing, [B1]}),
+	ets:insert(node_state, [{joined_blocks, [B1]}]),
+	ar_events:send(node_state, initializing),
 	true = ar_util:do_until(fun() -> get_current_step_number() == 1 end, 100, 1000),
 	{ok, Output2, _} = compute(2, InitialOutput),
 	B2 = test_block(2, Output2, Seed, NextSeed, [], [Output2]),

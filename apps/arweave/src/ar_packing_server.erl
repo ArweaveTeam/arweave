@@ -234,6 +234,10 @@ log_packing_rate(PackingRate, Max) ->
 			"Estimated maximum rate: ~.2f chunks/s.~n",
 			[PackingRate, Max]).
 
+calculate_throttle_delay(0, _PackingRate) ->
+	0;
+calculate_throttle_delay(_SpawnSchedulers, 0) ->
+	0;
 calculate_throttle_delay(SpawnSchedulers, PackingRate) ->
 	Load = PackingRate / (SpawnSchedulers * (1000 / (?PACKING_LATENCY_MS))),
 	case Load >= 1 of
@@ -601,3 +605,18 @@ pack_test() ->
 		Cases
 	)),
 	?assertEqual(length(PackedList), sets:size(sets:from_list(PackedList))).
+
+calculate_throttle_delay_test() ->
+	%% 1000 / ?PACKING_LATENCY_MS = 16.666666
+	?assertEqual(0, calculate_throttle_delay(1, 17),
+		"PackingRate > SpawnSchedulers capacity -> no throttle"),
+	?assertEqual(0, calculate_throttle_delay(8, 1000),
+		"PackingRate > SpawnSchedulers capacity -> no throttle"),
+	?assertEqual(2, calculate_throttle_delay(1, 16),
+		"PackingRate < SpawnSchedulers capacity -> throttle"),
+	?assertEqual(15, calculate_throttle_delay(8, 100),
+		"PackingRate < SpawnSchedulers capacity -> throttle"),
+	?assertEqual(0, calculate_throttle_delay(0, 100),
+		"0 schedulers -> no throttle"),
+	?assertEqual(0, calculate_throttle_delay(8, 0),
+		"no packing -> no throttle").

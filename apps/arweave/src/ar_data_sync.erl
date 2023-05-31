@@ -24,7 +24,7 @@
 -ifdef(DEBUG).
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5000).
 -else.
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300000).
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300_000).
 -endif.
 
 %%%===================================================================
@@ -707,13 +707,38 @@ handle_cast({pack_and_store_chunk, Args} = Cast,
 	end;
 
 %% Schedule syncing of the unsynced intervals. Choose a peer for each of the intervals.
+%% There are two message payloads:
+%% 1. collect_peer_intervals
+%%    Start the collection process over the full storage_module range.
+%% 2. {collect_peer_intervals, Start, End}
+%%    Collect intervals for the specified range. This interface is used to pick up where
+%%    we left off after a pause. There are 2 main conditions that can trigger a pause: 
+%%    a. Insufficient disk space. Will pause until disk space frees up
+%%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
+%%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
-	#sync_data_state{ range_start = Start, range_end = End, sync_intervals_queue = Q,
-			store_id = StoreID, disk_pool_threshold = DiskPoolThreshold } = State,
+	#sync_data_state{ range_start = Start, range_end = End } = State,
+	gen_server:cast(self(), {collect_peer_intervals, Start, End}),
+	{noreply, State};
+
+handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
+		#sync_data_state{ store_id = StoreID } = State,
+	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
+		{start, Start}]),
+	%% We've finished collecting intervals for the whole storage_module range. Schedule
+	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS and
+	%% clear the all_peers_intervals cache so we can start fresh and requery peers for
+	%% their advertised intervals.
+	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
+	{noreply, State#sync_data_state{ all_peers_intervals = #{} }};
+handle_cast({collect_peer_intervals, Start, End}, State) ->
+	#sync_data_state{ sync_intervals_queue = Q,
+			store_id = StoreID, disk_pool_threshold = DiskPoolThreshold,
+			all_peers_intervals = AllPeersIntervals } = State,
 	IsJoined =
 		case ar_node:is_joined() of
 			false ->
-				ar_util:cast_after(1000, self(), collect_peer_intervals),
+				ar_util:cast_after(1000, self(), {collect_peer_intervals, Start, End}),
 				false;
 			true ->
 				true
@@ -727,7 +752,7 @@ handle_cast(collect_peer_intervals, State) ->
 					true ->
 						true;
 					_ ->
-						ar_util:cast_after(30000, self(), collect_peer_intervals),
+						ar_util:cast_after(30_000, self(), {collect_peer_intervals, Start, End}),
 						false
 				end
 		end,
@@ -736,51 +761,56 @@ handle_cast(collect_peer_intervals, State) ->
 			false ->
 				true;
 			true ->
-				case gb_sets:size(Q) > ?SYNC_INTERVALS_MAX_QUEUE_SIZE of
+				%% Q is the number of chunks that we've already queued for syncing. We need
+				%% to manage the queue length.
+				%% 1. Periodically sync_intervals will pull from Q and send work to
+				%%    ar_data_sync_worker_master. We need to make sure Q is long enough so
+				%%    that we never starve ar_data_sync_worker_master of work.
+				%% 2. On the flip side we don't want Q to get so long as to trigger an
+				%%    out-of-memory condition. In the extreme case we could collect and
+				%%    enqueue all chunks in a full 3.6TB storage_module. A Q of this length
+				%%    would have a roughly 500MB memory footprint per storage_module. For a
+				%%    node that is syncing multiple storage modules, this can add up fast.
+				%% 3. We also want to make sure we are using the most up to date information
+				%%    we can. Every time we add a task to the Q we're locking in a specific
+				%%    view of Peer data availability. If that peer goes offline before we
+				%%    get to the task it can result in wasted work or syncing stalls. A
+				%%    shorter queue helps ensure we're always syncing from the "best" peers
+				%%    at any point in time.
+				%%
+				%% With all that in mind, we'll pause collection once the Q hits roughly
+				%% a bucket size worth of chunks. This number is slightly arbitrary and we
+				%% should feel free to adjust as necessary.
+				case gb_sets:size(Q) > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
 					true ->
-						ar_util:cast_after(500, self(), collect_peer_intervals),
+						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
 						true;
 					false ->
 						false
 				end
 		end,
-	IsBelowDiskPoolThreshold =
+	AllPeersIntervals2 =
 		case IsSyncQueueBusy of
 			true ->
-				false;
+				AllPeersIntervals;
 			false ->
 				case Start >= DiskPoolThreshold of
 					true ->
-						ar_util:cast_after(500, self(), collect_peer_intervals),
-						false;
+						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
+						AllPeersIntervals;
 					false ->
-						true
+						%% All checks have pased, find and enqueue intervals for one
+						%% sync bucket worth of chunks starting at offset Start
+						find_peer_intervals(
+							Start, min(End, DiskPoolThreshold), StoreID, AllPeersIntervals)
 				end
 		end,
-	case IsBelowDiskPoolThreshold of
-		false ->
-			ok;
-		true ->
-			{ok, Config} = application:get_env(arweave, config),
-			SyncWorkers = Config#config.sync_jobs,
-			%% We do not want to bother peers if we still have a lot of data scheduled for
-			%% local copying and repacking.
-			case ar_data_sync_worker_master:get_total_task_count() > SyncWorkers * 2 of
-				true ->
-					ar_util:cast_after(1000, self(), collect_peer_intervals);
-				false ->
-					Self = self(),
-					monitor(process, spawn(
-						fun() ->
-							find_peer_intervals(Start, min(End, DiskPoolThreshold), StoreID,
-									Self, #{}),
-							ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, Self,
-									collect_peer_intervals)
-						end
-					))
-			end
-	end,
-	{noreply, State};
+	%% While we are working through the storage_module range we'll maintain a cache
+	%% of the mapping of peers to their advertised intervals. This ensures we don't query
+	%% each peer's /data_sync_record endpoint too often. Once we've made a full pass through
+	%% the range, we'll clear the cache so that we can incorporate any peer interval changes
+	%% the next time through.
+	{noreply, State#sync_data_state{ all_peers_intervals = AllPeersIntervals2 }};
 
 handle_cast({enqueue_intervals, []}, State) ->
 	{noreply, State};
@@ -802,7 +832,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	
 	%% This is an approximation. The intent is to enqueue one sync_bucket at a time - but
 	%% due to the selection of each peer's intervals, the total number of bytes may be
-	%% less than a full sync_bucket. But for the purposes of distrubiting requests among
+	%% less than a full sync_bucket. But for the purposes of distributing requests among
 	%% many peers - the approximation is fine (and much cheaper to calculate than taking
 	%% the sum of all the peer intervals).
 	TotalChunksToEnqueue = ?DEFAULT_SYNC_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
@@ -814,6 +844,10 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 
 	{Q2, QIntervals2} = enqueue_intervals(
 		ar_util:shuffle_list(Intervals), ChunksPerPeer, {Q, QIntervals}),
+
+	?LOG_DEBUG([{event, enqueue_intervals}, {pid, self()},
+		{queue_before, gb_sets:size(Q)}, {queue_after, gb_sets:size(Q2)},
+		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer}]),
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -2154,20 +2188,39 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 			end
 	end.
 
-find_peer_intervals(Start, End, _StoreID, _Self, _AllPeersIntervals) when Start >= End ->
-	ok;
-find_peer_intervals(Start, End, StoreID, Self, AllPeersIntervals) ->
+find_peer_intervals(Start, End, StoreID, _AllPeersIntervals) when Start >= End ->
+	%% We've reached the end of the range, next time through we'll start with a clear cache.
+	?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
+		{start, Start}]),
+	#{};
+find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
 	Start2 = Start - Start rem ?NETWORK_DATA_BUCKET_SIZE,
 	End2 = min(Start2 + ?NETWORK_DATA_BUCKET_SIZE, End),
 	UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
-	AllPeersIntervals2 =
-		case ar_intervals:is_empty(UnsyncedIntervals) of
+
+	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
+	{ok, Config} = application:get_env(arweave, config),
+	Peers =
+		case Config#config.sync_from_local_peers_only of
 			true ->
-				AllPeersIntervals;
+				Config#config.local_peers;
 			false ->
-				find_peer_intervals2(Start, UnsyncedIntervals, Self, AllPeersIntervals)
+				ar_data_discovery:get_bucket_peers(Bucket)
 		end,
-	find_peer_intervals(End2, End, StoreID, Self, AllPeersIntervals2).
+	?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID}, 
+		{start, Start}, {bucket, Bucket}, 
+		{peers, io_lib:format("~p", [[ar_util:format_peer(Peer) || Peer <- Peers]])}]),
+
+	%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
+	gen_server:cast(self(), {collect_peer_intervals, End2, End}),
+
+	%% The updated AllPeersIntervals cache is returned so it can be added to the State
+	case ar_intervals:is_empty(UnsyncedIntervals) of
+		true ->
+			AllPeersIntervals;
+		false ->
+			find_peer_intervals2(Start, Peers, UnsyncedIntervals, AllPeersIntervals)
+	end.
 
 %% @doc Collect the unsynced intervals between Start and End excluding the blocklisted
 %% intervals.
@@ -2193,24 +2246,7 @@ get_unsynced_intervals(Start, End, Intervals, StoreID) ->
 			end
 	end.
 
-find_peer_intervals2(Start, UnsyncedIntervals, Self, AllPeersIntervals) ->
-	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
-	{ok, Config} = application:get_env(arweave, config),
-	Peers =
-		case Config#config.sync_from_local_peers_only of
-			true ->
-				Config#config.local_peers;
-			false ->
-				ar_data_discovery:get_bucket_peers(Bucket)
-		end,
-	case ar_intervals:is_empty(UnsyncedIntervals) of
-		true ->
-			AllPeersIntervals;
-		false ->
-			find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers)
-	end.
-
-find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers) ->
+find_peer_intervals2(Start, Peers, UnsyncedIntervals, AllPeersIntervals) ->
 	Intervals =
 		ar_util:pmap(
 			fun(Peer) ->
@@ -2225,22 +2261,6 @@ find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers) -
 				end
 			end,
 			Peers
-		),
-	AllPeersIntervals2 =
-		lists:foldl(
-			fun	({Peer, _, PeerIntervals, Left}, Acc) ->
-					case ar_intervals:is_empty(PeerIntervals) of
-						true ->
-							Acc;
-						false ->
-							Right = element(1, ar_intervals:largest(PeerIntervals)),
-							maps:put(Peer, {Right, Left, PeerIntervals}, Acc)
-					end;
-				(_, Acc) ->
-					Acc
-			end,
-			AllPeersIntervals,
-			Intervals
 		),
 	EnqueueIntervals =
 		lists:foldl(
@@ -2257,8 +2277,24 @@ find_peer_intervals3(Start, UnsyncedIntervals, Self, AllPeersIntervals, Peers) -
 			[],
 			Intervals
 		),
-	gen_server:cast(Self, {enqueue_intervals, EnqueueIntervals}),
-	AllPeersIntervals2.
+	gen_server:cast(self(), {enqueue_intervals, EnqueueIntervals}),
+
+	%% Update and return AllPeersIntervals
+	lists:foldl(
+		fun	({Peer, _, PeerIntervals, Left}, Acc) ->
+				case ar_intervals:is_empty(PeerIntervals) of
+					true ->
+						Acc;
+					false ->
+						Right = element(1, ar_intervals:largest(PeerIntervals)),
+						maps:put(Peer, {Right, Left, PeerIntervals}, Acc)
+				end;
+			(_, Acc) ->
+				Acc
+		end,
+		AllPeersIntervals,
+		Intervals
+	).
 
 %% @doc
 %% @return {ok, Intervals, PeerIntervals, Left} | Error
@@ -2290,6 +2326,10 @@ enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) 
 	enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
 
 enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
+	?LOG_DEBUG([{event, enqueue_peer_intervals}, {pid, self()},
+		{peer, ar_util:format_peer(Peer)}, {num_intervals, gb_sets:size(Intervals)},
+		{chunks_to_enqueue, ChunksToEnqueue}]),
+
 	%% Only keep unique intervals. We may get some duplicates for two
 	%% reasons:
 	%% 1) find_peer_intervals might choose the same interval several

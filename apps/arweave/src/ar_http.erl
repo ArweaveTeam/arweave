@@ -218,12 +218,14 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
 
 handle_info({'DOWN', _Ref, process, PID, Reason},
 		#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
-	?LOG_DEBUG([{event, gun_connection_process_down},
-			{reason, io_lib:format("~p", [Reason])}]),
 	case maps:get(PID, StatusByPID, not_found) of
 		not_found ->
+			?LOG_DEBUG([{event, gun_connection_process_down}, {pid, PID}, {peer, unknown},
+				{reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State};
 		{Status, _MonitorRef, Peer} ->
+			?LOG_DEBUG([{event, gun_connection_process_down}, {pid, PID},
+				{peer, ar_util:format_peer(Peer)}, {reason, io_lib:format("~p", [Reason])}]),
 			PIDByPeer2 = maps:remove(Peer, PIDByPeer),
 			StatusByPID2 = maps:remove(PID, StatusByPID),
 			case Status of

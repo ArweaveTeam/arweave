@@ -6,7 +6,8 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--define(SAMPLE_INTERVAL, 1000).
+%% Sample relatively infrequently - every 5 seconds - to minimize the impact on the system.
+-define(SAMPLE_INTERVAL, 5000).
 
 %% API
 start_link() ->
@@ -25,8 +26,11 @@ handle_cast(_Msg, State) ->
 
 handle_info(sample, State) ->
 	Processes = erlang:processes(),
-	ProcessNames = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
-	lists:foreach(fun(Name) -> prometheus_counter:inc(process_functions, [Name]) end, ProcessNames),
+	ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
+	lists:foreach(fun({ProcessName, FunctionName, Bytes}) ->
+		prometheus_counter:inc(process_functions, [FunctionName]),
+		prometheus_gauge:set(process_memory, [ProcessName], Bytes)
+	end, ProcessData),
 	{noreply, State};
 
 handle_info(_Info, State) ->
@@ -40,13 +44,24 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Internal functions
 process_function(Pid) ->
-	case process_info(Pid, [current_function, status]) of
-	[{current_function, {?MODULE, process_function, _A}}, _] ->
+	case process_info(Pid, [current_function, registered_name, status, memory]) of
+	[{current_function, {?MODULE, process_function, _A}}, _, _, _] ->
 		false;
-	[{current_function, {erlang, process_info, _A}}, _] ->
+	[{current_function, {erlang, process_info, _A}}, _, _, _] ->
 		false;
-	[{current_function, {M, F, A}}, {status, running}] ->
-		{true, atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A)};
+	[{current_function, {M, F, A}}, {registered_name, Name}, {status, running},
+			{memory, Bytes}] ->
+		ProcessName = process_name(Name),
+		FunctionName = function_name(ProcessName, M, F, A),
+		{true, {ProcessName, FunctionName, Bytes}};
 	_ ->
 		false
 	end.
+
+process_name([]) ->
+	process_name(unknown);
+process_name(ProcessName) ->
+	atom_to_list(ProcessName).
+
+function_name(ProcessName, M, F, A) ->
+	ProcessName ++ "~" ++ atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A).

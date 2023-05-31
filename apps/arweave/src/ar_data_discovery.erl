@@ -57,7 +57,16 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 	case ets:next(?MODULE, Cursor) of
 		'$end_of_table' ->
 			UniquePeers = sets:to_list(sets:from_list(Peers)),
-			pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT);
+			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
+			?LOG_DEBUG([
+				{event, get_bucket_peers},
+				{pid, self()},
+				{bucket, Bucket},
+				{peers, length(Peers)},
+				{unique_peers, length(UniquePeers)},
+				{picked_peers, length(PickedPeers)}
+			]),
+			PickedPeers;
 		{Bucket, _Share, Peer} = Key ->
 			get_bucket_peers(Bucket, Key, [Peer | Peers]);
 		_ ->
@@ -65,6 +74,7 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
 			?LOG_DEBUG([
 				{event, get_bucket_peers},
+				{pid, self()},
 				{bucket, Bucket},
 				{peers, length(Peers)},
 				{unique_peers, length(UniquePeers)},
@@ -115,6 +125,7 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 							get_sync_buckets(Peer);
 						Error ->
 							?LOG_DEBUG([{event, failed_to_fetch_sync_buckets},
+								{peer, ar_util:format_peer(Peer)},
 								{reason, io_lib:format("~p", [Error])}])
 					end
 				end

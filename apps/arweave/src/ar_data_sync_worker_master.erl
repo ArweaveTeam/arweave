@@ -187,6 +187,9 @@ cut_peer_queue(Peer, TaskQueue, MaxActive, EMA) ->
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
 			%% oldest tasks.
+			?LOG_DEBUG([{event, cut_peer_queue},
+				{peer, Peer}, {max_active, MaxActive}, {ema, EMA},
+				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			update_counters(queued, sync_range, ar_util:format_peer(Peer), -TasksToCut),
 			TaskQueue2;
