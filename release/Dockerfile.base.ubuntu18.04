@@ -1,0 +1,28 @@
+FROM ubuntu:18.04
+
+# Set noninteractive installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install the necessary software to add a new repository over HTTPS
+RUN apt-get update && apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release \
+    wget
+
+# Install missing dependencies
+RUN apt-get install -y \
+    libncurses5 \
+    libwxbase3.0-0v5 \
+    libwxgtk3.0-gtk3-0v5 \
+    libsctp1
+
+# Download and install the Erlang Solutions package
+RUN wget https://packages.erlang-solutions.com/erlang/debian/pool/esl-erlang_24.3.3-1~ubuntu~$(lsb_release -cs)_amd64.deb && \
+    dpkg -i esl-erlang_24.3.3-1~ubuntu~$(lsb_release -cs)_amd64.deb
+
+# Install other dependencies
+RUN apt-get install -y \
+    esl-erlang=1:24.3.3-1
