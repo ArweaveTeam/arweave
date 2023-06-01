@@ -2,6 +2,7 @@
 -define(AR_CONFIG_HRL, true).
 
 -include_lib("ar.hrl").
+-include_lib("ar_p3.hrl").
 
 -record(config_webhook, {
 	events = [],
@@ -196,7 +197,8 @@
 	defragmentation_trigger_threshold = 1_500_000_000,
 	defragmentation_modules = [],
 	block_throttle_by_ip_interval = ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
-	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS
+	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
+	p3 = #p3_config{}
 }).
 
 -endif.

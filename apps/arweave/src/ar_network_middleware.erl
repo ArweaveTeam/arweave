@@ -24,6 +24,8 @@ execute(Req, Env) ->
 			end
 	end.
 
+%% @doc When a node receives a request that includes the x-p2p-port header, it will attempt to
+%% add the requesting node to its peer list.
 maybe_add_peer(Peer, Req) ->
 	case cowboy_req:header(<<"x-p2p-port">>, Req, not_set) of
 		not_set ->

@@ -103,7 +103,25 @@ handle(Peer, Req, Pid) ->
 		_ ->
 			do_nothing
 	end,
-	case handle4(Method, SplitPath, Req, Pid) of
+	%% We break the P3 handling into two steps:
+	%% 1. Before the request is processed, ar_p3:allow_request checks whether this is a
+	%%    P3 request and if so it validates the header and applies the charge
+	%% 2. After the request is processed, handle_p3_response checks if the requet failed,
+	%%	  if so it reverses the charge
+	%%
+	%% This two-step process is needed to ensure clients aren't charged for failed requests.
+	Response2 = case ar_p3:allow_request(Req) of
+		{true, P3Data} ->
+			Response = handle4(Method, SplitPath, Req, Pid),
+			handle_p3_error(Response, P3Data),
+			Response;
+		{false, P3Status} ->
+			p3_error_response(P3Status, Req)
+	end,
+	add_cors_headers(Req, Response2).
+
+add_cors_headers(Req, Response) ->
+	case Response of
 		{Status, Hdrs, Body, HandledReq} ->
 			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
 		{Status, Body, HandledReq} ->
@@ -111,6 +129,31 @@ handle(Peer, Req, Pid) ->
 		{error, timeout} ->
 			{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
 	end.
+
+handle_p3_error(Response, P3Data) ->
+	Status = element(1, Response),
+	case {Status, P3Data} of
+		{_, not_p3_service} ->
+			do_nothing;
+		_ when Status >= 400 ->
+			{ok, _} = ar_p3:reverse_charge(P3Data);
+		_ ->
+			do_nothing
+	end,
+	ok.
+	
+p3_error_response(P3Status, Req) ->
+	Status = case P3Status of
+		invalid_header ->
+			400;
+		insufficient_funds ->
+			402;
+		stale_mod_seq ->
+			428;
+		_ ->
+			400
+	end,
+	{Status, jiffy:encode(#{ error => P3Status }), Req}.
 
 -ifdef(TESTNET).
 handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->
@@ -1196,6 +1239,19 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 					end
 			end
 	end;
+
+handle(<<"GET">>, [<<"balance">>, Addr, Network, Token], Req, _Pid) ->
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, AddrOK} ->
+			%% The only expected error is due to an invalid address (handled above).
+			{ok, Balance} = ar_p3:get_balance(AddrOK, Network, Token),
+			{200, #{}, integer_to_binary(Balance), Req}
+	end;
+
+handle(<<"GET">>, [<<"rates">>], Req, _Pid) ->
+	{200, #{}, ar_p3:get_rates_json(), Req};
 
 %% Return the current block hieght, or 500.
 handle(Method, [<<"height">>], Req, _Pid)
