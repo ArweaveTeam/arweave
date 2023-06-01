@@ -3,6 +3,10 @@
 
 %%% A collection of record structures used throughout the Arweave server.
 
+%% True if arweave was launched with -setcookie=test	
+%% (e.g. bin/test or bin/shell)	
+-define(IS_TEST, erlang:get_cookie() == test).
+
 -define(DATA_SIZE(Term), erlang:byte_size(term_to_binary(Term))).
 
 %% The mainnet name. Does not change at the hard forks.
