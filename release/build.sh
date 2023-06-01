@@ -49,3 +49,5 @@ for i in "${!BASE_IMAGES[@]}"; do
     # Rename the output file
     mv "./output/arweave-$VERSION.tar.gz" "$OUTPUT_FILE"
 done
+
+cp "./output/arweave-$VERSION.ubuntu22-x86_64.tar.gz" "./output/arweave-$VERSION.linux-x86_64.tar.gz"
