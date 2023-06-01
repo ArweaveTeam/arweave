@@ -1049,7 +1049,10 @@ trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, Upper
 			undefined ->
 				undefined;
 			_ ->
-				PrevSession#vdf_session{ steps = undefined, step_checkpoints_map = #{} }
+				PrevMap = PrevSession#vdf_session.step_checkpoints_map,
+				PrevSession#vdf_session{ steps = undefined,
+						step_checkpoints_map = maps:with(
+								[PrevSession#vdf_session.step_number], PrevMap) }
 		end,
 	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session2, PrevSessionKey,
 			PrevSession2, Step, UpperBound}}),
@@ -1057,7 +1060,8 @@ trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, Upper
 		[{_, StoredStepNumber}] when StoredStepNumber >= StepNumber ->
 			ok;
 		_ ->
-			ets:insert(?MODULE, {{steps, SessionKey}, Session#vdf_session.steps}),
+			ets:insert(?MODULE, {{steps, SessionKey},
+					{Session#vdf_session.steps, StepNumber}}),
 			ets:insert(?MODULE, {{step_number, SessionKey}, StepNumber})
 	end,
 	case PrevSession of
@@ -1070,7 +1074,7 @@ trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, Upper
 					ok;
 				_ ->
 					ets:insert(?MODULE, {{steps, PrevSessionKey},
-							PrevSession#vdf_session.steps}),
+							{PrevSession#vdf_session.steps, PrevStepNumber}}),
 					ets:insert(?MODULE, {{step_number, PrevSessionKey}, PrevStepNumber})
 			end
 	end,

@@ -89,11 +89,14 @@ make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
 	Session2 = Session#vdf_session{ step_checkpoints_map = #{} },
+	Steps = Session2#vdf_session.steps,
 	Session3 =
-		case Session2#vdf_session.steps of
+		case Steps of
 			undefined ->
-				Session2#vdf_session{ steps = element(2, hd(ets:lookup(ar_nonce_limiter,
-						{steps, SessionKey}))), step_checkpoints_map = #{} };
+				[{_, {Steps2, StepNumber2}}] = ets:lookup(ar_nonce_limiter,
+						{steps, SessionKey}),
+				Steps3 = lists:nthtail(StepNumber2 - StepNumber, Steps2),
+				Session2#vdf_session{ steps = Steps3 };
 			_ ->
 				Session2
 		end,
