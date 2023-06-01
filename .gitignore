@@ -28,3 +28,4 @@ logs
 ebin
 metrics_master
 metrics_slave
+release/output
