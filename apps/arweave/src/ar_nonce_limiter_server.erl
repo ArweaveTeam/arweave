@@ -88,7 +88,16 @@ terminate(_Reason, _State) ->
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
+	Session2 = Session#vdf_session{ step_checkpoints_map = #{} },
+	Session3 =
+		case Session2#vdf_session.steps of
+			undefined ->
+				Session2#vdf_session{ steps = element(2, hd(ets:lookup(ar_nonce_limiter,
+						{steps, SessionKey}))), step_checkpoints_map = #{} };
+			_ ->
+				Session2
+		end,
 	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
 	#nonce_limiter_update{ session_key = SessionKey,
 			is_partial = IsPartial, checkpoints = Checkpoints,
-			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
+			session = Session3 }.

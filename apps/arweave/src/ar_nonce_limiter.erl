@@ -625,8 +625,8 @@ handle_info({computed, Args}, State) ->
 					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			SessionByKey2 = maps:put(CurrentSessionKey, Session2, SessionByKey),
 			PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
-					PrevSessionKey, PrevSession, Output, UpperBound}}),
+			trigger_computed_outputs(CurrentSessionKey, Session2, PrevSessionKey, PrevSession,
+					UpperBound, [Output]),
 			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
 			{noreply, State#state{ session_by_key = SessionByKey2 }}
 	end;
@@ -832,6 +832,8 @@ prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
 	case BaseInterval > Interval + 10 of
 		true ->
 			SessionByKey2 = maps:remove({NextSeed, Interval}, SessionByKey),
+			ets:delete(?MODULE, {steps, {NextSeed, Interval}}),
+			ets:delete(?MODULE, {step_number, {NextSeed, Interval}}),
 			prune_old_sessions(Sessions2, SessionByKey2, BaseInterval);
 		false ->
 			{Sessions, SessionByKey}
@@ -1038,11 +1040,43 @@ trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _PrevSession,
 	ok;
 trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound,
 		[Step | Steps]) ->
-	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session, PrevSessionKey,
-			PrevSession, Step, UpperBound}}),
+	StepNumber = Session#vdf_session.step_number,
+	Map = Session#vdf_session.step_checkpoints_map,
+	Session2 = Session#vdf_session{ steps = undefined,
+			step_checkpoints_map = maps:with([StepNumber], Map) },
+	PrevSession2 =
+		case PrevSession of
+			undefined ->
+				undefined;
+			_ ->
+				PrevSession#vdf_session{ steps = undefined, step_checkpoints_map = #{} }
+		end,
+	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session2, PrevSessionKey,
+			PrevSession2, Step, UpperBound}}),
+	case ets:lookup(?MODULE, {step_number, SessionKey}) of
+		[{_, StoredStepNumber}] when StoredStepNumber >= StepNumber ->
+			ok;
+		_ ->
+			ets:insert(?MODULE, {{steps, SessionKey}, Session#vdf_session.steps}),
+			ets:insert(?MODULE, {{step_number, SessionKey}, StepNumber})
+	end,
+	case PrevSession of
+		undefined ->
+			ok;
+		_ ->
+			PrevStepNumber = PrevSession#vdf_session.step_number,
+			case ets:lookup(?MODULE, {step_number, PrevSessionKey}) of
+				[{_, StoredPrevStepNumber}] when StoredPrevStepNumber >= PrevStepNumber ->
+					ok;
+				_ ->
+					ets:insert(?MODULE, {{steps, PrevSessionKey},
+							PrevSession#vdf_session.steps}),
+					ets:insert(?MODULE, {{step_number, PrevSessionKey}, PrevStepNumber})
+			end
+	end,
 	#vdf_session{ step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
-	Session2 = Session#vdf_session{ step_number = StepNumber - 1, steps = PrevSteps },
-	trigger_computed_outputs(SessionKey, Session2, PrevSessionKey, PrevSession, UpperBound,
+	Session3 = Session#vdf_session{ step_number = StepNumber - 1, steps = PrevSteps },
+	trigger_computed_outputs(SessionKey, Session3, PrevSessionKey, PrevSession, UpperBound,
 			Steps).
 
 debug_double_check(Label, Result, Func, Args) ->
