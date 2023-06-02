@@ -545,7 +545,6 @@ init(StoreID) ->
 	State = init_kv(StoreID),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	gen_server:cast(self(), process_store_chunk_queue),
-	gen_server:cast(self(), sync_intervals),
 	State2 = State#sync_data_state{
 		store_id = StoreID,
 		range_start = RangeStart,
@@ -893,13 +892,11 @@ handle_cast(sync_intervals, State) ->
 			true ->
 				true;
 			false ->
-				{ok, Config} = application:get_env(arweave, config),
-				SyncWorkers = Config#config.sync_jobs,
-				case ar_data_sync_worker_master:get_total_task_count() > SyncWorkers * 50 of
-					true ->
+				case ar_data_sync_worker_master:ready_for_work() of
+					false ->
 						ar_util:cast_after(200, self(), sync_intervals),
 						true;
-					false ->
+					true ->
 						false
 				end
 		end,
@@ -1801,9 +1798,9 @@ may_be_start_syncing(#sync_data_state{ started_syncing = StartedSyncing } = Stat
 				true ->
 					State;
 				false ->
-					{ok, Config} = application:get_env(arweave, config),
-					case Config#config.sync_jobs > 0 of
+					case ar_data_sync_worker_master:is_syncing_enabled() of
 						true ->
+							gen_server:cast(self(), sync_intervals),
 							gen_server:cast(self(), sync_data),
 							State#sync_data_state{ started_syncing = true };
 						false ->

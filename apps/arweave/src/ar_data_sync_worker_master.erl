@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, get_total_task_count/0]).
+-export([start_link/2, is_syncing_enabled/0, ready_for_work/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -41,9 +41,17 @@
 start_link(Name, Workers) ->
 	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
 
-%% @doc Return the number of tasks that are queued on the master or active on a worker.
-get_total_task_count() ->
-	get_task_count(scheduled) + get_task_count(queued).
+%% @doc Returns true if syncing is enabled (i.e. sync_jobs > 0).
+is_syncing_enabled() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.sync_jobs > 0.
+
+%% @doc Returns true if we can accept new tasks. Will always return false if syncing is
+%% disabled (i.e. sync_jobs = 0).
+ready_for_work() ->
+	{ok, Config} = application:get_env(arweave, config),
+	TotalTaskCount = get_task_count(scheduled) + get_task_count(queued),
+	TotalTaskCount < (Config#config.sync_jobs * 50).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -54,7 +62,7 @@ init(Workers) ->
 	reset_counters(queued),
 	gen_server:cast(?MODULE, process_main_queue),
 
-	LatencyTarget = calculate_latency_target(Workers),
+	LatencyTarget = calculate_latency_target(Workers, ar_packing_server:packing_rate()),
 	ar:console("~nSync request latency target is: ~pms.~n", [LatencyTarget]),
 
 	{ok, #state{
@@ -394,9 +402,17 @@ update_max_active(
 %%
 %% The user can adjust the this number by changing the packing_rate or sync_jobs
 %% configuration parameters.
-calculate_latency_target(Workers) ->
+calculate_latency_target(_Workers, 0) ->
+	%% if sync_jobs > 0, but packing_rate is 0, the assumption is either that the user has
+	%% misconfigured the node, or that they are only expecting to sync and store unpacked
+	%% data (i.e. neither unpacking nor packing is required). We'll assign a default 1000ms
+	%% latency target mostly to make the math easy. In order to increase the number of
+	%% concurrent requests, the user can simply increase the sync_jobs.
+	%%
+	%% Note: if sync_jobs is 0, the ar_data_sync_worker_master will not be started.
+	1000;
+calculate_latency_target(Workers, PackingRate) ->
 	WorkerCount = length(Workers),
-	PackingRate = ar_packing_server:packing_rate(),
 	trunc((WorkerCount / PackingRate) * 1000).
 
 %%%===================================================================
@@ -634,8 +650,7 @@ test_complete_sync_range() ->
 	Peer1 = {1, 2, 3, 4, 1984},
 	Peer2 = {5, 6, 7, 8, 1985},
 	Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,11)],
-	ets:insert(ar_packing_server, {packing_rate, 5}),
-	LatencyTarget = calculate_latency_target(Workers),
+	LatencyTarget = calculate_latency_target(Workers, 5),
 	?assertEqual(2200, LatencyTarget),
 	State0 = #state{
 		all_workers = queue:from_list(Workers),
