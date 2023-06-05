@@ -265,6 +265,9 @@ schedule_task(Worker, Task, Args) ->
 %%          EMA, max_active, peer queue length)
 %%--------------------------------------------------------------------
 complete_sync_range(Peer, Result, Duration, State) ->
+	?LOG_INFO([
+		{event, complete_sync_range},
+		{state, ?DATA_SIZE(State) / (1024*1024)}]),
 	update_counters(scheduled, sync_range, ar_util:format_peer(Peer), -1),
 	PeerTasks = get_peer_tasks(Peer, State),
 	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),

@@ -625,6 +625,12 @@ handle_info({computed, Args}, State) ->
 					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			SessionByKey2 = maps:put(CurrentSessionKey, Session2, SessionByKey),
 			PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
+			?LOG_INFO([
+				{event, computed_output},
+				{session, ?DATA_SIZE(Session2) / (1024*1024)},
+				{prev_session, ?DATA_SIZE(PrevSession) / (1024*1024)},
+				{output, ?DATA_SIZE(Output) / (1024*1024)},
+				{upper_bound, ?DATA_SIZE(UpperBound) / (1024*1024)}]),
 			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
 					PrevSessionKey, PrevSession, Output, UpperBound}}),
 			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
@@ -1038,6 +1044,12 @@ trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _PrevSession,
 	ok;
 trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound,
 		[Step | Steps]) ->
+	?LOG_INFO([
+		{event, computed_output},
+		{session, ?DATA_SIZE(Session) / (1024*1024)},
+		{prev_session, ?DATA_SIZE(PrevSession) / (1024*1024)},
+		{output, ?DATA_SIZE(Step) / (1024*1024)},
+		{upper_bound, ?DATA_SIZE(UpperBound) / (1024*1024)}]),
 	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session, PrevSessionKey,
 			PrevSession, Step, UpperBound}}),
 	#vdf_session{ step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
