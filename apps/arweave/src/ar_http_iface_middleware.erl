@@ -103,7 +103,25 @@ handle(Peer, Req, Pid) ->
 		_ ->
 			do_nothing
 	end,
-	case handle4(Method, SplitPath, Req, Pid) of
+	%% We break the P3 handling into two steps:
+	%% 1. Before the request is processed, ar_p3:allow_request checks whether this is a
+	%%    P3 request and if so it validates the header and applies the charge
+	%% 2. After the request is processed, handle_p3_response checks if the requet failed,
+	%%	  if so it reverses the charge
+	%%
+	%% This two-step process is needed to ensure clients aren't charged for failed requests.
+	Response2 = case ar_p3:allow_request(Req) of
+		{true, P3Data} ->
+			Response = handle4(Method, SplitPath, Req, Pid),
+			handle_p3_error(Response, P3Data),
+			Response;
+		{false, P3Status} ->
+			p3_error_response(P3Status, Req)
+	end,
+	add_cors_headers(Req, Response2).
+
+add_cors_headers(Req, Response) ->
+	case Response of
 		{Status, Hdrs, Body, HandledReq} ->
 			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
 		{Status, Body, HandledReq} ->
@@ -111,6 +129,31 @@ handle(Peer, Req, Pid) ->
 		{error, timeout} ->
 			{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
 	end.
+
+handle_p3_error(Response, P3Data) ->
+	Status = element(1, Response),
+	case {Status, P3Data} of
+		{_, not_p3_service} ->
+			do_nothing;
+		_ when Status >= 400 ->
+			{ok, _} = ar_p3:reverse_charge(P3Data);
+		_ ->
+			do_nothing
+	end,
+	ok.
+	
+p3_error_response(P3Status, Req) ->
+	Status = case P3Status of
+		invalid_header ->
+			400;
+		insufficient_funds ->
+			402;
+		stale_mod_seq ->
+			428;
+		_ ->
+			400
+	end,
+	{Status, jiffy:encode(#{ error => P3Status }), Req}.
 
 -ifdef(TESTNET).
 handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->
@@ -1017,8 +1060,7 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
 			not_joined(Req);
 		true ->
 			List = ar_node:get_block_anchors(),
-			SuggestedAnchor =
-				lists:nth(min(length(List), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, List),
+			SuggestedAnchor = lists:nth(min(length(List), ?SUGGESTED_TX_ANCHOR_DEPTH), List),
 			{200, #{}, ar_util:encode(SuggestedAnchor), Req}
 	end;
 
@@ -1198,6 +1240,19 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 			end
 	end;
 
+handle(<<"GET">>, [<<"balance">>, Addr, Network, Token], Req, _Pid) ->
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, AddrOK} ->
+			%% The only expected error is due to an invalid address (handled above).
+			{ok, Balance} = ar_p3:get_balance(AddrOK, Network, Token),
+			{200, #{}, integer_to_binary(Balance), Req}
+	end;
+
+handle(<<"GET">>, [<<"rates">>], Req, _Pid) ->
+	{200, #{}, ar_p3:get_rates_json(), Req};
+
 %% Return the current block hieght, or 500.
 handle(Method, [<<"height">>], Req, _Pid)
 		when (Method == <<"GET">>) or (Method == <<"HEAD">>) ->
@@ -1318,6 +1373,36 @@ handle(<<"POST">>, [<<"coordinated_mining">>, <<"publish">>], Req, Pid) ->
 			end;
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
+	end;
+
+%% Serve an VDF update to a configured VDF client.
+%% GET request to /vdf.
+handle(<<"GET">>, [<<"vdf">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_update)
+	end;
+
+%% Serve the current VDF session to a configured VDF client.
+%% GET request to /vdf.
+handle(<<"GET">>, [<<"vdf">>, <<"session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_session)
+	end;
+
+%% Serve the previous VDF session to a configured VDF client.
+%% GET request to /vdf.
+handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_previous_session)
 	end;
 
 %% Catch case for requests made to unknown endpoints.
@@ -1911,8 +1996,15 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{Packing, ok};
 							{{true, _}, _StoreID} ->
-								ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
-								{RequestedPacking, ok}
+								{ok, Config} = application:get_env(arweave, config),
+								case lists:member(pack_served_chunks, Config#config.enable) of
+									false ->
+										{none, {reply, {404, #{}, <<>>, Req}}};
+									true ->
+										ok = ar_semaphore:acquire(get_and_pack_chunk,
+												infinity),
+										{RequestedPacking, ok}
+								end
 						end,
 					case CheckRecords of
 						{reply, Reply} ->
@@ -2800,20 +2892,26 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	end.
 
 handle_post_vdf(Req, Pid) ->
-	case ets:lookup(ar_nonce_limiter, remote_servers) of
-		[] ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case ets:member(ar_peers, {vdf_server_peer, Peer}) of
+		false ->
 			{400, #{}, <<>>, Req};
-		[{remote_servers, Peers}] ->
-			Peer = ar_http_util:arweave_peer(Req),
-			case lists:member(Peer, Peers) of
-				false ->
-					{400, #{}, <<>>, Req};
-				true ->
-					handle_post_vdf2(Req, Pid, Peer)
-			end
+		true ->
+			handle_post_vdf2(Req, Pid, Peer)
 	end.
 
 handle_post_vdf2(Req, Pid, Peer) ->
+	case ar_config:pull_from_remote_vdf_server() of
+		true ->
+			%% We are pulling the updates - tell the server not to push them.
+			Response = #nonce_limiter_update_response{ postpone = 120 },
+			Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+			{202, #{}, Bin, Req};
+		false ->
+			handle_post_vdf3(Req, Pid, Peer)
+	end.
+
+handle_post_vdf3(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			{ok, Update} = ar_serialize:binary_to_nonce_limiter_update(Body),
@@ -2865,6 +2963,23 @@ handle_coordinated_mining_partition_table(Req) ->
 		end
 	end, [], CheckPartitionList),
 	{200, #{}, ar_serialize:jsonify(Table), Req}.
+
+handle_get_vdf(Req, Call) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
+		[] ->
+			{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
+		[{_, _RawPeer}] ->
+			handle_get_vdf2(Req, Call)
+	end.
+
+handle_get_vdf2(Req, Call) ->
+	case gen_server:call(ar_nonce_limiter_server, Call) of
+		not_found ->
+			{404, #{}, <<>>, Req};
+		Update ->
+			{200, #{}, ar_serialize:nonce_limiter_update_to_binary(Update), Req}
+	end.
 
 read_complete_body(Req, Pid) ->
 	read_complete_body(Req, Pid, ?MAX_BODY_SIZE).

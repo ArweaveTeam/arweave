@@ -7,11 +7,9 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [start/2, start/3, stop/0, slave_start/1, slave_start/2, slave_start/3, slave_stop/0, master_peer/0, slave_peer/0, disconnect_from_slave/0,
-		connect_to_slave/0, sign_tx/3, assert_post_tx_to_master/1, slave_mine/0,
-		assert_slave_wait_until_height/1, slave_call/3,
-		wait_until_height/1, read_block_when_stored/1,
-		sign_block/3, post_block/2, post_block/3, send_new_block/2]).
+-import(ar_test_node, [start/3, slave_start/1, slave_start/3, slave_stop/0,
+		master_peer/0, slave_peer/0, connect_to_slave/0, slave_mine/0,
+		assert_slave_wait_until_height/1, slave_call/3, post_block/2, send_new_block/2]).
 
 setup() ->
 	ets:new(?MODULE, [named_table, set, public]),
@@ -62,7 +60,9 @@ vdf_client_test_() ->
 		fun cleanup/1,
 		[
 			{timeout, 180, fun test_vdf_client_fast_block/0},
-			{timeout, 180, fun test_vdf_client_slow_block/0}
+			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
+			{timeout, 180, fun test_vdf_client_slow_block/0},
+			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
 		]
     }.
 
@@ -89,7 +89,8 @@ handle([<<"vdf">>], Req, State) ->
 
 	case ets:lookup(?MODULE, SessionKey) of
 		[{SessionKey, FirstStepNumber, LatestStepNumber}] ->
-			?assert(not IsPartial orelse StepNumber == LatestStepNumber+1, "Partial VDF update did not increase by 1"),
+			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
+					"Partial VDF update did not increase by 1"),
 			ets:insert(?MODULE, {SessionKey, FirstStepNumber, StepNumber}),
 			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
 		_ ->
@@ -104,7 +105,6 @@ handle([<<"vdf">>], Req, State) ->
 			end
 	end.
 
- 
 test_vdf_server_push_fast_block() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
@@ -193,11 +193,14 @@ test_vdf_server_push_slow_block() ->
 	?assertEqual(2, ets:info(?MODULE, size), "VDF server did not post 2 sessions"),
 	?assert(LatestStepNumber0 > FirstStepNumber1, "Session0 should be ahead of Session1"),
 	?assert(LatestStepNumber0 > LatestStepNumber1, "Session0 should be ahead of Session1"),
-	%% When a block comes in that opens a new session, the server doesn't push an update
-	%% until it's computed once step, which is why the FirstStepNumber is 1 more than
-	%% the block's global_step_number. Note: in some cases the preivous session will contain
-	%% the block's global_step_number, see test_vdf_server_push_fast_block
-	?assertEqual(StepNumber1+1, FirstStepNumber1),
+	%% The new session begins at the reset line in case there is a block
+	%% mined strictly after the previous reset line.
+	case (StepNumber1 + 1) rem 10 == 0 of
+		true ->
+			?assertEqual(StepNumber1 + 1, FirstStepNumber1);
+		false ->
+			?assert(FirstStepNumber1 >= StepNumber1 + 1)
+	end,
 
 	timer:sleep(3000),
 	[{SessionKey0, _, NewLatestStepNumber0}] = ets:lookup(?MODULE, SessionKey0),
@@ -207,7 +210,6 @@ test_vdf_server_push_slow_block() ->
 	?assert(NewLatestStepNumber1 > LatestStepNumber1, "Session1 should have progressed"),
 
 	cowboy:stop_listener(ar_vdf_server_test_listener).
-
 
 test_vdf_client_fast_block() ->
 	{_, Pub} = ar_wallet:new(),
@@ -230,7 +232,7 @@ test_vdf_client_fast_block() ->
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
 	slave_start(
 		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ]}),
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ] }),
 	%% Start the master as a VDF server
 	{ok, Config} = application:get_env(arweave, config),
 	start(
@@ -254,6 +256,51 @@ test_vdf_client_fast_block() ->
 	%% the VDF clietn to finally validate the block.
 	BI = assert_slave_wait_until_height(1).
 
+test_vdf_client_fast_block_pull_interface() ->
+	{_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
+
+	SlaveAddress = ar_wallet:to_address(slave_call(ar_wallet, new_keyfile, [])),
+
+	%% Let the slave get ahead of master in the VDF chain
+	slave_start(B0),
+	slave_call(ar_http, block_peer_connections, []),
+	timer:sleep(20000),
+
+	%% Mine a block that will be ahead of master in the VDF chain
+	slave_mine(),
+	BI = assert_slave_wait_until_height(1),
+	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
+	slave_stop(),
+
+	%% Restart the slave as a VDF client
+	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
+	slave_start(
+		B0, SlaveAddress,
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ],
+				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
+	%% Start the master as a VDF server
+	{ok, Config} = application:get_env(arweave, config),
+	start(
+		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1983" ]}),
+	connect_to_slave(),
+
+	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
+	%% isn't aware of the new VDF session yet.
+	send_new_block(slave_peer(), B1),
+	timer:sleep(10000),
+	?assertEqual(1,
+		length(slave_call(ar_node, get_blocks, [])),
+		"VDF client shouldn't be able to validate the block until the VDF server posts a "
+		"new VDF session"),
+
+	%% After the VDF server receives the block, it should push the old and new VDF sessions
+	%% to the VDF client allowing it to validate teh block.
+	send_new_block(master_peer(), B1),
+	%% If all is right, the VDF server should push the old and new VDF sessions allowing
+	%% the VDF clietn to finally validate the block.
+	BI = assert_slave_wait_until_height(1).
 
 test_vdf_client_slow_block() ->
 	{_, Pub} = ar_wallet:new(),
@@ -275,7 +322,42 @@ test_vdf_client_slow_block() ->
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
 	slave_start(
 		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ]}),
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ] }),
+	%% Start the master as a VDF server
+	{ok, Config} = application:get_env(arweave, config),
+	start(
+		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1983" ]}),
+	connect_to_slave(),
+	timer:sleep(10000),
+
+	%% Post the block to the VDF client, it should validate it "immediately" since the
+	%% VDF server is ahead of the block in the VDF chain.
+	send_new_block(slave_peer(), B1),
+	BI = assert_slave_wait_until_height(1).
+
+test_vdf_client_slow_block_pull_interface() ->
+	{_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
+
+	SlaveAddress = ar_wallet:to_address(slave_call(ar_wallet, new_keyfile, [])),
+
+	%% Let the slave get ahead of master in the VDF chain
+	slave_start(B0),
+	slave_call(ar_http, block_peer_connections, []),
+
+	%% Mine a block that will be ahead of master in the VDF chain
+	slave_mine(),
+	BI = assert_slave_wait_until_height(1),
+	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
+	slave_stop(),
+
+	%% Restart the slave as a VDF client
+	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
+	slave_start(
+		B0, SlaveAddress,
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ],
+				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
 	%% Start the master as a VDF server
 	{ok, Config} = application:get_env(arweave, config),
 	start(

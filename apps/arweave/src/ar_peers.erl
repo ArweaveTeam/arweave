@@ -9,7 +9,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
-		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1]).
+		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
+		resolve_and_cache_peer/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -169,6 +170,29 @@ discover_peers() ->
 		[{_, Peers}] ->
 			Peer = ar_util:pick_random(Peers),
 			discover_peers(get_peer_peers(Peer))
+	end.
+
+%% @doc Resolve the domain name of the given peer (if the given peer is an IP address)
+%% and cache it. Return {ok, Peer} | {error, Reason}.
+resolve_and_cache_peer(RawPeer, Type) ->
+	case ar_util:safe_parse_peer(RawPeer) of
+		{ok, Peer} ->
+			case ets:lookup(?MODULE, {raw_peer, RawPeer}) of
+				[] ->
+					ets:insert(?MODULE, {{raw_peer, RawPeer}, Peer}),
+					ets:insert(?MODULE, {{Type, Peer}, RawPeer});
+				[{_, Peer}] ->
+					ok;
+				[{_, PreviousPeer}] ->
+					%% This peer is configured with a domain name rather than IP address,
+					%% and the IP underlying the domain name has changed.
+					ets:delete(?MODULE, {Type, PreviousPeer}),
+					ets:insert(?MODULE, {{raw_peer, RawPeer}, Peer}),
+					ets:insert(?MODULE, {{Type, Peer}, RawPeer})
+			end,
+			{ok, Peer};
+		Error ->
+			Error
 	end.
 
 %%%===================================================================

@@ -12,7 +12,9 @@
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
 		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
-		push_nonce_limiter_update/2, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2, cm_publish_send/2]).
+		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
+		get_previous_vdf_session/1,
+		get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2, cm_publish_send/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -337,7 +339,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 		peer => Peer,
 		method => get,
 		path => get_chunk_path(Offset, Encoding),
-		timeout => 300 * 1000,
+		timeout => 120 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
 		headers => p2p_headers() ++ Headers
@@ -481,6 +483,46 @@ push_nonce_limiter_update(Peer, Update) ->
 			Reply
 	end.
 
+get_vdf_update(Peer) ->
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf",
+			timeout => 2000, headers => p2p_headers()
+			}) of
+		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
+			ar_serialize:binary_to_nonce_limiter_update(Bin);
+		{ok, {{<<"404">>, _}, _, _, _, _}} ->
+			not_found;
+		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
+			{error, {Status, ResponseBody}};
+		Reply ->
+			Reply
+	end.
+
+get_vdf_session(Peer) ->
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/session",
+			timeout => 10000, headers => p2p_headers() }) of
+		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
+			ar_serialize:binary_to_nonce_limiter_update(Bin);
+		{ok, {{<<"404">>, _}, _, _, _, _}} ->
+			not_found;
+		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
+			{error, {Status, ResponseBody}};
+		Reply ->
+			Reply
+	end.
+
+get_previous_vdf_session(Peer) ->
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/previous_session",
+			timeout => 10000, headers => p2p_headers() }) of
+		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
+			ar_serialize:binary_to_nonce_limiter_update(Bin);
+		{ok, {{<<"404">>, _}, _, _, _, _}} ->
+			not_found;
+		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
+			{error, {Status, ResponseBody}};
+		Reply ->
+			Reply
+	end.
+
 validate_reward_history_hashes(_RewardHistory, []) ->
 	true;
 validate_reward_history_hashes(RewardHistory, [H | ExpectedRewardHistoryHashes]) ->
@@ -603,6 +645,8 @@ handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 					{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
 			end
 	end;
+handle_chunk_response(_Encoding, {error, _} = Response) ->
+	Response;
 handle_chunk_response(_Encoding, Response) ->
 	{error, Response}.
 

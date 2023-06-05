@@ -40,17 +40,23 @@ handle_cast({read_range, Args}, State) ->
 	case read_range(Args) of
 		recast ->
 			ok;
-		_ ->
-			gen_server:cast(ar_data_sync_worker_master, task_completed)
+		ReadResult ->
+			gen_server:cast(ar_data_sync_worker_master,
+				{task_completed, {read_range, {ReadResult, Args}}})
 	end,
 	{noreply, State};
 
 handle_cast({sync_range, Args}, State) ->
-	case sync_range(Args) of
+	{_Start, _End, Peer, _TargetStoreID, _RetryCount} = Args,
+	StartTime = erlang:monotonic_time(),
+	SyncResult = sync_range(Args),
+	EndTime = erlang:monotonic_time(),
+	case SyncResult of
 		recast ->
 			ok;
 		_ ->
-			gen_server:cast(ar_data_sync_worker_master, task_completed)
+			gen_server:cast(ar_data_sync_worker_master,
+				{task_completed, {sync_range, {SyncResult, Peer, EndTime-StartTime}}})
 	end,
 	{noreply, State};
 
@@ -169,8 +175,11 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 
 sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}) when Start >= End ->
 	ok;
-sync_range({_Start, _End, _Peer, _TargetStoreID, 0}) ->
-	ok;
+sync_range({Start, End, Peer, _TargetStoreID, 0}) ->
+	?LOG_DEBUG([{event, sync_range_retries_exhausted},
+				{peer, ar_util:format_peer(Peer)},
+				{start_offset, Start}, {end_offset, End}]),
+	{error, timeout};
 sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
@@ -216,14 +225,18 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});
 						{error, timeout} ->
+							?LOG_DEBUG([{event, timeout_fetching_chunk},
+									{peer, ar_util:format_peer(Peer)},
+									{start_offset, Start2}, {end_offset, End}]),
 							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
 							ar_util:cast_after(1000, self(), {sync_range, Args2}),
 							recast;
 						{error, Reason} ->
-							?LOG_ERROR([{event, failed_to_fetch_chunk},
+							?LOG_DEBUG([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
-									{offset, Start2},
-									{reason, io_lib:format("~p", [Reason])}])
+									{start_offset, Start2}, {end_offset, End},
+									{reason, io_lib:format("~p", [Reason])}]),
+							{error, Reason}
 					end
 			end
 	end.

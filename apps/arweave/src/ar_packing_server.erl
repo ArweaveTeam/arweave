@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, pack/4, unpack/5, repack/6, packing_atom/1,
-		 is_buffer_full/0, record_buffer_size_metric/0]).
+		 is_buffer_full/0, packing_rate/0, record_buffer_size_metric/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -20,7 +20,9 @@
 -define(PACKING_LATENCY_MS, 60).
 
 -record(state, {
-	workers
+	workers,
+	num_workers,
+	packing_rate
 }).
 
 %%%===================================================================
@@ -72,6 +74,9 @@ is_buffer_full() ->
 		_ ->
 			false
 	end.
+
+packing_rate() ->
+	gen_server:call(?MODULE, get_packing_rate).
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -139,8 +144,11 @@ init([]) ->
 	ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
-	{ok, #state{ workers = Workers }}.
+	{ok, #state{ 
+		workers = Workers, num_workers = SpawnSchedulers, packing_rate = PackingRate }}.
 
+handle_call(get_packing_rate, _From, State = #state{ packing_rate = PackingRate }) ->
+	{reply, PackingRate, State};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
@@ -149,6 +157,9 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
+handle_info({event, chunk, {unpack_request, _, _}}, #state{ num_workers = 0 } = State) ->
+	?LOG_WARNING([{event, got_unpack_request_while_packing_is_disabled}]),
+	{noreply, State};
 handle_info({event, chunk, {unpack_request, Ref, Args}}, State) ->
 	#state{ workers = Workers } = State,
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
@@ -159,6 +170,9 @@ handle_info({event, chunk, {unpack_request, Ref, Args}}, State) ->
 	Worker ! {unpack, Ref, self(), Args},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 
+handle_info({event, chunk, {repack_request, _, _}}, #state{ num_workers = 0 } = State) ->
+	?LOG_WARNING([{event, got_repack_request_while_packing_is_disabled}]),
+	{noreply, State};
 handle_info({event, chunk, {repack_request, Ref, Args}}, State) ->
 	#state{ workers = Workers } = State,
 	{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
@@ -224,6 +238,10 @@ log_packing_rate(PackingRate, Max) ->
 			"Estimated maximum rate: ~.2f chunks/s.~n",
 			[PackingRate, Max]).
 
+calculate_throttle_delay(0, _PackingRate) ->
+	0;
+calculate_throttle_delay(_SpawnSchedulers, 0) ->
+	0;
 calculate_throttle_delay(SpawnSchedulers, PackingRate) ->
 	Load = PackingRate / (SpawnSchedulers * (1000 / (?PACKING_LATENCY_MS))),
 	case Load >= 1 of
@@ -253,7 +271,8 @@ worker(ThrottleDelay, RandomXStateRef) ->
 				{error, invalid_chunk_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}]);
+					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding},
+						{absolute_end_offset, AbsoluteOffset}]);
 				{exception, Error} ->
 					?LOG_ERROR([{event, failed_to_unpack_chunk},
 							{absolute_end_offset, AbsoluteOffset},
@@ -303,7 +322,8 @@ worker(ThrottleDelay, RandomXStateRef) ->
 				{error, invalid_chunk_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding}]);
+					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding},
+						{absolute_end_offset, AbsoluteOffset}]);
 				{error, invalid_unpacked_size} ->
 					?LOG_WARNING([{event, got_unpacked_chunk_of_invalid_size}]);
 				{exception, Error} ->
@@ -589,3 +609,18 @@ pack_test() ->
 		Cases
 	)),
 	?assertEqual(length(PackedList), sets:size(sets:from_list(PackedList))).
+
+calculate_throttle_delay_test() ->
+	%% 1000 / ?PACKING_LATENCY_MS = 16.666666
+	?assertEqual(0, calculate_throttle_delay(1, 17),
+		"PackingRate > SpawnSchedulers capacity -> no throttle"),
+	?assertEqual(0, calculate_throttle_delay(8, 1000),
+		"PackingRate > SpawnSchedulers capacity -> no throttle"),
+	?assertEqual(2, calculate_throttle_delay(1, 16),
+		"PackingRate < SpawnSchedulers capacity -> throttle"),
+	?assertEqual(15, calculate_throttle_delay(8, 100),
+		"PackingRate < SpawnSchedulers capacity -> throttle"),
+	?assertEqual(0, calculate_throttle_delay(0, 100),
+		"0 schedulers -> no throttle"),
+	?assertEqual(0, calculate_throttle_delay(8, 0),
+		"no packing -> no throttle").

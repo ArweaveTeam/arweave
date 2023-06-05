@@ -1,0 +1,34 @@
+# Set the base image using a build argument
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Install other dependencies
+RUN apt-get install -y \
+    libssl-dev \
+    libgmp-dev \
+    libsqlite3-dev \
+    make \
+    cmake \
+    gcc \
+    g++ \
+    git
+
+# Set the working directory
+WORKDIR /app
+
+# Clone the repository
+RUN git clone --recursive https://github.com/ArweaveTeam/arweave.git
+
+# Change directory
+WORKDIR /app/arweave
+
+# Define the output directory as a volume
+VOLUME /output
+
+# The build steps are executed every time
+ARG GIT_TAG
+RUN git fetch --all && \
+    git checkout ${GIT_TAG} && \
+    ./rebar3 as prod tar
+    
+CMD cp _build/prod/rel/arweave/arweave-*.tar.gz /output/

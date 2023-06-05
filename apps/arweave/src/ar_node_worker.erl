@@ -296,11 +296,11 @@ handle_info({join, BI, Blocks}, State) ->
 			false ->
 				Blocks3
 		end,
-	ar_events:send(node_state, {initializing, Blocks4}),
 	ets:insert(node_state, [
 		{recent_block_index,	lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN)},
 		{joined_blocks,			Blocks4}
 	]),
+	ar_events:send(node_state, initializing),
 	{noreply, State};
 
 handle_info(wallets_ready, State) ->

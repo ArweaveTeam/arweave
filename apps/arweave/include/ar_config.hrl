@@ -2,6 +2,7 @@
 -define(AR_CONFIG_HRL, true).
 
 -include_lib("ar.hrl").
+-include_lib("ar_p3.hrl").
 
 -record(config_webhook, {
 	events = [],
@@ -205,7 +206,8 @@
 	cm_exit_peer = not_set,
 	cm_peers = [],
 	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
-	cm_stat_interval = ?DEFAULT_CM_STAT_INTERVAL
+	cm_stat_interval = ?DEFAULT_CM_STAT_INTERVAL,
+	p3 = #p3_config{}
 }).
 
 -endif.

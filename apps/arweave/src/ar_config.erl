@@ -1,10 +1,12 @@
 -module(ar_config).
 
--export([use_remote_vdf_server/0, parse/1, parse_storage_module/1, format_config/1]).
+-export([use_remote_vdf_server/0, pull_from_remote_vdf_server/0, parse/1,
+		parse_storage_module/1, format_config/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_p3.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -18,6 +20,10 @@ use_remote_vdf_server() ->
 		_ ->
 			true
 	end.
+
+pull_from_remote_vdf_server() ->
+	{ok, Config} = application:get_env(arweave, config),
+	lists:member(vdf_server_pull, Config#config.enable).
 
 parse(Config) when is_binary(Config) ->
 	case ar_serialize:json_decode(Config) of
@@ -549,6 +555,16 @@ parse_options([{<<"cm_exit_peer">>, Peer} | Rest], Config) ->
 			{error, bad_cm_exit_peer, Peer}
 	end;
 
+parse_options([{<<"p3">>, {P3Config}} | Rest], Config) ->
+	try
+		P3 = ar_p3_config:parse_p3(P3Config, #p3_config{}),
+		parse_options(Rest, Config#config{ p3 = P3 })
+	catch error:Reason ->
+		{error,
+			{bad_format, p3, Reason},
+			P3Config}
+	end;
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
@@ -656,8 +672,6 @@ parse_requests_per_minute_limit_by_ip(_, _) ->
 parse_vdf_server_trusted_peers([Peer | Rest], Config) ->
 	Config2 = parse_vdf_server_trusted_peer(Peer, Config),
 	parse_vdf_server_trusted_peers(Rest, Config2);
-parse_vdf_server_trusted_peers([Peer], Config) ->
-	parse_vdf_server_trusted_peer(Peer, Config);
 parse_vdf_server_trusted_peers([], Config) ->
 	Config.
 

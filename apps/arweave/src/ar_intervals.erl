@@ -3,7 +3,7 @@
 
 -export([new/0, from_list/1, add/3, delete/3, cut/2, is_inside/2, sum/1, union/2, serialize/2,
 		safe_from_etf/1, count/1, is_empty/1, take_smallest/1, take_largest/1, largest/1,
-		smallest/1, iterator_from/2, next/1, fold/3, outerjoin/2, intersection/2]).
+		smallest/1, to_list/1, iterator_from/2, next/1, fold/3, outerjoin/2, intersection/2]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -65,7 +65,7 @@ is_inside(Intervals, Number) ->
 			false
 	end.
 
-%% @doc Return the sum of the lenghts of the intervals.
+%% @doc Return the sum of the lengths of the intervals.
 sum(Intervals) ->
 	gb_sets:fold(fun({End, Start}, Acc) -> Acc + End - Start end, 0, Intervals).
 
@@ -147,6 +147,10 @@ next(Iterator) ->
 %% @doc A proxy for gb_sets:fold/3.
 fold(Fun, Acc, Intervals) ->
 	gb_sets:fold(Fun, Acc, Intervals).
+
+%% @doc A proxy for gb_sets:to_list/1.
+to_list(Intervals) ->
+	gb_sets:to_list(Intervals).
 
 %% @doc Return a set of intervals containing the points from the second given set of
 %% intervals and excluding the points from the first given set of intervals.

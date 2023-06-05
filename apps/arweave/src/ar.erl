@@ -27,6 +27,7 @@
 		ar_block,
 		ar_block_cache,
 		ar_chunk_storage,
+		ar_data_sync_worker_master,
 		ar_deep_hash,
 		ar_diff_dag,
 		ar_ets_intervals,

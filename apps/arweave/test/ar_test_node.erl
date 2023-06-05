@@ -83,7 +83,8 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
-				double_check_nonce_limiter, legacy_storage_repacking, serve_wallet_lists],
+				double_check_nonce_limiter, legacy_storage_repacking, serve_wallet_lists,
+				pack_served_chunks | Config#config.enable],
 		mining_server_chunk_cache_size_limit = 4,
 		debug = true
 	}),

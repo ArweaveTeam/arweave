@@ -96,7 +96,7 @@ req(Args, ReestablishedConnection) ->
 			%%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
 			prometheus_histogram:observe(ar_http_request_duration_seconds, [
 					method_to_list(Method),
-					ar_metrics:label_http_path(list_to_binary(Path)),
+					ar_http_iface_server:label_http_path(list_to_binary(Path)),
 					ar_metrics:get_status_class(Response)
 				], EndTime - StartTime)
 	end,	
@@ -218,12 +218,14 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
 
 handle_info({'DOWN', _Ref, process, PID, Reason},
 		#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
-	?LOG_DEBUG([{event, gun_connection_process_down},
-			{reason, io_lib:format("~p", [Reason])}]),
 	case maps:get(PID, StatusByPID, not_found) of
 		not_found ->
+			?LOG_DEBUG([{event, gun_connection_process_down}, {pid, PID}, {peer, unknown},
+				{reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State};
 		{Status, _MonitorRef, Peer} ->
+			?LOG_DEBUG([{event, gun_connection_process_down}, {pid, PID},
+				{peer, ar_util:format_peer(Peer)}, {reason, io_lib:format("~p", [Reason])}]),
 			PIDByPeer2 = maps:remove(Peer, PIDByPeer),
 			StatusByPID2 = maps:remove(PID, StatusByPID),
 			case Status of
@@ -274,7 +276,7 @@ reply_error([PendingRequest | PendingRequests], Reason) ->
 
 record_response_status(Method, Path, Response) ->
 	prometheus_counter:inc(gun_requests_total, [method_to_list(Method),
-			ar_metrics:label_http_path(list_to_binary(Path)),
+			ar_http_iface_server:label_http_path(list_to_binary(Path)),
 			ar_metrics:get_status_class(Response)]).
 
 method_to_list(get) ->
@@ -360,6 +362,7 @@ await_response(Args) ->
 					Start, End}};
 		{error, timeout} = Response ->
 			record_response_status(Method, Path, Response),
+			gun:cancel(PID, Ref),
 			log(warn, gun_await_process_down, Args, Response),
 			Response;
 		{error, Reason} = Response when is_tuple(Reason) ->
@@ -398,14 +401,14 @@ log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
 download_metric(Data, #{path := Path}) ->
 	prometheus_counter:inc(
 		http_client_downloaded_bytes_total,
-		[ar_metrics:label_http_path(list_to_binary(Path))],
+		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
 		byte_size(Data)
 	).
 
 upload_metric(#{method := post, path := Path, body := Body}) ->
 	prometheus_counter:inc(
 		http_client_uploaded_bytes_total,
-		[ar_metrics:label_http_path(list_to_binary(Path))],
+		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
 		byte_size(Body)
 	);
 upload_metric(_) ->

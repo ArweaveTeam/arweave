@@ -9,7 +9,7 @@
 label_value(http_method, #{req:=Req}) ->
 	normalize_method(cowboy_req:method(Req));
 label_value(route, #{req:=Req}) ->
-	ar_metrics:label_http_path(cowboy_req:path(Req));
+	ar_http_iface_server:label_http_path(cowboy_req:path(Req));
 label_value(_, _) ->
 	undefined.
 

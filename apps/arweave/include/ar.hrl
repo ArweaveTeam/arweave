@@ -7,6 +7,8 @@
 %% (e.g. bin/test or bin/shell)
 -define(IS_TEST, erlang:get_cookie() == test).
 
+-define(DATA_SIZE(Term), erlang:byte_size(term_to_binary(Term))).
+
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
 	-ifdef(DEBUG).
@@ -21,7 +23,7 @@
 -define(CLIENT_VERSION, 5).
 
 %% The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 62).
+-define(RELEASE_NUMBER, 64).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
@@ -110,6 +112,14 @@
 -define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 -else.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
+-endif.
+
+%% The recommended depth of the block to use as an anchor for transactions.
+%% The corresponding block hash is returned by the GET /tx_anchor endpoint.
+-ifdef(DEBUG).
+-define(SUGGESTED_TX_ANCHOR_DEPTH, 5).
+-else.
+-define(SUGGESTED_TX_ANCHOR_DEPTH, 6).
 -endif.
 
 %% How long to wait before giving up on test(s).

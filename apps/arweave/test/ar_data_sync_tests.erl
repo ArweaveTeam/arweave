@@ -318,7 +318,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			)
 		end,
 		500,
-		10 * 1000
+		30 * 1000
 	).
 
 accepts_chunks_test_() ->
@@ -682,7 +682,8 @@ test_mines_off_only_second_last_chunks() ->
 	).
 
 packs_chunks_depending_on_packing_threshold_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 10 end}],
+	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 10 end},
+			{ar_fork, height_2_6_8, fun() -> 15 end}],
 			fun test_packs_chunks_depending_on_packing_threshold/0).
 
 test_packs_chunks_depending_on_packing_threshold() ->
@@ -1257,3 +1258,218 @@ compare_proofs(#{ chunk := C, data_path := D, tx_path := T },
 compare_proofs(_, _, EndOffset) ->
 	?debugFmt("Proof mismatch for ~B.", [EndOffset]),
 	false.
+
+enqueue_intervals_test() ->
+	test_enqueue_intervals([], 2, [], [], [], "Empty Intervals"),
+	Peer1 = {1, 2, 3, 4, 1984},
+	Peer2 = {101, 102, 103, 104, 1984},
+	Peer3 = {201, 202, 203, 204, 1984},
+
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+				])}
+		],
+		5,
+		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+		[
+			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+			{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1},
+			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer1},
+			{8*?DATA_CHUNK_SIZE, 9*?DATA_CHUNK_SIZE, Peer1}
+		],
+		"Single peer, full intervals, all chunks. Non-overlapping QIntervals."),
+
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+				])}
+		],
+		2,
+		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+		[
+			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1}
+		],
+		"Single peer, full intervals, 2 chunks. Non-overlapping QIntervals."),
+
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+			])},
+			{Peer2, ar_intervals:from_list([
+				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+			])},
+			{Peer3, ar_intervals:from_list([
+				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+			])}
+		],
+		2,
+		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+		[
+			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+			{8*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
+			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2},
+			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
+		],
+		"Multiple peers, overlapping, full intervals, 2 chunks. Non-overlapping QIntervals."),
+
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+			])},
+			{Peer2, ar_intervals:from_list([
+				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+			])},
+			{Peer3, ar_intervals:from_list([
+				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+			])}
+		],
+		3,
+		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+		[
+			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+			{8*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
+			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1},
+			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
+		],
+		"Multiple peers, overlapping, full intervals, 3 chunks. Non-overlapping QIntervals."),
+	
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+			])}
+		],
+		5,
+		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
+		[
+			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+			{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1}
+		],
+		"Single peer, full intervals, all chunks. Overlapping QIntervals."),
+
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+			])},
+			{Peer2, ar_intervals:from_list([
+				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+			])},
+			{Peer3, ar_intervals:from_list([
+				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+			])}
+		],
+		2,
+		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
+		[
+			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+			{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
+			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2}
+		],
+		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals."),
+
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
+				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
+			])}
+		],
+		2,
+		[
+			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
+			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
+		],
+		[
+			{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1}
+		],
+		"Single peer, partial intervals, 2 chunks. Overlapping partial QIntervals."),
+
+	test_enqueue_intervals(
+		[
+			{Peer1, ar_intervals:from_list([
+				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
+				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
+			])},
+			{Peer2, ar_intervals:from_list([
+				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+				{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+			])},
+			{Peer3, ar_intervals:from_list([
+				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+			])}
+		],
+		2,
+		[
+			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
+			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
+		],
+		[
+			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+			{8*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+		],
+		[
+			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+			{3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1},
+			{trunc(3.25*?DATA_CHUNK_SIZE), 4*?DATA_CHUNK_SIZE, Peer2},
+			{6*?DATA_CHUNK_SIZE, trunc(6.5*?DATA_CHUNK_SIZE), Peer2}
+		],
+		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals.").
+
+test_enqueue_intervals(Intervals, ChunksPerPeer, QIntervalsRanges, ExpectedQIntervalRanges, ExpectedChunks, Label) ->
+	QIntervals = ar_intervals:from_list(QIntervalsRanges),
+	Q = gb_sets:new(),
+	{QResult, QIntervalsResult} = ar_data_sync:enqueue_intervals(Intervals, ChunksPerPeer, {Q, QIntervals}),
+	ExpectedQIntervals = lists:foldl(fun({End, Start}, Acc) ->
+			ar_intervals:add(Acc, End, Start)
+		end, QIntervals, ExpectedQIntervalRanges),
+	?assertEqual(ar_intervals:to_list(ExpectedQIntervals), ar_intervals:to_list(QIntervalsResult), Label),
+	?assertEqual(ExpectedChunks, gb_sets:to_list(QResult), Label).
+

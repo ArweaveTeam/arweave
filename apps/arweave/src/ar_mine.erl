@@ -499,8 +499,7 @@ start_hashing_threads2(S) ->
 	HashingThreads =
 		[spawn(
 			fun() ->
-				ShuffledIOThreads = lists:sort(fun(_, _) -> rand:uniform() > 0.5 end,
-						IOThreads),
+				ShuffledIOThreads = ar_util:shuffle_list(IOThreads),
 				Type =
 					case N =< StageOneThreadCount of
 						true ->

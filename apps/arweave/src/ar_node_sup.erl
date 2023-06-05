@@ -15,9 +15,6 @@
 
 -include_lib("arweave/include/ar_sup.hrl").
 
-%% Helper macro for declaring children of supervisor
--define(CHILD(I, Type), {I, {I, start_link, []}, permanent, ?SHUTDOWN_TIMEOUT, Type, [I]}).
-
 %% ===================================================================
 %% API functions
 %% ===================================================================
