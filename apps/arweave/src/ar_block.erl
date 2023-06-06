@@ -206,7 +206,8 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		denomination = Denomination, redenomination_height = RedenominationHeight,
-		double_signing_proof = DoubleSigningProof, previous_cumulative_diff = PrevCDiff }) ->
+		double_signing_proof = DoubleSigningProof, previous_cumulative_diff = PrevCDiff,
+		merkle_rebase_support_threshold = RebaseThreshold }) ->
 	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
 	Nonce2 = binary:encode_unsigned(Nonce),
 	%% The only block where reward_address may be unclaimed
@@ -218,6 +219,13 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			next_partition_upper_bound = NextPartitionUpperBound,
 			steps = Steps, prev_output = PrevOutput,
 			last_step_checkpoints = LastStepCheckpoints } = NonceLimiterInfo,
+	RebaseThresholdBin =
+		case Height >= ar_fork:height_2_7() of
+			true ->
+				encode_int(RebaseThreshold, 16);
+			false ->
+				<<>>
+		end,
 	Segment = << (encode_bin(PrevH, 8))/binary, (encode_int(TS, 8))/binary,
 			(encode_bin(Nonce2, 16))/binary, (encode_int(Height, 8))/binary,
 			(encode_int(Diff, 16))/binary, (encode_int(CDiff, 16))/binary,
@@ -227,8 +235,10 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			(encode_bin(WalletList, 8))/binary,
 			(encode_bin(HashListMerkle, 8))/binary, (encode_int(RewardPool, 8))/binary,
 			(encode_int(Packing_2_5_Threshold, 8))/binary,
-			(encode_int(StrictChunkThreshold, 8))/binary, (encode_int(RateDividend, 8))/binary,
-			(encode_int(RateDivisor, 8))/binary, (encode_int(ScheduledRateDividend, 8))/binary,
+			(encode_int(StrictChunkThreshold, 8))/binary,
+					(encode_int(RateDividend, 8))/binary,
+			(encode_int(RateDivisor, 8))/binary,
+					(encode_int(ScheduledRateDividend, 8))/binary,
 			(encode_int(ScheduledRateDivisor, 8))/binary,
 			(encode_bin_list(Tags, 16, 16))/binary,
 			(encode_bin_list([GetTXID(TX) || TX <- TXs], 16, 8))/binary,
@@ -247,7 +257,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8, Denomination:24,
 			(encode_int(RedenominationHeight, 8))/binary,
 			(ar_serialize:encode_double_signing_proof(DoubleSigningProof))/binary,
-			(encode_int(PrevCDiff, 16))/binary >>,
+			(encode_int(PrevCDiff, 16))/binary, RebaseThresholdBin/binary >>,
 	crypto:hash(sha256, Segment).
 
 %% @doc Compute the block identifier from the signed hash and block signature.

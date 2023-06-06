@@ -2,7 +2,8 @@
 %%% various protocol entitities - transactions, blocks, proofs, etc
 -module(ar_serialize).
 
--export([block_to_binary/1, binary_to_block/1, json_struct_to_block/1, block_to_json_struct/1,
+-export([block_to_binary/1, binary_to_block/1, json_struct_to_block/1,
+		block_to_json_struct/1,
 		block_announcement_to_binary/1, binary_to_block_announcement/1,
 		binary_to_block_announcement_response/1, block_announcement_response_to_binary/1,
 		tx_to_binary/1, binary_to_tx/1,
@@ -67,7 +68,7 @@ block_to_binary(#block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
 			(encode_int(ScheduledRateDivisor, 8))/binary, (encode_int(Option, 8))/binary,
 			(encode_bin(Chunk, 24))/binary, (encode_bin(TXPath, 24))/binary,
 			(encode_bin(DataPath, 24))/binary, (encode_bin_list(Tags, 16, 16))/binary,
-			(encode_transactions(TXs))/binary, (encode_2_6_fields(B))/binary >>.
+			(encode_transactions(TXs))/binary, (encode_post_2_6_fields(B))/binary >>.
 
 %% @doc Deserialize the block.
 binary_to_block(<< H:48/binary, PrevHSize:8, PrevH:PrevHSize/binary,
@@ -126,7 +127,9 @@ block_to_json_struct(
 			indep_hash = IndepHash, txs = TXs, tx_root = TXRoot, wallet_list = WalletList,
 			reward_addr = RewardAddr, tags = Tags, reward_pool = RewardPool,
 			weave_size = WeaveSize, block_size = BlockSize, cumulative_diff = CDiff,
-			hash_list_merkle = MR, poa = POA, previous_cumulative_diff = PrevCDiff } = B) ->
+			hash_list_merkle = MR, poa = POA,
+			previous_cumulative_diff = PrevCDiff,
+			merkle_rebase_support_threshold = RebaseThreshold } = B) ->
 	{JSONDiff, JSONCDiff} =
 		case Height >= ar_fork:height_1_8() of
 			true ->
@@ -200,7 +203,8 @@ block_to_json_struct(
 					{scheduled_usd_to_ar_rate,
 						[integer_to_binary(ScheduledRateDividend),
 							integer_to_binary(ScheduledRateDivisor)]},
-					{packing_2_5_threshold, integer_to_binary(B#block.packing_2_5_threshold)},
+					{packing_2_5_threshold,
+							integer_to_binary(B#block.packing_2_5_threshold)},
 					{strict_data_split_threshold,
 							integer_to_binary(B#block.strict_data_split_threshold)}
 					| JSONElements3
@@ -248,7 +252,8 @@ block_to_json_struct(
 							{price_per_gib_minute, integer_to_binary(PricePerGiBMinute)},
 							{scheduled_price_per_gib_minute,
 									integer_to_binary(ScheduledPricePerGiBMinute)},
-							{reward_history_hash, ar_util:encode(B#block.reward_history_hash)},
+							{reward_history_hash,
+									ar_util:encode(B#block.reward_history_hash)},
 							{debt_supply, integer_to_binary(DebtSupply)},
 							{kryder_plus_rate_multiplier,
 									integer_to_binary(KryderPlusRateMultiplier)},
@@ -268,7 +273,15 @@ block_to_json_struct(
 			false ->
 				JSONElements4
 		end,
-	{JSONElements5}.
+	JSONElements7 =
+		case Height >= ar_fork:height_2_7() of
+			true ->
+				[{merkle_rebase_support_threshold, integer_to_binary(RebaseThreshold)}
+						| JSONElements5];
+			false ->
+				JSONElements5
+		end,
+	{JSONElements7}.
 
 reward_history_to_binary(RewardHistory) ->
 	reward_history_to_binary(RewardHistory, []).
@@ -384,9 +397,10 @@ encode_double_signing_proof(Proof) ->
 %%% Private functions.
 %%%===================================================================
 
-encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
+encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 			recall_byte = RecallByte, reward = Reward,
-			previous_solution_hash = PreviousSolutionHash, partition_number = PartitionNumber,
+			previous_solution_hash = PreviousSolutionHash,
+			partition_number = PartitionNumber,
 			signature = Sig, nonce_limiter_info = NonceLimiterInfo,
 			poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 			recall_byte2 = RecallByte2, price_per_gib_minute = PricePerGiBMinute,
@@ -415,7 +429,17 @@ encode_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 				KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8,
 				Denomination:24, (encode_int(RedenominationHeight, 8))/binary,
 				(encode_int(PrevCDiff, 16))/binary,
-				(encode_double_signing_proof(DoubleSigningProof))/binary >>
+				(encode_double_signing_proof(DoubleSigningProof))/binary,
+				(encode_post_2_7_fields(B))/binary >>
+	end.
+
+encode_post_2_7_fields(#block{ height = Height,
+		merkle_rebase_support_threshold = Threshold }) ->
+	case Height >= ar_fork:height_2_7() of
+		true ->
+			encode_int(Threshold, 16);
+		false ->
+			<<>>
 	end.
 
 encode_nonce_limiter_info(#nonce_limiter_info{ output = Output, global_step_number = N,
@@ -513,12 +537,12 @@ parse_block_transactions(Bin, B) ->
 		{{ok, TXs, <<>>}, true} ->
 			{ok, B#block{ txs = TXs }};
 		{{ok, TXs, Rest}, false} ->
-			parse_block_2_6_fields(B#block{ txs = TXs }, Rest);
+			parse_block_post_2_6_fields(B#block{ txs = TXs }, Rest);
 		_ ->
 			{error, invalid_input1}
 	end.
 
-parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/binary,
+parse_block_post_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/binary,
 		RecallByteSize:16, RecallByte:(RecallByteSize * 8), RewardSize:8,
 		Reward:(RewardSize * 8), SigSize:16, Sig:SigSize/binary,
 		RecallByte2Size:16, RecallByte2:(RecallByte2Size * 8), PreviousSolutionHashSize:8,
@@ -541,40 +565,35 @@ parse_block_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageSize/b
 		RedenominationHeight:(RedenominationHeightSize * 8),
 		PrevCDiffSize:16, PrevCDiff:(PrevCDiffSize * 8),
 		Rest/binary >>) ->
-	case parse_double_signing_proof(Rest) of
-		{error, _} = Error ->
-			Error;
-		{ok, DoubleSigningProof} ->
-			%% The only block where recall_byte may be undefined is the genesis block
-			%% of a new weave.
-			RecallByte_2 = case RecallByteSize of 0 -> undefined; _ -> RecallByte end,
-			Height = B#block.height,
-			Nonce = binary:decode_unsigned(B#block.nonce, big),
-			NonceLimiterInfo = #nonce_limiter_info{ output = NonceLimiterOutput,
-					prev_output = PrevOutput, global_step_number = GlobalStepNumber,
-					seed = Seed, next_seed = NextSeed,
-					partition_upper_bound = PartitionUpperBound,
-					next_partition_upper_bound = NextPartitionUpperBound,
-					last_step_checkpoints = parse_checkpoints(LastCheckpoints, Height),
-					steps = parse_checkpoints(Steps, Height) },
-			RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
-			{ok, B#block{ hash_preimage = HashPreimage, recall_byte = RecallByte_2,
-					reward = Reward, nonce = Nonce, recall_byte2 = RecallByte2_2,
-					previous_solution_hash = PreviousSolutionHash,
-					signature = Sig, partition_number = PartitionNumber,
-					reward_key = {{?RSA_SIGN_ALG, 65537}, RewardKey},
-					nonce_limiter_info = NonceLimiterInfo,
-					poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
-					price_per_gib_minute = PricePerGiBMinute,
-					scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
-					reward_history_hash = RewardHistoryHash, debt_supply = DebtSupply,
-					kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
-					kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
-					denomination = Denomination, redenomination_height = RedenominationHeight,
-					double_signing_proof = DoubleSigningProof,
-					previous_cumulative_diff = PrevCDiff }}
-	end;
-parse_block_2_6_fields(_B, _Rest) ->
+	%% The only block where recall_byte may be undefined is the genesis block
+	%% of a new weave.
+	RecallByte_2 = case RecallByteSize of 0 -> undefined; _ -> RecallByte end,
+	Height = B#block.height,
+	Nonce = binary:decode_unsigned(B#block.nonce, big),
+	NonceLimiterInfo = #nonce_limiter_info{ output = NonceLimiterOutput,
+			prev_output = PrevOutput, global_step_number = GlobalStepNumber,
+			seed = Seed, next_seed = NextSeed,
+			partition_upper_bound = PartitionUpperBound,
+			next_partition_upper_bound = NextPartitionUpperBound,
+			last_step_checkpoints = parse_checkpoints(LastCheckpoints, Height),
+			steps = parse_checkpoints(Steps, Height) },
+	RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
+	B2 = B#block{ hash_preimage = HashPreimage, recall_byte = RecallByte_2,
+			reward = Reward, nonce = Nonce, recall_byte2 = RecallByte2_2,
+			previous_solution_hash = PreviousSolutionHash,
+			signature = Sig, partition_number = PartitionNumber,
+			reward_key = {{?RSA_SIGN_ALG, 65537}, RewardKey},
+			nonce_limiter_info = NonceLimiterInfo,
+			poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
+			price_per_gib_minute = PricePerGiBMinute,
+			scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
+			reward_history_hash = RewardHistoryHash, debt_supply = DebtSupply,
+			kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
+			kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
+			denomination = Denomination, redenomination_height = RedenominationHeight,
+			previous_cumulative_diff = PrevCDiff },
+	parse_double_signing_proof(Rest, B2);
+parse_block_post_2_6_fields(_B, _Rest) ->
 	{error, invalid_input4}.
 
 parse_checkpoints(<<>>, 0) ->
@@ -618,17 +637,29 @@ parse_block_transactions(N, << Size:24, Bin:Size/binary, Rest/binary >>, TXs)
 parse_block_transactions(_N, _Rest, _TXs) ->
 	{error, invalid_transactions2_input}.
 
-parse_double_signing_proof(<< 0:8 >>) ->
-	{ok, undefined};
+parse_double_signing_proof(<< 0:8, Rest/binary >>, B) ->
+	parse_post_2_7_fields(Rest, B);
 parse_double_signing_proof(<< 1:8, Key:512/binary, Sig1:512/binary,
 		CDiff1Size:16, CDiff1:(CDiff1Size * 8),
 		PrevCDiff1Size:16, PrevCDiff1:(PrevCDiff1Size * 8),
 		Preimage1:64/binary, Sig2:512/binary, CDiff2Size:16, CDiff2:(CDiff2Size * 8),
 		PrevCDiff2Size:16, PrevCDiff2:(PrevCDiff2Size * 8),
-		Preimage2:64/binary >>) ->
-	{ok, {Key, Sig1, CDiff1, PrevCDiff1, Preimage1, Sig2, CDiff2, PrevCDiff2, Preimage2}};
-parse_double_signing_proof(_Bin) ->
+		Preimage2:64/binary, Rest/binary >>, B) ->
+	B2 = B#block{ double_signing_proof = {Key, Sig1, CDiff1, PrevCDiff1, Preimage1,
+			Sig2, CDiff2, PrevCDiff2, Preimage2} },
+	parse_post_2_7_fields(Rest, B2);
+parse_double_signing_proof(_Bin, _B) ->
 	{error, invalid_double_signing_proof_input}.
+
+parse_post_2_7_fields(Rest, #block{ height = Height } = B) ->
+	case {Rest, Height >= ar_fork:height_2_7()} of
+		{<<>>, false} ->
+			{ok, B};
+		{<< ThresholdSize:16, Threshold:(ThresholdSize*8) >>, true} ->
+			{ok, B#block{ merkle_rebase_support_threshold = Threshold }};
+		_ ->
+			{error, invalid_merkle_rebase_support_threshold}
+	end.
 
 parse_tx(<< TXID:32/binary >>) ->
 	{ok, TXID};
@@ -978,7 +1009,8 @@ json_struct_to_block({BlockStruct}) ->
 					find_value(<<"usd_to_ar_rate">>, BlockStruct),
 				[ScheduledRateDividendBinary, ScheduledRateDivisorBinary] =
 					find_value(<<"scheduled_usd_to_ar_rate">>, BlockStruct),
-				{{binary_to_integer(RateDividendBinary), binary_to_integer(RateDivisorBinary)},
+				{{binary_to_integer(RateDividendBinary),
+						binary_to_integer(RateDivisorBinary)},
 					{binary_to_integer(ScheduledRateDividendBinary),
 						binary_to_integer(ScheduledRateDivisorBinary)},
 							binary_to_integer(find_value(<<"packing_2_5_threshold">>,
@@ -1590,7 +1622,9 @@ block_index_to_binary_test() ->
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test_() ->
 	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_6, fun() -> infinity end}],
+			{ar_fork, height_2_6, fun() -> infinity end},
+			{ar_fork, height_2_6_8, fun() -> infinity end},
+			{ar_fork, height_2_7, fun() -> infinity end}],
 		fun test_block_roundtrip/0).
 
 test_block_roundtrip() ->

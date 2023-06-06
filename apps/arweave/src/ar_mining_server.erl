@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, pause/0, start_mining/1, set_difficulty/1,
-		pause_performance_reports/1]).
+		set_merkle_rebase_threshold/1, pause_performance_reports/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -31,6 +31,7 @@
 	hashing_thread_monitor_refs = #{},
 	session						= #mining_session{},
 	diff						= infinity,
+	merkle_rebase_threshold		= infinity,
 	partitions					= sets:new(),
 	task_queue					= gb_sets:new(),
 	pause_performance_reports	= false,
@@ -63,6 +64,9 @@ start_mining(Args) ->
 %% Also, a mining session may (in practice, almost always will) span several blocks.
 set_difficulty(Diff) ->
 	gen_server:cast(?MODULE, {set_difficulty, Diff}).
+
+set_merkle_rebase_threshold(Threshold) ->
+	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
 
 %% @doc Stop logging performance reports for the given number of milliseconds.
 pause_performance_reports(Time) ->
@@ -117,7 +121,7 @@ handle_cast(pause, #state{ io_threads = IOThreads,
 	{noreply, State#state{ diff = infinity, session = #mining_session{} }};
 
 handle_cast({start_mining, Args}, State) ->
-	{Diff} = Args,
+	{Diff, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
 	#state{ hashing_threads = HashingThreads, io_threads = IOThreads } = State,
 	Ref = make_ref(),
@@ -129,13 +133,17 @@ handle_cast({start_mining, Args}, State) ->
 	ets:insert(?MODULE, {chunk_cache_size, 0}),
 	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
 	Session = #mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit },
-	{noreply, State#state{ diff = Diff, session = Session }};
+	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold,
+			session = Session }};
 
 handle_cast({set_difficulty, _Diff},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{noreply, State};
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
+
+handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
+	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
 handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 	case gb_sets:is_empty(Q) of
@@ -1058,7 +1066,8 @@ prepare_solution(Args, State, Key) ->
 prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 	{PartitionNumber, Nonce, _H0, NonceLimiterOutput, ReplicaID, _Chunk1, _Chunk2, H,
 			Preimage, _Ref} = Args,
-	#state{ diff = Diff, session = Session } = State,
+	#state{ diff = Diff, session = Session,
+			merkle_rebase_threshold = RebaseThreshold } = State,
 	#mining_session{ seed = Seed, next_seed = NextSeed,
 			start_interval_number = StartIntervalNumber,
 			partition_upper_bound = PartitionUpperBound,
@@ -1066,7 +1075,7 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
 			StepNumber, NextSeed, StartIntervalNumber),
 	case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID, Nonce,
-			PoA1, PoA2, Diff, PartitionUpperBound}) of
+			PoA1, PoA2, Diff, PartitionUpperBound, RebaseThreshold}) of
 		error ->
 			?LOG_INFO([{event, failed_to_validate_solution},
 					{partition, PartitionNumber},
@@ -1089,7 +1098,7 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 		true ->
 			SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
 					NextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
-					RecallByte1, RecallByte2, PoA1, PoA2, Key},
+					RecallByte1, RecallByte2, PoA1, PoA2, Key, RebaseThreshold},
 			?LOG_INFO([{event, found_mining_solution},
 					{partition, PartitionNumber}, {step_number, StepNumber},
 					{mining_address, ar_util:encode(ReplicaID)},
@@ -1102,7 +1111,7 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 
 validate_solution(Args) ->
 	{NonceLimiterOutput, PartitionNumber, Seed, RewardAddr, Nonce, PoA1, PoA2, Diff,
-			PartitionUpperBound} = Args,
+			PartitionUpperBound, RebaseThreshold} = Args,
 	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, RewardAddr),
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
@@ -1113,7 +1122,7 @@ validate_solution(Args) ->
 			{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 			BlockSize1 = BlockEnd1 - BlockStart1,
 			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, RewardAddr}});
+					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, RewardAddr}, RebaseThreshold});
 		false ->
 			{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
 			case binary:decode_unsigned(H2, big) > Diff of
@@ -1125,7 +1134,8 @@ validate_solution(Args) ->
 							RecallByte2),
 					BlockSize2 = BlockEnd2 - BlockStart2,
 					ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2, PoA2,
-							?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, RewardAddr}})
+							?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, RewardAddr},
+							RebaseThreshold})
 			end
 	end.
 
