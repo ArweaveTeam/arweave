@@ -298,14 +298,14 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 		PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA }),
 	PeerTasks3 = update_active(
 		PeerTasks2, IsOK, Milliseconds, State#state.worker_count, LatencyTarget),
-	% ?LOG_ERROR([{event, complete_sync_range},
-	% 	{peer, ar_util:format_peer(Peer)}, {is_ok, IsOK}, {duration, Milliseconds},
-	% 	{before_latency_ema, PeerTasks#peer_tasks.latency_ema}, {after_latency_ema, LatencyEMA},
-	% 	{before_success_ema, PeerTasks#peer_tasks.success_ema}, {after_success_ema, SuccessEMA},
-	% 	{before_latency_target, State#state.latency_target}, {after_latency_target, LatencyTarget},
-	% 	{before_max_active, PeerTasks2#peer_tasks.max_active},
-	% 	{after_max_active, PeerTasks3#peer_tasks.max_active}
-	% ]),
+	?LOG_DEBUG([{event, complete_sync_range},
+		{peer, ar_util:format_peer(Peer)}, {is_ok, IsOK}, {duration, Milliseconds},
+		{before_latency_ema, PeerTasks#peer_tasks.latency_ema}, {after_latency_ema, LatencyEMA},
+		{before_success_ema, PeerTasks#peer_tasks.success_ema}, {after_success_ema, SuccessEMA},
+		{before_latency_target, State#state.latency_target}, {after_latency_target, LatencyTarget},
+		{before_max_active, PeerTasks2#peer_tasks.max_active},
+		{after_max_active, PeerTasks3#peer_tasks.max_active}
+	]),
 	{PeerTasks3, State#state{ latency_target = LatencyTarget }}.
 
 
