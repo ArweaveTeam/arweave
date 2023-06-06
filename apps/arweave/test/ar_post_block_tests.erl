@@ -20,21 +20,10 @@ start_node() ->
 	connect_to_slave().
 
 reset_node() ->
-	connect_to_slave().
+	ar_blacklist_middleware:reset(),
+	slave_call(ar_blacklist_middleware, reset, []),
+	connect_to_slave(),
 
-setup_all_post_2_6() ->
-	{Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_fork, height_2_6, fun() -> 0 end}
-		]),
-	Functions = Setup(),
-	start_node(),
-	{Cleanup, Functions}.
-
-cleanup_all_post_2_6({Cleanup, Functions}) ->
-	Cleanup(Functions).
-
-setup_one_post_2_6() ->
-	reset_node(),
 	Height = slave_height(),
 	[{PrevH, _, _} | _] = wait_until_height(Height),
 	disconnect_from_slave(),
@@ -46,12 +35,31 @@ setup_one_post_2_6() ->
 	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
 	{Key, B, PrevB}.
 
+setup_all_post_2_6() ->
+	{Setup, Cleanup} = ar_test_node:mock_functions([
+		{ar_fork, height_2_6, fun() -> 0 end}
+		]),
+	Functions = Setup(),
+	start_node(),
+	{Cleanup, Functions}.
+
+setup_all_post_2_7() ->
+	{Setup, Cleanup} = ar_test_node:mock_functions([
+		{ar_fork, height_2_7, fun() -> 1 end}
+		]),
+	Functions = Setup(),
+	start_node(),
+	{Cleanup, Functions}.
+
+cleanup_all_post_fork({Cleanup, Functions}) ->
+	Cleanup(Functions).
+
 instantiator(TestFun) ->
 	fun (Fixture) -> {timeout, 60, {with, Fixture, [TestFun]}} end.
 
 post_2_6_test_() ->
-	{setup, fun setup_all_post_2_6/0, fun cleanup_all_post_2_6/1,
-		{foreach, fun setup_one_post_2_6/0, [
+	{setup, fun setup_all_post_2_6/0, fun cleanup_all_post_fork/1,
+		{foreach, fun reset_node/0, [
 			instantiator(fun test_reject_block_invalid_miner_reward/1),
 			instantiator(fun test_reject_block_invalid_denomination/1),
 			instantiator(fun test_reject_block_invalid_kryder_plus_rate_multiplier/1),
@@ -59,9 +67,225 @@ post_2_6_test_() ->
 			instantiator(fun test_reject_block_invalid_endowment_pool/1),
 			instantiator(fun test_reject_block_invalid_debt_supply/1),
 			instantiator(fun test_reject_block_invalid_wallet_list/1),
-			instantiator(fun test_add_external_block_with_invalid_timestamp/1)
+			instantiator(fun test_mitm_poa_chunk_tamper_ban/1),
+			instantiator(fun test_mitm_poa2_chunk_tamper_ban/1)
 		]}
 	}.
+
+post_2_7_test_() ->
+	{setup, fun setup_all_post_2_7/0, fun cleanup_all_post_fork/1,
+		{foreach, fun reset_node/0, [
+			instantiator(fun test_mitm_poa_chunk_tamper_warn/1),
+			instantiator(fun test_mitm_poa2_chunk_tamper_warn/1),
+			instantiator(fun test_reject_block_invalid_chunk_hash_ban/1),
+			instantiator(fun test_reject_block_invalid_chunk2_hash_ban/1),
+			instantiator(fun test_reject_block_invalid_proof_size/1),
+			instantiator(fun test_cached_poa/1)
+		]}
+	}.
+
+%% ------------------------------------------------------------------------------------------------
+%% post_2_7_test_
+%% ------------------------------------------------------------------------------------------------
+test_mitm_poa_chunk_tamper_warn({_Key, B, _PrevB}) ->
+	%% Verify that, in 2.7, we don't ban a peer if the poa.chunk is tampered with.
+	ok = ar_events:subscribe(block),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
+	post_block(B2, invalid_first_chunk),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+
+test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
+	%% Verify that, in 2.7, we don't ban a peer if the poa2.chunk is tampered with.
+	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
+	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
+	ok = ar_events:subscribe(block),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	B2 = sign_block(B#block{ 
+			recall_byte2 = 100000000,
+			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
+	post_block(B2, invalid_second_chunk),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+
+test_reject_block_invalid_chunk_hash_ban({Key, B, PrevB}) ->
+	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk doesn't match
+	%% the chunk_hash
+	ok = ar_events:subscribe(block),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	B2 = sign_block(B#block{
+		poa = #poa{ chunk = <<>> },
+		chunk_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
+	post_block(B2, invalid_chunk_hash),
+	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+
+test_reject_block_invalid_chunk2_hash_ban({Key, B, PrevB}) ->
+	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk2 doesn't match
+	%% the chunk2_hash
+	ok = ar_events:subscribe(block),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	B2 = sign_block(B#block{
+		recall_byte2 = 1000,
+		poa2 = #poa{ chunk = <<>> },
+		chunk2_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
+	post_block(B2, invalid_chunk2_hash),
+	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+
+test_reject_block_invalid_proof_size({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	MaxDataPathSize = 349504,
+	MaxTxPathSize = 2176,
+	post_block(sign_block(
+		B#block{
+			poa = #poa{
+				tx_path = crypto:strong_rand_bytes(MaxTxPathSize + 1)
+			}
+		}, PrevB, Key),
+		invalid_proof_size),
+	post_block(sign_block(
+		B#block{
+			poa = #poa{
+				data_path = crypto:strong_rand_bytes(MaxDataPathSize + 1)
+			}
+		}, PrevB, Key),
+		invalid_proof_size),
+	post_block(sign_block(
+		B#block{
+			poa = #poa{
+				chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE+1)
+			}
+		}, PrevB, Key),
+		invalid_proof_size),
+	post_block(sign_block(
+		B#block{
+			poa2 = #poa{
+				tx_path = crypto:strong_rand_bytes(MaxTxPathSize + 1)
+			}
+		}, PrevB, Key),
+		invalid_proof_size),
+	post_block(sign_block(
+		B#block{
+			poa2 = #poa{
+				data_path = crypto:strong_rand_bytes(MaxDataPathSize + 1)
+			}
+		}, PrevB, Key),
+		invalid_proof_size),
+	post_block(sign_block(
+		B#block{
+			poa2 = #poa{
+				chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE+1)
+			}
+		}, PrevB, Key),
+		invalid_proof_size).
+
+test_cached_poa({Key, B, PrevB}) ->
+	%% Verify that comparing against a cached poa works
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B, PrevB, Key),
+	post_block(B2, valid),
+	B3 = sign_block(B, PrevB, Key),
+	post_block(B3, valid).
+
+%% ------------------------------------------------------------------------------------------------
+%% post_2_6_test_
+%% ------------------------------------------------------------------------------------------------
+test_reject_block_invalid_miner_reward({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B#block{ reward = 0 }, PrevB, Key),
+	post_block(B2, invalid_reward_history_hash),
+	HashRate = ar_difficulty:get_hash_rate(B2#block.diff),
+	RewardHistory = tl(B2#block.reward_history),
+	Addr = B2#block.reward_addr,
+	B3 = sign_block(B2#block{
+			reward_history_hash = ar_block:reward_history_hash([{Addr, HashRate, 0, 1}
+					| RewardHistory]) }, PrevB, Key),
+	post_block(B3, invalid_miner_reward).
+
+test_reject_block_invalid_denomination({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B#block{ denomination = 0 }, PrevB, Key),
+	post_block(B2, invalid_denomination).
+
+test_reject_block_invalid_kryder_plus_rate_multiplier({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B#block{ kryder_plus_rate_multiplier = 0 }, PrevB, Key),
+	post_block(B2, invalid_kryder_plus_rate_multiplier).
+
+test_reject_block_invalid_kryder_plus_rate_multiplier_latch({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B#block{ kryder_plus_rate_multiplier_latch = 2 }, PrevB, Key),
+	post_block(B2, invalid_kryder_plus_rate_multiplier_latch).
+
+test_reject_block_invalid_endowment_pool({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B#block{ reward_pool = 2 }, PrevB, Key),
+	post_block(B2, invalid_reward_pool).
+
+test_reject_block_invalid_debt_supply({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B#block{ debt_supply = 100000000 }, PrevB, Key),
+	post_block(B2, invalid_debt_supply).
+
+test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	B2 = sign_block(B#block{ wallet_list = crypto:strong_rand_bytes(32) }, PrevB, Key),
+	post_block(B2, invalid_wallet_list).
+
+test_mitm_poa_chunk_tamper_ban({_Key, B, _PrevB}) ->
+	%% This test simulates what could happen if a man-in-the-middle chages the poa.chunk in
+	%% transit causing a legitimate peer to be banned. This can happen because the recipient
+	%% does not validate the integrity of the chunk that it receives. This weakness is addressed
+	%% as part of the 2.7 hard fork.
+	ok = ar_events:subscribe(block),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
+	post_block(B2, invalid_pow),
+	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+
+test_mitm_poa2_chunk_tamper_ban({Key, B, PrevB}) ->
+	%% This test simulates what could happen if a man-in-the-middle chages the poa2.chunk in
+	%% transit causing a legitimate peer to be banned. This can happen because the recipient
+	%% does not validate the integrity of the chunk that it receives. This weakness is addressed
+	%% as part of the 2.7 hard fork.
+	%%
+	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
+	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
+	ok = ar_events:subscribe(block),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	B2 = sign_block(B#block{ 
+			recall_byte2 = 100000000,
+			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
+	post_block(B2, invalid_pow),
+	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+
+%% ------------------------------------------------------------------------------------------------
+%% Others tests
+%% ------------------------------------------------------------------------------------------------
+add_external_block_with_invalid_timestamp_test_() ->
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+		fun test_add_external_block_with_invalid_timestamp/0).
+
+test_add_external_block_with_invalid_timestamp() ->
+	start_node(),
+	{Key, B, PrevB} = reset_node(),
+
+	%% Expect the timestamp too far from the future to be rejected.
+	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
+	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
+	B2 = sign_block(B#block{ timestamp = TooFarFutureTimestamp }, PrevB, Key),
+	ok = ar_events:subscribe(block),
+	post_block(B2, invalid_timestamp),
+	%% Expect the timestamp from the future within the tolerance interval to be accepted.
+	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
+	B3 = sign_block(B#block{ timestamp = OkFutureTimestamp }, PrevB, Key),
+	post_block(B3, valid),
+	%% Expect the timestamp too far behind the previous timestamp to be rejected.
+	PastTimestampTolerance = lists:sum([?JOIN_CLOCK_TOLERANCE * 2, ?CLOCK_DRIFT_MAX]),
+	TooFarPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance - 1,
+	B4 = sign_block(B#block{ timestamp = TooFarPastTimestamp }, PrevB, Key),
+	post_block(B4, invalid_timestamp),
+	OkPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance + 1,
+	B5 = sign_block(B#block{ timestamp = OkPastTimestamp }, PrevB, Key),
+	post_block(B5, valid).
 
 rejects_invalid_blocks_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -235,11 +459,6 @@ test_rejects_invalid_blocks() ->
 			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),
 	ar_blacklist_middleware:reset().
 
-test_reject_block_invalid_denomination({Key, B, PrevB}) ->
-	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ denomination = 0 }, PrevB, Key),
-	post_block(B2, invalid_denomination).
-
 rejects_blocks_with_invalid_double_signing_proof_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun test_reject_block_invalid_double_signing_proof/0).
@@ -325,82 +544,6 @@ test_reject_block_invalid_double_signing_proof() ->
 	TXID = TX2#tx.id,
 	?assertEqual(2, length(B9#block.txs)),
 	?assertMatch(#{ Target := {1, <<>>}, BannedAddr := {_, TXID, 1, false} }, Accounts2).
-
-test_reject_block_invalid_kryder_plus_rate_multiplier({Key, B, PrevB}) ->
-	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ kryder_plus_rate_multiplier = 0 }, PrevB, Key),
-	post_block(B2, invalid_kryder_plus_rate_multiplier).
-
-test_reject_block_invalid_kryder_plus_rate_multiplier_latch({Key, B, PrevB}) ->
-	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ kryder_plus_rate_multiplier_latch = 2 }, PrevB, Key),
-	post_block(B2, invalid_kryder_plus_rate_multiplier_latch).
-
-test_reject_block_invalid_endowment_pool({Key, B, PrevB}) ->
-	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ reward_pool = 2 }, PrevB, Key),
-	post_block(B2, invalid_reward_pool).
-
-test_reject_block_invalid_debt_supply({Key, B, PrevB}) ->
-	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ debt_supply = 100000000 }, PrevB, Key),
-	post_block(B2, invalid_debt_supply).
-
-test_reject_block_invalid_miner_reward({Key, B, PrevB}) ->
-	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ reward = 0 }, PrevB, Key),
-	post_block(B2, invalid_reward_history_hash),
-	HashRate = ar_difficulty:get_hash_rate(B2#block.diff),
-	RewardHistory = tl(B2#block.reward_history),
-	Addr = B2#block.reward_addr,
-	B3 = sign_block(B2#block{
-			reward_history_hash = ar_block:reward_history_hash([{Addr, HashRate, 0, 1}
-					| RewardHistory]) }, PrevB, Key),
-	post_block(B3, invalid_miner_reward).
-
-test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
-	ok = ar_events:subscribe(block),
-	B2 = sign_block(B#block{ wallet_list = crypto:strong_rand_bytes(32) }, PrevB, Key),
-	post_block(B2, invalid_wallet_list).
-
-test_add_external_block_with_invalid_timestamp({Key, B, PrevB}) ->
-	Peer = master_peer(),
-	%% Expect the timestamp too far from the future to be rejected.
-	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
-	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
-	B2 = update_block_timestamp(B, PrevB, TooFarFutureTimestamp, Key),
-	ok = ar_events:subscribe(block),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B2)),
-	H = B2#block.indep_hash,
-	receive
-		{event, block, {rejected, invalid_timestamp, H, Peer}} ->
-			ok
-		after 500 ->
-			?assert(false, "Did not receive the rejected block event (invalid_timestamp)")
-	end,
-	%% Expect the timestamp from the future within the tolerance interval to be accepted.
-	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
-	B3 = update_block_timestamp(B, PrevB, OkFutureTimestamp, Key),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B3)),
-	%% Expect the timestamp too far behind the previous timestamp to be rejected.
-	PastTimestampTolerance = lists:sum([?JOIN_CLOCK_TOLERANCE * 2, ?CLOCK_DRIFT_MAX]),
-	TooFarPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance - 1,
-	B4 = update_block_timestamp(B, PrevB, TooFarPastTimestamp, Key),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B4)),
-	H2 = B4#block.indep_hash,
-	receive
-		{event, block, {rejected, invalid_timestamp, H2, Peer}} ->
-			ok
-		after 500 ->
-			?assert(false, "Did not receive the rejected block event "
-					"(invalid_timestamp).")
-	end,
-	OkPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance + 1,
-	B5 = update_block_timestamp(B, PrevB, OkPastTimestamp, Key),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B5)).
-
-update_block_timestamp(B, PrevB, Timestamp, Key) ->
-	sign_block(B#block{ timestamp = Timestamp }, PrevB, Key).
 
 send_block2_test_() ->
 	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -581,6 +724,10 @@ test_resigned_solution() ->
 	[{B6H, _, _}, _, _, _] = wait_until_height(3),
 	connect_to_slave(),
 	[{B6H, _, _}, {B5H, _, _}, {B2H, _, _}, _] = assert_slave_wait_until_height(3).
+
+%% ------------------------------------------------------------------------------------------------
+%% Helper functions
+%% ------------------------------------------------------------------------------------------------
 
 sort_txs_by_block_order(TXs, B) ->
 	TXByID = lists:foldl(fun(TX, Acc) -> maps:put(tx_id(TX), TX, Acc) end, #{}, TXs),
