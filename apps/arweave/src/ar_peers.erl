@@ -109,10 +109,15 @@
 	invalid_pow, 
 	invalid_poa, 
 	invalid_poa2, 
-	invalid_nonce_limiter
+	invalid_nonce_limiter,
+	invalid_chunk_hash,
+	invalid_chunk2_hash
 ]).
 -define(BLOCK_REJECTION_IGNORE, [
 	invalid_signature,
+	invalid_proof_size,
+	invalid_first_chunk,
+	invalid_second_chunk,
 	invalid_hash,
 	invalid_timestamp,
 	invalid_resigned_solution_hash,
@@ -164,6 +169,18 @@ get_peer_performances(Peers) ->
 		Peers).
 
 -if(?NETWORK_NAME == "arweave.N.1").
+resolve_peers([]) ->
+	[];
+resolve_peers([RawPeer | Peers]) ->
+	case ar_util:safe_parse_peer(RawPeer) of
+		{ok, Peer} ->
+			[Peer | resolve_peers(Peers)];
+		{error, invalid} ->
+			?LOG_WARNING([{event, failed_to_resolve_trusted_peer},
+					{peer, RawPeer}]),
+			resolve_peers(Peers)
+	end.
+
 get_trusted_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.peers of
@@ -180,17 +197,6 @@ get_trusted_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.peers.
 -endif.
-
-resolve_peers([]) ->
-	[];
-resolve_peers([RawPeer | Peers]) ->
-	case ar_util:safe_parse_peer(RawPeer) of
-		{ok, Peer} ->
-			[Peer | resolve_peers(Peers)];
-		{error, invalid} ->
-			?LOG_WARNING([{event, failed_to_resolve_trusted_peer}, {peer, RawPeer}]),
-			resolve_peers(Peers)
-	end.
 
 %% @doc Return true if the given peer has a public IPv4 address.
 %% https://en.wikipedia.org/wiki/Reserved_IP_addresses.

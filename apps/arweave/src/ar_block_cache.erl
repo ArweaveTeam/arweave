@@ -559,9 +559,9 @@ prune(Tab, Depth, TipHeight) ->
 	end.
 
 update_longest_chain_cache(Tab) ->
-	GetStart = erlang:timestamp(),
 	[{_, {_CDiff, H}}] = ets:lookup(Tab, max_cdiff),
-	Result = get_longest_chain_block_txs_pairs(Tab, H, ?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0),
+	Result = get_longest_chain_block_txs_pairs(Tab, H, ?STORE_BLOCKS_BEHIND_CURRENT,
+			none, none, [], 0),
 	case ets:update_element(Tab, longest_chain, {2, Result}) of
 		true -> ok;
 		false ->
@@ -847,11 +847,6 @@ random_block(CDiff) ->
 random_block_after_repacking(CDiff) ->
 	#block{ indep_hash = crypto:strong_rand_bytes(48), height = 0, cumulative_diff = CDiff,
 			hash = crypto:strong_rand_bytes(32) }.
-
-random_block_with_txs(CDiff, NumTXs) ->
-	TXs = [ #tx{ id = crypto:strong_rand_bytes(32) } || _ <- lists:seq(1, NumTXs)],
-	B = random_block(CDiff),
-	B#block{ txs = TXs }.
 
 block_id(#block{ indep_hash = H }) ->
 	H.

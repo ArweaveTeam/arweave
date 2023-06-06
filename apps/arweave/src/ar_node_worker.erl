@@ -133,7 +133,6 @@ init([]) ->
 	ok = ar_http_iface_server:start(),
 	gen_server:cast(?MODULE, refresh_timestamp),
 	{ok, #{
-		miner_2_5 => undefined,
 		miner_2_6 => undefined,
 		io_threads => [],
 		automine => false,
@@ -359,9 +358,9 @@ handle_info({event, miner, {found_solution, _Args}},
 handle_info({event, miner, {found_solution, Args}}, State) ->
 	{SolutionH, SolutionPreimage, PartitionNumber, Nonce, IntervalNumber,
 			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
-			RecallByte, RecallByte2, PoA1, PoA2, RewardKey} = Args,
+			RecallByte, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, RewardKey,
+			MerkleRebaseThreshold} = Args,
 	[{_, PrevH}] = ets:lookup(node_state, current),
-	[{_, PrevWeaveSize}] = ets:lookup(node_state, weave_size),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
 	Now = os:system_time(second),
 	MaxDeviation = ar_block:get_max_timestamp_deviation(),
@@ -390,8 +389,22 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck = PassesTimelineCheck andalso
 			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
-	HaveSteps =
+	PrevB = ar_block_cache:get(block_cache, PrevH),
+	CorrectRebaseThreshold =
 		case PassesSeedCheck of
+			false ->
+				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block}]),
+				false;
+			true ->
+				case get_merkle_rebase_threshold(PrevB) of
+					MerkleRebaseThreshold ->
+						true;
+					_ ->
+						false
+				end
+		end,
+	HaveSteps =
+		case CorrectRebaseThreshold of
 			false ->
 				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block}]),
 				false;
@@ -433,7 +446,6 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 					next_partition_upper_bound = NextPartitionUpperBound,
 					last_step_checkpoints = LastStepCheckpoints2,
 					steps = Steps },
-			PrevB = ar_block_cache:get(block_cache, PrevH),
 			Height = PrevB#block.height + 1,
 			{Rate, ScheduledRate} = ar_pricing:recalculate_usd_to_ar_rate(PrevB),
 			{PricePerGiBMinute, ScheduledPricePerGiBMinute} =
@@ -464,6 +476,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				cumulative_diff = CDiff,
 				previous_cumulative_diff = PrevB#block.cumulative_diff,
 				poa = PoA1,
+				poa_cache = PoACache,
 				usd_to_ar_rate = Rate,
 				scheduled_usd_to_ar_rate = ScheduledRate,
 				packing_2_5_threshold = 0,
@@ -474,13 +487,17 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
 				poa2 = PoA2,
+				poa2_cache = PoA2Cache,
 				recall_byte2 = RecallByte2,
 				reward_key = element(2, RewardKey),
 				price_per_gib_minute = PricePerGiBMinute2,
 				scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute2,
 				denomination = Denomination2,
 				redenomination_height = RedenominationHeight2,
-				double_signing_proof = may_be_get_double_signing_proof(PrevB, State)
+				double_signing_proof = may_be_get_double_signing_proof(PrevB, State),
+				merkle_rebase_support_threshold = MerkleRebaseThreshold,
+				chunk_hash = get_chunk_hash(PoA1, Height),
+				chunk2_hash = get_chunk_hash(PoA2, Height)
 			}, PrevB),
 			SignedH = ar_block:generate_signed_hash(UnsignedB),
 			PrevCDiff = PrevB#block.cumulative_diff,
@@ -641,14 +658,10 @@ handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
 	{noreply, State}.
 
-terminate(Reason, #{ miner_2_5 := Miner_2_5 }) ->
+terminate(Reason, _State) ->
 	ar_http_iface_server:stop(),
 	case ets:lookup(node_state, is_joined) of
 		[{_, true}] ->
-			case Miner_2_5 of
-				undefined -> do_nothing;
-				PID -> ar_mine:stop(PID)
-			end,
 			[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 			Mempool =
 				gb_sets:fold(
@@ -741,7 +754,8 @@ handle_initialized(State) ->
 		{kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
 		{denomination, B#block.denomination},
 		{redenomination_height, B#block.redenomination_height},
-		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
+		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
+		{merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
 	]),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
@@ -1052,6 +1066,19 @@ is_account_banned(Addr, Map) ->
 			false;
 		{_, _, _, MiningPermission} ->
 			not MiningPermission
+	end.
+
+get_chunk_hash(#poa{ chunk = Chunk }, Height) ->
+	case Height >= ar_fork:height_2_7() of
+		false ->
+			undefined;
+		true ->
+			case Chunk of
+				<<>> ->
+					undefined;
+				_ ->
+					crypto:hash(sha256, Chunk)
+			end
 	end.
 
 pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) ->
@@ -1402,7 +1429,8 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		{kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
 		{denomination, B#block.denomination},
 		{redenomination_height, B#block.redenomination_height},
-		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute}
+		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
+		{merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
 	]),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
@@ -1585,42 +1613,29 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
-may_be_reset_miner(#{ miner_2_5 := Miner_2_5, miner_2_6 := Miner_2_6,
-		automine := false } = State) ->
-	case Miner_2_5 of
-		undefined ->
-			ok;
-		_ ->
-			ar_mine:stop(Miner_2_5)
-	end,
+may_be_reset_miner(#{ miner_2_6 := Miner_2_6, automine := false } = State) ->
 	case Miner_2_6 of
 		undefined ->
 			ok;
 		_ ->
 			ar_mining_server:pause()
 	end,
-	State#{ miner_2_5 => undefined, miner_2_6 => undefined };
-may_be_reset_miner(#{ miner_2_5 := undefined } = State) ->
-	start_mining(State);
-may_be_reset_miner(#{ miner_2_5 := Pid } = State) ->
-	ar_mine:stop(Pid),
-	start_mining(State#{ miner_2_5 => undefined }).
+	State#{ miner_2_6 => undefined };
+may_be_reset_miner(State) ->
+	start_mining(State).
 
 start_mining(State) ->
-	[{height, Height}] = ets:lookup(node_state, height),
-	case Height + 1 >= ar_fork:height_2_6() of
-		true ->
-			Diff = get_current_diff(),
-			case maps:get(miner_2_6, State) of
-				undefined ->
-					ar_mining_server:start_mining({Diff}),
-					State#{ miner_2_6 => running };
-				_ ->
-					ar_mining_server:set_difficulty(Diff),
-					State
-			end;
-		false ->
-			start_2_5_mining(State)
+	Diff = get_current_diff(),
+	[{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
+			merkle_rebase_support_threshold),
+	case maps:get(miner_2_6, State) of
+		undefined ->
+			ar_mining_server:start_mining({Diff, MerkleRebaseThreshold}),
+			State#{ miner_2_6 => running };
+		_ ->
+			ar_mining_server:set_difficulty(Diff),
+			ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),
+			State
 	end.
 
 get_current_diff() ->
@@ -1643,35 +1658,13 @@ get_current_diff(TS) ->
 	PrevTS = proplists:get_value(timestamp, Props),
 	ar_retarget:maybe_retarget(Height + 1, Diff, TS, LastRetarget, PrevTS).
 
-start_2_5_mining(State) ->
-	State2 = may_be_start_2_5_io_threads(State),
-	#{ tags := Tags, io_threads := IOThreads } = State2,
-	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
-	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
-	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
-	[{current, Current}] = ets:lookup(node_state, current),
-	ar_watchdog:started_hashing(),
-	B = ar_block_cache:get(block_cache, Current),
-	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI),
-	{ok, Config} = application:get_env(arweave, config),
-	RewardAddr = maps:get(reward_addr, State2, Config#config.mining_addr),
-	Miner = ar_mine:start({B, collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
-			RewardAddr, Tags, BlockAnchors, RecentTXMap, PartitionUpperBound, IOThreads}),
-	?LOG_INFO([{event, started_mining}]),
-	State2#{ miner_2_5 => Miner }.
-
-may_be_start_2_5_io_threads(#{ io_threads := IOThreads } = State) ->
-	IOThreads2 =
-		case IOThreads of
-			[] ->
-				start_2_5_io_threads();
-			_ ->
-				IOThreads
-		end,
-	State#{ io_threads => IOThreads2 }.
-
-start_2_5_io_threads() ->
-	ar_mine:start_io_threads().
+get_merkle_rebase_threshold(PrevB) ->
+	case PrevB#block.height + 1 == ar_fork:height_2_7() of
+		true ->
+			PrevB#block.weave_size;
+		_ ->
+			PrevB#block.merkle_rebase_support_threshold
+	end.
 
 collect_mining_transactions(Limit) ->
 	collect_mining_transactions(Limit, ar_mempool:get_priority_set(), []).
