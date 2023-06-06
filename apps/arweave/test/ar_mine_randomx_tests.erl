@@ -24,71 +24,12 @@ randomx_suite_test_() ->
 	{setup, fun setup/0,
 		fun (SetupData) ->
 			[
-				test_register(fun test_pick_recall_byte/1, SetupData),
 				test_register(fun test_randomx_backwards_compatibility/1, SetupData),
 				test_register(fun test_randomx_pack_unpack/1, SetupData),
 				test_register(fun test_randomx_long/1, SetupData)
 			]
 		end
 	}.
-
-test_pick_recall_byte({_Key, State}) ->
-	PrevH = ar_util:decode(
-			<<"HXhU_CnCqHzn-AAPmWNcPCFb4XASvq0wiU9n59dbkl1C5xVf_nf5h4N5t0E-dGIp">>),
-	ExpectedNonce = ar_util:decode(<<"rtYRrtzI77B52ZtfYLSdWYqrgz0Evqyo-aMZXIkZWco">>),
-	Segment = ar_util:decode(
-			<<"NYdaNPNU3Nyp74gzKT4JdC5j9aoSrwFlIFUPdOqy7vPtvwBgFle4rLfuyKwhfHlh">>),
-	{ok, ExpectedH0} = ar_mine_randomx:hash_fast_nif(State,
-			<< ExpectedNonce/binary, Segment/binary >>, 0, 0, 0),
-	PartitionUpperBound = 24063907917401,
-	{ok, ExpectedByte} = ar_mine:pick_recall_byte(ExpectedH0, PrevH, PartitionUpperBound),
-	Ref = make_ref(),
-	HashPID = spawn_link(
-		fun() ->
-			receive {EncodedByte, H0, Nonce, Thread, Ref} ->
-				assert_bulk_hash(
-					{ExpectedH0, H0},
-					{ExpectedNonce, Nonce},
-					{self(), Thread},
-					{ExpectedByte, EncodedByte})
-			after 5000 ->
-				?assert(false, "Did not hear from NIF for too long")
-			end
-		end),
-	HashWithEntropyPID = spawn_link(
-		fun() ->
-			% When hashing with entropy the message includes an extra Entropy term
-			receive {EncodedByte, H0, _Entropy, Nonce, Thread, Ref} ->
-				assert_bulk_hash(
-					{ExpectedH0, H0},
-					{ExpectedNonce, Nonce},
-					{self(), Thread},
-					{ExpectedByte, EncodedByte})
-			after 5000 ->
-				?assert(false, "Did not hear from NIF for too long")
-			end
-		end),
-	ok = ar_mine_randomx:bulk_hash_fast_nif(State,
-			ExpectedNonce, ExpectedNonce, Segment, PrevH,
-			binary:encode_unsigned(PartitionUpperBound, big), [HashPID], [HashPID],
-			Ref, 1, 0, 0, 0),
-	ok = ar_mine_randomx:bulk_hash_fast_long_with_entropy_nif(State,
-			ExpectedNonce, ExpectedNonce, Segment, PrevH,
-			binary:encode_unsigned(PartitionUpperBound, big),
-			[HashWithEntropyPID], [HashWithEntropyPID], Ref, 1, 8, 0, 0, 0),
-	% sleep so that we give time for the PID to receive the message or timeout
-	timer:sleep(5000).
-
-assert_bulk_hash(
-		{ExpectedH0, H0},
-		{ExpectedNonce, Nonce},
-		{ExpectedThread, Thread},
-		{ExpectedByte, EncodedByte}) ->
-	?assertEqual(ExpectedH0, H0),
-	?assertEqual(ExpectedNonce, Nonce),
-	?assertEqual(ExpectedThread, Thread),
-	Byte = binary:decode_unsigned(EncodedByte),
-	?assertEqual(ExpectedByte, Byte).
 
 test_randomx_backwards_compatibility({Key, State}) ->
     ExpectedHash = ar_util:decode(?ENCODED_HASH),
@@ -97,27 +38,6 @@ test_randomx_backwards_compatibility({Key, State}) ->
     Input = << Nonce/binary, Segment/binary >>,
     {ok, Hash} = ar_mine_randomx:hash_fast_nif(State, Input, 0, 0, 0),
 	?assertEqual(ExpectedHash, Hash),
-	PrevH = crypto:strong_rand_bytes(48),
-	PartitionUpperBound = 123456789,
-	Ref = make_ref(),
-	PIDs = [spawn_link(
-		fun() ->
-			receive {EncodedByte, HashLocal, NonceLocal, Thread, Ref} ->
-				Byte = binary:decode_unsigned(EncodedByte),
-				{ok, ExpectedByte} = ar_mine:pick_recall_byte(HashLocal, PrevH,
-						PartitionUpperBound),
-				?assertEqual(ExpectedByte, Byte),
-				?assertEqual(self(), Thread),
-				InputLocal = << NonceLocal/binary, Segment/binary >>,
-				{ok, ExpectedHashLocal} = ar_mine_randomx:hash_fast_nif(State, InputLocal,
-						0, 0, 0),
-				?assertEqual(ExpectedHashLocal, HashLocal)
-			after 10000 ->
-				?assert(false, "Did not hear from NIF for too long.")
-			end
-		end) || _ <- [1, 2]],
-	ok = ar_mine_randomx:bulk_hash_fast_nif(State, Nonce, Nonce, Segment, PrevH,
-			binary:encode_unsigned(PartitionUpperBound, big), PIDs, PIDs, Ref, 2, 0, 0, 0),
 	Diff = binary:encode_unsigned(binary:decode_unsigned(Hash, big) - 1),
     {true, Hash} = ar_mine_randomx:hash_fast_verify_nif(State, Diff, Input, 0, 0, 0),
     false = ar_mine_randomx:hash_fast_verify_nif(State, Hash, Input, 0, 0, 0),
@@ -134,45 +54,20 @@ test_randomx_long({_Key, State}) ->
 	Segment = ar_util:decode(?ENCODED_SEGMENT),
 	Input = << Nonce/binary, Segment/binary >>,
 	ExpectedHash = ar_util:decode(?ENCODED_HASH),
-	{ok, Hash, OutEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(State, Input, 8, 0,
-			0, 0),
+	{ok, Hash, OutEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(State, Input,
+			8, 0, 0, 0),
 	%% Compute it again, the result must be the same.
-	{ok, Hash, OutEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(State, Input, 8, 0,
-			0, 0),
-	{ok, DifferentHash, DifferentEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(State,
-			crypto:strong_rand_bytes(48), 8, 0, 0, 0),
+	{ok, Hash, OutEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(State, Input,
+			8, 0, 0, 0),
+	{ok, DifferentHash, DifferentEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(
+			State, crypto:strong_rand_bytes(48), 8, 0, 0, 0),
     {ok, PlainHash} = ar_mine_randomx:hash_fast_nif(State, Input, 0, 0, 0),
 	?assertEqual(PlainHash, Hash),
 	?assertNotEqual(DifferentHash, Hash),
 	?assertNotEqual(DifferentEntropy, OutEntropy),
 	?assertEqual(ExpectedHash, Hash),
 	ExpectedEntropy = read_entropy_fixture(),
-	?assertEqual(ExpectedEntropy, OutEntropy),
-	%% Assert bulk_hash_fast_long_with_entropy_nif produces the same hash.
-	PrevH = crypto:strong_rand_bytes(48),
-	PartitionUpperBound = 123456789,
-	Ref = make_ref(),
-	PIDs = [spawn_link(
-		fun() ->
-			receive {EncodedByte, HashLocal, EntropyLocal, NonceLocal, Thread, Ref} ->
-				Byte = binary:decode_unsigned(EncodedByte),
-				{ok, ExpectedByte} = ar_mine:pick_recall_byte(HashLocal, PrevH,
-						PartitionUpperBound),
-				?assertEqual(ExpectedByte, Byte),
-				?assertEqual(self(), Thread),
-				InputLocal = << NonceLocal/binary, Segment/binary >>,
-				{ok, ExpectedHashLocal, ExpectedEntropyLocal} =
-						ar_mine_randomx:hash_fast_long_with_entropy_nif(State, InputLocal,
-								8, 0, 0, 0),
-				?assertEqual(ExpectedHashLocal, HashLocal),
-				?assertEqual(ExpectedEntropyLocal, EntropyLocal)
-			after 10000 ->
-				?assert(false, "Did not hear from NIF for too long.")
-			end
-		end) || _ <- [1, 2]],
-	ok = ar_mine_randomx:bulk_hash_fast_long_with_entropy_nif(State, Nonce, Nonce, Segment,
-			PrevH, binary:encode_unsigned(PartitionUpperBound, big), PIDs, PIDs, Ref, 2,
-			8, 0, 0, 0).
+	?assertEqual(ExpectedEntropy, OutEntropy).
 
 is_zero(<< 0:8, Rest/binary >>) ->
 	is_zero(Rest);
@@ -212,7 +107,8 @@ test_randomx_pack_unpack({_Key, State}) ->
 				crypto:strong_rand_bytes(32)},
 		{crypto:strong_rand_bytes(16), 16, crypto:strong_rand_bytes(32)},
 		{crypto:strong_rand_bytes(256 * 1024), 100000000000000, crypto:strong_rand_bytes(32)},
-		{crypto:strong_rand_bytes(256 * 1024 - 1), 100000000000000, crypto:strong_rand_bytes(32)}
+		{crypto:strong_rand_bytes(256 * 1024 - 1), 100000000000000,
+				crypto:strong_rand_bytes(32)}
 	],
 	lists:foreach(
 		fun({Chunk, Offset, TXRoot}) ->
@@ -233,7 +129,8 @@ test_randomx_pack_unpack({_Key, State}) ->
 					1, % RANDOMX_PACKING_ROUNDS
 					0, 0, 0),
 			
-			Padding = binary:part(Unpacked, byte_size(Chunk), byte_size(Packed1) - byte_size(Chunk)),
+			Padding = binary:part(Unpacked, byte_size(Chunk),
+					byte_size(Packed1) - byte_size(Chunk)),
 			?assertEqual(true, is_zero(Padding)),
 			Unpadded = binary:part(Unpacked, 0, byte_size(Chunk)),
 			?assertEqual(Chunk, Unpadded),

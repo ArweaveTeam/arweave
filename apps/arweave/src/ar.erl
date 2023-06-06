@@ -178,15 +178,6 @@ show_help() ->
 				"so it is used to pack synced data even if the \"mine\" flag is not "
 				"specified. The data already packed with different addresses is not repacked.",
 				[?WALLET_DIR])},
-			{"stage_one_hashing_threads (num)",
-				io_lib:format(
-					"The number of mining processes searching for the SPoRA chunks to read."
-					"Default: ~B. If the total number of stage one and stage two processes "
-					"exceeds the number of available CPU cores, the excess processes will be "
-					"hashing chunks when anything gets queued, and search for chunks "
-					"otherwise. Only takes effect until the fork 2.6.",
-					[?NUM_STAGE_ONE_HASHING_PROCESSES]
-				)},
 			{"hashing_threads (num)", io_lib:format("The number of hashing processes to spawn."
 					" Takes effect starting from the fork 2.6 block."
 					" Default is ~B.", [?NUM_HASHING_PROCESSES])},
@@ -198,18 +189,6 @@ show_help() ->
 					"new data unless the number of already fetched unprocessed chunks does "
 					"not exceed this number. When omitted, it is determined based on the "
 					"number of mining partitions and available RAM."},
-			{"io_threads (num)",
-				io_lib:format("The number of processes reading SPoRA chunks during mining. "
-					"Default: ~B. Only takes effect until the fork 2.6.",
-					[?NUM_IO_MINING_THREADS])},
-			{"stage_two_hashing_threads (num)",
-				io_lib:format(
-					"The number of mining processes hashing SPoRA chunks."
-					"Default: ~B. If the total number of stage one and stage two processes "
-					"exceeds the number of available CPU cores, the excess processes will be "
-					"hashing chunks when anything gets queued, and search for chunks "
-					"otherwise. Only takes effect until the fork 2.6.",
-					[?NUM_STAGE_TWO_HASHING_PROCESSES])},
 			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
 				"processes to spawn. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
 			{"tx_validators (num)", "Ignored. Set the post_tx key in the semaphores object"
@@ -448,8 +427,6 @@ parse_cli_args(["mining_addr", Addr | Rest], C) ->
 	end;
 parse_cli_args(["max_miners", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_miners = list_to_integer(Num) });
-parse_cli_args(["io_threads", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ io_threads = list_to_integer(Num) });
 parse_cli_args(["hashing_threads", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ hashing_threads = list_to_integer(Num) });
 parse_cli_args(["data_cache_size_limit", Num | Rest], C) ->
@@ -461,10 +438,6 @@ parse_cli_args(["packing_cache_size_limit", Num | Rest], C) ->
 parse_cli_args(["mining_server_chunk_cache_size_limit", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			mining_server_chunk_cache_size_limit = list_to_integer(Num) });
-parse_cli_args(["stage_one_hashing_threads", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ stage_one_hashing_threads = list_to_integer(Num) });
-parse_cli_args(["stage_two_hashing_threads", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ stage_two_hashing_threads = list_to_integer(Num) });
 parse_cli_args(["max_emitters", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
 parse_cli_args(["disk_space", Size | Rest], C) ->
