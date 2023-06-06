@@ -32,7 +32,7 @@
 	task_queue_len = 0,
 	all_workers = queue:new(),
 	worker_count = 0,
-	latency_target = 0
+	latency_target = undefined
 }).
 
 %%%===================================================================
@@ -64,13 +64,9 @@ init(Workers) ->
 	reset_counters(queued),
 	gen_server:cast(?MODULE, process_main_queue),
 
-	LatencyTarget = calculate_latency_target(Workers, ar_packing_server:packing_rate()),
-	ar:console("~nSync request latency target is: ~pms.~n", [LatencyTarget]),
-
 	{ok, #state{
 		all_workers = queue:from_list(Workers),
-		worker_count = length(Workers),
-		latency_target = LatencyTarget
+		worker_count = length(Workers)
 	}}.
 
 handle_call(Request, _From, State) ->
@@ -100,10 +96,10 @@ handle_cast({task_completed, {read_range, _}}, State) ->
 
 handle_cast({task_completed, {sync_range, {Result, Peer, Duration}}}, State) ->
 	PeerTasks = get_peer_tasks(Peer),
-	PeerTasks2 = complete_sync_range(PeerTasks, Result, Duration, State),
-	{PeerTasks3, State2} = process_peer_queue(PeerTasks2, State),	
+	{PeerTasks2, State2} = complete_sync_range(PeerTasks, Result, Duration, State),
+	{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),	
 	set_peer_tasks(PeerTasks3),
-	{noreply, State2};
+	{noreply, State3};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -199,15 +195,17 @@ cut_peer_queue(PeerTasks) ->
 	%% assume MaxActive concurrently executing tasks.
 	MaxActive = PeerTasks#peer_tasks.max_active,
 	LatencyEMA = PeerTasks#peer_tasks.latency_ema,
+	SuccessEMA = PeerTasks#peer_tasks.success_ema,
 	TaskQueue = PeerTasks#peer_tasks.task_queue,
 	Peer = PeerTasks#peer_tasks.peer,
-	MaxQueue = trunc((?MAX_QUEUE_DURATION * MaxActive) / LatencyEMA),
+	MaxQueue = trunc((?MAX_QUEUE_DURATION * MaxActive * SuccessEMA) / LatencyEMA),
 	TaskQueue3 = case queue:len(TaskQueue) - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
 			%% oldest tasks.
 			?LOG_DEBUG([{event, cut_peer_queue},
-				{peer, Peer}, {max_active, MaxActive}, {ema, LatencyEMA},
+				{peer, Peer}, {max_active, MaxActive},
+				{success_ema, SuccessEMA}, {latency_ema, LatencyEMA},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			update_counters(queued, sync_range, ar_util:format_peer(Peer), -TasksToCut),
@@ -272,17 +270,43 @@ schedule_task(Worker, Task, Args) ->
 complete_sync_range(PeerTasks, Result, Duration, State) ->
 	Peer = PeerTasks#peer_tasks.peer,
 	update_counters(scheduled, sync_range, ar_util:format_peer(Peer), -1),
-	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond),
+	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond) / 1.0,
 
 	IsOK = (Result == ok andalso Milliseconds > 10),
-	LatencyEMA = calculate_ema(PeerTasks#peer_tasks.latency_ema, IsOK, Milliseconds / 1.0),
+	LatencyAlpha = 0.1, 
+	LatencyEMA = case calculate_ema(PeerTasks#peer_tasks.latency_ema, IsOK,
+							Milliseconds, LatencyAlpha) of
+						undefined ->
+							undefined;
+						EMA ->
+							trunc(EMA)
+					end,
+	SuccessAlpha = 0.1,
 	SuccessEMA = calculate_ema(PeerTasks#peer_tasks.success_ema, true,
-			if IsOK == true -> 1.0; IsOK == false -> 0.0 end),
+			if IsOK == true -> 1.0; IsOK == false -> 0.0 end, SuccessAlpha),
+	%% Target Latency is the EMA of all peers' latencies
+	LatencyTargetAlpha =  2.0 / (State#state.worker_count + 1),
+	LatencyTarget = case calculate_ema(State#state.latency_target, IsOK,
+							Milliseconds, LatencyTargetAlpha) of
+						undefined ->
+							undefined;
+						Target ->
+							trunc(Target)
+					end,
 
 	PeerTasks2 = cut_peer_queue(
 		PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA }),
-	update_active(
-		PeerTasks2, IsOK, Milliseconds, State#state.worker_count, State#state.latency_target).
+	PeerTasks3 = update_active(
+		PeerTasks2, IsOK, Milliseconds, State#state.worker_count, LatencyTarget),
+	% ?LOG_ERROR([{event, complete_sync_range},
+	% 	{peer, ar_util:format_peer(Peer)}, {is_ok, IsOK}, {duration, Milliseconds},
+	% 	{before_latency_ema, PeerTasks#peer_tasks.latency_ema}, {after_latency_ema, LatencyEMA},
+	% 	{before_success_ema, PeerTasks#peer_tasks.success_ema}, {after_success_ema, SuccessEMA},
+	% 	{before_latency_target, State#state.latency_target}, {after_latency_target, LatencyTarget},
+	% 	{before_max_active, PeerTasks2#peer_tasks.max_active},
+	% 	{after_max_active, PeerTasks3#peer_tasks.max_active}
+	% ]),
+	{PeerTasks3, State#state{ latency_target = LatencyTarget }}.
 
 
 %%--------------------------------------------------------------------
@@ -307,14 +331,14 @@ get_task_count(TaskState) ->
 ets_key(TaskState) ->
 	list_to_atom(atom_to_list(TaskState) ++ "_tasks").
 
-calculate_ema(OldEMA, IsOk, Value) ->
-	case {IsOk, OldEMA} of
-		{true, undefined} ->
+calculate_ema(OldEMA, false, _Value, _Alpha) ->
+	OldEMA;
+calculate_ema(OldEMA, true, Value, Alpha) ->
+	case OldEMA of
+		undefined ->
 			Value;
-		{true, _} ->
-			?EMA_ALPHA * Value + (1 - ?EMA_ALPHA) * OldEMA;
-		_ ->
-			OldEMA
+		OldEMA ->
+			Alpha * Value + (1 - Alpha) * OldEMA
 	end.
 
 get_peer_tasks(Peer) ->
@@ -383,30 +407,6 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 		active_count = ActiveCount,
 		max_active = max(TaskLimitedMaxActive, ?MIN_MAX_ACTIVE)
 	}.
-
-%% @doc The GET /chunk latency target is set such that we can sync chunks at a rate that will
-%% saturate the configured packing rate. For example, if:
-%% WorkerCount = 100
-%% PackingRate = 50
-%%
-%% Then we need need 50 of the 100 concurrent requests to return every second, which means
-%% the latency target is 2000ms - if each request takes 2 seconds then, on average, half
-%% (i.e. 50) of the concurrent requests will return every second.
-%%
-%% The user can adjust the this number by changing the packing_rate or sync_jobs
-%% configuration parameters.
-calculate_latency_target(_Workers, 0) ->
-	%% if sync_jobs > 0, but packing_rate is 0, the assumption is either that the user has
-	%% misconfigured the node, or that they are only expecting to sync and store unpacked
-	%% data (i.e. neither unpacking nor packing is required). We'll assign a default 1000ms
-	%% latency target mostly to make the math easy. In order to increase the number of
-	%% concurrent requests, the user can simply increase the sync_jobs.
-	%%
-	%% Note: if sync_jobs is 0, the ar_data_sync_worker_master will not be started.
-	1000;
-calculate_latency_target(Workers, PackingRate) ->
-	WorkerCount = length(Workers),
-	trunc((WorkerCount / PackingRate) * 1000).
 
 %%%===================================================================
 %%% Tests. Included in the module so they can reference private
@@ -711,12 +711,10 @@ test_complete_sync_range() ->
 	PeerA = {1, 2, 3, 4, 1984},
 	PeerB = {5, 6, 7, 8, 1985},
 	Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,11)],
-	LatencyTarget = calculate_latency_target(Workers, 5),
-	?assertEqual(2200, LatencyTarget),
 	State0 = #state{
 		all_workers = queue:from_list(Workers),
 		worker_count = length(Workers),
-		latency_target = LatencyTarget
+		latency_target = 2200
 	},
 
 	State1 = enqueue_sync_range_tasks(PeerA, 17, State0),
@@ -734,62 +732,71 @@ test_complete_sync_range() ->
 	assert_peer_tasks([], 4, 8, undefined, undefined, PeerTasksB1),
 
 	%% Quick task
-	PeerTasksA2 = complete_sync_range(PeerTasksA1,
-		ok, (LatencyTarget-500) * 1_000_000, State3),
+	{PeerTasksA2, State4} = complete_sync_range(PeerTasksA1,
+		ok, (State3#state.latency_target-500) * 1_000_000, State3),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(11, get_task_count(scheduled)),
-	assert_peer_tasks(ExpectedPeerAQueue, 7, 9, 1700.0, 1.0, PeerTasksA2),
+	?assertEqual(2116, State4#state.latency_target),
+	assert_peer_tasks(ExpectedPeerAQueue, 7, 9, 1700, 1.0, PeerTasksA2),
 
 	%% Quick task, but can't go above Peer1 queue length
-	PeerTasksA3 = complete_sync_range(PeerTasksA2,
-		ok, (LatencyTarget-1000) * 1_000_000, State3),
+	{PeerTasksA3, State5} = complete_sync_range(PeerTasksA2,
+		ok, (State4#state.latency_target-1000) * 1_000_000, State4),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(10, get_task_count(scheduled)),
-	assert_peer_tasks(ExpectedPeerAQueue, 6, 9, 1650.0, 1.0, PeerTasksA3),
+	?assertEqual(1949, State5#state.latency_target),
+	assert_peer_tasks(ExpectedPeerAQueue, 6, 9, 1641, 1.0, PeerTasksA3),
 
 	%% Slow task but average is still quick -> max_active decreases
-	PeerTasksA4 = complete_sync_range(PeerTasksA3, ok, (LatencyTarget+100) * 1_000_000, State3),
+	{PeerTasksA4, State6} = complete_sync_range(PeerTasksA3, ok, (State5#state.latency_target+100) * 1_000_000, State5),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(9, get_task_count(scheduled)),
-	assert_peer_tasks(ExpectedPeerAQueue, 5, 8, 1715.0, 1.0, PeerTasksA4),
+	?assertEqual(1965, State6#state.latency_target),
+	assert_peer_tasks(ExpectedPeerAQueue, 5, 8, 1681, 1.0, PeerTasksA4),
 
 	%% Quick task, but hit max workers
-	PeerTasksA5 = complete_sync_range(PeerTasksA4,
-		ok, (LatencyTarget-100) * 1_000_000, State3#state{ worker_count = 8 }),
+	{PeerTasksA5, State7} = complete_sync_range(PeerTasksA4,
+		ok, (State6#state.latency_target-100) * 1_000_000, State6#state{ worker_count = 8 }),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(8, get_task_count(scheduled)),
-	assert_peer_tasks(ExpectedPeerAQueue, 4, 8, 1753.5, 1.0, PeerTasksA5),
+	?assertEqual(1942, State7#state.latency_target),
+	assert_peer_tasks(ExpectedPeerAQueue, 4, 8, 1699, 1.0, PeerTasksA5),
 
 	%% Slow task pushes average slow
-	PeerTasksA6 = complete_sync_range(PeerTasksA5, ok, (LatencyTarget+100_000) * 1_000_000, State3),
+	{PeerTasksA6, State8} = complete_sync_range(PeerTasksA5, ok, (State7#state.latency_target+100_000) * 1_000_000, State7),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(7, get_task_count(scheduled)),
-	assert_peer_tasks(ExpectedPeerAQueue, 3, 8, 11798.15, 1.0, PeerTasksA6),
+	?assertEqual(24164, State8#state.latency_target),
+	assert_peer_tasks(ExpectedPeerAQueue, 3, 8, 11723, 1.0, PeerTasksA6),
 
 	%% Too quick (error)
-	PeerTasksB2 = complete_sync_range(PeerTasksB1, ok, 5 * 1_000_000, State3),
+	{PeerTasksB2, State9} = complete_sync_range(PeerTasksB1, ok, 5 * 1_000_000, State8),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(6, get_task_count(scheduled)),
+	?assertEqual(24164, State9#state.latency_target),
 	assert_peer_tasks([], 3, 8, undefined, 0.0, PeerTasksB2),
 
 	%% Error
-	PeerTasksB3 = complete_sync_range(PeerTasksB2,
-		{error, timeout}, (LatencyTarget-100) * 1_000_000, State3),
+	{PeerTasksB3, State10} = complete_sync_range(PeerTasksB2,
+		{error, timeout}, (State9#state.latency_target-100) * 1_000_000, State9),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(5, get_task_count(scheduled)),
+	?assertEqual(24164, State10#state.latency_target),
 	assert_peer_tasks([], 2, 8, undefined, 0.0, PeerTasksB3),
 
 	%% Slow task, but can't go below 8
-	PeerTasksB4 = complete_sync_range(PeerTasksB3, ok, (LatencyTarget+100) * 1_000_000, State3),
+	{PeerTasksB4, State11} = complete_sync_range(PeerTasksB3, ok, (State10#state.latency_target+100) * 1_000_000, State10),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(4, get_task_count(scheduled)),
-	assert_peer_tasks([], 1, 8, 2300.0, 0.1, PeerTasksB4),
+	?assertEqual(24186, State11#state.latency_target),
+	assert_peer_tasks([], 1, 8, 24264, 0.1, PeerTasksB4),
 
 	%% Fast task, but can't go above max(active_count, peer queue length)
-	PeerTasksB5 = complete_sync_range(PeerTasksB4, ok, (LatencyTarget-1000) * 1_000_000, State3),
+	{PeerTasksB5, State12} = complete_sync_range(PeerTasksB4, ok, (State11#state.latency_target-1000) * 1_000_000, State11),
 	?assertEqual(9, get_task_count(queued)),
 	?assertEqual(3, get_task_count(scheduled)),
-	assert_peer_tasks([], 0, 8, 2190.0, 0.19, PeerTasksB5).
+	?assertEqual(23963, State12#state.latency_target),
+	assert_peer_tasks([], 0, 8, 24156, 0.19, PeerTasksB5).
 
 test_cut_peer_queue() ->
 	reset_ets(),
@@ -808,40 +815,47 @@ test_cut_peer_queue() ->
 	assert_peer_tasks(lists:sublist(Tasks, 9, 10), 8, 8, undefined, undefined, PeerTasks1),
 
 	%% Error at the beginning means EMA isn't set. This should not affect the peer queue.
-	PeerTasks2 = complete_sync_range(PeerTasks1, {error, timeout}, 5 * 1_000_000, State2),
+	{PeerTasks2, State3} = complete_sync_range(PeerTasks1, {error, timeout}, 5 * 1_000_000, State2),
 	?assertEqual(10, get_task_count(queued)),
 	?assertEqual(7, get_task_count(scheduled)),
+	?assertEqual(undefined, State3#state.latency_target),
 	assert_peer_tasks(lists:sublist(Tasks, 9, 10), 7, 8, undefined, 0.0, PeerTasks2),
 
-	%% Really slow task, max queue size cut to 8
-	PeerTasks3 = complete_sync_range(PeerTasks2, ok, (?MAX_QUEUE_DURATION) * 1_000_000, State2),
+	%% Really slow task, max queue size cut to 8. Reset success_ema to 1.0
+	{PeerTasks3, State4} = complete_sync_range(
+		PeerTasks2#peer_tasks{ success_ema = 1.0 }, ok, (?MAX_QUEUE_DURATION) * 1_000_000, State3),
 	?assertEqual(8, get_task_count(queued)),
 	?assertEqual(6, get_task_count(scheduled)),
-	assert_peer_tasks(lists:sublist(Tasks, 9, 8), 6, 8, 900_000.0, 0.1, PeerTasks3),
+	?assertEqual(900_000, State4#state.latency_target),
+	assert_peer_tasks(lists:sublist(Tasks, 9, 8), 6, 8, 900_000, 1.0, PeerTasks3),
 
 	%% Really slow task (twice the maximum duration), EMA is updated to slightly less than
 	%% twice the max duration duration -> max queue length is 7
-	PeerTasks4 = complete_sync_range(PeerTasks3, ok, (?MAX_QUEUE_DURATION * 2) * 1_000_000, State2),
+	{PeerTasks4, State5} = complete_sync_range(PeerTasks3, ok, (?MAX_QUEUE_DURATION * 2) * 1_000_000, State4),
 	?assertEqual(7, get_task_count(queued)),
 	?assertEqual(5, get_task_count(scheduled)),
-	assert_peer_tasks(lists:sublist(Tasks, 9, 7), 5, 8, 990_000.0, 0.19, PeerTasks4),
+	?assertEqual(1_100_000, State5#state.latency_target),
+	assert_peer_tasks(lists:sublist(Tasks, 9, 7), 5, 8, 990_000, 1.0, PeerTasks4),
 
 	%% We should still cut a peer queue when there's an error so long as the MaxQueue is less
 	%% than actual peer queue length
 	set_peer_tasks(PeerTasks4),
-	State3 = enqueue_sync_range_tasks(Peer1, 10, State2),
-	State4 = process_main_queue(State3),
+	State6 = enqueue_sync_range_tasks(Peer1, 10, State5),
+	State7 = process_main_queue(State6),
 	PeerTasks5 = get_peer_tasks(Peer1),
 	?assertEqual(14, get_task_count(queued)),
 	?assertEqual(8, get_task_count(scheduled)),
-	?assertEqual(990_000.0, PeerTasks5#peer_tasks.latency_ema),
-	?assertEqual(0.19, PeerTasks5#peer_tasks.success_ema),
+	?assertEqual(1_100_000, State7#state.latency_target),
+	?assertEqual(990_000, PeerTasks5#peer_tasks.latency_ema),
+	?assertEqual(1.0, PeerTasks5#peer_tasks.success_ema),
 
-	PeerTasks6 = complete_sync_range(PeerTasks5, {error, timeout}, 5 * 1_000_000, State4),
-	?assertEqual(7, get_task_count(queued)),
+	%% An error reduces the success_rate and therefore the max queue length
+	{PeerTasks6, State8} = complete_sync_range(PeerTasks5, {error, timeout}, 5 * 1_000_000, State7),
+	?assertEqual(6, get_task_count(queued)),
 	?assertEqual(7, get_task_count(scheduled)),
-	?assertEqual(990_000.0, PeerTasks6#peer_tasks.latency_ema),
-	?assertEqual(0.171, PeerTasks6#peer_tasks.success_ema).
+	?assertEqual(1_100_000, State8#state.latency_target),
+	?assertEqual(990_000, PeerTasks6#peer_tasks.latency_ema),
+	?assertEqual(0.9, PeerTasks6#peer_tasks.success_ema).
 
 enqueue_sync_range_tasks(_Peer, 0, State) ->
 	State;
