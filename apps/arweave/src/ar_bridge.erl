@@ -238,8 +238,9 @@ send_to_worker(Peer, {JSON, B}, W) ->
 							end;
 						TXs2 ->
 							PoA = case MissingChunk of true -> B#block.poa;
-									false -> #poa{} end,
-							PoA2 = case MissingChunk2 of false -> #poa{};
+									false -> (B#block.poa)#poa{ chunk = <<>> } end,
+							PoA2 = case MissingChunk2 of false ->
+									(B#block.poa2)#poa{ chunk = <<>> };
 									_ -> B#block.poa2 end,
 							Bin = ar_serialize:block_to_binary(B#block{ txs = TXs2,
 									poa = PoA, poa2 = PoA2 }),

@@ -89,7 +89,14 @@ init(WalletList, Diff, GenesisDataSize) ->
 			true ->
 				B0
 		end,
-	[B1#block{ indep_hash = ar_block:indep_hash(B1) }].
+	B2 =
+		case ar_fork:height_2_7() > 0 of
+			false ->
+				B1#block{ merkle_rebase_support_threshold = 0 };
+			true ->
+				B1
+		end,
+	[B2#block{ indep_hash = ar_block:indep_hash(B2) }].
 
 create_genesis_tx(Key, Size) ->
 	{_, {_, Pk}} = Key,

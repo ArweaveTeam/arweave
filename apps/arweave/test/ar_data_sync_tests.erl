@@ -201,7 +201,8 @@ test_does_not_store_small_chunks_after_2_5() ->
 	).
 
 rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size_test_() ->
-	{timeout, 120, fun test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0}.
+	{timeout, 120,
+			fun test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0}.
 
 test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 	{Master, _, Wallet} = setup_nodes(),
@@ -220,8 +221,7 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 			post_chunk(ar_serialize:jsonify(BigProof))).
 
 rejects_chunks_exceeding_disk_pool_limit_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
-		fun test_rejects_chunks_exceeding_disk_pool_limit/0, 120).
+	{timeout, 240, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
 
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
@@ -267,6 +267,8 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	Proofs2 = build_proofs(TX2, Chunks2, [TX2], 0, 0),
 	lists:foreach(
 		fun({_, Proof}) ->
+			%% The very last chunk will be dropped later because it starts and ends
+			%% in the bucket of the previous chunk (the chunk sizes are 131072).
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
 				post_chunk(ar_serialize:jsonify(Proof))
@@ -291,6 +293,8 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	[{_, FirstProof3} | Proofs3] = build_proofs(TX3, Chunks3, [TX3], 0, 0),
 	lists:foreach(
 		fun({_, Proof}) ->
+			%% The very last chunk will be dropped later because it starts and ends
+			%% in the bucket of the previous chunk (the chunk sizes are 131072).
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
 				post_chunk(ar_serialize:jsonify(Proof))
@@ -305,20 +309,42 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	slave_mine(),
 	true = ar_util:do_until(
 		fun() ->
-			lists:all(
-				fun(Proof) ->
-					case post_chunk(ar_serialize:jsonify(Proof)) of
-						{ok, {{<<"200">>, _}, _, _, _, _}} ->
-							true;
-						_ ->
-							false
-					end
-				end,
-				[FirstProof1, FirstProof3]
-			)
+			%% After a block is mined, the chunks receive their absolute offsets, which
+			%% end up above the rebase threshold and so the node discovers the very last
+			%% chunks of the last two transactions are invalid under these offsets and
+			%% frees up 131072 + 131072 bytes in the disk pool => we can submit a 262144-byte
+			%% chunk.
+			case post_chunk(ar_serialize:jsonify(FirstProof3)) of
+				{ok, {{<<"200">>, _}, _, _, _, _}} ->
+					true;
+				_ ->
+					false
+			end
 		end,
-		500,
-		30 * 1000
+		2000,
+		20 * 1000
+	),
+	%% Now we do not have free space again.
+	?assertMatch(
+		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
+		post_chunk(ar_serialize:jsonify(FirstProof1))
+	),
+	%% Mine two more blocks to make the chunks mature so that we can remove them from the
+	%% disk pool (they will stay in the corresponding storage modules though, if any).
+	slave_mine(),
+	assert_slave_wait_until_height(2),
+	slave_mine(),
+	true = ar_util:do_until(
+		fun() ->
+			case post_chunk(ar_serialize:jsonify(FirstProof1)) of
+				{ok, {{<<"200">>, _}, _, _, _, _}} ->
+					true;
+				_ ->
+					false
+			end
+		end,
+		2000,
+		20 * 1000
 	).
 
 accepts_chunks_test_() ->
@@ -685,8 +711,9 @@ test_mines_off_only_second_last_chunks() ->
 	).
 
 packs_chunks_depending_on_packing_threshold_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 10 end},
-			{ar_fork, height_2_6_8, fun() -> 15 end}],
+	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end},
+			{ar_fork, height_2_6_8, fun() -> 0 end},
+			{ar_fork, height_2_7, fun() -> 10 end}],
 			fun test_packs_chunks_depending_on_packing_threshold/0).
 
 test_packs_chunks_depending_on_packing_threshold() ->
@@ -757,66 +784,37 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			B = read_block_when_stored(H),
 			PoA = B#block.poa,
 			BI = lists:reverse(lists:sublist(lists:reverse(BILast), Height)),
-			{RecallByte, PartitionUpperBound} =
-				case B#block.height >= ar_fork:height_2_6() of
+			PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
+			PrevSeed =
+				case B#block.height == ar_fork:height_2_6() of
 					true ->
-						PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
-						PrevSeed =
-							case B#block.height == ar_fork:height_2_6() of
-								true ->
-									element(1, lists:nth(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI));
-								false ->
-									PrevNonceLimiterInfo#nonce_limiter_info.seed
-							end,
-						NonceLimiterInfo = B#block.nonce_limiter_info,
-						Output = NonceLimiterInfo#nonce_limiter_info.output,
-						UpperBound =
-								NonceLimiterInfo#nonce_limiter_info.partition_upper_bound,
-						H0 = ar_block:compute_h0(Output, B#block.partition_number, PrevSeed,
-								B#block.reward_addr),
-						{RecallRange1Start, _} = ar_block:get_recall_range(H0,
-								B#block.partition_number, UpperBound),
-						Byte = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
-						{Byte, UpperBound};
+						element(1, lists:nth(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI));
 					false ->
-						UpperBound = element(2,
-								lists:nth(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI)),
-						BDS = ar_block:generate_block_data_segment(B),
-						{H0, _Entropy} = ar_mine:spora_h0_with_entropy(BDS, B#block.nonce,
-								Height),
-						{ok, Byte} = ar_mine:pick_recall_byte(H0, PrevB#block.indep_hash,
-								UpperBound),
-						{Byte, UpperBound}
+						PrevNonceLimiterInfo#nonce_limiter_info.seed
 				end,
+			NonceLimiterInfo = B#block.nonce_limiter_info,
+			Output = NonceLimiterInfo#nonce_limiter_info.output,
+			PartitionUpperBound =
+					NonceLimiterInfo#nonce_limiter_info.partition_upper_bound,
+			H0 = ar_block:compute_h0(Output, B#block.partition_number, PrevSeed,
+					B#block.reward_addr),
+			{RecallRange1Start, _} = ar_block:get_recall_range(H0,
+					B#block.partition_number, PartitionUpperBound),
+			RecallByte = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
 			{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte),
-			case B#block.height >= ar_fork:height_2_6() of
-				true ->
-					?debugFmt("Mined a 2.6 block. "
-							"Computed recall byte: ~B, block's recall byte: ~p. "
-							"Height: ~B. Previous block: ~s. "
-							"Computed search space upper bound: ~B. "
-							"Block start: ~B. Block end: ~B. TX root: ~s.",
-							[RecallByte, B#block.recall_byte, Height,
-							ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
-							BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
-					?assertEqual(RecallByte, B#block.recall_byte),
-					?assertEqual(true, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-							BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
-							{spora_2_6, B#block.reward_addr}}));
-				false ->
-					?debugFmt("Mined a 2.5 block. "
-							"Computed recall byte: ~B, block's recall byte: ~p. "
-							"Height: ~B. Previous block: ~s. "
-							"Computed search space upper bound: ~B. "
-							"Block start: ~B. Block end: ~B. TX root: ~s.",
-							[RecallByte, B#block.recall_byte, Height,
-							ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
-							BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
-					?assertEqual(RecallByte, B#block.recall_byte),
-					?assertEqual(true, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-							BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
-							spora_2_5}))
-			end,
+			?debugFmt("Mined a block. "
+					"Computed recall byte: ~B, block's recall byte: ~p. "
+					"Height: ~B. Previous block: ~s. "
+					"Computed search space upper bound: ~B. "
+					"Block start: ~B. Block end: ~B. TX root: ~s.",
+					[RecallByte, B#block.recall_byte, Height,
+					ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
+					BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
+			?assertEqual(RecallByte, B#block.recall_byte),
+			?assertMatch({true, _}, ar_poa:validate({BlockStart, RecallByte, TXRoot,
+					BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
+					{spora_2_6, B#block.reward_addr},
+					B#block.merkle_rebase_support_threshold, not_set})),
 			B
 		end,
 		LastB,
@@ -891,7 +889,7 @@ setup_nodes() ->
 
 setup_nodes(MasterAddr, SlaveAddr) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
 	{Master, _} = start(B0, MasterAddr, Config),
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),

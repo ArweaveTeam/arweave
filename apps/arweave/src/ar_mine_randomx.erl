@@ -3,12 +3,11 @@
 -on_load(init_nif/0).
 
 -export([init_fast/2, hash_fast/2, init_light/1, hash_light/2, release_state/1,
-		bulk_hash_fast/13, hash_fast_verify/3,
+		hash_fast_verify/3,
 		randomx_encrypt_chunk/4,
 		randomx_decrypt_chunk/5,
 		randomx_reencrypt_chunk/7,
-		hash_fast_long_with_entropy/2, hash_light_long_with_entropy/2,
-		bulk_hash_fast_long_with_entropy/13]).
+		hash_fast_long_with_entropy/2, hash_light_long_with_entropy/2]).
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
@@ -49,29 +48,6 @@ hash_fast(FastState, Data) ->
 	{ok, Hash} =
 		hash_fast_nif(FastState, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
--endif.
-
--ifdef(DEBUG).
-bulk_hash_fast(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound, PIDs, ProxyPIDs,
-		_HashingIterations, _JIT, _LargePages, _HardwareAES, Ref) ->
-	%% A simple mock of the NIF function with hashingIterations == 2.
-	H1 = crypto:hash(sha256, << FastState/binary, Nonce1/binary, BDS/binary >>),
-	H2 = crypto:hash(sha256, << FastState/binary, Nonce2/binary, BDS/binary >>),
-	[PID1 | OtherPIDs] = PIDs,
-	{ok, Byte1} = ar_mine:pick_recall_byte(H1, PrevH, PartitionUpperBound),
-	[ProxyPID1 | OtherProxyPIDs] = ProxyPIDs,
-	PID1 ! {binary:encode_unsigned(Byte1), H1, Nonce1, ProxyPID1, Ref},
-	[PID2 | _] = OtherPIDs ++ [PID1],
-	{ok, Byte2} = ar_mine:pick_recall_byte(H2, PrevH, PartitionUpperBound),
-	[ProxyPID2 | _] = OtherProxyPIDs ++ [ProxyPID1],
-	PID2 ! {binary:encode_unsigned(Byte2), H2, Nonce2, ProxyPID2, Ref},
-	ok.
--else.
-bulk_hash_fast(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound, PIDs, ProxyPIDs,
-		HashingIterations, JIT, LargePages, HardwareAES, Ref) ->
-	bulk_hash_fast_nif(FastState, Nonce1, Nonce2, BDS, PrevH,
-			binary:encode_unsigned(PartitionUpperBound, big), PIDs, ProxyPIDs, Ref,
-			HashingIterations, JIT, LargePages, HardwareAES).
 -endif.
 
 -ifdef(DEBUG).
@@ -192,7 +168,7 @@ randomx_encrypt_chunk(_Packing, _State, Key, Chunk) ->
 	IV = binary:part(Key, {0, 16}),
 	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, pad_chunk(Chunk), Options)}.
 
-randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize, Rounds) ->
+randomx_decrypt_chunk2(_RandomxState, Key, Chunk, _ChunkSize, _Rounds) ->
 	Options = [{encrypt, false}],
 	IV = binary:part(Key, {0, 16}),
 	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
@@ -256,31 +232,6 @@ hash_light_long_with_entropy(LightState, Data) ->
 		hash_light_long_with_entropy_nif(LightState, Data, ?RANDOMX_WITH_ENTROPY_ROUNDS, jit(),
 				large_pages(), hardware_aes()),
 	{Hash, Entropy}.
--endif.
-
--ifdef(DEBUG).
-bulk_hash_fast_long_with_entropy(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound,
-		PIDs, ProxyPIDs, _HashingIterations, _JIT, _LargePages, _HardwareAES, Ref) ->
-	%% A simple mock of the NIF function with hashingIterations == 2.
-	H1 = crypto:hash(sha256, << FastState/binary, Nonce1/binary, BDS/binary >>),
-	Entropy1 = iolist_to_binary([H1 || _ <- lists:seq(1, 8)]),
-	H2 = crypto:hash(sha256, << FastState/binary, Nonce2/binary, BDS/binary >>),
-	Entropy2 = iolist_to_binary([H2 || _ <- lists:seq(1, 8)]),
-	[PID1 | OtherPIDs] = PIDs,
-	{ok, Byte1} = ar_mine:pick_recall_byte(H1, PrevH, PartitionUpperBound),
-	[ProxyPID1 | OtherProxyPIDs] = ProxyPIDs,
-	PID1 ! {binary:encode_unsigned(Byte1), H1, Entropy1, Nonce1, ProxyPID1, Ref},
-	[PID2 | _] = OtherPIDs ++ [PID1],
-	{ok, Byte2} = ar_mine:pick_recall_byte(H2, PrevH, PartitionUpperBound),
-	[ProxyPID2 | _] = OtherProxyPIDs ++ [ProxyPID1],
-	PID2 ! {binary:encode_unsigned(Byte2), H2, Entropy2, Nonce2, ProxyPID2, Ref},
-	ok.
--else.
-bulk_hash_fast_long_with_entropy(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound,
-		PIDs, ProxyPIDs, HashingIterations, JIT, LargePages, HardwareAES, Ref) ->
-	bulk_hash_fast_long_with_entropy_nif(FastState, Nonce1, Nonce2, BDS, PrevH,
-			binary:encode_unsigned(PartitionUpperBound, big), PIDs, ProxyPIDs, Ref,
-			HashingIterations, ?RANDOMX_WITH_ENTROPY_ROUNDS, JIT, LargePages, HardwareAES).
 -endif.
 
 -ifdef(DEBUG).

@@ -914,11 +914,11 @@ test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
 	{PathChunkID, StartOffset, EndOffset} =
 		ar_merkle:validate_path(DataRoot, ChallengeLocation, byte_size(Data), DataPath),
 	{PathChunkID, StartOffset, EndOffset} =
-		ar_merkle:validate_path_strict_data_split(DataRoot, ChallengeLocation, byte_size(Data),
-				DataPath),
+		ar_merkle:validate_path(DataRoot, ChallengeLocation, byte_size(Data),
+				DataPath, strict_data_split_ruleset),
 	{PathChunkID, StartOffset, EndOffset} =
-		ar_merkle:validate_path_strict_borders(DataRoot, ChallengeLocation, byte_size(Data),
-				DataPath),
+		ar_merkle:validate_path(DataRoot, ChallengeLocation, byte_size(Data),
+				DataPath, strict_borders_ruleset),
 	?assertEqual(RealChunkID, PathChunkID),
 	?assert(ChallengeLocation >= StartOffset),
 	?assert(ChallengeLocation < EndOffset).
@@ -1035,5 +1035,3 @@ test_get_tx_fee(DataSize, Height, Addr, ExpectedFee) ->
 	?assertEqual(ExpectedFee, 
 		ar_tx:get_tx_fee({DataSize, Rate, PricePerGiBMinute,
 			KryderPlusRateMultiplier, Addr, Timestamp, Accounts, Height})).
-
-	
