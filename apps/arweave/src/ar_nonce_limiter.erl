@@ -433,9 +433,6 @@ handle_call({get_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
 	#state{ session_by_key = SessionByKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
-			io:format("DEBUG not found~n"),
-			io:format("DEBUG not found SessionKey ~p~n", [SessionKey]),
-			io:format("DEBUG not found SessionByKey ~p~n", [SessionByKey]),
 			{reply, not_found, State};
 		Session ->
 			Map = Session#vdf_session.step_checkpoints_map,
