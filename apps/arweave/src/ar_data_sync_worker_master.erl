@@ -171,12 +171,12 @@ dequeue_main_task(State) ->
 
 %% @doc If a peer has capacity, take the next task from its queue and schedule it.
 process_peer_queue(PeerTasks, State) ->
-	?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(PeerTasks#peer_tasks.peer)},
-		{active_count, PeerTasks#peer_tasks.active_count},
-		{max_active, PeerTasks#peer_tasks.max_active},
-		{queue_len, queue:len(PeerTasks#peer_tasks.task_queue)},
-		{has_capacity, peer_has_capacity(PeerTasks)},
-		{has_queued_tasks, peer_has_queued_tasks(PeerTasks)}]),
+	% ?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(PeerTasks#peer_tasks.peer)},
+	% 	{active_count, PeerTasks#peer_tasks.active_count},
+	% 	{max_active, PeerTasks#peer_tasks.max_active},
+	% 	{queue_len, queue:len(PeerTasks#peer_tasks.task_queue)},
+	% 	{has_capacity, peer_has_capacity(PeerTasks)},
+	% 	{has_queued_tasks, peer_has_queued_tasks(PeerTasks)}]),
 	case peer_has_capacity(PeerTasks) andalso peer_has_queued_tasks(PeerTasks) of
 		true ->
 			{PeerTasks2, sync_range, Args} = dequeue_peer_task(PeerTasks),
@@ -295,16 +295,16 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 		PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA }),
 	PeerTasks3 = update_active(
 		PeerTasks2, IsOK, Milliseconds, State#state.worker_count, LatencyTarget),
-	?LOG_DEBUG([{event, complete_sync_range},
-		{peer, ar_util:format_peer(Peer)}, {is_ok, IsOK}, {duration, Milliseconds},
-		{before_latency_ema, PeerTasks#peer_tasks.latency_ema}, {after_latency_ema, LatencyEMA},
-		{before_success_ema, PeerTasks#peer_tasks.success_ema}, {after_success_ema, SuccessEMA},
-		{before_latency_target, State#state.latency_target}, {after_latency_target, LatencyTarget},
-		{before_max_active, PeerTasks#peer_tasks.max_active},
-		{after_max_active, PeerTasks3#peer_tasks.max_active},
-		{before_active_count, PeerTasks#peer_tasks.active_count},
-		{after_active_count, PeerTasks3#peer_tasks.active_count}
-	]),
+	% ?LOG_DEBUG([{event, complete_sync_range},
+	% 	{peer, ar_util:format_peer(Peer)}, {is_ok, IsOK}, {duration, Milliseconds},
+	% 	{before_latency_ema, PeerTasks#peer_tasks.latency_ema}, {after_latency_ema, LatencyEMA},
+	% 	{before_success_ema, PeerTasks#peer_tasks.success_ema}, {after_success_ema, SuccessEMA},
+	% 	{before_latency_target, State#state.latency_target}, {after_latency_target, LatencyTarget},
+	% 	{before_max_active, PeerTasks#peer_tasks.max_active},
+	% 	{after_max_active, PeerTasks3#peer_tasks.max_active},
+	% 	{before_active_count, PeerTasks#peer_tasks.active_count},
+	% 	{after_active_count, PeerTasks3#peer_tasks.active_count}
+	% ]),
 	{PeerTasks3, State#state{ latency_target = LatencyTarget }}.
 
 
