@@ -15,6 +15,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 %% ===================================================================
 %% API functions
@@ -89,7 +90,6 @@ init([]) ->
 		?CHILD(ar_nonce_limiter, worker),
 		?CHILD_SUP(ar_nonce_limiter_client, worker),
 		?CHILD(ar_mining_server, worker),
-		?CHILD(ar_process_sampler, worker),
 		?CHILD_SUP(ar_tx_emitter_sup, supervisor),
 		?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
 		?CHILD_SUP(ar_poller_sup, supervisor),
@@ -98,5 +98,9 @@ init([]) ->
 		?CHILD(ar_p3, worker),
 		?CHILD(ar_p3_db, worker)
 	],
-
-	{ok, {{one_for_one, 5, 10}, Children}}.
+	{ok, Config} = application:get_env(arweave, config),
+	DebugChildren = case Config#config.debug of
+		true -> [?CHILD(ar_process_sampler, worker)];
+		false -> []
+	end,
+	{ok, {{one_for_one, 5, 10}, Children ++ DebugChildren}}.
