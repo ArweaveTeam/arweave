@@ -1671,7 +1671,6 @@ json_struct_to_remote_final_solution(JSON) ->
 	{PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints}.
 
 remote_final_solution_to_json_struct({PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints}) ->
-	io:format("DEBUG remote_final_solution_to_json_struct 0~n"),
 	Res = [
 		{partition_number, integer_to_binary(PartitionNumber)},
 		{nonce, Nonce},
@@ -1688,18 +1687,11 @@ remote_final_solution_to_json_struct({PartitionNumber, Nonce, H0, Seed, NextSeed
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{vdf_checkpoints, ar_util:encode(iolist_to_binary(SuppliedCheckpoints))}
 	],
-	io:format("DEBUG remote_final_solution_to_json_struct 1~n"),
 	case PoA2 of
 		not_set ->
-			io:format("DEBUG remote_final_solution_to_json_struct 2.1~n"),
 			Res;
 		_ ->
-			% Res ++ [{poa2, poa_to_json_struct(PoA2)}]
-			io:format("DEBUG remote_final_solution_to_json_struct 2.2~n"),
-			Res2 = Res ++ [{poa2, poa_to_json_struct(PoA2)}],
-			io:format("DEBUG remote_final_solution_to_json_struct 2.3~n"),
-			%io:format("DEBUG remote_final_solution_to_json_struct 2.3 ~p~n", [Res2]),
-			Res2
+			Res ++ [{poa2, poa_to_json_struct(PoA2)}]
 	end.
 
 % TODO json_struct_to_remote_final_solution + remote_final_solution_to_json_struct test
