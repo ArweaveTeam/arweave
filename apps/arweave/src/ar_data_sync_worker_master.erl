@@ -23,8 +23,8 @@
 	task_queue = queue:new(),
 	active_count = 0,
 	max_active = ?MIN_MAX_ACTIVE,
-	latency_ema = undefined,
-	success_ema = undefined
+	latency_ema = 1000, %% seed a plausible value to avoid over weighting the first response
+	success_ema = 1.0 %% seed a plausible value to avoid over weighting the first response
 }).
 
 -record(state, {
@@ -32,7 +32,7 @@
 	task_queue_len = 0,
 	all_workers = queue:new(),
 	worker_count = 0,
-	latency_target = undefined
+	latency_target = 1000 %% seed a plausible value to avoid over weighting the first response
 }).
 
 %%%===================================================================
@@ -171,6 +171,12 @@ dequeue_main_task(State) ->
 
 %% @doc If a peer has capacity, take the next task from its queue and schedule it.
 process_peer_queue(PeerTasks, State) ->
+	?LOG_DEBUG([{event, process_peer_queue},
+		{active_count, PeerTasks#peer_tasks.active_count},
+		{max_active, PeerTasks#peer_tasks.max_active},
+		{queue_len, queue:len(PeerTasks#peer_tasks.task_queue)},
+		{has_capacity, peer_has_capacity(PeerTasks)},
+		{has_queued_tasks, peer_has_queued_tasks(PeerTasks)}]),
 	case peer_has_capacity(PeerTasks) andalso peer_has_queued_tasks(PeerTasks) of
 		true ->
 			{PeerTasks2, sync_range, Args} = dequeue_peer_task(PeerTasks),
@@ -274,25 +280,16 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 
 	IsOK = (Result == ok andalso Milliseconds > 10),
 	LatencyAlpha = 0.1, 
-	LatencyEMA = case calculate_ema(PeerTasks#peer_tasks.latency_ema, IsOK,
-							Milliseconds, LatencyAlpha) of
-						undefined ->
-							undefined;
-						EMA ->
-							trunc(EMA)
-					end,
+	LatencyEMA = trunc(calculate_ema(
+					PeerTasks#peer_tasks.latency_ema, IsOK, Milliseconds, LatencyAlpha)),
 	SuccessAlpha = 0.1,
-	SuccessEMA = calculate_ema(PeerTasks#peer_tasks.success_ema, true,
-			if IsOK == true -> 1.0; IsOK == false -> 0.0 end, SuccessAlpha),
+	SuccessEMA = calculate_ema(
+					PeerTasks#peer_tasks.success_ema, true,
+					if IsOK == true -> 1.0; IsOK == false -> 0.0 end, SuccessAlpha),
 	%% Target Latency is the EMA of all peers' latencies
 	LatencyTargetAlpha =  2.0 / (State#state.worker_count + 1),
-	LatencyTarget = case calculate_ema(State#state.latency_target, IsOK,
-							Milliseconds, LatencyTargetAlpha) of
-						undefined ->
-							undefined;
-						Target ->
-							trunc(Target)
-					end,
+	LatencyTarget = trunc(calculate_ema(
+					State#state.latency_target, IsOK, Milliseconds, LatencyTargetAlpha)),
 
 	PeerTasks2 = cut_peer_queue(
 		PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA }),
@@ -334,12 +331,7 @@ ets_key(TaskState) ->
 calculate_ema(OldEMA, false, _Value, _Alpha) ->
 	OldEMA;
 calculate_ema(OldEMA, true, Value, Alpha) ->
-	case OldEMA of
-		undefined ->
-			Value;
-		OldEMA ->
-			Alpha * Value + (1 - Alpha) * OldEMA
-	end.
+	Alpha * Value + (1 - Alpha) * OldEMA.
 
 get_peer_tasks(Peer) ->
 	case ets:lookup(?MODULE, {peer, Peer}) of
