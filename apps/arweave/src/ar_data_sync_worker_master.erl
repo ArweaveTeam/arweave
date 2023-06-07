@@ -53,6 +53,7 @@ is_syncing_enabled() ->
 ready_for_work() ->
 	{ok, Config} = application:get_env(arweave, config),
 	TotalTaskCount = get_task_count(scheduled) + get_task_count(queued),
+	?LOG_DEBUG([{event, ready_for_work}, {total_task_count, TotalTaskCount}]),
 	TotalTaskCount < (Config#config.sync_jobs * 50).
 
 %%%===================================================================
@@ -123,6 +124,7 @@ terminate(Reason, _State) ->
 process_main_queue(#state{ task_queue_len = 0 } = State) ->
 	State;
 process_main_queue(State) ->
+	?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, State#state.task_queue_len}]),
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
 		read_range ->
