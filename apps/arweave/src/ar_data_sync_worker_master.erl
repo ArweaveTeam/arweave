@@ -56,7 +56,12 @@ is_syncing_enabled() ->
 %% @doc Returns true if we can accept new tasks. Will always return false if syncing is
 %% disabled (i.e. sync_jobs = 0).
 ready_for_work() ->
-	gen_server:call(?MODULE, ready_for_work).
+	try
+		gen_server:call(?MODULE, ready_for_work)
+	catch
+		exit:{timeout,_} ->
+			false
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
