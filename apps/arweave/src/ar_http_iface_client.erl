@@ -545,7 +545,6 @@ get_cm_partition_table(Peer) ->
 
 % TODO binary protocol after debug
 cm_h1_send(Peer, Materials) ->
-	io:format("DEBUG cm_h1_send~n"),
 	Json = ar_serialize:remote_h2_materials_to_json_map(Materials),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
@@ -570,9 +569,7 @@ cm_h2_send(Peer, Solution) ->
 	})).
 
 cm_publish_send(Peer, Solution) ->
-	io:format("DEBUG cm_publish_send~n"),
 	Json = ar_serialize:remote_final_solution_to_json_struct(Solution),
-	io:format("DEBUG cm_publish_send 1~n"),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -1015,10 +1012,8 @@ process_get_info(Props) ->
 		{ok, [NetworkName, ClientVersion, Height, Blocks, Peers]} ->
 			ReleaseNumber =
 				case lists:keyfind(<<"release">>, 1, Props) of
-					{<<"release">>, R} when is_integer(R) ->
-						R;
-					_ ->
-						0
+					false -> 0;
+					R -> R
 				end,
 			[
 				{name, NetworkName},

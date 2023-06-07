@@ -3047,14 +3047,12 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 
 % TODO binary protocol after debug
 handle_mining_h1(Req, Pid) ->
-	io:format("DEBUG handle_mining_h1 1~n"),
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
 					H2Materials = ar_serialize:json_map_to_remote_h2_materials(JSON),
-					io:format("DEBUG handle_mining_h1 2~n"),
 					ar_coordination:compute_h2(Peer, H2Materials),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
@@ -3070,12 +3068,9 @@ handle_mining_h2(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					io:format("DEBUG handle_mining_h2 i0~n"),
 					Solution = ar_serialize:json_struct_to_remote_solution(JSON),
-					io:format("DEBUG handle_mining_h2 i1~n"),
 					{_Diff, ReplicaID, H0, _H1, Nonce, PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage, Seed, NextSeed, StartIntervalNumber, StepNumber,
 						NonceLimiterOutput, SuppliedCheckpoints} = Solution,
-					io:format("DEBUG handle_mining_h2 i2~n"),
 					{ok, Config} = application:get_env(arweave, config),
 					case Config#config.cm_exit_peer of
 						not_set ->
