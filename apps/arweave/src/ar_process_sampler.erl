@@ -27,9 +27,10 @@ handle_cast(_Msg, State) ->
 handle_info(sample, State) ->
 	Processes = erlang:processes(),
 	ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
-	lists:foreach(fun({ProcessName, FunctionName, Bytes}) ->
+	lists:foreach(fun({ProcessName, FunctionName, Memory, Binary}) ->
 		prometheus_counter:inc(process_functions, [FunctionName]),
-		prometheus_gauge:set(process_memory, [ProcessName], Bytes)
+		prometheus_gauge:set(process_memory, [ProcessName, memory], Memory),
+		prometheus_gauge:set(process_memory, [ProcessName, binary], Binary)
 	end, ProcessData),
 	{noreply, State};
 
@@ -44,16 +45,16 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Internal functions
 process_function(Pid) ->
-	case process_info(Pid, [current_function, registered_name, status, memory]) of
-	[{current_function, {?MODULE, process_function, _A}}, _, _, _] ->
+	case process_info(Pid, [current_function, registered_name, status, memory, binary]) of
+	[{current_function, {?MODULE, process_function, _A}}, _, _, _, _] ->
 		false;
-	[{current_function, {erlang, process_info, _A}}, _, _, _] ->
+	[{current_function, {erlang, process_info, _A}}, _, _, _, _] ->
 		false;
 	[{current_function, {M, F, A}}, {registered_name, Name}, {status, running},
-			{memory, Bytes}] ->
+			{memory, Memory}, {binary, Binary}] ->
 		ProcessName = process_name(Name),
 		FunctionName = function_name(ProcessName, M, F, A),
-		{true, {ProcessName, FunctionName, Bytes}};
+		{true, {ProcessName, FunctionName, Memory, Binary}};
 	_ ->
 		false
 	end.
