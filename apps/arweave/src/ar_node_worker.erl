@@ -455,7 +455,6 @@ handle_info({event, miner, {found_solution, _Solution}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
 handle_info({event, miner, {found_solution, Args}}, State) ->
-	io:format("DEBUG ar_node_worker 1~n"),
 	{SolutionH, SolutionPreimage, PartitionNumber, Nonce, IntervalNumber,
 			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, SuppliedCheckpoints, LastStepCheckpoints,
 			RecallByte, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, RewardKey,
@@ -539,8 +538,6 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			_ ->
 				HaveSteps
 		end,
-	io:format("DEBUG ar_node_worker 2 HaveSteps ~p~n", [HaveSteps]),
-	io:format("DEBUG ar_node_worker 2 HaveSteps2 ~p~n", [HaveSteps2]),
 	case HaveSteps2 of
 		false ->
 			{noreply, State};
@@ -672,7 +669,6 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			ar_block_cache:add(block_cache, B),
 			State2 = apply_validated_block(State, B, PrevBlocks, [], RecentBI2, BlockTXPairs2),
 			%% Won't be received by itself, but we should let know all "block" subscribers.
-			io:format("DEBUG ar_node_worker 3~n"),
 			ar_events:send(block, {new, B, #{ source => miner }}),
 			{noreply, State2};
 		_Steps ->
