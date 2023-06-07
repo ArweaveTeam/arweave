@@ -32,7 +32,7 @@
 	task_queue_len = 0,
 	all_workers = queue:new(),
 	worker_count = 0,
-	latency_target = 1000 %% seed a plausible value to avoid over weighting the first response
+	latency_target = 2000 %% seed a plausible value to avoid over weighting the first response
 }).
 
 %%%===================================================================
@@ -171,7 +171,7 @@ dequeue_main_task(State) ->
 
 %% @doc If a peer has capacity, take the next task from its queue and schedule it.
 process_peer_queue(PeerTasks, State) ->
-	?LOG_DEBUG([{event, process_peer_queue},
+	?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(PeerTasks#peer_tasks.peer)},
 		{active_count, PeerTasks#peer_tasks.active_count},
 		{max_active, PeerTasks#peer_tasks.max_active},
 		{queue_len, queue:len(PeerTasks#peer_tasks.task_queue)},
@@ -300,8 +300,10 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 		{before_latency_ema, PeerTasks#peer_tasks.latency_ema}, {after_latency_ema, LatencyEMA},
 		{before_success_ema, PeerTasks#peer_tasks.success_ema}, {after_success_ema, SuccessEMA},
 		{before_latency_target, State#state.latency_target}, {after_latency_target, LatencyTarget},
-		{before_max_active, PeerTasks2#peer_tasks.max_active},
-		{after_max_active, PeerTasks3#peer_tasks.max_active}
+		{before_max_active, PeerTasks#peer_tasks.max_active},
+		{after_max_active, PeerTasks3#peer_tasks.max_active},
+		{before_active_count, PeerTasks#peer_tasks.active_count},
+		{after_active_count, PeerTasks3#peer_tasks.active_count}
 	]),
 	{PeerTasks3, State#state{ latency_target = LatencyTarget }}.
 
