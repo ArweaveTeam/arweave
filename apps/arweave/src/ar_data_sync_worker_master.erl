@@ -57,7 +57,7 @@ is_syncing_enabled() ->
 %% disabled (i.e. sync_jobs = 0).
 ready_for_work() ->
 	try
-		gen_server:call(?MODULE, ready_for_work)
+		gen_server:call(?MODULE, ready_for_work, 1000)
 	catch
 		exit:{timeout,_} ->
 			false
