@@ -126,37 +126,17 @@ process_main_queue(#state{ task_queue_len = 0 } = State) ->
 	State;
 process_main_queue(State) ->
 	?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, State#state.task_queue_len}]),
+	time:sleep(500),
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
 		read_range ->
 			schedule_read_range(Args, State2);
 		sync_range ->
 			{_Start, _End, Peer, _TargetStoreID} = Args,
-
-			Start1 = os:timestamp(),
 			PeerTasks = get_peer_tasks(Peer, State2),
-			End1 = os:timestamp(),
-			Elapsed1 = timer:now_diff(End1, Start1),
-			?LOG_DEBUG([{event, process_main_queue_get_peer_tasks}, {time, Elapsed1}]),
-
-			Start2 = os:timestamp(),
 			PeerTasks2 = enqueue_peer_task(PeerTasks, sync_range, Args),
-			End2 = os:timestamp(),
-			Elapsed2 = timer:now_diff(End2, Start2),
-			?LOG_DEBUG([{event, process_main_queue_enqueue_peer_task}, {time, Elapsed2}]),
-
-			Start3 = os:timestamp(),
 			{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
-			End3 = os:timestamp(),
-			Elapsed3 = timer:now_diff(End3, Start3),
-			?LOG_DEBUG([{event, process_main_queue_process_peer_queue}, {time, Elapsed3}]),
-
-			Start4 = os:timestamp(),
-			State5 = set_peer_tasks(PeerTasks3, State3),
-			End4 = os:timestamp(),
-			Elapsed4 = timer:now_diff(End4, Start4),
-			?LOG_DEBUG([{event, process_main_queue_set_peer_tasks}, {time, Elapsed4}]),
-			State5
+			set_peer_tasks(PeerTasks3, State3)
 	end,
 	process_main_queue(State4).
 
