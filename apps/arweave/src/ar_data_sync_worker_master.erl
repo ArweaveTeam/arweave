@@ -137,7 +137,7 @@ process_main_queue(#state{ task_queue_len = 0 } = State) ->
 	State;
 process_main_queue(State) ->
 	?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, State#state.task_queue_len}]),
-	% timer:sleep(500),
+	timer:sleep(100),
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
 		read_range ->
