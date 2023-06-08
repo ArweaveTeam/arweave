@@ -227,7 +227,7 @@ cut_peer_queue(PeerTasks, State) ->
 	%% the maximum number of tasks we allow to be queued for this peer is related to its
 	%% contribution to our current throughput. Peers with a higher throughput can claim more
 	%% of the queue.
-	MaxQueue = (PeerThroughput / TotalThroughput) * max_tasks(),
+	MaxQueue = trunc((PeerThroughput / TotalThroughput) * max_tasks()),
 	case queue:len(TaskQueue) - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
@@ -235,6 +235,7 @@ cut_peer_queue(PeerTasks, State) ->
 			?LOG_DEBUG([{event, cut_peer_queue},
 				{peer, Peer}, {active_count, CurActive},
 				{success_ema, SuccessEMA}, {latency_ema, LatencyEMA},
+				{peer_throughput, PeerThroughput}, {total_throughput, TotalThroughput},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			{
