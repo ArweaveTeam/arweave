@@ -15,7 +15,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(MIN_MAX_ACTIVE, 8).
--define(MAX_QUEUE_DURATION, 15 * 60 * 1000). %% 15 minutes in milliseconds
 -define(EMA_ALPHA, 0.1).
 -define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over weighting the first response
 -define(STARTING_LATENCY_TARGET, 2000). %% initial value to avoid over weighting the first response
@@ -77,9 +76,8 @@ init(Workers) ->
 	}}.
 
 handle_call(ready_for_work, _From, State) ->
-	{ok, Config} = application:get_env(arweave, config),
 	TotalTaskCount = State#state.scheduled_task_count + State#state.queued_task_count,
-	ReadyForWork = TotalTaskCount < (Config#config.sync_jobs * 50),
+	ReadyForWork = TotalTaskCount < max_tasks(),
 	{reply, ReadyForWork, State};
 
 handle_call(Request, _From, State) ->
@@ -199,6 +197,12 @@ process_peer_queue(PeerTasks, State) ->
 			{PeerTasks, State}
 	end.
 
+%% @doc the maximum number of tasks we can have in process - including taxes queued here as well
+%% as those scheduled on ar_data_sync_workers.
+max_tasks() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.sync_jobs * 50.
+
 %% @doc Cut a peer's queue to store roughly 15 minutes worth of tasks. This prevents
 %% the a slow peer from filling up the ar_data_sync_worker_master queues, stalling the
 %% workers and preventing ar_data_sync from pushing new tasks.
@@ -209,21 +213,27 @@ cut_peer_queue(#peer_tasks{ latency_ema = 0 } = PeerTasks, State) ->
 cut_peer_queue(#peer_tasks{ latency_ema = 0.0 } = PeerTasks, State) ->
 	{PeerTasks, State};
 cut_peer_queue(PeerTasks, State) ->
-	%% MaxQueue is an estimate of how many tasks we need queued to keep us busy for
-	%% ?MAX_QUEUE_DURATION. We use the EMA to estimate how long each task will take, and
-	%% assume MaxActive concurrently executing tasks.
-	MaxActive = PeerTasks#peer_tasks.max_active,
+	CurActive = PeerTasks#peer_tasks.active_count,
 	LatencyEMA = PeerTasks#peer_tasks.latency_ema,
 	SuccessEMA = PeerTasks#peer_tasks.success_ema,
 	TaskQueue = PeerTasks#peer_tasks.task_queue,
+	LatencyTarget = State#state.latency_target,
 	Peer = PeerTasks#peer_tasks.peer,
-	MaxQueue = trunc((?MAX_QUEUE_DURATION * MaxActive * SuccessEMA) / LatencyEMA),
+	ScheduledTasks = State#state.scheduled_task_count,
+	%% estimate of our current total throughput
+	TotalThroughput = ScheduledTasks * (1.0 / LatencyTarget),
+	%% estimate of of this peer's througput
+	PeerThroughput = CurActive * SuccessEMA * (1.0 / LatencyEMA),
+	%% the maximum number of tasks we allow to be queued for this peer is related to its
+	%% contribution to our current throughput. Peers with a higher throughput can claim more
+	%% of the queue.
+	MaxQueue = (PeerThroughput / TotalThroughput) * max_tasks(),
 	case queue:len(TaskQueue) - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
 			%% oldest tasks.
 			?LOG_DEBUG([{event, cut_peer_queue},
-				{peer, Peer}, {max_active, MaxActive},
+				{peer, Peer}, {active_count, CurActive},
 				{success_ema, SuccessEMA}, {latency_ema, LatencyEMA},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
@@ -826,7 +836,7 @@ test_cut_peer_queue() ->
 
 	%% Really slow task, max queue size cut to 8. Reset success_ema to 1.0
 	{PeerTasks3, State4} = complete_sync_range(
-		PeerTasks2#peer_tasks{ success_ema = 1.0 }, ok, (?MAX_QUEUE_DURATION * 9) * 1_000_000, State3),
+		PeerTasks2#peer_tasks{ success_ema = 1.0 }, ok, (1234 * 9) * 1_000_000, State3),
 	?assertEqual(8, State4#state.queued_task_count),
 	?assertEqual(6, State4#state.scheduled_task_count),
 	?assertEqual(1_801_555, State4#state.latency_target),
@@ -834,7 +844,7 @@ test_cut_peer_queue() ->
 
 	%% Really slow task (twice the maximum duration), EMA is updated to slightly less than
 	%% twice the max duration duration -> max queue length is 7
-	{PeerTasks4, State5} = complete_sync_range(PeerTasks3, ok, (?MAX_QUEUE_DURATION * 2) * 1_000_000, State4),
+	{PeerTasks4, State5} = complete_sync_range(PeerTasks3, ok, (1234 * 2) * 1_000_000, State4),
 	?assertEqual(7, State5#state.queued_task_count),
 	?assertEqual(5, State5#state.scheduled_task_count),
 	?assertEqual(1_801_209, State5#state.latency_target),
