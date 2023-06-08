@@ -307,7 +307,7 @@ schedule_sync_range(PeerTasks, Args, State) ->
 
 schedule_read_range(Args, 0, State) ->
 	?LOG_DEBUG([{event, schedule_read_range_pause}]),
-	ar_util:cast_after(200, ?MODULE, {read_range, Args}, State),
+	ar_util:cast_after(200, ?MODULE, {read_range, Args}),
 	State;
 schedule_read_range(Args, ChunksRemaining, State) ->
 	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
