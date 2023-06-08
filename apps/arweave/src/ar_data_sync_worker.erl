@@ -159,6 +159,10 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
 									Packing, RelativeOffset, ChunkSize, Chunk,
 									UnpackedChunk, TargetStoreID, ChunkDataKey},
+							?LOG_DEBUG([{event, cast_pack_and_store_chunk},
+								{from, ar_data_sync_worker},
+								{store_id, TargetStoreID}]),
+
 							gen_server:cast(list_to_atom("ar_data_sync_"
 									++ TargetStoreID), {pack_and_store_chunk, Args}),
 							read_range2({Start + ChunkSize, End, OriginStoreID,
