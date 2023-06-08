@@ -152,7 +152,7 @@ process_main_queue(State) ->
 					{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
 					set_peer_tasks(PeerTasks3, State3);
 				false ->
-					?LOG_DEBUG([{event, skip_peer_task}, {peer, ar_util:format(Peer)},
+					?LOG_DEBUG([{event, skip_peer_task}, {peer, ar_util:format_peer(Peer)},
 						{max_queue, MaxQueue}, {queue_len, queue:len(TaskQueue)}]),
 					State2
 			end
