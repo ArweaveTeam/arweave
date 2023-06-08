@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, pack/4, unpack/5, repack/6, packing_atom/1,
+-export([start_link/0, packing_atom/1,
+		 request_unpack/2, request_repack/2, pack/4, unpack/5, repack/6, 
 		 is_buffer_full/0, packing_rate/0, record_buffer_size_metric/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -32,6 +33,12 @@ packing_atom(Packing) when is_atom(Packing) ->
 	Packing;
 packing_atom({spora_2_6, _}) ->
 	spora_2_6.
+
+request_unpack(Ref, Args) ->
+	gen_server:cast(?MODULE, {unpack_request, Ref, Args}).
+
+request_repack(Ref, Args) ->
+	gen_server:cast(?MODULE, {repack_request, Ref, Args}).
 
 %% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
@@ -153,14 +160,10 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
-	{noreply, State}.
-
-handle_info({event, chunk, {unpack_request, _, _}}, #state{ num_workers = 0 } = State) ->
+handle_cast({unpack_request, _, _}, #state{ num_workers = 0 } = State) ->
 	?LOG_WARNING([{event, got_unpack_request_while_packing_is_disabled}]),
 	{noreply, State};
-handle_info({event, chunk, {unpack_request, Ref, Args}}, State) ->
+handle_cast({unpack_request, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
@@ -169,11 +172,10 @@ handle_info({event, chunk, {unpack_request, Ref, Args}}, State) ->
 	record_packing_request(unpack, Packing, unpack_request),
 	Worker ! {unpack, Ref, self(), Args},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-
-handle_info({event, chunk, {repack_request, _, _}}, #state{ num_workers = 0 } = State) ->
+handle_cast({repack_request, _, _}, #state{ num_workers = 0 } = State) ->
 	?LOG_WARNING([{event, got_repack_request_while_packing_is_disabled}]),
 	{noreply, State};
-handle_info({event, chunk, {repack_request, Ref, Args}}, State) ->
+handle_cast({repack_request, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
@@ -201,6 +203,9 @@ handle_info({event, chunk, {repack_request, Ref, Args}}, State) ->
 			},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }}
 	end;
+handle_cast(Cast, State) ->
+	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	{noreply, State}.
 
 handle_info({event, chunk, _}, State) ->
 	{noreply, State};

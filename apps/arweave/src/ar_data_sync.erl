@@ -963,7 +963,7 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast,
 							{noreply, State};
 						false ->
 							ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
-							ar_events:send(chunk, {unpack_request, AbsoluteOffset, ChunkArgs}),
+							ar_packing_server:request_unpack(AbsoluteOffset, ChunkArgs),
 							?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
 									{data_path_hash, ar_util:encode(crypto:hash(sha256,
 											DataPath))},
@@ -2710,9 +2710,9 @@ pack_and_store_chunk(Args, State) ->
 									_ ->
 										{unpacked, UnpackedChunk}
 								end,
-							ar_events:send(chunk, {repack_request, AbsoluteOffset,
+							ar_packing_server:request_repack(AbsoluteOffset,
 									{RequiredPacking, Packing2, Chunk2, AbsoluteOffset,
-									TXRoot, ChunkSize}}),
+										TXRoot, ChunkSize}),
 							?LOG_DEBUG([{event, requested_chunk_repacking},
 									{data_path_hash, ar_util:encode(DataPathHash)},
 									{data_root, ar_util:encode(DataRoot)},

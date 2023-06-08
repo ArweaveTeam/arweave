@@ -816,9 +816,9 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 												{register_packing_ref, Ref, PaddedOffset}),
 										ar_util:cast_after(300000, Server,
 												{expire_repack_request, Ref}),
-										ar_events:send(chunk, {repack_request, Ref,
+										ar_packing_server:request_repack(Ref,
 												{RequiredPacking, Packing, Chunk,
-														AbsoluteOffset, TXRoot, ChunkSize}}),
+													AbsoluteOffset, TXRoot, ChunkSize}),
 										ok
 								end;
 							_ ->

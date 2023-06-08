@@ -144,18 +144,22 @@ process_main_queue(State) ->
 		sync_range ->
 			{_Start, _End, Peer, _TargetStoreID} = Args,
 			PeerTasks = get_peer_tasks(Peer, State2),
-			TaskQueue = PeerTasks#peer_tasks.task_queue,
-			MaxQueue = max_peer_queue(PeerTasks, State2),
-			case MaxQueue =:= undefined orelse queue:len(TaskQueue) < MaxQueue of
-				true ->
-					PeerTasks2 = enqueue_peer_task(PeerTasks, sync_range, Args),
-					{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
-					set_peer_tasks(PeerTasks3, State3);
-				false ->
-					?LOG_DEBUG([{event, skip_peer_task}, {peer, ar_util:format_peer(Peer)},
-						{max_queue, MaxQueue}, {queue_len, queue:len(TaskQueue)}]),
-					State2
-			end
+			PeerTasks2 = enqueue_peer_task(PeerTasks, sync_range, Args),
+			{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
+			set_peer_tasks(PeerTasks3, State3)
+			% PeerTasks = get_peer_tasks(Peer, State2),
+			% TaskQueue = PeerTasks#peer_tasks.task_queue,
+			% MaxQueue = max_peer_queue(PeerTasks, State2),
+			% case MaxQueue =:= undefined orelse queue:len(TaskQueue) < MaxQueue of
+			% 	true ->
+			% 		PeerTasks2 = enqueue_peer_task(PeerTasks, sync_range, Args),
+			% 		{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
+			% 		set_peer_tasks(PeerTasks3, State3);
+			% 	false ->
+			% 		?LOG_DEBUG([{event, skip_peer_task}, {peer, ar_util:format_peer(Peer)},
+			% 			{max_queue, MaxQueue}, {queue_len, queue:len(TaskQueue)}]),
+			% 		State2
+			% end
 	end,
 	process_main_queue(State4).
 
