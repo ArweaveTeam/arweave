@@ -14,6 +14,8 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(READ_RANGE_CHUNKS_PER_TASK, 10).
+-define(READ_RANGE_CHUNKS_PER_BATCH, 400). %% 100MiB
 -define(MIN_MAX_ACTIVE, 8).
 -define(LATENCY_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.1).
@@ -140,7 +142,7 @@ process_main_queue(State) ->
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
 		read_range ->
-			schedule_read_range(Args, State2);
+			schedule_read_range(Args, ?READ_RANGE_CHUNKS_PER_BATCH, State2);
 		sync_range ->
 			{_Start, _End, Peer, _TargetStoreID} = Args,
 			PeerTasks = get_peer_tasks(Peer, State2),
@@ -303,9 +305,17 @@ schedule_sync_range(PeerTasks, Args, State) ->
 	PeerTasks2 = PeerTasks#peer_tasks{ active_count = PeerTasks#peer_tasks.active_count + 1 },
 	{PeerTasks2, State2}.
 
-schedule_read_range(Args, State) ->
+schedule_read_range(Args, 0, State) ->
+	?LOG_DEBUG([{event, schedule_read_range_pause}]),
+	ar_util:cast_after(200, ?MODULE, {read_range, Args}, State),
+	State;
+schedule_read_range(Args, ChunksRemaining, State) ->
 	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
-	End2 = min(Start + 10 * 262144, End),
+	Chunks = min(ChunksRemaining, ?READ_RANGE_CHUNKS_PER_TASK),
+	End2 = min(Start + Chunks * ?DATA_CHUNK_SIZE, End),
+	?LOG_DEBUG([{event, schedule_read_range},
+		{start, Start}, {end1, End}, {end2, End2}, {chunks_remaining, ChunksRemaining},
+		{chunks, Chunks}, {origin_store_id, OriginStoreID}, {target_store_id, TargetStoreID}]),
 	State2 = schedule_task(
 		read_range, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}, State),
 	case End2 == End of
@@ -313,7 +323,7 @@ schedule_read_range(Args, State) ->
 			State2;
 		false ->
 			Args2 = {End2, End, OriginStoreID, TargetStoreID, SkipSmall},
-			push_main_task(read_range, Args2, State2)
+			schedule_read_range(Args2, ChunksRemaining - Chunks, State2)
 	end.
 
 %% @doc Schedule a task (either sync_range or read_range) to be run on a worker.

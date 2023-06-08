@@ -2700,6 +2700,7 @@ pack_and_store_chunk(Args, State) ->
 				false ->
 					case ar_packing_server:is_buffer_full() of
 						true ->
+							?LOG_DEBUG([{event, packing_server_full}]),
 							ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args}),
 							{noreply, State};
 						false ->
