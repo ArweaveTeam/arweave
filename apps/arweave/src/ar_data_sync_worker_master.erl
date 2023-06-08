@@ -213,7 +213,11 @@ max_tasks() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.sync_jobs * 50.
 
-max_peer_queue(#peer_tasks{ latency_ema = undefined } = _PeerTasks, _State) ->
+max_peer_queue(_PeerTasks, #state{ scheduled_task_count = 0 } = _State) ->
+	undefined;
+max_peer_queue(_PeerTasks, #state{ latency_target = 0 } = _State) ->
+	undefined;
+max_peer_queue(_PeerTasks, #state{ latency_target = 0.0 } = _State) ->
 	undefined;
 max_peer_queue(#peer_tasks{ latency_ema = 0 } = _PeerTasks, _State) ->
 	undefined;
