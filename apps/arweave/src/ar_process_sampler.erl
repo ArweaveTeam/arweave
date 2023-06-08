@@ -55,6 +55,8 @@ process_function(Pid) ->
 		current_function, registered_name, status, memory, message_queue_len]) of
 	[{current_function, {?MODULE, process_function, _A}}, _, _, _, _] ->
 		false;
+	[{current_function, {erlang, process_info, _A}}, _, _, _, _] ->
+		false;
 	[{current_function, {M, F, A}}, {registered_name, Name}, {status, Status},
 			{memory, Memory}, {message_queue_len, MessageQueueLen}] ->
 		ProcessName = process_name(Name),
