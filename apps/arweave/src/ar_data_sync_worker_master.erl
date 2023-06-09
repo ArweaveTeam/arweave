@@ -14,8 +14,7 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(READ_RANGE_CHUNKS_PER_TASK, 10).
--define(READ_RANGE_CHUNKS_PER_BATCH, 50).
+-define(READ_RANGE_CHUNKS, 10).
 -define(MIN_MAX_ACTIVE, 8).
 -define(LATENCY_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.1).
@@ -142,26 +141,13 @@ process_main_queue(State) ->
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
 		read_range ->
-			schedule_read_range(Args, ?READ_RANGE_CHUNKS_PER_BATCH, State2);
+			schedule_read_range(Args, State2);
 		sync_range ->
 			{_Start, _End, Peer, _TargetStoreID} = Args,
 			PeerTasks = get_peer_tasks(Peer, State2),
 			PeerTasks2 = enqueue_peer_task(PeerTasks, sync_range, Args),
 			{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
 			set_peer_tasks(PeerTasks3, State3)
-			% PeerTasks = get_peer_tasks(Peer, State2),
-			% TaskQueue = PeerTasks#peer_tasks.task_queue,
-			% MaxQueue = max_peer_queue(PeerTasks, State2),
-			% case MaxQueue =:= undefined orelse queue:len(TaskQueue) < MaxQueue of
-			% 	true ->
-			% 		PeerTasks2 = enqueue_peer_task(PeerTasks, sync_range, Args),
-			% 		{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
-			% 		set_peer_tasks(PeerTasks3, State3);
-			% 	false ->
-			% 		?LOG_DEBUG([{event, skip_peer_task}, {peer, ar_util:format_peer(Peer)},
-			% 			{max_queue, MaxQueue}, {queue_len, queue:len(TaskQueue)}]),
-			% 		State2
-			% end
 	end,
 	process_main_queue(State4).
 
@@ -305,17 +291,12 @@ schedule_sync_range(PeerTasks, Args, State) ->
 	PeerTasks2 = PeerTasks#peer_tasks{ active_count = PeerTasks#peer_tasks.active_count + 1 },
 	{PeerTasks2, State2}.
 
-schedule_read_range(Args, 0, State) ->
-	?LOG_DEBUG([{event, schedule_read_range_pause}]),
-	ar_util:cast_after(200, ?MODULE, {read_range, Args}),
-	State;
-schedule_read_range(Args, ChunksRemaining, State) ->
+schedule_read_range(Args, State) ->
 	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
-	Chunks = min(ChunksRemaining, ?READ_RANGE_CHUNKS_PER_TASK),
-	End2 = min(Start + Chunks * ?DATA_CHUNK_SIZE, End),
+	End2 = min(Start + ?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE, End),
 	?LOG_DEBUG([{event, schedule_read_range},
-		{start, Start}, {end1, End}, {end2, End2}, {chunks_remaining, ChunksRemaining},
-		{chunks, Chunks}, {origin_store_id, OriginStoreID}, {target_store_id, TargetStoreID}]),
+		{start, Start}, {end1, End}, {end2, End2},
+		{origin_store_id, OriginStoreID}, {target_store_id, TargetStoreID}]),
 	State2 = schedule_task(
 		read_range, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}, State),
 	case End2 == End of
@@ -323,7 +304,7 @@ schedule_read_range(Args, ChunksRemaining, State) ->
 			State2;
 		false ->
 			Args2 = {End2, End, OriginStoreID, TargetStoreID, SkipSmall},
-			schedule_read_range(Args2, ChunksRemaining - Chunks, State2)
+			push_main_task(read_range, Args2, State2)
 	end.
 
 %% @doc Schedule a task (either sync_range or read_range) to be run on a worker.

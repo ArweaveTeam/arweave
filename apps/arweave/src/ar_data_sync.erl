@@ -694,8 +694,8 @@ handle_cast(sync_data2, #sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
 	% ?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_c}, {store_id, State#sync_data_state.store_id}]),
-	gen_server:cast(ar_data_sync_worker_master,
-			{read_range, {Start, End, StoreID, OriginStoreID, false}}),
+	% gen_server:cast(ar_data_sync_worker_master,
+	% 		{read_range, {Start, End, StoreID, OriginStoreID, false}}),
 	ar_util:cast_after(50, self(), sync_data2),
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals }};
