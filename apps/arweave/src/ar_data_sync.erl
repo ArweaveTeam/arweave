@@ -705,11 +705,11 @@ handle_cast({invalidate_bad_data_record, Args}, State) ->
 	invalidate_bad_data_record(Args),
 	{noreply, State};
 
-handle_cast({pack_and_store_chunk, Args} = Cast,
+handle_cast({pack_and_store_chunk, Args, From} = Cast,
 			#sync_data_state{ store_id = StoreID } = State) ->
-	Count = maps:get(pack_and_store_chunk, State#sync_data_state.handle_calls, 0) + 1,
-	?LOG_DEBUG([{event, handle_cast}, {message, pack_and_store_chunk}, {count, Count}, {store_id, State#sync_data_state.store_id}]),
-	State2 = State#sync_data_state{ handle_calls = maps:put(pack_and_store_chunk, Count, State#sync_data_state.handle_calls) },
+	Count = maps:get(From, State#sync_data_state.handle_calls, 0) + 1,
+	?LOG_DEBUG([{event, handle_cast}, {message, pack_and_store_chunk}, {from, From}, {count, Count}, {store_id, State#sync_data_state.store_id}]),
+	State2 = State#sync_data_state{ handle_calls = maps:put(From, Count, State#sync_data_state.handle_calls) },
 	case is_disk_space_sufficient(StoreID) of
 		true ->
 			pack_and_store_chunk(Args, State2);
@@ -2703,7 +2703,7 @@ pack_and_store_chunk(Args, State) ->
 					case ar_packing_server:is_buffer_full() of
 						true ->
 							?LOG_DEBUG([{event, packing_server_full}]),
-							ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args}),
+							ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args, buffer_full}),
 							{noreply, State};
 						false ->
 							{Packing2, Chunk2} =
@@ -3157,7 +3157,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 							{from, ar_data_sync},
 							{store_id, StoreID6}]),
 					gen_server:cast(list_to_atom("ar_data_sync_" ++ StoreID6),
-							{pack_and_store_chunk, Args2}),
+							{pack_and_store_chunk, Args2, ar_data_sync}),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 							false, Args}),
 					{noreply, cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey,

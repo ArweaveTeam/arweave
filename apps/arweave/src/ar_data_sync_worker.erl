@@ -164,7 +164,7 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 								{store_id, TargetStoreID}]),
 
 							gen_server:cast(list_to_atom("ar_data_sync_"
-									++ TargetStoreID), {pack_and_store_chunk, Args}),
+									++ TargetStoreID), {pack_and_store_chunk, Args, worker}),
 							read_range2({Start + ChunkSize, End, OriginStoreID,
 									TargetStoreID, SkipSmall});
 						Reply ->
