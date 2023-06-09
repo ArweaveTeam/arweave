@@ -2238,8 +2238,8 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 
 find_peer_intervals(Start, End, StoreID, _AllPeersIntervals) when Start >= End ->
 	%% We've reached the end of the range, next time through we'll start with a clear cache.
-	?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
-		{start, Start}]),
+	% ?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
+	% 	{start, Start}]),
 	#{};
 find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
 	Start2 = Start - Start rem ?NETWORK_DATA_BUCKET_SIZE,
@@ -2255,9 +2255,9 @@ find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
 			false ->
 				ar_data_discovery:get_bucket_peers(Bucket)
 		end,
-	?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID}, 
-		{start, Start}, {bucket, Bucket}, 
-		{peers, io_lib:format("~p", [[ar_util:format_peer(Peer) || Peer <- Peers]])}]),
+	% ?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID}, 
+	% 	{start, Start}, {bucket, Bucket}, 
+	% 	{peers, io_lib:format("~p", [[ar_util:format_peer(Peer) || Peer <- Peers]])}]),
 
 	%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
 	gen_server:cast(self(), {collect_peer_intervals, End2, End}),
@@ -2402,10 +2402,10 @@ enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q2, QIntervals2}.
 
 enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
-	?LOG_DEBUG([
-		{event, add_interval_to_sync_queue},
-		{start_offset, RangeStart}, {end_offset, RangeEnd},
-		{num_chunks, length(ChunkOffsets)}, {peer, ar_util:format_peer(Peer)}]),
+	% ?LOG_DEBUG([
+	% 	{event, add_interval_to_sync_queue},
+	% 	{start_offset, RangeStart}, {end_offset, RangeEnd},
+	% 	{num_chunks, length(ChunkOffsets)}, {peer, ar_util:format_peer(Peer)}]),
 	Q2 = lists:foldl(
 		fun(ChunkStart, QAcc) ->
 			gb_sets:add_element(

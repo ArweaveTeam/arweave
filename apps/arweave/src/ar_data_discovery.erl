@@ -58,28 +58,28 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 		'$end_of_table' ->
 			UniquePeers = sets:to_list(sets:from_list(Peers)),
 			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
-			?LOG_DEBUG([
-				{event, get_bucket_peers},
-				{pid, self()},
-				{bucket, Bucket},
-				{peers, length(Peers)},
-				{unique_peers, length(UniquePeers)},
-				{picked_peers, length(PickedPeers)}
-			]),
+			% ?LOG_DEBUG([
+			% 	{event, get_bucket_peers},
+			% 	{pid, self()},
+			% 	{bucket, Bucket},
+			% 	{peers, length(Peers)},
+			% 	{unique_peers, length(UniquePeers)},
+			% 	{picked_peers, length(PickedPeers)}
+			% ]),
 			PickedPeers;
 		{Bucket, _Share, Peer} = Key ->
 			get_bucket_peers(Bucket, Key, [Peer | Peers]);
 		_ ->
 			UniquePeers = sets:to_list(sets:from_list(Peers)),
 			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
-			?LOG_DEBUG([
-				{event, get_bucket_peers},
-				{pid, self()},
-				{bucket, Bucket},
-				{peers, length(Peers)},
-				{unique_peers, length(UniquePeers)},
-				{picked_peers, length(PickedPeers)}
-			]),
+			% ?LOG_DEBUG([
+			% 	{event, get_bucket_peers},
+			% 	{pid, self()},
+			% 	{bucket, Bucket},
+			% 	{peers, length(Peers)},
+			% 	{unique_peers, length(UniquePeers)},
+			% 	{picked_peers, length(PickedPeers)}
+			% ]),
 			PickedPeers
 	end.
 

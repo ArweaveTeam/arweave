@@ -133,10 +133,10 @@ terminate(Reason, _State) ->
 %% Stage 1a: main queue management
 %%--------------------------------------------------------------------
 process_main_queue(#state{ task_queue_len = 0 } = State) ->
-	?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, 0}]),
+	% ?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, 0}]),
 	State;
 process_main_queue(State) ->
-	?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, State#state.task_queue_len}]),
+	% ?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, State#state.task_queue_len}]),
 	% timer:sleep(100),
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
@@ -294,9 +294,9 @@ schedule_sync_range(PeerTasks, Args, State) ->
 schedule_read_range(Args, State) ->
 	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
 	End2 = min(Start + ?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE, End),
-	?LOG_DEBUG([{event, schedule_read_range},
-		{start, Start}, {end1, End}, {end2, End2},
-		{origin_store_id, OriginStoreID}, {target_store_id, TargetStoreID}]),
+	% ?LOG_DEBUG([{event, schedule_read_range},
+	% 	{start, Start}, {end1, End}, {end2, End2},
+	% 	{origin_store_id, OriginStoreID}, {target_store_id, TargetStoreID}]),
 	State2 = schedule_task(
 		read_range, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}, State),
 	case End2 == End of
