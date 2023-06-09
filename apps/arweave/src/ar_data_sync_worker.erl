@@ -82,6 +82,7 @@ read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
 				true ->
+					?LOG_DEBUG([{event, read_range}, {size, (_End - _Start) / (1024*1024)}, {args, Args}]),
 					read_range2(Args);
 				_ ->
 					ar_util:cast_after(30000, self(), {read_range, Args}),
