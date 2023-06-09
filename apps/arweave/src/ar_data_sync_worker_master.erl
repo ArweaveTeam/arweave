@@ -15,7 +15,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(READ_RANGE_CHUNKS_PER_TASK, 10).
--define(READ_RANGE_CHUNKS_PER_BATCH, 400). %% 100MiB
+-define(READ_RANGE_CHUNKS_PER_BATCH, 50).
 -define(MIN_MAX_ACTIVE, 8).
 -define(LATENCY_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.1).

@@ -553,17 +553,17 @@ init(StoreID) ->
 	{ok, may_be_start_syncing(State2)}.
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, move_data_root_index}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, move_data_root_index}, {store_id, State#sync_data_state.store_id}]),
 	move_data_root_index(Cursor, N, State),
 	{noreply, State};
 
 handle_cast(process_store_chunk_queue, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, process_store_chunk_queue}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, process_store_chunk_queue}, {store_id, State#sync_data_state.store_id}]),
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
 	{noreply, process_store_chunk_queue(State)};
 
 handle_cast({join, RecentBI}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, join}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, join}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ block_index = CurrentBI, store_id = StoreID } = State,
 	[{_, WeaveSize, _} | _] = RecentBI,
 	case {CurrentBI, ar_block_index:get_intersection(CurrentBI)} of
@@ -597,7 +597,7 @@ handle_cast({join, RecentBI}, State) ->
 
 handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 		range_end = End } = State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, cut}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, cut}, {store_id, State#sync_data_state.store_id}]),
 	case ar_sync_record:get_next_synced_interval(Start, End, ?MODULE, StoreID) of
 		not_found ->
 			ok;
@@ -621,7 +621,7 @@ handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 	{noreply, State};
 
 handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, add_tip_block}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, add_tip_block}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ store_id = StoreID, weave_size = CurrentWeaveSize,
 			block_index = CurrentBI } = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
@@ -651,7 +651,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	{noreply, State2};
 
 handle_cast(sync_data, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, sync_data}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, sync_data}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
 	%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
@@ -672,7 +672,7 @@ handle_cast(sync_data, State) ->
 handle_cast(sync_data2, #sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [],
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_a}, {store_id, State#sync_data_state.store_id}]),
 	ar_util:cast_after(2000, self(), collect_peer_intervals),
 	{noreply, State};
 %% @doc Check to see if a neighboring storge_module may have already synced one of our
@@ -681,7 +681,7 @@ handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
 		unsynced_intervals_from_other_storage_modules = [],
 		other_storage_modules_with_unsynced_intervals = [StoreID | StoreIDs] } = State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_B}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_B}, {store_id, State#sync_data_state.store_id}]),
 	Intervals = get_unsynced_intervals_from_other_storage_modules(OriginStoreID, StoreID,
 			RangeStart, RangeEnd),
 	gen_server:cast(self(), sync_data2),
@@ -693,7 +693,7 @@ handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID,
 		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_c}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_c}, {store_id, State#sync_data_state.store_id}]),
 	gen_server:cast(ar_data_sync_worker_master,
 			{read_range, {Start, End, StoreID, OriginStoreID, false}}),
 	ar_util:cast_after(50, self(), sync_data2),
@@ -701,7 +701,7 @@ handle_cast(sync_data2, #sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals }};
 
 handle_cast({invalidate_bad_data_record, Args}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, invalidate_bad_data_record}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, invalidate_bad_data_record}, {store_id, State#sync_data_state.store_id}]),
 	invalidate_bad_data_record(Args),
 	{noreply, State};
 
@@ -729,13 +729,13 @@ handle_cast({pack_and_store_chunk, Args, From} = Cast,
 %%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
 %%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, collect_peer_intervals_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, collect_peer_intervals_a}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ range_start = Start, range_end = End } = State,
 	gen_server:cast(self(), {collect_peer_intervals, Start, End}),
 	{noreply, State};
 
 handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
-	?LOG_DEBUG([{event, handle_cast}, {message, collect_peer_intervals_B}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, collect_peer_intervals_B}, {store_id, State#sync_data_state.store_id}]),
 		#sync_data_state{ store_id = StoreID } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
 		{start, Start}]),
@@ -746,7 +746,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
 	{noreply, State#sync_data_state{ all_peers_intervals = #{} }};
 handle_cast({collect_peer_intervals, Start, End}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, collect_peer_intervals_c}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, collect_peer_intervals_c}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ sync_intervals_queue = Q,
 			store_id = StoreID, disk_pool_threshold = DiskPoolThreshold,
 			all_peers_intervals = AllPeersIntervals } = State,
@@ -828,10 +828,10 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 	{noreply, State#sync_data_state{ all_peers_intervals = AllPeersIntervals2 }};
 
 handle_cast({enqueue_intervals, []}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, enqueue_intervals_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, enqueue_intervals_a}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State};
 handle_cast({enqueue_intervals, Intervals}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, enqueue_intervals_b}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, enqueue_intervals_b}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
@@ -869,7 +869,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
 handle_cast(sync_intervals, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, sync_intervals}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, sync_intervals}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals, store_id = StoreID } = State,
 	IsQueueEmpty =
@@ -933,7 +933,7 @@ handle_cast(sync_intervals, State) ->
 	end;
 
 handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, store_fetched_chunk}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, store_fetched_chunk}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ packing_map = PackingMap } = State,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1) - 1,
@@ -995,11 +995,11 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast,
 	end;
 
 handle_cast(process_disk_pool_item, #sync_data_state{ disk_pool_scan_pause = true } = State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, process_disk_pool_item_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, process_disk_pool_item_a}, {store_id, State#sync_data_state.store_id}]),
 	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
 	{noreply, State};
 handle_cast(process_disk_pool_item, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, process_disk_pool_item_b}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, process_disk_pool_item_b}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ disk_pool_cursor = Cursor, disk_pool_chunks_index = DiskPoolChunksIndex,
 			disk_pool_full_scan_start_key = FullScanStartKey,
 			disk_pool_full_scan_start_timestamp = Timestamp,
@@ -1059,11 +1059,11 @@ handle_cast(process_disk_pool_item, State) ->
 	end;
 
 handle_cast(resume_disk_pool_scan, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, resume_disk_pool_scan}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, resume_disk_pool_scan}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State#sync_data_state{ disk_pool_scan_pause = false }};
 
 handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, process_disk_pool_chunk_offsets}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, process_disk_pool_chunk_offsets}, {store_id, State#sync_data_state.store_id}]),
 	{Offset, _, _, _, _, _, Key, _} = Args,
 	%% Place the chunk under its last 10 offsets in the weave (the same data
 	%% may be uploaded several times).
@@ -1089,11 +1089,11 @@ handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, Stat
 	end;
 
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
-	?LOG_DEBUG([{event, handle_cast}, {message, remove_range_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, remove_range_a}, {store_id, State#sync_data_state.store_id}]),
 	PID ! {removed_range, Ref},
 	{noreply, State};
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, remove_range_b}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, remove_range_b}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ chunks_index = ChunksIndex, store_id = StoreID } = State,
 	case get_chunk_by_byte(ChunksIndex, Cursor) of
 		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}} 
@@ -1153,7 +1153,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 	end;
 
 handle_cast({expire_repack_chunk_request, Key}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, expire_repack_chunk_request_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, expire_repack_chunk_request_a}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:get(Key, PackingMap, not_found) of
 		{pack_chunk, {_, DataPath, Offset, DataRoot, _, _, _}} ->
@@ -1169,7 +1169,7 @@ handle_cast({expire_repack_chunk_request, Key}, State) ->
 	end;
 
 handle_cast({expire_unpack_fetched_chunk_request, Key}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, expire_repack_chunk_request_b}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, expire_repack_chunk_request_b}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:get(Key, PackingMap, not_found) of
 		{unpack_fetched_chunk, _Args} ->
@@ -1180,17 +1180,17 @@ handle_cast({expire_unpack_fetched_chunk_request, Key}, State) ->
 	end;
 
 handle_cast(store_sync_state, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, store_sync_state}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, store_sync_state}, {store_id, State#sync_data_state.store_id}]),
 	store_sync_state(State),
 	ar_util:cast_after(?STORE_STATE_FREQUENCY_MS, self(), store_sync_state),
 	{noreply, State};
 
 handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, remove_recently_processed_disk_pool_offset}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, remove_recently_processed_disk_pool_offset}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, remove_recently_processed_disk_pool_offset(Offset, ChunkDataKey, State)};
 
 handle_cast({request_default_storage_2_5_repacking, Cursor, RightBound}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, request_default_storage_2_5_repacking}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, request_default_storage_2_5_repacking}, {store_id, State#sync_data_state.store_id}]),
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, spora_2_5, ?MODULE,
 			"default") of
 		not_found ->
@@ -1204,7 +1204,7 @@ handle_cast({request_default_storage_2_5_repacking, Cursor, RightBound}, State) 
 	{noreply, State};
 
 handle_cast({request_default_unpacked_packing, Cursor, RightBound}, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, request_default_unpacked_packing}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, request_default_unpacked_packing}, {store_id, State#sync_data_state.store_id}]),
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, unpacked, ?MODULE,
 			"default") of
 		not_found ->
@@ -1222,24 +1222,24 @@ handle_cast({request_default_unpacked_packing, Cursor, RightBound}, State) ->
 	{noreply, State};
 
 handle_cast(Cast, State) ->
-	?LOG_DEBUG([{event, handle_cast}, {message, Cast}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, Cast}, {store_id, State#sync_data_state.store_id}]),
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
-	?LOG_DEBUG([{event, handle_call}, {message, add_block}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_call}, {message, add_block}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ store_id = StoreID } = State,
 	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
 handle_call(Request, _From, State) ->
-	?LOG_DEBUG([{event, handle_call}, {message, Request}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_call}, {message, Request}, {store_id, State#sync_data_state.store_id}]),
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
 handle_info({event, node_state, {initialized, _B}},
 		#sync_data_state{ store_id = "default",
 				disk_pool_threshold = DiskPoolThreshold } = State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, initialized_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, initialized_a}, {store_id, State#sync_data_state.store_id}]),
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(legacy_storage_repacking, Config#config.enable)
 			orelse lists:member(legacy_storage_unpacked_packing, Config#config.enable) of
@@ -1254,19 +1254,19 @@ handle_info({event, node_state, {initialized, _B}},
 	end,
 	{noreply, State};
 handle_info({event, node_state, {initialized, _B}}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, initialized_b}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, initialized_b}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, may_be_start_syncing(State)};
 
 handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, search_space_upper_bound}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, search_space_upper_bound}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State#sync_data_state{ disk_pool_threshold = Bound }};
 
 handle_info({event, node_state, _}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, unhandled_node_state}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, unhandled_node_state}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State};
 
 handle_info({event, chunk, {unpacked, Offset, ChunkArgs}}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, unpacked}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, unpacked}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ packing_map = PackingMap } = State,
 	Key = {Offset, unpacked},
 	case maps:get(Key, PackingMap, not_found) of
@@ -1278,7 +1278,7 @@ handle_info({event, chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, packed}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, packed}, {store_id, State#sync_data_state.store_id}]),
 	#sync_data_state{ packing_map = PackingMap } = State,
 	Packing = element(1, ChunkArgs),
 	Key = {Offset, Packing},
@@ -1291,12 +1291,12 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({event, chunk, _}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, unhandled_chunk}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, unhandled_chunk}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State};
 
 handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, _Bytes}},
 		#sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, remaining_disk_space_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, remaining_disk_space_a}, {store_id, State#sync_data_state.store_id}]),
 	case Percentage < 0.01 of
 		true ->
 			case is_disk_space_sufficient(StoreID) of
@@ -1324,7 +1324,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 	{noreply, State};
 handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, Bytes}},
 		#sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, remaining_disk_space_b}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, remaining_disk_space_b}, {store_id, State#sync_data_state.store_id}]),
 	{ok, Config} = application:get_env(arweave, config),
 	%% Default values:
 	%% max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB = 100_000
@@ -1362,28 +1362,28 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	{noreply, State};
 
 handle_info({event, disksup, _}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, unhandled_disksup}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, unhandled_disksup}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State};
 
 handle_info({'EXIT', _PID, normal}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, exit}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, exit}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State};
 
 handle_info({'DOWN', _,  process, _, normal}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, down_a}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, down_a}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State};
 handle_info({'DOWN', _,  process, _, noproc}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, down_b}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, down_b}, {store_id, State#sync_data_state.store_id}]),
 	{noreply, State};
 handle_info({'DOWN', _,  process, _, Reason}, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, down_c}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, down_c}, {store_id, State#sync_data_state.store_id}]),
 	?LOG_WARNING([{event, collect_intervals_job_failed},
 			{reason, io_lib:format("~p", [Reason])}, {action, spawning_another_one}]),
 	gen_server:cast(self(), collect_peer_intervals),
 	{noreply, State};
 
 handle_info(Message, State) ->
-	?LOG_DEBUG([{event, handle_info}, {message, Message}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_info}, {message, Message}, {store_id, State#sync_data_state.store_id}]),
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
@@ -3153,9 +3153,6 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 					increment_chunk_cache_size(),
 					Args2 = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
-					?LOG_DEBUG([{event, cast_pack_and_store_chunk},
-							{from, ar_data_sync},
-							{store_id, StoreID6}]),
 					gen_server:cast(list_to_atom("ar_data_sync_" ++ StoreID6),
 							{pack_and_store_chunk, Args2, ar_data_sync}),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
