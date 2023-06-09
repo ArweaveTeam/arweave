@@ -17,6 +17,8 @@
 
 -record(state, {}).
 
+-define(READ_RANGE_MESSAGES_PER_BATCH, 400). %% # of messages to cast to ar_data_sync at once.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -83,7 +85,7 @@ read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
 				true ->
 					?LOG_DEBUG([{event, read_range}, {size, (_End - _Start) / (1024*1024)}, {args, Args}]),
-					read_range2(Args);
+					read_range2(?READ_RANGE_MESSAGES_PER_BATCH, Args);
 				_ ->
 					ar_util:cast_after(30000, self(), {read_range, Args}),
 					recast
@@ -93,9 +95,14 @@ read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 			recast
 	end.
 
-read_range2({Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
+read_range2(0, Args) ->
+	?LOG_DEBUG([{event, pausing_read_range2}]),
+	ar_util:cast_after(200, self(), {read_range, Args}),
+	recast;
+read_range2(_MessagesRemaining, {Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
+	?LOG_DEBUG([{event, done_read_range2}]),
 	ok;
-read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
+read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 	ChunksIndex = {chunks_index, OriginStoreID},
 	ChunkDataDB = {chunk_data_db, OriginStoreID},
 	case ar_data_sync:get_chunk_by_byte(ChunksIndex, Start + 1) of
@@ -106,7 +113,7 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 			PrefixSpaceSize = trunc(math:pow(2,
 					?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
 			Start2 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
-			read_range2({Start2, End, OriginStoreID, TargetStoreID, SkipSmall});
+			read_range2(MessagesRemaining, {Start2, End, OriginStoreID, TargetStoreID, SkipSmall});
 		{error, Reason} ->
 			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
 					{reason, io_lib:format("~p", [Reason])}]);
@@ -126,29 +133,30 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 				end,
 			case ReadChunk of
 				skip ->
-					read_range2({Start + ChunkSize, End, OriginStoreID, TargetStoreID,
-							SkipSmall});
+					read_range2(MessagesRemaining,
+							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				not_found ->
 					gen_server:cast(list_to_atom("ar_data_sync_" ++ OriginStoreID),
 							{invalidate_bad_data_record, {Start, AbsoluteOffset, ChunksIndex,
 							OriginStoreID, 1}}),
-					read_range2({Start + ChunkSize, End, OriginStoreID, TargetStoreID,
-							SkipSmall});
+					read_range2(MessagesRemaining-1,
+							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				{error, Error} ->
 					?LOG_ERROR([{event, failed_to_read_chunk},
 							{absolute_end_offset, AbsoluteOffset},
 							{chunk_data_key, ar_util:encode(ChunkDataKey)},
 							{reason, io_lib:format("~p", [Error])}]),
-					read_range2({Start + ChunkSize, End, OriginStoreID, TargetStoreID,
-							SkipSmall});
+					read_range2(MessagesRemaining, 
+							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				{ok, {Chunk, DataPath}} ->
 					case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
 							OriginStoreID) of
 						{true, Packing} ->
 							ar_data_sync:increment_chunk_cache_size(),
-							?LOG_DEBUG([{event, copying_chunk},
+							?LOG_DEBUG([{event, sending_read_range2},
 									{origin_store_id, OriginStoreID},
 									{target_store_id, TargetStoreID},
+									{messages_remaining, MessagesRemaining},
 									{absolute_end_offset, AbsoluteOffset}, {packing, Packing},
 									{chunk_size, ChunkSize}, {actual_chunk_size, ?DATA_SIZE(Chunk)},
 									{start, Start}, {end1, End}, {size, (End - Start) / (1024*1024)}]),
@@ -165,14 +173,14 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 
 							gen_server:cast(list_to_atom("ar_data_sync_"
 									++ TargetStoreID), {pack_and_store_chunk, Args, worker}),
-							read_range2({Start + ChunkSize, End, OriginStoreID,
-									TargetStoreID, SkipSmall});
+							read_range2(MessagesRemaining-1,
+								{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 						Reply ->
 							?LOG_ERROR([{event, chunk_record_not_found},
 									{absolute_end_offset, AbsoluteOffset},
 									{ar_sync_record_reply, io_lib:format("~p", [Reply])}]),
-							read_range2({Start + ChunkSize, End, OriginStoreID,
-									TargetStoreID, SkipSmall})
+							read_range2(MessagesRemaining,
+								{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall})
 					end
 			end
 	end.
