@@ -96,11 +96,12 @@ read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 	end.
 
 read_range2(0, Args) ->
-	?LOG_DEBUG([{event, pausing_read_range2}]),
+	?LOG_DEBUG([{event, pausing_read_range2}, {pid, self()}]),
 	ar_util:cast_after(200, self(), {read_range, Args}),
 	recast;
 read_range2(_MessagesRemaining, {Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
-	?LOG_DEBUG([{event, done_read_range2}]),
+	?LOG_DEBUG([{event, done_read_range2}, {pid, self()}, {origin_store_id, _OriginStoreID},
+									{target_store_id, _TargetStoreID}]),
 	ok;
 read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 	ChunksIndex = {chunks_index, OriginStoreID},
@@ -153,7 +154,7 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 							OriginStoreID) of
 						{true, Packing} ->
 							ar_data_sync:increment_chunk_cache_size(),
-							?LOG_DEBUG([{event, sending_read_range2},
+							?LOG_DEBUG([{event, sending_read_range2}, {pid, self()}, 
 									{origin_store_id, OriginStoreID},
 									{target_store_id, TargetStoreID},
 									{messages_remaining, MessagesRemaining},

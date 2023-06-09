@@ -6,8 +6,7 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
-%% Sample relatively infrequently - every 5 seconds - to minimize the impact on the system.
--define(SAMPLE_INTERVAL, 5000).
+-define(SAMPLE_INTERVAL, 1000).
 
 %% API
 start_link() ->
