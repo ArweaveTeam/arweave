@@ -149,8 +149,8 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 							?LOG_DEBUG([{event, copying_chunk},
 									{origin_store_id, OriginStoreID},
 									{target_store_id, TargetStoreID},
-									{absolute_end_offset, AbsoluteOffset},
-									{chunk_size, ChunkSize},
+									{absolute_end_offset, AbsoluteOffset}, {packing, Packing},
+									{chunk_size, ChunkSize}, {actual_chunk_size, ?DATA_SIZE(Chunk)},
 									{start, Start}, {end1, End}, {size, (End - Start) / (1024*1024)}]),
 							UnpackedChunk =
 								case Packing of
