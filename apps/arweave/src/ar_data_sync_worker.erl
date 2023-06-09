@@ -17,7 +17,10 @@
 
 -record(state, {}).
 
--define(READ_RANGE_MESSAGES_PER_BATCH, 400). %% # of messages to cast to ar_data_sync at once.
+ %% # of messages to cast to ar_data_sync at once. Each message carries at least 1 chunk worth
+ %% of data (256 KiB). Since there are dozens or hundreds of workers, if each one posts too
+ %% many messages at once it can overload the available memory.
+-define(READ_RANGE_MESSAGES_PER_BATCH, 40).
 
 %%%===================================================================
 %%% Public interface.
@@ -97,7 +100,7 @@ read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 
 read_range2(0, Args) ->
 	?LOG_DEBUG([{event, pausing_read_range2}, {pid, self()}]),
-	ar_util:cast_after(200, self(), {read_range, Args}),
+	ar_util:cast_after(1000, self(), {read_range, Args}),
 	recast;
 read_range2(_MessagesRemaining, {Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
 	?LOG_DEBUG([{event, done_read_range2}, {pid, self()}, {origin_store_id, _OriginStoreID},
