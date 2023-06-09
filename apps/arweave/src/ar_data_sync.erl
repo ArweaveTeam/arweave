@@ -694,8 +694,9 @@ handle_cast(sync_data2, #sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
 	% ?LOG_DEBUG([{event, handle_cast}, {message, sync_data2_c}, {store_id, State#sync_data_state.store_id}]),
-	% gen_server:cast(ar_data_sync_worker_master,
-	% 		{read_range, {Start, End, StoreID, OriginStoreID, false}}),
+	?LOG_DEBUG([{event, cast_read_range}, {start, Start}, {end1, End}, {size, (End - Start) / (1024*1024)}, {store_id, State#sync_data_state.store_id}]),
+	gen_server:cast(ar_data_sync_worker_master,
+			{read_range, {Start, End, StoreID, OriginStoreID, false}}),
 	ar_util:cast_after(50, self(), sync_data2),
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals }};
@@ -708,7 +709,7 @@ handle_cast({invalidate_bad_data_record, Args}, State) ->
 handle_cast({pack_and_store_chunk, Args, From} = Cast,
 			#sync_data_state{ store_id = StoreID } = State) ->
 	Count = maps:get(From, State#sync_data_state.handle_calls, 0) + 1,
-	?LOG_DEBUG([{event, handle_cast}, {message, pack_and_store_chunk}, {from, From}, {count, Count}, {store_id, State#sync_data_state.store_id}]),
+	% ?LOG_DEBUG([{event, handle_cast}, {message, pack_and_store_chunk}, {from, From}, {count, Count}, {store_id, State#sync_data_state.store_id}]),
 	State2 = State#sync_data_state{ handle_calls = maps:put(From, Count, State#sync_data_state.handle_calls) },
 	case is_disk_space_sufficient(StoreID) of
 		true ->
@@ -2805,12 +2806,12 @@ store_chunk2(ChunkArgs, Args, State) ->
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
 							DataRoot, TXPath, ChunkSize, Packing}, State) of
 						ok ->
-							?LOG_DEBUG([{event, stored_chunk},
-									{absolute_end_offset, AbsoluteOffset},
-									{relative_offset, Offset},
-									{data_path_hash, ar_util:encode(DataPathHash)},
-									{data_root, ar_util:encode(DataRoot)},
-									{store_id, StoreID}]),	
+							% ?LOG_DEBUG([{event, stored_chunk},
+							% 		{absolute_end_offset, AbsoluteOffset},
+							% 		{relative_offset, Offset},
+							% 		{data_path_hash, ar_util:encode(DataPathHash)},
+							% 		{data_root, ar_util:encode(DataRoot)},
+							% 		{store_id, StoreID}]),	
 							ok;
 						{error, Reason} ->
 							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
