@@ -146,10 +146,11 @@ read_range2({Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 							OriginStoreID) of
 						{true, Packing} ->
 							ar_data_sync:increment_chunk_cache_size(),
-							% ?LOG_DEBUG([{event, copying_chunk},
-							% 		{origin_store_id, OriginStoreID},
-							% 		{target_store_id, TargetStoreID},
-							% 		{absolute_end_offset, AbsoluteOffset}]),
+							?LOG_DEBUG([{event, copying_chunk},
+									{origin_store_id, OriginStoreID},
+									{target_store_id, TargetStoreID},
+									{absolute_end_offset, AbsoluteOffset},
+									{start, Start}, {end1, End}, {size, (End - Start) / (1024*1024)}]),
 							UnpackedChunk =
 								case Packing of
 									unpacked ->
