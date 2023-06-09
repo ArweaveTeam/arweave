@@ -211,6 +211,5 @@
 	%% fragmentation.
 	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
 	%% Cache mapping peers to /data_sync_record responses
-	all_peers_intervals = #{},
-	handle_calls = #{}
+	all_peers_intervals = #{}
 }).
