@@ -165,7 +165,6 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
 									Packing, RelativeOffset, ChunkSize, Chunk,
 									UnpackedChunk, TargetStoreID, ChunkDataKey},
-
 							gen_server:cast(list_to_atom("ar_data_sync_"
 									++ TargetStoreID), {pack_and_store_chunk, Args}),
 							read_range2(MessagesRemaining-1,

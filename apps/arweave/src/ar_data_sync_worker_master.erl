@@ -18,8 +18,8 @@
 -define(MIN_MAX_ACTIVE, 8).
 -define(LATENCY_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.1).
--define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over weighting the first response
--define(STARTING_LATENCY_TARGET, 2000). %% initial value to avoid over weighting the first response
+-define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over-weighting the first response
+-define(STARTING_LATENCY_TARGET, 2000). %% initial value to avoid over-weighting the first response
 
 -record(peer_tasks, {
 	peer = undefined,
@@ -190,7 +190,7 @@ process_peer_queue(PeerTasks, State) ->
 			{PeerTasks, State}
 	end.
 
-%% @doc the maximum number of tasks we can have in process - including taxes queued here as well
+%% @doc the maximum number of tasks we can have in process - including stasks queued here as well
 %% as those scheduled on ar_data_sync_workers.
 max_tasks() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -285,7 +285,7 @@ schedule_sync_range(PeerTasks, Args, State) ->
 
 schedule_read_range(Args, State) ->
 	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
-	End2 = min(Start + ?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE, End),
+	End2 = min(Start + (?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE), End),
 	State2 = schedule_task(
 		read_range, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}, State),
 	case End2 == End of
@@ -316,8 +316,8 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 	LatencyEMA = trunc(calculate_ema(
 					PeerTasks#peer_tasks.latency_ema, IsOK, Milliseconds, ?LATENCY_ALPHA)),
 	SuccessEMA = calculate_ema(
-					PeerTasks#peer_tasks.success_ema, true,
-					if IsOK == true -> 1.0; IsOK == false -> 0.0 end, ?SUCCESS_ALPHA),
+					PeerTasks#peer_tasks.success_ema, true, ar_util:bool_to_int(IsOK) / 1.0,
+					?SUCCESS_ALPHA),
 	%% Target Latency is the EMA of all peers' latencies
 	LatencyTargetAlpha =  2.0 / (State#state.worker_count + 1), %% heuristic - update as needed.
 	LatencyTarget = trunc(calculate_ema(
@@ -325,11 +325,12 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 
 	{PeerTasks2, State2} = cut_peer_queue(
 		max_peer_queue(PeerTasks, State),
-		PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA }, State),
+		PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA },
+		State),
 	PeerTasks3 = update_active(
 		PeerTasks2, IsOK, Milliseconds, State2#state.worker_count, LatencyTarget),
 	State3 = update_counters(
-				scheduled, sync_range, ar_util:format_peer(PeerTasks#peer_tasks.peer), -1, State2),
+		scheduled, sync_range, ar_util:format_peer(PeerTasks#peer_tasks.peer), -1, State2),
 	{PeerTasks3, State3#state{ latency_target = LatencyTarget }}.
 
 

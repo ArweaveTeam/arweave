@@ -4,7 +4,7 @@
 
 -export([start_link/0, packing_atom/1,
 		 request_unpack/2, request_repack/2, pack/4, unpack/5, repack/6, 
-		 is_buffer_full/0, packing_rate/0, record_buffer_size_metric/0]).
+		 is_buffer_full/0, record_buffer_size_metric/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -22,8 +22,7 @@
 
 -record(state, {
 	workers,
-	num_workers,
-	packing_rate
+	num_workers
 }).
 
 %%%===================================================================
@@ -81,9 +80,6 @@ is_buffer_full() ->
 		_ ->
 			false
 	end.
-
-packing_rate() ->
-	gen_server:call(?MODULE, get_packing_rate).
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -152,10 +148,8 @@ init([]) ->
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
 	{ok, #state{ 
-		workers = Workers, num_workers = SpawnSchedulers, packing_rate = PackingRate }}.
+		workers = Workers, num_workers = SpawnSchedulers }}.
 
-handle_call(get_packing_rate, _From, State = #state{ packing_rate = PackingRate }) ->
-	{reply, PackingRate, State};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.

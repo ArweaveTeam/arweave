@@ -209,8 +209,8 @@ handle_call(Request, _From, State) ->
 
 handle_cast({record_written_data, Size}, State) ->
 	CacheSize = State#state.size + Size,
-	% ?LOG_DEBUG([{event, updated_disk_cache}, {prev_size, State#state.size},
-	% 		{new_size, CacheSize}]),
+	?LOG_DEBUG([{event, updated_disk_cache}, {prev_size, State#state.size},
+			{new_size, CacheSize}]),
 	gen_server:cast(?MODULE, may_be_clean_up),
 	{noreply, State#state{ size = CacheSize }};
 

@@ -2648,7 +2648,7 @@ pack_and_store_chunk(Args, State) ->
 				false ->
 					case ar_packing_server:is_buffer_full() of
 						true ->
-							ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args, buffer_full}),
+							ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args}),
 							{noreply, State};
 						false ->
 							{Packing2, Chunk2} =
