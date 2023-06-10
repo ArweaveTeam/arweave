@@ -87,7 +87,8 @@ read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
 				true ->
-					?LOG_DEBUG([{event, read_range}, {size, (_End - _Start) / (1024*1024)}, {args, Args}]),
+					?LOG_DEBUG([{event, read_range},
+						{size, (_End - _Start) / (1024*1024)}, {args, Args}]),
 					read_range2(?READ_RANGE_MESSAGES_PER_BATCH, Args);
 				_ ->
 					ar_util:cast_after(30000, self(), {read_range, Args}),
@@ -99,12 +100,9 @@ read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 	end.
 
 read_range2(0, Args) ->
-	?LOG_DEBUG([{event, pausing_read_range2}, {pid, self()}]),
 	ar_util:cast_after(1000, self(), {read_range, Args}),
 	recast;
 read_range2(_MessagesRemaining, {Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
-	?LOG_DEBUG([{event, done_read_range2}, {pid, self()}, {origin_store_id, _OriginStoreID},
-									{target_store_id, _TargetStoreID}]),
 	ok;
 read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 	ChunksIndex = {chunks_index, OriginStoreID},
@@ -157,13 +155,6 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 							OriginStoreID) of
 						{true, Packing} ->
 							ar_data_sync:increment_chunk_cache_size(),
-							?LOG_DEBUG([{event, sending_read_range2}, {pid, self()}, 
-									{origin_store_id, OriginStoreID},
-									{target_store_id, TargetStoreID},
-									{messages_remaining, MessagesRemaining},
-									{absolute_end_offset, AbsoluteOffset}, {packing, Packing},
-									{chunk_size, ChunkSize}, {actual_chunk_size, ?DATA_SIZE(Chunk)},
-									{start, Start}, {end1, End}, {size, (End - Start) / (1024*1024)}]),
 							UnpackedChunk =
 								case Packing of
 									unpacked ->
@@ -176,7 +167,7 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 									UnpackedChunk, TargetStoreID, ChunkDataKey},
 
 							gen_server:cast(list_to_atom("ar_data_sync_"
-									++ TargetStoreID), {pack_and_store_chunk, Args, worker}),
+									++ TargetStoreID), {pack_and_store_chunk, Args}),
 							read_range2(MessagesRemaining-1,
 								{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 						Reply ->

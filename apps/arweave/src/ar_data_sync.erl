@@ -685,7 +685,6 @@ handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID,
 		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
-	?LOG_DEBUG([{event, cast_read_range}, {start, Start}, {end1, End}, {size, (End - Start) / (1024*1024)}, {store_id, State#sync_data_state.store_id}]),
 	gen_server:cast(ar_data_sync_worker_master,
 			{read_range, {Start, End, StoreID, OriginStoreID, false}}),
 	ar_util:cast_after(50, self(), sync_data2),
@@ -2188,8 +2187,8 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 
 find_peer_intervals(Start, End, StoreID, _AllPeersIntervals) when Start >= End ->
 	%% We've reached the end of the range, next time through we'll start with a clear cache.
-	% ?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
-	% 	{start, Start}]),
+	?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
+		{start, Start}]),
 	#{};
 find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
 	Start2 = Start - Start rem ?NETWORK_DATA_BUCKET_SIZE,
@@ -2205,9 +2204,9 @@ find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
 			false ->
 				ar_data_discovery:get_bucket_peers(Bucket)
 		end,
-	% ?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID}, 
-	% 	{start, Start}, {bucket, Bucket}, 
-	% 	{peers, io_lib:format("~p", [[ar_util:format_peer(Peer) || Peer <- Peers]])}]),
+	?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID}, 
+		{start, Start}, {bucket, Bucket}, 
+		{peers, io_lib:format("~p", [[ar_util:format_peer(Peer) || Peer <- Peers]])}]),
 
 	%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
 	gen_server:cast(self(), {collect_peer_intervals, End2, End}),
@@ -2352,10 +2351,6 @@ enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q2, QIntervals2}.
 
 enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
-	% ?LOG_DEBUG([
-	% 	{event, add_interval_to_sync_queue},
-	% 	{start_offset, RangeStart}, {end_offset, RangeEnd},
-	% 	{num_chunks, length(ChunkOffsets)}, {peer, ar_util:format_peer(Peer)}]),
 	Q2 = lists:foldl(
 		fun(ChunkStart, QAcc) ->
 			gb_sets:add_element(
@@ -2653,7 +2648,6 @@ pack_and_store_chunk(Args, State) ->
 				false ->
 					case ar_packing_server:is_buffer_full() of
 						true ->
-							?LOG_DEBUG([{event, packing_server_full}]),
 							ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args, buffer_full}),
 							{noreply, State};
 						false ->
@@ -2756,12 +2750,12 @@ store_chunk2(ChunkArgs, Args, State) ->
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
 							DataRoot, TXPath, ChunkSize, Packing}, State) of
 						ok ->
-							% ?LOG_DEBUG([{event, stored_chunk},
-							% 		{absolute_end_offset, AbsoluteOffset},
-							% 		{relative_offset, Offset},
-							% 		{data_path_hash, ar_util:encode(DataPathHash)},
-							% 		{data_root, ar_util:encode(DataRoot)},
-							% 		{store_id, StoreID}]),	
+							?LOG_DEBUG([{event, stored_chunk},
+									{absolute_end_offset, AbsoluteOffset},
+									{relative_offset, Offset},
+									{data_path_hash, ar_util:encode(DataPathHash)},
+									{data_root, ar_util:encode(DataRoot)},
+									{store_id, StoreID}]),	
 							ok;
 						{error, Reason} ->
 							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
@@ -3105,7 +3099,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 					Args2 = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
 					gen_server:cast(list_to_atom("ar_data_sync_" ++ StoreID6),
-							{pack_and_store_chunk, Args2, ar_data_sync}),
+							{pack_and_store_chunk, Args2}),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 							false, Args}),
 					{noreply, cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey,

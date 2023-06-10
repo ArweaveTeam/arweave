@@ -133,11 +133,8 @@ terminate(Reason, _State) ->
 %% Stage 1a: main queue management
 %%--------------------------------------------------------------------
 process_main_queue(#state{ task_queue_len = 0 } = State) ->
-	% ?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, 0}]),
 	State;
 process_main_queue(State) ->
-	% ?LOG_DEBUG([{event, process_main_queue}, {task_queue_len, State#state.task_queue_len}]),
-	% timer:sleep(100),
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
 		read_range ->
@@ -184,12 +181,6 @@ dequeue_main_task(State) ->
 
 %% @doc If a peer has capacity, take the next task from its queue and schedule it.
 process_peer_queue(PeerTasks, State) ->
-	% ?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(PeerTasks#peer_tasks.peer)},
-	% 	{active_count, PeerTasks#peer_tasks.active_count},
-	% 	{max_active, PeerTasks#peer_tasks.max_active},
-	% 	{queue_len, queue:len(PeerTasks#peer_tasks.task_queue)},
-	% 	{has_capacity, peer_has_capacity(PeerTasks)},
-	% 	{has_queued_tasks, peer_has_queued_tasks(PeerTasks)}]),
 	case peer_has_capacity(PeerTasks) andalso peer_has_queued_tasks(PeerTasks) of
 		true ->
 			{PeerTasks2, sync_range, Args} = dequeue_peer_task(PeerTasks),
@@ -205,6 +196,7 @@ max_tasks() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.sync_jobs * 50.
 
+%% @doc The maximum number of tasks we can have queued for a given peer.
 max_peer_queue(_PeerTasks, #state{ scheduled_task_count = 0 } = _State) ->
 	undefined;
 max_peer_queue(_PeerTasks, #state{ latency_target = 0 } = _State) ->
@@ -225,11 +217,13 @@ max_peer_queue(PeerTasks, State) ->
 	TotalThroughput = ScheduledTasks * (1000.0 / LatencyTarget),
 	%% estimate of of this peer's througput
 	PeerThroughput = CurActive * SuccessEMA * (1000.0 / LatencyEMA),
-	%% the maximum number of tasks we allow to be queued for this peer is related to its
+	%% The maximum number of tasks we allow to be queued for this peer is related to its
 	%% contribution to our current throughput. Peers with a higher throughput can claim more
 	%% of the queue.
+	%%
 	%% We also allow all peers to maintain a small queue no matter what - this is to allow for
-	%% them to recover from a temporary drop in throughput.
+	%% them to recover from a temporary drop in throughput. The minimum queue is set to allow
+	%% enough observations to work their way through the Latency EMA calculation.
 	Minimum = trunc(2 * (1.0 / ?LATENCY_ALPHA)),
 	max(trunc((PeerThroughput / TotalThroughput) * max_tasks()), Minimum).
 
@@ -252,8 +246,6 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 				{success_ema, PeerTasks#peer_tasks.success_ema},
 				{latency_ema, PeerTasks#peer_tasks.latency_ema},
 				{latency_target, State#state.latency_target},
-				{peer_throughput, PeerTasks#peer_tasks.active_count * PeerTasks#peer_tasks.success_ema * (1000.0 / PeerTasks#peer_tasks.latency_ema)},
-				{total_throughput, State#state.scheduled_task_count * (1000.0 / State#state.latency_target)},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			{
@@ -294,9 +286,6 @@ schedule_sync_range(PeerTasks, Args, State) ->
 schedule_read_range(Args, State) ->
 	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
 	End2 = min(Start + ?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE, End),
-	% ?LOG_DEBUG([{event, schedule_read_range},
-	% 	{start, Start}, {end1, End}, {end2, End2},
-	% 	{origin_store_id, OriginStoreID}, {target_store_id, TargetStoreID}]),
 	State2 = schedule_task(
 		read_range, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}, State),
 	case End2 == End of
@@ -330,7 +319,7 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 					PeerTasks#peer_tasks.success_ema, true,
 					if IsOK == true -> 1.0; IsOK == false -> 0.0 end, ?SUCCESS_ALPHA),
 	%% Target Latency is the EMA of all peers' latencies
-	LatencyTargetAlpha =  2.0 / (State#state.worker_count + 1),
+	LatencyTargetAlpha =  2.0 / (State#state.worker_count + 1), %% heuristic - update as needed.
 	LatencyTarget = trunc(calculate_ema(
 					State#state.latency_target, IsOK, Milliseconds, LatencyTargetAlpha)),
 
@@ -339,18 +328,6 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 		PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA }, State),
 	PeerTasks3 = update_active(
 		PeerTasks2, IsOK, Milliseconds, State2#state.worker_count, LatencyTarget),
-	% ?LOG_DEBUG([{event, complete_sync_range},
-	% 	{peer, ar_util:format_peer(PeerTasks#peer_tasks.peer)}, {is_ok, IsOK}, {duration, Milliseconds},
-	% 	{before_latency_ema, PeerTasks#peer_tasks.latency_ema}, {after_latency_ema, LatencyEMA},
-	% 	{before_success_ema, PeerTasks#peer_tasks.success_ema}, {after_success_ema, SuccessEMA},
-	% 	{before_latency_target, State#state.latency_target}, {after_latency_target, LatencyTarget},
-	% 	{before_max_active, PeerTasks#peer_tasks.max_active},
-	% 	{after_max_active, PeerTasks3#peer_tasks.max_active},
-	% 	{before_active_count, PeerTasks#peer_tasks.active_count},
-	% 	{after_active_count, PeerTasks3#peer_tasks.active_count},
-	% 	{before_peer_queue_len, queue:len(PeerTasks#peer_tasks.task_queue)},
-	% 	{after_peer_queue_len, queue:len(PeerTasks3#peer_tasks.task_queue)}
-	% ]),
 	State3 = update_counters(
 				scheduled, sync_range, ar_util:format_peer(PeerTasks#peer_tasks.peer), -1, State2),
 	{PeerTasks3, State3#state{ latency_target = LatencyTarget }}.
