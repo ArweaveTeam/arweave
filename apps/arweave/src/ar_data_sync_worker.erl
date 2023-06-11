@@ -15,7 +15,9 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--record(state, {}).
+-record(state, {
+	name = undefined
+}).
 
  %% # of messages to cast to ar_data_sync at once. Each message carries at least 1 chunk worth
  %% of data (256 KiB). Since there are dozens or hundreds of workers, if each one posts too
@@ -27,15 +29,15 @@
 %%%===================================================================
 
 start_link(Name) ->
-	gen_server:start_link({local, Name}, ?MODULE, [], []).
+	gen_server:start_link({local, Name}, ?MODULE, Name, []).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([]) ->
+init(Name) ->
 	process_flag(trap_exit, true),
-	{ok, #state{}}.
+	{ok, #state{ name = Name }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -47,7 +49,7 @@ handle_cast({read_range, Args}, State) ->
 			ok;
 		ReadResult ->
 			gen_server:cast(ar_data_sync_worker_master,
-				{task_completed, {read_range, {ReadResult, Args}}})
+				{task_completed, {read_range, {State#state.name, ReadResult, Args}}})
 	end,
 	{noreply, State};
 
@@ -61,7 +63,7 @@ handle_cast({sync_range, Args}, State) ->
 			ok;
 		_ ->
 			gen_server:cast(ar_data_sync_worker_master,
-				{task_completed, {sync_range, {SyncResult, Peer, EndTime-StartTime}}})
+				{task_completed, {sync_range, {State#state.name, SyncResult, Peer, EndTime-StartTime}}})
 	end,
 	{noreply, State};
 

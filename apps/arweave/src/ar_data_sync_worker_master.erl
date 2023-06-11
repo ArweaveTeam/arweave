@@ -35,8 +35,9 @@
 	task_queue_len = 0,
 	queued_task_count = 0, %% includes tasks queued in the main queue and in peer queues
 	scheduled_task_count = 0,
-	all_workers = queue:new(),
+	workers = queue:new(),
 	worker_count = 0,
+	worker_loads = #{},
 	latency_target = ?STARTING_LATENCY_TARGET,
 	peer_tasks = #{}
 }).
@@ -73,7 +74,7 @@ init(Workers) ->
 	gen_server:cast(?MODULE, process_main_queue),
 
 	{ok, #state{
-		all_workers = queue:from_list(Workers),
+		workers = queue:from_list(Workers),
 		worker_count = length(Workers)
 	}}.
 
@@ -103,15 +104,16 @@ handle_cast({sync_range, _Args}, #state{ worker_count = 0 } = State) ->
 handle_cast({sync_range, Args}, State) ->
 	{noreply, enqueue_main_task(sync_range, Args, State)};
 
-handle_cast({task_completed, {read_range, _}}, State) ->
-	State2 = update_counters(scheduled, read_range, "localhost", -1, State),
+handle_cast({task_completed, {read_range, {Worker, _, _}}}, State) ->
+	State2 = update_scheduled_task_count(Worker, read_range, "localhost", -1, State),
 	{noreply, State2};
 
-handle_cast({task_completed, {sync_range, {Result, Peer, Duration}}}, State) ->
-	PeerTasks = get_peer_tasks(Peer, State),
-	{PeerTasks2, State2} = complete_sync_range(PeerTasks, Result, Duration, State),
-	{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),	
-	{noreply, set_peer_tasks(PeerTasks3, State3)};
+handle_cast({task_completed, {sync_range, {Worker, Result, Peer, Duration}}}, State) ->
+	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
+	PeerTasks = get_peer_tasks(Peer, State2),
+	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, Duration, State2),
+	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
+	{noreply, set_peer_tasks(PeerTasks3, State4)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -164,7 +166,7 @@ enqueue_main_task(Task, Args, State, Front) ->
 	end,
 
 	FormattedPeer = format_peer(Task, Args),
-	State2 = update_counters(queued, Task, FormattedPeer, 1, State),
+	State2 = update_queued_task_count(Task, FormattedPeer, 1, State),
 	State2#state{
 		task_queue = TaskQueue,
 		task_queue_len = State#state.task_queue_len + 1 }.
@@ -250,7 +252,7 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			{
 				PeerTasks#peer_tasks{ task_queue = TaskQueue2 },
-				update_counters(queued, sync_range, ar_util:format_peer(Peer), -TasksToCut, State)
+				update_queued_task_count(sync_range, ar_util:format_peer(Peer), -TasksToCut, State)
 			};
 		_ ->
 			{PeerTasks, State}
@@ -302,8 +304,8 @@ schedule_task(Task, Args, State) ->
 	gen_server:cast(Worker, {Task, Args}),
 
 	FormattedPeer = format_peer(Task, Args),
-	State3 = update_counters(scheduled, Task, FormattedPeer, 1, State2),
-	update_counters(queued, Task, FormattedPeer, -1, State3).
+	State3 = update_scheduled_task_count(Worker, Task, FormattedPeer, 1, State2),
+	update_queued_task_count(Task, FormattedPeer, -1, State3).
 
 %%--------------------------------------------------------------------
 %% Stage 3: record a completed task and update related values (i.e.
@@ -329,22 +331,23 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 		State),
 	PeerTasks3 = update_active(
 		PeerTasks2, IsOK, Milliseconds, State2#state.worker_count, LatencyTarget),
-	State3 = update_counters(
-		scheduled, sync_range, ar_util:format_peer(PeerTasks#peer_tasks.peer), -1, State2),
-	{PeerTasks3, State3#state{ latency_target = LatencyTarget }}.
+	{PeerTasks3, State2#state{ latency_target = LatencyTarget }}.
 
 
 %%--------------------------------------------------------------------
 %% Helpers
 %%--------------------------------------------------------------------
-update_counters(TaskState, Task, FormattedPeer, N, State) ->
-	prometheus_gauge:inc(sync_tasks, [TaskState, Task, FormattedPeer], N),
-	case TaskState of
-		queued ->
-			State#state{ queued_task_count = State#state.queued_task_count + N };
-		scheduled ->
-			State#state{ scheduled_task_count = State#state.scheduled_task_count + N }
-	end.
+update_queued_task_count(Task, FormattedPeer, N, State) ->
+	prometheus_gauge:inc(sync_tasks, [queued, Task, FormattedPeer], N),
+	State#state{ queued_task_count = State#state.queued_task_count + N }.
+update_scheduled_task_count(Worker, Task, FormattedPeer, N, State) ->
+	prometheus_gauge:inc(sync_tasks, [scheduled, Task, FormattedPeer], N),
+	Load = maps:get(Worker, State#state.worker_loads, 0) + N,
+	State2 = State#state{
+		scheduled_task_count = State#state.scheduled_task_count + N,
+		worker_loads = maps:put(Worker, Load, State#state.worker_loads)
+	},
+	State2.
 
 calculate_ema(OldEMA, false, _Value, _Alpha) ->
 	OldEMA;
@@ -359,13 +362,20 @@ set_peer_tasks(PeerTasks, State) ->
 		maps:put(PeerTasks#peer_tasks.peer, PeerTasks, State#state.peer_tasks)
 	}.
 
-get_worker(#state{ all_workers = AllWorkerQ } = State) ->
-	{Worker, AllWorkerQ2} = cycle_worker(AllWorkerQ),
-	{Worker, State#state{all_workers = AllWorkerQ2}}.
+get_worker(State) ->
+	AverageLoad = State#state.scheduled_task_count / State#state.worker_count,
+	cycle_workers(AverageLoad, State).
 
-cycle_worker(WorkerQ) ->
-	{{value, Worker}, WorkerQ2} = queue:out(WorkerQ),
-	{Worker, queue:in(Worker, WorkerQ2)}.
+cycle_workers(AverageLoad, #state{ workers = Workers, worker_loads = WorkerLoads} = State) ->
+	{{value, Worker}, Workers2} = queue:out(Workers),
+	State2 = State#state{ workers = queue:in(Worker, Workers2) },
+	Load = maps:get(Worker, WorkerLoads, 0),
+	case Load =< AverageLoad of
+		true ->
+			{Worker, State2};
+		false ->
+			cycle_workers(AverageLoad, State2)
+	end.
 
 format_peer(Task, Args) ->
 	case Task of
@@ -460,7 +470,7 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 
 % test_get_worker() ->
 % 	State0 = #state{
-% 		all_workers = queue:from_list([worker1, worker2, worker3]),
+% 		workers = queue:from_list([worker1, worker2, worker3]),
 % 		worker_count = 3
 % 	},
 % 	{worker1, State1} = get_worker(State0),
@@ -675,7 +685,7 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 % 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
 % 	StoreID2 = ar_storage_module:id({?PARTITION_SIZE, 2, default}),
 % 	State0 = #state{
-% 		all_workers = queue:from_list([worker1, worker2, worker3]), worker_count = 3
+% 		workers = queue:from_list([worker1, worker2, worker3]), worker_count = 3
 % 	},
 
 % 	State1 = enqueue_main_task(read_range, {0, 100, StoreID1, StoreID2, true}, State0),
@@ -701,7 +711,7 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 % 	assert_main_queue([], State14),
 % 	?assertEqual(1, State14#state.queued_task_count),
 % 	?assertEqual(13, State14#state.scheduled_task_count),
-% 	?assertEqual([worker2, worker3, worker1], queue:to_list(State14#state.all_workers)),
+% 	?assertEqual([worker2, worker3, worker1], queue:to_list(State14#state.workers)),
 
 % 	PeerTasks = get_peer_tasks(Peer1, State14),
 % 	assert_peer_tasks(
@@ -714,7 +724,7 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 % 	PeerB = {5, 6, 7, 8, 1985},
 % 	Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,11)],
 % 	State0 = #state{
-% 		all_workers = queue:from_list(Workers),
+% 		workers = queue:from_list(Workers),
 % 		worker_count = length(Workers),
 % 		latency_target = 2200
 % 	},
@@ -806,7 +816,7 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 % 	Peer1 = {1, 2, 3, 4, 1984},
 % 	Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,8)],
 % 	State0 = #state{
-% 		all_workers = queue:from_list(Workers), worker_count = length(Workers)
+% 		workers = queue:from_list(Workers), worker_count = length(Workers)
 % 	},
 
 % 	State1 = enqueue_sync_range_tasks(Peer1, 18, State0),
