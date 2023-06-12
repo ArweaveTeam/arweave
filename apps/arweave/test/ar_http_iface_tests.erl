@@ -85,6 +85,7 @@ batch_test_() ->
 				%% ---------------------------------------------------------
 				%% The following tests must be run at a block height of 0.
 				%% ---------------------------------------------------------
+				test_register(fun test_get_total_supply/1, GenesisData),
 				test_register(fun test_get_current_block/1, GenesisData),
 				test_register(fun test_get_height/1, GenesisData),
 				%% ---------------------------------------------------------
@@ -119,7 +120,8 @@ batch_test_() ->
 				test_register(fun test_send_missing_tx_with_the_block/1, GenesisData),
 				test_register(
 					fun test_fallback_to_block_endpoint_if_cannot_send_tx/1, GenesisData),
-				test_register(fun test_get_recent_hash_list_diff/1, GenesisData)
+				test_register(fun test_get_recent_hash_list_diff/1, GenesisData),
+				test_register(fun test_get_total_supply/1, GenesisData)
 			]}
 		end
 	}.
@@ -973,6 +975,22 @@ test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 			= ar_http:req(#{ method => get, peer => master_peer(),
 			path => "/recent_hash_list_diff", headers => [],
 			body => << B0H/binary, B1H/binary, (crypto:strong_rand_bytes(48))/binary >>}).
+
+test_get_total_supply(_Args) ->
+	BlockDenomination = (ar_node:get_current_block())#block.denomination,
+	TotalSupply =
+		ar_patricia_tree:foldr(
+			fun	(_, {B, _}, Acc) ->
+					Acc + ar_pricing:redenominate(B, 1, BlockDenomination);
+				(_, {B, _, Denomination, _}, Acc) ->
+					Acc + ar_pricing:redenominate(B, Denomination, BlockDenomination)
+			end,
+			0,
+			ar_diff_dag:get_sink(sys:get_state(ar_wallets))
+		),
+	TotalSupplyBin = integer_to_binary(TotalSupply),
+	?assertMatch({ok, {{<<"200">>, _}, _, TotalSupplyBin, _, _}},
+			ar_http:req(#{ method => get, peer => master_peer(), path => "/total_supply" })).
 
 wait_until_syncs_tx_data(TXID) ->
 	ar_util:do_until(
