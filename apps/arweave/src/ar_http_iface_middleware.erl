@@ -936,6 +936,20 @@ handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
 			end
 	end;
 
+%% Return the sum of all the existing accounts in the latest state, in Winston.
+%% GET request to endpoint /total_supply.
+handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_wallet_list, infinity),
+			B = ar_node:get_current_block(),
+			TotalSupply = get_total_supply(B#block.wallet_list, first, 0,
+					B#block.denomination),
+			{200, #{}, integer_to_binary(TotalSupply), Req}
+	end;
+
 %% Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
@@ -2408,6 +2422,26 @@ get_recent_hash_list_diff([{H, TXIDs} | BlockTXPairs]) ->
 			(get_recent_hash_list_diff(BlockTXPairs))/binary >>;
 get_recent_hash_list_diff([]) ->
 	<<>>.
+
+get_total_supply(RootHash, Cursor, Sum, Denomination) ->
+	{ok, {NextCursor, Range}} = ar_wallets:get_chunk(RootHash, Cursor),
+	RangeSum = get_balance_sum(Range, Denomination),
+	case NextCursor of
+		last ->
+			Sum + RangeSum;
+		_ ->
+			get_total_supply(RootHash, NextCursor, Sum + RangeSum, Denomination)
+	end.
+
+get_balance_sum([{_, {Balance, _LastTX}} | Range], BlockDenomination) ->
+	ar_pricing:redenominate(Balance, 1, BlockDenomination)
+			+ get_balance_sum(Range, BlockDenomination);
+get_balance_sum([{_, {Balance, _LastTX, Denomination, _MiningPermission}} | Range],
+		BlockDenomination) ->
+	ar_pricing:redenominate(Balance, Denomination, BlockDenomination)
+			+ get_balance_sum(Range, BlockDenomination);
+get_balance_sum([], _BlockDenomination) ->
+	0.
 
 %% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
