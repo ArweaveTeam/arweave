@@ -387,9 +387,6 @@ handle_call(get_current_step_number, _From,
 handle_call(get_current_step_number, _From, State) ->
 	#state{ current_session_key = Key, session_by_key = SessionByKey } = State,
 	Session = maps:get(Key, SessionByKey),
-	?LOG_DEBUG([{event, vdf_oom_get_current_step_number},
-			{session_key, Key},
-			{step_number, Session#vdf_session.step_number}]),
 	{reply, Session#vdf_session.step_number, State};
 
 handle_call({get_current_step_number, SessionKey}, _From, State) ->
@@ -630,9 +627,6 @@ handle_info({computed, Args}, State) ->
 			PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
 					PrevSessionKey, PrevSession, Output, UpperBound}}),
-			?LOG_DEBUG([{event, vdf_oom_computed_output},
-					{step_number, StepNumber},
-					{session_key, CurrentSessionKey}]),
 			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
 			{noreply, State#state{ session_by_key = SessionByKey2 }}
 	end;

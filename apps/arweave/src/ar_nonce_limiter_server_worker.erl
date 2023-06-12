@@ -63,18 +63,8 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 		false ->
 			case Session#vdf_session.step_number < CurrentStepNumber of
 				true ->
-					?LOG_DEBUG([{event, vdf_oom_ignore_update},
-							{peer, ar_util:format_peer(Peer)},
-							{session_key, SessionKey},
-							{session_step_number, Session#vdf_session.step_number},
-							{current_step_number, CurrentStepNumber}]),
 					{noreply, State};
 				false ->
-					?LOG_DEBUG([{event, vdf_oom_handle_update},
-						{peer, ar_util:format_peer(Peer)},
-						{session_key, SessionKey},
-						{session_step_number, Session#vdf_session.step_number},
-						{current_step_number, CurrentStepNumber}]),
 					{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
 							PartitionUpperBound, Peer, State)}
 			end
