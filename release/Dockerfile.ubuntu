@@ -31,4 +31,4 @@ RUN git fetch --all && \
     git checkout ${GIT_TAG} && \
     ./rebar3 as prod tar
     
-CMD cp _build/prod/rel/arweave/arweave-*.tar.gz /output/
+CMD cp _build/prod/rel/arweave/arweave-*.tar.gz /output/arweave.tar.gz
