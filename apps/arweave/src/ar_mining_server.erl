@@ -1539,7 +1539,7 @@ read_recall_range_test() ->
 	CorrelationRef = {0, 0, 1, make_ref()},
 	read_recall_range(type, H0, 0, 0, <<>>, <<>>, 0, 0, Output, ReplicaID, self(), 0, 1,
 			ChunkOffsets, Ref, CorrelationRef),
-	receive {type, {H0, 0, 0, 0, Output, ReplicaID, Chunk, CorrelationRef, Ref}} ->
+	receive {type, {H0, 0, 0, <<>>, <<>>, 0, 0, Output, ReplicaID, Chunk, CorrelationRef, Ref}} ->
 		ok
 	after 1000 ->
 		?assert(false, "Did not receive the expected message.")
