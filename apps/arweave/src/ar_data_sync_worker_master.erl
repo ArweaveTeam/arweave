@@ -24,6 +24,7 @@
 -record(peer_tasks, {
 	peer = undefined,
 	task_queue = queue:new(),
+	task_queue_len = 0,
 	active_count = 0,
 	max_active = ?MIN_MAX_ACTIVE,
 	latency_ema = ?STARTING_LATENCY_EMA, 
@@ -237,12 +238,12 @@ cut_peer_queue(undefined, PeerTasks, State) ->
 cut_peer_queue(MaxQueue, PeerTasks, State) ->
 	Peer = PeerTasks#peer_tasks.peer,
 	TaskQueue = PeerTasks#peer_tasks.task_queue,
-	case queue:len(TaskQueue) - MaxQueue of
+	case PeerTasks#peer_tasks.task_queue_len - MaxQueue of
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
 			%% oldest tasks.
 			?LOG_DEBUG([{event, cut_peer_queue},
-				{peer, Peer},
+				{peer, ar_util:format_peer(Peer)},
 				{active_count, PeerTasks#peer_tasks.active_count},
 				{scheduled_tasks, State#state.scheduled_task_count},
 				{success_ema, PeerTasks#peer_tasks.success_ema},
@@ -251,7 +252,8 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			{
-				PeerTasks#peer_tasks{ task_queue = TaskQueue2 },
+				PeerTasks#peer_tasks{ 
+					task_queue = TaskQueue2, task_queue_len = queue:len(TaskQueue2) },
 				update_queued_task_count(sync_range, ar_util:format_peer(Peer), -TasksToCut, State)
 			};
 		_ ->
@@ -260,18 +262,21 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 
 enqueue_peer_task(PeerTasks, Task, Args) ->
 	PeerTaskQueue = queue:in({Task, Args}, PeerTasks#peer_tasks.task_queue),
-	PeerTasks#peer_tasks{ task_queue = PeerTaskQueue }.
+	TaskQueueLength = PeerTasks#peer_tasks.task_queue_len + 1,
+	PeerTasks#peer_tasks{ task_queue = PeerTaskQueue, task_queue_len = TaskQueueLength }.
 
 dequeue_peer_task(PeerTasks) ->
 	{{value, {Task, Args}}, PeerTaskQueue} = queue:out(PeerTasks#peer_tasks.task_queue),
-	PeerTasks2 = PeerTasks#peer_tasks{ task_queue = PeerTaskQueue },
+	TaskQueueLength = PeerTasks#peer_tasks.task_queue_len - 1,
+	PeerTasks2 = PeerTasks#peer_tasks{ 
+		task_queue = PeerTaskQueue, task_queue_len = TaskQueueLength },
 	{PeerTasks2, Task, Args}.
 
 peer_has_capacity(PeerTasks) ->
 	PeerTasks#peer_tasks.active_count < PeerTasks#peer_tasks.max_active.
 
 peer_has_queued_tasks(PeerTasks) ->
-	queue:len(PeerTasks#peer_tasks.task_queue) > 0.
+	PeerTasks#peer_tasks.task_queue_len > 0.
 
 %%--------------------------------------------------------------------
 %% Stage 2: schedule tasks to be run on workers
@@ -398,7 +403,6 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 	LatencyEMA = PeerTasks#peer_tasks.latency_ema,
 	MaxActive = PeerTasks#peer_tasks.max_active,
 	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
-	QueueLength = queue:len(PeerTasks#peer_tasks.task_queue),
 	TargetMaxActive = case {
 			IsOK, Milliseconds < LatencyTarget, LatencyEMA < LatencyTarget} of
 		{false, _, _} ->
@@ -418,7 +422,10 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 	%% Can't have more active tasks than workers.
 	WorkerLimitedMaxActive = min(TargetMaxActive, WorkerCount),
 	%% Can't have more active tasks than we have active or queued tasks.
-	TaskLimitedMaxActive = min(WorkerLimitedMaxActive, max(ActiveCount, QueueLength)),
+	TaskLimitedMaxActive = min(
+		WorkerLimitedMaxActive, 
+		max(ActiveCount, PeerTasks#peer_tasks.task_queue_len)
+	),
 	%% Can't have less than the minimum.
 	PeerTasks#peer_tasks{
 		active_count = ActiveCount,
