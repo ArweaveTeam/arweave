@@ -3,14 +3,16 @@
 ECHO_ONLY=0
 PRE_RELEASE=0
 BRANCH=""
+LINUX_VERSION=""
 
 # Parse flags
-while getopts 'eb:' flag; do
+while getopts 'eb:l:' flag; do
   case "${flag}" in
     e) ECHO_ONLY=1 ;;
     b) PRE_RELEASE=1
        BRANCH="${OPTARG}" ;;
-    *) echo "Usage: $0 [-e] [-b <pre-release branch>] version" 
+    l) LINUX_VERSION="${OPTARG}" ;;
+    *) echo "Usage: $0 [-e] [-b <pre-release branch>] [-l <linux version>] version" 
        exit 1 ;;
   esac
 done
@@ -18,7 +20,7 @@ shift $((OPTIND-1))
 
 # Check if version is supplied
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 [-e] [-b <pre-release branch>] version"
+    echo "Usage: $0 [-e] [-b <pre-release branch>] [-l <linux version>] version"
     exit 1
 fi
 
@@ -29,15 +31,20 @@ else
   GIT_TAG="N.$VERSION"
 fi
 
-BASE_IMAGES=("arweave-base:18.04" "arweave-base:20.04" "arweave-base:22.04")
-LINUX_VERSIONS=("ubuntu18" "ubuntu20" "ubuntu22")
-BASE_DOCKERFILES=("Dockerfile.base.ubuntu18.04" "Dockerfile.base.ubuntu20.04" "Dockerfile.base.ubuntu22.04")
+BASE_IMAGES=("arweave-base:18.04" "arweave-base:20.04" "arweave-base:22.04" "")
+LINUX_VERSIONS=("ubuntu18" "ubuntu20" "ubuntu22" "rocky9")
+BASE_DOCKERFILES=("Dockerfile.base.ubuntu18.04" "Dockerfile.base.ubuntu20.04" "Dockerfile.base.ubuntu22.04" "")
 
-# Limit the build to only ubuntu-22.04 for pre-release
-if [ $PRE_RELEASE -eq 1 ]; then
-  BASE_IMAGES=("arweave-base:22.04")
-  LINUX_VERSIONS=("ubuntu22")
-  BASE_DOCKERFILES=("Dockerfile.base.ubuntu22.04")
+# If specific Linux version is supplied, filter the arrays
+if [ ! -z "$LINUX_VERSION" ]; then
+  for i in "${!LINUX_VERSIONS[@]}"; do
+    if [ "${LINUX_VERSIONS[$i]}" = "$LINUX_VERSION" ]; then
+      BASE_IMAGES=("${BASE_IMAGES[$i]}")
+      LINUX_VERSIONS=("${LINUX_VERSIONS[$i]}")
+      BASE_DOCKERFILES=("${BASE_DOCKERFILES[$i]}")
+      break
+    fi
+  done
 fi
 
 # Function to execute a command, optionally just echoing it
@@ -54,27 +61,32 @@ for i in "${!BASE_DOCKERFILES[@]}"; do
     BASE_DOCKERFILE=${BASE_DOCKERFILES[$i]}
     BASE_IMAGE=${BASE_IMAGES[$i]}
 
-    echo "Building base image $BASE_IMAGE..."
+    if [ ! -z "$BASE_DOCKERFILE" ] && [ ! -z "$BASE_IMAGE" ]; then
+      echo "Building base image $BASE_IMAGE..."
 
-    # Build the base Docker image
-    run_cmd "docker build -f $BASE_DOCKERFILE -t $BASE_IMAGE ."
+      # Build the base Docker image
+      run_cmd "docker build -f $BASE_DOCKERFILE -t $BASE_IMAGE ."
+    fi
 done
 
-for i in "${!BASE_IMAGES[@]}"; do
-    BASE_IMAGE=${BASE_IMAGES[$i]}
+for i in "${!LINUX_VERSIONS[@]}"; do
     LINUX_VERSION=${LINUX_VERSIONS[$i]}
     IMAGE_NAME="arweave:$VERSION-$LINUX_VERSION"
     OUTPUT_FILE="./output/arweave-$VERSION.$LINUX_VERSION-x86_64.tar.gz"
 
     DOCKERFILE="Dockerfile.ubuntu"
-    if [[ $BASE_IMAGE == "centos:9" ]]; then
-        DOCKERFILE="Dockerfile.centos"
+    if [ "$LINUX_VERSION" == "rocky9" ]; then
+        DOCKERFILE="Dockerfile.rocky"
     fi
 
     echo "Building $IMAGE_NAME..."
 
-    # Build the Docker image
-    run_cmd "docker build -f $DOCKERFILE --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg GIT_TAG=$GIT_TAG -t $IMAGE_NAME ."
+    if [ ! -z "${BASE_IMAGES[$i]}" ]; then
+        # Build the Docker image
+        run_cmd "docker build -f $DOCKERFILE --build-arg BASE_IMAGE=${BASE_IMAGES[$i]} --build-arg GIT_TAG=$GIT_TAG -t $IMAGE_NAME ."
+    else
+        run_cmd "docker build -f $DOCKERFILE --build-arg GIT_TAG=$GIT_TAG -t $IMAGE_NAME ."
+    fi
 
     echo "Running $IMAGE_NAME..."
 

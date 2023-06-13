@@ -1,0 +1,56 @@
+# Set the base image using a build argument
+FROM rockylinux:9
+
+# Update the system and install necessary tools
+RUN dnf update -y && \
+    dnf install -y wget \
+    gcc \
+    gcc-c++ \
+    glibc-devel \
+    make \
+    ncurses-devel \
+    openssl-devel \
+    autoconf \
+    java-1.8.0-openjdk-devel \
+    m4
+
+# Download and extract Erlang/OTP source
+WORKDIR /tmp
+RUN wget https://github.com/erlang/otp/releases/download/OTP-24.3.4.12/otp_src_24.3.4.12.tar.gz
+RUN tar zxf otp_src_24.3.4.12.tar.gz
+
+# Build and install Erlang/OTP
+WORKDIR /tmp/otp_src_24.3.4.12
+RUN ./configure --prefix=/usr/local && \
+    make && \
+    make install
+
+# Clean up
+WORKDIR /
+RUN rm -rf /tmp/otp_src_24.3.4.12 /tmp/otp_src_24.3.4.12.tar.gz
+
+# Install other dependencies
+RUN dnf install -y \
+    gmp-devel \
+    cmake \
+    git
+
+# Set the working directory
+WORKDIR /app
+
+# Clone the repository
+RUN git clone --recursive https://github.com/ArweaveTeam/arweave.git
+
+# Change directory
+WORKDIR /app/arweave
+
+# Define the output directory as a volume
+VOLUME /output
+
+# The build steps are executed every time
+ARG GIT_TAG
+RUN git fetch --all && \
+    git checkout ${GIT_TAG} && \
+    ./rebar3 as prod tar
+    
+CMD cp _build/prod/rel/arweave/arweave-*.tar.gz /output/arweave.tar.gz
