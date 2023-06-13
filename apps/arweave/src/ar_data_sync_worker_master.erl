@@ -643,7 +643,6 @@ test_update_active() ->
 		"Can't decrease below ?MIN_MAX_ACTIVE").
 
 test_enqueue_main_task() ->
-	reset_ets(),
 	Peer1 = {1, 2, 3, 4, 1984},
 	Peer2 = {5, 6, 7, 8, 1985},
 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
@@ -672,7 +671,6 @@ test_enqueue_main_task() ->
 	?assertEqual(3, State5#state.queued_task_count).
 
 test_enqueue_peer_task() ->
-	reset_ets(),
 	PeerA = {1, 2, 3, 4, 1984},
 	PeerB = {5, 6, 7, 8, 1985},
 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
@@ -702,7 +700,6 @@ test_enqueue_peer_task() ->
 
 
 test_process_main_queue() ->
-	reset_ets(),
 	Peer1 = {1, 2, 3, 4, 1984},
 	Peer2 = {5, 6, 7, 8, 1985},
 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
@@ -742,7 +739,6 @@ test_process_main_queue() ->
 		8, 8, ?STARTING_LATENCY_EMA, 1.0, PeerTasks).
 
 test_complete_sync_range() ->
-	reset_ets(),
 	PeerA = {1, 2, 3, 4, 1984},
 	PeerB = {5, 6, 7, 8, 1985},
 	Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,11)],
@@ -815,57 +811,64 @@ test_complete_sync_range() ->
 	assert_peer_tasks([], 0, 8, 5312, 0.846, PeerTasksB5).
 
 test_cut_peer_queue() ->
-	reset_ets(),
-	Peer1 = {1, 2, 3, 4, 1984},
-	Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,8)],
-	State0 = #state{
-		workers = queue:from_list(Workers), worker_count = length(Workers)
-	},
+	{ok, OriginalConfig} = application:get_env(arweave, config),
+	try
+		ok = application:set_env(arweave, config, OriginalConfig#config{
+			sync_jobs = 10
+		}),
+		Peer1 = {1, 2, 3, 4, 1984},
+		Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,8)],
+		State0 = #state{
+			workers = queue:from_list(Workers), worker_count = length(Workers)
+		},
 
-	State1 = enqueue_sync_range_tasks(Peer1, 100, State0),
-	Tasks = queue:to_list(State1#state.task_queue),
-	State2 = process_main_queue(State1),
-	?assertEqual(92, State2#state.queued_task_count),
-	?assertEqual(8, State2#state.scheduled_task_count),
-	PeerTasks1 = get_peer_tasks(Peer1, State2),
-	assert_peer_tasks(
-		lists:sublist(Tasks, 9, 92),
-		8, 8, ?STARTING_LATENCY_EMA, 1.0, PeerTasks1),
+		State1 = enqueue_sync_range_tasks(Peer1, 100, State0),
+		Tasks = queue:to_list(State1#state.task_queue),
+		State2 = process_main_queue(State1),
+		?assertEqual(92, State2#state.queued_task_count),
+		?assertEqual(8, State2#state.scheduled_task_count),
+		PeerTasks1 = get_peer_tasks(Peer1, State2),
+		assert_peer_tasks(
+			lists:sublist(Tasks, 9, 92),
+			8, 8, ?STARTING_LATENCY_EMA, 1.0, PeerTasks1),
 
-	%% Error at the beginning means EMA isn't set. This should not affect the peer queue.
-	{PeerTasks2, State3} = assert_complete_sync_range(
-		92, 7, 2000, PeerTasks1, {error, timeout}, 5 * 1_000_000, State2),
-	assert_peer_tasks(lists:sublist(Tasks, 9, 92), 7, 8, 1000, 0.9, PeerTasks2),
+		%% Error at the beginning means EMA isn't set. This should not affect the peer queue.
+		{PeerTasks2, State3} = assert_complete_sync_range(
+			92, 7, 2000, PeerTasks1, {error, timeout}, 5 * 1_000_000, State2),
+		assert_peer_tasks(lists:sublist(Tasks, 9, 92), 7, 8, 1000, 0.9, PeerTasks2),
 
-	%% Really slow task, max queue size cut to 55. Reset success_ema to 1.0
-	{PeerTasks3, State4} = assert_complete_sync_range(
-		55, 6, 46_000,
-		PeerTasks2#peer_tasks{ success_ema = 1.0 }, ok, (200_000) * 1_000_000, State3),
-	assert_peer_tasks(lists:sublist(Tasks, 9, 55), 6, 8, 20_900, 1.0, PeerTasks3),
+		%% Really slow task, max queue size cut to 55. Reset success_ema to 1.0
+		{PeerTasks3, State4} = assert_complete_sync_range(
+			55, 6, 46_000,
+			PeerTasks2#peer_tasks{ success_ema = 1.0 }, ok, (200_000) * 1_000_000, State3),
+		assert_peer_tasks(lists:sublist(Tasks, 9, 55), 6, 8, 20_900, 1.0, PeerTasks3),
 
-	%% We should still cut a peer queue when there's an error so long as the MaxQueue is less
-	%% than actual peer queue length
-	State5 = set_peer_tasks(PeerTasks3, State4),
-	State6 = enqueue_sync_range_tasks(Peer1, 10, State5),
-	State7 = process_main_queue(State6),
-	PeerTasks4 = get_peer_tasks(Peer1, State7),
-	%% 55 (initial queue) + 10 (enqueued) - 2 (scheduled) = 63
-	?assertEqual(63, State7#state.queued_task_count), 
-	?assertEqual(8, State7#state.scheduled_task_count),
-	?assertEqual(46_000, State7#state.latency_target),
-	?assertEqual(20_900, PeerTasks4#peer_tasks.latency_ema),
-	?assertEqual(1.0, PeerTasks4#peer_tasks.success_ema),
+		%% We should still cut a peer queue when there's an error so long as the MaxQueue is less
+		%% than actual peer queue length
+		State5 = set_peer_tasks(PeerTasks3, State4),
+		State6 = enqueue_sync_range_tasks(Peer1, 10, State5),
+		State7 = process_main_queue(State6),
+		PeerTasks4 = get_peer_tasks(Peer1, State7),
+		%% 55 (initial queue) + 10 (enqueued) - 2 (scheduled) = 63
+		?assertEqual(63, State7#state.queued_task_count), 
+		?assertEqual(8, State7#state.scheduled_task_count),
+		?assertEqual(46_000, State7#state.latency_target),
+		?assertEqual(20_900, PeerTasks4#peer_tasks.latency_ema),
+		?assertEqual(1.0, PeerTasks4#peer_tasks.success_ema),
 
-	%% An error reduces the success_rate and therefore the max queue length. We have to fudge
-	%% things a bit by setting the latency_ema to 400,000 to compensate for the tasks added
-	%% above. Without considering the error the MaxQueue would be 65 (no cutting needed),
-	%% however with the error it drops to 59 (cutting needed).
-	{PeerTasks5, _} = assert_complete_sync_range(
-		59, 7, 46_000,
-		PeerTasks4#peer_tasks{ latency_ema = 400_000 }, {error, timeout}, 5 * 1_000_000, State7),
-	?assertEqual(7, PeerTasks5#peer_tasks.active_count),
-	?assertEqual(8, PeerTasks5#peer_tasks.max_active),
-	?assertEqual(round_3(0.9), round_3(PeerTasks5#peer_tasks.success_ema)).
+		%% An error reduces the success_rate and therefore the max queue length. We have to fudge
+		%% things a bit by setting the latency_ema to 400,000 to compensate for the tasks added
+		%% above. Without considering the error the MaxQueue would be 65 (no cutting needed),
+		%% however with the error it drops to 59 (cutting needed).
+		{PeerTasks5, _} = assert_complete_sync_range(
+			59, 7, 46_000,
+			PeerTasks4#peer_tasks{ latency_ema = 400_000 }, {error, timeout}, 5 * 1_000_000, State7),
+		?assertEqual(7, PeerTasks5#peer_tasks.active_count),
+		?assertEqual(8, PeerTasks5#peer_tasks.max_active),
+		?assertEqual(round_3(0.9), round_3(PeerTasks5#peer_tasks.success_ema))
+	after
+		application:set_env(arweave, config, OriginalConfig)
+	end.
 
 enqueue_sync_range_tasks(_Peer, 0, State) ->
 	State;
@@ -902,10 +905,6 @@ assert_peer_tasks(
 assert_task(ExpectedTask, ExpectedArgs, Task, Args) ->
 	?assertEqual(ExpectedTask, Task),
 	?assertEqual(ExpectedArgs, Args).
-
-%% This is only for testing purposes
-reset_ets() ->
-	ets:delete_all_objects(?MODULE).
 
 round_3(Float) ->
 	round(Float * 1000) / 1000.
