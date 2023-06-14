@@ -3,7 +3,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, put/2, put/3, open_files/1, get/1, get/2, get_range/2, get_range/3,
+-export([start_link/2, put/2, put/3, store_packed_chunk/3,
+		open_files/1, get/1, get/2, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, run_defragmentation/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -51,6 +52,10 @@ put(Offset, Chunk, StoreID) ->
 		Reply ->
 			Reply
 	end.
+
+store_packed_chunk(Offset, ChunkArgs, StoreID) ->
+	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	gen_server:cast(GenServerID, {chunk, {packed, Offset, ChunkArgs}}).
 
 %% @doc Open all the storage files. The subsequent calls to get/1 in the
 %% caller process will use the opened file descriptors.
@@ -189,7 +194,6 @@ run_defragmentation() ->
 
 init(StoreID) ->
 	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(chunk),
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
 	Dir =
@@ -252,6 +256,50 @@ handle_cast({register_packing_ref, Ref, Offset}, #state{ packing_map = Map } = S
 handle_cast({expire_repack_request, Ref}, #state{ packing_map = Map } = State) ->
 	{noreply, State#state{ packing_map = maps:remove(Ref, Map) }};
 
+handle_cast({chunk, {packed, Ref, ChunkArgs}},
+	#state{ packing_map = Map, store_id = StoreID, file_index = FileIndex,
+				repack_cursor = PrevCursor } = State) ->
+	case maps:get(Ref, Map, not_found) of
+		not_found ->
+			{noreply, State};
+		Offset ->
+			State2 = State#state{ packing_map = maps:remove(Ref, Map) },
+			{Packing, Chunk, _, _, _} = ChunkArgs,
+			case ar_sync_record:delete(Offset, Offset - ?DATA_CHUNK_SIZE,
+					ar_data_sync, StoreID) of
+				ok ->
+					case handle_store_chunk(Offset, Chunk, FileIndex, StoreID) of
+						{ok, FileIndex2} ->
+							case ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE,
+									Packing, ar_data_sync, StoreID) of
+								ok ->
+									?LOG_DEBUG([{event, repacked_chunk},
+											{offset, Offset},
+											{packing, format_packing(Packing)}]);
+								Error ->
+									?LOG_ERROR([{event, failed_to_record_repacked_chunk},
+											{offset, Offset},
+											{packing, format_packing(Packing)},
+											{error, io_lib:format("~p", [Error])}])
+							end,
+							{noreply, State2#state{ file_index = FileIndex2,
+									repack_cursor = Offset, prev_repack_cursor = PrevCursor }};
+						Error2 ->
+							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
+									{offset, Offset},
+									{packing, format_packing(Packing)},
+									{error, io_lib:format("~p", [Error2])}]),
+							{noreply, State2}
+					end;
+				Error3 ->
+					?LOG_ERROR([{event, failed_to_remove_repacked_chunk_from_sync_record},
+							{offset, Offset},
+							{packing, format_packing(Packing)},
+							{error, io_lib:format("~p", [Error3])}]),
+					{noreply, State2}
+			end
+	end;
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -295,52 +343,6 @@ handle_call(reset, _, #state{ store_id = StoreID, file_index = FileIndex } = Sta
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
-
-handle_info({event, chunk, {packed, Ref, ChunkArgs}},
-		#state{ packing_map = Map, store_id = StoreID, file_index = FileIndex,
-				repack_cursor = PrevCursor } = State) ->
-	case maps:get(Ref, Map, not_found) of
-		not_found ->
-			{noreply, State};
-		Offset ->
-			State2 = State#state{ packing_map = maps:remove(Ref, Map) },
-			{Packing, Chunk, _, _, _} = ChunkArgs,
-			case ar_sync_record:delete(Offset, Offset - ?DATA_CHUNK_SIZE,
-					ar_data_sync, StoreID) of
-				ok ->
-					case handle_store_chunk(Offset, Chunk, FileIndex, StoreID) of
-						{ok, FileIndex2} ->
-							case ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE,
-									Packing, ar_data_sync, StoreID) of
-								ok ->
-									?LOG_DEBUG([{event, repacked_chunk},
-											{offset, Offset},
-											{packing, format_packing(Packing)}]);
-								Error ->
-									?LOG_ERROR([{event, failed_to_record_repacked_chunk},
-											{offset, Offset},
-											{packing, format_packing(Packing)},
-											{error, io_lib:format("~p", [Error])}])
-							end,
-							{noreply, State2#state{ file_index = FileIndex2,
-									repack_cursor = Offset, prev_repack_cursor = PrevCursor }};
-						Error2 ->
-							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
-									{offset, Offset},
-									{packing, format_packing(Packing)},
-									{error, io_lib:format("~p", [Error2])}]),
-							{noreply, State2}
-					end;
-				Error3 ->
-					?LOG_ERROR([{event, failed_to_remove_repacked_chunk_from_sync_record},
-							{offset, Offset},
-							{packing, format_packing(Packing)},
-							{error, io_lib:format("~p", [Error3])}]),
-					{noreply, State2}
-			end
-	end;
-handle_info({event, chunk, _}, State) ->
-	{noreply, State};
 
 handle_info({Ref, _Reply}, State) when is_reference(Ref) ->
 	%% A stale gen_server:call reply.

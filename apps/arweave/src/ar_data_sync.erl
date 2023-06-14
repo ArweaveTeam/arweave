@@ -476,7 +476,7 @@ init("default" = StoreID) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
-	[ok, ok, ok] = ar_events:subscribe([node_state, chunk, disksup]),
+	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
 	move_data_root_index(State),
@@ -541,7 +541,7 @@ init("default" = StoreID) ->
 init(StoreID) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
-	[ok, ok, ok] = ar_events:subscribe([node_state, chunk, disksup]),
+	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	gen_server:cast(self(), process_store_chunk_queue),
@@ -1226,7 +1226,7 @@ handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
-handle_info({event, chunk, {unpacked, Offset, ChunkArgs}}, State) ->
+handle_info({chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	Key = {Offset, unpacked},
 	case maps:get(Key, PackingMap, not_found) of
@@ -1237,8 +1237,9 @@ handle_info({event, chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 			{noreply, State}
 	end;
 
-handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
-	#sync_data_state{ packing_map = PackingMap } = State,
+handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
+	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
+	ar_chunk_storage:store_packed_chunk(Offset, ChunkArgs, StoreID),
 	Packing = element(1, ChunkArgs),
 	Key = {Offset, Packing},
 	case maps:get(Key, PackingMap, not_found) of
@@ -1249,7 +1250,7 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 			{noreply, State}
 	end;
 
-handle_info({event, chunk, _}, State) ->
+handle_info({chunk, _}, State) ->
 	{noreply, State};
 
 handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, _Bytes}},
