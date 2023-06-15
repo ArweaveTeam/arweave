@@ -2,8 +2,9 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, pack/4, unpack/5, repack/6, packing_atom/1,
-		 is_buffer_full/0, packing_rate/0, record_buffer_size_metric/0]).
+-export([start_link/0, packing_atom/1,
+		 request_unpack/2, request_repack/2, pack/4, unpack/5, repack/6, 
+		 is_buffer_full/0, record_buffer_size_metric/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -21,8 +22,7 @@
 
 -record(state, {
 	workers,
-	num_workers,
-	packing_rate
+	num_workers
 }).
 
 %%%===================================================================
@@ -32,6 +32,12 @@ packing_atom(Packing) when is_atom(Packing) ->
 	Packing;
 packing_atom({spora_2_6, _}) ->
 	spora_2_6.
+
+request_unpack(Ref, Args) ->
+	gen_server:cast(?MODULE, {unpack_request, self(), Ref, Args}).
+
+request_repack(Ref, Args) ->
+	gen_server:cast(?MODULE, {repack_request, self(), Ref, Args}).
 
 %% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
@@ -74,9 +80,6 @@ is_buffer_full() ->
 		_ ->
 			false
 	end.
-
-packing_rate() ->
-	gen_server:call(?MODULE, get_packing_rate).
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -127,7 +130,6 @@ init([]) ->
 	Workers = queue:from_list(
 		[spawn_link(fun() -> worker(ThrottleDelay, PackingStateRef) end)
 			|| _ <- lists:seq(1, SpawnSchedulers)]),
-	ok = ar_events:subscribe(chunk),
 	ets:insert(?MODULE, {buffer_size, 0}),
 	{ok, Config} = application:get_env(arweave, config),
 	MaxSize =
@@ -145,35 +147,28 @@ init([]) ->
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
 	{ok, #state{ 
-		workers = Workers, num_workers = SpawnSchedulers, packing_rate = PackingRate }}.
+		workers = Workers, num_workers = SpawnSchedulers }}.
 
-handle_call(get_packing_rate, _From, State = #state{ packing_rate = PackingRate }) ->
-	{reply, PackingRate, State};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
-	{noreply, State}.
-
-handle_info({event, chunk, {unpack_request, _, _}}, #state{ num_workers = 0 } = State) ->
+handle_cast({unpack_request, _, _, _}, #state{ num_workers = 0 } = State) ->
 	?LOG_WARNING([{event, got_unpack_request_while_packing_is_disabled}]),
 	{noreply, State};
-handle_info({event, chunk, {unpack_request, Ref, Args}}, State) ->
+handle_cast({unpack_request, From, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
 	?LOG_DEBUG([{event, got_unpack_request}, {ref, Ref}]),
 	increment_buffer_size(),
 	record_packing_request(unpack, Packing, unpack_request),
-	Worker ! {unpack, Ref, self(), Args},
+	Worker ! {unpack, Ref, From, Args},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-
-handle_info({event, chunk, {repack_request, _, _}}, #state{ num_workers = 0 } = State) ->
+handle_cast({repack_request, _, _, _}, #state{ num_workers = 0 } = State) ->
 	?LOG_WARNING([{event, got_repack_request_while_packing_is_disabled}]),
 	{noreply, State};
-handle_info({event, chunk, {repack_request, Ref, Args}}, State) ->
+handle_cast({repack_request, From, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
@@ -181,14 +176,13 @@ handle_info({event, chunk, {repack_request, Ref, Args}}, State) ->
 	case {RequestedPacking, Packing} of
 		{unpacked, unpacked} ->
 			?LOG_DEBUG([{event, got_pack_request_already_unpacked}, {ref, Ref}]),
-			ar_events:send(chunk, {packed, Ref, {unpacked, Chunk, AbsoluteOffset, TXRoot,
-					ChunkSize}}),
+			From ! {chunk, {packed, Ref, {unpacked, Chunk, AbsoluteOffset, TXRoot, ChunkSize}}},
 			{noreply, State};
 		{_, unpacked} ->
 			?LOG_DEBUG([{event, sending_for_packing}, {ref, Ref}]),
 			increment_buffer_size(),
 			record_packing_request(pack, RequestedPacking, repack_request),
-			Worker ! {pack, Ref, self(), {RequestedPacking, Chunk, AbsoluteOffset, TXRoot,
+			Worker ! {pack, Ref, From, {RequestedPacking, Chunk, AbsoluteOffset, TXRoot,
 					ChunkSize}},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 		_ ->
@@ -196,23 +190,14 @@ handle_info({event, chunk, {repack_request, Ref, Args}}, State) ->
 			increment_buffer_size(),
 			record_packing_request(repack, RequestedPacking, repack_request),
 			Worker ! {
-				repack, Ref, self(),
+				repack, Ref, From,
 				{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize}
 			},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }}
 	end;
-
-handle_info({event, chunk, _}, State) ->
-	{noreply, State};
-
-handle_info({worker, {unpacked, Ref, Args}}, State) ->
-	?LOG_DEBUG([{event, worker_unpacked_chunk}, {ref, Ref}]),
-	ar_events:send(chunk, {unpacked, Ref, Args}),
-	{noreply, State};
-
-handle_info({worker, {packed, Ref, Args}}, State) ->
-	ar_events:send(chunk, {packed, Ref, Args}),
-	{noreply, State};
+handle_cast(Cast, State) ->
+	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	{noreply, State}.
 
 handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
@@ -258,7 +243,7 @@ worker(ThrottleDelay, RandomXStateRef) ->
 			case unpack(Packing, AbsoluteOffset, TXRoot, Chunk, ChunkSize,
 					RandomXStateRef, internal) of
 				{ok, U, AlreadyUnpacked} ->
-					From ! {worker, {unpacked, Ref, {Packing, U, AbsoluteOffset, TXRoot,
+					From ! {chunk, {unpacked, Ref, {Packing, U, AbsoluteOffset, TXRoot,
 							ChunkSize}}},
 					case AlreadyUnpacked of
 						already_unpacked ->
@@ -284,7 +269,7 @@ worker(ThrottleDelay, RandomXStateRef) ->
 			{Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 			case pack(Packing, AbsoluteOffset, TXRoot, Chunk, RandomXStateRef, internal) of
 				{ok, Packed, AlreadyPacked} ->
-					From ! {worker, {packed, Ref, {Packing, Packed, AbsoluteOffset, TXRoot,
+					From ! {chunk, {packed, Ref, {Packing, Packed, AbsoluteOffset, TXRoot,
 							ChunkSize}}},
 					case AlreadyPacked of
 						already_packed ->
@@ -306,7 +291,7 @@ worker(ThrottleDelay, RandomXStateRef) ->
 			case repack(RequestedPacking, Packing, 
 					AbsoluteOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, internal) of
 				{ok, Packed, Unpacked} ->
-					From ! {worker, {packed, Ref, {RequestedPacking, Packed, AbsoluteOffset, TXRoot,
+					From ! {chunk, {packed, Ref, {RequestedPacking, Packed, AbsoluteOffset, TXRoot,
 							ChunkSize}}},
 					case Unpacked of
 						none ->

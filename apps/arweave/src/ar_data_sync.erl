@@ -476,7 +476,7 @@ init("default" = StoreID) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
-	[ok, ok, ok] = ar_events:subscribe([node_state, chunk, disksup]),
+	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
 	move_data_root_index(State),
@@ -541,7 +541,7 @@ init("default" = StoreID) ->
 init(StoreID) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
-	[ok, ok, ok] = ar_events:subscribe([node_state, chunk, disksup]),
+	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	gen_server:cast(self(), process_store_chunk_queue),
@@ -945,7 +945,7 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast,
 							{noreply, State};
 						false ->
 							ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
-							ar_events:send(chunk, {unpack_request, AbsoluteOffset, ChunkArgs}),
+							ar_packing_server:request_unpack(AbsoluteOffset, ChunkArgs),
 							?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
 									{data_path_hash, ar_util:encode(crypto:hash(sha256,
 											DataPath))},
@@ -1226,7 +1226,7 @@ handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
-handle_info({event, chunk, {unpacked, Offset, ChunkArgs}}, State) ->
+handle_info({chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	Key = {Offset, unpacked},
 	case maps:get(Key, PackingMap, not_found) of
@@ -1237,8 +1237,8 @@ handle_info({event, chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 			{noreply, State}
 	end;
 
-handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
-	#sync_data_state{ packing_map = PackingMap } = State,
+handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
+	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
 	Packing = element(1, ChunkArgs),
 	Key = {Offset, Packing},
 	case maps:get(Key, PackingMap, not_found) of
@@ -1249,7 +1249,7 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 			{noreply, State}
 	end;
 
-handle_info({event, chunk, _}, State) ->
+handle_info({chunk, _}, State) ->
 	{noreply, State};
 
 handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, _Bytes}},
@@ -2351,10 +2351,6 @@ enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q2, QIntervals2}.
 
 enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
-	?LOG_DEBUG([
-		{event, add_interval_to_sync_queue},
-		{start_offset, RangeStart}, {end_offset, RangeEnd},
-		{num_chunks, length(ChunkOffsets)}, {peer, ar_util:format_peer(Peer)}]),
 	Q2 = lists:foldl(
 		fun(ChunkStart, QAcc) ->
 			gb_sets:add_element(
@@ -2662,9 +2658,9 @@ pack_and_store_chunk(Args, State) ->
 									_ ->
 										{unpacked, UnpackedChunk}
 								end,
-							ar_events:send(chunk, {repack_request, AbsoluteOffset,
+							ar_packing_server:request_repack(AbsoluteOffset,
 									{RequiredPacking, Packing2, Chunk2, AbsoluteOffset,
-									TXRoot, ChunkSize}}),
+										TXRoot, ChunkSize}),
 							?LOG_DEBUG([{event, requested_chunk_repacking},
 									{data_path_hash, ar_util:encode(DataPathHash)},
 									{data_root, ar_util:encode(DataRoot)},

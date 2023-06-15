@@ -790,7 +790,7 @@ parse_missing_tx_indices_and_missing_chunk2(_Rest, _Indices) ->
 
 block_announcement_response_to_binary(#block_announcement_response{
 		missing_tx_indices = L, missing_chunk = Reply, missing_chunk2 = Reply2 }) ->
-	<< (case Reply of true -> 1; _ -> 0 end):8, (encode_missing_tx_indices(L))/binary,
+	<< (ar_util:bool_to_int(Reply)):8, (encode_missing_tx_indices(L))/binary,
 			(case Reply2 of undefined -> <<>>; false -> << 0:8 >>;
 					true -> << 1:8 >> end)/binary >>.
 

@@ -3,7 +3,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, put/2, put/3, open_files/1, get/1, get/2, get_range/2, get_range/3,
+-export([start_link/2, put/2, put/3,
+		open_files/1, get/1, get/2, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, run_defragmentation/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -189,7 +190,6 @@ run_defragmentation() ->
 
 init(StoreID) ->
 	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(chunk),
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
 	Dir =
@@ -296,8 +296,8 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_info({event, chunk, {packed, Ref, ChunkArgs}},
-		#state{ packing_map = Map, store_id = StoreID, file_index = FileIndex,
+handle_info({chunk, {packed, Ref, ChunkArgs}},
+	#state{ packing_map = Map, store_id = StoreID, file_index = FileIndex,
 				repack_cursor = PrevCursor } = State) ->
 	case maps:get(Ref, Map, not_found) of
 		not_found ->
@@ -339,8 +339,6 @@ handle_info({event, chunk, {packed, Ref, ChunkArgs}},
 					{noreply, State2}
 			end
 	end;
-handle_info({event, chunk, _}, State) ->
-	{noreply, State};
 
 handle_info({Ref, _Reply}, State) when is_reference(Ref) ->
 	%% A stale gen_server:call reply.
@@ -816,9 +814,9 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 												{register_packing_ref, Ref, PaddedOffset}),
 										ar_util:cast_after(300000, Server,
 												{expire_repack_request, Ref}),
-										ar_events:send(chunk, {repack_request, Ref,
+										ar_packing_server:request_repack(Ref,
 												{RequiredPacking, Packing, Chunk,
-														AbsoluteOffset, TXRoot, ChunkSize}}),
+													AbsoluteOffset, TXRoot, ChunkSize}),
 										ok
 								end;
 							_ ->

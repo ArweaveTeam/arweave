@@ -415,9 +415,11 @@ register(MetricsDir) ->
 	prometheus_counter:new([{name, process_functions},
 			{labels, [process]},
 			{help, "Sampling active functions. The 'process' label is a fully qualified "
-					"function name with the format 'process~module:function/arith'"}]),
-	prometheus_gauge:new([{name, process_memory},
-			{help, "Sampling active process memory usage."}, {labels, [process]}]).
+					"function name with the format 'process~module:function/arith'. "
+					"Only set when debug=true."}]),
+	prometheus_gauge:new([{name, process_info},
+			{labels, [process, type]},
+			{help, "Sampling info about active processes. Only set when debug=true."}]).
 
 %% @doc Store the given metric in a file.
 store(Name) ->

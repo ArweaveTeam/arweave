@@ -38,7 +38,7 @@ init([]) ->
 		?CHILD(ar_events, tx, worker),
 		%% Events: discovered, rejected, new, mined, double_signing.
 		?CHILD(ar_events, block, worker),
-		%% Events: unpack_request, unpacked, repack_request, packed.
+		%% Events: unpacked, packed.
 		?CHILD(ar_events, chunk, worker),
 		%% Events: made_request, bad_response, served_tx, served_block, served_chunk,
 		%% gossiped_tx, gossiped_block, banned

@@ -6,8 +6,7 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
-%% Sample relatively infrequently - every 5 seconds - to minimize the impact on the system.
--define(SAMPLE_INTERVAL, 5000).
+-define(SAMPLE_INTERVAL, 1000).
 
 %% API
 start_link() ->
@@ -27,10 +26,17 @@ handle_cast(_Msg, State) ->
 handle_info(sample, State) ->
 	Processes = erlang:processes(),
 	ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
-	lists:foreach(fun({ProcessName, FunctionName, Bytes}) ->
-		prometheus_counter:inc(process_functions, [FunctionName]),
-		prometheus_gauge:set(process_memory, [ProcessName], Bytes)
+	lists:foreach(fun({Status, ProcessName, FunctionName, Memory, MessageQueueLen}) ->
+		case Status of
+			running ->
+				prometheus_counter:inc(process_functions, [FunctionName]);
+			_ ->
+				ok
+		end,
+		prometheus_gauge:set(process_info, [ProcessName, memory], Memory),
+		prometheus_gauge:set(process_info, [ProcessName, message_queue], MessageQueueLen)
 	end, ProcessData),
+	prometheus_gauge:set(process_info, [system, memory], erlang:memory(system)),
 	{noreply, State};
 
 handle_info(_Info, State) ->
@@ -44,16 +50,17 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Internal functions
 process_function(Pid) ->
-	case process_info(Pid, [current_function, registered_name, status, memory]) of
-	[{current_function, {?MODULE, process_function, _A}}, _, _, _] ->
+	case process_info(Pid, [
+		current_function, registered_name, status, memory, message_queue_len]) of
+	[{current_function, {?MODULE, process_function, _A}}, _, _, _, _] ->
 		false;
-	[{current_function, {erlang, process_info, _A}}, _, _, _] ->
+	[{current_function, {erlang, process_info, _A}}, _, _, _, _] ->
 		false;
-	[{current_function, {M, F, A}}, {registered_name, Name}, {status, running},
-			{memory, Bytes}] ->
+	[{current_function, {M, F, A}}, {registered_name, Name}, {status, Status},
+			{memory, Memory}, {message_queue_len, MessageQueueLen}] ->
 		ProcessName = process_name(Name),
 		FunctionName = function_name(ProcessName, M, F, A),
-		{true, {ProcessName, FunctionName, Bytes}};
+		{true, {Status, ProcessName, FunctionName, Memory, MessageQueueLen}};
 	_ ->
 		false
 	end.

@@ -1,6 +1,6 @@
 -module(ar_util).
 
--export([pick_random/1, pick_random/2, encode/1, decode/1, safe_decode/1,
+-export([bool_to_int/1, pick_random/1, pick_random/2, encode/1, decode/1, safe_decode/1,
 		parse_peer/1, peer_to_str/1, parse_port/1, safe_parse_peer/1, format_peer/1,
 		unique/1, count/2,
 		genesis_wallets/0, pmap/2, pfilter/2,
@@ -10,6 +10,9 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+bool_to_int(true) -> 1;
+bool_to_int(_) -> 0.
 
 %% @doc Pick a list of random elements from a given list.
 pick_random(_, 0) -> [];
