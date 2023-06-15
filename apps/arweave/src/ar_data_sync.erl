@@ -1239,7 +1239,6 @@ handle_info({chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 
 handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
 	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
-	ar_chunk_storage:store_packed_chunk(Offset, ChunkArgs, StoreID),
 	Packing = element(1, ChunkArgs),
 	Key = {Offset, Packing},
 	case maps:get(Key, PackingMap, not_found) of

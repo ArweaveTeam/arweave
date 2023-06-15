@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, put/2, put/3, store_packed_chunk/3,
+-export([start_link/2, put/2, put/3,
 		open_files/1, get/1, get/2, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, run_defragmentation/0]).
 
@@ -52,10 +52,6 @@ put(Offset, Chunk, StoreID) ->
 		Reply ->
 			Reply
 	end.
-
-store_packed_chunk(Offset, ChunkArgs, StoreID) ->
-	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
-	gen_server:cast(GenServerID, {chunk, {packed, Offset, ChunkArgs}}).
 
 %% @doc Open all the storage files. The subsequent calls to get/1 in the
 %% caller process will use the opened file descriptors.
