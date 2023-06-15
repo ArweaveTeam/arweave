@@ -83,15 +83,15 @@ for i in "${!LINUX_VERSIONS[@]}"; do
 
     if [ ! -z "${BASE_IMAGES[$i]}" ]; then
         # Build the Docker image
-        run_cmd "docker build -f $DOCKERFILE --build-arg BASE_IMAGE=${BASE_IMAGES[$i]} --build-arg GIT_TAG=$GIT_TAG -t $IMAGE_NAME ."
+        run_cmd "docker build -f $DOCKERFILE --build-arg BASE_IMAGE=${BASE_IMAGES[$i]} -t $IMAGE_NAME ."
     else
-        run_cmd "docker build -f $DOCKERFILE --build-arg GIT_TAG=$GIT_TAG -t $IMAGE_NAME ."
+        run_cmd "docker build -f $DOCKERFILE -t $IMAGE_NAME ."
     fi
 
     echo "Running $IMAGE_NAME..."
 
     # Run the Docker container
-    run_cmd "docker run --rm -v $(pwd)/output:/output $IMAGE_NAME"
+    run_cmd "docker run --rm -e GIT_TAG=$GIT_TAG -v $(pwd)/output:/output $IMAGE_NAME"
 
     echo "Renaming output file..."
 

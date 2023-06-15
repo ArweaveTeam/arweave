@@ -16,19 +16,15 @@ RUN apt-get install -y \
 # Set the working directory
 WORKDIR /app
 
-# Clone the repository
-RUN git clone --recursive https://github.com/ArweaveTeam/arweave.git
-
-# Change directory
-WORKDIR /app/arweave
-
-# Define the output directory as a volume
+# Define the output directory as a volume 
 VOLUME /output
 
 # The build steps are executed every time
-ARG GIT_TAG
-RUN git fetch --all && \
-    git checkout ${GIT_TAG} && \
-    ./rebar3 as prod tar
-    
-CMD cp _build/prod/rel/arweave/arweave-*.tar.gz /output/arweave.tar.gz
+CMD set -x && \
+    git clone --recursive https://github.com/ArweaveTeam/arweave.git && \
+    cd arweave && \
+    git fetch --all && \
+    git pull --force && \
+    git checkout --force $GIT_TAG && \
+    ./rebar3 as prod tar && \
+    cp _build/prod/rel/arweave/arweave-*.tar.gz /output/arweave.tar.gz
