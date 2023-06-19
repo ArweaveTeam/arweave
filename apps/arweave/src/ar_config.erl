@@ -473,17 +473,26 @@ parse_options([{<<"max_nonce_limiter_last_step_validation_thread_count">>, D} | 
 parse_options([{<<"vdf_server_trusted_peer">>, <<>>} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"vdf_server_trusted_peer">>, Peer} | Rest], Config) ->
-	parse_options(Rest, parse_vdf_server_trusted_peer(Peer, Config));
+	#config{ nonce_limiter_server_trusted_peers = Peers } = Config,
+	parse_options(Rest,
+		Config#config{ nonce_limiter_server_trusted_peers = Peers ++ parse_peers([Peer]) });
 
 parse_options([{<<"vdf_server_trusted_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
-	parse_options(Rest, parse_vdf_server_trusted_peers(Peers, Config));
+	#config{ nonce_limiter_server_trusted_peers = ExistingPeers } = Config,
+	parse_options(Rest,
+		Config#config{ nonce_limiter_server_trusted_peers = ExistingPeers ++ parse_peers(Peers) });
 parse_options([{<<"vdf_server_trusted_peers">>, Peers} | _], _) ->
 	{error, {bad_type, vdf_server_trusted_peers, array}, Peers};
 
 parse_options([{<<"vdf_client_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
-	parse_options(Rest, Config#config{ nonce_limiter_client_peers = Peers });
+	parse_options(Rest, Config#config{ nonce_limiter_client_peers = parse_peers(Peers) });
 parse_options([{<<"vdf_client_peers">>, Peers} | _], _) ->
 	{error, {bad_type, vdf_client_peers, array}, Peers};
+
+parse_options([{<<"p3_server_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
+	parse_options(Rest, Config#config{ p3_server_peers = parse_peers(Peers) });
+parse_options([{<<"p3_server_peers">>, Peers} | _], _) ->
+	{error, {bad_type, vdf_clp3_server_peersient_peers, array}, Peers};
 
 parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ debug = B });
@@ -631,17 +640,8 @@ parse_requests_per_minute_limit_by_ip({[]}, Parsed) ->
 parse_requests_per_minute_limit_by_ip(_, _) ->
 	error.
 
-parse_vdf_server_trusted_peers([Peer | Rest], Config) ->
-	Config2 = parse_vdf_server_trusted_peer(Peer, Config),
-	parse_vdf_server_trusted_peers(Rest, Config2);
-parse_vdf_server_trusted_peers([], Config) ->
-	Config.
-
-parse_vdf_server_trusted_peer(Peer, Config) when is_binary(Peer) ->
-	parse_vdf_server_trusted_peer(binary_to_list(Peer), Config);
-parse_vdf_server_trusted_peer(Peer, Config) ->
-	#config{ nonce_limiter_server_trusted_peers = Peers } = Config,
-	Config#config{ nonce_limiter_server_trusted_peers = Peers ++ [Peer] }.
+parse_peers(Peers) ->
+	[ar_util:peer_to_str(Peer) || Peer <- Peers].
 
 format_config(Config) ->
 	Fields = record_info(fields, config),
