@@ -412,7 +412,8 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 			{performance, nonce_limiter},
 			[{3, 1}],
 			{{performance, nonce_limiter}, erlang:monotonic_time(millisecond), 0}),
-	Task = {computed_output, {SessionKey, Session, Output, PartitionUpperBound}},
+	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
+	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
 	prometheus_gauge:inc(mining_server_task_queue_len),
@@ -723,7 +724,7 @@ filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = St
 filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
-read_recall_range(Type, _H0, _PartitionNumber, _RecallRangeStart, _Seed, _NextSeed,
+read_recall_range(_Type, _H0, _PartitionNumber, _RecallRangeStart, _Seed, _NextSeed,
 		_StartIntervalNumber, _StepNumber, _NonceLimiterOutput,
 		_ReplicaID, _From, Nonce, NonceMax, _ChunkOffsets, _Ref, _CorrelationRef)
 			when Nonce > NonceMax ->
@@ -960,8 +961,7 @@ handle_task({computed_output, _},
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session, io_threads = IOThreads } = State,
-	{{NextSeed, StartIntervalNumber}, #vdf_session{ seed = Seed, step_number = StepNumber },
-		Output, PartitionUpperBound} = Args,
+	{{NextSeed, StartIntervalNumber}, Seed, StepNumber, Output, PartitionUpperBound} = Args,
 	#mining_session{ next_seed = CurrentNextSeed,
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = Session,
