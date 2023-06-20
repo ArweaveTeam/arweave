@@ -690,6 +690,7 @@ write_block_index_and_reward_history(BI, RewardHistory) ->
 write_wallet_list(Height, Tree) ->
 	{RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
 	store_account_tree_update(Height, RootHash, UpdateMap),
+	erlang:garbage_collect(),
 	RootHash.
 
 %% @doc Read a list of block hashes from the disk.
