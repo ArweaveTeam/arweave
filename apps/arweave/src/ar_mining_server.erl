@@ -453,7 +453,10 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 	{SessionKey, Session, _PrevSessionKey, _PrevSession, Output, PartitionUpperBound} = Args,
 	StepNumber = Session#vdf_session.step_number,
 	true = is_integer(StepNumber),
-	ar_mining_stats:increment_vdf_stats(),
+	ets:update_counter(?MODULE,
+			{performance, nonce_limiter},
+			[{3, 1}],
+			{{performance, nonce_limiter}, erlang:monotonic_time(millisecond), 0}),
 	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
 	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
@@ -752,7 +755,7 @@ filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = St
 filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
-read_recall_range(Type, _H0, _PartitionNumber, _RecallRangeStart, _Seed, _NextSeed,
+read_recall_range(_Type, _H0, _PartitionNumber, _RecallRangeStart, _Seed, _NextSeed,
 		_StartIntervalNumber, _StepNumber, _NonceLimiterOutput,
 		_ReplicaID, _From, Nonce, NonceMax, _ChunkOffsets, _Ref, _CorrelationRef)
 			when Nonce > NonceMax ->
