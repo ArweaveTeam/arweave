@@ -1142,7 +1142,9 @@ handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, Seed, NextS
 				error ->
 					case Config#config.coordinated_mining of
 						false ->
-							ok;
+							Map2 = maps:put({CorrelationRef, Nonce}, {Chunk, H1}, Map),
+							Session2 = Session#mining_session{ chunk_cache = Map2 },
+							{noreply, State#state{ session = Session2 }};
 						true ->
 							{_PartitionNumber, PartitionNumber2, PartitionUpperBound, _ref} = CorrelationRef,
 							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
@@ -1157,9 +1159,9 @@ handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, Seed, NextS
 											NonceLimiterOutput, SuppliedCheckpoints, Ref});
 								false ->
 									ok
-							end
-					end,
-					{noreply, State};
+							end,
+							{noreply, State}
+					end;
 				{Chunk2, Map2} ->
 					{Thread, Threads2} = pick_hashing_thread(Threads),
 					Thread ! {compute_h2, {Ref, self(), H0, PartitionNumber, Nonce,
@@ -1196,11 +1198,12 @@ handle_task({may_be_remove_chunk_from_cache, _Args}, State) ->
 handle_task({mining_thread_computed_h2, {H0, PartitionNumber, Nonce, Seed, NextSeed,
 		StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, H2,
 		Preimage, Ref}},
-		#state{ diff = Diff, session = #mining_session{ ref = Ref } } = State) ->
+		#state{ diff = Diff, session = #mining_session{ ref = Ref } = Session } = State) ->
 	case binary:decode_unsigned(H2, big) > Diff of
 		true ->
+			#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,
 			Args = {PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber,
-					StepNumber, NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, H2, Preimage,
+					StepNumber, NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, H2, Preimage, PartitionUpperBound,
 					Ref},
 			{noreply, prepare_solution(Args, State)};
 		false ->
