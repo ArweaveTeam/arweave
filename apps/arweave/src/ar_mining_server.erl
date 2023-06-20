@@ -143,6 +143,7 @@ handle_cast(pause, #state{ io_threads = IOThreads,
 		hashing_threads = HashingThreads } = State) ->
 	[Thread ! stop || Thread <- queue:to_list(HashingThreads)],
 	[Thread ! stop || Thread <- maps:values(IOThreads)],
+	prometheus_gauge:set(mining_rate, 0),
 	{noreply, State#state{ diff = infinity, session = #mining_session{} }};
 
 handle_cast({start_mining, Args}, State) ->
@@ -270,7 +271,7 @@ handle_cast(report_performance, #state{ io_threads = IOThreads, session = Sessio
 								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s; VDF: ~.2f s.~n",
 						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed])
 				end,
-			prometheus_gauge:set(mining_rate, TotalCurrent),
+			prometheus_gauge:set(mining_rate, TotalCurrent * 4),
 			IOList2 = [Str | [IOList | ["~n"]]],
 			ar:console(iolist_to_binary(IOList2));
 		false ->
