@@ -623,7 +623,7 @@ io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
 							Session, CorrelationRef);
 					_ ->
 						ar:console("WARNING recv Addr ~s but ReplicaID ~s ~n",
-								[ar_util:encode(Addr), ar_util:encode(ReplicaID)]) % TODO
+								[ar_util:encode(Addr), ar_util:encode(ReplicaID)])
 			end,
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{remote_io_thread_recall_range2_chunk, Args} ->
@@ -879,11 +879,11 @@ hashing_thread(SessionRef) ->
 						end,
 					case PoA2 of
 						error ->
-							% TODO console
 							?LOG_WARNING([{event,
 									mined_block_but_failed_to_read_chunk_proofs_cm},
 									{recall_byte2, RecallByte2},
 									{mining_address, ar_util:encode(ReplicaID)}]),
+							ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs_cm. Check logs for details~n"),
 							ok;
 						_ ->
 							ar_coordination:computed_h2({Diff, ReplicaID, H0, H1, Nonce,
@@ -1303,11 +1303,11 @@ prepare_solution(Args, State) ->
 						end,
 					case PoA2 of
 						error ->
-							% TODO console
 							?LOG_WARNING([{event,
 									mined_block_but_failed_to_read_chunk_proofs_cm},
 									{recall_byte2, RecallByte2},
-									{mining_address, ar_util:encode(ReplicaID)}]);
+									{mining_address, ar_util:encode(ReplicaID)}]),
+							ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs_cm. Check logs for details~n");
 						_ ->
 							% TODO error handling
 							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
@@ -1322,13 +1322,13 @@ prepare_solution(Args, State) ->
 				_ ->
 					{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
 							PartitionNumber, PartitionUpperBound),
-					% TODO console
 					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs_cm},
 							{recall_byte, RecallByte1},
 							{recall_range_start, RecallRange1Start},
 							{nonce, Nonce},
 							{partition, PartitionNumber},
-							{mining_address, ar_util:encode(ReplicaID)}])
+							{mining_address, ar_util:encode(ReplicaID)}]),
+					ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs_cm. Check logs for details~n")
 			end,
 			State
 	end.
@@ -1363,6 +1363,7 @@ prepare_solution(Args, State, Key) ->
 					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
 							{recall_byte2, RecallByte2},
 							{mining_address, ar_util:encode(ReplicaID)}]),
+					ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs. Check logs for details~n"),
 					State;
 				_ ->
 					RecallByte22 = case Chunk2 of not_set -> undefined; _ -> RecallByte2 end,
@@ -1377,6 +1378,7 @@ prepare_solution(Args, State, Key) ->
 					{nonce, Nonce},
 					{partition, PartitionNumber},
 					{mining_address, ar_util:encode(ReplicaID)}]),
+			ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs. Check logs for details~n"),
 			State
 	end.
 
@@ -1390,7 +1392,6 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, Supplie
 	case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID, Nonce,
 			PoA1, PoA2, Diff, PartitionUpperBound, RebaseThreshold}) of
 		error ->
-			% TODO console
 			?LOG_WARNING([{event, failed_to_validate_solution},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
@@ -1399,9 +1400,9 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, Supplie
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:encode(H)},
 					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+			ar:console("WARNING. failed_to_validate_solution. Check logs for details~n"),
 			State;
 		false ->
-			% TODO console
 			?LOG_WARNING([{event, found_invalid_solution}, {partition, PartitionNumber},
 					{step_number, StepNumber},
 					{mining_address, ar_util:encode(ReplicaID)},
@@ -1409,6 +1410,7 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, Supplie
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:encode(H)},
 					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+			ar:console("WARNING. found_invalid_solution. Check logs for details~n"),
 			State;
 		{true, PoACache, PoA2Cache} ->
 			SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
@@ -1520,7 +1522,7 @@ reset_mining_session(State) ->
 	log_chunk_cache_size_limit(CacheSizeLimit),
 	ets:insert(?MODULE, {chunk_cache_size, 0}),
 	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
-	ar_coordination:reset_mining_session(Ref),
+	ar_coordination:reset_mining_session(),
 	#mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit }.
 
 %%%===================================================================
