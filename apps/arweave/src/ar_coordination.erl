@@ -2,9 +2,8 @@
 
 -behaviour(gen_server).
 
-% TODO reset_mining_session/1 -> reset_mining_session/0
 -export([
-	start_link/0, computed_h1/1, check_partition/2, reset_mining_session/1, get_state/0, get_public_state/0, call_remote_peer/0,
+	start_link/0, computed_h1/1, reset_mining_session/0, get_public_state/0, call_remote_peer/0,
 	compute_h2/2, computed_h2/1, poll_loop/0, stat_loop/0
 ]).
 
@@ -48,11 +47,6 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% Helper function to see state while testing
-%% TODO Remove it
-get_state() ->
-	gen_server:call(?MODULE, get_state).
-
 %% Helper function to see state while testing and later for monitoring API
 get_public_state() ->
 	gen_server:call(?MODULE, get_public_state).
@@ -65,17 +59,9 @@ computed_h1({CorrelationRef, Diff, Addr, H0, H1, Nonce, PartitionNumber, Partiti
 call_remote_peer() ->
 	gen_server:cast(?MODULE, call_remote_peer).
 
-%% @doc Check if there is a peer with PartitionNumber2 and prepare the
-%% coordination to send requests
-check_partition(PartitionNumber2, Addr) ->
-	gen_server:call(
-		?MODULE,
-		{check_partition, PartitionNumber2, Addr}
-	).
-
 %% @doc Mining session has changed. Reset it and discard any intermediate value
-reset_mining_session(Ref) ->
-	gen_server:call(?MODULE, {reset_mining_session, Ref}).
+reset_mining_session() ->
+	gen_server:call(?MODULE, {reset_mining_session}).
 
 %% @doc Compute h2 from a remote peer
 compute_h2(Peer, H2Materials) ->
@@ -123,42 +109,12 @@ init([]) ->
 	end,
 	{ok, State2}.
 
-%% Helper callback to see state while testing
-%% TODO Remove it
-handle_call(get_state, _From, State) ->
-	{reply, {ok, State}, State};
-
-% TODO remove
-handle_call(
-	{check_partition, PartitionNumber2, Addr},
-	_From,
-	State
-) ->
-	% BUG. Argument should be not partition number, but offset
-	case maps:find(PartitionNumber2, State#state.peers_by_partition) of
-		{ok, PeerList} ->
-			lists:foldl(
-				fun (Val, Res) ->
-					case Val of
-						{_Peer, _PartitionStart, _PartitionEnd, Addr} ->
-							true;
-						_ ->
-							Res
-					end
-				end,
-				false,
-				PeerList
-			);
-		_ ->
-			{reply, false, State}
-	end;
-
 %% Helper function to see state while testing and later for monitoring API
 handle_call(get_public_state, _From, State) ->
 	PublicState = {State#state.last_peer_response},
 	{reply, {ok, PublicState}, State};
 
-handle_call({reset_mining_session, _MiningSession}, _From, State) ->
+handle_call({reset_mining_session}, _From, State) ->
 	{reply, ok, State#state{
 		diff_addr_h0_pn_pub_to_req_list_map = #{}
 	}};
