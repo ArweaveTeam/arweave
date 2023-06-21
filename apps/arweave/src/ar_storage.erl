@@ -884,6 +884,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast({store_account_tree_update, Height, RootHash, Map}, State) ->
 	store_account_tree_update(Height, RootHash, Map),
+	erlang:garbage_collect(),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
