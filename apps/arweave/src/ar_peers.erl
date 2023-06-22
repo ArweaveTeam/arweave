@@ -285,10 +285,12 @@ handle_info({event, peer, {made_request, Peer, Release}}, State) ->
 	{noreply, State};
 
 handle_info({event, peer, {served_tx, Peer, TimeDelta, Size}}, State) ->
+	?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
 handle_info({event, peer, {served_block, Peer, TimeDelta, Size}}, State) ->
+	?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
@@ -297,6 +299,7 @@ handle_info({event, peer, {gossiped_tx, Peer, TimeDelta, Size}}, State) ->
 	%% Otherwise, one may exploit the endpoint to gain reputation.
 	case check_external_peer(Peer) of
 		ok ->
+			?LOG_DEBUG([{event, update_rating}, {type, gossiped_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 			update_rating(Peer, TimeDelta, Size);
 		_ ->
 			ok
@@ -308,6 +311,7 @@ handle_info({event, peer, {gossiped_block, Peer, TimeDelta, Size}}, State) ->
 	%% Otherwise, one may exploit the endpoint to gain reputation.
 	case check_external_peer(Peer) of
 		ok ->
+			?LOG_DEBUG([{event, update_rating}, {type, gossiped_block}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 			update_rating(Peer, TimeDelta, Size);
 		_ ->
 			ok
@@ -315,6 +319,7 @@ handle_info({event, peer, {gossiped_block, Peer, TimeDelta, Size}}, State) ->
 	{noreply, State};
 
 handle_info({event, peer, {served_chunk, Peer, TimeDelta, Size}}, State) ->
+	?LOG_DEBUG([{event, update_rating}, {type, served_chunk}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
