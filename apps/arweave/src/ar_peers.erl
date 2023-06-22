@@ -162,6 +162,7 @@ stats(Peers) ->
 			Peers).
 
 discover_peers() ->
+	stats(),
 	case ets:lookup(?MODULE, peers) of
 		[] ->
 			ok;
@@ -385,9 +386,11 @@ discover_peers([Peer | Peers]) ->
 	discover_peers(Peers).
 
 format_stats(Peer, Perf) ->
-	io:format("\t~s ~.2f kB/s (~p transfers, ~B failures)~n",
+	KB = Perf#performance.bytes / 1024,
+	Seconds = (Perf#performance.time + 1) / 1000000,
+	io:format("\t~s ~.2f kB/s (~.2f kB, ~.2f s, ~p transfers, ~B failures)~n",
 		[string:pad(ar_util:format_peer(Peer), 20, trailing, $ ),
-			(Perf#performance.bytes / 1024) / ((Perf#performance.time + 1) / 1000000),
+			KB / Seconds, KB, Seconds,
 			Perf#performance.transfers, Perf#performance.failures]).
 
 load_peers() ->
