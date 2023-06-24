@@ -14,6 +14,7 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(REBALANCE_FREQUENCY_MS, 60*1000).
 -define(READ_RANGE_CHUNKS, 10).
 -define(MIN_MAX_ACTIVE, 8).
 -define(LATENCY_ALPHA, 0.1).
@@ -73,6 +74,7 @@ ready_for_work() ->
 init(Workers) ->
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, process_main_queue),
+	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 
 	{ok, #state{
 		workers = queue:from_list(Workers),
@@ -115,6 +117,12 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Peer, Duration}}}, St
 	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, Duration, State2),
 	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
 	{noreply, set_peer_tasks(PeerTasks3, State4)};
+
+handle_cast(rebalance_peers, State) ->
+	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
+	?LOG_DEBUG([{event, rebalance_peers}]),
+	AllPeerTasks = maps:values(State#state.peer_tasks),
+	{noreply, rebalance_peers(AllPeerTasks, State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -330,15 +338,41 @@ complete_sync_range(PeerTasks, Result, Duration, State) ->
 	LatencyTarget = trunc(calculate_ema(
 					State#state.latency_target, IsOK, Milliseconds, LatencyTargetAlpha)),
 
-	PeerTasks2 = PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA },
-	{PeerTasks3, State2} = cut_peer_queue(
-		max_peer_queue(PeerTasks2, State),
-		PeerTasks2,
-		State),
-	PeerTasks4 = update_active(
-		PeerTasks3, IsOK, Milliseconds, State2#state.worker_count, LatencyTarget),
-	{PeerTasks4, State2#state{ latency_target = LatencyTarget }}.
+	PeerTasks2 = PeerTasks#peer_tasks{ 
+		latency_ema = LatencyEMA,
+		success_ema = SuccessEMA,
+		active_count = PeerTasks#peer_tasks.active_count - 1
+	},
+	{PeerTasks2, State#state{ latency_target = LatencyTarget }}.
 
+rebalance_peers([], State) ->
+	State;
+rebalance_peers([PeerTasks | Rest], State) ->
+	{PeerTasks2, State2} = rebalance_peer(PeerTasks, State),
+	State3 = set_peer_tasks(PeerTasks2, State2),
+	rebalance_peers(Rest, State3).
+
+rebalance_peer(PeerTasks, State) ->
+	{PeerTasks2, State2} = cut_peer_queue(
+		max_peer_queue(PeerTasks, State),
+		PeerTasks,
+		State),
+	IsOK = true,
+	Milliseconds = PeerTasks2#peer_tasks.latency_ema,
+	WorkerCount = State2#state.worker_count,
+	LatencyTarget = State2#state.latency_target,
+	PeerTasks3 = update_active(PeerTasks2, IsOK, Milliseconds, WorkerCount, LatencyTarget),
+	?LOG_DEBUG([
+		{event, update_active},
+		{peer, ar_util:format_peer(PeerTasks3#peer_tasks.peer)},
+		{before_max, PeerTasks2#peer_tasks.max_active},
+		{after_max, PeerTasks3#peer_tasks.max_active},
+		{worker_count, WorkerCount},
+		{active_count, PeerTasks2#peer_tasks.active_count},
+		{latency_target, LatencyTarget},
+		{latency_ema, Milliseconds}
+		]),
+	{PeerTasks3, State2}.
 
 %%--------------------------------------------------------------------
 %% Helpers
@@ -403,7 +437,7 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
 	LatencyEMA = PeerTasks#peer_tasks.latency_ema,
 	MaxActive = PeerTasks#peer_tasks.max_active,
-	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
+	ActiveCount = PeerTasks#peer_tasks.active_count,
 	TargetMaxActive = case {
 			IsOK, Milliseconds < LatencyTarget, LatencyEMA < LatencyTarget} of
 		{false, _, _} ->
@@ -429,7 +463,6 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 	),
 	%% Can't have less than the minimum.
 	PeerTasks#peer_tasks{
-		active_count = ActiveCount,
 		max_active = max(TaskLimitedMaxActive, ?MIN_MAX_ACTIVE)
 	}.
 
