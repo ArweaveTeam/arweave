@@ -517,10 +517,11 @@ load_from_url(URL) ->
 		#{ host := Host, path := Path, scheme := Scheme } = M = uri_string:parse(URL),
 		Query = case maps:get(query, M, not_found) of not_found -> <<>>; Q -> [<<"?">>, Q] end,
 		Port = maps:get(port, M, case Scheme of "http" -> 80; "https" -> 443 end),
+		Peer = ar_util:parse_peer(Host ++ ":" ++ integer_to_list(Port)),
 		Reply =
 			ar_http:req(#{
 				method => get,
-				peer => {Host, Port},
+				peer => Peer,
 				path => binary_to_list(iolist_to_binary([Path, Query])),
 				is_peer_request => false,
 				timeout => 20000,
