@@ -10,7 +10,7 @@
 
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
-		resolve_and_cache_peer/2]).
+		resolve_and_cache_peer/2, start_request/3, end_request/4]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -148,6 +148,19 @@ get_peer_release(Peer) ->
 			-1
 	end.
 
+start_request(Peer, PathLabel, Method) ->
+	gen_server:cast(?MODULE, {start_request, Peer, PathLabel, Method}).
+
+end_request(Peer, PathLabel, Method, {ok, {{<<"200">>, _}, _, Body, Start, End}} = Response) ->
+	gen_server:cast(?MODULE, {end_request,
+		Peer, PathLabel, Method,
+		ar_metrics:get_status_class(Response),
+		End-Start, byte_size(term_to_binary(Body))});
+end_request(Peer, PathLabel, Method, Response) ->
+	%% TODO: error response
+	ok.
+
+
 %% @doc Print statistics about the current peers.
 stats() ->
 	Connected = get_peers(),
@@ -261,6 +274,21 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
+handle_cast({start_request, Peer, PathLabel, Method}, State) ->
+	{noreply, State};
+
+handle_cast({end_request, Peer, PathLabel, _Method, Status, ElapsedMicroseconds, Size}, State) ->
+	?LOG_DEBUG([
+		{event, update_rating},
+		{path, PathLabel},
+		{status, Status},
+		{peer, ar_util:format_peer(Peer)},
+		{time_delta, ElapsedMicroseconds},
+		{size, Size}
+	]),
+	update_rating(Peer, ElapsedMicroseconds, Size),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -285,42 +313,42 @@ handle_info({event, peer, {made_request, Peer, Release}}, State) ->
 	{noreply, State};
 
 handle_info({event, peer, {served_tx, Peer, TimeDelta, Size}}, State) ->
-	?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	update_rating(Peer, TimeDelta, Size),
+	% ?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
+	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
 handle_info({event, peer, {served_block, Peer, TimeDelta, Size}}, State) ->
-	?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	update_rating(Peer, TimeDelta, Size),
+	% ?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
+	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
 handle_info({event, peer, {gossiped_tx, Peer, TimeDelta, Size}}, State) ->
 	%% Only the first peer who sent the given transaction is rated.
 	%% Otherwise, one may exploit the endpoint to gain reputation.
-	case check_external_peer(Peer) of
-		ok ->
-			?LOG_DEBUG([{event, update_rating}, {type, gossiped_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-			update_rating(Peer, TimeDelta, Size);
-		_ ->
-			ok
-	end,
+	% case check_external_peer(Peer) of
+	% 	ok ->
+	% 		?LOG_DEBUG([{event, update_rating}, {type, gossiped_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
+	% 		update_rating(Peer, TimeDelta, Size);
+	% 	_ ->
+	% 		ok
+	% end,
 	{noreply, State};
 
 handle_info({event, peer, {gossiped_block, Peer, TimeDelta, Size}}, State) ->
 	%% Only the first peer who sent the given block is rated.
 	%% Otherwise, one may exploit the endpoint to gain reputation.
-	case check_external_peer(Peer) of
-		ok ->
-			?LOG_DEBUG([{event, update_rating}, {type, gossiped_block}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-			update_rating(Peer, TimeDelta, Size);
-		_ ->
-			ok
-	end,
+	% case check_external_peer(Peer) of
+	% 	ok ->
+	% 		?LOG_DEBUG([{event, update_rating}, {type, gossiped_block}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
+	% 		update_rating(Peer, TimeDelta, Size);
+	% 	_ ->
+	% 		ok
+	% end,
 	{noreply, State};
 
 handle_info({event, peer, {served_chunk, Peer, TimeDelta, Size}}, State) ->
-	?LOG_DEBUG([{event, update_rating}, {type, served_chunk}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	update_rating(Peer, TimeDelta, Size),
+	% ?LOG_DEBUG([{event, update_rating}, {type, served_chunk}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
+	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
 handle_info({event, peer, {bad_response, {Peer, _Type, _Reason}}}, State) ->
@@ -480,7 +508,10 @@ may_be_rotate_peer_ports(Peer) ->
 	end.
 
 get_ip_port({A, B, C, D, Port}) ->
-	{{A, B, C, D}, Port}.
+	{{A, B, C, D}, Port};
+
+get_ip_port({Domain, Port}) ->
+	{Domain, Port}.
 
 construct_peer({A, B, C, D}, Port) ->
 	{A, B, C, D, Port}.

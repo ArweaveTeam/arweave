@@ -63,6 +63,8 @@ req(Args) ->
 req(Args, ReestablishedConnection) ->
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
+	PathLabel = ar_http_iface_server:label_http_path(list_to_binary(Path)),
+	ar_peers:start_request(Peer, PathLabel, Method),
 	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, infinity) of
 		{ok, PID} ->
 			ar_rate_limiter:throttle(Peer, Path),
@@ -89,6 +91,9 @@ req(Args, ReestablishedConnection) ->
 		true ->
 			ok;
 		false -> 
+			Status = ar_metrics:get_status_class(Response),
+			ElapsedNative = EndTime - StartTime,
+			ar_peers:end_request(Peer, PathLabel, Method, Response),
 			%% NOTE: the erlang prometheus client looks at the metric name to determine units.
 			%%       If it sees <name>_duration_<unit> it assumes the observed value is in
 			%%       native units and it converts it to <unit> .To query native units, use:
@@ -96,9 +101,9 @@ req(Args, ReestablishedConnection) ->
 			%%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
 			prometheus_histogram:observe(ar_http_request_duration_seconds, [
 					method_to_list(Method),
-					ar_http_iface_server:label_http_path(list_to_binary(Path)),
-					ar_metrics:get_status_class(Response)
-				], EndTime - StartTime)
+					PathLabel,
+					Status
+				], ElapsedNative)
 	end,	
 	Response.
 %%% ==================================================================
