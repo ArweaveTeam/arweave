@@ -148,16 +148,20 @@ get_peer_release(Peer) ->
 			-1
 	end.
 
-start_request(Peer, PathLabel, Method) ->
-	gen_server:cast(?MODULE, {start_request, Peer, PathLabel, Method}).
+start_request(Peer, PathLabel, get) ->
+	gen_server:cast(?MODULE, {start_request, Peer, PathLabel, get});
+start_request(Peer, PathLabel, _) ->
+	ok.
 
-end_request(Peer, PathLabel, Method, {ok, {{<<"200">>, _}, _, Body, Start, End}} = Response) ->
+end_request(Peer, PathLabel, get, {ok, {{<<"200">>, _}, _, Body, Start, End}} = Response) ->
 	gen_server:cast(?MODULE, {end_request,
-		Peer, PathLabel, Method,
+		Peer, PathLabel, get,
 		ar_metrics:get_status_class(Response),
 		End-Start, byte_size(term_to_binary(Body))});
-end_request(Peer, PathLabel, Method, Response) ->
+end_request(Peer, PathLabel, get, Response) ->
 	%% TODO: error response
+	ok;
+end_request(Peer, PathLabel, _, Response) ->
 	ok.
 
 
@@ -508,10 +512,7 @@ may_be_rotate_peer_ports(Peer) ->
 	end.
 
 get_ip_port({A, B, C, D, Port}) ->
-	{{A, B, C, D}, Port};
-
-get_ip_port({Domain, Port}) ->
-	{Domain, Port}.
+	{{A, B, C, D}, Port}.
 
 construct_peer({A, B, C, D}, Port) ->
 	{A, B, C, D, Port}.

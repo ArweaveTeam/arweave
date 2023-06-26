@@ -733,7 +733,7 @@ pre_validate_nonce_limiter(B, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, Gossip) ->
 	ar_ignore_registry:add(B#block.indep_hash),
 	ar_events:send(block, {new, B, #{ source => {peer, Peer}, gossip => Gossip }}),
-	ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
+	% ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
 	record_block_pre_validation_time(Timestamp),
 	?LOG_INFO([{event, accepted_block}, {height, B#block.height},
 			{indep_hash, ar_util:encode(B#block.indep_hash)}]).
@@ -777,7 +777,7 @@ pre_validate_pow(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 			B2 = B#block{ txs = include_transactions(B#block.txs) },
 			ar_events:send(block, {new, B2, #{ source => {peer, Peer},
 					recall_byte => RecallByte }}),
-			ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
+			% ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
 			record_block_pre_validation_time(Timestamp),
 			prometheus_counter:inc(block2_received_transactions,
 					count_received_transactions(B#block.txs)),

@@ -511,10 +511,10 @@ download_block(Peers, H, H2, TXRoot) ->
 				end,
 			case BH of
 				H when Height >= Fork_2_0 ->
-					ar_events:send(peer, {served_block, Peer, Time, Size}),
+					% ar_events:send(peer, {served_block, Peer, Time, Size}),
 					download_txs(Peers, B, TXRoot);
 				H2 when Height < Fork_2_0 ->
-					ar_events:send(peer, {served_block, Peer, Time, Size}),
+					% ar_events:send(peer, {served_block, Peer, Time, Size}),
 					download_txs(Peers, B, TXRoot);
 				_ ->
 					?LOG_WARNING([
