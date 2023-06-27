@@ -148,11 +148,17 @@ get_peer_release(Peer) ->
 			-1
 	end.
 
+start_request({_Host, _Port}, _, _) ->
+	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
+	ok;
 start_request(Peer, PathLabel, get) ->
 	gen_server:cast(?MODULE, {start_request, Peer, PathLabel, get});
-start_request(Peer, PathLabel, _) ->
+start_request(_Peer, _PathLabel, _) ->
 	ok.
 
+end_request({_Host, _Port}, _, _, _) ->
+	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
+	ok;
 end_request(Peer, PathLabel, get, {ok, {{<<"200">>, _}, _, Body, Start, End}} = Response) ->
 	gen_server:cast(?MODULE, {end_request,
 		Peer, PathLabel, get,
