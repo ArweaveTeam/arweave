@@ -1830,8 +1830,7 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	% ar_events:send(peer, {gossiped_tx, Peer, erlang:get(read_body_time),
-	% 		erlang:get(body_size)}),
+	ar_peers:gossiped_tx(Peer),
 	ar_events:send(tx, {new, TX, Peer}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),
@@ -2318,9 +2317,6 @@ post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 				{error, _} ->
 					{400, #{}, <<"Invalid block.">>, Req2};
 				{ok, BShadow} ->
-					ReadBodyTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp),
-					erlang:put(read_body_time, ReadBodyTime),
-					erlang:put(body_size, byte_size(term_to_binary(BShadow))),
 					post_block(check_transactions_are_present, {BShadow, Peer}, Req2,
 							ReceiveTimestamp)
 			end;
@@ -2343,7 +2339,7 @@ post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestam
 		_ -> % POST /block; do not reject for backwards-compatibility
 			post_block(enqueue_block, {BShadow, Peer}, Req, ReceiveTimestamp)
 	end;
-post_block(enqueue_block, {B, Peer}, Req, Timestamp) ->
+post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 	B2 =
 		case B#block.height >= ar_fork:height_2_6() of
 			true ->
@@ -2362,8 +2358,11 @@ post_block(enqueue_block, {B, Peer}, Req, Timestamp) ->
 				end
 		end,
 	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	ar_block_pre_validator:pre_validate(B2, Peer, Timestamp, erlang:get(read_body_time),
-			erlang:get(body_size)),
+	%% ReadBodyTime in microseconds, measure elapsed time before validation since the validation
+	%% operation can take some time.
+	ReadBodyTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp),
+	ValidationStatus = ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp),
+	ar_peers:gossiped_block(Peer, B2, ValidationStatus, ReadBodyTime),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->

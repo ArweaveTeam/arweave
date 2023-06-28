@@ -10,7 +10,7 @@
 
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
-		resolve_and_cache_peer/2, start_request/3, end_request/4]).
+		resolve_and_cache_peer/2, start_request/3, end_request/4, gossiped_block/4, gossiped_tx/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -170,6 +170,20 @@ end_request(Peer, PathLabel, get, Response) ->
 end_request(Peer, PathLabel, _, Response) ->
 	ok.
 
+gossiped_block(Peer, B, ok, ReadBodyTime) ->
+	gen_server:cast(?MODULE, {
+		gossiped_data, block, Peer, ReadBodyTime, byte_size(term_to_binary(B))
+	});
+gossiped_block(_Peer, _B, _ValidationStatus, _ReadBodyTime) ->
+	%% Ignore skipped or invalid blocks for now (consistent with old behavior, but may need to
+	%% be revisited)
+	ok.
+
+
+gossiped_tx(Peer) ->
+	gen_server:cast(?MODULE, {
+		gossiped_data, tx, Peer, erlang:get(read_body_time), erlang:get(body_size)
+	}).
 
 %% @doc Print statistics about the current peers.
 stats() ->
@@ -290,6 +304,7 @@ handle_cast({start_request, Peer, PathLabel, Method}, State) ->
 handle_cast({end_request, Peer, PathLabel, _Method, Status, ElapsedMicroseconds, Size}, State) ->
 	?LOG_DEBUG([
 		{event, update_rating},
+		{update_type, request},
 		{path, PathLabel},
 		{status, Status},
 		{peer, ar_util:format_peer(Peer)},
@@ -297,6 +312,23 @@ handle_cast({end_request, Peer, PathLabel, _Method, Status, ElapsedMicroseconds,
 		{size, Size}
 	]),
 	update_rating(Peer, ElapsedMicroseconds, Size),
+	{noreply, State};
+
+handle_cast({gossiped_data, DataType, Peer, ElapsedMicroseconds, Size}, State) ->
+	case check_external_peer(Peer) of
+		ok ->
+			?LOG_DEBUG([
+				{event, update_rating},
+				{update_type, DataType},
+				{peer, ar_util:format_peer(Peer)},
+				{time_delta, ElapsedMicroseconds},
+				{size, Size}
+			]),
+			update_rating(Peer, ElapsedMicroseconds, Size);
+		_ ->
+			ok
+	end,
+	
 	{noreply, State};
 
 handle_cast(Cast, State) ->
@@ -329,35 +361,6 @@ handle_info({event, peer, {served_tx, Peer, TimeDelta, Size}}, State) ->
 
 handle_info({event, peer, {served_block, Peer, TimeDelta, Size}}, State) ->
 	% ?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	% update_rating(Peer, TimeDelta, Size),
-	{noreply, State};
-
-handle_info({event, peer, {gossiped_tx, Peer, TimeDelta, Size}}, State) ->
-	%% Only the first peer who sent the given transaction is rated.
-	%% Otherwise, one may exploit the endpoint to gain reputation.
-	% case check_external_peer(Peer) of
-	% 	ok ->
-	% 		?LOG_DEBUG([{event, update_rating}, {type, gossiped_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	% 		update_rating(Peer, TimeDelta, Size);
-	% 	_ ->
-	% 		ok
-	% end,
-	{noreply, State};
-
-handle_info({event, peer, {gossiped_block, Peer, TimeDelta, Size}}, State) ->
-	%% Only the first peer who sent the given block is rated.
-	%% Otherwise, one may exploit the endpoint to gain reputation.
-	% case check_external_peer(Peer) of
-	% 	ok ->
-	% 		?LOG_DEBUG([{event, update_rating}, {type, gossiped_block}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	% 		update_rating(Peer, TimeDelta, Size);
-	% 	_ ->
-	% 		ok
-	% end,
-	{noreply, State};
-
-handle_info({event, peer, {served_chunk, Peer, TimeDelta, Size}}, State) ->
-	% ?LOG_DEBUG([{event, update_rating}, {type, served_chunk}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
@@ -430,10 +433,10 @@ discover_peers([Peer | Peers]) ->
 
 format_stats(Peer, Perf) ->
 	KB = Perf#performance.bytes / 1024,
-	Seconds = (Perf#performance.time + 1) / 1000000,
+	Seconds = (Perf#performance.time + 1) / 1000,
 	io:format("\t~s ~.2f kB/s (~.2f kB, ~.2f s, ~p transfers, ~B failures)~n",
-		[string:pad(ar_util:format_peer(Peer), 20, trailing, $ ),
-			KB / Seconds, KB, Seconds,
+		[string:pad(ar_util:format_peer(Peer), 21, trailing, $ ),
+			float(Perf#performance.rating), KB, Seconds,
 			Perf#performance.transfers, Perf#performance.failures]).
 
 load_peers() ->

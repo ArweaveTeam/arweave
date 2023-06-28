@@ -80,8 +80,7 @@ get_payments_value(P3Config, Asset, Field) when
 	end.
 
 get_service_config(P3Config, Req) ->
-	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	Path = ar_http_iface_server:label_http_path(SplitPath),
+	Path = ar_http_iface_server:label_req(Req),
 	case Path of
 		undefined ->
 			undefined;
