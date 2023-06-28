@@ -10,7 +10,7 @@
 
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
-		resolve_and_cache_peer/2, start_request/3, end_request/4, gossiped_block/4, gossiped_tx/1]).
+		resolve_and_cache_peer/2, start_request/3, end_request/4, gossiped_block/4, gossiped_tx/3]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -180,9 +180,9 @@ gossiped_block(_Peer, _B, _ValidationStatus, _ReadBodyTime) ->
 	ok.
 
 
-gossiped_tx(Peer) ->
+gossiped_tx(Peer, TX, ReadBodyTime) ->
 	gen_server:cast(?MODULE, {
-		gossiped_data, tx, Peer, erlang:get(read_body_time), erlang:get(body_size)
+		gossiped_data, tx, Peer, ReadBodyTime, byte_size(term_to_binary(TX))
 	}).
 
 %% @doc Print statistics about the current peers.
