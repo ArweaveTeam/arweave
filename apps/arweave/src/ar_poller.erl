@@ -142,7 +142,19 @@ handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
 		true ->
 			ok
 	end,
-	ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp(), Time, Size),
+	%% How we rank peers changed in June 2023
+	%%
+	%% Previous Behavior:
+	%% - throughput metrics (block size and time to download) were recorded in pre_validate
+	%%   for valid blocks only
+	%% Current Behavior:
+	%% - throughput metrics are recorded for all outbound web requests to peers (including the
+	%%   GET /block/hash request that triggers the block/discovered event)
+	%%
+	%% The new behavior is slightly different, but I believe it still results in a valid ranking.
+	%% Future work may change the behavior further (e.g. regarding when penalties are recorded
+	%% for errors or invalid blocks)
+	ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp()),
 	{noreply, State};
 handle_info({event, block, _}, State) ->
 	{noreply, State};

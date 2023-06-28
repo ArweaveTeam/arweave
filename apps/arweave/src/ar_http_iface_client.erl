@@ -10,7 +10,7 @@
 		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
 		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
-		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
+		get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
 		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1]).
@@ -302,9 +302,6 @@ get_sync_record(Peer, Start, Limit) ->
 		headers => Headers
 	}), Start, Limit).
 
-get_chunk_json(Peer, Offset, RequestedPacking) ->
-	get_chunk(Peer, Offset, RequestedPacking, json).
-
 get_chunk_binary(Peer, Offset, RequestedPacking) ->
 	get_chunk(Peer, Offset, RequestedPacking, binary).
 
@@ -562,7 +559,7 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 handle_sync_record_response(Reply, _, _) ->
 	{error, Reply}.
 
-handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
+handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	DecodeFun =
 		case Encoding of
 			json ->
@@ -591,7 +588,7 @@ handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 				Chunk when byte_size(Chunk) > ?DATA_CHUNK_SIZE ->
 					{error, chunk_bigger_than_256kib};
 				_ ->
-					{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
+					{ok, Proof}
 			end
 	end;
 handle_chunk_response(_Encoding, {error, _} = Response) ->

@@ -913,7 +913,7 @@ handle_cast(sync_intervals, State) ->
 					sync_intervals_queue_intervals = I2 }}
 	end;
 
-handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast, State) ->
+handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1) - 1,
