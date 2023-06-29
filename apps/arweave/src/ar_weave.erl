@@ -113,7 +113,7 @@ get_initial_block_time_history() ->
 	[{120, 1, 1}].
 -endif.
 
-create_genesis_tx(Key) ->
+create_genesis_tx(Key, Size) ->
 	{_, {_, Pk}} = Key,
 	UnsignedTX =
 		(ar_tx:new())#tx{

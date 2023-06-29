@@ -2,13 +2,11 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0, start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
-		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
-		get_difficulty_for_invalid_hash/0, invalid_solution/0, valid_solution/0,
-		remote_call/4, slave_node/0, master_node/0, miner_node/1]).
+		http_get_block/2, turn_off_one_chunk_mining/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4, slave_start/0, slave_start/1,
-		slave_start/2, slave_start/3, mine/0,
+		slave_start/2, slave_start/3,
 		get_tx_price/1, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
@@ -87,25 +85,21 @@ start_node(B0, Config) ->
 		peers = Config#config.peers,
 		cm_exit_peer = Config#config.cm_exit_peer,
 		cm_peers = Config#config.cm_peers,
-		mine = Config#config.mine,
 		storage_modules = Config#config.storage_modules
 	},
 	ok = application:set_env(arweave, config, Config2),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
-	wait_until_syncs_genesis_data(),
-	erlang:node().
+	% TODO wait_until_syncs_genesis_data(),
+	B0.
 
-%% @doc Launch the given number (>= 1, =< ?MAX_MINERS) of the mining nodes in the coordinated
+%% @doc Launch the given number (>= 1, =< 3) of the mining nodes in the coordinated
 %% mode plus an exit node and a validator node.
 %% Return [Node1, ..., NodeN, ExitNode, ValidatorNode].
-start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
-	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
-	%% a solution.
-	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
-	RewardAddr = ar_wallet:to_address(remote_call(ar_wallet, new_keyfile, [],
-			slave_node())),
-	BaseConfig = #config{
+start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< 3 ->
+	[B0] = ar_weave:init([], 1, 20 * 1024 * 1024 * 3),
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	BaseConfig2 = #config{
 		start_from_block_index = true,
 		auto_join = true,
 		mining_addr = RewardAddr,
@@ -118,18 +112,17 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		mining_server_chunk_cache_size_limit = 4,
 		debug = true
 	},
-	ExitPeer = slave_peer(),
-	ValidatorPeer = master_peer(),
-	BaseCMConfig = BaseConfig#config{
+	ExitPeer = {127, 0, 0, 1, 1982},
+	ValidatorPeer = {127, 0, 0, 1, 1981},
+	BaseCMConfig = BaseConfig2#config{
 		coordinated_mining = true,
 		coordinated_mining_secret = <<"test_coordinated_mining_secret">>,
 		cm_poll_interval = 2000
 	},
 	ExitNodeConfig = BaseCMConfig#config{
-		peers = [ValidatorPeer],
-		mine = true
+		peers = [ValidatorPeer]
 	},
-	ValidatorNodeConfig = BaseConfig#config{
+	ValidatorNodeConfig = BaseConfig2#config{
 		peers = [ExitPeer]
 	},
 	MiningNodeConfigs = [BaseCMConfig#config{
@@ -138,28 +131,21 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		cm_peers = get_cm_peers(I, MiningNodeCount),
 		storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
 	} || I <- lists:seq(1, MiningNodeCount)],
-	
-	ExitNode = remote_call(ar_test_node, start_node, [B0, ExitNodeConfig],
-			slave_node()),
-	ValidatorNode = remote_call(ar_test_node, start_node, [B0, ValidatorNodeConfig],
-			master_node()),
-	MiningNodes = [remote_call(ar_test_node, start_node, [B0, lists:nth(I, MiningNodeConfigs)],
-			miner_node(I))
-		|| I <- lists:seq(1, MiningNodeCount)],
-	MiningNodes ++ [ExitNode, ValidatorNode].
-
-mine() ->
-	gen_server:cast(ar_node_worker, mine).
+	remote_call(ar_test_node, start_node, [B0, ExitNodeConfig], 'cm_exit@127.0.0.1'),
+	remote_call(ar_test_node, start_node, [B0, ValidatorNodeConfig], 'cm_validator@127.0.0.1'),
+	[remote_call(ar_test_node, start_node, [B0, lists:nth(I, MiningNodeConfigs)],
+			list_to_atom("cm_miner_" ++ integer_to_list(I) ++ "@127.0.0.1"))
+		|| I <- lists:seq(1, MiningNodeCount)].
 
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
-	remote_call(ar_test_node, mine, [], Node).
+	remote_call(ar_node, mine, [], Node).
 
 %% @doc Wait until the given node reaches the given height or fail by timeout.
 wait_until_height(Height, Node) ->
 	{ok, BI} = ar_util:do_until(
 		fun() ->
-			case get_blocks(Node) of
+			case remote_call(ar_node, get_blocks, [], Node) of
 				BI when length(BI) - 1 == Height ->
 					{ok, BI};
 				_ ->
@@ -170,9 +156,6 @@ wait_until_height(Height, Node) ->
 		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
 	),
 	BI.
-
-wait_until_mining_paused(Node) ->
-	remote_call(ar_test_node, wait_until_mining_paused, [], Node).
 
 %% @doc Fetch and decode a binary-encoded block by hash H from the HTTP API of the
 %% given node. Return {ok, B} | {error, Reason}.
@@ -190,109 +173,14 @@ http_get_block(H, Node) ->
 			{error, {StatusCode, Body}}
 	end.
 
-get_blocks(Node) ->
-	remote_call(ar_node, get_blocks, [], Node).
-
-invalid_solution() ->
-	<<"00000000000000000000000000000000">>.
-
-valid_solution() ->
-	<<"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF">>.
-
-mock_to_force_invalid_h1() ->
-	{
-		ar_block, compute_h1,
-		fun(_H0, _Nonce, _Chunk1) -> 
-			{invalid_solution(), invalid_solution()}
-		end
-	}.
-
-get_difficulty_for_invalid_hash() ->
-	%% Set the difficulty just high enough to exclude the invalid_solution(), this lets
-	%% us selectively disable one- or two-chunk mining in tests.
-	binary:decode_unsigned(invalid_solution(), big) + 1.
+%% @doc Turn off "one chunk mining" (i.e., the node will start mining but only publish
+%% a two-chunk solution) on the given node.
+turn_off_one_chunk_mining(Node) ->
+	remote_call(ar_mining_server, turn_off_one_chunk_mining, [], Node).
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-clean_up_and_stop() ->
-	Config = stop(),
-	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
-	lists:foreach(
-		fun	("wallets") ->
-				ok;
-			(Entry) ->
-				file:del_dir_r(filename:join(Config#config.data_dir, Entry))
-		end,
-		Entries
-	).
-
-write_genesis_files(DataDir, B0) ->
-	BH = B0#block.indep_hash,
-	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
-	ok = filelib:ensure_dir(BlockDir ++ "/"),
-	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
-	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
-	TXDir = filename:join(DataDir, ?TX_DIR),
-	ok = filelib:ensure_dir(TXDir ++ "/"),
-	lists:foreach(
-		fun(TX) ->
-			TXID = TX#tx.id,
-			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),
-			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-			ok = file:write_file(TXFilepath, TXJSON)
-		end,
-		B0#block.txs
-	),
-	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIBin = term_to_binary({BI, B0#block.reward_history}),
-	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
-	ok = filelib:ensure_dir(HashListDir ++ "/"),
-	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
-	ok = file:write_file(BIFilepath, BIBin),
-	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
-	ok = filelib:ensure_dir(WalletListDir ++ "/"),
-	RootHash = B0#block.wallet_list,
-	WalletListFilepath =
-		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
-	WalletListJSON =
-		ar_serialize:jsonify(
-			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
-					B0#block.account_tree)
-		),
-	ok = file:write_file(WalletListFilepath, WalletListJSON).
-
-wait_until_syncs_data(Left, Right, WeaveSize, _Packing)
-  		when Left >= Right orelse
-			Left >= WeaveSize orelse
-			(Right - Left < ?DATA_CHUNK_SIZE) orelse
-			(WeaveSize - Left < ?DATA_CHUNK_SIZE) ->
-	ok;
-wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
-	true = ar_util:do_until(
-		fun() ->
-			case Packing of
-				any ->
-					case ar_sync_record:is_recorded(Left + 1, ar_data_sync) of
-						false ->
-							false;
-						_ ->
-							true
-					end;
-				_ ->
-					case ar_sync_record:is_recorded(Left + 1, {ar_data_sync, Packing}) of
-						{{true, _}, _} ->
-							true;
-						_ ->
-							false
-					end
-			end
-		end,
-		1000,
-		30000
-	),
-	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, Packing).
 
 %% @doc Return the list of the configured coordinated mining peers for the peer
 %% with the given number I and the total number of confiruded mining peers N.
@@ -310,18 +198,16 @@ get_cm_peers(3, 3) ->
 	[{127, 0, 0, 1, 1980}, {127, 0, 0, 1, 1979}].
 
 get_cm_storage_modules(RewardAddr, 1, 1) ->
-	%% When there's only 1 node it covers all 3 storage modules.
-	get_cm_storage_modules(RewardAddr, 1, 3) ++
-	get_cm_storage_modules(RewardAddr, 2, 3) ++
-	get_cm_storage_modules(RewardAddr, 3, 3);
-get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
-		when MiningNodeCount == 2 orelse MiningNodeCount == 3 ->
-	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
-	RangeNumber = lists:nth(N, [0, 2, 4]),
-	[{?PARTITION_SIZE, RangeNumber, {spora_2_6, RewardAddr}}].
+	[{20 * 1024 * 1024, N, {spora_2_6, RewardAddr}} || N <- lists:seq(0, 2)];
+get_cm_storage_modules(RewardAddr, 1, N) when N == 2 orelse N == 3 ->
+	[{20 * 1024 * 1024, 0, {spora_2_6, RewardAddr}}];
+get_cm_storage_modules(RewardAddr, 2, N) when N == 2 orelse N == 3 ->
+	[{20 * 1024 * 1024, 1, {spora_2_6, RewardAddr}}];
+get_cm_storage_modules(RewardAddr, 3, N) when N == 3 ->
+	[{20 * 1024 * 1024, 2, {spora_2_6, RewardAddr}}].
 
 remote_call(Module, Function, Args, Node) ->
-	remote_call(Module, Function, Args, 300000, Node).
+	remote_call(Module, Function, Args, 10000, Node).
 
 remote_call(Module, Function, Args, Timeout, Node) ->
 	Key = rpc:async_call(Node, Module, Function, Args),

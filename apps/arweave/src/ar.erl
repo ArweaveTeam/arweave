@@ -43,6 +43,7 @@
 		ar_packing_server,
 		ar_patricia_tree,
 		ar_peers,
+		ar_coordinated_mining,
 		ar_poa,
 		ar_pricing,
 		ar_retarget,
@@ -323,12 +324,22 @@ show_help() ->
 			{"defragment_module",
 				"Run defragmentation of the chunk storage files from the given storage module."
 				" Assumes the run_defragmentation flag is provided."},
-			{"coordinated_mining", "Enable coordinated mining (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."},
-			{"coordinated_mining_secret", "Coordinated mining secret for authenticated requests between private peers (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."},
-			{"cm_poll_interval", io_lib:format("Coordinated mining interval for poll other nodes partition tables (default ~B).", [?DEFAULT_CM_POLL_INTERVAL])},
-			{"cm_stat_interval", io_lib:format("Coordinated mining interval for print statistics (default ~B).", [?DEFAULT_CM_STAT_INTERVAL])},
-			{"cm_peer (IP:port)", "Coordinated mining peer (or set of peers) (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."},
-			{"cm_exit_peer (IP:port)", "Coordinated mining exit peer which will publish solution (coordinated_mining, coordinated_mining_secret, cm_peer and cm_exit_peer needed)."}
+			{"coordinated_mining", "Enable coordinated mining. You need to also set "
+					"coordinated_mining_secret, cm_peer, and cm_exit_peer."},
+			{"coordinated_mining_secret", "Coordinated mining secret for authenticated "
+					"requests between private peers. You need to also set coordinated_mining, "
+					"cm_peer, and cm_exit_peer."},
+			{"cm_poll_interval", io_lib:format("The frequency in milliseconds of asking the "
+					"other nodes in the coordinated mining setup about their partition "
+					"tables. Default is ~B.", [?DEFAULT_CM_POLL_INTERVAL])},
+			{"cm_stat_interval", io_lib:format("The frequency in milliseconds of printing the "
+					"coordinated mining statistics. Default is ~B.",
+					[?DEFAULT_CM_STAT_INTERVAL])},
+			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
+					"set coordinated_mining, coordinated_mining_secret, and cm_exit_peer."},
+			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
+					"coordinated mining mode. You need to also set coordinated_mining, "
+					"coordinated_mining_secret, and cm_peer."}
 		]
 	),
 	erlang:halt().

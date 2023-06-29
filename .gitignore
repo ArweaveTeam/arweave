@@ -3,6 +3,8 @@
 *.dat
 .vscode
 slave.out
+cm_exit.out
+cm_validator.out
 cm_miner_1.out
 cm_miner_2.out
 cm_miner_3.out
@@ -18,6 +20,8 @@ apps/arweave/c_src/**/*.o
 apps/arweave/c_src/tests/tests
 data_test_master
 data_test_slave
+data_test_cm_exit
+data_test_cm_validator
 data_test_cm_miner_1
 data_test_cm_miner_2
 data_test_cm_miner_3
@@ -34,6 +38,8 @@ logs
 ebin
 metrics_master
 metrics_slave
+metrics_cm_exit
+metrics_cm_validator
 metrics_cm_miner_1
 metrics_cm_miner_2
 metrics_cm_miner_3
