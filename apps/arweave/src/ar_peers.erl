@@ -36,6 +36,11 @@
 
 %% The number of failed requests in a row we tolerate before dropping the peer.
 -define(TOLERATE_FAILURE_COUNT, 20).
+-define(MINIMUM_SUCCESS, 0.5).
+-define(LATENCY_ALPHA, 0.1).
+-define(SIZE_ALPHA, 0.1).
+-define(SUCCESS_ALPHA, 0.01).
+-define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over-weighting the first response
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
 %% we remove the peer from the first slot.
@@ -44,9 +49,9 @@
 
 -record(performance, {
 	bytes = 0,
-	time = 0,
+	latency = ?STARTING_LATENCY_EMA,
 	transfers = 0,
-	failures = 0,
+	success = 1.0,
 	rating = 0,
 	release = -1
 }).
@@ -433,11 +438,11 @@ discover_peers([Peer | Peers]) ->
 
 format_stats(Peer, Perf) ->
 	KB = Perf#performance.bytes / 1024,
-	Seconds = (Perf#performance.time + 1) / 1000,
-	io:format("\t~s ~.2f kB/s (~.2f kB, ~.2f s, ~p transfers, ~B failures)~n",
+	Seconds = Perf#performance.latency / 1000,
+	io:format("\t~s ~.2f kB/s (~.2f kB, ~.2f s, ~.2f success, ~p transfers)~n",
 		[string:pad(ar_util:format_peer(Peer), 21, trailing, $ ),
 			float(Perf#performance.rating), KB, Seconds,
-			Perf#performance.transfers, Perf#performance.failures]).
+			Perf#performance.success, Perf#performance.transfers]).
 
 load_peers() ->
 	case ar_storage:read_term(peers) of
@@ -477,14 +482,14 @@ load_peer({Peer, Performance}) ->
 		<<?NETWORK_NAME>> ->
 			may_be_rotate_peer_ports(Peer),
 			case Performance of
-				{performance, Bytes, Time, Transfers, Failures, Rating} ->
+				{performance, Bytes, Latency, Transfers, _Failures, Rating} ->
 					%% For compatibility with a few nodes already storing the records
 					%% without the release field.
 					ets:insert(?MODULE, {{peer, Peer}, #performance{ bytes = Bytes,
-							time = Time, transfers = Transfers, failures = Failures,
-							rating = Rating, release = -1 }});
+							latency = Latency, transfers = Transfers,
+							success = 1.0, rating = Rating, release = -1 }});
 				_ ->
-					ets:insert(?MODULE, {{peer, Peer}, Performance})
+					ets:insert(?MODULE, {{peer, Peer}, Performance#performance{ success = 1.0 }})
 			end,
 			ok;
 		Network ->
@@ -622,15 +627,21 @@ check_external_peer(Peer) ->
 update_rating(Peer, TimeDelta, Size) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
-	#performance{ bytes = Bytes, time = Time,
+	#performance{ bytes = Bytes, latency = Latency, success = Success,
 			rating = Rating, transfers = N } = Performance,
-	Bytes2 = Bytes + Size,
-	Time2 = Time + TimeDelta / 1000,
-	Performance2 = Performance#performance{ bytes = Bytes2, time = Time2,
-			rating = Rating2 = Bytes2 / (Time2 + 1), failures = 0, transfers = N + 1 },
+	Bytes2 = calculate_ema(Bytes, Size, ?SIZE_ALPHA),
+	Latency2 = calculate_ema(Latency, TimeDelta / 1000, ?LATENCY_ALPHA),
+	Success2 = calculate_ema(Success, 1, ?SUCCESS_ALPHA),
+	Rating2 = Bytes2 / Latency2,
+	Performance2 = Performance#performance{
+			bytes = Bytes2, latency = Latency2, success = Success2,
+			rating = Rating2, transfers = N + 1 },
 	Total2 = Total - Rating + Rating2,
 	may_be_rotate_peer_ports(Peer),
 	ets:insert(?MODULE, [{{peer, Peer}, Performance2}, {rating_total, Total2}]).
+
+calculate_ema(OldEMA, Value, Alpha) ->
+	Alpha * Value + (1 - Alpha) * OldEMA.
 
 get_or_init_performance(Peer) ->
 	case ets:lookup(?MODULE, {peer, Peer}) of
@@ -651,6 +662,10 @@ get_total_rating() ->
 remove_peer(RemovedPeer) ->
 	Total = get_total_rating(),
 	Performance = get_or_init_performance(RemovedPeer),
+	?LOG_DEBUG([
+		{event, remove_peer},
+		{peer, ar_util:format_peer(RemovedPeer)},
+		{performance, format_stats(RemovedPeer, Performance)}]),
 	ets:insert(?MODULE, {rating_total, Total - Performance#performance.rating}),
 	ets:delete(?MODULE, {peer, RemovedPeer}),
 	remove_peer_port(RemovedPeer).
@@ -708,12 +723,12 @@ store_peers() ->
 
 issue_warning(Peer) ->
 	Performance = get_or_init_performance(Peer),
-	Failures = Performance#performance.failures,
-	case Failures + 1 > ?TOLERATE_FAILURE_COUNT of
+	Success = calculate_ema(Performance#performance.success, 0, ?SUCCESS_ALPHA),
+	case Success < ?MINIMUM_SUCCESS of
 		true ->
 			remove_peer(Peer);
 		false ->
-			Performance2 = Performance#performance{ failures = Failures + 1 },
+			Performance2 = Performance#performance{ success = Success },
 			may_be_rotate_peer_ports(Peer),
 			ets:insert(?MODULE, {{peer, Peer}, Performance2})
 	end.
