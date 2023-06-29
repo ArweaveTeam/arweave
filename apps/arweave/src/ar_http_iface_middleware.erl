@@ -814,6 +814,29 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 			end
 	end;
 
+handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_util:safe_decode(EncodedBH) of
+				{ok, BH} ->
+					Fork_2_7 = ar_fork:height_2_7(),
+					case ar_block_cache:get_block_and_status(block_cache, BH) of
+						{#block{ height = Height,
+									block_time_history = BlockTimeHistory }, Status}
+								when (Status == on_chain orelse Status == validated),
+									Height >= Fork_2_7 ->
+							{200, #{}, ar_serialize:block_time_history_to_binary(
+									BlockTimeHistory), Req};
+						_ ->
+							{404, #{}, <<>>, Req}
+					end;
+				{error, invalid} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req}
+			end
+	end;
+
 %% Return the current JSON-encoded hash list held by the node.
 %% GET request to endpoint /block_index.
 handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
@@ -1557,22 +1580,10 @@ estimate_tx_fee(Size, Addr, Type) ->
 					{'==', '$1', kryder_plus_rate_multiplier}}], ['$_']}]
 		),
 	Height = proplists:get_value(height, Props),
-	CurrentRate = proplists:get_value(usd_to_ar_rate, Props),
-	ScheduledRate = proplists:get_value(scheduled_usd_to_ar_rate, Props),
 	CurrentPricePerGiBMinute =  proplists:get_value(price_per_gib_minute, Props),
 	Denomination = proplists:get_value(denomination, Props),
 	ScheduledPricePerGiBMinute = proplists:get_value(scheduled_price_per_gib_minute, Props),
 	KryderPlusRateMultiplier = proplists:get_value(kryder_plus_rate_multiplier, Props),
-	Rate =
-		case Type of
-			pessimistic ->
-				%% Of the two rates - the currently active one and the one scheduled to be
-				%% used soon - pick the one that leads to a higher fee in AR to make sure the
-				%% transaction does not become underpaid.
-				ar_fraction:maximum(CurrentRate, ScheduledRate);
-			optimistic ->
-				ar_fraction:minimum(CurrentRate, ScheduledRate)
-		end,
 	PricePerGiBMinute =
 		case Type of
 			pessimistic ->
@@ -1589,9 +1600,7 @@ estimate_tx_fee(Size, Addr, Type) ->
 				ar_wallets:get(RootHash, Addr)
 		end,
 	Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
-	Timestamp = os:system_time(second),
-	Args = {Size2, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Timestamp,
-			Accounts, Height + 1},
+	Args = {Size2, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height + 1},
 	Denomination2 =
 		case Height >= ar_fork:height_2_6() of
 			true ->

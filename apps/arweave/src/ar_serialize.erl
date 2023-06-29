@@ -19,6 +19,7 @@
 		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1, encode_int/2, encode_bin/2,
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
 		reward_history_to_binary/1, binary_to_reward_history/1,
+		block_time_history_to_binary/1, binary_to_block_time_history/1,
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
 
@@ -245,7 +246,7 @@ block_to_json_struct(
 									ar_util:encode(B#block.previous_solution_hash)},
 							{partition_number, B#block.partition_number},
 							{nonce_limiter_info, nonce_limiter_info_to_json_struct(
-									B#block.nonce_limiter_info)},
+									B#block.height, B#block.nonce_limiter_info)},
 							{poa2, poa_to_json_struct(B#block.poa2)},
 							{signature, ar_util:encode(B#block.signature)},
 							{reward_key, ar_util:encode(element(2, B#block.reward_key))},
@@ -278,7 +279,11 @@ block_to_json_struct(
 			true ->
 				JSONElements7 = [
 						{merkle_rebase_support_threshold, integer_to_binary(RebaseThreshold)},
-						{chunk_hash, ar_util:encode(B#block.chunk_hash)} | JSONElements5],
+						{chunk_hash, ar_util:encode(B#block.chunk_hash)},
+						{block_time_history_hash,
+							ar_util:encode(B#block.block_time_history_hash)},
+						{vdf_difficulty, integer_to_binary(B#block.vdf_difficulty)}
+						| JSONElements5],
 				case B#block.chunk2_hash of
 					undefined ->
 						JSONElements7;
@@ -310,6 +315,34 @@ binary_to_reward_history(<<>>, RewardHistory) ->
 	{ok, RewardHistory};
 binary_to_reward_history(_Rest, _RewardHistory) ->
 	{error, invalid_reward_history}.
+
+block_time_history_to_binary(BlockTimeHistory) ->
+	block_time_history_to_binary(BlockTimeHistory, []).
+
+block_time_history_to_binary([], IOList) ->
+	iolist_to_binary(IOList);
+block_time_history_to_binary([{BlockInterval, VDFInterval, ChunkCount} | BlockTimeHistory],
+		IOList) ->
+	block_time_history_to_binary(BlockTimeHistory, [
+			ar_serialize:encode_int(BlockInterval, 8),
+			ar_serialize:encode_int(VDFInterval, 8),
+			ar_serialize:encode_int(ChunkCount, 8)
+	| IOList]).
+
+binary_to_block_time_history(Bin) ->
+	binary_to_block_time_history(Bin, []).
+
+binary_to_block_time_history(<< BlockIntervalSize:8,
+			BlockInterval:(BlockIntervalSize * 8),
+			VDFIntervalSize:8, VDFInterval:(VDFIntervalSize * 8),
+			ChunkCountSize:8, ChunkCount:(ChunkCountSize * 8), Rest/binary >>,
+		BlockTimeHistory) ->
+	binary_to_block_time_history(Rest,
+			[{BlockInterval, VDFInterval, ChunkCount} | BlockTimeHistory]);
+binary_to_block_time_history(<<>>, BlockTimeHistory) ->
+	{ok, BlockTimeHistory};
+binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
+	{error, invalid_block_time_history}.
 
 nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
@@ -442,11 +475,18 @@ encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 
 encode_post_2_7_fields(#block{ height = Height,
 		merkle_rebase_support_threshold = Threshold, chunk_hash = ChunkHash,
-		chunk2_hash = Chunk2Hash }) ->
+		chunk2_hash = Chunk2Hash, vdf_difficulty = VDFDifficulty,
+		block_time_history_hash = BlockTimeHistoryHash,
+		nonce_limiter_info = #nonce_limiter_info{ vdf_difficulty = VDFDifficulty2,
+				next_vdf_difficulty = VDFDifficulty3 } }) ->
 	case Height >= ar_fork:height_2_7() of
 		true ->
 			<< (encode_int(Threshold, 16))/binary, ChunkHash:32/binary,
-					(encode_bin(Chunk2Hash, 8))/binary >>;
+					(encode_bin(Chunk2Hash, 8))/binary,
+					(encode_int(VDFDifficulty, 8))/binary,
+					BlockTimeHistoryHash:32/binary,
+					(encode_int(VDFDifficulty2, 8))/binary,
+					(encode_int(VDFDifficulty3, 8))/binary >>;
 		false ->
 			<<>>
 	end.
@@ -665,10 +705,19 @@ parse_post_2_7_fields(Rest, #block{ height = Height } = B) ->
 		{<<>>, false} ->
 			{ok, B};
 		{<< ThresholdSize:16, Threshold:(ThresholdSize*8), ChunkHash:32/binary,
-				Chunk2HashSize:8, Chunk2Hash:Chunk2HashSize/binary >>, true} ->
+				Chunk2HashSize:8, Chunk2Hash:Chunk2HashSize/binary,
+				VDFDifficultySize:8, VDFDifficulty:(VDFDifficultySize * 8),
+				BlockTimeHistoryHash:32/binary,
+				VDFDifficulty2Size:8, VDFDifficulty2:(VDFDifficulty2Size * 8),
+				VDFDifficulty3Size:8, VDFDifficulty3:(VDFDifficulty3Size * 8) >>, true} ->
 			Chunk2Hash2 = case Chunk2HashSize of 0 -> undefined; _ -> Chunk2Hash end,
 			{ok, B#block{ merkle_rebase_support_threshold = Threshold,
-					chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash2 }};
+					chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash2,
+					vdf_difficulty = VDFDifficulty,
+					block_time_history_hash = BlockTimeHistoryHash,
+					nonce_limiter_info = (B#block.nonce_limiter_info)#nonce_limiter_info{
+							vdf_difficulty = VDFDifficulty2,
+							next_vdf_difficulty = VDFDifficulty3 } }};
 		_ ->
 			{error, invalid_merkle_rebase_support_threshold}
 	end.
@@ -1144,18 +1193,30 @@ poa_to_json_struct(POA) ->
 		{chunk, ar_util:encode(POA#poa.chunk)}
 	]}.
 
-nonce_limiter_info_to_json_struct(#nonce_limiter_info{ output = Output, global_step_number = N,
+nonce_limiter_info_to_json_struct(Height,
+		#nonce_limiter_info{ output = Output, global_step_number = N,
 		seed = Seed, next_seed = NextSeed, partition_upper_bound = ZoneUpperBound,
 		next_partition_upper_bound = NextZoneUpperBound, last_step_checkpoints = Checkpoints,
-		steps = Steps, prev_output = PrevOutput }) ->
-	{[{output, ar_util:encode(Output)}, {global_step_number, N}, {seed, ar_util:encode(Seed)},
+		steps = Steps, prev_output = PrevOutput,
+		vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty }) ->
+	Fields = [{output, ar_util:encode(Output)}, {global_step_number, N},
+			{seed, ar_util:encode(Seed)},
 			{next_seed, ar_util:encode(NextSeed)}, {zone_upper_bound, ZoneUpperBound},
 			{next_zone_upper_bound, NextZoneUpperBound},
 			{prev_output, ar_util:encode(PrevOutput)},
 			{last_step_checkpoints, [ar_util:encode(Elem) || Elem <- Checkpoints]},
 			%% Keeping  'checkpoints' as JSON key (rather than 'steps') for backwards
 			%% compatibility.
-			{checkpoints, [ar_util:encode(Elem) || Elem <- Steps]}]}.
+			{checkpoints, [ar_util:encode(Elem) || Elem <- Steps]}],
+	Fields2 =
+		case Height >= ar_fork:height_2_7() of
+			false ->
+				Fields;
+			true ->
+				Fields ++ [{vdf_difficulty, integer_to_binary(VDFDifficulty)},
+						{next_vdf_difficulty, integer_to_binary(NextVDFDifficulty)}]
+		end,
+	{Fields2}.
 
 json_struct_to_poa({JSONStruct}) ->
 	#poa{

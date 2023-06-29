@@ -304,7 +304,7 @@ write_genesis_files(DataDir, B0) ->
 		B0#block.txs
 	),
 	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIBin = term_to_binary({BI, B0#block.reward_history}),
+	BIBin = term_to_binary({BI, B0#block.reward_history, B0#block.block_time_history}),
 	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
 	ok = filelib:ensure_dir(HashListDir ++ "/"),
 	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
