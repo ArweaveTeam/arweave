@@ -334,6 +334,12 @@
 %% picked as recall chunks and therefore equally incentivize the storage.
 -define(PADDING_NODE_DATA_ROOT, <<>>).
 
+-ifdef(DEBUG).
+-define(INITIAL_VDF_DIFFICULTY, 2).
+-else.
+-define(INITIAL_VDF_DIFFICULTY, 600_000).
+-endif.
+
 %% @doc A chunk with the proofs of its presence in the weave at a particular offset.
 -record(poa, {
 	%% DEPRECATED. Not used since the fork 2.4.
@@ -370,7 +376,15 @@
 	last_step_checkpoints = [],
 	%% A list of the output of each step of the nonce limiting process. Note: each step
 	%% has ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints, the last of which is that step's output.
-	steps = []
+	steps = [],
+
+	%% The fields added at the fork 2.7
+
+	%% The number of SHA2-256 iterations in a single 50-ms checkpoint.
+	vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
+	%% The number of SHA2-256 iterations in a single 50-ms checkpoint, scheduled for
+	%% applying after the closest approaching VDF reset line.
+	next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
 }).
 
 %% @doc A VDF session.
@@ -381,7 +395,9 @@
 	steps,
 	prev_session_key,
 	upper_bound,
-	next_upper_bound
+	next_upper_bound,
+	vdf_difficulty,
+	next_vdf_difficulty
 }).
 
 %% @doc The format of the nonce limiter update provided by the configured trusted peer.
@@ -578,6 +594,19 @@
 	chunk_hash,
 	%% The SHA2-256 of the packed chunk2, when present.
 	chunk2_hash,
+
+	%% The recursive hash of the history of block times (in seconds), VDF times (in steps),
+	%% and solution types (one-chunk vs two-chunk) of the latest
+	%% ?BLOCK_TIME_HISTORY_BLOCKS blocks.
+	block_time_history_hash,
+	%% The block times (in seconds), VDF times (in steps), and solution types (one-chunk vs
+	%% two-chunk) of the latest ?BLOCK_TIME_HISTORY_BLOCKS blocks.
+	%% Used internally, not gossiped.
+	block_time_history = [], % {block_interval, vdf_interval, chunk_count}
+	%% The current VDF difficulty. The protocol aims at keeping the step calculation
+	%% time around one second by varying this parameter.
+	vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
+
 	%% Used internally, not gossiped. Convenient for validating potentially non-unique
 	%% merkle proofs assigned to the different signatures of the same solution
 	%% (see validate_poa_against_cached_poa in ar_block_pre_validator.erl).

@@ -356,7 +356,8 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
-handle_cast({valid_data, Peer, _DataType, LatencyMilliseconds, DataSize, Concurrency}, State) ->
+handle_cast({valid_data, Peer, _DataType, LatencyMilliseconds, DataSize, Concurrency},
+		State) ->
 	update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, true),
 	{noreply, State};
 

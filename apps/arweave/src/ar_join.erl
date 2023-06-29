@@ -1,6 +1,6 @@
 -module(ar_join).
 
--export([start/1, set_reward_history/2]).
+-export([start/1, set_reward_history/2, set_block_time_history/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -33,6 +33,14 @@ set_reward_history(Blocks, []) ->
 	Blocks;
 set_reward_history([B | Blocks], RewardHistory) ->
 	[B#block{ reward_history = RewardHistory } | set_reward_history(Blocks, tl(RewardHistory))].
+
+set_block_time_history([], _BlockTimeHistory) ->
+	[];
+set_block_time_history(Blocks, []) ->
+	Blocks;
+set_block_time_history([B | Blocks], BlockTimeHistory) ->
+	[B#block{ block_time_history = BlockTimeHistory }
+			| set_block_time_history(Blocks, tl(BlockTimeHistory))].
 
 %%%===================================================================
 %%% Private functions.
@@ -236,7 +244,8 @@ do_join(Peers, B, BI) ->
 			| get_block_trail(WorkerQ, PeerQ, Trail, Retries)],
 	ar:console("Downloaded the block trail successfully.~n", []),
 	Blocks2 = may_be_set_reward_history(Blocks, Peers),
-	ar_node_worker ! {join, BI, Blocks2},
+	Blocks3 = may_be_set_block_time_history(Blocks2, Peers),
+	ar_node_worker ! {join, BI, Blocks3},
 	join_peers(Peers).
 
 %% @doc Get the 2 * ?MAX_TX_ANCHOR_DEPTH blocks preceding the head block.
@@ -444,6 +453,26 @@ may_be_set_reward_history([#block{ height = Height } | _] = Blocks, Peers) ->
 					set_reward_history(Blocks, RewardHistory);
 				_ ->
 					ar:console("Failed to fetch the reward history for the block ~s from "
+							"any of the peers. Consider changing the peers.~n",
+							[ar_util:encode((hd(Blocks))#block.indep_hash)]),
+					timer:sleep(1000),
+					erlang:halt()
+			end;
+		false ->
+			Blocks
+	end.
+
+may_be_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
+	Fork_2_7 = ar_fork:height_2_7(),
+	case Height >= Fork_2_7 of
+		true ->
+			Len = min(Height - Fork_2_7 + 1, ?STORE_BLOCKS_BEHIND_CURRENT),
+			L = [B#block.block_time_history_hash || B <- lists:sublist(Blocks, Len)],
+			case ar_http_iface_client:get_block_time_history(Peers, hd(Blocks), L) of
+				{ok, BlockTimeHistory} ->
+					set_block_time_history(Blocks, BlockTimeHistory);
+				_ ->
+					ar:console("Failed to fetch the block time history for the block ~s from "
 							"any of the peers. Consider changing the peers.~n",
 							[ar_util:encode((hd(Blocks))#block.indep_hash)]),
 					timer:sleep(1000),

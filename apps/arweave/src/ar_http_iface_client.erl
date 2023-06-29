@@ -12,6 +12,7 @@
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
 		get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
+		get_block_time_history/3,
 		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1]).
 
@@ -410,13 +411,11 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 	true = length(ExpectedRewardHistoryHashes) == min(Height - Fork_2_6 + 1,
 			?STORE_BLOCKS_BEHIND_CURRENT),
-	SizeLimit = (33 * 2) * (?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 	case ar_http:req(#{
 				peer => Peer,
 				method => get,
 				path => "/reward_history/" ++ binary_to_list(ar_util:encode(H)),
 				timeout => 30000,
-				limit => SizeLimit,
 				headers => p2p_headers()
 			}) of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
@@ -448,6 +447,52 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 			get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 	end;
 get_reward_history([], _B, _RewardHistoryHashes) ->
+	not_found.
+
+get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
+	#block{ height = Height, indep_hash = H } = B,
+	Fork_2_7 = ar_fork:height_2_7(),
+	true = Height >= Fork_2_7,
+	ExpectedLength = min(Height - Fork_2_7 + 1,
+			?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+	true = length(ExpectedBlockTimeHistoryHashes) == min(Height - Fork_2_7 + 1,
+			?STORE_BLOCKS_BEHIND_CURRENT),
+	case ar_http:req(#{
+				peer => Peer,
+				method => get,
+				path => "/block_time_history/" ++ binary_to_list(ar_util:encode(H)),
+				timeout => 30000,
+				headers => p2p_headers()
+			}) of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			case ar_serialize:binary_to_block_time_history(Body) of
+				{ok, BlockTimeHistory} when length(BlockTimeHistory) == ExpectedLength ->
+					case validate_block_time_history_hashes(BlockTimeHistory,
+							ExpectedBlockTimeHistoryHashes) of
+						true ->
+							{ok, BlockTimeHistory};
+						false ->
+							?LOG_WARNING([{event, received_invalid_block_time_history},
+									{peer, ar_util:format_peer(Peer)}]),
+							get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
+					end;
+				{ok, L} ->
+					?LOG_WARNING([{event, received_block_time_history_of_unexpected_length},
+							{expected_length, ExpectedLength}, {received_length, length(L)},
+							{peer, ar_util:format_peer(Peer)}]),
+					get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes);
+				{error, _} ->
+					?LOG_WARNING([{event, failed_to_parse_block_time_history},
+							{peer, ar_util:format_peer(Peer)}]),
+					get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
+			end;
+		Reply ->
+			?LOG_WARNING([{event, failed_to_fetch_block_time_history},
+					{peer, ar_util:format_peer(Peer)},
+					{reply, io_lib:format("~p", [Reply])}]),
+			get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
+	end;
+get_block_time_history([], _B, _RewardHistoryHashes) ->
 	not_found.
 
 push_nonce_limiter_update(Peer, Update) ->
@@ -517,6 +562,17 @@ validate_reward_history_hashes(RewardHistory, [H | ExpectedRewardHistoryHashes])
 	case ar_block:validate_reward_history_hash(H, RewardHistory) of
 		true ->
 			validate_reward_history_hashes(tl(RewardHistory), ExpectedRewardHistoryHashes);
+		false ->
+			false
+	end.
+
+validate_block_time_history_hashes(_BlockTimeHistory, []) ->
+	true;
+validate_block_time_history_hashes(BlockTimeHistory, [H | ExpectedBlockTimeHistoryHashes]) ->
+	case ar_block:validate_block_time_history_hash(H, BlockTimeHistory) of
+		true ->
+			validate_block_time_history_hashes(tl(BlockTimeHistory),
+					ExpectedBlockTimeHistoryHashes);
 		false ->
 			false
 	end.

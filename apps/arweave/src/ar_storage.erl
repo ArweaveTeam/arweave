@@ -5,8 +5,8 @@
 -export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
 		read_tx/1, read_tx_data/1, update_confirmation_index/1, get_tx_confirmation_data/1,
 		read_wallet_list/1, write_wallet_list/2,
-		write_block_index/1, write_block_index_and_reward_history/2,
-		read_block_index/0, read_block_index_and_reward_history/0,
+		write_block_index/1, write_block_index_and_additional_fields/3,
+		read_block_index/0, read_block_index_and_additional_fields/0,
 		delete_blacklisted_tx/1, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
 		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
@@ -679,16 +679,16 @@ write_block_index(BI) ->
 			Error
 	end.
 
-%% @doc Write the given block index and reward history data to disk. Read when a
-%% node starts with the start_from_block_index flag.
-write_block_index_and_reward_history(BI, RewardHistory) ->
-	?LOG_INFO([{event, writing_block_index_and_reward_history_to_disk}]),
+%% @doc Write the given block index, the recent reward history, and the recent
+%% block time history to disk, to read when starting with the start_from_block_index flag.
+write_block_index_and_additional_fields(BI, RewardHistory, BlockTimeHistory) ->
+	?LOG_INFO([{event, writing_block_index_and_additional_fields_to_disk}]),
 	File = block_index_and_reward_history_filepath(),
-	case write_file_atomic(File, term_to_binary({BI, RewardHistory})) of
+	case write_file_atomic(File, term_to_binary({BI, RewardHistory, BlockTimeHistory})) of
 		ok ->
 			ok;
 		{error, Reason} = Error ->
-			?LOG_ERROR([{event, failed_to_write_block_index_and_reward_history_to_disk},
+			?LOG_ERROR([{event, failed_to_write_block_index_and_additional_fields_to_disk},
 					{reason, Reason}]),
 			Error
 	end.
@@ -719,10 +719,18 @@ read_block_index() ->
 	end.
 
 %% @doc Read the latest stored block index and reward history data from disk.
-read_block_index_and_reward_history() ->
+read_block_index_and_additional_fields() ->
 	case file:read_file(block_index_and_reward_history_filepath()) of
 		{ok, Binary} ->
-			binary_to_term(Binary, [safe]);
+			case binary_to_term(Binary, [safe]) of
+				{BI, RewardHistory} -> % migrate from old format
+					{BI, RewardHistory, (#block{})#block.block_time_history};
+				{BI, RewardHistory, BlockTimeHistory} ->
+					{BI, RewardHistory, BlockTimeHistory};
+				_ ->
+					?LOG_WARNING([{event, bad_file_format_block_index_and_additional_fields}]),
+					{error, bad_file_format_block_index_and_additional_fields}
+			end;
 		Error ->
 			Error
 	end.
@@ -1176,9 +1184,9 @@ test_store_and_retrieve_block() ->
 			B0#block.tx_root}]),
 	FetchedB03 = FetchedB02#block{ txs = [tx_id(TX) || TX <- FetchedB02#block.txs] },
 	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
-			account_tree = undefined }, FetchedB01),
+			block_time_history = [], account_tree = undefined }, FetchedB01),
 	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
-			account_tree = undefined }, FetchedB03),
+			block_time_history = [], account_tree = undefined }, FetchedB03),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
 	ar_node:mine(),

@@ -284,6 +284,9 @@ name_route([<<"optimistic_price">>, _SizeInBytes, _Addr]) ->
 name_route([<<"reward_history">>, _BH]) ->
 	"/reward_history/{block_hash}";
 
+name_route([<<"block_time_history">>, _BH]) ->
+	"/block_time_history/{block_hash}";
+
 name_route([<<"wallet">>, _Addr, <<"balance">>]) ->
 	"/wallet/{addr}/balance";
 name_route([<<"wallet">>, _Addr, <<"last_tx">>]) ->

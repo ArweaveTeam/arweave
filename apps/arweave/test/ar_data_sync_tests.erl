@@ -887,7 +887,7 @@ setup_nodes() ->
 
 setup_nodes(MasterAddr, SlaveAddr) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20000), <<>>}]),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
 	{Master, _} = start(B0, MasterAddr, Config),
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
