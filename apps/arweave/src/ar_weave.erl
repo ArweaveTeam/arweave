@@ -70,7 +70,8 @@ init(WalletList, Diff, GenesisDataSize) ->
 				RewardAddr = ar_wallet:to_address(RewardKey),
 				HashRate = ar_difficulty:get_hash_rate(Diff),
 				RewardHistory = [{RewardAddr, HashRate, 10, 1}],
-				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(RewardHistory, 1),
+				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(0, RewardHistory,
+						[], 1),
 				B0#block{ hash = crypto:strong_rand_bytes(32),
 						nonce = 0, recall_byte = 0, partition_number = 0,
 						reward_key = RewardKey, reward_addr = RewardAddr,
@@ -92,13 +93,27 @@ init(WalletList, Diff, GenesisDataSize) ->
 	B2 =
 		case ar_fork:height_2_7() > 0 of
 			false ->
-				B1#block{ merkle_rebase_support_threshold = 0 };
+				InitialHistory = get_initial_block_time_history(),
+				B1#block{
+					merkle_rebase_support_threshold = ?STRICT_DATA_SPLIT_THRESHOLD * 2,
+					chunk_hash = crypto:strong_rand_bytes(32),
+					block_time_history = InitialHistory,
+					block_time_history_hash = ar_block:block_time_history_hash(InitialHistory)
+				};
 			true ->
 				B1
 		end,
 	[B2#block{ indep_hash = ar_block:indep_hash(B2) }].
 
-create_genesis_tx(Key, Size) ->
+-ifdef(DEBUG).
+get_initial_block_time_history() ->
+	[{1, 1, 1}].
+-else.
+get_initial_block_time_history() ->
+	[{120, 1, 1}].
+-endif.
+
+create_genesis_tx(Key) ->
 	{_, {_, Pk}} = Key,
 	UnsignedTX =
 		(ar_tx:new())#tx{

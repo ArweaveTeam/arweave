@@ -9,7 +9,7 @@
 
 %% The target number of replications.
 -ifdef(DEBUG).
--define(N_REPLICATIONS, fun(_MACRO_Height) -> 2 end).
+-define(N_REPLICATIONS, fun(_MACRO_Height) -> 200 end).
 -else.
 -define(N_REPLICATIONS, fun(MACRO_Height) ->
 	MACRO_Forks = {
@@ -55,46 +55,24 @@ end).
 %% fluctuate a lot around the fork.
 -define(FORK_2_6_PRE_TRANSITION_USD_TO_AR_RATE, {1, 10}).
 
-%% The number of blocks which have to pass since the 2.6 fork before we
+%% The number of blocks which have to pass since the 2.6.8 fork before we
 %% start mixing in the new fee calculation method.
--ifdef(DEBUG).
-	-define(PRICE_2_6_TRANSITION_START, 2).
--else.
-	-ifdef(FORKS_RESET).
-		-define(PRICE_2_6_TRANSITION_START, 0).
-	-else.
-		-define(PRICE_2_6_TRANSITION_START, (30 * 24 * 75)). % ~75 days.
-	-endif.
--endif.
-
-%% The number of blocks following the 2.6 + ?PRICE_2_6_TRANSITION_START block where the tx fee
-%% computation is transitioned to the new calculation method.
-%% Let TransitionStart = fork 2.6 height + ?PRICE_2_6_TRANSITION_START.
-%% Let A = height - TransitionStart + 1.
-%% Let B = TransitionStart + ?PRICE_2_6_TRANSITION_BLOCKS - (height + 1).
-%% Then tx fee = tx fee old * B / (A + B) + tx fee new * A / (A + B).
--ifdef(DEBUG).
-	-define(PRICE_2_6_TRANSITION_BLOCKS, 2).
--else.
-	-ifdef(FORKS_RESET).
-		-define(PRICE_2_6_TRANSITION_BLOCKS, 0).
-	-else.
-		-ifndef(PRICE_2_6_TRANSITION_BLOCKS).
-			-define(PRICE_2_6_TRANSITION_BLOCKS, (30 * 24 * 12 * 30)). % ~12 months.
-		-endif.
-	-endif.
--endif.
-
 -ifdef(DEBUG).
 	-define(PRICE_2_6_8_TRANSITION_START, 2).
 -else.
 	-ifdef(FORKS_RESET).
 		-define(PRICE_2_6_8_TRANSITION_START, 0).
 	-else.
-		-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 30 * 4)). % ~4 months;
+		-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 30 * 8)). % ~8 months;
 	-endif.
 -endif.
 
+%% The number of blocks following the 2.6.8 + ?PRICE_2_6_8_TRANSITION_START block
+%% where the tx fee computation is transitioned to the new calculation method.
+%% Let TransitionStart = fork 2.6.8 height + ?PRICE_2_6_8_TRANSITION_START.
+%% Let A = height - TransitionStart + 1.
+%% Let B = TransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS - (height + 1).
+%% Then price per GiB-minute = price old * B / (A + B) + price new * A / (A + B).
 -ifdef(DEBUG).
 	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 2).
 -else.
@@ -107,6 +85,13 @@ end).
 	-endif.
 -endif.
 
+-ifdef(DEBUG).
+	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, 8162).
+-else.
+	%% STATIC_2_6_8_FEE_WINSTON / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
+	%% = ~400 Winston per GiB per minute.
+	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, 400).
+-endif.
 
 %% The number of recent blocks contributing data points to the continuous estimation
 %% of the average price of storing a gibibyte for a minute. Also, the reward history
@@ -116,6 +101,14 @@ end).
 -else.
 -ifndef(REWARD_HISTORY_BLOCKS).
 -define(REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
+-endif.
+-endif.
+
+-ifdef(DEBUG).
+-define(BLOCK_TIME_HISTORY_BLOCKS, 3).
+-else.
+-ifndef(BLOCK_TIME_HISTORY_BLOCKS).
+-define(BLOCK_TIME_HISTORY_BLOCKS, (30 * 24 * 30)).
 -endif.
 -endif.
 

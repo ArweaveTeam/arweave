@@ -109,15 +109,20 @@ height_2_6_8() ->
 	-endif.
 -endif.
 
--ifdef(FORKS_RESET).
+-ifdef(FORK_2_7_HEIGHT).
 height_2_7() ->
-	infinity.
+	?FORK_2_7_HEIGHT.
 -else.
-	-ifdef(TESTNET).
-		height_2_7() ->
-			infinity.
+	-ifdef(FORKS_RESET).
+	height_2_7() ->
+		0.
 	-else.
-		height_2_7() ->
-			infinity. % TODO
+		-ifdef(TESTNET).
+			height_2_7() ->
+				infinity.
+		-else.
+			height_2_7() ->
+				infinity. % TODO
+		-endif.
 	-endif.
 -endif.

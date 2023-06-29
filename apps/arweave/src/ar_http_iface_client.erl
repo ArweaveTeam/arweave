@@ -12,6 +12,7 @@
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
 		get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
+		get_block_time_history/3,
 		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/3, cm_h2_send/2,
 		cm_publish_send/2]).
@@ -411,13 +412,11 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 	true = length(ExpectedRewardHistoryHashes) == min(Height - Fork_2_6 + 1,
 			?STORE_BLOCKS_BEHIND_CURRENT),
-	SizeLimit = (33 * 2) * (?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 	case ar_http:req(#{
 				peer => Peer,
 				method => get,
 				path => "/reward_history/" ++ binary_to_list(ar_util:encode(H)),
 				timeout => 30000,
-				limit => SizeLimit,
 				headers => p2p_headers()
 			}) of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
@@ -449,6 +448,52 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 			get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 	end;
 get_reward_history([], _B, _RewardHistoryHashes) ->
+	not_found.
+
+get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
+	#block{ height = Height, indep_hash = H } = B,
+	Fork_2_7 = ar_fork:height_2_7(),
+	true = Height >= Fork_2_7,
+	ExpectedLength = min(Height - Fork_2_7 + 1,
+			?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+	true = length(ExpectedBlockTimeHistoryHashes) == min(Height - Fork_2_7 + 1,
+			?STORE_BLOCKS_BEHIND_CURRENT),
+	case ar_http:req(#{
+				peer => Peer,
+				method => get,
+				path => "/block_time_history/" ++ binary_to_list(ar_util:encode(H)),
+				timeout => 30000,
+				headers => p2p_headers()
+			}) of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			case ar_serialize:binary_to_block_time_history(Body) of
+				{ok, BlockTimeHistory} when length(BlockTimeHistory) == ExpectedLength ->
+					case validate_block_time_history_hashes(BlockTimeHistory,
+							ExpectedBlockTimeHistoryHashes) of
+						true ->
+							{ok, BlockTimeHistory};
+						false ->
+							?LOG_WARNING([{event, received_invalid_block_time_history},
+									{peer, ar_util:format_peer(Peer)}]),
+							get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
+					end;
+				{ok, L} ->
+					?LOG_WARNING([{event, received_block_time_history_of_unexpected_length},
+							{expected_length, ExpectedLength}, {received_length, length(L)},
+							{peer, ar_util:format_peer(Peer)}]),
+					get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes);
+				{error, _} ->
+					?LOG_WARNING([{event, failed_to_parse_block_time_history},
+							{peer, ar_util:format_peer(Peer)}]),
+					get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
+			end;
+		Reply ->
+			?LOG_WARNING([{event, failed_to_fetch_block_time_history},
+					{peer, ar_util:format_peer(Peer)},
+					{reply, io_lib:format("~p", [Reply])}]),
+			get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
+	end;
+get_block_time_history([], _B, _RewardHistoryHashes) ->
 	not_found.
 
 push_nonce_limiter_update(Peer, Update) ->
@@ -522,52 +567,16 @@ validate_reward_history_hashes(RewardHistory, [H | ExpectedRewardHistoryHashes])
 			false
 	end.
 
-get_cm_partition_table(Peer) ->
-	handle_cm_partition_table_response(ar_http:req(#{
-		peer => Peer,
-		method => get,
-		path => "/coordinated_mining/partition_table",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => cm_p2p_headers()
-	})).
-
-% TODO binary protocol after debug
-cm_h1_send(Peer, Candidate, H1List) ->
-	Json = ar_serialize:h2_inputs_to_json_struct(Candidate, H1List),
-	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer,
-		method => post,
-		path => "/coordinated_mining/h1",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
-	})).
-
-cm_h2_send(Peer, Candidate) ->
-	Json = ar_serialize:candidate_to_json_struct(Candidate),
-	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer,
-		method => post,
-		path => "/coordinated_mining/h2",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
-	})).
-
-cm_publish_send(Peer, Solution) ->
-	Json = ar_serialize:solution_to_json_struct(Solution),
-	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer,
-		method => post,
-		path => "/coordinated_mining/publish",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
-	})).
+validate_block_time_history_hashes(_BlockTimeHistory, []) ->
+	true;
+validate_block_time_history_hashes(BlockTimeHistory, [H | ExpectedBlockTimeHistoryHashes]) ->
+	case ar_block:validate_block_time_history_hash(H, BlockTimeHistory) of
+		true ->
+			validate_block_time_history_hashes(tl(BlockTimeHistory),
+					ExpectedBlockTimeHistoryHashes);
+		false ->
+			false
+	end.
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);

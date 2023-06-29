@@ -572,6 +572,53 @@ get_reserved_balance(Node, Address) ->
 %%% Legacy private functions.
 %%%===================================================================
 
+clean_up_and_stop() ->
+	Config = stop(),
+	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
+	lists:foreach(
+		fun	("wallets") ->
+				ok;
+			(Entry) ->
+				file:del_dir_r(filename:join(Config#config.data_dir, Entry))
+		end,
+		Entries
+	).
+
+write_genesis_files(DataDir, B0) ->
+	BH = B0#block.indep_hash,
+	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
+	ok = filelib:ensure_dir(BlockDir ++ "/"),
+	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
+	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
+	TXDir = filename:join(DataDir, ?TX_DIR),
+	ok = filelib:ensure_dir(TXDir ++ "/"),
+	lists:foreach(
+		fun(TX) ->
+			TXID = TX#tx.id,
+			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),
+			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+			ok = file:write_file(TXFilepath, TXJSON)
+		end,
+		B0#block.txs
+	),
+	BI = [ar_util:block_index_entry_from_block(B0)],
+	BIBin = term_to_binary({BI, B0#block.reward_history, B0#block.block_time_history}),
+	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
+	ok = filelib:ensure_dir(HashListDir ++ "/"),
+	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
+	ok = file:write_file(BIFilepath, BIBin),
+	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
+	ok = filelib:ensure_dir(WalletListDir ++ "/"),
+	RootHash = B0#block.wallet_list,
+	WalletListFilepath =
+		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
+	WalletListJSON =
+		ar_serialize:jsonify(
+			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
+					B0#block.account_tree)
+		),
+	ok = file:write_file(WalletListFilepath, WalletListJSON).
+
 insert_root(Params) ->
 	case {maps:get(data, Params, <<>>), maps:get(data_root, Params, <<>>)} of
 		{<<>>, _} ->

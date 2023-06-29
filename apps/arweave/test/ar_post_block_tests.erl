@@ -6,9 +6,9 @@
 
 -import(ar_test_node, [start/1, start/2, slave_start/1,
 		slave_start/2, connect_to_slave/0, get_tx_anchor/0, disconnect_from_slave/0,
-		wait_until_height/1, sign_tx/2, sign_tx/3, post_block/2, post_block/3,
-		send_new_block/2, await_post_block/2, await_post_block/3, sign_block/3,
-		read_block_when_stored/1, read_block_when_stored/2,
+		wait_until_height/1, sign_tx/2, sign_tx/3, post_block/2,
+		send_new_block/2, sign_block/3,
+		read_block_when_stored/2,
 		master_peer/0, slave_peer/0, slave_mine/0, assert_slave_wait_until_height/1,
 		slave_call/3, assert_post_tx_to_master/1, assert_post_tx_to_slave/1,
 		test_with_mocked_functions/2]).
@@ -37,7 +37,8 @@ reset_node() ->
 
 setup_all_post_2_6() ->
 	{Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_fork, height_2_6, fun() -> 0 end}
+		{ar_fork, height_2_6, fun() -> 0 end},
+		{ar_fork, height_2_7, fun() -> infinity end}
 		]),
 	Functions = Setup(),
 	start_node(),
@@ -84,51 +85,51 @@ post_2_7_test_() ->
 		]}
 	}.
 
-%% ------------------------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------------------
 %% post_2_7_test_
-%% ------------------------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------------------
 test_mitm_poa_chunk_tamper_warn({_Key, B, _PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa.chunk is tampered with.
 	ok = ar_events:subscribe(block),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	assert_not_banned(master_peer()),
 	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
 	post_block(B2, invalid_first_chunk),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+	assert_not_banned(master_peer()).
 
 test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa2.chunk is tampered with.
 	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	assert_not_banned(master_peer()),
 	B2 = sign_block(B#block{ 
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_second_chunk),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+	assert_not_banned(master_peer()).
 
 test_reject_block_invalid_chunk_hash_ban({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk doesn't match
 	%% the chunk_hash
 	ok = ar_events:subscribe(block),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	assert_not_banned(master_peer()),
 	B2 = sign_block(B#block{
 		poa = #poa{ chunk = <<>> },
 		chunk_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_chunk_hash),
-	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+	assert_banned(master_peer()).
 
 test_reject_block_invalid_chunk2_hash_ban({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk2 doesn't match
 	%% the chunk2_hash
 	ok = ar_events:subscribe(block),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	assert_not_banned(master_peer()),
 	B2 = sign_block(B#block{
 		recall_byte2 = 1000,
 		poa2 = #poa{ chunk = <<>> },
 		chunk2_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_chunk2_hash),
-	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+	assert_banned(master_peer()).
 
 test_reject_block_invalid_proof_size({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
@@ -185,9 +186,31 @@ test_cached_poa({Key, B, PrevB}) ->
 	B3 = sign_block(B, PrevB, Key),
 	post_block(B3, valid).
 
-%% ------------------------------------------------------------------------------------------------
+%% The banning process is asynchronous now so we may have to wait a little until
+%% the peer gets banned.
+assert_banned(Peer) ->
+	case ar_util:do_until(
+		fun() ->
+			banned == ar_blacklist_middleware:is_peer_banned(Peer)
+		end,
+		200,
+		2000
+	) of
+		true ->
+			true;
+		false ->
+			?assert(false, "Expected the peer to be banned but the peer was not banned.")
+	end.
+
+%% The banning process is asynchronous now so we should wait a little to gain some
+%% confidence the peer is not banned.
+assert_not_banned(Peer) ->
+	timer:sleep(2000),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)).
+
+%% ------------------------------------------------------------------------------------------
 %% post_2_6_test_
-%% ------------------------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------------------
 test_reject_block_invalid_miner_reward({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
 	B2 = sign_block(B#block{ reward = 0 }, PrevB, Key),
@@ -231,35 +254,26 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 	post_block(B2, invalid_wallet_list).
 
 test_mitm_poa_chunk_tamper_ban({_Key, B, _PrevB}) ->
-	%% This test simulates what could happen if a man-in-the-middle chages the poa.chunk in
-	%% transit causing a legitimate peer to be banned. This can happen because the recipient
-	%% does not validate the integrity of the chunk that it receives. This weakness is addressed
-	%% as part of the 2.7 hard fork.
 	ok = ar_events:subscribe(block),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	assert_not_banned(master_peer()),
 	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
 	post_block(B2, invalid_pow),
-	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+	assert_banned(master_peer()).
 
 test_mitm_poa2_chunk_tamper_ban({Key, B, PrevB}) ->
-	%% This test simulates what could happen if a man-in-the-middle chages the poa2.chunk in
-	%% transit causing a legitimate peer to be banned. This can happen because the recipient
-	%% does not validate the integrity of the chunk that it receives. This weakness is addressed
-	%% as part of the 2.7 hard fork.
-	%%
 	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
-	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(master_peer())),
+	assert_not_banned(master_peer()),
 	B2 = sign_block(B#block{ 
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_pow),
-	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(master_peer())).
+	assert_banned(master_peer()).
 
-%% ------------------------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------------------
 %% Others tests
-%% ------------------------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------------------
 add_external_block_with_invalid_timestamp_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun test_add_external_block_with_invalid_timestamp/0).
@@ -288,7 +302,8 @@ test_add_external_block_with_invalid_timestamp() ->
 	post_block(B5, valid).
 
 rejects_invalid_blocks_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end},
+			{ar_fork, height_2_7, fun() -> infinity end}],
 		fun test_rejects_invalid_blocks/0).
 
 test_rejects_invalid_blocks() ->
@@ -361,8 +376,8 @@ test_rejects_invalid_blocks() ->
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
 			%% Also, here it changes the block hash (the previous one would be ignored),
-			%% because the poa field does not explicitly go in there (the motivation is to have
-			%% a "quick pow" step which is quick to validate and somewhat expensive to
+			%% because the poa field does not explicitly go in there (the motivation is to
+			%% have a "quick pow" step which is quick to validate and somewhat expensive to
 			%% forge).
 			hash = crypto:strong_rand_bytes(32),
 			poa = (B1#block.poa)#poa{ chunk = <<"a">> } }, B0, Key),
@@ -725,9 +740,9 @@ test_resigned_solution() ->
 	connect_to_slave(),
 	[{B6H, _, _}, {B5H, _, _}, {B2H, _, _}, _] = assert_slave_wait_until_height(3).
 
-%% ------------------------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------------------
 %% Helper functions
-%% ------------------------------------------------------------------------------------------------
+%% ------------------------------------------------------------------------------------------
 
 sort_txs_by_block_order(TXs, B) ->
 	TXByID = lists:foldl(fun(TX, Acc) -> maps:put(tx_id(TX), TX, Acc) end, #{}, TXs),

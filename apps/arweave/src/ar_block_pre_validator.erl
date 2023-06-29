@@ -537,79 +537,41 @@ pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer) ->
 pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
 	#block{ hash_preimage = HashPreimage, diff = Diff, nonce_limiter_info = NonceLimiterInfo,
 			partition_number = PartitionNumber, reward_addr = RewardAddr } = B,
-	PrevNonceLimiterInfo = get_prev_nonce_limiter_info(PrevB),
-	SolutionHash =
-		case PrevNonceLimiterInfo of
-			not_found ->
-				not_found;
-			_ ->
-				Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
-				NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
-				H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed,
-						RewardAddr),
-				ar_block:compute_solution_h(H0, HashPreimage)
-		end,
-	case SolutionHash of
-		not_found ->
-			%% The new blocks should have been applied in the meantime since we
-			%% looked for the previous block in the block cache.
-			skipped;
-		_ ->
-			case binary:decode_unsigned(SolutionHash, big) > Diff of
-				false ->
-					post_block_reject_warn(B, check_hash_preimage, Peer),
-					ar_events:send(block, {rejected, invalid_hash_preimage,
-							B#block.indep_hash, Peer}),
-					invalid;
-				true ->
-					gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer}}),
-					enqueued
-			end
-	end.
-
-get_prev_nonce_limiter_info(#block{ indep_hash = PrevH, height = PrevHeight } = PrevB) ->
-	Fork_2_6 = ar_fork:height_2_6(),
-	true = PrevHeight + 1 >= Fork_2_6,
-	case PrevHeight + 1 == Fork_2_6 of
-		true ->
-			case ar_node:get_recent_partition_upper_bound_by_prev_h(PrevH) of
-				not_found ->
-					not_found;
-				{Seed, PartitionUpperBound} ->
-					Output = crypto:hash(sha256, Seed),
-					#nonce_limiter_info{ output = Output, seed = Seed, next_seed = PrevH,
-							partition_upper_bound = PartitionUpperBound,
-							next_partition_upper_bound = PrevB#block.weave_size }
-			end;
+	PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
+	Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
+	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
+	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, RewardAddr),
+	SolutionHash = ar_block:compute_solution_h(H0, HashPreimage),
+	case binary:decode_unsigned(SolutionHash, big) > Diff of
 		false ->
-			PrevB#block.nonce_limiter_info
+			post_block_reject_warn(B, check_hash_preimage, Peer),
+			ar_events:send(block, {rejected, invalid_hash_preimage,
+					B#block.indep_hash, Peer}),
+			invalid;
+		true ->
+			gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer}}),
+			enqueued
 	end.
 
 pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer) ->
 	Info = B#block.nonce_limiter_info,
 	#nonce_limiter_info{ global_step_number = StepNumber, seed = Seed,
 			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
+			vdf_difficulty = VDFDifficulty,
+			next_vdf_difficulty = NextVDFDifficulty,
 			next_partition_upper_bound = NextPartitionUpperBound } = Info,
 	StepNumber = (B#block.nonce_limiter_info)#nonce_limiter_info.global_step_number,
-	case get_prev_nonce_limiter_info(PrevB) of
-		not_found ->
-			%% The new blocks should have been applied in the meantime since we
-			%% looked for the previous block in the block cache.
-			skipped;
-		PrevNonceLimiterInfo ->
-			ExpectedSeedData = ar_nonce_limiter:get_seed_data(StepNumber, PrevNonceLimiterInfo,
-					PrevB#block.indep_hash, PrevB#block.weave_size),
-			case ExpectedSeedData == {Seed, NextSeed, PartitionUpperBound,
-					NextPartitionUpperBound} of
-				true ->
-					pre_validate_partition_number(B, PrevB, PartitionUpperBound,
-							SolutionResigned, Peer);
-				false ->
-					post_block_reject_warn(B, check_nonce_limiter_seed_data, Peer),
-					ar_events:send(block, {rejected, invalid_nonce_limiter_seed_data,
-							B#block.indep_hash, Peer}),
-					invalid
-			end
+	ExpectedSeedData = ar_nonce_limiter:get_seed_data(StepNumber, PrevB),
+	case ExpectedSeedData == {Seed, NextSeed, PartitionUpperBound,
+			NextPartitionUpperBound, VDFDifficulty, NextVDFDifficulty} of
+		true ->
+			pre_validate_partition_number(B, PrevB, PartitionUpperBound,
+					SolutionResigned, Peer);
+		false ->
+			post_block_reject_warn(B, check_nonce_limiter_seed_data, Peer),
+			ar_events:send(block, {rejected, invalid_nonce_limiter_seed_data,
+					B#block.indep_hash, Peer}),
+			invalid
 	end.
 
 pre_validate_partition_number(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
@@ -710,7 +672,7 @@ pre_validate_may_be_fetch_second_chunk(B, PrevB, PartitionUpperBound, Peer) ->
 pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 	NonceLimiterInfo = B#block.nonce_limiter_info,
 	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
-	PrevNonceLimiterInfo = get_prev_nonce_limiter_info(PrevB),
+	PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
 	Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
 	H0 = ar_block:compute_h0(NonceLimiterOutput, B#block.partition_number, Seed,
 			B#block.reward_addr),

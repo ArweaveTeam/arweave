@@ -1,7 +1,7 @@
 -module(ar_pricing).
 
 %% 2.6 exports.
--export([is_v2_pricing_height/1, get_price_per_gib_minute/2, get_tx_fee/1,
+-export([is_v2_pricing_height/1, get_price_per_gib_minute/4, get_tx_fee/1,
 		get_miner_reward_endowment_pool_debt_supply/1, recalculate_price_per_gib_minute/1,
 		redenominate/3, may_be_redenominate/1]).
 
@@ -45,7 +45,28 @@ is_v2_pricing_height(Height) ->
 %% network hash rates and block rewards. The total reward used in calculations
 %% is at least 1 Winston, even if all block rewards from the given history are 0.
 %% Also, the returned price is always at least 1 Winston.
-get_price_per_gib_minute(RewardHistory, Denomination2) ->
+get_price_per_gib_minute(Height, RewardHistory, BlockTimeHistory, Denomination2) ->
+	case Height >= ar_fork:height_2_7() of
+		false ->
+			%% Computed but not used at this point.
+			get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2);
+		true ->
+			PriceTransitionStart = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
+			PriceTransitionEnd = PriceTransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+			case Height >= PriceTransitionStart of
+				false ->
+					?PRICE_PER_GIB_MINUTE_PRE_TRANSITION;
+				true ->
+					Price1 = ?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
+					Price2 = get_price_per_gib_minute2(Height, RewardHistory,
+							BlockTimeHistory, Denomination2),
+					Interval1 = Height - PriceTransitionStart + 1,
+					Interval2 = PriceTransitionEnd - (Height + 1),
+					(Price1 * Interval2 + Price2 * Interval1) div (Interval1 + Interval2)
+			end
+	end.
+
+get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2) ->
 	{HashRateTotal, RewardTotal} =
 		lists:foldl(
 			fun({_Addr, HashRate, Reward, Denomination}, {Acc1, Acc2}) ->
@@ -55,20 +76,60 @@ get_price_per_gib_minute(RewardHistory, Denomination2) ->
 			{0, 0},
 			RewardHistory
 		),
-	%% 2 recall ranges per partition per second.
-	SolutionsPerPartitionPerSecond = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
-	SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
-	SolutionsPerPartitionPerTwoMinutes = SolutionsPerPartitionPerMinute * 2,
-	%% Estimated partition count = hash rate / 2 / solutions per partition per minute.
-	%% 2 minutes is the average block time.
-	%% Estimated data size = estimated partition count * partition size.
-	%% Estimated price per gib minute = total block reward / estimated data size in gibibytes.
-	(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerTwoMinutes)
-		div (max(1, HashRateTotal)
-				* (?PARTITION_SIZE)
-				* 2	% The reward is paid every two minutes whereas we are calculating
-					% the minute rate here.
-			).
+	case Height - ?BLOCK_TIME_HISTORY_BLOCKS >= ar_fork:height_2_7() of
+		true ->
+			{IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount} =
+				lists:foldl(
+					fun({BlockInterval, VDFInterval, ChunkCount}, {Acc1, Acc2, Acc3, Acc4}) ->
+						{
+							Acc1 + BlockInterval,
+							Acc2 + VDFInterval,
+							case ChunkCount of
+								1 -> Acc3 + 1;
+								_ -> Acc3
+							end,
+							case ChunkCount of
+								1 -> Acc4;
+								_ -> Acc4 + 1
+							end
+						}
+					end,
+					{0, 0, 0, 0},
+					BlockTimeHistory
+				),
+			SolutionsPerPartitionPerVDFStep =
+				case OneChunkCount of
+					0 ->
+						2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE);
+					_ ->
+						min(2 * ?RECALL_RANGE_SIZE,
+								?RECALL_RANGE_SIZE
+									+ ?RECALL_RANGE_SIZE * TwoChunkCount div OneChunkCount)
+							div ?DATA_CHUNK_SIZE
+				end,
+			SolutionsPerPartitionPerSecond = (SolutionsPerPartitionPerVDFStep
+					* VDFIntervalTotal) div IntervalTotal,
+			(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerSecond * 60)
+				div (max(1, HashRateTotal)
+						* (?PARTITION_SIZE)
+					);
+		false ->
+			%% 2 recall ranges per partition per second.
+			SolutionsPerPartitionPerSecond = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
+			SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
+			SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerMinute * 2,
+			%% Estimated partition count = hash rate / 2 / solutions per partition per minute.
+			%% 2 minutes is the average block time.
+			%% Estimated data size = estimated partition count * partition size.
+			%% Estimated price per gib minute = total block reward / estimated data size
+			%% in gibibytes.
+			(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerBlock)
+				div (max(1, HashRateTotal)
+						* (?PARTITION_SIZE)
+						* 2	% The reward is paid every two minutes whereas we are calculating
+							% the minute rate here.
+					)
+	end.
 
 %% @doc Return the minimum required transaction fee for the given number of
 %% total bytes stored and gibibyte minute price.
@@ -86,9 +147,11 @@ get_tx_fee(Args) ->
 %% @doc Return the block reward, the new endowment pool, and the new debt supply.
 get_miner_reward_endowment_pool_debt_supply(Args) ->
 	{EndowmentPool, DebtSupply, TXs, WeaveSize, Height, GiBMinutePrice,
-			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination} = Args,
+			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination,
+			BlockInterval} = Args,
 	Inflation = redenominate(ar_inflation:calculate(Height), 1, Denomination),
-	ExpectedReward = (?N_REPLICATIONS(Height)) * WeaveSize * GiBMinutePrice * 2 div (?GiB),
+	ExpectedReward = (?N_REPLICATIONS(Height)) * WeaveSize * GiBMinutePrice
+			* BlockInterval div (60 * ?GiB),
 	{EndowmentPoolFeeShare, MinerFeeShare} = distribute_transaction_fees2(TXs, Denomination),
 	BaseReward = Inflation + MinerFeeShare,
 	EndowmentPool2 = EndowmentPool + EndowmentPoolFeeShare,
@@ -185,26 +248,38 @@ may_be_redenominate3(B) ->
 	end.
 
 get_initial_current_and_scheduled_price_per_gib_minute(B) ->
-	#block{ diff = Diff } = B,
+	#block{ diff = Diff, height = Height } = B,
 	HashRate = ar_difficulty:get_hash_rate(Diff),
 	Reward = ar_inflation:calculate(B#block.height),
 	Denomination = 1,
-	Price = get_price_per_gib_minute([{B#block.reward_addr, HashRate, Reward, Denomination}],
-			Denomination),
+	Price = get_price_per_gib_minute(Height,
+			[{B#block.reward_addr, HashRate, Reward, Denomination}],
+			B#block.block_time_history, Denomination),
 	{Price, Price}.
 
 recalculate_price_per_gib_minute2(B) ->
 	#block{ height = PrevHeight, reward_history = RewardHistory,
+			block_time_history = BlockTimeHistory,
 			denomination = Denomination, price_per_gib_minute = Price,
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
-	case is_price_adjustment_height(PrevHeight + 1) of
-		false ->
-			{Price, ScheduledPrice};
-		true ->
-			RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
-			Price2 = min(Price * 2, get_price_per_gib_minute(RewardHistory2, Denomination)),
-			Price3 = max(Price div 2, Price2),
-			{ScheduledPrice, Price3}
+	Fork_2_7 = ar_fork:height_2_7(),
+	case PrevHeight + 1 of
+		Fork_2_7 ->
+			{?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
+					?PRICE_PER_GIB_MINUTE_PRE_TRANSITION};
+		_ ->
+			case is_price_adjustment_height(PrevHeight + 1) of
+				false ->
+					{Price, ScheduledPrice};
+				true ->
+					RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
+					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
+							?BLOCK_TIME_HISTORY_BLOCKS),
+					Price2 = min(Price * 2, get_price_per_gib_minute(PrevHeight,
+							RewardHistory2, BlockTimeHistory2, Denomination)),
+					Price3 = max(Price div 2, Price2),
+					{ScheduledPrice, Price3}
+			end
 	end.
 
 is_price_adjustment_height(Height) ->

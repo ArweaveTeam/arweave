@@ -5,6 +5,7 @@
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
 		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2, reward_history_hash/1,
+		block_time_history_hash/1,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
 		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
@@ -12,12 +13,15 @@
 		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
 		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
-		get_packing_threshold/2, validate_reward_history_hash/2]).
+		get_packing_threshold/2, validate_reward_history_hash/2,
+		validate_block_time_history_hash/2, update_block_time_history/2,
+		compute_block_interval/1, compute_vdf_difficulty/1, verify_vdf_difficulty/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_block.hrl").
+-include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -174,6 +178,59 @@ compute_h2(H1, Chunk, H0) ->
 compute_solution_h(H0, Preimage) ->
 	crypto:hash(sha256, << H0:32/binary, Preimage/binary >>).
 
+compute_block_interval(OldB) ->
+	Height = OldB#block.height + 1,
+	case Height - ?BLOCK_TIME_HISTORY_BLOCKS >= ar_fork:height_2_7() of
+		true ->
+			IntervalTotal =
+				lists:foldl(
+					fun({BlockInterval, _VDFInterval, _ChunkCount}, Acc) ->
+						Acc + BlockInterval
+					end,
+					0,
+					lists:sublist(OldB#block.block_time_history, ?BLOCK_TIME_HISTORY_BLOCKS)
+				),
+			IntervalTotal div ?BLOCK_TIME_HISTORY_BLOCKS;
+		false -> 120
+	end.
+
+compute_vdf_difficulty(OldB) ->
+	Height = OldB#block.height + 1,
+	case Height - ?BLOCK_TIME_HISTORY_BLOCKS > ar_fork:height_2_7()
+			andalso Height - ?VDF_HISTORY_CUT - 1 > ar_fork:height_2_7() of
+		true ->
+			case Height rem ?VDF_DIFFICULTY_RETARGET == 0 of
+				false ->
+					OldB#block.vdf_difficulty;
+				true ->
+					HistoryPart = lists:nthtail(?VDF_HISTORY_CUT,
+							lists:sublist(OldB#block.block_time_history,
+									?BLOCK_TIME_HISTORY_BLOCKS)),
+					{IntervalTotal, VDFIntervalTotal} =
+						lists:foldl(
+							fun({BlockInterval, VDFInterval, _ChunkCount}, {Acc1, Acc2}) ->
+								{
+									Acc1 + BlockInterval,
+									Acc2 + VDFInterval
+								}
+							end,
+							{0, 0},
+							HistoryPart
+						),
+					(VDFIntervalTotal * OldB#block.vdf_difficulty) div IntervalTotal
+			end;
+		false ->
+			?VDF_DIFFICULTY
+	end.
+
+verify_vdf_difficulty(NewB, OldB)->
+	case NewB#block.height - ?BLOCK_TIME_HISTORY_BLOCKS >= ar_fork:height_2_7() of
+		true->
+			NewB#block.vdf_difficulty == compute_vdf_difficulty(OldB);
+		false->
+			NewB#block.vdf_difficulty == ?VDF_DIFFICULTY
+	end.
+
 %% @doc Compute the block identifier (also referred to as "independent hash").
 indep_hash(B) ->
 	case B#block.height >= ar_fork:height_2_6() of
@@ -202,7 +259,8 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		previous_solution_hash = PreviousSolutionHash,
 		price_per_gib_minute = PricePerGiBMinute,
 		scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute,
-		reward_history_hash = RewardHistoryHash, debt_supply = DebtSupply,
+		reward_history_hash = RewardHistoryHash,
+		block_time_history_hash = BlockTimeHistoryHash, debt_supply = DebtSupply,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		denomination = Denomination, redenomination_height = RedenominationHeight,
@@ -210,7 +268,8 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		merkle_rebase_support_threshold = RebaseThreshold,
 		poa = #poa{ data_path = DataPath, tx_path = TXPath },
 		poa2 = #poa{ data_path = DataPath2, tx_path = TXPath2 },
-		chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash }) ->
+		chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
+		vdf_difficulty = VDFDifficulty }) ->
 	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
 	Nonce2 = binary:encode_unsigned(Nonce),
 	%% The only block where reward_address may be unclaimed
@@ -221,9 +280,12 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 			next_partition_upper_bound = NextPartitionUpperBound,
 			steps = Steps, prev_output = PrevOutput,
-			last_step_checkpoints = LastStepCheckpoints } = NonceLimiterInfo,
+			last_step_checkpoints = LastStepCheckpoints,
+			vdf_difficulty = VDFDifficulty2,
+			next_vdf_difficulty = NextVDFDifficulty } = NonceLimiterInfo,
 	{RebaseThresholdBin, DataPathBin, TXPathBin, DataPath2Bin, TXPath2Bin,
-			ChunkHashBin, Chunk2HashBin} =
+			ChunkHashBin, Chunk2HashBin, BlockTimeHistoryHashBin,
+			VDFDifficultyBin, VDFDifficulty2Bin, NextVDFDifficultyBin} =
 		case Height >= ar_fork:height_2_7() of
 			true ->
 				{encode_int(RebaseThreshold, 16), ar_serialize:encode_bin(DataPath, 24),
@@ -231,9 +293,13 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 						ar_serialize:encode_bin(DataPath2, 24),
 						ar_serialize:encode_bin(TXPath2, 24),
 						<< ChunkHash:32/binary >>,
-						ar_serialize:encode_bin(Chunk2Hash, 8) };
+						ar_serialize:encode_bin(Chunk2Hash, 8),
+						<< BlockTimeHistoryHash:32/binary >>,
+						ar_serialize:encode_int(VDFDifficulty, 8),
+						ar_serialize:encode_int(VDFDifficulty2, 8),
+						ar_serialize:encode_int(NextVDFDifficulty, 8)};
 			false ->
-				{<<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>}
+				{<<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>}
 		end,
 	%% The elements must be either fixed-size or separated by the size separators (
 	%% the ar_serialize:encode_* functions).
@@ -270,7 +336,8 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			(ar_serialize:encode_double_signing_proof(DoubleSigningProof))/binary,
 			(encode_int(PrevCDiff, 16))/binary, RebaseThresholdBin/binary,
 			DataPathBin/binary, TXPathBin/binary, DataPath2Bin/binary, TXPath2Bin/binary,
-			ChunkHashBin/binary, Chunk2HashBin/binary >>,
+			ChunkHashBin/binary, Chunk2HashBin/binary, BlockTimeHistoryHashBin/binary,
+			VDFDifficultyBin/binary, VDFDifficulty2Bin/binary, NextVDFDifficultyBin/binary >>,
 	crypto:hash(sha256, Segment).
 
 %% @doc Compute the block identifier from the signed hash and block signature.
@@ -296,7 +363,21 @@ reward_history_hash([{Addr, HashRate, Reward, Denomination} | RewardHistory], IO
 	HashRateBin = ar_serialize:encode_int(HashRate, 8),
 	RewardBin = ar_serialize:encode_int(Reward, 8),
 	DenominationBin = << Denomination:24 >>,
-	reward_history_hash(RewardHistory, [Addr, HashRateBin, RewardBin, DenominationBin | IOList]).
+	reward_history_hash(RewardHistory,
+			[Addr, HashRateBin, RewardBin, DenominationBin | IOList]).
+
+block_time_history_hash(BlockTimeHistory) ->
+	block_time_history_hash(BlockTimeHistory,
+			[ar_serialize:encode_int(length(BlockTimeHistory), 8)]).
+
+block_time_history_hash([], IOList) ->
+	crypto:hash(sha256, iolist_to_binary(IOList));
+block_time_history_hash([{BlockInterval, VDFInterval, ChunkCount} | History], IOList) ->
+	BlockIntervalBin = ar_serialize:encode_int(BlockInterval, 8),
+	VDFIntervalBin = ar_serialize:encode_int(VDFInterval, 8),
+	ChunkCountBin = ar_serialize:encode_int(ChunkCount, 8),
+	block_time_history_hash(History,
+			[BlockIntervalBin, VDFIntervalBin, ChunkCountBin | IOList]).
 
 %% @doc Verify the block signature.
 verify_signature(BlockPreimage, PrevCDiff,
@@ -545,6 +626,30 @@ shift_packing_2_5_threshold(Threshold) ->
 
 validate_reward_history_hash(H, RewardHistory) ->
 	H == ar_block:reward_history_hash(lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS)).
+
+validate_block_time_history_hash(H, BlockTimeHistory) ->
+	H == ar_block:block_time_history_hash(lists:sublist(BlockTimeHistory,
+			?BLOCK_TIME_HISTORY_BLOCKS)).
+
+update_block_time_history(B, PrevB) ->
+	case B#block.height >= ar_fork:height_2_7() of
+		false ->
+			PrevB#block.block_time_history;
+		true ->
+			BlockInterval = max(1, B#block.timestamp - PrevB#block.timestamp),
+			VDFInterval = vdf_step_number(B) - vdf_step_number(PrevB),
+			ChunkCount =
+				case B#block.recall_byte2 of
+					undefined ->
+						1;
+					_ ->
+						2
+				end,
+			[{BlockInterval, VDFInterval, ChunkCount} | PrevB#block.block_time_history]
+	end.
+
+vdf_step_number(#block{ nonce_limiter_info = Info }) ->
+	Info#nonce_limiter_info.global_step_number.
 
 verify_tx_root(B) ->
 	B#block.tx_root == generate_tx_root_for_block(B).

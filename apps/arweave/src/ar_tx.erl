@@ -323,8 +323,8 @@ get_addresses([TX | TXs], Addresses) ->
 	get_addresses(TXs, WithDest).
 
 do_verify_v1(TX, Args, VerifySignature) ->
-	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, RedenominationHeight,
-			Height, Accounts, Timestamp} = Args,
+	{_Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, RedenominationHeight,
+			Height, Accounts, _Timestamp} = Args,
 	Fork_1_8 = ar_fork:height_1_8(),
 	LastTXCheck = case Height of
 		H when H >= Fork_1_8 ->
@@ -337,8 +337,8 @@ do_verify_v1(TX, Args, VerifySignature) ->
 			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
 		true ->
 			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
-			FeeArgs = {TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
-					Height, Accounts, TX#tx.target, Timestamp},
+			FeeArgs = {TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+					Height, Accounts, TX#tx.target},
 			Checks = [
 				{"quantity_negative", TX#tx.quantity >= 0},
 				{"same_owner_as_target", (From =/= TX#tx.target)},
@@ -349,8 +349,8 @@ do_verify_v1(TX, Args, VerifySignature) ->
 				{"overspend", validate_overspend(TX,
 						ar_node_utils:apply_tx(Accounts, Denomination, TX))},
 				{"tx_signature_not_valid", verify_signature_v1(TX, VerifySignature, Height)},
-				{"tx_malleable", verify_malleability({TX, Rate, PricePerGiBMinute,
-						KryderPlusRateMultiplier, Denomination, Height, Accounts, Timestamp})},
+				{"tx_malleable", verify_malleability({TX, PricePerGiBMinute,
+						KryderPlusRateMultiplier, Denomination, Height, Accounts})},
 				{"invalid_target_length", verify_target_length(TX, Height)}
 			],
 			collect_validation_results(TX#tx.id, Checks)
@@ -372,15 +372,15 @@ collect_validation_results(TXID, Checks) ->
 	end.
 
 do_verify_v2(TX, Args, VerifySignature) ->
-	{Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, RedenominationHeight,
-			Height, Accounts, Timestamp} = Args,
+	{_Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, RedenominationHeight,
+			Height, Accounts, _Timestamp} = Args,
 	case verify_denomination(TX, Denomination, Height, RedenominationHeight) of
 		false ->
 			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
 		true ->
 			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
-			FeeArgs = {TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
-					Height, Accounts, TX#tx.target, Timestamp},
+			FeeArgs = {TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
+					Height, Accounts, TX#tx.target},
 			Checks = [
 				{"quantity_negative", TX#tx.quantity >= 0},
 				{"same_owner_as_target", (From =/= TX#tx.target)},
@@ -447,8 +447,7 @@ verify_signature_v1(TX, verify_signature, Height) ->
 	end.
 
 verify_malleability(Args) ->
-	{TX, _Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination, Height,
-			_Accounts, _Timestamp} = Args,
+	{TX, _PricePerGiBMinute, _KryderMultiplier, _Denomination, Height, _Accounts} = Args,
 	case Height + 1 >= ar_fork:height_2_4() of
 		false ->
 			true;
@@ -464,8 +463,7 @@ verify_malleability(Args) ->
 	end.
 
 verify_malleability2(Args) ->
-	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height, Accounts,
-			Timestamp} = Args,
+	{TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height, Accounts} = Args,
 	Target = TX#tx.target,
 	case {byte_size(Target), TX#tx.quantity > 0} of
 		{TargetSize, true} when TargetSize /= 32 ->
@@ -487,8 +485,8 @@ verify_malleability2(Args) ->
 									TX#tx.denomination,
 									Denomination),
 							not is_tx_fee_sufficient({TX#tx{ reward = TruncatedReward },
-									Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
-									Denomination, Height, Accounts, Target, Timestamp})
+									PricePerGiBMinute, KryderPlusRateMultiplier,
+									Denomination, Height, Accounts, Target})
 					end
 			end
 	end.
@@ -547,58 +545,26 @@ validate_overspend(TX, Accounts) ->
 	).
 
 is_tx_fee_sufficient(Args) ->
-	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height, Accounts,
-			Addr, Timestamp} = Args,
+	{TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height, Accounts,
+			Addr} = Args,
 	DataSize = get_weave_size_increase(TX, Height + 1),
-	MinimumRequiredFee = ar_tx:get_tx_fee({DataSize, Rate, PricePerGiBMinute,
-			KryderPlusRateMultiplier, Addr, Timestamp, Accounts, Height + 1}),
+	MinimumRequiredFee = ar_tx:get_tx_fee({DataSize, PricePerGiBMinute,
+			KryderPlusRateMultiplier, Addr, Accounts, Height + 1}),
 	Fee = TX#tx.reward,
 	ar_pricing:redenominate(Fee, TX#tx.denomination, Denomination) >= MinimumRequiredFee.
 
 get_tx_fee(Args) ->
-	{DataSize, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Timestamp, Accounts,
-			Height} = Args,
-	Fork_2_6 = ar_fork:height_2_6(),
+	{DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height} = Args,
 	Fork_2_6_8 = ar_fork:height_2_6_8(),
-	PreFork26Args = {DataSize, Rate, Height, Accounts, Addr, Timestamp},
-	V2PricingArgs = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts,
-					Height},
-
-	V2PricingHeight = Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START)
-					+ (?PRICE_2_6_8_TRANSITION_BLOCKS),
-
-	TransitionStart_2_6 = Fork_2_6 + ?PRICE_2_6_TRANSITION_START,
-	TransitionEnd_2_6 = TransitionStart_2_6 + ?PRICE_2_6_TRANSITION_BLOCKS,
+	Args2 = {DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height},
 	TransitionStart_2_6_8 = Fork_2_6_8 + ?PRICE_2_6_8_TRANSITION_START,
-	TransitionEnd_2_6_8 = TransitionStart_2_6_8 + ?PRICE_2_6_8_TRANSITION_BLOCKS,
-
-	case Height of
-		H when H >= V2PricingHeight ->
-			%% New pricing is fully live
-			get_tx_fee2(V2PricingArgs);
-		H when H >= TransitionStart_2_6_8 ->
-			%% 2.6.8 transition period. Interpolate between a static fee-based pricing and
-			%% new pricing throughout the 2.6.8 transition period
-			get_transition_tx_fee(
-				get_static_2_6_8_tx_fee(DataSize, Addr, Accounts), %% StartFee
-				get_tx_fee2(V2PricingArgs), %% EndFee
-				TransitionStart_2_6_8, 
-				TransitionEnd_2_6_8,
-				Height);
-		H when H >= Fork_2_6_8 ->
+	true = Height >= Fork_2_6_8,
+	case Height >= TransitionStart_2_6_8 of
+		false ->
 			%% Pre-2.6.8 transition period. Use a static fee-based pricing + new account fee.
 			get_static_2_6_8_tx_fee(DataSize, Addr, Accounts);
-		H when H >= TransitionStart_2_6 ->
-			%% 2.6 transition period. Interpolate between pre-2.6 pricing and new pricing
-			%% throughout the 2.6 transition period
-			get_transition_tx_fee(
-				get_tx_fee_pre_fork_2_6(PreFork26Args), %% StartFee
-				get_tx_fee2(V2PricingArgs), %% EndFee
-				TransitionStart_2_6, 
-				TransitionEnd_2_6,
-				Height);
-		_ ->
-			get_tx_fee_pre_fork_2_6(PreFork26Args)
+		true ->
+			get_tx_fee2(Args2)
 	end.
 
 get_static_2_6_8_tx_fee(DataSize, Addr, Accounts) ->
@@ -611,11 +577,6 @@ get_static_2_6_8_tx_fee(DataSize, Addr, Accounts) ->
 					?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT,
 			UploadFee + NewAccountFee
 	end.
-
-get_transition_tx_fee(StartFee, EndFee, StartHeight, EndHeight, Height) ->
-	Interval1 = Height - StartHeight + 1,
-	Interval2 = EndHeight - (Height + 1),
-	(StartFee * Interval2 + EndFee * Interval1) div (Interval1 + Interval2).
 
 get_tx_fee2(Args) ->
 	{DataSize, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height} = Args,
@@ -634,16 +595,6 @@ get_new_account_fee(BytePerMinutePrice, KryderPlusRateMultiplier, Height) ->
 	Args = {?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, BytePerMinutePrice,
 			KryderPlusRateMultiplier, Height},
 	ar_pricing:get_tx_fee(Args).
-
-get_tx_fee_pre_fork_2_6({DataSize, Rate, Height, Accounts, Addr, Timestamp}) ->
-	true = Height >= ar_fork:height_2_4(),
-	case Addr == <<>> orelse maps:is_key(Addr, Accounts) of
-		true ->
-			ar_pricing:get_tx_fee(DataSize, Timestamp, Rate, Height);
-		false ->
-			WalletFee = ar_pricing:usd_to_ar(?WALLET_GEN_FEE_USD, Rate, Height),
-			WalletFee + ar_pricing:get_tx_fee(DataSize, Timestamp, Rate, Height)
-	end.
 
 verify_target_length(TX, Height) ->
 	case Height >= ar_fork:height_2_4() of
@@ -831,15 +782,13 @@ test_forge() ->
 is_tx_fee_sufficient_test() ->
 	ValidTX = new(<<"TEST DATA">>, ?AR(10)),
 	InvalidTX = new(<<"TEST DATA">>, 1),
-	Rate = {1, 5},
 	PricePerGiBMinute = 2,
 	Height = 2,
-	Timestamp = os:system_time(seconds),
-	?assert(is_tx_fee_sufficient({ValidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
-			<<"non-existing-addr">>, Timestamp})),
+	?assert(is_tx_fee_sufficient({ValidTX, PricePerGiBMinute, 1, 1, Height, #{},
+			<<"non-existing-addr">>})),
 	?assert(
-		not is_tx_fee_sufficient({InvalidTX, Rate, PricePerGiBMinute, 1, 1, Height, #{},
-				<<"non-existing-addr">>, Timestamp})).
+		not is_tx_fee_sufficient({InvalidTX, PricePerGiBMinute, 1, 1, Height, #{},
+				<<"non-existing-addr">>})).
 
 %% Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
@@ -941,97 +890,3 @@ get_weave_size_increase_test() ->
 			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5() - 1)),
 	?assertEqual(262144,
 			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5() - 1)).
-
-%% @doc Primarily test the different branches in the ar_tx:get_tx_fee logic. Several
-%% of the pricing constants have test specific values which means the fees asserted here
-%% will not match true mainnet fees. 
-get_tx_fee_test() ->
-	meck:new(ar_fork, [passthrough]),
-	meck:expect(ar_fork, height_2_6, fun() -> 1132210 end),
-	meck:expect(ar_fork, height_2_6_8, fun() -> 1189560 end),
-
-	Addr = crypto:strong_rand_bytes(32),
-
-	%% After the 2.6 transition starts
-	Height3 = ar_fork:height_2_6() + ?PRICE_2_6_TRANSITION_START,
-	test_get_tx_fee(1, Height3, <<>>, 2748223),
-	test_get_tx_fee(2, Height3, <<>>, 2749079),
-	test_get_tx_fee(2 * ?GiB, Height3, <<>>, 1837986144189),
-	%% +new account fee
-	test_get_tx_fee(1, Height3, Addr, 21460170515),
-	test_get_tx_fee(2, Height3, Addr, 21460171371),
-	test_get_tx_fee(2 * ?GiB, Height3, Addr, 1859443566481),
-
-	%% After the 2.6 transition starts, with interpolation. 
-	Height4 = ar_fork:height_2_6() + ?PRICE_2_6_TRANSITION_START + 1,
-	test_get_tx_fee(1, Height4, <<>>, 5284478),
-	test_get_tx_fee(2, Height4, <<>>, 5286124),
-	test_get_tx_fee(2 * ?GiB, Height4, <<>>, 3534209808925),
-	%% +new account fee
-	test_get_tx_fee(1, Height4, Addr, 32920129062),
-	test_get_tx_fee(2, Height4, Addr, 32920130708),
-	test_get_tx_fee(2 * ?GiB, Height4, Addr, 3567124653509),
-
-	%% After the 2.6.8 hard fork
-	Height5 = ar_fork:height_2_6_8(),
-	test_get_tx_fee(1, Height5, <<>>, 2565589),
-	test_get_tx_fee(2, Height5, <<>>, 2566388),
-	test_get_tx_fee(2 * ?GiB, Height5, <<>>, 1715841999542),
-	%% +new account fee
-	test_get_tx_fee(1, Height5, Addr, 15982565589),
-	test_get_tx_fee(2, Height5, Addr, 15982566388),
-	test_get_tx_fee(2 * ?GiB, Height5, Addr, 1731821999542),
-
-	%% After the 2.6.8 hard fork. Second sample to confirm static pricing.
-	Height6 = ar_fork:height_2_6_8() + 1,
-	test_get_tx_fee(1, Height6, <<>>, 2565589),
-	test_get_tx_fee(2, Height6, <<>>, 2566388),
-	test_get_tx_fee(2 * ?GiB, Height6, <<>>, 1715841999542),
-	%% +new account fee
-	test_get_tx_fee(1, Height6, Addr, 15982565589),
-	test_get_tx_fee(2, Height6, Addr, 15982566388),
-	test_get_tx_fee(2 * ?GiB, Height6, Addr, 1731821999542),
-
-	%% After the 2.6.8 transition starts
-	Height7 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
-	test_get_tx_fee(1, Height7, <<>>, 3925033),
-	test_get_tx_fee(2, Height7, <<>>, 3926256),
-	test_get_tx_fee(2 * ?GiB, Height7, <<>>, 2625025904233),
-	%% +new account fee
-	test_get_tx_fee(1, Height7, Addr, 24451347325),
-	test_get_tx_fee(2, Height7, Addr, 24451348548),
-	test_get_tx_fee(2 * ?GiB, Height7, Addr, 2649473326525),
-
-	%% After the 2.6 transition starts, with interpolation
-	Height8 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START + 1,
-	test_get_tx_fee(1, Height8, <<>>, 5284478),
-	test_get_tx_fee(2, Height8, <<>>, 5286124),
-	test_get_tx_fee(2 * ?GiB, Height8, <<>>, 3534209808925),
-	%% +new account fee
-	test_get_tx_fee(1, Height8, Addr, 32920129062),
-	test_get_tx_fee(2, Height8, Addr, 32920130708),
-	test_get_tx_fee(2 * ?GiB, Height8, Addr, 3567124653509),
-
-	%% V2Pricing
-	Height9 = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START + ?PRICE_2_6_8_TRANSITION_BLOCKS,
-	test_get_tx_fee(1, Height9, <<>>, 5284478),
-	test_get_tx_fee(2, Height9, <<>>, 5286124),
-	test_get_tx_fee(2 * ?GiB, Height9, <<>>, 3534209808925),
-	%% +new account fee
-	test_get_tx_fee(1, Height9, Addr, 32920129062),
-	test_get_tx_fee(2, Height9, Addr, 32920130708),
-	test_get_tx_fee(2 * ?GiB, Height9, Addr, 3567124653509),
-
-	meck:unload(ar_fork).
-
-
-test_get_tx_fee(DataSize, Height, Addr, ExpectedFee) ->
-	Rate = {1, 10},
-	PricePerGiBMinute = 8025,
-	KryderPlusRateMultiplier = 1, 
-	Timestamp = os:system_time(seconds),
-	Accounts = #{},
-
-	?assertEqual(ExpectedFee, 
-		ar_tx:get_tx_fee({DataSize, Rate, PricePerGiBMinute,
-			KryderPlusRateMultiplier, Addr, Timestamp, Accounts, Height})).

@@ -5,10 +5,6 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% These functions serve as mocks and are exported to overcome the meck's
-%% issue with picking them up after the module is rebuilt (e.g. during debugging).
--export([get_miner_reward_and_endowment_pool/1]).
-
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
 		sign_tx/3, sign_v1_tx/3,
 		get_tx_price/3, get_tx_price/2, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
@@ -16,7 +12,6 @@
 		get_balance/2, get_reserved_balance/2, wait_until_height/1,
 		assert_slave_wait_until_height/1]).
 
--define(HUGE_WEAVE_SIZE, 1000000000000000).
 -define(DISTANT_FUTURE_BLOCK_HEIGHT, 262800000). %% 1,000 years from genesis
 
 auto_redenomination_and_endowment_debt_test_() ->
@@ -34,8 +29,8 @@ test_auto_redenomination_and_endowment_debt() ->
 	start(B0),
 	slave_start(B0),
 	connect_to_slave(),
-	?assert(?PRICE_2_6_TRANSITION_START == 2),
-	?assert(?PRICE_2_6_TRANSITION_BLOCKS == 2),
+	?assert(?PRICE_2_6_8_TRANSITION_START == 2),
+	?assert(?PRICE_2_6_8_TRANSITION_BLOCKS == 2),
 	?assert(?PRICE_ADJUSTMENT_FREQUENCY == 2),
 	?assert(?REDENOMINATION_DELAY_BLOCKS == 2),
 	?assert(?REWARD_HISTORY_BLOCKS == 3),
@@ -56,6 +51,8 @@ test_auto_redenomination_and_endowment_debt() ->
 	MinerAddr = ar_wallet:to_address(MinerPub),
 	?assertEqual([{MinerAddr, 1, 10, 1}, {B0#block.reward_addr, 1, 10, 1}],
 			B1#block.reward_history),
+	?assertEqual([{time_diff(B1, B0), vdf_diff(B1, B0), chunk_count(B1)}, {1, 1, 1}],
+			B1#block.block_time_history),
 	%% The price is recomputed every two blocks.
 	?assertEqual(B1#block.price_per_gib_minute, B1#block.scheduled_price_per_gib_minute),
 	ar_test_node:mine(),
@@ -69,7 +66,10 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual(B2#block.scheduled_price_per_gib_minute, B2#block.price_per_gib_minute),
 	?assertEqual([{MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1},
 			{B0#block.reward_addr, 1, 10, 1}], B2#block.reward_history),
-	ar_test_node:mine(),
+	?assertEqual([{time_diff(B2, B1), vdf_diff(B2, B1), chunk_count(B2)},
+			{time_diff(B1, B0), vdf_diff(B1, B0), chunk_count(B1)}, {1, 1, 1}],
+			B2#block.block_time_history),
+	ar_node:mine(),
 	_BI3 = wait_until_height(3),
 	assert_slave_wait_until_height(3),
 	?assertEqual(0, get_balance(master, MinerPub)),
@@ -88,13 +88,15 @@ test_auto_redenomination_and_endowment_debt() ->
 	_BI4 = wait_until_height(4),
 	assert_slave_wait_until_height(4),
 	B4 = ar_node:get_current_block(),
-	%% We are at the height ?PRICE_2_6_TRANSITION_START + ?PRICE_2_6_TRANSITION_BLOCKS
+	%% We are at the height ?PRICE_2_6_8_TRANSITION_START + ?PRICE_2_6_8_TRANSITION_BLOCKS
 	%% so the new algorithm kicks in which estimates the expected block reward and takes
 	%% the missing amount from the endowment pool or takes on debt.
-	ExpectedReward4 = B3#block.price_per_gib_minute
-			* ?N_REPLICATIONS(B3#block.height)
-			* 2 % minutes
-			* 3 div (4 * 1024), % weave_size / GiB
+	AvgBlockTime4 = lists:sum([element(1, El)
+			|| El <- lists:sublist(B3#block.block_time_history, 3)]) div 3,
+	ExpectedReward4 = max(ar_inflation:calculate(4), B3#block.price_per_gib_minute
+			* ?N_REPLICATIONS(B4#block.height)
+			* AvgBlockTime4 div 60
+			* 3 div (4 * 1024)), % weave_size / GiB
 	?assertEqual(ExpectedReward4, B4#block.reward),
 	?assertEqual(ExpectedReward4 + 20, get_reserved_balance(master, B4#block.reward_addr)),
 	?assertEqual(10, get_balance(master, MinerPub)),
@@ -102,8 +104,12 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual(1, B4#block.kryder_plus_rate_multiplier_latch),
 	?assertEqual(2, B4#block.kryder_plus_rate_multiplier),
 	?assertEqual(B4#block.price_per_gib_minute, B3#block.scheduled_price_per_gib_minute),
-	?assertEqual(ar_pricing:get_price_per_gib_minute(lists:sublist(B3#block.reward_history, 3),
-			1), B4#block.scheduled_price_per_gib_minute),
+	PricePerGiBMinute3 = B3#block.price_per_gib_minute,
+	?assertEqual(max(PricePerGiBMinute3 div 2, min(PricePerGiBMinute3 * 2,
+			ar_pricing:get_price_per_gib_minute(B3#block.height,
+				lists:sublist(B3#block.reward_history, 3),
+				lists:sublist(B3#block.block_time_history, 3), 1))),
+			B4#block.scheduled_price_per_gib_minute),
 	%% The Kryder+ rate multiplier is 2 now so the fees should have doubled.
 	?assert(lists:member(get_optimistic_tx_price(master, 1024), [Fee * 2, Fee * 2 + 1])),
 	?assertEqual([{MinerAddr, 1, ExpectedReward4, 1}, {MinerAddr, 1, 10, 1},
@@ -116,16 +122,25 @@ test_auto_redenomination_and_endowment_debt() ->
 	assert_slave_wait_until_height(5),
 	B5 = ar_node:get_current_block(),
 	?assertEqual(20, get_balance(master, MinerPub)),
-	?assertEqual([{MinerAddr, 1, ExpectedReward4, 1}, {MinerAddr, 1, ExpectedReward4, 1},
+	AvgBlockTime5 = lists:sum([element(1, El)
+			|| El <- lists:sublist(B4#block.block_time_history, 3)]) div 3,
+	ExpectedReward5 = max(B4#block.price_per_gib_minute
+			* ?N_REPLICATIONS(B5#block.height)
+			* AvgBlockTime5 div 60
+			* 3 div (4 * 1024), % weave_size / GiB
+			ar_inflation:calculate(5)),
+	?assertEqual(ExpectedReward5, B5#block.reward),
+	?assertEqual([{MinerAddr, 1, ExpectedReward5, 1}, {MinerAddr, 1, ExpectedReward4, 1},
 			{MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1},
 			{B0#block.reward_addr, 1, 10, 1}], B5#block.reward_history),
-	?assertEqual(ar_block:reward_history_hash([{MinerAddr, 1, ExpectedReward4, 1},
+	?assertEqual(ar_block:reward_history_hash([{MinerAddr, 1, ExpectedReward5, 1},
 			{MinerAddr, 1, ExpectedReward4, 1},
 			{MinerAddr, 1, 10, 1}]), B5#block.reward_history_hash),
 	?assertEqual(1, B5#block.kryder_plus_rate_multiplier_latch),
 	?assertEqual(2, B5#block.kryder_plus_rate_multiplier),
 	%% The price per GiB minute recalculation only happens every two blocks.
-	?assertEqual(B5#block.scheduled_price_per_gib_minute, B5#block.price_per_gib_minute),
+	?assertEqual(B5#block.scheduled_price_per_gib_minute,
+			B4#block.scheduled_price_per_gib_minute),
 	?assertEqual(B4#block.price_per_gib_minute, B5#block.price_per_gib_minute),
 	?assertEqual(20000000000000, get_balance(master, Pub1)),
 	?assert(lists:member(get_optimistic_tx_price(master, 1024), [Fee * 2, Fee * 2 + 1])),
@@ -146,16 +161,20 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual(20000000000000 - HalfKryderLatchReset, get_balance(master, Pub1)),
 	?assertEqual(1, B6#block.kryder_plus_rate_multiplier_latch),
 	?assertEqual(2, B6#block.kryder_plus_rate_multiplier),
-	?assertEqual(B6#block.price_per_gib_minute, B5#block.price_per_gib_minute),
+	?assertEqual(B6#block.price_per_gib_minute, B5#block.scheduled_price_per_gib_minute),
+	PricePerGiBMinute5 = B5#block.price_per_gib_minute,
 	?assertEqual(
-		min(ar_pricing:get_price_per_gib_minute(lists:sublist(B5#block.reward_history, 3), 1),
-				B6#block.price_per_gib_minute * 2),
+		max(PricePerGiBMinute5 div 2,
+			min(ar_pricing:get_price_per_gib_minute(B5#block.height,
+					lists:sublist(B5#block.reward_history, 3),
+					lists:sublist(B5#block.block_time_history, 3), 1),
+				PricePerGiBMinute5 * 2)),
 			B6#block.scheduled_price_per_gib_minute),
 	assert_new_account_fee(),
 	?assertEqual(1, B6#block.denomination),
 	?assertEqual(?TOTAL_SUPPLY + B6#block.debt_supply - B6#block.reward_pool,
 			prometheus_gauge:value(available_supply)),
-	?assertEqual([{MinerAddr, 1, B6#block.reward, 1}, {MinerAddr, 1, ExpectedReward4, 1},
+	?assertEqual([{MinerAddr, 1, B6#block.reward, 1}, {MinerAddr, 1, ExpectedReward5, 1},
 			{MinerAddr, 1, ExpectedReward4, 1}], lists:sublist(B6#block.reward_history, 3)),
 	TX2 = sign_tx(master, Key1, #{ denomination => 0, reward => HalfKryderLatchReset * 2 }),
 	assert_post_tx_to_master(TX2),
@@ -179,14 +198,14 @@ test_auto_redenomination_and_endowment_debt() ->
 	_BI8 = wait_until_height(8),
 	assert_slave_wait_until_height(8),
 	B8 = ar_node:get_current_block(),
-	?assertEqual(30 + ExpectedReward4 + ExpectedReward4, get_balance(master, MinerPub)),
+	?assertEqual(30 + ExpectedReward5 + ExpectedReward4, get_balance(master, MinerPub)),
 	%% Release because at the previous block the endowment pool exceeded the threshold.
 	?assert(B8#block.reward_pool < B7#block.reward_pool),
 	?assertEqual(0, B8#block.kryder_plus_rate_multiplier_latch),
 	?assertEqual(2, B8#block.kryder_plus_rate_multiplier),
 	?assertEqual(1, B8#block.denomination),
 	?assert(prometheus_gauge:value(available_supply) > ?REDENOMINATION_THRESHOLD),
-	?assert(B8#block.price_per_gib_minute > B7#block.price_per_gib_minute),
+	?assert(B8#block.scheduled_price_per_gib_minute > B8#block.price_per_gib_minute),
 	%% A transaction with explicitly set denomination.
 	TX3 = sign_tx(master, Key3, #{ denomination => 1 }),
 	{Reward3, _} = get_tx_price(master, 0, ar_wallet:to_address(Pub2)),
@@ -277,6 +296,7 @@ test_auto_redenomination_and_endowment_debt() ->
 			B12#block.reward_history),
 	TX12 = sign_tx(master, Key3, #{ denomination => 0, quantity => 10,
 			target => ar_wallet:to_address(Pub5) }),
+	{Reward12, 2} = get_tx_price(master, 0),
 	assert_post_tx_to_master(TX12),
 	TX13 = sign_v1_tx(master, Key3, #{ denomination => 0,
 			reward => get_optimistic_tx_price(master, 0),
@@ -305,17 +325,24 @@ test_auto_redenomination_and_endowment_debt() ->
 	assert_slave_wait_until_height(13),
 	B13 = ar_node:get_current_block(),
 	Reward17_2 = erlang:ceil(Reward17 / 1000) * 1000,
+	AvgBlockTime13 = lists:sum([element(1, El)
+			|| El <- lists:sublist(B12#block.block_time_history, 3)]) div 3,
 	BaseReward13 =
 		B12#block.price_per_gib_minute
 		* ?N_REPLICATIONS(B13#block.height)
-		* 2 % minutes
+		* AvgBlockTime13 div 60 % minutes
 		* B13#block.weave_size div (1024 * 1024 * 1024), % weave_size / GiB
 	FeeSum13 =
-			Reward14 * MinerShareDividend div MinerShareDivisor % TX12
+			Reward12 * MinerShareDividend div MinerShareDivisor % TX12
 			+ Reward14 * MinerShareDividend div MinerShareDivisor % TX13
 			+ Reward14 * MinerShareDividend div MinerShareDivisor % TX14
 			+ Reward17_2 * MinerShareDividend div MinerShareDivisor, % TX17
-	?assertEqual(B12#block.reward_pool + Reward14 * 3 + Reward17_2 - FeeSum13
+	?debugFmt("B12#block.reward_pool: ~B, fees: ~B, fees received by the reward pool:~B, "
+			"expected reward: ~B, miner fee share: ~B~n", [B12#block.reward_pool,
+				Reward12 + Reward14 * 2 + Reward17_2,
+				Reward12 + Reward14 * 2 + Reward17_2 - FeeSum13,
+				BaseReward13, FeeSum13]),
+	?assertEqual(B12#block.reward_pool + Reward12 + Reward14 * 2 + Reward17_2 - FeeSum13
 			- max(0, (BaseReward13 - (10 * 1000 + FeeSum13))), B13#block.reward_pool),
 	?assertEqual(4, length(B13#block.txs)),
 	?assertEqual(2, B13#block.denomination),
@@ -327,12 +354,26 @@ test_auto_redenomination_and_endowment_debt() ->
 	_BI14 = wait_until_height(14),
 	assert_slave_wait_until_height(14),
 	B14 = ar_node:get_current_block(),
-	?assertEqual(B13#block.price_per_gib_minute, B14#block.price_per_gib_minute),
+	PricePerGiBMinute13 = B13#block.price_per_gib_minute,
 	?assertEqual(
-		min(
-			ar_pricing:get_price_per_gib_minute(lists:sublist(B13#block.reward_history, 3), 2),
-			B14#block.price_per_gib_minute * 2
-		), B14#block.scheduled_price_per_gib_minute).
+		max(PricePerGiBMinute13 div 2, min(
+			ar_pricing:get_price_per_gib_minute(B13#block.height,
+					lists:sublist(B13#block.reward_history, 3),
+					lists:sublist(B13#block.block_time_history, 3), 2),
+			PricePerGiBMinute13 * 2
+		)), B14#block.scheduled_price_per_gib_minute).
+
+time_diff(#block{ timestamp = TS }, #block{ timestamp = PrevTS }) ->
+	TS - PrevTS.
+
+vdf_diff(#block{ nonce_limiter_info = Info }, #block{ nonce_limiter_info = PrevInfo }) ->
+	Info#nonce_limiter_info.global_step_number
+			- PrevInfo#nonce_limiter_info.global_step_number.
+
+chunk_count(#block{ recall_byte2 = undefined }) ->
+	1;
+chunk_count(_) ->
+	2.
 
 hash_rate(#block{ diff = Diff }) ->
 	ar_difficulty:get_hash_rate(Diff).
@@ -344,7 +385,3 @@ assert_new_account_fee() ->
 	?assert(get_optimistic_tx_price(master,
 			?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT - 262144) <
 			get_optimistic_tx_price(master, 0, <<"non-existent-address">>)).
-
-get_miner_reward_and_endowment_pool(Args) ->
-	{Pool, TXs, Addr, _WeaveSize, Height, Timestamp, Rate} = Args,
-	meck:passthrough([{Pool, TXs, Addr, ?HUGE_WEAVE_SIZE, Height, Timestamp, Rate}]).

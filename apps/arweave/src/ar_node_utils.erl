@@ -47,11 +47,12 @@ update_accounts(B, PrevB, Accounts) ->
 	Denomination = PrevB#block.denomination,
 	DebtSupply = PrevB#block.debt_supply,
 	TXs = B#block.txs,
+	BlockInterval = ar_block:compute_block_interval(PrevB),
 	Args =
 		get_miner_reward_and_endowment_pool({EndowmentPool, DebtSupply, TXs,
 				B#block.reward_addr, B#block.weave_size, B#block.height, B#block.timestamp,
 				Rate, PricePerGiBMinute, KryderPlusRateMultiplierLatch,
-				KryderPlusRateMultiplier, Denomination}),
+				KryderPlusRateMultiplier, Denomination, BlockInterval}),
 	Accounts2 = apply_txs(Accounts, Denomination, TXs),
 	true = B#block.height >= ar_fork:height_2_6(),
 	update_accounts2(B, PrevB, Accounts2, Args).
@@ -154,13 +155,13 @@ update_recipient_balance(Accounts, Denomination,
 get_miner_reward_and_endowment_pool(Args) ->
 	{EndowmentPool, DebtSupply, TXs, RewardAddr, WeaveSize, Height, Timestamp, Rate,
 			PricePerGiBMinute, KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier,
-			Denomination} = Args,
+			Denomination, BlockInterval} = Args,
 	true = Height >= ar_fork:height_2_4(),
 	case ar_pricing:is_v2_pricing_height(Height) of
 		true ->
 			ar_pricing:get_miner_reward_endowment_pool_debt_supply({EndowmentPool, DebtSupply,
 					TXs, WeaveSize, Height, PricePerGiBMinute, KryderPlusRateMultiplierLatch,
-					KryderPlusRateMultiplier, Denomination});
+					KryderPlusRateMultiplier, Denomination, BlockInterval});
 		false ->
 			{MinerReward, EndowmentPool2} = ar_pricing:get_miner_reward_and_endowment_pool({
 					EndowmentPool, TXs, RewardAddr, WeaveSize, Height, Timestamp, Rate}),
@@ -497,10 +498,28 @@ validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 			| RewardHistory], ?REWARD_HISTORY_BLOCKS),
 	case ar_block:reward_history_hash(RewardHistory2) of
 		RewardHistoryHash ->
-			validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
+			validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors,
 					RecentTXMap});
 		_ ->
 			{invalid, invalid_reward_history_hash}
+	end;
+
+validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
+	case NewB#block.height >= ar_fork:height_2_7() of
+		false ->
+			validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
+					RecentTXMap});
+		true ->
+			#block{ block_time_history_hash = HistoryHash } = NewB,
+			History2 = lists:sublist(ar_block:update_block_time_history(NewB, OldB),
+					?BLOCK_TIME_HISTORY_BLOCKS),
+			case ar_block:block_time_history_hash(History2) of
+				HistoryHash ->
+					validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
+							RecentTXMap});
+				_ ->
+					{invalid, invalid_block_time_history_hash}
+			end
 	end;
 
 validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
@@ -572,6 +591,14 @@ validate_block(cumulative_diff, {NewB, OldB}) ->
 	case ar_block:verify_cumulative_diff(NewB, OldB) of
 		false ->
 			{invalid, invalid_cumulative_difficulty};
+		true ->
+			validate_block(vdf_difficulty, {NewB, OldB})
+	end;
+
+validate_block(vdf_difficulty, {NewB, OldB}) ->
+	case ar_block:verify_vdf_difficulty(NewB, OldB) of
+		false ->
+			{invalid, invalid_vdf_difficulty};
 		true ->
 			validate_block(merkle_rebase_support_threshold, {NewB, OldB})
 	end;

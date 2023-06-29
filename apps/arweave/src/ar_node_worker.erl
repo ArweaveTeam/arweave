@@ -19,7 +19,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_mining.hrl").
+-include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(DEBUG).
@@ -82,7 +82,7 @@ init([]) ->
 			{false, false} ->
 				not_joined;
 			{true, _} ->
-				case ar_storage:read_block_index_and_reward_history() of
+				case ar_storage:read_block_index_and_additional_fields() of
 					{error, enoent} ->
 						io:format(
 							"~n~n\tBlock index file is not found. "
@@ -103,13 +103,13 @@ init([]) ->
 						ar_retarget:switch_to_linear_diff(Config#config.diff)),
 				RootHash0 = B0#block.wallet_list,
 				RootHash0 = ar_storage:write_wallet_list(0, B0#block.account_tree),
-				{[B0], B0#block.reward_history}
+				{[B0], B0#block.reward_history, B0#block.block_time_history}
 		end,
 	case {StateLookup, Config#config.auto_join} of
 		{not_joined, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
-		{{BI, RewardHistory}, true} ->
-			start_from_block_index(BI, RewardHistory);
+		{{BI, RewardHistory, BlockTimeHistory}, true} ->
+			start_from_block_index(BI, RewardHistory, BlockTimeHistory);
 		{_, false} ->
 			do_nothing
 	end,
@@ -454,9 +454,9 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 					{step_number, StepNumber}]),
 			{noreply, State};
 		[NonceLimiterOutput | _] = Steps ->
-			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound}
-					= ar_nonce_limiter:get_seed_data(StepNumber, TipNonceLimiterInfo,
-							PrevH, PrevWeaveSize),
+			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound,
+					VDFDifficulty, NextVDFDifficulty}
+						= ar_nonce_limiter:get_seed_data(StepNumber, PrevB),
 			LastStepCheckpoints2 =
 				case LastStepCheckpoints of
 					not_found ->
@@ -470,7 +470,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 						PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
 								PrevOutput, PrevStepNumber, StepNumber, PrevNextSeed),
 						{ok, NonceLimiterOutput, Checkpoints} = ar_nonce_limiter:compute(
-								StepNumber, PrevOutput2),
+								StepNumber, PrevOutput2, NextVDFDifficulty),
 						Checkpoints;
 					_ ->
 						LastStepCheckpoints
@@ -478,6 +478,8 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			NonceLimiterInfo2 = NonceLimiterInfo#nonce_limiter_info{ seed = Seed,
 					next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 					next_partition_upper_bound = NextPartitionUpperBound,
+					vdf_difficulty = VDFDifficulty,
+					next_vdf_difficulty = NextVDFDifficulty,
 					last_step_checkpoints = LastStepCheckpoints2,
 					steps = Steps },
 			Height = PrevB#block.height + 1,
@@ -492,6 +494,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 					Denomination, Denomination2),
 			CDiff = ar_difficulty:next_cumulative_diff(PrevB#block.cumulative_diff, Diff,
 					Height),
+			BlockVDFDifficulty = ar_block:compute_vdf_difficulty(PrevB),
 			UnsignedB = pack_block_with_transactions(#block{
 				nonce = Nonce,
 				previous_block = PrevH,
@@ -531,16 +534,33 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				double_signing_proof = may_be_get_double_signing_proof(PrevB, State),
 				merkle_rebase_support_threshold = MerkleRebaseThreshold,
 				chunk_hash = get_chunk_hash(PoA1, Height),
-				chunk2_hash = get_chunk_hash(PoA2, Height)
+				chunk2_hash = get_chunk_hash(PoA2, Height),
+				vdf_difficulty = BlockVDFDifficulty
 			}, PrevB),
-			SignedH = ar_block:generate_signed_hash(UnsignedB),
+			UnsignedB2 =
+				case Height >= ar_fork:height_2_7() of
+					false ->
+						UnsignedB;
+					true ->
+						BlockTimeHistory2 = lists:sublist(ar_block:update_block_time_history(
+								UnsignedB, PrevB),
+								?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+						BlockTimeHistory3 = lists:sublist(BlockTimeHistory2,
+								?BLOCK_TIME_HISTORY_BLOCKS),
+						UnsignedB#block{
+							block_time_history = BlockTimeHistory2,
+							block_time_history_hash = ar_block:block_time_history_hash(
+									BlockTimeHistory3)
+						}
+				end,
+			SignedH = ar_block:generate_signed_hash(UnsignedB2),
 			PrevCDiff = PrevB#block.cumulative_diff,
 			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, (PrevB#block.hash)/binary,
 					SignedH/binary >>,
 			Signature = ar_wallet:sign(element(1, RewardKey), SignaturePreimage),
 			H = ar_block:indep_hash2(SignedH, Signature),
-			B = UnsignedB#block{ indep_hash = H, signature = Signature },
+			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
 			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
 					{solution, ar_util:encode(SolutionH)}, {txs, length(B#block.txs)}]),
@@ -1020,7 +1040,21 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 							false ->
 								B
 						end,
-					State2 = apply_validated_block(State, B2, PrevBlocks, Orphans, RecentBI2,
+					B3 =
+						case B#block.height >= ar_fork:height_2_7() of
+							true ->
+								BlockTimeHistory2 = ar_block:update_block_time_history(
+										B, PrevB),
+								Len2 = ?BLOCK_TIME_HISTORY_BLOCKS
+										+ ?STORE_BLOCKS_BEHIND_CURRENT,
+								BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, Len2),
+								B2#block{
+									block_time_history = BlockTimeHistory3
+								};
+							false ->
+								B2
+						end,
+					State2 = apply_validated_block(State, B3, PrevBlocks, Orphans, RecentBI2,
 							BlockTXPairs2),
 					record_processing_time(Timestamp),
 					{noreply, State2}
@@ -1531,8 +1565,10 @@ maybe_store_block_index(B) ->
 	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
 		0 ->
 			BI = ar_node:get_block_index(),
-			spawn(fun() -> ar_storage:write_block_index_and_reward_history(BI,
-					B#block.reward_history) end);
+			spawn(fun() ->
+				ar_storage:write_block_index_and_additional_fields(BI, B#block.reward_history,
+						B#block.block_time_history)
+			end);
 		_ ->
 			ok
 	end.
@@ -1574,10 +1610,12 @@ record_economic_metrics2(B, PrevB) ->
 					|| {_, _, R, _} <- RewardHistory]), RewardHistorySize),
 			prometheus_gauge:set(average_block_reward, AverageBlockReward),
 			prometheus_gauge:set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
+			BlockInterval = ar_block:compute_block_interval(PrevB),
 			Args = {PrevB#block.reward_pool, PrevB#block.debt_supply, B#block.txs,
 					B#block.weave_size, B#block.height, PrevB#block.price_per_gib_minute,
 					PrevB#block.kryder_plus_rate_multiplier_latch,
-					PrevB#block.kryder_plus_rate_multiplier, PrevB#block.denomination},
+					PrevB#block.kryder_plus_rate_multiplier, PrevB#block.denomination,
+					BlockInterval},
 			{ExpectedBlockReward,
 					_, _, _, _} = ar_pricing:get_miner_reward_endowment_pool_debt_supply(Args),
 			prometheus_gauge:set(expected_block_reward, ExpectedBlockReward),
@@ -1746,7 +1784,7 @@ read_hash_list_2_0_for_1_0_blocks() ->
 			[]
 	end.
 
-start_from_block_index([#block{} = GenesisB], RewardHistory) ->
+start_from_block_index([#block{} = GenesisB], RewardHistory, BlockTimeHistory) ->
 	BI = [ar_util:block_index_entry_from_block(GenesisB)],
 	case ar_fork:height_2_6() of
 		0 ->
@@ -1754,8 +1792,11 @@ start_from_block_index([#block{} = GenesisB], RewardHistory) ->
 		_ ->
 			ar_randomx_state:init(BI, [])
 	end,
-	self() ! {join, BI, [GenesisB#block{ reward_history = RewardHistory }]};
-start_from_block_index(BI, RewardHistory) ->
+	self() ! {join, BI, [GenesisB#block{
+		reward_history = RewardHistory,
+		block_time_history = BlockTimeHistory
+	}]};
+start_from_block_index(BI, RewardHistory, BlockTimeHistory) ->
 	case length(BI) - 1 - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_6() of
 		true ->
 			ok;
@@ -1764,7 +1805,8 @@ start_from_block_index(BI, RewardHistory) ->
 	end,
 	Blocks = read_recent_blocks(BI),
 	Blocks2 = ar_join:set_reward_history(Blocks, RewardHistory),
-	self() ! {join, BI, Blocks2}.
+	Blocks3 = ar_join:set_block_time_history(Blocks2, BlockTimeHistory),
+	self() ! {join, BI, Blocks3}.
 
 read_recent_blocks(not_joined) ->
 	[];
