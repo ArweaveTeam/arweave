@@ -313,7 +313,7 @@ handle_cast({end_request, Peer, PathLabel, _Method, Status, ElapsedMicroseconds,
 		{path, PathLabel},
 		{status, Status},
 		{peer, ar_util:format_peer(Peer)},
-		{time_delta, ElapsedMicroseconds},
+		{latency_ms, ElapsedMicroseconds / 1000},
 		{size, Size}
 	]),
 	update_rating(Peer, ElapsedMicroseconds, Size),
@@ -326,7 +326,7 @@ handle_cast({gossiped_data, DataType, Peer, ElapsedMicroseconds, Size}, State) -
 				{event, update_rating},
 				{update_type, DataType},
 				{peer, ar_util:format_peer(Peer)},
-				{time_delta, ElapsedMicroseconds},
+				{latency_ms, ElapsedMicroseconds / 1000},
 				{size, Size}
 			]),
 			update_rating(Peer, ElapsedMicroseconds, Size);
@@ -438,10 +438,9 @@ discover_peers([Peer | Peers]) ->
 
 format_stats(Peer, Perf) ->
 	KB = Perf#performance.bytes / 1024,
-	Seconds = Perf#performance.latency / 1000,
-	io:format("\t~s ~.2f kB/s (~.2f kB, ~.2f s, ~.2f success, ~p transfers)~n",
+	io:format("\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success, ~p transfers)~n",
 		[string:pad(ar_util:format_peer(Peer), 21, trailing, $ ),
-			float(Perf#performance.rating), KB, Seconds,
+			float(Perf#performance.rating), KB, trunc(Perf#performance.latency),
 			Perf#performance.success, Perf#performance.transfers]).
 
 load_peers() ->
@@ -624,13 +623,13 @@ check_external_peer(Peer) ->
 			ok
 	end.
 
-update_rating(Peer, TimeDelta, Size) ->
+update_rating(Peer, LatencyMicroseconds, Size) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
 	#performance{ bytes = Bytes, latency = Latency, success = Success,
 			rating = Rating, transfers = N } = Performance,
 	Bytes2 = calculate_ema(Bytes, Size, ?SIZE_ALPHA),
-	Latency2 = calculate_ema(Latency, TimeDelta / 1000, ?LATENCY_ALPHA),
+	Latency2 = calculate_ema(Latency, LatencyMicroseconds / 1000, ?LATENCY_ALPHA),
 	Success2 = calculate_ema(Success, 1, ?SUCCESS_ALPHA),
 	Rating2 = Bytes2 / Latency2,
 	Performance2 = Performance#performance{
