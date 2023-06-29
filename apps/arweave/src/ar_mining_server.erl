@@ -6,7 +6,8 @@
 -behaviour(gen_server).
 
 -export([start_link/0, pause/0, start_mining/1, set_difficulty/1, pause_performance_reports/1,
-		remote_compute_h2/2, cm_exit_prepare_solution/1, get_recall_bytes/4]).
+		remote_compute_h2/2, cm_exit_prepare_solution/1, get_recall_bytes/4,
+		turn_off_one_chunk_mining/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -36,7 +37,8 @@
 	partitions					= sets:new(),
 	task_queue					= gb_sets:new(),
 	pause_performance_reports	= false,
-	pause_performance_reports_timeout
+	pause_performance_reports_timeout,
+	is_one_chunk_mining_enabled = true
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -92,6 +94,11 @@ cm_exit_prepare_solution({PartitionNumber, Nonce, H0, Seed, NextSeed, StartInter
 	gen_server:cast(?MODULE, {cm_exit_prepare_solution, PartitionNumber, Nonce, H0, Seed,
 			NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, PoA1,
 			PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints, RetryConterLeft}).
+
+%% @doc Turn off "one chunk mining", i.e., the node will start mining but only publish
+%% a two-chunk solution.
+turn_off_one_chunk_mining() ->
+	gen_server:cast(?MODULE, turn_off_one_chunk_mining).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -382,6 +389,9 @@ handle_cast({remote_io_thread_recall_range2_chunk,
 		ReqList
 	),
 	{noreply, State#state{ hashing_threads = NewThreads }};
+
+handle_cast(turn_off_one_chunk_mining, State) ->
+	{noreply, State#state{ is_one_chunk_mining_enabled = false }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -1084,10 +1094,12 @@ handle_task({mining_thread_computed_h0, _Args}, State) ->
 handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, Seed, NextSeed,
 		StartIntervalNumber, StepNumber, NonceLimiterOutput, ReplicaID, Chunk, H1, Preimage,
 		CorrelationRef, Ref}},
-		#state{ session = #mining_session{ ref = Ref } } = State) ->
+		#state{ session = #mining_session{ ref = Ref },
+				is_one_chunk_mining_enabled = IsOneChunkMiningEnabled } = State) ->
 	#state{ session = Session, diff = Diff, hashing_threads = Threads } = State,
 	#mining_session{ chunk_cache = Map } = Session,
-	case binary:decode_unsigned(H1, big) > Diff of
+	case binary:decode_unsigned(H1, big) > Diff
+			andalso IsOneChunkMiningEnabled of
 		true ->
 			#state{ session = Session } = State,
 			#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,
