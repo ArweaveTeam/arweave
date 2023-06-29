@@ -1,7 +1,12 @@
 -module(ar_test_node).
 
+%% The new, more flexible, and more user-friendly interface.
+-export([wait_until_joined/0, start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
+		http_get_block/2, turn_off_one_chunk_mining/1]).
+
+%% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4, slave_start/0, slave_start/1,
-		slave_start/2, slave_start/3, wait_until_joined/0,
+		slave_start/2, slave_start/3,
 		get_tx_price/1, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
@@ -37,11 +42,242 @@
 %% with height >= 20 (2 difficulty retargets).
 -define(WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT, 180000).
 -define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 30000).
+
 %% Sometimes takes a while on a slow machine
 -define(SLAVE_START_TIMEOUT, 40000).
 
 %%%===================================================================
 %%% Public interface.
+%%%===================================================================
+
+%% @doc Wait until the node joins the network (initializes the state).
+wait_until_joined() ->
+	ar_util:do_until(
+		fun() -> ar_node:is_joined() end,
+		100,
+		60 * 1000
+	 ).
+
+%% @doc Start a node with the given genesis block and configuration.
+start_node(B0, Config) ->
+	{ok, BaseConfig} = application:get_env(arweave, config),
+	clean_up_and_stop(),
+	write_genesis_files(BaseConfig#config.data_dir, B0),
+	Config2 = BaseConfig#config{
+		start_from_block_index = Config#config.start_from_block_index,
+		auto_join = Config#config.auto_join,
+		mining_addr = Config#config.mining_addr,
+		sync_jobs = Config#config.sync_jobs,
+		packing_rate = Config#config.packing_rate,
+		disk_pool_jobs = Config#config.disk_pool_jobs,
+		header_sync_jobs = Config#config.header_sync_jobs,
+		enable = Config#config.enable ++ BaseConfig#config.enable,
+		mining_server_chunk_cache_size_limit
+				= Config#config.mining_server_chunk_cache_size_limit,
+		debug = Config#config.debug,
+		coordinated_mining = Config#config.coordinated_mining,
+		coordinated_mining_secret = Config#config.coordinated_mining_secret,
+		cm_poll_interval = Config#config.cm_poll_interval,
+		peers = Config#config.peers,
+		cm_exit_peer = Config#config.cm_exit_peer,
+		cm_peers = Config#config.cm_peers,
+		storage_modules = Config#config.storage_modules
+	},
+	ok = application:set_env(arweave, config, Config2),
+	{ok, _} = application:ensure_all_started(arweave, permanent),
+	wait_until_joined(),
+	% TODO wait_until_syncs_genesis_data(),
+	B0.
+
+%% @doc Launch the given number (>= 1, =< 3) of the mining nodes in the coordinated
+%% mode plus an exit node and a validator node.
+%% Return [Node1, ..., NodeN, ExitNode, ValidatorNode].
+start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< 3 ->
+	[B0] = ar_weave:init([], 1, 20 * 1024 * 1024 * 3),
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	BaseConfig2 = #config{
+		start_from_block_index = true,
+		auto_join = true,
+		mining_addr = RewardAddr,
+		sync_jobs = 2,
+		packing_rate = 20,
+		disk_pool_jobs = 2,
+		header_sync_jobs = 2,
+		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
+				serve_wallet_lists, pack_served_chunks],
+		mining_server_chunk_cache_size_limit = 4,
+		debug = true
+	},
+	ExitPeer = {127, 0, 0, 1, 1982},
+	ValidatorPeer = {127, 0, 0, 1, 1981},
+	BaseCMConfig = BaseConfig2#config{
+		coordinated_mining = true,
+		coordinated_mining_secret = <<"test_coordinated_mining_secret">>,
+		cm_poll_interval = 2000
+	},
+	ExitNodeConfig = BaseCMConfig#config{
+		peers = [ValidatorPeer]
+	},
+	ValidatorNodeConfig = BaseConfig2#config{
+		peers = [ExitPeer]
+	},
+	MiningNodeConfigs = [BaseCMConfig#config{
+		cm_exit_peer = ExitPeer,
+		peers = [ValidatorPeer],
+		cm_peers = get_cm_peers(I, MiningNodeCount),
+		storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
+	} || I <- lists:seq(1, MiningNodeCount)],
+	remote_call(ar_test_node, start_node, [B0, ExitNodeConfig], 'cm_exit@127.0.0.1'),
+	remote_call(ar_test_node, start_node, [B0, ValidatorNodeConfig], 'cm_validator@127.0.0.1'),
+	[remote_call(ar_test_node, start_node, [B0, lists:nth(I, MiningNodeConfigs)],
+			list_to_atom("cm_miner_" ++ integer_to_list(I) ++ "@127.0.0.1"))
+		|| I <- lists:seq(1, MiningNodeCount)].
+
+%% @doc Start mining on the given node. The node will be mining until it finds a block.
+mine(Node) ->
+	remote_call(ar_node, mine, [], Node).
+
+%% @doc Wait until the given node reaches the given height or fail by timeout.
+wait_until_height(Height, Node) ->
+	{ok, BI} = ar_util:do_until(
+		fun() ->
+			case remote_call(ar_node, get_blocks, [], Node) of
+				BI when length(BI) - 1 == Height ->
+					{ok, BI};
+				_ ->
+					false
+			end
+		end,
+		100,
+		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
+	),
+	BI.
+
+%% @doc Fetch and decode a binary-encoded block by hash H from the HTTP API of the
+%% given node. Return {ok, B} | {error, Reason}.
+http_get_block(H, Node) ->
+	{ok, Config} = remote_call(application, get_env, [arweave, config], Node),
+	Port = Config#config.port,
+	Peer = {127, 0, 0, 1, Port},
+	case ar_http:req(#{ peer => Peer, method => get,
+			path => "/block2/hash/" ++ binary_to_list(ar_util:encode(H)) }) of
+		{ok, {{<<"200">>, _}, _, BlockBin, _, _}} ->
+			ar_serialize:binary_to_block(BlockBin);
+		{error, Reason} ->
+			{error, Reason};
+		{ok, {{StatusCode, _}, _, Body, _, _}} ->
+			{error, {StatusCode, Body}}
+	end.
+
+%% @doc Turn off "one chunk mining" (i.e., the node will start mining but only publish
+%% a two-chunk solution) on the given node.
+turn_off_one_chunk_mining(Node) ->
+	remote_call(ar_mining_server, turn_off_one_chunk_mining, [], Node).
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+clean_up_and_stop() ->
+	Config = stop(),
+	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
+	lists:foreach(
+		fun	("wallets") ->
+				ok;
+			(Entry) ->
+				file:del_dir_r(filename:join(Config#config.data_dir, Entry))
+		end,
+		Entries
+	).
+
+write_genesis_files(DataDir, B0) ->
+	BH = B0#block.indep_hash,
+	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
+	ok = filelib:ensure_dir(BlockDir ++ "/"),
+	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
+	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
+	TXDir = filename:join(DataDir, ?TX_DIR),
+	ok = filelib:ensure_dir(TXDir ++ "/"),
+	lists:foreach(
+		fun(TX) ->
+			TXID = TX#tx.id,
+			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),
+			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+			ok = file:write_file(TXFilepath, TXJSON)
+		end,
+		B0#block.txs
+	),
+	BI = [ar_util:block_index_entry_from_block(B0)],
+	BIBin = term_to_binary({BI, B0#block.reward_history}),
+	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
+	ok = filelib:ensure_dir(HashListDir ++ "/"),
+	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
+	ok = file:write_file(BIFilepath, BIBin),
+	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
+	ok = filelib:ensure_dir(WalletListDir ++ "/"),
+	RootHash = B0#block.wallet_list,
+	WalletListFilepath =
+		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
+	WalletListJSON =
+		ar_serialize:jsonify(
+			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
+					B0#block.account_tree)
+		),
+	ok = file:write_file(WalletListFilepath, WalletListJSON).
+
+%% @doc Return the list of the configured coordinated mining peers for the peer
+%% with the given number I and the total number of confiruded mining peers N.
+get_cm_peers(1, 1) ->
+	[];
+get_cm_peers(1, 2) ->
+	[{127, 0, 0, 1, 1979}];
+get_cm_peers(2, 2) ->
+	[{127, 0, 0, 1, 1980}];
+get_cm_peers(1, 3) ->
+	[{127, 0, 0, 1, 1979}, {127, 0, 0, 1, 1978}];
+get_cm_peers(2, 3) ->
+	[{127, 0, 0, 1, 1980}, {127, 0, 0, 1, 1978}];
+get_cm_peers(3, 3) ->
+	[{127, 0, 0, 1, 1980}, {127, 0, 0, 1, 1979}].
+
+get_cm_storage_modules(RewardAddr, 1, 1) ->
+	[{20 * 1024 * 1024, N, {spora_2_6, RewardAddr}} || N <- lists:seq(0, 2)];
+get_cm_storage_modules(RewardAddr, 1, N) when N == 2 orelse N == 3 ->
+	[{20 * 1024 * 1024, 0, {spora_2_6, RewardAddr}}];
+get_cm_storage_modules(RewardAddr, 2, N) when N == 2 orelse N == 3 ->
+	[{20 * 1024 * 1024, 1, {spora_2_6, RewardAddr}}];
+get_cm_storage_modules(RewardAddr, 3, N) when N == 3 ->
+	[{20 * 1024 * 1024, 2, {spora_2_6, RewardAddr}}].
+
+remote_call(Module, Function, Args, Node) ->
+	remote_call(Module, Function, Args, 10000, Node).
+
+remote_call(Module, Function, Args, Timeout, Node) ->
+	Key = rpc:async_call(Node, Module, Function, Args),
+	Result = ar_util:do_until(
+		fun() ->
+			case rpc:nb_yield(Key) of
+				timeout ->
+					false;
+				{value, Reply} ->
+					{ok, Reply}
+			end
+		end,
+		200,
+		Timeout
+	),
+	case Result of
+		{error, timeout} ->
+			?debugFmt("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
+					"args: ~p, node: ~p.~n", [Timeout, Module, Function, Args, Node]);
+		_ ->
+			ok
+	end,
+	?assertMatch({ok, _}, Result),
+	element(2, Result).
+
+%%%===================================================================
+%%% Legacy public interface.
 %%%===================================================================
 
 %% @doc Start a fresh master node.
@@ -124,14 +360,6 @@ slave_start(B0, RewardAddr, Config) ->
 	slave_wait_until_joined(),
 	slave_wait_until_syncs_genesis_data(),
 	Slave.
-
-%% @doc Wait until the master node joins the network (initializes the state).
-wait_until_joined() ->
-	ar_util:do_until(
-		fun() -> ar_node:is_joined() end,
-		100,
-		60 * 1000
-	 ).
 
 %% @doc Fetch the fee estimation and the denomination (call GET /price2/[size])
 %% from the slave node.
@@ -275,69 +503,8 @@ get_reserved_balance(Node, Address) ->
 	binary_to_integer(Reply).
 
 %%%===================================================================
-%%% Private functions.
+%%% Legacy private functions.
 %%%===================================================================
-
-clean_up_and_stop() ->
-	Config = stop(),
-	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
-	lists:foreach(
-		fun	("wallets") ->
-				ok;
-			(Entry) ->
-				file:del_dir_r(filename:join(Config#config.data_dir, Entry))
-		end,
-		Entries
-	).
-
-write_genesis_files(DataDir, B0) ->
-	BH = B0#block.indep_hash,
-	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
-	ok = filelib:ensure_dir(BlockDir ++ "/"),
-	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
-	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
-	TXDir = filename:join(DataDir, ?TX_DIR),
-	ok = filelib:ensure_dir(TXDir ++ "/"),
-	lists:foreach(
-		fun(TX) ->
-			TXID = TX#tx.id,
-			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),
-			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-			ok = file:write_file(TXFilepath, TXJSON)
-		end,
-		B0#block.txs
-	),
-	ets:new(ar_kv, [set, public, named_table]),
-	ar_kv:start_link(),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
-			block_time_history_db),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
-	H = B0#block.indep_hash,
-	WeaveSize = B0#block.weave_size,
-	TXRoot = B0#block.tx_root,
-	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),
-	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
-	case ar_fork:height_2_7() of
-		0 ->
-			ok = ar_kv:put(block_time_history_db, H,
-					term_to_binary(hd(B0#block.block_time_history)));
-		_ ->
-			ok
-	end,
-	gen_server:stop(ar_kv),
-	ets:delete(ar_kv),
-	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
-	ok = filelib:ensure_dir(WalletListDir ++ "/"),
-	RootHash = B0#block.wallet_list,
-	WalletListFilepath =
-		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
-	WalletListJSON =
-		ar_serialize:jsonify(
-			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
-					B0#block.account_tree)
-		),
-	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
 insert_root(Params) ->
 	case {maps:get(data, Params, <<>>), maps:get(data_root, Params, <<>>)} of
