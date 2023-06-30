@@ -544,10 +544,8 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 		{false, _} ->
 			not_joined(Req);
 		{true, pass} ->
-			Timestamp = erlang:timestamp(),
 			case read_complete_body(Req, Pid) of
 				{ok, Body, Req2} ->
-					ReadBodyTime = timer:now_diff(erlang:timestamp(), Timestamp),
 					{UnsignedTXProps} = ar_serialize:dejsonify(Body),
 					WalletAccessCode =
 						proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
@@ -583,7 +581,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					Peer = ar_http_util:arweave_peer(Req),
 					Reply = ar_serialize:jsonify({[{<<"id">>,
 							ar_util:encode(SignedTX#tx.id)}]}),
-					case handle_post_tx(Req2, Peer, SignedTX, ReadBodyTime) of
+					case handle_post_tx(Req2, Peer, SignedTX) of
 						ok ->
 							{200, #{}, Reply, Req2};
 						{error_response, {Status, Headers, ErrBody}} ->
@@ -1791,9 +1789,9 @@ handle_post_tx({Req, Pid, Encoding}) ->
 							{413, #{}, <<"Payload too large">>, Req2};
 						{error, timeout} ->
 							{503, #{}, <<>>, Req};
-						{ok, TX, Req2, ReadBodyTime} ->
+						{ok, TX, Req2} ->
 							Peer = ar_http_util:arweave_peer(Req),
-							case handle_post_tx(Req2, Peer, TX, ReadBodyTime) of
+							case handle_post_tx(Req2, Peer, TX) of
 								ok ->
 									{200, #{}, <<"OK">>, Req2};
 								{error_response, {Status, Headers, Body}} ->
@@ -1804,7 +1802,7 @@ handle_post_tx({Req, Pid, Encoding}) ->
 			end
 	end.
 
-handle_post_tx(Req, Peer, TX, ReadBodyTime) ->
+handle_post_tx(Req, Peer, TX) ->
 	case ar_tx_validator:validate(TX) of
 		{invalid, tx_verification_failed} ->
 			handle_post_tx_verification_response();
@@ -1823,16 +1821,16 @@ handle_post_tx(Req, Peer, TX, ReadBodyTime) ->
 		{valid, TX2} ->
 			ar_data_sync:add_data_root_to_disk_pool(TX2#tx.data_root, TX2#tx.data_size,
 					TX#tx.id),
-			handle_post_tx_accepted(Req, TX, Peer, ReadBodyTime)
+			handle_post_tx_accepted(Req, TX, Peer)
 	end.
 
-handle_post_tx_accepted(Req, TX, Peer, ReadBodyTime) ->
+handle_post_tx_accepted(Req, TX, Peer) ->
 	%% Exclude successful requests with valid transactions from the
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	ar_peers:gossiped_tx(Peer, TX, ReadBodyTime),
+	ar_peers:gossiped_tx(Peer),
 	ar_events:send(tx, {new, TX, Peer}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),
@@ -2360,11 +2358,8 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 				end
 		end,
 	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	%% ReadBodyTime in microseconds, measure elapsed time before validation since the validation
-	%% operation can take some time.
-	ReadBodyTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp),
 	ValidationStatus = ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp),
-	ar_peers:gossiped_block(Peer, B2, ValidationStatus, ReadBodyTime),
+	ar_peers:gossiped_block(Peer, ValidationStatus),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->
@@ -2707,22 +2702,20 @@ post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
 			post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
 	end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
-	Timestamp = erlang:timestamp(),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			ReadBodyTime = timer:now_diff(erlang:timestamp(), Timestamp),
 			case Encoding of
 				json ->
-					post_tx_parse_id(parse_json, {TXID, Req2, Body, ReadBodyTime});
+					post_tx_parse_id(parse_json, {TXID, Req2, Body});
 				binary ->
-					post_tx_parse_id(parse_binary, {TXID, Req2, Body, ReadBodyTime})
+					post_tx_parse_id(parse_binary, {TXID, Req2, Body})
 			end;
 		{error, body_size_too_large} ->
 			{error, body_size_too_large, Req};
 		{error, timeout} ->
 			{error, timeout}
 	end;
-post_tx_parse_id(parse_json, {TXID, Req, Body, ReadBodyTime}) ->
+post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
@@ -2750,9 +2743,9 @@ post_tx_parse_id(parse_json, {TXID, Req, Body, ReadBodyTime}) ->
 			end,
 			{error, invalid_json, Req};
 		TX ->
-			post_tx_parse_id(verify_id_match, {TXID, Req, TX, ReadBodyTime})
+			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
-post_tx_parse_id(parse_binary, {TXID, Req, Body, ReadBodyTime}) ->
+post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
 	case catch ar_serialize:binary_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
@@ -2771,13 +2764,13 @@ post_tx_parse_id(parse_binary, {TXID, Req, Body, ReadBodyTime}) ->
 			end,
 			{error, invalid_json, Req};
 		{ok, TX} ->
-			post_tx_parse_id(verify_id_match, {TXID, Req, TX, ReadBodyTime})
+			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
-post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX, ReadBodyTime}) ->
+post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	TXID = TX#tx.id,
 	case MaybeTXID of
 		TXID ->
-			{ok, TX, Req, ReadBodyTime};
+			{ok, TX, Req};
 		MaybeNotSet ->
 			case MaybeNotSet of
 				not_set ->
@@ -2794,7 +2787,7 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX, ReadBodyTime}) ->
 							{error, tx_already_processed, TXID, Req};
 						false ->
 							ar_ignore_registry:add_temporary(TXID, 5000),
-							{ok, TX, Req, ReadBodyTime}
+							{ok, TX, Req}
 					end
 			end
 	end.

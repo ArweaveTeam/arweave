@@ -10,7 +10,7 @@
 
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
-		resolve_and_cache_peer/2, start_request/3, end_request/4, gossiped_block/4, gossiped_tx/3]).
+		resolve_and_cache_peer/2, start_request/3, end_request/4, gossiped_block/2, gossiped_tx/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -175,19 +175,18 @@ end_request(Peer, PathLabel, get, Response) ->
 end_request(Peer, PathLabel, _, Response) ->
 	ok.
 
-gossiped_block(Peer, B, ok, ReadBodyTime) ->
+gossiped_block(Peer, ok) ->
 	gen_server:cast(?MODULE, {
-		gossiped_data, block, Peer, ReadBodyTime, byte_size(term_to_binary(B))
+		gossiped_data, Peer
 	});
-gossiped_block(_Peer, _B, _ValidationStatus, _ReadBodyTime) ->
+gossiped_block(_Peer, _ValidationStatus) ->
 	%% Ignore skipped or invalid blocks for now (consistent with old behavior, but may need to
 	%% be revisited)
 	ok.
 
-
-gossiped_tx(Peer, TX, ReadBodyTime) ->
+gossiped_tx(Peer) ->
 	gen_server:cast(?MODULE, {
-		gossiped_data, tx, Peer, ReadBodyTime, byte_size(term_to_binary(TX))
+		gossiped_data, Peer
 	}).
 
 %% @doc Print statistics about the current peers.
@@ -319,17 +318,15 @@ handle_cast({end_request, Peer, PathLabel, _Method, Status, ElapsedMicroseconds,
 	update_rating(Peer, ElapsedMicroseconds, Size),
 	{noreply, State};
 
-handle_cast({gossiped_data, DataType, Peer, ElapsedMicroseconds, Size}, State) ->
+handle_cast({gossiped_data, Peer}, State) ->
 	case check_external_peer(Peer) of
 		ok ->
 			?LOG_DEBUG([
 				{event, update_rating},
-				{update_type, DataType},
-				{peer, ar_util:format_peer(Peer)},
-				{latency_ms, ElapsedMicroseconds / 1000},
-				{size, Size}
+				{update_type, gossiped_data},
+				{peer, ar_util:format_peer(Peer)}
 			]),
-			update_rating(Peer, ElapsedMicroseconds, Size);
+			update_rating(Peer);
 		_ ->
 			ok
 	end,
@@ -623,6 +620,11 @@ check_external_peer(Peer) ->
 			ok
 	end.
 
+update_rating(Peer) ->
+	Performance = get_or_init_performance(Peer),
+	%% Pass in the current latecny and bytes values in order to hold them constant.
+	%% Only the success average should be updated.
+	update_rating(Peer, Performance#performance.latency, Performance#performance.bytes).
 update_rating(Peer, LatencyMicroseconds, Size) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
