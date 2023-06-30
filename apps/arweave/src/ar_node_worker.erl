@@ -87,11 +87,37 @@ init([]) ->
 	ar_mempool:load_from_disk(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
-	validate_trusted_peers(Config),
-	StartFromLocalState = Config#config.start_from_latest_state orelse
-			Config#config.start_from_block /= undefined,
-	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
-		{false, false, true} ->
+	case Config#config.start_from_block_index of
+		false ->
+			validate_trusted_peers(Config);
+		_ ->
+			ok
+	end,
+	StateLookup =
+		case {Config#config.start_from_block_index, Config#config.init} of
+			{false, false} ->
+				not_joined;
+			{true, _} ->
+				case ar_storage:read_block_index_and_reward_history() of
+					{error, enoent} ->
+						io:format(
+							"~n~n\tBlock index file is not found. "
+							"If you want to start from a block index copied "
+							"from another node, place it in "
+							"<data_dir>/hash_lists/last_block_index_and_reward_history.bin~n~n"
+						),
+						timer:sleep(1000),
+						erlang:halt();
+					Result ->
+						Result
+				end;
+			{false, true} ->
+				Config2 = Config#config{ init = false },
+				application:set_env(arweave, config, Config2),
+				ar_weave:init([], ar_retarget:switch_to_linear_diff(Config#config.diff))
+		end,
+	case {StateLookup, Config#config.auto_join} of
+		{not_joined, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
 			case ar_storage:read_block_index() of
@@ -596,8 +622,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				previous_solution_hash = PrevB#block.hash,
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
-				poa2 = PoA2,
-				poa2_cache = PoA2Cache,
+				poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
 				recall_byte2 = RecallByte2,
 				reward_key = element(2, RewardKey),
 				price_per_gib_minute = PricePerGiBMinute2,
