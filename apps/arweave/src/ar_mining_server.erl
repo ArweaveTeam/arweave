@@ -1260,7 +1260,45 @@ handle_task({mining_thread_computed_h2, {H0, PartitionNumber, Nonce, Seed, NextS
 			Args = {PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber,
 					StepNumber, NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, H2, Preimage, PartitionUpperBound,
 					Ref},
-			{noreply, prepare_solution(Args, State)};
+			{ok, Config} = application:get_env(arweave, config),
+			State2 = case Config#config.cm_exit_peer of
+				not_set ->
+					prepare_solution(Args, State);
+				_ ->
+					{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound),
+					Proofs = read_proofs({RecallByte1, RecallByte2, ReplicaID, Chunk2, PartitionNumber,
+						PartitionUpperBound, H0, Nonce}),
+					case Proofs of
+						error ->
+								?LOG_WARNING([{event,
+										mined_block_but_failed_to_read_second_chunk_proof},
+										{recall_byte1, RecallByte1},
+										{recall_byte2, RecallByte2},
+										{mining_address, ar_util:encode(ReplicaID)}]),
+								ar:console("WARNING: we found a solution but failed to read "
+										"the proof for the second chunk. See logs for more "
+										"details.~n");
+						{PoA1, PoA2} ->
+							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+							#nonce_limiter_info{ next_seed = PrevNextSeed,
+								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+							Checkpoints = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
+							case ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer,
+									{PartitionNumber, Nonce, H0, Seed, NextSeed,
+									StartIntervalNumber, StepNumber, NonceLimiterOutput,
+									ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, Checkpoints}) of
+								{ok, _} ->
+									ok;
+								{error, Reason} ->
+									?LOG_WARNING([{event, found_solution_but_failed_to_reach_exit_node},
+											{reason, io_lib:format("~p", [Reason])}]),
+									ar:console("We found a solution but failed to reach the exit node, "
+											"error: ~p.", [io_lib:format("~p", [Reason])])
+							end
+					end,
+					State
+			end,
+			{noreply, State2};
 		false ->
 			{noreply, State}
 	end;
