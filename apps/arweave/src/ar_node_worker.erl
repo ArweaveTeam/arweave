@@ -70,7 +70,12 @@ init([]) ->
 	ar_mempool:load_from_disk(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
-	validate_trusted_peers(Config),
+	case Config#config.start_from_block_index of
+		false ->
+			validate_trusted_peers(Config);
+		_ ->
+			ok
+	end,
 	StateLookup =
 		case {Config#config.start_from_block_index, Config#config.init} of
 			{false, false} ->
@@ -476,7 +481,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				previous_solution_hash = PrevB#block.hash,
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
-				poa2 = PoA2,
+				poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
 				recall_byte2 = RecallByte2,
 				reward_key = element(2, RewardKey),
 				price_per_gib_minute = PricePerGiBMinute2,
