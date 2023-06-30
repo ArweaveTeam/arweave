@@ -398,9 +398,16 @@ ensure_storage_modules_paths() ->
 	lists:foreach(EnsurePaths, StoragePaths).
 
 parse_df_2(Input) ->
-	[_, DfInfo] = string:tokens(Input, "\n"),
+	[DfHeader, DfInfo] = string:tokens(Input, "\n"),
+	[_, BlocksInfo | _] = string:tokens(DfHeader, " \t"),
+	BlocksNum = case string:tokens(BlocksInfo, "-") of
+		 [Num, _] ->
+			 erlang:list_to_integer(Num);
+		 _->
+			 1
+  end,
 	[Filesystem, Total, _, Available, _, _] = string:tokens(DfInfo, " \t"),
 	BytesAvailable = erlang:list_to_integer(Available),
 	TotalCapacity = erlang:list_to_integer(Total),
 	PercentageAvailable = BytesAvailable / TotalCapacity,
-	[Filesystem, BytesAvailable, PercentageAvailable].
+	[Filesystem, BytesAvailable * BlocksNum, PercentageAvailable].
