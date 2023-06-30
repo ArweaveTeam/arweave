@@ -14,14 +14,6 @@ _build
 apps/arweave/c_src/**/*.o
 apps/arweave/c_src/tests/tests
 data_test_*
-erl_crash.dump
-tags
-metrics
-blocks
-txs
-hash_lists
-wallet_lists
-wallets
 logs
 !bin/logs
 ebin

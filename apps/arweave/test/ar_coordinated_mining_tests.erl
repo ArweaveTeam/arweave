@@ -12,25 +12,14 @@ single_node_coordinated_mining_test_() ->
 
 test_single_node_coordinated_mining() ->
 	[Node, _ExitNode, ValidatorNode] = start_coordinated(1),
-	mine_until_both_solution_types_found(Node, ValidatorNode, 0).
-
-mine_until_both_solution_types_found(Node, ValidatorNode, CurrentHeight) ->
-	mine_until_both_solution_types_found(Node, ValidatorNode, CurrentHeight, false, false).
-
-mine_until_both_solution_types_found(_Node, _ValidatorNode, _CurrentHeight, true, true) ->
-	ok;
-mine_until_both_solution_types_found(Node, ValidatorNode, CurrentHeight, OneChunk, TwoChunk) ->
 	mine(Node),
-	BI = wait_until_height(CurrentHeight + 1, ValidatorNode),
-	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
-	case byte_size((B#block.poa2)#poa.data_path) > 0 of
-		true ->
-			mine_until_both_solution_types_found(Node, ValidatorNode, CurrentHeight + 1,
-					OneChunk, true);
-		false ->
-			mine_until_both_solution_types_found(Node, ValidatorNode, CurrentHeight + 1,
-					true, TwoChunk)
-	end.
+	BI = wait_until_height(1, ValidatorNode),
+	{ok, #block{}} = http_get_block(element(1, hd(BI)), ValidatorNode),
+	turn_off_one_chunk_mining(Node),
+	mine(Node),
+	BI2 = wait_until_height(2, ValidatorNode),
+	{ok, B2} = http_get_block(element(1, hd(BI2)), ValidatorNode),
+	?assert(byte_size((B2#block.poa2)#poa.data_path) > 0).
 
 two_node_coordinated_mining_concurrency_test_() ->
 	{timeout, 120, fun test_two_node_coordinated_mining_concurrency/0}.
