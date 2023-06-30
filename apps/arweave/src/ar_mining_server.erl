@@ -851,10 +851,11 @@ hashing_thread(SessionRef) ->
 			 %% Clear the message queue from the requests from the outdated mining session.
 			 hashing_thread(SessionRef);
 		{remote_compute_h2, {_From, H1, Nonce, Chunk2, Session, _CorrelationRef}} ->
-			%% Important: here we make http requests inside the hashing thread
+			%% Important: here we make an HTTP request inside the hashing thread
 			%% to reduce the latency.
-			{remote, Diff, ReplicaID, H0, PartitionNumber, _PartitionNumber2, PartitionUpperBound,
-					_RecallByte2Start, Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints,
+			{remote, Diff, ReplicaID, H0, PartitionNumber, _PartitionNumber2,
+					PartitionUpperBound, _RecallByte2Start, Seed, NextSeed,
+					StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints,
 					_ReqList, Peer } = Session,
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
 			case binary:decode_unsigned(H2, big) > Diff of
@@ -862,33 +863,29 @@ hashing_thread(SessionRef) ->
 					Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
 					{_RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 							PartitionUpperBound),
-					% TODO FIXME how can be Chunk2 not_set?
 					PoA2 =
-						case Chunk2 of
-							not_set ->
-								#poa{};
+						case ar_data_sync:get_chunk(RecallByte2 + 1, Options) of
+							{ok, #{ chunk := Chunk2, tx_path := TXPath2,
+									data_path := DataPath2 }} ->
+								#poa{ option = 1, chunk = Chunk2, tx_path = TXPath2,
+									data_path = DataPath2 };
 							_ ->
-								case ar_data_sync:get_chunk(RecallByte2 + 1, Options) of
-									{ok, #{ chunk := Chunk2, tx_path := TXPath2,
-											data_path := DataPath2 }} ->
-										#poa{ option = 1, chunk = Chunk2, tx_path = TXPath2,
-											data_path = DataPath2 };
-									_ ->
-										error
-								end
+								error
 						end,
 					case PoA2 of
 						error ->
 							?LOG_WARNING([{event,
-									mined_block_but_failed_to_read_chunk_proofs_cm},
+									mined_block_but_failed_to_read_second_chunk_proof},
 									{recall_byte2, RecallByte2},
 									{mining_address, ar_util:encode(ReplicaID)}]),
-							ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs_cm. Check logs for details~n"),
-							ok;
+							ar:console("WARNING: we found a solution but failed to read "
+									"the proof for the second chunk. See logs for more "
+									"details.~n");
 						_ ->
 							ar_coordination:computed_h2({Diff, ReplicaID, H0, H1, Nonce,
 									PartitionNumber, PartitionUpperBound, PoA2, H2, Preimage2,
-									Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, SuppliedCheckpoints, Peer})
+									Seed, NextSeed, StartIntervalNumber, StepNumber,
+									NonceLimiterOutput, SuppliedCheckpoints, Peer})
 					end;
 				false ->
 					ok
@@ -1223,12 +1220,10 @@ prepare_solution(Args, #state{ session = #mining_session{ ref = Ref } } = State)
 		when element(15, Args) /= Ref ->
 	State;
 prepare_solution(Args, State) ->
-	{PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber,
-			NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, H2, Preimage, PartitionUpperBound,
-			_Ref} = Args,
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.cm_exit_peer of
 		not_set ->
+			ReplicaID = element(9, Args),
 			case ar_wallet:load_key(ReplicaID) of
 				not_found ->
 					?LOG_WARNING([{event, mined_block_but_no_mining_key_found},
@@ -1239,73 +1234,72 @@ prepare_solution(Args, State) ->
 					prepare_solution(Args, State, Key)
 			end;
 		_ ->
-			{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
-					PartitionUpperBound),
-			?LOG_INFO([{event, found_solution_send_to_cm_exit_peer},
-					{partition, PartitionNumber},
-					{step_number, StepNumber},
-					{mining_address, ar_util:encode(ReplicaID)},
-					{recall_byte1, RecallByte1},
-					{recall_byte2, RecallByte2},
-					{solution_h, ar_util:encode(H2)},
-					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-			Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
-			case ar_data_sync:get_chunk(RecallByte1 + 1, Options) of
-				{ok, #{ chunk := Chunk1, tx_path := TXPath1, data_path := DataPath1 }} ->
-					PoA1 = #poa{ option = 1, chunk = Chunk1, tx_path = TXPath1,
-							data_path = DataPath1 },
-					PoA2 =
-						case Chunk2 of
-							not_set ->
-								not_set;
-							_ ->
-								case ar_data_sync:get_chunk(RecallByte2 + 1, Options) of
-									{ok, #{ chunk := Chunk2, tx_path := TXPath2,
-											data_path := DataPath2 }} ->
-										#poa{ option = 1, chunk = Chunk2, tx_path = TXPath2,
-											data_path = DataPath2 };
-									_ ->
-										error
-								end
-						end,
-					case PoA2 of
-						error ->
-							?LOG_WARNING([{event,
-									mined_block_but_failed_to_read_chunk_proofs_cm},
-									{recall_byte2, RecallByte2},
-									{mining_address, ar_util:encode(ReplicaID)}]),
-							ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs_cm. Check logs for details~n");
-						_ ->
-							% TODO error handling
-							[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-							#nonce_limiter_info{ next_seed = PrevNextSeed,
-								global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
-							SuppliedCheckpoints = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
-							ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer,
-									{PartitionNumber, Nonce, H0, Seed, NextSeed,
-									StartIntervalNumber, StepNumber, NonceLimiterOutput,
-									ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, SuppliedCheckpoints})
-					end;
-				_ ->
-					{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
-							PartitionNumber, PartitionUpperBound),
-					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs_cm},
-							{recall_byte, RecallByte1},
-							{recall_range_start, RecallRange1Start},
-							{nonce, Nonce},
-							{partition, PartitionNumber},
-							{mining_address, ar_util:encode(ReplicaID)}]),
-					ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs_cm. Check logs for details~n")
-			end,
-			State
+			prepare_coordinated_mining_solution(Args, State)
 	end.
 
-prepare_solution(Args, State, Key) ->
-	{PartitionNumber, Nonce, H0, _Seed, _NextSeed, _StartIntervalNumber, _StepNumber,
-			_NonceLimiterOutput, ReplicaID, Chunk1, Chunk2, _H, _Preimage,
-			PartitionUpperBound, _Ref} = Args,
+prepare_coordinated_mining_solution(Args, State) ->
+	StepNumber = element(7, Args),
+	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+	#nonce_limiter_info{ next_seed = PrevNextSeed,
+			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+	case PrevStepNumber >= StepNumber of
+		true ->
+			State;
+		false ->
+			case ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed) of
+				not_found ->
+					?LOG_WARNING([{event, found_solution_but_failed_to_find_checkpoints},
+							{start_step_number, PrevStepNumber},
+							{next_step_number, StepNumber},
+							{next_seed, ar_util:encode(PrevNextSeed)}]),
+					ar:console("WARNING: found a solution but failed to find checkpoints, "
+							"start step number: ~B, end step number: ~B, next_seed: ~s.",
+							[PrevStepNumber, StepNumber, PrevNextSeed]),
+					State;
+				Checkpoints ->
+					prepare_coordinated_mining_solution(Args, State, Checkpoints)
+			end
+	end.
+
+prepare_coordinated_mining_solution(Args, State, Checkpoints) ->
+	{PartitionNumber, Nonce, H0, Seed, NextSeed, StartIntervalNumber, StepNumber,
+			NonceLimiterOutput, ReplicaID, _Chunk1, Chunk2, H2, Preimage, PartitionUpperBound,
+			_Ref} = Args,
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 			PartitionUpperBound),
+	?LOG_INFO([{event, found_solution_to_send_to_exit_node},
+			{partition, PartitionNumber},
+			{step_number, StepNumber},
+			{mining_address, ar_util:encode(ReplicaID)},
+			{recall_byte1, RecallByte1},
+			{recall_byte2, RecallByte2},
+			{solution_h, ar_util:encode(H2)},
+			{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+	Proofs = read_proofs({RecallByte1, RecallByte2, ReplicaID, Chunk2, PartitionNumber,
+			PartitionUpperBound, H0, Nonce}),
+	case Proofs of
+		error ->
+			ok;
+		{PoA1, PoA2} ->
+			{ok, Config} = application:get_env(arweave, config),
+			case ar_http_iface_client:cm_publish_send(Config#config.cm_exit_peer,
+					{PartitionNumber, Nonce, H0, Seed, NextSeed,
+					StartIntervalNumber, StepNumber, NonceLimiterOutput,
+					ReplicaID, PoA1, PoA2, H2, Preimage, PartitionUpperBound, Checkpoints}) of
+				{ok, _} ->
+					ok;
+				{error, Reason} ->
+					?LOG_WARNING([{event, found_solution_but_failed_to_reach_exit_node},
+							{reason, io_lib:format("~p", [Reason])}]),
+					ar:console("We found a solution but failed to reach the exit node, "
+							"error: ~p.", [io_lib:format("~p", [Reason])])
+			end
+	end,
+	State.
+
+read_proofs(Args) ->
+	{RecallByte1, RecallByte2, ReplicaID, Chunk2, PartitionNumber, PartitionUpperBound,
+			H0, Nonce} = Args,
 	Options = #{ pack => true, packing => {spora_2_6, ReplicaID} },
 	case ar_data_sync:get_chunk(RecallByte1 + 1, Options) of
 		{ok, #{ chunk := Chunk1, tx_path := TXPath1, data_path := DataPath1 }} ->
@@ -1314,7 +1308,7 @@ prepare_solution(Args, State, Key) ->
 			PoA2 =
 				case Chunk2 of
 					not_set ->
-						#poa{};
+						not_set;
 					_ ->
 						case ar_data_sync:get_chunk(RecallByte2 + 1, Options) of
 							{ok, #{ chunk := Chunk2, tx_path := TXPath2,
@@ -1330,11 +1324,12 @@ prepare_solution(Args, State, Key) ->
 					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
 							{recall_byte2, RecallByte2},
 							{mining_address, ar_util:encode(ReplicaID)}]),
-					ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs. Check logs for details~n"),
-					State;
+					ar:console("WARNING: we have mined a block but failed to fetch "
+							"the chunk proofs required for publishing it. Check logs "
+							"for more details~n"),
+					error;
 				_ ->
-					RecallByte22 = case Chunk2 of not_set -> undefined; _ -> RecallByte2 end,
-					prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, PoA2, not_found)
+					{PoA1, PoA2}
 			end;
 		_ ->
 			{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
@@ -1345,11 +1340,30 @@ prepare_solution(Args, State, Key) ->
 					{nonce, Nonce},
 					{partition, PartitionNumber},
 					{mining_address, ar_util:encode(ReplicaID)}]),
-			ar:console("WARNING. mined_block_but_failed_to_read_chunk_proofs. Check logs for details~n"),
-			State
+			ar:console("WARNING: we have mined a block but failed to fetch "
+					"the chunk proofs required for publishing it. "
+					"Check logs for more details~n"),
+			error
 	end.
 
-prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, SuppliedCheckpoints) ->
+prepare_solution(Args, State, Key) ->
+	{PartitionNumber, Nonce, H0, _Seed, _NextSeed, _StartIntervalNumber, _StepNumber,
+			_NonceLimiterOutput, ReplicaID, _Chunk1, Chunk2, _H, _Preimage,
+			PartitionUpperBound, _Ref} = Args,
+	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
+			PartitionUpperBound),
+	Proofs = read_proofs({RecallByte1, RecallByte2, ReplicaID, Chunk2, PartitionNumber,
+			PartitionUpperBound, H0, Nonce}),
+	case Proofs of
+		error ->
+			State;
+		{PoA1, PoA2} ->
+			RecallByte22 = case Chunk2 of not_set -> undefined; _ -> RecallByte2 end,
+			prepare_solution(Args, State, Key, RecallByte1, RecallByte22, PoA1, PoA2,
+					not_found)
+	end.
+
+prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, Checkpoints) ->
 	{PartitionNumber, Nonce, _H0, Seed, NextSeed, StartIntervalNumber, StepNumber,
 			NonceLimiterOutput, ReplicaID, _Chunk1, _Chunk2, H, Preimage, PartitionUpperBound,
 			_Ref} = Args,
@@ -1367,7 +1381,8 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, Supplie
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:encode(H)},
 					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-			ar:console("WARNING. failed_to_validate_solution. Check logs for details~n"),
+			ar:console("WARNING: we failed to validate our solution. Check logs for more "
+					"details~n"),
 			State;
 		false ->
 			?LOG_WARNING([{event, found_invalid_solution}, {partition, PartitionNumber},
@@ -1377,12 +1392,13 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2, Supplie
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:encode(H)},
 					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
-			ar:console("WARNING. found_invalid_solution. Check logs for details~n"),
+			ar:console("WARNING: the solution we found is invalid. Check logs for more "
+					"details~n"),
 			State;
 		{true, PoACache, PoA2Cache} ->
 			SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
-					NextSeed, NonceLimiterOutput, StepNumber, SuppliedCheckpoints, LastStepCheckpoints,
-					RecallByte1, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, Key,
+					NextSeed, NonceLimiterOutput, StepNumber, Checkpoints,
+					LastStepCheckpoints, RecallByte1, RecallByte2, PoACache, PoA2Cache, Key,
 					RebaseThreshold},
 			?LOG_INFO([{event, found_mining_solution},
 					{partition, PartitionNumber}, {step_number, StepNumber},

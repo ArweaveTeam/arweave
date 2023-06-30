@@ -615,7 +615,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				previous_solution_hash = PrevB#block.hash,
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
-				poa2 = PoA2,
+				poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
 				poa2_cache = PoA2Cache,
 				recall_byte2 = RecallByte2,
 				reward_key = element(2, RewardKey),
