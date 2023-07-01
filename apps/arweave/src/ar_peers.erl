@@ -164,7 +164,7 @@ start_request(_Peer, _PathLabel, _) ->
 end_request({_Host, _Port}, _, _, _) ->
 	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
 	ok;
-end_request(Peer, PathLabel, get, {_, _, _, Body, Start, End} = Response) ->
+end_request(Peer, PathLabel, get, {_, {_, _, Body, Start, End}} = Response) ->
 	gen_server:cast(?MODULE, {end_request,
 		Peer, PathLabel, get,
 		ar_metrics:get_status_class(Response),
