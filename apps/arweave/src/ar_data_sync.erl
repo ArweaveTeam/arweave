@@ -2586,6 +2586,7 @@ process_invalid_fetched_chunk(Peer, Byte, State) ->
 	#sync_data_state{ weave_size = WeaveSize } = State,
 	?LOG_WARNING([{event, got_invalid_proof_from_peer}, {peer, ar_util:format_peer(Peer)},
 			{byte, Byte}, {weave_size, WeaveSize}]),
+	ar_peers:rate_fetched_data(Peer, invalid),
 	%% Not necessarily a malicious peer, it might happen
 	%% if the chunk is recent and from a different fork.
 	{noreply, State}.
