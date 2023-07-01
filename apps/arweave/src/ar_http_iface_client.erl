@@ -576,7 +576,7 @@ handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 					end
 				end
 		end,
-	case catch DecodeFun(Body) of
+	Result = case catch DecodeFun(Body) of
 		{'EXIT', Reason} ->
 			{error, Reason};
 		{error, Reason} ->
@@ -590,7 +590,9 @@ handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 				_ ->
 					{ok, Proof}
 			end
-	end;
+	end,
+	ar_peers:rate_fetched_data(Result),
+	Result;
 handle_chunk_response(_Encoding, {error, _} = Response) ->
 	Response;
 handle_chunk_response(_Encoding, Response) ->

@@ -10,7 +10,8 @@
 
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
-		resolve_and_cache_peer/2, start_request/3, end_request/4, gossiped_block/2, gossiped_tx/1]).
+		resolve_and_cache_peer/2, 
+		start_request/3, end_request/4, rate_fetched_data/2,  gossiped_block/2, gossiped_tx/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -37,8 +38,7 @@
 %% The number of failed requests in a row we tolerate before dropping the peer.
 -define(TOLERATE_FAILURE_COUNT, 20).
 -define(MINIMUM_SUCCESS, 0.5).
--define(LATENCY_ALPHA, 0.1).
--define(SIZE_ALPHA, 0.1).
+-define(THROUGHPUT_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.01).
 -define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over-weighting the first response
 
@@ -164,16 +164,26 @@ start_request(_Peer, _PathLabel, _) ->
 end_request({_Host, _Port}, _, _, _) ->
 	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
 	ok;
-end_request(Peer, PathLabel, get, {ok, {{<<"200">>, _}, _, Body, Start, End}} = Response) ->
+end_request(Peer, PathLabel, get, {_, _, _, Body, Start, End} = Response) ->
 	gen_server:cast(?MODULE, {end_request,
 		Peer, PathLabel, get,
 		ar_metrics:get_status_class(Response),
 		End-Start, byte_size(term_to_binary(Body))});
-end_request(Peer, PathLabel, get, Response) ->
-	%% TODO: error response
-	ok;
-end_request(Peer, PathLabel, _, Response) ->
+end_request(_Peer, _PathLabel, _, _Response) ->
 	ok.
+
+rate_fetched_data(_Peer, {ok, _}) ->
+	%% The fetched data is valid so the rating was already captured as part of
+	%% the start/end request pair. Nothing more to do.
+	ok;
+rate_fetched_data(Peer, {error, _}) ->
+	%% The fetched data is invalid, so we need to reverse the rating that was applied
+	%% in end_request, and then apply a penalty
+	gen_server:cast(?MODULE, {invalid_fetched_data, Peer});
+rate_fetched_data(Peer, invalid) ->
+	%% The fetched data is invalid, so we need to reverse the rating that was applied
+	%% in end_request, and then apply a penalty
+	gen_server:cast(?MODULE, {invalid_fetched_data, Peer}).
 
 gossiped_block(Peer, ok) ->
 	gen_server:cast(?MODULE, {
@@ -305,7 +315,7 @@ handle_cast(ping_peers, State) ->
 handle_cast({start_request, Peer, PathLabel, Method}, State) ->
 	{noreply, State};
 
-handle_cast({end_request, Peer, PathLabel, _Method, Status, ElapsedMicroseconds, Size}, State) ->
+handle_cast({end_request, Peer, PathLabel, get, Status, ElapsedMicroseconds, Size}, State) ->
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, request},
@@ -315,8 +325,30 @@ handle_cast({end_request, Peer, PathLabel, _Method, Status, ElapsedMicroseconds,
 		{latency_ms, ElapsedMicroseconds / 1000},
 		{size, Size}
 	]),
-	update_rating(Peer, ElapsedMicroseconds, Size),
+	case Status of
+		"success" ->
+			update_rating(Peer, ElapsedMicroseconds, Size, true);
+		_ ->
+			update_rating(Peer, false)
+	end,
 	{noreply, State};
+
+handle_cast({invalid_fetched_data, Peer}, State) ->
+	?LOG_DEBUG([
+		{event, update_rating},
+		{update_type, invalid_fetched_data},
+		{peer, ar_util:format_peer(Peer)}
+	]),
+	%% log 2 failures - first is to reverse the success that was previously recorded by end_request
+	%% (since end_request only considers whether or not the HTTP request was successful and does not
+	%% consider the validity of the data it may be overly permissive), and the second is to
+	%% penalize the peer for serving invalid data.
+	%% Note: this is an approximation as due to the nature of the EMA this won't exactly reverse
+	%% the prior success.
+	update_rating(Peer, false),
+	update_rating(Peer, false),
+	{noreply, State};
+
 
 handle_cast({gossiped_data, Peer}, State) ->
 	case check_external_peer(Peer) of
@@ -326,7 +358,7 @@ handle_cast({gossiped_data, Peer}, State) ->
 				{update_type, gossiped_data},
 				{peer, ar_util:format_peer(Peer)}
 			]),
-			update_rating(Peer);
+			update_rating(Peer, true);
 		_ ->
 			ok
 	end,
@@ -620,19 +652,19 @@ check_external_peer(Peer) ->
 			ok
 	end.
 
-update_rating(Peer) ->
+update_rating(Peer, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
 	%% Pass in the current latecny and bytes values in order to hold them constant.
 	%% Only the success average should be updated.
-	update_rating(Peer, Performance#performance.latency, Performance#performance.bytes).
-update_rating(Peer, LatencyMicroseconds, Size) ->
+	update_rating(Peer, Performance#performance.latency, Performance#performance.bytes, IsSuccess).
+update_rating(Peer, LatencyMicroseconds, Size, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
 	#performance{ bytes = Bytes, latency = Latency, success = Success,
 			rating = Rating, transfers = N } = Performance,
-	Bytes2 = calculate_ema(Bytes, Size, ?SIZE_ALPHA),
-	Latency2 = calculate_ema(Latency, LatencyMicroseconds / 1000, ?LATENCY_ALPHA),
-	Success2 = calculate_ema(Success, 1, ?SUCCESS_ALPHA),
+	Bytes2 = calculate_ema(Bytes, Size, ?THROUGHPUT_ALPHA),
+	Latency2 = calculate_ema(Latency, LatencyMicroseconds / 1000, ?THROUGHPUT_ALPHA),
+	Success2 = calculate_ema(Success, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
 	Rating2 = Bytes2 / Latency2,
 	Performance2 = Performance#performance{
 			bytes = Bytes2, latency = Latency2, success = Success2,
