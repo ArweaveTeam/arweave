@@ -53,7 +53,8 @@
 	transfers = 0,
 	success = 1.0,
 	rating = 0,
-	release = -1
+	release = -1,
+	active_requests = 0
 }).
 
 -record(state, {}).
@@ -269,10 +270,9 @@ handle_cast({add_peer, Peer, Release}, State) ->
 		[{_, #performance{ release = Release }}] ->
 			ok;
 		[{_, Performance}] ->
-			ets:insert(?MODULE, {{peer, Peer},
-					Performance#performance{ release = Release }});
+			set_performance(Peer, Performance#performance{ release = Release });
 		[] ->
-			ets:insert(?MODULE, {{peer, Peer}, #performance{ release = Release }})
+			set_performance(Peer, #performance{ release = Release })
 	end,
 	{noreply, State};
 
@@ -312,25 +312,32 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
-handle_cast({start_request, Peer, PathLabel, Method}, State) ->
+handle_cast({start_request, Peer, _PathLabel, _Method}, State) ->
+	Performance = get_or_init_performance(Peer),
+	ActiveRequests = Performance#performance.active_requests,
+	set_performance(Peer, Performance#performance{ active_requests = ActiveRequests+1 }),
 	{noreply, State};
 
 handle_cast({end_request, Peer, PathLabel, get, Status, ElapsedMicroseconds, Size}, State) ->
-	?LOG_DEBUG([
-		{event, update_rating},
-		{update_type, request},
-		{path, PathLabel},
-		{status, Status},
-		{peer, ar_util:format_peer(Peer)},
-		{latency_ms, ElapsedMicroseconds / 1000},
-		{size, Size}
-	]),
 	case Status of
 		"success" ->
 			update_rating(Peer, ElapsedMicroseconds, Size, true);
 		_ ->
 			update_rating(Peer, false)
 	end,
+	Performance = get_or_init_performance(Peer),
+	ActiveRequests = Performance#performance.active_requests,
+	set_performance(Peer, Performance#performance{ active_requests = ActiveRequests-1 }),
+	?LOG_DEBUG([
+		{event, update_rating},
+		{update_type, request},
+		{path, PathLabel},
+		{status, Status},
+		{peer, ar_util:format_peer(Peer)},
+		{active_requests, ActiveRequests},
+		{latency_ms, ElapsedMicroseconds / 1000},
+		{size, Size}
+	]),
 	{noreply, State};
 
 handle_cast({invalid_fetched_data, Peer}, State) ->
@@ -375,13 +382,11 @@ handle_info({event, peer, {made_request, Peer, Release}}, State) ->
 		[{_, #performance{ release = Release }}] ->
 			ok;
 		[{_, Performance}] ->
-			ets:insert(?MODULE, {{peer, Peer},
-					Performance#performance{ release = Release }});
+			set_performance(Peer, Performance#performance{ release = Release });
 		[] ->
 			case check_external_peer(Peer) of
 				ok ->
-					ets:insert(?MODULE, {{peer, Peer},
-							#performance{ release = Release }});
+					set_performance(Peer, #performance{ release = Release });
 				_ ->
 					ok
 			end
@@ -434,7 +439,6 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
 get_peer_peers(Peer) ->
 	case ar_http_iface_client:get_peers(Peer) of
 		unavailable -> [];
@@ -467,10 +471,10 @@ discover_peers([Peer | Peers]) ->
 
 format_stats(Peer, Perf) ->
 	KB = Perf#performance.bytes / 1024,
-	io:format("\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success, ~p transfers)~n",
+	io:format("\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success, ~p transfers, ~B requests)~n",
 		[string:pad(ar_util:format_peer(Peer), 21, trailing, $ ),
 			float(Perf#performance.rating), KB, trunc(Perf#performance.latency),
-			Perf#performance.success, Perf#performance.transfers]).
+			Perf#performance.success, Perf#performance.transfers, Perf#performance.active_requests]).
 
 load_peers() ->
 	case ar_storage:read_term(peers) of
@@ -513,11 +517,13 @@ load_peer({Peer, Performance}) ->
 				{performance, Bytes, Latency, Transfers, _Failures, Rating} ->
 					%% For compatibility with a few nodes already storing the records
 					%% without the release field.
-					ets:insert(?MODULE, {{peer, Peer}, #performance{ bytes = Bytes,
-							latency = Latency, transfers = Transfers,
-							success = 1.0, rating = Rating, release = -1 }});
+					set_performance(Peer, #performance{
+							bytes = Bytes, latency = Latency, transfers = Transfers,
+							rating = Rating, release = -1 });
 				_ ->
-					ets:insert(?MODULE, {{peer, Peer}, Performance#performance{ success = 1.0 }})
+					%% Always reset success and active_requests when loading a peer from disk
+					set_performance(Peer,
+						Performance#performance{ success = 1.0, active_requests = 0 })
 			end,
 			ok;
 		Network ->
@@ -661,17 +667,17 @@ update_rating(Peer, LatencyMicroseconds, Size, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
 	#performance{ bytes = Bytes, latency = Latency, success = Success,
-			rating = Rating, transfers = N } = Performance,
+			rating = Rating, transfers = N, active_requests = ActiveRequests } = Performance,
 	Bytes2 = calculate_ema(Bytes, Size, ?THROUGHPUT_ALPHA),
 	Latency2 = calculate_ema(Latency, LatencyMicroseconds / 1000, ?THROUGHPUT_ALPHA),
 	Success2 = calculate_ema(Success, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
-	Rating2 = Bytes2 / Latency2,
+	Rating2 = (Bytes2 / Latency2) * Success2 * ActiveRequests,
 	Performance2 = Performance#performance{
 			bytes = Bytes2, latency = Latency2, success = Success2,
 			rating = Rating2, transfers = N + 1 },
 	Total2 = Total - Rating + Rating2,
 	may_be_rotate_peer_ports(Peer),
-	ets:insert(?MODULE, [{{peer, Peer}, Performance2}, {rating_total, Total2}]).
+	set_performance(Peer, Performance2, Total2).
 
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
@@ -683,6 +689,14 @@ get_or_init_performance(Peer) ->
 		[{_, Performance}] ->
 			Performance
 	end.
+
+set_performance(Peer, Performance, TotalRating) ->
+	ets:insert(?MODULE, [
+		{{peer, Peer}, Performance},
+		{rating_total, TotalRating}]).
+
+set_performance(Peer, Performance) ->
+	ets:insert(?MODULE, [{{peer, Peer}, Performance}]).
 
 get_total_rating() ->
 	case ets:lookup(?MODULE, rating_total) of
@@ -763,7 +777,7 @@ issue_warning(Peer) ->
 		false ->
 			Performance2 = Performance#performance{ success = Success },
 			may_be_rotate_peer_ports(Peer),
-			ets:insert(?MODULE, {{peer, Peer}, Performance2})
+			set_performance(Peer, Performance2)
 	end.
 
 %%%===================================================================
