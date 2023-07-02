@@ -5,12 +5,13 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_peers.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
+-export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
-		resolve_and_cache_peer/2, 
+		resolve_and_cache_peer/2,
 		start_request/3, end_request/4, rate_fetched_data/2,  gossiped_block/2, gossiped_tx/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -40,22 +41,11 @@
 -define(MINIMUM_SUCCESS, 0.5).
 -define(THROUGHPUT_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.01).
--define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over-weighting the first response
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
 %% we remove the peer from the first slot.
 -define(DEFAULT_PEER_PORT_MAP, {empty_slot, empty_slot, empty_slot, empty_slot, empty_slot,
 		empty_slot, empty_slot, empty_slot, empty_slot, empty_slot}).
-
--record(performance, {
-	bytes = 0,
-	latency = ?STARTING_LATENCY_EMA,
-	transfers = 0,
-	success = 1.0,
-	rating = 0,
-	release = -1,
-	active_requests = 0
-}).
 
 -record(state, {}).
 
@@ -76,6 +66,9 @@ get_peers() ->
 		[{_, Peers}] ->
 			Peers
 	end.
+
+get_peer_performances(Peers) ->
+	[ get_or_init_performance(Peer) || Peer <- Peers].
 
 -if(?NETWORK_NAME == "arweave.N.1").
 get_trusted_peers() ->
@@ -445,6 +438,14 @@ get_peer_peers(Peer) ->
 		Peers -> Peers
 	end.
 
+get_or_init_performance(Peer) ->
+	case ets:lookup(?MODULE, {peer, Peer}) of
+		[] ->
+			#performance{};
+		[{_, Performance}] ->
+			Performance
+	end.
+
 discover_peers([]) ->
 	ok;
 discover_peers([Peer | Peers]) ->
@@ -517,13 +518,19 @@ load_peer({Peer, Performance}) ->
 				{performance, Bytes, Latency, Transfers, _Failures, Rating} ->
 					%% For compatibility with a few nodes already storing the records
 					%% without the release field.
-					set_performance(Peer, #performance{
-							bytes = Bytes, latency = Latency, transfers = Transfers,
-							rating = Rating, release = -1 });
-				_ ->
+					% set_performance(Peer, #performance{
+					% 		bytes = Bytes, latency = Latency, transfers = Transfers,
+					% 		rating = Rating, release = -1 });
+					% XXX TODO
+					ok;
+				{performance, Bytes, Latency, Transfers, _Failures, Rating, Release} ->
 					%% Always reset success and active_requests when loading a peer from disk
-					set_performance(Peer,
-						Performance#performance{ success = 1.0, active_requests = 0 })
+					% set_performance(Peer,
+					% 	Performance#performance{ success = 1.0, active_requests = 0 });
+					% XX TODO
+					ok;
+				{performance, 3, Release, Overall, Sync} ->
+					set_performance(Peer, Performance)
 			end,
 			ok;
 		Network ->
@@ -681,14 +688,6 @@ update_rating(Peer, LatencyMicroseconds, Size, IsSuccess) ->
 
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
-
-get_or_init_performance(Peer) ->
-	case ets:lookup(?MODULE, {peer, Peer}) of
-		[] ->
-			#performance{};
-		[{_, Performance}] ->
-			Performance
-	end.
 
 set_performance(Peer, Performance, TotalRating) ->
 	ets:insert(?MODULE, [
