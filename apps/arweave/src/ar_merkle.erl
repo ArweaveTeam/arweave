@@ -57,186 +57,93 @@ validate_path(ID, Dest, RightBound, Path, Ruleset) when Dest < 0 ->
 validate_path(ID, Dest, RightBound, Path, Ruleset) ->
 	validate_path(ID, Dest, 0, RightBound, Path, Ruleset).
 
-validate_path(ID, _Dest, LeftBound, RightBound,
-		<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>, basic_ruleset) ->
-	case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
-		ID ->
-			{Data, LeftBound, max(min(RightBound, EndOffset), LeftBound + 1)};
-		_ ->
-			false
-	end;
-validate_path(ID, Dest, LeftBound, RightBound,
-		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>,
-		basic_ruleset) ->
-	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
-		ID ->
-			{Path, NextLeftBound, NextRightBound} =
-				case Dest < Note of
-					true ->
-						{L, LeftBound, min(RightBound, Note)};
-					false ->
-						{R, max(LeftBound, Note), RightBound}
-				end,
-			validate_path(Path, Dest, NextLeftBound, NextRightBound, Rest, basic_ruleset);
-		_ ->
-			false
-	end;
-validate_path(_, _, _, _, _, basic_ruleset) ->
-	false;
+validate_path(ID, Dest, LeftBound, RightBound, Path, basic_ruleset) ->
+	CheckBorders = false,
+	CheckSplit = false,
+	AllowRebase = false,
+	validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase);
 
-%% Validate the given merkle path and ensure every offset does not
-%% exceed the previous offset by more than ?DATA_CHUNK_SIZE.
-validate_path(ID, _Dest, LeftBound, RightBound,
-		<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>, strict_borders_ruleset) ->
-	case EndOffset - LeftBound > ?DATA_CHUNK_SIZE
-			orelse RightBound - LeftBound > ?DATA_CHUNK_SIZE of
-		true ->
-			false;
-		false ->
-			case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
-				ID ->
-					{Data, LeftBound, max(min(RightBound, EndOffset), LeftBound + 1)};
-				_ ->
-					false
-			end
-	end;
-validate_path(ID, Dest, LeftBound, RightBound,
-		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>,
-		strict_borders_ruleset) ->
-	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
-		ID ->
-			{Path, NextLeftBound, NextRightBound} =
-				case Dest < Note of
-					true ->
-						{L, LeftBound, min(RightBound, Note)};
-					false ->
-						{R, max(LeftBound, Note), RightBound}
-				end,
-			validate_path(Path, Dest, NextLeftBound, NextRightBound, Rest,
-					strict_borders_ruleset);
-		_ ->
-			false
-	end;
-validate_path(_, _, _, _, _, strict_borders_ruleset) ->
-	false;
+validate_path(ID, Dest, LeftBound, RightBound, Path, strict_borders_ruleset) ->
+	CheckBorders = true,
+	CheckSplit = false,
+	AllowRebase = false,
+	validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase);
 
-%% Validate the given merkle path and ensure every offset does not
-%% exceed the previous offset by more than ?DATA_CHUNK_SIZE. Additionally,
-%% reject chunks smaller than 256 KiB unless they are the last or the only chunks
-%% of their datasets or the second last chunks which do not exceed 256 KiB when
-%% combined with the following (last) chunks. Finally, reject chunks smaller than
-%% their Merkle proofs unless they are the last chunks of their datasets.
-validate_path(ID, Dest, LeftBound, RightBound, Path, strict_data_split_ruleset) ->
-	validate_path(ID, Dest, LeftBound, RightBound, Path, {strict_data_split_ruleset,
-			byte_size(Path), RightBound});
+validate_path(ID, Dest, LeftBound, RightBound, Path, strict_borders_ruleset) ->
+	CheckBorders = true,
+	CheckSplit = true,
+	AllowRebase = false,
+	validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase);
 
+validate_path(ID, Dest, LeftBound, RightBound, Path, offset_rebase_support_ruleset) ->
+	CheckBorders = true,
+	CheckSplit = true,
+	AllowRebase = true,
+	validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase).
+
+
+validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase) ->
+	PathSize = byte_size(Path),
+	DataSize = RightBound,
+	%% Will be set to true only if we only take right branches from the root to the leaf. In this
+	%% case we know the leaf chunk is the final chunk in the range reprsented by the merkle tree.
+	IsRightMostInItsSubTree = undefined, 
+	%% Set to non-zero when AllowRebase is true and we begin processing a subtree.
+	LeftBoundShift = 0,
+	validate_path(ID, Dest, LeftBound, RightBound, Path,
+		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, AllowRebase).
+
+%% Validate the leaf of the merkle path (i.e. the data chunk)
 validate_path(ID, _Dest, LeftBound, RightBound,
 		<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>,
-		{strict_data_split_ruleset, PathSize, DataSize}) ->
-	case EndOffset - LeftBound > ?DATA_CHUNK_SIZE
-			orelse RightBound - LeftBound > ?DATA_CHUNK_SIZE of
+		PathSize, _DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, _AllowRebase) ->
+	AreBordersValid = case CheckBorders of
 		true ->
-			false;
+			%% Borders are only valid if every offset does not exceed the previous offset
+			%% by more than ?DATA_CHUNK_SIZE
+			EndOffset - LeftBound =< ?DATA_CHUNK_SIZE andalso
+				RightBound - LeftBound =< ?DATA_CHUNK_SIZE;
 		false ->
+			%% Borders are always valid if we don't need to check them
+			true
+	end,
+	IsSplitValid = case CheckSplit of
+		true ->
+			%% Reject chunks smaller than 256 KiB unless they are the last or the only chunks
+			%% of their datasets or the second last chunks which do not exceed 256 KiB when
+			%% combined with the following (last) chunks. Finally, reject chunks smaller than
+			%% their Merkle proofs unless they are the last chunks of their datasets.
 			ChunkSize = EndOffset - LeftBound,
-			IsSplitValid =
-				case validate_strict_split of
-					_ when ChunkSize == (?DATA_CHUNK_SIZE) ->
-						LeftBound rem (?DATA_CHUNK_SIZE) == 0;
-					_ when EndOffset == DataSize ->
-						Border = RightBound - RightBound rem (?DATA_CHUNK_SIZE),
-						RightBound rem (?DATA_CHUNK_SIZE) > 0
-								andalso LeftBound =< Border;
-					_ when PathSize > ChunkSize ->
-						false;
-					_ ->
-						LeftBound rem (?DATA_CHUNK_SIZE) == 0
-								andalso DataSize - LeftBound > (?DATA_CHUNK_SIZE)
-								andalso DataSize - LeftBound < 2 * (?DATA_CHUNK_SIZE)
-				end,
-			case IsSplitValid of
-				false ->
-					false;
+			case IsRightMostInItsSubTree of
 				true ->
-					case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
-						ID ->
-							{Data, LeftBound, max(min(RightBound, EndOffset), LeftBound + 1)};
-						_ ->
-							false
-					end
-			end
-	end;
-validate_path(ID, Dest, LeftBound, RightBound,
-		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>,
-		{strict_data_split_ruleset, PathSize, DataSize}) ->
-	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
-		ID ->
-			{Path, NextLeftBound, NextRightBound} =
-				case Dest < Note of
-					true ->
-						{L, LeftBound, min(RightBound, Note)};
-					false ->
-						{R, max(LeftBound, Note), RightBound}
-				end,
-			validate_path(Path, Dest, NextLeftBound, NextRightBound, Rest,
-					{strict_data_split_ruleset, PathSize, DataSize});
-		_ ->
+					%% The last chunk may either start at the bucket start or
+					%% span two buckets.
+					Bucket0 = LeftBound div (?DATA_CHUNK_SIZE),
+					Bucket1 = EndOffset div (?DATA_CHUNK_SIZE),
+					(LeftBound rem (?DATA_CHUNK_SIZE) == 0) orelse Bucket0 + 1 == Bucket1;
+				_ ->
+					%% May also be the only chunk of a single-chunk subtree.
+					LeftBound rem (?DATA_CHUNK_SIZE) == 0 andalso PathSize =< ChunkSize
+			end;
+		false ->
+			%% Split is always valid if we don't need to check it
+			true
+	end,
+	case AreBordersValid andalso IsSplitValid of
+		true ->
+			validate_leaf(ID, Data, EndOffset, LeftBound, RightBound, LeftBoundShift);
+		false ->
 			false
 	end;
-validate_path(_, _, _, _, _, {strict_data_split_ruleset, _, _}) ->
-	false;
 
 %% Validate the given merkle path where any subtrees may have 0-based offset.
-validate_path(ID, Dest, LeftBound, RightBound, Path, offset_rebase_support_ruleset) ->
-	validate_path(ID, Dest, LeftBound, RightBound, Path,
-			{offset_rebase_support_ruleset, undefined, 0});
-
-validate_path(ID, _Dest, LeftBound, RightBound,
-		<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>,
-		{offset_rebase_support_ruleset, IsRightMostInItsSubTree, LeftBoundShift}) ->
-	case EndOffset - LeftBound > ?DATA_CHUNK_SIZE
-			orelse RightBound - LeftBound > ?DATA_CHUNK_SIZE of
-		true ->
-			io:format("Bounds: E=~B L=~B R=~B~n", [EndOffset, LeftBound, RightBound]), % TODO
-			false;
-		false ->
-			ChunkSize = EndOffset - LeftBound,
-			IsSplitValid =
-				case IsRightMostInItsSubTree of
-					true ->
-						%% The last chunk may either start at the bucket start or
-						%% span two buckets.
-						Bucket0 = LeftBound div (?DATA_CHUNK_SIZE),
-						Bucket1 = EndOffset div (?DATA_CHUNK_SIZE),
-						(LeftBound rem (?DATA_CHUNK_SIZE) == 0) orelse Bucket0 + 1 == Bucket1;
-					_ ->
-						%% May also be the only chunk of a single-chunk subtree.
-						LeftBound rem (?DATA_CHUNK_SIZE) == 0
-				end,
-			case IsSplitValid of
-				false ->
-					io:format("Split: E=~B L=~B R=~B C=~B ~p~n",
-							[EndOffset, LeftBound, RightBound, ChunkSize,
-								IsRightMostInItsSubTree]), % TODO
-					false;
-				true ->
-					case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
-						ID ->
-							{Data, LeftBoundShift + LeftBound,
-								LeftBoundShift + max(min(RightBound, EndOffset),
-											LeftBound + 1)};
-						_ ->
-							io:format("Hashing: E=~B L=~B R=~B ID: ~s~n",
-									[EndOffset, LeftBound, RightBound,
-									ar_util:encode(ID)]), % TODO
-							false
-					end
-			end
-	end;
 validate_path(ID, Dest, LeftBound, RightBound,
 		<< 0:(?HASH_SIZE*8), L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
 			Note:(?NOTE_SIZE*8), Rest/binary >>,
-			{offset_rebase_support_ruleset, _IsRightMostInItsSubTree, LeftBoundShift}) ->
+		PathSize, DataSize, _IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, true) ->
 	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
 			{Path, NextLeftBound, NextRightBound, Dest2, NextLeftBoundShift} =
@@ -251,40 +158,57 @@ validate_path(ID, Dest, LeftBound, RightBound,
 								Dest - Note2,
 								LeftBoundShift + Note2}
 				end,
-			io:format("Passing: E=~B L=~B R=~B Shift: ~B NextShift: ~B~n",
-					[Dest, LeftBound, RightBound, LeftBoundShift, NextLeftBoundShift]), % TODO
-			validate_path(Path, Dest2, NextLeftBound, NextRightBound, Rest,
-					{offset_rebase_support_ruleset,
-						%% IsRightMostInItsSubTree=undefined because we step
-						%% into the rebased tree.
-						undefined,
-						NextLeftBoundShift});
+			validate_path(Path, Dest2, NextLeftBound, NextRightBound, Rest, PathSize, DataSize,
+				undefined, NextLeftBoundShift, CheckBorders, CheckSplit, true);
 		_ ->
 			false
 	end;
+
+%% Validate a non-leaf node in the merkle path
 validate_path(ID, Dest, LeftBound, RightBound,
 		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>,
-		{offset_rebase_support_ruleset, IsRightMostInItsSubTree, LeftBoundShift}) ->
+		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, AllowRebase) ->
+	validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, Rest,
+		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, AllowRebase);
+
+%% Invalid merkle path
+validate_path(_, _, _, _, _, _, _, _, _, _, _, _) ->
+	false.
+
+validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, RemainingPath,
+		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, AllowRebase) ->
 	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
-			io:format("Passing no rebase: E=~B L=~B R=~B~n",
-					[Dest, LeftBound, RightBound]), % TODO
-			{Path, NextLeftBound, NextRightBound, IsRightMostInItsSubTree2} =
+			{BranchID, NextLeftBound, NextRightBound, IsRightMostInItsSubTree2} =
 				case Dest < Note of
 					true ->
+						%% Traverse left branch (at this point we know the leaf chunk will never
+						%% be the right most in the subtree)
 						{L, LeftBound, min(RightBound, Note), false};
 					false ->
+						%% Traverse right branch)
 						{R, max(LeftBound, Note), RightBound,
 								case IsRightMostInItsSubTree of undefined -> true;
 										_ -> IsRightMostInItsSubTree end}
 				end,
-			validate_path(Path, Dest, NextLeftBound, NextRightBound, Rest,
-					{offset_rebase_support_ruleset, IsRightMostInItsSubTree2, LeftBoundShift});
+			validate_path(BranchID, Dest, NextLeftBound, NextRightBound, RemainingPath,
+				PathSize, DataSize, IsRightMostInItsSubTree2, LeftBoundShift,
+				CheckBorders, CheckSplit, AllowRebase);
 		_ ->
 			false
-	end;
-validate_path(_, _, _, _, _, {offset_rebase_support_ruleset, _, _}) ->
-	false.
+	end.
+
+validate_leaf(ID, Data, EndOffset, LeftBound, RightBound, LeftBoundShift) ->
+	case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
+		ID ->
+			{Data, LeftBoundShift + LeftBound,
+				LeftBoundShift + max(min(RightBound, EndOffset), LeftBound + 1)};
+		_ ->
+			false
+	end.
 
 %% @doc Get the note (offset) attached to the leaf from a path.
 extract_note(Path) ->
