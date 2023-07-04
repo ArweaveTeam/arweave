@@ -83,7 +83,6 @@ validate_path(ID, Dest, LeftBound, RightBound, Path, offset_rebase_support_rules
 
 
 validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase) ->
-	PathSize = byte_size(Path),
 	DataSize = RightBound,
 	%% Will be set to true only if we only take right branches from the root to the leaf. In this
 	%% case we know the leaf chunk is the final chunk in the range reprsented by the merkle tree.
@@ -91,13 +90,13 @@ validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, A
 	%% Set to non-zero when AllowRebase is true and we begin processing a subtree.
 	LeftBoundShift = 0,
 	validate_path(ID, Dest, LeftBound, RightBound, Path,
-		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase).
 
 %% Validate the leaf of the merkle path (i.e. the data chunk)
 validate_path(ID, _Dest, LeftBound, RightBound,
 		<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>,
-		PathSize, _DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		_DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, _AllowRebase) ->
 	AreBordersValid = case CheckBorders of
 		true ->
@@ -115,7 +114,6 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 			%% of their datasets or the second last chunks which do not exceed 256 KiB when
 			%% combined with the following (last) chunks. Finally, reject chunks smaller than
 			%% their Merkle proofs unless they are the last chunks of their datasets.
-			ChunkSize = EndOffset - LeftBound,
 			case IsRightMostInItsSubTree of
 				true ->
 					%% The last chunk may either start at the bucket start or
@@ -125,7 +123,7 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 					(LeftBound rem (?DATA_CHUNK_SIZE) == 0) orelse Bucket0 + 1 == Bucket1;
 				_ ->
 					%% May also be the only chunk of a single-chunk subtree.
-					LeftBound rem (?DATA_CHUNK_SIZE) == 0 andalso PathSize =< ChunkSize
+					LeftBound rem (?DATA_CHUNK_SIZE) == 0
 			end;
 		false ->
 			%% Split is always valid if we don't need to check it
@@ -142,7 +140,7 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 validate_path(ID, Dest, LeftBound, RightBound,
 		<< 0:(?HASH_SIZE*8), L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
 			Note:(?NOTE_SIZE*8), Rest/binary >>,
-		PathSize, DataSize, _IsRightMostInItsSubTree, LeftBoundShift,
+		DataSize, _IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, true) ->
 	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
@@ -158,7 +156,7 @@ validate_path(ID, Dest, LeftBound, RightBound,
 								Dest - Note2,
 								LeftBoundShift + Note2}
 				end,
-			validate_path(Path, Dest2, NextLeftBound, NextRightBound, Rest, PathSize, DataSize,
+			validate_path(Path, Dest2, NextLeftBound, NextRightBound, Rest, DataSize,
 				undefined, NextLeftBoundShift, CheckBorders, CheckSplit, true);
 		_ ->
 			false
@@ -167,18 +165,18 @@ validate_path(ID, Dest, LeftBound, RightBound,
 %% Validate a non-leaf node in the merkle path
 validate_path(ID, Dest, LeftBound, RightBound,
 		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>,
-		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase) ->
 	validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, Rest,
-		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase);
 
 %% Invalid merkle path
-validate_path(_, _, _, _, _, _, _, _, _, _, _, _) ->
+validate_path(_, _, _, _, _, _, _, _, _, _, _) ->
 	false.
 
 validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, RemainingPath,
-		PathSize, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase) ->
 	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
@@ -195,7 +193,7 @@ validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, RemainingPath,
 										_ -> IsRightMostInItsSubTree end}
 				end,
 			validate_path(BranchID, Dest, NextLeftBound, NextRightBound, RemainingPath,
-				PathSize, DataSize, IsRightMostInItsSubTree2, LeftBoundShift,
+				DataSize, IsRightMostInItsSubTree2, LeftBoundShift,
 				CheckBorders, CheckSplit, AllowRebase);
 		_ ->
 			false
