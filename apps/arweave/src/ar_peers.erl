@@ -12,7 +12,7 @@
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
 		resolve_and_cache_peer/2,
-		start_request/3, end_request/4, rate_fetched_data/2,  gossiped_block/2, gossiped_tx/1]).
+		rate_response/4, rate_fetched_data/2,  gossiped_block/2, gossiped_tx/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -41,6 +41,10 @@
 -define(MINIMUM_SUCCESS, 0.5).
 -define(THROUGHPUT_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.01).
+
+-define(RATE_SUCCESS, 1).
+-define(RATE_ERROR, 0).
+-define(RATE_PENALTY, -1).
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
 %% we remove the peer from the first slot.
@@ -147,23 +151,14 @@ get_peer_release(Peer) ->
 			-1
 	end.
 
-start_request({_Host, _Port}, _, _) ->
+rate_response({_Host, _Port}, _, _, _) ->
 	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
 	ok;
-start_request(Peer, PathLabel, get) ->
-	gen_server:cast(?MODULE, {start_request, Peer, PathLabel, get});
-start_request(_Peer, _PathLabel, _) ->
-	ok.
-
-end_request({_Host, _Port}, _, _, _) ->
-	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
-	ok;
-end_request(Peer, PathLabel, get, {_, {_, _, Body, Start, End}} = Response) ->
-	gen_server:cast(?MODULE, {end_request,
+rate_response(Peer, PathLabel, get, Response) ->
+	gen_server:cast(?MODULE, {rate_response,
 		Peer, PathLabel, get,
-		ar_metrics:get_status_class(Response),
-		End-Start, byte_size(term_to_binary(Body))});
-end_request(_Peer, _PathLabel, _, _Response) ->
+		ar_metrics:get_status_class(Response)});
+rate_response(_Peer, _PathLabel, _Method, _Response) ->
 	ok.
 
 rate_fetched_data(_Peer, {ok, _}) ->
@@ -305,31 +300,23 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
-handle_cast({start_request, Peer, _PathLabel, _Method}, State) ->
-	Performance = get_or_init_performance(Peer),
-	ActiveRequests = Performance#performance.active_requests,
-	set_performance(Peer, Performance#performance{ active_requests = ActiveRequests+1 }),
-	{noreply, State};
-
-handle_cast({end_request, Peer, PathLabel, get, Status, ElapsedMicroseconds, Size}, State) ->
+handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 	case Status of
 		"success" ->
-			update_rating(Peer, ElapsedMicroseconds, Size, true);
+			update_rating(Peer, ?RATE_SUCCESS);
+		"redirection" ->
+			ok; %% don't update rating
+		"client-error" ->
+			ok; %% don't update rating
 		_ ->
-			update_rating(Peer, false)
+			update_rating(Peer, ?RATE_ERROR)
 	end,
-	Performance = get_or_init_performance(Peer),
-	ActiveRequests = Performance#performance.active_requests,
-	set_performance(Peer, Performance#performance{ active_requests = ActiveRequests-1 }),
 	?LOG_DEBUG([
 		{event, update_rating},
-		{update_type, request},
+		{update_type, response},
 		{path, PathLabel},
 		{status, Status},
-		{peer, ar_util:format_peer(Peer)},
-		{active_requests, ActiveRequests},
-		{latency_ms, ElapsedMicroseconds / 1000},
-		{size, Size}
+		{peer, ar_util:format_peer(Peer)}
 	]),
 	{noreply, State};
 
@@ -386,13 +373,13 @@ handle_info({event, peer, {made_request, Peer, Release}}, State) ->
 	end,
 	{noreply, State};
 
-handle_info({event, peer, {served_tx, Peer, TimeDelta, Size}}, State) ->
-	% ?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
+handle_info({event, peer, {fetched_tx, Peer, TimeDelta, Size}}, State) ->
+	% ?LOG_DEBUG([{event, update_rating}, {type, fetched_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
-handle_info({event, peer, {served_block, Peer, TimeDelta, Size}}, State) ->
-	% ?LOG_DEBUG([{event, update_rating}, {type, served_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
+handle_info({event, peer, {fetched_block, Peer, TimeDelta, Size}}, State) ->
+	% ?LOG_DEBUG([{event, update_rating}, {type, fetched_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
@@ -518,18 +505,29 @@ load_peer({Peer, Performance}) ->
 				{performance, Bytes, Latency, Transfers, _Failures, Rating} ->
 					%% For compatibility with a few nodes already storing the records
 					%% without the release field.
-					% set_performance(Peer, #performance{
-					% 		bytes = Bytes, latency = Latency, transfers = Transfers,
-					% 		rating = Rating, release = -1 });
-					% XXX TODO
-					ok;
+					Overall = #metrics{
+						bytes = Bytes, latency = Latency, transfers = Transfers,
+						rating = Rating },
+					Performance2 = #performance{ 
+						metrics = #{
+							overall => Overall,
+							data_sync => #metrics{}
+						}
+					},
+					set_performance(Peer, Performance2);
 				{performance, Bytes, Latency, Transfers, _Failures, Rating, Release} ->
-					%% Always reset success and active_requests when loading a peer from disk
-					% set_performance(Peer,
-					% 	Performance#performance{ success = 1.0, active_requests = 0 });
-					% XX TODO
-					ok;
-				{performance, 3, Release, Overall, Sync} ->
+					Overall = #metrics{
+						bytes = Bytes, latency = Latency, transfers = Transfers,
+						rating = Rating },
+					Performance2 = #performance{ 
+						release = Release,
+						metrics = #{
+							overall => Overall,
+							data_sync => #metrics{}
+						}
+					},
+					set_performance(Peer, Performance2);
+				_ ->
 					set_performance(Peer, Performance)
 			end,
 			ok;

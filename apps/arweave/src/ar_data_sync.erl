@@ -944,7 +944,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 							ar_util:cast_after(1000, self(), Cast),
 							{noreply, State};
 						false ->
-							% ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
+							% ar_events:send(peer, {fetched_chunk, Peer, Time, TransferSize}),
 							ar_packing_server:request_unpack(AbsoluteOffset, ChunkArgs),
 							?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
 									{data_path_hash, ar_util:encode(crypto:hash(sha256,
@@ -964,7 +964,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkSize, ChunkID} ->
-			% ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
+			% ar_events:send(peer, {fetched_chunk, Peer, Time, TransferSize}),
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
 			ChunkArgs = {unpacked, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
@@ -1369,7 +1369,7 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
 			{error, Reason};
 		{ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath} ->
 			ChunkID =
-				case validate_served_chunk({AbsoluteOffset, DataPath, TXPath, TXRoot,
+				case validate_fetched_chunk({AbsoluteOffset, DataPath, TXPath, TXRoot,
 						ChunkSize, StoreID}) of
 					{true, ID} ->
 						ID;
@@ -1498,7 +1498,7 @@ invalidate_bad_data_record({Start, End, ChunksIndex, StoreID, Case}) ->
 			end
 	end.
 
-validate_served_chunk(Args) ->
+validate_fetched_chunk(Args) ->
 	{Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID} = Args,
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case Offset > T orelse not ar_node:is_joined() of
