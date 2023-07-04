@@ -187,7 +187,7 @@ validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, RemainingPath,
 						%% be the right most in the subtree)
 						{L, LeftBound, min(RightBound, Note), false};
 					false ->
-						%% Traverse right branch)
+						%% Traverse right branch
 						{R, max(LeftBound, Note), RightBound,
 								case IsRightMostInItsSubTree of undefined -> true;
 										_ -> IsRightMostInItsSubTree end}
