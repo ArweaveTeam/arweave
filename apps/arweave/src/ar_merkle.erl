@@ -69,7 +69,7 @@ validate_path(ID, Dest, LeftBound, RightBound, Path, strict_borders_ruleset) ->
 	AllowRebase = false,
 	validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase);
 
-validate_path(ID, Dest, LeftBound, RightBound, Path, strict_borders_ruleset) ->
+validate_path(ID, Dest, LeftBound, RightBound, Path, strict_data_split_ruleset) ->
 	CheckBorders = true,
 	CheckSplit = true,
 	AllowRebase = false,
