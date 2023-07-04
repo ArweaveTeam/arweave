@@ -1915,7 +1915,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								{Packing, ok};
 							{{true, _}, _StoreID} ->
 								{ok, Config} = application:get_env(arweave, config),
-								case lists:member(pack_served_chunks, Config#config.enable) of
+								case lists:member(pack_fetched_chunks, Config#config.enable) of
 									false ->
 										{none, {reply, {404, #{}, <<>>, Req}}};
 									true ->
