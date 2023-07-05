@@ -42,9 +42,6 @@
 -define(THROUGHPUT_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.01).
 
--define(RATE_SUCCESS, 1).
--define(RATE_ERROR, 0).
--define(RATE_PENALTY, -1).
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
 %% we remove the peer from the first slot.
@@ -80,8 +77,8 @@ get_trusted_peers() ->
 	case Config#config.peers of
 		[] ->
 			ArweavePeers = ["sfo-1.na-west-1.arweave.net", "ams-1.eu-central-1.arweave.net",
-							"fra-1.eu-central-2.arweave.net", "blr-1.ap-central-1.arweave.net",
-							"sgp-1.ap-central-2.arweave.net"
+					"fra-1.eu-central-2.arweave.net", "blr-1.ap-central-1.arweave.net",
+					"sgp-1.ap-central-2.arweave.net"
 			],
 			resolve_peers(ArweavePeers);
 		Peers ->
@@ -100,9 +97,8 @@ resolve_peers([RawPeer | Peers]) ->
 		{ok, Peer} ->
 			[Peer | resolve_peers(Peers)];
 		{error, invalid} ->
-			?LOG_WARNING([
-				{event, failed_to_resolve_trusted_peer},
-				{peer, RawPeer}
+			?LOG_WARNING([{event, failed_to_resolve_trusted_peer},
+					{peer, RawPeer}
 			]),
 			resolve_peers(Peers)
 	end.
@@ -179,7 +175,6 @@ rate_fetched_data(Peer, invalid) ->
 
 gossiped_data(Peer, Data) ->
 	gossiped_data(Peer, Data, ok).
-
 gossiped_data(Peer, Data, ok) ->
 	gen_server:cast(?MODULE, {
 		gossiped_data, Peer, Data
@@ -272,6 +267,7 @@ handle_cast({add_peer, Peer, Release}, State) ->
 			set_performance(Peer, #performance{release = Release})
 	end,
 	{noreply, State};
+
 handle_cast(rank_peers, State) ->
 	Total = get_total_rating(),
 	Peers =
@@ -298,14 +294,16 @@ handle_cast(rank_peers, State) ->
 	ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),
 	stats(),
 	{noreply, State};
+
 handle_cast(ping_peers, State) ->
 	[{peers, Peers}] = ets:lookup(?MODULE, peers),
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
+
 handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 	case Status of
 		"success" ->
-			update_rating(Peer, ?RATE_SUCCESS);
+			update_rating(Peer, overall, ?RATE_SUCCESS);
 		"redirection" ->
 			%% don't update rating
 			ok;
@@ -313,31 +311,29 @@ handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 			%% don't update rating
 			ok;
 		_ ->
-			update_rating(Peer, ?RATE_ERROR)
+			update_rating(Peer, overall, ?RATE_ERROR)
 	end,
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, response},
+		{metric, overall},
 		{path, PathLabel},
 		{status, Status},
 		{peer, ar_util:format_peer(Peer)}
 	]),
 	{noreply, State};
+
 handle_cast({invalid_fetched_data, Peer}, State) ->
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, invalid_fetched_data},
 		{peer, ar_util:format_peer(Peer)}
 	]),
-	%% log 2 failures - first is to reverse the success that was previously recorded by end_request
-	%% (since end_request only considers whether or not the HTTP request was successful and does not
-	%% consider the validity of the data it may be overly permissive), and the second is to
-	%% penalize the peer for serving invalid data.
-	%% Note: this is an approximation as due to the nature of the EMA this won't exactly reverse
-	%% the prior success.
-	update_rating(Peer, false),
-	update_rating(Peer, false),
+	%% Log a penalty in order to reverse the SUCESS_RATING that was applied in rate_response
+	%% (When the data was successfully fetched, but before it was validated)
+	update_rating(Peer, overall, ?RATE_PENALTY),
 	{noreply, State};
+
 handle_cast({gossiped_data, Peer, Data}, State) ->
 	case check_external_peer(Peer) of
 		ok ->
@@ -346,12 +342,13 @@ handle_cast({gossiped_data, Peer, Data}, State) ->
 				{update_type, gossiped_data},
 				{peer, ar_util:format_peer(Peer)}
 			]),
-			update_rating(Peer, true);
+			update_rating(Peer, overall, ?RATE_SUCCESS);
 		_ ->
 			ok
 	end,
 
 	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -372,33 +369,43 @@ handle_info({event, peer, {made_request, Peer, Release}}, State) ->
 			end
 	end,
 	{noreply, State};
+
 handle_info({event, peer, {fetched_tx, Peer, TimeDelta, Size}}, State) ->
 	% ?LOG_DEBUG([{event, update_rating}, {type, fetched_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
+
 handle_info({event, peer, {fetched_block, Peer, TimeDelta, Size}}, State) ->
 	% ?LOG_DEBUG([{event, update_rating}, {type, fetched_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
 	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
+
 handle_info({event, peer, {bad_response, {Peer, _Type, _Reason}}}, State) ->
 	issue_warning(Peer),
 	{noreply, State};
+
 handle_info({event, peer, {banned, BannedPeer}}, State) ->
 	remove_peer(BannedPeer),
 	{noreply, State};
+
 handle_info({event, block, {rejected, failed_to_fetch_first_chunk, _H, Peer}}, State) ->
 	issue_warning(Peer),
 	{noreply, State};
+
 handle_info({event, block, {rejected, failed_to_fetch_second_chunk, _H, Peer}}, State) ->
 	issue_warning(Peer),
 	{noreply, State};
+
 handle_info({event, block, {rejected, failed_to_fetch_chunk, _H, Peer}}, State) ->
 	issue_warning(Peer),
 	{noreply, State};
+
 handle_info({event, block, _}, State) ->
 	{noreply, State};
+
 handle_info({'EXIT', _, normal}, State) ->
 	{noreply, State};
+
 handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
@@ -409,6 +416,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
 get_peer_peers(Peer) ->
 	case ar_http_iface_client:get_peers(Peer) of
 		unavailable -> [];
@@ -473,15 +481,9 @@ format_stats(Peer, Perf) ->
 	KB = Perf#performance.bytes / 1024,
 	io:format(
 		"\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success, ~p transfers)~n",
-		[
-			string:pad(ar_util:format_peer(Peer), 21, trailing, $\s),
-			float(Perf#performance.rating),
-			KB,
-			trunc(Perf#performance.latency),
-			Perf#performance.success,
-			Perf#performance.transfers
-		]
-	).
+		[string:pad(ar_util:format_peer(Peer), 21, trailing, $\s),
+			float(Perf#performance.rating), KB, trunc(Perf#performance.latency),
+			Perf#performance.success, Perf#performance.transfers]).
 
 read_peer_records() ->
 	PeerRecords = case ar_storage:read_term(peers) of
@@ -603,8 +605,8 @@ may_be_rotate_peer_ports(Peer) ->
 	{IP, Port} = get_ip_port(Peer),
 	case ets:lookup(?MODULE, {peer_ip, IP}) of
 		[] ->
-			ets:insert(
-				?MODULE, {{peer_ip, IP}, {erlang:setelement(1, ?DEFAULT_PEER_PORT_MAP, Port), 1}}
+			ets:insert(?MODULE, {{peer_ip, IP},
+					{erlang:setelement(1, ?DEFAULT_PEER_PORT_MAP, Port), 1}}
 			);
 		[{_, {PortMap, Position}}] ->
 			case is_in_port_map(Port, PortMap) of
@@ -614,12 +616,9 @@ may_be_rotate_peer_ports(Peer) ->
 					MaxSize = erlang:size(?DEFAULT_PEER_PORT_MAP),
 					case Position < MaxSize of
 						true ->
-							ets:insert(
-								?MODULE,
-								{{peer_ip, IP}, {
-									erlang:setelement(Position + 1, PortMap, Port), Position + 1
-								}}
-							);
+							ets:insert(?MODULE, {{peer_ip, IP},
+									{erlang:setelement(Position + 1, PortMap, Port),
+										Position + 1}});
 						false ->
 							RemovedPeer = construct_peer(IP, element(1, PortMap)),
 							PortMap2 = shift_port_map_left(PortMap),
@@ -738,34 +737,12 @@ check_external_peer(Peer) ->
 			ok
 	end.
 
-update_rating(Peer, IsSuccess) ->
-	update_rating(Peer, [], IsSuccess).
-update_rating(Peer, AdditionalMetrics, IsSuccess) ->
-	Performance = get_or_init_performance(Peer),
-	%% Pass in the current latency and bytes values in order to hold them constant.
-	%% Only the success average should be updated.
-	update_rating(
-		Peer,
-		AdditionalMetrics,
-		Performance#performance.latency,
-		Performance#performance.bytes,
-		IsSuccess
-	).
-
-update_rating(Peer, LatencyMicroseconds, Size, IsSuccess) ->
-	update_rating(Peer, [], LatencyMicroseconds, Size, IsSuccess).
-update_rating(Peer, AdditionalMetrics, LatencyMicroseconds, Size, IsSuccess) ->
-	%% Update the 'overall' metric plus any additional metrics specified.
-	lists:foreach(
-		fun(Metric) ->
-			update_performance(Peer, Metric, LatencyMicroseconds, Size, IsSuccess)
-		end,
-		[overall | AdditionalMetrics]
-	).
-
-update_performance(Peer, Metric, LatencyMicroseconds, Size, IsSuccess) ->
+update_rating(Peer, Metric, SuccessRating) ->
+	update_rating(Peer, Metric, undefined, undefined, SuccessRating).
+update_rating(Peer, Metric, LatencyMicroseconds, Size, SuccessRating) ->
 	%% only update available metrics
 	true = lists:member(Metric, ?AVAILABLE_METRICS),
+	true = lists:member(SuccessRating, ?AVAILABLE_SUCCESS_RATINGS),
 	Performance = get_or_init_performance(Peer, Metric),
 	Total = get_total_rating(Metric),
 	#performance{
@@ -773,18 +750,28 @@ update_performance(Peer, Metric, LatencyMicroseconds, Size, IsSuccess) ->
 		latency = Latency,
 		success = Success,
 		rating = Rating,
-		transfers = N
+		transfers = Transfers
 	} = Performance,
-	Bytes2 = calculate_ema(Bytes, Size, ?THROUGHPUT_ALPHA),
-	Latency2 = calculate_ema(Latency, LatencyMicroseconds / 1000, ?THROUGHPUT_ALPHA),
-	Success2 = calculate_ema(Success, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
+	Bytes2 = case Size of
+		undefined -> Bytes;
+		_ -> calculate_ema(Bytes, Size, ?THROUGHPUT_ALPHA)
+	end,
+	Latency2 = case LatencyMicroseconds of
+		undefined -> Latency;
+		_ -> calculate_ema(Latency, LatencyMicroseconds / 1000, ?THROUGHPUT_ALPHA)
+	end,
+	Transfers2 = case Size of
+		undefined -> Transfers;
+		_ -> Transfers + 1
+	end,
+	Success2 = calculate_ema(Success, SuccessRating, ?SUCCESS_ALPHA),
 	Rating2 = (Bytes2 / Latency2) * Success2,
 	Performance2 = Performance#performance{
 		bytes = Bytes2,
 		latency = Latency2,
 		success = Success2,
 		rating = Rating2,
-		transfers = N + 1
+		transfers = Transfers2
 	},
 	Total2 = Total - Rating + Rating2,
 	may_be_rotate_peer_ports(Peer),
