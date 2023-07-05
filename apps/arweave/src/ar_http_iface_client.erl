@@ -303,9 +303,6 @@ get_sync_record(Peer, Start, Limit) ->
 	}), Start, Limit).
 
 get_chunk_binary(Peer, Offset, RequestedPacking) ->
-	get_chunk(Peer, Offset, RequestedPacking, binary).
-
-get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 	PackingBinary =
 		case RequestedPacking of
 			any ->
@@ -334,7 +331,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 	Response = ar_http:req(#{
 		peer => Peer,
 		method => get,
-		path => get_chunk_path(Offset, Encoding),
+		path => "/chunk2/" ++ integer_to_binary(Offset),
 		timeout => 120 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
@@ -348,12 +345,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 		],
 		erlang:monotonic_time() - StartTime),
 
-	handle_chunk_response(Encoding, Response).
-
-get_chunk_path(Offset, json) ->
-	"/chunk/" ++ integer_to_binary(Offset);
-get_chunk_path(Offset, binary) ->
-	"/chunk2/" ++ integer_to_binary(Offset).
+	handle_chunk_response(Response).
 
 get_mempool(Peer) ->
 	handle_mempool_response(ar_http:req(#{
@@ -559,29 +551,13 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 handle_sync_record_response(Reply, _, _) ->
 	{error, Reply}.
 
-handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	DecodeFun =
-		case Encoding of
-			json ->
-				fun(Bin) ->
-					ar_serialize:json_map_to_chunk_proof(jiffy:decode(Bin, [return_maps]))
-				end;
-			binary ->
-				fun(Bin) ->
-					case ar_serialize:binary_to_poa(Bin) of
-						{ok, Reply} ->
-							Reply;
-						{error, Reason} ->
-							{error, Reason}
-					end
-				end
-		end,
-	Result = case catch DecodeFun(Body) of
+handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch ar_serialize:binary_to_poa(Body) of
 		{'EXIT', Reason} ->
 			{error, Reason};
 		{error, Reason} ->
 			{error, Reason};
-		Proof ->
+		{ok, Proof} ->
 			case maps:get(chunk, Proof) of
 				<<>> ->
 					{error, empty_chunk};
@@ -590,12 +566,10 @@ handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 				_ ->
 					{ok, Proof}
 			end
-	end,
-	ar_peers:rate_fetched_data(Result),
-	Result;
-handle_chunk_response(_Encoding, {error, _} = Response) ->
+	end;
+handle_chunk_response({error, _} = Response) ->
 	Response;
-handle_chunk_response(_Encoding, Response) ->
+handle_chunk_response(Response) ->
 	{error, Response}.
 
 handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->

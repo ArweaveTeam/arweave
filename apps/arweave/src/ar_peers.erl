@@ -11,7 +11,7 @@
 
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 	get_peer_release/1, stats/0, discover_peers/0, rank_peers/1, resolve_and_cache_peer/2,
-	rate_response/4, rate_fetched_data/2, gossiped_data/3, gossiped_data/2
+	rate_response/4, rate_fetched_data/2, rate_gossiped_data/3, rate_gossiped_data/2
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -173,13 +173,13 @@ rate_fetched_data(Peer, invalid) ->
 	%% in end_request, and then apply a penalty
 	gen_server:cast(?MODULE, {invalid_fetched_data, Peer}).
 
-gossiped_data(Peer, Data) ->
-	gossiped_data(Peer, Data, ok).
-gossiped_data(Peer, Data, ok) ->
+rate_gossiped_data(Peer, Data) ->
+	rate_gossiped_data(Peer, Data, ok).
+rate_gossiped_data(Peer, Data, ok) ->
 	gen_server:cast(?MODULE, {
 		gossiped_data, Peer, Data
 	});
-gossiped_data(_Peer, _Data, _ValidationStatus) ->
+rate_gossiped_data(_Peer, _Data, _ValidationStatus) ->
 	%% Ignore skipped or invalid blocks for now (consistent with old behavior, but may need to
 	%% be revisited)
 	ok.
@@ -303,7 +303,7 @@ handle_cast(ping_peers, State) ->
 handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 	case Status of
 		"success" ->
-			update_rating(Peer, overall, ?RATE_SUCCESS);
+			update_rating(Peer, overall, true);
 		"redirection" ->
 			%% don't update rating
 			ok;
@@ -311,7 +311,7 @@ handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 			%% don't update rating
 			ok;
 		_ ->
-			update_rating(Peer, overall, ?RATE_ERROR)
+			update_rating(Peer, overall, false)
 	end,
 	?LOG_DEBUG([
 		{event, update_rating},
@@ -342,7 +342,7 @@ handle_cast({gossiped_data, Peer, Data}, State) ->
 				{update_type, gossiped_data},
 				{peer, ar_util:format_peer(Peer)}
 			]),
-			update_rating(Peer, overall, ?RATE_SUCCESS);
+			update_rating(Peer, overall, true);
 		_ ->
 			ok
 	end,
@@ -737,12 +737,11 @@ check_external_peer(Peer) ->
 			ok
 	end.
 
-update_rating(Peer, Metric, SuccessRating) ->
-	update_rating(Peer, Metric, undefined, undefined, SuccessRating).
-update_rating(Peer, Metric, LatencyMicroseconds, Size, SuccessRating) ->
+update_rating(Peer, Metric, IsSuccess) ->
+	update_rating(Peer, Metric, undefined, undefined, IsSuccess).
+update_rating(Peer, Metric, LatencyMicroseconds, Size, IsSuccess) ->
 	%% only update available metrics
 	true = lists:member(Metric, ?AVAILABLE_METRICS),
-	true = lists:member(SuccessRating, ?AVAILABLE_SUCCESS_RATINGS),
 	Performance = get_or_init_performance(Peer, Metric),
 	Total = get_total_rating(Metric),
 	#performance{
@@ -764,7 +763,7 @@ update_rating(Peer, Metric, LatencyMicroseconds, Size, SuccessRating) ->
 		undefined -> Transfers;
 		_ -> Transfers + 1
 	end,
-	Success2 = calculate_ema(Success, SuccessRating, ?SUCCESS_ALPHA),
+	Success2 = calculate_ema(Success, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
 	Rating2 = (Bytes2 / Latency2) * Success2,
 	Performance2 = Performance#performance{
 		bytes = Bytes2,
