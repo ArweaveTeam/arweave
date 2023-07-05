@@ -71,13 +71,13 @@ validate_path(ID, Dest, LeftBound, RightBound, Path, strict_borders_ruleset) ->
 
 validate_path(ID, Dest, LeftBound, RightBound, Path, strict_data_split_ruleset) ->
 	CheckBorders = true,
-	CheckSplit = true,
+	CheckSplit = strict,
 	AllowRebase = false,
 	validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase);
 
 validate_path(ID, Dest, LeftBound, RightBound, Path, offset_rebase_support_ruleset) ->
 	CheckBorders = true,
-	CheckSplit = true,
+	CheckSplit = relaxed,
 	AllowRebase = true,
 	validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase).
 
@@ -109,8 +109,8 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 			true
 	end,
 	IsSplitValid = case CheckSplit of
-		true ->
-			ChunkSize = EndOffset - LeftBound,	
+		strict ->
+			ChunkSize = EndOffset - LeftBound,
 			case validate_strict_split of	
 				_ when ChunkSize == (?DATA_CHUNK_SIZE) ->	
 					LeftBound rem (?DATA_CHUNK_SIZE) == 0;	
@@ -123,7 +123,23 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 							andalso DataSize - LeftBound > (?DATA_CHUNK_SIZE)	
 							andalso DataSize - LeftBound < 2 * (?DATA_CHUNK_SIZE)	
 			end;
-		false ->
+		relaxed ->
+			%% Reject chunks smaller than 256 KiB unless they are the last or the only chunks
+			%% of their datasets or the second last chunks which do not exceed 256 KiB when
+			%% combined with the following (last) chunks. Finally, reject chunks smaller than
+			%% their Merkle proofs unless they are the last chunks of their datasets.
+			case IsRightMostInItsSubTree of
+				true ->
+					%% The last chunk may either start at the bucket start or
+					%% span two buckets.
+					Bucket0 = LeftBound div (?DATA_CHUNK_SIZE),
+					Bucket1 = EndOffset div (?DATA_CHUNK_SIZE),
+					(LeftBound rem (?DATA_CHUNK_SIZE) == 0) orelse Bucket0 + 1 == Bucket1;
+				_ ->
+					%% May also be the only chunk of a single-chunk subtree.
+					LeftBound rem (?DATA_CHUNK_SIZE) == 0
+			end;
+		_ ->
 			%% Split is always valid if we don't need to check it
 			true
 	end,
