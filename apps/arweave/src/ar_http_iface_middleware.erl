@@ -1830,7 +1830,7 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	ar_peers:gossiped_tx(Peer),
+	ar_peers:gossiped_data(Peer, Tx),
 	ar_events:send(tx, {new, TX, Peer}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),
@@ -2359,7 +2359,7 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 		end,
 	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
 	ValidationStatus = ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp),
-	ar_peers:gossiped_block(Peer, ValidationStatus),
+	ar_peers:gossiped_data(Peer, B2, ValidationStatus),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->
