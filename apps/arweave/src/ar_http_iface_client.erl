@@ -813,7 +813,7 @@ get_tx_from_remote_peer(Peer, TXID) ->
 					ar_events:send(peer, {bad_response, {Peer, tx, invalid}}),
 					{error, invalid_tx};
 				true ->
-					% ar_events:send(peer, {fetched_tx, Peer, Time, Size}),
+					ar_peers:rate_fetched_data(Peer, tx, Time, Size),
 					TX
 			end;
 		Error ->
