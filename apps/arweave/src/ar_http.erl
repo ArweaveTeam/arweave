@@ -92,8 +92,6 @@ req(Args, ReestablishedConnection) ->
 		false -> 
 			Status = ar_metrics:get_status_class(Response),
 			ElapsedNative = EndTime - StartTime,
-			%% XXX maybe don't do this
-			%% ar_peers:rate_response(Peer, PathLabel, Method, Response),
 			%% NOTE: the erlang prometheus client looks at the metric name to determine units.
 			%%       If it sees <name>_duration_<unit> it assumes the observed value is in
 			%%       native units and it converts it to <unit> .To query native units, use:

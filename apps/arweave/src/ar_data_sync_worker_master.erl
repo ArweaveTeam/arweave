@@ -110,10 +110,12 @@ handle_cast({task_completed, {read_range, {Worker, _, _}}}, State) ->
 	State2 = update_scheduled_task_count(Worker, read_range, "localhost", -1, State),
 	{noreply, State2};
 
-handle_cast({task_completed, {sync_range, {Worker, _Result, Peer}}}, State) ->
+handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
+	{Start, End, Peer, _} = Args,
+	DataSize = End - Start,
 	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
-	{PeerTasks2, State3} = complete_sync_range(PeerTasks, State2),
+	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State2),
 	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
 	{noreply, set_peer_tasks(PeerTasks3, State4)};
 
@@ -324,10 +326,14 @@ schedule_task(Task, Args, State) ->
 %% Stage 3: record a completed task and update related values (i.e.
 %%          EMA, max_active, peer queue length)
 %%--------------------------------------------------------------------
-complete_sync_range(PeerTasks, State) ->
+complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State) ->
 	PeerTasks2 = PeerTasks#peer_tasks{ 
 		active_count = PeerTasks#peer_tasks.active_count - 1
 	},
+	ar_peers:rate_fetched_data(
+		PeerTasks2#peer_tasks.peer, chunk, Result,
+		erlang:convert_time_unit(ElapsedNative, native, microsecond), DataSize,
+		PeerTasks2#peer_tasks.max_active),
 	{PeerTasks2, State}.
 
 rebalance_peers([], [], _, State) ->
@@ -374,11 +380,6 @@ update_scheduled_task_count(Worker, Task, FormattedPeer, N, State) ->
 		worker_loads = maps:put(Worker, Load, State#state.worker_loads)
 	},
 	State2.
-
-calculate_ema(OldEMA, false, _Value, _Alpha) ->
-	OldEMA;
-calculate_ema(OldEMA, true, Value, Alpha) ->
-	Alpha * Value + (1 - Alpha) * OldEMA.
 
 get_peer_tasks(Peer, State) ->
 	maps:get(Peer, State#state.peer_tasks, #peer_tasks{peer = Peer}).
