@@ -133,7 +133,7 @@ handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
-handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
+handle_info({event, block, {discovered, Peer, B, ElapsedMicroseconds, Size}}, State) ->
 	case ar_ignore_registry:member(B#block.indep_hash) of
 		false ->
 			?LOG_INFO([{event, fetched_block_for_validation},
@@ -142,19 +142,8 @@ handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
 		true ->
 			ok
 	end,
-	%% How we rank peers changed in June 2023
-	%%
-	%% Previous Behavior:
-	%% - throughput metrics (block size and time to download) were recorded in pre_validate
-	%%   for valid blocks only
-	%% Current Behavior:
-	%% - throughput metrics are recorded for all outbound web requests to peers (including the
-	%%   GET /block/hash request that triggers the block/discovered event)
-	%%
-	%% The new behavior is slightly different, but I believe it still results in a valid ranking.
-	%% Future work may change the behavior further (e.g. regarding when penalties are recorded
-	%% for errors or invalid blocks)
-	ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp()),
+	ValidationStatus = ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp()),
+	ar_peers:rate_fetched_data(Peer, block, ValidationStatus, ElapsedMicroseconds, Size, 1),
 	{noreply, State};
 handle_info({event, block, _}, State) ->
 	{noreply, State};

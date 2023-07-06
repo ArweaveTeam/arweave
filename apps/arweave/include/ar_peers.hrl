@@ -3,21 +3,20 @@
 
 -include_lib("ar.hrl").
 
--define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over-weighting the first response
--define(RATE_SUCCESS, 1).
--define(RATE_ERROR, 0).
--define(RATE_PENALTY, -1).
-
--define(AVAILABLE_METRICS, [overall, data_sync]). %% the performance metrics currently tracked
--define(AVAILABLE_SUCCESS_RATINGS, [?RATE_PENALTY, ?RATE_ERROR, ?RATE_SUCCESS]).
+%% the performance metrics currently tracked
+-define(AVAILABLE_METRICS, [overall, data_sync]). 
+%% factor to scale the average latency by when rating gossiped data - lower is better
+-define(GOSSIP_ADVANTAGE, 0.5). 
 
 -record(performance, {
 	version = 3,
 	release = -1,
-	bytes = 0,
-	latency = ?STARTING_LATENCY_EMA,
+	average_bytes = 0.0,
+	total_bytes = 0,
+	average_latency = 0.0,
+	total_latency = 0.0,
 	transfers = 0,
-	success = 1.0,
+	average_success = 1.0,
 	rating = 0
 }).
 

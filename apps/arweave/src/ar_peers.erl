@@ -11,7 +11,7 @@
 
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 	get_peer_release/1, stats/0, discover_peers/0, rank_peers/1, resolve_and_cache_peer/2,
-	rate_response/4, rate_fetched_data/2, rate_gossiped_data/3, rate_gossiped_data/2
+	rate_response/4, rate_fetched_data/6, rate_gossiped_data/3, rate_gossiped_data/2
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -160,26 +160,25 @@ rate_response(Peer, PathLabel, get, Response) ->
 rate_response(_Peer, _PathLabel, _Method, _Response) ->
 	ok.
 
-rate_fetched_data(_Peer, {ok, _}) ->
-	%% The fetched data is valid so the rating was already captured as part of
-	%% the start/end request pair. Nothing more to do.
+rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
+	gen_server:cast(?MODULE,
+		{fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency});
+rate_fetched_data(Peer, DataType, {ok, _}, LatencyMicroseconds, DataSize, Concurrency) ->
+	gen_server:cast(?MODULE,
+		{fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency});
+rate_fetched_data(Peer, DataType, skipped, _LatencyMicroseconds, _DataSize, _Concurrency) ->
+	%% No need to penalize skipped blocks, as they are not the peer's fault.
 	ok;
-rate_fetched_data(Peer, {error, _}) ->
-	%% The fetched data is invalid, so we need to reverse the rating that was applied
-	%% in end_request, and then apply a penalty
-	gen_server:cast(?MODULE, {invalid_fetched_data, Peer});
-rate_fetched_data(Peer, invalid) ->
-	%% The fetched data is invalid, so we need to reverse the rating that was applied
-	%% in end_request, and then apply a penalty
-	gen_server:cast(?MODULE, {invalid_fetched_data, Peer}).
+rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
+	gen_server:cast(?MODULE, {invalid_fetched_data, DataType, Peer}).
 
-rate_gossiped_data(Peer, Data) ->
-	rate_gossiped_data(Peer, Data, ok).
-rate_gossiped_data(Peer, Data, ok) ->
+rate_gossiped_data(Peer, DataSize) ->
+	rate_gossiped_data(Peer, DataSize, ok).
+rate_gossiped_data(Peer, DataSize, ok) ->
 	gen_server:cast(?MODULE, {
-		gossiped_data, Peer, Data
+		gossiped_data, Peer, DataSize
 	});
-rate_gossiped_data(_Peer, _Data, _ValidationStatus) ->
+rate_gossiped_data(_Peer, _DataSize, _ValidationStatus) ->
 	%% Ignore skipped or invalid blocks for now (consistent with old behavior, but may need to
 	%% be revisited)
 	ok.
@@ -323,26 +322,63 @@ handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 	]),
 	{noreply, State};
 
-handle_cast({invalid_fetched_data, Peer}, State) ->
+handle_cast({fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency}, State) ->
+	?LOG_DEBUG([
+		{event, update_rating},
+		{update_type, fetched_data},
+		{data_type, DataType},
+		{peer, ar_util:format_peer(Peer)},
+		{latency, LatencyMicroseconds  / 1000},
+		{data_size, DataSize},
+		{concurrency, Concurrency}
+	]),
+	update_rating(Peer, overall, LatencyMicroseconds, DataSize, Concurrency, true),
+	case DataType of
+		chunk -> update_rating(Peer, data_sync, LatencyMicroseconds, DataSize, Concurrency, true);
+		_ -> ok
+	end,
+	{noreply, State};
+
+
+handle_cast({invalid_fetched_data, DataType, Peer}, State) ->
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, invalid_fetched_data},
+		{data_type, DataType},
 		{peer, ar_util:format_peer(Peer)}
 	]),
-	%% Log a penalty in order to reverse the SUCESS_RATING that was applied in rate_response
-	%% (When the data was successfully fetched, but before it was validated)
-	update_rating(Peer, overall, ?RATE_PENALTY),
+	update_rating(Peer, overall, false),
+	case DataType of
+		chunk -> update_rating(Peer, data_sync, false);
+		_ -> ok
+	end,
 	{noreply, State};
 
-handle_cast({gossiped_data, Peer, Data}, State) ->
+handle_cast({gossiped_data, Peer, DataSize}, State) ->
 	case check_external_peer(Peer) of
 		ok ->
+			%% Since gossiped data is pushed to us we don't know the latency, but we do want
+			%% to incentivize peers to gossip data quickly and frequently, so we will assign
+			%% a latency that is guaranteed to improve the peer's rating:
+			%% 1. Calculate the latency that would be required to transfer DataSize bytes at the
+			%%    peer's current average rate.
+			%% 2. Scale that latency by ?GOSSIP_ADVANTAGE and rate using the scaled latency
+			Performance = get_or_init_performance(Peer),
+			#performance{
+				average_bytes = AverageBytes,
+				average_latency = AverageLatency
+			} = Performance,
+			AverageThroughput = AverageBytes / AverageLatency,
+			GossipLatency = (DataSize / AverageThroughput) * ?GOSSIP_ADVANTAGE,
+			LatencyMicroseconds = GossipLatency * 1000,
 			?LOG_DEBUG([
 				{event, update_rating},
 				{update_type, gossiped_data},
-				{peer, ar_util:format_peer(Peer)}
+				{peer, ar_util:format_peer(Peer)},
+				{latency, LatencyMicroseconds / 1000},
+				{data_size, DataSize}
 			]),
-			update_rating(Peer, overall, true);
+			update_rating(Peer, overall, LatencyMicroseconds, DataSize, 1, true);
 		_ ->
 			ok
 	end,
@@ -478,12 +514,12 @@ discover_peers([Peer | Peers]) ->
 	discover_peers(Peers).
 
 format_stats(Peer, Perf) ->
-	KB = Perf#performance.bytes / 1024,
+	KB = Perf#performance.average_bytes / 1024,
 	io:format(
 		"\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success, ~p transfers)~n",
 		[string:pad(ar_util:format_peer(Peer), 21, trailing, $\s),
-			float(Perf#performance.rating), KB, trunc(Perf#performance.latency),
-			Perf#performance.success, Perf#performance.transfers]).
+			float(Perf#performance.rating), KB, trunc(Perf#performance.average_latency),
+			Perf#performance.average_success, Perf#performance.transfers]).
 
 read_peer_records() ->
 	PeerRecords = case ar_storage:read_term(peers) of
@@ -554,26 +590,28 @@ load_peer({Peer, Performance}) ->
 load_peer({Peer, Metric, Performance}) ->
 	may_be_rotate_peer_ports(Peer),
 	case Performance of
-		{performance, Bytes, Latency, Transfers, _Failures, Rating} ->
+		{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating} ->
 			%% For compatibility with a few nodes already storing the records
 			%% without the release field.
 			set_performance(Peer, Metric, #performance{
-				bytes = Bytes,
-				latency = Latency,
+				total_bytes = TotalBytes,
+				total_latency = TotalLatency,
 				transfers = Transfers,
 				rating = Rating
 			});
-		{performance, Bytes, Latency, Transfers, _Failures, Rating, Release} ->
+		{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating, Release} ->
 			%% For compatibility with nodes storing records from before the introduction of
 			%% the version field
 			set_performance(Peer, Metric, #performance{
 				release = Release,
-				bytes = Bytes,
-				latency = Latency,
+				total_bytes = TotalBytes,
+				total_latency = TotalLatency,
 				transfers = Transfers,
 				rating = Rating
 			});
-		{performance, 3, _Release, _Bytes, _Latency, _Transfers, _Success, _Rating} ->
+		{performance, 3,
+				_Release, _AverageBytes, _TotalBytes, _AverageLatency, _TotalLatency,
+				_Transfers, _AverageSuccess, _Rating} ->
 			%% Going forward whenever we change the #performance record we should increment the
 			%% version field so we can match on it when doing a load. Here we're handling the
 			%% version 3 format.
@@ -738,37 +776,55 @@ check_external_peer(Peer) ->
 	end.
 
 update_rating(Peer, Metric, IsSuccess) ->
-	update_rating(Peer, Metric, undefined, undefined, IsSuccess).
-update_rating(Peer, Metric, LatencyMicroseconds, Size, IsSuccess) ->
+	update_rating(Peer, Metric, undefined, undefined, 1, IsSuccess).
+update_rating(Peer, Metric, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 	%% only update available metrics
 	true = lists:member(Metric, ?AVAILABLE_METRICS),
 	Performance = get_or_init_performance(Peer, Metric),
 	Total = get_total_rating(Metric),
+	LatencyMilliseconds = LatencyMicroseconds / 1000,
 	#performance{
-		bytes = Bytes,
-		latency = Latency,
-		success = Success,
+		average_bytes = AverageBytes,
+		total_bytes = TotalBytes,
+		average_latency = AverageLatency,
+		total_latency = TotalLatency,
+		average_success = AverageSuccess,
 		rating = Rating,
 		transfers = Transfers
 	} = Performance,
-	Bytes2 = case Size of
-		undefined -> Bytes;
-		_ -> calculate_ema(Bytes, Size, ?THROUGHPUT_ALPHA)
+	TotalBytes2 = case DataSize of
+		undefined -> TotalBytes;
+		_ -> TotalBytes + DataSize
 	end,
-	Latency2 = case LatencyMicroseconds of
-		undefined -> Latency;
-		_ -> calculate_ema(Latency, LatencyMicroseconds / 1000, ?THROUGHPUT_ALPHA)
+	%% AverageBytes is the average number of bytes transferred during the AverageLatency time
+	%% period. In order to approximate the impact of multiple concurrent requests we multiply
+	%% DataSize by the Concurrency value. We do this *only* when updating the AverageBytes
+	%% value so that it doesn't distort the TotalBytes.
+	AverageBytes2 = case DataSize of
+		undefined -> AverageBytes;
+		_ -> calculate_ema(AverageBytes, (DataSize * Concurrency), ?THROUGHPUT_ALPHA)
 	end,
-	Transfers2 = case Size of
+	TotalLatency2 = case LatencyMilliseconds of
+		undefined -> TotalLatency;
+		_ -> TotalLatency + LatencyMilliseconds
+	end,
+	AverageLatency2 = case LatencyMilliseconds of
+		undefined -> AverageLatency;
+		_ -> calculate_ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+	end,
+	Transfers2 = case DataSize of
 		undefined -> Transfers;
 		_ -> Transfers + 1
 	end,
-	Success2 = calculate_ema(Success, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
-	Rating2 = (Bytes2 / Latency2) * Success2,
+	AverageSuccess2 = calculate_ema(AverageSuccess, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
+	%% Rating is an estimate of the peer's effective throughput in bytes per second.
+	Rating2 = (AverageBytes2 / AverageLatency2) * AverageSuccess2,
 	Performance2 = Performance#performance{
-		bytes = Bytes2,
-		latency = Latency2,
-		success = Success2,
+		average_bytes = AverageBytes2,
+		total_bytes = TotalBytes2,
+		average_latency = AverageLatency2,
+		total_latency = TotalLatency2,
+		average_success = AverageSuccess2,
 		rating = Rating2,
 		transfers = Transfers2
 	},
@@ -850,12 +906,12 @@ store_peers() ->
 
 issue_warning(Peer) ->
 	Performance = get_or_init_performance(Peer),
-	Success = calculate_ema(Performance#performance.success, 0, ?SUCCESS_ALPHA),
+	Success = calculate_ema(Performance#performance.average_success, 0, ?SUCCESS_ALPHA),
 	case Success < ?MINIMUM_SUCCESS of
 		true ->
 			remove_peer(Peer);
 		false ->
-			Performance2 = Performance#performance{success = Success},
+			Performance2 = Performance#performance{average_success = Success},
 			may_be_rotate_peer_ports(Peer),
 			set_performance(Peer, Performance2)
 	end.
