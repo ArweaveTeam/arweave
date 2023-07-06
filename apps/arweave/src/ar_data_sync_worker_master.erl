@@ -362,7 +362,7 @@ rebalance_peer(PeerTasks, Performance, ThroughputTarget, State) ->
 		{worker_count, WorkerCount},
 		{active_count, PeerTasks2#peer_tasks.active_count},
 		{throughput_target, ThroughputTarget},
-		{latency_ema, Performance#performance.latency}
+		{latency_ema, Performance#performance.average_latency}
 		]),
 	{PeerTasks3, State2}.
 

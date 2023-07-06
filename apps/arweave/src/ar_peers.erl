@@ -11,7 +11,7 @@
 
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 	get_peer_release/1, stats/0, discover_peers/0, rank_peers/1, resolve_and_cache_peer/2,
-	rate_response/4, rate_fetched_data/6, rate_gossiped_data/3, rate_gossiped_data/2
+	rate_response/4, rate_fetched_data/4, rate_fetched_data/6, rate_gossiped_data/2
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -160,6 +160,8 @@ rate_response(Peer, PathLabel, get, Response) ->
 rate_response(_Peer, _PathLabel, _Method, _Response) ->
 	ok.
 
+rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
+	rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
 rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
 	gen_server:cast(?MODULE,
 		{fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency});
@@ -173,15 +175,7 @@ rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurren
 	gen_server:cast(?MODULE, {invalid_fetched_data, DataType, Peer}).
 
 rate_gossiped_data(Peer, DataSize) ->
-	rate_gossiped_data(Peer, DataSize, ok).
-rate_gossiped_data(Peer, DataSize, ok) ->
-	gen_server:cast(?MODULE, {
-		gossiped_data, Peer, DataSize
-	});
-rate_gossiped_data(_Peer, _DataSize, _ValidationStatus) ->
-	%% Ignore skipped or invalid blocks for now (consistent with old behavior, but may need to
-	%% be revisited)
-	ok.
+	gen_server:cast(?MODULE, {gossiped_data, Peer, DataSize}).
 
 %% @doc Print statistics about the current peers.
 stats() ->
