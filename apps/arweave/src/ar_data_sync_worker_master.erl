@@ -18,8 +18,7 @@
 -define(REBALANCE_FREQUENCY_MS, 60*1000).
 -define(READ_RANGE_CHUNKS, 10).
 -define(MIN_MAX_ACTIVE, 8).
--define(LATENCY_ALPHA, 0.1).
--define(SUCCESS_ALPHA, 0.1).
+-define(MIN_PEER_QUEUE, 20).
 
 -record(peer_tasks, {
 	peer = undefined,
@@ -27,8 +26,6 @@
 	task_queue_len = 0,
 	active_count = 0,
 	max_active = ?MIN_MAX_ACTIVE
-	% latency_ema = ?STARTING_LATENCY_EMA, 
-	% success_ema = 1.0
 }).
 
 -record(state, {
@@ -39,7 +36,6 @@
 	workers = queue:new(),
 	worker_count = 0,
 	worker_loads = #{},
-	throughput_target = 0,
 	peer_tasks = #{}
 }).
 
@@ -125,8 +121,9 @@ handle_cast(rebalance_peers, State) ->
 	Peers = maps:keys(State#state.peer_tasks),
 	AllPeerTasks =[ maps:get(Peer, State#state.peer_tasks) || Peer <- Peers],
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
-	ThroughputTarget = lists:sum([ Performance#performance.rating || Performance <- AllPeerPerformances ]) / length(Peers),
-	{noreply, rebalance_peers(AllPeerTasks, AllPeerPerformances, ThroughputTarget, State)};
+	{TargetLatency, TotalThroughput} = calculate_targets(Peers, AllPeerPerformances),
+	{noreply, rebalance_peers(
+		Peers, AllPeerTasks, AllPeerPerformances, TargetLatency, TotalThroughput, State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -212,39 +209,30 @@ max_tasks() ->
 	Config#config.sync_jobs * 50.
 
 %% @doc The maximum number of tasks we can have queued for a given peer.
-max_peer_queue(_PeerTasks, _Performance, #state{ scheduled_task_count = 0 } = _State) ->
+max_peer_queue(_Peformance, 0) ->
 	undefined;
-max_peer_queue(_PeerTasks, _Peformance, #state{ latency_target = 0 } = _State) ->
+max_peer_queue(_Performance, 0.0) ->
 	undefined;
-max_peer_queue(_PeerTasks, _Performance, #state{ latency_target = 0.0 } = _State) ->
+max_peer_queue(#performance{ rating = 0 } = _Performance, _TotalThroughput) ->
 	undefined;
-max_peer_queue(_PeerTasks, #performance{ latency = 0 } = _Performance, _State) ->
+max_peer_queue(#performance{ rating = 0.0 } = _Performance, _TotalThroughput) ->
 	undefined;
-max_peer_queue(_PeerTasks, #performance{ latency = 0.0 } = _Performance,  _State) ->
-	undefined;
-max_peer_queue(PeerTasks, Performance, State) ->
-	CurActive = PeerTasks#peer_tasks.active_count,
-	LatencyEMA = Performance#performance.latency,
-	SuccessEMA = Performance#performance.success,
-	LatencyTarget = State#state.latency_target,
-	ScheduledTasks = State#state.scheduled_task_count,
-	%% estimate of our current total throughput
-	TotalThroughput = ScheduledTasks * (1000.0 / LatencyTarget),
+max_peer_queue(Performance, TotalThroughput) ->
 	%% estimate of of this peer's througput
-	PeerThroughput = CurActive * SuccessEMA * (1000.0 / LatencyEMA),
+	PeerThroughput = Performance#performance.rating,
 	%% The maximum number of tasks we allow to be queued for this peer is related to its
 	%% contribution to our current throughput. Peers with a higher throughput can claim more
 	%% of the queue.
 	%%
 	%% We also allow all peers to maintain a small queue no matter what - this is to allow for
-	%% them to recover from a temporary drop in throughput. The minimum queue is set to allow
-	%% enough observations to work their way through the Latency EMA calculation.
-	Minimum = trunc(2 * (1.0 / ?LATENCY_ALPHA)),
-	max(trunc((PeerThroughput / TotalThroughput) * max_tasks()), Minimum).
+	%% them to recover from a temporary drop in throughput.
+	max(trunc((PeerThroughput / TotalThroughput) * max_tasks()), ?MIN_PEER_QUEUE).
 
 %% @doc Cut a peer's queue to store roughly 15 minutes worth of tasks. This prevents
 %% the a slow peer from filling up the ar_data_sync_worker_master queues, stalling the
 %% workers and preventing ar_data_sync from pushing new tasks.
+cut_peer_queue(_MaxQueue, PeerTasks, #state{ scheduled_task_count = 0 } = State) ->
+	{PeerTasks, State};
 cut_peer_queue(undefined, PeerTasks, State) ->
 	{PeerTasks, State};
 cut_peer_queue(MaxQueue, PeerTasks, State) ->
@@ -258,7 +246,6 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 				{peer, ar_util:format_peer(Peer)},
 				{active_count, PeerTasks#peer_tasks.active_count},
 				{scheduled_tasks, State#state.scheduled_task_count},
-				{latency_target, State#state.latency_target},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			{
@@ -336,24 +323,41 @@ complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State) ->
 		PeerTasks2#peer_tasks.max_active),
 	{PeerTasks2, State}.
 
-rebalance_peers([], [], _, State) ->
+calculate_targets(Peers, AllPeerPerformances) ->
+	TotalThroughput =
+		lists:foldl(
+			fun(Peer, Acc) -> 
+				Performance = maps:get(Peer, AllPeerPerformances),
+				Acc + Performance#performance.rating
+			end, 0, Peers),
+    TotalLatency = 
+		lists:foldl(
+			fun(Peer, Acc) -> 
+				Performance = maps:get(Peer, AllPeerPerformances),
+				Acc + Performance#performance.average_latency
+			end, 0, Peers),
+    TargetLatency = TotalLatency / length(Peers),
+    {TargetLatency, TotalThroughput}.
+
+rebalance_peers([], _AllPeerTasks, _AllPeerPerformances, _TargetLatency, _TotalThroughput, State) ->
 	State;
 rebalance_peers(
-		[PeerTasks | AllPeerTasks],
-		[Performance | AllPeerPerformances],
-		ThroughputTarget,
-		State) ->
-	{PeerTasks2, State2} = rebalance_peer(PeerTasks, Performance, ThroughputTarget, State),
+		[Peer | Peers], AllPeerTasks, AllPeerPerformances, TargetLatency, TotalThroughput, State) ->
+	PeerTasks = maps:get(Peer, AllPeerTasks),
+	Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
+	{PeerTasks2, State2} = rebalance_peer(
+		PeerTasks, Performance, TargetLatency, TotalThroughput, State),
 	State3 = set_peer_tasks(PeerTasks2, State2),
-	rebalance_peers(AllPeerTasks, AllPeerPerformances, ThroughputTarget, State3).
+	rebalance_peers(
+		Peers, AllPeerTasks, AllPeerPerformances, TargetLatency, TotalThroughput, State3).
 
-rebalance_peer(PeerTasks, Performance, ThroughputTarget, State) ->
+rebalance_peer(PeerTasks, Performance, TargetLatency, TotalThroughput, State) ->
 	{PeerTasks2, State2} = cut_peer_queue(
-		max_peer_queue(PeerTasks, Performance, State),
+		max_peer_queue(Performance, TotalThroughput),
 		PeerTasks,
 		State),
 	WorkerCount = State2#state.worker_count,
-	PeerTasks3 = update_active(PeerTasks2, Performance, WorkerCount, ThroughputTarget),
+	PeerTasks3 = update_active(PeerTasks2, Performance, WorkerCount, TargetLatency),
 	?LOG_DEBUG([
 		{event, update_active},
 		{peer, ar_util:format_peer(PeerTasks3#peer_tasks.peer)},
@@ -361,8 +365,8 @@ rebalance_peer(PeerTasks, Performance, ThroughputTarget, State) ->
 		{after_max, PeerTasks3#peer_tasks.max_active},
 		{worker_count, WorkerCount},
 		{active_count, PeerTasks2#peer_tasks.active_count},
-		{throughput_target, ThroughputTarget},
-		{latency_ema, Performance#performance.average_latency}
+		{target_latency, TargetLatency},
+		{average_latency, Performance#performance.average_latency}
 		]),
 	{PeerTasks3, State2}.
 
@@ -411,7 +415,7 @@ format_peer(Task, Args) ->
 			ar_util:format_peer(element(3, Args))
 	end.
 
-update_active(PeerTasks, Performance, WorkerCount, ThroughputTarget) ->
+update_active(PeerTasks, Performance, WorkerCount, TargetLatency) ->
 	%% Determine target max_active:
 	%% 1. Increase max_active when the EMA is less than the threshold
 	%% 2. Decrease max_active if the most recent request was slower than the threshold - this
@@ -424,12 +428,12 @@ update_active(PeerTasks, Performance, WorkerCount, ThroughputTarget) ->
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
 	MaxActive = PeerTasks#peer_tasks.max_active,
 	ActiveCount = PeerTasks#peer_tasks.active_count,
-	TargetMaxActive = case Performance#performance.rating < ThroughputTarget of
+	TargetMaxActive = case Performance#performance.average_latency < TargetLatency of
 		false ->
-			%% throughput > target, decrease max_active
+			%% latency > target, decrease max_active
 			MaxActive-1;
 		true ->
-			%% througput < target, increase max_active.
+			%% latency < target, increase max_active.
 			MaxActive+1
 	end,
 

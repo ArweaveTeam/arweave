@@ -98,7 +98,13 @@ get_peers() ->
 	end.
 
 get_peer_performances(Peers) ->
-	[get_or_init_performance(Peer) || Peer <- Peers].
+	lists:foldl(
+		fun(Peer, Map) -> 
+			Performance = get_or_init_performance(Peer),
+			maps:put(Peer, Performance, Map)
+		end,
+		#{},
+		Peers).
 
 -if(?NETWORK_NAME == "arweave.N.1").
 get_trusted_peers() ->
