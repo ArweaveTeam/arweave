@@ -163,7 +163,7 @@ handle_info({'EXIT', _, normal}, State) ->
 handle_info({'DOWN', _,  process, _, _}, #state{ peers_pending = N } = State) ->
 	{noreply, State#state{ peers_pending = N - 1 }};
 
-handle_info({event, peer, {bad_response, {Peer, _Resource, _Reason}}}, State) ->
+handle_info({event, peer, {removed, Peer}}, State) ->
 	gen_server:cast(?MODULE, {remove_peer, Peer}),
 	{noreply, State};
 

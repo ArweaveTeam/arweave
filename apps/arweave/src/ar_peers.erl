@@ -169,6 +169,9 @@ rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurren
 rate_gossiped_data(Peer, DataType, DataSize) ->
 	gen_server:cast(?MODULE, {gossiped_data, Peer, DataType, DataSize}).
 
+issue_warning(Peer, _Type, _Reason) ->
+	gen_server:cast(?MODULE, {warning, Peer}).
+
 %% @doc Print statistics about the current peers.
 stats() ->
 	Connected = get_peers(),
@@ -355,6 +358,16 @@ handle_cast({gossiped_data, Peer, DataType, DataSize}, State) ->
 
 	{noreply, State};
 
+handle_cast({warning, Peer}, State) ->
+	Performance = update_rating(Peer, false),
+	case Performance#performance.average_success < ?MINIMUM_SUCCESS of
+		true ->
+			remove_peer(Peer);
+		false ->
+			ok
+	end,
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -363,28 +376,24 @@ handle_info({event, peer, {made_request, Peer, Release}}, State) ->
 	add_peer(Peer, Release),
 	{noreply, State};
 
-handle_info({event, peer, {bad_response, {Peer, _Type, _Reason}}}, State) ->
-	issue_warning(Peer),
-	{noreply, State};
-
 handle_info({event, peer, {banned, BannedPeer}}, State) ->
 	remove_peer(BannedPeer),
 	{noreply, State};
 
 handle_info({event, block, {rejected, failed_to_fetch_first_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer),
+	issue_warning(Peer, block_rejected, failed_to_fetch_first_chunk),
 	{noreply, State};
 
 handle_info({event, block, {rejected, failed_to_fetch_second_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer),
+	issue_warning(Peer, block_rejected, failed_to_fetch_second_chunk),
 	{noreply, State};
 
 handle_info({event, block, {rejected, failed_to_fetch_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer),
+	issue_warning(Peer, block_rejected, failed_to_fetch_chunk),
 	{noreply, State};
 
 handle_info({event, block, {new, B,
-		#{ source := {peer, Peer}, query_block_tie := QueryBlockTime }}}, State) ->
+		#{ source := {peer, Peer}, query_block_time := QueryBlockTime }}}, State) ->
 	DataSize = byte_size(term_to_binary(B)),
 	case QueryBlockTime of
 		undefined -> ar_peers:rate_gossiped_data(Peer, block, DataSize);
@@ -719,7 +728,8 @@ update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 	Total2 = Total - Rating + Rating2,
 	may_be_rotate_peer_ports(Peer),
 	set_performance(Peer, Performance2),
-	set_total_rating(Total2).
+	set_total_rating(Total2),
+	Performance2.
 
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
@@ -749,7 +759,8 @@ remove_peer(RemovedPeer) ->
 	Total = get_total_rating(),
 	set_total_rating(Total - Performance#performance.rating),
 	ets:delete(?MODULE, {peer, RemovedPeer}),
-	remove_peer_port(RemovedPeer).
+	remove_peer_port(RemovedPeer),
+	ar_events:send(peer, {removed, RemovedPeer}).
 
 remove_peer_port(Peer) ->
 	{IP, Port} = get_ip_port(Peer),
@@ -801,18 +812,6 @@ store_peers() ->
 			ok;
 		_ ->     
 			ar_storage:write_term(peers, Records)
-	end.
-
-issue_warning(Peer) ->
-	Performance = get_or_init_performance(Peer),
-	Success = calculate_ema(Performance#performance.average_success, 0, ?SUCCESS_ALPHA),
-	case Success < ?MINIMUM_SUCCESS of
-		true ->
-			remove_peer(Peer);
-		false ->
-			Performance2 = Performance#performance{average_success = Success},
-			may_be_rotate_peer_ports(Peer),
-			set_performance(Peer, Performance2)
 	end.
 
 %%%===================================================================
