@@ -191,6 +191,7 @@
 			= ?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
 	nonce_limiter_server_trusted_peers = [],
 	nonce_limiter_client_peers = [],
+	p3_server_peers = [],
 	debug = false,
 	repair_rocksdb = [],
 	run_defragmentation = false,

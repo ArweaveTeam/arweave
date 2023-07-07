@@ -5,12 +5,15 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_peers.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
-		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1,
-		resolve_and_cache_peer/2]).
+-export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
+	get_peer_release/1, stats/0, discover_peers/0, add_peer/2, rank_peers/1,
+	resolve_and_cache_peer/2, rate_response/4, rate_fetched_data/4, rate_fetched_data/6,
+	rate_gossiped_data/3
+]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -36,20 +39,43 @@
 
 %% The number of failed requests in a row we tolerate before dropping the peer.
 -define(TOLERATE_FAILURE_COUNT, 20).
+-define(MINIMUM_SUCCESS, 0.5).
+-define(THROUGHPUT_ALPHA, 0.1).
+-define(SUCCESS_ALPHA, 0.01).
+
+%% When processing block rejected events for blocks received from a peer, we handle rejections
+%% differently based on the rejection reason.
+-define(BLOCK_REJECTION_WARNING, [
+	failed_to_fetch_first_chunk,
+	failed_to_fetch_second_chunk,
+	failed_to_fetch_chunk
+]).
+-define(BLOCK_REJECTION_BAN, [
+	invalid_previous_solution_hash,
+	invalid_last_retarget,
+	invalid_difficulty,
+	invalid_cumulative_difficulty,
+	invalid_hash_preimage, 
+	invalid_nonce_limiter_seed_data, 
+	invalid_partition_number, 
+	invalid_nonce, 
+	invalid_pow, 
+	invalid_poa, 
+	invalid_poa2, 
+	invalid_nonce_limiter
+]).
+-define(BLOCK_REJECTION_IGNORE, [
+	invalid_signature,
+	invalid_hash,
+	invalid_timestamp,
+	invalid_resigned_solution_hash,
+	invalid_nonce_limiter_cache_mismatch
+]).
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
 %% we remove the peer from the first slot.
 -define(DEFAULT_PEER_PORT_MAP, {empty_slot, empty_slot, empty_slot, empty_slot, empty_slot,
 		empty_slot, empty_slot, empty_slot, empty_slot, empty_slot}).
-
--record(performance, {
-	bytes = 0,
-	time = 0,
-	transfers = 0,
-	failures = 0,
-	rating = 0,
-	release = -1
-}).
 
 -record(state, {}).
 
@@ -71,6 +97,9 @@ get_peers() ->
 			Peers
 	end.
 
+get_peer_performances(Peers) ->
+	[get_or_init_performance(Peer) || Peer <- Peers].
+
 -if(?NETWORK_NAME == "arweave.N.1").
 get_trusted_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -78,7 +107,8 @@ get_trusted_peers() ->
 		[] ->
 			ArweavePeers = ["sfo-1.na-west-1.arweave.net", "ams-1.eu-central-1.arweave.net",
 					"fra-1.eu-central-2.arweave.net", "blr-1.ap-central-1.arweave.net",
-					"sgp-1.ap-central-2.arweave.net"],
+					"sgp-1.ap-central-2.arweave.net"
+			],
 			resolve_peers(ArweavePeers);
 		Peers ->
 			Peers
@@ -96,8 +126,7 @@ resolve_peers([RawPeer | Peers]) ->
 		{ok, Peer} ->
 			[Peer | resolve_peers(Peers)];
 		{error, invalid} ->
-			?LOG_WARNING([{event, failed_to_resolve_trusted_peer},
-					{peer, RawPeer}]),
+			?LOG_WARNING([{event, failed_to_resolve_trusted_peer}, {peer, RawPeer}]),
 			resolve_peers(Peers)
 	end.
 
@@ -148,18 +177,53 @@ get_peer_release(Peer) ->
 			-1
 	end.
 
+rate_response({_Host, _Port}, _, _, _) ->
+	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
+	ok;
+rate_response(Peer, PathLabel, get, Response) ->
+	gen_server:cast(
+		?MODULE, {rate_response, Peer, PathLabel, get, ar_metrics:get_status_class(Response)}
+	);
+rate_response(_Peer, _PathLabel, _Method, _Response) ->
+	ok.
+
+rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
+	rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
+rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
+	gen_server:cast(?MODULE,
+		{fetched_data, Peer, DataType, LatencyMicroseconds, DataSize, Concurrency});
+rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
+	gen_server:cast(?MODULE, {invalid_fetched_data, Peer, DataType}).
+
+rate_gossiped_data(Peer, DataType, DataSize) ->
+	gen_server:cast(?MODULE, {gossiped_data, Peer, DataType, DataSize}).
+
+issue_warning(Peer, _Type, _Reason) ->
+	gen_server:cast(?MODULE, {warning, Peer}).
+
+add_peer(Peer, Release) ->
+	gen_server:cast(?MODULE, {add_peer, Peer, Release}).
+
 %% @doc Print statistics about the current peers.
 stats() ->
 	Connected = get_peers(),
 	io:format("Connected peers, in preference order:~n"),
 	stats(Connected),
 	io:format("Other known peers:~n"),
-	All = ets:foldl(fun({{peer, Peer}, _}, Acc) -> [Peer | Acc];
-			(_, Acc) -> Acc end, [], ?MODULE),
+	All = ets:foldl(
+		fun
+			({{peer, Peer}, _}, Acc) -> [Peer | Acc];
+			(_, Acc) -> Acc
+		end,
+		[],
+		?MODULE
+	),
 	stats(All -- Connected).
 stats(Peers) ->
-	lists:foreach(fun(Peer) -> format_stats(Peer, get_or_init_performance(Peer)) end,
-			Peers).
+	lists:foreach(
+		fun(Peer) -> format_stats(Peer, get_or_init_performance(Peer)) end,
+		Peers
+	).
 
 discover_peers() ->
 	case ets:lookup(?MODULE, peers) of
@@ -201,7 +265,7 @@ resolve_and_cache_peer(RawPeer, Type) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe([peer, block]),
+	[ok, ok] = ar_events:subscribe(block),
 	load_peers(),
 	gen_server:cast(?MODULE, rank_peers),
 	gen_server:cast(?MODULE, ping_peers),
@@ -213,36 +277,23 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({add_peer, Peer, Release}, State) ->
-	may_be_rotate_peer_ports(Peer),
-	case ets:lookup(?MODULE, {peer, Peer}) of
-		[{_, #performance{ release = Release }}] ->
-			ok;
-		[{_, Performance}] ->
-			ets:insert(?MODULE, {{peer, Peer},
-					Performance#performance{ release = Release }});
-		[] ->
-			ets:insert(?MODULE, {{peer, Peer}, #performance{ release = Release }})
-	end,
+	maybe_add_peer(Peer, Release),
 	{noreply, State};
 
 handle_cast(rank_peers, State) ->
-	Total =
-		case ets:lookup(?MODULE, rating_total) of
-			[] ->
-				0;
-			[{_, T}] ->
-				T
-		end,
+	Total = get_total_rating(),
 	Peers =
 		ets:foldl(
-			fun	({{peer, Peer}, Performance}, Acc) ->
+			fun
+				({{peer, Peer}, Performance}, Acc) ->
 					%% Bigger score increases the chances to end up on the top
 					%% of the peer list, but at the same time the ranking is
 					%% probabilistic to always give everyone a chance to improve
 					%% in the competition (i.e., reduce the advantage gained by
 					%% being the first to earn a reputation).
-					Score = rand:uniform() * Performance#performance.rating
-							/ (Total + 0.0001),
+					Score =
+						rand:uniform() * Performance#performance.rating /
+							(Total + 0.0001),
 					[{Peer, Score} | Acc];
 				(_, Acc) ->
 					Acc
@@ -253,6 +304,7 @@ handle_cast(rank_peers, State) ->
 	prometheus_gauge:set(arweave_peer_count, length(Peers)),
 	ets:insert(?MODULE, {peers, lists:sublist(rank_peers(Peers), ?MAX_PEERS)}),
 	ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),
+	stats(),
 	{noreply, State};
 
 handle_cast(ping_peers, State) ->
@@ -260,81 +312,125 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
+handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
+	case Status of
+		"success" ->
+			update_rating(Peer, true);
+		"redirection" ->
+			%% don't update rating
+			ok;
+		"client-error" ->
+			%% don't update rating
+			ok;
+		_ ->
+			update_rating(Peer, false)
+	end,
+	?LOG_DEBUG([
+		{event, update_rating},
+		{update_type, response},
+		{path, PathLabel},
+		{status, Status},
+		{peer, ar_util:format_peer(Peer)}
+	]),
+	{noreply, State};
+
+handle_cast({fetched_data, Peer, DataType, LatencyMicroseconds, DataSize, Concurrency}, State) ->
+	?LOG_DEBUG([
+		{event, update_rating},
+		{update_type, fetched_data},
+		{data_type, DataType},
+		{peer, ar_util:format_peer(Peer)},
+		{latency, LatencyMicroseconds  / 1000},
+		{data_size, DataSize},
+		{concurrency, Concurrency}
+	]),
+	update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, true),
+	{noreply, State};
+
+
+handle_cast({invalid_fetched_data, Peer, DataType}, State) ->
+	?LOG_DEBUG([
+		{event, update_rating},
+		{update_type, invalid_fetched_data},
+		{data_type, DataType},
+		{peer, ar_util:format_peer(Peer)}
+	]),
+	update_rating(Peer, false),
+	{noreply, State};
+
+handle_cast({gossiped_data, Peer, DataType, DataSize}, State) ->
+	case check_peer(Peer) of
+		ok ->
+			%% Since gossiped data is pushed to us we don't know the latency, but we do want
+			%% to incentivize peers to gossip data quickly and frequently, so we will assign
+			%% a latency that is guaranteed to improve the peer's rating:
+			%% 1. Calculate the latency that would be required to transfer DataSize bytes at the
+			%%    peer's current average rate.
+			%% 2. Scale that latency by ?GOSSIP_ADVANTAGE and rate using the scaled latency
+			Performance = get_or_init_performance(Peer),
+			#performance{
+				average_bytes = AverageBytes,
+				average_latency = AverageLatency
+			} = Performance,
+			AverageThroughput = AverageBytes / AverageLatency,
+			GossipLatency = (DataSize / AverageThroughput) * ?GOSSIP_ADVANTAGE,
+			LatencyMicroseconds = GossipLatency * 1000,
+			?LOG_DEBUG([
+				{event, update_rating},
+				{update_type, gossiped_data},
+				{data_type, DataType},
+				{peer, ar_util:format_peer(Peer)},
+				{latency, LatencyMicroseconds / 1000},
+				{data_size, DataSize}
+			]),
+			update_rating(Peer, LatencyMicroseconds, DataSize, 1, true);
+		_ ->
+			ok
+	end,
+
+	{noreply, State};
+
+handle_cast({warning, Peer}, State) ->
+	Performance = update_rating(Peer, false),
+	case Performance#performance.average_success < ?MINIMUM_SUCCESS of
+		true ->
+			remove_peer(Peer);
+		false ->
+			ok
+	end,
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_info({event, peer, {made_request, Peer, Release}}, State) ->
-	may_be_rotate_peer_ports(Peer),
-	case ets:lookup(?MODULE, {peer, Peer}) of
-		[{_, #performance{ release = Release }}] ->
+handle_info({event, block, {rejected, Reason, _H, Peer}}, State) when Peer /= no_peer ->
+	IssueBan = lists:member(Reason, ?BLOCK_REJECTION_BAN),
+	IssueWarning = lists:member(Reason, ?BLOCK_REJECTION_WARNING),
+	Ignore = lists:member(Reason, ?BLOCK_REJECTION_IGNORE),
+
+	case {IssueBan, IssueWarning, Ignore} of
+		{true, false, false} ->
+			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
+			remove_peer(Peer);
+		{false, true, false} ->
+			issue_warning(Peer, block_rejected, Reason);
+		{false, false, true} ->
+			%% ignore
 			ok;
-		[{_, Performance}] ->
-			ets:insert(?MODULE, {{peer, Peer},
-					Performance#performance{ release = Release }});
-		[] ->
-			case check_external_peer(Peer) of
-				ok ->
-					ets:insert(?MODULE, {{peer, Peer},
-							#performance{ release = Release }});
-				_ ->
-					ok
-			end
-	end,
-	{noreply, State};
-
-handle_info({event, peer, {served_tx, Peer, TimeDelta, Size}}, State) ->
-	update_rating(Peer, TimeDelta, Size),
-	{noreply, State};
-
-handle_info({event, peer, {served_block, Peer, TimeDelta, Size}}, State) ->
-	update_rating(Peer, TimeDelta, Size),
-	{noreply, State};
-
-handle_info({event, peer, {gossiped_tx, Peer, TimeDelta, Size}}, State) ->
-	%% Only the first peer who sent the given transaction is rated.
-	%% Otherwise, one may exploit the endpoint to gain reputation.
-	case check_external_peer(Peer) of
-		ok ->
-			update_rating(Peer, TimeDelta, Size);
 		_ ->
-			ok
+			%% Ever reason should be in exactly 1 list.
+			error("invalid block rejection reason")
 	end,
 	{noreply, State};
 
-handle_info({event, peer, {gossiped_block, Peer, TimeDelta, Size}}, State) ->
-	%% Only the first peer who sent the given block is rated.
-	%% Otherwise, one may exploit the endpoint to gain reputation.
-	case check_external_peer(Peer) of
-		ok ->
-			update_rating(Peer, TimeDelta, Size);
-		_ ->
-			ok
+handle_info({event, block, {new, B,
+		#{ source := {peer, Peer}, query_block_time := QueryBlockTime }}}, State) ->
+	DataSize = byte_size(term_to_binary(B)),
+	case QueryBlockTime of
+		undefined -> ar_peers:rate_gossiped_data(Peer, block, DataSize);
+		_ -> ar_peers:rate_fetched_data(Peer, block, QueryBlockTime, DataSize)
 	end,
-	{noreply, State};
-
-handle_info({event, peer, {served_chunk, Peer, TimeDelta, Size}}, State) ->
-	update_rating(Peer, TimeDelta, Size),
-	{noreply, State};
-
-handle_info({event, peer, {bad_response, {Peer, _Type, _Reason}}}, State) ->
-	issue_warning(Peer),
-	{noreply, State};
-
-handle_info({event, peer, {banned, BannedPeer}}, State) ->
-	remove_peer(BannedPeer),
-	{noreply, State};
-
-handle_info({event, block, {rejected, failed_to_fetch_first_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer),
-	{noreply, State};
-
-handle_info({event, block, {rejected, failed_to_fetch_second_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer),
-	{noreply, State};
-
-handle_info({event, block, {rejected, failed_to_fetch_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer),
 	{noreply, State};
 
 handle_info({event, block, _}, State) ->
@@ -360,6 +456,28 @@ get_peer_peers(Peer) ->
 		Peers -> Peers
 	end.
 
+get_or_init_performance(Peer) ->
+	case ets:lookup(?MODULE, {peer, Peer}) of
+		[] ->
+			#performance{};
+		[{_, Performance}] ->
+			Performance
+	end.
+
+set_performance(Peer, Performance) ->
+	ets:insert(?MODULE, [{{peer, Peer}, Performance}]).
+
+get_total_rating() ->
+	case ets:lookup(?MODULE, rating_total) of
+		[] ->
+			0;
+		[{_, Total}] ->
+			Total
+	end.
+
+set_total_rating(Total) ->
+	ets:insert(?MODULE, {rating_total, Total}).
+
 discover_peers([]) ->
 	ok;
 discover_peers([Peer | Peers]) ->
@@ -367,28 +485,27 @@ discover_peers([Peer | Peers]) ->
 		true ->
 			ok;
 		false ->
-			IsPublic = is_public_peer(Peer),
-			IsBanned = ar_blacklist_middleware:is_peer_banned(Peer) == banned,
-			IsBlacklisted = lists:member(Peer, ?PEER_PERMANENT_BLACKLIST),
-			case IsPublic andalso not IsBanned andalso not IsBlacklisted of
-				false ->
-					ok;
-				true ->
+			case check_peer(Peer, is_public_peer(Peer)) of
+				ok ->
 					case ar_http_iface_client:get_info(Peer, release) of
 						{<<"release">>, Release} when is_integer(Release) ->
-							gen_server:cast(?MODULE, {add_peer, Peer, Release});
+							maybe_add_peer(Peer, Release);
 						_ ->
 							ok
-					end
+					end;
+				_ ->
+					ok
 			end
 	end,
 	discover_peers(Peers).
 
 format_stats(Peer, Perf) ->
-	io:format("\t~s ~.2f kB/s (~p transfers, ~B failures)~n",
-		[string:pad(ar_util:format_peer(Peer), 20, trailing, $ ),
-			(Perf#performance.bytes / 1024) / ((Perf#performance.time + 1) / 1000000),
-			Perf#performance.transfers, Perf#performance.failures]).
+	KB = Perf#performance.average_bytes / 1024,
+	io:format(
+		"\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success, ~p transfers)~n",
+		[string:pad(ar_util:format_peer(Peer), 21, trailing, $\s),
+			float(Perf#performance.rating), KB, trunc(Perf#performance.average_latency),
+			Perf#performance.average_success, Perf#performance.transfers]).
 
 load_peers() ->
 	case ar_storage:read_term(peers) of
@@ -400,10 +517,10 @@ load_peers() ->
 			load_peers(Records),
 			TotalRating =
 				ets:foldl(
-					fun	({{peer_ip, _IP}, _}, Acc) ->
-							Acc;
-						({{peer, _Peer}, Performance}, Acc) ->
-							Acc + Performance#performance.rating
+					fun	({{peer, _Peer}, Performance}, Acc) ->
+							Acc + Performance#performance.rating;
+						(_, Acc) ->
+							Acc
 					end,
 					0,
 					?MODULE
@@ -428,14 +545,32 @@ load_peer({Peer, Performance}) ->
 		<<?NETWORK_NAME>> ->
 			may_be_rotate_peer_ports(Peer),
 			case Performance of
-				{performance, Bytes, Time, Transfers, Failures, Rating} ->
+				{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating} ->
 					%% For compatibility with a few nodes already storing the records
 					%% without the release field.
-					ets:insert(?MODULE, {{peer, Peer}, #performance{ bytes = Bytes,
-							time = Time, transfers = Transfers, failures = Failures,
-							rating = Rating, release = -1 }});
-				_ ->
-					ets:insert(?MODULE, {{peer, Peer}, Performance})
+					set_performance(Peer, #performance{
+						total_bytes = TotalBytes,
+						total_latency = TotalLatency,
+						transfers = Transfers,
+						rating = Rating
+					});
+				{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating, Release} ->
+					%% For compatibility with nodes storing records from before the introduction of
+					%% the version field
+					set_performance(Peer, #performance{
+						release = Release,
+						total_bytes = TotalBytes,
+						total_latency = TotalLatency,
+						transfers = Transfers,
+						rating = Rating
+					});
+				{performance, 3,
+						_Release, _AverageBytes, _TotalBytes, _AverageLatency, _TotalLatency,
+						_Transfers, _AverageSuccess, _Rating} ->
+					%% Going forward whenever we change the #performance record we should increment the
+					%% version field so we can match on it when doing a load. Here we're handling the
+					%% version 3 format.
+					set_performance(Peer, Performance)
 			end,
 			ok;
 		Network ->
@@ -449,7 +584,8 @@ may_be_rotate_peer_ports(Peer) ->
 	case ets:lookup(?MODULE, {peer_ip, IP}) of
 		[] ->
 			ets:insert(?MODULE, {{peer_ip, IP},
-					{erlang:setelement(1, ?DEFAULT_PEER_PORT_MAP, Port), 1}});
+					{erlang:setelement(1, ?DEFAULT_PEER_PORT_MAP, Port), 1}}
+			);
 		[{_, {PortMap, Position}}] ->
 			case is_in_port_map(Port, PortMap) of
 				{true, _} ->
@@ -460,7 +596,7 @@ may_be_rotate_peer_ports(Peer) ->
 						true ->
 							ets:insert(?MODULE, {{peer_ip, IP},
 									{erlang:setelement(Position + 1, PortMap, Port),
-									Position + 1}});
+										Position + 1}});
 						false ->
 							RemovedPeer = construct_peer(IP, element(1, PortMap)),
 							PortMap2 = shift_port_map_left(PortMap),
@@ -527,7 +663,8 @@ is_loopback_ip({_, _, _, _}) -> false.
 %% @doc Return a ranked list of peers.
 rank_peers(ScoredPeers) ->
 	SortedReversed = lists:reverse(
-			lists:sort(fun({_, S1}, {_, S2}) -> S1 >= S2 end, ScoredPeers)),
+		lists:sort(fun({_, S1}, {_, S2}) -> S1 >= S2 end, ScoredPeers)
+	),
 	GroupedBySubnet =
 		lists:foldl(
 			fun({{A, B, _C, _D, _Port}, _Score} = Peer, Acc) ->
@@ -552,59 +689,110 @@ rank_peers(ScoredPeers) ->
 			[],
 			GroupedBySubnet
 		),
-	[Peer || {Peer, _} <- lists:sort(fun({_, S1}, {_, S2}) -> S1 >= S2 end,
-			ScoredSubnetPeers)].
+	[Peer || {Peer, _} <- lists:sort(
+		fun({_, S1}, {_, S2}) -> S1 >= S2 end,
+		ScoredSubnetPeers
+	)].
 
-check_external_peer(Peer) ->
-	IsLoopbackIP = is_loopback_ip(Peer),
+check_peer(Peer) ->
+	check_peer(Peer, not is_loopback_ip(Peer)).
+check_peer(Peer, IsPeerScopeValid) ->
 	IsBlacklisted = lists:member(Peer, ?PEER_PERMANENT_BLACKLIST),
 	IsBanned = ar_blacklist_middleware:is_peer_banned(Peer) == banned,
-	case {IsLoopbackIP, IsBlacklisted, IsBanned} of
-		{true, _, _} ->
-			reject;
-		{_, true, _} ->
-			reject;
-		{_, _, true} ->
-			reject;
-		_ ->
-			ok
+	case IsPeerScopeValid andalso not IsBlacklisted andalso not IsBanned of
+		true ->
+			ok;
+		false ->
+			reject
 	end.
 
-update_rating(Peer, TimeDelta, Size) ->
+update_rating(Peer, IsSuccess) ->
+	update_rating(Peer, undefined, undefined, 1, IsSuccess).
+update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
-	#performance{ bytes = Bytes, time = Time,
-			rating = Rating, transfers = N } = Performance,
-	Bytes2 = Bytes + Size,
-	Time2 = Time + TimeDelta / 1000,
-	Performance2 = Performance#performance{ bytes = Bytes2, time = Time2,
-			rating = Rating2 = Bytes2 / (Time2 + 1), failures = 0, transfers = N + 1 },
+	LatencyMilliseconds = LatencyMicroseconds / 1000,
+	#performance{
+		average_bytes = AverageBytes,
+		total_bytes = TotalBytes,
+		average_latency = AverageLatency,
+		total_latency = TotalLatency,
+		average_success = AverageSuccess,
+		rating = Rating,
+		transfers = Transfers
+	} = Performance,
+	TotalBytes2 = case DataSize of
+		undefined -> TotalBytes;
+		_ -> TotalBytes + DataSize
+	end,
+	%% AverageBytes is the average number of bytes transferred during the AverageLatency time
+	%% period. In order to approximate the impact of multiple concurrent requests we multiply
+	%% DataSize by the Concurrency value. We do this *only* when updating the AverageBytes
+	%% value so that it doesn't distort the TotalBytes.
+	AverageBytes2 = case DataSize of
+		undefined -> AverageBytes;
+		_ -> calculate_ema(AverageBytes, (DataSize * Concurrency), ?THROUGHPUT_ALPHA)
+	end,
+	TotalLatency2 = case LatencyMilliseconds of
+		undefined -> TotalLatency;
+		_ -> TotalLatency + LatencyMilliseconds
+	end,
+	AverageLatency2 = case LatencyMilliseconds of
+		undefined -> AverageLatency;
+		_ -> calculate_ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+	end,
+	Transfers2 = case DataSize of
+		undefined -> Transfers;
+		_ -> Transfers + 1
+	end,
+	AverageSuccess2 = calculate_ema(AverageSuccess, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
+	%% Rating is an estimate of the peer's effective throughput in bytes per second.
+	Rating2 = (AverageBytes2 / AverageLatency2) * AverageSuccess2,
+	Performance2 = Performance#performance{
+		average_bytes = AverageBytes2,
+		total_bytes = TotalBytes2,
+		average_latency = AverageLatency2,
+		total_latency = TotalLatency2,
+		average_success = AverageSuccess2,
+		rating = Rating2,
+		transfers = Transfers2
+	},
 	Total2 = Total - Rating + Rating2,
 	may_be_rotate_peer_ports(Peer),
-	ets:insert(?MODULE, [{{peer, Peer}, Performance2}, {rating_total, Total2}]).
+	set_performance(Peer, Performance2),
+	set_total_rating(Total2),
+	Performance2.
 
-get_or_init_performance(Peer) ->
+calculate_ema(OldEMA, Value, Alpha) ->
+	Alpha * Value + (1 - Alpha) * OldEMA.
+
+maybe_add_peer(Peer, Release) ->
+	may_be_rotate_peer_ports(Peer),
 	case ets:lookup(?MODULE, {peer, Peer}) of
-		[] ->
-			#performance{};
+		[{_, #performance{ release = Release }}] ->
+			ok;
 		[{_, Performance}] ->
-			Performance
-	end.
-
-get_total_rating() ->
-	case ets:lookup(?MODULE, rating_total) of
+			set_performance(Peer, Performance#performance{ release = Release });
 		[] ->
-			0;
-		[{_, Total}] ->
-			Total
+			case check_peer(Peer) of
+				ok ->
+					set_performance(Peer, #performance{ release = Release });
+				_ ->
+					ok
+			end
 	end.
 
 remove_peer(RemovedPeer) ->
-	Total = get_total_rating(),
+	?LOG_DEBUG([
+		{event, remove_peer},
+		{peer, ar_util:format_peer(RemovedPeer)}
+	]),
 	Performance = get_or_init_performance(RemovedPeer),
-	ets:insert(?MODULE, {rating_total, Total - Performance#performance.rating}),
+	Total = get_total_rating(),
+	set_total_rating(Total - Performance#performance.rating),
 	ets:delete(?MODULE, {peer, RemovedPeer}),
-	remove_peer_port(RemovedPeer).
+	remove_peer_port(RemovedPeer),
+	ar_events:send(peer, {removed, RemovedPeer}).
 
 remove_peer_port(Peer) ->
 	{IP, Port} = get_ip_port(Peer),
@@ -640,33 +828,22 @@ is_port_map_empty(PortMap, Max, N) ->
 	end.
 
 store_peers() ->
-	case ets:lookup(?MODULE, rating_total) of
+	Records =
+		ets:foldl(
+			fun
+				({{peer, Peer}, Performance}, Acc) ->
+					[{Peer, Performance} | Acc];
+				(_, Acc) ->
+					Acc
+			end,
+			[],
+			?MODULE
+		),
+	case Records of
 		[] ->
 			ok;
-		[{_, Total}] ->
-			Records =
-				ets:foldl(
-					fun	({{peer, Peer}, Performance}, Acc) ->
-							[{Peer, Performance} | Acc];
-						(_, Acc) ->
-							Acc
-					end,
-					[],
-					?MODULE
-				),
-			ar_storage:write_term(peers, {Total, Records})
-	end.
-
-issue_warning(Peer) ->
-	Performance = get_or_init_performance(Peer),
-	Failures = Performance#performance.failures,
-	case Failures + 1 > ?TOLERATE_FAILURE_COUNT of
-		true ->
-			remove_peer(Peer);
-		false ->
-			Performance2 = Performance#performance{ failures = Failures + 1 },
-			may_be_rotate_peer_ports(Peer),
-			ets:insert(?MODULE, {{peer, Peer}, Performance2})
+		_ ->     
+			ar_storage:write_term(peers, Records)
 	end.
 
 %%%===================================================================

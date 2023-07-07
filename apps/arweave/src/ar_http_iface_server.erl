@@ -5,7 +5,7 @@
 -module(ar_http_iface_server).
 
 -export([start/0, stop/0]).
--export([split_path/1, label_http_path/1]).
+-export([split_path/1, label_http_path/1, label_req/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -44,6 +44,10 @@ label_http_path(Path) when is_list(Path) ->
 	name_route(Path);
 label_http_path(Path) ->
 	label_http_path(split_path(Path)).
+
+label_req(Req) ->
+	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+	ar_http_iface_server:label_http_path(SplitPath).
 
 %%%===================================================================
 %%% Private functions.
@@ -309,10 +313,14 @@ name_route([<<"hash_list">>, _From, _To]) ->
 name_route([<<"hash_list2">>, _From, _To]) ->
 	"/hash_list2/{from}/{to}";
 
+name_route([<<"block">>]) ->
+	"/block";
 name_route([<<"block">>, <<"hash">>, _IndepHash]) ->
 	"/block/hash/{indep_hash}";
 name_route([<<"block">>, <<"height">>, _Height]) ->
 	"/block/height/{height}";
+name_route([<<"block2">>]) ->
+	"/block2";
 name_route([<<"block2">>, <<"hash">>, _IndepHash]) ->
 	"/block2/hash/{indep_hash}";
 name_route([<<"block2">>, <<"height">>, _Height]) ->

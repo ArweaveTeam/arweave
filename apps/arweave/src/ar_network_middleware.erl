@@ -31,7 +31,7 @@ maybe_add_peer(Peer, Req) ->
 		not_set ->
 			ok;
 		_ ->
-			ar_events:send(peer, {made_request, Peer, get_release(Req)})
+			ar_peers:add_peer(Peer, get_release(Req))
 	end.
 
 wrong_network(Req) ->

@@ -1830,8 +1830,7 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	ar_events:send(peer, {gossiped_tx, Peer, erlang:get(read_body_time),
-			erlang:get(body_size)}),
+	ar_peers:rate_gossiped_data(Peer, byte_size(term_to_binary(TX))),
 	ar_events:send(tx, {new, TX, Peer}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),
@@ -1916,7 +1915,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								{Packing, ok};
 							{{true, _}, _StoreID} ->
 								{ok, Config} = application:get_env(arweave, config),
-								case lists:member(pack_served_chunks, Config#config.enable) of
+								case lists:member(pack_fetched_chunks, Config#config.enable) of
 									false ->
 										{none, {reply, {404, #{}, <<>>, Req}}};
 									true ->
@@ -2318,9 +2317,6 @@ post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 				{error, _} ->
 					{400, #{}, <<"Invalid block.">>, Req2};
 				{ok, BShadow} ->
-					ReadBodyTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp),
-					erlang:put(read_body_time, ReadBodyTime),
-					erlang:put(body_size, byte_size(term_to_binary(BShadow))),
 					post_block(check_transactions_are_present, {BShadow, Peer}, Req2,
 							ReceiveTimestamp)
 			end;
@@ -2343,7 +2339,7 @@ post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestam
 		_ -> % POST /block; do not reject for backwards-compatibility
 			post_block(enqueue_block, {BShadow, Peer}, Req, ReceiveTimestamp)
 	end;
-post_block(enqueue_block, {B, Peer}, Req, Timestamp) ->
+post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 	B2 =
 		case B#block.height >= ar_fork:height_2_6() of
 			true ->
@@ -2362,8 +2358,7 @@ post_block(enqueue_block, {B, Peer}, Req, Timestamp) ->
 				end
 		end,
 	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	ar_block_pre_validator:pre_validate(B2, Peer, Timestamp, erlang:get(read_body_time),
-			erlang:get(body_size)),
+	ar_block_pre_validator:pre_validate(B2, Peer, undefined, ReceiveTimestamp),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->
@@ -2706,21 +2701,20 @@ post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
 			post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
 	end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
-	Timestamp = erlang:timestamp(),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case Encoding of
 				json ->
-					post_tx_parse_id(parse_json, {TXID, Req2, Body, Timestamp});
+					post_tx_parse_id(parse_json, {TXID, Req2, Body});
 				binary ->
-					post_tx_parse_id(parse_binary, {TXID, Req2, Body, Timestamp})
+					post_tx_parse_id(parse_binary, {TXID, Req2, Body})
 			end;
 		{error, body_size_too_large} ->
 			{error, body_size_too_large, Req};
 		{error, timeout} ->
 			{error, timeout}
 	end;
-post_tx_parse_id(parse_json, {TXID, Req, Body, Timestamp}) ->
+post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
@@ -2748,12 +2742,9 @@ post_tx_parse_id(parse_json, {TXID, Req, Body, Timestamp}) ->
 			end,
 			{error, invalid_json, Req};
 		TX ->
-			Time = timer:now_diff(erlang:timestamp(), Timestamp),
-			erlang:put(read_body_time, Time),
-			erlang:put(body_size, byte_size(term_to_binary(TX))),
 			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
-post_tx_parse_id(parse_binary, {TXID, Req, Body, Timestamp}) ->
+post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
 	case catch ar_serialize:binary_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
@@ -2772,9 +2763,6 @@ post_tx_parse_id(parse_binary, {TXID, Req, Body, Timestamp}) ->
 			end,
 			{error, invalid_json, Req};
 		{ok, TX} ->
-			Time = timer:now_diff(erlang:timestamp(), Timestamp),
-			erlang:put(read_body_time, Time),
-			erlang:put(body_size, byte_size(term_to_binary(TX))),
 			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
 post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->

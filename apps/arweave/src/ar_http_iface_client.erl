@@ -10,7 +10,7 @@
 		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
 		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
 		get_block_index/3, get_sync_record/1, get_sync_record/3,
-		get_chunk_json/3, get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
+		get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
 		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1]).
@@ -302,13 +302,7 @@ get_sync_record(Peer, Start, Limit) ->
 		headers => Headers
 	}), Start, Limit).
 
-get_chunk_json(Peer, Offset, RequestedPacking) ->
-	get_chunk(Peer, Offset, RequestedPacking, json).
-
 get_chunk_binary(Peer, Offset, RequestedPacking) ->
-	get_chunk(Peer, Offset, RequestedPacking, binary).
-
-get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 	PackingBinary =
 		case RequestedPacking of
 			any ->
@@ -337,7 +331,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 	Response = ar_http:req(#{
 		peer => Peer,
 		method => get,
-		path => get_chunk_path(Offset, Encoding),
+		path => "/chunk2/" ++ integer_to_binary(Offset),
 		timeout => 120 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
@@ -351,12 +345,7 @@ get_chunk(Peer, Offset, RequestedPacking, Encoding) ->
 		],
 		erlang:monotonic_time() - StartTime),
 
-	handle_chunk_response(Encoding, Response).
-
-get_chunk_path(Offset, json) ->
-	"/chunk/" ++ integer_to_binary(Offset);
-get_chunk_path(Offset, binary) ->
-	"/chunk2/" ++ integer_to_binary(Offset).
+	handle_chunk_response(Response).
 
 get_mempool(Peer) ->
 	handle_mempool_response(ar_http:req(#{
@@ -562,41 +551,25 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 handle_sync_record_response(Reply, _, _) ->
 	{error, Reply}.
 
-handle_chunk_response(Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
-	DecodeFun =
-		case Encoding of
-			json ->
-				fun(Bin) ->
-					ar_serialize:json_map_to_chunk_proof(jiffy:decode(Bin, [return_maps]))
-				end;
-			binary ->
-				fun(Bin) ->
-					case ar_serialize:binary_to_poa(Bin) of
-						{ok, Reply} ->
-							Reply;
-						{error, Reason} ->
-							{error, Reason}
-					end
-				end
-		end,
-	case catch DecodeFun(Body) of
+handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch ar_serialize:binary_to_poa(Body) of
 		{'EXIT', Reason} ->
 			{error, Reason};
 		{error, Reason} ->
 			{error, Reason};
-		Proof ->
+		{ok, Proof} ->
 			case maps:get(chunk, Proof) of
 				<<>> ->
 					{error, empty_chunk};
 				Chunk when byte_size(Chunk) > ?DATA_CHUNK_SIZE ->
 					{error, chunk_bigger_than_256kib};
 				_ ->
-					{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
+					{ok, Proof}
 			end
 	end;
-handle_chunk_response(_Encoding, {error, _} = Response) ->
+handle_chunk_response({error, _} = Response) ->
 	Response;
-handle_chunk_response(_Encoding, Response) ->
+handle_chunk_response(Response) ->
 	{error, Response}.
 
 handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
@@ -669,10 +642,10 @@ handle_get_recent_hash_list_response(Response) ->
 handle_get_recent_hash_list_diff_response({ok, {{<<"200">>, _}, _, Body, _, _}}, HL, Peer) ->
 	case parse_recent_hash_list_diff(Body, HL) of
 		{error, invalid_input} ->
-			ar_events:send(peer, {bad_response, {Peer, recent_hash_list_diff, invalid_input}}),
+			ar_peers:issue_warning(Peer, recent_hash_list_diff, invalid_input),
 			{error, invalid_input};
 		{error, unknown_base} ->
-			ar_events:send(peer, {bad_response, {Peer, recent_hash_list_diff, unknown_base}}),
+			ar_peers:issue_warning(Peer, recent_hash_list_diff, unknown_base),
 			{error, unknown_base};
 		{ok, Reply} ->
 			{ok, Reply}
@@ -837,10 +810,10 @@ get_tx_from_remote_peer(Peer, TXID) ->
 						{peer, ar_util:format_peer(Peer)},
 						{tx, ar_util:encode(TXID)}
 					]),
-					ar_events:send(peer, {bad_response, {Peer, tx, invalid}}),
+					ar_peers:issue_warning(Peer, tx, invalid),
 					{error, invalid_tx};
 				true ->
-					ar_events:send(peer, {served_tx, Peer, Time, Size}),
+					ar_peers:rate_fetched_data(Peer, tx, Time, Size),
 					TX
 			end;
 		Error ->
@@ -992,7 +965,7 @@ handle_block_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}
 			?LOG_INFO(
 				"event: failed_to_parse_block_response, peer: ~s, reason: ~p",
 				[ar_util:format_peer(Peer), Reason]),
-			ar_events:send(peer, {bad_response, {Peer, block, Reason}}),
+			ar_peers:issue_warning(Peer, block, Reason),
 			not_found;
 		{ok, B} ->
 			{ok, B, End - Start, byte_size(term_to_binary(B))};
@@ -1002,11 +975,11 @@ handle_block_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}
 			?LOG_INFO(
 				"event: failed_to_parse_block_response, peer: ~s, error: ~p",
 				[ar_util:format_peer(Peer), Error]),
-			ar_events:send(peer, {bad_response, {Peer, block, Error}}),
+			ar_peers:issue_warning(Peer, block, Error),
 			not_found
 	end;
 handle_block_response(Peer, _Encoding, Response) ->
-	ar_events:send(peer, {bad_response, {Peer, block, Response}}),
+	ar_peers:issue_warning(Peer, block, Response),
 	not_found.
 
 %% @doc Process the response of a GET /unconfirmed_tx call.
@@ -1037,14 +1010,14 @@ handle_tx_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) 
 					{ok, TX#tx{ data = <<>> }, End - Start, Size - DataSize}
 			end;
 		{'EXIT', Reason} ->
-			ar_events:send(peer, {bad_response, {Peer, tx, Reason}}),
+			ar_peers:issue_warning(Peer, tx, Reason),
 			{error, Reason};
 		Reply ->
-			ar_events:send(peer, {bad_response, {Peer, tx, Reply}}),
+			ar_peers:issue_warning(Peer, tx, Reply),
 			Reply
 	end;
 handle_tx_response(Peer, _Encoding, Response) ->
-	ar_events:send(peer, {bad_response, {Peer, tx, Response}}),
+	ar_peers:issue_warning(Peer, tx, Response),
 	{error, Response}.
 
 p2p_headers() ->

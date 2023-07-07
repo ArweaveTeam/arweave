@@ -133,7 +133,7 @@ handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
-handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
+handle_info({event, block, {discovered, Peer, B, QueryBlockTime}}, State) ->
 	case ar_ignore_registry:member(B#block.indep_hash) of
 		false ->
 			?LOG_INFO([{event, fetched_block_for_validation},
@@ -142,7 +142,7 @@ handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
 		true ->
 			ok
 	end,
-	ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp(), Time, Size),
+	ar_block_pre_validator:pre_validate(B, Peer, QueryBlockTime, erlang:timestamp()),
 	{noreply, State};
 handle_info({event, block, _}, State) ->
 	{noreply, State};

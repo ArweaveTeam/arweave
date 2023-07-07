@@ -331,7 +331,7 @@ get_block2(BH, Peers, RetryCount) ->
 				{Peer, B, Time, Size} ->
 					case ar_block:indep_hash(B) of
 						BH ->
-							ar_events:send(peer, {served_block, Peer, Time, Size}),
+							ar_peers:rate_fetched_data(Peer, block, Time, Size),
 							{ok, B};
 						InvalidBH ->
 							?LOG_WARNING([

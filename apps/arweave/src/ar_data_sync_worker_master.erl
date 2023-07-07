@@ -12,23 +12,23 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
+-include_lib("arweave/include/ar_peers.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(REBALANCE_FREQUENCY_MS, 60*1000).
 -define(READ_RANGE_CHUNKS, 10).
 -define(MIN_MAX_ACTIVE, 8).
 -define(LATENCY_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.1).
--define(STARTING_LATENCY_EMA, 1000). %% initial value to avoid over-weighting the first response
--define(STARTING_LATENCY_TARGET, 2000). %% initial value to avoid over-weighting the first response
 
 -record(peer_tasks, {
 	peer = undefined,
 	task_queue = queue:new(),
 	task_queue_len = 0,
 	active_count = 0,
-	max_active = ?MIN_MAX_ACTIVE,
-	latency_ema = ?STARTING_LATENCY_EMA, 
-	success_ema = 1.0
+	max_active = ?MIN_MAX_ACTIVE
+	% latency_ema = ?STARTING_LATENCY_EMA, 
+	% success_ema = 1.0
 }).
 
 -record(state, {
@@ -39,7 +39,7 @@
 	workers = queue:new(),
 	worker_count = 0,
 	worker_loads = #{},
-	latency_target = ?STARTING_LATENCY_TARGET,
+	throughput_target = 0,
 	peer_tasks = #{}
 }).
 
@@ -73,6 +73,7 @@ ready_for_work() ->
 init(Workers) ->
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, process_main_queue),
+	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 
 	{ok, #state{
 		workers = queue:from_list(Workers),
@@ -109,12 +110,23 @@ handle_cast({task_completed, {read_range, {Worker, _, _}}}, State) ->
 	State2 = update_scheduled_task_count(Worker, read_range, "localhost", -1, State),
 	{noreply, State2};
 
-handle_cast({task_completed, {sync_range, {Worker, Result, Peer, Duration}}}, State) ->
+handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
+	{Start, End, Peer, _} = Args,
+	DataSize = End - Start,
 	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
-	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, Duration, State2),
+	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State2),
 	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
 	{noreply, set_peer_tasks(PeerTasks3, State4)};
+
+handle_cast(rebalance_peers, State) ->
+	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
+	?LOG_DEBUG([{event, rebalance_peers}]),
+	Peers = maps:keys(State#state.peer_tasks),
+	AllPeerTasks =[ maps:get(Peer, State#state.peer_tasks) || Peer <- Peers],
+	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
+	ThroughputTarget = lists:sum([ Performance#performance.rating || Performance <- AllPeerPerformances ]) / length(Peers),
+	{noreply, rebalance_peers(AllPeerTasks, AllPeerPerformances, ThroughputTarget, State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -200,20 +212,20 @@ max_tasks() ->
 	Config#config.sync_jobs * 50.
 
 %% @doc The maximum number of tasks we can have queued for a given peer.
-max_peer_queue(_PeerTasks, #state{ scheduled_task_count = 0 } = _State) ->
+max_peer_queue(_PeerTasks, _Performance, #state{ scheduled_task_count = 0 } = _State) ->
 	undefined;
-max_peer_queue(_PeerTasks, #state{ latency_target = 0 } = _State) ->
+max_peer_queue(_PeerTasks, _Peformance, #state{ latency_target = 0 } = _State) ->
 	undefined;
-max_peer_queue(_PeerTasks, #state{ latency_target = 0.0 } = _State) ->
+max_peer_queue(_PeerTasks, _Performance, #state{ latency_target = 0.0 } = _State) ->
 	undefined;
-max_peer_queue(#peer_tasks{ latency_ema = 0 } = _PeerTasks, _State) ->
+max_peer_queue(_PeerTasks, #performance{ latency = 0 } = _Performance, _State) ->
 	undefined;
-max_peer_queue(#peer_tasks{ latency_ema = 0.0 } = _PeerTasks, _State) ->
+max_peer_queue(_PeerTasks, #performance{ latency = 0.0 } = _Performance,  _State) ->
 	undefined;
-max_peer_queue(PeerTasks, State) ->
+max_peer_queue(PeerTasks, Performance, State) ->
 	CurActive = PeerTasks#peer_tasks.active_count,
-	LatencyEMA = PeerTasks#peer_tasks.latency_ema,
-	SuccessEMA = PeerTasks#peer_tasks.success_ema,
+	LatencyEMA = Performance#performance.latency,
+	SuccessEMA = Performance#performance.success,
 	LatencyTarget = State#state.latency_target,
 	ScheduledTasks = State#state.scheduled_task_count,
 	%% estimate of our current total throughput
@@ -246,8 +258,6 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 				{peer, ar_util:format_peer(Peer)},
 				{active_count, PeerTasks#peer_tasks.active_count},
 				{scheduled_tasks, State#state.scheduled_task_count},
-				{success_ema, PeerTasks#peer_tasks.success_ema},
-				{latency_ema, PeerTasks#peer_tasks.latency_ema},
 				{latency_target, State#state.latency_target},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
@@ -316,29 +326,45 @@ schedule_task(Task, Args, State) ->
 %% Stage 3: record a completed task and update related values (i.e.
 %%          EMA, max_active, peer queue length)
 %%--------------------------------------------------------------------
-complete_sync_range(PeerTasks, Result, Duration, State) ->
-	Milliseconds = erlang:convert_time_unit(Duration, native, millisecond) / 1.0,
+complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State) ->
+	PeerTasks2 = PeerTasks#peer_tasks{ 
+		active_count = PeerTasks#peer_tasks.active_count - 1
+	},
+	ar_peers:rate_fetched_data(
+		PeerTasks2#peer_tasks.peer, chunk, Result,
+		erlang:convert_time_unit(ElapsedNative, native, microsecond), DataSize,
+		PeerTasks2#peer_tasks.max_active),
+	{PeerTasks2, State}.
 
-	IsOK = (Result == ok andalso Milliseconds > 10),
-	LatencyEMA = trunc(calculate_ema(
-					PeerTasks#peer_tasks.latency_ema, IsOK, Milliseconds, ?LATENCY_ALPHA)),
-	SuccessEMA = calculate_ema(
-					PeerTasks#peer_tasks.success_ema, true, ar_util:bool_to_int(IsOK) / 1.0,
-					?SUCCESS_ALPHA),
-	%% Target Latency is the EMA of all peers' latencies
-	LatencyTargetAlpha =  2.0 / (State#state.worker_count + 1), %% heuristic - update as needed.
-	LatencyTarget = trunc(calculate_ema(
-					State#state.latency_target, IsOK, Milliseconds, LatencyTargetAlpha)),
+rebalance_peers([], [], _, State) ->
+	State;
+rebalance_peers(
+		[PeerTasks | AllPeerTasks],
+		[Performance | AllPeerPerformances],
+		ThroughputTarget,
+		State) ->
+	{PeerTasks2, State2} = rebalance_peer(PeerTasks, Performance, ThroughputTarget, State),
+	State3 = set_peer_tasks(PeerTasks2, State2),
+	rebalance_peers(AllPeerTasks, AllPeerPerformances, ThroughputTarget, State3).
 
-	PeerTasks2 = PeerTasks#peer_tasks{ latency_ema = LatencyEMA, success_ema = SuccessEMA },
-	{PeerTasks3, State2} = cut_peer_queue(
-		max_peer_queue(PeerTasks2, State),
-		PeerTasks2,
+rebalance_peer(PeerTasks, Performance, ThroughputTarget, State) ->
+	{PeerTasks2, State2} = cut_peer_queue(
+		max_peer_queue(PeerTasks, Performance, State),
+		PeerTasks,
 		State),
-	PeerTasks4 = update_active(
-		PeerTasks3, IsOK, Milliseconds, State2#state.worker_count, LatencyTarget),
-	{PeerTasks4, State2#state{ latency_target = LatencyTarget }}.
-
+	WorkerCount = State2#state.worker_count,
+	PeerTasks3 = update_active(PeerTasks2, Performance, WorkerCount, ThroughputTarget),
+	?LOG_DEBUG([
+		{event, update_active},
+		{peer, ar_util:format_peer(PeerTasks3#peer_tasks.peer)},
+		{before_max, PeerTasks2#peer_tasks.max_active},
+		{after_max, PeerTasks3#peer_tasks.max_active},
+		{worker_count, WorkerCount},
+		{active_count, PeerTasks2#peer_tasks.active_count},
+		{throughput_target, ThroughputTarget},
+		{latency_ema, Performance#performance.average_latency}
+		]),
+	{PeerTasks3, State2}.
 
 %%--------------------------------------------------------------------
 %% Helpers
@@ -354,11 +380,6 @@ update_scheduled_task_count(Worker, Task, FormattedPeer, N, State) ->
 		worker_loads = maps:put(Worker, Load, State#state.worker_loads)
 	},
 	State2.
-
-calculate_ema(OldEMA, false, _Value, _Alpha) ->
-	OldEMA;
-calculate_ema(OldEMA, true, Value, Alpha) ->
-	Alpha * Value + (1 - Alpha) * OldEMA.
 
 get_peer_tasks(Peer, State) ->
 	maps:get(Peer, State#state.peer_tasks, #peer_tasks{peer = Peer}).
@@ -390,9 +411,9 @@ format_peer(Task, Args) ->
 			ar_util:format_peer(element(3, Args))
 	end.
 
-update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
+update_active(PeerTasks, Performance, WorkerCount, ThroughputTarget) ->
 	%% Determine target max_active:
-	%% 1. Increase max_active when the EMA is less than the threshold
+	%% 1. Increase max_active when the EthrMA is less than the threshold
 	%% 2. Decrease max_active if the most recent request was slower than the threshold - this
 	%%    allows us to respond more quickly to a sudden drop in performance
 	%%
@@ -401,23 +422,15 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 	%% This prevents situations where we have a low number of active tasks and no queue which
 	%% causes each request to complete fast and hikes up the max_active. Then we get a new
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
-	LatencyEMA = PeerTasks#peer_tasks.latency_ema,
 	MaxActive = PeerTasks#peer_tasks.max_active,
-	ActiveCount = PeerTasks#peer_tasks.active_count - 1,
-	TargetMaxActive = case {
-			IsOK, Milliseconds < LatencyTarget, LatencyEMA < LatencyTarget} of
-		{false, _, _} ->
-			%% Always reduce if there was an error
+	ActiveCount = PeerTasks#peer_tasks.active_count,
+	TargetMaxActive = case Performance#performance.rating < ThroughputTarget of
+		false ->
+			%% throughput > target, decrease max_active
 			MaxActive-1;
-		{true, false, _} ->
-			%% Milliseconds > threshold, decrease max_active
-			MaxActive-1;
-		{true, true, true} ->
-			%% Milliseconds < threshold and EMA < threshold, increase max_active.
-			MaxActive+1;
-		_ ->
-			%% Milliseconds < threshold and EMA > threshold, do  nothing.
-			MaxActive
+		true ->
+			%% througput < target, increase max_active.
+			MaxActive+1
 	end,
 
 	%% Can't have more active tasks than workers.
@@ -429,7 +442,6 @@ update_active(PeerTasks, IsOK, Milliseconds, WorkerCount, LatencyTarget) ->
 	),
 	%% Can't have less than the minimum.
 	PeerTasks#peer_tasks{
-		active_count = ActiveCount,
 		max_active = max(TaskLimitedMaxActive, ?MIN_MAX_ACTIVE)
 	}.
 
