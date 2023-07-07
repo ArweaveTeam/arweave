@@ -323,19 +323,21 @@ complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State) ->
 		PeerTasks2#peer_tasks.max_active),
 	{PeerTasks2, State}.
 
+calculate_targets([], _AllPeerPerformances) ->
+	{0.0, 0.0};
 calculate_targets(Peers, AllPeerPerformances) ->
 	TotalThroughput =
 		lists:foldl(
 			fun(Peer, Acc) -> 
-				Performance = maps:get(Peer, AllPeerPerformances),
+				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 				Acc + Performance#performance.rating
-			end, 0, Peers),
+			end, 0.0, Peers),
     TotalLatency = 
 		lists:foldl(
 			fun(Peer, Acc) -> 
-				Performance = maps:get(Peer, AllPeerPerformances),
+				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 				Acc + Performance#performance.average_latency
-			end, 0, Peers),
+			end, 0.0, Peers),
     TargetLatency = TotalLatency / length(Peers),
     {TargetLatency, TotalThroughput}.
 
@@ -458,8 +460,7 @@ helpers_test_() ->
 	[
 		{timeout, 30, fun test_counters/0},
 		{timeout, 30, fun test_get_worker/0},
-		{timeout, 30, fun test_format_peer/0},
-		{timeout, 30, fun test_update_active/0}
+		{timeout, 30, fun test_format_peer/0}
 	].
 
 queue_test_() ->
@@ -469,10 +470,12 @@ queue_test_() ->
 		{timeout, 30, fun test_process_main_queue/0}
 	].
 
-complete_sync_range_test_() ->
+rebalance_peers_test_() ->
 	[
-		{timeout, 30, fun test_complete_sync_range/0},
-		{timeout, 30, fun test_cut_peer_queue/0}
+		{timeout, 30, fun test_max_peer_queue/0},
+		{timeout, 30, fun test_cut_peer_queue/0},
+		{timeout, 30, fun test_update_active/0},
+		{timeout, 30, fun test_calculate_targets/0}
 	].
 
 test_counters() ->
@@ -521,143 +524,6 @@ test_format_peer() ->
 	?assertEqual("localhost", format_peer(read_range, undefined)),
 	?assertEqual("1.2.3.4:1984", format_peer(sync_range, {0, 100, {1, 2, 3, 4, 1984}, 2})).
 
-test_update_active() ->
-	LatencyTarget = 3000,
-	FastTime = LatencyTarget - 1,
-	SlowTime = LatencyTarget + 1,
-	PeerTasks = #peer_tasks{ peer = "localhost" },
-
-	PeerTasks1 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 10
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{10, 10}, {PeerTasks1#peer_tasks.active_count, PeerTasks1#peer_tasks.max_active},
-		"Increase max_active for fast Milliseconds and EMA"),
-
-	PeerTasks2 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 10
-		}, true, FastTime, 9, LatencyTarget),
-	?assertEqual(
-		{10, 9}, {PeerTasks2#peer_tasks.active_count, PeerTasks2#peer_tasks.max_active},
-		"Limit max_active to number of workers"),
-
-	PeerTasks3 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 10
-		}, true, FastTime, 8, LatencyTarget),
-	?assertEqual(
-		{10, 8}, {PeerTasks3#peer_tasks.active_count, PeerTasks3#peer_tasks.max_active},
-		"Decrease max_active to number of workers"),
-
-	PeerTasks4 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 10,
-			max_active = 9,
-			task_queue_len = 9
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{9, 9}, {PeerTasks4#peer_tasks.active_count, PeerTasks2#peer_tasks.max_active},
-		"Limit max_active to max(active_count, queue length)"),
-
-	PeerTasks5 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 9
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{10, 10}, {PeerTasks5#peer_tasks.active_count, PeerTasks5#peer_tasks.max_active},
-		"Limit max_active to max(active_count, queue length)"),
-
-	PeerTasks6 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 10,
-			max_active = 9,
-			task_queue = queue:from_list(lists:seq(1, 10)),
-			task_queue_len = 10
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{9, 10}, {PeerTasks6#peer_tasks.active_count, PeerTasks6#peer_tasks.max_active},
-		"Limit max_active to max(active_count, queue length)"),
-
-	PeerTasks7 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 9,
-			max_active = 9,
-			task_queue_len = 8
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{8, 8}, {PeerTasks7#peer_tasks.active_count, PeerTasks7#peer_tasks.max_active},
-		"Decrease max_active to max(active_count, queue length)"),
-
-	PeerTasks8 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 8
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{10, 10}, {PeerTasks8#peer_tasks.active_count, PeerTasks8#peer_tasks.max_active},
-		"Decrease max_active to max(active_count, queue length)"),
-
-	PeerTasks9 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 9,
-			max_active = 9,
-			task_queue_len = 10
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{8, 10}, {PeerTasks9#peer_tasks.active_count, PeerTasks9#peer_tasks.max_active},
-		"Decrease max_active to max(active_count, queue length)"),
-
-	PeerTasks10 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 10
-		}, false, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{10, 8}, {PeerTasks10#peer_tasks.active_count, PeerTasks10#peer_tasks.max_active},
-		"Decrease max_active for error"),
-
-	PeerTasks11 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 10
-		}, true, SlowTime, 10, LatencyTarget),
-	?assertEqual(
-		{10, 8}, {PeerTasks11#peer_tasks.active_count, PeerTasks11#peer_tasks.max_active},
-		"Decrease max_active for slow Milliseconds"),
-
-	PeerTasks12 = update_active(PeerTasks#peer_tasks{
-			latency_ema = SlowTime,
-			active_count = 11,
-			max_active = 9,
-			task_queue_len = 10
-		}, true, FastTime, 10, LatencyTarget),
-	?assertEqual(
-		{10, 9}, {PeerTasks12#peer_tasks.active_count, PeerTasks12#peer_tasks.max_active},
-		"Do nothing for conflicting Milliseconds and EMA"),
-
-	PeerTasks13 = update_active(PeerTasks#peer_tasks{
-			latency_ema = FastTime,
-			active_count = 10,
-			max_active = ?MIN_MAX_ACTIVE,
-			task_queue_len = 9
-		}, true, SlowTime, 9, LatencyTarget),
-	?assertEqual(
-		{9, ?MIN_MAX_ACTIVE}, {PeerTasks13#peer_tasks.active_count, PeerTasks13#peer_tasks.max_active},
-		"Can't decrease below ?MIN_MAX_ACTIVE").
-
 test_enqueue_main_task() ->
 	Peer1 = {1, 2, 3, 4, 1984},
 	Peer2 = {5, 6, 7, 8, 1985},
@@ -700,10 +566,10 @@ test_enqueue_peer_task() ->
 	assert_peer_tasks([
 		{sync_range, {0, 100, PeerA, StoreID1}},
 		{sync_range, {100, 200, PeerA, StoreID1}}
-	], 0, 8, ?STARTING_LATENCY_EMA, 1.0, PeerATasks2),
+	], 0, 8, PeerATasks2),
 	assert_peer_tasks([
 		{sync_range, {200, 300, PeerB, StoreID1}}
-	], 0, 8, ?STARTING_LATENCY_EMA, 1.0, PeerBTasks1),
+	], 0, 8, PeerBTasks1),
 
 	{PeerATasks3, Task1, Args1} = dequeue_peer_task(PeerATasks2),
 	assert_task(sync_range, {0, 100, PeerA, StoreID1}, Task1, Args1),
@@ -711,8 +577,8 @@ test_enqueue_peer_task() ->
 	assert_task(sync_range, {200, 300, PeerB, StoreID1}, Task2, Args2),
 	assert_peer_tasks([
 		{sync_range, {100, 200, PeerA, StoreID1}}
-	], 0, 8, ?STARTING_LATENCY_EMA, 1.0, PeerATasks3),
-	assert_peer_tasks([], 0, 8, ?STARTING_LATENCY_EMA, 1.0, PeerBTasks2).
+	], 0, 8, PeerATasks3),
+	assert_peer_tasks([], 0, 8, PeerBTasks2).
 
 
 test_process_main_queue() ->
@@ -752,79 +618,23 @@ test_process_main_queue() ->
 	PeerTasks = get_peer_tasks(Peer1, State14),
 	assert_peer_tasks(
 		[{sync_range, {800, 900, Peer1, StoreID1}}],
-		8, 8, ?STARTING_LATENCY_EMA, 1.0, PeerTasks).
+		8, 8, PeerTasks).
 
-test_complete_sync_range() ->
-	PeerA = {1, 2, 3, 4, 1984},
-	PeerB = {5, 6, 7, 8, 1985},
-	Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,11)],
-	State0 = #state{
-		workers = queue:from_list(Workers),
-		worker_count = length(Workers),
-		latency_target = 2200
-	},
-
-	State1 = enqueue_sync_range_tasks(PeerA, 17, State0),
-	Tasks1 = queue:to_list(State1#state.task_queue),
-	%% Since this test only calls process_main_queue and process_peer_queue once, the
-	%% Peer1 queue won't change
-	ExpectedPeerAQueue = lists:sublist(Tasks1, 9, 9),
-	State2 = enqueue_sync_range_tasks(PeerB, 4, State1),
-	State3 = process_main_queue(State2),
-	PeerTasksA1 = get_peer_tasks(PeerA, State3),
-	PeerTasksB1 = get_peer_tasks(PeerB, State3),
-	assert_peer_tasks(
-		ExpectedPeerAQueue, 8, 8, ?STARTING_LATENCY_EMA, 1.0, PeerTasksA1),
-	assert_peer_tasks([], 4, 8, ?STARTING_LATENCY_EMA, 1.0, PeerTasksB1),
-
-	%% Quick task
-	{PeerTasksA2, State4} = complete_sync_range(PeerTasksA1,
-		ok, (State3#state.latency_target-500) * 1_000_000, State3),
-	?assertEqual(2116, State4#state.latency_target),
-	assert_peer_tasks(ExpectedPeerAQueue, 7, 9, 1070, 1.0, PeerTasksA2),
-
-	%% Quick task, but can't go above Peer1 queue length
-	{PeerTasksA3, State5} = complete_sync_range(PeerTasksA2,
-		ok, (State4#state.latency_target-1000) * 1_000_000, State4),
-	?assertEqual(1949, State5#state.latency_target),
-	assert_peer_tasks(ExpectedPeerAQueue, 6, 9, 1074, 1.0, PeerTasksA3),
-
-	%% Slow task but average is still quick -> max_active decreases
-	{PeerTasksA4, State6} = complete_sync_range(PeerTasksA3, ok, (State5#state.latency_target+100) * 1_000_000, State5),
-	?assertEqual(1965, State6#state.latency_target),
-	assert_peer_tasks(ExpectedPeerAQueue, 5, 8, 1171, 1.0, PeerTasksA4),
-
-	%% Quick task, but hit max workers
-	{PeerTasksA5, State7} = complete_sync_range(PeerTasksA4,
-		ok, (State6#state.latency_target-100) * 1_000_000, State6#state{ worker_count = 8 }),
-	?assertEqual(1942, State7#state.latency_target),
-	assert_peer_tasks(ExpectedPeerAQueue, 4, 8, 1240, 1.0, PeerTasksA5),
-
-	%% Slow task pushes average slow
-	{PeerTasksA6, State8} = complete_sync_range(PeerTasksA5, ok, (State7#state.latency_target+100_000) * 1_000_000, State7),
-	?assertEqual(24164, State8#state.latency_target),
-	assert_peer_tasks(ExpectedPeerAQueue, 3, 8, 11310, 1.0, PeerTasksA6),
-
-	%% Too quick (error)
-	{PeerTasksB2, State9} = complete_sync_range(PeerTasksB1, ok, 5 * 1_000_000, State8),
-	?assertEqual(24164, State9#state.latency_target),
-	assert_peer_tasks([], 3, 8, 1000, 0.9, PeerTasksB2),
-
-	%% Error
-	{PeerTasksB3, State10} = complete_sync_range(PeerTasksB2,
-		{error, timeout}, (State9#state.latency_target-100) * 1_000_000, State9),
-	?assertEqual(24164, State10#state.latency_target),
-	assert_peer_tasks([], 2, 8, 1000, 0.81, PeerTasksB3),
-
-	%% Slow task, but can't go below 8
-	{PeerTasksB4, State11} = complete_sync_range(PeerTasksB3, ok, (State10#state.latency_target+100) * 1_000_000, State10),
-	?assertEqual(24186, State11#state.latency_target),
-	assert_peer_tasks([], 1, 8, 3326, 0.829, PeerTasksB4),
-
-	%% Fast task, but can't go above max(active_count, peer queue length)
-	{PeerTasksB5, State12} = complete_sync_range(PeerTasksB4, ok, (State11#state.latency_target-1000) * 1_000_000, State11),
-	?assertEqual(23963, State12#state.latency_target),
-	assert_peer_tasks([], 0, 8, 5312, 0.846, PeerTasksB5).
+test_max_peer_queue() ->
+	{ok, OriginalConfig} = application:get_env(arweave, config),
+	try
+		ok = application:set_env(arweave, config, OriginalConfig#config{
+			sync_jobs = 10
+		}),
+		?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0)),
+		?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0.0)),
+		?assertEqual(undefined, max_peer_queue(#performance{ rating = 0 }, 100)),
+		?assertEqual(undefined, max_peer_queue(#performance{ rating = 0.0 }, 100)),
+		?assertEqual(50, max_peer_queue(#performance{ rating = 10 }, 100)),
+		?assertEqual(20, max_peer_queue(#performance{ rating = 1 }, 100))
+	after
+		application:set_env(arweave, config, OriginalConfig)
+	end.
 
 test_cut_peer_queue() ->
 	{ok, OriginalConfig} = application:get_env(arweave, config),
@@ -832,95 +642,126 @@ test_cut_peer_queue() ->
 		ok = application:set_env(arweave, config, OriginalConfig#config{
 			sync_jobs = 10
 		}),
+
 		Peer1 = {1, 2, 3, 4, 1984},
-		Workers = [list_to_atom("worker"++integer_to_list(Value)) || Value <- lists:seq(1,8)],
-		State0 = #state{
-			workers = queue:from_list(Workers), worker_count = length(Workers)
+		TaskQueue = lists:seq(1, 100),
+		PeerTasks = #peer_tasks{
+			peer = Peer1,
+			task_queue = queue:from_list(TaskQueue),
+			task_queue_len = length(TaskQueue)
 		},
+		State = #state{
+			queued_task_count = length(TaskQueue),
+			scheduled_task_count = 10
+		},
+		
+		{PeerTasks1, State1} = cut_peer_queue(200, PeerTasks, State),
+		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks1),
+		?assertEqual(100, State1#state.queued_task_count),
 
-		State1 = enqueue_sync_range_tasks(Peer1, 100, State0),
-		Tasks = queue:to_list(State1#state.task_queue),
-		State2 = process_main_queue(State1),
-		?assertEqual(92, State2#state.queued_task_count),
-		?assertEqual(8, State2#state.scheduled_task_count),
-		PeerTasks1 = get_peer_tasks(Peer1, State2),
-		assert_peer_tasks(
-			lists:sublist(Tasks, 9, 92),
-			8, 8, ?STARTING_LATENCY_EMA, 1.0, PeerTasks1),
+		{PeerTasks2, State2} = cut_peer_queue(20, PeerTasks, State),
+		assert_peer_tasks(lists:sublist(TaskQueue, 1, 20), 0, 8, PeerTasks2),
+		?assertEqual(20, State2#state.queued_task_count),
 
-		%% Error at the beginning means EMA isn't set. This should not affect the peer queue.
-		{PeerTasks2, State3} = assert_complete_sync_range(
-			92, 7, 2000, PeerTasks1, {error, timeout}, 5 * 1_000_000, State2),
-		assert_peer_tasks(lists:sublist(Tasks, 9, 92), 7, 8, 1000, 0.9, PeerTasks2),
+		{PeerTasks3, State3} = cut_peer_queue(
+			20, PeerTasks, State#state{ scheduled_task_count = 0 }),
+		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks3),
+		?assertEqual(100, State3#state.queued_task_count),
 
-		%% Really slow task, max queue size cut to 55. Reset success_ema to 1.0
-		{PeerTasks3, State4} = assert_complete_sync_range(
-			55, 6, 46_000,
-			PeerTasks2#peer_tasks{ success_ema = 1.0 }, ok, (200_000) * 1_000_000, State3),
-		assert_peer_tasks(lists:sublist(Tasks, 9, 55), 6, 8, 20_900, 1.0, PeerTasks3),
-
-		%% We should still cut a peer queue when there's an error so long as the MaxQueue is less
-		%% than actual peer queue length
-		State5 = set_peer_tasks(PeerTasks3, State4),
-		State6 = enqueue_sync_range_tasks(Peer1, 10, State5),
-		State7 = process_main_queue(State6),
-		PeerTasks4 = get_peer_tasks(Peer1, State7),
-		%% 55 (initial queue) + 10 (enqueued) - 2 (scheduled) = 63
-		?assertEqual(63, State7#state.queued_task_count), 
-		?assertEqual(8, State7#state.scheduled_task_count),
-		?assertEqual(46_000, State7#state.latency_target),
-		?assertEqual(20_900, PeerTasks4#peer_tasks.latency_ema),
-		?assertEqual(1.0, PeerTasks4#peer_tasks.success_ema),
-
-		%% An error reduces the success_rate and therefore the max queue length. We have to fudge
-		%% things a bit by setting the latency_ema to 400,000 to compensate for the tasks added
-		%% above. Without considering the error the MaxQueue would be 65 (no cutting needed),
-		%% however with the error it drops to 59 (cutting needed).
-		{PeerTasks5, _} = assert_complete_sync_range(
-			59, 7, 46_000,
-			PeerTasks4#peer_tasks{ latency_ema = 400_000 }, {error, timeout}, 5 * 1_000_000, State7),
-		?assertEqual(7, PeerTasks5#peer_tasks.active_count),
-		?assertEqual(8, PeerTasks5#peer_tasks.max_active),
-		?assertEqual(round_3(0.9), round_3(PeerTasks5#peer_tasks.success_ema))
+		{PeerTasks4, State4} = cut_peer_queue(undefined, PeerTasks, State),
+		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks4),
+		?assertEqual(100, State4#state.queued_task_count)
 	after
 		application:set_env(arweave, config, OriginalConfig)
 	end.
 
-enqueue_sync_range_tasks(_Peer, 0, State) ->
-	State;
-enqueue_sync_range_tasks(Peer, N, State) ->
-	Args = {N*100, (N+1)*100, Peer, ar_storage_module:id({?PARTITION_SIZE, 1, default})},
-	State1 = enqueue_main_task(sync_range, Args, State),
-	enqueue_sync_range_tasks(Peer, N-1, State1).
+test_update_active() ->
+	Result1 = update_active(
+		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 30},
+		#performance{average_latency = 100},
+		20,
+		200),
+	?assertEqual(11, Result1#peer_tasks.max_active),
 
-assert_complete_sync_range(
-		ExpectedQueuedTaskCount, ExpectedScheduledTaskCount, ExpectedLatencyTarget,
-		PeerTasks, Result, Duration, State) ->
-	State2 = update_scheduled_task_count(
-		worker1, sync_range, ar_util:format_peer(PeerTasks#peer_tasks.peer), -1, State),
-	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, Duration, State2),
-	?assertEqual(ExpectedQueuedTaskCount, State3#state.queued_task_count),
-	?assertEqual(ExpectedScheduledTaskCount, State3#state.scheduled_task_count),
-	?assertEqual(ExpectedLatencyTarget, State3#state.latency_target),
-	{PeerTasks2, State3}.
+	Result2 = update_active(
+		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+		#performance{average_latency = 300},
+		20,
+		200),
+	?assertEqual(9, Result2#peer_tasks.max_active),
+
+	Result3 = update_active(
+		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+		#performance{average_latency = 100},
+		10,
+		200),
+	?assertEqual(10, Result3#peer_tasks.max_active),
+
+	Result4 = update_active(
+		#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
+		#performance{average_latency = 100},
+		20,
+		200),
+	?assertEqual(10, Result4#peer_tasks.max_active),
+
+	Result5 = update_active(
+		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
+		#performance{average_latency = 100},
+		20,
+		200),
+	?assertEqual(10, Result5#peer_tasks.max_active),
+
+	Result6 = update_active(
+		#peer_tasks{max_active = 8, active_count = 20, task_queue_len = 30},
+		#performance{average_latency = 300},
+		20,
+		200),
+	?assertEqual(8, Result6#peer_tasks.max_active).
+
+test_calculate_targets() ->
+	Result1 = calculate_targets([], #{}),
+	?assertEqual({0.0, 0.0}, Result1),
+
+    Result2 = calculate_targets(
+		["peer1", "peer2"],
+		#{
+			"peer1" => #performance{rating = 0, average_latency = 0},
+			"peer2" => #performance{rating = 0, average_latency = 0}
+		}),
+    ?assertEqual({0.0, 0.0}, Result2),
+	
+	Result3 = calculate_targets(
+		["peer1", "peer2"],
+		#{
+			"peer1" => #performance{rating = 5, average_latency = 2},
+			"peer2" => #performance{rating = 3, average_latency = 4}
+		}),
+    ?assertEqual({3.0, 8.0}, Result3),
+
+	Result4 = calculate_targets(
+		["peer1", "peer2"],
+		#{
+			"peer1" => #performance{rating = 5, average_latency = 2}
+		}),
+    ?assertEqual({1.0, 5.0}, Result4),
+
+    Result5 = calculate_targets(
+		["peer1"],
+		#{
+			"peer1" => #performance{rating = 5, average_latency = 2},
+			"peer2" => #performance{rating = 3, average_latency = 4}
+		}),
+    ?assertEqual({2.0, 5.0}, Result5).
 
 assert_main_queue(ExpectedTasks, State) ->
 	?assertEqual(ExpectedTasks, queue:to_list(State#state.task_queue)),
 	?assertEqual(length(ExpectedTasks), State#state.task_queue_len).
 
-assert_peer_tasks(
-		ExpectedQueue, ExpectedActiveCount, ExpectedMaxActive,
-		ExpectedLatencyEMA, ExpectedSuccessEMA,
-		PeerTasks) ->
+assert_peer_tasks(ExpectedQueue, ExpectedActiveCount, ExpectedMaxActive, PeerTasks) ->
 	?assertEqual(ExpectedQueue, queue:to_list(PeerTasks#peer_tasks.task_queue)),
 	?assertEqual(ExpectedActiveCount, PeerTasks#peer_tasks.active_count),
-	?assertEqual(ExpectedMaxActive, PeerTasks#peer_tasks.max_active),
-	?assertEqual(ExpectedLatencyEMA, PeerTasks#peer_tasks.latency_ema),
-	?assertEqual(round_3(ExpectedSuccessEMA), round_3(PeerTasks#peer_tasks.success_ema)).
+	?assertEqual(ExpectedMaxActive, PeerTasks#peer_tasks.max_active).
 
 assert_task(ExpectedTask, ExpectedArgs, Task, Args) ->
 	?assertEqual(ExpectedTask, Task),
 	?assertEqual(ExpectedArgs, Args).
-
-round_3(Float) ->
-	round(Float * 1000) / 1000.
