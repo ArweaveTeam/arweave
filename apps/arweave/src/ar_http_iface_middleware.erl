@@ -1830,7 +1830,7 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	ar_peers:rate_gossiped_data(Peer, byte_size(term_to_binary(TX))),
+	ar_peers:rate_gossiped_data(Peer, tx, byte_size(term_to_binary(TX))),
 	ar_events:send(tx, {new, TX, Peer}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),

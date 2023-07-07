@@ -551,7 +551,7 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 handle_sync_record_response(Reply, _, _) ->
 	{error, Reply}.
 
-handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 	case catch ar_serialize:binary_to_poa(Body) of
 		{'EXIT', Reason} ->
 			{error, Reason};
@@ -564,7 +564,7 @@ handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 				Chunk when byte_size(Chunk) > ?DATA_CHUNK_SIZE ->
 					{error, chunk_bigger_than_256kib};
 				_ ->
-					{ok, Proof}
+					{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
 			end
 	end;
 handle_chunk_response({error, _} = Response) ->

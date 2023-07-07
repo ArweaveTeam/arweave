@@ -107,7 +107,7 @@ handle_cast({task_completed, {read_range, {Worker, _, _}}}, State) ->
 	{noreply, State2};
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
-	{Start, End, Peer, _} = Args,
+	{Start, End, Peer, _, _} = Args,
 	DataSize = End - Start,
 	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
