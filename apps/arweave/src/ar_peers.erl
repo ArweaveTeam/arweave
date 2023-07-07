@@ -11,7 +11,7 @@
 
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 	get_peer_release/1, stats/0, discover_peers/0, add_peer/2, rank_peers/1,
-	resolve_and_cache_peer/2, rate_response/4, rate_fetched_data/4, rate_fetched_data/6,
+	resolve_and_cache_peer/2, rate_fetched_data/4, rate_fetched_data/6,
 	rate_gossiped_data/3
 ]).
 
@@ -107,8 +107,7 @@ get_trusted_peers() ->
 		[] ->
 			ArweavePeers = ["sfo-1.na-west-1.arweave.net", "ams-1.eu-central-1.arweave.net",
 					"fra-1.eu-central-2.arweave.net", "blr-1.ap-central-1.arweave.net",
-					"sgp-1.ap-central-2.arweave.net"
-			],
+					"sgp-1.ap-central-2.arweave.net"],
 			resolve_peers(ArweavePeers);
 		Peers ->
 			Peers
@@ -176,16 +175,6 @@ get_peer_release(Peer) ->
 		_ ->
 			-1
 	end.
-
-rate_response({_Host, _Port}, _, _, _) ->
-	%% Only track requests for IP-based peers as the rest of the stack assumes an IP-based peer.
-	ok;
-rate_response(Peer, PathLabel, get, Response) ->
-	gen_server:cast(
-		?MODULE, {rate_response, Peer, PathLabel, get, ar_metrics:get_status_class(Response)}
-	);
-rate_response(_Peer, _PathLabel, _Method, _Response) ->
-	ok.
 
 rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 	rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
@@ -265,7 +254,7 @@ resolve_and_cache_peer(RawPeer, Type) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe(block),
+	ok = ar_events:subscribe(block),
 	load_peers(),
 	gen_server:cast(?MODULE, rank_peers),
 	gen_server:cast(?MODULE, ping_peers),
@@ -284,16 +273,14 @@ handle_cast(rank_peers, State) ->
 	Total = get_total_rating(),
 	Peers =
 		ets:foldl(
-			fun
-				({{peer, Peer}, Performance}, Acc) ->
+			fun ({{peer, Peer}, Performance}, Acc) ->
 					%% Bigger score increases the chances to end up on the top
 					%% of the peer list, but at the same time the ranking is
 					%% probabilistic to always give everyone a chance to improve
 					%% in the competition (i.e., reduce the advantage gained by
 					%% being the first to earn a reputation).
-					Score =
-						rand:uniform() * Performance#performance.rating /
-							(Total + 0.0001),
+					Score = rand:uniform() * Performance#performance.rating
+							/ (Total + 0.0001),
 					[{Peer, Score} | Acc];
 				(_, Acc) ->
 					Acc
@@ -310,28 +297,6 @@ handle_cast(rank_peers, State) ->
 handle_cast(ping_peers, State) ->
 	[{peers, Peers}] = ets:lookup(?MODULE, peers),
 	ping_peers(lists:sublist(Peers, 100)),
-	{noreply, State};
-
-handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
-	case Status of
-		"success" ->
-			update_rating(Peer, true);
-		"redirection" ->
-			%% don't update rating
-			ok;
-		"client-error" ->
-			%% don't update rating
-			ok;
-		_ ->
-			update_rating(Peer, false)
-	end,
-	?LOG_DEBUG([
-		{event, update_rating},
-		{update_type, response},
-		{path, PathLabel},
-		{status, Status},
-		{peer, ar_util:format_peer(Peer)}
-	]),
 	{noreply, State};
 
 handle_cast({fetched_data, Peer, DataType, LatencyMicroseconds, DataSize, Concurrency}, State) ->
@@ -543,7 +508,7 @@ load_peer({Peer, Performance}) ->
 			?LOG_DEBUG([{event, peer_unavailable}, {peer, ar_util:format_peer(Peer)}]),
 			ok;
 		<<?NETWORK_NAME>> ->
-			may_be_rotate_peer_ports(Peer),
+			maybe_rotate_peer_ports(Peer),
 			case Performance of
 				{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating} ->
 					%% For compatibility with a few nodes already storing the records
@@ -579,13 +544,12 @@ load_peer({Peer, Performance}) ->
 			ok
 	end.
 
-may_be_rotate_peer_ports(Peer) ->
+maybe_rotate_peer_ports(Peer) ->
 	{IP, Port} = get_ip_port(Peer),
 	case ets:lookup(?MODULE, {peer_ip, IP}) of
 		[] ->
 			ets:insert(?MODULE, {{peer_ip, IP},
-					{erlang:setelement(1, ?DEFAULT_PEER_PORT_MAP, Port), 1}}
-			);
+					{erlang:setelement(1, ?DEFAULT_PEER_PORT_MAP, Port), 1}});
 		[{_, {PortMap, Position}}] ->
 			case is_in_port_map(Port, PortMap) of
 				{true, _} ->
@@ -596,7 +560,7 @@ may_be_rotate_peer_ports(Peer) ->
 						true ->
 							ets:insert(?MODULE, {{peer_ip, IP},
 									{erlang:setelement(Position + 1, PortMap, Port),
-										Position + 1}});
+									Position + 1}});
 						false ->
 							RemovedPeer = construct_peer(IP, element(1, PortMap)),
 							PortMap2 = shift_port_map_left(PortMap),
@@ -663,8 +627,7 @@ is_loopback_ip({_, _, _, _}) -> false.
 %% @doc Return a ranked list of peers.
 rank_peers(ScoredPeers) ->
 	SortedReversed = lists:reverse(
-		lists:sort(fun({_, S1}, {_, S2}) -> S1 >= S2 end, ScoredPeers)
-	),
+		lists:sort(fun({_, S1}, {_, S2}) -> S1 >= S2 end, ScoredPeers)),
 	GroupedBySubnet =
 		lists:foldl(
 			fun({{A, B, _C, _D, _Port}, _Score} = Peer, Acc) ->
@@ -758,7 +721,7 @@ update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 		transfers = Transfers2
 	},
 	Total2 = Total - Rating + Rating2,
-	may_be_rotate_peer_ports(Peer),
+	maybe_rotate_peer_ports(Peer),
 	set_performance(Peer, Performance2),
 	set_total_rating(Total2),
 	Performance2.
@@ -767,7 +730,7 @@ calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
 
 maybe_add_peer(Peer, Release) ->
-	may_be_rotate_peer_ports(Peer),
+	maybe_rotate_peer_ports(Peer),
 	case ets:lookup(?MODULE, {peer, Peer}) of
 		[{_, #performance{ release = Release }}] ->
 			ok;
@@ -830,8 +793,7 @@ is_port_map_empty(PortMap, Max, N) ->
 store_peers() ->
 	Records =
 		ets:foldl(
-			fun
-				({{peer, Peer}, Performance}, Acc) ->
+			fun ({{peer, Peer}, Performance}, Acc) ->
 					[{Peer, Performance} | Acc];
 				(_, Acc) ->
 					Acc
@@ -852,14 +814,14 @@ store_peers() ->
 
 rotate_peer_ports_test() ->
 	Peer = {2, 2, 2, 2, 1},
-	may_be_rotate_peer_ports(Peer),
+	maybe_rotate_peer_ports(Peer),
 	[{_, {PortMap, 1}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(1, element(1, PortMap)),
 	remove_peer(Peer),
 	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})),
-	may_be_rotate_peer_ports(Peer),
+	maybe_rotate_peer_ports(Peer),
 	Peer2 = {2, 2, 2, 2, 2},
-	may_be_rotate_peer_ports(Peer2),
+	maybe_rotate_peer_ports(Peer2),
 	[{_, {PortMap2, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(1, element(1, PortMap2)),
 	?assertEqual(2, element(2, PortMap2)),
@@ -876,35 +838,35 @@ rotate_peer_ports_test() ->
 	Peer9 = {2, 2, 2, 2, 9},
 	Peer10 = {2, 2, 2, 2, 10},
 	Peer11 = {2, 2, 2, 2, 11},
-	may_be_rotate_peer_ports(Peer3),
-	may_be_rotate_peer_ports(Peer4),
-	may_be_rotate_peer_ports(Peer5),
-	may_be_rotate_peer_ports(Peer6),
-	may_be_rotate_peer_ports(Peer7),
-	may_be_rotate_peer_ports(Peer8),
-	may_be_rotate_peer_ports(Peer9),
-	may_be_rotate_peer_ports(Peer10),
+	maybe_rotate_peer_ports(Peer3),
+	maybe_rotate_peer_ports(Peer4),
+	maybe_rotate_peer_ports(Peer5),
+	maybe_rotate_peer_ports(Peer6),
+	maybe_rotate_peer_ports(Peer7),
+	maybe_rotate_peer_ports(Peer8),
+	maybe_rotate_peer_ports(Peer9),
+	maybe_rotate_peer_ports(Peer10),
 	[{_, {PortMap4, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(empty_slot, element(1, PortMap4)),
 	?assertEqual(2, element(2, PortMap4)),
 	?assertEqual(10, element(10, PortMap4)),
-	may_be_rotate_peer_ports(Peer8),
-	may_be_rotate_peer_ports(Peer9),
-	may_be_rotate_peer_ports(Peer10),
+	maybe_rotate_peer_ports(Peer8),
+	maybe_rotate_peer_ports(Peer9),
+	maybe_rotate_peer_ports(Peer10),
 	[{_, {PortMap5, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(empty_slot, element(1, PortMap5)),
 	?assertEqual(2, element(2, PortMap5)),
 	?assertEqual(3, element(3, PortMap5)),
 	?assertEqual(9, element(9, PortMap5)),
 	?assertEqual(10, element(10, PortMap5)),
-	may_be_rotate_peer_ports(Peer11),
+	maybe_rotate_peer_ports(Peer11),
 	[{_, {PortMap6, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(element(2, PortMap5), element(1, PortMap6)),
 	?assertEqual(3, element(2, PortMap6)),
 	?assertEqual(4, element(3, PortMap6)),
 	?assertEqual(5, element(4, PortMap6)),
 	?assertEqual(11, element(10, PortMap6)),
-	may_be_rotate_peer_ports(Peer11),
+	maybe_rotate_peer_ports(Peer11),
 	[{_, {PortMap7, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(element(2, PortMap5), element(1, PortMap7)),
 	?assertEqual(3, element(2, PortMap7)),

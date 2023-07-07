@@ -413,7 +413,7 @@ format_peer(Task, Args) ->
 
 update_active(PeerTasks, Performance, WorkerCount, ThroughputTarget) ->
 	%% Determine target max_active:
-	%% 1. Increase max_active when the EthrMA is less than the threshold
+	%% 1. Increase max_active when the EMA is less than the threshold
 	%% 2. Decrease max_active if the most recent request was slower than the threshold - this
 	%%    allows us to respond more quickly to a sudden drop in performance
 	%%
