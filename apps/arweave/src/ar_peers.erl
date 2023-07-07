@@ -10,8 +10,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
-	get_peer_release/1, stats/0, discover_peers/0, rank_peers/1, resolve_and_cache_peer/2,
-	rate_response/4, rate_fetched_data/4, rate_fetched_data/6, rate_gossiped_data/3
+	get_peer_release/1, stats/0, discover_peers/0, add_peer/2, rank_peers/1,
+	resolve_and_cache_peer/2, rate_response/4, rate_fetched_data/4, rate_fetched_data/6,
+	rate_gossiped_data/3
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -42,6 +43,34 @@
 -define(THROUGHPUT_ALPHA, 0.1).
 -define(SUCCESS_ALPHA, 0.01).
 
+%% When processing block rejected events for blocks received from a peer, we handle rejections
+%% differently based on the rejection reason.
+-define(BLOCK_REJECTION_WARNING, [
+	failed_to_fetch_first_chunk,
+	failed_to_fetch_second_chunk,
+	failed_to_fetch_chunk
+]).
+-define(BLOCK_REJECTION_BAN, [
+	invalid_previous_solution_hash,
+	invalid_last_retarget,
+	invalid_difficulty,
+	invalid_cumulative_difficulty,
+	invalid_hash_preimage, 
+	invalid_nonce_limiter_seed_data, 
+	invalid_partition_number, 
+	invalid_nonce, 
+	invalid_pow, 
+	invalid_poa, 
+	invalid_poa2, 
+	invalid_nonce_limiter
+]).
+-define(BLOCK_REJECTION_IGNORE, [
+	invalid_signature,
+	invalid_hash,
+	invalid_timestamp,
+	invalid_resigned_solution_hash,
+	invalid_nonce_limiter_cache_mismatch
+]).
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
 %% we remove the peer from the first slot.
@@ -172,6 +201,9 @@ rate_gossiped_data(Peer, DataType, DataSize) ->
 issue_warning(Peer, _Type, _Reason) ->
 	gen_server:cast(?MODULE, {warning, Peer}).
 
+add_peer(Peer, Release) ->
+	gen_server:cast(?MODULE, {add_peer, Peer, Release}).
+
 %% @doc Print statistics about the current peers.
 stats() ->
 	Connected = get_peers(),
@@ -233,7 +265,7 @@ resolve_and_cache_peer(RawPeer, Type) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe([peer, block]),
+	[ok, ok] = ar_events:subscribe(block),
 	load_peers(),
 	gen_server:cast(?MODULE, rank_peers),
 	gen_server:cast(?MODULE, ping_peers),
@@ -245,7 +277,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({add_peer, Peer, Release}, State) ->
-	add_peer(Peer, Release),
+	maybe_add_peer(Peer, Release),
 	{noreply, State};
 
 handle_cast(rank_peers, State) ->
@@ -372,24 +404,24 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_info({event, peer, {made_request, Peer, Release}}, State) ->
-	add_peer(Peer, Release),
-	{noreply, State};
+handle_info({event, block, {rejected, Reason, _H, Peer}}, State) when Peer /= no_peer ->
+	IssueBan = lists:member(Reason, ?BLOCK_REJECTION_BAN),
+	IssueWarning = lists:member(Reason, ?BLOCK_REJECTION_WARNING),
+	Ignore = lists:member(Reason, ?BLOCK_REJECTION_IGNORE),
 
-handle_info({event, peer, {banned, BannedPeer}}, State) ->
-	remove_peer(BannedPeer),
-	{noreply, State};
-
-handle_info({event, block, {rejected, failed_to_fetch_first_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer, block_rejected, failed_to_fetch_first_chunk),
-	{noreply, State};
-
-handle_info({event, block, {rejected, failed_to_fetch_second_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer, block_rejected, failed_to_fetch_second_chunk),
-	{noreply, State};
-
-handle_info({event, block, {rejected, failed_to_fetch_chunk, _H, Peer}}, State) ->
-	issue_warning(Peer, block_rejected, failed_to_fetch_chunk),
+	case {IssueBan, IssueWarning, Ignore} of
+		{true, false, false} ->
+			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
+			remove_peer(Peer);
+		{false, true, false} ->
+			issue_warning(Peer, block_rejected, Reason);
+		{false, false, true} ->
+			%% ignore
+			ok;
+		_ ->
+			%% Ever reason should be in exactly 1 list.
+			error("invalid block rejection reason")
+	end,
 	{noreply, State};
 
 handle_info({event, block, {new, B,
@@ -457,7 +489,7 @@ discover_peers([Peer | Peers]) ->
 				ok ->
 					case ar_http_iface_client:get_info(Peer, release) of
 						{<<"release">>, Release} when is_integer(Release) ->
-							gen_server:cast(?MODULE, {add_peer, Peer, Release});
+							maybe_add_peer(Peer, Release);
 						_ ->
 							ok
 					end;
@@ -734,7 +766,7 @@ update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
 
-add_peer(Peer, Release) ->
+maybe_add_peer(Peer, Release) ->
 	may_be_rotate_peer_ports(Peer),
 	case ets:lookup(?MODULE, {peer, Peer}) of
 		[{_, #performance{ release = Release }}] ->

@@ -401,7 +401,6 @@ pre_validate_previous_solution_hash(B, BDS, PrevB, SolutionResigned, Peer, Query
 	case B#block.previous_solution_hash == PrevB#block.hash of
 		false ->
 			post_block_reject_warn(B, check_previous_solution_hash, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_previous_solution_hash,
 					B#block.indep_hash, Peer}),
 			invalid;
@@ -419,7 +418,6 @@ pre_validate_last_retarget(B, BDS, PrevB, SolutionResigned, Peer, QueryBlockTime
 					pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, QueryBlockTime);
 				false ->
 					post_block_reject_warn(B, check_last_retarget, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_last_retarget,
 							B#block.indep_hash, Peer}),
 					invalid
@@ -440,7 +438,6 @@ pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, QueryBlockTime) -
 					QueryBlockTime);
 		_ ->
 			post_block_reject_warn(B, check_difficulty, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_difficulty, B#block.indep_hash, Peer}),
 			invalid
 	end.
@@ -451,7 +448,6 @@ pre_validate_cumulative_difficulty(B, BDS, PrevB, SolutionResigned, Peer, QueryB
 			case ar_block:verify_cumulative_diff(B, PrevB) of
 				false ->
 					post_block_reject_warn(B, check_cumulative_difficulty, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_cumulative_difficulty,
 							B#block.indep_hash, Peer}),
 					invalid;
@@ -493,7 +489,6 @@ pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer, QueryBlockTime) ->
 			case binary:decode_unsigned(SolutionHash, big) > Diff of
 				false ->
 					post_block_reject_warn(B, check_hash_preimage, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_hash_preimage,
 							B#block.indep_hash, Peer}),
 					invalid;
@@ -543,7 +538,6 @@ pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer, QueryBloc
 							SolutionResigned, Peer, QueryBlockTime);
 				false ->
 					post_block_reject_warn(B, check_nonce_limiter_seed_data, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_nonce_limiter_seed_data,
 							B#block.indep_hash, Peer}),
 					invalid
@@ -556,7 +550,6 @@ pre_validate_partition_number(B, PrevB, PartitionUpperBound, SolutionResigned, P
 	case B#block.partition_number > Max of
 		true ->
 			post_block_reject_warn(B, check_partition_number, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_partition_number, B#block.indep_hash,
 					Peer}),
 			invalid;
@@ -570,7 +563,6 @@ pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer, QueryB
 	case B#block.nonce > Max of
 		true ->
 			post_block_reject_warn(B, check_nonce, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_nonce, B#block.indep_hash, Peer}),
 			invalid;
 		false ->
@@ -643,7 +635,6 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer, QueryBlockTime) ->
 					pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, QueryBlockTime);
 				false ->
 					post_block_reject_warn(B, check_pow, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_pow, B#block.indep_hash, Peer}),
 					invalid
 			end
@@ -664,7 +655,6 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, QueryBlockTime) ->
 			invalid;
 		false ->
 			post_block_reject_warn(B, check_poa, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_poa, B#block.indep_hash, Peer}),
 			invalid;
 		true ->
@@ -686,7 +676,6 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, QueryBlockTime) ->
 							invalid;
 						false ->
 							post_block_reject_warn(B, check_poa2, Peer),
-							ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 							ar_events:send(block, {rejected, invalid_poa2,
 									B#block.indep_hash, Peer}),
 							invalid;
@@ -702,11 +691,10 @@ pre_validate_nonce_limiter(B, PrevB, Peer, QueryBlockTime) ->
 		{false, cache_mismatch} ->
 			ar_ignore_registry:add(B#block.indep_hash),
 			post_block_reject_warn(B, check_nonce_limiter, Peer),
-			ar_events:send(block, {rejected, invalid_nonce_limiter, B#block.indep_hash, Peer}),
+			ar_events:send(block, {rejected, invalid_nonce_limiter_cache_mismatch, B#block.indep_hash, Peer}),
 			invalid;
 		false ->
 			post_block_reject_warn(B, check_nonce_limiter, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_nonce_limiter, B#block.indep_hash, Peer}),
 			invalid;
 		{true, cache_match} ->
@@ -768,7 +756,6 @@ pre_validate_pow(B, BDS, PrevB, Peer, QueryBlockTime) ->
 			ok;
 		false ->
 			post_block_reject_warn(B, check_pow, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_pow, B#block.indep_hash, Peer}),
 			invalid
 	end.
