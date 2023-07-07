@@ -97,9 +97,7 @@ resolve_peers([RawPeer | Peers]) ->
 		{ok, Peer} ->
 			[Peer | resolve_peers(Peers)];
 		{error, invalid} ->
-			?LOG_WARNING([{event, failed_to_resolve_trusted_peer},
-					{peer, RawPeer}
-			]),
+			?LOG_WARNING([{event, failed_to_resolve_trusted_peer}, {peer, RawPeer}]),
 			resolve_peers(Peers)
 	end.
 
@@ -144,7 +142,7 @@ is_public_peer(_) ->
 %% Return -1 if the release is not known.
 get_peer_release(Peer) ->
 	case catch ets:lookup(?MODULE, {peer, Peer}) of
-		[{_, Release}] ->
+		[{_, #performance{ release = Release }}] ->
 			Release;
 		_ ->
 			-1
@@ -252,7 +250,7 @@ handle_cast(rank_peers, State) ->
 	Peers =
 		ets:foldl(
 			fun
-				({{performance, Peer, overall}, Performance}, Acc) ->
+				({{peer, Peer}, Performance}, Acc) ->
 					%% Bigger score increases the chances to end up on the top
 					%% of the peer list, but at the same time the ranking is
 					%% probabilistic to always give everyone a chance to improve
@@ -282,7 +280,7 @@ handle_cast(ping_peers, State) ->
 handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 	case Status of
 		"success" ->
-			update_rating(Peer, overall, true);
+			update_rating(Peer, true);
 		"redirection" ->
 			%% don't update rating
 			ok;
@@ -290,12 +288,11 @@ handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 			%% don't update rating
 			ok;
 		_ ->
-			update_rating(Peer, overall, false)
+			update_rating(Peer, false)
 	end,
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, response},
-		{metric, overall},
 		{path, PathLabel},
 		{status, Status},
 		{peer, ar_util:format_peer(Peer)}
@@ -312,11 +309,7 @@ handle_cast({fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concur
 		{data_size, DataSize},
 		{concurrency, Concurrency}
 	]),
-	update_rating(Peer, overall, LatencyMicroseconds, DataSize, Concurrency, true),
-	case DataType of
-		chunk -> update_rating(Peer, data_sync, LatencyMicroseconds, DataSize, Concurrency, true);
-		_ -> ok
-	end,
+	update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, true),
 	{noreply, State};
 
 
@@ -327,11 +320,7 @@ handle_cast({invalid_fetched_data, DataType, Peer}, State) ->
 		{data_type, DataType},
 		{peer, ar_util:format_peer(Peer)}
 	]),
-	update_rating(Peer, overall, false),
-	case DataType of
-		chunk -> update_rating(Peer, data_sync, false);
-		_ -> ok
-	end,
+	update_rating(Peer, false),
 	{noreply, State};
 
 handle_cast({gossiped_data, Peer, DataSize}, State) ->
@@ -427,9 +416,7 @@ get_peer_peers(Peer) ->
 	end.
 
 get_or_init_performance(Peer) ->
-	get_or_init_performance(Peer, overall).
-get_or_init_performance(Peer, Metric) ->
-	case ets:lookup(?MODULE, {performance, Peer, Metric}) of
+	case ets:lookup(?MODULE, {peer, Peer}) of
 		[] ->
 			#performance{};
 		[{_, Performance}] ->
@@ -437,14 +424,10 @@ get_or_init_performance(Peer, Metric) ->
 	end.
 
 set_performance(Peer, Performance) ->
-	set_performance(Peer, overall, Performance).
-set_performance(Peer, Metric, Performance) ->
-	ets:insert(?MODULE, [{{performance, Peer, Metric}, Performance}]).
+	ets:insert(?MODULE, [{{peer, Peer}, Performance}]).
 
 get_total_rating() ->
-	get_total_rating(overall).
-get_total_rating(Metric) ->
-	case ets:lookup(?MODULE, {rating_total, Metric}) of
+	case ets:lookup(?MODULE, rating_total) of
 		[] ->
 			0;
 		[{_, Total}] ->
@@ -452,9 +435,7 @@ get_total_rating(Metric) ->
 	end.
 
 set_total_rating(Total) ->
-	set_total_rating(overall, Total).
-set_total_rating(Metric, Total) ->
-	ets:insert(?MODULE, {{rating_total, Metric}, Total}).
+	ets:insert(?MODULE, {rating_total, Total}).
 
 discover_peers([]) ->
 	ok;
@@ -485,123 +466,77 @@ format_stats(Peer, Perf) ->
 			float(Perf#performance.rating), KB, trunc(Perf#performance.average_latency),
 			Perf#performance.average_success, Perf#performance.transfers]).
 
-read_peer_records() ->
-	PeerRecords = case ar_storage:read_term(peers) of
+load_peers() ->
+	case ar_storage:read_term(peers) of
 		not_found ->
 			ok;
 		{ok, {_TotalRating, Records}} ->
-			%% Legacy format included the TotalRating, but since we always recalculate it when
-			%% loading the peers, we've dropped it from the saved format.
-			Records;
-		{ok, Records} ->
-			Records
-	end,
-
-	%% We only want to return records for available peers. However, PeerRecords may contain
-	%% multiple records for the same peer (one for each tracked metric) and we don't want to
-	%% ping each peer multiple times. So:
-	%% 1. Get a set of UniquePeers from PeerRecords
-	%% 2. Ping those peers to get a set of VaidPeers
-	%% 3. Filter PeerRecords to only include records for ValidPeers
-	UniquePeers = sets:from_list([ element(1, Record) || Record <- PeerRecords ]),
-
-	ValidPeers = sets:filter(
-		fun(Peer) ->
-			case ar_http_iface_client:get_info(Peer, name) of
-				info_unavailable ->
-					?LOG_DEBUG([{event, peer_unavailable}, {peer, ar_util:format_peer(Peer)}]),
-					false;
-				<<?NETWORK_NAME>> ->
-					true;
-				Network ->
-					?LOG_DEBUG([
-						{event, peer_from_the_wrong_network},
-						{peer, ar_util:format_peer(Peer)},
-						{network, Network}
-					]),
-					false
-			end
-		end,
-		UniquePeers
-	),
-
-	ValidPeerRecords = lists:filter(
-		fun(PeerRecord) ->	
-			sets:is_element(element(1, PeerRecord), ValidPeers)
-		end,
-		PeerRecords
-	),
-	ValidPeerRecords.
-	
-load_peers() ->
-	?LOG_INFO([{event, polling_saved_peers}]),
-	ar:console("Polling saved peers...~n"),
-	PeerRecords = read_peer_records(),
-	load_peers(PeerRecords),
-	load_totals(),
-	?LOG_INFO([{event, polled_saved_peers}]),
-	ar:console("Polled saved peers.~n").
-
-load_peers(PeerRecords) when length(PeerRecords) < 20 ->
-	ar_util:pmap(fun load_peer/1, PeerRecords);
-load_peers(PeerRecords) ->
-	{PeerRecords2, PeerRecords3} = lists:split(20, PeerRecords),
-	ar_util:pmap(fun load_peer/1, PeerRecords2),
-	load_peers(PeerRecords3).
-
-load_peer({Peer, Performance}) ->
-	load_peer({Peer, overall, Performance});
-load_peer({Peer, Metric, Performance}) ->
-	may_be_rotate_peer_ports(Peer),
-	case Performance of
-		{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating} ->
-			%% For compatibility with a few nodes already storing the records
-			%% without the release field.
-			set_performance(Peer, Metric, #performance{
-				total_bytes = TotalBytes,
-				total_latency = TotalLatency,
-				transfers = Transfers,
-				rating = Rating
-			});
-		{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating, Release} ->
-			%% For compatibility with nodes storing records from before the introduction of
-			%% the version field
-			set_performance(Peer, Metric, #performance{
-				release = Release,
-				total_bytes = TotalBytes,
-				total_latency = TotalLatency,
-				transfers = Transfers,
-				rating = Rating
-			});
-		{performance, 3,
-				_Release, _AverageBytes, _TotalBytes, _AverageLatency, _TotalLatency,
-				_Transfers, _AverageSuccess, _Rating} ->
-			%% Going forward whenever we change the #performance record we should increment the
-			%% version field so we can match on it when doing a load. Here we're handling the
-			%% version 3 format.
-			set_performance(Peer, Metric, Performance)
+			?LOG_INFO([{event, polling_saved_peers}]),
+			ar:console("Polling saved peers...~n"),
+			load_peers(Records),
+			TotalRating =
+				ets:foldl(
+					fun	({{peer, _Peer}, Performance}, Acc) ->
+							Acc + Performance#performance.rating;
+						(_, Acc) ->
+							Acc
+					end,
+					0,
+					?MODULE
+				),
+			ets:insert(?MODULE, {rating_total, TotalRating}),
+			?LOG_INFO([{event, polled_saved_peers}]),
+			ar:console("Polled saved peers.~n")
 	end.
 
-load_totals() ->
-	Totals = ets:foldl(
-		fun
-			({{peer, Metric, _Peer}, Performance}, Acc) ->
-				Total = maps:get(Metric, Acc, 0),
-				maps:put(Metric, Total + Performance#performance.rating, Acc);
-			(_, Acc) ->
-				Acc
-		end,
-		#{},
-		?MODULE
-	),
+load_peers(Peers) when length(Peers) < 20 ->
+	ar_util:pmap(fun load_peer/1, Peers);
+load_peers(Peers) ->
+	{Peers2, Peers3} = lists:split(20, Peers),
+	ar_util:pmap(fun load_peer/1, Peers2),
+	load_peers(Peers3).
 
-	lists:foreach(
-		fun(Metric) ->
-			Total = maps:get(Metric, Totals, 0),
-			set_total_rating(Metric, Total)
-		end,
-		?AVAILABLE_METRICS
-	).
+load_peer({Peer, Performance}) ->
+	case ar_http_iface_client:get_info(Peer, name) of
+		info_unavailable ->
+			?LOG_DEBUG([{event, peer_unavailable}, {peer, ar_util:format_peer(Peer)}]),
+			ok;
+		<<?NETWORK_NAME>> ->
+			may_be_rotate_peer_ports(Peer),
+			case Performance of
+				{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating} ->
+					%% For compatibility with a few nodes already storing the records
+					%% without the release field.
+					set_performance(Peer, #performance{
+						total_bytes = TotalBytes,
+						total_latency = TotalLatency,
+						transfers = Transfers,
+						rating = Rating
+					});
+				{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating, Release} ->
+					%% For compatibility with nodes storing records from before the introduction of
+					%% the version field
+					set_performance(Peer, #performance{
+						release = Release,
+						total_bytes = TotalBytes,
+						total_latency = TotalLatency,
+						transfers = Transfers,
+						rating = Rating
+					});
+				{performance, 3,
+						_Release, _AverageBytes, _TotalBytes, _AverageLatency, _TotalLatency,
+						_Transfers, _AverageSuccess, _Rating} ->
+					%% Going forward whenever we change the #performance record we should increment the
+					%% version field so we can match on it when doing a load. Here we're handling the
+					%% version 3 format.
+					set_performance(Peer, Performance)
+			end,
+			ok;
+		Network ->
+			?LOG_DEBUG([{event, peer_from_the_wrong_network},
+					{peer, ar_util:format_peer(Peer)}, {network, Network}]),
+			ok
+	end.
 
 may_be_rotate_peer_ports(Peer) ->
 	{IP, Port} = get_ip_port(Peer),
@@ -700,29 +635,23 @@ rank_peers(ScoredPeers) ->
 	ScoredSubnetPeers =
 		maps:fold(
 			fun(_Subnet, SubnetPeers, Acc) ->
-				element(
-					2,
-					lists:foldl(
-						fun({Peer, Score}, {N, Acc2}) ->
-							%% At first we take the best peer from every subnet,
-							%% then take the second best from every subnet, etc.
-							{N + 1, [{Peer, {-N, Score}} | Acc2]}
-						end,
-						{0, Acc},
-						SubnetPeers
-					)
-				)
+				element(2, lists:foldl(
+					fun({Peer, Score}, {N, Acc2}) ->
+						%% At first we take the best peer from every subnet,
+						%% then take the second best from every subnet, etc.
+						{N + 1, [{Peer, {-N, Score}} | Acc2]}
+					end,
+					{0, Acc},
+					SubnetPeers
+				))
 			end,
 			[],
 			GroupedBySubnet
 		),
-	[
-		Peer
-	 || {Peer, _} <- lists:sort(
-			fun({_, S1}, {_, S2}) -> S1 >= S2 end,
-			ScoredSubnetPeers
-		)
-	].
+	[Peer || {Peer, _} <- lists:sort(
+		fun({_, S1}, {_, S2}) -> S1 >= S2 end,
+		ScoredSubnetPeers
+	)].
 
 check_peer(Peer) ->
 	check_peer(Peer, not is_loopback_ip(Peer)).
@@ -736,13 +665,11 @@ check_peer(Peer, IsPeerScopeValid) ->
 			reject
 	end.
 
-update_rating(Peer, Metric, IsSuccess) ->
-	update_rating(Peer, Metric, undefined, undefined, 1, IsSuccess).
-update_rating(Peer, Metric, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
-	%% only update available metrics
-	true = lists:member(Metric, ?AVAILABLE_METRICS),
-	Performance = get_or_init_performance(Peer, Metric),
-	Total = get_total_rating(Metric),
+update_rating(Peer, IsSuccess) ->
+	update_rating(Peer, undefined, undefined, 1, IsSuccess).
+update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
+	Performance = get_or_init_performance(Peer),
+	Total = get_total_rating(),
 	LatencyMilliseconds = LatencyMicroseconds / 1000,
 	#performance{
 		average_bytes = AverageBytes,
@@ -791,8 +718,8 @@ update_rating(Peer, Metric, LatencyMicroseconds, DataSize, Concurrency, IsSucces
 	},
 	Total2 = Total - Rating + Rating2,
 	may_be_rotate_peer_ports(Peer),
-	set_performance(Peer, Metric, Performance2),
-	set_total_rating(Metric, Total2).
+	set_performance(Peer, Performance2),
+	set_total_rating(Total2).
 
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
@@ -816,15 +743,10 @@ remove_peer(RemovedPeer) ->
 		{event, remove_peer},
 		{peer, ar_util:format_peer(RemovedPeer)}
 	]),
-	lists:foreach(
-		fun(Metric) ->
-			Performance = get_or_init_performance(RemovedPeer, Metric),
-			Total = get_total_rating(Metric),
-			set_total_rating(Metric, Total - Performance#performance.rating),
-			ets:delete(?MODULE, {peer, RemovedPeer, Metric})
-		end,
-		?AVAILABLE_METRICS
-	),
+	Performance = get_or_init_performance(RemovedPeer),
+	Total = get_total_rating(),
+	set_total_rating(Total - Performance#performance.rating),
+	ets:delete(?MODULE, {peer, RemovedPeer}),
 	remove_peer_port(RemovedPeer).
 
 remove_peer_port(Peer) ->
@@ -864,8 +786,8 @@ store_peers() ->
 	Records =
 		ets:foldl(
 			fun
-				({{peer, Peer, Metric}, Performance}, Acc) ->
-					[{Peer, Metric, Performance} | Acc];
+				({{peer, Peer}, Performance}, Acc) ->
+					[{Peer, Performance} | Acc];
 				(_, Acc) ->
 					Acc
 			end,
