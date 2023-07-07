@@ -10,7 +10,6 @@ body(Req, SizeLimit) ->
 		not_set ->
 			read_complete_body(Req, #{ acc => [], counter => 0, size_limit => SizeLimit });
 		Body ->
-			?LOG_DEBUG([{event, cached_completed_body}, {size, byte_size(Body)}, {path, ar_http_iface_server:label_req(Req)}]),
 			{ok, Body, Req}
 	end.
 
@@ -43,7 +42,6 @@ read_complete_body(more, Data, Req) ->
 	read_complete_body(Req, Data);
 read_complete_body(ok, #{ acc := Acc }, Req) ->
 	Body = iolist_to_binary(Acc),
-	?LOG_DEBUG([{event, read_completed_body}, {size, byte_size(Body)}, {path, ar_http_iface_server:label_req(Req)}]),
 	{ok, Body, with_body_req_field(Req, Body)}.
 
 with_body_req_field(Req, Body) ->

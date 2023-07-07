@@ -40,7 +40,7 @@ init([]) ->
 		?CHILD(ar_events, block, worker),
 		%% Events: unpacked, packed.
 		?CHILD(ar_events, chunk, worker),
-		%% Events: made_request, bad_response, fetched_tx, fetched_block, fetched_chunk, banned
+		%% Events: removed
 		?CHILD(ar_events, peer, worker),
 		%% Events: initializing, initialized, validated_pre_fork_2_6_block, new_tip,
 		%% checkpoint_block, search_space_upper_bound.
