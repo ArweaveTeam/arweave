@@ -944,7 +944,6 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 							ar_util:cast_after(1000, self(), Cast),
 							{noreply, State};
 						false ->
-							% HANDLED ar_events:send(peer, {fetched_chunk, Peer, Time, TransferSize}),
 							ar_packing_server:request_unpack(AbsoluteOffset, ChunkArgs),
 							?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
 									{data_path_hash, ar_util:encode(crypto:hash(sha256,
@@ -964,7 +963,6 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkSize, ChunkID} ->
-			% HANDLED ar_events:send(peer, {fetched_chunk, Peer, Time, TransferSize}),
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
 			ChunkArgs = {unpacked, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},

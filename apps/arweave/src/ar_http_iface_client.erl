@@ -642,10 +642,10 @@ handle_get_recent_hash_list_response(Response) ->
 handle_get_recent_hash_list_diff_response({ok, {{<<"200">>, _}, _, Body, _, _}}, HL, Peer) ->
 	case parse_recent_hash_list_diff(Body, HL) of
 		{error, invalid_input} ->
-			ar_events:send(peer, {bad_response, {Peer, recent_hash_list_diff, invalid_input}}),
+			ar_peers:issue_warning(Peer, recent_hash_list_diff, invalid_input),
 			{error, invalid_input};
 		{error, unknown_base} ->
-			ar_events:send(peer, {bad_response, {Peer, recent_hash_list_diff, unknown_base}}),
+			ar_peers:issue_warning(Peer, recent_hash_list_diff, unknown_base),
 			{error, unknown_base};
 		{ok, Reply} ->
 			{ok, Reply}
@@ -810,7 +810,7 @@ get_tx_from_remote_peer(Peer, TXID) ->
 						{peer, ar_util:format_peer(Peer)},
 						{tx, ar_util:encode(TXID)}
 					]),
-					ar_events:send(peer, {bad_response, {Peer, tx, invalid}}),
+					ar_peers:issue_warning(Peer, tx, invalid),
 					{error, invalid_tx};
 				true ->
 					ar_peers:rate_fetched_data(Peer, tx, Time, Size),
@@ -965,7 +965,7 @@ handle_block_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}
 			?LOG_INFO(
 				"event: failed_to_parse_block_response, peer: ~s, reason: ~p",
 				[ar_util:format_peer(Peer), Reason]),
-			ar_events:send(peer, {bad_response, {Peer, block, Reason}}),
+			ar_peers:issue_warning(Peer, block, Reason),
 			not_found;
 		{ok, B} ->
 			{ok, B, End - Start, byte_size(term_to_binary(B))};
@@ -975,11 +975,11 @@ handle_block_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}
 			?LOG_INFO(
 				"event: failed_to_parse_block_response, peer: ~s, error: ~p",
 				[ar_util:format_peer(Peer), Error]),
-			ar_events:send(peer, {bad_response, {Peer, block, Error}}),
+			ar_peers:issue_warning(Peer, block, Error),
 			not_found
 	end;
 handle_block_response(Peer, _Encoding, Response) ->
-	ar_events:send(peer, {bad_response, {Peer, block, Response}}),
+	ar_peers:issue_warning(Peer, block, Response),
 	not_found.
 
 %% @doc Process the response of a GET /unconfirmed_tx call.
@@ -1010,14 +1010,14 @@ handle_tx_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) 
 					{ok, TX#tx{ data = <<>> }, End - Start, Size - DataSize}
 			end;
 		{'EXIT', Reason} ->
-			ar_events:send(peer, {bad_response, {Peer, tx, Reason}}),
+			ar_peers:issue_warning(Peer, tx, Reason),
 			{error, Reason};
 		Reply ->
-			ar_events:send(peer, {bad_response, {Peer, tx, Reply}}),
+			ar_peers:issue_warning(Peer, tx, Reply),
 			Reply
 	end;
 handle_tx_response(Peer, _Encoding, Response) ->
-	ar_events:send(peer, {bad_response, {Peer, tx, Response}}),
+	ar_peers:issue_warning(Peer, tx, Response),
 	{error, Response}.
 
 p2p_headers() ->
