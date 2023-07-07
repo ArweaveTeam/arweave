@@ -78,7 +78,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			ar_util:cast_after(50, ?MODULE, pre_validate),
 			{noreply, State};
 		false ->
-			{{_, {B, PrevB, SolutionResigned, Peer, Timestamp}},
+			{{_, {B, PrevB, SolutionResigned, Peer, QueryBlockTime}},
 					Q2} = gb_sets:take_largest(Q),
 			BlockSize = byte_size(term_to_binary(B)),				
 			Size2 = Size - BlockSize,
@@ -110,7 +110,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 												{previous_block,
 													ar_util:encode(PrevB#block.indep_hash)}]),
 										pre_validate_nonce_limiter_seed_data(B, PrevB,
-												SolutionResigned, Peer, Timestamp),
+												SolutionResigned, Peer, QueryBlockTime),
 										{IPTimestamps2, HashTimestamps2};
 									false ->
 										{IPTimestamps2, HashTimestamps}
@@ -122,13 +122,13 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			end
 	end;
 
-handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer, Timestamp}},
+handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer, QueryBlockTime}},
 		State) ->
 	#state{ pqueue = Q, size = Size } = State,
 	Priority = priority(B, Peer),
 	BlockSize = byte_size(term_to_binary(B)),
 	Size2 = Size + BlockSize,
-	Q2 = gb_sets:add_element({Priority, {B, PrevB, SolutionResigned, Peer, Timestamp}}, Q),
+	Q2 = gb_sets:add_element({Priority, {B, PrevB, SolutionResigned, Peer, QueryBlockTime}}, Q),
 	{Q3, Size3} =
 		case Size2 > ?MAX_PRE_VALIDATION_QUEUE_SIZE of
 			true ->
