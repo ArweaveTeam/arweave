@@ -804,21 +804,21 @@ is_port_map_empty(PortMap, Max, N) ->
 	end.
 
 store_peers() ->
-	Records =
-		ets:foldl(
-			fun ({{peer, Peer}, Performance}, Acc) ->
-					[{Peer, Performance} | Acc];
-				(_, Acc) ->
-					Acc
-			end,
-			[],
-			?MODULE
-		),
-	case Records of
+	case ets:lookup(?MODULE, rating_total) of
 		[] ->
 			ok;
-		_ ->     
-			ar_storage:write_term(peers, Records)
+		[{_, Total}] ->
+			Records =
+				ets:foldl(
+					fun	({{peer, Peer}, Performance}, Acc) ->
+							[{Peer, Performance} | Acc];
+						(_, Acc) ->
+							Acc
+					end,
+					[],
+					?MODULE
+				),
+			ar_storage:write_term(peers, {Total, Records})
 	end.
 
 %%%===================================================================
