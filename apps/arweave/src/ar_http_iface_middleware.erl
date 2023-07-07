@@ -2358,8 +2358,7 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 				end
 		end,
 	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	ValidationStatus = ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp),
-	% ar_peers:rate_gossiped_data(Peer, byte_size(term_to_binary(B2)), ValidationStatus),
+	ar_block_pre_validator:pre_validate(B2, Peer, undefined, ReceiveTimestamp),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->
