@@ -5,7 +5,7 @@
 
 %% the performance metrics currently tracked
 -define(AVAILABLE_METRICS, [overall, data_sync]). 
-%% factor to scale the average latency by when rating gossiped data - lower is better
+%% factor to scale the average throughput by when rating gossiped data - lower is better
 -define(GOSSIP_ADVANTAGE, 0.5). 
 
 -record(performance, {

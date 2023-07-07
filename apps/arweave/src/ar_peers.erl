@@ -144,7 +144,7 @@ is_public_peer(_) ->
 %% Return -1 if the release is not known.
 get_peer_release(Peer) ->
 	case catch ets:lookup(?MODULE, {peer, Peer}) of
-		[{_, #performance{release = Release}}] ->
+		[{_, Release}] ->
 			Release;
 		_ ->
 			-1
@@ -165,12 +165,6 @@ rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
 	gen_server:cast(?MODULE,
 		{fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency});
-rate_fetched_data(Peer, DataType, {ok, _}, LatencyMicroseconds, DataSize, Concurrency) ->
-	gen_server:cast(?MODULE,
-		{fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency});
-rate_fetched_data(Peer, DataType, skipped, _LatencyMicroseconds, _DataSize, _Concurrency) ->
-	%% No need to penalize skipped blocks, as they are not the peer's fault.
-	ok;
 rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
 	gen_server:cast(?MODULE, {invalid_fetched_data, DataType, Peer}).
 
@@ -250,15 +244,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({add_peer, Peer, Release}, State) ->
-	may_be_rotate_peer_ports(Peer),
-	case ets:lookup(?MODULE, {peer, Peer}) of
-		[{_, #performance{release = Release}}] ->
-			ok;
-		[{_, Performance}] ->
-			set_performance(Peer, Performance#performance{release = Release});
-		[] ->
-			set_performance(Peer, #performance{release = Release})
-	end,
+	add_peer(Peer, Release),
 	{noreply, State};
 
 handle_cast(rank_peers, State) ->
@@ -266,7 +252,7 @@ handle_cast(rank_peers, State) ->
 	Peers =
 		ets:foldl(
 			fun
-				({{peer, Peer}, Performance}, Acc) ->
+				({{performance, Peer, overall}, Performance}, Acc) ->
 					%% Bigger score increases the chances to end up on the top
 					%% of the peer list, but at the same time the ranking is
 					%% probabilistic to always give everyone a chance to improve
@@ -349,7 +335,7 @@ handle_cast({invalid_fetched_data, DataType, Peer}, State) ->
 	{noreply, State};
 
 handle_cast({gossiped_data, Peer, DataSize}, State) ->
-	case check_external_peer(Peer) of
+	case check_peer(Peer) of
 		ok ->
 			%% Since gossiped data is pushed to us we don't know the latency, but we do want
 			%% to incentivize peers to gossip data quickly and frequently, so we will assign
@@ -384,20 +370,7 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, peer, {made_request, Peer, Release}}, State) ->
-	may_be_rotate_peer_ports(Peer),
-	case ets:lookup(?MODULE, {peer, Peer}) of
-		[{_, #performance{release = Release}}] ->
-			ok;
-		[{_, Performance}] ->
-			set_performance(Peer, Performance#performance{release = Release});
-		[] ->
-			case check_external_peer(Peer) of
-				ok ->
-					set_performance(Peer, #performance{release = Release});
-				_ ->
-					ok
-			end
-	end,
+	add_peer(Peer, Release),
 	{noreply, State};
 
 handle_info({event, peer, {fetched_tx, Peer, TimeDelta, Size}}, State) ->
@@ -456,7 +429,7 @@ get_peer_peers(Peer) ->
 get_or_init_performance(Peer) ->
 	get_or_init_performance(Peer, overall).
 get_or_init_performance(Peer, Metric) ->
-	case ets:lookup(?MODULE, {peer, Peer, Metric}) of
+	case ets:lookup(?MODULE, {performance, Peer, Metric}) of
 		[] ->
 			#performance{};
 		[{_, Performance}] ->
@@ -466,7 +439,7 @@ get_or_init_performance(Peer, Metric) ->
 set_performance(Peer, Performance) ->
 	set_performance(Peer, overall, Performance).
 set_performance(Peer, Metric, Performance) ->
-	ets:insert(?MODULE, [{{peer, Peer, Metric}, Performance}]).
+	ets:insert(?MODULE, [{{performance, Peer, Metric}, Performance}]).
 
 get_total_rating() ->
 	get_total_rating(overall).
@@ -490,19 +463,16 @@ discover_peers([Peer | Peers]) ->
 		true ->
 			ok;
 		false ->
-			IsPublic = is_public_peer(Peer),
-			IsBanned = ar_blacklist_middleware:is_peer_banned(Peer) == banned,
-			IsBlacklisted = lists:member(Peer, ?PEER_PERMANENT_BLACKLIST),
-			case IsPublic andalso not IsBanned andalso not IsBlacklisted of
-				false ->
-					ok;
-				true ->
+			case check_peer(Peer, is_public_peer(Peer)) of
+				ok ->
 					case ar_http_iface_client:get_info(Peer, release) of
 						{<<"release">>, Release} when is_integer(Release) ->
 							gen_server:cast(?MODULE, {add_peer, Peer, Release});
 						_ ->
 							ok
-					end
+					end;
+				_ ->
+					ok
 			end
 	end,
 	discover_peers(Peers).
@@ -754,19 +724,16 @@ rank_peers(ScoredPeers) ->
 		)
 	].
 
-check_external_peer(Peer) ->
-	IsLoopbackIP = is_loopback_ip(Peer),
+check_peer(Peer) ->
+	check_peer(Peer, not is_loopback_ip(Peer)).
+check_peer(Peer, IsPeerScopeValid) ->
 	IsBlacklisted = lists:member(Peer, ?PEER_PERMANENT_BLACKLIST),
 	IsBanned = ar_blacklist_middleware:is_peer_banned(Peer) == banned,
-	case {IsLoopbackIP, IsBlacklisted, IsBanned} of
-		{true, _, _} ->
-			reject;
-		{_, true, _} ->
-			reject;
-		{_, _, true} ->
-			reject;
-		_ ->
-			ok
+	case IsPeerScopeValid andalso not IsBlacklisted andalso not IsBanned of
+		true ->
+			ok;
+		false ->
+			reject
 	end.
 
 update_rating(Peer, Metric, IsSuccess) ->
@@ -829,6 +796,20 @@ update_rating(Peer, Metric, LatencyMicroseconds, DataSize, Concurrency, IsSucces
 
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
+
+add_peer(Peer, Release) ->
+	may_be_rotate_peer_ports(Peer),
+	case ets:lookup(?MODULE, {peer, Peer}) of
+		[{_, Release}] ->
+			ok;
+		_ ->
+			case check_peer(Peer) of
+				ok ->
+					ets:insert(?MODULE, [{{peer, Peer}, Release}]);
+				_ ->
+					ok
+			end
+	end.
 
 remove_peer(RemovedPeer) ->
 	?LOG_DEBUG([
