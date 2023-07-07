@@ -45,7 +45,6 @@ start() ->
 ban_peer(Peer, TTLSeconds) ->
 	Key = {ban, peer_to_ip_addr(Peer)},
 	Expires = os:system_time(seconds) + TTLSeconds,
-	ar_events:send(peer, {banned, Peer}),
 	ets:insert(?MODULE, {Key, Expires}).
 
 is_peer_banned(Peer) ->
