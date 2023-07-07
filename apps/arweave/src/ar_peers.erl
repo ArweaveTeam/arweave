@@ -11,7 +11,7 @@
 
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 	get_peer_release/1, stats/0, discover_peers/0, rank_peers/1, resolve_and_cache_peer/2,
-	rate_response/4, rate_fetched_data/4, rate_fetched_data/6, rate_gossiped_data/2
+	rate_response/4, rate_fetched_data/4, rate_fetched_data/6, rate_gossiped_data/3
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -162,12 +162,12 @@ rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 	rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
 rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
 	gen_server:cast(?MODULE,
-		{fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency});
+		{fetched_data, Peer, DataType, LatencyMicroseconds, DataSize, Concurrency});
 rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
-	gen_server:cast(?MODULE, {invalid_fetched_data, DataType, Peer}).
+	gen_server:cast(?MODULE, {invalid_fetched_data, Peer, DataType}).
 
-rate_gossiped_data(Peer, DataSize) ->
-	gen_server:cast(?MODULE, {gossiped_data, Peer, DataSize}).
+rate_gossiped_data(Peer, DataType, DataSize) ->
+	gen_server:cast(?MODULE, {gossiped_data, Peer, DataType, DataSize}).
 
 %% @doc Print statistics about the current peers.
 stats() ->
@@ -299,7 +299,7 @@ handle_cast({rate_response, Peer, PathLabel, get, Status}, State) ->
 	]),
 	{noreply, State};
 
-handle_cast({fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concurrency}, State) ->
+handle_cast({fetched_data, Peer, DataType, LatencyMicroseconds, DataSize, Concurrency}, State) ->
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, fetched_data},
@@ -313,7 +313,7 @@ handle_cast({fetched_data, DataType, Peer, LatencyMicroseconds, DataSize, Concur
 	{noreply, State};
 
 
-handle_cast({invalid_fetched_data, DataType, Peer}, State) ->
+handle_cast({invalid_fetched_data, Peer, DataType}, State) ->
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, invalid_fetched_data},
@@ -323,7 +323,7 @@ handle_cast({invalid_fetched_data, DataType, Peer}, State) ->
 	update_rating(Peer, false),
 	{noreply, State};
 
-handle_cast({gossiped_data, Peer, DataSize}, State) ->
+handle_cast({gossiped_data, Peer, DataType, DataSize}, State) ->
 	case check_peer(Peer) of
 		ok ->
 			%% Since gossiped data is pushed to us we don't know the latency, but we do want
@@ -343,11 +343,12 @@ handle_cast({gossiped_data, Peer, DataSize}, State) ->
 			?LOG_DEBUG([
 				{event, update_rating},
 				{update_type, gossiped_data},
+				{data_type, DataType},
 				{peer, ar_util:format_peer(Peer)},
 				{latency, LatencyMicroseconds / 1000},
 				{data_size, DataSize}
 			]),
-			update_rating(Peer, overall, LatencyMicroseconds, DataSize, 1, true);
+			update_rating(Peer, LatencyMicroseconds, DataSize, 1, true);
 		_ ->
 			ok
 	end,
@@ -360,16 +361,6 @@ handle_cast(Cast, State) ->
 
 handle_info({event, peer, {made_request, Peer, Release}}, State) ->
 	add_peer(Peer, Release),
-	{noreply, State};
-
-handle_info({event, peer, {fetched_tx, Peer, TimeDelta, Size}}, State) ->
-	% ?LOG_DEBUG([{event, update_rating}, {type, fetched_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	% update_rating(Peer, TimeDelta, Size),
-	{noreply, State};
-
-handle_info({event, peer, {fetched_block, Peer, TimeDelta, Size}}, State) ->
-	% ?LOG_DEBUG([{event, update_rating}, {type, fetched_tx}, {peer, ar_util:format_peer(Peer)}, {time_delta, TimeDelta}, {size, Size}]),
-	% update_rating(Peer, TimeDelta, Size),
 	{noreply, State};
 
 handle_info({event, peer, {bad_response, {Peer, _Type, _Reason}}}, State) ->
@@ -390,6 +381,15 @@ handle_info({event, block, {rejected, failed_to_fetch_second_chunk, _H, Peer}}, 
 
 handle_info({event, block, {rejected, failed_to_fetch_chunk, _H, Peer}}, State) ->
 	issue_warning(Peer),
+	{noreply, State};
+
+handle_info({event, block, {new, B,
+		#{ source := {peer, Peer}, query_block_tie := QueryBlockTime }}}, State) ->
+	DataSize = byte_size(term_to_binary(B)),
+	case QueryBlockTime of
+		undefined -> ar_peers:rate_gossiped_data(Peer, block, DataSize);
+		_ -> ar_peers:rate_fetched_data(Peer, block, QueryBlockTime, DataSize)
+	end,
 	{noreply, State};
 
 handle_info({event, block, _}, State) ->
@@ -727,12 +727,14 @@ calculate_ema(OldEMA, Value, Alpha) ->
 add_peer(Peer, Release) ->
 	may_be_rotate_peer_ports(Peer),
 	case ets:lookup(?MODULE, {peer, Peer}) of
-		[{_, Release}] ->
+		[{_, #performance{ release = Release }}] ->
 			ok;
-		_ ->
+		[{_, Performance}] ->
+			set_performance(Peer, Performance#performance{ release = Release });
+		[] ->
 			case check_peer(Peer) of
 				ok ->
-					ets:insert(?MODULE, [{{peer, Peer}, Release}]);
+					set_performance(Peer, #performance{ release = Release });
 				_ ->
 					ok
 			end
