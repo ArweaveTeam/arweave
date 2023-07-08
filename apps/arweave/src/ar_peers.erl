@@ -668,7 +668,6 @@ update_rating(Peer, IsSuccess) ->
 update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
-	LatencyMilliseconds = LatencyMicroseconds / 1000,
 	#performance{
 		average_bytes = AverageBytes,
 		total_bytes = TotalBytes,
@@ -690,13 +689,13 @@ update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 		undefined -> AverageBytes;
 		_ -> calculate_ema(AverageBytes, (DataSize * Concurrency), ?THROUGHPUT_ALPHA)
 	end,
-	TotalLatency2 = case LatencyMilliseconds of
+	TotalLatency2 = case LatencyMicroseconds of
 		undefined -> TotalLatency;
-		_ -> TotalLatency + LatencyMilliseconds
+		_ -> TotalLatency + (LatencyMicroseconds / 1000)
 	end,
-	AverageLatency2 = case LatencyMilliseconds of
+	AverageLatency2 = case LatencyMicroseconds of
 		undefined -> AverageLatency;
-		_ -> calculate_ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+		_ -> calculate_ema(AverageLatency, (LatencyMicroseconds / 1000), ?THROUGHPUT_ALPHA)
 	end,
 	Transfers2 = case DataSize of
 		undefined -> Transfers;

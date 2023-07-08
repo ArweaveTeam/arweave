@@ -119,11 +119,10 @@ handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	?LOG_DEBUG([{event, rebalance_peers}]),
 	Peers = maps:keys(State#state.peer_tasks),
-	AllPeerTasks =[ maps:get(Peer, State#state.peer_tasks) || Peer <- Peers],
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	{TargetLatency, TotalThroughput} = calculate_targets(Peers, AllPeerPerformances),
 	{noreply, rebalance_peers(
-		Peers, AllPeerTasks, AllPeerPerformances, TargetLatency, TotalThroughput, State)};
+		Peers, State#state.peer_tasks, AllPeerPerformances, TargetLatency, TotalThroughput, State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
