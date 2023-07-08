@@ -11,8 +11,8 @@
 	release = -1,
 	average_bytes = 0.0,
 	total_bytes = 0,
-	average_latency = 0.0,
-	total_latency = 0.0,
+	average_latency = 0.0, %% milliseconds
+	total_latency = 0.0, %% milliseconds
 	transfers = 0,
 	average_success = 1.0,
 	rating = 0

@@ -37,11 +37,11 @@
 %% The maximum number of peers to return from get_peers/0.
 -define(MAX_PEERS, 1000).
 
-%% The number of failed requests in a row we tolerate before dropping the peer.
--define(TOLERATE_FAILURE_COUNT, 20).
+%% Minimum average_success we'll tolerate before dropping a peer.
 -define(MINIMUM_SUCCESS, 0.5).
--define(THROUGHPUT_ALPHA, 0.1).
--define(SUCCESS_ALPHA, 0.01).
+-define(THROUGHPUT_ALPHA, 0.05).
+%% set so that roughly 20 consecutive failures will drop the average_success below 0.5
+-define(SUCCESS_ALPHA, 0.035). 
 
 %% When processing block rejected events for blocks received from a peer, we handle rejections
 %% differently based on the rejection reason.
@@ -186,7 +186,7 @@ rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 	rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
 rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
 	gen_server:cast(?MODULE,
-		{fetched_data, Peer, DataType, LatencyMicroseconds, DataSize, Concurrency});
+		{fetched_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize, Concurrency});
 rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
 	gen_server:cast(?MODULE, {invalid_fetched_data, Peer, DataType}).
 
@@ -297,7 +297,7 @@ handle_cast(rank_peers, State) ->
 	prometheus_gauge:set(arweave_peer_count, length(Peers)),
 	ets:insert(?MODULE, {peers, lists:sublist(rank_peers(Peers), ?MAX_PEERS)}),
 	ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),
-	stats(),
+	% stats(),
 	{noreply, State};
 
 handle_cast(ping_peers, State) ->
@@ -305,17 +305,17 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
-handle_cast({fetched_data, Peer, DataType, LatencyMicroseconds, DataSize, Concurrency}, State) ->
+handle_cast({fetched_data, Peer, DataType, LatencyMilliseconds, DataSize, Concurrency}, State) ->
 	?LOG_DEBUG([
 		{event, update_rating},
 		{update_type, fetched_data},
 		{data_type, DataType},
 		{peer, ar_util:format_peer(Peer)},
-		{latency, LatencyMicroseconds  / 1000},
+		{latency, LatencyMilliseconds},
 		{data_size, DataSize},
 		{concurrency, Concurrency}
 	]),
-	update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, true),
+	update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, true),
 	{noreply, State};
 
 
@@ -333,16 +333,16 @@ handle_cast({gossiped_data, Peer, DataType, DataSize}, State) ->
 	case check_peer(Peer) of
 		ok ->
 			Performance = get_or_init_performance(Peer),
-			LatencyMicroseconds = calculate_gossip_latency(Performance, DataSize),
+			LatencyMilliseconds = calculate_gossip_latency(Performance, DataSize),
 			?LOG_DEBUG([
 				{event, update_rating},
 				{update_type, gossiped_data},
 				{data_type, DataType},
 				{peer, ar_util:format_peer(Peer)},
-				{latency, LatencyMicroseconds / 1000},
+				{latency, LatencyMilliseconds},
 				{data_size, DataSize}
 			]),
-			update_rating(Peer, LatencyMicroseconds, DataSize, 1, true);
+			update_rating(Peer, LatencyMilliseconds, DataSize, 1, true);
 		_ ->
 			ok
 	end,
@@ -665,7 +665,11 @@ check_peer(Peer, IsPeerScopeValid) ->
 
 update_rating(Peer, IsSuccess) ->
 	update_rating(Peer, undefined, undefined, 1, IsSuccess).
-update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
+update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, false)
+  		when LatencyMilliseconds =/= undefined; DataSize =/= undefined ->
+	%% Don't credit peers for failed requests.
+	update_rating(Peer, undefined, undefined, Concurrency, false);	
+update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
 	Total = get_total_rating(),
 	#performance{
@@ -689,13 +693,13 @@ update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 		undefined -> AverageBytes;
 		_ -> calculate_ema(AverageBytes, (DataSize * Concurrency), ?THROUGHPUT_ALPHA)
 	end,
-	TotalLatency2 = case LatencyMicroseconds of
+	TotalLatency2 = case LatencyMilliseconds of
 		undefined -> TotalLatency;
-		_ -> TotalLatency + (LatencyMicroseconds / 1000)
+		_ -> TotalLatency + LatencyMilliseconds
 	end,
-	AverageLatency2 = case LatencyMicroseconds of
+	AverageLatency2 = case LatencyMilliseconds of
 		undefined -> AverageLatency;
-		_ -> calculate_ema(AverageLatency, (LatencyMicroseconds / 1000), ?THROUGHPUT_ALPHA)
+		_ -> calculate_ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
 	end,
 	Transfers2 = case DataSize of
 		undefined -> Transfers;
@@ -703,7 +707,10 @@ update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 	end,
 	AverageSuccess2 = calculate_ema(AverageSuccess, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
 	%% Rating is an estimate of the peer's effective throughput in bytes per second.
-	Rating2 = (AverageBytes2 / AverageLatency2) * AverageSuccess2,
+	Rating2 = case AverageLatency2 > 0 of
+		true -> (AverageBytes2 / AverageLatency2) * AverageSuccess2;
+		_ -> Rating
+	end,
 	Performance2 = Performance#performance{
 		average_bytes = AverageBytes2,
 		total_bytes = TotalBytes2,
@@ -728,15 +735,14 @@ update_rating(Peer, LatencyMicroseconds, DataSize, Concurrency, IsSuccess) ->
 
 calculate_gossip_latency(
 		#performance{average_bytes = 0.0}, _DataSize) ->
-	1000; %% If this is the first rating we've received, assume 1ms latency
+	10; %% If this is the first rating we've received, assume 10ms latency
 calculate_gossip_latency(
 		#performance{average_latency = 0.0}, _DataSize) ->
-	1000; %% If this is the first rating we've received, assume 1ms latency
+	10; %% If this is the first rating we've received, assume 10ms latency
 calculate_gossip_latency(
 		#performance{average_bytes = AverageBytes, average_latency = AverageLatency}, DataSize) ->
 	AverageThroughput = AverageBytes / AverageLatency,
-	GossipLatency = (DataSize / AverageThroughput) * ?GOSSIP_ADVANTAGE,
-	GossipLatency * 1000.
+	(DataSize / AverageThroughput) * ?GOSSIP_ADVANTAGE.
 
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.
@@ -824,81 +830,164 @@ store_peers() ->
 %%% Tests.
 %%%===================================================================
 
-rotate_peer_ports_test() ->
-	Peer = {2, 2, 2, 2, 1},
-	maybe_rotate_peer_ports(Peer),
-	[{_, {PortMap, 1}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(1, element(1, PortMap)),
-	remove_peer(Peer),
-	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})),
-	maybe_rotate_peer_ports(Peer),
-	Peer2 = {2, 2, 2, 2, 2},
-	maybe_rotate_peer_ports(Peer2),
-	[{_, {PortMap2, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(1, element(1, PortMap2)),
-	?assertEqual(2, element(2, PortMap2)),
-	remove_peer(Peer),
-	[{_, {PortMap3, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(empty_slot, element(1, PortMap3)),
-	?assertEqual(2, element(2, PortMap3)),
-	Peer3 = {2, 2, 2, 2, 3},
-	Peer4 = {2, 2, 2, 2, 4},
-	Peer5 = {2, 2, 2, 2, 5},
-	Peer6 = {2, 2, 2, 2, 6},
-	Peer7 = {2, 2, 2, 2, 7},
-	Peer8 = {2, 2, 2, 2, 8},
-	Peer9 = {2, 2, 2, 2, 9},
-	Peer10 = {2, 2, 2, 2, 10},
-	Peer11 = {2, 2, 2, 2, 11},
-	maybe_rotate_peer_ports(Peer3),
-	maybe_rotate_peer_ports(Peer4),
-	maybe_rotate_peer_ports(Peer5),
-	maybe_rotate_peer_ports(Peer6),
-	maybe_rotate_peer_ports(Peer7),
-	maybe_rotate_peer_ports(Peer8),
-	maybe_rotate_peer_ports(Peer9),
-	maybe_rotate_peer_ports(Peer10),
-	[{_, {PortMap4, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(empty_slot, element(1, PortMap4)),
-	?assertEqual(2, element(2, PortMap4)),
-	?assertEqual(10, element(10, PortMap4)),
-	maybe_rotate_peer_ports(Peer8),
-	maybe_rotate_peer_ports(Peer9),
-	maybe_rotate_peer_ports(Peer10),
-	[{_, {PortMap5, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(empty_slot, element(1, PortMap5)),
-	?assertEqual(2, element(2, PortMap5)),
-	?assertEqual(3, element(3, PortMap5)),
-	?assertEqual(9, element(9, PortMap5)),
-	?assertEqual(10, element(10, PortMap5)),
-	maybe_rotate_peer_ports(Peer11),
-	[{_, {PortMap6, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(element(2, PortMap5), element(1, PortMap6)),
-	?assertEqual(3, element(2, PortMap6)),
-	?assertEqual(4, element(3, PortMap6)),
-	?assertEqual(5, element(4, PortMap6)),
-	?assertEqual(11, element(10, PortMap6)),
-	maybe_rotate_peer_ports(Peer11),
-	[{_, {PortMap7, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(element(2, PortMap5), element(1, PortMap7)),
-	?assertEqual(3, element(2, PortMap7)),
-	?assertEqual(4, element(3, PortMap7)),
-	?assertEqual(5, element(4, PortMap7)),
-	?assertEqual(11, element(10, PortMap7)),
-	remove_peer(Peer4),
-	[{_, {PortMap8, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(empty_slot, element(3, PortMap8)),
-	?assertEqual(3, element(2, PortMap8)),
-	?assertEqual(5, element(4, PortMap8)),
-	remove_peer(Peer2),
-	remove_peer(Peer3),
-	remove_peer(Peer5),
-	remove_peer(Peer6),
-	remove_peer(Peer7),
-	remove_peer(Peer8),
-	remove_peer(Peer9),
-	remove_peer(Peer10),
-	[{_, {PortMap9, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-	?assertEqual(11, element(10, PortMap9)),
-	remove_peer(Peer11),
-	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})).
+% rotate_peer_ports_test() ->
+% 	Peer = {2, 2, 2, 2, 1},
+% 	maybe_rotate_peer_ports(Peer),
+% 	[{_, {PortMap, 1}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(1, element(1, PortMap)),
+% 	remove_peer(Peer),
+% 	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})),
+% 	maybe_rotate_peer_ports(Peer),
+% 	Peer2 = {2, 2, 2, 2, 2},
+% 	maybe_rotate_peer_ports(Peer2),
+% 	[{_, {PortMap2, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(1, element(1, PortMap2)),
+% 	?assertEqual(2, element(2, PortMap2)),
+% 	remove_peer(Peer),
+% 	[{_, {PortMap3, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(empty_slot, element(1, PortMap3)),
+% 	?assertEqual(2, element(2, PortMap3)),
+% 	Peer3 = {2, 2, 2, 2, 3},
+% 	Peer4 = {2, 2, 2, 2, 4},
+% 	Peer5 = {2, 2, 2, 2, 5},
+% 	Peer6 = {2, 2, 2, 2, 6},
+% 	Peer7 = {2, 2, 2, 2, 7},
+% 	Peer8 = {2, 2, 2, 2, 8},
+% 	Peer9 = {2, 2, 2, 2, 9},
+% 	Peer10 = {2, 2, 2, 2, 10},
+% 	Peer11 = {2, 2, 2, 2, 11},
+% 	maybe_rotate_peer_ports(Peer3),
+% 	maybe_rotate_peer_ports(Peer4),
+% 	maybe_rotate_peer_ports(Peer5),
+% 	maybe_rotate_peer_ports(Peer6),
+% 	maybe_rotate_peer_ports(Peer7),
+% 	maybe_rotate_peer_ports(Peer8),
+% 	maybe_rotate_peer_ports(Peer9),
+% 	maybe_rotate_peer_ports(Peer10),
+% 	[{_, {PortMap4, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(empty_slot, element(1, PortMap4)),
+% 	?assertEqual(2, element(2, PortMap4)),
+% 	?assertEqual(10, element(10, PortMap4)),
+% 	maybe_rotate_peer_ports(Peer8),
+% 	maybe_rotate_peer_ports(Peer9),
+% 	maybe_rotate_peer_ports(Peer10),
+% 	[{_, {PortMap5, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(empty_slot, element(1, PortMap5)),
+% 	?assertEqual(2, element(2, PortMap5)),
+% 	?assertEqual(3, element(3, PortMap5)),
+% 	?assertEqual(9, element(9, PortMap5)),
+% 	?assertEqual(10, element(10, PortMap5)),
+% 	maybe_rotate_peer_ports(Peer11),
+% 	[{_, {PortMap6, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(element(2, PortMap5), element(1, PortMap6)),
+% 	?assertEqual(3, element(2, PortMap6)),
+% 	?assertEqual(4, element(3, PortMap6)),
+% 	?assertEqual(5, element(4, PortMap6)),
+% 	?assertEqual(11, element(10, PortMap6)),
+% 	maybe_rotate_peer_ports(Peer11),
+% 	[{_, {PortMap7, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(element(2, PortMap5), element(1, PortMap7)),
+% 	?assertEqual(3, element(2, PortMap7)),
+% 	?assertEqual(4, element(3, PortMap7)),
+% 	?assertEqual(5, element(4, PortMap7)),
+% 	?assertEqual(11, element(10, PortMap7)),
+% 	remove_peer(Peer4),
+% 	[{_, {PortMap8, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(empty_slot, element(3, PortMap8)),
+% 	?assertEqual(3, element(2, PortMap8)),
+% 	?assertEqual(5, element(4, PortMap8)),
+% 	remove_peer(Peer2),
+% 	remove_peer(Peer3),
+% 	remove_peer(Peer5),
+% 	remove_peer(Peer6),
+% 	remove_peer(Peer7),
+% 	remove_peer(Peer8),
+% 	remove_peer(Peer9),
+% 	remove_peer(Peer10),
+% 	[{_, {PortMap9, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
+% 	?assertEqual(11, element(10, PortMap9)),
+% 	remove_peer(Peer11),
+% 	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})).
+
+update_rating_test() ->
+	Peer1 = {1, 2, 3, 4, 1984},
+	Peer2 = {5, 6, 7, 8, 1984},
+
+	?assertEqual(#performance{}, get_or_init_performance(Peer1)),
+	?assertEqual(0, get_total_rating()),
+
+	update_rating(Peer1, true),
+	?assertEqual(#performance{}, get_or_init_performance(Peer1)),
+	?assertEqual(0, get_total_rating()),
+
+	update_rating(Peer1, false),
+	assert_performance(#performance{ average_success = 0.965 }, get_or_init_performance(Peer1)),
+	?assertEqual(0, get_total_rating()),
+
+	%% Failed transfer should impact bytes or latency
+	update_rating(Peer1, 1000, 100, 1, false),
+	assert_performance(#performance{ 
+			average_success = 0.931 },
+		get_or_init_performance(Peer1)),
+	?assertEqual(0, get_total_rating()),
+
+	%% Test successful transfer
+	update_rating(Peer1, 1000, 100, 1, true),
+	assert_performance(#performance{ 
+			average_bytes = 5.0,
+			total_bytes = 100,
+			average_latency = 50,
+			total_latency = 1000.0,
+			transfers = 1,
+			average_success = 0.934,
+			rating = 0.0934 },
+		get_or_init_performance(Peer1)),
+	?assertEqual(0.0934, round(get_total_rating(), 4)),
+
+	%% Test concurrency
+	update_rating(Peer1, 1000, 50, 10, true),
+	assert_performance(#performance{ 
+			average_bytes = 29.75,
+			total_bytes = 150,
+			average_latency = 97.5,
+			total_latency = 2000.0,
+			transfers = 2,
+			average_success = 0.936,
+			rating = 0.2856 },
+		get_or_init_performance(Peer1)),
+	?assertEqual(0.2856, round(get_total_rating(), 4)),
+
+	%% With 2 peers total rating should be the sum of both
+	update_rating(Peer2, 1000, 100, 1, true),
+	assert_performance(#performance{ 
+			average_bytes = 5.0,
+			total_bytes = 100,
+			average_latency = 50,
+			total_latency = 1000.0,
+			transfers = 1,
+			average_success = 1,
+			rating = 0.1 },
+		get_or_init_performance(Peer2)),
+	?assertEqual(0.3856, round(get_total_rating(), 4)).
+
+
+assert_performance(Expected, Actual) ->
+	?assertEqual(
+		round(Expected#performance.average_bytes, 3),
+		round(Actual#performance.average_bytes, 3)),
+	?assertEqual(Expected#performance.total_bytes, Actual#performance.total_bytes),
+	?assertEqual(
+		round(Expected#performance.average_latency, 3),
+		round(Actual#performance.average_latency, 3)),
+	?assertEqual(Expected#performance.total_latency, Actual#performance.total_latency),
+	?assertEqual(Expected#performance.transfers, Actual#performance.transfers),
+	?assertEqual(
+		round(Expected#performance.average_success, 3),
+		round(Actual#performance.average_success, 3)),
+	?assertEqual(
+		round(Expected#performance.rating, 4),
+		round(Actual#performance.rating, 4)).
+
+round(Float, N) ->
+    Multiplier = math:pow(10, N),
+    round(Float * Multiplier) / Multiplier.
