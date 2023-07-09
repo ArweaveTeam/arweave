@@ -127,14 +127,15 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	?LOG_DEBUG([{event, rebalance_peers}]),
-	Peers = maps:keys(State#state.peer_tasks),
+	State2 = purge_empty_peers(State),
+	Peers = maps:keys(State2#state.peer_tasks),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	{TargetLatency, TotalThroughput} = calculate_targets(Peers, AllPeerPerformances),
-	MaxActiveIncrement = calculate_max_active_increment(Peers, State),
-	State2 = rebalance_peers(
-				Peers, State#state.peer_tasks, AllPeerPerformances,
-				MaxActiveIncrement, TargetLatency, TotalThroughput, State),
-	{noreply, State2};
+	MaxActiveIncrement = calculate_max_active_increment(Peers, State2),
+	State3 = rebalance_peers(
+				Peers, State2#state.peer_tasks, AllPeerPerformances,
+				MaxActiveIncrement, TargetLatency, TotalThroughput, State2),
+	{noreply, State3};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -358,6 +359,14 @@ calculate_max_active_increment(Peers, State) ->
 	NumPeers = length(Peers),
 	UtilizationGap = State#state.worker_count - State#state.scheduled_task_count,
 	trunc(max(1, UtilizationGap / NumPeers)).
+
+purge_empty_peers(State) ->
+	PurgedPeerTasks = maps:filter(
+		fun(_Peer, PeerTasks) ->
+			PeerTasks#peer_tasks.task_queue_len > 0 orelse PeerTasks#peer_tasks.active_count > 0
+		end,
+		State#state.peer_tasks),
+	State#state{ peer_tasks = PurgedPeerTasks }.
 
 rebalance_peers(
 		[], _AllPeerTasks, _AllPeerPerformances,
