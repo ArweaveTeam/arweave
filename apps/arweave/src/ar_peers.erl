@@ -298,7 +298,7 @@ handle_cast(rank_peers, State) ->
 	prometheus_gauge:set(arweave_peer_count, length(Peers)),
 	ets:insert(?MODULE, {peers, lists:sublist(rank_peers(Peers), ?MAX_PEERS)}),
 	ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),
-	% stats(),
+	stats(),
 	{noreply, State};
 
 handle_cast(ping_peers, State) ->

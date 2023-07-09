@@ -227,8 +227,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							Start3 = ar_data_sync:get_chunk_padded_offset(
 									Start2 + byte_size(Chunk)) + 1,
 							gen_server:cast(list_to_atom("ar_data_sync_" ++ TargetStoreID),
-									{store_fetched_chunk, Peer, Time, TransferSize, Start2 - 1,
-									Proof}),
+									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});
 						{error, timeout} ->
