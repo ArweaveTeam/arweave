@@ -357,7 +357,7 @@ calculate_max_active_increment([], _State) ->
 calculate_max_active_increment(Peers, State) ->
 	NumPeers = length(Peers),
 	UtilizationGap = State#state.worker_count - State#state.scheduled_task_count,
-	max(1, UtilizationGap / NumPeers).
+	trunc(max(1, UtilizationGap / NumPeers)).
 
 rebalance_peers(
 		[], _AllPeerTasks, _AllPeerPerformances,
