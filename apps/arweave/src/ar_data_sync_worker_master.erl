@@ -372,8 +372,9 @@ rebalance_peer(PeerTasks, Performance, TargetLatency, TotalThroughput, State) ->
 		{before_max, PeerTasks2#peer_tasks.max_active},
 		{after_max, PeerTasks3#peer_tasks.max_active},
 		{worker_count, State2#state.worker_count},
-		{scheduled_tass, State2#state.scheduled_task_count},
+		{scheduled_tasks, State2#state.scheduled_task_count},
 		{active_count, PeerTasks2#peer_tasks.active_count},
+		{task_queue_len, PeerTasks2#peer_tasks.task_queue_len},
 		{target_latency, TargetLatency},
 		{average_latency, Performance#performance.average_latency}
 		]),
@@ -436,12 +437,10 @@ update_active(PeerTasks, Performance, TargetLatency, State) ->
 	%% This prevents situations where we have a low number of active tasks and no queue which
 	%% causes each request to complete fast and hikes up the max_active. Then we get a new
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
-	WorkerCount = State#state.worker_count,
-	ScheduledTasks = State#state.scheduled_task_count,
 	MaxActive = PeerTasks#peer_tasks.max_active,
 	ActiveCount = PeerTasks#peer_tasks.active_count,
 	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
-	WorkersStarved = ScheduledTasks < WorkerCount,
+	WorkersStarved = State#state.scheduled_task_count < State#state.worker_count,
 	TargetMaxActive = case FasterThanTarget orelse WorkersStarved of
 		false ->
 			%% latency > target, decrease max_active
@@ -452,7 +451,7 @@ update_active(PeerTasks, Performance, TargetLatency, State) ->
 	end,
 
 	%% Can't have more active tasks than workers.
-	WorkerLimitedMaxActive = min(TargetMaxActive, WorkerCount),
+	WorkerLimitedMaxActive = min(TargetMaxActive, State#state.worker_count),
 	%% Can't have more active tasks than we have active or queued tasks.
 	TaskLimitedMaxActive = min(
 		WorkerLimitedMaxActive, 
