@@ -130,8 +130,11 @@ handle_cast(rebalance_peers, State) ->
 	Peers = maps:keys(State#state.peer_tasks),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	{TargetLatency, TotalThroughput} = calculate_targets(Peers, AllPeerPerformances),
-	{noreply, rebalance_peers(
-		Peers, State#state.peer_tasks, AllPeerPerformances, TargetLatency, TotalThroughput, State)};
+	MaxActiveIncrement = calculate_max_active_increment(Peers, State),
+	State2 = rebalance_peers(
+				Peers, State#state.peer_tasks, AllPeerPerformances,
+				MaxActiveIncrement, TargetLatency, TotalThroughput, State),
+	{noreply, State2};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -348,29 +351,42 @@ calculate_targets(Peers, AllPeerPerformances) ->
     TargetLatency = TotalLatency / length(Peers),
     {TargetLatency, TotalThroughput}.
 
-rebalance_peers([], _AllPeerTasks, _AllPeerPerformances, _TargetLatency, _TotalThroughput, State) ->
+%% @doc: if the workers are starved we want to ramp up each peer's max_active more quickly.
+calculate_max_active_increment([], _State) ->
+	1;
+calculate_max_active_increment(Peers, State) ->
+	NumPeers = length(Peers),
+	UtilizationGap = State#state.worker_count - State#state.scheduled_task_count,
+	max(1, UtilizationGap / NumPeers).
+
+rebalance_peers(
+		[], _AllPeerTasks, _AllPeerPerformances,
+		_MaxActiveIncrement, _TargetLatency, _TotalThroughput, State) ->
 	State;
 rebalance_peers(
-		[Peer | Peers], AllPeerTasks, AllPeerPerformances, TargetLatency, TotalThroughput, State) ->
+		[Peer | Peers], AllPeerTasks, AllPeerPerformances,
+		MaxActiveIncrement, TargetLatency, TotalThroughput, State) ->
 	PeerTasks = maps:get(Peer, AllPeerTasks),
 	Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 	{PeerTasks2, State2} = rebalance_peer(
-		PeerTasks, Performance, TargetLatency, TotalThroughput, State),
+		PeerTasks, Performance, MaxActiveIncrement, TargetLatency, TotalThroughput, State),
 	State3 = set_peer_tasks(PeerTasks2, State2),
 	rebalance_peers(
-		Peers, AllPeerTasks, AllPeerPerformances, TargetLatency, TotalThroughput, State3).
+		Peers, AllPeerTasks, AllPeerPerformances,
+		MaxActiveIncrement, TargetLatency, TotalThroughput, State3).
 
-rebalance_peer(PeerTasks, Performance, TargetLatency, TotalThroughput, State) ->
+rebalance_peer(PeerTasks, Performance, MaxActiveIncrement, TargetLatency, TotalThroughput, State) ->
 	{PeerTasks2, State2} = cut_peer_queue(
 		max_peer_queue(Performance, TotalThroughput, State#state.worker_count),
 		PeerTasks,
 		State),
-	PeerTasks3 = update_active(PeerTasks2, Performance, TargetLatency, State2),
+	PeerTasks3 = update_active(PeerTasks2, Performance, MaxActiveIncrement, TargetLatency, State2),
 	?LOG_DEBUG([
 		{event, update_active},
 		{peer, ar_util:format_peer(PeerTasks3#peer_tasks.peer)},
 		{before_max, PeerTasks2#peer_tasks.max_active},
 		{after_max, PeerTasks3#peer_tasks.max_active},
+		{max_active_increment, MaxActiveIncrement},
 		{worker_count, State2#state.worker_count},
 		{scheduled_tasks, State2#state.scheduled_task_count},
 		{active_count, PeerTasks2#peer_tasks.active_count},
@@ -425,7 +441,7 @@ format_peer(Task, Args) ->
 			ar_util:format_peer(element(3, Args))
 	end.
 
-update_active(PeerTasks, Performance, TargetLatency, State) ->
+update_active(PeerTasks, Performance, MaxActiveIncrement, TargetLatency, State) ->
 	%% Determine target max_active:
 	%% 1. Increase max_active when the peer's average latency is less than the threshold
 	%% 2. OR increase max_active when the workers are not fully utilized
@@ -438,16 +454,15 @@ update_active(PeerTasks, Performance, TargetLatency, State) ->
 	%% causes each request to complete fast and hikes up the max_active. Then we get a new
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
 	MaxActive = PeerTasks#peer_tasks.max_active,
-	ActiveCount = PeerTasks#peer_tasks.active_count,
 	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
 	WorkersStarved = State#state.scheduled_task_count < State#state.worker_count,
 	TargetMaxActive = case FasterThanTarget orelse WorkersStarved of
-		false ->
-			%% latency > target, decrease max_active
-			MaxActive-1;
 		true ->
 			%% latency < target, increase max_active.
-			MaxActive+1
+			MaxActive+MaxActiveIncrement;
+		false ->
+			%% latency > target, decrease max_active
+			MaxActive-1
 	end,
 
 	%% Can't have more active tasks than workers.
@@ -455,7 +470,7 @@ update_active(PeerTasks, Performance, TargetLatency, State) ->
 	%% Can't have more active tasks than we have active or queued tasks.
 	TaskLimitedMaxActive = min(
 		WorkerLimitedMaxActive, 
-		max(ActiveCount, PeerTasks#peer_tasks.task_queue_len)
+		max(PeerTasks#peer_tasks.active_count, PeerTasks#peer_tasks.task_queue_len)
 	),
 	%% Can't have less than the minimum.
 	PeerTasks#peer_tasks{
@@ -683,6 +698,7 @@ test_update_active() ->
 		Result = update_active(
 			#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 30},
 			#performance{average_latency = 100},
+			1,
 			200,
 			#state{ worker_count = 20, scheduled_task_count = 20 }),
 		?assertEqual(11, Result#peer_tasks.max_active)
@@ -692,6 +708,7 @@ test_update_active() ->
 		Result = update_active(
 			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
 			#performance{average_latency = 300},
+			1,
 			200,
 			#state{ worker_count = 20, scheduled_task_count = 20 }),
 		?assertEqual(9, Result#peer_tasks.max_active)
@@ -701,15 +718,17 @@ test_update_active() ->
 		Result = update_active(
 			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
 			#performance{average_latency = 300},
+			3,
 			200,
 			#state{ worker_count = 20, scheduled_task_count = 10 }),
-		?assertEqual(11, Result#peer_tasks.max_active)
+		?assertEqual(13, Result#peer_tasks.max_active)
 	end),
 
 	?_test(begin
 		Result = update_active(
 			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
 			#performance{average_latency = 100},
+			1,
 			200,
 			#state{ worker_count = 10, scheduled_task_count = 10 }),
 		?assertEqual(10, Result#peer_tasks.max_active)
@@ -719,6 +738,7 @@ test_update_active() ->
 		Result = update_active(
 			#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
 			#performance{average_latency = 100},
+			1,
 			200,
 			#state{ worker_count = 20, scheduled_task_count = 20 }),
 		?assertEqual(10, Result#peer_tasks.max_active)
@@ -728,6 +748,7 @@ test_update_active() ->
 		Result = update_active(
 			#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
 			#performance{average_latency = 100},
+			1,
 			200,
 			#state{ worker_count = 20, scheduled_task_count = 20 }),
 		?assertEqual(10, Result#peer_tasks.max_active)
@@ -737,6 +758,7 @@ test_update_active() ->
 		Result = update_active(
 			#peer_tasks{max_active = 8, active_count = 20, task_queue_len = 30},
 			#performance{average_latency = 300},
+			1,
 			200,
 			#state{ worker_count = 20, scheduled_task_count = 20 }),
 		?assertEqual(8, Result#peer_tasks.max_active)

@@ -4,10 +4,10 @@
 -include_lib("ar.hrl").
 
 %% When rating gossiped data we don't have a latency value to use, so we'll credit the peer at
-%% this rate - which is (currently) roughly equal to the latency of 50ms to fetch a 1250 byte
+%% this rate - which is (currently) roughly equal to the latency of 20ms to fetch a 1250 byte
 %% transaction. This is on the fast end so should generally be a boost to the peer's rating. We
 %% can adjust this value to increase or decrease the incentive for gossiping data.
--define(GOSSIP_THROUGHPUT, 25). %% bytes per millisecond
+-define(GOSSIP_THROUGHPUT, 60). %% bytes per millisecond
 
 -record(performance, {
 	version = 3,
