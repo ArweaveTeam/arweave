@@ -333,8 +333,11 @@ handle_cast({invalid_fetched_data, Peer, DataType}, State) ->
 handle_cast({gossiped_data, Peer, DataType, DataSize}, State) ->
 	case check_peer(Peer) of
 		ok ->
-			Performance = get_or_init_performance(Peer),
-			LatencyMilliseconds = calculate_gossip_latency(Performance, DataSize),
+			%% Since gossiped data is pushed to us we don't know the latency, but we do want
+			%% to incentivize peers to gossip data quickly and frequently. We'll assign a value
+			%% based on a pretty generous peer throughput assumption. See ?GOSSIP_THROUGHPUT for a
+			%% description of the formula.
+			LatencyMilliseconds = DataSize / ?GOSSIP_THROUGHPUT,
 			?LOG_DEBUG([
 				{event, update_rating},
 				{update_type, gossiped_data},
@@ -707,7 +710,7 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 		_ -> Transfers + 1
 	end,
 	AverageSuccess2 = calculate_ema(AverageSuccess, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
-	%% Rating is an estimate of the peer's effective throughput in bytes per second.
+	%% Rating is an estimate of the peer's effective throughput in bytes per millisecond.
 	Rating2 = case AverageLatency2 > 0 of
 		true -> (AverageBytes2 / AverageLatency2) * AverageSuccess2;
 		_ -> Rating
@@ -726,24 +729,6 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	set_performance(Peer, Performance2),
 	set_total_rating(Total2),
 	Performance2.
-
-%% @doc Since gossiped data is pushed to us we don't know the latency, but we do want
-%% to incentivize peers to gossip data quickly and frequently, so we will assign
-%% a latency that is guaranteed to improve the peer's rating:
-%% 1. Calculate the latency that would be required to transfer DataSize bytes at the
-%%    peer's current average rate.
-%% 2. Scale that latency by ?GOSSIP_ADVANTAGE and rate using the scaled latency
-
-calculate_gossip_latency(
-		#performance{average_bytes = 0.0}, _DataSize) ->
-	10; %% If this is the first rating we've received, assume 10ms latency
-calculate_gossip_latency(
-		#performance{average_latency = 0.0}, _DataSize) ->
-	10; %% If this is the first rating we've received, assume 10ms latency
-calculate_gossip_latency(
-		#performance{average_bytes = AverageBytes, average_latency = AverageLatency}, DataSize) ->
-	AverageThroughput = AverageBytes / AverageLatency,
-	(DataSize / AverageThroughput) * ?GOSSIP_ADVANTAGE.
 
 calculate_ema(OldEMA, Value, Alpha) ->
 	Alpha * Value + (1 - Alpha) * OldEMA.

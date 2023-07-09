@@ -78,7 +78,7 @@ init(Workers) ->
 
 handle_call(ready_for_work, _From, State) ->
 	TotalTaskCount = State#state.scheduled_task_count + State#state.queued_task_count,
-	ReadyForWork = TotalTaskCount < max_tasks(),
+	ReadyForWork = TotalTaskCount < max_tasks(State#state.worker_count),
 	{reply, ReadyForWork, State};
 
 handle_call(Request, _From, State) ->
@@ -212,20 +212,19 @@ process_peer_queue(PeerTasks, State) ->
 
 %% @doc the maximum number of tasks we can have in process - including stasks queued here as well
 %% as those scheduled on ar_data_sync_workers.
-max_tasks() ->
-	{ok, Config} = application:get_env(arweave, config),
-	Config#config.sync_jobs * 50.
+max_tasks(WorkerCount) ->
+	WorkerCount * 50.
 
 %% @doc The maximum number of tasks we can have queued for a given peer.
-max_peer_queue(_Peformance, 0) ->
+max_peer_queue(_Peformance, 0, _WorkerCount) ->
 	undefined;
-max_peer_queue(_Performance, 0.0) ->
+max_peer_queue(_Performance, 0.0, _WorkerCount) ->
 	undefined;
-max_peer_queue(#performance{ rating = 0 } = _Performance, _TotalThroughput) ->
+max_peer_queue(#performance{ rating = 0 } = _Performance, _TotalThroughput, _WorkerCount) ->
 	undefined;
-max_peer_queue(#performance{ rating = 0.0 } = _Performance, _TotalThroughput) ->
+max_peer_queue(#performance{ rating = 0.0 } = _Performance, _TotalThroughput, _WorkerCount) ->
 	undefined;
-max_peer_queue(Performance, TotalThroughput) ->
+max_peer_queue(Performance, TotalThroughput, WorkerCount) ->
 	%% estimate of of this peer's througput
 	PeerThroughput = Performance#performance.rating,
 	%% The maximum number of tasks we allow to be queued for this peer is related to its
@@ -234,7 +233,7 @@ max_peer_queue(Performance, TotalThroughput) ->
 	%%
 	%% We also allow all peers to maintain a small queue no matter what - this is to allow for
 	%% them to recover from a temporary drop in throughput.
-	max(trunc((PeerThroughput / TotalThroughput) * max_tasks()), ?MIN_PEER_QUEUE).
+	max(trunc((PeerThroughput / TotalThroughput) * max_tasks(WorkerCount)), ?MIN_PEER_QUEUE).
 
 %% @doc Cut a peer's queue to store roughly 15 minutes worth of tasks. This prevents
 %% the a slow peer from filling up the ar_data_sync_worker_master queues, stalling the
@@ -363,17 +362,17 @@ rebalance_peers(
 
 rebalance_peer(PeerTasks, Performance, TargetLatency, TotalThroughput, State) ->
 	{PeerTasks2, State2} = cut_peer_queue(
-		max_peer_queue(Performance, TotalThroughput),
+		max_peer_queue(Performance, TotalThroughput, State#state.worker_count),
 		PeerTasks,
 		State),
-	WorkerCount = State2#state.worker_count,
-	PeerTasks3 = update_active(PeerTasks2, Performance, WorkerCount, TargetLatency),
+	PeerTasks3 = update_active(PeerTasks2, Performance, TargetLatency, State2),
 	?LOG_DEBUG([
 		{event, update_active},
 		{peer, ar_util:format_peer(PeerTasks3#peer_tasks.peer)},
 		{before_max, PeerTasks2#peer_tasks.max_active},
 		{after_max, PeerTasks3#peer_tasks.max_active},
-		{worker_count, WorkerCount},
+		{worker_count, State2#state.worker_count},
+		{scheduled_tass, State2#state.scheduled_task_count},
 		{active_count, PeerTasks2#peer_tasks.active_count},
 		{target_latency, TargetLatency},
 		{average_latency, Performance#performance.average_latency}
@@ -425,10 +424,11 @@ format_peer(Task, Args) ->
 			ar_util:format_peer(element(3, Args))
 	end.
 
-update_active(PeerTasks, Performance, WorkerCount, TargetLatency) ->
+update_active(PeerTasks, Performance, TargetLatency, State) ->
 	%% Determine target max_active:
-	%% 1. Increase max_active when the EMA is less than the threshold
-	%% 2. Decrease max_active if the most recent request was slower than the threshold - this
+	%% 1. Increase max_active when the peer's average latency is less than the threshold
+	%% 2. OR increase max_active when the workers are not fully utilized
+	%% 3. Decrease max_active if the most recent request was slower than the threshold - this
 	%%    allows us to respond more quickly to a sudden drop in performance
 	%%
 	%% Once we have the target max_active, find the maximum of the currently active tasks
@@ -436,9 +436,13 @@ update_active(PeerTasks, Performance, WorkerCount, TargetLatency) ->
 	%% This prevents situations where we have a low number of active tasks and no queue which
 	%% causes each request to complete fast and hikes up the max_active. Then we get a new
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
+	WorkerCount = State#state.worker_count,
+	ScheduledTasks = State#state.scheduled_task_count,
 	MaxActive = PeerTasks#peer_tasks.max_active,
 	ActiveCount = PeerTasks#peer_tasks.active_count,
-	TargetMaxActive = case Performance#performance.average_latency < TargetLatency of
+	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
+	WorkersStarved = ScheduledTasks < WorkerCount,
+	TargetMaxActive = case FasterThanTarget orelse WorkersStarved of
 		false ->
 			%% latency > target, decrease max_active
 			MaxActive-1;
@@ -629,20 +633,12 @@ test_process_main_queue() ->
 		8, 8, PeerTasks).
 
 test_max_peer_queue() ->
-	{ok, OriginalConfig} = application:get_env(arweave, config),
-	try
-		ok = application:set_env(arweave, config, OriginalConfig#config{
-			sync_jobs = 10
-		}),
-		?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0)),
-		?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0.0)),
-		?assertEqual(undefined, max_peer_queue(#performance{ rating = 0 }, 100)),
-		?assertEqual(undefined, max_peer_queue(#performance{ rating = 0.0 }, 100)),
-		?assertEqual(50, max_peer_queue(#performance{ rating = 10 }, 100)),
-		?assertEqual(20, max_peer_queue(#performance{ rating = 1 }, 100))
-	after
-		application:set_env(arweave, config, OriginalConfig)
-	end.
+	?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0, 10)),
+	?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0.0, 10)),
+	?assertEqual(undefined, max_peer_queue(#performance{ rating = 0 }, 100, 10)),
+	?assertEqual(undefined, max_peer_queue(#performance{ rating = 0.0 }, 100, 10)),
+	?assertEqual(50, max_peer_queue(#performance{ rating = 10 }, 100, 10)),
+	?assertEqual(20, max_peer_queue(#performance{ rating = 1 }, 100, 10)).
 
 test_cut_peer_queue() ->
 	{ok, OriginalConfig} = application:get_env(arweave, config),
@@ -684,47 +680,68 @@ test_cut_peer_queue() ->
 	end.
 
 test_update_active() ->
-	Result1 = update_active(
-		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 30},
-		#performance{average_latency = 100},
-		20,
-		200),
-	?assertEqual(11, Result1#peer_tasks.max_active),
+	?_test(begin
+		Result = update_active(
+			#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 30},
+			#performance{average_latency = 100},
+			200,
+			#state{ worker_count = 20, scheduled_task_count = 20 }),
+		?assertEqual(11, Result#peer_tasks.max_active)
+	end),
 
-	Result2 = update_active(
-		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
-		#performance{average_latency = 300},
-		20,
-		200),
-	?assertEqual(9, Result2#peer_tasks.max_active),
+	?_test(begin
+		Result = update_active(
+			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+			#performance{average_latency = 300},
+			200,
+			#state{ worker_count = 20, scheduled_task_count = 20 }),
+		?assertEqual(9, Result#peer_tasks.max_active)
+	end),
 
-	Result3 = update_active(
-		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
-		#performance{average_latency = 100},
-		10,
-		200),
-	?assertEqual(10, Result3#peer_tasks.max_active),
+	?_test(begin
+		Result = update_active(
+			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+			#performance{average_latency = 300},
+			200,
+			#state{ worker_count = 20, scheduled_task_count = 10 }),
+		?assertEqual(11, Result#peer_tasks.max_active)
+	end),
 
-	Result4 = update_active(
-		#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
-		#performance{average_latency = 100},
-		20,
-		200),
-	?assertEqual(10, Result4#peer_tasks.max_active),
+	?_test(begin
+		Result = update_active(
+			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+			#performance{average_latency = 100},
+			200,
+			#state{ worker_count = 10, scheduled_task_count = 10 }),
+		?assertEqual(10, Result#peer_tasks.max_active)
+	end),
 
-	Result5 = update_active(
-		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
-		#performance{average_latency = 100},
-		20,
-		200),
-	?assertEqual(10, Result5#peer_tasks.max_active),
+	?_test(begin
+		Result = update_active(
+			#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
+			#performance{average_latency = 100},
+			200,
+			#state{ worker_count = 20, scheduled_task_count = 20 }),
+		?assertEqual(10, Result#peer_tasks.max_active)
+	end),
 
-	Result6 = update_active(
-		#peer_tasks{max_active = 8, active_count = 20, task_queue_len = 30},
-		#performance{average_latency = 300},
-		20,
-		200),
-	?assertEqual(8, Result6#peer_tasks.max_active).
+	?_test(begin
+		Result = update_active(
+			#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
+			#performance{average_latency = 100},
+			200,
+			#state{ worker_count = 20, scheduled_task_count = 20 }),
+		?assertEqual(10, Result#peer_tasks.max_active)
+	end),
+
+	?_test(begin
+		Result = update_active(
+			#peer_tasks{max_active = 8, active_count = 20, task_queue_len = 30},
+			#performance{average_latency = 300},
+			200,
+			#state{ worker_count = 20, scheduled_task_count = 20 }),
+		?assertEqual(8, Result#peer_tasks.max_active)
+	end).
 
 test_calculate_targets() ->
 	Result1 = calculate_targets([], #{}),
