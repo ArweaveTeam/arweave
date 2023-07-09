@@ -69,7 +69,8 @@
 	invalid_hash,
 	invalid_timestamp,
 	invalid_resigned_solution_hash,
-	invalid_nonce_limiter_cache_mismatch
+	invalid_nonce_limiter_cache_mismatch,
+	invalid_nonce_limiter_global_step_number
 ]).
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,
