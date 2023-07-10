@@ -108,15 +108,6 @@ handle_cast({task_completed, {read_range, {Worker, _, _}}}, State) ->
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
 	{Start, End, Peer, _, _} = Args,
-	?LOG_DEBUG([
-		{event, task_completed},
-		{task, sync_range},
-		{peer, ar_util:format_peer(Peer)},
-		{s, Start},
-		{e, End},
-		{result, Result},
-		{elapsed, ElapsedNative}
-		]),
 	DataSize = End - Start,
 	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
@@ -126,7 +117,6 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}
 
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
-	?LOG_DEBUG([{event, rebalance_peers}]),
 	State2 = purge_empty_peers(State),
 	Peers = maps:keys(State2#state.peer_tasks),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
@@ -385,18 +375,6 @@ rebalance_peer(PeerTasks, Performance, TotalMaxActive, TargetLatency, TotalThrou
 		PeerTasks,
 		State),
 	PeerTasks3 = update_active(PeerTasks2, Performance, TotalMaxActive, TargetLatency, State2),
-	?LOG_DEBUG([
-		{event, update_active},
-		{peer, ar_util:format_peer(PeerTasks3#peer_tasks.peer)},
-		{before_max, PeerTasks2#peer_tasks.max_active},
-		{after_max, PeerTasks3#peer_tasks.max_active},
-		{worker_count, State2#state.worker_count},
-		{total_max_active, TotalMaxActive},
-		{active_count, PeerTasks2#peer_tasks.active_count},
-		{task_queue_len, PeerTasks2#peer_tasks.task_queue_len},
-		{target_latency, TargetLatency},
-		{average_latency, Performance#performance.average_latency}
-		]),
 	{PeerTasks3, State2}.
 
 update_active(PeerTasks, Performance, TotalMaxActive, TargetLatency, State) ->

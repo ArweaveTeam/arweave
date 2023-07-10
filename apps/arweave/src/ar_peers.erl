@@ -298,7 +298,6 @@ handle_cast(rank_peers, State) ->
 	prometheus_gauge:set(arweave_peer_count, length(Peers)),
 	ets:insert(?MODULE, {peers, lists:sublist(rank_peers(Peers), ?MAX_PEERS)}),
 	ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),
-	stats(),
 	{noreply, State};
 
 handle_cast(ping_peers, State) ->
@@ -306,31 +305,16 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
-handle_cast({fetched_data, Peer, DataType, LatencyMilliseconds, DataSize, Concurrency}, State) ->
-	?LOG_DEBUG([
-		{event, update_rating},
-		{update_type, fetched_data},
-		{data_type, DataType},
-		{peer, ar_util:format_peer(Peer)},
-		{latency, LatencyMilliseconds},
-		{data_size, DataSize},
-		{concurrency, Concurrency}
-	]),
+handle_cast({fetched_data, Peer, _DataType, LatencyMilliseconds, DataSize, Concurrency}, State) ->
 	update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, true),
 	{noreply, State};
 
 
-handle_cast({invalid_fetched_data, Peer, DataType}, State) ->
-	?LOG_DEBUG([
-		{event, update_rating},
-		{update_type, invalid_fetched_data},
-		{data_type, DataType},
-		{peer, ar_util:format_peer(Peer)}
-	]),
+handle_cast({invalid_fetched_data, Peer, _DataType}, State) ->
 	update_rating(Peer, false),
 	{noreply, State};
 
-handle_cast({gossiped_data, Peer, DataType, DataSize}, State) ->
+handle_cast({gossiped_data, Peer, _DataType, DataSize}, State) ->
 	case check_peer(Peer) of
 		ok ->
 			%% Since gossiped data is pushed to us we don't know the latency, but we do want
@@ -338,14 +322,6 @@ handle_cast({gossiped_data, Peer, DataType, DataSize}, State) ->
 			%% based on a pretty generous peer throughput assumption. See ?GOSSIP_THROUGHPUT for a
 			%% description of the formula.
 			LatencyMilliseconds = DataSize / ?GOSSIP_THROUGHPUT,
-			?LOG_DEBUG([
-				{event, update_rating},
-				{update_type, gossiped_data},
-				{data_type, DataType},
-				{peer, ar_util:format_peer(Peer)},
-				{latency, LatencyMilliseconds},
-				{data_size, DataSize}
-			]),
 			update_rating(Peer, LatencyMilliseconds, DataSize, 1, true);
 		_ ->
 			ok
@@ -956,6 +932,36 @@ update_rating_test() ->
 			rating = 0.1 },
 		get_or_init_performance(Peer2)),
 	?assertEqual(0.3856, round(get_total_rating(), 4)).
+
+block_rejected_test_() ->
+	[
+		{timeout, 30, fun test_block_rejected/0}
+	].
+
+test_block_rejected() ->
+	ar_blacklist_middleware:cleanup_ban(whereis(ar_blacklist_middleware)),
+	Peer = {127,0,0,1,1985},
+	ar_peers:add_peer(Peer, -1),
+
+	ar_events:send(block, {rejected, invalid_signature, <<>>, Peer}),
+	timer:sleep(5000),
+
+	?assertEqual(#{Peer => #performance{}}, ar_peers:get_peer_performances([Peer])),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)),
+
+	ar_events:send(block, {rejected, failed_to_fetch_first_chunk, <<>>, Peer}),
+	timer:sleep(5000),
+
+	?assertEqual(
+		#{Peer => #performance{ average_success = 0.965 }},
+		ar_peers:get_peer_performances([Peer])),
+	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)),
+
+	ar_events:send(block, {rejected, invalid_previous_solution_hash, <<>>, Peer}),
+	timer:sleep(5000),
+
+	?assertEqual(#{Peer => #performance{}}, ar_peers:get_peer_performances([Peer])),
+	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)).
 
 
 assert_performance(Expected, Actual) ->
