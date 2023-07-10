@@ -15,7 +15,7 @@
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(REBALANCE_FREQUENCY_MS, 60*1000).
+-define(REBALANCE_FREQUENCY_MS, 10*1000).
 -define(READ_RANGE_CHUNKS, 10).
 -define(MIN_MAX_ACTIVE, 8).
 -define(MIN_PEER_QUEUE, 20).
@@ -131,7 +131,7 @@ handle_cast(rebalance_peers, State) ->
 	Peers = maps:keys(State2#state.peer_tasks),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	{TargetLatency, TotalThroughput} = calculate_targets(Peers, AllPeerPerformances),
-	MaxActiveIncrement = calculate_max_active_increment(Peers, State2),
+	MaxActiveIncrement = 1, %% calculate_max_active_increment(Peers, State2),
 	State3 = rebalance_peers(
 				Peers, State2#state.peer_tasks, AllPeerPerformances,
 				MaxActiveIncrement, TargetLatency, TotalThroughput, State2),
