@@ -130,11 +130,10 @@ handle_cast(rebalance_peers, State) ->
 	State2 = purge_empty_peers(State),
 	Peers = maps:keys(State2#state.peer_tasks),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
+	TotalMaxActive = calculate_total_max_active(State2),
 	{TargetLatency, TotalThroughput} = calculate_targets(Peers, AllPeerPerformances),
-	MaxActiveIncrement = 1, %% calculate_max_active_increment(Peers, State2),
 	State3 = rebalance_peers(
-				Peers, State2#state.peer_tasks, AllPeerPerformances,
-				MaxActiveIncrement, TargetLatency, TotalThroughput, State2),
+				Peers, AllPeerPerformances, TotalMaxActive, TargetLatency, TotalThroughput, State2),
 	{noreply, State3};
 
 handle_cast(Cast, State) ->
@@ -352,13 +351,12 @@ calculate_targets(Peers, AllPeerPerformances) ->
     TargetLatency = TotalLatency / length(Peers),
     {TargetLatency, TotalThroughput}.
 
-%% @doc: if the workers are starved we want to ramp up each peer's max_active more quickly.
-calculate_max_active_increment([], _State) ->
-	1;
-calculate_max_active_increment(Peers, State) ->
-	NumPeers = length(Peers),
-	UtilizationGap = State#state.worker_count - State#state.scheduled_task_count,
-	trunc(max(1, UtilizationGap / NumPeers)).
+calculate_total_max_active(State) ->
+	maps:fold(
+		fun(_Key, PeerTasks, Acc) ->
+			PeerTasks#peer_tasks.max_active + Acc
+		end,
+	0, State#state.peer_tasks).
 
 purge_empty_peers(State) ->
 	PurgedPeerTasks = maps:filter(
@@ -369,41 +367,73 @@ purge_empty_peers(State) ->
 	State#state{ peer_tasks = PurgedPeerTasks }.
 
 rebalance_peers(
-		[], _AllPeerTasks, _AllPeerPerformances,
-		_MaxActiveIncrement, _TargetLatency, _TotalThroughput, State) ->
+		[], _AllPeerPerformances, _TotalMaxActive, _TargetLatency, _TotalThroughput, State) ->
 	State;
-rebalance_peers(
-		[Peer | Peers], AllPeerTasks, AllPeerPerformances,
-		MaxActiveIncrement, TargetLatency, TotalThroughput, State) ->
-	PeerTasks = maps:get(Peer, AllPeerTasks),
+rebalance_peers([Peer | Peers],
+		AllPeerPerformances, TotalMaxActive, TargetLatency, TotalThroughput, State) ->
+	PeerTasks = maps:get(Peer, State#state.peer_tasks),
 	Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 	{PeerTasks2, State2} = rebalance_peer(
-		PeerTasks, Performance, MaxActiveIncrement, TargetLatency, TotalThroughput, State),
+		PeerTasks, Performance, TotalMaxActive, TargetLatency, TotalThroughput, State),
 	State3 = set_peer_tasks(PeerTasks2, State2),
 	rebalance_peers(
-		Peers, AllPeerTasks, AllPeerPerformances,
-		MaxActiveIncrement, TargetLatency, TotalThroughput, State3).
+		Peers, AllPeerPerformances, TotalMaxActive, TargetLatency, TotalThroughput, State3).
 
-rebalance_peer(PeerTasks, Performance, MaxActiveIncrement, TargetLatency, TotalThroughput, State) ->
+rebalance_peer(PeerTasks, Performance, TotalMaxActive, TargetLatency, TotalThroughput, State) ->
 	{PeerTasks2, State2} = cut_peer_queue(
 		max_peer_queue(Performance, TotalThroughput, State#state.worker_count),
 		PeerTasks,
 		State),
-	PeerTasks3 = update_active(PeerTasks2, Performance, MaxActiveIncrement, TargetLatency, State2),
+	PeerTasks3 = update_active(PeerTasks2, Performance, TotalMaxActive, TargetLatency, State2),
 	?LOG_DEBUG([
 		{event, update_active},
 		{peer, ar_util:format_peer(PeerTasks3#peer_tasks.peer)},
 		{before_max, PeerTasks2#peer_tasks.max_active},
 		{after_max, PeerTasks3#peer_tasks.max_active},
-		{max_active_increment, MaxActiveIncrement},
 		{worker_count, State2#state.worker_count},
-		{scheduled_tasks, State2#state.scheduled_task_count},
+		{total_max_active, TotalMaxActive},
 		{active_count, PeerTasks2#peer_tasks.active_count},
 		{task_queue_len, PeerTasks2#peer_tasks.task_queue_len},
 		{target_latency, TargetLatency},
 		{average_latency, Performance#performance.average_latency}
 		]),
 	{PeerTasks3, State2}.
+
+update_active(PeerTasks, Performance, TotalMaxActive, TargetLatency, State) ->
+	%% Determine target max_active:
+	%% 1. Increase max_active when the peer's average latency is less than the threshold
+	%% 2. OR increase max_active when the workers are not fully utilized
+	%% 3. Decrease max_active if the most recent request was slower than the threshold - this
+	%%    allows us to respond more quickly to a sudden drop in performance
+	%%
+	%% Once we have the target max_active, find the maximum of the currently active tasks
+	%% and queued tasks. The new max_active is the minimum of the target and that value.
+	%% This prevents situations where we have a low number of active tasks and no queue which
+	%% causes each request to complete fast and hikes up the max_active. Then we get a new
+	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
+	MaxActive = PeerTasks#peer_tasks.max_active,
+	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
+	WorkersStarved = TotalMaxActive < State#state.worker_count,
+	TargetMaxActive = case FasterThanTarget orelse WorkersStarved of
+		true ->
+			%% latency < target, increase max_active.
+			MaxActive+1;
+		false ->
+			%% latency > target, decrease max_active
+			MaxActive-1
+	end,
+
+	%% Can't have more active tasks than workers.
+	WorkerLimitedMaxActive = min(TargetMaxActive, State#state.worker_count),
+	%% Can't have more active tasks than we have active or queued tasks.
+	TaskLimitedMaxActive = min(
+		WorkerLimitedMaxActive, 
+		max(PeerTasks#peer_tasks.active_count, PeerTasks#peer_tasks.task_queue_len)
+	),
+	%% Can't have less than the minimum.
+	PeerTasks#peer_tasks{
+		max_active = max(TaskLimitedMaxActive, ?MIN_MAX_ACTIVE)
+	}.
 
 %%--------------------------------------------------------------------
 %% Helpers
@@ -449,42 +479,6 @@ format_peer(Task, Args) ->
 		sync_range ->
 			ar_util:format_peer(element(3, Args))
 	end.
-
-update_active(PeerTasks, Performance, MaxActiveIncrement, TargetLatency, State) ->
-	%% Determine target max_active:
-	%% 1. Increase max_active when the peer's average latency is less than the threshold
-	%% 2. OR increase max_active when the workers are not fully utilized
-	%% 3. Decrease max_active if the most recent request was slower than the threshold - this
-	%%    allows us to respond more quickly to a sudden drop in performance
-	%%
-	%% Once we have the target max_active, find the maximum of the currently active tasks
-	%% and queued tasks. The new max_active is the minimum of the target and that value.
-	%% This prevents situations where we have a low number of active tasks and no queue which
-	%% causes each request to complete fast and hikes up the max_active. Then we get a new
-	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
-	MaxActive = PeerTasks#peer_tasks.max_active,
-	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
-	WorkersStarved = State#state.scheduled_task_count < State#state.worker_count,
-	TargetMaxActive = case FasterThanTarget orelse WorkersStarved of
-		true ->
-			%% latency < target, increase max_active.
-			MaxActive+MaxActiveIncrement;
-		false ->
-			%% latency > target, decrease max_active
-			MaxActive-1
-	end,
-
-	%% Can't have more active tasks than workers.
-	WorkerLimitedMaxActive = min(TargetMaxActive, State#state.worker_count),
-	%% Can't have more active tasks than we have active or queued tasks.
-	TaskLimitedMaxActive = min(
-		WorkerLimitedMaxActive, 
-		max(PeerTasks#peer_tasks.active_count, PeerTasks#peer_tasks.task_queue_len)
-	),
-	%% Can't have less than the minimum.
-	PeerTasks#peer_tasks{
-		max_active = max(TaskLimitedMaxActive, ?MIN_MAX_ACTIVE)
-	}.
 
 %%%===================================================================
 %%% Tests. Included in the module so they can reference private
