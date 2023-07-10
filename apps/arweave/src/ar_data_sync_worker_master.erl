@@ -675,75 +675,61 @@ test_cut_peer_queue() ->
 	end.
 
 test_update_active() ->
-	?_test(begin
-		Result = update_active(
-			#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 30},
-			#performance{average_latency = 100},
-			1,
-			200,
-			#state{ worker_count = 20, scheduled_task_count = 20 }),
-		?assertEqual(11, Result#peer_tasks.max_active)
-	end),
+	Result1 = update_active(
+		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 30},
+		#performance{average_latency = 100},
+		20,
+		200,
+		#state{ worker_count = 20 }),
+	?assertEqual(11, Result1#peer_tasks.max_active),
+	
+	Result2 = update_active(
+		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+		#performance{average_latency = 300},
+		20,
+		200,
+		#state{ worker_count = 20 }),
+	?assertEqual(9, Result2#peer_tasks.max_active),
 
-	?_test(begin
-		Result = update_active(
-			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
-			#performance{average_latency = 300},
-			1,
-			200,
-			#state{ worker_count = 20, scheduled_task_count = 20 }),
-		?assertEqual(9, Result#peer_tasks.max_active)
-	end),
+	Result3 = update_active(
+		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+		#performance{average_latency = 300},
+		10,
+		200,
+		#state{ worker_count = 20 }),
+	?assertEqual(11, Result3#peer_tasks.max_active),
+	
+	Result4 = update_active(
+		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
+		#performance{average_latency = 100},
+		10,
+		200,
+		#state{ worker_count = 10 }),
+	?assertEqual(10, Result4#peer_tasks.max_active),
+	
+	Result5 = update_active(
+		#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
+		#performance{average_latency = 100},
+		20,
+		200,
+		#state{ worker_count = 20 }),
+	?assertEqual(10, Result5#peer_tasks.max_active),
+	
+	Result6 = update_active(
+		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
+		#performance{average_latency = 100},
+		20,
+		200,
+		#state{ worker_count = 20 }),
+	?assertEqual(10, Result6#peer_tasks.max_active),
 
-	?_test(begin
-		Result = update_active(
-			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
-			#performance{average_latency = 300},
-			3,
-			200,
-			#state{ worker_count = 20, scheduled_task_count = 10 }),
-		?assertEqual(13, Result#peer_tasks.max_active)
-	end),
-
-	?_test(begin
-		Result = update_active(
-			#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
-			#performance{average_latency = 100},
-			1,
-			200,
-			#state{ worker_count = 10, scheduled_task_count = 10 }),
-		?assertEqual(10, Result#peer_tasks.max_active)
-	end),
-
-	?_test(begin
-		Result = update_active(
-			#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
-			#performance{average_latency = 100},
-			1,
-			200,
-			#state{ worker_count = 20, scheduled_task_count = 20 }),
-		?assertEqual(10, Result#peer_tasks.max_active)
-	end),
-
-	?_test(begin
-		Result = update_active(
-			#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
-			#performance{average_latency = 100},
-			1,
-			200,
-			#state{ worker_count = 20, scheduled_task_count = 20 }),
-		?assertEqual(10, Result#peer_tasks.max_active)
-	end),
-
-	?_test(begin
-		Result = update_active(
-			#peer_tasks{max_active = 8, active_count = 20, task_queue_len = 30},
-			#performance{average_latency = 300},
-			1,
-			200,
-			#state{ worker_count = 20, scheduled_task_count = 20 }),
-		?assertEqual(8, Result#peer_tasks.max_active)
-	end).
+	Result7 = update_active(
+		#peer_tasks{max_active = 8, active_count = 20, task_queue_len = 30},
+		#performance{average_latency = 300},
+		20,
+		200,
+		#state{ worker_count = 20 }),
+	?assertEqual(8, Result7#peer_tasks.max_active).
 
 test_calculate_targets() ->
 	Result1 = calculate_targets([], #{}),
