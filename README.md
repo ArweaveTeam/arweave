@@ -56,7 +56,7 @@ Run in the development mode:
 Make a production build:
 
 ```sh
-$ ./rebar3 as prod tar
+$ rebar3 as prod tar
 ```
 
 You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
@@ -66,7 +66,7 @@ You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z
 To make a testnet build, run:
 
 ```sh
-$ ./rebar3 as testnet tar
+$ rebar3 as testnet tar
 ```
 
 The tarball is created at `_build/testnet/rel/arweave/arweave-x.y.z.tar.gz`.
