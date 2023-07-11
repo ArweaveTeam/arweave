@@ -119,6 +119,12 @@ add_local_ipfs_tx_data(TXid) ->
 					add_ipfs_data(TX, Hash);
 				false ->
 					{error, hash_not_found}
+			end,
+			case lists:keyfind(<<"IPFS-Dag-Put">>, 1, TX#tx.tags) of
+				{<<"IPFS-Dag-Put">>, Hash} ->
+					put_ipfs_dag(TX, Hash);
+				false ->
+					{error, hash_not_found}
 			end
 	end.
 
@@ -203,6 +209,13 @@ server(State=#state{
 				false ->
 					pass
 			end,
+			case lists:keyfind(<<"IPFS-Dag-Put">>, 1, Tags) of
+				{<<"IPFS-Dag-Put">>, Hash} ->
+					{ok, _Hash2} = put_ipfs_dag(TX, Hash),
+					spawn(ar_ipfs, dht_provide_hash, [Hash]);
+				false ->
+					pass
+			end,
 			server(State);
 		{recv_new_tx, X} ->
 			?LOG_DEBUG({app_ipfs, recv_new_tx, X}),
@@ -223,6 +236,25 @@ get_hash_and_queue(Hash, Queue) ->
 			{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
 			?LOG_DEBUG({added, Hash, Hash2}),
 			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
+			app_queue:add(Queue, UnsignedTX),
+			ok;
+		{error, Reason} ->
+			{error, Reason}
+	end.
+
+put_ipfs_dag(TX, Hash) ->
+	%% version 0.1, no validation
+	?LOG_DEBUG({recv_tx_ipfs_dag_put, TX#tx.id, Hash}),
+	{ok, _Hash2} = ar_ipfs:dag_put_object(TX#tx.data, Hash).
+
+%% This may break for IPLD DAG Objects if the codec is not CBOR or DAG-JSON as they're not yet supported by go-ipfs HTTP API
+resolve_hash_and_queue(Hash, Queue) ->
+	?LOG_DEBUG({fetching, Hash}),
+	case ar_ipfs:get_object_by_hash(Hash) of
+		{ok, Data} ->
+			{ok, Hash2} = ar_ipfs:dag_put_object(Data, Hash),
+			?LOG_DEBUG({added, Hash, Hash2}),
+			UnsignedTX = #tx{tags=[{<<"IPFS-Dag-Put">>, Hash}], data=Data},
 			app_queue:add(Queue, UnsignedTX),
 			ok;
 		{error, Reason} ->
