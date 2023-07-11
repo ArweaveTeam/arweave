@@ -32,7 +32,7 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 To install the dependencies on Ubuntu 22 (recommended), run:
 
 ```sh
-sudo apt install libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
+sudo apt install libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++ erlang-dev rebar3
 ```
 
 On some systems you might need to install `libncurses-dev`.
