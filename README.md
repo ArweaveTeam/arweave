@@ -110,7 +110,11 @@ init option unless you clean the data directory - you need to either restart wit
 `peer <peer>`. Note that the state is only persisted every 50 blocks so if you
 restart the node without peers via `start_from_block_index` before reaching the height 50,
 it will go back to the genesis block.
+
+As with mainnet peers, each peer must be run in its own physical or virtual environment (e.g. on its own machine or in its own container or virtual machine). If you try to run two nodes within the same environment you will get an error like `Protocol 'inet_tcp': the name arweave@127.0.0.1 seems to be in use by another Erlang node`
+
 When POST'ing transactions to your localnet make sure to include the `X-Network: arweave.localnet` header. If the header is omitted, the mainnet network will be assumed and the request will fail.
+
 # Contributing
 
 Make sure to have the build requirements installed.
