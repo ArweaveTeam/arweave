@@ -80,6 +80,37 @@ You can join the public testnet now:
 We recommed you do not use your mainnet mining address on testnet. Also, do not join the
 testnet from the mainnet machine.
 
+### Starting New Weave
+
+To start a new weave, create a new data directory
+
+```sh
+mkdir -p localnet_data_dir
+```
+,
+create a wallet:
+
+```sh
+./bin/create-wallet localnet_data_dir
+```
+,
+and run:
+
+```sh
+$ ./bin/start-localnet init data_dir <your-data-dir> mining_addr <your-mining-addr>
+storage_module 0,<your-mining-addr> mine
+```
+
+The given address (if none is specified, one will be generated for you) will be assigned
+`1000_000_000_000` AR in the new weave.
+
+The network name will be `arweave.localnet`. You can not start the same node again with the
+init option unless you clean the data directory - you need to either restart with the
+`start_from_block_index` option or specify a peer from the same Arweave network via
+`peer <peer>`. Note that the state is only persisted every 50 blocks so if you
+restart the node without peers via `start_from_block_index` before reaching the height 50,
+it will go back to the genesis block.
+
 # Contributing
 
 Make sure to have the build requirements installed.

@@ -575,6 +575,21 @@ start(Port) when is_integer(Port) ->
 	start(#config{ port = Port });
 start(Config) ->
 	%% Start the logging system.
+	case Config#config.init of
+		true ->
+			case ?NETWORK_NAME of
+				"arweave.N.1" ->
+					io:format("~nCannot start a new network with the mainnet name! "
+							"Use ./bin/start-localnet ... when running from sources "
+							"or compile via ./rebar3 as localnet tar and use "
+							"./bin/start ... as usual.~n~n"),
+					erlang:halt();
+				_ ->
+					ok
+			end;
+		false ->
+			ok
+	end,
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
 	io:format(
