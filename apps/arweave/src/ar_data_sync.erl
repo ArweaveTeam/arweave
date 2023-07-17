@@ -567,7 +567,12 @@ handle_cast({join, RecentBI}, State) ->
 		{[], _} ->
 			ok;
 		{_, no_intersection} ->
-			throw(last_stored_block_index_has_no_intersection_with_the_new_one);
+			io:format("~nWARNING: the stored block index of the data syncing module "
+					"has no intersection with the new one "
+					"in the most recent blocks. If you have just started a new weave using "
+					"the init option, restart with the start_from_block_index option "
+					"or specify some peers.~n~n"),
+			erlang:halt();
 		{_, {_H, Offset, _TXRoot}} ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
@@ -1238,7 +1243,7 @@ handle_info({chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
-	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
+	#sync_data_state{ packing_map = PackingMap } = State,
 	Packing = element(1, ChunkArgs),
 	Key = {Offset, Packing},
 	case maps:get(Key, PackingMap, not_found) of
