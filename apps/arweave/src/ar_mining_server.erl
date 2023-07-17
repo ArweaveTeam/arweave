@@ -1174,6 +1174,7 @@ handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, Seed, NextS
 				{Chunk2, Map2} ->
 					{Thread, Threads2} = pick_hashing_thread(Threads),
 					Thread ! {compute_h2, {Ref, self(), H0, PartitionNumber, Nonce,
+							Seed, NextSeed, StartIntervalNumber, StepNumber, 
 							NonceLimiterOutput, ReplicaID, Chunk, Chunk2, H1}},
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
 					ets:update_counter(?MODULE, chunk_cache_size, {2, -2}),
