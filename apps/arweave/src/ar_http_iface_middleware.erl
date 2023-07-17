@@ -1830,7 +1830,9 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	ar_peers:rate_gossiped_data(Peer, tx, byte_size(term_to_binary(TX))),
+	BodyReadTime = ar_http_req:body_read_time(Req),
+	ar_peers:rate_gossiped_data(Peer, tx,
+		erlang:convert_time_unit(BodyReadTime, native, microsecond), byte_size(term_to_binary(TX))),
 	ar_events:send(tx, {new, TX, Peer}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),
@@ -2358,7 +2360,15 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 				end
 		end,
 	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	ar_block_pre_validator:pre_validate(B2, Peer, undefined, ReceiveTimestamp),
+	BodyReadTime = ar_http_req:body_read_time(Req),
+	case ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp) of
+		ok ->
+			ar_peers:rate_gossiped_data(Peer, block,
+				erlang:convert_time_unit(BodyReadTime, native, microsecond),
+				byte_size(term_to_binary(B)));
+		_ ->
+			ok
+	end,
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->

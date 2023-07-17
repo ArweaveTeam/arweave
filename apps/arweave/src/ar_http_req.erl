@@ -1,17 +1,28 @@
 -module(ar_http_req).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_http_req.hrl").
 
--export([body/2, read_body_chunk/3]).
+-export([body/2, read_body_chunk/3, body_read_time/1]).
+
+-define(AR_HTTP_REQ_BODY, '_ar_http_req_body').
+-define(AR_HTTP_REQ_BODY_READ_TIME, '_ar_http_req_body_read_time').
 
 body(Req, SizeLimit) ->
 	case maps:get(?AR_HTTP_REQ_BODY, Req, not_set) of
 		not_set ->
-			read_complete_body(Req, #{ acc => [], counter => 0, size_limit => SizeLimit });
+			Opts = #{
+				acc => [],
+				counter => 0,
+				size_limit => SizeLimit,
+				start_time => erlang:monotonic_time() },
+			read_complete_body(Req, Opts);
 		Body ->
 			{ok, Body, Req}
 	end.
+
+%% @doc The elapsed time (in native units) to read the request body via `read_complete_body()`
+body_read_time(Req) ->
+	maps:get(?AR_HTTP_REQ_BODY_READ_TIME, Req, undefined).
 
 read_body_chunk(Req, Size, Timeout) ->
 	case cowboy_req:read_body(Req, #{ length => Size, period => Timeout }) of
@@ -40,9 +51,12 @@ read_complete_body(_, #{ counter := C, size_limit := SizeLimit }, _) when C > Si
 	{error, body_size_too_large};
 read_complete_body(more, Data, Req) ->
 	read_complete_body(Req, Data);
-read_complete_body(ok, #{ acc := Acc }, Req) ->
+read_complete_body(ok, #{ acc := Acc, start_time := StartTime }, Req) ->
 	Body = iolist_to_binary(Acc),
-	{ok, Body, with_body_req_field(Req, Body)}.
+	BodyReadTime = erlang:monotonic_time() - StartTime,
+	{ok, Body, with_body_req_fields(Req, Body, BodyReadTime)}.
 
-with_body_req_field(Req, Body) ->
-	Req#{ ?AR_HTTP_REQ_BODY => Body }.
+with_body_req_fields(Req, Body, BodyReadTime) ->
+	Req#{
+		?AR_HTTP_REQ_BODY => Body,
+		?AR_HTTP_REQ_BODY_READ_TIME => BodyReadTime }.

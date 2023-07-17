@@ -12,7 +12,7 @@
 -export([start_link/0, get_peers/0, get_peer_performances/1, get_trusted_peers/0, is_public_peer/1,
 	get_peer_release/1, stats/0, discover_peers/0, add_peer/2, rank_peers/1,
 	resolve_and_cache_peer/2, rate_fetched_data/4, rate_fetched_data/6,
-	rate_gossiped_data/3, issue_warning/3
+	rate_gossiped_data/4, issue_warning/3
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -187,12 +187,18 @@ rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 	rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
 rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
 	gen_server:cast(?MODULE,
-		{fetched_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize, Concurrency});
+		{valid_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize, Concurrency});
 rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
-	gen_server:cast(?MODULE, {invalid_fetched_data, Peer, DataType}).
+	gen_server:cast(?MODULE, {invalid_data, Peer, DataType}).
 
-rate_gossiped_data(Peer, DataType, DataSize) ->
-	gen_server:cast(?MODULE, {gossiped_data, Peer, DataType, DataSize}).
+rate_gossiped_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
+	case check_peer(Peer) of
+		ok ->
+			gen_server:cast(?MODULE,
+				{valid_data, Peer, DataType,  LatencyMicroseconds / 1000, DataSize});
+		_ ->
+			ok
+	end.
 
 issue_warning(Peer, _Type, _Reason) ->
 	gen_server:cast(?MODULE, {warning, Peer}).
@@ -305,28 +311,13 @@ handle_cast(ping_peers, State) ->
 	ping_peers(lists:sublist(Peers, 100)),
 	{noreply, State};
 
-handle_cast({fetched_data, Peer, _DataType, LatencyMilliseconds, DataSize, Concurrency}, State) ->
+handle_cast({valid_data, Peer, _DataType, LatencyMilliseconds, DataSize, Concurrency}, State) ->
 	update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, true),
 	{noreply, State};
 
 
-handle_cast({invalid_fetched_data, Peer, _DataType}, State) ->
+handle_cast({invalid_data, Peer, _DataType}, State) ->
 	update_rating(Peer, false),
-	{noreply, State};
-
-handle_cast({gossiped_data, Peer, _DataType, DataSize}, State) ->
-	case check_peer(Peer) of
-		ok ->
-			%% Since gossiped data is pushed to us we don't know the latency, but we do want
-			%% to incentivize peers to gossip data quickly and frequently. We'll assign a value
-			%% based on a pretty generous peer throughput assumption. See ?GOSSIP_THROUGHPUT for a
-			%% description of the formula.
-			LatencyMilliseconds = DataSize / ?GOSSIP_THROUGHPUT,
-			update_rating(Peer, LatencyMilliseconds, DataSize, 1, true);
-		_ ->
-			ok
-	end,
-
 	{noreply, State};
 
 handle_cast({warning, Peer}, State) ->
@@ -360,15 +351,6 @@ handle_info({event, block, {rejected, Reason, _H, Peer}}, State) when Peer /= no
 		_ ->
 			%% Ever reason should be in exactly 1 list.
 			error("invalid block rejection reason")
-	end,
-	{noreply, State};
-
-handle_info({event, block, {new, B,
-		#{ source := {peer, Peer}, query_block_time := QueryBlockTime }}}, State) ->
-	DataSize = byte_size(term_to_binary(B)),
-	case QueryBlockTime of
-		undefined -> ar_peers:rate_gossiped_data(Peer, block, DataSize);
-		_ -> ar_peers:rate_fetched_data(Peer, block, QueryBlockTime, DataSize)
 	end,
 	{noreply, State};
 
