@@ -604,7 +604,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 			[
 				list_to_binary(ar_util:format_peer(P))
 			||
-				P <- ar_peers:get_peers(),
+				P <- ar_peers:get_peers(lifetime),
 				P /= ar_http_util:arweave_peer(Req),
 				ar_peers:is_public_peer(P)
 			]
@@ -1832,7 +1832,8 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
 	BodyReadTime = ar_http_req:body_read_time(Req),
 	ar_peers:rate_gossiped_data(Peer, tx,
-		erlang:convert_time_unit(BodyReadTime, native, microsecond), byte_size(term_to_binary(TX))),
+		erlang:convert_time_unit(BodyReadTime, native, microsecond),
+		byte_size(term_to_binary(TX))),
 	ar_events:send(tx, {new, TX, Peer}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),

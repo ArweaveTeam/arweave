@@ -209,7 +209,8 @@ pick_peers(Peers, PeerLen, N) ->
 
 collect_peers() ->
 	N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-	collect_peers(lists:sublist(ar_peers:get_peers(), N)).
+	%% rank peers by their current rating since we care about their recent throughput performance
+	collect_peers(lists:sublist(ar_peers:get_peers(current), N)).
 
 collect_peers([Peer | Peers]) ->
 	gen_server:cast(?MODULE, {add_peer, Peer}),

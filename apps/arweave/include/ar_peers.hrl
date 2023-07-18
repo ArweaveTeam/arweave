@@ -16,9 +16,10 @@
 	total_bytes = 0,
 	average_latency = 0.0, %% milliseconds
 	total_latency = 0.0, %% milliseconds
-	transfers = 0,
+	total_transfers = 0,
 	average_success = 1.0,
-	rating = 0
+	lifetime_rating = 0, %% longer time window
+	current_rating = 0 %% shorter time window
 }).
 
 -endif.

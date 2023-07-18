@@ -213,13 +213,13 @@ max_peer_queue(_Peformance, 0, _WorkerCount) ->
 	undefined;
 max_peer_queue(_Performance, 0.0, _WorkerCount) ->
 	undefined;
-max_peer_queue(#performance{ rating = 0 } = _Performance, _TotalThroughput, _WorkerCount) ->
+max_peer_queue(#performance{ current_rating = 0 } = _Performance, _TotalThroughput, _WorkerCount) ->
 	undefined;
-max_peer_queue(#performance{ rating = 0.0 } = _Performance, _TotalThroughput, _WorkerCount) ->
+max_peer_queue(#performance{ current_rating = 0.0 } = _Performance, _TotalThroughput, _WorkerCount) ->
 	undefined;
 max_peer_queue(Performance, TotalThroughput, WorkerCount) ->
 	%% estimate of of this peer's througput
-	PeerThroughput = Performance#performance.rating,
+	PeerThroughput = Performance#performance.current_rating,
 	%% The maximum number of tasks we allow to be queued for this peer is related to its
 	%% contribution to our current throughput. Peers with a higher throughput can claim more
 	%% of the queue.
@@ -330,7 +330,7 @@ calculate_targets(Peers, AllPeerPerformances) ->
 		lists:foldl(
 			fun(Peer, Acc) -> 
 				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
-				Acc + Performance#performance.rating
+				Acc + Performance#performance.current_rating
 			end, 0.0, Peers),
     TotalLatency = 
 		lists:foldl(
@@ -628,12 +628,12 @@ test_process_main_queue() ->
 		8, 8, PeerTasks).
 
 test_max_peer_queue() ->
-	?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0, 10)),
-	?assertEqual(undefined, max_peer_queue(#performance{ rating = 10 }, 0.0, 10)),
-	?assertEqual(undefined, max_peer_queue(#performance{ rating = 0 }, 100, 10)),
-	?assertEqual(undefined, max_peer_queue(#performance{ rating = 0.0 }, 100, 10)),
-	?assertEqual(50, max_peer_queue(#performance{ rating = 10 }, 100, 10)),
-	?assertEqual(20, max_peer_queue(#performance{ rating = 1 }, 100, 10)).
+	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 10 }, 0, 10)),
+	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 10 }, 0.0, 10)),
+	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 0 }, 100, 10)),
+	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 0.0 }, 100, 10)),
+	?assertEqual(50, max_peer_queue(#performance{ current_rating = 10 }, 100, 10)),
+	?assertEqual(20, max_peer_queue(#performance{ current_rating = 1 }, 100, 10)).
 
 test_cut_peer_queue() ->
 	{ok, OriginalConfig} = application:get_env(arweave, config),
@@ -738,31 +738,31 @@ test_calculate_targets() ->
     Result2 = calculate_targets(
 		["peer1", "peer2"],
 		#{
-			"peer1" => #performance{rating = 0, average_latency = 0},
-			"peer2" => #performance{rating = 0, average_latency = 0}
+			"peer1" => #performance{current_rating = 0, average_latency = 0},
+			"peer2" => #performance{current_rating = 0, average_latency = 0}
 		}),
     ?assertEqual({0.0, 0.0}, Result2),
 	
 	Result3 = calculate_targets(
 		["peer1", "peer2"],
 		#{
-			"peer1" => #performance{rating = 5, average_latency = 2},
-			"peer2" => #performance{rating = 3, average_latency = 4}
+			"peer1" => #performance{current_rating = 5, average_latency = 2},
+			"peer2" => #performance{current_rating = 3, average_latency = 4}
 		}),
     ?assertEqual({3.0, 8.0}, Result3),
 
 	Result4 = calculate_targets(
 		["peer1", "peer2"],
 		#{
-			"peer1" => #performance{rating = 5, average_latency = 2}
+			"peer1" => #performance{current_rating = 5, average_latency = 2}
 		}),
     ?assertEqual({1.0, 5.0}, Result4),
 
     Result5 = calculate_targets(
 		["peer1"],
 		#{
-			"peer1" => #performance{rating = 5, average_latency = 2},
-			"peer2" => #performance{rating = 3, average_latency = 4}
+			"peer1" => #performance{current_rating = 5, average_latency = 2},
+			"peer2" => #performance{current_rating = 3, average_latency = 4}
 		}),
     ?assertEqual({2.0, 5.0}, Result5).
 

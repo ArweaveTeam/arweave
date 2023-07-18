@@ -844,7 +844,7 @@ priority(B, Peer) ->
 	{B#block.height, get_peer_score(Peer)}.
 
 get_peer_score(Peer) ->
-	get_peer_score(Peer, ar_peers:get_peers(), 0).
+	get_peer_score(Peer, ar_peers:get_peers(lifetime), 0).
 
 get_peer_score(Peer, [Peer | _Peers], N) ->
 	N;
