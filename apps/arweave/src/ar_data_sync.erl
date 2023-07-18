@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, join/1, add_tip_block/2, add_block/2, is_chunk_proof_ratio_attractive/3,
+-export([start_link/2, join/1, add_tip_block/2, add_block/2,
+		is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_tx_data/1, get_tx_data/2, get_tx_offset/1, has_data_root/2,
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
@@ -115,15 +116,17 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 				case validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
 					false ->
 						{error, invalid_proof};
-					{true, PassesStrict, EndOffset} ->
-						{ok, {EndOffset, PassesStrict, DiskPoolDataRootValue}}
+					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
+						{ok, {EndOffset, PassesBase, PassesStrict, PassesRebase,
+								DiskPoolDataRootValue}}
 				end
 		end,
 	CheckSynced =
 		case ValidateProof of
 			{error, _} = Error2 ->
 				Error2;
-			{ok, {EndOffset2, _PassesStrict2, {_, Timestamp3, _}} = PassedState2} ->
+			{ok, {EndOffset2, _PassesBase2, _PassesStrict2, _PassesRebase2,
+					{_, Timestamp3, _}} = PassedState2} ->
 				DataPathHash = crypto:hash(sha256, DataPath),
 				DiskPoolChunkKey = << Timestamp3:256, DataPathHash/binary >>,
 				case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
@@ -161,8 +164,8 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			ok;
 		{error, _} = Error4 ->
 			Error4;
-		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesStrict3,
-				DiskPoolDataRootValue2}}} ->
+		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesBase3, PassesStrict3,
+				PassesRebase3, DiskPoolDataRootValue2}}} ->
 			ChunkDataKey = get_chunk_data_key(DataPathHash2),
 			case ar_kv:put(ChunkDataDB, ChunkDataKey, term_to_binary({Chunk, DataPath})) of
 				{error, Reason2} ->
@@ -174,7 +177,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 					{error, failed_to_store_chunk};
 				ok ->
 					DiskPoolChunkValue = term_to_binary({EndOffset3, ChunkSize, DataRoot,
-							TXSize, ChunkDataKey, PassesStrict3}),
+							TXSize, ChunkDataKey, PassesBase3, PassesStrict3, PassesRebase3}),
 					case ar_kv:put(DiskPoolChunksIndex, DiskPoolChunkKey2,
 							DiskPoolChunkValue) of
 						{error, Reason3} ->
@@ -925,20 +928,15 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast,
 	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),
 	BlockSize = BlockEndOffset - BlockStartOffset,
 	Offset = SeekByte - BlockStartOffset,
-	{Strict, ValidateDataPathFun} =
-		case BlockStartOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
-			true ->
-				{true, fun ar_merkle:validate_path_strict_data_split/4};
-			false ->
-				{false, fun ar_merkle:validate_path_strict_borders/4}
-		end,
+	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(BlockStartOffset,
+			get_merkle_rebase_threshold()),
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
-			ValidateDataPathFun) of
+			ValidateDataPathRuleset) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
 			{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte},
+					Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
 			case maps:is_key({AbsoluteOffset, unpacked}, PackingMap) of
 				true ->
 					decrement_chunk_cache_size(),
@@ -975,7 +973,7 @@ handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, Proof} = Cast,
 			ChunkArgs = {unpacked, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte},
+					Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
 			process_valid_fetched_chunk(ChunkArgs, Args, State)
 	end;
 
@@ -1045,7 +1043,7 @@ handle_cast(resume_disk_pool_scan, State) ->
 	{noreply, State#sync_data_state{ disk_pool_scan_pause = false }};
 
 handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, State) ->
-	{Offset, _, _, _, _, _, Key, _} = Args,
+	{Offset, _, _, _, _, _, Key, _, _, _} = Args,
 	%% Place the chunk under its last 10 offsets in the weave (the same data
 	%% may be uploaded several times).
 	case data_root_index_next_v2(Iterator, 10) of
@@ -1512,31 +1510,26 @@ validate_served_chunk(Args) ->
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
 				{BlockStart, BlockEnd, TXRoot} ->
-					{_Strict, ValidateDataPathFun} =
-						case BlockStart >= ?STRICT_DATA_SPLIT_THRESHOLD of
-							true ->
-								{true, fun ar_merkle:validate_path_strict_data_split/4};
-							false ->
-								{false, fun ar_merkle:validate_path_strict_borders/4}
-						end,
+					ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(
+							BlockStart, get_merkle_rebase_threshold()),
 					BlockSize = BlockEnd - BlockStart,
 					ChunkOffset = Offset - BlockStart - 1,
 					case validate_proof2({TXRoot, ChunkOffset, BlockSize, DataPath, TXPath,
-							ChunkSize, ValidateDataPathFun}) of
+							ChunkSize, ValidateDataPathRuleset}) of
 						{true, ChunkID} ->
 							{true, ChunkID};
 						false ->
 							StartOffset = Offset - ChunkSize,
-							invalidate_bad_data_record({StartOffset, Offset, {chunks_index, StoreID},
-									StoreID, 2}),
+							invalidate_bad_data_record({StartOffset, Offset,
+									{chunks_index, StoreID}, StoreID, 2}),
 							false
 					end;
 				{_BlockStart, _BlockEnd, TXRoot2} ->
 					?LOG_WARNING([{event, stored_chunk_invalid_tx_root},
 							{byte, Offset - 1}, {tx_root, ar_util:encode(TXRoot2)},
 							{stored_tx_root, ar_util:encode(TXRoot)}]),
-					invalidate_bad_data_record({Offset - ChunkSize, Offset,  {chunks_index, StoreID},
-							StoreID, 3}),
+					invalidate_bad_data_record({Offset - ChunkSize, Offset,
+							{chunks_index, StoreID}, StoreID, 3}),
 					false
 			end
 	end.
@@ -2368,7 +2361,7 @@ enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 	QIntervals2 = ar_intervals:add(QIntervals, RangeEnd, RangeStart),
 	{Q2, QIntervals2}.
 
-validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathFun) ->
+validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathRuleset) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	case ar_merkle:validate_path(TXRoot, Offset, BlockSize, TXPath) of
 		false ->
@@ -2376,7 +2369,8 @@ validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataP
 		{DataRoot, TXStartOffset, TXEndOffset} ->
 			TXSize = TXEndOffset - TXStartOffset,
 			ChunkOffset = Offset - TXStartOffset,
-			case ValidateDataPathFun(DataRoot, ChunkOffset, TXSize, DataPath) of
+			case ar_merkle:validate_path(DataRoot, ChunkOffset, TXSize, DataPath,
+					ValidateDataPathRuleset) of
 				false ->
 					false;
 				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
@@ -2406,14 +2400,15 @@ validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataP
 	end.
 
 validate_proof2(Args) ->
-	{TXRoot, Offset, BlockSize, DataPath, TXPath, ChunkSize, ValidateDataPathFun} = Args,
+	{TXRoot, Offset, BlockSize, DataPath, TXPath, ChunkSize, ValidateDataPathRuleset} = Args,
 	case ar_merkle:validate_path(TXRoot, Offset, BlockSize, TXPath) of
 		false ->
 			false;
 		{DataRoot, TXStartOffset, TXEndOffset} ->
 			TXSize = TXEndOffset - TXStartOffset,
 			ChunkOffset = Offset - TXStartOffset,
-			case ValidateDataPathFun(DataRoot, ChunkOffset, TXSize, DataPath) of
+			case ar_merkle:validate_path(DataRoot, ChunkOffset, TXSize, DataPath,
+					ValidateDataPathRuleset) of
 				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
 					case ChunkEndOffset - ChunkStartOffset == ChunkSize of
 						false ->
@@ -2427,30 +2422,36 @@ validate_proof2(Args) ->
 	end.
 
 validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
-	ValidatePathResult =
-		case ar_merkle:validate_path_strict_data_split(DataRoot, Offset, TXSize, DataPath) of
-			false ->
-				case ar_merkle:validate_path_strict_borders(DataRoot, Offset, TXSize,
-						DataPath) of
-					false ->
-						false;
-					R ->
-						{false, R}
-				end;
-			R ->
-				{true, R}
+	Base = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath, strict_borders_ruleset),
+	Strict = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
+			strict_data_split_ruleset),
+	Rebase = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
+			offset_rebase_support_ruleset),
+	Result =
+		case {Base, Strict, Rebase} of
+			{false, false, false} ->
+				false;
+			{_, {_, _, _} = StrictResult, _} ->
+				StrictResult;
+			{_, _, {_, _, _} = RebaseResult} ->
+				RebaseResult;
+			{{_, _, _} = BaseResult, _, _} ->
+				BaseResult
 		end,
-	case ValidatePathResult of
+	case Result of
 		false ->
 			false;
-		{Strict, {ChunkID, StartOffset, EndOffset}} ->
+		{ChunkID, StartOffset, EndOffset} ->
 			case ar_tx:generate_chunk_id(Chunk) == ChunkID of
 				false ->
 					false;
 				true ->
 					case EndOffset - StartOffset == byte_size(Chunk) of
 						true ->
-							{true, Strict, EndOffset};
+							PassesBase = not (Base == false),
+							PassesStrict = not (Strict == false),
+							PassesRebase = not (Rebase == false),
+							{true, PassesBase, PassesStrict, PassesRebase, EndOffset};
 						false ->
 							false
 					end
@@ -2599,7 +2600,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	{Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
-			ChunkEndOffset, _Strict, Peer, Byte} = Args,
+			ChunkEndOffset, Peer, Byte} = Args,
 	case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
 		false ->
 			?LOG_WARNING([{event, got_too_big_proof_from_peer},
@@ -2805,7 +2806,8 @@ process_disk_pool_item(State, Key, Value) ->
 	<< Timestamp:256, DataPathHash/binary >> = Key,
 	DiskPoolChunk = parse_disk_pool_chunk(Value),
 	{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
-			PassedStrictValidation} = DiskPoolChunk,
+			PassedBaseValidation, PassedStrictValidation,
+			PassedRebaseValidation} = DiskPoolChunk,
 	DataRootKey = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
 	InDataRootIndex = get_data_root_offset(DataRootKey, StoreID),
 	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootKey),
@@ -2846,7 +2848,7 @@ process_disk_pool_item(State, Key, Value) ->
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			State2 = State#sync_data_state{ disk_pool_cursor = NextCursor },
 			Args = {Offset, InDiskPool, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key,
-					PassedStrictValidation},
+					PassedBaseValidation, PassedStrictValidation, PassedRebaseValidation},
 			gen_server:cast(self(), {process_disk_pool_chunk_offsets, DataRootIndexIterator,
 					true, Args}),
 			{noreply, State2}
@@ -2881,7 +2883,7 @@ parse_disk_pool_chunk(Bin) ->
 delete_disk_pool_chunk(Iterator, Args, State) ->
 	#sync_data_state{ chunks_index = ChunksIndex, chunk_data_db = ChunkDataDB,
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
-	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey, _} = Args,
+	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
 	case data_root_index_next_v2(Iterator, 10) of
 		none ->
 			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
@@ -2929,20 +2931,54 @@ deregister_currently_processed_disk_pool_key(Key, State) ->
 	Keys2 = sets:del_element(Key, Keys),
 	State#sync_data_state{ currently_processed_disk_pool_keys = Keys2 }.
 
+get_merkle_rebase_threshold() ->
+	case ets:lookup(node_state, merkle_rebase_support_threshold) of
+		[] ->
+			infinity;
+		[{_, Threshold}] ->
+			Threshold
+	end.
+
 process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude, Args,
 		State) ->
 	#sync_data_state{ disk_pool_threshold = DiskPoolThreshold } = State,
-	{Offset, _, _, DataRoot, DataPathHash, _, _, PassedStrictValidation} = Args,
-	case AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD orelse PassedStrictValidation of
+	{Offset, _, _, DataRoot, DataPathHash, _, _,
+			PassedBase, PassedStrictValidation, PassedRebaseValidation} = Args,
+	PassedValidation =
+		case {AbsoluteOffset >= get_merkle_rebase_threshold(),
+				AbsoluteOffset >= ?STRICT_DATA_SPLIT_THRESHOLD,
+				PassedBase, PassedStrictValidation, PassedRebaseValidation} of
+			%% At the rebase threshold we relax some of the validation rules so the strict
+			%% validation may fail.
+			{true, true, _, _, true} ->
+				true;
+			%% Between the "strict" and "rebase" thresholds the "base" and "strict split"
+			%% rules must be followed.
+			{false, true, true, true, _} ->
+				true;
+			%% Before the strict threshold only the base (most relaxed) validation must
+			%% pass.
+			{false, false, true, _, _} ->
+				true;
+			_ ->
+				false
+		end,
+	case PassedValidation of
 		false ->
 			%% When we accept chunks into the disk pool, we do not know where they will
 			%% end up on the weave. Therefore, we cannot require all Merkle proofs pass
 			%% the strict validation rules taking effect only after
-			%% ?STRICT_DATA_SPLIT_THRESHOLD.
-			%% Instead we note down whether the chunk passes the strict validation and take it
-			%% into account here where the chunk is associated with a global weave offset.
+			%% ?STRICT_DATA_SPLIT_THRESHOLD or allow the merkle tree offset rebases
+			%% supported after the yet another special weave threshold.
+			%% Instead we note down whether the chunk passes the strict and rebase validations
+			%% and take it into account here where the chunk is associated with a global weave
+			%% offset.
 			?LOG_INFO([{event, disk_pool_chunk_from_bad_split},
 					{absolute_end_offset, AbsoluteOffset},
+					{merkle_rebase_threshold, get_merkle_rebase_threshold()},
+					{strict_data_split_threshold, ?STRICT_DATA_SPLIT_THRESHOLD},
+					{passed_base, PassedBase}, {passed_strict, PassedStrictValidation},
+					{passed_rebase, PassedRebaseValidation},
 					{relative_offset, Offset},
 					{data_path_hash, ar_util:encode(DataPathHash)},
 					{data_root, ar_util:encode(DataRoot)}]),
@@ -2972,7 +3008,7 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 			gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, false, Args}),
 			{noreply, State};
 		false ->
-			{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _} = Args,
+			{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _, _, _} = Args,
 			case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey,
 					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, State) of
 				ok ->
@@ -3006,7 +3042,8 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 	%% The other modules will either sync the chunk themselves or copy it over from the
 	%% other module the next time the node is restarted.
 	#sync_data_state{ chunk_data_db = ChunkDataDB, store_id = DefaultStoreID } = State,
-	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _StrictSplit} = Args,
+	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _PassedBaseValidation,
+			_PassedStrictValidation, _PassedRebaseValidation} = Args,
 	FindStorageModule =
 		case find_storage_module_for_disk_pool_chunk(AbsoluteOffset) of
 			not_found ->
@@ -3159,7 +3196,7 @@ cache_recently_processed_offset(Offset, ChunkDataKey, State) ->
 
 process_unpacked_chunk(ChunkArgs, Args, State) ->
 	{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot, _Chunk, ChunkID,
-			_ChunkEndOffset, _Strict, Peer, Byte} = Args,
+			_ChunkEndOffset, Peer, Byte} = Args,
 	{_Packing, Chunk, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
 	case validate_chunk_id_size(Chunk, ChunkID, ChunkSize) of
 		false ->

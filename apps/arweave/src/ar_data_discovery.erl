@@ -199,7 +199,7 @@ pick_peers(Peers, PeerLen, N) ->
 	%% Other: the rest of the Peers list
 	{Best, Other} = lists:split(max(PeerLen div 5, 1), Peers),
 	%% TakeBest: Select 80% of N worth of Best - or all of Best if Best is short.
-	TakeBest = max((8 * N) div 10, 1), length(Best),
+	TakeBest = max((8 * N) div 10, 1),
 	Part1 = ar_util:pick_random(Best, min(length(Best), TakeBest)),
 	%% TakeOther: rather than strictly take 20% of N, take enough to ensure we're
 	%% getting the full N of picked peers.

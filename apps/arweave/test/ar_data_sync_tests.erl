@@ -682,8 +682,9 @@ test_mines_off_only_second_last_chunks() ->
 	).
 
 packs_chunks_depending_on_packing_threshold_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 10 end},
-			{ar_fork, height_2_6_8, fun() -> 15 end}],
+	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end},
+			{ar_fork, height_2_6_8, fun() -> 0 end},
+			{ar_fork, height_2_7, fun() -> 10 end}],
 			fun test_packs_chunks_depending_on_packing_threshold/0).
 
 test_packs_chunks_depending_on_packing_threshold() ->
@@ -754,66 +755,37 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			B = read_block_when_stored(H),
 			PoA = B#block.poa,
 			BI = lists:reverse(lists:sublist(lists:reverse(BILast), Height)),
-			{RecallByte, PartitionUpperBound} =
-				case B#block.height >= ar_fork:height_2_6() of
+			PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
+			PrevSeed =
+				case B#block.height == ar_fork:height_2_6() of
 					true ->
-						PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
-						PrevSeed =
-							case B#block.height == ar_fork:height_2_6() of
-								true ->
-									element(1, lists:nth(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI));
-								false ->
-									PrevNonceLimiterInfo#nonce_limiter_info.seed
-							end,
-						NonceLimiterInfo = B#block.nonce_limiter_info,
-						Output = NonceLimiterInfo#nonce_limiter_info.output,
-						UpperBound =
-								NonceLimiterInfo#nonce_limiter_info.partition_upper_bound,
-						H0 = ar_block:compute_h0(Output, B#block.partition_number, PrevSeed,
-								B#block.reward_addr),
-						{RecallRange1Start, _} = ar_block:get_recall_range(H0,
-								B#block.partition_number, UpperBound),
-						Byte = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
-						{Byte, UpperBound};
+						element(1, lists:nth(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI));
 					false ->
-						UpperBound = element(2,
-								lists:nth(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI)),
-						BDS = ar_block:generate_block_data_segment(B),
-						{H0, _Entropy} = ar_mine:spora_h0_with_entropy(BDS, B#block.nonce,
-								Height),
-						{ok, Byte} = ar_mine:pick_recall_byte(H0, PrevB#block.indep_hash,
-								UpperBound),
-						{Byte, UpperBound}
+						PrevNonceLimiterInfo#nonce_limiter_info.seed
 				end,
+			NonceLimiterInfo = B#block.nonce_limiter_info,
+			Output = NonceLimiterInfo#nonce_limiter_info.output,
+			PartitionUpperBound =
+					NonceLimiterInfo#nonce_limiter_info.partition_upper_bound,
+			H0 = ar_block:compute_h0(Output, B#block.partition_number, PrevSeed,
+					B#block.reward_addr),
+			{RecallRange1Start, _} = ar_block:get_recall_range(H0,
+					B#block.partition_number, PartitionUpperBound),
+			RecallByte = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
 			{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte),
-			case B#block.height >= ar_fork:height_2_6() of
-				true ->
-					?debugFmt("Mined a 2.6 block. "
-							"Computed recall byte: ~B, block's recall byte: ~p. "
-							"Height: ~B. Previous block: ~s. "
-							"Computed search space upper bound: ~B. "
-							"Block start: ~B. Block end: ~B. TX root: ~s.",
-							[RecallByte, B#block.recall_byte, Height,
-							ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
-							BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
-					?assertEqual(RecallByte, B#block.recall_byte),
-					?assertEqual(true, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-							BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
-							{spora_2_6, B#block.reward_addr}}));
-				false ->
-					?debugFmt("Mined a 2.5 block. "
-							"Computed recall byte: ~B, block's recall byte: ~p. "
-							"Height: ~B. Previous block: ~s. "
-							"Computed search space upper bound: ~B. "
-							"Block start: ~B. Block end: ~B. TX root: ~s.",
-							[RecallByte, B#block.recall_byte, Height,
-							ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
-							BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
-					?assertEqual(RecallByte, B#block.recall_byte),
-					?assertEqual(true, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-							BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
-							spora_2_5}))
-			end,
+			?debugFmt("Mined a block. "
+					"Computed recall byte: ~B, block's recall byte: ~p. "
+					"Height: ~B. Previous block: ~s. "
+					"Computed search space upper bound: ~B. "
+					"Block start: ~B. Block end: ~B. TX root: ~s.",
+					[RecallByte, B#block.recall_byte, Height,
+					ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
+					BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
+			?assertEqual(RecallByte, B#block.recall_byte),
+			?assertEqual(true, ar_poa:validate({BlockStart, RecallByte, TXRoot,
+					BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
+					{spora_2_6, B#block.reward_addr},
+					B#block.merkle_rebase_support_threshold})),
 			B
 		end,
 		LastB,
@@ -888,7 +860,7 @@ setup_nodes() ->
 
 setup_nodes(MasterAddr, SlaveAddr) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
 	{Master, _} = start(B0, MasterAddr, Config),
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),

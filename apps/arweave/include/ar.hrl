@@ -563,7 +563,19 @@
 	%% The proof of signing the same block several times or extending two equal forks.
 	double_signing_proof,
 	%% The cumulative difficulty of the previous block.
-	previous_cumulative_diff = 0
+	previous_cumulative_diff = 0,
+
+	%%
+	%% The fields below were added at the fork 2.7 (note that 2.6.8 was a hard fork too).
+	%%
+
+	%% The merkle trees of the data written after this weave offset may be constructed
+	%% in a way where some subtrees are "rebased", i.e., their offsets start from 0 as if
+	%% they were the leftmost subtree of the entire tree. The merkle paths for the chunks
+	%% belonging to the subtrees will include a 32-byte 0-sequence preceding the pivot to
+	%% the corresponding subtree. The rebases allow for flexible combination of data before
+	%% registering it on the weave, extremely useful e.g., for the bundling services.
+	merkle_rebase_support_threshold
 }).
 
 %% @doc A transaction.

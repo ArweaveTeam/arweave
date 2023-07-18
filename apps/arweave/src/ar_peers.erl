@@ -72,6 +72,18 @@ get_peers() ->
 	end.
 
 -if(?NETWORK_NAME == "arweave.N.1").
+resolve_peers([]) ->
+	[];
+resolve_peers([RawPeer | Peers]) ->
+	case ar_util:safe_parse_peer(RawPeer) of
+		{ok, Peer} ->
+			[Peer | resolve_peers(Peers)];
+		{error, invalid} ->
+			?LOG_WARNING([{event, failed_to_resolve_trusted_peer},
+					{peer, RawPeer}]),
+			resolve_peers(Peers)
+	end.
+
 get_trusted_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.peers of
@@ -88,18 +100,6 @@ get_trusted_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.peers.
 -endif.
-
-resolve_peers([]) ->
-	[];
-resolve_peers([RawPeer | Peers]) ->
-	case ar_util:safe_parse_peer(RawPeer) of
-		{ok, Peer} ->
-			[Peer | resolve_peers(Peers)];
-		{error, invalid} ->
-			?LOG_WARNING([{event, failed_to_resolve_trusted_peer},
-					{peer, RawPeer}]),
-			resolve_peers(Peers)
-	end.
 
 %% @doc Return true if the given peer has a public IPv4 address.
 %% https://en.wikipedia.org/wiki/Reserved_IP_addresses.
