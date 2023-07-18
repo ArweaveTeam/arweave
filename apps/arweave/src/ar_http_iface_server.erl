@@ -313,14 +313,10 @@ name_route([<<"hash_list">>, _From, _To]) ->
 name_route([<<"hash_list2">>, _From, _To]) ->
 	"/hash_list2/{from}/{to}";
 
-name_route([<<"block">>]) ->
-	"/block";
 name_route([<<"block">>, <<"hash">>, _IndepHash]) ->
 	"/block/hash/{indep_hash}";
 name_route([<<"block">>, <<"height">>, _Height]) ->
 	"/block/height/{height}";
-name_route([<<"block2">>]) ->
-	"/block2";
 name_route([<<"block2">>, <<"hash">>, _IndepHash]) ->
 	"/block2/hash/{indep_hash}";
 name_route([<<"block2">>, <<"height">>, _Height]) ->
