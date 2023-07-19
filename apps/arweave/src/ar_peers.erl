@@ -757,7 +757,7 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	%% Rating is an estimate of the peer's effective throughput in bytes per millisecond.
 	%% 'lifetime' considers all data ever received from this peer
 	%% 'current' considers recently received data
-	LifetimeRating2 = case TotalThroughput2 > 0 of
+	LifetimeRating2 = case TotalTransfers2 > 0 of
 		true -> (TotalThroughput2 / TotalTransfers2) * AverageSuccess2;
 		_ -> LifetimeRating
 	end,
