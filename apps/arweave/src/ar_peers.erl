@@ -67,9 +67,9 @@
 %% The THROUGHPUT_ALPHA is even harder to intuit since the values being averaged can be any
 %% positive number and are not just limited to 0 or 1. Perhaps one way to think about it is:
 %% When a datapoint is first added to the average it is scaled by Alpha, and then every time
-%% another datapoint is added, the contribution of all prior datapoints are
-%% scaled by (1-Alpha). So how many new datapoints will it take to reduce the
-%% contribution of an earlier datapoint to "virtually" 0?
+%% another datapoint is added, the contribution of all prior datapoints are scaled by (1-Alpha).
+%% So how many new datapoints will it take to reduce the contribution of an earlier datapoint
+%% to "virtually" 0?
 %%
 %% If we assume "virtually 0" is the the same as 1% of its true value (i.e. if the datapoint was
 %% originaly 100, it now contributes 1 to the average), then we can use a similar equation as
@@ -482,18 +482,15 @@ discover_peers([Peer | Peers]) ->
 format_stats(lifetime, Peer, Perf) ->
 	KB = Perf#performance.total_bytes / 1024,
 	io:format(
-		"\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success, ~p transfers)~n",
+		"\t~s ~.2f kB/s (~.2f kB, ~.2f success, ~p transfers)~n",
 		[string:pad(ar_util:format_peer(Peer), 21, trailing, $\s),
-			float(Perf#performance.lifetime_rating),
-			KB, trunc(Perf#performance.total_latency),
+			float(Perf#performance.lifetime_rating), KB,
 			Perf#performance.average_success, Perf#performance.total_transfers]);
 format_stats(current, Peer, Perf) ->
-	KB = Perf#performance.average_bytes / 1024,
 	io:format(
-		"\t~s ~.2f kB/s (~.2f kB, ~B latency, ~.2f success)~n",
+		"\t~s ~.2f kB/s (~.2f success)~n",
 		[string:pad(ar_util:format_peer(Peer), 21, trailing, $\s),
 			float(Perf#performance.current_rating),
-			KB, trunc(Perf#performance.average_latency),
 			Perf#performance.average_success]).
 
 load_peers() ->
@@ -525,30 +522,31 @@ load_peer({Peer, Performance}) ->
 		<<?NETWORK_NAME>> ->
 			maybe_rotate_peer_ports(Peer),
 			case Performance of
-				{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating} ->
-					%% For compatibility with a few nodes already storing the records
-					%% without the release field.
+				{performance, TotalBytes, _TotalLatency, Transfers, _Failures, Rating} ->
+					%% For backwards compatibility.
 					set_performance(Peer, #performance{
 						total_bytes = TotalBytes,
-						total_latency = TotalLatency,
+						total_throughput = Rating,
 						total_transfers = Transfers,
+						average_throughput = Rating,
 						lifetime_rating = Rating,
 						current_rating = Rating
 					});
-				{performance, TotalBytes, TotalLatency, Transfers, _Failures, Rating, Release} ->
-					%% For compatibility with nodes storing records from before the introduction of
-					%% the version field
+				{performance, TotalBytes, _TotalLatency, Transfers, _Failures, Rating, Release} ->
+					%% For backwards compatibility.
 					set_performance(Peer, #performance{
 						release = Release,
 						total_bytes = TotalBytes,
-						total_latency = TotalLatency,
+						total_throughput = Rating,
 						total_transfers = Transfers,
+						average_throughput = Rating,
 						lifetime_rating = Rating,
 						current_rating = Rating
 					});
 				{performance, 3,
-						_Release, _AverageBytes, _TotalBytes, _AverageLatency, _TotalLatency,
-						_TotalTransfers, _AverageSuccess, _LifetimeRating, _CurrentRating} ->
+						_Release, _TotalBytes, _TotalThroughput, _TotalTransfers,
+						_AverageLatency, _AverageThroughput, _AverageSuccess, _LifetimeRating,
+						_CurrentRating} ->
 					%% Going forward whenever we change the #performance record we should increment the
 					%% version field so we can match on it when doing a load. Here we're handling the
 					%% version 3 format.
@@ -714,38 +712,42 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, false)
   		when LatencyMilliseconds =/= undefined; DataSize =/= undefined ->
 	%% Don't credit peers for failed requests.
 	update_rating(Peer, undefined, undefined, Concurrency, false);	
+update_rating(Peer, 0, _DataSize, Concurrency, IsSuccess) ->
+	update_rating(Peer, undefined, undefined, Concurrency, IsSuccess);
+update_rating(Peer, 0.0, _DataSize, Concurrency, IsSuccess) ->
+	update_rating(Peer, undefined, undefined, Concurrency, IsSuccess);
 update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
 	
 	#performance{
-		average_bytes = AverageBytes,
 		total_bytes = TotalBytes,
+		total_throughput = TotalThroughput,
+		total_transfers = TotalTransfers,
 		average_latency = AverageLatency,
-		total_latency = TotalLatency,
+		average_throughput = AverageThroughput,
 		average_success = AverageSuccess,
 		lifetime_rating = LifetimeRating,
-		current_rating = CurrentRating,
-		total_transfers = TotalTransfers
+		current_rating = CurrentRating
 	} = Performance,
 	TotalBytes2 = case DataSize of
 		undefined -> TotalBytes;
 		_ -> TotalBytes + DataSize
 	end,
-	%% AverageBytes is the average number of bytes transferred during the AverageLatency time
-	%% period. In order to approximate the impact of multiple concurrent requests we multiply
-	%% DataSize by the Concurrency value. We do this *only* when updating the AverageBytes
-	%% value so that it doesn't distort the TotalBytes.
-	AverageBytes2 = case DataSize of
-		undefined -> AverageBytes;
-		_ -> calculate_ema(AverageBytes, (DataSize * Concurrency), ?THROUGHPUT_ALPHA)
-	end,
-	TotalLatency2 = case LatencyMilliseconds of
-		undefined -> TotalLatency;
-		_ -> TotalLatency + LatencyMilliseconds
-	end,
 	AverageLatency2 = case LatencyMilliseconds of
 		undefined -> AverageLatency;
 		_ -> calculate_ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+	end,
+	%% In order to approximate the impact of multiple concurrent requests we multiply
+	%% DataSize by the Concurrency value. We do this *only* when updating the AverageThroughput
+	%% value so that it doesn't distort the TotalThroughput.
+	AverageThroughput2 = case LatencyMilliseconds of
+		undefined -> AverageThroughput;
+		_ -> calculate_ema(
+			AverageThroughput, (DataSize * Concurrency) / LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+	end,
+	TotalThroughput2 = case LatencyMilliseconds of
+		undefined -> TotalThroughput;
+		_ -> TotalThroughput + (DataSize / LatencyMilliseconds)
 	end,
 	TotalTransfers2 = case DataSize of
 		undefined -> TotalTransfers;
@@ -755,23 +757,23 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	%% Rating is an estimate of the peer's effective throughput in bytes per millisecond.
 	%% 'lifetime' considers all data ever received from this peer
 	%% 'current' considers recently received data
-	LifetimeRating2 = case TotalLatency2 > 0 of
-		true -> (TotalBytes2 / TotalLatency2) * AverageSuccess2;
+	LifetimeRating2 = case TotalThroughput2 > 0 of
+		true -> (TotalThroughput2 / TotalTransfers2) * AverageSuccess2;
 		_ -> LifetimeRating
 	end,
-	CurrentRating2 = case AverageLatency2 > 0 of
-		true -> (AverageBytes2 / AverageLatency2) * AverageSuccess2;
+	CurrentRating2 = case AverageThroughput2 > 0 of
+		true -> AverageThroughput2 * AverageSuccess2;
 		_ -> CurrentRating
 	end,
 	Performance2 = Performance#performance{
-		average_bytes = AverageBytes2,
 		total_bytes = TotalBytes2,
+		total_throughput = TotalThroughput2,
+		total_transfers = TotalTransfers2,
 		average_latency = AverageLatency2,
-		total_latency = TotalLatency2,
+		average_throughput = AverageThroughput2,
 		average_success = AverageSuccess2,
 		lifetime_rating = LifetimeRating2,
-		current_rating = CurrentRating2,
-		total_transfers = TotalTransfers2
+		current_rating = CurrentRating2
 	},
 	TotalLifetimeRating = get_total_rating(lifetime),
 	TotalLifetimeRating2 = TotalLifetimeRating - LifetimeRating + LifetimeRating2,
@@ -975,7 +977,7 @@ update_rating_test() ->
 	%% Failed transfer should impact bytes or latency
 	update_rating(Peer1, 1000, 100, 1, false),
 	assert_performance(#performance{ 
-			average_success = 0.931 },
+			average_success = 0.9312 },
 		get_or_init_performance(Peer1)),
 	?assertEqual(0, get_total_rating(lifetime)),
 	?assertEqual(0, get_total_rating(current)),
@@ -984,47 +986,47 @@ update_rating_test() ->
 	%% Test successful transfer
 	update_rating(Peer1, 1000, 100, 1, true),
 	assert_performance(#performance{ 
-			average_bytes = 5.0,
 			total_bytes = 100,
-			average_latency = 50,
-			total_latency = 1000.0,
+			total_throughput = 0.1,
 			total_transfers = 1,
-			average_success = 0.934,
+			average_latency = 50,
+			average_throughput = 0.005,
+			average_success = 0.9336,
 			lifetime_rating = 0.0934,
-			current_rating = 0.0934 },
+			current_rating = 0.0047 },
 		get_or_init_performance(Peer1)),
 	?assertEqual(0.0934, round(get_total_rating(lifetime), 4)),
-	?assertEqual(0.0934, round(get_total_rating(current), 4)),
+	?assertEqual(0.0047, round(get_total_rating(current), 4)),
 
 	%% Test concurrency
 	update_rating(Peer1, 1000, 50, 10, true),
 	assert_performance(#performance{ 
-			average_bytes = 29.75,
 			total_bytes = 150,
-			average_latency = 97.5,
-			total_latency = 2000.0,
+			total_throughput = 0.15,
 			total_transfers = 2,
+			average_latency = 97.5,
+			average_throughput = 0.0298,
 			average_success = 0.936,
 			lifetime_rating = 0.0702,
-			current_rating = 0.2856 },
+			current_rating = 0.0278 },
 		get_or_init_performance(Peer1)),
 	?assertEqual(0.0702, round(get_total_rating(lifetime), 4)),
-	?assertEqual(0.2856, round(get_total_rating(current), 4)),
+	?assertEqual(0.0278, round(get_total_rating(current), 4)),
 
 	%% With 2 peers total rating should be the sum of both
 	update_rating(Peer2, 1000, 100, 1, true),
 	assert_performance(#performance{ 
-			average_bytes = 5.0,
 			total_bytes = 100,
-			average_latency = 50,
-			total_latency = 1000.0,
+			total_throughput = 0.1,
 			total_transfers = 1,
+			average_latency = 50,
+			average_throughput = 0.005,
 			average_success = 1,
 			lifetime_rating = 0.1,
-			current_rating = 0.1 },
+			current_rating = 0.005 },
 		get_or_init_performance(Peer2)),
 	?assertEqual(0.1702, round(get_total_rating(lifetime), 4)),
-	?assertEqual(0.3856, round(get_total_rating(current), 4)).
+	?assertEqual(0.0328, round(get_total_rating(current), 4)).
 
 block_rejected_test_() ->
 	[
@@ -1058,18 +1060,20 @@ test_block_rejected() ->
 
 
 assert_performance(Expected, Actual) ->
-	?assertEqual(
-		round(Expected#performance.average_bytes, 3),
-		round(Actual#performance.average_bytes, 3)),
 	?assertEqual(Expected#performance.total_bytes, Actual#performance.total_bytes),
 	?assertEqual(
-		round(Expected#performance.average_latency, 3),
-		round(Actual#performance.average_latency, 3)),
-	?assertEqual(Expected#performance.total_latency, Actual#performance.total_latency),
+		round(Expected#performance.total_throughput, 4),
+		round(Actual#performance.total_throughput, 4)),
 	?assertEqual(Expected#performance.total_transfers, Actual#performance.total_transfers),
 	?assertEqual(
-		round(Expected#performance.average_success, 3),
-		round(Actual#performance.average_success, 3)),
+		round(Expected#performance.average_latency, 4),
+		round(Actual#performance.average_latency, 4)),
+	?assertEqual(
+		round(Expected#performance.average_throughput, 4),
+		round(Actual#performance.average_throughput, 4)),
+	?assertEqual(
+		round(Expected#performance.average_success, 4),
+		round(Actual#performance.average_success, 4)),
 	?assertEqual(
 		round(Expected#performance.lifetime_rating, 4),
 		round(Actual#performance.lifetime_rating, 4)),
