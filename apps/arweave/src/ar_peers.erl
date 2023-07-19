@@ -40,7 +40,30 @@
 %% Minimum average_success we'll tolerate before dropping a peer.
 -define(MINIMUM_SUCCESS, 0.8).
 -define(THROUGHPUT_ALPHA, 0.05).
-%% set so that roughly 20 consecutive failures will drop the average_success below 0.5
+%% The alpha value in an EMA calculation is somewhat unintuitive:
+%%
+%% NewEma = (1 - Alpha) * OldEma + Alpha * NewValue
+%%
+%% When calculating the SucessEma the NewValue is always either 1 or 0. So if we want to see how
+%% many consecutive failures it will take to drop the SuccessEma from 1 to 0.5 (i.e. 50% failure
+%% rate), a number of terms in the equation drop out and we're left with:
+%%
+%% 0.5 = (1 - Alpha) ^ N
+%% 
+%% Where N is the number of consecutive failures.
+%%
+%% Setting Alpha to 0.1 we can determine the number of consecutive failures:
+%% 0.5 = 0.9 ^ N
+%% log(0.5) = N * log(0.9)
+%% N = log(0.5) / log(0.9)
+%% N = 6.58
+%%
+%% And if we want to set the Alpha such that it takes 20 consecutive failures to go from 1 to 0.5:
+%% 0.5 = (1 - Alpha) ^ 20
+%% log(0.5) = 20 * log(1 - Alpha)
+%% 1 - Alpha = 10 ^ (log(0.5) / 20)
+%% Alpha = 1 - 10 ^ (log(0.5) / 20)
+%% Alpha = 0.035
 -define(SUCCESS_ALPHA, 0.035). 
 
 %% When processing block rejected events for blocks received from a peer, we handle rejections
