@@ -39,12 +39,11 @@
 
 %% Minimum average_success we'll tolerate before dropping a peer.
 -define(MINIMUM_SUCCESS, 0.8).
--define(THROUGHPUT_ALPHA, 0.05).
 %% The alpha value in an EMA calculation is somewhat unintuitive:
 %%
 %% NewEma = (1 - Alpha) * OldEma + Alpha * NewValue
 %%
-%% When calculating the SucessEma the NewValue is always either 1 or 0. So if we want to see how
+%% When calculating the SuccessEma the NewValue is always either 1 or 0. So if we want to see how
 %% many consecutive failures it will take to drop the SuccessEma from 1 to 0.5 (i.e. 50% failure
 %% rate), a number of terms in the equation drop out and we're left with:
 %%
@@ -65,6 +64,31 @@
 %% Alpha = 1 - 10 ^ (log(0.5) / 20)
 %% Alpha = 0.035
 -define(SUCCESS_ALPHA, 0.035). 
+%% The THROUGHPUT_ALPHA is even harder to intuit since the values being averaged can be any
+%% positive number and are not just limited to 0 or 1. Perhaps one way to think about it is:
+%% When a datapoint is first added to the average it is scaled by Alpha, and then every time
+%% another datapoint is added, the contribution of all prior datapoints are
+%% scaled by (1-Alpha). So how many new datapoints will it take to reduce the
+%% contribution of an earlier datapoint to "virtually" 0?
+%%
+%% If we assume "virtually 0" is the the same as 1% of its true value (i.e. if the datapoint was
+%% originaly 100, it now contributes 1 to the average), then we can use a similar equation as
+%% the SUCCESS_ALPHA equation to determine how many datapoints materially contribute to the average:
+%%
+%% 0.01 = (1 - Alpha) ^ N) * Alpha
+%%
+%% The additional "* Alpha" term is to account for the scaling that happens when a datapoint is
+%% first added.
+%%
+%% With an Alpha of 0.05 we're essentially saying that the last ~31 datapoints contribute 99% of
+%% the average:
+%%
+%% 0.01 = ((1 - 0.05) ^ N) * 0.05
+%% 0.01 / 0.05 = (1 - 0.05) ^ N
+%% log(0.2) = N * log(0.95)
+%% N = log(0.2) / log(0.95)
+%% N = 31.38
+-define(THROUGHPUT_ALPHA, 0.05).
 
 %% When processing block rejected events for blocks received from a peer, we handle rejections
 %% differently based on the rejection reason.
