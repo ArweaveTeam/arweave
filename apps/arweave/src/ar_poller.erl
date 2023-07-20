@@ -55,7 +55,7 @@ resume() ->
 
 init(Workers) ->
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe([block, node_state]),
+	ok = ar_events:subscribe(node_state),
 	case ar_node:is_joined() of
 		true ->
 			handle_node_state_initialized();
@@ -84,7 +84,7 @@ handle_cast(collect_peers, #state{ pause = true } = State) ->
 handle_cast(collect_peers, State) ->
 	#state{ worker_count = N, workers = Workers } = State,
 	TrustedPeers = lists:sublist(ar_peers:get_trusted_peers(), N div 3),
-	Peers = ar_peers:get_peers(),
+	Peers = ar_peers:get_peers(lifetime),
 	PickedPeers = TrustedPeers ++ lists:sublist((Peers -- TrustedPeers),
 			N - length(TrustedPeers)),
 	start_polling_peers(Workers, PickedPeers),
@@ -129,11 +129,7 @@ handle_cast({peer_out_of_sync, Peer}, State) ->
 			{noreply, State#state{ in_sync_trusted_peers = Set2 }}
 	end;
 
-handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
-	{noreply, State}.
-
-handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
+handle_cast({block, Peer, B, BlockQueryTime}, State) ->
 	case ar_ignore_registry:member(B#block.indep_hash) of
 		false ->
 			?LOG_INFO([{event, fetched_block_for_validation},
@@ -142,10 +138,17 @@ handle_info({event, block, {discovered, Peer, B, Time, Size}}, State) ->
 		true ->
 			ok
 	end,
-	ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp(), Time, Size),
+	case ar_block_pre_validator:pre_validate(B, Peer, erlang:timestamp()) of
+		ok ->
+			ar_peers:rate_fetched_data(Peer, block, BlockQueryTime, byte_size(term_to_binary(B)));
+		_ ->
+			ok
+	end,
 	{noreply, State};
-handle_info({event, block, _}, State) ->
-	{noreply, State};
+
+handle_cast(Msg, State) ->
+	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+	{noreply, State}.
 
 handle_info({event, node_state, {initialized, _B}}, State) ->
 	handle_node_state_initialized(),

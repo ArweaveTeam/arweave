@@ -49,12 +49,10 @@ handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From},
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			case catch ar_serialize:binary_to_block_announcement_response(Body) of
 				{'EXIT', Reason} ->
-					ar_events:send(peer, {bad_response,
-							{Peer, block_announcement, Reason}}),
+					ar_peers:issue_warning(Peer, block_announcement, Reason),
 					From ! {worker_sent_block, self()};
 				{error, Reason} ->
-					ar_events:send(peer, {bad_response,
-							{Peer, block_announcement, Reason}}),
+					ar_peers:issue_warning(Peer, block_announcement, Reason),
 					From ! {worker_sent_block, self()};
 				{ok, #block_announcement_response{ missing_tx_indices = L,
 						missing_chunk = MissingChunk, missing_chunk2 = MissingChunk2 }} ->

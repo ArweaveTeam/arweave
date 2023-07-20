@@ -434,7 +434,7 @@ connect_to_slave() ->
 		}),
 	true = ar_util:do_until(
 		fun() ->
-			[master_peer()] == slave_call(ar_peers, get_peers, [])
+			[master_peer()] == slave_call(ar_peers, get_peers, [lifetime])
 		end,
 		200,
 		5000
@@ -449,7 +449,7 @@ connect_to_slave() ->
 		}),
 	true = ar_util:do_until(
 		fun() ->
-			[slave_peer()] == ar_peers:get_peers()
+			[slave_peer()] == ar_peers:get_peers(lifetime)
 		end,
 		200,
 		5000

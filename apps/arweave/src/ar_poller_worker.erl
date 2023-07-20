@@ -86,7 +86,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 					ar_ignore_registry:add_temporary(H, 1000),
 					Indices = get_missing_tx_indices(TXIDs),
 					case ar_http_iface_client:get_block(Peer, H, Indices) of
-						{#block{ height = Height } = B, Time, Size} ->
+						{#block{ height = Height } = B, TimeMicroseconds, _Size} ->
 							case Height =< CurrentHeight - 5 of
 								true ->
 									warning(Peer, fork);
@@ -97,7 +97,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 								{ok, TXs} ->
 									B2 = B#block{ txs = TXs },
 									ar_ignore_registry:remove_temporary(H),
-									ar_events:send(block, {discovered, Peer, B2, Time, Size}),
+									gen_server:cast(ar_poller, {block, Peer, B2, TimeMicroseconds}),
 									ok;
 								failed ->
 									?LOG_WARNING([{event, failed_to_get_block_txs_from_peer},

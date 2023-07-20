@@ -126,7 +126,7 @@ handle_info({event, block, {new, B, _}}, State) ->
 			{ok, Config} = application:get_env(arweave, config),
 			TrustedPeers = ar_peers:get_trusted_peers(),
 			SpecialPeers = Config#config.block_gossip_peers,
-			Peers = ((SpecialPeers ++ ar_peers:get_peers()) -- TrustedPeers) ++ TrustedPeers,
+			Peers = ((SpecialPeers ++ ar_peers:get_peers(lifetime)) -- TrustedPeers) ++ TrustedPeers,
 			JSON =
 				case B#block.height >= ar_fork:height_2_6() of
 					true ->

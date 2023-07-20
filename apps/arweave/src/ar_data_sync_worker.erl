@@ -54,7 +54,6 @@ handle_cast({read_range, Args}, State) ->
 	{noreply, State};
 
 handle_cast({sync_range, Args}, State) ->
-	{_Start, _End, Peer, _TargetStoreID, _RetryCount} = Args,
 	StartTime = erlang:monotonic_time(),
 	SyncResult = sync_range(Args),
 	EndTime = erlang:monotonic_time(),
@@ -62,8 +61,8 @@ handle_cast({sync_range, Args}, State) ->
 		recast ->
 			ok;
 		_ ->
-			gen_server:cast(ar_data_sync_worker_master,
-				{task_completed, {sync_range, {State#state.name, SyncResult, Peer, EndTime-StartTime}}})
+			gen_server:cast(ar_data_sync_worker_master, {task_completed,
+				{sync_range, {State#state.name, SyncResult, Args, EndTime-StartTime}}})
 	end,
 	{noreply, State};
 
@@ -228,8 +227,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							Start3 = ar_data_sync:get_chunk_padded_offset(
 									Start2 + byte_size(Chunk)) + 1,
 							gen_server:cast(list_to_atom("ar_data_sync_" ++ TargetStoreID),
-									{store_fetched_chunk, Peer, Time, TransferSize, Start2 - 1,
-									Proof}),
+									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});
 						{error, timeout} ->

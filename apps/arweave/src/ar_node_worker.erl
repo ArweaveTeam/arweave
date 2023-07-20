@@ -1252,7 +1252,7 @@ get_missing_txs_and_retry(#block{ txs = TXIDs }, _Worker)
 	ok;
 get_missing_txs_and_retry(BShadow, Worker) ->
 	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs,
-			Worker, ar_peers:get_peers(), [], 0).
+			Worker, ar_peers:get_peers(lifetime), [], 0).
 
 get_missing_txs_and_retry(_H, _TXIDs, _Worker, _Peers, _TXs, TotalSize)
 		when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
