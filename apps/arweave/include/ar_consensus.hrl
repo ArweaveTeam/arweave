@@ -21,6 +21,8 @@
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.
 
+-define(PARTITION_NUMBER(Offset), (Offset div ?PARTITION_SIZE)).
+
 %% The size of a recall range. The first range is randomly chosen from the given
 %% mining partition. The second range is chosen from the entire weave.
 -ifdef(DEBUG).
