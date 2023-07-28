@@ -18,27 +18,6 @@ bool_to_int(_) -> 0.
 int_to_bool(1) -> true;
 int_to_bool(0) -> false.
 
-%% @doc Implementations of integer_to_binary and binary_to_integer that can handle infinity.
-integer_to_binary(infinity) ->
-	<<"infinity">>;
-integer_to_binary(N) ->
-	erlang:integer_to_binary(N).
-
-binary_to_integer(<<"infinity">>) ->
-	infinity;
-binary_to_integer(N) ->
-	erlang:binary_to_integer(N).
-
-%% @doc: rounds IntValue up to the nearest multiple of Nearest.
-%% Rounds up even if IntValue is already a multiple of Nearest.
-ceil_int(IntValue, Nearest) ->
-	IntValue - (IntValue rem Nearest) + Nearest.
-
-%% @doc: rounds IntValue down to the nearest multiple of Nearest.
-%% Doesn't change IntValue if it's already a multiple of Nearest.
-floor_int(IntValue, Nearest) ->
-	IntValue - (IntValue rem Nearest).
-
 %% @doc Pick a list of random elements from a given list.
 pick_random(_, 0) -> [];
 pick_random([], _) -> [];

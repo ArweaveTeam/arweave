@@ -20,6 +20,7 @@
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(DEBUG).
@@ -454,11 +455,24 @@ handle_info({event, nonce_limiter, _}, State) ->
 handle_info({event, miner, {found_solution, _Solution}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
-handle_info({event, miner, {found_solution, Args}}, State) ->
-	{SolutionH, SolutionPreimage, PartitionNumber, Nonce, IntervalNumber,
-			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, SuppliedCheckpoints, LastStepCheckpoints,
-			RecallByte, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, RewardKey,
-			MerkleRebaseThreshold} = Args,
+handle_info({event, miner, {found_solution, Solution}}, State) ->
+	#mining_solution{ 
+		key = RewardKey,
+		last_step_checkpoints = LastStepCheckpoints,
+		next_seed = NonceLimiterNextSeed,
+		nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		poa1 = PoA1,
+		poa2 = PoA2,
+		preimage = SolutionPreimage,
+		recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
+		solution_hash = SolutionH,
+		start_interval_number = IntervalNumber,
+		step_number = StepNumber,
+		steps = SuppliedSteps
+	} = Solution,
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
 	Now = os:system_time(second),
@@ -534,7 +548,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 		case HaveSteps of
 			not_found ->
 				% TODO verify
-				SuppliedCheckpoints;
+				SuppliedSteps;
 			_ ->
 				HaveSteps
 		end,
