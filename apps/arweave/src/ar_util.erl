@@ -14,6 +14,9 @@
 bool_to_int(true) -> 1;
 bool_to_int(_) -> 0.
 
+int_to_bool(1) -> true;
+int_to_bool(0) -> false.
+
 %% @doc Pick a list of random elements from a given list.
 pick_random(_, 0) -> [];
 pick_random([], _) -> [];
