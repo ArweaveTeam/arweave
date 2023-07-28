@@ -19,7 +19,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(DEBUG).
@@ -477,13 +477,27 @@ handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
 
-handle_info({event, miner, {found_solution, _Args}},
+handle_info({event, miner, {found_solution, _Solution}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
-handle_info({event, miner, {found_solution, Args}}, State) ->
-	{SolutionH, SolutionPreimage, PartitionNumber, Nonce, IntervalNumber,
-			NonceLimiterNextSeed, NonceLimiterOutput, StepNumber, SuppliedCheckpoints, LastStepCheckpoints,
-			RecallByte, RecallByte2, PoA1, PoA2, RewardKey} = Args,
+handle_info({event, miner, {found_solution, Solution}}, State) ->
+	#mining_solution{ 
+		key = RewardKey,
+		last_step_checkpoints = LastStepCheckpoints,
+		next_seed = NonceLimiterNextSeed,
+		nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		poa1 = PoA1,
+		poa2 = PoA2,
+		preimage = SolutionPreimage,
+		recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
+		solution_hash = SolutionH,
+		start_interval_number = IntervalNumber,
+		step_number = StepNumber,
+		steps = SuppliedSteps
+	} = Solution,
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
 	Now = os:system_time(second),
@@ -541,7 +555,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 		case HaveSteps of
 			not_found ->
 				% TODO verify
-				SuppliedCheckpoints;
+				SuppliedSteps;
 			_ ->
 				HaveSteps
 		end,
@@ -618,7 +632,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				packing_2_5_threshold = 0,
 				strict_data_split_threshold = PrevB#block.strict_data_split_threshold,
 				hash_preimage = SolutionPreimage,
-				recall_byte = RecallByte,
+				recall_byte = RecallByte1,
 				previous_solution_hash = PrevB#block.hash,
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
