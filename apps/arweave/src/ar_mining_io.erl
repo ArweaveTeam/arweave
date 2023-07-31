@@ -186,8 +186,6 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 		_ ->
 			Thread ! {new_mining_session, SessionRef}
 	end,
-	?LOG_INFO([{event, started_io_mining_thread}, {partition_number, PartitionNumber},
-			{mining_addr, ar_util:encode(MiningAddress)}, {store_id, StoreID}]),
 	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }.
 
 handle_io_thread_down(Ref, Reason,
@@ -215,7 +213,7 @@ io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 			io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
 		{WhichChunk, {Candidate, RecallRangeStart}} ->
 			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true -> read_range(WhichChunk, Candidate, RecallRangeStart);
+				true -> read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
 				false -> ok %% Clear the message queue of requests from outdated mining sessions
 			end,
 			io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef)
@@ -245,14 +243,17 @@ filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = St
 filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
-read_range(WhichChunk, Candidate, RangeStart) ->
+read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	Size = ?RECALL_RANGE_SIZE,
-	#mining_candidate{ mining_address = MiningAddress, store_id = StoreID } = Candidate,
+	#mining_candidate{ mining_address = MiningAddress } = Candidate,
 	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
 	?LOG_DEBUG([{event, mining_debug_read_recall_range},
+			{chunk, WhichChunk},
+			{range_start, RangeStart},
+			{store_id, StoreID},
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
