@@ -359,8 +359,8 @@ handle_info({event, miner, {found_solution, _Solution}},
 	{noreply, State};
 handle_info({event, miner, {found_solution, Solution}}, State) ->
 	#mining_solution{ 
-		key = RewardKey,
 		last_step_checkpoints = LastStepCheckpoints,
+		mining_address = MiningAddress,
 		next_seed = NonceLimiterNextSeed,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
@@ -375,6 +375,7 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 		step_number = StepNumber,
 		steps = SuppliedSteps
 	} = Solution,
+
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevWeaveSize}] = ets:lookup(node_state, weave_size),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
@@ -392,19 +393,39 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 			false ->
 				Now
 		end,
+
+	%% Load key
+	RewardKey = case ar_wallet:load_key(MiningAddress) of
+		not_found ->
+			?LOG_WARNING([{event, mined_block_but_no_mining_key_found}, {node, node()},
+					{mining_address, ar_util:encode(MiningAddress)}]),
+			ar:console("WARNING. Can't find key ~w~n", [ar_util:encode(MiningAddress)]),
+			not_found;
+		Key ->
+			Key
+	end,
+	PassesKeyCheck = RewardKey =/= not_found,
+
+	%% Check solution difficulty
 	Diff = get_current_diff(Timestamp),
-	PassesDiffCheck = binary:decode_unsigned(SolutionH, big) > Diff,
+	PassesDiffCheck = PassesKeyCheck andalso binary:decode_unsigned(SolutionH, big) > Diff,
+
+	%% Check that solution is laster than the previous solution on the timeline
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
 			output = NonceLimiterOutput,
 			prev_output = TipNonceLimiterInfo#nonce_limiter_info.output },
 	PassesTimelineCheck = PassesDiffCheck andalso
 			ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo, TipNonceLimiterInfo),
+
+	%% Check solution seed
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck = PassesTimelineCheck andalso
 			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
+
+	%% Check steps and step checkpoints
 	HaveSteps =
 		case PassesSeedCheck of
 			false ->
@@ -421,6 +442,8 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 			_ ->
 				HaveSteps
 		end,
+
+	%% Pack, build, and sign block
 	case HaveSteps2 of
 		false ->
 			{noreply, State};

@@ -7,7 +7,7 @@
 -export([start_link/0, pause/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
 		pause_performance_reports/1, compute_h2_for_peer/2,
 		prepare_and_post_solution/1, post_solution/1,
-		get_recall_bytes/4, turn_off_one_chunk_mining/0, is_session_valid/2]).
+		get_recall_bytes/4, is_session_valid/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -44,8 +44,7 @@
 	diff						= infinity,
 	task_queue					= gb_sets:new(),
 	pause_performance_reports	= false,
-	pause_performance_reports_timeout,
-	is_one_chunk_mining_enabled = true
+	pause_performance_reports_timeout
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -104,11 +103,6 @@ prepare_and_post_solution(Candidate) ->
 
 post_solution(Solution) ->
 	gen_server:cast(?MODULE, {post_solution, Solution}).
-
-%% @doc Turn off "one chunk mining", i.e., the node will start mining but only publish
-%% a two-chunk solution.
-turn_off_one_chunk_mining() ->
-	gen_server:cast(?MODULE, turn_off_one_chunk_mining).
 
 %% @doc Returns true of the mining candidate belongs to an valid mining session. Always assume
 %% a candidate from a remote peer is valid.
@@ -215,9 +209,6 @@ handle_cast({prepare_and_post_solution, Candidate}, State) ->
 handle_cast({post_solution, Solution}, State) ->
 	post_solution(Solution, State),
 	{noreply, State};
-
-handle_cast(turn_off_one_chunk_mining, State) ->
-	{noreply, State#state{ is_one_chunk_mining_enabled = false }};
 
 handle_cast({may_be_remove_chunk_from_cache, _Args},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
@@ -495,7 +486,7 @@ distribute_output(Partitions, Candidate, Distributed, State) ->
 
 distribute_output([], _Candidate, _Distributed, State, N) ->
 	{N, State};
-distribute_output([{PartitionNumber, MiningAddress, StoreID} | Partitions],
+distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
 		Candidate, Distributed, State, N) ->
 	case maps:is_key({PartitionNumber, MiningAddress}, Distributed) of
 		true ->
@@ -506,7 +497,6 @@ distribute_output([{PartitionNumber, MiningAddress, StoreID} | Partitions],
 			Thread ! {compute_h0,
 				Candidate#mining_candidate{
 					partition_number = PartitionNumber,
-					store_id = StoreID,
 					mining_address = MiningAddress
 				}},
 			State2 = State#state{ hashing_threads = Threads2 },
@@ -561,7 +551,7 @@ handle_task({computed_output, Args}, State) ->
 						partition_upper_bound = PartitionUpperBound }
 		end,
 	Ref = Session2#mining_session.ref,
-	Partitions = sets:to_list(ar_mining_io:get_partitions(PartitionUpperBound)),
+	Partitions = ar_mining_io:get_partitions(PartitionUpperBound),
 	Candidate = #mining_candidate{
 		session_ref = Ref,
 		seed = Seed,
@@ -647,7 +637,8 @@ handle_task({computed_h0, Candidate}, State) ->
 									chunk2, Candidate2, RecallRange2Start),
 							case Range2Exists of
 								true -> reserve_cache_space();
-								false -> signal_cache_cleanup(Candidate2)
+								false -> 
+									signal_cache_cleanup(Candidate2)
 							end;
 						false ->
 							?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
@@ -661,15 +652,14 @@ handle_task({computed_h0, Candidate}, State) ->
 			{noreply, State}
 	end;
 
-handle_task({computed_h1, Candidate},
-		#state{ is_one_chunk_mining_enabled = IsOneChunkMiningEnabled } = State) ->
+handle_task({computed_h1, Candidate}, State) ->
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
 		true ->
 			#state{ session = Session, diff = Diff, hashing_threads = Threads } = State,
 			#mining_session{ chunk_cache = Map } = Session,
 			#mining_candidate{
 				h1 = H1, cache_ref = CacheRef, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
-			case binary:decode_unsigned(H1, big) > Diff andalso IsOneChunkMiningEnabled of
+			case binary:decode_unsigned(H1, big) > Diff of
 				true ->
 					#state{ session = Session } = State,
 					Map2 = evict_chunk_cache(CacheRef, Nonce, Map),
@@ -855,20 +845,7 @@ prepare_solution(Candidate, _State) ->
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	},
-	prepare_solution(key, Candidate, Solution).
-
-prepare_solution(key, Candidate, Solution) ->
-	#mining_candidate{ mining_address = MiningAddress } = Candidate,
-	case ar_wallet:load_key(MiningAddress) of
-		not_found ->
-			?LOG_WARNING([{event, mined_block_but_no_mining_key_found},
-					{mining_address, ar_util:encode(MiningAddress)}]),
-			ar:console("WARNING. Can't find key ~w~n", [ar_util:encode(MiningAddress)]),
-			error;
-		Key ->
-			prepare_solution(last_step_checkpoints,
-				Candidate, Solution#mining_solution{ key = Key })
-	end;
+	prepare_solution(last_step_checkpoints, Candidate, Solution).
 	
 prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 	#mining_candidate{

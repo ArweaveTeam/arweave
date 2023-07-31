@@ -20,8 +20,8 @@
 		reward_history_to_binary/1, binary_to_reward_history/1,
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
-		candidate_to_json_struct/1, h2_inputs_to_json_struct/2,
-		json_struct_to_h2_inputs/1, json_struct_to_candidate/1]).
+		candidate_to_json_struct/1, h2_inputs_to_json_struct/2, solution_to_json_struct/1,
+		json_struct_to_h2_inputs/1, json_struct_to_candidate/1, json_struct_to_solution/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
@@ -1506,15 +1506,15 @@ json_struct_to_candidate(JSON) ->
 	CacheRef = binary_to_term(ar_util:decode(maps:get(<<"cache_ref">>, JSON))),
 	Diff = binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
-	H1 = decode_if_set(JSON, "h1", fun ar_util:decode/1, not_set),
-	H2 = decode_if_set(JSON, "h2", fun ar_util:decode/1, not_set),
+	H1 = decode_if_set(JSON, <<"h1">>, fun ar_util:decode/1, not_set),
+	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
 	PartitionNumber2 = binary_to_integer(maps:get(<<"partition_number2">>, JSON)),
 	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
-	PoA2 = decode_if_set(JSON, "poa2", fun json_struct_to_poa_from_map/1, not_set),
+	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
 	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
 	SessionRef = binary_to_term(ar_util:decode(maps:get(<<"session_ref">>, JSON))),
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
@@ -1555,7 +1555,6 @@ json_struct_to_h2_inputs(JSON) ->
 
 solution_to_json_struct(
 	#mining_solution{
-		key = Key,
 		last_step_checkpoints = LastStepCheckpoints,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
@@ -1566,6 +1565,8 @@ solution_to_json_struct(
 		poa1 = PoA1,
 		poa2 = PoA2,
 		preimage = Preimage,
+		recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
 		seed = Seed,
 		solution_hash = SolutionHash,
 		start_interval_number = StartIntervalNumber,
@@ -1573,7 +1574,6 @@ solution_to_json_struct(
 		steps = Steps
 	}) ->
 	JSON = [
-		{key, ar_util:encode(Key)},
 		{last_step_checkpoints, ar_util:encode(iolist_to_binary(LastStepCheckpoints))},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{nonce, Nonce},
@@ -1583,27 +1583,30 @@ solution_to_json_struct(
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{poa1, poa_to_json_struct(PoA1)},
 		{preimage, ar_util:encode(Preimage)},
+		{recall_byte1, integer_to_binary(RecallByte1)},
 		{seed, ar_util:encode(Seed)},
 		{solution_hash, ar_util:encode(SolutionHash)},
 		{start_interval_number, integer_to_binary(StartIntervalNumber)},
 		{step_number, integer_to_binary(StepNumber)},
 		{steps, ar_util:encode(iolist_to_binary(Steps))}
 	],
-	encode_if_set(JSON, poa2, PoA2, fun poa_to_json_struct/1).
+	JSON2 = encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1),
+	encode_if_set(JSON2, poa2, PoA2, fun poa_to_json_struct/1).
 
 json_struct_to_solution(JSON) ->
-	Key = ar_util:decode(maps:get(<<"key">>, JSON)),
 	LastStepCheckpoints = parse_checkpoints(
 		ar_util:decode(maps:get(<<"last_step_checkpoints">>, JSON)), 1),
-	MiningAddress = ar_util:decode(maps:get(<<"addr">>, JSON)),
+	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
 	Nonce = maps:get(<<"nonce">>, JSON),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
 	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
 	PoA1 = json_struct_to_poa_from_map(maps:get(<<"poa1">>, JSON)),
-	PoA2 = decode_if_set(JSON, "poa2", fun json_struct_to_poa_from_map/1, not_set),
+	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
 	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
+	RecallByte1 = binary_to_integer(maps:get(<<"recall_byte1">>, JSON)),
+	RecallByte2 = decode_if_set(JSON, <<"recall_byte2">>, fun binary_to_integer/1, undefined),
 	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
 	SolutionHash = ar_util:decode(maps:get(<<"solution_hash">>, JSON)),
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
@@ -1612,7 +1615,6 @@ json_struct_to_solution(JSON) ->
 		ar_util:decode(maps:get(<<"steps">>, JSON)), 1),
 
 	#mining_solution{
-		key = Key,
 		last_step_checkpoints = LastStepCheckpoints,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
@@ -1623,6 +1625,8 @@ json_struct_to_solution(JSON) ->
 		poa1 = PoA1,
 		poa2 = PoA2,
 		preimage = Preimage,
+		recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
 		seed = Seed,
 		solution_hash = SolutionHash,
 		start_interval_number = StartIntervalNumber,
