@@ -457,8 +457,8 @@ handle_info({event, miner, {found_solution, _Solution}},
 	{noreply, State};
 handle_info({event, miner, {found_solution, Solution}}, State) ->
 	#mining_solution{ 
-		key = RewardKey,
 		last_step_checkpoints = LastStepCheckpoints,
+		mining_address = MiningAddress,
 		next_seed = NonceLimiterNextSeed,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
@@ -473,6 +473,7 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 		step_number = StepNumber,
 		steps = SuppliedSteps
 	} = Solution,
+
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
 	Now = os:system_time(second),
@@ -520,8 +521,9 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck = PassesTimelineCheck andalso
 			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
-	PrevB = ar_block_cache:get(block_cache, PrevH),
-	CorrectRebaseThreshold =
+
+	%% Check steps and step checkpoints
+	HaveSteps =
 		case PassesSeedCheck of
 			false ->
 				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
@@ -552,6 +554,8 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 			_ ->
 				HaveSteps
 		end,
+
+	%% Pack, build, and sign block
 	case HaveSteps2 of
 		false ->
 			{noreply, State};

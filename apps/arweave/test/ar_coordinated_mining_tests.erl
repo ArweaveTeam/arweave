@@ -4,22 +4,33 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start_coordinated/1, mine/1, wait_until_height/2, http_get_block/2,
-		turn_off_one_chunk_mining/1]).
+-import(ar_test_node, [start_coordinated/1, mine/1, wait_until_height/2, http_get_block/2]).
 
-single_node_coordinated_mining_test_() ->
-	{timeout, 120, fun test_single_node_coordinated_mining/0}.
+single_node_one_chunk_coordinated_mining_test_() ->
+	{timeout, 120, fun test_single_node_one_chunk_coordinated_mining/0}.
 
-test_single_node_coordinated_mining() ->
+test_single_node_one_chunk_coordinated_mining() ->
 	[Node, _ExitNode, ValidatorNode] = start_coordinated(1),
 	mine(Node),
 	BI = wait_until_height(1, ValidatorNode),
-	{ok, #block{}} = http_get_block(element(1, hd(BI)), ValidatorNode),
-	turn_off_one_chunk_mining(Node),
+	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
+	?assert(byte_size((B#block.poa)#poa.data_path) > 0).
+
+
+single_node_two_chunk_coordinated_mining_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			{ar_block, compute_h1, fun(_H0, _Nonce, _Chunk1) -> 
+				{<<"00000000000000000000000000000000">>,
+				<<"00000000000000000000000000000000">>}
+			end}],
+		fun test_single_node_two_chunk_coordinated_mining/0, 120).
+
+test_single_node_two_chunk_coordinated_mining() ->
+	[Node, _ExitNode, ValidatorNode] = start_coordinated(1),
 	mine(Node),
-	BI2 = wait_until_height(2, ValidatorNode),
-	{ok, B2} = http_get_block(element(1, hd(BI2)), ValidatorNode),
-	?assert(byte_size((B2#block.poa2)#poa.data_path) > 0).
+	BI = wait_until_height(1, ValidatorNode),
+	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
+	?assert(byte_size((B#block.poa2)#poa.data_path) > 0).
 
 % two_node_coordinated_mining_concurrency_test_() ->
 % 	{timeout, 120, fun test_two_node_coordinated_mining_concurrency/0}.

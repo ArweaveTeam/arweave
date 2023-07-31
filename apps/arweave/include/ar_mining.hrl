@@ -25,12 +25,10 @@
 	seed,
 	session_ref,
 	start_interval_number,
-	step_number,
-	store_id
+	step_number
 }).
 
 -record(mining_solution, {
-	key = not_set,
 	last_step_checkpoints = not_set,
 	next_seed = not_set,
 	nonce = not_set,
@@ -40,7 +38,7 @@
 	poa2 = not_set,
 	preimage = not_set,
 	recall_byte1 = not_set,
-	recall_byte2 = not_set,
+	recall_byte2 = undefined,
 	solution_hash = not_set,
 	start_interval_number = not_set,
 	step_number = not_set,

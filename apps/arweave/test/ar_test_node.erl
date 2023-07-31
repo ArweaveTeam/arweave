@@ -49,6 +49,7 @@
 -define(SLAVE_START_TIMEOUT, 40000).
 
 -define(MAX_MINERS, 3).
+-define(MINIMUM_SOLUTION_HASH, <<"00000000000000000000000000000000">>).
 
 %%%===================================================================
 %%% Public interface.
@@ -95,13 +96,17 @@ start_node(B0, Config) ->
 			|| {Size, N, Packing} <- Config2#config.storage_modules],
 	erlang:node().
 
-%% @doc Launch the given number (>= 1, =< 3) of the mining nodes in the coordinated
+%% @doc Launch the given number (>= 1, =< ?MAX_MINERS) of the mining nodes in the coordinated
 %% mode plus an exit node and a validator node.
 %% Return [Node1, ..., NodeN, ExitNode, ValidatorNode].
-start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< 3 ->
-	[B0] = ar_weave:init([], 1, 2 * 1024 * 1024 * 3),
+start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
+	Difficulty = binary:decode_unsigned(?MINIMUM_SOLUTION_HASH, big) + 1,
+	%% Set Difficulty to 1000 - low enough so we can easily find solutions, but high enough that
+	%% we can use mocks to control H1 vs. H2 solutions. The lowest valid H1 solution is <<"1">>
+	%% which decodes to 49 - so we need a difficuly > 49 if we want to prevent one-chunk solutions.
+	[B0] = ar_weave:init([], Difficulty, 2 * 1024 * 1024 * 3),
 	RewardAddr = ar_wallet:to_address(remote_call(ar_wallet, new_keyfile, [],
-			'slave@127.0.0.1')),
+			slave_node())),
 	BaseConfig2 = #config{
 		start_from_block_index = true,
 		auto_join = true,
@@ -136,11 +141,11 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
 	} || I <- lists:seq(1, MiningNodeCount)],
 	ExitNode = remote_call(ar_test_node, start_node, [B0, ExitNodeConfig],
-			'slave@127.0.0.1'),
+			slave_node()),
 	ValidatorNode = remote_call(ar_test_node, start_node, [B0, ValidatorNodeConfig],
-			'master@127.0.0.1'),
+			master_node()),
 	MiningNodes = [remote_call(ar_test_node, start_node, [B0, lists:nth(I, MiningNodeConfigs)],
-			list_to_atom("cm_miner_" ++ integer_to_list(I) ++ "@127.0.0.1"))
+			miner_node(I))
 		|| I <- lists:seq(1, MiningNodeCount)],
 	MiningNodes ++ [ExitNode, ValidatorNode].
 
@@ -687,7 +692,7 @@ slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 10000).
 
 slave_call(Module, Function, Args, Timeout) ->
-	remote_call(Module, Function, Args, Timeout, slave_node()).
+	remote_call(Module, Function, Args, Timeout, slave_peer()).
 
 slave_mine() ->
 	slave_call(ar_test_node, mine, []).
