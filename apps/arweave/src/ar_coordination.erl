@@ -34,7 +34,13 @@
 }).
 
 -define(START_DELAY, 1000).
+
+-ifdef(DEBUG).
+-define(BATCH_SIZE_LIMIT, 2).
+-else.
 -define(BATCH_SIZE_LIMIT, 400).
+-endif.
+
 -define(BATCH_TIMEOUT_MS, 20).
 
 %%%===================================================================
@@ -216,6 +222,7 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 	PeerRequests2 = maps:put(CacheRef, {ShareableCandidate, H1List2}, PeerRequests),
 	case length(H1List2) >= ?BATCH_SIZE_LIMIT of
 		true ->
+			?LOG_INFO([{event, batch_size_limit}]),
 			compute_h2_on_peer();
 		false ->
 			ok
@@ -228,6 +235,7 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests} = State)
 	{noreply, State#state{timer = NewTRef}};
 
 handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRef} = State) ->
+	?LOG_INFO([{event, compute_h2_on_peer}]),
 	timer:cancel(TRef),
 	NewPeerIOStat = maps:fold(
 		fun	(_CacheRef, {Candidate, H1List}, Acc) ->

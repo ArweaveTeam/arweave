@@ -1564,6 +1564,7 @@ candidate_to_json_struct(
 		h1 = H1,
 		h2 = H2,
 		mining_address = MiningAddress,
+		nonce = Nonce,
 		next_seed = NextSeed,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
@@ -1593,7 +1594,8 @@ candidate_to_json_struct(
 
 	JSON2 = encode_if_set(JSON, h1, H1, fun ar_util:encode/1),
 	JSON3 = encode_if_set(JSON2, h2, H2, fun ar_util:encode/1),
-	encode_if_set(JSON3, poa2, PoA2, fun poa_to_json_struct/1).
+	JSON4 = encode_if_set(JSON3, nonce, Nonce, fun integer_to_binary/1),
+	encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1).
 
 h2_inputs_to_json_struct(Candidate, H1List) ->
 	EncodedH1List = lists:map(fun ({H1, Nonce}) ->
@@ -1617,6 +1619,7 @@ json_struct_to_candidate(JSON) ->
 	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	Nonce = decode_if_set(JSON, <<"nonce">>, fun binary_to_integer/1, not_set),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
 	PartitionNumber2 = binary_to_integer(maps:get(<<"partition_number2">>, JSON)),
@@ -1635,6 +1638,7 @@ json_struct_to_candidate(JSON) ->
 		h2 = H2,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
+		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
 		partition_number2 = PartitionNumber2,
@@ -1689,6 +1693,7 @@ solution_to_json_struct(
 		{partition_number, integer_to_binary(PartitionNumber)},
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{poa1, poa_to_json_struct(PoA1)},
+		{poa2, poa_to_json_struct(PoA2)},
 		{preimage, ar_util:encode(Preimage)},
 		{recall_byte1, integer_to_binary(RecallByte1)},
 		{seed, ar_util:encode(Seed)},
@@ -1697,8 +1702,7 @@ solution_to_json_struct(
 		{step_number, integer_to_binary(StepNumber)},
 		{steps, ar_util:encode(iolist_to_binary(Steps))}
 	],
-	JSON2 = encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1),
-	encode_if_set(JSON2, poa2, PoA2, fun poa_to_json_struct/1).
+	encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1).
 
 json_struct_to_solution(JSON) ->
 	LastStepCheckpoints = parse_checkpoints(
@@ -1710,7 +1714,7 @@ json_struct_to_solution(JSON) ->
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
 	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
 	PoA1 = json_struct_to_poa_from_map(maps:get(<<"poa1">>, JSON)),
-	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
+	PoA2 = json_struct_to_poa_from_map(maps:get(<<"poa2">>, JSON)),
 	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
 	RecallByte1 = binary_to_integer(maps:get(<<"recall_byte1">>, JSON)),
 	RecallByte2 = decode_if_set(JSON, <<"recall_byte2">>, fun binary_to_integer/1, undefined),
