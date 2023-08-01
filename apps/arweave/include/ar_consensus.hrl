@@ -16,7 +16,7 @@
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
 -ifdef(DEBUG).
--define(PARTITION_SIZE, 1800000).
+-define(PARTITION_SIZE, 2097152). % 2 * 1024 * 1024
 -else.
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.

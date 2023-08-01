@@ -2,7 +2,7 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0, start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
-		http_get_block/2, turn_off_one_chunk_mining/1, remote_call/4]).
+		http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0, remote_call/4]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4, slave_start/0, slave_start/1,
@@ -11,7 +11,7 @@
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 		get_balance/1, get_balance/2, get_reserved_balance/2, get_balance_by_address/2,
-		stop/0, slave_stop/0, connect_to_slave/0, disconnect_from_slave/0,
+		stop/0, stop/1, slave_stop/0, connect_to_slave/0, disconnect_from_slave/0,
 		slave_call/3, slave_call/4,
 		slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
 		assert_slave_wait_until_height/1, wait_until_block_index/1,
@@ -36,6 +36,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% May occasionally take quite long on a slow CI server, expecially in tests
@@ -138,6 +139,15 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		cm_peers = get_cm_peers(I, MiningNodeCount),
 		storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
 	} || I <- lists:seq(1, MiningNodeCount)],
+	?LOG_ERROR("******* cm_exit_peer: ~p", [ar_util:format_peer(ExitPeer)]),
+	lists:foreach(fun(I) ->
+			?LOG_ERROR("******* cm_peers ~p: ~p", [miner_node(I), get_cm_peers(I, MiningNodeCount)]),
+			?LOG_ERROR("******* storage_modules ~p: ~p", [
+				miner_node(I), get_cm_storage_modules(RewardAddr, I, MiningNodeCount)])
+		end,
+		lists:seq(1, MiningNodeCount)
+	),
+	
 	ExitNode = remote_call(ar_test_node, start_node, [B0, ExitNodeConfig],
 			slave_node()),
 	ValidatorNode = remote_call(ar_test_node, start_node, [B0, ValidatorNodeConfig],
@@ -149,13 +159,14 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
+	?LOG_ERROR([{mine, Node}]),
 	remote_call(ar_node, mine, [], Node).
 
 %% @doc Wait until the given node reaches the given height or fail by timeout.
 wait_until_height(Height, Node) ->
 	{ok, BI} = ar_util:do_until(
 		fun() ->
-			case remote_call(ar_node, get_blocks, [], Node) of
+			case get_blocks(Node) of
 				BI when length(BI) - 1 == Height ->
 					{ok, BI};
 				_ ->
@@ -183,11 +194,17 @@ http_get_block(H, Node) ->
 			{error, {StatusCode, Body}}
 	end.
 
-%% @doc Turn off "one chunk mining" (i.e., the node will start mining but only publish
-%% a two-chunk solution) on the given node.
-turn_off_one_chunk_mining(Node) ->
-	remote_call(ar_mining_server, turn_off_one_chunk_mining, [], Node).
+get_blocks(Node) ->
+	remote_call(ar_node, get_blocks, [], Node).
 
+mock_to_force_invalid_h1() ->
+	{
+		ar_block, compute_h1,
+		fun(_H0, _Nonce, _Chunk1) -> 
+			{<<"00000000000000000000000000000000">>,
+			<<"00000000000000000000000000000000">>}
+		end
+	}.
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -282,13 +299,13 @@ get_cm_peers(3, 3) ->
 	[{127, 0, 0, 1, 1980}, {127, 0, 0, 1, 1979}].
 
 get_cm_storage_modules(RewardAddr, 1, 1) ->
-	[{2 * 1024 * 1024, N, {spora_2_6, RewardAddr}} || N <- lists:seq(0, 2)];
+	[{?PARTITION_SIZE, N, {spora_2_6, RewardAddr}} || N <- lists:seq(0, 2)];
 get_cm_storage_modules(RewardAddr, 1, N) when N == 2 orelse N == 3 ->
-	[{2 * 1024 * 1024, 0, {spora_2_6, RewardAddr}}];
+	[{?PARTITION_SIZE, 0, {spora_2_6, RewardAddr}}];
 get_cm_storage_modules(RewardAddr, 2, N) when N == 2 orelse N == 3 ->
-	[{2 * 1024 * 1024, 1, {spora_2_6, RewardAddr}}];
+	[{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}}];
 get_cm_storage_modules(RewardAddr, 3, N) when N == 3 ->
-	[{2 * 1024 * 1024, 2, {spora_2_6, RewardAddr}}].
+	[{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}].
 
 remote_call(Module, Function, Args, Node) ->
 	remote_call(Module, Function, Args, 300000, Node).
@@ -597,8 +614,11 @@ stop() ->
 	ok = ar:stop_dependencies(),
 	Config.
 
+stop(Node) ->
+	remote_call(ar_test_node, stop, [], Node).
+
 slave_stop() ->
-	slave_call(ar_test_node, stop, [], 20000).
+	stop(slave_peer()).
 
 join_on_slave() ->
 	join(slave_peer()).

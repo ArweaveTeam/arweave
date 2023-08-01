@@ -70,8 +70,10 @@ start_mining(Args) ->
 recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
 	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
 recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
+	?LOG_INFO([{event, recall_chunk2}, {nonce, Nonce}]),
 	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
 recall_chunk(skipped, undefined, Nonce, Candidate) ->
+	?LOG_INFO([{event, recall_chunk_skipped}, {nonce, Nonce}]),
 	signal_cache_cleanup(Nonce, Candidate).
 
 %% @doc Callback from the hashing threads when a hash is computed
@@ -106,7 +108,8 @@ post_solution(Solution) ->
 
 %% @doc Returns true of the mining candidate belongs to an valid mining session. Always assume
 %% a candidate from a remote peer is valid.
-is_session_valid(SessionRef, #mining_candidate{ session_ref = SessionRef }) ->
+is_session_valid(SessionRef, #mining_candidate{ session_ref = SessionRef }) 
+		when SessionRef /= undefined ->
 	true;
 is_session_valid(_SessionRef, #mining_candidate{ cm_lead_peer = LeadPeer })
   		when LeadPeer /= not_set ->
@@ -147,6 +150,7 @@ handle_cast(pause, #state{ hashing_threads = HashingThreads } = State) ->
 handle_cast({start_mining, Args}, State) ->
 	{Diff} = Args,
 	ar:console("Starting mining.~n"),
+	?LOG_INFO([{event, mining_server_starting}, {node, node()}, {difficulty, Diff}]),
 	Session = reset_mining_session(State),
 	ar_mining_io:reset_performance_counters(),
 	{noreply, State#state{ diff = Diff, session = Session }};
@@ -157,14 +161,19 @@ handle_cast({set_difficulty, _Diff},
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
 
-handle_cast({add_task, _}, #state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_cast({add_task, {TaskType, Candidate} = Task}, #state{ task_queue = Q } = State) ->
-	StepNumber = Candidate#mining_candidate.step_number,
-	Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
-	{noreply, State#state{ task_queue = Q2 }};
-
+handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
+	#state{ session = #mining_session{ ref = SessionRef }, task_queue = Q } = State,
+	case is_session_valid(SessionRef, Candidate) of
+		true ->
+			StepNumber = Candidate#mining_candidate.step_number,
+			Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
+			prometheus_gauge:inc(mining_server_task_queue_len),
+			{noreply, State#state{ task_queue = Q2 }};
+		false ->
+			?LOG_INFO([{event, add_task_failed}]),
+			{noreply, State}
+	end;
+	
 handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
@@ -190,9 +199,16 @@ handle_cast({compute_h2_for_peer, Candidate, H1List}, State) ->
 	
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
+	?LOG_INFO([{event, compute_h2_for_peer}, 
+		{peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
+		{recall_range2_start, RecallRange2Start},
+		{partition, PartitionNumber},
+		{partition2, ?PARTITION_NUMBER(RecallRange2Start)}]),
+
 	Range2Exists = ar_mining_io:read_recall_range(chunk2, Candidate, RecallRange2Start),
 	case Range2Exists of
 		true ->
+			?LOG_ERROR([{event, range_2_exists}]),
 			reserve_cache_space(),
 			Map2 = cache_h1_list(CacheRef, H1List, Map),
 			Session2 = Session#mining_session{ chunk_cache = Map2 },
@@ -577,6 +593,7 @@ handle_task({chunk1, Candidate}, State) ->
 	end;
 
 handle_task({chunk2, Candidate}, State) ->
+	?LOG_INFO([{event, chunk2_read}]),
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
 		true ->
 			#state{ session = Session, hashing_threads = Threads } = State,
@@ -584,20 +601,24 @@ handle_task({chunk2, Candidate}, State) ->
 			#mining_candidate{ cache_ref = CacheRef, chunk2 = Chunk2, nonce = Nonce } = Candidate,
 			case cycle_chunk_cache(CacheRef, Nonce, {chunk2, Chunk2}, Map) of
 				{{chunk1, Chunk1, H1}, Map2} ->
+					?LOG_INFO([{event, compute_h2}, {chunk1, local}]),
 					{Thread, Threads2} = pick_hashing_thread(Threads),
 					Thread ! {compute_h2, Candidate#mining_candidate{ chunk1 = Chunk1, h1 = H1 } },
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
 					{noreply, State#state{ session = Session2, hashing_threads = Threads2 }};
 				{{chunk1, H1}, Map2} ->
+					?LOG_INFO([{event, compute_h2}, {chunk1, remote}]),
 					{Thread, Threads2} = pick_hashing_thread(Threads),
 					Thread ! {compute_h2, Candidate#mining_candidate{ h1 = H1 } },
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
 					{noreply, State#state{ session = Session2, hashing_threads = Threads2 }};
 				{_, Map2} ->
+					?LOG_INFO([{event, compute_h2}, {chunk1, missing}]),
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
 					{noreply, State#state{ session = Session2 }}
 			end;
 		false ->
+			?LOG_INFO([{event, chunk2_read_invalid_session}]),
 			{noreply, State}
 	end;
 
@@ -633,12 +654,11 @@ handle_task({computed_h0, Candidate}, State) ->
 					case Range1Exists of
 						true ->
 							reserve_cache_space(),
-							Range2Exists =  ar_mining_io:read_recall_range(
+							Range2Exists = ar_mining_io:read_recall_range(
 									chunk2, Candidate2, RecallRange2Start),
 							case Range2Exists of
 								true -> reserve_cache_space();
-								false -> 
-									signal_cache_cleanup(Candidate2)
+								false -> signal_cache_cleanup(Candidate2)
 							end;
 						false ->
 							?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
@@ -646,11 +666,11 @@ handle_task({computed_h0, Candidate}, State) ->
 								{range_end, RecallRange1Start + ?RECALL_RANGE_SIZE}]),
 							ok
 					end
-			end,
-			{noreply, State};
+			end;
 		false ->
-			{noreply, State}
-	end;
+			ok
+	end,
+	{noreply, State};
 
 handle_task({computed_h1, Candidate}, State) ->
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
@@ -661,6 +681,12 @@ handle_task({computed_h1, Candidate}, State) ->
 				h1 = H1, cache_ref = CacheRef, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
 			case binary:decode_unsigned(H1, big) > Diff of
 				true ->
+					?LOG_INFO([
+						{event, computed_h1_solution},
+						{partition, Candidate#mining_candidate.partition_number},
+						{h1, ar_util:encode(H1)},
+						{nonce, Nonce},
+						{diff, Diff}]),
 					#state{ session = Session } = State,
 					Map2 = evict_chunk_cache(CacheRef, Nonce, Map),
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
@@ -668,6 +694,9 @@ handle_task({computed_h1, Candidate}, State) ->
 					prepare_and_post_solution(Candidate, State2),
 					{noreply, State2};
 				false ->
+					?LOG_INFO([
+						{event, computed_h1_invalid},
+						{partition, Candidate#mining_candidate.partition_number}]),
 					{ok, Config} = application:get_env(arweave, config),
 					case cycle_chunk_cache(CacheRef, Nonce, {chunk1, Chunk1, H1}, Map) of
 						{cached, Map2} ->
@@ -710,8 +739,14 @@ handle_task({computed_h2, Candidate}, State) ->
 				true ->
 					case LeadPeer of
 						not_set ->
-							prepare_and_post_solution(Candidate, State),
-							{noreply, State};
+							?LOG_INFO([
+								{event, computed_h2_solution},
+								{lead_peer, not_set},
+								{partition, PartitionNumber},
+								{h2, ar_util:encode(H2)},
+								{nonce, Nonce},
+								{diff, get_difficulty(State, Candidate)}]),
+							prepare_and_post_solution(Candidate, State);
 						_ ->
 							{_RecallByte1, RecallByte2} = get_recall_bytes(
 									H0, PartitionNumber, Nonce, PartitionUpperBound),
@@ -726,16 +761,24 @@ handle_task({computed_h2, Candidate}, State) ->
 											"the proof for the second chunk. See logs for more "
 											"details.~n");
 								_ ->
+									?LOG_INFO([
+										{event, computed_h2_solution},
+										{lead_peer, ar_util:format_peer(LeadPeer)},
+										{partition, PartitionNumber},
+										{h2, ar_util:encode(H2)},
+										{nonce, Nonce},
+										{diff, get_difficulty(State, Candidate)}]),
 									ar_coordination:computed_h2(
 										Candidate#mining_candidate{ poa2 = PoA2 })
 							end
 					end;
 				false ->
-					{noreply, State}
+					ok
 			end;
 		false ->
-			{noreply, State}
-	end;
+			ok
+	end,
+	{noreply, State};
 
 handle_task({may_be_remove_chunk_from_cache, {Nonce, Candidate}}, State) ->
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
@@ -900,7 +943,7 @@ prepare_solution(proofs, Candidate, Solution) ->
 			error;
 		{H1, not_set} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{
-				solution_hash = H1, recall_byte1 = RecallByte1 });
+				solution_hash = H1, recall_byte1 = RecallByte1, poa2 = #poa{} });
 		{_, H2} ->
 			prepare_solution(poa2, Candidate, Solution#mining_solution{
 				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2 })

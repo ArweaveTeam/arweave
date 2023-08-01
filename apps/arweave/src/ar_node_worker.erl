@@ -519,7 +519,7 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 				previous_solution_hash = PrevB#block.hash,
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
-				poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
+				poa2 = PoA2,
 				recall_byte2 = RecallByte2,
 				reward_key = element(2, RewardKey),
 				price_per_gib_minute = PricePerGiBMinute2,
@@ -538,7 +538,7 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 			B = UnsignedB#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
 			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
-					{txs, length(B#block.txs)}]),
+					{solution, ar_util:encode(SolutionH)}, {txs, length(B#block.txs)}]),
 			PrevBlocks = [PrevB],
 			[{_, RecentBI}] = ets:lookup(node_state, recent_block_index),
 			RecentBI2 = [block_index_entry(B) | RecentBI],
@@ -620,8 +620,8 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 			B = Block#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
 			ar_watchdog:mined_block(B#block.indep_hash, B#block.height,
 					B#block.previous_block),
-			?LOG_INFO([{event, mined_block},
-					{indep_hash, ar_util:encode(B#block.indep_hash)}, {txs, length(TXs)}]),
+			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(B#block.indep_hash)},
+				{solution, ar_util:encode(B#block.hash)}, {txs, length(TXs)}]),
 			PrevBlocks = [ar_block_cache:get(block_cache, Current)],
 			RecentBI2 = [block_index_entry(B) | RecentBI],
 			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
@@ -1654,6 +1654,7 @@ may_be_reset_miner(#{ miner_2_5 := Pid } = State) ->
 
 start_mining(State) ->
 	[{height, Height}] = ets:lookup(node_state, height),
+	?LOG_INFO([{event, ar_node_worker_start_mining}, {node, node()}, {height, Height}]),
 	case Height + 1 >= ar_fork:height_2_6() of
 		true ->
 			Diff = get_current_diff(),
