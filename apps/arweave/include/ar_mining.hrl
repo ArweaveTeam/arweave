@@ -37,7 +37,7 @@
 	poa1 = not_set,
 	poa2 = not_set,
 	preimage = not_set,
-	recall_byte1 = not_set,
+	recall_byte1 = undefined,
 	recall_byte2 = undefined,
 	solution_hash = not_set,
 	start_interval_number = not_set,
