@@ -213,8 +213,12 @@ io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 			io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
 		{WhichChunk, {Candidate, RecallRangeStart}} ->
 			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true -> read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
-				false -> ok %% Clear the message queue of requests from outdated mining sessions
+				true -> 
+					?LOG_ERROR([{event, read_range_session_valid}, {which_chunk, WhichChunk}]),
+					read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
+				false -> 
+					?LOG_ERROR([{event, read_range_session_invalid}, {which_chunk, WhichChunk}]),
+					ok %% Clear the message queue of requests from outdated mining sessions
 			end,
 			io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef)
 	end.
@@ -250,7 +254,7 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	?LOG_DEBUG([{event, mining_debug_read_recall_range},
+	?LOG_ERROR([{event, mining_debug_read_recall_range},
 			{chunk, WhichChunk},
 			{range_start, RangeStart},
 			{store_id, StoreID},

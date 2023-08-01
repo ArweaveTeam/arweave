@@ -41,21 +41,34 @@ handle_cast({send_block, SendFun, RetryCount, From}, State) ->
 	end;
 
 handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From}, State) ->
+	?LOG_INFO([{event, send_block2}, {peer, ar_util:format_peer(Peer)}]),
 	case SendAnnouncementFun() of
 		{ok, {{<<"412">>, _}, _, _, _, _}} when RetryCount > 0 ->
+			?LOG_INFO([{event, send_announcement}, {peer, ar_util:format_peer(Peer)},
+					{response, 412}]),
 			ar_util:cast_after(2000, self(),
 					{send_block2, Peer, SendAnnouncementFun, SendFun,
 							RetryCount - 1, From});
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			?LOG_INFO([{event, send_announcement}, {peer, ar_util:format_peer(Peer)},
+					{response, 200}]),
 			case catch ar_serialize:binary_to_block_announcement_response(Body) of
 				{'EXIT', Reason} ->
-					ar_peers:issue_warning(Peer, block_announcement, Reason),
+					?LOG_INFO([{event, send_announcement_response}, {peer, ar_util:format_peer(Peer)},
+						{exit, Reason}]),
+					ar_events:send(peer, {bad_response,
+							{Peer, block_announcement, Reason}}),
 					From ! {worker_sent_block, self()};
 				{error, Reason} ->
-					ar_peers:issue_warning(Peer, block_announcement, Reason),
+					?LOG_INFO([{event, send_announcement_response}, {peer, ar_util:format_peer(Peer)},
+						{error, Reason}]),
+					ar_events:send(peer, {bad_response,
+							{Peer, block_announcement, Reason}}),
 					From ! {worker_sent_block, self()};
 				{ok, #block_announcement_response{ missing_tx_indices = L,
 						missing_chunk = MissingChunk, missing_chunk2 = MissingChunk2 }} ->
+					?LOG_INFO([{event, send_announcement_response}, {peer, ar_util:format_peer(Peer)},
+						{ok, ok}]),
 					case SendFun(MissingChunk, MissingChunk2, L) of
 						{ok, {{<<"418">>, _}, _, Bin, _, _}} when RetryCount > 0 ->
 							case parse_txids(Bin) of
@@ -73,6 +86,8 @@ handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From},
 			end;
 		_ ->	%% 208 (the peer has already received this block) or
 				%% an unexpected response.
+			?LOG_INFO([{event, send_announcement}, {peer, ar_util:format_peer(Peer)},
+					{response, 208}]),
 			From ! {worker_sent_block, self()}
 	end,
 	{noreply, State};
