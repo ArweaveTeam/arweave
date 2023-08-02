@@ -63,6 +63,14 @@ maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) ->
 			CurDiff
 	end.
 
+-ifdef(TESTNET).
+	get_testnet_difficulty_drop_height() ->
+		?TESTNET_DIFFICULTY_DROP_HEIGHT.
+-else.
+	get_testnet_difficulty_drop_height() ->
+		infinity.
+-endif.
+
 calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_1_7 = ar_fork:height_1_7(),
 	Fork_1_8 = ar_fork:height_1_8(),
@@ -70,7 +78,10 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_2_4 = ar_fork:height_2_4(),
 	Fork_2_5 = ar_fork:height_2_5(),
 	Fork_2_6 = ar_fork:height_2_6(),
+	TestnetDifficultyDropHeight = get_testnet_difficulty_drop_height(),
 	case Height of
+		_ when Height == TestnetDifficultyDropHeight ->
+			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, 100, 2);
 		_ when Height == Fork_2_6 ->
 			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS,
 					?INITIAL_DIFF_DROP_2_6, ?DIFF_DROP_2_6);

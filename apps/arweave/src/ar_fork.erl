@@ -88,7 +88,7 @@ height_2_6() ->
 -else.
 	-ifdef(TESTNET).
 		height_2_6() ->
-			1109870.
+			1132210.
 	-else.
 		height_2_6() ->
 			1132210. % Targeting 2023-03-06 14:00 UTC
@@ -101,7 +101,7 @@ height_2_6_8() ->
 -else.
 	-ifdef(TESTNET).
 		height_2_6_8() ->
-			1189000.
+			1189560.
 	-else.
 		height_2_6_8() ->
 			1189560. % Targeting 2023-05-30 16:00 UTC
