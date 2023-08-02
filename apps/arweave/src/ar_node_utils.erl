@@ -374,11 +374,26 @@ update_accounts6(B, Accounts, Args) ->
 			KryderPlusRateMultiplier} = Args,
 	case validate_account_anchors(Accounts, B#block.txs) of
 		true ->
+			Accounts2 = top_up_test_wallet(Accounts, B#block.height),
 			{ok, {EndowmentPool, MinerReward, DebtSupply, KryderPlusRateMultiplierLatch,
-					KryderPlusRateMultiplier, Accounts}};
+					KryderPlusRateMultiplier, Accounts2}};
 		false ->
 			{error, invalid_account_anchors}
 	end.
+
+-ifdef(TESTNET).
+top_up_test_wallet(Accounts, Height) ->
+	case Height == ?TOP_UP_TEST_WALLET_HEIGHT of
+		true ->
+			Addr = ar_util:decode(<<?TEST_WALLET_ADDRESS>>),
+			maps:put(Addr, {?AR(?TOP_UP_TEST_WALLET_AR), <<>>, 1, true}, Accounts);
+		false ->
+			Accounts
+	end.
+-else.
+top_up_test_wallet(Accounts, _Height) ->
+	Accounts.
+-endif.
 
 do_validate(NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 	validate_block(weave_size, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
