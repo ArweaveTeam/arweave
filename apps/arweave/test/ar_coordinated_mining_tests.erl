@@ -54,14 +54,38 @@ test_coordinated_mining_retarget() ->
 		end,
 		lists:seq(0, ?RETARGET_BLOCKS)).
 
-three_node_coordinated_mining_concurrency_test_() ->
-	{timeout, 120, fun test_three_node_coordinated_mining_concurrency/0}.
+coordinated_mining_concurrency_test_() ->
+	{timeout, 120, fun test_coordinated_mining_concurrency/0}.
 
-test_three_node_coordinated_mining_concurrency() ->
+test_coordinated_mining_concurrency() ->
 	%% Assert that three nodes mining concurrently don't conflict with each other and that
 	%% each of them are able to win a solution.
 	[Node1, Node2, Node3, _ExitNode, ValidatorNode] = start_coordinated(3),	
-	wait_for_each_node([Node1, Node2, Node3], ValidatorNode, 0, [0, 1, 2]).
+	wait_for_each_node([Node1, Node2, Node3], ValidatorNode, 0, [0, 2, 4]).
+
+coordinated_mining_two_chunk_concurrency_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			ar_test_node:mock_to_force_invalid_h1()],
+		fun test_coordinated_mining_two_chunk_concurrency/0, 120).
+
+test_coordinated_mining_two_chunk_concurrency() ->
+	%% Assert that cross-node solutions still work when two nodes are mining concurrently 
+	[Node1, _Node2, Node3, _ExitNode, ValidatorNode] = start_coordinated(3),	
+	wait_for_each_node([Node1, Node3], ValidatorNode, 0, [0, 2, 4]).
+
+coordinated_mining_two_chunk_retarget_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			ar_test_node:mock_to_force_invalid_h1()],
+		fun test_coordinated_mining_two_chunk_retarget/0, 120).
+
+test_coordinated_mining_two_chunk_retarget() ->
+	[Node1, _Node2, _ExitNode, ValidatorNode] = start_coordinated(2),
+	lists:foreach(
+		fun(H) ->
+			mine_in_parallel([Node1], ValidatorNode, H)
+		end,
+		lists:seq(0, ?RETARGET_BLOCKS)),
+	wait_for_each_node([Node1], ValidatorNode, ?RETARGET_BLOCKS, [0, 2]).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 	wait_for_each_node(
@@ -74,10 +98,10 @@ wait_for_each_node(
 		Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
 	Partition = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
 	Partitions = sets:del_element(Partition, ExpectedPartitions),
-	?LOG_ERROR("********** Mined partition: ~p. Remaining: ~p",[Partition, sets:to_list(Partitions)]),
+	?LOG_ERROR("********** Mined partition: ~p at height ~p. Remaining: ~p",[Partition, CurrentHeight+1, sets:to_list(Partitions)]),
 	case sets:is_empty(Partitions) of
 		true ->
-			ok;
+			CurrentHeight+1;
 		false ->
 			wait_for_each_node(
 				Miners, ValidatorNode, CurrentHeight+1, Partitions, RetryCount-1)
@@ -98,26 +122,3 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 		undefined -> ?PARTITION_NUMBER(Block#block.recall_byte);
 		RecallByte2 -> ?PARTITION_NUMBER(RecallByte2)
 	end.
-
-two_node_coordinated_mining_two_chunk_solution_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			ar_test_node:mock_to_force_invalid_h1()],
-		fun test_two_node_coordinated_mining_two_chunk_solution/0, 120).
-
-test_two_node_coordinated_mining_two_chunk_solution() ->
-	[Node1, Node2, ExitNode, ValidatorNode] = start_coordinated(2),
-	wait_for_each_node([Node1], ValidatorNode, 0, [0,1]).
-	% wait_for_each_node([Node2], ValidatorNode, 0, [0,1]).
-
-	% mine(Node1),
-	% BI = wait_until_height(1, ValidatorNode),
-	% BI = wait_until_height(1, ExitNode),
-	% {ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
-	% ?assertNotEqual(undefined, B#block.recall_byte2),
-	% ?assert(byte_size((B#block.poa2)#poa.data_path) > 0),
-	% mine(Node2),
-	% BI2 = wait_until_height(2, ValidatorNode),
-	% BI2 = wait_until_height(2, ExitNode),
-	% {ok, B2} = http_get_block(element(1, hd(BI2)), ValidatorNode),
-	% ?assertNotEqual(undefined, B2#block.recall_byte2),
-	% ?assert(byte_size((B2#block.poa2)#poa.data_path) > 0).
