@@ -1654,7 +1654,6 @@ may_be_reset_miner(#{ miner_2_5 := Pid } = State) ->
 
 start_mining(State) ->
 	[{height, Height}] = ets:lookup(node_state, height),
-	?LOG_INFO([{event, ar_node_worker_start_mining}, {node, node()}, {height, Height}]),
 	case Height + 1 >= ar_fork:height_2_6() of
 		true ->
 			Diff = get_current_diff(),

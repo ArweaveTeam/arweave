@@ -49,7 +49,6 @@ send_tx_binary(Peer, TXID, Bin) ->
 
 %% @doc Announce a block to Peer.
 send_block_announcement(Peer, Announcement) ->
-	?LOG_INFO([{event, send_block_announcement}, {peer, ar_util:format_peer(Peer)}]),
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -61,7 +60,6 @@ send_block_announcement(Peer, Announcement) ->
 
 %% @doc Send the given JSON-encoded block to the given peer.
 send_block_json(Peer, H, Payload) ->
-	?LOG_INFO([{event, send_block_json}, {peer, ar_util:format_peer(Peer)}]),
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -77,7 +75,6 @@ send_block_binary(Peer, H, Payload) ->
 	send_block_binary(Peer, H, Payload, undefined).
 
 send_block_binary(Peer, H, Payload, RecallByte) ->
-	?LOG_INFO([{event, send_block_binary}, {peer, ar_util:format_peer(Peer)}]),
 	Headers = [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
 	%% The way of informing the recipient about the recall byte used before the fork
 	%% 2.6. Since the fork 2.6 blocks have a "recall_byte" field.
@@ -549,7 +546,6 @@ get_cm_partition_table(Peer) ->
 % TODO binary protocol after debug
 cm_h1_send(Peer, Candidate, H1List) ->
 	Json = ar_serialize:h2_inputs_to_json_struct(Candidate, H1List),
-	?LOG_INFO([{event, send_cm_h1}, {peer, ar_util:format_peer(Peer)}, {json, Json}]),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -562,7 +558,6 @@ cm_h1_send(Peer, Candidate, H1List) ->
 
 cm_h2_send(Peer, Candidate) ->
 	Json = ar_serialize:candidate_to_json_struct(Candidate),
-	?LOG_INFO([{event, send_cm_h2}, {peer, ar_util:format_peer(Peer)}, {json, Json}]),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
