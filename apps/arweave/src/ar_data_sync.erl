@@ -675,6 +675,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 handle_cast(sync_data, State) ->
 	#sync_data_state{ store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
+	?LOG_ERROR([{event, sync_data}, {s, RangeStart}, {e, RangeEnd}]),
 	%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(OriginStoreID, "default",
@@ -695,7 +696,7 @@ handle_cast(sync_data2, #sync_data_state{
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
 	ar_util:cast_after(2000, self(), collect_peer_intervals),
 	{noreply, State};
-%% @doc Check to see if a neighboring storge_module may have already synced one of our
+%% @doc Check to see if a neighboring storage_module may have already synced one of our
 %% unsynced intervals
 handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,

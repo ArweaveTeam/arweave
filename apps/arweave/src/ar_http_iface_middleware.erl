@@ -2399,7 +2399,6 @@ collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
 
 post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	Peer = ar_http_util:arweave_peer(Req),
-	?LOG_INFO([{event, post_block}, {peer, ar_util:format_peer(Peer)}]),
 	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
 			post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp);
@@ -2492,16 +2491,8 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 						end
 				end
 		end,
-	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	BodyReadTime = ar_http_req:body_read_time(Req),
-	case ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp) of
-		ok ->
-			ar_peers:rate_gossiped_data(Peer, block,
-				erlang:convert_time_unit(BodyReadTime, native, microsecond),
-				byte_size(term_to_binary(B)));
-		_ ->
-			ok
-	end,
+	ar_block_pre_validator:pre_validate(B2, Peer, Timestamp, erlang:get(read_body_time),
+			erlang:get(body_size)),
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->
@@ -3062,7 +3053,6 @@ handle_mining_h1(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					?LOG_INFO([{event, h1_received}, {peer, ar_util:format_peer(Peer)}, {json, JSON}]),
 					{Candidate, H1List} = ar_serialize:json_struct_to_h2_inputs(JSON),
 					ar_coordination:compute_h2(Peer, Candidate, H1List),
 					{200, #{}, <<>>, Req};
@@ -3074,6 +3064,7 @@ handle_mining_h1(Req, Pid) ->
 	end.
 
 handle_mining_h2(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
@@ -3081,10 +3072,9 @@ handle_mining_h2(Req, Pid) ->
 					Candidate = ar_serialize:json_struct_to_candidate(JSON),
 					?LOG_INFO([
 						{event, h2_received},
-						{nonce, Candidate#mining_candidate.nonce},
 						{json, JSON}
 					]),
-					ar_mining_server:prepare_and_post_solution(Candidate),
+					ar_coordination:post_solution(Peer, Candidate),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
