@@ -99,11 +99,12 @@ start_node(B0, Config) ->
 %% mode plus an exit node and a validator node.
 %% Return [Node1, ..., NodeN, ExitNode, ValidatorNode].
 start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
+	%% Set the difficulty just high enough to exclude the ?MINIMUM_SOLUTION_HASH, this lets
+	%% us selectively disable one-chunk mining in tests.
 	Difficulty = binary:decode_unsigned(?MINIMUM_SOLUTION_HASH, big) + 1,
-	%% Set Difficulty to 1000 - low enough so we can easily find solutions, but high enough that
-	%% we can use mocks to control H1 vs. H2 solutions. The lowest valid H1 solution is <<"1">>
-	%% which decodes to 49 - so we need a difficuly > 49 if we want to prevent one-chunk solutions.
-	[B0] = ar_weave:init([], Difficulty, 2 * 1024 * 1024 * 3),
+	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
+	%% a solution.
+	[B0] = ar_weave:init([], Difficulty, ?PARTITION_SIZE * 5),
 	RewardAddr = ar_wallet:to_address(remote_call(ar_wallet, new_keyfile, [],
 			slave_node())),
 	BaseConfig2 = #config{
@@ -299,13 +300,15 @@ get_cm_peers(3, 3) ->
 	[{127, 0, 0, 1, 1980}, {127, 0, 0, 1, 1979}].
 
 get_cm_storage_modules(RewardAddr, 1, 1) ->
-	[{?PARTITION_SIZE, N, {spora_2_6, RewardAddr}} || N <- lists:seq(0, 2)];
-get_cm_storage_modules(RewardAddr, 1, N) when N == 2 orelse N == 3 ->
-	[{?PARTITION_SIZE, 0, {spora_2_6, RewardAddr}}];
-get_cm_storage_modules(RewardAddr, 2, N) when N == 2 orelse N == 3 ->
-	[{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}}];
-get_cm_storage_modules(RewardAddr, 3, N) when N == 3 ->
-	[{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}].
+	%% When there's only 1 node it covers all 3 storage modules.
+	get_cm_storage_modules(RewardAddr, 1, 3) ++
+	get_cm_storage_modules(RewardAddr, 2, 3) ++
+	get_cm_storage_modules(RewardAddr, 3, 3);
+get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
+		when MiningNodeCount == 2 orelse MiningNodeCount == 3 ->
+	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
+	RangeNumber = lists:nth(N, [0, 2, 4]),
+	[{?PARTITION_SIZE, RangeNumber, {spora_2_6, RewardAddr}}].
 
 remote_call(Module, Function, Args, Node) ->
 	remote_call(Module, Function, Args, 300000, Node).

@@ -1558,7 +1558,6 @@ binary_to_signature_type(List) ->
 
 candidate_to_json_struct(
 	#mining_candidate{
-		cache_ref = CacheRef,
 		cm_diff = Diff,
 		h0 = H0,
 		h1 = H1,
@@ -1571,14 +1570,12 @@ candidate_to_json_struct(
 		partition_number2 = PartitionNumber2,
 		partition_upper_bound = PartitionUpperBound,
 		poa2 = PoA2,
+		preimage = Preimage,
 		seed = Seed,
-		session_ref = SessionRef,
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	}) ->
 	JSON = [
-		{session_ref, ar_util:encode(term_to_binary(SessionRef))},
-		{cache_ref, ar_util:encode(term_to_binary(CacheRef))},
 		{cm_diff, integer_to_binary(Diff)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{h0, ar_util:encode(H0)},
@@ -1595,7 +1592,8 @@ candidate_to_json_struct(
 	JSON2 = encode_if_set(JSON, h1, H1, fun ar_util:encode/1),
 	JSON3 = encode_if_set(JSON2, h2, H2, fun ar_util:encode/1),
 	JSON4 = encode_if_set(JSON3, nonce, Nonce, fun integer_to_binary/1),
-	encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1).
+	JSON5 = encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1),
+	encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1).
 
 h2_inputs_to_json_struct(Candidate, H1List) ->
 	EncodedH1List = lists:map(fun ({H1, Nonce}) ->
@@ -1612,7 +1610,6 @@ h2_inputs_to_json_struct(Candidate, H1List) ->
 	CandidateJSON ++ H1ListJSON.
 
 json_struct_to_candidate(JSON) ->
-	CacheRef = binary_to_term(ar_util:decode(maps:get(<<"cache_ref">>, JSON))),
 	Diff = binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
 	H1 = decode_if_set(JSON, <<"h1">>, fun ar_util:decode/1, not_set),
@@ -1625,13 +1622,12 @@ json_struct_to_candidate(JSON) ->
 	PartitionNumber2 = binary_to_integer(maps:get(<<"partition_number2">>, JSON)),
 	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
 	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
+	Preimage = decode_if_set(JSON, <<"preimage">>, fun ar_util:decode/1, not_set),
 	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
-	SessionRef = binary_to_term(ar_util:decode(maps:get(<<"session_ref">>, JSON))),
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 
 	#mining_candidate{
-		cache_ref = CacheRef,
 		cm_diff = Diff,
 		h0 = H0,
 		h1 = H1,
@@ -1644,8 +1640,8 @@ json_struct_to_candidate(JSON) ->
 		partition_number2 = PartitionNumber2,
 		partition_upper_bound = PartitionUpperBound,
 		poa2 = PoA2,
+		preimage = Preimage,
 		seed = Seed,
-		session_ref = SessionRef,
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	}.
