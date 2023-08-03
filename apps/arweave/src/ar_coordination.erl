@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, computed_h1/2, compute_h2/3, computed_h2/1, 
+	start_link/0, computed_h1/2, compute_h2/3, computed_h2/1, post_solution/2,
 	reset_mining_session/0, get_public_state/0, compute_h2_on_peer/0, poll_loop/0, stat_loop/0
 ]).
 
@@ -75,6 +75,9 @@ compute_h2(Peer, Candidate, H1List) ->
 
 computed_h2(Candidate) ->
 	gen_server:cast(?MODULE, {computed_h2, Candidate}).
+
+post_solution(Peer, Candidate) ->
+	ar_mining_server:prepare_and_post_solution(Candidate).
 
 poll_loop() ->
 	gen_server:call(?MODULE, poll_loop).
@@ -204,16 +207,16 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 	%%    shared.
 	%% 3. The peer field will be set to this peer's address by the remote miner
 	DefaultCandidate = Candidate#mining_candidate{
-		cm_diff = Diff,
-		cm_lead_peer = not_set,
-		nonce = not_set,
-		h1 = not_set,
-		h2 = not_set,
-		poa1 = not_set,
-		poa2 = not_set,
 		chunk1 = not_set,
 		chunk2 = not_set,
-		preimage = not_set
+		cm_diff = Diff,
+		cm_lead_peer = not_set,
+		h1 = not_set,
+		h2 = not_set,
+		nonce = not_set,
+		poa2 = not_set,		
+		preimage = not_set,
+		session_ref = not_set
 	},
 	{ShareableCandidate, H1List} = maps:get(
 			CacheRef, PeerRequests,
@@ -222,7 +225,6 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 	PeerRequests2 = maps:put(CacheRef, {ShareableCandidate, H1List2}, PeerRequests),
 	case length(H1List2) >= ?BATCH_SIZE_LIMIT of
 		true ->
-			?LOG_INFO([{event, batch_size_limit}]),
 			compute_h2_on_peer();
 		false ->
 			ok
@@ -235,7 +237,6 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests} = State)
 	{noreply, State#state{timer = NewTRef}};
 
 handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRef} = State) ->
-	?LOG_INFO([{event, compute_h2_on_peer}]),
 	timer:cancel(TRef),
 	NewPeerIOStat = maps:fold(
 		fun	(_CacheRef, {Candidate, H1List}, Acc) ->
