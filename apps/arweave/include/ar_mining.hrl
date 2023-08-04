@@ -4,27 +4,27 @@
 %% fields prefixed with cm_ are only set when a solution is distributed across miners as part
 %% of a coordinated mining set.
 -record(mining_candidate, {
-	cache_ref = not_set,
-	chunk1 = not_set,
-	chunk2 = not_set,
-	cm_diff = not_set, %% set to the difficulty used by the H1 miner
-	cm_lead_peer = not_set, %% if set, this candidate came from another peer and will be sent back
-	h0 = not_set,
-	h1 = not_set,
-	h2 = not_set,
-	mining_address = not_set,
-	next_seed = not_set,
-	nonce = not_set,
-	nonce_limiter_output,
-	partition_number = not_set,
-	partition_number2 = not_set,
-	partition_upper_bound = not_set,	
-	poa2 = not_set,
-	preimage = not_set, %% this can be either the h1 or h2 preimage
-	seed = not_set,
-	session_ref = not_set,
-	start_interval_number,
-	step_number = not_set
+	cache_ref = not_set, %% not serialized
+	chunk1 = not_set, %% not serialized
+	chunk2 = not_set, %% not serialized
+	cm_diff = not_set, %% serialized. set to the difficulty used by the H1 miner
+	cm_lead_peer = not_set, %% not serialized. if set, this candidate came from another peer
+	h0 = not_set, %% serialized
+	h1 = not_set, %% serialized
+	h2 = not_set, %% serialized
+	mining_address = not_set, %% serialized
+	next_seed = not_set, %% serialized
+	nonce = not_set, %% serialized
+	nonce_limiter_output = not_set, %% serialized
+	partition_number = not_set, %% serialized
+	partition_number2 = not_set, %% serialized
+	partition_upper_bound = not_set, %% serialized
+	poa2 = not_set, %% serialized
+	preimage = not_set, %% serialized. this can be either the h1 or h2 preimage
+	seed = not_set, %% serialized
+	session_ref = not_set, %% not serialized
+	start_interval_number = not_set, %% serialized
+	step_number = not_set %% serialized
 }).
 
 -record(mining_solution, {

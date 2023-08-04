@@ -23,7 +23,7 @@
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
 		candidate_to_json_struct/1, h2_inputs_to_json_struct/2, solution_to_json_struct/1,
-		json_struct_to_h2_inputs/1, json_struct_to_candidate/1, json_struct_to_solution/1]).
+		json_struct_to_candidate/1, json_struct_to_h2_inputs/1, json_struct_to_solution/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
@@ -1656,10 +1656,6 @@ json_struct_to_h2_inputs(JSON) ->
 
 	{Candidate, H1List}.
 
-% TODO json_map_to_remote_h2_materials + remote_h2_materials_to_json_map test
-
-% TODO json_struct_to_remote_solution + remote_solution_to_json_struct test
-
 solution_to_json_struct(
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
@@ -1720,159 +1716,6 @@ json_struct_to_solution(JSON) ->
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 	Steps = parse_checkpoints(
 		ar_util:decode(maps:get(<<"steps">>, JSON)), 1),
-
-	#mining_solution{
-		last_step_checkpoints = LastStepCheckpoints,
-		mining_address = MiningAddress,
-		next_seed = NextSeed,
-		nonce = Nonce,
-		nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber,
-		partition_upper_bound = PartitionUpperBound,
-		poa1 = PoA1,
-		poa2 = PoA2,
-		preimage = Preimage,
-		recall_byte1 = RecallByte1,
-		recall_byte2 = RecallByte2,
-		seed = Seed,
-		solution_hash = SolutionHash,
-		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber,
-		steps = Steps
-	}.
-
-% TODO json_struct_to_remote_final_solution + remote_final_solution_to_json_struct test
-encode_if_set(JSON, _JSONProperty, not_set, _Encoder) ->
-	JSON;
-encode_if_set(JSON, _JSONProperty, undefined, _Encoder) ->
-	JSON;
-encode_if_set(JSON, JSONProperty, Value, Encoder) ->
-	[{JSONProperty, Encoder(Value)} | JSON].
-
-decode_if_set(JSON, JSONProperty, Decoder, Default) ->
-	case maps:get(JSONProperty, JSON, not_found) of
-		not_found ->
-			Default;
-		EncodedValue ->
-			Decoder(EncodedValue)
-	end.
-
-%%% Tests: ar_serialize
-
-	JSON2 = encode_if_set(JSON, h1, H1, fun ar_util:encode/1),
-	JSON3 = encode_if_set(JSON2, h2, H2, fun ar_util:encode/1),
-	JSON4 = encode_if_set(JSON3, nonce, Nonce, fun integer_to_binary/1),
-	JSON5 = encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1),
-	encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1).
-
-h2_inputs_to_json_struct(Candidate, H1List) ->
-	EncodedH1List = lists:map(fun ({H1, Nonce}) ->
-		{[
-			{h1, ar_util:encode(H1)},
-			{nonce, Nonce}
-		]}
-	end,
-	H1List),
-
-	H1ListJSON = [{h1_list, EncodedH1List}],
-	CandidateJSON = candidate_to_json_struct(Candidate),
-
-	CandidateJSON ++ H1ListJSON.
-
-json_struct_to_candidate(JSON) ->
-	Diff = ar_util:binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
-	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
-	H1 = decode_if_set(JSON, <<"h1">>, fun ar_util:decode/1, not_set),
-	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),
-	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
-	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
-	Nonce = decode_if_set(JSON, <<"nonce">>, fun binary_to_integer/1, not_set),
-	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
-	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
-	PartitionNumber2 = binary_to_integer(maps:get(<<"partition_number2">>, JSON)),
-	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
-	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
-	Preimage = decode_if_set(JSON, <<"preimage">>, fun ar_util:decode/1, not_set),
-	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
-	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
-	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
-
-	#mining_candidate{
-		cm_diff = Diff,
-		h0 = H0,
-		h1 = H1,
-		h2 = H2,
-		mining_address = MiningAddress,
-		next_seed = NextSeed,
-		nonce = Nonce,
-		nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber,
-		partition_number2 = PartitionNumber2,
-		partition_upper_bound = PartitionUpperBound,
-		poa2 = PoA2,
-		preimage = Preimage,
-		seed = Seed,
-		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber
-	}.
-
-json_struct_to_h2_inputs(JSON) ->
-	Candidate = json_struct_to_candidate(JSON),
-	H1List = lists:map(fun (JsonElement) ->
-		H1 = ar_util:decode(maps:get(<<"h1">>, JsonElement)),
-		Nonce = maps:get(<<"nonce">>, JsonElement),
-		{H1, Nonce}
-	end, maps:get(<<"h1_list">>, JSON, [])),
-
-	{Candidate, H1List}.
-
-solution_to_json_struct(
-	#mining_solution{
-		last_step_checkpoints = LastStepCheckpoints,
-		mining_address = MiningAddress,
-		next_seed = NextSeed,
-		nonce = Nonce,
-		nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber,
-		partition_upper_bound = PartitionUpperBound,
-		poa1 = PoA1,
-		poa2 = PoA2,
-		preimage = Preimage,
-		recall_byte1 = RecallByte1,
-		recall_byte2 = RecallByte2,
-		seed = Seed,
-		solution_hash = SolutionHash,
-		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber,
-		steps = Steps
-	}) ->
-	JSON = [
-		{last_step_checkpoints, ar_util:encode(iolist_to_binary(LastStepCheckpoints))},
-		{mining_address, ar_util:encode(MiningAddress)},
-		{nonce, Nonce},
-		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
-		{next_seed, ar_util:encode(NextSeed)},
-		{partition_number, integer_to_binary(PartitionNumber)},
-		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
-		{poa1, poa_to_json_struct(PoA1)},
-		{poa2, poa_to_json_struct(PoA2)},
-		{preimage, ar_util:encode(Preimage)},
-		{recall_byte1, integer_to_binary(RecallByte1)},
-		{seed, ar_util:encode(Seed)},
-		{solution_hash, ar_util:encode(SolutionHash)},
-		{start_interval_number, integer_to_binary(StartIntervalNumber)},
-		{step_number, integer_to_binary(StepNumber)},
-		{steps, ar_util:encode(iolist_to_binary(Steps))}
-	],
-	encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1).
-
-%% @doc Convert a new block into JSON and back, ensure the result is the same.
-block_roundtrip_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_6, fun() -> infinity end},
-			{ar_fork, height_2_6_8, fun() -> infinity end},
-			{ar_fork, height_2_7, fun() -> infinity end}],
-		fun test_block_roundtrip/0).
 
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
