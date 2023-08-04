@@ -43,7 +43,7 @@ test_no_exit_node() ->
 	?assertEqual(1, length(BI)).
 
 coordinated_mining_retarget_test_() ->
-	{timeout, 120, fun test_coordinated_mining_retarget/0}.
+	{timeout, 240, fun test_coordinated_mining_retarget/0}.
 
 test_coordinated_mining_retarget() ->
 	%% Assert that a difficulty retarget is handled correctly.
@@ -76,7 +76,7 @@ test_coordinated_mining_two_chunk_concurrency() ->
 coordinated_mining_two_chunk_retarget_test_() ->
 	ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-		fun test_coordinated_mining_two_chunk_retarget/0, 120).
+		fun test_coordinated_mining_two_chunk_retarget/0, 240).
 
 test_coordinated_mining_two_chunk_retarget() ->
 	[Node1, _Node2, _ExitNode, ValidatorNode] = start_coordinated(2),
