@@ -784,7 +784,8 @@ sign_and_verify_chunked_test_() ->
 	{timeout, 60, fun test_sign_and_verify_chunked/0}.
 
 sign_and_verify_chunked_pre_fork_2_5_test_() ->
-	ar_test_fork:test_on_fork(height_2_5, infinity, fun test_sign_and_verify_chunked/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> infinity end}],
+		fun test_sign_and_verify_chunked/0, 120).
 
 test_sign_and_verify_chunked() ->
 	TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
@@ -846,7 +847,8 @@ check_last_tx_test_() ->
 	{timeout, 60, fun test_check_last_tx/0}.
 
 check_last_tx_pre_fork_2_5_test_() ->
-	ar_test_fork:test_on_fork(height_2_4, infinity, fun test_check_last_tx/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_4, fun() -> infinity end}],
+		fun test_sign_and_verify_chunked/0, 120).
 
 test_check_last_tx() ->
 	{_Priv1, Pub1} = ar_wallet:new(),

@@ -16,7 +16,6 @@
 		assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
 		assert_data_not_found_master/1, assert_data_not_found_slave/1, slave_call/3,
 		test_with_mocked_functions/2]).
--import(ar_test_fork, [test_on_fork/3]).
 
 rejects_invalid_chunks_test_() ->
 	{timeout, 180, fun test_rejects_invalid_chunks/0}.
@@ -221,7 +220,8 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 			post_chunk(ar_serialize:jsonify(BigProof))).
 
 rejects_chunks_exceeding_disk_pool_limit_test_() ->
-	test_on_fork(height_2_5, 0, fun test_rejects_chunks_exceeding_disk_pool_limit/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
+		fun test_rejects_chunks_exceeding_disk_pool_limit/0, 120).
 
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
@@ -322,7 +322,8 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	).
 
 accepts_chunks_test_() ->
-	test_on_fork(height_2_5, 0, fun test_accepts_chunks/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
+		fun test_accepts_chunks/0, 120).
 
 test_accepts_chunks() ->
 	test_accepts_chunks(original_split).
@@ -400,7 +401,8 @@ test_accepts_chunks(Split) ->
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, get_chunk(B#block.weave_size + 1)).
 
 syncs_data_test_() ->
-	test_on_fork(height_2_5, 0, fun test_syncs_data/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
+		fun test_syncs_data/0, 120).
 
 test_syncs_data() ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
@@ -527,7 +529,8 @@ test_fork_recovery(Split) ->
 	post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2).
 
 syncs_after_joining_test_() ->
-	test_on_fork(height_2_5, 0, fun test_syncs_after_joining/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
+		fun test_syncs_after_joining/0, 120).
 
 test_syncs_after_joining() ->
 	test_syncs_after_joining(original_split).

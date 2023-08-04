@@ -619,12 +619,12 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
 
 get_gb_cost_per_year_at_datetime_is_monotone_test_() ->
 	[
-		ar_test_fork:test_on_fork(
-			height_2_5, infinity, fun test_get_gb_cost_per_year_at_datetime_is_monotone/0
-		) | [
-			ar_test_fork:test_on_fork(
-				height_2_5, Height, fun test_get_gb_cost_per_year_at_datetime_is_monotone/0
-			)
+		ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> infinity end}],
+			fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120)
+		| 
+		[
+			ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> Height end}],
+				fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120)
 			|| Height <- lists:seq(0, 20)
 		]
 	].
