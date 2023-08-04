@@ -12,8 +12,8 @@
 	h0 = not_set,
 	h1 = not_set,
 	h2 = not_set,
-	mining_address,
-	next_seed,
+	mining_address = not_set,
+	next_seed = not_set,
 	nonce = not_set,
 	nonce_limiter_output,
 	partition_number = not_set,
@@ -21,10 +21,10 @@
 	partition_upper_bound = not_set,	
 	poa2 = not_set,
 	preimage = not_set, %% this can be either the h1 or h2 preimage
-	seed,
+	seed = not_set,
 	session_ref = not_set,
 	start_interval_number,
-	step_number
+	step_number = not_set
 }).
 
 -record(mining_solution, {
@@ -36,7 +36,7 @@
 	poa1 = not_set,
 	poa2 = not_set,
 	preimage = not_set,
-	recall_byte1 = undefined,
+	recall_byte1 = undefined, %% undefined instead of not_set for compatibility with existing code
 	recall_byte2 = undefined,
 	solution_hash = not_set,
 	start_interval_number = not_set,
