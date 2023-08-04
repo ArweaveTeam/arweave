@@ -144,14 +144,6 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		cm_peers = get_cm_peers(I, MiningNodeCount),
 		storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
 	} || I <- lists:seq(1, MiningNodeCount)],
-	?LOG_ERROR("******* cm_exit_peer: ~p", [ar_util:format_peer(ExitPeer)]),
-	lists:foreach(fun(I) ->
-			?LOG_ERROR("******* cm_peers ~p: ~p", [miner_node(I), get_cm_peers(I, MiningNodeCount)]),
-			?LOG_ERROR("******* storage_modules ~p: ~p", [
-				miner_node(I), get_cm_storage_modules(RewardAddr, I, MiningNodeCount)])
-		end,
-		lists:seq(1, MiningNodeCount)
-	),
 	
 	ExitNode = remote_call(ar_test_node, start_node, [B0, ExitNodeConfig],
 			slave_node()),
@@ -164,7 +156,6 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
-	?LOG_ERROR([{mine, Node}]),
 	remote_call(ar_node, mine, [], Node).
 
 %% @doc Wait until the given node reaches the given height or fail by timeout.
