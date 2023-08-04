@@ -11,7 +11,6 @@
 		assert_slave_wait_until_receives_txs/1, assert_slave_wait_until_height/1,
 		slave_call/3, disconnect_from_slave/0, sign_v1_tx/3, sign_tx/2, wait_until_joined/0,
 		read_block_when_stored/1, slave_peer/0, post_tx_to_master/2]).
--import(ar_test_fork, [test_on_fork/3]).
 
 %cannot_spend_accounts_of_other_type_test_() ->
 %	test_on_fork(height_2_6, 10, fun test_cannot_spend_accounts_of_other_type/0).
@@ -452,7 +451,8 @@ test_ar_node_interface() ->
 	?assertEqual(H, ar_node:get_current_block_hash()).
 
 mining_reward_test_() ->
-	test_on_fork(height_2_6, 0, fun test_mining_reward/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+		fun test_mining_reward/0, 120).
 
 test_mining_reward() ->
 	{_Priv1, Pub1} = ar_wallet:new_keyfile(),
@@ -474,7 +474,8 @@ test_mining_reward() ->
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
-	test_on_fork(height_2_6, 0, fun test_multi_node_mining_reward/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+		fun test_multi_node_mining_reward/0, 120).
 
 test_multi_node_mining_reward() ->
 	{_Priv1, Pub1} = slave_call(ar_wallet, new_keyfile, []),
@@ -523,7 +524,8 @@ replay_attack_test_() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
-	test_on_fork(height_2_6, 0, fun test_wallet_transaction/0).
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+		fun test_wallet_transaction/0, 120).
 
 test_wallet_transaction() ->
 	TestWalletTransaction = fun(KeyType) ->

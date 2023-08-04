@@ -98,7 +98,6 @@ wait_for_each_node(
 		Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
 	Partition = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
 	Partitions = sets:del_element(Partition, ExpectedPartitions),
-	?LOG_ERROR("********** Mined partition: ~p at height ~p. Remaining: ~p",[Partition, CurrentHeight+1, sets:to_list(Partitions)]),
 	case sets:is_empty(Partitions) of
 		true ->
 			CurrentHeight+1;
