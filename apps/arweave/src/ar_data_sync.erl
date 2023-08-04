@@ -675,7 +675,6 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 handle_cast(sync_data, State) ->
 	#sync_data_state{ store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
-	?LOG_ERROR([{event, sync_data}, {s, RangeStart}, {e, RangeEnd}]),
 	%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(OriginStoreID, "default",
