@@ -612,7 +612,7 @@ stop(Node) ->
 	remote_call(ar_test_node, stop, [], Node).
 
 slave_stop() ->
-	stop(slave_peer()).
+	stop(slave_node()).
 
 join_on_slave() ->
 	join(slave_peer()).
@@ -699,7 +699,7 @@ slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 10000).
 
 slave_call(Module, Function, Args, Timeout) ->
-	remote_call(Module, Function, Args, Timeout, slave_peer()).
+	remote_call(Module, Function, Args, Timeout, slave_node()).
 
 slave_mine() ->
 	slave_call(ar_node, mine, []).
