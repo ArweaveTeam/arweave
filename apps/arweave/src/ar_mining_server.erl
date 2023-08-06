@@ -56,6 +56,7 @@ start_mining(Args) ->
 
 %% @doc Callback from ar_mining_io when a chunk is read
 recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
+	?LOG_ERROR("******* SHOULDN'T BE HERE"),
 	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
 recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
 	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });

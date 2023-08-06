@@ -350,8 +350,8 @@ start(B0, RewardAddr) ->
 
 %% @doc Start a fresh master node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
-	StorageModules = lists:flatten([[{20 * 1024 * 1024, N, {spora_2_6, RewardAddr}},
-			{20 * 1024 * 1024, N, spora_2_5}] || N <- lists:seq(0, 8)]),
+	StorageModules = lists:flatten([[{?PARTITION_SIZE, N, {spora_2_6, RewardAddr}},
+			{?PARTITION_SIZE, N, spora_2_5}] || N <- lists:seq(0, 8)]),
 	start(B0, RewardAddr, Config, StorageModules).
 
 %% @doc Start a fresh master node with the given genesis block, mining address, config,
@@ -641,7 +641,7 @@ join(Peer, Rejoin) ->
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModulePacking = case ar_fork:height_2_6() of infinity -> spora_2_5;
 			_ -> {spora_2_6, RewardAddr} end,
-	StorageModules = [{20 * 1024 * 1024, N, StorageModulePacking} || N <- lists:seq(0, 4)],
+	StorageModules = [{?PARTITION_SIZE, N, StorageModulePacking} || N <- lists:seq(0, 4)],
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
 		mining_addr = RewardAddr,
@@ -710,6 +710,7 @@ slave_mine() ->
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
 	WeaveSize = (ar_node:get_current_block())#block.weave_size,
+	?LOG_ERROR("WeaveSize: ~p", [WeaveSize]),
 	wait_until_syncs_data(0, WeaveSize, any),
 	%% Once the data is stored in the disk pool, make the storage modules
 	%% copy the missing data over from each other. This procedure is executed on startup
