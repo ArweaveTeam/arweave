@@ -704,7 +704,6 @@ slave_mine() ->
 
 wait_until_syncs_genesis_data() ->
 	WeaveSize = (ar_node:get_current_block())#block.weave_size,
-	?LOG_ERROR("WeaveSize: ~p", [WeaveSize]),
 	wait_until_syncs_data(0, WeaveSize, any),
 	%% Once the data is stored in the disk pool, make the storage modules
 	%% copy the missing data over from each other. This procedure is executed on startup
