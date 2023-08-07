@@ -45,6 +45,13 @@
 	-define(START_FROM_STATE_SEARCH_DEPTH, 100).
 -endif.
 
+%% How frequently (in seconds) to recompute the mining difficulty at the retarget blocks.
+-ifdef(DEBUG).
+-define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 1).
+-else.
+-define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 10).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -145,7 +152,7 @@ init([]) ->
 	]),
 	%% Start the HTTP server.
 	ok = ar_http_iface_server:start(),
-	gen_server:cast(?MODULE, refresh_timestamp),
+	gen_server:cast(?MODULE, compute_mining_difficulty),
 	{ok, #{
 		miner_2_6 => undefined,
 		io_threads => [],
@@ -896,13 +903,22 @@ handle_task({filter_mempool, Mempool}, State) ->
 			{noreply, State}
 	end;
 
-handle_task(refresh_timestamp, #{ miner_2_6 := undefined } = State) ->
-	{noreply, State};
-handle_task(refresh_timestamp, State) ->
+handle_task(compute_mining_difficulty, State) ->
 	Diff = get_current_diff(),
-	ar_mining_server:set_difficulty(Diff),
-	ar_util:cast_after((?MINING_TIMESTAMP_REFRESH_INTERVAL) * 1000, ?MODULE,
-			refresh_timestamp),
+	case ets:lookup(node_state, height) of
+		[{_, Height}] when (Height + 1) rem 10 == 0 ->
+			?LOG_INFO([{event, current_mining_difficulty}, {difficulty, Diff}]);
+		_ ->
+			ok
+	end,
+	case maps:get(miner_2_6, State) of
+		undefined ->
+			ok;
+		_ ->
+			ar_mining_server:set_difficulty(Diff)
+	end,
+	ar_util:cast_after((?COMPUTE_MINING_DIFFICULTY_INTERVAL) * 1000, ?MODULE,
+			compute_mining_difficulty),
 	{noreply, State};
 
 handle_task(Msg, State) ->
