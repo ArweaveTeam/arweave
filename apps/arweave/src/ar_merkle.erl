@@ -147,7 +147,7 @@ validate_path_strict_data_split(ID, _Dest, LeftBound, RightBound,
 					_ when ChunkSize == (?DATA_CHUNK_SIZE) ->
 						LeftBound rem (?DATA_CHUNK_SIZE) == 0;
 					_ when EndOffset == DataSize ->
-						Border = RightBound - RightBound rem (?DATA_CHUNK_SIZE),
+						Border = ar_util:floor_int(RightBound, ?DATA_CHUNK_SIZE),
 						RightBound rem (?DATA_CHUNK_SIZE) > 0
 								andalso LeftBound =< Border;
 					_ when PathSize > ChunkSize ->
