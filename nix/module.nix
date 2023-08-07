@@ -16,6 +16,7 @@ let
       log_dir = cfg.logDir;
       storage_modules = cfg.storageModules;
       metrics_dir = cfg.metricsDir;
+      start_from_state = cfg.startFromState;
       start_from_block_index = cfg.startFromBlockIndex;
       transaction_blacklists = cfg.transactionBlacklists;
       transaction_whitelists = cfg.transactionWhitelists;

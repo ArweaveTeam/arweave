@@ -132,7 +132,10 @@ show_help() ->
 					"network via this configuration parameter."},
 			{"sync_from_local_peers_only", "If set, the data (not headers) is only synced "
 					"from the local network peers specified via the local_peer parameter."},
-			{"start_from_block_index", "Start the node from the latest stored block index."},
+			{"start_from_latest_state", "Start the node from the latest stored state."},
+			{"start_from_block (block hash)", "Start the node from the state corresponding "
+					"to the given block hash."},
+			{"start_from_block_index", "The legacy name for start_from_latest_state."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -449,7 +452,18 @@ parse_cli_args(["disk_space_check_frequency", Frequency | Rest], C) ->
 parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ ipfs_pin = true });
 parse_cli_args(["start_from_block_index" | Rest], C) ->
-	parse_cli_args(Rest, C#config{ start_from_block_index = true });
+	parse_cli_args(Rest, C#config{ start_from_latest_state = true });
+parse_cli_args(["start_from_block", H | Rest], C) ->
+	case ar_util:safe_decode(H) of
+		{ok, Decoded} when byte_size(Decoded) == 48 ->
+			parse_cli_args(Rest, C#config{ start_from_block = Decoded });
+		_ ->
+			io:format("Invalid start_from_block.~n", []),
+			timer:sleep(1000),
+			erlang:halt()
+	end;
+parse_cli_args(["start_from_latest_state" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ start_from_latest_state = true });
 parse_cli_args(["init" | Rest], C)->
 	parse_cli_args(Rest, C#config{ init = true });
 parse_cli_args(["internal_api_secret", Secret | Rest], C)

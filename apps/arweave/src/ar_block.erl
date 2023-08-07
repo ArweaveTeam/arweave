@@ -5,7 +5,7 @@
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
 		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2, reward_history_hash/1,
-		block_time_history_hash/1,
+		block_time_history_hash/1, get_block_time_history_element/2,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
 		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
@@ -636,17 +636,20 @@ update_block_time_history(B, PrevB) ->
 		false ->
 			PrevB#block.block_time_history;
 		true ->
-			BlockInterval = max(1, B#block.timestamp - PrevB#block.timestamp),
-			VDFInterval = vdf_step_number(B) - vdf_step_number(PrevB),
-			ChunkCount =
-				case B#block.recall_byte2 of
-					undefined ->
-						1;
-					_ ->
-						2
-				end,
-			[{BlockInterval, VDFInterval, ChunkCount} | PrevB#block.block_time_history]
+			[get_block_time_history_element(B, PrevB) | PrevB#block.block_time_history]
 	end.
+
+get_block_time_history_element(B, PrevB) ->
+	BlockInterval = max(1, B#block.timestamp - PrevB#block.timestamp),
+	VDFInterval = vdf_step_number(B) - vdf_step_number(PrevB),
+	ChunkCount =
+		case B#block.recall_byte2 of
+			undefined ->
+				1;
+			_ ->
+				2
+		end,
+	{BlockInterval, VDFInterval, ChunkCount}.
 
 vdf_step_number(#block{ nonce_limiter_info = Info }) ->
 	Info#nonce_limiter_info.global_step_number.

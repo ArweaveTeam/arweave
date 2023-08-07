@@ -72,7 +72,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
 	write_genesis_files(Config#config.data_dir, B0),
 	ok = application:set_env(arweave, config, Config#config{
-		start_from_block_index = true,
+		start_from_latest_state = true,
 		auto_join = true,
 		peers = [],
 		mining_addr = RewardAddr,
@@ -303,12 +303,26 @@ write_genesis_files(DataDir, B0) ->
 		end,
 		B0#block.txs
 	),
-	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIBin = term_to_binary({BI, B0#block.reward_history, B0#block.block_time_history}),
-	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
-	ok = filelib:ensure_dir(HashListDir ++ "/"),
-	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
-	ok = file:write_file(BIFilepath, BIBin),
+	ets:new(ar_kv, [set, public, named_table]),
+	ar_kv:start_link(),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
+			block_time_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
+	H = B0#block.indep_hash,
+	WeaveSize = B0#block.weave_size,
+	TXRoot = B0#block.tx_root,
+	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),
+	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
+	case ar_fork:height_2_7() of
+		0 ->
+			ok = ar_kv:put(block_time_history_db, H,
+					term_to_binary(hd(B0#block.block_time_history)));
+		_ ->
+			ok
+	end,
+	gen_server:stop(ar_kv),
+	ets:delete(ar_kv),
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
 	ok = filelib:ensure_dir(WalletListDir ++ "/"),
 	RootHash = B0#block.wallet_list,
@@ -404,7 +418,7 @@ join(Peer, Rejoin) ->
 	%% Configure the storage modules to cover 100 MiB of the weave.
 	StorageModules = [{20 * 1024 * 1024, N, StorageModulePacking} || N <- lists:seq(0, 4)],
 	ok = application:set_env(arweave, config, Config#config{
-		start_from_block_index = false,
+		start_from_latest_state = false,
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
 		auto_join = true,
