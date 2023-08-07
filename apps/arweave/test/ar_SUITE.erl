@@ -226,7 +226,7 @@ stop_slave_node(Config) ->
 
 start_master_application(Config) ->
 	ApplicationConfig = #config{
-		start_from_block_index = true,
+		start_from_latest_state = true,
 		data_dir = ?config(data_dir, Config) ++ "master",
 		metrics_dir = "metrics_master"
 	},
@@ -245,7 +245,7 @@ stop_master_application(Config) ->
 
 start_slave_application(Config) ->
 	ApplicationConfig = #config{
-		start_from_block_index = false,
+		start_from_latest_state = false,
 		port = 1983,
 		peers = [{127, 0, 0, 1, 1984}],
 		data_dir = ?config(data_dir, Config) ++ "slave",
@@ -284,11 +284,26 @@ write_genesis_files(DataDir, B0) ->
 		B0#block.txs
 	),
 	%% Write block index.
-	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIBin = term_to_binary({BI, B0#block.reward_history}),
-	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
-	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
-	ok = file:write_file(BIFilepath, BIBin),
+	ets:new(ar_kv, [set, public, named_table]),
+	ar_kv:start_link(),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
+			block_time_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
+	H = B0#block.indep_hash,
+	WeaveSize = B0#block.weave_size,
+	TXRoot = B0#block.tx_root,
+	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),
+	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
+	case ar_fork:height_2_7() of
+		0 ->
+			ok = ar_kv:put(block_time_history_db, H,
+					term_to_binary(hd(B0#block.block_time_history)));
+		_ ->
+			ok
+	end,
+	gen_server:stop(ar_kv),
+	ets:delete(ar_kv),
 	%% Write accounts.
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
 	RootHash = B0#block.wallet_list,

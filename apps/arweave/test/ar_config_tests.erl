@@ -10,6 +10,8 @@ parse_test_() ->
 parse_config() ->
 	ExpectedMiningAddr = ar_util:decode(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>),
 	{ok, ParsedConfig} = ar_config:parse(config_fixture()),
+	ExpectedBlockHash = ar_util:decode(
+			<<"lfoR_PyKV6t7Z6Xi2QJZlZ0JWThh0Ke7Zc5Q82CSshUhFGcjiYufP234ph1mVofX">>),
 	?assertMatch(#config{
 		init = true,
 		port = 1985,
@@ -68,7 +70,8 @@ parse_config() ->
 		},
 		disk_space = 44 * 1024 * 1024 * 1024,
 		disk_space_check_frequency = 10 * 1000,
-		start_from_block_index = true,
+		start_from_latest_state = true,
+		start_from_block = ExpectedBlockHash,
 		internal_api_secret = <<"some_very_very_long_secret">>,
 		enable = [feature_1, feature_2],
 		disable = [feature_3, feature_4],
