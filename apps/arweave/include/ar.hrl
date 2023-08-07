@@ -92,12 +92,6 @@
 
 -define(CLOCK_DRIFT_MAX, 5).
 
--ifdef(DEBUG).
--define(MINING_TIMESTAMP_REFRESH_INTERVAL, 1).
--else.
--define(MINING_TIMESTAMP_REFRESH_INTERVAL, 10).
--endif.
-
 %% The total supply of tokens in the Genesis block.
 -define(GENESIS_TOKENS, 55000000).
 
