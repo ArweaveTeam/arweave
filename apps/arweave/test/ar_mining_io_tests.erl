@@ -9,7 +9,6 @@
 -define(WEAVE_SIZE, trunc(2.5 * ?PARTITION_SIZE)).
 
 recall_chunk(WhichChunk, Chunk, Nonce, Candidate) ->
-	?LOG_ERROR([{event, recall_chunk}, {chunk, WhichChunk}, {nonce, Nonce}]),
 	ets:insert(?MODULE, {WhichChunk, Nonce, Chunk, Candidate}).
 
 setup_all() ->
@@ -90,7 +89,7 @@ test_io_threads() ->
 	%% Assert that ar_mining_io uses multiple threads when reading from different partitions.
 	%% We do this indirectly by comparing the time to read repeatedly from one partition vs.
 	%% the time to read from multiple partitions.
-	Iterations = 50,
+	Iterations = 3000,
 
     SingleThreadStart = os:system_time(microsecond),
     lists:foreach(
@@ -112,7 +111,6 @@ test_io_threads() ->
 	wait_for_io(2*Iterations),
     MultiThreadTime = os:system_time(microsecond) - MultiThreadStart,
 	ets:delete_all_objects(?MODULE),
-	?LOG_ERROR("Multi-thread time: ~p, Single-thread time: ~p", [MultiThreadTime, SingleThreadTime]),
 	?assert(SingleThreadTime > 1.5 * MultiThreadTime,
 		lists:flatten(io_lib:format(
 			"Multi-thread time (~p) not twice as fast as single-thread time (~p)",
@@ -173,7 +171,6 @@ test_mining_session() ->
 
 default_candidate() ->
 	{ok, Config} = application:get_env(arweave, config),
-	?LOG_ERROR("Config: ~s", [ar_config:format_config(Config)]),
 	MiningAddr = Config#config.mining_addr,
 	#mining_candidate{
 		mining_address = MiningAddr

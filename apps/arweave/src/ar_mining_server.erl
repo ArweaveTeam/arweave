@@ -412,11 +412,16 @@ handle_hashing_thread_down(Ref, Reason,
 			hashing_thread_monitor_refs = Refs2 }).
 
 get_chunk_cache_size_limit() ->
+	ThreadCount = ar_mining_io:get_thread_count(),
+	% Two ranges per output.
+	OptimalLimit = ar_util:ceil_int(
+		(?RECALL_RANGE_SIZE * 2 * ThreadCount) div ?DATA_CHUNK_SIZE,
+		100),
+
 	{ok, Config} = application:get_env(arweave, config),
 	Limit = case Config#config.mining_server_chunk_cache_size_limit of
 		undefined ->
-			ThreadCount = ar_mining_io:get_thread_count(),
-			Free = proplists:get_value(free_memory,
+			Total = proplists:get_value(total_memory,
 					memsup:get_system_memory_data(), 2000000000),
 			Bytes = Total * 0.7 / 3,
 			CalculatedLimit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
@@ -1135,9 +1140,11 @@ reset_mining_session(State) ->
 	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
 	ar_mining_io:reset(Ref),
 	CacheSizeLimit = get_chunk_cache_size_limit(),
-	log_chunk_cache_size_limit(CacheSizeLimit),
 	ets:insert(?MODULE, {chunk_cache_size, 0}),
 	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
 	ar_coordination:reset_mining_session(),
 	#mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit }.
 
+%%%===================================================================
+%%% Tests.
+%%%===================================================================

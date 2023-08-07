@@ -1,6 +1,7 @@
 -module(ar_util).
 
--export([bool_to_int/1, int_to_bool/1, pick_random/1, pick_random/2, encode/1, decode/1,
+-export([bool_to_int/1, int_to_bool/1, ceil_int/2, floor_int/2,
+		pick_random/1, pick_random/2, encode/1, decode/1,
 		safe_decode/1, parse_peer/1, peer_to_str/1, parse_port/1, safe_parse_peer/1, format_peer/1,
 		unique/1, count/2,
 		genesis_wallets/0, pmap/2, pfilter/2,
@@ -16,6 +17,16 @@ bool_to_int(_) -> 0.
 
 int_to_bool(1) -> true;
 int_to_bool(0) -> false.
+
+%% @doc: rounds IntValue up to the nearest multiple of Nearest.
+%% Rounds up even if IntValue is already a multiple of Nearest.
+ceil_int(IntValue, Nearest) ->
+	IntValue - (IntValue rem Nearest) + Nearest.
+
+%% @doc: rounds IntValue down to the nearest multiple of Nearest.
+%% Doesn't change IntValue if it's already a multiple of Nearest.
+floor_int(IntValue, Nearest) ->
+	IntValue - (IntValue rem Nearest).
 
 %% @doc Pick a list of random elements from a given list.
 pick_random(_, 0) -> [];
