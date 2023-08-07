@@ -592,7 +592,7 @@ handle_cast({join, RecentBI}, State) ->
 			io:format("~nWARNING: the stored block index of the data syncing module "
 					"has no intersection with the new one "
 					"in the most recent blocks. If you have just started a new weave using "
-					"the init option, restart with the start_from_block_index option "
+					"the init option, restart from the local state "
 					"or specify some peers.~n~n"),
 			erlang:halt();
 		{_, {_H, Offset, _TXRoot}} ->

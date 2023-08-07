@@ -2,16 +2,18 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
+-export([start_link/0, read_block_index/0, read_reward_history/1, read_block_time_history/2,
+		store_block_index/1, update_block_index/3,
+		store_reward_history_part/1, store_reward_history_part2/1,
+		store_block_time_history_part/2, store_block_time_history_part2/1,
+		write_full_block/2, read_block/1, read_block/2, write_tx/1,
 		read_tx/1, read_tx_data/1, update_confirmation_index/1, get_tx_confirmation_data/1,
 		read_wallet_list/1, write_wallet_list/2,
-		write_block_index/1, write_block_index_and_additional_fields/3,
-		read_block_index/0, read_block_index_and_additional_fields/0,
 		delete_blacklisted_tx/1, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
 		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
 		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1,
-		migrate_tx_record/1, migrate_block_record/1, update_reward_history/1, read_account/2]).
+		migrate_tx_record/1, migrate_block_record/1, read_account/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -29,6 +31,196 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Read the entire stored block index.
+read_block_index() ->
+	%% Use a key that is bigger than any << Height:256 >> (<<"a">> > << Height:256 >>)
+	%% to retrieve the largest stored Height.
+	case ar_kv:get_prev(block_index_db, <<"a">>) of
+		none ->
+			not_found;
+		{ok, << Height:256 >>, V} ->
+			{ok, Map} = ar_kv:get_range(block_index_db, << 0:256 >>, << (Height - 1):256 >>),
+			read_block_index_from_map(maps:put(<< Height:256 >>, V, Map), 0, Height, <<>>, [])
+	end.
+
+read_block_index_from_map(_Map, Height, End, _PrevH, BI) when Height > End ->
+	BI;
+read_block_index_from_map(Map, Height, End, PrevH, BI) ->
+	V = maps:get(<< Height:256 >>, Map),
+	case binary_to_term(V) of
+		{H, WeaveSize, TXRoot, PrevH} ->
+			read_block_index_from_map(Map, Height + 1, End, H, [{H, WeaveSize, TXRoot} | BI]);
+		{_, _, _, PrevH2} ->
+			ar:console("The stored block index is invalid. Height: ~B, "
+					"stored previous hash: ~s, expected previous hash: ~s.~n",
+					[Height, ar_util:encode(PrevH2), ar_util:encode(PrevH)]),
+
+			not_found
+	end.
+
+%% @doc Return the reward history for the given block index part or not_found.
+read_reward_history([]) ->
+	[];
+read_reward_history([{H, _WeaveSize, _TXRoot} | BI]) ->
+	case read_reward_history(BI) of
+		not_found ->
+			not_found;
+		History ->
+			case ar_kv:get(reward_history_db, H) of
+				not_found ->
+					not_found;
+				{ok, Bin} ->
+					Element = binary_to_term(Bin),
+					[Element | History]
+			end
+	end.
+
+%% @doc Return the block time history for the given block index part or not_found.
+read_block_time_history(_Height, []) ->
+	[];
+read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI]) ->
+	case Height < ar_fork:height_2_7() of
+		true ->
+			[];
+		false ->
+			case read_block_time_history(Height - 1, BI) of
+				not_found ->
+					not_found;
+				History ->
+					case ar_kv:get(block_time_history_db, H) of
+						not_found ->
+							not_found;
+						{ok, Bin} ->
+							Element = binary_to_term(Bin),
+							[Element | History]
+					end
+			end
+	end.
+
+%% @doc Record the block entire block index on disk.
+%% Return {error, block_index_no_recent_intersection} if the local state forks away
+%% at more than ?STORE_BLOCKS_BEHIND_CURRENT blocks ago.
+store_block_index(BI) ->
+	%% Use a key that is bigger than any << Height:256 >> (<<"a">> > << Height:256 >>)
+	%% to retrieve the largest stored Height.
+	case ar_kv:get_prev(block_index_db, <<"a">>) of
+		none ->
+			update_block_index(0, 0, lists:reverse(BI));
+		{ok, << Height:256 >>, _V} ->
+			Height2 = length(BI) - 1,
+			Height3 = max(0, min(Height, Height2) - ?STORE_BLOCKS_BEHIND_CURRENT),
+			{ok, V} = ar_kv:get(block_index_db, << Height3:256 >>),
+			{H, WeaveSize, TXRoot} = lists:nth(Height2 - Height3 + 1, BI),
+			case binary_to_term(V) of
+				{H, WeaveSize, TXRoot, _PrevH} ->
+					BI2 = lists:reverse(lists:sublist(BI, Height2 - Height3)),
+					update_block_index(Height3 + 1, Height - Height3, BI2);
+				{H2, _, _, _} ->
+					?LOG_ERROR([{event, failed_to_store_block_index},
+							{reason, no_intersection},
+							{height, Height3},
+							{stored_hash, ar_util:encode(H2)},
+							{expected_hash, ar_util:encode(H)}]),
+					{error, block_index_no_recent_intersection}
+			end;
+		Error ->
+			Error
+	end.
+
+%% @doc Record the block index update on disk. Remove the orphans, if any.
+update_block_index(Height, OrphanCount, BI) ->
+	case ar_kv:delete_range(block_index_db, << Height:256 >>,
+			<< (Height + OrphanCount + 1):256 >>) of
+		ok ->
+			case Height of
+				0 ->
+					update_block_index2(0, <<>>, BI);
+				_ ->
+					case ar_kv:get(block_index_db, << (Height - 1):256 >>) of
+						not_found ->
+							?LOG_ERROR([{event, failed_to_update_block_index},
+									{reason, prev_element_not_found},
+									{prev_height, Height - 1}]),
+							{error, not_found};
+						{ok, Bin} ->
+							{PrevH, _, _, _} = binary_to_term(Bin),
+							update_block_index2(Height, PrevH, BI)
+					end
+			end;
+		{error, Error} ->
+			?LOG_ERROR([{event, failed_to_update_block_index},
+					{reason, failed_to_remove_orphaned_range},
+					{range_start, Height},
+					{range_end, Height + OrphanCount + 1},
+					{reason, io_lib:format("~p", [Error])}]),
+			{error, Error}
+	end.
+
+update_block_index2(_Height, _PrevH, []) ->
+	ok;
+update_block_index2(Height, PrevH, [{H, WeaveSize, TXRoot} | BI]) ->
+	Bin = term_to_binary({H, WeaveSize, TXRoot, PrevH}),
+	case ar_kv:put(block_index_db, << Height:256 >>, Bin) of
+		ok ->
+			update_block_index2(Height + 1, H, BI);
+		Error ->
+			?LOG_ERROR([{event, failed_to_update_block_index},
+					{reason, io_lib:format("~p", [Error])}]),
+			{error, Error}
+	end.
+
+store_reward_history_part([]) ->
+	ok;
+store_reward_history_part(Blocks) ->
+	store_reward_history_part2([{B#block.indep_hash, {B#block.reward_addr,
+			ar_difficulty:get_hash_rate(B#block.diff), B#block.reward,
+			B#block.denomination}} || B <- Blocks]).
+
+store_reward_history_part2([]) ->
+	ok;
+store_reward_history_part2([{H, El} | History]) ->
+	Bin = term_to_binary(El),
+	case ar_kv:put(reward_history_db, H, Bin) of
+		ok ->
+			store_reward_history_part2(History);
+		Error ->
+			?LOG_ERROR([{event, failed_to_update_reward_history},
+					{reason, io_lib:format("~p", [Error])},
+					{block, ar_util:encode(H)}]),
+			{error, not_found}
+	end.
+
+store_block_time_history_part([], _PrevB) ->
+	ok;
+store_block_time_history_part(Blocks, PrevB) ->
+	History = get_block_time_history_from_blocks(Blocks, PrevB),
+	store_block_time_history_part2(History).
+
+get_block_time_history_from_blocks([], _PrevB) ->
+	[];
+get_block_time_history_from_blocks([B | Blocks], PrevB) ->
+	case B#block.height >= ar_fork:height_2_7() of
+		false ->
+			get_block_time_history_from_blocks(Blocks, B);
+		true ->
+			[{B#block.indep_hash, ar_block:get_block_time_history_element(B, PrevB)}
+					| get_block_time_history_from_blocks(Blocks, B)]
+	end.
+
+store_block_time_history_part2([]) ->
+	ok;
+store_block_time_history_part2([{H, El} | History]) ->
+	Bin = term_to_binary(El),
+	case ar_kv:put(block_time_history_db, H, Bin) of
+		ok ->
+			store_block_time_history_part2(History);
+		Error ->
+			?LOG_ERROR([{event, failed_to_update_block_time_history},
+					{reason, io_lib:format("~p", [Error])},
+					{block, ar_util:encode(H)}]),
+			{error, not_found}
+	end.
 
 -if(?NETWORK_NAME == "arweave.N.1").
 write_full_block(#block{ height = 0 } = BShadow, TXs) ->
@@ -665,76 +857,11 @@ read_tx_data(TX) ->
 			Error
 	end.
 
-%% @doc Write the givne block index to disk.
-%% Read when a node starts with the start_from_block_index flag.
-write_block_index(BI) ->
-	?LOG_INFO([{event, writing_block_index_to_disk}]),
-	Bin = ar_serialize:block_index_to_binary(BI),
-	File = block_index_filepath(),
-	case write_file_atomic(File, Bin) of
-		ok ->
-			ok;
-		{error, Reason} = Error ->
-			?LOG_ERROR([{event, failed_to_write_block_index_to_disk}, {reason, Reason}]),
-			Error
-	end.
-
-%% @doc Write the given block index, the recent reward history, and the recent
-%% block time history to disk, to read when starting with the start_from_block_index flag.
-write_block_index_and_additional_fields(BI, RewardHistory, BlockTimeHistory) ->
-	?LOG_INFO([{event, writing_block_index_and_additional_fields_to_disk}]),
-	File = block_index_and_reward_history_filepath(),
-	case write_file_atomic(File, term_to_binary({BI, RewardHistory, BlockTimeHistory})) of
-		ok ->
-			ok;
-		{error, Reason} = Error ->
-			?LOG_ERROR([{event, failed_to_write_block_index_and_additional_fields_to_disk},
-					{reason, Reason}]),
-			Error
-	end.
-
 write_wallet_list(Height, Tree) ->
 	{RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
 	store_account_tree_update(Height, RootHash, UpdateMap),
 	erlang:garbage_collect(),
 	RootHash.
-
-%% @doc Read a list of block hashes from the disk.
-read_block_index() ->
-	case file:read_file(block_index_filepath()) of
-		{ok, Binary} ->
-			case ar_serialize:binary_to_block_index(Binary) of
-				{ok, BI} ->
-					BI;
-				{error, _} ->
-					case ar_serialize:json_struct_to_block_index(
-							ar_serialize:dejsonify(Binary)) of
-						[H | _] = HL when is_binary(H) ->
-							[{BH, not_set, not_set} || BH <- HL];
-						BI ->
-							BI
-					end
-			end;
-		Error ->
-			Error
-	end.
-
-%% @doc Read the latest stored block index and reward history data from disk.
-read_block_index_and_additional_fields() ->
-	case file:read_file(block_index_and_reward_history_filepath()) of
-		{ok, Binary} ->
-			case binary_to_term(Binary, [safe]) of
-				{BI, RewardHistory} -> % migrate from old format
-					{BI, RewardHistory, (#block{})#block.block_time_history};
-				{BI, RewardHistory, BlockTimeHistory} ->
-					{BI, RewardHistory, BlockTimeHistory};
-				_ ->
-					?LOG_WARNING([{event, bad_file_format_block_index_and_additional_fields}]),
-					{error, bad_file_format_block_index_and_additional_fields}
-			end;
-		Error ->
-			Error
-	end.
 
 %% @doc Read a given wallet list (by hash) from the disk.
 read_wallet_list(<<>>) ->
@@ -889,6 +1016,9 @@ init([]) ->
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), tx_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_block_db"), block_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
+			block_time_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "account_tree_db"), account_tree_db),
 	ets:insert(?MODULE, [{same_disk_storage_modules_total_size,
 			get_same_disk_storage_modules_total_size()}]),
@@ -929,24 +1059,8 @@ write_block(B) ->
 	end,
 	TXIDs = lists:map(fun(TXID) when is_binary(TXID) -> TXID;
 			(#tx{ id = TXID }) -> TXID end, B#block.txs),
-	case ar_kv:put(block_db, B#block.indep_hash, ar_serialize:block_to_binary(B#block{
-			txs = TXIDs })) of
-		ok ->
-			update_reward_history(B);
-		Error ->
-			Error
-	end.
-
-update_reward_history(B) ->
-	case B#block.height >= ar_fork:height_2_6() of
-		true ->
-			HashRate = ar_difficulty:get_hash_rate(B#block.diff),
-			Addr = B#block.reward_addr,
-			Bin = term_to_binary({Addr, HashRate, B#block.reward}),
-			ar_kv:put(reward_history_db, B#block.indep_hash, Bin);
-		false ->
-			ok
-	end.
+	ar_kv:put(block_db, B#block.indep_hash, ar_serialize:block_to_binary(B#block{
+			txs = TXIDs })).
 
 write_full_block2(BShadow, TXs) ->
 	case write_block(BShadow) of
@@ -1058,12 +1172,6 @@ tx_filename(TXID) when is_binary(TXID) ->
 
 tx_data_filename(TXID) ->
 	iolist_to_binary([ar_util:encode(TXID), "_data.json"]).
-
-block_index_filepath() ->
-	filepath([?HASH_LIST_DIR, <<"last_block_index.json">>]).
-
-block_index_and_reward_history_filepath() ->
-	filepath([?HASH_LIST_DIR, <<"last_block_index_and_reward_history.bin">>]).
 
 wallet_list_filepath(Hash) when is_binary(Hash) ->
 	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
@@ -1209,17 +1317,6 @@ tx_id(#tx{ id = TXID }) ->
 	TXID;
 tx_id(TXID) ->
 	TXID.
-
-store_and_retrieve_block_block_index_test() ->
-	RandomEntry =
-		fun() ->
-			{crypto:strong_rand_bytes(48), rand:uniform(10000),
-					crypto:strong_rand_bytes(32)}
-		end,
-	BI = [RandomEntry() || _ <- lists:seq(1, 100)],
-	write_block_index(BI),
-	ReadBI = read_block_index(),
-	?assertEqual(BI, ReadBI).
 
 store_and_retrieve_wallet_list_test_() ->
 	{timeout, 20, fun test_store_and_retrieve_wallet_list/0}.

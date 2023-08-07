@@ -245,7 +245,7 @@ do_join(Peers, B, BI) ->
 	ar:console("Downloaded the block trail successfully.~n", []),
 	Blocks2 = may_be_set_reward_history(Blocks, Peers),
 	Blocks3 = may_be_set_block_time_history(Blocks2, Peers),
-	ar_node_worker ! {join, BI, Blocks3},
+	ar_node_worker ! {join, B#block.height, BI, Blocks3},
 	join_peers(Peers).
 
 %% @doc Get the 2 * ?MAX_TX_ANCHOR_DEPTH blocks preceding the head block.

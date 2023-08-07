@@ -630,7 +630,7 @@ test_persisted_mempool() ->
 	%% Expect the pending transactions to be picked up and distributed.
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:set_env(arweave, config, Config#config{
-		start_from_block_index = false,
+		start_from_latest_state = false,
 		peers = [slave_peer()]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),

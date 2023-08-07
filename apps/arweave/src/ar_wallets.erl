@@ -76,14 +76,14 @@ get_size() ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([{blocks, []}, {peers, _Peers}]) ->
+init([{blocks, []} | _]) ->
 	process_flag(trap_exit, true),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
 	ar_node_worker ! wallets_ready,
 	{ok, DAG};
-init([{blocks, Blocks}, {peers, Peers}]) ->
+init([{blocks, Blocks} | Args]) ->
 	process_flag(trap_exit, true),
-	gen_server:cast(?MODULE, {init, Blocks, Peers}),
+	gen_server:cast(?MODULE, {init, Blocks, Args}),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
 	{ok, DAG}.
 
@@ -170,11 +170,70 @@ handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, DAG) 
 handle_call({set_current, RootHash, Height, PruneDepth}, _, DAG) ->
 	{reply, ok, set_current(DAG, RootHash, Height, PruneDepth)}.
 
-handle_cast({init, Blocks, Peers}, _) ->
+handle_cast({init, Blocks, [{from_state, SearchDepth}]}, _) ->
+	?LOG_DEBUG([{event, init_from_state}, {block_count, length(Blocks)}]),
+	case find_local_account_tree(Blocks, SearchDepth) of
+		not_found ->
+			ar:console("~n~n\tThe local state is missing an account tree, consider joining "
+					"the network via the trusted peers.~n"),
+			timer:sleep(1000),
+			erlang:halt();
+		{Skipped, Tree} ->
+			Blocks2 = lists:nthtail(Skipped, Blocks),
+			initialize_state(Blocks2, Tree)
+	end;
+handle_cast({init, Blocks, [{from_peers, Peers}]}, _) ->
+	B =
+		case length(Blocks) >= ?STORE_BLOCKS_BEHIND_CURRENT of
+			true ->
+				lists:nth(?STORE_BLOCKS_BEHIND_CURRENT, Blocks);
+			false ->
+				lists:last(Blocks)
+		end,
+	Tree = get_tree_from_peers(B, Peers),
+	initialize_state(Blocks, Tree);
+
+handle_cast(Msg, DAG) ->
+	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+	{noreply, DAG}.
+
+terminate(Reason, _State) ->
+	?LOG_INFO([{event, ar_wallets_terminated}, {reason, Reason}]).
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+find_local_account_tree(Blocks, SearchDepth) ->
+	find_local_account_tree(Blocks, SearchDepth, 0).
+
+find_local_account_tree(_Blocks, Skipped, Skipped) ->
+	not_found;
+find_local_account_tree(Blocks, SearchDepth, Skipped) ->
+	{IsLast, B} =
+		case length(Blocks) >= ?STORE_BLOCKS_BEHIND_CURRENT of
+			true ->
+				{false, lists:nth(?STORE_BLOCKS_BEHIND_CURRENT, Blocks)};
+			false ->
+				{true, lists:last(Blocks)}
+		end,
+	ID = B#block.wallet_list,
+	case ar_storage:read_wallet_list(ID) of
+		{ok, Tree} ->
+			{Skipped, Tree};
+		_ ->
+			case IsLast of
+				true ->
+					not_found;
+				false ->
+					find_local_account_tree(tl(Blocks), SearchDepth, Skipped + 1)
+			end
+	end.
+
+initialize_state(Blocks, Tree) ->
 	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	{DAG3, LastB} = lists:foldl(
 		fun (B, start) ->
-				Tree = get_tree(B, Peers),
 				{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
 				gen_server:cast(ar_storage, {store_account_tree_update, B#block.height,
 						RootHash, UpdateMap}),
@@ -192,43 +251,27 @@ handle_cast({init, Blocks, Peers}, _) ->
 	WalletList = LastB#block.wallet_list,
 	LastHeight = LastB#block.height,
 	DAG4 = set_current(DAG3, WalletList, LastHeight, InitialDepth),
-	ar_node_worker ! wallets_ready,
-	{noreply, DAG4};
+	ar_events:send(node_state, {account_tree_initialized, LastB#block.height}),
+	{noreply, DAG4}.
 
-handle_cast(Msg, DAG) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
-	{noreply, DAG}.
-
-terminate(Reason, _State) ->
-	?LOG_INFO([{event, ar_wallets_terminated}, {reason, Reason}]).
-
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
-
-get_tree(B, Peers) ->
+get_tree_from_peers(B, Peers) ->
 	ID = B#block.wallet_list,
-	case ar_storage:read_wallet_list(ID) of
-		{ok, Tree} ->
+	ar:console("Downloading the wallet tree, chunk 1.~n", []),
+	case ar_http_iface_client:get_wallet_list_chunk(Peers, ID) of
+		{ok, {Cursor, Chunk}} ->
+			{ok, Tree} = load_wallet_tree_from_peers(
+				ID,
+				Peers,
+				ar_patricia_tree:from_proplist(Chunk),
+				Cursor,
+				2
+			),
+			ar:console("Downloaded the wallet tree successfully.~n", []),
 			Tree;
 		_ ->
-			ar:console("Downloading the wallet tree, chunk 1.~n", []),
-			case ar_http_iface_client:get_wallet_list_chunk(Peers, ID) of
-				{ok, {Cursor, Chunk}} ->
-					{ok, Tree} = load_wallet_tree_from_peers(
-						ID,
-						Peers,
-						ar_patricia_tree:from_proplist(Chunk),
-						Cursor,
-						2
-					),
-					ar:console("Downloaded the wallet tree successfully.~n", []),
-					Tree;
-				_ ->
-					ar:console("Failed to download wallet tree chunk, retrying...~n", []),
-					timer:sleep(1000),
-					get_tree(B, Peers)
-			end
+			ar:console("Failed to download wallet tree chunk, retrying...~n", []),
+			timer:sleep(1000),
+			get_tree_from_peers(B, Peers)
 	end.
 
 load_wallet_tree_from_peers(_ID, _Peers, Acc, last, _) ->
