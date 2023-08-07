@@ -82,7 +82,7 @@ post_txs_and_mine(Node, TXs) when is_list(TXs) ->
 post_txs_and_mine(TXs) when is_list(TXs) ->
 	Height = ar_node:get_height(),
 	post_txs(TXs),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	Height.
 
 post_txs(TXs) when is_list(TXs) ->
@@ -240,7 +240,7 @@ mine(Node) ->
 
 mine() ->
 	Height = ar_node:get_height(),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	Height.
 
 get_tx_anchor(Node) ->

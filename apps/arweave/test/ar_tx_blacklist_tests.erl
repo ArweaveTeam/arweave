@@ -119,7 +119,7 @@ test_uses_blacklists() ->
 	TX = sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 			last_tx => get_tx_anchor(slave) }),
 	assert_post_tx_to_master(TX),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[{_, WeaveSize, _} | _] = wait_until_height(length(TXs) + 1),
 	assert_present_offsets([[WeaveSize]]),
 	ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),

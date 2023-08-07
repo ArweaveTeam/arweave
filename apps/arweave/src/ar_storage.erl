@@ -1318,10 +1318,10 @@ test_store_and_retrieve_block() ->
 	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
 			block_time_history = [], account_tree = undefined }, FetchedB01),
 	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
-			block_time_history = [], account_tree = undefined }, FetchedB03),
-	ar_node:mine(),
+			account_tree = undefined }, FetchedB03),
+	ar_test_node:mine(),
 	ar_test_node:wait_until_height(1),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	BI1 = ar_test_node:wait_until_height(2),
 	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
 	ar_util:do_until(

@@ -2,11 +2,13 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0, start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
-		http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0, remote_call/4]).
+		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
+		get_difficulty_for_invalid_hash/0, invalid_solution/0, valid_solution/0,
+		remote_call/4, slave_node/0, master_node/0, miner_node/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4, slave_start/0, slave_start/1,
-		slave_start/2, slave_start/3,
+		slave_start/2, slave_start/3, mine/0,
 		get_tx_price/1, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
@@ -17,6 +19,7 @@
 		slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
 		assert_slave_wait_until_height/1, wait_until_block_index/1,
 		assert_wait_until_block_index/1, assert_slave_wait_until_block_index/1,
+		wait_until_mining_paused/0,
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
 		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
@@ -52,7 +55,6 @@
 
 
 -define(MAX_MINERS, 3).
--define(MINIMUM_SOLUTION_HASH, <<"00000000000000000000000000000000">>).
 
 %%%===================================================================
 %%% Public interface.
@@ -103,15 +105,12 @@ start_node(B0, Config) ->
 %% mode plus an exit node and a validator node.
 %% Return [Node1, ..., NodeN, ExitNode, ValidatorNode].
 start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
-	%% Set the difficulty just high enough to exclude the ?MINIMUM_SOLUTION_HASH, this lets
-	%% us selectively disable one-chunk mining in tests.
-	Difficulty = binary:decode_unsigned(?MINIMUM_SOLUTION_HASH, big) + 1,
 	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
 	%% a solution.
-	[B0] = ar_weave:init([], Difficulty, ?PARTITION_SIZE * 5),
+	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
 	RewardAddr = ar_wallet:to_address(remote_call(ar_wallet, new_keyfile, [],
 			slave_node())),
-	BaseConfig2 = #config{
+	BaseConfig = #config{
 		start_from_block_index = true,
 		auto_join = true,
 		mining_addr = RewardAddr,
@@ -124,9 +123,9 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		mining_server_chunk_cache_size_limit = 4,
 		debug = true
 	},
-	ExitPeer = {127, 0, 0, 1, 1983},
-	ValidatorPeer = {127, 0, 0, 1, 1984},
-	BaseCMConfig = BaseConfig2#config{
+	ExitPeer = slave_peer(),
+	ValidatorPeer = master_peer(),
+	BaseCMConfig = BaseConfig#config{
 		coordinated_mining = true,
 		coordinated_mining_secret = <<"test_coordinated_mining_secret">>,
 		cm_poll_interval = 2000
@@ -135,7 +134,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		peers = [ValidatorPeer],
 		mine = true
 	},
-	ValidatorNodeConfig = BaseConfig2#config{
+	ValidatorNodeConfig = BaseConfig#config{
 		peers = [ExitPeer]
 	},
 	MiningNodeConfigs = [BaseCMConfig#config{
@@ -154,9 +153,12 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		|| I <- lists:seq(1, MiningNodeCount)],
 	MiningNodes ++ [ExitNode, ValidatorNode].
 
+mine() ->
+	gen_server:cast(ar_node_worker, mine).
+
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
-	remote_call(ar_node, mine, [], Node).
+	remote_call(ar_test_node, mine, [], Node).
 
 %% @doc Wait until the given node reaches the given height or fail by timeout.
 wait_until_height(Height, Node) ->
@@ -173,6 +175,9 @@ wait_until_height(Height, Node) ->
 		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
 	),
 	BI.
+
+wait_until_mining_paused(Node) ->
+	remote_call(ar_test_node, wait_until_mining_paused, [], Node).
 
 %% @doc Fetch and decode a binary-encoded block by hash H from the HTTP API of the
 %% given node. Return {ok, B} | {error, Reason}.
@@ -193,14 +198,25 @@ http_get_block(H, Node) ->
 get_blocks(Node) ->
 	remote_call(ar_node, get_blocks, [], Node).
 
+invalid_solution() ->
+	<<"00000000000000000000000000000000">>.
+
+valid_solution() ->
+	<<"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF">>.
+
 mock_to_force_invalid_h1() ->
 	{
 		ar_block, compute_h1,
 		fun(_H0, _Nonce, _Chunk1) -> 
-			{<<"00000000000000000000000000000000">>,
-			<<"00000000000000000000000000000000">>}
+			{invalid_solution(), invalid_solution()}
 		end
 	}.
+
+get_difficulty_for_invalid_hash() ->
+	%% Set the difficulty just high enough to exclude the invalid_solution(), this lets
+	%% us selectively disable one- or two-chunk mining in tests.
+	binary:decode_unsigned(invalid_solution(), big) + 1.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -778,16 +794,9 @@ slave_mine() ->
 	slave_call(ar_node, mine, []).
 
 wait_until_syncs_genesis_data() ->
-	WeaveSize = (ar_node:get_current_block())#block.weave_size,
-	wait_until_syncs_data(0, WeaveSize, any),
-	%% Once the data is stored in the disk pool, make the storage modules
-	%% copy the missing data over from each other. This procedure is executed on startup
-	%% but the disk pool did not have any data at the time.
 	{ok, Config} = application:get_env(arweave, config),
-	[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:id(Module)),
-			sync_data) || Module <- Config#config.storage_modules],
-	wait_until_syncs_data(0, WeaveSize, spora_2_5),
-	wait_until_syncs_data(0, WeaveSize, {spora_2_6, Config#config.mining_addr}).
+	[wait_until_syncs_data(N * Size, (N + 1) * Size, Packing)
+			|| {Size, N, Packing} <- Config#config.storage_modules].
 
 slave_wait_until_joined() ->
 	ar_util:do_until(
@@ -876,6 +885,23 @@ wait_until_node_is_ready(NodeName) ->
         500,
         30000
     ).
+
+wait_until_mining_paused() ->
+	%% give time for all messages in message queues to be processed into the task queue, then
+	%% start the wait loop.
+	timer:sleep(2000),
+	ar_util:do_until(
+		fun() ->
+			case ar_mining_server:get_task_queue_len() of
+				0 ->
+					ok;
+				_ ->
+					false
+			end
+		end,
+		1000,
+		60 * 1000
+	).
 
 assert_wait_until_receives_txs(TXs) ->
 	?assertEqual(ok, wait_until_receives_txs(TXs)).
@@ -1112,7 +1138,7 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 		{master, _MiningNode} ->
 			Height = ar_node:get_height(),
 			lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
-			ar_node:mine(),
+			ar_test_node:mine(),
 			Height
 	end,
 	case AwaitOn of
