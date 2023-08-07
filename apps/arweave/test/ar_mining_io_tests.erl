@@ -13,7 +13,6 @@ recall_chunk(WhichChunk, Chunk, Nonce, Candidate) ->
 	ets:insert(?MODULE, {WhichChunk, Nonce, Chunk, Candidate}).
 
 setup_all() ->
-	?LOG_ERROR("**** setup_all"),
 	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
 	ar_test_node:start(B0),
 	{Setup, Cleanup} = ar_test_node:mock_functions([
@@ -23,24 +22,21 @@ setup_all() ->
 	{Cleanup, Functions}.
 
 cleanup_all({Cleanup, Functions}) ->
-	?LOG_ERROR("**** cleanup_all"),
 	Cleanup(Functions).
 
 setup_one() ->
-	?LOG_ERROR("**** setup_one"),
 	ets:new(?MODULE, [named_table, duplicate_bag, public]).
 
 cleanup_one(_) ->
-	?LOG_ERROR("**** cleanup_one"),
 	ets:delete(?MODULE).
 
 read_recall_range_test_() ->
 	{setup, fun setup_all/0, fun cleanup_all/1,
 		{foreach, fun setup_one/0, fun cleanup_one/1,
 		[
-			% {timeout, 180, fun test_read_recall_range/0},
-			% {timeout, 180, fun test_io_threads/0},
-			% {timeout, 30, fun test_partitions/0},
+			{timeout, 180, fun test_read_recall_range/0},
+			{timeout, 180, fun test_io_threads/0},
+			{timeout, 30, fun test_partitions/0},
 			{timeout, 180, fun test_mining_session/0}
 		]}
     }.
