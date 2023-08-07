@@ -143,7 +143,7 @@ add(Start, End, Size, Map) ->
 			maps:put(Bucket, min(1, (Share * Size + Increase) / Size), Map)).
 
 bucket_upper_bound(Offset, Size) ->
-	Offset - Offset rem Size + Size.
+	ar_util:ceil_int(Offset, Size).
 
 delete(Start, End, _Size, Map) when Start >= End ->
 	Map;

@@ -87,7 +87,7 @@ get(Byte, StoreID) ->
 			not_found;
 		{_End, IntervalStart} ->
 			Start = Byte - (Byte - IntervalStart) rem ?DATA_CHUNK_SIZE,
-			LeftBorder = Start - Start rem ?CHUNK_GROUP_SIZE,
+			LeftBorder = ar_util:floor_int(Start, ?CHUNK_GROUP_SIZE),
 			case get(Byte, Start, LeftBorder, StoreID, 1) of
 				[] ->
 					not_found;
@@ -113,7 +113,7 @@ get_range(Start, Size, StoreID) ->
 			Start2 = max(Start, IntervalStart),
 			Size2 = Start + Size - Start2,
 			BucketStart = Start2 - (Start2 - IntervalStart) rem ?DATA_CHUNK_SIZE,
-			LeftBorder = BucketStart - BucketStart rem ?CHUNK_GROUP_SIZE,
+			LeftBorder = ar_util:floor_int(BucketStart, ?CHUNK_GROUP_SIZE),
 			End = Start2 + Size2,
 			LastBucketStart = (End - 1) - ((End - 1)- IntervalStart) rem ?DATA_CHUNK_SIZE,
 			case LastBucketStart >= LeftBorder + ?CHUNK_GROUP_SIZE of
@@ -404,7 +404,7 @@ handle_store_chunk(Offset, Chunk, FileIndex, StoreID) ->
 
 get_key(Offset) ->
 	StartOffset = Offset - ?DATA_CHUNK_SIZE,
-	StartOffset - StartOffset rem ?CHUNK_GROUP_SIZE.
+	ar_util:floor_int(StartOffset, ?CHUNK_GROUP_SIZE).
 
 store_chunk(Key, Offset, Chunk, FileIndex, StoreID) ->
 	Filepath = filepath(Key, FileIndex, StoreID),
@@ -440,7 +440,7 @@ store_chunk(Key, Offset, Chunk, Filepath) ->
 
 store_chunk2(Key, Offset, Chunk, Filepath, F) ->
 	StartOffset = Offset - ?DATA_CHUNK_SIZE,
-	LeftChunkBorder = StartOffset - StartOffset rem ?DATA_CHUNK_SIZE,
+	LeftChunkBorder = ar_util:floor_int(StartOffset, ?DATA_CHUNK_SIZE),
 	ChunkOffset = StartOffset - LeftChunkBorder,
 	RelativeOffset = LeftChunkBorder - Key,
 	Position = RelativeOffset + ?OFFSET_SIZE * (RelativeOffset div ?DATA_CHUNK_SIZE),
@@ -472,7 +472,7 @@ delete_chunk(Offset, Key, Filepath) ->
 	case file:open(Filepath, [read, write, raw]) of
 		{ok, F} ->
 			StartOffset = Offset - ?DATA_CHUNK_SIZE,
-			LeftChunkBorder = StartOffset - StartOffset rem ?DATA_CHUNK_SIZE,
+			LeftChunkBorder = ar_util:floor_int(StartOffset, ?DATA_CHUNK_SIZE),
 			RelativeOffset = LeftChunkBorder - Key,
 			Position = RelativeOffset + ?OFFSET_SIZE * (RelativeOffset div ?DATA_CHUNK_SIZE),
 			ZeroChunk =
@@ -526,7 +526,7 @@ read_chunk(Byte, Start, Key, Filepath, ChunkCount) ->
 	end.
 
 read_chunk2(Byte, Start, Key, File, ChunkCount) ->
-	LeftChunkBorder = Start - Start rem ?DATA_CHUNK_SIZE,
+	LeftChunkBorder = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
 	RelativeOffset = LeftChunkBorder - Key,
 	Position = RelativeOffset + ?OFFSET_SIZE * RelativeOffset div ?DATA_CHUNK_SIZE,
 	read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount).
