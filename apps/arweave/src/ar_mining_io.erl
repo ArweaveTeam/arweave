@@ -103,9 +103,6 @@ handle_call({read_recall_range, WhichChunk, Candidate, RecallRangeStart}, _From,
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
 	PartitionNumber = ?PARTITION_NUMBER(RecallRangeStart),
 	RangeEnd = RecallRangeStart + ?RECALL_RANGE_SIZE,
-	?LOG_ERROR([{event, read_recall_range}, {chunk, WhichChunk}, {range_start, RecallRangeStart},
-		{range_end, RangeEnd}, {partition, PartitionNumber},
-		{mining_address, ar_util:encode(MiningAddress)}]),
 	case find_thread(PartitionNumber, MiningAddress, RangeEnd, RecallRangeStart, IOThreads) of
 		not_found ->
 			{reply, false, State};
@@ -158,9 +155,6 @@ terminate(_Reason, #state{ io_threads = IOThreads }) ->
 start_io_threads(Start, End, _ReplicaID, _StoreID, State) when Start >= End ->
 	State;
 start_io_threads(Start, End, MiningAddress, StoreID, State) ->
-	?LOG_ERROR([{event, start_io_threads},
-		{s, Start}, {e, End},
-		{mining_address, ar_util:encode(MiningAddress)}, {store_id, StoreID}]),
 	PartitionNumber = ?PARTITION_NUMBER(Start),
 	State2 = start_io_thread(PartitionNumber, MiningAddress, StoreID, State),
 	start_io_threads(Start + ?PARTITION_SIZE, End, MiningAddress, StoreID, State2).
@@ -265,13 +259,6 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
-	?LOG_ERROR([{event, read_range},
-		{chunk, WhichChunk},
-		{range_start, RangeStart},
-		{range_end, RangeStart + Size},
-		{store_id, StoreID},
-		{offsets, ChunkOffsets2},
-		{nonce_max, NonceMax}]),
 	read_range(WhichChunk, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2).
 
 read_range(_WhichChunk, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
@@ -321,9 +308,6 @@ find_thread2(PartitionNumber, MiningAddress, Iterator) ->
 find_thread3([Key | Keys], RangeEnd, RangeStart, Max, MaxKey) ->
 	{_PartitionNumber, _ReplicaID, StoreID} = Key,
 	I = ar_sync_record:get_intersection_size(RangeEnd, RangeStart, ar_chunk_storage, StoreID),
-	?LOG_ERROR([{event, find_thread3},
-		{partition_number, _PartitionNumber}, {store_id, StoreID}, 
-		{range_start, RangeStart}, {range_end, RangeEnd}, {i, I}]),
 	case I > Max of
 		true ->
 			find_thread3(Keys, RangeEnd, RangeStart, I, Key);
