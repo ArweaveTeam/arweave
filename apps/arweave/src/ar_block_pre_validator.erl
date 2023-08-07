@@ -484,7 +484,7 @@ pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) 
 pre_validate_previous_solution_hash(B, PrevB, SolutionResigned, Peer) ->
 	case B#block.previous_solution_hash == PrevB#block.hash of
 		false ->
-			post_block_reject_warn(B, check_previous_solution_hash, Peer),
+			post_block_reject_warn_and_error_dump(B, check_previous_solution_hash, Peer),
 			ar_events:send(block, {rejected, invalid_previous_solution_hash,
 					B#block.indep_hash, Peer}),
 			invalid;
@@ -498,7 +498,7 @@ pre_validate_last_retarget(B, PrevB, SolutionResigned, Peer) ->
 		true ->
 			pre_validate_difficulty(B, PrevB, SolutionResigned, Peer);
 		false ->
-			post_block_reject_warn(B, check_last_retarget, Peer),
+			post_block_reject_warn_and_error_dump(B, check_last_retarget, Peer),
 			ar_events:send(block, {rejected, invalid_last_retarget,
 					B#block.indep_hash, Peer}),
 			invalid
@@ -511,7 +511,7 @@ pre_validate_difficulty(B, PrevB, SolutionResigned, Peer) ->
 		true ->
 			pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer);
 		_ ->
-			post_block_reject_warn(B, check_difficulty, Peer),
+			post_block_reject_warn_and_error_dump(B, check_difficulty, Peer),
 			ar_events:send(block, {rejected, invalid_difficulty, B#block.indep_hash, Peer}),
 			invalid
 	end.
@@ -520,7 +520,7 @@ pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer) ->
 	true = B#block.height >= ar_fork:height_2_6(),
 	case ar_block:verify_cumulative_diff(B, PrevB) of
 		false ->
-			post_block_reject_warn(B, check_cumulative_difficulty, Peer),
+			post_block_reject_warn_and_error_dump(B, check_cumulative_difficulty, Peer),
 			ar_events:send(block, {rejected, invalid_cumulative_difficulty,
 					B#block.indep_hash, Peer}),
 			invalid;
@@ -544,7 +544,7 @@ pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
 	SolutionHash = ar_block:compute_solution_h(H0, HashPreimage),
 	case binary:decode_unsigned(SolutionHash, big) > Diff of
 		false ->
-			post_block_reject_warn(B, check_hash_preimage, Peer),
+			post_block_reject_warn_and_error_dump(B, check_hash_preimage, Peer),
 			ar_events:send(block, {rejected, invalid_hash_preimage,
 					B#block.indep_hash, Peer}),
 			invalid;
@@ -568,7 +568,7 @@ pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer) ->
 			pre_validate_partition_number(B, PrevB, PartitionUpperBound,
 					SolutionResigned, Peer);
 		false ->
-			post_block_reject_warn(B, check_nonce_limiter_seed_data, Peer),
+			post_block_reject_warn_and_error_dump(B, check_nonce_limiter_seed_data, Peer),
 			ar_events:send(block, {rejected, invalid_nonce_limiter_seed_data,
 					B#block.indep_hash, Peer}),
 			invalid
@@ -578,7 +578,7 @@ pre_validate_partition_number(B, PrevB, PartitionUpperBound, SolutionResigned, P
 	Max = max(0, PartitionUpperBound div ?PARTITION_SIZE - 1),
 	case B#block.partition_number > Max of
 		true ->
-			post_block_reject_warn(B, check_partition_number, Peer),
+			post_block_reject_warn_and_error_dump(B, check_partition_number, Peer),
 			ar_events:send(block, {rejected, invalid_partition_number, B#block.indep_hash,
 					Peer}),
 			invalid;
@@ -590,7 +590,7 @@ pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
 	Max = max(0, (?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1),
 	case B#block.nonce > Max of
 		true ->
-			post_block_reject_warn(B, check_nonce, Peer),
+			post_block_reject_warn_and_error_dump(B, check_nonce, Peer),
 			ar_events:send(block, {rejected, invalid_nonce, B#block.indep_hash, Peer}),
 			invalid;
 		false ->
@@ -612,7 +612,7 @@ pre_validate_may_be_fetch_first_chunk(#block{ recall_byte = RecallByte,
 			case B#block.height < ar_fork:height_2_7()
 					orelse crypto:hash(sha256, Chunk) == B#block.chunk_hash of
 				false ->
-					post_block_reject_warn(B, check_chunk_hash, Peer),
+					post_block_reject_warn_and_error_dump(B, check_chunk_hash, Peer),
 					ar_events:send(block, {rejected, invalid_chunk_hash, B#block.indep_hash,
 							Peer}),
 					invalid;
@@ -646,7 +646,7 @@ pre_validate_may_be_fetch_second_chunk(#block{ recall_byte2 = RecallByte2,
 			case B#block.height < ar_fork:height_2_7()
 					orelse crypto:hash(sha256, Chunk) == B#block.chunk2_hash of
 				false ->
-					post_block_reject_warn(B, check_chunk2_hash, Peer),
+					post_block_reject_warn_and_error_dump(B, check_chunk2_hash, Peer),
 					ar_events:send(block, {rejected, invalid_chunk2_hash, B#block.indep_hash,
 							Peer}),
 					invalid;
@@ -693,7 +693,7 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 				true ->
 					pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer);
 				false ->
-					post_block_reject_warn(B, check_pow, Peer),
+					post_block_reject_warn_and_error_dump(B, check_pow, Peer),
 					ar_events:send(block, {rejected, invalid_pow, B#block.indep_hash, Peer}),
 					invalid
 			end
@@ -728,7 +728,7 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 					{block, ar_util:encode(B#block.indep_hash)}]),
 			invalid;
 		false ->
-			post_block_reject_warn(B, check_poa, Peer),
+			post_block_reject_warn_and_error_dump(B, check_poa, Peer),
 			ar_events:send(block, {rejected, invalid_poa, B#block.indep_hash, Peer}),
 			invalid;
 		{true, ChunkID} ->
@@ -758,7 +758,7 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 									{block, ar_util:encode(B#block.indep_hash)}]),
 							invalid;
 						false ->
-							post_block_reject_warn(B, check_poa2, Peer),
+							post_block_reject_warn_and_error_dump(B, check_poa2, Peer),
 							ar_events:send(block, {rejected, invalid_poa2,
 									B#block.indep_hash, Peer}),
 							invalid;
@@ -778,12 +778,12 @@ pre_validate_nonce_limiter(B, PrevB, Peer) ->
 	case ar_nonce_limiter:validate_last_step_checkpoints(B, PrevB, PrevOutput) of
 		{false, cache_mismatch} ->
 			ar_ignore_registry:add(B#block.indep_hash),
-			post_block_reject_warn(B, check_nonce_limiter, Peer),
+			post_block_reject_warn_and_error_dump(B, check_nonce_limiter, Peer),
 			ar_events:send(block, {rejected, invalid_nonce_limiter_cache_mismatch,
 					B#block.indep_hash, Peer}),
 			invalid;
 		false ->
-			post_block_reject_warn(B, check_nonce_limiter, Peer),
+			post_block_reject_warn_and_error_dump(B, check_nonce_limiter, Peer),
 			ar_events:send(block, {rejected, invalid_nonce_limiter, B#block.indep_hash, Peer}),
 			invalid;
 		{true, cache_match} ->
@@ -809,6 +809,17 @@ compute_hash(B, PrevCDiff) ->
 		true ->
 			{ok, ar_block:indep_hash2(SignedH, B#block.signature)}
 	end.
+
+post_block_reject_warn_and_error_dump(B, Step, Peer) ->
+	{ok, Config} = application:get_env(arweave, config),
+	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
+	File = filename:join(Config#config.data_dir, "invalid_block_dump_" ++ ID),
+	file:write_file(File, term_to_binary(B)),
+	post_block_reject_warn(B, Step, Peer),
+	?LOG_WARNING([{event, post_block_rejected},
+			{hash, ar_util:encode(B#block.indep_hash)}, {step, Step},
+			{peer, ar_util:format_peer(Peer)},
+			{error_dump, File}]).
 
 post_block_reject_warn(B, Step, Peer) ->
 	?LOG_WARNING([{event, post_block_rejected},

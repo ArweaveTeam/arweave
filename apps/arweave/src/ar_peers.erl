@@ -110,6 +110,7 @@
 	invalid_poa, 
 	invalid_poa2, 
 	invalid_nonce_limiter,
+	invalid_nonce_limiter_cache_mismatch,
 	invalid_chunk_hash,
 	invalid_chunk2_hash
 ]).
