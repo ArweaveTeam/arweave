@@ -1141,7 +1141,7 @@ post_blocks(Wallet, BlockMap) ->
 	lists:foldl(
 		fun
 			({empty, Height}, Acc) ->
-				ar_node:mine(),
+				ar_test_node:mine(),
 				assert_slave_wait_until_height(Height),
 				Acc;
 			({TXMap, _Height}, Acc) ->

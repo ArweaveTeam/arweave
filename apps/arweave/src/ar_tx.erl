@@ -844,7 +844,7 @@ generate_and_validate_uneven_chunk_tree_test() ->
 	).
 
 test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
-	ChunkStart = ChallengeLocation - ChallengeLocation rem ?DATA_CHUNK_SIZE,
+	ChunkStart = ar_util:floor_int(ChallengeLocation, ?DATA_CHUNK_SIZE),
 	Chunk = binary:part(Data, ChunkStart, min(?DATA_CHUNK_SIZE, byte_size(Data) - ChunkStart)),
 	#tx{ data_root = DataRoot, data_tree = DataTree } =
 		ar_tx:generate_chunk_tree(

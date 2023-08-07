@@ -55,7 +55,7 @@ test_syncs_headers() ->
 	NoSpaceTX = sign_v1_tx(master, Wallet,
 		#{ data => random_v1_data(10 * 1024), last_tx => get_tx_anchor() }),
 	assert_post_tx_to_master(NoSpaceTX),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),
 	timer:sleep(1000),
 	%% The cleanup is not expected to kick in yet.
@@ -72,7 +72,7 @@ test_syncs_headers() ->
 			TX = sign_v1_tx(master, Wallet, #{
 				data => random_v1_data(200 * 1024), last_tx => get_tx_anchor() }),
 			assert_post_tx_to_master(TX),
-			ar_node:mine(),
+			ar_test_node:mine(),
 			[{_, Height}] = ets:lookup(test_syncs_header, height),
 			[_ | _] = wait_until_height(Height),
 			ets:insert(test_syncs_header, {height, Height + 1}),
@@ -113,7 +113,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 					[],
 					lists:seq(1, 2)
 				),
-			ar_node:mine(),
+			ar_test_node:mine(),
 			[{H, _, _} | _] = wait_until_height(Height),
 			?assertEqual(length(TXs), length((read_block_when_stored(H))#block.txs)),
 			H

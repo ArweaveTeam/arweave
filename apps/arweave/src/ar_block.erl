@@ -690,10 +690,10 @@ hash_list_gen_test_() ->
 test_hash_list_gen() ->
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	BI1 = ar_test_node:wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI1)),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	BI2 = ar_test_node:wait_until_height(2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	?assertEqual([B0#block.indep_hash], generate_hash_list_for_block(B1, BI2)),
