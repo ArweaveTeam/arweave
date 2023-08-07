@@ -386,24 +386,35 @@ handle_hashing_thread_down(Ref, Reason,
 			hashing_thread_monitor_refs = Refs2 }).
 
 get_chunk_cache_size_limit() ->
+	ThreadCount = ar_mining_io:get_thread_count(),
+	% Two ranges per output.
+	OptimalLimit = ar_util:ceil_int(
+		(?RECALL_RANGE_SIZE * 2 * ThreadCount) div ?DATA_CHUNK_SIZE,
+		100),
+
 	{ok, Config} = application:get_env(arweave, config),
-	case Config#config.mining_server_chunk_cache_size_limit of
+	Limit = case Config#config.mining_server_chunk_cache_size_limit of
 		undefined ->
-			ThreadCount = ar_mining_io:get_thread_count(),
-			Free = proplists:get_value(free_memory,
+			Total = proplists:get_value(total_memory,
 					memsup:get_system_memory_data(), 2000000000),
-			Bytes = min(Free * 0.7 / 3, ?RECALL_RANGE_SIZE
-				* 2 % Two ranges per output.
-				* ThreadCount),
-			Limit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
-			Limit - Limit rem 100 + 100;
+			Bytes = Total * 0.7 / 3,
+			CalculatedLimit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
+			min(ar_util:ceil_int(CalculatedLimit, 100), OptimalLimit);
 		N ->
 			N
-	end.
+	end,
 
-log_chunk_cache_size_limit(N) ->
-	ar:console("~nSetting the chunk cache size limit to ~B chunks.~n", [N]),
-	?LOG_INFO([{event, setting_chunk_cache_size_limit}, {limit, N}]).
+	ar:console("~nSetting the chunk cache size limit to ~B chunks.~n", [Limit]),
+	?LOG_INFO([{event, setting_chunk_cache_size_limit}, {limit, Limit}]),
+	case Limit < OptimalLimit of
+		true ->
+			ar:console("~nChunk cache size limit is below optimal limit of ~p. "
+				"Mining performance may be impacted.~n"
+				"Consider adding more RAM or changing the "
+				"'mining_server_chunk_cache_size_limit' option.", [OptimalLimit]);
+		false -> ok
+	end,
+	Limit.
 
 may_be_warn_about_lag({computed_output, _Args}, Q) ->
 	case gb_sets:is_empty(Q) of
@@ -1101,9 +1112,11 @@ reset_mining_session(State) ->
 	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
 	ar_mining_io:reset(Ref),
 	CacheSizeLimit = get_chunk_cache_size_limit(),
-	log_chunk_cache_size_limit(CacheSizeLimit),
 	ets:insert(?MODULE, {chunk_cache_size, 0}),
 	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
 	ar_coordination:reset_mining_session(),
 	#mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit }.
 
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
