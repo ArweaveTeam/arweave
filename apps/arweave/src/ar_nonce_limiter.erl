@@ -27,7 +27,8 @@
 	worker_monitor_ref,
 	autocompute = true,
 	computing = false,
-	last_external_update = {not_set, 0}
+	last_external_update = {not_set, 0},
+	emit_initialized_event = true
 }).
 
 %%%===================================================================
@@ -483,7 +484,12 @@ handle_cast(check_external_vdf_server_input,
 
 handle_cast(initialized, State) ->
 	gen_server:cast(?MODULE, schedule_step),
-	ar_events:send(nonce_limiter, initialized),
+	case State#state.emit_initialized_event of
+		true ->
+			ar_events:send(nonce_limiter, initialized);
+		false ->
+			ok
+	end,
 	{noreply, State};
 
 handle_cast({initialize, [PrevB, B | Blocks]}, State) ->
@@ -578,12 +584,14 @@ handle_cast(reset_and_pause, State) ->
 	{noreply, State#state{ autocompute = false, computing = false,
 			current_session_key = undefined, sessions = gb_sets:new(), session_by_key = #{} }};
 
+handle_cast(turn_off_initialized_event, State) ->
+	{noreply, State#state{ emit_initialized_event = false }};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_info({event, node_state, initializing}, State) ->
-	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
+handle_info({event, node_state, {initializing, Blocks}}, State) ->
 	{noreply, handle_initialized(lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT), State)};
 
 handle_info({event, node_state, {validated_pre_fork_2_6_block, B}}, State) ->
@@ -715,15 +723,9 @@ exclude_computed_steps_from_steps_to_validate(_StepsToValidate, _ComputedSteps, 
 		_NumAlreadyComputed) ->
 	invalid.
 
-handle_initialized([#block{ height = Height } = B | Blocks], State) ->
-	case Height + 1 < ar_fork:height_2_6() of
-		true ->
-			ar_events:send(nonce_limiter, initialized),
-			State;
-		false ->
-			Blocks2 = take_blocks_after_fork([B | Blocks]),
-			handle_initialized2(lists:reverse(Blocks2), State)
-	end.
+handle_initialized([B | Blocks], State) ->
+	Blocks2 = take_blocks_after_fork([B | Blocks]),
+	handle_initialized2(lists:reverse(Blocks2), State).
 
 take_blocks_after_fork([#block{ height = Height } = B | Blocks]) ->
 	case Height + 1 >= ar_fork:height_2_6() of
@@ -1133,6 +1135,10 @@ debug_double_check(Label, Result, Func, Args) ->
 reset_and_pause() ->
 	gen_server:cast(?MODULE, reset_and_pause).
 
+%% @doc Do not emit the initialized event. Used in tests.
+turn_off_initialized_event() ->
+	gen_server:cast(?MODULE, turn_off_initialized_event).
+
 %% @doc Get all steps starting from the latest on the current tip. Used in tests.
 get_steps() ->
 	gen_server:call(?MODULE, get_steps).
@@ -1202,8 +1208,8 @@ test_applies_validated_steps() ->
 	NextSeed2 = crypto:strong_rand_bytes(32),
 	InitialOutput = crypto:strong_rand_bytes(32),
 	B1 = test_block(1, InitialOutput, Seed, NextSeed, [], []),
-	ets:insert(node_state, [{joined_blocks, [B1]}]),
-	ar_events:send(node_state, initializing),
+	turn_off_initialized_event(),
+	ar_events:send(node_state, {initializing, [B1]}),
 	true = ar_util:do_until(fun() -> get_current_step_number() == 1 end, 100, 1000),
 	{ok, Output2, _} = compute(2, InitialOutput, ?VDF_DIFFICULTY),
 	B2 = test_block(2, Output2, Seed, NextSeed, [], [Output2]),

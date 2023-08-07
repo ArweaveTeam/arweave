@@ -91,10 +91,27 @@ parse_options([{<<"local_peers">>, Peers} | Rest], Config) when is_list(Peers) -
 parse_options([{<<"local_peers">>, Peers} | _], _) ->
 	{error, {bad_type, local_peers, array}, Peers};
 
+parse_options([{<<"start_from_latest_state">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ start_from_latest_state = true });
+parse_options([{<<"start_from_latest_state">>, false} | Rest], Config) ->
+	parse_options(Rest, Config#config{ start_from_latest_state = false });
+parse_options([{<<"start_from_latest_state">>, Opt} | _], _) ->
+	{error, {bad_type, start_from_latest_state, boolean}, Opt};
+
+parse_options([{<<"start_from_block">>, H} | Rest], Config) when is_binary(H) ->
+	case ar_util:safe_decode(H) of
+		{ok, Decoded} when byte_size(Decoded) == 48 ->
+			parse_options(Rest, Config#config{ start_from_block = Decoded });
+		_ ->
+			{error, bad_block, H}
+	end;
+parse_options([{<<"start_from_block">>, Opt} | _], _) ->
+	{error, {bad_type, start_from_block, string}, Opt};
+
 parse_options([{<<"start_from_block_index">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config{ start_from_block_index = true });
+	parse_options(Rest, Config#config{ start_from_latest_state = true });
 parse_options([{<<"start_from_block_index">>, false} | Rest], Config) ->
-	parse_options(Rest, Config#config{ start_from_block_index = false });
+	parse_options(Rest, Config#config{ start_from_latest_state = false });
 parse_options([{<<"start_from_block_index">>, Opt} | _], _) ->
 	{error, {bad_type, start_from_block_index, boolean}, Opt};
 

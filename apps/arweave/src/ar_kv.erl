@@ -488,6 +488,20 @@ get_range3({DB, CF}, StartOffsetBinary) ->
 			end;
 		Error ->
 			Error
+	end;
+get_range3(DB, StartOffsetBinary) ->
+	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
+		{ok, Iterator} ->
+			case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
+				{ok, Key, Value} ->
+					get_range4(Iterator, #{ Key => Value });
+				{error, invalid_iterator} ->
+					{ok, #{}};
+				{error, Reason} ->
+					{error, Reason}
+			end;
+		Error ->
+			Error
 	end.
 
 get_range2(Name, Start, End, RetryCount) ->
@@ -515,6 +529,22 @@ get_range2(Name, Start, End, RetryCount) ->
 
 get_range3({DB, CF}, StartOffsetBinary, EndOffsetBinary) ->
 	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
+		{ok, Iterator} ->
+			case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
+				{ok, Key, _Value} when Key > EndOffsetBinary ->
+					{ok, #{}};
+				{ok, Key, Value} ->
+					get_range4(Iterator, #{ Key => Value }, EndOffsetBinary);
+				{error, invalid_iterator} ->
+					{ok, #{}};
+				{error, Reason} ->
+					{error, Reason}
+			end;
+		Error ->
+			Error
+	end;
+get_range3(DB, StartOffsetBinary, EndOffsetBinary) ->
+	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
 			case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
 				{ok, Key, _Value} when Key > EndOffsetBinary ->
