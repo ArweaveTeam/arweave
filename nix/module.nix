@@ -28,7 +28,7 @@ let
       transaction_blacklist_urls = cfg.transactionBlacklistURLs;
       max_disk_pool_buffer_mb = cfg.maxDiskPoolBufferMb;
       max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
-      max_vdf_validation_thread_count = cfg.maxVDFValidationThreadCount;
+      max_nonce_limiter_validation_thread_count = cfg.maxVDFValidationThreadCount;
       block_pollers = cfg.blockPollers;
       polling = cfg.polling;
       tx_validators = cfg.txValidators;
