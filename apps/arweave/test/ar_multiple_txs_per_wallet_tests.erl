@@ -199,7 +199,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect master to have the set difference in the mempool.
 	assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
 	%% Mine a block on master and expect both transactions to be included.
-	ar_node:mine(),
+	ar_test_node:mine(),
 	BI2 = wait_until_height(2),
 	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
 	?assertEqual(
@@ -497,7 +497,7 @@ mines_format_2_txs_without_size_limit() ->
 		end,
 		lists:seq(1, ?BLOCK_TX_COUNT_LIMIT + 1)
 	),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[{H, _, _} | _] = wait_until_height(1),
 	B = read_block_when_stored(H),
 	?assertEqual(?BLOCK_TX_COUNT_LIMIT, length(B#block.txs)),
@@ -702,7 +702,7 @@ joins_network_successfully() ->
 	disconnect_from_slave(),
 	TX2 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
 	assert_post_tx_to_master(TX2),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
 	TX3 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
 	assert_post_tx_to_slave(TX3),
@@ -784,7 +784,7 @@ recovers_from_forks(ForkHeight) ->
 	{MasterPostForkTXs, SlavePostForkTXs} = lists:foldl(
 		fun(Height, {MasterTXs, SlaveTXs}) ->
 			UpdatedMasterTXs = MasterTXs ++ ([NewMasterTX] = PostTXToMaster()),
-			ar_node:mine(),
+			ar_test_node:mine(),
 			BI = wait_until_height(Height),
 			assert_block_txs([NewMasterTX], BI),
 			UpdatedSlaveTXs = SlaveTXs ++ ([NewSlaveTX] = PostTXToSlave()),

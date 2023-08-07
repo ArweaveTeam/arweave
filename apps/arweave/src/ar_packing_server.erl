@@ -106,7 +106,7 @@ init([]) ->
 		case Config#config.packing_rate of
 			undefined ->
 				ChosenRate = max(1, ceil(2 * MaxRate / 3)),
-				ChosenRate2 = ChosenRate - ChosenRate rem 10 + 10,
+				ChosenRate2 = ar_util:ceil_int(ChosenRate, 10),
 				log_packing_rate(ChosenRate2, MaxRate),
 				SchedulersRequired2 = ceil(ChosenRate2 / (1000 / (?PACKING_LATENCY_MS))),
 				{ChosenRate2, SchedulersRequired2};
@@ -138,7 +138,7 @@ init([]) ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
 				Limit2 = min(1200, erlang:ceil(Free * 0.9 / 3 / 262144)),
-				Limit3 = Limit2 - Limit2 rem 100 + 100,
+				Limit3 = ar_util:ceil_int(Limit2, 100),
 				Limit3;
 			Limit ->
 				Limit

@@ -320,7 +320,7 @@ simple_retarget_test_() ->
 		ar_test_node:start(B0),
 		lists:foreach(
 			fun(Height) ->
-				ar_node:mine(),
+				ar_test_node:mine(),
 				ar_test_node:wait_until_height(Height)
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
