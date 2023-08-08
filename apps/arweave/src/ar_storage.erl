@@ -94,16 +94,22 @@ get_tx_confirmation_data(TXID) ->
 		{ok, Binary} ->
 			{ok, binary_to_term(Binary)};
 		not_found ->
-			case catch ar_arql_db:select_block_by_tx_id(ar_util:encode(TXID)) of
-				{ok, #{
-					height := Height,
-					indep_hash := EncodedIndepHash
-				}} ->
-					{ok, {Height, ar_util:decode(EncodedIndepHash)}};
-				not_found ->
+			{ok, Config} = application:get_env(arweave, config),
+			case lists:member(arql, Config#config.disable) of
+				true ->
 					not_found;
-				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-					{error, timeout}
+				_ ->
+					case catch ar_arql_db:select_block_by_tx_id(ar_util:encode(TXID)) of
+						{ok, #{
+							height := Height,
+							indep_hash := EncodedIndepHash
+						}} ->
+							{ok, {Height, ar_util:decode(EncodedIndepHash)}};
+						not_found ->
+							not_found;
+						{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
+							{error, timeout}
+					end
 			end
 	end.
 
