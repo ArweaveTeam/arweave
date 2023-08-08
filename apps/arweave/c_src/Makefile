@@ -28,9 +28,17 @@ TESTS_OUTPUT = $(TESTS_DIR)/tests
 UNAME_SYS := $(shell uname -s)
 ifeq ($(UNAME_SYS), Darwin)
 	OSX_CPU_ARCH ?= x86_64
-	ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M1"),)
-	  OSX_CPU_ARCH = arm64
-	endif
+	# nix systems may not have sysctl where uname -m will return the correct arch
+	SYSCTL_EXISTS := $(shell which sysctl 2>/dev/null)
+	ifdef SYSCTL_EXISTS
+		ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M(1|2)"),)
+	  	OSX_CPU_ARCH = arm64
+		endif
+  else
+		ifneq ($(shell uname -m | egrep "arm64"),)
+	  	OSX_CPU_ARCH = arm64
+	 	endif
+  endif
 	CC ?= cc
 	CFLAGS += -std=c99 -arch $(OSX_CPU_ARCH) -finline-functions -Wall -Wmissing-prototypes
 	CXXFLAGS += -arch $(OSX_CPU_ARCH) -finline-functions -Wall
@@ -96,13 +104,13 @@ $(C_SRC_OUTPUT): $(ALL_LIB_OBJECTS)
 %.o: %.cpp
 	$(COMPILE_CPP) $(OUTPUT_OPTION) $<
 
-$(TESTS_OUTPUT): $(C_OBJECTS) $(TESTS_OBJECTS) 
+$(TESTS_OUTPUT): $(C_OBJECTS) $(TESTS_OBJECTS)
 	$(link_verbose) $(CXX) $(C_OBJECTS) $(TESTS_OBJECTS) $(LDFLAGS) $(LDLIBS) -o $(TESTS_OUTPUT)
 
 tests: $(TESTS_OUTPUT)
 
 clean:
-	@rm -f $(C_SRC_OUTPUT) $(TESTS_OUTPUT) $(ALL_LIB_OBJECTS) $(TESTS_OBJECTS) 
+	@rm -f $(C_SRC_OUTPUT) $(TESTS_OUTPUT) $(ALL_LIB_OBJECTS) $(TESTS_OBJECTS)
 
 
 
