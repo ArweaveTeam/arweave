@@ -18,9 +18,17 @@ C_SRC_OUTPUT ?= $(CURDIR)/../priv/$(PROJECT)_driver
 UNAME_SYS := $(shell uname -s)
 ifeq ($(UNAME_SYS), Darwin)
 	OSX_CPU_ARCH ?= x86_64
-	ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M1"),)
-	  OSX_CPU_ARCH = arm64
-	endif
+	# nix systems may not have sysctl where uname -m will return the correct arch
+	SYSCTL_EXISTS := $(shell which sysctl 2>/dev/null)
+	ifdef SYSCTL_EXISTS
+		ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M(1|2)"),)
+	  	OSX_CPU_ARCH = arm64
+		endif
+  else
+		ifneq ($(shell uname -m | egrep "arm64"),)
+	  	OSX_CPU_ARCH = arm64
+	 	endif
+  endif
 	CC ?= cc
 	CFLAGS ?= -O3 -std=c99 -arch $(OSX_CPU_ARCH) -Wall -Wmissing-prototypes
 	CXXFLAGS ?= -O3 -arch $(OSX_CPU_ARCH) -Wall
