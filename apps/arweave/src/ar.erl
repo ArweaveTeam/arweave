@@ -68,6 +68,8 @@
 		ar_mempool_tests,
 		ar_mine_randomx_tests,
 		ar_mine_vdf_tests,
+		ar_mining_io_tests,
+		ar_mining_server_tests,
 		ar_multiple_txs_per_wallet_tests,
 		ar_node_tests,
 		ar_poa_tests,
