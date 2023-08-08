@@ -13,7 +13,7 @@
  {<<"gun">>,{pkg,<<"gun">>,<<"1.3.3">>},0},
  {<<"jiffy">>,
   {git,"https://github.com/ArweaveTeam/jiffy.git",
-       {ref,"15a74ea720305fef559d9807d613af93f668ac36"}},
+       {ref,"ad95f05cf2bf8d44cf30611089c089410f31d723"}},
   0},
  {<<"prometheus">>,{pkg,<<"prometheus">>,<<"4.10.0">>},0},
  {<<"prometheus_cowboy">>,{pkg,<<"prometheus_cowboy">>,<<"0.1.8">>},0},
