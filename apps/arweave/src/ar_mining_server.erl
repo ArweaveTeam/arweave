@@ -497,6 +497,10 @@ distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
 		true ->
 			distribute_output(Partitions, Candidate, Distributed, State, N);
 		false ->
+			#state{ session = Session } = State,
+			#mining_session{ chunk_cache = Map } = Session,
+			?LOG_ERROR([{event, distribute_output},
+				{partition, PartitionNumber}, {keys, maps:size(Map)}]),
 			#state{ hashing_threads = Threads } = State,
 			{Thread, Threads2} = pick_hashing_thread(Threads),
 			Thread ! {compute_h0,
@@ -623,6 +627,11 @@ handle_task({computed_h0, Candidate}, State) ->
 					PartitionNumber2 = ?PARTITION_NUMBER(RecallRange2Start),
 					Candidate2 = Candidate#mining_candidate{ partition_number2 = PartitionNumber2 },
 					Candidate3 = generate_cache_ref(Candidate2),
+					?LOG_ERROR([{event, computed_h0},
+							{partition1, PartitionNumber},
+							{partition2, PartitionNumber2},
+							{recall_range1, RecallRange1Start},
+							{recall_range2, RecallRange2Start}]),
 
 					Range1Exists = ar_mining_io:read_recall_range(
 							chunk1, Candidate3, RecallRange1Start),
@@ -655,6 +664,7 @@ handle_task({computed_h1, Candidate}, State) ->
 			#mining_candidate{ h1 = H1, chunk1 = Chunk1 } = Candidate,
 			case binary:decode_unsigned(H1, big) > Diff of
 				true ->
+					?LOG_ERROR([{event, h1_solution}, {partition, Candidate#mining_candidate.partition_number}]),
 					#state{ session = Session } = State,
 					Map2 = evict_chunk_cache(Candidate, Map),
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
@@ -702,6 +712,11 @@ handle_task({computed_h2, Candidate}, State) ->
 			} = Candidate,
 			case binary:decode_unsigned(H2, big) > get_difficulty(State, Candidate) of
 				true ->
+					?LOG_ERROR([
+						{event, h2_solution},
+						{nonce, Nonce},
+						{h0, ar_util:encode(H0)},
+						{partition, Candidate#mining_candidate.partition_number2}]),
 					case Peer of
 						not_set ->
 							prepare_and_post_solution(Candidate, State);
