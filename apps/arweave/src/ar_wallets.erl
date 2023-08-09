@@ -359,11 +359,13 @@ apply_block2(B, PrevB, Args, Tree, DAG) ->
 			{{error, invalid_kryder_plus_rate_multiplier}, DAG};
 		_ ->
 			Tree2 = apply_diff(Accounts, Tree),
-			{RootHash2, _, _} = ar_block:hash_wallet_list(Tree2),
+			{RootHash2, _, UpdateMap} = ar_block:hash_wallet_list(Tree2),
 			case B#block.wallet_list == RootHash2 of
 				true ->
 					RootHash = PrevB#block.wallet_list,
 					DAG2 = maybe_add_node(DAG, RootHash2, RootHash, Accounts, Denomination2),
+					gen_server:cast(ar_storage, {store_account_tree_update, B#block.height,
+							RootHash2, UpdateMap}),
 					{{ok, RootHash2}, DAG2};
 				false ->
 					{{error, invalid_wallet_list}, DAG}
