@@ -358,22 +358,23 @@ read_block(BH) ->
 %% to the tree. The balance may be also 0 when the address exists in the tree. Return
 %% not_found if some of the files with the account data are missing.
 read_account(Addr, RootHash) ->
-	Key = term_to_binary({RootHash, root}),
-	case read_account(ar_kv:get(account_tree_db, Key), Addr, []) of
-		not_found ->
+	Key = RootHash,
+	case read_account(ar_kv:get_next(account_tree_db, Key), Addr, []) of
+		none ->
 			read_account2(Addr, RootHash);
 		Res ->
 			Res
 	end.
 
-read_account(not_found, Addr, Keys) ->
+read_account(none, Addr, Keys) ->
 	case Keys of
 		[] ->
 			not_found;
-		[Key | Keys2] ->
-			read_account(ar_kv:get(account_tree_db, term_to_binary(Key)), Addr, Keys2)
+		[{H, Prefix} | Keys2] ->
+			Key = << H/binary, Prefix/binary >>,
+			read_account(ar_kv:get_next(account_tree_db, Key), Addr, Keys2)
 	end;
-read_account({ok, V}, Addr, Keys) ->
+read_account({ok, _, V}, Addr, Keys) ->
 	case binary_to_term(V) of
 		{Key, Value} when Addr == Key ->
 			Value;
@@ -381,8 +382,9 @@ read_account({ok, V}, Addr, Keys) ->
 			case Keys of
 				[] ->
 					not_found;
-				[Key2 | Keys2] ->
-					read_account(ar_kv:get(account_tree_db, term_to_binary(Key2)), Addr, Keys2)
+				[{H, Prefix} | Keys2] ->
+					Key2 = << H/binary, Prefix/binary >>,
+					read_account(ar_kv:get_next(account_tree_db, Key2), Addr, Keys2)
 			end;
 		Keys2 ->
 			case get_matching_keys(Addr, Keys2) of
@@ -390,13 +392,13 @@ read_account({ok, V}, Addr, Keys) ->
 					case Keys of
 						[] ->
 							not_found;
-						[Key3 | Keys3] ->
-							read_account(ar_kv:get(account_tree_db, term_to_binary(Key3)),
-									Addr, Keys3)
+						[{H2, Prefix2} | Keys3] ->
+							Key2 = << H2/binary, Prefix2/binary >>,
+							read_account(ar_kv:get_next(account_tree_db, Key2), Addr, Keys3)
 					end;
-				[Key2 | Keys3] ->
-					read_account(ar_kv:get(account_tree_db, term_to_binary(Key2)), Addr,
-							Keys3 ++ Keys)
+				[{H3, Prefix3} | Keys3] ->
+					Key3 = << H3/binary, Prefix3/binary >>,
+					read_account(ar_kv:get_next(account_tree_db, Key3), Addr, Keys3 ++ Keys)
 			end
 	end;
 read_account(Error, _Addr, _Keys) ->
@@ -866,11 +868,11 @@ write_wallet_list(Height, Tree) ->
 read_wallet_list(<<>>) ->
 	{ok, ar_patricia_tree:new()};
 read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
-	Key = term_to_binary({WalletListHash, root}),
-	read_wallet_list(ar_kv:get(account_tree_db, Key), ar_patricia_tree:new(), [],
-			WalletListHash).
+	Key = WalletListHash,
+	read_wallet_list(ar_kv:get_next(account_tree_db, Key), ar_patricia_tree:new(), [],
+			WalletListHash, WalletListHash).
 
-read_wallet_list({ok, Bin}, Tree, Keys, RootHash) ->
+read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K) ->
 	case binary_to_term(Bin) of
 		{Key, Value} ->
 			Tree2 = ar_patricia_tree:insert(Key, Value, Tree),
@@ -878,16 +880,20 @@ read_wallet_list({ok, Bin}, Tree, Keys, RootHash) ->
 				[] ->
 					{ok, Tree2};
 				[{H, Prefix} | Keys2] ->
-					Key2 = term_to_binary({H, Prefix}),
-					read_wallet_list(ar_kv:get(account_tree_db, Key2), Tree2, Keys2, RootHash)
+					Key2 = << H/binary, Prefix/binary >>,
+					read_wallet_list(ar_kv:get_next(account_tree_db, Key2), Tree2, Keys2,
+							RootHash, H)
 			end;
 		[{H, Prefix} | Hs] ->
-			Key2 = term_to_binary({H, Prefix}),
-			read_wallet_list(ar_kv:get(account_tree_db, Key2), Tree, Hs ++ Keys, RootHash)
+			Key3 = << H/binary, Prefix/binary >>,
+			read_wallet_list(ar_kv:get_next(account_tree_db, Key3), Tree, Hs ++ Keys, RootHash,
+					H)
 	end;
-read_wallet_list(not_found, _Tree, _Keys, RootHash) ->
+read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K) ->
 	read_wallet_list_from_chunk_files(RootHash);
-read_wallet_list(Error, _Tree, _Keys, _RootHash) ->
+read_wallet_list(none, _Tree, _Keys, RootHash, _K) ->
+	read_wallet_list_from_chunk_files(RootHash);
+read_wallet_list(Error, _Tree, _Keys, _RootHash, _K) ->
 	Error.
 
 read_wallet_list_from_chunk_files(WalletListHash) when is_binary(WalletListHash) ->
@@ -1246,8 +1252,9 @@ store_account_tree_update(Height, RootHash, Map) ->
 	?LOG_INFO([{event, storing_account_tree_update}, {updated_key_count, map_size(Map)},
 			{height, Height}, {root_hash, ar_util:encode(RootHash)}]),
 	maps:map(
-		fun(Key, Value) ->
-			DBKey = term_to_binary(Key),
+		fun({H, Prefix} = Key, Value) ->
+			Prefix2 = case Prefix of root -> <<>>; _ -> Prefix end,
+			DBKey = << H/binary, Prefix2/binary >>,
 			case ar_kv:get(account_tree_db, DBKey) of
 				not_found ->
 					case ar_kv:put(account_tree_db, DBKey, term_to_binary(Value)) of
@@ -1327,7 +1334,21 @@ test_store_and_retrieve_wallet_list() ->
 	ExpectedWL = ar_patricia_tree:from_proplist([{Addr, {0, TX#tx.id}}]),
 	WalletListHash = write_wallet_list(0, ExpectedWL),
 	{ok, ActualWL} = read_wallet_list(WalletListHash),
-	assert_wallet_trees_equal(ExpectedWL, ActualWL).
+	assert_wallet_trees_equal(ExpectedWL, ActualWL),
+	Addr2 = binary:part(Addr, 0, 16),
+	ExpectedWL2 = ar_patricia_tree:from_proplist([{Addr, {0, TX#tx.id}},
+												{Addr2, {0, crypto:strong_rand_bytes(32)}}]),
+	WalletListHash2 = write_wallet_list(0, ExpectedWL2),
+	{ok, ActualWL2} = read_wallet_list(WalletListHash2),
+	assert_wallet_trees_equal(ExpectedWL2, ActualWL2),
+	{WalletListHash, ActualWL3, _UpdateMap} = ar_block:hash_wallet_list(ActualWL),
+	Addr3 = << (binary:part(Addr, 0, 3))/binary, (crypto:strong_rand_bytes(29))/binary >>,
+	ActualWL4 = ar_patricia_tree:insert(Addr3, {100, crypto:strong_rand_bytes(32)},
+			ar_patricia_tree:insert(Addr2, {0, crypto:strong_rand_bytes(32)}, ActualWL3)),
+	{WalletListHash3, ActualWL5, UpdateMap2} = ar_block:hash_wallet_list(ActualWL4),
+	store_account_tree_update(1, WalletListHash3, UpdateMap2),
+	{ok, ActualWL6} = read_wallet_list(WalletListHash3),
+	assert_wallet_trees_equal(ActualWL5, ActualWL6).
 
 assert_wallet_trees_equal(Expected, Actual) ->
 	?assertEqual(
