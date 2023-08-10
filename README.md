@@ -77,7 +77,7 @@ You can join the public testnet now:
 ./bin/start peer testnet-1.arweave.net peer testnet-2.arweave.net peer testnet-3.arweave.net
 ```
 
-We recommed you do not use your mainnet mining address on testnet. Also, do not join the
+We recommend you do not use your mainnet mining address on testnet. Also, do not join the
 testnet from the mainnet machine.
 
 ### Starting New Weave

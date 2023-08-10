@@ -1,6 +1,6 @@
 # Arweave code style
 
-The main development language of the Arweave client is Erlang, and as the number of developers of the project continues to grow this stlye guide will act as a means of keeping the codebase clean and comprehensible.
+The main development language of the Arweave client is Erlang, and as the number of developers of the project continues to grow this style guide will act as a means of keeping the codebase clean and comprehensible.
 
 
 
@@ -12,7 +12,7 @@ The main development language of the Arweave client is Erlang, and as the number
 
 Each module should have a simplistic comment at the top that encompasses and describes the set of functions that can be found within it.
 
-Module description comments should be prixed with '%%%' .
+Module description comments should be prefixed with '%%%' .
 
 ```erlang
 %% Example: head of ar_serialize.
@@ -127,7 +127,7 @@ The `true ->` subclause of the `if` clause is confusing because `true` suggests 
 
 Deeply nested code should be avoided as it can mask a large set of alternative code paths and can become very difficult to debug.
 
-Code that uses case or receive structures should aim for a singular level of nesting and at most two levels of depth.
+Code that uses case or receives structures should aim for a singular level of nesting and at most two levels of depth.
 
 ```erlang
 %% Bad
@@ -323,7 +323,7 @@ When constructing or deconstructing tuples ensure a space between each comma sep
 
 ### List deconstruction
 
-When deconstructing a list into head and tail ensure that a space is placed either side of the '|' separation character.
+When deconstructing a list into head and tail ensure that a space is placed on either side of the '|' separation character.
 
 ```erlang
 %% Bad
@@ -337,7 +337,7 @@ When deconstructing a list into head and tail ensure that a space is placed eith
 
 ### Record construction/deconstruction
 
-When constructing or deconstructing a record ensure that a space is placed eithter side of each field being handled.
+When constructing or deconstructing a record ensure that a space is placed on either side of each field being handled.
 
 ```erlang
 %% Bad
