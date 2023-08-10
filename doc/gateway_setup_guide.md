@@ -16,7 +16,7 @@ In order to allow the gateway to serve transactions under custom domain names, a
 
 In order to point a custom domain name to a specific transaction a special DNS record needs to be created in its DNS zone.
 
-For example, for a give custom domain name `custom.domain.example` and a given target transaction ID `1H0jHTlM6bYFdnrwZ4yMx92EgJITDRakse2YP_sDkBc`, a TXT record should be created with the name `_arweave.custom.domain.example` and the transaction ID as its value (`1H0jHTlM6bYFdnrwZ4yMx92EgJITDRakse2YP_sDkBc`).
+For example, for a given custom domain name `custom.domain.example` and a given target transaction ID `1H0jHTlM6bYFdnrwZ4yMx92EgJITDRakse2YP_sDkBc`, a TXT record should be created with the name `_arweave.custom.domain.example` and the transaction ID as its value (`1H0jHTlM6bYFdnrwZ4yMx92EgJITDRakse2YP_sDkBc`).
 
 ### Startup
 
@@ -37,7 +37,7 @@ Configuration field:
 }
 ```
 
-To allow a transactions to be served from custom domains, use the command line flag `custom_domain` or the `"custom_domains"` configuration field and specify the custom domain name to serve from **in addition** to the `gateway` flag.
+To allow a transaction to be served from custom domains, use the command line flag `custom_domain` or the `"custom_domains"` configuration field and specify the custom domain name to serve from **in addition** to the `gateway` flag.
 
 For example, given the custom domain names `custom1.domain.example` and `custom2.domain.example`:
 
