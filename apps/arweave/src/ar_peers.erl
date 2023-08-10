@@ -251,7 +251,7 @@ rate_gossiped_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 	case check_peer(Peer) of
 		ok ->
 			gen_server:cast(?MODULE,
-				{valid_data, Peer, DataType,  LatencyMicroseconds / 1000, DataSize});
+				{valid_data, Peer, DataType,  LatencyMicroseconds / 1000, DataSize, 1});
 		_ ->
 			ok
 	end.
@@ -353,7 +353,6 @@ handle_cast(ping_peers, State) ->
 handle_cast({valid_data, Peer, _DataType, LatencyMilliseconds, DataSize, Concurrency}, State) ->
 	update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, true),
 	{noreply, State};
-
 
 handle_cast({invalid_data, Peer, _DataType}, State) ->
 	update_rating(Peer, false),
@@ -1058,6 +1057,64 @@ test_block_rejected() ->
 	?assertEqual(#{Peer => #performance{}}, ar_peers:get_peer_performances([Peer])),
 	?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)).
 
+rate_data_test() ->
+	ets:delete_all_objects(?MODULE),
+	Peer1 = {1, 2, 3, 4, 1984},
+
+	?assertEqual(#performance{}, get_or_init_performance(Peer1)),
+	?assertEqual(0, get_total_rating(lifetime)),
+	?assertEqual(0, get_total_rating(current)),
+
+	ar_peers:rate_fetched_data(Peer1, chunk, {error, timeout}, 1000000, 100, 10),
+	timer:sleep(500),
+	assert_performance(#performance{ average_success = 0.965 }, get_or_init_performance(Peer1)),
+	?assertEqual(0, get_total_rating(lifetime)),
+	?assertEqual(0, get_total_rating(current)),
+
+	ar_peers:rate_fetched_data(Peer1, block, 1000000, 100),
+	timer:sleep(500),
+	assert_performance(#performance{
+			total_bytes = 100,
+			total_throughput = 0.1,
+			total_transfers = 1,
+			average_latency = 50,
+			average_throughput = 0.005,
+			average_success = 0.9662,
+			lifetime_rating = 0.0966,
+			current_rating = 0.0048 },
+		get_or_init_performance(Peer1)),
+	?assertEqual(0.0966, round(get_total_rating(lifetime), 4)),
+	?assertEqual(0.0048, round(get_total_rating(current), 4)),
+
+	ar_peers:rate_fetched_data(Peer1, tx, ok, 1000000, 100, 2),
+	timer:sleep(500),
+	assert_performance(#performance{
+			total_bytes = 200,
+			total_throughput = 0.2,
+			total_transfers = 2,
+			average_latency = 97.5,
+			average_throughput = 0.0148,
+			average_success = 0.9674,
+			lifetime_rating = 0.0967,
+			current_rating = 0.0143 },
+		get_or_init_performance(Peer1)),
+	?assertEqual(0.0967, round(get_total_rating(lifetime), 4)),
+	?assertEqual(0.0143, round(get_total_rating(current), 4)),
+
+	ar_peers:rate_gossiped_data(Peer1, block, 1000000, 100),
+	timer:sleep(500),
+	assert_performance(#performance{
+			total_bytes = 300,
+			total_throughput = 0.3,
+			total_transfers = 3,
+			average_latency = 142.625,
+			average_throughput = 0.019,
+			average_success = 0.9685,
+			lifetime_rating = 0.0969,
+			current_rating = 0.0184 },
+		get_or_init_performance(Peer1)),
+	?assertEqual(0.0969, round(get_total_rating(lifetime), 4)),
+	?assertEqual(0.0184, round(get_total_rating(current), 4)).
 
 assert_performance(Expected, Actual) ->
 	?assertEqual(Expected#performance.total_bytes, Actual#performance.total_bytes),
