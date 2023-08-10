@@ -2892,7 +2892,9 @@ may_be_reset_disk_pool_full_scan_key(_Key, State) ->
 parse_disk_pool_chunk(Bin) ->
 	case binary_to_term(Bin) of
 		{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey} ->
-			{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey, false};
+			{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey, true, false, false};
+		{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey, PassesStrict} ->
+			{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey, true, PassesStrict, false};
 		R ->
 			R
 	end.
