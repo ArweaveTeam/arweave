@@ -1760,7 +1760,15 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
-may_be_reset_miner(#{ miner_2_6 := Miner_2_6, automine := false } = State) ->
+%% automine will only be false in tests.
+may_be_reset_miner(#{ miner_2_5 := Miner_2_5, miner_2_6 := Miner_2_6,
+		automine := false } = State) ->
+	case Miner_2_5 of
+		undefined ->
+			ok;
+		_ ->
+			ar_mine:stop(Miner_2_5)
+	end,
 	case Miner_2_6 of
 		undefined ->
 			ok;

@@ -158,7 +158,7 @@ p3_error_response(P3Status, Req) ->
 
 -ifdef(TESTNET).
 handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->
-	ar_node:mine(),
+	ar_test_node:mine(),
 	{200, #{}, <<>>, Req};
 
 handle4(<<"GET">>, [<<"tx">>, <<"ready_for_mining">>], Req, _Pid) ->
