@@ -97,8 +97,7 @@ start_node(B0, Config) ->
 	ok = application:set_env(arweave, config, Config2),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
-	[wait_until_syncs_data(N * Size, (N + 1) * Size, Packing)
-			|| {Size, N, Packing} <- Config2#config.storage_modules],
+	wait_until_syncs_genesis_data(),
 	erlang:node().
 
 %% @doc Launch the given number (>= 1, =< ?MAX_MINERS) of the mining nodes in the coordinated
@@ -268,9 +267,10 @@ write_genesis_files(DataDir, B0) ->
 		),
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
-wait_until_syncs_data(Left, Right, _Packing) when Left >= Right ->
+wait_until_syncs_data(Left, Right, WeaveSize, _Packing)
+  		when Left >= Right orelse Left >= WeaveSize ->
 	ok;
-wait_until_syncs_data(Left, Right, Packing) ->
+wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
 	true = ar_util:do_until(
 		fun() ->
 			case Packing of
@@ -293,7 +293,7 @@ wait_until_syncs_data(Left, Right, Packing) ->
 		1000,
 		30000
 	),
-	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, Packing).
+	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, Packing).
 
 %% @doc Return the list of the configured coordinated mining peers for the peer
 %% with the given number I and the total number of confiruded mining peers N.
@@ -794,8 +794,15 @@ slave_mine() ->
 	slave_call(ar_node, mine, []).
 
 wait_until_syncs_genesis_data() ->
+	WeaveSize = (ar_node:get_current_block())#block.weave_size,
+	wait_until_syncs_data(0, WeaveSize, WeaveSize, any),
+	%% Once the data is stored in the disk pool, make the storage modules
+	%% copy the missing data over from each other. This procedure is executed on startup
+	%% but the disk pool did not have any data at the time.
 	{ok, Config} = application:get_env(arweave, config),
-	[wait_until_syncs_data(N * Size, (N + 1) * Size, Packing)
+	[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:id(Module)),
+			sync_data) || Module <- Config#config.storage_modules],
+	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)
 			|| {Size, N, Packing} <- Config#config.storage_modules].
 
 slave_wait_until_joined() ->
