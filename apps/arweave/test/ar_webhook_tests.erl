@@ -60,7 +60,7 @@ test_webhooks() ->
 			fun(Height) ->
 				SignedTX = sign_tx(master, Wallet, #{}),
 				assert_post_tx_to_master(SignedTX),
-				ar_node:mine(),
+				ar_test_node:mine(),
 				wait_until_height(Height),
 				SignedTX
 			end,

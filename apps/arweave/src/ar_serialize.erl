@@ -1469,7 +1469,7 @@ candidate_to_json_struct(
 		step_number = StepNumber
 	}) ->
 	JSON = [
-		{cm_diff, integer_to_binary(Diff)},
+		{cm_diff, ar_util:integer_to_binary(Diff)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{h0, ar_util:encode(H0)},
 		{partition_number, integer_to_binary(PartitionNumber)},
@@ -1503,7 +1503,7 @@ h2_inputs_to_json_struct(Candidate, H1List) ->
 	CandidateJSON ++ H1ListJSON.
 
 json_struct_to_candidate(JSON) ->
-	Diff = binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
+	Diff = ar_util:binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
 	H1 = decode_if_set(JSON, <<"h1">>, fun ar_util:decode/1, not_set),
 	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),

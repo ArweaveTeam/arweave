@@ -304,7 +304,7 @@ test_reject_block_invalid_double_signing_proof() ->
 	B6 = slave_call(ar_storage, read_block, [hd(BI2)]),
 	B7 = sign_block(B6, B1, Key),
 	post_block(B7, valid),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	BI3 = assert_slave_wait_until_height(3),
 	B8 = slave_call(ar_storage, read_block, [hd(BI3)]),
 	?assertNotEqual(undefined, B8#block.double_signing_proof),
@@ -318,7 +318,7 @@ test_reject_block_invalid_double_signing_proof() ->
 	TX1 = sign_tx(FullKey, #{ last_tx => <<>>, quantity => 1, target => Target }),
 	TX2 = sign_tx(FullKey, #{ last_tx => get_tx_anchor(), data => <<"a">> }),
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, [TX1, TX2]),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	BI4 = assert_slave_wait_until_height(4),
 	B9 = slave_call(ar_storage, read_block, [hd(BI4)]),
 	Accounts2 = ar_wallets:get(B9#block.wallet_list, [BannedAddr, Target]),
@@ -418,7 +418,7 @@ test_send_block2() ->
 	disconnect_from_slave(),
 	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[{H, _, _}, _] = wait_until_height(1),
 	B = ar_storage:read_block(H),
 	TXs2 = sort_txs_by_block_order(TXs, B),
@@ -459,7 +459,7 @@ test_send_block2() ->
 	TXs3 = [sign_tx(master, Wallet, #{ last_tx => get_tx_anchor(),
 			data => crypto:strong_rand_bytes(10 * 1024) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs3),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[{H2, _, _}, _, _] = wait_until_height(2),
 	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
 			peer => slave_peer(), path => "/block_announcement",
@@ -497,7 +497,7 @@ test_send_block2() ->
 	connect_to_slave(),
 	lists:foreach(
 		fun(Height) ->
-			ar_node:mine(),
+			ar_test_node:mine(),
 			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(3, 3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH)
@@ -509,7 +509,7 @@ test_send_block2() ->
 					indep_hash = B5#block.indep_hash,
 					previous_block = B5#block.previous_block }) }),
 	disconnect_from_slave(),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[_ | _] = wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
 	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
@@ -577,7 +577,7 @@ test_resigned_solution() ->
 	B5H = B5#block.indep_hash,
 	post_block(B5, [valid]),
 	[{B5H, _, _}, {B2H, _, _}, _] = wait_until_height(2),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[{B6H, _, _}, _, _, _] = wait_until_height(3),
 	connect_to_slave(),
 	[{B6H, _, _}, {B5H, _, _}, {B2H, _, _}, _] = assert_slave_wait_until_height(3).

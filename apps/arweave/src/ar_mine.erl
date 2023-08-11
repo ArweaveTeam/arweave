@@ -916,7 +916,7 @@ execute_test_() ->
 test_basic() ->
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	BI = ar_test_node:wait_until_height(1),
 	B1 = ar_test_node:read_block_when_stored(hd(BI)),
 	Threads = start_io_threads(),
