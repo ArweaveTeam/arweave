@@ -791,7 +791,7 @@ slave_call(Module, Function, Args, Timeout) ->
 	remote_call(Module, Function, Args, Timeout, slave_node()).
 
 slave_mine() ->
-	slave_call(ar_node, mine, []).
+	slave_call(ar_test_node, mine, []).
 
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -805,7 +805,8 @@ wait_until_syncs_genesis_data() ->
 	[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:id(Module)),
 			sync_data) || Module <- Config#config.storage_modules],
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)
-			|| {Size, N, Packing} <- Config#config.storage_modules].
+			|| {Size, N, Packing} <- Config#config.storage_modules],
+	ok.
 
 slave_wait_until_joined() ->
 	ar_util:do_until(
