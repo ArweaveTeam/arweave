@@ -495,19 +495,19 @@ e2e_deposit_before_charge() ->
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(1),
 
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(2),
 
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(3),
 
 	timer:sleep(1000),
@@ -725,10 +725,10 @@ e2e_charge_before_deposit() ->
 	TX1 = sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
 	assert_post_tx_to_master(TX1),
 	
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(1),
 
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(2),
 
 	?assertMatch(
@@ -749,10 +749,10 @@ e2e_charge_before_deposit() ->
 	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
 	assert_post_tx_to_master(TX2),
 	
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(3),
 
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(4),
 
 	timer:sleep(1000),
@@ -871,7 +871,7 @@ e2e_concurrent_requests() ->
 	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),
 	assert_post_tx_to_master(TX1),
 	
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(1),
 
 	timer:sleep(1000),

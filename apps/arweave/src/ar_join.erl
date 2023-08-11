@@ -509,9 +509,9 @@ basic_node_join_test() ->
 	{timeout, 60, fun() ->
 		[B0] = ar_weave:init([]),
 		ar_test_node:start(B0),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		ar_test_node:wait_until_height(1),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		ar_test_node:wait_until_height(2),
 		ar_test_node:join_on_master(),
 		ar_test_node:assert_slave_wait_until_height(2)
@@ -522,9 +522,9 @@ node_join_test() ->
 	{timeout, 60, fun() ->
 		[B0] = ar_weave:init([]),
 		ar_test_node:start(B0),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		ar_test_node:wait_until_height(1),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		ar_test_node:wait_until_height(2),
 		ar_test_node:join_on_master(),
 		ar_test_node:assert_slave_wait_until_height(2),
