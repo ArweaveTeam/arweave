@@ -66,7 +66,7 @@
 %		end,
 %		ValidTXsBeforeFork
 %	),
-%	lists:foreach(fun(Height) -> ar_node:mine(), [_ | _] = wait_until_height(Height) end,
+%	lists:foreach(fun(Height) -> ar_test_node:mine(), [_ | _] = wait_until_height(Height) end,
 %			lists:seq(1, 10)),
 %	InvalidTXsAfterFork = [
 %		{["tx_malleable"],
@@ -444,7 +444,7 @@ test_ar_node_interface() ->
 	{_Node1, _} = start(B0),
 	?assertEqual(0, ar_node:get_height()),
 	?assertEqual(B0#block.indep_hash, ar_node:get_current_block_hash()),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	B0H = B0#block.indep_hash,
 	[{H, _, _}, {B0H, _, _}] = wait_until_height(1),
 	?assertEqual(1, ar_node:get_height()),
@@ -458,14 +458,14 @@ test_mining_reward() ->
 	{_Priv1, Pub1} = ar_wallet:new_keyfile(),
 	[B0] = ar_weave:init(),
 	{_Node1, _} = start(B0, MiningAddr = ar_wallet:to_address(Pub1)),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	wait_until_height(1),
 	B1 = ar_node:get_current_block(),
 	[{MiningAddr, _, Reward, 1}, _] = B1#block.reward_history,
 	?assertEqual(0, ar_node:get_balance(Pub1)),
 	lists:foreach(
 		fun(Height) ->
-			ar_node:mine(),
+			ar_test_node:mine(),
 			wait_until_height(Height + 1)
 		end,
 		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
@@ -490,7 +490,7 @@ test_multi_node_mining_reward() ->
 	?assertEqual(0, ar_node:get_balance(Pub1)),
 	lists:foreach(
 		fun(Height) ->
-			ar_node:mine(),
+			ar_test_node:mine(),
 			wait_until_height(Height + 1)
 		end,
 		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
@@ -509,13 +509,13 @@ replay_attack_test_() ->
 		SignedTX = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		assert_post_tx_to_master(SignedTX),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		assert_slave_wait_until_height(1),
 		?assertEqual(?AR(8999), slave_call(ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(1000), slave_call(ar_node, get_balance, [Pub2])),
 		ar_events:send(tx, {ready_for_mining, SignedTX}),
 		wait_until_receives_txs([SignedTX]),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		assert_slave_wait_until_height(2),
 		?assertEqual(?AR(8999), slave_call(ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(1000), slave_call(ar_node, get_balance, [Pub2]))
@@ -540,7 +540,7 @@ test_wallet_transaction() ->
 			slave_start(B0),
 			connect_to_slave(),
 			assert_post_tx_to_master(SignedTX),
-			ar_node:mine(),
+			ar_test_node:mine(),
 			wait_until_height(1),
 			assert_slave_wait_until_height(1),
 			?assertEqual(?AR(999), slave_call(ar_node, get_balance, [Pub1])),
@@ -568,7 +568,7 @@ test_wallet_transaction() ->
 %		slave_start(B0),
 %		connect_to_slave(),
 %		assert_post_tx_to_master(SignedTX),
-%		ar_node:mine(),
+%		ar_test_node:mine(),
 %		assert_slave_wait_until_height(1),
 %		assert_post_tx_to_slave(SignedTX2),
 %		slave_mine(),
@@ -592,10 +592,10 @@ tx_threading_test_() ->
 		SignedTX2 = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => SignedTX#tx.id }),
 		assert_post_tx_to_master(SignedTX),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		wait_until_height(1),
 		assert_post_tx_to_master(SignedTX2),
-		ar_node:mine(),
+		ar_test_node:mine(),
 		assert_slave_wait_until_height(2),
 		?assertEqual(?AR(7998), slave_call(ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(2000), slave_call(ar_node, get_balance, [Pub2]))
@@ -636,7 +636,7 @@ test_persisted_mempool() ->
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
 	assert_slave_wait_until_receives_txs([SignedTX]),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	[{H, _, _} | _] = assert_slave_wait_until_height(1),
 	B = read_block_when_stored(H),
 	?assertEqual([SignedTX#tx.id], B#block.txs),
