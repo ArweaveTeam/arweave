@@ -189,7 +189,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual([{time_diff(B2, B1), vdf_diff(B2, B1), chunk_count(B2)},
 			{time_diff(B1, B0), vdf_diff(B1, B0), chunk_count(B1)}, {1, 1, 1}],
 			B2#block.block_time_history),
-	ar_node:mine(),
+	ar_test_node:mine(),
 	_BI3 = wait_until_height(3),
 	assert_slave_wait_until_height(3),
 	?assertEqual(0, get_balance(master, MinerPub)),

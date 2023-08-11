@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, stop/0, reset/1, reset_performance_counters/0, get_partitions/1,
+-export([start_link/0, reset/1, reset_performance_counters/0, get_partitions/1,
 			get_thread_count/0, read_recall_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -26,9 +26,6 @@
 %% @doc Start the gen_server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-stop() ->
-	gen_server:cast(?MODULE, stop).
 
 reset(SessionRef) ->
 	gen_server:cast(?MODULE, {reset, SessionRef}).
@@ -117,10 +114,6 @@ handle_call({read_recall_range, WhichChunk, Candidate, RecallRangeStart}, _From,
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
-
-handle_cast(stop, #state{ io_threads = IOThreads } = State) ->
-	[Thread ! stop || Thread <- maps:values(IOThreads)],
-	{noreply, State#state{ session_ref = undefined }};
 
 handle_cast({reset, SessionRef}, #state{ io_threads = IOThreads } = State) ->
 	[Thread ! {new_mining_session, SessionRef} || Thread <- maps:values(IOThreads)],

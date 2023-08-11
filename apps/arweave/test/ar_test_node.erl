@@ -2,11 +2,13 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0, start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
-		http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0, remote_call/4]).
+		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
+		get_difficulty_for_invalid_hash/0, invalid_solution/0, valid_solution/0,
+		remote_call/4, slave_node/0, master_node/0, miner_node/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4, slave_start/0, slave_start/1,
-		slave_start/2, slave_start/3,
+		slave_start/2, slave_start/3, mine/0,
 		get_tx_price/1, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
@@ -49,7 +51,6 @@
 -define(SLAVE_START_TIMEOUT, 40000).
 
 -define(MAX_MINERS, 3).
--define(MINIMUM_SOLUTION_HASH, <<"00000000000000000000000000000000">>).
 
 %%%===================================================================
 %%% Public interface.
@@ -151,9 +152,12 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		|| I <- lists:seq(1, MiningNodeCount)],
 	MiningNodes ++ [ExitNode, ValidatorNode].
 
+mine() ->
+	gen_server:cast(ar_node_worker, mine).
+
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
-	remote_call(ar_node, mine, [], Node).
+	remote_call(ar_test_node, mine, [], Node).
 
 %% @doc Wait until the given node reaches the given height or fail by timeout.
 wait_until_height(Height, Node) ->
@@ -170,6 +174,9 @@ wait_until_height(Height, Node) ->
 		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
 	),
 	BI.
+
+wait_until_mining_paused(Node) ->
+	remote_call(ar_test_node, wait_until_mining_paused, [], Node).
 
 %% @doc Fetch and decode a binary-encoded block by hash H from the HTTP API of the
 %% given node. Return {ok, B} | {error, Reason}.
@@ -190,6 +197,12 @@ http_get_block(H, Node) ->
 get_blocks(Node) ->
 	remote_call(ar_node, get_blocks, [], Node).
 
+invalid_solution() ->
+	<<"00000000000000000000000000000000">>.
+
+valid_solution() ->
+	<<"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF">>.
+
 mock_to_force_invalid_h1() ->
 	{
 		ar_block, compute_h1,
@@ -198,6 +211,12 @@ mock_to_force_invalid_h1() ->
 			<<"00000000000000000000000000000000">>}
 		end
 	}.
+
+get_difficulty_for_invalid_hash() ->
+	%% Set the difficulty just high enough to exclude the invalid_solution(), this lets
+	%% us selectively disable one- or two-chunk mining in tests.
+	binary:decode_unsigned(invalid_solution(), big) + 1.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
