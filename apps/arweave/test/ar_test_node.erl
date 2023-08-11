@@ -723,12 +723,14 @@ slave_mine() ->
 	slave_call(ar_node, mine, []).
 
 wait_until_syncs_genesis_data() ->
+	{ok, Config} = application:get_env(arweave, config),
 	WeaveSize = (ar_node:get_current_block())#block.weave_size,
-	wait_until_syncs_data(0, WeaveSize, WeaveSize, any),
+	
+	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, any)
+			|| {Size, N, _Packing} <- Config#config.storage_modules],
 	%% Once the data is stored in the disk pool, make the storage modules
 	%% copy the missing data over from each other. This procedure is executed on startup
 	%% but the disk pool did not have any data at the time.
-	{ok, Config} = application:get_env(arweave, config),
 	[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:id(Module)),
 			sync_data) || Module <- Config#config.storage_modules],
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)
