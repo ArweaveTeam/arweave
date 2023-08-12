@@ -538,7 +538,7 @@ pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer) ->
 	end.
 
 pre_validate_partition_number(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
-	Max = ?PARTITION_NUMBER(PartitionUpperBound),
+	Max = ?MAX_PARTITION_NUMBER(PartitionUpperBound),
 	case B#block.partition_number > Max of
 		true ->
 			post_block_reject_warn(B, check_partition_number, Peer),
