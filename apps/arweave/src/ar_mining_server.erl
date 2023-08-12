@@ -537,8 +537,11 @@ distribute_output([], _Candidate, _Distributed, State, N) ->
 	{N, State};
 distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
 		Candidate, Distributed, State, N) ->
-	case maps:is_key({PartitionNumber, MiningAddress}, Distributed) of
+	MaxPartitionNumber = ?MAX_PARTITION_NUMBER(Candidate#mining_candidate.partition_upper_bound),
+	case PartitionNumber > MaxPartitionNumber
+			orelse maps:is_key({PartitionNumber, MiningAddress}, Distributed) of
 		true ->
+			%% Skip this partition
 			distribute_output(Partitions, Candidate, Distributed, State, N);
 		false ->
 			#state{ hashing_threads = Threads } = State,
