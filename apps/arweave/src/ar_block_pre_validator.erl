@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, pre_validate/5]).
+-export([start_link/2, pre_validate/3]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -39,14 +39,21 @@ start_link(Name, Workers) ->
 %% is called. Afterwards, the block is put in a limited-size priority queue.
 %% Bigger-height blocks from better-rated peers have higher priority. Additionally,
 %% the processing is throttled by IP and solution hash.
-pre_validate(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
+%% Returns: ok, invalid, skipped
+pre_validate(B, Peer, ReceiveTimestamp) ->
 	#block{ indep_hash = H } = B,
-	case ar_ignore_registry:member(H) of
+	ValidationStatus = case ar_ignore_registry:member(H) of
 		true ->
-			ok;
+			skipped;
 		false ->
-			pre_validate_is_peer_banned(B, Peer, Timestamp, ReadBodyTime, BodySize)
-	end.
+			pre_validate_is_peer_banned(B, Peer)
+	end,
+	case ValidationStatus of
+		ok -> record_block_pre_validation_time(ReceiveTimestamp);
+		_ -> ok
+	end,
+	ValidationStatus.
+
 
 %%%===================================================================
 %%% gen_server callbacks.
@@ -71,9 +78,10 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			ar_util:cast_after(50, ?MODULE, pre_validate),
 			{noreply, State};
 		false ->
-			{{_, {B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime, BodySize}},
+			{{_, {B, PrevB, SolutionResigned, Peer}},
 					Q2} = gb_sets:take_largest(Q),
-			Size2 = Size - BodySize,
+			BlockSize = byte_size(term_to_binary(B)),				
+			Size2 = Size - BlockSize,
 			case ar_ignore_registry:permanent_member(B#block.indep_hash) of
 				true ->
 					gen_server:cast(?MODULE, pre_validate),
@@ -102,8 +110,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 												{previous_block,
 													ar_util:encode(PrevB#block.indep_hash)}]),
 										pre_validate_nonce_limiter_seed_data(B, PrevB,
-												SolutionResigned, Peer, Timestamp,
-												ReadBodyTime, BodySize),
+												SolutionResigned, Peer),
 										{IPTimestamps2, HashTimestamps2};
 									false ->
 										{IPTimestamps2, HashTimestamps}
@@ -115,13 +122,13 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			end
 	end;
 
-handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime, BodySize}},
+handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer}},
 		State) ->
 	#state{ pqueue = Q, size = Size } = State,
 	Priority = priority(B, Peer),
-	Size2 = Size + BodySize,
-	Q2 = gb_sets:add_element({Priority, {B, PrevB, SolutionResigned, Peer, Timestamp,
-			ReadBodyTime, BodySize}}, Q),
+	BlockSize = byte_size(term_to_binary(B)),
+	Size2 = Size + BlockSize,
+	Q2 = gb_sets:add_element({Priority, {B, PrevB, SolutionResigned, Peer}}, Q),
 	{Q3, Size3} =
 		case Size2 > ?MAX_PRE_VALIDATION_QUEUE_SIZE of
 			true ->
@@ -177,15 +184,15 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-pre_validate_is_peer_banned(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_is_peer_banned(B, Peer) ->
 	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
-			pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize);
+			pre_validate_previous_block(B, Peer);
 		banned ->
-			ok
+			skipped
 	end.
 
-pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_previous_block(B, Peer) ->
 	PrevH = B#block.previous_block,
 	case ar_node:get_block_shadow_from_cache(PrevH) of
 		not_found ->
@@ -193,73 +200,67 @@ pre_validate_previous_block(B, Peer, Timestamp, ReadBodyTime, BodySize) ->
 			%% successive blocks are distributed at the same time. Do not
 			%% ban the peer as the block might be valid. If the network adopts
 			%% this block, ar_poller will catch up.
-			ok;
+			skipped;
 		#block{ height = PrevHeight } = PrevB ->
 			case B#block.height == PrevHeight + 1 of
 				false ->
-					ok;
+					invalid;
 				true ->
 					case B#block.height >= ar_fork:height_2_6() of
 						true ->
 							PrevCDiff = B#block.previous_cumulative_diff,
 							case PrevB#block.cumulative_diff == PrevCDiff of
 								true ->
-									pre_validate_indep_hash(B, PrevB, Peer, Timestamp,
-											ReadBodyTime, BodySize);
+									pre_validate_indep_hash(B, PrevB, Peer);
 								false ->
-									ok
+									invalid
 							end;
 						false ->
-							pre_validate_may_be_fetch_chunk(B, PrevB, Peer, Timestamp,
-									ReadBodyTime, BodySize)
+							pre_validate_may_be_fetch_chunk(B, PrevB, Peer)
 					end
 			end
 	end.
 
-pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer, Timestamp, ReadBodyTime,
-		BodySize) ->
+pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer) ->
 	case catch compute_hash(B, PrevB#block.cumulative_diff) of
 		{ok, {BDS, H}} ->
 			ar_ignore_registry:add_temporary(H, 5000),
-			pre_validate_timestamp(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize);
+			pre_validate_timestamp(B, BDS, PrevB, Peer);
 		{ok, H} ->
 			case ar_ignore_registry:permanent_member(H) of
 				true ->
-					ok;
+					skipped;
 				false ->
 					ar_ignore_registry:add_temporary(H, 5000),
-					pre_validate_timestamp(B, none, PrevB, Peer, Timestamp, ReadBodyTime,
-							BodySize)
+					pre_validate_timestamp(B, none, PrevB, Peer)
 			end;
 		{error, invalid_signature} ->
 			post_block_reject_warn(B, check_signature, Peer),
 			ar_events:send(block, {rejected, invalid_signature, B#block.indep_hash, Peer}),
-			ok;
+			invalid;
 		{ok, _DifferentH} ->
 			post_block_reject_warn(B, check_indep_hash, Peer),
 			ar_events:send(block, {rejected, invalid_hash, B#block.indep_hash, Peer}),
-			ok
+			invalid
 	end.
 
-pre_validate_timestamp(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_timestamp(B, BDS, PrevB, Peer) ->
 	#block{ indep_hash = H } = B,
 	case ar_block:verify_timestamp(B, PrevB) of
 		true ->
-			pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime,
-					BodySize);
+			pre_validate_existing_solution_hash(B, BDS, PrevB, Peer);
 		false ->
 			post_block_reject_warn(B, check_timestamp, Peer, [{block_time,
 					B#block.timestamp}, {current_time, os:system_time(seconds)}]),
 			ar_events:send(block, {rejected, invalid_timestamp, H, Peer}),
 			ar_ignore_registry:remove_temporary(B#block.indep_hash),
-			ok
+			invalid
 	end.
 
-pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_existing_solution_hash(B, BDS, PrevB, Peer) ->
 	case B#block.height >= ar_fork:height_2_6() of
 		false ->
-			pre_validate_last_retarget(B, BDS, PrevB, false, Peer, Timestamp, ReadBodyTime,
-					BodySize);
+			pre_validate_last_retarget(B, BDS, PrevB, false, Peer);
 		true ->
 			SolutionH = B#block.hash,
 			#block{ hash = SolutionH, nonce = Nonce, reward_addr = RewardAddr,
@@ -315,16 +316,14 @@ pre_validate_existing_solution_hash(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime
 				end,
 			case ValidatedCachedSolutionDiff of
 				not_found ->
-					pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, false, Peer,
-							Timestamp, ReadBodyTime, BodySize);
+					pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, false, Peer);
 				invalid ->
 					post_block_reject_warn(B, check_resigned_solution_hash, Peer),
 					ar_events:send(block, {rejected, invalid_resigned_solution_hash,
 							B#block.indep_hash, Peer}),
-					ok;
+					invalid;
 				{valid, B3} ->
-					pre_validate_nonce_limiter_global_step_number(B3, BDS, PrevB, true, Peer,
-							Timestamp, ReadBodyTime, BodySize)
+					pre_validate_nonce_limiter_global_step_number(B3, BDS, PrevB, true, Peer)
 			end
 	end.
 
@@ -358,8 +357,7 @@ get_last_step_prev_output(B) ->
 			PrevOutput
 	end.
 
-pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, SolutionResigned, Peer, Timestamp,
-		ReadBodyTime, BodySize) ->
+pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, SolutionResigned, Peer) ->
 	BlockInfo = B#block.nonce_limiter_info,
 	StepNumber = BlockInfo#nonce_limiter_info.global_step_number,
 	PrevBlockInfo = PrevB#block.nonce_limiter_info,
@@ -389,49 +387,40 @@ pre_validate_nonce_limiter_global_step_number(B, BDS, PrevB, SolutionResigned, P
 			ar_events:send(block,
 					{rejected, invalid_nonce_limiter_global_step_number, H, Peer}),
 			ar_ignore_registry:remove_temporary(B#block.indep_hash),
-			ok;
+			invalid;
 		true ->
 			prometheus_gauge:set(block_vdf_advance, StepNumber - CurrentStepNumber),
-			pre_validate_previous_solution_hash(B, BDS, PrevB, SolutionResigned, Peer,
-					Timestamp, ReadBodyTime, BodySize)
+			pre_validate_previous_solution_hash(B, BDS, PrevB, SolutionResigned, Peer)
 	end.
 
-pre_validate_previous_solution_hash(B, BDS, PrevB, SolutionResigned, Peer, Timestamp,
-		ReadBodyTime, BodySize) ->
+pre_validate_previous_solution_hash(B, BDS, PrevB, SolutionResigned, Peer) ->
 	case B#block.previous_solution_hash == PrevB#block.hash of
 		false ->
 			post_block_reject_warn(B, check_previous_solution_hash, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_previous_solution_hash,
 					B#block.indep_hash, Peer}),
-			ok;
+			invalid;
 		true ->
-			pre_validate_last_retarget(B, BDS, PrevB, SolutionResigned, Peer, Timestamp,
-					ReadBodyTime, BodySize)
+			pre_validate_last_retarget(B, BDS, PrevB, SolutionResigned, Peer)
 	end.
 
-pre_validate_last_retarget(B, BDS, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime,
-		BodySize) ->
+pre_validate_last_retarget(B, BDS, PrevB, SolutionResigned, Peer) ->
 	case B#block.height >= ar_fork:height_2_6() of
 		false ->
-			pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, Timestamp,
-					ReadBodyTime, BodySize);
+			pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer);
 		true ->
 			case ar_block:verify_last_retarget(B, PrevB) of
 				true ->
-					pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, Timestamp,
-							ReadBodyTime, BodySize);
+					pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer);
 				false ->
 					post_block_reject_warn(B, check_last_retarget, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_last_retarget,
 							B#block.indep_hash, Peer}),
-					ok
+					invalid
 			end
 	end.
 
-pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime,
-		BodySize) ->
+pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer) ->
 	DiffValid =
 		case B#block.height >= ar_fork:height_2_6() of
 			true ->
@@ -441,41 +430,36 @@ pre_validate_difficulty(B, BDS, PrevB, SolutionResigned, Peer, Timestamp, ReadBo
 		end,
 	case DiffValid of
 		true ->
-			pre_validate_cumulative_difficulty(B, BDS, PrevB, SolutionResigned, Peer,
-					Timestamp, ReadBodyTime, BodySize);
+			pre_validate_cumulative_difficulty(B, BDS, PrevB, SolutionResigned, Peer);
 		_ ->
 			post_block_reject_warn(B, check_difficulty, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_difficulty, B#block.indep_hash, Peer}),
-			ok
+			invalid
 	end.
 
-pre_validate_cumulative_difficulty(B, BDS, PrevB, SolutionResigned, Peer, Timestamp,
-		ReadBodyTime, BodySize) ->
+pre_validate_cumulative_difficulty(B, BDS, PrevB, SolutionResigned, Peer) ->
 	case B#block.height >= ar_fork:height_2_6() of
 		true ->
 			case ar_block:verify_cumulative_diff(B, PrevB) of
 				false ->
 					post_block_reject_warn(B, check_cumulative_difficulty, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_cumulative_difficulty,
 							B#block.indep_hash, Peer}),
-					ok;
+					invalid;
 				true ->
 					case SolutionResigned of
 						true ->
-							gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer,
-									Timestamp, ReadBodyTime, BodySize}});
+							gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer}}),
+							ok;
 						false ->
-							pre_validate_quick_pow(B, PrevB, false, Peer, Timestamp,
-									ReadBodyTime, BodySize)
+							pre_validate_quick_pow(B, PrevB, false, Peer)
 					end
 			end;
 		false ->
-			pre_validate_pow(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize)
+			pre_validate_pow(B, BDS, PrevB, Peer)
 	end.
 
-pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
 	#block{ hash_preimage = HashPreimage, diff = Diff, nonce_limiter_info = NonceLimiterInfo,
 			partition_number = PartitionNumber, reward_addr = RewardAddr } = B,
 	PrevNonceLimiterInfo = get_prev_nonce_limiter_info(PrevB),
@@ -494,18 +478,17 @@ pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime
 		not_found ->
 			%% The new blocks should have been applied in the meantime since we
 			%% looked for the previous block in the block cache.
-			ok;
+			skipped;
 		_ ->
 			case binary:decode_unsigned(SolutionHash, big) > Diff of
 				false ->
 					post_block_reject_warn(B, check_hash_preimage, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_hash_preimage,
 							B#block.indep_hash, Peer}),
-					ok;
+					invalid;
 				true ->
-					gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer,
-							Timestamp, ReadBodyTime, BodySize}})
+					gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer}}),
+					ok
 			end
 	end.
 
@@ -527,8 +510,7 @@ get_prev_nonce_limiter_info(#block{ indep_hash = PrevH, height = PrevHeight } = 
 			PrevB#block.nonce_limiter_info
 	end.
 
-pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer, Timestamp, ReadBodyTime,
-		BodySize) ->
+pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer) ->
 	Info = B#block.nonce_limiter_info,
 	#nonce_limiter_info{ global_step_number = StepNumber, seed = Seed,
 			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
@@ -538,7 +520,7 @@ pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer, Timestamp
 		not_found ->
 			%% The new blocks should have been applied in the meantime since we
 			%% looked for the previous block in the block cache.
-			ok;
+			skipped;
 		PrevNonceLimiterInfo ->
 			ExpectedSeedData = ar_nonce_limiter:get_seed_data(StepNumber, PrevNonceLimiterInfo,
 					PrevB#block.indep_hash, PrevB#block.weave_size),
@@ -546,53 +528,46 @@ pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer, Timestamp
 					NextPartitionUpperBound} of
 				true ->
 					pre_validate_partition_number(B, PrevB, PartitionUpperBound,
-							SolutionResigned, Peer, Timestamp, ReadBodyTime, BodySize);
+							SolutionResigned, Peer);
 				false ->
 					post_block_reject_warn(B, check_nonce_limiter_seed_data, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_nonce_limiter_seed_data,
 							B#block.indep_hash, Peer}),
-					ok
+					invalid
 			end
 	end.
 
-pre_validate_partition_number(B, PrevB, PartitionUpperBound, SolutionResigned, Peer, Timestamp,
-		ReadBodyTime, BodySize) ->
+pre_validate_partition_number(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
 	Max = ?PARTITION_NUMBER(PartitionUpperBound),
 	case B#block.partition_number > Max of
 		true ->
 			post_block_reject_warn(B, check_partition_number, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_partition_number, B#block.indep_hash,
 					Peer}),
-			ok;
+			invalid;
 		false ->
-			pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer,
-					Timestamp, ReadBodyTime, BodySize)
+			pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer)
 	end.
 
-pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer, Timestamp,
-		ReadBodyTime, BodySize) ->
+pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
 	Max = max(0, (?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1),
 	case B#block.nonce > Max of
 		true ->
 			post_block_reject_warn(B, check_nonce, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_nonce, B#block.indep_hash, Peer}),
-			ok;
+			invalid;
 		false ->
 			case SolutionResigned of
 				true ->
-					accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, false);
+					accept_block(B, Peer, false);
 				false ->
-					pre_validate_may_be_fetch_first_chunk(B, PrevB, PartitionUpperBound, Peer,
-							Timestamp, ReadBodyTime, BodySize)
+					pre_validate_may_be_fetch_first_chunk(B, PrevB, PartitionUpperBound, Peer)
 			end
 	end.
 
 pre_validate_may_be_fetch_first_chunk(#block{ recall_byte = RecallByte,
-		poa = #poa{ chunk = <<>> } } = B, PrevB, PartitionUpperBound, Peer, Timestamp,
-		ReadBodyTime, BodySize) when RecallByte /= undefined ->
+		poa = #poa{ chunk = <<>> } } = B, PrevB, PartitionUpperBound, Peer)
+			when RecallByte /= undefined ->
 	case ar_data_sync:get_chunk(RecallByte + 1, #{ pack => true,
 			packing => {spora_2_6, B#block.reward_addr}, bucket_based_offset => true }) of
 		{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
@@ -600,39 +575,34 @@ pre_validate_may_be_fetch_first_chunk(#block{ recall_byte = RecallByte,
 			B2 = B#block{ poa = #poa{ chunk = Chunk, data_path = DataPath,
 					tx_path = TXPath } },
 			pre_validate_may_be_fetch_second_chunk(B2, PrevB, PartitionUpperBound,
-					Peer, Timestamp, ReadBodyTime, BodySize);
+					Peer);
 		_ ->
 			ar_events:send(block, {rejected, failed_to_fetch_first_chunk, B#block.indep_hash,
 					Peer}),
-			ok
+			invalid
 	end;
-pre_validate_may_be_fetch_first_chunk(B, PrevB, PartitionUpperBound, Peer, Timestamp,
-		ReadBodyTime, BodySize) ->
-	pre_validate_may_be_fetch_second_chunk(B, PrevB, PartitionUpperBound, Peer, Timestamp,
-			ReadBodyTime, BodySize).
+pre_validate_may_be_fetch_first_chunk(B, PrevB, PartitionUpperBound, Peer) ->
+	pre_validate_may_be_fetch_second_chunk(B, PrevB, PartitionUpperBound, Peer).
 
 pre_validate_may_be_fetch_second_chunk(#block{ recall_byte2 = RecallByte2,
-		poa2 = #poa{ chunk = <<>> } } = B, PrevB, PartitionUpperBound, Peer, Timestamp,
-		ReadBodyTime, BodySize) when RecallByte2 /= undefined ->
+		poa2 = #poa{ chunk = <<>> } } = B, PrevB, PartitionUpperBound, Peer)
+		  when RecallByte2 /= undefined ->
 	case ar_data_sync:get_chunk(RecallByte2 + 1, #{ pack => true,
 			packing => {spora_2_6, B#block.reward_addr}, bucket_based_offset => true }) of
 		{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
 			prometheus_counter:inc(block2_fetched_chunks),
 			B2 = B#block{ poa2 = #poa{ chunk = Chunk, data_path = DataPath,
 					tx_path = TXPath } },
-			pre_validate_pow_2_6(B2, PrevB, PartitionUpperBound, Peer, Timestamp,
-					ReadBodyTime, BodySize);
+			pre_validate_pow_2_6(B2, PrevB, PartitionUpperBound, Peer);
 		_ ->
 			ar_events:send(block, {rejected, failed_to_fetch_second_chunk, B#block.indep_hash,
 					Peer}),
-			ok
+			invalid
 	end;
-pre_validate_may_be_fetch_second_chunk(B, PrevB, PartitionUpperBound, Peer, Timestamp,
-			ReadBodyTime, BodySize) ->
-	pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer, Timestamp, ReadBodyTime,
-			BodySize).
+pre_validate_may_be_fetch_second_chunk(B, PrevB, PartitionUpperBound, Peer) ->
+	pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer).
 
-pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 	NonceLimiterInfo = B#block.nonce_limiter_info,
 	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
 	PrevNonceLimiterInfo = get_prev_nonce_limiter_info(PrevB),
@@ -645,26 +615,22 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer, Timestamp, ReadBodyTim
 			andalso Preimage1 == B#block.hash_preimage
 			andalso B#block.recall_byte2 == undefined of
 		true ->
-			pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp,
-					ReadBodyTime, BodySize);
+			pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer);
 		false ->
 			Chunk2 = (B#block.poa2)#poa.chunk,
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
 			case H2 == B#block.hash andalso binary:decode_unsigned(H2, big) > B#block.diff
 					andalso Preimage2 == B#block.hash_preimage of
 				true ->
-					pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp,
-							ReadBodyTime, BodySize);
+					pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer);
 				false ->
 					post_block_reject_warn(B, check_pow, Peer),
-					ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 					ar_events:send(block, {rejected, invalid_pow, B#block.indep_hash, Peer}),
-					ok
+					invalid
 			end
 	end.
 
-pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp, ReadBodyTime,
-		BodySize) ->
+pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			B#block.partition_number, PartitionUpperBound),
 	RecallByte1 = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
@@ -675,17 +641,16 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp, ReadBod
 				andalso RecallByte1 == B#block.recall_byte of
 		error ->
 			?LOG_ERROR([{event, failed_to_validate_proof_of_access},
-					{block, ar_util:encode(B#block.indep_hash)}]);
+					{block, ar_util:encode(B#block.indep_hash)}]),
+			invalid;
 		false ->
 			post_block_reject_warn(B, check_poa, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_poa, B#block.indep_hash, Peer}),
-			ok;
+			invalid;
 		true ->
 			case B#block.hash == H1 of
 				true ->
-					pre_validate_nonce_limiter(B, PrevB, Peer, Timestamp, ReadBodyTime,
-							BodySize);
+					pre_validate_nonce_limiter(B, PrevB, Peer);
 				false ->
 					RecallByte2 = RecallRange2Start + B#block.nonce * ?DATA_CHUNK_SIZE,
 					{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
@@ -697,65 +662,62 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer, Timestamp, ReadBod
 								andalso RecallByte2 == B#block.recall_byte2 of
 						error ->
 							?LOG_ERROR([{event, failed_to_validate_proof_of_access},
-									{block, ar_util:encode(B#block.indep_hash)}]);
+									{block, ar_util:encode(B#block.indep_hash)}]),
+							invalid;
 						false ->
 							post_block_reject_warn(B, check_poa2, Peer),
-							ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 							ar_events:send(block, {rejected, invalid_poa2,
 									B#block.indep_hash, Peer}),
-							ok;
+							invalid;
 						true ->
-							pre_validate_nonce_limiter(B, PrevB, Peer, Timestamp, ReadBodyTime,
-									BodySize)
+							pre_validate_nonce_limiter(B, PrevB, Peer)
 					end
 			end
 	end.
 
-pre_validate_nonce_limiter(B, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_nonce_limiter(B, PrevB, Peer) ->
 	PrevOutput = get_last_step_prev_output(B),
 	case ar_nonce_limiter:validate_last_step_checkpoints(B, PrevB, PrevOutput) of
 		{false, cache_mismatch} ->
 			ar_ignore_registry:add(B#block.indep_hash),
 			post_block_reject_warn(B, check_nonce_limiter, Peer),
-			ar_events:send(block, {rejected, invalid_nonce_limiter, B#block.indep_hash, Peer}),
-			ok;
+			ar_events:send(block, {rejected, invalid_nonce_limiter_cache_mismatch, B#block.indep_hash, Peer}),
+			invalid;
 		false ->
 			post_block_reject_warn(B, check_nonce_limiter, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_nonce_limiter, B#block.indep_hash, Peer}),
-			ok;
+			invalid;
 		{true, cache_match} ->
-			accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, true);
+			accept_block(B, Peer, true);
 		true ->
-			accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, false)
+			accept_block(B, Peer, false)
 	end.
 
-accept_block(B, Peer, ReadBodyTime, BodySize, Timestamp, Gossip) ->
+accept_block(B, Peer, Gossip) ->
 	ar_ignore_registry:add(B#block.indep_hash),
-	ar_events:send(block, {new, B, #{ source => {peer, Peer}, gossip => Gossip }}),
-	ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
-	record_block_pre_validation_time(Timestamp),
+	ar_events:send(block, {new, B, 
+		#{ source => {peer, Peer}, gossip => Gossip }}),
 	?LOG_INFO([{event, accepted_block}, {height, B#block.height},
-			{indep_hash, ar_util:encode(B#block.indep_hash)}]).
+			{indep_hash, ar_util:encode(B#block.indep_hash)}]),
+	ok.
 
 pre_validate_may_be_fetch_chunk(#block{ recall_byte = RecallByte,
-		poa = #poa{ chunk = <<>> } } = B, PrevB, Peer, Timestamp, ReadBodyTime,
-		BodySize) when RecallByte /= undefined ->
+		poa = #poa{ chunk = <<>> } } = B, PrevB, Peer) when RecallByte /= undefined ->
 	Options = #{ pack => false, packing => spora_2_5, bucket_based_offset => true },
 	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
 		{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
 			prometheus_counter:inc(block2_fetched_chunks),
 			B2 = B#block{ poa = #poa{ chunk = Chunk, tx_path = TXPath,
 					data_path = DataPath } },
-			pre_validate_indep_hash(B2, PrevB, Peer, Timestamp, ReadBodyTime, BodySize);
+			pre_validate_indep_hash(B2, PrevB, Peer);
 		_ ->
 			ar_events:send(block, {rejected, failed_to_fetch_chunk, B#block.indep_hash, Peer}),
-			ok
+			invalid
 	end;
-pre_validate_may_be_fetch_chunk(B, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
-	pre_validate_indep_hash(B, PrevB, Peer, Timestamp, ReadBodyTime, BodySize).
+pre_validate_may_be_fetch_chunk(B, PrevB, Peer) ->
+	pre_validate_indep_hash(B, PrevB, Peer).
 
-pre_validate_pow(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
+pre_validate_pow(B, BDS, PrevB, Peer) ->
 	#block{ indep_hash = PrevH } = PrevB,
 	MaybeValid =
 		case ar_node:get_recent_partition_upper_bound_by_prev_h(PrevH) of
@@ -768,26 +730,23 @@ pre_validate_pow(B, BDS, PrevB, Peer, Timestamp, ReadBodyTime, BodySize) ->
 		not_found ->
 			%% The new blocks should have been applied in the meantime since we
 			%% looked for the previous block in the block cache.
-			ok;
+			skipped;
 		{true, RecallByte} ->
 			H = B#block.indep_hash,
 			%% Include all transactions found in the mempool in place of the
 			%% corresponding transaction identifiers so that we can gossip them to
 			%% peers who miss them along with the block.
 			B2 = B#block{ txs = include_transactions(B#block.txs) },
-			ar_events:send(block, {new, B2, #{ source => {peer, Peer},
-					recall_byte => RecallByte }}),
-			ar_events:send(peer, {gossiped_block, Peer, ReadBodyTime, BodySize}),
-			record_block_pre_validation_time(Timestamp),
+			ar_events:send(block, {new, B2, #{
+				source => {peer, Peer}, recall_byte => RecallByte }}),
 			prometheus_counter:inc(block2_received_transactions,
 					count_received_transactions(B#block.txs)),
 			?LOG_INFO([{event, accepted_block}, {indep_hash, ar_util:encode(H)}]),
 			ok;
 		false ->
 			post_block_reject_warn(B, check_pow, Peer),
-			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
 			ar_events:send(block, {rejected, invalid_pow, B#block.indep_hash, Peer}),
-			ok
+			invalid
 	end.
 
 compute_hash(B, PrevCDiff) ->
@@ -885,7 +844,7 @@ priority(B, Peer) ->
 	{B#block.height, get_peer_score(Peer)}.
 
 get_peer_score(Peer) ->
-	get_peer_score(Peer, ar_peers:get_peers(), 0).
+	get_peer_score(Peer, ar_peers:get_peers(lifetime), 0).
 
 get_peer_score(Peer, [Peer | _Peers], N) ->
 	N;

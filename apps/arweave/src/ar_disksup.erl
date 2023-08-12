@@ -215,12 +215,17 @@ check_disk_space({unix, darwin}, Port) ->
 	Result = my_cmd("/bin/df -i -k -t ufs,hfs,apfs", Port),
 	check_disks_susv3(skip_to_eol(Result)).
 
+disk_free_cmd({unix, darwin}, Df, DataDirPath, Port) ->
+	 my_cmd(Df ++ " -Pa " ++ DataDirPath ++ "/", Port);
+disk_free_cmd({unix, _}, Df, DataDirPath, Port) ->
+	 my_cmd(Df ++ " -Pa -B1 " ++ DataDirPath ++ "/", Port).
+
 %% doc: iterates trough storage modules
-broadcast_disk_free({unix, _}, Port) ->
+broadcast_disk_free({unix, _} = Os, Port) ->
 	Df = find_cmd("df"),
 	[DataDirPathData | StorageModulePaths] = get_storage_modules_paths(),
 	{DataDirID, DataDirPath} = DataDirPathData,
-	DataDirDfResult = my_cmd(Df ++ " -Pa -B1 " ++ DataDirPath ++ "/", Port),
+	DataDirDfResult = disk_free_cmd(Os, Df, DataDirPath, Port),
 	[DataDirFs, DataDirBytes, DataDirPercentage] = parse_df_2(DataDirDfResult),
 	ar_events:send(disksup, {
 		remaining_disk_space,
@@ -230,7 +235,7 @@ broadcast_disk_free({unix, _}, Port) ->
 			DataDirBytes
 	}),
 	HandleSmPath = fun({StoreID, StorageModulePath}) ->
-		Result = my_cmd(Df ++ " -Pa -B1 " ++ StorageModulePath ++ "/", Port),
+		Result = disk_free_cmd(Os, Df, StorageModulePath, Port),
 		[StorageModuleFs, Bytes, Percentage] = parse_df_2(Result),
 		IsDataDirDrive = string:equal(DataDirFs, StorageModuleFs),
 		ar_events:send(disksup, {
@@ -393,9 +398,16 @@ ensure_storage_modules_paths() ->
 	lists:foreach(EnsurePaths, StoragePaths).
 
 parse_df_2(Input) ->
-	[_, DfInfo] = string:tokens(Input, "\n"),
+	[DfHeader, DfInfo] = string:tokens(Input, "\n"),
+	[_, BlocksInfo | _] = string:tokens(DfHeader, " \t"),
+	BlocksNum = case string:tokens(BlocksInfo, "-") of
+		 [Num, _] ->
+			 erlang:list_to_integer(Num);
+		 _->
+			 1
+  end,
 	[Filesystem, Total, _, Available, _, _] = string:tokens(DfInfo, " \t"),
 	BytesAvailable = erlang:list_to_integer(Available),
 	TotalCapacity = erlang:list_to_integer(Total),
 	PercentageAvailable = BytesAvailable / TotalCapacity,
-	[Filesystem, BytesAvailable, PercentageAvailable].
+	[Filesystem, BytesAvailable * BlocksNum, PercentageAvailable].

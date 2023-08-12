@@ -98,7 +98,12 @@ init([]) ->
 			{false, true} ->
 				Config2 = Config#config{ init = false },
 				application:set_env(arweave, config, Config2),
-				ar_weave:init([], ar_retarget:switch_to_linear_diff(Config#config.diff))
+				InitialBalance = ?AR(1000000000000),
+				[B0] = ar_weave:init([{Config#config.mining_addr, InitialBalance, <<>>}],
+						ar_retarget:switch_to_linear_diff(Config#config.diff)),
+				RootHash0 = B0#block.wallet_list,
+				RootHash0 = ar_storage:write_wallet_list(0, B0#block.account_tree),
+				{[B0], B0#block.reward_history}
 		end,
 	case {StateLookup, Config#config.auto_join} of
 		{not_joined, true} ->
@@ -1298,7 +1303,7 @@ get_missing_txs_and_retry(#block{ txs = TXIDs }, _Worker)
 	ok;
 get_missing_txs_and_retry(BShadow, Worker) ->
 	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs,
-			Worker, ar_peers:get_peers(), [], 0).
+			Worker, ar_peers:get_peers(lifetime), [], 0).
 
 get_missing_txs_and_retry(_H, _TXIDs, _Worker, _Peers, _TXs, TotalSize)
 		when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->

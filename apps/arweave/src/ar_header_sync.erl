@@ -102,7 +102,12 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 			{[], _} ->
 				State2;
 			{_, no_intersection} ->
-				throw(last_stored_block_index_has_no_intersection_with_the_new_one);
+				io:format("~nWARNING: the stored block index of the header syncing module "
+						"has no intersection with the "
+						"new one in the most recent blocks. If you have just started a new "
+						"weave using the init option, restart with the start_from_block_index "
+						"option or specify some peers.~n~n"),
+					erlang:halt();
 			{_, {IntersectionHeight, _}} ->
 				S = State2#state{
 						sync_record = ar_intervals:cut(SyncRecord, IntersectionHeight),
@@ -482,7 +487,7 @@ check_fork(Height, H, TXRoot) ->
 	end.
 
 download_block(H, H2, TXRoot) ->
-	Peers = ar_peers:get_peers(),
+	Peers = ar_peers:get_peers(lifetime),
 	case ar_storage:read_block(H) of
 		unavailable ->
 			download_block(Peers, H, H2, TXRoot);
@@ -499,7 +504,7 @@ download_block(Peers, H, H2, TXRoot) ->
 				{block, ar_util:encode(H)}
 			]),
 			{error, block_header_unavailable};
-		{Peer, #block{ height = Height } = B, Time, Size} ->
+		{Peer, #block{ height = Height } = B, Time, BlockSize} ->
 			BH =
 				case Height >= Fork_2_0 of
 					true ->
@@ -511,10 +516,10 @@ download_block(Peers, H, H2, TXRoot) ->
 				end,
 			case BH of
 				H when Height >= Fork_2_0 ->
-					ar_events:send(peer, {served_block, Peer, Time, Size}),
+					ar_peers:rate_fetched_data(Peer, block, Time, BlockSize),
 					download_txs(Peers, B, TXRoot);
 				H2 when Height < Fork_2_0 ->
-					ar_events:send(peer, {served_block, Peer, Time, Size}),
+					ar_peers:rate_fetched_data(Peer, block, Time, BlockSize),
 					download_txs(Peers, B, TXRoot);
 				_ ->
 					?LOG_WARNING([

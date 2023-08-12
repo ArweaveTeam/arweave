@@ -14,6 +14,10 @@
 	pause_until = 0
 }).
 
+%% The frequency of re-resolving the domain names of the VDF client peers (who are
+%% configured via the domain names as opposed to IP addresses).
+-define(RESOLVE_DOMAIN_NAME_FREQUENCY_MS, 30000).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -39,11 +43,12 @@ handle_call(Request, _From, State) ->
 handle_cast(resolve_raw_peer, #state{ raw_peer = RawPeer } = State) ->
 	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_client_peer) of
 		{ok, Peer} ->
+			ar_util:cast_after(?RESOLVE_DOMAIN_NAME_FREQUENCY_MS, self(), resolve_raw_peer),
 			{noreply, State#state{ peer = Peer }};
 		{error, Reason} ->
 			?LOG_WARNING([{event, failed_to_resolve_vdf_client_peer},
 					{reason, io_lib:format("~p", [Reason])}]),
-			ar_util:cast_after(30000, self(), resolve_raw_peer),
+			ar_util:cast_after(10000, self(), resolve_raw_peer),
 			{noreply, State}
 	end;
 

@@ -52,7 +52,7 @@ handle_call(Request, _From, State) ->
 handle_cast(process_chunk, State) ->
 	#state{ workers = Q, currently_emitting = Emitting } = State,
 	TrustedPeers = ar_peers:get_trusted_peers(),
-	Peers = (ar_peers:get_peers() -- TrustedPeers) ++ TrustedPeers,
+	Peers = (ar_peers:get_peers(lifetime) -- TrustedPeers) ++ TrustedPeers,
 	{ok, Config} = application:get_env(arweave, config),
 	{Q2, Emitting2} = emit(ar_mempool:get_propagation_queue(), Q, Emitting, Peers,
 			Config#config.max_propagation_peers, ?CHUNK_SIZE),

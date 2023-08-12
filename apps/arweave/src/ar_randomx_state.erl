@@ -296,7 +296,7 @@ get_block(Height) when is_integer(Height) ->
 	end;
 get_block(BH) ->
 	try
-		Peers = ar_peers:get_peers(),
+		Peers = ar_peers:get_peers(lifetime),
 		get_block(BH, Peers)
 	catch Type:Exception:StackTrace ->
 		?LOG_ERROR([
@@ -328,10 +328,10 @@ get_block2(BH, Peers, RetryCount) ->
 									", ")}]),
 					timer:sleep(2000),
 					get_block2(BH, Peers, RetryCount - 1);
-				{Peer, B, Time, Size} ->
+				{Peer, B, Time, BlockSize} ->
 					case ar_block:indep_hash(B) of
 						BH ->
-							ar_events:send(peer, {served_block, Peer, Time, Size}),
+							ar_peers:rate_fetched_data(Peer, block, Time, BlockSize),
 							{ok, B};
 						InvalidBH ->
 							?LOG_WARNING([

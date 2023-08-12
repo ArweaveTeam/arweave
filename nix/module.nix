@@ -1,12 +1,23 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (lib) literalExpression mkEnableOption mkIf mkOption types;
+  inherit (lib) literalExpression filterAttrs isAttrs isList mkEnableOption mkIf mkOption types;
   cfg = config.services.arweave;
   defaultUser = "arweave";
   arweavePkg = pkgs.callPackage ./arweave.nix { inherit pkgs; };
+  recursiveFilterNulls = set:
+    let
+      isNotNull = value: value != null;
+      filterNulls = attrs: filterAttrs (name: value: isNotNull value) attrs;
+    in
+      lib.mapAttrs (name: value:
+        if isAttrs value then recursiveFilterNulls (filterNulls value)
+        else if isList value then value
+        else if isNotNull value then value
+        else {})
+      set;
   generatedConfigFile =
-    pkgs.writeText "config.json" (builtins.toJSON {
+    pkgs.writeText "config.json" (builtins.toJSON (recursiveFilterNulls {
       data_dir = cfg.dataDir;
       log_dir = cfg.logDir;
       storage_modules = cfg.storageModules;
@@ -17,6 +28,7 @@ let
       transaction_blacklist_urls = cfg.transactionBlacklistURLs;
       max_disk_pool_buffer_mb = cfg.maxDiskPoolBufferMb;
       max_disk_pool_data_root_buffer_mb = cfg.maxDiskPoolDataRootBufferMb;
+      max_nonce_limiter_validation_thread_count = cfg.maxVDFValidationThreadCount;
       block_pollers = cfg.blockPollers;
       polling = cfg.polling;
       tx_validators = cfg.txValidators;
@@ -50,7 +62,7 @@ let
           default = ipObj.defaultLimit;
         };
       }) {} cfg.requestsPerMinuteLimitByIp;
-    });
+    }));
 in
 {
   options.services.arweave = {
@@ -304,6 +316,16 @@ in
       type = types.int;
       default = 2;
       description = "As semaphore, the max amount of parallel get sync record requests to perform.";
+    };
+
+    maxVDFValidationThreadCount = mkOption {
+      type = with types; nullOr int;
+      default = null;
+      description = ''
+        The number of threads to use for VDF validation.
+        Note that the default value (null) defaults in runtime
+        to `max(1, (erlang:system_info(schedulers_online) div 2))).`
+      '';
     };
 
     requestsPerMinuteLimit = mkOption {

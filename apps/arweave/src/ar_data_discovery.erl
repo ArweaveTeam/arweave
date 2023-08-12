@@ -163,7 +163,7 @@ handle_info({'EXIT', _, normal}, State) ->
 handle_info({'DOWN', _,  process, _, _}, #state{ peers_pending = N } = State) ->
 	{noreply, State#state{ peers_pending = N - 1 }};
 
-handle_info({event, peer, {bad_response, {Peer, _Resource, _Reason}}}, State) ->
+handle_info({event, peer, {removed, Peer}}, State) ->
 	gen_server:cast(?MODULE, {remove_peer, Peer}),
 	{noreply, State};
 
@@ -209,7 +209,8 @@ pick_peers(Peers, PeerLen, N) ->
 
 collect_peers() ->
 	N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-	collect_peers(lists:sublist(ar_peers:get_peers(), N)).
+	%% rank peers by their current rating since we care about their recent throughput performance
+	collect_peers(lists:sublist(ar_peers:get_peers(current), N)).
 
 collect_peers([Peer | Peers]) ->
 	gen_server:cast(?MODULE, {add_peer, Peer}),
