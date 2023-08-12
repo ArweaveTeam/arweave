@@ -1082,15 +1082,13 @@ validate_solution(Solution, Diff) ->
 		mining_address = MiningAddress, nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, partition_upper_bound = PartitionUpperBound,
 		poa1 = PoA1, poa2 = PoA2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-		seed = Seed, solution_hash = SolutionHash } = Solution,
+		seed = Seed } = Solution,
 	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress),
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
 	case binary:decode_unsigned(H1, big) > Diff of
 		true ->
-			%% validates solution_hash
-			SolutionHash = H1,
 			%% validates recall_byte1
 			RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE, 
 			{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
@@ -1110,8 +1108,6 @@ validate_solution(Solution, Diff) ->
 						false ->
 							false;
 						true ->
-							%% validates solution_hash
-							SolutionHash = H2,
 							%% validates recall_byte2
 							RecallByte2 = RecallRange2Start + Nonce * ?DATA_CHUNK_SIZE, 
 							{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
