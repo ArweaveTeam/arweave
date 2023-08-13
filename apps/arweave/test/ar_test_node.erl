@@ -264,7 +264,10 @@ write_genesis_files(DataDir, B0) ->
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
 wait_until_syncs_data(Left, Right, WeaveSize, _Packing)
-  		when Left >= Right orelse Left >= WeaveSize ->
+  		when Left >= Right orelse
+			Left >= WeaveSize orelse
+			(Right - Left < ?DATA_CHUNK_SIZE) orelse
+			(WeaveSize - Left < ?DATA_CHUNK_SIZE) ->
 	ok;
 wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
 	true = ar_util:do_until(
