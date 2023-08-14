@@ -14,7 +14,11 @@ recall_chunk(WhichChunk, Chunk, Nonce, Candidate) ->
 
 setup_all() ->
 	[B0] = ar_weave:init([], 1, weave_size()),
-	ar_test_node:start(B0),
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	{ok, Config} = application:get_env(arweave, config),
+	StorageModules = lists:flatten(
+		[[{?PARTITION_SIZE, N, {spora_2_6, RewardAddr}}] || N <- lists:seq(0, 8)]),
+	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
 	{Setup, Cleanup} = ar_test_node:mock_functions([
 		{ar_mining_server, recall_chunk, fun recall_chunk/4}
 	]),
