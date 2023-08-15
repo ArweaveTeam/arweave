@@ -188,7 +188,7 @@ get_missing_tx_indices([TXID | TXIDs], N) ->
 	end.
 
 slow_block_application_warning(N) ->
-	ar_mining_server:pause_performance_reports(60000),
+	ar_mining_stats:pause_performance_reports(60000),
 	ar_util:terminal_clear(),
 	ar:console("WARNING: there are more than ~B not yet validated blocks on the longest chain."
 			" Please, double-check if you are in sync with the network and make sure your "
@@ -202,7 +202,7 @@ warning(Peer, Event) ->
 		false ->
 			ok;
 		true ->
-			ar_mining_server:pause_performance_reports(60000),
+			ar_mining_stats:pause_performance_reports(60000),
 			EventMessage =
 				case Event of
 					behind ->
