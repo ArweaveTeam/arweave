@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, reset/1, reset_performance_counters/0, get_partitions/1,
+-export([start_link/0, reset/2, get_partitions/0,
 			get_thread_count/0, read_recall_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -14,7 +14,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	session_ref = undefined,	
+	session_ref = undefined,
+	partition_upper_bound = undefined,
 	io_threads = #{},
 	io_thread_monitor_refs = #{}
 }).
@@ -27,14 +28,11 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-reset(SessionRef) ->
-	gen_server:cast(?MODULE, {reset, SessionRef}).
+reset(SessionRef, PartitionUpperBound) ->
+	gen_server:cast(?MODULE, {reset, SessionRef, PartitionUpperBound}).
 
-reset_performance_counters() ->
-	gen_server:cast(?MODULE, reset_performance_counters).
-
-get_partitions(PartitionUpperBound) ->
-	gen_server:call(?MODULE, {get_partitions, PartitionUpperBound}).
+get_partitions() ->
+	gen_server:call(?MODULE, get_partitions).
 
 get_thread_count() ->
 	gen_server:call(?MODULE, get_thread_count).
@@ -73,9 +71,11 @@ init([]) ->
 		),
 	{ok, State2}.
 
-handle_call({get_partitions, PartitionUpperBound}, _From,
-		#state{ io_threads = IOThreads } = State) ->
-	Max = max(0, (PartitionUpperBound-1) div ?PARTITION_SIZE),
+handle_call(get_partitions, _From, #state{ partition_upper_bound = undefined } = State) ->
+	{reply, [], State};
+handle_call(get_partitions, _From,
+		#state{ partition_upper_bound = PartitionUpperBound, io_threads = IOThreads } = State) ->
+	Max = ?MAX_PARTITION_NUMBER(PartitionUpperBound),
 	Partitions = lists:sort(sets:to_list(
 		maps:fold(
 			fun({Partition, MiningAddress, StoreID}, _, Acc) ->
@@ -115,13 +115,11 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast({reset, SessionRef}, #state{ io_threads = IOThreads } = State) ->
+handle_cast({reset, SessionRef, PartitionUpperBound}, #state{ io_threads = IOThreads } = State) ->
 	[Thread ! {new_mining_session, SessionRef} || Thread <- maps:values(IOThreads)],
-	{noreply, State#state{ session_ref = SessionRef }};
-
-handle_cast(reset_performance_counters, #state{ io_threads = IOThreads } = State) ->
-	[Thread ! reset_performance_counters || Thread <- maps:values(IOThreads)],
-	{noreply, State};
+	{noreply, State#state{
+				session_ref = SessionRef,
+				partition_upper_bound = PartitionUpperBound }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -203,11 +201,6 @@ io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 	receive
 		stop ->
 			io_thread(PartitionNumber, MiningAddress, StoreID);
-		reset_performance_counters ->
-			ets:insert(?MODULE, [{{performance, PartitionNumber},
-					erlang:monotonic_time(millisecond), 0,
-					erlang:monotonic_time(millisecond), 0}]),
-			io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef);
 		{new_mining_session, Ref} ->
 			io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
 		{WhichChunk, {Candidate, RecallRangeStart}} ->
@@ -284,11 +277,6 @@ read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, [{EndOffset, _Chu
 	read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets);
 read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax,
 		[{_EndOffset, Chunk} | ChunkOffsets]) ->
-	PartitionNumber = Candidate#mining_candidate.partition_number,
-	ets:update_counter(?MODULE, {performance, PartitionNumber}, [{3, 1}, {5, 1}],
-			{{performance, PartitionNumber},
-			 erlang:monotonic_time(millisecond), 1,
-			 erlang:monotonic_time(millisecond), 1}),
 	ar_mining_server:recall_chunk(WhichChunk, Chunk, Nonce, Candidate),
 	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
 

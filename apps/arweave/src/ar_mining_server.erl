@@ -4,9 +4,9 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, pause/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
-		set_merkle_rebase_threshold/1, pause_performance_reports/1, compute_h2_for_peer/2,
-		prepare_and_post_solution/1, post_solution/1,
+-export([start_link/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
+		compute_h2_for_peer/2, prepare_and_post_solution/1, post_solution/1,
+		set_merkle_rebase_threshold/1, pause_performance_reports/1, 
 		get_recall_bytes/4, is_session_valid/2]).
 -export([pause/0, get_task_queue_len/0]).
 
@@ -57,9 +57,10 @@ start_mining(Args) ->
 
 %% @doc Callback from ar_mining_io when a chunk is read
 recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
-	?LOG_ERROR("******* SHOULDN'T BE HERE"),
+	ar_mining_stats:increment_partition_stats(Candidate#mining_candidate.partition_number),
 	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
 recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
+	ar_mining_stats:increment_partition_stats(Candidate#mining_candidate.partition_number),
 	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
 recall_chunk(skipped, undefined, Nonce, Candidate) ->
 	update_chunk_cache_size(-1),
@@ -119,7 +120,6 @@ init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
 	ar_chunk_storage:open_files("default"),
 	gen_server:cast(?MODULE, handle_task),
-	gen_server:cast(?MODULE, report_performance),
 	reset_chunk_cache_size(),
 	State = lists:foldl(
 		fun(_, Acc) -> start_hashing_thread(Acc) end,
@@ -148,8 +148,8 @@ handle_cast(pause, State) ->
 handle_cast({start_mining, Args}, State) ->
 	{Diff, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
-	Session = reset_mining_session(State),
-	ar_mining_io:reset_performance_counters(),
+	Session = reset_mining_session(State#state.session, State),
+	ar_mining_stats:reset_all_stats(),
 	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold, session = Session }};
 
 handle_cast({set_difficulty, _Diff},
@@ -236,121 +236,6 @@ handle_cast({may_be_remove_chunk_from_cache, _Args} = Task,
 	prometheus_gauge:inc(mining_server_task_queue_len),
 	{noreply, State#state{ task_queue = Q2 }};
 
-handle_cast(report_performance,
-		#state{ session = #mining_session{ partition_upper_bound = undefined } } = State) ->
-	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
-	{noreply, State};
-handle_cast(report_performance, #state{ pause_performance_reports = true,
-			pause_performance_reports_timeout = Timeout } = State) ->
-	Now = os:system_time(millisecond),
-	case Now > Timeout of
-		true ->
-			%% Only reserve enough space to process the H1 list provided. If this is less
-			%% than the full recall range, some of the chunk2s will be read, cached, and ignored
-			%% (since we don't have the H1 needed to compute the H2).
-			%%
-			%% This may cause some temporary memory bloat - but it will be cleaned up with the
-			%% next mining session (e.g. when the next block is applied).
-			%%
-			%% If however we reserve cache space for these "orphan" chunk2s the cache space they
-			%% consume will prevent usable chunks from being read and negatively impact the mining
-			%% rate.
-			reserve_cache_space(length(H1List)),
-			Map2 = cache_h1_list(Candidate, H1List, Map),
-			Session2 = Session#mining_session{ chunk_cache = Map2 },
-			{noreply, State#state{ session = Session2 }};
-		false ->
-			%% This can happen if the remote peer has an outdated partition table
-			{noreply, State}
-	end;
-handle_cast(report_performance, #state{ session = Session } = State) ->
-	#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,	
-	Partitions = ar_mining_io:get_partitions(PartitionUpperBound),
-	Now = erlang:monotonic_time(millisecond),
-	VdfSpeed = vdf_speed(Now),
-	{IOList, MaxPartitionTime, PartitionsSum, MaxCurrentTime, CurrentsSum} =
-		lists:foldr(
-			fun({Partition, _ReplicaID, StoreID}, {Acc1, Acc2, Acc3, Acc4, Acc5} = Acc) ->
-				case ets:lookup(?MODULE, {performance, Partition}) of
-					[] ->
-						Acc;
-					[{_, PartitionStart, _, CurrentStart, _}]
-							when Now - PartitionStart =:= 0
-								orelse Now - CurrentStart =:= 0 ->
-						Acc;
-					[{_, PartitionStart, PartitionTotal, CurrentStart, CurrentTotal}] ->
-						ets:update_counter(?MODULE,
-										{performance, Partition},
-										[{4, -1, Now, Now}, {5, 0, -1, 0}]),
-						PartitionTimeLapse = (Now - PartitionStart) / 1000,
-						PartitionAvg = PartitionTotal / PartitionTimeLapse / 4,
-						CurrentTimeLapse = (Now - CurrentStart) / 1000,
-						CurrentAvg = CurrentTotal / CurrentTimeLapse / 4,
-						Optimal = optimal_performance(StoreID, VdfSpeed),
-						?LOG_INFO([{event, mining_partition_performance_report},
-								{partition, Partition}, {avg, PartitionAvg},
-								{current, CurrentAvg}]),
-						case Optimal of
-							undefined ->
-								{[io_lib:format("Partition ~B avg: ~.2f MiB/s, "
-										"current: ~.2f MiB/s.~n",
-									[Partition, PartitionAvg, CurrentAvg]) | Acc1],
-									max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
-									max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal};
-							_ ->
-								{[io_lib:format("Partition ~B avg: ~.2f MiB/s, "
-										"current: ~.2f MiB/s, "
-										"optimum: ~.2f MiB/s, ~.2f MiB/s (full weave).~n",
-									[Partition, PartitionAvg, CurrentAvg, Optimal / 2,
-											Optimal]) | Acc1],
-									max(Acc2, PartitionTimeLapse), Acc3 + PartitionTotal,
-									max(Acc4, CurrentTimeLapse), Acc5 + CurrentTotal}
-						end
-				end
-			end,
-			{[], 0, 0, 0, 0},
-			Partitions
-		),
-	case MaxPartitionTime > 0 of
-		true ->
-			TotalAvg = PartitionsSum / MaxPartitionTime / 4,
-			TotalCurrent = CurrentsSum / MaxCurrentTime / 4,
-			?LOG_INFO([{event, mining_performance_report}, {total_avg_mibps, TotalAvg},
-					{total_avg_hps, TotalAvg * 4}, {total_current_mibps, TotalCurrent},
-					{total_current_hps, TotalCurrent * 4}]),
-			Str =
-				case VdfSpeed of
-					undefined ->
-						io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
-								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s.~n",
-						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4]);
-					_ ->
-						io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
-								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s; VDF: ~.2f s.~n",
-						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed])
-				end,
-			prometheus_gauge:set(mining_rate, TotalCurrent),
-			IOList2 = [Str | [IOList | ["~n"]]],
-			ar:console(iolist_to_binary(IOList2));
-		false ->
-			ok
-	end,
-	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
-	{noreply, State};
-
-handle_cast({post_solution, Solution}, State) ->
-	post_solution(Solution, State),
-	{noreply, State};
-
-handle_cast({may_be_remove_chunk_from_cache, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{noreply, State};
-handle_cast({may_be_remove_chunk_from_cache, _Args} = Task,
-		#state{ task_queue = Q } = State) ->
-	Q2 = gb_sets:insert({priority(may_be_remove_chunk_from_cache), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
-	{noreply, State#state{ task_queue = Q2 }};
-
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -376,10 +261,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 	{SessionKey, Session, _PrevSessionKey, _PrevSession, Output, PartitionUpperBound} = Args,
 	StepNumber = Session#vdf_session.step_number,
 	true = is_integer(StepNumber),
-	ets:update_counter(?MODULE,
-			{performance, nonce_limiter},
-			[{3, 1}],
-			{{performance, nonce_limiter}, erlang:monotonic_time(millisecond), 0}),
+	ar_mining_stats:increment_vdf_stats(),
 	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
 	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
@@ -530,8 +412,8 @@ hashing_thread(SessionRef) ->
 			hashing_thread(Ref)
 	end.
 
-distribute_output(Partitions, Candidate, Distributed, State) ->
-	distribute_output(Partitions, Candidate, Distributed, State, 0).
+distribute_output(Candidate, Distributed, State) ->
+	distribute_output(ar_mining_io:get_partitions(), Candidate, Distributed, State, 0).
 
 distribute_output([], _Candidate, _Distributed, State, N) ->
 	{N, State};
@@ -610,12 +492,11 @@ handle_task({computed_output, Args}, State) ->
 				NewSession = reset_mining_session(State),
 				NewSession#mining_session{ seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
-						partition_upper_bound = PartitionUpperBound }
+						partition_upper_bound = PartitionUpperBound },
+					State)
 		end,
-	Ref = Session2#mining_session.ref,
-	Partitions = ar_mining_io:get_partitions(PartitionUpperBound),
 	Candidate = #mining_candidate{
-		session_ref = Ref,
+		session_ref = Session2#mining_session.ref,
 		seed = Seed,
 		next_seed = NextSeed,
 		start_interval_number = StartIntervalNumber,
@@ -623,7 +504,7 @@ handle_task({computed_output, Args}, State) ->
 		nonce_limiter_output = Output,
 		partition_upper_bound = PartitionUpperBound
 	},
-	{N, State2} = distribute_output(Partitions, Candidate, #{}, State),
+	{N, State2} = distribute_output(Candidate, #{}, State),
 	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N}]),
 	{noreply, State2#state{ session = Session2 }};
 
@@ -1160,43 +1041,16 @@ pick_hashing_thread(Threads) ->
 	{{value, Thread}, Threads2} = queue:out(Threads),
 	{Thread, queue:in(Thread, Threads2)}.
 
-optimal_performance(_StoreID, undefined) ->
-	undefined;
-optimal_performance("default", _VdfSpeed) ->
-	undefined;
-optimal_performance(StoreID, VdfSpeed) ->
-	{PartitionSize, PartitionIndex, _Packing} = ar_storage_module:get_by_id(StoreID),
-	case prometheus_gauge:value(v2_index_data_size_by_packing, [StoreID, spora_2_6,
-			PartitionSize, PartitionIndex]) of
-		undefined -> 0.0;
-		StorageSize -> (200 / VdfSpeed) * (StorageSize / PartitionSize)
-	end.
-
-vdf_speed(Now) ->
-	case ets:lookup(?MODULE, {performance, nonce_limiter}) of
-		[] ->
-			undefined;
-		[{_, Now, _}] ->
-			undefined;
-		[{_, _Now, 0}] ->
-			undefined;
-		[{_, VdfStart, VdfCount}] ->
-			ets:update_counter(?MODULE,
-							{performance, nonce_limiter},
-							[{2, -1, Now, Now}, {3, 0, -1, 0}]),
-			VdfLapse = (Now - VdfStart) / 1000,
-			VdfLapse / VdfCount
-	end.
-
-reset_mining_session(State) ->
+reset_mining_session(Session, State) ->
+	#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,
 	#state{ hashing_threads = HashingThreads } = State,
 	Ref = make_ref(),
 	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
-	ar_mining_io:reset(Ref),
+	ar_mining_io:reset(Ref, PartitionUpperBound),
 	CacheSizeLimit = get_chunk_cache_size_limit(),
 	reset_chunk_cache_size(),
 	ar_coordination:reset_mining_session(),
-	#mining_session{ ref = Ref, paused = false, chunk_cache_size_limit = CacheSizeLimit }.
+	Session#mining_session{ ref = Ref, paused = false, chunk_cache_size_limit = CacheSizeLimit }.
 
 reset_chunk_cache_size() ->
 	ets:insert(?MODULE, {chunk_cache_size, 0}),

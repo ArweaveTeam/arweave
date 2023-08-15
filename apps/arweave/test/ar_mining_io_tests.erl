@@ -124,19 +124,30 @@ test_partitions() ->
 	MiningAddress = Candidate#mining_candidate.mining_address,
 	Packing = {spora_2_6, MiningAddress},
 
+	ar_mining_io:reset(make_ref(), 0),
 	?assertEqual([
 			{0, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 0, Packing})}],
-		ar_mining_io:get_partitions(0)),
+		ar_mining_io:get_partitions()),
 
+	ar_mining_io:reset(make_ref(), ?PARTITION_SIZE),
 	?assertEqual([
 			{0, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 0, Packing})}],
-		ar_mining_io:get_partitions(?PARTITION_SIZE)),
+		ar_mining_io:get_partitions()),
 
+	ar_mining_io:reset(make_ref(), trunc(2.5 * ?PARTITION_SIZE)),
+	?assertEqual([
+			{0, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 0, Packing})},
+			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})}],
+		ar_mining_io:get_partitions()),
+
+	ar_mining_io:reset(make_ref(), weave_size()),
 	?assertEqual([
 			{0, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 0, Packing})},
 			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})},
-			{2, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 2, Packing})}],
-		ar_mining_io:get_partitions(trunc(2.5 * ?PARTITION_SIZE))).
+			{2, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 2, Packing})},
+			{3, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 3, Packing})},
+			{4, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 4, Packing})}],
+		ar_mining_io:get_partitions()).
 
 test_mining_session() ->
 	Candidate = default_candidate(),
@@ -153,7 +164,7 @@ test_mining_session() ->
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
 	assert_no_io(),
 
-	ar_mining_io:reset(SessionRef),
+	ar_mining_io:reset(SessionRef, weave_size()),
 
 	%% mining session: set, candidate session: set
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
