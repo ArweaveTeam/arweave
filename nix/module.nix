@@ -5,19 +5,13 @@ let
   cfg = config.services.arweave;
   defaultUser = "arweave";
   arweavePkg = pkgs.callPackage ./arweave.nix { inherit pkgs; };
-  recursiveFilterNulls = set:
+  filterTopLevelNulls = set:
     let
       isNotNull = value: value != null;
-      filterNulls = attrs: filterAttrs (name: value: isNotNull value) attrs;
     in
-      lib.mapAttrs (name: value:
-        if isAttrs value then recursiveFilterNulls (filterNulls value)
-        else if isList value then value
-        else if isNotNull value then value
-        else {})
-      set;
+      filterAttrs (name: value: isNotNull value) set;
   generatedConfigFile =
-    pkgs.writeText "config.json" (builtins.toJSON (recursiveFilterNulls {
+    pkgs.writeText "config.json" (builtins.toJSON (filterTopLevelNulls {
       data_dir = cfg.dataDir;
       log_dir = cfg.logDir;
       storage_modules = cfg.storageModules;
