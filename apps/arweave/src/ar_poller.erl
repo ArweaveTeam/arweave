@@ -117,7 +117,7 @@ handle_cast({peer_out_of_sync, Peer}, State) ->
 			ar_util:cast_after(300000, ?MODULE, {peer_out_of_sync_timeout, Peer}),
 			case {sets:is_empty(Set), sets:is_empty(Set2)} of
 				{false, true} ->
-					ar_mining_server:pause_performance_reports(60000),
+					ar_mining_stats:pause_performance_reports(60000),
 					ar_util:terminal_clear(),
 					TrustedPeersStr = string:join([ar_util:format_peer(Peer2)
 							|| Peer2 <- Config#config.peers], ", "),
