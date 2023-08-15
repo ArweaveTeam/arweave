@@ -148,15 +148,15 @@ let
     setupHook = false;
     REBAR = "${pkgs.beamPackages.rebar3}/bin/rebar3";
     nativeBuildInputs = [ pkgs.pkg-config ];
-    buildInputs = [ pkgs.llvmPackages.bintools-unwrapped ];
+    buildInputs = [ pkgs.llvmPackages.bintools-unwrapped pkgs.gnumake ];
     configureFlags = [ "-fno-lto" ];
     hardeningDisable = [ "all" ];
 
     src = fetchFromGitHub {
-      owner = "davisp";
+      owner = "ArweaveTeam";
       repo = name;
-      rev = "37039ba32e950480715be74751a53339420a6fe1";
-      sha256 = "sha256-t+AixeZ2HONEyyJ69CA7yJ5kWDthJM3c7J6jVriG7l0=";
+      rev = "82792758e61be7d303a11290f859a7b3b20eaf95";
+      sha256 = "R7kbdMh5wOIN/aA7KFrICjlFAym3OJs9sYWrfdU06GM=";
     };
 
     patchPhase = ''
