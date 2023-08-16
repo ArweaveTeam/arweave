@@ -136,6 +136,7 @@ terminate(_Reason, _State) ->
 report_performance([]) ->
 	ok;
 report_performance(Partitions) ->
+	ar_mining_server:get_task_queue_len(),
 	Now = erlang:monotonic_time(millisecond),
 	VdfSpeed = vdf_speed(Now),
 	{IOList, MaxPartitionTime, PartitionsSum, MaxCurrentTime, CurrentsSum} =
@@ -189,13 +190,13 @@ report_performance(Partitions) ->
 			Str =
 				case VdfSpeed of
 					undefined ->
-						io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
+						io_lib:format("~nMining performance report: ~p~nTotal avg: ~.2f MiB/s, "
 								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s.~n",
-						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4]);
+						[erlang:localtime(), TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4]);
 					_ ->
-						io_lib:format("~nMining performance report:~nTotal avg: ~.2f MiB/s, "
+						io_lib:format("~nMining performance report: ~p~nTotal avg: ~.2f MiB/s, "
 								" ~.2f h/s; current: ~.2f MiB/s, ~.2f h/s; VDF: ~.2f s.~n",
-						[TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed])
+						[erlang:localtime(), TotalAvg, TotalAvg * 4, TotalCurrent, TotalCurrent * 4, VdfSpeed])
 				end,
 			prometheus_gauge:set(mining_rate, TotalCurrent * 4),
 			IOList2 = [Str | [IOList | ["~n"]]],

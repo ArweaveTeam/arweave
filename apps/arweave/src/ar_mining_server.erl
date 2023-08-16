@@ -118,8 +118,14 @@ init([]) ->
 
 handle_call(get_task_queue_len, _From, State) ->
 	%% Used in tests.
-	#state{ task_queue = Q } = State,
+	#state{ session = Session, task_queue = Q } = State,
+	#mining_session{ chunk_cache = Map } = Session,
 	Length = length(gb_sets:to_list(Q)),
+	[{_, Size}] = ets:lookup(?MODULE, chunk_cache_size),
+	?LOG_INFO([{event, task_queue},
+		{q_length, Length}, {q_size, gb_sets:size(Q)},
+		{cache_size, Size}, {cache_keys, maps:size(Map)}]),
+	% count_keys(Map),
 	{reply, Length, State};
 
 handle_call(Request, _From, State) ->
@@ -164,11 +170,21 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, ?MODULE, handle_task),
 			{noreply, State};
 		_ ->
+			Start = erlang:monotonic_time(microsecond),
 			{{_Priority, _ID, Task}, Q2} = gb_sets:take_smallest(Q),
 			prometheus_gauge:dec(mining_server_task_queue_len),
 			may_be_warn_about_lag(Task, Q2),
 			gen_server:cast(?MODULE, handle_task),
-			handle_task(Task, State#state{ task_queue = Q2 })
+			Response = handle_task(Task, State#state{ task_queue = Q2 }),
+			Elapsed = erlang:monotonic_time(microsecond) - Start,
+			case Elapsed > 1000000 of
+				true ->
+					?LOG_INFO([{event, handle_task},
+						{elapsed, Elapsed}, {task, element(1, Task)}]);
+				false ->
+					ok
+			end,
+			Response
 	end;
 
 handle_cast({compute_h2_for_peer, Candidate, H1List}, State) ->
@@ -354,6 +370,19 @@ count_nonce_limiter_tasks(Q) ->
 			end
 	end.
 
+count_h0_tasks(Q) ->
+	case gb_sets:is_empty(Q) of
+		true ->
+			0;
+		false ->
+			case gb_sets:take_smallest(Q) of
+				{{_Priority, _ID, {computed_h0, _Args}}, Q2} ->
+					1 + count_h0_tasks(Q2);
+				_ ->
+					0
+			end
+	end.
+
 hashing_thread() ->
 	hashing_thread(not_set).
 
@@ -467,9 +496,15 @@ handle_task({computed_output, Args}, State) ->
 				Session;
 			false ->
 				ar:console("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
-						"next entropy nonce: ~s, interval number: ~B.~n",
+						"next entropy nonce: ~s, interval number: ~B, step number: ~B, "
+						"output: ~s.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
-						StartIntervalNumber]),
+						StartIntervalNumber, StepNumber, ar_util:encode(Output)]),
+				?LOG_INFO("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
+						"next entropy nonce: ~s, interval number: ~B, step number: ~B, "
+						"output: ~s.~n",
+						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
+						StartIntervalNumber, StepNumber, ar_util:encode(Output)]),
 				reset_mining_session(
 					#mining_session{ seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
@@ -539,15 +574,17 @@ handle_task({chunk2, Candidate}, State) ->
 			{noreply, State}
 	end;
 
-handle_task({computed_h0, Candidate}, State) ->
+handle_task({computed_h0, Candidate}, #state{ task_queue = Q } = State) ->
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
 		true ->
-			#state{ session = #mining_session{ chunk_cache_size_limit = Limit } } = State,
+			% #state{ session = #mining_session{ chunk_cache_size_limit = Limit } } = State,
 			[{_, Size}] = ets:lookup(?MODULE, chunk_cache_size),
+			Limit = Size + 1,
 			case Size > Limit of
 				true ->
-					%% Re-add the task so that it can bd executed later once some cache space frees up.
+					%% Re-add the task so that it can be executed later once some cache space frees up.
 					add_task(computed_h0, Candidate);
+					%%?LOG_INFO([{event, computed_h0}, {tasks, count_h0_tasks(Q)}]);
 				false ->
 					#mining_candidate{ h0 = H0, partition_number = PartitionNumber,
 						partition_upper_bound = PartitionUpperBound } = Candidate,
@@ -748,7 +785,7 @@ generate_cache_ref(Candidate) ->
 	#mining_candidate{
 		partition_number = PartitionNumber, partition_number2 = PartitionNumber2,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
-	CacheRef = {PartitionNumber, PartitionNumber2, PartitionUpperBound, make_ref()},
+	CacheRef = {PartitionNumber, PartitionNumber2, PartitionUpperBound, erlang:localtime(), make_ref()},
 	Candidate#mining_candidate{ cache_ref = CacheRef }.
 
 prepare_and_post_solution(Candidate, State) ->
@@ -1051,3 +1088,21 @@ pause() ->
 %% @doc Query the number of tasks pending in the queue. Only used in tests.
 get_task_queue_len() ->
 	gen_server:call(?MODULE, get_task_queue_len).
+
+count_keys(Map) ->
+    CountMap = maps:fold(fun count_key/3, #{}, Map),
+    print_keys(CountMap).
+
+count_key({Value1, _Value2}, _Val, Acc) ->
+    case maps:is_key(Value1, Acc) of
+        true ->
+            Count = maps:get(Value1, Acc),
+            maps:put(Value1, Count + 1, Acc);
+        false ->
+            maps:put(Value1, 1, Acc)
+    end.
+
+print_keys(CountMap) ->
+    maps:map(fun(Value1, Count) -> 
+		?LOG_INFO([{event, print_keys}, {value, Value1}, {count, Count}])
+    end, CountMap).

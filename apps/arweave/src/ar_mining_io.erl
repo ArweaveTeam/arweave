@@ -196,15 +196,22 @@ io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 		stop ->
 			io_thread(PartitionNumber, MiningAddress, StoreID);
 		{new_mining_session, Ref} ->
-			io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
-		{WhichChunk, {Candidate, RecallRangeStart}} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true -> 
-					read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
-				false -> 
-					ok %% Clear the message queue of requests from outdated mining sessions
-			end,
-			io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef)
+			io_thread(PartitionNumber, MiningAddress, StoreID, Ref)
+	after 0 ->
+		receive
+			stop ->
+				io_thread(PartitionNumber, MiningAddress, StoreID);
+			{new_mining_session, Ref} ->
+				io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
+			{WhichChunk, {Candidate, RecallRangeStart}} ->
+				case ar_mining_server:is_session_valid(SessionRef, Candidate) of
+					true -> 
+						read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
+					false -> 
+						ok %% Clear the message queue of requests from outdated mining sessions
+				end,
+				io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef)
+		end
 	end.
 
 get_packed_intervals(Start, End, MiningAddress, "default", Intervals) ->
