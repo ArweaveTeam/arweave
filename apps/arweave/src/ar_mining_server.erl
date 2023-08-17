@@ -300,10 +300,54 @@ get_chunk_cache_size_limit() ->
 		(?RECALL_RANGE_SIZE * 2 * ThreadCount) div ?DATA_CHUNK_SIZE,
 		100),
 
+io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
+	receive
+		%% Prioritize stop and new_mining_session message before any read_recall_range messages,
+		%% this ensures we don't continue to process previously queued read_recall_range messages
+		%% after a mining session change
+		stop ->
+			io_thread(PartitionNumber, ReplicaID, StoreID);
+		{new_mining_session, Ref} ->
+			io_thread(PartitionNumber, ReplicaID, StoreID, Ref)
+	after 0 ->
+		receive
+			stop ->
+				io_thread(PartitionNumber, ReplicaID, StoreID);
+			{new_mining_session, Ref} ->
+				io_thread(PartitionNumber, ReplicaID, StoreID, Ref);
+			reset_performance_counters ->
+				ets:insert(?MODULE, [{{performance, PartitionNumber},
+						erlang:monotonic_time(millisecond), 0,
+						erlang:monotonic_time(millisecond), 0}]),
+				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
+			{read_recall_range, {SessionRef, From, PartitionNumber2, RecallRangeStart, H0,
+					NonceLimiterOutput, CorrelationRef}} ->
+				read_recall_range(io_thread_recall_range_chunk, H0, PartitionNumber2,
+						RecallRangeStart, NonceLimiterOutput, ReplicaID, StoreID, From,
+						SessionRef, CorrelationRef),
+				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
+			{read_recall_range, _} ->
+				%% Clear the message queue from the requests from the outdated mining session.
+				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
+			{read_recall_range2, {SessionRef, From, PartitionNumber2, RecallRangeStart, H0,
+					NonceLimiterOutput, CorrelationRef}} ->
+				read_recall_range(io_thread_recall_range2_chunk, H0, PartitionNumber2,
+						RecallRangeStart, NonceLimiterOutput, ReplicaID, StoreID, From,
+						SessionRef, CorrelationRef),
+				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
+			{read_recall_range2, _} ->
+				%% Clear the message queue from the requests from the outdated mining session.
+				io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef)
+		end
+	end.
+
+get_chunk_cache_size_limit(State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	Limit = case Config#config.mining_server_chunk_cache_size_limit of
 		undefined ->
-			Total = proplists:get_value(total_memory,
+			#state{ io_threads = IOThreads } = State,
+			ThreadCount = map_size(IOThreads),
+			Free = proplists:get_value(total_memory,
 					memsup:get_system_memory_data(), 2000000000),
 			Bytes = Total * 0.7 / 3,
 			CalculatedLimit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
@@ -470,8 +514,18 @@ handle_task({computed_output, Args}, State) ->
 						"next entropy nonce: ~s, interval number: ~B.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
 						StartIntervalNumber]),
-				reset_mining_session(
-					#mining_session{ seed = Seed, next_seed = NextSeed,
+				?LOG_INFO("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
+						"next entropy nonce: ~s, interval number: ~B.~n",
+						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
+						StartIntervalNumber]),
+				Ref2 = make_ref(),
+				[Thread ! {new_mining_session, Ref2} || Thread <- queue:to_list(Threads)],
+				[Thread ! {new_mining_session, Ref2} || Thread <- maps:values(IOThreads)],
+				CacheSizeLimit = get_chunk_cache_size_limit(State),
+				log_chunk_cache_size_limit(CacheSizeLimit),
+				ets:insert(?MODULE, {chunk_cache_size, 0}),
+				prometheus_gauge:set(mining_server_chunk_cache_size, 0),
+				#mining_session{ ref = Ref2, seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound },
 					State)
