@@ -120,7 +120,9 @@ add_mainnet_v1_genesis_txs() ->
 				Files
 			);
 		false ->
-			[]  % Skip if the directory does not exist
+			?LOG_WARNING("data/genesis_txs directory not found. Node might not index the genesis "
+						 "block transactions."),
+			[]
 	end.
 
 
