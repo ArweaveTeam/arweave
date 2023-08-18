@@ -68,6 +68,8 @@ init([]) ->
 	ar_randomx_state:start_block_polling(),
 	%% Read persisted mempool.
 	ar_mempool:load_from_disk(),
+	%% Copy genesis transactions (snapshotted in the repo) into data_dir/txs
+	ar_weave:add_mainnet_v1_genesis_txs(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
 	validate_trusted_peers(Config),
