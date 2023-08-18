@@ -108,19 +108,26 @@ create_genesis_tx(Key, Size) ->
 	ar_tx:sign_v1(UnsignedTX, Key).
 
 add_mainnet_v1_genesis_txs() ->
-	{ok, Files} = file:list_dir("data/genesis_txs"),
-	{ok, Config} = application:get_env(arweave, config),
-	lists:foldl(
-		fun(F, Acc) ->
-			file:copy(
-				"data/genesis_txs/" ++ F,
-				Config#config.data_dir ++ "/" ++ ?TX_DIR ++ "/" ++ F
-			),
-			[ar_util:decode(hd(string:split(F, ".")))|Acc]
-		end,
-		[],
-		Files
-	).
+	case filelib:is_dir("data/genesis_txs") of
+		true ->
+			{ok, Files} = file:list_dir("data/genesis_txs"),
+			{ok, Config} = application:get_env(arweave, config),
+			lists:foldl(
+				fun(F, Acc) ->
+					SourcePath = "data/genesis_txs/" ++ F,
+					TargetPath = Config#config.data_dir ++ "/" ++ ?TX_DIR ++ "/" ++ F,
+					file:copy(SourcePath, TargetPath),
+					[ar_util:decode(hd(string:split(F, ".")))|Acc]
+				end,
+				[],
+				Files
+			);
+		false ->
+			?LOG_WARNING("data/genesis_txs directory not found. Node might not index the genesis "
+						 "block transactions."),
+			[]
+	end.
+
 
 %% @doc Return the mainnet genesis transactions.
 create_mainnet_genesis_txs() ->

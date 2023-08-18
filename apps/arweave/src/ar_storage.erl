@@ -874,6 +874,8 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	ensure_directories(Config#config.data_dir),
+	%% Copy genesis transactions (snapshotted in the repo) into data_dir/txs
+	ar_weave:add_mainnet_v1_genesis_txs(),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"),
 			tx_confirmation_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), tx_db),
