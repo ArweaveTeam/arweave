@@ -589,7 +589,7 @@
 	%% The SHA2-256 of the packed chunk2, when present.
 	chunk2_hash,
 
-	%% The recursive hash of the history of block times (in seconds), VDF times (in steps),
+	%% The hashes of the history of block times (in seconds), VDF times (in steps),
 	%% and solution types (one-chunk vs two-chunk) of the latest
 	%% ?BLOCK_TIME_HISTORY_BLOCKS blocks.
 	block_time_history_hash,
