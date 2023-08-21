@@ -406,6 +406,11 @@ may_be_report_double_signing(B, B2) ->
 					(ar_block:generate_signed_hash(B2))/binary >>,
 			Proof = {Key, Signature1, CDiff1, PrevCDiff, Preimage1, Signature2, CDiff2,
 					PrevCDiff2, Preimage2},
+			?LOG_INFO([{event, report_double_signing},
+				{key, ar_util:encode(Key)}, 
+				{block1, ar_util:encode(B#block.indep_hash)},
+				{block2, ar_util:encode(B2#block.indep_hash)},
+				{height1, B#block.height}, {height2, B2#block.height}]),
 			ar_events:send(block, {double_signing, Proof});
 		false ->
 			ok
