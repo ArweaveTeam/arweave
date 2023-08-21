@@ -43,6 +43,7 @@ start() ->
 %% Ban a peer completely for TTLSeconds seoncds. Since we cannot trust the port,
 %% we ban the whole IP address.
 ban_peer(Peer, TTLSeconds) ->
+	?LOG_DEBUG([{event, ban_peer}, {peer, ar_util:format_peer(Peer)}, {seconds, TTLSeconds}]),
 	Key = {ban, peer_to_ip_addr(Peer)},
 	Expires = os:system_time(seconds) + TTLSeconds,
 	ets:insert(?MODULE, {Key, Expires}).

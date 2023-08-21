@@ -12,6 +12,10 @@
 -define(VDF_HISTORY_CUT, 2).
 -else.
 -define(VDF_DIFFICULTY, ?VDF_SHA_1S div ?VDF_CHECKPOINT_COUNT_IN_STEP).
--define(VDF_DIFFICULTY_RETARGET, 720).
--define(VDF_HISTORY_CUT, 50).
+	-ifndef(VDF_DIFFICULTY_RETARGET).
+		-define(VDF_DIFFICULTY_RETARGET, 720).
+	-endif.
+	-ifndef(VDF_HISTORY_CUT).
+		-define(VDF_HISTORY_CUT, 50).
+	-endif.
 -endif.
