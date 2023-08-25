@@ -16,7 +16,7 @@ screen_cmd="screen -dmsL arweave /arweave-build/testnet/bin/start"
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_client_peer)
 
-screen_cmd+=" debug \
+screen_cmd+=" debug mine \
 data_dir /arweave-data \
 header_sync_jobs 0 \
 start_from_latest_state"
