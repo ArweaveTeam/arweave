@@ -7,12 +7,13 @@ if ! $ARWEAVE_DIR/testnet/assert_testnet.sh; then
 	exit 1
 fi
 
+peers="$2"
 prefix="$1"
 flags=""
 
 # Read the testnet servers and build the peer flags
 while IFS= read -r line || [[ -n "$line" ]]; do
     flags+=" $prefix $line"
-done < $ARWEAVE_DIR/testnet/testnet_servers.txt
+done < $ARWEAVE_DIR/testnet/$peers.txt
 
 echo "$flags"

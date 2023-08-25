@@ -14,12 +14,13 @@ fi
 
 screen_cmd="screen -dmsL arweave /arweave-build/testnet/bin/start"
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
-screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_client_peer testnet_miners)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_miners)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_vdf)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_server_trusted_peer testnet_vdf)
 
 screen_cmd+=" debug mine \
-data_dir /arweave-data \
-header_sync_jobs 0 \
-start_from_latest_state"
+max_vdf_validation_thread_count 2 \
+data_dir /arweave-data"
 
 echo "$screen_cmd"
 echo "$screen_cmd" > /arweave-build/testnet/run.command
