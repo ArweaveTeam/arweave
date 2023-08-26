@@ -1,10 +1,11 @@
 #!/bin/bash
 
-TESTNET_SERVERS=$(cat testnet_miners.txt)
-TESTNET_SERVERS+=" "
-TESTNET_SERVERS+=$(cat testnet_vdf.txt)
+ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
 
-for server in $TESTNET_SERVERS; do
+source $ARWEAVE_DIR/testnet/testnet_miners.sh
+source $ARWEAVE_DIR/testnet/testnet_vdf.sh
+
+for server in "${TESTNET_SERVERS[@]}"; do
     echo "Stopping $server"
 
     ssh -q -t "$server" 'bash --norc --noprofile' << 'ENDSSH'
