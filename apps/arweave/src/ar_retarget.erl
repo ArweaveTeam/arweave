@@ -13,24 +13,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% A macro for checking if the given block is a retarget block.
-%% Returns true if so, otherwise returns false.
--define(IS_RETARGET_BLOCK(X),
-		(
-			((X#block.height rem ?RETARGET_BLOCKS) == 0) and
-			(X#block.height =/= 0)
-		)
-	).
-
-%% A macro for checking if the given height is a retarget height.
-%% Returns true if so, otherwise returns false.
--define(IS_RETARGET_HEIGHT(Height),
-		(
-			((Height rem ?RETARGET_BLOCKS) == 0) and
-			(Height =/= 0)
-		)
-	).
-
 %% @doc The unconditional difficulty reduction coefficient applied at the
 %% first 2.5 block.
 -define(DIFF_DROP_2_5, 2).
@@ -49,11 +31,12 @@
 
 %% @doc Return true if the given height is a retarget height.
 is_retarget_height(Height) ->
-	?IS_RETARGET_HEIGHT(Height).
+	(Height == get_testnet_difficulty_drop_height() orelse
+		((Height rem ?RETARGET_BLOCKS) == 0) andalso (Height =/= 0)).
 
 %% @doc Return true if the given block is a retarget block.
 is_retarget_block(Block) ->
-	?IS_RETARGET_BLOCK(Block).
+	is_retarget_height(Block#block.height).
 
 maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) ->
 	case ar_retarget:is_retarget_height(Height) of
@@ -79,6 +62,8 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_2_5 = ar_fork:height_2_5(),
 	Fork_2_6 = ar_fork:height_2_6(),
 	TestnetDifficultyDropHeight = get_testnet_difficulty_drop_height(),
+	?LOG_DEBUG([{event, calculate_difficulty}, {old_diff, OldDiff},
+		{height, Height}, {drop_height, TestnetDifficultyDropHeight}]),
 	case Height of
 		_ when Height == TestnetDifficultyDropHeight ->
 			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, 100, 2);
