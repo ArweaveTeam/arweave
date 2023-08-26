@@ -7,12 +7,13 @@ if ! $ARWEAVE_DIR/testnet/assert_testnet.sh; then
 	exit 1
 fi
 
-peers="$2"
+
 prefix="$1"
+peers="$2"
 flags=""
 
 # Read the testnet servers and build the peer flags
-source $ARWEAVE_DIR/testnet/testnet_vdf.sh
+source $ARWEAVE_DIR/testnet/$peers.sh
 for server in "${TESTNET_SERVERS[@]}"; do
 	flags+=" $prefix $server"
 done

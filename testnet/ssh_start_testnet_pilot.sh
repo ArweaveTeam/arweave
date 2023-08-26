@@ -10,6 +10,7 @@ ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
 source $ARWEAVE_DIR/testnet/testnet_vdf.sh
 
 BRANCH="$1"
+BLOCK="$2"
 
 for server in "${TESTNET_SERVERS[@]}"; do
     echo "Rebuilding $server"
@@ -22,9 +23,9 @@ for server in "${TESTNET_SERVERS[@]}"; do
     exit
 ENDSSH
 
-    echo "Starting $server"
+    echo "Starting $server: start_testnet_pilot.sh $BLOCK"
     ssh -q -t "$server" 'bash --norc --noprofile' << ENDSSH
-    /opt/arweave/arweave/testnet/start_testnet_pilot.sh
+    /opt/arweave/arweave/testnet/start_testnet_pilot.sh $BLOCK
     exit
 ENDSSH
 
