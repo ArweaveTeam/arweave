@@ -15,4 +15,3 @@ echo "$0 $@" > /arweave-build/testnet/build.command
 cd $ARWEAVE_DIR
 $ARWEAVE_DIR/rebar3 as testnet tar
 tar xf $ARWEAVE_DIR/_build/testnet/rel/arweave/arweave-*.tar.gz -C /arweave-build/testnet
-

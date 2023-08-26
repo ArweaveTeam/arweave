@@ -1,10 +1,9 @@
 #!/bin/bash
 
-# List of testnet servers
-mapfile -t TESTNET_MINERS < testnet_miners.txt
-mapfile -t TESTNET_VDF < testnet_vdf.txt
+ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
 
-TESTNET_SERVERS=("${TESTNET_MINERS[@]}" "${TESTNET_VDF[@]}")
+source $ARWEAVE_DIR/testnet/testnet_miners.sh
+source $ARWEAVE_DIR/testnet/testnet_vdf.sh
 
 # Get the current hostname
 current_host=$(hostname -f)

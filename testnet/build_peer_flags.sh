@@ -12,8 +12,9 @@ prefix="$1"
 flags=""
 
 # Read the testnet servers and build the peer flags
-while IFS= read -r line || [[ -n "$line" ]]; do
-    flags+=" $prefix $line"
-done < $ARWEAVE_DIR/testnet/$peers.txt
+source $ARWEAVE_DIR/testnet/testnet_vdf.sh
+for server in "${TESTNET_SERVERS[@]}"; do
+	flags+=" $prefix $server"
+done
 
 echo "$flags"
