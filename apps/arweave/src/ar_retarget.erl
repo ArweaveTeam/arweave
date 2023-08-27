@@ -13,6 +13,24 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+%% A macro for checking if the given block is a retarget block.
+%% Returns true if so, otherwise returns false.
+-define(IS_RETARGET_BLOCK(X),
+		(
+			((X#block.height rem ?RETARGET_BLOCKS) == 0) and
+			(X#block.height =/= 0)
+		)
+	).
+
+%% A macro for checking if the given height is a retarget height.
+%% Returns true if so, otherwise returns false.
+-define(IS_RETARGET_HEIGHT(Height),
+		(
+			((Height rem ?RETARGET_BLOCKS) == 0) and
+			(Height =/= 0)
+		)
+	).
+
 %% @doc The unconditional difficulty reduction coefficient applied at the
 %% first 2.5 block.
 -define(DIFF_DROP_2_5, 2).
@@ -31,12 +49,11 @@
 
 %% @doc Return true if the given height is a retarget height.
 is_retarget_height(Height) ->
-	(Height == get_testnet_difficulty_drop_height() orelse
-		((Height rem ?RETARGET_BLOCKS) == 0) andalso (Height =/= 0)).
+	?IS_RETARGET_HEIGHT(Height).
 
 %% @doc Return true if the given block is a retarget block.
 is_retarget_block(Block) ->
-	is_retarget_height(Block#block.height).
+	?IS_RETARGET_BLOCK(Block).
 
 maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) ->
 	case ar_retarget:is_retarget_height(Height) of
