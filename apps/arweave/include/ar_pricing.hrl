@@ -120,7 +120,9 @@ end).
 -ifdef(DEBUG).
 -define(PRICE_ADJUSTMENT_FREQUENCY, 2).
 -else.
--define(PRICE_ADJUSTMENT_FREQUENCY, 50).
+	-ifndef(PRICE_ADJUSTMENT_FREQUENCY).
+		-define(PRICE_ADJUSTMENT_FREQUENCY, 50).
+	-endif.
 -endif.
 
 %% An approximation of the natural logarithm of ?PRICE_DECAY_ANNUAL (0.995),
