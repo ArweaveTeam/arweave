@@ -63,7 +63,6 @@ start_mining(Args) ->
 %% we choose it in advance we may miss a better option arriving in the process).
 %% Also, a mining session may (in practice, almost always will) span several blocks.
 set_difficulty(Diff) ->
-	?LOG_DEBUG([{event, setting_difficulty}, {difficulty, Diff}]),
 	gen_server:cast(?MODULE, {set_difficulty, Diff}).
 
 set_merkle_rebase_threshold(Threshold) ->

@@ -79,8 +79,6 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_2_5 = ar_fork:height_2_5(),
 	Fork_2_6 = ar_fork:height_2_6(),
 	TestnetDifficultyDropHeight = get_testnet_difficulty_drop_height(),
-	?LOG_DEBUG([{event, calculate_difficulty}, {old_diff, OldDiff},
-		{height, Height}, {drop_height, TestnetDifficultyDropHeight}]),
 	case Height of
 		_ when Height == TestnetDifficultyDropHeight ->
 			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, 100, 2);

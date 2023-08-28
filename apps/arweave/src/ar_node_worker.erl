@@ -628,7 +628,13 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
 			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
-					{txs, length(B#block.txs)}]),
+					{solution, ar_util:encode(SolutionH)}, {height, Height},
+					{txs, length(B#block.txs)},
+					{chunks, 
+						case B#block.recall_byte2 of
+							undefined -> 1;
+							_ -> 2
+						end}]),
 			PrevBlocks = [PrevB],
 			[{_, RecentBI}] = ets:lookup(node_state, recent_block_index),
 			RecentBI2 = [block_index_entry(B) | RecentBI],
