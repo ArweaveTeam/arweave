@@ -491,8 +491,12 @@ handle_task({computed_output, _},
 	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined}]),
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
-	#state{ session = Session } = State,
-	{{NextSeed, StartIntervalNumber}, Seed, StepNumber, Output, PartitionUpperBound} = Args,
+	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
+	{SessionKey,
+		#vdf_session{ seed = Seed, step_number = StepNumber,
+			vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty },
+		Output, PartitionUpperBound} = Args,
+	{NextSeed, StartIntervalNumber} = SessionKey,
 	#mining_session{ next_seed = CurrentNextSeed,
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = Session,
@@ -522,18 +526,17 @@ handle_task({computed_output, Args}, State) ->
 						partition_upper_bound = PartitionUpperBound },
 					State)
 		end,
-	Candidate = #mining_candidate{
-		session_ref = Session2#mining_session.ref,
-		seed = Seed,
-		next_seed = NextSeed,
-		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber,
-		nonce_limiter_output = Output,
-		partition_upper_bound = PartitionUpperBound
-	},
-	{N, State2} = distribute_output(Candidate, #{}, State),
-	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N}]),
-	{noreply, State2#state{ session = Session2 }};
+	#mining_session{ step_number_by_output = Map } = Session2,
+	Map2 = maps:put(Output, StepNumber, Map),
+	Session3 = Session2#mining_session{ step_number_by_output = Map2 },
+	Ref = Session3#mining_session.ref,
+	Iterator = maps:iterator(IOThreads),
+	{N, State2} = distribute_output(Seed, PartitionUpperBound, Output, Iterator, #{}, Ref,
+			State),
+	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
+		{step_number, StepNumber}, {start_interval_number, StartIntervalNumber},
+		{vdf_difficulty, VDFDifficulty}, {next_vdf_difficulty, NextVDFDifficulty}]),
+	{noreply, State2#state{ session = Session3 }};
 
 handle_task({chunk1, Candidate}, State) ->
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of

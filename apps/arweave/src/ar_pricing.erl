@@ -62,7 +62,13 @@ get_price_per_gib_minute(Height, RewardHistory, BlockTimeHistory, Denomination2)
 							BlockTimeHistory, Denomination2),
 					Interval1 = Height - PriceTransitionStart + 1,
 					Interval2 = PriceTransitionEnd - (Height + 1),
-					(Price1 * Interval2 + Price2 * Interval1) div (Interval1 + Interval2)
+					PricePerGiBPerMinute =
+						(Price1 * Interval2 + Price2 * Interval1) div (Interval1 + Interval2),
+					?LOG_DEBUG([{event, get_price_per_gib_minute},
+						{height, Height}, {price1, Price1}, {price2, Price2},
+						{interval1, Interval1}, {interval2, Interval2},
+						{price, PricePerGiBPerMinute}]),
+					PricePerGiBPerMinute
 			end
 	end.
 
@@ -97,6 +103,14 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 					{0, 0, 0, 0},
 					BlockTimeHistory
 				),
+			%% Estimate the number of solutions that were generated per partition per second
+			%% based the number of actual VDF steps that elapsed over time, as well as
+			%% the ratio of 1-chunk to 2-chunk solutions.
+			%% 
+			%% This differs from the pre-2.7 calculation which always assumed 2 solutions per
+			%% *second*. The post-2.7 calculation accounts for VDF drift (i.e. steps taking more or
+			%% less than 1-second on average) as well as the impact of having a statistically
+			%% disproportionate number of 1-chunk solutions may have.
 			SolutionsPerPartitionPerVDFStep =
 				case OneChunkCount of
 					0 ->
@@ -107,12 +121,31 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 									+ ?RECALL_RANGE_SIZE * TwoChunkCount div OneChunkCount)
 							div ?DATA_CHUNK_SIZE
 				end,
-			SolutionsPerPartitionPerSecond = (SolutionsPerPartitionPerVDFStep
-					* VDFIntervalTotal) div IntervalTotal,
-			(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerSecond * 60)
-				div (max(1, HashRateTotal)
-						* (?PARTITION_SIZE)
-					);
+			SolutionsPerPartitionPerSecond = 
+				(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal,
+
+			%% The following walks through the math of calculating the price per GiB per minute.
+			%% However to reduce rounding errors due to divs, the uncommented equation at the
+			%% end is used instead. Logically they should be the same. Notably the '* 2' in
+			%% SolutionsPerPartitionPerBlock and the 'div 2' in PricePerGiBPerMinute cancel each
+			%% other out.
+			%%
+			%% SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
+			%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerMinute * 2,
+			%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
+			%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
+			%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
+			%% PricePerGiBPerMinute = PricePerGibPerBlock div 2,
+			PricePerGiBPerMinute = 
+				(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerSecond * 60)
+				div (max(1, HashRateTotal) * (?PARTITION_SIZE)),
+			?LOG_DEBUG([{event, get_price_per_gib_minute2},
+				{hash_rate_total, HashRateTotal}, {reward_total, RewardTotal},
+				{interval_total, IntervalTotal}, {vdf_interval_total, VDFIntervalTotal},
+				{one_chunk_count, OneChunkCount}, {two_chunk_count, TwoChunkCount},
+				{solutions_per_partition_per_vdf_step, SolutionsPerPartitionPerVDFStep},
+				{price, PricePerGiBPerMinute}]),
+			PricePerGiBPerMinute;
 		false ->
 			%% 2 recall ranges per partition per second.
 			SolutionsPerPartitionPerSecond = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),

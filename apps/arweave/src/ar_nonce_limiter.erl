@@ -880,6 +880,7 @@ start_worker(State) ->
 	State#state{ worker = Worker, worker_monitor_ref = Ref }.
 
 compute(StepNumber, PrevOutput, VDFDifficulty) ->
+	?LOG_DEBUG([{event, compute_vdf}, {step_number, StepNumber}, {vdf_difficulty, VDFDifficulty}]),
 	{ok, Output, Checkpoints} = ar_vdf:compute2(StepNumber, PrevOutput, VDFDifficulty),
 	debug_double_check(
 		"compute",
@@ -1001,6 +1002,9 @@ schedule_step(State) ->
 			none ->
 				{UpperBound, VDFDifficulty};
 			_ ->
+				?LOG_DEBUG([{event, entropy_reset_point_found}, {step_number, StepNumber},
+					{interval_start, IntervalStart}, {vdf_difficulty, VDFDifficulty},
+					{next_vdf_difficulty, NextVDFDifficulty}]),
 				{NextUpperBound, NextVDFDifficulty}
 		end,
 	Worker ! {compute, {StepNumber, PrevOutput2, UpperBound2, VDFDifficulty2}, self()},

@@ -221,8 +221,8 @@ compute_vdf_difficulty(OldB) ->
 						(VDFIntervalTotal * OldB#block.vdf_difficulty) div IntervalTotal,
 					?LOG_DEBUG([{event, vdf_difficulty_retarget},
 							{height, Height},
-							{new_vdf_difficulty, VDFDifficulty},
 							{old_vdf_difficulty, OldB#block.vdf_difficulty},
+							{new_vdf_difficulty, VDFDifficulty},
 							{interval_total, IntervalTotal},
 							{vdf_interval_total, VDFIntervalTotal}]),
 					VDFDifficulty
