@@ -796,7 +796,9 @@ handle_task({computed_output, _},
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
-	{SessionKey, #vdf_session{ seed = Seed, step_number = StepNumber },
+	{SessionKey,
+		#vdf_session{ seed = Seed, step_number = StepNumber,
+			vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty },
 		Output, PartitionUpperBound} = Args,
 	{NextSeed, StartIntervalNumber} = SessionKey,
 	#mining_session{ next_seed = CurrentNextSeed,
@@ -835,7 +837,9 @@ handle_task({computed_output, Args}, State) ->
 	Iterator = maps:iterator(IOThreads),
 	{N, State2} = distribute_output(Seed, PartitionUpperBound, Output, Iterator, #{}, Ref,
 			State),
-	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N}]),
+	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
+		{step_number, StepNumber}, {start_interval_number, StartIntervalNumber},
+		{vdf_difficulty, VDFDifficulty}, {next_vdf_difficulty, NextVDFDifficulty}]),
 	{noreply, State2#state{ session = Session3 }};
 
 handle_task({io_thread_recall_range_chunk, {H0, PartitionNumber, Nonce, NonceLimiterOutput,
