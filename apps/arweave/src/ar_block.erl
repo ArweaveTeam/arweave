@@ -15,7 +15,7 @@
 		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
 		get_packing_threshold/2, validate_reward_history_hash/2,
 		validate_block_time_history_hash/2, update_block_time_history/2,
-		compute_block_interval/1, compute_vdf_difficulty/1, verify_vdf_difficulty/2]).
+		compute_block_interval/1, compute_next_vdf_difficulty/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -194,17 +194,22 @@ compute_block_interval(OldB) ->
 		false -> 120
 	end.
 
-compute_vdf_difficulty(OldB) ->
-	Height = OldB#block.height + 1,
+compute_next_vdf_difficulty(PrevB) ->
+	Height = PrevB#block.height + 1,
+	#nonce_limiter_info{
+		vdf_difficulty = VDFDifficulty,
+		next_vdf_difficulty = NextVDFDifficulty
+	} = PrevB#block.nonce_limiter_info,
 	case Height - ?BLOCK_TIME_HISTORY_BLOCKS > ar_fork:height_2_7()
 			andalso Height - ?VDF_HISTORY_CUT - 1 > ar_fork:height_2_7() of
 		true ->
-			case Height rem ?VDF_DIFFICULTY_RETARGET == 0 of
+			case (Height rem ?VDF_DIFFICULTY_RETARGET == 0) andalso
+					(VDFDifficulty == NextVDFDifficulty) of
 				false ->
-					OldB#block.vdf_difficulty;
+					NextVDFDifficulty;
 				true ->
 					HistoryPart = lists:nthtail(?VDF_HISTORY_CUT,
-							lists:sublist(OldB#block.block_time_history,
+							lists:sublist(PrevB#block.block_time_history,
 									?BLOCK_TIME_HISTORY_BLOCKS)),
 					{IntervalTotal, VDFIntervalTotal} =
 						lists:foldl(
@@ -217,26 +222,18 @@ compute_vdf_difficulty(OldB) ->
 							{0, 0},
 							HistoryPart
 						),
-					VDFDifficulty =
-						(VDFIntervalTotal * OldB#block.vdf_difficulty) div IntervalTotal,
+					NewVDFDifficulty =
+						(VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
 					?LOG_DEBUG([{event, vdf_difficulty_retarget},
 							{height, Height},
-							{old_vdf_difficulty, OldB#block.vdf_difficulty},
-							{new_vdf_difficulty, VDFDifficulty},
+							{old_vdf_difficulty, VDFDifficulty},
+							{new_vdf_difficulty, NewVDFDifficulty},
 							{interval_total, IntervalTotal},
 							{vdf_interval_total, VDFIntervalTotal}]),
-					VDFDifficulty
+					NewVDFDifficulty
 			end;
 		false ->
 			?VDF_DIFFICULTY
-	end.
-
-verify_vdf_difficulty(NewB, OldB)->
-	case NewB#block.height - ?BLOCK_TIME_HISTORY_BLOCKS >= ar_fork:height_2_7() of
-		true->
-			NewB#block.vdf_difficulty == compute_vdf_difficulty(OldB);
-		false->
-			NewB#block.vdf_difficulty == ?VDF_DIFFICULTY
 	end.
 
 %% @doc Compute the block identifier (also referred to as "independent hash").
@@ -276,8 +273,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		merkle_rebase_support_threshold = RebaseThreshold,
 		poa = #poa{ data_path = DataPath, tx_path = TXPath },
 		poa2 = #poa{ data_path = DataPath2, tx_path = TXPath2 },
-		chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
-		vdf_difficulty = VDFDifficulty }) ->
+		chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash }) ->
 	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
 	Nonce2 = binary:encode_unsigned(Nonce),
 	%% The only block where reward_address may be unclaimed
@@ -289,11 +285,11 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			next_partition_upper_bound = NextPartitionUpperBound,
 			steps = Steps, prev_output = PrevOutput,
 			last_step_checkpoints = LastStepCheckpoints,
-			vdf_difficulty = VDFDifficulty2,
+			vdf_difficulty = VDFDifficulty,
 			next_vdf_difficulty = NextVDFDifficulty } = NonceLimiterInfo,
 	{RebaseThresholdBin, DataPathBin, TXPathBin, DataPath2Bin, TXPath2Bin,
 			ChunkHashBin, Chunk2HashBin, BlockTimeHistoryHashBin,
-			VDFDifficultyBin, VDFDifficulty2Bin, NextVDFDifficultyBin} =
+			VDFDifficultyBin, NextVDFDifficultyBin} =
 		case Height >= ar_fork:height_2_7() of
 			true ->
 				{encode_int(RebaseThreshold, 16), ar_serialize:encode_bin(DataPath, 24),
@@ -304,10 +300,9 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 						ar_serialize:encode_bin(Chunk2Hash, 8),
 						<< BlockTimeHistoryHash:32/binary >>,
 						ar_serialize:encode_int(VDFDifficulty, 8),
-						ar_serialize:encode_int(VDFDifficulty2, 8),
 						ar_serialize:encode_int(NextVDFDifficulty, 8)};
 			false ->
-				{<<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>}
+				{<<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>}
 		end,
 	%% The elements must be either fixed-size or separated by the size separators (
 	%% the ar_serialize:encode_* functions).
@@ -345,7 +340,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			(encode_int(PrevCDiff, 16))/binary, RebaseThresholdBin/binary,
 			DataPathBin/binary, TXPathBin/binary, DataPath2Bin/binary, TXPath2Bin/binary,
 			ChunkHashBin/binary, Chunk2HashBin/binary, BlockTimeHistoryHashBin/binary,
-			VDFDifficultyBin/binary, VDFDifficulty2Bin/binary, NextVDFDifficultyBin/binary >>,
+			VDFDifficultyBin/binary, NextVDFDifficultyBin/binary >>,
 	crypto:hash(sha256, Segment).
 
 %% @doc Compute the block identifier from the signed hash and block signature.

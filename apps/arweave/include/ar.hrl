@@ -374,10 +374,12 @@
 
 	%% The fields added at the fork 2.7
 
-	%% The number of SHA2-256 iterations in a single 50-ms checkpoint.
+	%% The number of SHA2-256 iterations in a single VDF checkpoint. The protocol aims to keep the
+	%% checkoint calculation time to around 40ms by varying this paramter. Note: there are
+	%% 25 checkpoints in a single VDF step - so the protocol aims to keep the step calculation at
+	%% 1 second by varying this parameter.
 	vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
-	%% The number of SHA2-256 iterations in a single 50-ms checkpoint, scheduled for
-	%% applying after the closest approaching VDF reset line.
+	%% The VDF difficulty scheduled for to be applied after the next VDF reset line.
 	next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
 }).
 
@@ -597,9 +599,6 @@
 	%% two-chunk) of the latest ?BLOCK_TIME_HISTORY_BLOCKS blocks.
 	%% Used internally, not gossiped.
 	block_time_history = [], % {block_interval, vdf_interval, chunk_count}
-	%% The current VDF difficulty. The protocol aims at keeping the step calculation
-	%% time around one second by varying this parameter.
-	vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
 
 	%% Used internally, not gossiped. Convenient for validating potentially non-unique
 	%% merkle proofs assigned to the different signatures of the same solution

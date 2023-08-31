@@ -58,27 +58,41 @@ get_current_step_number(B) ->
 	SessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	gen_server:call(?MODULE, {get_current_step_number, SessionKey}, infinity).
 
-%% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound,
-%% VDFDifficulty, NextVDFDifficulty} for
-%% the block mined at StepNumber considering its previous block PrevB.
+%% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
+%% for the block mined at StepNumber considering its previous block PrevB.
 %% The previous block's independent hash, weave size, and VDF difficulty
 %% become the new NextSeed, NextPartitionUpperBound, and NextVDFDifficulty
 %% accordingly when we cross the next reset line.
+%% Note: next_vdf_difficulty is not part of the seed data as it is computed using the
+%% block_time_history - which is a heavier operation handled separate from the (quick) seed data
+%% retrieval
 get_seed_data(StepNumber, PrevB) ->
 	NonceLimiterInfo = PrevB#block.nonce_limiter_info,
-	#nonce_limiter_info{ global_step_number = N, seed = Seed, next_seed = NextSeed,
-			partition_upper_bound = PartitionUpperBound,
-			next_partition_upper_bound = NextPartitionUpperBound,
-			vdf_difficulty = VDFDifficulty,
-			next_vdf_difficulty = NextVDFDifficulty } = NonceLimiterInfo,
-	true = StepNumber > N,
-	case get_entropy_reset_point(N, StepNumber) of
+	#nonce_limiter_info{
+		global_step_number = PrevStepNumber,
+		seed = Seed, next_seed = NextSeed,
+		partition_upper_bound = PartitionUpperBound,
+		next_partition_upper_bound = NextPartitionUpperBound,
+		%% VDF difficulty in use at the previous block
+		vdf_difficulty = VDFDifficulty, 
+		%% Next VDF difficulty scheduled at the previous block
+		next_vdf_difficulty = PrevNextVDFDifficulty 
+	} = NonceLimiterInfo,
+	true = StepNumber > PrevStepNumber,
+	case get_entropy_reset_point(PrevStepNumber, StepNumber) of
 		none ->
-			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound,
-				VDFDifficulty, NextVDFDifficulty};
+			%% Entropy reset line was not crossed between previous and current block
+			{ Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty };
 		_ ->
-			{NextSeed, PrevB#block.indep_hash, NextPartitionUpperBound,
-					PrevB#block.weave_size, NextVDFDifficulty, PrevB#block.vdf_difficulty}
+			%% Entropy reset line was crossed between previous and current block
+			{
+				NextSeed, PrevB#block.indep_hash,
+				NextPartitionUpperBound, PrevB#block.weave_size,
+				%% The next VDF difficulty that was scheduled at the previous block
+				%% (PrevNextVDFDifficulty) was applied when we crossed the entropy reset line and
+				%% is now the current VDF difficulty.
+				PrevNextVDFDifficulty
+			}
 	end.
 
 %% @doc Return the cached checkpoints for the given step. Return not_found if
