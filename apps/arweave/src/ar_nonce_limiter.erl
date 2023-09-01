@@ -1045,16 +1045,21 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
+	{SessionSeed, SessionInterval} = SessionKey,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			case IsPartial of
 				true ->
 					%% Inform the peer we have not initialized the corresponding session yet.
+					?LOG_DEBUG([{event, apply_external_vdf},
+						{result, session_not_found},
+						{session_seed, ar_util:encode(SessionSeed)},
+						{session_interval, SessionInterval},
+						{server_step_number, StepNumber}]),
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
 					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
-					Sessions2 = gb_sets:add_element({element(2, SessionKey),
-							element(1, SessionKey)}, Sessions),
+					Sessions2 = gb_sets:add_element({SessionInterval, SessionSeed}, Sessions),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 					trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession,
@@ -1080,12 +1085,24 @@ apply_external_update2(Update, State) ->
 					case CurrentStepNumber >= StepNumber of
 						true ->
 							%% Inform the peer we are ahead.
+							?LOG_DEBUG([{event, apply_external_vdf},
+								{result, ahead_of_server},
+								{session_seed, ar_util:encode(SessionSeed)},
+								{session_interval, SessionInterval},
+								{client_step_number, CurrentStepNumber},
+								{server_step_number, StepNumber}]),
 							{reply, #nonce_limiter_update_response{
 											step_number = CurrentStepNumber }, State};
 						false ->
 							case IsPartial of
 								true ->
 									%% Inform the peer we miss some steps.
+									?LOG_DEBUG([{event, apply_external_vdf},
+										{result, missing_steps},
+										{session_seed, ar_util:encode(SessionSeed)},
+										{session_interval, SessionInterval},
+										{client_step_number, CurrentStepNumber},
+										{server_step_number, StepNumber}]),
 									{reply, #nonce_limiter_update_response{
 											step_number = CurrentStepNumber }, State};
 								false ->

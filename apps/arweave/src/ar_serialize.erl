@@ -343,6 +343,12 @@ binary_to_block_time_history(<<>>, BlockTimeHistory) ->
 binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 	{error, invalid_block_time_history}.
 
+%% Note: the #nonce_limiter_update and #vdf_session records are only serialized for communication
+%% between a VDF server and VDF client. Only fields that are required for this communication are
+%% serialized.
+%% 
+%% For example, the vdf_difficulty and next_vdf_difficulty fields are omitted as they are only used
+%% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
 nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
