@@ -139,6 +139,11 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 push_session(SessionKey, Session, Peer) ->
 	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
 	{SessionSeed, SessionInterval} = SessionKey,
+	?LOG_DEBUG([{event, push_session}, {peer, ar_util:format_peer(Peer)},
+			{session_seed, ar_util:encode(SessionSeed)},
+			{session_interval, SessionInterval},
+			{server_step_number, Session#vdf_session.step_number},
+			{num_steps, length(Session#vdf_session.steps)}]),
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			ok;
