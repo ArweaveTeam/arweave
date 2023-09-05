@@ -58,27 +58,41 @@ get_current_step_number(B) ->
 	SessionKey = {NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY},
 	gen_server:call(?MODULE, {get_current_step_number, SessionKey}, infinity).
 
-%% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound,
-%% VDFDifficulty, NextVDFDifficulty} for
-%% the block mined at StepNumber considering its previous block PrevB.
+%% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
+%% for the block mined at StepNumber considering its previous block PrevB.
 %% The previous block's independent hash, weave size, and VDF difficulty
 %% become the new NextSeed, NextPartitionUpperBound, and NextVDFDifficulty
 %% accordingly when we cross the next reset line.
+%% Note: next_vdf_difficulty is not part of the seed data as it is computed using the
+%% block_time_history - which is a heavier operation handled separate from the (quick) seed data
+%% retrieval
 get_seed_data(StepNumber, PrevB) ->
 	NonceLimiterInfo = PrevB#block.nonce_limiter_info,
-	#nonce_limiter_info{ global_step_number = N, seed = Seed, next_seed = NextSeed,
-			partition_upper_bound = PartitionUpperBound,
-			next_partition_upper_bound = NextPartitionUpperBound,
-			vdf_difficulty = VDFDifficulty,
-			next_vdf_difficulty = NextVDFDifficulty } = NonceLimiterInfo,
-	true = StepNumber > N,
-	case get_entropy_reset_point(N, StepNumber) of
+	#nonce_limiter_info{
+		global_step_number = PrevStepNumber,
+		seed = Seed, next_seed = NextSeed,
+		partition_upper_bound = PartitionUpperBound,
+		next_partition_upper_bound = NextPartitionUpperBound,
+		%% VDF difficulty in use at the previous block
+		vdf_difficulty = VDFDifficulty, 
+		%% Next VDF difficulty scheduled at the previous block
+		next_vdf_difficulty = PrevNextVDFDifficulty 
+	} = NonceLimiterInfo,
+	true = StepNumber > PrevStepNumber,
+	case get_entropy_reset_point(PrevStepNumber, StepNumber) of
 		none ->
-			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound,
-				VDFDifficulty, NextVDFDifficulty};
+			%% Entropy reset line was not crossed between previous and current block
+			{ Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty };
 		_ ->
-			{NextSeed, PrevB#block.indep_hash, NextPartitionUpperBound,
-					PrevB#block.weave_size, NextVDFDifficulty, PrevB#block.vdf_difficulty}
+			%% Entropy reset line was crossed between previous and current block
+			{
+				NextSeed, PrevB#block.indep_hash,
+				NextPartitionUpperBound, PrevB#block.weave_size,
+				%% The next VDF difficulty that was scheduled at the previous block
+				%% (PrevNextVDFDifficulty) was applied when we crossed the entropy reset line and
+				%% is now the current VDF difficulty.
+				PrevNextVDFDifficulty
+			}
 	end.
 
 %% @doc Return the cached checkpoints for the given step. Return not_found if
@@ -880,7 +894,6 @@ start_worker(State) ->
 	State#state{ worker = Worker, worker_monitor_ref = Ref }.
 
 compute(StepNumber, PrevOutput, VDFDifficulty) ->
-	?LOG_DEBUG([{event, compute_vdf}, {step_number, StepNumber}, {vdf_difficulty, VDFDifficulty}]),
 	{ok, Output, Checkpoints} = ar_vdf:compute2(StepNumber, PrevOutput, VDFDifficulty),
 	debug_double_check(
 		"compute",
@@ -1031,16 +1044,21 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
+	{SessionSeed, SessionInterval} = SessionKey,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			case IsPartial of
 				true ->
 					%% Inform the peer we have not initialized the corresponding session yet.
+					?LOG_DEBUG([{event, apply_external_vdf},
+						{result, session_not_found},
+						{session_seed, ar_util:encode(SessionSeed)},
+						{session_interval, SessionInterval},
+						{server_step_number, StepNumber}]),
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
 					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
-					Sessions2 = gb_sets:add_element({element(2, SessionKey),
-							element(1, SessionKey)}, Sessions),
+					Sessions2 = gb_sets:add_element({SessionInterval, SessionSeed}, Sessions),
 					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 					trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession,
@@ -1066,12 +1084,24 @@ apply_external_update2(Update, State) ->
 					case CurrentStepNumber >= StepNumber of
 						true ->
 							%% Inform the peer we are ahead.
+							?LOG_DEBUG([{event, apply_external_vdf},
+								{result, ahead_of_server},
+								{session_seed, ar_util:encode(SessionSeed)},
+								{session_interval, SessionInterval},
+								{client_step_number, CurrentStepNumber},
+								{server_step_number, StepNumber}]),
 							{reply, #nonce_limiter_update_response{
 											step_number = CurrentStepNumber }, State};
 						false ->
 							case IsPartial of
 								true ->
 									%% Inform the peer we miss some steps.
+									?LOG_DEBUG([{event, apply_external_vdf},
+										{result, missing_steps},
+										{session_seed, ar_util:encode(SessionSeed)},
+										{session_interval, SessionInterval},
+										{client_step_number, CurrentStepNumber},
+										{server_step_number, StepNumber}]),
 									{reply, #nonce_limiter_update_response{
 											step_number = CurrentStepNumber }, State};
 								false ->

@@ -138,17 +138,24 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 
 push_session(SessionKey, Session, Peer) ->
 	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
+	{SessionSeed, SessionInterval} = SessionKey,
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			ok;
-		{ok, #nonce_limiter_update_response{ step_number = ReportedStepNumber,
+		{ok, #nonce_limiter_update_response{ step_number = ClientStepNumber,
 				session_found = ReportedSessionFound }} ->
 			?LOG_WARNING([{event, failed_to_push_nonce_limiter_update_to_peer},
 					{peer, ar_util:format_peer(Peer)},
+					{session_seed, ar_util:encode(SessionSeed)},
+					{session_interval, SessionInterval},
 					{session_found, ReportedSessionFound},
-					{reported_step_number, ReportedStepNumber}]);
+					{client_step_number, ClientStepNumber},
+					{server_step_number, Session#vdf_session.step_number}]);
 		{error, Error} ->
 			?LOG_WARNING([{event, failed_to_push_nonce_limiter_update_to_peer},
 				{peer, ar_util:format_peer(Peer)},
-				{reason, io_lib:format("~p", [Error])}])
+				{session_seed, ar_util:encode(SessionSeed)},
+				{session_interval, SessionInterval},
+				{reason, io_lib:format("~p", [Error])},
+				{server_step_number, Session#vdf_session.step_number}])
 	end.
