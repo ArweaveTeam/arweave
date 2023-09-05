@@ -281,8 +281,7 @@ block_to_json_struct(
 						{merkle_rebase_support_threshold, integer_to_binary(RebaseThreshold)},
 						{chunk_hash, ar_util:encode(B#block.chunk_hash)},
 						{block_time_history_hash,
-							ar_util:encode(B#block.block_time_history_hash)},
-						{vdf_difficulty, integer_to_binary(B#block.vdf_difficulty)}
+							ar_util:encode(B#block.block_time_history_hash)}
 						| JSONElements5],
 				case B#block.chunk2_hash of
 					undefined ->
@@ -344,6 +343,12 @@ binary_to_block_time_history(<<>>, BlockTimeHistory) ->
 binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 	{error, invalid_block_time_history}.
 
+%% Note: the #nonce_limiter_update and #vdf_session records are only serialized for communication
+%% between a VDF server and VDF client. Only fields that are required for this communication are
+%% serialized.
+%% 
+%% For example, the vdf_difficulty and next_vdf_difficulty fields are omitted as they are only used
+%% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
 nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
@@ -475,18 +480,17 @@ encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 
 encode_post_2_7_fields(#block{ height = Height,
 		merkle_rebase_support_threshold = Threshold, chunk_hash = ChunkHash,
-		chunk2_hash = Chunk2Hash, vdf_difficulty = VDFDifficulty,
+		chunk2_hash = Chunk2Hash,
 		block_time_history_hash = BlockTimeHistoryHash,
-		nonce_limiter_info = #nonce_limiter_info{ vdf_difficulty = VDFDifficulty2,
-				next_vdf_difficulty = VDFDifficulty3 } }) ->
+		nonce_limiter_info = #nonce_limiter_info{ vdf_difficulty = VDFDifficulty,
+				next_vdf_difficulty = NextVDFDifficulty } }) ->
 	case Height >= ar_fork:height_2_7() of
 		true ->
 			<< (encode_int(Threshold, 16))/binary, ChunkHash:32/binary,
 					(encode_bin(Chunk2Hash, 8))/binary,
-					(encode_int(VDFDifficulty, 8))/binary,
 					BlockTimeHistoryHash:32/binary,
-					(encode_int(VDFDifficulty2, 8))/binary,
-					(encode_int(VDFDifficulty3, 8))/binary >>;
+					(encode_int(VDFDifficulty, 8))/binary,
+					(encode_int(NextVDFDifficulty, 8))/binary >>;
 		false ->
 			<<>>
 	end.
@@ -706,18 +710,16 @@ parse_post_2_7_fields(Rest, #block{ height = Height } = B) ->
 			{ok, B};
 		{<< ThresholdSize:16, Threshold:(ThresholdSize*8), ChunkHash:32/binary,
 				Chunk2HashSize:8, Chunk2Hash:Chunk2HashSize/binary,
-				VDFDifficultySize:8, VDFDifficulty:(VDFDifficultySize * 8),
 				BlockTimeHistoryHash:32/binary,
-				VDFDifficulty2Size:8, VDFDifficulty2:(VDFDifficulty2Size * 8),
-				VDFDifficulty3Size:8, VDFDifficulty3:(VDFDifficulty3Size * 8) >>, true} ->
+				VDFDifficultySize:8, VDFDifficulty:(VDFDifficultySize * 8),
+				NextVDFDifficultySize:8, NextVDFDifficulty:(NextVDFDifficultySize * 8) >>, true} ->
 			Chunk2Hash2 = case Chunk2HashSize of 0 -> undefined; _ -> Chunk2Hash end,
 			{ok, B#block{ merkle_rebase_support_threshold = Threshold,
 					chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash2,
-					vdf_difficulty = VDFDifficulty,
 					block_time_history_hash = BlockTimeHistoryHash,
 					nonce_limiter_info = (B#block.nonce_limiter_info)#nonce_limiter_info{
-							vdf_difficulty = VDFDifficulty2,
-							next_vdf_difficulty = VDFDifficulty3 } }};
+							vdf_difficulty = VDFDifficulty,
+							next_vdf_difficulty = NextVDFDifficulty } }};
 		_ ->
 			{error, invalid_merkle_rebase_support_threshold}
 	end.
