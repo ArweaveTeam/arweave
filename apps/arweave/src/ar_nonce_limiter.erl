@@ -894,7 +894,6 @@ start_worker(State) ->
 	State#state{ worker = Worker, worker_monitor_ref = Ref }.
 
 compute(StepNumber, PrevOutput, VDFDifficulty) ->
-	?LOG_DEBUG([{event, compute_vdf}, {step_number, StepNumber}, {vdf_difficulty, VDFDifficulty}]),
 	{ok, Output, Checkpoints} = ar_vdf:compute2(StepNumber, PrevOutput, VDFDifficulty),
 	debug_double_check(
 		"compute",
