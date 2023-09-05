@@ -547,9 +547,8 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 					{step_number, StepNumber}]),
 			{noreply, State};
 		[NonceLimiterOutput | _] = Steps ->
-			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound,
-					VDFDifficulty, NextVDFDifficulty}
-						= ar_nonce_limiter:get_seed_data(StepNumber, PrevB),
+			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
+				= ar_nonce_limiter:get_seed_data(StepNumber, PrevB),
 			LastStepCheckpoints2 =
 				case LastStepCheckpoints of
 					not_found ->
@@ -563,11 +562,12 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 						PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
 								PrevOutput, PrevStepNumber, StepNumber, PrevNextSeed),
 						{ok, NonceLimiterOutput, Checkpoints} = ar_nonce_limiter:compute(
-								StepNumber, PrevOutput2, NextVDFDifficulty),
+								StepNumber, PrevOutput2, VDFDifficulty),
 						Checkpoints;
 					_ ->
 						LastStepCheckpoints
 				end,
+			NextVDFDifficulty = ar_block:compute_next_vdf_difficulty(PrevB),
 			NonceLimiterInfo2 = NonceLimiterInfo#nonce_limiter_info{ seed = Seed,
 					next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 					next_partition_upper_bound = NextPartitionUpperBound,
@@ -587,7 +587,6 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 					Denomination, Denomination2),
 			CDiff = ar_difficulty:next_cumulative_diff(PrevB#block.cumulative_diff, Diff,
 					Height),
-			BlockVDFDifficulty = ar_block:compute_vdf_difficulty(PrevB),
 			UnsignedB = pack_block_with_transactions(#block{
 				nonce = Nonce,
 				previous_block = PrevH,
@@ -627,8 +626,7 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 				double_signing_proof = may_be_get_double_signing_proof(PrevB, State),
 				merkle_rebase_support_threshold = MerkleRebaseThreshold,
 				chunk_hash = get_chunk_hash(PoA1, Height),
-				chunk2_hash = get_chunk_hash(PoA2, Height),
-				vdf_difficulty = BlockVDFDifficulty
+				chunk2_hash = get_chunk_hash(PoA2, Height)
 			}, PrevB),
 			UnsignedB2 =
 				case Height >= ar_fork:height_2_7() of
@@ -1097,14 +1095,10 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 					B3 =
 						case B#block.height >= ar_fork:height_2_7() of
 							true ->
-								BlockTimeHistory2 = ar_block:update_block_time_history(
-										B, PrevB),
-								Len2 = ?BLOCK_TIME_HISTORY_BLOCKS
-										+ ?STORE_BLOCKS_BEHIND_CURRENT,
+								BlockTimeHistory2 = ar_block:update_block_time_history(B, PrevB),
+								Len2 = ?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
 								BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, Len2),
-								B2#block{
-									block_time_history = BlockTimeHistory3
-								};
+								B2#block{ block_time_history = BlockTimeHistory3 };
 							false ->
 								B2
 						end,

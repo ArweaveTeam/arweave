@@ -522,7 +522,7 @@ validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	case NewB#block.height >= ar_fork:height_2_7() of
 		false ->
-			validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
+			validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors,
 					RecentTXMap});
 		true ->
 			#block{ block_time_history_hash = HistoryHash } = NewB,
@@ -530,10 +530,28 @@ validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors, Rece
 					?BLOCK_TIME_HISTORY_BLOCKS),
 			case ar_block:block_time_history_hash(History2) of
 				HistoryHash ->
-					validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
+					validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors,
 							RecentTXMap});
 				_ ->
 					{invalid, invalid_block_time_history_hash}
+			end
+	end;
+
+validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
+	case NewB#block.height >= ar_fork:height_2_7() of
+		false ->
+			validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
+					RecentTXMap});
+		true ->
+			ExpectedNextVDFDifficulty = ar_block:compute_next_vdf_difficulty(OldB),
+			#nonce_limiter_info{ next_vdf_difficulty = NextVDFDifficulty } = 
+				NewB#block.nonce_limiter_info,
+			case ExpectedNextVDFDifficulty == NextVDFDifficulty of
+				false ->
+					{invalid, invalid_next_vdf_difficulty};
+				true ->
+					validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
+							RecentTXMap})
 			end
 	end;
 
@@ -606,14 +624,6 @@ validate_block(cumulative_diff, {NewB, OldB}) ->
 	case ar_block:verify_cumulative_diff(NewB, OldB) of
 		false ->
 			{invalid, invalid_cumulative_difficulty};
-		true ->
-			validate_block(vdf_difficulty, {NewB, OldB})
-	end;
-
-validate_block(vdf_difficulty, {NewB, OldB}) ->
-	case ar_block:verify_vdf_difficulty(NewB, OldB) of
-		false ->
-			{invalid, invalid_vdf_difficulty};
 		true ->
 			validate_block(merkle_rebase_support_threshold, {NewB, OldB})
 	end;

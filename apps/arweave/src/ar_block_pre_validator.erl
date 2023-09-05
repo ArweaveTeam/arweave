@@ -563,12 +563,11 @@ pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer) ->
 	#nonce_limiter_info{ global_step_number = StepNumber, seed = Seed,
 			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 			vdf_difficulty = VDFDifficulty,
-			next_vdf_difficulty = NextVDFDifficulty,
 			next_partition_upper_bound = NextPartitionUpperBound } = Info,
 	StepNumber = (B#block.nonce_limiter_info)#nonce_limiter_info.global_step_number,
 	ExpectedSeedData = ar_nonce_limiter:get_seed_data(StepNumber, PrevB),
 	case ExpectedSeedData == {Seed, NextSeed, PartitionUpperBound,
-			NextPartitionUpperBound, VDFDifficulty, NextVDFDifficulty} of
+			NextPartitionUpperBound, VDFDifficulty} of
 		true ->
 			pre_validate_partition_number(B, PrevB, PartitionUpperBound,
 					SolutionResigned, Peer);
