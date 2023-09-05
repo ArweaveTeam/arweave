@@ -6,6 +6,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 -import(ar_test_node, [start/3, slave_start/1, slave_start/3, slave_stop/0,
 		master_peer/0, slave_peer/0, connect_to_slave/0, slave_mine/0,
@@ -370,3 +371,169 @@ test_vdf_client_slow_block_pull_interface() ->
 	%% VDF server is ahead of the block in the VDF chain.
 	send_new_block(slave_peer(), B1),
 	BI = assert_slave_wait_until_height(1).
+
+external_update_test_() ->
+    {foreach,
+		fun setup_external_update/0,
+     	fun cleanup_external_update/1,
+		[
+			{timeout, 120, fun test_session_overlap/0},
+			{timeout, 120, fun test_client_ahead/0},
+			{timeout, 120, fun test_skip_ahead/0}
+		]
+    }.
+
+setup_external_update() ->
+	exit(whereis(ar_nonce_limiter), kill),
+	timer:sleep(1000),
+	ets:new(?MODULE, [named_table, ordered_set, public]),
+	Pid = spawn(
+		fun() ->
+			ok = ar_events:subscribe(nonce_limiter),
+			computed_output()
+		end
+	),
+
+	?assertEqual(5, ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
+	Pid.
+
+cleanup_external_update(Pid) ->
+	exit(Pid, kill),
+	ets:delete(?MODULE).
+
+computed_steps() ->
+    lists:reverse(ets:foldl(fun({_, Int}, Acc) -> [Int | Acc] end, [], ?MODULE)).
+	
+computed_output() ->
+	receive
+		{event, nonce_limiter, {computed_output, Args}} ->
+			{SessionKey, _Session, _PrevSessionKey, _PrevSession, Step, _UpperBound} = Args,
+			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
+    		ets:insert(?MODULE, {Key, Step}),
+			computed_output()
+	end.
+
+apply_external_update(Seed, Interval, ExistingSteps, StepNumber, IsPartial,
+		PrevSeed, PrevInterval) ->
+	PrevSessionKey = {PrevSeed, PrevInterval},
+
+	SessionKey = {Seed, Interval},
+	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [StepNumber | ExistingSteps]],
+	Session = #vdf_session{
+		upper_bound = 0,
+		prev_session_key = PrevSessionKey,
+		step_number = StepNumber,
+		seed = Seed,
+		steps = Steps
+	},
+
+	Update = #nonce_limiter_update{
+		session_key = SessionKey,
+		is_partial = IsPartial,
+		checkpoints = [],
+		session = Session
+	},
+	Peer = {1, 2, 3, 4, 1984},
+	ar_nonce_limiter:apply_external_update(Update, Peer).
+
+%% @doc The VDF session key is only updated when a block is procesed by the VDF server. Until that
+%% happens the serve will push all VDF steps under the same session key - even if those steps
+%% cross an entropy reset line. When a block comes in the server will update the session key
+%% *and* move all appropriate steps to that session. Prior to 2.7 this caused VDF clients to 
+%% process some steps twice - once under the old session key, and once under the new session key.
+%% This test asserts that this behavior has been fixed and that VDF clients only process each
+%% step once.
+test_session_overlap() ->
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = false },
+		apply_external_update(<<"session1">>, 1, [], 8, true, <<"session0">>, 0),
+		"Partial session1, session not found"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [7, 6, 5], 8, false, <<"session0">>, 0),
+		"Full session1"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [], 9, true, <<"session0">>, 0),
+		"Partial session1"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [], 10, true, <<"session0">>, 0),
+		"Partial session1, interval2"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [], 11, true, <<"session0">>, 0),
+		"Partial session1, interval2"),
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = false },
+		apply_external_update(<<"session2">>, 2, [], 12, true, <<"session1">>, 1),
+		"Partial session2, interval2"),
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = true, step_number = 11 },
+		apply_external_update(<<"session1">>, 1, [8, 7, 6, 5], 9, false, <<"session1">>, 1),
+		"Full session1, all steps already seen"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session2">>, 2, [11, 10], 12, false, <<"session1">>, 1),
+		"Full session2, some steps already seen"),
+	timer:sleep(5000),
+	?assertEqual(
+		[<<"8">>, <<"7">>, <<"6">>, <<"5">>, <<"9">>, <<"10">>, <<"11">>, <<"12">>],
+		computed_steps()).
+
+%% @doc This test asserts that the client responds correctly when it is ahead of the VDF server.
+test_client_ahead() ->
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [7, 6, 5], 8, false, <<"session0">>, 0),
+		"Full session"),
+	?assertEqual(
+		#nonce_limiter_update_response{ step_number = 8 },
+		apply_external_update(<<"session1">>, 1, [], 7, true, <<"session0">>, 0),
+		"Partial session, client ahead"),
+	?assertEqual(
+		#nonce_limiter_update_response{ step_number = 8 },
+		apply_external_update(<<"session1">>, 1, [6, 5], 7, false, <<"session0">>, 0),
+		"Full session, client ahead"),
+	timer:sleep(5000),
+	?assertEqual(
+		[<<"8">>, <<"7">>, <<"6">>, <<"5">>],
+		computed_steps()).
+
+%% @doc 
+%% Test case:
+%% 1. VDF server pushes a partial update that skips too far ahead of the client
+%% 2. Simulate the updates that the server would then push (i.e. full session updates of the current
+%%    session and maybe previous session)
+%%
+%% Assert that the client responds correctly and only processes each step once (even though it may
+%% see the same step several times as part of the full session updates).
+test_skip_ahead() ->
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [5], 6, false, <<"session0">>, 0),
+		"Full session1"),
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = true, step_number = 6 },
+		apply_external_update(<<"session1">>, 1, [], 8, true, <<"session0">>, 0),
+		"Partial session1, server ahead"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [7, 6, 5], 8, false, <<"session0">>, 0),
+		"Full session1"),
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = false },
+		apply_external_update(<<"session2">>, 2, [], 12, true, <<"session1">>, 1),
+		"Partial session2, server ahead"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session1">>, 1, [8, 7, 6, 5], 9, false, <<"session0">>, 0),
+		"Full session1, all steps already seen"),
+	?assertEqual(
+		ok,
+		apply_external_update(<<"session2">>, 2, [11, 10], 12, false, <<"session1">>, 1),
+		"Full session2, some steps already seen"),
+	timer:sleep(5000),
+	?assertEqual(
+		[<<"6">>, <<"5">>, <<"8">>, <<"7">>, <<"9">>, <<"12">>, <<"11">>, <<"10">>],
+		computed_steps()).
