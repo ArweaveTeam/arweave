@@ -8,7 +8,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
--import(ar_test_node, [start/3, slave_start/1, slave_start/3, slave_stop/0,
+-import(ar_test_node, [start/3, stop/0, slave_start/1, slave_start/3, slave_stop/0,
 		master_peer/0, slave_peer/0, connect_to_slave/0, slave_mine/0,
 		assert_slave_wait_until_height/1, slave_call/3, post_block/2, send_new_block/2]).
 
@@ -384,8 +384,15 @@ external_update_test_() ->
     }.
 
 setup_external_update() ->
-	exit(whereis(ar_nonce_limiter), kill),
-	timer:sleep(1000),
+	{ok, Config} = application:get_env(arweave, config),
+	[B0] = ar_weave:init(),
+	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF - 
+	%% this is necessary so that we can test the behavior of apply_external_update without any
+	%% auto-computed VDF steps getting in the way.
+	ar_test_node:start(
+		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		Config#config{ nonce_limiter_server_trusted_peers = [ ar_util:format_peer(slave_peer()) ]}),
+	ar_test_node:start(),
 	ets:new(?MODULE, [named_table, ordered_set, public]),
 	Pid = spawn(
 		fun() ->
@@ -407,7 +414,7 @@ computed_steps() ->
 computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
-			{SessionKey, _Session, _PrevSessionKey, _PrevSession, Step, _UpperBound} = Args,
+			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Step, _UpperBound} = Args,
 			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
     		ets:insert(?MODULE, {Key, Step}),
 			computed_output()
@@ -433,8 +440,7 @@ apply_external_update(Seed, Interval, ExistingSteps, StepNumber, IsPartial,
 		checkpoints = [],
 		session = Session
 	},
-	Peer = {1, 2, 3, 4, 1984},
-	ar_nonce_limiter:apply_external_update(Update, Peer).
+	ar_nonce_limiter:apply_external_update(Update, slave_peer()).
 
 %% @doc The VDF session key is only updated when a block is procesed by the VDF server. Until that
 %% happens the serve will push all VDF steps under the same session key - even if those steps
