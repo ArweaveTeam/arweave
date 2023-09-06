@@ -1042,7 +1042,7 @@ apply_external_update2(Update, State) ->
 	#nonce_limiter_update{ session_key = SessionKey,
 			session = #vdf_session{ upper_bound = UpperBound,
 					prev_session_key = PrevSessionKey,
-					step_number = StepNumber, steps = [Output | _] = Steps } = Session,
+					step_number = StepNumber } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
 	{SessionSeed, SessionInterval} = SessionKey,
 	case maps:get(SessionKey, SessionByKey, not_found) of
@@ -1052,33 +1052,53 @@ apply_external_update2(Update, State) ->
 					%% Inform the peer we have not initialized the corresponding session yet.
 					?LOG_DEBUG([{event, apply_external_vdf},
 						{result, session_not_found},
+						{is_partial, IsPartial},
 						{session_seed, ar_util:encode(SessionSeed)},
 						{session_interval, SessionInterval},
 						{server_step_number, StepNumber}]),
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
-					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
 					Sessions2 = gb_sets:add_element({SessionInterval, SessionSeed}, Sessions),
-					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
-					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-					trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession,
-							UpperBound, Steps),
-					{reply, ok, State#state{ session_by_key = SessionByKey2,
-							sessions = Sessions2 }}
+					%% Handle the case where The VDF server has processed a block and re-allocated
+					%% steps across sessions. Between blocks The VDF server (and all nodes that 
+					%% compute their own VDF) will add all computed steps to the same session -
+					%% *even if* the new steps have crossed the entropy reset line and therefore 
+					%% could be added to a new session. Once a block is processed the server will
+					%% open a new session and re-allocate all the steps past the entropy reset line
+					%% to that new session. When the VDF client sees the new session it will request
+					%% the full session to be resent - which will contain steps it has already seen
+					%% and cached under the previous session key.
+					%% 
+					%% Note: This overlap in session caching is intentional. The intention is to
+					%% quickly access the steps when validating B1 -> reset line -> B2 given the
+					%% current fork of B1 -> B2' -> reset line -> B3 i.e. we can query all steps by
+					%% B1.next_seed even though on our fork the reset line determined a different
+					%% next_seed for the latest session.
+					%%
+					%% To avoid processing those steps twice, the client grabs PrevSessions's most
+					%% recently processed step and ignores it and any lower steps found in Session.
+					PrevStepNumber = case maps:get(PrevSessionKey, SessionByKey, undefined) of
+						undefined -> 0;
+						PrevSession -> PrevSession#vdf_session.step_number
+					end,
+					SessionByKey2 = apply_external_update3(CurrentSessionKey, SessionKey,
+						PrevSessionKey, Session, SessionByKey, StepNumber - PrevStepNumber,
+						UpperBound),
+					{reply, ok,
+						State#state{ session_by_key = SessionByKey2, sessions = Sessions2 }}
 			end;
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
 				step_checkpoints_map = Map } = CurrentSession ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
+					[Output | _] = Session#vdf_session.steps,
 					CurrentSession2 = CurrentSession#vdf_session{ step_number = StepNumber,
 							step_checkpoints_map = Map2,
 							steps = [Output | CurrentSteps] },
-					SessionByKey2 = maps:put(SessionKey, CurrentSession2, SessionByKey),
-					PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-					trigger_computed_outputs(SessionKey, CurrentSession2, PrevSessionKey,
-							PrevSession, UpperBound, [Output]),
-					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
+					SessionByKey2 = apply_external_update3(
+							CurrentSessionKey, SessionKey, PrevSessionKey,
+							CurrentSession2, SessionByKey, 1, UpperBound),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
 					case CurrentStepNumber >= StepNumber of
@@ -1098,6 +1118,7 @@ apply_external_update2(Update, State) ->
 									%% Inform the peer we miss some steps.
 									?LOG_DEBUG([{event, apply_external_vdf},
 										{result, missing_steps},
+										{is_partial, IsPartial},
 										{session_seed, ar_util:encode(SessionSeed)},
 										{session_interval, SessionInterval},
 										{client_step_number, CurrentStepNumber},
@@ -1105,21 +1126,48 @@ apply_external_update2(Update, State) ->
 									{reply, #nonce_limiter_update_response{
 											step_number = CurrentStepNumber }, State};
 								false ->
-									SessionByKey2 = maps:put(SessionKey, Session,
-											SessionByKey),
-									may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey,
-											StepNumber),
-									Steps2 = lists:sublist(Steps,
-											StepNumber - CurrentStepNumber),
-									PrevSession = maps:get(PrevSessionKey, SessionByKey,
-											undefined),
-									trigger_computed_outputs(SessionKey, Session,
-											PrevSessionKey, PrevSession, UpperBound, Steps2),
+									%% Handle the case where the VDF client has dropped of the
+									%% network briefly and the VDF server has advanced several
+									%% steps within the same session. In this case the client has
+									%% noticed the gap and requested the  full VDF session be sent -
+									%% which may contain previously processed steps in a addition to
+									%% the missing ones.
+									%% 
+									%% To avoid processing those steps twice, the client grabs
+									%% CurrentStepNumber (our most recently processed step number)
+									%% and ignores it and any lower steps found in Session.
+									SessionByKey2 = apply_external_update3(
+										CurrentSessionKey, SessionKey, PrevSessionKey,
+										Session, SessionByKey, StepNumber - CurrentStepNumber,
+										UpperBound),
 									{reply, ok, State#state{ session_by_key = SessionByKey2 }}
 							end
 					end
 			end
 	end.
+
+%% @doc Final step of applying a VDF update pushed by a VDF server
+%% @param CurrentSessionKey Session key of the session currently tracked by ar_nonce_limiter state
+%% @param SessionKey Session key of the session pushed by the VDF server
+%% @param PrevSessionKey Session key of the session before the session pushed by the VDF server
+%% @param Session Session to apply (either the session pushed by the VDF server or the one tracked
+%%                by ar_nonce_limiter state)
+%% @param SessionByKey Session map maintained by ar_nonce_limiter state
+%% @param NumSteps Number of Session steps to apply. Steps are sorted in descending order.
+%% @param UpperBound Upper bound of the session pushed by the VDF server
+%%
+%% Note: an important job of this function is to ensure that VDF steps are only processed once.
+%% We truncate Session.steps such the previously procesed steps are not sent to
+%% trigger_computed_outputs.
+apply_external_update3(
+	CurrentSessionKey, SessionKey, PrevSessionKey, Session, SessionByKey, NumSteps, UpperBound) ->
+	SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
+	StepNumber = Session#vdf_session.step_number,
+	may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
+	PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
+	Steps = lists:sublist(Session#vdf_session.steps, NumSteps),
+	trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound, Steps),
+	SessionByKey2.
 
 may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber) ->
 	case SessionKey == CurrentSessionKey of
@@ -1128,6 +1176,7 @@ may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber) ->
 		false ->
 			ok
 	end.
+
 
 trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _PrevSession,
 		_UpperBound, []) ->
