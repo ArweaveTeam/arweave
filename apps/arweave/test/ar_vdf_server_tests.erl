@@ -415,9 +415,6 @@ computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
 			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Output, _UpperBound} = Args,
-			{Seed, Interval} = _SessionKey,
-			?LOG_ERROR([{event, computed_output}, {seed, Seed},
-				{interval, Interval}, {output, Output}]),
 			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
     		ets:insert(?MODULE, {Key, Output}),
 			computed_output()
