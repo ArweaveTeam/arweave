@@ -1341,6 +1341,7 @@ test_applies_validated_steps() ->
 	B8 = test_block(8, Output8, NextSeed, NextSeed2, [], [Output8, Output7, Output6],
 			B8VDFDifficulty, B8NextVDFDifficulty),
 	ar_events:send(node_state, {new_tip, B8, B4}),
+	timer:sleep(1000),
 	assert_session(B8, B4),
 	assert_validate(B8, B4, valid),
 	ok.
