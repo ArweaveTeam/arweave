@@ -122,7 +122,6 @@
 	invalid_hash,
 	invalid_timestamp,
 	invalid_resigned_solution_hash,
-	invalid_nonce_limiter_cache_mismatch,
 	invalid_nonce_limiter_global_step_number
 ]).
 

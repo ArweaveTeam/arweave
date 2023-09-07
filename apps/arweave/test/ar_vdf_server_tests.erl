@@ -414,18 +414,25 @@ computed_steps() ->
 computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
-			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Step, _UpperBound} = Args,
+			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Output, _UpperBound} = Args,
+			{Seed, Interval} = _SessionKey,
+			?LOG_ERROR([{event, computed_output}, {seed, Seed},
+				{interval, Interval}, {output, Output}]),
 			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
-    		ets:insert(?MODULE, {Key, Step}),
+    		ets:insert(?MODULE, {Key, Output}),
 			computed_output()
 	end.
 
 apply_external_update(Seed, Interval, ExistingSteps, StepNumber, IsPartial,
 		PrevSeed, PrevInterval) ->
+	apply_external_update(Seed, Interval, ExistingSteps, StepNumber, StepNumber, IsPartial,
+		PrevSeed, PrevInterval).
+apply_external_update(Seed, Interval, ExistingSteps, StepNumber, Output, IsPartial,
+		PrevSeed, PrevInterval) ->
 	PrevSessionKey = {PrevSeed, PrevInterval},
 
 	SessionKey = {Seed, Interval},
-	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [StepNumber | ExistingSteps]],
+	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [Output | ExistingSteps]],
 	Session = #vdf_session{
 		upper_bound = 0,
 		prev_session_key = PrevSessionKey,
