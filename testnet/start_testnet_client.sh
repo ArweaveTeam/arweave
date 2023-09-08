@@ -12,24 +12,16 @@ if [[ ! -f "/arweave-build/testnet/bin/start" ]]; then
 	exit 1
 fi
 
-# If an argument is provided, start from that block, otherwise start from latest state
-if [ "$#" -gt 0 ]; then
-    block=$1
-fi
-
 screen_cmd="screen -dmsL arweave /arweave-build/testnet/bin/start"
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
-screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_client_peer testnet_client)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_client)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_solo)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_pilot)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_server_trusted_peer testnet_pilot)
 
 screen_cmd+=" debug mine \
-data_dir /arweave-data \
-header_sync_jobs 0"
-
-if [ -z "$block" ]; then
-    screen_cmd+=" start_from_latest_state"
-else
-    screen_cmd+=" start_from_block $block"
-fi
+max_vdf_validation_thread_count 2 \
+data_dir /arweave-data"
 
 echo "$screen_cmd"
 echo "$screen_cmd" > /arweave-build/testnet/run.command

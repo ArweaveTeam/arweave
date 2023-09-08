@@ -14,9 +14,8 @@ fi
 
 screen_cmd="screen -dmsL arweave /arweave-build/testnet/bin/start"
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
-screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_miners)
-screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_vdf)
-screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_server_trusted_peer testnet_vdf)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_client)
+screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_pilot)
 
 screen_cmd+=" debug mine \
 max_vdf_validation_thread_count 2 \

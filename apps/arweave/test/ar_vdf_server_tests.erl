@@ -392,7 +392,6 @@ setup_external_update() ->
 	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_server_trusted_peers = [ ar_util:format_peer(slave_peer()) ]}),
-	ar_test_node:start(),
 	ets:new(?MODULE, [named_table, ordered_set, public]),
 	Pid = spawn(
 		fun() ->
@@ -402,10 +401,11 @@ setup_external_update() ->
 	),
 
 	?assertEqual(5, ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
-	Pid.
+	{Pid, Config}.
 
-cleanup_external_update(Pid) ->
+cleanup_external_update({Pid, Config}) ->
 	exit(Pid, kill),
+	ok = application:set_env(arweave, config, Config),
 	ets:delete(?MODULE).
 
 computed_steps() ->
@@ -414,18 +414,22 @@ computed_steps() ->
 computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
-			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Step, _UpperBound} = Args,
+			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Output, _UpperBound} = Args,
 			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
-    		ets:insert(?MODULE, {Key, Step}),
+    		ets:insert(?MODULE, {Key, Output}),
 			computed_output()
 	end.
 
 apply_external_update(Seed, Interval, ExistingSteps, StepNumber, IsPartial,
 		PrevSeed, PrevInterval) ->
+	apply_external_update(Seed, Interval, ExistingSteps, StepNumber, StepNumber, IsPartial,
+		PrevSeed, PrevInterval).
+apply_external_update(Seed, Interval, ExistingSteps, StepNumber, Output, IsPartial,
+		PrevSeed, PrevInterval) ->
 	PrevSessionKey = {PrevSeed, PrevInterval},
 
 	SessionKey = {Seed, Interval},
-	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [StepNumber | ExistingSteps]],
+	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [Output | ExistingSteps]],
 	Session = #vdf_session{
 		upper_bound = 0,
 		prev_session_key = PrevSessionKey,
