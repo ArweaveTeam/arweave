@@ -639,4 +639,5 @@ test_persisted_mempool() ->
 	ar_test_node:mine(),
 	[{H, _, _} | _] = assert_slave_wait_until_height(1),
 	B = read_block_when_stored(H),
-	?assertEqual([SignedTX#tx.id], B#block.txs).
+	?assertEqual([SignedTX#tx.id], B#block.txs),
+	ok = application:set_env(arweave, config, Config).
