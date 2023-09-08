@@ -837,7 +837,8 @@ handle_task({computed_output, Args}, State) ->
 	{N, State2} = distribute_output(Seed, PartitionUpperBound, Output, Iterator, #{}, Ref,
 			State),
 	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
-		{step_number, StepNumber}, {start_interval_number, StartIntervalNumber},
+		{step_number, StepNumber}, {output, ar_util:encode(Output)},
+		{start_interval_number, StartIntervalNumber},
 		{vdf_difficulty, VDFSession#vdf_session.vdf_difficulty},
 		{next_vdf_difficulty, VDFSession#vdf_session.next_vdf_difficulty}]),
 	{noreply, State2#state{ session = Session3 }};
