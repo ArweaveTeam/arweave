@@ -68,6 +68,10 @@ start(B0, RewardAddr, Config) ->
 
 %% @doc Start a fresh master node with the given genesis block, mining address, config,
 %% and storage modules.
+%%
+%% Note: the Config provided here is written to disk. This is fine if it's the default Config,
+%% but if you've modified any of the Config fields for your test, please restore the default
+%% Config after the test is done. Otherwise the tests that run after yours may fail.
 start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
 	write_genesis_files(Config#config.data_dir, B0),
@@ -88,6 +92,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		mining_server_chunk_cache_size_limit = 4,
 		debug = true
 	}),
+	?LOG_ERROR("Config: ~p", [Config]),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
 	wait_until_syncs_genesis_data(),
