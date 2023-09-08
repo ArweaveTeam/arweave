@@ -685,7 +685,8 @@ e2e_deposit_before_charge() ->
 		"No balance change expected"),
 	?assertEqual(
 		{<<"200">>, <<"0">>}, get_balance(Sender2Address),
-		"No balance change expected").
+		"No balance change expected"),
+	ok = application:set_env(arweave, config, BaseConfig).
 
 e2e_charge_before_deposit() ->
 	Wallet1 = {Priv1, Pub1} = ar_wallet:new(),
@@ -771,9 +772,8 @@ e2e_charge_before_deposit() ->
 		"Requesting P3 endpoint after deposit"
 	),
 
-	?assertEqual({<<"200">>, <<"-800">>}, get_balance(Address1)).
-
-
+	?assertEqual({<<"200">>, <<"-800">>}, get_balance(Address1)),
+	ok = application:set_env(arweave, config, BaseConfig).
 
 %% @doc Test that nodes correctly scan old blocks that came in while they were offline.
 e2e_restart_p3_service() ->
@@ -843,8 +843,9 @@ e2e_restart_p3_service() ->
 	stop(),
 	rejoin_on_slave(),
 	?assertEqual(5, ar_p3_db:get_scan_height(),
-		"Restarting node should not have reset scan height db: scan height 5").
-
+		"Restarting node should not have reset scan height db: scan height 5"),
+	
+	ok = application:set_env(arweave, config, BaseConfig).
 
 %% @doc Test that a bunch of concurrent requests don't overspend the P3 account and that they
 %% are gated before they are processed (i.e. if the account does not have sufficient balance,
@@ -926,7 +927,9 @@ e2e_concurrent_requests() ->
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
 
 	{ok, AccountValid} = ar_p3_db:get_account(Address1),
-	?assertEqual(Count+1, AccountValid#p3_account.count).
+	?assertEqual(Count+1, AccountValid#p3_account.count),
+
+	ok = application:set_env(arweave, config, BaseConfig).
 
 %% ------------------------------------------------------------------
 %% Private helper functions

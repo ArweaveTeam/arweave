@@ -392,7 +392,6 @@ setup_external_update() ->
 	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_server_trusted_peers = [ ar_util:format_peer(slave_peer()) ]}),
-	ar_test_node:start(),
 	ets:new(?MODULE, [named_table, ordered_set, public]),
 	Pid = spawn(
 		fun() ->
@@ -402,10 +401,11 @@ setup_external_update() ->
 	),
 
 	?assertEqual(5, ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
-	Pid.
+	{Pid, Config}.
 
-cleanup_external_update(Pid) ->
+cleanup_external_update({Pid, Config}) ->
 	exit(Pid, kill),
+	ok = application:set_env(arweave, config, Config),
 	ets:delete(?MODULE).
 
 computed_steps() ->
