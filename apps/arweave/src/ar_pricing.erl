@@ -139,7 +139,7 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 			PricePerGiBPerMinute = 
 				(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerSecond * 60)
 				div (max(1, HashRateTotal) * (?PARTITION_SIZE)),
-			?LOG_DEBUG([{event, get_price_per_gib_minute2},
+			?LOG_DEBUG([{event, get_price_per_gib_minute2}, {height, Height},
 				{hash_rate_total, HashRateTotal}, {reward_total, RewardTotal},
 				{interval_total, IntervalTotal}, {vdf_interval_total, VDFIntervalTotal},
 				{one_chunk_count, OneChunkCount}, {two_chunk_count, TwoChunkCount},
@@ -305,6 +305,9 @@ recalculate_price_per_gib_minute2(B) ->
 				false ->
 					{Price, ScheduledPrice};
 				true ->
+					%% price_per_gib_minute = scheduled_price_per_gib_minute
+					%% scheduled_price_per_gib_minute = get_price_per_gib_minute() capped to
+					%%                                  0.5x to 2x of old price_per_gib_minute
 					RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
 					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
 							?BLOCK_TIME_HISTORY_BLOCKS),
