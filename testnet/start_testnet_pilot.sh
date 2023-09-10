@@ -12,7 +12,7 @@ if [[ ! -f "/arweave-build/testnet/bin/start" ]]; then
 	exit 1
 fi
 
-# If an argument is provided, start from that block, otherwise start from latest state
+# If an argument is provided, start from that block in local state, otherwise start from peers
 if [ "$#" -gt 0 ]; then
     block=$1
 fi
@@ -22,13 +22,13 @@ screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_client_peer testnet_client)
 
 screen_cmd+=" debug mine \
-data_dir /arweave-data \
-header_sync_jobs 0"
+data_dir /arweave-data"
 
 if [ -z "$block" ]; then
-    screen_cmd+=" start_from_latest_state"
+    screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_client)
+    screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_solo)
 else
-    screen_cmd+=" start_from_block $block"
+    screen_cmd+=" header_sync_jobs 0 start_from_block $block"
 fi
 
 echo "$screen_cmd"

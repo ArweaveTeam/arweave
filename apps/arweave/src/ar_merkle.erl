@@ -85,7 +85,7 @@ validate_path(ID, Dest, LeftBound, RightBound, Path, offset_rebase_support_rules
 validate_path(ID, Dest, LeftBound, RightBound, Path, CheckBorders, CheckSplit, AllowRebase) ->
 	DataSize = RightBound,
 	%% Will be set to true only if we only take right branches from the root to the leaf. In this
-	%% case we know the leaf chunk is the final chunk in the range reprsented by the merkle tree.
+	%% case we know the leaf chunk is the final chunk in the range represented by the merkle tree.
 	IsRightMostInItsSubTree = undefined, 
 	%% Set to non-zero when AllowRebase is true and we begin processing a subtree.
 	LeftBoundShift = 0,
@@ -128,23 +128,25 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 			%% of their datasets or the second last chunks which do not exceed 256 KiB when
 			%% combined with the following (last) chunks. Finally, reject chunks smaller than
 			%% their Merkle proofs unless they are the last chunks of their datasets.
+			ShiftedLeftBound = LeftBoundShift + LeftBound,
+			ShiftedEndOffset = LeftBoundShift + EndOffset,
 			case IsRightMostInItsSubTree of
 				true ->
 					%% The last chunk may either start at the bucket start or
 					%% span two buckets.
-					Bucket0 = LeftBound div (?DATA_CHUNK_SIZE),
-					Bucket1 = EndOffset div (?DATA_CHUNK_SIZE),
-					(LeftBound rem (?DATA_CHUNK_SIZE) == 0)
+					Bucket0 = ShiftedLeftBound div (?DATA_CHUNK_SIZE),
+					Bucket1 = ShiftedEndOffset div (?DATA_CHUNK_SIZE),
+					(ShiftedLeftBound rem (?DATA_CHUNK_SIZE) == 0)
 							%% Make sure each chunk "steps" at least 1 byte into
 							%% its own bucket, which is to the right from the right border
 							%% cause since this chunk does not start at the left border,
 							%% the bucket on the left from the right border belongs to
 							%% the preceding chunk.
 							orelse (Bucket0 + 1 == Bucket1
-									andalso EndOffset rem ?DATA_CHUNK_SIZE /= 0);
+									andalso ShiftedEndOffset rem ?DATA_CHUNK_SIZE /= 0);
 				_ ->
 					%% May also be the only chunk of a single-chunk subtree.
-					LeftBound rem (?DATA_CHUNK_SIZE) == 0
+					ShiftedLeftBound rem (?DATA_CHUNK_SIZE) == 0
 			end;
 		_ ->
 			%% Split is always valid if we don't need to check it
@@ -901,7 +903,92 @@ test_tree_with_rebase_partial_chunk() ->
 
 	Path8_3 = ar_merkle:generate_path(Root8, 393213 + 1, Tree8),
 	{Leaf3, 393213, 655355} = ar_merkle:validate_path(Root8, 393213 + 2, 655355, Path8_3,
-			offset_rebase_support_ruleset).
+			offset_rebase_support_ruleset),
+
+    %%                           Root9
+	%%                  /                     \
+	%%              SubTree1             Leaf3 (1 B)
+	%%         /               \
+	%% Leaf1 (1 B)         Leaf2 (1 B)
+	Tags9 = [
+				[
+					{Leaf1, 1}
+				],
+				[
+					{Leaf2, 1}
+				],
+				[
+					{Leaf3, 1}
+				]
+			],
+	{Root9, Tree9} = ar_merkle:generate_tree(Tags9),
+	assert_tree([
+			{branch, undefined, 2, false},  %% Root
+			{branch, undefined, 1, false},  %% SubTree1
+			{leaf, Leaf3, 1, true},
+			{leaf, Leaf1, 1, true},
+			{leaf, Leaf2, 1, true},
+			{leaf, Leaf3, 1, true}          %% Duplicates are safe and expected
+		], Tree9),
+
+	%% Path to first chunk in data set (even if it's a small chunk) will validate
+	Path9_1 = ar_merkle:generate_path(Root9, 0, Tree9),
+	{Leaf1, 0, 1} = ar_merkle:validate_path(Root9, 0,
+			1,
+			Path9_1, offset_rebase_support_ruleset),
+
+	Path9_2 = ar_merkle:generate_path(Root9, 1, Tree9),
+	?assertEqual(false,
+		ar_merkle:validate_path(Root9, 1, 2, Path9_2, offset_rebase_support_ruleset)),
+
+	Path9_3 = ar_merkle:generate_path(Root9, 2, Tree9),
+	?assertEqual(false,
+		ar_merkle:validate_path(Root9, 2, 3, Path9_3, offset_rebase_support_ruleset)),
+
+	%%                           Root9
+	%%                  /                     \
+	%%              SubTree1             Leaf3 (256 KiB)
+	%%         /               \
+	%% Leaf1 (256 KiB)         Leaf2 (1 B)
+	%%
+	%% Every chunk in a subtree following a small-chunk subtree should fail to validated. When
+	%% bundling, bundlers are required to bad small chunks out to a chunk boundary.
+	Tags10 = [
+				[
+					{Leaf1, ?DATA_CHUNK_SIZE}
+				],
+				[
+					{Leaf2, 1}
+				],
+				[
+					{Leaf3, ?DATA_CHUNK_SIZE}
+				]
+			],
+	{Root10, Tree10} = ar_merkle:generate_tree(Tags10),
+	assert_tree([
+			{branch, undefined, ?DATA_CHUNK_SIZE+1, false},  %% Root
+			{branch, undefined, ?DATA_CHUNK_SIZE, false},  %% SubTree1
+			{leaf, Leaf3, ?DATA_CHUNK_SIZE, true},
+			{leaf, Leaf1, ?DATA_CHUNK_SIZE, true},
+			{leaf, Leaf2, 1, true},
+			{leaf, Leaf3, ?DATA_CHUNK_SIZE, true}          %% Duplicates are safe and expected
+		], Tree10),
+
+	Path10_1 = ar_merkle:generate_path(Root10, 0, Tree10),
+	{Leaf1, 0, ?DATA_CHUNK_SIZE} = ar_merkle:validate_path(Root10, 0,
+			?DATA_CHUNK_SIZE,
+			Path10_1, offset_rebase_support_ruleset),
+
+	Path10_2 = ar_merkle:generate_path(Root10, ?DATA_CHUNK_SIZE, Tree10),
+	{Leaf2, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE+1} = ar_merkle:validate_path(Root10,
+			?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE+1,
+			Path10_2, offset_rebase_support_ruleset),
+
+	Path10_3 = ar_merkle:generate_path(Root10, ?DATA_CHUNK_SIZE+1, Tree10),
+	?assertEqual(false,
+		ar_merkle:validate_path(Root10, ?DATA_CHUNK_SIZE+1, (2*?DATA_CHUNK_SIZE)+1,
+			Path10_3, offset_rebase_support_ruleset)),
+	ok.
 
 test_tree_with_rebase_subtree_ids() ->
 	%% Assert that the all the tree IDs are preserved when the tree is added as a subtree within
