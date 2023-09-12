@@ -1,11 +1,12 @@
 { arweaveConfig, pkgs, ... }:
 
 let
+  inherit (pkgs) lib;
   filterTopLevelNulls = set:
     let
       isNotNull = value: value != null;
     in
-    filterAttrs (name: value: isNotNull value) set;
+    lib.filterAttrs (name: value: isNotNull value) set;
 in
 pkgs.writeText "config.json" (builtins.toJSON (filterTopLevelNulls {
   data_dir = arweaveConfig.dataDir;
@@ -55,4 +56,4 @@ pkgs.writeText "config.json" (builtins.toJSON (filterTopLevelNulls {
     })
     { }
     arweaveConfig.requestsPerMinuteLimitByIp;
-}));
+}))
