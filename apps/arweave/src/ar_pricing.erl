@@ -46,30 +46,32 @@ is_v2_pricing_height(Height) ->
 %% is at least 1 Winston, even if all block rewards from the given history are 0.
 %% Also, the returned price is always at least 1 Winston.
 get_price_per_gib_minute(Height, RewardHistory, BlockTimeHistory, Denomination2) ->
-	case Height >= ar_fork:height_2_7() of
-		false ->
+	Fork_2_7 = ar_fork:height_2_7(),
+	PriceTransitionStart = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
+	PriceTransitionEnd = PriceTransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+
+	PreTransitionPrice = ?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
+	NewPrice = get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2),
+
+	case Height of
+		_ when Height < Fork_2_7 ->
 			%% Computed but not used at this point.
-			get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2);
-		true ->
-			PriceTransitionStart = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
-			PriceTransitionEnd = PriceTransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS,
-			case Height >= PriceTransitionStart of
-				false ->
-					?PRICE_PER_GIB_MINUTE_PRE_TRANSITION;
-				true ->
-					Price1 = ?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
-					Price2 = get_price_per_gib_minute2(Height, RewardHistory,
-							BlockTimeHistory, Denomination2),
-					Interval1 = Height - PriceTransitionStart + 1,
-					Interval2 = PriceTransitionEnd - (Height + 1),
-					PricePerGiBPerMinute =
-						(Price1 * Interval2 + Price2 * Interval1) div (Interval1 + Interval2),
-					?LOG_DEBUG([{event, get_price_per_gib_minute},
-						{height, Height}, {price1, Price1}, {price2, Price2},
-						{interval1, Interval1}, {interval2, Interval2},
-						{price, PricePerGiBPerMinute}]),
-					PricePerGiBPerMinute
-			end
+			NewPrice;
+		_ when Height < PriceTransitionStart ->
+			PreTransitionPrice;
+		_ when Height < PriceTransitionEnd ->
+			%% Interpolate between the pre-transition price and the new price.
+			Interval1 = Height - PriceTransitionStart,
+			Interval2 = PriceTransitionEnd - Height,
+			PricePerGiBPerMinute =
+				(PreTransitionPrice * Interval2 + NewPrice * Interval1) div (Interval1 + Interval2),
+			?LOG_DEBUG([{event, get_price_per_gib_minute},
+				{height, Height}, {price1, PreTransitionPrice}, {price2, NewPrice},
+				{interval1, Interval1}, {interval2, Interval2},
+				{price, PricePerGiBPerMinute}]),
+			PricePerGiBPerMinute;
+		_ ->
+			NewPrice
 	end.
 
 get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2) ->
@@ -103,14 +105,29 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 					{0, 0, 0, 0},
 					BlockTimeHistory
 				),
-			%% Estimate the number of solutions that were generated per partition per second
-			%% based the number of actual VDF steps that elapsed over time, as well as
-			%% the ratio of 1-chunk to 2-chunk solutions.
-			%% 
-			%% This differs from the pre-2.7 calculation which always assumed 2 solutions per
-			%% *second*. The post-2.7 calculation accounts for VDF drift (i.e. steps taking more or
-			%% less than 1-second on average) as well as the impact of having a statistically
-			%% disproportionate number of 1-chunk solutions may have.
+			%% The intent of the SolutionsPerPartitionPerVDFStep is to estimate network replica
+			%% count (how many copies of the weave are stored across the network).
+			%% The logic behind this is complex - an explanation from @vird:
+			%%
+			%% 1. Naive solution: If we assume that each miner stores 1 replica, then we
+			%%    can trivially calculate the network replica count using the network hashrate
+			%%    (which we have) and the weave size (which we also have). However what if on
+			%%    average each miner only stores 50% of the weave? In that case each miner will
+			%%    get fewer hashes per partition (because they will miss out on 2-chunk solutions
+			%%    that fall on the partitions they don't store), and that will push *up* the
+			%%    replica count for a given network hashrate. How much to scale up our replica
+			%%    count is based on the average replica count per miner.
+			%% 2. Estimate average replica count per miner: Start with this basic assumption:
+			%%    the higher the percentage of the weave a miner stores, the more likely they are
+			%%    to mine a 2-chunk solution. If a miner has 100% of the weave, then, on average,
+			%%    50% of their solutions will be 1-chunk, and 50% will be 2-chunk.
+			%%
+			%%    With this we can use the ratio of observed 2-chunk to 1-chunk solutions to
+			%%    estimate the average percentage of the weave each miner stores.
+			%%
+			%% The SolutionsPerPartitionPerVDFStep combines that average weave % calculation
+			%% with the expected number of solutions per partition per VDF step to arrive a single
+			%% number that can be used in the PricePerGiBPerMinute calculation.
 			SolutionsPerPartitionPerVDFStep =
 				case OneChunkCount of
 					0 ->
@@ -121,15 +138,14 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 									+ ?RECALL_RANGE_SIZE * TwoChunkCount div OneChunkCount)
 							div ?DATA_CHUNK_SIZE
 				end,
-			SolutionsPerPartitionPerSecond = 
-				(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal,
-
 			%% The following walks through the math of calculating the price per GiB per minute.
 			%% However to reduce rounding errors due to divs, the uncommented equation at the
 			%% end is used instead. Logically they should be the same. Notably the '* 2' in
 			%% SolutionsPerPartitionPerBlock and the 'div 2' in PricePerGiBPerMinute cancel each
 			%% other out.
 			%%
+			%% SolutionsPerPartitionPerSecond =
+			%%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
 			%% SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
 			%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerMinute * 2,
 			%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
@@ -137,8 +153,14 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 			%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
 			%% PricePerGiBPerMinute = PricePerGibPerBlock div 2,
 			PricePerGiBPerMinute = 
-				(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerSecond * 60)
-				div (max(1, HashRateTotal) * (?PARTITION_SIZE)),
+				(
+					(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) *
+					max(1, RewardTotal) * (?GiB) * 60
+				)
+				div
+				(
+					IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
+				),
 			?LOG_DEBUG([{event, get_price_per_gib_minute2}, {height, Height},
 				{hash_rate_total, HashRateTotal}, {reward_total, RewardTotal},
 				{interval_total, IntervalTotal}, {vdf_interval_total, VDFIntervalTotal},
