@@ -92,7 +92,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		mining_server_chunk_cache_size_limit = 4,
 		debug = true
 	}),
-	?LOG_ERROR("Config: ~p", [Config]),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
 	wait_until_syncs_genesis_data(),
