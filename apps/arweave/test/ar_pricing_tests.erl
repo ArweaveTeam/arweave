@@ -14,6 +14,126 @@
 
 -define(DISTANT_FUTURE_BLOCK_HEIGHT, 262800000). %% 1,000 years from genesis
 
+get_price_per_gib_minute_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_7, fun() -> 5 end}],
+			fun test_price_per_gib_minute_pre_fork/0),
+		{timeout, 30, fun test_price_per_gib_minute_pre_block_time_history/0},
+		%% Need to set the 2.7 fork height to -1 since BLOCK_TIME_HISTORY_BLOCKS is 3 and
+		%% PRICE_2_6_8_TRANSITION_START is 2. Without this workaround we can't start the
+		%% price transition until it's half over.
+		ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_7, fun() -> -1 end}],
+			fun test_price_per_gib_minute_in_transition/0),
+		ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_7, fun() -> -1 end}],
+			fun test_price_per_gib_minute_pre_transition/0),
+		{timeout, 30, fun test_price_per_gib_minute_post_transition/0}
+	].
+
+test_price_per_gib_minute_pre_fork() ->
+	?assertEqual(143165,
+		ar_pricing:get_price_per_gib_minute(0, reward_history(1, 1), vdf(1, 1), 0),
+		"Before 2.7").
+
+test_price_per_gib_minute_pre_block_time_history() ->
+	%% This test verifies an edge case code path that probably shouldn't ver be triggered.
+	%% ar_fork:height_2_7() and ar_fork:height_2_6_8() ar 0
+	%% ?BLOCK_TIME_HISTORY_BLOCKS is 3
+	%% ?PRICE_2_6_8_TRANSITION_START is 2
+	%% So when the price transition starts we don't have enough block time history to apply the
+	%% new algorithm.
+	Start = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
+	?assertEqual(?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
+		ar_pricing:get_price_per_gib_minute(Start, reward_history(1, 1), vdf(1, 1), 0),
+		"Before we have enough block time history").
+
+test_price_per_gib_minute_pre_transition() ->
+	Start = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
+	?assertEqual(?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
+		ar_pricing:get_price_per_gib_minute(Start-1, reward_history(1, 1), vdf(1, 1), 0),
+		"Before transition").
+
+test_price_per_gib_minute_in_transition() ->
+	Start = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
+	?assertEqual(?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
+		ar_pricing:get_price_per_gib_minute(Start, reward_history(1, 1), vdf(1, 1), 0),
+		"Transition start"),
+	?assertEqual(39872,
+		ar_pricing:get_price_per_gib_minute(Start + 1, reward_history(1, 1), vdf(1, 1), 0),
+		"In transition"),
+	?assertEqual(71582,
+		ar_pricing:get_price_per_gib_minute(Start + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+			reward_history(1, 1), vdf(1, 1), 0),
+		"Transition end").
+
+test_price_per_gib_minute_post_transition() ->
+	AtTransitionEnd = ar_fork:height_2_6_8() +
+		?PRICE_2_6_8_TRANSITION_START +
+		?PRICE_2_6_8_TRANSITION_BLOCKS,
+	do_price_per_gib_minute_post_transition(AtTransitionEnd),
+	BeyondTransition = AtTransitionEnd + 1000,
+	do_price_per_gib_minute_post_transition(BeyondTransition).
+
+do_price_per_gib_minute_post_transition(Height) ->
+	Baseline = 71582,
+	Baseline1_5 = 107374, %% 1.5x Baseline
+	Baseline2 = 143165, %% 2x Baseline
+	Baseline10 = 715827, %% 10x Baseline
+	?assertEqual(Baseline,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(1, 1), 0),
+		"hash_rate: low, reward: low, vdf: perfect, chunks: all_one"),
+	?assertEqual(Baseline10,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 10), vdf(1, 1), 0),
+		"hash_rate: low, reward: high, vdf: perfect, chunks: all_one"),
+	?assertEqual(Baseline div 10,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(10, 1), vdf(1, 1), 0),
+		"hash_rate: high, reward: low, vdf: perfect, chunks: all_one"),
+	?assertEqual(Baseline,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(10, 10), vdf(1, 1), 0),
+		"hash_rate: high, reward: high, vdf: perfect, chunks: all_one"),
+	?assertEqual(Baseline div 10,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(10, 1), 0),
+		"hash_rate: low, reward: low, vdf: slow, chunks: all_one"),
+	?assertEqual(Baseline10,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(1, 10), 0),
+		"hash_rate: low, reward: low, vdf: fast, chunks: all_one"),
+	?assertEqual(Baseline2,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), all_two_chunks(), 0),
+		"hash_rate: low, reward: low, vdf: perfect, chunks: all_two"),
+	?assertEqual(Baseline1_5,
+		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), mix_chunks(), 0),
+		"hash_rate: low, reward: low, vdf: perfect, chunks: mix").
+
+reward_history(HashRate, Reward) ->
+	[
+		{crypto:strong_rand_bytes(32), 1*HashRate, 1*Reward, 0},
+		{crypto:strong_rand_bytes(32), 2*HashRate, 2*Reward, 0},
+		{crypto:strong_rand_bytes(32), 3*HashRate, 3*Reward, 0}
+	].
+
+vdf(BlockInterval, VDFSteps) ->
+	[
+		{BlockInterval*10, VDFSteps*10, 1},
+		{BlockInterval*20, VDFSteps*20, 1},
+		{BlockInterval*30, VDFSteps*30, 1}
+	].
+
+all_two_chunks() ->
+	[
+		{10, 10, 2},
+		{20, 20, 2},
+		{30, 30, 2}
+	].
+
+mix_chunks() ->
+	[
+		{10, 10, 1},
+		{20, 20, 2},
+		{30, 30, 1}
+	].
+
 auto_redenomination_and_endowment_debt_test_() ->
 	{timeout, 180, fun test_auto_redenomination_and_endowment_debt/0}.
 
