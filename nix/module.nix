@@ -9,7 +9,7 @@ let
       isNotNull = value: value != null;
     in
     filterAttrs (name: value: isNotNull value) set;
-  generatedConfigFile = "${import ./generate-config.nix { arweaveConfig = cfg; inherit pkgs; }}/config.json";
+  generatedConfigFile = "${import ./generate-config.nix { arweaveConfig = cfg; inherit pkgs; }}";
 in
 {
   options.services.arweave = import ./options.nix {
