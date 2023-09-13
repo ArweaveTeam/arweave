@@ -118,6 +118,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 			ar_util:cast_after(FrequencyMs, self(), {poll, Ref}),
 			{noreply, State};
 		{error, not_found} ->
+			?LOG_DEBUG([{event, peer_out_of_sync}, {peer, ar_util:format_peer(Peer)}]),
 			gen_server:cast(ar_poller, {peer_out_of_sync, Peer}),
 			{noreply, State#state{ pause = true }};
 		{error, Reason} ->
