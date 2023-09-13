@@ -21,7 +21,7 @@ screen_cmd="screen -dmsL arweave /arweave-build/testnet/bin/start"
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_client_peer testnet_client)
 
-screen_cmd+=" debug mine \
+screen_cmd+=" debug mine enable remove_orphaned_storage_module_data \
 data_dir /arweave-data"
 
 if [ -z "$block" ]; then
