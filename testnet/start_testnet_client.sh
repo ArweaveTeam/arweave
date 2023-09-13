@@ -20,7 +20,7 @@ screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_pilot)
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_server_trusted_peer testnet_pilot)
 
 screen_cmd+=" debug mine \
-max_vdf_validation_thread_count 2 \
+max_vdf_validation_thread_count 2 enable remove_orphaned_storage_module_data \
 data_dir /arweave-data"
 
 echo "$screen_cmd"
