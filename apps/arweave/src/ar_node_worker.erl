@@ -1525,7 +1525,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		end,
 		tl(lists:reverse(PrevBlocks))
 	),
-	ar_storage:update_block_index(B#block.height - OrphanCount, OrphanCount, AddedBIElements),
+	ar_storage:update_block_index(B#block.height, OrphanCount, AddedBIElements),
 	ar_storage:store_reward_history_part(AddedBlocks),
 	ar_storage:store_block_time_history_part(AddedBlocks, lists:last(PrevBlocks)),
 	ets:insert(node_state, [
