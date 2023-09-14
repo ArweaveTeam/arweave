@@ -723,6 +723,52 @@ test_rocksdb_iterator() ->
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
 			[{"default", Opts2}, {"test", Opts2}], [], [default1, test1]),
 	assert_iteration(test1, SmallerPrefix, BiggerPrefix, Suffixes),
+	close(test1),
+	destroy("test_db").
+
+delete_range_test_() ->
+	{timeout, 300, fun test_delete_range/0}.
+
+test_delete_range() ->
+	destroy("test_db"),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"), test_db),
+	ok = ar_kv:put(test_db, << 0:256 >>, << 0:256 >>),
+	ok = ar_kv:put(test_db, << 1:256 >>, << 1:256 >>),
+	ok = ar_kv:put(test_db, << 2:256 >>, << 2:256 >>),
+	ok = ar_kv:put(test_db, << 3:256 >>, << 3:256 >>),
+	ok = ar_kv:put(test_db, << 4:256 >>, << 4:256 >>),
+	?assertEqual({ok, << 1:256 >>}, ar_kv:get(test_db, << 1:256 >>)),
+
+	%% Base case
+	?assertEqual(ok, ar_kv:delete_range(test_db, << 1:256 >>, << 2:256 >>)),
+	?assertEqual({ok, << 0:256 >>}, ar_kv:get(test_db, << 0:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 1:256 >>)),
+	?assertEqual({ok, << 2:256 >>}, ar_kv:get(test_db, << 2:256 >>)),
+
+	%% Missing start and missing end
+	?assertEqual(ok, ar_kv:delete_range(test_db, << 1:256 >>, << 5:256 >>)),
+	?assertEqual({ok, << 0:256 >>}, ar_kv:get(test_db, << 0:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 1:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 2:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 3:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 4:256 >>)),
+
+	%% Empty range
+	?assertEqual(ok, ar_kv:delete_range(test_db, << 1:256 >>, << 1:256 >>)),
+	?assertEqual({ok, << 0:256 >>}, ar_kv:get(test_db, << 0:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 1:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 2:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 3:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 4:256 >>)),
+
+	%% Reversed range
+	?assertMatch({error, _}, ar_kv:delete_range(test_db, << 1:256 >>, << 0:256 >>)),
+	?assertEqual({ok, << 0:256 >>}, ar_kv:get(test_db, << 0:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 1:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 2:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 3:256 >>)),
+	?assertEqual(not_found, ar_kv:get(test_db, << 4:256 >>)),
+
 	destroy("test_db").
 
 assert_iteration(Name, SmallerPrefix, BiggerPrefix, Suffixes) ->

@@ -129,30 +129,41 @@ store_block_index(BI) ->
 	end.
 
 %% @doc Record the block index update on disk. Remove the orphans, if any.
-update_block_index(Height, OrphanCount, BI) ->
-	case ar_kv:delete_range(block_index_db, << Height:256 >>,
-			<< (Height + OrphanCount + 1):256 >>) of
+update_block_index(TipHeight, OrphanCount, BI) ->
+	%% Height of the earliest orphaned block. This height and higher will be deleted from
+	%% the block index. If OrphanCount is 0, then no blocks will be deleted from the block index.
+	OrphanHeight = TipHeight - OrphanCount + 1,
+	%% Record the contents of BI starting at this height. Whether there are 1 or 0 orphans
+	%% we update the index starting at the same height (the tip). Only when OrphanCount is > 1 do
+	%% need to rewrite the index starting at a lower height.
+	IndexHeight = TipHeight - max(0, OrphanCount-1),
+	%% 1. Delete all the orphaned blocks from the block index
+	case ar_kv:delete_range(block_index_db,
+			<< OrphanHeight:256 >>, << (TipHeight + 1):256 >>) of
 		ok ->
-			case Height of
+			case IndexHeight of
 				0 ->
 					update_block_index2(0, <<>>, BI);
 				_ ->
-					case ar_kv:get(block_index_db, << (Height - 1):256 >>) of
+					%% 2. Add all the entries in BI to the block index
+					%% BI will include the new tip block at the current height, as well as any new
+					%% history blocks if the tip is on a new branch.
+					case ar_kv:get(block_index_db, << (IndexHeight - 1):256 >>) of
 						not_found ->
 							?LOG_ERROR([{event, failed_to_update_block_index},
 									{reason, prev_element_not_found},
-									{prev_height, Height - 1}]),
+									{prev_height, IndexHeight - 1}]),
 							{error, not_found};
 						{ok, Bin} ->
 							{PrevH, _, _, _} = binary_to_term(Bin),
-							update_block_index2(Height, PrevH, BI)
+							update_block_index2(IndexHeight, PrevH, BI)
 					end
 			end;
 		{error, Error} ->
 			?LOG_ERROR([{event, failed_to_update_block_index},
 					{reason, failed_to_remove_orphaned_range},
-					{range_start, Height},
-					{range_end, Height + OrphanCount + 1},
+					{range_start, OrphanHeight},
+					{range_end, TipHeight + 1},
 					{reason, io_lib:format("~p", [Error])}]),
 			{error, Error}
 	end.
@@ -166,6 +177,7 @@ update_block_index2(Height, PrevH, [{H, WeaveSize, TXRoot} | BI]) ->
 			update_block_index2(Height + 1, H, BI);
 		Error ->
 			?LOG_ERROR([{event, failed_to_update_block_index},
+					{height, Height},
 					{reason, io_lib:format("~p", [Error])}]),
 			{error, Error}
 	end.
