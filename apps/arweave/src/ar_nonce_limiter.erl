@@ -189,7 +189,7 @@ request_validation(H, #nonce_limiter_info{ global_step_number = N },
 request_validation(H, #nonce_limiter_info{ output = Output,
 		steps = [Output | _] = StepsToValidate } = Info, PrevInfo) ->
 	#nonce_limiter_info{ output = PrevOutput, next_seed = PrevNextSeed,
-			global_step_number = PrevStepNumber } = PrevInfo,
+			global_step_number = PrevStepNumber, vdf_difficulty = PrevVDFDifficulty } = PrevInfo,
 	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
 			vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty,
 			partition_upper_bound = UpperBound,
@@ -202,14 +202,6 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 	SessionSteps = gen_server:call(?MODULE, {get_session_steps, PrevStepNumber, StepNumber,
 			SessionKey}, infinity),
 	NextSessionKey = session_key(Info),
-
-	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
-			{session_key, ar_util:encode(PrevNextSeed)},
-			{next_session_key, ar_util:encode(NextSeed)},
-			{start_step_number, PrevStepNumber}, {step_number, StepNumber},
-			{step_count, StepNumber - PrevStepNumber}, {steps, length(StepsToValidate)},
-			{session_steps, length(SessionSteps)},
-			{pid, self()}]),
 
 	%% We need to validate all the steps from PrevStepNumber to StepNumber:
 	%% PrevStepNumber <--------------------------------------------> StepNumber
@@ -227,6 +219,15 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 	{StartStepNumber, StartOutput, ComputedSteps} =
 		skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput,
 			StepsToValidate, SessionSteps),
+	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
+			{session_key, ar_util:encode(PrevNextSeed)},
+			{next_session_key, ar_util:encode(NextSeed)},
+			{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
+			{start_step_number, StartStepNumber},
+			{step_count, StepNumber - PrevStepNumber}, {steps, length(StepsToValidate)},
+			{session_steps, length(SessionSteps)}, {prev_vdf_difficulty, PrevVDFDifficulty},
+			{vdf_difficulty, VDFDifficulty}, {next_vdf_difficulty, NextVDFDifficulty},
+			{pid, self()}]),
 	case exclude_computed_steps_from_steps_to_validate(
 			lists:reverse(StepsToValidate), ComputedSteps) of
 		invalid ->
@@ -257,7 +258,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 		  		when StartStepNumber + NumAlreadyComputed < StepNumber ->
 			case ar_config:use_remote_vdf_server() of
 				true ->
-					%% Wait for our VDF server(s) to validate the reamining steps.
+					%% Wait for our VDF server(s) to validate the remaining steps.
 					spawn(fun() ->
 						timer:sleep(1000),
 						request_validation(H, Info, PrevInfo) end);
@@ -279,7 +280,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 											?VDF_CHECKPOINT_COUNT_IN_STEP,
 											RemainingStepsToValidate, EntropyResetPoint,
 											crypto:hash(sha256, Seed), ThreadCount,
-											VDFDifficulty, NextVDFDifficulty);
+											PrevVDFDifficulty, VDFDifficulty);
 								_ ->
 									catch verify_no_reset(StartStepNumber2, StartOutput2,
 											?VDF_CHECKPOINT_COUNT_IN_STEP,

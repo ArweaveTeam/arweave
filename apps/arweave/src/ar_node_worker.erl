@@ -510,7 +510,8 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 	CorrectRebaseThreshold =
 		case PassesSeedCheck of
 			false ->
-				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block}]),
+				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
+					{check, seed_check}, {solution, ar_util:encode(SolutionH)}]),
 				false;
 			true ->
 				case get_merkle_rebase_threshold(PrevB) of
@@ -523,7 +524,8 @@ handle_info({event, miner, {found_solution, Args}}, State) ->
 	HaveSteps =
 		case CorrectRebaseThreshold of
 			false ->
-				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block}]),
+				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
+					{check, rebase_threshold_check}, {solution, ar_util:encode(SolutionH)}]),
 				false;
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed)
