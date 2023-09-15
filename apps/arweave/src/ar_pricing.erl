@@ -317,13 +317,14 @@ recalculate_price_per_gib_minute2(B) ->
 			block_time_history = BlockTimeHistory,
 			denomination = Denomination, price_per_gib_minute = Price,
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
+	Height = PrevHeight + 1,
 	Fork_2_7 = ar_fork:height_2_7(),
-	case PrevHeight + 1 of
+	case Height of
 		Fork_2_7 ->
 			{?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
 					?PRICE_PER_GIB_MINUTE_PRE_TRANSITION};
 		_ ->
-			case is_price_adjustment_height(PrevHeight + 1) of
+			case is_price_adjustment_height(Height) of
 				false ->
 					{Price, ScheduledPrice};
 				true ->
@@ -333,7 +334,7 @@ recalculate_price_per_gib_minute2(B) ->
 					RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
 					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
 							?BLOCK_TIME_HISTORY_BLOCKS),
-					Price2 = min(Price * 2, get_price_per_gib_minute(PrevHeight,
+					Price2 = min(Price * 2, get_price_per_gib_minute(Height,
 							RewardHistory2, BlockTimeHistory2, Denomination)),
 					Price3 = max(Price div 2, Price2),
 					{ScheduledPrice, Price3}
