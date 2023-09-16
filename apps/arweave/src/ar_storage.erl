@@ -47,16 +47,21 @@ read_block_index() ->
 read_block_index_from_map(_Map, Height, End, _PrevH, BI) when Height > End ->
 	BI;
 read_block_index_from_map(Map, Height, End, PrevH, BI) ->
-	V = maps:get(<< Height:256 >>, Map),
-	case binary_to_term(V) of
-		{H, WeaveSize, TXRoot, PrevH} ->
-			read_block_index_from_map(Map, Height + 1, End, H, [{H, WeaveSize, TXRoot} | BI]);
-		{_, _, _, PrevH2} ->
-			ar:console("The stored block index is invalid. Height: ~B, "
-					"stored previous hash: ~s, expected previous hash: ~s.~n",
-					[Height, ar_util:encode(PrevH2), ar_util:encode(PrevH)]),
-
-			not_found
+	V = maps:get(<< Height:256 >>, Map, not_found),
+	case V of
+		not_found ->
+			ar:console("The stored block index is invalid. Height ~B not found.~n", [Height]),
+			not_found;
+		_ ->
+			case binary_to_term(V) of
+				{H, WeaveSize, TXRoot, PrevH} ->
+					read_block_index_from_map(Map, Height + 1, End, H, [{H, WeaveSize, TXRoot} | BI]);
+				{_, _, _, PrevH2} ->
+					ar:console("The stored block index is invalid. Height: ~B, "
+							"stored previous hash: ~s, expected previous hash: ~s.~n",
+							[Height, ar_util:encode(PrevH2), ar_util:encode(PrevH)]),
+					not_found
+			end
 	end.
 
 %% @doc Return the reward history for the given block index part or not_found.
@@ -98,7 +103,7 @@ read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI]) ->
 			end
 	end.
 
-%% @doc Record the block entire block index on disk.
+%% @doc Record the entire block index on disk.
 %% Return {error, block_index_no_recent_intersection} if the local state forks away
 %% at more than ?STORE_BLOCKS_BEHIND_CURRENT blocks ago.
 store_block_index(BI) ->
