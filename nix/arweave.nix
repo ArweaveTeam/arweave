@@ -99,20 +99,20 @@ let
     beamDeps = [ beamPackages.pc geas_rebar3 rebar3_hex ];
 
     patchPhase = ''
-     substituteInPlace src/graphql.erl \
-       --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-     substituteInPlace src/graphql_ast.erl \
-       --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-     substituteInPlace src/graphql_err.erl \
-       --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-     substituteInPlace src/graphql_parser.yrl \
-       --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-     substituteInPlace src/graphql_introspection.erl \
-       --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-     substituteInPlace src/graphql_execute.erl \
-       --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-     substituteInPlace src/graphql_check.erl \
-       --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
+      substituteInPlace src/graphql.erl \
+        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
+      substituteInPlace src/graphql_ast.erl \
+        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
+      substituteInPlace src/graphql_err.erl \
+        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
+      substituteInPlace src/graphql_parser.yrl \
+        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
+      substituteInPlace src/graphql_introspection.erl \
+        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
+      substituteInPlace src/graphql_execute.erl \
+        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
+      substituteInPlace src/graphql_check.erl \
+        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
     '';
     src = fetchFromGitHub {
       owner = "jlouis";
@@ -145,10 +145,8 @@ let
   jiffy = buildRebar rec {
     name = "jiffy";
     version = "1.0.8";
-    setupHook = false;
-    REBAR = "${pkgs.beamPackages.rebar3}/bin/rebar3";
-    nativeBuildInputs = [ pkgs.pkg-config ];
-    buildInputs = [ pkgs.llvmPackages.bintools-unwrapped pkgs.gnumake ];
+    nativeBuildInputs = with pkgs; [ gnumake pkg-config ];
+    buildInputs = [ pkgs.gnumake ];
     configureFlags = [ "-fno-lto" ];
     hardeningDisable = [ "all" ];
 
@@ -380,7 +378,8 @@ let
   };
 
 
-in beamPackages.rebar3Relx {
+in
+beamPackages.rebar3Relx {
 
   pname = "arweave";
   version = "2.6.0";
