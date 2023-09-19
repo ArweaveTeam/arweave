@@ -95,7 +95,7 @@ init([]) ->
 		true ->
 			case Config#config.cm_exit_peer of
 				not_set ->
-					ar:console("CRITICAL WARNING. cm_exit_peer is not set. Coordinated mining will not produce final solution.~n");
+					ar:console("CRITICAL WARNING. cm_exit_peer is not set. Coordinated mining will not produce final solution. Ignore this message if this peer is exit peer~n");
 				_ ->
 					ok
 			end,
