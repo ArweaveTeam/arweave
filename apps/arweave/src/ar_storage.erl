@@ -896,14 +896,18 @@ read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K
 			case Keys of
 				[] ->
 					{ok, Tree2};
-				[{H, Prefix} | Keys2] ->
-					Key2 = << H/binary, Prefix/binary >>,
-					read_wallet_list(ar_kv:get_next(account_tree_db, Key2), Tree2, Keys2,
+				[{H, _Prefix} | Keys2] ->
+					%% get_next(<<H>>) rather than get_next(<<H, Prefix>>) since the prefix 
+					%% associated with a hash depends on the order of insertions (and is only
+					%% needed to speed up the tree search when querying an address balance)
+					read_wallet_list(ar_kv:get_next(account_tree_db, H), Tree2, Keys2,
 							RootHash, H)
 			end;
-		[{H, Prefix} | Hs] ->
-			Key3 = << H/binary, Prefix/binary >>,
-			read_wallet_list(ar_kv:get_next(account_tree_db, Key3), Tree, Hs ++ Keys, RootHash,
+		[{H, _Prefix} | Hs] ->
+			%% get_next(<<H>>) rather than get_next(<<H, Prefix>>) since the prefix 
+			%% associated with a hash depends on the order of insertions (and is only
+			%% needed to speed up the tree search when querying an address balance)
+			read_wallet_list(ar_kv:get_next(account_tree_db, H), Tree, Hs ++ Keys, RootHash,
 					H)
 	end;
 read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K) ->
