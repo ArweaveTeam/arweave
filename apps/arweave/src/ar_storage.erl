@@ -120,7 +120,7 @@ store_block_index(BI) ->
 			case binary_to_term(V) of
 				{H, WeaveSize, TXRoot, _PrevH} ->
 					BI2 = lists:reverse(lists:sublist(BI, Height2 - Height3)),
-					update_block_index(Height3 + 1, Height - Height3, BI2);
+					update_block_index(Height, Height - Height3, BI2);
 				{H2, _, _, _} ->
 					?LOG_ERROR([{event, failed_to_store_block_index},
 							{reason, no_intersection},
