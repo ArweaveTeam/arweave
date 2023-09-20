@@ -375,7 +375,10 @@ read_block(BH) ->
 %% to the tree. The balance may be also 0 when the address exists in the tree. Return
 %% not_found if some of the files with the account data are missing.
 read_account(Addr, Key) ->
-	case get_account_tree_value(Key) of
+	read_account(Addr, Key, <<>>).
+
+read_account(Addr, Key, Prefix) ->
+	case get_account_tree_value(Key, Prefix) of
 		{ok, << Key:48/binary, _/binary >>, V} ->
 			case binary_to_term(V) of
 				{K, Val} when K == Addr ->
@@ -386,8 +389,8 @@ read_account(Addr, Key) ->
 					case find_key_by_matching_longest_prefix(Addr, SubTrees) of
 						not_found ->
 							{0, <<>>};
-						H ->
-							read_account(Addr, H)
+						{H, Prefix2} ->
+							read_account(Addr, H, Prefix2)
 					end
 			end;
 		_ ->
@@ -397,22 +400,22 @@ read_account(Addr, Key) ->
 find_key_by_matching_longest_prefix(Addr, Keys) ->
 	find_key_by_matching_longest_prefix(Addr, Keys, {<<>>, -1}).
 
-find_key_by_matching_longest_prefix(_Addr, [], {Key, _}) ->
+find_key_by_matching_longest_prefix(_Addr, [], {Key, Prefix}) ->
 	case Key of
 		<<>> ->
 			not_found;
 		_ ->
-			Key
+			{Key, Prefix}
 	end;
-find_key_by_matching_longest_prefix(Addr, [{_, Prefix} | Keys], {Key, PrefixSize})
-		when byte_size(Prefix) =< PrefixSize ->
-	find_key_by_matching_longest_prefix(Addr, Keys, {Key, PrefixSize});
-find_key_by_matching_longest_prefix(Addr, [{H, Prefix} | Keys], {Key, PrefixSize}) ->
+find_key_by_matching_longest_prefix(Addr, [{_, Prefix} | Keys], {Key, KeyPrefix})
+		when byte_size(Prefix) =< byte_size(KeyPrefix) ->
+	find_key_by_matching_longest_prefix(Addr, Keys, {Key, KeyPrefix});
+find_key_by_matching_longest_prefix(Addr, [{H, Prefix} | Keys], {Key, KeyPrefix}) ->
 	case binary:match(Addr, Prefix) of
 		{0, _} ->
-			find_key_by_matching_longest_prefix(Addr, Keys, {H, byte_size(Prefix)});
+			find_key_by_matching_longest_prefix(Addr, Keys, {H, Prefix});
 		_ ->
-			find_key_by_matching_longest_prefix(Addr, Keys, {Key, PrefixSize})
+			find_key_by_matching_longest_prefix(Addr, Keys, {Key, KeyPrefix})
 	end.
 
 read_account2(Addr, RootHash) ->
@@ -868,7 +871,7 @@ read_wallet_list(<<>>) ->
 	{ok, ar_patricia_tree:new()};
 read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 	Key = WalletListHash,
-	read_wallet_list(get_account_tree_value(Key), ar_patricia_tree:new(), [],
+	read_wallet_list(get_account_tree_value(Key, <<>>), ar_patricia_tree:new(), [],
 			WalletListHash, WalletListHash).
 
 read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K) ->
@@ -878,12 +881,12 @@ read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K
 			case Keys of
 				[] ->
 					{ok, Tree2};
-				[{H, _Prefix} | Keys2] ->
-					read_wallet_list(get_account_tree_value(H), Tree2, Keys2,
+				[{H, Prefix} | Keys2] ->
+					read_wallet_list(get_account_tree_value(H, Prefix), Tree2, Keys2,
 							RootHash, H)
 			end;
-		[{H, _Prefix} | Hs] ->
-			read_wallet_list(get_account_tree_value(H), Tree, Hs ++ Keys, RootHash,
+		[{H, Prefix} | Hs] ->
+			read_wallet_list(get_account_tree_value(H, Prefix), Tree, Hs ++ Keys, RootHash,
 					H)
 	end;
 read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K) ->
@@ -1284,10 +1287,14 @@ store_account_tree_update(Height, RootHash, Map) ->
 
 %% @doc Ignore the prefix when querying a key since the prefix might depend on the order of
 %% insertions and is only used to optimize certain lookups.
-get_account_tree_value(Key) ->
-	<< N:(48 * 8) >> = Key,
-	Key2 = << (N + 1):(48 * 8) >>,
-	ar_kv:get_prev(account_tree_db, Key2).
+get_account_tree_value(Key, Prefix) ->
+	ar_kv:get_prev(account_tree_db, << Key/binary, Prefix/binary >>).
+	% does not work:
+	%ar_kv:get_next(account_tree_db, << Key/binary, Prefix/binary >>).
+	% works:
+	%<< N:(48 * 8) >> = Key,
+	%Key2 = << (N + 1):(48 * 8) >>,
+	%ar_kv:get_prev(account_tree_db, Key2).
 
 %%%===================================================================
 %%% Tests
@@ -1418,19 +1425,43 @@ store_and_retrieve_wallet_list(Keys) ->
 	MinBinary = <<>>,
 	MaxBinary = << <<1:1>> || _ <- lists:seq(1, 512) >>,
 	ar_kv:delete_range(account_tree_db, MinBinary, MaxBinary),
-	store_and_retrieve_wallet_list(Keys, ar_patricia_tree:new()).
+	store_and_retrieve_wallet_list(Keys, ar_patricia_tree:new(), maps:new(), false).
 
-store_and_retrieve_wallet_list([], Tree) ->
-	Tree;
-store_and_retrieve_wallet_list([Key | Keys], Tree) ->
+store_and_retrieve_wallet_list([], Tree, InsertedKeys, IsUpdate) ->
+	store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate);
+store_and_retrieve_wallet_list([Key | Keys], Tree, InsertedKeys, IsUpdate) ->
 	TXID = crypto:strong_rand_bytes(32),
 	Balance = rand:uniform(1000000000),
-	ExpectedTree = ar_patricia_tree:insert(Key, {Balance, TXID}, Tree),
-	WalletListHash = write_wallet_list(0, ExpectedTree),
+	Tree2 = ar_patricia_tree:insert(Key, {Balance, TXID}, Tree),
+	InsertedKeys2 = maps:put(Key, {Balance, TXID}, InsertedKeys),
+	case rand:uniform(2) of
+		1 ->
+			Tree3 = store_and_retrieve_wallet_list2(Tree2, InsertedKeys2, IsUpdate),
+			store_and_retrieve_wallet_list(Keys, Tree3, InsertedKeys2, true);
+		_ ->
+			store_and_retrieve_wallet_list(Keys, Tree2, InsertedKeys2, IsUpdate)
+	end.
+
+store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate) ->
+	{WalletListHash, Tree2} =
+		case IsUpdate of
+			false ->
+				{write_wallet_list(0, Tree), Tree};
+			_ ->
+				{R, T, Map} = ar_block:hash_wallet_list(Tree),
+				store_account_tree_update(0, R, Map),
+				{R, T}
+		end,
 	{ok, ActualTree} = read_wallet_list(WalletListHash),
-	?assertEqual({Balance, TXID}, read_account(Key, WalletListHash)),
-	assert_wallet_trees_equal(ExpectedTree, ActualTree),
-	store_and_retrieve_wallet_list(Keys, ExpectedTree).
+	maps:foreach(
+		fun(Key, {Balance, TXID}) ->
+			?assertEqual({Balance, TXID}, read_account(Key, WalletListHash))
+		end,
+		InsertedKeys
+	),
+	assert_wallet_trees_equal(Tree, ActualTree),
+	assert_wallet_trees_equal(Tree2, ActualTree),
+	Tree2.
 
 %% From: https://www.erlang.org/doc/programming_examples/list_comprehensions.html#permutations
 permutations([]) -> [[]];
