@@ -64,7 +64,7 @@ end).
 		-ifdef(FORKS_RESET).
 			-define(PRICE_2_6_8_TRANSITION_START, 0).
 		-else.
-			-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 195)). % ~6.5 months / Dec. 14, 2023
+			-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 190)). % ~6.5 months / Dec. 14, 2023
 		-endif.
 	-endif.
 -endif.
