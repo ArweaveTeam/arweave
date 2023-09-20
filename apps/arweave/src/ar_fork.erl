@@ -119,10 +119,10 @@ height_2_7() ->
 	-else.
 		-ifdef(TESTNET).
 			height_2_7() ->
-				1237300.
+				1265120.
 		-else.
 			height_2_7() ->
-				infinity. % TODO
+				1275480. % Targeting 2023-10-04 14:00 UTC
 		-endif.
 	-endif.
 -endif.
