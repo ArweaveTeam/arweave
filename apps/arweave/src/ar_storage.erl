@@ -408,7 +408,7 @@ find_key_by_matching_longest_prefix(_Addr, [], {Key, Prefix}) ->
 			{Key, Prefix}
 	end;
 find_key_by_matching_longest_prefix(Addr, [{_, Prefix} | Keys], {Key, KeyPrefix})
-		when byte_size(Prefix) =< byte_size(KeyPrefix) ->
+		when Prefix == <<>> orelse byte_size(Prefix) =< byte_size(KeyPrefix) ->
 	find_key_by_matching_longest_prefix(Addr, Keys, {Key, KeyPrefix});
 find_key_by_matching_longest_prefix(Addr, [{H, Prefix} | Keys], {Key, KeyPrefix}) ->
 	case binary:match(Addr, Prefix) of
