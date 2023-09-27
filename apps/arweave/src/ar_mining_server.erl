@@ -6,7 +6,7 @@
 
 -export([start_link/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
 		compute_h2_for_peer/2, prepare_and_post_solution/1, post_solution/1,
-		get_recall_bytes/4, is_session_valid/2]).
+		set_merkle_rebase_threshold/1, get_recall_bytes/4, is_session_valid/2]).
 -export([pause/0, get_task_queue_len/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -33,6 +33,7 @@
 	hashing_thread_monitor_refs = #{},
 	session						= #mining_session{},
 	diff						= infinity,
+	merkle_rebase_threshold		= infinity,
 	task_queue					= gb_sets:new()
 }).
 
@@ -80,6 +81,9 @@ compute_h2_for_peer(Candidate, H1List) ->
 %% Also, a mining session may (in practice, almost always will) span several blocks.
 set_difficulty(Diff) ->
 	gen_server:cast(?MODULE, {set_difficulty, Diff}).
+
+set_merkle_rebase_threshold(Threshold) ->
+	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
 
 prepare_and_post_solution(Candidate) ->
 	gen_server:cast(?MODULE, {prepare_and_post_solution, Candidate}).
@@ -138,13 +142,16 @@ handle_cast({start_mining, Args}, State) ->
 	ar:console("Starting mining.~n"),
 	Session = reset_mining_session(State#state.session, State),
 	ar_mining_stats:reset_all_stats(),
-	{noreply, State#state{ diff = Diff, session = Session }};
+	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold, session = Session }};
 
 handle_cast({set_difficulty, _Diff},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{noreply, State};
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
+
+handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
+	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
 handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 	#state{ session = #mining_session{ ref = SessionRef }, task_queue = Q } = State,
@@ -476,6 +483,10 @@ handle_task({computed_output, Args}, State) ->
 						"next entropy nonce: ~s, interval number: ~B.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
 						StartIntervalNumber]),
+				?LOG_INFO("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
+						"next entropy nonce: ~s, interval number: ~B.~n",
+						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
+						StartIntervalNumber]),
 				reset_mining_session(
 					#mining_session{ seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
@@ -492,7 +503,9 @@ handle_task({computed_output, Args}, State) ->
 		partition_upper_bound = PartitionUpperBound
 	},
 	{N, State2} = distribute_output(Candidate, #{}, State),
-	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N}]),
+	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
+		{step_number, StepNumber}, {output, ar_util:encode(Output)},
+		{start_interval_number, StartIntervalNumber}]),
 	{noreply, State2#state{ session = Session2 }};
 
 handle_task({chunk1, Candidate}, State) ->
@@ -762,7 +775,10 @@ prepare_and_post_solution(Candidate, State) ->
 	post_solution(Solution, State).
 
 prepare_solution(Candidate, State) ->
-	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
+	#state{
+		session = #mining_session{ ref = SessionRef },
+		merkle_rebase_threshold = RebaseThreshold } = State,
+	case is_session_valid(SessionRef, Candidate) of
 		true ->
 			#mining_candidate{
 				mining_address = MiningAddress, next_seed = NextSeed, nonce = Nonce,
@@ -773,6 +789,7 @@ prepare_solution(Candidate, State) ->
 			
 			Solution = #mining_solution{
 				mining_address = MiningAddress,
+				merkle_rebase_threshold = RebaseThreshold,
 				next_seed = NextSeed,
 				nonce = Nonce,
 				nonce_limiter_output = NonceLimiterOutput,
@@ -935,8 +952,8 @@ post_solution(not_set, Solution, State) ->
 					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
 					"details~n");
-		true ->
-			ar_events:send(miner, {found_solution, Solution})
+		{true, PoACache, PoA2Cache} ->
+			ar_events:send(miner, {found_solution, Solution, PoACache, PoA2Cache})
 	end;
 post_solution(ExitPeer, Solution, _State) ->
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
@@ -969,44 +986,68 @@ read_poa(RecallByte, MiningAddress) ->
 
 validate_solution(Solution, Diff) ->
 	#mining_solution{
-		mining_address = MiningAddress, nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
+		merkle_rebase_threshold = RebaseThreshold, mining_address = MiningAddress,
+		nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, partition_upper_bound = PartitionUpperBound,
 		poa1 = PoA1, poa2 = PoA2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-		seed = Seed } = Solution,
+		seed = Seed, solution_hash = SolutionHash } = Solution,
 	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress),
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
-	case binary:decode_unsigned(H1, big) > Diff of
-		true ->
-			%% validates recall_byte1
-			RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE, 
-			{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
-			BlockSize1 = BlockEnd1 - BlockStart1,
-			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}});
-		false ->
-			case RecallByte2 of
-				undefined ->
-					%% This can happen if the difficulty has increased between when the H1 solution
-					%% was found and now. In this case there is no H2 solution, so we flag the
-					%% solution invalid.
-					false;
-				_ ->
-					{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
-					case binary:decode_unsigned(H2, big) > Diff of
-						false ->
+	%% validates recall_byte1
+	RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE,
+	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
+	BlockSize1 = BlockEnd1 - BlockStart1,
+	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
+			?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}, RebaseThreshold,
+			not_set}) of
+		{true, ChunkID} ->
+			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
+					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}, RebaseThreshold},
+					ChunkID},
+			case binary:decode_unsigned(H1, big) > Diff of
+				true ->
+					%% validates solution_hash
+					SolutionHash = H1,
+					{true, PoACache, undefined};
+				false ->
+					case RecallByte2 of
+						undefined ->
+							%% This can happen if the difficulty has increased between when the H1
+							%% solution was found and now. In this case there is no H2 solution, so
+							%% we flag the solution invalid.
 							false;
-						true ->
-							%% validates recall_byte2
-							RecallByte2 = RecallRange2Start + Nonce * ?DATA_CHUNK_SIZE, 
-							{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
-									RecallByte2),
-							BlockSize2 = BlockEnd2 - BlockStart2,
-							ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2, PoA2,
-									?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}})
+						_ ->
+							{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
+							case binary:decode_unsigned(H2, big) > Diff of
+								false ->
+									false;
+								true ->
+									%% validates solution_hash
+									SolutionHash = H2,
+									%% validates recall_byte2
+									RecallByte2 = RecallRange2Start + Nonce * ?DATA_CHUNK_SIZE,
+									{BlockStart2, BlockEnd2, TXRoot2} =
+											ar_block_index:get_block_bounds(RecallByte2),
+									BlockSize2 = BlockEnd2 - BlockStart2,
+									case ar_poa:validate({BlockStart2, RecallByte2, TXRoot2,
+											BlockSize2, PoA2, ?STRICT_DATA_SPLIT_THRESHOLD,
+											{spora_2_6, MiningAddress}, RebaseThreshold, not_set}) of
+										{true, Chunk2ID} ->
+											PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2,
+													BlockSize2, ?STRICT_DATA_SPLIT_THRESHOLD,
+													{spora_2_6, MiningAddress}, RebaseThreshold},
+													Chunk2ID},
+											{true, PoACache, PoA2Cache};
+										Result2 ->
+											Result2
+									end
+							end
 					end
-			end
+			end;
+		Result ->
+			Result
 	end.
 
 get_difficulty(State, #mining_candidate{ cm_diff = not_set }) ->

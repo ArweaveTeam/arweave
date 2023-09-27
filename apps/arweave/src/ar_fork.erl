@@ -119,7 +119,7 @@ height_2_7() ->
 	-else.
 		-ifdef(TESTNET).
 			height_2_7() ->
-				1265120.
+				1275480.
 		-else.
 			height_2_7() ->
 				1275480. % Targeting 2023-10-04 14:00 UTC

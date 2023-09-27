@@ -6,14 +6,13 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-weave_size() ->
-	ar_util:ceil_int(trunc(5.5 * ?PARTITION_SIZE), ?DATA_CHUNK_SIZE).
+-define(WEAVE_SIZE, trunc(2.5 * ?PARTITION_SIZE)).
 
 recall_chunk(WhichChunk, Chunk, Nonce, Candidate) ->
 	ets:insert(?MODULE, {WhichChunk, Nonce, Chunk, Candidate}).
 
 setup_all() ->
-	[B0] = ar_weave:init([], 1, weave_size()),
+	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	{ok, Config} = application:get_env(arweave, config),
 	StorageModules = lists:flatten(
@@ -73,12 +72,12 @@ test_read_recall_range() ->
 	assert_recall_chunks([{chunk2, 0, Chunk5, Candidate}, {chunk2, 1, Chunk6, Candidate}]),
 
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate,
-		weave_size() - ?DATA_CHUNK_SIZE)),
+		?WEAVE_SIZE - ?DATA_CHUNK_SIZE)),
 	wait_for_io(2),
 	[Chunk7, _Chunk8] = get_recall_chunks(),
 	assert_recall_chunks([{chunk1, 0, Chunk7, Candidate}, {skipped, 1, undefined, Candidate}]),
 
-	?assertEqual(false, ar_mining_io:read_recall_range(chunk1, Candidate, weave_size())).
+	?assertEqual(false, ar_mining_io:read_recall_range(chunk1, Candidate, ?WEAVE_SIZE)).
 
 test_io_threads() ->
 	Candidate = default_candidate(),
@@ -105,7 +104,7 @@ test_io_threads() ->
 	MultiThreadStart = os:system_time(microsecond),
     lists:foreach(
 		fun(I) ->
-			Offset = (I * 2 * ?DATA_CHUNK_SIZE) rem weave_size(),
+			Offset = (I * 2 * ?DATA_CHUNK_SIZE) rem ?WEAVE_SIZE,
 			?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate, Offset))
 		end,
 		lists:seq(1, Iterations)),
@@ -114,7 +113,7 @@ test_io_threads() ->
 	ets:delete_all_objects(?MODULE),
 	?assert(SingleThreadTime > 1.5 * MultiThreadTime,
 		lists:flatten(io_lib:format(
-			"Multi-thread time (~p) not 1.5x faster than single-thread time (~p)",
+			"Multi-thread time (~p) not twice as fast as single-thread time (~p)",
 			[MultiThreadTime, SingleThreadTime]))).	
 
 test_partitions() ->
@@ -138,7 +137,7 @@ test_partitions() ->
 			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})}],
 		ar_mining_io:get_partitions()),
 
-	ar_mining_io:reset(make_ref(), weave_size()),
+	ar_mining_io:reset(make_ref(), trunc(5 * ?PARTITION_SIZE)),
 	?assertEqual([
 			{0, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 0, Packing})},
 			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})},
@@ -162,7 +161,7 @@ test_mining_session() ->
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
 	assert_no_io(),
 
-	ar_mining_io:reset(SessionRef, weave_size()),
+	ar_mining_io:reset(SessionRef, ?WEAVE_SIZE),
 
 	%% mining session: set, candidate session: set
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
