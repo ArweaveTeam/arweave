@@ -6,7 +6,7 @@
 
 -export([start_link/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
 		compute_h2_for_peer/2, prepare_and_post_solution/1, post_solution/1,
-		get_recall_bytes/4, is_session_valid/2]).
+		set_merkle_rebase_threshold/1, get_recall_bytes/4, is_session_valid/2]).
 -export([pause/0, get_task_queue_len/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -33,6 +33,7 @@
 	hashing_thread_monitor_refs = #{},
 	session						= #mining_session{},
 	diff						= infinity,
+	merkle_rebase_threshold		= infinity,
 	task_queue					= gb_sets:new()
 }).
 
@@ -80,6 +81,9 @@ compute_h2_for_peer(Candidate, H1List) ->
 %% Also, a mining session may (in practice, almost always will) span several blocks.
 set_difficulty(Diff) ->
 	gen_server:cast(?MODULE, {set_difficulty, Diff}).
+
+set_merkle_rebase_threshold(Threshold) ->
+	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
 
 prepare_and_post_solution(Candidate) ->
 	gen_server:cast(?MODULE, {prepare_and_post_solution, Candidate}).
@@ -138,13 +142,16 @@ handle_cast({start_mining, Args}, State) ->
 	ar:console("Starting mining.~n"),
 	Session = reset_mining_session(State#state.session, State),
 	ar_mining_stats:reset_all_stats(),
-	{noreply, State#state{ diff = Diff, session = Session }};
+	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold, session = Session }};
 
 handle_cast({set_difficulty, _Diff},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{noreply, State};
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
+
+handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
+	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
 handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 	#state{ session = #mining_session{ ref = SessionRef }, task_queue = Q } = State,
@@ -476,8 +483,12 @@ handle_task({computed_output, Args}, State) ->
 						"next entropy nonce: ~s, interval number: ~B.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
 						StartIntervalNumber]),
-				reset_mining_session(
-					#mining_session{ seed = Seed, next_seed = NextSeed,
+				?LOG_INFO("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
+						"next entropy nonce: ~s, interval number: ~B.~n",
+						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
+						StartIntervalNumber]),
+				NewSession = reset_mining_session(State),
+				NewSession#mining_session{ seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound },
 					State)
@@ -907,12 +918,12 @@ post_solution(Solution, State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	post_solution(Config#config.cm_exit_peer, Solution, State).
 post_solution(not_set, Solution, State) ->
-	#state{ diff = Diff } = State,
+	#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold } = State,
 	#mining_solution{
 		mining_address = MiningAddress, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
 		solution_hash = H, step_number = StepNumber } = Solution,
-	case validate_solution(Solution, Diff) of
+	case validate_solution(Solution, Diff, RebaseThreshold) of
 		error ->
 			?LOG_WARNING([{event, failed_to_validate_solution},
 					{partition, PartitionNumber},
@@ -972,13 +983,15 @@ validate_solution(Solution, Diff) ->
 		mining_address = MiningAddress, nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, partition_upper_bound = PartitionUpperBound,
 		poa1 = PoA1, poa2 = PoA2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-		seed = Seed } = Solution,
+		seed = Seed, solution_hash = SolutionHash } = Solution,
 	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress),
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
 	case binary:decode_unsigned(H1, big) > Diff of
 		true ->
+			%% validates solution_hash
+			SolutionHash = H1,
 			%% validates recall_byte1
 			RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE, 
 			{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
@@ -998,6 +1011,8 @@ validate_solution(Solution, Diff) ->
 						false ->
 							false;
 						true ->
+							%% validates solution_hash
+							SolutionHash = H2,
 							%% validates recall_byte2
 							RecallByte2 = RecallRange2Start + Nonce * ?DATA_CHUNK_SIZE, 
 							{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
