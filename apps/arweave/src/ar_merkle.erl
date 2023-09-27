@@ -111,24 +111,26 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 	IsSplitValid = case CheckSplit of
 		strict ->
 			ChunkSize = EndOffset - LeftBound,
-			ValidateSplit =
-				case validate_strict_split of
-					_ when ChunkSize == (?DATA_CHUNK_SIZE) ->
-						LeftBound rem (?DATA_CHUNK_SIZE) == 0;
-					_ when EndOffset == DataSize ->
-						Border = ar_util:floor_int(RightBound, ?DATA_CHUNK_SIZE),
-						RightBound rem (?DATA_CHUNK_SIZE) > 0
-								andalso LeftBound =< Border;
-					_ when PathSize > ChunkSize ->
-						false;
-					_ ->
-						LeftBound rem (?DATA_CHUNK_SIZE) == 0
-								andalso DataSize - LeftBound > (?DATA_CHUNK_SIZE)
-								andalso DataSize - LeftBound < 2 * (?DATA_CHUNK_SIZE)
-				end,
-			case ValidateSplit of
-				false ->
-					false;
+			case validate_strict_split of
+				_ when ChunkSize == (?DATA_CHUNK_SIZE) ->
+					LeftBound rem (?DATA_CHUNK_SIZE) == 0;
+				_ when EndOffset == DataSize ->
+					Border = RightBound - RightBound rem (?DATA_CHUNK_SIZE),
+					RightBound rem (?DATA_CHUNK_SIZE) > 0
+							andalso LeftBound =< Border;
+				_ ->
+					LeftBound rem (?DATA_CHUNK_SIZE) == 0
+							andalso DataSize - LeftBound > (?DATA_CHUNK_SIZE)
+							andalso DataSize - LeftBound < 2 * (?DATA_CHUNK_SIZE)
+			end;
+		relaxed ->
+			%% Reject chunks smaller than 256 KiB unless they are the last or the only chunks
+			%% of their datasets or the second last chunks which do not exceed 256 KiB when
+			%% combined with the following (last) chunks. Finally, reject chunks smaller than
+			%% their Merkle proofs unless they are the last chunks of their datasets.
+			ShiftedLeftBound = LeftBoundShift + LeftBound,
+			ShiftedEndOffset = LeftBoundShift + EndOffset,
+			case IsRightMostInItsSubTree of
 				true ->
 					%% The last chunk may either start at the bucket start or
 					%% span two buckets.
