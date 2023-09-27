@@ -6,8 +6,7 @@
 
 -export([start_link/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
 		compute_h2_for_peer/2, prepare_and_post_solution/1, post_solution/1,
-		set_merkle_rebase_threshold/1, pause_performance_reports/1, 
-		get_recall_bytes/4, is_session_valid/2]).
+		set_merkle_rebase_threshold/1, get_recall_bytes/4, is_session_valid/2]).
 -export([pause/0, get_task_queue_len/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -35,10 +34,7 @@
 	session						= #mining_session{},
 	diff						= infinity,
 	merkle_rebase_threshold		= infinity,
-	partitions					= sets:new(),
-	task_queue					= gb_sets:new(),
-	pause_performance_reports	= false,
-	pause_performance_reports_timeout
+	task_queue					= gb_sets:new()
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -88,10 +84,6 @@ set_difficulty(Diff) ->
 
 set_merkle_rebase_threshold(Threshold) ->
 	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
-
-%% @doc Stop logging performance reports for the given number of milliseconds.
-pause_performance_reports(Time) ->
-	gen_server:cast(?MODULE, {pause_performance_reports, Time}).
 
 prepare_and_post_solution(Candidate) ->
 	gen_server:cast(?MODULE, {prepare_and_post_solution, Candidate}).

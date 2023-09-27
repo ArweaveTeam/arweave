@@ -2989,16 +2989,38 @@ handle_get_vdf2(Req, Call) ->
 
 handle_coordinated_mining_partition_table(Req) ->
 	{ok, Config} = application:get_env(arweave, config),
-	Table = lists:map(
-		fun	({BucketSize, Bucket, {spora_2_6, Addr}}) ->
-			{[
-				{bucket, Bucket},
-				{bucketsize, BucketSize},
-				{addr, ar_util:encode(Addr)}
-			]}
-		end,
-		Config#config.storage_modules
-	),
+	Partition_dict = lists:foldl(fun(Module, Dict) ->
+		{BucketSize, Bucket, {spora_2_6, Addr}} = Module,
+		MinPartitionId = Bucket*BucketSize div ?PARTITION_SIZE,
+		MaxPartitionId = (Bucket+1)*BucketSize div ?PARTITION_SIZE,
+		PartitionList = lists:seq(MinPartitionId, MaxPartitionId),
+		lists:foldl(fun(PartitionId, Dict2) ->
+			AddrDict = maps:get(PartitionId, Dict2, #{}),
+			AddrDict2 = maps:put(Addr, true, AddrDict),
+			maps:put(PartitionId, AddrDict2, Dict2)
+		end, Dict, PartitionList)
+	end, #{}, Config#config.storage_modules),
+	Right_bound = lists:max(lists:map(fun({BucketSize, Bucket, {spora_2_6, _Addr}}) ->
+		(Bucket+1)*BucketSize
+	end, Config#config.storage_modules)),
+	Right_bound_partition_id = Right_bound div ?PARTITION_SIZE,
+	CheckPartitionList = lists:seq(0, Right_bound_partition_id),
+	Table = lists:foldr(fun(PartitionId, Acc) ->
+		case maps:find(PartitionId, Partition_dict) of
+			{ok, AddrDict} ->
+				maps:fold(fun(Addr, _, Acc2) ->
+					NewEntity = {[
+						{bucket, PartitionId},
+						{bucketsize, ?PARTITION_SIZE},
+						{addr, ar_util:encode(Addr)}
+						% TODO range start, end for less requests (better check before send)
+					]},
+					[NewEntity | Acc2]
+				end, Acc, AddrDict);
+			_ ->
+				Acc
+		end
+	end, [], CheckPartitionList),
 	{200, #{}, ar_serialize:jsonify(Table), Req}.
 
 read_complete_body(Req, Pid) ->
