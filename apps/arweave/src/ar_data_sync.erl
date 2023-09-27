@@ -2206,8 +2206,7 @@ find_peer_intervals(Start, End, StoreID, _AllPeersIntervals) when Start >= End -
 		{start, Start}]),
 	#{};
 find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
-	Start2 = ar_util:ceil_int(Start, ?NETWORK_DATA_BUCKET_SIZE),
-	End2 = min(Start2, End),
+	End2 = min(ar_util:ceil_int(Start, ?NETWORK_DATA_BUCKET_SIZE), End),
 	UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
 
 	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,

@@ -1659,6 +1659,7 @@ json_struct_to_h2_inputs(JSON) ->
 solution_to_json_struct(
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
+		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
 		nonce = Nonce,
@@ -1678,6 +1679,7 @@ solution_to_json_struct(
 	}) ->
 	JSON = [
 		{last_step_checkpoints, ar_util:encode(iolist_to_binary(LastStepCheckpoints))},
+		{merkle_rebase_threshold, integer_to_binary(RebaseThreshold)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{nonce, Nonce},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
@@ -1699,6 +1701,7 @@ solution_to_json_struct(
 json_struct_to_solution(JSON) ->
 	LastStepCheckpoints = parse_checkpoints(
 		ar_util:decode(maps:get(<<"last_step_checkpoints">>, JSON)), 1),
+	RebaseThreshold = binary_to_integer(maps:get(<<"merkle_rebase_threshold">>, JSON)),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
 	Nonce = maps:get(<<"nonce">>, JSON),
@@ -1719,6 +1722,7 @@ json_struct_to_solution(JSON) ->
 
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
+		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
 		nonce = Nonce,

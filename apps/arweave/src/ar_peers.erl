@@ -471,19 +471,16 @@ discover_peers([Peer | Peers]) ->
 		true ->
 			ok;
 		false ->
-			IsPublic = is_public_peer(Peer),
-			IsBanned = ar_blacklist_middleware:is_peer_banned(Peer) == banned,
-			IsBlacklisted = lists:member(Peer, ?PEER_PERMANENT_BLACKLIST),
-			case IsPublic andalso not IsBanned andalso not IsBlacklisted of
-				false ->
-					ok;
-				true ->
+			case check_peer(Peer, is_public_peer(Peer)) of
+				ok ->
 					case ar_http_iface_client:get_info(Peer, release) of
 						{<<"release">>, Release} when is_integer(Release) ->
-							gen_server:cast(?MODULE, {add_peer, Peer, Release});
+							maybe_add_peer(Peer, Release);
 						_ ->
 							ok
-					end
+					end;
+				_ ->
+					ok
 			end
 	end,
 	discover_peers(Peers).
