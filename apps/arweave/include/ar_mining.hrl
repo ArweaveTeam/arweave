@@ -29,6 +29,7 @@
 
 -record(mining_solution, {
 	last_step_checkpoints = not_set,
+	merkle_rebase_threshold = not_set,
 	next_seed = not_set,
 	nonce = not_set,
 	nonce_limiter_output = not_set,
