@@ -12,7 +12,7 @@ recall_chunk(WhichChunk, Chunk, Nonce, Candidate) ->
 	ets:insert(?MODULE, {WhichChunk, Nonce, Chunk, Candidate}).
 
 setup_all() ->
-	[B0] = ar_weave:init([], 1, weave_size()),
+	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	{ok, Config} = application:get_env(arweave, config),
 	StorageModules = lists:flatten(
@@ -140,7 +140,7 @@ test_partitions() ->
 			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})}],
 		ar_mining_io:get_partitions()),
 
-	ar_mining_io:reset(make_ref(), weave_size()),
+	ar_mining_io:reset(make_ref(), ?WEAVE_SIZE),
 	?assertEqual([
 			{0, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 0, Packing})},
 			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})},
@@ -164,7 +164,7 @@ test_mining_session() ->
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
 	assert_no_io(),
 
-	ar_mining_io:reset(SessionRef, weave_size()),
+	ar_mining_io:reset(SessionRef, ?WEAVE_SIZE),
 
 	%% mining session: set, candidate session: set
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
