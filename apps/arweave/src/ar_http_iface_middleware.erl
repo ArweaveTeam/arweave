@@ -2491,8 +2491,16 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 						end
 				end
 		end,
-	ar_block_pre_validator:pre_validate(B2, Peer, Timestamp, erlang:get(read_body_time),
-			erlang:get(body_size)),
+	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
+	BodyReadTime = ar_http_req:body_read_time(Req),
+	case ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp) of
+		ok ->
+			ar_peers:rate_gossiped_data(Peer, block,
+				erlang:convert_time_unit(BodyReadTime, native, microsecond),
+				byte_size(term_to_binary(B)));
+		_ ->
+			ok
+	end,
 	{200, #{}, <<"OK">>, Req}.
 
 encode_txids([]) ->

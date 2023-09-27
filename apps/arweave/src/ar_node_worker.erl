@@ -452,12 +452,13 @@ handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
 
-handle_info({event, miner, {found_solution, _Solution}},
+handle_info({event, miner, {found_solution, _Solution, _PoACache, _PoA2Cache}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
-handle_info({event, miner, {found_solution, Solution}}, State) ->
+handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, State) ->
 	#mining_solution{ 
 		last_step_checkpoints = LastStepCheckpoints,
+		merkle_rebase_threshold = MerkleRebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NonceLimiterNextSeed,
 		nonce = Nonce,
@@ -522,8 +523,8 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 	PassesSeedCheck = PassesTimelineCheck andalso
 			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
 
-	%% Check steps and step checkpoints
-	HaveSteps =
+	PrevB = ar_block_cache:get(block_cache, PrevH),
+	CorrectRebaseThreshold =
 		case PassesSeedCheck of
 			false ->
 				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
@@ -537,6 +538,7 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 						false
 				end
 		end,
+	%% Check steps and step checkpoints
 	HaveSteps =
 		case CorrectRebaseThreshold of
 			false ->
