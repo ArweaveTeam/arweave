@@ -43,7 +43,6 @@
 		ar_packing_server,
 		ar_patricia_tree,
 		ar_peers,
-		ar_coordinated_mining,
 		ar_poa,
 		ar_pricing,
 		ar_retarget,
