@@ -155,7 +155,9 @@ block_index_to_binary_test() ->
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test_() ->
 	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_6, fun() -> infinity end}],
+			{ar_fork, height_2_6, fun() -> infinity end},
+			{ar_fork, height_2_6_8, fun() -> infinity end},
+			{ar_fork, height_2_7, fun() -> infinity end}],
 		fun test_block_roundtrip/0).
 
 test_block_roundtrip() ->
@@ -336,6 +338,7 @@ solution_to_json_struct_test() ->
 			crypto:strong_rand_bytes(32),
 			crypto:strong_rand_bytes(32),
 			crypto:strong_rand_bytes(32)],
+		merkle_rebase_threshold = rand:uniform(100),
 		mining_address = crypto:strong_rand_bytes(32),
 		next_seed = crypto:strong_rand_bytes(32),
 		nonce = rand:uniform(100),

@@ -221,8 +221,7 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 			post_chunk(ar_serialize:jsonify(BigProof))).
 
 rejects_chunks_exceeding_disk_pool_limit_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
-		fun test_rejects_chunks_exceeding_disk_pool_limit/0, 120).
+	{timeout, 240, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
 
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	{_Master, _Slave, Wallet} = setup_nodes(),

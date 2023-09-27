@@ -567,6 +567,16 @@ validate_reward_history_hashes(RewardHistory, [H | ExpectedRewardHistoryHashes])
 			false
 	end.
 
+validate_block_time_history_hashes(_BlockTimeHistory, []) ->
+	true;
+validate_block_time_history_hashes(BlockTimeHistory, [H | ExpectedBlockTimeHistoryHashes]) ->
+	case ar_block:validate_block_time_history_hash(H, BlockTimeHistory) of
+		true ->
+			validate_block_time_history_hashes(tl(BlockTimeHistory),
+					ExpectedBlockTimeHistoryHashes);
+		false ->
+			false
+	end.
 get_cm_partition_table(Peer) ->
 	handle_cm_partition_table_response(ar_http:req(#{
 		peer => Peer,
