@@ -26,9 +26,9 @@ export ERL_EPMD_ADDRESS=127.0.0.1
 ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/arweave/test -config config/sys.config"
 echo -e "\033[0;32m===> Running tests...\033[0m"
 
-erl $ERL_TEST_OPTS -noshell -name cm_miner_1@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1980 data_dir data_test_cm_miner_1 metrics_dir metrics_cm_miner_1 no_auto_join > cm_miner_1.out 2>&1 & PIDS+=($!)
-erl $ERL_TEST_OPTS -noshell -name cm_miner_2@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1979 data_dir data_test_cm_miner_2 metrics_dir metrics_cm_miner_2 no_auto_join > cm_miner_2.out 2>&1 & PIDS+=($!)
-erl $ERL_TEST_OPTS -noshell -name cm_miner_3@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1978 data_dir data_test_cm_miner_3 metrics_dir metrics_cm_miner_3 no_auto_join > cm_miner_3.out 2>&1 & PIDS+=($!)
+erl $ERL_TEST_OPTS -noshell -name cm_miner_1@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1980 data_dir data_test_cm_miner_1 metrics_dir metrics_cm_miner_1 no_auto_join > cm_miner_1.out 2>&1 &
+erl $ERL_TEST_OPTS -noshell -name cm_miner_2@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1979 data_dir data_test_cm_miner_2 metrics_dir metrics_cm_miner_2 no_auto_join > cm_miner_2.out 2>&1 &
+erl $ERL_TEST_OPTS -noshell -name cm_miner_3@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1978 data_dir data_test_cm_miner_3 metrics_dir metrics_cm_miner_3 no_auto_join > cm_miner_3.out 2>&1 &
 
-erl $ERL_TEST_OPTS -noshell -name slave@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1983 data_dir data_test_slave metrics_dir metrics_slave no_auto_join packing_rate 20 > slave.out 2>&1 & PIDS+=($!)
+erl $ERL_TEST_OPTS -noshell -name slave@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT debug port 1983 data_dir data_test_slave metrics_dir metrics_slave no_auto_join packing_rate 20 > slave.out 2>&1 &
 erl $ERL_TEST_OPTS -noshell -name master@127.0.0.1 -setcookie test -run ar tests ${@:1} -s init stop

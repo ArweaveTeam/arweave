@@ -23,6 +23,7 @@ init_from_gb_set(Table, Set) ->
 
 %% @doc Record an interval, bytes Start + 1, Start + 2 ... End.
 add(Table, End, Start) when End > Start ->
+	?LOG_ERROR([{event, add_interval}, {table, Table}, {s, Start}, {e, End}]),
 	{End2, Start2, InnerEnds} = find_largest_continuous_interval(Table, End, Start),
 	ets:insert(Table, [{End2, Start2}]),
 	remove_inner_intervals(Table, InnerEnds, End2).
@@ -182,10 +183,13 @@ get_next_interval(Table, Offset, RightBound) ->
 
 %% @doc Return the size of the intesection between the stored intervals and the given range.
 get_intersection_size(Table, End, Start) when End > Start ->
+	?LOG_ERROR([{event, get_intersection_size}, {table, Table}, {s, Start}, {e, End}]),
 	case ets:next(Table, Start) of
 		'$end_of_table' ->
+			?LOG_ERROR([{event, end_of_table}]),
 			0;
 		Offset when Offset >= End ->
+			?LOG_ERROR([{event, next}, {offset, Offset}]),
 			case ets:lookup(Table, Offset) of
 				[] ->
 					%% An extremely unlikely race condition: just retry.
@@ -196,6 +200,7 @@ get_intersection_size(Table, End, Start) when End > Start ->
 					End - max(Start, Start2)
 			end;
 		Offset ->
+			?LOG_ERROR([{event, next}, {offset, Offset}]),
 			case ets:lookup(Table, Offset) of
 				[] ->
 					%% An extremely unlikely race condition: just retry.

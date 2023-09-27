@@ -19,6 +19,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
+-include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -87,37 +88,11 @@ init([]) ->
 	ar_mempool:load_from_disk(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
-	case Config#config.start_from_block_index of
-		false ->
-			validate_trusted_peers(Config);
-		_ ->
-			ok
-	end,
-	StateLookup =
-		case {Config#config.start_from_block_index, Config#config.init} of
-			{false, false} ->
-				not_joined;
-			{true, _} ->
-				case ar_storage:read_block_index_and_reward_history() of
-					{error, enoent} ->
-						io:format(
-							"~n~n\tBlock index file is not found. "
-							"If you want to start from a block index copied "
-							"from another node, place it in "
-							"<data_dir>/hash_lists/last_block_index_and_reward_history.bin~n~n"
-						),
-						timer:sleep(1000),
-						erlang:halt();
-					Result ->
-						Result
-				end;
-			{false, true} ->
-				Config2 = Config#config{ init = false },
-				application:set_env(arweave, config, Config2),
-				ar_weave:init([], ar_retarget:switch_to_linear_diff(Config#config.diff))
-		end,
-	case {StateLookup, Config#config.auto_join} of
-		{not_joined, true} ->
+	validate_trusted_peers(Config),
+	StartFromLocalState = Config#config.start_from_latest_state orelse
+			Config#config.start_from_block /= undefined,
+	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
+		{false, false, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
 			case ar_storage:read_block_index() of
@@ -658,7 +633,8 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 				previous_solution_hash = PrevB#block.hash,
 				partition_number = PartitionNumber,
 				nonce_limiter_info = NonceLimiterInfo2,
-				poa2 = PoA2,
+				poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
+				poa2_cache = PoA2Cache,
 				recall_byte2 = RecallByte2,
 				reward_key = element(2, RewardKey),
 				price_per_gib_minute = PricePerGiBMinute2,
@@ -696,7 +672,13 @@ handle_info({event, miner, {found_solution, Solution}}, State) ->
 			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
 			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
-					{solution, ar_util:encode(SolutionH)}, {txs, length(B#block.txs)}]),
+					{solution, ar_util:encode(SolutionH)}, {height, Height},
+					{txs, length(B#block.txs)},
+					{chunks, 
+						case B#block.recall_byte2 of
+							undefined -> 1;
+							_ -> 2
+						end}]),
 			PrevBlocks = [PrevB],
 			[{_, RecentBI}] = ets:lookup(node_state, recent_block_index),
 			RecentBI2 = [block_index_entry(B) | RecentBI],
@@ -1760,15 +1742,7 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
-%% automine will only be false in tests.
-may_be_reset_miner(#{ miner_2_5 := Miner_2_5, miner_2_6 := Miner_2_6,
-		automine := false } = State) ->
-	case Miner_2_5 of
-		undefined ->
-			ok;
-		_ ->
-			ar_mine:stop(Miner_2_5)
-	end,
+may_be_reset_miner(#{ miner_2_6 := Miner_2_6, automine := false } = State) ->
 	case Miner_2_6 of
 		undefined ->
 			ok;
@@ -1780,20 +1754,17 @@ may_be_reset_miner(State) ->
 	start_mining(State).
 
 start_mining(State) ->
-	[{height, Height}] = ets:lookup(node_state, height),
-	case Height + 1 >= ar_fork:height_2_6() of
-		true ->
-			Diff = get_current_diff(),
-			case maps:get(miner_2_6, State) of
-				undefined ->
-					ar_mining_server:start_mining({Diff}),
-					State#{ miner_2_6 => running };
-				_ ->
-					ar_mining_server:set_difficulty(Diff),
-					State
-			end;
-		false ->
-			start_2_5_mining(State)
+	Diff = get_current_diff(),
+	[{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
+			merkle_rebase_support_threshold),
+	case maps:get(miner_2_6, State) of
+		undefined ->
+			ar_mining_server:start_mining({Diff, MerkleRebaseThreshold}),
+			State#{ miner_2_6 => running };
+		_ ->
+			ar_mining_server:set_difficulty(Diff),
+			ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),
+			State
 	end.
 
 get_current_diff() ->
