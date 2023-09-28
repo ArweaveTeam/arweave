@@ -37,9 +37,9 @@ read_recall_range_test_() ->
 	{setup, fun setup_all/0, fun cleanup_all/1,
 		{foreach, fun setup_one/0, fun cleanup_one/1,
 		[
-			% {timeout, 180, fun test_read_recall_range/0},
-			% {timeout, 180, fun test_io_threads/0},
-			% {timeout, 30, fun test_partitions/0},
+			{timeout, 180, fun test_read_recall_range/0},
+			{timeout, 180, fun test_io_threads/0},
+			{timeout, 30, fun test_partitions/0},
 			{timeout, 180, fun test_mining_session/0}
 		]}
     }.
@@ -137,7 +137,7 @@ test_partitions() ->
 			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})}],
 		ar_mining_io:get_partitions()),
 
-	ar_mining_io:reset(make_ref(), ?WEAVE_SIZE),
+	ar_mining_io:reset(make_ref(), trunc(5 * ?PARTITION_SIZE)),
 	?assertEqual([
 			{0, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 0, Packing})},
 			{1, MiningAddress, ar_storage_module:id({?PARTITION_SIZE, 1, Packing})},

@@ -57,7 +57,7 @@
 		%% test modules
 		ar_base64_compatibility_tests,
 		ar_config_tests,
-		% ar_coordinated_mining_tests,
+		ar_coordinated_mining_tests,
 		ar_data_sync_tests,
 		ar_difficulty_tests,
 		ar_fork_recovery_tests,
