@@ -33,7 +33,7 @@ get_price_per_gib_minute_test_() ->
 	].
 
 test_price_per_gib_minute_pre_fork() ->
-	?assertEqual(143165,
+	?assertEqual(122880,
 		ar_pricing:get_price_per_gib_minute(0, reward_history(1, 1), vdf(1, 1), 0),
 		"Before 2.7").
 
@@ -60,10 +60,10 @@ test_price_per_gib_minute_in_transition() ->
 	?assertEqual(?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
 		ar_pricing:get_price_per_gib_minute(Start, reward_history(1, 1), vdf(1, 1), 0),
 		"Transition start"),
-	?assertEqual(39872,
+	?assertEqual(34801,
 		ar_pricing:get_price_per_gib_minute(Start + 1, reward_history(1, 1), vdf(1, 1), 0),
 		"In transition"),
-	?assertEqual(71582,
+	?assertEqual(61440,
 		ar_pricing:get_price_per_gib_minute(Start + ?PRICE_2_6_8_TRANSITION_BLOCKS,
 			reward_history(1, 1), vdf(1, 1), 0),
 		"Transition end").
@@ -77,10 +77,10 @@ test_price_per_gib_minute_post_transition() ->
 	do_price_per_gib_minute_post_transition(BeyondTransition).
 
 do_price_per_gib_minute_post_transition(Height) ->
-	Baseline = 71582,
-	Baseline1_5 = 107374, %% 1.5x Baseline
-	Baseline2 = 143165, %% 2x Baseline
-	Baseline10 = 715827, %% 10x Baseline
+	Baseline = 61440,
+	Baseline1_5 = 92160, %% 1.5x Baseline
+	Baseline2 = 122880, %% 2x Baseline
+	Baseline10 = 614400, %% 10x Baseline
 	?assertEqual(Baseline,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(1, 1), 0),
 		"hash_rate: low, reward: low, vdf: perfect, chunks: all_one"),

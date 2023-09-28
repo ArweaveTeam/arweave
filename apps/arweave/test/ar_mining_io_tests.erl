@@ -25,15 +25,12 @@ setup_all() ->
 	{Cleanup, Functions}.
 
 cleanup_all({Cleanup, Functions}) ->
-	?LOG_ERROR("**** cleanup_all"),
 	Cleanup(Functions).
 
 setup_one() ->
-	?LOG_ERROR("**** setup_one"),
 	ets:new(?MODULE, [named_table, duplicate_bag, public]).
 
 cleanup_one(_) ->
-	?LOG_ERROR("**** cleanup_one"),
 	ets:delete(?MODULE).
 
 read_recall_range_test_() ->
