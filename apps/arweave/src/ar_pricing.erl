@@ -56,7 +56,6 @@ get_price_per_gib_minute(Height, RewardHistory, BlockTimeHistory, Denomination2)
 	case Height of
 		_ when Height < Fork_2_7 ->
 			%% Computed but not used at this point.
-			?LOG_ERROR([{new_price, NewPrice}]),
 			NewPrice;
 		_ when Height < PriceTransitionStart ->
 			PreTransitionPrice;
@@ -66,7 +65,7 @@ get_price_per_gib_minute(Height, RewardHistory, BlockTimeHistory, Denomination2)
 			Interval2 = PriceTransitionEnd - Height,
 			PricePerGiBPerMinute =
 				(PreTransitionPrice * Interval2 + NewPrice * Interval1) div (Interval1 + Interval2),
-			?LOG_ERROR([{event, get_price_per_gib_minute},
+			?LOG_DEBUG([{event, get_price_per_gib_minute},
 				{height, Height}, {price1, PreTransitionPrice}, {price2, NewPrice},
 				{interval1, Interval1}, {interval2, Interval2},
 				{price, PricePerGiBPerMinute}]),
