@@ -481,10 +481,11 @@ handle_task({computed_output, Args}, State) ->
 						"next entropy nonce: ~s, interval number: ~B.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
 						StartIntervalNumber]),
-				NewSession = reset_mining_session(Session, State),
-				NewSession#mining_session{ seed = Seed, next_seed = NextSeed,
+				reset_mining_session(
+					#mining_session{ seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
-						partition_upper_bound = PartitionUpperBound }
+						partition_upper_bound = PartitionUpperBound },
+					State)
 		end,
 	Candidate = #mining_candidate{
 		session_ref = Session2#mining_session.ref,
