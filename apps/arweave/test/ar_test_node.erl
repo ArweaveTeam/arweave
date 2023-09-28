@@ -233,38 +233,52 @@ clean_up_and_stop() ->
 	).
 
 write_genesis_files(DataDir, B0) ->
-	BH = B0#block.indep_hash,
-	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
-	ok = filelib:ensure_dir(BlockDir ++ "/"),
-	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
-	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
-	TXDir = filename:join(DataDir, ?TX_DIR),
-	ok = filelib:ensure_dir(TXDir ++ "/"),
-	lists:foreach(
-		fun(TX) ->
-			TXID = TX#tx.id,
-			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),
-			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-			ok = file:write_file(TXFilepath, TXJSON)
-		end,
-		B0#block.txs
-	),
-	BI = [ar_util:block_index_entry_from_block(B0)],
-	BIBin = term_to_binary({BI, B0#block.reward_history}),
-	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
-	ok = filelib:ensure_dir(HashListDir ++ "/"),
-	BIFilepath = filename:join(HashListDir, <<"last_block_index_and_reward_history.bin">>),
-	ok = file:write_file(BIFilepath, BIBin),
-	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
-	ok = filelib:ensure_dir(WalletListDir ++ "/"),
-	RootHash = B0#block.wallet_list,
-	WalletListFilepath =
-		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
-	WalletListJSON =
-		ar_serialize:jsonify(
-			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
-					B0#block.account_tree)
-		),
+	BH = B0#block.indep_hash,	
+	BlockDir = filename:join(DataDir, ?BLOCK_DIR),	
+	ok = filelib:ensure_dir(BlockDir ++ "/"),	
+	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),	
+	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),	
+	TXDir = filename:join(DataDir, ?TX_DIR),	
+	ok = filelib:ensure_dir(TXDir ++ "/"),	
+	lists:foreach(	
+		fun(TX) ->	
+			TXID = TX#tx.id,	
+			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),	
+			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),	
+			ok = file:write_file(TXFilepath, TXJSON)	
+		end,	
+		B0#block.txs	
+	),	
+	ets:new(ar_kv, [set, public, named_table]),	
+	ar_kv:start_link(),	
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),	
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),	
+			block_time_history_db),	
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),	
+	H = B0#block.indep_hash,	
+	WeaveSize = B0#block.weave_size,	
+	TXRoot = B0#block.tx_root,	
+	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),	
+	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),	
+	case ar_fork:height_2_7() of	
+		0 ->	
+			ok = ar_kv:put(block_time_history_db, H,	
+					term_to_binary(hd(B0#block.block_time_history)));	
+		_ ->	
+			ok	
+	end,	
+	gen_server:stop(ar_kv),	
+	ets:delete(ar_kv),	
+	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),	
+	ok = filelib:ensure_dir(WalletListDir ++ "/"),	
+	RootHash = B0#block.wallet_list,	
+	WalletListFilepath =	
+		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),	
+	WalletListJSON =	
+		ar_serialize:jsonify(	
+			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,	
+					B0#block.account_tree)	
+		),	
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
 wait_until_syncs_data(Left, Right, WeaveSize, _Packing)
@@ -799,7 +813,6 @@ slave_mine() ->
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
 	WeaveSize = (ar_node:get_current_block())#block.weave_size,
-	?LOG_ERROR("WeaveSize: ~p", [WeaveSize]),
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, any)
 			|| {Size, N, _Packing} <- Config#config.storage_modules],
 	%% Once the data is stored in the disk pool, make the storage modules
