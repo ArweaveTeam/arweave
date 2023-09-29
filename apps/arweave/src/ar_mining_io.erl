@@ -199,7 +199,14 @@ io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 			io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
 		{WhichChunk, {Candidate, RecallRangeStart}} ->
 			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true -> 
+				true ->
+					case WhichChunk of
+						chunk1 ->
+							prometheus_counter:inc(list_to_atom(io_lib:format("~s_scheduled_read_1chunk_counter", [StoreID])), ?RECALL_RANGE_SIZE / ?DATA_CHUNK_SIZE);
+						chunk2 ->
+							prometheus_counter:inc(list_to_atom(io_lib:format("~s_scheduled_read_2chunk_counter", [StoreID])), ?RECALL_RANGE_SIZE / ?DATA_CHUNK_SIZE);
+						_ ->unreach
+					end,
 					read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
 				false -> 
 					ok %% Clear the message queue of requests from outdated mining sessions
@@ -238,6 +245,14 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
+	MissingCount = (?RECALL_RANGE_SIZE / ?DATA_CHUNK_SIZE) - length(ChunkOffsets),
+	case WhichChunk of
+		chunk1 ->
+			prometheus_counter:inc(list_to_atom(io_lib:format("~s_missing_read_1chunk_counter", [StoreID])), MissingCount);
+		chunk2 ->
+			prometheus_counter:inc(list_to_atom(io_lib:format("~s_missing_read_2chunk_counter", [StoreID])), MissingCount);
+		_ ->unreach
+	end,
 	?LOG_DEBUG([{event, mining_debug_read_recall_range},
 			{chunk, WhichChunk},
 			{range_start, RangeStart},
@@ -245,27 +260,34 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
-	read_range(WhichChunk, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2).
+	read_range(WhichChunk, Candidate, RangeStart, StoreID, 0, NonceMax, ChunkOffsets2).
 
-read_range(_WhichChunk, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
+read_range(_WhichChunk, _Candidate, _RangeStart, _StoreID, Nonce, NonceMax, _ChunkOffsets)
 		when Nonce > NonceMax ->
 	ok;
-read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, []) ->
-	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate),
-	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, []);
-read_range(WhichChunk, Candidate,RangeStart, Nonce, NonceMax, [{EndOffset, Chunk} | ChunkOffsets])
+read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce, NonceMax, []) ->
+	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate, StoreID),
+	read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce + 1, NonceMax, []);
+read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce, NonceMax, [{EndOffset, Chunk} | ChunkOffsets])
 		%% Only 256 KiB chunks are supported at this point.
 		when RangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
-	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate),
-	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax,
+	case WhichChunk of
+		chunk1 ->
+			prometheus_counter:inc(list_to_atom(io_lib:format("~s_missing_read_1chunk_counter", [StoreID])));
+		chunk2 ->
+			prometheus_counter:inc(list_to_atom(io_lib:format("~s_missing_read_2chunk_counter", [StoreID])));
+		_ ->unreach
+	end,
+	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate, StoreID),
+	read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce + 1, NonceMax,
 		[{EndOffset, Chunk} | ChunkOffsets]);
-read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, [{EndOffset, _Chunk} | ChunkOffsets])
+read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce, NonceMax, [{EndOffset, _Chunk} | ChunkOffsets])
 		when RangeStart + Nonce * ?DATA_CHUNK_SIZE >= EndOffset ->
-	read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets);
-read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax,
+	read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce, NonceMax, ChunkOffsets);
+read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce, NonceMax,
 		[{_EndOffset, Chunk} | ChunkOffsets]) ->
-	ar_mining_server:recall_chunk(WhichChunk, Chunk, Nonce, Candidate),
-	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
+	ar_mining_server:recall_chunk(WhichChunk, Chunk, Nonce, Candidate, StoreID),
+	read_range(WhichChunk, Candidate, RangeStart, StoreID, Nonce + 1, NonceMax, ChunkOffsets).
 
 find_thread(PartitionNumber, MiningAddress, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, maps:iterator(Threads)),

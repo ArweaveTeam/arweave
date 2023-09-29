@@ -4,6 +4,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
@@ -419,7 +420,85 @@ register(MetricsDir) ->
 					"Only set when debug=true."}]),
 	prometheus_gauge:new([{name, process_info},
 			{labels, [process, type]},
-			{help, "Sampling info about active processes. Only set when debug=true."}]).
+			{help, "Sampling info about active processes. Only set when debug=true."}]),
+
+	% Mining performance
+
+	% useful for: more accurate VDF time estimation, max hashrate per partition (not storage module)
+	prometheus_counter:new([
+		{name, mining_perf_vdf_step_count},
+		{
+			help,
+			"Count of vdf steps provided to mining process"
+		}
+	]),
+
+	DiffBucketList = lists:seq(0, ?MINING_HASH_MAX_BUCKET),
+	prometheus_histogram:new([
+		{name, mining_perf_hash_gt_2_pow_x_1chunk_count},
+		{buckets, DiffBucketList},
+		{
+			help,
+			"Count of hashes (solutions) found since launch which are >= 2**(bucket_index) (1-chunk solutions only)"
+		}
+	]),
+	prometheus_histogram:new([
+		{name, mining_perf_hash_gt_2_pow_x_2chunk_count},
+		{buckets, DiffBucketList},
+		{
+			help,
+			"Count of hashes (solutions) found since launch which are >= 2**(bucket_index) (2-chunk solutions only)"
+		}
+	]),
+
+	{ok, Config} = application:get_env(arweave, config),
+	lists:foreach(fun(StorageModule) ->
+		StoreID = ar_storage_module:id(StorageModule),
+		% NOTE. If you have more than 100k storage_modules, then it can hit limit of ~1M (default atom table size limit)
+
+		% scheduled reads == 200*mining_perf_vdf_step_count for 1-chunk but
+		% * ?RECALL_RANGE_SIZE is different with DEBUG (2 chunks)
+		% * Unknown for 2-chunk
+		% * Also weave size grows, so storage modules can be allocated, but not triggered until weave will hit threshold
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_scheduled_read_1chunk_counter", [StoreID]))},
+			{help, "Scheduled read count watermark for storage_module (1st chunk in solution)"}
+		]),
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_scheduled_read_2chunk_counter", [StoreID]))},
+			{help, "Scheduled read count watermark for storage_module (2nd chunk in solution)"}
+		]),
+
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_successful_read_1chunk_counter", [StoreID]))},
+			{help, "Successful read count for storage_module (1st chunk in solution)"}
+		]),
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_successful_read_2chunk_counter", [StoreID]))},
+			{help, "Successful read count for storage_module (2nd chunk in solution)"}
+		]),
+
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_missing_read_1chunk_counter", [StoreID]))},
+			{help, "Missing read count for storage_module (1st chunk in solution)"}
+		]),
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_missing_read_2chunk_counter", [StoreID]))},
+			{help, "Missing read count for storage_module (2nd chunk in solution)"}
+		]),
+
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_hash_1chunk_counter", [StoreID]))},
+			{help, "Hash count for storage_module (1-chunk solutions only)"}
+		]),
+		prometheus_counter:new([
+			{name, list_to_atom(io_lib:format("~s_hash_2chunk_counter", [StoreID]))},
+			{help, "Hash count for storage_module (2-chunk solutions only)"}
+		]),
+
+		ok
+	end, Config#config.storage_modules),
+	ok.
 
 %% @doc Store the given metric in a file.
 store(Name) ->
