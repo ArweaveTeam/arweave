@@ -76,7 +76,7 @@ compute_h2(Peer, Candidate, H1List) ->
 computed_h2(Candidate) ->
 	gen_server:cast(?MODULE, {computed_h2, Candidate}).
 
-post_solution(Peer, Candidate) ->
+post_solution(_Peer, Candidate) ->
 	ar_mining_server:prepare_and_post_solution(Candidate).
 
 poll_loop() ->

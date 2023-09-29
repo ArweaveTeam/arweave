@@ -7,6 +7,8 @@
 	cache_ref = not_set, %% not serialized
 	chunk1 = not_set, %% not serialized
 	chunk2 = not_set, %% not serialized
+	chunk1_store_id = not_set,
+	chunk2_store_id = not_set,
 	cm_diff = not_set, %% serialized. set to the difficulty used by the H1 miner
 	cm_lead_peer = not_set, %% not serialized. if set, this candidate came from another peer
 	h0 = not_set, %% serialized
@@ -48,5 +50,7 @@
 	mining_address = not_set,
 	partition_upper_bound = not_set
 }).
+
+-define(MINING_HASH_MAX_BUCKET, 256).
 
 -endif.
