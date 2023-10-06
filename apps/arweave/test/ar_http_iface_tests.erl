@@ -91,7 +91,7 @@ batch_test_() ->
 				%% ---------------------------------------------------------
 				%% The following tests are read-only and will not modify
 				%% state. They assume that the blockchain state
-				%% is fixed (and set by start_node and test_get_height). 
+				%% is fixed (and set by start_node and test_get_height).
 				%% ---------------------------------------------------------
 				test_register(fun test_get_wallet_list_in_chunks/1, GenesisData),
 				test_register(fun test_get_info/1, GenesisData),
@@ -101,7 +101,7 @@ batch_test_() ->
 				test_register(fun test_get_non_existent_block/1, GenesisData),
 				%% ---------------------------------------------------------
 				%% The following tests are *not* read-only and may modify
-				%% state. They can *not* assume a fixed blockchain state. 
+				%% state. They can *not* assume a fixed blockchain state.
 				%% ---------------------------------------------------------
 				test_register(fun test_addresses_with_checksum/1, GenesisData),
 				test_register(fun test_single_regossip/1, GenesisData),
@@ -436,7 +436,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
 			path => "/wallet_list/" ++ RootHash ++ "/" ++ ar_util:encode(Cursor)
 		}),
 	?assertEqual(#{
-			next_cursor => last, 
+			next_cursor => last,
 			wallets => lists:reverse(ExpectedWallets2)
 		}, binary_to_term(Body2)).
 
@@ -548,20 +548,19 @@ test_get_format_2_tx(_) ->
 			peer => master_peer(),
 			path => "/tx/" ++ EncodedTXID
 		}),
-	?assertEqual(ValidTX#tx{ 
+	?assertEqual(ValidTX#tx{
 			data = <<>>,
 			data_size = 4
 		}, ar_serialize:json_struct_to_tx(Body)),
 	%% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.
 	{ok, Data} = wait_until_syncs_tx_data(TXID),
 	?assertEqual(ar_util:encode(<<"DATA">>), Data),
-	{ok, {{<<"200">>, _}, _, InvalidData, _, _}} =
+	{ok, {{<<"404">>, _}, _, InvalidData, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => master_peer(),
 			path => "/tx/" ++ EncodedInvalidTXID ++ "/data"
 		}),
-	?assertEqual(<<>>, InvalidData),
 	%% Ensure /tx/[ID]/data works for format=2 transactions when the data is empty.
 	{ok, {{<<"200">>, _}, _, <<>>, _, _}} =
 		ar_http:req(#{

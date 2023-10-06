@@ -20,7 +20,7 @@
 		join_on_master/0, rejoin_on_master/0,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
-		post_and_mine/2, post_block/2, post_block/3, send_new_block/2, 
+		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3, assert_get_tx_data_master/2,
@@ -1056,7 +1056,7 @@ assert_data_not_found_slave(TXID) ->
 	assert_data_not_found(slave_peer(), TXID).
 
 assert_data_not_found(Peer, TXID) ->
-	?assertMatch({ok, {{<<"200">>, _}, _, <<>>, _, _}},
+	?assertMatch({ok, {{<<"404">>, _}, _, _Binary, _, _}},
 			ar_http:req(#{ method => get, peer => Peer,
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).
 

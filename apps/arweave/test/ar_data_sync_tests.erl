@@ -399,7 +399,7 @@ test_accepts_chunks(Split) ->
 	}),
 	?assertMatch({ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}}, get_tx_offset(TX#tx.id)),
 	%% Expect no transaction data because the second chunk is not synced yet.
-	?assertMatch({ok, {{<<"200">>, _}, _, <<>>, _, _}}, get_tx_data(TX#tx.id)),
+	?assertMatch({ok, {{<<"404">>, _}, _, _Binary, _, _}}, get_tx_data(TX#tx.id)),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
 			post_chunk(ar_serialize:jsonify(SecondProof))),
 	ExpectedSecondProof = #{
@@ -1361,7 +1361,7 @@ enqueue_intervals_test() ->
 			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
 		],
 		"Multiple peers, overlapping, full intervals, 3 chunks. Non-overlapping QIntervals."),
-	
+
 	test_enqueue_intervals(
 		[
 			{Peer1, ar_intervals:from_list([
