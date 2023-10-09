@@ -1156,7 +1156,6 @@ trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _PrevSession,
 	ok;
 trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound,
 		[Step | Steps]) ->
-	?LOG_ERROR([{event, trigger_computed_outputs}, {step, Step}]),
 	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session, PrevSessionKey,
 			PrevSession, Step, UpperBound}}),
 	#vdf_session{ step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
