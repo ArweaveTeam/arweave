@@ -282,9 +282,12 @@ handle_info({'DOWN', Ref,  process, _, Reason},
 			{noreply, State}
 	end;
 
-handle_info({event, nonce_limiter, {computed_output, _}},
+handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined}]),
+	{{NextSeed, _StartIntervalNumber}, Session,
+		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
+	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
+		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
@@ -790,9 +793,12 @@ priority(mining_thread_computed_h0, StepNumber) ->
 priority(nonce_limiter_computed_output, StepNumber) ->
 	{6, -StepNumber}.
 
-handle_task({computed_output, _},
+handle_task({computed_output, Args},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined}]),
+	{{NextSeed, _StartIntervalNumber}, Session,
+		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
+	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined},
+		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,

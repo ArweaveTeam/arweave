@@ -459,15 +459,8 @@ handle_call(get_steps, _From, State) ->
 	{reply, get_steps(1, StepNumber, SessionKey, State), State};
 
 handle_call({apply_external_update, Update, Peer}, _From, State) ->
-	#state{ last_external_update = {Peer2, Time} } = State,
 	Now = os:system_time(millisecond),
-	case Peer /= Peer2 andalso Now - Time < 1000 of
-		true ->
-			{reply, #nonce_limiter_update_response{ postpone = 5 }, State};
-		false ->
-			State2 = State#state{ last_external_update = {Peer, Now} },
-			apply_external_update2(Update, State2)
-	end;
+	apply_external_update2(Update, State#state{ last_external_update = {Peer, Now} });
 
 handle_call({get_session, SessionKey}, _From, State) ->
 	#state{ session_by_key = SessionByKey } = State,
@@ -968,7 +961,8 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 	end.
 
 apply_external_update2(Update, State) ->
-	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
+	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey,
+		last_external_update = {Peer, _} } = State,
 	#nonce_limiter_update{ session_key = SessionKey,
 			session = #vdf_session{ upper_bound = UpperBound,
 					prev_session_key = PrevSessionKey,
@@ -982,6 +976,7 @@ apply_external_update2(Update, State) ->
 					%% Inform the peer we have not initialized the corresponding session yet.
 					?LOG_DEBUG([{event, apply_external_vdf},
 						{result, session_not_found},
+						{vdf_server, ar_util:format_peer(Peer)},
 						{is_partial, IsPartial},
 						{session_seed, ar_util:encode(SessionSeed)},
 						{session_interval, SessionInterval},
@@ -1034,6 +1029,7 @@ apply_external_update2(Update, State) ->
 							%% Inform the peer we are ahead.
 							?LOG_DEBUG([{event, apply_external_vdf},
 								{result, ahead_of_server},
+								{vdf_server, ar_util:format_peer(Peer)},
 								{session_seed, ar_util:encode(SessionSeed)},
 								{session_interval, SessionInterval},
 								{client_step_number, CurrentStepNumber},
@@ -1046,6 +1042,7 @@ apply_external_update2(Update, State) ->
 									%% Inform the peer we miss some steps.
 									?LOG_DEBUG([{event, apply_external_vdf},
 										{result, missing_steps},
+										{vdf_server, ar_util:format_peer(Peer)},
 										{is_partial, IsPartial},
 										{session_seed, ar_util:encode(SessionSeed)},
 										{session_interval, SessionInterval},
@@ -1088,6 +1085,13 @@ apply_external_update2(Update, State) ->
 %% trigger_computed_outputs.
 apply_external_update3(
 	State, SessionKey, PrevSessionKey, CurrentSessionKey, Session, NumSteps, UpperBound) ->
+	{SessionSeed, SessionInterval} = SessionKey,
+	?LOG_DEBUG([{event, apply_external_vdf},
+		{result, ok},
+		{session_seed, ar_util:encode(SessionSeed)},
+		{session_interval, SessionInterval},
+		{num_steps, NumSteps},
+		{length, length(Session#vdf_session.steps)}]),
 	#state{ session_by_key = SessionByKey } = State,
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
 	PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
@@ -1152,6 +1156,7 @@ trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _PrevSession,
 	ok;
 trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound,
 		[Step | Steps]) ->
+	?LOG_ERROR([{event, trigger_computed_outputs}, {step, Step}]),
 	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session, PrevSessionKey,
 			PrevSession, Step, UpperBound}}),
 	#vdf_session{ step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
