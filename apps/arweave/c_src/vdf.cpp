@@ -69,26 +69,36 @@ void _vdf_sha2(unsigned char* saltBuffer, unsigned char* seed, unsigned char* ou
 			unsigned char* locIn  = checkpointIdx == 0               ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE*(checkpointIdx-1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out  : (outCheckpoint + VDF_SHA_HASH_SIZE*checkpointIdx);
 			
-			{
-				SHA256_CTX sha256;
-				SHA256_Init(&sha256);
-				SHA256_Update(&sha256, saltBuffer, SALT_SIZE);
-				SHA256_Update(&sha256, locIn, VDF_SHA_HASH_SIZE); // -1 memcpy
-				SHA256_Final(tempOut, &sha256);
-			}
-			for(int i = 2; i < hashingIterations; i++) {
-				SHA256_CTX sha256;
-				SHA256_Init(&sha256);
-				SHA256_Update(&sha256, saltBuffer, SALT_SIZE);
-				SHA256_Update(&sha256, tempOut, VDF_SHA_HASH_SIZE);
-				SHA256_Final(tempOut, &sha256);
-			}
-			{
-				SHA256_CTX sha256;
-				SHA256_Init(&sha256);
-				SHA256_Update(&sha256, saltBuffer, SALT_SIZE);
-				SHA256_Update(&sha256, tempOut, VDF_SHA_HASH_SIZE);
-				SHA256_Final(locOut, &sha256);
+			if (hashingIterations > 1) {
+				{
+					SHA256_CTX sha256;
+					SHA256_Init(&sha256);
+					SHA256_Update(&sha256, saltBuffer, SALT_SIZE);
+					SHA256_Update(&sha256, locIn, VDF_SHA_HASH_SIZE); // -1 memcpy
+					SHA256_Final(tempOut, &sha256);
+				}
+				for(int i = 2; i < hashingIterations; i++) {
+					SHA256_CTX sha256;
+					SHA256_Init(&sha256);
+					SHA256_Update(&sha256, saltBuffer, SALT_SIZE);
+					SHA256_Update(&sha256, tempOut, VDF_SHA_HASH_SIZE);
+					SHA256_Final(tempOut, &sha256);
+				}
+				{
+					SHA256_CTX sha256;
+					SHA256_Init(&sha256);
+					SHA256_Update(&sha256, saltBuffer, SALT_SIZE);
+					SHA256_Update(&sha256, tempOut, VDF_SHA_HASH_SIZE);
+					SHA256_Final(locOut, &sha256);
+				}
+			} else {
+				{
+					SHA256_CTX sha256;
+					SHA256_Init(&sha256);
+					SHA256_Update(&sha256, saltBuffer, SALT_SIZE);
+					SHA256_Update(&sha256, locIn, VDF_SHA_HASH_SIZE); // -1 memcpy
+					SHA256_Final(locOut, &sha256);
+				}
 			}
 			long_add(saltBuffer, 1);
 		}
