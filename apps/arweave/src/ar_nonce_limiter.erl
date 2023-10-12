@@ -977,10 +977,15 @@ apply_external_update2(Update, State) ->
 					%% steps from the previous session to the new session. In this case we only
 					%% want to apply new steps - steps in Session that weren't already applied as
 					%% part of PrevSession.
+
+					%% Start after the last step of the previous session
 					RangeStart = case maps:get(PrevSessionKey, SessionByKey, undefined) of
 						undefined -> 0;
 						PrevSession -> PrevSession#vdf_session.step_number + 1
 					end,
+					%% But start no later than the beginning of the session 2 after PrevSession.
+					%% This is because the steps in that session - which may have been previously
+					%% computed - have now been invalidated.
 					NextSessionStart = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
 					{_, Steps} = get_step_range(
 						Session, min(RangeStart, NextSessionStart), StepNumber),					
