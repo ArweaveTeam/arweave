@@ -380,9 +380,9 @@ external_update_test_() ->
 			{timeout, 120, fun test_session_overlap/0},
 			{timeout, 120, fun test_client_ahead/0},
 			{timeout, 120, fun test_skip_ahead/0},
-			{timeout, 120, fun test_2_servers_switching/0}
-			% {timeout, 120, fun test_backtrack/0},
-			% {timeout, 120, fun test_2_servers_backtrack/0}
+			{timeout, 120, fun test_2_servers_switching/0},
+			{timeout, 120, fun test_backtrack/0},
+			{timeout, 120, fun test_2_servers_backtrack/0}
 		]
     }.
 
@@ -497,7 +497,7 @@ test_session_overlap() ->
 		ok,
 		apply_external_update(<<"session2">>, 2, [11, 10], 12, false, <<"session1">>, 1),
 		"Full session2, some steps already seen"),
-	timer:sleep(5000),
+	timer:sleep(2000),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>, <<"9">>, <<"10">>, <<"11">>, <<"12">>],
 		computed_steps()).
@@ -516,7 +516,7 @@ test_client_ahead() ->
 		#nonce_limiter_update_response{ step_number = 8 },
 		apply_external_update(<<"session1">>, 1, [6, 5], 7, false, <<"session0">>, 0),
 		"Full session, client ahead"),
-	timer:sleep(5000),
+	timer:sleep(2000),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>],
 		computed_steps()).
@@ -554,7 +554,7 @@ test_skip_ahead() ->
 		ok,
 		apply_external_update(<<"session2">>, 2, [11, 10], 12, false, <<"session1">>, 1),
 		"Full session2, some steps already seen"),
-	timer:sleep(5000),
+	timer:sleep(2000),
 	?assertEqual(
 		[<<"6">>, <<"5">>, <<"8">>, <<"7">>, <<"9">>, <<"12">>, <<"11">>, <<"10">>],
 		computed_steps()).
@@ -597,7 +597,7 @@ test_2_servers_switching() ->
 		ok,
 		apply_external_update(<<"session2">>, 2, [], 14, true, <<"session1">>, 1, vdf_server_2()),
 		"Partial (new) session2 from vdf_server_2"),
-	timer:sleep(5000),
+	timer:sleep(2000),
 	?assertEqual([
 		<<"7">>, <<"6">>, <<"5">>, <<"8">>, <<"9">>,
 		<<"11">>, <<"10">>, <<"12">>, <<"13">>, <<"14">>
@@ -621,14 +621,21 @@ test_backtrack() ->
 		apply_external_update(<<"session2">>, 2, [], 15, true, <<"session1">>, 1),
 		"Partial session2"),
 	?assertEqual(
+		#nonce_limiter_update_response{ step_number = 18 },
+		apply_external_update(
+			<<"session1">>, 1, [8, 7, 6, 5], 9, false, <<"session0">>, 0),
+		"Backtrack. Send full session1."),
+	?assertEqual(
 		ok,
 		apply_external_update(
 			<<"session2">>, 2, [14, 13, 12, 11, 10], 15, false, <<"session1">>, 1),
-		"Backtrack in session2"),
-	timer:sleep(5000),
-	?assertEqual(
-		[<<"TBD">>],
-		computed_steps()).
+		"Backtrack. Send full session2"),
+	timer:sleep(2000),
+	?assertEqual([
+		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
+        <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
+        <<"5">>,<<"18">>,<<"15">>
+	], computed_steps()).
 
 test_2_servers_backtrack() ->
 	?assertEqual(
@@ -652,7 +659,9 @@ test_2_servers_backtrack() ->
 		apply_external_update(
 			<<"session2">>, 2, [14, 13, 12, 11, 10], 15, false, <<"session1">>, 1, vdf_server_2()),
 		"Backtrack in session2 from vdf_server_2"),
-	timer:sleep(5000),
-	?assertEqual(
-		[<<"TBD">>],
-		computed_steps()).
+	timer:sleep(2000),
+	?assertEqual([
+		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
+        <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
+        <<"5">>,<<"18">>,<<"15">>
+	], computed_steps()).
