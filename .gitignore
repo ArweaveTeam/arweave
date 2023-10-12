@@ -2,7 +2,7 @@
 *.log
 *.dat
 .vscode
-slave.out
+*.out
 *.code-workspace
 .arweave.plt
 testlog
@@ -13,8 +13,7 @@ _build
 .rebar3
 apps/arweave/c_src/**/*.o
 apps/arweave/c_src/tests/tests
-data_test_master
-data_test_slave
+data_test_*
 erl_crash.dump
 tags
 metrics
@@ -26,6 +25,5 @@ wallets
 logs
 !bin/logs
 ebin
-metrics_master
-metrics_slave
+metrics_*
 release/output
