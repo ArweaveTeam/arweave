@@ -968,7 +968,7 @@ apply_external_update2(Update, State) ->
 						{result, session_not_found},
 						{vdf_server, ar_util:format_peer(Peer)},
 						{is_partial, IsPartial},
-						{session_seed, SessionSeed},
+						{session_seed, ar_util:encode(SessionSeed)},
 						{session_interval, SessionInterval},
 						{server_step_number, StepNumber}]),
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
