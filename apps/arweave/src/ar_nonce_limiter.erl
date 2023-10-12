@@ -448,8 +448,13 @@ handle_call({get_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, Stat
 			{reply, lists:sublist(Steps, TakeN), State}
 	end;
 
+%% @doc Get all the steps in the current session that fall between
+%% StartStepNumber+1 and EndStepNumber (inclusive)
 handle_call({get_session_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->
-	{reply, get_session_steps(StartStepNumber, EndStepNumber, SessionKey, State), State};
+	#state{ session_by_key = SessionByKey } = State,
+	Session = maps:get(SessionKey, SessionByKey, not_found),
+	{_, Steps} = get_step_range(Session, StartStepNumber + 1, EndStepNumber),
+	{reply, Steps, State};
 
 handle_call(get_steps, _From, #state{ current_session_key = undefined } = State) ->
 	{reply, [], State};
@@ -459,15 +464,8 @@ handle_call(get_steps, _From, State) ->
 	{reply, get_steps(1, StepNumber, SessionKey, State), State};
 
 handle_call({apply_external_update, Update, Peer}, _From, State) ->
-	#state{ last_external_update = {Peer2, Time} } = State,
 	Now = os:system_time(millisecond),
-	case Peer /= Peer2 andalso Now - Time < 1000 of
-		true ->
-			{reply, #nonce_limiter_update_response{ postpone = 5 }, State};
-		false ->
-			State2 = State#state{ last_external_update = {Peer, Now} },
-			apply_external_update2(Update, State2)
-	end;
+	apply_external_update2(Update, State#state{ last_external_update = {Peer, Now} });
 
 handle_call({get_session, SessionKey}, _From, State) ->
 	#state{ session_by_key = SessionByKey } = State,
@@ -537,11 +535,11 @@ handle_cast({validated_steps, Args}, State) ->
 						%% as well as the checkpoints associated with step StepNumber.
 						%% This branch occurs when a block is received that is ahead of us
 						%% in the VDF chain.
-						Steps2 = lists:sublist(Steps, StepNumber - CurrentStepNumber)
-								++ CurrentSteps,
+						{_, Steps2} =
+							get_step_range(Steps, StepNumber, CurrentStepNumber + 1, StepNumber),
 						Map2 = maps:put(StepNumber, LastStepCheckpoints, Map),
 						Session#vdf_session{
-							step_number = StepNumber, steps = Steps2,
+							step_number = StepNumber, steps = Steps2 ++ CurrentSteps,
 							step_checkpoints_map = Map2 };
 					false ->
 						Session
@@ -890,13 +888,12 @@ worker() ->
 get_steps(StartStepNumber, EndStepNumber, SessionKey, State) ->
 	#state{ session_by_key = SessionByKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
-		#vdf_session{ step_number = StepNumber, steps = SessionSteps,
-				prev_session_key = PrevSessionKey }
+		#vdf_session{ step_number = StepNumber, prev_session_key = PrevSessionKey } = Session
 				when StepNumber >= EndStepNumber ->
-			%% Get the steps within the current session that fall within the StartStepNumber
-			%% and EndStepNumber range.
-			Steps = lists:nthtail(StepNumber - EndStepNumber, SessionSteps),
-			TotalCount = EndStepNumber - StartStepNumber,
+			%% Get the steps within the current session that fall within the StartStepNumber+1
+			%% and EndStepNumber (inclusive) range.
+			{_, Steps} = get_step_range(Session, StartStepNumber + 1, EndStepNumber),
+			TotalCount = EndStepNumber - StartStepNumber - 1,
 			Count = length(Steps),
 			%% If we haven't found all the steps, recurse into the previous session.
 			case TotalCount > Count of
@@ -909,24 +906,10 @@ get_steps(StartStepNumber, EndStepNumber, SessionKey, State) ->
 							Steps ++ PrevSteps
 					end;
 				false ->
-					lists:sublist(Steps, TotalCount)
+					Steps
 			end;
 		_ ->
 			not_found
-	end.
-
-%% @doc Get all the steps in the current session that fall between
-%% StartStepNumber and EndStepNumber
-get_session_steps(StartStepNumber, EndStepNumber, SessionKey, State) ->
-	#state{ session_by_key = SessionByKey } = State,
-	case maps:get(SessionKey, SessionByKey, not_found) of
-		#vdf_session{ step_number = StepNumber, steps = SessionSteps }
-				when StepNumber > StartStepNumber ->
-			End = min(StepNumber, EndStepNumber),
-			Steps = lists:nthtail(StepNumber - End, SessionSteps),
-			lists:sublist(Steps, End - StartStepNumber);
-		_ ->
-			[]
 	end.
 
 schedule_step(State) ->
@@ -968,7 +951,8 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 	end.
 
 apply_external_update2(Update, State) ->
-	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
+	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey,
+		last_external_update = {Peer, _} } = State,
 	#nonce_limiter_update{ session_key = SessionKey,
 			session = #vdf_session{ upper_bound = UpperBound,
 					prev_session_key = PrevSessionKey,
@@ -982,6 +966,7 @@ apply_external_update2(Update, State) ->
 					%% Inform the peer we have not initialized the corresponding session yet.
 					?LOG_DEBUG([{event, apply_external_vdf},
 						{result, session_not_found},
+						{vdf_server, ar_util:format_peer(Peer)},
 						{is_partial, IsPartial},
 						{session_seed, ar_util:encode(SessionSeed)},
 						{session_interval, SessionInterval},
@@ -989,30 +974,24 @@ apply_external_update2(Update, State) ->
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
 					%% Handle the case where The VDF server has processed a block and re-allocated
-					%% steps across sessions. Between blocks The VDF server (and all nodes that 
-					%% compute their own VDF) will add all computed steps to the same session -
-					%% *even if* the new steps have crossed the entropy reset line and therefore 
-					%% could be added to a new session. Once a block is processed the server will
-					%% open a new session and re-allocate all the steps past the entropy reset line
-					%% to that new session. When the VDF client sees the new session it will request
-					%% the full session to be resent - which will contain steps it has already seen
-					%% and cached under the previous session key.
-					%% 
-					%% Note: This overlap in session caching is intentional. The intention is to
-					%% quickly access the steps when validating B1 -> reset line -> B2 given the
-					%% current fork of B1 -> B2' -> reset line -> B3 i.e. we can query all steps by
-					%% B1.next_seed even though on our fork the reset line determined a different
-					%% next_seed for the latest session.
-					%%
-					%% To avoid processing those steps twice, the client grabs PrevSessions's most
-					%% recently processed step and ignores it and any lower steps found in Session.
-					PrevStepNumber = case maps:get(PrevSessionKey, SessionByKey, undefined) of
+					%% steps from the previous session to the new session. In this case we only
+					%% want to apply new steps - steps in Session that weren't already applied as
+					%% part of PrevSession.
+
+					%% Start after the last step of the previous session
+					RangeStart = case maps:get(PrevSessionKey, SessionByKey, undefined) of
 						undefined -> 0;
-						PrevSession -> PrevSession#vdf_session.step_number
+						PrevSession -> PrevSession#vdf_session.step_number + 1
 					end,
+					%% But start no later than the beginning of the session 2 after PrevSession.
+					%% This is because the steps in that session - which may have been previously
+					%% computed - have now been invalidated.
+					NextSessionStart = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
+					{_, Steps} = get_step_range(
+						Session, min(RangeStart, NextSessionStart), StepNumber),					
 					State2 = apply_external_update3(State,
 						SessionKey, PrevSessionKey, CurrentSessionKey,
-						Session, StepNumber - PrevStepNumber, UpperBound),
+						Session, Steps, UpperBound),
 					{reply, ok, State2}
 			end;
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
@@ -1026,7 +1005,7 @@ apply_external_update2(Update, State) ->
 							steps = [Output | CurrentSteps] },
 					State2 = apply_external_update3(State,
 							SessionKey, PrevSessionKey, CurrentSessionKey, 
-							CurrentSession2, 1, UpperBound),
+							CurrentSession2, [Output], UpperBound),
 					{reply, ok, State2};
 				false ->
 					case CurrentStepNumber >= StepNumber of
@@ -1034,6 +1013,7 @@ apply_external_update2(Update, State) ->
 							%% Inform the peer we are ahead.
 							?LOG_DEBUG([{event, apply_external_vdf},
 								{result, ahead_of_server},
+								{vdf_server, ar_util:format_peer(Peer)},
 								{session_seed, ar_util:encode(SessionSeed)},
 								{session_interval, SessionInterval},
 								{client_step_number, CurrentStepNumber},
@@ -1046,6 +1026,7 @@ apply_external_update2(Update, State) ->
 									%% Inform the peer we miss some steps.
 									?LOG_DEBUG([{event, apply_external_vdf},
 										{result, missing_steps},
+										{vdf_server, ar_util:format_peer(Peer)},
 										{is_partial, IsPartial},
 										{session_seed, ar_util:encode(SessionSeed)},
 										{session_interval, SessionInterval},
@@ -1064,9 +1045,11 @@ apply_external_update2(Update, State) ->
 									%% To avoid processing those steps twice, the client grabs
 									%% CurrentStepNumber (our most recently processed step number)
 									%% and ignores it and any lower steps found in Session.
+									{_, Steps} = get_step_range(
+											Session, CurrentStepNumber + 1, StepNumber),
 									State2 = apply_external_update3(State,
 										SessionKey, PrevSessionKey, CurrentSessionKey, 
-										Session, StepNumber - CurrentStepNumber, UpperBound),
+										Session, Steps, UpperBound),
 									{reply, ok, State2}
 							end
 					end
@@ -1087,13 +1070,71 @@ apply_external_update2(Update, State) ->
 %% We truncate Session.steps such the previously procesed steps are not sent to
 %% trigger_computed_outputs.
 apply_external_update3(
-	State, SessionKey, PrevSessionKey, CurrentSessionKey, Session, NumSteps, UpperBound) ->
+	State, SessionKey, PrevSessionKey, CurrentSessionKey, Session, Steps, UpperBound) ->
+	?LOG_DEBUG([{event, apply_external_vdf},
+		{result, ok},
+		{session_seed, ar_util:encode(element(1, SessionKey))},
+		{session_interval, element(2, SessionKey)},
+		{length, length(Steps)}]),
 	#state{ session_by_key = SessionByKey } = State,
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
 	PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-	Steps = lists:sublist(Session#vdf_session.steps, NumSteps),
 	trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound, Steps),
 	State2.
+
+%% @doc Returns a sub-range of steps out of a larger list of steps. This is
+%% primarily used to manage "overflow" steps.
+%%
+%% Between blocks nodes will add all computed VDF steps to the same session -
+%% *even if* the new steps have crossed the entropy reset line and therefore 
+%% could be added to a new session (i.e. "overflow steps"). Once a block is 
+%% processed the node will open a new session and re-allocate all the steps past
+%% the entropy reset line to that new session. However, any steps that have crossed
+%% *TWO* entropy reset lines are no longer valid (the seed they were generated with
+%% has changed with the arrival of a new block)
+%% 
+%% Note: This overlap in session caching is intentional. The intention is to
+%% quickly access the steps when validating B1 -> reset line -> B2 given the
+%% current fork of B1 -> B2' -> reset line -> B3 i.e. we can query all steps by
+%% B1.next_seed even though on our fork the reset line determined a different
+%% next_seed for the latest session.
+get_step_range(Session, SessionInterval) ->
+	SessionStart = SessionInterval * ?NONCE_LIMITER_RESET_FREQUENCY,
+	SessionEnd = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY - 1,
+	get_step_range(Session, SessionStart, SessionEnd).
+
+get_step_range(not_found, _RangeStart, _RangeEnd) ->
+	{0, []};
+get_step_range(#vdf_session{steps = Steps, step_number = StepNumber}, RangeStart, RangeEnd) ->
+	get_step_range(Steps, StepNumber, RangeStart, RangeEnd).
+
+get_step_range([], _StepNumber, _RangeStart, _RangeEnd) ->
+	{0, []};
+get_step_range(_Steps, _StepNumber, RangeStart, RangeEnd)
+		when RangeStart > RangeEnd ->
+	{0, []};
+get_step_range(_Steps, StepNumber, RangeStart, _RangeEnd)
+		when StepNumber < RangeStart ->
+	{0, []};
+get_step_range(Steps, StepNumber, _RangeStart, RangeEnd)
+		when StepNumber - length(Steps) + 1 > RangeEnd ->
+	{0, []};
+get_step_range(Steps, StepNumber, RangeStart, RangeEnd) ->
+	%% Clip RangeStart to the earliest step number in Steps
+	RangeStart2 = max(RangeStart, StepNumber - length(Steps) + 1),
+	RangeSteps = 
+		case StepNumber > RangeEnd of
+			true ->
+				%% Exclude steps beyond the end of the session
+				lists:nthtail(StepNumber - RangeEnd, Steps);
+			false ->
+				Steps
+		end,
+	%% The highest step number in the range
+	RangeEnd2 = min(StepNumber, RangeEnd),
+	%% Exclude the steps before the start of the session
+	RangeSteps2 = lists:sublist(RangeSteps, RangeEnd2 - RangeStart2 + 1),
+	{RangeEnd2, RangeSteps2}.
 
 %% @doc Update the VDF session cache based on new info from a validated block.
 cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey, 
@@ -1103,22 +1144,11 @@ cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey,
 	Session =
 		case maps:get(SessionKey, SessionByKey, not_found) of
 			not_found ->
-				#vdf_session{ steps = PrevSteps, step_number = PrevStepNumber } = PrevSession,
 				{_, Interval} = SessionKey,
-				SessionStart = Interval * ?NONCE_LIMITER_RESET_FREQUENCY,
-				SessionEnd = (Interval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY - 1,
-				Steps =
-					case PrevStepNumber > SessionEnd of
-						true ->
-							lists:nthtail(PrevStepNumber - SessionEnd, PrevSteps);
-						false ->
-							PrevSteps
-					end,
-				StepNumber = min(PrevStepNumber, SessionEnd),
-				Steps2 = lists:sublist(Steps, StepNumber - SessionStart + 1),
+				{StepNumber, Steps} = get_step_range(PrevSession, Interval),
 				#vdf_session{ step_number = StepNumber, seed = Seed,
 						step_checkpoints_map = StepCheckpointsMap,
-						steps = Steps2, upper_bound = UpperBound,
+						steps = Steps, upper_bound = UpperBound,
 						next_upper_bound = NextUpperBound, prev_session_key = PrevSessionKey,
 						vdf_difficulty = VDFDifficulty,
 						next_vdf_difficulty = NextVDFDifficulty };
@@ -1133,7 +1163,7 @@ cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	{NextSeed, Interval} = SessionKey,
 	may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, Session#vdf_session.step_number),
 	SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
-	%% If Session exists, then {Inerval, NextSeed} will already exist in the Sessions set and
+	%% If Session exists, then {Interval, NextSeed} will already exist in the Sessions set and
 	%% gb_sets:add_element will not cause a change.
 	Sessions2 = gb_sets:add_element({Interval, NextSeed}, Sessions),
 	State#state{ current_session_key = CurrentSessionKey, sessions = Sessions2,
@@ -1386,6 +1416,86 @@ test_reorg_after_join2() ->
 	ar_test_node:connect_to_slave(),
 	ar_test_node:slave_mine(),
 	ar_test_node:wait_until_height(3).
+
+get_step_range_test() ->
+	?assertEqual(
+		{0, []},
+		get_step_range(lists:seq(9, 5, -1), 9, 0, 4),
+		"Disjoint range A"
+	),
+	?assertEqual(
+		{0, []},
+		get_step_range(lists:seq(9, 5, -1), 9 , 10, 14),
+		"Disjoint range B"
+	),
+	?assertEqual(
+		{0, []},
+		get_step_range([], 9, 0, 4),
+		"Empty steps"
+	),
+	?assertEqual(
+		{0, []},
+		get_step_range(lists:seq(9, 5, -1), 9, 9, 5),
+		"Invalid range"
+	),
+	?assertEqual(
+		{9, [9, 8, 7, 6, 5]},
+		get_step_range(lists:seq(9, 5, -1), 9, 5, 9),
+		"Full intersection"
+	),
+	?assertEqual(
+		{9, [9, 8, 7, 6, 5]},
+		get_step_range(lists:seq(9, 5, -1), 9, 3, 9),
+		"Clipped RangeStart"
+	),
+	?assertEqual(
+		{9, [9, 8, 7, 6]},
+		get_step_range(lists:seq(9, 5, -1), 9, 6, 12),
+		"Clipped RangeEnd"
+	),
+	?assertEqual(
+		{8, [8, 7]},
+		get_step_range(lists:seq(20, 5, -1), 20, 7, 8),
+		"Clipped Steps above"
+	),
+	?assertEqual(
+		{9, [9, 8, 7, 6, 5]},
+		get_step_range(lists:seq(9, 0, -1), 9, 5, 9),
+		"Clipped Steps below"
+	),
+	?assertEqual(
+		{6, [6]},
+		get_step_range(lists:seq(9, 5, -1), 9, 6, 6),
+		"Range length 1"
+	),
+	?assertEqual(
+		{8, [8]},
+		get_step_range([8], 8, 8, 8),
+		"Steps length 1"
+	),
+	?assertEqual(
+		{9, [9, 8, 7, 6, 5]},
+		get_step_range(
+			#vdf_session{ steps = lists:seq(12, 0, -1), step_number = 12}, 1),
+		"Session and Interval"
+	),
+	?assertEqual(
+		{0, []},
+		get_step_range(not_found, 1),
+		"not_found and Interval"
+	),
+	?assertEqual(
+		{9, [9, 8, 7]},
+		get_step_range(
+			#vdf_session{ steps = lists:seq(12, 0, -1), step_number = 12}, 7, 9),
+		"Session and Range"
+	),
+	?assertEqual(
+		{0, []},
+		get_step_range(not_found, 7, 9),
+		"not_found and Range"
+	),
+	ok.
 
 assert_session(B, PrevB) ->
 	%% vdf_diffic ulty and next_vdf_difficulty in cached VDF sessions should be
