@@ -128,7 +128,7 @@ test_randomx_pack_unpack({_Key, State}) ->
 					Packed1, byte_size(Packed1),
 					1, % RANDOMX_PACKING_ROUNDS
 					0, 0, 0),
-			
+
 			Padding = binary:part(Unpacked, byte_size(Chunk),
 					byte_size(Packed1) - byte_size(Chunk)),
 			?assertEqual(true, is_zero(Padding)),
@@ -147,7 +147,7 @@ test_randomx_pack_unpack({_Key, State}) ->
 	).
 
 read_entropy_fixture() ->
-	Dir = filename:dirname(?FILE),
-	Path = filename:join(Dir, "ar_mine_randomx_entropy_fixture"),
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/ar_mine_randomx_entropy_fixture"),
 	{ok, FileData} = file:read_file(Path),
 	ar_util:decode(FileData).

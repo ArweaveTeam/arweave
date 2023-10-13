@@ -1,6 +1,7 @@
 -module(ar_multiple_txs_per_wallet_tests).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -693,7 +694,7 @@ joins_network_successfully() ->
 						false ->
 							?assertMatch({ok, {{<<"400">>, _}, _,
 									<<"Invalid anchor (last_tx).">>, _, _}}, Reply)
-					end	
+					end
 			end
 		end,
 		TXs
@@ -732,9 +733,11 @@ recovers_from_forks(ForkHeight) ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
 	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
+	{ok, Config} = application:get_env(arweave, config),
+	MasterPort = Config#config.port,
 	PreForkTXs = lists:foldl(
 		fun(Height, TXs) ->
 			TX = sign_v1_tx(Key, #{ last_tx => get_tx_anchor(),
@@ -833,9 +836,9 @@ recovers_from_forks(ForkHeight) ->
 			{ok, {{<<"208">>, _}, _, <<"Transaction already processed.">>, _, _}} =
 				ar_http:req(#{
 					method => post,
-					peer => {127, 0, 0, 1, 1984},
+					peer => {127, 0, 0, 1, MasterPort},
 					path => "/tx",
-					headers => [{<<"X-P2p-Port">>, <<"1984">>}],
+					headers => [{<<"X-P2p-Port">>, integer_to_binary(MasterPort, 10)}],
 					body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 				})
 		end,

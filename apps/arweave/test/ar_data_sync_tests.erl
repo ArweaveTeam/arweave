@@ -1087,23 +1087,26 @@ build_proofs(TX, Chunks, TXs, BlockStartOffset, Height) ->
 	).
 
 get_tx_offset(TXID) ->
+  {ok, Config} = application:get_env(arweave, config),
 	ar_http:req(#{
 		method => get,
-		peer => {127, 0, 0, 1, 1984},
+		peer => {127, 0, 0, 1, Config#config.port},
 		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/offset"
 	}).
 
 get_tx_data(TXID) ->
+  {ok, Config} = application:get_env(arweave, config),
 	ar_http:req(#{
 		method => get,
-		peer => {127, 0, 0, 1, 1984},
+		peer => {127, 0, 0, 1, Config#config.port},
 		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
 	}).
 
 get_tx_offset_from_slave(TXID) ->
+  {ok, Config} = slave_call(application, get_env, [arweave, config]),
 	ar_http:req(#{
 		method => get,
-		peer => {127, 0, 0, 1, 1983},
+		peer => {127, 0, 0, 1, Config#config.port},
 		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/offset"
 	}).
 

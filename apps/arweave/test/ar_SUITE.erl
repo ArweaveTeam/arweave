@@ -49,7 +49,7 @@
 %% default data values, not perform any other operations.
 %%--------------------------------------------------------------------
 suite() ->
-	[{timetrap, {seconds, 30}}].
+	[{timetrap, {seconds, 300}}].
 
 %%--------------------------------------------------------------------
 %% Function: init_per_suite(Config0) ->
@@ -68,8 +68,10 @@ suite() ->
 init_per_suite(Config) ->
 	%% Clean the data dir before we start this suite if it hasn't been yet for some reason.
 	os:cmd("rm -r " ++ ?config(data_dir, Config) ++ "/*"),
-	Slave = start_slave_node(),
-	[{slave, Slave} | Config].
+	Slave = start_slave_node(Config),
+	SlavePort = ar_test_node:get_unused_port(),
+	MasterPort = ar_test_node:get_unused_port(),
+	[{slave, Slave}, {slave_port, SlavePort}, {master_port, MasterPort} | Config].
 
 %%--------------------------------------------------------------------
 %% Function: end_per_suite(Config0) -> term() | {save_config, Config1}
@@ -216,19 +218,41 @@ events_process_terminated(Config) -> ar_test_events:process_terminated(Config).
 %%% Private functions.
 %%%===================================================================
 
-start_slave_node() ->
-	{ok, Slave} = ct_slave:start('slave', [{monitor_master, true}]),
-	ok = ct_rpc:call(Slave, code, add_pathsz, [code:get_path()]),
-	Slave.
+start_slave_node(Config) ->
+    start_slave_node(Config, 1).
+
+start_slave_node(_, Attempts) when Attempts > 100 ->
+    error(too_many_attempts_to_start_slave_node);
+
+start_slave_node(Config, Attempts) ->
+		Config1 = case ?config(slave, Config) of
+    	undefined -> [{slave, list_to_atom(ar_test_node:generate_slave_node_name())} | Config];
+    	_ -> Config
+		end,
+		ct:print("Starting slave node ~p~n", [?config(slave, Config1)]),
+    case ct_slave:start(?config(slave, Config1), [{monitor_master, true}]) of
+        {ok, Slave} ->
+						ct:print("RPC slave node ~p~n", [Slave]),
+            ok = ct_rpc:call(Slave, code, add_pathsz, [code:get_path()]),
+            Slave;
+        {error, boot_timeout, _Reason} ->
+            %% Retry because of strangeness in CI pipeline
+            timer:sleep(1000),
+            start_slave_node(Config1, Attempts + 1);
+        {error, OtherReason} ->
+            error({failed_to_start_slave_node, OtherReason})
+    end.
 
 stop_slave_node(Config) ->
+	rpc:call(?config(slave, Config), init, stop, []),
 	ct_slave:stop(?config(slave, Config)).
 
 start_master_application(Config) ->
 	ApplicationConfig = #config{
 		start_from_latest_state = true,
 		data_dir = ?config(data_dir, Config) ++ "master",
-		metrics_dir = "metrics_master"
+		metrics_dir = "metrics_master",
+		port = ?config(master_port, Config)
 	},
 	ok = application:set_env(arweave, config, ApplicationConfig),
 	ar_storage:ensure_directories(ApplicationConfig#config.data_dir),
@@ -246,8 +270,8 @@ stop_master_application(Config) ->
 start_slave_application(Config) ->
 	ApplicationConfig = #config{
 		start_from_latest_state = false,
-		port = 1983,
-		peers = [{127, 0, 0, 1, 1984}],
+		port = ?config(slave_port, Config),
+		peers = [{127, 0, 0, 1, ?config(master_port, Config)}],
 		data_dir = ?config(data_dir, Config) ++ "slave",
 		metrics_dir = "metrics_slave"
 	},
@@ -261,7 +285,7 @@ start_slave_application(Config, ApplicationConfig) ->
 	Config.
 
 stop_slave_application(Config) ->
-	Slave = ?config(slave, Config),
+	Slave = ?config(test_slave_node_name, Config),
 	ct_rpc:call(Slave, ar_test_lib, stop_test_application, []).
 
 write_genesis_files(DataDir, B0) ->

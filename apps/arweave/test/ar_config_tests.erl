@@ -125,7 +125,7 @@ parse_config() ->
 	}, ParsedConfig).
 
 config_fixture() ->
-	Dir = filename:dirname(?FILE),
-	Path = filename:join(Dir, "ar_config_tests_config_fixture.json"),
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/ar_config_tests_config_fixture.json"),
 	{ok, FileData} = file:read_file(Path),
 	FileData.

@@ -6,7 +6,7 @@
 -import(ar_test_node, [
 		start/1, slave_start/0, slave_start/1, start/2, slave_start/2, connect_to_slave/0,
 		slave_peer/0, master_peer/0, disconnect_from_slave/0, assert_post_tx_to_slave/1,
-		slave_mine/0, assert_slave_wait_until_height/1, wait_until_height/1,
+		slave_mine/0, assert_slave_wait_until_height/1, wait_until_height/1, rejoin_on_slave/0,
 		slave_wait_until_height/1, sign_tx/2, read_block_when_stored/1, slave_call/3]).
 
 height_plus_one_fork_recovery_test_() ->
@@ -15,8 +15,10 @@ height_plus_one_fork_recovery_test_() ->
 test_height_plus_one_fork_recovery() ->
 	%% Mine on two nodes until they fork. Mine an extra block on one of them.
 	%% Expect the other one to recover.
-	{_SlaveNode, B0} = slave_start(),
-	{_MasterNode, B0} = start(B0),
+	{_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
+	{_, B0} = start(B0),
+	slave_start(B0),
 	disconnect_from_slave(),
 	slave_mine(),
 	assert_slave_wait_until_height(1),
@@ -31,7 +33,7 @@ test_height_plus_one_fork_recovery() ->
 	wait_until_height(3),
 	slave_mine(),
 	assert_slave_wait_until_height(3),
-	connect_to_slave(),
+	rejoin_on_slave(),
 	slave_mine(),
 	SlaveBI = slave_wait_until_height(4),
 	?assertEqual(SlaveBI, wait_until_height(4)).
@@ -42,8 +44,10 @@ height_plus_three_fork_recovery_test_() ->
 test_height_plus_three_fork_recovery() ->
 	%% Mine on two nodes until they fork. Mine three extra blocks on one of them.
 	%% Expect the other one to recover.
-	{_SlaveNode, B0} = slave_start(),
-	{_MasterNode, B0} = start(B0),
+	{_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
+	start(B0),
+	slave_start(B0),
 	disconnect_from_slave(),
 	slave_mine(),
 	assert_slave_wait_until_height(1),
@@ -57,7 +61,7 @@ test_height_plus_three_fork_recovery() ->
 	wait_until_height(3),
 	slave_mine(),
 	assert_slave_wait_until_height(3),
-	connect_to_slave(),
+	rejoin_on_slave(),
 	ar_node:mine(),
 	MasterBI = wait_until_height(4),
 	?assertEqual(MasterBI, slave_wait_until_height(4)).
@@ -71,14 +75,14 @@ test_missing_txs_fork_recovery() ->
 	%% is expected fetch the missing transaction and apply the block.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	{_SlaveNode, _} = slave_start(B0),
-	{_MasterNode, _} = start(B0),
+	start(B0),
+	slave_start(B0),
 	disconnect_from_slave(),
 	TX1 = sign_tx(Key, #{}),
 	assert_post_tx_to_slave(TX1),
 	%% Wait to make sure the tx will not be gossiped upon reconnect.
 	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
-	connect_to_slave(),
+	rejoin_on_slave(),
 	?assertEqual([], ar_mempool:get_all_txids()),
 	slave_mine(),
 	[{H1, _, _} | _] = wait_until_height(1),
@@ -93,8 +97,8 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	%% assert the transaction is re-mined.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	{_SlaveNode, _} = slave_start(B0),
-	{_MasterNode, _} = start(B0),
+	start(B0),
+	slave_start(B0),
 	disconnect_from_slave(),
 	TX = #tx{ id = TXID } = sign_tx(Key, #{ denomination => 1, reward => ?AR(1) }),
 	assert_post_tx_to_slave(TX),
@@ -130,8 +134,8 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Copy the key because we mine blocks on both nodes using the same key in this test.
 	{ok, _} = file:copy(Path, SlavePath),
 	[B0] = ar_weave:init([]),
-	{_SlaveNode, B0} = slave_start(B0, RewardAddr),
-	{_MasterNode, B0} = start(B0, RewardAddr),
+	start(B0, RewardAddr),
+	slave_start(B0, RewardAddr),
 	disconnect_from_slave(),
 	slave_mine(),
 	[{H1, _, _} | _] = slave_wait_until_height(1),

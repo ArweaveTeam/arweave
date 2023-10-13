@@ -9,7 +9,7 @@ let
     sha256 = "sha256-8DFJjXG8zqoONA1vXtgeKXy68KdJL5UaXR8NtVMUbx8=";
   };
 
-  inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
+  inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreFilterWith;
   inherit (pkgs) stdenv lib beamPackages fetchFromGitHub fetchFromGitLab fetchHex;
 
   randomx = fetchFromGitHub {
@@ -301,11 +301,12 @@ let
 
       PATH=
       ROOT_DIR=
+      PROFILE_DIR=
 
       cd $ROOT_DIR
       export ERL_EPMD_ADDRESS=127.0.0.1
 
-      erl -pa $(echo $ROOT_DIR/lib/*/ebin) \
+      erl -pa $(echo $PROFILE_DIR/lib/*/ebin) \
         -noshell \
         -config config/sys.config \
         -name stopper@127.0.0.1 \
@@ -321,6 +322,7 @@ let
 
       PATH=
       ROOT_DIR=
+      PROFILE_DIR=
 
       ERL_CRASH_DUMP=$(pwd)/erl_crash.dump
       cd $ROOT_DIR
@@ -334,7 +336,7 @@ let
       : "''${ERL_EPMD_ADDRESS:=127.0.0.1}"
       export ERL_EPMD_ADDRESS
 
-      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $ROOT_DIR/lib/*/ebin) \
+      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $PROFILE_DIR/lib/*/ebin) \
        -config $ROOT_DIR/config/sys.config \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
@@ -348,9 +350,10 @@ let
 
       PATH=
       ROOT_DIR=
+      PROFILE_DIR=
 
       ERL_CRASH_DUMP=$(pwd)/erl_crash.dump
-      cd $ROOT_DIR
+      cd $PROFILE_DIR
       $ROOT_DIR/bin/check-nofile
       if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
         RANDOMX_JIT="disable randomx_jit"
@@ -366,105 +369,191 @@ let
       export BINDIR=$ROOT_DIR/erts/bin
       export EMU="beam"
       export TERM="dumb"
-      BOOTFILE=$(echo $ROOT_DIR/releases/*/start.boot | sed -e "s/\.boot$//")
+      BOOTFILE=$(echo $PROFILE_DIR/releases/*/start.boot | sed -e "s/\.boot$//")
 
       erlexec -noinput +Bd -boot "$BOOTFILE" \
        -config $ROOT_DIR/config/sys.config \
        -mode embedded \
-       +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $ROOT_DIR/lib/*/ebin) \
+       +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $PROFILE_DIR/lib/*/ebin) \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
     '';
   };
 
+  arweaveSources = ../.;
+  sourcesFilter = src:
+    let
+      srcIgnored = gitignoreFilterWith {
+        basePath = src;
+        extraRules = ''
+          .github/*
+          doc
+        '';
+      };
+    in
+    path: type:
+      srcIgnored path type;
 
+  arweaveVersion = "2.6.10";
+
+  mkArweaveApp = { installPhase, profile, releaseType }:
+    beamPackages.rebar3Relx {
+      inherit profile releaseType;
+      pname = "arweave-${profile}";
+      version = arweaveVersion;
+      src = lib.cleanSourceWith {
+        filter = sourcesFilter arweaveSources;
+        src = arweaveSources;
+        name = "arweave-source";
+      };
+      plugins = [
+        pkgs.beamPackages.pc
+        rebar3_archive_plugin
+        rebar3_elvis_plugin
+      ];
+
+      doStrip = false;
+
+      nativeBuildInputs = with pkgs; [ clang-tools cmake pkg-config ];
+
+      beamDeps = [
+        beamPackages.pc
+        geas_rebar3
+        rebar3_hex
+        b64fast
+        erlang-rocksdb
+        jiffy
+        accept
+        gun
+        ranch
+        cowlib
+        meck
+        cowboy
+        quantile_estimator
+        prometheus
+        prometheus_process_collector
+        prometheus_cowboy
+        prometheus_httpd
+      ];
+
+      buildInputs = with pkgs; [
+        darwin.sigtool
+        erlang
+        git
+        gmp
+        beamPackages.pc
+        ncurses
+        which
+      ];
+
+      postConfigure = ''
+        rm -rf apps/arweave/lib/RandomX
+        mkdir -p apps/arweave/lib/RandomX
+        cp -rf ${randomx}/* apps/arweave/lib/RandomX
+        cp -rf ${jiffy}/lib/erlang/lib/* apps/jiffy
+        cp -rf ${graphql}/lib/erlang/lib/* apps/graphql
+      '';
+
+      postPatch = ''
+        sed -i -e 's|-arch x86_64|-arch ${pkgs.stdenv.targetPlatform.linuxArch}|g' \
+          apps/arweave/c_src/Makefile \
+          apps/ar_sqlite3/c_src/Makefile
+
+        sed -i -e 's|{b64fast,.*|{b64fast, "0.2.2"},|g' rebar.config
+        sed -i -e 's|{graphql,.*|{graphql_erl, "0.16.1"},|g' rebar.config
+        sed -i -e 's|{meck, "0.8.13"}||g' rebar.config
+      '';
+
+      installPhase = ''
+        ${installPhase}
+        # broken symlinks fixup
+        rm -f $out/${profile}/rel/arweave/releases/*/{sys.config,vm.args.src}
+        ln -s $out/config/{sys.config,vm.args.src} $out/${profile}/rel/arweave/releases/*/
+
+        rm -f $out/${profile}/lib/arweave/{include,priv,src}
+        ln -s $out/${profile}/rel/arweave/lib/arweave-*/{include,priv,src} $out/${profile}/lib/arweave
+
+        rm -f $out/${profile}/lib/ar_sqlite3/{include,priv,src}
+        ln -s $out/${profile}/rel/arweave/lib/ar_sqlite3-*/{include,priv,src} $out/${profile}/lib/ar_sqlite3
+
+        rm -f $out/${profile}/lib/graphql/{include,priv,src}
+        ln -s $out/${profile}/rel/arweave/lib/graphql-*/{include,priv,src} $out/${profile}/lib/graphql
+
+        rm -f $out/${profile}/lib/jiffy/{include,priv,src}
+        ln -s $out/${profile}/rel/arweave/lib/jiffy-*/{include,priv,src} $out/${profile}/lib/jiffy
+
+        rm -rf $out/${profile}/rel/arweave/lib/jiffy-*/priv
+        cp -rf ${jiffy}/lib/erlang/lib/jiffy-*/priv $out/${profile}/rel/arweave/lib/jiffy-*
+
+        rm -rf $out/${profile}/rel/arweave/lib/arweave-*/priv
+        cp -rf ./apps/arweave/priv $out/${profile}/rel/arweave/lib/arweave-*
+
+        rm -rf $out/${profile}/rel/arweave/lib/ar_sqlite3-*/priv
+        cp -rf ./apps/ar_sqlite3/priv $out/${profile}/rel/arweave/lib/ar_sqlite3-*
+      '';
+    };
+
+  arweaveTestProfile = mkArweaveApp {
+    profile = "test";
+    releaseType = "release";
+    installPhase = ''
+      mkdir $out; cp -rf ./_build/test $out
+      cp -r ./config $out
+      ln -s ${meck}/lib/erlang/lib/meck-${meck.version} $out/test/rel/arweave/lib/
+
+      ARWEAVE_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/arweave-*))
+      AR_SQLITE_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/ar_sqlite3-*))
+      GRAPHQL_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/graphql-*))
+      JIFFY_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/jiffy-*))
+
+      rm -f $out/test/rel/arweave/lib/arweave-*
+      rm -f $out/test/rel/arweave/lib/ar_sqlite3-*
+      rm -f $out/test/rel/arweave/lib/graphql-*
+      rm -f $out/test/rel/arweave/lib/jiffy-*
+
+      ln -s $out/test/lib/arweave $out/test/rel/arweave/lib/$ARWEAVE_LIB_PATH
+      ln -s $out/test/lib/ar_sqlite3 $out/test/rel/arweave/lib/$AR_SQLITE_LIB_PATH
+      ln -s $out/test/lib/graphql $out/test/rel/arweave/lib/$GRAPHQL_LIB_PATH
+      ln -s $out/test/lib/jiffy $out/test/rel/arweave/lib/$JIFFY_LIB_PATH
+    '';
+  };
+  arweaveProdProfile = mkArweaveApp {
+    profile = "prod";
+    releaseType = "release";
+    installPhase = ''
+      mkdir -p $out/bin; cp -rf ./_build/prod $out
+      cp ${startScript.outPath} $out/bin/start-nix
+      cp ${startScriptForeground.outPath} $out/bin/start-nix-foreground
+      cp ${stopScript.outPath} $out/bin/stop-nix
+
+      chmod +xw $out/bin/start-nix
+      chmod +xw $out/bin/start-nix-foreground
+      chmod +xw $out/bin/stop-nix
+
+      sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/start-nix
+      sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix
+
+      sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix-foreground
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/start-nix-foreground
+      sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix-foreground
+
+      sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/stop-nix
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/stop-nix
+      sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/stop-nix
+
+      cp -r ./config $out
+      ln -s $out/prod/rel/arweave/erts* $out/erts
+    '';
+  };
 in
-beamPackages.rebar3Relx {
-
-  pname = "arweave";
-  version = "2.6.0";
-  src = gitignoreSource ../.;
-  profile = "prod";
-  releaseType = "release";
-  plugins = [
-    pkgs.beamPackages.pc
-    rebar3_archive_plugin
-    rebar3_elvis_plugin
+pkgs.symlinkJoin {
+  name = "arweave";
+  version = arweaveVersion;
+  paths = [
+    arweaveTestProfile
+    arweaveProdProfile
   ];
-
-  doStrip = false;
-
-  nativeBuildInputs = with pkgs; [ clang-tools cmake pkg-config ];
-
-  beamDeps = [
-    beamPackages.pc
-    geas_rebar3
-    rebar3_hex
-    b64fast
-    erlang-rocksdb
-    jiffy
-    accept
-    gun
-    ranch
-    cowlib
-    meck
-    cowboy
-    quantile_estimator
-    prometheus
-    prometheus_process_collector
-    prometheus_cowboy
-    prometheus_httpd
-  ];
-
-  buildInputs = with pkgs; [
-    darwin.sigtool
-    erlang
-    git
-    gmp
-    beamPackages.pc
-    ncurses
-    which
-  ];
-
-  postConfigure = ''
-    rm -rf apps/arweave/lib/RandomX
-    mkdir -p apps/arweave/lib/RandomX
-    cp -rf ${randomx}/* apps/arweave/lib/RandomX
-    cp -rf ${jiffy}/lib/erlang/lib/* apps/jiffy
-    cp -rf ${graphql}/lib/erlang/lib/* apps/graphql
-  '';
-
-  postPatch = ''
-    sed -i -e 's|-arch x86_64|-arch ${pkgs.stdenv.targetPlatform.linuxArch}|g' \
-      apps/arweave/c_src/Makefile \
-      apps/ar_sqlite3/c_src/Makefile
-
-    sed -i -e 's|{b64fast,.*|{b64fast, "0.2.2"},|g' rebar.config
-    sed -i -e 's|{graphql,.*|{graphql_erl, "0.16.1"},|g' rebar.config
-  '';
-
-  installPhase = ''
-    mkdir $out; cp -rf ./_build/prod/rel/arweave/* $out
-    cp ${startScript.outPath} $out/bin/start-nix
-    cp ${startScriptForeground.outPath} $out/bin/start-nix-foreground
-    cp ${stopScript.outPath} $out/bin/stop-nix
-
-    chmod +xw $out/bin/start-nix
-    chmod +xw $out/bin/start-nix-foreground
-    chmod +xw $out/bin/stop-nix
-
-    sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix
-    sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix
-
-    sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix-foreground
-    sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix-foreground
-
-    sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/stop-nix
-    sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/stop-nix
-
-    cp -r ./config $out
-
-    ln -s $out/erts* $out/erts
-  '';
-
 }
+
+

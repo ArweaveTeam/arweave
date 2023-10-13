@@ -1,24 +1,159 @@
 name: "Arweave Tests"
 on:
+  workflow_dispatch:
   push:
     branches: ["**"]
 jobs:
-  test:
-    runs-on:
-      labels: ubuntu-latest-16-cores
+  common-test-suite:
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v2.3.4
+      - uses: actions/checkout@v4
         with:
           submodules: "recursive"
-      - uses: erlef/setup-beam@v1
-        with:
-          otp-version: "24.3"
-          rebar3-version: "3.20.0"
-      - name: Install linux dependencies
-        run: sudo apt-get install -y sqlite3 libgmp-dev
-      - name: Start empd
-        run: epmd -daemon
+      - name: Build arweave test sources
+        run: |
+          nix build .#packages.x86_64-linux.arweave
+          cp -Lr result _build
+          chmod -R u+w ./_build
+      - name: Start empd if needed
+        run: |
+          if ! pgrep -x "epmd" > /dev/null
+          then
+            epmd -relaxed_command_check -packet_timeout 30 -daemon
+          fi
       - name: CommonTest Suite
-        run: rebar3 ct --cover --sname=master@localhost
-      - name: Run Arweave Tests
-        run: ./bin/test
+        run: |
+          export PATH=$(pwd)/_build/erts/bin:$PATH
+          ct_run -dir ./_build/test/lib/arweave/test \
+            -noinput -no_auto_compile -logopts no_src \
+            -include $(pwd)/_build/test/lib/arweave/include \
+            -config $(pwd)/config/sys.config \
+            -pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) \
+            -suite "ar_SUITE.erl" \
+            -sname master
+  eunit-tests:
+    runs-on: self-hosted
+    needs: common-test-suite
+    strategy:
+      fail-fast: true
+      max-parallel: 6
+      matrix:
+        core_test_mod: [
+            ar,
+            ar_block,
+            ar_block_cache,
+            ar_chunk_storage,
+            ar_data_sync_worker_master,
+            ar_deep_hash,
+            ar_diff_dag,
+            ar_ets_intervals,
+            ar_inflation,
+            ar_intervals,
+            ar_join,
+            ar_kv,
+            ar_merkle,
+            ar_mining_server,
+            ar_node,
+            ar_node_utils,
+            ar_nonce_limiter,
+            ar_packing_server,
+            ar_patricia_tree,
+            ar_peers,
+            ar_poa,
+            ar_pricing,
+            ar_retarget,
+            ar_serialize,
+            ar_storage,
+            ar_sync_buckets,
+            ar_tx,
+            ar_tx_db,
+            ar_unbalanced_merkle,
+            ar_util,
+            ar_weave,
+
+            ## Note, that _tests are implicitly run by a matching prefix name
+            ar_base64_compatibility_tests,
+            ar_config_tests,
+            ar_data_sync_tests,
+            ar_difficulty_tests,
+            ar_fork_recovery_tests,
+            ar_gateway_middleware_tests,
+            ar_header_sync_tests,
+            ar_http_iface_tests,
+            ar_http_util_tests,
+            ar_mempool_tests,
+            ar_mine_randomx_tests,
+            ar_mine_vdf_tests,
+            ar_multiple_txs_per_wallet_tests,
+            # ar_node_tests, ## implicitly runs from ar_node
+            # ar_poa_tests, ## implicitly runs from ar_poa
+            ar_poller_tests,
+            ar_post_block_tests,
+            # ar_pricing_tests, ## implicitly runs from ar_pricing
+            ar_semaphore_tests,
+            ar_tx_blacklist_tests,
+            ar_tx_replay_pool_tests,
+            ar_vdf_server_tests,
+            ar_vdf_tests,
+            ar_wallet_tests,
+            ar_webhook_tests,
+          ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: Build arweave test sources
+        run: |
+          rm -rf .tmp _build || true
+          nix build .#packages.x86_64-linux.arweave
+          cp -Lr result _build
+          chmod -R u+w ./_build
+      - name: Start empd if needed
+        run: |
+          if ! pgrep -x "epmd" > /dev/null
+          then
+            epmd -relaxed_command_check -packet_timeout 30 -daemon
+          fi
+      - name: ${{ matrix.core_test_mod }}.erl
+        run: |
+          set -e
+          EXIT_CODE=0
+          echo -e "\033[0;32m===> Running tests...\033[0m"
+          export PATH=$(pwd)/_build/erts/bin:$PATH
+          export ERL_EPMD_ADDRESS=127.0.0.1
+          export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) $(pwd)/_build/test/lib/arweave/test -config $(pwd)/_build/config/sys.config"
+          RETRYABLE=1
+          while [[ $RETRYABLE -eq 1 ]]; do
+            RETRYABLE=0
+            erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee master.out &
+            ERL_MASTER_PID=$! # capture PID of the master background process
+            wait $ERL_MASTER_PID || EXIT_CODE=$?
+            kill -9 $ERL_MASTER_PID > /dev/null 2>&1 || true
+            # For debugging purposes, print the slave output if the tests failed
+            if [[ $EXIT_CODE -ne 0 ]]; then
+              if [[ -e slave.out ]]; then
+                first_line_slave=$(head -n 1 slave.out)
+                first_line_master=$(head -n 1 master.out)
+                # Check if it is a retryable error
+                if [[ "$first_line_slave" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
+                  echo "Retrying test because of inet_tcp error..."
+                  RETRYABLE=1
+                  sleep 1
+                elif [[ "$first_line_slave" == "Protocol 'inet_tcp': the name"* ]]; then
+                  echo "Retrying test because of inet_tcp clash..."
+                  RETRYABLE=1
+                  sleep 1
+                elif [[ "$first_line_master" == "econnrefused"* ]]; then
+                  echo "Retrying test because of econnrefused..."
+                  RETRYABLE=1
+                  sleep 1
+                else
+                  echo -e "\033[0;31m===> Test failed, printing the slave node's output...\033[0m"
+                  cat slave.out
+                fi
+              else
+                echo -e "\033[0;31m===> Test failed without slave output...\033[0m"
+              fi
+            fi
+          done
+          exit $EXIT_CODE # exit with the exit code of the tests

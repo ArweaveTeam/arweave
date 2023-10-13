@@ -640,13 +640,13 @@ req(Scheme, Host, Path) ->
 	end.
 
 index_manifest_fixture() ->
-	Dir = filename:dirname(?FILE),
-	Path = filename:join(Dir, "ar_gateway_middleware_tests_index_manifest_fixture.json"),
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/ar_gateway_middleware_tests_index_manifest_fixture.json"),
 	{ok, FileData} = file:read_file(Path),
 	FileData.
 
 listing_manifest_fixture() ->
-	Dir = filename:dirname(?FILE),
-	Path = filename:join(Dir, "ar_gateway_middleware_tests_listing_manifest_fixture.json"),
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/ar_gateway_middleware_tests_listing_manifest_fixture.json"),
 	{ok, FileData} = file:read_file(Path),
 	FileData.
