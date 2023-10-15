@@ -227,7 +227,7 @@ clean_up_and_stop() ->
 		fun	("wallets") ->
 				ok;
 			(Entry) ->
-				file:del_dir_r(filename:join(Config#config.data_dir, Entry))
+				ok = file:del_dir_r(filename:join(Config#config.data_dir, Entry))
 		end,
 		Entries
 	).
@@ -913,9 +913,9 @@ wait_until_node_is_ready(NodeName) ->
     ).
 
 wait_until_mining_paused() ->
-	%% give time for all messages in message queues to be processed into the task queue, then
-	%% start the wait loop.
-	timer:sleep(2000),
+	%% give time for all messages in message queues to be processed into the task queue
+	timer:sleep(3000),
+	%% wait until all messages in the task queue have been processed
 	ar_util:do_until(
 		fun() ->
 			case ar_mining_server:get_task_queue_len() of
@@ -927,7 +927,9 @@ wait_until_mining_paused() ->
 		end,
 		1000,
 		60 * 1000
-	).
+	),
+	%% wait one last time to ensure any tasks in process have completed
+	timer:sleep(3000).
 
 assert_wait_until_receives_txs(TXs) ->
 	?assertEqual(ok, wait_until_receives_txs(TXs)).

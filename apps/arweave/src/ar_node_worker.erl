@@ -508,7 +508,7 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 	Diff = get_current_diff(Timestamp),
 	PassesDiffCheck = PassesKeyCheck andalso binary:decode_unsigned(SolutionH, big) > Diff,
 
-	%% Check that solution is laster than the previous solution on the timeline
+	%% Check that solution is later than the previous solution on the timeline
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
 			output = NonceLimiterOutput,
@@ -673,7 +673,7 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 			H = ar_block:indep_hash2(SignedH, Signature),
 			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
-			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
+			?LOG_DEBUG([{event, mined_block}, {indep_hash, ar_util:encode(H)},
 					{solution, ar_util:encode(SolutionH)}, {height, Height},
 					{txs, length(B#block.txs)},
 					{chunks, 
@@ -681,16 +681,8 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 							undefined -> 1;
 							_ -> 2
 						end}]),
-			PrevBlocks = [PrevB],
-			[{_, RecentBI}] = ets:lookup(node_state, recent_block_index),
-			RecentBI2 = [block_index_entry(B) | RecentBI],
-			[{_, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
-			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
 			ar_block_cache:add(block_cache, B),
-			State2 = apply_validated_block(State, B, PrevBlocks, [], RecentBI2, BlockTXPairs2),
-			%% Won't be received by itself, but we should let know all "block" subscribers.
-			ar_events:send(block, {new, B, #{ source => miner }}),
-			{noreply, State2};
+			apply_block(State);
 		_Steps ->
 			?LOG_ERROR([{event, bad_steps},
 					{prev_block, ar_util:encode(PrevH)},
@@ -749,31 +741,6 @@ handle_info({event, block, {new, B, _Source}}, State) ->
 		_ ->
 			%% The block's already received from a different peer or
 			%% fetched by ar_poller.
-			{noreply, State}
-	end;
-
-handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
-	case ets:lookup(node_state, recent_block_index) of
-		[{recent_block_index, [{CurrentBH, _, _} | _] = RecentBI}] ->
-			[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
-			[{current, Current}] = ets:lookup(node_state, current),
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-					Block#block.height),
-			B = Block#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
-			ar_watchdog:mined_block(B#block.indep_hash, B#block.height,
-					B#block.previous_block),
-			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(B#block.indep_hash)},
-				{solution, ar_util:encode(B#block.hash)}, {txs, length(TXs)}]),
-			PrevBlocks = [ar_block_cache:get(block_cache, Current)],
-			RecentBI2 = [block_index_entry(B) | RecentBI],
-			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
-			ar_block_cache:add(block_cache, B),
-			State2 = apply_validated_block(State, B, PrevBlocks, [], RecentBI2, BlockTXPairs2),
-			%% Won't be received by itself, but we should let know all "block" subscribers.
-			ar_events:send(block, {new, Block#block{ txs = TXs }, #{ source => miner }}),
-			{noreply, State2};
-		_ ->
-			?LOG_INFO([{event, ignore_mined_block}, {reason, accepted_foreign_block}]),
 			{noreply, State}
 	end;
 
@@ -1009,6 +976,8 @@ apply_block(State) ->
 				true ->
 					{noreply, State};
 				false ->
+					?LOG_DEBUG([{event, schedule_nonce_limiter_validation},
+						{block, ar_util:encode(B#block.indep_hash)}]),
 					request_nonce_limiter_validation(B, PrevB),
 					{noreply, State#{ nonce_limiter_validation_scheduled => true }}
 			end;
@@ -1026,6 +995,8 @@ apply_block(B, PrevBlocks, Timestamp, State) ->
 	#{ blocks_missing_txs := BlocksMissingTXs } = State,
 	case sets:is_element(B#block.indep_hash, BlocksMissingTXs) of
 		true ->
+			?LOG_DEBUG([{event, block_is_missing_txs},
+					{block, ar_util:encode(B#block.indep_hash)}]),
 			%% We do not have some of the transactions from this block,
 			%% searching for them at the moment.
 			{noreply, State};
@@ -1454,6 +1425,13 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
 	end.
 
 apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
+	?LOG_DEBUG([{event, apply_validated_block}, {block, ar_util:encode(B#block.indep_hash)}]),
+	case ar_watchdog:is_mined_block(B) of
+		true ->
+			ar_events:send(block, {new, B, #{ source => miner }});
+		false ->
+			ok
+	end,
 	[{_, CDiff}] = ets:lookup(node_state, cumulative_diff),
 	B2 =
 		case B#block.height + 1 == ar_fork:height_2_6() of

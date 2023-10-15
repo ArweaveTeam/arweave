@@ -8,7 +8,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, started_hashing/0, block_received_n_confirmations/2, mined_block/3]).
+-export([start_link/0, started_hashing/0, block_received_n_confirmations/2, mined_block/3,
+			is_mined_block/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -32,6 +33,9 @@ block_received_n_confirmations(BH, Height) ->
 
 mined_block(BH, Height, PrevH) ->
 	gen_server:cast(?MODULE, {mined_block, BH, Height, PrevH}).
+
+is_mined_block(Block) ->
+	gen_server:call(?MODULE, {is_mined_block, Block#block.indep_hash}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -78,6 +82,9 @@ init([]) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_call({is_mined_block, H}, _From, State) ->
+	{reply, lists:member(H, maps:values(State#state.mined_blocks)), State};
+
 handle_call(Request, _From, State) ->
 	?LOG_ERROR([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.

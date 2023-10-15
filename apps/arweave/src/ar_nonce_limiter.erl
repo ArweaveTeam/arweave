@@ -1162,6 +1162,8 @@ cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	#state{ session_by_key = SessionByKey, sessions = Sessions } = State,
 	{NextSeed, Interval} = SessionKey,
 	may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, Session#vdf_session.step_number),
+	?LOG_DEBUG([{event, add_session}, {next_seed, ar_util:encode(NextSeed)}, {interval, Interval},
+		{step_number, Session#vdf_session.step_number}]),
 	SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
 	%% If Session exists, then {Interval, NextSeed} will already exist in the Sessions set and
 	%% gb_sets:add_element will not cause a change.
