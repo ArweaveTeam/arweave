@@ -2495,7 +2495,8 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 						end
 				end
 		end,
-	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)}]),
+	?LOG_INFO([{event, received_block}, {block, ar_util:encode(B#block.indep_hash)},
+		{peer, ar_util:format_peer(Peer)}]),
 	BodyReadTime = ar_http_req:body_read_time(Req),
 	case ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp) of
 		ok ->
@@ -3082,10 +3083,7 @@ handle_mining_h2(Req, Pid) ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
 					Candidate = ar_serialize:json_struct_to_candidate(JSON),
-					?LOG_INFO([
-						{event, h2_received},
-						{json, JSON}
-					]),
+					?LOG_INFO([{event, h2_received}, {peer, ar_util:format_peer(Peer)}]),
 					ar_coordination:post_solution(Peer, Candidate),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
@@ -3102,7 +3100,12 @@ handle_mining_cm_publish(Req, Pid) ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
 					Solution = ar_serialize:json_struct_to_solution(JSON),
-					ar:console("Block candidate from ~p ~n", [ar_util:format_peer(Peer)]),
+					ar:console("Block candidate ~p from ~p ~n", [
+						ar_util:encode(Solution#mining_solution.solution_hash),
+						ar_util:format_peer(Peer)]),
+					?LOG_INFO("Block candidate ~p from ~p ~n", [
+						ar_util:encode(Solution#mining_solution.solution_hash),
+						ar_util:format_peer(Peer)]),
 					ar_mining_server:post_solution(Solution),
 					{200, #{}, <<>>, Req};
 				{error, _} ->

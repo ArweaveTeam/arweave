@@ -22,6 +22,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
 %% @doc Send a JSON-encoded transaction to the given Peer.
@@ -613,6 +614,11 @@ cm_h2_send(Peer, Candidate) ->
 	})).
 
 cm_publish_send(Peer, Solution) ->
+	?LOG_DEBUG([{event, cm_publish_send}, {peer, ar_util:format_peer(Peer)},
+		{solution, ar_util:encode(Solution#mining_solution.solution_hash)},
+		{step_number, Solution#mining_solution.step_number},
+		{start_interval_number, Solution#mining_solution.start_interval_number},
+		{seed, ar_util:encode(Solution#mining_solution.seed)}]),
 	Json = ar_serialize:solution_to_json_struct(Solution),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,

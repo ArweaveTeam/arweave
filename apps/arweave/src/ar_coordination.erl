@@ -245,6 +245,9 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRe
 				mining_address = MiningAddress } = Candidate,
 			case maps:find(PartitionNumber2, State#state.peers_by_partition) of
 				{ok, List} ->
+					?LOG_DEBUG([{event, compute_h2_on_peer},
+						{expected_mining_addr, MiningAddress},
+						{encoded, ar_util:encode(MiningAddress)}]),
 					{Peer, _PartitionStart, _PartitionEnd, MiningAddress} = lists:last(List),
 					ar_http_iface_client:cm_h1_send(Peer, Candidate, H1List),
 					H1Count = length(H1List),
