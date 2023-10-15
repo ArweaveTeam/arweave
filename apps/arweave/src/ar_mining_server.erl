@@ -529,7 +529,7 @@ handle_task({chunk2, Candidate}, State) ->
 				{{chunk1, Chunk1, H1}, Map2} ->
 					%% Decrement 2 for chunk1 and chunk2:
 					%% 1. chunk1 was previously read and cached
-					%% 2. chunk2 that was just read and will shortly be use to compute h2
+					%% 2. chunk2 that was just read and will shortly be used to compute h2
 					update_chunk_cache_size(-2),
 					{Thread, Threads2} = pick_hashing_thread(Threads),
 					Thread ! {compute_h2, Candidate#mining_candidate{ chunk1 = Chunk1, h1 = H1 } },
@@ -538,7 +538,7 @@ handle_task({chunk2, Candidate}, State) ->
 				{{chunk1, H1}, Map2} ->
 					%% Decrement 1 for chunk2:
 					%% we're computing h2 for a peer so chunk1 was not previously read or cached 
-					%% on his node
+					%% on this node
 					update_chunk_cache_size(-1),
 					{Thread, Threads2} = pick_hashing_thread(Threads),
 					Thread ! {compute_h2, Candidate#mining_candidate{ h1 = H1 } },
@@ -641,7 +641,7 @@ handle_task({computed_h1, Candidate}, State) ->
 							Session2 = Session#mining_session{ chunk_cache = Map2 },
 							{noreply, State#state{ session = Session2 }};
 						{{chunk2, Chunk2}, Map2} ->
-							%% Decrement 1 for chunk1 and chunk2:
+							%% Decrement 2 for chunk1 and chunk2:
 							%% 1. chunk2 was previously read and cached
 							%% 2. chunk1 that was just read and used to compute H1
 							update_chunk_cache_size(-2),

@@ -77,7 +77,7 @@ coordinated_mining_two_chunk_concurrency_test_() ->
 
 test_coordinated_mining_two_chunk_concurrency() ->
 	%% Assert that cross-node solutions still work when two nodes are mining concurrently 
-	[Node1, Node2, _ExitNode, ValidatorNode] = start_coordinated(2),	
+	[Node1, Node2, _ExitNode, ValidatorNode] = start_coordinated(2),
 	wait_for_each_node([Node1, Node2], ValidatorNode, 0, [0, 2]),
 	assert_cache_size(0, Node1),
 	assert_cache_size(0, Node2).
@@ -123,7 +123,9 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	lists:foreach(
 		fun(Node) ->
 			[{MinerHash, _, _} | _] = wait_until_height(CurrentHeight + 1, Node),
-			?assertEqual(Hash, MinerHash)
+			Message = lists:flatten(
+				io_lib:format("Node ~p did not mine the same block as the validator node", [Node])),
+			?assertEqual(ar_util:encode(Hash), ar_util:encode(MinerHash), Message)
 		end,
 		Miners
 	),
@@ -136,4 +138,4 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 assert_cache_size(ExpectedCacheSize, Node) ->
 	ar_test_node:wait_until_mining_paused(Node),
 	[{_, Size}] = ar_test_node:remote_call(ets, lookup, [ar_mining_server, chunk_cache_size], Node),
-	?assertEqual(ExpectedCacheSize, Size).
+	?assertEqual(ExpectedCacheSize, Size, Node).

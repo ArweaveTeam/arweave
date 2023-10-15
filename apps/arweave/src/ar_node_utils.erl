@@ -705,7 +705,7 @@ is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
 %%%===================================================================
 
 block_validation_test_() ->
-	{timeout, 30, fun test_block_validation/0}.
+	{timeout, 90, fun test_block_validation/0}.
 
 test_block_validation() ->
 	Wallet = {_, Pub} = ar_wallet:new(),

@@ -227,7 +227,7 @@ clean_up_and_stop() ->
 		fun	("wallets") ->
 				ok;
 			(Entry) ->
-				file:del_dir_r(filename:join(Config#config.data_dir, Entry))
+				ok = file:del_dir_r(filename:join(Config#config.data_dir, Entry))
 		end,
 		Entries
 	).
