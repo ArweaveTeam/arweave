@@ -584,8 +584,7 @@ handle_task({computed_h0, Candidate}, State) ->
 							Range2Exists = ar_mining_io:read_recall_range(
 									chunk2, Candidate3, RecallRange2Start),
 							case Range2Exists of
-								true -> 
-									reserve_cache_space();
+								true -> reserve_cache_space();
 								false -> signal_cache_cleanup(Candidate3)
 							end;
 						false ->
@@ -748,7 +747,11 @@ evict_chunk_cache(#mining_candidate{ cache_ref = CacheRef, nonce = Nonce }, Cach
 	case maps:take({CacheRef, Nonce}, Cache) of
 		{do_not_cache, Cache2} ->
 			Cache2;
-		{_, Cache2} ->
+		{{chunk1, _}, Cache2} ->
+			Cache2;
+		{{chunk1, _, _}, Cache2} ->
+			Cache2;
+		{{chunk2, _}, Cache2} ->
 			update_chunk_cache_size(-1),
 			Cache2;
 		error ->

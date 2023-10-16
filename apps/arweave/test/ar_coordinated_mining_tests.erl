@@ -16,7 +16,7 @@ test_single_node_one_chunk_coordinated_mining() ->
 	BI = wait_until_height(1, ValidatorNode),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa)#poa.data_path) > 0),
-	assert_cache_size(0, Node).
+	assert_empty_cache(Node).
 	
 single_node_two_chunk_coordinated_mining_test_() ->
 	ar_test_node:test_with_mocked_functions([
@@ -29,7 +29,7 @@ test_single_node_two_chunk_coordinated_mining() ->
 	BI = wait_until_height(1, ValidatorNode),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa2)#poa.data_path) > 0),
-	assert_cache_size(0, Node).
+	assert_empty_cache(Node).
 
 no_exit_node_test_() ->
 	{timeout, 120, fun test_no_exit_node/0}.
@@ -55,8 +55,8 @@ test_coordinated_mining_retarget() ->
 			mine_in_parallel([Node1, Node2], ValidatorNode, Height)
 		end,
 		lists:seq(0, ?RETARGET_BLOCKS)),
-	assert_cache_size(0, Node1),
-	assert_cache_size(0, Node2).
+	assert_empty_cache(Node1),
+	assert_empty_cache(Node2).
 
 coordinated_mining_concurrency_test_() ->
 	{timeout, 120, fun test_coordinated_mining_concurrency/0}.
@@ -66,9 +66,9 @@ test_coordinated_mining_concurrency() ->
 	%% each of them are able to win a solution.
 	[Node1, Node2, Node3, _ExitNode, ValidatorNode] = start_coordinated(3),	
 	wait_for_each_node([Node1, Node2, Node3], ValidatorNode, 0, [0, 2, 4]),
-	assert_cache_size(0, Node1),
-	assert_cache_size(0, Node2),
-	assert_cache_size(0, Node3).
+	assert_empty_cache(Node1),
+	assert_empty_cache(Node2),
+	assert_empty_cache(Node3).
 
 coordinated_mining_two_chunk_concurrency_test_() ->
 	ar_test_node:test_with_mocked_functions([
@@ -79,8 +79,8 @@ test_coordinated_mining_two_chunk_concurrency() ->
 	%% Assert that cross-node solutions still work when two nodes are mining concurrently 
 	[Node1, Node2, _ExitNode, ValidatorNode] = start_coordinated(2),
 	wait_for_each_node([Node1, Node2], ValidatorNode, 0, [0, 2]),
-	assert_cache_size(0, Node1),
-	assert_cache_size(0, Node2).
+	assert_empty_cache(Node1),
+	assert_empty_cache(Node2).
 
 coordinated_mining_two_chunk_retarget_test_() ->
 	ar_test_node:test_with_mocked_functions([
@@ -95,8 +95,8 @@ test_coordinated_mining_two_chunk_retarget() ->
 		end,
 		lists:seq(0, ?RETARGET_BLOCKS)),
 	wait_for_each_node([Node1, Node2], ValidatorNode, ?RETARGET_BLOCKS, [0, 2]),
-	assert_cache_size(0, Node1),
-	assert_cache_size(0, Node2).
+	assert_empty_cache(Node1),
+	assert_empty_cache(Node2).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 	wait_for_each_node(
@@ -135,7 +135,7 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 		RecallByte2 -> ?PARTITION_NUMBER(RecallByte2)
 	end.
 
-assert_cache_size(ExpectedCacheSize, Node) ->
+assert_empty_cache(Node) ->
 	ar_test_node:wait_until_mining_paused(Node),
 	[{_, Size}] = ar_test_node:remote_call(ets, lookup, [ar_mining_server, chunk_cache_size], Node),
-	?assertEqual(ExpectedCacheSize, Size, Node).
+	?assertEqual(0, Size, Node).
