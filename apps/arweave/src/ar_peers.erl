@@ -48,7 +48,7 @@
 %% rate), a number of terms in the equation drop out and we're left with:
 %%
 %% 0.5 = (1 - Alpha) ^ N
-%% 
+%%
 %% Where N is the number of consecutive failures.
 %%
 %% Setting Alpha to 0.1 we can determine the number of consecutive failures:
@@ -63,7 +63,7 @@
 %% 1 - Alpha = 10 ^ (log(0.5) / 20)
 %% Alpha = 1 - 10 ^ (log(0.5) / 20)
 %% Alpha = 0.035
--define(SUCCESS_ALPHA, 0.035). 
+-define(SUCCESS_ALPHA, 0.035).
 %% The THROUGHPUT_ALPHA is even harder to intuit since the values being averaged can be any
 %% positive number and are not just limited to 0 or 1. Perhaps one way to think about it is:
 %% When a datapoint is first added to the average it is scaled by Alpha, and then every time
@@ -102,13 +102,13 @@
 	invalid_last_retarget,
 	invalid_difficulty,
 	invalid_cumulative_difficulty,
-	invalid_hash_preimage, 
-	invalid_nonce_limiter_seed_data, 
-	invalid_partition_number, 
-	invalid_nonce, 
-	invalid_pow, 
-	invalid_poa, 
-	invalid_poa2, 
+	invalid_hash_preimage,
+	invalid_nonce_limiter_seed_data,
+	invalid_partition_number,
+	invalid_nonce,
+	invalid_pow,
+	invalid_poa,
+	invalid_poa2,
 	invalid_nonce_limiter,
 	invalid_nonce_limiter_cache_mismatch,
 	invalid_chunk_hash,
@@ -161,7 +161,7 @@ get_peers(Ranking) ->
 
 get_peer_performances(Peers) ->
 	lists:foldl(
-		fun(Peer, Map) -> 
+		fun(Peer, Map) ->
 			Performance = get_or_init_performance(Peer),
 			maps:put(Peer, Performance, Map)
 		end,
@@ -717,14 +717,14 @@ update_rating(Peer, IsSuccess) ->
 update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, false)
   		when LatencyMilliseconds =/= undefined; DataSize =/= undefined ->
 	%% Don't credit peers for failed requests.
-	update_rating(Peer, undefined, undefined, Concurrency, false);	
+	update_rating(Peer, undefined, undefined, Concurrency, false);
 update_rating(Peer, 0, _DataSize, Concurrency, IsSuccess) ->
 	update_rating(Peer, undefined, undefined, Concurrency, IsSuccess);
 update_rating(Peer, 0.0, _DataSize, Concurrency, IsSuccess) ->
 	update_rating(Peer, undefined, undefined, Concurrency, IsSuccess);
 update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	Performance = get_or_init_performance(Peer),
-	
+
 	#performance{
 		total_bytes = TotalBytes,
 		total_throughput = TotalThroughput,
@@ -982,7 +982,7 @@ update_rating_test() ->
 
 	%% Failed transfer should impact bytes or latency
 	update_rating(Peer1, 1000, 100, 1, false),
-	assert_performance(#performance{ 
+	assert_performance(#performance{
 			average_success = 0.9312 },
 		get_or_init_performance(Peer1)),
 	?assertEqual(0, get_total_rating(lifetime)),
@@ -991,7 +991,7 @@ update_rating_test() ->
 
 	%% Test successful transfer
 	update_rating(Peer1, 1000, 100, 1, true),
-	assert_performance(#performance{ 
+	assert_performance(#performance{
 			total_bytes = 100,
 			total_throughput = 0.1,
 			total_transfers = 1,
@@ -1006,7 +1006,7 @@ update_rating_test() ->
 
 	%% Test concurrency
 	update_rating(Peer1, 1000, 50, 10, true),
-	assert_performance(#performance{ 
+	assert_performance(#performance{
 			total_bytes = 150,
 			total_throughput = 0.15,
 			total_transfers = 2,
@@ -1021,7 +1021,7 @@ update_rating_test() ->
 
 	%% With 2 peers total rating should be the sum of both
 	update_rating(Peer2, 1000, 100, 1, true),
-	assert_performance(#performance{ 
+	assert_performance(#performance{
 			total_bytes = 100,
 			total_throughput = 0.1,
 			total_transfers = 1,
@@ -1041,7 +1041,7 @@ block_rejected_test_() ->
 
 test_block_rejected() ->
 	ar_blacklist_middleware:cleanup_ban(whereis(ar_blacklist_middleware)),
-	Peer = {127,0,0,1,1985},
+	Peer = {127, 0, 0, 1, ar_test_node:get_unused_port()},
 	ar_peers:add_peer(Peer, -1),
 
 	ar_events:send(block, {rejected, invalid_signature, <<>>, Peer}),

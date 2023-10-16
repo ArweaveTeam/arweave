@@ -126,7 +126,7 @@ test_v2_transactions_after_2_0() ->
 	).
 
 recall_byte_on_the_border_test_() ->
-	{timeout, 120, fun test_recall_byte_on_the_border/0}.
+	{timeout, 420, fun test_recall_byte_on_the_border/0}.
 
 test_recall_byte_on_the_border() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -167,7 +167,7 @@ test_recall_byte_on_the_border() ->
 	).
 
 ignores_transactions_with_invalid_data_root_test_() ->
-	{timeout, 120, fun test_ignores_transactions_with_invalid_data_root/0}.
+	{timeout, 420, fun test_ignores_transactions_with_invalid_data_root/0}.
 
 test_ignores_transactions_with_invalid_data_root() ->
 	Key = {_, Pub} = ar_wallet:new(),

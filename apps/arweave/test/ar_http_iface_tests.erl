@@ -4,7 +4,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_stop/0, slave_start/1,
+-import(ar_test_node, [start/1, slave_start/1,
 		connect_to_slave/0, get_tx_anchor/0, disconnect_from_slave/0,
 		wait_until_height/1, wait_until_receives_txs/1, sign_tx/2, sign_tx/3,
 		post_tx_json_to_master/1, assert_slave_wait_until_receives_txs/1,
@@ -328,7 +328,6 @@ get_fun_msg_pair(send_tx_binary) ->
 %% to an ar_util:pmap/2 call fails the tests currently.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
-	slave_stop(),
 	ar_blacklist_middleware:reset(),
 	ar_rate_limiter:off(),
 	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
@@ -555,7 +554,7 @@ test_get_format_2_tx(_) ->
 	%% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.
 	{ok, Data} = wait_until_syncs_tx_data(TXID),
 	?assertEqual(ar_util:encode(<<"DATA">>), Data),
-	{ok, {{<<"404">>, _}, _, InvalidData, _, _}} =
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => master_peer(),

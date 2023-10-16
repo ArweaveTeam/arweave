@@ -752,26 +752,35 @@ tests() ->
 	tests(?CORE_TEST_MODS, #config{ debug = true }).
 
 tests(Mods, Config) when is_list(Mods) ->
-	start_for_tests(Config),
+	ar_test_node:boot_slave(start_for_tests(Config)),
 	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}]) of
 		ok ->
+			ar_test_node:stop_slave_node(),
 			ok;
 		_ ->
+			ar_test_node:stop_slave_node(),
 			exit(tests_failed)
 	end.
+
 
 start_for_tests() ->
 	start_for_tests(#config{}).
 
 start_for_tests(Config) ->
-	start(Config#config{
+	UniqueName = ar_test_node:generate_slave_node_name(),
+	TestConfig = Config#config{
 		peers = [],
-		data_dir = "data_test_master",
-		metrics_dir = "metrics_master",
+		data_dir = ".tmp/data_test_master_" ++ UniqueName,
+		metrics_dir = ".tmp/metrics_master_" ++ UniqueName,
+		test_slave_node_name = list_to_atom(UniqueName ++ "@127.0.0.1"),
+		test_slave_node_port = ar_test_node:get_unused_port(),
+		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
 		packing_rate = 20,
 		auto_join = false
-	}).
+	},
+	start(TestConfig),
+	TestConfig.
 
 %% @doc Run the tests for a set of module(s).
 %% Supports strings so that it can be trivially induced from a unix shell call.
@@ -784,7 +793,7 @@ tests(Args) ->
 			end,
 			Args
 		),
-	tests(Mods, #config{}).
+	tests(Mods, #config{ debug = true }).
 
 %% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
 test_ipfs() ->

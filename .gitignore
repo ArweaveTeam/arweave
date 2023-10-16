@@ -10,6 +10,7 @@ debug_logs
 apps/arweave/priv/tls
 apps/arweave/priv/*.so
 _build
+/result
 .rebar3
 apps/arweave/c_src/**/*.o
 apps/arweave/c_src/tests/tests
@@ -27,3 +28,5 @@ logs
 ebin
 metrics_*
 release/output
+.DS_Store
+.tmp

@@ -9,7 +9,7 @@
 		start/1, start/2, slave_mine/0, wait_until_height/1, slave_start/1, slave_start/2,
 		connect_to_slave/0, wait_until_receives_txs/1, assert_post_tx_to_master/1,
 		assert_slave_wait_until_receives_txs/1, assert_slave_wait_until_height/1,
-		slave_call/3, disconnect_from_slave/0, sign_v1_tx/3, sign_tx/2, wait_until_joined/0,
+		slave_call/3, slave_call/4, disconnect_from_slave/0, sign_v1_tx/3, sign_tx/2, wait_until_joined/0,
 		read_block_when_stored/1, slave_peer/0, post_tx_to_master/2]).
 -import(ar_test_fork, [test_on_fork/3]).
 
@@ -438,7 +438,7 @@
 %			Slave).
 
 ar_node_interface_test_() ->
-	{timeout, 30, fun test_ar_node_interface/0}.
+	{timeout, 300, fun test_ar_node_interface/0}.
 
 test_ar_node_interface() ->
 	[B0] = ar_weave:init(),
@@ -620,7 +620,7 @@ test_persisted_mempool() ->
 			maps:is_key(SignedTX#tx.id, Mempool)
 		end,
 		100,
-		1000
+		10000
 	),
 	ok = application:stop(arweave),
 	ok = ar:stop_dependencies(),

@@ -14,7 +14,8 @@
     let
       pkgs = import nixpkgs { inherit system; };
       arweave = pkgs.callPackage ./nix/arweave.nix { inherit pkgs; };
-    in {
+    in
+    {
       packages = utils.lib.flattenTree {
         inherit arweave;
       };

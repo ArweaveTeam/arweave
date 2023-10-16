@@ -41,7 +41,7 @@ cleanup({Config, SlaveConfig}) ->
 %%
 %% test_vdf_server_push_slow_block tests that the VDF server can handle receiving
 %% a block that is behind in the VDF chain: specifically:
-%%   
+%%
 vdf_server_push_test_() ->
     {foreach,
 		fun setup/0,
@@ -107,6 +107,7 @@ handle([<<"vdf">>], Req, State) ->
 	end.
 
 test_vdf_server_push_fast_block() ->
+	VdfPort = ar_test_node:get_unused_port(),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -118,13 +119,13 @@ test_vdf_server_push_fast_block() ->
 	{ok, Config} = application:get_env(arweave, config),
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1986" ]}),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VdfPort) ]}),
 
 	%% Setup a server to listen for VDF pushes
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
 		ar_vdf_server_test_listener,
-		[{port, 1986}],
+		[{port, VdfPort}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
 
@@ -213,6 +214,7 @@ test_vdf_server_push_slow_block() ->
 	cowboy:stop_listener(ar_vdf_server_test_listener).
 
 test_vdf_client_fast_block() ->
+	{ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -229,16 +231,16 @@ test_vdf_client_fast_block() ->
 	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
 	slave_stop(),
 
+
 	%% Restart the slave as a VDF client
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
 	slave_start(
 		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ] }),
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ] }),
 	%% Start the master as a VDF server
-	{ok, Config} = application:get_env(arweave, config),
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1983" ]}),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port) ]}),
 	connect_to_slave(),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -258,6 +260,7 @@ test_vdf_client_fast_block() ->
 	BI = assert_slave_wait_until_height(1).
 
 test_vdf_client_fast_block_pull_interface() ->
+  {ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -278,13 +281,12 @@ test_vdf_client_fast_block_pull_interface() ->
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
 	slave_start(
 		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ],
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ],
 				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
 	%% Start the master as a VDF server
-	{ok, Config} = application:get_env(arweave, config),
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1983" ]}),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port) ]}),
 	connect_to_slave(),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -304,6 +306,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	BI = assert_slave_wait_until_height(1).
 
 test_vdf_client_slow_block() ->
+	{ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -323,12 +326,15 @@ test_vdf_client_slow_block() ->
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
 	slave_start(
 		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ] }),
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [
+			"127.0.0.1:" ++ integer_to_list(Config#config.port)
+		] }),
 	%% Start the master as a VDF server
-	{ok, Config} = application:get_env(arweave, config),
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1983" ]}),
+		Config#config{ nonce_limiter_client_peers = [
+			"127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port)
+		]}),
 	connect_to_slave(),
 	timer:sleep(10000),
 
@@ -338,6 +344,7 @@ test_vdf_client_slow_block() ->
 	BI = assert_slave_wait_until_height(1).
 
 test_vdf_client_slow_block_pull_interface() ->
+  {ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -357,13 +364,16 @@ test_vdf_client_slow_block_pull_interface() ->
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
 	slave_start(
 		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:1984" ],
+		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [
+			"127.0.0.1:" ++ integer_to_list(Config#config.port) ],
 				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
 	%% Start the master as a VDF server
 	{ok, Config} = application:get_env(arweave, config),
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1983" ]}),
+		Config#config{ nonce_limiter_client_peers = [
+			"127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port)
+		]}),
 	connect_to_slave(),
 	timer:sleep(10000),
 
@@ -395,7 +405,7 @@ vdf_server_2() ->
 setup_external_update() ->
 	{ok, Config} = application:get_env(arweave, config),
 	[B0] = ar_weave:init(),
-	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF - 
+	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF -
 	%% this is necessary so that we can test the behavior of apply_external_update without any
 	%% auto-computed VDF steps getting in the way.
 	ar_test_node:start(
@@ -421,7 +431,7 @@ cleanup_external_update({Pid, Config}) ->
 
 computed_steps() ->
     lists:reverse(ets:foldl(fun({_, Int}, Acc) -> [Int | Acc] end, [], ?MODULE)).
-	
+
 computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
@@ -460,7 +470,7 @@ apply_external_update(Seed, Interval, ExistingSteps, StepNumber, IsPartial,
 %% @doc The VDF session key is only updated when a block is procesed by the VDF server. Until that
 %% happens the serve will push all VDF steps under the same session key - even if those steps
 %% cross an entropy reset line. When a block comes in the server will update the session key
-%% *and* move all appropriate steps to that session. Prior to 2.7 this caused VDF clients to 
+%% *and* move all appropriate steps to that session. Prior to 2.7 this caused VDF clients to
 %% process some steps twice - once under the old session key, and once under the new session key.
 %% This test asserts that this behavior has been fixed and that VDF clients only process each
 %% step once.
@@ -521,7 +531,7 @@ test_client_ahead() ->
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>],
 		computed_steps()).
 
-%% @doc 
+%% @doc
 %% Test case:
 %% 1. VDF server pushes a partial update that skips too far ahead of the client
 %% 2. Simulate the updates that the server would then push (i.e. full session updates of the current

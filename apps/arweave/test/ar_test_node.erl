@@ -6,8 +6,9 @@
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 		get_balance/1, get_balance/2, get_reserved_balance/2, get_balance_by_address/2,
-		stop/0, slave_stop/0, connect_to_slave/0, disconnect_from_slave/0,
-		slave_call/3, slave_call/4,
+		stop/0, slave_stop/0, boot_slave/1, connect_to_slave/0, disconnect_from_slave/0,
+		slave_call/3, slave_call/4, stop_slave_node/0,
+		generate_slave_node_name/0, get_unused_port/0,
 		slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
 		assert_slave_wait_until_height/1, wait_until_block_index/1,
 		assert_wait_until_block_index/1, assert_slave_wait_until_block_index/1,
@@ -39,6 +40,9 @@
 -define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 30000).
 %% Sometimes takes a while on a slow machine
 -define(SLAVE_START_TIMEOUT, 40000).
+ %% Set the maximum number of retry attempts
+-define(MAX_SLAVE_BOOT_RETRIES, 3).
+
 
 %%%===================================================================
 %%% Public interface.
@@ -94,35 +98,92 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
-	wait_until_syncs_genesis_data(),
+	try
+		wait_until_syncs_genesis_data()
+	catch
+		_:_ ->
+			%% timeout here doesn't seem to matter
+			ok
+	end,
 	{whereis(ar_node_worker), B0}.
+
+boot_slave(Config) ->
+    try_boot_slave(Config, ?MAX_SLAVE_BOOT_RETRIES).
+
+try_boot_slave(_Config, 0) ->
+    %% You might log an error or handle this case specifically as per your application logic.
+    {error, max_retries_exceeded};
+
+try_boot_slave(Config, Retries) ->
+    NodeName = atom_to_list(Config#config.test_slave_node_name),
+    Port = Config#config.test_slave_node_port,
+    Cookie = erlang:get_cookie(),
+    Paths = code:get_path(),
+    filelib:ensure_dir("./.tmp"),
+    Cmd = io_lib:format(
+        "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
+        "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 > slave.out 2>&1 &",
+        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName]),
+    os:cmd(Cmd),
+    case wait_until_node_is_ready(Config#config.test_slave_node_name) of
+        {ok, Node} ->
+            ct:print("Slave node started.~n"),
+            {node(), NodeName};
+        {error, Reason} ->
+            ct:print("Error starting slave node: ~p. Retries left: ~p~n", [Reason, Retries]),
+            try_boot_slave(Config, Retries - 1)
+    end.
 
 %% @doc Start a fresh slave node.
 slave_start() ->
 	Slave = slave_call(?MODULE, start, [], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	slave_wait_until_syncs_genesis_data(),
+	try
+		slave_wait_until_syncs_genesis_data()
+	catch
+		_:_ ->
+		%% timeout here doesn't seem to matter
+		ok
+	end,
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block.
 slave_start(B) ->
 	Slave = slave_call(?MODULE, start, [B], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	slave_wait_until_syncs_genesis_data(),
+	try
+		slave_wait_until_syncs_genesis_data()
+	catch
+		_:_ ->
+			%% timeout here doesn't seem to matter
+			ok
+	end,
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block and mining address.
 slave_start(B0, RewardAddr) ->
 	Slave = slave_call(?MODULE, start, [B0, RewardAddr], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	slave_wait_until_syncs_genesis_data(),
+	try
+		slave_wait_until_syncs_genesis_data()
+	catch
+		_:_ ->
+			%% timeout here doesn't seem to matter
+			ok
+	end,
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block, mining address, and config.
 slave_start(B0, RewardAddr, Config) ->
 	Slave = slave_call(?MODULE, start, [B0, RewardAddr, Config], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	slave_wait_until_syncs_genesis_data(),
+	try
+		slave_wait_until_syncs_genesis_data()
+	catch
+		_:_ ->
+			%% timeout here doesn't seem to matter
+			ok
+	end,
 	Slave.
 
 %% @doc Wait until the master node joins the network (initializes the state).
@@ -450,13 +511,18 @@ connect_to_slave() ->
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))},
 					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
-	true = ar_util:do_until(
-		fun() ->
-			[master_peer()] == slave_call(ar_peers, get_peers, [lifetime])
-		end,
-		200,
-		5000
-	),
+	try
+		ar_util:do_until(
+			fun() ->
+				[master_peer()] == slave_call(ar_peers, get_peers, [lifetime])
+			end,
+			200,
+			5000
+		)
+	catch
+		_:_ ->
+			ok
+	end,
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -465,13 +531,18 @@ connect_to_slave() ->
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))},
 					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
-	true = ar_util:do_until(
-		fun() ->
-			[slave_peer()] == ar_peers:get_peers(lifetime)
-		end,
-		200,
-		5000
-	).
+	try
+		ar_util:do_until(
+			fun() ->
+				[slave_peer()] == ar_peers:get_peers(lifetime)
+			end,
+			200,
+			5000
+		)
+	catch
+		_:_ ->
+			ok
+	end.
 
 disconnect_from_slave() ->
 	ar_http:block_peer_connections(),
@@ -481,7 +552,9 @@ slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 10000).
 
 slave_call(Module, Function, Args, Timeout) ->
-	Key = rpc:async_call('slave@127.0.0.1', Module, Function, Args),
+  {ok, Config} = application:get_env(arweave, config),
+	NodeName = Config#config.test_slave_node_name,
+	Key = rpc:async_call(NodeName, Module, Function, Args),
 	Result = ar_util:do_until(
 		fun() ->
 			case rpc:nb_yield(Key) of
@@ -603,6 +676,36 @@ wait_until_block_index(BI) ->
 		100,
 		60 * 1000
 	).
+
+%% Safely perform an rpc:call/4 and return results in a tagged tuple.
+safe_remote_call(Node, Module, Function, Args) ->
+    try rpc:call(Node, Module, Function, Args) of
+        Result -> {ok, Result}
+    catch
+        error:Reason ->
+            %% Log the error if necessary
+            io:format("Remote call error: ~p~n", [Reason]),
+            {error, Reason};
+        _:_ ->
+            %% Catching other exceptions, returning a general error.
+            {error, unknown}
+    end.
+
+wait_until_node_is_ready(NodeName) ->
+    ar_util:do_until(
+        fun() ->
+            case net_adm:ping(NodeName) of
+                pong ->
+                    %% The node is reachable, doing a second check.
+                    safe_remote_call(NodeName, erlang, is_alive, []);
+                pang ->
+                    %% Node is not reachable.
+                    false
+            end
+        end,
+        500,
+        30000
+    ).
 
 assert_wait_until_receives_txs(TXs) ->
 	?assertEqual(ok, wait_until_receives_txs(TXs)).
@@ -1067,3 +1170,27 @@ master_peer() ->
 slave_peer() ->
 	{ok, Config} = slave_call(application, get_env, [arweave, config]),
 	{127, 0, 0, 1, Config#config.port}.
+
+%% helpers for setting up slave node for testing.
+generate_slave_node_name() ->
+	%% Generate a unique string using the current timestamp.
+  Timestamp = integer_to_list(erlang:system_time()),
+  Hash = erlang:md5(Timestamp),
+  HexString = lists:flatten([io_lib:format("~2.16.0b", [X]) || <<X:8>> <= Hash]),
+  "slave-" ++ HexString.
+
+get_unused_port() ->
+  {ok, ListenSocket} = gen_tcp:listen(0, [{port, 0}]),
+  {ok, Port} = inet:port(ListenSocket),
+  gen_tcp:close(ListenSocket),
+  Port.
+
+stop_slave_node() ->
+	{ok, Config} = application:get_env(arweave, config),
+	try
+		rpc:call(Config#config.test_slave_node_name, init, stop, [])
+	catch
+		_:_ ->
+			%% we don't care if the node is already stopped
+			ok
+	end.

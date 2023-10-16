@@ -56,6 +56,7 @@ endif
 
 ifneq (, $(shell which pkg-config))
 	CFLAGS += `pkg-config --cflags gmp openssl`
+	CXXFLAGS += `pkg-config --cflags gmp openssl`
 	LDFLAGS += `pkg-config --libs gmp openssl`
 endif
 

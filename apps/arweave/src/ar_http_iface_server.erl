@@ -83,9 +83,13 @@ start_http_iface_listener(Config) ->
 	ok.
 
 stop() ->
-	cowboy:stop_listener(ar_http_iface_listener),
-	cowboy:stop_listener(ar_http_gateway_listener),
-	cowboy:stop_listener(ar_https_gateway_listener).
+	lists:foreach(fun(Listener) ->
+		try cowboy:stop_listener(Listener) of
+			_ -> ok
+		catch
+			_:_ -> ok
+		end
+	end, [ar_http_iface_listener, ar_http_gateway_listener, ar_https_gateway_listener]).
 
 start_gateway_listeners(Config) ->
 	case Config#config.gateway_domain of
