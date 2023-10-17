@@ -40,7 +40,7 @@ start_test_application(RewardAddress) ->
 		enable = [search_in_rocksdb_when_mining, serve_arql, serve_wallet_txs,
 			serve_wallet_deposits]
 	}),
-	{ok, _} = application:ensure_all_started(arweave, permanent),
+	ar:start_dependencies(),
 	ok.
 
 stop_test_application() ->

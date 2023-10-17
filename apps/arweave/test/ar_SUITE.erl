@@ -285,7 +285,7 @@ start_slave_application(Config, ApplicationConfig) ->
 	Config.
 
 stop_slave_application(Config) ->
-	Slave = ?config(test_slave_node_name, Config),
+	Slave = ar_test_node:slave_node_name(),
 	ct_rpc:call(Slave, ar_test_lib, stop_test_application, []).
 
 write_genesis_files(DataDir, B0) ->

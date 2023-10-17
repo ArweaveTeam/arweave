@@ -114,4 +114,8 @@ init([]) ->
 		true -> [?CHILD(ar_process_sampler, worker)];
 		false -> []
 	end,
-	{ok, {{one_for_one, 5, 10}, Children ++ DebugChildren}}.
+	TestChildren = case Config#config.test_node_namespace of
+		not_set -> [];
+		_ -> ?LOG_ERROR("*** STARTING ar_test_node"), [?CHILD(ar_test_node, worker)]
+	end,
+	{ok, {{one_for_one, 5, 10}, Children ++ DebugChildren ++ TestChildren}}.

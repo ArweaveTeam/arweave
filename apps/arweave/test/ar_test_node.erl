@@ -1,5 +1,7 @@
 -module(ar_test_node).
 
+-behaviour(gen_server).
+
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0, start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
 		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
@@ -13,7 +15,8 @@
 		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 		get_balance/1, get_balance/2, get_reserved_balance/2, get_balance_by_address/2,
-		stop/0, stop/1, slave_stop/0, boot_slave/1, connect_to_slave/0, disconnect_from_slave/0,
+		stop/0, stop/1, slave_stop/0, boot_slave/1, slave_node_name/0, slave_node_name/1,  slave_port/0,
+		connect_to_slave/0, disconnect_from_slave/0,
 		slave_call/3, slave_call/4, stop_slave_node/0,
 		generate_slave_node_name/0, get_unused_port/0,
 		slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
@@ -38,10 +41,18 @@
 		post_tx_json_to_slave/1, master_peer/0, slave_peer/0,
 		wait_until_syncs_genesis_data/0]).
 
+-export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+
+-record(state, {
+	namespace = not_set,
+	peer_ports = #{}
+}).
 
 %% May occasionally take quite long on a slow CI server, expecially in tests
 %% with height >= 20 (2 difficulty retargets).
@@ -50,15 +61,33 @@
 
 %% Sometimes takes a while on a slow machine
 -define(SLAVE_START_TIMEOUT, 40000).
- %% Set the maximum number of retry attempts
--define(MAX_SLAVE_BOOT_RETRIES, 3).
-
+%% Set the maximum number of retry attempts
+-define(MAX_BOOT_RETRIES, 3).
 
 -define(MAX_MINERS, 3).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+%% @doc Starts the gen_server.
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+boot_slave(NodeName) ->
+	gen_server:call(?MODULE, {boot_slave, NodeName}).
+
+slave_node_name() ->
+	slave_node_name("slave").
+
+slave_node_name(NodeName) ->
+	gen_server:call(?MODULE, {slave_node_name, NodeName}).
+
+slave_port() ->
+	slave_port("slave").
+
+slave_port(NodeName) ->
+	gen_server:call(?MODULE, {slave_port, NodeName}).
 
 %% @doc Wait until the node joins the network (initializes the state).
 wait_until_joined() ->
@@ -95,7 +124,7 @@ start_node(B0, Config) ->
 		storage_modules = Config#config.storage_modules
 	},
 	ok = application:set_env(arweave, config, Config2),
-	{ok, _} = application:ensure_all_started(arweave, permanent),
+	ar:start_dependencies(),
 	wait_until_joined(),
 	wait_until_syncs_genesis_data(),
 	erlang:node().
@@ -215,6 +244,43 @@ get_difficulty_for_invalid_hash() ->
 	%% Set the difficulty just high enough to exclude the invalid_solution(), this lets
 	%% us selectively disable one- or two-chunk mining in tests.
 	binary:decode_unsigned(invalid_solution(), big) + 1.
+
+%%%===================================================================
+%%% gen_server callbacks.
+%%%===================================================================
+
+%% @doc Initializes the server.
+init([]) ->
+	{ok, Config} = application:get_env(arweave, config),
+	State = #state{ namespace = Config#config.test_node_namespace },
+    {ok, State}.
+
+handle_call({boot_slave, NodePrefix}, _From, State) ->
+	{Result, State2} = try_boot_slave(NodePrefix, ?MAX_BOOT_RETRIES, State),
+	{reply, Result, State2};
+
+handle_call({slave_node_name, NodeName}, _From, State) ->
+	{reply, get_slave_node_name(NodeName, State), State};
+
+handle_call({slave_port, NodeName}, _From, State) ->
+	{reply, get_slave_port(NodeName, State), State};
+
+%% @doc Handling call messages.
+handle_call(_Request, _From, State) ->
+    Reply = ok,
+    {reply, Reply, State}.
+
+%% @doc Handling cast messages.
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+%% @doc Handling all non-call, non-cast messages.
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+%% @doc This function is called by a gen_server when it is about to terminate.
+terminate(_Reason, _State) ->
+    ok.
 
 %%%===================================================================
 %%% Private functions.
@@ -342,7 +408,9 @@ remote_call(Module, Function, Args, Node) ->
 	remote_call(Module, Function, Args, 300000, Node).
 
 remote_call(Module, Function, Args, Timeout, Node) ->
-	Key = rpc:async_call(Node, Module, Function, Args),
+	{ok, Config} = application:get_env(arweave, config),
+	NodeName = slave_node_name(),
+	Key = rpc:async_call(NodeName, Module, Function, Args),
 	Result = ar_util:do_until(
 		fun() ->
 			case rpc:nb_yield(Key) of
@@ -403,6 +471,8 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		start_from_latest_state = true,
 		auto_join = true,
 		peers = [],
+		cm_exit_peer = not_set,
+		cm_peers = [],
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
@@ -416,27 +486,18 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		mining_server_chunk_cache_size_limit = 4,
 		debug = true
 	}),
-	{ok, _} = application:ensure_all_started(arweave, permanent),
+	ar:start_dependencies(),
 	wait_until_joined(),
-	try
-		wait_until_syncs_genesis_data()
-	catch
-		_:_ ->
-			%% timeout here doesn't seem to matter
-			ok
-	end,
+	wait_until_syncs_genesis_data(),
 	{whereis(ar_node_worker), B0}.
 
-boot_slave(Config) ->
-    try_boot_slave(Config, ?MAX_SLAVE_BOOT_RETRIES).
-
-try_boot_slave(_Config, 0) ->
+try_boot_slave(_NodePrefix, 0, State) ->
     %% You might log an error or handle this case specifically as per your application logic.
-    {error, max_retries_exceeded};
+    {{error, max_retries_exceeded}, State};
 
-try_boot_slave(Config, Retries) ->
-    NodeName = atom_to_list(Config#config.test_slave_node_name),
-    Port = Config#config.test_slave_node_port,
+try_boot_slave(NodePrefix, Retries, State) ->
+    NodeName = get_slave_node_name(NodePrefix, State),
+    Port = get_unused_port(),
     Cookie = erlang:get_cookie(),
     Paths = code:get_path(),
     filelib:ensure_dir("./.tmp"),
@@ -444,66 +505,56 @@ try_boot_slave(Config, Retries) ->
         "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 > slave.out 2>&1 &",
         [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName]),
+
+    % Cmd = io_lib:format(
+    %     "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
+    %     "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 > slave.out 2>&1 &",
+    %     [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName]),
     os:cmd(Cmd),
-    case wait_until_node_is_ready(Config#config.test_slave_node_name) of
+    Reply = case wait_until_node_is_ready(NodeName) of
         {ok, Node} ->
             ct:print("Slave node started.~n"),
             {node(), NodeName};
         {error, Reason} ->
             ct:print("Error starting slave node: ~p. Retries left: ~p~n", [Reason, Retries]),
-            try_boot_slave(Config, Retries - 1)
-    end.
+            try_boot_slave(NodePrefix, Retries - 1, State)
+    end,
+	{Reply, State#state{ peer_ports = maps:put(NodeName, Port, State#state.peer_ports) }}.
+
+get_slave_node_name(NodePrefix, State) ->
+	#state{ namespace = Namespace } = State,
+	list_to_atom(NodePrefix ++ "-" ++ Namespace ++ "@127.0.0.1").
+
+get_slave_port(NodePrefix, State) ->
+	NodeName = get_slave_node_name(NodePrefix, State),
+	maps:get(NodeName, State#state.peer_ports).
 
 %% @doc Start a fresh slave node.
 slave_start() ->
 	Slave = slave_call(?MODULE, start, [], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	try
-		slave_wait_until_syncs_genesis_data()
-	catch
-		_:_ ->
-		%% timeout here doesn't seem to matter
-		ok
-	end,
+	slave_wait_until_syncs_genesis_data(),
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block.
 slave_start(B) ->
 	Slave = slave_call(?MODULE, start, [B], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	try
-		slave_wait_until_syncs_genesis_data()
-	catch
-		_:_ ->
-			%% timeout here doesn't seem to matter
-			ok
-	end,
+	slave_wait_until_syncs_genesis_data(),
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block and mining address.
 slave_start(B0, RewardAddr) ->
 	Slave = slave_call(?MODULE, start, [B0, RewardAddr], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	try
-		slave_wait_until_syncs_genesis_data()
-	catch
-		_:_ ->
-			%% timeout here doesn't seem to matter
-			ok
-	end,
+	slave_wait_until_syncs_genesis_data(),
 	Slave.
 
 %% @doc Start a fresh slave node with the given genesis block, mining address, and config.
 slave_start(B0, RewardAddr, Config) ->
 	Slave = slave_call(?MODULE, start, [B0, RewardAddr, Config], ?SLAVE_START_TIMEOUT),
 	slave_wait_until_joined(),
-	try
-		slave_wait_until_syncs_genesis_data()
-	catch
-		_:_ ->
-			%% timeout here doesn't seem to matter
-			ok
-	end,
+	slave_wait_until_syncs_genesis_data(),
 	Slave.
 
 %% @doc Fetch the fee estimation and the denomination (call GET /price2/[size])
@@ -742,7 +793,7 @@ join(Peer, Rejoin) ->
 		auto_join = true,
 		peers = [Peer]
 	}),
-	{ok, _} = application:ensure_all_started(arweave, permanent),
+	ar:start_dependencies(),
 	whereis(ar_node_worker).
 
 join_on_master() ->
@@ -764,18 +815,14 @@ connect_to_slave() ->
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))},
 					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
-	try
-		ar_util:do_until(
-			fun() ->
-				[master_peer()] == slave_call(ar_peers, get_peers, [lifetime])
-			end,
-			200,
-			5000
-		)
-	catch
-		_:_ ->
-			ok
-	end,
+	true = ar_util:do_until(
+		fun() ->
+			Peers = slave_call(ar_peers, get_peers, [lifetime]),
+			[master_peer()] == Peers
+		end,
+		200,
+		5000
+	),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -784,18 +831,13 @@ connect_to_slave() ->
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))},
 					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
-	try
-		ar_util:do_until(
-			fun() ->
-				[slave_peer()] == ar_peers:get_peers(lifetime)
-			end,
-			200,
-			5000
-		)
-	catch
-		_:_ ->
-			ok
-	end.
+	ar_util:do_until(
+		fun() ->
+			[slave_peer()] == ar_peers:get_peers(lifetime)
+		end,
+		200,
+		5000
+	).
 
 disconnect_from_slave() ->
 	ar_http:block_peer_connections(),
@@ -1405,10 +1447,9 @@ slave_peer() ->
 %% helpers for setting up slave node for testing.
 generate_slave_node_name() ->
 	%% Generate a unique string using the current timestamp.
-  Timestamp = integer_to_list(erlang:system_time()),
-  Hash = erlang:md5(Timestamp),
-  HexString = lists:flatten([io_lib:format("~2.16.0b", [X]) || <<X:8>> <= Hash]),
-  "slave-" ++ HexString.
+	Timestamp = integer_to_list(erlang:system_time()),
+	Hash = erlang:md5(Timestamp),
+	lists:flatten([io_lib:format("~2.16.0b", [X]) || <<X:8>> <= Hash]).
 
 get_unused_port() ->
   {ok, ListenSocket} = gen_tcp:listen(0, [{port, 0}]),
@@ -1419,7 +1460,7 @@ get_unused_port() ->
 stop_slave_node() ->
 	{ok, Config} = application:get_env(arweave, config),
 	try
-		rpc:call(Config#config.test_slave_node_name, init, stop, [])
+		rpc:call(slave_node_name(), init, stop, [])
 	catch
 		_:_ ->
 			%% we don't care if the node is already stopped

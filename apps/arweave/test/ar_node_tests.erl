@@ -633,7 +633,7 @@ test_persisted_mempool() ->
 		start_from_latest_state = false,
 		peers = [slave_peer()]
 	}),
-	{ok, _} = application:ensure_all_started(arweave, permanent),
+	ar:start_dependencies(),
 	wait_until_joined(),
 	assert_slave_wait_until_receives_txs([SignedTX]),
 	ar_test_node:mine(),

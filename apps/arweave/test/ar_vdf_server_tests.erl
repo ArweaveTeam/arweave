@@ -240,7 +240,7 @@ test_vdf_client_fast_block() ->
 	%% Start the master as a VDF server
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port) ]}),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:slave_port()) ]}),
 	connect_to_slave(),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -286,7 +286,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	%% Start the master as a VDF server
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port) ]}),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:slave_port()) ]}),
 	connect_to_slave(),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -333,7 +333,7 @@ test_vdf_client_slow_block() ->
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [
-			"127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port)
+			"127.0.0.1:" ++ integer_to_list(ar_test_node:slave_port())
 		]}),
 	connect_to_slave(),
 	timer:sleep(10000),
@@ -372,7 +372,7 @@ test_vdf_client_slow_block_pull_interface() ->
 	start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [
-			"127.0.0.1:" ++ integer_to_list(Config#config.test_slave_node_port)
+			"127.0.0.1:" ++ integer_to_list(ar_test_node:slave_port())
 		]}),
 	connect_to_slave(),
 	timer:sleep(10000),
