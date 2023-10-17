@@ -7,85 +7,15 @@
 
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
 		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0, start/0,
-		start/1, start/2, stop/1, stop_dependencies/0, tests/0, tests/1, tests/2, test_ipfs/0,
-		docs/0, start_for_tests/0, shutdown/1, console/1, console/2]).
+		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
+		tests/0, tests/1, tests/2,
+		docs/0, shutdown/1, console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
-
-%% A list of the modules to test.
-%% At some point we might want to make this just test all mods starting with
-%% ar_.
--define(
-	CORE_TEST_MODS,
-	[
-		%% tests embedded in modules
-		ar,
-		ar_block,
-		ar_block_cache,
-		ar_chunk_storage,
-		ar_data_sync_worker_master,
-		ar_deep_hash,
-		ar_diff_dag,
-		ar_ets_intervals,
-		ar_inflation,
-		ar_intervals,
-		ar_join,
-		ar_kv,
-		ar_merkle,
-		ar_mining_server,
-		ar_node,
-		ar_node_utils,
-		ar_nonce_limiter,
-		ar_packing_server,
-		ar_patricia_tree,
-		ar_peers,
-		ar_poa,
-		ar_pricing,
-		ar_retarget,
-		ar_storage,
-		ar_sync_buckets,
-		ar_tx,
-		ar_tx_db,
-		ar_unbalanced_merkle,
-		ar_util,
-		ar_weave,
-
-		%% test modules
-		ar_base64_compatibility_tests,
-		ar_config_tests,
-		ar_coordinated_mining_tests,
-		ar_data_sync_tests,
-		ar_difficulty_tests,
-		ar_fork_recovery_tests,
-		ar_gateway_middleware_tests,
-		ar_header_sync_tests,
-		ar_http_iface_tests,
-		ar_http_util_tests,
-		ar_mempool_tests,
-		ar_mine_randomx_tests,
-		ar_mine_vdf_tests,
-		ar_mining_io_tests,
-		ar_mining_server_tests,
-		ar_multiple_txs_per_wallet_tests,
-		ar_node_tests,
-		ar_poa_tests,
-		ar_poller_tests,
-		ar_post_block_tests,
-		ar_pricing_tests,
-		ar_semaphore_tests,
-		ar_serialize_tests,
-		ar_tx_blacklist_tests,
-		ar_tx_replay_pool_tests,
-		ar_vdf_server_tests,
-		ar_vdf_tests,
-		ar_wallet_tests,
-		ar_webhook_tests
-	]
-).
 
 %% Supported feature flags (default behaviour)
 % http_logging (false)
@@ -628,11 +558,6 @@ start(Config) ->
 	end,
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
-	io:format(
-		"~n****************************************~n"
-		"Launching with config:~n~s~n"
-		"****************************************~n",
-		[ar_config:format_config(Config)]),
 	warn_if_single_scheduler(),
 	case Config#config.nonce_limiter_server_trusted_peers of
 		[] ->
@@ -640,7 +565,7 @@ start(Config) ->
 		_ ->
 			ok
 	end,
-	{ok, _} = application:ensure_all_started(arweave, permanent).
+	start_dependencies().
 
 start(normal, _Args) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -785,6 +710,11 @@ stop_dependencies() ->
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
+start_dependencies() ->
+	{ok, Config} = application:get_env(arweave, config),
+	{ok, _} = application:ensure_all_started(arweave, permanent),
+	ar_config:log_config(Config).
+
 prepare_graphql() ->
 	ok = ar_graphql:load_schema(),
 	ok.
@@ -803,38 +733,32 @@ warn_if_single_scheduler() ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
-	tests(?CORE_TEST_MODS, #config{ debug = true }).
+	tests([], #config{ debug = true }).
 
 tests(Mods, Config) when is_list(Mods) ->
-	ar_test_node:boot_slave(start_for_tests(Config)),
+	start_for_tests(Config),
+	ar_test_node:boot_peers(),
 	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}]) of
 		ok ->
-			ar_test_node:stop_slave_node(),
+			ar_test_node:stop_peers(),
 			ok;
 		_ ->
-			ar_test_node:stop_slave_node(),
+			ar_test_node:stop_peers(),
 			exit(tests_failed)
 	end.
 
-
-start_for_tests() ->
-	start_for_tests(#config{}).
-
 start_for_tests(Config) ->
-	UniqueName = ar_test_node:generate_slave_node_name(),
+	UniqueName = ar_test_node:get_node_namespace(),
 	TestConfig = Config#config{
 		peers = [],
-		data_dir = ".tmp/data_test_master_" ++ UniqueName,
-		metrics_dir = ".tmp/metrics_master_" ++ UniqueName,
-		test_slave_node_name = list_to_atom(UniqueName ++ "@127.0.0.1"),
-		test_slave_node_port = ar_test_node:get_unused_port(),
+		data_dir = ".tmp/data_test_main_" ++ UniqueName,
+		metrics_dir = ".tmp/metrics_main_" ++ UniqueName,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
 		packing_rate = 20,
 		auto_join = false
 	},
-	start(TestConfig),
-	TestConfig.
+	start(TestConfig).
 
 %% @doc Run the tests for a set of module(s).
 %% Supports strings so that it can be trivially induced from a unix shell call.
@@ -848,11 +772,6 @@ tests(Args) ->
 			Args
 		),
 	tests(Mods, #config{ debug = true }).
-
-%% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
-test_ipfs() ->
-	Mods = [app_ipfs_tests],
-	tests(Mods, #config{}).
 
 %% @doc Generate the project documentation.
 docs() ->

@@ -673,7 +673,7 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 			H = ar_block:indep_hash2(SignedH, Signature),
 			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),
-			?LOG_DEBUG([{event, mined_block}, {indep_hash, ar_util:encode(H)},
+			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
 					{solution, ar_util:encode(SolutionH)}, {height, Height},
 					{txs, length(B#block.txs)},
 					{chunks, 

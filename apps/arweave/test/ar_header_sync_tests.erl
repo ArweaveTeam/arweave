@@ -6,14 +6,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
--import(ar_test_node, [
-	start/1,
-	join_on_master/0,
-	slave_call/3,
-	sign_tx/3, sign_v1_tx/3, assert_post_tx_to_master/1, get_tx_anchor/0,
-	wait_until_height/1, assert_slave_wait_until_height/1,
-	read_block_when_stored/1,
-	random_v1_data/1
+-import(ar_test_node, [sign_v1_tx/3, wait_until_height/1, assert_wait_until_height/2,
+	read_block_when_stored/1, random_v1_data/1
 ]).
 
 syncs_headers_test_() ->
@@ -22,15 +16,15 @@ syncs_headers_test_() ->
 test_syncs_headers() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
-	{_Master, _} = start(B0),
+	ar_test_node:start(B0),
 	post_random_blocks(Wallet, ?MAX_TX_ANCHOR_DEPTH + 5, B0),
-	join_on_master(),
-	BI = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 5),
+	ar_test_node:join_on(#{ node => peer1, join_on => main }),
+	BI = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 5),
 	lists:foreach(
 		fun(Height) ->
 			{ok, B} = ar_util:do_until(
 				fun() ->
-					case slave_call(ar_storage, read_block, [Height, BI]) of
+					case ar_test_node:remote_call(peer1, ar_storage, read_block, [Height, BI]) of
 						unavailable ->
 							unavailable;
 						B2 ->
@@ -40,11 +34,11 @@ test_syncs_headers() ->
 				200,
 				30000
 			),
-			MasterB = ar_storage:read_block(Height, ar_node:get_block_index()),
-			?assertEqual(B, MasterB),
-			TXs = slave_call(ar_storage, read_tx, [B#block.txs]),
-			MasterTXs = ar_storage:read_tx(B#block.txs),
-			?assertEqual(TXs, MasterTXs)
+			MainB = ar_storage:read_block(Height, ar_node:get_block_index()),
+			?assertEqual(B, MainB),
+			TXs = ar_test_node:remote_call(peer1, ar_storage, read_tx, [B#block.txs]),
+			MainTXs = ar_storage:read_tx(B#block.txs),
+			?assertEqual(TXs, MainTXs)
 		end,
 		lists:reverse(lists:seq(0, ?MAX_TX_ANCHOR_DEPTH + 5))
 	),
@@ -52,9 +46,9 @@ test_syncs_headers() ->
 	ar_disksup:pause(),
 	ar_events:send(disksup, {remaining_disk_space, "default", true, 0, 0}),
 	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
-	NoSpaceTX = sign_v1_tx(master, Wallet,
-		#{ data => random_v1_data(10 * 1024), last_tx => get_tx_anchor() }),
-	assert_post_tx_to_master(NoSpaceTX),
+	NoSpaceTX = sign_v1_tx(main, Wallet,
+		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
+	ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),
 	ar_test_node:mine(),
 	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),
 	timer:sleep(1000),
@@ -69,9 +63,9 @@ test_syncs_headers() ->
 		fun() ->
 			%% Keep mining blocks. At some point the cleanup procedure will
 			%% kick in and remove the oldest files.
-			TX = sign_v1_tx(master, Wallet, #{
-				data => random_v1_data(200 * 1024), last_tx => get_tx_anchor() }),
-			assert_post_tx_to_master(TX),
+			TX = sign_v1_tx(main, Wallet, #{
+				data => random_v1_data(200 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
+			ar_test_node:assert_post_tx_to_peer(main, TX),
 			ar_test_node:mine(),
 			[{_, Height}] = ets:lookup(test_syncs_header, height),
 			[_ | _] = wait_until_height(Height),
@@ -99,12 +93,12 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 					fun(_, Acc) ->
 						case rand:uniform(2) == 1 of
 							true ->
-								TX = sign_tx(master, Wallet,
+								TX = ar_test_node:sign_tx(main, Wallet,
 									#{
 										last_tx => Anchor,
 										data => crypto:strong_rand_bytes(10 * 1024 * 1024)
 									}),
-								assert_post_tx_to_master(TX),
+								ar_test_node:assert_post_tx_to_peer(main, TX),
 								[TX | Acc];
 							false ->
 								Acc

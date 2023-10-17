@@ -20,9 +20,9 @@ block_to_binary_test_() ->
 		fun test_block_to_binary/0).
 
 test_block_to_binary() ->
-	Dir = filename:dirname(?FILE),
-	BlockFixtureDir = filename:join(Dir, "../test/fixtures/blocks"),
-	TXFixtureDir = filename:join(Dir, "../test/fixtures/txs"),
+	{ok, Cwd} = file:get_cwd(),
+	BlockFixtureDir = filename:join(Cwd, "./apps/arweave/test/fixtures/blocks"),
+	TXFixtureDir = filename:join(Cwd, "./apps/arweave/test/fixtures/txs"),
 	{ok, BlockFixtures} = file:list_dir(BlockFixtureDir),
 	test_block_to_binary([filename:join(BlockFixtureDir, Name)
 			|| Name <- BlockFixtures], TXFixtureDir).
@@ -272,7 +272,7 @@ candidate_to_json_struct_test() ->
 		cache_ref = {rand:uniform(100), rand:uniform(100), rand:uniform(100), make_ref()},
 		chunk1 = crypto:strong_rand_bytes(256 * 1024),
 		chunk2 = crypto:strong_rand_bytes(256 * 1024),
-		cm_lead_peer = ar_test_node:master_peer(),
+		cm_lead_peer = ar_test_node:peer_ip(main),
 		session_ref = make_ref()}).
 
 h2_inputs_to_json_struct_test() ->
