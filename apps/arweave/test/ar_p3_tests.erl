@@ -8,10 +8,7 @@
 -export([raw_request/2, raw_request/3, http_request/1]).
 
 -import(ar_test_node, [
-	start/1, start/3, stop/0, slave_start/1, slave_start/3, master_peer/0, slave_peer/0,
-	connect_to_slave/0, disconnect_from_slave/0, assert_post_tx_to_slave/1,
-	slave_mine/0, assert_slave_wait_until_height/1, join_on_slave/0, rejoin_on_slave/0,
-	sign_tx/2, assert_post_tx_to_master/1, wait_until_height/1, read_block_when_stored/2]).
+	stop/0, assert_wait_until_height/2, wait_until_height/1, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
 	empty_p3_config/0]).
@@ -480,17 +477,17 @@ e2e_deposit_before_charge() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
-	start(B0, RewardAddress, Config),
-	slave_start(B0),
-	connect_to_slave(),
-	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 700, data => <<"hello">> }),
-	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
-	TX3 = sign_tx(Wallet2, #{ target => DepositAddress, quantity => 1000 }),
-	TX4 = sign_tx(Wallet1, #{ target => OtherAddress, quantity => 500 }),
-	assert_post_tx_to_master(TX1),
-	assert_post_tx_to_master(TX2),
-	assert_post_tx_to_master(TX3),
-	assert_post_tx_to_master(TX4),
+	ar_test_node:start(B0, RewardAddress, Config),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 700, data => <<"hello">> }),
+	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+	TX3 = ar_test_node:sign_tx(Wallet2, #{ target => DepositAddress, quantity => 1000 }),
+	TX4 = ar_test_node:sign_tx(Wallet1, #{ target => OtherAddress, quantity => 500 }),
+	ar_test_node:assert_post_tx_to_peer(main, TX1),
+	ar_test_node:assert_post_tx_to_peer(main, TX2),
+	ar_test_node:assert_post_tx_to_peer(main, TX3),
+	ar_test_node:assert_post_tx_to_peer(main, TX4),
 
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
@@ -703,9 +700,9 @@ e2e_charge_before_deposit() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -2000, 2) },
-	start(B0, RewardAddress, Config),
-	slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start(B0, RewardAddress, Config),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, _, _, _}},
@@ -722,8 +719,8 @@ e2e_charge_before_deposit() ->
 
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
 
-	TX1 = sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
-	assert_post_tx_to_master(TX1),
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
+	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	
 	ar_test_node:mine(),
 	wait_until_height(1),
@@ -746,8 +743,8 @@ e2e_charge_before_deposit() ->
 
 	?assertEqual({<<"200">>, <<"-1000">>}, get_balance(Address1)),
 
-	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
-	assert_post_tx_to_master(TX2),
+	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	
 	ar_test_node:mine(),
 	wait_until_height(3),
@@ -788,35 +785,35 @@ e2e_restart_p3_service() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
-	start(B0, RewardAddress, Config),
-	slave_start(B0),
-	join_on_slave(),
-	disconnect_from_slave(),
+	ar_test_node:start(B0, RewardAddress, Config),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
+	ar_test_node:disconnect_from(peer1),
 
-	%% This deposit will be too old and will not be scanned when the master node comes back up.
-	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
-	assert_post_tx_to_slave(TX1),
+	%% This deposit will be too old and will not be scanned when the main node comes back up.
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 
-	slave_mine(),
-	assert_slave_wait_until_height(1),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 1),
 
-	slave_mine(),
-	assert_slave_wait_until_height(2),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 2),
 
-	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
-	assert_post_tx_to_slave(TX2),
-	slave_mine(),
-	assert_slave_wait_until_height(3),
+	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 3),
 
-	%% Stop the master node. The slave will continue to mine. When the master comes back up
+	%% Stop the main node. The peer1 will continue to mine. When the main comes back up
 	%% it should correctly scan all the blocks missed since disconnectin
 	%% (up to ?MAX_BLOCK_SCAN blocks)
 	stop(),
 
-	slave_mine(),
-	assert_slave_wait_until_height(4),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 4),
 
-	rejoin_on_slave(),
+	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	?assertEqual(0, ar_p3_db:get_scan_height(),
 		"Node hasn't seen any blocks yet: scan height 0"),
 
@@ -827,8 +824,8 @@ e2e_restart_p3_service() ->
 	?assertEqual(0, ar_p3_db:get_scan_height(),
 		"Node has seen blocks, but hasn't received a new_tip event yet: scan height 0"),
 
-	slave_mine(),
-	assert_slave_wait_until_height(5),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 5),
 	wait_until_height(5),
 	%% allow time for the new_tip event to be processed
 	timer:sleep(1000),
@@ -839,9 +836,9 @@ e2e_restart_p3_service() ->
 	%% occurred before ?MAX_BLOCK_SCAN blocks in the past.
 	?assertEqual({<<"200">>, <<"500">>}, get_balance(Sender1Address)),
 
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	stop(),
-	rejoin_on_slave(),
+	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	?assertEqual(5, ar_p3_db:get_scan_height(),
 		"Restarting node should not have reset scan height db: scan height 5"),
 	
@@ -863,13 +860,13 @@ e2e_concurrent_requests() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, 0, 1, 100) },
-	start(B0, RewardAddress, Config),
-	slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start(B0, RewardAddress, Config),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 
 	%% Post a 100 winston deposit and wait for it to be picked up.
-	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),
-	assert_post_tx_to_master(TX1),
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),
+	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	
 	ar_test_node:mine(),
 	wait_until_height(1),
@@ -994,14 +991,14 @@ raw_request(Method, Path, Headers)
 	}.
 
 http_request(#{method := M, path := P, headers := H}) ->
-	Peer = master_peer(),
+	Peer = ar_test_node:peer_ip(main),
 	{_, _, _, _, Port} = Peer,
 	Method = case M of
 		<<"GET">> -> get;
 		<<"POST">> -> post
 	end,
 	Path = binary_to_list(P),
-	% Headers = maps:to_list(H#{<<"X-P2p-Port">> => integer_to_binary(Port)}),
+	% Headers = maps:to_list(H#{<<"x-p2p-port">> => integer_to_binary(Port)}),
 	Headers = maps:to_list(H),
 	ar_http:req(#{
 		method => Method,

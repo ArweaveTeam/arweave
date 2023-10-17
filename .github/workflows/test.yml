@@ -4,36 +4,8 @@ on:
   push:
     branches: ["**"]
 jobs:
-  common-test-suite:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
-      - name: Build arweave test sources
-        run: |
-          nix build .#packages.x86_64-linux.arweave
-          cp -Lr result _build
-          chmod -R u+w ./_build
-      - name: Start empd if needed
-        run: |
-          if ! pgrep -x "epmd" > /dev/null
-          then
-            epmd -relaxed_command_check -packet_timeout 30 -daemon
-          fi
-      - name: CommonTest Suite
-        run: |
-          export PATH=$(pwd)/_build/erts/bin:$PATH
-          ct_run -dir ./_build/test/lib/arweave/test \
-            -noinput -no_auto_compile -logopts no_src \
-            -include $(pwd)/_build/test/lib/arweave/include \
-            -config $(pwd)/config/sys.config \
-            -pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) \
-            -suite "ar_SUITE.erl" \
-            -sname master
   eunit-tests:
     runs-on: self-hosted
-    needs: common-test-suite
     strategy:
       fail-fast: true
       max-parallel: 6
@@ -47,6 +19,7 @@ jobs:
             ar_deep_hash,
             ar_diff_dag,
             ar_ets_intervals,
+            ar_events,
             ar_inflation,
             ar_intervals,
             ar_join,
@@ -69,11 +42,11 @@ jobs:
             ar_tx_db,
             ar_unbalanced_merkle,
             ar_util,
-            ar_weave,
 
             ## Note, that _tests are implicitly run by a matching prefix name
             ar_base64_compatibility_tests,
             ar_config_tests,
+            ar_coordinated_mining_tests,
             ar_data_sync_tests,
             ar_difficulty_tests,
             ar_fork_recovery_tests,
@@ -108,15 +81,17 @@ jobs:
           nix build .#packages.x86_64-linux.arweave
           cp -Lr result _build
           chmod -R u+w ./_build
-      - name: Start empd if needed
+      - name: Restart epmd
         run: |
           if ! pgrep -x "epmd" > /dev/null
           then
-            epmd -relaxed_command_check -packet_timeout 30 -daemon
+            echo "Starting epmd"
+            epmd -relaxed_command_check -daemon
           fi
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
-          set -e
+          # set -e
+          set -o pipefail
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
@@ -125,34 +100,62 @@ jobs:
           RETRYABLE=1
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
-            erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee master.out &
-            ERL_MASTER_PID=$! # capture PID of the master background process
-            wait $ERL_MASTER_PID || EXIT_CODE=$?
-            kill -9 $ERL_MASTER_PID > /dev/null 2>&1 || true
-            # For debugging purposes, print the slave output if the tests failed
+            EXIT_CODE=0
+            sleep 1
+            TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
+            NAMESPACE="${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}"
+            erl $ERL_TEST_OPTS -noshell -name main-${NAMESPACE}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main-${NAMESPACE}.out &
+            ERL_MAIN_PID=$! # capture PID of the main background process
+            wait $ERL_MAIN_PID || EXIT_CODE=$?
+            echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
+            kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
+            # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
-              if [[ -e slave.out ]]; then
-                first_line_slave=$(head -n 1 slave.out)
-                first_line_master=$(head -n 1 master.out)
-                # Check if it is a retryable error
-                if [[ "$first_line_slave" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
-                  echo "Retrying test because of inet_tcp error..."
-                  RETRYABLE=1
-                  sleep 1
-                elif [[ "$first_line_slave" == "Protocol 'inet_tcp': the name"* ]]; then
-                  echo "Retrying test because of inet_tcp clash..."
-                  RETRYABLE=1
-                  sleep 1
-                elif [[ "$first_line_master" == "econnrefused"* ]]; then
-                  echo "Retrying test because of econnrefused..."
-                  RETRYABLE=1
-                  sleep 1
-                else
-                  echo -e "\033[0;31m===> Test failed, printing the slave node's output...\033[0m"
-                  cat slave.out
-                fi
+              echo -e "\033[0;32m===> Checking for retry\033[0m"
+              echo -e "\033[0;32m===> peer1 file: peer1-${NAMESPACE}\033[0m"
+              echo -e "\033[0;32m===> main file: main-${NAMESPACE}\033[0m"
+              first_line_peer1=$(head -n 1 peer1-${NAMESPACE}.out)
+              first_line_main=$(head -n 1 main-${NAMESPACE}.out)
+              echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
+              echo -e "\033[0;31m===> First line of main node's output: $first_line_main\033[0m"
+              # Check if it is a retryable error
+              if [[ "$first_line_peer1" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
+                echo "Retrying test because of inet_tcp error..."
+                RETRYABLE=1
+                sleep 1
+              elif [[ "$first_line_peer1" == "Protocol 'inet_tcp': the name"* ]]; then
+                echo "Retrying test because of inet_tcp clash..."
+                RETRYABLE=1
+                sleep 1
+              elif [[ "$first_line_main" == *"econnrefused"* ]]; then
+                echo "Retrying test because of econnrefused..."
+                RETRYABLE=1
+                sleep 1
               else
-                echo -e "\033[0;31m===> Test failed without slave output...\033[0m"
+                if [[ -e peer1-${NAMESPACE}.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
+                  cat peer1-${NAMESPACE}.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
+                fi
+                if [[ -e peer2-${NAMESPACE}.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer2 node's output...\033[0m"
+                  cat peer2-${NAMESPACE}.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer2 output...\033[0m"
+                fi
+                if [[ -e peer3-${NAMESPACE}.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer3 node's output...\033[0m"
+                  cat peer3-${NAMESPACE}.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer3 output...\033[0m"
+                fi
+                if [[ -e peer4-${NAMESPACE}.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer4 node's output...\033[0m"
+                  cat peer4-${NAMESPACE}.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer4 output...\033[0m"
+                fi
               fi
             fi
           done

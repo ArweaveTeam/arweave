@@ -44,7 +44,7 @@ req(Args) ->
 		false ->
 			case ets:lookup(?MODULE, block_peer_connections) of
 				[{_}] ->
-					case lists:keyfind(<<"X-P2p-Port">>, 1, maps:get(headers, Args, [])) of
+					case lists:keyfind(<<"x-p2p-port">>, 1, maps:get(headers, Args, [])) of
 						{_, _} ->
 							{error, blocked};
 						_ ->

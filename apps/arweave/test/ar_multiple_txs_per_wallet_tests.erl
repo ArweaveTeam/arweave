@@ -5,15 +5,9 @@
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
-	slave_mine/0, join_on_slave/0, assert_wait_until_receives_txs/1,
-	wait_until_height/1, assert_slave_wait_until_height/1,
-	slave_call/3, assert_wait_until_block_index/1, post_tx_to_slave/1,
-	post_tx_to_slave/2, post_tx_to_master/1,
-	assert_post_tx_to_slave/1, assert_post_tx_to_slave/2,
-	assert_post_tx_to_master/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2,
-	sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1, get_tx_confirmations/2,
-	disconnect_from_slave/0, read_block_when_stored/1, random_v1_data/1, slave_peer/0]).
+-import(ar_test_node, [wait_until_height/1, assert_wait_until_height/2,
+	sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, 
+	read_block_when_stored/1, random_v1_data/1]).
 
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
@@ -52,7 +46,7 @@ keeps_txs_after_new_block_test_() ->
 		end
 	end,
 	[
-		%% Master receives the second set then the first set. Slave only
+		%% Main node receives the second set then the first set. Peer node only
 		%% receives the second set.
 		{timeout, 120, {
 			"First set: two block anchored txs, second set: empty",
@@ -111,37 +105,37 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%%
 	%% Expect them to be accepted, gossiped to the peer and included into the block.
 	%% Expect the block to be accepted by the peer.
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
-	connect_to_slave(),
-	%% Post the transactions to slave.
+	ar_test_node:connect_to_peer(peer1),
+	%% Post the transactions to peer1.
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX),
-			%% Expect transactions to be gossiped to master.
-			assert_wait_until_receives_txs([TX])
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
+			%% Expect transactions to be gossiped to main.
+			ar_test_node:assert_wait_until_receives_txs([TX])
 		end,
 		TXs
 	),
 	%% Mine a block.
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	%% Expect both transactions to be included into block.
-	SlaveBI = assert_slave_wait_until_height(1),
+	PeerBI = assert_wait_until_height(peer1, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		lists:sort(TXIDs),
-		lists:sort((slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
+		lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]))#block.txs)
 	),
 	lists:foreach(
 		fun(TX) ->
-			?assertEqual(TX, slave_call(ar_storage, read_tx, [TX#tx.id]))
+			?assertEqual(TX, ar_test_node:remote_call(peer1, ar_storage, read_tx, [TX#tx.id]))
 		end,
 		TXs
 	),
-	%% Expect the block to be accepted by master.
+	%% Expect the block to be accepted by main.
 	BI = wait_until_height(1),
 	?assertEqual(
 		lists:sort(TXIDs),
@@ -163,42 +157,42 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect the block to be accepted.
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
 	SecondTXSet = lists:map(fun(TXFun) -> TXFun() end, SecondTXSetFuns),
-	%% Disconnect the nodes so that slave does not receive txs.
-	disconnect_from_slave(),
-	%% Post transactions from the first set to master.
+	%% Disconnect the nodes so that peer1 does not receive txs.
+	ar_test_node:disconnect_from(peer1),
+	%% Post transactions from the first set to main.
 	lists:foreach(
 		fun(TX) ->
-			post_tx_to_master(TX)
+			ar_test_node:post_tx_to_peer(main, TX)
 		end,
 		SecondTXSet ++ FirstTXSet
 	),
-	?assertEqual([], slave_call(ar_mempool, get_all_txids, [])),
-	%% Post transactions from the second set to slave.
+	?assertEqual([], ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
+	%% Post transactions from the second set to peer1.
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		SecondTXSet
 	),
 	%% Wait to make sure the tx will not be gossiped upon reconnect.
 	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
-	%% Connect the nodes and mine a block on slave.
-	connect_to_slave(),
-	slave_mine(),
-	%% Expect master to receive the block.
+	%% Connect the nodes and mine a block on peer1.
+	ar_test_node:connect_to_peer(peer1),
+	ar_test_node:mine(peer1),
+	%% Expect main to receive the block.
 	BI = wait_until_height(1),
 	SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
 	?assertEqual(lists:sort(SecondSetTXIDs),
 			lists:sort((read_block_when_stored(hd(BI)))#block.txs)),
-	%% Expect master to have the set difference in the mempool.
-	assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
-	%% Mine a block on master and expect both transactions to be included.
+	%% Expect main to have the set difference in the mempool.
+	ar_test_node:assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
+	%% Mine a block on main and expect both transactions to be included.
 	ar_test_node:mine(),
 	BI2 = wait_until_height(2),
 	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
@@ -208,10 +202,10 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	).
 
 returns_error_when_txs_exceed_balance(B0, TXs) ->
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 
 	%% Expect the post for all TXs (including the balance exceeding one) to
 	%% succeed. However immeidately after adding each TX to the mempool,
@@ -229,18 +223,18 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	BelowBalanceTXs = lists:droplast(SortedTXs),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX, false)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX, false)
 		end,
 		TXs
 	),
-	assert_wait_until_receives_txs(BelowBalanceTXs),
+	ar_test_node:assert_wait_until_receives_txs(BelowBalanceTXs),
 	%% Expect only the first two to be included into the block.
-	slave_mine(),
-	SlaveBI = assert_slave_wait_until_height(1),
+	ar_test_node:mine(peer1),
+	PeerBI = assert_wait_until_height(peer1, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, BelowBalanceTXs),
 	?assertEqual(
 		lists:sort(TXIDs),
-		lists:sort((slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
+		lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]))#block.txs)
 	),
 	BI = wait_until_height(1),
 	?assertEqual(
@@ -249,15 +243,15 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	),
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
-	slave_call(ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
+	ar_test_node:remote_call(peer1, ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
 	{ok, {{<<"400">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => slave_peer(),
+			peer => ar_test_node:peer_ip(peer1),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
-	?assertEqual({ok, ["overspend"]}, slave_call(ar_tx_db, get_error_codes,
+	?assertEqual({ok, ["overspend"]}, ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes,
 			[ExceedBalanceTX#tx.id])).
 
 rejects_transactions_above_the_size_limit_test_() ->
@@ -272,20 +266,20 @@ test_rejects_transactions_above_the_size_limit() ->
 		{ar_wallet:to_address(Pub2), ?AR(20), <<>>}
 	]),
 	%% Start the node.
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	SmallData = random_v1_data(?TX_DATA_SIZE_LIMIT),
 	BigData = random_v1_data(?TX_DATA_SIZE_LIMIT + 1),
 	GoodTX = sign_v1_tx(Key1, #{ data => SmallData }),
-	assert_post_tx_to_slave(GoodTX),
+	ar_test_node:assert_post_tx_to_peer(peer1, GoodTX),
 	BadTX = sign_v1_tx(Key2, #{ data => BigData }),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}},
-		post_tx_to_slave(BadTX)
+		ar_test_node:post_tx_to_peer(peer1, BadTX)
 	),
 	?assertMatch(
 		{ok, ["tx_fields_too_large"]},
-		slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id])
+		ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes, [BadTX#tx.id])
 	).
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
@@ -305,21 +299,21 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	TX1 = sign_v1_tx(Key),
-	assert_post_tx_to_slave(TX1),
-	slave_mine(),
-	assert_slave_wait_until_height(1),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 1),
 	TX2 = sign_v1_tx(Key, #{ last_tx => TX1#tx.id }),
-	assert_post_tx_to_slave(TX2),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
 	TX3 = sign_v1_tx(Key, #{ last_tx => TX2#tx.id }),
-	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = post_tx_to_slave(TX3),
+	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, TX3),
 	TX4 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
-	assert_post_tx_to_slave(TX4),
-	slave_mine(),
-	SlaveBI = assert_slave_wait_until_height(2),
-	B2 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
+	ar_test_node:mine(peer1),
+	PeerBI = assert_wait_until_height(peer1, 2),
+	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]),
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
 
 does_not_allow_to_spend_mempool_tokens_test_() ->
@@ -341,11 +335,11 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 		{ar_wallet:to_address(Pub1), ?AR(20), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(0), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
 			quantity => ?AR(2) }),
-	assert_post_tx_to_slave(TX1),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 	TX2 = sign_v1_tx(
 		Key2,
 		#{
@@ -356,11 +350,11 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"1">>}]
 		}
 	),
-	{ok, {{<<"400">>, _}, _, _, _, _}} = post_tx_to_slave(TX2),
-	?assertEqual({ok, ["overspend"]}, slave_call(ar_tx_db, get_error_codes, [TX2#tx.id])),
-	slave_mine(),
-	SlaveBI = assert_slave_wait_until_height(1),
-	B1 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
+	{ok, {{<<"400">>, _}, _, _, _, _}} = ar_test_node:post_tx_to_peer(peer1, TX2),
+	?assertEqual({ok, ["overspend"]}, ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes, [TX2#tx.id])),
+	ar_test_node:mine(peer1),
+	PeerBI = assert_wait_until_height(peer1, 1),
+	B1 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]),
 	?assertEqual([TX1#tx.id], B1#block.txs),
 	TX3 = sign_v1_tx(
 		Key2,
@@ -372,10 +366,10 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"3">>}]
 		}
 	),
-	assert_post_tx_to_slave(TX3),
-	slave_mine(),
-	SlaveBI2 = assert_slave_wait_until_height(2),
-	B2 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI2)]),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
+	ar_test_node:mine(peer1),
+	PeerBI2 = assert_wait_until_height(peer1, 2),
+	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI2)]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
 
 does_not_allow_to_replay_empty_wallet_txs_test_() ->
@@ -393,78 +387,78 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(50), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => <<>> }),
-	assert_post_tx_to_slave(TX1),
-	slave_mine(),
-	assert_slave_wait_until_height(1),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 1),
 	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => slave_peer(),
+			peer => ar_test_node:peer_ip(peer1),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	Balance = binary_to_integer(Body),
 	TX2 = sign_v1_tx(Key2, #{ target => ar_wallet:to_address(Pub1), reward => Balance - ?AR(1),
 			quantity => ?AR(1), last_tx => <<>> }),
-	assert_post_tx_to_slave(TX2),
-	slave_mine(),
-	assert_slave_wait_until_height(2),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 2),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => slave_peer(),
+			peer => ar_test_node:peer_ip(peer1),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	?assertEqual(0, binary_to_integer(Body2)),
 	TX3 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => TX1#tx.id }),
-	assert_post_tx_to_slave(TX3),
-	slave_mine(),
-	assert_slave_wait_until_height(3),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 3),
 	%% Remove the replay TX from the ignore list (to simulate e.g. a node restart).
-	slave_call(ets, delete, [ignored_ids, TX2#tx.id]),
+	ar_test_node:remote_call(peer1, ets, delete, [ignored_ids, TX2#tx.id]),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-		post_tx_to_slave(TX2).
+		ar_test_node:post_tx_to_peer(peer1, TX2).
 
 mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	%% Post the given transactions grouped by block size to a node.
 	%%
 	%% Expect them to be mined into the corresponding number of blocks so that
 	%% each block fits under the limit.
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX),
-			assert_wait_until_receives_txs([TX])
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
+			ar_test_node:assert_wait_until_receives_txs([TX])
 		end,
 		lists:flatten(TXGroups)
 	),
 	%% Mine blocks, expect the transactions there.
 	lists:foldl(
 		fun(Group, Height) ->
-			slave_mine(),
-			SlaveBI = assert_slave_wait_until_height(Height),
+			ar_test_node:mine(peer1),
+			PeerBI = assert_wait_until_height(peer1, Height),
 			GroupTXIDs = lists:map(fun(TX) -> TX#tx.id end, Group),
 			?assertEqual(
 				lists:sort(GroupTXIDs),
 				lists:sort(
-					(slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs
+					(ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]))#block.txs
 				),
 				io_lib:format("Height ~B", [Height])
 			),
-			assert_slave_wait_until_txs_are_stored(GroupTXIDs),
+			assert_wait_until_txs_are_stored(GroupTXIDs),
 			Height + 1
 		end,
 		1,
 		TXGroups
 	).
 
-assert_slave_wait_until_txs_are_stored(TXIDs) ->
+assert_wait_until_txs_are_stored(TXIDs) ->
 	ar_util:do_until(
 		fun() ->
 			lists:all(fun(TX) -> is_record(TX, tx) end, ar_storage:read_tx(TXIDs))
@@ -478,13 +472,13 @@ mines_format_2_txs_without_size_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	ChunkSize = ?MEMPOOL_DATA_SIZE_LIMIT div (?BLOCK_TX_COUNT_LIMIT + 1),
 	lists:foreach(
 		fun(N) ->
-			TX = sign_tx(
+			TX = ar_test_node:sign_tx(
 				Key,
 				#{
 					last_tx => B0#block.indep_hash,
@@ -492,8 +486,8 @@ mines_format_2_txs_without_size_limit() ->
 					tags => [{<<"nonce">>, integer_to_binary(N)}]
 				}
 			),
-			assert_post_tx_to_slave(TX),
-			assert_wait_until_receives_txs([TX])
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
+			ar_test_node:assert_wait_until_receives_txs([TX])
 		end,
 		lists:seq(1, ?BLOCK_TX_COUNT_LIMIT + 1)
 	),
@@ -513,12 +507,12 @@ rejects_txs_with_outdated_anchors_test_() ->
 		[B0] = ar_weave:init([
 			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 		]),
-		{_Slave, _} = slave_start(B0),
-		slave_mine_blocks(?MAX_TX_ANCHOR_DEPTH),
-		assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH),
+		ar_test_node:start_peer(peer1, B0),
+		mine_blocks(peer1, ?MAX_TX_ANCHOR_DEPTH),
+		assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH),
 		TX1 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
 		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-			post_tx_to_slave(TX1)
+			ar_test_node:post_tx_to_peer(peer1, TX1)
 	end}.
 
 drops_v1_txs_exceeding_mempool_limit_test_() ->
@@ -532,7 +526,7 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	BigChunk = random_v1_data(?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE),
 	TXs = lists:map(
 		fun(N) ->
@@ -543,17 +537,17 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		lists:sublist(TXs, 5)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool1),
 	Last = lists:last(TXs),
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% There is no place for the last transaction in the mempool.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
 
@@ -565,11 +559,11 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT div 2),
 	TXs = lists:map(
 		fun(N) ->
-			sign_tx(Key, #{ last_tx => B0#block.indep_hash,
+			ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash,
 					data => case N of 11 -> << BigChunk/binary, BigChunk/binary >>;
 							_ -> BigChunk end,
 					tags => [{<<"nonce">>, integer_to_binary(N)}] })
@@ -578,25 +572,25 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		lists:sublist(TXs, 10)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 10)], Mempool1),
 	Last = lists:last(TXs),
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% The last TX is twice as big and twice as valuable so it replaces two
 	%% other transactions in the memory pool.
 	?assertEqual([Last#tx.id | [TX#tx.id || TX <- lists:sublist(TXs, 8)]], Mempool2),
 	%% Strip the data out. Expect the header to be accepted.
-	StrippedTX = sign_tx(Key, #{ last_tx => B0#block.indep_hash,
+	StrippedTX = ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash,
 			data => BigChunk, tags => [{<<"nonce">>, integer_to_binary(12)}] }),
-	assert_post_tx_to_slave(StrippedTX#tx{ data = <<>> }),
-	{ok, Mempool3} = ar_http_iface_client:get_mempool(slave_peer()),
+	ar_test_node:assert_post_tx_to_peer(peer1, StrippedTX#tx{ data = <<>> }),
+	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	?assertEqual([Last#tx.id] ++ [TX#tx.id || TX <- lists:sublist(TXs, 8)]
 			++ [StrippedTX#tx.id], Mempool3).
 
@@ -614,40 +608,40 @@ joins_network_successfully() ->
 	%% Expect all the transactions to be present on the new node.
 	%%
 	%% Isolate the nodes. Mine 1 block with a transaction anchoring the
-	%% oldest block possible on slave. Mine a block on master so that it stops
-	%% tracking the block just referenced by slave. Reconnect the nodes, mine another
-	%% block with transactions anchoring the oldest block possible on slave.
-	%% Expect master to fork recover successfully.
+	%% oldest block possible on peer1. Mine a block on main so that it stops
+	%% tracking the block just referenced by peer1. Reconnect the nodes, mine another
+	%% block with transactions anchoring the oldest block possible on peer1.
+	%% Expect main to fork recover successfully.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(200000000), <<>>},
 		{Addr = crypto:strong_rand_bytes(32), ?AR(200000000), <<>>},
 		{crypto:strong_rand_bytes(32), ?AR(200000000), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
 			{TX, AnchorType} = case rand:uniform(4) of
 				1 ->
 					{sign_v1_tx(Key, #{ last_tx => LastTX, reward => ?AR(10000) }), tx_anchor};
 				2 ->
-					{sign_v1_tx(Key, #{ last_tx => get_tx_anchor(), reward => ?AR(10000),
+					{sign_v1_tx(Key, #{ last_tx => ar_test_node:get_tx_anchor(peer1), reward => ?AR(10000),
 							tags => [{<<"nonce">>, integer_to_binary(rand:uniform(100))}] }),
 							block_anchor};
 				3 ->
-					{sign_tx(Key, #{ last_tx => LastTX, target => Addr,
+					{ar_test_node:sign_tx(Key, #{ last_tx => LastTX, target => Addr,
 							reward => ?AR(10000) }), tx_anchor};
 				4 ->
-					{sign_tx(Key, #{ last_tx => get_tx_anchor(), reward => ?AR(10000),
+					{ar_test_node:sign_tx(Key, #{ last_tx => ar_test_node:get_tx_anchor(peer1), reward => ?AR(10000),
 							tags => [{<<"nonce">>, integer_to_binary(rand:uniform(100))}]}),
 							block_anchor}
 			end,
-			assert_post_tx_to_slave(TX),
-			slave_mine(),
-			assert_slave_wait_until_height(Height),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
+			ar_test_node:mine(peer1),
+			assert_wait_until_height(peer1, Height),
 			ar_util:do_until(
 				fun() ->
-					slave_call(ar_mempool, get_all_txids, []) == []
+					ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, []) == []
 				end,
 				200,
 				1000
@@ -657,19 +651,19 @@ joins_network_successfully() ->
 		{[], <<>>},
 		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
 	),
-	_Master = join_on_slave(),
-	BI = slave_call(ar_node, get_block_index, []),
-	assert_wait_until_block_index(BI),
-	TX1 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
+	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
+	BI = ar_test_node:remote_call(peer1, ar_node, get_block_index, []),
+	?assertEqual(ok, ar_test_node:wait_until_block_index(BI)),
+	TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-		post_tx_to_master(TX1),
-	%% Expect transactions to be on master.
+		ar_test_node:post_tx_to_peer(main, TX1),
+	%% Expect transactions to be on main.
 	lists:foreach(
 		fun({TX, _}) ->
 			?assert(
 				ar_util:do_until(
 					fun() ->
-						get_tx_confirmations(master, TX#tx.id) > 0
+						ar_test_node:get_tx_confirmations(main, TX#tx.id) > 0
 					end,
 					100,
 					20000
@@ -680,7 +674,7 @@ joins_network_successfully() ->
 	),
 	lists:foreach(
 		fun({TX, AnchorType}) ->
-			Reply = post_tx_to_master(TX),
+			Reply = ar_test_node:post_tx_to_peer(main, TX),
 			case AnchorType of
 				tx_anchor ->
 					?assertMatch({ok, {{<<"400">>, _}, _,
@@ -699,33 +693,33 @@ joins_network_successfully() ->
 		end,
 		TXs
 	),
-	disconnect_from_slave(),
-	TX2 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
-	assert_post_tx_to_master(TX2),
+	ar_test_node:disconnect_from(peer1),
+	TX2 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
+	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	ar_test_node:mine(),
 	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
-	TX3 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
-	assert_post_tx_to_slave(TX3),
-	slave_mine(),
-	BI2 = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
-	connect_to_slave(),
-	TX4 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
-	assert_post_tx_to_slave(TX4),
-	assert_wait_until_receives_txs([TX4]),
-	slave_mine(),
-	BI3 = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
+	TX3 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
+	ar_test_node:mine(peer1),
+	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
+	ar_test_node:connect_to_peer(peer1),
+	TX4 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
+	ar_test_node:assert_wait_until_receives_txs([TX4]),
+	ar_test_node:mine(peer1),
+	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
 	BI3 = wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
 	?assertEqual([TX4#tx.id], (read_block_when_stored(hd(BI3)))#block.txs),
 	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI2)))#block.txs).
 
 recovers_from_forks(ForkHeight) ->
-	%% Mine a number of blocks with transactions on slave and master in sync,
+	%% Mine a number of blocks with transactions on peer1 and main in sync,
 	%% then mine another bunch independently.
 	%%
-	%% Mine an extra block on slave to make master fork recover to it.
+	%% Mine an extra block on peer1 to make main fork recover to it.
 	%% Expect the fork recovery to be successful.
 	%%
-	%% Try to replay all the past transactions on master. Expect the transactions to be rejected.
+	%% Try to replay all the past transactions on main. Expect the transactions to be rejected.
 	%%
 	%% Resubmit all the transactions from the orphaned fork. Expect them to be accepted
 	%% and successfully mined into a block.
@@ -733,81 +727,81 @@ recovers_from_forks(ForkHeight) ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	{ok, Config} = application:get_env(arweave, config),
-	MasterPort = Config#config.port,
+	MainPort = Config#config.port,
 	PreForkTXs = lists:foldl(
 		fun(Height, TXs) ->
-			TX = sign_v1_tx(Key, #{ last_tx => get_tx_anchor(),
+			TX = sign_v1_tx(Key, #{ last_tx => ar_test_node:get_tx_anchor(peer1),
 					tags => [{<<"nonce">>, random_nonce()}] }),
-			assert_post_tx_to_slave(TX),
-			assert_wait_until_receives_txs([TX]),
-			slave_mine(),
-			BI = assert_slave_wait_until_height(Height),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
+			ar_test_node:assert_wait_until_receives_txs([TX]),
+			ar_test_node:mine(peer1),
+			BI = assert_wait_until_height(peer1, Height),
 			BI = wait_until_height(Height),
-			slave_assert_block_txs([TX], BI),
-			assert_block_txs([TX], BI),
+			assert_block_txs(peer1, [TX], BI),
+			assert_block_txs(main, [TX], BI),
 			TXs ++ [TX]
 		end,
 		[],
 		lists:seq(1, ForkHeight)
 	),
-	PostTXToMaster =
+	PostTXToMain =
 		fun() ->
-			UnsignedTX = #{ last_tx => get_tx_anchor(master),
+			UnsignedTX = #{ last_tx => ar_test_node:get_tx_anchor(main),
 					tags => [{<<"nonce">>, random_nonce()}], reward => ?AR(1) },
 			TX = case rand:uniform(2) of
 				1 ->
-					sign_tx(master, Key, UnsignedTX);
+					ar_test_node:sign_tx(main, Key, UnsignedTX);
 				2 ->
-					sign_v1_tx(master, Key, UnsignedTX)
+					sign_v1_tx(main, Key, UnsignedTX)
 			end,
-			assert_post_tx_to_master(TX),
+			ar_test_node:assert_post_tx_to_peer(main, TX),
 			[TX]
 		end,
-	PostTXToSlave =
+	PostTXToPeer =
 		fun() ->
-			UnsignedTX = #{ last_tx => get_tx_anchor(),
+			UnsignedTX = #{ last_tx => ar_test_node:get_tx_anchor(peer1),
 					tags => [{<<"nonce">>, random_nonce()}] },
 			TX = case rand:uniform(2) of
 				1 ->
-					sign_tx(Key, UnsignedTX);
+					ar_test_node:sign_tx(Key, UnsignedTX);
 				2 ->
 					sign_v1_tx(Key, UnsignedTX)
 			end,
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			[TX]
 		end,
-	disconnect_from_slave(),
-	{MasterPostForkTXs, SlavePostForkTXs} = lists:foldl(
-		fun(Height, {MasterTXs, SlaveTXs}) ->
-			UpdatedMasterTXs = MasterTXs ++ ([NewMasterTX] = PostTXToMaster()),
+	ar_test_node:disconnect_from(peer1),
+	{MainPostForkTXs, PeerPostForkTXs} = lists:foldl(
+		fun(Height, {MainTXs, PeerTXs}) ->
+			UpdatedMainTXs = MainTXs ++ ([NewMainTX] = PostTXToMain()),
 			ar_test_node:mine(),
 			BI = wait_until_height(Height),
-			assert_block_txs([NewMasterTX], BI),
-			UpdatedSlaveTXs = SlaveTXs ++ ([NewSlaveTX] = PostTXToSlave()),
-			slave_mine(),
-			SlaveBI = assert_slave_wait_until_height(Height),
-			slave_assert_block_txs([NewSlaveTX], SlaveBI),
-			{UpdatedMasterTXs, UpdatedSlaveTXs}
+			assert_block_txs(main, [NewMainTX], BI),
+			UpdatedPeerTXs = PeerTXs ++ ([NewPeerTX] = PostTXToPeer()),
+			ar_test_node:mine(peer1),
+			PeerBI = assert_wait_until_height(peer1, Height),
+			assert_block_txs(peer1, [NewPeerTX], PeerBI),
+			{UpdatedMainTXs, UpdatedPeerTXs}
 		end,
 		{[], []},
 		lists:seq(ForkHeight + 1, 9)
 	),
-	connect_to_slave(),
-	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(),
+	ar_test_node:connect_to_peer(peer1),
+	TX2 = ar_test_node:sign_tx(Key, #{ last_tx => ar_test_node:get_tx_anchor(peer1),
 			tags => [{<<"nonce">>, random_nonce()}] }),
-	assert_post_tx_to_slave(TX2),
-	assert_wait_until_receives_txs([TX2]),
-	slave_mine(),
-	assert_slave_wait_until_height(10),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
+	ar_test_node:assert_wait_until_receives_txs([TX2]),
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, 10),
 	wait_until_height(10),
 	forget_txs(
 		PreForkTXs ++
-		MasterPostForkTXs ++
-		SlavePostForkTXs ++
+		MainPostForkTXs ++
+		PeerPostForkTXs ++
 		[TX2]
 	),
 	%% Assert pre-fork transactions, the transactions which came during
@@ -818,16 +812,16 @@ recovers_from_forks(ForkHeight) ->
 			?assert(
 				ar_util:do_until(
 					fun() ->
-						get_tx_confirmations(master, TX#tx.id) > 0
+						ar_test_node:get_tx_confirmations(main, TX#tx.id) > 0
 					end,
 					100,
 					1000
 				)
 			),
 			{ok, {{<<"400">>, _}, _, _, _, _}} =
-				post_tx_to_master(TX)
+				ar_test_node:post_tx_to_peer(main, TX)
 		end,
-		PreForkTXs ++ SlavePostForkTXs ++ [TX2]
+		PreForkTXs ++ PeerPostForkTXs ++ [TX2]
 	),
 	%% Assert the block anchored transactions from the abandoned fork are
 	%% back in the memory pool.
@@ -836,13 +830,13 @@ recovers_from_forks(ForkHeight) ->
 			{ok, {{<<"208">>, _}, _, <<"Transaction already processed.">>, _, _}} =
 				ar_http:req(#{
 					method => post,
-					peer => {127, 0, 0, 1, MasterPort},
+					peer => {127, 0, 0, 1, MainPort},
 					path => "/tx",
-					headers => [{<<"X-P2p-Port">>, integer_to_binary(MasterPort, 10)}],
+					headers => [{<<"x-p2p-port">>, integer_to_binary(MainPort, 10)}],
 					body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 				})
 		end,
-		MasterPostForkTXs
+		MainPostForkTXs
 	).
 
 one_wallet_list_one_block_anchored_txs(Key, B0) ->
@@ -907,15 +901,15 @@ grouped_txs() ->
 	%% the price per byte should be the same since we assigned the minimum required fees.
 	{B0, [[TX1], [TX2]]}.
 
-slave_mine_blocks(TargetHeight) ->
-	slave_mine_blocks(1, TargetHeight).
+mine_blocks(Node, TargetHeight) ->
+	mine_blocks(Node, 1, TargetHeight).
 
-slave_mine_blocks(Height, TargetHeight) when Height == TargetHeight + 1 ->
+mine_blocks(Node, Height, TargetHeight) when Height == TargetHeight + 1 ->
 	ok;
-slave_mine_blocks(Height, TargetHeight) ->
-	slave_mine(),
-	assert_slave_wait_until_height(Height),
-	slave_mine_blocks(Height + 1, TargetHeight).
+mine_blocks(Node, Height, TargetHeight) ->
+	ar_test_node:mine(Node),
+	assert_wait_until_height(Node, Height),
+	mine_blocks(Node, Height + 1, TargetHeight).
 
 forget_txs(TXs) ->
 	lists:foreach(
@@ -925,14 +919,9 @@ forget_txs(TXs) ->
 		TXs
 	).
 
-slave_assert_block_txs(TXs, BI) ->
+assert_block_txs(Node, TXs, BI) ->
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	B = slave_call(ar_test_node, read_block_when_stored, [hd(BI)]),
-	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
-
-assert_block_txs(TXs, BI) ->
-	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	B = read_block_when_stored(hd(BI)),
+	B = ar_test_node:remote_call(Node, ar_test_node, read_block_when_stored, [hd(BI)]),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
 
 random_nonce() ->
