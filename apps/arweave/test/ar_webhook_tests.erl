@@ -7,7 +7,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [start/3, sign_tx/3, assert_post_tx_to_master/1,
+-import(ar_test_node, [
 		wait_until_height/1, read_block_when_stored/1]).
 
 init(Req, State) ->
@@ -15,6 +15,7 @@ init(Req, State) ->
 	handle(SplitPath, Req, State).
 
 handle([<<"tx">>], Req, State) ->
+	?LOG_ERROR([{event, tx}]),
 	{ok, Reply, _} = cowboy_req:read_body(Req),
 	JSON = jiffy:decode(Reply, [return_maps]),
 	TX = maps:get(<<"transaction">>, JSON),
@@ -26,6 +27,7 @@ handle([<<"block">>], Req, State) ->
 	JSON = jiffy:decode(Reply, [return_maps]),
 	B = maps:get(<<"block">>, JSON),
 	ets:insert(?MODULE, {{block, maps:get(<<"height">>, B)}, B}),
+	?LOG_ERROR([{event, block}, {height, maps:get(<<"height">>, B)}]),
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
 webhooks_test_() ->
@@ -35,39 +37,42 @@ test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
+	Port = ar_test_node:get_unused_port(),
+	PortBinary = integer_to_binary(Port),
 	Config2 = Config#config{ webhooks = [
 		#config_webhook{
-			url = <<"http://127.0.0.1:1986/tx">>,
+			url = <<"http://127.0.0.1:", PortBinary/binary, "/tx">>,
 			events = [transaction]
 		},
 		#config_webhook{
-			url = <<"http://127.0.0.1:1986/block">>,
+			url = <<"http://127.0.0.1:", PortBinary/binary, "/block">>,
 			events = [block]
 		}
 	]},
-	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()), Config2),
+	ar_test_node:start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()), Config2),
 	%% Setup a server that would be listening for the webhooks and registering
 	%% them in the ETS table.
 	ets:new(?MODULE, [named_table, set, public]),
 	Routes = [{"/[...]", ar_webhook_tests, []}],
 	cowboy:start_clear(
 		ar_webhook_test_listener,
-		[{port, 1986}],
+		[{port, Port}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
 	TXs =
 		lists:map(
 			fun(Height) ->
-				SignedTX = sign_tx(master, Wallet, #{}),
-				assert_post_tx_to_master(SignedTX),
+				SignedTX = ar_test_node:sign_tx(main, Wallet, #{}),
+				ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 				ar_test_node:mine(),
 				wait_until_height(Height),
+				?LOG_ERROR([{event, mined}, {height, Height}]),
 				SignedTX
 			end,
 			lists:seq(1, 10)
 		),
-	UnconfirmedTX = sign_tx(master, Wallet, #{}),
-	assert_post_tx_to_master(UnconfirmedTX),
+	UnconfirmedTX = ar_test_node:sign_tx(main, Wallet, #{}),
+	ar_test_node:assert_post_tx_to_peer(main, UnconfirmedTX),
 	lists:foreach(
 		fun(Height) ->
 			TX = lists:nth(Height, TXs),
@@ -75,6 +80,7 @@ test_webhooks() ->
 				fun() ->
 					case ets:lookup(?MODULE, {block, Height}) of
 						[{_, B}] ->
+							?LOG_ERROR("**** A ~p", [Height]),
 							{H, _, _} = ar_node:get_block_index_entry(Height),
 							B2 = read_block_when_stored(H),
 							Struct = ar_serialize:block_to_json_struct(B2),
@@ -85,17 +91,19 @@ test_webhooks() ->
 								),
 							?assertEqual(Expected, B),
 							true;	
-						_ ->
+						Result ->
+							?LOG_ERROR([{height, Height}, {result, Result}]),
 							false
 					end
 				end,
 				100,
-				1000
+				10000
 			),
 			true = ar_util:do_until(
 				fun() ->
 					case ets:lookup(?MODULE, {tx, ar_util:encode(TX#tx.id)}) of
 						[{_, TX2}] ->
+							?LOG_ERROR("**** B ~p", [Height]),
 							Struct = ar_serialize:tx_to_json_struct(TX),
 							Expected =
 								maps:remove(
@@ -109,7 +117,7 @@ test_webhooks() ->
 					end
 				end,
 				100,
-				1000
+				10000
 			)
 		end,
 		lists:seq(1, 10)

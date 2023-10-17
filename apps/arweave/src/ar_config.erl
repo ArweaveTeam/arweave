@@ -1,7 +1,7 @@
 -module(ar_config).
 
 -export([use_remote_vdf_server/0, pull_from_remote_vdf_server/0, parse/1,
-		parse_storage_module/1, format_config/1]).
+		parse_storage_module/1, log_config/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -681,35 +681,37 @@ parse_vdf_server_trusted_peer(Peer, Config) ->
 	#config{ nonce_limiter_server_trusted_peers = Peers } = Config,
 	Config#config{ nonce_limiter_server_trusted_peers = Peers ++ [Peer] }.
 
-format_config(Config) ->
+log_config(Config) ->
 	Fields = record_info(fields, config),
-	format_config_fields(Config, Fields, 2, []).
+	?LOG_INFO("=============== Start Config ==============="),
+	log_config(Config, Fields, 2, []),
+	?LOG_INFO("=============== End Config   ===============").
 
-format_config_fields(_Config, [], _Index, Acc) ->
-	string:join(lists:reverse(Acc), "\n");
-format_config_fields(Config, [Field | Rest], Index, Acc) ->
+log_config(_Config, [], _Index, _Acc) ->
+	ok;
+log_config(Config, [Field | Rest], Index, Acc) ->
 	FieldValue = erlang:element(Index, Config),
 	%% Wrap formatting in a try/catch just in case - we don't want any issues in formatting
 	%% to cause a crash.
 	FormattedValue = try
-		format_config_value(Field, FieldValue)
+		log_config_value(Field, FieldValue)
 	catch _:_ ->
 		FieldValue
 	end,
-	Line = io_lib:format("~s: ~tp", [atom_to_list(Field), FormattedValue]),
-	format_config_fields(Config, Rest, Index+1, [Line | Acc]).
+	Line = ?LOG_INFO("~s: ~tp", [atom_to_list(Field), FormattedValue]),
+	log_config(Config, Rest, Index+1, [Line | Acc]).
 
-format_config_value(peers, FieldValue) ->
+log_config_value(peers, FieldValue) ->
 	format_peers(FieldValue);
-format_config_value(block_gossip_peers, FieldValue) ->
+log_config_value(block_gossip_peers, FieldValue) ->
 	format_peers(FieldValue);
-format_config_value(local_peers, FieldValue) ->
+log_config_value(local_peers, FieldValue) ->
 	format_peers(FieldValue);
-format_config_value(mining_addr, FieldValue) ->
+log_config_value(mining_addr, FieldValue) ->
 	format_address(FieldValue);
-format_config_value(storage_modules, FieldValue) ->
+log_config_value(storage_modules, FieldValue) ->
 	[format_storage_module(StorageModule) || StorageModule <- FieldValue];
-format_config_value(_, FieldValue) ->
+log_config_value(_, FieldValue) ->
 	FieldValue.
 
 format_peers(Peers) ->

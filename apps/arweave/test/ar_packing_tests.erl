@@ -4,8 +4,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/2]).
-
 -define(CHUNK_OFFSET, 10*256*1024).
 -define(ENCODED_TX_ROOT, <<"9d857DmXbSyhX6bgF7CDMDCl0f__RUjryMMvueFN9wE">>).
 -define(ENCODED_REWARD_ADDRESS, <<"usuW8f-hpzuA4ZFXxiTbv0OXRWZP2HUlJqP-bGMR8g8">>).
@@ -21,7 +19,7 @@ load_fixture(Fixture) ->
 % 	RewardAddress = ar_util:decode(?ENCODED_REWARD_ADDRESS),
 
 % 	[B0] = ar_weave:init([]),
-% 	start(B0, RewardAddress),
+% 	ar_test_node:start(B0, RewardAddress),
 
 % 	test_full_chunk(),
 % 	test_partial_chunk(),
@@ -46,7 +44,7 @@ packing_test_() ->
 setup() ->
     RewardAddress = ar_util:decode(?ENCODED_REWARD_ADDRESS),
     [B0] = ar_weave:init([]),
-    start(B0, RewardAddress),
+    ar_test_node:start(B0, RewardAddress),
     RewardAddress.
 
 teardown(_) ->

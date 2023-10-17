@@ -1177,8 +1177,8 @@ handle_cm_noop_response(Response) ->
 
 p2p_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
-	[{<<"X-P2p-Port">>, integer_to_binary(Config#config.port)},
-			{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}].
+	[{<<"x-p2p-port">>, integer_to_binary(Config#config.port)},
+			{<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}].
 
 cm_p2p_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
