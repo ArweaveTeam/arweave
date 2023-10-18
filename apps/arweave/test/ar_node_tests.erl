@@ -6,10 +6,10 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		slave_mine/0, wait_until_height/1, slave_start/1, slave_start/2,
+		wait_until_height/1, slave_start/1, slave_start/2,
 		wait_until_receives_txs/1, assert_post_tx_to_master/1,
-		assert_slave_wait_until_receives_txs/1, assert_wait_until_height/2,
-		slave_call/3, slave_call/4, disconnect_from_slave/0, sign_v1_tx/3,
+		assert_wait_until_height/2,
+		slave_call/4,  sign_v1_tx/3,
 		read_block_when_stored/1, post_tx_to_master/2]).
 
 %cannot_spend_accounts_of_other_type_test_() ->
@@ -483,7 +483,7 @@ test_multi_node_mining_reward() ->
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0, MiningAddr = ar_wallet:to_address(Pub1)),
 	ar_test_node:connect_to_peer(peer1),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	wait_until_height(1),
 	B1 = ar_node:get_current_block(),
 	[{MiningAddr, _, Reward, 1}, _] = B1#block.reward_history,
@@ -570,7 +570,7 @@ test_wallet_transaction() ->
 %		ar_test_node:mine(),
 %		assert_wait_until_height(peer1, 1),
 %		assert_post_tx_to_slave(SignedTX2),
-%		slave_mine(),
+%		ar_test_node:mine(peer1),
 %		wait_until_height(2),
 %		?AR(999) = ar_node:get_balance(Pub1),
 %		?AR(8499) = ar_node:get_balance(Pub2),
@@ -612,7 +612,7 @@ test_persisted_mempool() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(SignedTX, false),
 	Mempool = ar_mempool:get_map(),
@@ -634,7 +634,7 @@ test_persisted_mempool() ->
 	}),
 	ar:start_dependencies(),
 	ar_test_node:wait_until_joined(),
-	assert_slave_wait_until_receives_txs([SignedTX]),
+	ar_test_node:assert_wait_until_receives_txs(peer1, [SignedTX]),
 	ar_test_node:mine(),
 	[{H, _, _} | _] = assert_wait_until_height(peer1, 1),
 	B = read_block_when_stored(H),

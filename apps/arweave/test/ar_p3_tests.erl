@@ -9,8 +9,8 @@
 
 -import(ar_test_node, [
 	stop/0, slave_start/1, slave_start/3,
-	disconnect_from_slave/0, assert_post_tx_to_slave/1,
-	slave_mine/0, assert_wait_until_height/2, join_on_slave/0, rejoin_on_slave/0,
+	 assert_post_tx_to_slave/1,
+	assert_wait_until_height/2,
 	assert_post_tx_to_master/1, wait_until_height/1, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
@@ -790,22 +790,22 @@ e2e_restart_p3_service() ->
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
 	ar_test_node:start(B0, RewardAddress, Config),
 	ar_test_node:start_peer(peer1, B0),
-	join_on_slave(),
-	disconnect_from_slave(),
+	ar_test_node:join_on(main, peer1),
+	ar_test_node:disconnect_from(peer1),
 
 	%% This deposit will be too old and will not be scanned when the master node comes back up.
 	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
 	assert_post_tx_to_slave(TX1),
 
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 1),
 
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 2),
 
 	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
 	assert_post_tx_to_slave(TX2),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 3),
 
 	%% Stop the master node. The slave will continue to mine. When the master comes back up
@@ -813,10 +813,10 @@ e2e_restart_p3_service() ->
 	%% (up to ?MAX_BLOCK_SCAN blocks)
 	stop(),
 
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 4),
 
-	rejoin_on_slave(),
+	ar_test_node:rejoin_on(main, peer1),
 	?assertEqual(0, ar_p3_db:get_scan_height(),
 		"Node hasn't seen any blocks yet: scan height 0"),
 
@@ -827,7 +827,7 @@ e2e_restart_p3_service() ->
 	?assertEqual(0, ar_p3_db:get_scan_height(),
 		"Node has seen blocks, but hasn't received a new_tip event yet: scan height 0"),
 
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 5),
 	wait_until_height(5),
 	%% allow time for the new_tip event to be processed
@@ -839,9 +839,9 @@ e2e_restart_p3_service() ->
 	%% occurred before ?MAX_BLOCK_SCAN blocks in the past.
 	?assertEqual({<<"200">>, <<"500">>}, get_balance(Sender1Address)),
 
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	stop(),
-	rejoin_on_slave(),
+	ar_test_node:rejoin_on(main, peer1),
 	?assertEqual(5, ar_p3_db:get_scan_height(),
 		"Restarting node should not have reset scan height db: scan height 5"),
 	

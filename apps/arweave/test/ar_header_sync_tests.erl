@@ -7,8 +7,8 @@
 -include_lib("kernel/include/file.hrl").
 
 -import(ar_test_node, [
-	join_on_master/0,
-	slave_call/3,
+	
+	
 	sign_v1_tx/3, assert_post_tx_to_master/1,
 	wait_until_height/1, assert_wait_until_height/2,
 	read_block_when_stored/1,
@@ -23,7 +23,7 @@ test_syncs_headers() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
 	ar_test_node:start(B0),
 	post_random_blocks(Wallet, ?MAX_TX_ANCHOR_DEPTH + 5, B0),
-	join_on_master(),
+	ar_test_node:join_on(peer1, main),
 	BI = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 5),
 	lists:foreach(
 		fun(Height) ->

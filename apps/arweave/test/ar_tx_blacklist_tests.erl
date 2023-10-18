@@ -8,10 +8,9 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -import(ar_test_node, [slave_start/1,
-		sign_v1_tx/2, random_v1_data/1, slave_call/3, assert_post_tx_to_slave/1,
-		assert_post_tx_to_master/1, slave_mine/0, wait_until_height/1,
-		assert_wait_until_height/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-		disconnect_from_slave/0, assert_wait_until_receives_txs/1]).
+		sign_v1_tx/2, random_v1_data/1, assert_post_tx_to_slave/1,
+		assert_post_tx_to_master/1, wait_until_height/1,
+		assert_wait_until_height/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -73,15 +72,15 @@ test_uses_blacklists() ->
 	lists:foreach(
 		fun({TX, Height}) ->
 			assert_post_tx_to_slave(TX),
-			assert_wait_until_receives_txs([TX]),
+			ar_test_node:assert_wait_until_receives_txs([TX]),
 			case Height == length(TXs) of
 				true ->
 					assert_post_tx_to_slave(V1TX),
-					assert_wait_until_receives_txs([V1TX]);
+					ar_test_node:assert_wait_until_receives_txs([V1TX]);
 				_ ->
 					ok
 			end,
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			upload_data([TX], DataTrees),
 			wait_until_height(Height)
 		end,
@@ -115,7 +114,7 @@ test_uses_blacklists() ->
 	assert_removed_offsets(BadOffsets3),
 	assert_does_not_accept_offsets(BadOffsets3),
 	%% Blacklist the last transaction. Fork the weave. Assert the blacklisted offsets are moved.
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	TX = ar_test_node:sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 			last_tx => ar_test_node:get_tx_anchor(slave) }),
 	assert_post_tx_to_master(TX),
@@ -127,10 +126,10 @@ test_uses_blacklists() ->
 	TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
 			last_tx => ar_test_node:get_tx_anchor(slave) }),
 	assert_post_tx_to_slave(TX2),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, length(TXs) + 1),
 	assert_post_tx_to_slave(TX),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, length(TXs) + 2),
 	ar_test_node:connect_to_peer(peer1),
 	[{_, WeaveSize2, _} | _] = wait_until_height(length(TXs) + 2),

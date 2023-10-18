@@ -15,21 +15,19 @@
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 		stop/0, stop/1, boot_peer/1, 
-		main_ip/0,
+		main_ip/0, peer_ip/1,
 		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peer/1,
 		connect_to_peer/1,
-		disconnect_from_slave/0,
+		disconnect_from/1,
 		generate_node_namespace/0, get_unused_port/0,
-		slave_mine/0, wait_until_height/1,
+		wait_until_height/1,
 		assert_wait_until_height/2, wait_until_block_index/1,
-		assert_wait_until_block_index/1, assert_slave_wait_until_block_index/1,
 		wait_until_mining_paused/0,
 		wait_until_receives_txs/1,
-		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
+		assert_wait_until_receives_txs/2,
 		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
 		assert_post_tx_to_slave/1, assert_post_tx_to_slave/2, assert_post_tx_to_master/1,
-		get_tx_anchor/1, join/1, rejoin/1, join_on_slave/0, rejoin_on_slave/0,
-		join_on_master/0, rejoin_on_master/0,
+		get_tx_anchor/1, join/2, join_on/2, rejoin_on/2,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
@@ -699,20 +697,17 @@ stop() ->
 stop(NodePrefix) ->
 	remote_call(NodePrefix, ar_test_node, stop, []).
 
-join_on_slave() ->
-	join(peer1).
+rejoin_on(NodePrefix, JoinOnNodePrefix) ->
+	join_on(NodePrefix, JoinOnNodePrefix, true).
 
-rejoin_on_slave() ->
-	join(peer1, true).
+join_on(NodePrefix, JoinOnNodePrefix) ->
+	join_on(NodePrefix, JoinOnNodePrefix, false).
 
-rejoin(NodePrefix) ->
-	join(NodePrefix, true).
+join_on(NodePrefix, JoinOnNodePrefix, Rejoin) ->
+	remote_call(NodePrefix, ar_test_node, join, [JoinOnNodePrefix, Rejoin], 20000).
 
-join(NodePrefix) ->
-	join(NodePrefix, false).
-
-join(NodePrefix, Rejoin) ->
-	Peer = peer_ip(NodePrefix),
+join(JoinOnNodePrefix, Rejoin) ->
+	Peer = peer_ip(JoinOnNodePrefix),
 	{ok, Config} = application:get_env(arweave, config),
 	case Rejoin of
 		true ->
@@ -733,12 +728,6 @@ join(NodePrefix, Rejoin) ->
 	}),
 	ar:start_dependencies(),
 	whereis(ar_node_worker).
-
-join_on_master() ->
-	remote_call(peer1, ar_test_node, join, [main], 20000).
-
-rejoin_on_master() ->
-	remote_call(peer1, ar_test_node, rejoin, [main], 20000).
 
 connect_to_peer(NodePrefix) ->
 	%% Unblock connections possibly blocked in the prior test code.
@@ -778,12 +767,9 @@ connect_to_peer(NodePrefix) ->
 		5000
 	).
 
-disconnect_from_slave() ->
+disconnect_from(NodePrefix) ->
 	ar_http:block_peer_connections(),
-	remote_call(peer1, ar_http, block_peer_connections, []).
-
-slave_mine() ->
-	remote_call(peer1, ar_test_node, mine, []).
+	remote_call(NodePrefix, ar_http, block_peer_connections, []).
 
 wait_until_syncs_genesis_data(NodePrefix) ->
 	ok = remote_call(NodePrefix, ar_test_node, wait_until_syncs_genesis_data, [], 60000).
@@ -826,14 +812,8 @@ assert_wait_until_height(NodePrefix, TargetHeight) ->
 	?assert(is_list(BI), iolist_to_binary(io_lib:format("Got ~p.", [BI]))),
 	BI.
 
-assert_wait_until_block_index(BI) ->
-	?assertEqual(ok, wait_until_block_index(BI)).
-
-assert_slave_wait_until_block_index(BI) ->
-	?assertEqual(ok, slave_wait_until_block_index(BI)).
-
-slave_wait_until_block_index(BI) ->
-	remote_call(peer1, ?MODULE, wait_until_block_index, [BI]).
+wait_until_block_index(NodePrefix, BI) ->
+	remote_call(NodePrefix, ?MODULE, wait_until_block_index, [BI]).
 
 wait_until_block_index(BI) ->
 	ar_util:do_until(
@@ -901,6 +881,13 @@ wait_until_mining_paused() ->
 assert_wait_until_receives_txs(TXs) ->
 	?assertEqual(ok, wait_until_receives_txs(TXs)).
 
+assert_wait_until_receives_txs(NodePrefix, TXs) ->
+	?assertEqual(ok, wait_until_receives_txs(NodePrefix, TXs)).
+
+wait_until_receives_txs(NodePrefix, TXs) ->
+	remote_call(NodePrefix, ?MODULE, wait_until_receives_txs, [TXs],
+					?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT + 500).
+
 wait_until_receives_txs(TXs) ->
 	ar_util:do_until(
 		fun() ->
@@ -915,10 +902,6 @@ wait_until_receives_txs(TXs) ->
 		100,
 		?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT
 	).
-
-assert_slave_wait_until_receives_txs(TXs) ->
-	?assertEqual(ok, remote_call(peer1, ?MODULE, wait_until_receives_txs, [TXs],
-			?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT + 500)).
 
 assert_post_tx_to_slave(TX) ->
 	assert_post_tx_to_slave(TX, true).
@@ -938,7 +921,7 @@ post_tx_to_master(TX, Wait) ->
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			case Wait of
 				true ->
-					assert_wait_until_receives_txs([TX]);
+					ar_test_node:assert_wait_until_receives_txs([TX]);
 				false ->
 					ok
 			end;
@@ -958,7 +941,7 @@ post_tx_to_slave(TX, Wait) ->
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			case Wait of
 				true ->
-					assert_slave_wait_until_receives_txs([TX]);
+					ar_test_node:assert_wait_until_receives_txs(peer1, [TX]);
 				false ->
 					ok
 			end;
@@ -1117,7 +1100,7 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 		{slave, _MiningNode} ->
 			Height = remote_call(peer1, ar_node, get_height, []),
 			lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, TXs),
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			Height;
 		{master, _MiningNode} ->
 			Height = ar_node:get_height(),

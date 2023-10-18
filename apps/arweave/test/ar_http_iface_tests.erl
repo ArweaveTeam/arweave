@@ -5,12 +5,12 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [slave_start/1,
-		disconnect_from_slave/0,
+		
 		wait_until_height/1, wait_until_receives_txs/1,
-		post_tx_json_to_master/1, assert_slave_wait_until_receives_txs/1,
+		post_tx_json_to_master/1,
 		slave_wait_until_height/1, read_block_when_stored/1, read_block_when_stored/2,
-		slave_mine/0, assert_wait_until_height/2,
-		slave_call/3, assert_post_tx_to_master/1, assert_post_tx_to_slave/1]).
+		assert_wait_until_height/2,
+		assert_post_tx_to_master/1, assert_post_tx_to_slave/1]).
 
 start_node() ->
 	%% Starting a node is slow so we'll run it once for the whole test module
@@ -174,7 +174,7 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
 		end,
 		ValidPayloads
 	),
-	assert_slave_wait_until_receives_txs([TX, TX2]),
+	ar_test_node:assert_wait_until_receives_txs(peer1, [TX, TX2]),
 	ar_test_node:mine(),
 	[{H, _, _} | _] = slave_wait_until_height(RemoteHeight + 1),
 	B = read_block_when_stored(H),
@@ -258,7 +258,7 @@ test_get_info(_) ->
 
 %% @doc Ensure that transactions are only accepted once.
 test_single_regossip(_) ->
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	TX = ar_tx:new(),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -658,7 +658,7 @@ test_find_external_tx(_) ->
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
 	LocalHeight = ar_node:get_height(),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	{_Priv1, Pub1} = Wallet1,
 	{_Priv2, Pub2} = Wallet2,
 	SignedTX = ar_test_node:sign_tx(Wallet1, #{
@@ -710,7 +710,7 @@ test_get_pending_tx(_) ->
 
 %% @doc Mine a transaction into a block and retrieve it's binary body via HTTP.
 test_get_tx_body(_) ->
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	LocalHeight = ar_node:get_height(),
 	TX = ar_tx:new(<<"TEST DATA">>),
 	assert_post_tx_to_master(TX),
@@ -723,7 +723,7 @@ test_get_tx_status(_) ->
 	ar_test_node:connect_to_peer(peer1),
 	Height = ar_node:get_height(),
 	assert_wait_until_height(peer1, Height),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
 	assert_post_tx_to_master(TX),
 	FetchStatus = fun() ->
@@ -763,12 +763,12 @@ test_get_tx_status(_) ->
 		5000
 	),
 	%% Create a fork which returns the TX to mempool.
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, Height + 1),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, Height + 2),
 	ar_test_node:connect_to_peer(peer1),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	wait_until_height(Height + 3),
 	?assertMatch({ok, {{<<"202">>, _}, _, _, _, _}}, FetchStatus()).
 
@@ -900,7 +900,7 @@ test_get_error_of_data_limit(_) ->
 test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	LocalHeight = ar_node:get_height(),
 	RemoteHeight = slave_height(),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
@@ -917,7 +917,7 @@ test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	LocalHeight = ar_node:get_height(),
 	RemoteHeight = slave_height(),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
@@ -933,7 +933,7 @@ test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _Stat
 test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	LocalHeight = ar_node:get_height(),
 	BTip = ar_node:get_current_block(),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	{ok, {{<<"404">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => get,
 		peer => ar_test_node:main_ip(), path => "/recent_hash_list_diff",
 		headers => [], body => <<>> }),

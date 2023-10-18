@@ -4,9 +4,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [slave_start/1,
-		assert_post_tx_to_slave/1, slave_mine/0,
+		assert_post_tx_to_slave/1,
 		wait_until_height/1, assert_wait_until_height/2,
-		assert_wait_until_receives_txs/1,
+		
 		read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
@@ -29,10 +29,10 @@ test_v1_transactions_after_2_0() ->
 		end,
 		TXs
 	),
-	assert_wait_until_receives_txs(TXs),
+	ar_test_node:assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			BI = wait_until_height(Height),
 			case Height of
 				1 ->
@@ -51,10 +51,10 @@ test_v1_transactions_after_2_0() ->
 		end,
 		MoreTXs
 	),
-	assert_wait_until_receives_txs(MoreTXs),
+	ar_test_node:assert_wait_until_receives_txs(MoreTXs),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			BI = wait_until_height(Height),
 			case Height of
 				11 ->
@@ -87,10 +87,10 @@ test_v2_transactions_after_2_0() ->
 		end,
 		TXs
 	),
-	assert_wait_until_receives_txs(TXs),
+	ar_test_node:assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			BI = wait_until_height(Height),
 			case Height of
 				1 ->
@@ -109,10 +109,10 @@ test_v2_transactions_after_2_0() ->
 		end,
 		MoreTXs
 	),
-	assert_wait_until_receives_txs(MoreTXs),
+	ar_test_node:assert_wait_until_receives_txs(MoreTXs),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			BI = wait_until_height(Height),
 			case Height of
 				11 ->
@@ -150,10 +150,10 @@ test_recall_byte_on_the_border() ->
 		end,
 		TXs
 	),
-	assert_wait_until_receives_txs(TXs),
+	ar_test_node:assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			BI = wait_until_height(Height),
 			case Height of
 				1 ->
@@ -205,10 +205,10 @@ test_ignores_transactions_with_invalid_data_root() ->
 		end,
 		TXs
 	),
-	assert_wait_until_receives_txs(TXs),
+	ar_test_node:assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(),
+			ar_test_node:mine(peer1),
 			BI = wait_until_height(Height),
 			case Height of
 				1 ->

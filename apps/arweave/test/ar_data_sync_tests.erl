@@ -7,14 +7,14 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--import(ar_test_node, [slave_start/3, rejoin_on_master/0,
-		sign_v1_tx/2, assert_wait_until_receives_txs/1, post_tx_to_master/1,
+-import(ar_test_node, [slave_start/3,
+		sign_v1_tx/2, post_tx_to_master/1,
 		wait_until_height/1, assert_wait_until_height/2, post_and_mine/2,
-		disconnect_from_slave/0,
-		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, slave_mine/0,
+		
+		assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
 		read_block_when_stored/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
-		assert_data_not_found_master/1, assert_data_not_found_slave/1, slave_call/3,
+		assert_data_not_found_master/1, assert_data_not_found_slave/1,
 		test_with_mocked_functions/2]).
 
 rejects_invalid_chunks_test_() ->
@@ -306,7 +306,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
 		post_chunk(ar_serialize:jsonify(FirstProof3))
 	),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	true = ar_util:do_until(
 		fun() ->
 			%% After a block is mined, the chunks receive their absolute offsets, which
@@ -331,9 +331,9 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	),
 	%% Mine two more blocks to make the chunks mature so that we can remove them from the
 	%% disk pool (they will stay in the corresponding storage modules though, if any).
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 2),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	true = ar_util:do_until(
 		fun() ->
 			case post_chunk(ar_serialize:jsonify(FirstProof1)) of
@@ -358,7 +358,7 @@ test_accepts_chunks(Split) ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX, Chunks} = tx(Wallet, {Split, 3}),
 	assert_post_tx_to_slave(TX),
-	assert_wait_until_receives_txs([TX]),
+	ar_test_node:assert_wait_until_receives_txs([TX]),
 	[{Offset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] = build_proofs(TX, Chunks,
 			[TX], 0, 0),
 	EndOffset = Offset + ?STRICT_DATA_SPLIT_THRESHOLD,
@@ -367,7 +367,7 @@ test_accepts_chunks(Split) ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(ar_serialize:jsonify(ThirdProof))
 	),
-	slave_mine(),
+	ar_test_node:mine(peer1),
 	[{BH, _, _} | _] = wait_until_height(1),
 	B = read_block_when_stored(BH),
 	?assertMatch(
@@ -497,7 +497,7 @@ test_fork_recovery(Split) ->
 	wait_until_syncs_chunks(Proofs1),
 	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	{SlaveTX2, SlaveChunks2} = tx(Wallet, {Split, 15}, v2, ?AR(10)),
 	{SlaveTX3, SlaveChunks3} = tx(Wallet, {Split, 17}, v2, ?AR(10)),
 	?debugFmt("Posting tx to slave ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
@@ -541,7 +541,7 @@ test_fork_recovery(Split) ->
 	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
 	post_tx_to_master(SlaveTX2),
 	post_tx_to_master(SlaveTX4),
-	assert_wait_until_receives_txs([SlaveTX2, SlaveTX4]),
+	ar_test_node:assert_wait_until_receives_txs([SlaveTX2, SlaveTX4]),
 	MasterB4 = post_and_mine(#{ miner => {master, Master},
 			await_on => {master, Master} }, []),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB4#block.indep_hash),
@@ -569,7 +569,7 @@ test_syncs_after_joining(Split) ->
 	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
 	wait_until_syncs_chunks(Proofs1),
-	disconnect_from_slave(),
+	ar_test_node:disconnect_from(peer1),
 	{MasterTX2, MasterChunks2} = tx(Wallet, {Split, 13}, v2, ?AR(1)),
 	MasterB2 = post_and_mine(
 		#{ miner => {master, Master}, await_on => {master, Master} },
@@ -589,7 +589,7 @@ test_syncs_after_joining(Split) ->
 	),
 	SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
 	slave_wait_until_syncs_chunks(SlaveProofs2),
-	_Slave2 = rejoin_on_master(),
+	_Slave2 = ar_test_node:rejoin_on(peer1, main),
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),

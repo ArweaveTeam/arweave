@@ -5,7 +5,7 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start_coordinated/1, mine/1, http_get_block/2]).
+-import(ar_test_node, [start_coordinated/1, http_get_block/2]).
 
 % single_node_one_chunk_coordinated_mining_test_() ->
 % 	{timeout, 120, fun test_single_node_one_chunk_coordinated_mining/0}.
@@ -118,7 +118,7 @@ wait_for_each_node(
 	end.
 	
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
-	ar_util:pmap(fun(Node) -> mine(Node) end, Miners),
+	ar_util:pmap(fun(Node) -> ar_test_node:mine(Node) end, Miners),
 	[{Hash, _, _} | _] = ar_test_node:wait_until_height(ValidatorNode, CurrentHeight + 1),
 	lists:foreach(
 		fun(Node) ->
