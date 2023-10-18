@@ -91,45 +91,45 @@ post_2_7_test_() ->
 test_mitm_poa_chunk_tamper_warn({_Key, B, _PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa.chunk is tampered with.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:main_ip()),
+	assert_not_banned(ar_test_node:peer_ip(main)),
 	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
 	post_block(B2, invalid_first_chunk),
-	assert_not_banned(ar_test_node:main_ip()).
+	assert_not_banned(ar_test_node:peer_ip(main)).
 
 test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa2.chunk is tampered with.
 	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:main_ip()),
+	assert_not_banned(ar_test_node:peer_ip(main)),
 	B2 = sign_block(B#block{ 
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_second_chunk),
-	assert_not_banned(ar_test_node:main_ip()).
+	assert_not_banned(ar_test_node:peer_ip(main)).
 
 test_reject_block_invalid_chunk_hash_ban({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk doesn't match
 	%% the chunk_hash
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:main_ip()),
+	assert_not_banned(ar_test_node:peer_ip(main)),
 	B2 = sign_block(B#block{
 		poa = #poa{ chunk = <<>> },
 		chunk_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_chunk_hash),
-	assert_banned(ar_test_node:main_ip()).
+	assert_banned(ar_test_node:peer_ip(main)).
 
 test_reject_block_invalid_chunk2_hash_ban({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk2 doesn't match
 	%% the chunk2_hash
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:main_ip()),
+	assert_not_banned(ar_test_node:peer_ip(main)),
 	B2 = sign_block(B#block{
 		recall_byte2 = 1000,
 		poa2 = #poa{ chunk = <<>> },
 		chunk2_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_chunk2_hash),
-	assert_banned(ar_test_node:main_ip()).
+	assert_banned(ar_test_node:peer_ip(main)).
 
 test_reject_block_invalid_proof_size({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
@@ -255,21 +255,21 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 
 test_mitm_poa_chunk_tamper_ban({_Key, B, _PrevB}) ->
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:main_ip()),
+	assert_not_banned(ar_test_node:peer_ip(main)),
 	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
 	post_block(B2, invalid_pow),
-	assert_banned(ar_test_node:main_ip()).
+	assert_banned(ar_test_node:peer_ip(main)).
 
 test_mitm_poa2_chunk_tamper_ban({Key, B, PrevB}) ->
 	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:main_ip()),
+	assert_not_banned(ar_test_node:peer_ip(main)),
 	B2 = sign_block(B#block{ 
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_pow),
-	assert_banned(ar_test_node:main_ip()).
+	assert_banned(ar_test_node:peer_ip(main)).
 
 %% ------------------------------------------------------------------------------------------
 %% Others tests
@@ -324,7 +324,7 @@ test_rejects_invalid_blocks() ->
 	%% The valid block with the ID from the failed attempt can still go through.
 	post_block(B1, valid),
 	%% Try to post the same block again.
-	Peer = ar_test_node:main_ip(),
+	Peer = ar_test_node:peer_ip(main),
 	?assertMatch({ok, {{<<"208">>, _}, _, _, _, _}}, send_new_block(Peer, B1)),
 	%% Correct hash, but invalid signature.
 	B2Preimage = B1#block{ signature = <<>> },
@@ -629,20 +629,20 @@ test_send_block2() ->
 			peer => ar_test_node:peer_ip(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B3) }),
 	{ok, {{<<"200">>, _}, _, SerializedB, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:main_ip(), path => "/block2/height/1" }),
+			peer => ar_test_node:peer_ip(main), path => "/block2/height/1" }),
 	?assertEqual({ok, B}, ar_serialize:binary_to_block(SerializedB)),
 	Map = element(2, lists:foldl(fun(TX, {N, M}) -> {N + 1, maps:put(TX#tx.id, N, M)} end,
 			{0, #{}}, TXs2)),
 	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:main_ip(), path => "/block2/height/1",
+			peer => ar_test_node:peer_ip(main), path => "/block2/height/1",
 			body => << 1:1, 0:(8 * 125 - 1) >> }),
 	?assertEqual({ok, B#block{ txs = [case maps:get(TX#tx.id, Map) == 0 of true -> TX;
 			_ -> TX#tx.id end || TX <- BTXs] }}, ar_serialize:binary_to_block(Serialized2B)),
 	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:main_ip(), path => "/block2/height/1",
+			peer => ar_test_node:peer_ip(main), path => "/block2/height/1",
 			body => << 1:1, 0:7 >> }),
 	{ok, {{<<"200">>, _}, _, Serialized3B, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:main_ip(), path => "/block2/height/1",
+			peer => ar_test_node:peer_ip(main), path => "/block2/height/1",
 			body => << 0:1, 1:1, 0:1, 1:1, 0:4 >> }),
 	?assertEqual({ok, B#block{ txs = [case lists:member(maps:get(TX#tx.id, Map), [1, 3]) of
 			true -> TX; _ -> TX#tx.id end || TX <- BTXs] }},

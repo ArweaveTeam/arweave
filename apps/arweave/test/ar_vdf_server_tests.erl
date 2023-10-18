@@ -301,7 +301,7 @@ test_vdf_client_fast_block_pull_interface() ->
 
 	%% After the VDF server receives the block, it should push the old and new VDF sessions
 	%% to the VDF client allowing it to validate teh block.
-	send_new_block(ar_test_node:main_ip(), B1),
+	send_new_block(ar_test_node:peer_ip(main), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
 	%% the VDF clietn to finally validate the block.
 	BI = assert_wait_until_height(peer1, 1).

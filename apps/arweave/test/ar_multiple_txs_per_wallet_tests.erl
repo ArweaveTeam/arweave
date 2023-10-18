@@ -6,13 +6,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [slave_start/1,
-	
 	wait_until_height/1, assert_wait_until_height/2,
-	
-	
-	
 	 sign_v1_tx/1, sign_v1_tx/2,
-	sign_v1_tx/3, get_tx_confirmations/2,
+	sign_v1_tx/3, 
 	 read_block_when_stored/1, random_v1_data/1]).
 
 accepts_gossips_and_mines_test_() ->
@@ -669,7 +665,7 @@ joins_network_successfully() ->
 			?assert(
 				ar_util:do_until(
 					fun() ->
-						get_tx_confirmations(master, TX#tx.id) > 0
+						ar_test_node:get_tx_confirmations(main, TX#tx.id) > 0
 					end,
 					100,
 					20000
@@ -818,7 +814,7 @@ recovers_from_forks(ForkHeight) ->
 			?assert(
 				ar_util:do_until(
 					fun() ->
-						get_tx_confirmations(master, TX#tx.id) > 0
+						ar_test_node:get_tx_confirmations(main, TX#tx.id) > 0
 					end,
 					100,
 					1000

@@ -13,7 +13,7 @@
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 		stop/0, stop/1, boot_peer/1, 
-		main_ip/0, peer_ip/1,
+		peer_ip/1,
 		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peer/1,
 		connect_to_peer/1,
 		disconnect_from/1,
@@ -25,14 +25,13 @@
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
 		post_tx_to_peer/2, post_tx_to_peer/3,
 		get_tx_anchor/1, join/2, join_on/2, rejoin_on/2,
-		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
+		get_tx_confirmations/2,
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
-		read_block_when_stored/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-		random_v1_data/1, assert_get_tx_data/3, assert_get_tx_data_master/2,
-		assert_get_tx_data_slave/2, assert_data_not_found_master/1,
-		assert_data_not_found_slave/1, post_tx_json/2,
+		read_block_when_stored/2, get_chunk/2, post_chunk/1, post_chunk/2,
+		random_v1_data/1, assert_get_tx_data/3,
+		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -102,10 +101,6 @@ stop_peer(NodePrefix) ->
 			ok
 	end.
 
-
-main_ip() ->
-	peer_ip(main).
-
 peer_ip(NodePrefix) ->
 	{127, 0, 0, 1, peer_port(NodePrefix)}.
 
@@ -174,7 +169,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		debug = true
 	},
 	ExitPeer = peer_ip(peer1),
-	ValidatorPeer = main_ip(),
+	ValidatorPeer = peer_ip(main),
 	BaseCMConfig = BaseConfig#config{
 		coordinated_mining = true,
 		coordinated_mining_secret = <<"test_coordinated_mining_secret">>,
@@ -663,13 +658,13 @@ connect_to_peer(NodePrefix) ->
 			method => get,
 			peer => Peer,
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, main_ip()))},
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, peer_ip(main)))},
 					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
 	true = ar_util:do_until(
 		fun() ->
 			Peers = remote_call(NodePrefix, ar_peers, get_peers, [lifetime]),
-			[main_ip()] == Peers
+			[peer_ip(main)] == Peers
 		end,
 		200,
 		5000
@@ -677,7 +672,7 @@ connect_to_peer(NodePrefix) ->
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => main_ip(),
+			peer => peer_ip(main),
 			path => "/info",
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, Peer))},
 					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
@@ -880,49 +875,11 @@ get_tx_anchor(NodePrefix) ->
 		}),
 	ar_util:decode(Reply).
 
-get_last_tx(Key) ->
-	get_last_tx(slave, Key).
-
-get_last_tx(slave, {_, Pub}) ->
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => peer_ip(peer1),
-			path => "/wallet/"
-					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
-					++ "/last_tx"
-		}),
-	ar_util:decode(Reply);
-get_last_tx(master, {_, Pub}) ->
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => main_ip(),
-			path => "/wallet/"
-					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
-					++ "/last_tx"
-		}),
-	ar_util:decode(Reply).
-
-get_tx_confirmations(slave, TXID) ->
+get_tx_confirmations(NodePrefix, TXID) ->
 	Response =
 		ar_http:req(#{
 			method => get,
-			peer => peer_ip(peer1),
-			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status"
-		}),
-	case Response of
-		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->
-			{Status} = ar_serialize:dejsonify(Reply),
-			element(2, lists:keyfind(<<"number_of_confirmations">>, 1, Status));
-		{ok, {{<<"404">>, _}, _, _, _, _}} ->
-			-1
-	end;
-get_tx_confirmations(master, TXID) ->
-	Response =
-		ar_http:req(#{
-			method => get,
-			peer => main_ip(),
+			peer => peer_ip(NodePrefix),
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status"
 		}),
 	case Response of
@@ -1012,9 +969,9 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 	end.
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
-	post_block(B, [ExpectedResult], main_ip());
+	post_block(B, [ExpectedResult], peer_ip(main));
 post_block(B, ExpectedResults) ->
-	post_block(B, ExpectedResults, main_ip()).
+	post_block(B, ExpectedResults, peer_ip(main)).
 
 post_block(B, ExpectedResults, Peer) ->
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B)),
@@ -1025,7 +982,7 @@ send_new_block(Peer, B) ->
 			ar_serialize:block_to_binary(B)).
 
 await_post_block(B, ExpectedResults) ->
-	await_post_block(B, ExpectedResults, main_ip()).
+	await_post_block(B, ExpectedResults, peer_ip(main)).
 
 await_post_block(#block{ indep_hash = H } = B, ExpectedResults, Peer) ->
 	PostGossipFailureCodes = [invalid_denomination,
@@ -1117,19 +1074,10 @@ read_block_when_stored(H, IncludeTXs) ->
 	),
 	B.
 
-get_chunk(Offset) ->
-	get_chunk(master, Offset).
-
-get_chunk(master, Offset) ->
-	get_chunk2(main_ip(), Offset);
-
-get_chunk(slave, Offset) ->
-	get_chunk2(peer_ip(peer1), Offset).
-
-get_chunk2(Peer, Offset) ->
+get_chunk(NodePrefix, Offset) ->
 	ar_http:req(#{
 		method => get,
-		peer => Peer,
+		peer => peer_ip(NodePrefix),
 		path => "/chunk/" ++ integer_to_list(Offset),
 		headers => [{<<"x-bucket-based-offset">>, <<"true">>}]
 	}).
@@ -1138,7 +1086,7 @@ post_chunk(Proof) ->
 	post_chunk(master, Proof).
 
 post_chunk(master, Proof) ->
-	post_chunk2(main_ip(), Proof);
+	post_chunk2(peer_ip(main), Proof);
 
 post_chunk(slave, Proof) ->
 	post_chunk2(peer_ip(peer1), Proof).
@@ -1155,14 +1103,9 @@ random_v1_data(Size) ->
 	%% Make sure v1 txs do not end with a digit, otherwise they are malleable.
 	<< (crypto:strong_rand_bytes(Size - 1))/binary, <<"a">>/binary >>.
 
-assert_get_tx_data_master(TXID, ExpectedData) ->
-	assert_get_tx_data(main_ip(), TXID, ExpectedData).
-
-assert_get_tx_data_slave(TXID, ExpectedData) ->
-	assert_get_tx_data(peer_ip(peer1), TXID, ExpectedData).
-
-assert_get_tx_data(Peer, TXID, ExpectedData) ->
+assert_get_tx_data(NodePrefix, TXID, ExpectedData) ->
 	?debugFmt("Polling for data of ~s.", [ar_util:encode(TXID)]),
+	Peer = peer_ip(NodePrefix),
 	true = ar_util:do_until(
 		fun() ->
 			case ar_http:req(#{ method => get, peer => Peer,
@@ -1216,13 +1159,8 @@ get_tx_data_in_chunks_traverse_forward(Offset, Start, Peer, Bin) ->
 	get_tx_data_in_chunks_traverse_forward(Offset, Start + byte_size(Chunk), Peer,
 			[Chunk | Bin]).
 
-assert_data_not_found_master(TXID) ->
-	assert_data_not_found(main_ip(), TXID).
-
-assert_data_not_found_slave(TXID) ->
-	assert_data_not_found(peer_ip(peer1), TXID).
-
-assert_data_not_found(Peer, TXID) ->
+assert_data_not_found(NodePrefix, TXID) ->
+	Peer = peer_ip(NodePrefix),
 	?assertMatch({ok, {{<<"404">>, _}, _, _Binary, _, _}},
 			ar_http:req(#{ method => get, peer => Peer,
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).

@@ -149,7 +149,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	?debugFmt("Fake block: ~s.", [ar_util:encode(B2H)]),
 	ok = ar_events:subscribe(block),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-			ar_http_iface_client:send_block_binary(ar_test_node:main_ip(), B2#block.indep_hash,
+			ar_http_iface_client:send_block_binary(ar_test_node:peer_ip(main), B2#block.indep_hash,
 					ar_serialize:block_to_binary(B2))),
 	receive
 		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->

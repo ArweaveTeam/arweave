@@ -7,14 +7,10 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--import(ar_test_node, [slave_start/3,
+-import(ar_test_node, [
 		sign_v1_tx/2,
 		wait_until_height/1, assert_wait_until_height/2, post_and_mine/2,
-		
-		
-		read_block_when_stored/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-		assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
-		assert_data_not_found_master/1, assert_data_not_found_slave/1,
+		read_block_when_stored/1, post_chunk/1, post_chunk/2,
 		test_with_mocked_functions/2]).
 
 rejects_invalid_chunks_test_() ->
@@ -177,19 +173,19 @@ test_does_not_store_small_chunks_after_2_5() ->
 			lists:foreach(
 				fun	({Offset, 404}) ->
 						?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
-								get_chunk(GenesisOffset + Offset), Title);
+								ar_test_node:get_chunk(main, GenesisOffset + Offset), Title);
 					({Offset, first}) ->
-						{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} = get_chunk(
+						{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} = ar_test_node:get_chunk(main, 
 								GenesisOffset + Offset),
 						?assertEqual(FirstChunk, ar_util:decode(maps:get(<<"chunk">>,
 								jiffy:decode(ProofJSON, [return_maps]))), Title);
 					({Offset, second}) ->
-						{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} = get_chunk(
+						{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} = ar_test_node:get_chunk(main, 
 								GenesisOffset + Offset),
 						?assertEqual(SecondChunk, ar_util:decode(maps:get(<<"chunk">>,
 								jiffy:decode(ProofJSON, [return_maps]))), Title);
 					({Offset, third}) ->
-						{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} = get_chunk(
+						{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} = ar_test_node:get_chunk(main, 
 								GenesisOffset + Offset),
 						?assertEqual(ThirdChunk, ar_util:decode(maps:get(<<"chunk">>,
 								jiffy:decode(ProofJSON, [return_maps]))), Title)
@@ -372,7 +368,7 @@ test_accepts_chunks(Split) ->
 	B = read_block_when_stored(BH),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
-		get_chunk(EndOffset)
+		ar_test_node:get_chunk(main, EndOffset)
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -390,8 +386,8 @@ test_accepts_chunks(Split) ->
 	wait_until_syncs_chunk(EndOffset, ExpectedProof),
 	wait_until_syncs_chunk(EndOffset - rand:uniform(FirstChunkSize - 2), ExpectedProof),
 	wait_until_syncs_chunk(EndOffset - FirstChunkSize + 1, ExpectedProof),
-	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, get_chunk(0)),
-	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, get_chunk(EndOffset + 1)),
+	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, ar_test_node:get_chunk(main, 0)),
+	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, ar_test_node:get_chunk(main, EndOffset + 1)),
 	TXSize = byte_size(binary:list_to_bin(Chunks)),
 	ExpectedOffsetInfo = ar_serialize:jsonify(#{
 		offset => integer_to_binary(TXSize + ?STRICT_DATA_SPLIT_THRESHOLD),
@@ -424,7 +420,7 @@ test_accepts_chunks(Split) ->
 		chunk => maps:get(chunk, ThirdProof)
 	},
 	wait_until_syncs_chunk(B#block.weave_size, ExpectedThirdProof),
-	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, get_chunk(B#block.weave_size + 1)).
+	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, ar_test_node:get_chunk(main, B#block.weave_size + 1)).
 
 syncs_data_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
@@ -469,12 +465,12 @@ test_syncs_data() ->
 				60 * 1000
 			),
 			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-			assert_get_tx_data_master(TXID, ExpectedData),
+			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
 			case AbsoluteTXOffset > DiskPoolThreshold of
 				true ->
 					ok;
 				false ->
-					assert_get_tx_data_slave(TXID, ExpectedData)
+					ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
 			end
 		end,
 		RecordsWithProofs
@@ -824,8 +820,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
 	maps:map(
 		fun(TXID, [{_, _, Chunks, _} | _]) ->
 			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-			assert_get_tx_data_master(TXID, ExpectedData),
-			assert_get_tx_data_slave(TXID, ExpectedData)
+			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
+			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
 		end,
 		StrictProofs
 	),
@@ -833,8 +829,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
 	maps:map(
 		fun(TXID, [{_, _, Chunks, _} | _]) ->
 			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-			assert_get_tx_data_master(TXID, ExpectedData),
-			assert_get_tx_data_slave(TXID, ExpectedData)
+			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
+			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
 		end,
 		V1Proofs
 	),
@@ -863,8 +859,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
 				true ->
 					?debugMsg("Asserting random split which turned out strict."),
 					ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-					assert_get_tx_data_master(TXID, ExpectedData),
-					assert_get_tx_data_slave(TXID, ExpectedData),
+					ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
+					ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData),
 					wait_until_syncs_chunks([P || {_, _, _, P} <- Proofs]),
 					slave_wait_until_syncs_chunks([P || {_, _, _, P} <- Proofs]);
 				false ->
@@ -872,8 +868,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
 							" and was placed above the strict data split threshold, "
 							"TXID: ~s.", [ar_util:encode(TXID)]),
 					?debugFmt("Chunk sizes: ~p.", [[byte_size(Chunk) || Chunk <- Chunks]]),
-					assert_data_not_found_master(TXID),
-					assert_data_not_found_slave(TXID)
+					ar_test_node:assert_data_not_found(main, TXID),
+					ar_test_node:assert_data_not_found(peer1, TXID)
 			end
 		end,
 		LegacyProofs
@@ -1192,7 +1188,7 @@ post_proofs(Peer, B, TX, Chunks) ->
 wait_until_syncs_chunk(Offset, ExpectedProof) ->
 	true = ar_util:do_until(
 		fun() ->
-			case get_chunk(Offset) of
+			case ar_test_node:get_chunk(main, Offset) of
 				{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
 					Proof = jiffy:decode(ProofJSON, [return_maps]),
 					maps:fold(
@@ -1213,18 +1209,18 @@ wait_until_syncs_chunk(Offset, ExpectedProof) ->
 	).
 
 wait_until_syncs_chunks(Proofs) ->
-	wait_until_syncs_chunks(master, Proofs, infinity).
+	wait_until_syncs_chunks(main, Proofs, infinity).
 
 wait_until_syncs_chunks(Proofs, UpperBound) ->
-	wait_until_syncs_chunks(master, Proofs, UpperBound).
+	wait_until_syncs_chunks(main, Proofs, UpperBound).
 
 slave_wait_until_syncs_chunks(Proofs) ->
-	wait_until_syncs_chunks(slave, Proofs, infinity).
+	wait_until_syncs_chunks(peer1, Proofs, infinity).
 
 slave_wait_until_syncs_chunks(Proofs, UpperBound) ->
-	wait_until_syncs_chunks(slave, Proofs, UpperBound).
+	wait_until_syncs_chunks(peer1, Proofs, UpperBound).
 
-wait_until_syncs_chunks(Peer, Proofs, UpperBound) ->
+wait_until_syncs_chunks(NodePrefix, Proofs, UpperBound) ->
 	lists:foreach(
 		fun({EndOffset, Proof}) ->
 			true = ar_util:do_until(
@@ -1233,7 +1229,7 @@ wait_until_syncs_chunks(Peer, Proofs, UpperBound) ->
 						true ->
 							true;
 						false ->
-							case get_chunk(Peer, EndOffset) of
+							case ar_test_node:get_chunk(NodePrefix, EndOffset) of
 								{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
 									FetchedProof = ar_serialize:json_map_to_chunk_proof(
 										jiffy:decode(EncodedProof, [return_maps])

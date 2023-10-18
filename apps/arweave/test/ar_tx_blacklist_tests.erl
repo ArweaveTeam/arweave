@@ -7,10 +7,10 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [slave_start/1,
+-import(ar_test_node, [
 		sign_v1_tx/2, random_v1_data/1, 
 		 wait_until_height/1,
-		assert_wait_until_height/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2]).
+		assert_wait_until_height/2, post_chunk/1, post_chunk/2]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -359,7 +359,7 @@ assert_present_offsets(GoodOffsets) ->
 		fun() ->
 			lists:all(
 				fun(Offset) ->
-					case get_chunk(Offset) of
+					case ar_test_node:get_chunk(main, Offset) of
 						{ok, {{<<"200">>, _}, _, _, _, _}} ->
 							true;
 						_ ->
@@ -379,7 +379,7 @@ assert_removed_offsets(BadOffsets) ->
 		fun() ->
 			lists:all(
 				fun(Offset) ->
-					case get_chunk(Offset) of
+					case ar_test_node:get_chunk(main, Offset) of
 						{ok, {{<<"404">>, _}, _, _, _, _}} ->
 							true;
 						_ ->
@@ -399,10 +399,10 @@ assert_does_not_accept_offsets(BadOffsets) ->
 		fun() ->
 			lists:all(
 				fun(Offset) ->
-					case get_chunk(Offset) of
+					case ar_test_node:get_chunk(main, Offset) of
 						{ok, {{<<"404">>, _}, _, _, _, _}} ->
 							{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} =
-								get_chunk(slave, Offset),
+								ar_test_node:get_chunk(peer1, Offset),
 							Proof = decode_chunk(EncodedProof),
 							DataPath = maps:get(data_path, Proof),
 							{ok, DataRoot} = ar_merkle:extract_root(DataPath),
@@ -416,7 +416,7 @@ assert_does_not_accept_offsets(BadOffsets) ->
 							%% The node returns 200 but does not store the chunk.
 							case post_chunk(EncodedProof2) of
 								{ok, {{<<"200">>, _}, _, _, _, _}} ->
-									case get_chunk(Offset) of
+									case ar_test_node:get_chunk(main, Offset) of
 										{ok, {{<<"404">>, _}, _, _, _, _}} ->
 											true;
 										_ ->

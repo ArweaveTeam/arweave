@@ -994,7 +994,7 @@ raw_request(Method, Path, Headers)
 	}.
 
 http_request(#{method := M, path := P, headers := H}) ->
-	Peer = ar_test_node:main_ip(),
+	Peer = ar_test_node:peer_ip(main),
 	{_, _, _, _, Port} = Peer,
 	Method = case M of
 		<<"GET">> -> get;
