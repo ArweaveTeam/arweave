@@ -3,32 +3,31 @@
 -behaviour(gen_server).
 
 %% The new, more flexible, and more user-friendly interface.
--export([wait_until_joined/0, start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
+-export([wait_until_joined/0,
+		start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
 		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0, valid_solution/0,
 		remote_call/4, miner_node/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4, mine/0,
-		get_tx_price/1, get_tx_price/2, get_tx_price/3,
-		get_optimistic_tx_price/1, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
+		get_tx_price/2, get_tx_price/3,
+		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
-		get_balance/1, get_balance/2, get_reserved_balance/2, get_balance_by_address/2,
-		stop/0, stop/1, slave_stop/0, boot_peer/1, 
+		stop/0, stop/1, boot_peer/1, 
 		main_ip/0,
 		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peer/1,
 		connect_to_peer/1,
 		disconnect_from_slave/0,
 		generate_node_namespace/0, get_unused_port/0,
-		slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
-		assert_slave_wait_until_height/1, wait_until_block_index/1,
+		slave_mine/0, wait_until_height/1,
+		assert_wait_until_height/2, wait_until_block_index/1,
 		assert_wait_until_block_index/1, assert_slave_wait_until_block_index/1,
 		wait_until_mining_paused/0,
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
 		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
 		assert_post_tx_to_slave/1, assert_post_tx_to_slave/2, assert_post_tx_to_master/1,
-		get_tx_anchor/0,
 		get_tx_anchor/1, join/1, rejoin/1, join_on_slave/0, rejoin_on_slave/0,
 		join_on_master/0, rejoin_on_master/0,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
@@ -102,6 +101,9 @@ main_ip() ->
 
 peer_ip(NodePrefix) ->
 	{127, 0, 0, 1, peer_port(NodePrefix)}.
+
+wait_until_joined(NodePrefix) ->
+	remote_call(NodePrefix, ar_test_node, wait_until_joined, []).
 
 %% @doc Wait until the node joins the network (initializes the state).
 wait_until_joined() ->
@@ -198,22 +200,6 @@ mine() ->
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(NodePrefix) ->
 	remote_call(NodePrefix, ar_test_node, mine, []).
-
-%% @doc Wait until the given node reaches the given height or fail by timeout.
-wait_until_height(Height, Node) ->
-	{ok, BI} = ar_util:do_until(
-		fun() ->
-			case get_blocks(Node) of
-				BI when length(BI) - 1 == Height ->
-					{ok, BI};
-				_ ->
-					false
-			end
-		end,
-		100,
-		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
-	),
-	BI.
 
 wait_until_mining_paused(NodePrefix) ->
 	remote_call(NodePrefix, ar_test_node, wait_until_mining_paused, []).
@@ -425,6 +411,9 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 remote_call(NodePrefix, Module, Function, Args) ->
 	remote_call(NodePrefix, Module, Function, Args, 10000).
 
+remote_call(main, Module, Function, Args, _Timeout) ->
+	%% main is this node, so run the function locally.
+	apply(Module, Function, Args);
 remote_call(NodePrefix, Module, Function, Args, Timeout) ->
 	Node = peer_name(NodePrefix),
 	Key = rpc:async_call(Node, Module, Function, Args),
@@ -520,8 +509,8 @@ try_boot_peer(NodePrefix, Retries, State) ->
     Cmd = io_lib:format(
         "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 " ++
-		"> logs/slave.out 2>&1 &",
-        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName]),
+		"> logs/~s.out 2>&1 &",
+        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, NodeName]),
     os:cmd(Cmd),
     Reply = case wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->
@@ -553,8 +542,8 @@ peer_port(NodePrefix, State) ->
 start_peer(NodePrefix, Args) when is_list(Args) ->
 	{Peer, Port} = remote_call(NodePrefix, ?MODULE, start , Args, ?SLAVE_START_TIMEOUT),
 	register_peer_port(NodePrefix, Port),
-	slave_wait_until_joined(),
-	slave_wait_until_syncs_genesis_data(),
+	wait_until_joined(NodePrefix),
+	wait_until_syncs_genesis_data(NodePrefix),
 	{Peer, Port};
 
 %% @doc Start a fresh peer node with the given genesis block.
@@ -571,19 +560,14 @@ start_peer(NodePrefix, B0, RewardAddr, Config) ->
 
 
 %% @doc Fetch the fee estimation and the denomination (call GET /price2/[size])
-%% from the slave node.
-get_tx_price(DataSize) ->
-	get_tx_price(slave, DataSize).
-
-%% @doc Fetch the fee estimation and the denomination (call GET /price2/[size])
 %% from the given node.
-get_tx_price(Node, DataSize) ->
-	get_tx_price(Node, DataSize, <<>>).
+get_tx_price(NodePrefix, DataSize) ->
+	get_tx_price(NodePrefix, DataSize, <<>>).
 
 %% @doc Fetch the fee estimation and the denomination (call GET /price2/[size]/[addr])
 %% from the given node.
-get_tx_price(Node, DataSize, Target) ->
-	Peer = case Node of slave -> peer_ip(peer1); master -> main_ip() end,
+get_tx_price(NodePrefix, DataSize, Target) ->
+	Peer = peer_ip(NodePrefix),
 	Path = "/price/" ++ integer_to_list(DataSize) ++ "/"
 			++ binary_to_list(ar_util:encode(Target)),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
@@ -609,38 +593,33 @@ get_tx_price(Node, DataSize, Target) ->
 			?assert(false, io_lib:format("Fee mismatch, expected: ~B, got: ~B.", [Fee, Fee2]))
 	end.
 
-%% @doc Fetch the optimistic fee estimation (call GET /price/[size]) from the slave node.
-get_optimistic_tx_price(DataSize) ->
-	get_optimistic_tx_price(slave, DataSize).
-
 %% @doc Fetch the optimistic fee estimation (call GET /price/[size]) from the given node.
-get_optimistic_tx_price(Node, DataSize) ->
-	get_optimistic_tx_price(Node, DataSize, <<>>).
+get_optimistic_tx_price(NodePrefix, DataSize) ->
+	get_optimistic_tx_price(NodePrefix, DataSize, <<>>).
 
 %% @doc Fetch the optimistic fee estimation (call GET /price/[size]/[addr]) from the given
 %% node.
-get_optimistic_tx_price(Node, DataSize, Target) ->
-	Peer = case Node of slave -> peer_ip(peer1); master -> main_ip() end,
+get_optimistic_tx_price(NodePrefix, DataSize, Target) ->
 	Path = "/optimistic_price/" ++ integer_to_list(DataSize) ++ "/"
 			++ binary_to_list(ar_util:encode(Target)),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => Peer,
+			peer => peer_ip(NodePrefix),
 			path => Path
 		}),
 	binary_to_integer(maps:get(<<"fee">>, jiffy:decode(Reply, [return_maps]))).
 
 %% @doc Return a signed format=2 transaction with the minimum required fee fetched from
-%% GET /price/0 on the slave node.
+%% GET /price/0 on the peer1 node.
 sign_tx(Wallet) ->
-	sign_tx(slave, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
+	sign_tx(peer1, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
 
 %% @doc Return a signed format=2 transaction with properties from the given Args map.
 %% If the fee is not in Args, fetch it from GET /price/{data_size}
-%% or GET /price/{data_size}/{target} (if the target is specified) on the slave node.
+%% or GET /price/{data_size}/{target} (if the target is specified) on the peer1 node.
 sign_tx(Wallet, Args) ->
-	sign_tx(slave, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
+	sign_tx(peer1, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
 
 %% @doc Like sign_tx/2, but use the given Node to fetch the fee estimation and
 %% block anchor from.
@@ -649,67 +628,15 @@ sign_tx(Node, Wallet, Args) ->
 
 %% @doc Like sign_tx/1 but return a format=1 transaction.
 sign_v1_tx(Wallet) ->
-	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_v1/2).
+	sign_tx(peer1, Wallet, #{}, fun ar_tx:sign_v1/2).
 
 %% @doc Like sign_tx/2 but return a format=1 transaction.
 sign_v1_tx(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign_v1/2).
+	sign_tx(peer1, Wallet, TXParams, fun ar_tx:sign_v1/2).
 
 %% @doc Like sign_tx/3 but return a format=1 transaction.
-sign_v1_tx(Node, Wallet, Args) ->
-	sign_tx(Node, Wallet, Args, fun ar_tx:sign_v1/2).
-
-%% @doc Return the current balance of the account with the given public key.
-%% Request it from the slave node.
-get_balance(Pub) ->
-	get_balance_by_address(slave, ar_wallet:to_address(Pub)).
-
-%% @doc Return the current balance of the account with the given public key.
-%% Request it from the given node.
-get_balance(Node, Pub) ->
-	get_balance_by_address(Node, ar_wallet:to_address(Pub)).
-
-%% @doc Return the current balance of the given account (request it from the given node).
-get_balance_by_address(Node, Address) ->
-	Peer = case Node of slave -> peer_ip(peer1); master -> main_ip() end,
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance"
-		}),
-	Balance = binary_to_integer(Reply),
-	B =
-		case Node of
-			master ->
-				ar_node:get_current_block();
-			slave ->
-				remote_call(peer1, ar_node, get_current_block, [])
-		end,
-	{ok, {{<<"200">>, _}, _, Reply2, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => "/wallet_list/" ++ binary_to_list(ar_util:encode(B#block.wallet_list))
-					++ "/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance"
-		}),
-	case binary_to_integer(Reply2) of
-		Balance ->
-			Balance;
-		Balance2 ->
-			?assert(false, io_lib:format("Expected: ~B, got: ~B.~n", [Balance, Balance2]))
-	end.
-
-get_reserved_balance(Node, Address) ->
-	Peer = case Node of slave -> peer_ip(peer1); master -> main_ip() end,
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(Address))
-					++ "/reserved_rewards_total"
-		}),
-	binary_to_integer(Reply).
+sign_v1_tx(NodePrefix, Wallet, Args) ->
+	sign_tx(NodePrefix, Wallet, Args, fun ar_tx:sign_v1/2).
 
 %%%===================================================================
 %%% Legacy private functions.
@@ -726,12 +653,12 @@ insert_root(Params) ->
 			Params
 	end.
 
-sign_tx(Node, Wallet, Args, SignFun) ->
+sign_tx(NodePrefix, Wallet, Args, SignFun) ->
 	{_, {_, Pub}} = Wallet,
 	Data = maps:get(data, Args, <<>>),
 	DataSize = maps:get(data_size, Args, byte_size(Data)),
 	Format = maps:get(format, Args, 1),
-	{Fee, Denomination} = get_tx_price(Node, DataSize, maps:get(target, Args, <<>>)),
+	{Fee, Denomination} = get_tx_price(NodePrefix, DataSize, maps:get(target, Args, <<>>)),
 	Fee2 =
 		case {Format, maps:get(reward, Args, none)} of
 			{1, none} ->
@@ -754,7 +681,7 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 			target = maps:get(target, Args, <<>>),
 			quantity = maps:get(quantity, Args, 0),
 			tags = maps:get(tags, Args, []),
-			last_tx = maps:get(last_tx, Args, get_tx_anchor(Node)),
+			last_tx = maps:get(last_tx, Args, get_tx_anchor(NodePrefix)),
 			data_size = DataSize,
 			data_root = maps:get(data_root, Args, <<>>),
 			format = Format,
@@ -772,22 +699,20 @@ stop() ->
 stop(NodePrefix) ->
 	remote_call(NodePrefix, ar_test_node, stop, []).
 
-slave_stop() ->
-	stop(peer_name(peer1)).
-
 join_on_slave() ->
-	join(peer_ip(peer1)).
+	join(peer1).
 
 rejoin_on_slave() ->
-	join(peer_ip(peer1), true).
+	join(peer1, true).
 
-rejoin(Peer) ->
-	join(Peer, true).
+rejoin(NodePrefix) ->
+	join(NodePrefix, true).
 
-join(Peer) ->
-	join(Peer, false).
+join(NodePrefix) ->
+	join(NodePrefix, false).
 
-join(Peer, Rejoin) ->
+join(NodePrefix, Rejoin) ->
+	Peer = peer_ip(NodePrefix),
 	{ok, Config} = application:get_env(arweave, config),
 	case Rejoin of
 		true ->
@@ -810,10 +735,10 @@ join(Peer, Rejoin) ->
 	whereis(ar_node_worker).
 
 join_on_master() ->
-	remote_call(peer1, ar_test_node, join, [main_ip()], 20000).
+	remote_call(peer1, ar_test_node, join, [main], 20000).
 
 rejoin_on_master() ->
-	remote_call(peer1, ar_test_node, rejoin, [main_ip()], 20000).
+	remote_call(peer1, ar_test_node, rejoin, [main], 20000).
 
 connect_to_peer(NodePrefix) ->
 	%% Unblock connections possibly blocked in the prior test code.
@@ -860,6 +785,9 @@ disconnect_from_slave() ->
 slave_mine() ->
 	remote_call(peer1, ar_test_node, mine, []).
 
+wait_until_syncs_genesis_data(NodePrefix) ->
+	ok = remote_call(NodePrefix, ar_test_node, wait_until_syncs_genesis_data, [], 60000).
+
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
 	WeaveSize = (ar_node:get_current_block())#block.weave_size,
@@ -874,15 +802,9 @@ wait_until_syncs_genesis_data() ->
 			|| {Size, N, Packing} <- Config#config.storage_modules],
 	ok.
 
-slave_wait_until_joined() ->
-	ar_util:do_until(
-		fun() -> remote_call(peer1, ar_node, is_joined, []) end,
-		100,
-		60 * 1000
-	 ).
-
-slave_wait_until_syncs_genesis_data() ->
-	ok = remote_call(peer1, ar_test_node, wait_until_syncs_genesis_data, [], 60000).
+wait_until_height(NodePrefix, TargetHeight) ->
+	remote_call(NodePrefix, ?MODULE, wait_until_height, [TargetHeight],
+			?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500).
 
 wait_until_height(TargetHeight) ->
 	{ok, BI} = ar_util:do_until(
@@ -899,13 +821,8 @@ wait_until_height(TargetHeight) ->
 	),
 	BI.
 
-slave_wait_until_height(TargetHeight) ->
-	remote_call(peer1, ?MODULE, wait_until_height, [TargetHeight],
-			?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500).
-
-assert_slave_wait_until_height(TargetHeight) ->
-	BI = remote_call(peer1, ?MODULE, wait_until_height, [TargetHeight],
-			?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500),
+assert_wait_until_height(NodePrefix, TargetHeight) ->
+	BI = wait_until_height(NodePrefix, TargetHeight),
 	?assert(is_list(BI), iolist_to_binary(io_lib:format("Got ~p.", [BI]))),
 	BI.
 
@@ -1077,22 +994,11 @@ post_tx_json(JSON, Peer) ->
 		body => JSON
 	}).
 
-get_tx_anchor() ->
-	get_tx_anchor(slave).
-
-get_tx_anchor(slave) ->
+get_tx_anchor(NodePrefix) ->
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => peer_ip(peer1),
-			path => "/tx_anchor"
-		}),
-	ar_util:decode(Reply);
-get_tx_anchor(master) ->
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => main_ip(),
+			peer => peer_ip(NodePrefix),
 			path => "/tx_anchor"
 		}),
 	ar_util:decode(Reply).
@@ -1224,7 +1130,7 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 			[{H, _, _} | _] = wait_until_height(CurrentHeight + 1),
 			read_block_when_stored(H, true);
 		{slave, _AwaitNode} ->
-			[{H, _, _} | _] = slave_wait_until_height(CurrentHeight + 1),
+			[{H, _, _} | _] = wait_until_height(peer1, CurrentHeight + 1),
 			remote_call(peer1, ar_test_node, read_block_when_stored, [H, true], 20000)
 	end.
 

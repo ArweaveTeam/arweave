@@ -8,9 +8,9 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
--import(ar_test_node, [stop/0, slave_stop/0,
+-import(ar_test_node, [stop/0,
 		slave_mine/0,
-		assert_slave_wait_until_height/1, slave_call/3, post_block/2, send_new_block/2]).
+		assert_wait_until_height/2, slave_call/3, post_block/2, send_new_block/2]).
 
 setup() ->
 	ets:new(?MODULE, [named_table, set, public]),
@@ -131,7 +131,7 @@ test_vdf_server_push_fast_block() ->
 
 	%% Mine a block that will be ahead of master in the VDF chain
 	slave_mine(),
-	BI = assert_slave_wait_until_height(1),
+	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 
 	%% Post the block to master which will cause it to validate VDF for the block under
@@ -177,7 +177,7 @@ test_vdf_server_push_slow_block() ->
 
 	%% Mine a block that will be ahead of master in the VDF chain
 	slave_mine(),
-	BI = assert_slave_wait_until_height(1),
+	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 
 	%% Post the block to master which will cause it to validate VDF for the block under
@@ -227,9 +227,9 @@ test_vdf_client_fast_block() ->
 
 	%% Mine a block that will be ahead of master in the VDF chain
 	slave_mine(),
-	BI = assert_slave_wait_until_height(1),
+	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
-	slave_stop(),
+	ar_test_node:stop(peer1),
 
 
 	%% Restart the slave as a VDF client
@@ -257,7 +257,7 @@ test_vdf_client_fast_block() ->
 	send_new_block(ar_test_node:main_ip(), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
 	%% the VDF clietn to finally validate the block.
-	BI = assert_slave_wait_until_height(1).
+	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_fast_block_pull_interface() ->
   {ok, Config} = application:get_env(arweave, config),
@@ -273,9 +273,9 @@ test_vdf_client_fast_block_pull_interface() ->
 
 	%% Mine a block that will be ahead of master in the VDF chain
 	slave_mine(),
-	BI = assert_slave_wait_until_height(1),
+	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
-	slave_stop(),
+	ar_test_node:stop(peer1),
 
 	%% Restart the slave as a VDF client
 	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
@@ -303,7 +303,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	send_new_block(ar_test_node:main_ip(), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
 	%% the VDF clietn to finally validate the block.
-	BI = assert_slave_wait_until_height(1).
+	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_slow_block() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -318,9 +318,9 @@ test_vdf_client_slow_block() ->
 
 	%% Mine a block that will be ahead of master in the VDF chain
 	slave_mine(),
-	BI = assert_slave_wait_until_height(1),
+	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
-	slave_stop(),
+	ar_test_node:stop(peer1),
 
 	%% Restart the slave as a VDF client
 	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
@@ -341,7 +341,7 @@ test_vdf_client_slow_block() ->
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	BI = assert_slave_wait_until_height(1).
+	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_slow_block_pull_interface() ->
   {ok, Config} = application:get_env(arweave, config),
@@ -356,9 +356,9 @@ test_vdf_client_slow_block_pull_interface() ->
 
 	%% Mine a block that will be ahead of master in the VDF chain
 	slave_mine(),
-	BI = assert_slave_wait_until_height(1),
+	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
-	slave_stop(),
+	ar_test_node:stop(peer1),
 
 	%% Restart the slave as a VDF client
 	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
@@ -380,7 +380,7 @@ test_vdf_client_slow_block_pull_interface() ->
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	BI = assert_slave_wait_until_height(1).
+	BI = assert_wait_until_height(peer1, 1).
 
 external_update_test_() ->
     {foreach,

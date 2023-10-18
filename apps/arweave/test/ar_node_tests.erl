@@ -8,8 +8,8 @@
 -import(ar_test_node, [
 		slave_mine/0, wait_until_height/1, slave_start/1, slave_start/2,
 		wait_until_receives_txs/1, assert_post_tx_to_master/1,
-		assert_slave_wait_until_receives_txs/1, assert_slave_wait_until_height/1,
-		slave_call/3, slave_call/4, disconnect_from_slave/0, sign_v1_tx/3, sign_tx/2, wait_until_joined/0,
+		assert_slave_wait_until_receives_txs/1, assert_wait_until_height/2,
+		slave_call/3, slave_call/4, disconnect_from_slave/0, sign_v1_tx/3,
 		read_block_when_stored/1, post_tx_to_master/2]).
 
 %cannot_spend_accounts_of_other_type_test_() ->
@@ -29,26 +29,26 @@
 %	ar_test_node:connect_to_peer(peer1),
 %	InvalidTXsBeforeFork = [
 %		{["invalid_target_length"],
-%				sign_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%				ar_test_node:sign_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %						target => ar_wallet:to_address(element(2, EDDSA)) })},
 %		{["invalid_target_length"],
-%				sign_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%				ar_test_node:sign_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %						target => ar_wallet:to_address(element(2, ECDSA)) })},
 %		{["tx_malleable", "invalid_target_length"],
-%				sign_v1_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%				sign_v1_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %						target => ar_wallet:to_address(element(2, EDDSA)) })},
 %		{["tx_malleable", "invalid_target_length"],
-%				sign_v1_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%				sign_v1_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %						target => ar_wallet:to_address(element(2, ECDSA)) })},
-%		{["tx_signature_not_valid"], sign_tx(ECDSA, #{ last_tx => get_tx_anchor(master) })},
-%		{["tx_signature_not_valid"], sign_v1_tx(ECDSA, #{ last_tx => get_tx_anchor(master) })},
-%		{["tx_signature_not_valid"], sign_tx(EDDSA, #{ last_tx => get_tx_anchor(master) })},
-%		{["tx_signature_not_valid"], sign_v1_tx(EDDSA, #{ last_tx => get_tx_anchor(master) })}
+%		{["tx_signature_not_valid"], ar_test_node:sign_tx(ECDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) })},
+%		{["tx_signature_not_valid"], sign_v1_tx(ECDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) })},
+%		{["tx_signature_not_valid"], ar_test_node:sign_tx(EDDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) })},
+%		{["tx_signature_not_valid"], sign_v1_tx(EDDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) })}
 %	],
 %	ValidTXsBeforeFork = [
-%		sign_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%		ar_test_node:sign_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %				target => ar_wallet:to_address(element(2, RSA2)) }),
-%		sign_v1_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%		sign_v1_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %				target => ar_wallet:to_address(element(2, RSA2)) })
 %	],
 %	lists:foreach(
@@ -70,24 +70,24 @@
 %			lists:seq(1, 10)),
 %	InvalidTXsAfterFork = [
 %		{["tx_malleable"],
-%				sign_v1_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%				sign_v1_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %						target => ar_wallet:to_address(element(2, EDDSA)) })},
 %		{["tx_malleable"],
-%				sign_v1_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%				sign_v1_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %						target => ar_wallet:to_address(element(2, ECDSA)) })},
-%		{["tx_signature_not_valid"], sign_v1_tx(ECDSA, #{ last_tx => get_tx_anchor(master) })},
-%		{["tx_signature_not_valid"], sign_v1_tx(EDDSA, #{ last_tx => get_tx_anchor(master) })}
+%		{["tx_signature_not_valid"], sign_v1_tx(ECDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) })},
+%		{["tx_signature_not_valid"], sign_v1_tx(EDDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) })}
 %	],
 %	ValidTXsAfterFork = [
-%		sign_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%		ar_test_node:sign_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %				target => ar_wallet:to_address(element(2, EDDSA)) }),
-%		sign_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%		ar_test_node:sign_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %				target => ar_wallet:to_address(element(2, ECDSA)) }),
-%		sign_tx(ECDSA, #{ last_tx => get_tx_anchor(master) }),
-%		sign_tx(EDDSA, #{ last_tx => get_tx_anchor(master) }),
-%		sign_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%		ar_test_node:sign_tx(ECDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
+%		ar_test_node:sign_tx(EDDSA, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
+%		ar_test_node:sign_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %				target => ar_wallet:to_address(element(2, RSA2)) }),
-%		sign_v1_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
+%		sign_v1_tx(RSA, #{ last_tx => ar_test_node:get_tx_anchor(main), quantity => 1,
 %				target => ar_wallet:to_address(element(2, RSA2)) })
 %	],
 %	lists:foreach(
@@ -413,7 +413,7 @@
 %		lists:map(
 %			fun({Sender, {Recipient, Amount, Payload}}) ->
 %				Wallet = maps:get(Sender, Wallets),
-%				sign_tx(Wallet, #{ last_tx => get_tx_anchor(master),
+%				ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main),
 %						quantity => Amount, data => Payload, target => Recipient })
 %			end,
 %			Transfers
@@ -510,13 +510,13 @@ replay_attack_test_() ->
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		assert_post_tx_to_master(SignedTX),
 		ar_test_node:mine(),
-		assert_slave_wait_until_height(1),
+		assert_wait_until_height(peer1, 1),
 		?assertEqual(?AR(8999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(1000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2])),
 		ar_events:send(tx, {ready_for_mining, SignedTX}),
 		wait_until_receives_txs([SignedTX]),
 		ar_test_node:mine(),
-		assert_slave_wait_until_height(2),
+		assert_wait_until_height(peer1, 2),
 		?assertEqual(?AR(8999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(1000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 	end}.
@@ -541,7 +541,7 @@ test_wallet_transaction() ->
 			assert_post_tx_to_master(SignedTX),
 			ar_test_node:mine(),
 			wait_until_height(1),
-			assert_slave_wait_until_height(1),
+			assert_wait_until_height(peer1, 1),
 			?assertEqual(?AR(999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 			?assertEqual(?AR(9000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 		end
@@ -568,7 +568,7 @@ test_wallet_transaction() ->
 %		ar_test_node:connect_to_peer(peer1),
 %		assert_post_tx_to_master(SignedTX),
 %		ar_test_node:mine(),
-%		assert_slave_wait_until_height(1),
+%		assert_wait_until_height(peer1, 1),
 %		assert_post_tx_to_slave(SignedTX2),
 %		slave_mine(),
 %		wait_until_height(2),
@@ -595,7 +595,7 @@ tx_threading_test_() ->
 		wait_until_height(1),
 		assert_post_tx_to_master(SignedTX2),
 		ar_test_node:mine(),
-		assert_slave_wait_until_height(2),
+		assert_wait_until_height(peer1, 2),
 		?assertEqual(?AR(7998), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(2000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 	end}.
@@ -613,7 +613,7 @@ test_persisted_mempool() ->
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
-	SignedTX = sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(master) }),
+	SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(SignedTX, false),
 	Mempool = ar_mempool:get_map(),
 	true = ar_util:do_until(
@@ -633,10 +633,10 @@ test_persisted_mempool() ->
 		peers = [ar_test_node:peer_ip(peer1)]
 	}),
 	ar:start_dependencies(),
-	wait_until_joined(),
+	ar_test_node:wait_until_joined(),
 	assert_slave_wait_until_receives_txs([SignedTX]),
 	ar_test_node:mine(),
-	[{H, _, _} | _] = assert_slave_wait_until_height(1),
+	[{H, _, _} | _] = assert_wait_until_height(peer1, 1),
 	B = read_block_when_stored(H),
 	?assertEqual([SignedTX#tx.id], B#block.txs),
 	ok = application:set_env(arweave, config, Config).

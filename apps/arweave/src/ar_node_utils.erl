@@ -713,7 +713,7 @@ test_block_validation() ->
 	ar_test_node:start(B0),
 	%% Add at least 10 KiB of data to the weave and mine a block on top,
 	%% to make sure SPoRA mining activates.
-	PrevTX = ar_test_node:sign_tx(master, Wallet, #{ reward => ?AR(10),
+	PrevTX = ar_test_node:sign_tx(main, Wallet, #{ reward => ?AR(10),
 			data => crypto:strong_rand_bytes(10 * 1024 * 1024) }),
 	ar_test_node:assert_post_tx_to_master(PrevTX),
 	ar_test_node:mine(),
@@ -725,7 +725,7 @@ test_block_validation() ->
 	PartitionUpperBound = ar_node:get_partition_upper_bound(BI),
 	BlockAnchors = ar_node:get_block_anchors(),
 	RecentTXMap = ar_node:get_recent_txs_map(),
-	TX = ar_test_node:sign_tx(master, Wallet, #{ reward => ?AR(10),
+	TX = ar_test_node:sign_tx(main, Wallet, #{ reward => ?AR(10),
 			data => crypto:strong_rand_bytes(7 * 1024 * 1024), last_tx => PrevH }),
 	ar_test_node:assert_post_tx_to_master(TX),
 	ar_test_node:mine(),

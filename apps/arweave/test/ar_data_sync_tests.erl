@@ -8,9 +8,9 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 
 -import(ar_test_node, [slave_start/3, rejoin_on_master/0,
-		sign_tx/2, sign_v1_tx/2, assert_wait_until_receives_txs/1, post_tx_to_master/1,
-		wait_until_height/1, assert_slave_wait_until_height/1, post_and_mine/2,
-		get_tx_anchor/1, disconnect_from_slave/0,
+		sign_v1_tx/2, assert_wait_until_receives_txs/1, post_tx_to_master/1,
+		wait_until_height/1, assert_wait_until_height/2, post_and_mine/2,
+		disconnect_from_slave/0,
 		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, slave_mine/0,
 		read_block_when_stored/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
@@ -150,7 +150,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 					ar_tx:generate_chunk_id(SecondChunk), ar_tx:generate_chunk_id(ThirdChunk)},
 			{DataRoot, DataTree} = ar_merkle:generate_tree([{FirstChunkID, FirstMerkleOffset},
 					{SecondChunkID, SecondMerkleOffset}, {ThirdChunkID, ThirdMerkleOffset}]),
-			TX = sign_tx(Wallet, #{ last_tx => get_tx_anchor(master), data_size => DataSize,
+			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
 			post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, [TX]),
 			lists:foreach(
@@ -209,7 +209,7 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 	BigOutOfBoundsOffsetChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	BigChunkID = ar_tx:generate_chunk_id(BigOutOfBoundsOffsetChunk),
 	{BigDataRoot, BigDataTree} = ar_merkle:generate_tree([{BigChunkID, ?DATA_CHUNK_SIZE + 1}]),
-	BigTX = sign_tx(Wallet, #{ last_tx => get_tx_anchor(master), data_size => ?DATA_CHUNK_SIZE,
+	BigTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => ?DATA_CHUNK_SIZE,
 			data_root => BigDataRoot }),
 	post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, [BigTX]),
 	BigDataPath = ar_merkle:generate_path(BigDataRoot, 0, BigDataTree),
@@ -332,7 +332,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	%% Mine two more blocks to make the chunks mature so that we can remove them from the
 	%% disk pool (they will stay in the corresponding storage modules though, if any).
 	slave_mine(),
-	assert_slave_wait_until_height(2),
+	assert_wait_until_height(peer1, 2),
 	slave_mine(),
 	true = ar_util:do_until(
 		fun() ->
@@ -590,7 +590,7 @@ test_syncs_after_joining(Split) ->
 	SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
 	slave_wait_until_syncs_chunks(SlaveProofs2),
 	_Slave2 = rejoin_on_master(),
-	assert_slave_wait_until_height(3),
+	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(MasterProofs2, UpperBound2),
@@ -613,7 +613,7 @@ test_mines_off_only_last_chunks() ->
 			DataSize = ?DATA_CHUNK_SIZE + 1023,
 			{DataRoot, DataTree} = ar_merkle:generate_tree([{RandomID, ?DATA_CHUNK_SIZE},
 					{ChunkID, DataSize}]),
-			TX = sign_tx(Wallet, #{ last_tx => get_tx_anchor(master), data_size => DataSize,
+			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
 			post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} }, [TX]),
 			Offset = ?DATA_CHUNK_SIZE + 1,
@@ -676,7 +676,7 @@ test_mines_off_only_second_last_chunks() ->
 			DataSize = (?DATA_CHUNK_SIZE) div 2 + (?DATA_CHUNK_SIZE) div 2 + 3,
 			{DataRoot, DataTree} = ar_merkle:generate_tree([{ChunkID, ?DATA_CHUNK_SIZE div 2},
 					{RandomID, DataSize}]),
-			TX = sign_tx(Wallet, #{ last_tx => get_tx_anchor(master), data_size => DataSize,
+			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
 			post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} }, [TX]),
 			Offset = 0,
@@ -911,50 +911,50 @@ tx(Wallet, SplitType, Format, Reward) ->
 		{{fixed_data, DataRoot, Chunks}, v2} ->
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => get_tx_anchor(master) },
+					last_tx => ar_test_node:get_tx_anchor(main) },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			{sign_tx(Wallet, Args2), Chunks};
+			{ar_test_node:sign_tx(Wallet, Args2), Chunks};
 		{{fixed_data, DataRoot, Chunks}, v1} ->
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => get_tx_anchor(master), data => Data },
+					last_tx => ar_test_node:get_tx_anchor(main), data => Data },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
 			{sign_v1_tx(Wallet, Args2), Chunks};
 		{original_split, v1} ->
 			{_, Chunks} = generate_random_original_v1_split(),
 			Data = binary:list_to_bin(Chunks),
-			Args = #{ data => Data, last_tx => get_tx_anchor(master) },
+			Args = #{ data => Data, last_tx => ar_test_node:get_tx_anchor(main) },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
 			{sign_v1_tx(Wallet, Args2), Chunks};
 		{original_split, v2} ->
 			{DataRoot, Chunks} = generate_random_original_split(),
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => get_tx_anchor(master) },
+					last_tx => ar_test_node:get_tx_anchor(main) },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			{sign_tx(Wallet, Args2), Chunks};
+			{ar_test_node:sign_tx(Wallet, Args2), Chunks};
 		{{custom_split, ChunkNumber}, v2} ->
 			{DataRoot, Chunks} = generate_random_split(ChunkNumber),
 			Args = #{ data_size => byte_size(binary:list_to_bin(Chunks)),
-					last_tx => get_tx_anchor(master), data_root => DataRoot },
+					last_tx => ar_test_node:get_tx_anchor(main), data_root => DataRoot },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			TX = sign_tx(Wallet, Args2),
+			TX = ar_test_node:sign_tx(Wallet, Args2),
 			{TX, Chunks};
 		{standard_split, v2} ->
 			{DataRoot, Chunks} = generate_random_standard_split(),
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => get_tx_anchor(master) },
+					last_tx => ar_test_node:get_tx_anchor(main) },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			TX = sign_tx(Wallet, Args2),
+			TX = ar_test_node:sign_tx(Wallet, Args2),
 			{TX, Chunks};
 		{{original_split, ChunkNumber}, v2} ->
 			{DataRoot, Chunks} = generate_random_original_split(ChunkNumber),
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => get_tx_anchor(master) },
+					last_tx => ar_test_node:get_tx_anchor(main) },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			TX = sign_tx(Wallet, Args2),
+			TX = ar_test_node:sign_tx(Wallet, Args2),
 			{TX, Chunks}
 	end.
 
@@ -1141,7 +1141,7 @@ post_blocks(Wallet, BlockMap) ->
 		fun
 			({empty, Height}, Acc) ->
 				ar_test_node:mine(),
-				assert_slave_wait_until_height(Height),
+				assert_wait_until_height(peer1, Height),
 				Acc;
 			({TXMap, _Height}, Acc) ->
 				TXsWithChunks = lists:map(

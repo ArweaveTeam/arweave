@@ -5,7 +5,7 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start_coordinated/1, mine/1, wait_until_height/2, http_get_block/2]).
+-import(ar_test_node, [start_coordinated/1, mine/1, http_get_block/2]).
 
 % single_node_one_chunk_coordinated_mining_test_() ->
 % 	{timeout, 120, fun test_single_node_one_chunk_coordinated_mining/0}.
@@ -13,7 +13,7 @@
 % test_single_node_one_chunk_coordinated_mining() ->
 % 	[Node, _ExitNode, ValidatorNode] = start_coordinated(1),
 % 	mine(Node),
-% 	BI = wait_until_height(1, ValidatorNode),
+% 	BI = ar_test_node:wait_until_height(ValidatorNode, 1),
 % 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 % 	?assert(byte_size((B#block.poa)#poa.data_path) > 0),
 % 	assert_empty_cache(Node).
@@ -26,7 +26,7 @@
 % test_single_node_two_chunk_coordinated_mining() ->
 % 	[Node, _ExitNode, ValidatorNode] = start_coordinated(1),
 % 	mine(Node),
-% 	BI = wait_until_height(1, ValidatorNode),
+% 	BI = ar_test_node:wait_until_height(ValidatorNode, 1),
 % 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 % 	?assert(byte_size((B#block.poa2)#poa.data_path) > 0),
 % 	assert_empty_cache(Node).
@@ -119,10 +119,10 @@ wait_for_each_node(
 	
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	ar_util:pmap(fun(Node) -> mine(Node) end, Miners),
-	[{Hash, _, _} | _] = wait_until_height(CurrentHeight + 1, ValidatorNode),
+	[{Hash, _, _} | _] = ar_test_node:wait_until_height(ValidatorNode, CurrentHeight + 1),
 	lists:foreach(
 		fun(Node) ->
-			[{MinerHash, _, _} | _] = wait_until_height(CurrentHeight + 1, Node),
+			[{MinerHash, _, _} | _] = ar_test_node:wait_until_height(Node, CurrentHeight + 1),
 			Message = lists:flatten(
 				io_lib:format("Node ~p did not mine the same block as the validator node", [Node])),
 			?assertEqual(ar_util:encode(Hash), ar_util:encode(MinerHash), Message)

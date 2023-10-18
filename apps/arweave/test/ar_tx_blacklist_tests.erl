@@ -7,10 +7,10 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [slave_start/1, get_tx_anchor/1, sign_tx/2,
+-import(ar_test_node, [slave_start/1,
 		sign_v1_tx/2, random_v1_data/1, slave_call/3, assert_post_tx_to_slave/1,
 		assert_post_tx_to_master/1, slave_mine/0, wait_until_height/1,
-		assert_slave_wait_until_height/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
+		assert_wait_until_height/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		disconnect_from_slave/0, assert_wait_until_receives_txs/1]).
 
 init(Req, State) ->
@@ -116,8 +116,8 @@ test_uses_blacklists() ->
 	assert_does_not_accept_offsets(BadOffsets3),
 	%% Blacklist the last transaction. Fork the weave. Assert the blacklisted offsets are moved.
 	disconnect_from_slave(),
-	TX = sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-			last_tx => get_tx_anchor(slave) }),
+	TX = ar_test_node:sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+			last_tx => ar_test_node:get_tx_anchor(slave) }),
 	assert_post_tx_to_master(TX),
 	ar_test_node:mine(),
 	[{_, WeaveSize, _} | _] = wait_until_height(length(TXs) + 1),
@@ -125,13 +125,13 @@ test_uses_blacklists() ->
 	ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),
 	assert_removed_offsets([[WeaveSize]]),
 	TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
-			last_tx => get_tx_anchor(slave) }),
+			last_tx => ar_test_node:get_tx_anchor(slave) }),
 	assert_post_tx_to_slave(TX2),
 	slave_mine(),
-	assert_slave_wait_until_height(length(TXs) + 1),
+	assert_wait_until_height(peer1, length(TXs) + 1),
 	assert_post_tx_to_slave(TX),
 	slave_mine(),
-	assert_slave_wait_until_height(length(TXs) + 2),
+	assert_wait_until_height(peer1, length(TXs) + 2),
 	ar_test_node:connect_to_peer(peer1),
 	[{_, WeaveSize2, _} | _] = wait_until_height(length(TXs) + 2),
 	assert_removed_offsets([[WeaveSize2]]),
@@ -144,7 +144,7 @@ setup() ->
 	TXIDs = [TX#tx.id || TX <- TXs],
 	BadTXIDs = [lists:nth(1, TXIDs), lists:nth(3, TXIDs)],
 	V1TX = sign_v1_tx(Wallet, #{ data => random_v1_data(3 * ?DATA_CHUNK_SIZE),
-			last_tx => get_tx_anchor(slave), reward => ?AR(10000) }),
+			last_tx => ar_test_node:get_tx_anchor(slave), reward => ?AR(10000) }),
 	DataSizes = [TX#tx.data_size || TX <- TXs],
 	S0 = B0#block.block_size,
 	[S1, S2, S3, S4, S5, S6, S7, S8 | _] = DataSizes,
@@ -227,8 +227,8 @@ create_txs(Wallet) ->
 					ar_tx:chunks_to_size_tagged_chunks(Chunks)
 				),
 				{DataRoot, DataTree} = ar_merkle:generate_tree(SizedChunkIDs),
-				TX = sign_tx(Wallet, #{ format => 2, data_root => DataRoot,
-						data_size => 10 * ?DATA_CHUNK_SIZE, last_tx => get_tx_anchor(slave),
+				TX = ar_test_node:sign_tx(Wallet, #{ format => 2, data_root => DataRoot,
+						data_size => 10 * ?DATA_CHUNK_SIZE, last_tx => ar_test_node:get_tx_anchor(slave),
 						reward => ?AR(10000), denomination => 1 }),
 				{[TX | TXs], maps:put(TX#tx.id, {DataTree, Chunks}, DataTrees)}
 		end,

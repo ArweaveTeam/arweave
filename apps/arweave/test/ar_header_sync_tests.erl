@@ -7,11 +7,10 @@
 -include_lib("kernel/include/file.hrl").
 
 -import(ar_test_node, [
-	
 	join_on_master/0,
 	slave_call/3,
-	sign_tx/3, sign_v1_tx/3, assert_post_tx_to_master/1, get_tx_anchor/0,
-	wait_until_height/1, assert_slave_wait_until_height/1,
+	sign_v1_tx/3, assert_post_tx_to_master/1,
+	wait_until_height/1, assert_wait_until_height/2,
 	read_block_when_stored/1,
 	random_v1_data/1
 ]).
@@ -25,7 +24,7 @@ test_syncs_headers() ->
 	ar_test_node:start(B0),
 	post_random_blocks(Wallet, ?MAX_TX_ANCHOR_DEPTH + 5, B0),
 	join_on_master(),
-	BI = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 5),
+	BI = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 5),
 	lists:foreach(
 		fun(Height) ->
 			{ok, B} = ar_util:do_until(
@@ -53,7 +52,7 @@ test_syncs_headers() ->
 	ar_events:send(disksup, {remaining_disk_space, "default", true, 0, 0}),
 	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
 	NoSpaceTX = sign_v1_tx(master, Wallet,
-		#{ data => random_v1_data(10 * 1024), last_tx => get_tx_anchor() }),
+		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
 	assert_post_tx_to_master(NoSpaceTX),
 	ar_test_node:mine(),
 	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),
@@ -70,7 +69,7 @@ test_syncs_headers() ->
 			%% Keep mining blocks. At some point the cleanup procedure will
 			%% kick in and remove the oldest files.
 			TX = sign_v1_tx(master, Wallet, #{
-				data => random_v1_data(200 * 1024), last_tx => get_tx_anchor() }),
+				data => random_v1_data(200 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
 			assert_post_tx_to_master(TX),
 			ar_test_node:mine(),
 			[{_, Height}] = ets:lookup(test_syncs_header, height),
@@ -99,7 +98,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 					fun(_, Acc) ->
 						case rand:uniform(2) == 1 of
 							true ->
-								TX = sign_tx(master, Wallet,
+								TX = ar_test_node:sign_tx(main, Wallet,
 									#{
 										last_tx => Anchor,
 										data => crypto:strong_rand_bytes(10 * 1024 * 1024)

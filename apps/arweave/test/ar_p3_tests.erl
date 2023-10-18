@@ -10,8 +10,8 @@
 -import(ar_test_node, [
 	stop/0, slave_start/1, slave_start/3,
 	disconnect_from_slave/0, assert_post_tx_to_slave/1,
-	slave_mine/0, assert_slave_wait_until_height/1, join_on_slave/0, rejoin_on_slave/0,
-	sign_tx/2, assert_post_tx_to_master/1, wait_until_height/1, read_block_when_stored/2]).
+	slave_mine/0, assert_wait_until_height/2, join_on_slave/0, rejoin_on_slave/0,
+	assert_post_tx_to_master/1, wait_until_height/1, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
 	empty_p3_config/0]).
@@ -483,10 +483,10 @@ e2e_deposit_before_charge() ->
 	ar_test_node:start(B0, RewardAddress, Config),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
-	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 700, data => <<"hello">> }),
-	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
-	TX3 = sign_tx(Wallet2, #{ target => DepositAddress, quantity => 1000 }),
-	TX4 = sign_tx(Wallet1, #{ target => OtherAddress, quantity => 500 }),
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 700, data => <<"hello">> }),
+	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+	TX3 = ar_test_node:sign_tx(Wallet2, #{ target => DepositAddress, quantity => 1000 }),
+	TX4 = ar_test_node:sign_tx(Wallet1, #{ target => OtherAddress, quantity => 500 }),
 	assert_post_tx_to_master(TX1),
 	assert_post_tx_to_master(TX2),
 	assert_post_tx_to_master(TX3),
@@ -722,7 +722,7 @@ e2e_charge_before_deposit() ->
 
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
 
-	TX1 = sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
 	assert_post_tx_to_master(TX1),
 	
 	ar_test_node:mine(),
@@ -746,7 +746,7 @@ e2e_charge_before_deposit() ->
 
 	?assertEqual({<<"200">>, <<"-1000">>}, get_balance(Address1)),
 
-	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
 	assert_post_tx_to_master(TX2),
 	
 	ar_test_node:mine(),
@@ -794,19 +794,19 @@ e2e_restart_p3_service() ->
 	disconnect_from_slave(),
 
 	%% This deposit will be too old and will not be scanned when the master node comes back up.
-	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
 	assert_post_tx_to_slave(TX1),
 
 	slave_mine(),
-	assert_slave_wait_until_height(1),
+	assert_wait_until_height(peer1, 1),
 
 	slave_mine(),
-	assert_slave_wait_until_height(2),
+	assert_wait_until_height(peer1, 2),
 
-	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
+	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
 	assert_post_tx_to_slave(TX2),
 	slave_mine(),
-	assert_slave_wait_until_height(3),
+	assert_wait_until_height(peer1, 3),
 
 	%% Stop the master node. The slave will continue to mine. When the master comes back up
 	%% it should correctly scan all the blocks missed since disconnectin
@@ -814,7 +814,7 @@ e2e_restart_p3_service() ->
 	stop(),
 
 	slave_mine(),
-	assert_slave_wait_until_height(4),
+	assert_wait_until_height(peer1, 4),
 
 	rejoin_on_slave(),
 	?assertEqual(0, ar_p3_db:get_scan_height(),
@@ -828,7 +828,7 @@ e2e_restart_p3_service() ->
 		"Node has seen blocks, but hasn't received a new_tip event yet: scan height 0"),
 
 	slave_mine(),
-	assert_slave_wait_until_height(5),
+	assert_wait_until_height(peer1, 5),
 	wait_until_height(5),
 	%% allow time for the new_tip event to be processed
 	timer:sleep(1000),
@@ -868,7 +868,7 @@ e2e_concurrent_requests() ->
 	ar_test_node:connect_to_peer(peer1),
 
 	%% Post a 100 winston deposit and wait for it to be picked up.
-	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),
+	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),
 	assert_post_tx_to_master(TX1),
 	
 	ar_test_node:mine(),

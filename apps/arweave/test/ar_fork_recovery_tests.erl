@@ -6,8 +6,8 @@
 -import(ar_test_node, [
 		slave_start/0, slave_start/1, slave_start/2,
 		disconnect_from_slave/0, assert_post_tx_to_slave/1,
-		slave_mine/0, assert_slave_wait_until_height/1, wait_until_height/1, rejoin_on_slave/0,
-		slave_wait_until_height/1, sign_tx/2, read_block_when_stored/1, slave_call/3]).
+		slave_mine/0, assert_wait_until_height/2, wait_until_height/1, rejoin_on_slave/0,
+		slave_wait_until_height/1, read_block_when_stored/1, slave_call/3]).
 
 height_plus_one_fork_recovery_test_() ->
 	{timeout, 120, fun test_height_plus_one_fork_recovery/0}.
@@ -21,7 +21,7 @@ test_height_plus_one_fork_recovery() ->
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
-	assert_slave_wait_until_height(1),
+	assert_wait_until_height(peer1, 1),
 	ar_test_node:mine(),
 	wait_until_height(1),
 	ar_test_node:mine(),
@@ -32,7 +32,7 @@ test_height_plus_one_fork_recovery() ->
 	ar_test_node:mine(),
 	wait_until_height(3),
 	slave_mine(),
-	assert_slave_wait_until_height(3),
+	assert_wait_until_height(peer1, 3),
 	rejoin_on_slave(),
 	slave_mine(),
 	SlaveBI = slave_wait_until_height(4),
@@ -50,17 +50,17 @@ test_height_plus_three_fork_recovery() ->
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
-	assert_slave_wait_until_height(1),
+	assert_wait_until_height(peer1, 1),
 	ar_test_node:mine(),
 	wait_until_height(1),
 	ar_test_node:mine(),
 	wait_until_height(2),
 	slave_mine(),
-	assert_slave_wait_until_height(2),
+	assert_wait_until_height(peer1, 2),
 	ar_test_node:mine(),
 	wait_until_height(3),
 	slave_mine(),
-	assert_slave_wait_until_height(3),
+	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
 	MasterBI = wait_until_height(4),
@@ -78,7 +78,7 @@ test_missing_txs_fork_recovery() ->
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
-	TX1 = sign_tx(Key, #{}),
+	TX1 = ar_test_node:sign_tx(Key, #{}),
 	assert_post_tx_to_slave(TX1),
 	%% Wait to make sure the tx will not be gossiped upon reconnect.
 	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
@@ -100,7 +100,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
-	TX = #tx{ id = TXID } = sign_tx(Key, #{ denomination => 1, reward => ?AR(1) }),
+	TX = #tx{ id = TXID } = ar_test_node:sign_tx(Key, #{ denomination => 1, reward => ?AR(1) }),
 	assert_post_tx_to_slave(TX),
 	slave_mine(),
 	[{H1, _, _} | _] = slave_wait_until_height(1),

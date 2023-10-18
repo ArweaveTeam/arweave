@@ -514,7 +514,7 @@ basic_node_join_test() ->
 		ar_test_node:mine(),
 		ar_test_node:wait_until_height(2),
 		ar_test_node:join_on_master(),
-		ar_test_node:assert_slave_wait_until_height(2)
+		ar_test_node:assert_wait_until_height(peer1, 2)
 	end}.
 
 %% @doc Ensure that both nodes can mine after a join.
@@ -527,7 +527,7 @@ node_join_test() ->
 		ar_test_node:mine(),
 		ar_test_node:wait_until_height(2),
 		ar_test_node:join_on_master(),
-		ar_test_node:assert_slave_wait_until_height(2),
+		ar_test_node:assert_wait_until_height(peer1, 2),
 		ar_test_node:slave_mine(),
 		ar_test_node:wait_until_height(3)
 	end}.
