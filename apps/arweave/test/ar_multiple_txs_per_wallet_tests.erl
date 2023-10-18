@@ -8,8 +8,8 @@
 -import(ar_test_node, [slave_start/1,
 	
 	wait_until_height/1, assert_wait_until_height/2,
-	post_tx_to_slave/1,
-	post_tx_to_slave/2, post_tx_to_master/1,
+	
+	post_tx_to_master/1,
 	assert_post_tx_to_slave/1, assert_post_tx_to_slave/2,
 	assert_post_tx_to_master/1, sign_v1_tx/1, sign_v1_tx/2,
 	sign_v1_tx/3, get_tx_confirmations/2,
@@ -281,7 +281,7 @@ test_rejects_transactions_above_the_size_limit() ->
 	BadTX = sign_v1_tx(Key2, #{ data => BigData }),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}},
-		post_tx_to_slave(BadTX)
+		ar_test_node:post_tx_to_peer(peer1, BadTX)
 	),
 	?assertMatch(
 		{ok, ["tx_fields_too_large"]},
@@ -314,7 +314,7 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	TX2 = sign_v1_tx(Key, #{ last_tx => TX1#tx.id }),
 	assert_post_tx_to_slave(TX2),
 	TX3 = sign_v1_tx(Key, #{ last_tx => TX2#tx.id }),
-	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = post_tx_to_slave(TX3),
+	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, TX3),
 	TX4 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
 	assert_post_tx_to_slave(TX4),
 	ar_test_node:mine(peer1),
@@ -356,7 +356,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"1">>}]
 		}
 	),
-	{ok, {{<<"400">>, _}, _, _, _, _}} = post_tx_to_slave(TX2),
+	{ok, {{<<"400">>, _}, _, _, _, _}} = ar_test_node:post_tx_to_peer(peer1, TX2),
 	?assertEqual({ok, ["overspend"]}, ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes, [TX2#tx.id])),
 	ar_test_node:mine(peer1),
 	SlaveBI = assert_wait_until_height(peer1, 1),
@@ -427,7 +427,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	%% Remove the replay TX from the ignore list (to simulate e.g. a node restart).
 	ar_test_node:remote_call(peer1, ets, delete, [ignored_ids, TX2#tx.id]),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-		post_tx_to_slave(TX2).
+		ar_test_node:post_tx_to_peer(peer1, TX2).
 
 mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	%% Post the given transactions grouped by block size to a node.
@@ -518,7 +518,7 @@ rejects_txs_with_outdated_anchors_test_() ->
 		assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH),
 		TX1 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
 		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-			post_tx_to_slave(TX1)
+			ar_test_node:post_tx_to_peer(peer1, TX1)
 	end}.
 
 drops_v1_txs_exceeding_mempool_limit_test_() ->
@@ -552,7 +552,7 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool1),
 	Last = lists:last(TXs),
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
 	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% There is no place for the last transaction in the mempool.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
@@ -587,7 +587,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 10)], Mempool1),
 	Last = lists:last(TXs),
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
 	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% The last TX is twice as big and twice as valuable so it replaces two
 	%% other transactions in the memory pool.

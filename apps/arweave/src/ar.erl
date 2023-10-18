@@ -32,6 +32,7 @@
 		ar_deep_hash,
 		ar_diff_dag,
 		ar_ets_intervals,
+		ar_events,
 		ar_inflation,
 		ar_intervals,
 		ar_join,

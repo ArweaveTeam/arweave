@@ -23,7 +23,7 @@
 		wait_until_mining_paused/0,
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/2,
-		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
+		post_tx_to_peer/2, post_tx_to_peer/3, post_tx_to_master/1, post_tx_to_master/2,
 		assert_post_tx_to_slave/1, assert_post_tx_to_slave/2, assert_post_tx_to_master/1,
 		get_tx_anchor/1, join/2, join_on/2, rejoin_on/2,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
@@ -832,7 +832,7 @@ assert_post_tx_to_slave(TX) ->
 	assert_post_tx_to_slave(TX, true).
 
 assert_post_tx_to_slave(TX, Wait) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(TX, Wait).
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_peer(peer1, TX, Wait).
 
 assert_post_tx_to_master(TX) ->
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(TX).
@@ -857,16 +857,16 @@ post_tx_to_master(TX, Wait) ->
 	end,
 	Reply.
 
-post_tx_to_slave(TX) ->
-	post_tx_to_slave(TX, true).
+post_tx_to_peer(NodePrefix, TX) ->
+	post_tx_to_peer(NodePrefix, TX, true).
 
-post_tx_to_slave(TX, Wait) ->
+post_tx_to_peer(NodePrefix, TX, Wait) ->
 	Reply = post_tx_json_to_slave(ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			case Wait of
 				true ->
-					ar_test_node:assert_wait_until_receives_txs(peer1, [TX]);
+					assert_wait_until_receives_txs(NodePrefix, [TX]);
 				false ->
 					ok
 			end;
