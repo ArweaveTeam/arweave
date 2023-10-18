@@ -9,9 +9,9 @@
 	
 	wait_until_height/1, assert_wait_until_height/2,
 	
-	post_tx_to_master/1,
-	assert_post_tx_to_slave/1, assert_post_tx_to_slave/2,
-	assert_post_tx_to_master/1, sign_v1_tx/1, sign_v1_tx/2,
+	
+	
+	 sign_v1_tx/1, sign_v1_tx/2,
 	sign_v1_tx/3, get_tx_confirmations/2,
 	 read_block_when_stored/1, random_v1_data/1]).
 
@@ -120,7 +120,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Post the transactions to slave.
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			%% Expect transactions to be gossiped to master.
 			ar_test_node:assert_wait_until_receives_txs([TX])
 		end,
@@ -174,7 +174,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Post transactions from the first set to master.
 	lists:foreach(
 		fun(TX) ->
-			post_tx_to_master(TX)
+			ar_test_node:post_tx_to_peer(main, TX)
 		end,
 		SecondTXSet ++ FirstTXSet
 	),
@@ -182,7 +182,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Post transactions from the second set to slave.
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		SecondTXSet
 	),
@@ -229,7 +229,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	BelowBalanceTXs = lists:droplast(SortedTXs),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX, false)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX, false)
 		end,
 		TXs
 	),
@@ -277,7 +277,7 @@ test_rejects_transactions_above_the_size_limit() ->
 	SmallData = random_v1_data(?TX_DATA_SIZE_LIMIT),
 	BigData = random_v1_data(?TX_DATA_SIZE_LIMIT + 1),
 	GoodTX = sign_v1_tx(Key1, #{ data => SmallData }),
-	assert_post_tx_to_slave(GoodTX),
+	ar_test_node:assert_post_tx_to_peer(peer1, GoodTX),
 	BadTX = sign_v1_tx(Key2, #{ data => BigData }),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}},
@@ -308,15 +308,15 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
 	TX1 = sign_v1_tx(Key),
-	assert_post_tx_to_slave(TX1),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 1),
 	TX2 = sign_v1_tx(Key, #{ last_tx => TX1#tx.id }),
-	assert_post_tx_to_slave(TX2),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
 	TX3 = sign_v1_tx(Key, #{ last_tx => TX2#tx.id }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, TX3),
 	TX4 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
-	assert_post_tx_to_slave(TX4),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
 	ar_test_node:mine(peer1),
 	SlaveBI = assert_wait_until_height(peer1, 2),
 	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
@@ -345,7 +345,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 	ar_test_node:connect_to_peer(peer1),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
 			quantity => ?AR(2) }),
-	assert_post_tx_to_slave(TX1),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 	TX2 = sign_v1_tx(
 		Key2,
 		#{
@@ -372,7 +372,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"3">>}]
 		}
 	),
-	assert_post_tx_to_slave(TX3),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),
 	SlaveBI2 = assert_wait_until_height(peer1, 2),
 	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI2)]),
@@ -396,7 +396,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	ar_test_node:start_peer(peer1, B0),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => <<>> }),
-	assert_post_tx_to_slave(TX1),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 1),
 	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
@@ -409,7 +409,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	Balance = binary_to_integer(Body),
 	TX2 = sign_v1_tx(Key2, #{ target => ar_wallet:to_address(Pub1), reward => Balance - ?AR(1),
 			quantity => ?AR(1), last_tx => <<>> }),
-	assert_post_tx_to_slave(TX2),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 2),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
@@ -421,7 +421,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	?assertEqual(0, binary_to_integer(Body2)),
 	TX3 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => TX1#tx.id }),
-	assert_post_tx_to_slave(TX3),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 3),
 	%% Remove the replay TX from the ignore list (to simulate e.g. a node restart).
@@ -439,7 +439,7 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	ar_test_node:connect_to_peer(peer1),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			ar_test_node:assert_wait_until_receives_txs([TX])
 		end,
 		lists:flatten(TXGroups)
@@ -492,7 +492,7 @@ mines_format_2_txs_without_size_limit() ->
 					tags => [{<<"nonce">>, integer_to_binary(N)}]
 				}
 			),
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			ar_test_node:assert_wait_until_receives_txs([TX])
 		end,
 		lists:seq(1, ?BLOCK_TX_COUNT_LIMIT + 1)
@@ -543,7 +543,7 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		lists:sublist(TXs, 5)
 	),
@@ -578,7 +578,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		lists:sublist(TXs, 10)
 	),
@@ -595,7 +595,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	%% Strip the data out. Expect the header to be accepted.
 	StrippedTX = ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash,
 			data => BigChunk, tags => [{<<"nonce">>, integer_to_binary(12)}] }),
-	assert_post_tx_to_slave(StrippedTX#tx{ data = <<>> }),
+	ar_test_node:assert_post_tx_to_peer(peer1, StrippedTX#tx{ data = <<>> }),
 	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	?assertEqual([Last#tx.id] ++ [TX#tx.id || TX <- lists:sublist(TXs, 8)]
 			++ [StrippedTX#tx.id], Mempool3).
@@ -642,7 +642,7 @@ joins_network_successfully() ->
 							tags => [{<<"nonce">>, integer_to_binary(rand:uniform(100))}]}),
 							block_anchor}
 			end,
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			ar_test_node:mine(peer1),
 			assert_wait_until_height(peer1, Height),
 			ar_util:do_until(
@@ -662,7 +662,7 @@ joins_network_successfully() ->
 	?assertEqual(ok, ar_test_node:wait_until_block_index(BI)),
 	TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-		post_tx_to_master(TX1),
+		ar_test_node:post_tx_to_peer(main, TX1),
 	%% Expect transactions to be on master.
 	lists:foreach(
 		fun({TX, _}) ->
@@ -680,7 +680,7 @@ joins_network_successfully() ->
 	),
 	lists:foreach(
 		fun({TX, AnchorType}) ->
-			Reply = post_tx_to_master(TX),
+			Reply = ar_test_node:post_tx_to_peer(main, TX),
 			case AnchorType of
 				tx_anchor ->
 					?assertMatch({ok, {{<<"400">>, _}, _,
@@ -701,16 +701,16 @@ joins_network_successfully() ->
 	),
 	ar_test_node:disconnect_from(peer1),
 	TX2 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
-	assert_post_tx_to_master(TX2),
+	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	ar_test_node:mine(),
 	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
 	TX3 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
-	assert_post_tx_to_slave(TX3),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),
 	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
 	ar_test_node:connect_to_peer(peer1),
 	TX4 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
-	assert_post_tx_to_slave(TX4),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
 	ar_test_node:assert_wait_until_receives_txs([TX4]),
 	ar_test_node:mine(peer1),
 	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
@@ -742,7 +742,7 @@ recovers_from_forks(ForkHeight) ->
 		fun(Height, TXs) ->
 			TX = sign_v1_tx(Key, #{ last_tx => ar_test_node:get_tx_anchor(peer1),
 					tags => [{<<"nonce">>, random_nonce()}] }),
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			ar_test_node:assert_wait_until_receives_txs([TX]),
 			ar_test_node:mine(peer1),
 			BI = assert_wait_until_height(peer1, Height),
@@ -764,7 +764,7 @@ recovers_from_forks(ForkHeight) ->
 				2 ->
 					sign_v1_tx(master, Key, UnsignedTX)
 			end,
-			assert_post_tx_to_master(TX),
+			ar_test_node:assert_post_tx_to_peer(main, TX),
 			[TX]
 		end,
 	PostTXToSlave =
@@ -777,7 +777,7 @@ recovers_from_forks(ForkHeight) ->
 				2 ->
 					sign_v1_tx(Key, UnsignedTX)
 			end,
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			[TX]
 		end,
 	ar_test_node:disconnect_from(peer1),
@@ -799,7 +799,7 @@ recovers_from_forks(ForkHeight) ->
 	ar_test_node:connect_to_peer(peer1),
 	TX2 = ar_test_node:sign_tx(Key, #{ last_tx => ar_test_node:get_tx_anchor(peer1),
 			tags => [{<<"nonce">>, random_nonce()}] }),
-	assert_post_tx_to_slave(TX2),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
 	ar_test_node:assert_wait_until_receives_txs([TX2]),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 10),
@@ -825,7 +825,7 @@ recovers_from_forks(ForkHeight) ->
 				)
 			),
 			{ok, {{<<"400">>, _}, _, _, _, _}} =
-				post_tx_to_master(TX)
+				ar_test_node:post_tx_to_peer(main, TX)
 		end,
 		PreForkTXs ++ SlavePostForkTXs ++ [TX2]
 	),

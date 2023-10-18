@@ -5,7 +5,7 @@
 
 -import(ar_test_node, [
 		slave_start/0, slave_start/1, slave_start/2,
-		 assert_post_tx_to_slave/1,
+		 
 		assert_wait_until_height/2, wait_until_height/1,
 		slave_wait_until_height/1, read_block_when_stored/1]).
 
@@ -79,7 +79,7 @@ test_missing_txs_fork_recovery() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:disconnect_from(peer1),
 	TX1 = ar_test_node:sign_tx(Key, #{}),
-	assert_post_tx_to_slave(TX1),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 	%% Wait to make sure the tx will not be gossiped upon reconnect.
 	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
 	ar_test_node:rejoin_on(main, peer1),
@@ -101,7 +101,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:disconnect_from(peer1),
 	TX = #tx{ id = TXID } = ar_test_node:sign_tx(Key, #{ denomination => 1, reward => ?AR(1) }),
-	assert_post_tx_to_slave(TX),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX),
 	ar_test_node:mine(peer1),
 	[{H1, _, _} | _] = slave_wait_until_height(1),
 	H1TXIDs = (ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [H1]))#block.txs,

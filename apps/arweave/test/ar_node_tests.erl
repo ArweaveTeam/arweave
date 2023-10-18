@@ -7,7 +7,7 @@
 
 -import(ar_test_node, [
 		wait_until_height/1, slave_start/1, slave_start/2,
-		wait_until_receives_txs/1, assert_post_tx_to_master/1,
+		wait_until_receives_txs/1, 
 		assert_wait_until_height/2,
 		slave_call/4,  sign_v1_tx/3,
 		read_block_when_stored/1, post_tx_to_master/2]).
@@ -55,14 +55,14 @@
 %		fun({ExpectedErrors, TX}) ->
 %			?assertMatch({ok, {{<<"400">>, _}, _,
 %					<<"Transaction verification failed.">>, _, _}},
-%					post_tx_to_master(TX)),
+%					ar_test_node:post_tx_to_peer(main, TX)),
 %			?assertEqual({ok, ExpectedErrors}, ar_tx_db:get_error_codes(TX#tx.id))
 %		end,
 %		InvalidTXsBeforeFork
 %	),
 %	lists:foreach(
 %		fun(TX) ->
-%			?assertMatch({ok, {{<<"200">>, _}, _, <<"OK">>, _, _}}, post_tx_to_master(TX))
+%			?assertMatch({ok, {{<<"200">>, _}, _, <<"OK">>, _, _}}, ar_test_node:post_tx_to_peer(main, TX))
 %		end,
 %		ValidTXsBeforeFork
 %	),
@@ -94,14 +94,14 @@
 %		fun({ErrorCodes, TX}) ->
 %			?assertMatch({ok, {{<<"400">>, _}, _,
 %					<<"Transaction verification failed.">>, _, _}},
-%					post_tx_to_master(TX)),
+%					ar_test_node:post_tx_to_peer(main, TX)),
 %			?assertEqual({ok, ErrorCodes}, ar_tx_db:get_error_codes(TX#tx.id))
 %		end,
 %		InvalidTXsAfterFork
 %	),
 %	lists:foreach(
 %		fun(TX) ->
-%			?assertMatch({ok, {{<<"200">>, _}, _, <<"OK">>, _, _}}, post_tx_to_master(TX))
+%			?assertMatch({ok, {{<<"200">>, _}, _, <<"OK">>, _, _}}, ar_test_node:post_tx_to_peer(main, TX))
 %		end,
 %		ValidTXsAfterFork
 %	).
@@ -508,7 +508,7 @@ replay_attack_test_() ->
 		ar_test_node:connect_to_peer(peer1),
 		SignedTX = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
-		assert_post_tx_to_master(SignedTX),
+		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 		ar_test_node:mine(),
 		assert_wait_until_height(peer1, 1),
 		?assertEqual(?AR(8999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
@@ -538,7 +538,7 @@ test_wallet_transaction() ->
 			ar_test_node:start(B0, ar_wallet:to_address(ar_wallet:new_keyfile({eddsa, ed25519}))),
 			ar_test_node:start_peer(peer1, B0),
 			ar_test_node:connect_to_peer(peer1),
-			assert_post_tx_to_master(SignedTX),
+			ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 			ar_test_node:mine(),
 			wait_until_height(1),
 			assert_wait_until_height(peer1, 1),
@@ -566,10 +566,10 @@ test_wallet_transaction() ->
 %		ar_test_node:start(B0),
 %		ar_test_node:start_peer(peer1, B0),
 %		ar_test_node:connect_to_peer(peer1),
-%		assert_post_tx_to_master(SignedTX),
+%		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 %		ar_test_node:mine(),
 %		assert_wait_until_height(peer1, 1),
-%		assert_post_tx_to_slave(SignedTX2),
+%		ar_test_node:assert_post_tx_to_peer(peer1, SignedTX2),
 %		ar_test_node:mine(peer1),
 %		wait_until_height(2),
 %		?AR(999) = ar_node:get_balance(Pub1),
@@ -590,10 +590,10 @@ tx_threading_test_() ->
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		SignedTX2 = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => SignedTX#tx.id }),
-		assert_post_tx_to_master(SignedTX),
+		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 		ar_test_node:mine(),
 		wait_until_height(1),
-		assert_post_tx_to_master(SignedTX2),
+		ar_test_node:assert_post_tx_to_peer(main, SignedTX2),
 		ar_test_node:mine(),
 		assert_wait_until_height(peer1, 2),
 		?assertEqual(?AR(7998), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
@@ -614,7 +614,7 @@ test_persisted_mempool() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:disconnect_from(peer1),
 	SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(SignedTX, false),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(main, SignedTX, false),
 	Mempool = ar_mempool:get_map(),
 	true = ar_util:do_until(
 		fun() ->

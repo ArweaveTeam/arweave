@@ -4,7 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [slave_start/1,
-		assert_post_tx_to_slave/1,
+		
 		wait_until_height/1, assert_wait_until_height/2,
 		
 		read_block_when_stored/1]).
@@ -25,7 +25,7 @@ test_v1_transactions_after_2_0() ->
 	TXs = generate_txs(Key, fun ar_test_node:sign_v1_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		TXs
 	),
@@ -47,7 +47,7 @@ test_v1_transactions_after_2_0() ->
 	MoreTXs = generate_txs(Key2, fun ar_test_node:sign_v1_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		MoreTXs
 	),
@@ -83,7 +83,7 @@ test_v2_transactions_after_2_0() ->
 	TXs = generate_txs(Key, fun ar_test_node:sign_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		TXs
 	),
@@ -105,7 +105,7 @@ test_v2_transactions_after_2_0() ->
 	MoreTXs = generate_txs(Key2, fun ar_test_node:sign_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		MoreTXs
 	),
@@ -146,7 +146,7 @@ test_recall_byte_on_the_border() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		TXs
 	),
@@ -201,7 +201,7 @@ test_ignores_transactions_with_invalid_data_root() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(TX)
+			ar_test_node:assert_post_tx_to_peer(peer1, TX)
 		end,
 		TXs
 	),

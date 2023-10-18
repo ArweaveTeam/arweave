@@ -8,8 +8,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -import(ar_test_node, [slave_start/1,
-		sign_v1_tx/2, random_v1_data/1, assert_post_tx_to_slave/1,
-		assert_post_tx_to_master/1, wait_until_height/1,
+		sign_v1_tx/2, random_v1_data/1, 
+		 wait_until_height/1,
 		assert_wait_until_height/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2]).
 
 init(Req, State) ->
@@ -71,11 +71,11 @@ test_uses_blacklists() ->
 	BadV1TXIDs = [V1TX#tx.id],
 	lists:foreach(
 		fun({TX, Height}) ->
-			assert_post_tx_to_slave(TX),
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
 			ar_test_node:assert_wait_until_receives_txs([TX]),
 			case Height == length(TXs) of
 				true ->
-					assert_post_tx_to_slave(V1TX),
+					ar_test_node:assert_post_tx_to_peer(peer1, V1TX),
 					ar_test_node:assert_wait_until_receives_txs([V1TX]);
 				_ ->
 					ok
@@ -117,7 +117,7 @@ test_uses_blacklists() ->
 	ar_test_node:disconnect_from(peer1),
 	TX = ar_test_node:sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 			last_tx => ar_test_node:get_tx_anchor(slave) }),
-	assert_post_tx_to_master(TX),
+	ar_test_node:assert_post_tx_to_peer(main, TX),
 	ar_test_node:mine(),
 	[{_, WeaveSize, _} | _] = wait_until_height(length(TXs) + 1),
 	assert_present_offsets([[WeaveSize]]),
@@ -125,10 +125,10 @@ test_uses_blacklists() ->
 	assert_removed_offsets([[WeaveSize]]),
 	TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
 			last_tx => ar_test_node:get_tx_anchor(slave) }),
-	assert_post_tx_to_slave(TX2),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, length(TXs) + 1),
-	assert_post_tx_to_slave(TX),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, length(TXs) + 2),
 	ar_test_node:connect_to_peer(peer1),

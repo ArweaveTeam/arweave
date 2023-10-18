@@ -9,7 +9,7 @@
 -import(ar_test_node, [
 	
 	
-	sign_v1_tx/3, assert_post_tx_to_master/1,
+	sign_v1_tx/3, 
 	wait_until_height/1, assert_wait_until_height/2,
 	read_block_when_stored/1,
 	random_v1_data/1
@@ -53,7 +53,7 @@ test_syncs_headers() ->
 	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
 	NoSpaceTX = sign_v1_tx(master, Wallet,
 		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
-	assert_post_tx_to_master(NoSpaceTX),
+	ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),
 	ar_test_node:mine(),
 	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),
 	timer:sleep(1000),
@@ -70,7 +70,7 @@ test_syncs_headers() ->
 			%% kick in and remove the oldest files.
 			TX = sign_v1_tx(master, Wallet, #{
 				data => random_v1_data(200 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
-			assert_post_tx_to_master(TX),
+			ar_test_node:assert_post_tx_to_peer(main, TX),
 			ar_test_node:mine(),
 			[{_, Height}] = ets:lookup(test_syncs_header, height),
 			[_ | _] = wait_until_height(Height),
@@ -103,7 +103,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 										last_tx => Anchor,
 										data => crypto:strong_rand_bytes(10 * 1024 * 1024)
 									}),
-								assert_post_tx_to_master(TX),
+								ar_test_node:assert_post_tx_to_peer(main, TX),
 								[TX | Acc];
 							false ->
 								Acc

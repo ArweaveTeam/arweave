@@ -7,7 +7,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [assert_post_tx_to_master/1,
+-import(ar_test_node, [
 		wait_until_height/1, read_block_when_stored/1]).
 
 init(Req, State) ->
@@ -59,7 +59,7 @@ test_webhooks() ->
 		lists:map(
 			fun(Height) ->
 				SignedTX = ar_test_node:sign_tx(main, Wallet, #{}),
-				assert_post_tx_to_master(SignedTX),
+				ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 				ar_test_node:mine(),
 				wait_until_height(Height),
 				SignedTX
@@ -67,7 +67,7 @@ test_webhooks() ->
 			lists:seq(1, 10)
 		),
 	UnconfirmedTX = ar_test_node:sign_tx(main, Wallet, #{}),
-	assert_post_tx_to_master(UnconfirmedTX),
+	ar_test_node:assert_post_tx_to_peer(main, UnconfirmedTX),
 	lists:foreach(
 		fun(Height) ->
 			TX = lists:nth(Height, TXs),

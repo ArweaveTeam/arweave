@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [slave_start/1, 
-		assert_post_tx_to_slave/1,
+		
 		assert_wait_until_height/2, slave_wait_until_height/1, wait_until_height/1,
 		read_block_when_stored/1]).
 
@@ -22,7 +22,7 @@ test_polling() ->
 		lists:map(
 			fun(Height) ->
 				SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }),
-				assert_post_tx_to_slave(SignedTX),
+				ar_test_node:assert_post_tx_to_peer(peer1, SignedTX),
 				ar_test_node:mine(peer1),
 				assert_wait_until_height(peer1, Height),
 				SignedTX

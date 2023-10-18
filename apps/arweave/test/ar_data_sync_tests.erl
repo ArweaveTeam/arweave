@@ -8,10 +8,10 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 
 -import(ar_test_node, [slave_start/3,
-		sign_v1_tx/2, post_tx_to_master/1,
+		sign_v1_tx/2,
 		wait_until_height/1, assert_wait_until_height/2, post_and_mine/2,
 		
-		assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
+		
 		read_block_when_stored/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
 		assert_data_not_found_master/1, assert_data_not_found_slave/1,
@@ -235,7 +235,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		)
 	),
 	{TX1, Chunks1} = tx(Wallet, {fixed_data, DataRoot1, Chunks1}),
-	assert_post_tx_to_master(TX1),
+	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	[{_, FirstProof1} | Proofs1] = build_proofs(TX1, Chunks1, [TX1], 0, 0),
 	lists:foreach(
 		fun({_, Proof}) ->
@@ -263,7 +263,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		)
 	),
 	{TX2, Chunks2} = tx(Wallet, {fixed_data, DataRoot2, Chunks2}),
-	assert_post_tx_to_master(TX2),
+	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	Proofs2 = build_proofs(TX2, Chunks2, [TX2], 0, 0),
 	lists:foreach(
 		fun({_, Proof}) ->
@@ -289,7 +289,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		)
 	),
 	{TX3, Chunks3} = tx(Wallet, {fixed_data, DataRoot3, Chunks3}),
-	assert_post_tx_to_master(TX3),
+	ar_test_node:assert_post_tx_to_peer(main, TX3),
 	[{_, FirstProof3} | Proofs3] = build_proofs(TX3, Chunks3, [TX3], 0, 0),
 	lists:foreach(
 		fun({_, Proof}) ->
@@ -357,7 +357,7 @@ test_accepts_chunks() ->
 test_accepts_chunks(Split) ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX, Chunks} = tx(Wallet, {Split, 3}),
-	assert_post_tx_to_slave(TX),
+	ar_test_node:assert_post_tx_to_peer(peer1, TX),
 	ar_test_node:assert_wait_until_receives_txs([TX]),
 	[{Offset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] = build_proofs(TX, Chunks,
 			[TX], 0, 0),
@@ -539,8 +539,8 @@ test_fork_recovery(Split) ->
 	%% and gossip them.
 	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
 	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
-	post_tx_to_master(SlaveTX2),
-	post_tx_to_master(SlaveTX4),
+	ar_test_node:post_tx_to_peer(main, SlaveTX2),
+	ar_test_node:post_tx_to_peer(main, SlaveTX4),
 	ar_test_node:assert_wait_until_receives_txs([SlaveTX2, SlaveTX4]),
 	MasterB4 = post_and_mine(#{ miner => {master, Master},
 			await_on => {master, Master} }, []),

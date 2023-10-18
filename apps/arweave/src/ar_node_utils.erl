@@ -715,7 +715,7 @@ test_block_validation() ->
 	%% to make sure SPoRA mining activates.
 	PrevTX = ar_test_node:sign_tx(main, Wallet, #{ reward => ?AR(10),
 			data => crypto:strong_rand_bytes(10 * 1024 * 1024) }),
-	ar_test_node:assert_post_tx_to_master(PrevTX),
+	ar_test_node:assert_post_tx_to_peer(main, PrevTX),
 	ar_test_node:mine(),
 	[_ | _] = ar_test_node:wait_until_height(1),
 	ar_test_node:mine(),
@@ -727,7 +727,7 @@ test_block_validation() ->
 	RecentTXMap = ar_node:get_recent_txs_map(),
 	TX = ar_test_node:sign_tx(main, Wallet, #{ reward => ?AR(10),
 			data => crypto:strong_rand_bytes(7 * 1024 * 1024), last_tx => PrevH }),
-	ar_test_node:assert_post_tx_to_master(TX),
+	ar_test_node:assert_post_tx_to_peer(main, TX),
 	ar_test_node:mine(),
 	[{H, _, _} | _] = ar_test_node:wait_until_height(3),
 	B = ar_node:get_block_shadow_from_cache(H),

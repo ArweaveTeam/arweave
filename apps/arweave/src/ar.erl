@@ -17,78 +17,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% A list of the modules to test.
-%% At some point we might want to make this just test all mods starting with
-%% ar_.
--define(
-	CORE_TEST_MODS,
-	[
-		%% tests embedded in modules
-		ar,
-		ar_block,
-		ar_block_cache,
-		ar_chunk_storage,
-		ar_data_sync_worker_master,
-		ar_deep_hash,
-		ar_diff_dag,
-		ar_ets_intervals,
-		ar_events,
-		ar_inflation,
-		ar_intervals,
-		ar_join,
-		ar_kv,
-		ar_merkle,
-		ar_mining_server,
-		ar_node,
-		ar_node_utils,
-		ar_nonce_limiter,
-		ar_packing_server,
-		ar_patricia_tree,
-		ar_peers,
-		ar_poa,
-		ar_pricing,
-		ar_retarget,
-		ar_storage,
-		ar_sync_buckets,
-		ar_tx,
-		ar_tx_db,
-		ar_unbalanced_merkle,
-		ar_util,
-		ar_weave,
-
-		%% test modules
-		ar_base64_compatibility_tests,
-		ar_config_tests,
-		ar_coordinated_mining_tests,
-		ar_data_sync_tests,
-		ar_difficulty_tests,
-		ar_fork_recovery_tests,
-		ar_gateway_middleware_tests,
-		ar_header_sync_tests,
-		ar_http_iface_tests,
-		ar_http_util_tests,
-		ar_mempool_tests,
-		ar_mine_randomx_tests,
-		ar_mine_vdf_tests,
-		ar_mining_io_tests,
-		ar_mining_server_tests,
-		ar_multiple_txs_per_wallet_tests,
-		ar_node_tests,
-		ar_poa_tests,
-		ar_poller_tests,
-		ar_post_block_tests,
-		ar_pricing_tests,
-		ar_semaphore_tests,
-		ar_serialize_tests,
-		ar_tx_blacklist_tests,
-		ar_tx_replay_pool_tests,
-		ar_vdf_server_tests,
-		ar_vdf_tests,
-		ar_wallet_tests,
-		ar_webhook_tests
-	]
-).
-
 %% Supported feature flags (default behaviour)
 % http_logging (false)
 % disk_logging (false)
@@ -805,7 +733,7 @@ warn_if_single_scheduler() ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
-	tests(?CORE_TEST_MODS, #config{ debug = true }).
+	tests([], #config{ debug = true }).
 
 tests(Mods, Config) when is_list(Mods) ->
 	start_for_tests(Config),

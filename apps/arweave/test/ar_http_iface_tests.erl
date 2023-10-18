@@ -4,13 +4,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [slave_start/1,
-		
-		wait_until_height/1, wait_until_receives_txs/1,
-		post_tx_json_to_master/1,
-		slave_wait_until_height/1, read_block_when_stored/1, read_block_when_stored/2,
-		assert_wait_until_height/2,
-		assert_post_tx_to_master/1, assert_post_tx_to_slave/1]).
+-import(ar_test_node, [wait_until_height/1, wait_until_receives_txs/1,
+		read_block_when_stored/1, read_block_when_stored/2, assert_wait_until_height/2]).
 
 start_node() ->
 	%% Starting a node is slow so we'll run it once for the whole test module
@@ -157,7 +152,7 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
 		fun(Struct) ->
 			Payload = ar_serialize:jsonify({Struct}),
 			?assertMatch({ok, {{<<"400">>, _}, _, <<"Invalid JSON.">>, _, _}},
-					post_tx_json_to_master(Payload))
+					ar_test_node:post_tx_json(main, Payload))
 		end,
 		InvalidPayloads
 	),
@@ -170,13 +165,13 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
 		fun(Struct) ->
 			Payload = ar_serialize:jsonify({Struct}),
 			?assertMatch({ok, {{<<"200">>, _}, _, <<"OK">>, _, _}},
-					post_tx_json_to_master(Payload))
+					ar_test_node:post_tx_json(main, Payload))
 		end,
 		ValidPayloads
 	),
 	ar_test_node:assert_wait_until_receives_txs(peer1, [TX, TX2]),
 	ar_test_node:mine(),
-	[{H, _, _} | _] = slave_wait_until_height(RemoteHeight + 1),
+	[{H, _, _} | _] = ar_test_node:wait_until_height(peer1, RemoteHeight + 1),
 	B = read_block_when_stored(H),
 	ChecksumAddr = << (ar_util:encode(Address32))/binary, <<":">>/binary,
 			(ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>,
@@ -713,7 +708,7 @@ test_get_tx_body(_) ->
 	ar_test_node:disconnect_from(peer1),
 	LocalHeight = ar_node:get_height(),
 	TX = ar_tx:new(<<"TEST DATA">>),
-	assert_post_tx_to_master(TX),
+	ar_test_node:assert_post_tx_to_peer(main, TX),
 	ar_test_node:mine(),
 	wait_until_height(LocalHeight + 1),
 	{ok, Data} = wait_until_syncs_tx_data(TX#tx.id),
@@ -725,7 +720,7 @@ test_get_tx_status(_) ->
 	assert_wait_until_height(peer1, Height),
 	ar_test_node:disconnect_from(peer1),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
-	assert_post_tx_to_master(TX),
+	ar_test_node:assert_post_tx_to_peer(main, TX),
 	FetchStatus = fun() ->
 		ar_http:req(#{
 			method => get,
@@ -902,10 +897,10 @@ test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	RemoteHeight = slave_height(),
 	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
-	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
 			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
-	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(peer1, TX) end, EverySecondTX),
 	ar_test_node:mine(),
 	BI = wait_until_height(LocalHeight + 1),
 	B = ar_storage:read_block(hd(BI)),
@@ -919,10 +914,10 @@ test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _Stat
 	RemoteHeight = slave_height(),
 	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
-	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
 			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
-	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(peer1, TX) end, EverySecondTX),
 	ar_test_node:mine(),
 	BI = wait_until_height(LocalHeight + 1),
 	B = ar_storage:read_block(hd(BI)),
@@ -954,7 +949,7 @@ test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 		ar_http:req(#{ method => get, peer => ar_test_node:main_ip(),
 				path => "/recent_hash_list_diff", headers => [], body => B0H }),
 	TXs = [ar_test_node:sign_tx(main, Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 3)],
-	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	ar_test_node:mine(),
 	BI2 = wait_until_height(LocalHeight + 2),
 	{B2H, _, _} = hd(BI2),

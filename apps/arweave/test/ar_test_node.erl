@@ -22,9 +22,8 @@
 		assert_wait_until_height/2, wait_until_block_index/1,
 		wait_until_mining_paused/0,
 		wait_until_receives_txs/1,
-		assert_wait_until_receives_txs/2,
-		post_tx_to_peer/2, post_tx_to_peer/3, post_tx_to_master/1, post_tx_to_master/2,
-		assert_post_tx_to_slave/1, assert_post_tx_to_slave/2, assert_post_tx_to_master/1,
+		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
+		post_tx_to_peer/2, post_tx_to_peer/3,
 		get_tx_anchor/1, join/2, join_on/2, rejoin_on/2,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
@@ -33,8 +32,7 @@
 		read_block_when_stored/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3, assert_get_tx_data_master/2,
 		assert_get_tx_data_slave/2, assert_data_not_found_master/1,
-		assert_data_not_found_slave/1, post_tx_json_to_master/1,
-		post_tx_json_to_slave/1,
+		assert_data_not_found_slave/1, post_tx_json/2,
 		wait_until_syncs_genesis_data/0]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -828,40 +826,17 @@ wait_until_receives_txs(TXs) ->
 		?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT
 	).
 
-assert_post_tx_to_slave(TX) ->
-	assert_post_tx_to_slave(TX, true).
+assert_post_tx_to_peer(NodePrefix, TX) ->
+	assert_post_tx_to_peer(NodePrefix, TX, true).
 
-assert_post_tx_to_slave(TX, Wait) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_peer(peer1, TX, Wait).
-
-assert_post_tx_to_master(TX) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(TX).
-
-post_tx_to_master(TX) ->
-	post_tx_to_master(TX, true).
-
-post_tx_to_master(TX, Wait) ->
-	Reply = post_tx_json_to_master(ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
-	case Reply of
-		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
-			case Wait of
-				true ->
-					ar_test_node:assert_wait_until_receives_txs([TX]);
-				false ->
-					ok
-			end;
-		_ ->
-			?debugFmt("Failed to post transaction ~s. Error DB entries: ~p.",
-					[ar_util:encode(TX#tx.id), ar_tx_db:get_error_codes(TX#tx.id)]),
-			noop
-	end,
-	Reply.
+assert_post_tx_to_peer(NodePrefix, TX, Wait) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_peer(NodePrefix, TX, Wait).
 
 post_tx_to_peer(NodePrefix, TX) ->
 	post_tx_to_peer(NodePrefix, TX, true).
 
 post_tx_to_peer(NodePrefix, TX, Wait) ->
-	Reply = post_tx_json_to_slave(ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
+	Reply = post_tx_json(NodePrefix, ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			case Wait of
@@ -888,16 +863,10 @@ post_tx_to_peer(NodePrefix, TX, Wait) ->
 	end,
 	Reply.
 
-post_tx_json_to_master(JSON) ->
-	post_tx_json(JSON, main_ip()).
-
-post_tx_json_to_slave(JSON) ->
-	post_tx_json(JSON, peer_ip(peer1)).
-
-post_tx_json(JSON, Peer) ->
+post_tx_json(NodePrefix, JSON) ->
 	ar_http:req(#{
 		method => post,
-		peer => Peer,
+		peer => peer_ip(NodePrefix),
 		path => "/tx",
 		body => JSON
 	}).
@@ -1024,12 +993,12 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 	CurrentHeight = case Miner of
 		{slave, _MiningNode} ->
 			Height = remote_call(peer1, ar_node, get_height, []),
-			lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, TXs),
+			lists:foreach(fun(TX) -> assert_post_tx_to_peer(peer1, TX) end, TXs),
 			ar_test_node:mine(peer1),
 			Height;
 		{master, _MiningNode} ->
 			Height = ar_node:get_height(),
-			lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+			lists:foreach(fun(TX) -> assert_post_tx_to_peer(main, TX) end, TXs),
 			mine(),
 			Height
 	end,
