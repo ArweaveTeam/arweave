@@ -1,7 +1,5 @@
 -module(ar_test_node).
 
--behaviour(gen_server).
-
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0,
 		start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
@@ -39,18 +37,10 @@
 		post_tx_json_to_slave/1,
 		wait_until_syncs_genesis_data/0]).
 
--export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
-
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
-
--record(state, {
-	namespace = not_set,
-	peer_ports = #{}
-}).
 
 %% May occasionally take quite long on a slow CI server, expecially in tests
 %% with height >= 20 (2 difficulty retargets).
@@ -68,21 +58,42 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Starts the gen_server.
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
 boot_peer(NodePrefix) ->
-	gen_server:call(?MODULE, {boot_peer, NodePrefix}).
+	try_boot_peer(NodePrefix, ?MAX_BOOT_RETRIES).
+
+try_boot_peer(_NodePrefix, 0) ->
+    %% You might log an error or handle this case specifically as per your application logic.
+    {error, max_retries_exceeded};
+try_boot_peer(NodePrefix, Retries) ->
+    NodeName = peer_name(NodePrefix),
+    Port = get_unused_port(),
+    Cookie = erlang:get_cookie(),
+    Paths = code:get_path(),
+    filelib:ensure_dir("./.tmp"),
+    Cmd = io_lib:format(
+        "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
+        "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 " ++
+		"> logs/~s.out 2>&1 &",
+        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, NodeName]),
+    os:cmd(Cmd),
+    case wait_until_node_is_ready(NodeName) of
+        {ok, _Node} ->
+            io:format("~s started.~n", [NodeName]),
+            {node(), NodeName};
+        {error, Reason} ->
+            io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
+            try_boot_peer(NodePrefix, Retries - 1)
+    end.
 
 peer_name(NodePrefix) ->
-	gen_server:call(?MODULE, {peer_name, NodePrefix}).
+	{ok, Config} = application:get_env(arweave, config),
+	list_to_atom(
+		atom_to_list(NodePrefix) ++ "-" ++ Config#config.test_node_namespace ++ "@127.0.0.1"
+	).
 
 peer_port(NodePrefix) ->
-	gen_server:call(?MODULE, {peer_port, NodePrefix}).
-
-register_peer_port(NodePrefix, Port) ->
-	gen_server:call(?MODULE, {register_peer_port, NodePrefix, Port}).
+	{ok, Config} = ar_test_node:remote_call(NodePrefix, application, get_env, [arweave, config]),
+	Config#config.port.
 
 stop_peer(NodePrefix) ->
 	try
@@ -239,50 +250,6 @@ get_difficulty_for_invalid_hash() ->
 	%% Set the difficulty just high enough to exclude the invalid_solution(), this lets
 	%% us selectively disable one- or two-chunk mining in tests.
 	binary:decode_unsigned(invalid_solution(), big) + 1.
-
-%%%===================================================================
-%%% gen_server callbacks.
-%%%===================================================================
-
-%% @doc Initializes the server.
-init([]) ->
-	io:format("***** ar_test_node:init~n"),
-	{ok, Config} = application:get_env(arweave, config),
-	State = #state{ namespace = Config#config.test_node_namespace },
-	State2 = register_peer_port(Config#config.test_node_prefix, Config#config.port, State),
-    {ok, State2}.
-
-handle_call({boot_peer, NodePrefix}, _From, State) ->
-	{Result, State2} = try_boot_peer(NodePrefix, ?MAX_BOOT_RETRIES, State),
-	{reply, Result, State2};
-
-handle_call({peer_name, NodePrefix}, _From, State) ->
-	{reply, peer_name(NodePrefix, State), State};
-
-handle_call({peer_port, NodePrefix}, _From, State) ->
-	{reply, peer_port(NodePrefix, State), State};
-
-handle_call({register_peer_port, NodePrefix, Port}, _From, State) ->
-	State2 = register_peer_port(NodePrefix, Port, State),
-	{reply, ok, State2};
-
-
-%% @doc Handling call messages.
-handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
-
-%% @doc Handling cast messages.
-handle_cast(_Msg, State) ->
-    {noreply, State}.
-
-%% @doc Handling all non-call, non-cast messages.
-handle_info(_Info, State) ->
-    {noreply, State}.
-
-%% @doc This function is called by a gen_server when it is about to terminate.
-terminate(_Reason, _State) ->
-    ok.
 
 %%%===================================================================
 %%% Private functions.
@@ -495,51 +462,9 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	wait_until_syncs_genesis_data(),
 	{whereis(ar_node_worker), Config#config.port}.
 
-try_boot_peer(_NodePrefix, 0, State) ->
-    %% You might log an error or handle this case specifically as per your application logic.
-    {{error, max_retries_exceeded}, State};
-try_boot_peer(NodePrefix, Retries, State) ->
-    NodeName = peer_name(NodePrefix, State),
-    Port = get_unused_port(),
-    Cookie = erlang:get_cookie(),
-    Paths = code:get_path(),
-    filelib:ensure_dir("./.tmp"),
-    Cmd = io_lib:format(
-        "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
-        "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 " ++
-		"> logs/~s.out 2>&1 &",
-        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, NodeName]),
-    os:cmd(Cmd),
-    Reply = case wait_until_node_is_ready(NodeName) of
-        {ok, _Node} ->
-            io:format("~s started.~n", [NodeName]),
-            {node(), NodeName};
-        {error, Reason} ->
-            io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
-            try_boot_peer(NodePrefix, Retries - 1, State)
-    end,
-	State2 = register_peer_port(NodePrefix, Port, State),
-	{Reply, State2}.
-
-register_peer_port(not_set, _Port, State) ->
-	State;
-register_peer_port(NodePrefix, Port, State) ->
-	io:format("Registering port ~p for node ~s.~n", [Port, NodePrefix]),
-	State#state{ peer_ports = maps:put(NodePrefix, Port, State#state.peer_ports) }.
-
-peer_name(NodePrefix, State) ->
-	#state{ namespace = Namespace } = State,
-	
-	list_to_atom(
-		atom_to_list(NodePrefix) ++ "-" ++ Namespace ++ "@127.0.0.1"
-	).
-
-peer_port(NodePrefix, State) ->
-	maps:get(NodePrefix, State#state.peer_ports).
 
 start_peer(NodePrefix, Args) when is_list(Args) ->
 	{Peer, Port} = remote_call(NodePrefix, ?MODULE, start , Args, ?SLAVE_START_TIMEOUT),
-	register_peer_port(NodePrefix, Port),
 	wait_until_joined(NodePrefix),
 	wait_until_syncs_genesis_data(NodePrefix),
 	{Peer, Port};

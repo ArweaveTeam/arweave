@@ -40,15 +40,15 @@ cleanup({Config, SlaveConfig}) ->
 %% test_vdf_server_push_slow_block tests that the VDF server can handle receiving
 %% a block that is behind in the VDF chain: specifically:
 %%
-% vdf_server_push_test_() ->
-%     {foreach,
-% 		fun setup/0,
-%      	fun cleanup/1,
-% 		[
-% 			{timeout, 120, fun test_vdf_server_push_fast_block/0},
-% 			{timeout, 120, fun test_vdf_server_push_slow_block/0}
-% 		]
-%     }.
+vdf_server_push_test_() ->
+    {foreach,
+		fun setup/0,
+     	fun cleanup/1,
+		[
+			{timeout, 120, fun test_vdf_server_push_fast_block/0},
+			{timeout, 120, fun test_vdf_server_push_slow_block/0}
+		]
+    }.
 
 %% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
 %% flow where a VDF client has to validate a block with VDF information provided by
@@ -58,10 +58,10 @@ vdf_client_test_() ->
 		fun setup/0,
 		fun cleanup/1,
 		[
-			{timeout, 180, fun test_vdf_client_fast_block/0}
-			% {timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
-			% {timeout, 180, fun test_vdf_client_slow_block/0},
-			% {timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
+			{timeout, 180, fun test_vdf_client_fast_block/0},
+			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
+			{timeout, 180, fun test_vdf_client_slow_block/0},
+			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
 		]
     }.
 
@@ -231,18 +231,17 @@ test_vdf_client_fast_block() ->
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	ar_test_node:stop(peer1),
 
-
-	%% Start main as a VDF server
-	ar_test_node:start(
-		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ 
-			ar_util:format_peer(ar_test_node:peer_ip(peer1)) ]}),
 	%% Restart peer1 as a VDF client
 	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_test_node:start_peer(peer1, 
 		B0, SlaveAddress,
 		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ 
 			ar_util:format_peer(ar_test_node:peer_ip(main)) ] }),
+	%% Start main as a VDF server
+	ar_test_node:start(
+		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		Config#config{ nonce_limiter_client_peers = [ 
+			ar_util:format_peer(ar_test_node:peer_ip(peer1)) ]}),
 	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -384,19 +383,19 @@ test_vdf_client_slow_block_pull_interface() ->
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
 	BI = assert_wait_until_height(peer1, 1).
 
-% external_update_test_() ->
-%     {foreach,
-% 		fun setup_external_update/0,
-%      	fun cleanup_external_update/1,
-% 		[
-% 			{timeout, 120, fun test_session_overlap/0},
-% 			{timeout, 120, fun test_client_ahead/0},
-% 			{timeout, 120, fun test_skip_ahead/0},
-% 			{timeout, 120, fun test_2_servers_switching/0},
-% 			{timeout, 120, fun test_backtrack/0},
-% 			{timeout, 120, fun test_2_servers_backtrack/0}
-% 		]
-%     }.
+external_update_test_() ->
+    {foreach,
+		fun setup_external_update/0,
+     	fun cleanup_external_update/1,
+		[
+			{timeout, 120, fun test_session_overlap/0},
+			{timeout, 120, fun test_client_ahead/0},
+			{timeout, 120, fun test_skip_ahead/0},
+			{timeout, 120, fun test_2_servers_switching/0},
+			{timeout, 120, fun test_backtrack/0},
+			{timeout, 120, fun test_2_servers_backtrack/0}
+		]
+    }.
 
 vdf_server_1() ->
 	{127,0,0,1,2001}.
