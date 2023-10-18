@@ -17,4 +17,5 @@ export ERL_EPMD_ADDRESS=127.0.0.1
 ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/arweave/test -config config/sys.config"
 echo -e "\033[0;32m===> Running tests...\033[0m"
 
-erl $ERL_TEST_OPTS -noshell -name master@127.0.0.1 -setcookie test -run ar tests ${@:1} -s init stop 2>&1 | tee main.out
+set -o pipefail
+erl $ERL_TEST_OPTS -noshell -name master@127.0.0.1 -setcookie test -run ar tests ${@:1} -s init stop 2>&1 | tee main.out &

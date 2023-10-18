@@ -139,7 +139,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 				SecondMerkleOffset, ThirdMerkleOffset, FirstPublishOffsets, SecondPublishOffsets,
 				ThirdPublishOffsets, Expectations}) ->
 			?debugFmt("Running [~s]", [Title]),
-			{Master, _, Wallet} = setup_nodes(),
+			{_Master, _, Wallet} = setup_nodes(),
 			{FirstChunk, SecondChunk, ThirdChunk} = {crypto:strong_rand_bytes(FirstSize),
 					crypto:strong_rand_bytes(SecondSize), crypto:strong_rand_bytes(ThirdSize)},
 			{FirstChunkID, SecondChunkID, ThirdChunkID} = {ar_tx:generate_chunk_id(FirstChunk),
@@ -201,7 +201,7 @@ rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size_test_() ->
 			fun test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0}.
 
 test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
-	{Master, _, Wallet} = setup_nodes(),
+	{_Master, _, Wallet} = setup_nodes(),
 	BigOutOfBoundsOffsetChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	BigChunkID = ar_tx:generate_chunk_id(BigOutOfBoundsOffsetChunk),
 	{BigDataRoot, BigDataTree} = ar_merkle:generate_tree([{BigChunkID, ?DATA_CHUNK_SIZE + 1}]),
@@ -483,7 +483,7 @@ test_fork_recovery() ->
 	test_fork_recovery(original_split).
 
 test_fork_recovery(Split) ->
-	{Master, Slave, Wallet} = setup_nodes(),
+	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {Split, 13}, v2, ?AR(10)),
 	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(TX1#tx.id)]),
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
@@ -557,7 +557,7 @@ test_syncs_after_joining() ->
 	test_syncs_after_joining(original_split).
 
 test_syncs_after_joining(Split) ->
-	{Master, Slave, Wallet} = setup_nodes(),
+	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {Split, 17}, v2, ?AR(1)),
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
 	Proofs1 = post_proofs(main, B1, TX1, Chunks1),
@@ -588,7 +588,7 @@ mines_off_only_last_chunks_test_() ->
 			fun test_mines_off_only_last_chunks/0).
 
 test_mines_off_only_last_chunks() ->
-	{Master, Slave, Wallet} = setup_nodes(),
+	{_Master, _Slave, Wallet} = setup_nodes(),
 	%% Submit only the last chunks (smaller than 256 KiB) of transactions.
 	%% Assert the nodes construct correct proofs of access from them.
 	lists:foreach(
@@ -651,7 +651,7 @@ mines_off_only_second_last_chunks_test_() ->
 			fun test_mines_off_only_second_last_chunks/0).
 
 test_mines_off_only_second_last_chunks() ->
-	{Master, Slave, Wallet} = setup_nodes(),
+	{_Master, _Slave, Wallet} = setup_nodes(),
 	%% Submit only the second last chunks (smaller than 256 KiB) of transactions.
 	%% Assert the nodes construct correct proofs of access from them.
 	lists:foreach(
@@ -719,7 +719,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			#{},
 			lists:seq(1, 20)
 		),
-	{Master, Slave, Wallet} = setup_nodes(MasterAddr, SlaveAddr),
+	{_Master, _Slave, Wallet} = setup_nodes(MasterAddr, SlaveAddr),
 	{LegacyProofs, StrictProofs, V1Proofs} = lists:foldl(
 		fun(Height, {Acc1, Acc2, Acc3}) ->
 			{{DR1, Chunks1}, {DR2, Chunks2}, {DR3, Chunks3}} = maps:get(Height, DataMap),
@@ -877,11 +877,11 @@ setup_nodes(MasterAddr, SlaveAddr) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
-	{Master, _} = ar_test_node:start(B0, MasterAddr, Config),
+	{_Master, _} = ar_test_node:start(B0, MasterAddr, Config),
 	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	{Slave, _} = ar_test_node:start_peer(peer1, B0, SlaveAddr, SlaveConfig),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0, SlaveAddr, SlaveConfig),
 	ar_test_node:connect_to_peer(peer1),
-	{Master, Slave, Wallet}.
+	{_Master, _Slave, Wallet}.
 
 tx(Wallet, SplitType) ->
 	tx(Wallet, SplitType, v2, fetch).
