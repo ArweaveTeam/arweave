@@ -10,7 +10,7 @@
 -import(ar_test_node, [
 		sign_v1_tx/2, random_v1_data/1, 
 		 wait_until_height/1,
-		assert_wait_until_height/2, post_chunk/1, post_chunk/2]).
+		assert_wait_until_height/2]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -291,7 +291,7 @@ upload_data(TXs, DataTrees) ->
 				fun({Chunk, Offset}) ->
 					DataPath = ar_merkle:generate_path(DataRoot, Offset - 1, DataTree),
 					{ok, {{<<"200">>, _}, _, _, _, _}} =
-						post_chunk(slave, encode_chunk(#{
+						ar_test_node:post_chunk(peer1, encode_chunk(#{
 							data_root => DataRoot,
 							chunk => Chunk,
 							data_path => DataPath,
@@ -414,7 +414,7 @@ assert_does_not_accept_offsets(BadOffsets) ->
 							},
 							EncodedProof2 = encode_chunk(Proof2),
 							%% The node returns 200 but does not store the chunk.
-							case post_chunk(EncodedProof2) of
+							case ar_test_node:post_chunk(main, EncodedProof2) of
 								{ok, {{<<"200">>, _}, _, _, _, _}} ->
 									case ar_test_node:get_chunk(main, Offset) of
 										{ok, {{<<"404">>, _}, _, _, _, _}} ->

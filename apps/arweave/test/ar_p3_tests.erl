@@ -790,7 +790,7 @@ e2e_restart_p3_service() ->
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
 	ar_test_node:start(B0, RewardAddress, Config),
 	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:join_on(main, peer1),
+	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:disconnect_from(peer1),
 
 	%% This deposit will be too old and will not be scanned when the master node comes back up.
@@ -816,7 +816,7 @@ e2e_restart_p3_service() ->
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 4),
 
-	ar_test_node:rejoin_on(main, peer1),
+	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	?assertEqual(0, ar_p3_db:get_scan_height(),
 		"Node hasn't seen any blocks yet: scan height 0"),
 
@@ -841,7 +841,7 @@ e2e_restart_p3_service() ->
 
 	ar_test_node:disconnect_from(peer1),
 	stop(),
-	ar_test_node:rejoin_on(main, peer1),
+	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	?assertEqual(5, ar_p3_db:get_scan_height(),
 		"Restarting node should not have reset scan height db: scan height 5"),
 	

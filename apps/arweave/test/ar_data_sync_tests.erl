@@ -9,8 +9,8 @@
 
 -import(ar_test_node, [
 		sign_v1_tx/2,
-		wait_until_height/1, assert_wait_until_height/2, post_and_mine/2,
-		read_block_when_stored/1, post_chunk/1, post_chunk/2,
+		wait_until_height/1, assert_wait_until_height/2,
+		read_block_when_stored/1,
 		test_with_mocked_functions/2]).
 
 rejects_invalid_chunks_test_() ->
@@ -20,7 +20,7 @@ test_rejects_invalid_chunks() ->
 	{_Master, _, _Wallet} = setup_nodes(),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_too_big\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(#{
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
 			chunk => ar_util:encode(crypto:strong_rand_bytes(?DATA_CHUNK_SIZE + 1)),
 			data_path => <<>>,
 			offset => <<"0">>,
@@ -29,7 +29,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_path_too_big\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(#{
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
 			data_path => ar_util:encode(crypto:strong_rand_bytes(?MAX_PATH_SIZE + 1)),
 			chunk => <<>>,
 			offset => <<"0">>,
@@ -38,7 +38,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"offset_too_big\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(#{
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
 			offset => integer_to_binary(trunc(math:pow(2, 256))),
 			data_path => <<>>,
 			chunk => <<>>,
@@ -47,7 +47,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_size_too_big\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(#{
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
 			data_size => integer_to_binary(trunc(math:pow(2, 256))),
 			data_path => <<>>,
 			chunk => <<>>,
@@ -56,7 +56,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_proof_ratio_not_attractive\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(#{
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
 			chunk => ar_util:encode(<<"a">>),
 			data_path => ar_util:encode(<<"bb">>),
 			offset => <<"0">>,
@@ -72,7 +72,7 @@ test_rejects_invalid_chunks() ->
 	DataPath = ar_merkle:generate_path(DataRoot, 0, DataTree),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_root_not_found\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(#{
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
 			data_root => ar_util:encode(DataRoot),
 			chunk => ar_util:encode(Chunk),
 			data_path => ar_util:encode(DataPath),
@@ -82,7 +82,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"413">>, _}, _, <<"Payload too large">>, _, _}},
-		post_chunk(<< <<0>> || _ <- lists:seq(1, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE + 1) >>)
+		ar_test_node:post_chunk(main, << <<0>> || _ <- lists:seq(1, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE + 1) >>)
 	).
 
 does_not_store_small_chunks_after_2_5_test_() ->
@@ -148,7 +148,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 					{SecondChunkID, SecondMerkleOffset}, {ThirdChunkID, ThirdMerkleOffset}]),
 			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
-			post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, [TX]),
+			ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
 			lists:foreach(
 				fun({Chunk, Offset}) ->
 					DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
@@ -160,7 +160,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 					%% All chunks are accepted because we do not know their offsets yet -
 					%% in theory they may end up below the strict data split threshold.
 					?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-							post_chunk(ar_serialize:jsonify(Proof)), Title)
+							ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof)), Title)
 				end,
 				[{FirstChunk, O} || O <- FirstPublishOffsets]
 						++ [{SecondChunk, O} || O <- SecondPublishOffsets]
@@ -207,14 +207,14 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 	{BigDataRoot, BigDataTree} = ar_merkle:generate_tree([{BigChunkID, ?DATA_CHUNK_SIZE + 1}]),
 	BigTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => ?DATA_CHUNK_SIZE,
 			data_root => BigDataRoot }),
-	post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, [BigTX]),
+	ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [BigTX]),
 	BigDataPath = ar_merkle:generate_path(BigDataRoot, 0, BigDataTree),
 	BigProof = #{ data_root => ar_util:encode(BigDataRoot),
 			data_path => ar_util:encode(BigDataPath),
 			chunk => ar_util:encode(BigOutOfBoundsOffsetChunk), offset => <<"0">>,
 			data_size => integer_to_binary(?DATA_CHUNK_SIZE)},
 	?assertMatch({ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_proof\"}">>, _, _}},
-			post_chunk(ar_serialize:jsonify(BigProof))).
+			ar_test_node:post_chunk(main, ar_serialize:jsonify(BigProof))).
 
 rejects_chunks_exceeding_disk_pool_limit_test_() ->
 	{timeout, 240, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
@@ -237,14 +237,14 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		fun({_, Proof}) ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(ar_serialize:jsonify(Proof))
+				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
 			)
 		end,
 		Proofs1
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(FirstProof1))
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof1))
 	),
 	Data2 = crypto:strong_rand_bytes(
 		min(
@@ -267,7 +267,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			%% in the bucket of the previous chunk (the chunk sizes are 131072).
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(ar_serialize:jsonify(Proof))
+				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
 			)
 		end,
 		Proofs2
@@ -293,14 +293,14 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			%% in the bucket of the previous chunk (the chunk sizes are 131072).
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(ar_serialize:jsonify(Proof))
+				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
 			)
 		end,
 		Proofs3
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(FirstProof3))
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof3))
 	),
 	ar_test_node:mine(peer1),
 	true = ar_util:do_until(
@@ -310,7 +310,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			%% chunks of the last two transactions are invalid under these offsets and
 			%% frees up 131072 + 131072 bytes in the disk pool => we can submit a 262144-byte
 			%% chunk.
-			case post_chunk(ar_serialize:jsonify(FirstProof3)) of
+			case ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof3)) of
 				{ok, {{<<"200">>, _}, _, _, _, _}} ->
 					true;
 				_ ->
@@ -323,7 +323,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	%% Now we do not have free space again.
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
-		post_chunk(ar_serialize:jsonify(FirstProof1))
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof1))
 	),
 	%% Mine two more blocks to make the chunks mature so that we can remove them from the
 	%% disk pool (they will stay in the corresponding storage modules though, if any).
@@ -332,7 +332,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	ar_test_node:mine(peer1),
 	true = ar_util:do_until(
 		fun() ->
-			case post_chunk(ar_serialize:jsonify(FirstProof1)) of
+			case ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof1)) of
 				{ok, {{<<"200">>, _}, _, _, _, _}} ->
 					true;
 				_ ->
@@ -361,7 +361,7 @@ test_accepts_chunks(Split) ->
 	%% Post the third proof to the disk pool.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(ar_serialize:jsonify(ThirdProof))
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(ThirdProof))
 	),
 	ar_test_node:mine(peer1),
 	[{BH, _, _} | _] = wait_until_height(1),
@@ -372,7 +372,7 @@ test_accepts_chunks(Split) ->
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(ar_serialize:jsonify(FirstProof))
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof))
 	),
 	%% Expect the chunk to be retrieved by any offset within
 	%% (EndOffset - ChunkSize, EndOffset], but not outside of it.
@@ -397,7 +397,7 @@ test_accepts_chunks(Split) ->
 	%% Expect no transaction data because the second chunk is not synced yet.
 	?assertMatch({ok, {{<<"404">>, _}, _, _Binary, _, _}}, get_tx_data(TX#tx.id)),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-			post_chunk(ar_serialize:jsonify(SecondProof))),
+			ar_test_node:post_chunk(main, ar_serialize:jsonify(SecondProof))),
 	ExpectedSecondProof = #{
 		data_path => maps:get(data_path, SecondProof),
 		tx_path => maps:get(tx_path, SecondProof),
@@ -434,9 +434,9 @@ test_syncs_data() ->
 	lists:foreach(
 		fun({_, _, _, {_, Proof}}) ->
 			?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-					post_chunk(ar_serialize:jsonify(Proof))),
+					ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
 			?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-					post_chunk(ar_serialize:jsonify(Proof)))
+					ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof)))
 		end,
 		RecordsWithProofs
 	),
@@ -486,10 +486,10 @@ test_fork_recovery(Split) ->
 	{Master, Slave, Wallet} = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {Split, 13}, v2, ?AR(10)),
 	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(TX1#tx.id)]),
-	B1 = post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} }, [TX1]),
+	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(B1#block.indep_hash),
 			B1#block.height]),
-	Proofs1 = post_proofs_to_master(B1, TX1, Chunks1),
+	Proofs1 = post_proofs(main, B1, TX1, Chunks1),
 	wait_until_syncs_chunks(Proofs1),
 	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
@@ -498,35 +498,35 @@ test_fork_recovery(Split) ->
 	{SlaveTX3, SlaveChunks3} = tx(Wallet, {Split, 17}, v2, ?AR(10)),
 	?debugFmt("Posting tx to slave ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
 	?debugFmt("Posting tx to slave ~s.~n", [ar_util:encode(SlaveTX3#tx.id)]),
-	SlaveB2 = post_and_mine(#{ miner => {slave, Slave}, await_on => {slave, Slave} },
+	SlaveB2 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
 			[SlaveTX2, SlaveTX3]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(SlaveB2#block.indep_hash),
 			SlaveB2#block.height]),
 	{MasterTX2, MasterChunks2} = tx(Wallet, {Split, 14}, v2, ?AR(10)),
 	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(MasterTX2#tx.id)]),
-	MasterB2 = post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} },
+	MasterB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
 			[MasterTX2]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB2#block.indep_hash),
 			MasterB2#block.height]),
-	_SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
-	_SlaveProofs3 = post_proofs_to_slave(SlaveB2, SlaveTX3, SlaveChunks3),
+	_SlaveProofs2 = post_proofs(peer1, SlaveB2, SlaveTX2, SlaveChunks2),
+	_SlaveProofs3 = post_proofs(peer1, SlaveB2, SlaveTX3, SlaveChunks3),
 	{SlaveTX4, SlaveChunks4} = tx(Wallet, {Split, 22}, v2, ?AR(10)),
 	?debugFmt("Posting tx to slave ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
-	SlaveB3 = post_and_mine(#{ miner => {slave, Slave}, await_on => {slave, Slave} },
+	SlaveB3 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
 			[SlaveTX4]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(SlaveB3#block.indep_hash),
 			SlaveB3#block.height]),
-	_SlaveProofs4 = post_proofs_to_slave(SlaveB3, SlaveTX4, SlaveChunks4),
-	post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, []),
-	MasterProofs2 = post_proofs_to_master(MasterB2, MasterTX2, MasterChunks2),
+	_SlaveProofs4 = post_proofs(peer1, SlaveB3, SlaveTX4, SlaveChunks4),
+	ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
+	MasterProofs2 = post_proofs(main, MasterB2, MasterTX2, MasterChunks2),
 	{MasterTX3, MasterChunks3} = tx(Wallet, {Split, 16}, v2, ?AR(10)),
 	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(MasterTX3#tx.id)]),
-	MasterB3 = post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} },
+	MasterB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
 			[MasterTX3]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB3#block.indep_hash),
 			MasterB3#block.height]),
 	ar_test_node:connect_to_peer(peer1),
-	MasterProofs3 = post_proofs_to_master(MasterB3, MasterTX3, MasterChunks3),
+	MasterProofs3 = post_proofs(main, MasterB3, MasterTX3, MasterChunks3),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(MasterProofs2, UpperBound2),
 	slave_wait_until_syncs_chunks(MasterProofs3, UpperBound2),
@@ -538,8 +538,7 @@ test_fork_recovery(Split) ->
 	ar_test_node:post_tx_to_peer(main, SlaveTX2),
 	ar_test_node:post_tx_to_peer(main, SlaveTX4),
 	ar_test_node:assert_wait_until_receives_txs([SlaveTX2, SlaveTX4]),
-	MasterB4 = post_and_mine(#{ miner => {master, Master},
-			await_on => {master, Master} }, []),
+	MasterB4 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB4#block.indep_hash),
 			MasterB4#block.height]),
 	Proofs4 = build_proofs(MasterB4, SlaveTX4, SlaveChunks4),
@@ -548,7 +547,7 @@ test_fork_recovery(Split) ->
 	slave_wait_until_syncs_chunks(Proofs4),
 	UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	wait_until_syncs_chunks(Proofs4, UpperBound3),
-	post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2).
+	post_proofs(peer1, SlaveB2, SlaveTX2, SlaveChunks2).
 
 syncs_after_joining_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
@@ -560,32 +559,23 @@ test_syncs_after_joining() ->
 test_syncs_after_joining(Split) ->
 	{Master, Slave, Wallet} = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {Split, 17}, v2, ?AR(1)),
-	B1 = post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} }, [TX1]),
-	Proofs1 = post_proofs_to_master(B1, TX1, Chunks1),
+	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
+	Proofs1 = post_proofs(main, B1, TX1, Chunks1),
 	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
 	wait_until_syncs_chunks(Proofs1),
 	ar_test_node:disconnect_from(peer1),
 	{MasterTX2, MasterChunks2} = tx(Wallet, {Split, 13}, v2, ?AR(1)),
-	MasterB2 = post_and_mine(
-		#{ miner => {master, Master}, await_on => {master, Master} },
-		[MasterTX2]
-	),
-	MasterProofs2 = post_proofs_to_master(MasterB2, MasterTX2, MasterChunks2),
+	MasterB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [MasterTX2]),
+	MasterProofs2 = post_proofs(main, MasterB2, MasterTX2, MasterChunks2),
 	{MasterTX3, MasterChunks3} = tx(Wallet, {Split, 12}, v2, ?AR(1)),
-	MasterB3 = post_and_mine(
-		#{ miner => {master, Master}, await_on => {master, Master} },
-		[MasterTX3]
-	),
-	MasterProofs3 = post_proofs_to_master(MasterB3, MasterTX3, MasterChunks3),
+	MasterB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [MasterTX3]),
+	MasterProofs3 = post_proofs(main, MasterB3, MasterTX3, MasterChunks3),
 	{SlaveTX2, SlaveChunks2} = tx(Wallet, {Split, 20}, v2, ?AR(1)),
-	SlaveB2 = post_and_mine(
-		#{ miner => {slave, Slave}, await_on => {slave, Slave} },
-		[SlaveTX2]
-	),
-	SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
+	SlaveB2 = ar_test_node:post_and_mine( #{ miner => peer1, await_on => peer1 }, [SlaveTX2] ),
+	SlaveProofs2 = post_proofs(peer1, SlaveB2, SlaveTX2, SlaveChunks2),
 	slave_wait_until_syncs_chunks(SlaveProofs2),
-	_Slave2 = ar_test_node:rejoin_on(peer1, main),
+	_Slave2 = ar_test_node:rejoin_on(#{ node => peer1, join_on => main }),
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
@@ -611,7 +601,7 @@ test_mines_off_only_last_chunks() ->
 					{ChunkID, DataSize}]),
 			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
-			post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} }, [TX]),
+			ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX]),
 			Offset = ?DATA_CHUNK_SIZE + 1,
 			DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
 			Proof = #{ data_root => ar_util:encode(DataRoot),
@@ -619,7 +609,7 @@ test_mines_off_only_last_chunks() ->
 					offset => integer_to_binary(Offset),
 					data_size => integer_to_binary(DataSize) },
 			?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-					post_chunk(ar_serialize:jsonify(Proof))),
+					ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
 			case Height - ?SEARCH_SPACE_UPPER_BOUND_DEPTH of
 				-1 ->
 					%% Make sure we waited enough to have the next block use
@@ -674,7 +664,7 @@ test_mines_off_only_second_last_chunks() ->
 					{RandomID, DataSize}]),
 			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
-			post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} }, [TX]),
+			ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX]),
 			Offset = 0,
 			DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
 			Proof = #{ data_root => ar_util:encode(DataRoot),
@@ -682,7 +672,7 @@ test_mines_off_only_second_last_chunks() ->
 					offset => integer_to_binary(Offset),
 					data_size => integer_to_binary(DataSize) },
 			?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-					post_chunk(ar_serialize:jsonify(Proof))),
+					ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
 			case Height - ?SEARCH_SPACE_UPPER_BOUND_DEPTH >= 0 of
 				true ->
 					%% Wait until the new chunks fall below the new upper bound and
@@ -739,17 +729,17 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			{Miner, Receiver} =
 				case rand:uniform(2) == 1 of
 					true ->
-						{{master, Master}, {slave, Slave}};
+						{main, peer1};
 					false ->
-						{{slave, Slave}, {master, Master}}
+						{peer1, main}
 				end,
 			?debugFmt("Mining block ~B, txs: ~s, ~s, ~s; data roots: ~s, ~s, ~s.~n", [Height,
 					ar_util:encode(TX1#tx.id), ar_util:encode(TX2#tx.id),
 					ar_util:encode(TX3#tx.id), ar_util:encode(TX1#tx.data_root),
 					ar_util:encode(TX2#tx.data_root), ar_util:encode(TX3#tx.data_root)]),
-			B = post_and_mine(#{ miner => Miner, await_on => Receiver }, [TX1, TX2, TX3]),
-			post_proofs_to_master(B, TX1, Chunks1),
-			post_proofs_to_slave(B, TX2, Chunks2),
+			B = ar_test_node:post_and_mine(#{ miner => Miner, await_on => Receiver }, [TX1, TX2, TX3]),
+			post_proofs(main, B, TX1, Chunks1),
+			post_proofs(peer1, B, TX2, Chunks2),
 			{maps:put(TXID1, get_records_with_proofs(B, TX1, Chunks1), Acc1),
 					maps:put(TXID2, get_records_with_proofs(B, TX2, Chunks2), Acc2),
 					maps:put(TXID3, get_records_with_proofs(B, TX3, Chunks3), Acc3)}
@@ -764,11 +754,11 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			{Miner, Receiver} =
 				case rand:uniform(2) == 1 of
 					true ->
-						{{master, Master}, {slave, Slave}};
+						{main, peer1};
 					false ->
-						{{slave, Slave}, {master, Master}}
+						{peer1, main}
 				end,
-			post_and_mine(#{ miner => Miner, await_on => Receiver }, [])
+			ar_test_node:post_and_mine(#{ miner => Miner, await_on => Receiver }, [])
 		end,
 		lists:seq(1, 5)
 	),
@@ -1157,8 +1147,8 @@ post_blocks(Wallet, BlockMap) ->
 					end,
 					TXMap
 				),
-				B = post_and_mine(
-					#{ miner => {master, "master"}, await_on => {master, "master"} },
+				B = ar_test_node:post_and_mine(
+					#{ miner => main, await_on => main },
 					[TX || {{TX, _}, _} <- TXsWithChunks]
 				),
 				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
@@ -1168,18 +1158,12 @@ post_blocks(Wallet, BlockMap) ->
 		lists:zip(BlockMap, lists:seq(1, length(BlockMap)))
 	).
 
-post_proofs_to_master(B, TX, Chunks) ->
-	post_proofs(master, B, TX, Chunks).
-
-post_proofs_to_slave(B, TX, Chunks) ->
-	post_proofs(slave, B, TX, Chunks).
-
 post_proofs(Peer, B, TX, Chunks) ->
 	Proofs = build_proofs(B, TX, Chunks),
 	lists:foreach(
 		fun({_, Proof}) ->
 			{ok, {{<<"200">>, _}, _, _, _, _}} =
-				post_chunk(Peer, ar_serialize:jsonify(Proof))
+				ar_test_node:post_chunk(Peer, ar_serialize:jsonify(Proof))
 		end,
 		Proofs
 	),

@@ -23,7 +23,7 @@ test_syncs_headers() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
 	ar_test_node:start(B0),
 	post_random_blocks(Wallet, ?MAX_TX_ANCHOR_DEPTH + 5, B0),
-	ar_test_node:join_on(peer1, main),
+	ar_test_node:join_on(#{ node => peer1, join_on => main }),
 	BI = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 5),
 	lists:foreach(
 		fun(Height) ->

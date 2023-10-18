@@ -513,7 +513,7 @@ basic_node_join_test() ->
 		ar_test_node:wait_until_height(1),
 		ar_test_node:mine(),
 		ar_test_node:wait_until_height(2),
-		ar_test_node:join_on(peer1, main),
+		ar_test_node:join_on(#{ node => peer1, join_on => main }),
 		ar_test_node:assert_wait_until_height(peer1, 2)
 	end}.
 
@@ -526,7 +526,7 @@ node_join_test() ->
 		ar_test_node:wait_until_height(1),
 		ar_test_node:mine(),
 		ar_test_node:wait_until_height(2),
-		ar_test_node:join_on(peer1, main),
+		ar_test_node:join_on(#{ node => peer1, join_on => main }),
 		ar_test_node:assert_wait_until_height(peer1, 2),
 		ar_test_node:mine(peer1),
 		ar_test_node:wait_until_height(3)

@@ -653,7 +653,7 @@ joins_network_successfully() ->
 		{[], <<>>},
 		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
 	),
-	_Master = ar_test_node:join_on(main, peer1),
+	_Master = ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	BI = ar_test_node:remote_call(peer1, ar_node, get_block_index, []),
 	?assertEqual(ok, ar_test_node:wait_until_block_index(BI)),
 	TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),

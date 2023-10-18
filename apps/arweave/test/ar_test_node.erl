@@ -24,12 +24,12 @@
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
 		post_tx_to_peer/2, post_tx_to_peer/3,
-		get_tx_anchor/1, join/2, join_on/2, rejoin_on/2,
+		get_tx_anchor/1, join/2, join_on/1, rejoin_on/1,
 		get_tx_confirmations/2,
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
-		read_block_when_stored/2, get_chunk/2, post_chunk/1, post_chunk/2,
+		read_block_when_stored/2, get_chunk/2, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0]).
@@ -615,13 +615,13 @@ stop() ->
 stop(NodePrefix) ->
 	remote_call(NodePrefix, ar_test_node, stop, []).
 
-rejoin_on(NodePrefix, JoinOnNodePrefix) ->
-	join_on(NodePrefix, JoinOnNodePrefix, true).
+rejoin_on(#{ node := NodePrefix, join_on := JoinOnNodePrefix }) ->
+	join_on(#{ node => NodePrefix, join_on => JoinOnNodePrefix }, true).
 
-join_on(NodePrefix, JoinOnNodePrefix) ->
-	join_on(NodePrefix, JoinOnNodePrefix, false).
+join_on(#{ node := NodePrefix, join_on := JoinOnNodePrefix }) ->
+	join_on(#{ node => NodePrefix, join_on => JoinOnNodePrefix }, false).
 
-join_on(NodePrefix, JoinOnNodePrefix, Rejoin) ->
+join_on(#{ node := NodePrefix, join_on := JoinOnNodePrefix }, Rejoin) ->
 	remote_call(NodePrefix, ar_test_node, join, [JoinOnNodePrefix, Rejoin], 20000).
 
 join(JoinOnNodePrefix, Rejoin) ->
@@ -946,27 +946,12 @@ test_with_mocked_functions(Functions, TestFun, Timeout) ->
 		[{timeout, Timeout, TestFun}]
 	}.
 
-post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
-	CurrentHeight = case Miner of
-		{slave, _MiningNode} ->
-			Height = remote_call(peer1, ar_node, get_height, []),
-			lists:foreach(fun(TX) -> assert_post_tx_to_peer(peer1, TX) end, TXs),
-			ar_test_node:mine(peer1),
-			Height;
-		{master, _MiningNode} ->
-			Height = ar_node:get_height(),
-			lists:foreach(fun(TX) -> assert_post_tx_to_peer(main, TX) end, TXs),
-			mine(),
-			Height
-	end,
-	case AwaitOn of
-		{master, _AwaitNode} ->
-			[{H, _, _} | _] = wait_until_height(CurrentHeight + 1),
-			read_block_when_stored(H, true);
-		{slave, _AwaitNode} ->
-			[{H, _, _} | _] = wait_until_height(peer1, CurrentHeight + 1),
-			remote_call(peer1, ar_test_node, read_block_when_stored, [H, true], 20000)
-	end.
+post_and_mine(#{ miner := NodePrefix, await_on := AwaitOnNodePrefix }, TXs) ->
+	CurrentHeight = remote_call(NodePrefix, ar_node, get_height, []),
+	lists:foreach(fun(TX) -> assert_post_tx_to_peer(NodePrefix, TX) end, TXs),
+	mine(NodePrefix),
+	[{H, _, _} | _] = wait_until_height(AwaitOnNodePrefix, CurrentHeight + 1),
+	remote_call(AwaitOnNodePrefix, ar_test_node, read_block_when_stored, [H, true], 20000).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
 	post_block(B, [ExpectedResult], peer_ip(main));
@@ -1082,16 +1067,8 @@ get_chunk(NodePrefix, Offset) ->
 		headers => [{<<"x-bucket-based-offset">>, <<"true">>}]
 	}).
 
-post_chunk(Proof) ->
-	post_chunk(master, Proof).
-
-post_chunk(master, Proof) ->
-	post_chunk2(peer_ip(main), Proof);
-
-post_chunk(slave, Proof) ->
-	post_chunk2(peer_ip(peer1), Proof).
-
-post_chunk2(Peer, Proof) ->
+post_chunk(NodePrefix, Proof) ->
+	Peer = peer_ip(NodePrefix),
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -1165,7 +1142,7 @@ assert_data_not_found(NodePrefix, TXID) ->
 			ar_http:req(#{ method => get, peer => Peer,
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).
 
-%% helpers for setting up slave node for testing.
+%% helpers for setting up nodes for testing.
 generate_node_namespace() ->
 	%% Generate a unique string using the current timestamp.
 	Timestamp = integer_to_list(erlang:system_time()),
