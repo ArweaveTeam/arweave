@@ -825,6 +825,7 @@ start_for_tests(Config) ->
 		data_dir = ".tmp/data_test_main_" ++ UniqueName,
 		metrics_dir = ".tmp/metrics_main_" ++ UniqueName,
 		test_node_namespace = UniqueName,
+		test_node_prefix = main,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
 		packing_rate = 20,

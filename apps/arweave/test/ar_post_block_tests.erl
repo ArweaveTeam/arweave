@@ -4,8 +4,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, start/2, slave_start/1,
-		slave_start/2, connect_to_slave/0, get_tx_anchor/0, disconnect_from_slave/0,
+-import(ar_test_node, [slave_start/1,
+		slave_start/2, get_tx_anchor/0, disconnect_from_slave/0,
 		wait_until_height/1, sign_tx/2, sign_tx/3, post_block/2,
 		send_new_block/2, sign_block/3,
 		read_block_when_stored/2,
@@ -15,14 +15,14 @@
 
 start_node() ->
 	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	connect_to_slave().
+	ar_test_node:connect_to_peer(peer1).
 
 reset_node() ->
 	ar_blacklist_middleware:reset(),
 	ar_test_node:remote_call(peer1, ar_blacklist_middleware, reset, []),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 
 	Height = slave_height(),
 	[{PrevH, _, _} | _] = wait_until_height(Height),
@@ -308,8 +308,8 @@ rejects_invalid_blocks_test_() ->
 
 test_rejects_invalid_blocks() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
-	start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
@@ -427,7 +427,7 @@ test_rejects_invalid_blocks() ->
 			nonce_limiter_info = (B1#block.nonce_limiter_info)#nonce_limiter_info{
 					last_step_checkpoints = [crypto:strong_rand_bytes(32)] } }, B0, Key),
 	%% Reset the node to the genesis block.
-	start(B0),
+	ar_test_node:start(B0),
 	ok = ar_events:subscribe(block),
 	post_block(B12, invalid_nonce_limiter),
 	?assertMatch({ok, {{<<"403">>, _}, _,
@@ -482,7 +482,7 @@ test_reject_block_invalid_double_signing_proof() ->
 	Key0 = ar_wallet:new(),
 	Addr0 = ar_wallet:to_address(Key0),
 	[B0] = ar_weave:init([{Addr0, ?AR(1000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
@@ -533,7 +533,7 @@ test_reject_block_invalid_double_signing_proof() ->
 			Signature4, CDiff, PrevCDiff, Preimage4},
 	B5 = sign_block(B1#block{ double_signing_proof = InvalidProof3 }, B0, Key),
 	post_block(B5, invalid_double_signing_proof_not_in_reward_history),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	wait_until_height(2),
 	B6 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI2)]),
 	B7 = sign_block(B6, B1, Key),
@@ -571,7 +571,7 @@ test_send_block2() ->
 	MasterAddress = ar_wallet:to_address(MasterWallet),
 	SlaveWallet = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
 	SlaveAddress = ar_wallet:to_address(SlaveWallet),
-	start(B0, MasterAddress),
+	ar_test_node:start(B0, MasterAddress),
 	ar_test_node:start_peer(peer1, B0, SlaveAddress),
 	disconnect_from_slave(),
 	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
@@ -587,30 +587,30 @@ test_send_block2() ->
 			previous_block = B0#block.indep_hash,
 			tx_prefixes = [binary:part(TX#tx.id, 0, 8) || TX <- TXs2] },
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block_announcement",
+			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement) }),
 	Response = ar_serialize:binary_to_block_announcement_response(Body),
 	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
 			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response),
 	Announcement2 = Announcement#block_announcement{ recall_byte = 0 },
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block_announcement",
+			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement2) }),
 	Response2 = ar_serialize:binary_to_block_announcement_response(Body2),
 	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
 			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response2),
 	Announcement3 = Announcement#block_announcement{ recall_byte = 100000000000000 },
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block_announcement",
+			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement3) }),
 	{ok, {{<<"418">>, _}, _, Body3, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block2",
+			peer => ar_test_node:peer_ip(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B) }),
 	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
 			[], TXs2 -- EverySecondTX)), Body3),
 	B2 = B#block{ txs = [lists:nth(1, TXs2) | tl(B#block.txs)] },
 	{ok, {{<<"418">>, _}, _, Body4, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block2",
+			peer => ar_test_node:peer_ip(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B2) }),
 	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
 			[], (TXs2 -- EverySecondTX) -- [lists:nth(1, TXs2)])), Body4),
@@ -620,13 +620,13 @@ test_send_block2() ->
 	ar_test_node:mine(),
 	[{H2, _, _}, _, _] = wait_until_height(2),
 	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block_announcement",
+			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = H2, previous_block = B#block.indep_hash }) }),
 	BTXs = ar_storage:read_tx(B#block.txs),
 	B3 = B#block{ txs = BTXs },
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block2",
+			peer => ar_test_node:peer_ip(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B3) }),
 	{ok, {{<<"200">>, _}, _, SerializedB, _, _}} = ar_http:req(#{ method => get,
 			peer => ar_test_node:main_ip(), path => "/block2/height/1" }),
@@ -650,9 +650,9 @@ test_send_block2() ->
 	B4 = read_block_when_stored(H2, true),
 	timer:sleep(500),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block2",
+			peer => ar_test_node:peer_ip(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B4) }),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(),
@@ -662,7 +662,7 @@ test_send_block2() ->
 	),
 	B5 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"208">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block_announcement",
+			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B5#block.indep_hash,
 					previous_block = B5#block.previous_block }) }),
@@ -671,7 +671,7 @@ test_send_block2() ->
 	[_ | _] = wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
 	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block_announcement",
+			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,
@@ -680,7 +680,7 @@ test_send_block2() ->
 			missing_tx_indices = [] }},
 			ar_serialize:binary_to_block_announcement_response(Body5)),
 	{ok, {{<<"200">>, _}, _, Body6, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:slave_ip(), path => "/block_announcement",
+			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,
@@ -695,9 +695,9 @@ resigned_solution_test_() ->
 
 test_resigned_solution() ->
 	[B0] = ar_weave:init(),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	slave_mine(),
 	wait_until_height(1),
 	disconnect_from_slave(),
@@ -737,7 +737,7 @@ test_resigned_solution() ->
 	[{B5H, _, _}, {B2H, _, _}, _] = wait_until_height(2),
 	ar_test_node:mine(),
 	[{B6H, _, _}, _, _, _] = wait_until_height(3),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	[{B6H, _, _}, {B5H, _, _}, {B2H, _, _}, _] = assert_slave_wait_until_height(3).
 
 %% ------------------------------------------------------------------------------------------

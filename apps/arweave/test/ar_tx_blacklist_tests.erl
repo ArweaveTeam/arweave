@@ -7,7 +7,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [slave_start/1, start/3, connect_to_slave/0, get_tx_anchor/1, sign_tx/2,
+-import(ar_test_node, [slave_start/1, get_tx_anchor/1, sign_tx/2,
 		sign_v1_tx/2, random_v1_data/1, slave_call/3, assert_post_tx_to_slave/1,
 		assert_post_tx_to_master/1, slave_mine/0, wait_until_height/1,
 		assert_slave_wait_until_height/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
@@ -53,7 +53,7 @@ test_uses_blacklists() ->
 	ok = file:write_file(WhitelistFile, <<>>),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	{_, _} =
-		start(B0, RewardAddr,
+		ar_test_node:start(B0, RewardAddr,
 				(element(2, application:get_env(arweave, config)))#config{
 			transaction_blacklist_files = BlacklistFiles,
 			transaction_whitelist_files = [WhitelistFile],
@@ -68,7 +68,7 @@ test_uses_blacklists() ->
 				"http://localhost:1985/bad/and/good"
 			]
 		}),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	BadV1TXIDs = [V1TX#tx.id],
 	lists:foreach(
 		fun({TX, Height}) ->
@@ -132,7 +132,7 @@ test_uses_blacklists() ->
 	assert_post_tx_to_slave(TX),
 	slave_mine(),
 	assert_slave_wait_until_height(length(TXs) + 2),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	[{_, WeaveSize2, _} | _] = wait_until_height(length(TXs) + 2),
 	assert_removed_offsets([[WeaveSize2]]),
 	assert_present_offsets([[WeaveSize]]),

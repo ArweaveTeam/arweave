@@ -5,7 +5,7 @@
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
+-import(ar_test_node, [slave_start/1,
 	slave_mine/0, join_on_slave/0, assert_wait_until_receives_txs/1,
 	wait_until_height/1, assert_slave_wait_until_height/1,
 	slave_call/3, assert_wait_until_block_index/1, post_tx_to_slave/1,
@@ -13,7 +13,7 @@
 	assert_post_tx_to_slave/1, assert_post_tx_to_slave/2,
 	assert_post_tx_to_master/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2,
 	sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1, get_tx_confirmations/2,
-	disconnect_from_slave/0, read_block_when_stored/1, random_v1_data/1, ar_test_node:slave_ip/0]).
+	disconnect_from_slave/0, read_block_when_stored/1, random_v1_data/1]).
 
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
@@ -111,12 +111,12 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%%
 	%% Expect them to be accepted, gossiped to the peer and included into the block.
 	%% Expect the block to be accepted by the peer.
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	%% Post the transactions to slave.
 	lists:foreach(
 		fun(TX) ->
@@ -163,8 +163,8 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect the block to be accepted.
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
@@ -189,7 +189,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Wait to make sure the tx will not be gossiped upon reconnect.
 	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
 	%% Connect the nodes and mine a block on slave.
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	slave_mine(),
 	%% Expect master to receive the block.
 	BI = wait_until_height(1),
@@ -208,10 +208,10 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	).
 
 returns_error_when_txs_exceed_balance(B0, TXs) ->
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 
 	%% Expect the post for all TXs (including the balance exceeding one) to
 	%% succeed. However immeidately after adding each TX to the mempool,
@@ -253,7 +253,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	{ok, {{<<"400">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => ar_test_node:slave_ip(),
+			peer => ar_test_node:peer_ip(peer1),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
@@ -272,8 +272,8 @@ test_rejects_transactions_above_the_size_limit() ->
 		{ar_wallet:to_address(Pub2), ?AR(20), <<>>}
 	]),
 	%% Start the node.
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	SmallData = random_v1_data(?TX_DATA_SIZE_LIMIT),
 	BigData = random_v1_data(?TX_DATA_SIZE_LIMIT + 1),
 	GoodTX = sign_v1_tx(Key1, #{ data => SmallData }),
@@ -305,8 +305,8 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	TX1 = sign_v1_tx(Key),
 	assert_post_tx_to_slave(TX1),
 	slave_mine(),
@@ -341,8 +341,8 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 		{ar_wallet:to_address(Pub1), ?AR(20), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(0), <<>>}
 	]),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
 			quantity => ?AR(2) }),
 	assert_post_tx_to_slave(TX1),
@@ -393,7 +393,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(50), <<>>}
 	]),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start_peer(peer1, B0),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => <<>> }),
 	assert_post_tx_to_slave(TX1),
@@ -403,7 +403,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => ar_test_node:slave_ip(),
+			peer => ar_test_node:peer_ip(peer1),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	Balance = binary_to_integer(Body),
@@ -415,7 +415,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => ar_test_node:slave_ip(),
+			peer => ar_test_node:peer_ip(peer1),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	?assertEqual(0, binary_to_integer(Body2)),
@@ -434,9 +434,9 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	%%
 	%% Expect them to be mined into the corresponding number of blocks so that
 	%% each block fits under the limit.
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	lists:foreach(
 		fun(TX) ->
 			assert_post_tx_to_slave(TX),
@@ -478,9 +478,9 @@ mines_format_2_txs_without_size_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	ChunkSize = ?MEMPOOL_DATA_SIZE_LIMIT div (?BLOCK_TX_COUNT_LIMIT + 1),
 	lists:foreach(
 		fun(N) ->
@@ -513,7 +513,7 @@ rejects_txs_with_outdated_anchors_test_() ->
 		[B0] = ar_weave:init([
 			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 		]),
-		{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+		ar_test_node:start_peer(peer1, B0),
 		slave_mine_blocks(?MAX_TX_ANCHOR_DEPTH),
 		assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH),
 		TX1 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
@@ -532,7 +532,7 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start_peer(peer1, B0),
 	BigChunk = random_v1_data(?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE),
 	TXs = lists:map(
 		fun(N) ->
@@ -547,13 +547,13 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 5)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% There is no place for the last transaction in the mempool.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
 
@@ -565,7 +565,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start_peer(peer1, B0),
 	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT div 2),
 	TXs = lists:map(
 		fun(N) ->
@@ -582,13 +582,13 @@ drops_v2_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 10)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 10)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% The last TX is twice as big and twice as valuable so it replaces two
 	%% other transactions in the memory pool.
 	?assertEqual([Last#tx.id | [TX#tx.id || TX <- lists:sublist(TXs, 8)]], Mempool2),
@@ -596,7 +596,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	StrippedTX = sign_tx(Key, #{ last_tx => B0#block.indep_hash,
 			data => BigChunk, tags => [{<<"nonce">>, integer_to_binary(12)}] }),
 	assert_post_tx_to_slave(StrippedTX#tx{ data = <<>> }),
-	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
+	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	?assertEqual([Last#tx.id] ++ [TX#tx.id || TX <- lists:sublist(TXs, 8)]
 			++ [StrippedTX#tx.id], Mempool3).
 
@@ -624,7 +624,7 @@ joins_network_successfully() ->
 		{Addr = crypto:strong_rand_bytes(32), ?AR(200000000), <<>>},
 		{crypto:strong_rand_bytes(32), ?AR(200000000), <<>>}
 	]),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start_peer(peer1, B0),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
 			{TX, AnchorType} = case rand:uniform(4) of
@@ -708,7 +708,7 @@ joins_network_successfully() ->
 	assert_post_tx_to_slave(TX3),
 	slave_mine(),
 	BI2 = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	TX4 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
 	assert_post_tx_to_slave(TX4),
 	assert_wait_until_receives_txs([TX4]),
@@ -733,9 +733,9 @@ recovers_from_forks(ForkHeight) ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	{ok, Config} = application:get_env(arweave, config),
 	MasterPort = Config#config.port,
 	PreForkTXs = lists:foldl(
@@ -796,7 +796,7 @@ recovers_from_forks(ForkHeight) ->
 		{[], []},
 		lists:seq(ForkHeight + 1, 9)
 	),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(),
 			tags => [{<<"nonce">>, random_nonce()}] }),
 	assert_post_tx_to_slave(TX2),

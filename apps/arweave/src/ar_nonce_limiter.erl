@@ -1386,7 +1386,7 @@ test_reorg_after_join() ->
 	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
 	ar_test_node:assert_slave_wait_until_height(1),
 	ar_test_node:join_on_slave(),
@@ -1403,7 +1403,7 @@ test_reorg_after_join2() ->
 	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
 	ar_test_node:assert_slave_wait_until_height(1),
 	ar_test_node:join_on_slave(),
@@ -1415,7 +1415,7 @@ test_reorg_after_join2() ->
 	ar_test_node:assert_slave_wait_until_height(1),
 	ar_test_node:slave_mine(),
 	ar_test_node:assert_slave_wait_until_height(2),
-	ar_test_node:connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:slave_mine(),
 	ar_test_node:wait_until_height(3).
 

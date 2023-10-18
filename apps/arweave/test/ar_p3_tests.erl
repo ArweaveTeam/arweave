@@ -8,8 +8,8 @@
 -export([raw_request/2, raw_request/3, http_request/1]).
 
 -import(ar_test_node, [
-	start/1, start/3, stop/0, slave_start/1, slave_start/3,
-	connect_to_slave/0, disconnect_from_slave/0, assert_post_tx_to_slave/1,
+	stop/0, slave_start/1, slave_start/3,
+	disconnect_from_slave/0, assert_post_tx_to_slave/1,
 	slave_mine/0, assert_slave_wait_until_height/1, join_on_slave/0, rejoin_on_slave/0,
 	sign_tx/2, assert_post_tx_to_master/1, wait_until_height/1, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
@@ -480,9 +480,9 @@ e2e_deposit_before_charge() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 	ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 700, data => <<"hello">> }),
 	TX2 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
 	TX3 = sign_tx(Wallet2, #{ target => DepositAddress, quantity => 1000 }),
@@ -703,9 +703,9 @@ e2e_charge_before_deposit() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -2000, 2) },
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 	ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, _, _, _}},
@@ -788,7 +788,7 @@ e2e_restart_p3_service() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 	ar_test_node:start_peer(peer1, B0),
 	join_on_slave(),
 	disconnect_from_slave(),
@@ -863,9 +863,9 @@ e2e_concurrent_requests() ->
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, 0, 1, 100) },
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 	ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 
 	%% Post a 100 winston deposit and wait for it to be picked up.
 	TX1 = sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),

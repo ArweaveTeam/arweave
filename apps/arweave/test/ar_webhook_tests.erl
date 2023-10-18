@@ -7,7 +7,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [start/3, sign_tx/3, assert_post_tx_to_master/1,
+-import(ar_test_node, [sign_tx/3, assert_post_tx_to_master/1,
 		wait_until_height/1, read_block_when_stored/1]).
 
 init(Req, State) ->
@@ -45,7 +45,7 @@ test_webhooks() ->
 			events = [block]
 		}
 	]},
-	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()), Config2),
+	ar_test_node:start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()), Config2),
 	%% Setup a server that would be listening for the webhooks and registering
 	%% them in the ETS table.
 	ets:new(?MODULE, [named_table, set, public]),

@@ -3,7 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
+-import(ar_test_node, [slave_start/1,
 		assert_post_tx_to_slave/1, slave_mine/0,
 		wait_until_height/1, assert_slave_wait_until_height/1,
 		assert_wait_until_receives_txs/1,
@@ -19,9 +19,9 @@ test_v1_transactions_after_2_0() ->
 		{ar_wallet:to_address(Pub1), ?AR(100), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(100), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	TXs = generate_txs(Key, fun ar_test_node:sign_v1_tx/2),
 	lists:foreach(
 		fun(TX) ->
@@ -77,9 +77,9 @@ test_v2_transactions_after_2_0() ->
 		{ar_wallet:to_address(Pub1), ?AR(100), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(100), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	TXs = generate_txs(Key, fun ar_test_node:sign_tx/2),
 	lists:foreach(
 		fun(TX) ->
@@ -133,9 +133,9 @@ test_recall_byte_on_the_border() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	%% Generate one-byte transactions so that recall byte is often on the
 	%% the border between two transactions.
 	TXs = [
@@ -174,9 +174,9 @@ test_ignores_transactions_with_invalid_data_root() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
 	%% Generate transactions where half of them are valid and the other
 	%% half has an invalid data_root.
 	GenerateTXParams =

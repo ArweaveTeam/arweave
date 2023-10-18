@@ -4,8 +4,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1,
-		connect_to_slave/0, get_tx_anchor/0, disconnect_from_slave/0,
+-import(ar_test_node, [slave_start/1,
+		get_tx_anchor/0, disconnect_from_slave/0,
 		wait_until_height/1, wait_until_receives_txs/1, sign_tx/2, sign_tx/3,
 		post_tx_json_to_master/1, assert_slave_wait_until_receives_txs/1,
 		slave_wait_until_height/1, read_block_when_stored/1, read_block_when_stored/2,
@@ -23,15 +23,15 @@ start_node() ->
 		{ar_wallet:to_address(Pub2), ?AR(10000), <<>>},
 		{ar_wallet:to_address(Pub3), ?AR(10), <<"TEST_ID">>}
 	], 0), %% Set difficulty to 0 to speed up tests
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	{B0, Wallet1, Wallet2, StaticWallet}.
 
 reset_node() ->
 	ar_blacklist_middleware:reset(),
 	ar_test_node:remote_call(peer1, ar_blacklist_middleware, reset, []),
-	connect_to_slave().
+	ar_test_node:connect_to_peer(peer1).
 
 setup_all_batch() ->
 	%% Never retarget the difficulty - this ensures the tests are always
@@ -267,17 +267,17 @@ test_single_regossip(_) ->
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:remote_call(peer1, ar_http_iface_client, send_tx_binary, [ar_test_node:slave_ip(), TX#tx.id,
+		ar_test_node:remote_call(peer1, ar_http_iface_client, send_tx_binary, [ar_test_node:peer_ip(peer1), TX#tx.id,
 				ar_serialize:tx_to_binary(TX)])
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_test_node:remote_call(peer1, ar_http_iface_client, send_tx_binary, [ar_test_node:slave_ip(), TX#tx.id,
+		ar_test_node:remote_call(peer1, ar_http_iface_client, send_tx_binary, [ar_test_node:peer_ip(peer1), TX#tx.id,
 				ar_serialize:tx_to_binary(TX)])
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_test_node:remote_call(peer1, ar_http_iface_client, send_tx_json, [ar_test_node:slave_ip(), TX#tx.id,
+		ar_test_node:remote_call(peer1, ar_http_iface_client, send_tx_json, [ar_test_node:peer_ip(peer1), TX#tx.id,
 				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))])
 	).
 
@@ -720,7 +720,7 @@ test_get_tx_body(_) ->
 	?assertEqual(<<"TEST DATA">>, ar_util:decode(Data)).
 
 test_get_tx_status(_) ->
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	Height = ar_node:get_height(),
 	assert_slave_wait_until_height(Height),
 	disconnect_from_slave(),
@@ -767,7 +767,7 @@ test_get_tx_status(_) ->
 	assert_slave_wait_until_height(Height + 1),
 	slave_mine(),
 	assert_slave_wait_until_height(Height + 2),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	slave_mine(),
 	wait_until_height(Height + 3),
 	?assertMatch({ok, {{<<"202">>, _}, _, _, _, _}}, FetchStatus()).
@@ -910,7 +910,7 @@ test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	BI = wait_until_height(LocalHeight + 1),
 	B = ar_storage:read_block(hd(BI)),
 	B2 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	ar_bridge ! {event, block, {new, B2, #{ recall_byte => undefined }}},
 	assert_slave_wait_until_height(RemoteHeight + 1).
 
@@ -926,7 +926,7 @@ test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _Stat
 	ar_test_node:mine(),
 	BI = wait_until_height(LocalHeight + 1),
 	B = ar_storage:read_block(hd(BI)),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	ar_bridge ! {event, block, {new, B, #{ recall_byte => undefined }}},
 	assert_slave_wait_until_height(RemoteHeight + 1).
 

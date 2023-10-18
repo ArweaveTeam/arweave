@@ -7,7 +7,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--import(ar_test_node, [start/3, slave_start/3, connect_to_slave/0, rejoin_on_master/0,
+-import(ar_test_node, [slave_start/3, rejoin_on_master/0,
 		sign_tx/2, sign_v1_tx/2, assert_wait_until_receives_txs/1, post_tx_to_master/1,
 		wait_until_height/1, assert_slave_wait_until_height/1, post_and_mine/2,
 		get_tx_anchor/1, disconnect_from_slave/0,
@@ -529,7 +529,7 @@ test_fork_recovery(Split) ->
 			[MasterTX3]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB3#block.indep_hash),
 			MasterB3#block.height]),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	MasterProofs3 = post_proofs_to_master(MasterB3, MasterTX3, MasterChunks3),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(MasterProofs2, UpperBound2),
@@ -591,7 +591,7 @@ test_syncs_after_joining(Split) ->
 	slave_wait_until_syncs_chunks(SlaveProofs2),
 	_Slave2 = rejoin_on_master(),
 	assert_slave_wait_until_height(3),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(MasterProofs2, UpperBound2),
 	slave_wait_until_syncs_chunks(MasterProofs3, UpperBound2),
@@ -891,10 +891,10 @@ setup_nodes(MasterAddr, SlaveAddr) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
-	{Master, _} = start(B0, MasterAddr, Config),
+	{Master, _} = ar_test_node:start(B0, MasterAddr, Config),
 	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	{Slave, _} = ar_test_node:start_peer(peer1, B0, SlaveAddr, SlaveConfig),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	{Master, Slave, Wallet}.
 
 tx(Wallet, SplitType) ->

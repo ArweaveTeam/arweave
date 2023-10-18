@@ -4,7 +4,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, disconnect_from_slave/0, connect_to_slave/0,
+-import(ar_test_node, [slave_start/1, disconnect_from_slave/0,
 		get_tx_anchor/0, sign_tx/2, assert_post_tx_to_slave/1, slave_mine/0,
 		assert_slave_wait_until_height/1, slave_wait_until_height/1, wait_until_height/1,
 		read_block_when_stored/1]).
@@ -15,7 +15,7 @@ polling_test_() ->
 test_polling() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	TXs =
@@ -29,7 +29,7 @@ test_polling() ->
 			end,
 			lists:seq(1, 9)
 		),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	wait_until_height(9),
 	lists:foreach(
 		fun(Height) ->
@@ -62,7 +62,7 @@ test_polling() ->
 	BS13 = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, SH13]),
 	CDiffM13 = BM13#block.cumulative_diff,
 	CDiffS13 = BS13#block.cumulative_diff,
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	case CDiffM13 > CDiffS13 of
 		true ->
 			?debugFmt("Case 1.", []),

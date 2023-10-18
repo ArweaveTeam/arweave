@@ -6,8 +6,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		start/1, start/2, slave_mine/0, wait_until_height/1, slave_start/1, slave_start/2,
-		connect_to_slave/0, wait_until_receives_txs/1, assert_post_tx_to_master/1,
+		slave_mine/0, wait_until_height/1, slave_start/1, slave_start/2,
+		wait_until_receives_txs/1, assert_post_tx_to_master/1,
 		assert_slave_wait_until_receives_txs/1, assert_slave_wait_until_height/1,
 		slave_call/3, slave_call/4, disconnect_from_slave/0, sign_v1_tx/3, sign_tx/2, wait_until_joined/0,
 		read_block_when_stored/1, post_tx_to_master/2]).
@@ -24,9 +24,9 @@
 %			{ar_wallet:to_address(element(2, EDDSA)), ?AR(1000), <<>>},
 %			{ar_wallet:to_address(element(2, ECDSA)), ?AR(1000), <<>>},
 %			{ar_wallet:to_address(element(2, RSA2)), ?AR(1000), <<>>}]),
-%	start(B0),
+%	ar_test_node:start(B0),
 %	ar_test_node:start_peer(peer1, B0),
-%	connect_to_slave(),
+%	ar_test_node:connect_to_peer(peer1),
 %	InvalidTXsBeforeFork = [
 %		{["invalid_target_length"],
 %				sign_tx(RSA, #{ last_tx => get_tx_anchor(master), quantity => 1,
@@ -295,9 +295,9 @@
 %			ExpectedAccounts} = generate_wallets(ScenarioTemplate,
 %					GenesisWalletsTemplate, ExpectedAccountsTemplate),
 %	[B0] = ar_weave:init(GenesisWallets, ?DEFAULT_DIFF, ?AR(1)),
-%	{Master, _} = start(B0),
+%	{Master, _} = ar_test_node:start(B0),
 %	{Slave, _} = ar_test_node:start_peer(peer1, B0),
-%	connect_to_slave(),
+%	ar_test_node:connect_to_peer(peer1),
 %	Iterator = gb_sets:iterator(Scenario),
 %	test_multi_account(gb_sets:next(Iterator), Title, Wallets, ExpectedAccounts,
 %			Master, Slave).
@@ -441,7 +441,7 @@ ar_node_interface_test_() ->
 
 test_ar_node_interface() ->
 	[B0] = ar_weave:init(),
-	{_Node1, _} = start(B0),
+	ar_test_node:start(B0),
 	?assertEqual(0, ar_node:get_height()),
 	?assertEqual(B0#block.indep_hash, ar_node:get_current_block_hash()),
 	ar_test_node:mine(),
@@ -457,7 +457,7 @@ mining_reward_test_() ->
 test_mining_reward() ->
 	{_Priv1, Pub1} = ar_wallet:new_keyfile(),
 	[B0] = ar_weave:init(),
-	{_Node1, _} = start(B0, MiningAddr = ar_wallet:to_address(Pub1)),
+	ar_test_node:start(B0, MiningAddr = ar_wallet:to_address(Pub1)),
 	ar_test_node:mine(),
 	wait_until_height(1),
 	B1 = ar_node:get_current_block(),
@@ -480,9 +480,9 @@ multi_node_mining_reward_test_() ->
 test_multi_node_mining_reward() ->
 	{_Priv1, Pub1} = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
 	[B0] = ar_weave:init(),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0, MiningAddr = ar_wallet:to_address(Pub1)),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	slave_mine(),
 	wait_until_height(1),
 	B1 = ar_node:get_current_block(),
@@ -503,9 +503,9 @@ replay_attack_test_() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		{_Node1, _} = start(B0),
+		ar_test_node:start(B0),
 		ar_test_node:start_peer(peer1, B0),
-		connect_to_slave(),
+		ar_test_node:connect_to_peer(peer1),
 		SignedTX = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		assert_post_tx_to_master(SignedTX),
@@ -535,10 +535,9 @@ test_wallet_transaction() ->
 			TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 			SignedTX = ar_tx:sign(TX#tx{ format = 2 }, Priv1, Pub1),
 			[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-			{_Node1, _} = start(B0,
-					ar_wallet:to_address(ar_wallet:new_keyfile({eddsa, ed25519}))),
+			ar_test_node:start(B0, ar_wallet:to_address(ar_wallet:new_keyfile({eddsa, ed25519}))),
 			ar_test_node:start_peer(peer1, B0),
-			connect_to_slave(),
+			ar_test_node:connect_to_peer(peer1),
 			assert_post_tx_to_master(SignedTX),
 			ar_test_node:mine(),
 			wait_until_height(1),
@@ -564,9 +563,9 @@ test_wallet_transaction() ->
 %		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 %		SignedTX2 = ar_tx:sign(TX2#tx{ format = 2 }, Priv2, Pub2),
 %		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
-%		start(B0),
+%		ar_test_node:start(B0),
 %		ar_test_node:start_peer(peer1, B0),
-%		connect_to_slave(),
+%		ar_test_node:connect_to_peer(peer1),
 %		assert_post_tx_to_master(SignedTX),
 %		ar_test_node:mine(),
 %		assert_slave_wait_until_height(1),
@@ -584,9 +583,9 @@ tx_threading_test_() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		{_Node1, _} = start(B0),
+		ar_test_node:start(B0),
 		ar_test_node:start_peer(peer1, B0),
-		connect_to_slave(),
+		ar_test_node:connect_to_peer(peer1),
 		SignedTX = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		SignedTX2 = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
@@ -611,7 +610,7 @@ persisted_mempool_test_() ->
 test_persisted_mempool() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	SignedTX = sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(master) }),
@@ -631,7 +630,7 @@ test_persisted_mempool() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
-		peers = [ar_test_node:slave_ip()]
+		peers = [ar_test_node:peer_ip(peer1)]
 	}),
 	ar:start_dependencies(),
 	wait_until_joined(),

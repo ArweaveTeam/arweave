@@ -8,8 +8,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
--import(ar_test_node, [start/3, stop/0, slave_stop/0,
-		connect_to_slave/0, slave_mine/0,
+-import(ar_test_node, [stop/0, slave_stop/0,
+		slave_mine/0,
 		assert_slave_wait_until_height/1, slave_call/3, post_block/2, send_new_block/2]).
 
 setup() ->
@@ -117,7 +117,7 @@ test_vdf_server_push_fast_block() ->
 	timer:sleep(3000),
 
 	{ok, Config} = application:get_env(arweave, config),
-	start(
+	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VdfPort) ]}),
 
@@ -158,7 +158,7 @@ test_vdf_server_push_slow_block() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
 	{ok, Config} = application:get_env(arweave, config),
-	start(
+	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1986" ]}),
 	timer:sleep(3000),
@@ -238,14 +238,14 @@ test_vdf_client_fast_block() ->
 		B0, SlaveAddress,
 		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ] }),
 	%% Start the master as a VDF server
-	start(
+	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1)) ]}),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
 	%% isn't aware of the new VDF session yet.
-	send_new_block(ar_test_node:slave_ip(), B1),
+	send_new_block(ar_test_node:peer_ip(peer1), B1),
 	timer:sleep(10000),
 	?assertEqual(1,
 		length(ar_test_node:remote_call(peer1, ar_node, get_blocks, [])),
@@ -284,14 +284,14 @@ test_vdf_client_fast_block_pull_interface() ->
 		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ],
 				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
 	%% Start the master as a VDF server
-	start(
+	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1)) ]}),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
 	%% isn't aware of the new VDF session yet.
-	send_new_block(ar_test_node:slave_ip(), B1),
+	send_new_block(ar_test_node:peer_ip(peer1), B1),
 	timer:sleep(10000),
 	?assertEqual(1,
 		length(ar_test_node:remote_call(peer1, ar_node, get_blocks, [])),
@@ -330,17 +330,17 @@ test_vdf_client_slow_block() ->
 			"127.0.0.1:" ++ integer_to_list(Config#config.port)
 		] }),
 	%% Start the master as a VDF server
-	start(
+	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [
 			"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
 		]}),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	timer:sleep(10000),
 
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
-	send_new_block(ar_test_node:slave_ip(), B1),
+	send_new_block(ar_test_node:peer_ip(peer1), B1),
 	BI = assert_slave_wait_until_height(1).
 
 test_vdf_client_slow_block_pull_interface() ->
@@ -369,17 +369,17 @@ test_vdf_client_slow_block_pull_interface() ->
 				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
 	%% Start the master as a VDF server
 	{ok, Config} = application:get_env(arweave, config),
-	start(
+	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [
 			"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
 		]}),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	timer:sleep(10000),
 
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
-	send_new_block(ar_test_node:slave_ip(), B1),
+	send_new_block(ar_test_node:peer_ip(peer1), B1),
 	BI = assert_slave_wait_until_height(1).
 
 external_update_test_() ->

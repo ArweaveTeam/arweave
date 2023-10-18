@@ -15,7 +15,7 @@ start_node() ->
 	]),
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	ets:insert(node_state, [{wallet_list, B0#block.wallet_list}]),
 	{Key, LastTXID, OtherKey, B0}.
 

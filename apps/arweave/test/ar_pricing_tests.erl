@@ -5,7 +5,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
+-import(ar_test_node, [slave_start/1,
 		sign_tx/3, sign_v1_tx/3,
 		get_tx_price/3, get_tx_price/2, get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		assert_post_tx_to_master/1, post_tx_to_master/1,
@@ -146,9 +146,9 @@ test_auto_redenomination_and_endowment_debt() ->
 		{ar_wallet:to_address(Pub2), 2000000000, <<>>},
 		{ar_wallet:to_address(Pub3), ?AR(1000000000000000000), <<>>}
 	]),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	?assert(?PRICE_2_6_8_TRANSITION_START == 2),
 	?assert(?PRICE_2_6_8_TRANSITION_BLOCKS == 2),
 	?assert(?PRICE_ADJUSTMENT_FREQUENCY == 2),

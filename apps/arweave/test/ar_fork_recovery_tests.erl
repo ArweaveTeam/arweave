@@ -4,7 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		start/1, slave_start/0, slave_start/1, start/2, slave_start/2, connect_to_slave/0,
+		slave_start/0, slave_start/1, slave_start/2,
 		disconnect_from_slave/0, assert_post_tx_to_slave/1,
 		slave_mine/0, assert_slave_wait_until_height/1, wait_until_height/1, rejoin_on_slave/0,
 		slave_wait_until_height/1, sign_tx/2, read_block_when_stored/1, slave_call/3]).
@@ -17,7 +17,7 @@ test_height_plus_one_fork_recovery() ->
 	%% Expect the other one to recover.
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	{_, B0} = start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
@@ -26,7 +26,7 @@ test_height_plus_one_fork_recovery() ->
 	wait_until_height(1),
 	ar_test_node:mine(),
 	MasterBI = wait_until_height(2),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	?assertEqual(MasterBI, slave_wait_until_height(2)),
 	disconnect_from_slave(),
 	ar_test_node:mine(),
@@ -46,7 +46,7 @@ test_height_plus_three_fork_recovery() ->
 	%% Expect the other one to recover.
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
@@ -61,7 +61,7 @@ test_height_plus_three_fork_recovery() ->
 	wait_until_height(3),
 	slave_mine(),
 	assert_slave_wait_until_height(3),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
 	MasterBI = wait_until_height(4),
 	?assertEqual(MasterBI, slave_wait_until_height(4)).
@@ -75,7 +75,7 @@ test_missing_txs_fork_recovery() ->
 	%% is expected fetch the missing transaction and apply the block.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	TX1 = sign_tx(Key, #{}),
@@ -97,7 +97,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	%% assert the transaction is re-mined.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	start(B0),
+	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	TX = #tx{ id = TXID } = sign_tx(Key, #{ denomination => 1, reward => ?AR(1) }),
@@ -110,7 +110,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	[{H2, _, _} | _] = wait_until_height(1),
 	ar_test_node:mine(),
 	[{H3, _, _}, {H2, _, _}, {_, _, _}] = wait_until_height(2),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	?assertMatch([{H3, _, _}, {H2, _, _}, {_, _, _}], slave_wait_until_height(2)),
 	slave_mine(),
 	[{H4, _, _} | _] = slave_wait_until_height(3),
@@ -134,14 +134,14 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Copy the key because we mine blocks on both nodes using the same key in this test.
 	{ok, _} = file:copy(Path, SlavePath),
 	[B0] = ar_weave:init([]),
-	start(B0, RewardAddr),
+	ar_test_node:start(B0, RewardAddr),
 	ar_test_node:start_peer(peer1, B0, RewardAddr),
 	disconnect_from_slave(),
 	slave_mine(),
 	[{H1, _, _} | _] = slave_wait_until_height(1),
 	ar_test_node:mine(),
 	[{H2, _, _} | _] = wait_until_height(1),
-	connect_to_slave(),
+	ar_test_node:connect_to_peer(peer1),
 	?assertNotEqual(H2, H1),
 	B1 = read_block_when_stored(H2),
 	B2 = fake_block_with_strong_cumulative_difficulty(B1, B0, 10000000000000000),
@@ -165,7 +165,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Assert the nodes have continued building on the original fork.
 	[{H3, _, _} | _] = slave_wait_until_height(2),
 	?assertNotEqual(B2#block.indep_hash, H3),
-	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow(1, ar_test_node:slave_ip(), binary),
+	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow(1, ar_test_node:peer_ip(peer1), binary),
 	?assertEqual(H2, B3#block.indep_hash).
 
 fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->

@@ -6,7 +6,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/3]).
 -import(ar_p3_tests, [raw_request/2, http_request/1]).
 
 -export([
@@ -448,7 +447,7 @@ all_endpoints_validate_test() ->
 		<<"/queue">>, <<"/tx/{hash}/status">>, <<"/tx/{hash}">>, <<"/tx2/{hash}">>,
 		<<"/unconfirmed_tx/{hash}">>, <<"/unconfirmed_tx2/{hash}">>, <<"/arql">>,
 		<<"/tx/{hash}/data.{ext}">>, <<"/sync_buckets">>, <<"/data_sync_record">>,
-		<<"/data_sync_record/{start}/{limit}">>, <<"/chunk/{offset}">>, <<"/chunk2/{offset}">>,
+		<<"/data_sync_record/{start }/{limit}">>, <<"/chunk/{offset}">>, <<"/chunk2/{offset}">>,
 		<<"/tx/{hash}/offset">>, <<"/chunk">>, <<"/block_announcement">>, <<"/block">>,
 		<<"/block2">>, <<"/wallet">>, <<"/tx">>, <<"/tx2">>, <<"/unsigned_tx">>, <<"/peers">>,
 		<<"/price/{bytes}">>, <<"/price2/{bytes}">>, <<"/optimistic_price/{bytes}">>,
@@ -714,7 +713,7 @@ test_no_rates_endpoint() ->
 	RewardAddress = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	[B0] = ar_weave:init(),
 	{ok, Config} = application:get_env(arweave, config),
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 
 	{<<"200">>, Body} = get_rates(),
 	DecodedBody = jiffy:decode(Body, [return_maps]),
@@ -728,7 +727,7 @@ test_empty_rates_endpoint() ->
 	[B0] = ar_weave:init(),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = empty_p3_config() },
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 
 	{<<"200">>, Body} = get_rates(),
 	DecodedBody = jiffy:decode(Body, [return_maps]),
@@ -744,7 +743,7 @@ test_empty_payments_and_services_rates_endpoint() ->
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	P3Config = #p3_config{ payments = #{}, services = #{}},
 	Config = BaseConfig#config{ p3 = P3Config },
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 
 	{<<"200">>, Body} = get_rates(),
 	DecodedBody = jiffy:decode(Body, [return_maps]),
@@ -762,7 +761,7 @@ test_rates_endpoint() ->
 	[B0] = ar_weave:init(),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
-	start(B0, RewardAddress, Config),
+	ar_test_node:start(B0, RewardAddress, Config),
 
 	{<<"200">>, Body} = get_rates(),
 	DecodedBody = jiffy:decode(Body, [return_maps]),
