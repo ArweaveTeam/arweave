@@ -48,7 +48,7 @@
 -define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 30000).
 
 %% Sometimes takes a while on a slow machine
--define(SLAVE_START_TIMEOUT, 40000).
+-define(PEER_START_TIMEOUT, 40000).
 %% Set the maximum number of retry attempts
 -define(MAX_BOOT_RETRIES, 3).
 
@@ -464,7 +464,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 
 
 start_peer(NodePrefix, Args) when is_list(Args) ->
-	{Peer, Port} = remote_call(NodePrefix, ?MODULE, start , Args, ?SLAVE_START_TIMEOUT),
+	{Peer, Port} = remote_call(NodePrefix, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
 	wait_until_joined(NodePrefix),
 	wait_until_syncs_genesis_data(NodePrefix),
 	{Peer, Port};

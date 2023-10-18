@@ -270,7 +270,7 @@ stop_master_application(Config) ->
 start_slave_application(Config) ->
 	ApplicationConfig = #config{
 		start_from_latest_state = false,
-		port = ?config(peer_port, Config),
+		port = ?config(slave_port, Config),
 		peers = [{127, 0, 0, 1, ?config(master_port, Config)}],
 		data_dir = ?config(data_dir, Config) ++ peer1,
 		metrics_dir = "metrics_slave"
