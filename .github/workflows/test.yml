@@ -99,34 +99,34 @@ jobs:
           RETRYABLE=1
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
-            erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee master.out &
-            ERL_MASTER_PID=$! # capture PID of the master background process
-            wait $ERL_MASTER_PID || EXIT_CODE=$?
-            kill -9 $ERL_MASTER_PID > /dev/null 2>&1 || true
-            # For debugging purposes, print the slave output if the tests failed
+            erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
+            ERL_MAIN_PID=$! # capture PID of the main background process
+            wait $ERL_MAIN_PID || EXIT_CODE=$?
+            kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
+            # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
-              if [[ -e slave.out ]]; then
-                first_line_slave=$(head -n 1 slave.out)
-                first_line_master=$(head -n 1 master.out)
+              if [[ -e peer1.out ]]; then
+                first_line_peer1=$(head -n 1 peer1.out)
+                first_line_main=$(head -n 1 main.out)
                 # Check if it is a retryable error
-                if [[ "$first_line_slave" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
+                if [[ "$first_line_peer1" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
                   echo "Retrying test because of inet_tcp error..."
                   RETRYABLE=1
                   sleep 1
-                elif [[ "$first_line_slave" == "Protocol 'inet_tcp': the name"* ]]; then
+                elif [[ "$first_line_peer1" == "Protocol 'inet_tcp': the name"* ]]; then
                   echo "Retrying test because of inet_tcp clash..."
                   RETRYABLE=1
                   sleep 1
-                elif [[ "$first_line_master" == "econnrefused"* ]]; then
+                elif [[ "$first_line_main" == "econnrefused"* ]]; then
                   echo "Retrying test because of econnrefused..."
                   RETRYABLE=1
                   sleep 1
                 else
-                  echo -e "\033[0;31m===> Test failed, printing the slave node's output...\033[0m"
-                  cat slave.out
+                  echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
+                  cat peer1.out
                 fi
               else
-                echo -e "\033[0;31m===> Test failed without slave output...\033[0m"
+                echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
               fi
             fi
           done

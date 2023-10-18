@@ -113,11 +113,11 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%% estimation from it.
 	TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
 	ar_test_node:connect_to_peer(peer1),
-	%% Post the transactions to slave.
+	%% Post the transactions to peer1.
 	lists:foreach(
 		fun(TX) ->
 			ar_test_node:assert_post_tx_to_peer(peer1, TX),
-			%% Expect transactions to be gossiped to master.
+			%% Expect transactions to be gossiped to main.
 			ar_test_node:assert_wait_until_receives_txs([TX])
 		end,
 		TXs
@@ -137,7 +137,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 		end,
 		TXs
 	),
-	%% Expect the block to be accepted by master.
+	%% Expect the block to be accepted by main.
 	BI = wait_until_height(1),
 	?assertEqual(
 		lists:sort(TXIDs),
@@ -165,9 +165,9 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% estimation from it.
 	FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
 	SecondTXSet = lists:map(fun(TXFun) -> TXFun() end, SecondTXSetFuns),
-	%% Disconnect the nodes so that slave does not receive txs.
+	%% Disconnect the nodes so that peer1 does not receive txs.
 	ar_test_node:disconnect_from(peer1),
-	%% Post transactions from the first set to master.
+	%% Post transactions from the first set to main.
 	lists:foreach(
 		fun(TX) ->
 			ar_test_node:post_tx_to_peer(main, TX)
@@ -175,7 +175,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 		SecondTXSet ++ FirstTXSet
 	),
 	?assertEqual([], ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
-	%% Post transactions from the second set to slave.
+	%% Post transactions from the second set to peer1.
 	lists:foreach(
 		fun(TX) ->
 			ar_test_node:assert_post_tx_to_peer(peer1, TX)
@@ -184,17 +184,17 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	),
 	%% Wait to make sure the tx will not be gossiped upon reconnect.
 	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
-	%% Connect the nodes and mine a block on slave.
+	%% Connect the nodes and mine a block on peer1.
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	%% Expect master to receive the block.
+	%% Expect main to receive the block.
 	BI = wait_until_height(1),
 	SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
 	?assertEqual(lists:sort(SecondSetTXIDs),
 			lists:sort((read_block_when_stored(hd(BI)))#block.txs)),
-	%% Expect master to have the set difference in the mempool.
+	%% Expect main to have the set difference in the mempool.
 	ar_test_node:assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
-	%% Mine a block on master and expect both transactions to be included.
+	%% Mine a block on main and expect both transactions to be included.
 	ar_test_node:mine(),
 	BI2 = wait_until_height(2),
 	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
@@ -610,10 +610,10 @@ joins_network_successfully() ->
 	%% Expect all the transactions to be present on the new node.
 	%%
 	%% Isolate the nodes. Mine 1 block with a transaction anchoring the
-	%% oldest block possible on slave. Mine a block on master so that it stops
-	%% tracking the block just referenced by slave. Reconnect the nodes, mine another
-	%% block with transactions anchoring the oldest block possible on slave.
-	%% Expect master to fork recover successfully.
+	%% oldest block possible on peer1. Mine a block on main so that it stops
+	%% tracking the block just referenced by peer1. Reconnect the nodes, mine another
+	%% block with transactions anchoring the oldest block possible on peer1.
+	%% Expect main to fork recover successfully.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(200000000), <<>>},
@@ -659,7 +659,7 @@ joins_network_successfully() ->
 	TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		ar_test_node:post_tx_to_peer(main, TX1),
-	%% Expect transactions to be on master.
+	%% Expect transactions to be on main.
 	lists:foreach(
 		fun({TX, _}) ->
 			?assert(
@@ -715,13 +715,13 @@ joins_network_successfully() ->
 	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI2)))#block.txs).
 
 recovers_from_forks(ForkHeight) ->
-	%% Mine a number of blocks with transactions on slave and master in sync,
+	%% Mine a number of blocks with transactions on peer1 and main in sync,
 	%% then mine another bunch independently.
 	%%
-	%% Mine an extra block on slave to make master fork recover to it.
+	%% Mine an extra block on peer1 to make main fork recover to it.
 	%% Expect the fork recovery to be successful.
 	%%
-	%% Try to replay all the past transactions on master. Expect the transactions to be rejected.
+	%% Try to replay all the past transactions on main. Expect the transactions to be rejected.
 	%%
 	%% Resubmit all the transactions from the orphaned fork. Expect them to be accepted
 	%% and successfully mined into a block.
@@ -758,7 +758,7 @@ recovers_from_forks(ForkHeight) ->
 				1 ->
 					ar_test_node:sign_tx(main, Key, UnsignedTX);
 				2 ->
-					sign_v1_tx(master, Key, UnsignedTX)
+					sign_v1_tx(main, Key, UnsignedTX)
 			end,
 			ar_test_node:assert_post_tx_to_peer(main, TX),
 			[TX]

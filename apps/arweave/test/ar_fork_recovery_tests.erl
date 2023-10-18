@@ -70,8 +70,8 @@ missing_txs_fork_recovery_test_() ->
 	{timeout, 120, fun test_missing_txs_fork_recovery/0}.
 
 test_missing_txs_fork_recovery() ->
-	%% Mine a block with a transaction on the slave node
-	%% but do not gossip the transaction. The master node
+	%% Mine a block with a transaction on the peer1 node
+	%% but do not gossip the transaction. The main node
 	%% is expected fetch the missing transaction and apply the block.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
@@ -92,8 +92,8 @@ orphaned_txs_are_remined_after_fork_recovery_test_() ->
 	{timeout, 120, fun test_orphaned_txs_are_remined_after_fork_recovery/0}.
 
 test_orphaned_txs_are_remined_after_fork_recovery() ->
-	%% Mine a transaction on slave, mine two blocks on master to
-	%% make the transaction orphaned. Mine a block on slave and
+	%% Mine a transaction on peer1, mine two blocks on main to
+	%% make the transaction orphaned. Mine a block on peer1 and
 	%% assert the transaction is re-mined.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),

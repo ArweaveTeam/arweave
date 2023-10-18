@@ -485,7 +485,7 @@ test_fork_recovery() ->
 test_fork_recovery(Split) ->
 	{Master, Slave, Wallet} = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {Split, 13}, v2, ?AR(10)),
-	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(TX1#tx.id)]),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(TX1#tx.id)]),
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(B1#block.indep_hash),
 			B1#block.height]),
@@ -496,14 +496,14 @@ test_fork_recovery(Split) ->
 	ar_test_node:disconnect_from(peer1),
 	{SlaveTX2, SlaveChunks2} = tx(Wallet, {Split, 15}, v2, ?AR(10)),
 	{SlaveTX3, SlaveChunks3} = tx(Wallet, {Split, 17}, v2, ?AR(10)),
-	?debugFmt("Posting tx to slave ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
-	?debugFmt("Posting tx to slave ~s.~n", [ar_util:encode(SlaveTX3#tx.id)]),
+	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
+	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(SlaveTX3#tx.id)]),
 	SlaveB2 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
 			[SlaveTX2, SlaveTX3]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(SlaveB2#block.indep_hash),
 			SlaveB2#block.height]),
 	{MasterTX2, MasterChunks2} = tx(Wallet, {Split, 14}, v2, ?AR(10)),
-	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(MasterTX2#tx.id)]),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MasterTX2#tx.id)]),
 	MasterB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
 			[MasterTX2]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB2#block.indep_hash),
@@ -511,7 +511,7 @@ test_fork_recovery(Split) ->
 	_SlaveProofs2 = post_proofs(peer1, SlaveB2, SlaveTX2, SlaveChunks2),
 	_SlaveProofs3 = post_proofs(peer1, SlaveB2, SlaveTX3, SlaveChunks3),
 	{SlaveTX4, SlaveChunks4} = tx(Wallet, {Split, 22}, v2, ?AR(10)),
-	?debugFmt("Posting tx to slave ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
+	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
 	SlaveB3 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
 			[SlaveTX4]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(SlaveB3#block.indep_hash),
@@ -520,7 +520,7 @@ test_fork_recovery(Split) ->
 	ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
 	MasterProofs2 = post_proofs(main, MasterB2, MasterTX2, MasterChunks2),
 	{MasterTX3, MasterChunks3} = tx(Wallet, {Split, 16}, v2, ?AR(10)),
-	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(MasterTX3#tx.id)]),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MasterTX3#tx.id)]),
 	MasterB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
 			[MasterTX3]),
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB3#block.indep_hash),
@@ -531,10 +531,10 @@ test_fork_recovery(Split) ->
 	slave_wait_until_syncs_chunks(MasterProofs2, UpperBound2),
 	slave_wait_until_syncs_chunks(MasterProofs3, UpperBound2),
 	slave_wait_until_syncs_chunks(Proofs1),
-	%% The slave node will return the orphaned transactions to the mempool
+	%% The peer1 node will return the orphaned transactions to the mempool
 	%% and gossip them.
-	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
-	?debugFmt("Posting tx to master ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
 	ar_test_node:post_tx_to_peer(main, SlaveTX2),
 	ar_test_node:post_tx_to_peer(main, SlaveTX4),
 	ar_test_node:assert_wait_until_receives_txs([SlaveTX2, SlaveTX4]),
@@ -542,7 +542,7 @@ test_fork_recovery(Split) ->
 	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB4#block.indep_hash),
 			MasterB4#block.height]),
 	Proofs4 = build_proofs(MasterB4, SlaveTX4, SlaveChunks4),
-	%% We did not submit proofs for SlaveTX4 to master - they are supposed to be still stored
+	%% We did not submit proofs for SlaveTX4 to main - they are supposed to be still stored
 	%% in the disk pool.
 	slave_wait_until_syncs_chunks(Proofs4),
 	UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),

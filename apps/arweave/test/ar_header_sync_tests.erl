@@ -51,7 +51,7 @@ test_syncs_headers() ->
 	ar_disksup:pause(),
 	ar_events:send(disksup, {remaining_disk_space, "default", true, 0, 0}),
 	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
-	NoSpaceTX = sign_v1_tx(master, Wallet,
+	NoSpaceTX = sign_v1_tx(main, Wallet,
 		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
 	ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),
 	ar_test_node:mine(),
@@ -68,7 +68,7 @@ test_syncs_headers() ->
 		fun() ->
 			%% Keep mining blocks. At some point the cleanup procedure will
 			%% kick in and remove the oldest files.
-			TX = sign_v1_tx(master, Wallet, #{
+			TX = sign_v1_tx(main, Wallet, #{
 				data => random_v1_data(200 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
 			ar_test_node:assert_post_tx_to_peer(main, TX),
 			ar_test_node:mine(),

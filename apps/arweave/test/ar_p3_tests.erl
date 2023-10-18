@@ -793,7 +793,7 @@ e2e_restart_p3_service() ->
 	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:disconnect_from(peer1),
 
-	%% This deposit will be too old and will not be scanned when the master node comes back up.
+	%% This deposit will be too old and will not be scanned when the main node comes back up.
 	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 
@@ -808,7 +808,7 @@ e2e_restart_p3_service() ->
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 3),
 
-	%% Stop the master node. The slave will continue to mine. When the master comes back up
+	%% Stop the main node. The peer1 will continue to mine. When the main comes back up
 	%% it should correctly scan all the blocks missed since disconnectin
 	%% (up to ?MAX_BLOCK_SCAN blocks)
 	stop(),

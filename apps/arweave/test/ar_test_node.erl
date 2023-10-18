@@ -19,7 +19,7 @@
 		disconnect_from/1,
 		generate_node_namespace/0, get_unused_port/0,
 		wait_until_height/1,
-		assert_wait_until_height/2, wait_until_block_index/1,
+		assert_wait_until_height/2, wait_until_block_index/1, wait_until_block_index/2,
 		wait_until_mining_paused/0,
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
@@ -70,7 +70,7 @@ try_boot_peer(NodePrefix, Retries) ->
     Cmd = io_lib:format(
         "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 " ++
-		"> logs/~s.out 2>&1 &",
+		"> ~s.out 2>&1 &",
         [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, NodeName]),
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
@@ -401,28 +401,28 @@ remote_call(NodePrefix, Module, Function, Args, Timeout) ->
 %%% Legacy public interface.
 %%%===================================================================
 
-%% @doc Start a fresh master node.
+%% @doc Start a fresh main node.
 start() ->
 	[B0] = ar_weave:init(),
 	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 			element(2, application:get_env(arweave, config))).
 
-%% @doc Start a fresh master node with the given genesis block.
+%% @doc Start a fresh main node with the given genesis block.
 start(B0) ->
 	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 			element(2, application:get_env(arweave, config))).
 
-%% @doc Start a fresh master node with the given genesis block and mining address.
+%% @doc Start a fresh main node with the given genesis block and mining address.
 start(B0, RewardAddr) ->
 	start(B0, RewardAddr, element(2, application:get_env(arweave, config))).
 
-%% @doc Start a fresh master node with the given genesis block, mining address, and config.
+%% @doc Start a fresh main node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
 	StorageModules = lists:flatten([[{20 * 1024 * 1024, N, {spora_2_6, RewardAddr}},
 			{20 * 1024 * 1024, N, spora_2_5}] || N <- lists:seq(0, 8)]),
 	start(B0, RewardAddr, Config, StorageModules).
 
-%% @doc Start a fresh master node with the given genesis block, mining address, config,
+%% @doc Start a fresh main node with the given genesis block, mining address, config,
 %% and storage modules.
 %%
 %% Note: the Config provided here is written to disk. This is fine if it's the default Config,
