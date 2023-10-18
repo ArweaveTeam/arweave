@@ -162,7 +162,7 @@ setup() ->
 	BadTXIDs3 = [lists:nth(4, TXIDs), lists:nth(6, TXIDs)], % Ranges.
 	Routes = [{"/[...]", ar_tx_blacklist_tests, BadTXIDs2}],
 	{ok, _PID} =
-		slave_call(cowboy, start_clear, [
+		ar_test_node:remote_call(peer1, cowboy, start_clear, [
 			ar_tx_blacklist_test_listener,
 			[{port, 1985}],
 			#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
@@ -210,7 +210,7 @@ setup() ->
 setup_slave() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100000000), <<>>}]),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	{B0, Wallet}.
 
 create_txs(Wallet) ->
@@ -261,7 +261,7 @@ create_files(BadTXIDs, [{Start1, End1}, {Start2, End2}, {Start3, End3}]) ->
 	[Filename || {Filename, _} <- Files].
 
 random_filename() ->
-	{ok, Config} = slave_call(application, get_env, [arweave, config]),
+	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	filename:join(Config#config.data_dir,
 		"ar-tx-blacklist-tests-transaction-blacklist-"
 		++
@@ -444,7 +444,7 @@ decode_chunk(EncodedProof) ->
 
 teardown() ->
 	{ok, Config} = application:get_env(arweave, config),
-	ok = slave_call(cowboy, stop_listener, [ar_tx_blacklist_test_listener]),
+	ok = ar_test_node:remote_call(peer1, cowboy, stop_listener, [ar_tx_blacklist_test_listener]),
 	application:set_env(arweave, config, Config#config{
 		transaction_blacklist_files = [],
 		transaction_blacklist_urls = [],

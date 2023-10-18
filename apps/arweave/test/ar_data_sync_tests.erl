@@ -718,7 +718,7 @@ packs_chunks_depending_on_packing_threshold_test_() ->
 
 test_packs_chunks_depending_on_packing_threshold() ->
 	MasterWallet = ar_wallet:new_keyfile(),
-	SlaveWallet = slave_call(ar_wallet, new_keyfile, []),
+	SlaveWallet = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
 	MasterAddr = ar_wallet:to_address(MasterWallet),
 	SlaveAddr = ar_wallet:to_address(SlaveWallet),
 	DataMap =
@@ -884,7 +884,7 @@ get_records_with_proofs(B, TX, Chunks) ->
 
 setup_nodes() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	SlaveAddr = ar_wallet:to_address(slave_call(ar_wallet, new_keyfile, [])),
+	SlaveAddr = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 	setup_nodes(Addr, SlaveAddr).
 
 setup_nodes(MasterAddr, SlaveAddr) ->
@@ -892,8 +892,8 @@ setup_nodes(MasterAddr, SlaveAddr) ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
 	{Master, _} = start(B0, MasterAddr, Config),
-	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
-	{Slave, _} = slave_start(B0, SlaveAddr, SlaveConfig),
+	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{Slave, _} = ar_test_node:start_peer(peer1, B0, SlaveAddr, SlaveConfig),
 	connect_to_slave(),
 	{Master, Slave, Wallet}.
 
@@ -1105,7 +1105,7 @@ get_tx_data(TXID) ->
 	}).
 
 get_tx_offset_from_slave(TXID) ->
-  {ok, Config} = slave_call(application, get_env, [arweave, config]),
+  {ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_http:req(#{
 		method => get,
 		peer => {127, 0, 0, 1, Config#config.port},

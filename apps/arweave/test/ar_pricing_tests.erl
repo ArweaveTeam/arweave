@@ -147,7 +147,7 @@ test_auto_redenomination_and_endowment_debt() ->
 		{ar_wallet:to_address(Pub3), ?AR(1000000000000000000), <<>>}
 	]),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	?assert(?PRICE_2_6_8_TRANSITION_START == 2),
 	?assert(?PRICE_2_6_8_TRANSITION_BLOCKS == 2),

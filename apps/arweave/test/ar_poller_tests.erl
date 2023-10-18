@@ -16,7 +16,7 @@ test_polling() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	TXs =
 		lists:map(
@@ -59,7 +59,7 @@ test_polling() ->
 	[{SH13, _, _} | _] = SBI12 = slave_wait_until_height(12),
 	?assertNotEqual(SH13, MH13),
 	BM13 = ar_block_cache:get(block_cache, MH13),
-	BS13 = ar_test_node:slave_call(ar_block_cache, get, [block_cache, SH13]),
+	BS13 = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, SH13]),
 	CDiffM13 = BM13#block.cumulative_diff,
 	CDiffS13 = BS13#block.cumulative_diff,
 	connect_to_slave(),
@@ -74,7 +74,7 @@ test_polling() ->
 					?debugFmt("Case 2.", []),
 					ar_test_node:assert_wait_until_block_index(SBI12),
 					?assertMatch([{SH13, _, _} | _],
-							ar_test_node:slave_call(ar_node, get_block_index, []));
+							ar_test_node:remote_call(peer1, ar_node, get_block_index, []));
 				false ->
 					?debugFmt("Case 3.", []),
 					slave_mine(),

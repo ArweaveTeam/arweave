@@ -30,7 +30,7 @@ test_syncs_headers() ->
 		fun(Height) ->
 			{ok, B} = ar_util:do_until(
 				fun() ->
-					case slave_call(ar_storage, read_block, [Height, BI]) of
+					case ar_test_node:remote_call(peer1, ar_storage, read_block, [Height, BI]) of
 						unavailable ->
 							unavailable;
 						B2 ->
@@ -42,7 +42,7 @@ test_syncs_headers() ->
 			),
 			MasterB = ar_storage:read_block(Height, ar_node:get_block_index()),
 			?assertEqual(B, MasterB),
-			TXs = slave_call(ar_storage, read_tx, [B#block.txs]),
+			TXs = ar_test_node:remote_call(peer1, ar_storage, read_tx, [B#block.txs]),
 			MasterTXs = ar_storage:read_tx(B#block.txs),
 			?assertEqual(TXs, MasterTXs)
 		end,

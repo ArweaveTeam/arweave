@@ -736,23 +736,23 @@ test_calculate_targets() ->
 	?assertEqual({0.0, 0.0}, Result1),
 
     Result2 = calculate_targets(
-		["peer1", "peer2"],
+		["peer1", "peer1"],
 		#{
 			"peer1" => #performance{current_rating = 0, average_latency = 0},
-			"peer2" => #performance{current_rating = 0, average_latency = 0}
+			"peer1" => #performance{current_rating = 0, average_latency = 0}
 		}),
     ?assertEqual({0.0, 0.0}, Result2),
 	
 	Result3 = calculate_targets(
-		["peer1", "peer2"],
+		["peer1", "peer1"],
 		#{
 			"peer1" => #performance{current_rating = 5, average_latency = 2},
-			"peer2" => #performance{current_rating = 3, average_latency = 4}
+			"peer1" => #performance{current_rating = 3, average_latency = 4}
 		}),
     ?assertEqual({3.0, 8.0}, Result3),
 
 	Result4 = calculate_targets(
-		["peer1", "peer2"],
+		["peer1", "peer1"],
 		#{
 			"peer1" => #performance{current_rating = 5, average_latency = 2}
 		}),
@@ -762,7 +762,7 @@ test_calculate_targets() ->
 		["peer1"],
 		#{
 			"peer1" => #performance{current_rating = 5, average_latency = 2},
-			"peer2" => #performance{current_rating = 3, average_latency = 4}
+			"peer1" => #performance{current_rating = 3, average_latency = 4}
 		}),
     ?assertEqual({2.0, 5.0}, Result5).
 

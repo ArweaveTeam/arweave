@@ -20,7 +20,7 @@ test_v1_transactions_after_2_0() ->
 		{ar_wallet:to_address(Pub2), ?AR(100), <<>>}
 	]),
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	TXs = generate_txs(Key, fun ar_test_node:sign_v1_tx/2),
 	lists:foreach(
@@ -78,7 +78,7 @@ test_v2_transactions_after_2_0() ->
 		{ar_wallet:to_address(Pub2), ?AR(100), <<>>}
 	]),
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	TXs = generate_txs(Key, fun ar_test_node:sign_tx/2),
 	lists:foreach(
@@ -134,7 +134,7 @@ test_recall_byte_on_the_border() ->
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	%% Generate one-byte transactions so that recall byte is often on the
 	%% the border between two transactions.
@@ -175,7 +175,7 @@ test_ignores_transactions_with_invalid_data_root() ->
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	%% Generate transactions where half of them are valid and the other
 	%% half has an invalid data_root.

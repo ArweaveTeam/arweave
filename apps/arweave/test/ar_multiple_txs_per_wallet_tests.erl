@@ -13,7 +13,7 @@
 	assert_post_tx_to_slave/1, assert_post_tx_to_slave/2,
 	assert_post_tx_to_master/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2,
 	sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1, get_tx_confirmations/2,
-	disconnect_from_slave/0, read_block_when_stored/1, random_v1_data/1, slave_peer/0]).
+	disconnect_from_slave/0, read_block_when_stored/1, random_v1_data/1, ar_test_node:slave_ip/0]).
 
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
@@ -112,7 +112,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Expect them to be accepted, gossiped to the peer and included into the block.
 	%% Expect the block to be accepted by the peer.
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
@@ -133,11 +133,11 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		lists:sort(TXIDs),
-		lists:sort((slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
+		lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
 	),
 	lists:foreach(
 		fun(TX) ->
-			?assertEqual(TX, slave_call(ar_storage, read_tx, [TX#tx.id]))
+			?assertEqual(TX, ar_test_node:remote_call(peer1, ar_storage, read_tx, [TX#tx.id]))
 		end,
 		TXs
 	),
@@ -164,7 +164,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
@@ -178,7 +178,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 		end,
 		SecondTXSet ++ FirstTXSet
 	),
-	?assertEqual([], slave_call(ar_mempool, get_all_txids, [])),
+	?assertEqual([], ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
 	%% Post transactions from the second set to slave.
 	lists:foreach(
 		fun(TX) ->
@@ -209,7 +209,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 
 returns_error_when_txs_exceed_balance(B0, TXs) ->
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 
 	connect_to_slave(),
 
@@ -240,7 +240,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, BelowBalanceTXs),
 	?assertEqual(
 		lists:sort(TXIDs),
-		lists:sort((slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
+		lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
 	),
 	BI = wait_until_height(1),
 	?assertEqual(
@@ -249,15 +249,15 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	),
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
-	slave_call(ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
+	ar_test_node:remote_call(peer1, ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
 	{ok, {{<<"400">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => slave_peer(),
+			peer => ar_test_node:slave_ip(),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
-	?assertEqual({ok, ["overspend"]}, slave_call(ar_tx_db, get_error_codes,
+	?assertEqual({ok, ["overspend"]}, ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes,
 			[ExceedBalanceTX#tx.id])).
 
 rejects_transactions_above_the_size_limit_test_() ->
@@ -272,7 +272,7 @@ test_rejects_transactions_above_the_size_limit() ->
 		{ar_wallet:to_address(Pub2), ?AR(20), <<>>}
 	]),
 	%% Start the node.
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	SmallData = random_v1_data(?TX_DATA_SIZE_LIMIT),
 	BigData = random_v1_data(?TX_DATA_SIZE_LIMIT + 1),
@@ -285,7 +285,7 @@ test_rejects_transactions_above_the_size_limit() ->
 	),
 	?assertMatch(
 		{ok, ["tx_fields_too_large"]},
-		slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id])
+		ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes, [BadTX#tx.id])
 	).
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
@@ -305,7 +305,7 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	TX1 = sign_v1_tx(Key),
 	assert_post_tx_to_slave(TX1),
@@ -319,7 +319,7 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	assert_post_tx_to_slave(TX4),
 	slave_mine(),
 	SlaveBI = assert_slave_wait_until_height(2),
-	B2 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
+	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
 
 does_not_allow_to_spend_mempool_tokens_test_() ->
@@ -341,7 +341,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 		{ar_wallet:to_address(Pub1), ?AR(20), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(0), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
 			quantity => ?AR(2) }),
@@ -357,10 +357,10 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 		}
 	),
 	{ok, {{<<"400">>, _}, _, _, _, _}} = post_tx_to_slave(TX2),
-	?assertEqual({ok, ["overspend"]}, slave_call(ar_tx_db, get_error_codes, [TX2#tx.id])),
+	?assertEqual({ok, ["overspend"]}, ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes, [TX2#tx.id])),
 	slave_mine(),
 	SlaveBI = assert_slave_wait_until_height(1),
-	B1 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
+	B1 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
 	?assertEqual([TX1#tx.id], B1#block.txs),
 	TX3 = sign_v1_tx(
 		Key2,
@@ -375,7 +375,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 	assert_post_tx_to_slave(TX3),
 	slave_mine(),
 	SlaveBI2 = assert_slave_wait_until_height(2),
-	B2 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI2)]),
+	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI2)]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
 
 does_not_allow_to_replay_empty_wallet_txs_test_() ->
@@ -393,7 +393,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(50), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => <<>> }),
 	assert_post_tx_to_slave(TX1),
@@ -403,7 +403,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => slave_peer(),
+			peer => ar_test_node:slave_ip(),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	Balance = binary_to_integer(Body),
@@ -415,7 +415,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => slave_peer(),
+			peer => ar_test_node:slave_ip(),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	?assertEqual(0, binary_to_integer(Body2)),
@@ -425,7 +425,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	slave_mine(),
 	assert_slave_wait_until_height(3),
 	%% Remove the replay TX from the ignore list (to simulate e.g. a node restart).
-	slave_call(ets, delete, [ignored_ids, TX2#tx.id]),
+	ar_test_node:remote_call(peer1, ets, delete, [ignored_ids, TX2#tx.id]),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		post_tx_to_slave(TX2).
 
@@ -435,7 +435,7 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	%% Expect them to be mined into the corresponding number of blocks so that
 	%% each block fits under the limit.
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	lists:foreach(
 		fun(TX) ->
@@ -453,7 +453,7 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 			?assertEqual(
 				lists:sort(GroupTXIDs),
 				lists:sort(
-					(slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs
+					(ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs
 				),
 				io_lib:format("Height ~B", [Height])
 			),
@@ -479,7 +479,7 @@ mines_format_2_txs_without_size_limit() ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	ChunkSize = ?MEMPOOL_DATA_SIZE_LIMIT div (?BLOCK_TX_COUNT_LIMIT + 1),
 	lists:foreach(
@@ -513,7 +513,7 @@ rejects_txs_with_outdated_anchors_test_() ->
 		[B0] = ar_weave:init([
 			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 		]),
-		{_Slave, _} = slave_start(B0),
+		{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 		slave_mine_blocks(?MAX_TX_ANCHOR_DEPTH),
 		assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH),
 		TX1 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
@@ -532,7 +532,7 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	BigChunk = random_v1_data(?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE),
 	TXs = lists:map(
 		fun(N) ->
@@ -547,13 +547,13 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 5)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
 	%% There is no place for the last transaction in the mempool.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
 
@@ -565,7 +565,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT div 2),
 	TXs = lists:map(
 		fun(N) ->
@@ -582,13 +582,13 @@ drops_v2_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 10)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 10)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
 	%% The last TX is twice as big and twice as valuable so it replaces two
 	%% other transactions in the memory pool.
 	?assertEqual([Last#tx.id | [TX#tx.id || TX <- lists:sublist(TXs, 8)]], Mempool2),
@@ -596,7 +596,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	StrippedTX = sign_tx(Key, #{ last_tx => B0#block.indep_hash,
 			data => BigChunk, tags => [{<<"nonce">>, integer_to_binary(12)}] }),
 	assert_post_tx_to_slave(StrippedTX#tx{ data = <<>> }),
-	{ok, Mempool3} = ar_http_iface_client:get_mempool(slave_peer()),
+	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:slave_ip()),
 	?assertEqual([Last#tx.id] ++ [TX#tx.id || TX <- lists:sublist(TXs, 8)]
 			++ [StrippedTX#tx.id], Mempool3).
 
@@ -624,7 +624,7 @@ joins_network_successfully() ->
 		{Addr = crypto:strong_rand_bytes(32), ?AR(200000000), <<>>},
 		{crypto:strong_rand_bytes(32), ?AR(200000000), <<>>}
 	]),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
 			{TX, AnchorType} = case rand:uniform(4) of
@@ -647,7 +647,7 @@ joins_network_successfully() ->
 			assert_slave_wait_until_height(Height),
 			ar_util:do_until(
 				fun() ->
-					slave_call(ar_mempool, get_all_txids, []) == []
+					ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, []) == []
 				end,
 				200,
 				1000
@@ -658,7 +658,7 @@ joins_network_successfully() ->
 		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
 	),
 	_Master = join_on_slave(),
-	BI = slave_call(ar_node, get_block_index, []),
+	BI = ar_test_node:remote_call(peer1, ar_node, get_block_index, []),
 	assert_wait_until_block_index(BI),
 	TX1 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
@@ -734,7 +734,7 @@ recovers_from_forks(ForkHeight) ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	{ok, Config} = application:get_env(arweave, config),
 	MasterPort = Config#config.port,
@@ -927,7 +927,7 @@ forget_txs(TXs) ->
 
 slave_assert_block_txs(TXs, BI) ->
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	B = slave_call(ar_test_node, read_block_when_stored, [hd(BI)]),
+	B = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(BI)]),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
 
 assert_block_txs(TXs, BI) ->

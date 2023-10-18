@@ -272,7 +272,7 @@ candidate_to_json_struct_test() ->
 		cache_ref = {rand:uniform(100), rand:uniform(100), rand:uniform(100), make_ref()},
 		chunk1 = crypto:strong_rand_bytes(256 * 1024),
 		chunk2 = crypto:strong_rand_bytes(256 * 1024),
-		cm_lead_peer = ar_test_node:master_peer(),
+		cm_lead_peer = ar_test_node:main_ip(),
 		session_ref = make_ref()}).
 
 h2_inputs_to_json_struct_test() ->

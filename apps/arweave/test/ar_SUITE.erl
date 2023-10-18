@@ -226,7 +226,7 @@ start_slave_node(_, Attempts) when Attempts > 100 ->
 
 start_slave_node(Config, Attempts) ->
 		Config1 = case ?config(slave, Config) of
-    	undefined -> [{slave, list_to_atom(ar_test_node:generate_slave_node_name())} | Config];
+    	undefined -> [{slave, list_to_atom(ar_test_node:generate_node_namespace())} | Config];
     	_ -> Config
 		end,
 		ct:print("Starting slave node ~p~n", [?config(slave, Config1)]),
@@ -270,9 +270,9 @@ stop_master_application(Config) ->
 start_slave_application(Config) ->
 	ApplicationConfig = #config{
 		start_from_latest_state = false,
-		port = ?config(slave_port, Config),
+		port = ?config(peer_port, Config),
 		peers = [{127, 0, 0, 1, ?config(master_port, Config)}],
-		data_dir = ?config(data_dir, Config) ++ "slave",
+		data_dir = ?config(data_dir, Config) ++ peer1,
 		metrics_dir = "metrics_slave"
 	},
 	ar_storage:ensure_directories(ApplicationConfig#config.data_dir),
@@ -285,7 +285,7 @@ start_slave_application(Config, ApplicationConfig) ->
 	Config.
 
 stop_slave_application(Config) ->
-	Slave = ar_test_node:slave_node_name(),
+	Slave = ar_test_node:peer_node(peer1),
 	ct_rpc:call(Slave, ar_test_lib, stop_test_application, []).
 
 write_genesis_files(DataDir, B0) ->

@@ -5,7 +5,7 @@
 
 -import(ar_test_node, [
 		start/1, slave_start/0, slave_start/1, start/2, slave_start/2, connect_to_slave/0,
-		slave_peer/0, master_peer/0, disconnect_from_slave/0, assert_post_tx_to_slave/1,
+		disconnect_from_slave/0, assert_post_tx_to_slave/1,
 		slave_mine/0, assert_slave_wait_until_height/1, wait_until_height/1, rejoin_on_slave/0,
 		slave_wait_until_height/1, sign_tx/2, read_block_when_stored/1, slave_call/3]).
 
@@ -18,7 +18,7 @@ test_height_plus_one_fork_recovery() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
 	{_, B0} = start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
 	assert_slave_wait_until_height(1),
@@ -47,7 +47,7 @@ test_height_plus_three_fork_recovery() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
 	assert_slave_wait_until_height(1),
@@ -76,7 +76,7 @@ test_missing_txs_fork_recovery() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	TX1 = sign_tx(Key, #{}),
 	assert_post_tx_to_slave(TX1),
@@ -98,13 +98,13 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	TX = #tx{ id = TXID } = sign_tx(Key, #{ denomination => 1, reward => ?AR(1) }),
 	assert_post_tx_to_slave(TX),
 	slave_mine(),
 	[{H1, _, _} | _] = slave_wait_until_height(1),
-	H1TXIDs = (slave_call(ar_test_node, read_block_when_stored, [H1]))#block.txs,
+	H1TXIDs = (ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [H1]))#block.txs,
 	?assertEqual([TXID], H1TXIDs),
 	ar_test_node:mine(),
 	[{H2, _, _} | _] = wait_until_height(1),
@@ -114,7 +114,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	?assertMatch([{H3, _, _}, {H2, _, _}, {_, _, _}], slave_wait_until_height(2)),
 	slave_mine(),
 	[{H4, _, _} | _] = slave_wait_until_height(3),
-	H4TXIDs = (slave_call(ar_test_node, read_block_when_stored, [H4]))#block.txs,
+	H4TXIDs = (ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [H4]))#block.txs,
 	?debugFmt("Expecting ~s to be re-mined.~n", [ar_util:encode(TXID)]),
 	?assertEqual([TXID], H4TXIDs).
 
@@ -130,12 +130,12 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	RewardAddr = ar_wallet:to_address(RewardKey),
 	WalletName = ar_util:encode(RewardAddr),
 	Path = ar_wallet:wallet_filepath(WalletName),
-	SlavePath = slave_call(ar_wallet, wallet_filepath, [WalletName]),
+	SlavePath = ar_test_node:remote_call(peer1, ar_wallet, wallet_filepath, [WalletName]),
 	%% Copy the key because we mine blocks on both nodes using the same key in this test.
 	{ok, _} = file:copy(Path, SlavePath),
 	[B0] = ar_weave:init([]),
 	start(B0, RewardAddr),
-	slave_start(B0, RewardAddr),
+	ar_test_node:start_peer(peer1, B0, RewardAddr),
 	disconnect_from_slave(),
 	slave_mine(),
 	[{H1, _, _} | _] = slave_wait_until_height(1),
@@ -149,7 +149,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	?debugFmt("Fake block: ~s.", [ar_util:encode(B2H)]),
 	ok = ar_events:subscribe(block),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-			ar_http_iface_client:send_block_binary(master_peer(), B2#block.indep_hash,
+			ar_http_iface_client:send_block_binary(ar_test_node:main_ip(), B2#block.indep_hash,
 					ar_serialize:block_to_binary(B2))),
 	receive
 		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
@@ -165,7 +165,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Assert the nodes have continued building on the original fork.
 	[{H3, _, _} | _] = slave_wait_until_height(2),
 	?assertNotEqual(B2#block.indep_hash, H3),
-	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow(1, slave_peer(), binary),
+	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow(1, ar_test_node:slave_ip(), binary),
 	?assertEqual(H2, B3#block.indep_hash).
 
 fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->

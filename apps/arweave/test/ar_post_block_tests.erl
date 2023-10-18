@@ -9,19 +9,19 @@
 		wait_until_height/1, sign_tx/2, sign_tx/3, post_block/2,
 		send_new_block/2, sign_block/3,
 		read_block_when_stored/2,
-		master_peer/0, slave_peer/0, slave_mine/0, assert_slave_wait_until_height/1,
+		slave_mine/0, assert_slave_wait_until_height/1,
 		slave_call/3, assert_post_tx_to_master/1, assert_post_tx_to_slave/1,
 		test_with_mocked_functions/2]).
 
 start_node() ->
 	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	connect_to_slave().
 
 reset_node() ->
 	ar_blacklist_middleware:reset(),
-	slave_call(ar_blacklist_middleware, reset, []),
+	ar_test_node:remote_call(peer1, ar_blacklist_middleware, reset, []),
 	connect_to_slave(),
 
 	Height = slave_height(),
@@ -29,10 +29,10 @@ reset_node() ->
 	disconnect_from_slave(),
 	slave_mine(),
 	[{H, _, _} | _] = ar_test_node:assert_slave_wait_until_height(Height + 1),
-	B = slave_call(ar_block_cache, get, [block_cache, H]),
-	PrevB = slave_call(ar_block_cache, get, [block_cache, PrevH]),
-	{ok, Config} = slave_call(application, get_env, [arweave, config]),
-	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
+	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
+	PrevB = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, PrevH]),
+	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	Key = element(1, ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
 	{Key, B, PrevB}.
 
 setup_all_post_2_6() ->
@@ -91,45 +91,45 @@ post_2_7_test_() ->
 test_mitm_poa_chunk_tamper_warn({_Key, B, _PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa.chunk is tampered with.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(master_peer()),
+	assert_not_banned(ar_test_node:main_ip()),
 	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
 	post_block(B2, invalid_first_chunk),
-	assert_not_banned(master_peer()).
+	assert_not_banned(ar_test_node:main_ip()).
 
 test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa2.chunk is tampered with.
 	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(master_peer()),
+	assert_not_banned(ar_test_node:main_ip()),
 	B2 = sign_block(B#block{ 
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_second_chunk),
-	assert_not_banned(master_peer()).
+	assert_not_banned(ar_test_node:main_ip()).
 
 test_reject_block_invalid_chunk_hash_ban({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk doesn't match
 	%% the chunk_hash
 	ok = ar_events:subscribe(block),
-	assert_not_banned(master_peer()),
+	assert_not_banned(ar_test_node:main_ip()),
 	B2 = sign_block(B#block{
 		poa = #poa{ chunk = <<>> },
 		chunk_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_chunk_hash),
-	assert_banned(master_peer()).
+	assert_banned(ar_test_node:main_ip()).
 
 test_reject_block_invalid_chunk2_hash_ban({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk2 doesn't match
 	%% the chunk2_hash
 	ok = ar_events:subscribe(block),
-	assert_not_banned(master_peer()),
+	assert_not_banned(ar_test_node:main_ip()),
 	B2 = sign_block(B#block{
 		recall_byte2 = 1000,
 		poa2 = #poa{ chunk = <<>> },
 		chunk2_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_chunk2_hash),
-	assert_banned(master_peer()).
+	assert_banned(ar_test_node:main_ip()).
 
 test_reject_block_invalid_proof_size({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
@@ -255,21 +255,21 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 
 test_mitm_poa_chunk_tamper_ban({_Key, B, _PrevB}) ->
 	ok = ar_events:subscribe(block),
-	assert_not_banned(master_peer()),
+	assert_not_banned(ar_test_node:main_ip()),
 	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
 	post_block(B2, invalid_pow),
-	assert_banned(master_peer()).
+	assert_banned(ar_test_node:main_ip()).
 
 test_mitm_poa2_chunk_tamper_ban({Key, B, PrevB}) ->
 	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(master_peer()),
+	assert_not_banned(ar_test_node:main_ip()),
 	B2 = sign_block(B#block{ 
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_pow),
-	assert_banned(master_peer()).
+	assert_banned(ar_test_node:main_ip()).
 
 %% ------------------------------------------------------------------------------------------
 %% Others tests
@@ -309,11 +309,11 @@ rejects_invalid_blocks_test_() ->
 test_rejects_invalid_blocks() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
-	{_Slave, _} = slave_start(B0),
+	{_Slave, _} = ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
-	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
+	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	%% Try to post an invalid block.
 	InvalidH = crypto:strong_rand_bytes(48),
 	ok = ar_events:subscribe(block),
@@ -324,7 +324,7 @@ test_rejects_invalid_blocks() ->
 	%% The valid block with the ID from the failed attempt can still go through.
 	post_block(B1, valid),
 	%% Try to post the same block again.
-	Peer = master_peer(),
+	Peer = ar_test_node:main_ip(),
 	?assertMatch({ok, {{<<"208">>, _}, _, _, _, _}}, send_new_block(Peer, B1)),
 	%% Correct hash, but invalid signature.
 	B2Preimage = B1#block{ signature = <<>> },
@@ -332,8 +332,8 @@ test_rejects_invalid_blocks() ->
 	post_block(B2, invalid_signature),
 	%% Nonce limiter output too far in the future.
 	Info1 = B1#block.nonce_limiter_info,
-	{ok, Config} = slave_call(application, get_env, [arweave, config]),
-	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
+	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	Key = element(1, ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
 	B3 = sign_block(B1#block{
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
@@ -483,17 +483,17 @@ test_reject_block_invalid_double_signing_proof() ->
 	Addr0 = ar_wallet:to_address(Key0),
 	[B0] = ar_weave:init([{Addr0, ?AR(1000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
-	{ok, Config} = slave_call(application, get_env, [arweave, config]),
+	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
-	{Key, _} = FullKey = slave_call(ar_wallet, load_key, [Config#config.mining_addr]),
+	{Key, _} = FullKey = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
 	TX0 = sign_tx(Key0, #{ target => ar_wallet:to_address(Key), quantity => ?AR(10) }),
 	assert_post_tx_to_slave(TX0),
 	assert_post_tx_to_master(TX0),
 	slave_mine(),
 	BI = ar_test_node:assert_slave_wait_until_height(1),
-	B1 = slave_call(ar_storage, read_block, [hd(BI)]),
+	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	Random512 = crypto:strong_rand_bytes(512),
 	Random64 = crypto:strong_rand_bytes(64),
 	InvalidProof = {Random512, Random512, 2, 1, Random64, Random512, 3, 2, Random64},
@@ -535,12 +535,12 @@ test_reject_block_invalid_double_signing_proof() ->
 	post_block(B5, invalid_double_signing_proof_not_in_reward_history),
 	connect_to_slave(),
 	wait_until_height(2),
-	B6 = slave_call(ar_storage, read_block, [hd(BI2)]),
+	B6 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI2)]),
 	B7 = sign_block(B6, B1, Key),
 	post_block(B7, valid),
 	ar_test_node:mine(),
 	BI3 = assert_slave_wait_until_height(3),
-	B8 = slave_call(ar_storage, read_block, [hd(BI3)]),
+	B8 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI3)]),
 	?assertNotEqual(undefined, B8#block.double_signing_proof),
 	RewardAddr = B8#block.reward_addr,
 	BannedAddr = ar_wallet:to_address(Key),
@@ -554,7 +554,7 @@ test_reject_block_invalid_double_signing_proof() ->
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, [TX1, TX2]),
 	ar_test_node:mine(),
 	BI4 = assert_slave_wait_until_height(4),
-	B9 = slave_call(ar_storage, read_block, [hd(BI4)]),
+	B9 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI4)]),
 	Accounts2 = ar_wallets:get(B9#block.wallet_list, [BannedAddr, Target]),
 	TXID = TX2#tx.id,
 	?assertEqual(2, length(B9#block.txs)),
@@ -569,10 +569,10 @@ test_send_block2() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
 	MasterWallet = ar_wallet:new_keyfile(),
 	MasterAddress = ar_wallet:to_address(MasterWallet),
-	SlaveWallet = slave_call(ar_wallet, new_keyfile, []),
+	SlaveWallet = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
 	SlaveAddress = ar_wallet:to_address(SlaveWallet),
 	start(B0, MasterAddress),
-	slave_start(B0, SlaveAddress),
+	ar_test_node:start_peer(peer1, B0, SlaveAddress),
 	disconnect_from_slave(),
 	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
@@ -587,30 +587,30 @@ test_send_block2() ->
 			previous_block = B0#block.indep_hash,
 			tx_prefixes = [binary:part(TX#tx.id, 0, 8) || TX <- TXs2] },
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block_announcement",
+			peer => ar_test_node:slave_ip(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement) }),
 	Response = ar_serialize:binary_to_block_announcement_response(Body),
 	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
 			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response),
 	Announcement2 = Announcement#block_announcement{ recall_byte = 0 },
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block_announcement",
+			peer => ar_test_node:slave_ip(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement2) }),
 	Response2 = ar_serialize:binary_to_block_announcement_response(Body2),
 	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
 			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response2),
 	Announcement3 = Announcement#block_announcement{ recall_byte = 100000000000000 },
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block_announcement",
+			peer => ar_test_node:slave_ip(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement3) }),
 	{ok, {{<<"418">>, _}, _, Body3, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block2",
+			peer => ar_test_node:slave_ip(), path => "/block2",
 			body => ar_serialize:block_to_binary(B) }),
 	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
 			[], TXs2 -- EverySecondTX)), Body3),
 	B2 = B#block{ txs = [lists:nth(1, TXs2) | tl(B#block.txs)] },
 	{ok, {{<<"418">>, _}, _, Body4, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block2",
+			peer => ar_test_node:slave_ip(), path => "/block2",
 			body => ar_serialize:block_to_binary(B2) }),
 	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
 			[], (TXs2 -- EverySecondTX) -- [lists:nth(1, TXs2)])), Body4),
@@ -620,29 +620,29 @@ test_send_block2() ->
 	ar_test_node:mine(),
 	[{H2, _, _}, _, _] = wait_until_height(2),
 	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block_announcement",
+			peer => ar_test_node:slave_ip(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = H2, previous_block = B#block.indep_hash }) }),
 	BTXs = ar_storage:read_tx(B#block.txs),
 	B3 = B#block{ txs = BTXs },
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block2",
+			peer => ar_test_node:slave_ip(), path => "/block2",
 			body => ar_serialize:block_to_binary(B3) }),
 	{ok, {{<<"200">>, _}, _, SerializedB, _, _}} = ar_http:req(#{ method => get,
-			peer => master_peer(), path => "/block2/height/1" }),
+			peer => ar_test_node:main_ip(), path => "/block2/height/1" }),
 	?assertEqual({ok, B}, ar_serialize:binary_to_block(SerializedB)),
 	Map = element(2, lists:foldl(fun(TX, {N, M}) -> {N + 1, maps:put(TX#tx.id, N, M)} end,
 			{0, #{}}, TXs2)),
 	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
-			peer => master_peer(), path => "/block2/height/1",
+			peer => ar_test_node:main_ip(), path => "/block2/height/1",
 			body => << 1:1, 0:(8 * 125 - 1) >> }),
 	?assertEqual({ok, B#block{ txs = [case maps:get(TX#tx.id, Map) == 0 of true -> TX;
 			_ -> TX#tx.id end || TX <- BTXs] }}, ar_serialize:binary_to_block(Serialized2B)),
 	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
-			peer => master_peer(), path => "/block2/height/1",
+			peer => ar_test_node:main_ip(), path => "/block2/height/1",
 			body => << 1:1, 0:7 >> }),
 	{ok, {{<<"200">>, _}, _, Serialized3B, _, _}} = ar_http:req(#{ method => get,
-			peer => master_peer(), path => "/block2/height/1",
+			peer => ar_test_node:main_ip(), path => "/block2/height/1",
 			body => << 0:1, 1:1, 0:1, 1:1, 0:4 >> }),
 	?assertEqual({ok, B#block{ txs = [case lists:member(maps:get(TX#tx.id, Map), [1, 3]) of
 			true -> TX; _ -> TX#tx.id end || TX <- BTXs] }},
@@ -650,7 +650,7 @@ test_send_block2() ->
 	B4 = read_block_when_stored(H2, true),
 	timer:sleep(500),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block2",
+			peer => ar_test_node:slave_ip(), path => "/block2",
 			body => ar_serialize:block_to_binary(B4) }),
 	connect_to_slave(),
 	lists:foreach(
@@ -662,7 +662,7 @@ test_send_block2() ->
 	),
 	B5 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"208">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block_announcement",
+			peer => ar_test_node:slave_ip(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B5#block.indep_hash,
 					previous_block = B5#block.previous_block }) }),
@@ -671,7 +671,7 @@ test_send_block2() ->
 	[_ | _] = wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
 	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block_announcement",
+			peer => ar_test_node:slave_ip(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,
@@ -680,7 +680,7 @@ test_send_block2() ->
 			missing_tx_indices = [] }},
 			ar_serialize:binary_to_block_announcement_response(Body5)),
 	{ok, {{<<"200">>, _}, _, Body6, _, _}} = ar_http:req(#{ method => post,
-			peer => slave_peer(), path => "/block_announcement",
+			peer => ar_test_node:slave_ip(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,
@@ -696,22 +696,22 @@ resigned_solution_test_() ->
 test_resigned_solution() ->
 	[B0] = ar_weave:init(),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	connect_to_slave(),
 	slave_mine(),
 	wait_until_height(1),
 	disconnect_from_slave(),
 	slave_mine(),
 	B = ar_node:get_current_block(),
-	{ok, Config} = slave_call(application, get_env, [arweave, config]),
-	Key = element(1, slave_call(ar_wallet, load_key, [Config#config.mining_addr])),
+	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	Key = element(1, ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
 	ok = ar_events:subscribe(block),
 	B2 = sign_block(B#block{ tags = [<<"tag1">>] }, B0, Key),
 	post_block(B2, [valid]),
 	B3 = sign_block(B#block{ tags = [<<"tag2">>] }, B0, Key),
 	post_block(B3, [valid]),
 	assert_slave_wait_until_height(2),
-	B4 = slave_call(ar_node, get_current_block, []),
+	B4 = ar_test_node:remote_call(peer1, ar_node, get_current_block, []),
 	?assertEqual(B#block.indep_hash, B4#block.previous_block),
 	B2H = B2#block.indep_hash,
 	?assertNotEqual(B2#block.indep_hash, B4#block.previous_block),
@@ -754,4 +754,4 @@ tx_id(ID) ->
 	ID.
 
 slave_height() ->
-	slave_call(ar_node, get_height, []).
+	ar_test_node:remote_call(peer1, ar_node, get_height, []).

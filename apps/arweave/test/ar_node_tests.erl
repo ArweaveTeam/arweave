@@ -10,7 +10,7 @@
 		connect_to_slave/0, wait_until_receives_txs/1, assert_post_tx_to_master/1,
 		assert_slave_wait_until_receives_txs/1, assert_slave_wait_until_height/1,
 		slave_call/3, slave_call/4, disconnect_from_slave/0, sign_v1_tx/3, sign_tx/2, wait_until_joined/0,
-		read_block_when_stored/1, slave_peer/0, post_tx_to_master/2]).
+		read_block_when_stored/1, post_tx_to_master/2]).
 
 %cannot_spend_accounts_of_other_type_test_() ->
 %	test_on_fork(height_2_6, 10, fun test_cannot_spend_accounts_of_other_type/0).
@@ -25,7 +25,7 @@
 %			{ar_wallet:to_address(element(2, ECDSA)), ?AR(1000), <<>>},
 %			{ar_wallet:to_address(element(2, RSA2)), ?AR(1000), <<>>}]),
 %	start(B0),
-%	slave_start(B0),
+%	ar_test_node:start_peer(peer1, B0),
 %	connect_to_slave(),
 %	InvalidTXsBeforeFork = [
 %		{["invalid_target_length"],
@@ -296,7 +296,7 @@
 %					GenesisWalletsTemplate, ExpectedAccountsTemplate),
 %	[B0] = ar_weave:init(GenesisWallets, ?DEFAULT_DIFF, ?AR(1)),
 %	{Master, _} = start(B0),
-%	{Slave, _} = slave_start(B0),
+%	{Slave, _} = ar_test_node:start_peer(peer1, B0),
 %	connect_to_slave(),
 %	Iterator = gb_sets:iterator(Scenario),
 %	test_multi_account(gb_sets:next(Iterator), Title, Wallets, ExpectedAccounts,
@@ -405,7 +405,7 @@
 %				ar_node_worker:set_reward_addr(MiningAddress),
 %				{master, Master};
 %			slave ->
-%				slave_call(ar_node_worker, set_reward_addr, [MiningAddress]),
+%				ar_test_node:remote_call(peer1, ar_node_worker, set_reward_addr, [MiningAddress]),
 %				{slave, Slave}
 %		end,
 %	Validator = case Node of master -> {slave, Slave}; slave -> {master, Master} end,
@@ -478,10 +478,10 @@ multi_node_mining_reward_test_() ->
 		fun test_multi_node_mining_reward/0, 120).
 
 test_multi_node_mining_reward() ->
-	{_Priv1, Pub1} = slave_call(ar_wallet, new_keyfile, []),
+	{_Priv1, Pub1} = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
 	[B0] = ar_weave:init(),
 	start(B0),
-	slave_start(B0, MiningAddr = ar_wallet:to_address(Pub1)),
+	ar_test_node:start_peer(peer1, B0, MiningAddr = ar_wallet:to_address(Pub1)),
 	connect_to_slave(),
 	slave_mine(),
 	wait_until_height(1),
@@ -504,21 +504,21 @@ replay_attack_test_() ->
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		{_Node1, _} = start(B0),
-		slave_start(B0),
+		ar_test_node:start_peer(peer1, B0),
 		connect_to_slave(),
 		SignedTX = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		assert_post_tx_to_master(SignedTX),
 		ar_test_node:mine(),
 		assert_slave_wait_until_height(1),
-		?assertEqual(?AR(8999), slave_call(ar_node, get_balance, [Pub1])),
-		?assertEqual(?AR(1000), slave_call(ar_node, get_balance, [Pub2])),
+		?assertEqual(?AR(8999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
+		?assertEqual(?AR(1000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2])),
 		ar_events:send(tx, {ready_for_mining, SignedTX}),
 		wait_until_receives_txs([SignedTX]),
 		ar_test_node:mine(),
 		assert_slave_wait_until_height(2),
-		?assertEqual(?AR(8999), slave_call(ar_node, get_balance, [Pub1])),
-		?assertEqual(?AR(1000), slave_call(ar_node, get_balance, [Pub2]))
+		?assertEqual(?AR(8999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
+		?assertEqual(?AR(1000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 	end}.
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
@@ -537,14 +537,14 @@ test_wallet_transaction() ->
 			[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 			{_Node1, _} = start(B0,
 					ar_wallet:to_address(ar_wallet:new_keyfile({eddsa, ed25519}))),
-			slave_start(B0),
+			ar_test_node:start_peer(peer1, B0),
 			connect_to_slave(),
 			assert_post_tx_to_master(SignedTX),
 			ar_test_node:mine(),
 			wait_until_height(1),
 			assert_slave_wait_until_height(1),
-			?assertEqual(?AR(999), slave_call(ar_node, get_balance, [Pub1])),
-			?assertEqual(?AR(9000), slave_call(ar_node, get_balance, [Pub2]))
+			?assertEqual(?AR(999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
+			?assertEqual(?AR(9000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 		end
 	end,
 	[
@@ -565,7 +565,7 @@ test_wallet_transaction() ->
 %		SignedTX2 = ar_tx:sign(TX2#tx{ format = 2 }, Priv2, Pub2),
 %		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
 %		start(B0),
-%		slave_start(B0),
+%		ar_test_node:start_peer(peer1, B0),
 %		connect_to_slave(),
 %		assert_post_tx_to_master(SignedTX),
 %		ar_test_node:mine(),
@@ -585,7 +585,7 @@ tx_threading_test_() ->
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		{_Node1, _} = start(B0),
-		slave_start(B0),
+		ar_test_node:start_peer(peer1, B0),
 		connect_to_slave(),
 		SignedTX = sign_v1_tx(master, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
@@ -597,8 +597,8 @@ tx_threading_test_() ->
 		assert_post_tx_to_master(SignedTX2),
 		ar_test_node:mine(),
 		assert_slave_wait_until_height(2),
-		?assertEqual(?AR(7998), slave_call(ar_node, get_balance, [Pub1])),
-		?assertEqual(?AR(2000), slave_call(ar_node, get_balance, [Pub2]))
+		?assertEqual(?AR(7998), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
+		?assertEqual(?AR(2000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 	end}.
 
 persisted_mempool_test_() ->
@@ -612,7 +612,7 @@ test_persisted_mempool() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 	start(B0),
-	slave_start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	disconnect_from_slave(),
 	SignedTX = sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(master) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(SignedTX, false),
@@ -631,7 +631,7 @@ test_persisted_mempool() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
-		peers = [slave_peer()]
+		peers = [ar_test_node:slave_ip()]
 	}),
 	ar:start_dependencies(),
 	wait_until_joined(),

@@ -808,22 +808,22 @@ tests() ->
 
 tests(Mods, Config) when is_list(Mods) ->
 	start_for_tests(Config),
-	ar_test_node:boot_slave("slave"),
+	ar_test_node:boot_peer(peer1),
 	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}]) of
 		ok ->
-			ar_test_node:stop_slave_node(),
+			ar_test_node:stop_peer(peer1),
 			ok;
 		_ ->
-			ar_test_node:stop_slave_node(),
+			ar_test_node:stop_peer(peer1),
 			exit(tests_failed)
 	end.
 
 start_for_tests(Config) ->
-	UniqueName = ar_test_node:generate_slave_node_name(),
+	UniqueName = ar_test_node:generate_node_namespace(),
 	TestConfig = Config#config{
 		peers = [],
-		data_dir = ".tmp/data_test_master_" ++ UniqueName,
-		metrics_dir = ".tmp/metrics_master_" ++ UniqueName,
+		data_dir = ".tmp/data_test_main_" ++ UniqueName,
+		metrics_dir = ".tmp/metrics_main_" ++ UniqueName,
 		test_node_namespace = UniqueName,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
