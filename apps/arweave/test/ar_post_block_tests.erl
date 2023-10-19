@@ -4,13 +4,11 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [slave_start/1,
-		slave_start/2, 
+-import(ar_test_node, [
 		wait_until_height/1, post_block/2,
 		send_new_block/2, sign_block/3,
 		read_block_when_stored/2,
 		assert_wait_until_height/2,
-		 
 		test_with_mocked_functions/2]).
 
 start_node() ->
@@ -24,7 +22,7 @@ reset_node() ->
 	ar_test_node:remote_call(peer1, ar_blacklist_middleware, reset, []),
 	ar_test_node:connect_to_peer(peer1),
 
-	Height = slave_height(),
+	Height = height(peer1),
 	[{PrevH, _, _} | _] = wait_until_height(Height),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
@@ -753,5 +751,5 @@ tx_id(#tx{ id = ID }) ->
 tx_id(ID) ->
 	ID.
 
-slave_height() ->
-	ar_test_node:remote_call(peer1, ar_node, get_height, []).
+height(Node) ->
+	ar_test_node:remote_call(Node, ar_node, get_height, []).

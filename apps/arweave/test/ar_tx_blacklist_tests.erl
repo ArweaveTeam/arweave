@@ -138,7 +138,7 @@ test_uses_blacklists() ->
 	teardown().
 
 setup() ->
-	{B0, Wallet} = setup_slave(),
+	{B0, Wallet} = setup(peer1),
 	{TXs, DataTrees} = create_txs(Wallet),
 	TXIDs = [TX#tx.id || TX <- TXs],
 	BadTXIDs = [lists:nth(1, TXIDs), lists:nth(3, TXIDs)],
@@ -206,10 +206,10 @@ setup() ->
 		DataTrees
 	}.
 
-setup_slave() ->
+setup(Node) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100000000), <<>>}]),
-	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start_peer(Node, B0),
 	{B0, Wallet}.
 
 create_txs(Wallet) ->

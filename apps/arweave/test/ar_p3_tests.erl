@@ -8,10 +8,7 @@
 -export([raw_request/2, raw_request/3, http_request/1]).
 
 -import(ar_test_node, [
-	stop/0, slave_start/1, slave_start/3,
-	 
-	assert_wait_until_height/2,
-	 wait_until_height/1, read_block_when_stored/2]).
+	stop/0, assert_wait_until_height/2, wait_until_height/1, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
 	empty_p3_config/0]).

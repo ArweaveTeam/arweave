@@ -508,7 +508,7 @@ rejects_txs_with_outdated_anchors_test_() ->
 			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 		]),
 		ar_test_node:start_peer(peer1, B0),
-		slave_mine_blocks(?MAX_TX_ANCHOR_DEPTH),
+		mine_blocks(peer1, ?MAX_TX_ANCHOR_DEPTH),
 		assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH),
 		TX1 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
 		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
@@ -741,8 +741,8 @@ recovers_from_forks(ForkHeight) ->
 			ar_test_node:mine(peer1),
 			BI = assert_wait_until_height(peer1, Height),
 			BI = wait_until_height(Height),
-			slave_assert_block_txs([TX], BI),
-			assert_block_txs([TX], BI),
+			assert_block_txs(peer1, [TX], BI),
+			assert_block_txs(main, [TX], BI),
 			TXs ++ [TX]
 		end,
 		[],
@@ -780,11 +780,11 @@ recovers_from_forks(ForkHeight) ->
 			UpdatedMainTXs = MainTXs ++ ([NewMainTX] = PostTXToMain()),
 			ar_test_node:mine(),
 			BI = wait_until_height(Height),
-			assert_block_txs([NewMainTX], BI),
+			assert_block_txs(main, [NewMainTX], BI),
 			UpdatedPeerTXs = PeerTXs ++ ([NewPeerTX] = PostTXToPeer()),
 			ar_test_node:mine(peer1),
 			PeerBI = assert_wait_until_height(peer1, Height),
-			slave_assert_block_txs([NewPeerTX], PeerBI),
+			assert_block_txs(peer1, [NewPeerTX], PeerBI),
 			{UpdatedMainTXs, UpdatedPeerTXs}
 		end,
 		{[], []},
@@ -901,15 +901,15 @@ grouped_txs() ->
 	%% the price per byte should be the same since we assigned the minimum required fees.
 	{B0, [[TX1], [TX2]]}.
 
-slave_mine_blocks(TargetHeight) ->
-	slave_mine_blocks(1, TargetHeight).
+mine_blocks(Node, TargetHeight) ->
+	mine_blocks(Node, 1, TargetHeight).
 
-slave_mine_blocks(Height, TargetHeight) when Height == TargetHeight + 1 ->
+mine_blocks(Node, Height, TargetHeight) when Height == TargetHeight + 1 ->
 	ok;
-slave_mine_blocks(Height, TargetHeight) ->
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, Height),
-	slave_mine_blocks(Height + 1, TargetHeight).
+mine_blocks(Node, Height, TargetHeight) ->
+	ar_test_node:mine(Node),
+	assert_wait_until_height(Node, Height),
+	mine_blocks(Node, Height + 1, TargetHeight).
 
 forget_txs(TXs) ->
 	lists:foreach(
@@ -919,14 +919,9 @@ forget_txs(TXs) ->
 		TXs
 	).
 
-slave_assert_block_txs(TXs, BI) ->
+assert_block_txs(Node, TXs, BI) ->
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	B = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(BI)]),
-	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
-
-assert_block_txs(TXs, BI) ->
-	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	B = read_block_when_stored(hd(BI)),
+	B = ar_test_node:remote_call(Node, ar_test_node, read_block_when_stored, [hd(BI)]),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
 
 random_nonce() ->

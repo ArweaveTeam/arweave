@@ -385,8 +385,8 @@ remote_call(main, Module, Function, Args, _Timeout) ->
 	%% main is this node, so run the function locally.
 	apply(Module, Function, Args);
 remote_call(Node, Module, Function, Args, Timeout) ->
-	Node = peer_name(Node),
-	Key = rpc:async_call(Node, Module, Function, Args),
+	NodeName = peer_name(Node),
+	Key = rpc:async_call(NodeName, Module, Function, Args),
 	Result = ar_util:do_until(
 		fun() ->
 			case rpc:nb_yield(Key) of

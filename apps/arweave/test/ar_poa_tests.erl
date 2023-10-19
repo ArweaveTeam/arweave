@@ -3,11 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [slave_start/1,
-		
-		wait_until_height/1, assert_wait_until_height/2,
-		
-		read_block_when_stored/1]).
+-import(ar_test_node, [wait_until_height/1, assert_wait_until_height/2, read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
 	{timeout, 420, fun test_v1_transactions_after_2_0/0}.

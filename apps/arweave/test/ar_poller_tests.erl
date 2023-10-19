@@ -4,10 +4,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [slave_start/1, 
-		
-		assert_wait_until_height/2, slave_wait_until_height/1, wait_until_height/1,
-		read_block_when_stored/1]).
+-import(ar_test_node, [assert_wait_until_height/2, read_block_when_stored/1]).
 
 polling_test_() ->
 	{timeout, 120, fun test_polling/0}.
@@ -30,7 +27,7 @@ test_polling() ->
 			lists:seq(1, 9)
 		),
 	ar_test_node:connect_to_peer(peer1),
-	wait_until_height(9),
+	ar_test_node:wait_until_height(main, 9),
 	lists:foreach(
 		fun(Height) ->
 			{H, _, _} = ar_node:get_block_index_entry(Height),
@@ -45,18 +42,18 @@ test_polling() ->
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(),
 	ar_test_node:mine(peer1),
-	[{MH11, _, _} | _] = wait_until_height(10),
-	[{SH11, _, _} | _] = slave_wait_until_height(10),
+	[{MH11, _, _} | _] = ar_test_node:wait_until_height(main, 10),
+	[{SH11, _, _} | _] = ar_test_node:wait_until_height(peer1, 10),
 	?assertNotEqual(SH11, MH11),
 	ar_test_node:mine(),
 	ar_test_node:mine(peer1),
-	[{MH12, _, _} | _] = wait_until_height(11),
-	[{SH12, _, _} | _] = slave_wait_until_height(11),
+	[{MH12, _, _} | _] = ar_test_node:wait_until_height(main, 11),
+	[{SH12, _, _} | _] = ar_test_node:wait_until_height(peer1, 11),
 	?assertNotEqual(SH12, MH12),
 	ar_test_node:mine(),
 	ar_test_node:mine(peer1),
-	[{MH13, _, _} | _] = MBI12 = wait_until_height(12),
-	[{SH13, _, _} | _] = SBI12 = slave_wait_until_height(12),
+	[{MH13, _, _} | _] = MBI12 = ar_test_node:wait_until_height(main, 12),
+	[{SH13, _, _} | _] = SBI12 = ar_test_node:wait_until_height(peer1, 12),
 	?assertNotEqual(SH13, MH13),
 	BM13 = ar_block_cache:get(block_cache, MH13),
 	BS13 = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, SH13]),
@@ -79,8 +76,8 @@ test_polling() ->
 					?debugFmt("Case 3.", []),
 					ar_test_node:mine(peer1),
 					[{MH14, _, _}, {MH13_1, _, _}, {MH12_1, _, _}, {MH11_1, _, _} | _]
-					= wait_until_height(13),
-					[{SH14, _, _} | _] = slave_wait_until_height(13),
+					= ar_test_node:wait_until_height(main, 13),
+					[{SH14, _, _} | _] = ar_test_node:wait_until_height(peer1, 13),
 					?assertEqual(MH14, SH14),
 					?assertEqual(SH13, MH13_1),
 					?assertEqual(SH12, MH12_1),
