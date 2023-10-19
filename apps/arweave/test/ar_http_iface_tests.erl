@@ -122,7 +122,7 @@ batch_test_() ->
 	}.
 
 test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
-	RemoteHeight = slave_height(),
+	RemoteHeight = height(peer1),
 	Address19 = crypto:strong_rand_bytes(19),
 	Address65 = crypto:strong_rand_bytes(65),
 	Address20 = crypto:strong_rand_bytes(20),
@@ -894,7 +894,7 @@ test_get_error_of_data_limit(_) ->
 
 test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	LocalHeight = ar_node:get_height(),
-	RemoteHeight = slave_height(),
+	RemoteHeight = height(peer1),
 	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
@@ -911,7 +911,7 @@ test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 
 test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	LocalHeight = ar_node:get_height(),
-	RemoteHeight = slave_height(),
+	RemoteHeight = height(peer1),
 	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
@@ -1005,5 +1005,5 @@ wait_until_syncs_tx_data(TXID) ->
 		2000
 	).
 
-slave_height() ->
-	ar_test_node:remote_call(peer1, ar_node, get_height, []).
+height(Node) ->
+	ar_test_node:remote_call(Node, ar_node, get_height, []).

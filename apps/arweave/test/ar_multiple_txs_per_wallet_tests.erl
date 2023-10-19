@@ -5,11 +5,9 @@
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [slave_start/1,
-	wait_until_height/1, assert_wait_until_height/2,
-	 sign_v1_tx/1, sign_v1_tx/2,
-	sign_v1_tx/3, 
-	 read_block_when_stored/1, random_v1_data/1]).
+-import(ar_test_node, [wait_until_height/1, assert_wait_until_height/2,
+	sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, 
+	read_block_when_stored/1, random_v1_data/1]).
 
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
@@ -453,14 +451,14 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 				),
 				io_lib:format("Height ~B", [Height])
 			),
-			assert_slave_wait_until_txs_are_stored(GroupTXIDs),
+			assert_wait_until_txs_are_stored(GroupTXIDs),
 			Height + 1
 		end,
 		1,
 		TXGroups
 	).
 
-assert_slave_wait_until_txs_are_stored(TXIDs) ->
+assert_wait_until_txs_are_stored(TXIDs) ->
 	ar_util:do_until(
 		fun() ->
 			lists:all(fun(TX) -> is_record(TX, tx) end, ar_storage:read_tx(TXIDs))

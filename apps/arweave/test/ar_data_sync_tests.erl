@@ -390,7 +390,7 @@ test_accepts_chunks(Split) ->
 		offset => integer_to_binary(TXSize + ?STRICT_DATA_SPLIT_THRESHOLD),
 		size => integer_to_binary(TXSize)
 	}),
-	?assertMatch({ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}}, get_tx_offset(TX#tx.id)),
+	?assertMatch({ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}}, get_tx_offset(main, TX#tx.id)),
 	%% Expect no transaction data because the second chunk is not synced yet.
 	?assertMatch({ok, {{<<"404">>, _}, _, _Binary, _, _}}, get_tx_data(TX#tx.id)),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
@@ -440,7 +440,7 @@ test_syncs_data() ->
 	Proofs = [Proof || {_, _, _, Proof} <- RecordsWithProofs],
 	wait_until_syncs_chunks(Proofs),
 	DiskPoolThreshold = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	slave_wait_until_syncs_chunks(Proofs, DiskPoolThreshold),
+	wait_until_syncs_chunks(peer1, Proofs, DiskPoolThreshold),
 	lists:foreach(
 		fun({B, #tx{ id = TXID }, Chunks, {_, Proof}}) ->
 			TXSize = byte_size(binary:list_to_bin(Chunks)),
@@ -451,7 +451,7 @@ test_syncs_data() ->
 					size => integer_to_binary(TXSize) }),
 			true = ar_util:do_until(
 				fun() ->
-					case get_tx_offset_from_slave(TXID) of
+					case get_tx_offset(peer1, TXID) of
 						{ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}} ->
 							true;
 						_ ->
@@ -489,7 +489,7 @@ test_fork_recovery(Split) ->
 	Proofs1 = post_proofs(main, B1, TX1, Chunks1),
 	wait_until_syncs_chunks(Proofs1),
 	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
+	wait_until_syncs_chunks(peer1, Proofs1, UpperBound),
 	ar_test_node:disconnect_from(peer1),
 	{PeerTX2, PeerChunks2} = tx(Wallet, {Split, 15}, v2, ?AR(10)),
 	{PeerTX3, PeerChunks3} = tx(Wallet, {Split, 17}, v2, ?AR(10)),
@@ -525,9 +525,9 @@ test_fork_recovery(Split) ->
 	ar_test_node:connect_to_peer(peer1),
 	MainProofs3 = post_proofs(main, MainB3, MainTX3, MainChunks3),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	slave_wait_until_syncs_chunks(MainProofs2, UpperBound2),
-	slave_wait_until_syncs_chunks(MainProofs3, UpperBound2),
-	slave_wait_until_syncs_chunks(Proofs1),
+	wait_until_syncs_chunks(peer1, MainProofs2, UpperBound2),
+	wait_until_syncs_chunks(peer1, MainProofs3, UpperBound2),
+	wait_until_syncs_chunks(peer1, Proofs1),
 	%% The peer1 node will return the orphaned transactions to the mempool
 	%% and gossip them.
 	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
@@ -541,7 +541,7 @@ test_fork_recovery(Split) ->
 	Proofs4 = build_proofs(MainB4, PeerTX4, PeerChunks4),
 	%% We did not submit proofs for PeerTX4 to main - they are supposed to be still stored
 	%% in the disk pool.
-	slave_wait_until_syncs_chunks(Proofs4),
+	wait_until_syncs_chunks(peer1, Proofs4),
 	UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	wait_until_syncs_chunks(Proofs4, UpperBound3),
 	post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2).
@@ -559,7 +559,7 @@ test_syncs_after_joining(Split) ->
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
 	Proofs1 = post_proofs(main, B1, TX1, Chunks1),
 	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
+	wait_until_syncs_chunks(peer1, Proofs1, UpperBound),
 	wait_until_syncs_chunks(Proofs1),
 	ar_test_node:disconnect_from(peer1),
 	{MainTX2, MainChunks2} = tx(Wallet, {Split, 13}, v2, ?AR(1)),
@@ -571,14 +571,14 @@ test_syncs_after_joining(Split) ->
 	{PeerTX2, PeerChunks2} = tx(Wallet, {Split, 20}, v2, ?AR(1)),
 	PeerB2 = ar_test_node:post_and_mine( #{ miner => peer1, await_on => peer1 }, [PeerTX2] ),
 	PeerProofs2 = post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2),
-	slave_wait_until_syncs_chunks(PeerProofs2),
+	wait_until_syncs_chunks(peer1, PeerProofs2),
 	_Peer2 = ar_test_node:rejoin_on(#{ node => peer1, join_on => main }),
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	slave_wait_until_syncs_chunks(MainProofs2, UpperBound2),
-	slave_wait_until_syncs_chunks(MainProofs3, UpperBound2),
-	slave_wait_until_syncs_chunks(Proofs1).
+	wait_until_syncs_chunks(peer1, MainProofs2, UpperBound2),
+	wait_until_syncs_chunks(peer1, MainProofs3, UpperBound2),
+	wait_until_syncs_chunks(peer1, Proofs1).
 
 mines_off_only_last_chunks_test_() ->
 	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -824,9 +824,9 @@ test_packs_chunks_depending_on_packing_threshold() ->
 	?debugMsg("Asserting synced chunks."),
 	wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(StrictProofs))]),
 	wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))]),
-	slave_wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(
+	wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(
 			maps:values(StrictProofs))]),
-	slave_wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))]),
+	wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))]),
 	ChunkSize = ?DATA_CHUNK_SIZE,
 	maps:map(
 		fun(TXID, [{_B, _TX, Chunks, _} | _] = Proofs) ->
@@ -849,7 +849,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
 					ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData),
 					wait_until_syncs_chunks([P || {_, _, _, P} <- Proofs]),
-					slave_wait_until_syncs_chunks([P || {_, _, _, P} <- Proofs]);
+					wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- Proofs]);
 				false ->
 					?debugFmt("Asserting random split which turned out NOT strict"
 							" and was placed above the strict data split threshold, "
@@ -1071,11 +1071,11 @@ build_proofs(TX, Chunks, TXs, BlockStartOffset, Height) ->
 		SizeTaggedChunks
 	).
 
-get_tx_offset(TXID) ->
-  {ok, Config} = application:get_env(arweave, config),
+get_tx_offset(Node, TXID) ->
+	Peer = ar_test_node:peer_ip(Node),
 	ar_http:req(#{
 		method => get,
-		peer => {127, 0, 0, 1, Config#config.port},
+		peer => Peer,
 		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/offset"
 	}).
 
@@ -1085,14 +1085,6 @@ get_tx_data(TXID) ->
 		method => get,
 		peer => {127, 0, 0, 1, Config#config.port},
 		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
-	}).
-
-get_tx_offset_from_slave(TXID) ->
-  {ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_http:req(#{
-		method => get,
-		peer => {127, 0, 0, 1, Config#config.port},
-		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/offset"
 	}).
 
 post_random_blocks(Wallet) ->
@@ -1195,13 +1187,7 @@ wait_until_syncs_chunks(Proofs) ->
 wait_until_syncs_chunks(Proofs, UpperBound) ->
 	wait_until_syncs_chunks(main, Proofs, UpperBound).
 
-slave_wait_until_syncs_chunks(Proofs) ->
-	wait_until_syncs_chunks(peer1, Proofs, infinity).
-
-slave_wait_until_syncs_chunks(Proofs, UpperBound) ->
-	wait_until_syncs_chunks(peer1, Proofs, UpperBound).
-
-wait_until_syncs_chunks(NodePrefix, Proofs, UpperBound) ->
+wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 	lists:foreach(
 		fun({EndOffset, Proof}) ->
 			true = ar_util:do_until(
@@ -1210,7 +1196,7 @@ wait_until_syncs_chunks(NodePrefix, Proofs, UpperBound) ->
 						true ->
 							true;
 						false ->
-							case ar_test_node:get_chunk(NodePrefix, EndOffset) of
+							case ar_test_node:get_chunk(Node, EndOffset) of
 								{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
 									FetchedProof = ar_serialize:json_map_to_chunk_proof(
 										jiffy:decode(EncodedProof, [return_maps])
