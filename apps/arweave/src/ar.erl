@@ -737,13 +737,13 @@ tests() ->
 
 tests(Mods, Config) when is_list(Mods) ->
 	start_for_tests(Config),
-	ar_test_node:boot_peer(peer1),
+	ar_test_node:boot_peers(),
 	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}]) of
 		ok ->
-			ar_test_node:stop_peer(peer1),
+			ar_test_node:stop_peers(),
 			ok;
 		_ ->
-			ar_test_node:stop_peer(peer1),
+			ar_test_node:stop_peers(),
 			exit(tests_failed)
 	end.
 

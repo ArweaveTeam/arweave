@@ -5,11 +5,11 @@
 		start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
 		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0, valid_solution/0,
-		remote_call/4, miner_node/1]).
+		remote_call/4]).
 
 %% The "legacy" interface.
--export([boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1, 
-		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peer/1,
+-export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1, 
+		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peers/0, stop_peer/1,
 		connect_to_peer/1, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
 		peer_ip/1, generate_node_namespace/0, get_unused_port/0,
@@ -53,6 +53,17 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+all_peers() ->
+	[peer1, peer2, peer3, peer4].
+
+boot_peers() ->
+	boot_peers(all_peers()).
+
+boot_peers([]) ->
+	ok;
+boot_peers([NodePrefix | Peers]) ->
+	boot_peer(NodePrefix),
+	boot_peers(Peers).
 
 boot_peer(NodePrefix) ->
 	try_boot_peer(NodePrefix, ?MAX_BOOT_RETRIES).
@@ -90,6 +101,15 @@ peer_name(NodePrefix) ->
 peer_port(NodePrefix) ->
 	{ok, Config} = ar_test_node:remote_call(NodePrefix, application, get_env, [arweave, config]),
 	Config#config.port.
+
+stop_peers() ->
+	stop_peers(all_peers()).
+
+stop_peers([]) ->
+	ok;
+stop_peers([NodePrefix | Peers]) ->
+	stop_peer(NodePrefix),
+	stop_peers(Peers).
 
 stop_peer(NodePrefix) ->
 	try
@@ -181,19 +201,27 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 	ValidatorNodeConfig = BaseConfig#config{
 		peers = [ExitPeer]
 	},
-	MiningNodeConfigs = [BaseCMConfig#config{
-		cm_exit_peer = ExitPeer,
-		peers = [ValidatorPeer],
-		cm_peers = get_cm_peers(I, MiningNodeCount),
-		storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
-	} || I <- lists:seq(1, MiningNodeCount)],
 	
-	ExitNode = remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]),
-	ValidatorNode = remote_call(peer1, ar_test_node, start_node, [B0, ValidatorNodeConfig]),
-	MiningNodes = [remote_call(ar_test_node, start_node, [B0, lists:nth(I, MiningNodeConfigs)],
-			miner_node(I))
-		|| I <- lists:seq(1, MiningNodeCount)],
-	MiningNodes ++ [ExitNode, ValidatorNode].
+	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]),
+	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]),
+	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
+	lists:foreach(
+		fun(I) ->
+			MinerNode = lists:nth(I, MinerNodes),
+			MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
+			
+			MinerConfig = BaseCMConfig#config{
+				cm_exit_peer = ExitPeer,
+				peers = [ValidatorPeer],
+				cm_peers = [peer_ip(Peer) || Peer <- MinerPeers],
+				storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
+			},
+			remote_call(MinerNode, ar_test_node, start_node, [B0, MinerConfig])
+		end,
+		lists:seq(1, MiningNodeCount)
+	),
+
+	MinerNodes ++ [peer1, main].
 
 mine() ->
 	gen_server:cast(ar_node_worker, mine).
@@ -338,21 +366,6 @@ wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
 		30000
 	),
 	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, Packing).
-
-%% @doc Return the list of the configured coordinated mining peers for the peer
-%% with the given number I and the total number of confiruded mining peers N.
-get_cm_peers(1, 1) ->
-	[];
-get_cm_peers(1, 2) ->
-	[{127, 0, 0, 1, 1979}];
-get_cm_peers(2, 2) ->
-	[{127, 0, 0, 1, 1980}];
-get_cm_peers(1, 3) ->
-	[{127, 0, 0, 1, 1979}, {127, 0, 0, 1, 1978}];
-get_cm_peers(2, 3) ->
-	[{127, 0, 0, 1, 1980}, {127, 0, 0, 1, 1978}];
-get_cm_peers(3, 3) ->
-	[{127, 0, 0, 1, 1980}, {127, 0, 0, 1, 1979}].
 
 get_cm_storage_modules(RewardAddr, 1, 1) ->
 	%% When there's only 1 node it covers all 3 storage modules.
@@ -899,17 +912,16 @@ mock_functions(Functions) ->
 								fun(NodePrefix) -> 
 									remote_call(NodePrefix, meck, new, [Module, [no_link, passthrough]])
 								end,
-								[peer1 | miner_nodes()]),
+								all_peers()),
 							maps:put(Module, true, Mocked);
 						true ->
 							Mocked
 					end,
-					meck:expect(Module, Fun, Mock),
 					lists:foreach(
 						fun(NodePrefix) -> 
 							remote_call(NodePrefix, meck, expect, [Module, Fun, Mock])
 						end,
-						[peer1 | miner_nodes()]),
+						[main | all_peers()]),
 					NewMocked
 				end,
 				maps:new(),
@@ -919,12 +931,11 @@ mock_functions(Functions) ->
 		fun(Mocked) ->
 			maps:fold(
 				fun(Module, _, _) ->
-					meck:unload(Module),
 					lists:foreach(
 						fun(NodePrefix) -> 
 							remote_call(NodePrefix, meck, unload, [Module])
 						end,
-						[peer1 | miner_nodes()])
+						[main | all_peers()])
 				end,
 				noop,
 				Mocked
