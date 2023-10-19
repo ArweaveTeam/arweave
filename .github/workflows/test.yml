@@ -120,7 +120,7 @@ jobs:
                   echo "Retrying test because of inet_tcp clash..."
                   RETRYABLE=1
                   sleep 1
-                elif [[ "$first_line_main" == "econnrefused"* ]]; then
+                elif [[ "$first_line_main" == *"econnrefused"* ]]; then
                   echo "Retrying test because of econnrefused..."
                   RETRYABLE=1
                   sleep 1
