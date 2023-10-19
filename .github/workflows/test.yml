@@ -112,8 +112,8 @@ jobs:
               if [[ -e peer1.out ]]; then
                 first_line_peer1=$(head -n 1 peer1.out)
                 first_line_main=$(head -n 1 main.out)
-                echo -e "\033[0;31m===> peer1 node's output: $first_line_peer1\033[0m"
-                echo -e "\033[0;31m===> main node's output: $first_line_main\033[0m"
+                echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
+                echo -e "\033[0;31m===> First line of main node's output: $first_line_main\033[0m"
                 # Check if it is a retryable error
                 if [[ "$first_line_peer1" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
                   echo "Retrying test because of inet_tcp error..."

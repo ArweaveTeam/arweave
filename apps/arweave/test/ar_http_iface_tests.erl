@@ -193,7 +193,7 @@ get_balance(EncodedAddr) ->
 			method => get,
 			peer => Peer,
 			path => "/wallet/" ++ binary_to_list(EncodedAddr) ++ "/balance",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"x-p2p-port">>, integer_to_binary(Port)}]
 		}),
 	binary_to_integer(Reply).
 
@@ -205,7 +205,7 @@ get_last_tx(EncodedAddr) ->
 			method => get,
 			peer => Peer,
 			path => "/wallet/" ++ binary_to_list(EncodedAddr) ++ "/last_tx",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"x-p2p-port">>, integer_to_binary(Port)}]
 		}),
 	Reply.
 
@@ -217,7 +217,7 @@ get_price(EncodedAddr) ->
 			method => get,
 			peer => Peer,
 			path => "/price/0/" ++ binary_to_list(EncodedAddr),
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"x-p2p-port">>, integer_to_binary(Port)}]
 		}),
 	binary_to_integer(Reply).
 
@@ -229,7 +229,7 @@ get_tx(ID) ->
 			method => get,
 			peer => Peer,
 			path => "/tx/" ++ binary_to_list(ar_util:encode(ID)),
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"x-p2p-port">>, integer_to_binary(Port)}]
 		}),
 	Reply.
 

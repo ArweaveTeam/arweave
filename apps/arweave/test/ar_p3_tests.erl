@@ -998,7 +998,7 @@ http_request(#{method := M, path := P, headers := H}) ->
 		<<"POST">> -> post
 	end,
 	Path = binary_to_list(P),
-	% Headers = maps:to_list(H#{<<"X-P2p-Port">> => integer_to_binary(Port)}),
+	% Headers = maps:to_list(H#{<<"x-p2p-port">> => integer_to_binary(Port)}),
 	Headers = maps:to_list(H),
 	ar_http:req(#{
 		method => Method,

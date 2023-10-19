@@ -832,7 +832,7 @@ recovers_from_forks(ForkHeight) ->
 					method => post,
 					peer => {127, 0, 0, 1, MainPort},
 					path => "/tx",
-					headers => [{<<"X-P2p-Port">>, integer_to_binary(MainPort, 10)}],
+					headers => [{<<"x-p2p-port">>, integer_to_binary(MainPort, 10)}],
 					body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 				})
 		end,

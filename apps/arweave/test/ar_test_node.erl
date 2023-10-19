@@ -85,7 +85,7 @@ try_boot_peer(Node, Retries) ->
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->
-            io:format("~s started.~n", [NodeName]),
+            io:format("~s started at port ~p.~n", [NodeName, Port]),
             {node(), NodeName};
         {error, Reason} ->
             io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
@@ -668,13 +668,12 @@ connect_to_peer(Node) ->
 			method => get,
 			peer => Peer,
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, peer_ip(main)))},
-					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
+			headers => p2p_headers(main)
 		}),
 	true = ar_util:do_until(
 		fun() ->
 			Peers = remote_call(Node, ar_peers, get_peers, [lifetime]),
-			[peer_ip(main)] == Peers
+			lists:member(peer_ip(main), Peers)
 		end,
 		200,
 		5000
@@ -684,12 +683,11 @@ connect_to_peer(Node) ->
 			method => get,
 			peer => peer_ip(main),
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, Peer))},
-					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
+			headers => p2p_headers(Node)
 		}),
 	ar_util:do_until(
 		fun() ->
-			[Peer] == ar_peers:get_peers(lifetime)
+			lists:member(Peer, ar_peers:get_peers(lifetime))
 		end,
 		200,
 		5000
@@ -1163,8 +1161,8 @@ get_unused_port() ->
   gen_tcp:close(ListenSocket),
   Port.
 
-miner_node(I) ->
-	list_to_atom("cm_miner_" ++ integer_to_list(I) ++ "@127.0.0.1").
-
-miner_nodes() ->
-	[ miner_node(I) || I <- lists:seq(1, ?MAX_MINERS) ].
+p2p_headers(Node) ->
+	[
+		{<<"x-p2p-port">>, integer_to_binary(peer_port(Node))},
+		{<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}
+	].
