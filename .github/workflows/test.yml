@@ -104,6 +104,7 @@ jobs:
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID
             EXIT_CODE=$?
+            echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
             kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
