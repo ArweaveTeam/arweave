@@ -863,7 +863,7 @@ post_tx_to_peer(Node, TX, Wait) ->
 				"TX last_tx: ~s. Error(s): ~p. Reply: ~p.~n",
 				[ar_util:encode(TX#tx.id), TX#tx.format, TX#tx.reward, TX#tx.data_size,
 					ar_util:encode(TX#tx.last_tx),
-					remote_call(peer1, ar_tx_db, get_error_codes, [TX#tx.id]), ErrorInfo]),
+					remote_call(Node, ar_tx_db, get_error_codes, [TX#tx.id]), ErrorInfo]),
 			noop
 	end,
 	Reply.

@@ -6,11 +6,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		wait_until_height/1,
-		wait_until_receives_txs/1, 
-		assert_wait_until_height/2,
-		sign_v1_tx/3,
-		read_block_when_stored/1, post_tx_to_master/2]).
+		wait_until_receives_txs/1, sign_v1_tx/3, read_block_when_stored/1]).
 
 ar_node_interface_test_() ->
 	{timeout, 300, fun test_ar_node_interface/0}.
@@ -22,7 +18,7 @@ test_ar_node_interface() ->
 	?assertEqual(B0#block.indep_hash, ar_node:get_current_block_hash()),
 	ar_test_node:mine(),
 	B0H = B0#block.indep_hash,
-	[{H, _, _}, {B0H, _, _}] = wait_until_height(1),
+	[{H, _, _}, {B0H, _, _}] = ar_test_node:wait_until_height(1),
 	?assertEqual(1, ar_node:get_height()),
 	?assertEqual(H, ar_node:get_current_block_hash()).
 
@@ -35,14 +31,14 @@ test_mining_reward() ->
 	[B0] = ar_weave:init(),
 	ar_test_node:start(B0, MiningAddr = ar_wallet:to_address(Pub1)),
 	ar_test_node:mine(),
-	wait_until_height(1),
+	ar_test_node:wait_until_height(1),
 	B1 = ar_node:get_current_block(),
 	[{MiningAddr, _, Reward, 1}, _] = B1#block.reward_history,
 	?assertEqual(0, ar_node:get_balance(Pub1)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(),
-			wait_until_height(Height + 1)
+			ar_test_node:wait_until_height(Height + 1)
 		end,
 		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
 	),
@@ -60,14 +56,14 @@ test_multi_node_mining_reward() ->
 	ar_test_node:start_peer(peer1, B0, MiningAddr = ar_wallet:to_address(Pub1)),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	wait_until_height(1),
+	ar_test_node:wait_until_height(1),
 	B1 = ar_node:get_current_block(),
 	[{MiningAddr, _, Reward, 1}, _] = B1#block.reward_history,
 	?assertEqual(0, ar_node:get_balance(Pub1)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(),
-			wait_until_height(Height + 1)
+			ar_test_node:wait_until_height(Height + 1)
 		end,
 		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
 	),
@@ -86,13 +82,13 @@ replay_attack_test_() ->
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 		ar_test_node:mine(),
-		assert_wait_until_height(peer1, 1),
+		ar_test_node:assert_wait_until_height(peer1, 1),
 		?assertEqual(?AR(8999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(1000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2])),
 		ar_events:send(tx, {ready_for_mining, SignedTX}),
-		wait_until_receives_txs([SignedTX]),
+		ar_test_node:wait_until_receives_txs([SignedTX]),
 		ar_test_node:mine(),
-		assert_wait_until_height(peer1, 2),
+		ar_test_node:assert_wait_until_height(peer1, 2),
 		?assertEqual(?AR(8999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(1000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 	end}.
@@ -116,8 +112,8 @@ test_wallet_transaction() ->
 			ar_test_node:connect_to_peer(peer1),
 			ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 			ar_test_node:mine(),
-			wait_until_height(1),
-			assert_wait_until_height(peer1, 1),
+			ar_test_node:wait_until_height(1),
+			ar_test_node:assert_wait_until_height(peer1, 1),
 			?assertEqual(?AR(999), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 			?assertEqual(?AR(9000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 		end
@@ -127,31 +123,6 @@ test_wallet_transaction() ->
 		{"ES256K", timeout, 60, TestWalletTransaction({?ECDSA_SIGN_ALG, secp256k1})},
 		{"Ed25519", timeout, 60, TestWalletTransaction({?EDDSA_SIGN_ALG, ed25519})}
 	].
-
-%% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
-%wallet_two_transaction_test_() ->
-%	test_on_fork(height_2_6, 0, fun() ->
-%		{Priv1, Pub1} = ar_wallet:new({?RSA_SIGN_ALG, 65537}),
-%		{Priv2, Pub2} = ar_wallet:new({?ECDSA_SIGN_ALG, secp256k1}),
-%		{_Priv3, Pub3} = ar_wallet:new({?EDDSA_SIGN_ALG, ed25519}),
-%		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-%		SignedTX = ar_tx:sign(TX#tx{ format = 2 }, Priv1, Pub1),
-%		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
-%		SignedTX2 = ar_tx:sign(TX2#tx{ format = 2 }, Priv2, Pub2),
-%		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
-%		ar_test_node:start(B0),
-%		ar_test_node:start_peer(peer1, B0),
-%		ar_test_node:connect_to_peer(peer1),
-%		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
-%		ar_test_node:mine(),
-%		assert_wait_until_height(peer1, 1),
-%		ar_test_node:assert_post_tx_to_peer(peer1, SignedTX2),
-%		ar_test_node:mine(peer1),
-%		wait_until_height(2),
-%		?AR(999) = ar_node:get_balance(Pub1),
-%		?AR(8499) = ar_node:get_balance(Pub2),
-%		?AR(500) = ar_node:get_balance(Pub3)
-%	end).
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test_() ->
@@ -168,10 +139,10 @@ tx_threading_test_() ->
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => SignedTX#tx.id }),
 		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 		ar_test_node:mine(),
-		wait_until_height(1),
+		ar_test_node:wait_until_height(1),
 		ar_test_node:assert_post_tx_to_peer(main, SignedTX2),
 		ar_test_node:mine(),
-		assert_wait_until_height(peer1, 2),
+		ar_test_node:assert_wait_until_height(peer1, 2),
 		?assertEqual(?AR(7998), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub1])),
 		?assertEqual(?AR(2000), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2]))
 	end}.
@@ -199,20 +170,19 @@ test_persisted_mempool() ->
 		100,
 		10000
 	),
-	ok = application:stop(arweave),
-	ok = ar:stop_dependencies(),
+	Config = ar_test_node:stop(),
 	%% Rejoin the network.
 	%% Expect the pending transactions to be picked up and distributed.
-	{ok, Config} = application:get_env(arweave, config),
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
 		peers = [ar_test_node:peer_ip(peer1)]
 	}),
 	ar:start_dependencies(),
 	ar_test_node:wait_until_joined(),
+	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:assert_wait_until_receives_txs(peer1, [SignedTX]),
 	ar_test_node:mine(),
-	[{H, _, _} | _] = assert_wait_until_height(peer1, 1),
+	[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, 1),
 	B = read_block_when_stored(H),
 	?assertEqual([SignedTX#tx.id], B#block.txs),
 	ok = application:set_env(arweave, config, Config).
