@@ -187,11 +187,11 @@ check_disk_space({win32, _}, not_used) ->
 	Result = os_mon_sysinfo:get_disk_info(),
 	check_disks_win32(Result);
 check_disk_space({unix, solaris}, Port) ->
-	Result = my_cmd("/usr/bin/df -lk", Port),
+	Result = my_cmd("/usr/bin/df -k", Port),
 	check_disks_solaris(skip_to_eol(Result));
 check_disk_space({unix, linux}, Port) ->
 	Df = find_cmd("df", "/bin"),
-	Result = my_cmd(Df ++ " -lk -x squashfs", Port),
+	Result = my_cmd(Df ++ " -k -x squashfs", Port),
 	check_disks_solaris(skip_to_eol(Result));
 check_disk_space({unix, posix}, Port) ->
 	Result = my_cmd("df -k -P", Port),
@@ -200,10 +200,10 @@ check_disk_space({unix, dragonfly}, Port) ->
 	Result = my_cmd("/bin/df -k -t ufs,hammer", Port),
 	check_disks_solaris(skip_to_eol(Result));
 check_disk_space({unix, freebsd}, Port) ->
-	Result = my_cmd("/bin/df -k -l", Port),
+	Result = my_cmd("/bin/df -k", Port),
 	check_disks_solaris(skip_to_eol(Result));
 check_disk_space({unix, openbsd}, Port) ->
-	Result = my_cmd("/bin/df -k -l", Port),
+	Result = my_cmd("/bin/df -k", Port),
 	check_disks_solaris(skip_to_eol(Result));
 check_disk_space({unix, netbsd}, Port) ->
 	Result = my_cmd("/bin/df -k -t ffs", Port),

@@ -465,6 +465,8 @@ let
       '';
 
       installPhase = ''
+        mkdir -p $out/bin
+        cp -rf ./bin/* $out/bin
         ${installPhase}
         # broken symlinks fixup
         rm -f $out/${profile}/rel/arweave/releases/*/{sys.config,vm.args.src}
@@ -497,7 +499,7 @@ let
     profile = "test";
     releaseType = "release";
     installPhase = ''
-      mkdir $out; cp -rf ./_build/test $out
+      mkdir -p $out; cp -rf ./_build/test $out
       cp -r ./config $out
       ln -s ${meck}/lib/erlang/lib/meck-${meck.version} $out/test/rel/arweave/lib/
 
@@ -531,15 +533,15 @@ let
       chmod +xw $out/bin/stop-nix
 
       sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix
-      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/start-nix
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel/arweave|g" $out/bin/start-nix
       sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix
 
       sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix-foreground
-      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/start-nix-foreground
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel/arweave|g" $out/bin/start-nix-foreground
       sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix-foreground
 
       sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/stop-nix
-      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/stop-nix
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel/arweave|g" $out/bin/stop-nix
       sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/stop-nix
 
       cp -r ./config $out
