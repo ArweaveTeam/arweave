@@ -81,7 +81,7 @@ try_boot_peer(Node, Retries) ->
         "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 " ++
 		"> ~s.out 2>&1 &",
-        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, NodeName]),
+        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, Node]),
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->

@@ -104,13 +104,14 @@ jobs:
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID
             EXIT_CODE=$?
-            echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
             kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
               if [[ -e peer1.out ]]; then
                 first_line_peer1=$(head -n 1 peer1.out)
                 first_line_main=$(head -n 1 main.out)
+                echo -e "\033[0;31m===> peer1 node's output: $first_line_peer1\033[0m"
+                echo -e "\033[0;31m===> main node's output: $first_line_main\033[0m"
                 # Check if it is a retryable error
                 if [[ "$first_line_peer1" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
                   echo "Retrying test because of inet_tcp error..."
