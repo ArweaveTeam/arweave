@@ -13,12 +13,12 @@
 setup() ->
 	ets:new(?MODULE, [named_table, set, public]),
 	{ok, Config} = application:get_env(arweave, config),
-	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-    {Config, SlaveConfig}.
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+    {Config, PeerConfig}.
 
-cleanup({Config, SlaveConfig}) ->
+cleanup({Config, PeerConfig}) ->
 	application:set_env(arweave, config, Config),
-	ar_test_node:remote_call(peer1, application, set_env, [arweave, config, SlaveConfig]),
+	ar_test_node:remote_call(peer1, application, set_env, [arweave, config, PeerConfig]),
 	ets:delete(?MODULE).
 
 %% @doc All vdf_server_push_test_ tests test a few things
@@ -217,7 +217,7 @@ test_vdf_client_fast_block() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
-	SlaveAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
+	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
 	?LOG_ERROR([{event, start_peer}]),
@@ -232,10 +232,10 @@ test_vdf_client_fast_block() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_test_node:start_peer(peer1, 
-		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ 
+		B0, PeerAddress,
+		PeerConfig#config{ nonce_limiter_server_trusted_peers = [ 
 			ar_util:format_peer(ar_test_node:peer_ip(main)) ] }),
 	%% Start main as a VDF server
 	ar_test_node:start(
@@ -265,7 +265,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
-	SlaveAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
+	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
 	ar_test_node:start_peer(peer1, B0),
@@ -279,11 +279,11 @@ test_vdf_client_fast_block_pull_interface() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_test_node:start_peer(peer1, 
-		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ],
-				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
+		B0, PeerAddress,
+		PeerConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ],
+				enable = [vdf_server_pull | PeerConfig#config.enable] }),
 	%% Start the main as a VDF server
 	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
@@ -311,7 +311,7 @@ test_vdf_client_slow_block() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
-	SlaveAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
+	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
 	ar_test_node:start_peer(peer1, B0),
@@ -324,10 +324,10 @@ test_vdf_client_slow_block() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_test_node:start_peer(peer1, 
-		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [
+		B0, PeerAddress,
+		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
 			"127.0.0.1:" ++ integer_to_list(Config#config.port)
 		] }),
 	%% Start the main as a VDF server
@@ -349,7 +349,7 @@ test_vdf_client_slow_block_pull_interface() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
-	SlaveAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
+	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
 	ar_test_node:start_peer(peer1, B0),
@@ -362,12 +362,12 @@ test_vdf_client_slow_block_pull_interface() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_test_node:start_peer(peer1, 
-		B0, SlaveAddress,
-		SlaveConfig#config{ nonce_limiter_server_trusted_peers = [
+		B0, PeerAddress,
+		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
 			"127.0.0.1:" ++ integer_to_list(Config#config.port) ],
-				enable = [vdf_server_pull | SlaveConfig#config.enable] }),
+				enable = [vdf_server_pull | PeerConfig#config.enable] }),
 	%% Start the main as a VDF server
 	{ok, Config} = application:get_env(arweave, config),
 	ar_test_node:start(

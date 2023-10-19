@@ -17,7 +17,7 @@ rejects_invalid_chunks_test_() ->
 	{timeout, 180, fun test_rejects_invalid_chunks/0}.
 
 test_rejects_invalid_chunks() ->
-	{_Master, _, _Wallet} = setup_nodes(),
+	setup_nodes(),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_too_big\"}">>, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
@@ -139,7 +139,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 				SecondMerkleOffset, ThirdMerkleOffset, FirstPublishOffsets, SecondPublishOffsets,
 				ThirdPublishOffsets, Expectations}) ->
 			?debugFmt("Running [~s]", [Title]),
-			{_Master, _, Wallet} = setup_nodes(),
+			Wallet = setup_nodes(),
 			{FirstChunk, SecondChunk, ThirdChunk} = {crypto:strong_rand_bytes(FirstSize),
 					crypto:strong_rand_bytes(SecondSize), crypto:strong_rand_bytes(ThirdSize)},
 			{FirstChunkID, SecondChunkID, ThirdChunkID} = {ar_tx:generate_chunk_id(FirstChunk),
@@ -201,7 +201,7 @@ rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size_test_() ->
 			fun test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0}.
 
 test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
-	{_Master, _, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	BigOutOfBoundsOffsetChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	BigChunkID = ar_tx:generate_chunk_id(BigOutOfBoundsOffsetChunk),
 	{BigDataRoot, BigDataTree} = ar_merkle:generate_tree([{BigChunkID, ?DATA_CHUNK_SIZE + 1}]),
@@ -220,7 +220,7 @@ rejects_chunks_exceeding_disk_pool_limit_test_() ->
 	{timeout, 240, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
 
 test_rejects_chunks_exceeding_disk_pool_limit() ->
-	{_Master, _Slave, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	Data1 = crypto:strong_rand_bytes(
 		(?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
 	),
@@ -351,7 +351,7 @@ test_accepts_chunks() ->
 	test_accepts_chunks(original_split).
 
 test_accepts_chunks(Split) ->
-	{_Master, _Slave, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	{TX, Chunks} = tx(Wallet, {Split, 3}),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX),
 	ar_test_node:assert_wait_until_receives_txs([TX]),
@@ -427,7 +427,7 @@ syncs_data_test_() ->
 		fun test_syncs_data/0, 120).
 
 test_syncs_data() ->
-	{_Master, _Slave, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	Records = post_random_blocks(Wallet),
 	RecordsWithProofs = lists:flatmap(
 			fun({B, TX, Chunks}) -> get_records_with_proofs(B, TX, Chunks) end, Records),
@@ -483,7 +483,7 @@ test_fork_recovery() ->
 	test_fork_recovery(original_split).
 
 test_fork_recovery(Split) ->
-	{_Master, _Slave, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {Split, 13}, v2, ?AR(10)),
 	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(TX1#tx.id)]),
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
@@ -494,60 +494,60 @@ test_fork_recovery(Split) ->
 	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
 	ar_test_node:disconnect_from(peer1),
-	{SlaveTX2, SlaveChunks2} = tx(Wallet, {Split, 15}, v2, ?AR(10)),
-	{SlaveTX3, SlaveChunks3} = tx(Wallet, {Split, 17}, v2, ?AR(10)),
-	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
-	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(SlaveTX3#tx.id)]),
-	SlaveB2 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
-			[SlaveTX2, SlaveTX3]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(SlaveB2#block.indep_hash),
-			SlaveB2#block.height]),
-	{MasterTX2, MasterChunks2} = tx(Wallet, {Split, 14}, v2, ?AR(10)),
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MasterTX2#tx.id)]),
-	MasterB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
-			[MasterTX2]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB2#block.indep_hash),
-			MasterB2#block.height]),
-	_SlaveProofs2 = post_proofs(peer1, SlaveB2, SlaveTX2, SlaveChunks2),
-	_SlaveProofs3 = post_proofs(peer1, SlaveB2, SlaveTX3, SlaveChunks3),
-	{SlaveTX4, SlaveChunks4} = tx(Wallet, {Split, 22}, v2, ?AR(10)),
-	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
-	SlaveB3 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
-			[SlaveTX4]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(SlaveB3#block.indep_hash),
-			SlaveB3#block.height]),
-	_SlaveProofs4 = post_proofs(peer1, SlaveB3, SlaveTX4, SlaveChunks4),
+	{PeerTX2, PeerChunks2} = tx(Wallet, {Split, 15}, v2, ?AR(10)),
+	{PeerTX3, PeerChunks3} = tx(Wallet, {Split, 17}, v2, ?AR(10)),
+	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
+	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX3#tx.id)]),
+	PeerB2 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
+			[PeerTX2, PeerTX3]),
+	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(PeerB2#block.indep_hash),
+			PeerB2#block.height]),
+	{MainTX2, MainChunks2} = tx(Wallet, {Split, 14}, v2, ?AR(10)),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MainTX2#tx.id)]),
+	MainB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
+			[MainTX2]),
+	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB2#block.indep_hash),
+			MainB2#block.height]),
+	_PeerProofs2 = post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2),
+	_PeerProofs3 = post_proofs(peer1, PeerB2, PeerTX3, PeerChunks3),
+	{PeerTX4, PeerChunks4} = tx(Wallet, {Split, 22}, v2, ?AR(10)),
+	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX4#tx.id)]),
+	PeerB3 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
+			[PeerTX4]),
+	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(PeerB3#block.indep_hash),
+			PeerB3#block.height]),
+	_PeerProofs4 = post_proofs(peer1, PeerB3, PeerTX4, PeerChunks4),
 	ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
-	MasterProofs2 = post_proofs(main, MasterB2, MasterTX2, MasterChunks2),
-	{MasterTX3, MasterChunks3} = tx(Wallet, {Split, 16}, v2, ?AR(10)),
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MasterTX3#tx.id)]),
-	MasterB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
-			[MasterTX3]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB3#block.indep_hash),
-			MasterB3#block.height]),
+	MainProofs2 = post_proofs(main, MainB2, MainTX2, MainChunks2),
+	{MainTX3, MainChunks3} = tx(Wallet, {Split, 16}, v2, ?AR(10)),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MainTX3#tx.id)]),
+	MainB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
+			[MainTX3]),
+	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB3#block.indep_hash),
+			MainB3#block.height]),
 	ar_test_node:connect_to_peer(peer1),
-	MasterProofs3 = post_proofs(main, MasterB3, MasterTX3, MasterChunks3),
+	MainProofs3 = post_proofs(main, MainB3, MainTX3, MainChunks3),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	slave_wait_until_syncs_chunks(MasterProofs2, UpperBound2),
-	slave_wait_until_syncs_chunks(MasterProofs3, UpperBound2),
+	slave_wait_until_syncs_chunks(MainProofs2, UpperBound2),
+	slave_wait_until_syncs_chunks(MainProofs3, UpperBound2),
 	slave_wait_until_syncs_chunks(Proofs1),
 	%% The peer1 node will return the orphaned transactions to the mempool
 	%% and gossip them.
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(SlaveTX2#tx.id)]),
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(SlaveTX4#tx.id)]),
-	ar_test_node:post_tx_to_peer(main, SlaveTX2),
-	ar_test_node:post_tx_to_peer(main, SlaveTX4),
-	ar_test_node:assert_wait_until_receives_txs([SlaveTX2, SlaveTX4]),
-	MasterB4 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MasterB4#block.indep_hash),
-			MasterB4#block.height]),
-	Proofs4 = build_proofs(MasterB4, SlaveTX4, SlaveChunks4),
-	%% We did not submit proofs for SlaveTX4 to main - they are supposed to be still stored
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
+	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX4#tx.id)]),
+	ar_test_node:post_tx_to_peer(main, PeerTX2),
+	ar_test_node:post_tx_to_peer(main, PeerTX4),
+	ar_test_node:assert_wait_until_receives_txs([PeerTX2, PeerTX4]),
+	MainB4 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
+	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB4#block.indep_hash),
+			MainB4#block.height]),
+	Proofs4 = build_proofs(MainB4, PeerTX4, PeerChunks4),
+	%% We did not submit proofs for PeerTX4 to main - they are supposed to be still stored
 	%% in the disk pool.
 	slave_wait_until_syncs_chunks(Proofs4),
 	UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	wait_until_syncs_chunks(Proofs4, UpperBound3),
-	post_proofs(peer1, SlaveB2, SlaveTX2, SlaveChunks2).
+	post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2).
 
 syncs_after_joining_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
@@ -557,7 +557,7 @@ test_syncs_after_joining() ->
 	test_syncs_after_joining(original_split).
 
 test_syncs_after_joining(Split) ->
-	{_Master, _Slave, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {Split, 17}, v2, ?AR(1)),
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
 	Proofs1 = post_proofs(main, B1, TX1, Chunks1),
@@ -565,22 +565,22 @@ test_syncs_after_joining(Split) ->
 	slave_wait_until_syncs_chunks(Proofs1, UpperBound),
 	wait_until_syncs_chunks(Proofs1),
 	ar_test_node:disconnect_from(peer1),
-	{MasterTX2, MasterChunks2} = tx(Wallet, {Split, 13}, v2, ?AR(1)),
-	MasterB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [MasterTX2]),
-	MasterProofs2 = post_proofs(main, MasterB2, MasterTX2, MasterChunks2),
-	{MasterTX3, MasterChunks3} = tx(Wallet, {Split, 12}, v2, ?AR(1)),
-	MasterB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [MasterTX3]),
-	MasterProofs3 = post_proofs(main, MasterB3, MasterTX3, MasterChunks3),
-	{SlaveTX2, SlaveChunks2} = tx(Wallet, {Split, 20}, v2, ?AR(1)),
-	SlaveB2 = ar_test_node:post_and_mine( #{ miner => peer1, await_on => peer1 }, [SlaveTX2] ),
-	SlaveProofs2 = post_proofs(peer1, SlaveB2, SlaveTX2, SlaveChunks2),
-	slave_wait_until_syncs_chunks(SlaveProofs2),
-	_Slave2 = ar_test_node:rejoin_on(#{ node => peer1, join_on => main }),
+	{MainTX2, MainChunks2} = tx(Wallet, {Split, 13}, v2, ?AR(1)),
+	MainB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [MainTX2]),
+	MainProofs2 = post_proofs(main, MainB2, MainTX2, MainChunks2),
+	{MainTX3, MainChunks3} = tx(Wallet, {Split, 12}, v2, ?AR(1)),
+	MainB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [MainTX3]),
+	MainProofs3 = post_proofs(main, MainB3, MainTX3, MainChunks3),
+	{PeerTX2, PeerChunks2} = tx(Wallet, {Split, 20}, v2, ?AR(1)),
+	PeerB2 = ar_test_node:post_and_mine( #{ miner => peer1, await_on => peer1 }, [PeerTX2] ),
+	PeerProofs2 = post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2),
+	slave_wait_until_syncs_chunks(PeerProofs2),
+	_Peer2 = ar_test_node:rejoin_on(#{ node => peer1, join_on => main }),
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	slave_wait_until_syncs_chunks(MasterProofs2, UpperBound2),
-	slave_wait_until_syncs_chunks(MasterProofs3, UpperBound2),
+	slave_wait_until_syncs_chunks(MainProofs2, UpperBound2),
+	slave_wait_until_syncs_chunks(MainProofs3, UpperBound2),
 	slave_wait_until_syncs_chunks(Proofs1).
 
 mines_off_only_last_chunks_test_() ->
@@ -588,7 +588,7 @@ mines_off_only_last_chunks_test_() ->
 			fun test_mines_off_only_last_chunks/0).
 
 test_mines_off_only_last_chunks() ->
-	{_Master, _Slave, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	%% Submit only the last chunks (smaller than 256 KiB) of transactions.
 	%% Assert the nodes construct correct proofs of access from them.
 	lists:foreach(
@@ -651,7 +651,7 @@ mines_off_only_second_last_chunks_test_() ->
 			fun test_mines_off_only_second_last_chunks/0).
 
 test_mines_off_only_second_last_chunks() ->
-	{_Master, _Slave, Wallet} = setup_nodes(),
+	Wallet = setup_nodes(),
 	%% Submit only the second last chunks (smaller than 256 KiB) of transactions.
 	%% Assert the nodes construct correct proofs of access from them.
 	lists:foreach(
@@ -703,10 +703,10 @@ packs_chunks_depending_on_packing_threshold_test_() ->
 			fun test_packs_chunks_depending_on_packing_threshold/0).
 
 test_packs_chunks_depending_on_packing_threshold() ->
-	MasterWallet = ar_wallet:new_keyfile(),
-	SlaveWallet = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
-	MasterAddr = ar_wallet:to_address(MasterWallet),
-	SlaveAddr = ar_wallet:to_address(SlaveWallet),
+	MainWallet = ar_wallet:new_keyfile(),
+	PeerWallet = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
+	MainAddr = ar_wallet:to_address(MainWallet),
+	PeerAddr = ar_wallet:to_address(PeerWallet),
 	DataMap =
 		lists:foldr(
 			fun(Height, Acc) ->
@@ -719,7 +719,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			#{},
 			lists:seq(1, 20)
 		),
-	{_Master, _Slave, Wallet} = setup_nodes(MasterAddr, SlaveAddr),
+	Wallet = setup_nodes(MainAddr, PeerAddr),
 	{LegacyProofs, StrictProofs, V1Proofs} = lists:foldl(
 		fun(Height, {Acc1, Acc2, Acc3}) ->
 			{{DR1, Chunks1}, {DR2, Chunks2}, {DR3, Chunks3}} = maps:get(Height, DataMap),
@@ -870,18 +870,18 @@ get_records_with_proofs(B, TX, Chunks) ->
 
 setup_nodes() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	SlaveAddr = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
-	setup_nodes(Addr, SlaveAddr).
+	PeerAddr = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
+	setup_nodes(Addr, PeerAddr).
 
-setup_nodes(MasterAddr, SlaveAddr) ->
+setup_nodes(MainAddr, PeerAddr) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
-	{_Master, _} = ar_test_node:start(B0, MasterAddr, Config),
-	{ok, SlaveConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	{_Slave, _} = ar_test_node:start_peer(peer1, B0, SlaveAddr, SlaveConfig),
+	ar_test_node:start(B0, MainAddr, Config),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig),
 	ar_test_node:connect_to_peer(peer1),
-	{_Master, _Slave, Wallet}.
+	Wallet.
 
 tx(Wallet, SplitType) ->
 	tx(Wallet, SplitType, v2, fetch).

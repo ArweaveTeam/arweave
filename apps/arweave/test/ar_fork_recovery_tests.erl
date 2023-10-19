@@ -25,9 +25,9 @@ test_height_plus_one_fork_recovery() ->
 	ar_test_node:mine(),
 	wait_until_height(1),
 	ar_test_node:mine(),
-	MasterBI = wait_until_height(2),
+	MainBI = wait_until_height(2),
 	ar_test_node:connect_to_peer(peer1),
-	?assertEqual(MasterBI, slave_wait_until_height(2)),
+	?assertEqual(MainBI, slave_wait_until_height(2)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(),
 	wait_until_height(3),
@@ -35,8 +35,8 @@ test_height_plus_one_fork_recovery() ->
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(peer1),
-	SlaveBI = slave_wait_until_height(4),
-	?assertEqual(SlaveBI, wait_until_height(4)).
+	PeerBI = slave_wait_until_height(4),
+	?assertEqual(PeerBI, wait_until_height(4)).
 
 height_plus_three_fork_recovery_test_() ->
 	{timeout, 120, fun test_height_plus_three_fork_recovery/0}.
@@ -63,8 +63,8 @@ test_height_plus_three_fork_recovery() ->
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	MasterBI = wait_until_height(4),
-	?assertEqual(MasterBI, slave_wait_until_height(4)).
+	MainBI = wait_until_height(4),
+	?assertEqual(MainBI, slave_wait_until_height(4)).
 
 missing_txs_fork_recovery_test_() ->
 	{timeout, 120, fun test_missing_txs_fork_recovery/0}.
@@ -130,9 +130,9 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	RewardAddr = ar_wallet:to_address(RewardKey),
 	WalletName = ar_util:encode(RewardAddr),
 	Path = ar_wallet:wallet_filepath(WalletName),
-	SlavePath = ar_test_node:remote_call(peer1, ar_wallet, wallet_filepath, [WalletName]),
+	PeerPath = ar_test_node:remote_call(peer1, ar_wallet, wallet_filepath, [WalletName]),
 	%% Copy the key because we mine blocks on both nodes using the same key in this test.
-	{ok, _} = file:copy(Path, SlavePath),
+	{ok, _} = file:copy(Path, PeerPath),
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0, RewardAddr),
 	ar_test_node:start_peer(peer1, B0, RewardAddr),

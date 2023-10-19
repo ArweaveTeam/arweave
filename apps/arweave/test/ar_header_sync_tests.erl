@@ -39,11 +39,11 @@ test_syncs_headers() ->
 				200,
 				30000
 			),
-			MasterB = ar_storage:read_block(Height, ar_node:get_block_index()),
-			?assertEqual(B, MasterB),
+			MainB = ar_storage:read_block(Height, ar_node:get_block_index()),
+			?assertEqual(B, MainB),
 			TXs = ar_test_node:remote_call(peer1, ar_storage, read_tx, [B#block.txs]),
-			MasterTXs = ar_storage:read_tx(B#block.txs),
-			?assertEqual(TXs, MasterTXs)
+			MainTXs = ar_storage:read_tx(B#block.txs),
+			?assertEqual(TXs, MainTXs)
 		end,
 		lists:reverse(lists:seq(0, ?MAX_TX_ANCHOR_DEPTH + 5))
 	),

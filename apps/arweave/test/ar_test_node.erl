@@ -452,15 +452,13 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	}),
 	ar:start_dependencies(),
 	wait_until_joined(),
-	wait_until_syncs_genesis_data(),
-	{whereis(ar_node_worker), Config#config.port}.
+	wait_until_syncs_genesis_data().
 
 
 start_peer(NodePrefix, Args) when is_list(Args) ->
-	{Peer, Port} = remote_call(NodePrefix, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
+	remote_call(NodePrefix, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
 	wait_until_joined(NodePrefix),
-	wait_until_syncs_genesis_data(NodePrefix),
-	{Peer, Port};
+	wait_until_syncs_genesis_data(NodePrefix);
 
 %% @doc Start a fresh peer node with the given genesis block.
 start_peer(NodePrefix, B0) ->
