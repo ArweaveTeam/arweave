@@ -10,30 +10,28 @@
 %% The "legacy" interface.
 -export([boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1, 
 		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peer/1,
-		mine/0,
-		get_tx_price/2, get_tx_price/3,
+		connect_to_peer/1, disconnect_from/1,
+		join/2, join_on/1, rejoin_on/1,
+		peer_ip/1, generate_node_namespace/0, get_unused_port/0,
+
+		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
-		peer_ip/1,
-		connect_to_peer/1,
-		disconnect_from/1,
-		generate_node_namespace/0, get_unused_port/0,
-		wait_until_height/1,
-		assert_wait_until_height/2, wait_until_block_index/1, wait_until_block_index/2,
-		assert_post_tx_to_peer/2,
+				
+		wait_until_height/1, assert_wait_until_height/2,
+		wait_until_block_index/1, wait_until_block_index/2,
 		wait_until_mining_paused/0,
-		wait_until_receives_txs/1,
+		wait_until_receives_txs/1, 
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
-		post_tx_to_peer/2, post_tx_to_peer/3,
-		get_tx_anchor/1, join/2, join_on/1, rejoin_on/1,
-		get_tx_confirmations/2,
-		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3,
+		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/2, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
-		wait_until_syncs_genesis_data/0]).
+		wait_until_syncs_genesis_data/0,
+		
+		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").

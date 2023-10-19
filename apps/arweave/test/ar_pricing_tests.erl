@@ -500,7 +500,8 @@ assert_new_account_fee() ->
 			ar_test_node:get_optimistic_tx_price(main, 0, <<"non-existent-address">>)).
 
 %% @doc Return the current balance of the given account.
-get_balance(Address) ->
+get_balance(Pub) ->
+	Address = ar_wallet:to_address(Pub),
 	Peer = ar_test_node:peer_ip(main),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
