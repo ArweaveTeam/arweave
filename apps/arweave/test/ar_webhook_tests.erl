@@ -35,13 +35,15 @@ test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
+	Port = ar_test_node:get_unused_port(),
+	PortBinary = integer_to_binary(Port),
 	Config2 = Config#config{ webhooks = [
 		#config_webhook{
-			url = <<"http://127.0.0.1:1986/tx">>,
+			url = <<"http://127.0.0.1:", PortBinary/binary, "/tx">>,
 			events = [transaction]
 		},
 		#config_webhook{
-			url = <<"http://127.0.0.1:1986/block">>,
+			url = <<"http://127.0.0.1:", PortBinary/binary, "/block">>,
 			events = [block]
 		}
 	]},
@@ -52,7 +54,7 @@ test_webhooks() ->
 	Routes = [{"/[...]", ar_webhook_tests, []}],
 	cowboy:start_clear(
 		ar_webhook_test_listener,
-		[{port, 1986}],
+		[{port, Port}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
 	TXs =
@@ -75,6 +77,7 @@ test_webhooks() ->
 				fun() ->
 					case ets:lookup(?MODULE, {block, Height}) of
 						[{_, B}] ->
+							?LOG_ERROR("**** A ~p", [Height]),
 							{H, _, _} = ar_node:get_block_index_entry(Height),
 							B2 = read_block_when_stored(H),
 							Struct = ar_serialize:block_to_json_struct(B2),
@@ -96,6 +99,7 @@ test_webhooks() ->
 				fun() ->
 					case ets:lookup(?MODULE, {tx, ar_util:encode(TX#tx.id)}) of
 						[{_, TX2}] ->
+							?LOG_ERROR("**** B ~p", [Height]),
 							Struct = ar_serialize:tx_to_json_struct(TX),
 							Expected =
 								maps:remove(
