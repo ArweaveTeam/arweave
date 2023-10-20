@@ -126,20 +126,24 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 	end,
 	{noreply, State#state{ mined_blocks = UpdatedMinedBlocks }};
 
-handle_cast({mined_block, BH, Height, PrevH}, State) when State#state.miner_logging == true ->
-	Message = io_lib:format("Produced candidate block ~s (height ~B, previous block ~s).",
-			[ar_util:encode(BH), Height, ar_util:encode(PrevH)]),
-	?LOG_INFO([{event, mined_block}, {block, ar_util:encode(BH)}, {height, Height},
-			{previous_block, ar_util:encode(PrevH)}]),
-	ar:console("~s~n", [Message]),
-	MinedBlocks = State#state.mined_blocks,
-	State1 = State#state{ mined_blocks = MinedBlocks#{ Height => BH } },
-	{noreply, State1};
-
-handle_cast({mined_block, BH, Height, _PrevH}, State) ->
-	MinedBlocks = State#state.mined_blocks,
-	State1 = State#state{ mined_blocks = MinedBlocks#{ Height => BH } },
-	{noreply, State1};
+handle_cast({mined_block, BH, Height, PrevH}, State) ->
+	case State#state.miner_logging of
+		true ->
+			Message = io_lib:format("Produced candidate block ~s (height ~B, previous block ~s).",
+					[ar_util:encode(BH), Height, ar_util:encode(PrevH)]),
+			?LOG_INFO([{event, mined_block}, {block, ar_util:encode(BH)}, {height, Height},
+					{previous_block, ar_util:encode(PrevH)}]),
+			ar:console("~s~n", [Message]);
+		_ ->
+			ok
+	end,
+	MinedBlocks = case maps:is_key(Height, State#state.mined_blocks) of
+		false ->
+			maps:put(Height, BH, State#state.mined_blocks);
+		_ ->
+			State#state.mined_blocks
+	end,
+	{noreply, State#state{ mined_blocks = MinedBlocks } };
 
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {message, Msg}]),
