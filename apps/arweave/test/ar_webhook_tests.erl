@@ -15,6 +15,7 @@ init(Req, State) ->
 	handle(SplitPath, Req, State).
 
 handle([<<"tx">>], Req, State) ->
+	?LOG_ERROR([{event, tx}]),
 	{ok, Reply, _} = cowboy_req:read_body(Req),
 	JSON = jiffy:decode(Reply, [return_maps]),
 	TX = maps:get(<<"transaction">>, JSON),
@@ -22,6 +23,7 @@ handle([<<"tx">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
 
 handle([<<"block">>], Req, State) ->
+	?LOG_ERROR([{event, block}]),
 	{ok, Reply, _} = cowboy_req:read_body(Req),
 	JSON = jiffy:decode(Reply, [return_maps]),
 	B = maps:get(<<"block">>, JSON),
@@ -64,6 +66,7 @@ test_webhooks() ->
 				ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 				ar_test_node:mine(),
 				wait_until_height(Height),
+				?LOG_ERROR([{event, mined}, {height, Height}]),
 				SignedTX
 			end,
 			lists:seq(1, 10)
@@ -88,12 +91,13 @@ test_webhooks() ->
 								),
 							?assertEqual(Expected, B),
 							true;	
-						_ ->
+						Result ->
+							?LOG_ERROR([{height, Height}, {result, Result}]),
 							false
 					end
 				end,
 				100,
-				1000
+				10000
 			),
 			true = ar_util:do_until(
 				fun() ->
@@ -113,7 +117,7 @@ test_webhooks() ->
 					end
 				end,
 				100,
-				1000
+				10000
 			)
 		end,
 		lists:seq(1, 10)

@@ -80,8 +80,9 @@ try_boot_peer(Node, Retries) ->
     Cmd = io_lib:format(
         "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s metrics_dir .tmp/metrics_~s no_auto_join packing_rate 20 " ++
-		"> ~s.out 2>&1 &",
-        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, Node]),
+		"> ~s-~s.out 2>&1 &",
+        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, NodeName, Node,
+			get_node_namespace()]),
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->

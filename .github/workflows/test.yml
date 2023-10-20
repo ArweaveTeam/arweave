@@ -83,12 +83,11 @@ jobs:
           chmod -R u+w ./_build
       - name: Restart epmd
         run: |
-          if pgrep -x "epmd" > /dev/null
+          if ! pgrep -x "epmd" > /dev/null
           then
-            echo "Killing epmd"
-            epmd -kill
+            echo "Starting epmd"
+            epmd -relaxed_command_check -daemon
           fi
-          epmd -relaxed_command_check -daemon
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
           # set -e
@@ -104,7 +103,8 @@ jobs:
             EXIT_CODE=0
             sleep 1
             TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
-            erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
+            NAMESPACE="${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}"
+            erl $ERL_TEST_OPTS -noshell -name main-${NAMESPACE}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main-${NAMESPACE}.out &
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID || EXIT_CODE=$?
             echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
@@ -112,8 +112,8 @@ jobs:
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
               echo -e "\033[0;32m===> Checking for retry\033[0m"
-              first_line_peer1=$(head -n 1 peer1.out 2>/dev/null)
-              first_line_main=$(head -n 1 main.out 2>/dev/null)
+              first_line_peer1=$(head -n 1 peer1-${NAMESPACE}.out 2>/dev/null)
+              first_line_main=$(head -n 1 main-${NAMESPACE}.out 2>/dev/null)
               echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
               echo -e "\033[0;31m===> First line of main node's output: $first_line_main\033[0m"
               # Check if it is a retryable error
@@ -130,27 +130,27 @@ jobs:
                 RETRYABLE=1
                 sleep 1
               else
-                if [[ -e peer1.out ]]; then
+                if [[ -e peer1-${NAMESPACE}.out ]]; then
                   echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
-                  cat peer1.out
+                  cat peer1-${NAMESPACE}.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
                 fi
-                if [[ -e peer2.out ]]; then
+                if [[ -e peer2-${NAMESPACE}.out ]]; then
                   echo -e "\033[0;31m===> Test failed, printing the peer2 node's output...\033[0m"
-                  cat peer2.out
+                  cat peer2-${NAMESPACE}.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer2 output...\033[0m"
                 fi
-                if [[ -e peer3.out ]]; then
+                if [[ -e peer3-${NAMESPACE}.out ]]; then
                   echo -e "\033[0;31m===> Test failed, printing the peer3 node's output...\033[0m"
-                  cat peer3.out
+                  cat peer3-${NAMESPACE}.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer3 output...\033[0m"
                 fi
-                if [[ -e peer4.out ]]; then
+                if [[ -e peer4-${NAMESPACE}.out ]]; then
                   echo -e "\033[0;31m===> Test failed, printing the peer4 node's output...\033[0m"
-                  cat peer4.out
+                  cat peer4-${NAMESPACE}.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer4 output...\033[0m"
                 fi
