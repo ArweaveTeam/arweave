@@ -527,7 +527,7 @@ test_fork_recovery(Split) ->
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	wait_until_syncs_chunks(peer1, MainProofs2, UpperBound2),
 	wait_until_syncs_chunks(peer1, MainProofs3, UpperBound2),
-	wait_until_syncs_chunks(peer1, Proofs1),
+	wait_until_syncs_chunks(peer1, Proofs1, infinity),
 	%% The peer1 node will return the orphaned transactions to the mempool
 	%% and gossip them.
 	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
@@ -541,7 +541,7 @@ test_fork_recovery(Split) ->
 	Proofs4 = build_proofs(MainB4, PeerTX4, PeerChunks4),
 	%% We did not submit proofs for PeerTX4 to main - they are supposed to be still stored
 	%% in the disk pool.
-	wait_until_syncs_chunks(peer1, Proofs4),
+	wait_until_syncs_chunks(peer1, Proofs4, infinity),
 	UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	wait_until_syncs_chunks(Proofs4, UpperBound3),
 	post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2).
@@ -571,14 +571,14 @@ test_syncs_after_joining(Split) ->
 	{PeerTX2, PeerChunks2} = tx(Wallet, {Split, 20}, v2, ?AR(1)),
 	PeerB2 = ar_test_node:post_and_mine( #{ miner => peer1, await_on => peer1 }, [PeerTX2] ),
 	PeerProofs2 = post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2),
-	wait_until_syncs_chunks(peer1, PeerProofs2),
+	wait_until_syncs_chunks(peer1, PeerProofs2, infinity),
 	_Peer2 = ar_test_node:rejoin_on(#{ node => peer1, join_on => main }),
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 	wait_until_syncs_chunks(peer1, MainProofs2, UpperBound2),
 	wait_until_syncs_chunks(peer1, MainProofs3, UpperBound2),
-	wait_until_syncs_chunks(peer1, Proofs1).
+	wait_until_syncs_chunks(peer1, Proofs1, infinity).
 
 mines_off_only_last_chunks_test_() ->
 	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
@@ -825,8 +825,9 @@ test_packs_chunks_depending_on_packing_threshold() ->
 	wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(StrictProofs))]),
 	wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))]),
 	wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(
-			maps:values(StrictProofs))]),
-	wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))]),
+			maps:values(StrictProofs))], infinity),
+	wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))],
+			infinity),
 	ChunkSize = ?DATA_CHUNK_SIZE,
 	maps:map(
 		fun(TXID, [{_B, _TX, Chunks, _} | _] = Proofs) ->
@@ -849,7 +850,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
 					ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData),
 					wait_until_syncs_chunks([P || {_, _, _, P} <- Proofs]),
-					wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- Proofs]);
+					wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- Proofs], infinity);
 				false ->
 					?debugFmt("Asserting random split which turned out NOT strict"
 							" and was placed above the strict data split threshold, "
