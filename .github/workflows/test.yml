@@ -112,8 +112,6 @@ jobs:
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
               echo -e "\033[0;32m===> Checking for retry\033[0m"
-              echo -e "\033[0;32m===> peer1 file: peer1-${NAMESPACE}\033[0m"
-              echo -e "\033[0;32m===> main file: main-${NAMESPACE}\033[0m"
               first_line_peer1=$(head -n 1 peer1-${NAMESPACE}.out)
               first_line_main=$(head -n 1 main-${NAMESPACE}.out)
               echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
