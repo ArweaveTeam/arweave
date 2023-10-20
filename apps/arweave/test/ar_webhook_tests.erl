@@ -23,11 +23,11 @@ handle([<<"tx">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
 
 handle([<<"block">>], Req, State) ->
-	?LOG_ERROR([{event, block}]),
 	{ok, Reply, _} = cowboy_req:read_body(Req),
 	JSON = jiffy:decode(Reply, [return_maps]),
 	B = maps:get(<<"block">>, JSON),
 	ets:insert(?MODULE, {{block, maps:get(<<"height">>, B)}, B}),
+	?LOG_ERROR([{event, block}, {height, maps:get(<<"height">>, B)}]),
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
 webhooks_test_() ->
