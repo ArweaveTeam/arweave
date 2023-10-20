@@ -89,11 +89,11 @@ jobs:
             echo "Killing epmd"
             epmd -kill
           fi
-          epmd -relaxed_command_check -debug -daemon
+          epmd -relaxed_command_check -daemon
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
           # set -e
-          # set -o pipefail
+          set -o pipefail
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
