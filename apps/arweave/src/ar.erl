@@ -748,13 +748,11 @@ tests(Mods, Config) when is_list(Mods) ->
 	end.
 
 start_for_tests(Config) ->
-	UniqueName = ar_test_node:generate_node_namespace(),
+	UniqueName = ar_test_node:get_node_namespace(),
 	TestConfig = Config#config{
 		peers = [],
 		data_dir = ".tmp/data_test_main_" ++ UniqueName,
 		metrics_dir = ".tmp/metrics_main_" ++ UniqueName,
-		test_node_namespace = UniqueName,
-		test_node_prefix = main,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
 		packing_rate = 20,

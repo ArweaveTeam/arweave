@@ -201,9 +201,7 @@
 	cm_exit_peer = not_set,
 	cm_peers = [],
 	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
-	cm_stat_interval = ?DEFAULT_CM_STAT_INTERVAL,
-	test_node_namespace = not_set,
-	test_node_prefix = not_set
+	cm_stat_interval = ?DEFAULT_CM_STAT_INTERVAL
 }).
 
 -endif.

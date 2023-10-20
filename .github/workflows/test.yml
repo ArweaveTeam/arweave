@@ -101,7 +101,7 @@ jobs:
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
             EXIT_CODE=0
-            erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
+            erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
             ERL_MAIN_PID=$! # capture PID of the main background process
             echo -e "\033[0;32m===> Waiting...\033[0m"
             wait $ERL_MAIN_PID || EXIT_CODE=$?

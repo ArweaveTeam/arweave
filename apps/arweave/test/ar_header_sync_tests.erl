@@ -6,13 +6,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
--import(ar_test_node, [
-	
-	
-	sign_v1_tx/3, 
-	wait_until_height/1, assert_wait_until_height/2,
-	read_block_when_stored/1,
-	random_v1_data/1
+-import(ar_test_node, [sign_v1_tx/3, wait_until_height/1, assert_wait_until_height/2,
+	read_block_when_stored/1, random_v1_data/1
 ]).
 
 syncs_headers_test_() ->

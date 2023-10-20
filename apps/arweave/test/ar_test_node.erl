@@ -12,7 +12,7 @@
 		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peers/0, stop_peer/1,
 		connect_to_peer/1, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
-		peer_ip/1, generate_node_namespace/0, get_unused_port/0,
+		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
@@ -93,9 +93,8 @@ try_boot_peer(Node, Retries) ->
     end.
 
 peer_name(Node) ->
-	{ok, Config} = application:get_env(arweave, config),
 	list_to_atom(
-		atom_to_list(Node) ++ "-" ++ Config#config.test_node_namespace ++ "@127.0.0.1"
+		atom_to_list(Node) ++ "-" ++ get_node_namespace() ++ "@127.0.0.1"
 	).
 
 peer_port(Node) ->
@@ -380,34 +379,36 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 
 remote_call(Node, Module, Function, Args) ->
 	remote_call(Node, Module, Function, Args, 10000).
-
-remote_call(main, Module, Function, Args, _Timeout) ->
-	%% main is this node, so run the function locally.
-	apply(Module, Function, Args);
+	
 remote_call(Node, Module, Function, Args, Timeout) ->
 	NodeName = peer_name(Node),
-	Key = rpc:async_call(NodeName, Module, Function, Args),
-	Result = ar_util:do_until(
-		fun() ->
-			case rpc:nb_yield(Key) of
-				timeout ->
-					false;
-				{value, Reply} ->
-					{ok, Reply}
-			end
-		end,
-		200,
-		Timeout
-	),
-	case Result of
-		{error, timeout} ->
-			?debugFmt("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
-					"args: ~p, node: ~p.~n", [Timeout, Module, Function, Args, Node]);
-		_ ->
-			ok
-	end,
-	?assertMatch({ok, _}, Result),
-	element(2, Result).
+	case node() == NodeName of
+		true ->
+			apply(Module, Function, Args);
+		false ->
+			Key = rpc:async_call(NodeName, Module, Function, Args),
+			Result = ar_util:do_until(
+				fun() ->
+					case rpc:nb_yield(Key) of
+						timeout ->
+							false;
+						{value, Reply} ->
+							{ok, Reply}
+					end
+				end,
+				200,
+				Timeout
+			),
+			case Result of
+				{error, timeout} ->
+					?debugFmt("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
+							"args: ~p, node: ~p.~n", [Timeout, Module, Function, Args, Node]);
+				_ ->
+					ok
+			end,
+			?assertMatch({ok, _}, Result),
+			element(2, Result)
+	end.
 
 %%%===================================================================
 %%% Legacy public interface.
@@ -1148,12 +1149,9 @@ assert_data_not_found(Node, TXID) ->
 			ar_http:req(#{ method => get, peer => Peer,
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).
 
-%% helpers for setting up nodes for testing.
-generate_node_namespace() ->
-	%% Generate a unique string using the current timestamp.
-	Timestamp = integer_to_list(erlang:system_time()),
-	Hash = erlang:md5(Timestamp),
-	lists:flatten([io_lib:format("~2.16.0b", [X]) || <<X:8>> <= Hash]).
+get_node_namespace() ->
+	Parts = string:tokens(atom_to_list(node()), "-@"), % Split the node name at '-' and '@'
+	lists:nth(2, Parts). % Retrieve the element between the '-' and '@'
 
 get_unused_port() ->
   {ok, ListenSocket} = gen_tcp:listen(0, [{port, 0}]),
