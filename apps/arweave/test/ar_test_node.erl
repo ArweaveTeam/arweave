@@ -378,7 +378,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 	[{?PARTITION_SIZE, RangeNumber, {spora_2_6, RewardAddr}}].
 
 remote_call(Node, Module, Function, Args) ->
-	remote_call(Node, Module, Function, Args, 10000).
+	remote_call(Node, Module, Function, Args, 30000).
 	
 remote_call(Node, Module, Function, Args, Timeout) ->
 	NodeName = peer_name(Node),

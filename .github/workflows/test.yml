@@ -101,7 +101,8 @@ jobs:
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
             EXIT_CODE=0
-            stdbuf -oL -eL erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
+            sleep 1
+            erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID || EXIT_CODE=$?
             echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
@@ -128,11 +129,31 @@ jobs:
                 echo "Retrying test because of econnrefused..."
                 RETRYABLE=1
                 sleep 1
-              elif [[ -e peer1.out ]]; then
-                echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
-                cat peer1.out
               else
-                echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
+                if [[ -e peer1.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
+                  cat peer1.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
+                fi
+                if [[ -e peer2.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer2 node's output...\033[0m"
+                  cat peer2.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer2 output...\033[0m"
+                fi
+                if [[ -e peer3.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer3 node's output...\033[0m"
+                  cat peer3.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer3 output...\033[0m"
+                fi
+                if [[ -e peer4.out ]]; then
+                  echo -e "\033[0;31m===> Test failed, printing the peer4 node's output...\033[0m"
+                  cat peer4.out
+                else
+                  echo -e "\033[0;31m===> Test failed without peer4 output...\033[0m"
+                fi
               fi
             fi
           done
