@@ -89,18 +89,15 @@ jobs:
             echo "Killing epmd"
             epmd -kill
           fi
-          echo "Starting epmd"
-          date
           epmd -relaxed_command_check -debug -daemon
-          date
-          echo "Started epmd"
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
           set -e
           set -o pipefail
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
-          pgrep -x "epmd"
+          pgrep -x "epmd" || true
+          echo "names:"
           epmd -names
           export PATH=$(pwd)/_build/erts/bin:$PATH
           export ERL_EPMD_ADDRESS=127.0.0.1
@@ -110,15 +107,18 @@ jobs:
             RETRYABLE=0
             EXIT_CODE=0
             sleep 1
-            pgrep -x "epmd"
+            pgrep -x "epmd" || true
+            echo "names:"
             epmd -names
             erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
-            pgrep -x "epmd"
+            pgrep -x "epmd" || true
+            echo "names:"
             epmd -names
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID || EXIT_CODE=$?
             echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
-            pgrep -x "epmd"
+            pgrep -x "epmd" || true
+            echo "names:"
             epmd -names
             kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
             # For debugging purposes, print the peer1 output if the tests failed
