@@ -84,8 +84,16 @@ jobs:
           chmod -R u+w ./_build
       - name: Restart epmd
         run: |
-          epmd -kill
-          epmd -relaxed_command_check -daemon
+          if ! pgrep -x "epmd" > /dev/null
+          then
+            echo "Killing epmd"
+            epmd -kill
+          fi
+          echo "Starting epmd"
+          date
+          epmd -relaxed_command_check -debug -daemon
+          date
+          echo "Started epmd"
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
           set -e
