@@ -92,7 +92,7 @@ jobs:
           epmd -relaxed_command_check -debug -daemon
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
-          set -e
+          # set -e
           # set -o pipefail
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
