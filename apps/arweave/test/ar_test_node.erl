@@ -23,7 +23,7 @@
 		wait_until_mining_paused/0,
 		wait_until_receives_txs/1, 
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
-		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2,
+		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2, assert_post_tx_to_peer/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/2, post_chunk/2,
