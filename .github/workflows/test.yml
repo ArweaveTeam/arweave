@@ -86,7 +86,8 @@ jobs:
         run: |
           if ! pgrep -x "epmd" > /dev/null
           then
-            epmd -relaxed_command_check -packet_timeout 30 -daemon
+            echo "Starting epmd"
+            epmd -relaxed_command_check -debug -packet_timeout 30 -daemon
           fi
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
@@ -102,6 +103,7 @@ jobs:
             RETRYABLE=0
             EXIT_CODE=0
             sleep 1
+            ps -ef | grep epmd
             erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID || EXIT_CODE=$?
