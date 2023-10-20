@@ -15,7 +15,6 @@ init(Req, State) ->
 	handle(SplitPath, Req, State).
 
 handle([<<"tx">>], Req, State) ->
-	?LOG_ERROR([{event, tx}]),
 	{ok, Reply, _} = cowboy_req:read_body(Req),
 	JSON = jiffy:decode(Reply, [return_maps]),
 	TX = maps:get(<<"transaction">>, JSON),
@@ -27,7 +26,6 @@ handle([<<"block">>], Req, State) ->
 	JSON = jiffy:decode(Reply, [return_maps]),
 	B = maps:get(<<"block">>, JSON),
 	ets:insert(?MODULE, {{block, maps:get(<<"height">>, B)}, B}),
-	?LOG_ERROR([{event, block}, {height, maps:get(<<"height">>, B)}]),
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
 webhooks_test_() ->
@@ -66,7 +64,6 @@ test_webhooks() ->
 				ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 				ar_test_node:mine(),
 				wait_until_height(Height),
-				?LOG_ERROR([{event, mined}, {height, Height}]),
 				SignedTX
 			end,
 			lists:seq(1, 10)
@@ -80,7 +77,6 @@ test_webhooks() ->
 				fun() ->
 					case ets:lookup(?MODULE, {block, Height}) of
 						[{_, B}] ->
-							?LOG_ERROR("**** A ~p", [Height]),
 							{H, _, _} = ar_node:get_block_index_entry(Height),
 							B2 = read_block_when_stored(H),
 							Struct = ar_serialize:block_to_json_struct(B2),
@@ -91,8 +87,7 @@ test_webhooks() ->
 								),
 							?assertEqual(Expected, B),
 							true;	
-						Result ->
-							?LOG_ERROR([{height, Height}, {result, Result}]),
+						_ ->
 							false
 					end
 				end,
@@ -103,7 +98,6 @@ test_webhooks() ->
 				fun() ->
 					case ets:lookup(?MODULE, {tx, ar_util:encode(TX#tx.id)}) of
 						[{_, TX2}] ->
-							?LOG_ERROR("**** B ~p", [Height]),
 							Struct = ar_serialize:tx_to_json_struct(TX),
 							Expected =
 								maps:remove(
