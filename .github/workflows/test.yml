@@ -107,8 +107,10 @@ jobs:
             wait $ERL_MAIN_PID || EXIT_CODE=$?
             echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
             kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
+            echo -e "\033[0;32m===> Killed: $ERL_MAIN_PID. Exit Code: $EXIT_CODE\033[0m"
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
+              echo -e "\033[0;32m===> Checking for retry\033[0m"
               first_line_peer1=$(head -n 1 peer1.out 2>/dev/null)
               first_line_main=$(head -n 1 main.out 2>/dev/null)
               echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
