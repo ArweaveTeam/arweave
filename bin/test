@@ -18,4 +18,4 @@ ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/ar
 echo -e "\033[0;32m===> Running tests...\033[0m"
 
 set -o pipefail
-erl $ERL_TEST_OPTS -noshell -name main-localtest@127.0.0.1 -setcookie test -run ar tests ${@:1} -s init stop 2>&1 | tee main.out
+stdbuf -oL -eL erl $ERL_TEST_OPTS -noshell -name main-localtest@127.0.0.1 -setcookie test -run ar tests ${@:1} -s init stop 2>&1 | tee main.out
