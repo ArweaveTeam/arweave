@@ -104,7 +104,8 @@ jobs:
             RETRYABLE=0
             EXIT_CODE=0
             sleep 1
-            erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
+            TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
+            erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID || EXIT_CODE=$?
             echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
