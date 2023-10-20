@@ -84,7 +84,7 @@ jobs:
           chmod -R u+w ./_build
       - name: Restart epmd
         run: |
-          if ! pgrep -x "epmd" > /dev/null
+          if pgrep -x "epmd" > /dev/null
           then
             echo "Killing epmd"
             epmd -kill
