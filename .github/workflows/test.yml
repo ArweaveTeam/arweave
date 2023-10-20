@@ -82,19 +82,18 @@ jobs:
           nix build .#packages.x86_64-linux.arweave
           cp -Lr result _build
           chmod -R u+w ./_build
-      - name: Start empd if needed
+      - name: Restart epmd
         run: |
-          if ! pgrep -x "epmd" > /dev/null
-          then
-            echo "Starting epmd"
-            epmd -relaxed_command_check -debug -packet_timeout 30 -daemon
-          fi
+          epmd -kill
+          epmd -relaxed_command_check -daemon
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
           set -e
           set -o pipefail
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
+          pgrep -x "epmd"
+          epmd -names
           export PATH=$(pwd)/_build/erts/bin:$PATH
           export ERL_EPMD_ADDRESS=127.0.0.1
           export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) $(pwd)/_build/test/lib/arweave/test -config $(pwd)/_build/config/sys.config"
@@ -103,11 +102,16 @@ jobs:
             RETRYABLE=0
             EXIT_CODE=0
             sleep 1
-            ps -ef | grep epmd
+            pgrep -x "epmd"
+            epmd -names
             erl $ERL_TEST_OPTS -noshell -name main-${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out &
+            pgrep -x "epmd"
+            epmd -names
             ERL_MAIN_PID=$! # capture PID of the main background process
             wait $ERL_MAIN_PID || EXIT_CODE=$?
             echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
+            pgrep -x "epmd"
+            epmd -names
             kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
