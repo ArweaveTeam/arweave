@@ -2,11 +2,12 @@
 
 ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
 
-source $ARWEAVE_DIR/testnet/testnet_client.sh
-source $ARWEAVE_DIR/testnet/testnet_solo.sh
-source $ARWEAVE_DIR/testnet/testnet_pilot.sh
+source $ARWEAVE_DIR/testnet/testnet_nodes.sh
 
-for server in "${TESTNET_SERVERS[@]}"; do
+nodes=("$@")
+
+for node in "${nodes[@]}"; do
+    server="$node.arweave.net"
     echo "Stopping $server"
 
     ssh -q -t "$server" 'bash --norc --noprofile' << 'ENDSSH'

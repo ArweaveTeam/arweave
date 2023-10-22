@@ -51,6 +51,10 @@ init([]) ->
 	State =
 		lists:foldl(
 			fun	({BucketSize, Bucket, {spora_2_6, Addr}} = M, Acc) when Addr == MiningAddr ->
+					?LOG_DEBUG([{event, mining_debug_start_io_threads},
+							{bucket_size, BucketSize},
+							{bucket, Bucket},
+							{mining_address, ar_util:encode(Addr)}]),
 					Start = Bucket * BucketSize,
 					End = (Bucket + 1) * BucketSize,
 					StoreID = ar_storage_module:id(M),

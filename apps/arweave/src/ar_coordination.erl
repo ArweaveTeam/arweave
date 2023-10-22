@@ -222,6 +222,9 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 			CacheRef, PeerRequests,
 			{DefaultCandidate, []}),
 	H1List2 = [{H1, Nonce} | H1List],
+	?LOG_DEBUG([{event, cm_computed_h1},
+		{mining_address, ar_util:encode(ShareableCandidate#mining_candidate.mining_address)},
+		{h1, ar_util:encode(H1)}, {nonce, Nonce}]),
 	PeerRequests2 = maps:put(CacheRef, {ShareableCandidate, H1List2}, PeerRequests),
 	case length(H1List2) >= ?BATCH_SIZE_LIMIT of
 		true ->
