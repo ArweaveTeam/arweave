@@ -9,13 +9,14 @@ fi
 
 
 prefix="$1"
-peers="$2"
+shift
 flags=""
 
-# Read the testnet servers and build the peer flags
-source $ARWEAVE_DIR/testnet/$peers.sh
-for server in "${TESTNET_SERVERS[@]}"; do
-	flags+=" $prefix $server"
+# Read the testnet nodes and build the peer flags
+for node in "$@"; do
+	if [ "$node" != "$(hostname)" ]; then
+		flags+=" $prefix $node.arweave.net"
+	fi
 done
 
 echo "$flags"

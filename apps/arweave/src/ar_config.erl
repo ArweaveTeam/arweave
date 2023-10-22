@@ -708,7 +708,9 @@ log_config_value(block_gossip_peers, FieldValue) ->
 log_config_value(local_peers, FieldValue) ->
 	format_peers(FieldValue);
 log_config_value(mining_addr, FieldValue) ->
-	format_address(FieldValue);
+	format_binary(FieldValue);
+log_config_value(start_from_block, FieldValue) ->
+	format_binary(FieldValue);
 log_config_value(storage_modules, FieldValue) ->
 	[format_storage_module(StorageModule) || StorageModule <- FieldValue];
 log_config_value(_, FieldValue) ->
@@ -716,9 +718,9 @@ log_config_value(_, FieldValue) ->
 
 format_peers(Peers) ->
 	[ar_util:format_peer(Peer) || Peer <- Peers].
-format_address(Address) ->
+format_binary(Address) ->
 	ar_util:encode(Address).
 format_storage_module({RangeSize, RangeNumber, {spora_2_6, MiningAddress}}) ->
-	{RangeSize, RangeNumber, {spora_2_6, format_address(MiningAddress)}};
+	{RangeSize, RangeNumber, {spora_2_6, format_binary(MiningAddress)}};
 format_storage_module(StorageModule) ->
 	StorageModule.

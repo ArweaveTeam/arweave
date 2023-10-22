@@ -2,24 +2,26 @@
 
 # Function to display help
 display_help() {
-    echo "Usage: $0 <branch-name> <node> [<node> <node> ...]"
+    echo "Usage: $0 <branch-name>]"
     echo "   branch-name: Name of the git branch."
-    echo "   node: testnet node name (e.g. testnet-1, testnet-2, etc...)."
+    echo ""
+    echo "Starts all nodes except the pilot node"
 }
 
 # Check for required arguments
-if [ -z "$1" ] || [ -z "$2" ]; then
+if [ -z "$1" ]; then
     display_help
     exit 1
 fi
 
 branch="$1"
-shift # Shift off the first two arguments
-nodes=("$@")
 
 ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
 source "$ARWEAVE_DIR/testnet/testnet_nodes.sh"
 
-for node in "${nodes[@]}"; do
+for node in "${ALL_NODES[@]}"; do
+    if is_node_in_array "$node" "${VDF_SERVER_NODES[@]}"; then
+        continue
+    fi
     ssh_start_node "$node" "$branch"
 done
