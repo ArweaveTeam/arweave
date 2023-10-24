@@ -534,10 +534,10 @@ parse_options([{<<"coordinated_mining">>, false} | Rest], Config) ->
 parse_options([{<<"coordinated_mining">>, Opt} | _], _) ->
 	{error, {bad_type, coordinated_mining, boolean}, Opt};
 
-parse_options([{<<"coordinated_mining_secret">>, CMSecret} | Rest], Config) when is_binary(CMSecret), byte_size(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
-	parse_options(Rest, Config#config{ coordinated_mining_secret = CMSecret });
-parse_options([{<<"coordinated_mining_secret">>, CMSecret} | _], _) ->
-	{error, {bad_type, coordinated_mining_secret, string}, CMSecret};
+parse_options([{<<"cm_api_secret">>, CMSecret} | Rest], Config) when is_binary(CMSecret), byte_size(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	parse_options(Rest, Config#config{ cm_api_secret = CMSecret });
+parse_options([{<<"cm_api_secret">>, CMSecret} | _], _) ->
+	{error, {bad_type, cm_api_secret, string}, CMSecret};
 
 parse_options([{<<"cm_poll_interval">>, CMPollInterval} | Rest], Config) when is_integer(CMPollInterval) ->
 	parse_options(Rest, Config#config{ cm_poll_interval = CMPollInterval });

@@ -31,7 +31,7 @@ send_tx_json(Peer, TXID, Bin) ->
 		method => post,
 		peer => Peer,
 		path => "/tx",
-		headers => [{<<"arweave-tx-id">>, ar_util:encode(TXID)} | p2p_headers()],
+		headers => add_header(<<"arweave-tx-id">>, ar_util:encode(TXID), p2p_headers()),
 		body => Bin,
 		connect_timeout => 5000,
 		timeout => 30 * 1000
@@ -43,7 +43,7 @@ send_tx_binary(Peer, TXID, Bin) ->
 		method => post,
 		peer => Peer,
 		path => "/tx2",
-		headers => [{<<"arweave-tx-id">>, ar_util:encode(TXID)} | p2p_headers()],
+		headers => add_header(<<"arweave-tx-id">>, ar_util:encode(TXID), p2p_headers()),
 		body => Bin,
 		connect_timeout => 5000,
 		timeout => 30 * 1000
@@ -66,7 +66,7 @@ send_block_json(Peer, H, Payload) ->
 		method => post,
 		peer => Peer,
 		path => "/block",
-		headers => [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
+		headers => add_header(<<"arweave-block-hash">>, ar_util:encode(H), p2p_headers()),
 		body => Payload,
 		connect_timeout => 5000,
 		timeout => 20 * 1000
@@ -77,11 +77,11 @@ send_block_binary(Peer, H, Payload) ->
 	send_block_binary(Peer, H, Payload, undefined).
 
 send_block_binary(Peer, H, Payload, RecallByte) ->
-	Headers = [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
+	Headers = add_header(<<"arweave-block-hash">>, ar_util:encode(H), p2p_headers()),
 	%% The way of informing the recipient about the recall byte used before the fork
 	%% 2.6. Since the fork 2.6 blocks have a "recall_byte" field.
 	Headers2 = case RecallByte of undefined -> Headers; _ ->
-			[{<<"arweave-recall-byte">>, integer_to_binary(RecallByte)} | Headers] end,
+			add_header(<<"arweave-recall-byte">>, integer_to_binary(RecallByte), Headers) end,
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -1130,6 +1130,7 @@ handle_tx_response(Peer, _Encoding, Response) ->
 	{error, Response}.
 
 handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	?LOG_ERROR([{event, cm_partition_table_response}, {body, Body}]),
 	case catch jiffy:decode(Body) of
 		{'EXIT', Error} ->
 			?LOG_WARNING([{event, failed_to_parse_cm_partition_table},
@@ -1182,7 +1183,13 @@ p2p_headers() ->
 
 cm_p2p_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
-	[{<<"x-cm-api-secret">>, Config#config.coordinated_mining_secret} | p2p_headers()].
+	add_header(<<"x-cm-api-secret">>, Config#config.cm_api_secret, p2p_headers()).
+
+add_header(Name, Value, Headers) when is_binary(Name) andalso is_binary(Value) ->
+	[{Name, Value} | Headers];
+add_header(Name, Value, Headers) ->
+	?LOG_ERROR([{event, invalid_header}, {name, Name}, {value, Value}]),
+	Headers.
 
 %% @doc Return values for keys - or error if any key is missing.
 safe_get_vals(Keys, Props) ->

@@ -2182,52 +2182,34 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	end.
 
 check_internal_api_secret(Req) ->
-	Reject = fun(Msg) ->
-		log_internal_api_reject(Msg, Req),
-		%% Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
-		timer:sleep(rand:uniform(1000) + 1000),
-		{reject,
-			{421, #{}, <<"Internal API disabled or invalid internal API secret in request.">>}}
-	end,
 	{ok, Config} = application:get_env(arweave, config),
-	case {Config#config.internal_api_secret,
-			cowboy_req:header(<<"x-internal-api-secret">>, Req)} of
-		{not_set, _} ->
-			Reject("Request to disabled internal API");
-		{Secret, Secret} when is_binary(Secret) ->
-			pass;
-		_ ->
-			Reject("Invalid secret for internal API request")
-	end.
-
-log_internal_api_reject(Msg, Req) ->
-	spawn(fun() ->
-		Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-		{IpAddr, _Port} = cowboy_req:peer(Req),
-		BinIpAddr = list_to_binary(inet:ntoa(IpAddr)),
-		?LOG_WARNING("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
-	end).
+	check_api_secret(
+		<<"x-internal-api-secret">>, Config#config.internal_api_secret, <<"Internal API">>, Req).
 
 check_cm_api_secret(Req) ->
+	{ok, Config} = application:get_env(arweave, config),
+	check_api_secret(<<"x-cm-api-secret">>, Config#config.cm_api_secret, <<"CM API">>, Req).
+
+check_api_secret(Header, Secret, APIName, Req) ->
 	Reject = fun(Msg) ->
-		log_cm_api_reject(Msg, Req),
+		log_api_reject(Msg, Req),
 		%% Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
 		timer:sleep(rand:uniform(1000) + 1000),
-		{reject,
-			{421, #{}, <<"Coodrinated mining API disabled or invalid CM API secret in request.">>}}
+		{reject, {
+			421, #{}, 
+			<<APIName/bitstring, " disabled or invalid ", APIName/bitstring, " secret in request.">>
+		}}
 	end,
-	{ok, Config} = application:get_env(arweave, config),
-	case {Config#config.coordinated_mining_secret,
-			cowboy_req:header(<<"x-cm-api-secret">>, Req)} of
+	case {Secret, cowboy_req:header(Header, Req)} of
 		{not_set, _} ->
-			Reject("Request to disabled CM API");
+			Reject(<<"Request to disabled ", APIName/bitstring>>);
 		{Secret, Secret} when is_binary(Secret) ->
 			pass;
 		_ ->
-			Reject("Invalid secret for CM API request")
+			Reject(<<"Invalid secret for ", APIName/bitstring, " request">>)
 	end.
 
-log_cm_api_reject(Msg, Req) ->
+log_api_reject(Msg, Req) ->
 	spawn(fun() ->
 		Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 		{IpAddr, _Port} = cowboy_req:peer(Req),

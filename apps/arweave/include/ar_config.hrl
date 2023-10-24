@@ -197,7 +197,7 @@
 	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
 	p3 = #p3_config{},
 	coordinated_mining = false,
-	coordinated_mining_secret = not_set,
+	cm_api_secret = not_set,
 	cm_exit_peer = not_set,
 	cm_peers = [],
 	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
