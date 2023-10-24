@@ -2,7 +2,7 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0,
-		start_node/2, start_coordinated/1, mine/1, wait_until_height/2,
+		start_node/2, start_coordinated/1, start_coordinated/2, mine/1, wait_until_height/2,
 		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0, valid_solution/0,
 		remote_call/4]).
@@ -152,7 +152,7 @@ start_node(B0, Config) ->
 				= Config#config.mining_server_chunk_cache_size_limit,
 		debug = Config#config.debug,
 		coordinated_mining = Config#config.coordinated_mining,
-		coordinated_mining_secret = Config#config.coordinated_mining_secret,
+		cm_api_secret = Config#config.cm_api_secret,
 		cm_poll_interval = Config#config.cm_poll_interval,
 		peers = Config#config.peers,
 		cm_exit_peer = Config#config.cm_exit_peer,
@@ -169,7 +169,9 @@ start_node(B0, Config) ->
 %% @doc Launch the given number (>= 1, =< ?MAX_MINERS) of the mining nodes in the coordinated
 %% mode plus an exit node and a validator node.
 %% Return [Node1, ..., NodeN, ExitNode, ValidatorNode].
-start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
+start_coordinated(MiningNodeCount) ->
+	start_coordinated(MiningNodeCount, <<"test_coordinated_mining_secret">>).
+start_coordinated(MiningNodeCount, Secret) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
 	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
 	%% a solution.
 	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
@@ -191,7 +193,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 	ValidatorPeer = peer_ip(main),
 	BaseCMConfig = BaseConfig#config{
 		coordinated_mining = true,
-		coordinated_mining_secret = <<"test_coordinated_mining_secret">>,
+		cm_api_secret = Secret,
 		cm_poll_interval = 2000
 	},
 	ExitNodeConfig = BaseCMConfig#config{

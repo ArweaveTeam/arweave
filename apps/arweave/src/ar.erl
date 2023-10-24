@@ -254,8 +254,8 @@ show_help() ->
 				"Run defragmentation of the chunk storage files from the given storage module."
 				" Assumes the run_defragmentation flag is provided."},
 			{"coordinated_mining", "Enable coordinated mining. You need to also set "
-					"coordinated_mining_secret, cm_peer, and cm_exit_peer."},
-			{"coordinated_mining_secret", "Coordinated mining secret for authenticated "
+					"cm_api_secret, cm_peer, and cm_exit_peer."},
+			{"cm_api_secret", "Coordinated mining secret for authenticated "
 					"requests between private peers. You need to also set coordinated_mining, "
 					"cm_peer, and cm_exit_peer."},
 			{"cm_poll_interval", io_lib:format("The frequency in milliseconds of asking the "
@@ -265,10 +265,10 @@ show_help() ->
 					"coordinated mining statistics. Default is ~B.",
 					[?DEFAULT_CM_STAT_INTERVAL])},
 			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
-					"set coordinated_mining, coordinated_mining_secret, and cm_exit_peer."},
+					"set coordinated_mining, cm_api_secret, and cm_exit_peer."},
 			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
 					"coordinated mining mode. You need to also set coordinated_mining, "
-					"coordinated_mining_secret, and cm_peer."}
+					"cm_api_secret, and cm_peer."}
 		]
 	),
 	erlang:halt().
@@ -503,11 +503,11 @@ parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
 	end;
 parse_cli_args(["coordinated_mining" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ coordinated_mining = true });
-parse_cli_args(["coordinated_mining_secret", CMSecret | Rest], C)
+parse_cli_args(["cm_api_secret", CMSecret | Rest], C)
 		when length(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
-	parse_cli_args(Rest, C#config{ coordinated_mining_secret = list_to_binary(CMSecret) });
-parse_cli_args(["coordinated_mining_secret", _ | _], _) ->
-	io:format("~nThe coordinated_mining_secret must be at least ~B characters long.~n~n",
+	parse_cli_args(Rest, C#config{ cm_api_secret = list_to_binary(CMSecret) });
+parse_cli_args(["cm_api_secret", _ | _], _) ->
+	io:format("~nThe cm_api_secret must be at least ~B characters long.~n~n",
 			[?INTERNAL_API_SECRET_MIN_LEN]),
 	erlang:halt();
 parse_cli_args(["cm_poll_interval", Num | Rest], C) ->

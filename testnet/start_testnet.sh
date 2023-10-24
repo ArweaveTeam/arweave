@@ -48,10 +48,10 @@ else
 fi
 
 if is_node_in_array "$node" "${CM_EXIT_NODE[@]}"; then
-    screen_cmd+=" coordinated_mining coordinated_mining_secret testnet_cm_secret"
+    screen_cmd+=" coordinated_mining cm_api_secret testnet_cm_secret"
     screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh cm_peer "${CM_MINER_NODES[@]}")
 elif is_node_in_array "$node" "${CM_MINER_NODES[@]}"; then
-    screen_cmd+=" coordinated_mining coordinated_mining_secret testnet_cm_secret"
+    screen_cmd+=" coordinated_mining cm_api_secret testnet_cm_secret"
     screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh cm_exit_peer "${CM_EXIT_NODE[@]}")
     screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh cm_peer "${CM_MINER_NODES[@]}")
 fi

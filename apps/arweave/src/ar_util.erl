@@ -50,7 +50,7 @@ pick_random(List, N) ->
 pick_random(Xs) ->
 	lists:nth(rand:uniform(length(Xs)), Xs).
 
-%% @doc Encode a binary to URL safe base64.
+%% @doc Encode a binary to URL safe base64 binary string.
 encode(Bin) ->
 	b64fast:encode(Bin).
 
