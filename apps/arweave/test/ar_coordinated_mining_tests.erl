@@ -31,7 +31,8 @@ mining_test_() ->
 api_test_() ->
 	[
 		{timeout, 120, fun test_no_secret/0},
-		{timeout, 120, fun test_bad_secret/0}
+		{timeout, 120, fun test_bad_secret/0},
+		{timeout, 120, fun test_partition_table/0}
 	].
 
 %% --------------------------------------------------------------------
@@ -143,6 +144,71 @@ test_bad_secret() ->
 		{error, {ok, {{<<"421">>, _}, _, 
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
+
+test_partition_table() ->
+	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
+	Config = ar_test_node:base_cm_config([]),
+	
+	% {ok, Config} = application:get_env(arweave, config),
+	MiningAddr = Config#config.mining_addr,
+	RandomAddress = crypto:strong_rand_bytes(32),
+	Peer = ar_test_node:peer_ip(main),
+
+	%% No partitions
+	% application:set_env(arweave, config, Config#config{ storage_modules = [] }),
+	ar_test_node:start_node(B0, Config, false),
+	?assertEqual(
+		{ok, []},
+		ar_http_iface_client:get_cm_partition_table(Peer)
+	),
+
+	%% Partition jumble with 2 addresses
+	PartitionUpperBound = 35 * ?PARTITION_SIZE, %% less than the highest configured partition
+	ar_test_node:start_node(B0, Config#config{ 
+		storage_modules = [
+			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 0, {spora_2_6, RandomAddress}},
+			{1000, 2, {spora_2_6, MiningAddr}},
+			{1000, 2, {spora_2_6, RandomAddress}},
+			{1000, 10, {spora_2_6, MiningAddr}},
+			{1000, 10, {spora_2_6, RandomAddress}},
+			{?PARTITION_SIZE * 2, 4, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE * 2, 4, {spora_2_6, RandomAddress}},
+			{(?PARTITION_SIZE div 10), 18, {spora_2_6, MiningAddr}},
+			{(?PARTITION_SIZE div 10), 18, {spora_2_6, RandomAddress}},
+			{(?PARTITION_SIZE div 10), 19, {spora_2_6, MiningAddr}},
+			{(?PARTITION_SIZE div 10), 19, {spora_2_6, RandomAddress}},
+			{(?PARTITION_SIZE div 10), 20, {spora_2_6, MiningAddr}},
+			{(?PARTITION_SIZE div 10), 20, {spora_2_6, RandomAddress}},
+			{(?PARTITION_SIZE div 10), 21, {spora_2_6, MiningAddr}},
+			{(?PARTITION_SIZE div 10), 21, {spora_2_6, RandomAddress}},
+			{?PARTITION_SIZE+1, 30, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE+1, 30, {spora_2_6, RandomAddress}},
+			{?PARTITION_SIZE, 40, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 40, {spora_2_6, RandomAddress}}
+		]}, false),
+	%% get_cm_partition_table returns the currently minable partitions - which is [] if the
+	%% node is not mining.
+	?assertEqual(
+		{ok, []},
+		ar_http_iface_client:get_cm_partition_table(Peer)
+	),
+
+	%% Simulate mining start
+	ar_mining_io:reset(make_ref(), PartitionUpperBound),
+	
+	?assertEqual(
+		{ok, [
+			{0, ?PARTITION_SIZE, MiningAddr},
+			{1, ?PARTITION_SIZE, MiningAddr},
+			{2, ?PARTITION_SIZE, MiningAddr},
+			{8, ?PARTITION_SIZE, MiningAddr},
+			{9, ?PARTITION_SIZE, MiningAddr},
+			{30, ?PARTITION_SIZE, MiningAddr},
+			{31, ?PARTITION_SIZE, MiningAddr}
+		]},
+		ar_http_iface_client:get_cm_partition_table(Peer)
+	).
 
 %% --------------------------------------------------------------------
 %% Helpers
