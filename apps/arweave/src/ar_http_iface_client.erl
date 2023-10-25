@@ -1130,7 +1130,6 @@ handle_tx_response(Peer, _Encoding, Response) ->
 	{error, Response}.
 
 handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	?LOG_ERROR([{event, cm_partition_table_response}, {body, Body}]),
 	case catch jiffy:decode(Body) of
 		{'EXIT', Error} ->
 			?LOG_WARNING([{event, failed_to_parse_cm_partition_table},

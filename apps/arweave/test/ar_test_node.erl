@@ -2,10 +2,10 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0,
-		start_node/2, start_coordinated/1, start_coordinated/2, mine/1, wait_until_height/2,
-		wait_until_mining_paused/1, http_get_block/2, get_blocks/1, mock_to_force_invalid_h1/0,
-		get_difficulty_for_invalid_hash/0, invalid_solution/0, valid_solution/0,
-		remote_call/4]).
+		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
+		wait_until_height/2, wait_until_mining_paused/1, http_get_block/2, get_blocks/1,
+		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
+		valid_solution/0, remote_call/4]).
 
 %% The "legacy" interface.
 -export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1, 
@@ -136,6 +136,8 @@ wait_until_joined() ->
 
 %% @doc Start a node with the given genesis block and configuration.
 start_node(B0, Config) ->
+	start_node(B0, Config, true).
+start_node(B0, Config, WaitUntilSync) ->
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	clean_up_and_stop(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
@@ -163,20 +165,59 @@ start_node(B0, Config) ->
 	ok = application:set_env(arweave, config, Config2),
 	ar:start_dependencies(),
 	wait_until_joined(),
-	wait_until_syncs_genesis_data(),
+	case WaitUntilSync of
+		true ->
+			wait_until_syncs_genesis_data();
+		false ->
+			ok
+	end,
 	erlang:node().
 
 %% @doc Launch the given number (>= 1, =< ?MAX_MINERS) of the mining nodes in the coordinated
 %% mode plus an exit node and a validator node.
 %% Return [Node1, ..., NodeN, ExitNode, ValidatorNode].
-start_coordinated(MiningNodeCount) ->
-	start_coordinated(MiningNodeCount, <<"test_coordinated_mining_secret">>).
-start_coordinated(MiningNodeCount, Secret) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
+start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
 	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
 	%% a solution.
 	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
+	ExitPeer = peer_ip(peer1),
+	ValidatorPeer = peer_ip(main),
+
+	BaseCMConfig = base_cm_config([ValidatorPeer]),
+	RewardAddr = BaseCMConfig#config.mining_addr,
+	ExitNodeConfig = BaseCMConfig#config{ 
+		mine = true
+	},
+	ValidatorNodeConfig = BaseCMConfig#config{
+		mine = false, 
+		peers = [ExitPeer],
+		coordinated_mining = false,
+		cm_api_secret = not_set
+	},
+	
+	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]), %% exit node
+	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]), %% validator node
+	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
+	lists:foreach(
+		fun(I) ->
+			MinerNode = lists:nth(I, MinerNodes),
+			MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
+			
+			MinerConfig = BaseCMConfig#config{
+				cm_exit_peer = ExitPeer,
+				cm_peers = [peer_ip(Peer) || Peer <- MinerPeers],
+				storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
+			},
+			remote_call(MinerNode, ar_test_node, start_node, [B0, MinerConfig])
+		end,
+		lists:seq(1, MiningNodeCount)
+	),
+
+	MinerNodes ++ [peer1, main].
+
+base_cm_config(Peers) ->
 	RewardAddr = ar_wallet:to_address(remote_call(peer1, ar_wallet, new_keyfile, [])),
-	BaseConfig = #config{
+	#config{
 		start_from_latest_state = true,
 		auto_join = true,
 		mining_addr = RewardAddr,
@@ -187,43 +228,12 @@ start_coordinated(MiningNodeCount, Secret) when MiningNodeCount >= 1, MiningNode
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
 				serve_wallet_lists, pack_served_chunks],
 		mining_server_chunk_cache_size_limit = 4,
-		debug = true
-	},
-	ExitPeer = peer_ip(peer1),
-	ValidatorPeer = peer_ip(main),
-	BaseCMConfig = BaseConfig#config{
+		debug = true,
+		peers = Peers,
 		coordinated_mining = true,
-		cm_api_secret = Secret,
+		cm_api_secret = <<"test_coordinated_mining_secret">>,
 		cm_poll_interval = 2000
-	},
-	ExitNodeConfig = BaseCMConfig#config{
-		peers = [ValidatorPeer],
-		mine = true
-	},
-	ValidatorNodeConfig = BaseConfig#config{
-		peers = [ExitPeer]
-	},
-	
-	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]),
-	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]),
-	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
-	lists:foreach(
-		fun(I) ->
-			MinerNode = lists:nth(I, MinerNodes),
-			MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
-			
-			MinerConfig = BaseCMConfig#config{
-				cm_exit_peer = ExitPeer,
-				peers = [ValidatorPeer],
-				cm_peers = [peer_ip(Peer) || Peer <- MinerPeers],
-				storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
-			},
-			remote_call(MinerNode, ar_test_node, start_node, [B0, MinerConfig])
-		end,
-		lists:seq(1, MiningNodeCount)
-	),
-
-	MinerNodes ++ [peer1, main].
+	}.
 
 mine() ->
 	gen_server:cast(ar_node_worker, mine).

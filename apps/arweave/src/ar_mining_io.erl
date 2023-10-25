@@ -51,7 +51,7 @@ init([]) ->
 	State =
 		lists:foldl(
 			fun	({BucketSize, Bucket, {spora_2_6, Addr}} = M, Acc) when Addr == MiningAddr ->
-					?LOG_DEBUG([{event, mining_debug_start_io_threads},
+					?LOG_DEBUG([{event, start_io_threads},
 							{bucket_size, BucketSize},
 							{bucket, Bucket},
 							{mining_address, ar_util:encode(Addr)}]),
@@ -181,6 +181,8 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 		_ ->
 			Thread ! {new_mining_session, SessionRef}
 	end,
+	?LOG_DEBUG([{event, started_io_mining_thread}, {partition_number, PartitionNumber},
+			{mining_addr, ar_util:encode(MiningAddress)}, {store_id, StoreID}]),
 	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }.
 
 handle_io_thread_down(Ref, Reason,

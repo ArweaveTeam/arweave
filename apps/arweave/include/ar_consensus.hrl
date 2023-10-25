@@ -21,7 +21,7 @@
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.
 
--define(PARTITION_NUMBER(Offset), (Offset div ?PARTITION_SIZE)).
+-define(PARTITION_NUMBER(Offset), ((Offset) div ?PARTITION_SIZE)).
 %% MAX_PARTITION_NUMBER excludes the last partition as it may be incomplete and therefore provides
 %% a mining advantage (e.g. it can fit in RAM)
 -define(MAX_PARTITION_NUMBER(PartitionUpperBound),

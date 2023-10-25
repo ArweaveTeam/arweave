@@ -4,13 +4,15 @@
 
 -export([
 	start_link/0, computed_h1/2, compute_h2/3, computed_h2/1, post_solution/2,
-	reset_mining_session/0, get_public_state/0, compute_h2_on_peer/0, poll_loop/0, stat_loop/0
+	reset_mining_session/0, get_public_state/0, get_partition_table/0,
+	compute_h2_on_peer/0, poll_loop/0, stat_loop/0
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 
 -record(state, {
@@ -84,6 +86,24 @@ poll_loop() ->
 
 stat_loop() ->
 	gen_server:call(?MODULE, stat_loop).
+
+get_partition_table() ->
+	get_partition_table(ar_mining_io:get_partitions(), sets:new()).
+
+get_partition_table([], UniquePartitions) ->
+	lists:sort(sets:to_list(UniquePartitions));
+get_partition_table([{PartitionId, MiningAddress, _StoreID} | Partitions], UniquePartitions) ->
+	get_partition_table(
+		Partitions,
+		sets:add_element(
+			{[
+				{bucket, PartitionId},
+				{bucketsize, ?PARTITION_SIZE},
+				{addr, ar_util:encode(MiningAddress)}
+			]},
+			UniquePartitions
+		)
+	).
 
 %%%===================================================================
 %%% Generic server callbacks.
