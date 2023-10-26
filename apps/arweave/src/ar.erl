@@ -738,14 +738,17 @@ tests() ->
 tests(Mods, Config) when is_list(Mods) ->
 	start_for_tests(Config),
 	ar_test_node:boot_peers(),
-	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}]) of
-		ok ->
-			ar_test_node:stop_peers(),
-			ok;
-		_ ->
-			ar_test_node:stop_peers(),
-			exit(tests_failed)
+	Result = 
+		try
+			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
+		after
+			ar_test_node:stop_peers()
+		end,
+	case Result of
+		ok -> ok;
+		_ -> exit(tests_failed)
 	end.
+
 
 start_for_tests(Config) ->
 	UniqueName = ar_test_node:get_node_namespace(),

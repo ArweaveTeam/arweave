@@ -23,6 +23,7 @@ testnet-2
 
 CM_MINER_NODES+=(
 testnet-1
+testnet-2
 testnet-3
 testnet-6
 )

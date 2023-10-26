@@ -160,7 +160,7 @@ handle_cast({unpack_request, From, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	?LOG_DEBUG([{event, got_unpack_request}, {ref, Ref}]),
+	?LOG_DEBUG([{event, got_unpack_request}, {ref, Ref}, {packing, Packing}]),
 	increment_buffer_size(),
 	record_packing_request(unpack, Packing, unpack_request),
 	Worker ! {unpack, Ref, From, Args},
@@ -172,21 +172,19 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	?LOG_DEBUG([{event, got_pack_request}, {ref, Ref}]),
+	?LOG_DEBUG([{event, got_repack_request}, {ref, Ref},
+		{requested_packing, RequestedPacking}, {packing, Packing}]),
 	case {RequestedPacking, Packing} of
 		{unpacked, unpacked} ->
-			?LOG_DEBUG([{event, got_pack_request_already_unpacked}, {ref, Ref}]),
 			From ! {chunk, {packed, Ref, {unpacked, Chunk, AbsoluteOffset, TXRoot, ChunkSize}}},
 			{noreply, State};
 		{_, unpacked} ->
-			?LOG_DEBUG([{event, sending_for_packing}, {ref, Ref}]),
 			increment_buffer_size(),
 			record_packing_request(pack, RequestedPacking, repack_request),
 			Worker ! {pack, Ref, From, {RequestedPacking, Chunk, AbsoluteOffset, TXRoot,
 					ChunkSize}},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 		_ ->
-			?LOG_DEBUG([{event, got_pack_request_need_unpacking_first}, {ref, Ref}]),
 			increment_buffer_size(),
 			record_packing_request(repack, RequestedPacking, repack_request),
 			Worker ! {

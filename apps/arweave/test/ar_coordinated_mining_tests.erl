@@ -35,6 +35,11 @@ api_test_() ->
 		{timeout, 120, fun test_partition_table/0}
 	].
 
+refresh_test_() ->
+	[
+		{timeout, 120, fun test_peers_by_partition/0}
+	].
+
 %% --------------------------------------------------------------------
 %% Tests
 %% --------------------------------------------------------------------
@@ -146,24 +151,22 @@ test_bad_secret() ->
 		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
 
 test_partition_table() ->
-	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
+	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ?PARTITION_SIZE),
 	Config = ar_test_node:base_cm_config([]),
 	
-	% {ok, Config} = application:get_env(arweave, config),
 	MiningAddr = Config#config.mining_addr,
 	RandomAddress = crypto:strong_rand_bytes(32),
 	Peer = ar_test_node:peer_ip(main),
 
 	%% No partitions
-	% application:set_env(arweave, config, Config#config{ storage_modules = [] }),
 	ar_test_node:start_node(B0, Config, false),
+
 	?assertEqual(
 		{ok, []},
 		ar_http_iface_client:get_cm_partition_table(Peer)
 	),
 
 	%% Partition jumble with 2 addresses
-	PartitionUpperBound = 35 * ?PARTITION_SIZE, %% less than the highest configured partition
 	ar_test_node:start_node(B0, Config#config{ 
 		storage_modules = [
 			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
@@ -195,6 +198,7 @@ test_partition_table() ->
 	),
 
 	%% Simulate mining start
+	PartitionUpperBound = 35 * ?PARTITION_SIZE, %% less than the highest configured partition
 	ar_mining_io:reset(make_ref(), PartitionUpperBound),
 	
 	?assertEqual(
@@ -209,6 +213,114 @@ test_partition_table() ->
 		]},
 		ar_http_iface_client:get_cm_partition_table(Peer)
 	).
+
+test_peers_by_partition() ->
+	PartitionUpperBound = 6 * ?PARTITION_SIZE,
+	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), PartitionUpperBound),
+
+	MainPeer = ar_test_node:peer_ip(main),
+	Peer1 = ar_test_node:peer_ip(peer1),
+	Peer2 = ar_test_node:peer_ip(peer2),
+	Peer3 = ar_test_node:peer_ip(peer3),
+
+	BaseConfig = ar_test_node:base_cm_config([]),
+	Config = BaseConfig#config{ cm_exit_peer = MainPeer },
+	MiningAddr = Config#config.mining_addr,
+	
+	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
+		cm_peers = [Peer2, Peer3],
+		storage_modules = [
+			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 1, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 2, {spora_2_6, MiningAddr}}
+		]}, false]),
+	ar_test_node:remote_call(peer2, ar_test_node, start_node, [B0, Config#config{
+		cm_peers = [Peer1, Peer3],
+		storage_modules = [
+			{?PARTITION_SIZE, 1, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 2, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 3, {spora_2_6, MiningAddr}}
+		]}, false]),
+	ar_test_node:remote_call(peer3, ar_test_node, start_node, [B0, Config#config{
+		cm_peers = [Peer1, Peer2],
+		storage_modules = [
+			{?PARTITION_SIZE, 2, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 3, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 4, {spora_2_6, MiningAddr}}
+		]}, false]),
+
+	ar_test_node:remote_call(peer1, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
+	ar_test_node:remote_call(peer2, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
+	ar_test_node:remote_call(peer3, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
+
+	timer:sleep(3000),
+	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [0])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [3])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [4])),
+	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [5])),
+
+	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [0])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [3])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [4])),
+	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [5])),
+
+	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [0])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [3])),
+	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [4])),
+	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [5])),
+
+	ar_test_node:remote_call(peer1, ar_test_node, stop, []),
+	timer:sleep(3000),
+
+	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [0])),
+	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [3])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [4])),
+
+	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [0])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [3])),
+	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [4])),
+
+	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
+		cm_peers = [Peer2, Peer3],
+		storage_modules = [
+			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 4, {spora_2_6, MiningAddr}},
+			{?PARTITION_SIZE, 5, {spora_2_6, MiningAddr}}
+		]}, false]),
+	ar_test_node:remote_call(peer1, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
+	timer:sleep(3000),
+	
+	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [0])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [3])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [4])),
+	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [5])),
+
+	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [0])),
+	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [3])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [4])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [5])),
+
+	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [0])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [1])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [2])),
+	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [3])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [4])),
+	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [5])),
+	ok.	
 
 %% --------------------------------------------------------------------
 %% Helpers
