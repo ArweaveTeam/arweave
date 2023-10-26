@@ -3,9 +3,9 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, computed_h1/2, compute_h2/3, computed_h2/1, post_solution/2,
-	reset_mining_session/0, get_public_state/0, get_partition_table/0,
-	compute_h2_on_peer/0, poll_loop/0, stat_loop/0
+	start_link/0, computed_h1/2, compute_h2/3, computed_h2/1, post_solution/1,
+	reset_mining_session/0, get_public_state/0,
+	compute_h2_on_peer/0, stat_loop/0, get_peer/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -17,7 +17,6 @@
 
 -record(state, {
 	last_peer_response = #{},
-	timer_poll,
 	timer_stat,
 	peers_by_partition = #{},
 	peer_requests = #{},
@@ -68,7 +67,7 @@ compute_h2_on_peer() ->
 
 %% @doc Mining session has changed. Reset it and discard any intermediate value
 reset_mining_session() ->
-	gen_server:call(?MODULE, {reset_mining_session}).
+	gen_server:call(?MODULE, reset_mining_session).
 
 %% @doc Compute h2 for a remote peer
 compute_h2(Peer, Candidate, H1List) ->
@@ -78,32 +77,14 @@ compute_h2(Peer, Candidate, H1List) ->
 computed_h2(Candidate) ->
 	gen_server:cast(?MODULE, {computed_h2, Candidate}).
 
-post_solution(Peer, Candidate) ->
+post_solution(Candidate) ->
 	ar_mining_server:prepare_and_post_solution(Candidate).
-
-poll_loop() ->
-	gen_server:call(?MODULE, poll_loop).
 
 stat_loop() ->
 	gen_server:call(?MODULE, stat_loop).
 
-get_partition_table() ->
-	get_partition_table(ar_mining_io:get_partitions(), sets:new()).
-
-get_partition_table([], UniquePartitions) ->
-	lists:sort(sets:to_list(UniquePartitions));
-get_partition_table([{PartitionId, MiningAddress, _StoreID} | Partitions], UniquePartitions) ->
-	get_partition_table(
-		Partitions,
-		sets:add_element(
-			{[
-				{bucket, PartitionId},
-				{bucketsize, ?PARTITION_SIZE},
-				{addr, ar_util:encode(MiningAddress)}
-			]},
-			UniquePartitions
-		)
-	).
+get_peer(PartitionNumber) ->
+	gen_server:call(?MODULE, {get_peer, PartitionNumber}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -128,11 +109,10 @@ init([]) ->
 				_ ->
 					ok
 			end,
-			{ok, TimerPoll} = timer:apply_after(?START_DELAY, ?MODULE, poll_loop, []),
+			ar_util:cast_after(?START_DELAY, ?MODULE, refresh_peers),
 			{ok, TimerStat} = timer:apply_after(?START_DELAY, ?MODULE, stat_loop, []),
 			State#state{
 				last_peer_response = #{},
-				timer_poll = TimerPoll,
 				timer_stat = TimerStat
 			}
 	end,
@@ -143,19 +123,8 @@ handle_call(get_public_state, _From, State) ->
 	PublicState = {State#state.last_peer_response},
 	{reply, {ok, PublicState}, State};
 
-handle_call({reset_mining_session}, _From, State) ->
-	{reply, ok, State#state{
-		peer_requests = #{}
-	}};
-
-handle_call(poll_loop, _From, State) ->
-	{ok, Config} = application:get_env(arweave, config),
-	NewState = refresh(Config#config.cm_peers, State),
-	{ok, TimerPoll} = timer:apply_after(Config#config.cm_poll_interval, ?MODULE, poll_loop, []),
-	NewState2 = NewState#state{
-		timer_poll = TimerPoll
-	},
-	{reply, {ok}, NewState2};
+handle_call(reset_mining_session, _From, State) ->
+	{reply, ok, State#state{ peer_requests = #{} }};
 
 handle_call(stat_loop, _From, State) ->
 	ar:console("Coordinated mining stat~n", []),
@@ -209,10 +178,12 @@ handle_call(stat_loop, _From, State) ->
 	},
 	{reply, {ok}, NewState};
 
+handle_call({get_peer, PartitionNumber}, _From, State) ->
+	{reply, get_peer(PartitionNumber, State), State};
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
-
 
 handle_cast({computed_h1, Candidate, Diff}, State) ->
 	#mining_candidate{
@@ -263,15 +234,11 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRe
 	timer:cancel(TRef),
 	NewPeerIOStat = maps:fold(
 		fun	(_CacheRef, {Candidate, H1List}, Acc) ->
-			#mining_candidate{ 
-				partition_number2 = PartitionNumber2,
-				mining_address = MiningAddress } = Candidate,
-			case maps:find(PartitionNumber2, State#state.peers_by_partition) of
-				{ok, List} ->
-					?LOG_DEBUG([{event, compute_h2_on_peer},
-						{expected_mining_addr, MiningAddress},
-						{encoded, ar_util:encode(MiningAddress)}]),
-					{Peer, _PartitionStart, _PartitionEnd, MiningAddress} = lists:last(List),
+			#mining_candidate{ partition_number2 = PartitionNumber2 } = Candidate,
+			case get_peer(PartitionNumber2, State) of
+				none ->
+					Acc;
+				Peer ->
 					ar_http_iface_client:cm_h1_send(Peer, Candidate, H1List),
 					H1Count = length(H1List),
 					OldStat = maps:get(Peer, Acc, #peer_io_stat{}),
@@ -279,9 +246,7 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRe
 						h1_out_counter = OldStat#peer_io_stat.h1_out_counter + H1Count,
 						h1_out_counter_ps = OldStat#peer_io_stat.h1_out_counter_ps + H1Count
 					},
-					maps:put(Peer, NewStat, Acc);
-				_ ->
-					Acc
+					maps:put(Peer, NewStat, Acc)
 			end
 		end,
 		State#state.peer_io_stat,
@@ -294,11 +259,6 @@ handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRe
 		peer_io_stat = NewPeerIOStat
 	},
 	{noreply, NewState};
-
-handle_cast({reset_mining_session, _MiningSession}, State) ->
-	{noreply, State#state{
-		peer_requests = #{}
-	}};
 
 handle_cast({compute_h2, Candidate, H1List}, State) ->
 	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
@@ -328,6 +288,12 @@ handle_cast({computed_h2, Candidate}, State) ->
 	},
 	{noreply, NewState};
 
+handle_cast(refresh_peers, State) ->
+	{ok, Config} = application:get_env(arweave, config),
+	State2 = refresh(Config#config.cm_peers, State),
+	ar_util:cast_after(Config#config.cm_poll_interval, ?MODULE, refresh_peers),
+	{noreply, State2};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -342,58 +308,41 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+get_peer(PartitionNumber, State) ->
+	case maps:find(PartitionNumber, State#state.peers_by_partition) of
+		{ok, Peers} ->
+			lists:last(Peers);
+		_ ->
+			none
+	end.
 
 add_mining_peer({Peer, StorageModules}, State) ->
-	MiningPeers =
+	PeersByPartition =
 		lists:foldl(
-			fun({PartitionId, PartitionSize, PackingAddr}, Acc) ->
-				%% Allowing the case of same partition handled by different peers
-				% TODO range start, range end
-				NewElement = {Peer, 0, PartitionSize, PackingAddr},
-				Acc2 = case maps:get(PartitionId, Acc, none) of
-					L when is_list(L) ->
-						case lists:member(NewElement, L) of
-							true ->
-								Acc;
-							false ->
-								maps:put(PartitionId, [NewElement | L], Acc)
-						end;
-					none ->
-						maps:put(PartitionId, [NewElement], Acc)
-				end,
-				Acc2
+			fun({PartitionId, _PartitionSize, _PackingAddr}, Acc) ->
+				Peers = maps:get(PartitionId, Acc, []),
+				maps:put(PartitionId, [Peer | Peers], Acc)
 			end,
 			State#state.peers_by_partition,
 			StorageModules
 		),
-	State#state{peers_by_partition = MiningPeers}.
+	State#state{peers_by_partition = PeersByPartition}.
 
 remove_mining_peer(Peer, State) ->
-	PeersByPartition2 = maps:fold(
-		fun(PartitionId, PeerPartitionList, Acc) ->
-			PeerPartitionList2 = lists:foldl(
-				fun(Value, ListAcc) ->
-					case Value of
-						{Peer, _PartitionSize, _PackingAddr} ->
-							ListAcc;
-						_ ->
-							[ Value | ListAcc ]
-					end
-				end,
-				[],
-				PeerPartitionList
-			),
-			case PeerPartitionList2 of
+	PeersByPartition = maps:fold(
+		fun(PartitionId, Peers, Acc) ->
+			Peers2 = lists:delete(Peer, Peers),
+			case Peers2 of
 				[] ->
 					Acc;
 				_ ->
-					maps:put(PartitionId, PeerPartitionList2, Acc)
+					maps:put(PartitionId, Peers2, Acc)
 			end
 		end,
 		#{},
 		State#state.peers_by_partition
 	),
-	State#state{peers_by_partition = PeersByPartition2}.
+	State#state{peers_by_partition = PeersByPartition}.
 
 refresh([], State) ->
 	State;
@@ -404,7 +353,6 @@ refresh([Peer | Peers], State) ->
 			State2 = State#state{
 				last_peer_response = maps:put(Peer, SetValue, State#state.last_peer_response)
 			},
-			% TODO maybe there is better variant how to refresh partitions without remove+add shuffling
 			State3 = remove_mining_peer(Peer, State2),
 			add_mining_peer({Peer, PartitionList}, State3);
 		_ ->

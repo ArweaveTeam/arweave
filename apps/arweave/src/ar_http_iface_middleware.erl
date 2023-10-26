@@ -1355,7 +1355,7 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) 
 				false ->
 					not_joined(Req);
 				true ->
-					Table = ar_coordination:get_partition_table(),
+					Table = format_partition_table(),
 					{200, #{}, ar_serialize:jsonify(Table), Req}
 			end;
 		{reject, {Status, Headers, Body}} ->
@@ -3006,6 +3006,24 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 		{error, timeout}
 	end.
 
+format_partition_table() ->
+	format_partition_table(ar_mining_io:get_partitions(), sets:new()).
+
+format_partition_table([], UniquePartitions) ->
+	lists:sort(sets:to_list(UniquePartitions));
+format_partition_table([{PartitionId, MiningAddress, _StoreID} | Partitions], UniquePartitions) ->
+	format_partition_table(
+		Partitions,
+		sets:add_element(
+			{[
+				{bucket, PartitionId},
+				{bucketsize, ?PARTITION_SIZE},
+				{addr, ar_util:encode(MiningAddress)}
+			]},
+			UniquePartitions
+		)
+	).
+
 % TODO binary protocol after debug
 handle_mining_h1(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
@@ -3031,7 +3049,7 @@ handle_mining_h2(Req, Pid) ->
 				{ok, JSON} ->
 					Candidate = ar_serialize:json_struct_to_candidate(JSON),
 					?LOG_INFO([{event, h2_received}, {peer, ar_util:format_peer(Peer)}]),
-					ar_coordination:post_solution(Peer, Candidate),
+					ar_coordination:post_solution(Candidate),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
