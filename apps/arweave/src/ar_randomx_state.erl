@@ -37,9 +37,14 @@ init(Server, SwapHeight, Key, Threads) ->
 	ar:console("RandomX dataset initialisation for swap height ~p complete.~n", [SwapHeight]).
 
 start() ->
-	Pid = spawn_link(fun server/0),
-	register(?MODULE, Pid),
-	Pid.
+	case whereis(?MODULE) of
+		undefined ->
+			Pid = spawn_link(fun server/0),
+			register(?MODULE, Pid),
+			Pid;
+		Pid when is_pid(Pid) ->
+			Pid
+	end.
 
 start_block_polling() ->
 	whereis(?MODULE) ! poll_new_blocks.
