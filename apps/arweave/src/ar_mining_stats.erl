@@ -251,7 +251,9 @@ get_partition_data_size(PartitionNumber) ->
 %% @doc caculate the maximum hash rate (in MiB per second read from disk) for the given VDF speed
 %% at the current weave size.
 max_weave_read_mibps(VDFSpeed) ->
-	NumPartitions = ?MAX_PARTITION_NUMBER(ar_node:get_weave_size()) + 1,
+	max_weave_read_mibps(VDFSpeed, ar_node:get_weave_size()).
+max_weave_read_mibps(VDFSpeed, WeaveSize) ->
+	NumPartitions = ?MAX_PARTITION_NUMBER(WeaveSize) + 1,
 	NumPartitions * (200.0 / VDFSpeed).
 
 optimal_read_mibps(VDFSpeed, PartitionDataSize, TotalDataSize, WeaveSize) ->
@@ -365,7 +367,8 @@ mining_stats_test_() ->
 		{timeout, 30, fun test_data_size_stats/0},
 		{timeout, 30, fun test_h1_sent_to_peer_stats/0},
 		{timeout, 30, fun test_h1_received_from_peer_stats/0},
-		{timeout, 30, fun test_h2_peer_stats/0}
+		{timeout, 30, fun test_h2_peer_stats/0},
+		{timeout, 30, fun test_optimal_stats/0}
 	].
 
 test_read_stats() ->
@@ -594,3 +597,24 @@ test_peer_stats(Fun, Stat) ->
 	?assertEqual(0.0, get_average({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
 	?assertEqual(0.0, get_average({peer, Peer3, Stat, current}, CurrentStart1 + 250)).
 
+test_optimal_stats() ->
+	?assertEqual(2000.0, max_weave_read_mibps(1.0, floor(10 * ?PARTITION_SIZE))),
+	?assertEqual(2500.0, max_weave_read_mibps(0.8, floor(10 * ?PARTITION_SIZE))),
+	?assertEqual(1800.0, max_weave_read_mibps(1.0, floor(9.5 * ?PARTITION_SIZE))),
+
+	?assertEqual(200.0, 
+		optimal_read_mibps(
+			1.0, ?PARTITION_SIZE,
+			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
+	?assertEqual(100.0, 
+		optimal_read_mibps(
+			2.0, ?PARTITION_SIZE,
+			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
+	?assertEqual(50.0, 
+		optimal_read_mibps(
+			1.0, floor(0.25 * ?PARTITION_SIZE),
+			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
+	?assertEqual(160.0, 
+		optimal_read_mibps(
+			1.0, ?PARTITION_SIZE,
+			floor(6 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))).
