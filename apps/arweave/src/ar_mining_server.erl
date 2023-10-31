@@ -53,10 +53,10 @@ start_mining(Args) ->
 
 %% @doc Callback from ar_mining_io when a chunk is read
 recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
-	ar_mining_stats:increment_partition_stats(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
 	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
 recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
-	ar_mining_stats:increment_partition_stats(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
 	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
 recall_chunk(skipped, undefined, Nonce, Candidate) ->
 	update_chunk_cache_size(-1),
@@ -64,10 +64,13 @@ recall_chunk(skipped, undefined, Nonce, Candidate) ->
 
 %% @doc Callback from the hashing threads when a hash is computed
 computed_hash(computed_h0, H0, undefined, Candidate) ->
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h0, Candidate#mining_candidate{ h0 = H0 });
 computed_hash(computed_h1, H1, Preimage, Candidate) ->
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h1, Candidate#mining_candidate{ h1 = H1, preimage = Preimage });
 computed_hash(computed_h2, H2, Preimage, Candidate) ->
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h2, Candidate#mining_candidate{ h2 = H2, preimage = Preimage }).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
@@ -256,7 +259,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 	{SessionKey, Session, _PrevSessionKey, _PrevSession, Output, PartitionUpperBound} = Args,
 	StepNumber = Session#vdf_session.step_number,
 	true = is_integer(StepNumber),
-	ar_mining_stats:increment_vdf_stats(),
+	ar_mining_stats:vdf_computed(),
 	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
 	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
@@ -682,7 +685,7 @@ handle_task({computed_h2, Candidate}, State) ->
 											"the proof for the second chunk. See logs for more "
 											"details.~n");
 								_ ->
-									ar_coordination:computed_h2(
+									ar_coordination:computed_h2_for_peer(
 										Candidate#mining_candidate{ poa2 = PoA2 })
 							end
 					end;

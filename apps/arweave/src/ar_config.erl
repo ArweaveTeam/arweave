@@ -544,11 +544,6 @@ parse_options([{<<"cm_poll_interval">>, CMPollInterval} | Rest], Config) when is
 parse_options([{<<"cm_poll_interval">>, CMPollInterval} | _], _) ->
 	{error, {bad_type, cm_poll_interval, number}, CMPollInterval};
 
-parse_options([{<<"cm_stat_interval">>, CMStatInterval} | Rest], Config) when is_integer(CMStatInterval) ->
-	parse_options(Rest, Config#config{ cm_stat_interval = CMStatInterval });
-parse_options([{<<"cm_stat_interval">>, CMStatInterval} | _], _) ->
-	{error, {bad_type, cm_stat_interval, number}, CMStatInterval};
-
 parse_options([{<<"cm_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
 	case parse_peers(Peers, []) of
 		{ok, ParsedPeers} ->

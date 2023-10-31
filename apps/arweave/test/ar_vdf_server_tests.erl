@@ -105,7 +105,7 @@ handle([<<"vdf">>], Req, State) ->
 	end.
 
 test_vdf_server_push_fast_block() ->
-	VdfPort = ar_test_node:get_unused_port(),
+	VDFPort = ar_test_node:get_unused_port(),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -117,13 +117,13 @@ test_vdf_server_push_fast_block() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VdfPort) ]}),
+		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VDFPort) ]}),
 
 	%% Setup a server to listen for VDF pushes
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
 		ar_vdf_server_test_listener,
-		[{port, VdfPort}],
+		[{port, VDFPort}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
 

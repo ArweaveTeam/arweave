@@ -9,6 +9,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
 
@@ -43,10 +44,12 @@
 	state_db,
 	%% The identifier of the storage module.
 	store_id,
-	%% The size in bytes of the partition; undefined for the "default" storage.
-	partition_size,
-	%% The index of the partition; undefined for the "default" storage.
-	partition_index,
+	%% The partition covered by the storage module.
+	partition_number,
+	%% The size in bytes of the storage module; undefined for the "default" storage.
+	storage_module_size,
+	%% The index of the storage module; undefined for the "default" storage.
+	storage_module_index,
 	%% The number of entries in the write-ahead log.
 	wal
 }).
@@ -236,14 +239,15 @@ get_intersection_size(End, Start, ID, StoreID) ->
 
 init(StoreID) ->
 	process_flag(trap_exit, true),
-	{Dir, PartitionSize, PartitionIndex} =
+	{Dir, StorageModuleSize, StorageModuleIndex, PartitionNumber} =
 		case StoreID of
 			"default" ->
-				{filename:join(?ROCKS_DB_DIR, "ar_sync_record_db"), undefined, undefined};
+				{filename:join(?ROCKS_DB_DIR, "ar_sync_record_db"),
+					undefined, undefined, undefined};
 			_ ->
 				{Size, Index, _Packing} = ar_storage_module:get_by_id(StoreID),
 				{filename:join(["storage_modules", StoreID, ?ROCKS_DB_DIR,
-						"ar_sync_record_db"]), Size, Index}
+						"ar_sync_record_db"]), Size, Index, ?PARTITION_NUMBER(Size * Index)}
 		end,
 	StateDB = {sync_record, StoreID},
 	ok = ar_kv:open(Dir, StateDB),
@@ -254,8 +258,9 @@ init(StoreID) ->
 	{ok, #state{
 		state_db = StateDB,
 		store_id = StoreID,
-		partition_size = PartitionSize,
-		partition_index = PartitionIndex,
+		partition_number = PartitionNumber,
+		storage_module_size = StorageModuleSize,
+		storage_module_index = StorageModuleIndex,
 		sync_record_by_id = SyncRecordByID,
 		sync_record_by_id_type = SyncRecordByIDType,
 		wal = WAL
@@ -550,7 +555,9 @@ initialize_sync_record_by_id_type_ets2({{ID, Type}, SyncRecord, Iterator}, Store
 store_state(State) ->
 	#state{ state_db = StateDB, sync_record_by_id = SyncRecordByID,
 			sync_record_by_id_type = SyncRecordByIDType, store_id = StoreID,
-			partition_size = PartitionSize, partition_index = PartitionIndex } = State,
+			partition_number = PartitionNumber,
+			storage_module_size = StorageModuleSize,
+			storage_module_index = StorageModuleIndex } = State,
 	StoreSyncRecords =
 		ar_kv:put(
 			StateDB,
@@ -581,8 +588,9 @@ store_state(State) ->
 								_ ->
 									Type
 							end,
-						prometheus_gauge:set(v2_index_data_size_by_packing, [StoreID, Type2,
-								PartitionSize, PartitionIndex], ar_intervals:sum(TypeRecord));
+						ar_mining_stats:set_storage_module_data_size(
+							StoreID, Type2, PartitionNumber, StorageModuleSize, StorageModuleIndex,
+							ar_intervals:sum(TypeRecord));
 					(_, _) ->
 						ok
 				end,

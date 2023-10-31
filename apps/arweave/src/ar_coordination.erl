@@ -3,9 +3,9 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, computed_h1/2, compute_h2/3, computed_h2/1, post_solution/1,
+	start_link/0, computed_h1/2, compute_h2_for_peer/3, computed_h2_for_peer/1, post_solution/2,
 	reset_mining_session/0, get_public_state/0,
-	compute_h2_on_peer/0, stat_loop/0, get_peer/1
+	send_h1_batch_to_peer/0, stat_loop/0, get_peer/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -17,21 +17,9 @@
 
 -record(state, {
 	last_peer_response = #{},
-	timer_stat,
 	peers_by_partition = #{},
 	peer_requests = #{},
-	peer_io_stat = #{},
-	timer
-}).
--record(peer_io_stat, {
-	h1_out_counter = 0,
-	h1_in_counter = 0,
-	% per second resetable
-	h1_out_counter_ps = 0,
-	h1_in_counter_ps = 0,
-	% solutions
-	h2_out_counter = 0,
-	h2_in_counter = 0
+	h1_batch_timer
 }).
 
 -define(START_DELAY, 1000).
@@ -47,8 +35,6 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
-% TODO call/cast -> call
-
 %% @doc Start the gen_server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -57,28 +43,29 @@ start_link() ->
 get_public_state() ->
 	gen_server:call(?MODULE, get_public_state).
 
+%% @doc Mining session has changed. Reset it and discard any intermediate value
+reset_mining_session() ->
+	gen_server:call(?MODULE, reset_mining_session).
+
 %% @doc An H1 has been generated. Store it to send it later to a
 %% coordinated mining peer
 computed_h1(Candidate, Diff) ->
 	gen_server:cast(?MODULE, {computed_h1, Candidate, Diff}).
 
-compute_h2_on_peer() ->
-	gen_server:cast(?MODULE, compute_h2_on_peer).
-
-%% @doc Mining session has changed. Reset it and discard any intermediate value
-reset_mining_session() ->
-	gen_server:call(?MODULE, reset_mining_session).
+send_h1_batch_to_peer() ->
+	gen_server:cast(?MODULE, send_h1_batch_to_peer).
 
 %% @doc Compute h2 for a remote peer
-compute_h2(Peer, Candidate, H1List) ->
-	gen_server:cast(?MODULE, {compute_h2,
+compute_h2_for_peer(Peer, Candidate, H1List) ->
+	gen_server:cast(?MODULE, {compute_h2_for_peer,
 		Candidate#mining_candidate{ cm_lead_peer = Peer }, H1List}).
 
-computed_h2(Candidate) ->
-	gen_server:cast(?MODULE, {computed_h2, Candidate}).
+computed_h2_for_peer(Candidate) ->
+	gen_server:cast(?MODULE, {computed_h2_for_peer, Candidate}).
 
-post_solution(Candidate) ->
-	ar_mining_server:prepare_and_post_solution(Candidate).
+post_solution(Peer, Candidate) ->
+	ar_mining_server:prepare_and_post_solution(Candidate),
+	ar_mining_stats:h2_received_from_peer(Peer).
 
 stat_loop() ->
 	gen_server:call(?MODULE, stat_loop).
@@ -94,10 +81,12 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	
-	{ok, TRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, compute_h2_on_peer, []),
+	%% using timer:apply_after so we can cacncel pending timers. This allows us to send the
+	%% h1 batch as soon as it's full instead of waiting for the timeout to expire.
+	{ok, H1BatchTimerRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
 	State = #state{
 		last_peer_response = #{},
-		timer = TRef
+		h1_batch_timer = H1BatchTimerRef
 	},
 	State2 = case Config#config.coordinated_mining of
 		false ->
@@ -110,10 +99,8 @@ init([]) ->
 					ok
 			end,
 			ar_util:cast_after(?START_DELAY, ?MODULE, refresh_peers),
-			{ok, TimerStat} = timer:apply_after(?START_DELAY, ?MODULE, stat_loop, []),
 			State#state{
-				last_peer_response = #{},
-				timer_stat = TimerStat
+				last_peer_response = #{}
 			}
 	end,
 	{ok, State2}.
@@ -125,58 +112,6 @@ handle_call(get_public_state, _From, State) ->
 
 handle_call(reset_mining_session, _From, State) ->
 	{reply, ok, State#state{ peer_requests = #{} }};
-
-handle_call(stat_loop, _From, State) ->
-	ar:console("Coordinated mining stat~n", []),
-	% TODO print IO stat in header
-	ar:console("~21s | ~5s | ~13s | ~13s | ~13s ~n", ["peer", "alive",
-		"h1 I/O total", "h1 per second", "h2 I/O total"
-	]),
-	ar:console("~21s | ~5s | ~s~n", ["", "", "partition list"]),
-	{ok, Config} = application:get_env(arweave, config),
-	% TODO print self
-	% self alive == is_joined
-	maps:foreach(fun(Peer, Value) ->
-		{AliveStatus, PartitionList} = Value,
-		IOStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
-		% 21 enough for IPv4 111.111.111.111:11111
-		ar:console("~21s | ~5s | ~6B/~6B | ~6B/~6B | ~6B/~6B ~n", [
-			list_to_binary(ar_util:format_peer(Peer)), AliveStatus,
-			IOStat#peer_io_stat.h1_in_counter, IOStat#peer_io_stat.h1_out_counter,
-			% TODO make float
-			(1000*IOStat#peer_io_stat.h1_in_counter_ps) div Config#config.cm_stat_interval,
-			(1000*IOStat#peer_io_stat.h1_out_counter_ps) div Config#config.cm_stat_interval,
-			IOStat#peer_io_stat.h2_in_counter, IOStat#peer_io_stat.h2_out_counter
-		]),
-		lists:foreach(
-			fun	(ListValue) ->
-				{Bucket, BucketSize, Addr} = ListValue,
-				ar:console("~21s | ~5s | ~5B ~20B ~s~n", ["", "", Bucket, BucketSize, ar_util:encode(Addr)]),
-				ok
-			end,
-			PartitionList
-		),
-		ok
-		end,
-		State#state.last_peer_response
-	),
-	{ok, TimerStat} = timer:apply_after(Config#config.cm_stat_interval, ?MODULE, stat_loop, []),
-	NewPeerIOStat = maps:fold(
-		fun (Peer, OldStat, Acc) ->
-			NewStat = OldStat#peer_io_stat{
-				h1_out_counter_ps = 0,
-				h1_in_counter_ps = 0
-			},
-			maps:put(Peer, NewStat, Acc)
-		end,
-		#{},
-		State#state.peer_io_stat
-	),
-	NewState = State#state{
-		timer_stat = TimerStat,
-		peer_io_stat = NewPeerIOStat
-	},
-	{reply, {ok}, NewState};
 
 handle_call({get_peer, PartitionNumber}, _From, State) ->
 	{reply, get_peer(PartitionNumber, State), State};
@@ -219,74 +154,51 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 	PeerRequests2 = maps:put(CacheRef, {ShareableCandidate, H1List2}, PeerRequests),
 	case length(H1List2) >= ?BATCH_SIZE_LIMIT of
 		true ->
-			compute_h2_on_peer();
+			send_h1_batch_to_peer();
 		false ->
 			ok
 	end,
 	{noreply, State#state{peer_requests = PeerRequests2}};
 
-handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests} = State)
+handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests} = State)
   		when map_size(PeerRequests) == 0 ->
-	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, compute_h2_on_peer, []),
-	{noreply, State#state{timer = NewTRef}};
+	{ok, TimerRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
+	{noreply, State#state{h1_batch_timer = TimerRef}};
 
-handle_cast(compute_h2_on_peer, #state{peer_requests = PeerRequests, timer = TRef} = State) ->
-	timer:cancel(TRef),
-	NewPeerIOStat = maps:fold(
-		fun	(_CacheRef, {Candidate, H1List}, Acc) ->
+handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests, h1_batch_timer = TimerRef} = State) ->
+	timer:cancel(TimerRef),
+	maps:fold(
+		fun	(_CacheRef, {Candidate, H1List}, _) ->
 			#mining_candidate{ partition_number2 = PartitionNumber2 } = Candidate,
 			case get_peer(PartitionNumber2, State) of
 				none ->
-					Acc;
+					ok;
 				Peer ->
 					ar_http_iface_client:cm_h1_send(Peer, Candidate, H1List),
-					H1Count = length(H1List),
-					OldStat = maps:get(Peer, Acc, #peer_io_stat{}),
-					NewStat = OldStat#peer_io_stat{
-						h1_out_counter = OldStat#peer_io_stat.h1_out_counter + H1Count,
-						h1_out_counter_ps = OldStat#peer_io_stat.h1_out_counter_ps + H1Count
-					},
-					maps:put(Peer, NewStat, Acc)
+					ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
 			end
 		end,
-		State#state.peer_io_stat,
+		ok,
 		PeerRequests
 	),
-	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, compute_h2_on_peer, []),
+	{ok, NewTimerRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
 	NewState = State#state{
 		peer_requests = #{},
-		timer = NewTRef,
-		peer_io_stat = NewPeerIOStat
+		h1_batch_timer = NewTimerRef
 	},
 	{noreply, NewState};
 
-handle_cast({compute_h2, Candidate, H1List}, State) ->
+handle_cast({compute_h2_for_peer, Candidate, H1List}, State) ->
 	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
 	ar_mining_server:compute_h2_for_peer(Candidate, H1List),
-	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
-	H1Count = length(H1List),
-	NewStat = OldStat#peer_io_stat{
-		h1_in_counter = OldStat#peer_io_stat.h1_in_counter + H1Count,
-		h1_in_counter_ps = OldStat#peer_io_stat.h1_in_counter_ps + H1Count
-	},
-	NewPeerIOStat = maps:put(Peer, NewStat, State#state.peer_io_stat),
-	NewState = State#state{
-		peer_io_stat = NewPeerIOStat
-	},
-	{noreply, NewState};
+	ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
+	{noreply, State};
 
-handle_cast({computed_h2, Candidate}, State) ->
+handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
 	ar_http_iface_client:cm_h2_send(Peer, Candidate),
-	OldStat = maps:get(Peer, State#state.peer_io_stat, #peer_io_stat{}),
-	NewStat = OldStat#peer_io_stat{
-		h2_out_counter = OldStat#peer_io_stat.h2_out_counter + 1
-	},
-	NewPeerIOStat = maps:put(Peer, NewStat, State#state.peer_io_stat),
-	NewState = State#state{
-		peer_io_stat = NewPeerIOStat
-	},
-	{noreply, NewState};
+	ar_mining_stats:h2_sent_to_peer(Peer),
+	{noreply, State};
 
 handle_cast(refresh_peers, State) ->
 	{ok, Config} = application:get_env(arweave, config),
