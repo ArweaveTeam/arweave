@@ -220,12 +220,28 @@ disk_free_cmd({unix, darwin}, Df, DataDirPath, Port) ->
 disk_free_cmd({unix, _}, Df, DataDirPath, Port) ->
 	 my_cmd(Df ++ " -Pa -B1 " ++ DataDirPath ++ "/", Port).
 
+%% check for hardware errors in df output
+check_for_hardware_error(DfOutput, ThrowOnError) ->
+    case lists:member("Input/output error", DfOutput) of
+        true ->
+            ar:console("~nERROR: one or more of your disks are in corrupt/failing state.~n~p~n", [DfOutput]),
+            case ThrowOnError of
+                true ->
+                    erlang:error({input_output_error_detected, DfOutput});
+                _ ->
+                    true
+            end;
+        false ->
+            false
+    end.
+
 %% doc: iterates trough storage modules
 broadcast_disk_free({unix, _} = Os, Port) ->
 	Df = find_cmd("df"),
 	[DataDirPathData | StorageModulePaths] = get_storage_modules_paths(),
 	{DataDirID, DataDirPath} = DataDirPathData,
 	DataDirDfResult = disk_free_cmd(Os, Df, DataDirPath, Port),
+	check_for_hardware_error(DataDirDfResult, true),
 	[DataDirFs, DataDirBytes, DataDirPercentage] = parse_df_2(DataDirDfResult),
 	ar_events:send(disksup, {
 		remaining_disk_space,
@@ -236,13 +252,20 @@ broadcast_disk_free({unix, _} = Os, Port) ->
 	}),
 	HandleSmPath = fun({StoreID, StorageModulePath}) ->
 		Result = disk_free_cmd(Os, Df, StorageModulePath, Port),
-		[StorageModuleFs, Bytes, Percentage] = parse_df_2(Result),
-		IsDataDirDrive = string:equal(DataDirFs, StorageModuleFs),
-		ar_events:send(disksup, {
-			remaining_disk_space,
-			StoreID, IsDataDirDrive, Percentage, Bytes
-		})
-	end,
+		HasDiskError = check_for_hardware_error(Result, false),
+		case HasDiskError of
+			true ->
+						ar:console("~nERROR: storage module ~p is offline.~n", [StorageModulePath]),
+						ok;
+			false ->
+						[StorageModuleFs, Bytes, Percentage] = parse_df_2(Result),
+						IsDataDirDrive = string:equal(DataDirFs, StorageModuleFs),
+						ar_events:send(disksup, {
+							remaining_disk_space,
+							StoreID, IsDataDirDrive, Percentage, Bytes
+						})
+			end
+end,
 	lists:foreach(HandleSmPath, StorageModulePaths);
 broadcast_disk_free(_, _) ->
 	ar:console("~nWARNING: disk space checks are not supported on your platform. The node "
