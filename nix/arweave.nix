@@ -1,4 +1,4 @@
-{ pkgs }:
+{ pkgs, crashDumpsDir ? null, erlangCookie ? null }:
 
 
 let
@@ -324,7 +324,9 @@ let
       ROOT_DIR=
       PROFILE_DIR=
 
-      ERL_CRASH_DUMP=$(pwd)/erl_crash.dump
+      ${if crashDumpsDir == null then "" else "mkdir -p ${crashDumpsDir}"}
+      export ERL_CRASH_DUMP=${if crashDumpsDir == null then "$(pwd)/erl_crash.dump" else "${crashDumpsDir}/erl_crash_$(date \"+%Y-%m-%d_%H-%M-%S\").dump"}
+      ${if erlangCookie == null then "" else "export ERLANG_COOKIE=${erlangCookie}"}
       cd $ROOT_DIR
       $ROOT_DIR/bin/check-nofile
       if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
@@ -336,7 +338,8 @@ let
       : "''${ERL_EPMD_ADDRESS:=127.0.0.1}"
       export ERL_EPMD_ADDRESS
 
-      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $PROFILE_DIR/lib/*/ebin) \
+      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi \
+       -pa $(echo $PROFILE_DIR/lib/*/ebin) \
        -config $ROOT_DIR/config/sys.config \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
@@ -352,7 +355,9 @@ let
       ROOT_DIR=
       PROFILE_DIR=
 
-      ERL_CRASH_DUMP=$(pwd)/erl_crash.dump
+      ${if crashDumpsDir == null then "" else "mkdir -p ${crashDumpsDir}"}
+      export ERL_CRASH_DUMP=${if crashDumpsDir == null then "$(pwd)/erl_crash.dump" else "${crashDumpsDir}/erl_crash_$(date \"+%Y-%m-%d_%H-%M-%S\").dump"}
+      ${if erlangCookie == null then "" else "export ERLANG_COOKIE=${erlangCookie}"}
       cd $PROFILE_DIR
       $ROOT_DIR/bin/check-nofile
       if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then

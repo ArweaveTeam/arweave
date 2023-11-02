@@ -541,6 +541,14 @@ start(Port) when is_integer(Port) ->
 	start(#config{ port = Port });
 start(Config) ->
 	%% Start the logging system.
+	case os:getenv("TERM") of
+		"dumb" ->
+			% Set logger to output all levels of logs to the console
+			% when running in a dumb terminal.
+			logger:add_handler(console, logger_std_h, #{level => all});
+		_->
+			ok
+  end,
 	case Config#config.init of
 		true ->
 			case ?NETWORK_NAME of
