@@ -98,6 +98,10 @@
 %% Winstons per AR.
 -define(WINSTON_PER_AR, 1000000000000).
 
+%% The number of bytes in a gibibyte.
+-define(GiB, (1024 * 1024 * 1024)).
+-define(TiB, (1024 * ?GiB)).
+
 %% How far into the past or future the block can be in order to be accepted for
 %% processing. The maximum lag when fork recovery (chain reorganisation) is performed.
 -ifdef(DEBUG).

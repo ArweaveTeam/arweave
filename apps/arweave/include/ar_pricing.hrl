@@ -1,8 +1,5 @@
 %% @doc Pricing macros.
 
-%% The number of bytes in a gibibyte.
--define(GiB, (1024 * 1024 * 1024)).
-
 %% For a new account, we charge the fee equal to the price of uploading
 %% this number of bytes. The fee is about 0.1$ at the time.
 -define(NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT, 20_000_000).
