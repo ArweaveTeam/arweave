@@ -29,6 +29,12 @@
 	current_read_mibps = 0.0,
 	average_hash_hps = 0.0,
 	current_hash_hps = 0.0,
+	average_h1_to_peer_hps = 0.0,
+	current_h1_to_peer_hps = 0.0,
+	average_h1_from_peer_hps = 0.0,
+	current_h1_from_peer_hps = 0.0,
+	total_h2_to_peer = 0,
+	total_h2_from_peer = 0,
 	
 	partitions = [],
 	peers = []
@@ -244,6 +250,12 @@ get_overall_average(PartitionPeer, Stat, TotalCurrent, Now) ->
 			end
 	end.
 
+get_overall_total(PartitionPeer, Stat, TotalCurrent) ->
+	Pattern = {{PartitionPeer, '_', Stat, TotalCurrent}, '$1', '$2'},
+    Matches = ets:match(?MODULE, Pattern),
+	Counts = [Count || [_, Count] <- Matches],
+	lists:sum(Counts).
+
 get_partition_data_size(PartitionNumber) ->
     Pattern = {{partition, PartitionNumber, storage_module, '_'}, '$1'},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
@@ -278,41 +290,48 @@ generate_report() ->
 	generate_report(
 		ar_mining_io:get_partitions(),
 		Config#config.cm_peers,
+		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
 	).
 
-generate_report([], _Peers, Now) ->
+generate_report([], _Peers, _WeaveSize, Now) ->
 	#report{
 		now = Now
 	};
-generate_report(Partitions, Peers, Now) ->
+generate_report(Partitions, Peers, WeaveSize, Now) ->
 	VDFSpeed = vdf_speed(Now),
 	TotalDataSize = get_total_data_size(),
 	Report = #report{
 		now = Now,
 		vdf_speed = VDFSpeed,
 		total_data_size = TotalDataSize,
-		optimal_overall_read_mibps = optimal_overall_read_mibps(VDFSpeed, TotalDataSize),
+		optimal_overall_read_mibps = optimal_overall_read_mibps(VDFSpeed, TotalDataSize, WeaveSize),
 		average_read_mibps = get_overall_average(partition, read, total, Now) / 4,
 		current_read_mibps = get_overall_average(partition, read, current, Now) / 4,
 		average_hash_hps = get_overall_average(partition, hash, total, Now),
-		current_hash_hps = get_overall_average(partition, hash, current, Now)
+		current_hash_hps = get_overall_average(partition, hash, current, Now),
+		average_h1_to_peer_hps = get_overall_average(peer, h1_to_peer, total, Now),
+		current_h1_to_peer_hps = get_overall_average(peer, h1_to_peer, current, Now),
+		average_h1_from_peer_hps = get_overall_average(peer, h1_from_peer, total, Now),
+		current_h1_from_peer_hps = get_overall_average(peer, h1_from_peer, current, Now),
+		total_h2_to_peer = get_overall_total(peer, h2_to_peer, total),
+		total_h2_from_peer = get_overall_total(peer, h2_from_peer, total)
 	},
 
-	Report2 = generate_partition_reports(Partitions, Report),
+	Report2 = generate_partition_reports(Partitions, Report, WeaveSize),
 	Report3 = generate_peer_reports(Peers, Report2),
 	Report3.
 
-generate_partition_reports(Partitions, Report) ->
+generate_partition_reports(Partitions, Report, WeaveSize) ->
 	lists:foldr(
 		fun({PartitionNumber, _ReplicaID, _StoreID}, Acc) ->
-			generate_partition_report(PartitionNumber, Acc)
+			generate_partition_report(PartitionNumber, Acc, WeaveSize)
 		end,
 		Report,
 		Partitions
 	).
 
-generate_partition_report(PartitionNumber, Report) ->
+generate_partition_report(PartitionNumber, Report, WeaveSize) ->
 	#report{
 		now = Now,
 		vdf_speed = VDFSpeed,
@@ -327,7 +346,7 @@ generate_partition_report(PartitionNumber, Report) ->
 		average_hash_hps = get_average({partition, PartitionNumber, hash, total}, Now),
 		current_hash_hps = get_average({partition, PartitionNumber, hash, current}, Now),
 		optimal_read_mibps = optimal_partition_read_mibps(
-			VDFSpeed, DataSize, TotalDataSize, ar_node:get_weave_size())
+			VDFSpeed, DataSize, TotalDataSize, WeaveSize)
 	},
 
 	reset_count({partition, PartitionNumber, read, current}, Now),
@@ -368,6 +387,8 @@ report_performance() ->
 	ok.
 
 print_report(Report) ->
+	print_report(Report, ar_node:get_weave_size()).
+print_report(Report, WeaveSize) ->
 	Preamble = io_lib:format(
 		"=========================================== Mining Performance Report ============================================\n"
 		"\n"
@@ -375,24 +396,24 @@ print_report(Report) ->
 		"\n",
 		[format_vdf_speed(Report#report.vdf_speed)]
 	),
-	PartitionTable = format_partition_report(Report),
+	PartitionTable = format_partition_report(Report, WeaveSize),
 	PeerTable = format_peer_report(Report),
     
-    io:format(standard_error, "~n~s~s~n~n~s", [Preamble, PartitionTable, PeerTable]).
+    io:format("~n~s~s~s", [Preamble, PartitionTable, PeerTable]).
 
-format_partition_report(Report) ->
+format_partition_report(Report, WeaveSize) ->
 	Header = 
-		"Local stats:\n"
+		"Local mining stats:\n"
 		"+-----------+-----------+----------+-------------+-------------+-------------+------------+------------+------------+\n"
         "| Partition | Data Size | % of Max |  Read (Cur) |  Read (Avg) |  Read (Max) | Hash (Cur) | Hash (Avg) | Hash (Max) |\n"
 		"+-----------+-----------+----------+-------------+-------------+-------------+------------+------------+------------+\n",
-	TotalRow = format_partition_total_row(Report),
+	TotalRow = format_partition_total_row(Report, WeaveSize),
 	PartitionRows = format_partition_rows(Report#report.partitions),
     Footer =
-		"+-----------+-----------+----------+-------------+-------------+-------------+-----------+-----------+-----------+\n",
+		"+-----------+-----------+----------+-------------+-------------+-------------+------------+------------+------------+\n",
 	io_lib:format("~s~s~s~s", [Header, TotalRow, PartitionRows, Footer]).
 
-format_partition_total_row(Report) ->
+format_partition_total_row(Report, WeaveSize) ->
 	#report{
 		total_data_size = TotalDataSize,
 		optimal_overall_read_mibps = OptimalOverallRead,
@@ -400,13 +421,12 @@ format_partition_total_row(Report) ->
 		current_read_mibps = CurrentRead,
 		average_hash_hps = AverageHash,
 		current_hash_hps = CurrentHash } = Report,
-	WeaveSize = ar_node:get_weave_size(),
 	TotalTiB = TotalDataSize / ?TiB,
 	PctOfWeave = floor((TotalDataSize / WeaveSize) * 100),
     io_lib:format(
 		"|     Total | ~5.1f TiB | ~6.B % "
 		"| ~5.1f MiB/s | ~5.1f MiB/s | ~5.1f MiB/s "
-		"| ~5B h/s | ~5B h/s | ~5B h/s |\n",
+		"| ~6B h/s | ~6B h/s | ~6B h/s |\n",
 		[
 			TotalTiB, PctOfWeave,
 			CurrentRead, AverageRead, OptimalOverallRead,
@@ -428,27 +448,70 @@ format_partition_row(PartitionReport) ->
 		average_hash_hps = AverageHash,
 		current_hash_hps = CurrentHash } = PartitionReport,
 	TiB = DataSize / ?TiB,
-	PctOfPartition = floor((TiB / ?PARTITION_SIZE) * 100),
+	PctOfPartition = floor((DataSize / ?PARTITION_SIZE) * 100),
     io_lib:format(
 		"| ~9.B | ~5.1f TiB | ~6.B % "
 		"| ~5.1f MiB/s | ~5.1f MiB/s | ~5.1f MiB/s "
-		"| ~5B h/s | ~5B h/s | ~5B h/s |\n",
+		"| ~6B h/s | ~6B h/s | ~6B h/s |\n",
 		[
 			PartitionNumber, TiB, PctOfPartition,
 			CurrentRead, AverageRead, OptimalRead,
 			floor(CurrentHash), floor(AverageHash), floor(OptimalRead * 4)]).
 
+format_peer_report(#report{ peers = [] }) ->
+	"";
 format_peer_report(Report) ->
 	Header = 
-		"Peer stats:\n"
-		"+----------------------+-------------+-------------+---------------+---------------+-------+---------+\n"
-        "|                 Peer | H1 To (Cur) | H1 To (Avg) | H1 From (Cur) | H1 From (Avg) | H2 To | H2 From |\n"
-		"+----------------------+-------------+-------------+---------------+---------------+-------+---------+\n",
-	TotalRow = "", %format_peer_total_row(Report),
-	PartitionRows = "", %format_peer_rows(Report#report.peers),
+		"\n"
+		"Coordinated mining cluster stats:\n"
+		"+----------------------+-------------+-------------+---------------+---------------+---------+---------+\n"
+        "|                 Peer | H1 To (Cur) | H1 To (Avg) | H1 From (Cur) | H1 From (Avg) |   H2 To | H2 From |\n"
+		"+----------------------+-------------+-------------+---------------+---------------+---------+---------+\n",
+	TotalRow = format_peer_total_row(Report),
+	PartitionRows = format_peer_rows(Report#report.peers),
     Footer =
-		"+----------------------+-------------+-------------+---------------+---------------+-------+---------+\n",
+		"+----------------------+-------------+-------------+---------------+---------------+---------+---------+\n",
 	io_lib:format("~s~s~s~s", [Header, TotalRow, PartitionRows, Footer]).
+
+format_peer_total_row(Report) ->
+	#report{
+		average_h1_to_peer_hps = AverageH1To,
+		current_h1_to_peer_hps = CurrentH1To,
+		average_h1_from_peer_hps = AverageH1From,
+		current_h1_from_peer_hps = CurrentH1From,
+		total_h2_to_peer = TotalH2To,
+		total_h2_from_peer = TotalH2From } = Report,
+    io_lib:format(
+		"|                  All | ~7B h/s | ~7B h/s | ~9B h/s | ~9B h/s | ~7B | ~7B |\n",
+		[
+			floor(AverageH1To), floor(CurrentH1To),
+			floor(AverageH1From), floor(CurrentH1From),
+			TotalH2To, TotalH2From
+		]).
+
+format_peer_rows([]) ->
+	"";
+format_peer_rows([PeerReport | PeerReports]) ->
+	format_peer_rows(PeerReports) ++
+	[format_peer_row(PeerReport)].
+
+format_peer_row(PeerReport) ->
+	#peer_report{
+		peer = Peer,
+		average_h1_to_peer_hps = AverageH1To,
+		current_h1_to_peer_hps = CurrentH1To,
+		average_h1_from_peer_hps = AverageH1From,
+		current_h1_from_peer_hps = CurrentH1From,
+		total_h2_to_peer = TotalH2To,
+		total_h2_from_peer = TotalH2From } = PeerReport,
+    io_lib:format(
+		"| ~20s | ~7B h/s | ~7B h/s | ~9B h/s | ~9B h/s | ~7B | ~7B |\n",
+		[
+			ar_util:format_peer(Peer),
+			floor(AverageH1To), floor(CurrentH1To),
+			floor(AverageH1From), floor(CurrentH1From),
+			TotalH2To, TotalH2From
+		]).
 
 format_vdf_speed(undefined) ->
 	"undefined";
@@ -461,15 +524,15 @@ format_vdf_speed(VDFSpeed) ->
 
 mining_stats_test_() ->
 	[
-		% {timeout, 30, fun test_read_stats/0},
-		% {timeout, 30, fun test_hash_stats/0},
-		% {timeout, 30, fun test_vdf_stats/0},
-		% {timeout, 30, fun test_data_size_stats/0},
+		{timeout, 30, fun test_read_stats/0},
+		{timeout, 30, fun test_hash_stats/0},
+		{timeout, 30, fun test_vdf_stats/0},
+		{timeout, 30, fun test_data_size_stats/0},
 		{timeout, 30, fun test_h1_sent_to_peer_stats/0},
 		{timeout, 30, fun test_h1_received_from_peer_stats/0},
-		{timeout, 30, fun test_h2_peer_stats/0}
-		% {timeout, 30, fun test_optimal_stats/0},
-		% {timeout, 30, fun test_report/0}
+		{timeout, 30, fun test_h2_peer_stats/0},
+		{timeout, 30, fun test_optimal_stats/0},
+		{timeout, 30, fun test_report/0}
 	].
 
 test_read_stats() ->
@@ -599,53 +662,6 @@ test_h1_sent_to_peer_stats() ->
 test_h1_received_from_peer_stats() ->
 	test_peer_stats(fun h1_received_from_peer/2, h1_from_peer).
 
-test_h2_peer_stats() ->
-	ar_mining_stats:pause_performance_reports(120000),
-	ar_mining_stats:reset_all_stats(),
-
-	Peer1 = ar_test_node:peer_ip(peer1),
-	Peer2 = ar_test_node:peer_ip(peer2),
-	Peer3 = ar_test_node:peer_ip(peer3),
-
-	ar_mining_stats:h2_sent_to_peer(Peer1),
-	ar_mining_stats:h2_sent_to_peer(Peer1),
-	ar_mining_stats:h2_sent_to_peer(Peer1),
-	ar_mining_stats:h2_sent_to_peer(Peer2),
-	ar_mining_stats:h2_sent_to_peer(Peer2),
-
-	?assertEqual(3, get_count({peer, Peer1, h2_to_peer, total})),
-	?assertEqual(2, get_count({peer, Peer2, h2_to_peer, total})),
-	?assertEqual(0, get_count({peer, Peer3, h2_to_peer, total})),
-
-	ar_mining_stats:h2_received_from_peer(Peer1),
-	ar_mining_stats:h2_received_from_peer(Peer1),
-	ar_mining_stats:h2_received_from_peer(Peer1),
-	ar_mining_stats:h2_received_from_peer(Peer2),
-	ar_mining_stats:h2_received_from_peer(Peer2),
-
-	?assertEqual(3, get_count({peer, Peer1, h2_from_peer, total})),
-	?assertEqual(2, get_count({peer, Peer2, h2_from_peer, total})),
-	?assertEqual(0, get_count({peer, Peer3, h2_from_peer, total})),
-
-	reset_count({peer, Peer1, h2_to_peer, total}, 1000),
-	reset_count({peer, Peer2, h2_from_peer, total}, 1000),
-
-	?assertEqual(0, get_count({peer, Peer1, h2_to_peer, total})),
-	?assertEqual(2, get_count({peer, Peer2, h2_to_peer, total})),
-	?assertEqual(0, get_count({peer, Peer3, h2_to_peer, total})),
-	?assertEqual(3, get_count({peer, Peer1, h2_from_peer, total})),
-	?assertEqual(0, get_count({peer, Peer2, h2_from_peer, total})),
-	?assertEqual(0, get_count({peer, Peer3, h2_from_peer, total})),
-
-	ar_mining_stats:reset_all_stats(),
-
-	?assertEqual(0, get_count({peer, Peer1, h2_to_peer, total})),
-	?assertEqual(0, get_count({peer, Peer2, h2_to_peer, total})),
-	?assertEqual(0, get_count({peer, Peer3, h2_to_peer, total})),
-	?assertEqual(0, get_count({peer, Peer1, h2_from_peer, total})),
-	?assertEqual(0, get_count({peer, Peer2, h2_from_peer, total})),
-	?assertEqual(0, get_count({peer, Peer3, h2_from_peer, total})).
-
 test_peer_stats(Fun, Stat) ->
 	ar_mining_stats:pause_performance_reports(120000),
 	ar_mining_stats:reset_all_stats(),
@@ -680,8 +696,8 @@ test_peer_stats(Fun, Stat) ->
 	?assertEqual(0.0, get_average({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
 	?assertEqual(0.0, get_average({peer, Peer3, Stat, current}, TotalStart1 + 250)),
 
-	?assertEqual(0.5, get_overall_average(peer, Stat, total, TotalStart1 + 10000)),
-	?assertEqual(0.5, get_overall_average(peer, Stat, current, TotalStart1 + 10000)),
+	?assertEqual(5.0, get_overall_average(peer, Stat, total, TotalStart1 + 10000)),
+	?assertEqual(5.0, get_overall_average(peer, Stat, current, TotalStart1 + 10000)),
 
 	Now = CurrentStart2 + 1000,
 	reset_count({peer, Peer1, Stat, current}, Now),
@@ -693,8 +709,8 @@ test_peer_stats(Fun, Stat) ->
 	?assertEqual(0.0, get_average({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
 	?assertEqual(0.0, get_average({peer, Peer3, Stat, current}, CurrentStart1 + 250)),
 
-	?assertEqual(0.5, get_overall_average(peer, Stat, total, TotalStart1 + 10000)),
-	?assertEqual(0.2, get_overall_average(peer, Stat, current, CurrentStart2 + 10000)),
+	?assertEqual(5.0, get_overall_average(peer, Stat, total, TotalStart1 + 10000)),
+	?assertEqual(2.0, get_overall_average(peer, Stat, current, CurrentStart2 + 10000)),
 
 	ar_mining_stats:reset_all_stats(),
 	?assertEqual(0.0, get_average({peer, Peer1, Stat, total}, TotalStart1 + 500)),
@@ -707,6 +723,62 @@ test_peer_stats(Fun, Stat) ->
 	?assertEqual(0.0, get_overall_average(peer, Stat, total, TotalStart1 + 10000)),
 	?assertEqual(0.0, get_overall_average(peer, Stat, current, CurrentStart2 + 10000)).
 
+test_h2_peer_stats() ->
+	ar_mining_stats:pause_performance_reports(120000),
+	ar_mining_stats:reset_all_stats(),
+
+	Peer1 = ar_test_node:peer_ip(peer1),
+	Peer2 = ar_test_node:peer_ip(peer2),
+	Peer3 = ar_test_node:peer_ip(peer3),
+
+	ar_mining_stats:h2_sent_to_peer(Peer1),
+	ar_mining_stats:h2_sent_to_peer(Peer1),
+	ar_mining_stats:h2_sent_to_peer(Peer1),
+	ar_mining_stats:h2_sent_to_peer(Peer2),
+	ar_mining_stats:h2_sent_to_peer(Peer2),
+
+	?assertEqual(3, get_count({peer, Peer1, h2_to_peer, total})),
+	?assertEqual(2, get_count({peer, Peer2, h2_to_peer, total})),
+	?assertEqual(0, get_count({peer, Peer3, h2_to_peer, total})),
+
+	?assertEqual(5, get_overall_total(peer, h2_to_peer, total)),
+
+	ar_mining_stats:h2_received_from_peer(Peer1),
+	ar_mining_stats:h2_received_from_peer(Peer1),
+	ar_mining_stats:h2_received_from_peer(Peer1),
+	ar_mining_stats:h2_received_from_peer(Peer2),
+	ar_mining_stats:h2_received_from_peer(Peer2),
+
+	?assertEqual(3, get_count({peer, Peer1, h2_from_peer, total})),
+	?assertEqual(2, get_count({peer, Peer2, h2_from_peer, total})),
+	?assertEqual(0, get_count({peer, Peer3, h2_from_peer, total})),
+
+	?assertEqual(5, get_overall_total(peer, h2_from_peer, total)),
+
+	reset_count({peer, Peer1, h2_to_peer, total}, 1000),
+	reset_count({peer, Peer2, h2_from_peer, total}, 1000),
+
+	?assertEqual(0, get_count({peer, Peer1, h2_to_peer, total})),
+	?assertEqual(2, get_count({peer, Peer2, h2_to_peer, total})),
+	?assertEqual(0, get_count({peer, Peer3, h2_to_peer, total})),
+	?assertEqual(3, get_count({peer, Peer1, h2_from_peer, total})),
+	?assertEqual(0, get_count({peer, Peer2, h2_from_peer, total})),
+	?assertEqual(0, get_count({peer, Peer3, h2_from_peer, total})),
+
+	?assertEqual(2, get_overall_total(peer, h2_to_peer, total)),
+	?assertEqual(3, get_overall_total(peer, h2_from_peer, total)),
+
+	ar_mining_stats:reset_all_stats(),
+
+	?assertEqual(0, get_count({peer, Peer1, h2_to_peer, total})),
+	?assertEqual(0, get_count({peer, Peer2, h2_to_peer, total})),
+	?assertEqual(0, get_count({peer, Peer3, h2_to_peer, total})),
+	?assertEqual(0, get_count({peer, Peer1, h2_from_peer, total})),
+	?assertEqual(0, get_count({peer, Peer2, h2_from_peer, total})),
+	?assertEqual(0, get_count({peer, Peer3, h2_from_peer, total})),
+
+	?assertEqual(0, get_overall_total(peer, h2_to_peer, total)),
+	?assertEqual(0, get_overall_total(peer, h2_from_peer, total)).
 
 test_optimal_stats() ->
 	?assertEqual(0.0, optimal_overall_read_mibps(
@@ -758,5 +830,125 @@ test_report() ->
 	Peers = [Peer1, Peer2, Peer3],
 
 	Now = erlang:monotonic_time(millisecond),
+	WeaveSize = floor(10 * ?PARTITION_SIZE),
+	ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
+	ar_mining_stats:set_storage_module_data_size(store_id1, unpacked, 1, floor(0.1 * ?PARTITION_SIZE), 1, floor(0.1 * ?PARTITION_SIZE)),
+	ar_mining_stats:set_storage_module_data_size(store_id2, unpacked, 1, floor(0.3 * ?PARTITION_SIZE), 2, floor(0.2 * ?PARTITION_SIZE)),
+	ar_mining_stats:set_storage_module_data_size(store_id3, unpacked, 1, floor(0.2 * ?PARTITION_SIZE), 3, floor(0.05 * ?PARTITION_SIZE)),
+	ar_mining_stats:set_storage_module_data_size(store_id4, unpacked, 2, ?PARTITION_SIZE, 1, floor(0.25 * ?PARTITION_SIZE)),
+	ar_mining_stats:vdf_computed(),
+	ar_mining_stats:vdf_computed(),
+	ar_mining_stats:vdf_computed(),
+	ar_mining_stats:chunk_read(1),
+	ar_mining_stats:chunk_read(1),
+	ar_mining_stats:chunk_read(1),
+	ar_mining_stats:chunk_read(2),
+	ar_mining_stats:chunk_read(2),
+	ar_mining_stats:hash_computed(1),
+	ar_mining_stats:hash_computed(1),
+	ar_mining_stats:hash_computed(1),
+	ar_mining_stats:hash_computed(2),
+	ar_mining_stats:hash_computed(2),
+	ar_mining_stats:h1_sent_to_peer(Peer1, 10),
+	ar_mining_stats:h1_sent_to_peer(Peer1, 5),
+	ar_mining_stats:h1_sent_to_peer(Peer1, 15),
+	ar_mining_stats:h1_sent_to_peer(Peer2, 1),
+	ar_mining_stats:h1_sent_to_peer(Peer2, 19),
+	ar_mining_stats:h1_received_from_peer(Peer2, 10),
+	ar_mining_stats:h1_received_from_peer(Peer2, 5),
+	ar_mining_stats:h1_received_from_peer(Peer2, 15),
+	ar_mining_stats:h1_received_from_peer(Peer1, 1),
+	ar_mining_stats:h1_received_from_peer(Peer1, 19),
+	ar_mining_stats:h2_sent_to_peer(Peer1),
+	ar_mining_stats:h2_sent_to_peer(Peer1),
+	ar_mining_stats:h2_sent_to_peer(Peer1),
+	ar_mining_stats:h2_sent_to_peer(Peer2),
+	ar_mining_stats:h2_sent_to_peer(Peer2),
+	ar_mining_stats:h2_received_from_peer(Peer1),
+	ar_mining_stats:h2_received_from_peer(Peer1),
+	ar_mining_stats:h2_received_from_peer(Peer2),
+	ar_mining_stats:h2_received_from_peer(Peer2),
+	ar_mining_stats:h2_received_from_peer(Peer2),
+	
+	Report1 = generate_report([], [], WeaveSize, Now+1000),
+	?assertEqual(#report{ now = Now+1000 }, Report1),
+	print_report(Report1, WeaveSize),
 
-	print_report(generate_report(Partitions, Peers, Now)).
+	Report2 = generate_report(Partitions, Peers, WeaveSize, Now+1000),
+	print_report(Report2, WeaveSize),
+	?assertEqual(#report{ 
+		now = Now+1000,
+		vdf_speed = 3.0,
+		total_data_size = floor(0.6 * ?PARTITION_SIZE),
+		optimal_overall_read_mibps = 35.3333330154419,
+		average_read_mibps = 1.25,
+		current_read_mibps = 1.25,
+		average_hash_hps = 5.0,
+		current_hash_hps = 5.0,
+		average_h1_to_peer_hps = 50.0,
+		current_h1_to_peer_hps = 50.0,
+		average_h1_from_peer_hps = 50.0,
+		current_h1_from_peer_hps = 50.0,
+		total_h2_to_peer = 5,
+		total_h2_from_peer = 5,
+		partitions = [
+			#partition_report{
+				partition_number = 3,
+				data_size = 0,
+				optimal_read_mibps = 0.0,
+				average_read_mibps = 0.0,
+				current_read_mibps = 0.0,
+				average_hash_hps = 0.0,
+				current_hash_hps = 0.0
+			},
+			#partition_report{
+				partition_number = 2,
+				data_size = floor(0.25 * ?PARTITION_SIZE),
+				optimal_read_mibps = 8.833333253860475,
+				average_read_mibps = 0.5,
+				current_read_mibps = 0.5,
+				average_hash_hps = 2.0,
+				current_hash_hps = 2.0
+			},
+			#partition_report{
+				partition_number = 1,
+				data_size = 734002,
+				optimal_read_mibps = 12.366646337509339,
+				average_read_mibps = 0.75,
+				current_read_mibps = 0.75,
+				average_hash_hps = 3.0,
+				current_hash_hps = 3.0
+			}
+		],
+		peers = [
+			#peer_report{
+				peer = Peer3,
+				average_h1_to_peer_hps = 0.0,
+				current_h1_to_peer_hps = 0.0,
+				average_h1_from_peer_hps = 0.0,
+				current_h1_from_peer_hps = 0.0,
+				total_h2_to_peer = 0,
+				total_h2_from_peer = 0
+			},
+			#peer_report{
+				peer = Peer2,
+				average_h1_to_peer_hps = 20.0,
+				current_h1_to_peer_hps = 20.0,
+				average_h1_from_peer_hps = 30.0,
+				current_h1_from_peer_hps = 30.0,
+				total_h2_to_peer = 2,
+				total_h2_from_peer = 3
+			},
+			#peer_report{
+				peer = Peer1,
+				average_h1_to_peer_hps = 30.0,
+				current_h1_to_peer_hps = 30.0,
+				average_h1_from_peer_hps = 20.0,
+				current_h1_from_peer_hps = 20.0,
+				total_h2_to_peer = 3,
+				total_h2_from_peer = 2
+			}
+		]
+	},
+	Report2).
+	
