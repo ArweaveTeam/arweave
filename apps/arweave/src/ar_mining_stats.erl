@@ -135,7 +135,7 @@ reset_all_stats() ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	gen_server:cast(?MODULE, report_performance),
+	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -383,14 +383,61 @@ generate_peer_report(Peer, Report) ->
 	Report#report{ peers = Peers ++ [PeerReport] }.
 
 report_performance() ->
-	%% prometheus_gauge:set(mining_rate, TotalCurrent * 4),
-	ok.
+	Report = generate_report(),
+	set_metrics(Report),
+	ReportString = format_report(Report),
+	io:format("~s", [ReportString]),
+	log_report(ReportString).
 
-print_report(Report) ->
-	print_report(Report, ar_node:get_weave_size()).
-print_report(Report, WeaveSize) ->
+log_report(ReportString) ->
+	Lines = string:tokens(lists:flatten(ReportString), "\n"),
+	log_report_lines(Lines).
+
+log_report_lines([]) ->
+	ok;
+log_report_lines([Line | Lines]) ->
+	?LOG_INFO(Line),
+	log_report_lines(Lines).
+
+set_metrics(Report) ->
+	prometheus_gauge:set(mining_read_rate, [total], Report#report.current_read_mibps),
+	prometheus_gauge:set(mining_hash_rate, [total],  Report#report.current_hash_hps),
+	prometheus_gauge:set(cm_h1_rate, [total, to], Report#report.current_h1_to_peer_hps),
+	prometheus_gauge:set(cm_h1_rate, [total, from], Report#report.current_h1_from_peer_hps),
+	prometheus_gauge:set(cm_h2_count, [total, to], Report#report.total_h2_to_peer),
+	prometheus_gauge:set(cm_h2_count, [total, from], Report#report.total_h2_from_peer),
+	set_partition_metrics(Report#report.partitions),
+	set_peer_metrics(Report#report.peers).
+
+set_partition_metrics([]) ->
+	ok;
+set_partition_metrics([PartitionReport | PartitionReports]) ->
+	PartitionNumber = PartitionReport#partition_report.partition_number,
+	prometheus_gauge:set(mining_read_rate, [PartitionNumber],
+		PartitionReport#partition_report.current_read_mibps),
+	prometheus_gauge:set(mining_hash_rate, [PartitionNumber],
+		PartitionReport#partition_report.current_hash_hps),
+	set_partition_metrics(PartitionReports).
+
+set_peer_metrics([]) ->
+	ok;
+set_peer_metrics([PeerReport | PeerReports]) ->
+	Peer = ar_util:format_peer(PeerReport#peer_report.peer),
+	prometheus_gauge:set(cm_h1_rate, [Peer, to],
+		PeerReport#peer_report.current_h1_to_peer_hps),
+	prometheus_gauge:set(cm_h1_rate, [Peer, from],
+		PeerReport#peer_report.current_h1_from_peer_hps),
+	prometheus_gauge:set(cm_h2_count, [Peer, to],
+		PeerReport#peer_report.total_h2_to_peer),
+	prometheus_gauge:set(cm_h2_count, [Peer, from],
+		PeerReport#peer_report.total_h2_from_peer),
+	set_peer_metrics(PeerReports).
+
+format_report(Report) ->
+	format_report(Report, ar_node:get_weave_size()).
+format_report(Report, WeaveSize) ->
 	Preamble = io_lib:format(
-		"=========================================== Mining Performance Report ============================================\n"
+		"============================================= Mining Performance Report =============================================\n"
 		"\n"
 		"VDF Speed: ~s\n"
 		"\n",
@@ -399,7 +446,7 @@ print_report(Report, WeaveSize) ->
 	PartitionTable = format_partition_report(Report, WeaveSize),
 	PeerTable = format_peer_report(Report),
     
-    io:format("~n~s~s~s", [Preamble, PartitionTable, PeerTable]).
+    io_lib:format("\n~s~s~s", [Preamble, PartitionTable, PeerTable]).
 
 format_partition_report(Report, WeaveSize) ->
 	Header = 
@@ -872,10 +919,10 @@ test_report() ->
 	
 	Report1 = generate_report([], [], WeaveSize, Now+1000),
 	?assertEqual(#report{ now = Now+1000 }, Report1),
-	print_report(Report1, WeaveSize),
+	log_report(format_report(Report1, WeaveSize)),
 
 	Report2 = generate_report(Partitions, Peers, WeaveSize, Now+1000),
-	print_report(Report2, WeaveSize),
+	log_report(format_report(Report2, WeaveSize)),
 	?assertEqual(#report{ 
 		now = Now+1000,
 		vdf_speed = 3.0,

@@ -241,9 +241,34 @@ register(MetricsDir) ->
 		}
 	]),
 	prometheus_gauge:new([
-		{name, mining_rate},
-		{help, "The number of solution candidates processed per second."}
+		{name, mining_read_rate},
+		{labels, [partition]},
+		{help, "The number of chunks read per second. Each chunk is 256KiB. The partition label "
+				"breaks the mining rate down by partition. The overall mining rate is inidcated by "
+				"'total'."}
 	]),
+	prometheus_gauge:new([
+		{name, mining_hash_rate},
+		{labels, [partition]},
+		{help, "The number of solutions candidates generated per second. The partition label "
+				"breaks the mining rate down by partition. The overall mining rate is inidcated by "
+				"'total'."}
+	]),
+	prometheus_gauge:new([
+		{name, cm_h1_rate},
+		{labels, [peer, direction]},
+		{help, "The number of H1 hashes exchanged with a coordinated mining peer per second. "
+				"The peer label indicates the peer that the value is exchanged with, and the "
+				"direction label can be 'to' or 'from'."}
+	]),
+	prometheus_gauge:new([
+		{name, cm_h2_count},
+		{labels, [peer, direction]},
+		{help, "The total number of H2 hashes exchanged with a coordinated mining peer. "
+				"The peer label indicates the peer that the value is exchanged with, and the "
+				"direction label can be 'to' or 'from'."}
+	]),
+
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
 		{help, "The number of chunks fetched during mining and not processed yet."}
