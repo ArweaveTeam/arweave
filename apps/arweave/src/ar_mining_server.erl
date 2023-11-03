@@ -135,7 +135,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(pause, State) ->
 	#state{ session = Session } = State,
-	prometheus_gauge:set(mining_rate, 0),
+	ar_mining_stats:mining_paused(),
 	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be 
 	%% distributed. Setting diff to infnity ensures that no solutions are found.
 	{noreply, State#state{ diff = infinity, session = Session#mining_session{ paused = true } }};

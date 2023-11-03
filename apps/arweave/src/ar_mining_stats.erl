@@ -1,7 +1,7 @@
 -module(ar_mining_stats).
 -behaviour(gen_server).
 
--export([start_link/0, pause_performance_reports/1,
+-export([start_link/0, pause_performance_reports/1, mining_paused/0,
 		set_total_data_size/1, set_storage_module_data_size/6,
 		vdf_computed/0, chunk_read/1, hash_computed/1,
 		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1,
@@ -128,6 +128,9 @@ set_storage_module_data_size(
 
 reset_all_stats() ->
 	ets:delete_all_objects(?MODULE).
+
+mining_paused() ->
+	clear_metrics().
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -432,6 +435,35 @@ set_peer_metrics([PeerReport | PeerReports]) ->
 	prometheus_gauge:set(cm_h2_count, [Peer, from],
 		PeerReport#peer_report.total_h2_from_peer),
 	set_peer_metrics(PeerReports).
+
+clear_metrics() ->
+	Report = generate_report(),
+	prometheus_gauge:set(mining_read_rate, [total], 0),
+	prometheus_gauge:set(mining_hash_rate, [total],  0),
+	prometheus_gauge:set(cm_h1_rate, [total, to], 0),
+	prometheus_gauge:set(cm_h1_rate, [total, from], 0),
+	prometheus_gauge:set(cm_h2_count, [total, to], 0),
+	prometheus_gauge:set(cm_h2_count, [total, from], 0),
+	clear_partition_metrics(Report#report.partitions),
+	clear_peer_metrics(Report#report.peers).
+
+clear_partition_metrics([]) ->
+	ok;
+clear_partition_metrics([PartitionReport | PartitionReports]) ->
+	PartitionNumber = PartitionReport#partition_report.partition_number,
+	prometheus_gauge:set(mining_read_rate, [PartitionNumber], 0),
+	prometheus_gauge:set(mining_hash_rate, [PartitionNumber], 0),
+	clear_partition_metrics(PartitionReports).
+
+clear_peer_metrics([]) ->
+	ok;
+clear_peer_metrics([PeerReport | PeerReports]) ->
+	Peer = ar_util:format_peer(PeerReport#peer_report.peer),
+	prometheus_gauge:set(cm_h1_rate, [Peer, to], 0),
+	prometheus_gauge:set(cm_h1_rate, [Peer, from], 0),
+	prometheus_gauge:set(cm_h2_count, [Peer, to], 0),
+	prometheus_gauge:set(cm_h2_count, [Peer, from], 0),
+	clear_peer_metrics(PeerReports).
 
 format_report(Report) ->
 	format_report(Report, ar_node:get_weave_size()).
