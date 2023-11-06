@@ -77,6 +77,7 @@ pause_performance_reports(Time) ->
 %%%===================================================================
 
 init([]) ->
+	?LOG_ERROR("MINING SERVER INIT"),
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	{ok, Config} = application:get_env(arweave, config),
@@ -151,11 +152,17 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, ?MODULE, handle_task),
 			{noreply, State};
 		_ ->
+			Start = erlang:monotonic_time(),
 			{{_Priority, _ID, Task}, Q2} = gb_sets:take_smallest(Q),
-			prometheus_gauge:dec(mining_server_task_queue_len),
+			{TaskType, _Args} = Task,
+			prometheus_gauge:dec(mining_server_task_queue_len, [TaskType]),
 			may_be_warn_about_lag(Task, Q2),
 			gen_server:cast(?MODULE, handle_task),
-			handle_task(Task, State#state{ task_queue = Q2 })
+			Response = handle_task(Task, State#state{ task_queue = Q2 }),
+			End = erlang:monotonic_time(),
+			Elapsed = erlang:convert_time_unit(End - Start, native, microsecond),
+			?LOG_DEBUG([{event, TaskType}, {elapsed, Elapsed}]),
+			Response
 	end;
 
 handle_cast(report_performance,
@@ -301,7 +308,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 	Task = {computed_output, {SessionKey, Session, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [nonce_limiter_computed_output]),
 	{noreply, State#state{ task_queue = Q2 }};
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
@@ -318,7 +325,7 @@ handle_info({io_thread_recall_range_chunk, Args} = Task,
 		StepNumber ->
 			Q2 = gb_sets:insert({priority(io_thread_recall_range_chunk, StepNumber),
 					make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [io_thread_recall_range_chunk]),
 			{noreply, State#state{ task_queue = Q2 }}
 	end;
 
@@ -334,7 +341,7 @@ handle_info({io_thread_recall_range2_chunk, Args} = Task,
 		StepNumber ->
 			Q2 = gb_sets:insert({priority(io_thread_recall_range2_chunk, StepNumber),
 					make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [io_thread_recall_range2_chunk]),
 			{noreply, State#state{ task_queue = Q2 }}
 	end;
 
@@ -350,7 +357,7 @@ handle_info({mining_thread_computed_h0, Args} = Task,
 		StepNumber ->
 			Q2 = gb_sets:insert({priority(mining_thread_computed_h0, StepNumber), make_ref(),
 					Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [mining_thread_computed_h0]),
 			{noreply, State#state{ task_queue = Q2 }}
 	end;
 
@@ -366,7 +373,7 @@ handle_info({mining_thread_computed_h1, Args} = Task,
 		StepNumber ->
 			Q2 = gb_sets:insert({priority(mining_thread_computed_h1, StepNumber), make_ref(),
 					Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [mining_thread_computed_h1]),
 			{noreply, State#state{ task_queue = Q2 }}
 	end;
 
@@ -376,7 +383,7 @@ handle_info({may_be_remove_chunk_from_cache, _Args},
 handle_info({may_be_remove_chunk_from_cache, _Args} = Task,
 		#state{ task_queue = Q } = State) ->
 	Q2 = gb_sets:insert({priority(may_be_remove_chunk_from_cache), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [may_be_remove_chunk_from_cache]),
 	{noreply, State#state{ task_queue = Q2 }};
 
 handle_info({mining_thread_computed_h2, _Args},
@@ -391,7 +398,7 @@ handle_info({mining_thread_computed_h2, Args} = Task,
 		StepNumber ->
 			Q2 = gb_sets:insert({priority(mining_thread_computed_h2, StepNumber),
 					make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [mining_thread_computed_h2]),
 			{noreply, State#state{ task_queue = Q2 }}
 	end;
 
@@ -592,6 +599,9 @@ read_recall_range(Type, H0, PartitionNumber, RecallRangeStart, NonceLimiterOutpu
 	ChunkOffsets = ar_chunk_storage:get_range(RecallRangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
 	?LOG_DEBUG([{event, mining_debug_read_recall_range},
+			{type, Type},
+			{partition_number, PartitionNumber},
+			{recall_range_start, RecallRangeStart},
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
@@ -901,7 +911,7 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 				StepNumber ->
 					Q2 = gb_sets:insert({priority(mining_thread_computed_h0, StepNumber),
 							make_ref(), Task}, Q),
-					prometheus_gauge:inc(mining_server_task_queue_len),
+					prometheus_gauge:inc(mining_server_task_queue_len, [mining_thread_computed_h0]),
 					{noreply, State#state{ task_queue = Q2 }}
 			end;
 		false ->
