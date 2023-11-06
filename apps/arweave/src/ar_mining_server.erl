@@ -77,7 +77,6 @@ pause_performance_reports(Time) ->
 %%%===================================================================
 
 init([]) ->
-	?LOG_ERROR("MINING SERVER INIT"),
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	{ok, Config} = application:get_env(arweave, config),
@@ -152,17 +151,12 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, ?MODULE, handle_task),
 			{noreply, State};
 		_ ->
-			Start = erlang:monotonic_time(),
 			{{_Priority, _ID, Task}, Q2} = gb_sets:take_smallest(Q),
 			{TaskType, _Args} = Task,
 			prometheus_gauge:dec(mining_server_task_queue_len, [TaskType]),
 			may_be_warn_about_lag(Task, Q2),
 			gen_server:cast(?MODULE, handle_task),
-			Response = handle_task(Task, State#state{ task_queue = Q2 }),
-			End = erlang:monotonic_time(),
-			Elapsed = erlang:convert_time_unit(End - Start, native, microsecond),
-			?LOG_DEBUG([{event, TaskType}, {elapsed, Elapsed}]),
-			Response
+			handle_task(Task, State#state{ task_queue = Q2 })
 	end;
 
 handle_cast(report_performance,
