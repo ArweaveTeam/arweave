@@ -598,6 +598,7 @@ handle_info({event, node_state, {checkpoint_block, B}}, State) ->
 			BaseInterval = StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 			{Sessions2, SessionByKey2} = prune_old_sessions(Sessions, SessionByKey,
 					BaseInterval),
+			?LOG_ERROR([{current_session_key, CurrentSessionKey}]),
 			true = maps:is_key(CurrentSessionKey, SessionByKey2),
 			{noreply, State#state{ sessions = Sessions2, session_by_key = SessionByKey2 }}
 	end;
@@ -813,12 +814,15 @@ apply_tip2(B, PrevB, State) ->
 			VDFDifficulty, NextVDFDifficulty),
 	State2.
 
-prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
+prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->	
 	{{Interval, NextSeed}, Sessions2} = gb_sets:take_smallest(Sessions),
+	?LOG_ERROR([{event, prune}, {base_interval, BaseInterval}, {seed, NextSeed},
+					{interval, Interval}]),
 	case BaseInterval > Interval + 10 of
 		true ->
 			?LOG_DEBUG([{event, prune_old_vdf_session},
 				{session_seed, ar_util:encode(NextSeed)}, {session_interval, Interval}]),
+			?LOG_ERROR([{event, pruned}]),
 			SessionByKey2 = maps:remove({NextSeed, Interval}, SessionByKey),
 			prune_old_sessions(Sessions2, SessionByKey2, BaseInterval);
 		false ->
@@ -972,7 +976,7 @@ apply_external_update2(Update, State) ->
 			case IsPartial of
 				true ->
 					%% Inform the peer we have not initialized the corresponding session yet.
-					?LOG_DEBUG([{event, apply_external_vdf},
+					?LOG_ERROR([{event, apply_external_vdf},
 						{result, session_not_found},
 						{vdf_server, ar_util:format_peer(Peer)},
 						{is_partial, IsPartial},
@@ -1019,7 +1023,7 @@ apply_external_update2(Update, State) ->
 					case CurrentStepNumber >= StepNumber of
 						true ->
 							%% Inform the peer we are ahead.
-							?LOG_DEBUG([{event, apply_external_vdf},
+							?LOG_ERROR([{event, apply_external_vdf},
 								{result, ahead_of_server},
 								{vdf_server, ar_util:format_peer(Peer)},
 								{session_seed, ar_util:encode(SessionSeed)},
@@ -1032,7 +1036,7 @@ apply_external_update2(Update, State) ->
 							case IsPartial of
 								true ->
 									%% Inform the peer we miss some steps.
-									?LOG_DEBUG([{event, apply_external_vdf},
+									?LOG_ERROR([{event, apply_external_vdf},
 										{result, missing_steps},
 										{vdf_server, ar_util:format_peer(Peer)},
 										{is_partial, IsPartial},
@@ -1080,9 +1084,10 @@ apply_external_update2(Update, State) ->
 apply_external_update3(
 	State, SessionKey, PrevSessionKey, CurrentSessionKey, Session, Steps, UpperBound) ->
 	#state{ session_by_key = SessionByKey, last_external_update = {Peer, _} } = State,
-	?LOG_DEBUG([{event, apply_external_vdf},
+	?LOG_ERROR([{event, apply_external_vdf},
 		{result, ok},
 		{vdf_server, ar_util:format_peer(Peer)},
+		{current_session_key, CurrentSessionKey},
 		{session_seed, ar_util:encode(element(1, SessionKey))},
 		{session_interval, element(2, SessionKey)},
 		{length, length(Steps)}]),
