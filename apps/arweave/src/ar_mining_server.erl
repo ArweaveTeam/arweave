@@ -162,7 +162,7 @@ handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 		true ->
 			StepNumber = Candidate#mining_candidate.step_number,
 			Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [TaskType]),
 			{noreply, State#state{ task_queue = Q2 }};
 		false ->
 			{noreply, State}
@@ -175,7 +175,8 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			{noreply, State};
 		_ ->
 			{{_Priority, _ID, Task}, Q2} = gb_sets:take_smallest(Q),
-			prometheus_gauge:dec(mining_server_task_queue_len),
+			{TaskType, _Args} = Task,
+			prometheus_gauge:dec(mining_server_task_queue_len, [TaskType]),
 			may_be_warn_about_lag(Task, Q2),
 			gen_server:cast(?MODULE, handle_task),
 			handle_task(Task, State#state{ task_queue = Q2 })
