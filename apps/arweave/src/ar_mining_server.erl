@@ -53,10 +53,10 @@ start_mining(Args) ->
 
 %% @doc Callback from ar_mining_io when a chunk is read
 recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
-	ar_mining_stats:increment_partition_stats(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
 	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
 recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
-	ar_mining_stats:increment_partition_stats(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
 	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
 recall_chunk(skipped, undefined, Nonce, Candidate) ->
 	update_chunk_cache_size(-1),
@@ -64,10 +64,13 @@ recall_chunk(skipped, undefined, Nonce, Candidate) ->
 
 %% @doc Callback from the hashing threads when a hash is computed
 computed_hash(computed_h0, H0, undefined, Candidate) ->
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h0, Candidate#mining_candidate{ h0 = H0 });
 computed_hash(computed_h1, H1, Preimage, Candidate) ->
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h1, Candidate#mining_candidate{ h1 = H1, preimage = Preimage });
 computed_hash(computed_h2, H2, Preimage, Candidate) ->
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h2, Candidate#mining_candidate{ h2 = H2, preimage = Preimage }).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
@@ -132,7 +135,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(pause, State) ->
 	#state{ session = Session } = State,
-	prometheus_gauge:set(mining_rate, 0),
+	ar_mining_stats:mining_paused(),
 	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be 
 	%% distributed. Setting diff to infnity ensures that no solutions are found.
 	{noreply, State#state{ diff = infinity, session = Session#mining_session{ paused = true } }};
@@ -141,7 +144,7 @@ handle_cast({start_mining, Args}, State) ->
 	{Diff, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
 	Session = reset_mining_session(State#state.session, State),
-	ar_mining_stats:reset_all_stats(),
+	ar_mining_stats:start_performance_reports(),
 	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold, session = Session }};
 
 handle_cast({set_difficulty, _Diff},
@@ -256,7 +259,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 	{SessionKey, Session, _PrevSessionKey, _PrevSession, Output, PartitionUpperBound} = Args,
 	StepNumber = Session#vdf_session.step_number,
 	true = is_integer(StepNumber),
-	ar_mining_stats:increment_vdf_stats(),
+	ar_mining_stats:vdf_computed(),
 	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
 	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
@@ -407,19 +410,17 @@ hashing_thread(SessionRef) ->
 			hashing_thread(Ref)
 	end.
 
-distribute_output(Candidate, Distributed, State) ->
-	distribute_output(ar_mining_io:get_partitions(), Candidate, Distributed, State, 0).
+distribute_output(Candidate, State) ->
+	distribute_output(ar_mining_io:get_partitions(), Candidate, State, 0).
 
-distribute_output([], _Candidate, _Distributed, State, N) ->
+distribute_output([], _Candidate, State, N) ->
 	{N, State};
-distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
-		Candidate, Distributed, State, N) ->
+distribute_output([{PartitionNumber, MiningAddress} | Partitions], Candidate, State, N) ->
 	MaxPartitionNumber = ?MAX_PARTITION_NUMBER(Candidate#mining_candidate.partition_upper_bound),
-	case PartitionNumber > MaxPartitionNumber
-			orelse maps:is_key({PartitionNumber, MiningAddress}, Distributed) of
+	case PartitionNumber > MaxPartitionNumber of
 		true ->
 			%% Skip this partition
-			distribute_output(Partitions, Candidate, Distributed, State, N);
+			distribute_output(Partitions, Candidate, State, N);
 		false ->
 			#state{ hashing_threads = Threads } = State,
 			{Thread, Threads2} = pick_hashing_thread(Threads),
@@ -429,8 +430,7 @@ distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
 					mining_address = MiningAddress
 				}},
 			State2 = State#state{ hashing_threads = Threads2 },
-			Distributed2 = maps:put({PartitionNumber, MiningAddress}, sent, Distributed),
-			distribute_output(Partitions, Candidate, Distributed2, State2, N + 1)
+			distribute_output(Partitions, Candidate, State2, N + 1)
 	end.
 
 %% @doc Before loading a recall range we reserve enough cache space for the whole range. This
@@ -502,7 +502,7 @@ handle_task({computed_output, Args}, State) ->
 		nonce_limiter_output = Output,
 		partition_upper_bound = PartitionUpperBound
 	},
-	{N, State2} = distribute_output(Candidate, #{}, State),
+	{N, State2} = distribute_output(Candidate, State),
 	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
 		{step_number, StepNumber}, {output, ar_util:encode(Output)},
 		{start_interval_number, StartIntervalNumber}]),
@@ -682,7 +682,7 @@ handle_task({computed_h2, Candidate}, State) ->
 											"the proof for the second chunk. See logs for more "
 											"details.~n");
 								_ ->
-									ar_coordination:computed_h2(
+									ar_coordination:computed_h2_for_peer(
 										Candidate#mining_candidate{ poa2 = PoA2 })
 							end
 					end;

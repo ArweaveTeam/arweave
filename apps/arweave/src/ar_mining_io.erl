@@ -82,15 +82,15 @@ handle_call(get_partitions, _From,
 	Max = ?MAX_PARTITION_NUMBER(PartitionUpperBound),
 	Partitions = lists:sort(sets:to_list(
 		maps:fold(
-			fun({Partition, MiningAddress, StoreID}, _, Acc) ->
+			fun({Partition, MiningAddress, _StoreID}, _, Acc) ->
 				case Partition > Max of
 					true ->
 						Acc;
 					_ ->
-						sets:add_element({Partition, MiningAddress, StoreID}, Acc)
+						sets:add_element({Partition, MiningAddress}, Acc)
 				end
 			end,
-			sets:new(), % A storage module may be smaller than a partition.
+			sets:new(), %% Ensure only one entry per partition (i.e. collapse storage modules)
 			IOThreads
 		))
 	),

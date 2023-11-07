@@ -108,7 +108,6 @@
 -endif.
 
 -define(DEFAULT_CM_POLL_INTERVAL, 60000).
--define(DEFAULT_CM_STAT_INTERVAL, 60000).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -200,8 +199,7 @@
 	cm_api_secret = not_set,
 	cm_exit_peer = not_set,
 	cm_peers = [],
-	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
-	cm_stat_interval = ?DEFAULT_CM_STAT_INTERVAL
+	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL
 }).
 
 -endif.

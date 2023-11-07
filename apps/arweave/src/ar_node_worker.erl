@@ -821,11 +821,9 @@ terminate(Reason, _State) ->
 
 record_metrics() ->
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	[{weave_size, WeaveSize}] = ets:lookup(node_state, weave_size),
-	[{height, Height}] = ets:lookup(node_state, height),
-	prometheus_gauge:set(arweave_block_height, Height),
+	prometheus_gauge:set(arweave_block_height, ar_node:get_height()),
 	record_mempool_size_metrics(MempoolSize),
-	prometheus_gauge:set(weave_size, WeaveSize).
+	prometheus_gauge:set(weave_size, ar_node:get_weave_size()).
 
 record_mempool_size_metrics({HeaderSize, DataSize}) ->
 	prometheus_gauge:set(mempool_header_size_bytes, HeaderSize),
@@ -885,7 +883,7 @@ handle_task({filter_mempool, Mempool}, State) ->
 			{noreply, State};
 		_ ->
 			[{wallet_list, WalletList}] = ets:lookup(node_state, wallet_list),
-			[{height, Height}] = ets:lookup(node_state, height),
+			Height = ar_node:get_height(),
 			[{usd_to_ar_rate, Rate}] = ets:lookup(node_state, usd_to_ar_rate),
 			[{price_per_gib_minute, Price}] = ets:lookup(node_state, price_per_gib_minute),
 			[{kryder_plus_rate_multiplier, KryderPlusRateMultiplier}] = ets:lookup(node_state,
@@ -924,8 +922,8 @@ handle_task({filter_mempool, Mempool}, State) ->
 
 handle_task(compute_mining_difficulty, State) ->
 	Diff = get_current_diff(),
-	case ets:lookup(node_state, height) of
-		[{_, Height}] when (Height + 1) rem 10 == 0 ->
+	case ar_node:get_height() of
+		Height when (Height + 1) rem 10 == 0 ->
 			?LOG_INFO([{event, current_mining_difficulty}, {difficulty, Diff}]);
 		_ ->
 			ok

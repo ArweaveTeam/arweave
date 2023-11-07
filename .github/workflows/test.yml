@@ -26,6 +26,7 @@ jobs:
             ar_kv,
             ar_merkle,
             ar_mining_server,
+            ar_mining_stats,
             ar_node,
             ar_node_utils,
             ar_nonce_limiter,

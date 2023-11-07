@@ -7,7 +7,7 @@
 
 -export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0,
 		get_current_block/0, is_in_block_index/1, get_block_index_and_height/0,
-		get_height/0, get_balance/1, get_last_tx/1, get_ready_for_mining_txs/0,
+		get_height/0, get_weave_size/0, get_balance/1, get_last_tx/1, get_ready_for_mining_txs/0,
 		get_current_usd_to_ar_rate/0, get_current_block_hash/0,
 		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
 		get_recent_txs_map/0, get_mempool_size/0,
@@ -142,6 +142,14 @@ get_height() ->
 	case ets:lookup(node_state, height) of
 		[{height, Height}] ->
 			Height;
+		[] ->
+			-1
+	end.
+
+get_weave_size() ->
+	case ets:lookup(node_state, weave_size) of
+		[{weave_size, WeaveSize}] ->
+			WeaveSize;
 		[] ->
 			-1
 	end.

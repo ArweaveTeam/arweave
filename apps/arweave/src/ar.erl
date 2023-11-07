@@ -261,9 +261,6 @@ show_help() ->
 			{"cm_poll_interval", io_lib:format("The frequency in milliseconds of asking the "
 					"other nodes in the coordinated mining setup about their partition "
 					"tables. Default is ~B.", [?DEFAULT_CM_POLL_INTERVAL])},
-			{"cm_stat_interval", io_lib:format("The frequency in milliseconds of printing the "
-					"coordinated mining statistics. Default is ~B.",
-					[?DEFAULT_CM_STAT_INTERVAL])},
 			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
 					"set coordinated_mining, cm_api_secret, and cm_exit_peer."},
 			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
@@ -512,8 +509,6 @@ parse_cli_args(["cm_api_secret", _ | _], _) ->
 	erlang:halt();
 parse_cli_args(["cm_poll_interval", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ cm_poll_interval = list_to_integer(Num) });
-parse_cli_args(["cm_stat_interval", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ cm_stat_interval = list_to_integer(Num) });
 parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->
