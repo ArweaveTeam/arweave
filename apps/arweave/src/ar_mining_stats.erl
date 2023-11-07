@@ -275,7 +275,7 @@ vdf_speed(Now) ->
 			VDFSpeed
 	end.
 
-%% @doc caculate the maximum hash rate (in MiB per second read from disk) for the given VDF speed
+%% @doc calculate the maximum hash rate (in MiB per second read from disk) for the given VDF speed
 %% at the current weave size.
 optimal_overall_read_mibps(undefined, _TotalDataSize, _WeaveSize) ->
 	0.0;

@@ -81,7 +81,7 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	
-	%% using timer:apply_after so we can cacncel pending timers. This allows us to send the
+	%% using timer:apply_after so we can cancel pending timers. This allows us to send the
 	%% h1 batch as soon as it's full instead of waiting for the timeout to expire.
 	{ok, H1BatchTimerRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
 	State = #state{
