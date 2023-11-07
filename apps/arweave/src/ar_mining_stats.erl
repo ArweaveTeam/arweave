@@ -1,11 +1,10 @@
 -module(ar_mining_stats).
 -behaviour(gen_server).
 
--export([start_link/0, pause_performance_reports/1, mining_paused/0,
+-export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
 		set_total_data_size/1, set_storage_module_data_size/6,
 		vdf_computed/0, chunk_read/1, hash_computed/1,
-		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1,
-		reset_all_stats/0]).
+		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -16,7 +15,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	pause_performance_reports	= false,
+	pause_performance_reports = false,
 	pause_performance_reports_timeout
 }).
 
@@ -86,6 +85,10 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+start_performance_reports() ->
+	reset_all_stats(),
+	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance).
+
 %% @doc Stop logging performance reports for the given number of milliseconds.
 pause_performance_reports(Time) ->
 	gen_server:cast(?MODULE, {pause_performance_reports, Time}).
@@ -126,9 +129,6 @@ set_storage_module_data_size(
 		DataSize),
 	ets:insert(?MODULE, {{partition, PartitionNumber, storage_module, StoreID}, DataSize}).
 
-reset_all_stats() ->
-	ets:delete_all_objects(?MODULE).
-
 mining_paused() ->
 	clear_metrics().
 
@@ -138,7 +138,6 @@ mining_paused() ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -181,6 +180,9 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+reset_all_stats() ->
+	ets:delete_all_objects(?MODULE).
 
 %% @doc Atomically increments the count for ETS records stored in the format:
 %% {Key, StartTimestamp, Count}
@@ -275,8 +277,6 @@ vdf_speed(Now) ->
 
 %% @doc caculate the maximum hash rate (in MiB per second read from disk) for the given VDF speed
 %% at the current weave size.
-optimal_overall_read_mibps(VDFSpeed, TotalDataSize) ->
-	optimal_overall_read_mibps(VDFSpeed, TotalDataSize, ar_node:get_weave_size()).
 optimal_overall_read_mibps(undefined, _TotalDataSize, _WeaveSize) ->
 	0.0;
 optimal_overall_read_mibps(VDFSpeed, TotalDataSize, WeaveSize) ->
@@ -327,7 +327,7 @@ generate_report(Partitions, Peers, WeaveSize, Now) ->
 
 generate_partition_reports(Partitions, Report, WeaveSize) ->
 	lists:foldr(
-		fun({PartitionNumber, _ReplicaID, _StoreID}, Acc) ->
+		fun({PartitionNumber, _ReplicaID}, Acc) ->
 			generate_partition_report(PartitionNumber, Acc, WeaveSize)
 		end,
 		Report,
@@ -483,13 +483,13 @@ format_report(Report, WeaveSize) ->
 format_partition_report(Report, WeaveSize) ->
 	Header = 
 		"Local mining stats:\n"
-		"+-----------+-----------+----------+-------------+-------------+-------------+------------+------------+------------+\n"
-        "| Partition | Data Size | % of Max |  Read (Cur) |  Read (Avg) |  Read (Max) | Hash (Cur) | Hash (Avg) | Hash (Max) |\n"
-		"+-----------+-----------+----------+-------------+-------------+-------------+------------+------------+------------+\n",
+		"+-----------+-----------+----------+---------------+---------------+---------------+------------+------------+--------------+\n"
+        "| Partition | Data Size | % of Max |   Read (Cur)  |   Read (Avg)  |  Read (Ideal) | Hash (Cur) | Hash (Avg) | Hash (Ideal) |\n"
+		"+-----------+-----------+----------+---------------+---------------+---------------+------------+------------+--------------+\n",
 	TotalRow = format_partition_total_row(Report, WeaveSize),
 	PartitionRows = format_partition_rows(Report#report.partitions),
     Footer =
-		"+-----------+-----------+----------+-------------+-------------+-------------+------------+------------+------------+\n",
+		"+-----------+-----------+----------+---------------+---------------+---------------+------------+------------+--------------+\n",
 	io_lib:format("~s~s~s~s", [Header, TotalRow, PartitionRows, Footer]).
 
 format_partition_total_row(Report, WeaveSize) ->
@@ -504,8 +504,8 @@ format_partition_total_row(Report, WeaveSize) ->
 	PctOfWeave = floor((TotalDataSize / WeaveSize) * 100),
     io_lib:format(
 		"|     Total | ~5.1f TiB | ~6.B % "
-		"| ~5.1f MiB/s | ~5.1f MiB/s | ~5.1f MiB/s "
-		"| ~6B h/s | ~6B h/s | ~6B h/s |\n",
+		"| ~7.1f MiB/s | ~7.1f MiB/s | ~7.1f MiB/s "
+		"| ~6B h/s | ~6B h/s | ~8B h/s |\n",
 		[
 			TotalTiB, PctOfWeave,
 			CurrentRead, AverageRead, OptimalOverallRead,
@@ -530,8 +530,8 @@ format_partition_row(PartitionReport) ->
 	PctOfPartition = floor((DataSize / ?PARTITION_SIZE) * 100),
     io_lib:format(
 		"| ~9.B | ~5.1f TiB | ~6.B % "
-		"| ~5.1f MiB/s | ~5.1f MiB/s | ~5.1f MiB/s "
-		"| ~6B h/s | ~6B h/s | ~6B h/s |\n",
+		"| ~7.1f MiB/s | ~7.1f MiB/s | ~7.1f MiB/s "
+		"| ~6B h/s | ~6B h/s | ~8B h/s |\n",
 		[
 			PartitionNumber, TiB, PctOfPartition,
 			CurrentRead, AverageRead, OptimalRead,
@@ -622,7 +622,7 @@ test_hash_stats() ->
 
 test_local_stats(Fun, Stat) ->
 	ar_mining_stats:pause_performance_reports(120000),
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	Fun(1),
 	TotalStart1 = get_start({partition, 1, Stat, total}),
 	CurrentStart1 = get_start({partition, 1, Stat, current}),
@@ -665,7 +665,7 @@ test_local_stats(Fun, Stat) ->
 	?assertEqual(0.5, get_overall_average(partition, Stat, total, TotalStart1 + 10000)),
 	?assertEqual(0.2, get_overall_average(partition, Stat, current, CurrentStart2 + 10000)),
 
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	?assertEqual(0.0, get_average({partition, 1, Stat, total}, Now + 500)),
 	?assertEqual(0.0, get_average({partition, 1, Stat, current}, Now + 12000)),
 	?assertEqual(0.0, get_average({partition, 2, Stat, total}, TotalStart2 + 4000)),
@@ -678,7 +678,7 @@ test_local_stats(Fun, Stat) ->
 
 test_vdf_stats() ->
 	ar_mining_stats:pause_performance_reports(120000),
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	ar_mining_stats:vdf_computed(),
 	Start = get_start(vdf),
 	ar_mining_stats:vdf_computed(),
@@ -699,14 +699,14 @@ test_vdf_stats() ->
 	?assertEqual(2.0, vdf_speed(Start2 + 500)),
 
 	ar_mining_stats:vdf_computed(),
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	?assertEqual(undefined, get_start(vdf)),
 	?assertEqual(0.0, get_average(vdf, 1000)),
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
 	ar_mining_stats:pause_performance_reports(120000),
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	?assertEqual(0, get_total_data_size()),
 	?assertEqual(0, get_partition_data_size(1)),
 	?assertEqual(0, get_partition_data_size(2)),
@@ -730,7 +730,7 @@ test_data_size_stats() ->
 	?assertEqual(250, get_partition_data_size(1)),
 	?assertEqual(300, get_partition_data_size(2)),
 
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	?assertEqual(0, get_total_data_size()),
 	?assertEqual(0, get_partition_data_size(1)),
 	?assertEqual(0, get_partition_data_size(2)).
@@ -743,7 +743,7 @@ test_h1_received_from_peer_stats() ->
 
 test_peer_stats(Fun, Stat) ->
 	ar_mining_stats:pause_performance_reports(120000),
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 
 	Peer1 = ar_test_node:peer_ip(peer1),
 	Peer2 = ar_test_node:peer_ip(peer2),
@@ -791,7 +791,7 @@ test_peer_stats(Fun, Stat) ->
 	?assertEqual(5.0, get_overall_average(peer, Stat, total, TotalStart1 + 10000)),
 	?assertEqual(2.0, get_overall_average(peer, Stat, current, CurrentStart2 + 10000)),
 
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	?assertEqual(0.0, get_average({peer, Peer1, Stat, total}, TotalStart1 + 500)),
 	?assertEqual(0.0, get_average({peer, Peer1, Stat, current}, Now + 12000)),
 	?assertEqual(0.0, get_average({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
@@ -804,7 +804,7 @@ test_peer_stats(Fun, Stat) ->
 
 test_h2_peer_stats() ->
 	ar_mining_stats:pause_performance_reports(120000),
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 
 	Peer1 = ar_test_node:peer_ip(peer1),
 	Peer2 = ar_test_node:peer_ip(peer2),
@@ -847,7 +847,7 @@ test_h2_peer_stats() ->
 	?assertEqual(2, get_overall_total(peer, h2_to_peer, total)),
 	?assertEqual(3, get_overall_total(peer, h2_from_peer, total)),
 
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 
 	?assertEqual(0, get_count({peer, Peer1, h2_to_peer, total})),
 	?assertEqual(0, get_count({peer, Peer2, h2_to_peer, total})),
@@ -896,12 +896,12 @@ test_optimal_stats() ->
 
 test_report() ->
 	ar_mining_stats:pause_performance_reports(120000),
-	ar_mining_stats:reset_all_stats(),
+	reset_all_stats(),
 	MiningAddress = crypto:strong_rand_bytes(32),
 	Partitions = [
-		{1, MiningAddress, store_id1},
-		{2, MiningAddress, store_id2},
-		{3, MiningAddress, store_id3}
+		{1, MiningAddress},
+		{2, MiningAddress},
+		{3, MiningAddress}
 	],
 	Peer1 = ar_test_node:peer_ip(peer1),
 	Peer2 = ar_test_node:peer_ip(peer2),
@@ -954,7 +954,8 @@ test_report() ->
 	log_report(format_report(Report1, WeaveSize)),
 
 	Report2 = generate_report(Partitions, Peers, WeaveSize, Now+1000),
-	log_report(format_report(Report2, WeaveSize)),
+	ReportString = format_report(Report2, WeaveSize),
+	log_report(ReportString),
 	?assertEqual(#report{ 
 		now = Now+1000,
 		vdf_speed = 3.0,

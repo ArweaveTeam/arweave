@@ -3011,7 +3011,7 @@ format_partition_table() ->
 
 format_partition_table([], UniquePartitions) ->
 	lists:sort(sets:to_list(UniquePartitions));
-format_partition_table([{PartitionId, MiningAddress, _StoreID} | Partitions], UniquePartitions) ->
+format_partition_table([{PartitionId, MiningAddress} | Partitions], UniquePartitions) ->
 	format_partition_table(
 		Partitions,
 		sets:add_element(

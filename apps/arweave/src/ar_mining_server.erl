@@ -144,7 +144,7 @@ handle_cast({start_mining, Args}, State) ->
 	{Diff, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
 	Session = reset_mining_session(State#state.session, State),
-	ar_mining_stats:reset_all_stats(),
+	ar_mining_stats:start_performance_reports(),
 	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold, session = Session }};
 
 handle_cast({set_difficulty, _Diff},
@@ -410,19 +410,17 @@ hashing_thread(SessionRef) ->
 			hashing_thread(Ref)
 	end.
 
-distribute_output(Candidate, Distributed, State) ->
-	distribute_output(ar_mining_io:get_partitions(), Candidate, Distributed, State, 0).
+distribute_output(Candidate, State) ->
+	distribute_output(ar_mining_io:get_partitions(), Candidate, State, 0).
 
-distribute_output([], _Candidate, _Distributed, State, N) ->
+distribute_output([], _Candidate, State, N) ->
 	{N, State};
-distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
-		Candidate, Distributed, State, N) ->
+distribute_output([{PartitionNumber, MiningAddress} | Partitions], Candidate, State, N) ->
 	MaxPartitionNumber = ?MAX_PARTITION_NUMBER(Candidate#mining_candidate.partition_upper_bound),
-	case PartitionNumber > MaxPartitionNumber
-			orelse maps:is_key({PartitionNumber, MiningAddress}, Distributed) of
+	case PartitionNumber > MaxPartitionNumber of
 		true ->
 			%% Skip this partition
-			distribute_output(Partitions, Candidate, Distributed, State, N);
+			distribute_output(Partitions, Candidate, State, N);
 		false ->
 			#state{ hashing_threads = Threads } = State,
 			{Thread, Threads2} = pick_hashing_thread(Threads),
@@ -432,8 +430,7 @@ distribute_output([{PartitionNumber, MiningAddress, _StoreID} | Partitions],
 					mining_address = MiningAddress
 				}},
 			State2 = State#state{ hashing_threads = Threads2 },
-			Distributed2 = maps:put({PartitionNumber, MiningAddress}, sent, Distributed),
-			distribute_output(Partitions, Candidate, Distributed2, State2, N + 1)
+			distribute_output(Partitions, Candidate, State2, N + 1)
 	end.
 
 %% @doc Before loading a recall range we reserve enough cache space for the whole range. This
@@ -505,7 +502,7 @@ handle_task({computed_output, Args}, State) ->
 		nonce_limiter_output = Output,
 		partition_upper_bound = PartitionUpperBound
 	},
-	{N, State2} = distribute_output(Candidate, #{}, State),
+	{N, State2} = distribute_output(Candidate, State),
 	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
 		{step_number, StepNumber}, {output, ar_util:encode(Output)},
 		{start_interval_number, StartIntervalNumber}]),
