@@ -239,7 +239,8 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 
 read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	Size = ?RECALL_RANGE_SIZE,
-	#mining_candidate{ mining_address = MiningAddress } = Candidate,
+	#mining_candidate{
+		mining_address = MiningAddress, partition_number = PartitionNumber, h0 = H0 } = Candidate,
 	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
@@ -247,6 +248,9 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	?LOG_DEBUG([{event, mining_debug_read_recall_range},
 			{chunk, WhichChunk},
 			{range_start, RangeStart},
+			{size, Size},
+			{h0, ar_util:encode(H0)},
+			{partition_number, PartitionNumber},
 			{store_id, StoreID},
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
