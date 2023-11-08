@@ -8,7 +8,7 @@
 		valid_solution/0, remote_call/4]).
 
 %% The "legacy" interface.
--export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1, 
+-export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1,
 		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peers/0, stop_peer/1,
 		connect_to_peer/1, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
@@ -17,11 +17,11 @@
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
-				
+
 		wait_until_height/1, assert_wait_until_height/2,
 		wait_until_block_index/1, wait_until_block_index/2,
 		wait_until_mining_paused/0,
-		wait_until_receives_txs/1, 
+		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
 		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2, assert_post_tx_to_peer/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
@@ -30,7 +30,7 @@
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0,
-		
+
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -185,16 +185,16 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 	BaseCMConfig = base_cm_config([ValidatorPeer]),
 	RewardAddr = BaseCMConfig#config.mining_addr,
-	ExitNodeConfig = BaseCMConfig#config{ 
+	ExitNodeConfig = BaseCMConfig#config{
 		mine = true
 	},
 	ValidatorNodeConfig = BaseCMConfig#config{
-		mine = false, 
+		mine = false,
 		peers = [ExitPeer],
 		coordinated_mining = false,
 		cm_api_secret = not_set
 	},
-	
+
 	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]), %% exit node
 	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]), %% validator node
 	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
@@ -202,7 +202,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		fun(I) ->
 			MinerNode = lists:nth(I, MinerNodes),
 			MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
-			
+
 			MinerConfig = BaseCMConfig#config{
 				cm_exit_peer = ExitPeer,
 				cm_peers = [peer_ip(Peer) || Peer <- MinerPeers],
@@ -273,7 +273,7 @@ valid_solution() ->
 mock_to_force_invalid_h1() ->
 	{
 		ar_block, compute_h1,
-		fun(_H0, _Nonce, _Chunk1) -> 
+		fun(_H0, _Nonce, _Chunk1) ->
 			{invalid_solution(), invalid_solution()}
 		end
 	}.
@@ -300,52 +300,52 @@ clean_up_and_stop() ->
 	).
 
 write_genesis_files(DataDir, B0) ->
-	BH = B0#block.indep_hash,	
-	BlockDir = filename:join(DataDir, ?BLOCK_DIR),	
-	ok = filelib:ensure_dir(BlockDir ++ "/"),	
-	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),	
-	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),	
-	TXDir = filename:join(DataDir, ?TX_DIR),	
-	ok = filelib:ensure_dir(TXDir ++ "/"),	
-	lists:foreach(	
-		fun(TX) ->	
-			TXID = TX#tx.id,	
-			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),	
-			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),	
-			ok = file:write_file(TXFilepath, TXJSON)	
-		end,	
-		B0#block.txs	
-	),	
-	ets:new(ar_kv, [set, public, named_table]),	
-	ar_kv:start_link(),	
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),	
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),	
-			block_time_history_db),	
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),	
-	H = B0#block.indep_hash,	
-	WeaveSize = B0#block.weave_size,	
-	TXRoot = B0#block.tx_root,	
-	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),	
-	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),	
-	case ar_fork:height_2_7() of	
-		0 ->	
-			ok = ar_kv:put(block_time_history_db, H,	
-					term_to_binary(hd(B0#block.block_time_history)));	
-		_ ->	
-			ok	
-	end,	
-	gen_server:stop(ar_kv),	
-	ets:delete(ar_kv),	
-	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),	
-	ok = filelib:ensure_dir(WalletListDir ++ "/"),	
-	RootHash = B0#block.wallet_list,	
-	WalletListFilepath =	
-		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),	
-	WalletListJSON =	
-		ar_serialize:jsonify(	
-			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,	
-					B0#block.account_tree)	
-		),	
+	BH = B0#block.indep_hash,
+	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
+	ok = filelib:ensure_dir(BlockDir ++ "/"),
+	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".bin"),
+	ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
+	TXDir = filename:join(DataDir, ?TX_DIR),
+	ok = filelib:ensure_dir(TXDir ++ "/"),
+	lists:foreach(
+		fun(TX) ->
+			TXID = TX#tx.id,
+			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),
+			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+			ok = file:write_file(TXFilepath, TXJSON)
+		end,
+		B0#block.txs
+	),
+	ets:new(ar_kv, [set, public, named_table]),
+	ar_kv:start_link(),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
+			block_time_history_db),
+	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
+	H = B0#block.indep_hash,
+	WeaveSize = B0#block.weave_size,
+	TXRoot = B0#block.tx_root,
+	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),
+	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
+	case ar_fork:height_2_7() of
+		0 ->
+			ok = ar_kv:put(block_time_history_db, H,
+					term_to_binary(hd(B0#block.block_time_history)));
+		_ ->
+			ok
+	end,
+	gen_server:stop(ar_kv),
+	ets:delete(ar_kv),
+	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
+	ok = filelib:ensure_dir(WalletListDir ++ "/"),
+	RootHash = B0#block.wallet_list,
+	WalletListFilepath =
+		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
+	WalletListJSON =
+		ar_serialize:jsonify(
+			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
+					B0#block.account_tree)
+		),
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
 wait_until_syncs_data(Left, Right, WeaveSize, _Packing)
@@ -392,7 +392,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 
 remote_call(Node, Module, Function, Args) ->
 	remote_call(Node, Module, Function, Args, 30000).
-	
+
 remote_call(Node, Module, Function, Args, Timeout) ->
 	NodeName = peer_name(Node),
 	case node() == NodeName of
@@ -921,7 +921,7 @@ mock_functions(Functions) ->
 						false ->
 							meck:new(Module, [passthrough]),
 							lists:foreach(
-								fun(Node) -> 
+								fun(Node) ->
 									remote_call(Node, meck, new, [Module, [no_link, passthrough]])
 								end,
 								all_peers()),
@@ -930,7 +930,7 @@ mock_functions(Functions) ->
 							Mocked
 					end,
 					lists:foreach(
-						fun(Node) -> 
+						fun(Node) ->
 							remote_call(Node, meck, expect, [Module, Fun, Mock])
 						end,
 						[main | all_peers()]),
@@ -944,7 +944,7 @@ mock_functions(Functions) ->
 			maps:fold(
 				fun(Module, _, _) ->
 					lists:foreach(
-						fun(Node) -> 
+						fun(Node) ->
 							remote_call(Node, meck, unload, [Module])
 						end,
 						[main | all_peers()])

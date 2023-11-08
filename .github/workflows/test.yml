@@ -93,6 +93,7 @@ jobs:
         run: |
           # set -e
           set -o pipefail
+          rm -f *.out || true
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
@@ -113,7 +114,9 @@ jobs:
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
               echo -e "\033[0;32m===> Checking for retry\033[0m"
-              first_line_peer1=$(head -n 1 peer1-${NAMESPACE}.out)
+              if compgen -G "peer1-*.out" > /dev/null; then
+                first_line_peer1=$(head -n 1 peer1-*.out)
+              fi
               first_line_main=$(head -n 1 main-${NAMESPACE}.out)
               echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
               echo -e "\033[0;31m===> First line of main node's output: $first_line_main\033[0m"
@@ -131,27 +134,27 @@ jobs:
                 RETRYABLE=1
                 sleep 1
               else
-                if [[ -e peer1-${NAMESPACE}.out ]]; then
+                if compgen -G peer1-*.out > /dev/null; then
                   echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
-                  cat peer1-${NAMESPACE}.out
+                  cat peer1-*.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
                 fi
-                if [[ -e peer2-${NAMESPACE}.out ]]; then
+                if compgen -G peer2-*.out > /dev/null; then
                   echo -e "\033[0;31m===> Test failed, printing the peer2 node's output...\033[0m"
-                  cat peer2-${NAMESPACE}.out
+                  cat peer2-*.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer2 output...\033[0m"
                 fi
-                if [[ -e peer3-${NAMESPACE}.out ]]; then
+                if compgen -G peer3-*.out > /dev/null; then
                   echo -e "\033[0;31m===> Test failed, printing the peer3 node's output...\033[0m"
-                  cat peer3-${NAMESPACE}.out
+                  cat peer3-*.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer3 output...\033[0m"
                 fi
-                if [[ -e peer4-${NAMESPACE}.out ]]; then
+                if compgen -G peer4-*.out > /dev/null; then
                   echo -e "\033[0;31m===> Test failed, printing the peer4 node's output...\033[0m"
-                  cat peer4-${NAMESPACE}.out
+                  cat peer4-*.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer4 output...\033[0m"
                 fi
