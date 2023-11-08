@@ -229,7 +229,7 @@ handle_cast({may_be_remove_chunk_from_cache, _Args},
 handle_cast({may_be_remove_chunk_from_cache, _Args} = Task,
 		#state{ task_queue = Q } = State) ->
 	Q2 = gb_sets:insert({priority(may_be_remove_chunk_from_cache), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [may_be_remove_chunk_from_cache]),
 	{noreply, State#state{ task_queue = Q2 }};
 
 handle_cast(Cast, State) ->
@@ -265,7 +265,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [nonce_limiter_computed_output]),
 	{noreply, State#state{ task_queue = Q2 }};
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
