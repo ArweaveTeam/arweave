@@ -51,8 +51,10 @@ pick_random(Xs) ->
 	lists:nth(rand:uniform(length(Xs)), Xs).
 
 %% @doc Encode a binary to URL safe base64 binary string.
+encode(Bin) when is_binary(Bin) ->
+	b64fast:encode(Bin);
 encode(Bin) ->
-	b64fast:encode(Bin).
+	Bin.
 
 %% @doc Try to decode a URL safe base64 into a binary or throw an error when
 %% invalid.

@@ -469,7 +469,7 @@ format_report(Report) ->
 	format_report(Report, ar_node:get_weave_size()).
 format_report(Report, WeaveSize) ->
 	Preamble = io_lib:format(
-		"============================================= Mining Performance Report =============================================\n"
+		"================================================= Mining Performance Report =================================================\n"
 		"\n"
 		"VDF Speed: ~s\n"
 		"\n",
