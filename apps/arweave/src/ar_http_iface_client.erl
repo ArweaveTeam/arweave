@@ -496,7 +496,20 @@ get_block_time_history([], _B, _RewardHistoryHashes) ->
 	not_found.
 
 push_nonce_limiter_update(Peer, Update) ->
-	Body = ar_serialize:nonce_limiter_update_to_binary(Update),
+	Updated =
+		case ar_http_iface_client:get_info(Peer, release) of
+			{<<"release">>, Release} when is_integer(Release) ->
+				Release >= ?RELEASE_NUMBER;
+			_ ->
+				false
+		end,
+	Body =
+		case Updated of
+			true ->
+				ar_serialize:nonce_limiter_update_to_binary2(Update);
+			false ->
+				ar_serialize:nonce_limiter_update_to_binary(Update)
+		end,
 	case ar_http:req(#{
 				peer => Peer,
 				method => post,
@@ -517,7 +530,7 @@ push_nonce_limiter_update(Peer, Update) ->
 	end.
 
 get_vdf_update(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf",
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2",
 			timeout => 2000, headers => p2p_headers()
 			}) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
@@ -531,7 +544,7 @@ get_vdf_update(Peer) ->
 	end.
 
 get_vdf_session(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/session",
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2/session",
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Bin);
@@ -544,7 +557,7 @@ get_vdf_session(Peer) ->
 	end.
 
 get_previous_vdf_session(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/previous_session",
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2/previous_session",
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Bin);

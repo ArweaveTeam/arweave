@@ -1324,27 +1324,57 @@ handle(<<"GET">>, [<<"vdf">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_update)
+			handle_get_vdf(Req, get_update, 1)
+	end;
+
+%% Serve an VDF update to a configured VDF client.
+%% GET request to /vdf2.
+handle(<<"GET">>, [<<"vdf2">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_update, 2)
 	end;
 
 %% Serve the current VDF session to a configured VDF client.
-%% GET request to /vdf.
+%% GET request to /vdf/session.
 handle(<<"GET">>, [<<"vdf">>, <<"session">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_session)
+			handle_get_vdf(Req, get_session, 1)
+	end;
+
+%% Serve the current VDF session to a configured VDF client.
+%% GET request to /vdf2/session.
+handle(<<"GET">>, [<<"vdf2">>, <<"session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_session, 2)
 	end;
 
 %% Serve the previous VDF session to a configured VDF client.
-%% GET request to /vdf.
+%% GET request to /vdf/previous_session.
 handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_previous_session)
+			handle_get_vdf(Req, get_previous_session, 1)
+	end;
+
+%% Serve the previous VDF session to a configured VDF client.
+%% GET request to /vdf2/previous_session.
+handle(<<"GET">>, [<<"vdf2">>, <<"previous_session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_previous_session, 2)
 	end;
 
 %% Catch case for requests made to unknown endpoints.
@@ -2852,21 +2882,28 @@ handle_post_vdf3(Req, Pid, Peer) ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
-handle_get_vdf(Req, Call) ->
+handle_get_vdf(Req, Call, Version) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
 		[] ->
 			{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
 		[{_, _RawPeer}] ->
-			handle_get_vdf2(Req, Call)
+			handle_get_vdf2(Req, Call, Version)
 	end.
 
-handle_get_vdf2(Req, Call) ->
+handle_get_vdf2(Req, Call, Version) ->
 	case gen_server:call(ar_nonce_limiter_server, Call) of
 		not_found ->
 			{404, #{}, <<>>, Req};
 		Update ->
-			{200, #{}, ar_serialize:nonce_limiter_update_to_binary(Update), Req}
+			Bin =
+				case Version of
+					1 ->
+						ar_serialize:nonce_limiter_update_to_binary(Update);
+					2 ->
+						ar_serialize:nonce_limiter_update_to_binary2(Update)
+				end,
+			{200, #{}, Bin, Req}
 	end.
 
 read_complete_body(Req, Pid) ->

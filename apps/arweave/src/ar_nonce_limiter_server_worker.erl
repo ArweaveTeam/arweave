@@ -138,7 +138,7 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 
 push_session(SessionKey, Session, Peer) ->
 	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
-	{SessionSeed, SessionInterval} = SessionKey,
+	{SessionSeed, SessionInterval, _NextVDFDifficulty} = SessionKey,
 	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
 		ok ->
 			ok;

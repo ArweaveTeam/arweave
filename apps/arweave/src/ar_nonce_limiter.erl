@@ -961,7 +961,7 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
-	{SessionSeed, SessionInterval} = SessionKey,
+	{SessionSeed, SessionInterval, _NextVDFDifficulty} = SessionKey,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			case IsPartial of

@@ -20,7 +20,10 @@
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
 		reward_history_to_binary/1, binary_to_reward_history/1,
 		block_time_history_to_binary/1, binary_to_block_time_history/1,
-		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
+		
+		nonce_limiter_update_to_binary/1, nonce_limiter_update_to_binary2/1,
+		binary_to_nonce_limiter_update/1,
+
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -349,12 +352,22 @@ binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 %% 
 %% For example, the vdf_difficulty and next_vdf_difficulty fields are omitted as they are only used
 %% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
-nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval},
+nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval, _},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, Interval:64, IsPartialBin/binary, CheckpointLen:16,
 			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session(Session))/binary >>.
+
+nonce_limiter_update_to_binary2(#nonce_limiter_update{
+			session_key = {NextSeed, Interval, NextVDFDifficulty},
+		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
+	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
+	CheckpointLen = length(Checkpoints),
+	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
+			Interval:64, IsPartialBin/binary, CheckpointLen:16,
+			(ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
+			(encode_vdf_session2(Session))/binary >>.
 
 encode_vdf_session(#vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
 		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
@@ -365,19 +378,37 @@ encode_vdf_session(#vdf_session{ step_number = StepNumber, seed = Seed, steps = 
 			(iolist_to_binary(Steps))/binary,
 			(encode_prev_session_key(PrevSessionKey))/binary >>.
 
+encode_vdf_session2(#vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
+		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
+		next_upper_bound = NextUpperBound }) ->
+	StepsLen = length(Steps),
+	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
+			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
+			(iolist_to_binary(Steps))/binary,
+			(encode_prev_session_key2(PrevSessionKey))/binary >>.
+
 encode_prev_session_key(undefined) ->
 	<<>>;
-encode_prev_session_key({PrevNextSeed, PrevInterval}) ->
+encode_prev_session_key({PrevNextSeed, PrevInterval, _}) ->
 	<< PrevNextSeed:48/binary, PrevInterval:64 >>.
 
-binary_to_nonce_limiter_update(<< NextSeed:48/binary, Interval:64, IsPartial:8,
+encode_prev_session_key2(undefined) ->
+	<<>>;
+encode_prev_session_key2({PrevNextSeed, PrevInterval, PrevNextDifficulty}) ->
+	<< PrevNextSeed:48/binary, (ar_serialize:encode_int(PrevNextDifficulty, 8))/binary,
+			PrevInterval:64 >>.
+
+binary_to_nonce_limiter_update(<< NextSeed:48/binary,
+			NextVDFDifficultySize:8, NextVDFDifficulty:(NextVDFDifficultySize * 8),
+			Interval:64, IsPartial:8,
 			CheckpointLen:16, Checkpoints:(CheckpointLen * 32)/binary,
 			StepNumber:64, Seed:48/binary, UpperBoundSize:8, UpperBound:(UpperBoundSize * 8),
 			NextUpperBoundSize:8, NextUpperBound:(NextUpperBoundSize * 8),
-			StepsLen:16, Steps:(StepsLen * 32)/binary, PrevSessionKeyBin/binary >>)
+			StepsLen:16, Steps:(StepsLen * 32)/binary,
+			PrevSessionKeyBin/binary >>)
 		when UpperBoundSize > 0, StepsLen > 0, CheckpointLen == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
 	NextUpperBound2 = case NextUpperBoundSize of 0 -> undefined; _ -> NextUpperBound end,
-	Update = #nonce_limiter_update{ session_key = {NextSeed, Interval},
+	Update = #nonce_limiter_update{ session_key = {NextSeed, Interval, NextVDFDifficulty},
 			checkpoints = parse_32b_list(Checkpoints),
 			is_partial = case IsPartial of 0 -> false; _ -> true end,
 			session = Session = #vdf_session{ step_number = StepNumber, seed = Seed,
@@ -386,8 +417,12 @@ binary_to_nonce_limiter_update(<< NextSeed:48/binary, Interval:64, IsPartial:8,
 	case PrevSessionKeyBin of
 		<<>> ->
 			{ok, Update};
-		<< PrevNextSeed:48/binary, PrevInterval:64 >> ->
-			Session2 = Session#vdf_session{ prev_session_key = {PrevNextSeed, PrevInterval} },
+		<< PrevNextSeed:48/binary,
+				PrevNextVDFDifficultySize:8,
+				PrevNextVDFDifficulty:(PrevNextVDFDifficultySize * 8),
+				PrevInterval:64 >> ->
+			Session2 = Session#vdf_session{
+					prev_session_key = {PrevNextSeed, PrevInterval, PrevNextVDFDifficulty} },
 			{ok, Update#nonce_limiter_update{ session = Session2 }};
 		_ ->
 			{error, invalid1}
