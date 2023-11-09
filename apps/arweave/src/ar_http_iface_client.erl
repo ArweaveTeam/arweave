@@ -495,14 +495,8 @@ get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
 get_block_time_history([], _B, _RewardHistoryHashes) ->
 	not_found.
 
-push_nonce_limiter_update(Peer, Update, IsUpdated) ->
-	Body =
-		case IsUpdated of
-			true ->
-				ar_serialize:nonce_limiter_update_to_binary2(Update);
-			false ->
-				ar_serialize:nonce_limiter_update_to_binary(Update)
-		end,
+push_nonce_limiter_update(Peer, Update, Format) ->
+	Body = ar_serialize:nonce_limiter_update_to_binary(Format, Update),
 	case ar_http:req(#{
 				peer => Peer,
 				method => post,
