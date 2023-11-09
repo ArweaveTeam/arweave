@@ -738,7 +738,7 @@ handle_cast({pack_and_store_chunk, Args} = Cast,
 %%    Start the collection process over the full storage_module range.
 %% 2. {collect_peer_intervals, Start, End}
 %%    Collect intervals for the specified range. This interface is used to pick up where
-%%    we left off after a pause. There are 2 main conditions that can trigger a pause: 
+%%    we left off after a pause. There are 2 main conditions that can trigger a pause:
 %%    a. Insufficient disk space. Will pause until disk space frees up
 %%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
 %%       ar_data_sync_worker_master for syncing.
@@ -749,7 +749,7 @@ handle_cast(collect_peer_intervals, State) ->
 
 handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 		#sync_data_state{ store_id = StoreID } = State,
-	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
+	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID},
 		{start, Start}]),
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS and
@@ -855,7 +855,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	%%
 	%% The compute overhead of these 2 steps is minimal and results in a pretty good
 	%% distribution of sync requests among peers.
-	
+
 	%% This is an approximation. The intent is to enqueue one sync_bucket at a time - but
 	%% due to the selection of each peer's intervals, the total number of bytes may be
 	%% less than a full sync_bucket. But for the purposes of distributing requests among
@@ -1090,7 +1090,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 	#sync_data_state{ chunks_index = ChunksIndex, store_id = StoreID } = State,
 	case get_chunk_by_byte(ChunksIndex, Cursor) of
-		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}} 
+		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}}
 				when AbsoluteOffset > End ->
 			PID ! {removed_range, Ref},
 			{noreply, State};
@@ -1313,6 +1313,10 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + (BufferSize div 2) of
 		true ->
+			ar:console("error: Not enough disk space left on 'data_dir' disk for "
+				"the requested 'disk_pool_size' ~Bmb and 'disk_cache_size' ~Bmb "
+				"either lower these values or add more disk space.~n",
+			[Config#config.max_disk_pool_buffer_mb, Config#config.disk_cache_size]),
 			case is_disk_space_sufficient(StoreID) of
 				false ->
 					ok;
@@ -1446,7 +1450,7 @@ read_chunk_with_metadata(
 	case get_chunk_by_byte({chunks_index, StoreID}, SeekOffset) of
 		{error, _} ->
 			{error, chunk_not_found};
-		{ok, _, {AbsoluteOffset, _, _, _, _, _, ChunkSize}} 
+		{ok, _, {AbsoluteOffset, _, _, _, _, _, ChunkSize}}
 				when AbsoluteOffset - SeekOffset >= ChunkSize ->
 			case ar_sync_record:delete(AbsoluteOffset - ChunkSize, SeekOffset - 1, ?MODULE,
 					StoreID) of
@@ -2202,7 +2206,7 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 
 find_peer_intervals(Start, End, StoreID, _AllPeersIntervals) when Start >= End ->
 	%% We've reached the end of the range, next time through we'll start with a clear cache.
-	?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID}, 
+	?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID},
 		{start, Start}]),
 	#{};
 find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
@@ -2218,8 +2222,8 @@ find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
 			false ->
 				ar_data_discovery:get_bucket_peers(Bucket)
 		end,
-	?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID}, 
-		{start, Start}, {bucket, Bucket}, 
+	?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID},
+		{start, Start}, {bucket, Bucket},
 		{peers, io_lib:format("~p", [[ar_util:format_peer(Peer) || Peer <- Peers]])}]),
 
 	%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
@@ -2779,7 +2783,7 @@ store_chunk2(ChunkArgs, Args, State) ->
 									{relative_offset, Offset},
 									{data_path_hash, ar_util:encode(DataPathHash)},
 									{data_root, ar_util:encode(DataRoot)},
-									{store_id, StoreID}]),	
+									{store_id, StoreID}]),
 							ok;
 						{error, Reason} ->
 							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
