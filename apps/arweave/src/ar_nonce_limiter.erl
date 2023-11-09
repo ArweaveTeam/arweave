@@ -1318,7 +1318,8 @@ test_applies_validated_steps() ->
 	[step() || _ <- lists:seq(1, 3)],
 	assert_step_number(5),
 	ar_events:send(node_state, {new_tip, B2, B1}),
-	assert_step_number(5),
+	%% We have just applied B2 with a VDF difficulty update => a new session has to be opened.
+	assert_step_number(2),
 	assert_session(B2, B1),
 	{ok, Output3, _} = compute(3, Output2, B2VDFDifficulty),
 	{ok, Output4, _} = compute(4, Output3, B2VDFDifficulty),
@@ -1335,7 +1336,7 @@ test_applies_validated_steps() ->
 	B4 = test_block(5, Output5, NextSeed, NextSeed2, [], [Output5],
 			B4VDFDifficulty, B4NextVDFDifficulty),
 	[step() || _ <- lists:seq(1, 6)],
-	assert_step_number(11),
+	assert_step_number(10),
 	assert_validate(B4, B3, valid),
 	ar_events:send(node_state, {new_tip, B4, B3}),
 	assert_step_number(9),
