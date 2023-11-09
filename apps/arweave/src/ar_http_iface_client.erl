@@ -13,7 +13,7 @@
 		get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
 		get_block_time_history/3,
-		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
+		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -495,16 +495,9 @@ get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
 get_block_time_history([], _B, _RewardHistoryHashes) ->
 	not_found.
 
-push_nonce_limiter_update(Peer, Update) ->
-	Updated =
-		case ar_http_iface_client:get_info(Peer, release) of
-			{<<"release">>, Release} when is_integer(Release) ->
-				Release >= ?RELEASE_NUMBER;
-			_ ->
-				false
-		end,
+push_nonce_limiter_update(Peer, Update, IsUpdated) ->
 	Body =
-		case Updated of
+		case IsUpdated of
 			true ->
 				ar_serialize:nonce_limiter_update_to_binary2(Update);
 			false ->
