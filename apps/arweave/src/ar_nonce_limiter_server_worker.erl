@@ -53,6 +53,8 @@ handle_cast(resolve_raw_peer, #state{ raw_peer = RawPeer } = State) ->
 					_ ->
 						false
 				end,
+			?LOG_DEBUG([{event, resolved_vdf_client_peer},
+					{raw_peer, RawPeer}, {peer, ar_util:format_peer(Peer)}, {updated, Updated}]),
 			ar_util:cast_after(?RESOLVE_DOMAIN_NAME_FREQUENCY_MS, self(), resolve_raw_peer),
 			{noreply, State#state{ peer = Peer, is_updated = Updated }};
 		{error, Reason} ->

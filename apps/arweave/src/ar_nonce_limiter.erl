@@ -22,7 +22,7 @@
 -record(state, {
 	current_session_key,
 	sessions = gb_sets:new(),
-	session_by_key = #{}, % {NextSeed, StartIntervalNumber} => #vdf_session
+	session_by_key = #{}, % {NextSeed, StartIntervalNumber, NextVDFDifficulty} => #vdf_session
 	worker,
 	worker_monitor_ref,
 	autocompute = true,
@@ -524,7 +524,8 @@ handle_cast({validated_steps, Args}, State) ->
 			%% checkpoint height.
 			?LOG_WARNING([{event, session_not_found_for_validated_steps},
 					{next_seed, ar_util:encode(element(1, SessionKey))},
-					{interval, element(2, SessionKey)}]),
+					{interval, element(2, SessionKey)},
+					{vdf_difficulty, element(3, SessionKey)}]),
 			{noreply, State};
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
 				step_checkpoints_map = Map } = Session ->
@@ -961,7 +962,7 @@ apply_external_update2(Update, State) ->
 					prev_session_key = PrevSessionKey,
 					step_number = StepNumber } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
-	{SessionSeed, SessionInterval, _NextVDFDifficulty} = SessionKey,
+	{SessionSeed, SessionInterval, SessionVDFDifficulty} = SessionKey,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			case IsPartial of
@@ -973,6 +974,7 @@ apply_external_update2(Update, State) ->
 						{is_partial, IsPartial},
 						{session_seed, ar_util:encode(SessionSeed)},
 						{session_interval, SessionInterval},
+						{session_vdf_difficulty, SessionVDFDifficulty},
 						{server_step_number, StepNumber}]),
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
@@ -1019,6 +1021,7 @@ apply_external_update2(Update, State) ->
 								{vdf_server, ar_util:format_peer(Peer)},
 								{session_seed, ar_util:encode(SessionSeed)},
 								{session_interval, SessionInterval},
+								{session_vdf_difficulty, SessionVDFDifficulty},
 								{client_step_number, CurrentStepNumber},
 								{server_step_number, StepNumber}]),
 							{reply, #nonce_limiter_update_response{
@@ -1033,6 +1036,7 @@ apply_external_update2(Update, State) ->
 										{is_partial, IsPartial},
 										{session_seed, ar_util:encode(SessionSeed)},
 										{session_interval, SessionInterval},
+										{session_vdf_difficulty, SessionVDFDifficulty},
 										{client_step_number, CurrentStepNumber},
 										{server_step_number, StepNumber}]),
 									{reply, #nonce_limiter_update_response{
@@ -1078,6 +1082,7 @@ apply_external_update3(
 		{result, ok},
 		{session_seed, ar_util:encode(element(1, SessionKey))},
 		{session_interval, element(2, SessionKey)},
+		{session_difficulty, element(3, SessionKey)},
 		{length, length(Steps)}]),
 	#state{ session_by_key = SessionByKey } = State,
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
