@@ -17,6 +17,7 @@
 	ref,
 	seed,
 	next_seed,
+	next_vdf_difficulty,
 	start_interval_number,
 	partition_upper_bound,
 	step_number_by_output = #{},
@@ -284,7 +285,7 @@ handle_info({'DOWN', Ref,  process, _, Reason},
 
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber}, Session,
+	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty}, Session,
 		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
 		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
@@ -805,13 +806,15 @@ handle_task({computed_output, Args}, State) ->
 	{SessionKey,
 		#vdf_session{ seed = Seed, step_number = StepNumber } = VDFSession,
 		Output, PartitionUpperBound} = Args,
-	{NextSeed, StartIntervalNumber} = SessionKey,
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 	#mining_session{ next_seed = CurrentNextSeed,
+			next_vdf_difficulty = CurrentNextVDFDifficulty,
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = Session,
 	Session2 =
-		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound}
-				== {StartIntervalNumber, NextSeed, PartitionUpperBound} of
+		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound,
+				CurrentNextVDFDifficulty}
+				== {StartIntervalNumber, NextSeed, PartitionUpperBound, NextVDFDifficulty} of
 			true ->
 				Session;
 			false ->
@@ -831,6 +834,7 @@ handle_task({computed_output, Args}, State) ->
 				ets:insert(?MODULE, {chunk_cache_size, 0}),
 				prometheus_gauge:set(mining_server_chunk_cache_size, 0),
 				#mining_session{ ref = Ref2, seed = Seed, next_seed = NextSeed,
+						next_vdf_difficulty = NextVDFDifficulty,
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound,
 						chunk_cache_size_limit = CacheSizeLimit }
@@ -1094,11 +1098,12 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 	#state{ diff = Diff, session = Session,
 			merkle_rebase_threshold = RebaseThreshold } = State,
 	#mining_session{ seed = Seed, next_seed = NextSeed,
+			next_vdf_difficulty = NextVDFDifficulty,
 			start_interval_number = StartIntervalNumber,
 			partition_upper_bound = PartitionUpperBound,
 			step_number_by_output = #{ NonceLimiterOutput := StepNumber } } = Session,
 	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
-			StepNumber, NextSeed, StartIntervalNumber),
+			StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficulty),
 	case validate_solution({NonceLimiterOutput, PartitionNumber, Seed, ReplicaID, Nonce,
 			PoA1, PoA2, Diff, PartitionUpperBound, RebaseThreshold}) of
 		error ->
@@ -1122,7 +1127,8 @@ prepare_solution(Args, State, Key, RecallByte1, RecallByte2, PoA1, PoA2) ->
 			State;
 		{true, PoACache, PoA2Cache} ->
 			SolutionArgs = {H, Preimage, PartitionNumber, Nonce, StartIntervalNumber,
-					NextSeed, NonceLimiterOutput, StepNumber, LastStepCheckpoints,
+					NextSeed, NextVDFDifficulty, NonceLimiterOutput, StepNumber,
+					LastStepCheckpoints,
 					RecallByte1, RecallByte2, PoA1, PoA2, PoACache, PoA2Cache, Key,
 					RebaseThreshold},
 			?LOG_INFO([{event, found_mining_solution},

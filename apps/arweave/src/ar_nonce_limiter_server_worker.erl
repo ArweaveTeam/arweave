@@ -11,12 +11,15 @@
 -record(state, {
 	peer,
 	raw_peer,
-	pause_until = 0
+	pause_until = 0,
+	is_updated = false
 }).
 
 %% The frequency of re-resolving the domain names of the VDF client peers (who are
 %% configured via the domain names as opposed to IP addresses).
 -define(RESOLVE_DOMAIN_NAME_FREQUENCY_MS, 30000).
+
+-define(NONCE_LIMITER_UPDATE_VERSION, 67).
 
 %%%===================================================================
 %%% Public interface.
@@ -43,8 +46,15 @@ handle_call(Request, _From, State) ->
 handle_cast(resolve_raw_peer, #state{ raw_peer = RawPeer } = State) ->
 	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_client_peer) of
 		{ok, Peer} ->
+			Updated =
+				case ar_http_iface_client:get_info(Peer, release) of
+					{<<"release">>, Release} when is_integer(Release) ->
+						Release >= ?NONCE_LIMITER_UPDATE_VERSION;
+					_ ->
+						false
+				end,
 			ar_util:cast_after(?RESOLVE_DOMAIN_NAME_FREQUENCY_MS, self(), resolve_raw_peer),
-			{noreply, State#state{ peer = Peer }};
+			{noreply, State#state{ peer = Peer, is_updated = Updated }};
 		{error, Reason} ->
 			?LOG_WARNING([{event, failed_to_resolve_vdf_client_peer},
 					{reason, io_lib:format("~p", [Reason])}]),
@@ -59,7 +69,7 @@ handle_cast(Cast, State) ->
 handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) ->
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	#state{ peer = Peer, pause_until = Timestamp } = State,
+	#state{ peer = Peer, pause_until = Timestamp, is_updated = IsUpdated } = State,
 	{SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound} = Args,
 	CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
 	case os:system_time(second) < Timestamp of
@@ -70,8 +80,9 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				true ->
 					{noreply, State};
 				false ->
-					{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
-							PartitionUpperBound, Peer, State)}
+					{noreply, push_update(SessionKey, Session, PrevSessionKey,
+							PrevSession, Output, PartitionUpperBound,
+							Peer, IsUpdated, State)}
 			end
 	end;
 
@@ -90,7 +101,8 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 
 push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound,
-		Peer, State) ->
+		Peer, IsUpdated, State) ->
+	#state{ is_updated = IsUpdated } = State,
 	Update = ar_nonce_limiter_server:make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
@@ -99,7 +111,7 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 		},
 		true),
 	StepNumber = Session#vdf_session.step_number,
-	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
+	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update, IsUpdated) of
 		ok ->
 			State;
 		{ok, Response} ->
@@ -115,16 +127,16 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 								undefined ->
 									ok;
 								_ ->
-									push_session(PrevSessionKey, PrevSession, Peer)
+									push_session(PrevSessionKey, PrevSession, Peer, IsUpdated)
 							end,
-							push_session(SessionKey, Session, Peer);
+							push_session(SessionKey, Session, Peer, IsUpdated);
 						true ->
 							StepNumber2 = Response#nonce_limiter_update_response.step_number,
 							case StepNumber2 >= StepNumber - 1 of
 								true ->
 									ok;
 								false ->
-									push_session(SessionKey, Session, Peer)
+									push_session(SessionKey, Session, Peer, IsUpdated)
 							end
 					end,
 					State
@@ -136,10 +148,10 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 			State
 	end.
 
-push_session(SessionKey, Session, Peer) ->
+push_session(SessionKey, Session, Peer, IsUpdated) ->
 	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
-	{SessionSeed, SessionInterval} = SessionKey,
-	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
+	{SessionSeed, SessionInterval, _NextVDFDifficulty} = SessionKey,
+	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update, IsUpdated) of
 		ok ->
 			ok;
 		{ok, #nonce_limiter_update_response{ step_number = ClientStepNumber,

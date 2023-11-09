@@ -29,7 +29,7 @@
 		"queue", "recent_hash_list", "recent_hash_list_diff", "tx_anchor", "arql", "time",
 		"chunk", "chunk2", "data_sync_record", "sync_buckets", "wallet", "unsigned_tx",
 		"peers", "hash_list", "block_index", "block_index2", "total_supply", "wallet_list",
-		"height", "metrics", "rates"]).
+		"height", "metrics", "rates", "vdf", "vdf2"]).
 
 %%%===================================================================
 %%% Public interface.
@@ -219,8 +219,6 @@ convert_208(Status) -> Status.
 
 name_route([]) ->
 	"/";
-name_route([<<"vdf">>]) ->
-	"/vdf";
 name_route([<<"current_block">>]) ->
 	"/current/block";
 name_route([<<_Hash:43/binary, _MaybeExt/binary>>]) ->
@@ -235,6 +233,15 @@ name_route([Bin]) ->
 	end;
 name_route([<<"peer">> | _]) ->
 	"/peer/...";
+
+name_route([<<"vdf">>, <<"session">>]) ->
+	"/vdf/session";
+name_route([<<"vdf2">>, <<"session">>]) ->
+	"/vdf2/session";
+name_route([<<"vdf">>, <<"previous_session">>]) ->
+	"/vdf/previous_session";
+name_route([<<"vdf2">>, <<"previous_session">>]) ->
+	"/vdf2/previous_session";
 
 name_route([<<"tx">>, <<"pending">>]) ->
 	"/tx/pending";
