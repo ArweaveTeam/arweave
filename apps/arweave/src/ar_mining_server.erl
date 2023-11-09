@@ -285,7 +285,7 @@ handle_info({'DOWN', Ref,  process, _, Reason},
 
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber}, Session,
+	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty}, Session,
 		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
 		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
