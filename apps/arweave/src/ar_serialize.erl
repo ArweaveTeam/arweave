@@ -366,7 +366,6 @@ nonce_limiter_update_to_binary2(#nonce_limiter_update{
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
 			Interval:64, IsPartialBin/binary, CheckpointLen:16,
-			(ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
 			(encode_vdf_session2(Session))/binary >>.
 
 encode_vdf_session(#vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
