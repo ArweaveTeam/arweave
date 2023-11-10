@@ -134,31 +134,30 @@ jobs:
             kill -9 $ERL_MASTER_PID > /dev/null 2>&1 || true
             # For debugging purposes, print the slave output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
-              if [[ -e slave.out ]]; then
+              if compgen -G "slave.out" > /dev/null; then
                 first_line_slave=$(head -n 1 slave.out)
-                if compgen -G "slave.out" > /dev/null; then
-                  first_line_peer1=$(head -n 1 slave.out)
-                fi
-                first_line_master=$(head -n 1 master.out)
-                # Check if it is a retryable error
-                if [[ "$first_line_slave" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
-                  echo "Retrying test because of inet_tcp error..."
-                  RETRYABLE=1
-                  sleep 1
-                elif [[ "$first_line_slave" == "Protocol 'inet_tcp': the name"* ]]; then
-                  echo "Retrying test because of inet_tcp clash..."
-                  RETRYABLE=1
-                  sleep 1
-                elif [[ "$first_line_master" == "econnrefused"* ]]; then
-                  echo "Retrying test because of econnrefused..."
-                  RETRYABLE=1
-                  sleep 1
-                else
+              fi
+              first_line_master=$(head -n 1 master.out)
+              # Check if it is a retryable error
+              if [[ "$first_line_slave" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
+                echo "Retrying test because of inet_tcp error..."
+                RETRYABLE=1
+                sleep 1
+              elif [[ "$first_line_slave" == "Protocol 'inet_tcp': the name"* ]]; then
+                echo "Retrying test because of inet_tcp clash..."
+                RETRYABLE=1
+                sleep 1
+              elif [[ "$first_line_master" == "econnrefused"* ]]; then
+                echo "Retrying test because of econnrefused..."
+                RETRYABLE=1
+                sleep 1
+              else
+                if compgen -G slave.out" > /dev/null; then
                   echo -e "\033[0;31m===> Test failed, printing the slave node's output...\033[0m"
                   cat slave.out
+                else
+                  echo -e "\033[0;31m===> Test failed without slave output...\033[0m"
                 fi
-              else
-                echo -e "\033[0;31m===> Test failed without slave output...\033[0m"
               fi
             fi
           done
