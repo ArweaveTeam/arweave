@@ -819,9 +819,25 @@ test_update_accounts_rejects_same_signature_in_double_signing_proof() ->
 update_accounts_receives_released_reward_and_prover_reward_test_() ->
 	{timeout, 10, fun test_update_accounts_receives_released_reward_and_prover_reward/0}.
 
+% this function will prepend reward_history up to ?REWARD_HISTORY_BLOCKS
+% elements will keep pattern of changed values
+augment_reward_history(PrevB = #block{ reward_history = RewardHistory }) ->
+	[First, Second | _] = RewardHistory,
+	NewRewardHistory = case length(RewardHistory) >= ?REWARD_HISTORY_BLOCKS of
+		true -> RewardHistory;
+		_ ->
+			PairsToAdd = (?REWARD_HISTORY_BLOCKS - length(RewardHistory)) div 2,
+			AdditionalElements = lists:flatten(lists:duplicate(PairsToAdd, [First, Second])),
+			case (?REWARD_HISTORY_BLOCKS - length(RewardHistory)) rem 2 of
+				1 -> [Second | AdditionalElements];
+				0 -> AdditionalElements
+			end ++ RewardHistory
+	end,
+	PrevB#block{ reward_history = NewRewardHistory }.
+
 test_update_accounts_receives_released_reward_and_prover_reward() ->
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
-	?assert(?REWARD_HISTORY_BLOCKS == 3),
+	?assert(?REWARD_HISTORY_BLOCKS >= 3),
 	?assert(?DOUBLE_SIGNING_PROVER_REWARD_SHARE == {1, 2}),
 	Accounts = #{},
 	Key = ar_wallet:new(),
@@ -841,9 +857,10 @@ test_update_accounts_receives_released_reward_and_prover_reward() ->
 	ProverReward = 5, % 1/2 of min(10, 12)
 	PrevB = #block{ reward_history = [{stub, stub, 12, 1}, {BannedAddr, 0, 10, 1},
 			{RewardAddr, 0, Reward, 1}], usd_to_ar_rate = {1, 5}, reward_pool = 0 },
+	PrevB1 = augment_reward_history(PrevB),
 	{ok, {_EndowmentPool2, _MinerReward, _DebtSupply2,
 			_KryderPlusRateMultiplierLatch2, _KryderPlusRateMultiplier2, Accounts2}} =
-			update_accounts(B, PrevB, Accounts),
+			update_accounts(B, PrevB1, Accounts),
 	?assertEqual({ProverReward + Reward, <<>>}, maps:get(RewardAddr, Accounts2)),
 	?assertEqual({1, <<>>, 1, false}, maps:get(BannedAddr, Accounts2)).
 
@@ -852,7 +869,7 @@ update_accounts_does_not_let_banned_account_take_reward_test_() ->
 
 test_update_accounts_does_not_let_banned_account_take_reward() ->
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
-	?assert(?REWARD_HISTORY_BLOCKS == 3),
+	?assert(?REWARD_HISTORY_BLOCKS >= 3),
 	?assert(?DOUBLE_SIGNING_PROVER_REWARD_SHARE == {1, 2}),
 	Accounts = #{},
 	Key = ar_wallet:new(),
@@ -873,8 +890,9 @@ test_update_accounts_does_not_let_banned_account_take_reward() ->
 	PrevB = #block{ reward_history = [{stub, stub, 7, 1}, {stub, stub, 8, 1},
 			{BannedAddr, 0, Reward, 1}, {BannedAddr, 0, 10, 1}],
 					usd_to_ar_rate = {1, 5}, reward_pool = 0 },
+	PrevB1 = augment_reward_history(PrevB),
 	{ok, {_EndowmentPool2, _MinerReward, _DebtSupply2,
 			_KryderPlusRateMultiplierLatch2, _KryderPlusRateMultiplier2, Accounts2}} =
-			update_accounts(B, PrevB, Accounts),
+			update_accounts(B, PrevB1, Accounts),
 	?assertEqual({ProverReward, <<>>}, maps:get(RewardAddr, Accounts2)),
 	?assertEqual({1, <<>>, 1, false}, maps:get(BannedAddr, Accounts2)).
