@@ -2903,6 +2903,9 @@ handle_get_vdf2(Req, Call, Version) ->
 					2 ->
 						ar_serialize:nonce_limiter_update_to_binary2(Update)
 				end,
+			Peer = ar_http_util:arweave_peer(Req),
+			?LOG_DEBUG([{event, vdf_update}, {peer, ar_util:format_peer(Peer)},
+				{version, Version}, {update, Update}]),
 			{200, #{}, Bin, Req}
 	end.
 
