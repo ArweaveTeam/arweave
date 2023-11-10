@@ -117,6 +117,7 @@ jobs:
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
           set -e
+          set -o pipefail
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
@@ -127,7 +128,8 @@ jobs:
             RETRYABLE=0
             erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee master.out &
             ERL_MASTER_PID=$! # capture PID of the master background process
-            wait $ERL_MASTER_PID || EXIT_CODE=$?
+            wait $ERL_MASTER_PID
+            EXIT_CODE=$?
             kill -9 $ERL_MASTER_PID > /dev/null 2>&1 || true
             # For debugging purposes, print the slave output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
