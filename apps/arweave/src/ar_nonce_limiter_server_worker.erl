@@ -127,7 +127,7 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 							Output, PartitionUpperBound, Peer, RequestedFormat,
 							State#state{ format = RequestedFormat });
 				{true, true, _, _} ->
-					%% CLient requested we pause updateds
+					%% Client requested we pause updates
 					Now = os:system_time(second),
 					State#state{ pause_until = Now + Postpone };
 				{true, true, false, _} ->
@@ -138,10 +138,12 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 						_ ->
 							push_session(PrevSessionKey, PrevSession, Peer, Format)
 					end,
-					push_session(SessionKey, Session, Peer, Format);
+					push_session(SessionKey, Session, Peer, Format),
+					State;
 				{true, true, true, false} ->
 					%% Client requested missing steps
-					push_session(SessionKey, Session, Peer, Format);
+					push_session(SessionKey, Session, Peer, Format),
+					State;
 				_ ->
 					%% Client is ahead of the server
 					State
