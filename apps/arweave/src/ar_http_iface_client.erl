@@ -527,7 +527,7 @@ get_vdf_update(Peer) ->
 			timeout => 2000, headers => p2p_headers()
 			}) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
-			ar_serialize:binary_to_nonce_limiter_update(Bin);
+			ar_serialize:binary_to_nonce_limiter_update2(Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
 			not_found;
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
@@ -540,7 +540,7 @@ get_vdf_session(Peer) ->
 	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2/session",
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
-			ar_serialize:binary_to_nonce_limiter_update(Bin);
+			ar_serialize:binary_to_nonce_limiter_update2(Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
 			not_found;
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
@@ -553,7 +553,7 @@ get_previous_vdf_session(Peer) ->
 	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2/previous_session",
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
-			ar_serialize:binary_to_nonce_limiter_update(Bin);
+			ar_serialize:binary_to_nonce_limiter_update2(Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
 			not_found;
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
