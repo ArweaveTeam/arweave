@@ -43,30 +43,30 @@ cleanup({Config, SlaveConfig}) ->
 %% test_vdf_server_push_slow_block tests that the VDF server can handle receiving
 %% a block that is behind in the VDF chain: specifically:
 %%
-% vdf_server_push_test_() ->
-%     {foreach,
-% 		fun setup/0,
-%      	fun cleanup/1,
-% 		[
-% 			{timeout, 120, fun test_vdf_server_push_fast_block/0},
-% 			{timeout, 120, fun test_vdf_server_push_slow_block/0}
-% 		]
-%     }.
+vdf_server_push_test_() ->
+    {foreach,
+		fun setup/0,
+     	fun cleanup/1,
+		[
+			{timeout, 120, fun test_vdf_server_push_fast_block/0},
+			{timeout, 120, fun test_vdf_server_push_slow_block/0}
+		]
+    }.
 
 %% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
 %% flow where a VDF client has to validate a block with VDF information provided by
 %% the VDF server.
-% vdf_client_test_() ->
-% 	{foreach,
-% 		fun setup/0,
-% 		fun cleanup/1,
-% 		[
-% 			{timeout, 180, fun test_vdf_client_fast_block/0},
-% 			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
-% 			{timeout, 180, fun test_vdf_client_slow_block/0},
-% 			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
-% 		]
-%     }.
+vdf_client_test_() ->
+	{foreach,
+		fun setup/0,
+		fun cleanup/1,
+		[
+			{timeout, 180, fun test_vdf_client_fast_block/0},
+			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
+			{timeout, 180, fun test_vdf_client_slow_block/0},
+			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
+		]
+    }.
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -74,9 +74,17 @@ init(Req, State) ->
 
 handle([<<"vdf">>], Req, State) ->
 	{ok, Body, _} = ar_http_req:body(Req, ?MAX_BODY_SIZE),
-	{ok, Update} = ar_serialize:binary_to_nonce_limiter_update(Body),
+	case ar_serialize:binary_to_nonce_limiter_update(Body) of
+		{ok, Update} ->
+			handle_update(Update, Req, State);
+		{error, _} ->
+			Response = #nonce_limiter_update_response{ format = 2 },
+			Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+			{ok, cowboy_req:reply(202, #{}, Bin, Req), State}
+	end.
 
-	{SessionKey, _} = Update#nonce_limiter_update.session_key,
+handle_update(Update, Req, State) ->
+	{Seed, _, _} = Update#nonce_limiter_update.session_key,
 	IsPartial  = Update#nonce_limiter_update.is_partial,
 	UpdateOutput = hd(Update#nonce_limiter_update.checkpoints),
 
@@ -89,20 +97,21 @@ handle([<<"vdf">>], Req, State) ->
 	%% the head of checkpoints should match the head of the session's steps
 	?assertEqual(UpdateOutput, SessionOutput),
 
-	case ets:lookup(?MODULE, SessionKey) of
-		[{SessionKey, FirstStepNumber, LatestStepNumber}] ->
+	case ets:lookup(?MODULE, Seed) of
+		[{Seed, FirstStepNumber, LatestStepNumber}] ->
 			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
 					"Partial VDF update did not increase by 1"),
-			ets:insert(?MODULE, {SessionKey, FirstStepNumber, StepNumber}),
+
+			ets:insert(?MODULE, {Seed, FirstStepNumber, StepNumber}),
 			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
 		_ ->
 			case IsPartial of
 				true ->
-					Bin = ar_serialize:nonce_limiter_update_response_to_binary(
-						#nonce_limiter_update_response{ session_found = false }),
+					Response = #nonce_limiter_update_response{ session_found = false },
+					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
 					{ok, cowboy_req:reply(202, #{}, Bin, Req), State};
 				false ->
-					ets:insert(?MODULE, {SessionKey, StepNumber, StepNumber}),
+					ets:insert(?MODULE, {Seed, StepNumber, StepNumber}),
 					{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
 			end
 	end.
@@ -141,12 +150,12 @@ test_vdf_server_push_fast_block() ->
 	post_block(B1, valid),
 	timer:sleep(3000),
 
-	SessionKey0 = B0#block.nonce_limiter_info#nonce_limiter_info.next_seed,
-	SessionKey1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
+	Seed0 = B0#block.nonce_limiter_info#nonce_limiter_info.next_seed,
+	Seed1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
 	StepNumber1 = B1#block.nonce_limiter_info#nonce_limiter_info.global_step_number,
 
-	[{SessionKey0, _, LatestStepNumber0}] = ets:lookup(?MODULE, SessionKey0),
-	[{SessionKey1, FirstStepNumber1, _}] = ets:lookup(?MODULE, SessionKey1),
+	[{Seed0, _, LatestStepNumber0}] = ets:lookup(?MODULE, Seed0),
+	[{Seed1, FirstStepNumber1, _}] = ets:lookup(?MODULE, Seed1),
 	?assertEqual(2, ets:info(?MODULE, size), "VDF server did not post 2 sessions"),
 	?assertEqual(FirstStepNumber1, LatestStepNumber0+1),
 	?assertEqual(StepNumber1, LatestStepNumber0,
@@ -187,12 +196,12 @@ test_vdf_server_push_slow_block() ->
 	post_block(B1, valid),
 	timer:sleep(3000),
 
-	SessionKey0 = B0#block.nonce_limiter_info#nonce_limiter_info.next_seed,
-	SessionKey1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
+	Seed0 = B0#block.nonce_limiter_info#nonce_limiter_info.next_seed,
+	Seed1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
 	StepNumber1 = B1#block.nonce_limiter_info#nonce_limiter_info.global_step_number,
 
-	[{SessionKey0, _, LatestStepNumber0}] = ets:lookup(?MODULE, SessionKey0),
-	[{SessionKey1, FirstStepNumber1, LatestStepNumber1}] = ets:lookup(?MODULE, SessionKey1),
+	[{Seed0, _, LatestStepNumber0}] = ets:lookup(?MODULE, Seed0),
+	[{Seed1, FirstStepNumber1, LatestStepNumber1}] = ets:lookup(?MODULE, Seed1),
 	?assertEqual(2, ets:info(?MODULE, size), "VDF server did not post 2 sessions"),
 	?assert(LatestStepNumber0 > FirstStepNumber1, "Session0 should be ahead of Session1"),
 	?assert(LatestStepNumber0 > LatestStepNumber1, "Session0 should be ahead of Session1"),
@@ -206,8 +215,8 @@ test_vdf_server_push_slow_block() ->
 	end,
 
 	timer:sleep(3000),
-	[{SessionKey0, _, NewLatestStepNumber0}] = ets:lookup(?MODULE, SessionKey0),
-	[{SessionKey1, _, NewLatestStepNumber1}] = ets:lookup(?MODULE, SessionKey1),
+	[{Seed0, _, NewLatestStepNumber0}] = ets:lookup(?MODULE, Seed0),
+	[{Seed1, _, NewLatestStepNumber1}] = ets:lookup(?MODULE, Seed1),
 	?assertEqual(LatestStepNumber0, NewLatestStepNumber0,
 		"Session0 should not have progressed"),
 	?assert(NewLatestStepNumber1 > LatestStepNumber1, "Session1 should have progressed"),

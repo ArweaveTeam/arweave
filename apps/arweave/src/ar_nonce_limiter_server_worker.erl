@@ -114,19 +114,19 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 
 			case { 
 					RequestedFormat == Format,
-					Postpone > 0,
+					Postpone == 0,
 					SessionFound,
 					RequestedStepNumber >= StepNumber - 1
 			} of
 				{false, _, _, _} ->
 					%% Client requested a different payload format
-					?LOG_DEBUG([{event, vdf_client_peer_requested_different_format},
+					?LOG_DEBUG([{event, vdf_client_requested_different_format},
 						{peer, ar_util:format_peer(Peer)},
 						{format, Format}, {requested_format, RequestedFormat}]),
 					push_update(SessionKey, Session, PrevSessionKey, PrevSession,
 							Output, PartitionUpperBound, Peer, RequestedFormat,
 							State#state{ format = RequestedFormat });
-				{true, true, _, _} ->
+				{true, false, _, _} ->
 					%% Client requested we pause updates
 					Now = os:system_time(second),
 					State#state{ pause_until = Now + Postpone };

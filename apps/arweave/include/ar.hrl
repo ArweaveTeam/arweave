@@ -409,7 +409,7 @@
 	session_found = true,
 	step_number,
 	postpone = 0,
-	format = 1
+	format = 2
 }).
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers
