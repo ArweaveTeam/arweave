@@ -2889,30 +2889,24 @@ handle_post_vdf3(Req, Pid, Peer) ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
-handle_get_vdf(Req, Call, Version) ->
+handle_get_vdf(Req, Call, Format) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
 		[] ->
 			{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
 		[{_, _RawPeer}] ->
-			handle_get_vdf2(Req, Call, Version)
+			handle_get_vdf2(Req, Call, Format)
 	end.
 
-handle_get_vdf2(Req, Call, Version) ->
+handle_get_vdf2(Req, Call, Format) ->
 	case gen_server:call(ar_nonce_limiter_server, Call) of
 		not_found ->
 			{404, #{}, <<>>, Req};
 		Update ->
-			Bin =
-				case Version of
-					1 ->
-						ar_serialize:nonce_limiter_update_to_binary(Update);
-					2 ->
-						ar_serialize:nonce_limiter_update_to_binary2(Update)
-				end,
+			Bin = ar_serialize:nonce_limiter_update_to_binary(Format, Update),
 			Peer = ar_http_util:arweave_peer(Req),
 			?LOG_DEBUG([{event, vdf_update}, {peer, ar_util:format_peer(Peer)}, 
-				{version, Version}]),
+				{format, Format}]),
 			{200, #{}, Bin, Req}
 	end.
 
