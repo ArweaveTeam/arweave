@@ -2868,13 +2868,20 @@ handle_post_vdf2(Req, Pid, Peer) ->
 handle_post_vdf3(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			{ok, Update} = ar_serialize:binary_to_nonce_limiter_update(Body),
-			case ar_nonce_limiter:apply_external_update(Update, Peer) of
-				ok ->
-					{200, #{}, <<>>, Req2};
-				#nonce_limiter_update_response{} = Response ->
+			case ar_serialize:binary_to_nonce_limiter_update(Body) of
+				{ok, Update} ->
+					case ar_nonce_limiter:apply_external_update(Update, Peer) of
+						ok ->
+							{200, #{}, <<>>, Req2};
+						#nonce_limiter_update_response{} = Response ->
+							Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+							{202, #{}, Bin, Req2}
+					end;
+				{error, _} ->
+					%% We couldn't deserialize the update, ask for a different format
+					Response = #nonce_limiter_update_response{ format = 2 },
 					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-					{202, #{}, Bin, Req2}
+					{202, #{}, Bin, Req}
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
@@ -2904,8 +2911,8 @@ handle_get_vdf2(Req, Call, Version) ->
 						ar_serialize:nonce_limiter_update_to_binary2(Update)
 				end,
 			Peer = ar_http_util:arweave_peer(Req),
-			?LOG_DEBUG([{event, vdf_update}, {peer, ar_util:format_peer(Peer)},
-				{version, Version}, {update, Update}]),
+			?LOG_DEBUG([{event, vdf_update}, {peer, ar_util:format_peer(Peer)}, 
+				{version, Version}]),
 			{200, #{}, Bin, Req}
 	end.
 

@@ -399,8 +399,10 @@ external_update_test_() ->
 
 serialize_test_() ->
     [
-		{timeout, 120, fun test_serialize_format_1/0},
-		{timeout, 120, fun test_serialize_format_2/0}
+		{timeout, 120, fun test_serialize_update_format_1/0},
+		{timeout, 120, fun test_serialize_update_format_2/0},
+		{timeout, 120, fun test_serialize_response/0},
+		{timeout, 120, fun test_serialize_response_compatibility/0}
 	].
 
 vdf_server_1() ->
@@ -697,10 +699,9 @@ test_2_servers_backtrack() ->
         <<"5">>,<<"18">>,<<"15">>
 	], computed_steps()).
 
-test_serialize_format_1() ->
+test_serialize_update_format_1() ->
 	SessionKey0 = {crypto:strong_rand_bytes(48), 0, 1},
 	SessionKey1 = {crypto:strong_rand_bytes(48), 1, 1},
-	SessionKey2 = {crypto:strong_rand_bytes(48), 2, 1},
 	Checkpoints = [crypto:strong_rand_bytes(32) || _ <- lists:seq(1, 25)],
 	Update = #nonce_limiter_update{
 		session_key = SessionKey1,
@@ -715,7 +716,7 @@ test_serialize_format_1() ->
 			steps = [crypto:strong_rand_bytes(32)]
 		}
 	},
-	Binary = ar_serialize:nonce_limiter_update_to_binary(Update),
+	Binary = ar_serialize:nonce_limiter_update_to_binary(1, Update),
 
 	%% Deserialize function copied from ar_serialize:binary_to_nonce_limiter_update/1 as of
 	%% commit 4bc555e1fa8b764c329e9e41d53489ca8cbfbfc5
@@ -758,7 +759,7 @@ test_serialize_format_1() ->
 	},
 	?assertEqual({ok, ExpectedUpdate}, Format1Deserialize(Binary)).
 
-test_serialize_format_2() ->
+test_serialize_update_format_2() ->
 	SessionKey0 = {crypto:strong_rand_bytes(48), 0, 1},
 	SessionKey1 = {crypto:strong_rand_bytes(48), 1, 1},
 	Checkpoints = [crypto:strong_rand_bytes(32) || _ <- lists:seq(1, 25)],
@@ -775,5 +776,42 @@ test_serialize_format_2() ->
 			steps = [crypto:strong_rand_bytes(32)]
 		}
 	},
-	Binary = ar_serialize:nonce_limiter_update_to_binary2(Update),
+	Binary = ar_serialize:nonce_limiter_update_to_binary(2, Update),
 	?assertEqual({ok, Update}, ar_serialize:binary_to_nonce_limiter_update(Binary)).
+
+%% @doc test serializing and deserializing a #nonce_limiter_update_response when the client
+%% is running the same node version as the server.
+test_serialize_response() ->
+	ResponseA = #nonce_limiter_update_response{},
+	BinaryA = ar_serialize:nonce_limiter_update_response_to_binary(ResponseA),
+	?assertEqual({ok, ResponseA}, ar_serialize:binary_to_nonce_limiter_update_response(BinaryA)),
+
+	ResponseB = #nonce_limiter_update_response{
+		session_found = false,
+		step_number = 8589934593,
+		postpone = 255,
+		format = 2
+	},
+	BinaryB = ar_serialize:nonce_limiter_update_response_to_binary(ResponseB),
+	?assertEqual({ok, ResponseB}, ar_serialize:binary_to_nonce_limiter_update_response(BinaryB)).
+
+%% @doc test serializing and deserializing a #nonce_limiter_update_response when the client
+%% is running an older node version than the server.
+test_serialize_response_compatibility() ->
+	BinaryA = << 0:8, 1:8, 5:8 >>,
+	ResponseA = #nonce_limiter_update_response{
+		session_found = false,
+		step_number = 5,
+		postpone = 0,
+		format = 1
+	},
+	?assertEqual({ok, ResponseA}, ar_serialize:binary_to_nonce_limiter_update_response(BinaryA)),
+
+	BinaryB = << 1:8, 2:8, 511:16, 120:8 >>,
+	ResponseB = #nonce_limiter_update_response{
+		session_found = true,
+		step_number = 511,
+		postpone = 120,
+		format = 1
+	},
+	?assertEqual({ok, ResponseB}, ar_serialize:binary_to_nonce_limiter_update_response(BinaryB)).

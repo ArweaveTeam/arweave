@@ -408,7 +408,8 @@
 -record(nonce_limiter_update_response, {
 	session_found = true,
 	step_number,
-	postpone = 0
+	postpone = 0,
+	format = 1
 }).
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers

@@ -21,8 +21,7 @@
 		reward_history_to_binary/1, binary_to_reward_history/1,
 		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
 		
-		nonce_limiter_update_to_binary/1, nonce_limiter_update_to_binary2/1,
-		binary_to_nonce_limiter_update/1,
+		nonce_limiter_update_to_binary/2, binary_to_nonce_limiter_update/1,
 
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
 
@@ -352,48 +351,48 @@ binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 %% 
 %% For example, the vdf_difficulty and next_vdf_difficulty fields are omitted as they are only used
 %% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
-nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval, _},
+nonce_limiter_update_to_binary(1 = _Format, #nonce_limiter_update{ session_key = {NextSeed, Interval, _},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, Interval:64, IsPartialBin/binary, CheckpointLen:16,
-			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session(Session))/binary >>.
+			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session(1, Session))/binary >>;
 
-nonce_limiter_update_to_binary2(#nonce_limiter_update{
+nonce_limiter_update_to_binary(2 = _Format, #nonce_limiter_update{
 			session_key = {NextSeed, Interval, NextVDFDifficulty},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
 			Interval:64, IsPartialBin/binary, CheckpointLen:16,
-			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session2(Session))/binary >>.
+			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session(2, Session))/binary >>.
 
-encode_vdf_session(#vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
+encode_vdf_session(1 = _Format, #vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
 		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
 		next_upper_bound = NextUpperBound }) ->
 	StepsLen = length(Steps),
 	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
 			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
 			(iolist_to_binary(Steps))/binary,
-			(encode_prev_session_key(PrevSessionKey))/binary >>.
+			(encode_prev_session_key(1, PrevSessionKey))/binary >>;
 
-encode_vdf_session2(#vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
+encode_vdf_session(2 = _Format, #vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
 		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
 		next_upper_bound = NextUpperBound }) ->
 	StepsLen = length(Steps),
 	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
 			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
 			(iolist_to_binary(Steps))/binary,
-			(encode_prev_session_key2(PrevSessionKey))/binary >>.
+			(encode_prev_session_key(2, PrevSessionKey))/binary >>.
 
-encode_prev_session_key(undefined) ->
+encode_prev_session_key(1 = _Format, undefined) ->
 	<<>>;
-encode_prev_session_key({PrevNextSeed, PrevInterval, _}) ->
-	<< PrevNextSeed:48/binary, PrevInterval:64 >>.
+encode_prev_session_key(1 = _Format, {PrevNextSeed, PrevInterval, _}) ->
+	<< PrevNextSeed:48/binary, PrevInterval:64 >>;
 
-encode_prev_session_key2(undefined) ->
+encode_prev_session_key(2 = _Format, undefined) ->
 	<<>>;
-encode_prev_session_key2({PrevNextSeed, PrevInterval, PrevNextDifficulty}) ->
+encode_prev_session_key(2 = _Format, {PrevNextSeed, PrevInterval, PrevNextDifficulty}) ->
 	<< PrevNextSeed:48/binary, (ar_serialize:encode_int(PrevNextDifficulty, 8))/binary,
 			PrevInterval:64 >>.
 
@@ -435,32 +434,36 @@ parse_32b_list(<< El:32/binary, Rest/binary >>) ->
 	[El | parse_32b_list(Rest)].
 
 nonce_limiter_update_response_to_binary(#nonce_limiter_update_response{
-		session_found = SessionFound, step_number = StepNumber, postpone = Postpone }) ->
-	PostponeBin = case Postpone of 0 -> <<>>; _ -> << Postpone:8 >> end,
-	case SessionFound of
-		true ->
-			<< 1:8, (encode_int(StepNumber, 8))/binary, PostponeBin/binary >>;
-		false ->
-			<< 0:8, (encode_int(StepNumber, 8))/binary, PostponeBin/binary >>
-	end.
+		session_found = SessionFound, step_number = StepNumber, postpone = Postpone,
+		format = Format }) ->
+	SessionFoundBin = case SessionFound of false -> << 0:8 >>; _ -> << 1:8 >> end,
+	<< SessionFoundBin/binary, (encode_int(StepNumber, 8))/binary, Postpone:8, Format:8 >>.
 
-binary_to_nonce_limiter_update_response(<< SessionFound:8, StepNumberSize:8,
-		StepNumber:(StepNumberSize * 8), MayBePostponeBin/binary >>)
-		when byte_size(MayBePostponeBin) == 0; byte_size(MayBePostponeBin) == 1 ->
-	StepNumber2 = case StepNumberSize of 0 -> undefined; _ -> StepNumber end,
-	Postpone = case MayBePostponeBin of <<>> -> 0; << N:8 >> -> N end,
-	case SessionFound of
-		0 ->
-			{ok, #nonce_limiter_update_response{ session_found = false,
-					step_number = StepNumber2, postpone = Postpone }};
-		1 ->
-			{ok, #nonce_limiter_update_response{ session_found = true,
-					step_number = StepNumber2, postpone = Postpone }};
-		_ ->
-			{error, invalid1}
-	end;
+binary_to_nonce_limiter_update_response(<< SessionFoundBin:8, StepNumberSize:8,
+		StepNumber:(StepNumberSize * 8) >>) ->
+	binary_to_nonce_limiter_update_response(
+		SessionFoundBin, StepNumberSize, StepNumber, 0, 1);
+binary_to_nonce_limiter_update_response(<< SessionFoundBin:8, StepNumberSize:8,
+		StepNumber:(StepNumberSize * 8), Postpone:8 >>) ->
+	binary_to_nonce_limiter_update_response(
+		SessionFoundBin, StepNumberSize, StepNumber, Postpone, 1);
+binary_to_nonce_limiter_update_response(<< SessionFoundBin:8, StepNumberSize:8,
+		StepNumber:(StepNumberSize * 8), Postpone:8, Format:8 >>) ->
+	binary_to_nonce_limiter_update_response(
+		SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format);
 binary_to_nonce_limiter_update_response(_Bin) ->
 	{error, invalid2}.
+
+binary_to_nonce_limiter_update_response(
+	SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format) 
+		when SessionFoundBin == 0; SessionFoundBin == 1 ->
+	SessionFound = case SessionFoundBin of 0 -> false; 1 -> true end,
+	StepNumber2 = case StepNumberSize of 0 -> undefined; _ -> StepNumber end,
+	{ok, #nonce_limiter_update_response{ session_found = SessionFound,
+			step_number = StepNumber2, postpone = Postpone, format = Format }};
+binary_to_nonce_limiter_update_response(
+		_SessionFoundBin, _StepNumberSize, _StepNumber, _Postpone, _Format) ->
+	{error, invalid1}.
 
 encode_double_signing_proof(undefined) ->
 	<< 0:8 >>;

@@ -753,13 +753,15 @@ tests() ->
 
 tests(Mods, Config) when is_list(Mods) ->
 	ar_test_node:boot_slave(start_for_tests(Config)),
-	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}]) of
-		ok ->
-			ar_test_node:stop_slave_node(),
-			ok;
-		_ ->
-			ar_test_node:stop_slave_node(),
-			exit(tests_failed)
+	Result =
+		try
+			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
+		after
+			ar_test_node:stop_slave_node()
+		end,
+	case Result of
+		ok -> ok;
+		_ -> exit(tests_failed)
 	end.
 
 
