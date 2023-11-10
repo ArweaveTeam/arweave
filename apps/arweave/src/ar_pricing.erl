@@ -319,11 +319,12 @@ recalculate_price_per_gib_minute2(B) ->
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
 	Height = PrevHeight + 1,
 	Fork_2_7 = ar_fork:height_2_7(),
+	Fork_2_8 = ar_fork:height_2_8(),
 	case Height of
 		Fork_2_7 ->
 			{?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
 					?PRICE_PER_GIB_MINUTE_PRE_TRANSITION};
-		_ ->
+		Height when Height < Fork_2_8 ->
 			case is_price_adjustment_height(Height) of
 				false ->
 					{Price, ScheduledPrice};
@@ -336,6 +337,24 @@ recalculate_price_per_gib_minute2(B) ->
 							?BLOCK_TIME_HISTORY_BLOCKS),
 					Price2 = min(Price * 2, get_price_per_gib_minute(Height,
 							RewardHistory2, BlockTimeHistory2, Denomination)),
+					Price3 = max(Price div 2, Price2),
+					{ScheduledPrice, Price3}
+			end;
+		_ ->
+			case is_price_adjustment_height(Height) of
+				false ->
+					{Price, ScheduledPrice};
+				true ->
+					%% price_per_gib_minute = scheduled_price_per_gib_minute
+					%% scheduled_price_per_gib_minute = get_price_per_gib_minute() capped to
+					%%                                  0.5x to 2x of old price_per_gib_minute
+					RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
+					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
+							?BLOCK_TIME_HISTORY_BLOCKS),
+					TargetPrice = get_price_per_gib_minute(Height,
+							RewardHistory2, BlockTimeHistory2, Denomination),
+					EMAPrice = (9 * Price + TargetPrice) div 10,
+					Price2 = min(Price * 2, EMAPrice),
 					Price3 = max(Price div 2, Price2),
 					{ScheduledPrice, Price3}
 			end

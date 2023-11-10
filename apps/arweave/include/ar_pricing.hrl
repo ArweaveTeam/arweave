@@ -101,6 +101,8 @@ end).
 %% of the average price of storing a gibibyte for a minute. Also, the reward history
 %% is used to tracking the reserved mining rewards.
 -ifdef(DEBUG).
+	% testnet value should have same ratio 30:1 to VDF_DIFFICULTY_RETARGET
+	% BUT. For tests we are using old value
 	-define(REWARD_HISTORY_BLOCKS, 3).
 -else.
 	-ifndef(REWARD_HISTORY_BLOCKS).

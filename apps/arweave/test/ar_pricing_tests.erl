@@ -134,6 +134,42 @@ mix_chunks() ->
 		{30, 30, 1}
 	].
 
+recalculate_price_per_gib_minute_test_block() ->
+	#block{
+		height = ?PRICE_ADJUSTMENT_FREQUENCY-1,
+		denomination = 1,
+		reward_history = [
+			{<<>>, 10000, 10, 1}
+		],
+		block_time_history = [
+			{129, 135, 1}
+		],
+		price_per_gib_minute = 10000,
+		scheduled_price_per_gib_minute = 15000
+	}.
+
+recalculate_price_per_gib_minute_2_7_test_() ->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_fork, height_2_6, fun() -> -1 end},
+		{ar_fork, height_2_7, fun() -> -1 end},
+		{ar_fork, height_2_8, fun() -> infinity end}],
+		fun() ->
+			B = recalculate_price_per_gib_minute_test_block(),
+			{15000, 8162} = ar_pricing:recalculate_price_per_gib_minute(B),
+			ok
+		end).
+
+recalculate_price_per_gib_minute_2_8_ema_test_() ->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_fork, height_2_6, fun() -> -1 end},
+		{ar_fork, height_2_7, fun() -> -1 end},
+		{ar_fork, height_2_8, fun() -> -1 end}],
+		fun() ->
+			B = recalculate_price_per_gib_minute_test_block(),
+			{15000, 9816} = ar_pricing:recalculate_price_per_gib_minute(B),
+			ok
+		end).
+
 auto_redenomination_and_endowment_debt_test_() ->
 	{timeout, 180, fun test_auto_redenomination_and_endowment_debt/0}.
 
