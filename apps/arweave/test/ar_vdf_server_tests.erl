@@ -7,6 +7,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave/include/ar_vdf.hrl").
 
 -import(ar_test_node, [start/3, stop/0, slave_start/1, slave_start/3, slave_stop/0,
 		master_peer/0, slave_peer/0, connect_to_slave/0, slave_mine/0,
@@ -396,6 +397,12 @@ external_update_test_() ->
 		]
     }.
 
+serialize_test_() ->
+    [
+		{timeout, 120, fun test_serialize_format_1/0},
+		{timeout, 120, fun test_serialize_format_2/0}
+	].
+
 vdf_server_1() ->
 	{127,0,0,1,2001}.
 
@@ -472,7 +479,7 @@ apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSess
 %% step once.
 test_session_overlap() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
-	SessionKey1 = {<<"session0">>, 1, 1},
+	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
@@ -514,7 +521,7 @@ test_session_overlap() ->
 %% @doc This test asserts that the client responds correctly when it is ahead of the VDF server.
 test_client_ahead() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
-	SessionKey1 = {<<"session0">>, 1, 1},
+	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
@@ -543,7 +550,7 @@ test_client_ahead() ->
 %% see the same step several times as part of the full session updates).
 test_skip_ahead() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
-	SessionKey1 = {<<"session0">>, 1, 1},
+	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
@@ -576,7 +583,7 @@ test_skip_ahead() ->
 
 test_2_servers_switching() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
-	SessionKey1 = {<<"session0">>, 1, 1},
+	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
@@ -623,7 +630,7 @@ test_2_servers_switching() ->
 
 test_backtrack() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
-	SessionKey1 = {<<"session0">>, 1, 1},
+	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
@@ -660,7 +667,7 @@ test_backtrack() ->
 
 test_2_servers_backtrack() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
-	SessionKey1 = {<<"session0">>, 1, 1},
+	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
@@ -689,3 +696,84 @@ test_2_servers_backtrack() ->
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
         <<"5">>,<<"18">>,<<"15">>
 	], computed_steps()).
+
+test_serialize_format_1() ->
+	SessionKey0 = {crypto:strong_rand_bytes(48), 0, 1},
+	SessionKey1 = {crypto:strong_rand_bytes(48), 1, 1},
+	SessionKey2 = {crypto:strong_rand_bytes(48), 2, 1},
+	Checkpoints = [crypto:strong_rand_bytes(32) || _ <- lists:seq(1, 25)],
+	Update = #nonce_limiter_update{
+		session_key = SessionKey1,
+		is_partial = true,
+		checkpoints = Checkpoints,
+		session = #vdf_session{
+			upper_bound = 1,
+			next_upper_bound = 1,
+			prev_session_key = SessionKey0,
+			step_number = 1,
+			seed = element(1, SessionKey1),
+			steps = [crypto:strong_rand_bytes(32)]
+		}
+	},
+	Binary = ar_serialize:nonce_limiter_update_to_binary(Update),
+
+	%% Deserialize function copied from ar_serialize:binary_to_nonce_limiter_update/1 as of
+	%% commit 4bc555e1fa8b764c329e9e41d53489ca8cbfbfc5
+	%% This test confirms that an updtaed VDF server can build a payload for a unupdated VDF
+	%% client. i.e. that the Server can generate payload in Format 1
+	Format1Deserialize =
+		fun
+			(<< NextSeed:48/binary, Interval:64, IsPartial:8,
+				CheckpointLen:16, Checkpoints:(CheckpointLen * 32)/binary,
+				StepNumber:64, Seed:48/binary, UpperBoundSize:8, UpperBound:(UpperBoundSize * 8),
+				NextUpperBoundSize:8, NextUpperBound:(NextUpperBoundSize * 8),
+				StepsLen:16, Steps:(StepsLen * 32)/binary, PrevSessionKeyBin/binary >>)
+			when UpperBoundSize > 0, StepsLen > 0, CheckpointLen == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
+				NextUpperBound2 = case NextUpperBoundSize of 0 -> undefined; _ -> NextUpperBound end,
+				NonceLimiterUpdate = #nonce_limiter_update{ session_key = {NextSeed, Interval},
+						checkpoints = ar_serialize:parse_32b_list(Checkpoints),
+						is_partial = case IsPartial of 0 -> false; _ -> true end,
+						session = Session = #vdf_session{ step_number = StepNumber, seed = Seed,
+								upper_bound = UpperBound, next_upper_bound = NextUpperBound2,
+								steps = ar_serialize:parse_32b_list(Steps) } },
+				case PrevSessionKeyBin of
+					<<>> ->
+						{ok, NonceLimiterUpdate};
+					<< PrevNextSeed:48/binary, PrevInterval:64 >> ->
+						Session2 = Session#vdf_session{ prev_session_key = {PrevNextSeed, PrevInterval} },
+						{ok, NonceLimiterUpdate#nonce_limiter_update{ session = Session2 }};
+					_ ->
+						{error, invalid1}
+				end;
+			(_Bin) ->
+				{error, invalid2}
+		end,
+
+	ExpectedSession = (Update#nonce_limiter_update.session)#vdf_session{
+		prev_session_key = {element(1, SessionKey0), element(2, SessionKey0)}
+	},
+	ExpectedUpdate = Update#nonce_limiter_update{
+		session_key = {element(1, SessionKey1), element(2, SessionKey1)},
+		session = ExpectedSession
+	},
+	?assertEqual({ok, ExpectedUpdate}, Format1Deserialize(Binary)).
+
+test_serialize_format_2() ->
+	SessionKey0 = {crypto:strong_rand_bytes(48), 0, 1},
+	SessionKey1 = {crypto:strong_rand_bytes(48), 1, 1},
+	Checkpoints = [crypto:strong_rand_bytes(32) || _ <- lists:seq(1, 25)],
+	Update = #nonce_limiter_update{
+		session_key = SessionKey1,
+		is_partial = true,
+		checkpoints = Checkpoints,
+		session = #vdf_session{
+			upper_bound = 1,
+			next_upper_bound = 1,
+			prev_session_key = SessionKey0,
+			step_number = 1,
+			seed = element(1, SessionKey1),
+			steps = [crypto:strong_rand_bytes(32)]
+		}
+	},
+	Binary = ar_serialize:nonce_limiter_update_to_binary2(Update),
+	?assertEqual({ok, Update}, ar_serialize:binary_to_nonce_limiter_update(Binary)).

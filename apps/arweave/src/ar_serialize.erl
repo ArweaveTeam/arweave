@@ -19,7 +19,7 @@
 		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1, encode_int/2, encode_bin/2,
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
 		reward_history_to_binary/1, binary_to_reward_history/1,
-		block_time_history_to_binary/1, binary_to_block_time_history/1,
+		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
 		
 		nonce_limiter_update_to_binary/1, nonce_limiter_update_to_binary2/1,
 		binary_to_nonce_limiter_update/1,
@@ -366,7 +366,7 @@ nonce_limiter_update_to_binary2(#nonce_limiter_update{
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
 			Interval:64, IsPartialBin/binary, CheckpointLen:16,
-			(encode_vdf_session2(Session))/binary >>.
+			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session2(Session))/binary >>.
 
 encode_vdf_session(#vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
 		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
