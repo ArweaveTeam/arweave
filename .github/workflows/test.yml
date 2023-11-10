@@ -118,6 +118,7 @@ jobs:
         run: |
           set -e
           set -o pipefail
+          rm -f *.out || true
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
@@ -135,6 +136,9 @@ jobs:
             if [[ $EXIT_CODE -ne 0 ]]; then
               if [[ -e slave.out ]]; then
                 first_line_slave=$(head -n 1 slave.out)
+                if compgen -G "slave.out" > /dev/null; then
+                  first_line_peer1=$(head -n 1 slave.out)
+                fi
                 first_line_master=$(head -n 1 master.out)
                 # Check if it is a retryable error
                 if [[ "$first_line_slave" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
