@@ -136,6 +136,8 @@ jobs:
             if [[ $EXIT_CODE -ne 0 ]]; then
               if compgen -G "slave.out" > /dev/null; then
                 first_line_slave=$(head -n 1 slave.out)
+              else
+                first_line_slave=""
               fi
               first_line_master=$(head -n 1 master.out)
               # Check if it is a retryable error
@@ -147,12 +149,12 @@ jobs:
                 echo "Retrying test because of inet_tcp clash..."
                 RETRYABLE=1
                 sleep 1
-              elif [[ "$first_line_master" == "econnrefused"* ]]; then
+              elif [[ "$first_line_master" == *"econnrefused"* ]]; then
                 echo "Retrying test because of econnrefused..."
                 RETRYABLE=1
                 sleep 1
               else
-                if compgen -G slave.out" > /dev/null; then
+                if compgen -G slave.out > /dev/null; then
                   echo -e "\033[0;31m===> Test failed, printing the slave node's output...\033[0m"
                   cat slave.out
                 else
