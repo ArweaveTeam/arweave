@@ -122,7 +122,7 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 					%% Client requested a different payload format
 					?LOG_DEBUG([{event, vdf_client_peer_requested_different_format},
 						{peer, ar_util:format_peer(Peer)},
-						{format, Format}, {requested_format, Format}]),
+						{format, Format}, {requested_format, RequestedFormat}]),
 					push_update(SessionKey, Session, PrevSessionKey, PrevSession,
 							Output, PartitionUpperBound, Peer, RequestedFormat,
 							State#state{ format = RequestedFormat });
