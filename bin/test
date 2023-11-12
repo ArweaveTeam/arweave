@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+kill_slave() {
+    [[ -n $! ]] && kill $!;
+}
+
+trap "kill_slave" EXIT
+
 SCRIPT_DIR="$(dirname "$0")"
 cd "$SCRIPT_DIR/.."
 
