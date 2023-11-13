@@ -61,6 +61,22 @@ in
     '';
   };
 
+  crashDumpsDir = mkOption {
+    type = types.path;
+    default = "/var/lib/arweave/dumps";
+    description = ''
+      Crash dumps directory path.
+    '';
+  };
+
+  erlangCookie = mkOption {
+    type = with types; nullOr str;
+    default = null;
+    description = ''
+      Erlang cookie for distributed erlang.
+    '';
+  };
+
   storageModules = mkOption {
     type = types.listOf types.str;
     default = [ ];
