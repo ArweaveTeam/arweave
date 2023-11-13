@@ -1,4 +1,4 @@
-{ pkgs }:
+{ pkgs, crashDumpsDir ? null, erlangCookie ? null }:
 
 
 let
@@ -324,7 +324,9 @@ let
       ROOT_DIR=
       PROFILE_DIR=
 
-      ERL_CRASH_DUMP=$(pwd)/erl_crash.dump
+      ${if crashDumpsDir == null then "" else "mkdir -p ${crashDumpsDir}"}
+      export ERL_CRASH_DUMP=${if crashDumpsDir == null then "$(pwd)/erl_crash.dump" else "${crashDumpsDir}/erl_crash_$(date \"+%Y-%m-%d_%H-%M-%S\").dump"}
+      ${if erlangCookie == null then "" else "export ERLANG_COOKIE=${erlangCookie}"}
       cd $ROOT_DIR
       $ROOT_DIR/bin/check-nofile
       if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
@@ -336,7 +338,8 @@ let
       : "''${ERL_EPMD_ADDRESS:=127.0.0.1}"
       export ERL_EPMD_ADDRESS
 
-      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $PROFILE_DIR/lib/*/ebin) \
+      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi \
+       -pa $(echo $PROFILE_DIR/lib/*/ebin) \
        -config $ROOT_DIR/config/sys.config \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
@@ -352,7 +355,9 @@ let
       ROOT_DIR=
       PROFILE_DIR=
 
-      ERL_CRASH_DUMP=$(pwd)/erl_crash.dump
+      ${if crashDumpsDir == null then "" else "mkdir -p ${crashDumpsDir}"}
+      export ERL_CRASH_DUMP=${if crashDumpsDir == null then "$(pwd)/erl_crash.dump" else "${crashDumpsDir}/erl_crash_$(date \"+%Y-%m-%d_%H-%M-%S\").dump"}
+      ${if erlangCookie == null then "" else "export ERLANG_COOKIE=${erlangCookie}"}
       cd $PROFILE_DIR
       $ROOT_DIR/bin/check-nofile
       if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
@@ -465,6 +470,8 @@ let
       '';
 
       installPhase = ''
+        mkdir -p $out/bin
+        cp -rf ./bin/* $out/bin
         ${installPhase}
         # broken symlinks fixup
         rm -f $out/${profile}/rel/arweave/releases/*/{sys.config,vm.args.src}
@@ -497,7 +504,7 @@ let
     profile = "test";
     releaseType = "release";
     installPhase = ''
-      mkdir $out; cp -rf ./_build/test $out
+      mkdir -p $out; cp -rf ./_build/test $out
       cp -r ./config $out
       ln -s ${meck}/lib/erlang/lib/meck-${meck.version} $out/test/rel/arweave/lib/
 
@@ -531,15 +538,15 @@ let
       chmod +xw $out/bin/stop-nix
 
       sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix
-      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/start-nix
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel/arweave|g" $out/bin/start-nix
       sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix
 
       sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/start-nix-foreground
-      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/start-nix-foreground
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel/arweave|g" $out/bin/start-nix-foreground
       sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/start-nix-foreground
 
       sed -i -e "s|ROOT_DIR=|ROOT_DIR=$out|g" $out/bin/stop-nix
-      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel|g" $out/bin/stop-nix
+      sed -i -e "s|PROFILE_DIR=|PROFILE_DIR=$out/prod/rel/arweave|g" $out/bin/stop-nix
       sed -i -e "s|PATH=|PATH=$PATH:$out/erts/bin|g" $out/bin/stop-nix
 
       cp -r ./config $out
