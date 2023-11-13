@@ -8,7 +8,7 @@
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
 		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
-		tests/0, tests/1, tests/2,
+		tests/0, tests/1, tests/2, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -733,6 +733,15 @@ warn_if_single_scheduler() ->
 		_ ->
 			ok
 	end.
+
+shell() ->
+	Config = #config{ debug = true },
+	start_for_tests(Config),
+	ar_test_node:boot_peers().
+
+stop_shell() ->
+	ar_test_node:stop_peers(),
+	init:stop().
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
