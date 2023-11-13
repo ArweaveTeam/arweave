@@ -1,3 +1,3 @@
 TESTNET_SERVERS+=(
-testnet-6.arweave.net
+testnet-4.arweave.net
 )
