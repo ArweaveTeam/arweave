@@ -263,6 +263,11 @@ register(MetricsDir) ->
 		{name, vdf_step},
 		{help, "The current VDF step."}
 	]),
+	prometheus_gauge:new([
+		{name, vdf_difficulty},
+		{labels, [type]},
+		{help, "The cached VDF difficulty. 'type' can be either 'current' or 'next'."}
+	]),
 
 	%% Economic metrics.
 	prometheus_gauge:new([

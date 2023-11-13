@@ -729,7 +729,7 @@ handle_initialized2([B | Blocks], State) ->
 	State2.
 
 apply_base_block(B, State) ->
-	#nonce_limiter_info{ seed = Seed, next_seed = NextSeed, output = Output,
+	#nonce_limiter_info{ seed = Seed, output = Output,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound,
 			global_step_number = StepNumber,
@@ -742,11 +742,7 @@ apply_base_block(B, State) ->
 			seed = Seed, vdf_difficulty = VDFDifficulty,
 			next_vdf_difficulty = NextVDFDifficulty },
 	SessionKey = session_key(B#block.nonce_limiter_info),
-	Sessions = gb_sets:from_list([{StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY, NextSeed,
-			NextVDFDifficulty}]),
-	SessionByKey = #{ SessionKey => Session },
-	State#state{ current_session_key = SessionKey, sessions = Sessions,
-			session_by_key = SessionByKey }.
+	cache_session(State, SessionKey, SessionKey, Session).
 
 apply_chain(#nonce_limiter_info{ global_step_number = StepNumber },
 		#nonce_limiter_info{ global_step_number = PrevStepNumber })
@@ -1168,7 +1164,7 @@ cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey,
 cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	#state{ session_by_key = SessionByKey, sessions = Sessions } = State,
 	{NextSeed, Interval, NextVDFDifficulty} = SessionKey,
-	may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, Session#vdf_session.step_number),
+	maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session),
 	SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
 	%% If Session exists, then {Interval, NextSeed} will already exist in the Sessions set and
 	%% gb_sets:add_element will not cause a change.
@@ -1176,10 +1172,16 @@ cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	State#state{ current_session_key = CurrentSessionKey, sessions = Sessions2,
 					session_by_key = SessionByKey2 }.
 
-may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber) ->
+maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 	case SessionKey == CurrentSessionKey of
 		true ->
-			prometheus_gauge:set(vdf_step, StepNumber);
+			#vdf_session{
+				step_number = StepNumber,
+				vdf_difficulty = VDFDifficulty, 
+				next_vdf_difficulty = NextVDFDifficulty } = Session,
+			prometheus_gauge:set(vdf_step, StepNumber),
+			prometheus_gauge:set(vdf_difficulty, [current], VDFDifficulty),
+			prometheus_gauge:set(vdf_difficulty, [next], NextVDFDifficulty);
 		false ->
 			ok
 	end.
