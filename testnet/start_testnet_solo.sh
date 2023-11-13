@@ -12,6 +12,12 @@ if [[ ! -f "/arweave-build/testnet/bin/start" ]]; then
 	exit 1
 fi
 
+num_wallets=$(ls -1 /arweave-data/wallets | wc -l)
+if [[ $num_wallets -ne 1 ]]; then
+	echo "Error: Only 1 wallet file is allowed on a testnet server. Please check /arweave-data/wallets."
+	exit 1
+fi
+
 screen_cmd="screen -dmsL arweave /arweave-build/testnet/bin/start"
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
 screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer testnet_client)
