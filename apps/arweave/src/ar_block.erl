@@ -251,13 +251,15 @@ compute_next_vdf_difficulty(PrevB) ->
 								),
 							NewVDFDifficulty =
 								(VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
+							EMAVDFDifficulty = (9*VDFDifficulty + NewVDFDifficulty) div 10,
 							?LOG_DEBUG([{event, vdf_difficulty_retarget},
 									{height, Height},
 									{old_vdf_difficulty, VDFDifficulty},
 									{new_vdf_difficulty, NewVDFDifficulty},
+									{ema_vdf_difficulty, EMAVDFDifficulty},
 									{interval_total, IntervalTotal},
 									{vdf_interval_total, VDFIntervalTotal}]),
-							(9*VDFDifficulty + NewVDFDifficulty) div 10
+							EMAVDFDifficulty
 					end
 			end;
 		false ->
