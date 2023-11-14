@@ -752,7 +752,13 @@ tests() ->
 	tests(?CORE_TEST_MODS, #config{ debug = true }).
 
 tests(Mods, Config) when is_list(Mods) ->
-	ar_test_node:boot_slave(start_for_tests(Config)),
+	try
+		ar_test_node:boot_slave(start_for_tests(Config))
+	catch
+		_:_ ->
+			io:format("~nFailed to start the slave node.~n~n"),
+			erlang:halt(1)
+	end,
 	Result =
 		try
 			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
@@ -761,7 +767,7 @@ tests(Mods, Config) when is_list(Mods) ->
 		end,
 	case Result of
 		ok -> ok;
-		_ -> exit(tests_failed)
+		_ -> erlang:halt(1)
 	end.
 
 
