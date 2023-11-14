@@ -356,6 +356,13 @@ recalculate_price_per_gib_minute2(B) ->
 					EMAPrice = (9 * Price + TargetPrice) div 10,
 					Price2 = min(Price * 2, EMAPrice),
 					Price3 = max(Price div 2, Price2),
+					?LOG_DEBUG([{event, recalculate_price_per_gib_minute},
+						{height, Height},
+						{old_price, Price},
+						{scheduled_price, ScheduledPrice},
+						{target_price, TargetPrice},
+						{ema_price, EMAPrice},
+						{capped_price, Price3}]),
 					{ScheduledPrice, Price3}
 			end
 	end.
