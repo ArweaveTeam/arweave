@@ -118,32 +118,28 @@ jobs:
         run: |
           rm -f *.out || true
           EXIT_CODE=0
-          echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
           export ERL_EPMD_ADDRESS=127.0.0.1
           export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) $(pwd)/_build/test/lib/arweave/test -config $(pwd)/_build/config/sys.config"
           RETRYABLE=1
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
-            erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee master.out &
-            ERL_MASTER_PID=$! # capture PID of the master background process
-            wait $ERL_MASTER_PID || export EXIT_CODE=1
-            echo EXIT_CODE: $EXIT_CODE
-            kill -9 $ERL_MASTER_PID > /dev/null 2>&1 || true
+            echo -e "\033[0;32m===> Running tests...\033[0m"
+
+            # Run erl and redirect output to a file, then run tee in a subshell to allow capturing of exit code directly
+            set +e
+            erl $ERL_TEST_OPTS -noshell -name ${{ matrix.core_test_mod }}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee master.out
+            EXIT_CODE=${PIPESTATUS[0]}
+            set -e
+
             # For debugging purposes, print the slave output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
               if [ -f "slave.out" ]; then
                 first_line_slave=$(head -n 1 slave.out)
-                echo "slave.out found"
-                echo "first_line_slave: $first_line_slave"
-                echo "all slave.out"
-                cat slave.out
-              else
-                echo "slave.out not found"
-                ls -A
-                first_line_slave=""
               fi
-              first_line_master=$(head -n 1 master.out)
+              if [ -f "master.out" ]; then
+                first_line_master=$(head -n 1 master.out)
+              fi
               # Check if it is a retryable error
               if [[ "$first_line_slave" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
                 echo "Retrying test because of inet_tcp error..."
@@ -154,11 +150,11 @@ jobs:
                 RETRYABLE=1
                 sleep 1
               elif [[ "$first_line_master" == *"econnrefused"* ]]; then
-                echo "Retrying test because of econnrefused..."
+                echo "Retrying test because of econnrefused on master thread..."
                 RETRYABLE=1
                 sleep 1
               else
-                if compgen -G slave.out > /dev/null; then
+                if [ -f "slave.out" ]; then
                   echo -e "\033[0;31m===> Test failed, printing the slave node's output...\033[0m"
                   cat slave.out
                 else
