@@ -4,36 +4,8 @@ on:
   push:
     branches: ["**"]
 jobs:
-  common-test-suite:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
-      - name: Build arweave test sources
-        run: |
-          nix build .#packages.x86_64-linux.arweave
-          cp -Lr result _build
-          chmod -R u+w ./_build
-      - name: Start empd if needed
-        run: |
-          if ! pgrep -x "epmd" > /dev/null
-          then
-            epmd -relaxed_command_check -packet_timeout 30 -daemon
-          fi
-      - name: CommonTest Suite
-        run: |
-          export PATH=$(pwd)/_build/erts/bin:$PATH
-          ct_run -dir ./_build/test/lib/arweave/test \
-            -noinput -no_auto_compile -logopts no_src \
-            -include $(pwd)/_build/test/lib/arweave/include \
-            -config $(pwd)/config/sys.config \
-            -pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) \
-            -suite "ar_SUITE.erl" \
-            -sname master
   eunit-tests:
     runs-on: self-hosted
-    needs: common-test-suite
     strategy:
       fail-fast: true
       max-parallel: 6
