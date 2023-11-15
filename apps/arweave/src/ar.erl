@@ -739,9 +739,15 @@ tests() ->
 	tests([], #config{ debug = true }).
 
 tests(Mods, Config) when is_list(Mods) ->
-	start_for_tests(Config),
-	ar_test_node:boot_peers(),
-	Result = 
+	try
+		start_for_tests(Config),
+		ar_test_node:boot_peers()
+	catch
+		Type:Reason ->
+			io:format("Failed to start the peers due to ~p:~p~n", [Type, Reason]),
+			erlang:halt(1)
+	end,
+	Result =
 		try
 			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
 		after
@@ -749,7 +755,7 @@ tests(Mods, Config) when is_list(Mods) ->
 		end,
 	case Result of
 		ok -> ok;
-		_ -> exit(tests_failed)
+		_ -> erlang:halt(1)
 	end.
 
 

@@ -91,35 +91,31 @@ jobs:
           fi
       - name: ${{ matrix.core_test_mod }}.erl
         run: |
-          # set -e
-          set -o pipefail
           rm -f *.out || true
           EXIT_CODE=0
           echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
           export ERL_EPMD_ADDRESS=127.0.0.1
+          export TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
+          export NAMESPACE="${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}"
           export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) $(pwd)/_build/test/lib/arweave/test -config $(pwd)/_build/config/sys.config"
           RETRYABLE=1
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
-            EXIT_CODE=0
-            sleep 1
-            TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
-            NAMESPACE="${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}"
-            erl $ERL_TEST_OPTS -noshell -name main-${NAMESPACE}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main-${NAMESPACE}.out &
-            ERL_MAIN_PID=$! # capture PID of the main background process
-            wait $ERL_MAIN_PID || EXIT_CODE=$?
-            echo -e "\033[0;32m===> Tests finished with exit code: $EXIT_CODE\033[0m"
-            kill -9 $ERL_MAIN_PID > /dev/null 2>&1 || true
+            set +e
+            erl $ERL_TEST_OPTS -noshell -name main-${NAMESPACE}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out
+            EXIT_CODE=${PIPESTATUS[0]}
+            set -e
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
               echo -e "\033[0;32m===> Checking for retry\033[0m"
-              if compgen -G "peer1-*.out" > /dev/null; then
+              if ls peer1-*.out 1> /dev/null 2>&1; then
                 first_line_peer1=$(head -n 1 peer1-*.out)
               fi
-              first_line_main=$(head -n 1 main-${NAMESPACE}.out)
+              first_line_main=$(head -n 1 main.out)
               echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
               echo -e "\033[0;31m===> First line of main node's output: $first_line_main\033[0m"
+
               # Check if it is a retryable error
               if [[ "$first_line_peer1" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
                 echo "Retrying test because of inet_tcp error..."
@@ -134,25 +130,25 @@ jobs:
                 RETRYABLE=1
                 sleep 1
               else
-                if compgen -G peer1-*.out > /dev/null; then
+                if ls peer1-*.out 1> /dev/null 2>&1; then
                   echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
                   cat peer1-*.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
                 fi
-                if compgen -G peer2-*.out > /dev/null; then
+                if ls peer2-*.out 1> /dev/null 2>&1; then
                   echo -e "\033[0;31m===> Test failed, printing the peer2 node's output...\033[0m"
                   cat peer2-*.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer2 output...\033[0m"
                 fi
-                if compgen -G peer3-*.out > /dev/null; then
+                if ls peer3-*.out 1> /dev/null 2>&1; then
                   echo -e "\033[0;31m===> Test failed, printing the peer3 node's output...\033[0m"
                   cat peer3-*.out
                 else
                   echo -e "\033[0;31m===> Test failed without peer3 output...\033[0m"
                 fi
-                if compgen -G peer4-*.out > /dev/null; then
+                if ls peer4-*.out 1> /dev/null 2>&1; then
                   echo -e "\033[0;31m===> Test failed, printing the peer4 node's output...\033[0m"
                   cat peer4-*.out
                 else
