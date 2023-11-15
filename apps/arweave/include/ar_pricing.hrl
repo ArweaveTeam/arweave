@@ -70,6 +70,7 @@ end).
 			%% https://www.timeanddate.com/date/durationresult.html?m1=05&d1=30&y1=2023&m2=02&d2=20&y2=2024&h1=15&i1=35&s1=&h2=14&i2=&s2=
 			%% In seconds: 22,976,700
 			%% In blocks: 22,976,700 / 128s average block time = 179505
+			%% Target block: 1189560 + 179505 = 1369065
 			-define(PRICE_2_6_8_TRANSITION_START, 179505).
 		-endif.
 	-endif.

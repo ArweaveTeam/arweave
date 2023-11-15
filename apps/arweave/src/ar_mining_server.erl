@@ -796,8 +796,8 @@ priority(nonce_limiter_computed_output, StepNumber) ->
 
 handle_task({computed_output, Args},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber, NextVDFDifficulty}, Session,
-		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
+	{{NextSeed, _StartIntervalNumber, NextVDFDifficulty},
+			Session, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined},
 		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)},
 		{next_vdf_difficulty, NextVDFDifficulty}]),
