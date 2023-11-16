@@ -19,8 +19,8 @@
 		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1, encode_int/2, encode_bin/2,
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
 		reward_history_to_binary/1, binary_to_reward_history/1,
-		block_time_history_to_binary/1, binary_to_block_time_history/1,
-		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
+		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
+		nonce_limiter_update_to_binary/2, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
 		candidate_to_json_struct/1, h2_inputs_to_json_struct/2, solution_to_json_struct/1,
 		json_struct_to_candidate/1, json_struct_to_h2_inputs/1, json_struct_to_solution/1]).
@@ -352,35 +352,62 @@ binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 %% 
 %% For example, the vdf_difficulty and next_vdf_difficulty fields are omitted as they are only used
 %% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
-nonce_limiter_update_to_binary(#nonce_limiter_update{ session_key = {NextSeed, Interval},
+nonce_limiter_update_to_binary(1 = _Format, #nonce_limiter_update{ session_key = {NextSeed, Interval, _},
 		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, Interval:64, IsPartialBin/binary, CheckpointLen:16,
-			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session(Session))/binary >>.
+			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session(1, Session))/binary >>;
 
-encode_vdf_session(#vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
+nonce_limiter_update_to_binary(2 = _Format, #nonce_limiter_update{
+			session_key = {NextSeed, Interval, NextVDFDifficulty},
+		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
+	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
+	CheckpointLen = length(Checkpoints),
+	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
+			Interval:64, IsPartialBin/binary, CheckpointLen:16,
+			(iolist_to_binary(Checkpoints))/binary, (encode_vdf_session(2, Session))/binary >>.
+
+encode_vdf_session(1 = _Format, #vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
 		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
 		next_upper_bound = NextUpperBound }) ->
 	StepsLen = length(Steps),
 	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
 			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
 			(iolist_to_binary(Steps))/binary,
-			(encode_prev_session_key(PrevSessionKey))/binary >>.
+			(encode_prev_session_key(1, PrevSessionKey))/binary >>;
 
-encode_prev_session_key(undefined) ->
+encode_vdf_session(2 = _Format, #vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
+		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
+		next_upper_bound = NextUpperBound }) ->
+	StepsLen = length(Steps),
+	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
+			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
+			(iolist_to_binary(Steps))/binary,
+			(encode_prev_session_key(2, PrevSessionKey))/binary >>.
+
+encode_prev_session_key(1 = _Format, undefined) ->
 	<<>>;
-encode_prev_session_key({PrevNextSeed, PrevInterval}) ->
-	<< PrevNextSeed:48/binary, PrevInterval:64 >>.
+encode_prev_session_key(1 = _Format, {PrevNextSeed, PrevInterval, _}) ->
+	<< PrevNextSeed:48/binary, PrevInterval:64 >>;
 
-binary_to_nonce_limiter_update(<< NextSeed:48/binary, Interval:64, IsPartial:8,
+encode_prev_session_key(2 = _Format, undefined) ->
+	<<>>;
+encode_prev_session_key(2 = _Format, {PrevNextSeed, PrevInterval, PrevNextDifficulty}) ->
+	<< PrevNextSeed:48/binary, (ar_serialize:encode_int(PrevNextDifficulty, 8))/binary,
+			PrevInterval:64 >>.
+
+binary_to_nonce_limiter_update(<< NextSeed:48/binary,
+			NextVDFDifficultySize:8, NextVDFDifficulty:(NextVDFDifficultySize * 8),
+			Interval:64, IsPartial:8,
 			CheckpointLen:16, Checkpoints:(CheckpointLen * 32)/binary,
 			StepNumber:64, Seed:48/binary, UpperBoundSize:8, UpperBound:(UpperBoundSize * 8),
 			NextUpperBoundSize:8, NextUpperBound:(NextUpperBoundSize * 8),
-			StepsLen:16, Steps:(StepsLen * 32)/binary, PrevSessionKeyBin/binary >>)
+			StepsLen:16, Steps:(StepsLen * 32)/binary,
+			PrevSessionKeyBin/binary >>)
 		when UpperBoundSize > 0, StepsLen > 0, CheckpointLen == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
 	NextUpperBound2 = case NextUpperBoundSize of 0 -> undefined; _ -> NextUpperBound end,
-	Update = #nonce_limiter_update{ session_key = {NextSeed, Interval},
+	Update = #nonce_limiter_update{ session_key = {NextSeed, Interval, NextVDFDifficulty},
 			checkpoints = parse_32b_list(Checkpoints),
 			is_partial = case IsPartial of 0 -> false; _ -> true end,
 			session = Session = #vdf_session{ step_number = StepNumber, seed = Seed,
@@ -389,8 +416,12 @@ binary_to_nonce_limiter_update(<< NextSeed:48/binary, Interval:64, IsPartial:8,
 	case PrevSessionKeyBin of
 		<<>> ->
 			{ok, Update};
-		<< PrevNextSeed:48/binary, PrevInterval:64 >> ->
-			Session2 = Session#vdf_session{ prev_session_key = {PrevNextSeed, PrevInterval} },
+		<< PrevNextSeed:48/binary,
+				PrevNextVDFDifficultySize:8,
+				PrevNextVDFDifficulty:(PrevNextVDFDifficultySize * 8),
+				PrevInterval:64 >> ->
+			Session2 = Session#vdf_session{
+					prev_session_key = {PrevNextSeed, PrevInterval, PrevNextVDFDifficulty} },
 			{ok, Update#nonce_limiter_update{ session = Session2 }};
 		_ ->
 			{error, invalid1}
@@ -404,32 +435,36 @@ parse_32b_list(<< El:32/binary, Rest/binary >>) ->
 	[El | parse_32b_list(Rest)].
 
 nonce_limiter_update_response_to_binary(#nonce_limiter_update_response{
-		session_found = SessionFound, step_number = StepNumber, postpone = Postpone }) ->
-	PostponeBin = case Postpone of 0 -> <<>>; _ -> << Postpone:8 >> end,
-	case SessionFound of
-		true ->
-			<< 1:8, (encode_int(StepNumber, 8))/binary, PostponeBin/binary >>;
-		false ->
-			<< 0:8, (encode_int(StepNumber, 8))/binary, PostponeBin/binary >>
-	end.
+		session_found = SessionFound, step_number = StepNumber, postpone = Postpone,
+		format = Format }) ->
+	SessionFoundBin = case SessionFound of false -> << 0:8 >>; _ -> << 1:8 >> end,
+	<< SessionFoundBin/binary, (encode_int(StepNumber, 8))/binary, Postpone:8, Format:8 >>.
 
-binary_to_nonce_limiter_update_response(<< SessionFound:8, StepNumberSize:8,
-		StepNumber:(StepNumberSize * 8), MayBePostponeBin/binary >>)
-		when byte_size(MayBePostponeBin) == 0; byte_size(MayBePostponeBin) == 1 ->
-	StepNumber2 = case StepNumberSize of 0 -> undefined; _ -> StepNumber end,
-	Postpone = case MayBePostponeBin of <<>> -> 0; << N:8 >> -> N end,
-	case SessionFound of
-		0 ->
-			{ok, #nonce_limiter_update_response{ session_found = false,
-					step_number = StepNumber2, postpone = Postpone }};
-		1 ->
-			{ok, #nonce_limiter_update_response{ session_found = true,
-					step_number = StepNumber2, postpone = Postpone }};
-		_ ->
-			{error, invalid1}
-	end;
+binary_to_nonce_limiter_update_response(<< SessionFoundBin:8, StepNumberSize:8,
+		StepNumber:(StepNumberSize * 8) >>) ->
+	binary_to_nonce_limiter_update_response(
+		SessionFoundBin, StepNumberSize, StepNumber, 0, 1);
+binary_to_nonce_limiter_update_response(<< SessionFoundBin:8, StepNumberSize:8,
+		StepNumber:(StepNumberSize * 8), Postpone:8 >>) ->
+	binary_to_nonce_limiter_update_response(
+		SessionFoundBin, StepNumberSize, StepNumber, Postpone, 1);
+binary_to_nonce_limiter_update_response(<< SessionFoundBin:8, StepNumberSize:8,
+		StepNumber:(StepNumberSize * 8), Postpone:8, Format:8 >>) ->
+	binary_to_nonce_limiter_update_response(
+		SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format);
 binary_to_nonce_limiter_update_response(_Bin) ->
 	{error, invalid2}.
+
+binary_to_nonce_limiter_update_response(
+	SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format) 
+		when SessionFoundBin == 0; SessionFoundBin == 1 ->
+	SessionFound = case SessionFoundBin of 0 -> false; 1 -> true end,
+	StepNumber2 = case StepNumberSize of 0 -> undefined; _ -> StepNumber end,
+	{ok, #nonce_limiter_update_response{ session_found = SessionFound,
+			step_number = StepNumber2, postpone = Postpone, format = Format }};
+binary_to_nonce_limiter_update_response(
+		_SessionFoundBin, _StepNumberSize, _StepNumber, _Postpone, _Format) ->
+	{error, invalid1}.
 
 encode_double_signing_proof(undefined) ->
 	<< 0:8 >>;
@@ -1565,6 +1600,7 @@ candidate_to_json_struct(
 		mining_address = MiningAddress,
 		nonce = Nonce,
 		next_seed = NextSeed,
+		next_vdf_difficulty = NextVDFDifficulty,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
 		partition_number2 = PartitionNumber2,
@@ -1584,6 +1620,7 @@ candidate_to_json_struct(
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{seed, ar_util:encode(Seed)},
 		{next_seed, ar_util:encode(NextSeed)},
+		{next_vdf_difficulty, integer_to_binary(NextVDFDifficulty)},
 		{start_interval_number, integer_to_binary(StartIntervalNumber)},
 		{step_number, integer_to_binary(StepNumber)},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}
@@ -1616,6 +1653,7 @@ json_struct_to_candidate(JSON) ->
 	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	NextVDFDifficulty = binary_to_integer(maps:get(<<"next_vdf_difficulty">>, JSON)),
 	Nonce = decode_if_set(JSON, <<"nonce">>, fun binary_to_integer/1, not_set),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
@@ -1634,6 +1672,7 @@ json_struct_to_candidate(JSON) ->
 		h2 = H2,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
+		next_vdf_difficulty = NextVDFDifficulty,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
@@ -1662,6 +1701,7 @@ solution_to_json_struct(
 		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
+		next_vdf_difficulty = NextVDFDifficulty,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
@@ -1684,6 +1724,7 @@ solution_to_json_struct(
 		{nonce, Nonce},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
 		{next_seed, ar_util:encode(NextSeed)},
+		{next_vdf_difficulty, NextVDFDifficulty},
 		{partition_number, integer_to_binary(PartitionNumber)},
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{poa1, poa_to_json_struct(PoA1)},
@@ -1704,6 +1745,7 @@ json_struct_to_solution(JSON) ->
 	RebaseThreshold = binary_to_integer(maps:get(<<"merkle_rebase_threshold">>, JSON)),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+	NextVDFDifficulty = maps:get(<<"next_vdf_difficulty">>, JSON),
 	Nonce = maps:get(<<"nonce">>, JSON),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
@@ -1725,6 +1767,7 @@ json_struct_to_solution(JSON) ->
 		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
+		next_vdf_difficulty = NextVDFDifficulty,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,

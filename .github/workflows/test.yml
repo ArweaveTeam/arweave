@@ -93,7 +93,6 @@ jobs:
         run: |
           rm -f *.out || true
           EXIT_CODE=0
-          echo -e "\033[0;32m===> Running tests...\033[0m"
           export PATH=$(pwd)/_build/erts/bin:$PATH
           export ERL_EPMD_ADDRESS=127.0.0.1
           export TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)

@@ -127,6 +127,42 @@ mix_chunks() ->
 		{30, 30, 1}
 	].
 
+recalculate_price_per_gib_minute_test_block() ->
+	#block{
+		height = ?PRICE_ADJUSTMENT_FREQUENCY-1,
+		denomination = 1,
+		reward_history = [
+			{<<>>, 10000, 10, 1}
+		],
+		block_time_history = [
+			{129, 135, 1}
+		],
+		price_per_gib_minute = 10000,
+		scheduled_price_per_gib_minute = 15000
+	}.
+
+recalculate_price_per_gib_minute_2_7_test_() ->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_fork, height_2_6, fun() -> -1 end},
+		{ar_fork, height_2_7, fun() -> -1 end},
+		{ar_fork, height_2_8, fun() -> infinity end}],
+		fun() ->
+			B = recalculate_price_per_gib_minute_test_block(),
+			?assertEqual({15000, 8162}, ar_pricing:recalculate_price_per_gib_minute(B)),
+			ok
+		end).
+
+recalculate_price_per_gib_minute_2_8_ema_test_() ->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_fork, height_2_6, fun() -> -1 end},
+		{ar_fork, height_2_7, fun() -> -1 end},
+		{ar_fork, height_2_8, fun() -> -1 end}],
+		fun() ->
+			B = recalculate_price_per_gib_minute_test_block(),
+			?assertEqual({15000, 14316}, ar_pricing:recalculate_price_per_gib_minute(B)),
+			ok
+		end).
+
 auto_redenomination_and_endowment_debt_test_() ->
 	{timeout, 180, fun test_auto_redenomination_and_endowment_debt/0}.
 
@@ -275,13 +311,13 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual(1, B6#block.kryder_plus_rate_multiplier_latch),
 	?assertEqual(2, B6#block.kryder_plus_rate_multiplier),
 	?assertEqual(B6#block.price_per_gib_minute, B5#block.scheduled_price_per_gib_minute),
-	PricePerGiBMinute5 = B5#block.price_per_gib_minute,
+	ScheduledPricePerGiBMinute5 = B5#block.scheduled_price_per_gib_minute,
 	?assertEqual(
-		max(PricePerGiBMinute5 div 2,
+		max(ScheduledPricePerGiBMinute5 div 2,
 			min(ar_pricing:get_price_per_gib_minute(B5#block.height,
 					lists:sublist(B5#block.reward_history, 3),
 					lists:sublist(B5#block.block_time_history, 3), 1),
-				PricePerGiBMinute5 * 2)),
+				ScheduledPricePerGiBMinute5 * 2)),
 			B6#block.scheduled_price_per_gib_minute),
 	assert_new_account_fee(),
 	?assertEqual(1, B6#block.denomination),
@@ -467,13 +503,13 @@ test_auto_redenomination_and_endowment_debt() ->
 	_BI14 = ar_test_node:wait_until_height(14),
 	ar_test_node:assert_wait_until_height(peer1, 14),
 	B14 = ar_node:get_current_block(),
-	PricePerGiBMinute13 = B13#block.price_per_gib_minute,
+	ScheduledPricePerGiBMinute13 = B13#block.scheduled_price_per_gib_minute,
 	?assertEqual(
-		max(PricePerGiBMinute13 div 2, min(
+		max(ScheduledPricePerGiBMinute13 div 2, min(
 			ar_pricing:get_price_per_gib_minute(B13#block.height,
 					lists:sublist(B13#block.reward_history, 3),
 					lists:sublist(B13#block.block_time_history, 3), 2),
-			PricePerGiBMinute13 * 2
+			ScheduledPricePerGiBMinute13 * 2
 		)), B14#block.scheduled_price_per_gib_minute).
 
 time_diff(#block{ timestamp = TS }, #block{ timestamp = PrevTS }) ->

@@ -6,7 +6,7 @@
 
 -export([height_1_6/0, height_1_7/0, height_1_8/0, height_1_9/0, height_2_0/0, height_2_2/0,
 		height_2_3/0, height_2_4/0, height_2_5/0, height_2_6/0, height_2_6_8/0,
-		height_2_7/0]).
+		height_2_7/0, height_2_8/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -123,6 +123,24 @@ height_2_7() ->
 		-else.
 			height_2_7() ->
 				1275480. % Targeting 2023-10-04 14:00 UTC
+		-endif.
+	-endif.
+-endif.
+
+-ifdef(FORK_2_8_HEIGHT).
+height_2_8() ->
+	?FORK_2_8_HEIGHT.
+-else.
+	-ifdef(FORKS_RESET).
+	height_2_8() ->
+		0.
+	-else.
+		-ifdef(TESTNET).
+			height_2_8() ->
+				1301000.
+		-else.
+			height_2_8() ->
+				infinity.
 		-endif.
 	-endif.
 -endif.

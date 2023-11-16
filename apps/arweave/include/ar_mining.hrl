@@ -14,6 +14,7 @@
 	h2 = not_set, %% serialized
 	mining_address = not_set, %% serialized
 	next_seed = not_set, %% serialized
+	next_vdf_difficulty = not_set, %% serialized
 	nonce = not_set, %% serialized
 	nonce_limiter_output = not_set, %% serialized
 	partition_number = not_set, %% serialized
@@ -31,6 +32,7 @@
 	last_step_checkpoints = not_set,
 	merkle_rebase_threshold = not_set,
 	next_seed = not_set,
+	next_vdf_difficulty = not_set,
 	nonce = not_set,
 	nonce_limiter_output = not_set,
 	partition_number = not_set,

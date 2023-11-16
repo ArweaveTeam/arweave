@@ -61,7 +61,14 @@ end).
 		-ifdef(FORKS_RESET).
 			-define(PRICE_2_6_8_TRANSITION_START, 0).
 		-else.
-			-define(PRICE_2_6_8_TRANSITION_START, (30 * 24 * 190)). % ~6.5 months / Dec. 14, 2023
+			%% Target: February 20, 2024 at 2p UTC
+			%% Fork 2.6.8 was published at: May 30, 2023 at 3:35p UTC
+			%% Time between dates: 265 days, 22 hours, 25 minutes
+			%% https://www.timeanddate.com/date/durationresult.html?m1=05&d1=30&y1=2023&m2=02&d2=20&y2=2024&h1=15&i1=35&s1=&h2=14&i2=&s2=
+			%% In seconds: 22,976,700
+			%% In blocks: 22,976,700 / 128s average block time = 179505
+			%% Target block: 1189560 + 179505 = 1369065
+			-define(PRICE_2_6_8_TRANSITION_START, 179505).
 		-endif.
 	-endif.
 -endif.
@@ -98,6 +105,8 @@ end).
 %% of the average price of storing a gibibyte for a minute. Also, the reward history
 %% is used to tracking the reserved mining rewards.
 -ifdef(DEBUG).
+	% testnet value should have same ratio 30:1 to VDF_DIFFICULTY_RETARGET
+	% BUT. For tests we are using old value
 	-define(REWARD_HISTORY_BLOCKS, 3).
 -else.
 	-ifndef(REWARD_HISTORY_BLOCKS).

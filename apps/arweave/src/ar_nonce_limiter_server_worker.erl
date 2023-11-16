@@ -11,12 +11,15 @@
 -record(state, {
 	peer,
 	raw_peer,
-	pause_until = 0
+	pause_until = 0,
+	format = 1
 }).
 
 %% The frequency of re-resolving the domain names of the VDF client peers (who are
 %% configured via the domain names as opposed to IP addresses).
 -define(RESOLVE_DOMAIN_NAME_FREQUENCY_MS, 30000).
+
+-define(NONCE_LIMITER_UPDATE_VERSION, 67).
 
 %%%===================================================================
 %%% Public interface.
@@ -59,7 +62,7 @@ handle_cast(Cast, State) ->
 handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) ->
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	#state{ peer = Peer, pause_until = Timestamp } = State,
+	#state{ peer = Peer, pause_until = Timestamp, format = Format } = State,
 	{SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound} = Args,
 	CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
 	case os:system_time(second) < Timestamp of
@@ -70,8 +73,9 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				true ->
 					{noreply, State};
 				false ->
-					{noreply, push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output,
-							PartitionUpperBound, Peer, State)}
+					{noreply, push_update(SessionKey, Session, PrevSessionKey,
+							PrevSession, Output, PartitionUpperBound,
+							Peer, Format, State)}
 			end
 	end;
 
@@ -90,7 +94,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 
 push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound,
-		Peer, State) ->
+		Peer, Format, State) ->
 	Update = ar_nonce_limiter_server:make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
@@ -99,34 +103,49 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 		},
 		true),
 	StepNumber = Session#vdf_session.step_number,
-	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
+	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update, Format) of
 		ok ->
 			State;
 		{ok, Response} ->
+			RequestedFormat = Response#nonce_limiter_update_response.format,
 			Postpone = Response#nonce_limiter_update_response.postpone,
-			case Postpone > 0 of
-				true ->
+			SessionFound = Response#nonce_limiter_update_response.session_found,
+			RequestedStepNumber = Response#nonce_limiter_update_response.step_number,
+
+			case { 
+					RequestedFormat == Format,
+					Postpone == 0,
+					SessionFound,
+					RequestedStepNumber >= StepNumber - 1
+			} of
+				{false, _, _, _} ->
+					%% Client requested a different payload format
+					?LOG_DEBUG([{event, vdf_client_requested_different_format},
+						{peer, ar_util:format_peer(Peer)},
+						{format, Format}, {requested_format, RequestedFormat}]),
+					push_update(SessionKey, Session, PrevSessionKey, PrevSession,
+							Output, PartitionUpperBound, Peer, RequestedFormat,
+							State#state{ format = RequestedFormat });
+				{true, false, _, _} ->
+					%% Client requested we pause updates
 					Now = os:system_time(second),
 					State#state{ pause_until = Now + Postpone };
-				false ->
-					case Response#nonce_limiter_update_response.session_found of
-						false ->
-							case PrevSession of
-								undefined ->
-									ok;
-								_ ->
-									push_session(PrevSessionKey, PrevSession, Peer)
-							end,
-							push_session(SessionKey, Session, Peer);
-						true ->
-							StepNumber2 = Response#nonce_limiter_update_response.step_number,
-							case StepNumber2 >= StepNumber - 1 of
-								true ->
-									ok;
-								false ->
-									push_session(SessionKey, Session, Peer)
-							end
+				{true, true, false, _} ->
+					%% Client requested the full session
+					case PrevSession of
+						undefined ->
+							ok;
+						_ ->
+							push_session(PrevSessionKey, PrevSession, Peer, Format)
 					end,
+					push_session(SessionKey, Session, Peer, Format),
+					State;
+				{true, true, true, false} ->
+					%% Client requested missing steps
+					push_session(SessionKey, Session, Peer, Format),
+					State;
+				_ ->
+					%% Client is ahead of the server
 					State
 			end;
 		{error, Error} ->
@@ -136,10 +155,10 @@ push_update(SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionU
 			State
 	end.
 
-push_session(SessionKey, Session, Peer) ->
+push_session(SessionKey, Session, Peer, Format) ->
 	Update = ar_nonce_limiter_server:make_nonce_limiter_update(SessionKey, Session, false),
-	{SessionSeed, SessionInterval} = SessionKey,
-	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update) of
+	{SessionSeed, SessionInterval, _NextVDFDifficulty} = SessionKey,
+	case ar_http_iface_client:push_nonce_limiter_update(Peer, Update, Format) of
 		ok ->
 			ok;
 		{ok, #nonce_limiter_update_response{ step_number = ClientStepNumber,

@@ -13,7 +13,7 @@
 		get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
 		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
 		get_block_time_history/3,
-		push_nonce_limiter_update/2, get_vdf_update/1, get_vdf_session/1,
+		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/3, cm_h2_send/2,
 		cm_publish_send/2]).
 
@@ -497,8 +497,8 @@ get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
 get_block_time_history([], _B, _RewardHistoryHashes) ->
 	not_found.
 
-push_nonce_limiter_update(Peer, Update) ->
-	Body = ar_serialize:nonce_limiter_update_to_binary(Update),
+push_nonce_limiter_update(Peer, Update, Format) ->
+	Body = ar_serialize:nonce_limiter_update_to_binary(Format, Update),
 	case ar_http:req(#{
 				peer => Peer,
 				method => post,
@@ -519,7 +519,7 @@ push_nonce_limiter_update(Peer, Update) ->
 	end.
 
 get_vdf_update(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf",
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2",
 			timeout => 2000, headers => p2p_headers()
 			}) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
@@ -533,7 +533,7 @@ get_vdf_update(Peer) ->
 	end.
 
 get_vdf_session(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/session",
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2/session",
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Bin);
@@ -546,7 +546,7 @@ get_vdf_session(Peer) ->
 	end.
 
 get_previous_vdf_session(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf/previous_session",
+	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2/previous_session",
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Bin);

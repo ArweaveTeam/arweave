@@ -22,6 +22,7 @@
 	paused = true,
 	seed,
 	next_seed,
+	next_vdf_difficulty,
 	start_interval_number,
 	partition_upper_bound,
 	chunk_cache = #{},
@@ -246,7 +247,7 @@ handle_info({'DOWN', Ref, process, _, Reason},
 
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber}, Session,
+	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty}, Session,
 		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
 		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
@@ -462,20 +463,24 @@ priority(nonce_limiter_computed_output, StepNumber) ->
 
 handle_task({computed_output, Args},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber}, Session,
-		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
+	{{NextSeed, _StartIntervalNumber, NextVDFDifficulty},
+			Session, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined},
-		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
+		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)},
+		{next_vdf_difficulty, NextVDFDifficulty}]),
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session } = State,
-	{{NextSeed, StartIntervalNumber}, Seed, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, Seed, StepNumber, Output, PartitionUpperBound} = Args,
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 	#mining_session{ next_seed = CurrentNextSeed,
+			next_vdf_difficulty = CurrentNextVDFDifficulty,
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = Session,
 	Session2 =
-		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound}
-				== {StartIntervalNumber, NextSeed, PartitionUpperBound} of
+		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound,
+				CurrentNextVDFDifficulty}
+				== {StartIntervalNumber, NextSeed, PartitionUpperBound, NextVDFDifficulty} of
 			true ->
 				Session;
 			false ->
@@ -489,6 +494,7 @@ handle_task({computed_output, Args}, State) ->
 						StartIntervalNumber]),
 				reset_mining_session(
 					#mining_session{ seed = Seed, next_seed = NextSeed,
+						next_vdf_difficulty = NextVDFDifficulty,
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound },
 					State)
@@ -497,6 +503,7 @@ handle_task({computed_output, Args}, State) ->
 		session_ref = Session2#mining_session.ref,
 		seed = Seed,
 		next_seed = NextSeed,
+		next_vdf_difficulty = NextVDFDifficulty,
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber,
 		nonce_limiter_output = Output,
@@ -784,7 +791,8 @@ prepare_solution(Candidate, State) ->
 	case is_session_valid(SessionRef, Candidate) of
 		true ->
 			#mining_candidate{
-				mining_address = MiningAddress, next_seed = NextSeed, nonce = Nonce,
+				mining_address = MiningAddress, next_seed = NextSeed, 
+				next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
 				nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
 				partition_upper_bound = PartitionUpperBound, poa2 = PoA2, preimage = Preimage,
 				seed = Seed, start_interval_number = StartIntervalNumber, step_number = StepNumber
@@ -794,6 +802,7 @@ prepare_solution(Candidate, State) ->
 				mining_address = MiningAddress,
 				merkle_rebase_threshold = RebaseThreshold,
 				next_seed = NextSeed,
+				next_vdf_difficulty = NextVDFDifficulty,
 				nonce = Nonce,
 				nonce_limiter_output = NonceLimiterOutput,
 				partition_number = PartitionNumber,
@@ -811,10 +820,10 @@ prepare_solution(Candidate, State) ->
 	
 prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 	#mining_candidate{
-		next_seed = NextSeed, start_interval_number = StartIntervalNumber,
-		step_number = StepNumber } = Candidate,
+		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
+		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
 	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
-			StepNumber, NextSeed, StartIntervalNumber),
+			StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficulty),
 	case LastStepCheckpoints of
 		not_found ->
 			error;
@@ -826,17 +835,19 @@ prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 prepare_solution(steps, Candidate, Solution) ->
 	#mining_candidate{ step_number = StepNumber } = Candidate,
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-	#nonce_limiter_info{ global_step_number = PrevStepNumber,
-		next_seed = PrevNextSeed } = TipNonceLimiterInfo,
+	#nonce_limiter_info{ global_step_number = PrevStepNumber, next_seed = PrevNextSeed,
+			next_vdf_difficulty = PrevNextVDFDifficulty } = TipNonceLimiterInfo,
 	case StepNumber > PrevStepNumber of
 		true ->
-			Steps = ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed),
+			Steps = ar_nonce_limiter:get_steps(
+					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty),
 			case Steps of
 				not_found ->
 					?LOG_WARNING([{event, found_solution_but_failed_to_find_checkpoints},
 							{start_step_number, PrevStepNumber},
 							{next_step_number, StepNumber},
-							{next_seed, ar_util:encode(PrevNextSeed)}]),
+							{next_seed, ar_util:encode(PrevNextSeed)},
+							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
 					ar:console("WARNING: found a solution but failed to find checkpoints, "
 							"start step number: ~B, end step number: ~B, next_seed: ~s.",
 							[PrevStepNumber, StepNumber, PrevNextSeed]),
@@ -848,7 +859,8 @@ prepare_solution(steps, Candidate, Solution) ->
 			?LOG_WARNING([{event, found_solution_but_stale_step_number},
 							{start_step_number, PrevStepNumber},
 							{next_step_number, StepNumber},
-							{next_seed, ar_util:encode(PrevNextSeed)}]),
+							{next_seed, ar_util:encode(PrevNextSeed)},
+							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
 			error
 	end;
 
