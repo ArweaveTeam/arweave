@@ -10,12 +10,6 @@ bin/check-nofile
 echo Building dependencies...
 ./rebar3 as localnet compile
 
-if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
-    RANDOMX_JIT="disable randomx_jit"
-else
-    RANDOMX_JIT=
-fi
-
 export ERL_EPMD_ADDRESS=127.0.0.1
 
 while true; do
@@ -34,7 +28,7 @@ while true; do
         # -run ar main: call ar:main() on launch
         erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +Bi -pa `./rebar3 as localnet path` \
             -config config/sys.config -args_file config/vm.args.dev \
-            -run ar main $RANDOMX_JIT "$@"
+            -run ar main "$@"
     then
         echo "Arweave Heartbeat: Server terminated safely."
         exit 0

@@ -13,10 +13,10 @@ let
   inherit (pkgs) stdenv lib beamPackages fetchFromGitHub fetchFromGitLab fetchHex;
 
   randomx = fetchFromGitHub {
-    owner = "arweaveteam";
+    owner = "ArweaveTeam";
     repo = "RandomX";
-    rev = "d64fce8329f85bbafe43ffbfd03284242b13fb1c";
-    sha256 = "sha256-+SrRGAasQcwo5gJm646Ci+31y6tJ0lgIAlzaeEez1CU=";
+    rev = "913873c13a2dffb7c4188c39b4eb188f912f523e";
+    sha256 = "sha256-obxX/b5o/RY46kCtHOhWMFX29jT5y8oigzVLwZRFHgQ=";
     fetchSubmodules = true;
   };
 
