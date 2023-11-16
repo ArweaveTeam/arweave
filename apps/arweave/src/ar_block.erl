@@ -208,7 +208,7 @@ compute_next_vdf_difficulty(PrevB) ->
 				false ->
 					NextVDFDifficulty;
 				true ->
-					case Height < ar_fork:height_2_8() of
+					case Height < ar_fork:height_2_7_1() of
 						true ->
 							HistoryPart = lists:nthtail(?VDF_HISTORY_CUT,
 									lists:sublist(PrevB#block.block_time_history,

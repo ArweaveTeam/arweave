@@ -319,12 +319,12 @@ recalculate_price_per_gib_minute2(B) ->
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
 	Height = PrevHeight + 1,
 	Fork_2_7 = ar_fork:height_2_7(),
-	Fork_2_8 = ar_fork:height_2_8(),
+	Fork_2_7_1 = ar_fork:height_2_7_1(),
 	case Height of
 		Fork_2_7 ->
 			{?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
 					?PRICE_PER_GIB_MINUTE_PRE_TRANSITION};
-		Height when Height < Fork_2_8 ->
+		Height when Height < Fork_2_7_1 ->
 			case is_price_adjustment_height(Height) of
 				false ->
 					{Price, ScheduledPrice};
