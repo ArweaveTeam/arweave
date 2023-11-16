@@ -10,11 +10,6 @@ bin/check-nofile
 echo Building dependencies...
 ./rebar3 as debug compile
 
-if [ `uname -s` == "Darwin" ]; then
-    RANDOMX_JIT="disable randomx_jit"
-else
-    RANDOMX_JIT=
-fi
 
 OPTS="-pa `./rebar3 as debug path`"
 
@@ -27,4 +22,4 @@ fi
 echo Launching Erlang Virtual Machine...
 erl $OPTS \
     -config config/sys.config -args_file config/vm.args.dev \
-    -run ar main $RANDOMX_JIT data_dir benchmark init mine
+    -run ar main data_dir benchmark init mine
