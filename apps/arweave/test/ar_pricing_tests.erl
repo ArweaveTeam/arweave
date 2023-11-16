@@ -145,18 +145,18 @@ recalculate_price_per_gib_minute_2_7_test_() ->
 	ar_test_node:test_with_mocked_functions(
 		[{ar_fork, height_2_6, fun() -> -1 end},
 		{ar_fork, height_2_7, fun() -> -1 end},
-		{ar_fork, height_2_8, fun() -> infinity end}],
+		{ar_fork, height_2_7_1, fun() -> infinity end}],
 		fun() ->
 			B = recalculate_price_per_gib_minute_test_block(),
 			?assertEqual({15000, 8162}, ar_pricing:recalculate_price_per_gib_minute(B)),
 			ok
 		end).
 
-recalculate_price_per_gib_minute_2_8_ema_test_() ->
+recalculate_price_per_gib_minute_2_7_1_ema_test_() ->
 	ar_test_node:test_with_mocked_functions(
 		[{ar_fork, height_2_6, fun() -> -1 end},
 		{ar_fork, height_2_7, fun() -> -1 end},
-		{ar_fork, height_2_8, fun() -> -1 end}],
+		{ar_fork, height_2_7_1, fun() -> -1 end}],
 		fun() ->
 			B = recalculate_price_per_gib_minute_test_block(),
 			?assertEqual({15000, 14316}, ar_pricing:recalculate_price_per_gib_minute(B)),
