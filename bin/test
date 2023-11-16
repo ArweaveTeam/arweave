@@ -6,12 +6,6 @@ cd "$SCRIPT_DIR/.."
 
 ./rebar3 as test compile
 
-if [ `uname -s` == "Darwin" ]; then
-    RANDOMX_JIT="disable randomx_jit"
-else
-    RANDOMX_JIT=
-fi
-
 export ERL_EPMD_ADDRESS=127.0.0.1
 
 ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/arweave/test -config config/sys.config"
