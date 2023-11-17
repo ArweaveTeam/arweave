@@ -1072,7 +1072,7 @@ apply_external_update2(Update, State) ->
 %% @param UpperBound Upper bound of the session pushed by the VDF server
 %%
 %% Note: an important job of this function is to ensure that VDF steps are only processed once.
-%% We truncate Session.steps such the previously procesed steps are not sent to
+%% We truncate Session.steps such the previously processed steps are not sent to
 %% trigger_computed_outputs.
 apply_external_update3(
 	State, SessionKey, PrevSessionKey, CurrentSessionKey, Session, Steps, UpperBound) ->
@@ -1085,7 +1085,7 @@ apply_external_update3(
 		{session_difficulty, element(3, SessionKey)},
 		{length, length(Steps)}]),
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
-	trigger_computed_outputs(SessionKey, Session, PrevSessionKey, UpperBound, Steps),
+	send_events_for_external_update(SessionKey, Session, PrevSessionKey, UpperBound, Steps),
 	State2.
 
 %% @doc Returns a sub-range of steps out of a larger list of steps. This is
@@ -1191,14 +1191,14 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 			ok
 	end.
 
-trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _UpperBound, []) ->
+send_events_for_external_update(_SessionKey, _Session, _PrevSessionKey, _UpperBound, []) ->
 	ok;
-trigger_computed_outputs(SessionKey, Session, PrevSessionKey, UpperBound, [Step | Steps]) ->
+send_events_for_external_update(SessionKey, Session, PrevSessionKey, UpperBound, [Step | Steps]) ->
 	#vdf_session{ seed = Seed, step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
 	ar_events:send(nonce_limiter, {computed_output,
 			{SessionKey, PrevSessionKey, Seed, StepNumber, Step, UpperBound}}),
 	Session2 = Session#vdf_session{ step_number = StepNumber - 1, steps = PrevSteps },
-	trigger_computed_outputs(SessionKey, Session2, PrevSessionKey, UpperBound, Steps).
+	send_events_for_external_update(SessionKey, Session2, PrevSessionKey, UpperBound, Steps).
 
 debug_double_check(Label, Result, Func, Args) ->
 	{ok, Config} = application:get_env(arweave, config),

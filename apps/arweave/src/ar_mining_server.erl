@@ -493,7 +493,7 @@ handle_task({computed_output, Args}, State) ->
 						partition_upper_bound = PartitionUpperBound },
 					State),
 				?LOG_INFO([{event, new_mining_session}, 
-						{session_ref, ar_util:encode(NewSession#mining_session.ref)},
+						{session_ref, ar_util:safe_encode(NewSession#mining_session.ref)},
 						{step_number, StepNumber},
 						{interval_number, StartIntervalNumber},
 						{upper_bound, PartitionUpperBound},
