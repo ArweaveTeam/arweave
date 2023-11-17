@@ -275,6 +275,7 @@ register(MetricsDir) ->
 	]),
 	prometheus_gauge:new([
 		{name, mining_server_task_queue_len},
+		{labels, [task]},
 		{help, "The number of items in the mining server task queue."}
 	]),
 	prometheus_histogram:new([

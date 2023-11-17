@@ -811,6 +811,9 @@ prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
 	{{Interval, NextSeed, NextVDFDifficulty}, Sessions2} = gb_sets:take_smallest(Sessions),
 	case BaseInterval > Interval + 10 of
 		true ->
+			?LOG_DEBUG([{event, prune_old_vdf_session},
+				{session_seed, ar_util:encode(NextSeed)}, {session_interval, Interval},
+				{session_difficulty, NextVDFDifficulty}]),
 			SessionByKey2 = maps:remove({NextSeed, Interval, NextVDFDifficulty}, SessionByKey),
 			prune_old_sessions(Sessions2, SessionByKey2, BaseInterval);
 		false ->
@@ -1074,13 +1077,14 @@ apply_external_update2(Update, State) ->
 %% trigger_computed_outputs.
 apply_external_update3(
 	State, SessionKey, PrevSessionKey, CurrentSessionKey, Session, Steps, UpperBound) ->
+	#state{ session_by_key = SessionByKey, last_external_update = {Peer, _} } = State,
 	?LOG_DEBUG([{event, apply_external_vdf},
 		{result, ok},
+		{vdf_server, ar_util:format_peer(Peer)},
 		{session_seed, ar_util:encode(element(1, SessionKey))},
 		{session_interval, element(2, SessionKey)},
 		{session_difficulty, element(3, SessionKey)},
 		{length, length(Steps)}]),
-	#state{ session_by_key = SessionByKey } = State,
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
 	PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
 	trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound, Steps),

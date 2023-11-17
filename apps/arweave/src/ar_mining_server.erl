@@ -57,7 +57,7 @@ recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
 	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
 	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
 recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
-	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number2),
 	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
 recall_chunk(skipped, undefined, Nonce, Candidate) ->
 	update_chunk_cache_size(-1),
@@ -71,7 +71,7 @@ computed_hash(computed_h1, H1, Preimage, Candidate) ->
 	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h1, Candidate#mining_candidate{ h1 = H1, preimage = Preimage });
 computed_hash(computed_h2, H2, Preimage, Candidate) ->
-	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number2),
 	add_task(computed_h2, Candidate#mining_candidate{ h2 = H2, preimage = Preimage }).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
@@ -163,9 +163,13 @@ handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 		true ->
 			StepNumber = Candidate#mining_candidate.step_number,
 			Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [TaskType]),
 			{noreply, State#state{ task_queue = Q2 }};
 		false ->
+			?LOG_DEBUG([{event, mining_debug_stale_task}, {task, TaskType},
+				{current_ref, ar_util:encode(SessionRef)},
+				{candidate_ref, ar_util:encode(Candidate#mining_candidate.session_ref)},
+				{partition_number, Candidate#mining_candidate.partition_number}]),
 			{noreply, State}
 	end;
 	
@@ -176,7 +180,8 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			{noreply, State};
 		_ ->
 			{{_Priority, _ID, Task}, Q2} = gb_sets:take_smallest(Q),
-			prometheus_gauge:dec(mining_server_task_queue_len),
+			{TaskType, _Args} = Task,
+			prometheus_gauge:dec(mining_server_task_queue_len, [TaskType]),
 			may_be_warn_about_lag(Task, Q2),
 			gen_server:cast(?MODULE, handle_task),
 			handle_task(Task, State#state{ task_queue = Q2 })
@@ -229,7 +234,7 @@ handle_cast({may_be_remove_chunk_from_cache, _Args},
 handle_cast({may_be_remove_chunk_from_cache, _Args} = Task,
 		#state{ task_queue = Q } = State) ->
 	Q2 = gb_sets:insert({priority(may_be_remove_chunk_from_cache), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [may_be_remove_chunk_from_cache]),
 	{noreply, State#state{ task_queue = Q2 }};
 
 handle_cast(Cast, State) ->
@@ -265,7 +270,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [computed_output]),
 	{noreply, State#state{ task_queue = Q2 }};
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
@@ -461,13 +466,8 @@ priority(computed_h0, StepNumber) ->
 priority(nonce_limiter_computed_output, StepNumber) ->
 	{6, -StepNumber}.
 
-handle_task({computed_output, Args},
+handle_task({computed_output, _Args},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber, NextVDFDifficulty},
-			Session, _Output, _PartitionUpperBound} = Args,
-	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined},
-		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)},
-		{next_vdf_difficulty, NextVDFDifficulty}]),
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
 	#state{ session = Session } = State,
@@ -488,16 +488,20 @@ handle_task({computed_output, Args}, State) ->
 						"next entropy nonce: ~s, interval number: ~B.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
 						StartIntervalNumber]),
-				?LOG_INFO("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
-						"next entropy nonce: ~s, interval number: ~B.~n",
-						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
-						StartIntervalNumber]),
-				reset_mining_session(
+				NewSession = reset_mining_session(
 					#mining_session{ seed = Seed, next_seed = NextSeed,
 						next_vdf_difficulty = NextVDFDifficulty,
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound },
-					State)
+					State),
+				?LOG_INFO([{event, new_mining_session}, 
+						{session_ref, ar_util:encode(NewSession#mining_session.ref)},
+						{step_number, StepNumber},
+						{interval_number, StartIntervalNumber},
+						{upper_bound, PartitionUpperBound},
+						{entropy_nonce, ar_util:encode(Seed)},
+						{next_entropy_nonce, ar_util:encode(NextSeed)}]),
+				NewSession
 		end,
 	Candidate = #mining_candidate{
 		session_ref = Session2#mining_session.ref,
@@ -512,7 +516,8 @@ handle_task({computed_output, Args}, State) ->
 	{N, State2} = distribute_output(Candidate, State),
 	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
 		{step_number, StepNumber}, {output, ar_util:encode(Output)},
-		{start_interval_number, StartIntervalNumber}]),
+		{start_interval_number, StartIntervalNumber},
+		{session_ref, ar_util:encode(Session2#mining_session.ref)}]),
 	{noreply, State2#state{ session = Session2 }};
 
 handle_task({chunk1, Candidate}, State) ->
