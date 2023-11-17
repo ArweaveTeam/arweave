@@ -2,8 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, make_full_nonce_limiter_update/2, make_full_nonce_limiter_update/1,
-	make_partial_nonce_limiter_update/3]).
+-export([start_link/0, make_full_nonce_limiter_update/2, make_partial_nonce_limiter_update/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -24,8 +23,7 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-make_partial_nonce_limiter_update(SessionKey, Output, PartitionUpperBound) ->
-	Session = ar_nonce_limiter:get_session(SessionKey),
+make_partial_nonce_limiter_update(SessionKey, Session, Output, PartitionUpperBound) ->
 	make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
@@ -33,10 +31,6 @@ make_partial_nonce_limiter_update(SessionKey, Output, PartitionUpperBound) ->
 			steps = [Output]
 		},
 		true).
-
-make_full_nonce_limiter_update(SessionKey) ->
-	Session = ar_nonce_limiter:get_session(SessionKey),
-	make_full_nonce_limiter_update(SessionKey, Session).
 
 make_full_nonce_limiter_update(SessionKey, Session) ->
 	make_nonce_limiter_update(SessionKey, Session, false).
@@ -55,7 +49,9 @@ handle_call(get_update, _From, #state{ current_output = undefined } = State) ->
 handle_call(get_update, _From, State) ->
 	#state{ current_output = Output, current_session = {SessionKey, Session},
 			current_partition_upper_bound = PartitionUpperBound } = State,
-	{reply, make_partial_nonce_limiter_update(SessionKey, Output, PartitionUpperBound), State};
+	{reply, 
+		make_partial_nonce_limiter_update(SessionKey, Session, Output, PartitionUpperBound),
+		State};
 
 handle_call(get_session, _From, #state{ current_session = undefined } = State) ->
 	{reply, not_found, State};
@@ -78,7 +74,9 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	{SessionKey, Session, PrevSessionKey, PrevSession, Output, PartitionUpperBound} = Args,
+	{SessionKey, PrevSessionKey, _Seed, _StepNumber, Output, PartitionUpperBound} = Args,
+	Session = ar_nonce_limiter:get_session(SessionKey),
+	PrevSession = ar_nonce_limiter:get_session(PrevSessionKey),
 	{noreply, State#state{ current_session = {SessionKey, Session},
 			current_prev_session = {PrevSessionKey, PrevSession},
 			current_output = Output, current_partition_upper_bound = PartitionUpperBound }};

@@ -76,53 +76,52 @@ cleanup_external_update({Pid, Config}) ->
 %% test_vdf_server_push_slow_block tests that the VDF server can handle receiving
 %% a block that is behind in the VDF chain: specifically:
 %%
-% vdf_server_push_test_() ->
-%     {foreach,
-% 		fun setup/0,
-%      	fun cleanup/1,
-% 		[
-% 			{timeout, 120, fun test_vdf_server_push_fast_block/0},
-% 			{timeout, 120, fun test_vdf_server_push_slow_block/0}
-% 		]
-%     }.
+vdf_server_push_test_() ->
+    {foreach,
+		fun setup/0,
+     	fun cleanup/1,
+		[
+			{timeout, 120, fun test_vdf_server_push_fast_block/0},
+			{timeout, 120, fun test_vdf_server_push_slow_block/0}
+		]
+    }.
 
 %% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
 %% flow where a VDF client has to validate a block with VDF information provided by
 %% the VDF server.
-% vdf_client_test_() ->
-% 	{foreach,
-% 		fun setup/0,
-% 		fun cleanup/1,
-% 		[
-% 			{timeout, 180, fun test_vdf_client_fast_block/0},
-% 			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
-% 			{timeout, 180, fun test_vdf_client_slow_block/0},
-% 			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
-% 		]
-%     }.
+vdf_client_test_() ->
+	{foreach,
+		fun setup/0,
+		fun cleanup/1,
+		[
+			{timeout, 180, fun test_vdf_client_fast_block/0},
+			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
+			{timeout, 180, fun test_vdf_client_slow_block/0},
+			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
+		]
+    }.
 
 external_update_test_() ->
     {foreach,
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 		[
-			% {timeout, 120, fun test_session_overlap/0},
-			% {timeout, 120, fun test_client_ahead/0},
-			% {timeout, 120, fun test_skip_ahead/0},
-			% {timeout, 120, fun test_2_servers_switching/0},
-			% {timeout, 120, fun test_backtrack/0},
-			% {timeout, 120, fun test_2_servers_backtrack/0},
-			{timeout, 120, fun test_old_session/0}
+			{timeout, 120, fun test_session_overlap/0},
+			{timeout, 120, fun test_client_ahead/0},
+			{timeout, 120, fun test_skip_ahead/0},
+			{timeout, 120, fun test_2_servers_switching/0},
+			{timeout, 120, fun test_backtrack/0},
+			{timeout, 120, fun test_2_servers_backtrack/0}
 		]
     }.
 
-% serialize_test_() ->
-%     [
-% 		{timeout, 120, fun test_serialize_update_format_1/0},
-% 		{timeout, 120, fun test_serialize_update_format_2/0},
-% 		{timeout, 120, fun test_serialize_response/0},
-% 		{timeout, 120, fun test_serialize_response_compatibility/0}
-% 	].
+serialize_test_() ->
+    [
+		{timeout, 120, fun test_serialize_update_format_1/0},
+		{timeout, 120, fun test_serialize_update_format_2/0},
+		{timeout, 120, fun test_serialize_response/0},
+		{timeout, 120, fun test_serialize_response_compatibility/0}
+	].
 
 %% -------------------------------------------------------------------------------------------------
 %% Tests
@@ -641,64 +640,6 @@ test_2_servers_backtrack() ->
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
         <<"5">>,<<"18">>,<<"15">>
 	], computed_steps()).
-
-test_old_session() ->
-	lists:foreach(
-		fun(Interval) ->
-			SessionSeed = <<"session", (integer_to_binary(Interval))/binary>>,
-			PrevSessionSeed = <<"session", (integer_to_binary(Interval-1))/binary>>,
-			PrevInterval = Interval - 1,
-			CurrentStep = ((Interval+1) * 5) - 1,
-			Steps = lists:seq(CurrentStep-1, Interval * 5, -1),
-			Message = io_lib:format("Full ~p from vdf_server1", [SessionSeed]),
-			?assertEqual(
-				ok,
-				apply_external_update(SessionSeed, Interval, Steps, CurrentStep,
-					false, PrevSessionSeed, PrevInterval, vdf_server_1()),
-				Message)
-		end,
-		lists:seq(1, 20)
-	),
-	%% Update the current session
-	PrevB = #block{
-		height = 2,
-		nonce_limiter_info = #nonce_limiter_info{
-			seed = <<"session18">>,
-			next_seed = <<"session19">>,
-			partition_upper_bound = 1000,
-			next_partition_upper_bound = 1000,
-			global_step_number = 99,
-			last_step_checkpoints = [],
-			vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
-			next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
-		}
-	},
-	B = #block{
-		height = 3,
-		nonce_limiter_info = #nonce_limiter_info{
-			seed = <<"session19">>,
-			next_seed = <<"session20">>,
-			partition_upper_bound = 1000,
-			next_partition_upper_bound = 1000,
-			global_step_number = 104,
-			last_step_checkpoints = [],
-			vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
-			next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
-		}
-	},
-	%% Prune old sessions
-	gen_server:cast(ar_nonce_limiter, {apply_tip, B, PrevB}),
-	timer:sleep(2000),
-	CheckpointBlock = #block{
-		height = 1,
-		nonce_limiter_info = #nonce_limiter_info{
-			global_step_number = 80
-		}
-	},
-	ar_events:send(node_state, {checkpoint_block, CheckpointBlock}),
-	timer:sleep(2000),
-	%% Push a pruned session with a lot of steps
-	?LOG_ERROR([{steps, computed_steps()}]).
 
 %%
 %% serialize_test_
