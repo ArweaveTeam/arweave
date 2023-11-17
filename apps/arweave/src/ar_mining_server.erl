@@ -252,21 +252,19 @@ handle_info({'DOWN', Ref, process, _, Reason},
 
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty}, Session,
-		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
+	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty},
+			_PrevSessionKey, _Seed, StepNumber, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
-		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
+		{step_number, StepNumber}, {session, ar_util:encode(NextSeed)}]),
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, _}},
 		#state{ session = #mining_session{ paused = true } } = State) ->
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
-	{SessionKey, Session, _PrevSessionKey, _PrevSession, Output, PartitionUpperBound} = Args,
-	StepNumber = Session#vdf_session.step_number,
+	{SessionKey, _PrevSessionKey, Seed, StepNumber, Output, PartitionUpperBound} = Args,
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
-	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
 	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),

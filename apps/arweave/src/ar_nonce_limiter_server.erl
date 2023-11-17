@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, make_nonce_limiter_update/3]).
+-export([start_link/0, make_full_nonce_limiter_update/2, make_full_nonce_limiter_update/1,
+	make_partial_nonce_limiter_update/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -23,6 +24,23 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+make_partial_nonce_limiter_update(SessionKey, Output, PartitionUpperBound) ->
+	Session = ar_nonce_limiter:get_session(SessionKey),
+	make_nonce_limiter_update(
+		SessionKey,
+		Session#vdf_session{
+			upper_bound = PartitionUpperBound,
+			steps = [Output]
+		},
+		true).
+
+make_full_nonce_limiter_update(SessionKey) ->
+	Session = ar_nonce_limiter:get_session(SessionKey),
+	make_full_nonce_limiter_update(SessionKey, Session).
+
+make_full_nonce_limiter_update(SessionKey, Session) ->
+	make_nonce_limiter_update(SessionKey, Session, false).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -37,25 +55,19 @@ handle_call(get_update, _From, #state{ current_output = undefined } = State) ->
 handle_call(get_update, _From, State) ->
 	#state{ current_output = Output, current_session = {SessionKey, Session},
 			current_partition_upper_bound = PartitionUpperBound } = State,
-	{reply, make_nonce_limiter_update(
-		SessionKey,
-		Session#vdf_session{
-			upper_bound = PartitionUpperBound,
-			steps = [Output]
-		},
-		true), State};
+	{reply, make_partial_nonce_limiter_update(SessionKey, Output, PartitionUpperBound), State};
 
 handle_call(get_session, _From, #state{ current_session = undefined } = State) ->
 	{reply, not_found, State};
 handle_call(get_session, _From, State) ->
 	#state{ current_session = {SessionKey, Session} } = State,
-	{reply, make_nonce_limiter_update(SessionKey, Session, false), State};
+	{reply, make_full_nonce_limiter_update(SessionKey, Session), State};
 
 handle_call(get_previous_session, _From, #state{ current_prev_session = undefined } = State) ->
 	{reply, not_found, State};
 handle_call(get_previous_session, _From, State) ->
 	#state{ current_prev_session = {SessionKey, Session} } = State,
-	{reply, make_nonce_limiter_update(SessionKey, Session, false), State};
+	{reply, make_full_nonce_limiter_update(SessionKey, Session), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -84,7 +96,8 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
+make_nonce_limiter_update(_SessionKey, not_found, _IsPartial) ->
+	not_found;
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),

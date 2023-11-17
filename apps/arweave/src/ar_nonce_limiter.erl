@@ -616,7 +616,7 @@ handle_info({computed, Args}, State) ->
 	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
 	Session = maps:get(CurrentSessionKey, SessionByKey),
 	#vdf_session{ steps = [SessionOutput | _] = Steps,
-			next_vdf_difficulty = NextVDFDifficulty,
+			seed = Seed, next_vdf_difficulty = NextVDFDifficulty,
 			step_checkpoints_map = Map, prev_session_key = PrevSessionKey } = Session,
 	{NextSeed, IntervalNumber, NextVDFDifficulty} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
@@ -633,9 +633,8 @@ handle_info({computed, Args}, State) ->
 			Session2 = Session#vdf_session{ step_number = StepNumber,
 					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			State2 = cache_session(State, CurrentSessionKey, CurrentSessionKey, Session2),
-			PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-			ar_events:send(nonce_limiter, {computed_output, {CurrentSessionKey, Session2,
-					PrevSessionKey, PrevSession, Output, UpperBound}}),
+			ar_events:send(nonce_limiter, {computed_output,
+				{CurrentSessionKey, PrevSessionKey, Seed, StepNumber, Output, UpperBound}}),
 			{noreply, State2}
 	end;
 
@@ -1077,7 +1076,7 @@ apply_external_update2(Update, State) ->
 %% trigger_computed_outputs.
 apply_external_update3(
 	State, SessionKey, PrevSessionKey, CurrentSessionKey, Session, Steps, UpperBound) ->
-	#state{ session_by_key = SessionByKey, last_external_update = {Peer, _} } = State,
+	#state{ last_external_update = {Peer, _} } = State,
 	?LOG_DEBUG([{event, apply_external_vdf},
 		{result, ok},
 		{vdf_server, ar_util:format_peer(Peer)},
@@ -1086,8 +1085,7 @@ apply_external_update3(
 		{session_difficulty, element(3, SessionKey)},
 		{length, length(Steps)}]),
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
-	PrevSession = maps:get(PrevSessionKey, SessionByKey, undefined),
-	trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound, Steps),
+	trigger_computed_outputs(SessionKey, Session, PrevSessionKey, UpperBound, Steps),
 	State2.
 
 %% @doc Returns a sub-range of steps out of a larger list of steps. This is
@@ -1193,17 +1191,14 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 			ok
 	end.
 
-trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _PrevSession,
-		_UpperBound, []) ->
+trigger_computed_outputs(_SessionKey, _Session, _PrevSessionKey, _UpperBound, []) ->
 	ok;
-trigger_computed_outputs(SessionKey, Session, PrevSessionKey, PrevSession, UpperBound,
-		[Step | Steps]) ->
-	ar_events:send(nonce_limiter, {computed_output, {SessionKey, Session, PrevSessionKey,
-			PrevSession, Step, UpperBound}}),
-	#vdf_session{ step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
+trigger_computed_outputs(SessionKey, Session, PrevSessionKey, UpperBound, [Step | Steps]) ->
+	#vdf_session{ seed = Seed, step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
+	ar_events:send(nonce_limiter, {computed_output,
+			{SessionKey, PrevSessionKey, Seed, StepNumber, Step, UpperBound}}),
 	Session2 = Session#vdf_session{ step_number = StepNumber - 1, steps = PrevSteps },
-	trigger_computed_outputs(SessionKey, Session2, PrevSessionKey, PrevSession, UpperBound,
-			Steps).
+	trigger_computed_outputs(SessionKey, Session2, PrevSessionKey, UpperBound, Steps).
 
 debug_double_check(Label, Result, Func, Args) ->
 	{ok, Config} = application:get_env(arweave, config),
