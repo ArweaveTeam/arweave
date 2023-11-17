@@ -95,7 +95,7 @@ terminate(_Reason, _State) ->
 push_update(SessionKey, PrevSessionKey, StepNumber, Output,
 		PartitionUpperBound, Peer, Format, State) ->
 	Update = ar_nonce_limiter_server:make_partial_nonce_limiter_update(
-		SessionKey, ar_nonce_limiter:get_session(SessionKey), Output, PartitionUpperBound),
+		SessionKey, ar_nonce_limiter:get_session(SessionKey), StepNumber, Output, PartitionUpperBound),
 	case Update of
 		not_found -> ok;
 		_ ->
