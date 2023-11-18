@@ -25,12 +25,13 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 make_partial_nonce_limiter_update(SessionKey, Session, StepNumber, Output, PartitionUpperBound) ->
+	#vdf_session{ header = Header } = Session,
 	make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
-			upper_bound = PartitionUpperBound,
-			steps = [Output],
-			step_number = StepNumber
+			header = Header#vdf_header{
+				upper_bound = PartitionUpperBound, step_number = StepNumber },
+			steps = [Output]
 		},
 		true).
 
@@ -103,7 +104,7 @@ terminate(_Reason, _State) ->
 make_nonce_limiter_update(_SessionKey, not_found, _IsPartial) ->
 	not_found;
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
-	StepNumber = Session#vdf_session.step_number,
+	StepNumber = Session#vdf_session.header#vdf_header.step_number,
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
 	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
 	#nonce_limiter_update{ session_key = SessionKey,

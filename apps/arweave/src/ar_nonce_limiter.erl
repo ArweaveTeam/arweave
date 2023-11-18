@@ -416,26 +416,23 @@ handle_call(get_current_step_number, _From,
 		#state{ current_session_key = undefined } = State) ->
 	{reply, 0, State};
 handle_call(get_current_step_number, _From, State) ->
-	#state{ current_session_key = Key, session_by_key = SessionByKey } = State,
-	Session = maps:get(Key, SessionByKey),
-	{reply, Session#vdf_session.step_number, State};
+	#state{ current_session_key = Key } = State,
+	#vdf_header{ step_number = StepNumber } = get_session_header(Key, State),
+	{reply, StepNumber, State};
 
 handle_call({get_current_step_number, SessionKey}, _From, State) ->
-	#state{ session_by_key = SessionByKey } = State,
-	case maps:get(SessionKey, SessionByKey, not_found) of
+	case get_session_header(SessionKey, State) of
 		not_found ->
 			{reply, not_found, State};
-		#vdf_session{ step_number = StepNumber } ->
+		#vdf_header{ step_number = StepNumber } ->
 			{reply, StepNumber, State}
 	end;
 
 handle_call({get_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
-	#state{ session_by_key = SessionByKey } = State,
-	case maps:get(SessionKey, SessionByKey, not_found) of
+	case get_session(SessionKey, State) of
 		not_found ->
 			{reply, not_found, State};
-		Session ->
-			Map = Session#vdf_session.step_checkpoints_map,
+		#vdf_session{ step_checkpoints_map = Map } ->
 			{reply, maps:get(StepNumber, Map, not_found), State}
 	end;
 
@@ -451,16 +448,15 @@ handle_call({get_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, Stat
 %% @doc Get all the steps in the current session that fall between
 %% StartStepNumber+1 and EndStepNumber (inclusive)
 handle_call({get_session_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->
-	#state{ session_by_key = SessionByKey } = State,
-	Session = maps:get(SessionKey, SessionByKey, not_found),
+	Session = get_session(SessionKey, State),
 	{_, Steps} = get_step_range(Session, StartStepNumber + 1, EndStepNumber),
 	{reply, Steps, State};
 
 handle_call(get_steps, _From, #state{ current_session_key = undefined } = State) ->
 	{reply, [], State};
 handle_call(get_steps, _From, State) ->
-	#state{ current_session_key = SessionKey, session_by_key = SessionByKey } = State,
-	#vdf_session{ step_number = StepNumber } = maps:get(SessionKey, SessionByKey),
+	#state{ current_session_key = SessionKey } = State,
+	#vdf_header{ step_number = StepNumber } = get_session_header(SessionKey, State),
 	{reply, get_steps2(1, StepNumber, SessionKey, State), State};
 
 handle_call({apply_external_update, Update, Peer}, _From, State) ->
@@ -468,8 +464,7 @@ handle_call({apply_external_update, Update, Peer}, _From, State) ->
 	apply_external_update2(Update, State#state{ last_external_update = {Peer, Now} });
 
 handle_call({get_session, SessionKey}, _From, State) ->
-	#state{ session_by_key = SessionByKey } = State,
-	{reply, maps:get(SessionKey, SessionByKey, not_found), State};
+	{reply, get_session(SessionKey, State), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -517,8 +512,8 @@ handle_cast({apply_tip, B, PrevB}, State) ->
 handle_cast({validated_steps, Args}, State) ->
 	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
 			VDFDifficulty, NextVDFDifficulty, Steps, LastStepCheckpoints} = Args,
-	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
-	case maps:get(SessionKey, SessionByKey, not_found) of
+	#state{ current_session_key = CurrentSessionKey } = State,
+	case get_session(SessionKey, State) of
 		not_found ->
 			%% The corresponding fork origin should have just dropped below the
 			%% checkpoint height.
@@ -527,8 +522,9 @@ handle_cast({validated_steps, Args}, State) ->
 					{interval, element(2, SessionKey)},
 					{vdf_difficulty, element(3, SessionKey)}]),
 			{noreply, State};
-		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
-				step_checkpoints_map = Map } = Session ->
+		#vdf_session{ 
+				header = Header, steps = CurrentSteps, step_checkpoints_map = Map } = Session ->
+			#vdf_header{ step_number = CurrentStepNumber } = Header,
 			Session2 =
 				case CurrentStepNumber < StepNumber of
 					true ->
@@ -540,7 +536,8 @@ handle_cast({validated_steps, Args}, State) ->
 							get_step_range(Steps, StepNumber, CurrentStepNumber + 1, StepNumber),
 						Map2 = maps:put(StepNumber, LastStepCheckpoints, Map),
 						Session#vdf_session{
-							step_number = StepNumber, steps = Steps2 ++ CurrentSteps,
+							header = Header#vdf_header{ step_number = StepNumber },
+							steps = Steps2 ++ CurrentSteps,
 							step_checkpoints_map = Map2 };
 					false ->
 						Session
@@ -612,12 +609,13 @@ handle_info({'DOWN', Ref, process, _, Reason}, #state{ worker_monitor_ref = Ref 
 	{noreply, start_worker(State)};
 
 handle_info({computed, Args}, State) ->
-	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
+	#state{ current_session_key = CurrentSessionKey } = State,
 	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
-	Session = maps:get(CurrentSessionKey, SessionByKey),
-	#vdf_session{ steps = [SessionOutput | _] = Steps,
-			seed = Seed, next_vdf_difficulty = NextVDFDifficulty,
-			step_checkpoints_map = Map, prev_session_key = PrevSessionKey } = Session,
+	Session = get_session(CurrentSessionKey, State),
+	#vdf_session{ header = Header, steps = [SessionOutput | _] = Steps,
+			step_checkpoints_map = Map } = Session,
+	#vdf_header{ seed = Seed, next_vdf_difficulty = NextVDFDifficulty,
+			prev_session_key = PrevSessionKey } = Header,
 	{NextSeed, IntervalNumber, NextVDFDifficulty} = CurrentSessionKey,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
 	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
@@ -630,7 +628,7 @@ handle_info({computed, Args}, State) ->
 			{noreply, State};
 		true ->
 			Map2 = maps:put(StepNumber, Checkpoints, Map),
-			Session2 = Session#vdf_session{ step_number = StepNumber,
+			Session2 = Session#vdf_session{ header = Header#vdf_header{ step_number = StepNumber },
 					step_checkpoints_map = Map2, steps = [Output | Steps] },
 			State2 = cache_session(State, CurrentSessionKey, CurrentSessionKey, Session2),
 			ar_events:send(nonce_limiter, {computed_output,
@@ -655,6 +653,16 @@ session_key(#nonce_limiter_info{ next_seed = NextSeed, global_step_number = Step
 	session_key(NextSeed, StepNumber, NextVDFDifficulty).
 session_key(NextSeed, StepNumber, NextVDFDifficulty) ->
 	{NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY, NextVDFDifficulty}.
+
+get_session_header(SessionKey, State) ->
+	Session = get_session(SessionKey, State),
+	case Session of
+		not_found -> not_found;
+		#vdf_session{ header = Header } -> Header
+	end.
+
+get_session(SessionKey, #state{ session_by_key = SessionByKey }) ->
+	maps:get(SessionKey, SessionByKey, not_found).
 
 dump_error(Data) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -735,11 +743,13 @@ apply_base_block(B, State) ->
 			last_step_checkpoints = LastStepCheckpoints,
 			vdf_difficulty = VDFDifficulty,
 			next_vdf_difficulty = NextVDFDifficulty } = B#block.nonce_limiter_info,
-	Session = #vdf_session{ step_number = StepNumber,
+	Session = #vdf_session{ 
+			header = #vdf_header{
+				seed = Seed, step_number = StepNumber,
+				upper_bound = UpperBound, next_upper_bound = NextUpperBound,
+				vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty },
 			step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
-			steps = [Output], upper_bound = UpperBound, next_upper_bound = NextUpperBound,
-			seed = Seed, vdf_difficulty = VDFDifficulty,
-			next_vdf_difficulty = NextVDFDifficulty },
+			steps = [Output] },
 	SessionKey = session_key(B#block.nonce_limiter_info),
 	cache_session(State, SessionKey, SessionKey, Session).
 
@@ -888,10 +898,11 @@ worker() ->
 %% @doc Get all the steps that fall between StartStepNumber and EndStepNumber, traversing
 %% multiple sessions if needed.
 get_steps2(StartStepNumber, EndStepNumber, SessionKey, State) ->
-	#state{ session_by_key = SessionByKey } = State,
-	case maps:get(SessionKey, SessionByKey, not_found) of
-		#vdf_session{ step_number = StepNumber, prev_session_key = PrevSessionKey } = Session
-				when StepNumber >= EndStepNumber ->
+	Session = get_session(SessionKey, State),
+	case Session of
+		#vdf_session{ header = #vdf_header{
+					step_number = StepNumber, prev_session_key = PrevSessionKey }
+				} = Session when StepNumber >= EndStepNumber ->
 			%% Get the steps within the current session that fall within the StartStepNumber+1
 			%% and EndStepNumber (inclusive) range.
 			{_, Steps} = get_step_range(Session, StartStepNumber + 1, EndStepNumber),
@@ -916,11 +927,12 @@ get_steps2(StartStepNumber, EndStepNumber, SessionKey, State) ->
 
 schedule_step(State) ->
 	#state{ current_session_key = {NextSeed, IntervalNumber, NextVDFDifficulty} = Key,
-			session_by_key = SessionByKey, worker = Worker } = State,
-	#vdf_session{ step_number = PrevStepNumber, steps = Steps, upper_bound = UpperBound,
+			worker = Worker } = State,
+	#vdf_session{ header = #vdf_header{
+			step_number = PrevStepNumber, upper_bound = UpperBound,
 			next_upper_bound = NextUpperBound,
-			vdf_difficulty = VDFDifficulty,
-			next_vdf_difficulty = NextVDFDifficulty } = maps:get(Key, SessionByKey),
+			vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty},
+			steps = Steps } = get_session(Key, State),
 	PrevOutput = hd(Steps),
 	StepNumber = PrevStepNumber + 1,
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
@@ -953,15 +965,14 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 	end.
 
 apply_external_update2(Update, State) ->
-	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey,
-		last_external_update = {Peer, _} } = State,
+	#state{ current_session_key = CurrentSessionKey, last_external_update = {Peer, _} } = State,
 	#nonce_limiter_update{ session_key = SessionKey,
-			session = #vdf_session{ upper_bound = UpperBound,
-					prev_session_key = PrevSessionKey,
-					step_number = StepNumber } = Session,
+			session = #vdf_session{ header = #vdf_header{ 
+					upper_bound = UpperBound, prev_session_key = PrevSessionKey,
+					step_number = StepNumber } } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
 	{SessionSeed, SessionInterval, SessionVDFDifficulty} = SessionKey,
-	case maps:get(SessionKey, SessionByKey, not_found) of
+	case get_session(SessionKey, State) of
 		not_found ->
 			case IsPartial of
 				true ->
@@ -982,9 +993,9 @@ apply_external_update2(Update, State) ->
 					%% part of PrevSession.
 
 					%% Start after the last step of the previous session
-					RangeStart = case maps:get(PrevSessionKey, SessionByKey, undefined) of
-						undefined -> 0;
-						PrevSession -> PrevSession#vdf_session.step_number + 1
+					RangeStart = case get_session_header(PrevSessionKey, State) of
+						not_found -> 0;
+						PrevHeader -> PrevHeader#vdf_header.step_number + 1
 					end,
 					%% But start no later than the beginning of the session 2 after PrevSession.
 					%% This is because the steps in that session - which may have been previously
@@ -997,13 +1008,15 @@ apply_external_update2(Update, State) ->
 						Session, Steps, UpperBound),
 					{reply, ok, State2}
 			end;
-		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
-				step_checkpoints_map = Map } = CurrentSession ->
+		CurrentSession ->
+			#vdf_session{ header = #vdf_header{ step_number = CurrentStepNumber } = CurrentHeader,
+				steps = CurrentSteps, step_checkpoints_map = Map } = CurrentSession,
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
 					Map2 = maps:put(StepNumber, Checkpoints, Map),
 					[Output | _] = Session#vdf_session.steps,
-					CurrentSession2 = CurrentSession#vdf_session{ step_number = StepNumber,
+					CurrentSession2 = CurrentSession#vdf_session{ 
+							header = CurrentHeader#vdf_header{ step_number = StepNumber },
 							step_checkpoints_map = Map2,
 							steps = [Output | CurrentSteps] },
 					State2 = apply_external_update3(State,
@@ -1111,7 +1124,8 @@ get_step_range(Session, SessionInterval) ->
 
 get_step_range(not_found, _RangeStart, _RangeEnd) ->
 	{0, []};
-get_step_range(#vdf_session{steps = Steps, step_number = StepNumber}, RangeStart, RangeEnd) ->
+get_step_range(Session, RangeStart, RangeEnd) ->
+	#vdf_session{header = #vdf_header{ step_number = StepNumber }, steps = Steps } = Session,
 	get_step_range(Steps, StepNumber, RangeStart, RangeEnd).
 
 get_step_range([], _StepNumber, _RangeStart, _RangeEnd) ->
@@ -1152,12 +1166,14 @@ cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey,
 			not_found ->
 				{_, Interval, NextVDFDifficulty} = SessionKey,
 				{StepNumber, Steps} = get_step_range(PrevSession, Interval),
-				#vdf_session{ step_number = StepNumber, seed = Seed,
+				#vdf_session{ header = #vdf_header{
+							step_number = StepNumber, seed = Seed,
+							upper_bound = UpperBound, next_upper_bound = NextUpperBound,
+							prev_session_key = PrevSessionKey,
+							vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty 
+						},
 						step_checkpoints_map = StepCheckpointsMap,
-						steps = Steps, upper_bound = UpperBound,
-						next_upper_bound = NextUpperBound, prev_session_key = PrevSessionKey,
-						vdf_difficulty = VDFDifficulty,
-						next_vdf_difficulty = NextVDFDifficulty };
+						steps = Steps };
 			ExistingSession ->
 				ExistingSession
 		end,
@@ -1166,10 +1182,12 @@ cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey,
 cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	#state{ session_by_key = SessionByKey, sessions = Sessions } = State,
 	{NextSeed, Interval, NextVDFDifficulty} = SessionKey,
-	maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session),
+	#vdf_session{ header = Header } = Session,
+	maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Header),
 	?LOG_DEBUG([{event, add_session}, {next_seed, ar_util:encode(NextSeed)}, 
-		{next_vdf_difficulty, Session#vdf_session.next_vdf_difficulty}, {interval, Interval},
-		{step_number, Session#vdf_session.step_number}]),
+		{next_vdf_difficulty, Header#vdf_header.next_vdf_difficulty},
+		{interval, Interval},
+		{step_number, Header#vdf_header.step_number}]),
 	SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
 	%% If Session exists, then {Interval, NextSeed} will already exist in the Sessions set and
 	%% gb_sets:add_element will not cause a change.
@@ -1177,13 +1195,13 @@ cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	State#state{ current_session_key = CurrentSessionKey, sessions = Sessions2,
 					session_by_key = SessionByKey2 }.
 
-maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
+maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Header) ->
 	case SessionKey == CurrentSessionKey of
 		true ->
-			#vdf_session{
+			#vdf_header{
 				step_number = StepNumber,
 				vdf_difficulty = VDFDifficulty, 
-				next_vdf_difficulty = NextVDFDifficulty } = Session,
+				next_vdf_difficulty = NextVDFDifficulty } = Header,
 			prometheus_gauge:set(vdf_step, StepNumber),
 			prometheus_gauge:set(vdf_difficulty, [current], VDFDifficulty),
 			prometheus_gauge:set(vdf_difficulty, [next], NextVDFDifficulty);
@@ -1194,10 +1212,14 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 send_events_for_external_update(_SessionKey, _Session, _PrevSessionKey, _UpperBound, []) ->
 	ok;
 send_events_for_external_update(SessionKey, Session, PrevSessionKey, UpperBound, [Step | Steps]) ->
-	#vdf_session{ seed = Seed, step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
+	#vdf_session{ 
+		header = #vdf_header{ seed = Seed, step_number = StepNumber } = Header,
+		steps = [_ | PrevSteps] } = Session,
 	ar_events:send(nonce_limiter, {computed_output,
 			{SessionKey, PrevSessionKey, Seed, StepNumber, Step, UpperBound}}),
-	Session2 = Session#vdf_session{ step_number = StepNumber - 1, steps = PrevSteps },
+	Session2 = Session#vdf_session{
+		header = Header#vdf_header{ step_number = StepNumber - 1 },
+		steps = PrevSteps },
 	send_events_for_external_update(SessionKey, Session2, PrevSessionKey, UpperBound, Steps).
 
 debug_double_check(Label, Result, Func, Args) ->
@@ -1488,7 +1510,8 @@ get_step_range_test() ->
 	?assertEqual(
 		{9, [9, 8, 7, 6, 5]},
 		get_step_range(
-			#vdf_session{ steps = lists:seq(12, 0, -1), step_number = 12}, 1),
+			#vdf_session{
+				header = #vdf_header{ step_number = 12 }, steps = lists:seq(12, 0, -1) }, 1),
 		"Session and Interval"
 	),
 	?assertEqual(
@@ -1499,7 +1522,8 @@ get_step_range_test() ->
 	?assertEqual(
 		{9, [9, 8, 7]},
 		get_step_range(
-			#vdf_session{ steps = lists:seq(12, 0, -1), step_number = 12}, 7, 9),
+			#vdf_session{
+				header = #vdf_header{ step_number = 12 }, steps = lists:seq(12, 0, -1) }, 7, 9),
 		"Session and Range"
 	),
 	?assertEqual(
@@ -1522,18 +1546,18 @@ assert_session(B, PrevB) ->
 	BSessionKey = session_key(B#block.nonce_limiter_info),
 
 	BSession = ar_nonce_limiter:get_session(BSessionKey),
-	?assertEqual(BVDFDifficulty, BSession#vdf_session.vdf_difficulty),
+	?assertEqual(BVDFDifficulty, BSession#vdf_session.header#vdf_header.vdf_difficulty),
 	?assertEqual(BNextVDFDifficulty,
-		BSession#vdf_session.next_vdf_difficulty),
+		BSession#vdf_session.header#vdf_header.next_vdf_difficulty),
 	case PrevBSessionKey == BSessionKey of
 		true ->
 			ok;
 		false ->
 			PrevBSession = ar_nonce_limiter:get_session(PrevBSessionKey),
 			?assertEqual(PrevBVDFDifficulty,
-				PrevBSession#vdf_session.vdf_difficulty),
+				PrevBSession#vdf_session.header#vdf_header.vdf_difficulty),
 			?assertEqual(PrevBNextVDFDifficulty,
-				PrevBSession#vdf_session.next_vdf_difficulty)
+				PrevBSession#vdf_session.header#vdf_header.next_vdf_difficulty)
 	end.
 
 assert_validate(B, PrevB, ExpectedResult) ->

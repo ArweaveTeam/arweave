@@ -388,16 +388,19 @@
 }).
 
 %% @doc A VDF session.
--record(vdf_session, {
+-record(vdf_header, {
 	step_number,
 	seed,
-	step_checkpoints_map = #{},
-	steps,
 	prev_session_key,
 	upper_bound,
 	next_upper_bound,
 	vdf_difficulty,
 	next_vdf_difficulty
+}).
+-record(vdf_session, {
+	header = #vdf_header{},
+	step_checkpoints_map = #{},
+	steps
 }).
 
 %% @doc The format of the nonce limiter update provided by the configured trusted peer.

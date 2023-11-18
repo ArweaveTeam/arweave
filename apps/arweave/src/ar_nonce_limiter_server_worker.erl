@@ -166,7 +166,7 @@ push_session(SessionKey, Peer, Format) ->
 
 log_failure(Peer, SessionKey, Update, Extra) ->
 	{SessionSeed, SessionInterval, NextVDFDifficulty} = SessionKey,
-	StepNumber = Update#nonce_limiter_update.session#vdf_session.step_number,
+	StepNumber = Update#nonce_limiter_update.session#vdf_session.header#vdf_header.step_number,
 	?LOG_WARNING([{event, failed_to_push_nonce_limiter_update_to_peer},
 			{peer, ar_util:format_peer(Peer)},
 			{session_seed, ar_util:encode(SessionSeed)},
