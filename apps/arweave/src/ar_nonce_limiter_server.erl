@@ -10,11 +10,9 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {
-	current_session,
-	current_prev_session,
-	current_step_number,
-	current_output,
-	current_partition_upper_bound
+	partial_update,
+	full_update,
+	full_prev_update
 }).
 
 %%%===================================================================
@@ -44,28 +42,23 @@ init([]) ->
 	ok = ar_events:subscribe(nonce_limiter),
 	{ok, #state{}}.
 
-handle_call(get_update, _From, #state{ current_output = undefined } = State) ->
+handle_call(get_update, _From, #state{ partial_update = undefined } = State) ->
 	{reply, not_found, State};
 handle_call(get_update, _From, State) ->
-	#state{ current_output = Output, current_session = {SessionKey, Session},
-			current_step_number = StepNumber,
-			current_partition_upper_bound = PartitionUpperBound } = State,
-	{reply, 
-		make_partial_nonce_limiter_update(
-			SessionKey, Session, StepNumber, Output, PartitionUpperBound),
-		State};
+	#state{ partial_update = PartialUpdate } = State,
+	{reply, PartialUpdate, State};
 
-handle_call(get_session, _From, #state{ current_session = undefined } = State) ->
+handle_call(get_session, _From, #state{ full_update = undefined } = State) ->
 	{reply, not_found, State};
 handle_call(get_session, _From, State) ->
-	#state{ current_session = {SessionKey, Session} } = State,
-	{reply, make_full_nonce_limiter_update(SessionKey, Session), State};
+	#state{ full_update = FullUpdate } = State,
+	{reply, FullUpdate, State};
 
-handle_call(get_previous_session, _From, #state{ current_prev_session = undefined } = State) ->
+handle_call(get_previous_session, _From, #state{ full_prev_update = undefined } = State) ->
 	{reply, not_found, State};
 handle_call(get_previous_session, _From, State) ->
-	#state{ current_prev_session = {SessionKey, Session} } = State,
-	{reply, make_full_nonce_limiter_update(SessionKey, Session), State};
+	#state{ full_prev_update = FullPrevUpdate } = State,
+	{reply, FullPrevUpdate, State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -80,11 +73,14 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	Session = ar_nonce_limiter:get_session(SessionKey),
 	PrevSessionKey = Session#vdf_session.prev_session_key,
 	PrevSession = ar_nonce_limiter:get_session(PrevSessionKey),
-	{noreply, State#state{ current_session = {SessionKey, Session},
-			current_prev_session = {PrevSessionKey, PrevSession},
-			current_step_number = StepNumber,
-			current_output = Output,
-			current_partition_upper_bound = PartitionUpperBound }};
+
+	PartialUpdate = make_partial_nonce_limiter_update(
+			SessionKey, Session, StepNumber, Output, PartitionUpperBound),
+	FullUpdate = make_full_nonce_limiter_update(SessionKey, Session),
+	FullPrevUpdate = make_full_nonce_limiter_update(PrevSessionKey, PrevSession),
+
+	{noreply, State#state{ partial_update = PartialUpdate, full_update = FullUpdate,
+			full_prev_update = FullPrevUpdate }};
 
 handle_info({event, nonce_limiter, _Args}, State) ->
 	{noreply, State};
