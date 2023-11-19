@@ -253,7 +253,7 @@ handle_info({'DOWN', Ref, process, _, Reason},
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty},
-			_PrevSessionKey, _Seed, StepNumber, _Output, _PartitionUpperBound} = Args,
+			StepNumber, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
 		{step_number, StepNumber}, {session, ar_util:safe_encode(NextSeed)}]),
 	{noreply, State};
@@ -262,10 +262,10 @@ handle_info({event, nonce_limiter, {computed_output, _}},
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
-	{SessionKey, _PrevSessionKey, Seed, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
-	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
+	Task = {computed_output, {SessionKey, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
 	prometheus_gauge:inc(mining_server_task_queue_len, [computed_output]),
@@ -468,42 +468,43 @@ handle_task({computed_output, _Args},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
-	#state{ session = Session } = State,
-	{SessionKey, Seed, StepNumber, Output, PartitionUpperBound} = Args,
-	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
+	#state{ session = MiningSession } = State,
+	{VDFSessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = VDFSessionKey,
 	#mining_session{ next_seed = CurrentNextSeed,
 			next_vdf_difficulty = CurrentNextVDFDifficulty,
 			start_interval_number = CurrentStartIntervalNumber,
-			partition_upper_bound = CurrentPartitionUpperBound } = Session,
-	Session2 =
+			partition_upper_bound = CurrentPartitionUpperBound } = MiningSession,
+	MiningSession2 =
 		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound,
 				CurrentNextVDFDifficulty}
 				== {StartIntervalNumber, NextSeed, PartitionUpperBound, NextVDFDifficulty} of
 			true ->
-				Session;
+				MiningSession;
 			false ->
+				#vdf_session{ seed = Seed } = ar_nonce_limiter:get_session(VDFSessionKey),
 				ar:console("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
-						"next entropy nonce: ~s, interval number: ~B.~n",
-						[PartitionUpperBound, ar_util:safe_encode(Seed), ar_util:safe_encode(NextSeed),
-						StartIntervalNumber]),
-				NewSession = reset_mining_session(
+					"next entropy nonce: ~s, interval number: ~B.~n",
+					[PartitionUpperBound, ar_util:safe_encode(Seed), ar_util:safe_encode(NextSeed),
+					StartIntervalNumber]),
+				NewMiningSession = reset_mining_session(
 					#mining_session{ seed = Seed, next_seed = NextSeed,
 						next_vdf_difficulty = NextVDFDifficulty,
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound },
 					State),
 				?LOG_INFO([{event, new_mining_session}, 
-						{session_ref, ar_util:safe_encode(NewSession#mining_session.ref)},
+						{session_ref, ar_util:safe_encode(NewMiningSession#mining_session.ref)},
 						{step_number, StepNumber},
 						{interval_number, StartIntervalNumber},
 						{upper_bound, PartitionUpperBound},
 						{entropy_nonce, ar_util:safe_encode(Seed)},
 						{next_entropy_nonce, ar_util:safe_encode(NextSeed)}]),
-				NewSession
+				NewMiningSession
 		end,
 	Candidate = #mining_candidate{
-		session_ref = Session2#mining_session.ref,
-		seed = Seed,
+		session_ref = MiningSession2#mining_session.ref,
+		seed = MiningSession2#mining_session.seed,
 		next_seed = NextSeed,
 		next_vdf_difficulty = NextVDFDifficulty,
 		start_interval_number = StartIntervalNumber,
@@ -515,8 +516,8 @@ handle_task({computed_output, Args}, State) ->
 	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
 		{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
 		{start_interval_number, StartIntervalNumber},
-		{session_ref, ar_util:safe_encode(Session2#mining_session.ref)}]),
-	{noreply, State2#state{ session = Session2 }};
+		{session_ref, ar_util:safe_encode(MiningSession2#mining_session.ref)}]),
+	{noreply, State2#state{ session = MiningSession2 }};
 
 handle_task({chunk1, Candidate}, State) ->
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of

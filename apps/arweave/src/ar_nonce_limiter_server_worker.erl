@@ -63,7 +63,7 @@ handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) 
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	#state{ peer = Peer, pause_until = Timestamp, format = Format } = State,
-	{SessionKey, PrevSessionKey, _Seed, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
 	case os:system_time(second) < Timestamp of
 		true ->
@@ -73,7 +73,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				true ->
 					{noreply, State};
 				false ->
-					{noreply, push_update(SessionKey, PrevSessionKey, StepNumber, Output,
+					{noreply, push_update(SessionKey, StepNumber, Output,
 							PartitionUpperBound, Peer, Format, State)}
 			end
 	end;
@@ -92,10 +92,11 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-push_update(SessionKey, PrevSessionKey, StepNumber, Output,
+push_update(SessionKey, StepNumber, Output,
 		PartitionUpperBound, Peer, Format, State) ->
+	Session = ar_nonce_limiter:get_session(SessionKey),
 	Update = ar_nonce_limiter_server:make_partial_nonce_limiter_update(
-		SessionKey, ar_nonce_limiter:get_session(SessionKey), StepNumber, Output, PartitionUpperBound),
+		SessionKey, Session, StepNumber, Output, PartitionUpperBound),
 	case Update of
 		not_found -> ok;
 		_ ->
@@ -119,7 +120,7 @@ push_update(SessionKey, PrevSessionKey, StepNumber, Output,
 							?LOG_DEBUG([{event, vdf_client_requested_different_format},
 								{peer, ar_util:format_peer(Peer)},
 								{format, Format}, {requested_format, RequestedFormat}]),
-							push_update(SessionKey, PrevSessionKey, StepNumber,
+							push_update(SessionKey, StepNumber,
 									Output, PartitionUpperBound, Peer, RequestedFormat,
 									State#state{ format = RequestedFormat });
 						{true, false, _, _} ->
@@ -128,12 +129,14 @@ push_update(SessionKey, PrevSessionKey, StepNumber, Output,
 							State#state{ pause_until = Now + Postpone };
 						{true, true, false, _} ->
 							%% Client requested the full session
-							push_session(PrevSessionKey, Peer, Format),
-							push_session(SessionKey, Peer, Format),
+							PrevSessionKey = Session#vdf_session.prev_session_key,
+							PrevSession = ar_nonce_limiter:get_session(PrevSessionKey),
+							push_session(PrevSessionKey, PrevSession, Peer, Format),
+							push_session(SessionKey, Session, Peer, Format),
 							State;
 						{true, true, true, false} ->
 							%% Client requested missing steps
-							push_session(SessionKey, Peer, Format),
+							push_session(SessionKey, Session, Peer, Format),
 							State;
 						_ ->
 							%% Client is ahead of the server
@@ -145,9 +148,8 @@ push_update(SessionKey, PrevSessionKey, StepNumber, Output,
 			end
 	end.
 
-push_session(SessionKey, Peer, Format) ->
-	Update = ar_nonce_limiter_server:make_full_nonce_limiter_update(
-		SessionKey, ar_nonce_limiter:get_session(SessionKey)),
+push_session(SessionKey, Session, Peer, Format) ->
+	Update = ar_nonce_limiter_server:make_full_nonce_limiter_update(SessionKey, Session),
 	case Update of
 		not_found -> ok;
 		_ ->
@@ -166,7 +168,7 @@ push_session(SessionKey, Peer, Format) ->
 
 log_failure(Peer, SessionKey, Update, Extra) ->
 	{SessionSeed, SessionInterval, NextVDFDifficulty} = SessionKey,
-	StepNumber = Update#nonce_limiter_update.session#vdf_session.header#vdf_header.step_number,
+	StepNumber = Update#nonce_limiter_update.session#vdf_session.step_number,
 	?LOG_WARNING([{event, failed_to_push_nonce_limiter_update_to_peer},
 			{peer, ar_util:format_peer(Peer)},
 			{session_seed, ar_util:encode(SessionSeed)},

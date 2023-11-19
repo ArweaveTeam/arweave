@@ -25,13 +25,10 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 make_partial_nonce_limiter_update(SessionKey, Session, StepNumber, Output, PartitionUpperBound) ->
-	#vdf_session{ header = Header } = Session,
 	make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
-			header = Header#vdf_header{
-				upper_bound = PartitionUpperBound, step_number = StepNumber },
-			steps = [Output]
+			upper_bound = PartitionUpperBound, step_number = StepNumber, steps = [Output]
 		},
 		true).
 
@@ -79,8 +76,9 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	{SessionKey, PrevSessionKey, _Seed, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	Session = ar_nonce_limiter:get_session(SessionKey),
+	PrevSessionKey = Session#vdf_session.prev_session_key,
 	PrevSession = ar_nonce_limiter:get_session(PrevSessionKey),
 	{noreply, State#state{ current_session = {SessionKey, Session},
 			current_prev_session = {PrevSessionKey, PrevSession},
@@ -104,7 +102,7 @@ terminate(_Reason, _State) ->
 make_nonce_limiter_update(_SessionKey, not_found, _IsPartial) ->
 	not_found;
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
-	StepNumber = Session#vdf_session.header#vdf_header.step_number,
+	StepNumber = Session#vdf_session.step_number,
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
 	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
 	#nonce_limiter_update{ session_key = SessionKey,
