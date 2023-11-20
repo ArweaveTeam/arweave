@@ -1325,27 +1325,57 @@ handle(<<"GET">>, [<<"vdf">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_update)
+			handle_get_vdf(Req, get_update, 1)
+	end;
+
+%% Serve an VDF update to a configured VDF client.
+%% GET request to /vdf2.
+handle(<<"GET">>, [<<"vdf2">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_update, 2)
 	end;
 
 %% Serve the current VDF session to a configured VDF client.
-%% GET request to /vdf.
+%% GET request to /vdf/session.
 handle(<<"GET">>, [<<"vdf">>, <<"session">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_session)
+			handle_get_vdf(Req, get_session, 1)
+	end;
+
+%% Serve the current VDF session to a configured VDF client.
+%% GET request to /vdf2/session.
+handle(<<"GET">>, [<<"vdf2">>, <<"session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_session, 2)
 	end;
 
 %% Serve the previous VDF session to a configured VDF client.
-%% GET request to /vdf.
+%% GET request to /vdf/previous_session.
 handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_previous_session)
+			handle_get_vdf(Req, get_previous_session, 1)
+	end;
+
+%% Serve the previous VDF session to a configured VDF client.
+%% GET request to /vdf2/previous_session.
+handle(<<"GET">>, [<<"vdf2">>, <<"previous_session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_previous_session, 2)
 	end;
 
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) ->
@@ -2944,13 +2974,20 @@ handle_post_vdf2(Req, Pid, Peer) ->
 handle_post_vdf3(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			{ok, Update} = ar_serialize:binary_to_nonce_limiter_update(Body),
-			case ar_nonce_limiter:apply_external_update(Update, Peer) of
-				ok ->
-					{200, #{}, <<>>, Req2};
-				#nonce_limiter_update_response{} = Response ->
+			case ar_serialize:binary_to_nonce_limiter_update(Body) of
+				{ok, Update} ->
+					case ar_nonce_limiter:apply_external_update(Update, Peer) of
+						ok ->
+							{200, #{}, <<>>, Req2};
+						#nonce_limiter_update_response{} = Response ->
+							Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+							{202, #{}, Bin, Req2}
+					end;
+				{error, _} ->
+					%% We couldn't deserialize the update, ask for a different format
+					Response = #nonce_limiter_update_response{ format = 2 },
 					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-					{202, #{}, Bin, Req2}
+					{202, #{}, Bin, Req}
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
@@ -2958,21 +2995,22 @@ handle_post_vdf3(Req, Pid, Peer) ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
-handle_get_vdf(Req, Call) ->
+handle_get_vdf(Req, Call, Format) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
 		[] ->
 			{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
 		[{_, _RawPeer}] ->
-			handle_get_vdf2(Req, Call)
+			handle_get_vdf2(Req, Call, Format)
 	end.
 
-handle_get_vdf2(Req, Call) ->
+handle_get_vdf2(Req, Call, Format) ->
 	case gen_server:call(ar_nonce_limiter_server, Call) of
 		not_found ->
 			{404, #{}, <<>>, Req};
 		Update ->
-			{200, #{}, ar_serialize:nonce_limiter_update_to_binary(Update), Req}
+			Bin = ar_serialize:nonce_limiter_update_to_binary(Format, Update),
+			{200, #{}, Bin, Req}
 	end.
 
 read_complete_body(Req, Pid) ->

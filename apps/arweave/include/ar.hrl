@@ -21,7 +21,7 @@
 -define(CLIENT_VERSION, 5).
 
 %% The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 66).
+-define(RELEASE_NUMBER, 67).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
@@ -412,7 +412,8 @@
 -record(nonce_limiter_update_response, {
 	session_found = true,
 	step_number,
-	postpone = 0
+	postpone = 0,
+	format = 2
 }).
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers

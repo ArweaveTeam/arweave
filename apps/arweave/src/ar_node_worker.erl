@@ -461,6 +461,7 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 		merkle_rebase_threshold = MerkleRebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NonceLimiterNextSeed,
+		next_vdf_difficulty = NonceLimiterNextVDFDifficulty,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
@@ -518,11 +519,12 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 
 	%% Check solution seed
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
+			next_vdf_difficulty = PrevNextVDFDifficulty,
 			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck = PassesTimelineCheck andalso
-			{IntervalNumber, NonceLimiterNextSeed} == {PrevIntervalNumber, PrevNextSeed},
-
+			{IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
+					== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty},
 	PrevB = ar_block_cache:get(block_cache, PrevH),
 	CorrectRebaseThreshold =
 		case PassesSeedCheck of
@@ -546,7 +548,8 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 					{check, rebase_threshold_check}, {solution, ar_util:encode(SolutionH)}]),
 				false;
 			true ->
-				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed)
+				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed,
+						PrevNextVDFDifficulty)
 		end,
 	HaveSteps2 =
 		case HaveSteps of

@@ -33,4 +33,13 @@ for dir in "${storage_modules[@]}"; do
     flags="$flags storage_module $index,$size,$address"
 done
 
+for dir in /arweave-data/wallets/*; do
+	prefix="arweave_keyfile_"
+	suffix=".json"
+
+	filename=$(basename $dir)
+	temp=${filename#$prefix}
+	address=${temp%$suffix}
+done
+
 echo "$flags mining_addr $address"

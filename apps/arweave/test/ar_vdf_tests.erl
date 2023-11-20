@@ -1,7 +1,9 @@
 -module(ar_vdf_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
 
 -define(ENCODED_PREV_OUTPUT, <<"f_z7RLug8etm3SrmRf-xPwXEL0ZQ_xHng2A5emRDQBw">>).
 -define(RESET_SEED, <<"f_z7RLug8etm3SrmRf-xPwXEL0ZQ_xHng2A5emRDQBw">>).
@@ -96,71 +98,71 @@ test_vdf_reset_verify_() ->
 	ok.
 
 test_vdf_reset_0_() ->
-    StartStepNumber1 = 2,
-    StartStepNumber2 = 3,
-    StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
-    StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
-    PrevOutput = ar_util:decode(?ENCODED_PREV_OUTPUT),
-    ResetSeed = ar_util:decode(?RESET_SEED),
+	StartStepNumber1 = 2,
+	StartStepNumber2 = 3,
+	StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
+	StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
+	PrevOutput = ar_util:decode(?ENCODED_PREV_OUTPUT),
+	ResetSeed = ar_util:decode(?RESET_SEED),
 
-    ResetSalt = StartSalt1,
+	ResetSalt = StartSalt1,
 
-    MixOutput = reset_mix(PrevOutput, ResetSeed),
-    {ok, Output1, Checkpoints1} = ar_vdf:compute2(StartStepNumber1, MixOutput, ?TEST_VDF_DIFFICULTY),
-    {ok, _Output2, Checkpoints2} = ar_vdf:compute2(StartStepNumber2, Output1, ?TEST_VDF_DIFFICULTY),
+	MixOutput = reset_mix(PrevOutput, ResetSeed),
+	{ok, Output1, Checkpoints1} = ar_vdf:compute2(StartStepNumber1, MixOutput, ?TEST_VDF_DIFFICULTY),
+	{ok, _Output2, Checkpoints2} = ar_vdf:compute2(StartStepNumber2, Output1, ?TEST_VDF_DIFFICULTY),
 
-    % partial verify should work
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1)),
-    assert_verify(StartSalt2, ResetSalt, Output1, 1, lists:reverse(Checkpoints2)),
+	% partial verify should work
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1)),
+	assert_verify(StartSalt2, ResetSalt, Output1, 1, lists:reverse(Checkpoints2)),
 
-    Hashes3 = lists:sublist(lists:reverse(Checkpoints2), 1, ?VDF_CHECKPOINT_COUNT_IN_STEP + 1),
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1) ++ Hashes3),
+	Hashes3 = lists:sublist(lists:reverse(Checkpoints2), 1, ?VDF_CHECKPOINT_COUNT_IN_STEP + 1),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1) ++ Hashes3),
 
-    Hashes4 = lists:reverse(Checkpoints1) ++ lists:reverse(Checkpoints2),
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, Hashes4),
+	Hashes4 = lists:reverse(Checkpoints1) ++ lists:reverse(Checkpoints2),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, Hashes4),
 
-    ok.
+	ok.
 
 test_vdf_reset_1_() ->
-    StartStepNumber1 = 2,
-    StartStepNumber2 = 3,
-    StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
-    StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
-    PrevOutput = ar_util:decode(?ENCODED_PREV_OUTPUT),
-    ResetSeed = ar_util:decode(?RESET_SEED),
+	StartStepNumber1 = 2,
+	StartStepNumber2 = 3,
+	StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
+	StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
+	PrevOutput = ar_util:decode(?ENCODED_PREV_OUTPUT),
+	ResetSeed = ar_util:decode(?RESET_SEED),
 
-    ResetSalt = StartSalt2,
+	ResetSalt = StartSalt2,
 
-    {ok, Output1, Checkpoints1} = ar_vdf:compute2(StartStepNumber1, PrevOutput, ?TEST_VDF_DIFFICULTY),
-    MixOutput = reset_mix(Output1, ResetSeed),
-    {ok, _Output2, Checkpoints2} = ar_vdf:compute2(StartStepNumber2, MixOutput, ?TEST_VDF_DIFFICULTY),
+	{ok, Output1, Checkpoints1} = ar_vdf:compute2(StartStepNumber1, PrevOutput, ?TEST_VDF_DIFFICULTY),
+	MixOutput = reset_mix(Output1, ResetSeed),
+	{ok, _Output2, Checkpoints2} = ar_vdf:compute2(StartStepNumber2, MixOutput, ?TEST_VDF_DIFFICULTY),
 
-    % partial verify should work
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1)),
-    assert_verify(StartSalt2, ResetSalt, Output1, 1, lists:reverse(Checkpoints2)),
+	% partial verify should work
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1)),
+	assert_verify(StartSalt2, ResetSalt, Output1, 1, lists:reverse(Checkpoints2)),
 
 	Hash1 = lists:last(Checkpoints2),
 	Hash2 = lists:nth(length(Checkpoints2) - 1, Checkpoints2),
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash1 | Checkpoints1])),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash1 | Checkpoints1])),
 
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash2, Hash1 | Checkpoints1])),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash2, Hash1 | Checkpoints1])),
 
-    Hashes5 = lists:reverse(Checkpoints1) ++ lists:reverse(Checkpoints2),
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, Hashes5),
+	Hashes5 = lists:reverse(Checkpoints1) ++ lists:reverse(Checkpoints2),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, Hashes5),
 
-    ok.
+	ok.
 
 test_vdf_reset_mid_checkpoint_() ->
-    StartStepNumber1 = 2,
-    StartStepNumber2 = 3,
-    StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
-    StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
-    PrevOutput = ar_util:decode(?ENCODED_PREV_OUTPUT),
-    ResetSeed = ar_util:decode(?RESET_SEED),
+	StartStepNumber1 = 2,
+	StartStepNumber2 = 3,
+	StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
+	StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
+	PrevOutput = ar_util:decode(?ENCODED_PREV_OUTPUT),
+	ResetSeed = ar_util:decode(?RESET_SEED),
 
-    % means inside 1 iteration
-    ResetSaltFlat = 10,
-    ResetSalt = StartSalt1 + ResetSaltFlat,
+	% means inside 1 iteration
+	ResetSaltFlat = 10,
+	ResetSalt = StartSalt1 + ResetSaltFlat,
 
 	Salt1 = << StartSalt1:256 >>,
 	{ok, Output1Part1, LastStepCheckpoints1Part1} =
@@ -177,19 +179,56 @@ test_vdf_reset_mid_checkpoint_() ->
 	>>,
 	Checkpoints1 = ar_vdf:checkpoint_buffer_to_checkpoints(LastStepCheckpoints1),
 
-    {ok, _Output2, Checkpoints2} = ar_vdf:compute2(StartStepNumber2, Output1, ?TEST_VDF_DIFFICULTY),
+	{ok, _Output2, Checkpoints2} = ar_vdf:compute2(StartStepNumber2, Output1, ?TEST_VDF_DIFFICULTY),
 
-    % partial verify should work
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1)),
-    assert_verify(StartSalt2, ResetSalt, Output1, 1, lists:reverse(Checkpoints2)),
+	% partial verify should work
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse(Checkpoints1)),
+	assert_verify(StartSalt2, ResetSalt, Output1, 1, lists:reverse(Checkpoints2)),
 
-    Hash1 = lists:last(Checkpoints2),
-    Hash2 = lists:nth(length(Checkpoints2) - 1, Checkpoints2),
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash1 | Checkpoints1])),
+	Hash1 = lists:last(Checkpoints2),
+	Hash2 = lists:nth(length(Checkpoints2) - 1, Checkpoints2),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash1 | Checkpoints1])),
 
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash2, Hash1 | Checkpoints1])),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, lists:reverse([Hash2, Hash1 | Checkpoints1])),
 
-    Hashes5 = lists:reverse(Checkpoints1) ++ lists:reverse(Checkpoints2),
-    assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, Hashes5),
+	Hashes5 = lists:reverse(Checkpoints1) ++ lists:reverse(Checkpoints2),
+	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, Hashes5),
 
-    ok.
+	ok.
+
+compute_next_vdf_difficulty_test_block() ->
+	Height1 = max(?BLOCK_TIME_HISTORY_BLOCKS, ?REWARD_HISTORY_BLOCKS),
+	Height2 = Height1 + ?VDF_DIFFICULTY_RETARGET - Height1 rem ?VDF_DIFFICULTY_RETARGET,
+	#block{
+		height = Height2-1,
+		nonce_limiter_info = #nonce_limiter_info{
+			vdf_difficulty = 10000,
+			next_vdf_difficulty = 10000
+		},
+		reward_history = lists:duplicate(?REWARD_HISTORY_BLOCKS, {<<>>, 10000, 10, 1}),
+		block_time_history = lists:duplicate(?BLOCK_TIME_HISTORY_BLOCKS, {129, 135, 1}),
+		price_per_gib_minute = 10000,
+		scheduled_price_per_gib_minute = 15000
+	}.
+
+compute_next_vdf_difficulty_2_7_test_()->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_fork, height_2_6, fun() -> -1 end},
+		{ar_fork, height_2_7, fun() -> -1 end},
+		{ar_fork, height_2_7_1, fun() -> infinity end}],
+		fun() ->
+			B = compute_next_vdf_difficulty_test_block(),
+			10465 = ar_block:compute_next_vdf_difficulty(B),
+			ok
+		end).
+
+compute_next_vdf_difficulty_2_7_1_test_()->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_fork, height_2_6, fun() -> -1 end},
+		{ar_fork, height_2_7, fun() -> -1 end},
+		{ar_fork, height_2_7_1, fun() -> -1 end}],
+		fun() ->
+			B = compute_next_vdf_difficulty_test_block(),
+			10046 = ar_block:compute_next_vdf_difficulty(B),
+			ok
+		end).

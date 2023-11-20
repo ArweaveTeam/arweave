@@ -208,29 +208,59 @@ compute_next_vdf_difficulty(PrevB) ->
 				false ->
 					NextVDFDifficulty;
 				true ->
-					HistoryPart = lists:nthtail(?VDF_HISTORY_CUT,
-							lists:sublist(PrevB#block.block_time_history,
-									?BLOCK_TIME_HISTORY_BLOCKS)),
-					{IntervalTotal, VDFIntervalTotal} =
-						lists:foldl(
-							fun({BlockInterval, VDFInterval, _ChunkCount}, {Acc1, Acc2}) ->
-								{
-									Acc1 + BlockInterval,
-									Acc2 + VDFInterval
-								}
-							end,
-							{0, 0},
-							HistoryPart
-						),
-					NewVDFDifficulty =
-						(VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
-					?LOG_DEBUG([{event, vdf_difficulty_retarget},
-							{height, Height},
-							{old_vdf_difficulty, VDFDifficulty},
-							{new_vdf_difficulty, NewVDFDifficulty},
-							{interval_total, IntervalTotal},
-							{vdf_interval_total, VDFIntervalTotal}]),
-					NewVDFDifficulty
+					case Height < ar_fork:height_2_7_1() of
+						true ->
+							HistoryPart = lists:nthtail(?VDF_HISTORY_CUT,
+									lists:sublist(PrevB#block.block_time_history,
+											?BLOCK_TIME_HISTORY_BLOCKS)),
+							{IntervalTotal, VDFIntervalTotal} =
+								lists:foldl(
+									fun({BlockInterval, VDFInterval, _ChunkCount}, {Acc1, Acc2}) ->
+										{
+											Acc1 + BlockInterval,
+											Acc2 + VDFInterval
+										}
+									end,
+									{0, 0},
+									HistoryPart
+								),
+							NewVDFDifficulty =
+								(VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
+							?LOG_DEBUG([{event, vdf_difficulty_retarget},
+									{height, Height},
+									{old_vdf_difficulty, VDFDifficulty},
+									{new_vdf_difficulty, NewVDFDifficulty},
+									{interval_total, IntervalTotal},
+									{vdf_interval_total, VDFIntervalTotal}]),
+							NewVDFDifficulty;
+						false ->
+							HistoryPartCut1 = lists:nthtail(?VDF_HISTORY_CUT,
+								lists:sublist(PrevB#block.block_time_history,
+										?BLOCK_TIME_HISTORY_BLOCKS)),
+							HistoryPart = lists:sublist(HistoryPartCut1, ?VDF_DIFFICULTY_RETARGET),
+							{IntervalTotal, VDFIntervalTotal} =
+								lists:foldl(
+									fun({BlockInterval, VDFInterval, _ChunkCount}, {Acc1, Acc2}) ->
+										{
+											Acc1 + BlockInterval,
+											Acc2 + VDFInterval
+										}
+									end,
+									{0, 0},
+									HistoryPart
+								),
+							NewVDFDifficulty =
+								(VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
+							EMAVDFDifficulty = (9*VDFDifficulty + NewVDFDifficulty) div 10,
+							?LOG_DEBUG([{event, vdf_difficulty_retarget},
+									{height, Height},
+									{old_vdf_difficulty, VDFDifficulty},
+									{new_vdf_difficulty, NewVDFDifficulty},
+									{ema_vdf_difficulty, EMAVDFDifficulty},
+									{interval_total, IntervalTotal},
+									{vdf_interval_total, VDFIntervalTotal}]),
+							EMAVDFDifficulty
+					end
 			end;
 		false ->
 			?VDF_DIFFICULTY

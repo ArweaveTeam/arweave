@@ -54,7 +54,7 @@ init([]) ->
 					?LOG_DEBUG([{event, start_io_threads},
 							{bucket_size, BucketSize},
 							{bucket, Bucket},
-							{mining_address, ar_util:encode(Addr)}]),
+							{mining_address, ar_util:safe_encode(Addr)}]),
 					Start = Bucket * BucketSize,
 					End = (Bucket + 1) * BucketSize,
 					StoreID = ar_storage_module:id(M),
@@ -182,7 +182,7 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 			Thread ! {new_mining_session, SessionRef}
 	end,
 	?LOG_DEBUG([{event, started_io_mining_thread}, {partition_number, PartitionNumber},
-			{mining_addr, ar_util:encode(MiningAddress)}, {store_id, StoreID}]),
+			{mining_addr, ar_util:safe_encode(MiningAddress)}, {store_id, StoreID}]),
 	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }.
 
 handle_io_thread_down(Ref, Reason,
@@ -239,7 +239,10 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 
 read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	Size = ?RECALL_RANGE_SIZE,
-	#mining_candidate{ mining_address = MiningAddress } = Candidate,
+	#mining_candidate{
+		mining_address = MiningAddress, partition_number = PartitionNumber, h0 = H0,
+		step_number = StepNumber, nonce_limiter_output = Output,
+		session_ref = SessionRef } = Candidate,
 	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
@@ -247,6 +250,12 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	?LOG_DEBUG([{event, mining_debug_read_recall_range},
 			{chunk, WhichChunk},
 			{range_start, RangeStart},
+			{size, Size},
+			{session_ref, ar_util:safe_encode(SessionRef)},
+			{h0, ar_util:safe_encode(H0)},
+			{step_number, StepNumber},
+			{output, ar_util:safe_encode(Output)},
+			{partition_number, PartitionNumber},
 			{store_id, StoreID},
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
