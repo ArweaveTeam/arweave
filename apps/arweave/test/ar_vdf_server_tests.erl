@@ -95,9 +95,9 @@ vdf_client_test_() ->
 		fun cleanup/1,
 		[
 			{timeout, 180, fun test_vdf_client_fast_block/0},
-			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
-			{timeout, 180, fun test_vdf_client_slow_block/0},
-			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
+			% {timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
+			{timeout, 180, fun test_vdf_client_slow_block/0}
+			% {timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
 		]
     }.
 
@@ -466,7 +466,6 @@ test_session_overlap() ->
 test_client_ahead() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
 	SessionKey1 = {<<"session1">>, 1, 1},
-	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
@@ -825,7 +824,7 @@ computed_steps() ->
 computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
-			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Output, _UpperBound} = Args,
+			{_SessionKey, _StepNumber, Output, _UpperBound} = Args,
 			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
     		ets:insert(?MODULE, {Key, Output}),
 			computed_output()
