@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, make_full_nonce_limiter_update/2, make_partial_nonce_limiter_update/5]).
+-export([start_link/0, make_full_nonce_limiter_update/2, make_partial_nonce_limiter_update/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -22,11 +22,11 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-make_partial_nonce_limiter_update(SessionKey, Session, StepNumber, Output, PartitionUpperBound) ->
+make_partial_nonce_limiter_update(SessionKey, Session, StepNumber, Output) ->
 	make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
-			upper_bound = PartitionUpperBound, step_number = StepNumber, steps = [Output]
+			step_number = StepNumber, steps = [Output]
 		},
 		true).
 
@@ -69,13 +69,12 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
 	Session = ar_nonce_limiter:get_session(SessionKey),
 	PrevSessionKey = Session#vdf_session.prev_session_key,
 	PrevSession = ar_nonce_limiter:get_session(PrevSessionKey),
 
-	PartialUpdate = make_partial_nonce_limiter_update(
-			SessionKey, Session, StepNumber, Output, PartitionUpperBound),
+	PartialUpdate = make_partial_nonce_limiter_update(SessionKey, Session, StepNumber, Output),
 	FullUpdate = make_full_nonce_limiter_update(SessionKey, Session),
 	FullPrevUpdate = make_full_nonce_limiter_update(PrevSessionKey, PrevSession),
 

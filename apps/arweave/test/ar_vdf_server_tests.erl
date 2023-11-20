@@ -460,7 +460,11 @@ test_session_overlap() ->
 	timer:sleep(2000),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>, <<"9">>, <<"10">>, <<"11">>, <<"12">>],
-		computed_steps()).
+	computed_steps()),
+	?assertEqual(
+		[10, 10, 10, 10, 10, 20, 20, 20],
+		computed_upper_bounds()).
+
 
 %% @doc This test asserts that the client responds correctly when it is ahead of the VDF server.
 test_client_ahead() ->
@@ -481,7 +485,10 @@ test_client_ahead() ->
 	timer:sleep(2000),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>],
-		computed_steps()).
+		computed_steps()),
+	?assertEqual(
+		[10, 10, 10, 10],
+		computed_upper_bounds()).
 
 %% @doc
 %% Test case:
@@ -522,7 +529,10 @@ test_skip_ahead() ->
 	timer:sleep(2000),
 	?assertEqual(
 		[<<"6">>, <<"5">>, <<"8">>, <<"7">>, <<"9">>, <<"12">>, <<"11">>, <<"10">>],
-		computed_steps()).
+		computed_steps()),
+	?assertEqual(
+		[10, 10, 10, 10, 10, 20, 20, 20],
+		computed_upper_bounds()).
 
 test_2_servers_switching() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
@@ -569,7 +579,10 @@ test_2_servers_switching() ->
 	?assertEqual([
 		<<"7">>, <<"6">>, <<"5">>, <<"8">>, <<"9">>,
 		<<"11">>, <<"10">>, <<"12">>, <<"13">>, <<"14">>
-	], computed_steps()).
+	], computed_steps()),
+	?assertEqual(
+		[10, 10, 10, 10, 10, 20, 20, 20, 20, 20],
+		computed_upper_bounds()).
 
 test_backtrack() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
@@ -606,7 +619,10 @@ test_backtrack() ->
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
         <<"5">>,<<"18">>,<<"15">>
-	], computed_steps()).
+	], computed_steps()),
+	?assertEqual(
+		[20, 20, 20, 20, 20, 20, 20, 20, 10, 10, 10, 10, 10, 20, 30],
+		computed_upper_bounds()).
 
 test_2_servers_backtrack() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
@@ -638,7 +654,10 @@ test_2_servers_backtrack() ->
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
         <<"5">>,<<"18">>,<<"15">>
-	], computed_steps()).
+	], computed_steps()),
+	?assertEqual(
+		[20, 20, 20, 20, 20, 20, 20, 20, 10, 10, 10, 10, 10, 20, 30],
+		computed_upper_bounds()).
 
 %%
 %% serialize_test_
@@ -819,14 +838,17 @@ vdf_server_2() ->
 	{127,0,0,1,2002}.
 
 computed_steps() ->
-    lists:reverse(ets:foldl(fun({_, Int}, Acc) -> [Int | Acc] end, [], ?MODULE)).
+    lists:reverse(ets:foldl(fun({_, Step, _}, Acc) -> [Step | Acc] end, [], ?MODULE)).
+
+computed_upper_bounds() ->
+    lists:reverse(ets:foldl(fun({_, _, UpperBound}, Acc) -> [UpperBound | Acc] end, [], ?MODULE)).
 
 computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
-			{_SessionKey, _StepNumber, Output, _UpperBound} = Args,
+			{_SessionKey, _StepNumber, Output, UpperBound} = Args,
 			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
-    		ets:insert(?MODULE, {Key, Output}),
+    		ets:insert(?MODULE, {Key, Output, UpperBound}),
 			computed_output()
 	end.
 
@@ -834,10 +856,11 @@ apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSess
 	apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey,
 		vdf_server_1()).
 apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey, Peer) ->
-	{Seed, _Interval, _Difficulty} = SessionKey,
+	{Seed, Interval, _Difficulty} = SessionKey,
 	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [StepNumber | ExistingSteps]],
 	Session = #vdf_session{
-		upper_bound = 0,
+		upper_bound = Interval * 10,
+		next_upper_bound = (Interval+1) * 10,
 		prev_session_key = PrevSessionKey,
 		step_number = StepNumber,
 		seed = Seed,
