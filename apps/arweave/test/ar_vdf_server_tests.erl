@@ -11,6 +11,10 @@
 
 -import(ar_test_node, [stop/0, assert_wait_until_height/2, post_block/2, send_new_block/2]).
 
+%% -------------------------------------------------------------------------------------------------
+%% Test Fixtures
+%% -------------------------------------------------------------------------------------------------
+
 setup() ->
 	ets:new(?MODULE, [named_table, set, public]),
 	{ok, Config} = application:get_env(arweave, config),
@@ -21,6 +25,37 @@ cleanup({Config, PeerConfig}) ->
 	application:set_env(arweave, config, Config),
 	ar_test_node:remote_call(peer1, application, set_env, [arweave, config, PeerConfig]),
 	ets:delete(?MODULE).
+
+setup_external_update() ->
+	{ok, Config} = application:get_env(arweave, config),
+	[B0] = ar_weave:init(),
+	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF -
+	%% this is necessary so that we can test the behavior of apply_external_update without any
+	%% auto-computed VDF steps getting in the way.
+	ar_test_node:start(
+		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		Config#config{ nonce_limiter_server_trusted_peers = [ 
+			ar_util:format_peer(vdf_server_1()),
+			ar_util:format_peer(vdf_server_2()) ]}),
+	ets:new(?MODULE, [named_table, ordered_set, public]),
+	Pid = spawn(
+		fun() ->
+			ok = ar_events:subscribe(nonce_limiter),
+			computed_output()
+		end
+	),
+
+	?assertEqual(5, ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
+	{Pid, Config}.
+
+cleanup_external_update({Pid, Config}) ->
+	exit(Pid, kill),
+	ok = application:set_env(arweave, config, Config),
+	ets:delete(?MODULE).
+
+%% -------------------------------------------------------------------------------------------------
+%% Test Registration
+%% -------------------------------------------------------------------------------------------------
 
 %% @doc All vdf_server_push_test_ tests test a few things
 %% 1. VDF server posts regular VDF updates to the client
@@ -66,54 +101,35 @@ vdf_client_test_() ->
 		]
     }.
 
-init(Req, State) ->
-	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	handle(SplitPath, Req, State).
+external_update_test_() ->
+    {foreach,
+		fun setup_external_update/0,
+     	fun cleanup_external_update/1,
+		[
+			{timeout, 120, fun test_session_overlap/0},
+			{timeout, 120, fun test_client_ahead/0},
+			{timeout, 120, fun test_skip_ahead/0},
+			{timeout, 120, fun test_2_servers_switching/0},
+			{timeout, 120, fun test_backtrack/0},
+			{timeout, 120, fun test_2_servers_backtrack/0}
+		]
+    }.
 
-handle([<<"vdf">>], Req, State) ->
-	{ok, Body, _} = ar_http_req:body(Req, ?MAX_BODY_SIZE),
-	case ar_serialize:binary_to_nonce_limiter_update(Body) of
-		{ok, Update} ->
-			handle_update(Update, Req, State);
-		{error, _} ->
-			Response = #nonce_limiter_update_response{ format = 2 },
-			Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-			{ok, cowboy_req:reply(202, #{}, Bin, Req), State}
-	end.
+serialize_test_() ->
+    [
+		{timeout, 120, fun test_serialize_update_format_1/0},
+		{timeout, 120, fun test_serialize_update_format_2/0},
+		{timeout, 120, fun test_serialize_response/0},
+		{timeout, 120, fun test_serialize_response_compatibility/0}
+	].
 
-handle_update(Update, Req, State) ->
-	{Seed, _, _} = Update#nonce_limiter_update.session_key,
-	IsPartial  = Update#nonce_limiter_update.is_partial,
-	UpdateOutput = hd(Update#nonce_limiter_update.checkpoints),
+%% -------------------------------------------------------------------------------------------------
+%% Tests
+%% -------------------------------------------------------------------------------------------------
 
-	Session = Update#nonce_limiter_update.session,
-	StepNumber = Session#vdf_session.step_number,
-	SessionOutput = hd(Session#vdf_session.steps),
-
-	?assertNotEqual(Update#nonce_limiter_update.checkpoints, Session#vdf_session.steps),
-	%% #nonce_limiter_update.checkpoints should be the checkpoints of the last step so
-	%% the head of checkpoints should match the head of the session's steps
-	?assertEqual(UpdateOutput, SessionOutput),
-
-	case ets:lookup(?MODULE, Seed) of
-		[{Seed, FirstStepNumber, LatestStepNumber}] ->
-			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
-					"Partial VDF update did not increase by 1"),
-
-			ets:insert(?MODULE, {Seed, FirstStepNumber, StepNumber}),
-			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
-		_ ->
-			case IsPartial of
-				true ->
-					Response = #nonce_limiter_update_response{ session_found = false },
-					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-					{ok, cowboy_req:reply(202, #{}, Bin, Req), State};
-				false ->
-					ets:insert(?MODULE, {Seed, StepNumber, StepNumber}),
-					{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
-			end
-	end.
-
+%%
+%% vdf_server_push_test_
+%%
 test_vdf_server_push_fast_block() ->
 	VDFPort = ar_test_node:get_unused_port(),
 	{_, Pub} = ar_wallet:new(),
@@ -221,6 +237,9 @@ test_vdf_server_push_slow_block() ->
 
 	cowboy:stop_listener(ar_vdf_server_test_listener).
 
+%%
+%% vdf_client_test_
+%%
 test_vdf_client_fast_block() ->
 	{ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
@@ -391,94 +410,9 @@ test_vdf_client_slow_block_pull_interface() ->
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
 	BI = assert_wait_until_height(peer1, 1).
 
-external_update_test_() ->
-    {foreach,
-		fun setup_external_update/0,
-     	fun cleanup_external_update/1,
-		[
-			{timeout, 120, fun test_session_overlap/0},
-			{timeout, 120, fun test_client_ahead/0},
-			{timeout, 120, fun test_skip_ahead/0},
-			{timeout, 120, fun test_2_servers_switching/0},
-			{timeout, 120, fun test_backtrack/0},
-			{timeout, 120, fun test_2_servers_backtrack/0}
-		]
-    }.
-
-serialize_test_() ->
-    [
-		{timeout, 120, fun test_serialize_update_format_1/0},
-		{timeout, 120, fun test_serialize_update_format_2/0},
-		{timeout, 120, fun test_serialize_response/0},
-		{timeout, 120, fun test_serialize_response_compatibility/0}
-	].
-
-vdf_server_1() ->
-	{127,0,0,1,2001}.
-
-vdf_server_2() ->
-	{127,0,0,1,2002}.
-
-setup_external_update() ->
-	{ok, Config} = application:get_env(arweave, config),
-	[B0] = ar_weave:init(),
-	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF -
-	%% this is necessary so that we can test the behavior of apply_external_update without any
-	%% auto-computed VDF steps getting in the way.
-	ar_test_node:start(
-		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_server_trusted_peers = [ 
-			ar_util:format_peer(vdf_server_1()),
-			ar_util:format_peer(vdf_server_2()) ]}),
-	ets:new(?MODULE, [named_table, ordered_set, public]),
-	Pid = spawn(
-		fun() ->
-			ok = ar_events:subscribe(nonce_limiter),
-			computed_output()
-		end
-	),
-
-	?assertEqual(5, ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
-	{Pid, Config}.
-
-cleanup_external_update({Pid, Config}) ->
-	exit(Pid, kill),
-	ok = application:set_env(arweave, config, Config),
-	ets:delete(?MODULE).
-
-computed_steps() ->
-    lists:reverse(ets:foldl(fun({_, Int}, Acc) -> [Int | Acc] end, [], ?MODULE)).
-
-computed_output() ->
-	receive
-		{event, nonce_limiter, {computed_output, Args}} ->
-			{_SessionKey, _Session, _PrevSessionKey, _PrevSession, Output, _UpperBound} = Args,
-			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
-    		ets:insert(?MODULE, {Key, Output}),
-			computed_output()
-	end.
-
-apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey) ->
-	apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey,
-		vdf_server_1()).
-apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey, Peer) ->
-	{Seed, _Interval, _Difficulty} = SessionKey,
-	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [StepNumber | ExistingSteps]],
-	Session = #vdf_session{
-		upper_bound = 0,
-		prev_session_key = PrevSessionKey,
-		step_number = StepNumber,
-		seed = Seed,
-		steps = Steps
-	},
-
-	Update = #nonce_limiter_update{
-		session_key = SessionKey,
-		is_partial = IsPartial,
-		checkpoints = [],
-		session = Session
-	},
-	ar_nonce_limiter:apply_external_update(Update, Peer).
+%%
+%% external_update_test_
+%%
 
 %% @doc The VDF session key is only updated when a block is procesed by the VDF server. Until that
 %% happens the serve will push all VDF steps under the same session key - even if those steps
@@ -532,7 +466,6 @@ test_session_overlap() ->
 test_client_ahead() ->
 	SessionKey0 = {<<"session0">>, 0, 1},
 	SessionKey1 = {<<"session1">>, 1, 1},
-	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
@@ -707,6 +640,10 @@ test_2_servers_backtrack() ->
         <<"5">>,<<"18">>,<<"15">>
 	], computed_steps()).
 
+%%
+%% serialize_test_
+%%
+
 test_serialize_update_format_1() ->
 	SessionKey0 = {crypto:strong_rand_bytes(48), 0, 1},
 	SessionKey1 = {crypto:strong_rand_bytes(48), 1, 1},
@@ -822,3 +759,95 @@ test_serialize_response_compatibility() ->
 		format = 1
 	},
 	?assertEqual({ok, ResponseB}, ar_serialize:binary_to_nonce_limiter_update_response(BinaryB)).
+
+%% -------------------------------------------------------------------------------------------------
+%% Helper Functions
+%% -------------------------------------------------------------------------------------------------
+
+init(Req, State) ->
+	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+	handle(SplitPath, Req, State).
+
+handle([<<"vdf">>], Req, State) ->
+	{ok, Body, _} = ar_http_req:body(Req, ?MAX_BODY_SIZE),
+	case ar_serialize:binary_to_nonce_limiter_update(Body) of
+		{ok, Update} ->
+			handle_update(Update, Req, State);
+		{error, _} ->
+			Response = #nonce_limiter_update_response{ format = 2 },
+			Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+			{ok, cowboy_req:reply(202, #{}, Bin, Req), State}
+	end.
+
+handle_update(Update, Req, State) ->
+	{Seed, _, _} = Update#nonce_limiter_update.session_key,
+	IsPartial  = Update#nonce_limiter_update.is_partial,
+	UpdateOutput = hd(Update#nonce_limiter_update.checkpoints),
+
+	Session = Update#nonce_limiter_update.session,
+	StepNumber = Session#vdf_session.step_number,
+	SessionOutput = hd(Session#vdf_session.steps),
+
+	?assertNotEqual(Update#nonce_limiter_update.checkpoints, Session#vdf_session.steps),
+	%% #nonce_limiter_update.checkpoints should be the checkpoints of the last step so
+	%% the head of checkpoints should match the head of the session's steps
+	?assertEqual(UpdateOutput, SessionOutput),
+
+	case ets:lookup(?MODULE, Seed) of
+		[{Seed, FirstStepNumber, LatestStepNumber}] ->
+			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
+					"Partial VDF update did not increase by 1"),
+
+			ets:insert(?MODULE, {Seed, FirstStepNumber, StepNumber}),
+			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
+		_ ->
+			case IsPartial of
+				true ->
+					Response = #nonce_limiter_update_response{ session_found = false },
+					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
+					{ok, cowboy_req:reply(202, #{}, Bin, Req), State};
+				false ->
+					ets:insert(?MODULE, {Seed, StepNumber, StepNumber}),
+					{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
+			end
+	end.
+
+vdf_server_1() ->
+	{127,0,0,1,2001}.
+
+vdf_server_2() ->
+	{127,0,0,1,2002}.
+
+computed_steps() ->
+    lists:reverse(ets:foldl(fun({_, Int}, Acc) -> [Int | Acc] end, [], ?MODULE)).
+
+computed_output() ->
+	receive
+		{event, nonce_limiter, {computed_output, Args}} ->
+			{_SessionKey, _StepNumber, Output, _UpperBound} = Args,
+			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
+    		ets:insert(?MODULE, {Key, Output}),
+			computed_output()
+	end.
+
+apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey) ->
+	apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey,
+		vdf_server_1()).
+apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey, Peer) ->
+	{Seed, _Interval, _Difficulty} = SessionKey,
+	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [StepNumber | ExistingSteps]],
+	Session = #vdf_session{
+		upper_bound = 0,
+		prev_session_key = PrevSessionKey,
+		step_number = StepNumber,
+		seed = Seed,
+		steps = Steps
+	},
+
+	Update = #nonce_limiter_update{
+		session_key = SessionKey,
+		is_partial = IsPartial,
+		checkpoints = [],
+		session = Session
+	},
+	ar_nonce_limiter:apply_external_update(Update, Peer).

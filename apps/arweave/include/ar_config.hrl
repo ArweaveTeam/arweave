@@ -56,16 +56,8 @@
 %% The default frequency of checking for the available disk space.
 -define(DISK_SPACE_CHECK_FREQUENCY_MS, 30 * 1000).
 
--define(NUM_STAGE_ONE_HASHING_PROCESSES,
-	max(1, (erlang:system_info(schedulers_online) div 2))).
-
--define(NUM_STAGE_TWO_HASHING_PROCESSES,
-	max(1, (3 * erlang:system_info(schedulers_online) div 4))).
-
 -define(NUM_HASHING_PROCESSES,
 	max(1, (erlang:system_info(schedulers_online) - 1))).
-
--define(NUM_IO_MINING_THREADS, 10).
 
 -define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
 -define(MAX_PARALLEL_ARQL_REQUESTS, 10).

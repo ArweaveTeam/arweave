@@ -57,7 +57,7 @@ recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
 	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
 	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
 recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
-	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number2),
 	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
 recall_chunk(skipped, undefined, Nonce, Candidate) ->
 	update_chunk_cache_size(-1),
@@ -71,7 +71,7 @@ computed_hash(computed_h1, H1, Preimage, Candidate) ->
 	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(computed_h1, Candidate#mining_candidate{ h1 = H1, preimage = Preimage });
 computed_hash(computed_h2, H2, Preimage, Candidate) ->
-	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number2),
 	add_task(computed_h2, Candidate#mining_candidate{ h2 = H2, preimage = Preimage }).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
@@ -163,9 +163,13 @@ handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 		true ->
 			StepNumber = Candidate#mining_candidate.step_number,
 			Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
-			prometheus_gauge:inc(mining_server_task_queue_len),
+			prometheus_gauge:inc(mining_server_task_queue_len, [TaskType]),
 			{noreply, State#state{ task_queue = Q2 }};
 		false ->
+			?LOG_DEBUG([{event, mining_debug_stale_task}, {task, TaskType},
+				{current_ref, ar_util:safe_encode(SessionRef)},
+				{candidate_ref, ar_util:safe_encode(Candidate#mining_candidate.session_ref)},
+				{partition_number, Candidate#mining_candidate.partition_number}]),
 			{noreply, State}
 	end;
 	
@@ -176,7 +180,8 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			{noreply, State};
 		_ ->
 			{{_Priority, _ID, Task}, Q2} = gb_sets:take_smallest(Q),
-			prometheus_gauge:dec(mining_server_task_queue_len),
+			{TaskType, _Args} = Task,
+			prometheus_gauge:dec(mining_server_task_queue_len, [TaskType]),
 			may_be_warn_about_lag(Task, Q2),
 			gen_server:cast(?MODULE, handle_task),
 			handle_task(Task, State#state{ task_queue = Q2 })
@@ -229,7 +234,7 @@ handle_cast({may_be_remove_chunk_from_cache, _Args},
 handle_cast({may_be_remove_chunk_from_cache, _Args} = Task,
 		#state{ task_queue = Q } = State) ->
 	Q2 = gb_sets:insert({priority(may_be_remove_chunk_from_cache), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [may_be_remove_chunk_from_cache]),
 	{noreply, State#state{ task_queue = Q2 }};
 
 handle_cast(Cast, State) ->
@@ -247,25 +252,23 @@ handle_info({'DOWN', Ref, process, _, Reason},
 
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty}, Session,
-		_PrevSessionKey, _PrevSession, _Output, _PartitionUpperBound} = Args,
+	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty},
+			StepNumber, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
-		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)}]),
+		{step_number, StepNumber}, {session, ar_util:safe_encode(NextSeed)}]),
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, _}},
 		#state{ session = #mining_session{ paused = true } } = State) ->
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
-	{SessionKey, Session, _PrevSessionKey, _PrevSession, Output, PartitionUpperBound} = Args,
-	StepNumber = Session#vdf_session.step_number,
+	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
-	#vdf_session{ seed = Seed, step_number = StepNumber } = Session,
-	Task = {computed_output, {SessionKey, Seed, StepNumber, Output, PartitionUpperBound}},
+	Task = {computed_output, {SessionKey, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len),
+	prometheus_gauge:inc(mining_server_task_queue_len, [computed_output]),
 	{noreply, State#state{ task_queue = Q2 }};
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
@@ -461,47 +464,47 @@ priority(computed_h0, StepNumber) ->
 priority(nonce_limiter_computed_output, StepNumber) ->
 	{6, -StepNumber}.
 
-handle_task({computed_output, Args},
+handle_task({computed_output, _Args},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
-	{{NextSeed, _StartIntervalNumber, NextVDFDifficulty},
-			Session, _Output, _PartitionUpperBound} = Args,
-	?LOG_DEBUG([{event, mining_debug_handle_task_computed_output_session_undefined},
-		{step_number, Session#vdf_session.step_number}, {session, ar_util:encode(NextSeed)},
-		{next_vdf_difficulty, NextVDFDifficulty}]),
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
-	#state{ session = Session } = State,
-	{SessionKey, Seed, StepNumber, Output, PartitionUpperBound} = Args,
-	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
+	#state{ session = MiningSession } = State,
+	{VDFSessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = VDFSessionKey,
 	#mining_session{ next_seed = CurrentNextSeed,
 			next_vdf_difficulty = CurrentNextVDFDifficulty,
 			start_interval_number = CurrentStartIntervalNumber,
-			partition_upper_bound = CurrentPartitionUpperBound } = Session,
-	Session2 =
+			partition_upper_bound = CurrentPartitionUpperBound } = MiningSession,
+	MiningSession2 =
 		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound,
 				CurrentNextVDFDifficulty}
 				== {StartIntervalNumber, NextSeed, PartitionUpperBound, NextVDFDifficulty} of
 			true ->
-				Session;
+				MiningSession;
 			false ->
+				#vdf_session{ seed = Seed } = ar_nonce_limiter:get_session(VDFSessionKey),
 				ar:console("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
-						"next entropy nonce: ~s, interval number: ~B.~n",
-						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
-						StartIntervalNumber]),
-				?LOG_INFO("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
-						"next entropy nonce: ~s, interval number: ~B.~n",
-						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
-						StartIntervalNumber]),
-				reset_mining_session(
+					"next entropy nonce: ~s, interval number: ~B.~n",
+					[PartitionUpperBound, ar_util:safe_encode(Seed), ar_util:safe_encode(NextSeed),
+					StartIntervalNumber]),
+				NewMiningSession = reset_mining_session(
 					#mining_session{ seed = Seed, next_seed = NextSeed,
 						next_vdf_difficulty = NextVDFDifficulty,
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound },
-					State)
+					State),
+				?LOG_INFO([{event, new_mining_session}, 
+						{session_ref, ar_util:safe_encode(NewMiningSession#mining_session.ref)},
+						{step_number, StepNumber},
+						{interval_number, StartIntervalNumber},
+						{upper_bound, PartitionUpperBound},
+						{entropy_nonce, ar_util:safe_encode(Seed)},
+						{next_entropy_nonce, ar_util:safe_encode(NextSeed)}]),
+				NewMiningSession
 		end,
 	Candidate = #mining_candidate{
-		session_ref = Session2#mining_session.ref,
-		seed = Seed,
+		session_ref = MiningSession2#mining_session.ref,
+		seed = MiningSession2#mining_session.seed,
 		next_seed = NextSeed,
 		next_vdf_difficulty = NextVDFDifficulty,
 		start_interval_number = StartIntervalNumber,
@@ -511,9 +514,10 @@ handle_task({computed_output, Args}, State) ->
 	},
 	{N, State2} = distribute_output(Candidate, State),
 	?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
-		{step_number, StepNumber}, {output, ar_util:encode(Output)},
-		{start_interval_number, StartIntervalNumber}]),
-	{noreply, State2#state{ session = Session2 }};
+		{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
+		{start_interval_number, StartIntervalNumber},
+		{session_ref, ar_util:safe_encode(MiningSession2#mining_session.ref)}]),
+	{noreply, State2#state{ session = MiningSession2 }};
 
 handle_task({chunk1, Candidate}, State) ->
 	case is_session_valid(State#state.session#mining_session.ref, Candidate) of
@@ -684,7 +688,7 @@ handle_task({computed_h2, Candidate}, State) ->
 									?LOG_WARNING([{event,
 											mined_block_but_failed_to_read_second_chunk_proof},
 											{recall_byte2, RecallByte2},
-											{mining_address, ar_util:encode(MiningAddress)}]),
+											{mining_address, ar_util:safe_encode(MiningAddress)}]),
 									ar:console("WARNING: we found a solution but failed to read "
 											"the proof for the second chunk. See logs for more "
 											"details.~n");
@@ -846,7 +850,7 @@ prepare_solution(steps, Candidate, Solution) ->
 					?LOG_WARNING([{event, found_solution_but_failed_to_find_checkpoints},
 							{start_step_number, PrevStepNumber},
 							{next_step_number, StepNumber},
-							{next_seed, ar_util:encode(PrevNextSeed)},
+							{next_seed, ar_util:safe_encode(PrevNextSeed)},
 							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
 					ar:console("WARNING: found a solution but failed to find checkpoints, "
 							"start step number: ~B, end step number: ~B, next_seed: ~s.",
@@ -859,7 +863,7 @@ prepare_solution(steps, Candidate, Solution) ->
 			?LOG_WARNING([{event, found_solution_but_stale_step_number},
 							{start_step_number, PrevStepNumber},
 							{next_step_number, StepNumber},
-							{next_seed, ar_util:encode(PrevNextSeed)},
+							{next_seed, ar_util:safe_encode(PrevNextSeed)},
 							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
 			error
 	end;
@@ -897,7 +901,7 @@ prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution 
 					{recall_range_start1, RecallRange1Start},
 					{nonce, Nonce},
 					{partition, PartitionNumber},
-					{mining_address, ar_util:encode(MiningAddress)}]),
+					{mining_address, ar_util:safe_encode(MiningAddress)}]),
 			ar:console("WARNING: we have mined a block but failed to fetch "
 					"the chunk proofs required for publishing it. "
 					"Check logs for more details~n"),
@@ -920,7 +924,7 @@ prepare_solution(poa2, Candidate, #mining_solution{ poa2 = not_set } = Solution)
 					{recall_range_start2, RecallRange2Start},
 					{nonce, Nonce},
 					{partition, PartitionNumber},
-					{mining_address, ar_util:encode(MiningAddress)}]),
+					{mining_address, ar_util:safe_encode(MiningAddress)}]),
 			ar:console("WARNING: we have mined a block but failed to fetch "
 					"the chunk proofs required for publishing it. "
 					"Check logs for more details~n"),
@@ -949,22 +953,22 @@ post_solution(not_set, Solution, State) ->
 			?LOG_WARNING([{event, failed_to_validate_solution},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
-					{mining_address, ar_util:encode(MiningAddress)},
+					{mining_address, ar_util:safe_encode(MiningAddress)},
 					{recall_byte1, RecallByte1},
 					{recall_byte2, RecallByte2},
-					{solution_h, ar_util:encode(H)},
-					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+					{solution_h, ar_util:safe_encode(H)},
+					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
 					"details~n");
 		false ->
 			?LOG_WARNING([{event, found_invalid_solution},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
-					{mining_address, ar_util:encode(MiningAddress)},
+					{mining_address, ar_util:safe_encode(MiningAddress)},
 					{recall_byte1, RecallByte1},
 					{recall_byte2, RecallByte2},
-					{solution_h, ar_util:encode(H)},
-					{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}]),
+					{solution_h, ar_util:safe_encode(H)},
+					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
 					"details~n");
 		{true, PoACache, PoA2Cache} ->
