@@ -1080,7 +1080,7 @@ apply_external_update3(
 		{session_difficulty, element(3, SessionKey)},
 		{length, length(Steps)}]),
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
-	send_events_for_external_update(SessionKey, Session, UpperBound, Steps),
+	send_events_for_external_update(SessionKey, Session#vdf_session.step_number, UpperBound, Steps),
 	State2.
 
 %% @doc Returns a sub-range of steps out of a larger list of steps. This is
@@ -1187,13 +1187,11 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 			ok
 	end.
 
-send_events_for_external_update(_SessionKey, _Header, _UpperBound, []) ->
+send_events_for_external_update(_SessionKey, _StepNumber, _UpperBound, []) ->
 	ok;
-send_events_for_external_update(SessionKey, Session, UpperBound, [Step | Steps]) ->
-	#vdf_session{ step_number = StepNumber, steps = [_ | PrevSteps] } = Session,
+send_events_for_external_update(SessionKey, StepNumber, UpperBound, [Step | Steps]) ->
 	ar_events:send(nonce_limiter, {computed_output, {SessionKey, StepNumber, Step, UpperBound}}),
-	Session2 = update_session(Session, StepNumber-1, PrevSteps),
-	send_events_for_external_update(SessionKey, Session2, UpperBound, Steps).
+	send_events_for_external_update(SessionKey, StepNumber-1, UpperBound, Steps).
 
 debug_double_check(Label, Result, Func, Args) ->
 	{ok, Config} = application:get_env(arweave, config),

@@ -98,7 +98,7 @@ push_update(SessionKey, StepNumber, Output,
 	Update = ar_nonce_limiter_server:make_partial_nonce_limiter_update(
 		SessionKey, Session, StepNumber, Output, PartitionUpperBound),
 	case Update of
-		not_found -> ok;
+		not_found -> State;
 		_ ->
 			case ar_http_iface_client:push_nonce_limiter_update(Peer, Update, Format) of
 				ok ->
