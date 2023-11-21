@@ -8,7 +8,7 @@
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, 
 		compute/3, resolve_remote_server_raw_peers/0,
-		get_entropy_reset_point/2, maybe_add_entropy/4, mix_seed/2]).
+		maybe_add_entropy/4, mix_seed/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -605,7 +605,7 @@ handle_info({'DOWN', Ref, process, _, Reason}, #state{ worker_monitor_ref = Ref 
 
 handle_info({computed, Args}, State) ->
 	#state{ current_session_key = CurrentSessionKey } = State,
-	{StepNumber, PrevOutput, Output, UpperBound, Checkpoints} = Args,
+	{StepNumber, PrevOutput, Output, Checkpoints} = Args,
 	Session = get_session(CurrentSessionKey, State),
 	#vdf_session{ next_vdf_difficulty = NextVDFDifficulty, steps = [SessionOutput | _] } = Session,
 	{NextSeed, IntervalNumber, NextVDFDifficulty} = CurrentSessionKey,
@@ -621,8 +621,7 @@ handle_info({computed, Args}, State) ->
 		true ->
 			Session2 = update_session(Session, StepNumber, Checkpoints, [Output]),
 			State2 = cache_session(State, CurrentSessionKey, CurrentSessionKey, Session2),
-			ar_events:send(nonce_limiter, {computed_output,
-				{CurrentSessionKey, StepNumber, Output, UpperBound}}),
+			send_output(CurrentSessionKey, Session2),
 			{noreply, State2}
 	end;
 
@@ -655,6 +654,19 @@ update_session(Session, StepNumber, Checkpoints, Steps) ->
 update_session(Session, StepNumber, Steps) ->
 	#vdf_session{ steps = CurrentSteps } = Session,
 	Session#vdf_session{ step_number = StepNumber, steps = Steps ++ CurrentSteps }.
+
+send_output(SessionKey, Session) ->
+	{_, IntervalNumber, _} = SessionKey,
+	#vdf_session{ step_number = StepNumber, steps = [Output | _] } = Session,
+	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+	UpperBound =
+		case get_entropy_reset_point(IntervalStart, StepNumber) of
+			none ->
+				Session#vdf_session.upper_bound;
+			_ ->
+				Session#vdf_session.next_upper_bound
+		end,
+	ar_events:send(nonce_limiter, {computed_output, {SessionKey, StepNumber, Output, UpperBound}}).
 
 dump_error(Data) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -876,11 +888,11 @@ verify_no_reset(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes
 
 worker() ->
 	receive
-		{compute, {StepNumber, PrevOutput, UpperBound, VDFDifficulty}, From} ->
+		{compute, {StepNumber, PrevOutput, VDFDifficulty}, From} ->
 			{ok, Output, Checkpoints} = prometheus_histogram:observe_duration(
 					vdf_step_time_milliseconds, [], fun() -> compute(StepNumber, PrevOutput,
 							VDFDifficulty) end),
-			From ! {computed, {StepNumber, PrevOutput, Output, UpperBound, Checkpoints}},
+			From ! {computed, {StepNumber, PrevOutput, Output, Checkpoints}},
 			worker();
 		stop ->
 			ok
@@ -918,7 +930,6 @@ schedule_step(State) ->
 	#state{ current_session_key = {NextSeed, IntervalNumber, NextVDFDifficulty} = Key,
 			worker = Worker } = State,
 	#vdf_session{ step_number = PrevStepNumber,
-		upper_bound = UpperBound, next_upper_bound = NextUpperBound,
 		vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty,
 		steps = Steps } = get_session(Key, State),
 	PrevOutput = hd(Steps),
@@ -926,17 +937,17 @@ schedule_step(State) ->
 	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
 	PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
 		PrevOutput, IntervalStart, StepNumber, NextSeed),
-	{UpperBound2, VDFDifficulty2} =
+	VDFDifficulty2 =
 		case get_entropy_reset_point(IntervalStart, StepNumber) of
 			none ->
-				{UpperBound, VDFDifficulty};
+				VDFDifficulty;
 			_ ->
 				?LOG_DEBUG([{event, entropy_reset_point_found}, {step_number, StepNumber},
 					{interval_start, IntervalStart}, {vdf_difficulty, VDFDifficulty},
 					{next_vdf_difficulty, NextVDFDifficulty}]),
-				{NextUpperBound, NextVDFDifficulty}
+				NextVDFDifficulty
 		end,
-	Worker ! {compute, {StepNumber, PrevOutput2, UpperBound2, VDFDifficulty2}, self()},
+	Worker ! {compute, {StepNumber, PrevOutput2, VDFDifficulty2}, self()},
 	State.
 
 get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpperBound) ->
@@ -955,8 +966,8 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 apply_external_update2(Update, State) ->
 	#state{ current_session_key = CurrentSessionKey, last_external_update = {Peer, _} } = State,
 	#nonce_limiter_update{ session_key = SessionKey,
-			session = #vdf_session{ upper_bound = UpperBound, prev_session_key = PrevSessionKey,
-				step_number = StepNumber } = Session,
+			session = #vdf_session{
+				prev_session_key = PrevSessionKey, step_number = StepNumber } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
 	{SessionSeed, SessionInterval, SessionVDFDifficulty} = SessionKey,
 	case get_session(SessionKey, State) of
@@ -991,8 +1002,7 @@ apply_external_update2(Update, State) ->
 					{_, Steps} = get_step_range(
 						Session, min(RangeStart, NextSessionStart), StepNumber),					
 					State2 = apply_external_update3(State,
-						SessionKey, CurrentSessionKey,
-						Session, Steps, UpperBound),
+						SessionKey, CurrentSessionKey, Session, Steps),
 					{reply, ok, State2}
 			end;
 		CurrentSession ->
@@ -1002,8 +1012,7 @@ apply_external_update2(Update, State) ->
 					[Output | _] = Session#vdf_session.steps,
 					CurrentSession2 = update_session(CurrentSession, StepNumber, Checkpoints, [Output]),
 					State2 = apply_external_update3(State,
-							SessionKey, CurrentSessionKey, 
-							CurrentSession2, [Output], UpperBound),
+							SessionKey, CurrentSessionKey, CurrentSession2, [Output]),
 					{reply, ok, State2};
 				false ->
 					case CurrentStepNumber >= StepNumber of
@@ -1048,8 +1057,7 @@ apply_external_update2(Update, State) ->
 									{_, Steps} = get_step_range(
 											Session, CurrentStepNumber + 1, StepNumber),
 									State2 = apply_external_update3(State,
-										SessionKey, CurrentSessionKey, 
-										Session, Steps, UpperBound),
+										SessionKey, CurrentSessionKey, Session, Steps),
 									{reply, ok, State2}
 							end
 					end
@@ -1068,9 +1076,8 @@ apply_external_update2(Update, State) ->
 %%
 %% Note: an important job of this function is to ensure that VDF steps are only processed once.
 %% We truncate Session.steps such the previously processed steps are not sent to
-%% trigger_computed_outputs.
-apply_external_update3(
-	State, SessionKey, CurrentSessionKey, Session, Steps, UpperBound) ->
+%% send_events_for_external_update.
+apply_external_update3(State, SessionKey, CurrentSessionKey, Session, Steps) ->
 	#state{ last_external_update = {Peer, _} } = State,
 	?LOG_DEBUG([{event, apply_external_vdf},
 		{result, ok},
@@ -1080,7 +1087,7 @@ apply_external_update3(
 		{session_difficulty, element(3, SessionKey)},
 		{length, length(Steps)}]),
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
-	send_events_for_external_update(SessionKey, Session#vdf_session.step_number, UpperBound, Steps),
+	send_events_for_external_update(SessionKey, Session#vdf_session{ steps = Steps }),
 	State2.
 
 %% @doc Returns a sub-range of steps out of a larger list of steps. This is
@@ -1187,11 +1194,13 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 			ok
 	end.
 
-send_events_for_external_update(_SessionKey, _StepNumber, _UpperBound, []) ->
+send_events_for_external_update(_SessionKey, #vdf_session{ steps = [] }) ->
 	ok;
-send_events_for_external_update(SessionKey, StepNumber, UpperBound, [Step | Steps]) ->
-	ar_events:send(nonce_limiter, {computed_output, {SessionKey, StepNumber, Step, UpperBound}}),
-	send_events_for_external_update(SessionKey, StepNumber-1, UpperBound, Steps).
+send_events_for_external_update(SessionKey, Session) ->
+	send_output(SessionKey, Session),
+	#vdf_session{ step_number = StepNumber, steps = [_ | RemainingSteps] } = Session,
+	send_events_for_external_update(SessionKey,
+		Session#vdf_session{ step_number = StepNumber-1, steps = RemainingSteps }).
 
 debug_double_check(Label, Result, Func, Args) ->
 	{ok, Config} = application:get_env(arweave, config),

@@ -63,7 +63,7 @@ handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) 
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	#state{ peer = Peer, pause_until = Timestamp, format = Format } = State,
-	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
 	CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
 	case os:system_time(second) < Timestamp of
 		true ->
@@ -73,8 +73,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				true ->
 					{noreply, State};
 				false ->
-					{noreply, push_update(SessionKey, StepNumber, Output,
-							PartitionUpperBound, Peer, Format, State)}
+					{noreply, push_update(SessionKey, StepNumber, Output, Peer, Format, State)}
 			end
 	end;
 
@@ -92,11 +91,10 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-push_update(SessionKey, StepNumber, Output,
-		PartitionUpperBound, Peer, Format, State) ->
+push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
 	Session = ar_nonce_limiter:get_session(SessionKey),
 	Update = ar_nonce_limiter_server:make_partial_nonce_limiter_update(
-		SessionKey, Session, StepNumber, Output, PartitionUpperBound),
+		SessionKey, Session, StepNumber, Output),
 	case Update of
 		not_found -> State;
 		_ ->
@@ -120,8 +118,7 @@ push_update(SessionKey, StepNumber, Output,
 							?LOG_DEBUG([{event, vdf_client_requested_different_format},
 								{peer, ar_util:format_peer(Peer)},
 								{format, Format}, {requested_format, RequestedFormat}]),
-							push_update(SessionKey, StepNumber,
-									Output, PartitionUpperBound, Peer, RequestedFormat,
+							push_update(SessionKey, StepNumber, Output, Peer, RequestedFormat,
 									State#state{ format = RequestedFormat });
 						{true, false, _, _} ->
 							%% Client requested we pause updates
