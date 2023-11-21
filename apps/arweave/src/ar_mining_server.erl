@@ -21,9 +21,7 @@
 	ref,
 	paused = true,
 	seed,
-	next_seed,
-	next_vdf_difficulty,
-	start_interval_number,
+	vdf_session_key,
 	partition_upper_bound,
 	chunk_cache = #{},
 	chunk_cache_size_limit = infinity
@@ -262,10 +260,10 @@ handle_info({event, nonce_limiter, {computed_output, _}},
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
-	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	{VDFSessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
-	Task = {computed_output, {SessionKey, StepNumber, Output, PartitionUpperBound}},
+	Task = {computed_output, {VDFSessionKey, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
 	prometheus_gauge:inc(mining_server_task_queue_len, [computed_output]),
@@ -471,14 +469,11 @@ handle_task({computed_output, Args}, State) ->
 	#state{ session = MiningSession } = State,
 	{VDFSessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = VDFSessionKey,
-	#mining_session{ next_seed = CurrentNextSeed,
-			next_vdf_difficulty = CurrentNextVDFDifficulty,
-			start_interval_number = CurrentStartIntervalNumber,
+	#mining_session{ vdf_session_key = CurrentVDFSessionKey,
 			partition_upper_bound = CurrentPartitionUpperBound } = MiningSession,
 	MiningSession2 =
-		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound,
-				CurrentNextVDFDifficulty}
-				== {StartIntervalNumber, NextSeed, PartitionUpperBound, NextVDFDifficulty} of
+		case (CurrentVDFSessionKey == VDFSessionKey andalso
+				CurrentPartitionUpperBound >= PartitionUpperBound) of
 			true ->
 				MiningSession;
 			false ->
@@ -488,9 +483,7 @@ handle_task({computed_output, Args}, State) ->
 					[PartitionUpperBound, ar_util:safe_encode(Seed), ar_util:safe_encode(NextSeed),
 					StartIntervalNumber]),
 				NewMiningSession = reset_mining_session(
-					#mining_session{ seed = Seed, next_seed = NextSeed,
-						next_vdf_difficulty = NextVDFDifficulty,
-						start_interval_number = StartIntervalNumber,
+					#mining_session{ seed = Seed, vdf_session_key = VDFSessionKey,
 						partition_upper_bound = PartitionUpperBound },
 					State),
 				?LOG_INFO([{event, new_mining_session}, 
