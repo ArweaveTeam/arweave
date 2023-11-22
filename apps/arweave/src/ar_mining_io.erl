@@ -135,8 +135,7 @@ handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
-terminate(_Reason, #state{ io_threads = IOThreads }) ->
-	[Thread ! stop || Thread <- maps:values(IOThreads)],
+terminate(_Reason, _State) ->
 	ok.
 
 %%%===================================================================
@@ -185,8 +184,6 @@ handle_io_thread_down(Ref, Reason,
 
 io_thread(PartitionNumber, MiningAddress, StoreID) ->
 	receive
-		stop ->
-			io_thread(PartitionNumber, MiningAddress, StoreID);
 		{WhichChunk, {Candidate, RecallRangeStart}} ->
 			read_range(WhichChunk, Candidate, RecallRangeStart, StoreID),
 			io_thread(PartitionNumber, MiningAddress, StoreID)
