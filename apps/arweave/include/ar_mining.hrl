@@ -23,7 +23,7 @@
 	poa2 = not_set, %% serialized
 	preimage = not_set, %% serialized. this can be either the h1 or h2 preimage
 	seed = not_set, %% serialized
-	session_ref = not_set, %% not serialized
+	vdf_session_key = not_set, %% not serialized
 	start_interval_number = not_set, %% serialized
 	step_number = not_set %% serialized
 }).

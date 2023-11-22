@@ -18,22 +18,21 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(mining_session, {
-	ref,
-	paused = true,
 	seed,
-	vdf_session_key,
-	partition_upper_bound,
-	chunk_cache = #{},
-	chunk_cache_size_limit = infinity
+	chunk_cache 				= #{}
 }).
 
 -record(state, {
+	paused 						= true,
 	hashing_threads				= queue:new(),
 	hashing_thread_monitor_refs = #{},
-	session						= #mining_session{},
+	sessions					= #{},
+	session_keys				= sets:new(),
 	diff						= infinity,
 	merkle_rebase_threshold		= infinity,
-	task_queue					= gb_sets:new()
+	partition_upper_bound		= 0,
+	task_queue					= gb_sets:new(),
+	chunk_cache_size_limit 		= infinity
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -94,15 +93,13 @@ post_solution(Solution) ->
 	gen_server:cast(?MODULE, {post_solution, Solution}).
 
 %% @doc Returns true if the mining candidate belongs to a valid mining session. Always assume
-%% that a coordinated mining candidate is valid (its session_ref is not_set)
-is_session_valid(_SessionRef, #mining_candidate{ session_ref = not_set }) ->
+%% that a coordinated mining candidate is valid
+is_session_valid(_SessionKeys, #mining_candidate{ vdf_session_key = not_set }) ->
 	true;
-is_session_valid(undefined, _Candidate) ->
+is_session_valid(#{}, _Candidate) ->
 	false; 
-is_session_valid(SessionRef, #mining_candidate{ session_ref = SessionRef }) ->
-	true;
-is_session_valid(_SessionRef, _Candidate) ->
-	false.
+is_session_valid(SessionKeys, #mining_candidate{ vdf_session_key = SessionKey }) ->
+	sets:is_element(SessionKey, SessionKeys).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -133,21 +130,20 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast(pause, State) ->
-	#state{ session = Session } = State,
 	ar_mining_stats:mining_paused(),
 	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be 
 	%% distributed. Setting diff to infnity ensures that no solutions are found.
-	{noreply, State#state{ diff = infinity, session = Session#mining_session{ paused = true } }};
+	{noreply, State#state{ diff = infinity, paused = true }};
 
 handle_cast({start_mining, Args}, State) ->
 	{Diff, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
-	Session = reset_mining_session(State#state.session, State),
+	State2 = refresh_sessions(State),
 	ar_mining_stats:start_performance_reports(),
-	{noreply, State#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold, session = Session }};
+	{noreply, State2#state{ diff = Diff, merkle_rebase_threshold = RebaseThreshold }};
 
 handle_cast({set_difficulty, _Diff},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
+		#state{ sessions = #{} } = State) ->
 	{noreply, State};
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
@@ -156,8 +152,8 @@ handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
 	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
 handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
-	#state{ session = #mining_session{ ref = SessionRef }, task_queue = Q } = State,
-	case is_session_valid(SessionRef, Candidate) of
+	#state{ session_keys = SessionKeys, task_queue = Q } = State,
+	case is_session_valid(SessionKeys, Candidate) of
 		true ->
 			StepNumber = Candidate#mining_candidate.step_number,
 			Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
@@ -165,8 +161,10 @@ handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 			{noreply, State#state{ task_queue = Q2 }};
 		false ->
 			?LOG_DEBUG([{event, mining_debug_stale_task}, {task, TaskType},
-				{current_ref, ar_util:safe_encode(SessionRef)},
-				{candidate_ref, ar_util:safe_encode(Candidate#mining_candidate.session_ref)},
+				{sesssion_keys, lists:map(fun(Key) ->
+					ar_nonce_limiter:encode_session_key(Key) end, sets:to_list(SessionKeys))},
+				{candidate_key, ar_nonce_limiter:encode_session_key(
+					Candidate#mining_candidate.vdf_session_key)},
 				{partition_number, Candidate#mining_candidate.partition_number}]),
 			{noreply, State}
 	end;
@@ -248,22 +246,20 @@ handle_info({'DOWN', Ref, process, _, Reason},
 			{noreply, State}
 	end;
 
-handle_info({event, nonce_limiter, {computed_output, Args}},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
+handle_info({event, nonce_limiter, {computed_output, Args}}, #state{ sessions = #{} } = State) ->
 	{{NextSeed, _StartIntervalNumber, _NextVDFDifficulty},
 			StepNumber, _Output, _PartitionUpperBound} = Args,
 	?LOG_DEBUG([{event, mining_debug_nonce_limiter_computed_output_session_undefined},
 		{step_number, StepNumber}, {session, ar_util:safe_encode(NextSeed)}]),
 	{noreply, State};
-handle_info({event, nonce_limiter, {computed_output, _}},
-		#state{ session = #mining_session{ paused = true } } = State) ->
+handle_info({event, nonce_limiter, {computed_output, _}}, #state{ paused = true } = State) ->
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
-	{VDFSessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
-	Task = {computed_output, {VDFSessionKey, StepNumber, Output, PartitionUpperBound}},
+	Task = {computed_output, {SessionKey, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
 			Task}, Q),
 	prometheus_gauge:inc(mining_server_task_queue_len, [computed_output]),
@@ -283,18 +279,73 @@ terminate(_Reason, #state{ hashing_threads = HashingThreads }) ->
 %%% Private functions.
 %%%===================================================================
 
+get_session(SessionKey, State) ->
+	#state{ sessions = Sessions } = State,
+	maps:get(SessionKey, Sessions, not_found).
+
+update_upper_bound(PartitionUpperBound, State) ->
+	#state{ partition_upper_bound = CurrentUpperBound } = State,
+	case PartitionUpperBound > CurrentUpperBound of
+		true ->
+			ar_mining_io:set_upper_bound(PartitionUpperBound),
+			State#state{ partition_upper_bound = PartitionUpperBound };
+		false ->
+			State
+	end.
+
+refresh_sessions(State) ->
+	#state{ sessions = CurrentSessions } = State,
+
+	{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
+	PreviousSessionKey = CurrentSession#vdf_session.prev_session_key,
+	PreviousSession = ar_nonce_limiter:get_session(PreviousSessionKey),
+
+	NewSessions = #{
+		CurrentSessionKey => maps:get(
+			CurrentSessionKey,
+			CurrentSessions,
+			#mining_session{ seed = CurrentSession#vdf_session.seed }
+		),
+		PreviousSessionKey => maps:get(
+			PreviousSessionKey,
+			CurrentSessions,
+			#mining_session{ seed = PreviousSession#vdf_session.seed }
+		)
+	},
+
+	reset_sessions(NewSessions, CurrentSessions, State).
+
+reset_sessions(NewSessions, CurrentSessions, State) ->
+	#state{ hashing_threads = HashingThreads } = State,
+	CurrentSessionKeys = sets:from_list(maps:keys(CurrentSessions)),
+	NewSessionKeys = sets:from_list(maps:keys(NewSessions)),
+
+	case NewSessionKeys == CurrentSessionKeys of
+		true ->
+			State;
+		false ->
+			[Thread ! {reset_sessions, NewSessionKeys} || Thread <- queue:to_list(HashingThreads)],
+			ar_mining_io:reset_sessions(NewSessionKeys),
+			% CacheSizeLimit = get_chunk_cache_size_limit(),
+			% reset_chunk_cache_size(),
+			% ar_coordination:reset_mining_session(),
+			% Session#mining_session{ ref = Ref, paused = false, chunk_cache_size_limit = CacheSizeLimit }.
+
+			State#state{ sessions = NewSessions, session_keys = NewSessionKeys }
+	end.
+
 start_hashing_thread(State) ->
 	#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs,
-			session = #mining_session{ ref = SessionRef } } = State,
+			session_keys = SessionKeys } = State,
 	Thread = spawn(fun hashing_thread/0),
 	Ref = monitor(process, Thread),
 	Threads2 = queue:in(Thread, Threads),
 	Refs2 = maps:put(Ref, Thread, Refs),
-	case SessionRef of
-		undefined ->
+	case sets:is_empty(SessionKeys) of
+		true ->
 			ok;
 		_ ->
-			Thread ! {new_mining_session, SessionRef}
+			Thread ! {reset_sessions, SessionKeys}
 	end,
 	State#state{ hashing_threads = Threads2, hashing_thread_monitor_refs = Refs2 }.
 
@@ -372,12 +423,12 @@ count_nonce_limiter_tasks(Q) ->
 hashing_thread() ->
 	hashing_thread(not_set).
 
-hashing_thread(SessionRef) ->
+hashing_thread(SessionKeys) ->
 	receive
 		stop ->
 			hashing_thread();
 		{compute_h0, Candidate} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
+			case ar_mining_server:is_session_valid(SessionKeys, Candidate) of
 				true ->
 					#mining_candidate{
 						mining_address = MiningAddress, nonce_limiter_output = Output,
@@ -387,9 +438,9 @@ hashing_thread(SessionRef) ->
 				false ->
 					ok %% Clear the message queue of requests from outdated mining sessions
 			end,
-			hashing_thread(SessionRef);
+			hashing_thread(SessionKeys);
 		{compute_h1, Candidate} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
+			case ar_mining_server:is_session_valid(SessionKeys, Candidate) of
 				true ->
 					#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
 					{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk1),
@@ -397,9 +448,9 @@ hashing_thread(SessionRef) ->
 				false ->
 					ok %% Clear the message queue of requests from outdated mining sessions
 			end,
-			hashing_thread(SessionRef);
+			hashing_thread(SessionKeys);
 		{compute_h2, Candidate} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
+			case ar_mining_server:is_session_valid(SessionKeys, Candidate) of
 				true ->
 					#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2 } = Candidate,
 					{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
@@ -407,9 +458,9 @@ hashing_thread(SessionRef) ->
 				false ->
 					ok %% Clear the message queue of requests from outdated mining sessions
 			end,
-			hashing_thread(SessionRef);
-		{new_mining_session, Ref} ->
-			hashing_thread(Ref)
+			hashing_thread(SessionKeys);
+		{reset_sessions, NewSessionKeys} ->
+			hashing_thread(NewSessionKeys)
 	end.
 
 distribute_output(Candidate, State) ->
@@ -463,27 +514,38 @@ priority(nonce_limiter_computed_output, StepNumber) ->
 	{6, -StepNumber}.
 
 handle_task({computed_output, _Args},
-		#state{ session = #mining_session{ ref = undefined } } = State) ->
+		#state{ sessions = #{} } = State) ->
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
-	#state{ session = MiningSession } = State,
-	{VDFSessionKey, StepNumber, Output, PartitionUpperBound} = Args,
-	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = VDFSessionKey,
+	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+
+	Session = get_session(SessionKey, State2),
+	{Session2, State2} = case Session of
+		not_found ->
+			RefreshedState = refresh_sessions(State),
+			{get_session(SessionKey, RefreshedState), RefreshedState};
+		_ ->
+			{Session, State}
+	end,
+
+	State3 = update_upper_bound(PartitionUpperBound, State2),
+
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 	#mining_session{ vdf_session_key = CurrentVDFSessionKey,
 			partition_upper_bound = CurrentPartitionUpperBound } = MiningSession,
 	MiningSession2 =
-		case (CurrentVDFSessionKey == VDFSessionKey andalso
+		case (CurrentVDFSessionKey == SessionKey andalso
 				CurrentPartitionUpperBound >= PartitionUpperBound) of
 			true ->
 				MiningSession;
 			false ->
-				#vdf_session{ seed = Seed } = ar_nonce_limiter:get_session(VDFSessionKey),
+				#vdf_session{ seed = Seed } = ar_nonce_limiter:get_session(SessionKey),
 				ar:console("Starting new mining session. Upper bound: ~B, entropy nonce: ~s, "
 					"next entropy nonce: ~s, interval number: ~B.~n",
 					[PartitionUpperBound, ar_util:safe_encode(Seed), ar_util:safe_encode(NextSeed),
 					StartIntervalNumber]),
 				NewMiningSession = reset_mining_session(
-					#mining_session{ seed = Seed, vdf_session_key = VDFSessionKey,
+					#mining_session{ seed = Seed, vdf_session_key = SessionKey,
 						partition_upper_bound = PartitionUpperBound },
 					State),
 				?LOG_INFO([{event, new_mining_session}, 

@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, is_ahead_on_the_timeline/2, get_current_step_number/0,
+-export([start_link/0, encode_session_key/1, is_ahead_on_the_timeline/2, get_current_step_number/0,
 		get_current_step_number/1, get_seed_data/2, get_step_checkpoints/4,
 		get_steps/4, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
@@ -39,12 +39,22 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+encode_session_key({NextSeed, StartIntervalNumber, NextVDFDifficulty}) ->
+	{ar_util:encode(NextSeed), StartIntervalNumber, NextVDFDifficulty}.
+
 %% @doc Return true if the first solution is above the second one according
 %% to the protocol ordering.
 is_ahead_on_the_timeline(NonceLimiterInfo1, NonceLimiterInfo2) ->
 	#nonce_limiter_info{ global_step_number = N1 } = NonceLimiterInfo1,
 	#nonce_limiter_info{ global_step_number = N2 } = NonceLimiterInfo2,
 	N1 > N2.
+
+%% @doc Return the nonce limiter session with the given key.
+get_session(SessionKey) ->
+	gen_server:call(?MODULE, {get_session, SessionKey}, infinity).
+
+get_current_session() ->
+	gen_server:call(?MODULE, get_current_session, infinity).
 
 %% @doc Return the latest known step number.
 get_current_step_number() ->
@@ -188,9 +198,9 @@ request_validation(H, #nonce_limiter_info{ global_step_number = N },
 	spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 1}) end);
 request_validation(H, #nonce_limiter_info{ output = Output,
 		steps = [Output | _] = StepsToValidate } = Info, PrevInfo) ->
-	#nonce_limiter_info{ output = PrevOutput, next_seed = PrevNextSeed,
+	#nonce_limiter_info{ output = PrevOutput,
 			global_step_number = PrevStepNumber, vdf_difficulty = PrevVDFDifficulty } = PrevInfo,
-	#nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
+	#nonce_limiter_info{ output = Output, seed = Seed,
 			vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty,
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
@@ -220,8 +230,8 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 		skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput,
 			StepsToValidate, SessionSteps),
 	?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
-			{session_key, ar_util:encode(PrevNextSeed)},
-			{next_session_key, ar_util:encode(NextSeed)},
+			{session_key, encode_session_key(SessionKey)},
+			{next_session_key, encode_session_key(NextSessionKey)},
 			{prev_step_number, PrevStepNumber}, {step_number, StepNumber},
 			{start_step_number, StartStepNumber},
 			{step_count, StepNumber - PrevStepNumber}, {steps, length(StepsToValidate)},
@@ -356,10 +366,6 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, RecentBI) ->
 apply_external_update(Update, Peer) ->
 	gen_server:call(?MODULE, {apply_external_update, Update, Peer}, infinity).
 
-%% @doc Return the nonce limiter session with the given key.
-get_session(SessionKey) ->
-	gen_server:call(?MODULE, {get_session, SessionKey}, infinity).
-
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -466,6 +472,10 @@ handle_call({apply_external_update, Update, Peer}, _From, State) ->
 handle_call({get_session, SessionKey}, _From, State) ->
 	{reply, get_session(SessionKey, State), State};
 
+handle_call(get_current_session, _From, State) ->
+	#state{ current_session_key = CurrentSessionKey } = State,
+	{reply, {CurrentSessionKey, get_session(CurrentSessionKey, State)}, State};
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
@@ -518,7 +528,7 @@ handle_cast({validated_steps, Args}, State) ->
 			%% The corresponding fork origin should have just dropped below the
 			%% checkpoint height.
 			?LOG_WARNING([{event, session_not_found_for_validated_steps},
-					{next_seed, ar_util:encode(element(1, SessionKey))},
+					{session_key, encode_session_key(SessionKey)},
 					{interval, element(2, SessionKey)},
 					{vdf_difficulty, element(3, SessionKey)}]),
 			{noreply, State};
@@ -820,12 +830,12 @@ apply_tip2(B, PrevB, State) ->
 	State2.
 
 prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
-	{{Interval, NextSeed, NextVDFDifficulty}, Sessions2} = gb_sets:take_smallest(Sessions),
+	{SessionKey, Sessions2} = gb_sets:take_smallest(Sessions),
+	{Interval, NextSeed, NextVDFDifficulty} = SessionKey,
 	case BaseInterval > Interval + 10 of
 		true ->
 			?LOG_DEBUG([{event, prune_old_vdf_session},
-				{session_seed, ar_util:encode(NextSeed)}, {session_interval, Interval},
-				{session_difficulty, NextVDFDifficulty}]),
+				{session_key, encode_session_key(SessionKey)}]),
 			SessionByKey2 = maps:remove({NextSeed, Interval, NextVDFDifficulty}, SessionByKey),
 			prune_old_sessions(Sessions2, SessionByKey2, BaseInterval);
 		false ->
@@ -969,7 +979,7 @@ apply_external_update2(Update, State) ->
 			session = #vdf_session{
 				prev_session_key = PrevSessionKey, step_number = StepNumber } = Session,
 			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
-	{SessionSeed, SessionInterval, SessionVDFDifficulty} = SessionKey,
+	{_SessionSeed, SessionInterval, _SessionVDFDifficulty} = SessionKey,
 	case get_session(SessionKey, State) of
 		not_found ->
 			case IsPartial of
@@ -979,9 +989,7 @@ apply_external_update2(Update, State) ->
 						{result, session_not_found},
 						{vdf_server, ar_util:format_peer(Peer)},
 						{is_partial, IsPartial},
-						{session_seed, ar_util:encode(SessionSeed)},
-						{session_interval, SessionInterval},
-						{session_vdf_difficulty, SessionVDFDifficulty},
+						{session_key, encode_session_key(SessionKey)},
 						{server_step_number, StepNumber}]),
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
@@ -1021,9 +1029,7 @@ apply_external_update2(Update, State) ->
 							?LOG_DEBUG([{event, apply_external_vdf},
 								{result, ahead_of_server},
 								{vdf_server, ar_util:format_peer(Peer)},
-								{session_seed, ar_util:encode(SessionSeed)},
-								{session_interval, SessionInterval},
-								{session_vdf_difficulty, SessionVDFDifficulty},
+								{session_key, encode_session_key(SessionKey)},
 								{client_step_number, CurrentStepNumber},
 								{server_step_number, StepNumber}]),
 							{reply, #nonce_limiter_update_response{
@@ -1036,9 +1042,7 @@ apply_external_update2(Update, State) ->
 										{result, missing_steps},
 										{vdf_server, ar_util:format_peer(Peer)},
 										{is_partial, IsPartial},
-										{session_seed, ar_util:encode(SessionSeed)},
-										{session_interval, SessionInterval},
-										{session_vdf_difficulty, SessionVDFDifficulty},
+										{session_key, encode_session_key(SessionKey)},
 										{client_step_number, CurrentStepNumber},
 										{server_step_number, StepNumber}]),
 									{reply, #nonce_limiter_update_response{
@@ -1082,9 +1086,7 @@ apply_external_update3(State, SessionKey, CurrentSessionKey, Session, Steps) ->
 	?LOG_DEBUG([{event, apply_external_vdf},
 		{result, ok},
 		{vdf_server, ar_util:format_peer(Peer)},
-		{session_seed, ar_util:encode(element(1, SessionKey))},
-		{session_interval, element(2, SessionKey)},
-		{session_difficulty, element(3, SessionKey)},
+		{session_key, encode_session_key(SessionKey)},
 		{length, length(Steps)}]),
 	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
 	send_events_for_external_update(SessionKey, Session#vdf_session{ steps = Steps }),
@@ -1169,9 +1171,7 @@ cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	#state{ session_by_key = SessionByKey, sessions = Sessions } = State,
 	{NextSeed, Interval, NextVDFDifficulty} = SessionKey,
 	maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session),
-	?LOG_DEBUG([{event, add_session}, {next_seed, ar_util:encode(NextSeed)}, 
-		{next_vdf_difficulty, Session#vdf_session.next_vdf_difficulty},
-		{interval, Interval},
+	?LOG_DEBUG([{event, add_session}, {session_key, encode_session_key(SessionKey)},
 		{step_number, Session#vdf_session.step_number}]),
 	SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
 	%% If Session exists, then {Interval, NextSeed} will already exist in the Sessions set and
