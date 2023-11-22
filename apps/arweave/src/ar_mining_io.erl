@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, reset/2, get_partitions/0,
+-export([start_link/0, set_upper_bound/1, get_partitions/0,
 			get_thread_count/0, read_recall_range/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -14,7 +14,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	session_ref = undefined,
 	partition_upper_bound = undefined,
 	io_threads = #{},
 	io_thread_monitor_refs = #{}
@@ -28,8 +27,8 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-reset(SessionRef, PartitionUpperBound) ->
-	gen_server:cast(?MODULE, {reset, SessionRef, PartitionUpperBound}).
+set_upper_bound(PartitionUpperBound) ->
+	gen_server:cast(?MODULE, {set_upper_bound, PartitionUpperBound}).
 
 get_partitions() ->
 	gen_server:call(?MODULE, get_partitions).
@@ -116,11 +115,8 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast({reset, SessionRef, PartitionUpperBound}, #state{ io_threads = IOThreads } = State) ->
-	[Thread ! {new_mining_session, SessionRef} || Thread <- maps:values(IOThreads)],
-	{noreply, State#state{
-				session_ref = SessionRef,
-				partition_upper_bound = PartitionUpperBound }};
+handle_cast({set_upper_bound, PartitionUpperBound}, State) ->
+	{noreply, State#state{ partition_upper_bound = PartitionUpperBound }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
@@ -158,10 +154,9 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID, #state{ io_threads = Th
 		when is_map_key({PartitionNumber, MiningAddress, StoreID}, Threads) ->
 	State;
 start_io_thread(PartitionNumber, MiningAddress, StoreID,
-		#state{ io_threads = Threads, io_thread_monitor_refs = Refs, 
-			session_ref = SessionRef } = State) ->
+		#state{ io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
 	Thread =
-		spawn(
+		spawn_link(
 			fun() ->
 				case StoreID of
 					"default" ->
@@ -175,12 +170,6 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 	Ref = monitor(process, Thread),
 	Threads2 = maps:put({PartitionNumber, MiningAddress, StoreID}, Thread, Threads),
 	Refs2 = maps:put(Ref, {PartitionNumber, MiningAddress, StoreID}, Refs),
-	case SessionRef of
-		undefined ->
-			ok;
-		_ ->
-			Thread ! {new_mining_session, SessionRef}
-	end,
 	?LOG_DEBUG([{event, started_io_mining_thread}, {partition_number, PartitionNumber},
 			{mining_addr, ar_util:safe_encode(MiningAddress)}, {store_id, StoreID}]),
 	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }.
@@ -195,22 +184,12 @@ handle_io_thread_down(Ref, Reason,
 			State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }).
 
 io_thread(PartitionNumber, MiningAddress, StoreID) ->
-	io_thread(PartitionNumber, MiningAddress, StoreID, not_set).
-
-io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 	receive
 		stop ->
 			io_thread(PartitionNumber, MiningAddress, StoreID);
-		{new_mining_session, Ref} ->
-			io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
 		{WhichChunk, {Candidate, RecallRangeStart}} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true -> 
-					read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
-				false -> 
-					ok %% Clear the message queue of requests from outdated mining sessions
-			end,
-			io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef)
+			read_range(WhichChunk, Candidate, RecallRangeStart, StoreID),
+			io_thread(PartitionNumber, MiningAddress, StoreID)
 	end.
 
 get_packed_intervals(Start, End, MiningAddress, "default", Intervals) ->
@@ -241,8 +220,7 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{
 		mining_address = MiningAddress, partition_number = PartitionNumber, h0 = H0,
-		step_number = StepNumber, nonce_limiter_output = Output,
-		session_ref = SessionRef } = Candidate,
+		step_number = StepNumber, nonce_limiter_output = Output } = Candidate,
 	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
@@ -251,7 +229,6 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			{chunk, WhichChunk},
 			{range_start, RangeStart},
 			{size, Size},
-			{session_ref, ar_util:safe_encode(SessionRef)},
 			{h0, ar_util:safe_encode(H0)},
 			{step_number, StepNumber},
 			{output, ar_util:safe_encode(Output)},
