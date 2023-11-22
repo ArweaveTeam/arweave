@@ -277,8 +277,7 @@ handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
-terminate(_Reason, #state{ hashing_threads = HashingThreads }) ->
-	[Thread ! stop || Thread <- queue:to_list(HashingThreads)],
+terminate(_Reason, _State) ->
 	ok.
 
 %%%===================================================================
@@ -286,18 +285,11 @@ terminate(_Reason, #state{ hashing_threads = HashingThreads }) ->
 %%%===================================================================
 
 start_hashing_thread(State) ->
-	#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs,
-			session = #mining_session{ ref = SessionRef } } = State,
-	Thread = spawn(fun hashing_thread/0),
+	#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs } = State,
+	Thread = spawn_link(fun hashing_thread/0),
 	Ref = monitor(process, Thread),
 	Threads2 = queue:in(Thread, Threads),
 	Refs2 = maps:put(Ref, Thread, Refs),
-	case SessionRef of
-		undefined ->
-			ok;
-		_ ->
-			Thread ! {new_mining_session, SessionRef}
-	end,
 	State#state{ hashing_threads = Threads2, hashing_thread_monitor_refs = Refs2 }.
 
 handle_hashing_thread_down(Ref, Reason,
@@ -371,47 +363,26 @@ count_nonce_limiter_tasks(Q) ->
 			end
 	end.
 
-hashing_thread() ->
-	hashing_thread(not_set).
 
-hashing_thread(SessionRef) ->
+hashing_thread() ->
 	receive
-		stop ->
-			hashing_thread();
 		{compute_h0, Candidate} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true ->
-					#mining_candidate{
-						mining_address = MiningAddress, nonce_limiter_output = Output,
-						partition_number = PartitionNumber, seed = Seed } = Candidate,
-					H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress),
-					ar_mining_server:computed_hash(computed_h0, H0, undefined, Candidate);
-				false ->
-					ok %% Clear the message queue of requests from outdated mining sessions
-			end,
-			hashing_thread(SessionRef);
+			#mining_candidate{
+				mining_address = MiningAddress, nonce_limiter_output = Output,
+				partition_number = PartitionNumber, seed = Seed } = Candidate,
+			H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress),
+			ar_mining_server:computed_hash(computed_h0, H0, undefined, Candidate),
+			hashing_thread();
 		{compute_h1, Candidate} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true ->
-					#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
-					{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk1),
-					ar_mining_server:computed_hash(computed_h1, H1, Preimage, Candidate);
-				false ->
-					ok %% Clear the message queue of requests from outdated mining sessions
-			end,
-			hashing_thread(SessionRef);
+			#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
+			{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk1),
+			ar_mining_server:computed_hash(computed_h1, H1, Preimage, Candidate),
+			hashing_thread();
 		{compute_h2, Candidate} ->
-			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true ->
-					#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2 } = Candidate,
-					{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
-					ar_mining_server:computed_hash(computed_h2, H2, Preimage, Candidate);
-				false ->
-					ok %% Clear the message queue of requests from outdated mining sessions
-			end,
-			hashing_thread(SessionRef);
-		{new_mining_session, Ref} ->
-			hashing_thread(Ref)
+			#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2 } = Candidate,
+			{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
+			ar_mining_server:computed_hash(computed_h2, H2, Preimage, Candidate),
+			hashing_thread()
 	end.
 
 distribute_output(Candidate, State) ->
@@ -1088,8 +1059,7 @@ reset_mining_session(Session, State) ->
 	#mining_session{ partition_upper_bound = PartitionUpperBound } = Session,
 	#state{ hashing_threads = HashingThreads } = State,
 	Ref = make_ref(),
-	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
-	ar_mining_io:reset(Ref, PartitionUpperBound),
+	ar_mining_io:set_upper_bound(PartitionUpperBound),
 	CacheSizeLimit = get_chunk_cache_size_limit(),
 	reset_chunk_cache_size(),
 	ar_coordination:reset_mining_session(),
