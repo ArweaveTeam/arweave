@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, is_syncing_enabled/0, ready_for_work/0]).
+-export([start_link/1, is_syncing_enabled/0, ready_for_work/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -44,8 +44,8 @@
 %%%===================================================================
 
 %% @doc Start the server.
-start_link(Name, Workers) ->
-	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
+start_link(Workers) ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, Workers, []).
 
 %% @doc Returns true if syncing is enabled (i.e. sync_jobs > 0).
 is_syncing_enabled() ->
@@ -82,7 +82,7 @@ handle_call(ready_for_work, _From, State) ->
 	{reply, ReadyForWork, State};
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast(process_main_queue, #state{ task_queue_len = 0 } = State) ->
@@ -127,11 +127,11 @@ handle_cast(rebalance_peers, State) ->
 	{noreply, State3};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, _State) ->

@@ -371,7 +371,7 @@ handle_call({cut, Offset, ID}, _From, State) ->
 	{reply, Reply, State3};
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast(store_state, State) ->
@@ -381,11 +381,11 @@ handle_cast(store_state, State) ->
 	{noreply, State2};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, State) ->

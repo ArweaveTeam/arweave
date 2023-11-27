@@ -150,7 +150,7 @@ init([]) ->
 		workers = Workers, num_workers = SpawnSchedulers }}.
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast({unpack_request, _, _, _}, #state{ num_workers = 0 } = State) ->
@@ -160,7 +160,8 @@ handle_cast({unpack_request, From, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	?LOG_DEBUG([{event, got_unpack_request}, {ref, Ref}, {packing, Packing}]),
+	?LOG_DEBUG([{event, got_unpack_request}, {ref, Ref},
+		{packing, ar_chunk_storage:encode_packing(Packing)}]),
 	increment_buffer_size(),
 	record_packing_request(unpack, Packing, unpack_request),
 	Worker ! {unpack, Ref, From, Args},
@@ -173,7 +174,8 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 	{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
 	?LOG_DEBUG([{event, got_repack_request}, {ref, Ref},
-		{requested_packing, RequestedPacking}, {packing, Packing}]),
+		{requested_packing, ar_chunk_storage:encode_packing(RequestedPacking)},
+		{packing, ar_chunk_storage:encode_packing(Packing)}]),
 	case {RequestedPacking, Packing} of
 		{unpacked, unpacked} ->
 			From ! {chunk, {packed, Ref, {unpacked, Chunk, AbsoluteOffset, TXRoot, ChunkSize}}},
@@ -194,11 +196,11 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }}
 	end;
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->

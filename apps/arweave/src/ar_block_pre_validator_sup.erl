@@ -20,7 +20,5 @@ start_link() ->
 %%%===================================================================
 
 init([]) ->
-	Children = [{ar_block_pre_validator, {ar_block_pre_validator, start_link,
-			[ar_block_pre_validator, []]}, permanent, ?SHUTDOWN_TIMEOUT, worker,
-			[ar_block_pre_validator]}],
+	Children = [?CHILD(ar_block_pre_validator, worker)],
 	{ok, {{one_for_one, 5, 10}, Children}}.

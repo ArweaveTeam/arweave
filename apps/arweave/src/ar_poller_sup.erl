@@ -31,6 +31,5 @@ init([]) ->
 		lists:seq(1, Config#config.block_pollers)
 	),
 	Workers = [element(1, El) || El <- Children],
-	Children2 = [{ar_poller, {ar_poller, start_link, [ar_poller, Workers]},
-			permanent, ?SHUTDOWN_TIMEOUT, worker, [ar_poller]} | Children],
+	Children2 = [?CHILD_WITH_ARGS(ar_poller, worker, ar_poller, [ar_poller, Workers]) | Children],
 	{ok, {{one_for_one, 5, 10}, Children2}}.

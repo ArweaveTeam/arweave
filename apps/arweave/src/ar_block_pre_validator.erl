@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, pre_validate/3]).
+-export([start_link/0, pre_validate/3]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -42,8 +42,8 @@
 %%% Public interface.
 %%%===================================================================
 
-start_link(Name, Workers) ->
-	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Partially validate the received block. The validation consists of multiple
 %% stages. The process is aiming to increase resistance against DDoS attacks.
@@ -175,7 +175,7 @@ handle_cast(Msg, State) ->
 	{noreply, State}.
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_info({event, block, _}, State) ->

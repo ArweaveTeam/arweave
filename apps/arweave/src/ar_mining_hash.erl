@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, compute_h0/1, compute_h1/1, compute_h2/1]).
+-export([start_link/0, compute_h0/2, compute_h1/2, compute_h2/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -25,14 +25,14 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-compute_h0(Candidate) ->
-	gen_server:cast(?MODULE, {compute, h0, Candidate}).
+compute_h0(Worker, Candidate) ->
+	gen_server:cast(?MODULE, {compute, h0, Worker, Candidate}).
 
-compute_h1(Candidate) ->
-	gen_server:cast(?MODULE, {compute, h1, Candidate}).
+compute_h1(Worker, Candidate) ->
+	gen_server:cast(?MODULE, {compute, h1, Worker, Candidate}).
 
-compute_h2(Candidate) ->
-	gen_server:cast(?MODULE, {compute, h2, Candidate}).
+compute_h2(Worker, Candidate) ->
+	gen_server:cast(?MODULE, {compute, h2, Worker, Candidate}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -49,17 +49,17 @@ init([]) ->
 	{ok, State}.
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({compute, HashType, Candidate},
+handle_cast({compute, HashType, Worker, Candidate},
 		#state{ hashing_threads = Threads } = State) ->
 	{Thread, Threads2} = pick_hashing_thread(Threads),
-	Thread ! {compute, HashType, Candidate},
+	Thread ! {compute, HashType, Worker, Candidate},
 	{noreply, State#state{ hashing_threads = Threads2 }};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info({'DOWN', Ref, process, _, Reason},
@@ -72,7 +72,7 @@ handle_info({'DOWN', Ref, process, _, Reason},
 	end;
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -103,22 +103,22 @@ handle_hashing_thread_down(Ref, Reason,
 
 hashing_thread() ->
 	receive
-		{compute, h0, Candidate} ->
+		{compute, h0, Worker, Candidate} ->
 			#mining_candidate{
 				mining_address = MiningAddress, nonce_limiter_output = Output,
 				partition_number = PartitionNumber, seed = Seed } = Candidate,
 			H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress),
-			ar_mining_server:computed_hash(computed_h0, H0, undefined, Candidate),
+			ar_mining_worker:computed_hash(Worker, computed_h0, H0, undefined, Candidate),
 			hashing_thread();
-		{compute, h1, Candidate} ->
+		{compute, h1, Worker, Candidate} ->
 			#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
 			{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk1),
-			ar_mining_server:computed_hash(computed_h1, H1, Preimage, Candidate),
+			ar_mining_worker:computed_hash(Worker, computed_h1, H1, Preimage, Candidate),
 			hashing_thread();
-		{compute, h2, Candidate} ->
+		{compute, h2, Worker, Candidate} ->
 			#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2 } = Candidate,
 			{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
-			ar_mining_server:computed_hash(computed_h2, H2, Preimage, Candidate),
+			ar_mining_worker:computed_hash(Worker, computed_h2, H2, Preimage, Candidate),
 			hashing_thread()
 	end.
 

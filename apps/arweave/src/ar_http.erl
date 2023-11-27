@@ -132,11 +132,11 @@ handle_call({get_connection, Args}, From,
 	end;
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info({gun_up, PID, Protocol}, #state{ status_by_pid = StatusByPID } = State) ->
@@ -239,7 +239,7 @@ handle_info({'DOWN', _Ref, process, PID, Reason},
 	end;
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, #state{ status_by_pid = StatusByPID }) ->

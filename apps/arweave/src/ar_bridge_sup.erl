@@ -30,6 +30,5 @@ init([]) ->
 		lists:seq(1, ?BLOCK_PROPAGATION_PARALLELIZATION)
 	),
 	Workers = [element(1, El) || El <- Children],
-	Children2 = [{ar_bridge, {ar_bridge, start_link, [ar_bridge, Workers]},
-			permanent, ?SHUTDOWN_TIMEOUT, worker, [ar_bridge]} | Children],
+	Children2 = [?CHILD_WITH_ARGS(ar_bridge, worker, ar_bridge, [ar_bridge, Workers]) | Children],
 	{ok, {{one_for_one, 5, 10}, Children2}}.

@@ -1210,7 +1210,7 @@ handle_cast({request_default_unpacked_packing, Cursor, RightBound}, State) ->
 	{noreply, State};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
@@ -1218,7 +1218,7 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_info({event, node_state, {initialized, _B}},
@@ -1358,7 +1358,7 @@ handle_info({'DOWN', _,  process, _, Reason}, State) ->
 	{noreply, State};
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, State) ->
@@ -2692,7 +2692,8 @@ pack_and_store_chunk(Args, State) ->
 									{data_root, ar_util:encode(DataRoot)},
 									{absolute_end_offset, AbsoluteOffset},
 									{relative_offset, Offset},
-									{required_packing, RequiredPacking},
+									{required_packing,
+										ar_chunk_storage:encode_packing(RequiredPacking)},
 									{packing, Packing2}]),
 							ar_util:cast_after(600000, self(),
 									{expire_repack_chunk_request,

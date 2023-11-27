@@ -229,14 +229,18 @@ candidate_to_json_struct_test() ->
             cache_ref = not_set,
             chunk1 = not_set,
             chunk2 = not_set,
-            cm_lead_peer = not_set,
-            session_ref = not_set
+            cm_lead_peer = not_set
         },
         ?assertEqual(ExpectedCandidate, CandidateAfter)
     end,
 
 	DefaultCandidate = #mining_candidate{
         cm_diff = binary:decode_unsigned(crypto:strong_rand_bytes(32), big),
+		cm_h1_list = [
+			{crypto:strong_rand_bytes(32), rand:uniform(100)},
+			{crypto:strong_rand_bytes(32), rand:uniform(100)},
+			{crypto:strong_rand_bytes(32), rand:uniform(100)}
+		],
         h0 = crypto:strong_rand_bytes(32),
         h1 = crypto:strong_rand_bytes(32),
         h2 = crypto:strong_rand_bytes(32),
@@ -254,6 +258,7 @@ candidate_to_json_struct_test() ->
  			tx_path = crypto:strong_rand_bytes(1024) },
         preimage = crypto:strong_rand_bytes(32),
         seed = crypto:strong_rand_bytes(32),
+		session_key = {crypto:strong_rand_bytes(32), rand:uniform(100), rand:uniform(10000)},
         start_interval_number = rand:uniform(100),
         step_number = rand:uniform(100)
     },
@@ -262,6 +267,7 @@ candidate_to_json_struct_test() ->
 
 	%% clear optional fields
 	Test(DefaultCandidate#mining_candidate{
+		cm_h1_list = [],
 		h1 = not_set,
 		h2 = not_set,
 		nonce = not_set,
@@ -273,58 +279,7 @@ candidate_to_json_struct_test() ->
 		cache_ref = {rand:uniform(100), rand:uniform(100), rand:uniform(100), make_ref()},
 		chunk1 = crypto:strong_rand_bytes(256 * 1024),
 		chunk2 = crypto:strong_rand_bytes(256 * 1024),
-		cm_lead_peer = ar_test_node:peer_ip(main),
-		session_ref = make_ref()}).
-
-h2_inputs_to_json_struct_test() ->
-
-	Test = fun(Candidate, H1List) ->
-        JSON = ar_serialize:jsonify({ar_serialize:h2_inputs_to_json_struct(Candidate, H1List)}),
-		{ok, JSONStruct} = ar_serialize:json_decode(JSON, [{return_maps, true}]),
-        {CandidateAfter, H1ListAfter} = ar_serialize:json_struct_to_h2_inputs(JSONStruct),
-        ExpectedCandidate = Candidate#mining_candidate{
-            cache_ref = not_set,
-            chunk1 = not_set,
-            chunk2 = not_set,
-            cm_lead_peer = not_set,
-            session_ref = not_set
-        },
-        ?assertEqual(ExpectedCandidate, CandidateAfter),
-		?assertEqual(H1List, H1ListAfter)
-    end,
-
-	DefaultCandidate = #mining_candidate{
-        cm_diff = binary:decode_unsigned(crypto:strong_rand_bytes(32), big),
-        h0 = crypto:strong_rand_bytes(32),
-        h1 = crypto:strong_rand_bytes(32),
-        h2 = crypto:strong_rand_bytes(32),
-        mining_address = crypto:strong_rand_bytes(32),
-        next_seed = crypto:strong_rand_bytes(32),
-		next_vdf_difficulty = rand:uniform(100),
-        nonce = rand:uniform(100),
-        nonce_limiter_output = crypto:strong_rand_bytes(32),
-        partition_number = rand:uniform(100),
-        partition_number2 = rand:uniform(100),
-        partition_upper_bound = rand:uniform(100),
-        poa2 = #poa{
-			chunk = crypto:strong_rand_bytes(256 * 1024),
-			data_path = crypto:strong_rand_bytes(1024),
- 			tx_path = crypto:strong_rand_bytes(1024) },
-        preimage = crypto:strong_rand_bytes(32),
-        seed = crypto:strong_rand_bytes(32),
-        start_interval_number = rand:uniform(100),
-        step_number = rand:uniform(100)
-    },
-
-	H1List = [
-		{crypto:strong_rand_bytes(32), rand:uniform(100)},
-		{crypto:strong_rand_bytes(32), rand:uniform(100)},
-		{crypto:strong_rand_bytes(32), rand:uniform(100)}
-	],
-
-	Test(DefaultCandidate, H1List),
-
-	Test(DefaultCandidate, []).
+		cm_lead_peer = ar_test_node:peer_ip(main)}).
 
 solution_to_json_struct_test() ->
 

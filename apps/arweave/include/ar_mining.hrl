@@ -8,6 +8,7 @@
 	chunk1 = not_set, %% not serialized
 	chunk2 = not_set, %% not serialized
 	cm_diff = not_set, %% serialized. set to the difficulty used by the H1 miner
+	cm_h1_list = [], %% serialized. list of {h1, nonce} pairs
 	cm_lead_peer = not_set, %% not serialized. if set, this candidate came from another peer
 	h0 = not_set, %% serialized
 	h1 = not_set, %% serialized
@@ -23,7 +24,7 @@
 	poa2 = not_set, %% serialized
 	preimage = not_set, %% serialized. this can be either the h1 or h2 preimage
 	seed = not_set, %% serialized
-	session_ref = not_set, %% not serialized
+	session_key = not_set, %% serialized
 	start_interval_number = not_set, %% serialized
 	step_number = not_set %% serialized
 }).

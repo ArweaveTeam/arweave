@@ -360,7 +360,7 @@ handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
 	Blocks4 = may_be_initialize_nonce_limiter(Blocks3, BI2),
 	Blocks5 = Blocks4 ++ lists:nthtail(length(Blocks3), Blocks2),
 	ets:insert(node_state, {join_state, {Height, Blocks5, BI2}}),
-	ar_events:send(node_state, {initializing, Blocks5}),
+	ar_nonce_limiter:account_tree_initialized(Blocks5),
 	{noreply, State};
 
 handle_info({event, node_state, _Event}, State) ->
@@ -427,7 +427,7 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	?LOG_INFO([{event, joined_the_network}, {block, ar_util:encode(Current)},
 			{height, Height}]),
 	ets:delete(node_state, join_state),
-	{noreply, may_be_reset_miner(State)};
+	{noreply, maybe_reset_miner(State)};
 
 handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
 	?LOG_WARNING([{event, received_block_with_invalid_nonce_limiter_chain},
@@ -1554,7 +1554,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {new_tip, B, PrevB}),
 	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
-	may_be_reset_miner(State).
+	maybe_reset_miner(State).
 
 get_checkpoint_block(RecentBI) ->
 	get_checkpoint_block(RecentBI, 1).
@@ -1723,7 +1723,7 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
-may_be_reset_miner(#{ miner_2_6 := Miner_2_6, automine := false } = State) ->
+maybe_reset_miner(#{ miner_2_6 := Miner_2_6, automine := false } = State) ->
 	case Miner_2_6 of
 		undefined ->
 			ok;
@@ -1731,7 +1731,7 @@ may_be_reset_miner(#{ miner_2_6 := Miner_2_6, automine := false } = State) ->
 			ar_mining_server:pause()
 	end,
 	State#{ miner_2_6 => undefined };
-may_be_reset_miner(State) ->
+maybe_reset_miner(State) ->
 	start_mining(State).
 
 start_mining(State) ->

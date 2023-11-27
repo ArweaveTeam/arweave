@@ -7,6 +7,9 @@
 
 -define(CHILD(I, Type), {I, {I, start_link, []}, permanent, ?SHUTDOWN_TIMEOUT, Type, [I]}).
 
+-define(CHILD_WITH_ARGS(I, Type, Name, Args),
+		{Name, {I, start_link, Args}, permanent, ?SHUTDOWN_TIMEOUT, Type, [Name]}).
+
 %% From the Erlang docs:
 %%
 %% An integer time-out value means that the supervisor tells the child process to terminate

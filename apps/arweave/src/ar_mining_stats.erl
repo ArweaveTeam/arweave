@@ -141,7 +141,7 @@ init([]) ->
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast(report_performance, #state{ pause_performance_reports = true,
@@ -167,11 +167,11 @@ handle_cast({pause_performance_reports, Time}, State) ->
 			pause_performance_reports_timeout = Timeout }};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -270,9 +270,9 @@ vdf_speed(Now) ->
 	case get_average(vdf, Now) of
 		0.0 ->
 			undefined;
-		VDFSpeed ->
+		StepsPerSecond ->
 			reset_count(vdf, Now),
-			VDFSpeed
+			1.0 / StepsPerSecond
 	end.
 
 %% @doc calculate the maximum hash rate (in MiB per second read from disk) for the given VDF speed
@@ -389,7 +389,7 @@ report_performance() ->
 	Report = generate_report(),
 	set_metrics(Report),
 	ReportString = format_report(Report),
-	io:format("~s", [ReportString]),
+	ar:console("~s", [ReportString]),
 	log_report(ReportString).
 
 log_report(ReportString) ->
@@ -688,7 +688,7 @@ test_vdf_stats() ->
 	?assertEqual(6.0, get_average(vdf, Start + 500)),
 
 	Now = Start + 1000,
-	?assertEqual(3.0, vdf_speed(Now)),
+	?assertEqual(1.0/3.0, vdf_speed(Now)),
 	?assertEqual(Now, get_start(vdf)),
 	?assertEqual(undefined, vdf_speed(Now)),
 	?assertEqual(0.0, get_average(vdf, Now + 500)),
@@ -696,7 +696,7 @@ test_vdf_stats() ->
 
 	ar_mining_stats:vdf_computed(),
 	Start2 = get_start(vdf),
-	?assertEqual(2.0, vdf_speed(Start2 + 500)),
+	?assertEqual(0.5, vdf_speed(Start2 + 500)),
 
 	ar_mining_stats:vdf_computed(),
 	reset_all_stats(),
@@ -958,9 +958,9 @@ test_report() ->
 	log_report(ReportString),
 	?assertEqual(#report{ 
 		now = Now+1000,
-		vdf_speed = 3.0,
+		vdf_speed = 1.0 / 3.0,
 		total_data_size = floor(0.6 * ?PARTITION_SIZE),
-		optimal_overall_read_mibps = 35.3333330154419,
+		optimal_overall_read_mibps = 317.99999713897705,
 		average_read_mibps = 1.25,
 		current_read_mibps = 1.25,
 		average_hash_hps = 5.0,
@@ -984,7 +984,7 @@ test_report() ->
 			#partition_report{
 				partition_number = 2,
 				data_size = floor(0.25 * ?PARTITION_SIZE),
-				optimal_read_mibps = 8.833333253860475,
+				optimal_read_mibps = 79.49999928474426,
 				average_read_mibps = 0.5,
 				current_read_mibps = 0.5,
 				average_hash_hps = 2.0,
@@ -993,7 +993,7 @@ test_report() ->
 			#partition_report{
 				partition_number = 1,
 				data_size = 734002,
-				optimal_read_mibps = 12.366646337509339,
+				optimal_read_mibps = 111.299817037584039,
 				average_read_mibps = 0.75,
 				current_read_mibps = 0.75,
 				average_hash_hps = 3.0,

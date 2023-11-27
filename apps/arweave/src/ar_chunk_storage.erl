@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, put/2, put/3,
+-export([start_link/2, encode_packing/1, put/2, put/3,
 		open_files/1, get/1, get/2, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, run_defragmentation/0]).
 
@@ -32,6 +32,13 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+encode_packing({spora_2_6, Addr}) ->
+	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
+encode_packing(spora_2_5) ->
+	"spora_2_5";
+encode_packing(unpacked) ->
+	"unpacked".
 
 %% @doc Start the server.
 start_link(Name, StoreID) ->
@@ -253,7 +260,7 @@ handle_cast({expire_repack_request, Ref}, #state{ packing_map = Map } = State) -
 	{noreply, State#state{ packing_map = maps:remove(Ref, Map) }};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_call({put, Offset, Chunk}, _From, State) when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
@@ -293,7 +300,7 @@ handle_call(reset, _, #state{ store_id = StoreID, file_index = FileIndex } = Sta
 	{reply, ok, State#state{ file_index = #{} }};
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_info({chunk, {packed, Ref, ChunkArgs}},
@@ -315,11 +322,11 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 								ok ->
 									?LOG_DEBUG([{event, repacked_chunk},
 											{offset, Offset},
-											{packing, format_packing(Packing)}]);
+											{packing, encode_packing(Packing)}]);
 								Error ->
 									?LOG_ERROR([{event, failed_to_record_repacked_chunk},
 											{offset, Offset},
-											{packing, format_packing(Packing)},
+											{packing, encode_packing(Packing)},
 											{error, io_lib:format("~p", [Error])}])
 							end,
 							{noreply, State2#state{ file_index = FileIndex2,
@@ -327,14 +334,14 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 						Error2 ->
 							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 									{offset, Offset},
-									{packing, format_packing(Packing)},
+									{packing, encode_packing(Packing)},
 									{error, io_lib:format("~p", [Error2])}]),
 							{noreply, State2}
 					end;
 				Error3 ->
 					?LOG_ERROR([{event, failed_to_remove_repacked_chunk_from_sync_record},
 							{offset, Offset},
-							{packing, format_packing(Packing)},
+							{packing, encode_packing(Packing)},
 							{error, io_lib:format("~p", [Error3])}]),
 					{noreply, State2}
 			end
@@ -709,7 +716,7 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 		not_found ->
 			ar:console("Repacking complete.~n", []),
 			?LOG_INFO([{event, repacking_complete},
-					{target_packing, format_packing(Packing)}]),
+					{target_packing, encode_packing(Packing)}]),
 			Server = list_to_atom("ar_chunk_storage_" ++ StoreID),
 			gen_server:cast(Server, repacking_complete),
 			ok;
@@ -801,7 +808,7 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 							{{true, RequiredPacking}, StoreID} ->
 								?LOG_WARNING([{event,
 											repacking_process_chunk_already_repacked},
-										{packing, format_packing(RequiredPacking)},
+										{packing, encode_packing(RequiredPacking)},
 										{offset, AbsoluteOffset}]),
 								ok;
 							{{true, Packing}, StoreID} ->
@@ -833,13 +840,6 @@ chunk_offset_list_to_map([], Min, Max, Map) ->
 chunk_offset_list_to_map([{Offset, Chunk} | ChunkOffsets], Min, Max, Map) ->
 	chunk_offset_list_to_map(ChunkOffsets, min(Min, Offset), max(Max, Offset),
 			maps:put(Offset, Chunk, Map)).
-
-format_packing({spora_2_6, Addr}) ->
-	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
-format_packing(spora_2_5) ->
-	"spora_2_5";
-format_packing(unpacked) ->
-	"unpacked".
 
 %%%===================================================================
 %%% Tests.

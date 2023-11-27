@@ -3069,8 +3069,8 @@ handle_mining_h1(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					{Candidate, H1List} = ar_serialize:json_struct_to_h2_inputs(JSON),
-					ar_coordination:compute_h2_for_peer(Peer, Candidate, H1List),
+					Candidate = ar_serialize:json_struct_to_candidate(JSON),
+					ar_coordination:compute_h2_for_peer(Peer, Candidate),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
@@ -3087,7 +3087,8 @@ handle_mining_h2(Req, Pid) ->
 				{ok, JSON} ->
 					Candidate = ar_serialize:json_struct_to_candidate(JSON),
 					?LOG_INFO([{event, h2_received}, {peer, ar_util:format_peer(Peer)}]),
-					ar_coordination:post_solution(Peer, Candidate),
+					ar_mining_server:prepare_and_post_solution(Candidate),
+					ar_mining_stats:h2_received_from_peer(Peer),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}

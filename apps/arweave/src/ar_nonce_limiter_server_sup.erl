@@ -26,8 +26,7 @@ init([]) ->
 		fun(Peer) ->
 			Name = list_to_atom("ar_nonce_limiter_server_worker_"
 					++ ar_util:peer_to_str(Peer)),
-			{Name, {ar_nonce_limiter_server_worker, start_link, [Name, Peer]}, permanent,
-					?SHUTDOWN_TIMEOUT, worker, [Name]}
+			?CHILD_WITH_ARGS(ar_nonce_limiter_server_worker, worker, Name, [Name, Peer])
 		end,
 		Config#config.nonce_limiter_client_peers
 	),

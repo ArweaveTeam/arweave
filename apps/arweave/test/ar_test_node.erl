@@ -3,7 +3,7 @@
 %% The new, more flexible, and more user-friendly interface.
 -export([wait_until_joined/0,
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
-		wait_until_height/2, wait_until_mining_paused/1, http_get_block/2, get_blocks/1,
+		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4]).
 
@@ -20,7 +20,6 @@
 
 		wait_until_height/1, assert_wait_until_height/2,
 		wait_until_block_index/1, wait_until_block_index/2,
-		wait_until_mining_paused/0,
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
 		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2, assert_post_tx_to_peer/3,
@@ -241,9 +240,6 @@ mine() ->
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
 	remote_call(Node, ar_test_node, mine, []).
-
-wait_until_mining_paused(Node) ->
-	remote_call(Node, ar_test_node, wait_until_mining_paused, []).
 
 %% @doc Fetch and decode a binary-encoded block by hash H from the HTTP API of the
 %% given node. Return {ok, B} | {error, Reason}.
@@ -798,25 +794,6 @@ wait_until_node_is_ready(NodeName) ->
         500,
         30000
     ).
-
-wait_until_mining_paused() ->
-	%% give time for all messages in message queues to be processed into the task queue
-	timer:sleep(3000),
-	%% wait until all messages in the task queue have been processed
-	ar_util:do_until(
-		fun() ->
-			case ar_mining_server:get_task_queue_len() of
-				0 ->
-					ok;
-				_ ->
-					false
-			end
-		end,
-		1000,
-		60 * 1000
-	),
-	%% wait one last time to ensure any tasks in process have completed
-	timer:sleep(3000).
 
 assert_wait_until_receives_txs(TXs) ->
 	?assertEqual(ok, wait_until_receives_txs(TXs)).
