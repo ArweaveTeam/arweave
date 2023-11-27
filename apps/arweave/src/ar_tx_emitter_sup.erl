@@ -22,7 +22,7 @@ start_link() ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
-	Children = lists:map(
+	Workers = lists:map(
 		fun(Num) ->
 			Name = list_to_atom("ar_tx_emitter_worker_" ++ integer_to_list(Num)),
 			{Name, {ar_tx_emitter_worker, start_link, [Name]}, permanent, ?SHUTDOWN_TIMEOUT,
@@ -30,7 +30,9 @@ init([]) ->
 		end,
 		lists:seq(1, Config#config.max_emitters)
 	),
-	Workers = [element(1, El) || El <- Children],
-	Children2 = [{ar_tx_emitter, {ar_tx_emitter, start_link, [ar_tx_emitter, Workers]},
-			permanent, ?SHUTDOWN_TIMEOUT, worker, [ar_tx_emitter]} | Children],
-	{ok, {{one_for_one, 5, 10}, Children2}}.
+	WorkerNames = [element(1, El) || El <- Workers],
+	Children = [
+		?CHILD_WITH_ARGS(ar_tx_emitter, worker, ar_tx_emitter, [ar_tx_emitter, WorkerNames]) | 
+		Workers
+	],
+	{ok, {{one_for_one, 5, 10}, Children}}.

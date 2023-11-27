@@ -3,9 +3,8 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, computed_h1/2, compute_h2_for_peer/3, computed_h2_for_peer/1, post_solution/2,
-	reset_mining_session/0, get_public_state/0,
-	send_h1_batch_to_peer/0, stat_loop/0, get_peer/1
+	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
+	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peer/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -43,10 +42,6 @@ start_link() ->
 get_public_state() ->
 	gen_server:call(?MODULE, get_public_state).
 
-%% @doc Mining session has changed. Reset it and discard any intermediate value
-reset_mining_session() ->
-	gen_server:call(?MODULE, reset_mining_session).
-
 %% @doc An H1 has been generated. Store it to send it later to a
 %% coordinated mining peer
 computed_h1(Candidate, Diff) ->
@@ -56,16 +51,12 @@ send_h1_batch_to_peer() ->
 	gen_server:cast(?MODULE, send_h1_batch_to_peer).
 
 %% @doc Compute h2 for a remote peer
-compute_h2_for_peer(Peer, Candidate, H1List) ->
-	gen_server:cast(?MODULE, {compute_h2_for_peer,
-		Candidate#mining_candidate{ cm_lead_peer = Peer }, H1List}).
+compute_h2_for_peer(Peer, Candidate) ->
+	gen_server:cast(?MODULE, {compute_h2_for_peer, 
+		Candidate#mining_candidate{ cm_lead_peer = Peer }}).
 
 computed_h2_for_peer(Candidate) ->
 	gen_server:cast(?MODULE, {computed_h2_for_peer, Candidate}).
-
-post_solution(Peer, Candidate) ->
-	ar_mining_server:prepare_and_post_solution(Candidate),
-	ar_mining_stats:h2_received_from_peer(Peer).
 
 stat_loop() ->
 	gen_server:call(?MODULE, stat_loop).
@@ -83,7 +74,8 @@ init([]) ->
 	
 	%% using timer:apply_after so we can cancel pending timers. This allows us to send the
 	%% h1 batch as soon as it's full instead of waiting for the timeout to expire.
-	{ok, H1BatchTimerRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
+	{ok, H1BatchTimerRef} = timer:apply_after(
+		?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
 	State = #state{
 		last_peer_response = #{},
 		h1_batch_timer = H1BatchTimerRef
@@ -94,7 +86,9 @@ init([]) ->
 		true ->
 			case Config#config.cm_exit_peer of
 				not_set ->
-					ar:console("CRITICAL WARNING. cm_exit_peer is not set. Coordinated mining will not produce final solution.~n");
+					ar:console(
+						"CRITICAL WARNING. cm_exit_peer is not set. Coordinated mining will "
+						"not produce final solution.~n");
 				_ ->
 					ok
 			end,
@@ -110,14 +104,11 @@ handle_call(get_public_state, _From, State) ->
 	PublicState = {State#state.last_peer_response},
 	{reply, {ok, PublicState}, State};
 
-handle_call(reset_mining_session, _From, State) ->
-	{reply, ok, State#state{ peer_requests = #{} }};
-
 handle_call({get_peer, PartitionNumber}, _From, State) ->
 	{reply, get_peer(PartitionNumber, State), State};
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast({computed_h1, Candidate, Diff}, State) ->
@@ -141,24 +132,24 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 		h2 = not_set,
 		nonce = not_set,
 		poa2 = not_set,		
-		preimage = not_set,
-		session_ref = not_set
+		preimage = not_set
 	},
-	{ShareableCandidate, H1List} = maps:get(
-			CacheRef, PeerRequests,
-			{DefaultCandidate, []}),
-	H1List2 = [{H1, Nonce} | H1List],
+	ShareableCandidate = maps:get(CacheRef, PeerRequests, DefaultCandidate),
+	H1List = [{H1, Nonce} | ShareableCandidate#mining_candidate.cm_h1_list],
 	?LOG_DEBUG([{event, cm_computed_h1},
 		{mining_address, ar_util:encode(ShareableCandidate#mining_candidate.mining_address)},
 		{h1, ar_util:encode(H1)}, {nonce, Nonce}]),
-	PeerRequests2 = maps:put(CacheRef, {ShareableCandidate, H1List2}, PeerRequests),
-	case length(H1List2) >= ?BATCH_SIZE_LIMIT of
+	PeerRequests2 = maps:put(
+		CacheRef,
+		ShareableCandidate#mining_candidate{ cm_h1_list = H1List },
+		PeerRequests),
+	case length(H1List) >= ?BATCH_SIZE_LIMIT of
 		true ->
 			send_h1_batch_to_peer();
 		false ->
 			ok
 	end,
-	{noreply, State#state{peer_requests = PeerRequests2}};
+	{noreply, State#state{ peer_requests = PeerRequests2 }};
 
 handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests} = State)
   		when map_size(PeerRequests) == 0 ->
@@ -168,13 +159,14 @@ handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests} = State)
 handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests, h1_batch_timer = TimerRef} = State) ->
 	timer:cancel(TimerRef),
 	maps:fold(
-		fun	(_CacheRef, {Candidate, H1List}, _) ->
-			#mining_candidate{ partition_number2 = PartitionNumber2 } = Candidate,
+		fun	(_CacheRef, Candidate, _) ->
+			#mining_candidate{
+				partition_number2 = PartitionNumber2, cm_h1_list = H1List } = Candidate,
 			case get_peer(PartitionNumber2, State) of
 				none ->
 					ok;
 				Peer ->
-					ar_http_iface_client:cm_h1_send(Peer, Candidate, H1List),
+					ar_http_iface_client:cm_h1_send(Peer, Candidate),
 					ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
 			end
 		end,
@@ -188,9 +180,9 @@ handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests, h1_batch
 	},
 	{noreply, NewState};
 
-handle_cast({compute_h2_for_peer, Candidate, H1List}, State) ->
-	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
-	ar_mining_server:compute_h2_for_peer(Candidate, H1List),
+handle_cast({compute_h2_for_peer, Candidate}, State) ->
+	#mining_candidate{ cm_lead_peer = Peer, cm_h1_list = H1List } = Candidate,
+	ar_mining_server:compute_h2_for_peer(Candidate),
 	ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
 	{noreply, State};
 
@@ -207,11 +199,11 @@ handle_cast(refresh_peers, State) ->
 	{noreply, State2};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->

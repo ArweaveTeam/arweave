@@ -27,15 +27,14 @@ init([]) ->
 			Workers = lists:map(
 				fun(Number) ->
 					Name = list_to_atom("ar_data_sync_worker_" ++ integer_to_list(Number)),
-					{Name, {ar_data_sync_worker, start_link, [Name]}, permanent, ?SHUTDOWN_TIMEOUT,
-							worker, [Name]}
+					?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name])
 				end,
 				lists:seq(1, Config#config.sync_jobs)
 			),
 			SyncWorkerNames = [element(1, El) || El <- Workers],
-			SyncWorkerMaster = {ar_data_sync_worker_master, {ar_data_sync_worker_master, start_link,
-					[ar_data_sync_worker_master, SyncWorkerNames]}, permanent, ?SHUTDOWN_TIMEOUT,
-					worker, [ar_data_sync_worker_master]},
+			SyncWorkerMaster = ?CHILD_WITH_ARGS(
+				ar_data_sync_worker_master, worker, ar_data_sync_worker_master,
+				[SyncWorkerNames]),
 			Workers ++ [SyncWorkerMaster];
 		false ->
 			[]
@@ -44,13 +43,12 @@ init([]) ->
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			Name = list_to_atom("ar_data_sync_" ++ StoreID),
-			{Name, {ar_data_sync, start_link, [Name, StoreID]}, permanent, ?SHUTDOWN_TIMEOUT,
-					worker, [Name]}
+			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, StoreID])
 		end,
 		Config#config.storage_modules
 	),
-	DefaultStorageModuleWorker = {ar_data_sync_default, {ar_data_sync, start_link,
-			[ar_data_sync_default, "default"]}, permanent, ?SHUTDOWN_TIMEOUT, worker,
-			[ar_data_sync_default]},
-	Workers3 = SyncWorkers ++ (StorageModuleWorkers ++ [DefaultStorageModuleWorker]),
-	{ok, {{one_for_one, 5, 10}, Workers3}}.
+
+	DefaultStorageModuleWorker = ?CHILD_WITH_ARGS(ar_data_sync, worker,
+		ar_data_sync_default, [ar_data_sync_default, "default"]),
+	Children = SyncWorkers ++ StorageModuleWorkers ++ [DefaultStorageModuleWorker],
+	{ok, {{one_for_one, 5, 10}, Children}}.

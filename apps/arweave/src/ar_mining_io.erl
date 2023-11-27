@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, set_upper_bound/1, get_partitions/0,
-			get_thread_count/0, read_recall_range/3]).
+			get_thread_count/0, read_recall_range/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -36,8 +36,8 @@ get_partitions() ->
 get_thread_count() ->
 	gen_server:call(?MODULE, get_thread_count).
 
-read_recall_range(WhichChunk, Candidate, RecallRangeStart) ->
-	gen_server:call(?MODULE, {read_recall_range, WhichChunk, Candidate, RecallRangeStart}).
+read_recall_range(WhichChunk, Worker, Candidate, RecallRangeStart) ->
+	gen_server:call(?MODULE, {read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -98,7 +98,7 @@ handle_call(get_partitions, _From,
 handle_call(get_thread_count, _From, #state{ io_threads = IOThreads } = State) ->
 	{reply, maps:size(IOThreads), State};
 
-handle_call({read_recall_range, WhichChunk, Candidate, RecallRangeStart}, _From,
+handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}, _From,
 		#state{ io_threads = IOThreads } = State) ->
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
 	PartitionNumber = ?PARTITION_NUMBER(RecallRangeStart),
@@ -107,19 +107,19 @@ handle_call({read_recall_range, WhichChunk, Candidate, RecallRangeStart}, _From,
 		not_found ->
 			{reply, false, State};
 		Thread ->
-			Thread ! {WhichChunk, {Candidate, RecallRangeStart}},
+			Thread ! {WhichChunk, {Worker, Candidate, RecallRangeStart}},
 			{reply, true, State}
 	end;
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast({set_upper_bound, PartitionUpperBound}, State) ->
 	{noreply, State#state{ partition_upper_bound = PartitionUpperBound }};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info({'DOWN', Ref, process, _, Reason},
@@ -132,7 +132,7 @@ handle_info({'DOWN', Ref, process, _, Reason},
 	end;
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -184,8 +184,8 @@ handle_io_thread_down(Ref, Reason,
 
 io_thread(PartitionNumber, MiningAddress, StoreID) ->
 	receive
-		{WhichChunk, {Candidate, RecallRangeStart}} ->
-			read_range(WhichChunk, Candidate, RecallRangeStart, StoreID),
+		{WhichChunk, {Worker, Candidate, RecallRangeStart}} ->
+			read_range(WhichChunk, Worker, Candidate, RecallRangeStart, StoreID),
 			io_thread(PartitionNumber, MiningAddress, StoreID)
 	end.
 
@@ -213,7 +213,7 @@ filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = St
 filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
-read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
+read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{
 		mining_address = MiningAddress, partition_number = PartitionNumber, h0 = H0,
@@ -223,6 +223,7 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
 	?LOG_DEBUG([{event, mining_debug_read_recall_range},
+			{worker, Worker},
 			{chunk, WhichChunk},
 			{range_start, RangeStart},
 			{size, Size},
@@ -234,27 +235,29 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			{found_chunks, length(ChunkOffsets)},
 			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
-	read_range(WhichChunk, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2).
+	read_range(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2).
 
-read_range(_WhichChunk, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
+read_range(_WhichChunk, _Worker, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
 		when Nonce > NonceMax ->
 	ok;
-read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, []) ->
-	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate),
-	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, []);
-read_range(WhichChunk, Candidate,RangeStart, Nonce, NonceMax, [{EndOffset, Chunk} | ChunkOffsets])
+read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, []) ->
+	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
+	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, []);
+read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
+		[{EndOffset, Chunk} | ChunkOffsets])
 		%% Only 256 KiB chunks are supported at this point.
 		when RangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
-	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate),
-	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax,
+	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
+	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax,
 		[{EndOffset, Chunk} | ChunkOffsets]);
-read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, [{EndOffset, _Chunk} | ChunkOffsets])
+read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
+		[{EndOffset, _Chunk} | ChunkOffsets])
 		when RangeStart + Nonce * ?DATA_CHUNK_SIZE >= EndOffset ->
-	read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets);
-read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax,
+	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets);
+read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
 		[{_EndOffset, Chunk} | ChunkOffsets]) ->
-	ar_mining_server:recall_chunk(WhichChunk, Chunk, Nonce, Candidate),
-	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
+	ar_mining_worker:recall_chunk(Worker, WhichChunk, Chunk, Nonce, Candidate),
+	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
 
 find_thread(PartitionNumber, MiningAddress, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, maps:iterator(Threads)),

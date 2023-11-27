@@ -22,8 +22,8 @@
 		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
 		nonce_limiter_update_to_binary/2, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
-		candidate_to_json_struct/1, h2_inputs_to_json_struct/2, solution_to_json_struct/1,
-		json_struct_to_candidate/1, json_struct_to_h2_inputs/1, json_struct_to_solution/1]).
+		candidate_to_json_struct/1, solution_to_json_struct/1,
+		json_struct_to_candidate/1, json_struct_to_solution/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
@@ -375,7 +375,7 @@ encode_vdf_session(1 = _Format, #vdf_session{ step_number = StepNumber, seed = S
 	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
 			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
 			(iolist_to_binary(Steps))/binary,
-			(encode_prev_session_key(1, PrevSessionKey))/binary >>;
+			(encode_session_key(1, PrevSessionKey))/binary >>;
 
 encode_vdf_session(2 = _Format, #vdf_session{ step_number = StepNumber, seed = Seed, steps = Steps,
 		prev_session_key = PrevSessionKey, upper_bound = UpperBound,
@@ -384,18 +384,30 @@ encode_vdf_session(2 = _Format, #vdf_session{ step_number = StepNumber, seed = S
 	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
 			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
 			(iolist_to_binary(Steps))/binary,
-			(encode_prev_session_key(2, PrevSessionKey))/binary >>.
+			(encode_session_key(2, PrevSessionKey))/binary >>.
 
-encode_prev_session_key(1 = _Format, undefined) ->
+encode_session_key(undefined) ->
 	<<>>;
-encode_prev_session_key(1 = _Format, {PrevNextSeed, PrevInterval, _}) ->
+encode_session_key({NextSeed, Interval, NextDifficulty}) ->
+	<< NextSeed:48/binary, (ar_serialize:encode_int(NextDifficulty, 8))/binary, Interval:64 >>.
+
+encode_session_key(1 = _Format, undefined) ->
+	<<>>;
+encode_session_key(1 = _Format, {PrevNextSeed, PrevInterval, _}) ->
 	<< PrevNextSeed:48/binary, PrevInterval:64 >>;
 
-encode_prev_session_key(2 = _Format, undefined) ->
-	<<>>;
-encode_prev_session_key(2 = _Format, {PrevNextSeed, PrevInterval, PrevNextDifficulty}) ->
-	<< PrevNextSeed:48/binary, (ar_serialize:encode_int(PrevNextDifficulty, 8))/binary,
-			PrevInterval:64 >>.
+encode_session_key(2 = _Format, SessionKey) ->
+	encode_session_key(SessionKey).
+
+decode_session_key(<<>>) ->
+	undefined;
+decode_session_key(<<
+		NextSeed:48/binary,
+		NextVDFDifficultySize:8, NextVDFDifficulty:(NextVDFDifficultySize * 8),
+		Interval:64 >>) ->
+	{NextSeed, Interval, NextVDFDifficulty};
+decode_session_key(_) ->
+	error.
 
 binary_to_nonce_limiter_update(<< NextSeed:48/binary,
 			NextVDFDifficultySize:8, NextVDFDifficulty:(NextVDFDifficultySize * 8),
@@ -413,18 +425,14 @@ binary_to_nonce_limiter_update(<< NextSeed:48/binary,
 			session = Session = #vdf_session{ step_number = StepNumber, seed = Seed,
 					upper_bound = UpperBound, next_upper_bound = NextUpperBound2,
 					steps = parse_32b_list(Steps) } },
-	case PrevSessionKeyBin of
-		<<>> ->
+	case decode_session_key(PrevSessionKeyBin) of
+		undefined ->
 			{ok, Update};
-		<< PrevNextSeed:48/binary,
-				PrevNextVDFDifficultySize:8,
-				PrevNextVDFDifficulty:(PrevNextVDFDifficultySize * 8),
-				PrevInterval:64 >> ->
-			Session2 = Session#vdf_session{
-					prev_session_key = {PrevNextSeed, PrevInterval, PrevNextVDFDifficulty} },
-			{ok, Update#nonce_limiter_update{ session = Session2 }};
-		_ ->
-			{error, invalid1}
+		error ->
+			{error, invalid1};
+		SessionKey ->
+			Session2 = Session#vdf_session{ prev_session_key = SessionKey },
+			{ok, Update#nonce_limiter_update{ session = Session2 }}
 	end;
 binary_to_nonce_limiter_update(_Bin) ->
 	{error, invalid2}.
@@ -1594,6 +1602,7 @@ binary_to_signature_type(List) ->
 candidate_to_json_struct(
 	#mining_candidate{
 		cm_diff = Diff,
+		cm_h1_list = H1List,
 		h0 = H0,
 		h1 = H1,
 		h2 = H2,
@@ -1608,11 +1617,13 @@ candidate_to_json_struct(
 		poa2 = PoA2,
 		preimage = Preimage,
 		seed = Seed,
+		session_key = SessionKey,
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	}) ->
 	JSON = [
 		{cm_diff, ar_util:integer_to_binary(Diff)},
+		{cm_h1_list, h1_list_to_json_struct(H1List)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{h0, ar_util:encode(H0)},
 		{partition_number, integer_to_binary(PartitionNumber)},
@@ -1621,6 +1632,7 @@ candidate_to_json_struct(
 		{seed, ar_util:encode(Seed)},
 		{next_seed, ar_util:encode(NextSeed)},
 		{next_vdf_difficulty, integer_to_binary(NextVDFDifficulty)},
+		{session_key, session_key_json_struct(SessionKey)},
 		{start_interval_number, integer_to_binary(StartIntervalNumber)},
 		{step_number, integer_to_binary(StepNumber)},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}
@@ -1632,22 +1644,25 @@ candidate_to_json_struct(
 	JSON5 = encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1),
 	encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1).
 
-h2_inputs_to_json_struct(Candidate, H1List) ->
-	EncodedH1List = lists:map(fun ({H1, Nonce}) ->
+h1_list_to_json_struct(H1List) ->
+	lists:map(fun ({H1, Nonce}) ->
 		{[
 			{h1, ar_util:encode(H1)},
-			{nonce, Nonce}
+			{nonce, integer_to_binary(Nonce)}
 		]}
 	end,
-	H1List),
+	H1List).
 
-	H1ListJSON = [{h1_list, EncodedH1List}],
-	CandidateJSON = candidate_to_json_struct(Candidate),
-
-	CandidateJSON ++ H1ListJSON.
+session_key_json_struct({NextSeed, Interval, NextDifficulty}) ->
+	{[
+		{next_seed, ar_util:encode(NextSeed)},
+		{interval, integer_to_binary(Interval)},
+		{next_difficulty, integer_to_binary(NextDifficulty)}
+	]}.
 
 json_struct_to_candidate(JSON) ->
 	Diff = ar_util:binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
+	H1List = json_struct_to_h1_list(maps:get(<<"cm_h1_list">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
 	H1 = decode_if_set(JSON, <<"h1">>, fun ar_util:decode/1, not_set),
 	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),
@@ -1662,11 +1677,13 @@ json_struct_to_candidate(JSON) ->
 	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
 	Preimage = decode_if_set(JSON, <<"preimage">>, fun ar_util:decode/1, not_set),
 	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
+	SessionKey = json_struct_to_session_key(maps:get(<<"session_key">>, JSON)),
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 
 	#mining_candidate{
 		cm_diff = Diff,
+		cm_h1_list = H1List,
 		h0 = H0,
 		h1 = H1,
 		h2 = H2,
@@ -1681,19 +1698,24 @@ json_struct_to_candidate(JSON) ->
 		poa2 = PoA2,
 		preimage = Preimage,
 		seed = Seed,
+		session_key = SessionKey,
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	}.
 
-json_struct_to_h2_inputs(JSON) ->
-	Candidate = json_struct_to_candidate(JSON),
-	H1List = lists:map(fun (JsonElement) ->
-		H1 = ar_util:decode(maps:get(<<"h1">>, JsonElement)),
-		Nonce = maps:get(<<"nonce">>, JsonElement),
+json_struct_to_h1_list(JSON) ->
+	lists:map(fun (JSONElement) ->
+		H1 = ar_util:decode(maps:get(<<"h1">>, JSONElement)),
+		Nonce = binary_to_integer(maps:get(<<"nonce">>, JSONElement)),
 		{H1, Nonce}
-	end, maps:get(<<"h1_list">>, JSON, [])),
+	end, JSON).
 
-	{Candidate, H1List}.
+json_struct_to_session_key(JSON) ->
+	{
+		ar_util:decode(maps:get(<<"next_seed">>, JSON)),
+		binary_to_integer(maps:get(<<"interval">>, JSON)),
+		binary_to_integer(maps:get(<<"next_difficulty">>, JSON))
+	}.
 
 solution_to_json_struct(
 	#mining_solution{

@@ -104,7 +104,7 @@ handle_call({get_serialized_sync_record, Args}, _From, State) ->
 	{reply, {ok, ar_intervals:serialize(Args#{ limit => Limit }, SyncRecord)}, State};
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast(update_serialized_sync_buckets, State) ->
@@ -124,7 +124,7 @@ handle_cast(record_v2_index_data_size_metric, State) ->
 	{noreply, State};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info({event, data_sync, {add_range, Start, End, _StoreID}}, State) ->
@@ -149,7 +149,7 @@ handle_info({event, data_sync, _}, State) ->
 	{noreply, State};
 
 handle_info(Message, State) ->
-	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, _State) ->

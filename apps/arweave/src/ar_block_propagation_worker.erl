@@ -26,7 +26,7 @@ init([]) ->
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast({send_block, SendFun, RetryCount, From}, State) ->

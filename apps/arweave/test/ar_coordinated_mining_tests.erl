@@ -117,7 +117,7 @@ test_no_secret() ->
 	?assertMatch(
 		{error, {ok, {{<<"421">>, _}, _, 
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate(), [])),
+		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
 	?assertMatch(
 		{error, {ok, {{<<"421">>, _}, _, 
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
@@ -140,7 +140,7 @@ test_bad_secret() ->
 	?assertMatch(
 		{error, {ok, {{<<"421">>, _}, _, 
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate(), [])),
+		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
 	?assertMatch(
 		{error, {ok, {{<<"421">>, _}, _, 
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
@@ -199,7 +199,7 @@ test_partition_table() ->
 
 	%% Simulate mining start
 	PartitionUpperBound = 35 * ?PARTITION_SIZE, %% less than the highest configured partition
-	ar_mining_io:reset(make_ref(), PartitionUpperBound),
+	ar_mining_io:set_upper_bound(PartitionUpperBound),
 	
 	?assertEqual(
 		{ok, [
@@ -249,9 +249,9 @@ test_peers_by_partition() ->
 			{?PARTITION_SIZE, 4, {spora_2_6, MiningAddr}}
 		]}, false]),
 
-	ar_test_node:remote_call(peer1, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
-	ar_test_node:remote_call(peer2, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
-	ar_test_node:remote_call(peer3, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
+	ar_test_node:remote_call(peer1, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
+	ar_test_node:remote_call(peer2, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
+	ar_test_node:remote_call(peer3, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
 
 	timer:sleep(3000),
 	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [0])),
@@ -297,7 +297,7 @@ test_peers_by_partition() ->
 			{?PARTITION_SIZE, 4, {spora_2_6, MiningAddr}},
 			{?PARTITION_SIZE, 5, {spora_2_6, MiningAddr}}
 		]}, false]),
-	ar_test_node:remote_call(peer1, ar_mining_io, reset, [make_ref(), PartitionUpperBound]),
+	ar_test_node:remote_call(peer1, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
 	timer:sleep(3000),
 	
 	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [0])),
@@ -363,7 +363,8 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	end.
 
 assert_empty_cache(Node) ->
-	ar_test_node:wait_until_mining_paused(Node),
+	%% wait until the mining has stopped, then assert that the cache is empty
+	timer:sleep(10000),
 	ok.
 	% [{_, Size}] = ar_test_node:remote_call(Node, ets, lookup, [ar_mining_server, chunk_cache_size]),
 	%% We should assert that the size is 0, but there is a lot of concurrency in these tests
@@ -386,6 +387,7 @@ dummy_candidate() ->
 		partition_number2 = rand:uniform(1024),
 		partition_upper_bound = rand:uniform(1024),
 		seed = crypto:strong_rand_bytes(32),
+		session_key = dummy_session_key(),
 		start_interval_number = rand:uniform(1024),
 		step_number = rand:uniform(1024)
 	}.
@@ -419,3 +421,6 @@ dummy_poa() ->
 		data_path = crypto:strong_rand_bytes(32),
 		chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)
 	}.
+
+dummy_session_key() ->
+	{crypto:strong_rand_bytes(32), rand:uniform(100), rand:uniform(10000)}.

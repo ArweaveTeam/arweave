@@ -148,7 +148,7 @@ test_partitions() ->
 
 test_mining_session() ->
 	Candidate = default_candidate(),
-	SessionRef = make_ref(),
+	SessionKey = make_session_key(),
 
 	%% mining session: not set, candidate session: not set
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate, 0)),
@@ -157,11 +157,11 @@ test_mining_session() ->
 	assert_recall_chunks([{chunk1, 0, Chunk1, Candidate}, {chunk1, 1, Chunk2, Candidate}]),
 
 	%% mining session: not set, candidate session: set
-	Candidate2 = Candidate#mining_candidate{ session_ref = SessionRef },
+	Candidate2 = Candidate#mining_candidate{ session_key = SessionKey },
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
 	assert_no_io(),
 
-	ar_mining_io:reset(SessionRef, ?WEAVE_SIZE),
+	ar_mining_io:reset(SessionKey, ?WEAVE_SIZE),
 
 	%% mining session: set, candidate session: set
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate2, 0)),
@@ -176,9 +176,12 @@ test_mining_session() ->
 	assert_recall_chunks([{chunk1, 0, Chunk1, Candidate}, {chunk1, 1, Chunk2, Candidate}]),
 
 	%% mining session: set, candidate session: set different
-	Candidate3 = Candidate#mining_candidate{ session_ref = make_ref() },
+	Candidate3 = Candidate#mining_candidate{ session_key = make_session_key() },
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, Candidate3, 0)),
 	assert_no_io().
+
+make_session_key() ->
+	{crypto:strong_rand_bytes(32), rand:uniform(100), rand:uniform(10000)}.
 
 default_candidate() ->
 	{ok, Config} = application:get_env(arweave, config),

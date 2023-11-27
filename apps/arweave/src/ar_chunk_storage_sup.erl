@@ -26,12 +26,11 @@ init([]) ->
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			Name = list_to_atom("ar_chunk_storage_" ++ StoreID),
-			{Name, {ar_chunk_storage, start_link, [Name, StoreID]}, permanent,
-					?SHUTDOWN_TIMEOUT, worker, [Name]}
+			?CHILD_WITH_ARGS(ar_chunk_storage, worker, Name, [Name, StoreID])
 		end,
 		Config#config.storage_modules
 	),
-	Workers = [{ar_chunk_storage_default, {ar_chunk_storage, start_link,
-			[ar_chunk_storage_default, "default"]}, permanent, ?SHUTDOWN_TIMEOUT, worker,
-			[ar_chunk_storage_default]} | ConfiguredWorkers],
+	DefaultChunkStorageWorker = ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
+		ar_chunk_storage_default, [ar_chunk_storage_default, "default"]),
+	Workers = [DefaultChunkStorageWorker | ConfiguredWorkers],
 	{ok, {{one_for_one, 5, 10}, Workers}}.

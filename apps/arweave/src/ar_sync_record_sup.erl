@@ -26,12 +26,11 @@ init([]) ->
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			Name = list_to_atom("ar_sync_record_" ++ StoreID),
-			{Name, {ar_sync_record, start_link, [Name, StoreID]}, permanent, ?SHUTDOWN_TIMEOUT,
-					worker, [Name]}
+			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
 		end,
 		Config#config.storage_modules
 	),
-	Workers = [{ar_sync_record_default, {ar_sync_record, start_link,
-			[ar_sync_record_default, "default"]}, permanent, ?SHUTDOWN_TIMEOUT, worker,
-			[ar_sync_record_default]} | ConfiguredWorkers],
+	DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(ar_sync_record, worker, ar_sync_record_default,
+		[ar_sync_record_default, "default"]), 
+	Workers = [DefaultSyncRecordWorker | ConfiguredWorkers],
 	{ok, {{one_for_one, 5, 10}, Workers}}.
