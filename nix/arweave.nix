@@ -177,12 +177,12 @@ let
 
   prometheus = buildRebar rec {
     name = "prometheus";
-    version = "4.10.0";
+    version = "4.11.0";
     buildInputs = [ quantile_estimator ];
     src = fetchHex {
       inherit version;
       pkg = name;
-      sha256 = "sha256-Kpm7bc6F4jjHI2/eawBk+YNNxCDdvZYqrE6io8PVk4Q=";
+      sha256 = "sha256-cZhiNRqr9N9webBdwIXSu8vjrArDAJ6VZnGx1auIJH0=";
     };
   };
 
