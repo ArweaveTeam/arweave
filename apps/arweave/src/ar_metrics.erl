@@ -467,19 +467,19 @@ register(MetricsDir) ->
 
 	DiffBucketList = lists:seq(0, ?MINING_HASH_MAX_BUCKET),
 	prometheus_histogram:new([
-		{name, mining_perf_hash_gt_2_pow_x_1chunk_count},
+		{name, mining_perf_hash_le_2_pow_x_1chunk_count},
 		{buckets, DiffBucketList},
 		{
 			help,
-			"Count of hashes (solutions) found since launch which are >= 2**(bucket_index) (1-chunk solutions only)"
+			"Count of hashes (solutions) found since launch which are <= 2**(bucket_index) (1-chunk solutions only)"
 		}
 	]),
 	prometheus_histogram:new([
-		{name, mining_perf_hash_gt_2_pow_x_2chunk_count},
+		{name, mining_perf_hash_le_2_pow_x_2chunk_count},
 		{buckets, DiffBucketList},
 		{
 			help,
-			"Count of hashes (solutions) found since launch which are >= 2**(bucket_index) (2-chunk solutions only)"
+			"Count of hashes (solutions) found since launch which are <= 2**(bucket_index) (2-chunk solutions only)"
 		}
 	]),
 

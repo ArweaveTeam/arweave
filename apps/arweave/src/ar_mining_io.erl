@@ -209,9 +209,9 @@ io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 					IncVal = ?RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE,
 					case WhichChunk of
 						chunk1 ->
-							prometheus_counter:inc(scheduled_read_1chunk_counter, IncVal, [{store_id, StoreID}]);
+							prometheus_counter:inc(scheduled_read_1chunk_counter, [StoreID], IncVal);
 						chunk2 ->
-							prometheus_counter:inc(scheduled_read_2chunk_counter, IncVal, [{store_id, StoreID}]);
+							prometheus_counter:inc(scheduled_read_2chunk_counter, [StoreID], IncVal);
 						_ ->
 							unreach
 					end,
@@ -256,12 +256,12 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	MissingCount = (?RECALL_RANGE_SIZE / ?DATA_CHUNK_SIZE) - length(ChunkOffsets),
+	MissingCount = max(0, (?RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE) - length(ChunkOffsets2)),
 	case WhichChunk of
 		chunk1 ->
-			prometheus_counter:inc(missing_read_1chunk_counter, MissingCount, [{store_id, StoreID}]);
+			prometheus_counter:inc(missing_read_1chunk_counter, [StoreID], MissingCount);
 		chunk2 ->
-			prometheus_counter:inc(missing_read_2chunk_counter, MissingCount, [{store_id, StoreID}]);
+			prometheus_counter:inc(missing_read_2chunk_counter, [StoreID], MissingCount);
 		_ ->
 			unreach
 	end,
