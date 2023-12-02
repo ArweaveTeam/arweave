@@ -277,12 +277,6 @@ vdf_speed(Now) ->
 
 %% @doc calculate the maximum hash rate (in MiB per second read from disk) for the given VDF speed
 %% at the current weave size.
-optimal_overall_read_mibps(undefined, _TotalDataSize, _WeaveSize) ->
-	0.0;
-optimal_overall_read_mibps(VDFSpeed, TotalDataSize, WeaveSize) ->
-	NumPartitions = ?MAX_PARTITION_NUMBER(TotalDataSize) + 1,
-	(100.0 / VDFSpeed) * NumPartitions * (1 + (TotalDataSize / WeaveSize)).
-
 optimal_partition_read_mibps(undefined, _PartitionDataSize, _TotalDataSize, _WeaveSize) ->
 	0.0;	
 optimal_partition_read_mibps(VDFSpeed, PartitionDataSize, TotalDataSize, WeaveSize) ->
@@ -308,11 +302,6 @@ generate_report(Partitions, Peers, WeaveSize, Now) ->
 		now = Now,
 		vdf_speed = VDFSpeed,
 		total_data_size = TotalDataSize,
-		optimal_overall_read_mibps = optimal_overall_read_mibps(VDFSpeed, TotalDataSize, WeaveSize),
-		average_read_mibps = get_overall_average(partition, read, total, Now) / 4,
-		current_read_mibps = get_overall_average(partition, read, current, Now) / 4,
-		average_hash_hps = get_overall_average(partition, hash, total, Now),
-		current_hash_hps = get_overall_average(partition, hash, current, Now),
 		average_h1_to_peer_hps = get_overall_average(peer, h1_to_peer, total, Now),
 		current_h1_to_peer_hps = get_overall_average(peer, h1_to_peer, current, Now),
 		average_h1_from_peer_hps = get_overall_average(peer, h1_from_peer, total, Now),
@@ -339,7 +328,12 @@ generate_partition_report(PartitionNumber, Report, WeaveSize) ->
 		now = Now,
 		vdf_speed = VDFSpeed,
 		total_data_size = TotalDataSize,
-		partitions = Partitions } = Report,
+		partitions = Partitions,
+		optimal_overall_read_mibps = OptimalOverallRead,
+		average_read_mibps = AverageRead,
+		current_read_mibps = CurrentRead,
+		average_hash_hps = AverageHash,
+		current_hash_hps = CurrentHash } = Report,
 	DataSize = get_partition_data_size(PartitionNumber),
 	PartitionReport = #partition_report{
 		partition_number = PartitionNumber,
@@ -355,7 +349,14 @@ generate_partition_report(PartitionNumber, Report, WeaveSize) ->
 	reset_count({partition, PartitionNumber, read, current}, Now),
 	reset_count({partition, PartitionNumber, hash, current}, Now),
 
-	Report#report{ partitions = Partitions ++ [PartitionReport] }.
+	Report#report{ 
+		optimal_overall_read_mibps = 
+			OptimalOverallRead + PartitionReport#partition_report.optimal_read_mibps,
+		average_read_mibps = AverageRead + PartitionReport#partition_report.average_read_mibps,
+		current_read_mibps = CurrentRead + PartitionReport#partition_report.current_read_mibps,
+		average_hash_hps = AverageHash + PartitionReport#partition_report.average_hash_hps,
+		current_hash_hps = CurrentHash + PartitionReport#partition_report.current_hash_hps,
+		partitions = Partitions ++ [PartitionReport] }.
 
 generate_peer_reports(Peers, Report) ->
 		lists:foldr(
@@ -860,19 +861,6 @@ test_h2_peer_stats() ->
 	?assertEqual(0, get_overall_total(peer, h2_from_peer, total)).
 
 test_optimal_stats() ->
-	?assertEqual(0.0, optimal_overall_read_mibps(
-		undefined, floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(2000.0, optimal_overall_read_mibps(
-		1.0, floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(2500.0, optimal_overall_read_mibps(
-		0.8, floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(750.0, optimal_overall_read_mibps(
-		1.0, floor(5 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(1800.0, optimal_overall_read_mibps(
-		1.0, floor(9.5 * ?PARTITION_SIZE), floor(9.5 * ?PARTITION_SIZE))),
-	?assertEqual(250.0, optimal_overall_read_mibps(
-		2.0, floor(4.75 * ?PARTITION_SIZE), floor(19 * ?PARTITION_SIZE))),
-
 	?assertEqual(0.0, 
 		optimal_partition_read_mibps(
 			undefined, ?PARTITION_SIZE,

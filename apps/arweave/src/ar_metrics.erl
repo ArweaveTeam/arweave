@@ -271,6 +271,7 @@ register(MetricsDir) ->
 
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
+		{labels, [partition]},
 		{help, "The number of chunks fetched during mining and not processed yet."}
 	]),
 	prometheus_gauge:new([
