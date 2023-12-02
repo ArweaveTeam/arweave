@@ -393,18 +393,19 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 	{RecallRange1Start + RelativeOffset, RecallRange2Start + RelativeOffset}.
 
 reset_chunk_cache_size() ->
-	Pattern = {chunk_cache_size, '$1'}, % '$1' matches any PartitionNumber
+	Pattern = {{chunk_cache_size, '$1'}, '_'}, % '$1' matches any PartitionNumber
     Entries = ets:match(?MODULE, Pattern),
     lists:foreach(
-        fun({chunk_cache_size, PartitionNumber}) ->
-			ets:insert(?MODULE, {chunk_cache_size, PartitionNumber}, 0),
+        fun(PartitionNumber) ->
+			ets:insert(?MODULE, {{chunk_cache_size, PartitionNumber}, 0}),
 			prometheus_gauge:set(mining_server_chunk_cache_size, [PartitionNumber], 0)
         end, 
         Entries
     ).
 
 update_chunk_cache_size(PartitionNumber, Delta) ->
-	ets:update_counter(?MODULE, {chunk_cache_size, PartitionNumber}, {2, Delta}),
+	ets:update_counter(?MODULE, {chunk_cache_size, PartitionNumber}, {2, Delta},
+		{{chunk_cache_size, PartitionNumber}, 0}),
 	prometheus_gauge:inc(mining_server_chunk_cache_size, [PartitionNumber], Delta),
 	Delta.
 

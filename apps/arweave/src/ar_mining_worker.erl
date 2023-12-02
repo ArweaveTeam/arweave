@@ -55,7 +55,8 @@ recall_chunk(Worker, chunk2, Chunk, Nonce, Candidate) ->
 recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate) ->
 	?LOG_DEBUG([{event, mining_debug_skipped_chunk},
 		{worker, Worker}, {which_chunk, WhichChunk}, {nonce, Nonce}]),
-	add_task(Worker, remove_chunk_from_cache, Candidate#mining_candidate{ nonce = Nonce }).
+	gen_server:cast(Worker,
+		{remove_chunk_from_cache, WhichChunk,  Candidate#mining_candidate{ nonce = Nonce }}).
 
 %% @doc Callback from the hashing threads when a hash is computed
 computed_hash(Worker, computed_h0, H0, undefined, Candidate) ->
@@ -173,6 +174,9 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			end
 	end;
 
+handle_cast({remove_chunk_from_cache, WhichChunk, Candidate}, State) ->
+	{noreply, remove_chunk_from_cache(WhichChunk, Candidate, State)};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -188,8 +192,6 @@ terminate(_Reason, _State) ->
 %%% Mining tasks.
 %%%===================================================================
 
-priority(remove_chunk_from_cache, _StepNumber) ->
-	0;
 priority(computed_h2, StepNumber) ->
 	{1, -StepNumber};
 priority(computed_h1, StepNumber) ->
@@ -394,10 +396,7 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 		false ->
 			%% This can happen if the remote peer has an outdated partition table
 			{noreply, State}
-	end;
-
-handle_task({remove_chunk_from_cache, WhichChunk, Candidate}, State) ->
-	{noreply, remove_chunk_from_cache(WhichChunk, Candidate, State)}.
+	end.
 
 %%%===================================================================
 %%% Private functions.
