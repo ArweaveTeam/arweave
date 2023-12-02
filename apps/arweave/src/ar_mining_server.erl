@@ -140,7 +140,6 @@ handle_cast({start_mining, Args}, State) ->
 	{noreply, State#state{ 
 		paused = false,
 		diff = Diff,
-		chunk_cache_size_limit = get_chunk_cache_size_limit(),
 		merkle_rebase_threshold = RebaseThreshold }};
 
 handle_cast({set_difficulty, Diff}, State) ->
@@ -242,7 +241,10 @@ update_upper_bound(PartitionUpperBound, State) ->
 	case PartitionUpperBound > CurrentUpperBound of
 		true ->
 			ar_mining_io:set_upper_bound(PartitionUpperBound),
-			State#state{ partition_upper_bound = PartitionUpperBound };
+			State#state{
+				partition_upper_bound = PartitionUpperBound,
+				chunk_cache_size_limit = get_chunk_cache_size_limit(State)
+			};
 		false ->
 			State
 	end.
@@ -320,7 +322,8 @@ reset_workers([Worker | Workers], SessionKey) ->
 	ar_mining_worker:new_session(Worker, SessionKey),
 	reset_workers(Workers, SessionKey).
 
-get_chunk_cache_size_limit() ->
+get_chunk_cache_size_limit(State) ->
+	#state{ chunk_cache_size_limit = CurrentLimit } = State,
 	ThreadCount = ar_mining_io:get_thread_count(),
 	% Two ranges per output.
 	OptimalLimit = ar_util:ceil_int(
@@ -342,19 +345,24 @@ get_chunk_cache_size_limit() ->
 	NumPartitions = max(1, length(ar_mining_io:get_partitions())),
 	LimitPerPartition = Limit div NumPartitions,
 
-	ar:console("~nSetting the chunk cache size limit to ~B chunks (~B chunks per partition).~n",
-		[Limit, LimitPerPartition]),
-	?LOG_INFO([{event, setting_chunk_cache_size_limit},
-		{limit, Limit}, {per_partition, LimitPerPartition}]),
-	case Limit < OptimalLimit of
+	case LimitPerPartition == CurrentLimit of
 		true ->
-			ar:console("~nChunk cache size limit is below optimal limit of ~p. "
-				"Mining performance may be impacted.~n"
-				"Consider adding more RAM or changing the "
-				"'mining_server_chunk_cache_size_limit' option.", [OptimalLimit]);
-		false -> ok
-	end,
-	LimitPerPartition.
+			CurrentLimit;
+		false ->
+			ar:console("~nSetting the chunk cache size limit to ~B chunks (~B chunks per partition).~n",
+				[Limit, LimitPerPartition]),
+			?LOG_INFO([{event, setting_chunk_cache_size_limit},
+				{limit, Limit}, {per_partition, LimitPerPartition}]),
+			case Limit < OptimalLimit of
+				true ->
+					ar:console("~nChunk cache size limit is below optimal limit of ~p. "
+						"Mining performance may be impacted.~n"
+						"Consider adding more RAM or changing the "
+						"'mining_server_chunk_cache_size_limit' option.", [OptimalLimit]);
+				false -> ok
+			end,
+			LimitPerPartition
+	end.
 
 distribute_output(Workers, Candidate) ->
 	distribute_output(Workers, ar_mining_io:get_partitions(), Candidate, 0).
