@@ -42,6 +42,9 @@ new_session(Worker, SessionKey) ->
 add_task(Worker, TaskType, Candidate) ->
 	gen_server:cast(Worker, {add_task, {TaskType, Candidate}}).
 
+add_delayed_task(Worker, TaskType, Candidate) ->
+	ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, Worker, {add_task, {TaskType, Candidate}}).
+
 %% @doc Callback from ar_mining_io when a chunk is read
 recall_chunk(Worker, chunk1, Chunk, Nonce, Candidate) ->
 	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
@@ -244,10 +247,14 @@ handle_task({compute_h0, Candidate}, State) ->
 	{noreply, State};
 
 handle_task({computed_h0, Candidate}, State) ->
-	case ar_mining_server:has_cache_space() of
-		true ->
-			#mining_candidate{ h0 = H0, partition_number = Partition1,
+	#mining_candidate{ h0 = H0, partition_number = Partition1,
 				partition_upper_bound = PartitionUpperBound } = Candidate,
+	%% We only check if Partition1 has cache space so it's possible that we will exceed
+	%% the cache when mining Partition2. However in the worst case this should only exceed
+	%% the cache limit by a marginal amount, since all further chunk1 reads on Partition2 will
+	%% be blocked until the cache frees up.
+	case ar_mining_server:has_cache_space(Partition1) of
+		true ->
 			{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 					Partition1, PartitionUpperBound),
 			Partition2 = ?PARTITION_NUMBER(RecallRange2Start),
@@ -275,8 +282,10 @@ handle_task({computed_h0, Candidate}, State) ->
 			end,
 			{noreply, State3};
 		false ->
-			%% Re-add the task so that it can be executed later once some cache space frees up.
-			add_task(self(), computed_h0, Candidate),
+			%% Wait a bit, and then re-add the task. This is to allow other, lower priority,
+			%% computed_h0 tasks to process while we wait for cache space to free up for this
+			%% partition.
+			add_delayed_task(self(), computed_h0, Candidate),
 			{noreply, State}
 	end;
 	
