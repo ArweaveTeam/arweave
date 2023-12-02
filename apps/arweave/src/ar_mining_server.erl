@@ -5,7 +5,7 @@
 -behaviour(gen_server).
 
 -export([start_link/1, start_mining/1,
-		has_cache_space/0, update_chunk_cache_size/1, reserve_cache_space/1,
+		has_cache_space/1, update_chunk_cache_size/2, reserve_cache_space/2,
 		set_difficulty/1, set_merkle_rebase_threshold/1, 
 		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1,
 		read_poa/3, get_recall_bytes/4]).
@@ -40,24 +40,22 @@ start_link(Workers) ->
 start_mining(Args) ->
 	gen_server:cast(?MODULE, {start_mining, Args}).
 
-has_cache_space() ->
+has_cache_space(PartitionNumber) ->
 	try
-        gen_server:call(?MODULE, has_cache_space)
+        gen_server:call(?MODULE, {has_cache_space, PartitionNumber})
     catch
         Error:Reason ->
 			?LOG_ERROR([{event, has_cache_space_failed}, {Error, Reason}]),
             false
     end.
 
-
 %% @doc Before loading a recall range we reserve enough cache space for the whole range. This
 %% helps make sure we don't exceed the cache limit (too much) when there are many parallel
 %% reads. 
 %%
 %% As we compute hashes we'll decrement the chunk_cache_size to indicate available cache space.
-reserve_cache_space(NumChunks) ->
-	gen_server:cast(?MODULE, {reserve_cache_space, NumChunks}).
-
+reserve_cache_space(PartitionNumber, NumChunks) ->
+	gen_server:cast(?MODULE, {reserve_cache_space, PartitionNumber, NumChunks}).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
 compute_h2_for_peer(Candidate) ->
@@ -103,10 +101,14 @@ init(Workers) ->
 	}}.
 
 
-handle_call(has_cache_space, _From, State) ->
+handle_call({has_cache_space, PartitionNumber}, _From, State) ->
 	#state{ chunk_cache_size_limit = Limit } = State,
-	[{_, Size}] = ets:lookup(?MODULE, chunk_cache_size),
-	{reply, Size < Limit, State};
+	case ets:lookup(?MODULE, {chunk_cache_size, PartitionNumber}) of
+		[{_, Size}] ->
+			{reply, Size < Limit, State};
+		[] ->
+			{reply, true, State}
+	end;
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -149,8 +151,8 @@ handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
 	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
 
-handle_cast({reserve_cache_space, NumChunks}, State) ->
-	update_chunk_cache_size(NumChunks),
+handle_cast({reserve_cache_space, PartitionNumber, NumChunks}, State) ->
+	update_chunk_cache_size(PartitionNumber, NumChunks),
 	{noreply, State};
 
 handle_cast({compute_h2_for_peer, Candidate}, State) ->
@@ -337,8 +339,13 @@ get_chunk_cache_size_limit() ->
 			N
 	end,
 
-	ar:console("~nSetting the chunk cache size limit to ~B chunks.~n", [Limit]),
-	?LOG_INFO([{event, setting_chunk_cache_size_limit}, {limit, Limit}]),
+	NumPartitions = max(1, length(ar_mining_io:get_partitions())),
+	LimitPerPartition = Limit div NumPartitions,
+
+	ar:console("~nSetting the chunk cache size limit to ~B chunks (~B chunks per partition).~n",
+		[Limit, LimitPerPartition]),
+	?LOG_INFO([{event, setting_chunk_cache_size_limit},
+		{limit, Limit}, {per_partition, LimitPerPartition}]),
 	case Limit < OptimalLimit of
 		true ->
 			ar:console("~nChunk cache size limit is below optimal limit of ~p. "
@@ -347,7 +354,7 @@ get_chunk_cache_size_limit() ->
 				"'mining_server_chunk_cache_size_limit' option.", [OptimalLimit]);
 		false -> ok
 	end,
-	Limit.
+	LimitPerPartition.
 
 distribute_output(Workers, Candidate) ->
 	distribute_output(Workers, ar_mining_io:get_partitions(), Candidate, 0).
@@ -386,12 +393,19 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 	{RecallRange1Start + RelativeOffset, RecallRange2Start + RelativeOffset}.
 
 reset_chunk_cache_size() ->
-	ets:insert(?MODULE, {chunk_cache_size, 0}),
-	prometheus_gauge:set(mining_server_chunk_cache_size, 0).
+	Pattern = {chunk_cache_size, '$1'}, % '$1' matches any PartitionNumber
+    Entries = ets:match(?MODULE, Pattern),
+    lists:foreach(
+        fun({chunk_cache_size, PartitionNumber}) ->
+			ets:insert(?MODULE, {chunk_cache_size, PartitionNumber}, 0),
+			prometheus_gauge:set(mining_server_chunk_cache_size, [PartitionNumber], 0)
+        end, 
+        Entries
+    ).
 
-update_chunk_cache_size(Delta) ->
-	ets:update_counter(?MODULE, chunk_cache_size, {2, Delta}),
-	prometheus_gauge:inc(mining_server_chunk_cache_size, Delta),
+update_chunk_cache_size(PartitionNumber, Delta) ->
+	ets:update_counter(?MODULE, {chunk_cache_size, PartitionNumber}, {2, Delta}),
+	prometheus_gauge:inc(mining_server_chunk_cache_size, [PartitionNumber], Delta),
 	Delta.
 
 prepare_and_post_solution(Candidate, State) ->

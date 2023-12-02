@@ -20,7 +20,7 @@
 	session_key					= not_set,
 	seed						= not_set,
 	chunk_cache 				= #{},
-	chunk_cache_size			= 0
+	chunk_cache_size			= #{}
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -101,32 +101,23 @@ handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
 
 handle_cast({reset, Diff}, State) ->
+	{State2, TasksDiscarded, ChunksDiscarded} = reset(State),
 	?LOG_DEBUG([{event, mining_debug_reset}, {worker, State#state.name}, {diff, Diff},
-		{tasks_discarded, gb_sets:size(State#state.task_queue) },
-		{chunks_discarded, State#state.chunk_cache_size}]),
-
-	ar_mining_server:update_chunk_cache_size(-State#state.chunk_cache_size),
-	State2 = clear_task_queue(State),
-	{noreply, State2#state{ 
-		diff = Diff,
-		chunk_cache = maps:new(),
-		chunk_cache_size = 0 }};
+		{tasks_discarded, TasksDiscarded },
+		{chunks_discarded, ChunksDiscarded}]),
+	{noreply, State2#state{ diff = Diff }};
 
 handle_cast({new_session, SessionKey}, State) ->
 	Session = ar_nonce_limiter:get_session(SessionKey),
 	#vdf_session{ seed = Seed } = Session,	
+
+	{State2, TasksDiscarded, ChunksDiscarded} = reset(State),
 	?LOG_DEBUG([{event, mining_debug_new_session}, {worker, State#state.name},
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-		{tasks_discarded, gb_sets:size(State#state.task_queue) },
-		{chunks_discarded, State#state.chunk_cache_size}]),
+		{tasks_discarded, TasksDiscarded },
+		{chunks_discarded, ChunksDiscarded}]),
 
-	ar_mining_server:update_chunk_cache_size(-State#state.chunk_cache_size),
-	State2 = clear_task_queue(State),
-	{noreply, State2#state{
-		session_key = SessionKey,
-		seed = Seed,
-		chunk_cache = maps:new(),
-		chunk_cache_size = 0 }};
+	{noreply, State2#state{ session_key = SessionKey, seed = Seed }};
 
 handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 	#state{ task_queue = Q } = State,
@@ -217,7 +208,8 @@ handle_task({chunk1, Candidate}, State) ->
 
 handle_task({chunk2, Candidate}, State) ->
 	#state{ chunk_cache = Cache } = State,
-	#mining_candidate{ chunk2 = Chunk2 } = Candidate,
+	#mining_candidate{ chunk2 = Chunk2,
+		partition_number = Partition1, partition_number2 = Partition2 } = Candidate,
 	case cycle_chunk_cache(Candidate, {chunk2, Chunk2}, Cache) of
 		{{chunk1, Chunk1, H1}, Cache2} ->
 			ar_mining_hash:compute_h2(
@@ -225,17 +217,19 @@ handle_task({chunk2, Candidate}, State) ->
 			%% Decrement 2 for chunk1 and chunk2:
 			%% 1. chunk1 was previously read and cached
 			%% 2. chunk2 that was just read and will shortly be used to compute h2
-			{noreply, update_chunk_cache_size(-2, State#state{ chunk_cache = Cache2 })};
+			State2 = update_chunk_cache_size(Partition1, -1, State#state{ chunk_cache = Cache2 }),
+			State3 = update_chunk_cache_size(Partition2, -1, State2),
+			{noreply, State3};
 		{{chunk1, H1}, Cache2} ->
 			ar_mining_hash:compute_h2(self(), Candidate#mining_candidate{ h1 = H1 }),
 			%% Decrement 1 for chunk2:
 			%% we're computing h2 for a peer so chunk1 was not previously read or cached 
 			%% on this node
-			{noreply, update_chunk_cache_size(-1, State#state{ chunk_cache = Cache2 })};
+			{noreply, update_chunk_cache_size(Partition2, -1, State#state{ chunk_cache = Cache2 })};
 		{do_not_cache, Cache2} ->
 			%% Decrement 1 for chunk2
 			%% do_not_cache indicates chunk1 was not and will not be read or cached
-			{noreply, update_chunk_cache_size(-1, State#state{ chunk_cache = Cache2 })};
+			{noreply, update_chunk_cache_size(Partition2, -1, State#state{ chunk_cache = Cache2 })};
 		{cached, Cache2} ->
 			{noreply, State#state{ chunk_cache = Cache2 }}
 	end;
@@ -252,23 +246,23 @@ handle_task({compute_h0, Candidate}, State) ->
 handle_task({computed_h0, Candidate}, State) ->
 	case ar_mining_server:has_cache_space() of
 		true ->
-			#mining_candidate{ h0 = H0, partition_number = PartitionNumber,
+			#mining_candidate{ h0 = H0, partition_number = Partition1,
 				partition_upper_bound = PartitionUpperBound } = Candidate,
 			{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-					PartitionNumber, PartitionUpperBound),
-			PartitionNumber2 = ?PARTITION_NUMBER(RecallRange2Start),
-			Candidate2 = Candidate#mining_candidate{ partition_number2 = PartitionNumber2 },
+					Partition1, PartitionUpperBound),
+			Partition2 = ?PARTITION_NUMBER(RecallRange2Start),
+			Candidate2 = Candidate#mining_candidate{ partition_number2 = Partition2 },
 			Candidate3 = generate_cache_ref(Candidate2),
 			Range1Exists = ar_mining_io:read_recall_range(
 					chunk1, self(), Candidate3, RecallRange1Start),
 			State3 = case Range1Exists of
 				true ->
-					State2 = reserve_cache_space(State),
+					State2 = reserve_cache_space(Partition1, State),
 					Range2Exists = ar_mining_io:read_recall_range(
 							chunk2, self(), Candidate3, RecallRange2Start),
 					case Range2Exists of
 						true -> 
-							reserve_cache_space(State2);
+							reserve_cache_space(Partition2, State2);
 						false ->
 							do_not_cache(Candidate3, State2)
 					end;
@@ -281,7 +275,7 @@ handle_task({computed_h0, Candidate}, State) ->
 			end,
 			{noreply, State3};
 		false ->
-			%% Re-add the task so that it can bd executed later once some cache space frees up.
+			%% Re-add the task so that it can be executed later once some cache space frees up.
 			add_task(self(), computed_h0, Candidate),
 			{noreply, State}
 	end;
@@ -289,7 +283,8 @@ handle_task({computed_h0, Candidate}, State) ->
 
 handle_task({computed_h1, Candidate}, State) ->
 	#state{ chunk_cache = Cache, diff = Diff } = State,
-	#mining_candidate{ h1 = H1, chunk1 = Chunk1 } = Candidate,
+	#mining_candidate{ h1 = H1, chunk1 = Chunk1,
+		partition_number = Partition1, partition_number2 = Partition2 } = Candidate,
 	case binary:decode_unsigned(H1, big) > Diff of
 		true ->
 			?LOG_DEBUG([{event, mining_debug_found_h1_solution}, {worker, State#state.name},
@@ -297,7 +292,7 @@ handle_task({computed_h1, Candidate}, State) ->
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
 			%% necessary below)
-			State2 = remove_chunk_from_cache(Candidate, State),
+			State2 = remove_chunk_from_cache(chunk1, Candidate, State),
 			ar_mining_server:prepare_and_post_solution(Candidate),
 			{noreply, State2};
 		false ->
@@ -318,22 +313,25 @@ handle_task({computed_h1, Candidate}, State) ->
 					end,
 					%% Decrement 1 for chunk1:
 					%% do_not_cache indicates chunk2 was not and will not be read or cached
-					{noreply, update_chunk_cache_size(-1, State#state{ chunk_cache = Cache2 })};
+					{noreply, update_chunk_cache_size(
+						Partition1, -1, State#state{ chunk_cache = Cache2 })};
 				{{chunk2, Chunk2}, Cache2} ->
 					%% Chunk2 has already been read, so we can compute H2 now.
 					ar_mining_hash:compute_h2(
 						self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
 					%% Decrement 2 for chunk1 and chunk2:
 					%% 1. chunk2 was previously read and cached
-					%% 2. chunk1 that was just read and used to compute H1					
-					{noreply, update_chunk_cache_size(-2, State#state{ chunk_cache = Cache2 })}
+					%% 2. chunk1 that was just read and used to compute H1	
+					State2 = update_chunk_cache_size(Partition1, -1, State#state{ chunk_cache = Cache2 }),
+					State3 = update_chunk_cache_size(Partition2, -1, State2),
+					{noreply, State3}
 			end
 	end;
 
 handle_task({computed_h2, Candidate}, State) ->
 	#mining_candidate{
 		chunk2 = Chunk2, h0 = H0, h2 = H2, mining_address = MiningAddress,
-		nonce = Nonce, partition_number = PartitionNumber, 
+		nonce = Nonce, partition_number = Partition1, 
 		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
 	} = Candidate,
 	case binary:decode_unsigned(H2, big) > get_difficulty(State, Candidate) of
@@ -345,7 +343,7 @@ handle_task({computed_h2, Candidate}, State) ->
 					ar_mining_server:prepare_and_post_solution(Candidate);
 				_ ->
 					{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(
-							H0, PartitionNumber, Nonce, PartitionUpperBound),
+							H0, Partition1, Nonce, PartitionUpperBound),
 					PoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, MiningAddress),
 					case PoA2 of
 						error ->
@@ -368,29 +366,29 @@ handle_task({computed_h2, Candidate}, State) ->
 	{noreply, State};
 
 handle_task({compute_h2_for_peer, Candidate}, State) ->
-	#state{ chunk_cache = Map } = State,
 	#mining_candidate{
 		h0 = H0,
-		partition_number = PartitionNumber,
+		partition_number = Partition1,
 		partition_upper_bound = PartitionUpperBound
 	} = Candidate,
 
-	Candidate2 = generate_cache_ref(Candidate),
-	
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-			PartitionNumber, PartitionUpperBound),
+					Partition1, PartitionUpperBound),
+	Partition2 = ?PARTITION_NUMBER(RecallRange2Start),
+	Candidate2 = Candidate#mining_candidate{ partition_number2 = Partition2 },
+	Candidate3 = generate_cache_ref(Candidate2),
 	Range2Exists = ar_mining_io:read_recall_range(
-		chunk2, self(), Candidate2#mining_candidate{ cm_h1_list = [] }, RecallRange2Start),
+		chunk2, self(), Candidate3#mining_candidate{ cm_h1_list = [] }, RecallRange2Start),
 	case Range2Exists of
 		true ->
-			{noreply, cache_h1_list(Candidate2, State)};
+			{noreply, cache_h1_list(Candidate3, State)};
 		false ->
 			%% This can happen if the remote peer has an outdated partition table
 			{noreply, State}
 	end;
 
-handle_task({remove_chunk_from_cache, Candidate}, State) ->
-	{noreply, remove_chunk_from_cache(Candidate, State)}.
+handle_task({remove_chunk_from_cache, WhichChunk, Candidate}, State) ->
+	{noreply, remove_chunk_from_cache(WhichChunk, Candidate, State)}.
 
 %%%===================================================================
 %%% Private functions.
@@ -428,10 +426,27 @@ count_h0_tasks(Q) ->
 			end
 	end.
 
+reset(State) ->
+	ChunksDiscarded = maps:fold(
+		fun(PartitionNumber, CacheSize, Total) ->
+			ar_mining_server:update_chunk_cache_size(PartitionNumber, -CacheSize),
+			Total + CacheSize
+		end,
+		0,
+		State#state.chunk_cache_size
+	),
+	TasksDiscarded = gb_sets:size(State#state.task_queue),
+	State2 = clear_task_queue(State),
+	{
+		State2#state{ chunk_cache = maps:new(), chunk_cache_size = #{} },
+		TasksDiscarded,
+		ChunksDiscarded
+	}.
+
 clear_task_queue(State) ->
 	#state{ task_queue = Q } = State,
 	gb_sets:fold(
-		fun({_Priority, _ID, {TaskType, Candidate}}, _Acc) ->
+		fun({_Priority, _ID, {TaskType, _Candidate}}, _Acc) ->
 			prometheus_gauge:dec(mining_server_task_queue_len, [TaskType])
 		end,
 		ok,
@@ -439,16 +454,21 @@ clear_task_queue(State) ->
 	),
 	State#state{ task_queue = gb_sets:new() }.
 
-update_chunk_cache_size(Delta, State) ->
-	ar_mining_server:update_chunk_cache_size(Delta),
-	State#state{ chunk_cache_size = State#state.chunk_cache_size + Delta }.
+update_chunk_cache_size(PartitionNumber, Delta, State) ->
+	ar_mining_server:update_chunk_cache_size(PartitionNumber, Delta),
+	PartitionCacheSize = maps:get(PartitionNumber, State#state.chunk_cache_size, 0),
+	CacheSize = maps:put(PartitionNumber, PartitionCacheSize + Delta, State#state.chunk_cache_size),
+	State#state{ chunk_cache_size = CacheSize }.
 
-reserve_cache_space(State) ->
-	reserve_cache_space(nonce_max() + 1, State).
+reserve_cache_space(PartitionNumber, State) ->
+	reserve_cache_space(PartitionNumber, nonce_max() + 1, State).
 
-reserve_cache_space(NumChunks, State) ->
-	ar_mining_server:reserve_cache_space(NumChunks),
-	State#state{ chunk_cache_size = State#state.chunk_cache_size + NumChunks }.
+reserve_cache_space(PartitionNumber, NumChunks, State) ->
+	ar_mining_server:reserve_cache_space(PartitionNumber, NumChunks),
+	PartitionCacheSize = maps:get(PartitionNumber, State#state.chunk_cache_size, 0),
+	CacheSize = maps:put(PartitionNumber, PartitionCacheSize + NumChunks,
+		State#state.chunk_cache_size),
+	State#state{ chunk_cache_size = CacheSize }.
 
 do_not_cache(Candidate, State) ->
 	do_not_cache(0, nonce_max(), Candidate, State).
@@ -482,9 +502,14 @@ cycle_chunk_cache(#mining_candidate{ cache_ref = CacheRef, nonce = Nonce }, Data
 			{CachedData, Cache2}
 	end.
 
-remove_chunk_from_cache(#mining_candidate{ cache_ref = CacheRef, nonce = Nonce }, State)
+remove_chunk_from_cache(WhichChunk, #mining_candidate{ cache_ref = CacheRef } = Candidate, State)
 		when CacheRef /= not_set ->
-	State2 = update_chunk_cache_size(-1, State),
+	#mining_candidate{ nonce = Nonce,
+		partition_number = Partition1, partition_number2 = Partition2 } = Candidate,
+	State2 = case WhichChunk of
+		chunk1 -> update_chunk_cache_size(Partition1, -1, State);
+		chunk2 -> update_chunk_cache_size(Partition2, -1, State)
+	end,
 	#state{ chunk_cache = Cache } = State2,
 	case maps:take({CacheRef, Nonce}, Cache) of
 		{do_not_cache, Cache2} ->
@@ -492,12 +517,16 @@ remove_chunk_from_cache(#mining_candidate{ cache_ref = CacheRef, nonce = Nonce }
 		error ->
 			Cache2 = maps:put({CacheRef, Nonce}, do_not_cache, Cache),
 			State2#state{ chunk_cache = Cache2 };
+		{{chunk2, _}, Cache2} ->
+			%% if we find any cached data, discard it and decrement the cache size
+			update_chunk_cache_size(Partition2, -1, State2#state{ chunk_cache = Cache2 });
 		{_, Cache2} ->
 			%% if we find any cached data, discard it and decrement the cache size
-			update_chunk_cache_size(-1, State2#state{ chunk_cache = Cache2 })
+			update_chunk_cache_size(Partition1, -1, State2#state{ chunk_cache = Cache2 })
 	end.
 
-cache_h1_list(#mining_candidate{ cm_h1_list = H1List } = Candidate, State) ->
+cache_h1_list(Candidate, State) ->
+	#mining_candidate{ cm_h1_list = H1List, partition_number2 = Partition2 } = Candidate,
 	%% Only reserve enough space to process the H1 list provided. If this is less
 	%% than the full recall range, some of the chunk2s will be read, cached, and ignored
 	%% (since we don't have the H1 needed to compute the H2).
@@ -508,7 +537,7 @@ cache_h1_list(#mining_candidate{ cm_h1_list = H1List } = Candidate, State) ->
 	%% If however we reserve cache space for these "orphan" chunk2s the cache space they
 	%% consume will prevent usable chunks from being read and negatively impact the mining
 	%% rate.
-	State2 = reserve_cache_space(length(H1List), State),
+	State2 = reserve_cache_space(Partition2, length(H1List), State),
 	cache_h1_list(Candidate, H1List, State2).
 
 cache_h1_list(_Candidate, [], State) ->
@@ -522,9 +551,9 @@ cache_h1_list(
 
 generate_cache_ref(Candidate) ->
 	#mining_candidate{
-		partition_number = PartitionNumber, partition_number2 = PartitionNumber2,
+		partition_number = Partition1, partition_number2 = Partition2,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
-	CacheRef = {PartitionNumber, PartitionNumber2, PartitionUpperBound, make_ref()},
+	CacheRef = {Partition1, Partition2, PartitionUpperBound, make_ref()},
 	Candidate#mining_candidate{ cache_ref = CacheRef }.
 
 get_difficulty(State, #mining_candidate{ cm_diff = not_set }) ->
