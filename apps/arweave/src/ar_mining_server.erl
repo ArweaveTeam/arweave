@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, start_mining/1, recall_chunk/4, computed_hash/4, set_difficulty/1,
+-export([start_link/0, start_mining/1, recall_chunk/5, computed_hash/4, set_difficulty/1,
 		compute_h2_for_peer/2, prepare_and_post_solution/1, post_solution/1,
 		set_merkle_rebase_threshold/1, get_recall_bytes/4, is_session_valid/2]).
 -export([pause/0, get_task_queue_len/0]).
@@ -53,13 +53,15 @@ start_mining(Args) ->
 	gen_server:cast(?MODULE, {start_mining, Args}).
 
 %% @doc Callback from ar_mining_io when a chunk is read
-recall_chunk(chunk1, Chunk, Nonce, Candidate) ->
+recall_chunk(chunk1, Chunk, Nonce, Candidate, StoreID) ->
 	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number),
-	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce });
-recall_chunk(chunk2, Chunk, Nonce, Candidate) ->
+	prometheus_counter:inc(successful_read_1chunk_counter, 1, [{store_id, StoreID}]),
+	add_task(chunk1, Candidate#mining_candidate{ chunk1 = Chunk, chunk1_store_id = StoreID, nonce = Nonce });
+recall_chunk(chunk2, Chunk, Nonce, Candidate, StoreID) ->
 	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number2),
-	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
-recall_chunk(skipped, undefined, Nonce, Candidate) ->
+	prometheus_counter:inc(successful_read_2chunk_counter, 1, [{store_id, StoreID}]),
+	add_task(chunk2, Candidate#mining_candidate{ chunk2 = Chunk, chunk2_store_id = StoreID, nonce = Nonce });
+recall_chunk(skipped, undefined, Nonce, Candidate, _StoreID) ->
 	update_chunk_cache_size(-1),
 	signal_cache_cleanup(Nonce, Candidate).
 
@@ -264,6 +266,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}},
 		#state{ task_queue = Q } = State) ->
 	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
 	true = is_integer(StepNumber),
+	prometheus_counter:inc(mining_perf_vdf_step_count),
 	ar_mining_stats:vdf_computed(),
 	Task = {computed_output, {SessionKey, StepNumber, Output, PartitionUpperBound}},
 	Q2 = gb_sets:insert({priority(nonce_limiter_computed_output, StepNumber), make_ref(),
@@ -393,8 +396,9 @@ hashing_thread(SessionRef) ->
 		{compute_h1, Candidate} ->
 			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
 				true ->
-					#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
+					#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1, chunk1_store_id = StoreID } = Candidate,
 					{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk1),
+					prometheus_counter:inc(hash_1chunk_counter, 1, [{store_id, StoreID}]),
 					ar_mining_server:computed_hash(computed_h1, H1, Preimage, Candidate);
 				false ->
 					ok %% Clear the message queue of requests from outdated mining sessions
@@ -403,8 +407,9 @@ hashing_thread(SessionRef) ->
 		{compute_h2, Candidate} ->
 			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
 				true ->
-					#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2 } = Candidate,
+					#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2, chunk2_store_id = StoreID } = Candidate,
 					{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
+					prometheus_counter:inc(hash_2chunk_counter, 1, [{store_id, StoreID}]),
 					ar_mining_server:computed_hash(computed_h2, H2, Preimage, Candidate);
 				false ->
 					ok %% Clear the message queue of requests from outdated mining sessions
@@ -616,6 +621,8 @@ handle_task({computed_h1, Candidate}, State) ->
 			#state{ session = Session, diff = Diff, hashing_threads = Threads } = State,
 			#mining_session{ chunk_cache = Map } = Session,
 			#mining_candidate{ h1 = H1, chunk1 = Chunk1 } = Candidate,
+			DiffBucket = min(hash_to_diff_bucket(H1), ?MINING_HASH_MAX_BUCKET),
+			prometheus_histogram:observe(mining_perf_hash_gt_2_pow_x_1chunk_count, DiffBucket),
 			case binary:decode_unsigned(H1, big) > Diff of
 				true ->
 					#state{ session = Session } = State,
@@ -674,6 +681,8 @@ handle_task({computed_h2, Candidate}, State) ->
 				nonce = Nonce, partition_number = PartitionNumber, 
 				partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
 			} = Candidate,
+			DiffBucket = min(hash_to_diff_bucket(H2), ?MINING_HASH_MAX_BUCKET),
+			prometheus_histogram:observe(mining_perf_hash_gt_2_pow_x_2chunk_count, DiffBucket),
 			case binary:decode_unsigned(H2, big) > get_difficulty(State, Candidate) of
 				true ->
 					case Peer of
@@ -1105,6 +1114,41 @@ update_chunk_cache_size(Delta) ->
 
 nonce_max() ->
 	max(0, ((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1)).
+
+% slight optimization (256-bit binary operations may be slower than 64-bit)
+hash_to_diff_bucket(Hash) ->
+	<<A:64, B:64, C:64, D:64>> = Hash,
+	ResA = hash_to_diff_bucket(A, 63),
+	ResB = case ResA of
+		64 ->
+			64+hash_to_diff_bucket(B, 63);
+		_ ->
+			ResA
+	end,
+	ResC = case ResB of
+		128 ->
+			128+hash_to_diff_bucket(C, 63);
+		_ ->
+			ResB
+	end,
+	ResD = case ResC of
+		192 ->
+			192+hash_to_diff_bucket(D, 63);
+		_ ->
+			ResC
+	end,
+	ResD.
+
+hash_to_diff_bucket(Hash, BitPosition) when BitPosition >= 0 ->
+	Mask = 1 bsl BitPosition,
+	case Hash band Mask of
+		0 ->
+			0;
+		_ ->
+			1 + hash_to_diff_bucket(Hash, BitPosition - 1)
+	end;
+hash_to_diff_bucket(_, _) ->
+	0.
 
 %%%===================================================================
 %%% Public Test interface.

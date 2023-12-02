@@ -4,6 +4,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
@@ -451,7 +452,83 @@ register(MetricsDir) ->
 					"Only set when debug=true."}]),
 	prometheus_gauge:new([{name, process_info},
 			{labels, [process, type]},
-			{help, "Sampling info about active processes. Only set when debug=true."}]).
+			{help, "Sampling info about active processes. Only set when debug=true."}]),
+
+	% Mining performance
+
+	% useful for: more accurate VDF time estimation, max hashrate per partition (not storage module)
+	prometheus_counter:new([
+		{name, mining_perf_vdf_step_count},
+		{
+			help,
+			"Count of vdf steps provided to mining process"
+		}
+	]),
+
+	DiffBucketList = lists:seq(0, ?MINING_HASH_MAX_BUCKET),
+	prometheus_histogram:new([
+		{name, mining_perf_hash_gt_2_pow_x_1chunk_count},
+		{buckets, DiffBucketList},
+		{
+			help,
+			"Count of hashes (solutions) found since launch which are >= 2**(bucket_index) (1-chunk solutions only)"
+		}
+	]),
+	prometheus_histogram:new([
+		{name, mining_perf_hash_gt_2_pow_x_2chunk_count},
+		{buckets, DiffBucketList},
+		{
+			help,
+			"Count of hashes (solutions) found since launch which are >= 2**(bucket_index) (2-chunk solutions only)"
+		}
+	]),
+
+	StorageModuleLabels = [store_id],
+
+	prometheus_counter:new([
+		{name, scheduled_read_1chunk_counter},
+		{help, "Scheduled read count watermark for storage_module (1st chunk in solution)"},
+		{labels, StorageModuleLabels}
+	]),
+	prometheus_counter:new([
+		{name, scheduled_read_2chunk_counter},
+		{help, "Scheduled read count watermark for storage_module (2nd chunk in solution)"},
+		{labels, StorageModuleLabels}
+	]),
+
+	prometheus_counter:new([
+		{name, successful_read_1chunk_counter},
+		{help, "Successful read count for storage_module (1st chunk in solution)"},
+		{labels, StorageModuleLabels}
+	]),
+	prometheus_counter:new([
+		{name, successful_read_2chunk_counter},
+		{help, "Successful read count for storage_module (2nd chunk in solution)"},
+		{labels, StorageModuleLabels}
+	]),
+
+	prometheus_counter:new([
+		{name, missing_read_1chunk_counter},
+		{help, "Missing read count for storage_module (1st chunk in solution)"},
+		{labels, StorageModuleLabels}
+	]),
+	prometheus_counter:new([
+		{name, missing_read_2chunk_counter},
+		{help, "Missing read count for storage_module (2nd chunk in solution)"},
+		{labels, StorageModuleLabels}
+	]),
+
+	prometheus_counter:new([
+		{name, hash_1chunk_counter},
+		{help, "Hash count for storage_module (1-chunk solutions only)"},
+		{labels, StorageModuleLabels}
+	]),
+	prometheus_counter:new([
+		{name, hash_2chunk_counter},
+		{help, "Hash count for storage_module (2-chunk solutions only)"},
+		{labels, StorageModuleLabels}
+	]),
+	ok.
 
 %% @doc Store the given metric in a file.
 store(Name) ->
