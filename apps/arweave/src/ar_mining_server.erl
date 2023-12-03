@@ -137,6 +137,7 @@ handle_cast({start_mining, Args}, State) ->
 	),
 
 	reset_chunk_cache_size(),
+
 	{noreply, State#state{ 
 		paused = false,
 		diff = Diff,

@@ -53,8 +53,6 @@ recall_chunk(Worker, chunk2, Chunk, Nonce, Candidate) ->
 	ar_mining_stats:chunk_read(Candidate#mining_candidate.partition_number2),
 	add_task(Worker, chunk2, Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce });
 recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate) ->
-	?LOG_DEBUG([{event, mining_debug_skipped_chunk},
-		{worker, Worker}, {which_chunk, WhichChunk}, {nonce, Nonce}]),
 	gen_server:cast(Worker,
 		{remove_chunk_from_cache, WhichChunk,  Candidate#mining_candidate{ nonce = Nonce }}).
 

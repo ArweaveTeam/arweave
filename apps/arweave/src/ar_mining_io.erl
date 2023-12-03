@@ -214,16 +214,29 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
 read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
+	
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{
 		mining_address = MiningAddress, partition_number = PartitionNumber, h0 = H0,
 		step_number = StepNumber, nonce_limiter_output = Output } = Candidate,
+	?LOG_DEBUG([{event, mining_debug_read_recall_range_start},
+			{worker, Worker},
+			{thread, self()},
+			{chunk, WhichChunk},
+			{range_start, RangeStart},
+			{size, Size},
+			{h0, ar_util:safe_encode(H0)},
+			{step_number, StepNumber},
+			{output, ar_util:safe_encode(Output)},
+			{partition_number, PartitionNumber},
+			{store_id, StoreID}]),
 	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	?LOG_DEBUG([{event, mining_debug_read_recall_range},
+	?LOG_DEBUG([{event, mining_debug_read_recall_range_end},
 			{worker, Worker},
+			{thread, self()},
 			{chunk, WhichChunk},
 			{range_start, RangeStart},
 			{size, Size},
