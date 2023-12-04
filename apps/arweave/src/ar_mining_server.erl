@@ -45,7 +45,7 @@ has_cache_space(PartitionNumber) ->
         gen_server:call(?MODULE, {has_cache_space, PartitionNumber})
     catch
         Error:Reason ->
-			?LOG_ERROR([{event, has_cache_space_failed}, {Error, Reason}]),
+			?LOG_WARNING([{event, has_cache_space_failed}, {Error, Reason}]),
             false
     end.
 

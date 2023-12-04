@@ -214,41 +214,17 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
 read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
-	
+	StartTime = erlang:monotonic_time(),
 	Size = ?RECALL_RANGE_SIZE,
-	#mining_candidate{
-		mining_address = MiningAddress, partition_number = PartitionNumber, h0 = H0,
-		step_number = StepNumber, nonce_limiter_output = Output } = Candidate,
-	?LOG_DEBUG([{event, mining_debug_read_recall_range_start},
-			{worker, Worker},
-			{thread, self()},
-			{chunk, WhichChunk},
-			{range_start, RangeStart},
-			{size, Size},
-			{h0, ar_util:safe_encode(H0)},
-			{step_number, StepNumber},
-			{output, ar_util:safe_encode(Output)},
-			{partition_number, PartitionNumber},
-			{store_id, StoreID}]),
+	#mining_candidate{ mining_address = MiningAddress } = Candidate,
 	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
 			MiningAddress, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	?LOG_DEBUG([{event, mining_debug_read_recall_range_end},
-			{worker, Worker},
-			{thread, self()},
-			{chunk, WhichChunk},
-			{range_start, RangeStart},
-			{size, Size},
-			{h0, ar_util:safe_encode(H0)},
-			{step_number, StepNumber},
-			{output, ar_util:safe_encode(Output)},
-			{partition_number, PartitionNumber},
-			{store_id, StoreID},
-			{found_chunks, length(ChunkOffsets)},
-			{found_chunks_with_required_packing, length(ChunkOffsets2)}]),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
-	read_range(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2).
+	read_range(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2),
+	log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
+			length(ChunkOffsets), length(ChunkOffsets2), StartTime).
 
 read_range(_WhichChunk, _Worker, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
 		when Nonce > NonceMax ->
@@ -271,6 +247,40 @@ read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
 		[{_EndOffset, Chunk} | ChunkOffsets]) ->
 	ar_mining_worker:recall_chunk(Worker, WhichChunk, Chunk, Nonce, Candidate),
 	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
+
+log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
+		FoundChunks, FoundChunksWithRequiredPacking, StartTime) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	ReadRate = case ElapsedTime > 0 of 
+		true -> (FoundChunks * 1000 div 4) div ElapsedTime; %% MiB per second
+		false -> 0
+	end,
+
+	#mining_candidate{
+		partition_number = Partition1, partition_number2 = Partition2, h0 = H0,
+		step_number = StepNumber, nonce_limiter_output = Output } = Candidate,
+
+	PartitionNumber = case WhichChunk of
+		chunk1 -> Partition1;
+		chunk2 -> Partition2
+	end,
+
+	?LOG_DEBUG([{event, mining_debug_read_recall_range},
+			{worker, Worker},
+			{thread, self()},
+			{elapsed_time_ms, ElapsedTime},
+			{read_rate_mibps, ReadRate},
+			{chunk, WhichChunk},
+			{range_start, RangeStart},
+			{size, ?RECALL_RANGE_SIZE},
+			{h0, ar_util:safe_encode(H0)},
+			{step_number, StepNumber},
+			{output, ar_util:safe_encode(Output)},
+			{partition_number, PartitionNumber},
+			{store_id, StoreID},
+			{found_chunks, FoundChunks},
+			{found_chunks_with_required_packing, FoundChunksWithRequiredPacking}]).
 
 find_thread(PartitionNumber, MiningAddress, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, maps:iterator(Threads)),
