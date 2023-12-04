@@ -144,8 +144,6 @@
 	transaction_blacklist_urls = [],
 	transaction_whitelist_files = [],
 	transaction_whitelist_urls = [],
-	gateway_domain = not_set,
-	gateway_custom_domains = [],
 	requests_per_minute_limit = ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT,
 	requests_per_minute_limit_by_ip = #{},
 	max_propagation_peers = ?DEFAULT_MAX_PROPAGATION_PEERS,
@@ -186,6 +184,8 @@
 	defragmentation_modules = [],
 	block_throttle_by_ip_interval = ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
 	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
+	tls_cert_file = not_set, %% required to enable TLS
+	tls_key_file = not_set,  %% required to enable TLS
 	p3 = #p3_config{},
 	coordinated_mining = false,
 	cm_api_secret = not_set,

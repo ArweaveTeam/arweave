@@ -370,7 +370,7 @@
 	%% The global sequence number of the nonce limiter step at which the block was found.
 	global_step_number = 1,
 	%% ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints from the most recent step in the nonce
-	%% limiter process. 
+	%% limiter process.
 	last_step_checkpoints = [],
 	%% A list of the output of each step of the nonce limiting process. Note: each step
 	%% has ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints, the last of which is that step's output.

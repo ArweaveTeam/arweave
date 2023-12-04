@@ -79,8 +79,6 @@ parse_config() ->
 		transaction_blacklist_urls = ["http://some_blacklist_1", "http://some_blacklist_2/x"],
 		transaction_whitelist_files = ["some_whitelist_1", "some_whitelist_2"],
 		transaction_whitelist_urls = ["http://some_whitelist"],
-		gateway_domain = <<"gateway.localhost">>,
-		gateway_custom_domains = [<<"domain1.example">>, <<"domain2.example">>],
 		webhooks = [
 			#config_webhook{
 				events = [transaction, block],

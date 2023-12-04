@@ -29,11 +29,10 @@
 %% middlewares. It uses the `handler` env value set by cowboy_router
 %% to determine whether or not it should run, otherwise it lets
 %% the cowboy_handler middleware run prometheus_cowboy2_handler.
-execute(Req, #{ handler := ar_http_iface_handler } = Env) ->
+execute(Req, #{ handler := ar_http_iface_handler }) ->
 	Pid = self(),
-	Req1 = with_arql_semaphore_req_field(Req, Env),
 	HandlerPid = spawn_link(fun() ->
-		Pid ! {handled, handle(Req1, Pid)}
+		Pid ! {handled, handle(Req, Pid)}
 	end),
 	{ok, TimeoutRef} = timer:send_after(
 		?HANDLER_TIMEOUT,
@@ -47,8 +46,6 @@ execute(Req, Env) ->
 %%% Private functions.
 %%%===================================================================
 
-with_arql_semaphore_req_field(Req, #{ arql_semaphore := Name }) ->
-	Req#{ '_ar_http_iface_middleware_arql_semaphore' => Name }.
 
 %% @doc In order to be able to have a handler-side timeout, we need to
 %% handle the request asynchronously. However, cowboy doesn't allow
@@ -240,7 +237,6 @@ handle(<<"GET">>, [<<"queue">>], Req, _Pid) ->
 %% Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}/status.
 handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
-	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -282,7 +278,6 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(serve_arql, Config#config.enable) of
 		true ->
-			ar_semaphore:acquire(arql_semaphore(Req), 5000),
 			case ar_node:is_joined() of
 				false ->
 					not_joined(Req);
@@ -1108,7 +1103,6 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req, _Pid) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(serve_wallet_txs, Config#config.enable) of
 		true ->
-			ar_semaphore:acquire(arql_semaphore(Req), 5000),
 			{Status, Headers, Body} = handle_get_wallet_txs(Addr, none),
 			{Status, Headers, Body, Req};
 		false ->
@@ -1122,7 +1116,6 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req, _Pid) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(serve_wallet_txs, Config#config.enable) of
 		true ->
-			ar_semaphore:acquire(arql_semaphore(Req), 5000),
 			{Status, Headers, Body} = handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX)),
 			{Status, Headers, Body, Req};
 		false ->
@@ -1136,7 +1129,6 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _Pid) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(serve_wallet_deposits, Config#config.enable) of
 		true ->
-			ar_semaphore:acquire(arql_semaphore(Req), 5000),
 			case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
 				TXMaps when is_list(TXMaps) ->
 					TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
@@ -1155,7 +1147,6 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _P
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(serve_wallet_deposits, Config#config.enable) of
 		true ->
-			ar_semaphore:acquire(arql_semaphore(Req), 5000),
 			case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
 				TXMaps when is_list(TXMaps) ->
 					TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
@@ -1532,9 +1523,6 @@ handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding)
 
 sendfile(Filename) ->
 	{sendfile, 0, filelib:file_size(Filename), Filename}.
-
-arql_semaphore(#{'_ar_http_iface_middleware_arql_semaphore' := Name}) ->
-	Name.
 
 not_found(Req) ->
 	{400, #{}, <<"Request type not found.">>, Req}.
@@ -2227,7 +2215,7 @@ check_api_secret(Header, Secret, APIName, Req) ->
 		%% Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
 		timer:sleep(rand:uniform(1000) + 1000),
 		{reject, {
-			421, #{}, 
+			421, #{},
 			<<APIName/bitstring, " disabled or invalid ", APIName/bitstring, " secret in request.">>
 		}}
 	end,

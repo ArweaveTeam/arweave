@@ -253,6 +253,10 @@ show_help() ->
 			{"defragment_module",
 				"Run defragmentation of the chunk storage files from the given storage module."
 				" Assumes the run_defragmentation flag is provided."},
+			{"tls_cert_file",
+				"Optional path to the TLS certificate file for TLS support, depends on 'tls_key_file' being set as well."},
+			{"tls_key_file",
+				"The path to the TLS key file for TLS support, depends on 'tls_cert_file' being set as well."},
 			{"coordinated_mining", "Enable coordinated mining. You need to also set "
 					"cm_api_secret, cm_peer, and cm_exit_peer."},
 			{"cm_api_secret", "Coordinated mining secret for authenticated "
@@ -424,10 +428,14 @@ parse_cli_args(["enable", Feature | Rest ], C = #config{ enable = Enabled }) ->
 	parse_cli_args(Rest, C#config{ enable = [ list_to_atom(Feature) | Enabled ] });
 parse_cli_args(["disable", Feature | Rest ], C = #config{ disable = Disabled }) ->
 	parse_cli_args(Rest, C#config{ disable = [ list_to_atom(Feature) | Disabled ] });
-parse_cli_args(["gateway", Domain | Rest ], C) ->
-	parse_cli_args(Rest, C#config{ gateway_domain = list_to_binary(Domain) });
-parse_cli_args(["custom_domain", Domain | Rest], C = #config{ gateway_custom_domains = Ds }) ->
-	parse_cli_args(Rest, C#config{ gateway_custom_domains = [ list_to_binary(Domain) | Ds ] });
+parse_cli_args(["gateway", _ | Rest ], C) ->
+	?LOG_WARNING("Deprecated option found 'gateway': "
+		" this option has been removed and is now a no-op.", []),
+	parse_cli_args(Rest, C#config{ });
+parse_cli_args(["custom_domain", _ | Rest], C = #config{ }) ->
+	?LOG_WARNING("Deprecated option found 'custom_domain': "
+			" this option has been removed and is a no-op.", []),
+	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["requests_per_minute_limit", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args(["max_propagation_peers", Num | Rest], C) ->
@@ -498,6 +506,14 @@ parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
 		io:format("~ndefragment_module value must be in the [number],[address] format.~n~n"),
 		erlang:halt()
 	end;
+parse_cli_args(["tls_cert_file", CertFilePath | Rest], C) ->
+    AbsCertFilePath = filename:absname(CertFilePath),
+    ar_util:assert_file_exists_and_readable(AbsCertFilePath),
+    parse_cli_args(Rest, C#config{ tls_cert_file = AbsCertFilePath });
+parse_cli_args(["tls_key_file", KeyFilePath | Rest], C) ->
+    AbsKeyFilePath = filename:absname(KeyFilePath),
+    ar_util:assert_file_exists_and_readable(AbsKeyFilePath),
+    parse_cli_args(Rest, C#config{ tls_key_file = AbsKeyFilePath });
 parse_cli_args(["coordinated_mining" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ coordinated_mining = true });
 parse_cli_args(["cm_api_secret", CMSecret | Rest], C)
@@ -623,15 +639,6 @@ start(normal, _Args) ->
 	prometheus_registry:register_collector(ar_metrics_collector),
 	%% Register custom metrics.
 	ar_metrics:register(Config#config.metrics_dir),
-	%% Verify port collisions when gateway is enabled.
-	case {Config#config.port, Config#config.gateway_domain} of
-		{P, D} when is_binary(D) andalso (P == 80 orelse P == 443) ->
-			io:format(
-				"~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
-			erlang:halt();
-		_ ->
-			do_nothing
-	end,
 	%% Start other apps which we depend on.
 	ok = prepare_graphql(),
 	case Config#config.ipfs_pin of

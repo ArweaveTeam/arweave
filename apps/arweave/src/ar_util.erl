@@ -7,10 +7,12 @@
 		genesis_wallets/0, pmap/2, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
-		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1]).
+		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1,
+		assert_file_exists_and_readable/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 
 bool_to_int(true) -> 1;
 bool_to_int(_) -> 0.
@@ -360,3 +362,12 @@ print_stacktrace() ->
 			?LOG_INFO(StacktraceString)
     end.
 
+% Function to assert that a file exists and is readable
+assert_file_exists_and_readable(FilePath) ->
+	case file:read_file(FilePath) of
+		{ok, _} ->
+			ok;
+		{error, _} ->
+			io:format("~nThe filepath ~p doesn't exist or isn't readable.~n~n", [FilePath]),
+			erlang:halt(1)
+	end.
