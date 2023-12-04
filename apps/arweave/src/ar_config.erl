@@ -390,25 +390,14 @@ parse_options([{<<"disable">>, Features} | Rest], Config) when is_list(Features)
 	end;
 parse_options([{<<"disable">>, Features} | _], _) ->
 	{error, {bad_type, disable, array}, Features};
-
-parse_options([{<<"gateway">>, Domain} | Rest], Config) when is_binary(Domain) ->
-	parse_options(Rest, Config#config{ gateway_domain = Domain });
-parse_options([{<<"gateway">>, false} | Rest], Config) ->
+parse_options([{<<"gateway">>, _} | Rest], Config) ->
+	?LOG_WARNING("Deprecated option found 'gateway': "
+		" this option has been removed and is a no-op.", []),
 	parse_options(Rest, Config);
-parse_options([{<<"gateway">>, Gateway} | _], _) ->
-	{error, {bad_type, gateway, string}, Gateway};
-
-parse_options([{<<"custom_domains">>, CustomDomains} | Rest], Config)
-		when is_list(CustomDomains) ->
-	case lists:all(fun is_binary/1, CustomDomains) of
-		true ->
-			parse_options(Rest, Config#config{ gateway_custom_domains = CustomDomains });
-		false ->
-			{error, bad_custom_domains}
-	end;
-parse_options([{<<"custom_domains">>, CustomDomains} | _], _) ->
-	{error, {bad_type, custom_domains, array}, CustomDomains};
-
+parse_options([{<<"custom_domains">>, _} | Rest], Config) ->
+	?LOG_WARNING("Deprecated option found 'custom_domains': "
+			" this option has been removed and is a no-op.", []),
+	parse_options(Rest, Config);
 parse_options([{<<"webhooks">>, WebhookConfigs} | Rest], Config) when is_list(WebhookConfigs) ->
 	case parse_webhooks(WebhookConfigs, []) of
 		{ok, ParsedWebhooks} ->

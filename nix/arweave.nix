@@ -261,14 +261,14 @@ let
 
   cowboy = buildRebar rec {
     name = "cowboy";
-    version = "2.9.0";
+    version = "2.10.0";
     buildInputs = [ cowlib rebar3_archive_plugin ranch ];
     beamDeps = [ cowlib rebar3_archive_plugin ranch ];
     plugins = [ beamPackages.pc ];
     src = fetchHex {
       inherit version;
       pkg = name;
-      sha256 = "sha256-LHKfk0tOGqFJr/iC9XxjcsFTmaINVPZcjWe+9YMCG94=";
+      sha256 = "sha256-Ov3Mtxg8xvFDyxTTz1H6AOU9ueyAzc1SVIL16ZvEHWs=";
     };
   };
 
@@ -285,12 +285,12 @@ let
 
   ranch = buildRebar rec {
     name = "ranch";
-    version = "2.1.0";
+    version = "1.8.0";
     src = fetchFromGitHub {
       owner = "ninenines";
       repo = name;
       rev = version;
-      sha256 = "sha256-Uchp4bE39rWSprNYYdVDE9uk0IZWznsLt9it5dYZQNQ=";
+      sha256 = "sha256-9tFgIQU5rhYE0/EY4NKRNrKoCG2xlZCoSvtihDNXyg4=";
     };
   };
 
