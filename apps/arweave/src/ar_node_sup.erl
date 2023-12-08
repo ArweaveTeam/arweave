@@ -1,6 +1,6 @@
-%% This Source Code Form is subject to the terms of the GNU General 
-%% Public License, v. 2.0. If a copy of the GPLv2 was not distributed 
-%% with this file, You can obtain one at 
+%% This Source Code Form is subject to the terms of the GNU General
+%% Public License, v. 2.0. If a copy of the GPLv2 was not distributed
+%% with this file, You can obtain one at
 %% https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 
 -module(ar_node_sup).

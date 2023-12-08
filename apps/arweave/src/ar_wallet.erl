@@ -22,7 +22,7 @@
 new() ->
 	new(?DEFAULT_KEY_TYPE).
 new(KeyType = {KeyAlg, PublicExpnt}) when KeyType =:= {?RSA_SIGN_ALG, 65537} ->
-    {[_, Pub], [_, Pub, Priv|_]} = {[_, Pub], [_, Pub, Priv|_]}
+    {[_, Pub], [_, Pub, Priv | _]} = {[_, Pub], [_, Pub, Priv | _]}
 		= crypto:generate_key(KeyAlg, {?RSA_PRIV_KEY_SZ, PublicExpnt}),
     {{KeyType, Priv, Pub}, {KeyType, Pub}};
 new(KeyType = {KeyAlg, KeyCrv}) when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
@@ -309,7 +309,7 @@ base64_address_with_optional_checksum_to_decoded_address(AddrBase64) ->
 			end
 	end.
 
-base64_address_with_optional_checksum_to_decoded_address_safe(AddrBase64)->
+base64_address_with_optional_checksum_to_decoded_address_safe(AddrBase64) ->
 	try
 		D = base64_address_with_optional_checksum_to_decoded_address(AddrBase64),
 		{ok, D}
@@ -440,26 +440,17 @@ checksum_test() ->
 	%% 65 bytes.
 	InvalidLongAddress = <<"01234567890123456789012345678901234567890123456789012345678901234">>,
 	InvalidLongAddressBase64 = ar_util:encode(InvalidLongAddress),
-	case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddressBase64/binary, ":MDA">>) of
-		{'EXIT', _} -> ok
-	end,
+	{'EXIT', _} = base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddressBase64/binary, ":MDA">>),
 	%% 100 bytes.
 	InvalidLongAddress2 = <<"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789">>,
 	InvalidLongAddress2Base64 = ar_util:encode(InvalidLongAddress2),
-	case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddress2Base64/binary, ":MDA">>) of
-		{'EXIT', _} -> ok
-	end,
+	{'EXIT', _} = base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddress2Base64/binary, ":MDA">>),
 	%% 10 bytes
 	InvalidShortAddress = <<"0123456789">>,
 	InvalidShortAddressBase64 = ar_util:encode(InvalidShortAddress),
-	case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidShortAddressBase64/binary, ":MDA">>) of
-		{'EXIT', _} -> ok
-	end,
+	{'EXIT', _} = base64_address_with_optional_checksum_to_decoded_address(<<InvalidShortAddressBase64/binary, ":MDA">>),
 	InvalidChecksum = ar_util:encode(<< 0:32 >>),
-	case catch base64_address_with_optional_checksum_to_decoded_address(
-			<< AddrBase64/binary, ":", InvalidChecksum/binary >>) of
-		{error, invalid_address_checksum} -> ok
-	end,
-	case catch base64_address_with_optional_checksum_to_decoded_address(<<":MDA">>) of
-		{'EXIT', _} -> ok
-	end.
+	{error, invalid_address_checksum} = base64_address_with_optional_checksum_to_decoded_address(
+			<< AddrBase64/binary, ":", InvalidChecksum/binary >>),
+	{'EXIT', _} = base64_address_with_optional_checksum_to_decoded_address(<<":MDA">>),
+	ok.

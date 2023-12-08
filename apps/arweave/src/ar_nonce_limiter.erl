@@ -6,7 +6,7 @@
 		get_current_step_number/1, get_seed_data/2, get_step_checkpoints/4,
 		get_steps/4, validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
-		apply_external_update/2, get_session/1, 
+		apply_external_update/2, get_session/1,
 		compute/3, resolve_remote_server_raw_peers/0,
 		maybe_add_entropy/4, mix_seed/2]).
 
@@ -72,9 +72,9 @@ get_seed_data(StepNumber, PrevB) ->
 		partition_upper_bound = PartitionUpperBound,
 		next_partition_upper_bound = NextPartitionUpperBound,
 		%% VDF difficulty in use at the previous block
-		vdf_difficulty = VDFDifficulty, 
+		vdf_difficulty = VDFDifficulty,
 		%% Next VDF difficulty scheduled at the previous block
-		next_vdf_difficulty = PrevNextVDFDifficulty 
+		next_vdf_difficulty = PrevNextVDFDifficulty
 	} = NonceLimiterInfo,
 	true = StepNumber > PrevStepNumber,
 	case get_entropy_reset_point(PrevStepNumber, StepNumber) of
@@ -151,8 +151,7 @@ validate_last_step_checkpoints(_B, _PrevB, _PrevOutput) ->
 %% @doc Determine whether StepNumber has passed the entropy reset line. If it has return the
 %% reset line, otherwise return none.
 get_entropy_reset_point(PrevStepNumber, StepNumber) ->
-	ResetLine = (PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY + 1)
-			* ?NONCE_LIMITER_RESET_FREQUENCY,
+	ResetLine = (PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
 	case ResetLine > StepNumber of
 		true ->
 			none;
@@ -208,7 +207,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 	%%     PrevOutput x
 	%%                                      |----------------------| StepsToValidate
 	%%                |-----------------------------------| SessionSteps
-	%%                      StartStepNumber x 
+	%%                      StartStepNumber x
 	%%                          StartOutput x
 	%%                                      |-------------| ComputedSteps
 	%%                                      --------------> NumAlreadyComputed
@@ -747,10 +746,10 @@ apply_base_block(B, State) ->
 			last_step_checkpoints = LastStepCheckpoints,
 			vdf_difficulty = VDFDifficulty,
 			next_vdf_difficulty = NextVDFDifficulty } = B#block.nonce_limiter_info,
-	Session = #vdf_session{ 
+	Session = #vdf_session{
 			seed = Seed, step_number = StepNumber,
 			upper_bound = UpperBound, next_upper_bound = NextUpperBound,
-			vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty ,
+			vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty,
 			step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
 			steps = [Output] },
 	SessionKey = session_key(B#block.nonce_limiter_info),
@@ -1000,7 +999,7 @@ apply_external_update2(Update, State) ->
 					%% computed - have now been invalidated.
 					NextSessionStart = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
 					{_, Steps} = get_step_range(
-						Session, min(RangeStart, NextSessionStart), StepNumber),					
+						Session, min(RangeStart, NextSessionStart), StepNumber),
 					State2 = apply_external_update3(State,
 						SessionKey, CurrentSessionKey, Session, Steps),
 					{reply, ok, State2}
@@ -1050,7 +1049,7 @@ apply_external_update2(Update, State) ->
 									%% noticed the gap and requested the  full VDF session be sent -
 									%% which may contain previously processed steps in a addition to
 									%% the missing ones.
-									%% 
+									%%
 									%% To avoid processing those steps twice, the client grabs
 									%% CurrentStepNumber (our most recently processed step number)
 									%% and ignores it and any lower steps found in Session.
@@ -1094,13 +1093,13 @@ apply_external_update3(State, SessionKey, CurrentSessionKey, Session, Steps) ->
 %% primarily used to manage "overflow" steps.
 %%
 %% Between blocks nodes will add all computed VDF steps to the same session -
-%% *even if* the new steps have crossed the entropy reset line and therefore 
-%% could be added to a new session (i.e. "overflow steps"). Once a block is 
+%% *even if* the new steps have crossed the entropy reset line and therefore
+%% could be added to a new session (i.e. "overflow steps"). Once a block is
 %% processed the node will open a new session and re-allocate all the steps past
 %% the entropy reset line to that new session. However, any steps that have crossed
 %% *TWO* entropy reset lines are no longer valid (the seed they were generated with
 %% has changed with the arrival of a new block)
-%% 
+%%
 %% Note: This overlap in session caching is intentional. The intention is to
 %% quickly access the steps when validating B1 -> reset line -> B2 given the
 %% current fork of B1 -> B2' -> reset line -> B3 i.e. we can query all steps by
@@ -1131,7 +1130,7 @@ get_step_range(Steps, StepNumber, _RangeStart, RangeEnd)
 get_step_range(Steps, StepNumber, RangeStart, RangeEnd) ->
 	%% Clip RangeStart to the earliest step number in Steps
 	RangeStart2 = max(RangeStart, StepNumber - length(Steps) + 1),
-	RangeSteps = 
+	RangeSteps =
 		case StepNumber > RangeEnd of
 			true ->
 				%% Exclude steps beyond the end of the session
@@ -1146,7 +1145,7 @@ get_step_range(Steps, StepNumber, RangeStart, RangeEnd) ->
 	{RangeEnd2, RangeSteps2}.
 
 %% @doc Update the VDF session cache based on new info from a validated block.
-cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey, 
+cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey,
 		StepCheckpointsMap, Seed, UpperBound, NextUpperBound, VDFDifficulty, NextVDFDifficulty) ->
 	Session =
 		case get_session(SessionKey, State) of
@@ -1169,7 +1168,7 @@ cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	#state{ session_by_key = SessionByKey, sessions = Sessions } = State,
 	{NextSeed, Interval, NextVDFDifficulty} = SessionKey,
 	maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session),
-	?LOG_DEBUG([{event, add_session}, {next_seed, ar_util:encode(NextSeed)}, 
+	?LOG_DEBUG([{event, add_session}, {next_seed, ar_util:encode(NextSeed)},
 		{next_vdf_difficulty, Session#vdf_session.next_vdf_difficulty},
 		{interval, Interval},
 		{step_number, Session#vdf_session.step_number}]),
@@ -1185,7 +1184,7 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 		true ->
 			#vdf_session{
 				step_number = StepNumber,
-				vdf_difficulty = VDFDifficulty, 
+				vdf_difficulty = VDFDifficulty,
 				next_vdf_difficulty = NextVDFDifficulty } = Session,
 			prometheus_gauge:set(vdf_step, StepNumber),
 			prometheus_gauge:set(vdf_difficulty, [current], VDFDifficulty),
@@ -1313,7 +1312,7 @@ test_applies_validated_steps() ->
 	{ok, Output2, _} = compute(2, InitialOutput, B1VDFDifficulty),
 	B2VDFDifficulty = 3,
 	B2NextVDFDifficulty = 4,
-	B2 = test_block(2, Output2, Seed, NextSeed, [], [Output2], 
+	B2 = test_block(2, Output2, Seed, NextSeed, [], [Output2],
 			B2VDFDifficulty, B2NextVDFDifficulty),
 	ok = ar_events:subscribe(nonce_limiter),
 	assert_validate(B2, B1, valid),
@@ -1382,7 +1381,7 @@ test_applies_validated_steps() ->
 	B8VDFDifficulty = 4,
 	%% Change the next_vdf_difficulty to confirm that apply_tip2 handles updating an
 	%% existing VDF session
-	B8NextVDFDifficulty = 6, 
+	B8NextVDFDifficulty = 6,
 	B8 = test_block(8, Output8, NextSeed, NextSeed2, [], [Output8, Output7, Output6],
 			B8VDFDifficulty, B8NextVDFDifficulty),
 	ar_events:send(node_state, {new_tip, B8, B4}),
@@ -1439,7 +1438,7 @@ get_step_range_test() ->
 	),
 	?assertEqual(
 		{0, []},
-		get_step_range(lists:seq(9, 5, -1), 9 , 10, 14),
+		get_step_range(lists:seq(9, 5, -1), 9, 10, 14),
 		"Disjoint range B"
 	),
 	?assertEqual(

@@ -33,7 +33,7 @@
 %%% API
 %%%===================================================================
 
-lookup_block_filename(H) when is_binary(H)->
+lookup_block_filename(H) when is_binary(H) ->
 	%% Use the process dictionary to keep the path.
 	PathBlock =
 		case get(ar_disk_cache_path) of
@@ -154,7 +154,7 @@ init([]) ->
 			Path,
 			"(.*\\.json$)|(.*\\.bin$)",
 			true,
-			fun(F,Acc) -> filelib:file_size(F) + Acc end,
+			fun(F, Acc) -> filelib:file_size(F) + Acc end,
 			0
 		),
 	LimitMax = Config#config.disk_cache_size * 1048576, % MB to Bytes.

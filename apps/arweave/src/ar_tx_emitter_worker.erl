@@ -72,7 +72,7 @@ handle_info({gun_down, _, http, normal, _, _}, State) ->
 	{noreply, State};
 handle_info({gun_down, _, http, closed, _, _}, State) ->
 	{noreply, State};
-handle_info({gun_down, _, http, {error,econnrefused}, _, _}, State) ->
+handle_info({gun_down, _, http, {error, econnrefused}, _, _}, State) ->
 	{noreply, State};
 handle_info({gun_up, _, http}, State) ->
 	{noreply, State};

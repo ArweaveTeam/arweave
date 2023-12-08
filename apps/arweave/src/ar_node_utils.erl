@@ -509,8 +509,10 @@ validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 	#block{ reward_history = RewardHistory } = OldB,
 	HashRate = ar_difficulty:get_hash_rate(Diff),
 	RewardAddr = NewB#block.reward_addr,
-	RewardHistory2 = lists:sublist([{RewardAddr, HashRate, Reward, Denomination}
-			| RewardHistory], ?REWARD_HISTORY_BLOCKS),
+	RewardHistory2 = lists:sublist(
+		[{RewardAddr, HashRate, Reward, Denomination} | RewardHistory],
+		?REWARD_HISTORY_BLOCKS
+	),
 	case ar_block:reward_history_hash(RewardHistory2) of
 		RewardHistoryHash ->
 			validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors,
@@ -544,7 +546,7 @@ validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 					RecentTXMap});
 		true ->
 			ExpectedNextVDFDifficulty = ar_block:compute_next_vdf_difficulty(OldB),
-			#nonce_limiter_info{ next_vdf_difficulty = NextVDFDifficulty } = 
+			#nonce_limiter_info{ next_vdf_difficulty = NextVDFDifficulty } =
 				NewB#block.nonce_limiter_info,
 			case ExpectedNextVDFDifficulty == NextVDFDifficulty of
 				false ->
@@ -632,8 +634,7 @@ validate_block(merkle_rebase_support_threshold, {NewB, OldB}) ->
 	#block{ height = Height } = NewB,
 	case Height > ar_fork:height_2_7() of
 		true ->
-			case NewB#block.merkle_rebase_support_threshold
-					== OldB#block.merkle_rebase_support_threshold of
+			case NewB#block.merkle_rebase_support_threshold == OldB#block.merkle_rebase_support_threshold of
 				false ->
 					{error, invalid_merkle_rebase_support_threshold};
 				true ->
@@ -642,8 +643,7 @@ validate_block(merkle_rebase_support_threshold, {NewB, OldB}) ->
 		false ->
 			case Height == ar_fork:height_2_7() of
 				true ->
-					case NewB#block.merkle_rebase_support_threshold
-							== OldB#block.weave_size of
+					case NewB#block.merkle_rebase_support_threshold == OldB#block.weave_size of
 						true ->
 							valid;
 						false ->

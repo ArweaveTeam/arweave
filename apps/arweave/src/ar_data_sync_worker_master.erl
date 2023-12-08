@@ -58,7 +58,7 @@ ready_for_work() ->
 	try
 		gen_server:call(?MODULE, ready_for_work, 1000)
 	catch
-		exit:{timeout,_} ->
+		exit:{timeout, _} ->
 			false
 	end.
 
@@ -112,7 +112,7 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}
 	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
 	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State2),
-	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
+	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),
 	{noreply, set_peer_tasks(PeerTasks3, State4)};
 
 handle_cast(rebalance_peers, State) ->
@@ -164,7 +164,7 @@ process_main_queue(State) ->
 push_main_task(Task, Args, State) ->
 	enqueue_main_task(Task, Args, State, true).
 
-enqueue_main_task(Task, Args, State) ->	
+enqueue_main_task(Task, Args, State) ->
 	enqueue_main_task(Task, Args, State, false).
 enqueue_main_task(Task, Args, State, Front) ->
 	TaskQueue = case Front of
@@ -249,7 +249,7 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
 			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			{
-				PeerTasks#peer_tasks{ 
+				PeerTasks#peer_tasks{
 					task_queue = TaskQueue2, task_queue_len = queue:len(TaskQueue2) },
 				update_queued_task_count(sync_range, ar_util:format_peer(Peer), -TasksToCut, State)
 			};
@@ -265,7 +265,7 @@ enqueue_peer_task(PeerTasks, Task, Args) ->
 dequeue_peer_task(PeerTasks) ->
 	{{value, {Task, Args}}, PeerTaskQueue} = queue:out(PeerTasks#peer_tasks.task_queue),
 	TaskQueueLength = PeerTasks#peer_tasks.task_queue_len - 1,
-	PeerTasks2 = PeerTasks#peer_tasks{ 
+	PeerTasks2 = PeerTasks#peer_tasks{
 		task_queue = PeerTaskQueue, task_queue_len = TaskQueueLength },
 	{PeerTasks2, Task, Args}.
 
@@ -314,7 +314,7 @@ schedule_task(Task, Args, State) ->
 %%          EMA, max_active, peer queue length)
 %%--------------------------------------------------------------------
 complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State) ->
-	PeerTasks2 = PeerTasks#peer_tasks{ 
+	PeerTasks2 = PeerTasks#peer_tasks{
 		active_count = PeerTasks#peer_tasks.active_count - 1
 	},
 	ar_peers:rate_fetched_data(
@@ -328,13 +328,13 @@ calculate_targets([], _AllPeerPerformances) ->
 calculate_targets(Peers, AllPeerPerformances) ->
 	TotalThroughput =
 		lists:foldl(
-			fun(Peer, Acc) -> 
+			fun(Peer, Acc) ->
 				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 				Acc + Performance#performance.current_rating
 			end, 0.0, Peers),
-    TotalLatency = 
+    TotalLatency =
 		lists:foldl(
-			fun(Peer, Acc) -> 
+			fun(Peer, Acc) ->
 				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 				Acc + Performance#performance.average_latency
 			end, 0.0, Peers),
@@ -395,17 +395,17 @@ update_active(PeerTasks, Performance, TotalMaxActive, TargetLatency, State) ->
 	TargetMaxActive = case FasterThanTarget orelse WorkersStarved of
 		true ->
 			%% latency < target, increase max_active.
-			MaxActive+1;
+			MaxActive + 1;
 		false ->
 			%% latency > target, decrease max_active
-			MaxActive-1
+			MaxActive - 1
 	end,
 
 	%% Can't have more active tasks than workers.
 	WorkerLimitedMaxActive = min(TargetMaxActive, State#state.worker_count),
 	%% Can't have more active tasks than we have active or queued tasks.
 	TaskLimitedMaxActive = min(
-		WorkerLimitedMaxActive, 
+		WorkerLimitedMaxActive,
 		max(PeerTasks#peer_tasks.active_count, PeerTasks#peer_tasks.task_queue_len)
 	),
 	%% Can't have less than the minimum.
@@ -516,7 +516,7 @@ test_get_worker() ->
 		worker_count = 3,
 		worker_loads = #{worker1 => 3, worker2 => 2, worker3 => 1}
 	},
-	%% get_worker will cycle the queue until it finds a worker that has a worker_load =< the 
+	%% get_worker will cycle the queue until it finds a worker that has a worker_load =< the
 	%% average load (i.e. scheduled_task_count / worker_count)
 	{worker2, State1} = get_worker(State0),
 	State2 = update_scheduled_task_count(worker2, sync_range, "localhost", 1, State1),
@@ -537,7 +537,7 @@ test_enqueue_main_task() ->
 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
 	StoreID2 = ar_storage_module:id({?PARTITION_SIZE, 2, default}),
 	State0 = #state{},
-	
+
 	State1 = enqueue_main_task(read_range, {0, 100, StoreID1, StoreID2, true}, State0),
 	State2 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1}, State1),
 	State3 = push_main_task(sync_range, {100, 200, Peer2, StoreID2}, State2),
@@ -566,7 +566,7 @@ test_enqueue_peer_task() ->
 
 	PeerATasks = #peer_tasks{ peer = PeerA },
 	PeerBTasks = #peer_tasks{ peer = PeerB },
-	
+
 	PeerATasks1 = enqueue_peer_task(PeerATasks, sync_range, {0, 100, PeerA, StoreID1}),
 	PeerATasks2 = enqueue_peer_task(PeerATasks1, sync_range, {100, 200, PeerA, StoreID1}),
 	PeerBTasks1 = enqueue_peer_task(PeerBTasks, sync_range, {200, 300, PeerB, StoreID1}),
@@ -653,7 +653,7 @@ test_cut_peer_queue() ->
 			queued_task_count = length(TaskQueue),
 			scheduled_task_count = 10
 		},
-		
+
 		{PeerTasks1, State1} = cut_peer_queue(200, PeerTasks, State),
 		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks1),
 		?assertEqual(100, State1#state.queued_task_count),
@@ -682,7 +682,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 20 }),
 	?assertEqual(11, Result1#peer_tasks.max_active),
-	
+
 	Result2 = update_active(
 		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
 		#performance{average_latency = 300},
@@ -698,7 +698,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 20 }),
 	?assertEqual(11, Result3#peer_tasks.max_active),
-	
+
 	Result4 = update_active(
 		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
 		#performance{average_latency = 100},
@@ -706,7 +706,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 10 }),
 	?assertEqual(10, Result4#peer_tasks.max_active),
-	
+
 	Result5 = update_active(
 		#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
 		#performance{average_latency = 100},
@@ -714,7 +714,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 20 }),
 	?assertEqual(10, Result5#peer_tasks.max_active),
-	
+
 	Result6 = update_active(
 		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
 		#performance{average_latency = 100},
@@ -742,7 +742,7 @@ test_calculate_targets() ->
 			"peer2" => #performance{current_rating = 0, average_latency = 0}
 		}),
     ?assertEqual({0.0, 0.0}, Result2),
-	
+
 	Result3 = calculate_targets(
 		["peer1", "peer2"],
 		#{

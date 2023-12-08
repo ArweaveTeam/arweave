@@ -158,8 +158,8 @@ calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, InitialCoeff, 
 	Step = 10 * 60,
 	%% Drop the difficulty InitialCoeff times right away, then drop extra Coeff times
 	%% for every 10 minutes passed.
-	ActualTime2 = ActualTime * InitialCoeff
-			* ar_fraction:pow(Coeff, max(TS - PrevTS, 0) div Step),
+	ActualTime2 = ActualTime * InitialCoeff *
+		ar_fraction:pow(Coeff, max(TS - PrevTS, 0) div Step),
 	MaxDiff = ?MAX_DIFF,
 	MinDiff = min_difficulty(Height),
 	DiffInverse = (MaxDiff - OldDiff) * ActualTime2 div TargetTime,
@@ -257,14 +257,18 @@ calculate_difficulty_before_1_8(OldDiff, TS, Last, Height) ->
 	ActualTime = TS - Last,
 	TimeError = abs(ActualTime - TargetTime),
 	Diff = erlang:max(
-		if
-			TimeError < (TargetTime * ?RETARGET_TOLERANCE) -> OldDiff;
-			TargetTime > ActualTime                        -> OldDiff + 1;
-			true                                           -> OldDiff - 1
+		case true of
+			_ when TimeError < (TargetTime * ?RETARGET_TOLERANCE) ->
+				OldDiff;
+			_ when TargetTime > ActualTime ->
+				OldDiff + 1;
+			_ ->
+				OldDiff - 1
 		end,
 		min_difficulty(Height)
 	),
 	Diff.
+
 
 between(N, Min, _) when N < Min -> Min;
 between(N, _, Max) when N > Max -> Max;
@@ -374,66 +378,42 @@ test_calculate_difficulty_linear() ->
 	%% The actual time is three times smaller.
 	Retarget5 = Timestamp - TargetTime div 3,
 	?assert(
-		3.001 * hashes(Diff)
-			> hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget5, 1)
-			)
+		3.001 * hashes(Diff) > hashes(calculate_difficulty(Diff, Timestamp, Retarget5, 1))
 	),
 	?assert(
-		3.001 / 2 * hashes(Diff)
-			> hashes( % Expect 2x drop at 2.5.
-				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget5, 0, Timestamp - 1)
-			)
+		% Expect 2x drop at 2.5.
+		3.001 / 2 * hashes(Diff) > hashes(calculate_difficulty_at_2_5(Diff, Timestamp, Retarget5, 0, Timestamp - 1))
 	),
 	?assert(
-		2.999 * hashes(Diff)
-			< hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget5, 1)
-			)
+		2.999 * hashes(Diff) < hashes(calculate_difficulty(Diff, Timestamp, Retarget5, 1))
 	),
 	?assert(
-		2.999 / 2 * hashes(Diff)
-			< hashes( % Expect 2x drop at 2.5.
-				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget5, 0, Timestamp - 1)
-			)
+		% Expect 2x drop at 2.5.
+		2.999 / 2 * hashes(Diff) < hashes(calculate_difficulty_at_2_5(Diff, Timestamp, Retarget5, 0, Timestamp - 1))
 	),
 	%% The actual time is two times bigger.
 	Retarget6 = Timestamp - 2 * TargetTime,
 	?assert(
-		hashes(Diff)
-			> 1.999 * hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget6, 1)
-			)
+		hashes(Diff) > 1.999 * hashes(calculate_difficulty(Diff, Timestamp, Retarget6, 1))
 	),
 	?assert(
-		hashes(Diff)
-			> 3.999 * hashes( % Expect 2x drop at 2.5.
-				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 1)
-			)
+		% Expect 2x drop at 2.5.
+		hashes(Diff) > 3.999 * hashes(calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 1))
 	),
 	?assert(
-		hashes(Diff)
-			> 7.999 * hashes( % Expect extra 2x after 10 minutes.
-				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 600)
-			)
+		% Expect extra 2x after 10 minutes.
+		hashes(Diff) > 7.999 * hashes(calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 600))
 	),
 	?assert(
-		hashes(Diff)
-			< 2.001 * hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget6, 1)
-			)
+		hashes(Diff) < 2.001 * hashes(calculate_difficulty(Diff, Timestamp, Retarget6, 1))
 	),
 	?assert(
-		hashes(Diff)
-			< 4.001 * hashes( % Expect 2x drop at 2.5.
-				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 1)
-			)
+		% Expect 2x drop at 2.5.
+		hashes(Diff) < 4.001 * hashes(calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 1))
 	),
 	?assert(
-		hashes(Diff)
-			< 8.001 * hashes( % Expect extra 2x after 10 minutes.
-				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 600)
-			)
+		% Expect extra 2x after 10 minutes.
+		hashes(Diff) < 8.001 * hashes(calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 600))
 	).
 
 hashes(Diff) ->

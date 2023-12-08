@@ -1013,19 +1013,17 @@ get_info(Peer) ->
 %% @doc Return a list of parsed peer IPs for a remote server.
 get_peers(Peer) ->
 	try
-		begin
-			{ok, {{<<"200">>, _}, _, Body, _, _}} =
-				ar_http:req(#{
-					method => get,
-					peer => Peer,
-					path => "/peers",
-					headers => p2p_headers(),
-					connect_timeout => 500,
-					timeout => 2 * 1000
-				}),
-			PeerArray = ar_serialize:dejsonify(Body),
-			lists:map(fun ar_util:parse_peer/1, PeerArray)
-		end
+		{ok, {{<<"200">>, _}, _, Body, _, _}} =
+			ar_http:req(#{
+				method => get,
+				peer => Peer,
+				path => "/peers",
+				headers => p2p_headers(),
+				connect_timeout => 500,
+				timeout => 2 * 1000
+			}),
+		PeerArray = ar_serialize:dejsonify(Body),
+		lists:map(fun ar_util:parse_peer/1, PeerArray)
 	catch _:_ -> unavailable
 	end.
 

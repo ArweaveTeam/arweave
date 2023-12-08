@@ -46,7 +46,7 @@ pick_random(_, 0) -> [];
 pick_random([], _) -> [];
 pick_random(List, N) ->
 	Elem = pick_random(List),
-	[Elem|pick_random(List -- [Elem], N - 1)].
+	[Elem | pick_random(List -- [Elem], N - 1)].
 
 %% @doc Select a random element from a list.
 pick_random(Xs) ->
@@ -98,8 +98,8 @@ peer_to_str(Bin) when is_binary(Bin) ->
 peer_to_str(Str) when is_list(Str) ->
 	Str;
 peer_to_str({A, B, C, D, Port}) ->
-	integer_to_list(A) ++ "_" ++ integer_to_list(B) ++ "_" ++ integer_to_list(C) ++ "_"
-			++ integer_to_list(D) ++ "_" ++ integer_to_list(Port).
+	integer_to_list(A) ++ "_" ++ integer_to_list(B) ++ "_" ++ integer_to_list(C) ++ "_" ++
+	integer_to_list(D) ++ "_" ++ integer_to_list(Port).
 
 %% @doc Parses a port string into an integer.
 parse_port(Int) when is_integer(Int) -> Int;
@@ -141,9 +141,9 @@ unique(Xs) when not is_list(Xs) ->
 [Xs];
 unique(Xs) -> unique([], Xs).
 unique(Res, []) -> lists:reverse(Res);
-unique(Res, [X|Xs]) ->
+unique(Res, [X | Xs]) ->
 	case lists:member(X, Res) of
-		false -> unique([X|Res], Xs);
+		false -> unique([X | Res], Xs);
 		true -> unique(Res, Xs)
 	end.
 
@@ -263,7 +263,7 @@ parse_list_indices(_BadInput, _N) ->
 	error.
 
 shuffle_list(List) ->
-	lists:sort(fun(_,_) -> rand:uniform() < 0.5 end, List).
+	lists:sort(fun(_, _) -> rand:uniform() < 0.5 end, List).
 
 %%%
 %%% Tests.
@@ -275,7 +275,7 @@ basic_unique_test() ->
 
 %% @doc Ensure that hosts are formatted as lists correctly.
 basic_peer_format_test() ->
-	"127.0.0.1:9001" = format_peer({127,0,0,1,9001}).
+	"127.0.0.1:9001" = format_peer({127, 0, 0, 1, 9001}).
 
 %% @doc Ensure that pick_random's are actually in the starting list.
 pick_random_test() ->

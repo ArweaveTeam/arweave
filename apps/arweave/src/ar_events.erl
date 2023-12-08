@@ -104,7 +104,7 @@ init(Name) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call(subscribe , {From, _Tag}, State) ->
+handle_call(subscribe, {From, _Tag}, State) ->
 	case maps:get(From, State#state.subscribers, unknown) of
 		unknown ->
 			Ref = erlang:monitor(process, From),
@@ -140,8 +140,8 @@ handle_call(Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({send, From, Value}, State) ->
 	%% Send to the subscribers except self.
-	[Pid ! {event, State#state.name, Value}
-		|| Pid <- maps:keys(State#state.subscribers), Pid /= From],
+	[Pid ! {event, State#state.name, Value} ||
+		Pid <- maps:keys(State#state.subscribers), Pid /= From],
 	{noreply, State};
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {message, Msg}]),

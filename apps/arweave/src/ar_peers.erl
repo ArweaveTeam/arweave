@@ -654,8 +654,7 @@ score_peers(Rating) ->
 				%% probabilistic to always give everyone a chance to improve
 				%% in the competition (i.e., reduce the advantage gained by
 				%% being the first to earn a reputation).
-				Score = rand:uniform() * get_peer_rating(Rating, Performance)
-						/ (Total + 0.0001),
+				Score = rand:uniform() * get_peer_rating(Rating, Performance) / (Total + 0.0001),
 				[{Peer, Score} | Acc];
 			(_, Acc) ->
 				Acc

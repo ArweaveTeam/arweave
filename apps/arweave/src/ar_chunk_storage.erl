@@ -115,20 +115,19 @@ get_range(Start, Size, StoreID) ->
 			BucketStart = Start2 - (Start2 - IntervalStart) rem ?DATA_CHUNK_SIZE,
 			LeftBorder = ar_util:floor_int(BucketStart, ?CHUNK_GROUP_SIZE),
 			End = Start2 + Size2,
-			LastBucketStart = (End - 1) - ((End - 1)- IntervalStart) rem ?DATA_CHUNK_SIZE,
+			LastBucketStart = (End - 1) - ((End - 1) - IntervalStart) rem ?DATA_CHUNK_SIZE,
 			case LastBucketStart >= LeftBorder + ?CHUNK_GROUP_SIZE of
 				false ->
 					ChunkCount = (LastBucketStart - BucketStart) div ?DATA_CHUNK_SIZE + 1,
 					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCount);
 				true ->
 					SizeBeforeBorder = LeftBorder + ?CHUNK_GROUP_SIZE - BucketStart,
-					ChunkCountBeforeBorder = SizeBeforeBorder div ?DATA_CHUNK_SIZE
-							+ case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of 0 -> 0; _ -> 1 end,
+					ChunkCountBeforeBorder = SizeBeforeBorder div ?DATA_CHUNK_SIZE +
+						case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of 0 -> 0; _ -> 1 end,
 					StartAfterBorder = BucketStart + ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE,
-					SizeAfterBorder = Size2 - ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE
-							+ (Start2 - BucketStart),
-					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCountBeforeBorder)
-						++ get_range(StartAfterBorder, SizeAfterBorder, StoreID)
+					SizeAfterBorder = Size2 - ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE + (Start2 - BucketStart),
+					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCountBeforeBorder) ++
+						get_range(StartAfterBorder, SizeAfterBorder, StoreID)
 			end;
 		_ ->
 			[]
@@ -1011,8 +1010,10 @@ test_cross_file_not_aligned() ->
 	assert_get(C3, 2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
 	?assertEqual([{2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2, C3},
 			{2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2, C2}],
-			ar_chunk_storage:get_range(2 * ?CHUNK_GROUP_SIZE
-					- ?DATA_CHUNK_SIZE div 2 - ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2)),
+			ar_chunk_storage:get_range(
+				2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2 - ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2
+			)
+	),
 	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE + 1)),
 	?assertEqual(
 		not_found,

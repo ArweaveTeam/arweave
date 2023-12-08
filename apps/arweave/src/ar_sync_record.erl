@@ -144,9 +144,8 @@ is_recorded(Offset, {ID, Type}) ->
 		true ->
 			{{true, Type}, "default"};
 		false ->
-			StorageModules = [Module
-					|| {_, _, Packing} = Module <- ar_storage_module:get_all(Offset),
-					Packing == Type],
+			StorageModules = [Module || {_, _, Packing} =
+				Module <- ar_storage_module:get_all(Offset), Packing == Type],
 			is_recorded_any_by_type(Offset, ID, StorageModules)
 	end;
 is_recorded(Offset, ID) ->

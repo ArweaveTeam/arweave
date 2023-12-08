@@ -60,18 +60,20 @@ loop(TimeoutRef) ->
 			CowboyStatus = handle_custom_codes(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
 			{stop, RepliedReq};
-		{read_complete_body, From, Req, SizeLimit} ->
-			case catch ar_http_req:body(Req, SizeLimit) of
-				Term ->
-					From ! {read_complete_body, Term}
-			end,
-			loop(TimeoutRef);
-		{read_body_chunk, From, Req, Size, Timeout} ->
-			case catch ar_http_req:read_body_chunk(Req, Size, Timeout) of
-				Term ->
-					From ! {read_body_chunk, Term}
-			end,
-			loop(TimeoutRef);
+			{read_complete_body, From, Req, SizeLimit} ->
+				try ar_http_req:body(Req, SizeLimit) of
+					Term -> From ! {read_complete_body, Term}
+				catch
+					Exception:Reason -> From ! {read_complete_body, {Exception, Reason}}
+				end,
+				loop(TimeoutRef);
+			{read_body_chunk, From, Req, Size, Timeout} ->
+				try ar_http_req:read_body_chunk(Req, Size, Timeout) of
+					Term -> From ! {read_body_chunk, Term}
+				catch
+					Exception:Reason -> From ! {read_body_chunk, {Exception, Reason}}
+				end,
+				loop(TimeoutRef);
 		{timeout, HandlerPid, InitialReq} ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
@@ -598,11 +600,10 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 	{200, #{},
 		ar_serialize:jsonify(
 			[
-				list_to_binary(ar_util:format_peer(P))
-			||
-				P <- ar_peers:get_peers(lifetime),
-				P /= ar_http_util:arweave_peer(Req),
-				ar_peers:is_public_peer(P)
+				list_to_binary(ar_util:format_peer(P)) ||
+					P <- ar_peers:get_peers(lifetime),
+					P /= ar_http_util:arweave_peer(Req),
+					ar_peers:is_public_peer(P)
 			]
 		),
 	Req};
@@ -835,8 +836,8 @@ handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
 
 %% Return the current JSON-encoded hash list held by the node.
 %% GET request to endpoint /block_index.
-handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
-	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
+handle(<<"GET">>, [<<"hash_list">>], Req, Pid) ->
+	handle(<<"GET">>, [<<"block_index">>], Req, Pid);
 
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 	ok = ar_semaphore:acquire(get_block_index, infinity),
@@ -877,15 +878,15 @@ handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
 			end
 	end;
 
-handle(<<"GET">>, [<<"hash_list">>, From, To], Req, _Pid) ->
-	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
+handle(<<"GET">>, [<<"hash_list">>, From, To], Req, Pid) ->
+	handle(<<"GET">>, [<<"block_index">>, From, To], Req, Pid);
 
-handle(<<"GET">>, [<<"hash_list2">>, From, To], Req, _Pid) ->
-	handle(<<"GET">>, [<<"block_index2">>, From, To], Req, _Pid);
+handle(<<"GET">>, [<<"hash_list2">>, From, To], Req, Pid) ->
+	handle(<<"GET">>, [<<"block_index2">>, From, To], Req, Pid);
 
-handle(<<"GET">>, [<<"block_index2">>, From, To], Req, _Pid) ->
+handle(<<"GET">>, [<<"block_index2">>, From, To], Req, Pid) ->
 	erlang:put(encoding, binary),
-	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
+	handle(<<"GET">>, [<<"block_index">>, From, To], Req, Pid);
 
 handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
 	ok = ar_semaphore:acquire(get_block_index, infinity),
@@ -1553,14 +1554,16 @@ handle_get_tx_status(EncodedTXID, Req) ->
 									%% First confirmation is when the TX is
 									%% in the latest block.
 									NumberOfConfirmations = CurrentHeight - Height + 1,
-									Status = PseudoTags
-											++ [{<<"number_of_confirmations">>,
-												NumberOfConfirmations}],
+									Status = PseudoTags ++ [
+										{<<"number_of_confirmations">>, NumberOfConfirmations}
+									],
 									{200, #{}, ar_serialize:jsonify({Status}), Req};
 								_ ->
 									{404, #{}, <<"Not Found.">>, Req}
 							end;
 						not_found ->
+							{404, #{}, <<"Not Found.">>, Req};
+						{error, not_found} ->
 							{404, #{}, <<"Not Found.">>, Req};
 						{error, timeout} ->
 							{503, #{}, <<"ArQL unavailable.">>, Req}
@@ -1842,8 +1845,7 @@ handle_get_block(H, Req, Pid, Encoding) ->
 									{400, #{}, <<>>, Req2};
 								Indices ->
 									Map = collect_missing_transactions(B#block.txs, Indices),
-									TXs2 = [maps:get(TX#tx.id, Map, TX#tx.id)
-											|| TX <- B#block.txs],
+									TXs2 = [maps:get(TX#tx.id, Map, TX#tx.id) || TX <- B#block.txs],
 									handle_get_block3(B#block{ txs = TXs2 }, Req2, binary)
 							end;
 						{error, body_size_too_large} ->
@@ -2577,12 +2579,12 @@ get_total_supply(RootHash, Cursor, Sum, Denomination) ->
 	end.
 
 get_balance_sum([{_, {Balance, _LastTX}} | Range], BlockDenomination) ->
-	ar_pricing:redenominate(Balance, 1, BlockDenomination)
-			+ get_balance_sum(Range, BlockDenomination);
+	ar_pricing:redenominate(Balance, 1, BlockDenomination) +
+	get_balance_sum(Range, BlockDenomination);
 get_balance_sum([{_, {Balance, _LastTX, Denomination, _MiningPermission}} | Range],
 		BlockDenomination) ->
-	ar_pricing:redenominate(Balance, Denomination, BlockDenomination)
-			+ get_balance_sum(Range, BlockDenomination);
+	ar_pricing:redenominate(Balance, Denomination, BlockDenomination) +
+	get_balance_sum(Range, BlockDenomination);
 get_balance_sum([], _BlockDenomination) ->
 	0.
 

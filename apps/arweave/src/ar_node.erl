@@ -278,8 +278,7 @@ get_recent_partition_upper_bound_by_prev_h(H, Diff, [], _Genesis) ->
 get_recent_partition_upper_bound_by_prev_h_short_cache_test() ->
 	ar_block_cache:new(block_cache, B0 = test_block(1, 1, <<>>)),
 	H0 = B0#block.indep_hash,
-	BI = lists:reverse([{H0, 20, <<>>}
-			| [{crypto:strong_rand_bytes(48), 20, <<>>} || _ <- lists:seq(1, 99)]]),
+	BI = lists:reverse([{H0, 20, <<>>} | [{crypto:strong_rand_bytes(48), 20, <<>>} || _ <- lists:seq(1, 99)]]),
 	ets:insert(node_state, {recent_block_index, BI}),
 	?assertEqual(not_found, get_recent_partition_upper_bound_by_prev_h(B0#block.indep_hash)),
 	?assertEqual(not_found,

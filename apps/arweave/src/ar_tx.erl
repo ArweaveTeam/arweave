@@ -699,16 +699,14 @@ test_sign_tx() ->
 	),
 	InvalidTXs = [
 		sign(
-			generate_chunk_tree( % a quantity with empty target
-				NewTX#tx{ format = 2, quantity = 1 }
-			),
+			% a quantity with empty target
+			generate_chunk_tree(NewTX#tx{ format = 2, quantity = 1 }),
 			Priv,
 			Pub
 		),
 		sign_v1(
-			generate_chunk_tree( % a target without quantity
-				NewTX#tx{ format = 1, target = crypto:strong_rand_bytes(32) }
-			),
+			% a target without quantity
+			generate_chunk_tree(NewTX#tx{ format = 1, target = crypto:strong_rand_bytes(32) }),
 			Priv,
 			Pub
 		)

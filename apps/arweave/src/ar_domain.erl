@@ -12,7 +12,7 @@ get_labeling(ApexDomain, CustomDomains, Hostname) ->
 		{0, Size} ->
 			apex;
 		{N, Size} ->
-			Label = binary:part(Hostname, {0, N-1}),
+			Label = binary:part(Hostname, {0, N - 1}),
 			{labeled, Label};
 		nomatch ->
 			get_labeling_1(CustomDomains, Hostname)
@@ -22,7 +22,7 @@ lookup_arweave_txt_record(Domain) ->
 	case inet_res:lookup("_arweave." ++ binary_to_list(Domain), in, txt) of
 		[] ->
 			not_found;
-		[RecordChunks|_] ->
+		[RecordChunks | _] ->
 			list_to_binary(lists:concat(RecordChunks))
 	end.
 

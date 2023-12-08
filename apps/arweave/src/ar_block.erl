@@ -52,8 +52,7 @@ block_field_size_limit(B) ->
 	Check = (byte_size(B#block.nonce) =< 512) and
 		(byte_size(B#block.previous_block) =< 48) and
 		(byte_size(integer_to_binary(B#block.timestamp)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
-		(byte_size(integer_to_binary(B#block.last_retarget))
-				=< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
+		(byte_size(integer_to_binary(B#block.last_retarget)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
 		(byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
 		(byte_size(integer_to_binary(B#block.height)) =< 20) and
 		(byte_size(B#block.hash) =< 48) and
@@ -249,9 +248,8 @@ compute_next_vdf_difficulty(PrevB) ->
 									{0, 0},
 									HistoryPart
 								),
-							NewVDFDifficulty =
-								(VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
-							EMAVDFDifficulty = (9*VDFDifficulty + NewVDFDifficulty) div 10,
+							NewVDFDifficulty = (VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
+							EMAVDFDifficulty = (9 * VDFDifficulty + NewVDFDifficulty) div 10,
 							?LOG_DEBUG([{event, vdf_difficulty_retarget},
 									{height, Height},
 									{old_vdf_difficulty, VDFDifficulty},
@@ -484,8 +482,7 @@ generate_block_data_segment_base(B) ->
 							integer_to_binary(ScheduledRateDividend),
 							integer_to_binary(ScheduledRateDivisor),
 							integer_to_binary(B#block.packing_2_5_threshold),
-							integer_to_binary(B#block.strict_data_split_threshold)
-							| Props
+							integer_to_binary(B#block.strict_data_split_threshold) | Props
 						];
 					false ->
 						Props
@@ -514,8 +511,8 @@ generate_block_data_segment_base(B) ->
 %% of the two recall ranges.
 get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
 	RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
-	RecallRange1Start = PartitionNumber * ?PARTITION_SIZE
-			+ RecallRange1Offset rem min(?PARTITION_SIZE, PartitionUpperBound),
+	RecallRange1Start = PartitionNumber * ?PARTITION_SIZE +
+		RecallRange1Offset rem min(?PARTITION_SIZE, PartitionUpperBound),
 	RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
 	{RecallRange1Start, RecallRange2Start}.
 
@@ -584,8 +581,7 @@ generate_size_tagged_list_from_txs(TXs, Height) ->
 					End = Pos + DataSize,
 					case Height >= ar_fork:height_2_5() of
 						true ->
-							Padding = ar_tx:get_weave_size_increase(DataSize, Height)
-									- DataSize,
+							Padding = ar_tx:get_weave_size_increase(DataSize, Height) - DataSize,
 							%% Encode the padding information in the Merkle tree.
 							case Padding > 0 of
 								true ->

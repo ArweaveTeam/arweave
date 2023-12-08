@@ -190,7 +190,7 @@ handle_cast(maybe_request_takedown, State) ->
 			false ->
 				State
 		end,
-	State3 = 
+	State3 =
 		case DTS + ?REQUEST_TAKEDOWN_DELAY_MS < Now of
 			true ->
 				request_data_takedown(State2);

@@ -71,7 +71,7 @@ run_benchmark(Test, TotalMegaBytes, JIT, LargePages, HardwareAES, VDF) ->
 		erlang:system_time() div 1000000000,
 		Test, TotalMegaBytes, JIT, LargePages, HardwareAES, VDF,
 		Init, Total]),
-	
+
 	file:write(File, Output),
 	io:format("~n"),
 	io:format(Output),
@@ -109,7 +109,7 @@ generate_input(TotalMegaBytes, Root, RewardAddress) ->
 
 	Spora25Filename = spora_2_5_filename(TotalMegaBytes),
 	io:format("~s", [Spora25Filename]),
-	
+
 	{ok, Spora25FileHandle} = file:open(Spora25Filename, [write, binary]),
 	ar_bench_timer:record({wall},
 		fun dirty_test/4, [
@@ -140,7 +140,7 @@ write_random_data(UnpackedFilename, TotalBytes) ->
     write_chunks(File, TotalBytes),
     file:close(File).
 write_chunks(File, TotalBytes) ->
-    ChunkSize = 1024*1024, % 1MB
+    ChunkSize = 1024 * 1024, % 1MB
     RemainingBytes = TotalBytes,
     write_chunks_loop(File, RemainingBytes, ChunkSize).
 write_chunks_loop(_File, 0, _) ->
@@ -262,7 +262,7 @@ dirty_test({TotalMegaBytes, _, _, _} = Permutation, WorkerFun, Args, NumWorkers)
 	Workers = [spawn_monitor(
 		fun() -> dirty_worker(
 			N,
-			Permutation, 
+			Permutation,
 			WorkerFun,
 			Args,
 			WorkerSize * (N - 1),
@@ -272,7 +272,7 @@ dirty_test({TotalMegaBytes, _, _, _} = Permutation, WorkerFun, Args, NumWorkers)
 	[
 		receive
 			{'DOWN', Ref, process, Pid, _Result} -> erlang:demonitor(Ref), ok
-		after 
+		after
 			60000 -> timeout
 		end || {Pid, Ref} <- Workers
 	],
@@ -299,7 +299,7 @@ baseline_pack_chunks(WorkerID,
 			_, JIT, LargePages, HardwareAES
 		} = Permutation,
 		{
-			RandomXState, UnpackedFileHandle, PackedFileHandle, 
+			RandomXState, UnpackedFileHandle, PackedFileHandle,
 			Root, RewardAddress, PackingType
 		} = Args,
 		Offset, Size) ->
@@ -318,7 +318,7 @@ baseline_pack_chunks(WorkerID,
             io:format("Error reading file: ~p~n", [Reason]),
 			0
     end,
-	baseline_pack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
+	baseline_pack_chunks(WorkerID, Permutation, Args, Offset + ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% Baseline Repacking Test
@@ -345,7 +345,7 @@ baseline_repack_chunks(WorkerID,
 				JIT, LargePages, HardwareAES),
 			{ok, RepackedChunk} =ar_mine_randomx:randomx_encrypt_chunk_nif(
 				RandomXState, RepackKey, UnpackedChunk, RepackingRounds,
-				JIT, LargePages, HardwareAES),	
+				JIT, LargePages, HardwareAES),
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
         eof ->
@@ -354,7 +354,7 @@ baseline_repack_chunks(WorkerID,
             io:format("Error reading file: ~p~n", [Reason]),
 			0
     end,
-	baseline_repack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
+	baseline_repack_chunks(WorkerID, Permutation, Args, Offset + ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% NIF Repacking Test
@@ -387,7 +387,7 @@ nif_repack_chunks(WorkerID,
             io:format("Error reading file: ~p~n", [Reason]),
 			0
     end,
-	nif_repack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
+	nif_repack_chunks(WorkerID, Permutation, Args, Offset + ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% Helpers

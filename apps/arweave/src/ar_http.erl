@@ -88,7 +88,7 @@ req(Args, ReestablishedConnection) ->
 	case ReestablishedConnection of
 		true ->
 			ok;
-		false -> 
+		false ->
 			%% NOTE: the erlang prometheus client looks at the metric name to determine units.
 			%%       If it sees <name>_duration_<unit> it assumes the observed value is in
 			%%       native units and it converts it to <unit> .To query native units, use:
@@ -99,7 +99,7 @@ req(Args, ReestablishedConnection) ->
 					ar_http_iface_server:label_http_path(list_to_binary(Path)),
 					ar_metrics:get_status_class(Response)
 				], EndTime - StartTime)
-	end,	
+	end,
 	Response.
 %%% ==================================================================
 %%% gen_server callbacks.

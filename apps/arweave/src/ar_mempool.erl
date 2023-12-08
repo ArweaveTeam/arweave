@@ -3,7 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 
 -export([reset/0, load_from_disk/0, add_tx/2, drop_txs/1, drop_txs/3,
-		get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, has_tx/1, 
+		get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, has_tx/1,
 		get_priority_set/0, get_last_tx_map/0, get_origin_tx_map/0,
 		get_propagation_queue/0, del_from_propagation_queue/2]).
 
@@ -21,7 +21,7 @@ load_from_disk() ->
 		{ok, {SerializedTXs, _MempoolSize}} ->
 			TXs = maps:map(fun(_, {TX, St}) -> {deserialize_tx(TX), St} end, SerializedTXs),
 
-			{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} = 
+			{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} =
 				maps:fold(
 					fun(TXID, {TX, Status}, {MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap}) ->
 						MetaData = {_, _, Timestamp} = init_tx_metadata(TX, Status),
@@ -79,11 +79,11 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 					add_to_last_tx_map(get_last_tx_map(), TX),
 					add_to_origin_tx_map(get_origin_tx_map(), TX)
 				};
-			{TX, PrevStatus, Timestamp} -> 
+			{TX, PrevStatus, Timestamp} ->
 				{
 					{TX, Status, Timestamp},
 					get_mempool_size(),
-					add_to_priority_set(get_priority_set(),TX, PrevStatus, Status, Timestamp),
+					add_to_priority_set(get_priority_set(), TX, PrevStatus, Status, Timestamp),
 					get_propagation_queue(),
 					get_last_tx_map(),
 					get_origin_tx_map()
@@ -98,7 +98,7 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 		{last_tx_map, LastTXMap},
 		{origin_tx_map, OriginTXMap}
 	]),
-	
+
 	case ar_node:is_joined() of
 		true ->
 			% 1. Drop unconfirmable transactions:
@@ -353,7 +353,7 @@ del_from_origin_tx_map(OriginTXMap, TX) ->
 
 unconfirmed_tx(TX = #tx{}) ->
 	{ar_tx:utility(TX), TX#tx.id}.
-	
+
 
 increase_mempool_size(
 	_MempoolSize = {MempoolHeaderSize, MempoolDataSize}, TX = #tx{}) ->
@@ -390,7 +390,7 @@ find_low_priority_txs(Iterator, {MempoolHeaderSize, MempoolDataSize})
 		when
 			MempoolHeaderSize > ?MEMPOOL_HEADER_SIZE_LIMIT;
 			MempoolDataSize > ?MEMPOOL_DATA_SIZE_LIMIT ->
-	{{_Utility, TXID, _Status} = _Element, Iterator2} = gb_sets:next(Iterator),
+				{{_Utility, TXID, _Status} = _Element, Iterator2} = gb_sets:next(Iterator),
 	TX = get_tx(TXID),
 	case should_drop_low_priority_tx(TX, {MempoolHeaderSize, MempoolDataSize}) of
 		true ->
@@ -460,7 +460,7 @@ filter_clashing_txs(ClashingTXIDs) ->
 %% confirmed)
 %%
 %% Note: when doing the overspend calculation any unconfirmed deposit
-%% transactions are ignored. This is to prevent a second potentially 
+%% transactions are ignored. This is to prevent a second potentially
 %% malicious scenario like the following:
 %%
 %% Peer A: receives deposit TX and several spend TXs,

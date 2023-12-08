@@ -107,7 +107,7 @@ handle_call({post_deposit, Address, Amount, TXID}, _From, State) ->
 		Account ->
 			{reply, post_tx_transaction(Account, Amount, TXID), State}
 	end;
-	
+
 handle_call({post_charge, Address, Amount, Minimum, Request}, _From, State) ->
 	case get_account2(Address) of
 		not_found ->
@@ -309,7 +309,7 @@ safe_get(Name, Key, Default) ->
 	Result = try
 		ar_kv:get(Name, Key)
 	catch
-		error:{badmatch,[]} ->
+		error:{badmatch, []} ->
 			not_found
 	end,
 	case Result of
@@ -317,6 +317,6 @@ safe_get(Name, Key, Default) ->
 			Value;
 		not_found ->
 			Default;
-		_ ->	
+		_ ->
 			Result
 	end.

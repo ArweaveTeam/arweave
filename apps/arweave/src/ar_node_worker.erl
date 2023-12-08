@@ -148,8 +148,8 @@ init([]) ->
 	end,
 	gen_server:cast(?MODULE, process_task_queue),
 	ets:insert(node_state, [
-		{is_joined,						false},
-		{hash_list_2_0_for_1_0_blocks,	read_hash_list_2_0_for_1_0_blocks()}
+		{is_joined, false},
+		{hash_list_2_0_for_1_0_blocks, read_hash_list_2_0_for_1_0_blocks()}
 	]),
 	%% Start the HTTP server.
 	ok = ar_http_iface_server:start(),
@@ -370,13 +370,13 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	[{_, {Height, Blocks, BI}}] = ets:lookup(node_state, join_state),
 	ar_storage:store_block_index(BI),
 	B = hd(Blocks),
-	RewardHistory = [{H, {Addr, HashRate, Reward, Denomination}}
-			|| {{Addr, HashRate, Reward, Denomination}, {H, _, _}}
+	RewardHistory = [{H, {Addr, HashRate, Reward, Denomination}} ||
+		{{Addr, HashRate, Reward, Denomination}, {H, _, _}}
 			<- lists:zip(B#block.reward_history,
 					lists:sublist(BI, length(B#block.reward_history)))],
 	ar_storage:store_reward_history_part2(RewardHistory),
-	BlockTimeHistory = [{H, {BlockInterval, VDFInterval, ChunkCount}}
-			|| {{BlockInterval, VDFInterval, ChunkCount}, {H, _, _}}
+	BlockTimeHistory = [{H, {BlockInterval, VDFInterval, ChunkCount}} ||
+		{{BlockInterval, VDFInterval, ChunkCount}, {H, _, _}}
 			<- lists:zip(B#block.block_time_history,
 					lists:sublist(BI, length(B#block.block_time_history)))],
 	ar_storage:store_block_time_history_part2(BlockTimeHistory),
@@ -393,23 +393,23 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
 	{Rate, ScheduledRate} = {B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate},
 	ets:insert(node_state, [
-		{recent_block_index,	lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN)},
-		{is_joined,				true},
-		{current,				Current},
-		{timestamp,				B#block.timestamp},
-		{nonce_limiter_info,	B#block.nonce_limiter_info},
-		{wallet_list,			B#block.wallet_list},
-		{height,				Height},
-		{hash,					B#block.hash},
-		{reward_pool,			B#block.reward_pool},
-		{diff,					B#block.diff},
-		{cumulative_diff,		B#block.cumulative_diff},
-		{last_retarget,			B#block.last_retarget},
-		{weave_size,			B#block.weave_size},
-		{block_txs_pairs,		BlockTXPairs},
-		{block_anchors,			BlockAnchors},
-		{recent_txs_map,		RecentTXMap},
-		{usd_to_ar_rate,		Rate},
+		{recent_block_index, lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN)},
+		{is_joined, true},
+		{current, Current},
+		{timestamp, B#block.timestamp},
+		{nonce_limiter_info, B#block.nonce_limiter_info},
+		{wallet_list, B#block.wallet_list},
+		{height, Height},
+		{hash, B#block.hash},
+		{reward_pool, B#block.reward_pool},
+		{diff, B#block.diff},
+		{cumulative_diff, B#block.cumulative_diff},
+		{last_retarget, B#block.last_retarget},
+		{weave_size, B#block.weave_size},
+		{block_txs_pairs, BlockTXPairs},
+		{block_anchors, BlockAnchors},
+		{recent_txs_map, RecentTXMap},
+		{usd_to_ar_rate, Rate},
 		{scheduled_usd_to_ar_rate, ScheduledRate},
 		{price_per_gib_minute, B#block.price_per_gib_minute},
 		{kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
@@ -456,7 +456,7 @@ handle_info({event, miner, {found_solution, _Solution, _PoACache, _PoA2Cache}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
 handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, State) ->
-	#mining_solution{ 
+	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
 		merkle_rebase_threshold = MerkleRebaseThreshold,
 		mining_address = MiningAddress,
@@ -523,8 +523,8 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck = PassesTimelineCheck andalso
-			{IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
-					== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty},
+			{IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty} ==
+			{PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty},
 	PrevB = ar_block_cache:get(block_cache, PrevH),
 	CorrectRebaseThreshold =
 		case PassesSeedCheck of
@@ -679,7 +679,7 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
 					{solution, ar_util:encode(SolutionH)}, {height, Height},
 					{txs, length(B#block.txs)},
-					{chunks, 
+					{chunks,
 						case B#block.recall_byte2 of
 							undefined -> 1;
 							_ -> 2
@@ -810,7 +810,7 @@ terminate(Reason, _State) ->
 						maps:put(TXID, {ar_mempool:get_tx(TXID), Status}, Acc)
 					end,
 					#{},
-					ar_mempool:get_priority_set()	
+					ar_mempool:get_priority_set()
 				),
 			dump_mempool(Mempool, MempoolSize);
 		_ ->
@@ -1076,8 +1076,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 								HashRate = ar_difficulty:get_hash_rate(B#block.diff),
 								Denomination2 = B#block.denomination,
 								Addr = B#block.reward_addr,
-								RewardHistory2 = [{Addr, HashRate, Reward, Denomination2}
-										| RewardHistory],
+								RewardHistory2 = [{Addr, HashRate, Reward, Denomination2} | RewardHistory],
 								Len = ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
 								RewardHistory3 = lists:sublist(RewardHistory2, Len),
 								B#block{ reward_history = RewardHistory3 };
@@ -1241,10 +1240,14 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
 			Denomination2),
 	HashRate = ar_difficulty:get_hash_rate(Diff),
-	RewardHistory2 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
-			| RewardHistory], ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-	RewardHistory3 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
-			| RewardHistory], ?REWARD_HISTORY_BLOCKS),
+	RewardHistory2 = lists:sublist(
+		[{RewardAddr, HashRate, Reward2, Denomination2} | RewardHistory],
+		?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT
+	),
+	RewardHistory3 = lists:sublist(
+		[{RewardAddr, HashRate, Reward2, Denomination2} | RewardHistory],
+		?REWARD_HISTORY_BLOCKS
+	),
 	B2#block{
 		wallet_list = RootHash,
 		reward_pool = EndowmentPool2,
@@ -1526,22 +1529,22 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	ar_storage:store_reward_history_part(AddedBlocks),
 	ar_storage:store_block_time_history_part(AddedBlocks, lists:last(PrevBlocks)),
 	ets:insert(node_state, [
-		{recent_block_index,	RecentBI2},
-		{current,				B#block.indep_hash},
-		{timestamp,				B#block.timestamp},
-		{wallet_list,			B#block.wallet_list},
-		{height,				B#block.height},
-		{hash,					B#block.hash},
-		{reward_pool,			B#block.reward_pool},
-		{diff,					B#block.diff},
-		{cumulative_diff,		B#block.cumulative_diff},
-		{last_retarget,			B#block.last_retarget},
-		{weave_size,			B#block.weave_size},
-		{nonce_limiter_info,	B#block.nonce_limiter_info},
-		{block_txs_pairs,		BlockTXPairs},
-		{block_anchors,			BlockAnchors},
-		{recent_txs_map,		RecentTXMap},
-		{usd_to_ar_rate,		Rate},
+		{recent_block_index, RecentBI2},
+		{current, B#block.indep_hash},
+		{timestamp, B#block.timestamp},
+		{wallet_list, B#block.wallet_list},
+		{height, B#block.height},
+		{hash, B#block.hash},
+		{reward_pool, B#block.reward_pool},
+		{diff, B#block.diff},
+		{cumulative_diff, B#block.cumulative_diff},
+		{last_retarget, B#block.last_retarget},
+		{weave_size, B#block.weave_size},
+		{nonce_limiter_info, B#block.nonce_limiter_info},
+		{block_txs_pairs, BlockTXPairs},
+		{block_anchors, BlockAnchors},
+		{recent_txs_map, RecentTXMap},
+		{usd_to_ar_rate, Rate},
 		{scheduled_usd_to_ar_rate, ScheduledRate},
 		{price_per_gib_minute, B#block.price_per_gib_minute},
 		{kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
@@ -1641,11 +1644,13 @@ record_economic_metrics2(B, PrevB) ->
 		true ->
 			#block{ reward_history = RewardHistory } = B,
 			RewardHistorySize = length(RewardHistory),
-			AverageHashRate = ar_util:safe_divide(lists:sum([HR
-					|| {_, HR, _, _} <- RewardHistory]), RewardHistorySize),
+			AverageHashRate = ar_util:safe_divide(
+				lists:sum([HR || {_, HR, _, _} <- RewardHistory]), RewardHistorySize
+			),
 			prometheus_gauge:set(average_network_hash_rate, AverageHashRate),
-			AverageBlockReward = ar_util:safe_divide(lists:sum([R
-					|| {_, _, R, _} <- RewardHistory]), RewardHistorySize),
+			AverageBlockReward = ar_util:safe_divide(
+				lists:sum([R || {_, _, R, _} <- RewardHistory]), RewardHistorySize
+			),
 			prometheus_gauge:set(average_block_reward, AverageBlockReward),
 			prometheus_gauge:set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
 			BlockInterval = ar_block:compute_block_interval(PrevB),
@@ -1654,8 +1659,8 @@ record_economic_metrics2(B, PrevB) ->
 					PrevB#block.kryder_plus_rate_multiplier_latch,
 					PrevB#block.kryder_plus_rate_multiplier, PrevB#block.denomination,
 					BlockInterval},
-			{ExpectedBlockReward,
-					_, _, _, _} = ar_pricing:get_miner_reward_endowment_pool_debt_supply(Args),
+			{ExpectedBlockReward, _, _, _, _} =
+				ar_pricing:get_miner_reward_endowment_pool_debt_supply(Args),
 			prometheus_gauge:set(expected_block_reward, ExpectedBlockReward),
 			LegacyPricePerGibibyte = ar_pricing:get_storage_cost(1024 * 1024 * 1024,
 					os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),

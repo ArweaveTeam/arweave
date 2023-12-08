@@ -209,8 +209,7 @@ send_to_worker(Peer, {JSON, B}, W) ->
 							recall_byte = B#block.recall_byte,
 							recall_byte2 = B#block.recall_byte2,
 							solution_hash = SolutionH2,
-							tx_prefixes = [ar_node_worker:tx_id_prefix(ID)
-									|| #tx{ id = ID } <- TXs] },
+							tx_prefixes = [ar_node_worker:tx_id_prefix(ID) || #tx{ id = ID } <- TXs] },
 					ar_http_iface_client:send_block_announcement(Peer, Announcement)
 				end,
 			SendFun =
@@ -289,8 +288,7 @@ determine_included_transactions([TXIDOrTX | TXs], [TXIDOrIndex | MissingTXs], In
 				true ->
 					missing;
 				false ->
-					determine_included_transactions(TXs, MissingTXs, [strip_v2_data(TXIDOrTX)
-							| Included], N + 1)
+					determine_included_transactions(TXs, MissingTXs, [strip_v2_data(TXIDOrTX) | Included], N + 1)
 			end;
 		false ->
 			determine_included_transactions(TXs, [TXIDOrIndex | MissingTXs], [TXID | Included],

@@ -1,5 +1,5 @@
 -module(ar_arql_middleware).
--behavior(cowboy_middleware).
+-behaviour(cowboy_middleware).
 
 -export([execute/2]).
 

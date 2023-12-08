@@ -42,7 +42,7 @@ show_help() ->
 		fun({Opt, Desc}) ->
 			io:format("\t~s~s~n",
 				[
-					string:pad(Opt, 40, trailing, $ ),
+					string:pad(Opt, 40, trailing, $\s),
 					Desc
 				]
 			)
@@ -303,7 +303,7 @@ parse_cli_args(["mine" | Rest], C) ->
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ peers = [ValidPeer|Ps] });
+			parse_cli_args(Rest, C#config{ peers = [ValidPeer | Ps] });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
@@ -328,16 +328,16 @@ parse_cli_args(["local_peer", Peer | Rest], C = #config{ local_peers = Peers }) 
 parse_cli_args(["sync_from_local_peers_only" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ sync_from_local_peers_only = true });
 parse_cli_args(["transaction_blacklist", File | Rest],
-	C = #config{ transaction_blacklist_files = Files } ) ->
+	C = #config{transaction_blacklist_files = Files}) ->
 	parse_cli_args(Rest, C#config{ transaction_blacklist_files = [File | Files] });
 parse_cli_args(["transaction_blacklist_url", URL | Rest],
-		C = #config{ transaction_blacklist_urls = URLs} ) ->
+		C = #config{transaction_blacklist_urls = URLs}) ->
 	parse_cli_args(Rest, C#config{ transaction_blacklist_urls = [URL | URLs] });
 parse_cli_args(["transaction_whitelist", File | Rest],
-		C = #config{ transaction_whitelist_files = Files } ) ->
+		C = #config{transaction_whitelist_files = Files}) ->
 	parse_cli_args(Rest, C#config{ transaction_whitelist_files = [File | Files] });
 parse_cli_args(["transaction_whitelist_url", URL | Rest],
-		C = #config{ transaction_whitelist_urls = URLs} ) ->
+		C = #config{transaction_whitelist_urls = URLs}) ->
 	parse_cli_args(Rest, C#config{ transaction_whitelist_urls = [URL | URLs] });
 parse_cli_args(["port", Port | Rest], C) ->
 	parse_cli_args(Rest, C#config{ port = list_to_integer(Port) });
@@ -415,7 +415,7 @@ parse_cli_args(["start_from_block", H | Rest], C) ->
 	end;
 parse_cli_args(["start_from_latest_state" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ start_from_latest_state = true });
-parse_cli_args(["init" | Rest], C)->
+parse_cli_args(["init" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ init = true });
 parse_cli_args(["internal_api_secret", Secret | Rest], C)
 		when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
@@ -450,7 +450,7 @@ parse_cli_args(["tx_validators", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ tx_validators = list_to_integer(Num) });
 parse_cli_args(["post_tx_timeout", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { post_tx_timeout = list_to_integer(Num) });
-parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
+parse_cli_args(["tx_propagation_parallelization", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_connections = list_to_integer(Num) });
@@ -528,7 +528,7 @@ parse_cli_args(["cm_poll_interval", Num | Rest], C) ->
 parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ cm_peers = [ValidPeer|Ps] });
+			parse_cli_args(Rest, C#config{ cm_peers = [ValidPeer | Ps] });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
@@ -557,7 +557,7 @@ start(Config) ->
 			% Set logger to output all levels of logs to the console
 			% when running in a dumb terminal.
 			logger:add_handler(console, logger_std_h, #{level => all});
-		_->
+		_ ->
 			ok
   end,
 	case Config#config.init of
@@ -595,7 +595,7 @@ start(normal, _Args) ->
 		chars_limit => 16256,
 		max_size => 8128,
 		depth => 256,
-		template => [time," [",level,"] ",mfa,":",line," ",msg,"\n"]
+		template => [time, " [", level, "] ", mfa, ":", line, " ", msg, "\n"]
 	},
 	logger:set_handler_config(default, formatter, {logger_formatter, LoggerFormatterConsole}),
 	logger:set_handler_config(default, level, error),
@@ -630,7 +630,7 @@ start(normal, _Args) ->
 		depth => 256,
 		legacy_header => false,
 		single_line => true,
-		template => [time," [",level,"] ",mfa,":",line," ",msg,"\n"]
+		template => [time, " [", level, "] ", mfa, ":", line, " ", msg, "\n"]
 	},
 	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
 	logger:set_application_level(arweave, Level),
@@ -814,11 +814,10 @@ commandline_parser_test_() ->
 		Addr = crypto:strong_rand_bytes(32),
 		Tests =
 			[
-				{"peer 1.2.3.4 peer 5.6.7.8:9", #config.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
+				{"peer 1.2.3.4 peer 5.6.7.8:9", #config.peers, [{5, 6, 7, 8, 9}, {1, 2, 3, 4, 1984}]},
 				{"mine", #config.mine, true},
 				{"port 22", #config.port, 22},
-				{"mining_addr "
-					++ binary_to_list(ar_util:encode(Addr)), #config.mining_addr, Addr}
+				{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #config.mining_addr, Addr}
 			],
 		X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
 		C = parse_cli_args(X, #config{}),

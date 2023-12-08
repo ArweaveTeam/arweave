@@ -35,8 +35,7 @@ init(WalletList, Diff, GenesisDataSize) ->
 	TX = create_genesis_tx(Key, GenesisDataSize),
 	WalletList2 = WalletList ++ [{ar_wallet:to_address(Key), 0, TX#tx.id}],
 	TXs = [TX],
-	AccountTree = ar_patricia_tree:from_proplist([{A, {B, LTX}}
-			|| {A, B, LTX} <- WalletList2]),
+	AccountTree = ar_patricia_tree:from_proplist([{A, {B, LTX}} || {A, B, LTX} <- WalletList2]),
 	WLH = element(1, ar_block:hash_wallet_list(AccountTree)),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, 0),
 	BlockSize = case SizeTaggedTXs of [] -> 0; _ -> element(2, lists:last(SizeTaggedTXs)) end,
@@ -139,7 +138,7 @@ add_mainnet_v1_genesis_txs() ->
 					SourcePath = "data/genesis_txs/" ++ F,
 					TargetPath = Config#config.data_dir ++ "/" ++ ?TX_DIR ++ "/" ++ F,
 					file:copy(SourcePath, TargetPath),
-					[ar_util:decode(hd(string:split(F, ".")))|Acc]
+					[ar_util:decode(hd(string:split(F, "."))) | Acc]
 				end,
 				[],
 				Files

@@ -153,7 +153,7 @@ parse_payment(BadToken, _PaymentConfig) ->
 parse_services(ServicesConfig) when is_list(ServicesConfig) ->
 	Services = [parse_service(ServiceConfig, #p3_service{}) || {ServiceConfig} <- ServicesConfig],
 	lists:foldl(
-		fun(Service, Acc) -> 
+		fun(Service, Acc) ->
 			maps:put(Service#p3_service.endpoint, Service, Acc)
 		end,
 		#{},
@@ -168,7 +168,7 @@ parse_services(ServicesConfig) ->
 %% {"endpoint": "/info", "modSeq": 1, "rates": {rates}}
 parse_service([{?P3_ENDPOINT_HEADER, Endpoint} | Rest], ServiceConfig) ->
 	parse_service(Rest, ServiceConfig#p3_service{ endpoint = Endpoint });
-	
+
 parse_service([{<<"rate_type">>, RateType} | Rest], ServiceConfig) ->
 	parse_service(Rest, ServiceConfig#p3_service{ rate_type = RateType });
 
@@ -264,7 +264,7 @@ to_json_service(ServiceConfig, P3Config) ->
 	#{
 		<<"endpoint">> => ServiceConfig#p3_service.endpoint,
 		<<"modSeq">> => ServiceConfig#p3_service.mod_seq,
-		<<"rates">> => Rates#{ 
+		<<"rates">> => Rates#{
 			<<"description">> => maps:get(ServiceConfig#p3_service.rate_type, ?RATE_TYPE_MAP)
 		}
 	}.
@@ -274,13 +274,13 @@ to_json_rates(RatesConfig, P3Config) ->
 		fun(Asset, Price, Acc) ->
 			{Network, Token} = ?FROM_P3_ASSET(Asset),
 			Address = ar_util:encode(get_payments_value(P3Config, Asset, #p3_payment.address)),
-			Acc#{ 
-				Network => #{ 
-					Token => #{ 
-						<<"price">> => Price, 
-						<<"address">> => Address 
-					} 
-				} 
+			Acc#{
+				Network => #{
+					Token => #{
+						<<"price">> => Price,
+						<<"address">> => Address
+					}
+				}
 			}
 		end,
 		#{},
