@@ -4,8 +4,9 @@
 -behaviour(gen_server).
 
 -export([start_link/2, encode_packing/1, put/2, put/3,
-		open_files/1, get/1, get/2, get_range/2, get_range/3,
-		close_file/2, close_files/1, cut/2, delete/1, delete/2, run_defragmentation/0]).
+		open_files/1, get/1, get/2, get/5, read_chunk2/5, get_range/2, get_range/3,
+		close_file/2, close_files/1, cut/2, delete/1, delete/2, 
+		list_files/2, run_defragmentation/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -573,8 +574,8 @@ is_offset_valid(_Byte, _LeftChunkBorder, 0) ->
 	%% 0 is interpreted as "data has not been written yet".
 	false;
 is_offset_valid(Byte, LeftChunkBorder, ChunkOffset) ->
-	 Diff = Byte - (LeftChunkBorder + ChunkOffset rem ?DATA_CHUNK_SIZE),
-	 Diff >= 0 andalso Diff < ?DATA_CHUNK_SIZE.
+	Diff = Byte - (LeftChunkBorder + ChunkOffset rem ?DATA_CHUNK_SIZE),
+	Diff >= 0 andalso Diff < ?DATA_CHUNK_SIZE.
 
 close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
 	file:close(erlang:get({cfile, Key})),
@@ -613,21 +614,23 @@ sync_and_close_files([_ | Keys]) ->
 sync_and_close_files([]) ->
 	ok.
 
+list_files(DataDir, StoreID) ->
+	Dir =
+		case StoreID of
+			"default" ->
+				DataDir;
+			_ ->
+				filename:join([DataDir, "storage_modules", StoreID])
+		end,
+	ok = filelib:ensure_dir(Dir ++ "/"),
+	ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
+	StorageIndex = read_file_index(Dir),
+	maps:values(StorageIndex).
+
 files_to_defrag(StorageModules, DataDir, ByteSizeThreshold, Sizes) ->
 	AllFiles = lists:flatmap(
 		fun(StorageModule) ->
-			StoreID = ar_storage_module:id(StorageModule),
-			Dir =
-				case StoreID of
-					"default" ->
-						DataDir;
-					_ ->
-						filename:join([DataDir, "storage_modules", StoreID])
-				end,
-			ok = filelib:ensure_dir(Dir ++ "/"),
-			ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
-			StorageIndex = read_file_index(Dir),
-			maps:values(StorageIndex)
+			list_files(DataDir, ar_storage_module:id(StorageModule))
 		end, StorageModules),
 	lists:filter(
 		fun(Filepath) ->
