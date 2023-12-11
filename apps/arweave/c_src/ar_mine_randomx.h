@@ -74,3 +74,9 @@ static ERL_NIF_TERM error_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM error(ErlNifEnv*, const char*);
 static ERL_NIF_TERM make_output_binary(ErlNifEnv*, unsigned char*, size_t);
 static int validate_hash(unsigned char[RANDOMX_HASH_SIZE], unsigned char[RANDOMX_HASH_SIZE]);
+
+// From RandomX/src/jit_compiler.hpp
+// needed for the JIT compiler to work on OpenBSD, NetBSD and Apple Silicon
+#if defined(__OpenBSD__) || defined(__NetBSD__) || (defined(__APPLE__) && defined(__aarch64__))
+#define RANDOMX_FORCE_SECURE
+#endif

@@ -124,6 +124,9 @@ static ERL_NIF_TERM init(
 	flags = RANDOMX_FLAG_DEFAULT;
 	if (jitEnabled) {
 		flags |= RANDOMX_FLAG_JIT;
+#ifdef RANDOMX_FORCE_SECURE
+		flags |= RANDOMX_FLAG_SECURE;
+#endif
 	}
 	if (largePagesEnabled) {
 		flags |= RANDOMX_FLAG_LARGE_PAGES;
@@ -267,7 +270,7 @@ static randomx_vm* create_vm(struct state* statePtr,
 		enif_rwlock_runlock(statePtr->lockPtr);
 		return NULL;
 	}
-	
+
 	randomx_flags flags = RANDOMX_FLAG_DEFAULT;
 	if (fullMemEnabled) {
 		flags |= RANDOMX_FLAG_FULL_MEM;
@@ -277,6 +280,9 @@ static randomx_vm* create_vm(struct state* statePtr,
 	}
 	if (jitEnabled) {
 		flags |= RANDOMX_FLAG_JIT;
+#ifdef RANDOMX_FORCE_SECURE
+		flags |= RANDOMX_FLAG_SECURE;
+#endif
 	}
 	if (largePagesEnabled) {
 		flags |= RANDOMX_FLAG_LARGE_PAGES;
@@ -297,7 +303,7 @@ static void destroy_vm(struct state* statePtr, randomx_vm* vmPtr) {
 
 static ERL_NIF_TERM decrypt_chunk(ErlNifEnv* envPtr,
 		randomx_vm *machine, const unsigned char *input, const size_t inputSize,
-		const unsigned char *inChunk, const size_t inChunkSize, 
+		const unsigned char *inChunk, const size_t inChunkSize,
 		unsigned char* outChunk, const size_t outChunkSize,
 		const int randomxProgramCount) {
 
@@ -321,13 +327,13 @@ static ERL_NIF_TERM encrypt_chunk(ErlNifEnv* envPtr,
 		randomx_encrypt_chunk(
 			machine, input, inputSize, paddedInChunk, MAX_CHUNK_SIZE,
 			encryptedChunk, randomxProgramCount);
-		free(paddedInChunk);	
+		free(paddedInChunk);
 	} else {
 		randomx_encrypt_chunk(
 			machine, input, inputSize, inChunk, inChunkSize,
 			encryptedChunk, randomxProgramCount);
 	}
-	
+
 	return encryptedChunkTerm;
 }
 
@@ -371,7 +377,7 @@ static ERL_NIF_TERM randomx_hash_nif(
 	}
 
 	randomx_calculate_hash(vmPtr, inputData.data, inputData.size, hashPtr);
-	
+
 	destroy_vm(statePtr, vmPtr);
 
 	return ok_tuple(envPtr, make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE));
@@ -511,6 +517,9 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	}
 	if (jitEnabled) {
 		flags |= RANDOMX_FLAG_JIT;
+#ifdef RANDOMX_FORCE_SECURE
+		flags |= RANDOMX_FLAG_SECURE;
+#endif
 	}
 	if (largePagesEnabled) {
 		flags |= RANDOMX_FLAG_LARGE_PAGES;
@@ -818,7 +827,7 @@ static ERL_NIF_TERM randomx_decrypt_chunk_nif(
 	// NOTE. Because randomx_decrypt_chunk will unpack padding too, decrypt always uses the
 	// full 256KB chunk size. We'll then truncate the output to the correct feistel-padded
 	// outChunkSize.
-	unsigned char outChunk[MAX_CHUNK_SIZE]; 
+	unsigned char outChunk[MAX_CHUNK_SIZE];
 	ERL_NIF_TERM decryptedChunkTerm = decrypt_chunk(envPtr, vmPtr,
 		inputData.data, inputData.size, inputChunk.data, inputChunk.size,
 		outChunk, outChunkLen, randomxRoundCount);
@@ -888,7 +897,7 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
 	// NOTE. Because randomx_decrypt_chunk will unpack padding too, decrypt always uses the
 	// full 256KB chunk size. We'll then truncate the output to the correct feistel-padded
 	// outChunkSize.
-	unsigned char decryptedChunk[MAX_CHUNK_SIZE]; 
+	unsigned char decryptedChunk[MAX_CHUNK_SIZE];
 	ERL_NIF_TERM decryptedChunkTerm = decrypt_chunk(envPtr, vmPtr,
 		decryptKey.data, decryptKey.size, inputChunk.data, inputChunk.size,
 		decryptedChunk, chunkSize, decryptRandomxRoundCount);
@@ -1103,6 +1112,9 @@ static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int 
 	}
 	if (jitEnabled) {
 		flags |= RANDOMX_FLAG_JIT;
+#ifdef RANDOMX_FORCE_SECURE
+		flags |= RANDOMX_FLAG_SECURE;
+#endif
 	}
 	if (largePagesEnabled) {
 		flags |= RANDOMX_FLAG_LARGE_PAGES;
