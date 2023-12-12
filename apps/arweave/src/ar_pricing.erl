@@ -38,8 +38,8 @@
 is_v2_pricing_height(Height) ->
 	Fork_2_6_8 = ar_fork:height_2_6_8(),
 	Height >= Fork_2_6_8 % First check just this because it may be infinity.
-			andalso Height >= Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START)
-					+ (?PRICE_2_6_8_TRANSITION_BLOCKS).
+			andalso Height >= Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START) +
+				(?PRICE_2_6_8_TRANSITION_BLOCKS).
 
 %% @doc Return the price per gibibyte minute estimated from the given history of
 %% network hash rates and block rewards. The total reward used in calculations
@@ -134,8 +134,7 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 						2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE);
 					_ ->
 						min(2 * ?RECALL_RANGE_SIZE,
-								?RECALL_RANGE_SIZE
-									+ ?RECALL_RANGE_SIZE * TwoChunkCount div OneChunkCount)
+								?RECALL_RANGE_SIZE + ?RECALL_RANGE_SIZE * TwoChunkCount div OneChunkCount)
 							div ?DATA_CHUNK_SIZE
 				end,
 			%% The following walks through the math of calculating the price per GiB per minute.
@@ -152,7 +151,7 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 			%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
 			%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
 			%% PricePerGiBPerMinute = PricePerGibPerBlock div 2,
-			PricePerGiBPerMinute = 
+			PricePerGiBPerMinute =
 				(
 					(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) *
 					max(1, RewardTotal) * (?GiB) * 60
@@ -179,11 +178,9 @@ get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2
 			%% Estimated price per gib minute = total block reward / estimated data size
 			%% in gibibytes.
 			(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerBlock)
-				div (max(1, HashRateTotal)
-						* (?PARTITION_SIZE)
-						* 2	% The reward is paid every two minutes whereas we are calculating
-							% the minute rate here.
-					)
+				div (max(1, HashRateTotal) * (?PARTITION_SIZE) * 2)
+			% The reward is paid every two minutes whereas we are calculating
+			% the minute rate here.
 	end.
 
 %% @doc Return the minimum required transaction fee for the given number of
@@ -192,8 +189,8 @@ get_tx_fee(Args) ->
 	{DataSize, GiBMinutePrice, KryderPlusRateMultiplier, Height} = Args,
 	FirstYearPrice = DataSize * GiBMinutePrice * 60 * 24 * 365,
 	{LnDecayDividend, LnDecayDivisor} = ?LN_PRICE_DECAY_ANNUAL,
-	PerpetualPrice = {-FirstYearPrice * LnDecayDivisor * KryderPlusRateMultiplier
-			* (?N_REPLICATIONS(Height)), LnDecayDividend * (?GiB)},
+	PerpetualPrice = {-FirstYearPrice * LnDecayDivisor * KryderPlusRateMultiplier *
+		(?N_REPLICATIONS(Height)), LnDecayDividend * (?GiB)},
 	MinerShare = ar_fraction:multiply(PerpetualPrice,
 			?MINER_MINIMUM_ENDOWMENT_CONTRIBUTION_SHARE),
 	{Dividend, Divisor} = ar_fraction:add(PerpetualPrice, MinerShare),
@@ -205,8 +202,8 @@ get_miner_reward_endowment_pool_debt_supply(Args) ->
 			KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier, Denomination,
 			BlockInterval} = Args,
 	Inflation = redenominate(ar_inflation:calculate(Height), 1, Denomination),
-	ExpectedReward = (?N_REPLICATIONS(Height)) * WeaveSize * GiBMinutePrice
-			* BlockInterval div (60 * ?GiB),
+	ExpectedReward = (?N_REPLICATIONS(Height)) * WeaveSize * GiBMinutePrice *
+		BlockInterval div (60 * ?GiB),
 	{EndowmentPoolFeeShare, MinerFeeShare} = distribute_transaction_fees2(TXs, Denomination),
 	BaseReward = Inflation + MinerFeeShare,
 	EndowmentPool2 = EndowmentPool + EndowmentPoolFeeShare,
@@ -347,7 +344,7 @@ recalculate_price_per_gib_minute2(B) ->
 				true ->
 					%% price_per_gib_minute = scheduled_price_per_gib_minute
 					%% scheduled_price_per_gib_minute =
-					%% 		get_price_per_gib_minute() 
+					%% 		get_price_per_gib_minute()
 					%%		EMA'ed with scheduled_price_per_gib_minute at 0.1 alpha
 					%%		and then capped to 0.5x to 2x of scheduled_price_per_gib_minute
 					RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
@@ -495,10 +492,12 @@ usd_to_ar({Dividend, Divisor}, Rate, Height) ->
 	InitialInflation = trunc(ar_inflation:calculate(?INITIAL_USD_TO_AR_HEIGHT(Height)())),
 	CurrentInflation = trunc(ar_inflation:calculate(Height)),
 	{InitialRateDividend, InitialRateDivisor} = Rate,
-	trunc(	Dividend
-			* ?WINSTON_PER_AR
-			* CurrentInflation
-			* InitialRateDividend	)
+		trunc(
+			Dividend *
+			?WINSTON_PER_AR *
+			CurrentInflation *
+			InitialRateDividend
+		)
 		div Divisor
 		div InitialInflation
 		div InitialRateDivisor.
@@ -587,12 +586,12 @@ distribute_transaction_fees([TX | TXs], EndowmentPool, Miner, Height) ->
 %% @doc Return the cost of storing 1 GB in the network perpetually.
 %% Integral of the exponential decay curve k*e^(-at), i.e. k/a.
 %% @end
--spec get_perpetual_gb_cost_at_timestamp(Timestamp::integer(), Height::nonegint()) -> usd().
+-spec get_perpetual_gb_cost_at_timestamp(Timestamp :: integer(), Height :: nonegint()) -> usd().
 get_perpetual_gb_cost_at_timestamp(Timestamp, Height) ->
 	K = get_gb_cost_per_year_at_timestamp(Timestamp, Height),
 	get_perpetual_gb_cost(K, Height).
 
--spec get_perpetual_gb_cost(Init::usd(), Height::nonegint()) -> usd().
+-spec get_perpetual_gb_cost(Init :: usd(), Height :: nonegint()) -> usd().
 get_perpetual_gb_cost(Init, Height) ->
 	case Height >= ar_fork:height_2_5() of
 		true ->
@@ -605,7 +604,7 @@ get_perpetual_gb_cost(Init, Height) ->
 	end.
 
 %% @doc Return the cost in USD of storing 1 GB per year at the given time.
--spec get_gb_cost_per_year_at_timestamp(Timestamp::integer(), Height::nonegint()) -> usd().
+-spec get_gb_cost_per_year_at_timestamp(Timestamp :: integer(), Height :: nonegint()) -> usd().
 get_gb_cost_per_year_at_timestamp(Timestamp, Height) ->
 	Datetime = system_time_to_universal_time(Timestamp, seconds),
 	get_gb_cost_per_year_at_datetime(Datetime, Height).
@@ -617,7 +616,7 @@ get_gb_cost_per_block_at_timestamp(Timestamp, Height) ->
 	get_gb_cost_per_block_at_datetime(Datetime, Height).
 
 %% @doc Return the cost in USD of storing 1 GB per year.
--spec get_gb_cost_per_year_at_datetime(DT::datetime(), Height::nonegint()) -> usd().
+-spec get_gb_cost_per_year_at_datetime(DT :: datetime(), Height :: nonegint()) -> usd().
 get_gb_cost_per_year_at_datetime({{Y, M, _}, _} = DT, Height) ->
 	PrevY = prev_jun_30_year(Y, M),
 	NextY = next_jun_30_year(Y, M),
@@ -630,21 +629,15 @@ get_gb_cost_per_year_at_datetime({{Y, M, _}, _} = DT, Height) ->
 			{PrevYCostDividend, PrevYCostDivisor} = PrevYCost,
 			{NextYCostDividend, NextYCostDivisor} = NextYCost,
 			Dividend =
-				(?N_REPLICATIONS(Height))
-				* (
-					PrevYCostDividend * NextYCostDivisor * FracYDivisor
-					- FracYDividend
-						* (
-							PrevYCostDividend
-								* NextYCostDivisor
-							- NextYCostDividend
-								* PrevYCostDivisor
+				(?N_REPLICATIONS(Height)) *
+				(
+					PrevYCostDividend * NextYCostDivisor * FracYDivisor -
+						FracYDividend * (
+							PrevYCostDividend * NextYCostDivisor -
+							NextYCostDividend * PrevYCostDivisor
 						)
 				),
-			Divisor =
-				PrevYCostDivisor
-				* NextYCostDivisor
-				* FracYDivisor,
+			Divisor = PrevYCostDivisor * NextYCostDivisor * FracYDivisor,
 			{Dividend, Divisor};
 		false ->
 			CY = PrevYCost - (FracY * (PrevYCost - NextYCost)),
@@ -662,7 +655,7 @@ next_jun_30_year(Y, _M) ->
 	Y + 1.
 
 %% @doc Return the cost in USD of storing 1 GB per average block time.
--spec get_gb_cost_per_block_at_datetime(DT::datetime(), Height::nonegint()) -> usd().
+-spec get_gb_cost_per_block_at_datetime(DT :: datetime(), Height :: nonegint()) -> usd().
 get_gb_cost_per_block_at_datetime(DT, Height) ->
 	case Height >= ar_fork:height_2_5() of
 		true ->
@@ -701,7 +694,7 @@ usd_p_gby(Y, Height) ->
 			T = Y - 2019,
 			P = ?TX_PRICE_NATURAL_EXPONENT_DECIMAL_FRACTION_PRECISION,
 			{EDividend, EDivisor} = ar_fraction:natural_exponent({ADividend * T, ADivisor}, P),
-			{EDividend * KDividend, EDivisor * KDivisor};	
+			{EDividend * KDividend, EDivisor * KDivisor};
 		false ->
 			{Dividend, Divisor} = ?USD_PER_GBY_2019,
 			K = Dividend / Divisor,
@@ -761,18 +754,15 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
 	MaxAdjustmentUp = ar_fraction:multiply(Rate, ?USD_TO_AR_MAX_ADJUSTMENT_UP_MULTIPLIER),
 	MaxAdjustmentDown = ar_fraction:multiply(Rate, ?USD_TO_AR_MAX_ADJUSTMENT_DOWN_MULTIPLIER),
 	CappedScheduledRate = ar_fraction:reduce(ar_fraction:maximum(
-			ar_fraction:minimum(ScheduledRate, MaxAdjustmentUp), MaxAdjustmentDown),
-			?USD_TO_AR_FRACTION_REDUCTION_LIMIT),
-	?LOG_DEBUG([{event, recalculated_rate},
-			{new_rate, ar_util:safe_divide(element(1, Rate), element(2, Rate))},
-			{new_scheduled_rate, ar_util:safe_divide(element(1, CappedScheduledRate),
-					element(2, CappedScheduledRate))},
-			{new_scheduled_rate_without_capping,
-					ar_util:safe_divide(element(1, ScheduledRate), element(2, ScheduledRate))},
-		{max_adjustment_up, ar_util:safe_divide(element(1, MaxAdjustmentUp),
-				element(2,MaxAdjustmentUp))},
-		{max_adjustment_down, ar_util:safe_divide(element(1, MaxAdjustmentDown),
-				element(2,MaxAdjustmentDown))}]),
+		ar_fraction:minimum(ScheduledRate, MaxAdjustmentUp), MaxAdjustmentDown), ?USD_TO_AR_FRACTION_REDUCTION_LIMIT),
+	?LOG_DEBUG([
+		{event, recalculated_rate},
+		{new_rate, ar_util:safe_divide(element(1, Rate), element(2, Rate))},
+		{new_scheduled_rate, ar_util:safe_divide(element(1, CappedScheduledRate), element(2, CappedScheduledRate))},
+		{new_scheduled_rate_without_capping, ar_util:safe_divide(element(1, ScheduledRate), element(2, ScheduledRate))},
+		{max_adjustment_up, ar_util:safe_divide(element(1, MaxAdjustmentUp), element(2, MaxAdjustmentUp))},
+		{max_adjustment_down, ar_util:safe_divide(element(1, MaxAdjustmentDown), element(2, MaxAdjustmentDown))}
+	]),
 	{Rate, CappedScheduledRate}.
 
 %%%===================================================================
@@ -782,13 +772,11 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
 get_gb_cost_per_year_at_datetime_is_monotone_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> infinity end}],
-			fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120)
-		| 
-		[
-			ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> Height end}],
-				fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120)
-			|| Height <- lists:seq(0, 20)
-		]
+			fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120) | [
+				ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> Height end}],
+					fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120) ||
+						Height <- lists:seq(0, 20)
+				]
 	].
 
 test_get_gb_cost_per_year_at_datetime_is_monotone() ->

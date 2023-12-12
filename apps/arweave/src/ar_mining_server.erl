@@ -100,7 +100,7 @@ post_solution(Solution) ->
 is_session_valid(_SessionRef, #mining_candidate{ session_ref = not_set }) ->
 	true;
 is_session_valid(undefined, _Candidate) ->
-	false; 
+	false;
 is_session_valid(SessionRef, #mining_candidate{ session_ref = SessionRef }) ->
 	true;
 is_session_valid(_SessionRef, _Candidate) ->
@@ -137,7 +137,7 @@ handle_call(Request, _From, State) ->
 handle_cast(pause, State) ->
 	#state{ session = Session } = State,
 	ar_mining_stats:mining_paused(),
-	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be 
+	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be
 	%% distributed. Setting diff to infnity ensures that no solutions are found.
 	{noreply, State#state{ diff = infinity, session = Session#mining_session{ paused = true } }};
 
@@ -172,7 +172,7 @@ handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 				{partition_number, Candidate#mining_candidate.partition_number}]),
 			{noreply, State}
 	end;
-	
+
 handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
@@ -195,7 +195,7 @@ handle_cast({compute_h2_for_peer, Candidate, H1List}, State) ->
 		partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound
 	} = Candidate,
-	
+
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
 	Range2Exists = ar_mining_io:read_recall_range(chunk2, Candidate, RecallRange2Start),
@@ -439,7 +439,7 @@ distribute_output([{PartitionNumber, MiningAddress} | Partitions], Candidate, St
 
 %% @doc Before loading a recall range we reserve enough cache space for the whole range. This
 %% helps make sure we don't exceed the cache limit (too much) when there are many parallel
-%% reads. 
+%% reads.
 %%
 %% As we compute hashes we'll decrement the chunk_cache_size to indicate available cache space.
 reserve_cache_space() ->
@@ -476,9 +476,8 @@ handle_task({computed_output, Args}, State) ->
 			start_interval_number = CurrentStartIntervalNumber,
 			partition_upper_bound = CurrentPartitionUpperBound } = MiningSession,
 	MiningSession2 =
-		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound,
-				CurrentNextVDFDifficulty}
-				== {StartIntervalNumber, NextSeed, PartitionUpperBound, NextVDFDifficulty} of
+		case {CurrentStartIntervalNumber, CurrentNextSeed, CurrentPartitionUpperBound, CurrentNextVDFDifficulty} ==
+					{StartIntervalNumber, NextSeed, PartitionUpperBound, NextVDFDifficulty} of
 			true ->
 				MiningSession;
 			false ->
@@ -493,7 +492,7 @@ handle_task({computed_output, Args}, State) ->
 						start_interval_number = StartIntervalNumber,
 						partition_upper_bound = PartitionUpperBound },
 					State),
-				?LOG_INFO([{event, new_mining_session}, 
+				?LOG_INFO([{event, new_mining_session},
 						{session_ref, ar_util:safe_encode(NewMiningSession#mining_session.ref)},
 						{step_number, StepNumber},
 						{interval_number, StartIntervalNumber},
@@ -548,7 +547,7 @@ handle_task({chunk2, Candidate}, State) ->
 					{noreply, State#state{ session = Session2, hashing_threads = Threads2 }};
 				{{chunk1, H1}, Map2} ->
 					%% Decrement 1 for chunk2:
-					%% we're computing h2 for a peer so chunk1 was not previously read or cached 
+					%% we're computing h2 for a peer so chunk1 was not previously read or cached
 					%% on this node
 					update_chunk_cache_size(-1),
 					{Thread, Threads2} = pick_hashing_thread(Threads),
@@ -671,7 +670,7 @@ handle_task({computed_h2, Candidate}, State) ->
 		true ->
 			#mining_candidate{
 				chunk2 = Chunk2, h0 = H0, h2 = H2, mining_address = MiningAddress,
-				nonce = Nonce, partition_number = PartitionNumber, 
+				nonce = Nonce, partition_number = PartitionNumber,
 				partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
 			} = Candidate,
 			case binary:decode_unsigned(H2, big) > get_difficulty(State, Candidate) of
@@ -795,13 +794,13 @@ prepare_solution(Candidate, State) ->
 	case is_session_valid(SessionRef, Candidate) of
 		true ->
 			#mining_candidate{
-				mining_address = MiningAddress, next_seed = NextSeed, 
+				mining_address = MiningAddress, next_seed = NextSeed,
 				next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
 				nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
 				partition_upper_bound = PartitionUpperBound, poa2 = PoA2, preimage = Preimage,
 				seed = Seed, start_interval_number = StartIntervalNumber, step_number = StepNumber
 			} = Candidate,
-			
+
 			Solution = #mining_solution{
 				mining_address = MiningAddress,
 				merkle_rebase_threshold = RebaseThreshold,
@@ -821,10 +820,10 @@ prepare_solution(Candidate, State) ->
 		false ->
 			error
 	end.
-	
+
 prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 	#mining_candidate{
-		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
+		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty,
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
 	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
 			StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficulty),
@@ -885,7 +884,7 @@ prepare_solution(proofs, Candidate, Solution) ->
 				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2 })
 	end;
 
-prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution ) ->
+prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution) ->
 	#mining_solution{
 		mining_address = MiningAddress, partition_number = PartitionNumber,
 		recall_byte1 = RecallByte1 } = Solution,

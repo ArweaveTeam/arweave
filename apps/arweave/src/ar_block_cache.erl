@@ -181,7 +181,7 @@ add_validated(Tab, B) ->
 							sets:to_list(SolutionSet)),
 					SolutionSet3 = sets:from_list([H | Remaining]),
 					[{_, Set}] = ets:lookup(Tab, links),
-					[{_, C = {MaxCDiff, _H}}] = ets:lookup(Tab, max_cdiff),
+					[{_, C = {MaxCDiff, _}}] = ets:lookup(Tab, max_cdiff),
 					insert(Tab, [
 						{{block, PrevH}, {PrevB, PrevStatus, PrevTimestamp,
 								sets:add_element(H, PrevChildren)}},
@@ -453,8 +453,7 @@ mark_on_chain(Tab, #block{ previous_block = PrevH, indep_hash = H }) ->
 			%% Mark the blocks from the previous main fork as validated, not on-chain.
 			mark_off_chain(Tab, sets:del_element(H, Children));
 		[{_, {PrevB, validated, Timestamp, Children}}] ->
-			[{{block, PrevH}, {PrevB, on_chain, Timestamp, Children}}
-					| mark_on_chain(Tab, PrevB)]
+			[{{block, PrevH}, {PrevB, on_chain, Timestamp, Children}} | mark_on_chain(Tab, PrevB)]
 	end.
 
 mark_off_chain(Tab, Set) ->
@@ -462,8 +461,7 @@ mark_off_chain(Tab, Set) ->
 		fun(H, Acc) ->
 			case ets:lookup(Tab, {block, H}) of
 				[{_, {B, on_chain, Timestamp, Children}}] ->
-					[{{block, H}, {B, validated, Timestamp, Children}}
-							| mark_off_chain(Tab, Children)];
+					[{{block, H}, {B, validated, Timestamp, Children}} | mark_off_chain(Tab, Children)];
 				_ ->
 					Acc
 			end
@@ -479,7 +477,7 @@ remove2(Tab, H) ->
 			ok;
 		[{_, {#block{ hash = SolutionH, height = Height }, _Status, _Timestamp, Children}}] ->
 			%% Don't update the cache here. remove/2 will do it.
-			delete(Tab, {block, H}, false), 
+			delete(Tab, {block, H}, false),
 			ar_ignore_registry:remove(H),
 			remove_solution(Tab, H, SolutionH),
 			insert(Tab, {links, gb_sets:del_element({Height, H}, Set)}, false),
@@ -696,7 +694,7 @@ test_block_cache() ->
 
 	%% B2_3->B2_2->B2->B1 is no longer and heavier but only B2->B1 are validated.
 	add(bcache_test, B2_3 = on_top(random_block(3), B2_2)),
-	?assertMatch({B2_2, [B2], {{not_validated, ExpectedStatus}, _Timestamp}},
+	?assertMatch({B2_2, [B2], {{not_validated, ExpectedStatus}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	?assertException(error, invalid_tip, mark_tip(bcache_test, block_id(B2_3))),
 	assert_longest_chain([B2, B1], 0),
@@ -723,7 +721,7 @@ test_block_cache() ->
 	assert_longest_chain([B3, B2, B1], 1),
 
 	add(bcache_test, B4 = on_top(random_block(5), B3)),
-	?assertMatch({B4, [B3, B2], {{not_validated, ExpectedStatus}, _Timestamp}},
+	?assertMatch({B4, [B3, B2], {{not_validated, ExpectedStatus}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	assert_longest_chain([B3, B2, B1], 1),
 
@@ -768,7 +766,7 @@ test_block_cache() ->
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2_3, B2_2], 0),
 
-	
+
 	new(bcache_test, B11 = random_block(0)),
 	add(bcache_test, _B12 = on_top(random_block(1), B11)),
 	add_validated(bcache_test, B13 = on_top(random_block(1), B11)),

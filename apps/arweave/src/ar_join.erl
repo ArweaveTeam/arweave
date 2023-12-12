@@ -39,8 +39,8 @@ set_block_time_history([], _BlockTimeHistory) ->
 set_block_time_history(Blocks, []) ->
 	Blocks;
 set_block_time_history([B | Blocks], BlockTimeHistory) ->
-	[B#block{ block_time_history = BlockTimeHistory }
-			| set_block_time_history(Blocks, tl(BlockTimeHistory))].
+	[B#block{ block_time_history = BlockTimeHistory } |
+		set_block_time_history(Blocks, tl(BlockTimeHistory))].
 
 %%%===================================================================
 %%% Private functions.
@@ -234,14 +234,12 @@ get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
 do_join(Peers, B, BI) ->
 	ar:console("Downloading the block trail.~n", []),
 	{ok, Config} = application:get_env(arweave, config),
-	WorkerQ = queue:from_list([spawn(fun() -> worker() end)
-			|| _ <- lists:seq(1, Config#config.join_workers)]),
+	WorkerQ = queue:from_list([spawn(fun() -> worker() end) || _ <- lists:seq(1, Config#config.join_workers)]),
 	PeerQ = queue:from_list(Peers),
 	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
 	Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 10, Acc) end, #{}, Peers),
-	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
-			| get_block_trail(WorkerQ, PeerQ, Trail, Retries)],
+	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs } | get_block_trail(WorkerQ, PeerQ, Trail, Retries)],
 	ar:console("Downloaded the block trail successfully.~n", []),
 	Blocks2 = may_be_set_reward_history(Blocks, Peers),
 	Blocks3 = may_be_set_block_time_history(Blocks2, Peers),

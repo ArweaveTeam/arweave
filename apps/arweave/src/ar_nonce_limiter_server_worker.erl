@@ -107,7 +107,7 @@ push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
 					SessionFound = Response#nonce_limiter_update_response.session_found,
 					RequestedStepNumber = Response#nonce_limiter_update_response.step_number,
 
-					case { 
+					case {
 							RequestedFormat == Format,
 							Postpone == 0,
 							SessionFound,

@@ -62,7 +62,7 @@ encode_binary(<<B1:8, B2:8, B3:8, B4:8, B5:8, Ls/bits>>, A) ->
 
 -compile({inline, [{b32e, 1}]}).
 b32e(X) ->
-	element(X+1, {
+	element(X + 1, {
 		$a, $b, $c, $d, $e, $f, $g, $h, $i, $j, $k, $l, $m,
 		$n, $o, $p, $q, $r, $s, $t, $u, $v, $w, $x, $y, $z,
 		$2, $3, $4, $5, $6, $7, $8, $9

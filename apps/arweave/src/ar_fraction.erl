@@ -8,6 +8,7 @@
 %%% Types.
 %%%===================================================================
 
+-export_type([fraction/0]).
 -type fraction() :: {integer(), integer()}.
 
 %%%===================================================================
@@ -15,7 +16,7 @@
 %%%===================================================================
 
 %% @doc Compute the given power of the given integer.
--spec pow(X::integer(), P::integer()) -> integer().
+-spec pow(X :: integer(), P :: integer()) -> integer().
 pow(_X, 0) ->
 	1;
 pow(X, 1) ->
@@ -34,14 +35,14 @@ pow(X, N) ->
 
 %% @doc Compute the X's power of e by summing up the terms of the Taylor series where
 %% the last term is a multiple of X to the power of P.
--spec natural_exponent(X::fraction(), P::integer()) -> fraction().
+-spec natural_exponent(X :: fraction(), P :: integer()) -> fraction().
 natural_exponent({0, _Divisor}, _P) ->
 	{1, 1};
 natural_exponent(X, P) ->
 	{natural_exponent_dividend(X, P, 0, 1), natural_exponent_divisor(X, P)}.
 
 %% @doc Return the smaller of D1 and D2.
--spec minimum(D1::fraction(), D2::fraction()) -> fraction().
+-spec minimum(D1 :: fraction(), D2 :: fraction()) -> fraction().
 minimum({Dividend1, Divisor1} = D1, {Dividend2, Divisor2} = D2) ->
 	case Dividend1 * Divisor2 < Dividend2 * Divisor1 of
 		true ->
@@ -51,7 +52,7 @@ minimum({Dividend1, Divisor1} = D1, {Dividend2, Divisor2} = D2) ->
 	end.
 
 %% @doc Return the bigger of D1 and D2.
--spec maximum(D1::fraction(), D2::fraction()) -> fraction().
+-spec maximum(D1 :: fraction(), D2 :: fraction()) -> fraction().
 maximum(D1, D2) ->
 	case minimum(D1, D2) of
 		D1 ->
@@ -61,13 +62,13 @@ maximum(D1, D2) ->
 	end.
 
 %% @doc Return the product of D1 and D2.
--spec multiply(D1::fraction(), D2::fraction()) -> fraction().
+-spec multiply(D1 :: fraction(), D2 :: fraction()) -> fraction().
 multiply({Dividend1, Divisor1}, {Dividend2, Divisor2}) ->
 	{Dividend1 * Dividend2, Divisor1 * Divisor2}.
 
 %% @doc Reduce the fraction until both the divisor and dividend are smaller than
 %% or equal to Max. Return at most Max or at least 1 / Max.
--spec reduce(D::fraction(), Max::integer()) -> fraction().
+-spec reduce(D :: fraction(), Max :: integer()) -> fraction().
 reduce({0, Divisor}, _Max) ->
 	{0, Divisor};
 reduce({Dividend, Divisor}, Max) ->
@@ -75,7 +76,7 @@ reduce({Dividend, Divisor}, Max) ->
 	reduce2({Dividend div GCD, Divisor div GCD}, Max).
 
 %% @doc Return the sum of two fractions.
--spec add(A::fraction(), B::integer()) -> fraction().
+-spec add(A :: fraction(), B :: integer()) -> fraction().
 add({Dividend1, Divisor1}, {Dividend2, Divisor2}) ->
 	{Dividend1 * Divisor2 + Dividend2 * Divisor1, Divisor1 * Divisor2}.
 

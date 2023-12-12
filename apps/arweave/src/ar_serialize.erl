@@ -210,8 +210,8 @@ block_to_json_struct(
 					{packing_2_5_threshold,
 							integer_to_binary(B#block.packing_2_5_threshold)},
 					{strict_data_split_threshold,
-							integer_to_binary(B#block.strict_data_split_threshold)}
-					| JSONElements3
+							integer_to_binary(B#block.strict_data_split_threshold)} |
+					JSONElements3
 				];
 			false ->
 				JSONElements3
@@ -266,8 +266,7 @@ block_to_json_struct(
 							{denomination, integer_to_binary(Denomination)},
 							{redenomination_height, RedenominationHeight},
 							{double_signing_proof, DoubleSigningProof},
-							{previous_cumulative_diff, integer_to_binary(PrevCDiff)}
-							| JSONElements4],
+							{previous_cumulative_diff, integer_to_binary(PrevCDiff)} | JSONElements4],
 				case B#block.recall_byte2 of
 					undefined ->
 						JSONElements6;
@@ -284,8 +283,7 @@ block_to_json_struct(
 						{merkle_rebase_support_threshold, integer_to_binary(RebaseThreshold)},
 						{chunk_hash, ar_util:encode(B#block.chunk_hash)},
 						{block_time_history_hash,
-							ar_util:encode(B#block.block_time_history_hash)}
-						| JSONElements5],
+							ar_util:encode(B#block.block_time_history_hash)} | JSONElements5],
 				case B#block.chunk2_hash of
 					undefined ->
 						JSONElements7;
@@ -328,8 +326,7 @@ block_time_history_to_binary([{BlockInterval, VDFInterval, ChunkCount} | BlockTi
 	block_time_history_to_binary(BlockTimeHistory, [
 			ar_serialize:encode_int(BlockInterval, 8),
 			ar_serialize:encode_int(VDFInterval, 8),
-			ar_serialize:encode_int(ChunkCount, 8)
-	| IOList]).
+			ar_serialize:encode_int(ChunkCount, 8) | IOList]).
 
 binary_to_block_time_history(Bin) ->
 	binary_to_block_time_history(Bin, []).
@@ -349,7 +346,7 @@ binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 %% Note: the #nonce_limiter_update and #vdf_session records are only serialized for communication
 %% between a VDF server and VDF client. Only fields that are required for this communication are
 %% serialized.
-%% 
+%%
 %% For example, the vdf_difficulty and next_vdf_difficulty fields are omitted as they are only used
 %% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
 nonce_limiter_update_to_binary(1 = _Format, #nonce_limiter_update{ session_key = {NextSeed, Interval, _},
@@ -456,7 +453,7 @@ binary_to_nonce_limiter_update_response(_Bin) ->
 	{error, invalid2}.
 
 binary_to_nonce_limiter_update_response(
-	SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format) 
+	SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format)
 		when SessionFoundBin == 0; SessionFoundBin == 1 ->
 	SessionFound = case SessionFoundBin of 0 -> false; 1 -> true end,
 	StepNumber2 = case StepNumberSize of 0 -> undefined; _ -> StepNumber end,
@@ -1319,9 +1316,9 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 		id = TXID,
 		last_tx = ar_util:decode(find_value(<<"last_tx">>, TXStruct)),
 		owner = ar_util:decode(find_value(<<"owner">>, TXStruct)),
-		tags = [{ar_util:decode(Name), ar_util:decode(Value)}
+		tags = [{ar_util:decode(Name), ar_util:decode(Value)} ||
 				%% Only the elements matching this pattern are included in the list.
-				|| {[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags],
+				{[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags],
 		target = ar_wallet:base64_address_with_optional_checksum_to_decoded_address(
 				find_value(<<"target">>, TXStruct)),
 		quantity = binary_to_integer(find_value(<<"quantity">>, TXStruct)),

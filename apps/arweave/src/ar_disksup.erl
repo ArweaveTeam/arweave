@@ -287,13 +287,13 @@ check_disks_solaris(Str) ->
 %% @private
 %% @doc Predicate to take a word from the input string until a space or
 %% a percent '%' sign (the Capacity field is followed by a %)
-parse_df_is_not_space($ ) -> false;
+parse_df_is_not_space($\s) -> false;
 parse_df_is_not_space($%) -> false;
 parse_df_is_not_space(_) -> true.
 
 %% @private
 %% @doc Predicate to take spaces away from string. Stops on a non-space
-parse_df_is_space($ ) -> true;
+parse_df_is_space($\s) -> true;
 parse_df_is_space(_) -> false.
 
 %% @private
@@ -384,7 +384,7 @@ check_disks_susv3(Str) ->
 
 check_disks_win32([]) ->
 	[];
-check_disks_win32([H|T]) ->
+check_disks_win32([H | T]) ->
 	case io_lib:fread("~s~s~d~d~d", H) of
 		{ok, [Drive, "DRIVE_FIXED", BAvail, BTot, _TotFree], _RestStr} ->
 			[{Drive, BTot div 1024, BAvail div 1024} | check_disks_win32(T)];
@@ -426,7 +426,7 @@ parse_df_2(Input) ->
 	BlocksNum = case string:tokens(BlocksInfo, "-") of
 		 [Num, _] ->
 			 erlang:list_to_integer(Num);
-		 _->
+		 _ ->
 			 1
   end,
 	[Filesystem, Total, _, Available, _, _] = string:tokens(DfInfo, " \t"),

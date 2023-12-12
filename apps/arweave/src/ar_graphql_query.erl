@@ -41,7 +41,7 @@ do_execute(_, _, <<"transactions">>, Args) ->
 		end
 	]),
 	TXs = case Opts of
-		[_|_] -> ar_arql_db:select_txs_by(Opts);
+		[_ | _] -> ar_arql_db:select_txs_by(Opts);
 		[] -> []
 	end,
 	{ok, [{ok, TX} || TX <- TXs]};

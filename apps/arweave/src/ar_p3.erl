@@ -65,10 +65,10 @@ handle_call({reverse_charge, Transaction}, _From, State) ->
 	{
 		reply,
 	 	ar_p3_db:reverse_transaction(
-			Transaction#p3_transaction.address, 
+			Transaction#p3_transaction.address,
 			Transaction#p3_transaction.id),
 		State
-	}; 
+	};
 
 handle_call({get_balance, Address, Asset}, _From, State) ->
 	{reply, ar_p3_db:get_balance(Address, Asset), State};
@@ -179,7 +179,7 @@ validate_mod_seq(ModSeq, _Req, ServiceConfig) when is_integer(ModSeq) ->
 			{error, stale_mod_seq}
 	end;
 validate_mod_seq(_ModSeq, _Req, _ServiceConfig) ->
-	{error, invalid_mod_seq}.	
+	{error, invalid_mod_seq}.
 
 validate_endpoint(Req, ServiceConfig) ->
 	Endpoint = cowboy_req:header(?P3_ENDPOINT_HEADER, Req),
@@ -326,7 +326,7 @@ get_block_txs(Height) ->
 
 apply_deposits([], _DepositAddress) ->
 	ok;
-apply_deposits([TX|TXs], DepositAddress) ->
+apply_deposits([TX | TXs], DepositAddress) ->
 	case TX#tx.target == DepositAddress of
 		true ->
 			apply_deposit(TX);

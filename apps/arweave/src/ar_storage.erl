@@ -141,7 +141,7 @@ update_block_index(TipHeight, OrphanCount, BI) ->
 	%% Record the contents of BI starting at this height. Whether there are 1 or 0 orphans
 	%% we update the index starting at the same height (the tip). Only when OrphanCount is > 1 do
 	%% need to rewrite the index starting at a lower height.
-	IndexHeight = TipHeight - max(0, OrphanCount-1),
+	IndexHeight = TipHeight - max(0, OrphanCount - 1),
 	%% 1. Delete all the orphaned blocks from the block index
 	case ar_kv:delete_range(block_index_db,
 			<< OrphanHeight:256 >>, << (TipHeight + 1):256 >>) of
@@ -221,8 +221,8 @@ get_block_time_history_from_blocks([B | Blocks], PrevB) ->
 		false ->
 			get_block_time_history_from_blocks(Blocks, B);
 		true ->
-			[{B#block.indep_hash, ar_block:get_block_time_history_element(B, PrevB)}
-					| get_block_time_history_from_blocks(Blocks, B)]
+			[{B#block.indep_hash, ar_block:get_block_time_history_element(B, PrevB)} |
+				get_block_time_history_from_blocks(Blocks, B)]
 	end.
 
 store_block_time_history_part2([]) ->
@@ -299,28 +299,30 @@ put_tx_confirmation_data(B) ->
 %% @doc Return {BlockHeight, BlockHash} belonging to the block where
 %% the given transaction was included.
 get_tx_confirmation_data(TXID) ->
-	case ar_kv:get(tx_confirmation_db, TXID) of
-		{ok, Binary} ->
-			{ok, binary_to_term(Binary)};
-		not_found ->
-			{ok, Config} = application:get_env(arweave, config),
-			case lists:member(arql, Config#config.disable) of
-				true ->
-					not_found;
-				_ ->
-					case catch ar_arql_db:select_block_by_tx_id(ar_util:encode(TXID)) of
-						{ok, #{
-							height := Height,
-							indep_hash := EncodedIndepHash
-						}} ->
-							{ok, {Height, ar_util:decode(EncodedIndepHash)}};
-						not_found ->
-							not_found;
-						{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-							{error, timeout}
-					end
-			end
-	end.
+    case ar_kv:get(tx_confirmation_db, TXID) of
+        {ok, Binary} ->
+            {ok, binary_to_term(Binary)};
+        not_found ->
+            {ok, Config} = application:get_env(arweave, config),
+            case lists:member(arql, Config#config.disable) of
+                true ->
+                    not_found;
+                false ->
+                    try ar_arql_db:select_block_by_tx_id(ar_util:encode(TXID)) of
+                        {ok, #{
+                            height := Height,
+                            indep_hash := EncodedIndepHash
+                        }} ->
+                            {ok, {Height, ar_util:decode(EncodedIndepHash)}};
+                        _ ->
+                            not_found
+                    catch
+                        _Class:_Exception ->
+                            {error, timeout}
+                    end
+            end
+    end.
+
 
 %% @doc Read a block from disk, given a height
 %% and a block index (used to determine the hash by height).
@@ -833,13 +835,16 @@ read_migrated_v1_tx_file(Filename) ->
 					case read_tx_data_from_kv_storage(ID) of
 						{ok, Data} ->
 							{ok, TX#tx{ data = Data }};
-						Error ->
-							Error
-					end
+								Error ->
+									Error
+					end;
+				Error ->
+					Error
 			end;
 		Error ->
 			Error
 	end.
+
 
 read_tx_data_from_kv_storage(ID) ->
 	case ar_data_sync:get_tx_data(ID) of
@@ -915,8 +920,7 @@ read_wallet_list_from_chunk_files(WalletListHash) when is_binary(WalletListHash)
 			Error
 	end;
 read_wallet_list_from_chunk_files(WL) when is_list(WL) ->
-	{ok, ar_patricia_tree:from_proplist([{get_wallet_key(T), get_wallet_value(T)}
-			|| T <- WL])}.
+	{ok, ar_patricia_tree:from_proplist([{get_wallet_key(T), get_wallet_value(T)} || T <- WL])}.
 
 get_wallet_key(T) ->
 	element(1, T).
@@ -1467,7 +1471,7 @@ store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate) ->
 
 %% From: https://www.erlang.org/doc/programming_examples/list_comprehensions.html#permutations
 permutations([]) -> [[]];
-permutations(L)  -> [[H|T] || H <- L, T <- permutations(L--[H])].
+permutations(L)  -> [[H | T] || H <- L, T <- permutations(L -- [H])].
 
 assert_wallet_trees_equal(Expected, Actual) ->
 	?assertEqual(

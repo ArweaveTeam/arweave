@@ -158,7 +158,7 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID, #state{ io_threads = Th
 		when is_map_key({PartitionNumber, MiningAddress, StoreID}, Threads) ->
 	State;
 start_io_thread(PartitionNumber, MiningAddress, StoreID,
-		#state{ io_threads = Threads, io_thread_monitor_refs = Refs, 
+		#state{ io_threads = Threads, io_thread_monitor_refs = Refs,
 			session_ref = SessionRef } = State) ->
 	Thread =
 		spawn(
@@ -205,9 +205,9 @@ io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef) ->
 			io_thread(PartitionNumber, MiningAddress, StoreID, Ref);
 		{WhichChunk, {Candidate, RecallRangeStart}} ->
 			case ar_mining_server:is_session_valid(SessionRef, Candidate) of
-				true -> 
+				true ->
 					read_range(WhichChunk, Candidate, RecallRangeStart, StoreID);
-				false -> 
+				false ->
 					ok %% Clear the message queue of requests from outdated mining sessions
 			end,
 			io_thread(PartitionNumber, MiningAddress, StoreID, SessionRef)
@@ -268,7 +268,7 @@ read_range(_WhichChunk, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
 read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, []) ->
 	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate),
 	read_range(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, []);
-read_range(WhichChunk, Candidate,RangeStart, Nonce, NonceMax, [{EndOffset, Chunk} | ChunkOffsets])
+read_range(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, [{EndOffset, Chunk} | ChunkOffsets])
 		%% Only 256 KiB chunks are supported at this point.
 		when RangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
 	ar_mining_server:recall_chunk(skipped, undefined, Nonce, Candidate),

@@ -24,8 +24,7 @@ init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
 	Workers = lists:map(
 		fun(Peer) ->
-			Name = list_to_atom("ar_nonce_limiter_server_worker_"
-					++ ar_util:peer_to_str(Peer)),
+			Name = list_to_atom("ar_nonce_limiter_server_worker_" ++ ar_util:peer_to_str(Peer)),
 			{Name, {ar_nonce_limiter_server_worker, start_link, [Name, Peer]}, permanent,
 					?SHUTDOWN_TIMEOUT, worker, [Name]}
 		end,

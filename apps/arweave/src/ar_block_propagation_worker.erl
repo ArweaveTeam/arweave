@@ -75,8 +75,9 @@ handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From},
 					end,
 					From ! {worker_sent_block, self()}
 			end;
-		_ ->	%% 208 (the peer has already received this block) or
-				%% an unexpected response.
+		_ ->
+			%% 208 (the peer has already received this block) or
+			%% an unexpected response.
 			From ! {worker_sent_block, self()}
 	end,
 	{noreply, State};

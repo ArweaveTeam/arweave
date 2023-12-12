@@ -247,7 +247,9 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 	{Time, Reply} = timer:tc(fun() ->
 		case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
 			Rows when is_list(Rows) ->
-				lists:map(fun tx_map/1, Rows)
+				lists:map(fun tx_map/1, Rows);
+			{error, Reason} ->
+				{error, Reason}
 		end
 	end),
 	record_query_time(select_txs_by, Time),
@@ -259,7 +261,7 @@ handle_call({select_block_by_tx_id, TXID}, _, State) ->
 	{Time, Reply} = timer:tc(fun() ->
 		case ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT) of
 			{row, Row} -> {ok, block_map(Row)};
-			done -> not_found
+			done -> {error, not_found}
 		end
 	end),
 	ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
@@ -268,10 +270,13 @@ handle_call({select_block_by_tx_id, TXID}, _, State) ->
 
 handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	#{ select_tags_by_tx_id_stmt := Stmt } = State,
+	ok = ar_sqlite3:bind(Stmt, [TXID], ?DRIVER_TIMEOUT),
 	{Time, Reply} = timer:tc(fun() ->
 		case stmt_fetchall(Stmt, [TXID], ?DRIVER_TIMEOUT) of
 			Rows when is_list(Rows) ->
-				lists:map(fun tags_map/1, Rows)
+				{ok, lists:map(fun tags_map/1, Rows)};
+			{error, Reason} ->
+				{error, Reason}
 		end
 	end),
 	record_query_time(select_tags_by_tx_id, Time),
@@ -279,20 +284,18 @@ handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 
 handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 	{Time, {Reply, _SQL, _Params}} = timer:tc(fun() ->
-		case catch eval_legacy_arql_where_clause(Query) of
-			{WhereClause, Params} ->
-				SQL = lists:concat([
-					"SELECT tx.id FROM tx ",
-					"JOIN block ON tx.block_indep_hash = block.indep_hash ",
-					"WHERE ", WhereClause,
-					" ORDER BY block.height DESC, tx.id DESC"
-				]),
-				case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
-					Rows when is_list(Rows) ->
-						{lists:map(fun([TXID]) -> TXID end, Rows), SQL, Params}
-				end;
-			bad_query ->
-				{bad_query, 'n/a', 'n/a'}
+		try
+			{WhereClause, Params} = eval_legacy_arql_where_clause(Query),
+			SQL = lists:concat([
+				"SELECT tx.id FROM tx ",
+				"JOIN block ON tx.block_indep_hash = block.indep_hash ",
+				"WHERE ", WhereClause,
+				" ORDER BY block.height DESC, tx.id DESC"
+			]),
+			Rows = sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT),
+			{ok, {lists:map(fun([TXID]) -> TXID end, Rows), SQL, Params}}
+		catch
+			_:_ -> {error, {bad_query, 'n/a', 'n/a'}}
 		end
 	end),
 	record_query_time(eval_legacy_arql, Time),
@@ -551,7 +554,7 @@ eval_legacy_arql_where_clause({equals, Key, Value})
 		"tx.id IN (SELECT tx_id FROM tag WHERE name = ? and value = ?)",
 		[Key, Value]
 	};
-eval_legacy_arql_where_clause({'and',E1,E2}) ->
+eval_legacy_arql_where_clause({'and', E1, E2}) ->
 	{E1WhereClause, E1Params} = eval_legacy_arql_where_clause(E1),
 	{E2WhereClause, E2Params} = eval_legacy_arql_where_clause(E2),
 	{
@@ -564,7 +567,7 @@ eval_legacy_arql_where_clause({'and',E1,E2}) ->
 		]),
 		E1Params ++ E2Params
 	};
-eval_legacy_arql_where_clause({'or',E1,E2}) ->
+eval_legacy_arql_where_clause({'or', E1, E2}) ->
 	{E1WhereClause, E1Params} = eval_legacy_arql_where_clause(E1),
 	{E2WhereClause, E2Params} = eval_legacy_arql_where_clause(E2),
 	{

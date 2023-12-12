@@ -19,8 +19,9 @@
 -export([verify/4]).
 
 %% Types
--type rsa_public_key()  :: #'RSAPublicKey'{}.
--type rsa_private_key() :: #'RSAPrivateKey'{}.
+-export_type([rsa_public_key/0, rsa_private_key/0, rsa_digest_type/0]).
+-opaque rsa_public_key()  :: #'RSAPublicKey'{}.
+-opaque rsa_private_key() :: #'RSAPrivateKey'{}.
 -type rsa_digest_type() :: 'md5' | 'sha' | 'sha224' | 'sha256' | 'sha384' | 'sha512'.
 
 -define(PSS_TRAILER_FIELD, 16#BC).

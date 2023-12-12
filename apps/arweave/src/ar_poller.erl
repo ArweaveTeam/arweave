@@ -63,10 +63,10 @@ init(Workers) ->
 			ok
 	end,
 	{ok, Config} = application:get_env(arweave, config),
-	{ok, #state{ 
+	{ok, #state{
 		workers = Workers,
 		worker_count = length(Workers),
-		in_sync_trusted_peers = sets:from_list(Config#config.peers) 
+		in_sync_trusted_peers = sets:from_list(Config#config.peers)
 	}}.
 
 handle_call(Request, _From, State) ->
@@ -119,8 +119,8 @@ handle_cast({peer_out_of_sync, Peer}, State) ->
 				{false, true} ->
 					ar_mining_stats:pause_performance_reports(60000),
 					ar_util:terminal_clear(),
-					TrustedPeersStr = string:join([ar_util:format_peer(Peer2)
-							|| Peer2 <- Config#config.peers], ", "),
+					TrustedPeersStr = string:join([ar_util:format_peer(Peer2) ||
+						Peer2 <- Config#config.peers], ", "),
 					?LOG_INFO([{event, node_out_of_sync}, {peer, ar_util:format_peer(Peer)},
 						{trusted_peers, TrustedPeersStr}]),
 					ar:console("WARNING: The node is out of sync with all of the specified "

@@ -101,13 +101,13 @@ reset_rate_limit(TableID, IPAddr, Path) ->
 	end.
 
 increment_ip_addr(IPAddr, Req) ->
-	case ets:whereis(?MODULE) of 
+	case ets:whereis(?MODULE) of
 		undefined -> pass;
 		_ -> update_ip_addr(IPAddr, Req, 1)
 	end.
 
 decrement_ip_addr(IPAddr, Req) ->
-	case ets:whereis(?MODULE) of 
+	case ets:whereis(?MODULE) of
 		undefined -> pass;
 		_ -> update_ip_addr(IPAddr, Req, -1)
 	end.

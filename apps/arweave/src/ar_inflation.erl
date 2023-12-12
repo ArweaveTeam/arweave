@@ -1,4 +1,4 @@
-%%% @doc Module responsible for managing and testing the inflation schedule of 
+%%% @doc Module responsible for managing and testing the inflation schedule of
 %%% the Arweave main network.
 -module(ar_inflation).
 
@@ -50,12 +50,12 @@ calculate_post_15_y1_extra() ->
 pre_15_calculate(Height) when Height =< ?REWARD_DELAY ->
 	1;
 pre_15_calculate(Height) ->
-	?WINSTON_PER_AR
-		* 0.2
-		* ?GENESIS_TOKENS
-		* math:pow(2, -(Height - ?REWARD_DELAY) / ?PRE_15_BLOCK_PER_YEAR)
-		* math:log(2)
-        / ?PRE_15_BLOCK_PER_YEAR.
+	?WINSTON_PER_AR *
+		0.2 *
+		?GENESIS_TOKENS *
+		math:pow(2, -(Height - ?REWARD_DELAY) / ?PRE_15_BLOCK_PER_YEAR) *
+		math:log(2) /
+		?PRE_15_BLOCK_PER_YEAR.
 
 calculate_base(Height) ->
 	{Ln2Dividend, Ln2Divisor} = ?LN2,
@@ -63,27 +63,24 @@ calculate_base(Height) ->
 	Divisor = ?BLOCKS_PER_YEAR * Ln2Divisor,
 	Precision = ?INFLATION_NATURAL_EXPONENT_DECIMAL_FRACTION_PRECISION,
 	{EXDividend, EXDivisor} = ar_fraction:natural_exponent({Dividend, Divisor}, Precision),
-	?GENESIS_TOKENS
-		* ?WINSTON_PER_AR
-		* EXDivisor
-		* 2
-		* Ln2Dividend
-		div (
-			10
-			* ?BLOCKS_PER_YEAR
-			* Ln2Divisor
-			* EXDividend
+	?GENESIS_TOKENS *
+		?WINSTON_PER_AR *
+		EXDivisor *
+		2 *
+		Ln2Dividend div (
+			10 *
+			?BLOCKS_PER_YEAR *
+			Ln2Divisor *
+			EXDividend
 		).
 
 calculate_base_pre_fork_2_5(Height) ->
-	?WINSTON_PER_AR
-		* (
-			0.2
-			* ?GENESIS_TOKENS
-			* math:pow(2, -(Height) / ?BLOCK_PER_YEAR)
-			* math:log(2)
-		)
-		/ ?BLOCK_PER_YEAR.
+	?WINSTON_PER_AR * (
+		0.2 *
+		?GENESIS_TOKENS *
+		math:pow(2, -(Height) / ?BLOCK_PER_YEAR) *
+		math:log(2)
+	) / ?BLOCK_PER_YEAR.
 
 %%%===================================================================
 %%% Tests.
@@ -166,8 +163,8 @@ is_in_tolerance(X, Y) ->
     is_in_tolerance(X, Y, ?DEFAULT_TOLERANCE_PERCENT).
 is_in_tolerance(X, Y, TolerancePercent) ->
     Tolerance = TolerancePercent / 100,
-    ( X >= ( Y * (1 - Tolerance ) ) ) and
-    ( X =< ( Y + (Y * Tolerance ) ) ).
+    (X >= (Y * (1 - Tolerance))) and
+    (X =< (Y + (Y * Tolerance))).
 
 %% @doc Count the total inflation rewards for a given year.
 year_sum_rewards(YearNum) ->

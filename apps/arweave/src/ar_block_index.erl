@@ -90,8 +90,9 @@ get_range(Start, End) when Start > End ->
 get_range(Start, End) ->
 	case catch ets:slot(block_index, Start) of
 		[{{WeaveSize, _Height, H, TXRoot} = Entry}] ->
-			lists:reverse([{H, WeaveSize, TXRoot}
-				| get_range2(Start + 1, End, ets:next(block_index, Entry))]);
+			lists:reverse(
+				[{H, WeaveSize, TXRoot} | get_range2(Start + 1, End, ets:next(block_index, Entry))]
+			);
 		_ ->
 			{error, invalid_start}
 	end.

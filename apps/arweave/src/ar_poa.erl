@@ -51,8 +51,7 @@ validate(Args) ->
 	RecallBucketOffset =
 		case RecallOffset >= StrictDataSplitThreshold of
 			true ->
-				get_padded_offset(RecallOffset + 1, StrictDataSplitThreshold)
-						- (?DATA_CHUNK_SIZE) - BlockStartOffset;
+				get_padded_offset(RecallOffset + 1, StrictDataSplitThreshold) - (?DATA_CHUNK_SIZE) - BlockStartOffset;
 			false ->
 				RecallOffset - BlockStartOffset
 		end,
@@ -73,8 +72,7 @@ validate(Args) ->
 					case ExpectedChunkID of
 						not_set ->
 							ChunkSize = ChunkEndOffset - ChunkStartOffset,
-							AbsoluteEndOffset = BlockStartOffset + TXStartOffset
-									+ ChunkEndOffset,
+							AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
 							prometheus_counter:inc(
 								validating_packed_spora,
 								[ar_packing_server:packing_atom(Packing)]),

@@ -682,9 +682,10 @@ handle_cast(sync_data, State) ->
 	gen_server:cast(self(), sync_data2),
 	%% Find all storage_modules that might include the target chunks (e.g. neighboring
 	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
-	StorageModules = [ar_storage_module:id(Module)
-			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
-			ar_storage_module:id(Module) /= OriginStoreID],
+	StorageModules = [
+		ar_storage_module:id(Module) || Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
+		ar_storage_module:id(Module) /= OriginStoreID
+	],
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals,
 			other_storage_modules_with_unsynced_intervals = StorageModules }};
@@ -1561,9 +1562,7 @@ validate_fetched_chunk(Args) ->
 get_chunk_seek_offset(Offset) ->
 	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
 		true ->
-			ar_poa:get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD)
-					- (?DATA_CHUNK_SIZE)
-					+ 1;
+			ar_poa:get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD) - (?DATA_CHUNK_SIZE) + 1;
 		false ->
 			Offset
 	end.

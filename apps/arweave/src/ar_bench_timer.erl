@@ -62,7 +62,7 @@ get_avg(Times) when is_list(Times) ->
     end;
 get_avg(Key) ->
 	get_avg(get_times(Key)).
-	
+
 get_times(Key) ->
 	[Match || [Match] <- ets:match(total_time, {{Key, '_'}, '$1'})].
 get_timing_keys() ->

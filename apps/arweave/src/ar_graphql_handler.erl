@@ -67,8 +67,8 @@ gather_query_params(Req, Body, Params) ->
 			{error, Reason}
 	end.
 
-document([#{ <<"query">> := Q }|_]) -> Q;
-document([_|Next]) -> document(Next);
+document([#{ <<"query">> := Q } | _]) -> Q;
+document([_ | Next]) -> document(Next);
 document([]) -> undefined.
 
 variables([#{ <<"variables">> := Vars } | _]) ->

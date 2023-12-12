@@ -77,7 +77,7 @@ verify_block_txs([TX | TXs],
 				{true, _, true} ->
 					invalid;
 				_ ->
-					verify_block_txs(TXs, 
+					verify_block_txs(TXs,
 							{Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
 							 Denomination, Height, RedenominationHeight, Timestamp, NewWallets,
 							 BlockAnchors, RecentTXMap, NewMempool, NewCount, NewSize})
@@ -109,7 +109,6 @@ verify_tx2(Args) ->
 	{TX, Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination, Height,
 			RedenominationHeight, Timestamp, FloatingWallets, BlockAnchors, RecentTXMap,
 			Mempool, VerifySignature} = Args,
-	
 	case ar_tx:verify(TX, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 			RedenominationHeight, Height, FloatingWallets, Timestamp}, VerifySignature) of
 		true ->

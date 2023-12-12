@@ -34,7 +34,7 @@
 	current_h1_from_peer_hps = 0.0,
 	total_h2_to_peer = 0,
 	total_h2_from_peer = 0,
-	
+
 	partitions = [],
 	peers = []
 }).
@@ -199,7 +199,7 @@ reset_count(Key, Now) ->
 	ets:insert(?MODULE, [{Key, Now, 0}]).
 
 get_average(Key, Now) ->
-	case ets:lookup(?MODULE, Key) of 
+	case ets:lookup(?MODULE, Key) of
 		[] ->
 			0.0;
 		[{_, Start, _Count}] when Now - Start =:= 0 ->
@@ -210,7 +210,7 @@ get_average(Key, Now) ->
 	end.
 
 get_count(Key) ->
-	case ets:lookup(?MODULE, Key) of 
+	case ets:lookup(?MODULE, Key) of
 		[] ->
 			0;
 		[{_, _Start, Count}] ->
@@ -218,7 +218,7 @@ get_count(Key) ->
 	end.
 
 get_start(Key) ->
-	case ets:lookup(?MODULE, Key) of 
+	case ets:lookup(?MODULE, Key) of
 		[] ->
 			undefined;
 		[{_, Start, _Count}] ->
@@ -226,7 +226,7 @@ get_start(Key) ->
 	end.
 
 get_total_data_size() ->
-	case ets:lookup(?MODULE, total_data_size) of 
+	case ets:lookup(?MODULE, total_data_size) of
 		[] ->
 			0;
 		[{_, TotalDataSize}] ->
@@ -284,7 +284,7 @@ optimal_overall_read_mibps(VDFSpeed, TotalDataSize, WeaveSize) ->
 	(100.0 / VDFSpeed) * NumPartitions * (1 + (TotalDataSize / WeaveSize)).
 
 optimal_partition_read_mibps(undefined, _PartitionDataSize, _TotalDataSize, _WeaveSize) ->
-	0.0;	
+	0.0;
 optimal_partition_read_mibps(VDFSpeed, PartitionDataSize, TotalDataSize, WeaveSize) ->
 	(100.0 / VDFSpeed) * (PartitionDataSize / ?PARTITION_SIZE) * (1 + (TotalDataSize / WeaveSize)).
 
@@ -477,11 +477,11 @@ format_report(Report, WeaveSize) ->
 	),
 	PartitionTable = format_partition_report(Report, WeaveSize),
 	PeerTable = format_peer_report(Report),
-    
+
     io_lib:format("\n~s~s~s", [Preamble, PartitionTable, PeerTable]).
 
 format_partition_report(Report, WeaveSize) ->
-	Header = 
+	Header =
 		"Local mining stats:\n"
 		"+-----------+-----------+----------+---------------+---------------+---------------+------------+------------+--------------+\n"
         "| Partition | Data Size | % of Max |   Read (Cur)  |   Read (Avg)  |  Read (Ideal) | Hash (Cur) | Hash (Avg) | Hash (Ideal) |\n"
@@ -540,7 +540,7 @@ format_partition_row(PartitionReport) ->
 format_peer_report(#report{ peers = [] }) ->
 	"";
 format_peer_report(Report) ->
-	Header = 
+	Header =
 		"\n"
 		"Coordinated mining cluster stats:\n"
 		"+----------------------+-------------+-------------+---------------+---------------+---------+---------+\n"
@@ -629,12 +629,12 @@ test_local_stats(Fun, Stat) ->
 	timer:sleep(1000),
 	Fun(1),
 	Fun(1),
-	
+
 	Fun(2),
 	TotalStart2 = get_start({partition, 2, Stat, total}),
 	CurrentStart2 = get_start({partition, 2, Stat, current}),
 	Fun(2),
-	
+
 	?assert(TotalStart1 /= TotalStart2),
 	?assert(CurrentStart1 /= CurrentStart2),
 	?assertEqual(0.0, get_average({partition, 1, Stat, total}, TotalStart1)),
@@ -755,12 +755,12 @@ test_peer_stats(Fun, Stat) ->
 	timer:sleep(1000),
 	Fun(Peer1, 5),
 	Fun(Peer1, 15),
-	
+
 	Fun(Peer2, 1),
 	TotalStart2 = get_start({peer, Peer2, Stat, total}),
 	CurrentStart2 = get_start({peer, Peer2, Stat, current}),
 	Fun(Peer2, 19),
-	
+
 	?assert(TotalStart1 /= TotalStart2),
 	?assert(CurrentStart1 /= CurrentStart2),
 	?assertEqual(0.0, get_average({peer, Peer1, Stat, total}, TotalStart1)),
@@ -873,23 +873,23 @@ test_optimal_stats() ->
 	?assertEqual(250.0, optimal_overall_read_mibps(
 		2.0, floor(4.75 * ?PARTITION_SIZE), floor(19 * ?PARTITION_SIZE))),
 
-	?assertEqual(0.0, 
+	?assertEqual(0.0,
 		optimal_partition_read_mibps(
 			undefined, ?PARTITION_SIZE,
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(200.0, 
+	?assertEqual(200.0,
 		optimal_partition_read_mibps(
 			1.0, ?PARTITION_SIZE,
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(100.0, 
+	?assertEqual(100.0,
 		optimal_partition_read_mibps(
 			2.0, ?PARTITION_SIZE,
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(50.0, 
+	?assertEqual(50.0,
 		optimal_partition_read_mibps(
 			1.0, floor(0.25 * ?PARTITION_SIZE),
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(160.0, 
+	?assertEqual(160.0,
 		optimal_partition_read_mibps(
 			1.0, ?PARTITION_SIZE,
 			floor(6 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))).
@@ -948,15 +948,15 @@ test_report() ->
 	ar_mining_stats:h2_received_from_peer(Peer2),
 	ar_mining_stats:h2_received_from_peer(Peer2),
 	ar_mining_stats:h2_received_from_peer(Peer2),
-	
-	Report1 = generate_report([], [], WeaveSize, Now+1000),
+
+	Report1 = generate_report([], [], WeaveSize, Now + 1000),
 	?assertEqual(#report{ now = Now+1000 }, Report1),
 	log_report(format_report(Report1, WeaveSize)),
 
-	Report2 = generate_report(Partitions, Peers, WeaveSize, Now+1000),
+	Report2 = generate_report(Partitions, Peers, WeaveSize, Now + 1000),
 	ReportString = format_report(Report2, WeaveSize),
 	log_report(ReportString),
-	?assertEqual(#report{ 
+	?assertEqual(#report{
 		now = Now+1000,
 		vdf_speed = 3.0,
 		total_data_size = floor(0.6 * ?PARTITION_SIZE),
@@ -1031,4 +1031,3 @@ test_report() ->
 		]
 	},
 	Report2).
-	

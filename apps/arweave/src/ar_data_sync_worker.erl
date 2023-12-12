@@ -62,7 +62,7 @@ handle_cast({sync_range, Args}, State) ->
 			ok;
 		_ ->
 			gen_server:cast(ar_data_sync_worker_master, {task_completed,
-				{sync_range, {State#state.name, SyncResult, Args, EndTime-StartTime}}})
+				{sync_range, {State#state.name, SyncResult, Args, EndTime - StartTime}}})
 	end,
 	{noreply, State};
 
@@ -83,13 +83,13 @@ terminate(Reason, _State) ->
 
 read_range({Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
 	ok;
-read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
+read_range({Start, End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 	case ar_data_sync:is_chunk_cache_full() of
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
 				true ->
 					?LOG_DEBUG([{event, read_range},
-						{size, (_End - _Start) / (1024*1024)}, {args, Args}]),
+						{size, (End - Start) / (1024 * 1024)}, {args, Args}]),
 					read_range2(?READ_RANGE_MESSAGES_PER_BATCH, Args);
 				_ ->
 					ar_util:cast_after(30000, self(), {read_range, Args}),
@@ -142,14 +142,14 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 					gen_server:cast(list_to_atom("ar_data_sync_" ++ OriginStoreID),
 							{invalidate_bad_data_record, {Start, AbsoluteOffset, ChunksIndex,
 							OriginStoreID, 1}}),
-					read_range2(MessagesRemaining-1,
+					read_range2(MessagesRemaining - 1,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				{error, Error} ->
 					?LOG_ERROR([{event, failed_to_read_chunk},
 							{absolute_end_offset, AbsoluteOffset},
 							{chunk_data_key, ar_util:encode(ChunkDataKey)},
 							{reason, io_lib:format("~p", [Error])}]),
-					read_range2(MessagesRemaining, 
+					read_range2(MessagesRemaining,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				{ok, {Chunk, DataPath}} ->
 					case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
@@ -166,9 +166,11 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
 									Packing, RelativeOffset, ChunkSize, Chunk,
 									UnpackedChunk, TargetStoreID, ChunkDataKey},
-							gen_server:cast(list_to_atom("ar_data_sync_"
-									++ TargetStoreID), {pack_and_store_chunk, Args}),
-							read_range2(MessagesRemaining-1,
+							gen_server:cast(
+								list_to_atom("ar_data_sync_" ++ TargetStoreID),
+								{pack_and_store_chunk, Args}
+							),
+							read_range2(MessagesRemaining - 1,
 								{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 						Reply ->
 							?LOG_ERROR([{event, chunk_record_not_found},
@@ -219,7 +221,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 					ok;
 				false ->
 					case ar_http_iface_client:get_chunk_binary(Peer, Start2, any) of
-						{ok, #{ chunk := Chunk } = Proof, Time, TransferSize} ->
+						{ok, #{ chunk := Chunk } = Proof, _Time, _TransferSize} ->
 							%% In case we fetched a packed small chunk,
 							%% we may potentially skip some chunks by
 							%% continuing with Start2 + byte_size(Chunk) - the skip

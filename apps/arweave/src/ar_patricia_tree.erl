@@ -245,8 +245,7 @@ compute_hash(Tree, HashFun, KeyPrefix, UpdateMap) ->
 								Hashes2 = [H || {H, _} <- Hashes],
 								NewHash3 = ar_deep_hash:hash([NewHash2 | Hashes2]),
 								{NewHash3, UpdateMap2#{ {NewHash2, KeyPrefix} => {Key, Value},
-										{NewHash3, KeyPrefix} => [{NewHash2, KeyPrefix}
-												| Hashes] }};
+										{NewHash3, KeyPrefix} => [{NewHash2, KeyPrefix} | Hashes] }};
 							no_value ->
 								case Hashes of
 									[{SingleHash, _}] ->

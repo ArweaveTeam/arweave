@@ -87,7 +87,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 		false ->
 			{{_, {B, PrevB, SolutionResigned, Peer}},
 					Q2} = gb_sets:take_largest(Q),
-			BlockSize = byte_size(term_to_binary(B)),				
+			BlockSize = byte_size(term_to_binary(B)),
 			Size2 = Size - BlockSize,
 			case ar_ignore_registry:permanent_member(B#block.indep_hash) of
 				true ->
@@ -407,7 +407,7 @@ may_be_report_double_signing(B, B2) ->
 			Proof = {Key, Signature1, CDiff1, PrevCDiff, Preimage1, Signature2, CDiff2,
 					PrevCDiff2, Preimage2},
 			?LOG_INFO([{event, report_double_signing},
-				{key, ar_util:encode(Key)}, 
+				{key, ar_util:encode(Key)},
 				{block1, ar_util:encode(B#block.indep_hash)},
 				{block2, ar_util:encode(B2#block.indep_hash)},
 				{height1, B#block.height}, {height2, B2#block.height}]),
@@ -798,7 +798,7 @@ pre_validate_nonce_limiter(B, PrevB, Peer) ->
 
 accept_block(B, Peer, Gossip) ->
 	ar_ignore_registry:add(B#block.indep_hash),
-	ar_events:send(block, {new, B, 
+	ar_events:send(block, {new, B,
 		#{ source => {peer, Peer}, gossip => Gossip }}),
 	?LOG_INFO([{event, accepted_block}, {height, B#block.height},
 			{indep_hash, ar_util:encode(B#block.indep_hash)}]),

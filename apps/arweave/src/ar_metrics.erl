@@ -470,17 +470,17 @@ get_status_class({error, connect_timeout}) ->
 	"connect_timeout";
 get_status_class({error, timeout}) ->
 	"timeout";
-get_status_class({error,{shutdown,timeout}}) ->
+get_status_class({error, {shutdown, timeout}}) ->
 	"shutdown_timeout";
 get_status_class({error, econnrefused}) ->
 	"econnrefused";
-get_status_class({error, {shutdown,econnrefused}}) ->
+get_status_class({error, {shutdown, econnrefused}}) ->
 	"shutdown_econnrefused";
-get_status_class({error, {shutdown,ehostunreach}}) ->
+get_status_class({error, {shutdown, ehostunreach}}) ->
 	"shutdown_ehostunreach";
-get_status_class({error, {shutdown,normal}}) ->
+get_status_class({error, {shutdown, normal}}) ->
 	"shutdown_normal";
-get_status_class({error, {closed,_}}) ->
+get_status_class({error, {closed, _}}) ->
 	"closed";
 get_status_class({error, noproc}) ->
 	"noproc";

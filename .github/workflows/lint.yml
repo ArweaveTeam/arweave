@@ -1,0 +1,14 @@
+name: "Elvis Linter"
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+jobs:
+  linter:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: lint
+        run: elvis rock --config config/elvis.config
