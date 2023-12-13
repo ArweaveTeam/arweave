@@ -11,6 +11,7 @@ main([]) ->
 	help(),
 	erlang:halt(1);
 main(Args) ->
+	logger:set_handler_config(default, level, error),
 	Command = hd(Args),
 	Success = case Command of
 		"merge" ->

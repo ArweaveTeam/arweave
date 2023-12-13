@@ -8,49 +8,79 @@
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
--define(NUM_ITERATIONS, 10).
+-define(NUM_ITERATIONS, 5).
 -define(NUM_FILES, 15).
 
 main(Args) ->
 	bench_read(Args).
 
 help() ->
-	ar:console("data-doctor bench data_dir storage_module~n").
+	ar:console("data-doctor bench data_dir storage_module [storage_module] [...]~n").
 
 bench_read(Args) when length(Args) < 2 ->
 	false;
 bench_read(Args) ->
-	[DataDir, StorageModuleConfig ] = Args,
-	
-	StorageModule = ar_config:parse_storage_module(StorageModuleConfig),
+	[DataDir | StorageModuleConfigs] = Args,
 
-	Config = #config{data_dir = DataDir, storage_modules = [StorageModule]},
+	StorageModules = parse_storage_modules(StorageModuleConfigs, []),
+	Config = #config{data_dir = DataDir, storage_modules = StorageModules},
 	application:set_env(arweave, config, Config),
 
 	ar_kv_sup:start_link(),
 	ar_sync_record_sup:start_link(),
 	ar_chunk_storage_sup:start_link(),
 
+	ar:console("~n~nStarting disk read benchmark. It may take a few minutes to complete.~n"),
+
+	read_storage_modules(DataDir, StorageModules).
+
+parse_storage_modules([], StorageModules) ->
+	StorageModules;
+parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModules) ->
+	StorageModule = ar_config:parse_storage_module(StorageModuleConfig),
+	parse_storage_modules(StorageModuleConfigs, StorageModules ++ [StorageModule]).
+	
+read_storage_modules(_DataDir, []) ->	
+	true;
+read_storage_modules(DataDir, [StorageModule | StorageModules]) ->
 	StoreID = ar_storage_module:id(StorageModule),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),	
 
-	ar:console("~n"),
-	% fprof:start(),
-	% fprof:trace([start, {procs, all}]),
-	random_chunk_pread(DataDir, StoreID),
-	random_dev_pread(DataDir, StoreID),
-	% fprof:trace([stop]),
-	% fprof:profile(),
-	% fprof:analyse([totals, {dest, "fprof.out"}]),
-	% fprof:stop(),
 	random_read(StoreID, StartOffset, EndOffset),
-	dd_chunk_files_read(DataDir, StoreID),
-	dd_chunk_file_read(DataDir, StoreID),
-	% dd_dev_file_read(DataDir, StoreID),
-	dd_devs_read(DataDir, StoreID),
-	dd_dev_read(DataDir, StoreID),
 
-	true.
+	% random_chunk_pread(DataDir, StoreID),
+	% random_dev_pread(DataDir, StoreID),
+	% dd_chunk_files_read(DataDir, StoreID),
+	% dd_chunk_file_read(DataDir, StoreID),
+	% dd_devs_read(DataDir, StoreID),
+	% dd_dev_read(DataDir, StoreID),
+
+	read_storage_modules(DataDir, StorageModules).
+
+random_read(StoreID, StartOffset, EndOffset) ->
+	random_read(StoreID, StartOffset, EndOffset, ?NUM_ITERATIONS, 0, 0).
+random_read(StoreID, _StartOffset, _EndOffset, 0, SumChunks, SumElapsedTime) ->
+	ReadRate = (SumChunks * 1000 div 4) div SumElapsedTime,
+	ar:console("~s read ~B chunks in ~B ms (~B MiB/s)~n", [StoreID, SumChunks, SumElapsedTime, ReadRate]);
+random_read(StoreID, StartOffset, EndOffset, Count, SumChunks, SumElapsedTime) ->
+	StartTime = erlang:monotonic_time(),
+	Chunks = read(StoreID, StartOffset, EndOffset, ?RECALL_RANGE_SIZE, ?NUM_FILES),
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime - StartTime, native, millisecond),
+	random_read(StoreID, StartOffset, EndOffset, Count - 1, SumChunks + Chunks, SumElapsedTime + ElapsedTime).
+	
+read(StoreID, StartOffset, EndOffset, Size, NumReads) ->
+	read(StoreID, StartOffset, EndOffset, Size, 0, NumReads).
+
+read(_StoreID, _StartOffset, _EndOffset, _Size, NumChunks, 0) ->
+	NumChunks;
+read(StoreID, StartOffset, EndOffset, Size, NumChunks, NumReads) ->
+	Offset = rand:uniform(EndOffset - Size - StartOffset + 1) + StartOffset,
+	Chunks = ar_chunk_storage:get_range(Offset, Size, StoreID),
+	read(StoreID, StartOffset, EndOffset, Size, NumChunks + length(Chunks), NumReads - 1).
+	
+%% XXX: the following functions are not used, but may be useful in the future to benchmark
+%% different read strategies. They can be deleted when they are no longer useful.
 
 random_chunk_pread(DataDir, StoreID) ->
 	random_chunk_pread(DataDir, StoreID, ?NUM_ITERATIONS, 0, 0).
@@ -80,19 +110,6 @@ random_dev_pread(DataDir, StoreID, Count, SumBytes, SumElapsedTime) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime - StartTime, native, millisecond),
 	random_dev_pread(DataDir, StoreID, Count - 1, SumBytes + Bytes, SumElapsedTime + ElapsedTime).
-
-
-random_read(StoreID, StartOffset, EndOffset) ->
-	random_read(StoreID, StartOffset, EndOffset, ?NUM_ITERATIONS, 0, 0).
-random_read(_StoreID, _StartOffset, _EndOffset, 0, SumChunks, SumElapsedTime) ->
-	ReadRate = (SumChunks * 1000 div 4) div SumElapsedTime,
-	ar:console("*Random* chunk storage read ~B chunks in ~B ms (~B MiB/s)~n", [SumChunks, SumElapsedTime, ReadRate]);
-random_read(StoreID, StartOffset, EndOffset, Count, SumChunks, SumElapsedTime) ->
-	StartTime = erlang:monotonic_time(),
-	Chunks = read(StoreID, StartOffset, EndOffset, ?RECALL_RANGE_SIZE, ?NUM_FILES),
-	EndTime = erlang:monotonic_time(),
-	ElapsedTime = erlang:convert_time_unit(EndTime - StartTime, native, millisecond),
-	random_read(StoreID, StartOffset, EndOffset, Count - 1, SumChunks + Chunks, SumElapsedTime + ElapsedTime).
 
 dd_chunk_files_read(DataDir, StoreID) ->
 	dd_chunk_files_read(DataDir, StoreID, ?NUM_ITERATIONS, 0, 0).
@@ -181,16 +198,6 @@ open_files(DataDir, StoreID) ->
 			[{Filepath, File, FileInfo#file_info.size} | Acc]
 		end,
 		[], Filepaths).
-
-read(StoreID, StartOffset, EndOffset, Size, NumReads) ->
-	read(StoreID, StartOffset, EndOffset, Size, 0, NumReads).
-
-read(_StoreID, _StartOffset, _EndOffset, _Size, NumChunks, 0) ->
-	NumChunks;
-read(StoreID, StartOffset, EndOffset, Size, NumChunks, NumReads) ->
-	Offset = rand:uniform(EndOffset - Size - StartOffset + 1) + StartOffset,
-	Chunks = ar_chunk_storage:get_range(Offset, Size, StoreID),
-	read(StoreID, StartOffset, EndOffset, Size, NumChunks + length(Chunks), NumReads - 1).
 
 pread([], _Size, NumBytes) ->
 	NumBytes;
