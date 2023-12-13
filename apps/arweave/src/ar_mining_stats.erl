@@ -119,15 +119,39 @@ h2_received_from_peer(Peer) ->
 	increment_count({peer, Peer, h2_from_peer, total}).
 
 set_total_data_size(DataSize) ->
-	prometheus_gauge:set(v2_index_data_size, DataSize),
-	ets:insert(?MODULE, {total_data_size, DataSize}).
+	try
+		prometheus_gauge:set(v2_index_data_size, DataSize),
+		ets:insert(?MODULE, {total_data_size, DataSize})
+	catch
+		error:badarg ->
+			?LOG_WARNING([{event, set_total_data_size_failed},
+				{reason, prometheus_not_started}, {data_size, DataSize}]);
+		Type:Reason ->
+			?LOG_ERROR([{event, set_total_data_size_failed},
+				{type, Type}, {reason, Reason}, {data_size, DataSize}])
+	end.
 
 set_storage_module_data_size(
 		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
-	prometheus_gauge:set(v2_index_data_size_by_packing,
-		[StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex],
-		DataSize),
-	ets:insert(?MODULE, {{partition, PartitionNumber, storage_module, StoreID}, DataSize}).
+	try
+		prometheus_gauge:set(v2_index_data_size_by_packing,
+			[StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex],
+			DataSize),
+		ets:insert(?MODULE, {{partition, PartitionNumber, storage_module, StoreID}, DataSize})
+	catch
+		error:badarg ->
+			?LOG_WARNING([{event, set_storage_module_data_size_failed},
+				{reason, prometheus_not_started},
+				{store_id, StoreID}, {packing, Packing}, {partition_number, PartitionNumber},
+				{storage_module_size, StorageModuleSize}, {storage_module_index, StorageModuleIndex},
+				{data_size, DataSize}]);
+		Type:Reason ->
+			?LOG_ERROR([{event, set_storage_module_data_size_failed},
+				{type, Type}, {reason, Reason},
+				{store_id, StoreID}, {packing, Packing}, {partition_number, PartitionNumber},
+				{storage_module_size, StorageModuleSize}, {storage_module_index, StorageModuleIndex},
+				{data_size, DataSize} ])
+	end.
 
 mining_paused() ->
 	clear_metrics().
