@@ -21,6 +21,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
+	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),
 	{ok, Config} = application:get_env(arweave, config),
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->

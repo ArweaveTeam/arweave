@@ -124,10 +124,11 @@ set_total_data_size(DataSize) ->
 
 set_storage_module_data_size(
 		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
-	prometheus_gauge:set(v2_index_data_size_by_packing,
-		[StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex],
-		DataSize),
-	ets:insert(?MODULE, {{partition, PartitionNumber, storage_module, StoreID}, DataSize}).
+	ok.
+	% prometheus_gauge:set(v2_index_data_size_by_packing,
+	% 	[StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex],
+	% 	DataSize),
+	% ets:insert(?MODULE, {{partition, PartitionNumber, storage_module, StoreID}, DataSize}).
 
 mining_paused() ->
 	clear_metrics().

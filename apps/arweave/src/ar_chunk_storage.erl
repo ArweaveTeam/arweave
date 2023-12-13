@@ -540,11 +540,21 @@ read_chunk2(Byte, Start, Key, File, ChunkCount) ->
 	read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount).
 
 read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount) ->
+	StartTime = erlang:monotonic_time(),
 	case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
 		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
+			EndTime1 = erlang:monotonic_time(),
 			case is_offset_valid(Byte, LeftChunkBorder, ChunkOffset) of
 				true ->
-					split_binary(Bin, LeftChunkBorder, 1);
+					Result = split_binary(Bin, LeftChunkBorder, 1),
+					EndTime2 = erlang:monotonic_time(),
+					?LOG_DEBUG([{event, mining_debug_read_chunk},
+							{byte, Byte},
+							{position, Position},
+							{chunk_count, ChunkCount},
+							{pread_time, erlang:convert_time_unit(EndTime1-StartTime, native, millisecond)},
+							{split_time, erlang:convert_time_unit(EndTime2-EndTime1, native, millisecond)}]),
+					Result;
 				false ->
 					[]
 			end;
