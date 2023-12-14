@@ -157,6 +157,10 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 	Thread =
 		spawn_link(
 			fun() ->
+				%% Reduce the likelihood that an io thread is pre-empted. Since chunks drive the
+				%% rest of the mining process, we want to make sure we read them as quickly as
+				%% possible.
+				process_flag(priority, high),
 				case StoreID of
 					"default" ->
 						ok;
@@ -214,6 +218,7 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
 read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
+	ProcessInfo = get_process_info(),
 	StartTime = erlang:monotonic_time(),
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
@@ -224,7 +229,7 @@ read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
 	read_range(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2),
 	log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
-			length(ChunkOffsets), length(ChunkOffsets2), StartTime).
+			length(ChunkOffsets), length(ChunkOffsets2), StartTime, ProcessInfo).
 
 read_range(_WhichChunk, _Worker, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
 		when Nonce > NonceMax ->
@@ -248,8 +253,11 @@ read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
 	ar_mining_worker:recall_chunk(Worker, WhichChunk, Chunk, Nonce, Candidate),
 	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
 
+get_process_info() ->
+	erlang:process_info(self(), [message_queue_len, priority, reductions, status, suspending]).
+
 log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
-		FoundChunks, FoundChunksWithRequiredPacking, StartTime) ->
+		FoundChunks, FoundChunksWithRequiredPacking, StartTime, ProcessInfo) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
 	ReadRate = case ElapsedTime > 0 of 
@@ -280,7 +288,9 @@ log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
 			{partition_number, PartitionNumber},
 			{store_id, StoreID},
 			{found_chunks, FoundChunks},
-			{found_chunks_with_required_packing, FoundChunksWithRequiredPacking}]).
+			{found_chunks_with_required_packing, FoundChunksWithRequiredPacking},
+			{info_before, ProcessInfo},
+			{info_after, get_process_info()}]).
 
 find_thread(PartitionNumber, MiningAddress, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, maps:iterator(Threads)),

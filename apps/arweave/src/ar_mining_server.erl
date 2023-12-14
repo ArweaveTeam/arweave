@@ -286,7 +286,7 @@ refresh_workers(State) ->
 	?LOG_DEBUG([{event, mining_debug_refreshing_workers},
 		{current_session_key, ar_nonce_limiter:encode_session_key(CurrentSessionKey)},
 		{previous_session_key, ar_nonce_limiter:encode_session_key(PreviousSessionKey)},
-		{mapped_sesssions, 
+		{mapped_sessions, 
 			[ar_nonce_limiter:encode_session_key(SessionKey) || SessionKey <- MappedSessions]}]),
 
 	SessionsToAdd = [SessionKey || SessionKey <- NewSessions,

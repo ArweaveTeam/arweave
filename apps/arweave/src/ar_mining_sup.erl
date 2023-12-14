@@ -21,10 +21,14 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	%% Largest multiple of 2 less than the number of schedulers (but no less than 2).
-	%% The ar_mining_server will divide the workers into 2 groups - one for the current
-	%% VDF session and one for the previous VDF session.
-	NumMiningWorkers = max(2, 2 * trunc((erlang:system_info(schedulers_online) - 1) / 2)),
+	{ok, Config} = application:get_env(arweave, config),
+	NumStorageModules = length(Config#config.storage_modules),
+	MaxWorkers = max(2, 2 * trunc((erlang:system_info(schedulers_online) - 1) / 2)),
+	%% Ideally we have 2 workers per storage module - 1 for the current VDF session and one
+	%% for the previous VDF session. However we don't want more workers than there are schedulers
+	%% so limit to largest multiple of 2 less than the number of schedulers (but no less than 2).
+	NumMiningWorkers = min(MaxWorkers, 2*NumStorageModules),
+	?LOG_INFO([{event, ar_mining_sup}, {num_mining_workers, NumMiningWorkers}]),
 	MiningWorkers = lists:map(
 		fun(Number) ->
 			Name = list_to_atom("ar_mining_worker_" ++ integer_to_list(Number)),
