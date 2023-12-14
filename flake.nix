@@ -27,6 +27,34 @@
 
       defaultPackage = self.packages."${system}".arweave;
 
+      devShells = {
+        # for arweave development, made to work with rebar3 builds (not nix)
+        default = with pkgs; mkShellNoCC {
+          name = "arweave-dev";
+          buildInputs = [
+            bashInteractive
+            cmake
+            elvis-erlang
+            erlang
+            erlang-ls
+            gmp
+            openssl
+            pkg-config
+            rebar3
+            rsync
+          ];
+
+          PKG_CONFIG_PATH = "${openssl.dev}/lib/pkgconfig";
+
+          shellHook = ''
+            ${pkgs.fish}/bin/fish --interactive -C \
+              '${pkgs.any-nix-shell}/bin/any-nix-shell fish --info-right | source'
+            exit $?
+          '';
+
+        };
+      };
+
     });
 
 }
