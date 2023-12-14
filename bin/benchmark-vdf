@@ -8,7 +8,9 @@ cd "$SCRIPT_DIR/.."
 echo Building dependencies...
 ./rebar3 compile
 
-erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +Bi -pa `./rebar3 path` \
+erl +MBas aobf +MBlmbcs 512 +Ktrue +A200 +SDio200 \
+	+sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long \
+	+swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -pa `./rebar3 path` \
 	-config config/sys.config -args_file config/vm.args.dev \
 	-run ar benchmark_vdf
 

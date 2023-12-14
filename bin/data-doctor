@@ -11,7 +11,9 @@ echo Building dependencies...
 ERL="erl"
 # ERL="$ERL_TOP/bin/cerl -debug"
 
-$ERL +MBas aobf +MBlmbcs 512 +A100 +SDio100 +Bi -pa `./rebar3 path` \
+$ERL +MBas aobf +MBlmbcs 512 +Ktrue +A200 +SDio200 \
+	+sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long \
+	+swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -pa `./rebar3 path` \
 	-config config/sys.config -name 'data-doctor@127.0.0.1' \
 	-run ar_data_doctor main ${@:1}
 

@@ -19,7 +19,9 @@ export NODE_NAME='arweave@127.0.0.1'
 while true; do
     echo Launching Erlang Virtual Machine...
     if
-        "bin/arweave" foreground +MBas aobf +MBlmbcs 512 +Ktrue +A20 +SDio20 +sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long +swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -run ar main $RANDOMX_JIT "$@"
+        "bin/arweave" foreground +MBas aobf +MBlmbcs 512 +Ktrue +A200 +SDio200 \
+	        +sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long \
+	        +swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -run ar main $RANDOMX_JIT "$@"
     then
         echo "Arweave Heartbeat: Server terminated safely."
         exit 0
