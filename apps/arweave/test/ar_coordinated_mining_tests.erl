@@ -372,7 +372,7 @@ assert_empty_cache(Node) ->
 	%% It's possible there is a bug in the cache management code, but that code is pretty complex.
 	%% In the future, if cache size ends up being a problem we can revisit - but for now, not
 	%% worth the time for a test failure that may not have any realworld implications.
-	% ?assertEaqual(0, Size, Node).
+	% ?assertEqual(0, Size, Node).
 
 dummy_candidate() ->
 	#mining_candidate{

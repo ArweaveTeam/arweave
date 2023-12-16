@@ -24,6 +24,7 @@
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
+-define(LAG_CHECK_FREQUENCY_MS, 5000).
 
 %%%===================================================================
 %%% Public interface.
@@ -93,6 +94,7 @@ init(Name) ->
 	process_flag(trap_exit, true),
 	ar_chunk_storage:open_files("default"),
 	gen_server:cast(self(), handle_task),
+	gen_server:cast(self(), maybe_warn_about_lag),
 	{ok, #state{ name = Name }}.
 
 handle_call(Request, _From, State) ->
@@ -155,7 +157,6 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			gen_server:cast(self(), handle_task),
 			case is_session_valid(State, Candidate) of
 				true ->
-					maybe_warn_about_lag(Task, Q2, State#state.name),
 					handle_task(Task, State#state{ task_queue = Q2 });
 				false ->
 					#state{ session_key = SessionKey } = State,
@@ -174,6 +175,11 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 
 handle_cast({remove_chunk_from_cache, WhichChunk, Candidate}, State) ->
 	{noreply, remove_chunk_from_cache(WhichChunk, Candidate, State)};
+
+handle_cast(maybe_warn_about_lag, State) ->
+	maybe_warn_about_lag(State#state.task_queue, State#state.name),
+	ar_util:cast_after(?LAG_CHECK_FREQUENCY_MS, self(), maybe_warn_about_lag),
+	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -276,6 +282,7 @@ handle_task({computed_h0, Candidate}, State) ->
 				false ->
 					?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
 						{worker, State#state.name},
+						{partition_number, Partition1},
 						{range_start, RecallRange1Start},
 						{range_end, RecallRange1Start + ?RECALL_RANGE_SIZE}]),
 					State
@@ -400,7 +407,7 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 %%% Private functions.
 %%%===================================================================
 
-maybe_warn_about_lag({compute_h0, _Args}, Q, Name) ->
+maybe_warn_about_lag(Q, Name) ->
 	case gb_sets:is_empty(Q) of
 		true ->
 			ok;
@@ -415,9 +422,7 @@ maybe_warn_about_lag({compute_h0, _Args}, Q, Name) ->
 				_ ->
 					ok
 			end
-	end;
-maybe_warn_about_lag(_Task, _Q, _Name) ->
-	ok.
+	end.
 
 count_h0_tasks(Q) ->
 	case gb_sets:is_empty(Q) of

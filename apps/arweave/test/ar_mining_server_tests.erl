@@ -179,15 +179,26 @@ do_test_chunk_cache_size_with_mocks(H1s, H2s, RecallRange2s, FirstChunks) ->
 		ar_test_node:mine(),
 		ar_test_node:wait_until_height(Height),
 		%% wait until the mining has stopped
-		timer:sleep(10000),
-		?assertEqual(0, get_chunk_cache_size())
+		?assert(ar_util:do_until(fun() -> get_chunk_cache_size() == 0 end, 200, 10000))
 	after
 		Cleanup(Functions)
 	end.
 
 get_chunk_cache_size() ->
-	[{_, Size}] = ets:lookup(ar_mining_server, chunk_cache_size),
-	Size.
+	Pattern = {{chunk_cache_size, '$1'}, '_'}, % '$1' matches any PartitionNumber
+    Entries = ets:match(?MODULE, Pattern),
+    lists:foldl(
+        fun(PartitionNumber, Acc) ->
+			case ets:lookup(ar_mining_server, {chunk_cache_size, PartitionNumber}) of
+				[] ->
+					Acc;
+				[{_, Size}] ->
+					Acc + Size
+			end
+		end,
+		0,
+        Entries
+    ).
 
 get_mock_value(Index, Values) when Index < length(Values) ->
     lists:nth(Index, Values);

@@ -24,8 +24,7 @@
 	workers						= #{},
 	chunk_cache_size_limit		= infinity,
 	diff						= infinity,
-	merkle_rebase_threshold		= infinity,
-	partition_upper_bound		= 0
+	merkle_rebase_threshold		= infinity
 }).
 
 %%%===================================================================
@@ -187,7 +186,16 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
 
-	State2 = update_upper_bound(PartitionUpperBound, State),
+	State2 = case ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound) of
+		true ->
+			%% If the largest seen upper bound changed, a new partition may have been added
+			%% to the mining set, so we may need to update the chunk cache size limit.
+			State#state{
+				chunk_cache_size_limit = get_chunk_cache_size_limit(State)
+			};
+		false ->
+			State
+	end,
 
 	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 	{Workers, State3} = 
@@ -237,19 +245,6 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-update_upper_bound(PartitionUpperBound, State) ->
-	#state{ partition_upper_bound = CurrentUpperBound } = State,
-	case PartitionUpperBound > CurrentUpperBound of
-		true ->
-			ar_mining_io:set_upper_bound(PartitionUpperBound),
-			State#state{
-				partition_upper_bound = PartitionUpperBound,
-				chunk_cache_size_limit = get_chunk_cache_size_limit(State)
-			};
-		false ->
-			State
-	end.
-
 get_worker(SessionKey, State) ->
 	case get_workers(SessionKey, State) of
 		[] ->
@@ -344,7 +339,7 @@ get_chunk_cache_size_limit(State) ->
 	end,
 
 	NumPartitions = max(1, length(ar_mining_io:get_partitions())),
-	LimitPerPartition = Limit div NumPartitions,
+	LimitPerPartition = max(1, Limit div NumPartitions),
 
 	case LimitPerPartition == CurrentLimit of
 		true ->
