@@ -972,7 +972,7 @@ test_report() ->
 		now = Now+1000,
 		vdf_speed = 1.0 / 3.0,
 		total_data_size = floor(0.6 * ?PARTITION_SIZE),
-		optimal_overall_read_mibps = 317.99999713897705,
+		optimal_overall_read_mibps = 190.7998163223283,
 		average_read_mibps = 1.25,
 		current_read_mibps = 1.25,
 		average_hash_hps = 5.0,

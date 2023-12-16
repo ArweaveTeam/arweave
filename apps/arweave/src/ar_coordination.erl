@@ -72,10 +72,9 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	
-	%% using timer:apply_after so we can cancel pending timers. This allows us to send the
+	%% using ar_util:cast_after so we can cancel pending timers. This allows us to send the
 	%% h1 batch as soon as it's full instead of waiting for the timeout to expire.
-	{ok, H1BatchTimerRef} = timer:apply_after(
-		?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
+	H1BatchTimerRef = ar_util:cast_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer),
 	State = #state{
 		last_peer_response = #{},
 		h1_batch_timer = H1BatchTimerRef
@@ -153,11 +152,11 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 
 handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests} = State)
   		when map_size(PeerRequests) == 0 ->
-	{ok, TimerRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
+	TimerRef = ar_util:cast_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer),
 	{noreply, State#state{h1_batch_timer = TimerRef}};
 
 handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests, h1_batch_timer = TimerRef} = State) ->
-	timer:cancel(TimerRef),
+	erlang:cancel_timer(TimerRef),
 	maps:fold(
 		fun	(_CacheRef, Candidate, _) ->
 			#mining_candidate{
@@ -173,7 +172,7 @@ handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests, h1_batch
 		ok,
 		PeerRequests
 	),
-	{ok, NewTimerRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer, []),
+	NewTimerRef = ar_util:cast_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer),
 	NewState = State#state{
 		peer_requests = #{},
 		h1_batch_timer = NewTimerRef

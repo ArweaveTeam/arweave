@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, set_upper_bound/1, get_partitions/0,
+-export([start_link/0, set_largest_seen_upper_bound/1, get_partitions/0,
 			get_thread_count/0, read_recall_range/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -14,7 +14,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	partition_upper_bound = undefined,
+	partition_upper_bound = 0,
 	io_threads = #{},
 	io_thread_monitor_refs = #{}
 }).
@@ -27,8 +27,8 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-set_upper_bound(PartitionUpperBound) ->
-	gen_server:cast(?MODULE, {set_upper_bound, PartitionUpperBound}).
+set_largest_seen_upper_bound(PartitionUpperBound) ->
+	gen_server:call(?MODULE, {set_largest_seen_upper_bound, PartitionUpperBound}).
 
 get_partitions() ->
 	gen_server:call(?MODULE, get_partitions).
@@ -74,7 +74,17 @@ init([]) ->
 		),
 	{ok, State2}.
 
-handle_call(get_partitions, _From, #state{ partition_upper_bound = undefined } = State) ->
+
+handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) ->
+	#state{ partition_upper_bound = CurrentUpperBound } = State,
+	case PartitionUpperBound > CurrentUpperBound of
+		true ->
+			{reply, true, State#state{ partition_upper_bound = PartitionUpperBound }};
+		false ->
+			{reply, false, State}
+	end;
+
+handle_call(get_partitions, _From, #state{ partition_upper_bound = 0 } = State) ->
 	{reply, [], State};
 handle_call(get_partitions, _From,
 		#state{ partition_upper_bound = PartitionUpperBound, io_threads = IOThreads } = State) ->
@@ -115,9 +125,6 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({set_upper_bound, PartitionUpperBound}, State) ->
-	{noreply, State#state{ partition_upper_bound = PartitionUpperBound }};
-
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -155,12 +162,8 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID, #state{ io_threads = Th
 start_io_thread(PartitionNumber, MiningAddress, StoreID,
 		#state{ io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
 	Thread =
-		spawn_link(
+		spawn(
 			fun() ->
-				%% Reduce the likelihood that an io thread is pre-empted. Since chunks drive the
-				%% rest of the mining process, we want to make sure we read them as quickly as
-				%% possible.
-				process_flag(priority, high),
 				case StoreID of
 					"default" ->
 						ok;
@@ -218,7 +221,6 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
 read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
-	ProcessInfo = get_process_info(),
 	StartTime = erlang:monotonic_time(),
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
@@ -229,7 +231,7 @@ read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
 	read_range(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2),
 	log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
-			length(ChunkOffsets), length(ChunkOffsets2), StartTime, ProcessInfo).
+			length(ChunkOffsets), length(ChunkOffsets2), StartTime).
 
 read_range(_WhichChunk, _Worker, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
 		when Nonce > NonceMax ->
@@ -257,7 +259,7 @@ get_process_info() ->
 	erlang:process_info(self(), [message_queue_len, priority, reductions, status, suspending]).
 
 log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
-		FoundChunks, FoundChunksWithRequiredPacking, StartTime, ProcessInfo) ->
+		FoundChunks, FoundChunksWithRequiredPacking, StartTime) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
 	ReadRate = case ElapsedTime > 0 of 
@@ -288,9 +290,7 @@ log_read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID,
 			{partition_number, PartitionNumber},
 			{store_id, StoreID},
 			{found_chunks, FoundChunks},
-			{found_chunks_with_required_packing, FoundChunksWithRequiredPacking},
-			{info_before, ProcessInfo},
-			{info_after, get_process_info()}]).
+			{found_chunks_with_required_packing, FoundChunksWithRequiredPacking}]).
 
 find_thread(PartitionNumber, MiningAddress, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, maps:iterator(Threads)),

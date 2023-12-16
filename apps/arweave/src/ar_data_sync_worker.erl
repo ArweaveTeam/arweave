@@ -74,7 +74,7 @@ handle_info(_Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, _State) ->
-	?LOG_INFO([{event, terminate}, {reason, io_lib:format("~p", [Reason])}]),
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, io_lib:format("~p", [Reason])}]),
 	ok.
 
 %%%===================================================================
