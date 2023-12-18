@@ -32,7 +32,21 @@ bench_read(Args) ->
 
 	ar:console("~n~nStarting disk read benchmark. It may take a few minutes to complete.~n"),
 
-	read_storage_modules(DataDir, StorageModules).
+	Results = ar_util:pmap(
+		fun(StorageModule) ->
+			read_storage_module(DataDir, StorageModule)
+		end,
+		StorageModules
+	),
+
+	lists:foreach(
+		fun({StoreID, SumChunks, SumElapsedTime}) ->
+			ReadRate = (SumChunks * 1000 div 4) div SumElapsedTime,
+			ar:console("~s read ~B chunks in ~B ms (~B MiB/s)~n", [StoreID, SumChunks, SumElapsedTime, ReadRate])
+		end,
+		Results),
+	
+	true.
 
 parse_storage_modules([], StorageModules) ->
 	StorageModules;
@@ -40,13 +54,11 @@ parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModul
 	StorageModule = ar_config:parse_storage_module(StorageModuleConfig),
 	parse_storage_modules(StorageModuleConfigs, StorageModules ++ [StorageModule]).
 	
-read_storage_modules(_DataDir, []) ->	
-	true;
-read_storage_modules(DataDir, [StorageModule | StorageModules]) ->
+read_storage_module(DataDir, StorageModule) ->
 	StoreID = ar_storage_module:id(StorageModule),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),	
 
-	random_read(StoreID, StartOffset, EndOffset),
+	random_read(StoreID, StartOffset, EndOffset).
 
 	% random_chunk_pread(DataDir, StoreID),
 	% random_dev_pread(DataDir, StoreID),
@@ -55,13 +67,10 @@ read_storage_modules(DataDir, [StorageModule | StorageModules]) ->
 	% dd_devs_read(DataDir, StoreID),
 	% dd_dev_read(DataDir, StoreID),
 
-	read_storage_modules(DataDir, StorageModules).
-
 random_read(StoreID, StartOffset, EndOffset) ->
 	random_read(StoreID, StartOffset, EndOffset, ?NUM_ITERATIONS, 0, 0).
 random_read(StoreID, _StartOffset, _EndOffset, 0, SumChunks, SumElapsedTime) ->
-	ReadRate = (SumChunks * 1000 div 4) div SumElapsedTime,
-	ar:console("~s read ~B chunks in ~B ms (~B MiB/s)~n", [StoreID, SumChunks, SumElapsedTime, ReadRate]);
+	{StoreID, SumChunks, SumElapsedTime};
 random_read(StoreID, StartOffset, EndOffset, Count, SumChunks, SumElapsedTime) ->
 	StartTime = erlang:monotonic_time(),
 	Chunks = read(StoreID, StartOffset, EndOffset, ?RECALL_RANGE_SIZE, ?NUM_FILES),
