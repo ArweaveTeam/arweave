@@ -15,6 +15,7 @@
 		prometheus_cowboy,
 		prometheus_process_collector,
 		prometheus_httpd,
-		graphql
+		graphql,
+		runtime_tools
 	]}
 ]}.
