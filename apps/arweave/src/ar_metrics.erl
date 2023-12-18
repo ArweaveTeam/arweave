@@ -447,7 +447,13 @@ register() ->
 					"Only set when debug=true."}]),
 	prometheus_gauge:new([{name, process_info},
 			{labels, [process, type]},
-			{help, "Sampling info about active processes. Only set when debug=true."}]).
+			{help, "Sampling info about active processes. Only set when debug=true."}]),
+	prometheus_gauge:new([{name, scheduler_utilization},
+			{labels, [type]},
+			{help, "Average scheduler utilization. `type` maps to the sched_type as defined here: "
+				"https://www.erlang.org/doc/man/scheduler#type-sched_util_result. "
+				"Only set when debug=true."}]).
+
 
 %% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total
 %% metrics.
