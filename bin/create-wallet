@@ -3,14 +3,9 @@
 set -e
 
 SCRIPT_DIR="$(dirname "$0")"
-cd "$SCRIPT_DIR/.."
 
-echo Building dependencies...
-./rebar3 compile
+# Sets $ARWEAVE and $ARWEAVE_* variables
+source $SCRIPT_DIR/arweave.env
 
-erl +MBas aobf +MBlmbcs 512 +Ktrue +A200 +SDio200 \
-	+sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long \
-	+swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -pa `./rebar3 path` \
-	-config config/sys.config -args_file config/vm.args.dev \
-	-run ar create_wallet "$@"
+$ARWEAVE foreground $ARWEAVE_OPTS -run ar create_wallet "$@"
 
