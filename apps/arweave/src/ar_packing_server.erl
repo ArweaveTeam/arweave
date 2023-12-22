@@ -160,8 +160,6 @@ handle_cast({unpack_request, From, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	?LOG_DEBUG([{event, got_unpack_request}, {ref, Ref},
-		{packing, ar_chunk_storage:encode_packing(Packing)}]),
 	increment_buffer_size(),
 	record_packing_request(unpack, Packing, unpack_request),
 	Worker ! {unpack, Ref, From, Args},
@@ -173,9 +171,6 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 	#state{ workers = Workers } = State,
 	{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	?LOG_DEBUG([{event, got_repack_request}, {ref, Ref},
-		{requested_packing, ar_chunk_storage:encode_packing(RequestedPacking)},
-		{packing, ar_chunk_storage:encode_packing(Packing)}]),
 	case {RequestedPacking, Packing} of
 		{unpacked, unpacked} ->
 			From ! {chunk, {packed, Ref, {unpacked, Chunk, AbsoluteOffset, TXRoot, ChunkSize}}},

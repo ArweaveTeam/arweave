@@ -223,11 +223,13 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				nonce_limiter_output = Output,
 				partition_upper_bound = PartitionUpperBound
 			},
-			N = distribute_output(Workers, Candidate),
-			?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
+			PartitionsToWorkers = distribute_output(Workers, Candidate),
+			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
+				{found_io_threads, maps:size(PartitionsToWorkers)},
 				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
 				{start_interval_number, StartIntervalNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{partitions_to_workers, PartitionsToWorkers}])
 	end,
 	{noreply, State3};
 
@@ -255,11 +257,7 @@ get_worker(SessionKey, State) ->
 
 get_workers(SessionKey, State) ->
 	#state{ workers = WorkersBySession } = State,
-	Workers = maps:get(SessionKey, WorkersBySession, []),
-	?LOG_DEBUG([{event, mining_debug_get_workers},
-		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-		{workers, Workers}]),
-	Workers.
+	maps:get(SessionKey, WorkersBySession, []).
 
 set_difficulty(Diff, State) ->
 	maps:foreach(
@@ -369,33 +367,27 @@ get_chunk_cache_size_limit(State) ->
 	end.
 
 distribute_output(Workers, Candidate) ->
-	distribute_output(Workers, ar_mining_io:get_partitions(), Candidate, 0).
+	distribute_output(Workers, ar_mining_io:get_partitions(), Candidate, #{}).
 
-distribute_output(_Workers, [], _Candidate, N) ->
-	N;
+distribute_output(_Workers, [], _Candidate, PartitionsToWorkers) ->
+	PartitionsToWorkers;
 distribute_output(
-		Workers, [{PartitionNumber, MiningAddress} | Partitions], Candidate, N) ->
+		Workers, [{PartitionNumber, MiningAddress} | Partitions], Candidate, PartitionsToWorkers) ->
 	MaxPartitionNumber = ?MAX_PARTITION_NUMBER(Candidate#mining_candidate.partition_upper_bound),
 	case PartitionNumber > MaxPartitionNumber of
 		true ->
 			%% Skip this partition
-			distribute_output(Workers, Partitions, Candidate, N);
+			distribute_output(Workers, Partitions, Candidate, PartitionsToWorkers);
 		false ->
 			Worker = ar_util:pick_random(Workers),
-			?LOG_DEBUG([{event, mining_debug_distributing_output},
-				{worker, Worker},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{step_number, Candidate#mining_candidate.step_number},
-				{partition_number, PartitionNumber},
-				{partition_upper_bound, Candidate#mining_candidate.partition_upper_bound},
-				{max_partition, MaxPartitionNumber}]),
 			ar_mining_worker:add_task(
 				Worker, compute_h0,
 				Candidate#mining_candidate{
 					partition_number = PartitionNumber,
 					mining_address = MiningAddress
 				}),
-			distribute_output(Workers, Partitions, Candidate, N + 1)
+			distribute_output(Workers, Partitions, Candidate,
+				maps:put(PartitionNumber, Worker, PartitionsToWorkers))
 	end.
 
 get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
