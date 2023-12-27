@@ -539,6 +539,20 @@ parse_options([{<<"cm_exit_peer">>, Peer} | Rest], Config) ->
 			{error, bad_cm_exit_peer, Peer}
 	end;
 
+parse_options([{<<"pool_server">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ pool_server = true });
+parse_options([{<<"pool_server">>, false} | Rest], Config) ->
+	parse_options(Rest, Config);
+parse_options([{<<"pool_server">>, Opt} | _], _) ->
+	{error, {bad_type, pool_server, boolean}, Opt};
+
+parse_options([{<<"pool_client">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ pool_client = true });
+parse_options([{<<"pool_client">>, false} | Rest], Config) ->
+	parse_options(Rest, Config);
+parse_options([{<<"pool_client">>, Opt} | _], _) ->
+	{error, {bad_type, pool_client, boolean}, Opt};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

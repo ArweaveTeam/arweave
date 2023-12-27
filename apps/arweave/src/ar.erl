@@ -268,7 +268,11 @@ show_help() ->
 					"set coordinated_mining, cm_api_secret, and cm_exit_peer."},
 			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
 					"coordinated mining mode. You need to also set coordinated_mining, "
-					"cm_api_secret, and cm_peer."}
+					"cm_api_secret, and cm_peer."},
+			{"pool_server", "Configure the node as a pool server. The pool node may not "
+					"participate in the coordinated mining."},
+			{"pool_client", "Configure the node as a pool client. The node may be an "
+					"exit peer in the coordinated mining setup or a standalone node."}
 		]
 	),
 	erlang:halt().
@@ -536,6 +540,10 @@ parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
+parse_cli_args(["pool_server" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_server = true });
+parse_cli_args(["pool_client" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_client = true });
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -570,6 +578,7 @@ start(Config) ->
 		false ->
 			ok
 	end,
+	validate_cm_pool_config(Config),
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
@@ -580,6 +589,26 @@ start(Config) ->
 			ok
 	end,
 	start_dependencies().
+
+validate_cm_pool_config(Config) ->
+	case {Config#config.coordinated_mining, Config#config.pool_server} of
+		{true, true} ->
+			io:format("~nThe pool server node cannot participate "
+					"in the coordinated mining.~n~n"),
+			timer:sleep(1000),
+			erlang:halt();
+		_ ->
+			ok
+	end,
+	case {Config#config.pool_server, Config#config.pool_client} of
+		{true, true} ->
+			io:format("~nThe node cannot be a pool server and a pool client "
+					"at the same time.~n~n"),
+			timer:sleep(1000),
+			erlang:halt();
+		_ ->
+			ok
+	end.
 
 start(normal, _Args) ->
 	{ok, Config} = application:get_env(arweave, config),

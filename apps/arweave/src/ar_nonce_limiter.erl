@@ -4,7 +4,7 @@
 
 -export([start_link/0, account_tree_initialized/1, encode_session_key/1,
 		is_ahead_on_the_timeline/2, 
-		get_current_step_number/0, get_current_step_number/1,
+		get_current_step_number/0, get_current_step_number/1, get_step_triplets/3,
 		get_seed_data/2, get_step_checkpoints/4, get_steps/4,
 		validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
@@ -72,6 +72,14 @@ get_current_step_number() ->
 get_current_step_number(B) ->
 	SessionKey = session_key(B#block.nonce_limiter_info),
 	gen_server:call(?MODULE, {get_current_step_number, SessionKey}, infinity).
+
+%% @doc Return {Output, StepNumber, PartitionUpperBound} for up to N latest steps
+%% from the VDF session of Info, if any. If PrevOutput is among the N latest steps,
+%% return only the steps strictly above PrevOutput.
+get_step_triplets(Info, PrevOutput, N) ->
+	SessionKey = session_key(Info),
+	Steps = gen_server:call(?MODULE, {get_latest_step_triplets, SessionKey, N}, infinity),
+	filter_step_triplets(Steps, [PrevOutput, Info#nonce_limiter_info.output]).
 
 %% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
 %% for the block mined at StepNumber considering its previous block PrevB.
@@ -439,6 +447,20 @@ handle_call({get_current_step_number, SessionKey}, _From, State) ->
 			{reply, not_found, State};
 		#vdf_session{ step_number = StepNumber } ->
 			{reply, StepNumber, State}
+	end;
+
+handle_call({get_latest_step_triplets, SessionKey, N}, _From, State) ->
+	case get_session(SessionKey, State) of
+		not_found ->
+			{reply, [], State};
+		#vdf_session{ step_number = StepNumber, steps = Steps,
+				upper_bound = UpperBound, next_upper_bound = NextUpperBound } ->
+			{_, IntervalNumber, _} = SessionKey,
+			IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+			ResetPoint = get_entropy_reset_point(IntervalStart, StepNumber),
+			{reply,
+				get_triplets(StepNumber, Steps, ResetPoint, UpperBound, NextUpperBound, N),
+				State}
 	end;
 
 handle_call({get_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
@@ -1232,6 +1254,34 @@ debug_double_check(Label, Result, Func, Args) ->
 			end
 	end.
 
+filter_step_triplets([], _LowerBounds) ->
+	[];
+filter_step_triplets([{O, _, _} = Triplet | Triplets], LowerBounds) ->
+	case lists:member(O, LowerBounds) of
+		true ->
+			[];
+		false ->
+			[Triplet | filter_step_triplets(Triplets, LowerBounds)]
+	end.
+
+get_triplets(_StepNumber, _Steps, _ResetPoint, _UpperBound, _NextUpperBound, 0) ->
+	[];
+get_triplets(_StepNumber, [], _ResetPoint, _UpperBound, _NextUpperBound, _N) ->
+	[];
+
+get_triplets(StepNumber, [Step | Steps], ResetPoint, UpperBound, NextUpperBound, N) ->
+	U =
+		case ResetPoint of
+			none ->
+				UpperBound;
+			_ when StepNumber >= ResetPoint ->
+				NextUpperBound;
+			_ ->
+				UpperBound
+		end,
+	[{Step, StepNumber, U}
+		| get_triplets(StepNumber - 1, Steps, ResetPoint, UpperBound, NextUpperBound, N - 1)].
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -1587,3 +1637,22 @@ test_block(StepNumber, Output, Seed, NextSeed, LastStepCheckpoints, Steps,
 					last_step_checkpoints = LastStepCheckpoints, steps = Steps,
 					vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty }
 	}.
+
+filter_step_triplets_test() ->
+	?assertEqual([], filter_step_triplets([], [a, b])),
+	?assertEqual([], filter_step_triplets([{a, 1, s}], [a, b])),
+	?assertEqual([], filter_step_triplets([{b, 1, s}], [a, b])),
+	?assertEqual([], filter_step_triplets([{b, 1, s}, {x, 1, s}], [a, b])),
+	?assertEqual([{y, 1, s}], filter_step_triplets([{y, 1, s}, {a, 1, s}, {x, 1, s}], [a, b])),
+	?assertEqual([{y, 1, s}, {x, 1, s}], filter_step_triplets([{y, 1, s}, {x, 1, s}], [a, b])).
+
+get_triplets_test() ->
+	?assertEqual([], get_triplets(1, [a], none, 2, 3, 0)),
+	?assertEqual([], get_triplets(2, [], 2, 4, 5, 2)),
+	?assertEqual([{a, 1, 2}], get_triplets(1, [a], none, 2, 3, 2)),
+	?assertEqual([{a, 1, 2}], get_triplets(1, [a], 2, 2, 3, 2)),
+	?assertEqual([{a, 1, 3}], get_triplets(1, [a], 1, 2, 3, 2)),
+	?assertEqual([{a, 2, 3}, {b, 1, 2}], get_triplets(2, [a, b], 2, 2, 3, 2)),
+	?assertEqual([{a, 2, 3}, {b, 1, 2}], get_triplets(2, [a, b, c], 2, 2, 3, 2)),
+	?assertEqual([{a, 3, 3}, {b, 2, 3}, {c, 1, 3}], get_triplets(3, [a, b, c], 0, 2, 3, 3)),
+	?assertEqual([{a, 3, 2}, {b, 2, 2}, {c, 1, 2}], get_triplets(3, [a, b, c], none, 2, 3, 4)).

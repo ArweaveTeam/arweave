@@ -12,6 +12,9 @@
 -include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
+-include_lib("arweave/include/ar_pool.hrl").
+
+
 -define(HANDLER_TIMEOUT, 55000).
 
 -define(MAX_SERIALIZED_RECENT_HASH_LIST_DIFF, 2400). % 50 * 48.
@@ -451,6 +454,58 @@ handle(<<"POST">>, [<<"block">>], Req, Pid) ->
 handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 	erlang:put(post_block2, true),
 	post_block(request, {Req, Pid, binary}, erlang:timestamp());
+
+%% Accept a (partial) solution from a pool proxy or a CM node and validate it.
+%%
+%% If the node is a CM exit node and a pool client, send the given solution to
+%% the pool and return an empty JSON object.
+%%
+%% If the node is a pool server, return a JSON object {"indep_hash": "...", "status": "..."},
+%% where the status is one of "accepted", "accepted_block", "rejected_bad_poa",
+%% "rejected_wrong_hash", "stale", "vdf_not_found".
+%% If the solution is partial, "indep_hash" string is empty.
+handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
+	case ar_node:is_joined() of
+		true ->
+			handle_post_partial_solution(Req, Pid);
+		false ->
+			not_joined(Req)
+	end;
+
+%% Return the information about up to ?GET_JOBS_COUNT latest VDF steps and a difficulty.
+%%
+%% If the given VDF output is present in the latest 10 VDF steps, return only the steps
+%% strictly above the given output. If the given output is our latest output,
+%% wait for up to ?GET_JOBS_TIMEOUT_S and return an empty list if no new steps are
+%% computed by the time. Also, only return the steps strictly above the latest block.
+%%
+%% If we are a pool server, return the current network difficulty along with the VDF
+%% information.
+%%
+%% If we are a CM exit node and a pool client, return the partial difficulty provided
+%% by the pool.
+%%
+%% Return a JSON object:
+%% {
+%%   "vdf":
+%%     [
+%%       {"output": "", "seed": "", "global_step_number": "", "partition_upper_bound": ""},
+%%       ...
+%%     ],
+%%   "diff": ""
+%% }
+handle(<<"GET">>, [<<"jobs">>, EncodedPrevOutput], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_util:safe_decode(EncodedPrevOutput) of
+				{ok, PrevOutput} ->
+					handle_get_jobs(PrevOutput, Req);
+				{error, invalid} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_prev_output }), Req}
+			end
+	end;
 
 %% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
@@ -2353,6 +2408,112 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 			ok
 	end,
 	{200, #{}, <<"OK">>, Req}.
+
+handle_post_partial_solution(Req, Pid) ->
+	{ok, Config} = application:get_env(arweave, config),
+	CMExitNode = Config#config.coordinated_mining == true andalso
+			Config#config.cm_exit_peer == not_set andalso Config#config.pool_client == true,
+	case {Config#config.pool_server, CMExitNode} of
+		{false, false} ->
+			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
+		{true, _} ->
+			case check_internal_api_secret(Req) of
+				{reject, {Status, Headers, Body}} ->
+					{Status, Headers, Body, Req};
+				pass ->
+					handle_post_partial_solution_pool_server(Req, Pid)
+			end;
+		{_, true} ->
+			case check_cm_api_secret(Req) of
+				{reject, {Status, Headers, Body}} ->
+					{Status, Headers, Body, Req};
+				pass ->
+					handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid)
+			end
+	end.
+
+handle_post_partial_solution_pool_server(Req, Pid) ->
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			% TODO deserialize partial solution; validate and publish
+			{200, #{}, jiffy:encode(#{}), Req};
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{500, #{}, <<"Handler timeout">>, Req}
+	end.
+
+handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			% TODO deserialize partial solution; send to pool
+			ok;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{500, #{}, <<"Handler timeout">>, Req}
+	end.
+
+handle_get_jobs(PrevOutput, Req) ->
+	{ok, Config} = application:get_env(arweave, config),
+	CMExitNode = Config#config.coordinated_mining == true andalso
+			Config#config.cm_exit_peer == not_set andalso Config#config.pool_client == true,
+	case {Config#config.pool_server, CMExitNode} of
+		{false, false} ->
+			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
+		{true, _} ->
+			case check_internal_api_secret(Req) of
+				{reject, {Status, Headers, Body}} ->
+					{Status, Headers, Body, Req};
+				pass ->
+					handle_get_jobs_pool_server(PrevOutput, Req)
+			end;
+		{_, true} ->
+			case check_cm_api_secret(Req) of
+				{reject, {Status, Headers, Body}} ->
+					{Status, Headers, Body, Req};
+				pass ->
+					handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req)
+			end
+	end.
+
+handle_get_jobs_pool_server(PrevOutput, Req) ->
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', diff},
+					{'==', '$1', nonce_limiter_info}}], ['$_']}]
+		),
+	Diff = proplists:get_value(diff, Props),
+	Info = proplists:get_value(nonce_limiter_info, Props),
+	Result = ar_util:do_until(
+		fun() ->
+			S = ar_nonce_limiter:get_step_triplets(Info, PrevOutput, ?GET_JOBS_COUNT),
+			case S of
+				[] ->
+					false;
+				_ ->
+					{true, S}
+			end
+		end,
+		200,
+		(?GET_JOBS_TIMEOUT_S) * 1000
+	),
+	Steps = case Result of false -> []; {true, S} -> S end,
+	M = #{
+		vdf => [#{
+			output => ar_util:encode(O),
+			seed => ar_util:encode(Info#nonce_limiter_info.seed),
+			global_step_number => integer_to_binary(N),
+			partition_upper_bound => integer_to_binary(U)} || {O, N, U} <- Steps],
+		diff => integer_to_binary(Diff) },
+	{200, #{}, jiffy:encode(M), Req}.
+
+handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req) ->
+	% TODO get jobs from proxy
+	ok.
 
 encode_txids([]) ->
 	<<>>;
