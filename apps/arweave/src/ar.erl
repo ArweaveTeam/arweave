@@ -272,7 +272,9 @@ show_help() ->
 			{"pool_server", "Configure the node as a pool server. The pool node may not "
 					"participate in the coordinated mining."},
 			{"pool_client", "Configure the node as a pool client. The node may be an "
-					"exit peer in the coordinated mining setup or a standalone node."}
+					"exit peer in the coordinated mining setup or a standalone node."},
+			{"pool_api_key", "API key for the requests to pool proxy."},
+			{"pool_host", "The pool proxy address"}
 		]
 	),
 	erlang:halt().
@@ -544,6 +546,10 @@ parse_cli_args(["pool_server" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_server = true });
 parse_cli_args(["pool_client" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_client = true });
+parse_cli_args(["pool_api_key", Key | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_api_key = list_to_binary(Key) });
+parse_cli_args(["pool_host", Host | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_host = list_to_binary(Host) });
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().

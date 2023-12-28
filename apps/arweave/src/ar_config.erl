@@ -553,6 +553,16 @@ parse_options([{<<"pool_client">>, false} | Rest], Config) ->
 parse_options([{<<"pool_client">>, Opt} | _], _) ->
 	{error, {bad_type, pool_client, boolean}, Opt};
 
+parse_options([{<<"pool_api_key">>, Key} | Rest], Config) when is_binary(Key) ->
+	parse_options(Rest, Config#config{ pool_api_key = Key });
+parse_options([{<<"pool_api_key">>, Key} | _], _) ->
+	{error, {bad_type, pool_api_key, string}, Key};
+
+parse_options([{<<"pool_host">>, Host} | Rest], Config) when is_binary(Host) ->
+	parse_options(Rest, Config#config{ pool_host = Host });
+parse_options([{<<"pool_host">>, Host} | _], _) ->
+	{error, {bad_type, pool_host, string}, Host};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

@@ -15,7 +15,7 @@
 		get_block_time_history/3,
 		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
-		cm_publish_send/2]).
+		cm_publish_send/2, get_jobs/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -616,6 +616,11 @@ cm_publish_send(Peer, Solution) ->
 		headers => cm_p2p_headers(),
 		body => ar_serialize:jsonify({Json})
 	})).
+
+%% @doc Fetch the jobs from the pool proxy or coordinated mining exit peer.
+get_jobs(_Peer, _PrevOutput, _AuthHeader) ->
+	% TODO
+	ok.
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);

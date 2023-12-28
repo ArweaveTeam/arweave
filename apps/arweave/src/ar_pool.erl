@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, is_client/0, get_current_sessions/0, get_jobs/1]).
+-export([start_link/0, is_client/0, get_current_sessions/0, get_jobs/1,
+		get_latest_output/0, cache_jobs/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -12,7 +13,7 @@
 
 -record(state, {
 	%% The most recent keys come first.
-	session_keys = gb_sets:new(),
+	session_keys = [],
 	%% Key => [{Output, StepNumber, PartitionUpperBound, Seed, Diff}, ...]
 	jobs_by_session_key = maps:new()
 }).
@@ -38,6 +39,15 @@ get_current_sessions() ->
 get_jobs(PrevOutput) ->
 	gen_server:call(?MODULE, {get_jobs, PrevOutput}, infinity).
 
+%% @doc Return the most recent cached VDF output. Return an empty binary if the
+%% cache is empty.
+get_latest_output() ->
+	gen_server:call(?MODULE, get_latest_output, infinity).
+
+%% @doc Cache the given jobs.
+cache_jobs(Jobs) ->
+	gen_server:cast(?MODULE, {cache_jobs, Jobs}).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -47,16 +57,50 @@ init([]) ->
 	{ok, #state{}}.
 
 handle_call(get_current_sessions, _From, State) ->
-	{reply, lists:sublist(gb_sets:to_list(State#state.session_keys), 2), State};
+	{reply, lists:sublist(State#state.session_keys, 2), State};
 
 handle_call({get_jobs, PrevOutput}, _From, State) ->
 	SessionKeys = State#state.session_keys,
 	JobCache = State#state.jobs_by_session_key,
 	{reply, get_jobs(PrevOutput, SessionKeys, JobCache), State};
 
+handle_call(get_latest_output, _From, State) ->
+	case State#state.session_keys of
+		[] ->
+			{reply, <<>>, State};
+		[Key | _] ->
+			{O, _SN, _U, _S, _Diff} = hd(maps:get(Key, State#state.jobs_by_session_key)),
+			{reply, O, State}
+	end;
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast({cache_jobs, #jobs{ vdf = [] }}, State) ->
+	{noreply, State};
+handle_cast({cache_jobs, Jobs}, State) ->
+	#jobs{ vdf = VDF, diff = Diff, next_seed = NextSeed, seed = Seed,
+			interval_number = IntervalNumber,
+			next_vdf_difficulty = NextVDFDifficulty } = Jobs,
+	SessionKey = {NextSeed, IntervalNumber, NextVDFDifficulty},
+	SessionKeys = State#state.session_keys,
+	SessionKeys2 = [SessionKey | SessionKeys],
+	JobList = [{Job#job.output, Job#job.global_step_number,
+			Job#job.partition_upper_bound, Seed, Diff} || Job <- VDF],
+	PrevJobList = maps:get(SessionKey, State#state.jobs_by_session_key, []),
+	JobList2 = JobList ++ PrevJobList,
+	JobsBySessionKey = maps:put(SessionKey, JobList2, State#state.jobs_by_session_key),
+	{SessionKeys3, JobsBySessionKey2} =
+		case length(SessionKeys2) == 3 of
+			true ->
+				{RemoveKey, SessionKeys4} = lists:last(SessionKeys2),
+				{SessionKeys4, maps:remove(RemoveKey, JobsBySessionKey)};
+			false ->
+				{SessionKeys2, JobsBySessionKey}
+		end,
+	{noreply, State#state{ session_keys = SessionKeys3,
+			jobs_by_session_key = JobsBySessionKey2 }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -69,20 +113,15 @@ handle_info(Message, State) ->
 terminate(_Reason, _State) ->
 	ok.
 
-% TODO periodic process that fetches jobs (from pool host if we are an exit or standalone node
-% or exit node otherwise), triggers events, and, if we are an exit node, caches them
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
 get_jobs(PrevOutput, SessionKeys, JobCache) ->
-	case gb_sets:is_empty(SessionKeys) of
-		true ->
+	case SessionKeys of
+		[] ->
 			#jobs{};
-		false ->
-			{NextSeed, Interval, NextVDFDifficulty} = SessionKey
-				= gb_sets:smallest(SessionKeys),
+		[{NextSeed, Interval, NextVDFDifficulty} = SessionKey | _] ->
 			Jobs = maps:get(SessionKey, JobCache),
 			{Seed, Diff, Jobs2} = collect_jobs(Jobs, PrevOutput, ?GET_JOBS_COUNT),
 			Jobs3 = [#job{ output = O, global_step_number = SN,
@@ -113,10 +152,10 @@ collect_jobs(_Jobs, _PrevO, _N, _Diff) ->
 	[].
 
 get_jobs_test() ->
-	?assertEqual(#jobs{}, get_jobs(<<>>, gb_sets:new(), maps:new())),
+	?assertEqual(#jobs{}, get_jobs(<<>>, [], maps:new())),
 
 	?assertEqual(#jobs{ next_seed = ns, interval_number = in, next_vdf_difficulty = nvd },
-			get_jobs(o, gb_sets:from_list([{ns, in, nvd}]),
+			get_jobs(o, [{ns, in, nvd}],
 			#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
 
 	?assertEqual(#jobs{ vdf = [#job{ output = o, global_step_number = gsn,
@@ -126,7 +165,7 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(a, gb_sets:from_list([{ns, in, nvd}]),
+			get_jobs(a, [{ns, in, nvd}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
 
 	%% d2 /= d (the difficulties are different) => only take the latest job.
@@ -137,7 +176,7 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(a, gb_sets:from_list([{ns, in, nvd}, {ns2, in2, nvd2}]),
+			get_jobs(a, [{ns, in, nvd}, {ns2, in2, nvd2}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}, {o2, gsn2, u2, s, d2}],
 							%% Same difficulty, but a different VDF session => not picked.
 							{ns2, in2, nvd2} => [{o3, gsn3, u3, s3, d}] })),
@@ -151,7 +190,7 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(a, gb_sets:from_list([{ns, in, nvd}, {ns2, in2, nvd2}]),
+			get_jobs(a, [{ns, in, nvd}, {ns2, in2, nvd2}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}, {o2, gsn2, u2, s, d}],
 							{ns2, in2, nvd2} => [{o2, gsn2, u2, s2, d2}] })),
 
@@ -163,6 +202,6 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(o2, gb_sets:from_list([{ns, in, nvd}, {ns2, in2, nvd2}]),
+			get_jobs(o2, [{ns, in, nvd}, {ns2, in2, nvd2}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}, {o2, gsn2, u2, s, d}],
 							{ns2, in2, nvd2} => [{o2, gsn2, u2, s2, d2}] })).

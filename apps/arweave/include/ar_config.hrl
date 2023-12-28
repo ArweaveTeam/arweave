@@ -187,7 +187,9 @@
 	cm_peers = [],
 	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
 	pool_server = false,
-	pool_client = false
+	pool_client = false,
+	pool_host = not_set,
+	pool_api_key = not_set
 }).
 
 -endif.
