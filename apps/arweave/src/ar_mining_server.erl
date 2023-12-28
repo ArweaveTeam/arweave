@@ -83,7 +83,7 @@ post_solution(Solution) ->
 
 init(Workers) ->
 	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(nonce_limiter),
+	[ok, ok] = ar_events:subscribe([nonce_limiter, pool]),
 	ar_chunk_storage:open_files("default"),
 	reset_chunk_cache_size(),
 	%% Initialize the map with dummy values for the VDF session keys. Once we receive our first
@@ -181,59 +181,20 @@ handle_info({event, nonce_limiter, {computed_output, _}}, #state{ paused = true 
 	?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}]),
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
-
-	true = is_integer(StepNumber),
-	ar_mining_stats:vdf_computed(),
-
-	State2 = case ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound) of
+	case ar_pool:is_client() of
 		true ->
-			%% If the largest seen upper bound changed, a new partition may have been added
-			%% to the mining set, so we may need to update the chunk cache size limit.
-			State#state{
-				chunk_cache_size_limit = get_chunk_cache_size_limit(State)
-			};
+			%% Ignore VDF events because we are receiving jobs from the pool.
+			{noreply, State};
 		false ->
-			State
-	end,
-
-	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
-	{Workers, State3} = 
-		case get_workers(SessionKey, State2) of
-			[] ->
-				RefreshedState = refresh_workers(State2),
-				{get_workers(SessionKey, RefreshedState), RefreshedState};
-			Workers2 ->
-				{Workers2, State2}
-		end,
-	
-	case Workers of
-		[] ->
-			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output},
-				{step_number, StepNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
-			ok;
-		_ ->
-			Candidate = #mining_candidate{
-				session_key = SessionKey,
-				next_seed = NextSeed,
-				next_vdf_difficulty = NextVDFDifficulty,
-				start_interval_number = StartIntervalNumber,
-				step_number = StepNumber,
-				nonce_limiter_output = Output,
-				partition_upper_bound = PartitionUpperBound
-			},
-			N = distribute_output(Workers, Candidate),
-			?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
-				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
-				{start_interval_number, StartIntervalNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
-	end,
-	{noreply, State3};
+			handle_computed_output(Args, State)
+	end;
 
 handle_info({event, nonce_limiter, Message}, State) ->
 	?LOG_DEBUG([{event, mining_debug_skipping_nonce_limiter}, {message, Message}]),
 	{noreply, State};
+
+handle_info({event, pool, {job, Args}}, State) ->
+	handle_computed_output(Args, State);
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
@@ -273,24 +234,24 @@ set_difficulty(Diff, State) ->
 refresh_workers(State) ->
 	#state{ workers = WorkersBySession } = State,
 
-	{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
-	PreviousSessionKey = CurrentSession#vdf_session.prev_session_key,
+	NewSessions = get_current_session_keys(),
 	MappedSessions = maps:keys(WorkersBySession),
 
-	?LOG_DEBUG([{event, mining_debug_refreshing_workers},
-		{current_session_key, ar_nonce_limiter:encode_session_key(CurrentSessionKey)},
-		{previous_session_key, ar_nonce_limiter:encode_session_key(PreviousSessionKey)},
-		{mapped_sessions, 
-			[ar_nonce_limiter:encode_session_key(SessionKey) || SessionKey <- MappedSessions]}]),
-
-	NewSessions = case ar_nonce_limiter:get_session(PreviousSessionKey) of
-		not_found ->
-			?LOG_DEBUG([{event, mining_debug_missing_previous_session},
-				{previous_session_key, ar_nonce_limiter:encode_session_key(PreviousSessionKey)}]),
-			[CurrentSessionKey];
-		_ ->
-			[CurrentSessionKey, PreviousSessionKey]
-	end,
+	PreviousSessionLogEntries =
+		case length(NewSessions) > 1 of
+			false ->
+				[];
+			true ->
+				[{previous_session_key,
+					ar_nonce_limiter:encode_session_key(lists:nth(2, NewSessions))}]
+		end,
+	RefreshLogEntries = [{event, mining_debug_refreshing_workers},
+			{current_session_key, ar_nonce_limiter:encode_session_key(hd(NewSessions))}]
+		++ PreviousSessionLogEntries
+		++ [{mapped_sessions,
+				[ar_nonce_limiter:encode_session_key(SessionKey)
+				|| SessionKey <- MappedSessions]}],
+	?LOG_DEBUG(RefreshLogEntries),
 
 	SessionsToAdd = [SessionKey || SessionKey <- NewSessions,
 			SessionKey /= undefined andalso not maps:is_key(SessionKey, WorkersBySession)],
@@ -300,6 +261,16 @@ refresh_workers(State) ->
 
 	WorkersBySession2 = refresh_workers(SessionsToAdd, SessionsToRemove2, WorkersBySession),
 	State#state{ workers = WorkersBySession2 }.
+
+get_current_session_keys() ->
+	case ar_pool:is_client() of
+		false ->
+			{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
+			PreviousSessionKey = CurrentSession#vdf_session.prev_session_key,
+			[CurrentSessionKey, PreviousSessionKey];
+		true ->
+			ar_pool:get_current_sessions()
+	end.
 
 refresh_workers([], [], WorkersBySession) ->
 	WorkersBySession;
@@ -615,6 +586,55 @@ post_solution(ExitPeer, Solution, _State) ->
 					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end.
 
+handle_computed_output(Args, State) ->
+	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	true = is_integer(StepNumber),
+	ar_mining_stats:vdf_computed(),
+
+	State2 = case ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound) of
+		true ->
+			%% If the largest seen upper bound changed, a new partition may have been added
+			%% to the mining set, so we may need to update the chunk cache size limit.
+			State#state{
+				chunk_cache_size_limit = get_chunk_cache_size_limit(State)
+			};
+		false ->
+			State
+	end,
+
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
+	{Workers, State3} =
+		case get_workers(SessionKey, State2) of
+			[] ->
+				RefreshedState = refresh_workers(State2),
+				{get_workers(SessionKey, RefreshedState), RefreshedState};
+			Workers2 ->
+				{Workers2, State2}
+		end,
+
+	case Workers of
+		[] ->
+			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output},
+				{step_number, StepNumber},
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+			ok;
+		_ ->
+			Candidate = #mining_candidate{
+				session_key = SessionKey,
+				next_seed = NextSeed,
+				next_vdf_difficulty = NextVDFDifficulty,
+				start_interval_number = StartIntervalNumber,
+				step_number = StepNumber,
+				nonce_limiter_output = Output,
+				partition_upper_bound = PartitionUpperBound
+			},
+			N = distribute_output(Workers, Candidate),
+			?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
+				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
+				{start_interval_number, StartIntervalNumber},
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
+	end,
+	{noreply, State3}.
 
 read_poa(RecallByte, Chunk, MiningAddress) ->
 	PoA = read_poa(RecallByte, MiningAddress),

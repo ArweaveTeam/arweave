@@ -53,6 +53,8 @@ init([]) ->
 		?CHILD(ar_events, chunk_storage, worker),
 		%% Events: add_range, remove_range, cut
 		?CHILD(ar_events, data_sync, worker),
+		%% Events: job
+		?CHILD(ar_events, pool, worker),
 		%% Used for the testing purposes.
 		?CHILD(ar_events, testing, worker)
 	]}}.

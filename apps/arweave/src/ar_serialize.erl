@@ -23,11 +23,14 @@
 		nonce_limiter_update_to_binary/2, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
 		candidate_to_json_struct/1, solution_to_json_struct/1,
-		json_struct_to_candidate/1, json_struct_to_solution/1]).
+		json_struct_to_candidate/1, json_struct_to_solution/1,
+		jobs_to_json_struct/1, json_struct_to_jobs/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
+-include_lib("arweave/include/ar_pool.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -1820,3 +1823,71 @@ decode_if_set(JSON, JSONProperty, Decoder, Default) ->
 		EncodedValue ->
 			Decoder(EncodedValue)
 	end.
+
+jobs_to_json_struct(Jobs) ->
+	#jobs{ vdf = JobList, diff = Diff, seed = Seed, next_seed = NextSeed,
+			interval_number = IntervalNumber, next_vdf_difficulty = NextVDFDiff } = Jobs,
+
+	{[{vdf, [job_to_json_struct(Job) || Job <- JobList]},
+		{diff, integer_to_binary(Diff)},
+		{seed, ar_util:encode(Seed)},
+		{next_seed, ar_util:encode(NextSeed)},
+		{interval_number, integer_to_binary(IntervalNumber)},
+		{next_vdf_difficulty, integer_to_binary(NextVDFDiff)}
+	]}.
+
+job_to_json_struct(Job) ->
+	#job{ output = Output, global_step_number = StepNumber,
+			partition_upper_bound = PartitionUpperBound } = Job,
+	{[{output, ar_util:encode(Output)},
+			{global_step_number, integer_to_binary(StepNumber)},
+			{partition_upper_bound, integer_to_binary(PartitionUpperBound)}]}.
+
+json_struct_to_jobs(Struct) ->
+	{Keys} = Struct,
+	Diff = binary_to_integer(proplists:get_value(<<"diff">>, Keys, <<"0">>)),
+	Seed = ar_util:decode(proplists:get_value(<<"seed">>, Keys, <<>>)),
+	NextSeed = ar_util:decode(proplists:get_value(<<"next_seed">>, Keys, <<>>)),
+	NextVDFDiff = binary_to_integer(proplists:get_value(<<"next_vdf_difficulty">>, Keys,
+			<<"0">>)),
+	IntervalNumber = binary_to_integer(proplists:get_value(<<"interval_number">>, Keys,
+			<<"0">>)),
+	VDF = [json_struct_to_job(Job) || Job <- proplists:get_value(<<"vdf">>, Keys, [])],
+	#jobs{ vdf = VDF, seed = Seed, next_seed = NextSeed, interval_number = IntervalNumber,
+			next_vdf_difficulty = NextVDFDiff, diff = Diff }.
+
+json_struct_to_job(Struct) ->
+	{Keys} = Struct,
+	Output = ar_util:decode(proplists:get_value(<<"output">>, Keys, <<>>)),
+	StepNumber = binary_to_integer(proplists:get_value(<<"global_step_number">>, Keys,
+			<<"0">>)),
+	PartitionUpperBound = binary_to_integer(proplists:get_value(<<"partition_upper_bound">>,
+			Keys, <<"0">>)),
+	#job{ output = Output, global_step_number = StepNumber,
+			partition_upper_bound = PartitionUpperBound }.
+
+jobs_to_json_struct_test() ->
+	TestCases = [
+		#jobs{}
+		#jobs{ seed = <<"a">> },
+		#jobs{ vdf = [#job{ output = <<"o">>,
+				global_step_number = 1,
+				partition_upper_bound = 100 }] },
+		#jobs{ vdf = [#job{ output = <<"o2">>,
+					global_step_number = 2,
+					partition_upper_bound = 100 }, #job{ output = <<"o1">>,
+						global_step_number = 1,
+						partition_upper_bound = 99 }],
+				diff = 12345,
+				seed = <<"gjhgjkghjhg">>,
+				next_seed = <<"dfdgfdg">>,
+				interval_number = 23,
+				next_vdf_difficulty = 32434 }
+	],
+	lists:foreach(
+		fun(Jobs) ->
+			?assertEqual(Jobs,
+					json_struct_to_jobs(dejsonify(jsonify(jobs_to_json_struct(Jobs)))))
+		end,
+		TestCases
+	).

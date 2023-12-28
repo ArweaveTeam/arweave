@@ -460,7 +460,11 @@ handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 %% If the node is a CM exit node and a pool client, send the given solution to
 %% the pool and return an empty JSON object.
 %%
-%% If the node is a pool server, return a JSON object {"indep_hash": "...", "status": "..."},
+%% If the node is a pool server, return a JSON object:
+%% {
+%%   "indep_hash": "",
+%%   "status": ""
+%% },
 %% where the status is one of "accepted", "accepted_block", "rejected_bad_poa",
 %% "rejected_wrong_hash", "stale", "vdf_not_found".
 %% If the solution is partial, "indep_hash" string is empty.
@@ -489,10 +493,13 @@ handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 %% {
 %%   "vdf":
 %%     [
-%%       {"output": "", "seed": "", "global_step_number": "", "partition_upper_bound": ""},
+%%       {"output": "...", "global_step_number": "...", "partition_upper_bound": "..."},
 %%       ...
 %%     ],
-%%   "diff": ""
+%%   "diff": "...",
+%%   "next_seed": "...",
+%%   "interval_number": "...",
+%%   "next_vdf_difficulty": "..."
 %% }
 handle(<<"GET">>, [<<"jobs">>, EncodedPrevOutput], Req, _Pid) ->
 	case ar_node:is_joined() of
@@ -2434,7 +2441,7 @@ handle_post_partial_solution(Req, Pid) ->
 
 handle_post_partial_solution_pool_server(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
-		{ok, Body, Req2} ->
+		{ok, _Body, _Req2} ->
 			% TODO deserialize partial solution; validate and publish
 			{200, #{}, jiffy:encode(#{}), Req};
 		{error, body_size_too_large} ->
@@ -2445,7 +2452,7 @@ handle_post_partial_solution_pool_server(Req, Pid) ->
 
 handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
-		{ok, Body, Req2} ->
+		{ok, _Body, _Req2} ->
 			% TODO deserialize partial solution; send to pool
 			ok;
 		{error, body_size_too_large} ->
@@ -2502,18 +2509,17 @@ handle_get_jobs_pool_server(PrevOutput, Req) ->
 		(?GET_JOBS_TIMEOUT_S) * 1000
 	),
 	Steps = case Result of false -> []; {true, S} -> S end,
-	M = #{
-		vdf => [#{
-			output => ar_util:encode(O),
-			seed => ar_util:encode(Info#nonce_limiter_info.seed),
-			global_step_number => integer_to_binary(N),
-			partition_upper_bound => integer_to_binary(U)} || {O, N, U} <- Steps],
-		diff => integer_to_binary(Diff) },
-	{200, #{}, jiffy:encode(M), Req}.
+	{NextSeed, IntervalNumber, NextVDFDiff} = ar_nonce_limiter:session_key(Info),
+	VDF = [#job{ output = O, global_step_number = SN,
+			partition_upper_bound = U } || {O, SN, U} <- Steps],
+	Jobs = #jobs{ vdf = VDF, seed = Info#nonce_limiter_info.seed,
+			next_seed = NextSeed, interval_number = IntervalNumber,
+			next_vdf_difficulty = NextVDFDiff, diff = Diff },
+	{200, #{}, ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)), Req}.
 
 handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req) ->
-	% TODO get jobs from proxy
-	ok.
+	{200, #{}, ar_serialize:jsonify(
+			ar_serialize:jobs_to_json_struct(ar_pool:get_jobs(PrevOutput))), Req}.
 
 encode_txids([]) ->
 	<<>>;
