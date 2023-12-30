@@ -241,18 +241,15 @@ register(MetricsDir) ->
 		}
 	]),
 	prometheus_gauge:new([
-		{name, mining_read_rate},
-		{labels, [partition]},
-		{help, "The number of chunks read per second. Each chunk is 256KiB. The partition label "
-				"breaks the mining rate down by partition. The overall mining rate is inidcated by "
-				"'total'."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_hash_rate},
-		{labels, [partition]},
-		{help, "The number of solutions candidates generated per second. The partition label "
-				"breaks the mining rate down by partition. The overall mining rate is inidcated by "
-				"'total'."}
+		{name, mining_rate},
+		{labels, [type, partition]},
+		{help, "Tracks 3 different mining rate metrics, each with a different type label. "
+				"The type label can be 'read', 'hash', or 'ideal'. 'read' tracks the number of "
+				"chunks read per second - recorded in MiB per second. Each chunk is 256KiB. "
+				"'hash' tracks the number of solutions candidates generated per second. "
+				"'ideal' tracks the ideal read rate given the current VDF step time and amount of "
+				"data synced. The partition label breaks the mining rate down by partition. "
+				"The overall mining rate is inidcated by 'total'."}
 	]),
 	prometheus_gauge:new([
 		{name, cm_h1_rate},

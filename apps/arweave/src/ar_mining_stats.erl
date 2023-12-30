@@ -428,8 +428,9 @@ log_report_lines([Line | Lines]) ->
 	log_report_lines(Lines).
 
 set_metrics(Report) ->
-	prometheus_gauge:set(mining_read_rate, [total], Report#report.current_read_mibps),
-	prometheus_gauge:set(mining_hash_rate, [total],  Report#report.current_hash_hps),
+	prometheus_gauge:set(mining_rate, [read, total], Report#report.current_read_mibps),
+	prometheus_gauge:set(mining_rate, [hash, total],  Report#report.current_hash_hps),
+	prometheus_gauge:set(mining_rate, [ideal, total],  Report#report.optimal_overall_read_mibps),
 	prometheus_gauge:set(cm_h1_rate, [total, to], Report#report.current_h1_to_peer_hps),
 	prometheus_gauge:set(cm_h1_rate, [total, from], Report#report.current_h1_from_peer_hps),
 	prometheus_gauge:set(cm_h2_count, [total, to], Report#report.total_h2_to_peer),
@@ -441,10 +442,12 @@ set_partition_metrics([]) ->
 	ok;
 set_partition_metrics([PartitionReport | PartitionReports]) ->
 	PartitionNumber = PartitionReport#partition_report.partition_number,
-	prometheus_gauge:set(mining_read_rate, [PartitionNumber],
+	prometheus_gauge:set(mining_rate, [read, PartitionNumber],
 		PartitionReport#partition_report.current_read_mibps),
-	prometheus_gauge:set(mining_hash_rate, [PartitionNumber],
+	prometheus_gauge:set(mining_rate, [hash, PartitionNumber],
 		PartitionReport#partition_report.current_hash_hps),
+	prometheus_gauge:set(mining_rate, [ideal, PartitionNumber],
+		PartitionReport#partition_report.optimal_read_mibps),
 	set_partition_metrics(PartitionReports).
 
 set_peer_metrics([]) ->
@@ -463,8 +466,9 @@ set_peer_metrics([PeerReport | PeerReports]) ->
 
 clear_metrics() ->
 	Report = generate_report(),
-	prometheus_gauge:set(mining_read_rate, [total], 0),
-	prometheus_gauge:set(mining_hash_rate, [total],  0),
+	prometheus_gauge:set(mining_rate, [read, total], 0),
+	prometheus_gauge:set(mining_rate, [hash, total],  0),
+	prometheus_gauge:set(mining_rate, [ideal, total],  0),
 	prometheus_gauge:set(cm_h1_rate, [total, to], 0),
 	prometheus_gauge:set(cm_h1_rate, [total, from], 0),
 	prometheus_gauge:set(cm_h2_count, [total, to], 0),
@@ -476,8 +480,9 @@ clear_partition_metrics([]) ->
 	ok;
 clear_partition_metrics([PartitionReport | PartitionReports]) ->
 	PartitionNumber = PartitionReport#partition_report.partition_number,
-	prometheus_gauge:set(mining_read_rate, [PartitionNumber], 0),
-	prometheus_gauge:set(mining_hash_rate, [PartitionNumber], 0),
+	prometheus_gauge:set(mining_rate, [read, PartitionNumber], 0),
+	prometheus_gauge:set(mining_rate, [hash, PartitionNumber], 0),
+	prometheus_gauge:set(mining_rate, [ideal, PartitionNumber], 0),
 	clear_partition_metrics(PartitionReports).
 
 clear_peer_metrics([]) ->
