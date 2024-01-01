@@ -3,13 +3,8 @@
 set -e
 
 SCRIPT_DIR="$(dirname "$0")"
-cd "$SCRIPT_DIR/.."
 
-export ERL_EPMD_ADDRESS=127.0.0.1
+# Sets $ARWEAVE and $ARWEAVE_* variables
+source $SCRIPT_DIR/arweave.env
 
-erl -pa `./rebar3 path` \
-    -noshell \
-    -config config/sys.config \
-    -name stopper@127.0.0.1 \
-    -setcookie arweave \
-    -s ar shutdown arweave@127.0.0.1 -s init stop
+$ARWEAVE stop

@@ -5,7 +5,6 @@ set -e
 SCRIPT_DIR="$(dirname "$0")"
 
 # Sets $ARWEAVE and $ARWEAVE_* variables
-export ARWEAVE_BUILD_TARGET="localnet"
 source $SCRIPT_DIR/arweave.env
 
 while true; do

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+$SCRIPT_DIR/check-nofile
+
+# Sets $ARWEAVE and $COMMAND
+source $SCRIPT_DIR/arweave.env
+
+echo "Moving the benchmark folder to benchmark.old..."
+rm -rf benchmark.old
+if [ -d benchmark ]; then
+    mv -i benchmark benchmark.old;
+fi
+
+$ARWEAVE foreground -run ar main $RANDOMX_JIT init mine data_dir benchmark

@@ -10,6 +10,9 @@ debug_logs
 apps/arweave/priv/tls
 apps/arweave/priv/*.so
 _build
+releases
+lib
+bin/arweave-dev
 /result
 .rebar3
 apps/arweave/c_src/**/*.o

@@ -4,4 +4,4 @@ set -e
 
 SCRIPT_DIR="$(dirname "$0")"
 
-"$SCRIPT_DIR/bin/start-dev" "$@"
+"$SCRIPT_DIR/bin/start" "$@"
