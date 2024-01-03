@@ -467,7 +467,7 @@ handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 %% },
 %% where the status is one of "accepted", "accepted_block", "rejected_bad_poa",
 %% "rejected_wrong_hash", "rejected_bad_vdf", "rejected_mining_address_banned",
-%% "stale", "vdf_not_found".
+%% "stale", "rejected_vdf_not_found", "rejected_missing_key_file".
 %% If the solution is partial, "indep_hash" string is empty.
 handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 	case ar_node:is_joined() of

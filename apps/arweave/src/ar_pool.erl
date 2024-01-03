@@ -126,20 +126,42 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, solution,
-		{rejected, #{ reason := mining_address_banned, request_ref := Ref }}}, State) ->
+		{rejected, #{ reason := mining_address_banned, source := {pool, Ref} }}}, State) ->
 	#state{ request_pid_by_ref = Map } = State,
 	PID = maps:get(Ref, Map),
 	gen_server:reply(PID,
-			#partial_solution_response{ status = <<"mining_address_banned">> }),
+			#partial_solution_response{ status = <<"rejected_mining_address_banned">> }),
 	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
 
-handle_info({event, solution, {processed, #{ request_ref := Ref }}}, State) ->
+handle_info({event, solution,
+		{rejected, #{ reason := missing_key_file, source := {pool, Ref} }}}, State) ->
+	#state{ request_pid_by_ref = Map } = State,
+	PID = maps:get(Ref, Map),
+	gen_server:reply(PID,
+			#partial_solution_response{ status = <<"rejected_missing_key_file">> }),
+	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
+
+handle_info({event, solution,
+		{rejected, #{ reason := vdf_not_found, source := {pool, Ref} }}}, State) ->
+	#state{ request_pid_by_ref = Map } = State,
+	PID = maps:get(Ref, Map),
+	gen_server:reply(PID, #partial_solution_response{ status = <<"rejected_vdf_not_found">> }),
+	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
+
+handle_info({event, solution,
+		{rejected, #{ reason := bad_vdf, source := {pool, Ref} }}}, State) ->
+	#state{ request_pid_by_ref = Map } = State,
+	PID = maps:get(Ref, Map),
+	gen_server:reply(PID, #partial_solution_response{ status = <<"rejected_bad_vdf">> }),
+	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
+
+handle_info({event, solution, {processed, #{ source := {pool, Ref} }}}, State) ->
 	#state{ request_pid_by_ref = Map } = State,
 	PID = maps:get(Ref, Map),
 	gen_server:reply(PID, #partial_solution_response{ status = <<"accepted">> }),
 	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
 
-handle_info({event, solution, {stale, #{ request_ref := Ref }}}, State) ->
+handle_info({event, solution, {stale, #{ source := {pool, Ref} }}}, State) ->
 	#state{ request_pid_by_ref = Map } = State,
 	PID = maps:get(Ref, Map),
 	gen_server:reply(PID, #partial_solution_response{ status = <<"stale">> }),
@@ -401,7 +423,7 @@ process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache) ->
 	case ar_nonce_limiter:get_step_checkpoints_seed_upper_bound(StepNumber, NextSeed,
 			StartIntervalNumber, NextVDFDifficulty) of
 		not_found ->
-			#partial_solution_response{ status = <<"vdf_not_found">> };
+			#partial_solution_response{ status = <<"rejected_vdf_not_found">> };
 		{[Output | _] = LastStepCheckpoints, Seed, PartitionUpperBound} ->
 			Solution2 =
 				Solution#mining_solution{
@@ -689,7 +711,7 @@ test_process_solution() ->
 						data_path = << 0:(349504 * 8) >> },
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"vdf_not_found">> }},
+			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"Bad VDF 1",
 			#mining_solution{ next_seed = << 1:256 >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
