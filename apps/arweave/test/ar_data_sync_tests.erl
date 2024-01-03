@@ -795,9 +795,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
 			?assertEqual(RecallByte, B#block.recall_byte),
 			?assertMatch({true, _}, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-					BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
-					{spora_2_6, B#block.reward_addr},
-					B#block.merkle_rebase_support_threshold, not_set})),
+					BlockEnd - BlockStart, PoA,
+					{spora_2_6, B#block.reward_addr}, not_set})),
 			B
 		end,
 		LastB,

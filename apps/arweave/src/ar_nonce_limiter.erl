@@ -5,7 +5,8 @@
 -export([start_link/0, account_tree_initialized/1, encode_session_key/1,
 		is_ahead_on_the_timeline/2, 
 		get_current_step_number/0, get_current_step_number/1, get_step_triplets/3,
-		get_seed_data/2, get_step_checkpoints/4, get_steps/4,
+		get_seed_data/2, get_step_checkpoints/4, get_step_checkpoints_seed_upper_bound/4,
+		get_steps/4,
 		validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_current_session/0,
@@ -125,6 +126,17 @@ get_step_checkpoints(StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficult
 	get_step_checkpoints(StepNumber, SessionKey).
 get_step_checkpoints(StepNumber, SessionKey) ->
 	gen_server:call(?MODULE, {get_step_checkpoints, StepNumber, SessionKey}, infinity).
+
+%% @doc Return the cached last step checkpoints, seed, and partition upper bound
+%% for the given step.
+%% Return not_found if the VDF session or cached last step checkpoints are not found.
+get_step_checkpoints_seed_upper_bound(StepNumber, NextSeed, StartIntervalNumber,
+		NextVDFDifficulty) ->
+	SessionKey = {NextSeed, StartIntervalNumber, NextVDFDifficulty},
+	get_step_checkpoints_seed_upper_bound(StepNumber, SessionKey).
+get_step_checkpoints_seed_upper_bound(StepNumber, SessionKey) ->
+	gen_server:call(?MODULE, {get_step_checkpoints_seed_upper_bound, StepNumber, SessionKey},
+			infinity).
 
 %% @doc Return the steps of the given interval. The steps are chosen
 %% according to the protocol. Return not_found if the corresponding hash chain is not
@@ -469,6 +481,29 @@ handle_call({get_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
 			{reply, not_found, State};
 		#vdf_session{ step_checkpoints_map = Map } ->
 			{reply, maps:get(StepNumber, Map, not_found), State}
+	end;
+
+handle_call({get_step_checkpoints_seed_upper_bound, StepNumber, SessionKey}, _From, State) ->
+	case get_session(SessionKey, State) of
+		not_found ->
+			{reply, not_found, State};
+		#vdf_session{ step_checkpoints_map = Map, seed = Seed,
+				upper_bound = UpperBound, next_upper_bound = NextUpperBound } ->
+			case maps:get(StepNumber, Map, not_found) of
+				not_found ->
+					{reply, not_found, State};
+				L ->
+					{_NextSeed, IntervalNumber, _NextVDFDifficulty} = SessionKey,
+					IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+					UpperBound2 =
+						case get_entropy_reset_point(IntervalStart, StepNumber) of
+							none ->
+								UpperBound;
+							_ ->
+								NextUpperBound
+						end,
+					{reply, {L, Seed, UpperBound2}, State}
+			end
 	end;
 
 handle_call({get_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->

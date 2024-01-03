@@ -573,7 +573,7 @@ post_solution(not_set, Solution, State) ->
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
 					"details~n");
 		{true, PoACache, PoA2Cache} ->
-			ar_events:send(miner, {found_solution, Solution, PoACache, PoA2Cache})
+			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
 	end;
 post_solution(ExitPeer, Solution, _State) ->
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
@@ -655,7 +655,7 @@ read_poa(RecallByte, MiningAddress) ->
 
 validate_solution(Solution, Diff) ->
 	#mining_solution{
-		merkle_rebase_threshold = RebaseThreshold, mining_address = MiningAddress,
+		mining_address = MiningAddress,
 		nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, partition_upper_bound = PartitionUpperBound,
 		poa1 = PoA1, poa2 = PoA2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
@@ -669,12 +669,10 @@ validate_solution(Solution, Diff) ->
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
 	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-			?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}, RebaseThreshold,
-			not_set}) of
+			{spora_2_6, MiningAddress}, not_set}) of
 		{true, ChunkID} ->
 			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
-					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}, RebaseThreshold},
-					ChunkID},
+					{spora_2_6, MiningAddress}}, ChunkID},
 			case binary:decode_unsigned(H1, big) > Diff of
 				true ->
 					%% validates solution_hash
@@ -701,12 +699,11 @@ validate_solution(Solution, Diff) ->
 											ar_block_index:get_block_bounds(RecallByte2),
 									BlockSize2 = BlockEnd2 - BlockStart2,
 									case ar_poa:validate({BlockStart2, RecallByte2, TXRoot2,
-											BlockSize2, PoA2, ?STRICT_DATA_SPLIT_THRESHOLD,
-											{spora_2_6, MiningAddress}, RebaseThreshold, not_set}) of
+											BlockSize2, PoA2,
+											{spora_2_6, MiningAddress}, not_set}) of
 										{true, Chunk2ID} ->
 											PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2,
-													BlockSize2, ?STRICT_DATA_SPLIT_THRESHOLD,
-													{spora_2_6, MiningAddress}, RebaseThreshold},
+													BlockSize2, {spora_2_6, MiningAddress}},
 													Chunk2ID},
 											{true, PoACache, PoA2Cache};
 										Result2 ->

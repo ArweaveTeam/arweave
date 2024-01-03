@@ -23,18 +23,6 @@
 	throttle_by_solution_interval
 }).
 
-%% The original plan was to cap the proof at 262144 (also the maximum chunk size).
-%% The maximum tree depth is then (262144 - 64) / (32 + 32 + 32) = 2730.
-%% Later we added support for offset rebases by recognizing the extra 32 bytes,
-%% possibly at every branching point, as indicating a rebase. To preserve the depth maximum,
-%% we now cap the size at 2730 * (96 + 32) + 65 = 349504.
--define(MAX_DATA_PATH_SIZE, 349504).
-
-%% We may have at most 1000 transactions + 1000 padding nodes => depth=11
-%% => at most 11 * 96 + 64 bytes worth of the proof. Due to its small size, we
-%% extend it somewhat for better future-compatibility.
--define(MAX_TX_PATH_SIZE, 2176).
-
 %% The maximum size in bytes the blocks enqueued for pre-validation can occupy.
 -define(MAX_PRE_VALIDATION_QUEUE_SIZE, (200 * 1024 * 1024)).
 
@@ -226,24 +214,14 @@ pre_validate_previous_block(B, Peer) ->
 	end.
 
 pre_validate_proof_sizes(B, PrevB, Peer) ->
-	case validate_proof_size(B#block.poa, B#block.height) andalso
-			validate_proof_size(B#block.poa2, B#block.height) of
+	case ar_block:validate_proof_size(B#block.poa) andalso
+			ar_block:validate_proof_size(B#block.poa2) of
 		true ->
 			may_be_pre_validate_first_chunk_hash(B, PrevB, Peer);
 		false ->
 			post_block_reject_warn(B, check_proof_size, Peer),
 			ar_events:send(block, {rejected, invalid_proof_size, B#block.indep_hash, Peer}),
 			invalid
-	end.
-
-validate_proof_size(PoA, Height) ->
-	case Height >= ar_fork:height_2_7() of
-		true ->
-			byte_size(PoA#poa.tx_path) =< ?MAX_TX_PATH_SIZE andalso
-					byte_size(PoA#poa.data_path) =< ?MAX_DATA_PATH_SIZE andalso
-					byte_size(PoA#poa.chunk) =< ?DATA_CHUNK_SIZE;
-		false ->
-			true
 	end.
 
 may_be_pre_validate_first_chunk_hash(#block{ poa = #poa{ chunk = <<>> } } = B, PrevB, Peer) ->
@@ -709,24 +687,11 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 	RecallByte1 = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
-	RebaseThreshold =
-		case B#block.height > ar_fork:height_2_7() of
-			true ->
-				PrevB#block.merkle_rebase_support_threshold;
-			false ->
-				case B#block.height == ar_fork:height_2_7() of
-					true ->
-						PrevB#block.weave_size;
-					false ->
-						infinity
-				end
-		end,
-	ArgCache = {BlockStart1, RecallByte1, TXRoot1, BlockSize1, ?STRICT_DATA_SPLIT_THRESHOLD,
-			{spora_2_6, B#block.reward_addr}, RebaseThreshold},
+	ArgCache = {BlockStart1, RecallByte1, TXRoot1, BlockSize1,
+			{spora_2_6, B#block.reward_addr}},
 	case RecallByte1 == B#block.recall_byte andalso
 			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, B#block.poa,
-					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, B#block.reward_addr},
-					RebaseThreshold, not_set}) of
+					{spora_2_6, B#block.reward_addr}, not_set}) of
 		error ->
 			?LOG_ERROR([{event, failed_to_validate_proof_of_access},
 					{block, ar_util:encode(B#block.indep_hash)}]),
@@ -750,13 +715,11 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 							RecallByte2),
 					BlockSize2 = BlockEnd2 - BlockStart2,
 					ArgCache2 = {BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-							?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, B#block.reward_addr},
-							RebaseThreshold},
+							{spora_2_6, B#block.reward_addr}},
 					case RecallByte2 == B#block.recall_byte2 andalso
 							ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-									B#block.poa2, ?STRICT_DATA_SPLIT_THRESHOLD,
-									{spora_2_6, B#block.reward_addr}, RebaseThreshold,
-									not_set}) of
+									B#block.poa2,
+									{spora_2_6, B#block.reward_addr}, not_set}) of
 						error ->
 							?LOG_ERROR([{event, failed_to_validate_proof_of_access},
 									{block, ar_util:encode(B#block.indep_hash)}]),

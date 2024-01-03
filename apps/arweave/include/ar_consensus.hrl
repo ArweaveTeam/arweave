@@ -47,6 +47,18 @@
 -define(STRICT_DATA_SPLIT_THRESHOLD, 30607159107830).
 -endif.
 
+-ifdef(FORKS_RESET).
+	-ifdef(DEBUG).
+		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, (?STRICT_DATA_SPLIT_THRESHOLD * 2)).
+	-else.
+		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, 0).
+	-endif.
+-else.
+%% The threshold was determined on the mainnet at the 2.7 fork block. The chunks
+%% submitted after the threshold must adhere to a different set of validation rules.
+-define(MERKLE_REBASE_SUPPORT_THRESHOLD, 151066495197430).
+-endif.
+
 %% Recall bytes are only picked from the subspace up to the size
 %% of the weave at the block of the depth defined by this constant.
 -ifdef(DEBUG).
@@ -119,3 +131,15 @@ end()).
 
 %% The key to initialize the RandomX state from, for RandomX packing.
 -define(RANDOMX_PACKING_KEY, <<"default arweave 2.5 pack key">>).
+
+%% The original plan was to cap the proof at 262144 (also the maximum chunk size).
+%% The maximum tree depth is then (262144 - 64) / (32 + 32 + 32) = 2730.
+%% Later we added support for offset rebases by recognizing the extra 32 bytes,
+%% possibly at every branching point, as indicating a rebase. To preserve the depth maximum,
+%% we now cap the size at 2730 * (96 + 32) + 65 = 349504.
+-define(MAX_DATA_PATH_SIZE, 349504).
+
+%% We may have at most 1000 transactions + 1000 padding nodes => depth=11
+%% => at most 11 * 96 + 64 bytes worth of the proof. Due to its small size, we
+%% extend it somewhat for better future-compatibility.
+-define(MAX_TX_PATH_SIZE, 2176).

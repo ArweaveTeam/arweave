@@ -30,26 +30,25 @@
 }).
 
 -record(mining_solution, {
-	last_step_checkpoints = not_set,
-	merkle_rebase_threshold = not_set,
-	next_seed = not_set,
-	next_vdf_difficulty = not_set,
-	nonce = not_set,
-	nonce_limiter_output = not_set,
-	partition_number = not_set,
-	poa1 = not_set,
-	poa2 = not_set,
-	preimage = not_set,
-	recall_byte1 = undefined, %% undefined instead of not_set for compatibility with existing code
+	last_step_checkpoints = [],
+	merkle_rebase_threshold = 0,
+	next_seed = << 0:256 >>,
+	next_vdf_difficulty = 0,
+	nonce = 0,
+	nonce_limiter_output = << 0:256 >>,
+	partition_number = 0,
+	poa1 = #poa{},
+	poa2 = #poa{},
+	preimage = << 0:256 >>,
+	recall_byte1 = 0,
 	recall_byte2 = undefined,
-	solution_hash = not_set,
-	start_interval_number = not_set,
-	step_number = not_set,
-	steps = not_set,
-	%% Not used in block, but cached to improve validation and logging:
-	seed = not_set,
-	mining_address = not_set,
-	partition_upper_bound = not_set
+	solution_hash = << 0:256 >>,
+	start_interval_number = 0,
+	step_number = 0,
+	steps = [],
+	seed = << 0:256 >>,
+	mining_address = << 0:256 >>,
+	partition_upper_bound = 0
 }).
 
 -endif.

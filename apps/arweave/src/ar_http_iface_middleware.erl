@@ -466,7 +466,8 @@ handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 %%   "status": ""
 %% },
 %% where the status is one of "accepted", "accepted_block", "rejected_bad_poa",
-%% "rejected_wrong_hash", "stale", "vdf_not_found".
+%% "rejected_wrong_hash", "rejected_bad_vdf", "rejected_mining_address_banned",
+%% "stale", "vdf_not_found".
 %% If the solution is partial, "indep_hash" string is empty.
 handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 	case ar_node:is_joined() of
@@ -2441,9 +2442,16 @@ handle_post_partial_solution(Req, Pid) ->
 
 handle_post_partial_solution_pool_server(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
-		{ok, _Body, _Req2} ->
-			% TODO deserialize partial solution; validate and publish
-			{200, #{}, jiffy:encode(#{}), Req};
+		{ok, Body, Req2} ->
+			case catch ar_serialize:json_map_to_partial_solution(
+					jiffy:decode(Body, [return_maps])) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+				Solution ->
+					Response = ar_pool:process_partial_solution(Solution),
+					JSON = ar_serialize:partial_solution_response_to_json_struct(Response),
+					{200, #{}, ar_serialize:jsonify(JSON), Req2}
+			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
 		{error, timeout} ->

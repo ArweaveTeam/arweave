@@ -452,13 +452,12 @@ handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
 
-handle_info({event, miner, {found_solution, _Solution, _PoACache, _PoA2Cache}},
+handle_info({event, miner, {found_solution, miner, _Solution, _PoACache, _PoA2Cache}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
-handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, State) ->
+handle_info({event, miner, {found_solution, _Source, Solution, PoACache, PoA2Cache}}, State) ->
 	#mining_solution{ 
 		last_step_checkpoints = LastStepCheckpoints,
-		merkle_rebase_threshold = MerkleRebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NonceLimiterNextSeed,
 		next_vdf_difficulty = NonceLimiterNextVDFDifficulty,
@@ -475,6 +474,7 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 		step_number = StepNumber,
 		steps = SuppliedSteps
 	} = Solution,
+	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),

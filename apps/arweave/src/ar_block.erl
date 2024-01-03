@@ -15,7 +15,8 @@
 		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
 		get_packing_threshold/2, 
 		validate_block_time_history_hash/2, update_block_time_history/2,
-		compute_block_interval/1, compute_next_vdf_difficulty/1]).
+		compute_block_interval/1, compute_next_vdf_difficulty/1,
+		validate_proof_size/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -265,6 +266,11 @@ compute_next_vdf_difficulty(PrevB) ->
 		false ->
 			?VDF_DIFFICULTY
 	end.
+
+validate_proof_size(PoA) ->
+	byte_size(PoA#poa.tx_path) =< ?MAX_TX_PATH_SIZE andalso
+			byte_size(PoA#poa.data_path) =< ?MAX_DATA_PATH_SIZE andalso
+			byte_size(PoA#poa.chunk) =< ?DATA_CHUNK_SIZE.
 
 %% @doc Compute the block identifier (also referred to as "independent hash").
 indep_hash(B) ->

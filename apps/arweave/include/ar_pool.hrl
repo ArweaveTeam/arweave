@@ -27,3 +27,9 @@
 	global_step_number = 0,
 	partition_upper_bound = 0
 }).
+
+%% @doc Partial solution validation response.
+-record(partial_solution_response, {
+	indep_hash = <<>>,
+	status = <<>>
+}).
