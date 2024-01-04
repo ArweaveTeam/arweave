@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(dirname "$0")"
 cd "$SCRIPT_DIR/.."
 
-./rebar3 as test compile
+./ar-rebar3 test compile
 
 if [ `uname -s` == "Darwin" ]; then
     RANDOMX_JIT="disable randomx_jit"
