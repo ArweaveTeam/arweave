@@ -506,13 +506,13 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 			true ->
 				ar_events:send(solution, {rejected, #{ reason => mining_address_banned,
 						source => Source }}),
-				false;
+				{false, address_banned};
 			false ->
 				case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
 						TipNonceLimiterInfo) of
 					false ->
 						ar_events:send(solution, {stale, #{ source => Source }}),
-						false;
+						{false, timeline};
 					true ->
 						true
 				end
@@ -525,14 +525,14 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck =
 		case PassesTimelineCheck of
-			false ->
-				false;
+			{false, Reason} ->
+				{false, Reason};
 			true ->
 				case {IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
 						== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty} of
 					false ->
 						ar_events:send(solution, {stale, #{ source => Source }}),
-						false;
+						{false, seed_data};
 					true ->
 						true
 				end
@@ -542,13 +542,13 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 	Diff = get_current_diff(Timestamp),
 	PassesDiffCheck =
 		case PassesSeedCheck of
-			false ->
-				false;
+			{false, Reason2} ->
+				{false, Reason2};
 			true ->
 				case binary:decode_unsigned(SolutionH, big) > Diff of
 					false ->
 						ar_events:send(solution, {processed, #{ source => Source }}),
-						false;
+						{false, diff};
 					true ->
 						true
 				end
@@ -565,14 +565,14 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 	end,
 	PassesKeyCheck =
 		case PassesDiffCheck of
-			false ->
-				false;
+			{false, Reason3} ->
+				{false, Reason3};
 			true ->
 				case RewardKey of
 					not_found ->
 						ar_events:send(solution,
 							{rejected, #{ reason => missing_key_file, source => Source }}),
-						false;
+						{false, wallet_not_found};
 					_ ->
 						true
 				end
@@ -581,24 +581,22 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 	PrevB = ar_block_cache:get(block_cache, PrevH),
 	CorrectRebaseThreshold =
 		case PassesKeyCheck of
-			false ->
-				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
-					{check, seed_check}, {solution, ar_util:encode(SolutionH)}]),
-				false;
+			{false, Reason4} ->
+				{false, Reason4};
 			true ->
 				case get_merkle_rebase_threshold(PrevB) of
 					MerkleRebaseThreshold ->
 						true;
 					_ ->
-						false
+						{false, rebase_threshold}
 				end
 		end,
 	%% Check steps and step checkpoints.
 	HaveSteps =
 		case CorrectRebaseThreshold of
-			false ->
-				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
-					{check, rebase_threshold_check}, {solution, ar_util:encode(SolutionH)}]),
+			{false, Reason5} ->
+				?LOG_INFO([{event, ignore_mining_solution},
+					{reason, Reason5}, {solution, ar_util:encode(SolutionH)}]),
 				false;
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed,
