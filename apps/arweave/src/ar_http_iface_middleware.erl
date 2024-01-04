@@ -2460,9 +2460,9 @@ handle_post_partial_solution_pool_server(Req, Pid) ->
 
 handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
-		{ok, _Body, _Req2} ->
-			% TODO deserialize partial solution; send to pool
-			ok;
+		{ok, Body, Req2} ->
+			ar_pool:post_partial_solution(Body),
+			{200, #{}, jiffy:encode(#{}), Req2};
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
 		{error, timeout} ->

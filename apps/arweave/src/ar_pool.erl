@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([start_link/0, is_client/0, get_current_sessions/0, get_jobs/1,
-		get_latest_output/0, cache_jobs/1, process_partial_solution/1]).
+		get_latest_output/0, cache_jobs/1, process_partial_solution/1,
+		post_partial_solution/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -55,6 +56,10 @@ cache_jobs(Jobs) ->
 %% producing a block, produce and publish a block.
 process_partial_solution(Solution) ->
 	gen_server:call(?MODULE, {process_partial_solution, Solution}, infinity).
+
+%% @doc Send the partial solution to the pool.
+post_partial_solution(Solution) ->
+	gen_server:cast(?MODULE, {post_partial_solution, Solution}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -120,6 +125,24 @@ handle_cast({cache_jobs, Jobs}, State) ->
 		end,
 	{noreply, State#state{ session_keys = SessionKeys3,
 			jobs_by_session_key = JobsBySessionKey2 }};
+
+handle_cast({post_partial_solution, Solution}, State) ->
+	Payload =
+		case is_binary(Solution) of
+			true ->
+				Solution;
+			false ->
+				ar_serialize:jsonify(ar_serialize:partial_solution_to_json_struct(Solution))
+		end,
+	{ok, Config} = application:get_env(arweave, config),
+	case ar_http_iface_client:post_partial_solution(Config#config.pool_host, Payload) of
+		{ok, _Response} ->
+			ok;
+		{error, Error} ->
+			?LOG_WARNING([{event, failed_to_submit_partial_solution},
+					{reason, io_lib:format("~p", [Error])}])
+	end,
+	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),

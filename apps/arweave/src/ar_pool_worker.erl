@@ -41,18 +41,16 @@ handle_call(Request, _From, State) ->
 handle_cast(fetch_jobs, State) ->
 	PrevOutput = ar_pool:get_latest_output(),
 	{ok, Config} = application:get_env(arweave, config),
-	{Peer, AuthHeader} =
+	{Peer, Pool} =
 		case {Config#config.coordinated_mining, Config#config.cm_exit_peer} of
 			{true, not_set} ->
-				{Config#config.pool_host,
-					{<<"x-pool-api-key">>, Config#config.pool_api_key}};
+				{Config#config.pool_host, true};
 			{true, ExitPeer} ->
-				{ExitPeer, {<<"x-cm-api-secret">>, Config#config.cm_api_secret}};
+				{ExitPeer, false};
 			_ ->
-				{Config#config.pool_host,
-					{<<"x-pool-api-key">>, Config#config.pool_api_key}}
+				{Config#config.pool_host, true}
 		end,
-	case ar_http_iface_client:get_jobs(Peer, PrevOutput, AuthHeader) of
+	case ar_http_iface_client:get_jobs(Peer, PrevOutput, Pool) of
 		{ok, Jobs} ->
 			emit_pool_jobs(Jobs),
 			ar_pool:cache_jobs(Jobs),

@@ -505,7 +505,7 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 		case IsBanned of
 			true ->
 				ar_events:send(solution, {rejected, #{ reason => mining_address_banned,
-						source => Source }});
+						source => Source }}),
 				false;
 			false ->
 				case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
@@ -570,7 +570,8 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 			true ->
 				case RewardKey of
 					not_found ->
-						ar_events:send(solution, {processed, #{ source => Source }}),
+						ar_events:send(solution,
+							{rejected, #{ reason => missing_key_file, source => Source }}),
 						false;
 					_ ->
 						true
