@@ -481,6 +481,7 @@ prepare_solution(proofs, Candidate, Solution) ->
 	#mining_candidate{
 		h0 = H0, h1 = H1, h2 = H2, nonce = Nonce, partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
+	#mining_solution{ poa1 = PoA1, poa2 = PoA2 } = Solution,
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 			PartitionUpperBound),
 	case { H1, H2 } of
@@ -488,10 +489,12 @@ prepare_solution(proofs, Candidate, Solution) ->
 			error;
 		{H1, not_set} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{
-				solution_hash = H1, recall_byte1 = RecallByte1, poa2 = #poa{} });
+				solution_hash = H1, recall_byte1 = RecallByte1,
+				poa1 = may_be_empty_poa(PoA1), poa2 = #poa{} });
 		{_, H2} ->
 			prepare_solution(poa2, Candidate, Solution#mining_solution{
-				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2 })
+				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+				poa1 = may_be_empty_poa(PoA1), poa2 = may_be_empty_poa(PoA2) })
 	end;
 
 prepare_solution(poa1, Candidate,
@@ -611,6 +614,11 @@ post_solution(ExitPeer, Solution, _State) ->
 			ar:console("We found a solution but failed to reach the exit node, "
 					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end.
+
+may_be_empty_poa(not_set) ->
+	#poa{};
+may_be_empty_poa(#poa{} = PoA) ->
+	PoA.
 
 handle_computed_output(Args, State) ->
 	{SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff} = Args,
