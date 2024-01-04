@@ -1060,7 +1060,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"reserved_rewards_total">>], Req, _Pid)
 			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
 				{ok, AddrOK} when byte_size(AddrOK) == 32 ->
 					B = ar_node:get_current_block(),
-					Sum = get_reward_sum(AddrOK, B#block.reward_history, B#block.denomination),
+					Sum = ar_rewards:get_total_reward_for_address(AddrOK, B),
 					{200, #{}, integer_to_binary(Sum), Req};
 				_ ->
 					{400, #{}, <<"Invalid address.">>, Req}
@@ -2782,19 +2782,6 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 				wallets => SerializedWallets
 			})
 	end.
-
-get_reward_sum(Addr, L, Denomination) ->
-	get_reward_sum(Addr, L, Denomination, ?REWARD_HISTORY_BLOCKS, 0).
-
-get_reward_sum(_Addr, _L, _Denomination, 0, Sum) ->
-	Sum;
-get_reward_sum(_Addr, [], _Denomination, _N, Sum) ->
-	Sum;
-get_reward_sum(Addr, [{Addr, _HashRate, Reward, RDenomination} | L], Denomination, N, Sum) ->
-	Reward2 = ar_pricing:redenominate(Reward, RDenomination, Denomination),
-	get_reward_sum(Addr, L, Denomination, N - 1, Sum + Reward2);
-get_reward_sum(Addr, [_ | L], Denomination, N, Sum) ->
-	get_reward_sum(Addr, L, Denomination, N - 1, Sum).
 
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->

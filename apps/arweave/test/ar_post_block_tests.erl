@@ -217,7 +217,7 @@ test_reject_block_invalid_miner_reward({Key, B, PrevB}) ->
 	RewardHistory = tl(B2#block.reward_history),
 	Addr = B2#block.reward_addr,
 	B3 = sign_block(B2#block{
-			reward_history_hash = ar_block:reward_history_hash([{Addr, HashRate, 0, 1}
+			reward_history_hash = ar_rewards:reward_history_hash([{Addr, HashRate, 0, 1}
 					| RewardHistory]) }, PrevB, Key),
 	post_block(B3, invalid_miner_reward).
 

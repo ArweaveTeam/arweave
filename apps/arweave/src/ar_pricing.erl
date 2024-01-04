@@ -45,13 +45,13 @@ is_v2_pricing_height(Height) ->
 %% network hash rates and block rewards. The total reward used in calculations
 %% is at least 1 Winston, even if all block rewards from the given history are 0.
 %% Also, the returned price is always at least 1 Winston.
-get_price_per_gib_minute(Height, RewardHistory, BlockTimeHistory, Denomination2) ->
+get_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination) ->
 	Fork_2_7 = ar_fork:height_2_7(),
 	PriceTransitionStart = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
 	PriceTransitionEnd = PriceTransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS,
 
 	PreTransitionPrice = ?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
-	NewPrice = get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2),
+	NewPrice = get_price_per_gib_minute2(Height, LockedRewards, BlockTimeHistory, Denomination),
 
 	case Height of
 		_ when Height < Fork_2_7 ->
@@ -74,16 +74,9 @@ get_price_per_gib_minute(Height, RewardHistory, BlockTimeHistory, Denomination2)
 			NewPrice
 	end.
 
-get_price_per_gib_minute2(Height, RewardHistory, BlockTimeHistory, Denomination2) ->
-	{HashRateTotal, RewardTotal} =
-		lists:foldl(
-			fun({_Addr, HashRate, Reward, Denomination}, {Acc1, Acc2}) ->
-				Reward2 = redenominate(Reward, Denomination, Denomination2),
-				{Acc1 + HashRate, Acc2 + Reward2}
-			end,
-			{0, 0},
-			RewardHistory
-		),
+get_price_per_gib_minute2(Height, LockedRewards, BlockTimeHistory, Denomination) ->
+	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(LockedRewards, Denomination),
+
 	case Height - ?BLOCK_TIME_HISTORY_BLOCKS >= ar_fork:height_2_7() of
 		true ->
 			{IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount} =
@@ -313,8 +306,7 @@ get_initial_current_and_scheduled_price_per_gib_minute(B) ->
 	{Price, Price}.
 
 recalculate_price_per_gib_minute2(B) ->
-	#block{ height = PrevHeight, reward_history = RewardHistory,
-			block_time_history = BlockTimeHistory,
+	#block{ height = PrevHeight, block_time_history = BlockTimeHistory,
 			denomination = Denomination, price_per_gib_minute = Price,
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
 	Height = PrevHeight + 1,
@@ -332,11 +324,11 @@ recalculate_price_per_gib_minute2(B) ->
 					%% price_per_gib_minute = scheduled_price_per_gib_minute
 					%% scheduled_price_per_gib_minute = get_price_per_gib_minute() capped to
 					%%                                  0.5x to 2x of old price_per_gib_minute
-					RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
+					LockedRewards = ar_rewards:get_locked_rewards(B),
 					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
 							?BLOCK_TIME_HISTORY_BLOCKS),
 					Price2 = min(Price * 2, get_price_per_gib_minute(Height,
-							RewardHistory2, BlockTimeHistory2, Denomination)),
+							LockedRewards, BlockTimeHistory2, Denomination)),
 					Price3 = max(Price div 2, Price2),
 					{ScheduledPrice, Price3}
 			end;
@@ -350,11 +342,11 @@ recalculate_price_per_gib_minute2(B) ->
 					%% 		get_price_per_gib_minute() 
 					%%		EMA'ed with scheduled_price_per_gib_minute at 0.1 alpha
 					%%		and then capped to 0.5x to 2x of scheduled_price_per_gib_minute
-					RewardHistory2 = lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS),
+					LockedRewards = ar_rewards:get_locked_rewards(B),
 					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
 							?BLOCK_TIME_HISTORY_BLOCKS),
 					TargetPrice = get_price_per_gib_minute(Height,
-							RewardHistory2, BlockTimeHistory2, Denomination),
+							LockedRewards, BlockTimeHistory2, Denomination),
 					EMAPrice = (9 * ScheduledPrice + TargetPrice) div 10,
 					Price2 = min(ScheduledPrice * 2, EMAPrice),
 					Price3 = max(ScheduledPrice div 2, Price2),

@@ -1,6 +1,6 @@
 -module(ar_join).
 
--export([start/1, set_reward_history/2, set_block_time_history/2]).
+-export([start/1, set_block_time_history/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -24,15 +24,6 @@
 %% @doc Start a process that will attempt to download the block index and the latest blocks.
 start(Peers) ->
 	spawn(fun() -> process_flag(trap_exit, true), start2(filter_peers(Peers)) end).
-
-%% @doc Add the corresponding reward history to every block record. We keep
-%% the reward histories in the block cache and use them to validate blocks applied on top.
-set_reward_history([], _RewardHistory) ->
-	[];
-set_reward_history(Blocks, []) ->
-	Blocks;
-set_reward_history([B | Blocks], RewardHistory) ->
-	[B#block{ reward_history = RewardHistory } | set_reward_history(Blocks, tl(RewardHistory))].
 
 set_block_time_history([], _BlockTimeHistory) ->
 	[];
@@ -442,24 +433,17 @@ request_block(H, WorkerQ, PeerQ) ->
 	W ! {get_block_shadow, H, Peer, self()},
 	{queue:in(W, WorkerQ2), queue:in(Peer, PeerQ2)}.
 
-may_be_set_reward_history([#block{ height = Height } | _] = Blocks, Peers) ->
-	Fork_2_6 = ar_fork:height_2_6(),
-	case Height >= Fork_2_6 of
-		true ->
-			Len = min(Height - Fork_2_6 + 1, ?STORE_BLOCKS_BEHIND_CURRENT),
-			L = [B#block.reward_history_hash || B <- lists:sublist(Blocks, Len)],
-			case ar_http_iface_client:get_reward_history(Peers, hd(Blocks), L) of
-				{ok, RewardHistory} ->
-					set_reward_history(Blocks, RewardHistory);
-				_ ->
-					ar:console("Failed to fetch the reward history for the block ~s from "
-							"any of the peers. Consider changing the peers.~n",
-							[ar_util:encode((hd(Blocks))#block.indep_hash)]),
-					timer:sleep(1000),
-					erlang:halt()
-			end;
-		false ->
-			Blocks
+may_be_set_reward_history(Blocks, Peers) ->
+	L = [B#block.reward_history_hash || B <- lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT)],
+	case ar_http_iface_client:get_reward_history(Peers, hd(Blocks), L) of
+		{ok, RewardHistory} ->
+			ar_rewards:set_reward_history(Blocks, RewardHistory);
+		_ ->
+			ar:console("Failed to fetch the reward history for the block ~s from "
+					"any of the peers. Consider changing the peers.~n",
+					[ar_util:encode((hd(Blocks))#block.indep_hash)]),
+			timer:sleep(1000),
+			erlang:halt()
 	end.
 
 may_be_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->

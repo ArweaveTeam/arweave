@@ -83,26 +83,26 @@ height_2_5() ->
 	812970.
 -endif.
 
--ifdef(FORKS_RESET).
+-ifdef(FORK_2_6_HEIGHT).
 height_2_6() ->
-	0.
+	?FORK_2_6_HEIGHT.
 -else.
-	-ifdef(TESTNET).
+	-ifdef(FORKS_RESET).
 		height_2_6() ->
-			1132210.
+			0.
 	-else.
 		height_2_6() ->
 			1132210. % Targeting 2023-03-06 14:00 UTC
 	-endif.
 -endif.
 
--ifdef(FORKS_RESET).
+-ifdef(FORK_2_6_8_HEIGHT).
 height_2_6_8() ->
-	0.
+	?FORK_2_6_8_HEIGHT.
 -else.
-	-ifdef(TESTNET).
+	-ifdef(FORKS_RESET).
 		height_2_6_8() ->
-			1189560.
+			0.
 	-else.
 		height_2_6_8() ->
 			1189560. % Targeting 2023-05-30 16:00 UTC
@@ -117,13 +117,8 @@ height_2_7() ->
 		height_2_7() ->
 			0.
 	-else.
-		-ifdef(TESTNET).
-			height_2_7() ->
-				1275480.
-		-else.
-			height_2_7() ->
-				1275480. % Targeting 2023-10-04 14:00 UTC
-		-endif.
+		height_2_7() ->
+			1275480. % Targeting 2023-10-04 14:00 UTC
 	-endif.
 -endif.
 
