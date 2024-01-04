@@ -80,11 +80,11 @@ terminate(_Reason, _State) ->
 emit_pool_jobs(Jobs) ->
 	SessionKey = {Jobs#jobs.next_seed, Jobs#jobs.interval_number,
 			Jobs#jobs.next_vdf_difficulty},
-	emit_pool_jobs(Jobs#jobs.vdf, SessionKey).
+	emit_pool_jobs(Jobs#jobs.vdf, SessionKey, Jobs#jobs.diff).
 
-emit_pool_jobs([], _SessionKey) ->
+emit_pool_jobs([], _SessionKey, _PartialDiff) ->
 	ok;
-emit_pool_jobs([{O, SN, U} | Steps], SessionKey) ->
-	Args = {SessionKey, SN, O, U},
+emit_pool_jobs([{O, SN, U} | Steps], SessionKey, PartialDiff) ->
+	Args = {SessionKey, SN, O, U, PartialDiff},
 	ar_events:send(pool, {job, Args}),
-	emit_pool_jobs(Steps, SessionKey).
+	emit_pool_jobs(Steps, SessionKey, PartialDiff).

@@ -295,13 +295,13 @@ handle_task({computed_h0, Candidate}, State) ->
 			add_delayed_task(self(), computed_h0, Candidate),
 			{noreply, State}
 	end;
-	
 
 handle_task({computed_h1, Candidate}, State) ->
 	#state{ chunk_cache = Cache, diff = Diff } = State,
 	#mining_candidate{ h1 = H1, chunk1 = Chunk1,
-		partition_number = Partition1, partition_number2 = Partition2 } = Candidate,
-	case binary:decode_unsigned(H1, big) > Diff of
+		partition_number = Partition1, partition_number2 = Partition2,
+		partial_diff = PartialDiff } = Candidate,
+	case passes_diff_check(H1, Diff, PartialDiff) of
 		true ->
 			?LOG_DEBUG([{event, mining_debug_found_h1_solution}, {worker, State#state.name},
 				{h1, ar_util:encode(H1)}, {difficulty, Diff}]),
@@ -311,7 +311,13 @@ handle_task({computed_h1, Candidate}, State) ->
 			State2 = remove_chunk_from_cache(chunk1, Candidate, State),
 			ar_mining_server:prepare_and_post_solution(Candidate),
 			{noreply, State2};
-		false ->
+		Result ->
+			case Result of
+				partial ->
+					ar_mining_server:prepare_and_post_solution(Candidate);
+				_ ->
+					ok
+			end,
 			{ok, Config} = application:get_env(arweave, config),
 			case cycle_chunk_cache(Candidate, {chunk1, Chunk1, H1}, Cache) of
 				{cached, Cache2} ->
@@ -338,7 +344,8 @@ handle_task({computed_h1, Candidate}, State) ->
 					%% Decrement 2 for chunk1 and chunk2:
 					%% 1. chunk2 was previously read and cached
 					%% 2. chunk1 that was just read and used to compute H1	
-					State2 = update_chunk_cache_size(Partition1, -1, State#state{ chunk_cache = Cache2 }),
+					State2 = update_chunk_cache_size(Partition1, -1,
+							State#state{ chunk_cache = Cache2 }),
 					State3 = update_chunk_cache_size(Partition2, -1, State2),
 					{noreply, State3}
 			end
@@ -348,9 +355,10 @@ handle_task({computed_h2, Candidate}, State) ->
 	#mining_candidate{
 		chunk2 = Chunk2, h0 = H0, h2 = H2, mining_address = MiningAddress,
 		nonce = Nonce, partition_number = Partition1, 
-		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
+		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer,
+		partial_diff = PartialDiff
 	} = Candidate,
-	case binary:decode_unsigned(H2, big) > get_difficulty(State, Candidate) of
+	case passes_diff_check(H2, get_difficulty(State, Candidate), PartialDiff) of
 		true ->
 			?LOG_DEBUG([{event, mining_debug_found_h2_solution}, {worker, State#state.name},
 				{h2, ar_util:encode(H2)}, {difficulty, get_difficulty(State, Candidate)}]),
@@ -376,6 +384,8 @@ handle_task({computed_h2, Candidate}, State) ->
 								Candidate#mining_candidate{ poa2 = PoA2 })
 					end
 			end;
+		partial ->
+			ar_mining_server:prepare_and_post_solution(Candidate);
 		false ->
 			ok
 	end,
@@ -406,6 +416,22 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+passes_diff_check(H, Diff, not_set) ->
+	binary:decode_unsigned(H, big) > Diff;
+passes_diff_check(H, Diff, PartialDiff) ->
+	Decoded = binary:decode_unsigned(H, big),
+	case Decoded > Diff of
+		true ->
+			true;
+		false ->
+			case Decoded > PartialDiff of
+				true ->
+					partial;
+				false ->
+					false
+			end
+	end.
 
 maybe_warn_about_lag(Q, Name) ->
 	case gb_sets:is_empty(Q) of

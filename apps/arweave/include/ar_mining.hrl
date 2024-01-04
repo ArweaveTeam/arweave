@@ -26,7 +26,8 @@
 	seed = not_set, %% serialized
 	session_key = not_set, %% serialized
 	start_interval_number = not_set, %% serialized
-	step_number = not_set %% serialized
+	step_number = not_set, %% serialized
+	partial_diff = not_set %% not serialized
 }).
 
 -record(mining_solution, {

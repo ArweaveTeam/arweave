@@ -24,7 +24,8 @@
 	workers						= #{},
 	chunk_cache_size_limit		= infinity,
 	diff						= infinity,
-	merkle_rebase_threshold		= infinity
+	merkle_rebase_threshold		= infinity,
+	is_pool_client				= false
 }).
 
 %%%===================================================================
@@ -96,9 +97,9 @@ init(Workers) ->
 	},
 
 	{ok, #state{
-		workers = WorkersBySession
+		workers = WorkersBySession,
+		is_pool_client = ar_pool:is_client()
 	}}.
-
 
 handle_call({has_cache_space, PartitionNumber}, _From, State) ->
 	#state{ chunk_cache_size_limit = Limit } = State,
@@ -186,7 +187,8 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 			%% Ignore VDF events because we are receiving jobs from the pool.
 			{noreply, State};
 		false ->
-			handle_computed_output(Args, State)
+			Args2 = erlang:append_element(Args, not_set),
+			handle_computed_output(Args2, State)
 	end;
 
 handle_info({event, nonce_limiter, Message}, State) ->
@@ -397,7 +399,7 @@ prepare_and_post_solution(Candidate, State) ->
 	post_solution(Solution, State).
 
 prepare_solution(Candidate, State) ->
-	#state{ merkle_rebase_threshold = RebaseThreshold } = State,
+	#state{ merkle_rebase_threshold = RebaseThreshold, is_pool_client = IsPoolClient } = State,
 	#mining_candidate{
 		mining_address = MiningAddress, next_seed = NextSeed, 
 		next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
@@ -421,8 +423,13 @@ prepare_solution(Candidate, State) ->
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	},
-	prepare_solution(last_step_checkpoints, Candidate, Solution).
-	
+	case IsPoolClient of
+		true ->
+			prepare_solution(proofs, Candidate, Solution);
+		false ->
+			prepare_solution(last_step_checkpoints, Candidate, Solution)
+	end.
+
 prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 	#mining_candidate{
 		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
@@ -458,7 +465,8 @@ prepare_solution(steps, Candidate, Solution) ->
 							[PrevStepNumber, StepNumber, PrevNextSeed]),
 					error;
 				_ ->
-					prepare_solution(proofs, Candidate, Solution#mining_solution{ steps = Steps })
+					prepare_solution(proofs, Candidate,
+							Solution#mining_solution{ steps = Steps })
 			end;
 		false ->
 			?LOG_WARNING([{event, found_solution_but_stale_step_number},
@@ -486,7 +494,8 @@ prepare_solution(proofs, Candidate, Solution) ->
 				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2 })
 	end;
 
-prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution ) ->
+prepare_solution(poa1, Candidate,
+		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
 	#mining_solution{
 		mining_address = MiningAddress, partition_number = PartitionNumber,
 		recall_byte1 = RecallByte1 } = Solution,
@@ -510,7 +519,8 @@ prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution 
 		PoA1 ->
 			Solution#mining_solution{ poa1 = PoA1 }
 	end;
-prepare_solution(poa2, Candidate, #mining_solution{ poa2 = not_set } = Solution) ->
+prepare_solution(poa2, Candidate,
+		#mining_solution{ poa2 = #poa{ chunk = <<>> } } = Solution) ->
 	#mining_solution{ mining_address = MiningAddress, partition_number = PartitionNumber,
 		recall_byte2 = RecallByte2 } = Solution,
 	#mining_candidate{
@@ -533,7 +543,8 @@ prepare_solution(poa2, Candidate, #mining_solution{ poa2 = not_set } = Solution)
 		PoA2 ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
 	end;
-prepare_solution(poa2, Candidate, #mining_solution{ poa1 = not_set } = Solution) ->
+prepare_solution(poa2, Candidate,
+		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
 	prepare_solution(poa1, Candidate, Solution);
 prepare_solution(_, _Candidate, Solution) ->
 	Solution.
@@ -543,11 +554,15 @@ post_solution(error, _State) ->
 post_solution(Solution, State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	post_solution(Config#config.cm_exit_peer, Solution, State).
+
+post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
+	ar_pool:post_partial_solution(Solution);
 post_solution(not_set, Solution, State) ->
 	#state{ diff = Diff } = State,
 	#mining_solution{
 		mining_address = MiningAddress, nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+		partition_number = PartitionNumber, recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
 		solution_hash = H, step_number = StepNumber } = Solution,
 	case validate_solution(Solution, Diff) of
 		error ->
@@ -561,8 +576,9 @@ post_solution(not_set, Solution, State) ->
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
 					"details~n");
-		false ->
+		{false, Reason} ->
 			?LOG_WARNING([{event, found_invalid_solution},
+					{reason, Reason},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
 					{mining_address, ar_util:safe_encode(MiningAddress)},
@@ -574,6 +590,16 @@ post_solution(not_set, Solution, State) ->
 					"details~n");
 		{true, PoACache, PoA2Cache} ->
 			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
+	end;
+post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
+	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution, false) of
+		{ok, _} ->
+			ok;
+		{error, Reason} ->
+			?LOG_WARNING([{event, found_partial_solution_but_failed_to_reach_exit_node},
+					{reason, io_lib:format("~p", [Reason])}]),
+			ar:console("We found a partial solution but failed to reach the exit node, "
+					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end;
 post_solution(ExitPeer, Solution, _State) ->
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
@@ -587,7 +613,7 @@ post_solution(ExitPeer, Solution, _State) ->
 	end.
 
 handle_computed_output(Args, State) ->
-	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+	{SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff} = Args,
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
 
@@ -626,7 +652,8 @@ handle_computed_output(Args, State) ->
 				start_interval_number = StartIntervalNumber,
 				step_number = StepNumber,
 				nonce_limiter_output = Output,
-				partition_upper_bound = PartitionUpperBound
+				partition_upper_bound = PartitionUpperBound,
+				partial_diff = PartialDiff
 			},
 			N = distribute_output(Workers, Candidate),
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
@@ -664,7 +691,7 @@ validate_solution(Solution, Diff) ->
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
-	%% validates recall_byte1
+	%% Assert recall_byte1 is computed correctly.
 	RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE,
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
@@ -681,15 +708,15 @@ validate_solution(Solution, Diff) ->
 				false ->
 					case RecallByte2 of
 						undefined ->
-							%% This can happen if the difficulty has increased between when the H1
-							%% solution was found and now. In this case there is no H2 solution, so
-							%% we flag the solution invalid.
-							false;
+							%% This can happen if the difficulty has increased between the
+							%% time the H1 solution was found and now. In this case,
+							%% there is no H2 solution, so we flag the solution invalid.
+							{false, h1_diff_check};
 						_ ->
 							{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
 							case binary:decode_unsigned(H2, big) > Diff of
 								false ->
-									false;
+									{false, h2_diff_check};
 								true ->
 									%% validates solution_hash
 									SolutionHash = H2,
@@ -706,14 +733,18 @@ validate_solution(Solution, Diff) ->
 													BlockSize2, {spora_2_6, MiningAddress}},
 													Chunk2ID},
 											{true, PoACache, PoA2Cache};
-										Result2 ->
-											Result2
+										error ->
+											error;
+										false ->
+											{false, poa2}
 									end
 							end
 					end
 			end;
-		Result ->
-			Result
+		error ->
+			error;
+		false ->
+			{false, poa1}
 	end.
 
 %%%===================================================================

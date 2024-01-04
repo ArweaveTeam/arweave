@@ -127,15 +127,8 @@ handle_cast({cache_jobs, Jobs}, State) ->
 			jobs_by_session_key = JobsBySessionKey2 }};
 
 handle_cast({post_partial_solution, Solution}, State) ->
-	Payload =
-		case is_binary(Solution) of
-			true ->
-				Solution;
-			false ->
-				ar_serialize:jsonify(ar_serialize:partial_solution_to_json_struct(Solution))
-		end,
 	{ok, Config} = application:get_env(arweave, config),
-	case ar_http_iface_client:post_partial_solution(Config#config.pool_host, Payload) of
+	case ar_http_iface_client:post_partial_solution(Config#config.pool_host, Solution, true) of
 		{ok, _Response} ->
 			ok;
 		{error, Error} ->

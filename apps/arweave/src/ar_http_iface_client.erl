@@ -15,7 +15,7 @@
 		get_block_time_history/3,
 		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
-		cm_publish_send/2, get_jobs/3, post_partial_solution/2]).
+		cm_publish_send/2, get_jobs/3, post_partial_solution/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -638,11 +638,22 @@ get_jobs(PeerOrURL, PrevOutput, Pool) ->
 	})).
 
 %% @doc Post the partial solution to the pool.
-post_partial_solution(URL, Payload) ->
-	#{ host := Host, port := Port, path := P } = uri_string:parse(URL),
-	Peer = {binary_to_list(Host), Port},
-	Headers = pool_client_headers(),
-	BasePath = binary_to_list(P),
+post_partial_solution(PeerOrURL, Solution, IsPool) ->
+	{Peer, Headers, BasePath} =
+		case IsPool of
+			false ->
+				{PeerOrURL, cm_p2p_headers(), ""};
+			true ->
+				#{ host := Host, port := Port, path := P } = uri_string:parse(PeerOrURL),
+				{{binary_to_list(Host), Port}, pool_client_headers(), P}
+		end,
+	Payload =
+		case is_binary(Solution) of
+			true ->
+				Solution;
+			false ->
+				ar_serialize:jsonify(ar_serialize:partial_solution_to_json_struct(Solution))
+		end,
 	handle_post_partial_solution_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -651,7 +662,7 @@ post_partial_solution(URL, Payload) ->
 		connect_timeout => 5 * 1000,
 		headers => Headers,
 		body => Payload,
-		is_peer_request => false
+		is_peer_request => not IsPool
 	})).
 
 handle_post_partial_solution_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
