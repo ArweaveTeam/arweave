@@ -34,17 +34,30 @@ test_mining_reward() ->
 	ar_test_node:wait_until_height(1),
 	B1 = ar_node:get_current_block(),
 	[{MiningAddr, _, Reward, 1}, _] = B1#block.reward_history,
-	?assertEqual(0, ar_node:get_balance(Pub1)),
-	lists:foreach(
-		fun(Height) ->
+	{_, TotalLocked} = lists:foldl(
+		fun(Height, {PrevB, TotalLocked}) ->
+			?assertEqual(0, ar_node:get_balance(Pub1)),
+			?assertEqual(TotalLocked, ar_rewards:get_total_reward_for_address(MiningAddr, PrevB)),
 			ar_test_node:mine(),
-			ar_test_node:wait_until_height(Height + 1)
+			ar_test_node:wait_until_height(Height + 1),
+			B = ar_node:get_current_block(),
+			{B, TotalLocked + B#block.reward}
 		end,
+		{B1, Reward},
 		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
 	),
-	?assertEqual(Reward, ar_node:get_balance(Pub1)).
+	?assertEqual(Reward, ar_node:get_balance(Pub1)),
 
-%% @doc Check that other nodes accept a new block and associated mining reward.
+	%% Unlock one more reward.
+	ar_test_node:mine(),
+	ar_test_node:wait_until_height(?REWARD_HISTORY_BLOCKS + 2),
+	FinalB = ar_node:get_current_block(),
+	?assertEqual(Reward + 10, ar_node:get_balance(Pub1)),
+	?assertEqual(
+		TotalLocked - Reward - 10 + FinalB#block.reward,
+		ar_rewards:get_total_reward_for_address(MiningAddr, FinalB)).
+
+% @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun test_multi_node_mining_reward/0, 120).
@@ -62,6 +75,7 @@ test_multi_node_mining_reward() ->
 	?assertEqual(0, ar_node:get_balance(Pub1)),
 	lists:foreach(
 		fun(Height) ->
+			?assertEqual(0, ar_node:get_balance(Pub1)),
 			ar_test_node:mine(),
 			ar_test_node:wait_until_height(Height + 1)
 		end,
