@@ -275,7 +275,6 @@ refresh_workers(State) ->
 
 	{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
 	PreviousSessionKey = CurrentSession#vdf_session.prev_session_key,
-	NewSessions = [CurrentSessionKey, PreviousSessionKey],
 	MappedSessions = maps:keys(WorkersBySession),
 
 	?LOG_DEBUG([{event, mining_debug_refreshing_workers},
@@ -283,6 +282,15 @@ refresh_workers(State) ->
 		{previous_session_key, ar_nonce_limiter:encode_session_key(PreviousSessionKey)},
 		{mapped_sessions, 
 			[ar_nonce_limiter:encode_session_key(SessionKey) || SessionKey <- MappedSessions]}]),
+
+	NewSessions = case ar_nonce_limiter:get_session(PreviousSessionKey) of
+		not_found ->
+			?LOG_DEBUG([{event, mining_debug_missing_previous_session},
+				{previous_session_key, ar_nonce_limiter:encode_session_key(PreviousSessionKey)}]),
+			[CurrentSessionKey];
+		_ ->
+			[CurrentSessionKey, PreviousSessionKey]
+	end,
 
 	SessionsToAdd = [SessionKey || SessionKey <- NewSessions,
 			SessionKey /= undefined andalso not maps:is_key(SessionKey, WorkersBySession)],
