@@ -16,7 +16,7 @@ fi
 
 branch="$1"
 
-ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
+ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ARWEAVE_DIR/testnet/testnet_nodes.sh"
 
 for node in "${ALL_NODES[@]}"; do

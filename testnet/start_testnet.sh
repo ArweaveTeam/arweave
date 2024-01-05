@@ -7,7 +7,7 @@ display_help() {
     echo "                  launching the pilot node with the start_from_block flag."
 }
 
-ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
+ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 if ! $ARWEAVE_DIR/testnet/assert_testnet.sh; then
 	echo "Error: This script must be run on a testnet server."

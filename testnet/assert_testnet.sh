@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
+ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 source $ARWEAVE_DIR/testnet/testnet_nodes.sh
 

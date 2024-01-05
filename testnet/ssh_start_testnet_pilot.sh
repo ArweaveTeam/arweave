@@ -19,7 +19,7 @@ if [ "$#" -gt 1 ]; then
     block=$2
 fi
 
-ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
+ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ARWEAVE_DIR/testnet/testnet_nodes.sh"
 
 for node in "${VDF_SERVER_NODES[@]}"; do

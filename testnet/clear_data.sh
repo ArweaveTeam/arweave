@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
+ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 if ! $ARWEAVE_DIR/testnet/assert_testnet.sh; then
 	echo "Error: This script must be run on a testnet server."
