@@ -431,8 +431,8 @@ validate_block(denomination, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) -
 
 validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	#block{ diff = Diff, reward = Reward, reward_history_hash = RewardHistoryHash,
-			denomination = Denomination } = NewB,
-	#block{ reward_history = RewardHistory, height = Height } = OldB,
+			denomination = Denomination, height = Height } = NewB,
+	#block{ reward_history = RewardHistory } = OldB,
 	HashRate = ar_difficulty:get_hash_rate(Diff),
 	RewardAddr = NewB#block.reward_addr,
 	LockedRewards = ar_rewards:trim_locked_rewards(Height,

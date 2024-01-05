@@ -76,16 +76,16 @@ validate_reward_history_hashes(Height, RewardHistory, [H | ExpectedRewardHistory
 validate_reward_history_hash(Height, H, RewardHistory) ->
 	H == reward_history_hash(trim_locked_rewards(Height, RewardHistory)).
 
-reward_history_hash(RewardHistory) ->
-	reward_history_hash(RewardHistory, [ar_serialize:encode_int(length(RewardHistory), 8)]).
+reward_history_hash(LockedRewards) ->
+	reward_history_hash(LockedRewards, [ar_serialize:encode_int(length(LockedRewards), 8)]).
 
 reward_history_hash([], IOList) ->
 	crypto:hash(sha256, iolist_to_binary(IOList));
-reward_history_hash([{Addr, HashRate, Reward, Denomination} | RewardHistory], IOList) ->
+reward_history_hash([{Addr, HashRate, Reward, Denomination} | LockedRewards], IOList) ->
 	HashRateBin = ar_serialize:encode_int(HashRate, 8),
 	RewardBin = ar_serialize:encode_int(Reward, 8),
 	DenominationBin = << Denomination:24 >>,
-	reward_history_hash(RewardHistory,
+	reward_history_hash(LockedRewards,
 			[Addr, HashRateBin, RewardBin, DenominationBin | IOList]).
 
 get_total_reward_for_address(Addr, B) ->
