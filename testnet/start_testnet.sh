@@ -32,7 +32,7 @@ if is_node_in_array "$node" "${VDF_SERVER_NODES[@]}"; then
     if [ $# -eq 0 ]; then
         screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer "${ALL_NODES[@]}")
     else
-        screen_cmd+=" header_sync_jobs 0 $*"
+        screen_cmd+=" header_sync_jobs 0"
     fi
 else
     screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer "${ALL_NODES[@]}")
@@ -54,7 +54,7 @@ fi
 
 
 
-screen_cmd+=" debug mine enable remove_orphaned_storage_module_data data_dir /arweave-data"
+screen_cmd+=" $* debug mine enable remove_orphaned_storage_module_data data_dir /arweave-data"
 
 echo "$screen_cmd"
 echo "$screen_cmd" > /arweave-build/testnet/run.command
