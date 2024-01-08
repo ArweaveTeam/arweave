@@ -280,6 +280,8 @@ handle_info({event, disksup, {remaining_disk_space, "default", true, _Percentage
 		true ->
 			case State#state.is_disk_space_sufficient of
 				true ->
+					ok
+				false ->
 					Msg = "~nThe node has stopped syncing headers. Add more disk space "
 							"if you wish to store more block and transaction headers. "
 							"The node will keep recording account tree updates and "
@@ -290,8 +292,6 @@ handle_info({event, disksup, {remaining_disk_space, "default", true, _Percentage
 					ar:console(Msg, []),
 					?LOG_INFO([{event, ar_header_sync_stopped_syncing},
 							{reason, insufficient_disk_space}]);
-				false ->
-					ok
 			end,
 			{noreply, State#state{ is_disk_space_sufficient = false }};
 		false ->
