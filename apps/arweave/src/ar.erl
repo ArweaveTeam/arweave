@@ -204,10 +204,6 @@ show_help() ->
 			{"max_disk_pool_data_root_buffer_mb",
 				"The max size in mebibytes per data root of the pending chunks in the disk"
 				" pool. The default is 50."},
-			{"randomx_bulk_hashing_iterations",
-				"The number of hashes RandomX generates before reporting the result back"
-				" to the Arweave miner. The faster CPU hashes, the higher this value should be."
-			},
 			{"disk_cache_size_mb",
 				lists:flatten(io_lib:format(
 					"The maximum size in mebibytes of the disk space allocated for"
@@ -460,8 +456,6 @@ parse_cli_args(["max_disk_pool_buffer_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_disk_pool_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
-parse_cli_args(["randomx_bulk_hashing_iterations", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ randomx_bulk_hashing_iterations = list_to_integer(Num) });
 parse_cli_args(["disk_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ disk_cache_size = list_to_integer(Num) });
 parse_cli_args(["packing_rate", Num | Rest], C) ->
