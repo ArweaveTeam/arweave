@@ -21,12 +21,6 @@
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.
 
--define(PARTITION_NUMBER(Offset), ((Offset) div ?PARTITION_SIZE)).
-%% MAX_PARTITION_NUMBER excludes the last partition as it may be incomplete and therefore provides
-%% a mining advantage (e.g. it can fit in RAM)
--define(MAX_PARTITION_NUMBER(PartitionUpperBound),
-	max(0, PartitionUpperBound div ?PARTITION_SIZE - 1)).
-
 %% The size of a recall range. The first range is randomly chosen from the given
 %% mining partition. The second range is chosen from the entire weave.
 -ifdef(DEBUG).

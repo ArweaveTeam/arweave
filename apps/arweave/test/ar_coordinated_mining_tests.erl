@@ -358,8 +358,8 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	),
 	{ok, Block} = ar_test_node:http_get_block(Hash, ValidatorNode),
 	case Block#block.recall_byte2 of
-		undefined -> ?PARTITION_NUMBER(Block#block.recall_byte);
-		RecallByte2 -> ?PARTITION_NUMBER(RecallByte2)
+		undefined -> ar_node:get_partition_number(Block#block.recall_byte);
+		RecallByte2 -> ar_node:get_partition_number(RecallByte2)
 	end.
 
 assert_empty_cache(Node) ->
