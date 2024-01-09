@@ -12,7 +12,8 @@
 		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
 		get_recent_txs_map/0, get_mempool_size/0,
 		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
-		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2]).
+		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2,
+		get_partition_number/1, get_max_partition_number/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -270,6 +271,18 @@ get_recent_partition_upper_bound_by_prev_h(H, Diff, [], _Genesis) ->
 	?LOG_INFO([{event, prev_block_not_found_when_scanning_recent_block_index},
 			{h, ar_util:encode(H)}, {depth, Diff}]),
 	not_found.
+
+get_partition_number(infinity) ->
+	infinity;
+get_partition_number(Offset) ->
+	Offset div ?PARTITION_SIZE.
+
+%% @doc Excludes the last partition as it may be incomplete and therefore provides
+%% a mining advantage (e.g. it can fit in RAM)
+get_max_partition_number(infinity) ->
+	infinity;
+get_max_partition_number(PartitionUpperBound) ->
+	max(0, PartitionUpperBound div ?PARTITION_SIZE - 1).
 
 %%%===================================================================
 %%% Tests.

@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, set_largest_seen_upper_bound/1, get_partitions/0,
+-export([start_link/0, set_largest_seen_upper_bound/1, get_partitions/0, get_partitions/1,
 			get_thread_count/0, read_recall_range/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -39,40 +39,38 @@ get_thread_count() ->
 read_recall_range(WhichChunk, Worker, Candidate, RecallRangeStart) ->
 	gen_server:call(?MODULE, {read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}).
 
+get_partitions(PartitionUpperBound) ->
+	Max = ar_node:get_max_partition_number(PartitionUpperBound),
+	lists:sort(sets:to_list(
+		lists:foldl(
+			fun({Partition, MiningAddress, _StoreID}, Acc) ->
+				case Partition > Max of
+					true ->
+						Acc;
+					_ ->
+						sets:add_element({Partition, MiningAddress}, Acc)
+				end
+			end,
+			sets:new(), %% Ensure only one entry per partition (i.e. collapse storage modules)
+			get_io_channels()
+		))
+	).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init([]) ->
 	process_flag(trap_exit, true),
-	{ok, Config} = application:get_env(arweave, config),
-	MiningAddr = Config#config.mining_addr,
 	State =
 		lists:foldl(
-			fun	({BucketSize, Bucket, {spora_2_6, Addr}} = M, Acc) when Addr == MiningAddr ->
-					?LOG_DEBUG([{event, start_io_threads},
-							{bucket_size, BucketSize},
-							{bucket, Bucket},
-							{mining_address, ar_util:safe_encode(Addr)}]),
-					Start = Bucket * BucketSize,
-					End = (Bucket + 1) * BucketSize,
-					StoreID = ar_storage_module:id(M),
-					start_io_threads(Start, End, MiningAddr, StoreID, Acc);
-				(_Module, Acc) ->
-					Acc
+			fun	({PartitionNumber, MiningAddress, StoreID}, Acc) ->
+				start_io_thread(PartitionNumber, MiningAddress, StoreID, Acc)
 			end,
 			#state{},
-			Config#config.storage_modules
+			get_io_channels()
 		),
-	State2 =
-		ar_intervals:fold(
-			fun({End, Start}, Acc) ->
-				start_io_threads(Start, End, MiningAddr, "default", Acc)
-			end,
-			State,
-			ar_sync_record:get(ar_data_sync, "default")
-		),
-	{ok, State2}.
+	{ok, State}.
 
 
 handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) ->
@@ -86,24 +84,8 @@ handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) -
 
 handle_call(get_partitions, _From, #state{ partition_upper_bound = 0 } = State) ->
 	{reply, [], State};
-handle_call(get_partitions, _From,
-		#state{ partition_upper_bound = PartitionUpperBound, io_threads = IOThreads } = State) ->
-	Max = ?MAX_PARTITION_NUMBER(PartitionUpperBound),
-	Partitions = lists:sort(sets:to_list(
-		maps:fold(
-			fun({Partition, MiningAddress, _StoreID}, _, Acc) ->
-				case Partition > Max of
-					true ->
-						Acc;
-					_ ->
-						sets:add_element({Partition, MiningAddress}, Acc)
-				end
-			end,
-			sets:new(), %% Ensure only one entry per partition (i.e. collapse storage modules)
-			IOThreads
-		))
-	),
-	{reply, Partitions, State};
+handle_call(get_partitions, _From, #state{ partition_upper_bound = PartitionUpperBound } = State) ->
+	{reply, get_partitions(PartitionUpperBound), State};
 
 handle_call(get_thread_count, _From, #state{ io_threads = IOThreads } = State) ->
 	{reply, maps:size(IOThreads), State};
@@ -111,7 +93,7 @@ handle_call(get_thread_count, _From, #state{ io_threads = IOThreads } = State) -
 handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}, _From,
 		#state{ io_threads = IOThreads } = State) ->
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
-	PartitionNumber = ?PARTITION_NUMBER(RecallRangeStart),
+	PartitionNumber = ar_node:get_partition_number(RecallRangeStart),
 	RangeEnd = RecallRangeStart + ?RECALL_RANGE_SIZE,
 	case find_thread(PartitionNumber, MiningAddress, RangeEnd, RecallRangeStart, IOThreads) of
 		not_found ->
@@ -148,13 +130,49 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+%% @doc Returns tuples {PartitionNumber, MiningAddress, StoreID) covering all defined storage
+%% modules (including the "default" storage module). The assumption is that each IO channel
+%% represents a distinct 200MiB/s read channel to which we will (later) assign an IO thread.
+get_io_channels() ->
+	{ok, Config} = application:get_env(arweave, config),
+	MiningAddress = Config#config.mining_addr,
 
-start_io_threads(Start, End, _ReplicaID, _StoreID, State) when Start >= End ->
-	State;
-start_io_threads(Start, End, MiningAddress, StoreID, State) ->
-	PartitionNumber = ?PARTITION_NUMBER(Start),
-	State2 = start_io_thread(PartitionNumber, MiningAddress, StoreID, State),
-	start_io_threads(Start + ?PARTITION_SIZE, End, MiningAddress, StoreID, State2).
+	%% First get the start/end ranges for all storage modules configured for the mining address.
+	StorageModules =
+		lists:foldl(
+			fun	({BucketSize, Bucket, {spora_2_6, Addr}} = M, Acc) when Addr == MiningAddress ->
+					Start = Bucket * BucketSize,
+					End = (Bucket + 1) * BucketSize,
+					StoreID = ar_storage_module:id(M),
+					[{Start, End, MiningAddress, StoreID} | Acc];
+				(_Module, Acc) ->
+					Acc
+			end,
+			[],
+			Config#config.storage_modules
+		),
+	StorageModules2 =
+		ar_intervals:fold(
+			fun({End, Start}, Acc) ->
+				[{Start, End, MiningAddress, "default"} | Acc]
+			end,
+			StorageModules,
+			ar_sync_record:get(ar_data_sync, "default")
+		),
+
+	%% And then map those storage modules to partitions.
+	get_io_channels(StorageModules2, []).
+
+get_io_channels([], Channels) ->
+	Channels;
+get_io_channels([{Start, End, _MiningAddress, _StoreID} | StorageModules], Channels)
+  		when Start >= End ->
+	get_io_channels(StorageModules, Channels);
+get_io_channels([{Start, End, MiningAddress, StoreID} | StorageModules], Channels) ->
+	PartitionNumber = ar_node:get_partition_number(Start),
+	Channels2 = [{PartitionNumber, MiningAddress, StoreID} | Channels],
+	StorageModules2 = [{Start + ?PARTITION_SIZE, End, MiningAddress, StoreID} | StorageModules],
+	get_io_channels(StorageModules2, Channels2).
 
 start_io_thread(PartitionNumber, MiningAddress, StoreID, #state{ io_threads = Threads } = State)
 		when is_map_key({PartitionNumber, MiningAddress, StoreID}, Threads) ->
