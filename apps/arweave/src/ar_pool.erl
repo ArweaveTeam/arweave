@@ -101,17 +101,18 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({cache_jobs, #jobs{ vdf = [] }}, State) ->
+handle_cast({cache_jobs, #jobs{ jobs = [] }}, State) ->
 	{noreply, State};
 handle_cast({cache_jobs, Jobs}, State) ->
-	#jobs{ vdf = VDF, diff = Diff, next_seed = NextSeed, seed = Seed,
+	#jobs{ jobs = JobList, partial_diff = Diff,
+			next_seed = NextSeed, seed = Seed,
 			interval_number = IntervalNumber,
 			next_vdf_difficulty = NextVDFDifficulty } = Jobs,
 	SessionKey = {NextSeed, IntervalNumber, NextVDFDifficulty},
 	SessionKeys = State#state.session_keys,
 	SessionKeys2 = [SessionKey | SessionKeys],
 	JobList = [{Job#job.output, Job#job.global_step_number,
-			Job#job.partition_upper_bound, Seed, Diff} || Job <- VDF],
+			Job#job.partition_upper_bound, Seed, Diff} || Job <- JobList],
 	PrevJobList = maps:get(SessionKey, State#state.jobs_by_session_key, []),
 	JobList2 = JobList ++ PrevJobList,
 	JobsBySessionKey = maps:put(SessionKey, JobList2, State#state.jobs_by_session_key),
@@ -214,7 +215,8 @@ get_jobs(PrevOutput, SessionKeys, JobCache) ->
 			{Seed, Diff, Jobs2} = collect_jobs(Jobs, PrevOutput, ?GET_JOBS_COUNT),
 			Jobs3 = [#job{ output = O, global_step_number = SN,
 					partition_upper_bound = U } || {O, SN, U} <- Jobs2],
-			#jobs{ vdf = Jobs3, seed = Seed, diff = Diff, next_seed = NextSeed,
+			#jobs{ jobs = Jobs3, seed = Seed, partial_diff = Diff,
+					next_seed = NextSeed,
 					interval_number = Interval, next_vdf_difficulty = NextVDFDifficulty }
 	end.
 
@@ -461,9 +463,9 @@ get_jobs_test() ->
 			get_jobs(o, [{ns, in, nvd}],
 			#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
 
-	?assertEqual(#jobs{ vdf = [#job{ output = o, global_step_number = gsn,
+	?assertEqual(#jobs{ jobs = [#job{ output = o, global_step_number = gsn,
 							partition_upper_bound = u }],
-						diff = d,
+						partial_diff = d,
 						seed = s,
 						next_seed = ns,
 						interval_number = in,
@@ -472,9 +474,9 @@ get_jobs_test() ->
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
 
 	%% d2 /= d (the difficulties are different) => only take the latest job.
-	?assertEqual(#jobs{ vdf = [#job{ output = o, global_step_number = gsn,
+	?assertEqual(#jobs{ jobs = [#job{ output = o, global_step_number = gsn,
 							partition_upper_bound = u }],
-						diff = d,
+						partial_diff = d,
 						seed = s,
 						next_seed = ns,
 						interval_number = in,
@@ -485,10 +487,10 @@ get_jobs_test() ->
 							{ns2, in2, nvd2} => [{o3, gsn3, u3, s3, d}] })),
 
 	%% d2 == d => take both.
-	?assertEqual(#jobs{ vdf = [#job{ output = o, global_step_number = gsn,
+	?assertEqual(#jobs{ jobs = [#job{ output = o, global_step_number = gsn,
 							partition_upper_bound = u }, #job{ output = o2,
 									global_step_number = gsn2, partition_upper_bound = u2 }],
-						diff = d,
+						partial_diff = d,
 						seed = s,
 						next_seed = ns,
 						interval_number = in,
@@ -498,9 +500,9 @@ get_jobs_test() ->
 							{ns2, in2, nvd2} => [{o2, gsn2, u2, s2, d2}] })),
 
 	%% Take strictly above the previous output.
-	?assertEqual(#jobs{ vdf = [#job{ output = o, global_step_number = gsn,
+	?assertEqual(#jobs{ jobs = [#job{ output = o, global_step_number = gsn,
 								partition_upper_bound = u }],
-						diff = d,
+						partial_diff = d,
 						seed = s,
 						next_seed = ns,
 						interval_number = in,

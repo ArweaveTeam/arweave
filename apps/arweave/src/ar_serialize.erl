@@ -1827,11 +1827,11 @@ decode_if_set(JSON, JSONProperty, Decoder, Default) ->
 	end.
 
 jobs_to_json_struct(Jobs) ->
-	#jobs{ vdf = JobList, diff = Diff, seed = Seed, next_seed = NextSeed,
+	#jobs{ jobs = JobList, partial_diff = Diff, seed = Seed, next_seed = NextSeed,
 			interval_number = IntervalNumber, next_vdf_difficulty = NextVDFDiff } = Jobs,
 
-	{[{vdf, [job_to_json_struct(Job) || Job <- JobList]},
-		{diff, integer_to_binary(Diff)},
+	{[{jobs, [job_to_json_struct(Job) || Job <- JobList]},
+		{partial_diff, integer_to_binary(Diff)},
 		{seed, ar_util:encode(Seed)},
 		{next_seed, ar_util:encode(NextSeed)},
 		{interval_number, integer_to_binary(IntervalNumber)},
@@ -1847,16 +1847,17 @@ job_to_json_struct(Job) ->
 
 json_struct_to_jobs(Struct) ->
 	{Keys} = Struct,
-	Diff = binary_to_integer(proplists:get_value(<<"diff">>, Keys, <<"0">>)),
+	Diff = binary_to_integer(proplists:get_value(<<"partial_diff">>, Keys, <<"0">>)),
 	Seed = ar_util:decode(proplists:get_value(<<"seed">>, Keys, <<>>)),
 	NextSeed = ar_util:decode(proplists:get_value(<<"next_seed">>, Keys, <<>>)),
 	NextVDFDiff = binary_to_integer(proplists:get_value(<<"next_vdf_difficulty">>, Keys,
 			<<"0">>)),
 	IntervalNumber = binary_to_integer(proplists:get_value(<<"interval_number">>, Keys,
 			<<"0">>)),
-	VDF = [json_struct_to_job(Job) || Job <- proplists:get_value(<<"vdf">>, Keys, [])],
-	#jobs{ vdf = VDF, seed = Seed, next_seed = NextSeed, interval_number = IntervalNumber,
-			next_vdf_difficulty = NextVDFDiff, diff = Diff }.
+	Jobs = [json_struct_to_job(Job) || Job <- proplists:get_value(<<"jobs">>, Keys, [])],
+	#jobs{ jobs = Jobs, seed = Seed, next_seed = NextSeed,
+			interval_number = IntervalNumber,
+			next_vdf_difficulty = NextVDFDiff, partial_diff = Diff }.
 
 json_struct_to_job(Struct) ->
 	{Keys} = Struct,
@@ -1951,15 +1952,15 @@ jobs_to_json_struct_test() ->
 	TestCases = [
 		#jobs{}
 		#jobs{ seed = <<"a">> },
-		#jobs{ vdf = [#job{ output = <<"o">>,
+		#jobs{ jobs = [#job{ output = <<"o">>,
 				global_step_number = 1,
 				partition_upper_bound = 100 }] },
-		#jobs{ vdf = [#job{ output = <<"o2">>,
+		#jobs{ jobs = [#job{ output = <<"o2">>,
 					global_step_number = 2,
 					partition_upper_bound = 100 }, #job{ output = <<"o1">>,
 						global_step_number = 1,
 						partition_upper_bound = 99 }],
-				diff = 12345,
+				partial_diff = 12345,
 				seed = <<"gjhgjkghjhg">>,
 				next_seed = <<"dfdgfdg">>,
 				interval_number = 23,

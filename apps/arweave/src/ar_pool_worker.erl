@@ -80,7 +80,7 @@ terminate(_Reason, _State) ->
 emit_pool_jobs(Jobs) ->
 	SessionKey = {Jobs#jobs.next_seed, Jobs#jobs.interval_number,
 			Jobs#jobs.next_vdf_difficulty},
-	emit_pool_jobs(Jobs#jobs.vdf, SessionKey, Jobs#jobs.diff).
+	emit_pool_jobs(Jobs#jobs.jobs, SessionKey, Jobs#jobs.partial_diff).
 
 emit_pool_jobs([], _SessionKey, _PartialDiff) ->
 	ok;

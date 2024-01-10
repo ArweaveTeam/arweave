@@ -492,12 +492,12 @@ handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 %%
 %% Return a JSON object:
 %% {
-%%   "vdf":
+%%   "jobs":
 %%     [
 %%       {"output": "...", "global_step_number": "...", "partition_upper_bound": "..."},
 %%       ...
 %%     ],
-%%   "diff": "...",
+%%   "partial_diff": "...",
 %%   "next_seed": "...",
 %%   "interval_number": "...",
 %%   "next_vdf_difficulty": "..."
@@ -2518,11 +2518,11 @@ handle_get_jobs_pool_server(PrevOutput, Req) ->
 	),
 	Steps = case Result of false -> []; {true, S} -> S end,
 	{NextSeed, IntervalNumber, NextVDFDiff} = ar_nonce_limiter:session_key(Info),
-	VDF = [#job{ output = O, global_step_number = SN,
+	JobList = [#job{ output = O, global_step_number = SN,
 			partition_upper_bound = U } || {O, SN, U} <- Steps],
-	Jobs = #jobs{ vdf = VDF, seed = Info#nonce_limiter_info.seed,
+	Jobs = #jobs{ jobs = JobList, seed = Info#nonce_limiter_info.seed,
 			next_seed = NextSeed, interval_number = IntervalNumber,
-			next_vdf_difficulty = NextVDFDiff, diff = Diff },
+			next_vdf_difficulty = NextVDFDiff, partial_diff = Diff },
 	{200, #{}, ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)), Req}.
 
 handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req) ->
