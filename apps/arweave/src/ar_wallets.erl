@@ -311,14 +311,7 @@ apply_block2(B, PrevB, DAG) ->
 	TXs = B#block.txs,
 	RewardAddr = B#block.reward_addr,
 	Addresses = [RewardAddr | ar_tx:get_addresses(TXs)],
-	RewardHistory = PrevB#block.reward_history,
-	Addresses2 =
-		case length(RewardHistory) >= ?REWARD_HISTORY_BLOCKS of
-			true ->
-				[element(1, lists:nth(?REWARD_HISTORY_BLOCKS, RewardHistory)) | Addresses];
-			false ->
-				Addresses
-		end,
+	Addresses2 = [ar_rewards:get_oldest_locked_address(PrevB) | Addresses],
 	Addresses3 =
 		case B#block.double_signing_proof of
 			undefined ->

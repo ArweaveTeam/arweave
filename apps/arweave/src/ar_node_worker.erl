@@ -1071,16 +1071,10 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 					B2 =
 						case B#block.height >= ar_fork:height_2_6() of
 							true ->
-								RewardHistory = PrevB#block.reward_history,
-								Reward = B#block.reward,
-								HashRate = ar_difficulty:get_hash_rate(B#block.diff),
-								Denomination2 = B#block.denomination,
-								Addr = B#block.reward_addr,
-								RewardHistory2 = [{Addr, HashRate, Reward, Denomination2}
-										| RewardHistory],
-								Len = ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
-								RewardHistory3 = lists:sublist(RewardHistory2, Len),
-								B#block{ reward_history = RewardHistory3 };
+								B#block{ 
+									reward_history =
+										ar_rewards:lock_reward(B, PrevB#block.reward_history)
+								};
 							false ->
 								B
 						end,
@@ -1134,46 +1128,28 @@ pick_txs(TXIDs) ->
 	).
 
 may_be_get_double_signing_proof(PrevB, State) ->
-	RewardHistory = lists:sublist(PrevB#block.reward_history, ?REWARD_HISTORY_BLOCKS),
+	LockedRewards = ar_rewards:get_locked_rewards(PrevB),
 	Proofs = maps:get(double_signing_proofs, State, #{}),
 	RootHash = PrevB#block.wallet_list,
-	may_be_get_double_signing_proof2(maps:iterator(Proofs), RootHash, RewardHistory).
+	may_be_get_double_signing_proof2(maps:iterator(Proofs), RootHash, LockedRewards).
 
-may_be_get_double_signing_proof2(Iterator, RootHash, RewardHistory) ->
+may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards) ->
 	case maps:next(Iterator) of
 		none ->
 			undefined;
 		{Addr, {_Timestamp, Proof2}, Iterator2} ->
-			case is_in_reward_history(Addr, RewardHistory) of
+			case ar_rewards:has_locked_reward(Addr, LockedRewards) of
 				false ->
-					may_be_get_double_signing_proof2(Iterator2, RootHash, RewardHistory);
+					may_be_get_double_signing_proof2(Iterator2, RootHash, LockedRewards);
 				true ->
 					Accounts = ar_wallets:get(RootHash, [Addr]),
-					case is_account_banned(Addr, Accounts) of
+					case ar_node_utils:is_account_banned(Addr, Accounts) of
 						true ->
-							may_be_get_double_signing_proof2(Iterator2, RootHash,
-									RewardHistory);
+							may_be_get_double_signing_proof2(Iterator2, RootHash, LockedRewards);
 						false ->
 							Proof2
 					end
 			end
-	end.
-
-is_in_reward_history(_Addr, []) ->
-	false;
-is_in_reward_history(Addr, [{Addr, _, _, _} | _]) ->
-	true;
-is_in_reward_history(Addr, [_ | RewardHistory]) ->
-	is_in_reward_history(Addr, RewardHistory).
-
-is_account_banned(Addr, Map) ->
-	case maps:get(Addr, Map, not_found) of
-		not_found ->
-			false;
-		{_, _} ->
-			false;
-		{_, _, _, MiningPermission} ->
-			not MiningPermission
 	end.
 
 get_chunk_hash(#poa{ chunk = Chunk }, Height) ->
@@ -1189,23 +1165,18 @@ get_chunk_hash(#poa{ chunk = Chunk }, Height) ->
 			end
 	end.
 
-pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) ->
+pack_block_with_transactions(B, PrevB) ->
 	#block{ reward_history = RewardHistory } = PrevB,
 	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
 	Rate = ar_pricing:usd_to_ar_rate(PrevB),
 	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
-	Denomination = PrevB#block.denomination,
-	Denomination2 = B#block.denomination,
+	PrevDenomination = PrevB#block.denomination,
+	Height = B#block.height,
+	Denomination = B#block.denomination,
 	KryderPlusRateMultiplier = PrevB#block.kryder_plus_rate_multiplier,
 	RedenominationHeight = PrevB#block.redenomination_height,
 	Addresses = [B#block.reward_addr | ar_tx:get_addresses(TXs)],
-	Addresses2 =
-		case length(RewardHistory) >= ?REWARD_HISTORY_BLOCKS of
-			true ->
-				[element(1, lists:nth(?REWARD_HISTORY_BLOCKS, RewardHistory)) | Addresses];
-			false ->
-				Addresses
-		end,
+	Addresses2 = [ar_rewards:get_oldest_locked_address(PrevB) | Addresses],
 	Addresses3 =
 		case B#block.double_signing_proof of
 			undefined ->
@@ -1218,7 +1189,7 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 	[{_, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 	ValidTXs = ar_tx_replay_pool:pick_txs_to_mine({BlockAnchors, RecentTXMap, Height - 1,
 			RedenominationHeight, Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
-			Denomination, B#block.timestamp, Accounts, TXs}),
+			PrevDenomination, B#block.timestamp, Accounts, TXs}),
 	BlockSize =
 		lists:foldl(
 			fun(TX, Acc) ->
@@ -1234,23 +1205,19 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 	{ok, {EndowmentPool, Reward, DebtSupply, KryderPlusRateMultiplierLatch,
 			KryderPlusRateMultiplier2, Accounts2}} = ar_node_utils:update_accounts(B2, PrevB,
 					Accounts),
-	Reward2 = ar_pricing:redenominate(Reward, Denomination, Denomination2),
-	EndowmentPool2 = ar_pricing:redenominate(EndowmentPool, Denomination, Denomination2),
-	DebtSupply2 = ar_pricing:redenominate(DebtSupply, Denomination, Denomination2),
-	RewardAddr = B2#block.reward_addr,
+	Reward2 = ar_pricing:redenominate(Reward, PrevDenomination, Denomination),
+	EndowmentPool2 = ar_pricing:redenominate(EndowmentPool, PrevDenomination, Denomination),
+	DebtSupply2 = ar_pricing:redenominate(DebtSupply, PrevDenomination, Denomination),
 	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
-			Denomination2),
-	HashRate = ar_difficulty:get_hash_rate(Diff),
-	RewardHistory2 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
-			| RewardHistory], ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-	RewardHistory3 = lists:sublist([{RewardAddr, HashRate, Reward2, Denomination2}
-			| RewardHistory], ?REWARD_HISTORY_BLOCKS),
+			Denomination),
+	RewardHistory2 = ar_rewards:lock_reward(B2#block{ reward = Reward2 }, RewardHistory),
+	LockedRewards = ar_rewards:trim_locked_rewards(Height, RewardHistory2),
 	B2#block{
 		wallet_list = RootHash,
 		reward_pool = EndowmentPool2,
 		reward = Reward2,
 		reward_history = RewardHistory2,
-		reward_history_hash = ar_block:reward_history_hash(RewardHistory3),
+		reward_history_hash = ar_rewards:reward_history_hash(LockedRewards),
 		debt_supply = DebtSupply2,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier2
@@ -1837,8 +1804,7 @@ start_from_state(BI, Height) ->
 		{Skipped, Blocks} ->
 			BI2 = lists:nthtail(Skipped, BI),
 			Height2 = Height - Skipped,
-			RewardHistoryBI = lists:sublist(BI2,
-					?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+			RewardHistoryBI = ar_rewards:trim_reward_history(Height, BI2),
 			BlockTimeHistoryBI = lists:sublist(BI2,
 					?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 			case {ar_storage:read_reward_history(RewardHistoryBI),
@@ -1848,7 +1814,7 @@ start_from_state(BI, Height) ->
 				{_, not_found} ->
 					block_time_history_not_found;
 				{RewardHistory, BlockTimeHistory} ->
-					Blocks2 = ar_join:set_reward_history(Blocks, RewardHistory),
+					Blocks2 = ar_rewards:set_reward_history(Blocks, RewardHistory),
 					Blocks3 = ar_join:set_block_time_history(Blocks2, BlockTimeHistory),
 					self() ! {join_from_state, Height2, BI2, Blocks3},
 					ok

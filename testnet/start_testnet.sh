@@ -2,11 +2,12 @@
 
 # Function to display help
 display_help() {
-    echo "Usage: $0 [<block>]"
-    echo "   <block>: is required when launching the pilot node with the start_from_block flag."
+    echo "Usage: $0 [<extra flags>]"
+    echo "   <extra flags>: start_from_block <block> or start_from_latest_state is required when "
+    echo "                  launching the pilot node with the start_from_block flag."
 }
 
-ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
+ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 if ! $ARWEAVE_DIR/testnet/assert_testnet.sh; then
 	echo "Error: This script must be run on a testnet server."
@@ -19,11 +20,6 @@ if [[ ! -f "/arweave-build/testnet/bin/start" ]]; then
 fi
 
 node=$(hostname -f)
-# If an argument is provided, start from that block in local state, otherwise start from peers
-if [ "$#" -gt 0 ]; then
-    block=$1
-fi
-
 source $ARWEAVE_DIR/testnet/testnet_nodes.sh
 
 screen_cmd="screen -dmsL arweave /arweave-build/testnet/bin/start"
@@ -33,10 +29,10 @@ screen_cmd+=$($ARWEAVE_DIR/testnet/build_data_flags.sh)
 if is_node_in_array "$node" "${VDF_SERVER_NODES[@]}"; then
     # VDF Server and Pilot node flags
     screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh vdf_client_peer "${VDF_CLIENT_NODES[@]}")
-    if [ -z "$block" ]; then
+    if [ $# -eq 0 ]; then
         screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer "${ALL_NODES[@]}")
     else
-        screen_cmd+=" header_sync_jobs 0 start_from_block $block"
+        screen_cmd+=" header_sync_jobs 0"
     fi
 else
     screen_cmd+=$($ARWEAVE_DIR/testnet/build_peer_flags.sh peer "${ALL_NODES[@]}")
@@ -58,7 +54,7 @@ fi
 
 
 
-screen_cmd+=" debug mine enable remove_orphaned_storage_module_data data_dir /arweave-data"
+screen_cmd+=" $* debug mine enable remove_orphaned_storage_module_data data_dir /arweave-data"
 
 echo "$screen_cmd"
 echo "$screen_cmd" > /arweave-build/testnet/run.command

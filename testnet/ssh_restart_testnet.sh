@@ -26,7 +26,7 @@ if [[ "$TYPE" != "pilot" && "$TYPE" != "client" && "$TYPE" != "solo" ]]; then
     exit 1
 fi
 
-ARWEAVE_DIR="$(readlink -f "$(dirname "$0")")/.."
+ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ARWEAVE_DIR/testnet/testnet_$TYPE.sh"
 
 

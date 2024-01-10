@@ -1,7 +1,8 @@
 %%% @doc Different utility functions for node and node worker.
 -module(ar_node_utils).
 
--export([apply_mining_reward/4, apply_tx/3, apply_txs/3, update_accounts/3, validate/6]).
+-export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6, update_account/6, 
+	is_account_banned/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -13,11 +14,6 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Add the mining reward to the corresponding account.
-apply_mining_reward(Accounts, unclaimed, _Quantity, _Denomination) ->
-	Accounts;
-apply_mining_reward(Accounts, RewardAddr, Quantity, Denomination) ->
-	add_amount_to_account(Accounts, RewardAddr, Quantity, Denomination).
 
 %% @doc Update the given accounts by applying a transaction.
 apply_tx(Accounts, Denomination, TX) ->
@@ -79,27 +75,24 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 			{invalid, Reason}
 	end.
 
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
-
-add_amount_to_account(Accounts, Addr, Amount, Denomination) ->
-	case maps:get(Addr, Accounts, not_found) of
-		not_found ->
-			update_account(Addr, Amount, <<>>, Denomination, true, Accounts);
-		{Balance, LastTX} ->
-			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
-			update_account(Addr, Balance2 + Amount, LastTX, Denomination, true, Accounts);
-		{Balance, LastTX, AccountDenomination, MiningPermission} ->
-			Balance2 = ar_pricing:redenominate(Balance, AccountDenomination, Denomination),
-			update_account(Addr, Balance2 + Amount, LastTX, Denomination, MiningPermission,
-					Accounts)
-	end.
-
 update_account(Addr, Balance, LastTX, 1, true, Accounts) ->
 	maps:put(Addr, {Balance, LastTX}, Accounts);
 update_account(Addr, Balance, LastTX, Denomination, MiningPermission, Accounts) ->
 	maps:put(Addr, {Balance, LastTX, Denomination, MiningPermission}, Accounts).
+
+is_account_banned(Addr, Accounts) ->
+	case maps:get(Addr, Accounts, not_found) of
+		not_found ->
+			false;
+		{_, _} ->
+			false;
+		{_, _, _, MiningPermission} ->
+			not MiningPermission
+	end.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
 
 apply_tx2(Accounts, Denomination, TX) ->
 	update_recipient_balance(update_sender_balance(Accounts, Denomination, TX), Denomination,
@@ -179,44 +172,31 @@ update_accounts2(B, PrevB, Accounts, Args) ->
 			update_accounts3(B, PrevB, Accounts, Args)
 	end.
 
-is_account_banned(Addr, Accounts) ->
-	case maps:get(Addr, Accounts, not_found) of
-		not_found ->
-			false;
-		{_, _} ->
-			false;
-		{_, _, _, MiningPermission} ->
-			not MiningPermission
-	end.
-
 update_accounts3(B, PrevB, Accounts, Args) ->
-	RewardHistory = lists:sublist(PrevB#block.reward_history, ?REWARD_HISTORY_BLOCKS),
-	case may_be_apply_double_signing_proof(B, Accounts, PrevB#block.denomination,
-			RewardHistory) of
+	case may_be_apply_double_signing_proof(B, PrevB, Accounts) of
 		{ok, Accounts2} ->
-			update_accounts4(B, PrevB, Accounts2, Args, RewardHistory);
+			Accounts3 = ar_rewards:apply_rewards(PrevB, Accounts2),
+			update_accounts4(B, PrevB, Accounts3, Args);
 		Error ->
 			Error
 	end.
 
-may_be_apply_double_signing_proof(#block{ double_signing_proof = undefined }, Accounts,
-		_Denomination, _RewardHistory) ->
+may_be_apply_double_signing_proof(#block{ double_signing_proof = undefined }, _PrevB, Accounts) ->
 	{ok, Accounts};
 may_be_apply_double_signing_proof(#block{
-		double_signing_proof = {_Pub, Sig, _, _, _, Sig, _, _, _} }, _Accounts,
-		_Denomination, _RewardHistory) ->
+		double_signing_proof = {_Pub, Sig, _, _, _, Sig, _, _, _} }, _PrevB, _Accounts) ->
 	{error, invalid_double_signing_proof_same_signature};
-may_be_apply_double_signing_proof(B, Accounts, Denomination, RewardHistory) ->
+may_be_apply_double_signing_proof(B, PrevB, Accounts) ->
 	{_Pub, _Signature1, CDiff1, PrevCDiff1, _Preimage1, _Signature2, CDiff2, PrevCDiff2,
 			_Preimage2} = B#block.double_signing_proof,
 	case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1) of
 		false ->
 			{error, invalid_double_signing_proof_cdiff};
 		true ->
-			may_be_apply_double_signing_proof2(B, Accounts, Denomination, RewardHistory)
+			may_be_apply_double_signing_proof2(B, PrevB, Accounts)
 	end.
 
-may_be_apply_double_signing_proof2(B, Accounts, Denomination, RewardHistory) ->
+may_be_apply_double_signing_proof2(B, PrevB, Accounts) ->
 	{Pub, _Signature1, _CDiff1, _PrevCDiff1, _Preimage1, _Signature2, _CDiff2, _PrevCDiff2,
 			_Preimage2} = B#block.double_signing_proof,
 	Key = {?DEFAULT_KEY_TYPE, Pub},
@@ -229,23 +209,17 @@ may_be_apply_double_signing_proof2(B, Accounts, Denomination, RewardHistory) ->
 				true ->
 					{error, invalid_double_signing_proof_already_banned};
 				false ->
-					case is_in_reward_history(Addr, RewardHistory) of
+					LockedRewards = ar_rewards:get_locked_rewards(PrevB),
+					case ar_rewards:has_locked_reward(Addr, LockedRewards) of
 						false ->
 							{error, invalid_double_signing_proof_not_in_reward_history};
 						true ->
-							may_be_apply_double_signing_proof3(B, Accounts, Denomination)
+							may_be_apply_double_signing_proof3(B, PrevB, Accounts)
 					end
 			end
 	end.
 
-is_in_reward_history(_Addr, []) ->
-	false;
-is_in_reward_history(Addr, [{Addr, _, _, _} | _]) ->
-	true;
-is_in_reward_history(Addr, [_ | RewardHistory]) ->
-	is_in_reward_history(Addr, RewardHistory).
-
-may_be_apply_double_signing_proof3(B, Accounts, Denomination) ->
+may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
 	{Pub, Signature1, CDiff1, PrevCDiff1, Preimage1, Signature2, CDiff2, PrevCDiff2,
 			Preimage2} = B#block.double_signing_proof,
 	EncodedCDiff1 = ar_serialize:encode_int(CDiff1, 16),
@@ -270,7 +244,7 @@ may_be_apply_double_signing_proof3(B, Accounts, Denomination) ->
 							{address, ar_util:encode(Addr)},
 							{previous_block, ar_util:encode(B#block.previous_block)},
 							{height, B#block.height}]),
-					{ok, ban_account(Addr, Accounts, Denomination)}
+					{ok, ban_account(Addr, Accounts, PrevB#block.denomination)}
 			end
 	end.
 
@@ -286,49 +260,30 @@ ban_account(Addr, Accounts, Denomination) ->
 			maps:put(Addr, {Balance2 + 1, LastTX, Denomination, false}, Accounts)
 	end.
 
-update_accounts4(B, PrevB, Accounts, Args, RewardHistory) ->
-	Denomination = PrevB#block.denomination,
-	case length(RewardHistory) >= ?REWARD_HISTORY_BLOCKS of
-		false ->
-			update_accounts5(B, PrevB, Accounts, Args, RewardHistory);
-		true ->
-			{Addr, _HashRate, Reward, RewardDenomination} = lists:nth(?REWARD_HISTORY_BLOCKS,
-					RewardHistory),
-			case is_account_banned(Addr, Accounts) of
-				true ->
-					update_accounts5(B, PrevB, Accounts, Args, RewardHistory);
-				false ->
-					Reward2 = ar_pricing:redenominate(Reward, RewardDenomination,
-							Denomination),
-					Accounts2 = apply_mining_reward(Accounts, Addr, Reward2, Denomination),
-					update_accounts5(B, PrevB, Accounts2, Args, RewardHistory)
-			end
-	end.
-
-update_accounts5(B, PrevB, Accounts, Args, RewardHistory) ->
+update_accounts4(B, PrevB, Accounts, Args) ->
 	{MinerReward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch,
 			KryderPlusRateMultiplier} = Args,
 	case B#block.double_signing_proof of
 		undefined ->
-			update_accounts6(B, Accounts, Args);
+			update_accounts5(B, Accounts, Args);
 		Proof ->
 			Denomination = PrevB#block.denomination,
 			BannedAddr = ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}),
-			{Sum, SumDenomination} = get_reward_sum(BannedAddr, RewardHistory),
-			Sum2 = ar_pricing:redenominate(Sum, SumDenomination, Denomination) - 1,
+			Sum = ar_rewards:get_total_reward_for_address(BannedAddr, PrevB) - 1,
 			{Dividend, Divisor} = ?DOUBLE_SIGNING_PROVER_REWARD_SHARE,
-			Sample = lists:sublist(RewardHistory, ?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE),
+			LockedRewards = ar_rewards:get_locked_rewards(PrevB),
+			Sample = lists:sublist(LockedRewards, ?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE),
 			{Min, MinDenomination} = get_minimal_reward(Sample),
 			Min2 = ar_pricing:redenominate(Min, MinDenomination, Denomination),
-			ProverReward = min(Min2 * Dividend div Divisor, Sum2),
+			ProverReward = min(Min2 * Dividend div Divisor, Sum),
 			{MinerReward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch,
 					KryderPlusRateMultiplier} = Args,
-			EndowmentPool2 = EndowmentPool + Sum2 - ProverReward,
-			Accounts2 = apply_mining_reward(Accounts, B#block.reward_addr, ProverReward,
+			EndowmentPool2 = EndowmentPool + Sum - ProverReward,
+			Accounts2 = ar_rewards:apply_reward(Accounts, B#block.reward_addr, ProverReward,
 					Denomination),
 			Args2 = {MinerReward, EndowmentPool2, DebtSupply, KryderPlusRateMultiplierLatch,
 					KryderPlusRateMultiplier},
-			update_accounts6(B, Accounts2, Args2)
+			update_accounts5(B, Accounts2, Args2)
 	end.
 
 get_minimal_reward(RewardHistory) ->
@@ -354,46 +309,17 @@ get_minimal_reward([{_Addr, _HashRate, Reward, RewardDenomination} | RewardHisto
 			get_minimal_reward(RewardHistory, Min, Denomination)
 	end.
 
-get_reward_sum(Addr, RewardHistory) ->
-	get_reward_sum(Addr,
-			%% Make sure to traverse in the order of not decreasing denomination.
-			lists:reverse(RewardHistory), 0, 1).
-
-get_reward_sum(_Addr, [], Sum, Denomination) ->
-	{Sum, Denomination};
-get_reward_sum(Addr, [{Addr, _HashRate, Reward, RewardDenomination} | RewardHistory],
-		Sum, Denomination) ->
-	Sum2 = ar_pricing:redenominate(Sum, Denomination, RewardDenomination),
-	Sum3 = Sum2 + Reward,
-	get_reward_sum(Addr, RewardHistory, Sum3, RewardDenomination);
-get_reward_sum(Addr, [_ | RewardHistory], Sum, Denomination) ->
-	get_reward_sum(Addr, RewardHistory, Sum, Denomination).
-
-update_accounts6(B, Accounts, Args) ->
+update_accounts5(B, Accounts, Args) ->
 	{MinerReward, EndowmentPool, DebtSupply, KryderPlusRateMultiplierLatch,
 			KryderPlusRateMultiplier} = Args,
 	case validate_account_anchors(Accounts, B#block.txs) of
 		true ->
-			Accounts2 = top_up_test_wallet(Accounts, B#block.height),
+			Accounts2 = ar_testnet:top_up_test_wallet(Accounts, B#block.height),
 			{ok, {EndowmentPool, MinerReward, DebtSupply, KryderPlusRateMultiplierLatch,
 					KryderPlusRateMultiplier, Accounts2}};
 		false ->
 			{error, invalid_account_anchors}
 	end.
-
--ifdef(TESTNET).
-top_up_test_wallet(Accounts, Height) ->
-	case Height == ?TOP_UP_TEST_WALLET_HEIGHT of
-		true ->
-			Addr = ar_util:decode(<<?TEST_WALLET_ADDRESS>>),
-			maps:put(Addr, {?AR(?TOP_UP_TEST_WALLET_AR), <<>>, 1, true}, Accounts);
-		false ->
-			Accounts
-	end.
--else.
-top_up_test_wallet(Accounts, _Height) ->
-	Accounts.
--endif.
 
 do_validate(NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 	validate_block(weave_size, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
@@ -505,13 +431,13 @@ validate_block(denomination, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) -
 
 validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	#block{ diff = Diff, reward = Reward, reward_history_hash = RewardHistoryHash,
-			denomination = Denomination } = NewB,
+			denomination = Denomination, height = Height } = NewB,
 	#block{ reward_history = RewardHistory } = OldB,
 	HashRate = ar_difficulty:get_hash_rate(Diff),
 	RewardAddr = NewB#block.reward_addr,
-	RewardHistory2 = lists:sublist([{RewardAddr, HashRate, Reward, Denomination}
-			| RewardHistory], ?REWARD_HISTORY_BLOCKS),
-	case ar_block:reward_history_hash(RewardHistory2) of
+	LockedRewards = ar_rewards:trim_locked_rewards(Height,
+		[{RewardAddr, HashRate, Reward, Denomination} | RewardHistory]),
+	case ar_rewards:reward_history_hash(LockedRewards) of
 		RewardHistoryHash ->
 			validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors,
 					RecentTXMap});

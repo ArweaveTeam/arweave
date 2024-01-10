@@ -300,13 +300,11 @@ register(MetricsDir) ->
 	%% Economic metrics.
 	prometheus_gauge:new([
 		{name, average_network_hash_rate},
-		{help, io_lib:format("The average network hash rate measured over the latest ~B "
-				"blocks.", [?REWARD_HISTORY_BLOCKS])}
+		{help, "The average network hash rate measured over the last ~30 days of blocks"}
 	]),
 	prometheus_gauge:new([
 		{name, average_block_reward},
-		{help, io_lib:format("The average block reward in Winston computed from the latest ~B "
-				"blocks.", [?REWARD_HISTORY_BLOCKS])}
+		{help, "The average block reward in Winston computed from the last ~30 days of blocks"}
 	]),
 	prometheus_gauge:new([
 		{name, expected_block_reward},

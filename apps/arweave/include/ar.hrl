@@ -555,7 +555,7 @@
 	%% the latest ?REWARD_HISTORY_BLOCKS blocks.
 	reward_history_hash,
 	%% The network hash rates, block rewards, and mining addresses from the latest
-	%% ?REWARD_HISTORY_BLOCKS blocks. Used internally, not gossiped.
+	%% ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT blocks. Used internally, not gossiped.
 	reward_history = [],
 	%% The total number of Winston emitted when the endowment was not sufficient
 	%% to compensate mining.

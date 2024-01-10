@@ -401,18 +401,15 @@ get_recent_hash_list_diff(Peer, HL) ->
 	}), HL, Peer).
 
 %% @doc Fetch the reward history from one of the given peers. The reward history
-%% must contain ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT elements or
-%% one per every block since the fork 2.6 block, whatever is smaller. The reward history
+%% must contain ar_rewards:reward_history_length/1 elements. The reward history
 %% hashes are validated against the given ExpectedRewardHistoryHashes. Return not_found
 %% if we fail to fetch a reward history of the expected length from any of the peers.
 get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 	#block{ height = Height, indep_hash = H } = B,
-	Fork_2_6 = ar_fork:height_2_6(),
-	true = Height >= Fork_2_6,
-	ExpectedLength = min(Height - Fork_2_6 + 1,
-			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-	true = length(ExpectedRewardHistoryHashes) == min(Height - Fork_2_6 + 1,
-			?STORE_BLOCKS_BEHIND_CURRENT),
+	ExpectedLength = ar_rewards:reward_history_length(Height),
+	true = length(ExpectedRewardHistoryHashes) == min(
+													Height - ar_fork:height_2_6() + 1,
+													?STORE_BLOCKS_BEHIND_CURRENT),
 	case ar_http:req(#{
 				peer => Peer,
 				method => get,
@@ -423,7 +420,7 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			case ar_serialize:binary_to_reward_history(Body) of
 				{ok, RewardHistory} when length(RewardHistory) == ExpectedLength ->
-					case validate_reward_history_hashes(RewardHistory,
+					case ar_rewards:validate_reward_history_hashes(Height, RewardHistory,
 							ExpectedRewardHistoryHashes) of
 						true ->
 							{ok, RewardHistory};
@@ -556,16 +553,6 @@ get_previous_vdf_session(Peer) ->
 			{error, {Status, ResponseBody}};
 		Reply ->
 			Reply
-	end.
-
-validate_reward_history_hashes(_RewardHistory, []) ->
-	true;
-validate_reward_history_hashes(RewardHistory, [H | ExpectedRewardHistoryHashes]) ->
-	case ar_block:validate_reward_history_hash(H, RewardHistory) of
-		true ->
-			validate_reward_history_hashes(tl(RewardHistory), ExpectedRewardHistoryHashes);
-		false ->
-			false
 	end.
 
 validate_block_time_history_hashes(_BlockTimeHistory, []) ->

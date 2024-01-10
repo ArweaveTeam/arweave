@@ -4,7 +4,7 @@
 		get_max_timestamp_deviation/0, verify_last_retarget/2, verify_weave_size/3,
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
 		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
-		indep_hash/1, indep_hash/2, indep_hash2/2, reward_history_hash/1,
+		indep_hash/1, indep_hash/2, indep_hash2/2,
 		block_time_history_hash/1, get_block_time_history_element/2,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
@@ -13,7 +13,7 @@
 		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
 		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
-		get_packing_threshold/2, validate_reward_history_hash/2,
+		get_packing_threshold/2, 
 		validate_block_time_history_hash/2, update_block_time_history/2,
 		compute_block_interval/1, compute_next_vdf_difficulty/1]).
 
@@ -387,18 +387,6 @@ indep_hash(BDS, B) ->
 			ar_deep_hash:hash([BDS, B#block.hash, B#block.nonce])
 	end.
 
-reward_history_hash(RewardHistory) ->
-	reward_history_hash(RewardHistory, [ar_serialize:encode_int(length(RewardHistory), 8)]).
-
-reward_history_hash([], IOList) ->
-	crypto:hash(sha256, iolist_to_binary(IOList));
-reward_history_hash([{Addr, HashRate, Reward, Denomination} | RewardHistory], IOList) ->
-	HashRateBin = ar_serialize:encode_int(HashRate, 8),
-	RewardBin = ar_serialize:encode_int(Reward, 8),
-	DenominationBin = << Denomination:24 >>,
-	reward_history_hash(RewardHistory,
-			[Addr, HashRateBin, RewardBin, DenominationBin | IOList]).
-
 block_time_history_hash(BlockTimeHistory) ->
 	block_time_history_hash(BlockTimeHistory,
 			[ar_serialize:encode_int(length(BlockTimeHistory), 8)]).
@@ -656,9 +644,6 @@ shift_packing_2_5_threshold(0) ->
 shift_packing_2_5_threshold(Threshold) ->
 	Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * (?TARGET_TIME),
 	max(0, Threshold - Shift).
-
-validate_reward_history_hash(H, RewardHistory) ->
-	H == ar_block:reward_history_hash(lists:sublist(RewardHistory, ?REWARD_HISTORY_BLOCKS)).
 
 validate_block_time_history_hash(H, BlockTimeHistory) ->
 	H == ar_block:block_time_history_hash(lists:sublist(BlockTimeHistory,
