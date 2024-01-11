@@ -2510,13 +2510,13 @@ handle_get_jobs_pool_server(PrevOutput, Req) ->
 				[] ->
 					false;
 				_ ->
-					{true, S}
+					{ok, S}
 			end
 		end,
 		200,
 		(?GET_JOBS_TIMEOUT_S) * 1000
 	),
-	Steps = case Result of false -> []; {true, S} -> S end,
+	Steps = case Result of {ok, S} -> S; _ -> [] end,
 	{NextSeed, IntervalNumber, NextVDFDiff} = ar_nonce_limiter:session_key(Info),
 	JobList = [#job{ output = O, global_step_number = SN,
 			partition_upper_bound = U } || {O, SN, U} <- Steps],
