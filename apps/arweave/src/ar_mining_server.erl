@@ -7,7 +7,7 @@
 -export([start_link/1, start_mining/1,
 		has_cache_space/1, update_chunk_cache_size/2, reserve_cache_space/2,
 		set_difficulty/1, set_merkle_rebase_threshold/1, 
-		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1,
+		compute_h2_for_peer/1, add_pool_job/1, prepare_and_post_solution/1, post_solution/1,
 		read_poa/3, get_recall_bytes/4]).
 -export([pause/0]).
 
@@ -72,6 +72,10 @@ set_difficulty(Diff) ->
 set_merkle_rebase_threshold(Threshold) ->
 	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
 
+%% @doc Add a pool job to the mining queue.
+add_pool_job(Args) ->
+	gen_server:cast(?MODULE, {add_pool_job, Args}).
+
 prepare_and_post_solution(Candidate) ->
 	gen_server:cast(?MODULE, {prepare_and_post_solution, Candidate}).
 
@@ -84,7 +88,7 @@ post_solution(Solution) ->
 
 init(Workers) ->
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe([nonce_limiter, pool]),
+	ok = ar_events:subscribe(nonce_limiter),
 	ar_chunk_storage:open_files("default"),
 	reset_chunk_cache_size(),
 	%% Initialize the map with dummy values for the VDF session keys. Once we receive our first
@@ -150,6 +154,8 @@ handle_cast({set_difficulty, Diff}, State) ->
 handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
 	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
+handle_cast({add_pool_job, Args}, State) ->
+	handle_computed_output(Args, State);
 
 handle_cast({reserve_cache_space, PartitionNumber, NumChunks}, State) ->
 	update_chunk_cache_size(PartitionNumber, NumChunks),
@@ -194,9 +200,6 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 handle_info({event, nonce_limiter, Message}, State) ->
 	?LOG_DEBUG([{event, mining_debug_skipping_nonce_limiter}, {message, Message}]),
 	{noreply, State};
-
-handle_info({event, pool, {job, Args}}, State) ->
-	handle_computed_output(Args, State);
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
