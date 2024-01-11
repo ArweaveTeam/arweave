@@ -547,7 +547,7 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 			true ->
 				case binary:decode_unsigned(SolutionH, big) > Diff of
 					false ->
-						ar_events:send(solution, {processed, #{ source => Source }}),
+						ar_events:send(solution, {partial, #{ source => Source }}),
 						{false, diff};
 					true ->
 						true

@@ -53,7 +53,7 @@ init([]) ->
 		?CHILD(ar_events, chunk_storage, worker),
 		%% Events: add_range, remove_range, cut.
 		?CHILD(ar_events, data_sync, worker),
-		%% Events: rejected, stale, processed, accepted.
+		%% Events: rejected, stale, partial, accepted.
 		?CHILD(ar_events, solution, worker),
 		%% Used for the testing purposes.
 		?CHILD(ar_events, testing, worker)
