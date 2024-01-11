@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, set_largest_seen_upper_bound/1, get_partitions/0, get_partitions/1,
-			get_thread_count/0, read_recall_range/4]).
+			read_recall_range/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -33,12 +33,11 @@ set_largest_seen_upper_bound(PartitionUpperBound) ->
 get_partitions() ->
 	gen_server:call(?MODULE, get_partitions).
 
-get_thread_count() ->
-	gen_server:call(?MODULE, get_thread_count).
-
 read_recall_range(WhichChunk, Worker, Candidate, RecallRangeStart) ->
 	gen_server:call(?MODULE, {read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}).
 
+get_partitions(PartitionUpperBound) when PartitionUpperBound =< 0 ->
+	[];
 get_partitions(PartitionUpperBound) ->
 	Max = ar_node:get_max_partition_number(PartitionUpperBound),
 	lists:sort(sets:to_list(
@@ -82,13 +81,8 @@ handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) -
 			{reply, false, State}
 	end;
 
-handle_call(get_partitions, _From, #state{ partition_upper_bound = 0 } = State) ->
-	{reply, [], State};
 handle_call(get_partitions, _From, #state{ partition_upper_bound = PartitionUpperBound } = State) ->
 	{reply, get_partitions(PartitionUpperBound), State};
-
-handle_call(get_thread_count, _From, #state{ io_threads = IOThreads } = State) ->
-	{reply, maps:size(IOThreads), State};
 
 handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}, _From,
 		#state{ io_threads = IOThreads } = State) ->
@@ -151,17 +145,9 @@ get_io_channels() ->
 			[],
 			Config#config.storage_modules
 		),
-	StorageModules2 =
-		ar_intervals:fold(
-			fun({End, Start}, Acc) ->
-				[{Start, End, MiningAddress, "default"} | Acc]
-			end,
-			StorageModules,
-			ar_sync_record:get(ar_data_sync, "default")
-		),
 
 	%% And then map those storage modules to partitions.
-	get_io_channels(StorageModules2, []).
+	get_io_channels(StorageModules, []).
 
 get_io_channels([], Channels) ->
 	Channels;
@@ -330,7 +316,7 @@ find_thread2(PartitionNumber, MiningAddress, Iterator) ->
 	end.
 
 find_thread3([Key | Keys], RangeEnd, RangeStart, Max, MaxKey) ->
-	{_PartitionNumber, _ReplicaID, StoreID} = Key,
+	{_PartitionNumber, _MiningAddress, StoreID} = Key,
 	I = ar_sync_record:get_intersection_size(RangeEnd, RangeStart, ar_chunk_storage, StoreID),
 	case I > Max of
 		true ->
