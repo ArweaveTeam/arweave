@@ -494,7 +494,8 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 		end,
 
 	[{wallet_list, WalletList}] = ets:lookup(node_state, wallet_list),
-	IsBanned = is_account_banned(MiningAddress, ar_wallets:get(WalletList, MiningAddress)),
+	IsBanned = ar_node_utils:is_account_banned(MiningAddress,
+			ar_wallets:get(WalletList, MiningAddress)),
 
 	%% Check the solution is ahead of the previous solution on the timeline.
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
