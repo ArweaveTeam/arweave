@@ -1,3 +1,36 @@
+%%% @doc The module defines the core pool mining functionality.
+%%%
+%%% The key actors are a pool client, a pool proxy, and a pool server. The pool client may be
+%%% a standalone mining node or an exit peer in a coordinated mining setup. The other CM peers
+%%% communicate with the pool via the exit peer. The proxy is NOT an Arweave node.
+%%%
+%%% Communication Scheme
+%%%
+%%%                                 +---> Standalone Pool Client
+%%%                                 |
+%%% Pool Server <--> Pool Proxy <---+
+%%%                                 |
+%%%                                 +---> CM Exit Node Pool Client <--> CM Miner Pool Client
+%%%
+%%% Job Assignment
+%%%
+%%% 1. Solo Mining
+%%%
+%%%   Pool Server -> Pool Proxy -> Standalone Pool Client
+%%%
+%%% 2. Coordinated Mining
+%%%
+%%%   Pool Server -> Pool Proxy -> CM Exit Node Pool Client -> CM Miner Pool Client
+%%%
+%%% Partial Solution Lifecycle
+%%%
+%%% 1. Solo Mining
+%%%
+%%%   Standalone Pool Client -> Pool Proxy -> Pool Sever
+%%%
+%%% 2. Coordinated Mining
+%%%
+%%%   CM Miner Pool Client -> CM Exit Node Pool Client -> Pool Proxy -> Pool Server
 -module(ar_pool).
 
 -behaviour(gen_server).
