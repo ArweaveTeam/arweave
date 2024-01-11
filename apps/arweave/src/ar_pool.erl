@@ -111,16 +111,16 @@ handle_cast({cache_jobs, Jobs}, State) ->
 	SessionKey = {NextSeed, IntervalNumber, NextVDFDifficulty},
 	SessionKeys = State#state.session_keys,
 	SessionKeys2 = [SessionKey | SessionKeys],
-	JobList = [{Job#job.output, Job#job.global_step_number,
+	JobList2 = [{Job#job.output, Job#job.global_step_number,
 			Job#job.partition_upper_bound, Seed, Diff} || Job <- JobList],
 	PrevJobList = maps:get(SessionKey, State#state.jobs_by_session_key, []),
-	JobList2 = JobList ++ PrevJobList,
-	JobsBySessionKey = maps:put(SessionKey, JobList2, State#state.jobs_by_session_key),
+	JobList3 = JobList2 ++ PrevJobList,
+	JobsBySessionKey = maps:put(SessionKey, JobList3, State#state.jobs_by_session_key),
 	{SessionKeys3, JobsBySessionKey2} =
 		case length(SessionKeys2) == 3 of
 			true ->
-				{RemoveKey, SessionKeys4} = lists:last(SessionKeys2),
-				{SessionKeys4, maps:remove(RemoveKey, JobsBySessionKey)};
+				[SK1, SK2, RemoveKey] = SessionKeys2,
+				{[SK1, SK2], maps:remove(RemoveKey, JobsBySessionKey)};
 			false ->
 				{SessionKeys2, JobsBySessionKey}
 		end,

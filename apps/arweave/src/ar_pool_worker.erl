@@ -84,7 +84,8 @@ emit_pool_jobs(Jobs) ->
 
 emit_pool_jobs([], _SessionKey, _PartialDiff) ->
 	ok;
-emit_pool_jobs([{O, SN, U} | Steps], SessionKey, PartialDiff) ->
+emit_pool_jobs([Job | Jobs], SessionKey, PartialDiff) ->
+	#job{ output = O, global_step_number = SN, partition_upper_bound = U } = Job,
 	Args = {SessionKey, SN, O, U, PartialDiff},
 	ar_events:send(pool, {job, Args}),
-	emit_pool_jobs(Steps, SessionKey, PartialDiff).
+	emit_pool_jobs(Jobs, SessionKey, PartialDiff).

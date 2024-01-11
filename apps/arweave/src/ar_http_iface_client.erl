@@ -645,7 +645,7 @@ post_partial_solution(PeerOrURL, Solution, IsPool) ->
 				{PeerOrURL, cm_p2p_headers(), ""};
 			true ->
 				#{ host := Host, port := Port, path := P } = uri_string:parse(PeerOrURL),
-				{{binary_to_list(Host), Port}, pool_client_headers(), P}
+				{{binary_to_list(Host), Port}, pool_client_headers(), binary_to_list(P)}
 		end,
 	Payload =
 		case is_binary(Solution) of

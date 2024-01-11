@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, account_tree_initialized/1, encode_session_key/1,
+-export([start_link/0, account_tree_initialized/1, encode_session_key/1, session_key/1,
 		is_ahead_on_the_timeline/2, 
 		get_current_step_number/0, get_current_step_number/1, get_step_triplets/3,
 		get_seed_data/2, get_step_checkpoints/4, get_step_checkpoints_seed_upper_bound/4,

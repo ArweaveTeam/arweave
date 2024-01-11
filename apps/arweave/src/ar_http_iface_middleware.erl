@@ -515,6 +515,14 @@ handle(<<"GET">>, [<<"jobs">>, EncodedPrevOutput], Req, _Pid) ->
 			end
 	end;
 
+handle(<<"GET">>, [<<"jobs">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_jobs(<<>>, Req)
+	end;
+
 %% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
