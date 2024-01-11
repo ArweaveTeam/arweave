@@ -598,7 +598,7 @@ post_solution(not_set, Solution, State) ->
 			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
 	end;
 post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
-	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution, false) of
+	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution, true) of
 		{ok, _} ->
 			ok;
 		{error, Reason} ->

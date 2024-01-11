@@ -162,7 +162,7 @@ handle_cast({cache_jobs, Jobs}, State) ->
 
 handle_cast({post_partial_solution, Solution}, State) ->
 	{ok, Config} = application:get_env(arweave, config),
-	case ar_http_iface_client:post_partial_solution(Config#config.pool_host, Solution, true) of
+	case ar_http_iface_client:post_partial_solution(Config#config.pool_host, Solution, false) of
 		{ok, _Response} ->
 			ok;
 		{error, Error} ->

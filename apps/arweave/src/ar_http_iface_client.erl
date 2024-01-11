@@ -618,14 +618,14 @@ cm_publish_send(Peer, Solution) ->
 	})).
 
 %% @doc Fetch the jobs from the pool or coordinated mining exit peer.
-get_jobs(PeerOrURL, PrevOutput, Pool) ->
+get_jobs(PeerOrURL, PrevOutput, GetJobsFromExitNode) ->
 	{Peer, Headers, BasePath} =
-		case Pool of
-			false ->
-				{PeerOrURL, cm_p2p_headers(), ""};
+		case GetJobsFromExitNode of
 			true ->
-				#{ host := Host, port := Port, path := P } = uri_string:parse(PeerOrURL),
-				{{binary_to_list(Host), Port}, pool_client_headers(), binary_to_list(P)}
+				{PeerOrURL, cm_p2p_headers(), ""};
+			false ->
+				{Peer2, Path2} = get_peer_and_path_from_url(PeerOrURL),
+				{Peer2, pool_client_headers(), Path2}
 		end,
 	handle_get_jobs_response(ar_http:req(#{
 		peer => Peer,
@@ -634,18 +634,22 @@ get_jobs(PeerOrURL, PrevOutput, Pool) ->
 		timeout => 5 * 1000,
 		connect_timeout => 1000,
 		headers => Headers,
-		is_peer_request => not Pool
+		is_peer_request => GetJobsFromExitNode
 	})).
 
-%% @doc Post the partial solution to the pool.
-post_partial_solution(PeerOrURL, Solution, IsPool) ->
+get_peer_and_path_from_url(URL) ->
+	#{ host := Host, port := Port, path := P } = uri_string:parse(URL),
+	{{binary_to_list(Host), Port}, binary_to_list(P)}.
+
+%% @doc Post the partial solution to the pool or coordinated mining exit peer.
+post_partial_solution(PeerOrURL, Solution, GetJobsFromExitNode) ->
 	{Peer, Headers, BasePath} =
-		case IsPool of
-			false ->
-				{PeerOrURL, cm_p2p_headers(), ""};
+		case GetJobsFromExitNode of
 			true ->
-				#{ host := Host, port := Port, path := P } = uri_string:parse(PeerOrURL),
-				{{binary_to_list(Host), Port}, pool_client_headers(), binary_to_list(P)}
+				{PeerOrURL, cm_p2p_headers(), ""};
+			false ->
+				{Peer2, Path2} = get_peer_and_path_from_url(PeerOrURL),
+				{Peer2, pool_client_headers(), Path2}
 		end,
 	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
 	Payload =
@@ -663,7 +667,7 @@ post_partial_solution(PeerOrURL, Solution, IsPool) ->
 		connect_timeout => 5 * 1000,
 		headers => Headers2,
 		body => Payload,
-		is_peer_request => not IsPool
+		is_peer_request => GetJobsFromExitNode
 	})).
 
 handle_post_partial_solution_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->

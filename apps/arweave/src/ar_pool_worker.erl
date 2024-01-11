@@ -41,19 +41,19 @@ handle_call(Request, _From, State) ->
 handle_cast(fetch_jobs, State) ->
 	PrevOutput = ar_pool:get_latest_output(),
 	{ok, Config} = application:get_env(arweave, config),
-	{Peer, Pool} =
+	{Peer, GetJobsFromExitNode} =
 		case {Config#config.coordinated_mining, Config#config.cm_exit_peer} of
 			{true, not_set} ->
 				%% We are a CM exit node.
-				{Config#config.pool_host, true};
+				{Config#config.pool_host, false};
 			{true, ExitPeer} ->
 				%% We are a CM miner.
-				{ExitPeer, false};
+				{ExitPeer, true};
 			_ ->
 				%% We are a standalone pool client (a non-CM miner and a pool client).
-				{Config#config.pool_host, true}
+				{Config#config.pool_host, false}
 		end,
-	case ar_http_iface_client:get_jobs(Peer, PrevOutput, Pool) of
+	case ar_http_iface_client:get_jobs(Peer, PrevOutput, GetJobsFromExitNode) of
 		{ok, Jobs} ->
 			emit_pool_jobs(Jobs),
 			ar_pool:cache_jobs(Jobs),
