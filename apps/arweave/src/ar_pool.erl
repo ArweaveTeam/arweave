@@ -143,7 +143,13 @@ handle_cast({cache_jobs, Jobs}, State) ->
 			next_vdf_difficulty = NextVDFDifficulty } = Jobs,
 	SessionKey = {NextSeed, IntervalNumber, NextVDFDifficulty},
 	SessionKeys = State#state.session_keys,
-	SessionKeys2 = [SessionKey | SessionKeys],
+	SessionKeys2 =
+		case lists:member(SessionKey, SessionKeys) of
+			true ->
+				SessionKeys;
+			false ->
+				[SessionKey | SessionKeys]
+		end,
 	JobList2 = [{Job#job.output, Job#job.global_step_number,
 			Job#job.partition_upper_bound, Seed, Diff} || Job <- JobList],
 	PrevJobList = maps:get(SessionKey, State#state.jobs_by_session_key, []),

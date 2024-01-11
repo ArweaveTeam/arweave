@@ -426,6 +426,7 @@ prepare_solution(Candidate, State) ->
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	},
+	%% A pool client does not validate VDF before sharing a solution.
 	case IsPoolClient of
 		true ->
 			prepare_solution(proofs, Candidate, Solution);
@@ -562,6 +563,8 @@ post_solution(Solution, State) ->
 	post_solution(Config#config.cm_exit_peer, Solution, State).
 
 post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
+	%% When posting a partial solution the pool client will skip many of the validation steps
+	%% that are normally performed before sharing a solution.
 	ar_pool:post_partial_solution(Solution);
 post_solution(not_set, Solution, State) ->
 	#state{ diff = Diff } = State,
