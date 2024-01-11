@@ -614,6 +614,14 @@ validate_cm_pool_config(Config) ->
 			erlang:halt();
 		_ ->
 			ok
+	end,
+	case {Config#config.pool_client, Config#config.mine} of
+		{true, false} ->
+			io:format("~nThe mine flag must be set along with the pool_client flag.~n~n"),
+			timer:sleep(1000),
+			erlang:halt();
+		_ ->
+			ok
 	end.
 
 start(normal, _Args) ->

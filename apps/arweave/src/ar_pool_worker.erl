@@ -44,10 +44,13 @@ handle_cast(fetch_jobs, State) ->
 	{Peer, Pool} =
 		case {Config#config.coordinated_mining, Config#config.cm_exit_peer} of
 			{true, not_set} ->
+				%% We are a CM exit node.
 				{Config#config.pool_host, true};
 			{true, ExitPeer} ->
+				%% We are a CM miner.
 				{ExitPeer, false};
 			_ ->
+				%% We are a standalone pool client (a non-CM miner and a pool client).
 				{Config#config.pool_host, true}
 		end,
 	case ar_http_iface_client:get_jobs(Peer, PrevOutput, Pool) of
