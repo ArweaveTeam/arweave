@@ -1841,8 +1841,8 @@ jobs_to_json_struct(Jobs) ->
 job_to_json_struct(Job) ->
 	#job{ output = Output, global_step_number = StepNumber,
 			partition_upper_bound = PartitionUpperBound } = Job,
-	{[{output, ar_util:encode(Output)},
-			{global_step_number, integer_to_binary(StepNumber)},
+	{[{nonce_limiter_output, ar_util:encode(Output)},
+			{step_number, integer_to_binary(StepNumber)},
 			{partition_upper_bound, integer_to_binary(PartitionUpperBound)}]}.
 
 json_struct_to_jobs(Struct) ->
@@ -1861,8 +1861,8 @@ json_struct_to_jobs(Struct) ->
 
 json_struct_to_job(Struct) ->
 	{Keys} = Struct,
-	Output = ar_util:decode(proplists:get_value(<<"output">>, Keys, <<>>)),
-	StepNumber = binary_to_integer(proplists:get_value(<<"global_step_number">>, Keys,
+	Output = ar_util:decode(proplists:get_value(<<"nonce_limiter_output">>, Keys, <<>>)),
+	StepNumber = binary_to_integer(proplists:get_value(<<"step_number">>, Keys,
 			<<"0">>)),
 	PartitionUpperBound = binary_to_integer(proplists:get_value(<<"partition_upper_bound">>,
 			Keys, <<"0">>)),

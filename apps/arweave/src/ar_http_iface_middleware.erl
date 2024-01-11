@@ -494,7 +494,7 @@ handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 %% {
 %%   "jobs":
 %%     [
-%%       {"output": "...", "global_step_number": "...", "partition_upper_bound": "..."},
+%%       {"nonce_limiter_output": "...", "step_number": "...", "partition_upper_bound": "..."},
 %%       ...
 %%     ],
 %%   "partial_diff": "...",
