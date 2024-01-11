@@ -263,7 +263,7 @@ process_partial_solution_field_size(Solution, Ref) ->
 		poa2 = #poa{ chunk = C2 }
 	} = Solution,
 	%% We have less strict deserialization in the pool pipeline to simplify
-	%% the pool proxy implementation. Therefore, we validate the field sizes here
+	%% the pool "proxy" implementation. Therefore, we validate the field sizes here
 	%% and return the "rejected_bad_poa" status in case of a failure.
 	case {byte_size(Output), byte_size(Seed), byte_size(NextSeed), byte_size(MiningAddress),
 			byte_size(Preimage), byte_size(SolutionH), byte_size(C1), byte_size(C2)} of

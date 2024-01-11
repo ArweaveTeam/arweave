@@ -617,7 +617,7 @@ cm_publish_send(Peer, Solution) ->
 		body => ar_serialize:jsonify({Json})
 	})).
 
-%% @doc Fetch the jobs from the pool proxy or coordinated mining exit peer.
+%% @doc Fetch the jobs from the pool or coordinated mining exit peer.
 get_jobs(PeerOrURL, PrevOutput, Pool) ->
 	{Peer, Headers, BasePath} =
 		case Pool of

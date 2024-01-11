@@ -273,8 +273,8 @@ show_help() ->
 					"participate in the coordinated mining."},
 			{"pool_client", "Configure the node as a pool client. The node may be an "
 					"exit peer in the coordinated mining setup or a standalone node."},
-			{"pool_api_key", "API key for the requests to pool proxy."},
-			{"pool_host", "The pool proxy address"}
+			{"pool_api_key", "API key for the requests to the pool."},
+			{"pool_host", "The pool address"}
 		]
 	),
 	erlang:halt().

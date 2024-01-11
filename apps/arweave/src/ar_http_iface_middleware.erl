@@ -455,7 +455,7 @@ handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 	erlang:put(post_block2, true),
 	post_block(request, {Req, Pid, binary}, erlang:timestamp());
 
-%% Accept a (partial) solution from a pool proxy or a CM node and validate it.
+%% Accept a (partial) solution from a pool or a CM node and validate it.
 %%
 %% If the node is a CM exit node and a pool client, send the given solution to
 %% the pool and return an empty JSON object.

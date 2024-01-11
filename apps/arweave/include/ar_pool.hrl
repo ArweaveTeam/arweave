@@ -5,7 +5,7 @@
 %% new jobs when the client already has the newest job.
 -define(GET_JOBS_TIMEOUT_S, 2).
 
-%% The frequency in milliseconds of asking the pool proxy or CM exit node about new jobs.
+%% The frequency in milliseconds of asking the pool or CM exit node about new jobs.
 -define(FETCH_JOBS_FREQUENCY_MS, 5000).
 
 %% The time in milliseconds we wait before retrying a failed fetch jobs request.
