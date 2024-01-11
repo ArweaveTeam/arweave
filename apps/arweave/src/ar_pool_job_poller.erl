@@ -1,4 +1,4 @@
--module(ar_pool_worker).
+-module(ar_pool_job_poller).
 
 -behaviour(gen_server).
 

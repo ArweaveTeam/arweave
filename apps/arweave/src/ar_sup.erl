@@ -96,7 +96,7 @@ init([]) ->
 		?CHILD(ar_p3, worker),
 		?CHILD(ar_p3_db, worker),
 		?CHILD(ar_pool, worker),
-		?CHILD(ar_pool_worker, worker)
+		?CHILD(ar_pool_job_poller, worker)
 	],
 	{ok, Config} = application:get_env(arweave, config),
 	DebugChildren = case Config#config.debug of
