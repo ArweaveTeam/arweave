@@ -578,7 +578,8 @@ process_partial_solution_test_() ->
 
 test_process_partial_solution() ->
 	Zero = << 0:256 >>,
-	H0 = ar_block:compute_h0(Zero, 0, Zero, Zero),
+	Zero48 = << 0:(8*48) >>,
+	H0 = ar_block:compute_h0(Zero, 0, Zero48, Zero),
 	SolutionHQuick = ar_block:compute_solution_h(H0, Zero),
 	{H1, Preimage1} = ar_block:compute_h1(H0, 1, <<>>),
 	SolutionH = ar_block:compute_solution_h(H0, Preimage1),
@@ -735,18 +736,18 @@ process_solution_test_() ->
 		{ar_nonce_limiter, get_step_checkpoints_seed_upper_bound,
 			fun(S, N, SIN, D) ->
 				case {S, N, SIN, D} of
-					{0, << 1:256 >>, 0, 0} ->
+					{0, << 1:(48*8) >>, 0, 0} ->
 						%% Test partition upper bound mismatch (2 /= 1).
-						{[<< 0:256 >>], << 0:256 >>, 2};
-					{0, << 2:256 >>, 0, 0} ->
-						%% Test partition upper seed mismatch (<< 3:256 >> /= << 0:256 >>).
-						{[<< 0:256 >>], << 3:256 >>, 1};
-					{0, << 3:256 >>, 0, 0} ->
+						{[<< 0:256 >>], << 0:(48*8) >>, 2};
+					{0, << 2:(48*8) >>, 0, 0} ->
+						%% Test partition upper seed mismatch (<< 3:(48*8) >> /= << 0:(48*8) >>).
+						{[<< 0:256 >>], << 3:(48*8) >>, 1};
+					{0, << 3:(48*8) >>, 0, 0} ->
 						%% Test output mismatch (<< 1:256 >> /= << 0:256 >>).
-						{[<< 1:256 >>], << 0:256 >>, 1};
-					{0, << 4:256 >>, 0, 0} ->
-						%% Happy path (achieved with next_seed = << 4:256 >>).
-						{[<< 0:256 >>], << 0:256 >>, 1};
+						{[<< 1:256 >>], << 0:(48*8) >>, 1};
+					{0, << 4:(48*8) >>, 0, 0} ->
+						%% Happy path (achieved with next_seed = << 4:(48*8) >>).
+						{[<< 0:256 >>], << 0:(48*8) >>, 1};
 					_ ->
 						not_found
 				end
@@ -757,42 +758,43 @@ process_solution_test_() ->
 
 test_process_solution() ->
 	Zero = << 0:256 >>,
-	H0 = ar_block:compute_h0(Zero, 0, Zero, Zero),
+	Zero48 = << 0:(48*8) >>,
+	H0 = ar_block:compute_h0(Zero, 0, Zero48, Zero),
 	{_H1, Preimage1} = ar_block:compute_h1(H0, 1, <<>>),
 	SolutionH = ar_block:compute_solution_h(H0, Preimage1),
 	{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0, 0, 1),
 	RecallByte1 = RecallRange1Start + 1 * ?DATA_CHUNK_SIZE,
 	TestCases = [
 		{"VDF not found",
-			#mining_solution{ next_seed = << 10:256 >>, nonce = 1, solution_hash = SolutionH,
+			#mining_solution{ next_seed = << 10:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"Bad VDF 1",
-			#mining_solution{ next_seed = << 1:256 >>, nonce = 1, solution_hash = SolutionH,
+			#mining_solution{ next_seed = << 1:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Bad VDF 2",
-			#mining_solution{ next_seed = << 2:256 >>, nonce = 1, solution_hash = SolutionH,
+			#mining_solution{ next_seed = << 2:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Bad VDF 3",
-			#mining_solution{ next_seed = << 3:256 >>, nonce = 1, solution_hash = SolutionH,
+			#mining_solution{ next_seed = << 3:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Accepted",
-			#mining_solution{ next_seed = << 4:256 >>, nonce = 1, solution_hash = SolutionH,
+			#mining_solution{ next_seed = << 4:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,

@@ -33,7 +33,7 @@
 -record(mining_solution, {
 	last_step_checkpoints = [],
 	merkle_rebase_threshold = 0,
-	next_seed = << 0:256 >>,
+	next_seed = << 0:(8 * 48) >>,
 	next_vdf_difficulty = 0,
 	nonce = 0,
 	nonce_limiter_output = << 0:256 >>,
@@ -47,7 +47,7 @@
 	start_interval_number = 0,
 	step_number = 0,
 	steps = [],
-	seed = << 0:256 >>,
+	seed = << 0:(8 * 48) >>,
 	mining_address = << 0:256 >>,
 	partition_upper_bound = 0
 }).
