@@ -3178,9 +3178,31 @@ find_storage_module_for_disk_pool_chunk(Offset) ->
 	case ar_storage_module:get_all(Offset) of
 		[] ->
 			not_found;
-		[Module | _] ->
-			ar_storage_module:id(Module)
+		Modules ->
+			SortedModules = sort_storage_modules_for_disk_pool_chunk(Modules),
+			ar_storage_module:id(hd(SortedModules))
 	end.
+
+%% @doc ensure we store the disk pool chunk in the most useful storage module. Primarily relevant
+%% for tests and miners that are repacking data between storage modules.
+sort_storage_modules_for_disk_pool_chunk(Modules) ->
+	{ok, Config} = application:get_env(arweave, config),
+	MiningAddress = Config#config.mining_addr,
+    CompareFun = 
+		fun({_, _, {spora_2_6, Addr1}}, {_, _, {spora_2_6, _}}) ->
+			%% Storage modules for our current mining address have the highest priority
+			Addr1 == MiningAddress;
+		({_, _, {spora_2_6, _}}, {_, _, spora_2_5}) ->
+			% spora_2_6 entries come before spora_2_5
+			true;
+		({_, _, spora_2_5}, {_, _, {spora_2_6, _}}) ->
+			% spora_2_5 entries come after spora_2_6
+			false;
+		(_, _) ->
+			% Default fallback for any other cases
+			true
+		end,
+    lists:sort(CompareFun, Modules).
 
 remove_recently_processed_disk_pool_offset(Offset, ChunkDataKey, State) ->
 	#sync_data_state{ recently_processed_disk_pool_offsets = Map } = State,
