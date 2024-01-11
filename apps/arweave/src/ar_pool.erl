@@ -35,7 +35,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, is_client/0, get_current_sessions/0, get_jobs/1,
+-export([start_link/0, is_client/0, get_current_session_key_seed_pairs/0, get_jobs/1,
 		get_latest_output/0, cache_jobs/1, process_partial_solution/1,
 		post_partial_solution/1]).
 
@@ -68,9 +68,9 @@ is_client() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.pool_client == true.
 
-%% @doc Return a list of up to two most recently cached VDF session keys.
-get_current_sessions() ->
-	gen_server:call(?MODULE, get_current_sessions, infinity).
+%% @doc Return a list of up to two most recently cached VDF session key, seed pairs.
+get_current_session_key_seed_pairs() ->
+	gen_server:call(?MODULE, get_current_session_key_seed_pairs, infinity).
 
 %% @doc Return a set of the most recent cached jobs.
 get_jobs(PrevOutput) ->
@@ -103,8 +103,11 @@ init([]) ->
 	ok = ar_events:subscribe(solution),
 	{ok, #state{}}.
 
-handle_call(get_current_sessions, _From, State) ->
-	{reply, lists:sublist(State#state.session_keys, 2), State};
+handle_call(get_current_session_key_seed_pairs, _From, State) ->
+	JobsBySessionKey = State#state.jobs_by_session_key,
+	Keys = lists:sublist(State#state.session_keys, 2),
+	KeySeedPairs = [{Key, element(4, hd(maps:get(Key, JobsBySessionKey)))} || Key <- Keys],
+	{reply, KeySeedPairs, State};
 
 handle_call({get_jobs, PrevOutput}, _From, State) ->
 	SessionKeys = State#state.session_keys,

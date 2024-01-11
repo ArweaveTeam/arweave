@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, reset/2, new_session/2, 
+-export([start_link/1, reset/2, new_session/3,
 	recall_chunk/5, computed_hash/5, set_difficulty/2, add_task/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -37,8 +37,8 @@ start_link(Name) ->
 reset(Worker, Diff) ->
 	gen_server:cast(Worker, {reset, Diff}).
 
-new_session(Worker, SessionKey) ->
-	gen_server:cast(Worker, {new_session, SessionKey}).
+new_session(Worker, SessionKey, Seed) ->
+	gen_server:cast(Worker, {new_session, SessionKey, Seed}).
 
 add_task(Worker, TaskType, Candidate) ->
 	gen_server:cast(Worker, {add_task, {TaskType, Candidate}}).
@@ -111,7 +111,7 @@ handle_cast({reset, Diff}, State) ->
 		{chunks_discarded, ChunksDiscarded}]),
 	{noreply, State2#state{ diff = Diff }};
 
-handle_cast({new_session, SessionKey}, State) ->
+handle_cast({new_session, SessionKey, Seed}, State) ->
 	Session = ar_nonce_limiter:get_session(SessionKey),
 	#vdf_session{ seed = Seed } = Session,	
 

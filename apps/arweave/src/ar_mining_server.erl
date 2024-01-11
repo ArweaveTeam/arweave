@@ -239,7 +239,7 @@ set_difficulty(Diff, State) ->
 refresh_workers(State) ->
 	#state{ workers = WorkersBySession } = State,
 
-	NewSessions = get_current_session_keys(),
+	NewSessions = get_current_session_key_seed_pairs(),
 	MappedSessions = maps:keys(WorkersBySession),
 
 	PreviousSessionLogEntries =
@@ -248,18 +248,20 @@ refresh_workers(State) ->
 				[];
 			true ->
 				[{previous_session_key,
-					ar_nonce_limiter:encode_session_key(lists:nth(2, NewSessions))}]
+					ar_nonce_limiter:encode_session_key(
+						element(1, lists:nth(2, NewSessions)))}]
 		end,
 	RefreshLogEntries = [{event, mining_debug_refreshing_workers},
-			{current_session_key, ar_nonce_limiter:encode_session_key(hd(NewSessions))}]
+			{current_session_key, ar_nonce_limiter:encode_session_key(
+				element(1, hd(NewSessions)))}]
 		++ PreviousSessionLogEntries
 		++ [{mapped_sessions,
 				[ar_nonce_limiter:encode_session_key(SessionKey)
 				|| SessionKey <- MappedSessions]}],
 	?LOG_DEBUG(RefreshLogEntries),
 
-	SessionsToAdd = [SessionKey || SessionKey <- NewSessions,
-			SessionKey /= undefined andalso not maps:is_key(SessionKey, WorkersBySession)],
+	SessionsToAdd = [{SessionKey, Seed} || {SessionKey, Seed} <- NewSessions,
+			not maps:is_key(SessionKey, WorkersBySession)],
 	SessionsToRemove = [SessionKey || SessionKey <- MappedSessions,
 			not lists:member(SessionKey, NewSessions)],
 	SessionsToRemove2 = lists:sublist(SessionsToRemove, length(SessionsToAdd)),
@@ -267,20 +269,30 @@ refresh_workers(State) ->
 	WorkersBySession2 = refresh_workers(SessionsToAdd, SessionsToRemove2, WorkersBySession),
 	State#state{ workers = WorkersBySession2 }.
 
-get_current_session_keys() ->
+get_current_session_key_seed_pairs() ->
 	case ar_pool:is_client() of
 		false ->
 			{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
 			PreviousSessionKey = CurrentSession#vdf_session.prev_session_key,
-			[CurrentSessionKey, PreviousSessionKey];
+			Seed = CurrentSession#vdf_session.seed,
+			case ar_nonce_limiter:get_session(PreviousSessionKey) of
+				not_found ->
+					?LOG_DEBUG([{event, mining_debug_missing_previous_session},
+						{previous_session_key,
+							ar_nonce_limiter:encode_session_key(PreviousSessionKey)}]),
+					[{CurrentSessionKey, Seed}];
+				PreviousSession ->
+					PrevSeed = PreviousSession#vdf_session.seed,
+					[{CurrentSessionKey, Seed}, {PreviousSessionKey, PrevSeed}]
+			end;
 		true ->
-			ar_pool:get_current_sessions()
+			ar_pool:get_current_session_key_seed_pairs()
 	end.
 
 refresh_workers([], [], WorkersBySession) ->
 	WorkersBySession;
 refresh_workers(
-	[AddKey | SessionsToAdd], [RemoveKey | SessionsToRemove], WorkersBySession) ->
+	[{AddKey, Seed} | SessionsToAdd], [RemoveKey | SessionsToRemove], WorkersBySession) ->
 	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = AddKey,
 	ar:console("Starting new mining session: "
 		"next entropy nonce: ~s, interval number: ~B, next vdf difficulty: ~B.~n",
@@ -290,17 +302,17 @@ refresh_workers(
 		{retired_session_key, ar_nonce_limiter:encode_session_key(RemoveKey)}]),
 
 	Workers = maps:get(RemoveKey, WorkersBySession, []),
-	reset_workers(Workers, AddKey),
+	reset_workers(Workers, AddKey, Seed),
 
 	WorkersBySession2 = maps:put(AddKey, Workers, WorkersBySession),
 	WorkersBySession3 = maps:remove(RemoveKey, WorkersBySession2),
 	refresh_workers(SessionsToAdd, SessionsToRemove, WorkersBySession3).
 
-reset_workers([], _SessionKey) ->
+reset_workers([], _SessionKey, _Seed) ->
 	ok;
-reset_workers([Worker | Workers], SessionKey) ->
-	ar_mining_worker:new_session(Worker, SessionKey),
-	reset_workers(Workers, SessionKey).
+reset_workers([Worker | Workers], SessionKey, Seed) ->
+	ar_mining_worker:new_session(Worker, SessionKey, Seed),
+	reset_workers(Workers, SessionKey, Seed).
 
 get_chunk_cache_size_limit(State) ->
 	#state{ chunk_cache_size_limit = CurrentLimit } = State,
