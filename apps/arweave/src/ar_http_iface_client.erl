@@ -647,6 +647,7 @@ post_partial_solution(PeerOrURL, Solution, IsPool) ->
 				#{ host := Host, port := Port, path := P } = uri_string:parse(PeerOrURL),
 				{{binary_to_list(Host), Port}, pool_client_headers(), binary_to_list(P)}
 		end,
+	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
 	Payload =
 		case is_binary(Solution) of
 			true ->
@@ -660,7 +661,7 @@ post_partial_solution(PeerOrURL, Solution, IsPool) ->
 		path => BasePath ++ "/partial_solution/",
 		timeout => 20 * 1000,
 		connect_timeout => 5 * 1000,
-		headers => Headers,
+		headers => Headers2,
 		body => Payload,
 		is_peer_request => not IsPool
 	})).
