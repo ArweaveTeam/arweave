@@ -112,9 +112,6 @@ handle_cast({reset, Diff}, State) ->
 	{noreply, State2#state{ diff = Diff }};
 
 handle_cast({new_session, SessionKey, Seed}, State) ->
-	Session = ar_nonce_limiter:get_session(SessionKey),
-	#vdf_session{ seed = Seed } = Session,	
-
 	{State2, TasksDiscarded, ChunksDiscarded} = reset(State),
 	?LOG_DEBUG([{event, mining_debug_new_session}, {worker, State#state.name},
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
