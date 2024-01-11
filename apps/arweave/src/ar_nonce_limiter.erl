@@ -1393,9 +1393,9 @@ applies_validated_steps_test_() ->
 
 test_applies_validated_steps() ->
 	reset_and_pause(),
-	Seed = crypto:strong_rand_bytes(32),
-	NextSeed = crypto:strong_rand_bytes(32),
-	NextSeed2 = crypto:strong_rand_bytes(32),
+	Seed = crypto:strong_rand_bytes(48),
+	NextSeed = crypto:strong_rand_bytes(48),
+	NextSeed2 = crypto:strong_rand_bytes(48),
 	InitialOutput = crypto:strong_rand_bytes(32),
 	B1VDFDifficulty = 3,
 	B1NextVDFDifficulty = 3,
@@ -1666,7 +1666,7 @@ assert_step_number(N) ->
 
 test_block(StepNumber, Output, Seed, NextSeed, LastStepCheckpoints, Steps,
 		VDFDifficulty, NextVDFDifficulty) ->
-	#block{ indep_hash = crypto:strong_rand_bytes(32),
+	#block{ indep_hash = crypto:strong_rand_bytes(48),
 			nonce_limiter_info = #nonce_limiter_info{ output = Output,
 					global_step_number = StepNumber, seed = Seed, next_seed = NextSeed,
 					last_step_checkpoints = LastStepCheckpoints, steps = Steps,

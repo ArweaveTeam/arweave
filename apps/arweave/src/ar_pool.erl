@@ -306,7 +306,7 @@ process_partial_solution_field_size(Solution, Ref) ->
 	%% and return the "rejected_bad_poa" status in case of a failure.
 	case {byte_size(Output), byte_size(Seed), byte_size(NextSeed), byte_size(MiningAddress),
 			byte_size(Preimage), byte_size(SolutionH), byte_size(C1), byte_size(C2)} of
-		{32, 32, 32, 32, 32, 32, L1, L2} when L1 =< ?DATA_CHUNK_SIZE, L2 =< ?DATA_CHUNK_SIZE ->
+		{32, 48, 48, 32, 32, 32, L1, L2} when L1 =< ?DATA_CHUNK_SIZE, L2 =< ?DATA_CHUNK_SIZE ->
 			%% The second chunk may be either empty or 256 KiB. ar_poa:validate/1 does
 			%% the proper verification - here we simply protect against payload size abuse.
 			%% We are not strict about the first chunk here to simplify tests.
