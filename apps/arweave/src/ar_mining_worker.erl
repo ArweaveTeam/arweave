@@ -135,7 +135,8 @@ handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 			?LOG_DEBUG([{event, mining_debug_add_stale_task},
 				{worker, State#state.name},
 				{task, TaskType},
-				{active_sessions, encode_active_sessions(State)},
+				{active_sessions,
+					ar_mining_server:encode_active_sessions(State#state.active_sessions)},
 				{candidate_session, 
 					ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
 				{partition_number, Candidate#mining_candidate.partition_number},
@@ -161,7 +162,8 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 					?LOG_DEBUG([{event, mining_debug_handle_stale_task},
 						{worker, State#state.name},
 						{task, TaskType},
-						{active_sessions, encode_active_sessions(State)},
+						{active_sessions,
+							ar_mining_server:encode_active_sessions(State#state.active_sessions)},
 						{candidate_session, ar_nonce_limiter:encode_session_key(
 							Candidate#mining_candidate.session_key)},
 						{partition_number, Candidate#mining_candidate.partition_number},
@@ -615,11 +617,6 @@ get_difficulty(_State, #mining_candidate{ cm_diff = Diff }) ->
 
 nonce_max() ->
 	max(0, ((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1)).
-
-encode_active_sessions(#state{ active_sessions = Sessions }) ->
-	lists:map(fun(SessionKey) ->
-		ar_nonce_limiter:encode_session_key(SessionKey)
-	end, sets:to_list(Sessions)).
 
 %%%===================================================================
 %%% Public Test interface.
