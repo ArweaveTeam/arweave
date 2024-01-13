@@ -4,10 +4,9 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, start_mining/1,
-		set_difficulty/1, set_merkle_rebase_threshold/1, 
-		compute_h2_for_peer/1, add_pool_job/1, prepare_and_post_solution/1, post_solution/1,
-		read_poa/3, get_recall_bytes/4]).
+-export([start_link/0, start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, 
+		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1, read_poa/3,
+		get_recall_bytes/4, encode_active_sessions/1]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -65,6 +64,11 @@ prepare_and_post_solution(Candidate) ->
 
 post_solution(Solution) ->
 	gen_server:cast(?MODULE, {post_solution, Solution}).
+
+encode_active_sessions(Sessions) ->
+	lists:map(fun(SessionKey) ->
+		ar_nonce_limiter:encode_session_key(SessionKey)
+	end, sets:to_list(Sessions)).
 
 %%%===================================================================
 %%% Generic server callbacks.
