@@ -732,6 +732,7 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 			ar_watchdog:mined_block(H, Height, PrevH),
 			?LOG_INFO([{event, mined_block}, {indep_hash, ar_util:encode(H)},
 					{solution, ar_util:encode(SolutionH)}, {height, Height},
+					{step_number, StepNumber}, {steps, length(Steps)},
 					{txs, length(B#block.txs)},
 					{chunks, 
 						case B#block.recall_byte2 of

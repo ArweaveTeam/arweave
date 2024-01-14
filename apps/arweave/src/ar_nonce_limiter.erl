@@ -615,7 +615,6 @@ handle_cast({apply_tip, B, PrevB}, State) ->
 handle_cast({validated_steps, Args}, State) ->
 	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
 			VDFDifficulty, NextVDFDifficulty, Steps, LastStepCheckpoints} = Args,
-	#state{ current_session_key = CurrentSessionKey } = State,
 	case get_session(SessionKey, State) of
 		not_found ->
 			%% The corresponding fork origin should have just dropped below the
@@ -640,8 +639,8 @@ handle_cast({validated_steps, Args}, State) ->
 					false ->
 						Session
 				end,
-			State2 = cache_session(State, SessionKey, CurrentSessionKey, Session2),
-			State3 = cache_block_session(State2, NextSessionKey, SessionKey, CurrentSessionKey,
+			State2 = cache_session(State, SessionKey, Session2),
+			State3 = cache_block_session(State2, NextSessionKey, SessionKey,
 					#{}, Seed, UpperBound, NextUpperBound, VDFDifficulty, NextVDFDifficulty),
 			{noreply, State3}
 	end;
@@ -720,7 +719,7 @@ handle_info({computed, Args}, State) ->
 			{noreply, State};
 		true ->
 			Session2 = update_session(Session, StepNumber, Checkpoints, [Output]),
-			State2 = cache_session(State, CurrentSessionKey, CurrentSessionKey, Session2),
+			State2 = cache_session(State, CurrentSessionKey, Session2),
 			?LOG_DEBUG([{event, computed_nonce_limiter_output},
 				{session_key, encode_session_key(CurrentSessionKey)}, {step_number, StepNumber}]),
 			send_output(CurrentSessionKey, Session2),
@@ -856,7 +855,8 @@ apply_base_block(B, State) ->
 			step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
 			steps = [Output] },
 	SessionKey = session_key(B#block.nonce_limiter_info),
-	cache_session(State, SessionKey, SessionKey, Session).
+	State2 = set_current_session(State, SessionKey),
+	cache_session(State2, SessionKey, Session).
 
 apply_chain(#nonce_limiter_info{ global_step_number = StepNumber },
 		#nonce_limiter_info{ global_step_number = PrevStepNumber })
@@ -916,10 +916,11 @@ apply_tip2(B, PrevB, State) ->
 			next_vdf_difficulty = NextVDFDifficulty } = B#block.nonce_limiter_info,
 	SessionKey = session_key(B#block.nonce_limiter_info),
 	PrevSessionKey = session_key(PrevB#block.nonce_limiter_info),
-	State2 = cache_block_session(State, SessionKey, PrevSessionKey, SessionKey,
+	State2 = set_current_session(State, SessionKey),
+	State3 = cache_block_session(State2, SessionKey, PrevSessionKey,
 			#{ StepNumber => LastStepCheckpoints }, Seed, UpperBound, NextUpperBound,
 			VDFDifficulty, NextVDFDifficulty),
-	State2.
+	State3.
 
 prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
 	{{Interval, NextSeed, NextVdfDifficulty}, Sessions2} = gb_sets:take_smallest(Sessions),
@@ -1066,7 +1067,7 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 	end.
 
 apply_external_update2(Update, State) ->
-	#state{ current_session_key = CurrentSessionKey, last_external_update = {Peer, _} } = State,
+	#state{ last_external_update = {Peer, _} } = State,
 	#nonce_limiter_update{ session_key = SessionKey,
 			session = #vdf_session{
 				prev_session_key = PrevSessionKey, step_number = StepNumber } = Session,
@@ -1101,8 +1102,7 @@ apply_external_update2(Update, State) ->
 					NextSessionStart = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
 					{_, Steps} = get_step_range(
 						Session, min(RangeStart, NextSessionStart), StepNumber),					
-					State2 = apply_external_update3(State,
-						SessionKey, CurrentSessionKey, Session, Steps),
+					State2 = apply_external_update3(State, SessionKey, Session, Steps),
 					{reply, ok, State2}
 			end;
 		CurrentSession ->
@@ -1111,8 +1111,7 @@ apply_external_update2(Update, State) ->
 				true ->
 					[Output | _] = Session#vdf_session.steps,
 					CurrentSession2 = update_session(CurrentSession, StepNumber, Checkpoints, [Output]),
-					State2 = apply_external_update3(State,
-							SessionKey, CurrentSessionKey, CurrentSession2, [Output]),
+					State2 = apply_external_update3(State, SessionKey, CurrentSession2, [Output]),
 					{reply, ok, State2};
 				false ->
 					case CurrentStepNumber >= StepNumber of
@@ -1153,7 +1152,7 @@ apply_external_update2(Update, State) ->
 									{_, Steps} = get_step_range(
 											Session, CurrentStepNumber + 1, StepNumber),
 									State2 = apply_external_update3(State,
-										SessionKey, CurrentSessionKey, Session, Steps),
+										SessionKey, Session, Steps),
 									{reply, ok, State2}
 							end
 					end
@@ -1161,7 +1160,6 @@ apply_external_update2(Update, State) ->
 	end.
 
 %% @doc Final step of applying a VDF update pushed by a VDF server
-%% @param CurrentSessionKey Session key of the session currently tracked by ar_nonce_limiter state
 %% @param SessionKey Session key of the session pushed by the VDF server
 %% @param PrevSessionKey Session key of the session before the session pushed by the VDF server
 %% @param Session Session to apply (either the session pushed by the VDF server or the one tracked
@@ -1173,15 +1171,17 @@ apply_external_update2(Update, State) ->
 %% Note: an important job of this function is to ensure that VDF steps are only processed once.
 %% We truncate Session.steps such the previously processed steps are not sent to
 %% send_events_for_external_update.
-apply_external_update3(State, SessionKey, CurrentSessionKey, Session, Steps) ->
+apply_external_update3(State, SessionKey, Session, Steps) ->
 	#state{ last_external_update = {Peer, _} } = State,
+
 	?LOG_DEBUG([{event, apply_external_vdf},
 		{result, ok},
 		{vdf_server, ar_util:format_peer(Peer)},
 		{session_key, encode_session_key(SessionKey)},
 		{step_number, Session#vdf_session.step_number},
 		{length, length(Steps)}]),
-	State2 = cache_session(State, SessionKey, CurrentSessionKey, Session),
+
+	State2 = cache_session(State, SessionKey, Session),
 	send_events_for_external_update(SessionKey, Session#vdf_session{ steps = Steps }),
 	State2.
 
@@ -1240,9 +1240,15 @@ get_step_range(Steps, StepNumber, RangeStart, RangeEnd) ->
 	RangeSteps2 = lists:sublist(RangeSteps, RangeEnd2 - RangeStart2 + 1),
 	{RangeEnd2, RangeSteps2}.
 
+set_current_session(State, SessionKey) ->
+	?LOG_DEBUG([{event, set_current_session},
+		{new_session_key, encode_session_key(SessionKey)},
+		{old_session_key, encode_session_key(State#state.current_session_key)}]),
+	State#state{ current_session_key = SessionKey }.
+
 %% @doc Update the VDF session cache based on new info from a validated block.
-cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey, 
-		StepCheckpointsMap, Seed, UpperBound, NextUpperBound, VDFDifficulty, NextVDFDifficulty) ->
+cache_block_session(State, SessionKey, PrevSessionKey, StepCheckpointsMap, Seed,
+		UpperBound, NextUpperBound, VDFDifficulty, NextVDFDifficulty) ->
 	Session =
 		case get_session(SessionKey, State) of
 			not_found ->
@@ -1258,10 +1264,11 @@ cache_block_session(State, SessionKey, PrevSessionKey, CurrentSessionKey,
 			ExistingSession ->
 				ExistingSession
 		end,
-	cache_session(State, SessionKey, CurrentSessionKey, Session).
+	cache_session(State, SessionKey, Session).
 
-cache_session(State, SessionKey, CurrentSessionKey, Session) ->
-	#state{ session_by_key = SessionByKey, sessions = Sessions } = State,
+cache_session(State, SessionKey, Session) ->
+	#state{ current_session_key = CurrentSessionKey, session_by_key = SessionByKey,
+		sessions = Sessions } = State,
 	{NextSeed, Interval, NextVDFDifficulty} = SessionKey,
 	maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session),
 	?LOG_DEBUG([{event, add_session}, {session_key, encode_session_key(SessionKey)},
@@ -1270,8 +1277,7 @@ cache_session(State, SessionKey, CurrentSessionKey, Session) ->
 	%% If Session exists, then {Interval, NextSeed} will already exist in the Sessions set and
 	%% gb_sets:add_element will not cause a change.
 	Sessions2 = gb_sets:add_element({Interval, NextSeed, NextVDFDifficulty}, Sessions),
-	State#state{ current_session_key = CurrentSessionKey, sessions = Sessions2,
-					session_by_key = SessionByKey2 }.
+	State#state{ sessions = Sessions2, session_by_key = SessionByKey2 }.
 
 maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 	case SessionKey == CurrentSessionKey of

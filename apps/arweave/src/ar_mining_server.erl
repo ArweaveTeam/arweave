@@ -6,7 +6,7 @@
 
 -export([start_link/0, start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, 
 		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1, read_poa/3,
-		get_recall_bytes/4, encode_active_sessions/1]).
+		get_recall_bytes/4, active_sessions/0, encode_sessions/1]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -65,7 +65,10 @@ prepare_and_post_solution(Candidate) ->
 post_solution(Solution) ->
 	gen_server:cast(?MODULE, {post_solution, Solution}).
 
-encode_active_sessions(Sessions) ->
+active_sessions() ->
+	gen_server:call(?MODULE, active_sessions).
+
+encode_sessions(Sessions) ->
 	lists:map(fun(SessionKey) ->
 		ar_nonce_limiter:encode_session_key(SessionKey)
 	end, sets:to_list(Sessions)).
@@ -91,6 +94,9 @@ init([]) ->
 		workers = Workers,
 		is_pool_client = ar_pool:is_client()
 	}}.
+
+handle_call(active_sessions, _From, State) ->
+	{reply, State#state.active_sessions, State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -203,13 +209,11 @@ maybe_update_sessions(SessionKey, State) ->
 		true ->
 			State;
 		false ->
+			NewSession = ar_nonce_limiter:get_session(SessionKey),
 			{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
-			NewActiveSessions = case CurrentSession#vdf_session.prev_session_key of
-				undefined ->
-					sets:from_list([CurrentSessionKey]);
-				PreviousSessionKey ->
-					sets:from_list([CurrentSessionKey, PreviousSessionKey])
-			end,
+			NewActiveSessions = build_active_session_set(
+					SessionKey, NewSession, CurrentSessionKey,
+					CurrentSession#vdf_session.prev_session_key),
 			case sets:to_list(sets:subtract(NewActiveSessions, CurrentActiveSessions)) of
 				[] ->
 					State;
@@ -217,6 +221,15 @@ maybe_update_sessions(SessionKey, State) ->
 					update_sessions(NewActiveSessions, AddedSessions, State)
 			end
 	end.
+
+build_active_session_set(NewSessionKey, NewSession, CurrentSessionKey, _PrevSessionKey)
+	when NewSession#vdf_session.prev_session_key == CurrentSessionKey ->
+	sets:from_list([NewSessionKey, CurrentSessionKey]);
+build_active_session_set(_NewSessionKey, _NewSession, CurrentSessionKey, PrevSessionKey)
+	when PrevSessionKey == undefined ->
+	sets:from_list([CurrentSessionKey]);
+build_active_session_set(_NewSessionKey, _NewSession, CurrentSessionKey, PrevSessionKey) ->
+	sets:from_list([CurrentSessionKey, PrevSessionKey]).
 
 update_sessions(NewActiveSessions, AddedSessions, State) ->
 	maps:foreach(

@@ -136,7 +136,7 @@ handle_cast({add_task, {TaskType, Candidate} = Task}, State) ->
 				{worker, State#state.name},
 				{task, TaskType},
 				{active_sessions,
-					ar_mining_server:encode_active_sessions(State#state.active_sessions)},
+					ar_mining_server:encode_sessions(State#state.active_sessions)},
 				{candidate_session, 
 					ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
 				{partition_number, Candidate#mining_candidate.partition_number},
@@ -163,7 +163,7 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 						{worker, State#state.name},
 						{task, TaskType},
 						{active_sessions,
-							ar_mining_server:encode_active_sessions(State#state.active_sessions)},
+							ar_mining_server:encode_sessions(State#state.active_sessions)},
 						{candidate_session, ar_nonce_limiter:encode_session_key(
 							Candidate#mining_candidate.session_key)},
 						{partition_number, Candidate#mining_candidate.partition_number},

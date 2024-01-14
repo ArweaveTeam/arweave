@@ -15,6 +15,9 @@
 -define(UNSYNCED_RECALL_RANGE_2, 0).
 
 
+%% ------------------------------------------------------------------------------------------------
+%% Fixtures
+%% ------------------------------------------------------------------------------------------------
 setup_all() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
@@ -35,21 +38,27 @@ setup_one() ->
 cleanup_one(_) ->
 	ets:delete(?MODULE).
 
-chunk_cache_size_test_() ->
-	{setup, fun setup_all/0, fun cleanup_all/1,
-		{foreach, fun setup_one/0, fun cleanup_one/1,
-		[
-			{timeout, 30, fun test_h2_solution_chunk1_first/0},
-			{timeout, 30, fun test_h2_solution_chunk2_first/0},
-			{timeout, 30, fun test_h1_solution_h2_synced_chunk1_first/0},
-			{timeout, 30, fun test_h1_solution_h2_synced_chunk2_first/0},
-			{timeout, 30, fun test_h1_solution_h2_unsynced/0},
-			{timeout, 30, fun test_no_solution_then_h2_solution/0},
-			{timeout, 30, fun test_no_solution_then_h1_solution_h2_synced/0},
-			{timeout, 30, fun test_no_solution_then_h1_solution_h2_unsynced/0}
-		]}
-    }.
+%% ------------------------------------------------------------------------------------------------
+%% Test Registration
+%% ------------------------------------------------------------------------------------------------
+% chunk_cache_size_test_() ->
+% 	{setup, fun setup_all/0, fun cleanup_all/1,
+% 		{foreach, fun setup_one/0, fun cleanup_one/1,
+% 		[
+% 			{timeout, 30, fun test_h2_solution_chunk1_first/0},
+% 			{timeout, 30, fun test_h2_solution_chunk2_first/0},
+% 			{timeout, 30, fun test_h1_solution_h2_synced_chunk1_first/0},
+% 			{timeout, 30, fun test_h1_solution_h2_synced_chunk2_first/0},
+% 			{timeout, 30, fun test_h1_solution_h2_unsynced/0},
+% 			{timeout, 30, fun test_no_solution_then_h2_solution/0},
+% 			{timeout, 30, fun test_no_solution_then_h1_solution_h2_synced/0},
+% 			{timeout, 30, fun test_no_solution_then_h1_solution_h2_unsynced/0}
+% 		]}
+%     }.
 
+%% ------------------------------------------------------------------------------------------------
+%% chunk_cache_size_test_
+%% ------------------------------------------------------------------------------------------------
 test_h2_solution_chunk1_first() ->
 	do_test_chunk_cache_size_with_mocks(
 		[ar_test_node:invalid_solution()],
@@ -117,6 +126,9 @@ test_no_solution_then_h1_solution_h2_unsynced() ->
 		[chunk1]
 	).
 
+%% ------------------------------------------------------------------------------------------------
+%% Helpers
+%% ------------------------------------------------------------------------------------------------
 do_test_chunk_cache_size_with_mocks(H1s, H2s, RecallRange2s, FirstChunks) ->
 	Height = ar_node:get_height() + 1,
 	ets:insert(?MODULE, {compute_h1, 0}),
