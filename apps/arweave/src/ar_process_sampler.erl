@@ -37,16 +37,51 @@ handle_cast(_Msg, State) ->
 handle_info(sample_processes, State) ->
 	Processes = erlang:processes(),
 	ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
-	lists:foreach(fun({Status, ProcessName, FunctionName, Memory, MessageQueueLen}) ->
-		case Status of
-			running ->
-				prometheus_counter:inc(process_functions, [FunctionName]);
-			_ ->
-				ok
-		end,
-		prometheus_gauge:set(process_info, [ProcessName, memory], Memory),
-		prometheus_gauge:set(process_info, [ProcessName, message_queue], MessageQueueLen)
-	end, ProcessData),
+
+	{ProcessMemory, ProcessMsgQueueLen} =
+		lists:foldl(fun(
+				{Status, ProcessName, FunctionName, Memory, MsgQueueLen},
+				{MemoryAcc, MsgQueueLenAcc}
+			) ->
+				case Status of
+					running ->
+						prometheus_counter:inc(process_functions, [FunctionName]);
+					_ ->
+						ok
+				end,
+
+				%% Sum the memory and message queue length for each process. This is a compromise
+				%% for handling unregistered processes. It has the effect of summing the memory
+				%% and message queue length across all unregistered processes running off the
+				%% same function. In general this is what we want (e.g. for the io threads within
+				%% ar_mining_io and the hashing threads within ar_mining_hashing, we wand to
+				%% see if, in aggregate, their memory or message queue length has spiked).
+				MemoryTotal = maps:get(ProcessName, MemoryAcc, 0),
+				MsgQueueLenTotal = maps:get(ProcessName, MsgQueueLenAcc, 0),
+				{
+					maps:put(ProcessName, MemoryTotal + Memory, MemoryAcc),
+					maps:put(ProcessName, MsgQueueLenTotal + MsgQueueLen, MsgQueueLenAcc)
+				}
+		end, 
+		{#{}, #{}},
+		ProcessData),
+
+	%% Clear out the process_info metric so that we don't persist data about processes that
+	%% have exited. We have to deregister and re-register the metric because we don't track
+	%% all the label values used.
+	prometheus_gauge:deregister(process_info),
+	prometheus_gauge:new([{name, process_info},
+		{labels, [process, type]},
+		{help, "Sampling info about active processes. Only set when debug=true."}]),
+
+	maps:foreach(fun(ProcessName, Memory) ->
+		prometheus_gauge:set(process_info, [ProcessName, memory], Memory)
+	end, ProcessMemory),
+
+	maps:foreach(fun(ProcessName, MsgQueueLen) ->
+		prometheus_gauge:set(process_info, [ProcessName, message_queue], MsgQueueLen)
+	end, ProcessMsgQueueLen),
+
 	prometheus_gauge:set(process_info, [system, memory], erlang:memory(system)),
 	{noreply, State};
 
@@ -99,25 +134,34 @@ average_utilization(Util) ->
 		Averages).
 	
 process_function(Pid) ->
-	case process_info(Pid, [
-		current_function, registered_name, status, memory, message_queue_len]) of
-	[{current_function, {?MODULE, process_function, _A}}, _, _, _, _] ->
+	case process_info(Pid, [current_function, current_stacktrace, registered_name,
+		status, memory, message_queue_len]) of
+	[{current_function, {?MODULE, process_function, _A}}, _, _, _, _, _] ->
 		false;
-	[{current_function, {erlang, process_info, _A}}, _, _, _, _] ->
+	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _] ->
 		false;
-	[{current_function, {M, F, A}}, {registered_name, Name}, {status, Status},
-			{memory, Memory}, {message_queue_len, MessageQueueLen}] ->
-		ProcessName = process_name(Name),
-		FunctionName = function_name(ProcessName, M, F, A),
-		{true, {Status, ProcessName, FunctionName, Memory, MessageQueueLen}};
+	[{current_function, CurrentFunction}, {current_stacktrace, Stack},
+			{registered_name, Name}, {status, Status},
+			{memory, Memory}, {message_queue_len, MsgQueueLen}] ->
+		ProcessName = process_name(Name, Stack),
+		FunctionName = function_name(ProcessName, CurrentFunction),
+		{true, {Status, ProcessName, FunctionName, Memory, MsgQueueLen}};
 	_ ->
 		false
 	end.
 
-process_name([]) ->
-	process_name(unknown);
-process_name(ProcessName) ->
-	atom_to_list(ProcessName).
+%% @doc Anonymous processes don't have a registered name. So we'll name them after their
+%% module, function and arity.
+process_name([], []) ->
+	"unknown";
+process_name([], Stack) ->
+	InitialCall = lists:last(Stack),
+	M = element(1, InitialCall),
+	F = element(2, InitialCall),
+	A = element(3, InitialCall),
+	atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A);
+process_name(Name, _Stack) ->
+	atom_to_list(Name).
 
-function_name(ProcessName, M, F, A) ->
+function_name(ProcessName, {M, F, A}) ->
 	ProcessName ++ "~" ++ atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A).
