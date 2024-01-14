@@ -445,6 +445,7 @@ register(MetricsDir) ->
 			{help, "Sampling active functions. The 'process' label is a fully qualified "
 					"function name with the format 'process~module:function/arith'. "
 					"Only set when debug=true."}]),
+	%% process_info gets unregistered and re-registered in ar_process_sampler.erl
 	prometheus_gauge:new([{name, process_info},
 			{labels, [process, type]},
 			{help, "Sampling info about active processes. Only set when debug=true."}]),
