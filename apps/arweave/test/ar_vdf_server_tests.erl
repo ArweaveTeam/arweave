@@ -86,9 +86,9 @@ vdf_server_push_test_() ->
 		]
     }.
 
-%% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
-%% flow where a VDF client has to validate a block with VDF information provided by
-%% the VDF server.
+% %% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
+% %% flow where a VDF client has to validate a block with VDF information provided by
+% %% the VDF server.
 vdf_client_test_() ->
 	{foreach,
 		fun setup/0,
@@ -422,41 +422,49 @@ test_vdf_client_slow_block_pull_interface() ->
 %% This test asserts that this behavior has been fixed and that VDF clients only process each
 %% step once.
 test_session_overlap() ->
-	SessionKey0 = {<<"session0">>, 0, 1},
+	SessionKey0 = get_current_session_key(),
 	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey1, [], 8, true, SessionKey0),
 		"Partial session1, session not found"),
+	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
 		"Full session1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 9, true, SessionKey0),
 		"Partial session1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 10, true, SessionKey0),
 		"Partial session1, interval2"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 11, true, SessionKey0),
 		"Partial session1, interval2"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 12, true, SessionKey1),
 		"Partial session2, interval2"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = true, step_number = 11 },
 		apply_external_update(SessionKey1, [8, 7, 6, 5], 9, false, SessionKey1),
 		"Full session1, all steps already seen"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [11, 10], 12, false, SessionKey1),
 		"Full session2, some steps already seen"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	timer:sleep(2000),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>, <<"9">>, <<"10">>, <<"11">>, <<"12">>],
@@ -468,20 +476,23 @@ test_session_overlap() ->
 
 %% @doc This test asserts that the client responds correctly when it is ahead of the VDF server.
 test_client_ahead() ->
-	SessionKey0 = {<<"session0">>, 0, 1},
+	SessionKey0 = get_current_session_key(),
 	SessionKey1 = {<<"session1">>, 1, 1},
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
 		"Full session"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 8 },
 		apply_external_update(SessionKey1, [], 7, true, SessionKey0),
 		"Partial session, client ahead"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 8 },
 		apply_external_update(SessionKey1, [6, 5], 7, false, SessionKey0),
 		"Full session, client ahead"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	timer:sleep(2000),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>],
@@ -499,33 +510,39 @@ test_client_ahead() ->
 %% Assert that the client responds correctly and only processes each step once (even though it may
 %% see the same step several times as part of the full session updates).
 test_skip_ahead() ->
-	SessionKey0 = {<<"session0">>, 0, 1},
+	SessionKey0 = get_current_session_key(),
 	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [5], 6, false, SessionKey0),
 		"Full session1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = true, step_number = 6 },
 		apply_external_update(SessionKey1, [], 8, true, SessionKey0),
 		"Partial session1, server ahead"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
 		"Full session1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 12, true, SessionKey1),
 		"Partial session2, server ahead"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [8, 7, 6, 5], 9, false, SessionKey0),
 		"Full session1, all steps already seen"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [11, 10], 12, false, SessionKey1),
 		"Full session2, some steps already seen"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	timer:sleep(2000),
 	?assertEqual(
 		[<<"6">>, <<"5">>, <<"8">>, <<"7">>, <<"9">>, <<"12">>, <<"11">>, <<"10">>],
@@ -535,57 +552,82 @@ test_skip_ahead() ->
 		computed_upper_bounds()).
 
 test_2_servers_switching() ->
-	SessionKey0 = {<<"session0">>, 0, 1},
+	SessionKey0 = get_current_session_key(),
 	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [6, 5], 7, false, SessionKey0, vdf_server_1()),
 		"Full session1 from vdf_server_1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 8, true, SessionKey0, vdf_server_2()),
 		"Partial session1 from vdf_server_2"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 9, true, SessionKey0, vdf_server_2()),
 		"Partial session1 from vdf_server_2"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 11, true, SessionKey1, vdf_server_1()),
-		"Full session2 from vdf_server_1"),
+		"Partial session2 from vdf_server_1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [10], 11, false, SessionKey1, vdf_server_1()),
 		"Full session2 from vdf_server_1"),
+	?assertEqual(SessionKey2, get_current_session_key()),
+	?assertEqual(
+		ok,
+		apply_external_update(SessionKey1, [], 10, true, SessionKey0, vdf_server_2()),
+		"Partial session1 from vdf_server_2 (should not change current session)"),
+	?assertEqual(SessionKey2, get_current_session_key()),
+	?assertEqual(
+		ok,
+		apply_external_update(SessionKey1, [], 11, true, SessionKey0, vdf_server_2()),
+		"Partial session1 from vdf_server_2 (should not change current session)"),
+	?assertEqual(SessionKey2, get_current_session_key()),
+	?assertEqual(
+		ok,
+		apply_external_update(SessionKey1, [], 12, true, SessionKey0, vdf_server_2()),
+		"Partial session1 from vdf_server_2 (should not change current session)"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(
 			SessionKey2, [11, 10], 12, false, SessionKey1, vdf_server_2()),
 		"Full session2 from vdf_server_2"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 12 },
 		apply_external_update(SessionKey2, [], 12, true, SessionKey1, vdf_server_1()),
 		"Partial (repeat) session2 from vdf_server_1"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [], 13, true, SessionKey1, vdf_server_1()),
 		"Partial (new) session2 from vdf_server_1"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [], 14, true, SessionKey1, vdf_server_2()),
 		"Partial (new) session2 from vdf_server_2"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	timer:sleep(2000),
 	?assertEqual([
 		<<"7">>, <<"6">>, <<"5">>, <<"8">>, <<"9">>,
-		<<"11">>, <<"10">>, <<"12">>, <<"13">>, <<"14">>
+		<<"11">>, <<"10">>, <<"10">>, <<"11">>, <<"12">>,
+		<<"12">>, <<"13">>, <<"14">>
 	], computed_steps()),
 	?assertEqual(
-		[10, 10, 10, 10, 10, 20, 20, 20, 20, 20],
+		[10, 10, 10, 10, 10, 20, 20, 20, 20, 20, 20, 20, 20],
 		computed_upper_bounds()).
 
 test_backtrack() ->
-	SessionKey0 = {<<"session0">>, 0, 1},
+	SessionKey0 = get_current_session_key(),
 	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
@@ -596,24 +638,29 @@ test_backtrack() ->
 			9, 8, 7, 6, 5		%% interval 1
 		], 17, false, SessionKey0),
 		"Full session1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 18, true, SessionKey0),
 		"Partial session1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 15, true, SessionKey1),
 		"Partial session2"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 18 },
 		apply_external_update(
 			SessionKey1, [8, 7, 6, 5], 9, false, SessionKey0),
 		"Backtrack. Send full session1."),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(
 			SessionKey2, [14, 13, 12, 11, 10], 15, false, SessionKey1),
 		"Backtrack. Send full session2"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	timer:sleep(2000),
 	?assertEqual([
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
@@ -625,7 +672,7 @@ test_backtrack() ->
 		computed_upper_bounds()).
 
 test_2_servers_backtrack() ->
-	SessionKey0 = {<<"session0">>, 0, 1},
+	SessionKey0 = get_current_session_key(),
 	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
 	?assertEqual(
@@ -636,19 +683,23 @@ test_2_servers_backtrack() ->
 			9, 8, 7, 6, 5		%% interval 1
 		], 17, false, SessionKey0, vdf_server_1()),
 		"Full session1 from vdf_server_1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 18, true, SessionKey0, vdf_server_1()),
 		"Partial session1 from vdf_server_1"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 15, true, SessionKey1, vdf_server_2()),
 		"Partial session2 from vdf_server_2"),
+	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(
 			SessionKey2, [14, 13, 12, 11, 10], 15, false, SessionKey1, vdf_server_2()),
 		"Backtrack in session2 from vdf_server_2"),
+	?assertEqual(SessionKey2, get_current_session_key()),
 	timer:sleep(2000),
 	?assertEqual([
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
@@ -874,3 +925,7 @@ apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSess
 		session = Session
 	},
 	ar_nonce_limiter:apply_external_update(Update, Peer).
+
+get_current_session_key() ->
+	{CurrentSessionKey, _} = ar_nonce_limiter:get_current_session(),
+	CurrentSessionKey.
