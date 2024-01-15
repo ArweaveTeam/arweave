@@ -1,18 +1,15 @@
 -module(ar_metrics).
 
--export([register/1, store/1, get_status_class/1]).
+-export([register/0, get_status_class/1]).
 
--include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 %% @doc Declare Arweave metrics.
-register(MetricsDir) ->
-	filelib:ensure_dir(MetricsDir ++ "/"),
+register() ->
 	%% Networking.
 	prometheus_counter:new([
 		{name, http_server_accepted_bytes_total},
@@ -451,13 +448,6 @@ register(MetricsDir) ->
 	prometheus_gauge:new([{name, process_info},
 			{labels, [process, type]},
 			{help, "Sampling info about active processes. Only set when debug=true."}]).
-
-%% @doc Store the given metric in a file.
-store(Name) ->
-	{ok, Config} = application:get_env(arweave, config),
-	ar_storage:write_term(Config#config.metrics_dir, Name, prometheus_gauge:value(Name)).
-
-
 
 %% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total
 %% metrics.

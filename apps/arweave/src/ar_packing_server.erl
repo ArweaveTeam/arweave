@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, packing_atom/1,
-		 request_unpack/2, request_repack/2, pack/4, unpack/5, repack/6, 
+		 request_unpack/2, request_repack/2, pack/4, unpack/5, repack/6,
 		 is_buffer_full/0, record_buffer_size_metric/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -146,7 +146,7 @@ init([]) ->
 	ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
-	{ok, #state{ 
+	{ok, #state{
 		workers = Workers, num_workers = SpawnSchedulers }}.
 
 handle_call(Request, _From, State) ->
@@ -288,7 +288,7 @@ worker(ThrottleDelay, RandomXStateRef) ->
 			worker(ThrottleDelay, RandomXStateRef);
 		{repack, Ref, From, Args} ->
 			{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
-			case repack(RequestedPacking, Packing, 
+			case repack(RequestedPacking, Packing,
 					AbsoluteOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, internal) of
 				{ok, Packed, Unpacked} ->
 					From ! {chunk, {packed, Ref, {RequestedPacking, Packed, AbsoluteOffset, TXRoot,
@@ -320,7 +320,7 @@ worker(ThrottleDelay, RandomXStateRef) ->
 			worker(ThrottleDelay, RandomXStateRef)
 	end.
 
-chunk_key(spora_2_5, ChunkOffset, TXRoot) -> 
+chunk_key(spora_2_5, ChunkOffset, TXRoot) ->
 	%% The presence of the absolute end offset in the key makes sure
 	%% packing of every chunk is unique, even when the same chunk is
 	%% present in the same transaction or across multiple transactions
@@ -328,7 +328,7 @@ chunk_key(spora_2_5, ChunkOffset, TXRoot) ->
 	%% ensures one cannot find data that has certain patterns after
 	%% packing.
 	{spora_2_5, crypto:hash(sha256, << ChunkOffset:256, TXRoot/binary >>)};
-chunk_key({spora_2_6, RewardAddr}, ChunkOffset, TXRoot) -> 
+chunk_key({spora_2_6, RewardAddr}, ChunkOffset, TXRoot) ->
 	%% The presence of the absolute end offset in the key makes sure
 	%% packing of every chunk is unique, even when the same chunk is
 	%% present in the same transaction or across multiple transactions
@@ -389,7 +389,7 @@ unpack(PackingArgs, ChunkOffset, TXRoot, Chunk, ChunkSize,
 repack(unpacked, unpacked,
 		_ChunkOffset, _TXRoot, Chunk, _ChunkSize, _RandomXStateRef, _External) ->
 	{ok, Chunk, Chunk};
-repack(RequestedPacking, unpacked, 
+repack(RequestedPacking, unpacked,
 		ChunkOffset, TXRoot, Chunk, _ChunkSize, RandomXStateRef, External) ->
 	case pack(RequestedPacking, ChunkOffset, TXRoot, Chunk, RandomXStateRef, External) of
 		{ok, Packed, _} ->
@@ -397,7 +397,7 @@ repack(RequestedPacking, unpacked,
 		Error ->
 			Error
 	end;
-repack(unpacked, StoredPacking, 
+repack(unpacked, StoredPacking,
 		ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, External) ->
 	case unpack(StoredPacking, ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, External) of
 		{ok, Unpacked, _} ->
@@ -405,14 +405,14 @@ repack(unpacked, StoredPacking,
 		Error ->
 			Error
 	end;
-repack(RequestedPacking, StoredPacking, 
+repack(RequestedPacking, StoredPacking,
 		_ChunkOffset, _TXRoot, Chunk, _ChunkSize, _RandomXStateRef, _External)
 		when StoredPacking == RequestedPacking ->
-	%% StoredPacking and Packing are in the same format and neither is unpacked. To 
+	%% StoredPacking and Packing are in the same format and neither is unpacked. To
 	%% avoid uneccessary unpacking we'll return none for the UnpackedChunk. If a caller
 	%% needs the UnpackedChunk they should call unpack explicity.
 	{ok, Chunk, none};
-repack(RequestedPacking, StoredPacking, 
+repack(RequestedPacking, StoredPacking,
 		ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, External) ->
 	{SourcePacking, UnpackKey} = chunk_key(StoredPacking, ChunkOffset, TXRoot),
 	{TargetPacking, PackKey} = chunk_key(RequestedPacking, ChunkOffset, TXRoot),
@@ -421,7 +421,7 @@ repack(RequestedPacking, StoredPacking,
 			PrometheusLabel = atom_to_list(SourcePacking) ++ "_to_" ++ atom_to_list(TargetPacking),
 			prometheus_histogram:observe_duration(packing_duration_milliseconds,
 				[repack, PrometheusLabel, External], fun() ->
-					ar_mine_randomx:randomx_reencrypt_chunk(SourcePacking, TargetPacking, 
+					ar_mine_randomx:randomx_reencrypt_chunk(SourcePacking, TargetPacking,
 						RandomXStateRef, UnpackKey, PackKey, Chunk, ChunkSize) end);
 		Error ->
 			Error
@@ -481,7 +481,9 @@ get_packing_latency(PackingStateRef) ->
 		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk, [spora_2_5 | Unpack], Repetitions),
 		minimum_run_time(ar_mine_randomx, randomx_decrypt_chunk, [spora_2_6 | Unpack], Repetitions)}.
 
-record_packing_benchmarks({TheoreticalMaxRate, ChosenRate, Schedulers,
+record_packing_benchmarks(
+	{
+		TheoreticalMaxRate, ChosenRate, Schedulers,
 		ActualRatePack_2_5, ActualRatePack_2_6, ActualRateUnpack_2_5,
 		ActualRateUnpack_2_6}) ->
 	prometheus_gauge:set(packing_latency_benchmark,
