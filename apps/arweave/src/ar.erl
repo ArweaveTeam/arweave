@@ -77,7 +77,6 @@ show_help() ->
 			{"log_dir", "The directory for logs. If the \"debug\" flag is set, the debug logs "
 					"are written to logs/debug_logs/. The RocksDB logs are written to "
 					"logs/rocksdb/."},
-			{"metrics_dir", "The directory for persisted metrics."},
 			{"storage_module", "A storage module is responsible for syncronizing and storing "
 					"a particular data range. The data and metadata related to the module "
 					"are stored in a dedicated folder "
@@ -345,8 +344,6 @@ parse_cli_args(["data_dir", DataDir | Rest], C) ->
 	parse_cli_args(Rest, C#config{ data_dir = DataDir });
 parse_cli_args(["log_dir", Dir | Rest], C) ->
 	parse_cli_args(Rest, C#config{ log_dir = Dir });
-parse_cli_args(["metrics_dir", MetricsDir | Rest], C) ->
-	parse_cli_args(Rest, C#config{ metrics_dir = MetricsDir });
 parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
 	StorageModules = C#config.storage_modules,
 	try
@@ -638,7 +635,7 @@ start(normal, _Args) ->
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
 	%% Register custom metrics.
-	ar_metrics:register(Config#config.metrics_dir),
+	ar_metrics:register(),
 	%% Start other apps which we depend on.
 	ok = prepare_graphql(),
 	case Config#config.ipfs_pin of
@@ -780,7 +777,6 @@ start_for_tests(Config) ->
 	TestConfig = Config#config{
 		peers = [],
 		data_dir = ".tmp/data_test_main_" ++ UniqueName,
-		metrics_dir = ".tmp/metrics_main_" ++ UniqueName,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
 		packing_rate = 20,

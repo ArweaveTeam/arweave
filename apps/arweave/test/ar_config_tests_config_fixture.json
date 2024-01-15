@@ -17,10 +17,13 @@
   "port": 1985,
   "data_dir": "some_data_dir",
   "log_dir": "log_dir",
-  "metrics_dir": "metrics_dir",
-  "storage_modules": ["0,unpacked", "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
-            "100,unpacked", "0,1,unpacked",
-            "14,1000000000000,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"],
+  "storage_modules": [
+    "0,unpacked",
+    "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
+    "100,unpacked",
+    "0,1,unpacked",
+    "14,1000000000000,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+  ],
   "polling": 10,
   "block_pollers": 100,
   "no_auto_join": true,
@@ -42,45 +45,28 @@
   "disk_pool_jobs": 2,
   "requests_per_minute_limit": 2500,
   "requests_per_minute_limit_by_ip": {
-      "127.0.0.1": {
-          "chunk": 100000,
-          "data_sync_record": 1,
-          "recent_hash_list_diff": 200000,
-          "default": 100
-      }
+    "127.0.0.1": {
+      "chunk": 100000,
+      "data_sync_record": 1,
+      "recent_hash_list_diff": 200000,
+      "default": 100
+    }
   },
-  "transaction_blacklists": [
-    "some_blacklist_1",
-    "some_blacklist_2"
-  ],
+  "transaction_blacklists": ["some_blacklist_1", "some_blacklist_2"],
   "transaction_blacklist_urls": [
     "http://some_blacklist_1",
     "http://some_blacklist_2/x"
   ],
-  "transaction_whitelists": [
-    "some_whitelist_1",
-    "some_whitelist_2"
-  ],
-  "transaction_whitelist_urls": [
-    "http://some_whitelist"
-  ],
+  "transaction_whitelists": ["some_whitelist_1", "some_whitelist_2"],
+  "transaction_whitelist_urls": ["http://some_whitelist"],
   "disk_space": 44,
   "disk_space_check_frequency": 10,
   "init": true,
   "internal_api_secret": "some_very_very_long_secret",
-  "enable": [
-    "feature_1",
-    "feature_2"
-  ],
-  "disable": [
-    "feature_3",
-    "feature_4"
-  ],
+  "enable": ["feature_1", "feature_2"],
+  "disable": ["feature_3", "feature_4"],
   "gateway": "gateway.localhost",
-  "custom_domains": [
-    "domain1.example",
-    "domain2.example"
-  ],
+  "custom_domains": ["domain1.example", "domain2.example"],
   "webhooks": [
     {
       "events": ["transaction", "block"],

@@ -12,7 +12,6 @@ pkgs.writeText "config.json" (builtins.toJSON (filterTopLevelNulls {
   data_dir = arweaveConfig.dataDir;
   log_dir = arweaveConfig.logDir;
   storage_modules = arweaveConfig.storageModules;
-  metrics_dir = arweaveConfig.metricsDir;
   start_from_block_index = arweaveConfig.startFromBlockIndex;
   transaction_blacklists = arweaveConfig.transactionBlacklists;
   transaction_whitelists = arweaveConfig.transactionWhitelists;

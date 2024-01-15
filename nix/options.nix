@@ -86,14 +86,6 @@ in
     '';
   };
 
-  metricsDir = mkOption {
-    type = types.path;
-    default = "/var/lib/arweave/metrics";
-    description = ''
-      Directory path for node metric outputs
-    '';
-  };
-
   startFromBlockIndex = mkOption {
     type = types.bool;
     default = false;
