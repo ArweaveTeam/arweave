@@ -4,7 +4,8 @@
 
 -export([
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
-	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peer/1
+	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peer/1,
+	is_exit_peer/0
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -63,6 +64,12 @@ stat_loop() ->
 
 get_peer(PartitionNumber) ->
 	gen_server:call(?MODULE, {get_peer, PartitionNumber}).
+
+%% Return true if we are an exit peer in the coordinated mining setup.
+is_exit_peer() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.coordinated_mining == true andalso
+			Config#config.cm_exit_peer == not_set.
 
 %%%===================================================================
 %%% Generic server callbacks.
