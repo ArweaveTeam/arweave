@@ -36,7 +36,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, is_client/0, get_current_session_key_seed_pairs/0, get_jobs/1,
-		get_latest_output/0, cache_jobs/1, process_partial_solution/1,
+		get_latest_job/0, cache_jobs/1, process_partial_solution/1,
 		post_partial_solution/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -76,10 +76,10 @@ get_current_session_key_seed_pairs() ->
 get_jobs(PrevOutput) ->
 	gen_server:call(?MODULE, {get_jobs, PrevOutput}, infinity).
 
-%% @doc Return the most recent cached VDF output. Return an empty binary if the
+%% @doc Return the most recent cached #job{}. Return an empty record if the
 %% cache is empty.
-get_latest_output() ->
-	gen_server:call(?MODULE, get_latest_output, infinity).
+get_latest_job() ->
+	gen_server:call(?MODULE, get_latest_job, infinity).
 
 %% @doc Cache the given jobs.
 cache_jobs(Jobs) ->
@@ -114,13 +114,14 @@ handle_call({get_jobs, PrevOutput}, _From, State) ->
 	JobCache = State#state.jobs_by_session_key,
 	{reply, get_jobs(PrevOutput, SessionKeys, JobCache), State};
 
-handle_call(get_latest_output, _From, State) ->
+handle_call(get_latest_job, _From, State) ->
 	case State#state.session_keys of
 		[] ->
-			{reply, <<>>, State};
+			{reply, #job{}, State};
 		[Key | _] ->
-			{O, _SN, _U, _S, _Diff} = hd(maps:get(Key, State#state.jobs_by_session_key)),
-			{reply, O, State}
+			{O, SN, U, _S, _Diff} = hd(maps:get(Key, State#state.jobs_by_session_key)),
+			{reply, #job{ output = O, global_step_number = SN,
+					partition_upper_bound = U }, State}
 	end;
 
 handle_call({process_partial_solution, Solution}, From, State) ->
