@@ -504,6 +504,8 @@ process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache) ->
 					Solution2, PoACache, PoA2Cache}),
 			noreply;
 		_ ->
+			%% {Output, Seed, PartitionUpperBound} mismatch (pattern matching against
+			%% the solution fields deconstructed above).
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }
 	end.
 
