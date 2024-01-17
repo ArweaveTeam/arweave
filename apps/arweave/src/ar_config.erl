@@ -348,11 +348,6 @@ parse_options([{<<"disk_space_check_frequency">>, Frequency} | Rest], Config)
 parse_options([{<<"disk_space_check_frequency">>, Frequency} | _], _) ->
 	{error, {bad_type, disk_space_check_frequency, number}, Frequency};
 
-parse_options([{<<"ipfs_pin">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
-parse_options([{<<"ipfs_pin">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config{ ipfs_pin = true });
-
 parse_options([{<<"init">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ init = true });
 parse_options([{<<"init">>, false} | Rest], Config) ->

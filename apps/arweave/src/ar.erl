@@ -53,7 +53,7 @@ show_help() ->
 				"described here. Additionally, you may specify a semaphores key. Its value "
 				"has to be a nested JSON object where keys are some of: get_chunk, "
 				"get_and_pack_chunk, get_tx_data, post_chunk, post_tx, get_block_index, "
-				"get_wallet_list, arql, gateway_arql, get_sync_record. For instance, your"
+				"get_wallet_list, get_sync_record. For instance, your"
 				" config file contents may look like {\"semaphores\": {\"post_tx\": 100}}."
 				" In this case, the node will validate up to 100 incoming transactions in "
 				"parallel."},
@@ -397,8 +397,6 @@ parse_cli_args(["disk_space_check_frequency", Frequency | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 		disk_space_check_frequency = list_to_integer(Frequency) * 1000
 	});
-parse_cli_args(["ipfs_pin" | Rest], C) ->
-	parse_cli_args(Rest, C#config{ ipfs_pin = true });
 parse_cli_args(["start_from_block_index" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ start_from_latest_state = true });
 parse_cli_args(["start_from_block", H | Rest], C) ->
@@ -637,11 +635,6 @@ start(normal, _Args) ->
 	%% Register custom metrics.
 	ar_metrics:register(),
 	%% Start other apps which we depend on.
-	ok = prepare_graphql(),
-	case Config#config.ipfs_pin of
-		false -> ok;
-		true  -> app_ipfs:start_pinning()
-	end,
 	set_mining_address(Config),
 	ar_chunk_storage:run_defragmentation(),
 	%% Start Arweave.
@@ -721,10 +714,6 @@ start_dependencies() ->
 	{ok, Config} = application:get_env(arweave, config),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	ar_config:log_config(Config).
-
-prepare_graphql() ->
-	ok = ar_graphql:load_schema(),
-	ok.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,

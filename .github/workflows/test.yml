@@ -51,7 +51,6 @@ jobs:
             ar_data_sync_tests,
             ar_difficulty_tests,
             ar_fork_recovery_tests,
-            ar_gateway_middleware_tests,
             ar_header_sync_tests,
             ar_http_iface_tests,
             ar_http_util_tests,

@@ -252,9 +252,6 @@
 %% Directory for storing unique wallet lists, relative to the data dir.
 -define(WALLET_LIST_DIR, "wallet_lists").
 
-%% Directory for storing the ArQL v2 index, relative to the data dir.
--define(SQLITE3_DIR, "data/sqlite3").
-
 %% Directory for storing data chunks, relative to the data dir.
 -define(DATA_CHUNK_DIR, "data_chunks").
 

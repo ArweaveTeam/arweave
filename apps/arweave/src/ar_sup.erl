@@ -64,15 +64,7 @@ init([]) ->
 	ets:new(block_index, [ordered_set, public, named_table]),
 	ets:new(node_state, [set, public, named_table]),
 	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
-	{ok, Config} = application:get_env(arweave, config),
-	MayBeARQL =
-		case lists:member(arql, Config#config.disable) of
-			true ->
-				[];
-			false ->
-				[?CHILD(ar_arql_db, worker)]
-		end,
-	Children = MayBeARQL ++ [
+	Children = [
 		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),
 		?CHILD_SUP(ar_events_sup, supervisor),
