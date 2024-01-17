@@ -276,13 +276,7 @@ is_blacklisted(#tx{ id = TXID }) ->
 	ar_tx_blacklist:is_tx_blacklisted(TXID).
 
 update_confirmation_index(B) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(arql_tags_index, Config#config.enable) of
-		true ->
-			ar_arql_db:insert_full_block(B, store_tags);
-		false ->
-			put_tx_confirmation_data(B)
-	end.
+	put_tx_confirmation_data(B).
 
 put_tx_confirmation_data(B) ->
 	Data = term_to_binary({B#block.height, B#block.indep_hash}),
@@ -303,23 +297,7 @@ get_tx_confirmation_data(TXID) ->
 		{ok, Binary} ->
 			{ok, binary_to_term(Binary)};
 		not_found ->
-			{ok, Config} = application:get_env(arweave, config),
-			case lists:member(arql, Config#config.disable) of
-				true ->
-					not_found;
-				_ ->
-					case catch ar_arql_db:select_block_by_tx_id(ar_util:encode(TXID)) of
-						{ok, #{
-							height := Height,
-							indep_hash := EncodedIndepHash
-						}} ->
-							{ok, {Height, ar_util:decode(EncodedIndepHash)}};
-						not_found ->
-							not_found;
-						{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-							{error, timeout}
-					end
-			end
+			not_found
 	end.
 
 %% @doc Read a block from disk, given a height
@@ -1068,10 +1046,9 @@ write_block(B) ->
 	ar_kv:put(block_db, B#block.indep_hash, ar_serialize:block_to_binary(B#block{
 			txs = TXIDs })).
 
-write_full_block2(BShadow, TXs) ->
+write_full_block2(BShadow, _) ->
 	case write_block(BShadow) of
 		ok ->
-			app_ipfs:maybe_ipfs_add_txs(TXs),
 			ok;
 		Error ->
 			Error

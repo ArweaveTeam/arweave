@@ -46,7 +46,6 @@ execute(Req, Env) ->
 %%% Private functions.
 %%%===================================================================
 
-
 %% @doc In order to be able to have a handler-side timeout, we need to
 %% handle the request asynchronously. However, cowboy doesn't allow
 %% reading the request's body from a process other than its handler's.
@@ -200,9 +199,6 @@ handle(<<"OPTIONS">>, [<<"tx">>], Req, _Pid) ->
 handle(<<"OPTIONS">>, [<<"peer">> | _], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
-handle(<<"OPTIONS">>, [<<"arql">>], Req, _Pid) ->
-	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
-			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
 handle(<<"OPTIONS">>, _, Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET">>}, <<"OK">>, Req};
 
@@ -263,54 +259,6 @@ handle(<<"GET">>, [<<"unconfirmed_tx">>, Hash], Req, _Pid) ->
 %% GET request to endpoint /unconfirmed_tx2/{hash}.
 handle(<<"GET">>, [<<"unconfirmed_tx2">>, Hash], Req, _Pid) ->
 	handle_get_unconfirmed_tx(Hash, Req, binary);
-
-%% Return the transaction IDs of all txs where the tags in post match the given set
-%% of key value pairs. POST request to endpoint /arql with body of request being a logical
-%% expression valid in ar_parser.
-%%
-%% Example logical expression.
-%%	{
-%%		op:		{ and | or | equals }
-%%		expr1:	{ string | logical expression }
-%%		expr2:	{ string | logical expression }
-%%	}
-handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(serve_arql, Config#config.enable) of
-		true ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					case read_complete_body(Req, Pid) of
-						{ok, QueryJSON, Req2} ->
-							case ar_serialize:json_struct_to_query(QueryJSON) of
-								{ok, Query} ->
-									case catch ar_arql_db:eval_legacy_arql(Query) of
-										EncodedTXIDs when is_list(EncodedTXIDs) ->
-											Body = ar_serialize:jsonify(EncodedTXIDs),
-											{200, #{}, Body, Req2};
-										bad_query ->
-											{400, #{}, <<"Invalid query.">>, Req2};
-										sqlite_parser_stack_overflow ->
-											{400, #{},
-												<<"The query nesting depth is too big.">>, Req2};
-										{'EXIT', {timeout,
-												{gen_server, call, [ar_arql_db, _]}}} ->
-											{503, #{}, <<"ArQL unavailable.">>, Req2}
-									end;
-								{error, _} ->
-									{400, #{}, <<"Invalid ARQL query.">>, Req2}
-							end;
-						{error, body_size_too_large} ->
-							{413, #{}, <<"Payload too large">>, Req};
-						{error, timeout} ->
-							{500, #{}, <<"Handler timeout">>, Req}
-					end
-			end;
-		false ->
-			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
-	end;
 
 %% Return the data field of the transaction specified via the transaction ID (hash)
 %% served as HTML.
@@ -1097,74 +1045,6 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
 			{200, #{}, ar_util:encode(SuggestedAnchor), Req}
 	end;
 
-%% Return transaction identifiers (hashes) for the wallet specified via wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/txs.
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req, _Pid) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(serve_wallet_txs, Config#config.enable) of
-		true ->
-			{Status, Headers, Body} = handle_get_wallet_txs(Addr, none),
-			{Status, Headers, Body, Req};
-		false ->
-			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
-	end;
-
-%% Return transaction identifiers (hashes) starting from the earliest_tx for the wallet
-%% specified via wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}.
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req, _Pid) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(serve_wallet_txs, Config#config.enable) of
-		true ->
-			{Status, Headers, Body} = handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX)),
-			{Status, Headers, Body, Req};
-		false ->
-			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
-	end;
-
-%% Return identifiers (hashes) of transfer transactions depositing to the given
-%% wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/deposits.
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _Pid) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(serve_wallet_deposits, Config#config.enable) of
-		true ->
-			case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
-				TXMaps when is_list(TXMaps) ->
-					TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
-					{200, #{}, ar_serialize:jsonify(TXIDs), Req};
-				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-					{503, #{}, <<"ArQL unavailable.">>, Req}
-			end;
-		false ->
-			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
-	end;
-
-%% Return identifiers (hashes) of transfer transactions depositing to the given
-%% wallet_address starting from the earliest_deposit.
-%% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}.
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _Pid) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(serve_wallet_deposits, Config#config.enable) of
-		true ->
-			case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
-				TXMaps when is_list(TXMaps) ->
-					TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
-					{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
-					FilteredTXs = case After of
-						[] ->
-							Before;
-						[EarliestDeposit | _] ->
-							Before ++ [EarliestDeposit]
-					end,
-					{200, #{}, ar_serialize:jsonify(FilteredTXs), Req};
-				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-					{503, #{}, <<"ArQL unavailable.">>, Req}
-			end;
-		false ->
-			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
-	end;
-
 %% Return the JSON-encoded block with the given height or hash.
 %% GET request to endpoint /block/{height|hash}/{height|hash}.
 handle(<<"GET">>, [<<"block">>, Type, ID], Req, Pid)
@@ -1756,41 +1636,6 @@ estimate_tx_fee_v2(Size, Addr) ->
 	Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
 	Args = {Size2, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height + 1},
 	ar_tx:get_tx_fee2(Args).
-
-handle_get_wallet_txs(Addr, EarliestTXID) ->
-	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid address.">>};
-		{ok, _} ->
-			case catch ar_arql_db:select_txs_by([{from, [Addr]}]) of
-				TXMaps when is_list(TXMaps) ->
-					TXIDs = lists:map(
-						fun(#{ id := ID }) -> ar_util:decode(ID) end,
-						TXMaps
-					),
-					RecentTXIDs = get_wallet_txs(EarliestTXID, TXIDs),
-					EncodedTXIDs = lists:map(fun ar_util:encode/1, RecentTXIDs),
-					{200, #{}, ar_serialize:jsonify(EncodedTXIDs)};
-				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-					{503, #{}, <<"ArQL unavailable.">>}
-			end
-	end.
-
-%% @doc Returns a list of all TX IDs starting with the last one to EarliestTXID (inclusive)
-%% for the same wallet.
-%% @end
-get_wallet_txs(EarliestTXID, TXIDs) ->
-	lists:reverse(get_wallet_txs(EarliestTXID, TXIDs, [])).
-
-get_wallet_txs(_EarliestTXID, [], Acc) ->
-	Acc;
-get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
-	case TXID of
-		EarliestTXID ->
-			[EarliestTXID | Acc];
-		_ ->
-			get_wallet_txs(EarliestTXID, TXIDs, [TXID | Acc])
-	end.
 
 handle_get_block(Type, ID, Req, Pid, Encoding) ->
 	case Type of

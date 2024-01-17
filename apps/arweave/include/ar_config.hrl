@@ -60,8 +60,6 @@
 	max(1, (erlang:system_info(schedulers_online) - 1))).
 
 -define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
--define(MAX_PARALLEL_ARQL_REQUESTS, 10).
--define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
 -define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
 -define(MAX_PARALLEL_GET_AND_PACK_CHUNK_REQUESTS, 1).
 -define(MAX_PARALLEL_GET_TX_DATA_REQUESTS, 1).
@@ -147,7 +145,6 @@
 	requests_per_minute_limit_by_ip = #{},
 	max_propagation_peers = ?DEFAULT_MAX_PROPAGATION_PEERS,
 	max_block_propagation_peers = ?DEFAULT_MAX_BLOCK_PROPAGATION_PEERS,
-	ipfs_pin = false,
 	webhooks = [],
 	max_connections = 1024,
 	max_gateway_connections = 128,
@@ -163,8 +160,6 @@
 		post_chunk => ?MAX_PARALLEL_POST_CHUNK_REQUESTS,
 		get_block_index => ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS,
 		get_wallet_list => ?MAX_PARALLEL_WALLET_LIST_REQUESTS,
-		arql => ?MAX_PARALLEL_ARQL_REQUESTS,
-		gateway_arql => ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS,
 		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS,
 		post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS
 	},

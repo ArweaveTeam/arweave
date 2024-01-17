@@ -629,7 +629,7 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 stop() ->
 	{ok, Config} = application:get_env(arweave, config),
 	application:stop(arweave),
-	ok = ar:stop_dependencies(),
+	ar:stop_dependencies(),
 	Config.
 
 stop(Node) ->

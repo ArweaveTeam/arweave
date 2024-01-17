@@ -93,38 +93,6 @@ let
     };
   };
 
-  graphql = buildRebar {
-    name = "graphql-erlang";
-    version = "none";
-    beamDeps = [ beamPackages.pc geas_rebar3 rebar3_hex ];
-
-    patchPhase = ''
-      substituteInPlace src/graphql.erl \
-        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-      substituteInPlace src/graphql_ast.erl \
-        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-      substituteInPlace src/graphql_err.erl \
-        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-      substituteInPlace src/graphql_parser.yrl \
-        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-      substituteInPlace src/graphql_introspection.erl \
-        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-      substituteInPlace src/graphql_execute.erl \
-        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-      substituteInPlace src/graphql_check.erl \
-        --replace 'graphql/include/graphql.hrl' 'include/graphql.hrl'
-    '';
-    src = fetchFromGitHub {
-      owner = "jlouis";
-      repo = "graphql-erlang";
-      rev = "4fd356294c2acea42a024366bc5a64661e4862d7";
-      sha256 = "lJ6mEP5ab4GbFzlnbf9U9bAlZ+HGFZLbOZNvTUO1Dhw=";
-    };
-    postInstall = ''
-      mv $out/lib/erlang/lib/graphql-erlang-none $out/lib/erlang/lib/graphql_erl-0.16.1
-    '';
-  };
-
   accept = buildRebar rec {
     name = "accept";
     version = "0.3.5";
@@ -456,16 +424,12 @@ let
         mkdir -p apps/arweave/lib/RandomX
         cp -rf ${randomx}/* apps/arweave/lib/RandomX
         cp -rf ${jiffy}/lib/erlang/lib/* apps/jiffy
-        cp -rf ${graphql}/lib/erlang/lib/* apps/graphql
       '';
 
       postPatch = ''
         sed -i -e 's|-arch x86_64|-arch ${pkgs.stdenv.targetPlatform.linuxArch}|g' \
-          apps/arweave/c_src/Makefile \
-          apps/ar_sqlite3/c_src/Makefile
-
+          apps/arweave/c_src/Makefile
         sed -i -e 's|{b64fast,.*|{b64fast, "0.2.2"},|g' rebar.config
-        sed -i -e 's|{graphql,.*|{graphql_erl, "0.16.1"},|g' rebar.config
         sed -i -e 's|{meck, "0.8.13"}||g' rebar.config
       '';
 
@@ -480,12 +444,6 @@ let
         rm -f $out/${profile}/lib/arweave/{include,priv,src}
         ln -s $out/${profile}/rel/arweave/lib/arweave-*/{include,priv,src} $out/${profile}/lib/arweave
 
-        rm -f $out/${profile}/lib/ar_sqlite3/{include,priv,src}
-        ln -s $out/${profile}/rel/arweave/lib/ar_sqlite3-*/{include,priv,src} $out/${profile}/lib/ar_sqlite3
-
-        rm -f $out/${profile}/lib/graphql/{include,priv,src}
-        ln -s $out/${profile}/rel/arweave/lib/graphql-*/{include,priv,src} $out/${profile}/lib/graphql
-
         rm -f $out/${profile}/lib/jiffy/{include,priv,src}
         ln -s $out/${profile}/rel/arweave/lib/jiffy-*/{include,priv,src} $out/${profile}/lib/jiffy
 
@@ -494,9 +452,6 @@ let
 
         rm -rf $out/${profile}/rel/arweave/lib/arweave-*/priv
         cp -rf ./apps/arweave/priv $out/${profile}/rel/arweave/lib/arweave-*
-
-        rm -rf $out/${profile}/rel/arweave/lib/ar_sqlite3-*/priv
-        cp -rf ./apps/ar_sqlite3/priv $out/${profile}/rel/arweave/lib/ar_sqlite3-*
       '';
     };
 
@@ -509,18 +464,12 @@ let
       ln -s ${meck}/lib/erlang/lib/meck-${meck.version} $out/test/rel/arweave/lib/
 
       ARWEAVE_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/arweave-*))
-      AR_SQLITE_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/ar_sqlite3-*))
-      GRAPHQL_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/graphql-*))
       JIFFY_LIB_PATH=$(basename $(echo $out/test/rel/arweave/lib/jiffy-*))
 
       rm -f $out/test/rel/arweave/lib/arweave-*
-      rm -f $out/test/rel/arweave/lib/ar_sqlite3-*
-      rm -f $out/test/rel/arweave/lib/graphql-*
       rm -f $out/test/rel/arweave/lib/jiffy-*
 
       ln -s $out/test/lib/arweave $out/test/rel/arweave/lib/$ARWEAVE_LIB_PATH
-      ln -s $out/test/lib/ar_sqlite3 $out/test/rel/arweave/lib/$AR_SQLITE_LIB_PATH
-      ln -s $out/test/lib/graphql $out/test/rel/arweave/lib/$GRAPHQL_LIB_PATH
       ln -s $out/test/lib/jiffy $out/test/rel/arweave/lib/$JIFFY_LIB_PATH
     '';
   };
