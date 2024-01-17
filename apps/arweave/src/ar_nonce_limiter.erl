@@ -10,6 +10,7 @@
 		validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_current_session/0,
+		get_current_sessions/0,
 		compute/3, resolve_remote_server_raw_peers/0,
 		maybe_add_entropy/4, mix_seed/2]).
 
@@ -61,8 +62,15 @@ is_ahead_on_the_timeline(NonceLimiterInfo1, NonceLimiterInfo2) ->
 get_session(SessionKey) ->
 	gen_server:call(?MODULE, {get_session, SessionKey}, infinity).
 
+%% @doc Return {SessionKey, Session} for the current VDF session.
 get_current_session() ->
 	gen_server:call(?MODULE, get_current_session, infinity).
+
+%% @doc Return a list of up to two {SessionKey, Session} pairs
+%% where the first pair corresponds to the current VDF session
+%% and the second pair is its previous session, if any.
+get_current_sessions() ->
+	gen_server:call(?MODULE, get_current_sessions, infinity).
 
 %% @doc Return the latest known step number.
 get_current_step_number() ->
@@ -543,6 +551,20 @@ handle_call({get_session, SessionKey}, _From, State) ->
 handle_call(get_current_session, _From, State) ->
 	#state{ current_session_key = CurrentSessionKey } = State,
 	{reply, {CurrentSessionKey, get_session(CurrentSessionKey, State)}, State};
+
+handle_call(get_current_sessions, _From, State) ->
+	#state{ current_session_key = CurrentSessionKey } = State,
+	Session = get_session(CurrentSessionKey, State),
+	PreviousSessionKey = Session#vdf_session.prev_session_key,
+	case get_session(PreviousSessionKey, State) of
+		not_found ->
+			?LOG_DEBUG([{event, request_current_sessions_missing_previous_session},
+					{current_session_key, encode_session_key(CurrentSessionKey)},
+					{previous_session_key, encode_session_key(PreviousSessionKey)}]),
+			{reply, [{CurrentSessionKey, Session}], State};
+		PrevSession ->
+			{reply, [{CurrentSessionKey, Session}, {PreviousSessionKey, PrevSession}], State}
+	end;
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),

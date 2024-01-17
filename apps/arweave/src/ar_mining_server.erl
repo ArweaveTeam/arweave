@@ -272,19 +272,8 @@ refresh_workers(State) ->
 get_current_session_key_seed_pairs() ->
 	case ar_pool:is_client() of
 		false ->
-			{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
-			PreviousSessionKey = CurrentSession#vdf_session.prev_session_key,
-			Seed = CurrentSession#vdf_session.seed,
-			case ar_nonce_limiter:get_session(PreviousSessionKey) of
-				not_found ->
-					?LOG_DEBUG([{event, mining_debug_missing_previous_session},
-						{previous_session_key,
-							ar_nonce_limiter:encode_session_key(PreviousSessionKey)}]),
-					[{CurrentSessionKey, Seed}];
-				PreviousSession ->
-					PrevSeed = PreviousSession#vdf_session.seed,
-					[{CurrentSessionKey, Seed}, {PreviousSessionKey, PrevSeed}]
-			end;
+			SessionKeyPairs = ar_nonce_limiter:get_current_sessions(),
+			[{Key, Session#vdf_session.seed} || {Key, Session} <- SessionKeyPairs];
 		true ->
 			ar_pool:get_current_session_key_seed_pairs()
 	end.
