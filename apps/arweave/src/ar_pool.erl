@@ -339,7 +339,7 @@ process_partial_solution_poa2_size(Solution, Ref) ->
 process_partial_solution_partition_number(Solution, Ref) ->
 	PartitionNumber = Solution#mining_solution.partition_number,
 	PartitionUpperBound = Solution#mining_solution.partition_upper_bound,
-	Max = max(0, PartitionUpperBound div ?PARTITION_SIZE - 1),
+	Max = ?MAX_PARTITION_NUMBER(PartitionUpperBound),
 	case PartitionNumber > Max of
 		false ->
 			process_partial_solution_nonce(Solution, Ref);
