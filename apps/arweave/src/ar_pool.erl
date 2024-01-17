@@ -480,9 +480,16 @@ process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache) ->
 		seed = Seed,
 		partition_upper_bound = PartitionUpperBound
 	} = Solution,
-	case ar_nonce_limiter:get_step_checkpoints_seed_upper_bound(StepNumber, NextSeed,
-			StartIntervalNumber, NextVDFDifficulty) of
-		not_found ->
+	SessionKey = {NextSeed, StartIntervalNumber, NextVDFDifficulty},
+	MayBeLastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(StepNumber, SessionKey),
+	MayBeSeed = ar_nonce_limiter:get_seed(SessionKey),
+	MayBeUpperBound = ar_nonce_limiter:get_active_partition_upper_bound(StepNumber, SessionKey),
+	case {MayBeLastStepCheckpoints, MayBeSeed, MayBeUpperBound} of
+		{not_found, _, _} ->
+			#partial_solution_response{ status = <<"rejected_vdf_not_found">> };
+		{_, not_found, _} ->
+			#partial_solution_response{ status = <<"rejected_vdf_not_found">> };
+		{_, _, not_found} ->
 			#partial_solution_response{ status = <<"rejected_vdf_not_found">> };
 		{[Output | _] = LastStepCheckpoints, Seed, PartitionUpperBound} ->
 			Solution2 =
@@ -733,23 +740,43 @@ process_solution_test_() ->
 				end
 			end},
 		{ar_node, get_current_diff, fun() -> 0 end},
-		{ar_nonce_limiter, get_step_checkpoints_seed_upper_bound,
-			fun(S, N, SIN, D) ->
+		{ar_nonce_limiter, get_step_checkpoints,
+			fun(S, {N, SIN, D}) ->
 				case {S, N, SIN, D} of
-					{0, << 1:(48*8) >>, 0, 0} ->
-						%% Test partition upper bound mismatch (2 /= 1).
-						{[<< 0:256 >>], << 0:(48*8) >>, 2};
-					{0, << 2:(48*8) >>, 0, 0} ->
-						%% Test partition upper seed mismatch (<< 3:(48*8) >> /= << 0:(48*8) >>).
-						{[<< 0:256 >>], << 3:(48*8) >>, 1};
+					{0, << 10:(48*8) >>, 0, 0} ->
+						%% Test not found.
+						not_found;
 					{0, << 3:(48*8) >>, 0, 0} ->
 						%% Test output mismatch (<< 1:256 >> /= << 0:256 >>).
-						{[<< 1:256 >>], << 0:(48*8) >>, 1};
-					{0, << 4:(48*8) >>, 0, 0} ->
-						%% Happy path (achieved with next_seed = << 4:(48*8) >>).
-						{[<< 0:256 >>], << 0:(48*8) >>, 1};
+						[<< 1:256 >>];
 					_ ->
-						not_found
+						[<< 0:256 >>]
+				end
+			end},
+		{ar_nonce_limiter, get_seed,
+			fun({N, SIN, D}) ->
+				case {N, SIN, D} of
+					{<< 11:(48*8) >>, 0, 0} ->
+						%% Test not_found.
+						not_found;
+					{<< 2:(48*8) >>, 0, 0} ->
+						%% Test seed mismatch (<< 3:(48*8) >> /= << 0:(48*8) >>).
+						<< 3:(48*8) >>;
+					_ ->
+						<< 0:(48*8) >>
+				end
+			end},
+		{ar_nonce_limiter, get_active_partition_upper_bound,
+			fun(S, {N, SIN, D}) ->
+				case {S, N, SIN, D} of
+					{0, << 12:(48*8) >>, 0, 0} ->
+						%% Test not_found.
+						not_found;
+					{0, << 1:(48*8) >>, 0, 0} ->
+						%% Test partition upper bound mismatch (2 /= 1).
+						2;
+					_ ->
+						1
 				end
 			end},
 		{ar_events, send, fun(_Type, _Payload) -> ok end}],
@@ -767,6 +794,20 @@ test_process_solution() ->
 	TestCases = [
 		{"VDF not found",
 			#mining_solution{ next_seed = << 10:(48*8) >>, nonce = 1, solution_hash = SolutionH,
+					preimage = Preimage1, partition_upper_bound = 1,
+					recall_byte1 = RecallByte1,
+					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >> }},
+			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
+		{"VDF not found 2",
+			#mining_solution{ next_seed = << 11:(48*8) >>, nonce = 1, solution_hash = SolutionH,
+					preimage = Preimage1, partition_upper_bound = 1,
+					recall_byte1 = RecallByte1,
+					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >> }},
+			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
+		{"VDF not found 3",
+			#mining_solution{ next_seed = << 12:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
