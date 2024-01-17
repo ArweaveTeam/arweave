@@ -314,12 +314,12 @@ process_partial_solution_field_size(Solution, Ref) ->
 			%% The second chunk may be either empty or 256 KiB. ar_poa:validate/1 does
 			%% the proper verification - here we simply protect against payload size abuse.
 			%% We are not strict about the first chunk here to simplify tests.
-			process_partial_solution_poa2(Solution, Ref);
+			process_partial_solution_poa2_size(Solution, Ref);
 		_ ->
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }
 	end.
 
-process_partial_solution_poa2(Solution, Ref) ->
+process_partial_solution_poa2_size(Solution, Ref) ->
 	#mining_solution{
 		recall_byte2 = RecallByte2,
 		poa2 = #poa{ chunk = C, data_path = DP, tx_path = TP }
