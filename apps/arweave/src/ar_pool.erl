@@ -370,6 +370,7 @@ process_partial_solution_quick_pow(Solution, Ref) ->
 		SolutionH ->
 			process_partial_solution_pow(Solution, Ref, H0);
 		_ ->
+			%% Solution hash mismatch (pattern matching against solution_hash = SolutionH).
 			#partial_solution_response{ status = <<"rejected_wrong_hash">> }
 	end.
 
