@@ -22,10 +22,9 @@
 		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
 		nonce_limiter_update_to_binary/2, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
-		candidate_to_json_struct/1, solution_to_json_struct/1,
-		json_struct_to_candidate/1, json_struct_to_solution/1,
+		candidate_to_json_struct/1, solution_to_json_struct/1, json_map_to_solution/1,
+		json_map_to_candidate/1,
 		jobs_to_json_struct/1, json_struct_to_jobs/1,
-		partial_solution_to_json_struct/1, json_map_to_partial_solution/1,
 		partial_solution_response_to_json_struct/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -1647,7 +1646,7 @@ candidate_to_json_struct(
 	JSON3 = encode_if_set(JSON2, h2, H2, fun ar_util:encode/1),
 	JSON4 = encode_if_set(JSON3, nonce, Nonce, fun integer_to_binary/1),
 	JSON5 = encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1),
-	encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1).
+	{encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1)}.
 
 h1_list_to_json_struct(H1List) ->
 	lists:map(fun ({H1, Nonce}) ->
@@ -1665,7 +1664,7 @@ session_key_json_struct({NextSeed, Interval, NextDifficulty}) ->
 		{next_difficulty, integer_to_binary(NextDifficulty)}
 	]}.
 
-json_struct_to_candidate(JSON) ->
+json_map_to_candidate(JSON) ->
 	Diff = ar_util:binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
 	H1List = json_struct_to_h1_list(maps:get(<<"cm_h1_list">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
@@ -1725,7 +1724,6 @@ json_struct_to_session_key(JSON) ->
 solution_to_json_struct(
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
-		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
 		next_vdf_difficulty = NextVDFDifficulty,
@@ -1746,12 +1744,11 @@ solution_to_json_struct(
 	}) ->
 	JSON = [
 		{last_step_checkpoints, ar_util:encode(iolist_to_binary(LastStepCheckpoints))},
-		{merkle_rebase_threshold, integer_to_binary(RebaseThreshold)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{nonce, Nonce},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
 		{next_seed, ar_util:encode(NextSeed)},
-		{next_vdf_difficulty, NextVDFDifficulty},
+		{next_vdf_difficulty, integer_to_binary(NextVDFDifficulty)},
 		{partition_number, integer_to_binary(PartitionNumber)},
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{poa1, poa_to_json_struct(PoA1)},
@@ -1764,15 +1761,21 @@ solution_to_json_struct(
 		{step_number, integer_to_binary(StepNumber)},
 		{steps, ar_util:encode(iolist_to_binary(Steps))}
 	],
-	encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1).
+	{encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1)}.
 
-json_struct_to_solution(JSON) ->
-	LastStepCheckpoints = parse_checkpoints(
-		ar_util:decode(maps:get(<<"last_step_checkpoints">>, JSON)), 1),
-	RebaseThreshold = binary_to_integer(maps:get(<<"merkle_rebase_threshold">>, JSON)),
+json_map_to_solution(JSON) ->
+	LastStepCheckpoints = parse_json_checkpoints(
+			ar_util:decode(maps:get(<<"last_step_checkpoints">>, JSON, <<>>))),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
 	NextVDFDifficulty = maps:get(<<"next_vdf_difficulty">>, JSON),
+	NextVDFDifficulty2 =
+		case is_binary(NextVDFDifficulty) of
+			true ->
+				binary_to_integer(NextVDFDifficulty);
+			false ->
+				NextVDFDifficulty
+		end,
 	Nonce = maps:get(<<"nonce">>, JSON),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
@@ -1786,15 +1789,13 @@ json_struct_to_solution(JSON) ->
 	SolutionHash = ar_util:decode(maps:get(<<"solution_hash">>, JSON)),
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
-	Steps = parse_checkpoints(
-		ar_util:decode(maps:get(<<"steps">>, JSON)), 1),
+	Steps = parse_json_checkpoints(ar_util:decode(maps:get(<<"steps">>, JSON, <<>>))),
 
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
-		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
-		next_vdf_difficulty = NextVDFDifficulty,
+		next_vdf_difficulty = NextVDFDifficulty2,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
@@ -1825,6 +1826,11 @@ decode_if_set(JSON, JSONProperty, Decoder, Default) ->
 		EncodedValue ->
 			Decoder(EncodedValue)
 	end.
+
+parse_json_checkpoints(<<>>) ->
+	[];
+parse_json_checkpoints(<< Checkpoint:32/binary, Rest/binary >>) ->
+	[Checkpoint | parse_json_checkpoints(Rest)].
 
 jobs_to_json_struct(Jobs) ->
 	#jobs{ jobs = JobList, partial_diff = Diff, seed = Seed, next_seed = NextSeed,
@@ -1869,171 +1875,6 @@ json_struct_to_job(Struct) ->
 	#job{ output = Output, global_step_number = StepNumber,
 			partition_upper_bound = PartitionUpperBound }.
 
-partial_solution_to_json_struct(
-	#mining_solution{
-		mining_address = MiningAddress,
-		next_seed = NextSeed,
-		next_vdf_difficulty = NextVDFDifficulty,
-		nonce = Nonce,
-		nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber,
-		partition_upper_bound = PartitionUpperBound,
-		poa1 = PoA1,
-		poa2 = PoA2,
-		preimage = Preimage,
-		recall_byte1 = RecallByte1,
-		recall_byte2 = RecallByte2,
-		seed = Seed,
-		solution_hash = SolutionHash,
-		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber
-	}) ->
-	JSON = [
-		{mining_address, ar_util:encode(MiningAddress)},
-		{nonce, Nonce},
-		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
-		{next_seed, ar_util:encode(NextSeed)},
-		{next_vdf_difficulty, integer_to_binary(NextVDFDifficulty)},
-		{partition_number, integer_to_binary(PartitionNumber)},
-		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
-		{poa1, poa_to_json_struct(PoA1)},
-		{poa2, poa_to_json_struct(PoA2)},
-		{preimage, ar_util:encode(Preimage)},
-		{recall_byte1, integer_to_binary(RecallByte1)},
-		{seed, ar_util:encode(Seed)},
-		{solution_hash, ar_util:encode(SolutionHash)},
-		{start_interval_number, integer_to_binary(StartIntervalNumber)},
-		{step_number, integer_to_binary(StepNumber)}
-	],
-	{encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1)}.
-
-json_map_to_partial_solution(JSON) ->
-	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
-	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
-	NextVDFDifficulty = binary_to_integer(maps:get(<<"next_vdf_difficulty">>, JSON)),
-	Nonce = maps:get(<<"nonce">>, JSON),
-	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
-	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
-	PartitionUpperBound = binary_to_integer(maps:get(<<"partition_upper_bound">>, JSON)),
-	PoA1 = json_struct_to_poa_from_map(maps:get(<<"poa1">>, JSON)),
-	PoA2 = json_struct_to_poa_from_map(maps:get(<<"poa2">>, JSON)),
-	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
-	RecallByte1 = binary_to_integer(maps:get(<<"recall_byte1">>, JSON)),
-	RecallByte2 = decode_if_set(JSON, <<"recall_byte2">>, fun binary_to_integer/1, undefined),
-	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
-	SolutionHash = ar_util:decode(maps:get(<<"solution_hash">>, JSON)),
-	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
-	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
-
-	#mining_solution{
-		mining_address = MiningAddress,
-		next_seed = NextSeed,
-		next_vdf_difficulty = NextVDFDifficulty,
-		nonce = Nonce,
-		nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber,
-		partition_upper_bound = PartitionUpperBound,
-		poa1 = PoA1,
-		poa2 = PoA2,
-		preimage = Preimage,
-		recall_byte1 = RecallByte1,
-		recall_byte2 = RecallByte2,
-		seed = Seed,
-		solution_hash = SolutionHash,
-		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber
-	}.
-
 partial_solution_response_to_json_struct(Response) ->
 	#partial_solution_response{ indep_hash = H, status = S } = Response,
 	{[{<<"indep_hash">>, ar_util:encode(H)}, {<<"status">>, S}]}.
-
-jobs_to_json_struct_test() ->
-	TestCases = [
-		#jobs{}
-		#jobs{ seed = <<"a">> },
-		#jobs{ jobs = [#job{ output = <<"o">>,
-				global_step_number = 1,
-				partition_upper_bound = 100 }] },
-		#jobs{ jobs = [#job{ output = <<"o2">>,
-					global_step_number = 2,
-					partition_upper_bound = 100 }, #job{ output = <<"o1">>,
-						global_step_number = 1,
-						partition_upper_bound = 99 }],
-				partial_diff = 12345,
-				seed = <<"gjhgjkghjhg">>,
-				next_seed = <<"dfdgfdg">>,
-				interval_number = 23,
-				next_vdf_difficulty = 32434 }
-	],
-	lists:foreach(
-		fun(Jobs) ->
-			?assertEqual(Jobs,
-					json_struct_to_jobs(dejsonify(jsonify(jobs_to_json_struct(Jobs)))))
-		end,
-		TestCases
-	).
-
-partial_solution_to_json_struct_test() ->
-	TestCases = [
-		#mining_solution{
-			mining_address = <<"a">>,
-			next_seed = <<"s">>,
-			seed = <<"s">>,
-			next_vdf_difficulty = 1,
-			nonce = 2,
-			partition_number = 10,
-			partition_upper_bound = 5001,
-			solution_hash = <<"h">>,
-			nonce_limiter_output = <<"output">>,
-			preimage = <<"pr">>,
-			poa1 = #poa{ chunk = <<"c">>, tx_path = <<"t">>, data_path = <<"dpath">> },
-			poa2 = #poa{},
-			recall_byte1 = 123234234234,
-			recall_byte2 = undefined,
-			start_interval_number = 23,
-			step_number = 1113423423423423423423423432342342342344
-		},
-		#mining_solution{
-			mining_address = <<"a">>,
-			next_seed = <<"s">>,
-			seed = <<"s">>,
-			next_vdf_difficulty = 1,
-			nonce = 2,
-			partition_number = 10,
-			partition_upper_bound = 5001,
-			solution_hash = <<"h">>,
-			nonce_limiter_output = <<"output">>,
-			preimage = <<"pr">>,
-			poa1 = #poa{ chunk = <<"c">>, tx_path = <<"t">>, data_path = <<"dpath">> },
-			poa2 = #poa{ chunk = <<"chunk2">>, tx_path = <<"t2">>, data_path = <<"d2">> },
-			recall_byte1 = 123234234234,
-			recall_byte2 = 2,
-			start_interval_number = 23,
-			step_number = 1113423423423423423423423432342342342344
-		}
-	],
-	lists:foreach(
-		fun(Solution) ->
-			?assertEqual(Solution,
-					json_map_to_partial_solution(jiffy:decode(jsonify(
-							partial_solution_to_json_struct(Solution)), [return_maps])))
-		end,
-		TestCases
-	).
-
-partial_solution_response_to_json_struct_test() ->
-	TestCases = [
-		{#partial_solution_response{}, <<>>, <<>>},
-		{#partial_solution_response{ indep_hash = <<"H">>, status = <<"S">>},
-				<<"H">>, <<"S">>}
-	],
-	lists:foreach(
-		fun({Case, ExpectedH, ExpectedStatus}) ->
-			{Struct} = dejsonify(jsonify(partial_solution_response_to_json_struct(Case))),
-			?assertEqual(ExpectedH,
-					ar_util:decode(proplists:get_value(<<"indep_hash">>, Struct))),
-			?assertEqual(ExpectedStatus, proplists:get_value(<<"status">>, Struct))
-		end,
-		TestCases
-	).

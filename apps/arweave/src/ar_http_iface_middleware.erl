@@ -2450,7 +2450,7 @@ handle_post_partial_solution(Req, Pid) ->
 handle_post_partial_solution_pool_server(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case catch ar_serialize:json_map_to_partial_solution(
+			case catch ar_serialize:json_map_to_solution(
 					jiffy:decode(Body, [return_maps])) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
@@ -3070,7 +3070,7 @@ handle_mining_h1(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					Candidate = ar_serialize:json_struct_to_candidate(JSON),
+					Candidate = ar_serialize:json_map_to_candidate(JSON),
 					ar_coordination:compute_h2_for_peer(Peer, Candidate),
 					{200, #{}, <<>>, Req};
 				{error, _} ->
@@ -3086,7 +3086,7 @@ handle_mining_h2(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					Candidate = ar_serialize:json_struct_to_candidate(JSON),
+					Candidate = ar_serialize:json_map_to_candidate(JSON),
 					?LOG_INFO([{event, h2_received}, {peer, ar_util:format_peer(Peer)}]),
 					ar_mining_server:prepare_and_post_solution(Candidate),
 					ar_mining_stats:h2_received_from_peer(Peer),
@@ -3104,15 +3104,19 @@ handle_mining_cm_publish(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 				{ok, JSON} ->
-					Solution = ar_serialize:json_struct_to_solution(JSON),
-					ar:console("Block candidate ~p from ~p ~n", [
-						ar_util:encode(Solution#mining_solution.solution_hash),
-						ar_util:format_peer(Peer)]),
-					?LOG_INFO("Block candidate ~p from ~p ~n", [
-						ar_util:encode(Solution#mining_solution.solution_hash),
-						ar_util:format_peer(Peer)]),
-					ar_mining_server:post_solution(Solution),
-					{200, #{}, <<>>, Req};
+					case catch ar_serialize:json_map_to_solution(JSON) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+						Solution ->
+							ar:console("Block candidate ~p from ~p ~n", [
+								ar_util:encode(Solution#mining_solution.solution_hash),
+								ar_util:format_peer(Peer)]),
+							?LOG_INFO("Block candidate ~p from ~p ~n", [
+								ar_util:encode(Solution#mining_solution.solution_hash),
+								ar_util:format_peer(Peer)]),
+							ar_mining_server:post_solution(Solution),
+							{200, #{}, <<>>, Req}
+					end;
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;

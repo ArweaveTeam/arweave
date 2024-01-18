@@ -2,6 +2,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
+-include_lib("arweave/include/ar_pool.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 block_to_binary_test_() ->
@@ -222,9 +223,9 @@ query_roundtrip_test() ->
 candidate_to_json_struct_test() ->
 
 	Test = fun(Candidate) ->
-        JSON = ar_serialize:jsonify({ar_serialize:candidate_to_json_struct(Candidate)}),
+        JSON = ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate)),
 		{ok, JSONStruct} = ar_serialize:json_decode(JSON, [{return_maps, true}]),
-        CandidateAfter = ar_serialize:json_struct_to_candidate(JSONStruct),
+        CandidateAfter = ar_serialize:json_map_to_candidate(JSONStruct),
         ExpectedCandidate = Candidate#mining_candidate{
             cache_ref = not_set,
             chunk1 = not_set,
@@ -284,9 +285,9 @@ candidate_to_json_struct_test() ->
 solution_to_json_struct_test() ->
 
 	Test = fun(Solution) ->
-        JSON = ar_serialize:jsonify({ar_serialize:solution_to_json_struct(Solution)}),
+        JSON = ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution)),
 		{ok, JSONStruct} = ar_serialize:json_decode(JSON, [{return_maps, true}]),
-        SolutionAfter = ar_serialize:json_struct_to_solution(JSONStruct),
+        SolutionAfter = ar_serialize:json_map_to_solution(JSONStruct),
         ?assertEqual(Solution, SolutionAfter)
     end,
 
@@ -295,7 +296,6 @@ solution_to_json_struct_test() ->
 			crypto:strong_rand_bytes(32),
 			crypto:strong_rand_bytes(32),
 			crypto:strong_rand_bytes(32)],
-		merkle_rebase_threshold = rand:uniform(100),
 		mining_address = crypto:strong_rand_bytes(32),
 		next_seed = crypto:strong_rand_bytes(32),
 		next_vdf_difficulty = rand:uniform(100),
@@ -329,3 +329,96 @@ solution_to_json_struct_test() ->
 	%% clear optional fields
 	Test(DefaultSolution#mining_solution{
 		recall_byte2 = undefined}).
+
+partial_solution_to_json_struct_test() ->
+	TestCases = [
+		#mining_solution{
+			mining_address = <<"a">>,
+			next_seed = <<"s">>,
+			seed = <<"s">>,
+			next_vdf_difficulty = 1,
+			nonce = 2,
+			partition_number = 10,
+			partition_upper_bound = 5001,
+			solution_hash = <<"h">>,
+			nonce_limiter_output = <<"output">>,
+			preimage = <<"pr">>,
+			poa1 = #poa{ chunk = <<"c">>, tx_path = <<"t">>, data_path = <<"dpath">> },
+			poa2 = #poa{},
+			recall_byte1 = 123234234234,
+			recall_byte2 = undefined,
+			start_interval_number = 23,
+			step_number = 1113423423423423423423423432342342342344
+		},
+		#mining_solution{
+			mining_address = <<"a">>,
+			next_seed = <<"s">>,
+			seed = <<"s">>,
+			next_vdf_difficulty = 1,
+			nonce = 2,
+			partition_number = 10,
+			partition_upper_bound = 5001,
+			solution_hash = <<"h">>,
+			nonce_limiter_output = <<"output">>,
+			preimage = <<"pr">>,
+			poa1 = #poa{ chunk = <<"c">>, tx_path = <<"t">>, data_path = <<"dpath">> },
+			poa2 = #poa{ chunk = <<"chunk2">>, tx_path = <<"t2">>, data_path = <<"d2">> },
+			recall_byte1 = 123234234234,
+			recall_byte2 = 2,
+			start_interval_number = 23,
+			step_number = 1113423423423423423423423432342342342344
+		}
+	],
+	lists:foreach(
+		fun(Solution) ->
+			?assertEqual(Solution,
+					ar_serialize:json_map_to_solution(jiffy:decode(ar_serialize:jsonify(
+							ar_serialize:solution_to_json_struct(Solution)), [return_maps])))
+		end,
+		TestCases
+	).
+
+partial_solution_response_to_json_struct_test() ->
+	TestCases = [
+		{#partial_solution_response{}, <<>>, <<>>},
+		{#partial_solution_response{ indep_hash = <<"H">>, status = <<"S">>},
+				<<"H">>, <<"S">>}
+	],
+	lists:foreach(
+		fun({Case, ExpectedH, ExpectedStatus}) ->
+			{Struct} = ar_serialize:dejsonify(ar_serialize:jsonify(
+					ar_serialize:partial_solution_response_to_json_struct(Case))),
+			?assertEqual(ExpectedH,
+					ar_util:decode(proplists:get_value(<<"indep_hash">>, Struct))),
+			?assertEqual(ExpectedStatus, proplists:get_value(<<"status">>, Struct))
+		end,
+		TestCases
+	).
+
+jobs_to_json_struct_test() ->
+	TestCases = [
+		#jobs{}
+		#jobs{ seed = <<"a">> },
+		#jobs{ jobs = [#job{ output = <<"o">>,
+				global_step_number = 1,
+				partition_upper_bound = 100 }] },
+		#jobs{ jobs = [#job{ output = <<"o2">>,
+					global_step_number = 2,
+					partition_upper_bound = 100 }, #job{ output = <<"o1">>,
+						global_step_number = 1,
+						partition_upper_bound = 99 }],
+				partial_diff = 12345,
+				seed = <<"gjhgjkghjhg">>,
+				next_seed = <<"dfdgfdg">>,
+				interval_number = 23,
+				next_vdf_difficulty = 32434 }
+	],
+	lists:foreach(
+		fun(Jobs) ->
+			?assertEqual(Jobs,
+					ar_serialize:json_struct_to_jobs(
+						ar_serialize:dejsonify(ar_serialize:jsonify(
+							ar_serialize:jobs_to_json_struct(Jobs)))))
+		end,
+		TestCases
+	).

@@ -577,7 +577,7 @@ get_cm_partition_table(Peer) ->
 
 % TODO binary protocol after debug
 cm_h1_send(Peer, Candidate) ->
-	Json = ar_serialize:candidate_to_json_struct(Candidate),
+	JSON = ar_serialize:candidate_to_json_struct(Candidate),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -585,11 +585,11 @@ cm_h1_send(Peer, Candidate) ->
 		timeout => 5 * 1000,
 		connect_timeout => 500,
 		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
+		body => ar_serialize:jsonify(JSON)
 	})).
 
 cm_h2_send(Peer, Candidate) ->
-	Json = ar_serialize:candidate_to_json_struct(Candidate),
+	JSON = ar_serialize:candidate_to_json_struct(Candidate),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -597,7 +597,7 @@ cm_h2_send(Peer, Candidate) ->
 		timeout => 5 * 1000,
 		connect_timeout => 500,
 		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
+		body => ar_serialize:jsonify(JSON)
 	})).
 
 cm_publish_send(Peer, Solution) ->
@@ -606,7 +606,7 @@ cm_publish_send(Peer, Solution) ->
 		{step_number, Solution#mining_solution.step_number},
 		{start_interval_number, Solution#mining_solution.start_interval_number},
 		{seed, ar_util:encode(Solution#mining_solution.seed)}]),
-	Json = ar_serialize:solution_to_json_struct(Solution),
+	JSON = ar_serialize:solution_to_json_struct(Solution),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -614,7 +614,7 @@ cm_publish_send(Peer, Solution) ->
 		timeout => 5 * 1000,
 		connect_timeout => 500,
 		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
+		body => ar_serialize:jsonify(JSON)
 	})).
 
 %% @doc Fetch the jobs from the pool or coordinated mining exit peer.
@@ -657,7 +657,7 @@ post_partial_solution(PeerOrURL, Solution, GetJobsFromExitNode) ->
 			true ->
 				Solution;
 			false ->
-				ar_serialize:jsonify(ar_serialize:partial_solution_to_json_struct(Solution))
+				ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution))
 		end,
 	handle_post_partial_solution_response(ar_http:req(#{
 		peer => Peer,
