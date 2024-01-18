@@ -692,11 +692,11 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 	set_mining_address(C2);
 set_mining_address(#config{ mine = false }) ->
 	ok;
-set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer }) ->
+set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer, pool_client = PoolClient }) ->
 	case ar_wallet:load_key(Addr) of
 		not_found ->
-			case CmExitPeer of
-				not_set ->
+			case {CmExitPeer, PoolClient} of
+				{not_set, false} ->
 					ar:console("~nThe mining key for the address ~s was not found."
 						" Make sure you placed the file in [data_dir]/~s (the node is looking for"
 						" [data_dir]/~s/[mining_addr].json or "
