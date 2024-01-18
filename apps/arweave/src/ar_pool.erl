@@ -66,7 +66,7 @@ start_link() ->
 %% @doc Return true if we are a pool client.
 is_client() ->
 	{ok, Config} = application:get_env(arweave, config),
-	Config#config.pool_client == true.
+	Config#config.is_pool_client == true.
 
 %% @doc Return a list of up to two most recently cached VDF session key, seed pairs.
 get_current_session_key_seed_pairs() ->
@@ -172,7 +172,8 @@ handle_cast({cache_jobs, Jobs}, State) ->
 
 handle_cast({post_partial_solution, Solution}, State) ->
 	{ok, Config} = application:get_env(arweave, config),
-	case ar_http_iface_client:post_partial_solution(Config#config.pool_host, Solution, false) of
+	case ar_http_iface_client:post_partial_solution(Config#config.pool_server_address,
+			Solution, false) of
 		{ok, _Response} ->
 			ok;
 		{error, Error} ->

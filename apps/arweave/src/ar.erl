@@ -269,12 +269,12 @@ show_help() ->
 			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
 					"coordinated mining mode. You need to also set coordinated_mining, "
 					"cm_api_secret, and cm_peer."},
-			{"pool_server", "Configure the node as a pool server. The pool node may not "
+			{"is_pool_server", "Configure the node as a pool server. The pool node may not "
 					"participate in the coordinated mining."},
-			{"pool_client", "Configure the node as a pool client. The node may be an "
+			{"is_pool_client", "Configure the node as a pool client. The node may be an "
 					"exit peer in the coordinated mining setup or a standalone node."},
 			{"pool_api_key", "API key for the requests to the pool."},
-			{"pool_host", "The pool address"}
+			{"pool_server_address", "The pool address"}
 		]
 	),
 	erlang:halt().
@@ -542,14 +542,14 @@ parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
-parse_cli_args(["pool_server" | Rest], C) ->
-	parse_cli_args(Rest, C#config{ pool_server = true });
-parse_cli_args(["pool_client" | Rest], C) ->
-	parse_cli_args(Rest, C#config{ pool_client = true });
+parse_cli_args(["is_pool_server" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ is_pool_server = true });
+parse_cli_args(["is_pool_client" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ is_pool_client = true });
 parse_cli_args(["pool_api_key", Key | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_api_key = list_to_binary(Key) });
-parse_cli_args(["pool_host", Host | Rest], C) ->
-	parse_cli_args(Rest, C#config{ pool_host = list_to_binary(Host) });
+parse_cli_args(["pool_server_address", Host | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_server_address = list_to_binary(Host) });
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -597,7 +597,7 @@ start(Config) ->
 	start_dependencies().
 
 validate_cm_pool_config(Config) ->
-	case {Config#config.coordinated_mining, Config#config.pool_server} of
+	case {Config#config.coordinated_mining, Config#config.is_pool_server} of
 		{true, true} ->
 			io:format("~nThe pool server node cannot participate "
 					"in the coordinated mining.~n~n"),
@@ -606,7 +606,7 @@ validate_cm_pool_config(Config) ->
 		_ ->
 			ok
 	end,
-	case {Config#config.pool_server, Config#config.pool_client} of
+	case {Config#config.is_pool_server, Config#config.is_pool_client} of
 		{true, true} ->
 			io:format("~nThe node cannot be a pool server and a pool client "
 					"at the same time.~n~n"),
@@ -615,9 +615,9 @@ validate_cm_pool_config(Config) ->
 		_ ->
 			ok
 	end,
-	case {Config#config.pool_client, Config#config.mine} of
+	case {Config#config.is_pool_client, Config#config.mine} of
 		{true, false} ->
-			io:format("~nThe mine flag must be set along with the pool_client flag.~n~n"),
+			io:format("~nThe mine flag must be set along with the is_pool_client flag.~n~n"),
 			timer:sleep(1000),
 			erlang:halt();
 		_ ->
@@ -692,7 +692,8 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 	set_mining_address(C2);
 set_mining_address(#config{ mine = false }) ->
 	ok;
-set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer, pool_client = PoolClient }) ->
+set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer,
+		is_pool_client = PoolClient }) ->
 	case ar_wallet:load_key(Addr) of
 		not_found ->
 			case {CmExitPeer, PoolClient} of

@@ -2428,7 +2428,7 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 handle_post_partial_solution(Req, Pid) ->
 	{ok, Config} = application:get_env(arweave, config),
 	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {Config#config.pool_server, CMExitNode} of
+	case {Config#config.is_pool_server, CMExitNode} of
 		{false, false} ->
 			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
 		{true, _} ->
@@ -2479,7 +2479,7 @@ handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
 handle_get_jobs(PrevOutput, Req) ->
 	{ok, Config} = application:get_env(arweave, config),
 	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {Config#config.pool_server, CMExitNode} of
+	case {Config#config.is_pool_server, CMExitNode} of
 		{false, false} ->
 			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
 		{true, _} ->

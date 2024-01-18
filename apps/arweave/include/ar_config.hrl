@@ -186,9 +186,9 @@
 	cm_exit_peer = not_set,
 	cm_peers = [],
 	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
-	pool_server = false,
-	pool_client = false,
-	pool_host = not_set,
+	is_pool_server = false,
+	is_pool_client = false,
+	pool_server_address = not_set,
 	pool_api_key = not_set
 }).
 
