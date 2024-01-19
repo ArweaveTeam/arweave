@@ -750,7 +750,7 @@ handle_cast(collect_peer_intervals, State) ->
 handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 		#sync_data_state{ store_id = StoreID } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID},
-		{start, Start}]),
+		{range_end, End}]),
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS and
 	%% clear the all_peers_intervals cache so we can start fresh and requery peers for
@@ -2222,9 +2222,6 @@ find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
 			false ->
 				ar_data_discovery:get_bucket_peers(Bucket)
 		end,
-	?LOG_DEBUG([{event, find_peer_intervals}, {pid, self()}, {store_id, StoreID},
-		{start, Start}, {bucket, Bucket},
-		{peers, io_lib:format("~p", [[ar_util:format_peer(Peer) || Peer <- Peers]])}]),
 
 	%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
 	gen_server:cast(self(), {collect_peer_intervals, End2, End}),

@@ -15,4 +15,5 @@ run_benchmark() ->
 					"and vdf_client_peer command line parameters).~n~n");
 		false ->
 			ok
-	end.
+	end,
+	Time.

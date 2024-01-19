@@ -378,8 +378,6 @@ parse_cli_args(["mining_addr", Addr | Rest], C) ->
 			io:format("~nYou may specify at most one mining_addr.~n~n"),
 			erlang:halt()
 	end;
-parse_cli_args(["max_miners", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ max_miners = list_to_integer(Num) });
 parse_cli_args(["hashing_threads", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ hashing_threads = list_to_integer(Num) });
 parse_cli_args(["data_cache_size_limit", Num | Rest], C) ->
@@ -584,7 +582,8 @@ start(Config) ->
 	warn_if_single_scheduler(),
 	case Config#config.nonce_limiter_server_trusted_peers of
 		[] ->
-			ar_bench_vdf:run_benchmark();
+			VDFSpeed = ar_bench_vdf:run_benchmark(),
+			?LOG_INFO([{event, vdf_benchmark}, {vdf_s, VDFSpeed / 1000000}]);
 		_ ->
 			ok
 	end,
