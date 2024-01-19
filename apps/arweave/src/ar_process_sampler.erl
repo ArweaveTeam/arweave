@@ -82,7 +82,15 @@ handle_info(sample_processes, State) ->
 		prometheus_gauge:set(process_info, [ProcessName, message_queue], MsgQueueLen)
 	end, ProcessMsgQueueLen),
 
+	prometheus_gauge:set(process_info, [total, memory], erlang:memory(total)),
+	prometheus_gauge:set(process_info, [processes, memory], erlang:memory(processes)),
+	prometheus_gauge:set(process_info, [processes_used, memory], erlang:memory(processes_used)),
 	prometheus_gauge:set(process_info, [system, memory], erlang:memory(system)),
+	prometheus_gauge:set(process_info, [atom, memory], erlang:memory(atom)),
+	prometheus_gauge:set(process_info, [atom_used, memory], erlang:memory(atom_used)),
+	prometheus_gauge:set(process_info, [binary, memory], erlang:memory(binary)),
+	prometheus_gauge:set(process_info, [code, memory], erlang:memory(code)),
+	prometheus_gauge:set(process_info, [ets, memory], erlang:memory(ets)),
 	{noreply, State};
 
 handle_info(_Info, State) ->
@@ -125,10 +133,8 @@ average_utilization(Util) ->
 		end,
 		#{},
 		Util),
-	?LOG_DEBUG([{event, scheduler_utilization}, {util, Util}]),
 	maps:foreach(
 		fun(Type, {Sum, Count}) ->
-			?LOG_DEBUG([{event, scheduler_utilization}, {Type, Sum / Count}]),
 			prometheus_gauge:set(scheduler_utilization, [Type], Sum / Count)
 		end,
 		Averages).

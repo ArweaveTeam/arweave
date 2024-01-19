@@ -550,6 +550,9 @@ handle_cast({validated_steps, Args}, State) ->
 						%% as well as the checkpoints associated with step StepNumber.
 						%% This branch occurs when a block is received that is ahead of us
 						%% in the VDF chain.
+						?LOG_DEBUG([{event, new_vdf_step}, {source, validated_steps},
+							{session_key, encode_session_key(SessionKey)},
+							{step_number, StepNumber}]),
 						{_, Steps2} =
 							get_step_range(Steps, StepNumber, CurrentStepNumber + 1, StepNumber),
 						update_session(Session, StepNumber, LastStepCheckpoints, Steps2);
@@ -637,7 +640,7 @@ handle_info({computed, Args}, State) ->
 		true ->
 			Session2 = update_session(Session, StepNumber, Checkpoints, [Output]),
 			State2 = cache_session(State, CurrentSessionKey, Session2),
-			?LOG_DEBUG([{event, computed_nonce_limiter_output},
+			?LOG_DEBUG([{event, new_vdf_step}, {source, computed},
 				{session_key, encode_session_key(CurrentSessionKey)}, {step_number, StepNumber}]),
 			send_output(CurrentSessionKey, Session2),
 			{noreply, State2}
@@ -772,6 +775,8 @@ apply_base_block(B, State) ->
 			step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
 			steps = [Output] },
 	SessionKey = session_key(B#block.nonce_limiter_info),
+	?LOG_DEBUG([{event, new_vdf_step}, {source, base_block},
+		{session_key, encode_session_key(SessionKey)}, {step_number, StepNumber}]),
 	State2 = set_current_session(State, SessionKey),
 	cache_session(State2, SessionKey, Session).
 
@@ -1091,8 +1096,7 @@ apply_external_update2(Update, State) ->
 apply_external_update3(State, SessionKey, Session, Steps) ->
 	#state{ last_external_update = {Peer, _}, current_session_key = CurrentSessionKey } = State,
 
-	?LOG_DEBUG([{event, apply_external_vdf},
-		{result, ok},
+	?LOG_DEBUG([{event, new_vdf_step}, {source, apply_external_vdf},
 		{vdf_server, ar_util:format_peer(Peer)},
 		{session_key, encode_session_key(SessionKey)},
 		{step_number, Session#vdf_session.step_number},
@@ -1184,6 +1188,8 @@ cache_block_session(State, SessionKey, PrevSessionKey, StepCheckpointsMap, Seed,
 				{_, Interval, NextVDFDifficulty} = SessionKey,
 				PrevSession = get_session(PrevSessionKey, State),
 				{StepNumber, Steps} = get_step_range(PrevSession, Interval),
+				?LOG_DEBUG([{event, new_vdf_step}, {source, block},
+					{session_key, encode_session_key(SessionKey)}, {step_number, StepNumber}]),
 				#vdf_session{ step_number = StepNumber, seed = Seed,
 						upper_bound = UpperBound, next_upper_bound = NextUpperBound,
 						prev_session_key = PrevSessionKey,
@@ -1200,8 +1206,6 @@ cache_session(State, SessionKey, Session) ->
 		sessions = Sessions } = State,
 	{NextSeed, Interval, NextVDFDifficulty} = SessionKey,
 	maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session),
-	?LOG_DEBUG([{event, add_session}, {session_key, encode_session_key(SessionKey)},
-		{step_number, Session#vdf_session.step_number}]),
 	SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
 	%% If Session exists, then {Interval, NextSeed} will already exist in the Sessions set and
 	%% gb_sets:add_element will not cause a change.

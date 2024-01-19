@@ -23,7 +23,7 @@
 	workers						= #{},
 	active_sessions				= sets:new(),
 	diff						= infinity,
-	chunk_cache_size_limit 		= 0,
+	chunk_cache_limit 			= 0,
 	merkle_rebase_threshold		= infinity
 }).
 
@@ -144,11 +144,7 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, nonce_limiter, {computed_output, Args}}, #state{ paused = true } = State) ->
-	{SessionKey, StepNumber, _Output, _PartitionUpperBound} = Args,
-	?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}, {reason, paused},
-				{step_number, StepNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+handle_info({event, nonce_limiter, {computed_output, _Args}}, #state{ paused = true } = State) ->
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
@@ -160,7 +156,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 		true ->
 			%% If the largest seen upper bound changed, a new partition may have been added
 			%% to the mining set, so we may need to update the chunk cache size limit.
-			update_chunk_cache_size_limit(State);
+			update_cache_limits(State);
 		false ->
 			State
 	end,
@@ -262,53 +258,51 @@ update_sessions(NewActiveSessions, AddedSessions, State) ->
 
 	State#state{ active_sessions = NewActiveSessions }.
 
-update_chunk_cache_size_limit(State) ->
+update_cache_limits(State) ->
 	NumActivePartitions = length(ar_mining_io:get_partitions()),
-	% Two ranges per output.
-	OptimalLimit = ar_util:ceil_int(
-		(?RECALL_RANGE_SIZE * 2 * NumActivePartitions) div ?DATA_CHUNK_SIZE,
-		100),
+	%% This allows the cache to store enough chunks for 2 concurrent VDF steps per partition.
+	IdealRangesPerStep = 4,
+	ChunksPerRange = ?RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE,
+	IdealCacheLimit = ar_util:ceil_int(
+		IdealRangesPerStep * ChunksPerRange * NumActivePartitions, 100),
 
 	{ok, Config} = application:get_env(arweave, config),
-	OverallLimit = case Config#config.mining_server_chunk_cache_size_limit of
+	OverallCacheLimit = case Config#config.mining_server_chunk_cache_size_limit of
 		undefined ->
-			Total = proplists:get_value(total_memory,
-					memsup:get_system_memory_data(), 2000000000),
-			Bytes = Total * 0.7 / 3,
-			CalculatedLimit = erlang:ceil(Bytes / ?DATA_CHUNK_SIZE),
-			min(ar_util:ceil_int(CalculatedLimit, 100), OptimalLimit);
+			IdealCacheLimit;
 		N ->
 			N
 	end,
 
 	%% We shard the chunk cache across every active worker. Only workers that mine a partition
 	%% included in the current weave are active.
-	NewLimit = max(1, OverallLimit div NumActivePartitions),
+	NewCacheLimit = max(1, OverallCacheLimit div NumActivePartitions),
 
-	case NewLimit == State#state.chunk_cache_size_limit of
+	case NewCacheLimit == State#state.chunk_cache_limit of
 		true ->
 			State;
 		false ->
 			maps:foreach(
 				fun(_Partition, Worker) ->
-					ar_mining_worker:set_chunk_cache_size_limit(Worker, NewLimit)
+					ar_mining_worker:set_cache_limit(Worker, NewCacheLimit)
 				end,
 				State#state.workers
 			),
 
-			ar:console("~nSetting the chunk cache size limit to ~B chunks (~B chunks per partition).~n",
-				[OverallLimit, NewLimit]),
-			?LOG_INFO([{event, setting_chunk_cache_size_limit},
-				{limit, OverallLimit}, {per_partition, NewLimit}]),
-			case OverallLimit < OptimalLimit of
+			ar:console(
+				"~nSetting the mining chunk cache size limit to ~B chunks "
+				"(~B chunks per partition).~n", [OverallCacheLimit, NewCacheLimit]),
+			?LOG_INFO([{event, update_mining_cache_limits},
+				{limit, OverallCacheLimit}, {per_partition, NewCacheLimit}]),
+			case OverallCacheLimit < IdealCacheLimit of
 				true ->
-					ar:console("~nChunk cache size limit is below optimal limit of ~p. "
+					ar:console("~nChunk cache size limit is below minimum limit of ~p. "
 						"Mining performance may be impacted.~n"
-						"Consider adding more RAM or changing the "
-						"'mining_server_chunk_cache_size_limit' option.", [OptimalLimit]);
+						"Consider changing the 'mining_server_chunk_cache_size_limit' option.",
+						[IdealCacheLimit]);
 				false -> ok
 			end,
-			State#state{ chunk_cache_size_limit = NewLimit }
+			State#state{ chunk_cache_limit = NewCacheLimit }
 	end.
 
 distribute_output(Candidate, State) ->

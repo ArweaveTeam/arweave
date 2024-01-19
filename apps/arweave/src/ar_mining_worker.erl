@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/1, name/1, reset/2, set_sessions/2, 
-	recall_chunk/5, computed_hash/5, set_difficulty/2, set_chunk_cache_size_limit/2, add_task/3]).
+	recall_chunk/5, computed_hash/5, set_difficulty/2, set_cache_limit/2, add_task/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -22,7 +22,8 @@
 	seeds						= #{},
 	chunk_cache 				= #{},
 	chunk_cache_size			= #{},
-	chunk_cache_size_limit		= 0
+	chunk_cache_limit			= 0,
+	latest_vdf_step_number		= 0
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -65,7 +66,6 @@ recall_chunk(Worker, skipped, _WhichChunk, Nonce, Candidate) ->
 
 %% @doc Callback from the hashing threads when a hash is computed
 computed_hash(Worker, computed_h0, H0, undefined, Candidate) ->
-	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
 	add_task(Worker, computed_h0, Candidate#mining_candidate{ h0 = H0 });
 computed_hash(Worker, computed_h1, H1, Preimage, Candidate) ->
 	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
@@ -82,8 +82,8 @@ computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
 set_difficulty(Worker, Diff) ->
 	gen_server:cast(Worker, {set_difficulty, Diff}).
 
-set_chunk_cache_size_limit(Worker, Limit) ->
-	gen_server:cast(Worker, {set_chunk_cache_size_limit, Limit}).
+set_cache_limit(Worker, CacheLimit) ->
+	gen_server:cast(Worker, {set_cache_limit, CacheLimit}).
 
 %% @doc Returns true if the mining candidate belongs to a valid mining session. Always assume
 %% that a coordinated mining candidate is valid (its session_key is not_set)
@@ -113,8 +113,8 @@ handle_call(Request, _From, State) ->
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
 
-handle_cast({set_chunk_cache_size_limit, Limit}, State) ->
-	{noreply, State#state{ chunk_cache_size_limit = Limit }};
+handle_cast({set_cache_limit, CacheLimit}, State) ->
+	{noreply, State#state{ chunk_cache_limit = CacheLimit }};
 
 handle_cast({reset, Diff}, State) ->
 	State2 = update_sessions(sets:new(), State),
@@ -240,58 +240,79 @@ handle_task({chunk2, Candidate}, State) ->
 	end;
 
 handle_task({compute_h0, Candidate}, State) ->
-	Seed = maps:get(Candidate#mining_candidate.session_key, State#state.seeds),
-	ar_mining_hash:compute_h0(
-		self(),
-		Candidate#mining_candidate{
-			seed = Seed
-		}),
-	{noreply, State};
+	#state{ latest_vdf_step_number = LatestVDFStepNumber } = State,
+	#mining_candidate{ session_key = SessionKey, step_number = StepNumber } = Candidate,
+	State3 = case try_to_reserve_cache_space(SessionKey, State) of
+		{true, State2} ->
+			Seed = maps:get(Candidate#mining_candidate.session_key, State#state.seeds),
+			ar_mining_hash:compute_h0(
+				self(),
+				Candidate#mining_candidate{
+					seed = Seed
+				}),
+			case StepNumber > LatestVDFStepNumber of
+				true ->
+					State2#state{ latest_vdf_step_number = StepNumber };
+				false ->
+					State2
+			end;
+		false ->
+			case StepNumber >= LatestVDFStepNumber of
+				true ->
+					%% Wait a bit, and then re-add the task.
+					add_delayed_task(self(), compute_h0, Candidate);
+				false ->
+					?LOG_DEBUG([{event, mining_debug_stale_compute_h0},
+						{worker, State#state.name},
+						{task, compute_h0},
+						{active_sessions,
+							ar_mining_server:encode_active_sessions(State#state.active_sessions)},
+						{candidate_session, ar_nonce_limiter:encode_session_key(
+							Candidate#mining_candidate.session_key)},
+						{partition_number, Candidate#mining_candidate.partition_number},
+						{step_number, Candidate#mining_candidate.step_number},
+						{latest_vdf_step_number, LatestVDFStepNumber}])
+			end,
+			
+			State
+	end,
+	{noreply, State3};
 
 handle_task({computed_h0, Candidate}, State) ->
 	#mining_candidate{ session_key = SessionKey, h0 = H0, partition_number = Partition1,
 				partition_upper_bound = PartitionUpperBound } = Candidate,
-	%% We only check if Partition1 has cache space so it's possible that we will exceed
-	%% the cache when mining Partition2. However in the worst case this should only exceed
-	%% the cache limit by a marginal amount, since all further chunk1 reads on Partition2 will
-	%% be blocked until the cache frees up.
-	NumChunks = nonce_max() + 1,
-	case try_to_reserve_cache_space(NumChunks, SessionKey, State) of
-		{true, State2} ->
-			{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-					Partition1, PartitionUpperBound),
-			Partition2 = ar_node:get_partition_number(RecallRange2Start),
-			Candidate2 = Candidate#mining_candidate{ partition_number2 = Partition2 },
-			Candidate3 = generate_cache_ref(Candidate2),
-			Range1Exists = ar_mining_io:read_recall_range(
-					chunk1, self(), Candidate3, RecallRange1Start),
-			State3 = case Range1Exists of
-				true ->
-					Range2Exists = ar_mining_io:read_recall_range(
-							chunk2, self(), Candidate3, RecallRange2Start),
-					case Range2Exists of
-						true -> 
-							update_chunk_cache_size(NumChunks, SessionKey, State2);
-						false ->
-							do_not_cache(Candidate3, State2)
-					end;
+	RecallRangeChunks = nonce_max() + 1,
+	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+			Partition1, PartitionUpperBound),
+	Partition2 = ar_node:get_partition_number(RecallRange2Start),
+	Candidate2 = Candidate#mining_candidate{ partition_number2 = Partition2 },
+	Candidate3 = generate_cache_ref(Candidate2),
+	Range1Exists = ar_mining_io:read_recall_range(
+			chunk1, self(), Candidate3, RecallRange1Start),
+	State3 = case Range1Exists of
+		true ->
+			Range2Exists = ar_mining_io:read_recall_range(
+					chunk2, self(), Candidate3, RecallRange2Start),
+			case Range2Exists of
+				true -> 
+					State;
 				false ->
-					?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
-						{worker, State#state.name},
-						{partition_number, Partition1},
-						{range_start, RecallRange1Start},
-						{range_end, RecallRange1Start + ?RECALL_RANGE_SIZE}]),
-					%% Release the cache space we reserved with try_to_reseve_cache_space/3
-					update_chunk_cache_size(-NumChunks, SessionKey, State2)	
-			end,
-			{noreply, State3};
+					%% Release just the Range2 cache space we reserved with
+					%% try_to_reserve_cache_space/2
+					State2 = update_chunk_cache_size(-RecallRangeChunks, SessionKey, State),
+					do_not_cache(Candidate3, State2)
+			end;
 		false ->
-			%% Wait a bit, and then re-add the task. This is to allow other, lower priority,
-			%% computed_h0 tasks to process while we wait for cache space to free up for this
-			%% partition.
-			add_delayed_task(self(), computed_h0, Candidate),
-			{noreply, State}
-	end;
+			?LOG_DEBUG([{event, mining_debug_no_io_thread_found_for_range},
+				{worker, State#state.name},
+				{partition_number, Partition1},
+				{range_start, RecallRange1Start},
+				{range_end, RecallRange1Start + ?RECALL_RANGE_SIZE}]),
+			%% Release the Range1 *and* Range2 caceh space we reserved with
+			%% try_to_reserve_cache_space/2
+			update_chunk_cache_size(-(2*RecallRangeChunks), SessionKey, State)	
+	end,
+	{noreply, State3};
 	
 
 handle_task({computed_h1, Candidate}, State) ->
@@ -508,10 +529,12 @@ update_chunk_cache_size(Delta, SessionKey, State) ->
 	State#state{
 		chunk_cache_size = maps:put(SessionKey, CacheSize + Delta, State#state.chunk_cache_size) }.
 
-try_to_reserve_cache_space(NumChunks, SessionKey, State) ->
-	case total_cache_size(State) =< State#state.chunk_cache_size_limit of
+try_to_reserve_cache_space(SessionKey, State) ->
+	RecallRangeChunks = nonce_max() + 1,
+	case total_cache_size(State) =< State#state.chunk_cache_limit of
 		true ->
-			{true, update_chunk_cache_size(NumChunks, SessionKey, State)};
+			%% reserve for both h1 and h2
+			{true, update_chunk_cache_size(2 * RecallRangeChunks, SessionKey, State)};
 		false ->
 			false
 	end.

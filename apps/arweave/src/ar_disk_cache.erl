@@ -85,6 +85,8 @@ write_block_shadow(B) ->
 	File = filename:join(get_block_path(), Name),
 	Bin = ar_serialize:block_to_binary(B),
 	Size = byte_size(Bin),
+	?LOG_DEBUG([{event, write_block_shadow},
+		{hash, ar_util:encode(B#block.indep_hash)}, {size, Size}]),
 	gen_server:cast(?MODULE, {record_written_data, Size}),
 	case ar_storage:write_file_atomic(File, Bin) of
 		ok ->
@@ -209,8 +211,6 @@ handle_call(Request, _From, State) ->
 
 handle_cast({record_written_data, Size}, State) ->
 	CacheSize = State#state.size + Size,
-	?LOG_DEBUG([{event, updated_disk_cache}, {bytes, Size}, {prev_size, State#state.size},
-			{new_size, CacheSize}]),
 	gen_server:cast(?MODULE, may_be_clean_up),
 	{noreply, State#state{ size = CacheSize }};
 
@@ -300,6 +300,7 @@ write_tx(TX) ->
 	JSONStruct = ar_serialize:tx_to_json_struct(TXHeader),
 	Data = ar_serialize:jsonify(JSONStruct),
 	Size = byte_size(Data),
+	?LOG_DEBUG([{event, write_tx}, {txid, ar_util:encode(TX#tx.id)}, {size, Size}]),
 	gen_server:cast(?MODULE, {record_written_data, Size}),
 	case ar_storage:write_file_atomic(File, Data) of
 		ok ->
