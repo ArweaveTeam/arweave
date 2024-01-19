@@ -44,7 +44,6 @@ parse_config() ->
 		join_workers = 9,
 		diff = 42,
 		mining_addr = ExpectedMiningAddr,
-		max_miners = 43,
 		hashing_threads = 17,
 		data_cache_size_limit = 10000,
 		packing_cache_size_limit = 20000,

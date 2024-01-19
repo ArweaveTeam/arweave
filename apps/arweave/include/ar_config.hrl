@@ -116,7 +116,6 @@
 	join_workers = ?DEFAULT_JOIN_WORKERS,
 	diff = ?DEFAULT_DIFF,
 	mining_addr = not_set,
-	max_miners = 0, % DEPRECATED.
 	hashing_threads = ?NUM_HASHING_PROCESSES,
 	mining_server_chunk_cache_size_limit,
 	packing_cache_size_limit,

@@ -3,7 +3,7 @@
 
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
 		set_total_data_size/1, set_storage_module_data_size/6,
-		vdf_computed/0, chunk_read/1, hash_computed/1,
+		vdf_computed/0, raw_read_rate/2, chunk_read/1, hash_computed/1,
 		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -95,6 +95,9 @@ pause_performance_reports(Time) ->
 
 vdf_computed() ->
 	increment_count(vdf).
+
+raw_read_rate(PartitionNumber, ReadRate) ->
+	prometheus_gauge:set(mining_rate, [raw_read, PartitionNumber], ReadRate).
 
 chunk_read(PartitionNumber) ->
 	increment_count({partition, PartitionNumber, read, total}),

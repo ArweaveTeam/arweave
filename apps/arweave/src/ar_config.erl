@@ -188,11 +188,6 @@ parse_options([{<<"mining_addr">>, Addr} | Rest], Config) when is_binary(Addr) -
 parse_options([{<<"mining_addr">>, Addr} | _], _) ->
 	{error, {bad_type, mining_addr, string}, Addr};
 
-parse_options([{<<"max_miners">>, MaxMiners} | Rest], Config) when is_integer(MaxMiners) ->
-	parse_options(Rest, Config#config{ max_miners = MaxMiners });
-parse_options([{<<"max_miners">>, MaxMiners} | _], _) ->
-	{error, {bad_type, max_miners, number}, MaxMiners};
-
 parse_options([{<<"hashing_threads">>, Threads} | Rest], Config) when is_integer(Threads) ->
 	parse_options(Rest, Config#config{ hashing_threads = Threads });
 parse_options([{<<"hashing_threads">>, Threads} | _], _) ->
