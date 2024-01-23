@@ -40,17 +40,16 @@ handle_info(sample_processes, State) ->
 	ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
 
 	ProcessMetrics =
-		lists:foldl(fun({_Status, ProcessName, Memory, Binary, Reductions, MsgQueueLen}, Acc) ->
+		lists:foldl(fun({_Status, ProcessName, Memory, Reductions, MsgQueueLen}, Acc) ->
 			%% Sum the data for each process. This is a compromise for handling unregistered
 			%% processes. It has the effect of summing the memory and message queue length across all unregistered processes running off the
 			%% same function. In general this is what we want (e.g. for the io threads within
 			%% ar_mining_io and the hashing threads within ar_mining_hashing, we wand to
 			%% see if, in aggregate, their memory or message queue length has spiked).
-			{MemoryTotal, BinaryTotal, ReductionsTotal, MsgQueueLenTotal} =
-				maps:get(ProcessName, Acc, {0, 0, 0, 0}),
+			{MemoryTotal, ReductionsTotal, MsgQueueLenTotal} =
+				maps:get(ProcessName, Acc, {0, 0, 0}),
 			Metrics = {
-				MemoryTotal + Memory, BinaryTotal + Binary, 
-				ReductionsTotal + Reductions, MsgQueueLenTotal + MsgQueueLen},
+				MemoryTotal + Memory, ReductionsTotal + Reductions, MsgQueueLenTotal + MsgQueueLen},
 			maps:put(ProcessName, Metrics, Acc)
 		end, 
 		#{},
@@ -65,9 +64,8 @@ handle_info(sample_processes, State) ->
 		{help, "Sampling info about active processes. Only set when debug=true."}]),
 
 	maps:foreach(fun(ProcessName, Metrics) ->
-		{Memory, Binary, Reductions, MsgQueueLen} = Metrics,
+		{Memory, Reductions, MsgQueueLen} = Metrics,
 		prometheus_gauge:set(process_info, [ProcessName, memory], Memory),
-		prometheus_gauge:set(process_info, [ProcessName, binary], Binary),
 		prometheus_gauge:set(process_info, [ProcessName, reductions], Reductions),
 		prometheus_gauge:set(process_info, [ProcessName, message_queue], MsgQueueLen)
 	end, ProcessMetrics),
@@ -135,16 +133,15 @@ average_utilization(Util) ->
 	
 process_function(Pid) ->
 	case process_info(Pid, [current_function, current_stacktrace, registered_name,
-		status, memory, binary, reductions, message_queue_len]) of
-	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _, _] ->
+		status, memory, reductions, message_queue_len]) of
+	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _] ->
 		false;
 	[{current_function, _CurrentFunction}, {current_stacktrace, Stack},
 			{registered_name, Name}, {status, Status},
-			{memory, Memory}, {binary, BinInfo}, {reductions, Reductions},
+			{memory, Memory}, {reductions, Reductions},
 			{message_queue_len, MsgQueueLen}] ->
 		ProcessName = process_name(Name, Stack),
-		BinaryTotal = binary_memory(BinInfo, sets:new(), 0),
-		{true, {Status, ProcessName, Memory, BinaryTotal, Reductions, MsgQueueLen}};
+		{true, {Status, ProcessName, Memory, Reductions, MsgQueueLen}};
 	_ ->
 		false
 	end.
