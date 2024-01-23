@@ -43,7 +43,7 @@ request_repack(Ref, Args) ->
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
 pack(Packing, ChunkOffset, TXRoot, Chunk) ->
 	[{_, RandomXStateRef}] = ets:lookup(?MODULE, randomx_packing_state),
-	record_packing_request(pack, Packing, get_caller()),
+	record_packing_request(pack, Packing, unpacked, get_caller()),
 	case pack(Packing, ChunkOffset, TXRoot, Chunk, RandomXStateRef, external) of
 		{ok, Packed, _} ->
 			{ok, Packed};
@@ -55,7 +55,7 @@ pack(Packing, ChunkOffset, TXRoot, Chunk) ->
 %% {error, invalid_packed_size}, {error, invalid_chunk_size}, or {error, invalid_padding}.
 unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 	[{_, RandomXStateRef}] = ets:lookup(?MODULE, randomx_packing_state),
-	record_packing_request(unpack, Packing, get_caller()),
+	record_packing_request(unpack, Packing, unpacked, get_caller()),
 	case unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, external) of
 		{ok, Unpacked, _} ->
 			{ok, Unpacked};
@@ -65,7 +65,7 @@ unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 
 repack(RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 	[{_, RandomXStateRef}] = ets:lookup(?MODULE, randomx_packing_state),
-	record_packing_request(repack, RequestedPacking, get_caller()),
+	record_packing_request(repack, RequestedPacking, StoredPacking, get_caller()),
 	repack(
 		RequestedPacking, StoredPacking, ChunkOffset, TXRoot,
 		Chunk, ChunkSize, RandomXStateRef, external).
@@ -97,6 +97,11 @@ init([]) ->
 	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
 	ar:console("RandomX dataset initialisation complete.~n", []),
 	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
+	{H0, H1} = ar_bench_hash:run_benchmark(),
+	H0String = io_lib:format("~.3f", [H0 / 1000]),
+	H1String = io_lib:format("~.3f", [H1 / 1000]),
+	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
+	?LOG_INFO([{event, hash_benchmark}, {h0_ms, H0String}, {h1_ms, H1String}]),
 	{ActualRatePack_2_5, ActualRatePack_2_6,
 			ActualRateUnpack_2_5, ActualRateUnpack_2_6} = get_packing_latency(PackingStateRef),
 	PackingLatency = ActualRatePack_2_6,
@@ -161,7 +166,7 @@ handle_cast({unpack_request, From, Ref, Args}, State) ->
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
 	increment_buffer_size(),
-	record_packing_request(unpack, Packing, unpack_request),
+	record_packing_request(unpack, Packing, unpack, unpack_request),
 	Worker ! {unpack, Ref, From, Args},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 handle_cast({repack_request, _, _, _}, #state{ num_workers = 0 } = State) ->
@@ -177,13 +182,13 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 			{noreply, State};
 		{_, unpacked} ->
 			increment_buffer_size(),
-			record_packing_request(pack, RequestedPacking, repack_request),
+			record_packing_request(pack, RequestedPacking, unpack, repack_request),
 			Worker ! {pack, Ref, From, {RequestedPacking, Chunk, AbsoluteOffset, TXRoot,
 					ChunkSize}},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 		_ ->
 			increment_buffer_size(),
-			record_packing_request(repack, RequestedPacking, repack_request),
+			record_packing_request(repack, RequestedPacking, Packing, repack_request),
 			Worker ! {
 				repack, Ref, From,
 				{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize}
@@ -521,18 +526,16 @@ calling_function([_, {_, _, _, _}|[{Module, Function, Arity, _}|_]]) ->
 calling_function(_) ->
     "unknown".
 
-record_packing_request(Type, Packing, From) when
-	is_atom(Type), is_atom(Packing), is_list(From) ->
+record_packing_request(Type, RequestedPacking, StoredPacking, From) ->
+	Type2 = case RequestedPacking == StoredPacking of
+		true ->
+			list_to_atom(atom_to_list(Type) ++ "_noop");
+		_ ->
+			Type
+	end,
 	prometheus_counter:inc(
 		packing_requests,
-		[atom_to_list(Type), atom_to_list(Packing), From]);
-record_packing_request(Type, Packing, From) when
-	is_atom(From) ->
-	record_packing_request(Type, Packing, atom_to_list(From));
-record_packing_request(Type, Packing, From) when
-	not is_atom(Packing) ->
-	record_packing_request(Type, packing_atom(Packing), From).
-
+		[Type2, packing_atom(RequestedPacking), From]).
 
 %%%===================================================================
 %%% Tests.

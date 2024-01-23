@@ -24,6 +24,7 @@
 	active_sessions				= sets:new(),
 	diff						= infinity,
 	chunk_cache_limit 			= 0,
+	vdf_queue_limit				= 0,
 	merkle_rebase_threshold		= infinity
 }).
 
@@ -282,9 +283,11 @@ update_cache_limits(State) ->
 		true ->
 			State;
 		false ->
+			%% Allow enough compute_h0 tasks to be queued to completely refill the chunk cache.
+			VDFQueueLimit = NewCacheLimit div (2 * ChunksPerRange),
 			maps:foreach(
 				fun(_Partition, Worker) ->
-					ar_mining_worker:set_cache_limit(Worker, NewCacheLimit)
+					ar_mining_worker:set_cache_limits(Worker, NewCacheLimit, VDFQueueLimit)
 				end,
 				State#state.workers
 			),
@@ -293,7 +296,8 @@ update_cache_limits(State) ->
 				"~nSetting the mining chunk cache size limit to ~B chunks "
 				"(~B chunks per partition).~n", [OverallCacheLimit, NewCacheLimit]),
 			?LOG_INFO([{event, update_mining_cache_limits},
-				{limit, OverallCacheLimit}, {per_partition, NewCacheLimit}]),
+				{limit, OverallCacheLimit}, {per_partition, NewCacheLimit},
+				{vdf_queue_limit, VDFQueueLimit}]),
 			case OverallCacheLimit < IdealCacheLimit of
 				true ->
 					ar:console("~nChunk cache size limit is below minimum limit of ~p. "

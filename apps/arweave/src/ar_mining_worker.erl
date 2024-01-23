@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/1, name/1, reset/2, set_sessions/2, 
-	recall_chunk/5, computed_hash/5, set_difficulty/2, set_cache_limit/2, add_task/3]).
+	recall_chunk/5, computed_hash/5, set_difficulty/2, set_cache_limits/3, add_task/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -23,6 +23,7 @@
 	chunk_cache 				= #{},
 	chunk_cache_size			= #{},
 	chunk_cache_limit			= 0,
+	vdf_queue_limit				= 0,
 	latest_vdf_step_number		= 0
 }).
 
@@ -51,7 +52,12 @@ add_task(Worker, TaskType, Candidate) ->
 	gen_server:cast(Worker, {add_task, {TaskType, Candidate}}).
 
 add_delayed_task(Worker, TaskType, Candidate) ->
-	ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, Worker, {add_task, {TaskType, Candidate}}).
+	%% Delay task by random amount between ?TASK_CHECK_FREQUENCY_MS and 2*?TASK_CHECK_FREQUENCY_MS
+	%% The reason for the randomization to avoid a glut tasks to all get added at the same time - 
+	%% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
+	%% to be delayed at about the same time.
+	Delay = rand:uniform(?TASK_CHECK_FREQUENCY_MS) + ?TASK_CHECK_FREQUENCY_MS,
+	ar_util:cast_after(Delay, Worker, {add_task, {TaskType, Candidate}}).
 
 %% @doc Callback from ar_mining_io when a chunk is read
 recall_chunk(Worker, chunk1, Chunk, Nonce, Candidate) ->
@@ -82,8 +88,8 @@ computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
 set_difficulty(Worker, Diff) ->
 	gen_server:cast(Worker, {set_difficulty, Diff}).
 
-set_cache_limit(Worker, CacheLimit) ->
-	gen_server:cast(Worker, {set_cache_limit, CacheLimit}).
+set_cache_limits(Worker, ChunkCacheLimit, VDFQueueLimit) ->
+	gen_server:cast(Worker, {set_cache_limits, ChunkCacheLimit, VDFQueueLimit}).
 
 %% @doc Returns true if the mining candidate belongs to a valid mining session. Always assume
 %% that a coordinated mining candidate is valid (its session_key is not_set)
@@ -113,8 +119,8 @@ handle_call(Request, _From, State) ->
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
 
-handle_cast({set_cache_limit, CacheLimit}, State) ->
-	{noreply, State#state{ chunk_cache_limit = CacheLimit }};
+handle_cast({set_cache_limits, ChunkCacheLimit, VDFQueueLimit}, State) ->
+	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit, vdf_queue_limit = VDFQueueLimit }};
 
 handle_cast({reset, Diff}, State) ->
 	State2 = update_sessions(sets:new(), State),
@@ -240,7 +246,7 @@ handle_task({chunk2, Candidate}, State) ->
 	end;
 
 handle_task({compute_h0, Candidate}, State) ->
-	#state{ latest_vdf_step_number = LatestVDFStepNumber } = State,
+	#state{ latest_vdf_step_number = LatestVDFStepNumber, vdf_queue_limit = VDFQueueLimit } = State,
 	#mining_candidate{ session_key = SessionKey, step_number = StepNumber } = Candidate,
 	State3 = case try_to_reserve_cache_space(SessionKey, State) of
 		{true, State2} ->
@@ -257,21 +263,12 @@ handle_task({compute_h0, Candidate}, State) ->
 					State2
 			end;
 		false ->
-			case StepNumber >= LatestVDFStepNumber of
+			case StepNumber >= LatestVDFStepNumber - VDFQueueLimit of
 				true ->
 					%% Wait a bit, and then re-add the task.
 					add_delayed_task(self(), compute_h0, Candidate);
 				false ->
-					?LOG_DEBUG([{event, mining_debug_stale_compute_h0},
-						{worker, State#state.name},
-						{task, compute_h0},
-						{active_sessions,
-							ar_mining_server:encode_active_sessions(State#state.active_sessions)},
-						{candidate_session, ar_nonce_limiter:encode_session_key(
-							Candidate#mining_candidate.session_key)},
-						{partition_number, Candidate#mining_candidate.partition_number},
-						{step_number, Candidate#mining_candidate.step_number},
-						{latest_vdf_step_number, LatestVDFStepNumber}])
+					ok
 			end,
 			
 			State
