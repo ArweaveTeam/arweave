@@ -5,15 +5,15 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("kernel/include/file.hrl").
 
 run_benchmark_from_cli(Args) ->
 	Test = list_to_atom(get_flag_value(Args, "test", "baseline_pack")),
-	TotalMegaBytes = list_to_integer(get_flag_value(Args, "mb", "16")),
 	JIT = list_to_integer(get_flag_value(Args, "jit", "1")),
 	LargePages = list_to_integer(get_flag_value(Args, "large_pages", "1")),
 	HardwareAES = list_to_integer(get_flag_value(Args, "hw_aes", "1")),
 	VDF = list_to_integer(get_flag_value(Args, "vdf", "0")),
-	run_benchmark(Test, TotalMegaBytes, JIT, LargePages, HardwareAES, VDF).
+	run_benchmark(Test, JIT, LargePages, HardwareAES, VDF).
 
 get_flag_value([], _, DefaultValue) ->
     DefaultValue;
@@ -22,7 +22,22 @@ get_flag_value([Flag | [Value | _Tail]], TargetFlag, _DefaultValue) when Flag ==
 get_flag_value([_ | Tail], TargetFlag, DefaultValue) ->
     get_flag_value(Tail, TargetFlag, DefaultValue).
 
-run_benchmark(Test, TotalMegaBytes, JIT, LargePages, HardwareAES, VDF) ->
+show_help() ->
+	io:format("~nUsage: benchmark-packing [options]~n"),
+	io:format("Options:~n"),
+	io:format("  test <test> (default: baseline_pack)~n"),
+	io:format("  mb <megabytes> (default: 16)~n"),
+	io:format("  jit <0|1> (default: 1)~n"),
+	io:format("  large_pages <0|1> (default: 1)~n"),
+	io:format("  hw_aes <0|1> (default: 1)~n"),
+	io:format("  vdf <0|1> (default: 0)~n"),
+	io:format("Valid tests:~n"),
+	io:format("  baseline_pack~n"),
+	io:format("  baseline_repack~n"),
+	io:format("  nif_repack~n"),
+	erlang:halt().
+
+run_benchmark(Test, JIT, LargePages, HardwareAES, VDF) ->
 	timer:sleep(3000),
 	ets:new(offsets, [set, named_table, public]),
 	EncodedRoot = <<"OIgTTxuEPklMR47Ho8VWnNr1Uh6TNjzxwIs38yuqBK0">>,
@@ -30,41 +45,40 @@ run_benchmark(Test, TotalMegaBytes, JIT, LargePages, HardwareAES, VDF) ->
 	EncodedRewardAddress = <<"mvK6e65dcD6XNYDHUVxMa7-d6wVP535Ummtvb8OCUtQ">>,
 	RewardAddress = ar_util:decode(EncodedRewardAddress),
 
+	NumWorkers = erlang:system_info(dirty_cpu_schedulers_online),
+
+	TotalMegaBytes = (1024 div NumWorkers) * NumWorkers,
+
 	io:format("~nBenchmark settings:~n"),
 	io:format("~12s: ~p~n", ["Test", Test]),
 	io:format("~12s: ~p~n", ["Data (MB)", TotalMegaBytes]),
+	io:format("~12s: ~p~n", ["Cores Used", NumWorkers]),
 	io:format("~12s: ~p~n", ["JIT", JIT]),
 	io:format("~12s: ~p~n", ["Large Pages", LargePages]),
 	io:format("~12s: ~p~n", ["HW AES", HardwareAES]),
 	io:format("~12s: ~p~n", ["VDF", VDF]),
+	io:format("~n"),
+
+	generate_input(TotalMegaBytes, NumWorkers,  Root, RewardAddress),
 
 	start_vdf(VDF),
 
 	Permutation = {TotalMegaBytes, JIT, LargePages, HardwareAES},
-
 	case Test of
-		input ->
-			generate_input(TotalMegaBytes, Root, RewardAddress);
 		baseline_pack ->
-			run_dirty_benchmark(baseline_pack, Permutation, Root, RewardAddress);
-		baseline_repack_2_5 ->
-			run_dirty_benchmark(baseline_repack_2_5, Permutation, Root, RewardAddress);
-		baseline_repack_2_6 ->
-			run_dirty_benchmark(baseline_repack_2_6, Permutation, Root, RewardAddress);
-		nif_repack_2_5 ->
-			run_dirty_benchmark(nif_repack_2_5, Permutation, Root, RewardAddress);
-		nif_repack_2_6 ->
-			run_dirty_benchmark(nif_repack_2_6, Permutation, Root, RewardAddress);
+			run_dirty_benchmark(baseline_pack, Permutation, NumWorkers, Root, RewardAddress);
+		baseline_repack ->
+			run_dirty_benchmark(baseline_repack, Permutation, NumWorkers, Root, RewardAddress);
+		nif_repack ->
+			run_dirty_benchmark(nif_repack, Permutation, NumWorkers, Root, RewardAddress);
 		_ ->
-			?LOG_ERROR(
-				"Unknown test: ~p. Valid values: input, baseline_pack, " ++
-				"baseline_repack_2_5, baseline_repack_2_6, " ++
-				"nif_repack_2_5, nif_repack_2_6", [Test])
+			show_help()
 	end,
+
 	Init = ar_bench_timer:get_total({init}) / 1000000,
 	Total = ar_bench_timer:get_total({wall}) / 1000000,
 
-	{ok, File} = file:open("benchmark.results.csv", [append]),
+	File = open_file("benchmark.results.csv", [append]),
 
 	%% Write the CSV string to the file
 	Output = io_lib:format("~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p~n", [
@@ -73,11 +87,28 @@ run_benchmark(Test, TotalMegaBytes, JIT, LargePages, HardwareAES, VDF) ->
 		Init, Total]),
 	
 	file:write(File, Output),
-	io:format("~n"),
-	io:format(Output),
+	file:close(File),
 
-	%% Close the file
-	file:close(File).
+	Label = case Test of
+		baseline_pack ->
+			"Chunks Packed";
+		_ ->
+			"Chunks Repacked"
+	end,
+
+	Chunks = (TotalMegaBytes * ?MiB) div ?DATA_CHUNK_SIZE,
+	TimePerChunk = (Total / Chunks) * 1000,
+	TimePerChunkPerCore = TimePerChunk * NumWorkers,
+	ChunksPerSecond = Chunks / Total,
+	ChunksPerSecondPerCore = ChunksPerSecond / NumWorkers,
+
+	io:format("~nBenchmark results:~n"),
+	io:format("~28s: ~p~n", [Label, Chunks]),
+	io:format("~28s: ~.2f~n", ["Total Time (s)", Total]),
+	io:format("~28s: ~.2f~n", ["Time Per Chunk (ms)", TimePerChunk]),
+	io:format("~28s: ~.2f~n", ["Time Per Chunk Per Core (ms)", TimePerChunkPerCore]),
+	io:format("~28s: ~p~n", ["Chunks Per Second", floor(ChunksPerSecond)]),
+	io:format("~28s: ~p~n", ["Chunks Per Second Per Core", floor(ChunksPerSecondPerCore)]).
 
 %% --------------------------------------------------------------------------------------------
 %% Write Input files
@@ -88,55 +119,46 @@ output_filename(Test, Permutation) ->
 	io_lib:format("benchmark.output.~s.~p", [string:join(StringList, "."), Test]).
 unpacked_filename(TotalMegaBytes) ->
 	io_lib:format("benchmark.input.~p.unpacked", [TotalMegaBytes]).
-spora_2_5_filename(TotalMegaBytes) ->
-	io_lib:format("benchmark.input.~p.spora_2_5", [TotalMegaBytes]).
-spora_2_6_filename(TotalMegaBytes) ->
-	io_lib:format("benchmark.input.~p.spora_2_6", [TotalMegaBytes]).
+packed_filename(TotalMegaBytes) ->
+	io_lib:format("benchmark.input.~p.packed", [TotalMegaBytes]).
 
-generate_input(TotalMegaBytes, Root, RewardAddress) ->
-	TotalBytes = TotalMegaBytes * 1024 * 1024,
-	io:format("~ngenerating input files...~n~n"),
+generate_input(TotalMegaBytes, NumWorkers, Root, RewardAddress) ->
+	TotalBytes = TotalMegaBytes * ?MiB,
 
 	UnpackedFilename = unpacked_filename(TotalMegaBytes),
-	io:format("~s~n", [UnpackedFilename]),
-	ar_bench_timer:record({wall},
-		fun write_random_data/2, [UnpackedFilename, TotalBytes]),
-	{ok, UnpackedFileHandle} = file:open(UnpackedFilename, [read, binary]),
+	case file:read_file_info(UnpackedFilename) of
+		{ok, FileInfo1} ->
+			if
+				FileInfo1#file_info.size == TotalBytes ->
+					ok;
+				true ->
+					file:delete(UnpackedFilename),
+					write_random_data(UnpackedFilename, TotalBytes)
+			end;
+		{error, _} ->
+			write_random_data(UnpackedFilename, TotalBytes)
+	end,
 
-	NumWorkers = erlang:system_info(dirty_cpu_schedulers_online),
-	{ok, RandomXState} = ar_bench_timer:record({init},
-		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, 1, 1, NumWorkers]),
-
-	Spora25Filename = spora_2_5_filename(TotalMegaBytes),
-	io:format("~s", [Spora25Filename]),
-	
-	{ok, Spora25FileHandle} = file:open(Spora25Filename, [write, binary]),
-	ar_bench_timer:record({wall},
-		fun dirty_test/4, [
-			{TotalMegaBytes, 1, 1, 1},
-			fun baseline_pack_chunks/5,
-			{RandomXState, UnpackedFileHandle, Spora25FileHandle, Root, RewardAddress, spora_2_5},
-			NumWorkers
-		]),
-	file:close(Spora25FileHandle),
-
-	Spora26Filename = spora_2_6_filename(TotalMegaBytes),
-	io:format("~s", [Spora26Filename]),
-	{ok, Spora26FileHandle} = file:open(Spora26Filename, [write, binary]),
-	ar_bench_timer:record({wall},
-			fun dirty_test/4, [
-				{TotalMegaBytes, 1, 1, 1},
-				fun baseline_pack_chunks/5,
-				{RandomXState, UnpackedFileHandle, Spora26FileHandle, Root, RewardAddress, spora_2_6},
-				NumWorkers
-			]),
-	file:close(Spora26FileHandle),
-
-	file:close(UnpackedFileHandle),
-	io:format("~ndone~n").
+	PackedFilename = packed_filename(TotalMegaBytes),
+	case file:read_file_info(PackedFilename) of
+		{ok, FileInfo2} ->
+			%% If the file already exists and is the correct size, we don't need to do anything
+			if
+				FileInfo2#file_info.size == TotalBytes ->
+					ok;
+				true ->
+					file:delete(PackedFilename),
+					write_packed_data(UnpackedFilename, PackedFilename,
+						TotalMegaBytes, NumWorkers, Root, RewardAddress)
+			end;
+		{error, _} ->
+			write_packed_data(UnpackedFilename, PackedFilename,
+						TotalMegaBytes, NumWorkers, Root, RewardAddress)
+	end.
 
 write_random_data(UnpackedFilename, TotalBytes) ->
-    {ok, File} = file:open(UnpackedFilename, [write, binary, raw]),
+	io:format("Generating input file: ~s~n", [UnpackedFilename]),
+    File = open_file(UnpackedFilename, [write, binary, raw]),
     write_chunks(File, TotalBytes),
     file:close(File).
 write_chunks(File, TotalBytes) ->
@@ -150,6 +172,22 @@ write_chunks_loop(File, RemainingBytes, ChunkSize) ->
     Data = crypto:strong_rand_bytes(BytesToWrite),
     file:write(File, Data),
     write_chunks_loop(File, RemainingBytes - BytesToWrite, ChunkSize).
+
+write_packed_data(UnpackedFilename, PackedFilename,
+		TotalMegaBytes, NumWorkers, Root, RewardAddress) ->
+	io:format("Generating input file: ~s~n", [PackedFilename]),
+	{ok, RandomXState} = ar_bench_timer:record({init},
+		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, 1, 1, NumWorkers]),
+
+	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
+	PackedFileHandle = open_file(PackedFilename, [write, binary]),
+	dirty_test({TotalMegaBytes, 1, 1, 1},
+		fun baseline_pack_chunks/5,
+		{RandomXState, UnpackedFileHandle, PackedFileHandle, Root, RewardAddress},
+		NumWorkers),
+	
+	file:close(PackedFileHandle),
+	file:close(UnpackedFileHandle).
 
 %% --------------------------------------------------------------------------------------------
 %% VDF Background Task
@@ -169,9 +207,7 @@ vdf_worker(Input) ->
 %% Test Runners
 %% --------------------------------------------------------------------------------------------
 
-run_dirty_benchmark(Test, {_, JIT, LargePages, _} = Permutation, Root, RewardAddress) ->
-	io:format("~ninit~n"),
-	NumWorkers = erlang:system_info(dirty_cpu_schedulers_online),
+run_dirty_benchmark(Test, {_, JIT, LargePages, _} = Permutation, NumWorkers, Root, RewardAddress) ->
 	{ok, RandomXState} = ar_bench_timer:record({init},
 		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
 
@@ -181,44 +217,30 @@ run_dirty_test(baseline_pack, Permutation,
 		RandomXState, Root, RewardAddress, NumWorkers) ->
 	run_dirty_pack_test(baseline_pack, Permutation,
 		RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(baseline_repack_2_5, {TotalMegaBytes, _, _, _} = Permutation,
+run_dirty_test(baseline_repack, {TotalMegaBytes, _, _, _} = Permutation,
 		RandomXState, Root, RewardAddress, NumWorkers) ->
 	run_dirty_repack_test(
-		spora_2_5_filename(TotalMegaBytes),
-		output_filename(baseline_repack_2_5, Permutation),
-		spora_2_5, spora_2_6, fun baseline_repack_chunks/5,
+		packed_filename(TotalMegaBytes),
+		output_filename(baseline_repack, Permutation),
+		fun baseline_repack_chunks/5,
 		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(baseline_repack_2_6, {TotalMegaBytes, _, _, _} = Permutation,
+run_dirty_test(nif_repack, {TotalMegaBytes, _, _, _} = Permutation,
 		RandomXState, Root, RewardAddress, NumWorkers) ->
 	run_dirty_repack_test(
-		spora_2_6_filename(TotalMegaBytes),
-		output_filename(baseline_repack_2_6, Permutation),
-		spora_2_6, spora_2_6, fun baseline_repack_chunks/5,
-		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(nif_repack_2_5, {TotalMegaBytes, _, _, _} = Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers) ->
-	run_dirty_repack_test(
-		spora_2_5_filename(TotalMegaBytes),
-		output_filename(nif_repack_2_5, Permutation),
-		spora_2_5, spora_2_6, fun nif_repack_chunks/5,
-		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
-run_dirty_test(nif_repack_2_6, {TotalMegaBytes, _, _, _} = Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers) ->
-	run_dirty_repack_test(
-		spora_2_6_filename(TotalMegaBytes),
-		output_filename(nif_repack_2_6, Permutation),
-		spora_2_6, spora_2_6, fun nif_repack_chunks/5,
+		packed_filename(TotalMegaBytes),
+		output_filename(nif_repack, Permutation),
+		fun nif_repack_chunks/5,
 		Permutation, RandomXState, Root, RewardAddress, NumWorkers).
 
 run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation,
 		RandomXState, Root, RewardAddress, NumWorkers) ->
 	UnpackedFilename = unpacked_filename(TotalMegaBytes),
 	PackedFilename = output_filename(baseline_pack, Permutation),
-	{ok, UnpackedFileHandle} = file:open(UnpackedFilename, [read, binary]),
-	{ok, PackedFileHandle} = file:open(PackedFilename, [write, binary]),
+	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
+	PackedFileHandle = open_file(PackedFilename, [write, binary]),
 
-	io:format("packing"),
-	Args = {RandomXState, UnpackedFileHandle, PackedFileHandle, Root, RewardAddress, spora_2_6},
+	io:format("packing..."),
+	Args = {RandomXState, UnpackedFileHandle, PackedFileHandle, Root, RewardAddress},
 	ar_bench_timer:record({wall}, fun dirty_test/4, [
 		Permutation,
 		fun baseline_pack_chunks/5,
@@ -230,17 +252,16 @@ run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation,
 	file:close(PackedFileHandle).
 
 run_dirty_repack_test(
-		InputFileName, OutputFileName, InputPackingType, OutputPackingType, WorkerFun,
+		InputFileName, OutputFileName, WorkerFun,
 		Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
-	{ok, InputFileHandle} = file:open(InputFileName, [read, binary]),
-	{ok, OutputFileHandle} = file:open(OutputFileName, [write, binary]),
+	InputFileHandle = open_file(InputFileName, [read, binary]),
+	OutputFileHandle = open_file(OutputFileName, [write, binary]),
 
-	io:format("repacking"),
+	io:format("repacking..."),
 	Args = {
 		RandomXState,
 		InputFileHandle, OutputFileHandle,
-		Root, RewardAddress,
-		InputPackingType, OutputPackingType
+		Root, RewardAddress
 	},
 	ar_bench_timer:record({wall}, fun dirty_test/4, [
 		Permutation,
@@ -249,14 +270,12 @@ run_dirty_repack_test(
 		NumWorkers
 	]),
 
-	io:format("~12s: ~8.2f~n", ["init", ar_bench_timer:get_total({init}) / 1000000]),
-	io:format("~12s: ~8.2f~n", ["wall", ar_bench_timer:get_total({wall}) / 1000000]),
 	file:close(InputFileHandle),
 	file:close(OutputFileHandle).
 
 %% For now this just encrypts each chunk without adding the offset hash
 dirty_test({TotalMegaBytes, _, _, _} = Permutation, WorkerFun, Args, NumWorkers) ->
-	TotalBytes = TotalMegaBytes * 1024 * 1024,
+	TotalBytes = TotalMegaBytes * ?MiB,
 	%% Spin up NumWorkers threads each responsible for a fraction of the file
 	WorkerSize = TotalBytes div NumWorkers,
 	Workers = [spawn_monitor(
@@ -300,16 +319,17 @@ baseline_pack_chunks(WorkerID,
 		} = Permutation,
 		{
 			RandomXState, UnpackedFileHandle, PackedFileHandle, 
-			Root, RewardAddress, PackingType
+			Root, RewardAddress
 		} = Args,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{Key, PackingRounds} = get_packing_args(PackingType, Offset, Root, RewardAddress),
+	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
 	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
         {ok, UnpackedChunk} ->
 			{ok, PackedChunk} = ar_mine_randomx:randomx_encrypt_chunk_nif(
-				RandomXState, Key, UnpackedChunk, PackingRounds, JIT, LargePages, HardwareAES),
+				RandomXState, Key, UnpackedChunk, ?RANDOMX_PACKING_ROUNDS_2_6,
+				JIT, LargePages, HardwareAES),
 			file:pwrite(PackedFileHandle, Offset, PackedChunk),
 			(Size - ChunkSize);
         eof ->
@@ -331,20 +351,19 @@ baseline_repack_chunks(WorkerID,
 		} = Permutation,
 		{
 			RandomXState, PackedFileHandle, RepackedFileHandle,
-			Root, RewardAddress, UnpackingType, RepackingType
+			Root, RewardAddress
 		} = Args,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{UnpackKey, UnpackingRounds} = get_packing_args(UnpackingType, Offset, Root, RewardAddress),
-	{RepackKey, RepackingRounds} = get_packing_args(RepackingType, Offset, Root, RewardAddress),
+	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
         {ok, PackedChunk} ->
 			{ok, UnpackedChunk} = ar_mine_randomx:randomx_decrypt_chunk_nif(
-				RandomXState, UnpackKey, PackedChunk, ChunkSize, UnpackingRounds,
+				RandomXState, Key, PackedChunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),
 			{ok, RepackedChunk} =ar_mine_randomx:randomx_encrypt_chunk_nif(
-				RandomXState, RepackKey, UnpackedChunk, RepackingRounds,
+				RandomXState, Key, UnpackedChunk, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),	
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
@@ -367,18 +386,18 @@ nif_repack_chunks(WorkerID,
 		} = Permutation,
 		{
 			RandomXState, PackedFileHandle, RepackedFileHandle,
-			Root, RewardAddress, UnpackingType, RepackingType
+			Root, RewardAddress
 		} = Args,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{UnpackKey, UnpackingRounds} = get_packing_args(UnpackingType, Offset, Root, RewardAddress),
-	{RepackKey, RepackingRounds} = get_packing_args(RepackingType, Offset, Root, RewardAddress),
+	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
         {ok, PackedChunk} ->
 			{ok, RepackedChunk} = ar_mine_randomx:randomx_reencrypt_chunk_nif(
-				RandomXState, UnpackKey, RepackKey, PackedChunk, ChunkSize,
-				UnpackingRounds, RepackingRounds, JIT, LargePages, HardwareAES),
+				RandomXState, Key, Key, PackedChunk, ChunkSize,
+				?RANDOMX_PACKING_ROUNDS_2_6, ?RANDOMX_PACKING_ROUNDS_2_6,
+				JIT, LargePages, HardwareAES),
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
         eof ->
@@ -392,68 +411,11 @@ nif_repack_chunks(WorkerID,
 %% --------------------------------------------------------------------------------------------
 %% Helpers
 %% --------------------------------------------------------------------------------------------
-get_packing_args(spora_2_5, Offset, Root, _RewardAddress) ->
-	{spora_2_5, Key} = ar_packing_server:chunk_key(spora_2_5, Offset, Root),
-	{Key, ?RANDOMX_PACKING_ROUNDS};
-get_packing_args(spora_2_6, Offset, Root, RewardAddress) ->
-	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
-	{Key, ?RANDOMX_PACKING_ROUNDS_2_6}.
-
-%% --------------------------------------------------------------------------------------------
-%% Pipelined
-%% --------------------------------------------------------------------------------------------
-
-% run_pipelined_benchmark({TotalBytes, JIT, LargePages, HardwareAES}, UnpackedFilename, PackedFilename, Key) ->
-% 	io:format("~npipelined init~n"),
-% 	ar_bench_timer:record({pipelined, init}, fun ar_packing_pipeline:init/3, [JIT, LargePages, HardwareAES]),
-
-% 	{ok, UnpackedFileHandle} = file:open(UnpackedFilename, [read, binary]),
-% 	{ok, PackedFileHandle} = file:open(PackedFilename, [write, binary]),
-
-% 	Root = crypto:strong_rand_bytes(32),
-% 	RewardAddress = crypto:strong_rand_bytes(32),
-
-% 	ar_bench_timer:record({pipelined, wall}, fun run_pipelined_test/5, [UnpackedFileHandle, PackedFileHandle, RewardAddress, Root, TotalBytes]),
-
-% 	file:close(UnpackedFileHandle),
-% 	file:close(PackedFileHandle).
-
-% run_pipelined_test(UnpackedFileHandle, PackedFileHandle, RewardAddress, Root, TotalBytes) ->
-% 	% spawn(fun() -> pack_pipelined_chunks(UnpackedFileHandle, RewardAddress, Root, 0, TotalBytes) end),
-% 	pack_pipelined_chunks(UnpackedFileHandle, RewardAddress, Root, 0, TotalBytes),
-% 	io:format("~npulling"),
-% 	write_pipelined_chunks(PackedFileHandle, TotalBytes div ?DATA_CHUNK_SIZE),
-% 	io:format("~n").
-
-% pack_pipelined_chunks(_UnpackedFileHandle, _RewardAddress, _Root, _Offset, Size) when Size =< 0 ->
-% 	ok;
-% pack_pipelined_chunks(UnpackedFileHandle, RewardAddress, Root, Offset, Size) ->
-% 	ReadResult = ar_bench_timer:record({pipelined, read, Offset}, fun file:pread/3, [UnpackedFileHandle, Offset, min(Size, ?DATA_CHUNK_SIZE)]),
-% 	RemainingSize = case ReadResult of
-%         {ok, UnpackedChunk} ->
-% 			TaskID = ar_packing_pipeline:pack_push({spora_2_6, RewardAddress}, Offset, Root, UnpackedChunk),
-% 			ar_bench_timer:start({pipelined, pack, Offset}),
-% 			ets:insert(offsets, {TaskID, Offset}),
-% 			(Size - ?DATA_CHUNK_SIZE);
-%         eof ->
-%             0;
-%         {error, Reason} ->
-%             io:format("Error reading file: ~p~n", [Reason]),
-% 			0
-%     end,
-% 	pack_pipelined_chunks(UnpackedFileHandle, RewardAddress, Root, Offset+?DATA_CHUNK_SIZE, RemainingSize).
-
-% write_pipelined_chunks(_PackedFileHandle, ChunksRemaining) when ChunksRemaining =< 0 ->
-% 	ok;
-% write_pipelined_chunks(PackedFileHandle, ChunksRemaining) ->
-% 	case ar_packing_pipeline:task_pull() of
-% 		{ok, TaskID, Chunk} ->
-% 			[{_, Offset}] = ets:lookup(offsets, TaskID),
-% 			io:format("."),
-% 			ar_bench_timer:stop({pipelined, pack, Offset}),
-% 			ar_bench_timer:record({pipelined, write, Offset}, fun file:pwrite/3, [PackedFileHandle, Offset, Chunk]),
-% 			write_pipelined_chunks(PackedFileHandle, ChunksRemaining-1);
-% 		Error ->
-% 			timer:sleep(100),
-% 			write_pipelined_chunks(PackedFileHandle, ChunksRemaining)
-% 	end.
+open_file(Filename, Options) ->
+	case file:open(Filename, Options) of
+		{ok, File} ->
+			File;
+		{error, Reason} ->
+			io:format("Error opening ~s: ~p~n", [Filename, Reason]),
+			show_help()
+	end.
