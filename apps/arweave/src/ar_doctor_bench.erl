@@ -10,17 +10,23 @@
 
 -define(NUM_ITERATIONS, 5).
 -define(NUM_FILES, 15).
+-define(OUTPUT_FILENAME, "<storage_module>.benchmark.csv").
+-define(FILE_FORMAT, "timestamp,bytes_read,elapsed_time_ms,throughput_bps").
 
 main(Args) ->
 	bench_read(Args).
 
 help() ->
-	ar:console("data-doctor bench data_dir storage_module [storage_module] [...]~n").
+	ar:console("data-doctor bench duration data_dir storage_module [storage_module] [...]~n"),
+	ar:console("  duration: How long, in seconds, to run the benchmark for.~n"), 
+	ar:console("            During the run data will be logged to ~p in the format:~n", [?OUTPUT_FILENAME]),
+	ar:console("            '~s'~n", [?FILE_FORMAT]).
 
-bench_read(Args) when length(Args) < 2 ->
+bench_read(Args) when length(Args) < 3 ->
 	false;
 bench_read(Args) ->
-	[DataDir | StorageModuleConfigs] = Args,
+	[DurationString, DataDir | StorageModuleConfigs] = Args,
+	Duration = list_to_integer(DurationString),
 
 	StorageModules = parse_storage_modules(StorageModuleConfigs, []),
 	Config = #config{data_dir = DataDir, storage_modules = StorageModules},
@@ -30,11 +36,16 @@ bench_read(Args) ->
 	ar_sync_record_sup:start_link(),
 	ar_chunk_storage_sup:start_link(),
 
-	ar:console("~n~nStarting disk read benchmark. It may take a few minutes to complete.~n"),
+	ar:console("~n~nDisk read benchmark will run for ~B seconds.~n", [Duration]),
+	ar:console("Data will be logged continuously to ~p in the format:~n", [?OUTPUT_FILENAME]),
+	ar:console("'~s'~n~n", [?FILE_FORMAT]),
+
+	StopTime = erlang:monotonic_time() + erlang:convert_time_unit(Duration, second, native),
+	File = file:open(?OUTPUT_FILENAME, [write, append]),
 
 	Results = ar_util:pmap(
 		fun(StorageModule) ->
-			read_storage_module(DataDir, StorageModule)
+			read_storage_module(DataDir, StorageModule, StopTime)
 		end,
 		StorageModules
 	),
@@ -45,6 +56,8 @@ bench_read(Args) ->
 			ar:console("~s read ~B chunks in ~B ms (~B MiB/s)~n", [StoreID, SumChunks, SumElapsedTime, ReadRate])
 		end,
 		Results),
+
+	ar:console("~n"),
 	
 	true.
 
@@ -54,11 +67,13 @@ parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModul
 	StorageModule = ar_config:parse_storage_module(StorageModuleConfig),
 	parse_storage_modules(StorageModuleConfigs, StorageModules ++ [StorageModule]).
 	
-read_storage_module(DataDir, StorageModule) ->
+read_storage_module(DataDir, StorageModule, StopTime) ->
 	StoreID = ar_storage_module:id(StorageModule),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),	
 
-	random_read(StoreID, StartOffset, EndOffset).
+	OutputFileName = string:replace(?OUTPUT_FILENAME, "<storage_module>", StoreID),
+
+	random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName).
 
 	% random_chunk_pread(DataDir, StoreID),
 	% random_dev_pread(DataDir, StoreID),
@@ -67,16 +82,27 @@ read_storage_module(DataDir, StorageModule) ->
 	% dd_devs_read(DataDir, StoreID),
 	% dd_dev_read(DataDir, StoreID),
 
-random_read(StoreID, StartOffset, EndOffset) ->
-	random_read(StoreID, StartOffset, EndOffset, ?NUM_ITERATIONS, 0, 0).
-random_read(StoreID, _StartOffset, _EndOffset, 0, SumChunks, SumElapsedTime) ->
-	{StoreID, SumChunks, SumElapsedTime};
-random_read(StoreID, StartOffset, EndOffset, Count, SumChunks, SumElapsedTime) ->
+random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName) ->
+	random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName, 0, 0).
+random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName, SumChunks, SumElapsedTime) ->
 	StartTime = erlang:monotonic_time(),
-	Chunks = read(StoreID, StartOffset, EndOffset, ?RECALL_RANGE_SIZE, ?NUM_FILES),
-	EndTime = erlang:monotonic_time(),
-	ElapsedTime = erlang:convert_time_unit(EndTime - StartTime, native, millisecond),
-	random_read(StoreID, StartOffset, EndOffset, Count - 1, SumChunks + Chunks, SumElapsedTime + ElapsedTime).
+	case StartTime < StopTime of
+		true ->
+			Chunks = read(StoreID, StartOffset, EndOffset, ?RECALL_RANGE_SIZE, ?NUM_FILES),
+			EndTime = erlang:monotonic_time(),
+			ElapsedTime = erlang:convert_time_unit(EndTime - StartTime, native, millisecond),
+
+			%% timestamp,bytes_read,elapsed_time_ms,throughput_bps
+			Timestamp = os:system_time(second),
+			BytesRead = Chunks * ?DATA_CHUNK_SIZE,
+			Line = io_lib:format("~B,~B,~B,~B~n", [
+				Timestamp, BytesRead, ElapsedTime, BytesRead * 1000 div ElapsedTime]),
+			file:write_file(OutputFileName, Line, [append]),
+			random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName,
+				SumChunks + Chunks, SumElapsedTime + ElapsedTime);
+		false ->
+			{StoreID, SumChunks, SumElapsedTime}
+	end.
 	
 read(StoreID, StartOffset, EndOffset, Size, NumReads) ->
 	read(StoreID, StartOffset, EndOffset, Size, 0, NumReads).
