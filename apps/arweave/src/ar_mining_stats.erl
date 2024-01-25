@@ -148,6 +148,12 @@ set_storage_module_data_size(
 				{store_id, StoreID}, {packing, Packing}, {partition_number, PartitionNumber},
 				{storage_module_size, StorageModuleSize}, {storage_module_index, StorageModuleIndex},
 				{data_size, DataSize}]);
+		error:{unknown_metric,default,v2_index_data_size_by_packing} ->
+			?LOG_WARNING([{event, set_storage_module_data_size_failed},
+				{reason, prometheus_not_started},
+				{store_id, StoreID}, {packing, Packing}, {partition_number, PartitionNumber},
+				{storage_module_size, StorageModuleSize}, {storage_module_index, StorageModuleIndex},
+				{data_size, DataSize}]);
 		Type:Reason ->
 			?LOG_ERROR([{event, set_storage_module_data_size_failed},
 				{type, Type}, {reason, Reason},

@@ -1,12 +1,14 @@
 -module(ar_data_doctor).
 
--export([main/1]).
+-export([main/0, main/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
+main() ->
+	main([]).
 main([]) ->
 	help(),
 	erlang:halt(1);
@@ -30,5 +32,8 @@ main(Args) ->
 	end.
 
 help() ->
+	ar:console("~n"),
 	ar_doctor_merge:help(),
-	ar_doctor_bench:help().
+	ar:console("~n"),
+	ar_doctor_bench:help(),
+	ar:console("~n").
