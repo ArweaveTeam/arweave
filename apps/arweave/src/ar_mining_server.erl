@@ -291,6 +291,7 @@ update_cache_limits(State) ->
 				end,
 				State#state.workers
 			),
+			ar_mining_hash:set_cache_limit(OverallCacheLimit),
 
 			ar:console(
 				"~nSetting the mining chunk cache size limit to ~B chunks "

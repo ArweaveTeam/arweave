@@ -29,6 +29,7 @@
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
 -define(LAG_CHECK_FREQUENCY_MS, 5000).
+-define(SAMPLE_PROCESS_INTERVAL, 1000).
 
 %%%===================================================================
 %%% Public interface.
@@ -104,17 +105,31 @@ is_session_valid(
 
 init(Partition) ->
 	Name = name(Partition),
-	?LOG_DEBUG([{event, mining_debug_worker_started}, {worker, Name}, {partition, Partition}]),
+	?LOG_DEBUG([{event, mining_debug_worker_started},
+		{worker, Name}, {pid, self()}, {partition, Partition}]),
 	process_flag(trap_exit, true),
 	ar_chunk_storage:open_files("default"),
 	gen_server:cast(self(), handle_task),
 	gen_server:cast(self(), maybe_warn_about_lag),
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], 0),
+	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, self(), sample_process),
 	{ok, #state{ name = Name, partition_number = Partition }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast(sample_process, State) ->
+	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	?LOG_DEBUG([{event, mining_worker_process_sample}, {worker, State#state.name}, {pid, self()}, {b, length(BinInfoBefore)},
+		{binary_before, BinInfoBefore}]),
+	% [{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	% garbage_collect(self()),
+	% [{binary, BinInfoAfter}] = process_info(self(), [binary]),
+	% ?LOG_DEBUG([{event, mining_worker_process_sample}, {worker, State#state.name}, {pid, self()}, {b, length(BinInfoBefore)},
+	% 	{a, length(BinInfoAfter)}, {binary_before, BinInfoBefore}, {binary_after, BinInfoAfter}]),
+	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, self(), sample_process),
+	{noreply, State};
 
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
@@ -250,12 +265,10 @@ handle_task({compute_h0, Candidate}, State) ->
 	#mining_candidate{ session_key = SessionKey, step_number = StepNumber } = Candidate,
 	State3 = case try_to_reserve_cache_space(SessionKey, State) of
 		{true, State2} ->
-			Seed = maps:get(Candidate#mining_candidate.session_key, State#state.seeds),
+			Seed = maps:get(Candidate#mining_candidate.session_key, State2#state.seeds),
 			ar_mining_hash:compute_h0(
 				self(),
-				Candidate#mining_candidate{
-					seed = Seed
-				}),
+				Candidate#mining_candidate{ seed = Seed }),
 			case StepNumber > LatestVDFStepNumber of
 				true ->
 					State2#state{ latest_vdf_step_number = StepNumber };

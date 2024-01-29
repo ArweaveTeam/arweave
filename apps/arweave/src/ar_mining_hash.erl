@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, compute_h0/2, compute_h1/2, compute_h2/2]).
+-export([start_link/0, compute_h0/2, compute_h1/2, compute_h2/2, set_cache_limit/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -12,9 +12,13 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(SAMPLE_PROCESS_INTERVAL, 1000).
+
 -record(state, {
 	hashing_threads				= queue:new(),
-  	hashing_thread_monitor_refs = #{}
+  	hashing_thread_monitor_refs = #{},
+	chunks_seen = 0,
+	chunk_cache_limit = infinity
 }).
 
 %%%===================================================================
@@ -34,6 +38,9 @@ compute_h1(Worker, Candidate) ->
 compute_h2(Worker, Candidate) ->
 	gen_server:cast(?MODULE, {compute, h2, Worker, Candidate}).
 
+set_cache_limit(CacheLimit) ->
+	gen_server:cast(?MODULE, {set_cache_limit, CacheLimit}).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -46,17 +53,48 @@ init([]) ->
 		#state{},
 		lists:seq(1, Config#config.hashing_threads)
 	),
+	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
 	{ok, State}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
+handle_cast({set_cache_limit, CacheLimit}, State) ->
+	{noreply, State#state{ chunk_cache_limit = CacheLimit }};
+
+handle_cast(sample_process, State) ->
+	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	?LOG_DEBUG([{event, mining_hash_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
+		{binary_before, BinInfoBefore}]),
+	% [{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	% garbage_collect(self()),
+	% [{binary, BinInfoAfter}] = process_info(self(), [binary]),
+	% ?LOG_DEBUG([{event, mining_hash_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
+	% 	{a, length(BinInfoAfter)}, {binary_before, BinInfoBefore}, {binary_after, BinInfoAfter}]),
+	queue:fold(
+		fun(Thread, _) ->
+			[{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
+			?LOG_DEBUG([{event, mining_hash_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
+				{binary_before, BinInfoBefore2}])
+			% [{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
+			% garbage_collect(self()),
+			% [{binary, BinInfoAfter2}] = process_info(Thread, [binary]),
+			% ?LOG_DEBUG([{event, mining_hash_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
+			% 	{a, length(BinInfoAfter2)}, {binary_before, BinInfoBefore2}, {binary_after, BinInfoAfter2}])
+		end,
+		ok,
+		State#state.hashing_threads
+	),
+	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
+	{noreply, State};
+
 handle_cast({compute, HashType, Worker, Candidate},
 		#state{ hashing_threads = Threads } = State) ->
 	{Thread, Threads2} = pick_hashing_thread(Threads),
 	Thread ! {compute, HashType, Worker, Candidate},
-	{noreply, State#state{ hashing_threads = Threads2 }};
+	State2 = check_garbage_collection(State),
+	{noreply, State2#state{ hashing_threads = Threads2 }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -122,7 +160,30 @@ hashing_thread() ->
 			hashing_thread()
 	end.
 
-
 pick_hashing_thread(Threads) ->
 	{{value, Thread}, Threads2} = queue:out(Threads),
 	{Thread, queue:in(Thread, Threads2)}.
+
+check_garbage_collection(State) ->
+	%% Every time ar_mining_hash routes a hash task to one of the hashing threads, it retains
+	%% a reference to the chunk - which, as a sub-binary of the full ?RECALL_RANGE_SIZE binary -
+	%% is actually a a reference to the full binary. Furthermore, since ar_mining_hash only
+	%% does lightweight routing, its heap does't grow fast nor does it rack up many reductions.
+	%% This means that the automatic garbage collection will not be triggered often. 
+	%% Instead we'll count each chunk that it routes and manually trigger the garbage collector
+	%% once its routed mining_server_chunk_cache_limit worth of chunks.
+	ChunksSeen = State#state.chunks_seen + 1,
+	ChunksSeen2 = case ChunksSeen > State#state.chunk_cache_limit of
+		true   ->
+			StartTime = erlang:monotonic_time(),
+			garbage_collect(self()),
+			EndTime = erlang:monotonic_time(),
+			ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+			?LOG_DEBUG([
+				{event, mining_hash_gc_limit_reached}, {chunks_seen, ChunksSeen},
+				{gc_time, ElapsedTime}]),
+			0;
+		false ->
+			ChunksSeen
+	end,
+	State#state{ chunks_seen = ChunksSeen2 }.

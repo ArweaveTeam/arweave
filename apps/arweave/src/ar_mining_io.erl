@@ -2,8 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, set_largest_seen_upper_bound/1, get_partitions/0, get_partitions/1,
-			read_recall_range/4]).
+-export([start_link/0, set_largest_seen_upper_bound/1, 
+			get_partitions/0, get_partitions/1, read_recall_range/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -12,6 +12,8 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-define(SAMPLE_PROCESS_INTERVAL, 1000).
 
 -record(state, {
 	partition_upper_bound = 0,
@@ -69,8 +71,8 @@ init([]) ->
 			#state{},
 			get_io_channels()
 		),
+	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
 	{ok, State}.
-
 
 handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) ->
 	#state{ partition_upper_bound = CurrentUpperBound } = State,
@@ -89,17 +91,44 @@ handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
 	PartitionNumber = ar_node:get_partition_number(RecallRangeStart),
 	RangeEnd = RecallRangeStart + ?RECALL_RANGE_SIZE,
-	case find_thread(PartitionNumber, MiningAddress, RangeEnd, RecallRangeStart, IOThreads) of
+	ThreadFound = case find_thread(PartitionNumber, MiningAddress, RangeEnd, RecallRangeStart, IOThreads) of
 		not_found ->
-			{reply, false, State};
+			false;
 		Thread ->
 			Thread ! {WhichChunk, {Worker, Candidate, RecallRangeStart}},
-			{reply, true, State}
-	end;
+			true
+	end,
+	{reply, ThreadFound, State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast(sample_process, State) ->
+	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	?LOG_DEBUG([{event, mining_io_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
+		{binary_before, BinInfoBefore}]),
+	% [{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	% garbage_collect(self()),
+	% [{binary, BinInfoAfter}] = process_info(self(), [binary]),
+	% ?LOG_DEBUG([{event, mining_io_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
+	% 	{a, length(BinInfoAfter)}, {binary_before, BinInfoBefore},  {binary_after, BinInfoAfter}]),
+	maps:fold(
+		fun(_Key, Thread, _) ->
+			[{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
+			?LOG_DEBUG([{event, mining_io_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
+				{binary_before, BinInfoBefore2}])
+			% [{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
+			% garbage_collect(self()),
+			% [{binary, BinInfoAfter2}] = process_info(Thread, [binary]),
+			% ?LOG_DEBUG([{event, mining_io_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
+			% 	{a, length(BinInfoAfter2)}, {binary_before, BinInfoBefore2}, {binary_after, BinInfoAfter2}])
+		end,
+		ok,
+		State#state.io_threads
+	),
+	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
+	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -228,9 +257,10 @@ read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
 	StartTime = erlang:monotonic_time(),
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
-	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
+	UniqueSize = Size, %% + (rand:uniform(100)*?DATA_CHUNK_SIZE),
+	Intervals = get_packed_intervals(RangeStart, RangeStart + UniqueSize,
 			MiningAddress, StoreID, ar_intervals:new()),
-	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
+	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, UniqueSize, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
 	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
 	read_range(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2),
@@ -322,4 +352,3 @@ find_thread3([Key | Keys], RangeEnd, RangeStart, Max, MaxKey) ->
 	end;
 find_thread3([], _RangeEnd, _RangeStart, _Max, MaxKey) ->
 	MaxKey.
-
