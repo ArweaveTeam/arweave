@@ -2,8 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, name/1, reset/2, set_sessions/2, 
-	recall_chunk/5, computed_hash/5, set_difficulty/2, set_cache_limits/3, add_task/3]).
+-export([start_link/1, name/1, reset/2, set_sessions/2,  recall_chunk/5, computed_hash/5,
+		set_difficulty/2, set_cache_limits/3, add_task/3, garbage_collect/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -29,6 +29,7 @@
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
 -define(LAG_CHECK_FREQUENCY_MS, 5000).
+-define(SAMPLE_PROCESS_INTERVAL, 1000).
 
 %%%===================================================================
 %%% Public interface.
@@ -98,23 +99,40 @@ is_session_valid(
 		#mining_candidate{ session_key = SessionKey }) ->
 	sets:is_element(SessionKey, Sessions).
 
+garbage_collect(Worker) ->
+	gen_server:cast(Worker, garbage_collect).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init(Partition) ->
 	Name = name(Partition),
-	?LOG_DEBUG([{event, mining_debug_worker_started}, {worker, Name}, {partition, Partition}]),
+	?LOG_DEBUG([{event, mining_debug_worker_started},
+		{worker, Name}, {pid, self()}, {partition, Partition}]),
 	process_flag(trap_exit, true),
 	ar_chunk_storage:open_files("default"),
 	gen_server:cast(self(), handle_task),
 	gen_server:cast(self(), maybe_warn_about_lag),
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], 0),
+	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, self(), sample_process),
 	{ok, #state{ name = Name, partition_number = Partition }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast(sample_process, State) ->
+	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	?LOG_DEBUG([{event, mining_worker_process_sample}, {worker, State#state.name}, {pid, self()}, {b, length(BinInfoBefore)},
+		{binary_before, BinInfoBefore}]),
+	% [{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	% garbage_collect(self()),
+	% [{binary, BinInfoAfter}] = process_info(self(), [binary]),
+	% ?LOG_DEBUG([{event, mining_worker_process_sample}, {worker, State#state.name}, {pid, self()}, {b, length(BinInfoBefore)},
+	% 	{a, length(BinInfoAfter)}, {binary_before, BinInfoBefore}, {binary_after, BinInfoAfter}]),
+	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, self(), sample_process),
+	{noreply, State};
 
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};
@@ -187,9 +205,26 @@ handle_cast(maybe_warn_about_lag, State) ->
 	ar_util:cast_after(?LAG_CHECK_FREQUENCY_MS, self(), maybe_warn_about_lag),
 	{noreply, State};
 
+handle_cast(garbage_collect, State) ->
+	erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({garbage_collect, StartTime, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > 100 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, State#state.name}, {pid, self()},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
+	{noreply, State};
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
@@ -250,12 +285,10 @@ handle_task({compute_h0, Candidate}, State) ->
 	#mining_candidate{ session_key = SessionKey, step_number = StepNumber } = Candidate,
 	State3 = case try_to_reserve_cache_space(SessionKey, State) of
 		{true, State2} ->
-			Seed = maps:get(Candidate#mining_candidate.session_key, State#state.seeds),
+			Seed = maps:get(Candidate#mining_candidate.session_key, State2#state.seeds),
 			ar_mining_hash:compute_h0(
 				self(),
-				Candidate#mining_candidate{
-					seed = Seed
-				}),
+				Candidate#mining_candidate{ seed = Seed }),
 			case StepNumber > LatestVDFStepNumber of
 				true ->
 					State2#state{ latest_vdf_step_number = StepNumber };
