@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, compute_h0/2, compute_h1/2, compute_h2/2]).
+-export([start_link/0, compute_h0/2, compute_h1/2, compute_h2/2,
+		set_cache_limit/1, garbage_collect/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -12,9 +13,13 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(SAMPLE_PROCESS_INTERVAL, 1000).
+
 -record(state, {
 	hashing_threads				= queue:new(),
-  	hashing_thread_monitor_refs = #{}
+  	hashing_thread_monitor_refs = #{},
+	chunks_seen = 0,
+	chunk_cache_limit = infinity
 }).
 
 %%%===================================================================
@@ -34,6 +39,12 @@ compute_h1(Worker, Candidate) ->
 compute_h2(Worker, Candidate) ->
 	gen_server:cast(?MODULE, {compute, h2, Worker, Candidate}).
 
+set_cache_limit(CacheLimit) ->
+	gen_server:cast(?MODULE, {set_cache_limit, CacheLimit}).
+
+garbage_collect() ->
+	gen_server:cast(?MODULE, garbage_collect).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -46,11 +57,31 @@ init([]) ->
 		#state{},
 		lists:seq(1, Config#config.hashing_threads)
 	),
+	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
 	{ok, State}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast({set_cache_limit, CacheLimit}, State) ->
+	{noreply, State#state{ chunk_cache_limit = CacheLimit }};
+
+handle_cast(sample_process, State) ->
+	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
+	?LOG_DEBUG([{event, mining_hash_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
+		{binary_before, BinInfoBefore}]),
+	queue:fold(
+		fun(Thread, _) ->
+			[{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
+			?LOG_DEBUG([{event, mining_hash_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
+				{binary_before, BinInfoBefore2}])
+		end,
+		ok,
+		State#state.hashing_threads
+	),
+	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
+	{noreply, State};
 
 handle_cast({compute, HashType, Worker, Candidate},
 		#state{ hashing_threads = Threads } = State) ->
@@ -58,9 +89,35 @@ handle_cast({compute, HashType, Worker, Candidate},
 	Thread ! {compute, HashType, Worker, Candidate},
 	{noreply, State#state{ hashing_threads = Threads2 }};
 
+handle_cast(garbage_collect, State) ->
+	erlang:garbage_collect(self(),
+		[{async, {ar_mining_hash, self(), erlang:monotonic_time()}}]),
+	queue:fold(
+		fun(Thread, _) ->
+			erlang:garbage_collect(Thread,
+				[{async, {ar_mining_hash_worker, Thread, erlang:monotonic_time()}}])
+		end,
+		ok,
+		State#state.hashing_threads
+	),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({garbage_collect, {Name, Pid, StartTime}, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > 100 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, Name}, {pid, Pid},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
+	{noreply, State};
 
 handle_info({'DOWN', Ref, process, _, Reason},
 		#state{ hashing_thread_monitor_refs = HashingThreadRefs } = State) ->
@@ -121,7 +178,6 @@ hashing_thread() ->
 			ar_mining_worker:computed_hash(Worker, computed_h2, H2, Preimage, Candidate),
 			hashing_thread()
 	end.
-
 
 pick_hashing_thread(Threads) ->
 	{{value, Thread}, Threads2} = queue:out(Threads),

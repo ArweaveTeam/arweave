@@ -54,7 +54,8 @@ fi
 
 
 
-screen_cmd+=" $* debug mine enable remove_orphaned_storage_module_data data_dir /arweave-data"
+screen_cmd+=" $* debug mine enable remove_orphaned_storage_module_data data_dir /arweave-data \
+requests_per_minute_limit 9000"
 
 echo "$screen_cmd"
 echo "$screen_cmd" > /arweave-build/testnet/run.command

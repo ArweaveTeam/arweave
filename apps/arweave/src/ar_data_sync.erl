@@ -2691,7 +2691,7 @@ pack_and_store_chunk(Args, State) ->
 									{relative_offset, Offset},
 									{required_packing,
 										ar_chunk_storage:encode_packing(RequiredPacking)},
-									{packing, Packing2}]),
+									{packing, ar_chunk_storage:encode_packing(Packing2)}]),
 							ar_util:cast_after(600000, self(),
 									{expire_repack_chunk_request,
 											{AbsoluteOffset, RequiredPacking}}),

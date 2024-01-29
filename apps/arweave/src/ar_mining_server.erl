@@ -24,6 +24,7 @@
 	active_sessions				= sets:new(),
 	diff						= infinity,
 	chunk_cache_size_limit 		= 0,
+	gc_frequency_ms				= undefined,
 	merkle_rebase_threshold		= infinity,
 	is_pool_client				= false
 }).
@@ -157,6 +158,30 @@ handle_cast({post_solution, Solution}, State) ->
 	post_solution(Solution, State),
 	{noreply, State};
 
+handle_cast(manual_garbage_collect, State) ->
+	%% Reading recall ranges from disk causes a large amount of binary data to be allocated and
+	%% references to that data is spread among all the different mining processes. Because of this
+	%% it can take the default garbage collection to clean up all references and deallocate the
+	%% memory - which in turn can cause memory to be exhausted.
+	%% 
+	%% To address this the mining server will force a garbage collection on all mining processes
+	%% every time we process a few VDF steps. The exact number of VDF steps is determined by
+	%% the chunk cache size limit in order to roughly align garbage collection with when we
+	%% expect all references to a recall range's chunks to be evicted from the cache.
+	?LOG_DEBUG([{event, mining_debug_garbage_collect_start}]),
+	ar_mining_io:garbage_collect(),
+	ar_mining_hash:garbage_collect(),
+	erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
+	maps:foreach(
+		fun(_Partition, Worker) ->
+			ar_mining_worker:garbage_collect(Worker)
+		end,
+		State#state.workers
+	),
+	ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, manual_garbage_collect),
+	{noreply, State};
+
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -175,6 +200,19 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 
 handle_info({event, nonce_limiter, Message}, State) ->
 	?LOG_DEBUG([{event, mining_debug_skipping_nonce_limiter}, {message, Message}]),
+	{noreply, State};
+
+handle_info({garbage_collect, StartTime, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > 100 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, ar_mining_server}, {pid, self()},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
 	{noreply, State};
 
 handle_info(Message, State) ->
@@ -281,6 +319,7 @@ update_cache_limits(State) ->
 				end,
 				State#state.workers
 			),
+			ar_mining_hash:set_cache_limit(OverallCacheLimit),
 
 			ar:console(
 				"~nSetting the mining chunk cache size limit to ~B chunks "
@@ -296,7 +335,18 @@ update_cache_limits(State) ->
 						[IdealCacheLimit]);
 				false -> ok
 			end,
-			State#state{ chunk_cache_limit = NewCacheLimit }
+			GarbageCollectionFrequency = 2 * VDFQueueLimit * 1000,
+			case State#state.gc_frequency_ms == undefined of
+				true ->
+					%% This is the first time setting the garbage collection frequency, so kick
+					%% off the periodic call.
+					ar_util:cast_after(GarbageCollectionFrequency, ?MODULE, manual_garbage_collect);
+				false -> ok
+			end,
+			State#state{
+				chunk_cache_limit = NewCacheLimit,
+				gc_frequency_ms = GarbageCollectionFrequency
+			}
 	end.
 
 distribute_output(Candidate, State) ->
