@@ -119,6 +119,7 @@
 	invalid_proof_size,
 	invalid_first_chunk,
 	invalid_second_chunk,
+	invalid_poa2_recall_byte2_undefined,
 	invalid_hash,
 	invalid_timestamp,
 	invalid_resigned_solution_hash,

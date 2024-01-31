@@ -229,8 +229,7 @@ may_be_pre_validate_first_chunk_hash(#block{ poa = #poa{ chunk = <<>> } } = B, P
 	%% the chunk so we can read it locally) => validate the chunk hash later.
 	may_be_pre_validate_second_chunk_hash(B, PrevB, Peer);
 may_be_pre_validate_first_chunk_hash(B, PrevB, Peer) ->
-	case B#block.height < ar_fork:height_2_7()
-			orelse crypto:hash(sha256, (B#block.poa)#poa.chunk) == B#block.chunk_hash of
+	case crypto:hash(sha256, (B#block.poa)#poa.chunk) == B#block.chunk_hash of
 		false ->
 			post_block_reject_warn(B, check_first_chunk, Peer),
 			ar_events:send(block, {rejected, invalid_first_chunk, B#block.indep_hash, Peer}),
@@ -240,16 +239,23 @@ may_be_pre_validate_first_chunk_hash(B, PrevB, Peer) ->
 	end.
 
 may_be_pre_validate_second_chunk_hash(#block{ recall_byte2 = undefined } = B, PrevB, Peer) ->
-	%% The block is not supposed to have the second chunk.
-	pre_validate_indep_hash(B, PrevB, Peer);
+	case B#block.height < ar_fork:height_2_7_2() orelse B#block.poa2 == #poa{} of
+		false ->
+			post_block_reject_warn(B, check_second_chunk, Peer),
+			ar_events:send(block, {rejected, invalid_poa2_recall_byte2_undefined,
+					B#block.indep_hash, Peer}),
+			invalid;
+		true ->
+			%% The block is not supposed to have the second chunk.
+			pre_validate_indep_hash(B, PrevB, Peer)
+	end;
 may_be_pre_validate_second_chunk_hash(#block{ poa2 = #poa{ chunk = <<>> } } = B, PrevB,
 		Peer) ->
 	%% The second chunk has not been sent along (we should have informed the sender we've got
 	%% the chunk so we can read it locally) => validate the second chunk hash later.
 	pre_validate_indep_hash(B, PrevB, Peer);
 may_be_pre_validate_second_chunk_hash(B, PrevB, Peer) ->
-	case B#block.height < ar_fork:height_2_7()
-			orelse crypto:hash(sha256, (B#block.poa2)#poa.chunk) == B#block.chunk2_hash of
+	case crypto:hash(sha256, (B#block.poa2)#poa.chunk) == B#block.chunk2_hash of
 		false ->
 			post_block_reject_warn(B, check_second_chunk, Peer),
 			ar_events:send(block, {rejected, invalid_second_chunk, B#block.indep_hash, Peer}),
@@ -292,7 +298,6 @@ pre_validate_timestamp(B, PrevB, Peer) ->
 	end.
 
 pre_validate_existing_solution_hash(B, PrevB, Peer) ->
-	true = B#block.height >= ar_fork:height_2_6(),
 	SolutionH = B#block.hash,
 	#block{ hash = SolutionH, nonce = Nonce, reward_addr = RewardAddr,
 			hash_preimage = HashPreimage, recall_byte = RecallByte,
@@ -302,7 +307,6 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 					partition_upper_bound = UpperBound,
 					last_step_checkpoints = LastStepCheckpoints },
 			chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash } = B,
-	Fork_2_6 = ar_fork:height_2_6(),
 	H = B#block.indep_hash,
 	CDiff = B#block.cumulative_diff,
 	PrevCDiff = PrevB#block.cumulative_diff,
@@ -311,31 +315,28 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 				CDiff, PrevCDiff) of
 			not_found ->
 				not_found;
-			#block{ height = Height, hash = SolutionH, nonce = Nonce,
-					reward_addr = RewardAddr, poa = PoA, hash_preimage = HashPreimage,
+			#block{ hash = SolutionH, nonce = Nonce,
+					reward_addr = RewardAddr, hash_preimage = HashPreimage,
 					recall_byte = RecallByte, partition_number = PartitionNumber,
 					nonce_limiter_info = #nonce_limiter_info{ output = Output,
 							last_step_checkpoints = LastStepCheckpoints,
 							seed = Seed, partition_upper_bound = UpperBound,
 							global_step_number = StepNumber },
 					chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
-					poa2 = PoA2, recall_byte2 = RecallByte2 } = CacheB
-						when Height >= Fork_2_6 ->
+					poa = #poa{ chunk = Chunk }, poa2 = #poa{ chunk = Chunk2 },
+					recall_byte2 = RecallByte2 } = CacheB ->
 				may_be_report_double_signing(B, CacheB),
 				LastStepPrevOutput = get_last_step_prev_output(B),
 				LastStepPrevOutput2 = get_last_step_prev_output(CacheB),
 				case LastStepPrevOutput == LastStepPrevOutput2 of
 					true ->
-						case Height >= ar_fork:height_2_7() of
-							true ->
-								case validate_poa_against_cached_poa(B, CacheB) of
-									{true, B2} ->
-										{valid, B2};
-									false ->
-										invalid
-								end;
+						B2 = B#block{ poa = (B#block.poa)#poa{ chunk = Chunk },
+								poa2 = (B#block.poa2)#poa{ chunk = Chunk2 } },
+						case validate_poa_against_cached_poa(B2, CacheB) of
+							{true, B3} ->
+								{valid, B3};
 							false ->
-								{valid, B#block{ poa = PoA, poa2 = PoA2 }}
+								invalid
 						end;
 					false ->
 						invalid
@@ -349,10 +350,10 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 				not_found;
 			invalid ->
 				invalid;
-			{valid, B3} ->
+			{valid, B4} ->
 				case ar_node_utils:block_passes_diff_check(B) of
 					true ->
-						{valid, B3};
+						{valid, B4};
 					false ->
 						invalid
 				end
@@ -365,8 +366,8 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 			ar_events:send(block, {rejected, invalid_resigned_solution_hash,
 					B#block.indep_hash, Peer}),
 			invalid;
-		{valid, B4} ->
-			pre_validate_nonce_limiter_global_step_number(B4, PrevB, true, Peer)
+		{valid, B5} ->
+			pre_validate_nonce_limiter_global_step_number(B5, PrevB, true, Peer)
 	end.
 
 may_be_report_double_signing(B, B2) ->
@@ -589,24 +590,16 @@ pre_validate_may_be_fetch_first_chunk(#block{ recall_byte = RecallByte,
 			when RecallByte /= undefined ->
 	case ar_data_sync:get_chunk(RecallByte + 1, #{ pack => true,
 			packing => {spora_2_6, B#block.reward_addr}, bucket_based_offset => true }) of
-		{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
+		{ok, #{ chunk := Chunk }} ->
 			prometheus_counter:inc(block2_fetched_chunks),
-			case B#block.height < ar_fork:height_2_7()
-					orelse crypto:hash(sha256, Chunk) == B#block.chunk_hash of
+			case crypto:hash(sha256, Chunk) == B#block.chunk_hash of
 				false ->
 					post_block_reject_warn_and_error_dump(B, check_chunk_hash, Peer),
 					ar_events:send(block, {rejected, invalid_chunk_hash, B#block.indep_hash,
 							Peer}),
 					invalid;
 				true ->
-					B2 =
-						case B#block.height >= ar_fork:height_2_7() of
-							true ->
-								B#block{ poa = (B#block.poa)#poa{ chunk = Chunk } };
-							false ->
-								B#block{ poa = #poa{ chunk = Chunk, data_path = DataPath,
-										tx_path = TXPath } }
-						end,
+					B2 = B#block{ poa = (B#block.poa)#poa{ chunk = Chunk } },
 					pre_validate_may_be_fetch_second_chunk(B2, PrevB, PartitionUpperBound,
 							Peer)
 			end;
@@ -623,24 +616,16 @@ pre_validate_may_be_fetch_second_chunk(#block{ recall_byte2 = RecallByte2,
 		  when RecallByte2 /= undefined ->
 	case ar_data_sync:get_chunk(RecallByte2 + 1, #{ pack => true,
 			packing => {spora_2_6, B#block.reward_addr}, bucket_based_offset => true }) of
-		{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
+		{ok, #{ chunk := Chunk }} ->
 			prometheus_counter:inc(block2_fetched_chunks),
-			case B#block.height < ar_fork:height_2_7()
-					orelse crypto:hash(sha256, Chunk) == B#block.chunk2_hash of
+			case crypto:hash(sha256, Chunk) == B#block.chunk2_hash of
 				false ->
 					post_block_reject_warn_and_error_dump(B, check_chunk2_hash, Peer),
 					ar_events:send(block, {rejected, invalid_chunk2_hash, B#block.indep_hash,
 							Peer}),
 					invalid;
 				true ->
-					B2 =
-						case B#block.height >= ar_fork:height_2_7() of
-							true ->
-								B#block{ poa2 = (B#block.poa2)#poa{ chunk = Chunk } };
-							false ->
-								B#block{ poa2 = #poa{ chunk = Chunk, data_path = DataPath,
-										tx_path = TXPath } }
-						end,
+					B2 = B#block{ poa2 = (B#block.poa2)#poa{ chunk = Chunk } },
 					pre_validate_pow_2_6(B2, PrevB, PartitionUpperBound, Peer)
 			end;
 		_ ->
@@ -664,8 +649,7 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 	case H1 == B#block.hash andalso ar_node_utils:h1_passes_diff_check(H1, DiffPair)
 			andalso Preimage1 == B#block.hash_preimage
 			andalso B#block.recall_byte2 == undefined
-			andalso (B#block.height < ar_fork:height_2_7()
-					orelse B#block.chunk2_hash == undefined) of
+			andalso B#block.chunk2_hash == undefined of
 		true ->
 			pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer);
 		false ->
