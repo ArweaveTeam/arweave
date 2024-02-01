@@ -899,7 +899,8 @@ mock_functions(Functions) ->
 							meck:new(Module, [passthrough]),
 							lists:foreach(
 								fun(Node) ->
-									remote_call(Node, meck, new, [Module, [no_link, passthrough]])
+									remote_call(Node, meck, new,
+											[Module, [no_link, passthrough]])
 								end,
 								all_peers()),
 							maps:put(Module, true, Mocked);
@@ -908,6 +909,7 @@ mock_functions(Functions) ->
 					end,
 					lists:foreach(
 						fun(Node) ->
+							meck:expect(Module, Fun, Mock),
 							remote_call(Node, meck, expect, [Module, Fun, Mock])
 						end,
 						[main | all_peers()]),

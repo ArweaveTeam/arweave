@@ -15,7 +15,7 @@
 		get_block_time_history/3,
 		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
-		cm_publish_send/2]).
+		cm_publish_send/2, get_jobs/3, post_partial_solution/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -577,7 +577,7 @@ get_cm_partition_table(Peer) ->
 
 % TODO binary protocol after debug
 cm_h1_send(Peer, Candidate) ->
-	Json = ar_serialize:candidate_to_json_struct(Candidate),
+	JSON = ar_serialize:candidate_to_json_struct(Candidate),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -585,11 +585,11 @@ cm_h1_send(Peer, Candidate) ->
 		timeout => 5 * 1000,
 		connect_timeout => 500,
 		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
+		body => ar_serialize:jsonify(JSON)
 	})).
 
 cm_h2_send(Peer, Candidate) ->
-	Json = ar_serialize:candidate_to_json_struct(Candidate),
+	JSON = ar_serialize:candidate_to_json_struct(Candidate),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -597,7 +597,7 @@ cm_h2_send(Peer, Candidate) ->
 		timeout => 5 * 1000,
 		connect_timeout => 500,
 		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
+		body => ar_serialize:jsonify(JSON)
 	})).
 
 cm_publish_send(Peer, Solution) ->
@@ -606,7 +606,7 @@ cm_publish_send(Peer, Solution) ->
 		{step_number, Solution#mining_solution.step_number},
 		{start_interval_number, Solution#mining_solution.start_interval_number},
 		{seed, ar_util:encode(Solution#mining_solution.seed)}]),
-	Json = ar_serialize:solution_to_json_struct(Solution),
+	JSON = ar_serialize:solution_to_json_struct(Solution),
 	handle_cm_noop_response(ar_http:req(#{
 		peer => Peer,
 		method => post,
@@ -614,8 +614,81 @@ cm_publish_send(Peer, Solution) ->
 		timeout => 5 * 1000,
 		connect_timeout => 500,
 		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify({Json})
+		body => ar_serialize:jsonify(JSON)
 	})).
+
+%% @doc Fetch the jobs from the pool or coordinated mining exit peer.
+get_jobs(PeerOrURL, PrevOutput, GetJobsFromExitNode) ->
+	{Peer, Headers, BasePath} =
+		case GetJobsFromExitNode of
+			true ->
+				{PeerOrURL, cm_p2p_headers(), ""};
+			false ->
+				{Peer2, Path2} = get_peer_and_path_from_url(PeerOrURL),
+				{Peer2, pool_client_headers(), Path2}
+		end,
+	handle_get_jobs_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => BasePath ++ "/jobs/" ++ binary_to_list(ar_util:encode(PrevOutput)),
+		timeout => 5 * 1000,
+		connect_timeout => 1000,
+		headers => Headers,
+		is_peer_request => GetJobsFromExitNode
+	})).
+
+get_peer_and_path_from_url(URL) ->
+	#{ host := Host, port := Port, path := P } = uri_string:parse(URL),
+	{{binary_to_list(Host), Port}, binary_to_list(P)}.
+
+%% @doc Post the partial solution to the pool or coordinated mining exit peer.
+post_partial_solution(PeerOrURL, Solution, GetJobsFromExitNode) ->
+	{Peer, Headers, BasePath} =
+		case GetJobsFromExitNode of
+			true ->
+				{PeerOrURL, cm_p2p_headers(), ""};
+			false ->
+				{Peer2, Path2} = get_peer_and_path_from_url(PeerOrURL),
+				{Peer2, pool_client_headers(), Path2}
+		end,
+	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
+	Payload =
+		case is_binary(Solution) of
+			true ->
+				Solution;
+			false ->
+				ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution))
+		end,
+	handle_post_partial_solution_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => BasePath ++ "/partial_solution/",
+		timeout => 20 * 1000,
+		connect_timeout => 5 * 1000,
+		headers => Headers2,
+		body => Payload,
+		is_peer_request => GetJobsFromExitNode
+	})).
+
+handle_post_partial_solution_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch jiffy:decode(Body, [return_maps]) of
+		{'EXIT', _} ->
+			{error, invalid_json};
+		Response ->
+			{ok, Response}
+	end;
+handle_post_partial_solution_response(Reply) ->
+	{error, Reply}.
+
+handle_get_jobs_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch ar_serialize:json_struct_to_jobs(ar_serialize:dejsonify(Body)) of
+		{'EXIT', _} ->
+			{error, invalid_json};
+		Jobs ->
+			{ok, Jobs}
+	end;
+handle_get_jobs_response(Reply) ->
+	{error, Reply}.
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);
@@ -1170,6 +1243,10 @@ p2p_headers() ->
 cm_p2p_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	add_header(<<"x-cm-api-secret">>, Config#config.cm_api_secret, p2p_headers()).
+
+pool_client_headers() ->
+	{ok, Config} = application:get_env(arweave, config),
+	add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()).
 
 add_header(Name, Value, Headers) when is_binary(Name) andalso is_binary(Value) ->
 	[{Name, Value} | Headers];

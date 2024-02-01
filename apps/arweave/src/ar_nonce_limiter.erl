@@ -2,13 +2,15 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, account_tree_initialized/1, encode_session_key/1,
+-export([start_link/0, account_tree_initialized/1, encode_session_key/1, session_key/1,
 		is_ahead_on_the_timeline/2, 
-		get_current_step_number/0, get_current_step_number/1,
-		get_seed_data/2, get_step_checkpoints/4, get_steps/4,
+		get_current_step_number/0, get_current_step_number/1, get_step_triplets/3,
+		get_seed_data/2, get_step_checkpoints/2, get_step_checkpoints/4, get_steps/4,
+		get_seed/1, get_active_partition_upper_bound/2,
 		validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_current_session/0,
+		get_current_sessions/0,
 		compute/3, resolve_remote_server_raw_peers/0,
 		maybe_add_entropy/4, mix_seed/2]).
 
@@ -60,8 +62,15 @@ is_ahead_on_the_timeline(NonceLimiterInfo1, NonceLimiterInfo2) ->
 get_session(SessionKey) ->
 	gen_server:call(?MODULE, {get_session, SessionKey}, infinity).
 
+%% @doc Return {SessionKey, Session} for the current VDF session.
 get_current_session() ->
 	gen_server:call(?MODULE, get_current_session, infinity).
+
+%% @doc Return a list of up to two {SessionKey, Session} pairs
+%% where the first pair corresponds to the current VDF session
+%% and the second pair is its previous session, if any.
+get_current_sessions() ->
+	gen_server:call(?MODULE, get_current_sessions, infinity).
 
 %% @doc Return the latest known step number.
 get_current_step_number() ->
@@ -72,6 +81,14 @@ get_current_step_number() ->
 get_current_step_number(B) ->
 	SessionKey = session_key(B#block.nonce_limiter_info),
 	gen_server:call(?MODULE, {get_current_step_number, SessionKey}, infinity).
+
+%% @doc Return {Output, StepNumber, PartitionUpperBound} for up to N latest steps
+%% from the VDF session of Info, if any. If PrevOutput is among the N latest steps,
+%% return only the steps strictly above PrevOutput.
+get_step_triplets(Info, PrevOutput, N) ->
+	SessionKey = session_key(Info),
+	Steps = gen_server:call(?MODULE, {get_latest_step_triplets, SessionKey, N}, infinity),
+	filter_step_triplets(Steps, [PrevOutput, Info#nonce_limiter_info.output]).
 
 %% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
 %% for the block mined at StepNumber considering its previous block PrevB.
@@ -117,6 +134,19 @@ get_step_checkpoints(StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficult
 	get_step_checkpoints(StepNumber, SessionKey).
 get_step_checkpoints(StepNumber, SessionKey) ->
 	gen_server:call(?MODULE, {get_step_checkpoints, StepNumber, SessionKey}, infinity).
+
+%% @doc Return the entropy seed of the given session.
+%% Return not_found if the VDF session is not found.
+get_seed(SessionKey) ->
+	gen_server:call(?MODULE, {get_seed, SessionKey}, infinity).
+
+%% @doc Return the active partition upper bound for the given step (chosen among
+%% session's upper_bound and next_upper_bound depending on whether the step number has
+%% reached the entropy reset point).
+%% Return not_found if the VDF session is not found.
+get_active_partition_upper_bound(StepNumber, SessionKey) ->
+	gen_server:call(?MODULE, {get_active_partition_upper_bound, StepNumber, SessionKey},
+			infinity).
 
 %% @doc Return the steps of the given interval. The steps are chosen
 %% according to the protocol. Return not_found if the corresponding hash chain is not
@@ -441,12 +471,51 @@ handle_call({get_current_step_number, SessionKey}, _From, State) ->
 			{reply, StepNumber, State}
 	end;
 
+handle_call({get_latest_step_triplets, SessionKey, N}, _From, State) ->
+	case get_session(SessionKey, State) of
+		not_found ->
+			{reply, [], State};
+		#vdf_session{ step_number = StepNumber, steps = Steps,
+				upper_bound = UpperBound, next_upper_bound = NextUpperBound } ->
+			{_, IntervalNumber, _} = SessionKey,
+			IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+			ResetPoint = get_entropy_reset_point(IntervalStart, StepNumber),
+			{reply,
+				get_triplets(StepNumber, Steps, ResetPoint, UpperBound, NextUpperBound, N),
+				State}
+	end;
+
 handle_call({get_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
 	case get_session(SessionKey, State) of
 		not_found ->
 			{reply, not_found, State};
 		#vdf_session{ step_checkpoints_map = Map } ->
 			{reply, maps:get(StepNumber, Map, not_found), State}
+	end;
+
+handle_call({get_seed, SessionKey}, _From, State) ->
+	case get_session(SessionKey, State) of
+		not_found ->
+			{reply, not_found, State};
+		#vdf_session{ seed = Seed } ->
+			{reply, Seed, State}
+	end;
+
+handle_call({get_active_partition_upper_bound, StepNumber, SessionKey}, _From, State) ->
+	case get_session(SessionKey, State) of
+		not_found ->
+			{reply, not_found, State};
+		#vdf_session{ upper_bound = UpperBound, next_upper_bound = NextUpperBound } ->
+			{_NextSeed, IntervalNumber, _NextVDFDifficulty} = SessionKey,
+			IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+			UpperBound2 =
+				case get_entropy_reset_point(IntervalStart, StepNumber) of
+					none ->
+						UpperBound;
+					_ ->
+						NextUpperBound
+				end,
+			{reply, UpperBound2, State}
 	end;
 
 handle_call({get_steps, StartStepNumber, EndStepNumber, SessionKey}, _From, State) ->
@@ -482,6 +551,20 @@ handle_call({get_session, SessionKey}, _From, State) ->
 handle_call(get_current_session, _From, State) ->
 	#state{ current_session_key = CurrentSessionKey } = State,
 	{reply, {CurrentSessionKey, get_session(CurrentSessionKey, State)}, State};
+
+handle_call(get_current_sessions, _From, State) ->
+	#state{ current_session_key = CurrentSessionKey } = State,
+	Session = get_session(CurrentSessionKey, State),
+	PreviousSessionKey = Session#vdf_session.prev_session_key,
+	case get_session(PreviousSessionKey, State) of
+		not_found ->
+			?LOG_DEBUG([{event, request_current_sessions_missing_previous_session},
+					{current_session_key, encode_session_key(CurrentSessionKey)},
+					{previous_session_key, encode_session_key(PreviousSessionKey)}]),
+			{reply, [{CurrentSessionKey, Session}], State};
+		PrevSession ->
+			{reply, [{CurrentSessionKey, Session}, {PreviousSessionKey, PrevSession}], State}
+	end;
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -1232,6 +1315,34 @@ debug_double_check(Label, Result, Func, Args) ->
 			end
 	end.
 
+filter_step_triplets([], _LowerBounds) ->
+	[];
+filter_step_triplets([{O, _, _} = Triplet | Triplets], LowerBounds) ->
+	case lists:member(O, LowerBounds) of
+		true ->
+			[];
+		false ->
+			[Triplet | filter_step_triplets(Triplets, LowerBounds)]
+	end.
+
+get_triplets(_StepNumber, _Steps, _ResetPoint, _UpperBound, _NextUpperBound, 0) ->
+	[];
+get_triplets(_StepNumber, [], _ResetPoint, _UpperBound, _NextUpperBound, _N) ->
+	[];
+
+get_triplets(StepNumber, [Step | Steps], ResetPoint, UpperBound, NextUpperBound, N) ->
+	U =
+		case ResetPoint of
+			none ->
+				UpperBound;
+			_ when StepNumber >= ResetPoint ->
+				NextUpperBound;
+			_ ->
+				UpperBound
+		end,
+	[{Step, StepNumber, U}
+		| get_triplets(StepNumber - 1, Steps, ResetPoint, UpperBound, NextUpperBound, N - 1)].
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -1308,9 +1419,9 @@ applies_validated_steps_test_() ->
 
 test_applies_validated_steps() ->
 	reset_and_pause(),
-	Seed = crypto:strong_rand_bytes(32),
-	NextSeed = crypto:strong_rand_bytes(32),
-	NextSeed2 = crypto:strong_rand_bytes(32),
+	Seed = crypto:strong_rand_bytes(48),
+	NextSeed = crypto:strong_rand_bytes(48),
+	NextSeed2 = crypto:strong_rand_bytes(48),
 	InitialOutput = crypto:strong_rand_bytes(32),
 	B1VDFDifficulty = 3,
 	B1NextVDFDifficulty = 3,
@@ -1581,9 +1692,28 @@ assert_step_number(N) ->
 
 test_block(StepNumber, Output, Seed, NextSeed, LastStepCheckpoints, Steps,
 		VDFDifficulty, NextVDFDifficulty) ->
-	#block{ indep_hash = crypto:strong_rand_bytes(32),
+	#block{ indep_hash = crypto:strong_rand_bytes(48),
 			nonce_limiter_info = #nonce_limiter_info{ output = Output,
 					global_step_number = StepNumber, seed = Seed, next_seed = NextSeed,
 					last_step_checkpoints = LastStepCheckpoints, steps = Steps,
 					vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty }
 	}.
+
+filter_step_triplets_test() ->
+	?assertEqual([], filter_step_triplets([], [a, b])),
+	?assertEqual([], filter_step_triplets([{a, 1, s}], [a, b])),
+	?assertEqual([], filter_step_triplets([{b, 1, s}], [a, b])),
+	?assertEqual([], filter_step_triplets([{b, 1, s}, {x, 1, s}], [a, b])),
+	?assertEqual([{y, 1, s}], filter_step_triplets([{y, 1, s}, {a, 1, s}, {x, 1, s}], [a, b])),
+	?assertEqual([{y, 1, s}, {x, 1, s}], filter_step_triplets([{y, 1, s}, {x, 1, s}], [a, b])).
+
+get_triplets_test() ->
+	?assertEqual([], get_triplets(1, [a], none, 2, 3, 0)),
+	?assertEqual([], get_triplets(2, [], 2, 4, 5, 2)),
+	?assertEqual([{a, 1, 2}], get_triplets(1, [a], none, 2, 3, 2)),
+	?assertEqual([{a, 1, 2}], get_triplets(1, [a], 2, 2, 3, 2)),
+	?assertEqual([{a, 1, 3}], get_triplets(1, [a], 1, 2, 3, 2)),
+	?assertEqual([{a, 2, 3}, {b, 1, 2}], get_triplets(2, [a, b], 2, 2, 3, 2)),
+	?assertEqual([{a, 2, 3}, {b, 1, 2}], get_triplets(2, [a, b, c], 2, 2, 3, 2)),
+	?assertEqual([{a, 3, 3}, {b, 2, 3}, {c, 1, 3}], get_triplets(3, [a, b, c], 0, 2, 3, 3)),
+	?assertEqual([{a, 3, 2}, {b, 2, 2}, {c, 1, 2}], get_triplets(3, [a, b, c], none, 2, 3, 4)).

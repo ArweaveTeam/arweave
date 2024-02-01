@@ -452,13 +452,12 @@ handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
 handle_info({event, nonce_limiter, _}, State) ->
 	{noreply, State};
 
-handle_info({event, miner, {found_solution, _Solution, _PoACache, _PoA2Cache}},
+handle_info({event, miner, {found_solution, miner, _Solution, _PoACache, _PoA2Cache}},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
-handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, State) ->
+handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cache}}, State) ->
 	#mining_solution{ 
 		last_step_checkpoints = LastStepCheckpoints,
-		merkle_rebase_threshold = MerkleRebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NonceLimiterNextSeed,
 		next_vdf_difficulty = NonceLimiterNextVDFDifficulty,
@@ -475,6 +474,7 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 		step_number = StepNumber,
 		steps = SuppliedSteps
 	} = Solution,
+	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
@@ -493,7 +493,68 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 				Now
 		end,
 
-	%% Load key
+	[{wallet_list, WalletList}] = ets:lookup(node_state, wallet_list),
+	IsBanned = ar_node_utils:is_account_banned(MiningAddress,
+			ar_wallets:get(WalletList, MiningAddress)),
+
+	%% Check the solution is ahead of the previous solution on the timeline.
+	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
+	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
+			output = NonceLimiterOutput,
+			prev_output = TipNonceLimiterInfo#nonce_limiter_info.output },
+	PassesTimelineCheck =
+		case IsBanned of
+			true ->
+				ar_events:send(solution, {rejected, #{ reason => mining_address_banned,
+						source => Source }}),
+				{false, address_banned};
+			false ->
+				case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
+						TipNonceLimiterInfo) of
+					false ->
+						ar_events:send(solution, {stale, #{ source => Source }}),
+						{false, timeline};
+					true ->
+						true
+				end
+		end,
+
+	%% Check solution seed.
+	#nonce_limiter_info{ next_seed = PrevNextSeed,
+			next_vdf_difficulty = PrevNextVDFDifficulty,
+			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
+	PassesSeedCheck =
+		case PassesTimelineCheck of
+			{false, Reason} ->
+				{false, Reason};
+			true ->
+				case {IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
+						== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty} of
+					false ->
+						ar_events:send(solution, {stale, #{ source => Source }}),
+						{false, seed_data};
+					true ->
+						true
+				end
+		end,
+
+	%% Check solution difficulty
+	Diff = get_current_diff(Timestamp),
+	PassesDiffCheck =
+		case PassesSeedCheck of
+			{false, Reason2} ->
+				{false, Reason2};
+			true ->
+				case binary:decode_unsigned(SolutionH, big) > Diff of
+					false ->
+						ar_events:send(solution, {partial, #{ source => Source }}),
+						{false, diff};
+					true ->
+						true
+				end
+		end,
+
 	RewardKey = case ar_wallet:load_key(MiningAddress) of
 		not_found ->
 			?LOG_WARNING([{event, mined_block_but_no_mining_key_found}, {node, node()},
@@ -503,49 +564,40 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 		Key ->
 			Key
 	end,
-	PassesKeyCheck = RewardKey =/= not_found,
+	PassesKeyCheck =
+		case PassesDiffCheck of
+			{false, Reason3} ->
+				{false, Reason3};
+			true ->
+				case RewardKey of
+					not_found ->
+						ar_events:send(solution,
+							{rejected, #{ reason => missing_key_file, source => Source }}),
+						{false, wallet_not_found};
+					_ ->
+						true
+				end
+		end,
 
-	%% Check solution difficulty
-	Diff = get_current_diff(Timestamp),
-	PassesDiffCheck = PassesKeyCheck andalso binary:decode_unsigned(SolutionH, big) > Diff,
-
-	%% Check that solution is later than the previous solution on the timeline
-	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
-			output = NonceLimiterOutput,
-			prev_output = TipNonceLimiterInfo#nonce_limiter_info.output },
-	PassesTimelineCheck = PassesDiffCheck andalso
-			ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo, TipNonceLimiterInfo),
-
-	%% Check solution seed
-	#nonce_limiter_info{ next_seed = PrevNextSeed,
-			next_vdf_difficulty = PrevNextVDFDifficulty,
-			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
-	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
-	PassesSeedCheck = PassesTimelineCheck andalso
-			{IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
-					== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty},
 	PrevB = ar_block_cache:get(block_cache, PrevH),
 	CorrectRebaseThreshold =
-		case PassesSeedCheck of
-			false ->
-				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
-					{check, seed_check}, {solution, ar_util:encode(SolutionH)}]),
-				false;
+		case PassesKeyCheck of
+			{false, Reason4} ->
+				{false, Reason4};
 			true ->
 				case get_merkle_rebase_threshold(PrevB) of
 					MerkleRebaseThreshold ->
 						true;
 					_ ->
-						false
+						{false, rebase_threshold}
 				end
 		end,
-	%% Check steps and step checkpoints
+	%% Check steps and step checkpoints.
 	HaveSteps =
 		case CorrectRebaseThreshold of
-			false ->
-				?LOG_INFO([{event, ignore_mining_solution}, {reason, accepted_another_block},
-					{check, rebase_threshold_check}, {solution, ar_util:encode(SolutionH)}]),
+			{false, Reason5} ->
+				?LOG_INFO([{event, ignore_mining_solution},
+					{reason, Reason5}, {solution, ar_util:encode(SolutionH)}]),
 				false;
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed,
@@ -560,11 +612,13 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 				HaveSteps
 		end,
 
-	%% Pack, build, and sign block
+	%% Pack, build, and sign block.
 	case HaveSteps2 of
 		false ->
 			{noreply, State};
 		not_found ->
+			ar_events:send(solution,
+					{rejected, #{ reason => vdf_not_found, source => Source }}),
 			?LOG_WARNING([{event, did_not_find_steps_for_mined_block},
 					{seed, ar_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
 					{step_number, StepNumber}]),
@@ -685,8 +739,11 @@ handle_info({event, miner, {found_solution, Solution, PoACache, PoA2Cache}}, Sta
 							_ -> 2
 						end}]),
 			ar_block_cache:add(block_cache, B),
+			ar_events:send(solution, {accepted, #{ indep_hash => H, source => Source }}),
 			apply_block(State);
 		_Steps ->
+			ar_events:send(solution,
+					{rejected, #{ reason => bad_vdf, source => Source }}),
 			?LOG_ERROR([{event, bad_steps},
 					{prev_block, ar_util:encode(PrevH)},
 					{step_number, StepNumber},

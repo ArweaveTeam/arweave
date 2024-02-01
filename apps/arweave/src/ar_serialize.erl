@@ -22,12 +22,16 @@
 		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
 		nonce_limiter_update_to_binary/2, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
-		candidate_to_json_struct/1, solution_to_json_struct/1,
-		json_struct_to_candidate/1, json_struct_to_solution/1]).
+		candidate_to_json_struct/1, solution_to_json_struct/1, json_map_to_solution/1,
+		json_map_to_candidate/1,
+		jobs_to_json_struct/1, json_struct_to_jobs/1,
+		partial_solution_response_to_json_struct/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
+-include_lib("arweave/include/ar_pool.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -1642,7 +1646,7 @@ candidate_to_json_struct(
 	JSON3 = encode_if_set(JSON2, h2, H2, fun ar_util:encode/1),
 	JSON4 = encode_if_set(JSON3, nonce, Nonce, fun integer_to_binary/1),
 	JSON5 = encode_if_set(JSON4, poa2, PoA2, fun poa_to_json_struct/1),
-	encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1).
+	{encode_if_set(JSON5, preimage, Preimage, fun ar_util:encode/1)}.
 
 h1_list_to_json_struct(H1List) ->
 	lists:map(fun ({H1, Nonce}) ->
@@ -1660,7 +1664,7 @@ session_key_json_struct({NextSeed, Interval, NextDifficulty}) ->
 		{next_difficulty, integer_to_binary(NextDifficulty)}
 	]}.
 
-json_struct_to_candidate(JSON) ->
+json_map_to_candidate(JSON) ->
 	Diff = ar_util:binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
 	H1List = json_struct_to_h1_list(maps:get(<<"cm_h1_list">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
@@ -1720,7 +1724,6 @@ json_struct_to_session_key(JSON) ->
 solution_to_json_struct(
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
-		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
 		next_vdf_difficulty = NextVDFDifficulty,
@@ -1741,12 +1744,11 @@ solution_to_json_struct(
 	}) ->
 	JSON = [
 		{last_step_checkpoints, ar_util:encode(iolist_to_binary(LastStepCheckpoints))},
-		{merkle_rebase_threshold, integer_to_binary(RebaseThreshold)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{nonce, Nonce},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
 		{next_seed, ar_util:encode(NextSeed)},
-		{next_vdf_difficulty, NextVDFDifficulty},
+		{next_vdf_difficulty, integer_to_binary(NextVDFDifficulty)},
 		{partition_number, integer_to_binary(PartitionNumber)},
 		{partition_upper_bound, integer_to_binary(PartitionUpperBound)},
 		{poa1, poa_to_json_struct(PoA1)},
@@ -1759,15 +1761,21 @@ solution_to_json_struct(
 		{step_number, integer_to_binary(StepNumber)},
 		{steps, ar_util:encode(iolist_to_binary(Steps))}
 	],
-	encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1).
+	{encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1)}.
 
-json_struct_to_solution(JSON) ->
-	LastStepCheckpoints = parse_checkpoints(
-		ar_util:decode(maps:get(<<"last_step_checkpoints">>, JSON)), 1),
-	RebaseThreshold = binary_to_integer(maps:get(<<"merkle_rebase_threshold">>, JSON)),
+json_map_to_solution(JSON) ->
+	LastStepCheckpoints = parse_json_checkpoints(
+			ar_util:decode(maps:get(<<"last_step_checkpoints">>, JSON, <<>>))),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
 	NextVDFDifficulty = maps:get(<<"next_vdf_difficulty">>, JSON),
+	NextVDFDifficulty2 =
+		case is_binary(NextVDFDifficulty) of
+			true ->
+				binary_to_integer(NextVDFDifficulty);
+			false ->
+				NextVDFDifficulty
+		end,
 	Nonce = maps:get(<<"nonce">>, JSON),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
 	PartitionNumber = binary_to_integer(maps:get(<<"partition_number">>, JSON)),
@@ -1781,15 +1789,13 @@ json_struct_to_solution(JSON) ->
 	SolutionHash = ar_util:decode(maps:get(<<"solution_hash">>, JSON)),
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
-	Steps = parse_checkpoints(
-		ar_util:decode(maps:get(<<"steps">>, JSON)), 1),
+	Steps = parse_json_checkpoints(ar_util:decode(maps:get(<<"steps">>, JSON, <<>>))),
 
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
-		merkle_rebase_threshold = RebaseThreshold,
 		mining_address = MiningAddress,
 		next_seed = NextSeed,
-		next_vdf_difficulty = NextVDFDifficulty,
+		next_vdf_difficulty = NextVDFDifficulty2,
 		nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber,
@@ -1820,3 +1826,55 @@ decode_if_set(JSON, JSONProperty, Decoder, Default) ->
 		EncodedValue ->
 			Decoder(EncodedValue)
 	end.
+
+parse_json_checkpoints(<<>>) ->
+	[];
+parse_json_checkpoints(<< Checkpoint:32/binary, Rest/binary >>) ->
+	[Checkpoint | parse_json_checkpoints(Rest)].
+
+jobs_to_json_struct(Jobs) ->
+	#jobs{ jobs = JobList, partial_diff = Diff, seed = Seed, next_seed = NextSeed,
+			interval_number = IntervalNumber, next_vdf_difficulty = NextVDFDiff } = Jobs,
+
+	{[{jobs, [job_to_json_struct(Job) || Job <- JobList]},
+		{partial_diff, integer_to_binary(Diff)},
+		{seed, ar_util:encode(Seed)},
+		{next_seed, ar_util:encode(NextSeed)},
+		{interval_number, integer_to_binary(IntervalNumber)},
+		{next_vdf_difficulty, integer_to_binary(NextVDFDiff)}
+	]}.
+
+job_to_json_struct(Job) ->
+	#job{ output = Output, global_step_number = StepNumber,
+			partition_upper_bound = PartitionUpperBound } = Job,
+	{[{nonce_limiter_output, ar_util:encode(Output)},
+			{step_number, integer_to_binary(StepNumber)},
+			{partition_upper_bound, integer_to_binary(PartitionUpperBound)}]}.
+
+json_struct_to_jobs(Struct) ->
+	{Keys} = Struct,
+	Diff = binary_to_integer(proplists:get_value(<<"partial_diff">>, Keys, <<"0">>)),
+	Seed = ar_util:decode(proplists:get_value(<<"seed">>, Keys, <<>>)),
+	NextSeed = ar_util:decode(proplists:get_value(<<"next_seed">>, Keys, <<>>)),
+	NextVDFDiff = binary_to_integer(proplists:get_value(<<"next_vdf_difficulty">>, Keys,
+			<<"0">>)),
+	IntervalNumber = binary_to_integer(proplists:get_value(<<"interval_number">>, Keys,
+			<<"0">>)),
+	Jobs = [json_struct_to_job(Job) || Job <- proplists:get_value(<<"jobs">>, Keys, [])],
+	#jobs{ jobs = Jobs, seed = Seed, next_seed = NextSeed,
+			interval_number = IntervalNumber,
+			next_vdf_difficulty = NextVDFDiff, partial_diff = Diff }.
+
+json_struct_to_job(Struct) ->
+	{Keys} = Struct,
+	Output = ar_util:decode(proplists:get_value(<<"nonce_limiter_output">>, Keys, <<>>)),
+	StepNumber = binary_to_integer(proplists:get_value(<<"step_number">>, Keys,
+			<<"0">>)),
+	PartitionUpperBound = binary_to_integer(proplists:get_value(<<"partition_upper_bound">>,
+			Keys, <<"0">>)),
+	#job{ output = Output, global_step_number = StepNumber,
+			partition_upper_bound = PartitionUpperBound }.
+
+partial_solution_response_to_json_struct(Response) ->
+	#partial_solution_response{ indep_hash = H, status = S } = Response,
+	{[{<<"indep_hash">>, ar_util:encode(H)}, {<<"status">>, S}]}.

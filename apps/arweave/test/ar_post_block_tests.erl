@@ -30,21 +30,13 @@ reset_node() ->
 	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
 	PrevB = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, PrevH]),
 	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	Key = element(1, ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
+	Key = element(1,
+		ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
 	{Key, B, PrevB}.
-
-setup_all_post_2_6() ->
-	{Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_fork, height_2_6, fun() -> 0 end},
-		{ar_fork, height_2_7, fun() -> infinity end}
-		]),
-	Functions = Setup(),
-	start_node(),
-	{Cleanup, Functions}.
 
 setup_all_post_2_7() ->
 	{Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_fork, height_2_7, fun() -> 1 end}
+		{ar_fork, height_2_7, fun() -> 0 end}
 		]),
 	Functions = Setup(),
 	start_node(),
@@ -56,8 +48,8 @@ cleanup_all_post_fork({Cleanup, Functions}) ->
 instantiator(TestFun) ->
 	fun (Fixture) -> {timeout, 60, {with, Fixture, [TestFun]}} end.
 
-post_2_6_test_() ->
-	{setup, fun setup_all_post_2_6/0, fun cleanup_all_post_fork/1,
+post_2_7_test_() ->
+	{setup, fun setup_all_post_2_7/0, fun cleanup_all_post_fork/1,
 		{foreach, fun reset_node/0, [
 			instantiator(fun test_reject_block_invalid_miner_reward/1),
 			instantiator(fun test_reject_block_invalid_denomination/1),
@@ -66,14 +58,6 @@ post_2_6_test_() ->
 			instantiator(fun test_reject_block_invalid_endowment_pool/1),
 			instantiator(fun test_reject_block_invalid_debt_supply/1),
 			instantiator(fun test_reject_block_invalid_wallet_list/1),
-			instantiator(fun test_mitm_poa_chunk_tamper_ban/1),
-			instantiator(fun test_mitm_poa2_chunk_tamper_ban/1)
-		]}
-	}.
-
-post_2_7_test_() ->
-	{setup, fun setup_all_post_2_7/0, fun cleanup_all_post_fork/1,
-		{foreach, fun reset_node/0, [
 			instantiator(fun test_mitm_poa_chunk_tamper_warn/1),
 			instantiator(fun test_mitm_poa2_chunk_tamper_warn/1),
 			instantiator(fun test_reject_block_invalid_chunk_hash_ban/1),
@@ -251,29 +235,11 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 	B2 = sign_block(B#block{ wallet_list = crypto:strong_rand_bytes(32) }, PrevB, Key),
 	post_block(B2, invalid_wallet_list).
 
-test_mitm_poa_chunk_tamper_ban({_Key, B, _PrevB}) ->
-	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:peer_ip(main)),
-	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
-	post_block(B2, invalid_pow),
-	assert_banned(ar_test_node:peer_ip(main)).
-
-test_mitm_poa2_chunk_tamper_ban({Key, B, PrevB}) ->
-	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
-	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
-	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:peer_ip(main)),
-	B2 = sign_block(B#block{ 
-			recall_byte2 = 100000000,
-			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
-	post_block(B2, invalid_pow),
-	assert_banned(ar_test_node:peer_ip(main)).
-
 %% ------------------------------------------------------------------------------------------
 %% Others tests
 %% ------------------------------------------------------------------------------------------
 add_external_block_with_invalid_timestamp_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_7, fun() -> 0 end}],
 		fun test_add_external_block_with_invalid_timestamp/0).
 
 test_add_external_block_with_invalid_timestamp() ->
@@ -300,8 +266,7 @@ test_add_external_block_with_invalid_timestamp() ->
 	post_block(B5, valid).
 
 rejects_invalid_blocks_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end},
-			{ar_fork, height_2_7, fun() -> infinity end}],
+	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_7, fun() -> 0 end}],
 		fun test_rejects_invalid_blocks/0).
 
 test_rejects_invalid_blocks() ->
@@ -379,7 +344,9 @@ test_rejects_invalid_blocks() ->
 			%% forge).
 			hash = crypto:strong_rand_bytes(32),
 			poa = (B1#block.poa)#poa{ chunk = <<"a">> } }, B0, Key),
-	post_block(B7, invalid_pow),
+	post_block(B7, invalid_first_chunk),
+	B7_1 = sign_block(B7#block{ chunk_hash = crypto:hash(sha256, <<"a">>) }, B0, Key),
+	post_block(B7_1, invalid_pow),
 	?assertMatch({ok, {{<<"403">>, _}, _,
 			<<"IP address blocked due to previous request.">>, _, _}},
 			send_new_block(Peer, B1#block{ indep_hash = crypto:strong_rand_bytes(48) })),

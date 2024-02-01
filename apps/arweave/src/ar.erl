@@ -268,7 +268,13 @@ show_help() ->
 					"set coordinated_mining, cm_api_secret, and cm_exit_peer."},
 			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
 					"coordinated mining mode. You need to also set coordinated_mining, "
-					"cm_api_secret, and cm_peer."}
+					"cm_api_secret, and cm_peer."},
+			{"is_pool_server", "Configure the node as a pool server. The pool node may not "
+					"participate in the coordinated mining."},
+			{"is_pool_client", "Configure the node as a pool client. The node may be an "
+					"exit peer in the coordinated mining setup or a standalone node."},
+			{"pool_api_key", "API key for the requests to the pool."},
+			{"pool_server_address", "The pool address"}
 		]
 	),
 	erlang:halt().
@@ -536,6 +542,14 @@ parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
+parse_cli_args(["is_pool_server" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ is_pool_server = true });
+parse_cli_args(["is_pool_client" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ is_pool_client = true });
+parse_cli_args(["pool_api_key", Key | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_api_key = list_to_binary(Key) });
+parse_cli_args(["pool_server_address", Host | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_server_address = list_to_binary(Host) });
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -570,6 +584,7 @@ start(Config) ->
 		false ->
 			ok
 	end,
+	validate_cm_pool_config(Config),
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
@@ -580,6 +595,34 @@ start(Config) ->
 			ok
 	end,
 	start_dependencies().
+
+validate_cm_pool_config(Config) ->
+	case {Config#config.coordinated_mining, Config#config.is_pool_server} of
+		{true, true} ->
+			io:format("~nThe pool server node cannot participate "
+					"in the coordinated mining.~n~n"),
+			timer:sleep(1000),
+			erlang:halt();
+		_ ->
+			ok
+	end,
+	case {Config#config.is_pool_server, Config#config.is_pool_client} of
+		{true, true} ->
+			io:format("~nThe node cannot be a pool server and a pool client "
+					"at the same time.~n~n"),
+			timer:sleep(1000),
+			erlang:halt();
+		_ ->
+			ok
+	end,
+	case {Config#config.is_pool_client, Config#config.mine} of
+		{true, false} ->
+			io:format("~nThe mine flag must be set along with the is_pool_client flag.~n~n"),
+			timer:sleep(1000),
+			erlang:halt();
+		_ ->
+			ok
+	end.
 
 start(normal, _Args) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -649,11 +692,12 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 	set_mining_address(C2);
 set_mining_address(#config{ mine = false }) ->
 	ok;
-set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer }) ->
+set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer,
+		is_pool_client = PoolClient }) ->
 	case ar_wallet:load_key(Addr) of
 		not_found ->
-			case CmExitPeer of
-				not_set ->
+			case {CmExitPeer, PoolClient} of
+				{not_set, false} ->
 					ar:console("~nThe mining key for the address ~s was not found."
 						" Make sure you placed the file in [data_dir]/~s (the node is looking for"
 						" [data_dir]/~s/[mining_addr].json or "

@@ -7,7 +7,7 @@
 -export([start_link/1, start_mining/1,
 		has_cache_space/1, update_chunk_cache_size/2, reserve_cache_space/2,
 		set_difficulty/1, set_merkle_rebase_threshold/1, 
-		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1,
+		compute_h2_for_peer/1, add_pool_job/1, prepare_and_post_solution/1, post_solution/1,
 		read_poa/3, get_recall_bytes/4]).
 -export([pause/0]).
 
@@ -24,7 +24,8 @@
 	workers						= #{},
 	chunk_cache_size_limit		= infinity,
 	diff						= infinity,
-	merkle_rebase_threshold		= infinity
+	merkle_rebase_threshold		= infinity,
+	is_pool_client				= false
 }).
 
 %%%===================================================================
@@ -71,6 +72,10 @@ set_difficulty(Diff) ->
 set_merkle_rebase_threshold(Threshold) ->
 	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
 
+%% @doc Add a pool job to the mining queue.
+add_pool_job(Args) ->
+	gen_server:cast(?MODULE, {add_pool_job, Args}).
+
 prepare_and_post_solution(Candidate) ->
 	gen_server:cast(?MODULE, {prepare_and_post_solution, Candidate}).
 
@@ -96,9 +101,9 @@ init(Workers) ->
 	},
 
 	{ok, #state{
-		workers = WorkersBySession
+		workers = WorkersBySession,
+		is_pool_client = ar_pool:is_client()
 	}}.
-
 
 handle_call({has_cache_space, PartitionNumber}, _From, State) ->
 	#state{ chunk_cache_size_limit = Limit } = State,
@@ -149,6 +154,8 @@ handle_cast({set_difficulty, Diff}, State) ->
 handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
 	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
+handle_cast({add_pool_job, Args}, State) ->
+	handle_computed_output(Args, State);
 
 handle_cast({reserve_cache_space, PartitionNumber, NumChunks}, State) ->
 	update_chunk_cache_size(PartitionNumber, NumChunks),
@@ -181,55 +188,14 @@ handle_info({event, nonce_limiter, {computed_output, _}}, #state{ paused = true 
 	?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}]),
 	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
-
-	true = is_integer(StepNumber),
-	ar_mining_stats:vdf_computed(),
-
-	State2 = case ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound) of
+	case ar_pool:is_client() of
 		true ->
-			%% If the largest seen upper bound changed, a new partition may have been added
-			%% to the mining set, so we may need to update the chunk cache size limit.
-			State#state{
-				chunk_cache_size_limit = get_chunk_cache_size_limit(State)
-			};
+			%% Ignore VDF events because we are receiving jobs from the pool.
+			{noreply, State};
 		false ->
-			State
-	end,
-
-	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
-	{Workers, State3} = 
-		case get_workers(SessionKey, State2) of
-			[] ->
-				RefreshedState = refresh_workers(State2),
-				{get_workers(SessionKey, RefreshedState), RefreshedState};
-			Workers2 ->
-				{Workers2, State2}
-		end,
-	
-	case Workers of
-		[] ->
-			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output},
-				{step_number, StepNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
-			ok;
-		_ ->
-			Candidate = #mining_candidate{
-				session_key = SessionKey,
-				next_seed = NextSeed,
-				next_vdf_difficulty = NextVDFDifficulty,
-				start_interval_number = StartIntervalNumber,
-				step_number = StepNumber,
-				nonce_limiter_output = Output,
-				partition_upper_bound = PartitionUpperBound
-			},
-			N = distribute_output(Workers, Candidate),
-			?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
-				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
-				{start_interval_number, StartIntervalNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
-	end,
-	{noreply, State3};
+			Args2 = erlang:append_element(Args, not_set),
+			handle_computed_output(Args2, State)
+	end;
 
 handle_info({event, nonce_limiter, Message}, State) ->
 	?LOG_DEBUG([{event, mining_debug_skipping_nonce_limiter}, {message, Message}]),
@@ -273,27 +239,29 @@ set_difficulty(Diff, State) ->
 refresh_workers(State) ->
 	#state{ workers = WorkersBySession } = State,
 
-	{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
-	PreviousSessionKey = CurrentSession#vdf_session.prev_session_key,
+	NewSessions = get_current_session_key_seed_pairs(),
 	MappedSessions = maps:keys(WorkersBySession),
 
-	?LOG_DEBUG([{event, mining_debug_refreshing_workers},
-		{current_session_key, ar_nonce_limiter:encode_session_key(CurrentSessionKey)},
-		{previous_session_key, ar_nonce_limiter:encode_session_key(PreviousSessionKey)},
-		{mapped_sessions, 
-			[ar_nonce_limiter:encode_session_key(SessionKey) || SessionKey <- MappedSessions]}]),
+	PreviousSessionLogEntries =
+		case length(NewSessions) > 1 of
+			false ->
+				[];
+			true ->
+				[{previous_session_key,
+					ar_nonce_limiter:encode_session_key(
+						element(1, lists:nth(2, NewSessions)))}]
+		end,
+	RefreshLogEntries = [{event, mining_debug_refreshing_workers},
+			{current_session_key, ar_nonce_limiter:encode_session_key(
+				element(1, hd(NewSessions)))}]
+		++ PreviousSessionLogEntries
+		++ [{mapped_sessions,
+				[ar_nonce_limiter:encode_session_key(SessionKey)
+				|| SessionKey <- MappedSessions]}],
+	?LOG_DEBUG(RefreshLogEntries),
 
-	NewSessions = case ar_nonce_limiter:get_session(PreviousSessionKey) of
-		not_found ->
-			?LOG_DEBUG([{event, mining_debug_missing_previous_session},
-				{previous_session_key, ar_nonce_limiter:encode_session_key(PreviousSessionKey)}]),
-			[CurrentSessionKey];
-		_ ->
-			[CurrentSessionKey, PreviousSessionKey]
-	end,
-
-	SessionsToAdd = [SessionKey || SessionKey <- NewSessions,
-			SessionKey /= undefined andalso not maps:is_key(SessionKey, WorkersBySession)],
+	SessionsToAdd = [{SessionKey, Seed} || {SessionKey, Seed} <- NewSessions,
+			not maps:is_key(SessionKey, WorkersBySession)],
 	SessionsToRemove = [SessionKey || SessionKey <- MappedSessions,
 			not lists:member(SessionKey, NewSessions)],
 	SessionsToRemove2 = lists:sublist(SessionsToRemove, length(SessionsToAdd)),
@@ -301,10 +269,19 @@ refresh_workers(State) ->
 	WorkersBySession2 = refresh_workers(SessionsToAdd, SessionsToRemove2, WorkersBySession),
 	State#state{ workers = WorkersBySession2 }.
 
+get_current_session_key_seed_pairs() ->
+	case ar_pool:is_client() of
+		false ->
+			SessionKeyPairs = ar_nonce_limiter:get_current_sessions(),
+			[{Key, Session#vdf_session.seed} || {Key, Session} <- SessionKeyPairs];
+		true ->
+			ar_pool:get_current_session_key_seed_pairs()
+	end.
+
 refresh_workers([], [], WorkersBySession) ->
 	WorkersBySession;
 refresh_workers(
-	[AddKey | SessionsToAdd], [RemoveKey | SessionsToRemove], WorkersBySession) ->
+	[{AddKey, Seed} | SessionsToAdd], [RemoveKey | SessionsToRemove], WorkersBySession) ->
 	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = AddKey,
 	ar:console("Starting new mining session: "
 		"next entropy nonce: ~s, interval number: ~B, next vdf difficulty: ~B.~n",
@@ -314,17 +291,17 @@ refresh_workers(
 		{retired_session_key, ar_nonce_limiter:encode_session_key(RemoveKey)}]),
 
 	Workers = maps:get(RemoveKey, WorkersBySession, []),
-	reset_workers(Workers, AddKey),
+	reset_workers(Workers, AddKey, Seed),
 
 	WorkersBySession2 = maps:put(AddKey, Workers, WorkersBySession),
 	WorkersBySession3 = maps:remove(RemoveKey, WorkersBySession2),
 	refresh_workers(SessionsToAdd, SessionsToRemove, WorkersBySession3).
 
-reset_workers([], _SessionKey) ->
+reset_workers([], _SessionKey, _Seed) ->
 	ok;
-reset_workers([Worker | Workers], SessionKey) ->
-	ar_mining_worker:new_session(Worker, SessionKey),
-	reset_workers(Workers, SessionKey).
+reset_workers([Worker | Workers], SessionKey, Seed) ->
+	ar_mining_worker:new_session(Worker, SessionKey, Seed),
+	reset_workers(Workers, SessionKey, Seed).
 
 get_chunk_cache_size_limit(State) ->
 	#state{ chunk_cache_size_limit = CurrentLimit } = State,
@@ -426,7 +403,7 @@ prepare_and_post_solution(Candidate, State) ->
 	post_solution(Solution, State).
 
 prepare_solution(Candidate, State) ->
-	#state{ merkle_rebase_threshold = RebaseThreshold } = State,
+	#state{ merkle_rebase_threshold = RebaseThreshold, is_pool_client = IsPoolClient } = State,
 	#mining_candidate{
 		mining_address = MiningAddress, next_seed = NextSeed, 
 		next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
@@ -450,8 +427,14 @@ prepare_solution(Candidate, State) ->
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber
 	},
-	prepare_solution(last_step_checkpoints, Candidate, Solution).
-	
+	%% A pool client does not validate VDF before sharing a solution.
+	case IsPoolClient of
+		true ->
+			prepare_solution(proofs, Candidate, Solution);
+		false ->
+			prepare_solution(last_step_checkpoints, Candidate, Solution)
+	end.
+
 prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 	#mining_candidate{
 		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
@@ -487,7 +470,8 @@ prepare_solution(steps, Candidate, Solution) ->
 							[PrevStepNumber, StepNumber, PrevNextSeed]),
 					error;
 				_ ->
-					prepare_solution(proofs, Candidate, Solution#mining_solution{ steps = Steps })
+					prepare_solution(proofs, Candidate,
+							Solution#mining_solution{ steps = Steps })
 			end;
 		false ->
 			?LOG_WARNING([{event, found_solution_but_stale_step_number},
@@ -502,6 +486,7 @@ prepare_solution(proofs, Candidate, Solution) ->
 	#mining_candidate{
 		h0 = H0, h1 = H1, h2 = H2, nonce = Nonce, partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
+	#mining_solution{ poa1 = PoA1, poa2 = PoA2 } = Solution,
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 			PartitionUpperBound),
 	case { H1, H2 } of
@@ -509,13 +494,16 @@ prepare_solution(proofs, Candidate, Solution) ->
 			error;
 		{H1, not_set} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{
-				solution_hash = H1, recall_byte1 = RecallByte1, poa2 = #poa{} });
+				solution_hash = H1, recall_byte1 = RecallByte1,
+				poa1 = may_be_empty_poa(PoA1), poa2 = #poa{} });
 		{_, H2} ->
 			prepare_solution(poa2, Candidate, Solution#mining_solution{
-				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2 })
+				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+				poa1 = may_be_empty_poa(PoA1), poa2 = may_be_empty_poa(PoA2) })
 	end;
 
-prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution ) ->
+prepare_solution(poa1, Candidate,
+		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
 	#mining_solution{
 		mining_address = MiningAddress, partition_number = PartitionNumber,
 		recall_byte1 = RecallByte1 } = Solution,
@@ -539,7 +527,8 @@ prepare_solution(poa1, Candidate, #mining_solution{ poa1 = not_set } = Solution 
 		PoA1 ->
 			Solution#mining_solution{ poa1 = PoA1 }
 	end;
-prepare_solution(poa2, Candidate, #mining_solution{ poa2 = not_set } = Solution) ->
+prepare_solution(poa2, Candidate,
+		#mining_solution{ poa2 = #poa{ chunk = <<>> } } = Solution) ->
 	#mining_solution{ mining_address = MiningAddress, partition_number = PartitionNumber,
 		recall_byte2 = RecallByte2 } = Solution,
 	#mining_candidate{
@@ -562,7 +551,8 @@ prepare_solution(poa2, Candidate, #mining_solution{ poa2 = not_set } = Solution)
 		PoA2 ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
 	end;
-prepare_solution(poa2, Candidate, #mining_solution{ poa1 = not_set } = Solution) ->
+prepare_solution(poa2, Candidate,
+		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
 	prepare_solution(poa1, Candidate, Solution);
 prepare_solution(_, _Candidate, Solution) ->
 	Solution.
@@ -572,11 +562,17 @@ post_solution(error, _State) ->
 post_solution(Solution, State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	post_solution(Config#config.cm_exit_peer, Solution, State).
+
+post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
+	%% When posting a partial solution the pool client will skip many of the validation steps
+	%% that are normally performed before sharing a solution.
+	ar_pool:post_partial_solution(Solution);
 post_solution(not_set, Solution, State) ->
 	#state{ diff = Diff } = State,
 	#mining_solution{
 		mining_address = MiningAddress, nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+		partition_number = PartitionNumber, recall_byte1 = RecallByte1,
+		recall_byte2 = RecallByte2,
 		solution_hash = H, step_number = StepNumber } = Solution,
 	case validate_solution(Solution, Diff) of
 		error ->
@@ -590,8 +586,9 @@ post_solution(not_set, Solution, State) ->
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
 					"details~n");
-		false ->
+		{false, Reason} ->
 			?LOG_WARNING([{event, found_invalid_solution},
+					{reason, Reason},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
 					{mining_address, ar_util:safe_encode(MiningAddress)},
@@ -602,7 +599,17 @@ post_solution(not_set, Solution, State) ->
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
 					"details~n");
 		{true, PoACache, PoA2Cache} ->
-			ar_events:send(miner, {found_solution, Solution, PoACache, PoA2Cache})
+			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
+	end;
+post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
+	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution, true) of
+		{ok, _} ->
+			ok;
+		{error, Reason} ->
+			?LOG_WARNING([{event, found_partial_solution_but_failed_to_reach_exit_node},
+					{reason, io_lib:format("~p", [Reason])}]),
+			ar:console("We found a partial solution but failed to reach the exit node, "
+					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end;
 post_solution(ExitPeer, Solution, _State) ->
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
@@ -615,6 +622,61 @@ post_solution(ExitPeer, Solution, _State) ->
 					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end.
 
+may_be_empty_poa(not_set) ->
+	#poa{};
+may_be_empty_poa(#poa{} = PoA) ->
+	PoA.
+
+handle_computed_output(Args, State) ->
+	{SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff} = Args,
+	true = is_integer(StepNumber),
+	ar_mining_stats:vdf_computed(),
+
+	State2 = case ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound) of
+		true ->
+			%% If the largest seen upper bound changed, a new partition may have been added
+			%% to the mining set, so we may need to update the chunk cache size limit.
+			State#state{
+				chunk_cache_size_limit = get_chunk_cache_size_limit(State)
+			};
+		false ->
+			State
+	end,
+
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
+	{Workers, State3} =
+		case get_workers(SessionKey, State2) of
+			[] ->
+				RefreshedState = refresh_workers(State2),
+				{get_workers(SessionKey, RefreshedState), RefreshedState};
+			Workers2 ->
+				{Workers2, State2}
+		end,
+
+	case Workers of
+		[] ->
+			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output},
+				{step_number, StepNumber},
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+			ok;
+		_ ->
+			Candidate = #mining_candidate{
+				session_key = SessionKey,
+				next_seed = NextSeed,
+				next_vdf_difficulty = NextVDFDifficulty,
+				start_interval_number = StartIntervalNumber,
+				step_number = StepNumber,
+				nonce_limiter_output = Output,
+				partition_upper_bound = PartitionUpperBound,
+				partial_diff = PartialDiff
+			},
+			N = distribute_output(Workers, Candidate),
+			?LOG_DEBUG([{event, mining_debug_processing_vdf_output}, {found_io_threads, N},
+				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
+				{start_interval_number, StartIntervalNumber},
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
+	end,
+	{noreply, State3}.
 
 read_poa(RecallByte, Chunk, MiningAddress) ->
 	PoA = read_poa(RecallByte, MiningAddress),
@@ -635,7 +697,7 @@ read_poa(RecallByte, MiningAddress) ->
 
 validate_solution(Solution, Diff) ->
 	#mining_solution{
-		merkle_rebase_threshold = RebaseThreshold, mining_address = MiningAddress,
+		mining_address = MiningAddress,
 		nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, partition_upper_bound = PartitionUpperBound,
 		poa1 = PoA1, poa2 = PoA2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
@@ -644,17 +706,15 @@ validate_solution(Solution, Diff) ->
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
-	%% validates recall_byte1
+	%% Assert recall_byte1 is computed correctly.
 	RecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE,
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
 	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-			?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}, RebaseThreshold,
-			not_set}) of
+			{spora_2_6, MiningAddress}, not_set}) of
 		{true, ChunkID} ->
 			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
-					?STRICT_DATA_SPLIT_THRESHOLD, {spora_2_6, MiningAddress}, RebaseThreshold},
-					ChunkID},
+					{spora_2_6, MiningAddress}}, ChunkID},
 			case binary:decode_unsigned(H1, big) > Diff of
 				true ->
 					%% validates solution_hash
@@ -663,15 +723,15 @@ validate_solution(Solution, Diff) ->
 				false ->
 					case RecallByte2 of
 						undefined ->
-							%% This can happen if the difficulty has increased between when the H1
-							%% solution was found and now. In this case there is no H2 solution, so
-							%% we flag the solution invalid.
-							false;
+							%% This can happen if the difficulty has increased between the
+							%% time the H1 solution was found and now. In this case,
+							%% there is no H2 solution, so we flag the solution invalid.
+							{false, h1_diff_check};
 						_ ->
 							{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
 							case binary:decode_unsigned(H2, big) > Diff of
 								false ->
-									false;
+									{false, h2_diff_check};
 								true ->
 									%% validates solution_hash
 									SolutionHash = H2,
@@ -681,22 +741,25 @@ validate_solution(Solution, Diff) ->
 											ar_block_index:get_block_bounds(RecallByte2),
 									BlockSize2 = BlockEnd2 - BlockStart2,
 									case ar_poa:validate({BlockStart2, RecallByte2, TXRoot2,
-											BlockSize2, PoA2, ?STRICT_DATA_SPLIT_THRESHOLD,
-											{spora_2_6, MiningAddress}, RebaseThreshold, not_set}) of
+											BlockSize2, PoA2,
+											{spora_2_6, MiningAddress}, not_set}) of
 										{true, Chunk2ID} ->
 											PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2,
-													BlockSize2, ?STRICT_DATA_SPLIT_THRESHOLD,
-													{spora_2_6, MiningAddress}, RebaseThreshold},
+													BlockSize2, {spora_2_6, MiningAddress}},
 													Chunk2ID},
 											{true, PoACache, PoA2Cache};
-										Result2 ->
-											Result2
+										error ->
+											error;
+										false ->
+											{false, poa2}
 									end
 							end
 					end
 			end;
-		Result ->
-			Result
+		error ->
+			error;
+		false ->
+			{false, poa1}
 	end.
 
 %%%===================================================================

@@ -43,6 +43,7 @@ jobs:
             ar_tx_db,
             ar_unbalanced_merkle,
             ar_util,
+            ar_pool,
 
             ## Note, that _tests are implicitly run by a matching prefix name
             ar_base64_compatibility_tests,

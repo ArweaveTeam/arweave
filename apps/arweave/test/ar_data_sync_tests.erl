@@ -696,7 +696,7 @@ test_mines_off_only_second_last_chunks() ->
 packs_chunks_depending_on_packing_threshold_test_() ->
 	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end},
 			{ar_fork, height_2_6_8, fun() -> 0 end},
-			{ar_fork, height_2_7, fun() -> 10 end}],
+			{ar_fork, height_2_7, fun() -> 0 end}],
 			fun test_packs_chunks_depending_on_packing_threshold/0).
 
 test_packs_chunks_depending_on_packing_threshold() ->
@@ -795,9 +795,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
 			?assertEqual(RecallByte, B#block.recall_byte),
 			?assertMatch({true, _}, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-					BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold,
-					{spora_2_6, B#block.reward_addr},
-					B#block.merkle_rebase_support_threshold, not_set})),
+					BlockEnd - BlockStart, PoA,
+					{spora_2_6, B#block.reward_addr}, not_set})),
 			B
 		end,
 		LastB,

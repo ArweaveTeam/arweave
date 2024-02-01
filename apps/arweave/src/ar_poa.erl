@@ -44,9 +44,10 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
 
 %% @doc Validate a proof of access.
 validate(Args) ->
-	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, StrictDataSplitThreshold,
-			Packing, MerkleRebaseSupportThreshold, ExpectedChunkID} = Args,
+	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing, ExpectedChunkID} = Args,
 	#poa{ chunk = Chunk } = SPoA,
+	StrictDataSplitThreshold = ?STRICT_DATA_SPLIT_THRESHOLD,
+	MerkleRebaseSupportThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 	TXPath = SPoA#poa.tx_path,
 	RecallBucketOffset =
 		case RecallOffset >= StrictDataSplitThreshold of
