@@ -548,7 +548,8 @@ try_to_reserve_cache_space(SessionKey, State) ->
 			EndTime = erlang:monotonic_time(),
 			ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
 			?LOG_DEBUG([
-				{event, mining_debug_worker_gc_limit_reached}, {gc_time, ElapsedTime}]),
+				{event, mining_debug_worker_gc_limit_reached}, 
+				{worker, State#state.name}, {pid, self()}, {gc_time, ElapsedTime}]),
 			%% reserve for both h1 and h2
 			{true, update_chunk_cache_size(2 * RecallRangeChunks, SessionKey, State)};
 		false ->
