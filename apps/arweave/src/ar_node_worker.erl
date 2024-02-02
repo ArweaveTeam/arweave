@@ -421,7 +421,8 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {initialized, B}),
-	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
+	ar_events:send(node_state, {checkpoint_block, 
+		ar_block_cache:get_checkpoint_block(RecentBI)}),
 	ar:console("Joined the Arweave network successfully at the block ~s, height ~B.~n",
 			[ar_util:encode(Current), Height]),
 	?LOG_INFO([{event, joined_the_network}, {block, ar_util:encode(Current)},
@@ -705,22 +706,16 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 				chunk_hash = get_chunk_hash(PoA1, Height),
 				chunk2_hash = get_chunk_hash(PoA2, Height)
 			}, PrevB),
-			UnsignedB2 =
-				case Height >= ar_fork:height_2_7() of
-					false ->
-						UnsignedB;
-					true ->
-						BlockTimeHistory2 = lists:sublist(ar_block:update_block_time_history(
-								UnsignedB, PrevB),
-								?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-						BlockTimeHistory3 = lists:sublist(BlockTimeHistory2,
-								?BLOCK_TIME_HISTORY_BLOCKS),
-						UnsignedB#block{
-							block_time_history = BlockTimeHistory2,
-							block_time_history_hash = ar_block:block_time_history_hash(
-									BlockTimeHistory3)
-						}
-				end,
+			
+			BlockTimeHistory2 = lists:sublist(
+				ar_block:update_block_time_history(UnsignedB, PrevB),
+				?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+			BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, ?BLOCK_TIME_HISTORY_BLOCKS),
+			UnsignedB2 = UnsignedB#block{
+				block_time_history = BlockTimeHistory2,
+				block_time_history_hash = ar_block:block_time_history_hash(
+						BlockTimeHistory3)
+			},
 			SignedH = ar_block:generate_signed_hash(UnsignedB2),
 			PrevCDiff = PrevB#block.cumulative_diff,
 			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
@@ -1044,9 +1039,6 @@ apply_block(State) ->
 			%% Waiting until the nonce limiter chain is validated.
 			{noreply, State};
 		{B, PrevBlocks, {{not_validated, nonce_limiter_validated}, Timestamp}} ->
-			apply_block(B, PrevBlocks, Timestamp, State);
-		{B, PrevBlocks, {{not_validated, awaiting_validation}, Timestamp}} ->
-			%% Pre-2.6 blocks.
 			apply_block(B, PrevBlocks, Timestamp, State)
 	end.
 
@@ -1459,37 +1451,26 @@ apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 			ok
 	end,
 	[{_, CDiff}] = ets:lookup(node_state, cumulative_diff),
-	B2 =
-		case B#block.height + 1 == ar_fork:height_2_6() of
-			true ->
-				Info = ar_nonce_limiter:get_or_init_nonce_limiter_info(B, RecentBI),
-				B3 = B#block{ nonce_limiter_info = Info },
-				ar_events:send(node_state, {validated_pre_fork_2_6_block, B3}),
-				B3;
-			_ ->
-				B
-		end,
-	case B2#block.cumulative_diff =< CDiff of
+	case B#block.cumulative_diff =< CDiff of
 		true ->
 			%% The block is from the longest fork, but not the latest known block from there.
-			ar_block_cache:add_validated(block_cache, B2),
+			ar_block_cache:add_validated(block_cache, B),
 			gen_server:cast(?MODULE, apply_block),
-			log_applied_block(B2),
+			log_applied_block(B),
 			State;
 		false ->
-			apply_validated_block2(State, B2, PrevBlocks, Orphans, RecentBI, BlockTXPairs)
+			apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs)
 	end.
 
 apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	[{current, CurrentH}] = ets:lookup(node_state, current),
-	PruneDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	BH = B#block.indep_hash,
 	%% Overwrite the block to store computed size tagged txs - they
 	%% may be needed for reconstructing block_txs_pairs if there is a reorg
 	%% off and then back on this fork.
 	ar_block_cache:add(block_cache, B),
 	ar_block_cache:mark_tip(block_cache, BH),
-	ar_block_cache:prune(block_cache, PruneDepth),
+	ar_block_cache:prune(block_cache, ?STORE_BLOCKS_BEHIND_CURRENT),
 	%% We could have missed a few blocks due to networking issues, which would then
 	%% be picked by ar_poller and end up waiting for missing transactions to be fetched.
 	%% Thefore, it is possible (although not likely) that there are blocks above the new tip,
@@ -1510,11 +1491,10 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 				CurrentB;
 			(CurrentB, _CurrentPrevB) ->
 				Wallets = CurrentB#block.wallet_list,
-				Height = CurrentB#block.height,
 				%% Use a twice bigger depth than the depth requested on join to serve
 				%% the wallet trees to the joining nodes.
-				PruneDepth2 = PruneDepth * 2,
-				ok = ar_wallets:set_current(Wallets, Height, PruneDepth2),
+				ok = ar_wallets:set_current(
+					Wallets, CurrentB#block.height, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
 				CurrentB
 		end,
 		start,
@@ -1578,41 +1558,9 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {new_tip, B, PrevB}),
-	ar_events:send(node_state, {checkpoint_block, get_checkpoint_block(RecentBI)}),
+	ar_events:send(node_state, {checkpoint_block, 
+		ar_block_cache:get_checkpoint_block(RecentBI)}),
 	maybe_reset_miner(State).
-
-get_checkpoint_block(RecentBI) ->
-	get_checkpoint_block(RecentBI, 1).
-
-get_checkpoint_block([{H, _, _}], _N) ->
-	%% The genesis block.
-	ar_block_cache:get(block_cache, H);
-get_checkpoint_block([{H, _, _} | BI], N) ->
-	 B = ar_block_cache:get(block_cache, H),
-	 get_checkpoint_block(BI, N + 1, B).
-
-get_checkpoint_block([{H, _, _}], _N, B) ->
-	%% The genesis block.
-	case ar_block_cache:get(block_cache, H) of
-		not_found ->
-			B;
-		B2 ->
-			B2
-	end;
-get_checkpoint_block([{H, _, _} | _], N, B) when N == ?STORE_BLOCKS_BEHIND_CURRENT ->
-	case ar_block_cache:get(block_cache, H) of
-		not_found ->
-			B;
-		B2 ->
-			B2
-	end;
-get_checkpoint_block([{H, _, _} | BI], N, B) ->
-	case ar_block_cache:get(block_cache, H) of
-		not_found ->
-			B;
-		B2 ->
-			get_checkpoint_block(BI, N + 1, B2)
-	end.
 
 log_applied_block(B) ->
 	?LOG_INFO([

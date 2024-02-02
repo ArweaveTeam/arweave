@@ -667,18 +667,6 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, node_state, {validated_pre_fork_2_6_block, B}}, State) ->
-	#state{ sessions = Sessions } = State,
-	case gb_sets:is_empty(Sessions) of
-		true ->
-			{noreply, apply_base_block(B, State)};
-		false ->
-			%% The fork block is seeded from the STORE_BLOCKS_BEHIND_CURRENT's past block
-			%% and we do not reorg past that point so even if there are competing
-			%% pre-fork 2.6 blocks, they have the same {NextSeed, IntervalNumber} key.
-			{noreply, State}
-	end;
-
 handle_info({event, node_state, {new_tip, B, PrevB}}, State) ->
 	{noreply, apply_tip(B, PrevB, State)};
 

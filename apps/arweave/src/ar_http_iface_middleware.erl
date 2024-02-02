@@ -955,8 +955,7 @@ handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
 					case decode_recent_hash_list(Body) of
 						{ok, ReverseHL} ->
 							{BlockTXPairs, _}
-									= ar_block_cache:get_longest_chain_block_txs_pairs(
-											block_cache),
+									= ar_block_cache:get_longest_chain_cache(block_cache),
 							case get_recent_hash_list_diff(ReverseHL,
 									lists:reverse(BlockTXPairs)) of
 								no_intersection ->

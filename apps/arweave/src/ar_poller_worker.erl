@@ -60,7 +60,7 @@ handle_cast({poll, _Ref}, #state{ peer = undefined } = State) ->
 handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 		polling_frequency_ms = FrequencyMs } = State) ->
 	CurrentHeight = ar_node:get_height(),
-	{L, NotOnChain} = ar_block_cache:get_longest_chain_block_txs_pairs(block_cache),
+	{L, NotOnChain} = ar_block_cache:get_longest_chain_cache(block_cache),
 	HL = [H || {H, _TXIDs} <- L],
 	case NotOnChain >= 5 of
 		true ->

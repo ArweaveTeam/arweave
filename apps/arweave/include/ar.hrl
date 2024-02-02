@@ -104,11 +104,18 @@
 -define(TiB, (1024 * ?GiB)).
 
 %% How far into the past or future the block can be in order to be accepted for
-%% processing. The maximum lag when fork recovery (chain reorganisation) is performed.
+%% processing.
 -ifdef(DEBUG).
 -define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 -else.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
+-endif.
+
+%% The maximum lag when fork recovery (chain reorganisation) is performed.
+-ifdef(DEBUG).
+-define(CHECKPOINT_DEPTH, 4).
+-else.
+-define(CHECKPOINT_DEPTH, 18).
 -endif.
 
 %% The recommended depth of the block to use as an anchor for transactions.

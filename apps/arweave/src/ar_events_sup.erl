@@ -43,7 +43,7 @@ init([]) ->
 		%% Events: removed
 		?CHILD(ar_events, peer, worker),
 		%% Events: account_tree_initialized, initialized,
-		%% validated_pre_fork_2_6_block, new_tip, checkpoint_block, search_space_upper_bound.
+		%% new_tip, checkpoint_block, search_space_upper_bound.
 		?CHILD(ar_events, node_state, worker),
 		%% Events: initialized, valid, invalid, validation_error, computed_output.
 		?CHILD(ar_events, nonce_limiter, worker),
