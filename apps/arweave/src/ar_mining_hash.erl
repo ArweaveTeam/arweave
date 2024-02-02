@@ -67,21 +67,11 @@ handle_cast(sample_process, State) ->
 	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
 	?LOG_DEBUG([{event, mining_hash_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
 		{binary_before, BinInfoBefore}]),
-	% [{binary, BinInfoBefore}] = process_info(self(), [binary]),
-	% garbage_collect(self()),
-	% [{binary, BinInfoAfter}] = process_info(self(), [binary]),
-	% ?LOG_DEBUG([{event, mining_hash_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
-	% 	{a, length(BinInfoAfter)}, {binary_before, BinInfoBefore}, {binary_after, BinInfoAfter}]),
 	queue:fold(
 		fun(Thread, _) ->
 			[{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
 			?LOG_DEBUG([{event, mining_hash_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
 				{binary_before, BinInfoBefore2}])
-			% [{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
-			% garbage_collect(self()),
-			% [{binary, BinInfoAfter2}] = process_info(Thread, [binary]),
-			% ?LOG_DEBUG([{event, mining_hash_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
-			% 	{a, length(BinInfoAfter2)}, {binary_before, BinInfoBefore2}, {binary_after, BinInfoAfter2}])
 		end,
 		ok,
 		State#state.hashing_threads
@@ -180,7 +170,7 @@ check_garbage_collection(State) ->
 			EndTime = erlang:monotonic_time(),
 			ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
 			?LOG_DEBUG([
-				{event, mining_hash_gc_limit_reached}, {chunks_seen, ChunksSeen},
+				{event, mining_debug_hash_gc_limit_reached}, {chunks_seen, ChunksSeen},
 				{gc_time, ElapsedTime}]),
 			0;
 		false ->

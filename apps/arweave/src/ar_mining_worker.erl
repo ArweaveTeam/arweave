@@ -543,6 +543,12 @@ try_to_reserve_cache_space(SessionKey, State) ->
 	RecallRangeChunks = nonce_max() + 1,
 	case total_cache_size(State) =< State#state.chunk_cache_limit of
 		true ->
+			StartTime = erlang:monotonic_time(),
+			garbage_collect(self()),
+			EndTime = erlang:monotonic_time(),
+			ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+			?LOG_DEBUG([
+				{event, mining_debug_worker_gc_limit_reached}, {gc_time, ElapsedTime}]),
 			%% reserve for both h1 and h2
 			{true, update_chunk_cache_size(2 * RecallRangeChunks, SessionKey, State)};
 		false ->
