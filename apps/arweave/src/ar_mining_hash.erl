@@ -167,6 +167,13 @@ check_garbage_collection(State) ->
 		true   ->
 			StartTime = erlang:monotonic_time(),
 			garbage_collect(self()),
+			queue:fold(
+				fun(Thread, _) ->
+					garbage_collect(Thread)
+				end,
+				ok,
+				State#state.hashing_threads
+			),
 			EndTime = erlang:monotonic_time(),
 			ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
 			?LOG_DEBUG([

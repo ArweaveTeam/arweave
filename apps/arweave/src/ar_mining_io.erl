@@ -255,6 +255,12 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 
 read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
 	StartTime = erlang:monotonic_time(),
+	garbage_collect(self()),
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	?LOG_DEBUG([
+		{event, mining_debug_io_worker_gc_limit_reached}, 
+		{pid, self()}, {gc_time, ElapsedTime}]),
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
 	UniqueSize = Size, %% + (rand:uniform(100)*?DATA_CHUNK_SIZE),
