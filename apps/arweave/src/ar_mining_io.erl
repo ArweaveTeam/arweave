@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, set_largest_seen_upper_bound/1, 
-			get_partitions/0, get_partitions/1, read_recall_range/4]).
+			get_partitions/0, get_partitions/1, read_recall_range/4, garbage_collect/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -56,6 +56,9 @@ get_partitions(PartitionUpperBound) ->
 			get_io_channels()
 		))
 	).
+
+garbage_collect() ->
+	gen_server:cast(?MODULE, garbage_collect).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -128,6 +131,22 @@ handle_cast(sample_process, State) ->
 		State#state.io_threads
 	),
 	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
+	{noreply, State};
+
+handle_cast(garbage_collect, State) ->
+	StartTime = erlang:monotonic_time(),
+	erlang:garbage_collect(self()),
+	maps:fold(
+		fun(_Key, Thread, _) ->
+			erlang:garbage_collect(Thread)
+		end,
+		ok,
+		State#state.io_threads
+	),
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	?LOG_DEBUG([{event, mining_debug_garbage_collect}, {process, ar_mining_io}, {pid, self()},
+		{gc_time, ElapsedTime}]),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
@@ -255,12 +274,6 @@ filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 
 read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
 	StartTime = erlang:monotonic_time(),
-	garbage_collect(self()),
-	EndTime = erlang:monotonic_time(),
-	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-	?LOG_DEBUG([
-		{event, mining_debug_io_worker_gc_limit_reached}, 
-		{pid, self()}, {gc_time, ElapsedTime}]),
 	Size = ?RECALL_RANGE_SIZE,
 	#mining_candidate{ mining_address = MiningAddress } = Candidate,
 	UniqueSize = Size, %% + (rand:uniform(100)*?DATA_CHUNK_SIZE),

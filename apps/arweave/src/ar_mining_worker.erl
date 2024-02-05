@@ -2,8 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, name/1, reset/2, set_sessions/2, 
-	recall_chunk/5, computed_hash/5, set_difficulty/2, set_cache_limits/3, add_task/3]).
+-export([start_link/1, name/1, reset/2, set_sessions/2,  recall_chunk/5, computed_hash/5,
+		set_difficulty/2, set_cache_limits/3, add_task/3, garbage_collect/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -98,6 +98,9 @@ is_session_valid(
 		#state{ active_sessions = Sessions },
 		#mining_candidate{ session_key = SessionKey }) ->
 	sets:is_element(SessionKey, Sessions).
+
+garbage_collect(Worker) ->
+	gen_server:cast(Worker, garbage_collect).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -200,6 +203,15 @@ handle_cast({remove_chunk_from_cache, Candidate}, State) ->
 handle_cast(maybe_warn_about_lag, State) ->
 	maybe_warn_about_lag(State#state.task_queue, State#state.name),
 	ar_util:cast_after(?LAG_CHECK_FREQUENCY_MS, self(), maybe_warn_about_lag),
+	{noreply, State};
+
+handle_cast(garbage_collect, State) ->
+	StartTime = erlang:monotonic_time(),
+	erlang:garbage_collect(self()),
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	?LOG_DEBUG([{event, mining_debug_garbage_collect}, {process, State#state.name}, {pid, self()},
+		{gc_time, ElapsedTime}]),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
@@ -543,13 +555,6 @@ try_to_reserve_cache_space(SessionKey, State) ->
 	RecallRangeChunks = nonce_max() + 1,
 	case total_cache_size(State) =< State#state.chunk_cache_limit of
 		true ->
-			StartTime = erlang:monotonic_time(),
-			garbage_collect(self()),
-			EndTime = erlang:monotonic_time(),
-			ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-			?LOG_DEBUG([
-				{event, mining_debug_worker_gc_limit_reached}, 
-				{worker, State#state.name}, {pid, self()}, {gc_time, ElapsedTime}]),
 			%% reserve for both h1 and h2
 			{true, update_chunk_cache_size(2 * RecallRangeChunks, SessionKey, State)};
 		false ->
