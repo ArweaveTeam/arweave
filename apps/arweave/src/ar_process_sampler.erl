@@ -83,12 +83,12 @@ handle_info(sample_processes, State) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, microsecond),
 	?LOG_DEBUG([{event, sample_processes}, {elapsed_ms, ElapsedTime / 1000}]),
-	% BinaryAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,binary_alloc})]),
-	% MsegAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,mseg_alloc})]),
-	% SysAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,sys_alloc})]),
-	% ?LOG_DEBUG([{event, binary_allocator}, {binary_allocator, BinaryAllocator}]),
-	% ?LOG_DEBUG([{event, mseg_allocator}, {mseg_allocator, MsegAllocator}]),
-	% ?LOG_DEBUG([{event, sys_allocator}, {sys_allocator, SysAllocator}]),
+	BinaryAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,binary_alloc})]),
+	MsegAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,mseg_alloc})]),
+	SysAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,sys_alloc})]),
+	?LOG_DEBUG([{event, binary_allocator}, {binary_allocator, BinaryAllocator}]),
+	?LOG_DEBUG([{event, mseg_allocator}, {mseg_allocator, MsegAllocator}]),
+	?LOG_DEBUG([{event, sys_allocator}, {sys_allocator, SysAllocator}]),
 	{noreply, State};
 
 handle_info(_Info, State) ->
