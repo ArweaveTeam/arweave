@@ -6,7 +6,7 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--define(SAMPLE_PROCESSES_INTERVAL, 10000).
+-define(SAMPLE_PROCESSES_INTERVAL, 15000).
 -define(SAMPLE_SCHEDULERS_INTERVAL, 30000).
 -define(SAMPLE_SCHEDULERS_DURATION, 5000).
 
@@ -80,15 +80,11 @@ handle_info(sample_processes, State) ->
 	prometheus_gauge:set(process_info, [code, memory], erlang:memory(code)),
 	prometheus_gauge:set(process_info, [ets, memory], erlang:memory(ets)),
 
+	log_binary_alloc(),
+
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, microsecond),
 	?LOG_DEBUG([{event, sample_processes}, {elapsed_ms, ElapsedTime / 1000}]),
-	BinaryAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,binary_alloc})]),
-	MsegAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,mseg_alloc})]),
-	SysAllocator = io_lib:format("~p\n",[erlang:system_info({allocator,sys_alloc})]),
-	?LOG_DEBUG([{event, binary_allocator}, {binary_allocator, BinaryAllocator}]),
-	?LOG_DEBUG([{event, mseg_allocator}, {mseg_allocator, MsegAllocator}]),
-	?LOG_DEBUG([{event, sys_allocator}, {sys_allocator, SysAllocator}]),
 	{noreply, State};
 
 handle_info(_Info, State) ->
@@ -152,15 +148,65 @@ process_function(Pid) ->
 		false
 	end.
 
-binary_memory([{ID, Size, _RefCount} | BinInfo], IDs, Total) ->
-	case sets:is_element(ID, IDs) of
-		true ->
-			binary_memory(BinInfo, IDs, Total);
-		false ->
-			binary_memory(BinInfo, sets:add_element(ID, IDs), Total + Size)
-	end;
-binary_memory([], _IDs, Total) ->
-	Total.
+log_binary_alloc() ->
+	[Instance0 | _Rest] = erlang:system_info({allocator, binary_alloc}),
+	log_binary_alloc_instances([Instance0]).
+
+log_binary_alloc_instances([]) ->
+	ok;
+log_binary_alloc_instances([Instance | _Rest]) ->
+	{instance, Id, [
+		_Versions,
+		_Options,
+		MBCS,
+		SBCS,
+		Calls
+	]} = Instance,
+	{calls, [
+		{binary_alloc, AllocGigaCount, AllocCount},
+		{binary_free, FreeGigaCount, FreeCount},
+		{binary_realloc, ReallocGigaCount, ReallocCount},
+		_MsegAllocCount, _MsegDeallocCount, _MsegReallocCount,
+		_SysAllocCount, _SysDeallocCount, _SysReallocCount
+	]} = Calls,
+
+	log_binary_alloc_carrier(Id, MBCS),
+	log_binary_alloc_carrier(Id, SBCS),
+
+	prometheus_gauge:set(allocator, [binary, Id, calls, binary_alloc_count],
+		(AllocGigaCount * 1000000000) + AllocCount),
+	prometheus_gauge:set(allocator, [binary, Id, calls, binary_free_count],
+		(FreeGigaCount * 1000000000) + FreeCount),
+	prometheus_gauge:set(allocator, [binary, Id, calls, binary_realloc_count],
+		(ReallocGigaCount * 1000000000) + ReallocCount).
+
+log_binary_alloc_carrier(Id, Carrier) ->
+	{CarrierType, [
+		{blocks, Blocks},
+		{carriers, _, CarrierCount, _},
+		_MsegCount, _SysCount,
+		{carriers_size, _, CarrierSize, _},
+		_MsegSize, _SysSize
+	]} = Carrier,
+
+	case Blocks of
+		[{binary_alloc, [{count, _, BlockCount, _}, {size, _, BlockSize, _}]}] ->
+			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_count],
+				BlockCount),
+			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_size],
+				BlockSize);
+		_ ->
+			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_count],
+				0),
+			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_size],
+				0)
+	end,
+
+	prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_carrier_count],
+		CarrierCount),
+	prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_carrier_size], 
+		CarrierSize).
+
 
 %% @doc Anonymous processes don't have a registered name. So we'll name them after their
 %% module, function and arity.
@@ -181,7 +227,3 @@ initial_call([{proc_lib, init_p_do_apply, _A, _Location} | Stack]) ->
 	initial_call(Stack);
 initial_call([InitialCall | _Stack]) ->
 	InitialCall.
-
-
-function_name(ProcessName, {M, F, A}) ->
-	ProcessName ++ "~" ++ atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A).

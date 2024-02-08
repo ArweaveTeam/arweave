@@ -139,14 +139,12 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({gun_up, PID, Protocol}, #state{ status_by_pid = StatusByPID } = State) ->
+handle_info({gun_up, PID, _Protocol}, #state{ status_by_pid = StatusByPID } = State) ->
 	case maps:get(PID, StatusByPID, not_found) of
 		not_found ->
 			%% A connection timeout should have occurred.
 			{noreply, State};
 		{{connecting, PendingRequests}, MonitorRef, Peer} ->
-			?LOG_DEBUG([{event, established_connection}, {protocol, Protocol},
-					{peer, ar_util:format_peer(Peer)}]),
 			[gen_server:reply(ReplyTo, {ok, PID}) || {ReplyTo, _} <- PendingRequests],
 			StatusByPID2 = maps:put(PID, {connected, MonitorRef, Peer}, StatusByPID),
 			prometheus_gauge:inc(outbound_connections),
@@ -211,8 +209,6 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
 					prometheus_gauge:dec(outbound_connections),
 					ok
 			end,
-			?LOG_DEBUG([{event, connection_down}, {protocol, Protocol},
-					{reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
 	end;
 
@@ -220,12 +216,8 @@ handle_info({'DOWN', _Ref, process, PID, Reason},
 		#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
 	case maps:get(PID, StatusByPID, not_found) of
 		not_found ->
-			?LOG_DEBUG([{event, gun_connection_process_down}, {pid, PID}, {peer, unknown},
-				{reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State};
 		{Status, _MonitorRef, Peer} ->
-			?LOG_DEBUG([{event, gun_connection_process_down}, {pid, PID},
-				{peer, ar_util:format_peer(Peer)}, {reason, io_lib:format("~p", [Reason])}]),
 			PIDByPeer2 = maps:remove(Peer, PIDByPeer),
 			StatusByPID2 = maps:remove(PID, StatusByPID),
 			case Status of

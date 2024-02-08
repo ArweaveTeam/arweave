@@ -13,8 +13,6 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(SAMPLE_PROCESS_INTERVAL, 1000).
-
 -record(state, {
 	partition_upper_bound = 0,
 	io_threads = #{},
@@ -74,7 +72,6 @@ init([]) ->
 			#state{},
 			get_io_channels()
 		),
-	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
 	{ok, State}.
 
 handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) ->
@@ -106,32 +103,6 @@ handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
-
-handle_cast(sample_process, State) ->
-	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
-	?LOG_DEBUG([{event, mining_io_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
-		{binary_before, BinInfoBefore}]),
-	% [{binary, BinInfoBefore}] = process_info(self(), [binary]),
-	% garbage_collect(self()),
-	% [{binary, BinInfoAfter}] = process_info(self(), [binary]),
-	% ?LOG_DEBUG([{event, mining_io_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
-	% 	{a, length(BinInfoAfter)}, {binary_before, BinInfoBefore},  {binary_after, BinInfoAfter}]),
-	maps:fold(
-		fun(_Key, Thread, _) ->
-			[{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
-			?LOG_DEBUG([{event, mining_io_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
-				{binary_before, BinInfoBefore2}])
-			% [{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
-			% garbage_collect(self()),
-			% [{binary, BinInfoAfter2}] = process_info(Thread, [binary]),
-			% ?LOG_DEBUG([{event, mining_io_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
-			% 	{a, length(BinInfoAfter2)}, {binary_before, BinInfoBefore2}, {binary_after, BinInfoAfter2}])
-		end,
-		ok,
-		State#state.io_threads
-	),
-	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
-	{noreply, State};
 
 handle_cast(garbage_collect, State) ->
 	erlang:garbage_collect(self(),
