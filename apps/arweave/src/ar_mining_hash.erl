@@ -13,8 +13,6 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(SAMPLE_PROCESS_INTERVAL, 1000).
-
 -record(state, {
 	hashing_threads				= queue:new(),
   	hashing_thread_monitor_refs = #{},
@@ -57,7 +55,6 @@ init([]) ->
 		#state{},
 		lists:seq(1, Config#config.hashing_threads)
 	),
-	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
 	{ok, State}.
 
 handle_call(Request, _From, State) ->
@@ -66,22 +63,6 @@ handle_call(Request, _From, State) ->
 
 handle_cast({set_cache_limit, CacheLimit}, State) ->
 	{noreply, State#state{ chunk_cache_limit = CacheLimit }};
-
-handle_cast(sample_process, State) ->
-	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
-	?LOG_DEBUG([{event, mining_hash_process_sample},{pid, self()}, {b, length(BinInfoBefore)},
-		{binary_before, BinInfoBefore}]),
-	queue:fold(
-		fun(Thread, _) ->
-			[{binary, BinInfoBefore2}] = process_info(Thread, [binary]),
-			?LOG_DEBUG([{event, mining_hash_thread_sample}, {thread, Thread}, {b, length(BinInfoBefore2)},
-				{binary_before, BinInfoBefore2}])
-		end,
-		ok,
-		State#state.hashing_threads
-	),
-	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, ?MODULE, sample_process),
-	{noreply, State};
 
 handle_cast({compute, HashType, Worker, Candidate},
 		#state{ hashing_threads = Threads } = State) ->
@@ -146,7 +127,6 @@ handle_hashing_thread_down(Ref, Reason,
 	Threads2 = queue:delete(Thread, Threads),
 	start_hashing_thread(State#state{ hashing_threads = Threads2,
 			hashing_thread_monitor_refs = Refs2 }).
-
 
 hashing_thread() ->
 	receive
