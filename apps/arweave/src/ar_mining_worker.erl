@@ -115,24 +115,11 @@ init(Partition) ->
 	gen_server:cast(self(), handle_task),
 	gen_server:cast(self(), maybe_warn_about_lag),
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], 0),
-	% ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, self(), sample_process),
 	{ok, #state{ name = Name, partition_number = Partition }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
-
-handle_cast(sample_process, State) ->
-	[{binary, BinInfoBefore}] = process_info(self(), [binary]),
-	?LOG_DEBUG([{event, mining_worker_process_sample}, {worker, State#state.name}, {pid, self()}, {b, length(BinInfoBefore)},
-		{binary_before, BinInfoBefore}]),
-	% [{binary, BinInfoBefore}] = process_info(self(), [binary]),
-	% garbage_collect(self()),
-	% [{binary, BinInfoAfter}] = process_info(self(), [binary]),
-	% ?LOG_DEBUG([{event, mining_worker_process_sample}, {worker, State#state.name}, {pid, self()}, {b, length(BinInfoBefore)},
-	% 	{a, length(BinInfoAfter)}, {binary_before, BinInfoBefore}, {binary_after, BinInfoAfter}]),
-	ar_util:cast_after(?SAMPLE_PROCESS_INTERVAL, self(), sample_process),
-	{noreply, State};
 
 handle_cast({set_difficulty, Diff}, State) ->
 	{noreply, State#state{ diff = Diff }};

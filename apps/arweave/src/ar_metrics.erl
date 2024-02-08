@@ -441,6 +441,9 @@ register() ->
 					"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
 					"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
 
+	%% --------------------------------------------------------------------------------------------
+	%% Debug-only metrics
+	%% --------------------------------------------------------------------------------------------
 	prometheus_counter:new([{name, process_functions},
 			{labels, [process]},
 			{help, "Sampling active functions. The 'process' label is a fully qualified "
@@ -454,7 +457,10 @@ register() ->
 			{labels, [type]},
 			{help, "Average scheduler utilization. `type` maps to the sched_type as defined here: "
 				"https://www.erlang.org/doc/man/scheduler#type-sched_util_result. "
-				"Only set when debug=true."}]).
+				"Only set when debug=true."}]),
+	prometheus_gauge:new([{name, allocator},
+			{labels, [type, instance, section, metric]},
+			{help, "Erlang VM memory allocator metrics. Only set when debug=true."}]).
 
 
 %% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total
