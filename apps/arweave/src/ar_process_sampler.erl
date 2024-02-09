@@ -183,14 +183,14 @@ log_binary_alloc_instances([Instance | _Rest]) ->
 log_binary_alloc_carrier(Id, Carrier) ->
 	{CarrierType, [
 		{blocks, Blocks},
-		{carriers, CarrierCount, _, _},
+		{carriers, _, CarrierCount, _},
 		_MsegCount, _SysCount,
-		{carriers_size, CarrierSize, _, _},
+		{carriers_size, _, CarrierSize, _},
 		_MsegSize, _SysSize
 	]} = Carrier,
 
 	case Blocks of
-		[{binary_alloc, [{count, BlockCount, _, _}, {size, BlockSize, _, _}]}] ->
+		[{binary_alloc, [{count, _, BlockCount, _}, {size, _, BlockSize, _}]}] ->
 			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_count],
 				BlockCount),
 			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_size],
