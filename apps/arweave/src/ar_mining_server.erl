@@ -24,7 +24,7 @@
 	active_sessions				= sets:new(),
 	diff						= infinity,
 	chunk_cache_limit 			= 0,
-	vdf_queue_limit				= 0,
+	gc_step_limit				= 0,
 	vdf_steps_seen				= 0,
 	merkle_rebase_threshold		= infinity
 }).
@@ -165,13 +165,13 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 
 	State3 = maybe_update_sessions(SessionKey, State2),
 	
-	case sets:is_element(SessionKey, State3#state.active_sessions) of
+	State4 = case sets:is_element(SessionKey, State3#state.active_sessions) of
 		false ->
 			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}, {reason, stale_session},
 				{step_number, StepNumber},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 				{active_sessions, encode_active_sessions(State#state.active_sessions)}]),
-			ok;
+			State3;
 		true ->
 			{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 			Candidate = #mining_candidate{
@@ -184,16 +184,29 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				partition_upper_bound = PartitionUpperBound
 			},
 			distribute_output(Candidate, State3),
-			check_garbage_collection(State3),
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
 				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
 				{start_interval_number, StartIntervalNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+			check_garbage_collection(State3)
 	end,
-	{noreply, State3};
+	{noreply, State4};
 
 handle_info({event, nonce_limiter, Message}, State) ->
 	?LOG_DEBUG([{event, mining_debug_skipping_nonce_limiter}, {message, Message}]),
+	{noreply, State};
+
+handle_info({garbage_collect, StartTime, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > 100 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, ar_mining_server}, {pid, self()},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
 	{noreply, State};
 
 handle_info(Message, State) ->
@@ -309,7 +322,7 @@ update_cache_limits(State) ->
 						[IdealCacheLimit]);
 				false -> ok
 			end,
-			State#state{ chunk_cache_limit = NewCacheLimit }
+			State#state{ chunk_cache_limit = NewCacheLimit, gc_step_limit = 2 * VDFQueueLimit }
 	end.
 
 distribute_output(Candidate, State) ->
@@ -339,29 +352,22 @@ check_garbage_collection(State) ->
 	%% memory - which in turn can cause memory to be exhausted.
 	%% 
 	%% To address this the mining server will force a garbage collection on all mining processes
-	%% every time we process a few VDF step. The exact number of VDF steps is determined by
+	%% every time we process a few VDF steps. The exact number of VDF steps is determined by
 	%% the chunk cache size limit in order to roughly align garbage collection with when we
-	%% expect all references to a recall range's chunks to be evicted from teh cache.
+	%% expect all references to a recall range's chunks to be evicted from the cache.
 	VDFStepsSeen = State#state.vdf_steps_seen + 1,
-	VDFStepsSeen2 = case VDFStepsSeen > State#state.chunk_cache_limit of
-		true   ->
-			StartTime = erlang:monotonic_time(),
-
+	VDFStepsSeen2 = case VDFStepsSeen > State#state.gc_step_limit of
+		true ->
+			?LOG_DEBUG([{event, mining_debug_garbage_collect_start}]),
+			ar_mining_io:garbage_collect(),
+			ar_mining_hash:garbage_collect(),
+			erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
 			maps:foreach(
 				fun(_Partition, Worker) ->
 					ar_mining_worker:garbage_collect(Worker)
 				end,
 				State#state.workers
 			),
-			ar_mining_io:garbage_collect(),
-			ar_mining_hash:garbage_collect(),
-			erlang:garbage_collect(self()),
-
-			EndTime = erlang:monotonic_time(),
-			ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-			?LOG_DEBUG([
-				{event, mining_debug_garbage_collect}, {process, ar_mining_server}, {pid, self()},
-				{vdf_steps_seen, VDFStepsSeen}, {gc_time, ElapsedTime}]),
 			0;
 		false ->
 			VDFStepsSeen

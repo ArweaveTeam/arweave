@@ -71,24 +71,34 @@ handle_cast({compute, HashType, Worker, Candidate},
 	{noreply, State#state{ hashing_threads = Threads2 }};
 
 handle_cast(garbage_collect, State) ->
-	StartTime = erlang:monotonic_time(),
-	erlang:garbage_collect(self()),
+	erlang:garbage_collect(self(),
+		[{async, {ar_mining_hash, self(), erlang:monotonic_time()}}]),
 	queue:fold(
 		fun(Thread, _) ->
-			erlang:garbage_collect(Thread)
+			erlang:garbage_collect(Thread,
+				[{async, {ar_mining_hash_worker, Thread, erlang:monotonic_time()}}])
 		end,
 		ok,
 		State#state.hashing_threads
 	),
-	EndTime = erlang:monotonic_time(),
-	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-	?LOG_DEBUG([{event, mining_debug_garbage_collect}, {process, ar_mining_hash}, 
-		{gc_time, ElapsedTime}]),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({garbage_collect, {Name, Pid, StartTime}, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > 100 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, Name}, {pid, Pid},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
+	{noreply, State};
 
 handle_info({'DOWN', Ref, process, _, Reason},
 		#state{ hashing_thread_monitor_refs = HashingThreadRefs } = State) ->

@@ -193,17 +193,25 @@ handle_cast(maybe_warn_about_lag, State) ->
 	{noreply, State};
 
 handle_cast(garbage_collect, State) ->
-	StartTime = erlang:monotonic_time(),
-	erlang:garbage_collect(self()),
-	EndTime = erlang:monotonic_time(),
-	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-	?LOG_DEBUG([{event, mining_debug_garbage_collect}, {process, State#state.name}, {pid, self()},
-		{gc_time, ElapsedTime}]),
+	erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({garbage_collect, StartTime, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > 100 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, State#state.name}, {pid, self()},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
+	{noreply, State};
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),

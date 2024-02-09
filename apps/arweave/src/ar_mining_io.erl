@@ -105,24 +105,34 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast(garbage_collect, State) ->
-	StartTime = erlang:monotonic_time(),
-	erlang:garbage_collect(self()),
+	erlang:garbage_collect(self(),
+		[{async, {ar_mining_io, self(), erlang:monotonic_time()}}]),
 	maps:fold(
 		fun(_Key, Thread, _) ->
-			erlang:garbage_collect(Thread)
+			erlang:garbage_collect(Thread,
+				[{async, {ar_mining_io_worker, Thread, erlang:monotonic_time()}}])
 		end,
 		ok,
 		State#state.io_threads
 	),
-	EndTime = erlang:monotonic_time(),
-	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-	?LOG_DEBUG([{event, mining_debug_garbage_collect}, {process, ar_mining_io}, {pid, self()},
-		{gc_time, ElapsedTime}]),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({garbage_collect, {Name, Pid, StartTime}, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > 100 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, Name}, {pid, Pid},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
+	{noreply, State};
 
 handle_info({'DOWN', Ref, process, _, Reason},
 		#state{ io_thread_monitor_refs = IOThreadRefs } = State) ->
