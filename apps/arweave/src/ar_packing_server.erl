@@ -55,7 +55,7 @@ pack(Packing, ChunkOffset, TXRoot, Chunk) ->
 %% {error, invalid_packed_size}, {error, invalid_chunk_size}, or {error, invalid_padding}.
 unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 	[{_, RandomXStateRef}] = ets:lookup(?MODULE, randomx_packing_state),
-	record_packing_request(unpack, Packing, unpacked, get_caller()),
+	record_packing_request(unpack, unpacked, Packing, get_caller()),
 	case unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, external) of
 		{ok, Unpacked, _} ->
 			{ok, Unpacked};
@@ -166,7 +166,7 @@ handle_cast({unpack_request, From, Ref, Args}, State) ->
 	{Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
 	{{value, Worker}, Workers2} = queue:out(Workers),
 	increment_buffer_size(),
-	record_packing_request(unpack, Packing, unpack, unpack_request),
+	record_packing_request(unpack, unpacked, Packing, unpack_request),
 	Worker ! {unpack, Ref, From, Args},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 handle_cast({repack_request, _, _, _}, #state{ num_workers = 0 } = State) ->
@@ -182,7 +182,7 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 			{noreply, State};
 		{_, unpacked} ->
 			increment_buffer_size(),
-			record_packing_request(pack, RequestedPacking, unpack, repack_request),
+			record_packing_request(pack, RequestedPacking, unpacked, repack_request),
 			Worker ! {pack, Ref, From, {RequestedPacking, Chunk, AbsoluteOffset, TXRoot,
 					ChunkSize}},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
@@ -528,16 +528,20 @@ calling_function([_, {_, _, _, _}|[{Module, Function, Arity, _}|_]]) ->
 calling_function(_) ->
     "unknown".
 
-record_packing_request(Type, RequestedPacking, StoredPacking, From) ->
-	Type2 = case RequestedPacking == StoredPacking of
-		true ->
-			list_to_atom(atom_to_list(Type) ++ "_noop");
-		_ ->
-			Type
-	end,
+%% @doc log actual packings/unpackings (where the StoredPacking does not match the RequestedPacking)
+record_packing_request(_Type, RequestedPacking, StoredPacking, _From)
+  		when RequestedPacking == StoredPacking ->
+	ok;
+record_packing_request(unpack, _RequestedPacking, StoredPacking, From) ->
+	%% When unpacking we care about StoredPacking (i.e. what we're unpacking from)
 	prometheus_counter:inc(
 		packing_requests,
-		[Type2, packing_atom(RequestedPacking), From]).
+		[unpack, packing_atom(StoredPacking), From]);
+record_packing_request(Type, RequestedPacking, _StoredPacking, From) ->
+	%% Type is either `pack` or `unpack` in both cases we record RequestedPacking.
+	prometheus_counter:inc(
+		packing_requests,
+		[Type, packing_atom(RequestedPacking), From]).
 
 %%%===================================================================
 %%% Tests.
