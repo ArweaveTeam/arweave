@@ -41,7 +41,6 @@ bench_read(Args) ->
 	ar:console("'~s'~n~n", [?FILE_FORMAT]),
 
 	StopTime = erlang:monotonic_time() + erlang:convert_time_unit(Duration, second, native),
-	File = file:open(?OUTPUT_FILENAME, [write, append]),
 
 	Results = ar_util:pmap(
 		fun(StorageModule) ->

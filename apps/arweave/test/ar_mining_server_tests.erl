@@ -41,20 +41,20 @@ cleanup_one(_) ->
 %% ------------------------------------------------------------------------------------------------
 %% Test Registration
 %% ------------------------------------------------------------------------------------------------
-% chunk_cache_size_test_() ->
-% 	{setup, fun setup_all/0, fun cleanup_all/1,
-% 		{foreach, fun setup_one/0, fun cleanup_one/1,
-% 		[
-% 			{timeout, 30, fun test_h2_solution_chunk1_first/0},
-% 			{timeout, 30, fun test_h2_solution_chunk2_first/0},
-% 			{timeout, 30, fun test_h1_solution_h2_synced_chunk1_first/0},
-% 			{timeout, 30, fun test_h1_solution_h2_synced_chunk2_first/0},
-% 			{timeout, 30, fun test_h1_solution_h2_unsynced/0},
-% 			{timeout, 30, fun test_no_solution_then_h2_solution/0},
-% 			{timeout, 30, fun test_no_solution_then_h1_solution_h2_synced/0},
-% 			{timeout, 30, fun test_no_solution_then_h1_solution_h2_unsynced/0}
-% 		]}
-%     }.
+chunk_cache_size_test_() ->
+	{setup, fun setup_all/0, fun cleanup_all/1,
+		{foreach, fun setup_one/0, fun cleanup_one/1,
+		[
+			{timeout, 30, fun test_h2_solution_chunk1_first/0},
+			{timeout, 30, fun test_h2_solution_chunk2_first/0},
+			{timeout, 30, fun test_h1_solution_h2_synced_chunk1_first/0},
+			{timeout, 30, fun test_h1_solution_h2_synced_chunk2_first/0},
+			{timeout, 30, fun test_h1_solution_h2_unsynced/0},
+			{timeout, 30, fun test_no_solution_then_h2_solution/0},
+			{timeout, 30, fun test_no_solution_then_h1_solution_h2_synced/0},
+			{timeout, 30, fun test_no_solution_then_h1_solution_h2_unsynced/0}
+		]}
+    }.
 
 %% ------------------------------------------------------------------------------------------------
 %% chunk_cache_size_test_

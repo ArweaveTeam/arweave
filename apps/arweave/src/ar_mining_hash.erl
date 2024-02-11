@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, compute_h0/2, compute_h1/2, compute_h2/2,
-		set_cache_limit/1, garbage_collect/0]).
+		garbage_collect/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -15,9 +15,7 @@
 
 -record(state, {
 	hashing_threads				= queue:new(),
-  	hashing_thread_monitor_refs = #{},
-	chunks_seen = 0,
-	chunk_cache_limit = infinity
+  	hashing_thread_monitor_refs = #{}
 }).
 
 %%%===================================================================
@@ -36,9 +34,6 @@ compute_h1(Worker, Candidate) ->
 
 compute_h2(Worker, Candidate) ->
 	gen_server:cast(?MODULE, {compute, h2, Worker, Candidate}).
-
-set_cache_limit(CacheLimit) ->
-	gen_server:cast(?MODULE, {set_cache_limit, CacheLimit}).
 
 garbage_collect() ->
 	gen_server:cast(?MODULE, garbage_collect).
@@ -60,9 +55,6 @@ init([]) ->
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
-
-handle_cast({set_cache_limit, CacheLimit}, State) ->
-	{noreply, State#state{ chunk_cache_limit = CacheLimit }};
 
 handle_cast({compute, HashType, Worker, Candidate},
 		#state{ hashing_threads = Threads } = State) ->
