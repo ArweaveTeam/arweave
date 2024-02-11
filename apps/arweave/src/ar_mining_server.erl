@@ -24,8 +24,7 @@
 	active_sessions				= sets:new(),
 	diff						= infinity,
 	chunk_cache_limit 			= 0,
-	gc_step_limit				= 0,
-	vdf_steps_seen				= 0,
+	gc_frequency_ms				= undefined,
 	merkle_rebase_threshold		= infinity
 }).
 
@@ -148,6 +147,30 @@ handle_cast({post_solution, Solution}, State) ->
 	post_solution(Solution, State),
 	{noreply, State};
 
+handle_cast(garbage_collect, State) ->
+	%% Reading recall ranges from disk causes a large amount of binary data to be allocated and
+	%% references to that data is spread among all the different mining processes. Because of this
+	%% it can take the default garbage collection to clean up all references and deallocate the
+	%% memory - which in turn can cause memory to be exhausted.
+	%% 
+	%% To address this the mining server will force a garbage collection on all mining processes
+	%% every time we process a few VDF steps. The exact number of VDF steps is determined by
+	%% the chunk cache size limit in order to roughly align garbage collection with when we
+	%% expect all references to a recall range's chunks to be evicted from the cache.
+	?LOG_DEBUG([{event, mining_debug_garbage_collect_start}]),
+	ar_mining_io:garbage_collect(),
+	ar_mining_hash:garbage_collect(),
+	erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
+	maps:foreach(
+		fun(_Partition, Worker) ->
+			ar_mining_worker:garbage_collect(Worker)
+		end,
+		State#state.workers
+	),
+	ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, garbage_collect),
+	{noreply, State};
+
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -193,8 +216,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
 				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
 				{start_interval_number, StartIntervalNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
-			check_garbage_collection(State3)
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
 	end,
 	{noreply, State4};
 
@@ -335,7 +357,19 @@ update_cache_limits(State) ->
 						[IdealCacheLimit]);
 				false -> ok
 			end,
-			State#state{ chunk_cache_limit = NewCacheLimit, gc_step_limit = 2 * VDFQueueLimit }
+			GarbageCollectionFrequency = 2 * VDFQueueLimit * 1000,
+			case State#state.gc_frequency_ms == undefined of
+				true ->
+					%% This is the first time setting the garbage collection frequency, so kick
+					%% off the periodic call.
+					ar_util:cast_after(GarbageCollectionFrequency, ?MODULE, garbage_collect);
+				false ->
+					ok
+			end,
+			State#state{
+				chunk_cache_limit = NewCacheLimit,
+				gc_frequency_ms = GarbageCollectionFrequency
+			}
 	end.
 
 distribute_output(Candidate, State) ->
@@ -357,35 +391,6 @@ distribute_output([{Partition, MiningAddress} | Partitions], Candidate, State) -
 				})
 	end,
 	distribute_output(Partitions, Candidate, State).
-
-check_garbage_collection(State) ->
-	%% Reading recall ranges from disk causes a large amount of binary data to be allocated and
-	%% references to that data is spread among all the different mining processes. Because of this
-	%% it can take the default garbage collection to clean up all references and deallocate the
-	%% memory - which in turn can cause memory to be exhausted.
-	%% 
-	%% To address this the mining server will force a garbage collection on all mining processes
-	%% every time we process a few VDF steps. The exact number of VDF steps is determined by
-	%% the chunk cache size limit in order to roughly align garbage collection with when we
-	%% expect all references to a recall range's chunks to be evicted from the cache.
-	VDFStepsSeen = State#state.vdf_steps_seen + 1,
-	VDFStepsSeen2 = case VDFStepsSeen > State#state.gc_step_limit of
-		true ->
-			?LOG_DEBUG([{event, mining_debug_garbage_collect_start}]),
-			ar_mining_io:garbage_collect(),
-			ar_mining_hash:garbage_collect(),
-			erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
-			maps:foreach(
-				fun(_Partition, Worker) ->
-					ar_mining_worker:garbage_collect(Worker)
-				end,
-				State#state.workers
-			),
-			0;
-		false ->
-			VDFStepsSeen
-	end,
-	State#state{ vdf_steps_seen = VDFStepsSeen2 }.
 
 get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
