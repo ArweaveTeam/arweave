@@ -29,7 +29,6 @@
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
 -define(LAG_CHECK_FREQUENCY_MS, 5000).
--define(SAMPLE_PROCESS_INTERVAL, 1000).
 
 %%%===================================================================
 %%% Public interface.
@@ -334,7 +333,8 @@ handle_task({computed_h0, Candidate}, State) ->
 
 handle_task({computed_h1, Candidate}, State) ->
 	#state{ diff = Diff } = State,
-	#mining_candidate{ h1 = H1, chunk1 = Chunk1, partial_diff = PartialDiff } = Candidate,
+	#mining_candidate{ h1 = H1, chunk1 = Chunk1, session_key = SessionKey, 
+		partial_diff = PartialDiff } = Candidate,
 	case passes_diff_check(H1, Diff, PartialDiff) of
 		true ->
 			?LOG_DEBUG([{event, mining_debug_found_h1_solution}, {worker, State#state.name},
