@@ -147,7 +147,7 @@ handle_cast({post_solution, Solution}, State) ->
 	post_solution(Solution, State),
 	{noreply, State};
 
-handle_cast(garbage_collect, State) ->
+handle_cast(manual_garbage_collect, State) ->
 	%% Reading recall ranges from disk causes a large amount of binary data to be allocated and
 	%% references to that data is spread among all the different mining processes. Because of this
 	%% it can take the default garbage collection to clean up all references and deallocate the
@@ -167,7 +167,7 @@ handle_cast(garbage_collect, State) ->
 		end,
 		State#state.workers
 	),
-	ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, garbage_collect),
+	ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, manual_garbage_collect),
 	{noreply, State};
 
 
@@ -194,13 +194,12 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 
 	State3 = maybe_update_sessions(SessionKey, State2),
 	
-	State4 = case sets:is_element(SessionKey, State3#state.active_sessions) of
+	case sets:is_element(SessionKey, State3#state.active_sessions) of
 		false ->
 			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}, {reason, stale_session},
 				{step_number, StepNumber},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-				{active_sessions, encode_sessions(State#state.active_sessions)}]),
-			State3;
+				{active_sessions, encode_sessions(State#state.active_sessions)}]);
 		true ->
 			{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 			Candidate = #mining_candidate{
@@ -218,7 +217,7 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				{start_interval_number, StartIntervalNumber},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
 	end,
-	{noreply, State4};
+	{noreply, State3};
 
 handle_info({event, nonce_limiter, Message}, State) ->
 	?LOG_DEBUG([{event, mining_debug_skipping_nonce_limiter}, {message, Message}]),
@@ -362,9 +361,8 @@ update_cache_limits(State) ->
 				true ->
 					%% This is the first time setting the garbage collection frequency, so kick
 					%% off the periodic call.
-					ar_util:cast_after(GarbageCollectionFrequency, ?MODULE, garbage_collect);
-				false ->
-					ok
+					ar_util:cast_after(GarbageCollectionFrequency, ?MODULE, manual_garbage_collect);
+				false -> ok
 			end,
 			State#state{
 				chunk_cache_limit = NewCacheLimit,
