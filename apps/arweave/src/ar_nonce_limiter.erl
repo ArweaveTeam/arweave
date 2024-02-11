@@ -1094,7 +1094,7 @@ apply_external_update2(Update, State) ->
 %% We truncate Session.steps such the previously processed steps are not sent to
 %% send_events_for_external_update.
 apply_external_update3(State, SessionKey, Session, Steps) ->
-	#state{ last_external_update = {Peer, _}, current_session_key = CurrentSessionKey } = State,
+	#state{ last_external_update = {Peer, _} } = State,
 
 	?LOG_DEBUG([{event, new_vdf_step}, {source, apply_external_vdf},
 		{vdf_server, ar_util:format_peer(Peer)},
@@ -1102,21 +1102,9 @@ apply_external_update3(State, SessionKey, Session, Steps) ->
 		{step_number, Session#vdf_session.step_number},
 		{length, length(Steps)}]),
 
-	{_, SessionInterval, _} = SessionKey,
-	CurrentSessionInterval = case CurrentSessionKey of
-		{_, Interval, _} -> Interval;
-		_ -> -1
-	end,
-	State2 = case SessionInterval > CurrentSessionInterval of
-		true ->
-			set_current_session(State, SessionKey);
-		false ->
-			State
-	end,
-
-	State3 = cache_session(State2, SessionKey, Session),
+	State2 = cache_session(State, SessionKey, Session),
 	send_events_for_external_update(SessionKey, Session#vdf_session{ steps = Steps }),
-	State3.
+	State2.
 
 %% @doc Returns a sub-range of steps out of a larger list of steps. This is
 %% primarily used to manage "overflow" steps.

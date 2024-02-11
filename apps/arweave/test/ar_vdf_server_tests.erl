@@ -7,16 +7,20 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
 
 -import(ar_test_node, [stop/0, assert_wait_until_height/2, post_block/2, send_new_block/2]).
+
+%% we have to wait to let the ar_events get processed whenever we apply a VDF step
+-define(WAIT_TIME, 1000).
 
 %% -------------------------------------------------------------------------------------------------
 %% Test Fixtures
 %% -------------------------------------------------------------------------------------------------
 
 setup() ->
-	ets:new(?MODULE, [named_table, set, public]),
+	ets:new(computed_output, [named_table, set, public]),
 	{ok, Config} = application:get_env(arweave, config),
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
     {Config, PeerConfig}.
@@ -24,7 +28,7 @@ setup() ->
 cleanup({Config, PeerConfig}) ->
 	application:set_env(arweave, config, Config),
 	ar_test_node:remote_call(peer1, application, set_env, [arweave, config, PeerConfig]),
-	ets:delete(?MODULE).
+	ets:delete(computed_output).
 
 setup_external_update() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -36,8 +40,10 @@ setup_external_update() ->
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_server_trusted_peers = [ 
 			ar_util:format_peer(vdf_server_1()),
-			ar_util:format_peer(vdf_server_2()) ]}),
-	ets:new(?MODULE, [named_table, ordered_set, public]),
+			ar_util:format_peer(vdf_server_2()) ],
+			mine = true}),
+	ets:new(computed_output, [named_table, ordered_set, public]),
+	ets:new(add_task, [named_table, bag, public]),
 	Pid = spawn(
 		fun() ->
 			ok = ar_events:subscribe(nonce_limiter),
@@ -51,7 +57,8 @@ setup_external_update() ->
 cleanup_external_update({Pid, Config}) ->
 	exit(Pid, kill),
 	ok = application:set_env(arweave, config, Config),
-	ets:delete(?MODULE).
+	ets:delete(add_task),
+	ets:delete(computed_output).
 
 %% -------------------------------------------------------------------------------------------------
 %% Test Registration
@@ -106,12 +113,18 @@ external_update_test_() ->
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 		[
-			{timeout, 120, fun test_session_overlap/0},
-			{timeout, 120, fun test_client_ahead/0},
-			{timeout, 120, fun test_skip_ahead/0},
-			{timeout, 120, fun test_2_servers_switching/0},
-			{timeout, 120, fun test_backtrack/0},
-			{timeout, 120, fun test_2_servers_backtrack/0}
+			ar_test_node:test_with_mocked_functions([mock_add_task()],
+				fun test_session_overlap/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task()],
+				fun test_client_ahead/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task()],
+				fun test_skip_ahead/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task()],
+				fun test_2_servers_switching/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task()],
+				fun test_backtrack/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task()],
+				fun test_2_servers_backtrack/0, 120)
 		]
     }.
 
@@ -122,6 +135,16 @@ serialize_test_() ->
 		{timeout, 120, fun test_serialize_response/0},
 		{timeout, 120, fun test_serialize_response_compatibility/0}
 	].
+
+mining_session_test_() ->
+    {foreach,
+		fun setup_external_update/0,
+     	fun cleanup_external_update/1,
+	[
+		ar_test_node:test_with_mocked_functions([mock_add_task()],
+			fun test_mining_session/0, 120)
+	]
+    }.
 
 %% -------------------------------------------------------------------------------------------------
 %% Tests
@@ -168,9 +191,9 @@ test_vdf_server_push_fast_block() ->
 	Seed1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
 	StepNumber1 = B1#block.nonce_limiter_info#nonce_limiter_info.global_step_number,
 
-	[{Seed0, _, LatestStepNumber0}] = ets:lookup(?MODULE, Seed0),
-	[{Seed1, FirstStepNumber1, _}] = ets:lookup(?MODULE, Seed1),
-	?assertEqual(2, ets:info(?MODULE, size), "VDF server did not post 2 sessions"),
+	[{Seed0, _, LatestStepNumber0}] = ets:lookup(computed_output, Seed0),
+	[{Seed1, FirstStepNumber1, _}] = ets:lookup(computed_output, Seed1),
+	?assertEqual(2, ets:info(computed_output, size), "VDF server did not post 2 sessions"),
 	?assertEqual(FirstStepNumber1, LatestStepNumber0+1),
 	?assertEqual(StepNumber1, LatestStepNumber0,
 		"VDF server did not post the full Session0 when starting Session1"),
@@ -214,9 +237,9 @@ test_vdf_server_push_slow_block() ->
 	Seed1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
 	StepNumber1 = B1#block.nonce_limiter_info#nonce_limiter_info.global_step_number,
 
-	[{Seed0, _, LatestStepNumber0}] = ets:lookup(?MODULE, Seed0),
-	[{Seed1, FirstStepNumber1, LatestStepNumber1}] = ets:lookup(?MODULE, Seed1),
-	?assertEqual(2, ets:info(?MODULE, size), "VDF server did not post 2 sessions"),
+	[{Seed0, _, LatestStepNumber0}] = ets:lookup(computed_output, Seed0),
+	[{Seed1, FirstStepNumber1, LatestStepNumber1}] = ets:lookup(computed_output, Seed1),
+	?assertEqual(2, ets:info(computed_output, size), "VDF server did not post 2 sessions"),
 	?assert(LatestStepNumber0 > FirstStepNumber1, "Session0 should be ahead of Session1"),
 	?assert(LatestStepNumber0 > LatestStepNumber1, "Session0 should be ahead of Session1"),
 	%% The new session begins at the reset line in case there is a block
@@ -229,8 +252,8 @@ test_vdf_server_push_slow_block() ->
 	end,
 
 	timer:sleep(3000),
-	[{Seed0, _, NewLatestStepNumber0}] = ets:lookup(?MODULE, Seed0),
-	[{Seed1, _, NewLatestStepNumber1}] = ets:lookup(?MODULE, Seed1),
+	[{Seed0, _, NewLatestStepNumber0}] = ets:lookup(computed_output, Seed0),
+	[{Seed1, _, NewLatestStepNumber1}] = ets:lookup(computed_output, Seed1),
 	?assertEqual(LatestStepNumber0, NewLatestStepNumber0,
 		"Session0 should not have progressed"),
 	?assert(NewLatestStepNumber1 > LatestStepNumber1, "Session1 should have progressed"),
@@ -429,46 +452,39 @@ test_session_overlap() ->
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey1, [], 8, true, SessionKey0),
 		"Partial session1, session not found"),
-	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
 		"Full session1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 9, true, SessionKey0),
 		"Partial session1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 10, true, SessionKey0),
 		"Partial session1, interval2"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 11, true, SessionKey0),
 		"Partial session1, interval2"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 12, true, SessionKey1),
 		"Partial session2, interval2"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = true, step_number = 11 },
 		apply_external_update(SessionKey1, [8, 7, 6, 5], 9, false, SessionKey1),
 		"Full session1, all steps already seen"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [11, 10], 12, false, SessionKey1),
 		"Full session2, some steps already seen"),
-	?assertEqual(SessionKey2, get_current_session_key()),
-	timer:sleep(2000),
+	timer:sleep(?WAIT_TIME),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>, <<"9">>, <<"10">>, <<"11">>, <<"12">>],
 	computed_steps()),
+	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		[10, 10, 10, 10, 10, 20, 20, 20],
 		computed_upper_bounds()).
@@ -482,18 +498,16 @@ test_client_ahead() ->
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
 		"Full session"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 8 },
 		apply_external_update(SessionKey1, [], 7, true, SessionKey0),
 		"Partial session, client ahead"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 8 },
 		apply_external_update(SessionKey1, [6, 5], 7, false, SessionKey0),
 		"Full session, client ahead"),
-	?assertEqual(SessionKey1, get_current_session_key()),
-	timer:sleep(2000),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		[<<"8">>, <<"7">>, <<"6">>, <<"5">>],
 		computed_steps()),
@@ -517,33 +531,28 @@ test_skip_ahead() ->
 		ok,
 		apply_external_update(SessionKey1, [5], 6, false, SessionKey0),
 		"Full session1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = true, step_number = 6 },
 		apply_external_update(SessionKey1, [], 8, true, SessionKey0),
 		"Partial session1, server ahead"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [7, 6, 5], 8, false, SessionKey0),
 		"Full session1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 12, true, SessionKey1),
 		"Partial session2, server ahead"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [8, 7, 6, 5], 9, false, SessionKey0),
 		"Full session1, all steps already seen"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [11, 10], 12, false, SessionKey1),
 		"Full session2, some steps already seen"),
-	?assertEqual(SessionKey2, get_current_session_key()),
-	timer:sleep(2000),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		[<<"6">>, <<"5">>, <<"8">>, <<"7">>, <<"9">>, <<"12">>, <<"11">>, <<"10">>],
 		computed_steps()),
@@ -559,64 +568,53 @@ test_2_servers_switching() ->
 		ok,
 		apply_external_update(SessionKey1, [6, 5], 7, false, SessionKey0, vdf_server_1()),
 		"Full session1 from vdf_server_1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 8, true, SessionKey0, vdf_server_2()),
 		"Partial session1 from vdf_server_2"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 9, true, SessionKey0, vdf_server_2()),
 		"Partial session1 from vdf_server_2"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 11, true, SessionKey1, vdf_server_1()),
 		"Partial session2 from vdf_server_1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [10], 11, false, SessionKey1, vdf_server_1()),
 		"Full session2 from vdf_server_1"),
-	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 10, true, SessionKey0, vdf_server_2()),
 		"Partial session1 from vdf_server_2 (should not change current session)"),
-	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 11, true, SessionKey0, vdf_server_2()),
 		"Partial session1 from vdf_server_2 (should not change current session)"),
-	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 12, true, SessionKey0, vdf_server_2()),
 		"Partial session1 from vdf_server_2 (should not change current session)"),
-	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(
 			SessionKey2, [11, 10], 12, false, SessionKey1, vdf_server_2()),
 		"Full session2 from vdf_server_2"),
-	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 12 },
 		apply_external_update(SessionKey2, [], 12, true, SessionKey1, vdf_server_1()),
 		"Partial (repeat) session2 from vdf_server_1"),
-	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [], 13, true, SessionKey1, vdf_server_1()),
 		"Partial (new) session2 from vdf_server_1"),
-	?assertEqual(SessionKey2, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey2, [], 14, true, SessionKey1, vdf_server_2()),
 		"Partial (new) session2 from vdf_server_2"),
-	?assertEqual(SessionKey2, get_current_session_key()),
-	timer:sleep(2000),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual([
 		<<"7">>, <<"6">>, <<"5">>, <<"8">>, <<"9">>,
 		<<"11">>, <<"10">>, <<"10">>, <<"11">>, <<"12">>,
@@ -638,30 +636,26 @@ test_backtrack() ->
 			9, 8, 7, 6, 5		%% interval 1
 		], 17, false, SessionKey0),
 		"Full session1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 18, true, SessionKey0),
 		"Partial session1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 15, true, SessionKey1),
 		"Partial session2"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 18 },
 		apply_external_update(
 			SessionKey1, [8, 7, 6, 5], 9, false, SessionKey0),
 		"Backtrack. Send full session1."),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(
 			SessionKey2, [14, 13, 12, 11, 10], 15, false, SessionKey1),
 		"Backtrack. Send full session2"),
-	?assertEqual(SessionKey2, get_current_session_key()),
-	timer:sleep(2000),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual([
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
@@ -683,32 +677,88 @@ test_2_servers_backtrack() ->
 			9, 8, 7, 6, 5		%% interval 1
 		], 17, false, SessionKey0, vdf_server_1()),
 		"Full session1 from vdf_server_1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [], 18, true, SessionKey0, vdf_server_1()),
 		"Partial session1 from vdf_server_1"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey2, [], 15, true, SessionKey1, vdf_server_2()),
 		"Partial session2 from vdf_server_2"),
-	?assertEqual(SessionKey1, get_current_session_key()),
 	?assertEqual(
 		ok,
 		apply_external_update(
 			SessionKey2, [14, 13, 12, 11, 10], 15, false, SessionKey1, vdf_server_2()),
 		"Backtrack in session2 from vdf_server_2"),
-	?assertEqual(SessionKey2, get_current_session_key()),
-	timer:sleep(2000),
+	timer:sleep(?WAIT_TIME),
 	?assertEqual([
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
         <<"5">>,<<"18">>,<<"15">>
 	], computed_steps()),
+	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		[20, 20, 20, 20, 20, 20, 20, 20, 10, 10, 10, 10, 10, 20, 30],
 		computed_upper_bounds()).
+
+test_mining_session() -> 
+	SessionKey0 = get_current_session_key(),
+	SessionKey1 = {<<"session1">>, 1, 1},
+	SessionKey2 = {<<"session2">>, 2, 1},
+	SessionKey3 = {<<"session3">>, 3, 1},
+	ar_test_node:mine(),
+	?assertEqual(
+		ok,
+		apply_external_update(SessionKey0, [], 2, true, undefined),
+		"Partial session0, should mine"),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([2], mined_steps()),
+	?assertEqual(
+		ok,
+		apply_external_update(SessionKey0, [3], 4, false, undefined),
+		"Full session0, should mine"),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([4, 3], mined_steps()),
+	?assertEqual(
+		#nonce_limiter_update_response{ step_number = 4 },
+		apply_external_update(SessionKey0, [], 4, true, undefined),
+		"Repeat step, should not mine"),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([], mined_steps()),
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = false },
+		apply_external_update(SessionKey1, [], 6, true, SessionKey0),
+		"Partial session1, should not mine"),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([], mined_steps()),
+	?assertEqual(
+		ok,
+		apply_external_update(SessionKey1, [5], 6, false, SessionKey0),
+		"Full session1, should mine"),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(sets:from_list([SessionKey0, SessionKey1]), ar_mining_server:active_sessions()),
+	?assertEqual([6, 5], mined_steps()),
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = false },
+		apply_external_update(SessionKey3, [], 16, true, SessionKey2),
+		"Partial session3, should not mine"),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(sets:from_list([SessionKey0, SessionKey1]), ar_mining_server:active_sessions()),
+	?assertEqual([], mined_steps()),
+	?assertEqual(
+		#nonce_limiter_update_response{ session_found = false },
+		apply_external_update(SessionKey3, [15], 16, true, SessionKey2),
+		"Full session3, should not mine"),
+	timer:sleep(?WAIT_TIME),
+	?assertEqual(sets:from_list([SessionKey0, SessionKey1]), ar_mining_server:active_sessions()),
+	?assertEqual([], mined_steps()),
+	%% Current session is only updated when applying a new tip block, not when applying a VDF step
+	%% from a VDF server.
+	?assertEqual(SessionKey0, get_current_session_key()).
 
 %%
 %% serialize_test_
@@ -863,12 +913,12 @@ handle_update(Update, Req, State) ->
 	%% the head of checkpoints should match the head of the session's steps
 	?assertEqual(UpdateOutput, SessionOutput),
 
-	case ets:lookup(?MODULE, Seed) of
+	case ets:lookup(computed_output, Seed) of
 		[{Seed, FirstStepNumber, LatestStepNumber}] ->
 			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
 					"Partial VDF update did not increase by 1"),
 
-			ets:insert(?MODULE, {Seed, FirstStepNumber, StepNumber}),
+			ets:insert(computed_output, {Seed, FirstStepNumber, StepNumber}),
 			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
 		_ ->
 			case IsPartial of
@@ -877,7 +927,7 @@ handle_update(Update, Req, State) ->
 					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
 					{ok, cowboy_req:reply(202, #{}, Bin, Req), State};
 				false ->
-					ets:insert(?MODULE, {Seed, StepNumber, StepNumber}),
+					ets:insert(computed_output, {Seed, StepNumber, StepNumber}),
 					{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
 			end
 	end.
@@ -889,17 +939,23 @@ vdf_server_2() ->
 	{127,0,0,1,2002}.
 
 computed_steps() ->
-    lists:reverse(ets:foldl(fun({_, Step, _}, Acc) -> [Step | Acc] end, [], ?MODULE)).
+    lists:reverse(ets:foldl(fun({_, Step, _}, Acc) -> [Step | Acc] end, [], computed_output)).
 
 computed_upper_bounds() ->
-    lists:reverse(ets:foldl(fun({_, _, UpperBound}, Acc) -> [UpperBound | Acc] end, [], ?MODULE)).
+    lists:reverse(ets:foldl(fun({_, _, UpperBound}, Acc) -> [UpperBound | Acc] end, [], computed_output)).
+
+mined_steps() ->
+	Steps = lists:reverse(ets:foldl(
+		fun({_Worker, _Task, Step}, Acc) -> [Step | Acc] end, [], add_task)),
+	ets:delete_all_objects(add_task),
+	Steps.
 
 computed_output() ->
 	receive
 		{event, nonce_limiter, {computed_output, Args}} ->
 			{_SessionKey, _StepNumber, Output, UpperBound} = Args,
-			Key = ets:info(?MODULE, size) + 1, % Unique key based on current size, ensures ordering
-    		ets:insert(?MODULE, {Key, Output, UpperBound}),
+			Key = ets:info(computed_output, size) + 1, % Unique key based on current size, ensures ordering
+    		ets:insert(computed_output, {Key, Output, UpperBound}),
 			computed_output()
 	end.
 
@@ -929,3 +985,11 @@ apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSess
 get_current_session_key() ->
 	{CurrentSessionKey, _} = ar_nonce_limiter:get_current_session(),
 	CurrentSessionKey.
+
+mock_add_task() ->
+	{
+		ar_mining_worker, add_task, 
+		fun(Worker, TaskType, Candidate) -> 
+			ets:insert(add_task, {Worker, TaskType, Candidate#mining_candidate.step_number})
+		end
+	}.
