@@ -276,9 +276,9 @@ validate_clock_sync(Peers) ->
 			erlang:halt()
 	end.
 
-log_peer_clock_diff(Peer, Diff) ->
+log_peer_clock_diff(Peer, Delta) ->
 	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
-	WarningArgs = [ar_util:format_peer(Peer), Diff],
+	WarningArgs = [ar_util:format_peer(Peer), Delta],
 	io:format(Warning, WarningArgs),
 	?LOG_WARNING(Warning, WarningArgs).
 
@@ -402,7 +402,7 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 		{height,				Height},
 		{hash,					B#block.hash},
 		{reward_pool,			B#block.reward_pool},
-		{diff,					B#block.diff},
+		{diff_pair,				ar_difficulty:diff_pair(B)},
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
@@ -541,13 +541,13 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 		end,
 
 	%% Check solution difficulty
-	Diff = get_current_diff(Timestamp),
+	DiffPair = {_PoA1Diff, Diff} = get_current_diff(Timestamp),
 	PassesDiffCheck =
 		case PassesSeedCheck of
 			{false, Reason2} ->
 				{false, Reason2};
 			true ->
-				case binary:decode_unsigned(SolutionH, big) > Diff of
+				case ar_node_utils:solution_passes_diff_check(Solution, DiffPair) of
 					false ->
 						ar_events:send(solution, {partial, #{ source => Source }}),
 						{false, diff};
@@ -560,7 +560,7 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 		not_found ->
 			?LOG_WARNING([{event, mined_block_but_no_mining_key_found}, {node, node()},
 					{mining_address, ar_util:encode(MiningAddress)}]),
-			ar:console("WARNING. Can't find key ~w~n", [ar_util:encode(MiningAddress)]),
+			ar:console("WARNING. Can't find key ~s~n", [ar_util:encode(MiningAddress)]),
 			not_found;
 		Key ->
 			Key
@@ -1538,7 +1538,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		{height,				B#block.height},
 		{hash,					B#block.hash},
 		{reward_pool,			B#block.reward_pool},
-		{diff,					B#block.diff},
+		{diff_pair,				ar_difficulty:diff_pair(B)},
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
@@ -1605,7 +1605,7 @@ record_economic_metrics(B, PrevB) ->
 	end.
 
 record_economic_metrics2(B, PrevB) ->
-	prometheus_gauge:set(network_hashrate, ar_difficulty:get_hash_rate(B#block.diff)),
+	prometheus_gauge:set(network_hashrate, ar_difficulty:get_hash_rate(B)),
 	prometheus_gauge:set(endowment_pool, B#block.reward_pool),
 	Period_200_Years = 200 * 365 * 24 * 60 * 60,
 	Burden = ar_pricing:get_storage_cost(B#block.weave_size, B#block.timestamp,
@@ -1708,15 +1708,15 @@ maybe_reset_miner(State) ->
 	start_mining(State).
 
 start_mining(State) ->
-	Diff = get_current_diff(),
+	DiffPair = get_current_diff(),
 	[{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
 			merkle_rebase_support_threshold),
 	case maps:get(miner_2_6, State) of
 		undefined ->
-			ar_mining_server:start_mining({Diff, MerkleRebaseThreshold}),
+			ar_mining_server:start_mining({DiffPair, MerkleRebaseThreshold}),
 			State#{ miner_2_6 => running };
 		_ ->
-			ar_mining_server:set_difficulty(Diff),
+			ar_mining_server:set_difficulty(DiffPair),
 			ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),
 			State
 	end.
@@ -1731,15 +1731,15 @@ get_current_diff(TS) ->
 			[{{'$1', '$2'},
 				[{'or',
 					{'==', '$1', height},
-					{'==', '$1', diff},
+					{'==', '$1', diff_pair},
 					{'==', '$1', last_retarget},
 					{'==', '$1', timestamp}}], ['$_']}]
 		),
 	Height = proplists:get_value(height, Props),
-	Diff = proplists:get_value(diff, Props),
+	DiffPair = proplists:get_value(diff_pair, Props),
 	LastRetarget = proplists:get_value(last_retarget, Props),
 	PrevTS = proplists:get_value(timestamp, Props),
-	ar_retarget:maybe_retarget(Height + 1, Diff, TS, LastRetarget, PrevTS).
+	ar_retarget:maybe_retarget(Height + 1, DiffPair, TS, LastRetarget, PrevTS).
 
 get_merkle_rebase_threshold(PrevB) ->
 	case PrevB#block.height + 1 == ar_fork:height_2_7() of

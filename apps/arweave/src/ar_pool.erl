@@ -141,7 +141,7 @@ handle_call(Request, _From, State) ->
 handle_cast({cache_jobs, #jobs{ jobs = [] }}, State) ->
 	{noreply, State};
 handle_cast({cache_jobs, Jobs}, State) ->
-	#jobs{ jobs = JobList, partial_diff = Diff,
+	#jobs{ jobs = JobList, partial_diff = PartialDiff,
 			next_seed = NextSeed, seed = Seed,
 			interval_number = IntervalNumber,
 			next_vdf_difficulty = NextVDFDifficulty } = Jobs,
@@ -155,7 +155,7 @@ handle_cast({cache_jobs, Jobs}, State) ->
 				[SessionKey | SessionKeys]
 		end,
 	JobList2 = [{Job#job.output, Job#job.global_step_number,
-			Job#job.partition_upper_bound, Seed, Diff} || Job <- JobList],
+			Job#job.partition_upper_bound, Seed, PartialDiff} || Job <- JobList],
 	PrevJobList = maps:get(SessionKey, State#state.jobs_by_session_key, []),
 	JobList3 = JobList2 ++ PrevJobList,
 	JobsBySessionKey = maps:put(SessionKey, JobList3, State#state.jobs_by_session_key),
@@ -256,33 +256,33 @@ get_jobs(PrevOutput, SessionKeys, JobCache) ->
 			#jobs{};
 		[{NextSeed, Interval, NextVDFDifficulty} = SessionKey | _] ->
 			Jobs = maps:get(SessionKey, JobCache),
-			{Seed, Diff, Jobs2} = collect_jobs(Jobs, PrevOutput, ?GET_JOBS_COUNT),
+			{Seed, PartialDiff, Jobs2} = collect_jobs(Jobs, PrevOutput, ?GET_JOBS_COUNT),
 			Jobs3 = [#job{ output = O, global_step_number = SN,
 					partition_upper_bound = U } || {O, SN, U} <- Jobs2],
-			#jobs{ jobs = Jobs3, seed = Seed, partial_diff = Diff,
+			#jobs{ jobs = Jobs3, seed = Seed, partial_diff = PartialDiff,
 					next_seed = NextSeed,
 					interval_number = Interval, next_vdf_difficulty = NextVDFDifficulty }
 	end.
 
 collect_jobs([], _PrevO, _N) ->
-	{<<>>, 0, []};
+	{<<>>, {0, 0}, []};
 collect_jobs(_Jobs, _PrevO, 0) ->
-	{<<>>, 0, []};
-collect_jobs([{O, _SN, _U, _S, _Diff} | _Jobs], O, _N) ->
-	{<<>>, 0, []};
-collect_jobs([{O, SN, U, S, Diff} | Jobs], PrevO, N) ->
-	{S, Diff, [{O, SN, U} | collect_jobs(Jobs, PrevO, N - 1, Diff)]}.
+	{<<>>, {0, 0}, []};
+collect_jobs([{O, _SN, _U, _S, _PartialDiff} | _Jobs], O, _N) ->
+	{<<>>, {0, 0}, []};
+collect_jobs([{O, SN, U, S, PartialDiff} | Jobs], PrevO, N) ->
+	{S, PartialDiff, [{O, SN, U} | collect_jobs(Jobs, PrevO, N - 1, PartialDiff)]}.
 
-collect_jobs([], _PrevO, _N, _Diff) ->
+collect_jobs([], _PrevO, _N, _PartialDiff) ->
 	[];
-collect_jobs(_Jobs, _PrevO, 0, _Diff) ->
+collect_jobs(_Jobs, _PrevO, 0, _PartialDiff) ->
 	[];
-collect_jobs([{O, _SN, _U, _S, _Diff} | _Jobs], O, _N, _Diff2) ->
+collect_jobs([{O, _SN, _U, _S, _PartialDiff} | _Jobs], O, _N, _PartialDiff2) ->
 	[];
-collect_jobs([{O, SN, U, _S, Diff} | Jobs], PrevO, N, Diff) ->
-	[{O, SN, U} | collect_jobs(Jobs, PrevO, N - 1, Diff)];
-collect_jobs(_Jobs, _PrevO, _N, _Diff) ->
-	%% Diff mismatch.
+collect_jobs([{O, SN, U, _S, PartialDiff} | Jobs], PrevO, N, PartialDiff) ->
+	[{O, SN, U} | collect_jobs(Jobs, PrevO, N - 1, PartialDiff)];
+collect_jobs(_Jobs, _PrevO, _N, _PartialDiff) ->
+	%% PartialDiff mismatch.
 	[].
 
 process_partial_solution(Solution, Ref) ->
@@ -322,18 +322,17 @@ process_partial_solution_field_size(Solution, Ref) ->
 
 process_partial_solution_poa2_size(Solution, Ref) ->
 	#mining_solution{
-		recall_byte2 = RecallByte2,
 		poa2 = #poa{ chunk = C, data_path = DP, tx_path = TP }
 	} = Solution,
-	case RecallByte2 of
-		undefined ->
+	case ar_mining_server:is_one_chunk_solution(Solution) of
+		true ->
 			case {C, DP, TP} of
 				{<<>>, <<>>, <<>>} ->
 					process_partial_solution_partition_number(Solution, Ref);
 				_ ->
 					#partial_solution_response{ status = <<"rejected_bad_poa">> }
 			end;
-		_ ->
+		false ->
 			process_partial_solution_partition_number(Solution, Ref)
 	end.
 
@@ -381,12 +380,11 @@ process_partial_solution_pow(Solution, Ref, H0) ->
 		poa1 = #poa{ chunk = Chunk1 },
 		solution_hash = SolutionH,
 		preimage = Preimage,
-		recall_byte2 = RecallByte2,
 		poa2 = #poa{ chunk = Chunk2 }
 	} = Solution,
 	{H1, Preimage1} = ar_block:compute_h1(H0, Nonce, Chunk1),
 	case H1 == SolutionH andalso Preimage1 == Preimage
-			andalso RecallByte2 == undefined of
+			andalso ar_mining_server:is_one_chunk_solution(Solution) of
 		true ->
 			process_partial_solution_partition_upper_bound(Solution, Ref, H0, H1);
 		false ->
@@ -515,7 +513,7 @@ get_jobs_test() ->
 
 	?assertEqual(#jobs{ next_seed = ns, interval_number = in, next_vdf_difficulty = nvd },
 			get_jobs(o, [{ns, in, nvd}],
-			#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
+						#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
 
 	?assertEqual(#jobs{ jobs = [#job{ output = o, global_step_number = gsn,
 							partition_upper_bound = u }],

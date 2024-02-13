@@ -350,7 +350,7 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 			invalid ->
 				invalid;
 			{valid, B3} ->
-				case binary:decode_unsigned(SolutionH, big) > B#block.diff of
+				case ar_node_utils:block_passes_diff_check(B) of
 					true ->
 						{valid, B3};
 					false ->
@@ -518,14 +518,14 @@ pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer) ->
 	end.
 
 pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
-	#block{ hash_preimage = HashPreimage, diff = Diff, nonce_limiter_info = NonceLimiterInfo,
+	#block{ hash_preimage = HashPreimage, nonce_limiter_info = NonceLimiterInfo,
 			partition_number = PartitionNumber, reward_addr = RewardAddr } = B,
 	PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
 	Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
 	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
 	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, RewardAddr),
 	SolutionHash = ar_block:compute_solution_h(H0, HashPreimage),
-	case binary:decode_unsigned(SolutionHash, big) > Diff of
+	case ar_node_utils:block_passes_diff_check(SolutionHash, B) of
 		false ->
 			post_block_reject_warn_and_error_dump(B, check_hash_preimage, Peer),
 			ar_events:send(block, {rejected, invalid_hash_preimage,
@@ -660,7 +660,8 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 			B#block.reward_addr),
 	Chunk1 = (B#block.poa)#poa.chunk,
 	{H1, Preimage1} = ar_block:compute_h1(H0, B#block.nonce, Chunk1),
-	case H1 == B#block.hash andalso binary:decode_unsigned(H1, big) > B#block.diff
+	DiffPair = ar_difficulty:diff_pair(B),
+	case H1 == B#block.hash andalso ar_node_utils:h1_passes_diff_check(H1, DiffPair)
 			andalso Preimage1 == B#block.hash_preimage
 			andalso B#block.recall_byte2 == undefined
 			andalso (B#block.height < ar_fork:height_2_7()
@@ -670,7 +671,7 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 		false ->
 			Chunk2 = (B#block.poa2)#poa.chunk,
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
-			case H2 == B#block.hash andalso binary:decode_unsigned(H2, big) > B#block.diff
+			case H2 == B#block.hash andalso ar_node_utils:h2_passes_diff_check(H2, DiffPair)
 					andalso Preimage2 == B#block.hash_preimage of
 				true ->
 					pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer);

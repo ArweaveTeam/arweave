@@ -16,7 +16,7 @@
 -record(state, {
 	name						= not_set,
 	partition_number			= not_set,
-	diff						= infinity,
+	diff_pair					= not_set,
 	task_queue					= gb_sets:new(),
 	active_sessions				= sets:new(),
 	seeds						= #{},
@@ -42,8 +42,8 @@ start_link(Partition) ->
 name(Partition) ->
 	list_to_atom("ar_mining_worker_" ++ integer_to_list(Partition)).
 
-reset(Worker, Diff) ->
-	gen_server:cast(Worker, {reset, Diff}).
+reset(Worker, DiffPair) ->
+	gen_server:cast(Worker, {reset, DiffPair}).
 
 set_sessions(Worker, ActiveSessions) ->
 	gen_server:cast(Worker, {set_sessions, ActiveSessions}).
@@ -85,8 +85,8 @@ computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
 %% ordering. The previous block is chosen only after the mining solution is found (if
 %% we choose it in advance we may miss a better option arriving in the process).
 %% Also, a mining session may (in practice, almost always will) span several blocks.
-set_difficulty(Worker, Diff) ->
-	gen_server:cast(Worker, {set_difficulty, Diff}).
+set_difficulty(Worker, DiffPair) ->
+	gen_server:cast(Worker, {set_difficulty, DiffPair}).
 
 set_cache_limits(Worker, ChunkCacheLimit, VDFQueueLimit) ->
 	gen_server:cast(Worker, {set_cache_limits, ChunkCacheLimit, VDFQueueLimit}).
@@ -120,15 +120,15 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({set_difficulty, Diff}, State) ->
-	{noreply, State#state{ diff = Diff }};
+handle_cast({set_difficulty, DiffPair}, State) ->
+	{noreply, State#state{ diff_pair = DiffPair }};
 
 handle_cast({set_cache_limits, ChunkCacheLimit, VDFQueueLimit}, State) ->
 	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit, vdf_queue_limit = VDFQueueLimit }};
 
-handle_cast({reset, Diff}, State) ->
+handle_cast({reset, DiffPair}, State) ->
 	State2 = update_sessions(sets:new(), State),
-	{noreply, State2#state{ diff = Diff }};
+	{noreply, State2#state{ diff_pair = DiffPair }};
 
 handle_cast({set_sessions, ActiveSessions}, State) ->
 	{noreply, update_sessions(ActiveSessions, State)};
@@ -332,13 +332,12 @@ handle_task({computed_h0, Candidate}, State) ->
 	
 
 handle_task({computed_h1, Candidate}, State) ->
-	#state{ diff = Diff } = State,
-	#mining_candidate{ h1 = H1, chunk1 = Chunk1, session_key = SessionKey, 
-		partial_diff = PartialDiff } = Candidate,
-	case passes_diff_check(H1, Diff, PartialDiff) of
+	#state{ diff_pair = DiffPair } = State,
+	#mining_candidate{ h1 = H1, chunk1 = Chunk1, session_key = SessionKey } = Candidate,
+	case h1_passes_diff_checks(H1, Candidate, State) of
 		true ->
 			?LOG_INFO([{event, found_h1_solution}, {worker, State#state.name},
-				{h1, ar_util:encode(H1)}, {difficulty, Diff}]),
+				{h1, ar_util:encode(H1)}, {difficulty, DiffPair}]),
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
 			%% necessary below)
@@ -365,7 +364,7 @@ handle_task({computed_h1, Candidate}, State) ->
 						false ->
 							ok;
 						true ->
-							ar_coordination:computed_h1(Candidate, Diff)
+							ar_coordination:computed_h1(Candidate, DiffPair)
 					end,
 					%% Decrement 1 for chunk1:
 					%% do_not_cache indicates chunk2 was not and will not be read or cached
@@ -385,13 +384,12 @@ handle_task({computed_h2, Candidate}, State) ->
 	#mining_candidate{
 		chunk2 = Chunk2, h0 = H0, h2 = H2, mining_address = MiningAddress,
 		nonce = Nonce, partition_number = Partition1, 
-		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer,
-		partial_diff = PartialDiff
+		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
 	} = Candidate,
-	case passes_diff_check(H2, get_difficulty(State, Candidate), PartialDiff) of
+	case h2_passes_diff_checks(H2, Candidate, State) of
 		true ->
 			?LOG_INFO([{event, found_h2_solution}, {worker, State#state.name},
-				{h2, ar_util:encode(H2)}, {difficulty, get_difficulty(State, Candidate)}]),
+				{h2, ar_util:encode(H2)}, {difficulty, get_difficulty(false, State, Candidate)}]),
 			case Peer of
 				not_set ->
 					ar_mining_server:prepare_and_post_solution(Candidate);
@@ -446,16 +444,20 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+h1_passes_diff_checks(H1, Candidate, State) ->
+	passes_diff_checks(H1, true, Candidate, State).
 
-passes_diff_check(H, Diff, not_set) ->
-	binary:decode_unsigned(H, big) > Diff;
-passes_diff_check(H, Diff, PartialDiff) ->
-	Decoded = binary:decode_unsigned(H, big),
-	case Decoded > Diff of
+h2_passes_diff_checks(H2, Candidate, State) ->
+	passes_diff_checks(H2, false, Candidate, State).
+
+passes_diff_checks(SolutionHash, IsPoA1, Candidate, State) ->
+	DiffPair = get_difficulty(IsPoA1, State, Candidate),
+	case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1, DiffPair) of
 		true ->
 			true;
 		false ->
-			case Decoded > PartialDiff of
+			PartialDiff = Candidate#mining_candidate.partial_diff,
+			case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1, PartialDiff) of
 				true ->
 					partial;
 				false ->
@@ -675,10 +677,12 @@ generate_cache_ref(Candidate) ->
 	CacheRef = {Partition1, Partition2, PartitionUpperBound, make_ref()},
 	Candidate#mining_candidate{ cache_ref = CacheRef }.
 
-get_difficulty(State, #mining_candidate{ cm_diff = not_set }) ->
-	State#state.diff;
-get_difficulty(_State, #mining_candidate{ cm_diff = Diff }) ->
-	Diff.
+get_difficulty(true, State, _Candidate) ->
+	State#state.diff_pair;
+get_difficulty(false, State, #mining_candidate{ cm_diff = not_set }) ->
+	State#state.diff_pair;
+get_difficulty(false, _State, #mining_candidate{ cm_diff = DiffPair }) ->
+	DiffPair.
 
 nonce_max() ->
 	max(0, ((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1)).

@@ -6,7 +6,8 @@
 
 -export([start_link/0, start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, 
 		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1, read_poa/3,
-		get_recall_bytes/4, active_sessions/0, encode_sessions/1, add_pool_job/1]).
+		get_recall_bytes/4, active_sessions/0, encode_sessions/1, add_pool_job/1,
+		is_one_chunk_solution/1]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -22,7 +23,7 @@
 	paused 						= true,
 	workers						= #{},
 	active_sessions				= sets:new(),
-	diff						= infinity,
+	diff_pair					= not_set,
 	chunk_cache_limit 			= 0,
 	gc_frequency_ms				= undefined,
 	merkle_rebase_threshold		= infinity,
@@ -50,8 +51,8 @@ compute_h2_for_peer(Candidate) ->
 %% ordering. The previous block is chosen only after the mining solution is found (if
 %% we choose it in advance we may miss a better option arriving in the process).
 %% Also, a mining session may (in practice, almost always will) span several blocks.
-set_difficulty(Diff) ->
-	gen_server:cast(?MODULE, {set_difficulty, Diff}).
+set_difficulty(DiffPair) ->
+	gen_server:cast(?MODULE, {set_difficulty, DiffPair}).
 
 set_merkle_rebase_threshold(Threshold) ->
 	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
@@ -73,6 +74,9 @@ encode_sessions(Sessions) ->
 	lists:map(fun(SessionKey) ->
 		ar_nonce_limiter:encode_session_key(SessionKey)
 	end, sets:to_list(Sessions)).
+
+is_one_chunk_solution(Solution) ->
+	Solution#mining_solution.recall_byte2 == undefined.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -109,18 +113,18 @@ handle_cast(pause, State) ->
 	ar_mining_stats:mining_paused(),
 	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be 
 	%% distributed. Setting diff to infinity ensures that no solutions are found.
-	State2 = set_difficulty(infinity, State),
+	State2 = set_difficulty({infinity, infinity}, State),
 	{noreply, State2#state{ paused = true }};
 
 handle_cast({start_mining, Args}, State) ->
-	{Diff, RebaseThreshold} = Args,
+	{DiffPair, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
-	?LOG_INFO([{event, start_mining}, {difficulty, Diff}, {rebase_threshold, RebaseThreshold}]),
+	?LOG_INFO([{event, start_mining}, {difficulty, DiffPair}, {rebase_threshold, RebaseThreshold}]),
 	ar_mining_stats:start_performance_reports(),
 
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:reset(Worker, Diff)
+			ar_mining_worker:reset(Worker, DiffPair)
 		end,
 		State#state.workers
 	),
@@ -128,11 +132,11 @@ handle_cast({start_mining, Args}, State) ->
 	{noreply, State#state{ 
 		paused = false,
 		active_sessions	= sets:new(),
-		diff = Diff,
+		diff_pair = DiffPair,
 		merkle_rebase_threshold = RebaseThreshold }};
 
-handle_cast({set_difficulty, Diff}, State) ->
-	State2 = set_difficulty(Diff, State),
+handle_cast({set_difficulty, DiffPair}, State) ->
+	State2 = set_difficulty(DiffPair, State),
 	{noreply, State2};
 
 handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
@@ -228,14 +232,14 @@ terminate(_Reason, _State) ->
 get_worker(Partition, State) ->
 	maps:get(Partition, State#state.workers, not_found).
 
-set_difficulty(Diff, State) ->
+set_difficulty(DiffPair, State) ->
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:set_difficulty(Worker, Diff)
+			ar_mining_worker:set_difficulty(Worker, DiffPair)
 		end,
 		State#state.workers
 	),
-	State#state{ diff = Diff }.
+	State#state{ diff_pair = DiffPair }.
 
 maybe_update_sessions(SessionKey, State) ->
 	CurrentActiveSessions = State#state.active_sessions,
@@ -544,13 +548,13 @@ post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
 	%% that are normally performed before sharing a solution.
 	ar_pool:post_partial_solution(Solution);
 post_solution(not_set, Solution, State) ->
-	#state{ diff = Diff } = State,
+	#state{ diff_pair = DiffPair } = State,
 	#mining_solution{
 		mining_address = MiningAddress, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, recall_byte1 = RecallByte1,
 		recall_byte2 = RecallByte2,
 		solution_hash = H, step_number = StepNumber } = Solution,
-	case validate_solution(Solution, Diff) of
+	case validate_solution(Solution, DiffPair) of
 		error ->
 			?LOG_WARNING([{event, failed_to_validate_solution},
 					{partition, PartitionNumber},
@@ -662,13 +666,13 @@ read_poa(RecallByte, MiningAddress) ->
 			error
 	end.
 
-validate_solution(Solution, Diff) ->
+validate_solution(Solution, DiffPair) ->
 	#mining_solution{
 		mining_address = MiningAddress,
 		nonce = Nonce, nonce_limiter_output = NonceLimiterOutput,
 		partition_number = PartitionNumber, partition_upper_bound = PartitionUpperBound,
-		poa1 = PoA1, poa2 = PoA2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-		seed = Seed, solution_hash = SolutionHash } = Solution,
+		poa1 = PoA1, recall_byte1 = RecallByte1, seed = Seed,
+		solution_hash = SolutionHash } = Solution,
 	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress),
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
@@ -682,24 +686,27 @@ validate_solution(Solution, Diff) ->
 		{true, ChunkID} ->
 			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
 					{spora_2_6, MiningAddress}}, ChunkID},
-			case binary:decode_unsigned(H1, big) > Diff of
+			case ar_node_utils:h1_passes_diff_check(H1, DiffPair) of
 				true ->
 					%% validates solution_hash
 					SolutionHash = H1,
 					{true, PoACache, undefined};
 				false ->
-					case RecallByte2 of
-						undefined ->
+					case is_one_chunk_solution(Solution) of
+						true ->
 							%% This can happen if the difficulty has increased between the
 							%% time the H1 solution was found and now. In this case,
 							%% there is no H2 solution, so we flag the solution invalid.
 							{false, h1_diff_check};
-						_ ->
+						false ->
+							#mining_solution{
+								recall_byte2 = RecallByte2, poa2 = PoA2 } = Solution,
 							{H2, _Preimage2} = ar_block:compute_h2(H1, PoA2#poa.chunk, H0),
-							case binary:decode_unsigned(H2, big) > Diff of
+							case ar_node_utils:h2_passes_diff_check(H2, DiffPair) of
 								false ->
 									{false, h2_diff_check};
 								true ->
+									
 									%% validates solution_hash
 									SolutionHash = H2,
 									%% validates recall_byte2

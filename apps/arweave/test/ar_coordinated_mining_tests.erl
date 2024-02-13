@@ -362,7 +362,7 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 		RecallByte2 -> ar_node:get_partition_number(RecallByte2)
 	end.
 
-assert_empty_cache(Node) ->
+assert_empty_cache(_Node) ->
 	%% wait until the mining has stopped, then assert that the cache is empty
 	timer:sleep(10000),
 	ok.
@@ -376,7 +376,7 @@ assert_empty_cache(Node) ->
 
 dummy_candidate() ->
 	#mining_candidate{
-		cm_diff = rand:uniform(1024),
+		cm_diff = {rand:uniform(1024), rand:uniform(1024)},
 		h0 = crypto:strong_rand_bytes(32),
 		h1 = crypto:strong_rand_bytes(32),
 		mining_address = crypto:strong_rand_bytes(32),

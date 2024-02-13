@@ -43,6 +43,14 @@
 %% first 2.6 block.
 -define(DIFF_DROP_2_6, 2).
 
+%% @doc The unconditional difficulty reduction coefficient applied at the
+%% first 2.7.2 block.
+-define(INITIAL_DIFF_DROP_2_7_2, 10).
+
+%% @doc The additional difficulty reduction coefficient applied every 10 minutes at the
+%% first 2.7.2 block.
+-define(DIFF_DROP_2_7_2, 2).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -55,12 +63,13 @@ is_retarget_height(Height) ->
 is_retarget_block(Block) ->
 	?IS_RETARGET_BLOCK(Block).
 
-maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) ->
+maybe_retarget(Height, {CurPoA1Diff, CurDiff}, TS, LastRetargetTS, PrevTS) ->
 	case ar_retarget:is_retarget_height(Height) of
 		true ->
-			calculate_difficulty(CurDiff, TS, LastRetargetTS, Height, PrevTS);
+			NewDiff = calculate_difficulty(CurDiff, TS, LastRetargetTS, Height, PrevTS),
+			{ar_difficulty:poa1_diff(NewDiff, Height), NewDiff};
 		false ->
-			CurDiff
+			{CurPoA1Diff, CurDiff}
 	end.
 
 calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
@@ -70,10 +79,14 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_2_4 = ar_fork:height_2_4(),
 	Fork_2_5 = ar_fork:height_2_5(),
 	Fork_2_6 = ar_fork:height_2_6(),
+	Fork_2_7_2 = ar_fork:height_2_7_2(),
 	Fork_Testnet = ar_testnet:height_testnet_fork(),
 	case Height of
 		_ when Height == Fork_Testnet ->
 			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, 100, 2);
+		_ when Height == Fork_2_7_2 ->
+			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS,
+					?INITIAL_DIFF_DROP_2_7_2, ?DIFF_DROP_2_7_2);
 		_ when Height == Fork_2_6 ->
 			calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS,
 					?INITIAL_DIFF_DROP_2_6, ?DIFF_DROP_2_6);
@@ -92,7 +105,7 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 		_ when Height == Fork_1_8 ->
 			switch_to_linear_diff_pre_fork_2_5(OldDiff);
 		_ when Height == Fork_1_7 ->
-			switch_to_randomx_fork_diff(OldDiff);
+			ar_difficulty:switch_to_randomx_fork_diff(OldDiff);
 		_ ->
 			calculate_difficulty_before_1_8(OldDiff, TS, Last, Height)
 	end.
@@ -112,8 +125,8 @@ validate_difficulty(NewB, OldB) ->
 
 %% @doc The number a hash must be greater than, to give the same odds of success
 %% as the old-style Diff (number of leading zeros in the bitstring).
-switch_to_linear_diff(Diff) ->
-	?MAX_DIFF - ar_fraction:pow(2, 256 - Diff).
+switch_to_linear_diff(LogDiff) ->
+	?MAX_DIFF - ar_fraction:pow(2, 256 - LogDiff).
 
 switch_to_linear_diff_pre_fork_2_5(Diff) ->
 	erlang:trunc(math:pow(2, 256)) - erlang:trunc(math:pow(2, 256 - Diff)).
@@ -130,14 +143,10 @@ calculate_difficulty(OldDiff, TS, Last, Height) ->
 		true ->
 			OldDiff;
 		false ->
-			MaxDiff = ?MAX_DIFF,
-			MinDiff = min_difficulty(Height),
-			DiffInverse = (MaxDiff - OldDiff) * ActualTime div TargetTime,
-			between(
-				MaxDiff - DiffInverse,
-				MinDiff,
-				MaxDiff - 1
-			)
+			%% Scale difficulty by TargetTime / ActualTime
+			%% If ActualTime is less than TargetTime it means we need to *increase* the difficulty,
+			%% and vice versa.
+			ar_difficulty:scale_diff(OldDiff, {TargetTime, ActualTime}, Height)
 	end.
 
 calculate_difficulty_at_2_5(OldDiff, TS, Last, Height, PrevTS) ->
@@ -152,10 +161,10 @@ calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, InitialCoeff, 
 	%% for every 10 minutes passed.
 	ActualTime2 = ActualTime * InitialCoeff
 			* ar_fraction:pow(Coeff, max(TS - PrevTS, 0) div Step),
-	MaxDiff = ?MAX_DIFF,
-	MinDiff = min_difficulty(Height),
-	DiffInverse = (MaxDiff - OldDiff) * ActualTime2 div TargetTime,
-	between(MaxDiff - DiffInverse, MinDiff, MaxDiff - 1).
+	%% Scale difficulty by TargetTime / ActualTime2
+	%% If ActualTime2 is less than TargetTime it means we need to *increase* the difficulty,
+	%% and vice versa.
+	ar_difficulty:scale_diff(OldDiff, {TargetTime, ActualTime2}, Height).
 
 calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
@@ -166,9 +175,9 @@ calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height) ->
 			OldDiff;
 		false ->
 			MaxDiff = ?MAX_DIFF,
-			MinDiff = min_difficulty(Height),
+			MinDiff = ar_difficulty:min_difficulty(Height),
 			DiffInverse = erlang:trunc((MaxDiff - OldDiff) * TimeDelta),
-			between(
+			ar_util:between(
 				MaxDiff - DiffInverse,
 				MinDiff,
 				MaxDiff
@@ -185,9 +194,9 @@ calculate_difficulty_at_2_4(OldDiff, TS, Last, Height) ->
 	%% reduction in difficulty, it would only take 100 minutes to adjust.
 	TimeDelta = 10 * ActualTime / TargetTime,
 	MaxDiff = ?MAX_DIFF,
-	MinDiff = min_difficulty(Height),
+	MinDiff = ar_difficulty:min_difficulty(Height),
 	DiffInverse = erlang:trunc((MaxDiff - OldDiff) * TimeDelta),
-	between(
+	ar_util:between(
 		MaxDiff - DiffInverse,
 		MinDiff,
 		MaxDiff
@@ -202,14 +211,14 @@ calculate_difficulty_at_and_after_1_9_before_2_4(OldDiff, TS, Last, Height) ->
 			OldDiff;
 		false ->
 			MaxDiff = ?MAX_DIFF,
-			MinDiff = min_difficulty(Height),
-			EffectiveTimeDelta = between(
+			MinDiff = ar_difficulty:min_difficulty(Height),
+			EffectiveTimeDelta = ar_util:between(
 				ActualTime / TargetTime,
 				1 / ?DIFF_ADJUSTMENT_UP_LIMIT,
 				?DIFF_ADJUSTMENT_DOWN_LIMIT
 			),
 			DiffInverse = erlang:trunc((MaxDiff - OldDiff) * EffectiveTimeDelta),
-			between(
+			ar_util:between(
 				MaxDiff - DiffInverse,
 				MinDiff,
 				MaxDiff
@@ -225,24 +234,13 @@ calculate_difficulty_after_1_8_before_1_9(OldDiff, TS, Last, Height) ->
 			OldDiff;
 		false ->
 			MaxDiff = ?MAX_DIFF,
-			MinDiff = min_difficulty(Height),
-			between(
+			MinDiff = ar_difficulty:min_difficulty(Height),
+			ar_util:between(
 				MaxDiff - (MaxDiff - OldDiff) * ActualTime div TargetTime,
 				max(MinDiff, OldDiff div 2),
 				min(MaxDiff, OldDiff * 4)
 			)
 	end.
-
--ifdef(DEBUG).
-switch_to_randomx_fork_diff(_) ->
-	1.
--else.
-sha384_diff_to_randomx_diff(Sha384Diff) ->
-	max(Sha384Diff + ?RANDOMX_DIFF_ADJUSTMENT, min_randomx_difficulty()).
-
-switch_to_randomx_fork_diff(OldDiff) ->
-	sha384_diff_to_randomx_diff(OldDiff) - 2.
--endif.
 
 calculate_difficulty_before_1_8(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
@@ -254,52 +252,9 @@ calculate_difficulty_before_1_8(OldDiff, TS, Last, Height) ->
 			TargetTime > ActualTime                        -> OldDiff + 1;
 			true                                           -> OldDiff - 1
 		end,
-		min_difficulty(Height)
+		ar_difficulty:min_difficulty(Height)
 	),
 	Diff.
-
-between(N, Min, _) when N < Min -> Min;
-between(N, _, Max) when N > Max -> Max;
-between(N, _, _) -> N.
-
--ifdef(DEBUG).
-min_difficulty(_Height) ->
-	1.
--else.
-min_spora_difficulty(Height) ->
-	?SPORA_MIN_DIFFICULTY(Height).
-
-min_randomx_difficulty() ->
-	min_sha384_difficulty() + ?RANDOMX_DIFF_ADJUSTMENT.
-
-min_sha384_difficulty() ->
-	31.
-
-min_difficulty(Height) ->
-	Diff =
-		case Height >= ar_fork:height_1_7() of
-			true ->
-				case Height >= ar_fork:height_2_4() of
-					true ->
-						min_spora_difficulty(Height);
-					false ->
-						min_randomx_difficulty()
-				end;
-			false ->
-				min_sha384_difficulty()
-		end,
-	case Height >= ar_fork:height_1_8() of
-		true ->
-			case Height >= ar_fork:height_2_5() of
-				true ->
-					ar_retarget:switch_to_linear_diff(Diff);
-				false ->
-					ar_retarget:switch_to_linear_diff_pre_fork_2_5(Diff)
-			end;
-		false ->
-			Diff
-	end.
--endif.
 
 %%%===================================================================
 %%% Tests.

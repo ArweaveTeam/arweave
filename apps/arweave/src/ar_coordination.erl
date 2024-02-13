@@ -117,7 +117,7 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({computed_h1, Candidate, Diff}, State) ->
+handle_cast({computed_h1, Candidate, DiffPair}, State) ->
 	#mining_candidate{
 		cache_ref = CacheRef,
 		h1 = H1,
@@ -132,7 +132,7 @@ handle_cast({computed_h1, Candidate, Diff}, State) ->
 	DefaultCandidate = Candidate#mining_candidate{
 		chunk1 = not_set,
 		chunk2 = not_set,
-		cm_diff = Diff,
+		cm_diff = DiffPair,
 		cm_lead_peer = not_set,
 		h1 = not_set,
 		h2 = not_set,

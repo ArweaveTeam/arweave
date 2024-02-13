@@ -191,7 +191,7 @@ store_reward_history_part([]) ->
 	ok;
 store_reward_history_part(Blocks) ->
 	store_reward_history_part2([{B#block.indep_hash, {B#block.reward_addr,
-			ar_difficulty:get_hash_rate(B#block.diff), B#block.reward,
+			ar_difficulty:get_hash_rate(B), B#block.reward,
 			B#block.denomination}} || B <- Blocks]).
 
 store_reward_history_part2([]) ->

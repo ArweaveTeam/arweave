@@ -118,18 +118,22 @@ get_price_per_gib_minute2(Height, LockedRewards, BlockTimeHistory, Denomination)
 			%%    With this we can use the ratio of observed 2-chunk to 1-chunk solutions to
 			%%    estimate the average percentage of the weave each miner stores.
 			%%
-			%% The SolutionsPerPartitionPerVDFStep combines that average weave % calculation
+			%% The SolutionsPerPartitionPerVDFStep combines that average weave calculation
 			%% with the expected number of solutions per partition per VDF step to arrive a single
 			%% number that can be used in the PricePerGiBPerMinute calculation.
+			MaxSolutionsPerPartition = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
 			SolutionsPerPartitionPerVDFStep =
 				case OneChunkCount of
 					0 ->
-						2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE);
+						MaxSolutionsPerPartition;
 					_ ->
-						min(2 * ?RECALL_RANGE_SIZE,
-								?RECALL_RANGE_SIZE
-									+ ?RECALL_RANGE_SIZE * TwoChunkCount div OneChunkCount)
-							div ?DATA_CHUNK_SIZE
+						PoA1Mult = ar_difficulty:poa1_diff_multiplier(Height),
+						EstimatedSolutionsPerPartition = 
+							(
+								?RECALL_RANGE_SIZE +
+								?RECALL_RANGE_SIZE * TwoChunkCount div (OneChunkCount * PoA1Mult)
+							) div (?DATA_CHUNK_SIZE),
+						min(MaxSolutionsPerPartition, EstimatedSolutionsPerPartition)
 				end,
 			%% The following walks through the math of calculating the price per GiB per minute.
 			%% However to reduce rounding errors due to divs, the uncommented equation at the
@@ -296,8 +300,8 @@ may_be_redenominate3(B) ->
 	end.
 
 get_initial_current_and_scheduled_price_per_gib_minute(B) ->
-	#block{ diff = Diff, height = Height } = B,
-	HashRate = ar_difficulty:get_hash_rate(Diff),
+	#block{ height = Height } = B,
+	HashRate = ar_difficulty:get_hash_rate(B),
 	Reward = ar_inflation:calculate(B#block.height),
 	Denomination = 1,
 	Price = get_price_per_gib_minute(Height,

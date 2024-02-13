@@ -1269,6 +1269,13 @@ nonce_limiter_info_to_json_struct(Height,
 		end,
 	{Fields2}.
 
+diff_pair_to_json_list(DiffPair) ->
+	{PoA1Diff, Diff} = DiffPair,
+	[
+		ar_util:integer_to_binary(PoA1Diff),
+		ar_util:integer_to_binary(Diff)
+	].
+
 json_struct_to_poa({JSONStruct}) ->
 	#poa{
 		option = binary_to_integer(find_value(<<"option">>, JSONStruct)),
@@ -1349,6 +1356,16 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 		denomination = Denomination
 	}.
 
+json_list_to_diff_pair(List) ->
+	[PoA1DiffBin, DiffBin] = 
+		case List of
+			undefined -> [<<"0">>, <<"0">>];
+			_ -> List
+		end,
+	PoA1Diff = binary_to_integer(PoA1DiffBin),
+	Diff = binary_to_integer(DiffBin),
+	{PoA1Diff, Diff}.
+	
 parse_data_size(1, _TXStruct, Data, true) ->
 	byte_size(Data);
 parse_data_size(_Format, TXStruct, _Data, _ComputeDataSize) ->
@@ -1605,7 +1622,7 @@ binary_to_signature_type(List) ->
 
 candidate_to_json_struct(
 	#mining_candidate{
-		cm_diff = Diff,
+		cm_diff = DiffPair,
 		cm_h1_list = H1List,
 		h0 = H0,
 		h1 = H1,
@@ -1626,7 +1643,7 @@ candidate_to_json_struct(
 		step_number = StepNumber
 	}) ->
 	JSON = [
-		{cm_diff, ar_util:integer_to_binary(Diff)},
+		{cm_diff, diff_pair_to_json_list(DiffPair)},
 		{cm_h1_list, h1_list_to_json_struct(H1List)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{h0, ar_util:encode(H0)},
@@ -1665,7 +1682,7 @@ session_key_json_struct({NextSeed, Interval, NextDifficulty}) ->
 	]}.
 
 json_map_to_candidate(JSON) ->
-	Diff = ar_util:binary_to_integer(maps:get(<<"cm_diff">>, JSON)),
+	DiffPair = json_list_to_diff_pair(maps:get(<<"cm_diff">>, JSON)),
 	H1List = json_struct_to_h1_list(maps:get(<<"cm_h1_list">>, JSON)),
 	H0 = ar_util:decode(maps:get(<<"h0">>, JSON)),
 	H1 = decode_if_set(JSON, <<"h1">>, fun ar_util:decode/1, not_set),
@@ -1686,7 +1703,7 @@ json_map_to_candidate(JSON) ->
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 
 	#mining_candidate{
-		cm_diff = Diff,
+		cm_diff = DiffPair,
 		cm_h1_list = H1List,
 		h0 = H0,
 		h1 = H1,
@@ -1833,11 +1850,12 @@ parse_json_checkpoints(<< Checkpoint:32/binary, Rest/binary >>) ->
 	[Checkpoint | parse_json_checkpoints(Rest)].
 
 jobs_to_json_struct(Jobs) ->
-	#jobs{ jobs = JobList, partial_diff = Diff, seed = Seed, next_seed = NextSeed,
-			interval_number = IntervalNumber, next_vdf_difficulty = NextVDFDiff } = Jobs,
-
+	#jobs{ jobs = JobList, partial_diff = PartialDiff,
+			seed = Seed, next_seed = NextSeed, interval_number = IntervalNumber,
+			next_vdf_difficulty = NextVDFDiff } = Jobs,
+	
 	{[{jobs, [job_to_json_struct(Job) || Job <- JobList]},
-		{partial_diff, integer_to_binary(Diff)},
+		{partial_diff, diff_pair_to_json_list(PartialDiff)},
 		{seed, ar_util:encode(Seed)},
 		{next_seed, ar_util:encode(NextSeed)},
 		{interval_number, integer_to_binary(IntervalNumber)},
@@ -1853,7 +1871,7 @@ job_to_json_struct(Job) ->
 
 json_struct_to_jobs(Struct) ->
 	{Keys} = Struct,
-	Diff = binary_to_integer(proplists:get_value(<<"partial_diff">>, Keys, <<"0">>)),
+	PartialDiff = json_list_to_diff_pair(proplists:get_value(<<"partial_diff">>, Keys)),
 	Seed = ar_util:decode(proplists:get_value(<<"seed">>, Keys, <<>>)),
 	NextSeed = ar_util:decode(proplists:get_value(<<"next_seed">>, Keys, <<>>)),
 	NextVDFDiff = binary_to_integer(proplists:get_value(<<"next_vdf_difficulty">>, Keys,
@@ -1863,7 +1881,7 @@ json_struct_to_jobs(Struct) ->
 	Jobs = [json_struct_to_job(Job) || Job <- proplists:get_value(<<"jobs">>, Keys, [])],
 	#jobs{ jobs = Jobs, seed = Seed, next_seed = NextSeed,
 			interval_number = IntervalNumber,
-			next_vdf_difficulty = NextVDFDiff, partial_diff = Diff }.
+			next_vdf_difficulty = NextVDFDiff, partial_diff = PartialDiff }.
 
 json_struct_to_job(Struct) ->
 	{Keys} = Struct,

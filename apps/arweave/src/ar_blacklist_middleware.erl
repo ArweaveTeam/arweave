@@ -112,12 +112,12 @@ decrement_ip_addr(IPAddr, Req) ->
 		_ -> update_ip_addr(IPAddr, Req, -1)
 	end.
 
-update_ip_addr(IPAddr, Req, Diff) ->
+update_ip_addr(IPAddr, Req, Delta) ->
 	{PathKey, Limit}  = get_key_limit(IPAddr, Req),
 	%% Divide by 2 as the throttle period is 30 seconds.
 	RequestLimit = Limit div 2,
 	Key = {rate_limit, IPAddr, PathKey},
-	case ets:update_counter(?MODULE, Key, {2, Diff}, {Key, 0}) of
+	case ets:update_counter(?MODULE, Key, {2, Delta}, {Key, 0}) of
 		1 ->
 			timer:apply_after(
 				?THROTTLE_PERIOD,

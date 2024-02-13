@@ -67,6 +67,16 @@
 	115792089237316195423570985008687907853269984665640564039457584007913129639936
 )).
 
+%% Increase the difficulty of PoA1 solutions by this multiplier (e.g. 100x).
+-ifdef(DEBUG).
+-define(POA1_DIFF_MULTIPLIER, 1).
+-else.
+-ifndef(POA1_DIFF_MULTIPLIER).
+-define(POA1_DIFF_MULTIPLIER, 100).
+-endif.
+-endif.
+
+
 %% The number of nonce limiter steps sharing the entropy. We add the entropy
 %% from a past block every so often. If we did not add any entropy at all, even
 %% a slight speedup of the nonce limiting function (considering its low cost) allows

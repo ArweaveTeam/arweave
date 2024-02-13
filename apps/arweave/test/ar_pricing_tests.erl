@@ -196,7 +196,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	B1 = ar_node:get_current_block(),
 	?assertEqual(10, B1#block.reward),
 	?assertEqual(10, get_reserved_balance(B1#block.reward_addr)),
-	?assertEqual(1, hash_rate(B1)),
+	?assertEqual(1, ar_difficulty:get_hash_rate(B1)),
 	MinerAddr = ar_wallet:to_address(MinerPub),
 	?assertEqual([{MinerAddr, 1, 10, 1}, {B0#block.reward_addr, 1, 10, 1}],
 			B1#block.reward_history),
@@ -415,8 +415,8 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertMatch({ok, {{<<"400">>, _}, _, _, _, _}}, ar_test_node:post_tx_to_peer(main, TX10)),
 	?assertEqual({ok, ["invalid_denomination"]}, ar_tx_db:get_error_codes(TX10#tx.id)),
 	{Reward11, _} = ar_test_node:get_tx_price(main, 0, ar_wallet:to_address(Pub5)),
-	?assert(hash_rate(B11) > 1),
-	?assertEqual(lists:sublist([{MinerAddr, hash_rate(B11), B11#block.reward, 1}
+	?assert(ar_difficulty:get_hash_rate(B11) > 1),
+	?assertEqual(lists:sublist([{MinerAddr, ar_difficulty:get_hash_rate(B11), B11#block.reward, 1}
 			| B10#block.reward_history],
 			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 			B11#block.reward_history),
@@ -441,7 +441,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	%% Setting the price scheduled on height=10.
 	?assertEqual(B11#block.scheduled_price_per_gib_minute * 1000,
 			B12#block.price_per_gib_minute),
-	?assertEqual([{MinerAddr, hash_rate(B12), B12#block.reward, 2} | B11#block.reward_history],
+	?assertEqual([{MinerAddr, ar_difficulty:get_hash_rate(B12), B12#block.reward, 2} | B11#block.reward_history],
 			B12#block.reward_history),
 	TX12 = ar_test_node:sign_tx(main, Key3, #{ denomination => 0, quantity => 10,
 			target => ar_wallet:to_address(Pub5) }),
@@ -523,9 +523,6 @@ chunk_count(#block{ recall_byte2 = undefined }) ->
 	1;
 chunk_count(_) ->
 	2.
-
-hash_rate(#block{ diff = Diff }) ->
-	ar_difficulty:get_hash_rate(Diff).
 
 assert_new_account_fee() ->
 	?assert(ar_test_node:get_optimistic_tx_price(main,

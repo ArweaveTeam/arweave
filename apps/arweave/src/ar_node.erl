@@ -68,8 +68,8 @@ get_current_block() ->
 %% @doc Return the current network difficulty. Assume the node has joined the network and
 %% initialized the state.
 get_current_diff() ->
-	[{_, Diff}] = ets:lookup(node_state, diff),
-	Diff.
+	[{_, DiffPair}] = ets:lookup(node_state, diff_pair),
+	DiffPair.
 
 get_block_index_and_height() ->
 	Props =

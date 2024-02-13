@@ -50,7 +50,7 @@ get_oldest_locked_address(B) ->
 lock_reward(B, RewardHistory) ->
 	Height = B#block.height,
 	Reward = B#block.reward,
-	HashRate = ar_difficulty:get_hash_rate(B#block.diff),
+	HashRate = ar_difficulty:get_hash_rate(B),
 	Denomination = B#block.denomination,
 	RewardAddr = B#block.reward_addr,
 	trim_reward_history(Height, 

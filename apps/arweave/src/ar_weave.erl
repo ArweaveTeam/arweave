@@ -68,7 +68,7 @@ init(WalletList, Diff, GenesisDataSize) ->
 			false ->
 				RewardKey = element(2, ar_wallet:new()),
 				RewardAddr = ar_wallet:to_address(RewardKey),
-				HashRate = ar_difficulty:get_hash_rate(Diff),
+				HashRate = ar_difficulty:get_hash_rate(B0),
 				RewardHistory = [{RewardAddr, HashRate, 10, 1}],
 				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(0, RewardHistory,
 						[], 1),

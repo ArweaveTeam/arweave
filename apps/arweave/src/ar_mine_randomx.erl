@@ -3,7 +3,6 @@
 -on_load(init_nif/0).
 
 -export([init_fast/2, hash_fast/2, init_light/1, hash_light/2, release_state/1,
-		hash_fast_verify/3,
 		randomx_encrypt_chunk/4,
 		randomx_decrypt_chunk/5,
 		randomx_reencrypt_chunk/7,
@@ -48,21 +47,6 @@ hash_fast(FastState, Data) ->
 	{ok, Hash} =
 		hash_fast_nif(FastState, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
--endif.
-
--ifdef(DEBUG).
-hash_fast_verify(FastState, Diff, Preimage) ->
-	Hash = crypto:hash(sha256, [FastState | Preimage]),
-	case binary:decode_unsigned(Hash, big) > Diff of
-		true ->
-			{true, Hash};
-		false ->
-			false
-	end.
--else.
-hash_fast_verify(FastState, Diff, Preimage) ->
-	DiffBinary = binary:encode_unsigned(Diff, big),
-	hash_fast_verify_nif(FastState, DiffBinary, Preimage, jit(), large_pages(), hardware_aes()).
 -endif.
 
 -ifdef(DEBUG).

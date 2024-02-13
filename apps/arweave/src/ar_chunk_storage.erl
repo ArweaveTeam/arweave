@@ -574,8 +574,8 @@ is_offset_valid(_Byte, _LeftChunkBorder, 0) ->
 	%% 0 is interpreted as "data has not been written yet".
 	false;
 is_offset_valid(Byte, LeftChunkBorder, ChunkOffset) ->
-	Diff = Byte - (LeftChunkBorder + ChunkOffset rem ?DATA_CHUNK_SIZE),
-	Diff >= 0 andalso Diff < ?DATA_CHUNK_SIZE.
+	Delta = Byte - (LeftChunkBorder + ChunkOffset rem ?DATA_CHUNK_SIZE),
+	Delta >= 0 andalso Delta < ?DATA_CHUNK_SIZE.
 
 close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
 	file:close(erlang:get({cfile, Key})),

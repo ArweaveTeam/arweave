@@ -1,12 +1,15 @@
 %%% @doc Different utility functions for node and node worker.
 -module(ar_node_utils).
 
--export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6, update_account/6, 
-	is_account_banned/2]).
+-export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6,
+	h1_passes_diff_check/2, h2_passes_diff_check/2, solution_passes_diff_check/2,
+	block_passes_diff_check/1, block_passes_diff_check/2, passes_diff_check/3,
+	update_account/6, is_account_banned/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -74,6 +77,37 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 					{time_taken_us, TimeTaken}]),
 			{invalid, Reason}
 	end.
+
+h1_passes_diff_check(H1, DiffPair) ->
+	passes_diff_check(H1, true, DiffPair).
+
+h2_passes_diff_check(H2, DiffPair) ->
+	passes_diff_check(H2, false, DiffPair).
+
+solution_passes_diff_check(Solution, DiffPair) ->
+	SolutionHash = Solution#mining_solution.solution_hash,
+	IsPoA1 = ar_mining_server:is_one_chunk_solution(Solution),
+	passes_diff_check(SolutionHash, IsPoA1, DiffPair).
+
+block_passes_diff_check(Block) ->
+	SolutionHash = Block#block.hash,
+	block_passes_diff_check(SolutionHash, Block).
+
+block_passes_diff_check(SolutionHash, Block) ->
+	IsPoA1 = (Block#block.recall_byte2 == undefined),
+	DiffPair = ar_difficulty:diff_pair(Block),
+	passes_diff_check(SolutionHash, IsPoA1, DiffPair).
+
+passes_diff_check(_SolutionHash, _IsPoA1, not_set) ->
+	false;
+passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}) ->
+	Diff2 = case IsPoA1 of
+		true ->
+			PoA1Diff;
+		false ->
+			Diff
+	end,
+	binary:decode_unsigned(SolutionHash) > Diff2.
 
 update_account(Addr, Balance, LastTX, 1, true, Accounts) ->
 	maps:put(Addr, {Balance, LastTX}, Accounts);
@@ -430,10 +464,10 @@ validate_block(denomination, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) -
 	end;
 
 validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
-	#block{ diff = Diff, reward = Reward, reward_history_hash = RewardHistoryHash,
+	#block{ reward = Reward, reward_history_hash = RewardHistoryHash,
 			denomination = Denomination, height = Height } = NewB,
 	#block{ reward_history = RewardHistory } = OldB,
-	HashRate = ar_difficulty:get_hash_rate(Diff),
+	HashRate = ar_difficulty:get_hash_rate(NewB),
 	RewardAddr = NewB#block.reward_addr,
 	LockedRewards = ar_rewards:trim_locked_rewards(Height,
 		[{RewardAddr, HashRate, Reward, Denomination} | RewardHistory]),

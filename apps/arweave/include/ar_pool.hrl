@@ -13,8 +13,8 @@
 
 %% @doc A collection of mining jobs.
 -record(jobs, {
-	jobs = [], % The information about a single VDF output (a "job").
-	partial_diff = 0, % Partial difficulty.
+	jobs = [], %% The information about a single VDF output (a "job").
+	partial_diff = {0, 0}, %% Partial difficulty.
 	seed = <<>>,
 	next_seed = <<>>,
 	interval_number = 0,

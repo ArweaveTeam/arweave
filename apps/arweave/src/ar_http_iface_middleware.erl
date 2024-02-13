@@ -2503,10 +2503,10 @@ handle_get_jobs_pool_server(PrevOutput, Req) ->
 			node_state,
 			[{{'$1', '$2'},
 				[{'or',
-					{'==', '$1', diff},
+					{'==', '$1', diff_pair},
 					{'==', '$1', nonce_limiter_info}}], ['$_']}]
 		),
-	Diff = proplists:get_value(diff, Props),
+	DiffPair = proplists:get_value(diff_pair, Props),
 	Info = proplists:get_value(nonce_limiter_info, Props),
 	Result = ar_util:do_until(
 		fun() ->
@@ -2527,7 +2527,7 @@ handle_get_jobs_pool_server(PrevOutput, Req) ->
 			partition_upper_bound = U } || {O, SN, U} <- Steps],
 	Jobs = #jobs{ jobs = JobList, seed = Info#nonce_limiter_info.seed,
 			next_seed = NextSeed, interval_number = IntervalNumber,
-			next_vdf_difficulty = NextVDFDiff, partial_diff = Diff },
+			next_vdf_difficulty = NextVDFDiff, partial_diff = DiffPair },
 	{200, #{}, ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)), Req}.
 
 handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req) ->

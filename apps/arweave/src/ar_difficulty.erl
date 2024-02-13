@@ -1,6 +1,8 @@
 -module(ar_difficulty).
 
--export([get_hash_rate/1, next_cumulative_diff/3, multiply_diff_pre_fork_2_5/2]).
+-export([get_hash_rate/1, next_cumulative_diff/3, multiply_diff_pre_fork_2_5/2,
+			diff_pair/1, poa1_diff_multiplier/1, poa1_diff/2, scale_diff/3,
+			min_difficulty/1, switch_to_randomx_fork_diff/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -10,8 +12,15 @@
 %%%===================================================================
 
 %% @doc Return the block time hash rate for the given difficulty.
-get_hash_rate(Diff) ->
-	?MAX_DIFF div (?MAX_DIFF - Diff).
+get_hash_rate(Block) ->
+	Multiplier = poa1_diff_multiplier(Block#block.height),
+	HashRate = ?MAX_DIFF div (?MAX_DIFF - Block#block.diff),
+	case Multiplier > 1 of
+		true ->
+			HashRate * Multiplier div (Multiplier + 1);
+		false ->
+			HashRate
+	end.
 
 %% @doc Calculate the cumulative difficulty for the next block.
 next_cumulative_diff(OldCDiff, NewDiff, Height) ->
@@ -28,6 +37,87 @@ next_cumulative_diff(OldCDiff, NewDiff, Height) ->
 %% @end
 multiply_diff_pre_fork_2_5(Diff, Multiplier) ->
 	?MAX_DIFF - erlang:trunc(1 / Multiplier * (?MAX_DIFF - Diff)).
+
+diff_pair(Block) ->
+	Diff = Block#block.diff,
+	Height = Block#block.height,
+	{poa1_diff(Diff, Height), Diff}.
+
+poa1_diff_multiplier(Height) ->
+	case Height >= ar_fork:height_2_7_2() of
+		true ->
+			?POA1_DIFF_MULTIPLIER;
+		false ->
+			1
+	end.
+
+poa1_diff(Diff, Height) ->
+	Scale = {poa1_diff_multiplier(Height), 1},
+	scale_diff(Diff, Scale, Height).
+
+%% @doc Scale the difficulty by ScaleDividend/ScaleDivisor.
+%% Example: scale_diff(Diff, {100, 1}, Height) will scale the difficulty by 100, increasing it
+%% Example: scale_diff(Diff, {3, 10}, Height) will scale the difficulty by 3/10, decreasing it
+scale_diff(Diff, {1, 1}, _Height) ->
+	Diff;
+scale_diff(Diff, {ScaleDividend, ScaleDivisor}, Height) ->
+	MaxDiff = ?MAX_DIFF,
+	MinDiff = min_difficulty(Height),
+	%% Scale DiffInverse by ScaleDivisor/ScaleDividend because it's an inverse value.
+	%% I.e. passing in {100, 1} will scale DiffInverse by 1/100 and *increase* the difficulty.
+	DiffInverse = (MaxDiff - Diff) * ScaleDivisor div ScaleDividend,
+	ar_util:between(
+		MaxDiff - DiffInverse,
+		MinDiff,
+		MaxDiff - 1
+	).
+
+-ifdef(DEBUG).
+min_difficulty(_Height) ->
+	1.
+switch_to_randomx_fork_diff(_) ->
+	1.
+-else.
+min_spora_difficulty(Height) ->
+	?SPORA_MIN_DIFFICULTY(Height).
+
+min_randomx_difficulty() ->
+	min_sha384_difficulty() + ?RANDOMX_DIFF_ADJUSTMENT.
+
+min_sha384_difficulty() ->
+	31.
+
+min_difficulty(Height) ->
+	Diff =
+		case Height >= ar_fork:height_1_7() of
+			true ->
+				case Height >= ar_fork:height_2_4() of
+					true ->
+						min_spora_difficulty(Height);
+					false ->
+						min_randomx_difficulty()
+				end;
+			false ->
+				min_sha384_difficulty()
+		end,
+	case Height >= ar_fork:height_1_8() of
+		true ->
+			case Height >= ar_fork:height_2_5() of
+				true ->
+					ar_retarget:switch_to_linear_diff(Diff);
+				false ->
+					ar_retarget:switch_to_linear_diff_pre_fork_2_5(Diff)
+			end;
+		false ->
+			Diff
+	end.
+
+sha384_diff_to_randomx_diff(Sha384Diff) ->
+	max(Sha384Diff + ?RANDOMX_DIFF_ADJUSTMENT, min_randomx_difficulty()).
+
+switch_to_randomx_fork_diff(OldDiff) ->
+	sha384_diff_to_randomx_diff(OldDiff) - 2.
+-endif.
 
 %%%===================================================================
 %%% Private functions.

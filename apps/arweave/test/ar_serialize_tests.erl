@@ -236,7 +236,7 @@ candidate_to_json_struct_test() ->
     end,
 
 	DefaultCandidate = #mining_candidate{
-        cm_diff = binary:decode_unsigned(crypto:strong_rand_bytes(32), big),
+        cm_diff = {rand:uniform(1024), rand:uniform(1024)},
 		cm_h1_list = [
 			{crypto:strong_rand_bytes(32), rand:uniform(100)},
 			{crypto:strong_rand_bytes(32), rand:uniform(100)},
@@ -407,7 +407,7 @@ jobs_to_json_struct_test() ->
 					partition_upper_bound = 100 }, #job{ output = <<"o1">>,
 						global_step_number = 1,
 						partition_upper_bound = 99 }],
-				partial_diff = 12345,
+				partial_diff = {12345, 6789},
 				seed = <<"gjhgjkghjhg">>,
 				next_seed = <<"dfdgfdg">>,
 				interval_number = 23,
