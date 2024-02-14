@@ -337,7 +337,7 @@ handle_task({computed_h1, Candidate}, State) ->
 		partial_diff = PartialDiff } = Candidate,
 	case passes_diff_check(H1, Diff, PartialDiff) of
 		true ->
-			?LOG_DEBUG([{event, mining_debug_found_h1_solution}, {worker, State#state.name},
+			?LOG_INFO([{event, found_h1_solution}, {worker, State#state.name},
 				{h1, ar_util:encode(H1)}, {difficulty, Diff}]),
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
@@ -390,7 +390,7 @@ handle_task({computed_h2, Candidate}, State) ->
 	} = Candidate,
 	case passes_diff_check(H2, get_difficulty(State, Candidate), PartialDiff) of
 		true ->
-			?LOG_DEBUG([{event, mining_debug_found_h2_solution}, {worker, State#state.name},
+			?LOG_INFO([{event, found_h2_solution}, {worker, State#state.name},
 				{h2, ar_util:encode(H2)}, {difficulty, get_difficulty(State, Candidate)}]),
 			case Peer of
 				not_set ->
