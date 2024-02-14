@@ -1,6 +1,8 @@
 -ifndef(AR_MINING_HRL).
 -define(AR_MINING_HRL, true).
 
+-define(GC_LOG_THRESHOLD, 1000).
+
 %% fields prefixed with cm_ are only set when a solution is distributed across miners as part
 %% of a coordinated mining set.
 -record(mining_candidate, {

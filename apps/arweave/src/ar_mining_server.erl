@@ -205,7 +205,7 @@ handle_info({event, nonce_limiter, Message}, State) ->
 handle_info({garbage_collect, StartTime, GCResult}, State) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-	case GCResult == false orelse ElapsedTime > 1000 of
+	case GCResult == false orelse ElapsedTime > ?GC_LOG_THRESHOLD of
 		true ->
 			?LOG_DEBUG([
 				{event, mining_debug_garbage_collect}, {process, ar_mining_server}, {pid, self()},
