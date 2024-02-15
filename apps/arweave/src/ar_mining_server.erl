@@ -205,7 +205,7 @@ handle_info({event, nonce_limiter, Message}, State) ->
 handle_info({garbage_collect, StartTime, GCResult}, State) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-	case GCResult == false orelse ElapsedTime > 100 of
+	case GCResult == false orelse ElapsedTime > ?GC_LOG_THRESHOLD of
 		true ->
 			?LOG_DEBUG([
 				{event, mining_debug_garbage_collect}, {process, ar_mining_server}, {pid, self()},
@@ -334,7 +334,7 @@ update_cache_limits(State) ->
 						[IdealCacheLimit]);
 				false -> ok
 			end,
-			GarbageCollectionFrequency = 2 * VDFQueueLimit * 1000,
+			GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
 			case State#state.gc_frequency_ms == undefined of
 				true ->
 					%% This is the first time setting the garbage collection frequency, so kick
