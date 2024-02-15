@@ -83,12 +83,14 @@ terminate(_Reason, _State) ->
 emit_pool_jobs(Jobs) ->
 	SessionKey = {Jobs#jobs.next_seed, Jobs#jobs.interval_number,
 			Jobs#jobs.next_vdf_difficulty},
-	emit_pool_jobs(Jobs#jobs.jobs, SessionKey, Jobs#jobs.partial_diff).
+	emit_pool_jobs(Jobs#jobs.jobs, SessionKey, Jobs#jobs.partial_diff, Jobs#jobs.seed).
 
-emit_pool_jobs([], _SessionKey, _PartialDiff) ->
+emit_pool_jobs([], _SessionKey, _PartialDiff, _Seed) ->
 	ok;
-emit_pool_jobs([Job | Jobs], SessionKey, PartialDiff) ->
-	#job{ output = O, global_step_number = SN, partition_upper_bound = U } = Job,
-	Args = {SessionKey, SN, O, U, PartialDiff},
-	ar_mining_server:add_pool_job(Args),
-	emit_pool_jobs(Jobs, SessionKey, PartialDiff).
+emit_pool_jobs([Job | Jobs], SessionKey, PartialDiff, Seed) ->
+	#job{
+		output = Output, global_step_number = StepNumber,
+		partition_upper_bound = PartitionUpperBound } = Job,
+	ar_mining_server:add_pool_job(
+		SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff),
+	emit_pool_jobs(Jobs, SessionKey, PartialDiff, Seed).

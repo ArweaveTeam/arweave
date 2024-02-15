@@ -19,7 +19,6 @@
 	diff_pair					= not_set,
 	task_queue					= gb_sets:new(),
 	active_sessions				= sets:new(),
-	seeds						= #{},
 	chunk_cache 				= #{},
 	chunk_cache_size			= #{},
 	chunk_cache_limit			= 0,
@@ -271,10 +270,7 @@ handle_task({compute_h0, Candidate}, State) ->
 	#mining_candidate{ session_key = SessionKey, step_number = StepNumber } = Candidate,
 	State3 = case try_to_reserve_cache_space(SessionKey, State) of
 		{true, State2} ->
-			Seed = maps:get(Candidate#mining_candidate.session_key, State2#state.seeds),
-			ar_mining_hash:compute_h0(
-				self(),
-				Candidate#mining_candidate{ seed = Seed }),
+			ar_mining_hash:compute_h0(self(), Candidate),
 			case StepNumber > LatestVDFStepNumber of
 				true ->
 					State2#state{ latest_vdf_step_number = StepNumber };
@@ -510,12 +506,8 @@ add_sessions([SessionKey | AddedSessions], State) ->
 	?LOG_DEBUG([{event, mining_debug_add_session},
 		{worker, State#state.name}, {partition, State#state.partition_number},
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
-
-	Session = ar_nonce_limiter:get_session(SessionKey),
-	#vdf_session{ seed = Seed } = Session,	
 	State2 = State#state{
-		chunk_cache = maps:put(SessionKey, #{}, State#state.chunk_cache),
-		seeds = maps:put(SessionKey, Seed, State#state.seeds)
+		chunk_cache = maps:put(SessionKey, #{}, State#state.chunk_cache)
 	},
 	add_sessions(AddedSessions, State2).
 
@@ -536,8 +528,7 @@ remove_sessions([SessionKey | RemovedSessions], State) ->
 	State3 = State2#state{
 		task_queue = TaskQueue,
 		chunk_cache = maps:remove(SessionKey, State#state.chunk_cache),
-		chunk_cache_size = maps:remove(SessionKey, State#state.chunk_cache_size),
-		seeds = maps:remove(SessionKey, State#state.seeds)
+		chunk_cache_size = maps:remove(SessionKey, State#state.chunk_cache_size)
 	},
 	remove_sessions(RemovedSessions, State3).
 

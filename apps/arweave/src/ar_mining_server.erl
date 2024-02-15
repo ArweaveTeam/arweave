@@ -6,7 +6,7 @@
 
 -export([start_link/0, start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, 
 		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1, read_poa/3,
-		get_recall_bytes/4, active_sessions/0, encode_sessions/1, add_pool_job/1,
+		get_recall_bytes/4, active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1]).
 -export([pause/0]).
 
@@ -23,6 +23,7 @@
 	paused 						= true,
 	workers						= #{},
 	active_sessions				= sets:new(),
+	seeds						= #{},
 	diff_pair					= not_set,
 	chunk_cache_limit 			= 0,
 	gc_frequency_ms				= undefined,
@@ -58,7 +59,8 @@ set_merkle_rebase_threshold(Threshold) ->
 	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
 
 %% @doc Add a pool job to the mining queue.
-add_pool_job(Args) ->
+add_pool_job(SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff) ->
+	Args = {SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff},
 	gen_server:cast(?MODULE, {add_pool_job, Args}).
 
 prepare_and_post_solution(Candidate) ->
@@ -143,7 +145,10 @@ handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
 	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
 handle_cast({add_pool_job, Args}, State) ->
-	handle_computed_output(Args, State);
+	{SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff} = Args,
+	State2 = set_seed(SessionKey, Seed, State),
+	handle_computed_output(
+		SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff, State2);
 
 handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	case get_worker(Candidate#mining_candidate.partition_number2, State) of
@@ -198,8 +203,9 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 			%% Ignore VDF events because we are receiving jobs from the pool.
 			{noreply, State};
 		false ->
-			Args2 = erlang:append_element(Args, not_set),
-			handle_computed_output(Args2, State)
+			{SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
+			handle_computed_output(
+				SessionKey, StepNumber, Output, PartitionUpperBound, not_set, State)
 	end;
 
 handle_info({event, nonce_limiter, Message}, State) ->
@@ -247,29 +253,34 @@ maybe_update_sessions(SessionKey, State) ->
 		true ->
 			State;
 		false ->
-			NewSession = ar_nonce_limiter:get_session(SessionKey),
-			{CurrentSessionKey, CurrentSession} = ar_nonce_limiter:get_current_session(),
-			NewActiveSessions = build_active_session_set(
-					SessionKey, NewSession, CurrentSessionKey,
-					CurrentSession#vdf_session.prev_session_key),
+			NewActiveSessions = build_active_session_set(SessionKey, CurrentActiveSessions),
 			case sets:to_list(sets:subtract(NewActiveSessions, CurrentActiveSessions)) of
 				[] ->
 					State;
-				AddedSessions ->
-					update_sessions(NewActiveSessions, AddedSessions, State)
+				_ ->
+					update_sessions(NewActiveSessions, CurrentActiveSessions, State)
 			end
 	end.
 
-build_active_session_set(NewSessionKey, NewSession, CurrentSessionKey, _PrevSessionKey)
-	when NewSession#vdf_session.prev_session_key == CurrentSessionKey ->
-	sets:from_list([NewSessionKey, CurrentSessionKey]);
-build_active_session_set(_NewSessionKey, _NewSession, CurrentSessionKey, PrevSessionKey)
-	when PrevSessionKey == undefined ->
-	sets:from_list([CurrentSessionKey]);
-build_active_session_set(_NewSessionKey, _NewSession, CurrentSessionKey, PrevSessionKey) ->
-	sets:from_list([CurrentSessionKey, PrevSessionKey]).
+build_active_session_set(SessionKey, CurrentActiveSessions) ->
+	CandidateSessions = [SessionKey | sets:to_list(CurrentActiveSessions)],
+	SortedSessions = lists:sort(
+		fun({_, StartIntervalA, _}, {_, StartIntervalB, _}) ->
+			StartIntervalA > StartIntervalB
+		end, CandidateSessions),
+	build_active_session_set(SortedSessions).
 
-update_sessions(NewActiveSessions, AddedSessions, State) ->
+build_active_session_set([A, B | _]) ->
+	sets:from_list([A, B]);
+build_active_session_set([A]) ->
+	sets:from_list([A]);
+build_active_session_set([]) ->
+	sets:new().
+
+update_sessions(NewActiveSessions, CurrentActiveSessions, State) ->
+	AddedSessions = sets:to_list(sets:subtract(NewActiveSessions, CurrentActiveSessions)),
+	RemovedSessions = sets:to_list(sets:subtract(CurrentActiveSessions, NewActiveSessions)),
+
 	maps:foreach(
 		fun(_Partition, Worker) ->
 			ar_mining_worker:set_sessions(Worker, NewActiveSessions)
@@ -277,19 +288,51 @@ update_sessions(NewActiveSessions, AddedSessions, State) ->
 		State#state.workers
 	),
 
-	lists:foreach(
-		fun(SessionKey) ->
-			{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
-			ar:console("Starting new mining session: "
-				"next entropy nonce: ~s, interval number: ~B, next vdf difficulty: ~B.~n",
-				[ar_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty]),
-			?LOG_INFO([{event, new_mining_session}, 
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
-		end,
-		AddedSessions
-	),
+	State2 = add_sessions(AddedSessions, State),
+	State3 = remove_sessions(RemovedSessions, State2),
 
-	State#state{ active_sessions = NewActiveSessions }.
+	State3#state{ active_sessions = NewActiveSessions }.
+
+add_sessions([], State) ->
+	State;
+add_sessions([SessionKey | AddedSessions], State) ->
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
+	ar:console("Starting new mining session: "
+		"next entropy nonce: ~s, interval number: ~B, next vdf difficulty: ~B.~n",
+		[ar_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty]),
+	?LOG_INFO([{event, new_mining_session}, 
+		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+	add_sessions(AddedSessions, add_seed(SessionKey, State)).
+
+remove_sessions([], State) ->
+	State;
+remove_sessions([SessionKey | RemovedSessions], State) ->
+	remove_sessions(RemovedSessions, remove_seed(SessionKey, State)).
+
+get_seed(SessionKey, State) ->
+	maps:get(SessionKey, State#state.seeds, not_found).
+
+set_seed(SessionKey, Seed, State) ->
+	State#state{ seeds = maps:put(SessionKey, Seed, State#state.seeds) }.
+
+remove_seed(SessionKey, State) ->
+	State#state{ seeds = maps:remove(SessionKey, State#state.seeds) }.
+
+add_seed(SessionKey, State) ->
+	case get_seed(SessionKey, State) of
+		not_found ->
+			Session = ar_nonce_limiter:get_session(SessionKey),
+			case Session of
+				not_found ->
+					?LOG_ERROR([{event, mining_session_not_found},
+						{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+					State;
+				_ ->
+					set_seed(SessionKey, Session#vdf_session.seed, State)
+			end;
+		_ ->
+			State
+	end.
 
 update_cache_limits(State) ->
 	NumActivePartitions = length(ar_mining_io:get_partitions()),
@@ -607,8 +650,7 @@ may_be_empty_poa(not_set) ->
 may_be_empty_poa(#poa{} = PoA) ->
 	PoA.
 
-handle_computed_output(Args, State) ->
-	{SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff} = Args,
+handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff, State) ->
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
 
@@ -633,6 +675,7 @@ handle_computed_output(Args, State) ->
 			{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 			Candidate = #mining_candidate{
 				session_key = SessionKey,
+				seed = get_seed(SessionKey, State3),
 				next_seed = NextSeed,
 				next_vdf_difficulty = NextVDFDifficulty,
 				start_interval_number = StartIntervalNumber,
