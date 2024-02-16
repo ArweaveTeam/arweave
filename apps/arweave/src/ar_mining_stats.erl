@@ -582,13 +582,13 @@ format_peer_report(Report) ->
 	Header = 
 		"\n"
 		"Coordinated mining cluster stats:\n"
-		"+----------------------+-------------+-------------+---------------+---------------+---------+---------+\n"
-        "|                 Peer | H1 To (Cur) | H1 To (Avg) | H1 From (Cur) | H1 From (Avg) |   H2 To | H2 From |\n"
-		"+----------------------+-------------+-------------+---------------+---------------+---------+---------+\n",
+		"+----------------------+--------------+--------------+-------------+-------------+--------+--------+\n"
+        "|                 Peer | H1 Out (Cur) | H1 Out (Avg) | H1 In (Cur) | H1 In (Avg) | H2 Out |  H2 In |\n"
+		"+----------------------+--------------+--------------+-------------+-------------+--------+--------+\n",
 	TotalRow = format_peer_total_row(Report),
 	PartitionRows = format_peer_rows(Report#report.peers),
     Footer =
-		"+----------------------+-------------+-------------+---------------+---------------+---------+---------+\n",
+		"+----------------------+--------------+--------------+-------------+-------------+--------+--------+\n",
 	io_lib:format("~s~s~s~s", [Header, TotalRow, PartitionRows, Footer]).
 
 format_peer_total_row(Report) ->
@@ -600,7 +600,7 @@ format_peer_total_row(Report) ->
 		total_h2_to_peer = TotalH2To,
 		total_h2_from_peer = TotalH2From } = Report,
     io_lib:format(
-		"|                  All | ~7B h/s | ~7B h/s | ~9B h/s | ~9B h/s | ~7B | ~7B |\n",
+		"|                  All | ~8B h/s | ~8B h/s | ~7B h/s | ~7B h/s | ~6B | ~6B |\n",
 		[
 			floor(AverageH1To), floor(CurrentH1To),
 			floor(AverageH1From), floor(CurrentH1From),
@@ -623,7 +623,7 @@ format_peer_row(PeerReport) ->
 		total_h2_to_peer = TotalH2To,
 		total_h2_from_peer = TotalH2From } = PeerReport,
     io_lib:format(
-		"| ~20s | ~7B h/s | ~7B h/s | ~9B h/s | ~9B h/s | ~7B | ~7B |\n",
+		"| ~20s | ~8B h/s | ~8B h/s | ~7B h/s | ~7B h/s | ~6B | ~6B |\n",
 		[
 			ar_util:format_peer(Peer),
 			floor(AverageH1To), floor(CurrentH1To),

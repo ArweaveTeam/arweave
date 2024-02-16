@@ -52,55 +52,6 @@ end).
 %% fluctuate a lot around the fork.
 -define(FORK_2_6_PRE_TRANSITION_USD_TO_AR_RATE, {1, 10}).
 
-%% The number of blocks which have to pass since the 2.6.8 fork before we
-%% start mixing in the new fee calculation method.
--ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_START, 2).
--else.
-	-ifndef(PRICE_2_6_8_TRANSITION_START).
-		-ifdef(FORKS_RESET).
-			-define(PRICE_2_6_8_TRANSITION_START, 0).
-		-else.
-			%% Target: February 20, 2024 at 2p UTC
-			%% Fork 2.6.8 was published at: May 30, 2023 at 3:35p UTC
-			%% Time between dates: 265 days, 22 hours, 25 minutes
-			%% https://www.timeanddate.com/date/durationresult.html?m1=05&d1=30&y1=2023&m2=02&d2=20&y2=2024&h1=15&i1=35&s1=&h2=14&i2=&s2=
-			%% In seconds: 22,976,700
-			%% In blocks: 22,976,700 / 128s average block time = 179505
-			%% Target block: 1189560 + 179505 = 1369065
-			-define(PRICE_2_6_8_TRANSITION_START, 179505).
-		-endif.
-	-endif.
--endif.
-
-%% The number of blocks following the 2.6.8 + ?PRICE_2_6_8_TRANSITION_START block
-%% where the tx fee computation is transitioned to the new calculation method.
-%% Let TransitionStart = fork 2.6.8 height + ?PRICE_2_6_8_TRANSITION_START.
-%% Let A = height - TransitionStart + 1.
-%% Let B = TransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS - (height + 1).
-%% Then price per GiB-minute = price old * B / (A + B) + price new * A / (A + B).
--ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 2).
--else.
-	-ifndef(PRICE_2_6_8_TRANSITION_BLOCKS).
-		-ifdef(FORKS_RESET).
-			-define(PRICE_2_6_8_TRANSITION_BLOCKS, 0).
-		-else.
-			-ifndef(PRICE_2_6_8_TRANSITION_BLOCKS).
-				-define(PRICE_2_6_8_TRANSITION_BLOCKS, (30 * 24 * 30 * 18)). % ~18 months.
-			-endif.
-		-endif.
-	-endif.
--endif.
-
--ifdef(DEBUG).
-	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, 8162).
--else.
-	%% STATIC_2_6_8_FEE_WINSTON / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
-	%% = ~400 Winston per GiB per minute.
-	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, 400).
--endif.
-
 %% The number of recent blocks contributing data points to the continuous estimation
 %% of the average price of storing a gibibyte for a minute. Also, the reward history
 %% is used to tracking the reserved mining rewards.

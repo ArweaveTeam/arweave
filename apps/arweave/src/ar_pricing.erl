@@ -1,7 +1,7 @@
 -module(ar_pricing).
 
 %% 2.6 exports.
--export([is_v2_pricing_height/1, get_price_per_gib_minute/4, get_tx_fee/1,
+-export([get_price_per_gib_minute/4, get_tx_fee/1,
 		get_miner_reward_endowment_pool_debt_supply/1, recalculate_price_per_gib_minute/1,
 		redenominate/3, may_be_redenominate/1]).
 
@@ -10,6 +10,9 @@
 		usd_to_ar_rate/1, usd_to_ar/3, recalculate_usd_to_ar_rate/1, usd_to_ar_pre_fork_2_4/3,
 		get_miner_reward_and_endowment_pool_pre_fork_2_4/1, get_storage_cost/4,
 		get_expected_min_decline_rate/6]).
+
+%% For tests.
+-export([get_v2_price_per_gib_minute/4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_inflation.hrl").
@@ -30,51 +33,18 @@
 -type datetime() :: {date(), time()}.
 
 %%%===================================================================
-%%% Public interface 2.6.
+%%% Public interface 2.6+.
 %%%===================================================================
-
-%% @doc Return true if the given height is a height where the transition to the
-%% new pricing algorithm is complete.
-is_v2_pricing_height(Height) ->
-	Fork_2_6_8 = ar_fork:height_2_6_8(),
-	Height >= Fork_2_6_8 % First check just this because it may be infinity.
-			andalso Height >= Fork_2_6_8 + (?PRICE_2_6_8_TRANSITION_START)
-					+ (?PRICE_2_6_8_TRANSITION_BLOCKS).
 
 %% @doc Return the price per gibibyte minute estimated from the given history of
 %% network hash rates and block rewards. The total reward used in calculations
 %% is at least 1 Winston, even if all block rewards from the given history are 0.
 %% Also, the returned price is always at least 1 Winston.
 get_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination) ->
-	Fork_2_7 = ar_fork:height_2_7(),
-	PriceTransitionStart = ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START,
-	PriceTransitionEnd = PriceTransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS,
+	V2Price = get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination),
+	ar_pricing_transition:get_transition_price(Height, V2Price).
 
-	PreTransitionPrice = ?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
-	NewPrice = get_price_per_gib_minute2(Height, LockedRewards, BlockTimeHistory, Denomination),
-
-	case Height of
-		_ when Height < Fork_2_7 ->
-			%% Computed but not used at this point.
-			NewPrice;
-		_ when Height < PriceTransitionStart ->
-			PreTransitionPrice;
-		_ when Height < PriceTransitionEnd ->
-			%% Interpolate between the pre-transition price and the new price.
-			Interval1 = Height - PriceTransitionStart,
-			Interval2 = PriceTransitionEnd - Height,
-			PricePerGiBPerMinute =
-				(PreTransitionPrice * Interval2 + NewPrice * Interval1) div (Interval1 + Interval2),
-			?LOG_DEBUG([{event, get_price_per_gib_minute},
-				{height, Height}, {price1, PreTransitionPrice}, {price2, NewPrice},
-				{interval1, Interval1}, {interval2, Interval2},
-				{price, PricePerGiBPerMinute}]),
-			PricePerGiBPerMinute;
-		_ ->
-			NewPrice
-	end.
-
-get_price_per_gib_minute2(Height, LockedRewards, BlockTimeHistory, Denomination) ->
+get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination) ->
 	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(LockedRewards, Denomination),
 
 	case Height - ?BLOCK_TIME_HISTORY_BLOCKS >= ar_fork:height_2_7() of
@@ -158,7 +128,7 @@ get_price_per_gib_minute2(Height, LockedRewards, BlockTimeHistory, Denomination)
 				(
 					IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
 				),
-			?LOG_DEBUG([{event, get_price_per_gib_minute2}, {height, Height},
+			?LOG_DEBUG([{event, get_v2_price_per_gib_minute}, {height, Height},
 				{hash_rate_total, HashRateTotal}, {reward_total, RewardTotal},
 				{interval_total, IntervalTotal}, {vdf_interval_total, VDFIntervalTotal},
 				{one_chunk_count, OneChunkCount}, {two_chunk_count, TwoChunkCount},
@@ -240,19 +210,6 @@ get_miner_reward_endowment_pool_debt_supply(Args) ->
 					KryderPlusRateMultiplier2}
 	end.
 
-%% @doc Return the new current and scheduled prices per byte minute.
-recalculate_price_per_gib_minute(B) ->
-	#block{ height = PrevHeight } = B,
-	Height = PrevHeight + 1,
-	Fork_2_6 = ar_fork:height_2_6(),
-	true = Height >= Fork_2_6,
-	case Height > Fork_2_6 of
-		false ->
-			get_initial_current_and_scheduled_price_per_gib_minute(B);
-		true ->
-			recalculate_price_per_gib_minute2(B)
-	end.
-
 %% @doc Return the denominated amount.
 redenominate(Amount, 0, _Denomination) ->
 	Amount;
@@ -266,7 +223,7 @@ redenominate(Amount, BaseDenomination, Denomination) when Denomination > BaseDen
 may_be_redenominate(B) ->
 	#block{ height = Height, denomination = Denomination,
 			redenomination_height = RedenominationHeight } = B,
-	case is_v2_pricing_height(Height + 1) of
+	case ar_pricing_transition:is_v2_pricing_height(Height + 1) of
 		false ->
 			{Denomination, RedenominationHeight};
 		true ->
@@ -299,17 +256,8 @@ may_be_redenominate3(B) ->
 			{Denomination, RedenominationHeight}
 	end.
 
-get_initial_current_and_scheduled_price_per_gib_minute(B) ->
-	#block{ height = Height } = B,
-	HashRate = ar_difficulty:get_hash_rate(B),
-	Reward = ar_inflation:calculate(B#block.height),
-	Denomination = 1,
-	Price = get_price_per_gib_minute(Height,
-			[{B#block.reward_addr, HashRate, Reward, Denomination}],
-			B#block.block_time_history, Denomination),
-	{Price, Price}.
-
-recalculate_price_per_gib_minute2(B) ->
+%% @doc Return the new current and scheduled prices per byte minute.
+recalculate_price_per_gib_minute(B) ->
 	#block{ height = PrevHeight, block_time_history = BlockTimeHistory,
 			denomination = Denomination, price_per_gib_minute = Price,
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
@@ -318,8 +266,7 @@ recalculate_price_per_gib_minute2(B) ->
 	Fork_2_7_1 = ar_fork:height_2_7_1(),
 	case Height of
 		Fork_2_7 ->
-			{?PRICE_PER_GIB_MINUTE_PRE_TRANSITION,
-					?PRICE_PER_GIB_MINUTE_PRE_TRANSITION};
+			{ar_pricing_transition:static_price(), ar_pricing_transition:static_price()};
 		Height when Height < Fork_2_7_1 ->
 			case is_price_adjustment_height(Height) of
 				false ->
