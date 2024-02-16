@@ -128,12 +128,9 @@ get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denominatio
 				(
 					IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
 				),
-			?LOG_DEBUG([{event, get_v2_price_per_gib_minute}, {height, Height},
-				{hash_rate_total, HashRateTotal}, {reward_total, RewardTotal},
-				{interval_total, IntervalTotal}, {vdf_interval_total, VDFIntervalTotal},
-				{one_chunk_count, OneChunkCount}, {two_chunk_count, TwoChunkCount},
-				{solutions_per_partition_per_vdf_step, SolutionsPerPartitionPerVDFStep},
-				{price, PricePerGiBPerMinute}]),
+			log_price_metrics(Height, length(LockedRewards), HashRateTotal, RewardTotal, 
+					IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount,
+					SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute),
 			PricePerGiBPerMinute;
 		false ->
 			%% 2 recall ranges per partition per second.
@@ -717,6 +714,34 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
 		{max_adjustment_down, ar_util:safe_divide(element(1, MaxAdjustmentDown),
 				element(2,MaxAdjustmentDown))}]),
 	{Rate, CappedScheduledRate}.
+
+log_price_metrics(
+		Height, RewardHistoryLength, HashRateTotal, RewardTotal, IntervalTotal, VDFIntervalTotal,
+		OneChunkCount, TwoChunkCount, SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute) ->
+
+	AverageHashRate = HashRateTotal div RewardHistoryLength,
+	EstimatedDataSizeInBytes = network_data_size(AverageHashRate, IntervalTotal, VDFIntervalTotal,
+			SolutionsPerPartitionPerVDFStep),
+
+	prometheus_gauge:set(poa_count, [1], OneChunkCount),
+	prometheus_gauge:set(poa_count, [2], TwoChunkCount),
+	prometheus_gauge:set(v2_price_per_gibibyte_minute, PricePerGiBPerMinute),
+	prometheus_gauge:set(network_data_size, EstimatedDataSizeInBytes),
+
+	?LOG_DEBUG([{event, get_v2_price_per_gib_minute}, {height, Height},
+		{hash_rate_total, HashRateTotal}, {average_hash_rate, AverageHashRate},
+		{reward_total, RewardTotal},
+		{interval_total, IntervalTotal}, {vdf_interval_total, VDFIntervalTotal},
+		{one_chunk_count, OneChunkCount}, {two_chunk_count, TwoChunkCount},
+		{solutions_per_partition_per_vdf_step, SolutionsPerPartitionPerVDFStep},
+		{data_size, EstimatedDataSizeInBytes}, {price, PricePerGiBPerMinute}]).
+
+network_data_size(
+		AverageHashRate, IntervalTotal, VDFIntervalTotal, SolutionsPerPartitionPerVDFStep) ->
+	SolutionsPerPartitionPerBlock =
+		(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * 60 * 2) div IntervalTotal,
+	EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
+	EstimatedPartitionCount * (?PARTITION_SIZE).
 
 %%%===================================================================
 %%% Tests.

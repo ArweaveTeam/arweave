@@ -6,7 +6,7 @@
 
 -export([is_retarget_height/1, is_retarget_block/1, maybe_retarget/5,
 		calculate_difficulty/5, validate_difficulty/2,
-		switch_to_linear_diff/1, switch_to_linear_diff_pre_fork_2_5/1]).
+		switch_to_linear_diff/1, switch_to_linear_diff_pre_fork_2_5/1, switch_to_log_diff/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -130,6 +130,10 @@ switch_to_linear_diff(LogDiff) ->
 
 switch_to_linear_diff_pre_fork_2_5(Diff) ->
 	erlang:trunc(math:pow(2, 256)) - erlang:trunc(math:pow(2, 256 - Diff)).
+
+%% @doc only used for logging/metrics as the log diff is easier to understand than the linear diff
+switch_to_log_diff(LinearDiff) ->
+	256 - math:log2(?MAX_DIFF - LinearDiff).
 
 %%%===================================================================
 %%% Private functions.

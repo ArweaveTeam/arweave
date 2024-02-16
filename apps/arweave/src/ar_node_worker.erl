@@ -1563,10 +1563,35 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	maybe_reset_miner(State).
 
 log_applied_block(B) ->
+	Partition1 = ar_node:get_partition_number(B#block.recall_byte),
+	Partition2 = ar_node:get_partition_number(B#block.recall_byte2),
+	case Partition1 of
+		undefined ->
+			ok;
+		_ ->
+			prometheus_gauge:inc(partition_count, [Partition1])
+	end,
+	case Partition2 of
+		undefined ->
+			ok;
+		_ ->
+			prometheus_gauge:inc(partition_count, [Partition2])
+	end,
+	NumChunks = case {Partition1, Partition2} of
+		{undefined, undefined} ->
+			0;
+		{undefined, _} ->
+			1;
+		{_, undefined} ->
+			1;
+		_ ->
+			2
+	end,
 	?LOG_INFO([
 		{event, applied_block},
 		{indep_hash, ar_util:encode(B#block.indep_hash)},
-		{height, B#block.height}
+		{height, B#block.height}, {partition1, Partition1}, {partition2, Partition2},
+		{num_chunks, NumChunks}
 	]).
 
 log_tip(B) ->
@@ -1605,6 +1630,9 @@ record_economic_metrics(B, PrevB) ->
 	end.
 
 record_economic_metrics2(B, PrevB) ->
+	{PoA1Diff, Diff} = ar_difficulty:diff_pair(B),
+	prometheus_gauge:set(log_diff, [poa1], ar_retarget:switch_to_log_diff(PoA1Diff)),
+	prometheus_gauge:set(log_diff, [poa2], ar_retarget:switch_to_log_diff(Diff)),
 	prometheus_gauge:set(network_hashrate, ar_difficulty:get_hash_rate(B)),
 	prometheus_gauge:set(endowment_pool, B#block.reward_pool),
 	Period_200_Years = 200 * 365 * 24 * 60 * 60,

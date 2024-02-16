@@ -279,6 +279,8 @@ get_recent_partition_upper_bound_by_prev_h(H, Diff, [], _Genesis) ->
 			{h, ar_util:encode(H)}, {depth, Diff}]),
 	not_found.
 
+get_partition_number(undefined) ->
+	undefined;
 get_partition_number(infinity) ->
 	infinity;
 get_partition_number(Offset) ->

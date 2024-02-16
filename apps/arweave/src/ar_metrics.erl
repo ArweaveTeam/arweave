@@ -310,6 +310,15 @@ register() ->
 				" as currently estimated by the protocol."}
 	]),
 	prometheus_gauge:new([
+		{name, network_data_size},
+		{help, "Total size of the network data in bytes."}
+	]),
+	prometheus_gauge:new([
+		{name, v2_price_per_gibibyte_minute},
+		{help, "The price of storing 1 GiB for one minute as it will be calculated once the"
+				" transition to the new pricing protocol is complete."}
+	]),
+	prometheus_gauge:new([
 		{name, price_per_gibibyte_minute},
 		{help, "The price of storing 1 GiB for one minute as currently estimated by "
 				"the protocol."}
@@ -331,6 +340,25 @@ register() ->
 		{name, debt_supply},
 		{help, "The amount of Winston emitted when the endowment pool was not sufficiently"
 				" large to compensate mining."}
+	]),
+	prometheus_gauge:new([
+		{name, poa_count},
+		{labels, [chunks]},
+		{help, "A count of the number of 1-chunk and 2-chunk blocks in the last 21,600 blocks. "
+				"The 'chunks' label is 1 for the count of 1-chunk blocks, and 2 for the count of "
+				"2-chunk blocks."}
+	]),
+	prometheus_gauge:new([
+		{name, partition_count},
+		{labels, [partition]},
+		{help, "A count of how often each partition is used in a block proof-of-access proof. "
+				"The 'partition' label is the partition number."}
+	]),
+	prometheus_gauge:new([
+		{name, log_diff},
+		{labels, [chunk]},
+		{help, "The current linear difficulty converted to log scale. The chunk label "
+				"is either 'poa1' or 'poa2'."}
 	]),
 	prometheus_gauge:new([
 		{name, network_hashrate},
