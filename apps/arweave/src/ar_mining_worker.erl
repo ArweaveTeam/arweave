@@ -266,7 +266,8 @@ handle_task({chunk2, Candidate}, State) ->
 	end;
 
 handle_task({compute_h0, Candidate}, State) ->
-	#state{ latest_vdf_step_number = LatestVDFStepNumber, vdf_queue_limit = VDFQueueLimit } = State,
+	#state{ latest_vdf_step_number = LatestVDFStepNumber,
+			vdf_queue_limit = VDFQueueLimit } = State,
 	#mining_candidate{ session_key = SessionKey, step_number = StepNumber } = Candidate,
 	State3 = case try_to_reserve_cache_space(SessionKey, State) of
 		{true, State2} ->
@@ -320,12 +321,11 @@ handle_task({computed_h0, Candidate}, State) ->
 				{partition_number, Partition1},
 				{range_start, RecallRange1Start},
 				{range_end, RecallRange1Start + ?RECALL_RANGE_SIZE}]),
-			%% Release the Range1 *and* Range2 caceh space we reserved with
+			%% Release the Range1 *and* Range2 cache space we reserved with
 			%% try_to_reserve_cache_space/2
 			update_chunk_cache_size(-(2*RecallRangeChunks), SessionKey, State)	
 	end,
 	{noreply, State3};
-	
 
 handle_task({computed_h1, Candidate}, State) ->
 	#state{ diff_pair = DiffPair } = State,

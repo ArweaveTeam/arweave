@@ -523,6 +523,14 @@ handle(<<"GET">>, [<<"jobs">>], Req, _Pid) ->
 			handle_get_jobs(<<>>, Req)
 	end;
 
+handle(<<"POST">>, [<<"pool_cm_jobs">>], Req, Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_post_pool_cm_jobs(Req, Pid)
+	end;
+
 %% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
@@ -1326,8 +1334,19 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) 
 				false ->
 					not_joined(Req);
 				true ->
-					Table = format_partition_table(),
-					{200, #{}, ar_serialize:jsonify(Table), Req}
+					LocalPartitions = get_unique_partitions(),
+					Partitions =
+						case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+							{true, true} ->
+								PoolPeer = ar_pool:pool_peer(),
+								PoolPartitions = ar_coordination:get_peer_partitions(PoolPeer),
+								ar_coordination:get_unique_partitions(PoolPartitions,
+										LocalPartitions);
+							_ ->
+								LocalPartitions
+						end,
+					JSON = ar_serialize:jsonify(lists:sort(sets:to_list(Partitions))),
+					{200, #{}, JSON, Req}
 			end;
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
@@ -1371,8 +1390,7 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
-%% TODO: endpoint description
-%% POST request to endpoint /coordinated_mining/h1
+%% POST request to /coordinated_mining/h1.
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"h1">>], Req, Pid) ->
 	case check_cm_api_secret(Req) of
 		pass ->
@@ -1386,8 +1404,7 @@ handle(<<"POST">>, [<<"coordinated_mining">>, <<"h1">>], Req, Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
-%% TODO: endpoint description
-%% POST request to endpoint /coordinated_mining/h1
+%% POST request to /coordinated_mining/h2.
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"h2">>], Req, Pid) ->
 	case check_cm_api_secret(Req) of
 		pass ->
@@ -2534,6 +2551,39 @@ handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req) ->
 	{200, #{}, ar_serialize:jsonify(
 			ar_serialize:jobs_to_json_struct(ar_pool:get_jobs(PrevOutput))), Req}.
 
+%% Only for cm miners that are NOT exit peers.
+handle_post_pool_cm_jobs(Req, Pid) ->
+	PoolCMMiner = (not ar_coordination:is_exit_peer()) andalso ar_pool:is_client(),
+	case PoolCMMiner of
+		false ->
+			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
+		true ->
+			case check_cm_api_secret(Req) of
+				{reject, {Status, Headers, Body}} ->
+					{Status, Headers, Body, Req};
+				pass ->
+					handle_post_pool_cm_jobs2(Req, Pid)
+			end
+	end.
+
+handle_post_pool_cm_jobs2(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case catch ar_serialize:json_struct_to_pool_cm_jobs(
+					ar_serialize:dejsonify(Body)) of		
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+				Jobs ->
+					ar_pool:process_cm_jobs(Jobs, Peer),
+					{200, #{}, <<>>, Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{500, #{}, <<"Handler timeout">>, Req}
+	end.
+
 encode_txids([]) ->
 	<<>>;
 encode_txids([TXID | TXIDs]) ->
@@ -3044,36 +3094,31 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 		{error, timeout}
 	end.
 
-format_partition_table() ->
-	format_partition_table(ar_mining_io:get_partitions(), sets:new()).
+get_unique_partitions() ->
+	ar_coordination:get_unique_partitions(ar_mining_io:get_partitions(), sets:new()).
 
-format_partition_table([], UniquePartitions) ->
-	lists:sort(sets:to_list(UniquePartitions));
-format_partition_table([{PartitionId, MiningAddress} | Partitions], UniquePartitions) ->
-	format_partition_table(
-		Partitions,
-		sets:add_element(
-			{[
-				{bucket, PartitionId},
-				{bucketsize, ?PARTITION_SIZE},
-				{addr, ar_util:encode(MiningAddress)}
-			]},
-			UniquePartitions
-		)
-	).
-
-% TODO binary protocol after debug
 handle_mining_h1(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
-				{ok, JSON} ->
-					Candidate = ar_serialize:json_map_to_candidate(JSON),
-					ar_coordination:compute_h2_for_peer(Peer, Candidate),
-					{200, #{}, <<>>, Req};
-				{error, _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+				{true, true} ->
+					PoolPeer = ar_pool:pool_peer(),
+					spawn(fun() ->
+						ar_http_iface_client:cm_h1_send(PoolPeer, Body) end);
+				_ ->
+					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+						{ok, JSON} ->
+							case catch ar_serialize:json_map_to_candidate(JSON) of
+								{'EXIT', _} ->
+									{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+								Candidate ->
+									ar_coordination:compute_h2_for_peer(Peer, Candidate),
+									{200, #{}, <<>>, Req}
+							end;
+						{error, _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+					end
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req}
@@ -3083,15 +3128,27 @@ handle_mining_h2(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
-				{ok, JSON} ->
-					Candidate = ar_serialize:json_map_to_candidate(JSON),
-					?LOG_INFO([{event, h2_received}, {peer, ar_util:format_peer(Peer)}]),
-					ar_mining_server:prepare_and_post_solution(Candidate),
-					ar_mining_stats:h2_received_from_peer(Peer),
-					{200, #{}, <<>>, Req};
-				{error, _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+				{true, true} ->
+					PoolPeer = ar_pool:pool_peer(),
+					spawn(fun() ->
+						ar_http_iface_client:cm_h2_send(PoolPeer, Body) end);
+				_ ->
+					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+						{ok, JSON} ->
+							case catch ar_serialize:json_map_to_candidate(JSON) of
+								{'EXIT', _} ->
+									{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+								Candidate ->
+									?LOG_INFO([{event, h2_received},
+											{peer, ar_util:format_peer(Peer)}]),
+									ar_mining_server:prepare_and_post_solution(Candidate),
+									ar_mining_stats:h2_received_from_peer(Peer),
+									{200, #{}, <<>>, Req}
+							end;
+						{error, _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+					end
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req}

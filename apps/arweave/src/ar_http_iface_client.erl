@@ -15,7 +15,8 @@
 		get_block_time_history/3,
 		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
-		cm_publish_send/2, get_jobs/3, post_partial_solution/3]).
+		cm_publish_send/2, get_jobs/2, post_partial_solution/2,
+		get_pool_cm_jobs/1, post_pool_cm_jobs/2, post_cm_partition_table_to_pool/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -565,39 +566,78 @@ validate_block_time_history_hashes(BlockTimeHistory, [H | ExpectedBlockTimeHisto
 		false ->
 			false
 	end.
+
 get_cm_partition_table(Peer) ->
+	{Peer3, Headers, BasePath, IsPeerRequest} =
+		case Peer of
+			{pool, URL} ->
+				{Peer2, Path2} = get_peer_and_path_from_url(URL),
+				{Peer2, pool_client_headers(), Path2, false};
+			_ ->
+				{Peer, cm_p2p_headers(), "", true}
+		end,
 	handle_cm_partition_table_response(ar_http:req(#{
-		peer => Peer,
+		peer => Peer3,
 		method => get,
-		path => "/coordinated_mining/partition_table",
+		path => BasePath ++ "/coordinated_mining/partition_table",
 		timeout => 5 * 1000,
 		connect_timeout => 500,
-		headers => cm_p2p_headers()
+		headers => Headers,
+		is_peer_request => IsPeerRequest
 	})).
 
-% TODO binary protocol after debug
 cm_h1_send(Peer, Candidate) ->
-	JSON = ar_serialize:candidate_to_json_struct(Candidate),
+	{Peer3, Headers, BasePath, IsPeerRequest} =
+		case Peer of
+			{pool, URL} ->
+				{Peer2, Path2} = get_peer_and_path_from_url(URL),
+				{Peer2, pool_client_headers(), Path2, false};
+			_ ->
+				{Peer, cm_p2p_headers(), "", true}
+		end,
+	JSON =
+		case is_binary(Candidate) of
+			true ->
+				Candidate;
+			false ->
+				ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate))
+		end,
 	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer,
+		peer => Peer3,
 		method => post,
-		path => "/coordinated_mining/h1",
+		path => BasePath ++ "/coordinated_mining/h1",
 		timeout => 5 * 1000,
 		connect_timeout => 500,
-		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify(JSON)
+		headers => Headers,
+		body => JSON,
+		is_peer_request => IsPeerRequest
 	})).
 
 cm_h2_send(Peer, Candidate) ->
-	JSON = ar_serialize:candidate_to_json_struct(Candidate),
+	{Peer3, Headers, BasePath, IsPeerRequest} =
+		case Peer of
+			{pool, URL} ->
+				{Peer2, Path2} = get_peer_and_path_from_url(URL),
+				{Peer2, pool_client_headers(), Path2, false};
+			_ ->
+				{Peer, cm_p2p_headers(), "", true}
+		end,
+	JSON =
+		case is_binary(Candidate) of
+			true ->
+				Candidate;
+			false ->
+				ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate))
+		end,
 	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer,
+		peer => Peer3,
 		method => post,
-		path => "/coordinated_mining/h2",
+		path => BasePath ++ "/coordinated_mining/h2",
 		timeout => 5 * 1000,
 		connect_timeout => 500,
-		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify(JSON)
+		headers => Headers,
+		body => JSON,
+		is_peer_request => IsPeerRequest
 	})).
 
 cm_publish_send(Peer, Solution) ->
@@ -618,23 +658,23 @@ cm_publish_send(Peer, Solution) ->
 	})).
 
 %% @doc Fetch the jobs from the pool or coordinated mining exit peer.
-get_jobs(PeerOrURL, PrevOutput, GetJobsFromExitNode) ->
-	{Peer, Headers, BasePath} =
-		case GetJobsFromExitNode of
-			true ->
-				{PeerOrURL, cm_p2p_headers(), ""};
-			false ->
-				{Peer2, Path2} = get_peer_and_path_from_url(PeerOrURL),
-				{Peer2, pool_client_headers(), Path2}
+get_jobs(Peer, PrevOutput) ->
+	{Peer3, Headers, BasePath, IsPeerRequest} =
+		case Peer of
+			{pool, URL} ->
+				{Peer2, Path2} = get_peer_and_path_from_url(URL),
+				{Peer2, pool_client_headers(), Path2, false};
+			_ ->
+				{Peer, cm_p2p_headers(), "", true}
 		end,
 	handle_get_jobs_response(ar_http:req(#{
-		peer => Peer,
+		peer => Peer3,
 		method => get,
 		path => BasePath ++ "/jobs/" ++ binary_to_list(ar_util:encode(PrevOutput)),
 		timeout => 5 * 1000,
 		connect_timeout => 1000,
 		headers => Headers,
-		is_peer_request => GetJobsFromExitNode
+		is_peer_request => IsPeerRequest
 	})).
 
 get_peer_and_path_from_url(URL) ->
@@ -642,14 +682,14 @@ get_peer_and_path_from_url(URL) ->
 	{{binary_to_list(Host), Port}, binary_to_list(P)}.
 
 %% @doc Post the partial solution to the pool or coordinated mining exit peer.
-post_partial_solution(PeerOrURL, Solution, GetJobsFromExitNode) ->
-	{Peer, Headers, BasePath} =
-		case GetJobsFromExitNode of
-			true ->
-				{PeerOrURL, cm_p2p_headers(), ""};
-			false ->
-				{Peer2, Path2} = get_peer_and_path_from_url(PeerOrURL),
-				{Peer2, pool_client_headers(), Path2}
+post_partial_solution(Peer, Solution) ->
+	{Peer3, Headers, BasePath, IsPeerRequest} =
+		case Peer of
+			{pool, URL} ->
+				{Peer2, Path2} = get_peer_and_path_from_url(URL),
+				{Peer2, pool_client_headers(), Path2, false};
+			_ ->
+				{Peer, cm_p2p_headers(), "", true}
 		end,
 	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
 	Payload =
@@ -660,15 +700,74 @@ post_partial_solution(PeerOrURL, Solution, GetJobsFromExitNode) ->
 				ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution))
 		end,
 	handle_post_partial_solution_response(ar_http:req(#{
-		peer => Peer,
+		peer => Peer3,
 		method => post,
 		path => BasePath ++ "/partial_solution/",
 		timeout => 20 * 1000,
 		connect_timeout => 5 * 1000,
 		headers => Headers2,
 		body => Payload,
-		is_peer_request => GetJobsFromExitNode
+		is_peer_request => IsPeerRequest
 	})).
+
+get_pool_cm_jobs(Peer) ->
+	{Peer3, Headers, BasePath, IsPeerRequest} =
+		case Peer of
+			{pool, URL} ->
+				{Peer2, Path2} = get_peer_and_path_from_url(URL),
+				{Peer2, pool_client_headers(), Path2, false};
+			_ ->
+				{Peer, cm_p2p_headers(), "", true}
+		end,
+	handle_get_pool_cm_jobs_response(ar_http:req(#{
+		peer => Peer3,
+		method => get,
+		path => BasePath ++ "/pool_cm_jobs",
+		timeout => 5 * 1000,
+		connect_timeout => 1000,
+		headers => Headers,
+		is_peer_request => IsPeerRequest
+	})).
+
+post_pool_cm_jobs(Peer, Payload) ->
+	handle_post_pool_cm_jobs_response(ar_http:req(#{
+		peer => Peer,
+		method => post,
+		path => "/pool_cm_jobs",
+		body => Payload,
+		timeout => 5 * 1000,
+		connect_timeout => 1000,
+		headers => cm_p2p_headers()
+	})).
+
+post_cm_partition_table_to_pool(Peer, Payload) ->
+	{pool, URL} = Peer,
+	{Peer2, BasePath} = get_peer_and_path_from_url(URL),
+	handle_cm_partition_table_response(ar_http:req(#{
+		peer => Peer2,
+		method => post,
+		path => BasePath ++ "/coordinated_mining/partition_table",
+		body => Payload,
+		timeout => 10 * 1000,
+		connect_timeout => 2000,
+		headers => pool_client_headers(),
+		is_peer_request => false
+	})).
+
+handle_get_pool_cm_jobs_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch ar_serialize:json_struct_to_pool_cm_jobs(ar_serialize:dejsonify(Body)) of
+		{'EXIT', _} ->
+			{error, invalid_json};
+		Jobs ->
+			{ok, Jobs}
+	end;
+handle_get_pool_cm_jobs_response(Reply) ->
+	{error, Reply}.
+
+handle_post_pool_cm_jobs_response({ok, {{<<"200">>, _}, _, _, _, _}}) ->
+	ok;
+handle_post_pool_cm_jobs_response(Reply) ->
+	{error, Reply}.
 
 handle_post_partial_solution_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	case catch jiffy:decode(Body, [return_maps]) of

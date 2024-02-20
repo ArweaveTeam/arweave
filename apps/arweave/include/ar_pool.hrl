@@ -11,6 +11,12 @@
 %% The time in milliseconds we wait before retrying a failed fetch jobs request.
 -define(FETCH_JOBS_RETRY_MS, 2000).
 
+%% The frequency in milliseconds of asking the pool or CM exit node about new CM jobs.
+-define(FETCH_CM_JOBS_FREQUENCY_MS, 1000).
+
+%% The time in milliseconds we wait before retrying a failed fetch CM jobs request.
+-define(FETCH_CM_JOBS_RETRY_MS, 2000).
+
 %% @doc A collection of mining jobs.
 -record(jobs, {
 	jobs = [], %% The information about a single VDF output (a "job").
@@ -32,4 +38,10 @@
 -record(partial_solution_response, {
 	indep_hash = <<>>,
 	status = <<>>
+}).
+
+%% @doc A set of coordinated mining jobs provided by the pool.
+-record(pool_cm_jobs, {
+	h1_to_h2_jobs = [], % [#mining_candidate{}]
+	h1_read_jobs = [] % [#mining_candidate{}]
 }).

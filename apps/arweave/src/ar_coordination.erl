@@ -5,7 +5,8 @@
 -export([
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
 	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peers/1, get_peer/1,
-	update_peer/2, remove_peer/1, is_exit_peer/0
+	update_peer/2, remove_peer/1, is_exit_peer/0, get_peer_partitions/1,
+	get_unique_partitions/2
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -79,6 +80,11 @@ is_exit_peer() ->
 	Config#config.coordinated_mining == true andalso
 			Config#config.cm_exit_peer == not_set.
 
+%% @doc Return the list of the partitions of the given Peer, to the best
+%% of our knowledge.
+get_peer_partitions(Peer) ->
+	gen_server:call(?MODULE, {get_peer_partitions, Peer}, infinity).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -107,7 +113,7 @@ init([]) ->
 				_ ->
 					ok
 			end,
-			ar_util:cast_after(?START_DELAY, ?MODULE, refresh_peers),
+			ar_util:cast_after(?START_DELAY, ?MODULE, refetch_peer_partitions),
 			State#state{
 				last_peer_response = #{}
 			}
@@ -124,6 +130,15 @@ handle_call({get_peer, PartitionNumber}, _From, State) ->
 
 handle_call({get_peers, PartitionNumber}, _From, State) ->
 	{reply, get_peers(PartitionNumber, State), State};
+
+handle_call({get_peer_partitions, Peer}, _From, State) ->
+	#state{ last_peer_response = Map } = State,
+	case maps:get(Peer, Map, []) of
+		[] ->
+			{reply, [], State};
+		{true, Partitions} ->
+			{reply, Partitions, State}
+	end;
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -166,7 +181,7 @@ handle_cast({computed_h1, Candidate, DiffPair}, State) ->
 	end,
 	{noreply, State#state{ peer_requests = PeerRequests2 }};
 
-handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests} = State)
+handle_cast(send_h1_batch_to_peer, #state{ peer_requests = PeerRequests } = State)
   		when map_size(PeerRequests) == 0 ->
 	#state{ h1_batch_timer = TimerRef, batch_timeout = BatchTimeout } = State,
 	erlang:cancel_timer(TimerRef),
@@ -208,10 +223,21 @@ handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	send_h2(Peer, Candidate),
 	{noreply, State};
 
-handle_cast(refresh_peers, State) ->
+handle_cast(refetch_peer_partitions, State) ->
 	{ok, Config} = application:get_env(arweave, config),
-	ar_util:cast_after(Config#config.cm_poll_interval, ?MODULE, refresh_peers),
-	refresh(Config#config.cm_peers),
+	Peers = Config#config.cm_peers,
+	Peers2 =
+		case Config#config.cm_exit_peer == not_set
+				orelse lists:member(Config#config.cm_exit_peer, Peers) of
+			true ->
+				%% Either we are the exit node or the exit node
+				%% is already configured as yet another mining peer.
+				Peers;
+			false ->
+				[Config#config.cm_exit_peer | Peers]
+		end,
+	ar_util:cast_after(Config#config.cm_poll_interval, ?MODULE, refetch_peer_partitions),
+	refetch_peer_partitions(Peers2),
 	{noreply, State};
 
 handle_cast({update_peer, {Peer, PartitionList}}, State) ->
@@ -238,6 +264,23 @@ handle_cast({remove_peer, Peer}, State) ->
 	end,
 	{noreply, State3};
 
+handle_cast(refetch_pool_peer_partitions, State) ->
+	%% Casted when we are a CM exit peer and a pool client. We collect our local peer
+	%% partitions and push them to the pool getting the pool's complementary partitions
+	%% in response.
+	UniquePeerPartitions =
+		maps:fold(
+			fun	({pool, _}, _Value, Acc) ->
+					Acc;
+				(_Peer, {_, Partitions}, Acc) ->
+					get_unique_partitions(Partitions, Acc)
+			end,
+			sets:new(),
+			State#state.last_peer_response
+		),
+	refetch_pool_peer_partitions(UniquePeerPartitions),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -252,6 +295,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
 get_peers(PartitionNumber, State) ->
 	maps:get(PartitionNumber, State#state.peers_by_partition, []).
 
@@ -265,16 +309,26 @@ get_peer(PartitionNumber, State) ->
 
 send_h1(Peer, Candidate) ->
 	#mining_candidate{ cm_h1_list = H1List } = Candidate,
-	spawn(fun() -> 
-        ar_http_iface_client:cm_h1_send(Peer, Candidate)
-    end),
-	ar_mining_stats:h1_sent_to_peer(Peer, length(H1List)).
+	spawn(fun() ->
+		ar_http_iface_client:cm_h1_send(Peer, Candidate)
+	end),
+	case Peer of
+		{pool, _} ->
+			ar_mining_stats:h1_sent_to_peer(pool, length(H1List));
+		_ ->
+			ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
+	end.
 
 send_h2(Peer, Candidate) ->
-	spawn(fun() -> 
-        ar_http_iface_client:cm_h2_send(Peer, Candidate)
-    end),
-	ar_mining_stats:h2_sent_to_peer(Peer).
+	spawn(fun() ->
+		ar_http_iface_client:cm_h2_send(Peer, Candidate)
+	end),
+	case Peer of
+		{pool, _} ->
+			ar_mining_stats:h2_sent_to_peer(pool);
+		_ ->
+			ar_mining_stats:h2_sent_to_peer(Peer)
+	end.
 
 add_mining_peer({Peer, StorageModules}, State) ->
 	Partitions = lists:map(
@@ -290,7 +344,7 @@ add_mining_peer({Peer, StorageModules}, State) ->
 			State#state.peers_by_partition,
 			Partitions
 		),
-	State#state{peers_by_partition = PeersByPartition}.
+	State#state{ peers_by_partition = PeersByPartition }.
 
 remove_mining_peer(Peer, State) ->
 	PeersByPartition = maps:fold(
@@ -300,17 +354,69 @@ remove_mining_peer(Peer, State) ->
 		#{},
 		State#state.peers_by_partition
 	),
-	State#state{peers_by_partition = PeersByPartition}.
+	State#state{ peers_by_partition = PeersByPartition }.
 
-refresh([]) ->
-	ok;
-refresh([Peer | Peers]) ->
-	spawn(fun() -> 
-        case ar_http_iface_client:get_cm_partition_table(Peer) of
-			{ok, PartitionList} ->
-				ar_coordination:update_peer(Peer, PartitionList);
+refetch_peer_partitions(Peers) ->
+	spawn(fun() ->
+		ar_util:pmap(
+			fun(Peer) ->
+				case ar_http_iface_client:get_cm_partition_table(Peer) of
+					{ok, PartitionList} ->
+						ar_coordination:update_peer(Peer, PartitionList);
+					_ ->
+						ok
+				end end,
+				Peers
+			),
+		%% ar_util:pmap ensures we fetch all the local up-to-date CM peer partitions first,
+		%% then share them with the Pool to fetch the complementary pool CM peer partitions.
+		case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+			{true, true} ->
+				refetch_pool_peer_partitions();
 			_ ->
-				ar_coordination:remove_peer(Peer)
+				ok
 		end
-    end),
-	refresh(Peers).
+	end).
+
+refetch_pool_peer_partitions() ->
+	gen_server:cast(?MODULE, refetch_pool_peer_partitions).
+
+get_unique_partitions([], UniquePartitions) ->
+	UniquePartitions;
+get_unique_partitions([{PartitionID, MiningAddress} | Partitions], UniquePartitions) ->
+	get_unique_partitions(
+		Partitions,
+		sets:add_element(
+			{[
+				{bucket, PartitionID},
+				{bucketsize, ?PARTITION_SIZE},
+				{addr, ar_util:encode(MiningAddress)}
+			]},
+			UniquePartitions
+		)
+	);
+get_unique_partitions([{PartitionID, BucketSize, MiningAddress} | Partitions],
+		UniquePartitions) ->
+	get_unique_partitions(
+		Partitions,
+		sets:add_element(
+			{[
+				{bucket, PartitionID},
+				{bucketsize, BucketSize},
+				{addr, ar_util:encode(MiningAddress)}
+			]},
+			UniquePartitions
+		)
+	).
+
+refetch_pool_peer_partitions(UniquePeerPartitions) ->
+	spawn(fun() ->
+		JSON = ar_serialize:jsonify(lists:sort(sets:to_list(UniquePeerPartitions))),
+		PoolPeer = ar_pool:pool_peer(),
+		case ar_http_iface_client:post_cm_partition_table_to_pool(PoolPeer, JSON) of
+			{ok, PartitionList} ->
+				ar_coordination:update_peer(PoolPeer, PartitionList);
+			_ ->
+				ok
+		end
+	end).

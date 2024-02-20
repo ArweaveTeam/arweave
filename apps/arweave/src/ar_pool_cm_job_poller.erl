@@ -1,4 +1,4 @@
--module(ar_pool_job_poller).
+-module(ar_pool_cm_job_poller).
 
 -behaviour(gen_server).
 
@@ -8,6 +8,7 @@
 
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pool.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {}).
@@ -26,10 +27,12 @@ start_link() ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	case ar_pool:is_client() of
-		true ->
-			gen_server:cast(self(), fetch_jobs);
-		false ->
+	case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+		{true, true} ->
+			gen_server:cast(self(), fetch_cm_jobs);
+		_ ->
+			%% If we are a CM miner and not an exit peer, our exit peer will push
+			%% the pool CM jobs to us.
 			ok
 	end,
 	{ok, #state{}}.
@@ -38,30 +41,17 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast(fetch_jobs, State) ->
-	PrevOutput = (ar_pool:get_latest_job())#job.output,
-	{ok, Config} = application:get_env(arweave, config),
-	Peer =
-		case {Config#config.coordinated_mining, Config#config.cm_exit_peer} of
-			{true, not_set} ->
-				%% We are a CM exit node.
-				ar_pool:pool_peer();
-			{true, ExitPeer} ->
-				%% We are a CM miner.
-				ExitPeer;
-			_ ->
-				%% We are a standalone pool client (a non-CM miner and a pool client).
-				ar_pool:pool_peer()
-		end,
-	case ar_http_iface_client:get_jobs(Peer, PrevOutput) of
+handle_cast(fetch_cm_jobs, State) ->
+	Peer = ar_pool:pool_peer(),
+	case ar_http_iface_client:get_pool_cm_jobs(Peer) of
 		{ok, Jobs} ->
-			emit_pool_jobs(Jobs),
-			ar_pool:cache_jobs(Jobs),
-			ar_util:cast_after(?FETCH_JOBS_FREQUENCY_MS, self(), fetch_jobs);
+			push_cm_jobs_to_cm_peers(Jobs),
+			ar_pool:process_cm_jobs(Jobs, Peer),
+			ar_util:cast_after(?FETCH_CM_JOBS_FREQUENCY_MS, self(), fetch_cm_jobs);
 		{error, Error} ->
-			?LOG_WARNING([{event, failed_to_fetch_pool_jobs},
+			?LOG_WARNING([{event, failed_to_fetch_pool_cm_jobs},
 					{error, io_lib:format("~p", [Error])}]),
-			ar_util:cast_after(?FETCH_JOBS_RETRY_MS, self(), fetch_jobs)
+			ar_util:cast_after(?FETCH_CM_JOBS_RETRY_MS, self(), fetch_cm_jobs)
 	end,
 	{noreply, State};
 
@@ -80,17 +70,14 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-emit_pool_jobs(Jobs) ->
-	SessionKey = {Jobs#jobs.next_seed, Jobs#jobs.interval_number,
-			Jobs#jobs.next_vdf_difficulty},
-	emit_pool_jobs(Jobs#jobs.jobs, SessionKey, Jobs#jobs.partial_diff, Jobs#jobs.seed).
+push_cm_jobs_to_cm_peers(Jobs) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Peers = Config#config.cm_peers,
+	Payload = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
+	push_cm_jobs_to_cm_peers(Payload, Peers).
 
-emit_pool_jobs([], _SessionKey, _PartialDiff, _Seed) ->
+push_cm_jobs_to_cm_peers(_Payload, []) ->
 	ok;
-emit_pool_jobs([Job | Jobs], SessionKey, PartialDiff, Seed) ->
-	#job{
-		output = Output, global_step_number = StepNumber,
-		partition_upper_bound = PartitionUpperBound } = Job,
-	ar_mining_server:add_pool_job(
-		SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff),
-	emit_pool_jobs(Jobs, SessionKey, PartialDiff, Seed).
+push_cm_jobs_to_cm_peers(Payload, [Peer | Peers]) ->
+	spawn(fun() -> ar_http_iface_client:post_pool_cm_jobs(Peer, Payload) end),
+	push_cm_jobs_to_cm_peers(Payload, Peers).

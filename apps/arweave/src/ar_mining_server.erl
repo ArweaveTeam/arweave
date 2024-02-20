@@ -1,6 +1,5 @@
 %%% @doc The 2.6 mining server.
 -module(ar_mining_server).
-% TODO Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput -> #vdf
 
 -behaviour(gen_server).
 
@@ -121,7 +120,8 @@ handle_cast(pause, State) ->
 handle_cast({start_mining, Args}, State) ->
 	{DiffPair, RebaseThreshold} = Args,
 	ar:console("Starting mining.~n"),
-	?LOG_INFO([{event, start_mining}, {difficulty, DiffPair}, {rebase_threshold, RebaseThreshold}]),
+	?LOG_INFO([{event, start_mining}, {difficulty, DiffPair},
+			{rebase_threshold, RebaseThreshold}]),
 	ar_mining_stats:start_performance_reports(),
 
 	maps:foreach(
@@ -625,7 +625,7 @@ post_solution(not_set, Solution, State) ->
 			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
 	end;
 post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
-	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution, true) of
+	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution) of
 		{ok, _} ->
 			ok;
 		{error, Reason} ->

@@ -28,7 +28,7 @@
 		"queue", "recent_hash_list", "recent_hash_list_diff", "tx_anchor", "arql", "time",
 		"chunk", "chunk2", "data_sync_record", "sync_buckets", "wallet", "unsigned_tx",
 		"peers", "hash_list", "block_index", "block_index2", "total_supply", "wallet_list",
-		"height", "metrics", "rates", "vdf", "vdf2", "partial_solution"]).
+		"height", "metrics", "rates", "vdf", "vdf2", "partial_solution", "pool_cm_jobs"]).
 
 %%%===================================================================
 %%% Public interface.

@@ -35,7 +35,7 @@ api_test_() ->
 		{timeout, 120, fun test_partition_table/0}
 	].
 
-refresh_test_() ->
+refetch_partitions_test_() ->
 	[
 		{timeout, 120, fun test_peers_by_partition/0}
 	].
@@ -216,18 +216,19 @@ test_partition_table() ->
 
 test_peers_by_partition() ->
 	PartitionUpperBound = 6 * ?PARTITION_SIZE,
-	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), PartitionUpperBound),
+	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(),
+			PartitionUpperBound),
 
-	MainPeer = ar_test_node:peer_ip(main),
 	Peer1 = ar_test_node:peer_ip(peer1),
 	Peer2 = ar_test_node:peer_ip(peer2),
 	Peer3 = ar_test_node:peer_ip(peer3),
 
 	BaseConfig = ar_test_node:base_cm_config([]),
-	Config = BaseConfig#config{ cm_exit_peer = MainPeer },
+	Config = BaseConfig#config{ cm_exit_peer = Peer1 },
 	MiningAddr = Config#config.mining_addr,
 	
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
+		cm_exit_peer = not_set,
 		cm_peers = [Peer2, Peer3],
 		storage_modules = [
 			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
@@ -281,19 +282,20 @@ test_peers_by_partition() ->
 	ar_test_node:remote_call(peer1, ar_test_node, stop, []),
 	timer:sleep(3000),
 
-	assert_peers([], peer2, 0),
-	assert_peers([], peer2, 1),
-	assert_peers([Peer3], peer2, 2),
+	assert_peers([Peer1], peer2, 0),
+	assert_peers([Peer1], peer2, 1),
+	assert_peers([Peer1, Peer3], peer2, 2),
 	assert_peers([Peer3], peer2, 3),
 	assert_peers([Peer3], peer2, 4),
 
-	assert_peers([], peer3, 0),
-	assert_peers([Peer2], peer3, 1),
-	assert_peers([Peer2], peer3, 2),
+	assert_peers([Peer1], peer3, 0),
+	assert_peers([Peer1, Peer2], peer3, 1),
+	assert_peers([Peer1, Peer2], peer3, 2),
 	assert_peers([Peer2], peer3, 3),
 	assert_peers([], peer3, 4),
 
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
+		cm_exit_peer = not_set,
 		cm_peers = [Peer2, Peer3],
 		storage_modules = [
 			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
@@ -329,6 +331,7 @@ test_peers_by_partition() ->
 %% --------------------------------------------------------------------
 %% Helpers
 %% --------------------------------------------------------------------
+
 assert_peers(ExpectedPeers, Node, Partition) ->
 	Peers = ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]),
 	?assertEqual(lists:sort(ExpectedPeers), lists:sort(Peers)).

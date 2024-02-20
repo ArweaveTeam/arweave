@@ -252,8 +252,10 @@ show_help() ->
 				"Optional path to the TLS certificate file for TLS support, depends on 'tls_key_file' being set as well."},
 			{"tls_key_file",
 				"The path to the TLS key file for TLS support, depends on 'tls_cert_file' being set as well."},
-			{"coordinated_mining", "Enable coordinated mining. You need to also set "
-					"cm_api_secret, cm_peer, and cm_exit_peer."},
+			{"coordinated_mining", "Enable coordinated mining. If you are a solo pool miner "
+					"coordinating on a replica with other pool miners, set this flag too. "
+					"To connect the internal nodes, set cm_api_secret, cm_peer, "
+					"and cm_exit_peer."},
 			{"cm_api_secret", "Coordinated mining secret for authenticated "
 					"requests between private peers. You need to also set coordinated_mining, "
 					"cm_peer, and cm_exit_peer."},

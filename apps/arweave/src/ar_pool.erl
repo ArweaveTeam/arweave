@@ -37,7 +37,7 @@
 
 -export([start_link/0, is_client/0, get_current_session_key_seed_pairs/0, get_jobs/1,
 		get_latest_job/0, cache_jobs/1, process_partial_solution/1,
-		post_partial_solution/1]).
+		post_partial_solution/1, pool_peer/0, process_cm_jobs/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -93,6 +93,24 @@ process_partial_solution(Solution) ->
 %% @doc Send the partial solution to the pool.
 post_partial_solution(Solution) ->
 	gen_server:cast(?MODULE, {post_partial_solution, Solution}).
+
+%% @doc Return the pool server as a "peer" recognized by ar_http_iface_client.
+pool_peer() ->
+	{ok, Config} = application:get_env(arweave, config),
+	{pool, Config#config.pool_server_address}.
+
+%% @doc Process the set of coordinated mining jobs received from the pool.
+process_cm_jobs(Jobs, Peer) ->
+	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs } = Jobs,
+	{ok, Config} = application:get_env(arweave, config),
+	Partitions = ar_mining_io:get_partitions(infinity),
+	case Config#config.mine of
+		true ->
+			process_h1_to_h2_jobs(H1ToH2Jobs, Peer, Partitions);
+		_ ->
+			ok
+	end,
+	process_h1_read_jobs(H1ReadJobs, Partitions).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -171,9 +189,7 @@ handle_cast({cache_jobs, Jobs}, State) ->
 			jobs_by_session_key = JobsBySessionKey2 }};
 
 handle_cast({post_partial_solution, Solution}, State) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case ar_http_iface_client:post_partial_solution(Config#config.pool_server_address,
-			Solution, false) of
+	case ar_http_iface_client:post_partial_solution(pool_peer(), Solution) of
 		{ok, _Response} ->
 			ok;
 		{error, Error} ->
@@ -507,6 +523,53 @@ process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache) ->
 			%% the solution fields deconstructed above).
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }
 	end.
+
+process_h1_to_h2_jobs([], _Peer, _Partitions) ->
+	ok;
+process_h1_to_h2_jobs([Candidate | Jobs], Peer, Partitions) ->
+	case we_have_partition_for_the_second_recall_byte(Candidate, Partitions) of
+		true ->
+			ar_coordination:compute_h2_for_peer(Peer, Candidate);
+		false ->
+			ok
+	end,
+	process_h1_to_h2_jobs(Jobs, Peer, Partitions).
+
+process_h1_read_jobs([], _Partitions) ->
+	ok;
+process_h1_read_jobs([Candidate | Jobs], Partitions) ->
+	case we_have_partition_for_the_first_recall_byte(Candidate, Partitions) of
+		true ->
+			ar_mining_server:prepare_and_post_solution(Candidate),
+			ar_mining_stats:h2_received_from_peer(pool);
+		false ->
+			ok
+	end,
+	process_h1_read_jobs(Jobs, Partitions).
+
+we_have_partition_for_the_first_recall_byte(_Candidate, []) ->
+	false;
+we_have_partition_for_the_first_recall_byte(
+		#mining_candidate{ mining_address = Addr, partition_number = PartitionID },
+		[{PartitionID, Addr} | _Partitions]) ->
+	true;
+we_have_partition_for_the_first_recall_byte(Candidate, [_Partition | Partitions]) ->
+	%% Mining address or partition number mismatch.
+	we_have_partition_for_the_first_recall_byte(Candidate, Partitions).
+
+we_have_partition_for_the_second_recall_byte(_Candidate, []) ->
+	false;
+we_have_partition_for_the_second_recall_byte(
+		#mining_candidate{ mining_address = Addr, partition_number2 = PartitionID },
+		[{PartitionID, Addr} | _Partitions]) ->
+	true;
+we_have_partition_for_the_second_recall_byte(Candidate, [_Partition | Partitions]) ->
+	%% Mining address or partition number mismatch.
+	we_have_partition_for_the_second_recall_byte(Candidate, Partitions).
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
 
 get_jobs_test() ->
 	?assertEqual(#jobs{}, get_jobs(<<>>, [], maps:new())),

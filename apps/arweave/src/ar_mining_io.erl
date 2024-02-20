@@ -153,8 +153,9 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-%% @doc Returns tuples {PartitionNumber, MiningAddress, StoreID) covering all defined storage
-%% modules (including the "default" storage module). The assumption is that each IO channel
+
+%% @doc Returns tuples {PartitionNumber, MiningAddress, StoreID) covering all attached storage
+%% modules (excluding the "default" storage module). The assumption is that each IO channel
 %% represents a distinct 200MiB/s read channel to which we will (later) assign an IO thread.
 get_io_channels() ->
 	{ok, Config} = application:get_env(arweave, config),
