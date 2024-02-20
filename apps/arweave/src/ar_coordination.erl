@@ -4,8 +4,8 @@
 
 -export([
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
-	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peer/1,
-	is_exit_peer/0
+	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peers/1, get_peer/1,
+	update_peer/2, remove_peer/1, is_exit_peer/0
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -19,7 +19,8 @@
 	last_peer_response = #{},
 	peers_by_partition = #{},
 	peer_requests = #{},
-	h1_batch_timer
+	h1_batch_timer,
+	batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS
 }).
 
 -define(START_DELAY, 1000).
@@ -29,8 +30,6 @@
 -else.
 -define(BATCH_SIZE_LIMIT, 400).
 -endif.
-
--define(BATCH_TIMEOUT_MS, 20).
 
 %%%===================================================================
 %%% Public interface.
@@ -65,6 +64,15 @@ stat_loop() ->
 get_peer(PartitionNumber) ->
 	gen_server:call(?MODULE, {get_peer, PartitionNumber}).
 
+get_peers(PartitionNumber) ->
+	gen_server:call(?MODULE, {get_peers, PartitionNumber}).
+
+update_peer(Peer, PartitionList) ->
+	gen_server:cast(?MODULE, {update_peer, {Peer, PartitionList}}).
+
+remove_peer(Peer) ->
+	gen_server:cast(?MODULE, {remove_peer, Peer}).
+
 %% Return true if we are an exit peer in the coordinated mining setup.
 is_exit_peer() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -81,7 +89,8 @@ init([]) ->
 	
 	%% using ar_util:cast_after so we can cancel pending timers. This allows us to send the
 	%% h1 batch as soon as it's full instead of waiting for the timeout to expire.
-	H1BatchTimerRef = ar_util:cast_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer),
+	H1BatchTimerRef = ar_util:cast_after(
+		Config#config.cm_batch_timeout, ?MODULE, send_h1_batch_to_peer),
 	State = #state{
 		last_peer_response = #{},
 		h1_batch_timer = H1BatchTimerRef
@@ -103,7 +112,7 @@ init([]) ->
 				last_peer_response = #{}
 			}
 	end,
-	{ok, State2}.
+	{ok, State2#state{ batch_timeout = Config#config.cm_batch_timeout }}.
 
 %% Helper function to see state while testing and later for monitoring API
 handle_call(get_public_state, _From, State) ->
@@ -112,6 +121,9 @@ handle_call(get_public_state, _From, State) ->
 
 handle_call({get_peer, PartitionNumber}, _From, State) ->
 	{reply, get_peer(PartitionNumber, State), State};
+
+handle_call({get_peers, PartitionNumber}, _From, State) ->
+	{reply, get_peers(PartitionNumber, State), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -142,9 +154,6 @@ handle_cast({computed_h1, Candidate, DiffPair}, State) ->
 	},
 	ShareableCandidate = maps:get(CacheRef, PeerRequests, DefaultCandidate),
 	H1List = [{H1, Nonce} | ShareableCandidate#mining_candidate.cm_h1_list],
-	?LOG_DEBUG([{event, cm_computed_h1},
-		{mining_address, ar_util:encode(ShareableCandidate#mining_candidate.mining_address)},
-		{h1, ar_util:encode(H1)}, {nonce, Nonce}]),
 	PeerRequests2 = maps:put(
 		CacheRef,
 		ShareableCandidate#mining_candidate{ cm_h1_list = H1List },
@@ -159,27 +168,29 @@ handle_cast({computed_h1, Candidate, DiffPair}, State) ->
 
 handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests} = State)
   		when map_size(PeerRequests) == 0 ->
-	TimerRef = ar_util:cast_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer),
-	{noreply, State#state{h1_batch_timer = TimerRef}};
-
-handle_cast(send_h1_batch_to_peer, #state{peer_requests = PeerRequests, h1_batch_timer = TimerRef} = State) ->
+	#state{ h1_batch_timer = TimerRef, batch_timeout = BatchTimeout } = State,
 	erlang:cancel_timer(TimerRef),
+	NewTimerRef = ar_util:cast_after(BatchTimeout, ?MODULE, send_h1_batch_to_peer),
+	{noreply, State#state{h1_batch_timer = NewTimerRef}};
+
+handle_cast(send_h1_batch_to_peer, State) ->
+	#state{ peer_requests = PeerRequests, h1_batch_timer = TimerRef,
+		batch_timeout = BatchTimeout } = State,
+	erlang:cancel_timer(TimerRef),
+	NewTimerRef = ar_util:cast_after(BatchTimeout, ?MODULE, send_h1_batch_to_peer),
 	maps:fold(
 		fun	(_CacheRef, Candidate, _) ->
-			#mining_candidate{
-				partition_number2 = PartitionNumber2, cm_h1_list = H1List } = Candidate,
+			#mining_candidate{ partition_number2 = PartitionNumber2 } = Candidate,
 			case get_peer(PartitionNumber2, State) of
 				none ->
 					ok;
 				Peer ->
-					ar_http_iface_client:cm_h1_send(Peer, Candidate),
-					ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
+					send_h1(Peer, Candidate)
 			end
 		end,
 		ok,
 		PeerRequests
 	),
-	NewTimerRef = ar_util:cast_after(?BATCH_TIMEOUT_MS, ?MODULE, send_h1_batch_to_peer),
 	NewState = State#state{
 		peer_requests = #{},
 		h1_batch_timer = NewTimerRef
@@ -194,15 +205,38 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 
 handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
-	ar_http_iface_client:cm_h2_send(Peer, Candidate),
-	ar_mining_stats:h2_sent_to_peer(Peer),
+	send_h2(Peer, Candidate),
 	{noreply, State};
 
 handle_cast(refresh_peers, State) ->
 	{ok, Config} = application:get_env(arweave, config),
-	State2 = refresh(Config#config.cm_peers, State),
 	ar_util:cast_after(Config#config.cm_poll_interval, ?MODULE, refresh_peers),
-	{noreply, State2};
+	refresh(Config#config.cm_peers),
+	{noreply, State};
+
+handle_cast({update_peer, {Peer, PartitionList}}, State) ->
+	SetValue = {true, PartitionList},
+	State2 = State#state{
+		last_peer_response = maps:put(Peer, SetValue, State#state.last_peer_response)
+	},
+	State3 = remove_mining_peer(Peer, State2),
+	State4 = add_mining_peer({Peer, PartitionList}, State3),
+	{noreply, State4};
+
+handle_cast({remove_peer, Peer}, State) ->
+	State3 = case maps:get(Peer, State#state.last_peer_response, none) of
+		none ->
+			State;
+		{_, OldPartitionList} ->
+			SetValue = {false, OldPartitionList},
+			% NOTE. We keep OldPartitionList because we don't want blinky stat
+			State2 = State#state{
+				last_peer_response = maps:put(Peer, SetValue, State#state.last_peer_response)
+			},
+			?LOG_INFO([{event, cm_peer_removed}, {peer, ar_util:format_peer(Peer)}]),
+			remove_mining_peer(Peer, State2)
+	end,
+	{noreply, State3};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -218,64 +252,65 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+get_peers(PartitionNumber, State) ->
+	maps:get(PartitionNumber, State#state.peers_by_partition, []).
+
 get_peer(PartitionNumber, State) ->
-	case maps:find(PartitionNumber, State#state.peers_by_partition) of
-		{ok, Peers} ->
-			lists:last(Peers);
-		_ ->
-			none
+	case get_peers(PartitionNumber, State) of
+		[] ->
+			none;
+		Peers ->
+			lists:last(Peers)
 	end.
 
+send_h1(Peer, Candidate) ->
+	#mining_candidate{ cm_h1_list = H1List } = Candidate,
+	spawn(fun() -> 
+        ar_http_iface_client:cm_h1_send(Peer, Candidate)
+    end),
+	ar_mining_stats:h1_sent_to_peer(Peer, length(H1List)).
+
+send_h2(Peer, Candidate) ->
+	spawn(fun() -> 
+        ar_http_iface_client:cm_h2_send(Peer, Candidate)
+    end),
+	ar_mining_stats:h2_sent_to_peer(Peer).
+
 add_mining_peer({Peer, StorageModules}, State) ->
+	Partitions = lists:map(
+		fun({PartitionId, _PartitionSize, _PackingAddr}) -> PartitionId end, StorageModules),
+	?LOG_INFO([{event, cm_peer_updated},
+		{peer, ar_util:format_peer(Peer)}, {partitions, Partitions}]),
 	PeersByPartition =
 		lists:foldl(
-			fun({PartitionId, _PartitionSize, _PackingAddr}, Acc) ->
+			fun(PartitionId, Acc) ->
 				Peers = maps:get(PartitionId, Acc, []),
 				maps:put(PartitionId, [Peer | Peers], Acc)
 			end,
 			State#state.peers_by_partition,
-			StorageModules
+			Partitions
 		),
 	State#state{peers_by_partition = PeersByPartition}.
 
 remove_mining_peer(Peer, State) ->
 	PeersByPartition = maps:fold(
 		fun(PartitionId, Peers, Acc) ->
-			Peers2 = lists:delete(Peer, Peers),
-			case Peers2 of
-				[] ->
-					Acc;
-				_ ->
-					maps:put(PartitionId, Peers2, Acc)
-			end
+			maps:put(PartitionId, lists:delete(Peer, Peers), Acc)
 		end,
 		#{},
 		State#state.peers_by_partition
 	),
 	State#state{peers_by_partition = PeersByPartition}.
 
-refresh([], State) ->
-	State;
-refresh([Peer | Peers], State) ->
-	NewState = case ar_http_iface_client:get_cm_partition_table(Peer) of
-		{ok, PartitionList} ->
-			SetValue = {true, PartitionList},
-			State2 = State#state{
-				last_peer_response = maps:put(Peer, SetValue, State#state.last_peer_response)
-			},
-			State3 = remove_mining_peer(Peer, State2),
-			add_mining_peer({Peer, PartitionList}, State3);
-		_ ->
-			case maps:get(Peer, State#state.last_peer_response, none) of
-				none ->
-					State;
-				{_, OldPartitionList} ->
-					SetValue = {false, OldPartitionList},
-					% NOTE. We keep OldPartitionList because we don't want blinky stat
-					State2 = State#state{
-						last_peer_response = maps:put(Peer, SetValue, State#state.last_peer_response)
-					},
-					remove_mining_peer(Peer, State2)
-			end
-	end,
-	refresh(Peers, NewState).
+refresh([]) ->
+	ok;
+refresh([Peer | Peers]) ->
+	spawn(fun() -> 
+        case ar_http_iface_client:get_cm_partition_table(Peer) of
+			{ok, PartitionList} ->
+				ar_coordination:update_peer(Peer, PartitionList);
+			_ ->
+				ar_coordination:remove_peer(Peer)
+		end
+    end),
+	refresh(Peers).

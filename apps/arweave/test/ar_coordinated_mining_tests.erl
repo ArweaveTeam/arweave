@@ -199,7 +199,7 @@ test_partition_table() ->
 
 	%% Simulate mining start
 	PartitionUpperBound = 35 * ?PARTITION_SIZE, %% less than the highest configured partition
-	ar_mining_io:set_upper_bound(PartitionUpperBound),
+	ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound),
 	
 	?assertEqual(
 		{ok, [
@@ -249,46 +249,49 @@ test_peers_by_partition() ->
 			{?PARTITION_SIZE, 4, {spora_2_6, MiningAddr}}
 		]}, false]),
 
-	ar_test_node:remote_call(peer1, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
-	ar_test_node:remote_call(peer2, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
-	ar_test_node:remote_call(peer3, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
+	ar_test_node:remote_call(peer1, ar_mining_io, set_largest_seen_upper_bound,
+		[PartitionUpperBound]),
+	ar_test_node:remote_call(peer2, ar_mining_io, set_largest_seen_upper_bound,
+		[PartitionUpperBound]),
+	ar_test_node:remote_call(peer3, ar_mining_io, set_largest_seen_upper_bound,
+		[PartitionUpperBound]),
 
 	timer:sleep(3000),
-	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [0])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [3])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [4])),
-	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [5])),
+	assert_peers([], peer1, 0),
+	assert_peers([Peer2], peer1, 1),
+	assert_peers([Peer2, Peer3], peer1, 2),
+	assert_peers([Peer2, Peer3], peer1, 3),
+	assert_peers([Peer3], peer1, 4),
+	assert_peers([], peer1, 5),
 
-	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [0])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [3])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [4])),
-	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [5])),
+	assert_peers([Peer1], peer2, 0),
+	assert_peers([Peer1], peer2, 1),
+	assert_peers([Peer1, Peer3], peer2, 2),
+	assert_peers([Peer3], peer2, 3),
+	assert_peers([Peer3], peer2, 4),
+	assert_peers([], peer2, 5),
 
-	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [0])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [3])),
-	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [4])),
-	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [5])),
+	assert_peers([Peer1], peer3, 0),
+	assert_peers([Peer1, Peer2], peer3, 1),
+	assert_peers([Peer1, Peer2], peer3, 2),
+	assert_peers([Peer2], peer3, 3),
+	assert_peers([], peer3, 4),
+	assert_peers([], peer3, 5),
 
 	ar_test_node:remote_call(peer1, ar_test_node, stop, []),
 	timer:sleep(3000),
 
-	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [0])),
-	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [3])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [4])),
+	assert_peers([], peer2, 0),
+	assert_peers([], peer2, 1),
+	assert_peers([Peer3], peer2, 2),
+	assert_peers([Peer3], peer2, 3),
+	assert_peers([Peer3], peer2, 4),
 
-	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [0])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [3])),
-	?assertEqual(none, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [4])),
+	assert_peers([], peer3, 0),
+	assert_peers([Peer2], peer3, 1),
+	assert_peers([Peer2], peer3, 2),
+	assert_peers([Peer2], peer3, 3),
+	assert_peers([], peer3, 4),
 
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
 		cm_peers = [Peer2, Peer3],
@@ -297,34 +300,39 @@ test_peers_by_partition() ->
 			{?PARTITION_SIZE, 4, {spora_2_6, MiningAddr}},
 			{?PARTITION_SIZE, 5, {spora_2_6, MiningAddr}}
 		]}, false]),
-	ar_test_node:remote_call(peer1, ar_mining_io, set_upper_bound, [PartitionUpperBound]),
+	ar_test_node:remote_call(peer1, ar_mining_io, set_largest_seen_upper_bound,
+		[PartitionUpperBound]),
 	timer:sleep(3000),
-	
-	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [0])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [3])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [4])),
-	?assertEqual(none, ar_test_node:remote_call(peer1, ar_coordination, get_peer, [5])),
 
-	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [0])),
-	?assertEqual(none, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer3, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [3])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [4])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer2, ar_coordination, get_peer, [5])),
+	assert_peers([], peer1, 0),
+	assert_peers([Peer2], peer1, 1),
+	assert_peers([Peer2, Peer3], peer1, 2),
+	assert_peers([Peer2, Peer3], peer1, 3),
+	assert_peers([Peer3], peer1, 4),
+	assert_peers([], peer1, 5),
 
-	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [0])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [1])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [2])),
-	?assertEqual(Peer2, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [3])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [4])),
-	?assertEqual(Peer1, ar_test_node:remote_call(peer3, ar_coordination, get_peer, [5])),
+	assert_peers([Peer1], peer2, 0),
+	assert_peers([], peer2, 1),
+	assert_peers([Peer3], peer2, 2),
+	assert_peers([Peer3], peer2, 3),
+	assert_peers([Peer1, Peer3], peer2, 4),
+	assert_peers([Peer1], peer2, 5),
+
+	assert_peers([Peer1], peer3, 0),
+	assert_peers([Peer2], peer3, 1),
+	assert_peers([Peer2], peer3, 2),
+	assert_peers([Peer2], peer3, 3),
+	assert_peers([Peer1], peer3, 4),
+	assert_peers([Peer1], peer3, 5),
 	ok.	
 
 %% --------------------------------------------------------------------
 %% Helpers
 %% --------------------------------------------------------------------
+assert_peers(ExpectedPeers, Node, Partition) ->
+	Peers = ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]),
+	?assertEqual(lists:sort(ExpectedPeers), lists:sort(Peers)).
+
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 	wait_for_each_node(
 		Miners, ValidatorNode, CurrentHeight, sets:from_list(ExpectedPartitions), 20).

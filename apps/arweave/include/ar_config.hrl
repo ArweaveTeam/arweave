@@ -97,7 +97,8 @@
 -define(DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS, 2000).
 -endif.
 
--define(DEFAULT_CM_POLL_INTERVAL, 60000).
+-define(DEFAULT_CM_POLL_INTERVAL_MS, 60000).
+-define(DEFAULT_CM_BATCH_TIMEOUT_MS, 20).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -183,7 +184,8 @@
 	cm_api_secret = not_set,
 	cm_exit_peer = not_set,
 	cm_peers = [],
-	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL,
+	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL_MS,
+	cm_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS,
 	is_pool_server = false,
 	is_pool_client = false,
 	pool_server_address = not_set,

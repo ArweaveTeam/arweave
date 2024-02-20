@@ -1362,8 +1362,8 @@ json_list_to_diff_pair(List) ->
 			undefined -> [<<"0">>, <<"0">>];
 			_ -> List
 		end,
-	PoA1Diff = binary_to_integer(PoA1DiffBin),
-	Diff = binary_to_integer(DiffBin),
+	PoA1Diff = ar_util:binary_to_integer(PoA1DiffBin),
+	Diff = ar_util:binary_to_integer(DiffBin),
 	{PoA1Diff, Diff}.
 	
 parse_data_size(1, _TXStruct, Data, true) ->

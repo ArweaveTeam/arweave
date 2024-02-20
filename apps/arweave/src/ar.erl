@@ -259,7 +259,10 @@ show_help() ->
 					"cm_peer, and cm_exit_peer."},
 			{"cm_poll_interval", io_lib:format("The frequency in milliseconds of asking the "
 					"other nodes in the coordinated mining setup about their partition "
-					"tables. Default is ~B.", [?DEFAULT_CM_POLL_INTERVAL])},
+					"tables. Default is ~B.", [?DEFAULT_CM_POLL_INTERVAL_MS])},
+			{"cm_batch_timeout", io_lib:format("The frequency in milliseconds of sending "
+					"other nodes in the coordinated mining setup a batch of H1 values to hash. "
+					"Default is ~B.", [?DEFAULT_CM_BATCH_TIMEOUT_MS])},
 			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
 					"set coordinated_mining, cm_api_secret, and cm_exit_peer."},
 			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
