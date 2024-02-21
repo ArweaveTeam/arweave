@@ -118,6 +118,7 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 					[ar_util:encode(BH)]),
 			?LOG_INFO([{event, block_got_10_confirmations}, {block, ar_util:encode(BH)}]),
 			ar:console("~s~n", [Message]),
+			ar_mining_stats:block_found(),
 			Map;
 		{_, Map} ->
 			Map;

@@ -73,10 +73,10 @@ recall_chunk(Worker, skipped, _WhichChunk, Nonce, Candidate) ->
 computed_hash(Worker, computed_h0, H0, undefined, Candidate) ->
 	add_task(Worker, computed_h0, Candidate#mining_candidate{ h0 = H0 });
 computed_hash(Worker, computed_h1, H1, Preimage, Candidate) ->
-	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number),
+	ar_mining_stats:h1_computed(Candidate#mining_candidate.partition_number),
 	add_task(Worker, computed_h1, Candidate#mining_candidate{ h1 = H1, preimage = Preimage });
 computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
-	ar_mining_stats:hash_computed(Candidate#mining_candidate.partition_number2),
+	ar_mining_stats:h2_computed(Candidate#mining_candidate.partition_number2),
 	add_task(Worker, computed_h2, Candidate#mining_candidate{ h2 = H2, preimage = Preimage }).
 
 %% @doc Set the new mining difficulty. We do not recalculate it inside the mining
@@ -350,6 +350,7 @@ handle_task({computed_h1, Candidate}, State) ->
 		true ->
 			?LOG_INFO([{event, found_h1_solution}, {worker, State#state.name},
 				{h1, ar_util:encode(H1)}, {difficulty, DiffPair}]),
+			ar_mining_stats:h1_solution(),
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
 			%% necessary below)
@@ -406,8 +407,8 @@ handle_task({computed_h2, Candidate}, State) ->
 			?LOG_INFO([{event, found_h2_solution},
 					{worker, State#state.name},
 					{h2, ar_util:encode(H2)},
-					{difficulty, get_difficulty(false, State, Candidate)}]);
-
+					{difficulty, get_difficulty(false, State, Candidate)}]),
+			ar_mining_stats:h2_solution();
 		partial ->
 			PartialDiff = Candidate#mining_candidate.partial_diff,
 			?LOG_INFO([{event, found_h2_partial_solution},
