@@ -24,7 +24,7 @@ get_price_per_gib_minute_test_() ->
 			[
 				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
 			],
-			fun test_v2_price/0)
+			fun test_v2_price_with_poa1_diff_multiplier/0)
 	].
 
 %% @doc This test verifies an edge case code path that probably shouldn't ever be triggered.
@@ -105,56 +105,56 @@ test_price_per_gib_minute_transition_phases() ->
 test_v2_price() ->
 	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() + 
 		ar_pricing_transition:transition_length(ar_pricing_transition:transition_start_2_7_2()),
-	do_price_per_gib_minute_post_transition(AtTransitionEnd),
+	do_price_per_gib_minute_post_transition(AtTransitionEnd, 61440, 122880, 122880),
 	BeyondTransition = AtTransitionEnd + 1000,
-	do_price_per_gib_minute_post_transition(BeyondTransition).
+	do_price_per_gib_minute_post_transition(BeyondTransition, 61440, 122880, 122880).
 
-do_price_per_gib_minute_post_transition(Height) ->
+test_v2_price_with_poa1_diff_multiplier() ->
+	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() + 
+		ar_pricing_transition:transition_length(ar_pricing_transition:transition_start_2_7_2()),
+	do_price_per_gib_minute_post_transition(AtTransitionEnd, 30720, 92160, 61440),
+	BeyondTransition = AtTransitionEnd + 1000,
+	do_price_per_gib_minute_post_transition(BeyondTransition, 30720, 92160, 61440).
+
+do_price_per_gib_minute_post_transition(Height,
+		AllOneChunkBaseline, AllTwoChunkBaseline, MixedChunkBaseline) ->
 	PoA1DiffMultiplier = ar_difficulty:poa1_diff_multiplier(Height),
-	Baseline = 61440,
-	Baseline1_5 = 92160, %% 1.5x Baseline
-	Baseline2 = 122880, %% 2x Baseline
-	Baseline10 = 614400, %% 10x Baseline
-	?assertEqual(Baseline,
+	?assertEqual(AllOneChunkBaseline,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(1, 1), 0),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
-	?assertEqual(Baseline10,
+	?assertEqual(AllOneChunkBaseline * 10,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 10), vdf(1, 1), 0),
 		io_lib:format(
 			"hash_rate: low, reward: high, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
-	?assertEqual(Baseline div 10,
+	?assertEqual(AllOneChunkBaseline div 10,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(10, 1), vdf(1, 1), 0),
 		io_lib:format(
 			"hash_rate: high, reward: low, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
-	?assertEqual(Baseline,
+	?assertEqual(AllOneChunkBaseline,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(10, 10), vdf(1, 1), 0),
 		io_lib:format(
 			"hash_rate: high, reward: high, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
-	?assertEqual(Baseline div 10,
+	?assertEqual(AllOneChunkBaseline div 10,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(10, 1), 0),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: slow, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
-	?assertEqual(Baseline10,
+	?assertEqual(AllOneChunkBaseline * 10,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(1, 10), 0),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: fast, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
-	?assertEqual(Baseline2,
+	?assertEqual(AllTwoChunkBaseline,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), all_two_chunks(), 0),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: perfect, chunks: all_two, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
-	ExpectedMixChunksPrice = case PoA1DiffMultiplier of
-		1 -> Baseline2;
-		_ -> Baseline1_5
-	end,
-	?assertEqual(ExpectedMixChunksPrice,
+	?assertEqual(MixedChunkBaseline,
 		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), mix_chunks(), 0),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: perfect, chunks: mix, poa1_diff: ~B",

@@ -80,29 +80,54 @@ get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denominatio
 			%%    that fall on the partitions they don't store), and that will push *up* the
 			%%    replica count for a given network hashrate. How much to scale up our replica
 			%%    count is based on the average replica count per miner.
-			%% 2. Estimate average replica count per miner: Start with this basic assumption:
+			%%
+			%% 2. Estimate average replica count per miner. Start with this basic assumption:
 			%%    the higher the percentage of the weave a miner stores, the more likely they are
-			%%    to mine a 2-chunk solution. If a miner has 100% of the weave, then, on average,
-			%%    50% of their solutions will be 1-chunk, and 50% will be 2-chunk.
+			%%    to mine a 2-chunk solution. If a miner has 100% of the weave and if the PoA1 and
+			%%    PoA2 difficulties are the same, then, on average, 50% of their solutions will be
+			%%    1-chunk, and 50% will be 2-chunk.
 			%%
 			%%    With this we can use the ratio of observed 2-chunk to 1-chunk solutions to
 			%%    estimate the average percentage of the weave each miner stores.
 			%%
+			%% 3. However, what happens if the PoA1 difficulty is higher than the PoA2 difficulty?
+			%%    In that case, we'd expect a miner with 100% of the weave to have fewer 1-chunk
+			%%    solutions than 2-chunk solutions. If the PoA1 difficulty is PoA1Mult times higher
+			%%    than the PoA2 difficulty, we'd expect the maximum number of solutions to be:
+			%%    
+			%%    (PoA1Mult + 1) * ?RECALL_RANGE_SIZE div (?DATA_CHUNK_SIZE * PoA1Mult)
+			%%    
+			%%    Or basically 1 1-chunk solution for every PoA1Mult 2-chunk solutions in the
+			%%    full-replica case.
+			%%
+			%% 4. Finally, what if the average miner is not mining a full replica? In that case we
+			%%    need to arrive at an equation that weights the 1-chunk and 2-chunk solutions
+			%%    differently - and use that to estimate the expected number of solutions per
+			%%    partition:
+			%%
+			%%    EstimatedSolutionsPerPartition = 
+			%%    (
+			%%      ?RECALL_RANGE_SIZE div PoA1Mult +
+			%%		?RECALL_RANGE_SIZE * TwoChunkCount div (OneChunkCount * PoA1Mult)
+			%%    ) div (?DATA_CHUNK_SIZE) 
+			%%
 			%% The SolutionsPerPartitionPerVDFStep combines that average weave calculation
 			%% with the expected number of solutions per partition per VDF step to arrive a single
 			%% number that can be used in the PricePerGiBPerMinute calculation.
-			MaxSolutionsPerPartition = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
+			PoA1Mult = ar_difficulty:poa1_diff_multiplier(Height),
+			MaxSolutionsPerPartition =
+				(PoA1Mult + 1) * ?RECALL_RANGE_SIZE div (?DATA_CHUNK_SIZE * PoA1Mult),
 			SolutionsPerPartitionPerVDFStep =
 				case OneChunkCount of
 					0 ->
 						MaxSolutionsPerPartition;
 					_ ->
-						PoA1Mult = ar_difficulty:poa1_diff_multiplier(Height),
-						EstimatedSolutionsPerPartition = 
-							(
-								?RECALL_RANGE_SIZE +
-								?RECALL_RANGE_SIZE * TwoChunkCount div (OneChunkCount * PoA1Mult)
-							) div (?DATA_CHUNK_SIZE),
+						%% The following is a version of the EstimatedSolutionsPerPartition
+						%% equation mentioned above that has been simpplified to limit rounding
+						%% errors:
+						EstimatedSolutionsPerPartition =
+							(OneChunkCount + TwoChunkCount) * ?RECALL_RANGE_SIZE
+							div (?DATA_CHUNK_SIZE * OneChunkCount * PoA1Mult),
 						min(MaxSolutionsPerPartition, EstimatedSolutionsPerPartition)
 				end,
 			%% The following walks through the math of calculating the price per GiB per minute.
