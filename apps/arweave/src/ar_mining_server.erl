@@ -26,6 +26,7 @@
 	diff_pair					= not_set,
 	chunk_cache_limit 			= 0,
 	gc_frequency_ms				= undefined,
+	gc_process_ref				= undefined,
 	merkle_rebase_threshold		= infinity,
 	is_pool_client				= false
 }).
@@ -167,7 +168,7 @@ handle_cast({post_solution, Solution}, State) ->
 	post_solution(Solution, State),
 	{noreply, State};
 
-handle_cast(manual_garbage_collect, State) ->
+handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = State) ->
 	%% Reading recall ranges from disk causes a large amount of binary data to be allocated and
 	%% references to that data is spread among all the different mining processes. Because of this
 	%% it can take the default garbage collection to clean up all references and deallocate the
@@ -187,9 +188,11 @@ handle_cast(manual_garbage_collect, State) ->
 		end,
 		State#state.workers
 	),
-	ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, manual_garbage_collect),
+	ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, {manual_garbage_collect, Ref}),
 	{noreply, State};
-
+handle_cast({manual_garbage_collect, _}, State) ->
+	%% Does not originate from the running instance of the server; happens in tests.
+	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -382,16 +385,22 @@ update_cache_limits(State) ->
 				false -> ok
 			end,
 			GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
-			case State#state.gc_frequency_ms == undefined of
-				true ->
-					%% This is the first time setting the garbage collection frequency, so kick
-					%% off the periodic call.
-					ar_util:cast_after(GarbageCollectionFrequency, ?MODULE, manual_garbage_collect);
-				false -> ok
-			end,
+			GCRef =
+				case State#state.gc_frequency_ms == undefined of
+					true ->
+						%% This is the first time setting the garbage collection frequency,
+						%% so kick off the periodic call.
+						Ref = make_ref(),
+						ar_util:cast_after(GarbageCollectionFrequency, ?MODULE,
+								{manual_garbage_collect, Ref}),
+						Ref;
+					false ->
+						State#state.gc_process_ref
+				end,
 			State#state{
 				chunk_cache_limit = NewCacheLimit,
-				gc_frequency_ms = GarbageCollectionFrequency
+				gc_frequency_ms = GarbageCollectionFrequency,
+				gc_process_ref = GCRef
 			}
 	end.
 
