@@ -255,7 +255,10 @@ show_help() ->
 			{"coordinated_mining", "Enable coordinated mining. If you are a solo pool miner "
 					"coordinating on a replica with other pool miners, set this flag too. "
 					"To connect the internal nodes, set cm_api_secret, cm_peer, "
-					"and cm_exit_peer."},
+					"and cm_exit_peer. Make sure every node specifies every other node in the "
+					"cluster via cm_peer or cm_exit_peer. The same peer may be both cm_peer "
+					"and cm_exit_peer. Also, set the mine flag on every CM peer. You may or "
+					"may not set the mine flag on the exit peer."},
 			{"cm_api_secret", "Coordinated mining secret for authenticated "
 					"requests between private peers. You need to also set coordinated_mining, "
 					"cm_peer, and cm_exit_peer."},
@@ -266,10 +269,14 @@ show_help() ->
 					"other nodes in the coordinated mining setup a batch of H1 values to hash. "
 					"Default is ~B.", [?DEFAULT_CM_BATCH_TIMEOUT_MS])},
 			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
-					"set coordinated_mining, cm_api_secret, and cm_exit_peer."},
+					"set coordinated_mining, cm_api_secret, and cm_exit_peer. The same "
+					"peer may be specified as cm_peer and cm_exit_peer. If we are an exit "
+					"peer, make sure to also set cm_peer for every miner we work with."},
 			{"cm_exit_peer (IP:port)", "The peer to send mining solutions to in the "
 					"coordinated mining mode. You need to also set coordinated_mining, "
-					"cm_api_secret, and cm_peer."},
+					"cm_api_secret, and cm_peer. If cm_exit_peer is not set, we are the "
+					"exit peer. When is_pool_client is set, the exit peer "
+					"is a proxy through which we communicate with the pool."},
 			{"is_pool_server", "Configure the node as a pool server. The pool node may not "
 					"participate in the coordinated mining."},
 			{"is_pool_client", "Configure the node as a pool client. The node may be an "
