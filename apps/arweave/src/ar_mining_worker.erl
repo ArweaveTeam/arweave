@@ -382,36 +382,46 @@ handle_task({computed_h2, Candidate}, State) ->
 		nonce = Nonce, partition_number = Partition1, 
 		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
 	} = Candidate,
-	case h2_passes_diff_checks(H2, Candidate, State) of
-		true ->
-			?LOG_INFO([{event, found_h2_solution}, {worker, State#state.name},
-				{h2, ar_util:encode(H2)}, {difficulty, get_difficulty(false, State, Candidate)}]),
-			case Peer of
-				not_set ->
-					ar_mining_server:prepare_and_post_solution(Candidate);
-				_ ->
-					{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(
-							H0, Partition1, Nonce, PartitionUpperBound),
-					PoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, MiningAddress),
-					case PoA2 of
-						error ->
-							?LOG_WARNING([{event,
-									mined_block_but_failed_to_read_second_chunk_proof},
-									{worker, State#state.name},
-									{recall_byte2, RecallByte2},
-									{mining_address, ar_util:safe_encode(MiningAddress)}]),
-							ar:console("WARNING: we found a solution but failed to read "
-									"the proof for the second chunk. See logs for more "
-									"details.~n");
-						_ ->
-							ar_coordination:computed_h2_for_peer(
-								Candidate#mining_candidate{ poa2 = PoA2 })
-					end
-			end;
-		partial ->
-			ar_mining_server:prepare_and_post_solution(Candidate);
+	PassesDiffChecks = h2_passes_diff_checks(H2, Candidate, State),
+	case PassesDiffChecks of
 		false ->
-			ok
+			ok;
+		true ->
+			?LOG_INFO([{event, found_h2_solution},
+					{worker, State#state.name},
+					{h2, ar_util:encode(H2)},
+					{difficulty, get_difficulty(false, State, Candidate)}]);
+
+		partial ->
+			PartialDiff = Candidate#mining_candidate.partial_diff,
+			?LOG_INFO([{event, found_h2_partial_solution},
+					{worker, State#state.name},
+					{h2, ar_util:encode(H2)},
+					{partial_difficulty, PartialDiff}])
+	end,
+	case {PassesDiffChecks, Peer} of
+		{false, _} ->
+			ok;
+		{_, not_set} ->
+			ar_mining_server:prepare_and_post_solution(Candidate);
+		_ ->
+			{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, Partition1,
+					Nonce, PartitionUpperBound),
+			PoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, MiningAddress),
+			case PoA2 of
+				error ->
+					?LOG_WARNING([{event,
+							mined_block_but_failed_to_read_second_chunk_proof},
+							{worker, State#state.name},
+							{recall_byte2, RecallByte2},
+							{mining_address, ar_util:safe_encode(MiningAddress)}]),
+					ar:console("WARNING: we found a solution but failed to read "
+							"the proof for the second chunk. See logs for more "
+							"details.~n");
+				_ ->
+					ar_coordination:computed_h2_for_peer(
+						Candidate#mining_candidate{ poa2 = PoA2 })
+			end
 	end,
 	{noreply, State};
 
