@@ -188,6 +188,7 @@ handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = Stat
 		end,
 		State#state.workers
 	),
+	ar_coordination:garbage_collect(),
 	ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, {manual_garbage_collect, Ref}),
 	{noreply, State};
 handle_cast({manual_garbage_collect, _}, State) ->
@@ -339,6 +340,11 @@ add_seed(SessionKey, State) ->
 
 update_cache_limits(State) ->
 	NumActivePartitions = length(ar_mining_io:get_partitions()),
+	update_cache_limits(NumActivePartitions, State).
+
+update_cache_limits(0, State) ->
+	State;
+update_cache_limits(NumActivePartitions, State) ->
 	%% This allows the cache to store enough chunks for 2 concurrent VDF steps per partition.
 	IdealRangesPerStep = 4,
 	ChunksPerRange = ?RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE,

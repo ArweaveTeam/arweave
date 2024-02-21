@@ -27,7 +27,7 @@
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
--define(LAG_CHECK_FREQUENCY_MS, 5000).
+-define(STATUS_CHECK_FREQUENCY_MS, 5000).
 
 %%%===================================================================
 %%% Public interface.
@@ -91,7 +91,10 @@ set_cache_limits(Worker, ChunkCacheLimit, VDFQueueLimit) ->
 	gen_server:cast(Worker, {set_cache_limits, ChunkCacheLimit, VDFQueueLimit}).
 
 %% @doc Returns true if the mining candidate belongs to a valid mining session. Always assume
-%% that a coordinated mining candidate is valid (its session_key is not_set)
+%% that a coordinated mining candidate is valid (its cm_lead_peer is set)
+is_session_valid(_State, #mining_candidate{ cm_lead_peer = Peer })
+		when Peer /= not_set ->
+	true;
 is_session_valid(
 		#state{ active_sessions = Sessions },
 		#mining_candidate{ session_key = SessionKey }) ->
@@ -111,7 +114,7 @@ init(Partition) ->
 	process_flag(trap_exit, true),
 	ar_chunk_storage:open_files("default"),
 	gen_server:cast(self(), handle_task),
-	gen_server:cast(self(), maybe_warn_about_lag),
+	gen_server:cast(self(), check_worker_status),
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], 0),
 	{ok, #state{ name = Name, partition_number = Partition }}.
 
@@ -185,9 +188,10 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 handle_cast({remove_chunk_from_cache, Candidate}, State) ->
 	{noreply, remove_chunk_from_cache(Candidate, State)};
 
-handle_cast(maybe_warn_about_lag, State) ->
+handle_cast(check_worker_status, State) ->
 	maybe_warn_about_lag(State#state.task_queue, State#state.name),
-	ar_util:cast_after(?LAG_CHECK_FREQUENCY_MS, self(), maybe_warn_about_lag),
+	maybe_warn_about_stale_chunks(State),
+	ar_util:cast_after(?STATUS_CHECK_FREQUENCY_MS, self(), check_worker_status),
 	{noreply, State};
 
 handle_cast(garbage_collect, State) ->
@@ -262,6 +266,18 @@ handle_task({chunk2, Candidate}, State) ->
 			%% do_not_cache indicates chunk1 was not and will not be read or cached
 			{noreply, update_chunk_cache_size(-1, SessionKey, State2)};
 		{cached, State2} ->
+			case Candidate#mining_candidate.cm_lead_peer of
+				not_set ->
+					ok;
+				_ ->
+					?LOG_DEBUG([{event, mining_debug_chunk2_cached_before_chunk1},
+						{worker, State#state.name},
+						{partition_number, Candidate#mining_candidate.partition_number},
+						{partition_number2, Candidate#mining_candidate.partition_number2},
+						{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
+						{cache_ref, Candidate#mining_candidate.cache_ref},
+						{nonce, Candidate#mining_candidate.nonce}])
+			end,
 			{noreply, State2}
 	end;
 
@@ -435,6 +451,16 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 					Partition1, PartitionUpperBound),
 	Partition2 = ar_node:get_partition_number(RecallRange2Start),
+	case Partition2 == Candidate#mining_candidate.partition_number2 of
+		true ->
+			ok;
+		false ->
+			?LOG_DEBUG([{event, cm_partition2_mismatch},
+				{worker, State#state.name},
+				{old_partition_number, Candidate#mining_candidate.partition_number2},
+				{new_partition_number, Partition2},
+				{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)}])
+	end,
 	Candidate2 = Candidate#mining_candidate{ partition_number2 = Partition2 },
 	Candidate3 = generate_cache_ref(Candidate2),
 	Range2Exists = ar_mining_io:read_recall_range(
@@ -444,6 +470,10 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 			{noreply, cache_h1_list(Candidate3, State)};
 		false ->
 			%% This can happen if the remote peer has an outdated partition table
+			?LOG_WARNING([{event, cm_outdated_partition_table},
+				{worker, State#state.name},
+				{partition_number, Partition2},
+				{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)}]),
 			{noreply, State}
 	end.
 
@@ -480,7 +510,7 @@ maybe_warn_about_lag(Q, Name) ->
 				{{_Priority, _ID, {compute_h0, _}}, Q3} ->
 					N = count_h0_tasks(Q3) + 1,
 					?LOG_WARNING([
-						{event, mining_server_lags_behind_the_nonce_limiter},
+						{event, mining_worker_lags_behind_the_nonce_limiter},
 						{worker, Name},
 						{step_count, N}]);
 				_ ->
@@ -499,6 +529,27 @@ count_h0_tasks(Q) ->
 				_ ->
 					0
 			end
+	end.
+
+maybe_warn_about_stale_chunks(State) ->
+	TotalChunkKeys = 
+		maps:fold(
+		fun(_SesssionKey, SessionCache, Acc) ->
+			Acc + maps:size(SessionCache)
+		end,
+		0,
+		State#state.chunk_cache),
+	TotalCacheSize = total_cache_size(State),
+	case TotalChunkKeys > TotalCacheSize orelse TotalCacheSize < 0 of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_worker_chunk_cache_mismatch},
+				{worker, State#state.name},
+				{partition, State#state.partition_number},
+				{chunk_cache_keys, TotalChunkKeys},
+				{chunk_cache_size, TotalCacheSize}]);
+		false ->
+			ok
 	end.
 
 update_sessions(ActiveSessions, State) ->

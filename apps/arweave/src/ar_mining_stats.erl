@@ -380,7 +380,8 @@ generate_partition_report(PartitionNumber, Report, WeaveSize) ->
 	},
 
 	reset_count({partition, PartitionNumber, read, current}, Now),
-	reset_count({partition, PartitionNumber, hash, current}, Now),
+	reset_count({partition, PartitionNumber, h1, current}, Now),
+	reset_count({partition, PartitionNumber, h2, current}, Now),
 
 	Report#report{ 
 		optimal_overall_read_mibps = 

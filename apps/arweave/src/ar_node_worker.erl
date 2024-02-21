@@ -597,7 +597,7 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 	HaveSteps =
 		case CorrectRebaseThreshold of
 			{false, Reason5} ->
-				?LOG_INFO([{event, ignore_mining_solution},
+				?LOG_WARNING([{event, ignore_mining_solution},
 					{reason, Reason5}, {solution, ar_util:encode(SolutionH)}]),
 				false;
 			true ->

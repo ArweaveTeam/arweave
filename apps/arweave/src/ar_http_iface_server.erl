@@ -230,5 +230,17 @@ name_route([<<"balance">>, _Addr, _Network, _Token]) ->
 name_route([<<"rates">>]) ->
 	"/rates";
 
+name_route([<<"coordinated_mining">>, <<"h1">>]) ->
+	"/coordinated_mining/h1";
+name_route([<<"coordinated_mining">>, <<"h2">>]) ->
+	"/coordinated_mining/h2";
+name_route([<<"coordinated_mining">>, <<"partition_table">>]) ->
+	"/coordinated_mining/partition_table";
+name_route([<<"coordinated_mining">>, <<"publish">>]) ->
+	"/coordinated_mining/publish";
+name_route([<<"coordinated_mining">>, <<"state">>]) ->
+	"/coordinated_mining/state";
+
+
 name_route(_) ->
 	undefined.

@@ -136,7 +136,9 @@ format_peer({A, B, C, D, Port}) ->
 format_peer(Host) when is_list(Host) ->
 	format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT});
 format_peer({Host, Port}) ->
-	lists:flatten(io_lib:format("~s:~w", [Host, Port])).
+	lists:flatten(io_lib:format("~s:~w", [Host, Port]));
+format_peer(Peer) ->
+	Peer.
 
 %% @doc Count occurences of element within list.
 count(A, List) ->

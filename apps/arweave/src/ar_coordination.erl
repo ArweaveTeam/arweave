@@ -5,7 +5,7 @@
 -export([
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
 	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peers/1, get_peer/1,
-	update_peer/2, remove_peer/1, is_exit_peer/0, get_peer_partitions/1,
+	update_peer/2, remove_peer/1, garbage_collect/0, is_exit_peer/0, get_peer_partitions/1,
 	get_unique_partitions/2
 ]).
 
@@ -45,8 +45,28 @@ get_public_state() ->
 
 %% @doc An H1 has been generated. Store it to send it later to a
 %% coordinated mining peer
-computed_h1(Candidate, Diff) ->
-	gen_server:cast(?MODULE, {computed_h1, Candidate, Diff}).
+computed_h1(Candidate, DiffPair) ->
+	#mining_candidate{
+		h1 = H1,
+		nonce = Nonce
+	} = Candidate,
+	%% prepare Candidate to be shared with a remote miner.
+	%% 1. Add the current difficulty (the remote peer will use this instead of its local difficulty)
+	%% 2. Remove any data that's not needed by the peer. This cuts down on the volume of data
+	%%    shared.
+	%% 3. The peer field will be set to this peer's address by the remote miner
+	ShareableCandidate = Candidate#mining_candidate{
+		chunk1 = not_set,
+		chunk2 = not_set,
+		cm_diff = DiffPair,
+		cm_lead_peer = not_set,
+		h1 = not_set,
+		h2 = not_set,
+		nonce = not_set,
+		poa2 = not_set,		
+		preimage = not_set
+	},
+	gen_server:cast(?MODULE, {computed_h1, ShareableCandidate, H1, Nonce}).
 
 send_h1_batch_to_peer() ->
 	gen_server:cast(?MODULE, send_h1_batch_to_peer).
@@ -73,6 +93,9 @@ update_peer(Peer, PartitionList) ->
 
 remove_peer(Peer) ->
 	gen_server:cast(?MODULE, {remove_peer, Peer}).
+
+garbage_collect() ->
+	gen_server:cast(?MODULE, garbage_collect).
 
 %% Return true if we are an exit peer in the coordinated mining setup.
 is_exit_peer() ->
@@ -108,8 +131,8 @@ init([]) ->
 			case Config#config.cm_exit_peer of
 				not_set ->
 					ar:console(
-						"CRITICAL WARNING. cm_exit_peer is not set. Coordinated mining will "
-						"not produce final solution.~n");
+						"This node is configured as a Coordinated Mining Exit Node. If this is "
+						"not correct, set 'cm_exit_peer' and relaunch.~n");
 				_ ->
 					ok
 			end,
@@ -144,34 +167,16 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({computed_h1, Candidate, DiffPair}, State) ->
+handle_cast({computed_h1, ShareableCandidate, H1, Nonce}, State) ->
 	#mining_candidate{
-		cache_ref = CacheRef,
-		h1 = H1,
-		nonce = Nonce
-	} = Candidate,
+		cache_ref = CacheRef
+	} = ShareableCandidate,
 	#state{peer_requests = PeerRequests} = State,
-	%% prepare Candidate to be shared with a remote miner.
-	%% 1. Add the current difficulty (the remote peer will use this instead of its local difficulty)
-	%% 2. Remove any data that's not needed by the peer. This cuts down on the volume of data
-	%%    shared.
-	%% 3. The peer field will be set to this peer's address by the remote miner
-	DefaultCandidate = Candidate#mining_candidate{
-		chunk1 = not_set,
-		chunk2 = not_set,
-		cm_diff = DiffPair,
-		cm_lead_peer = not_set,
-		h1 = not_set,
-		h2 = not_set,
-		nonce = not_set,
-		poa2 = not_set,		
-		preimage = not_set
-	},
-	ShareableCandidate = maps:get(CacheRef, PeerRequests, DefaultCandidate),
-	H1List = [{H1, Nonce} | ShareableCandidate#mining_candidate.cm_h1_list],
+	ShareableCandidate2 = maps:get(CacheRef, PeerRequests, ShareableCandidate),
+	H1List = [{H1, Nonce} | ShareableCandidate2#mining_candidate.cm_h1_list],
 	PeerRequests2 = maps:put(
 		CacheRef,
-		ShareableCandidate#mining_candidate{ cm_h1_list = H1List },
+		ShareableCandidate2#mining_candidate{ cm_h1_list = H1List },
 		PeerRequests),
 	case length(H1List) >= ?BATCH_SIZE_LIMIT of
 		true ->
@@ -192,7 +197,7 @@ handle_cast(send_h1_batch_to_peer, State) ->
 	#state{ peer_requests = PeerRequests, h1_batch_timer = TimerRef,
 		batch_timeout = BatchTimeout } = State,
 	erlang:cancel_timer(TimerRef),
-	NewTimerRef = ar_util:cast_after(BatchTimeout, ?MODULE, send_h1_batch_to_peer),
+	TimerRef2 = ar_util:cast_after(BatchTimeout, ?MODULE, send_h1_batch_to_peer),
 	maps:fold(
 		fun	(_CacheRef, Candidate, _) ->
 			#mining_candidate{ partition_number2 = PartitionNumber2 } = Candidate,
@@ -206,11 +211,11 @@ handle_cast(send_h1_batch_to_peer, State) ->
 		ok,
 		PeerRequests
 	),
-	NewState = State#state{
+	State2 = State#state{
 		peer_requests = #{},
-		h1_batch_timer = NewTimerRef
+		h1_batch_timer = TimerRef2
 	},
-	{noreply, NewState};
+	{noreply, State2};
 
 handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	#mining_candidate{ cm_lead_peer = Peer, cm_h1_list = H1List } = Candidate,
@@ -281,9 +286,27 @@ handle_cast(refetch_pool_peer_partitions, State) ->
 	refetch_pool_peer_partitions(UniquePeerPartitions),
 	{noreply, State};
 
+handle_cast(garbage_collect, State) ->
+	erlang:garbage_collect(self(),
+		[{async, {ar_coordination, self(), erlang:monotonic_time()}}]),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({garbage_collect, {Name, Pid, StartTime}, GCResult}, State) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
+	case GCResult == false orelse ElapsedTime > ?GC_LOG_THRESHOLD of
+		true ->
+			?LOG_DEBUG([
+				{event, mining_debug_garbage_collect}, {process, Name}, {pid, Pid},
+				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+		false ->
+			ok
+	end,
+	{noreply, State};
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),

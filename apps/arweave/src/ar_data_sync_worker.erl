@@ -83,13 +83,13 @@ terminate(Reason, _State) ->
 
 read_range({Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
 	ok;
-read_range({_Start, _End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
+read_range({Start, End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 	case ar_data_sync:is_chunk_cache_full() of
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
 				true ->
 					?LOG_DEBUG([{event, read_range},
-						{size, (_End - _Start) / (1024*1024)}, {args, Args}]),
+						{size_mb, (End - Start) div ?MiB}, {args, Args}]),
 					read_range2(?READ_RANGE_MESSAGES_PER_BATCH, Args);
 				_ ->
 					ar_util:cast_after(30000, self(), {read_range, Args}),
