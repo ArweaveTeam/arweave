@@ -270,7 +270,7 @@ handle_task({chunk2, Candidate}, State) ->
 				not_set ->
 					ok;
 				_ ->
-					?LOG_DEBUG([{event, mining_debug_chunk2_cached_before_chunk1},
+					?LOG_ERROR([{event, cm_chunk2_cached_before_chunk1},
 						{worker, State#state.name},
 						{partition_number, Candidate#mining_candidate.partition_number},
 						{partition_number2, Candidate#mining_candidate.partition_number2},
@@ -444,37 +444,40 @@ handle_task({computed_h2, Candidate}, State) ->
 
 handle_task({compute_h2_for_peer, Candidate}, State) ->
 	#mining_candidate{
+		session_key = SessionKey,
 		h0 = H0,
 		partition_number = Partition1,
-		partition_upper_bound = PartitionUpperBound
+		partition_upper_bound = PartitionUpperBound,
+		cm_h1_list = H1List,
+		cm_lead_peer = Peer
 	} = Candidate,
 
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 					Partition1, PartitionUpperBound),
-	Partition2 = ar_node:get_partition_number(RecallRange2Start),
-	case Partition2 == Candidate#mining_candidate.partition_number2 of
-		true ->
-			ok;
-		false ->
-			?LOG_DEBUG([{event, cm_partition2_mismatch},
-				{worker, State#state.name},
-				{old_partition_number, Candidate#mining_candidate.partition_number2},
-				{new_partition_number, Partition2},
-				{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)}])
-	end,
-	Candidate2 = Candidate#mining_candidate{ partition_number2 = Partition2 },
-	Candidate3 = generate_cache_ref(Candidate2),
-	Range2Exists = ar_mining_io:read_recall_range(
-		chunk2, self(), Candidate3#mining_candidate{ cm_h1_list = [] }, RecallRange2Start),
+	Candidate2 = generate_cache_ref(Candidate),
+	%% Clear the list so we aren't copying it around all over the place
+	Candidate3 = Candidate2#mining_candidate{ cm_h1_list = [] },
+
+	Range2Exists = ar_mining_io:read_recall_range(chunk2, self(), Candidate3, RecallRange2Start),
 	case Range2Exists of
 		true ->
-			{noreply, cache_h1_list(Candidate3, State)};
+			ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
+			%% Note: when processing CM requests we always reserve the cache space and proceed
+			%% *even if* this puts us over the chunk cache limit. This may have to be revisited
+			%% later if we find that this causes unacceptable memory bloat.
+			RecallRangeChunks = nonce_max() + 1,
+			State2 = update_chunk_cache_size(RecallRangeChunks, SessionKey, State),
+			%% First flag all nonces in the range as do_not_cache, then cache the specific nonces
+			%% inclueded in the H1 list. This will make sure we don't cache the chunk2s that are
+			%% read for the missing nonces.
+			State3 = do_not_cache(Candidate3, State2),
+			{noreply, cache_h1_list(Candidate3, H1List, State3)};
 		false ->
 			%% This can happen if the remote peer has an outdated partition table
 			?LOG_WARNING([{event, cm_outdated_partition_table},
 				{worker, State#state.name},
-				{partition_number, Partition2},
-				{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)}]),
+				{partition_number, Candidate3#mining_candidate.partition_number2},
+				{cm_peer, ar_util:format_peer(Peer)}]),
 			{noreply, State}
 	end.
 
@@ -675,6 +678,8 @@ remove_chunk_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, S
 	#mining_candidate{ nonce = Nonce, session_key = SessionKey } = Candidate,
 	Cache = State#state.chunk_cache,
 	SessionCache = maps:get(SessionKey, Cache, #{}),
+	%% Decrement the cache size by 1 for the chunk being removed. We may decrement the cache
+	%% size further depending on what's already cached.
 	State2 = update_chunk_cache_size(-1, SessionKey, State),
 	case maps:take({CacheRef, Nonce}, SessionCache) of
 		{do_not_cache, SessionCache2} ->
@@ -682,6 +687,10 @@ remove_chunk_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, S
 			State2#state{ chunk_cache = Cache2 };
 		error ->
 			cache_chunk(do_not_cache, Candidate, State2);
+		{{chunk1, _H1}, SessionCache2} ->
+			%% If we find data from a CM peer, discard it but don't decrement the cache size
+			Cache2 = maps:put(SessionKey, SessionCache2, Cache),
+			State2#state{ chunk_cache = Cache2 };
 		{_, SessionCache2} ->
 			%% if we find any cached data, discard it and decrement the cache size
 			Cache2 = maps:put(SessionKey, SessionCache2, Cache),
@@ -696,25 +705,6 @@ cache_chunk(Data, Candidate, State) ->
 	Cache2 = maps:put(SessionKey, SessionCache2, Cache),
 	State#state{ chunk_cache = Cache2 }.
 
-cache_h1_list(Candidate, State) ->
-	#mining_candidate{ session_key = SessionKey, cm_h1_list = H1List } = Candidate,
-	%% Only reserve enough space to process the H1 list provided. If this is less
-	%% than the full recall range, some of the chunk2s will be read, cached, and ignored
-	%% (since we don't have the H1 needed to compute the H2).
-	%%
-	%% This may cause some temporary memory bloat - but it will be cleaned up with the
-	%% next mining session (e.g. when the next block is applied).
-	%%
-	%% If however we reserve cache space for these "orphan" chunk2s the cache space they
-	%% consume will prevent usable chunks from being read and negatively impact the mining
-	%% rate.
-	%%
-	%% Note: when processing CM requests we always reserve the cache space and proceed *even if*
-	%% this puts us over the chunk cache limit. This may have to be revisited later if we find
-	%% that this causes unacceptable memory bloat.
-	State2 = update_chunk_cache_size(length(H1List), SessionKey, State),
-	cache_h1_list(Candidate, H1List, State2).
-
 cache_h1_list(_Candidate, [], State) ->
 	State;
 cache_h1_list(
@@ -722,13 +712,6 @@ cache_h1_list(
 		[ {H1, Nonce} | H1List ], State) when CacheRef /= not_set ->
 	State2 = cache_chunk({chunk1, H1}, Candidate#mining_candidate{ nonce = Nonce }, State),
 	cache_h1_list(Candidate, H1List, State2).
-
-generate_cache_ref(Candidate) ->
-	#mining_candidate{
-		partition_number = Partition1, partition_number2 = Partition2,
-		partition_upper_bound = PartitionUpperBound } = Candidate,
-	CacheRef = {Partition1, Partition2, PartitionUpperBound, make_ref()},
-	Candidate#mining_candidate{ cache_ref = CacheRef }.
 
 get_difficulty(true, State, _Candidate) ->
 	State#state.diff_pair;
@@ -739,6 +722,13 @@ get_difficulty(false, _State, #mining_candidate{ cm_diff = DiffPair }) ->
 
 nonce_max() ->
 	max(0, ((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1)).
+
+generate_cache_ref(Candidate) ->
+	#mining_candidate{
+		partition_number = Partition1, partition_number2 = Partition2,
+		partition_upper_bound = PartitionUpperBound } = Candidate,
+	CacheRef = {Partition1, Partition2, PartitionUpperBound, make_ref()},
+	Candidate#mining_candidate{ cache_ref = CacheRef }.
 
 %%%===================================================================
 %%% Public Test interface.

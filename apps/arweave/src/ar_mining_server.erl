@@ -152,7 +152,8 @@ handle_cast({add_pool_job, Args}, State) ->
 		SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff, State2);
 
 handle_cast({compute_h2_for_peer, Candidate}, State) ->
-	case get_worker(Candidate#mining_candidate.partition_number2, State) of
+	#mining_candidate{ partition_number2 = Partition2 } = Candidate,
+	case get_worker(Partition2, State) of
 		not_found ->
 			ok;
 		Worker ->
@@ -345,11 +346,12 @@ update_cache_limits(State) ->
 update_cache_limits(0, State) ->
 	State;
 update_cache_limits(NumActivePartitions, State) ->
-	%% This allows the cache to store enough chunks for 2 concurrent VDF steps per partition.
-	IdealRangesPerStep = 4,
+	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
+	IdealStepsPerPartition = 4,
+	IdealRangesPerStep = 2,
 	ChunksPerRange = ?RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE,
 	IdealCacheLimit = ar_util:ceil_int(
-		IdealRangesPerStep * ChunksPerRange * NumActivePartitions, 100),
+		IdealStepsPerPartition * IdealRangesPerStep * ChunksPerRange * NumActivePartitions, 100),
 
 	{ok, Config} = application:get_env(arweave, config),
 	OverallCacheLimit = case Config#config.mining_server_chunk_cache_size_limit of

@@ -121,6 +121,7 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 			ar_mining_stats:block_found(),
 			Map;
 		{_, Map} ->
+			ar_mining_stats:block_found(),
 			Map;
 		error ->
 			MinedBlocks

@@ -19,9 +19,10 @@
 -record(state, {
 	last_peer_response = #{},
 	peers_by_partition = #{},
-	peer_requests = #{},
-	h1_batch_timer,
-	batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS
+	out_batches = #{},
+	in_batches = #{},
+	out_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS,
+	in_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS
 }).
 
 -define(START_DELAY, 1000).
@@ -31,6 +32,8 @@
 -else.
 -define(BATCH_SIZE_LIMIT, 400).
 -endif.
+
+-define(BATCH_POLL_INTERVAL_MS, 20).
 
 %%%===================================================================
 %%% Public interface.
@@ -116,13 +119,9 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	
-	%% using ar_util:cast_after so we can cancel pending timers. This allows us to send the
-	%% h1 batch as soon as it's full instead of waiting for the timeout to expire.
-	H1BatchTimerRef = ar_util:cast_after(
-		Config#config.cm_batch_timeout, ?MODULE, send_h1_batch_to_peer),
+	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
 	State = #state{
-		last_peer_response = #{},
-		h1_batch_timer = H1BatchTimerRef
+		last_peer_response = #{}
 	},
 	State2 = case Config#config.coordinated_mining of
 		false ->
@@ -141,7 +140,9 @@ init([]) ->
 				last_peer_response = #{}
 			}
 	end,
-	{ok, State2#state{ batch_timeout = Config#config.cm_batch_timeout }}.
+	{ok, State2#state{
+		out_batch_timeout = Config#config.cm_out_batch_timeout,
+		in_batch_timeout = Config#config.cm_in_batch_timeout }}.
 
 %% Helper function to see state while testing and later for monitoring API
 handle_call(get_public_state, _From, State) ->
@@ -167,61 +168,54 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
+handle_cast(check_batches, State) ->
+	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
+	OutBatches = check_out_batches(State),
+	InBatches = check_in_batches(State),
+	{noreply, State#state{ out_batches = OutBatches, in_batches = InBatches }};
+
 handle_cast({computed_h1, ShareableCandidate, H1, Nonce}, State) ->
+	#state{ out_batches = OutBatches } = State,
 	#mining_candidate{
 		cache_ref = CacheRef
 	} = ShareableCandidate,
-	#state{peer_requests = PeerRequests} = State,
-	ShareableCandidate2 = maps:get(CacheRef, PeerRequests, ShareableCandidate),
+	Now = os:system_time(millisecond),
+	{Start, ShareableCandidate2} = maps:get(CacheRef, OutBatches, {Now, ShareableCandidate}),
 	H1List = [{H1, Nonce} | ShareableCandidate2#mining_candidate.cm_h1_list],
-	PeerRequests2 = maps:put(
-		CacheRef,
-		ShareableCandidate2#mining_candidate{ cm_h1_list = H1List },
-		PeerRequests),
-	case length(H1List) >= ?BATCH_SIZE_LIMIT of
+	ShareableCandidate3 = ShareableCandidate2#mining_candidate{ cm_h1_list = H1List },
+	OutBatches2 = case length(H1List) >= ?BATCH_SIZE_LIMIT of
 		true ->
-			send_h1_batch_to_peer();
+			send_h1(ShareableCandidate3, State),
+			maps:remove(CacheRef, OutBatches);
 		false ->
-			ok
+			maps:put(CacheRef, {Start, ShareableCandidate3}, OutBatches)
 	end,
-	{noreply, State#state{ peer_requests = PeerRequests2 }};
+	{noreply, State#state{ out_batches = OutBatches2 }};
 
-handle_cast(send_h1_batch_to_peer, #state{ peer_requests = PeerRequests } = State)
-  		when map_size(PeerRequests) == 0 ->
-	#state{ h1_batch_timer = TimerRef, batch_timeout = BatchTimeout } = State,
-	erlang:cancel_timer(TimerRef),
-	NewTimerRef = ar_util:cast_after(BatchTimeout, ?MODULE, send_h1_batch_to_peer),
-	{noreply, State#state{h1_batch_timer = NewTimerRef}};
+handle_cast({compute_h2_for_peer, InCandidate}, State) ->
+	#state{ in_batches = InBatches } = State,
+	#mining_candidate{
+		cm_lead_peer = Peer,
+		partition_number = Partition1,
+		partition_number2 = Partition2,
+		h0 = H0 } = InCandidate,
 
-handle_cast(send_h1_batch_to_peer, State) ->
-	#state{ peer_requests = PeerRequests, h1_batch_timer = TimerRef,
-		batch_timeout = BatchTimeout } = State,
-	erlang:cancel_timer(TimerRef),
-	TimerRef2 = ar_util:cast_after(BatchTimeout, ?MODULE, send_h1_batch_to_peer),
-	maps:fold(
-		fun	(_CacheRef, Candidate, _) ->
-			#mining_candidate{ partition_number2 = PartitionNumber2 } = Candidate,
-			case get_peer(PartitionNumber2, State) of
-				none ->
-					ok;
-				Peer ->
-					send_h1(Peer, Candidate)
-			end
-		end,
-		ok,
-		PeerRequests
-	),
-	State2 = State#state{
-		peer_requests = #{},
-		h1_batch_timer = TimerRef2
-	},
-	{noreply, State2};
+	CacheKey = {Peer, Partition1, Partition2, H0},
+	Now = os:system_time(millisecond),
+	{Start, Candidate} = maps:get(CacheKey, InBatches,
+		{Now, InCandidate#mining_candidate{ cm_h1_list = [] }}),
 
-handle_cast({compute_h2_for_peer, Candidate}, State) ->
-	#mining_candidate{ cm_lead_peer = Peer, cm_h1_list = H1List } = Candidate,
-	ar_mining_server:compute_h2_for_peer(Candidate),
-	ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
-	{noreply, State};
+	H1List = Candidate#mining_candidate.cm_h1_list ++ InCandidate#mining_candidate.cm_h1_list,
+	Candidate2 = Candidate#mining_candidate{ cm_h1_list = H1List },
+
+	InBatches2 = case length(H1List) >= ?BATCH_SIZE_LIMIT of
+		true ->
+			ar_mining_server:compute_h2_for_peer(Candidate2),
+			maps:remove(CacheKey, InBatches);
+		false ->
+			maps:put(CacheKey, {Start, Candidate2}, InBatches)
+	end,
+	{noreply, State#state{ in_batches = InBatches2 }};
 
 handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
@@ -319,6 +313,44 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+check_out_batches(#state{out_batches = OutBatches}) when map_size(OutBatches) == 0 ->
+	OutBatches;
+check_out_batches(State) ->
+	#state{ out_batches = OutBatches, out_batch_timeout = BatchTimeout } = State,
+	Now = os:system_time(millisecond),
+	maps:filter(
+		fun	(_CacheRef, {Start, Candidate}) ->
+			case Now - Start >= BatchTimeout of
+				true ->
+					%% send this batch, and remove it from the map
+					send_h1(Candidate, State),
+					false;
+				false ->
+					%% not yet time to send this batch, keep it in the map
+					true
+			end
+		end,
+		OutBatches
+	).
+
+check_in_batches(#state{ in_batches = InBatches }) when map_size(InBatches) == 0 ->
+	InBatches;
+check_in_batches(State) ->
+	#state{ in_batches = InBatches, in_batch_timeout = BatchTimeout } = State,
+	Now = os:system_time(millisecond),
+	maps:filter(
+		fun	(_CacheRef, {Start, Candidate}) ->
+			case Now - Start >= BatchTimeout of
+				true ->
+					ar_mining_server:compute_h2_for_peer(Candidate),
+					false;
+				false ->
+					true
+			end
+		end,
+		InBatches
+	).
+
 get_peers(PartitionNumber, State) ->
 	maps:get(PartitionNumber, State#state.peers_by_partition, []).
 
@@ -330,16 +362,23 @@ get_peer(PartitionNumber, State) ->
 			lists:last(Peers)
 	end.
 
-send_h1(Peer, Candidate) ->
-	#mining_candidate{ cm_h1_list = H1List } = Candidate,
-	spawn(fun() ->
-		ar_http_iface_client:cm_h1_send(Peer, Candidate)
-	end),
-	case Peer of
-		{pool, _} ->
-			ar_mining_stats:h1_sent_to_peer(pool, length(H1List));
-		_ ->
-			ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
+send_h1(Candidate, State) ->
+	#mining_candidate{
+		partition_number2 = PartitionNumber2, cm_h1_list = H1List } = Candidate,
+	Peer = get_peer(PartitionNumber2, State),
+	case get_peer(PartitionNumber2, State) of
+		none ->
+			ok;
+		Peer ->
+			spawn(fun() -> 
+				ar_http_iface_client:cm_h1_send(Peer, Candidate)
+			end),
+			case Peer of
+				{pool, _} ->
+					ar_mining_stats:h1_sent_to_peer(pool, length(H1List));
+				_ ->
+					ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
+			end
 	end.
 
 send_h2(Peer, Candidate) ->

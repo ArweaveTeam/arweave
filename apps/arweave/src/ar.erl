@@ -265,8 +265,13 @@ show_help() ->
 			{"cm_poll_interval", io_lib:format("The frequency in milliseconds of asking the "
 					"other nodes in the coordinated mining setup about their partition "
 					"tables. Default is ~B.", [?DEFAULT_CM_POLL_INTERVAL_MS])},
-			{"cm_batch_timeout", io_lib:format("The frequency in milliseconds of sending "
+			{"cm_out_batch_timeout", io_lib:format("The frequency in milliseconds of sending "
 					"other nodes in the coordinated mining setup a batch of H1 values to hash. "
+					"A higher value reduces network traffic, a lower value reduces hashing latency."
+					"Default is ~B.", [?DEFAULT_CM_BATCH_TIMEOUT_MS])},
+			{"cm_in_batch_timeout", io_lib:format("The frequency in milliseconds of processing "
+					"H1 batches that this node has received from peers. A higher value reduces "
+					"redundant disk reads, a lower value reduces hashing latency."
 					"Default is ~B.", [?DEFAULT_CM_BATCH_TIMEOUT_MS])},
 			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
 					"set coordinated_mining, cm_api_secret, and cm_exit_peer. The same "
@@ -546,6 +551,10 @@ parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
+parse_cli_args(["cm_out_batch_timeout", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ cm_out_batch_timeout = list_to_integer(Num) });
+parse_cli_args(["cm_in_batch_timeout", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ cm_in_batch_timeout = list_to_integer(Num) });
 parse_cli_args(["is_pool_server" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ is_pool_server = true });
 parse_cli_args(["is_pool_client" | Rest], C) ->
