@@ -88,8 +88,8 @@ read_range({Start, End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
 				true ->
-					?LOG_DEBUG([{event, read_range},
-						{size_mb, (End - Start) div ?MiB}, {args, Args}]),
+					?LOG_DEBUG([{event, read_range}, {pid, self()},
+						{size_mb, (End - Start) / ?MiB}, {args, Args}]),
 					read_range2(?READ_RANGE_MESSAGES_PER_BATCH, Args);
 				_ ->
 					ar_util:cast_after(30000, self(), {read_range, Args}),

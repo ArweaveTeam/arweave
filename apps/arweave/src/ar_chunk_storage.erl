@@ -472,6 +472,12 @@ store_chunk2(Key, Offset, Chunk, Filepath, F) ->
 			]),
 			Error;
 		ok ->
+			?LOG_DEBUG([
+				{event, store_chunk2},
+				{offset, Offset},
+				{file, Filepath},
+				{position, Position}
+			]),
 			prometheus_counter:inc(chunks_stored),
 			{ok, Filepath}
 	end.
@@ -496,6 +502,12 @@ delete_chunk(Offset, Key, Filepath) ->
 					Chunk ->
 						Chunk
 				end,
+			?LOG_DEBUG([
+				{event, delete_chunk},
+				{offset, Offset},
+				{file, Filepath},
+				{position, Position}
+			]),
 			file:pwrite(F, Position, ZeroChunk);
 		{error, enoent} ->
 			ok;

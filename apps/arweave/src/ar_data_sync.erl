@@ -712,11 +712,15 @@ handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID,
 		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
-	gen_server:cast(ar_data_sync_worker_master,
-			{read_range, {Start, End, StoreID, OriginStoreID, false}}),
+	State2 = case ar_data_sync_worker_master:read_range(Start, End, StoreID, OriginStoreID, false) of
+		true ->
+			State#sync_data_state{
+				unsynced_intervals_from_other_storage_modules = Intervals };
+		false ->
+			State
+	end,
 	ar_util:cast_after(50, self(), sync_data2),
-	{noreply, State#sync_data_state{
-			unsynced_intervals_from_other_storage_modules = Intervals }};
+	{noreply, State2};
 
 handle_cast({invalidate_bad_data_record, Args}, State) ->
 	invalidate_bad_data_record(Args),
@@ -1185,8 +1189,7 @@ handle_cast({request_default_storage_2_5_repacking, Cursor, RightBound}, State) 
 		not_found ->
 			ok;
 		{End, Start} ->
-			gen_server:cast(ar_data_sync_worker_master, {read_range, {Start, End,
-					"default", "default", true}}),
+			ar_data_sync_worker_master:read_range(Start, End, "default", "default", true),
 			gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking,
 					End, RightBound})
 	end,
@@ -2649,7 +2652,6 @@ pack_and_store_chunk(Args, State) ->
 	{DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, Packing, Offset, ChunkSize, Chunk,
 			UnpackedChunk, OriginStoreID, OriginChunkDataKey} = Args,
 	#sync_data_state{ packing_map = PackingMap } = State,
-	DataPathHash = crypto:hash(sha256, DataPath),
 	RequiredPacking = get_required_chunk_packing(AbsoluteOffset, ChunkSize, State),
 	PackingStatus =
 		case {RequiredPacking, Packing} of
@@ -2684,14 +2686,6 @@ pack_and_store_chunk(Args, State) ->
 							ar_packing_server:request_repack(AbsoluteOffset,
 									{RequiredPacking, Packing2, Chunk2, AbsoluteOffset,
 										TXRoot, ChunkSize}),
-							?LOG_DEBUG([{event, requested_chunk_repacking},
-									{data_path_hash, ar_util:encode(DataPathHash)},
-									{data_root, ar_util:encode(DataRoot)},
-									{absolute_end_offset, AbsoluteOffset},
-									{relative_offset, Offset},
-									{required_packing,
-										ar_chunk_storage:encode_packing(RequiredPacking)},
-									{packing, ar_chunk_storage:encode_packing(Packing2)}]),
 							ar_util:cast_after(600000, self(),
 									{expire_repack_chunk_request,
 											{AbsoluteOffset, RequiredPacking}}),
@@ -2705,9 +2699,13 @@ pack_and_store_chunk(Args, State) ->
 			end
 	end.
 
-process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State) ->
+process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = StartLen } = State) ->
+	process_store_chunk_queue(State, StartLen).
+
+process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State, StartLen) ->
+	log_stored_chunks(State, StartLen),
 	State;
-process_store_chunk_queue(State) ->
+process_store_chunk_queue(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len,
 			store_chunk_queue_threshold = Threshold } = State,
 	Timestamp = element(2, gb_sets:smallest(Q)),
@@ -2736,6 +2734,7 @@ process_store_chunk_queue(State) ->
 							?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD) },
 			process_store_chunk_queue(State2);
 		false ->
+			log_stored_chunks(State, StartLen),
 			State
 	end.
 
@@ -2776,12 +2775,6 @@ store_chunk2(ChunkArgs, Args, State) ->
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
 							DataRoot, TXPath, ChunkSize, Packing}, State) of
 						ok ->
-							?LOG_DEBUG([{event, stored_chunk},
-									{absolute_end_offset, AbsoluteOffset},
-									{relative_offset, Offset},
-									{data_path_hash, ar_util:encode(DataPathHash)},
-									{data_root, ar_util:encode(DataRoot)},
-									{store_id, StoreID}]),
 							ok;
 						{error, Reason} ->
 							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
@@ -2793,6 +2786,16 @@ store_chunk2(ChunkArgs, Args, State) ->
 							DataPathHash, StoreID),
 					{error, Reason}
 			end
+	end.
+
+log_stored_chunks(State, StartLen) ->
+	#sync_data_state{ store_chunk_queue_len = EndLen, store_id = StoreID } = State,
+	StoredCount = StartLen - EndLen,
+	case StoredCount > 0 of
+		true ->
+			?LOG_DEBUG([{event, stored_chunks}, {count, StoredCount}, {store_id, StoreID}]);
+		false ->
+			ok
 	end.
 
 log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->

@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, is_syncing_enabled/0, ready_for_work/0]).
+-export([start_link/1, is_syncing_enabled/0, ready_for_work/0, read_range/5]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -62,6 +62,15 @@ ready_for_work() ->
 			false
 	end.
 
+read_range(Start, End, OriginStoreID, TargetStoreID, SkipSmall) ->
+	case ar_data_sync_worker_master:ready_for_work() of
+		true ->
+			gen_server:cast(?MODULE,
+					{read_range, {Start, End, OriginStoreID, TargetStoreID, SkipSmall}}),
+			true;
+		false ->
+			false
+	end.
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -229,7 +238,7 @@ max_peer_queue(Performance, TotalThroughput, WorkerCount) ->
 	max(trunc((PeerThroughput / TotalThroughput) * max_tasks(WorkerCount)), ?MIN_PEER_QUEUE).
 
 %% @doc Cut a peer's queue to store roughly 15 minutes worth of tasks. This prevents
-%% the a slow peer from filling up the ar_data_sync_worker_master queues, stalling the
+%% a slow peer from filling up the ar_data_sync_worker_master queues, stalling the
 %% workers and preventing ar_data_sync from pushing new tasks.
 cut_peer_queue(_MaxQueue, PeerTasks, #state{ scheduled_task_count = 0 } = State) ->
 	{PeerTasks, State};
