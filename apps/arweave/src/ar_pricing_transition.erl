@@ -129,11 +129,23 @@
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_2_7_2_PER_GIB_MINUTE_CAP, 30000).
+	-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, 30000).
 -else.
-	%% 1_100_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
-	%% = ~520 Winston per GiB per minute.
-	-define(PRICE_2_7_2_PER_GIB_MINUTE_CAP, 520).
+	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND).
+		%% 1_100_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
+		%% = ~520 Winston per GiB per minute.
+		-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, 520).
+	-endif.
+-endif.
+
+-ifdef(DEBUG).
+	-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, 0).
+-else.
+	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND).
+		%% 550_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
+		%% = ~260 Winston per GiB per minute.
+		-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, 260).
+	-endif.
 -endif.
 
 
@@ -149,7 +161,8 @@ get_transition_price(Height, V2Price) ->
 	PriceTransitionEnd = PriceTransitionStart + transition_length(Height),
 
 	StartPrice = transition_start_price(Height),
-	CapPrice = transition_cap(Height),
+	UpperBound = transition_upper_bound(Height),
+	LowerBound = transition_lower_bound(Height),
 
 	case Height of
 		_ when Height < StaticPricingHeight ->
@@ -160,9 +173,10 @@ get_transition_price(Height, V2Price) ->
 			Interval2 = PriceTransitionEnd - Height,
 			InterpolatedPrice =
 				(StartPrice * Interval2 + V2Price * Interval1) div (Interval1 + Interval2),
-			PricePerGiBPerMinute = ar_util:between(InterpolatedPrice, 0, CapPrice),
+			PricePerGiBPerMinute = ar_util:between(InterpolatedPrice, LowerBound, UpperBound),
 			?LOG_DEBUG([{event, get_price_per_gib_minute},
-				{height, Height}, {price1, StartPrice}, {price2, V2Price}, {cap, CapPrice},
+				{height, Height}, {price1, StartPrice}, {price2, V2Price},
+				{lower_bound, LowerBound}, {upper_bound, UpperBound},
 				{transition_start, PriceTransitionStart}, {transition_end, PriceTransitionEnd},
 				{interval1, Interval1}, {interval2, Interval2},
 				{interpolated_price, InterpolatedPrice}, {price, PricePerGiBPerMinute}]),
@@ -242,12 +256,12 @@ transition_start_price(Height) ->
 
 	case Height of
 		_ when Height >= TransitionStart_2_7_2 ->
-			?PRICE_2_7_2_PER_GIB_MINUTE_CAP;
+			?PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND;
 		_ ->
 			?PRICE_PER_GIB_MINUTE_PRE_TRANSITION
 	end.
 
-transition_cap(Height) ->
+transition_upper_bound(Height) ->
 	TransitionStart_2_7_2 = ar_pricing_transition:transition_start_2_7_2(),
 	Fork_2_7_2 = ar_fork:height_2_7_2(),
 	
@@ -255,7 +269,20 @@ transition_cap(Height) ->
 		_ when Height >= TransitionStart_2_7_2 ->
 			infinity;
 		_ when Height >= Fork_2_7_2 ->
-			?PRICE_2_7_2_PER_GIB_MINUTE_CAP;
+			?PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND;
 		_ ->
 			infinity
+	end.
+
+transition_lower_bound(Height) ->
+	TransitionStart_2_7_2 = ar_pricing_transition:transition_start_2_7_2(),
+	Fork_2_7_2 = ar_fork:height_2_7_2(),
+	
+	case Height of
+		_ when Height >= TransitionStart_2_7_2 ->
+			0;
+		_ when Height >= Fork_2_7_2 ->
+			?PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND;
+		_ ->
+			0
 	end.
