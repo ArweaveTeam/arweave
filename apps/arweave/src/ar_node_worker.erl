@@ -980,7 +980,7 @@ handle_task(compute_mining_difficulty, State) ->
 	Diff = get_current_diff(),
 	case ar_node:get_height() of
 		Height when (Height + 1) rem 10 == 0 ->
-			?LOG_INFO([{event, current_mining_difficulty}, {difficulty, Diff}]);
+			?LOG_INFO([{event, current_mining_difficulty}, {height, Height}, {difficulty, Diff}]);
 		_ ->
 			ok
 	end,

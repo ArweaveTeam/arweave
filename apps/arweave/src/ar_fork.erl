@@ -144,6 +144,6 @@ height_2_7_2() ->
 			0.
 	-else.
 		height_2_7_2() ->
-			1378640. % Targeting 2024-03-07 14:00 UTC
+			1391330. % Targeting 2024-03-26 14:00 UTC
 	-endif.
 -endif.

@@ -132,9 +132,9 @@
 	-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, 30000).
 -else.
 	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND).
-		%% 1_100_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
-		%% = ~520 Winston per GiB per minute.
-		-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, 520).
+		%% 714_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
+		%% = ~340 Winston per GiB per minute.
+		-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, 340).
 	-endif.
 -endif.
 
@@ -142,9 +142,9 @@
 	-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, 0).
 -else.
 	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND).
-		%% 550_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
-		%% = ~260 Winston per GiB per minute.
-		-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, 260).
+		%% 357_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
+		%% = ~170 Winston per GiB per minute.
+		-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, 170).
 	-endif.
 -endif.
 
