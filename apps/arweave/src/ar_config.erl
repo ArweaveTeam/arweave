@@ -569,6 +569,13 @@ parse_options([{<<"pool_server_address">>, Host} | Rest], Config) when is_binary
 parse_options([{<<"pool_server_address">>, Host} | _], _) ->
 	{error, {bad_type, pool_server_address, string}, Host};
 
+%% Undocumented/unsupported options
+parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | Rest], Config)
+  		when is_integer(ChunkGroupSize) ->
+	parse_options(Rest, Config#config{ chunk_storage_file_size = ChunkGroupSize });
+parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | _], _) ->
+	{error, {bad_type, chunk_storage_file_size, number}, ChunkGroupSize};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

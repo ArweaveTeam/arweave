@@ -563,6 +563,11 @@ parse_cli_args(["pool_api_key", Key | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_api_key = list_to_binary(Key) });
 parse_cli_args(["pool_server_address", Host | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_server_address = list_to_binary(Host) });
+
+%% Undocumented/unsupported options
+parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ chunk_storage_file_size = list_to_integer(Num) });
+
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().

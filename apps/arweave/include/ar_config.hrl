@@ -100,6 +100,8 @@
 -define(DEFAULT_CM_POLL_INTERVAL_MS, 60000).
 -define(DEFAULT_CM_BATCH_TIMEOUT_MS, 20).
 
+-define(CHUNK_GROUP_SIZE, (256 * 1024 * 8000)). % 2 GiB.
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -190,7 +192,9 @@
 	is_pool_server = false,
 	is_pool_client = false,
 	pool_server_address = not_set,
-	pool_api_key = not_set
+	pool_api_key = not_set,
+	%% Undocumented/unsupported options
+	chunk_storage_file_size = ?CHUNK_GROUP_SIZE
 }).
 
 -endif.

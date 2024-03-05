@@ -95,7 +95,7 @@ get(Byte, StoreID) ->
 			not_found;
 		{_End, IntervalStart} ->
 			Start = Byte - (Byte - IntervalStart) rem ?DATA_CHUNK_SIZE,
-			LeftBorder = ar_util:floor_int(Start, ?CHUNK_GROUP_SIZE),
+			LeftBorder = ar_util:floor_int(Start, get_chunk_group_size()),
 			case get(Byte, Start, LeftBorder, StoreID, 1) of
 				[] ->
 					not_found;
@@ -121,15 +121,15 @@ get_range(Start, Size, StoreID) ->
 			Start2 = max(Start, IntervalStart),
 			Size2 = Start + Size - Start2,
 			BucketStart = Start2 - (Start2 - IntervalStart) rem ?DATA_CHUNK_SIZE,
-			LeftBorder = ar_util:floor_int(BucketStart, ?CHUNK_GROUP_SIZE),
+			LeftBorder = ar_util:floor_int(BucketStart, get_chunk_group_size()),
 			End = Start2 + Size2,
 			LastBucketStart = (End - 1) - ((End - 1)- IntervalStart) rem ?DATA_CHUNK_SIZE,
-			case LastBucketStart >= LeftBorder + ?CHUNK_GROUP_SIZE of
+			case LastBucketStart >= LeftBorder + get_chunk_group_size() of
 				false ->
 					ChunkCount = (LastBucketStart - BucketStart) div ?DATA_CHUNK_SIZE + 1,
 					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCount);
 				true ->
-					SizeBeforeBorder = LeftBorder + ?CHUNK_GROUP_SIZE - BucketStart,
+					SizeBeforeBorder = LeftBorder + get_chunk_group_size() - BucketStart,
 					ChunkCountBeforeBorder = SizeBeforeBorder div ?DATA_CHUNK_SIZE
 							+ case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of 0 -> 0; _ -> 1 end,
 					StartAfterBorder = BucketStart + ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE,
@@ -224,6 +224,19 @@ init(StoreID) ->
 		end,
 		FileIndex
 	),
+
+	case StoreID == "default" andalso get_chunk_group_size() /= ?CHUNK_GROUP_SIZE of
+		true ->
+			%% This warning applies to all store ids, but we will only print it when loading
+			%% the default StoreID to ensure it is only printed once.
+			WarningMessage = "WARNING: changing chunk_storage_file_size is not "
+				"recommended and may cause errors if different sizes are used for the same "
+				"chunk storage files.",
+			ar:console(WarningMessage),
+			?LOG_WARNING(WarningMessage);
+		false ->
+			ok
+	end,
 	{ok, #state{ file_index = FileIndex2, store_id = StoreID,
 			repack_cursor = read_repack_cursor(StoreID) }}.
 
@@ -365,6 +378,10 @@ terminate(_Reason, #state{ repack_cursor = Cursor, store_id = StoreID }) ->
 %%% Private functions.
 %%%===================================================================
 
+get_chunk_group_size() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.chunk_storage_file_size.
+
 read_repack_cursor(StoreID) ->
 	Filepath = get_filepath("repack_cursor", StoreID),
 	case file:read_file(Filepath) of
@@ -412,7 +429,7 @@ handle_store_chunk(Offset, Chunk, FileIndex, StoreID) ->
 
 get_key(Offset) ->
 	StartOffset = Offset - ?DATA_CHUNK_SIZE,
-	ar_util:floor_int(StartOffset, ?CHUNK_GROUP_SIZE).
+	ar_util:floor_int(StartOffset, get_chunk_group_size()).
 
 store_chunk(Key, Offset, Chunk, FileIndex, StoreID) ->
 	Filepath = filepath(Key, FileIndex, StoreID),
@@ -971,28 +988,28 @@ test_cross_file_aligned() ->
 	clear("default"),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(?CHUNK_GROUP_SIZE, C1),
-	assert_get(C1, ?CHUNK_GROUP_SIZE),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE)),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE + 1)),
+	ar_chunk_storage:put(get_chunk_group_size(), C1),
+	assert_get(C1, get_chunk_group_size()),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size())),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1)),
 	?assertEqual(not_found, ar_chunk_storage:get(0)),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE - 1)),
-	ar_chunk_storage:put(?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE, C2),
-	assert_get(C2, ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE),
-	assert_get(C1, ?CHUNK_GROUP_SIZE),
-	?assertEqual([{?CHUNK_GROUP_SIZE, C1}, {?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE, C2}],
-			ar_chunk_storage:get_range(?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE,
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE - 1)),
+	ar_chunk_storage:put(get_chunk_group_size() + ?DATA_CHUNK_SIZE, C2),
+	assert_get(C2, get_chunk_group_size() + ?DATA_CHUNK_SIZE),
+	assert_get(C1, get_chunk_group_size()),
+	?assertEqual([{get_chunk_group_size(), C1}, {get_chunk_group_size() + ?DATA_CHUNK_SIZE, C2}],
+			ar_chunk_storage:get_range(get_chunk_group_size() - ?DATA_CHUNK_SIZE,
 					2 * ?DATA_CHUNK_SIZE)),
-	?assertEqual([{?CHUNK_GROUP_SIZE, C1}, {?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE, C2}],
-			ar_chunk_storage:get_range(?CHUNK_GROUP_SIZE - 2 * ?DATA_CHUNK_SIZE - 1,
+	?assertEqual([{get_chunk_group_size(), C1}, {get_chunk_group_size() + ?DATA_CHUNK_SIZE, C2}],
+			ar_chunk_storage:get_range(get_chunk_group_size() - 2 * ?DATA_CHUNK_SIZE - 1,
 					4 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(not_found, ar_chunk_storage:get(0)),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE - 1)),
-	ar_chunk_storage:delete(?CHUNK_GROUP_SIZE),
-	assert_get(not_found, ?CHUNK_GROUP_SIZE),
-	assert_get(C2, ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(?CHUNK_GROUP_SIZE, C2),
-	assert_get(C2, ?CHUNK_GROUP_SIZE).
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE - 1)),
+	ar_chunk_storage:delete(get_chunk_group_size()),
+	assert_get(not_found, get_chunk_group_size()),
+	assert_get(C2, get_chunk_group_size() + ?DATA_CHUNK_SIZE),
+	ar_chunk_storage:put(get_chunk_group_size(), C2),
+	assert_get(C2, get_chunk_group_size()).
 
 cross_file_not_aligned_test_() ->
 	{timeout, 20, fun test_cross_file_not_aligned/0}.
@@ -1002,41 +1019,41 @@ test_cross_file_not_aligned() ->
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(?CHUNK_GROUP_SIZE + 1, C1),
-	assert_get(C1, ?CHUNK_GROUP_SIZE + 1),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE + 1)),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE)),
-	ar_chunk_storage:put(2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2, C2),
-	assert_get(C2, 2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE + 1)),
-	ar_chunk_storage:put(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2, C3),
-	assert_get(C2, 2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2),
-	assert_get(C3, 2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
-	?assertEqual([{2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2, C3},
-			{2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2, C2}],
-			ar_chunk_storage:get_range(2 * ?CHUNK_GROUP_SIZE
+	ar_chunk_storage:put(get_chunk_group_size() + 1, C1),
+	assert_get(C1, get_chunk_group_size() + 1),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1)),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE)),
+	ar_chunk_storage:put(2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2),
+	assert_get(C2, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1)),
+	ar_chunk_storage:put(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3),
+	assert_get(C2, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
+	assert_get(C3, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
+	?assertEqual([{2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3},
+			{2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2}],
+			ar_chunk_storage:get_range(2 * get_chunk_group_size()
 					- ?DATA_CHUNK_SIZE div 2 - ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2)),
-	?assertEqual(not_found, ar_chunk_storage:get(?CHUNK_GROUP_SIZE + 1)),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1)),
 	?assertEqual(
 		not_found,
-		ar_chunk_storage:get(?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2 - 1)
+		ar_chunk_storage:get(get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2 - 1)
 	),
-	ar_chunk_storage:delete(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
-	assert_get(not_found, 2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
-	assert_get(C2, 2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2),
-	assert_get(C1, ?CHUNK_GROUP_SIZE + 1),
-	ar_chunk_storage:delete(?CHUNK_GROUP_SIZE + 1),
-	assert_get(not_found, ?CHUNK_GROUP_SIZE + 1),
-	assert_get(not_found, 2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
-	assert_get(C2, 2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2),
-	ar_chunk_storage:delete(2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2),
-	assert_get(not_found, 2 * ?CHUNK_GROUP_SIZE + ?DATA_CHUNK_SIZE div 2),
-	ar_chunk_storage:delete(?CHUNK_GROUP_SIZE + 1),
-	ar_chunk_storage:delete(100 * ?CHUNK_GROUP_SIZE + 1),
-	ar_chunk_storage:put(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2, C1),
-	assert_get(C1, 2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2),
+	ar_chunk_storage:delete(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
+	assert_get(not_found, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
+	assert_get(C2, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
+	assert_get(C1, get_chunk_group_size() + 1),
+	ar_chunk_storage:delete(get_chunk_group_size() + 1),
+	assert_get(not_found, get_chunk_group_size() + 1),
+	assert_get(not_found, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
+	assert_get(C2, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
+	ar_chunk_storage:delete(2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
+	assert_get(not_found, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
+	ar_chunk_storage:delete(get_chunk_group_size() + 1),
+	ar_chunk_storage:delete(100 * get_chunk_group_size() + 1),
+	ar_chunk_storage:put(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C1),
+	assert_get(C1, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
 	?assertEqual(not_found,
-			ar_chunk_storage:get(2 * ?CHUNK_GROUP_SIZE - ?DATA_CHUNK_SIZE div 2)).
+			ar_chunk_storage:get(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2)).
 
 clear(StoreID) ->
 	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
