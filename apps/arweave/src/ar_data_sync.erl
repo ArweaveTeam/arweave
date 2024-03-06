@@ -881,6 +881,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
+
 handle_cast(sync_intervals, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals, store_id = StoreID } = State,
@@ -2175,6 +2176,7 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 		RangeEnd) ->
 	get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeStart,
 			RangeEnd, []).
+
 get_unsynced_intervals_from_other_storage_modules(_TargetStoreID, _StoreID, RangeStart,
 		RangeEnd, Intervals) when RangeStart >= RangeEnd ->
 	Intervals;
@@ -2201,7 +2203,8 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 					get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID,
 							RightBound, RangeEnd, Intervals);
 				{End2, Start2} ->
-					Intervals2 = [{StoreID, {Start2, End2}} | Intervals],
+					Start3 = max(Start2, Cursor),
+					Intervals2 = [{StoreID, {Start3, End2}} | Intervals],
 					get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID,
 							End2, RangeEnd, Intervals2)
 			end
