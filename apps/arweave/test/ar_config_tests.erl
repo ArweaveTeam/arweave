@@ -38,6 +38,10 @@ parse_config() ->
 				{?PARTITION_SIZE, 100, unpacked},
 				{1, 0, unpacked},
 				{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}}],
+		repack_in_place_storage_modules = [
+				{{?PARTITION_SIZE, 1, unpacked}, {spora_2_6, ExpectedMiningAddr}},
+				{{1, 1, {spora_2_6, ExpectedMiningAddr}}, unpacked}],
+		repack_batch_size = 200,
 		polling = 10,
 		block_pollers = 100,
 		auto_join = false,

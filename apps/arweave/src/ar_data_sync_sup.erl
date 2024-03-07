@@ -43,12 +43,20 @@ init([]) ->
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			Name = list_to_atom("ar_data_sync_" ++ StoreID),
-			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, StoreID])
+			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
 		end,
 		Config#config.storage_modules
 	),
-
 	DefaultStorageModuleWorker = ?CHILD_WITH_ARGS(ar_data_sync, worker,
-		ar_data_sync_default, [ar_data_sync_default, "default"]),
-	Children = SyncWorkers ++ StorageModuleWorkers ++ [DefaultStorageModuleWorker],
+		ar_data_sync_default, [ar_data_sync_default, {"default", none}]),
+	RepackInPlaceWorkers = lists:map(
+		fun({StorageModule, TargetPacking}) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			Name = list_to_atom("ar_data_sync_" ++ StoreID),
+			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
+		end,
+		Config#config.repack_in_place_storage_modules
+	),
+	Children = SyncWorkers ++ StorageModuleWorkers ++ [DefaultStorageModuleWorker]
+			++ RepackInPlaceWorkers,
 	{ok, {{one_for_one, 5, 10}, Children}}.

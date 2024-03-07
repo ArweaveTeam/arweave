@@ -494,7 +494,7 @@ debug_get_disk_pool_chunks(Cursor) ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init("default" = StoreID) ->
+init({"default" = StoreID, _}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
@@ -560,19 +560,24 @@ init("default" = StoreID) ->
 	timer:apply_interval(200, ?MODULE, record_chunk_cache_size_metric, []),
 	gen_server:cast(self(), process_store_chunk_queue),
 	{ok, State2};
-init(StoreID) ->
+init({StoreID, RepackInPlacePacking}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
-	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-	gen_server:cast(self(), process_store_chunk_queue),
-	State2 = State#sync_data_state{
-		store_id = StoreID,
-		range_start = RangeStart,
-		range_end = RangeEnd
-	},
-	{ok, may_be_start_syncing(State2)}.
+	case RepackInPlacePacking of
+		none ->
+			gen_server:cast(self(), process_store_chunk_queue),
+			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+			State2 = State#sync_data_state{
+				store_id = StoreID,
+				range_start = RangeStart,
+				range_end = RangeEnd
+			},
+			{ok, may_be_start_syncing(State2)};
+		_ ->
+			{ok, State}
+	end.
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),

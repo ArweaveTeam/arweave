@@ -102,6 +102,9 @@
 
 -define(CHUNK_GROUP_SIZE, (256 * 1024 * 8000)). % 2 GiB.
 
+%% The default number of chunks fetched from disk at a time during in-place repacking.
+-define(DEFAULT_REPACK_BATCH_SIZE, 100).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -134,6 +137,8 @@
 	disk_space,
 	disk_space_check_frequency = ?DISK_SPACE_CHECK_FREQUENCY_MS,
 	storage_modules = [],
+	repack_in_place_storage_modules = [],
+	repack_batch_size = ?DEFAULT_REPACK_BATCH_SIZE,
 	start_from_latest_state = false,
 	start_from_block,
 	internal_api_secret = not_set,

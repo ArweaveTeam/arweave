@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([start_link/0, packing_atom/1,
-		 request_unpack/2, request_repack/2, pack/4, unpack/5, repack/6,
+		 request_unpack/2, request_unpack/3, request_repack/2, request_repack/3,
+		 pack/4, unpack/5, repack/6,
 		 is_buffer_full/0, record_buffer_size_metric/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -28,16 +29,23 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
 packing_atom(Packing) when is_atom(Packing) ->
 	Packing;
 packing_atom({spora_2_6, _}) ->
 	spora_2_6.
 
 request_unpack(Ref, Args) ->
-	gen_server:cast(?MODULE, {unpack_request, self(), Ref, Args}).
+	request_unpack(Ref, self(), Args).
+
+request_unpack(Ref, ReplyTo, Args) ->
+	gen_server:cast(?MODULE, {unpack_request, ReplyTo, Ref, Args}).
 
 request_repack(Ref, Args) ->
-	gen_server:cast(?MODULE, {repack_request, self(), Ref, Args}).
+	request_repack(Ref, self(), Args).
+
+request_repack(Ref, ReplyTo, Args) ->
+	gen_server:cast(?MODULE, {repack_request, ReplyTo, Ref, Args}).
 
 %% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.

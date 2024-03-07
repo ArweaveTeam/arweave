@@ -34,6 +34,16 @@ parse(Config) when is_binary(Config) ->
 parse_storage_module(IOList) ->
 	Bin = iolist_to_binary(IOList),
 	case binary:split(Bin, <<",">>, [global]) of
+		[PartitionNumberBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
+			PartitionNumber = binary_to_integer(PartitionNumberBin),
+			true = PartitionNumber >= 0,
+			parse_storage_module(PartitionNumber, ?PARTITION_SIZE, PackingBin, ToPackingBin);
+		[RangeNumberBin, RangeSizeBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
+			RangeNumber = binary_to_integer(RangeNumberBin),
+			true = RangeNumber >= 0,
+			RangeSize = binary_to_integer(RangeSizeBin),
+			true = RangeSize >= 0,
+			parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin);
 		[PartitionNumberBin, PackingBin] ->
 			PartitionNumber = binary_to_integer(PartitionNumberBin),
 			true = PartitionNumber >= 0,
@@ -139,13 +149,33 @@ parse_options([{<<"log_dir">>, Dir} | _], _) ->
 
 parse_options([{<<"storage_modules">>, L} | Rest], Config) when is_list(L) ->
 	try
-		StorageModules = [parse_storage_module(Bin) || Bin <- L],
-		parse_options(Rest, Config#config{ storage_modules = StorageModules })
+		{StorageModules, RepackInPlaceStorageModules} =
+			lists:foldr(
+				fun(Bin, {Acc1, Acc2}) ->
+					case parse_storage_module(Bin) of
+						{ok, Module} ->
+							{[Module | Acc1], Acc2};
+						{repack_in_place, Module} ->
+							{Acc1, [Module | Acc2]}
+					end
+				end,
+				{[], []},
+				L
+			),
+		parse_options(Rest, Config#config{
+				storage_modules = StorageModules,
+				repack_in_place_storage_modules = RepackInPlaceStorageModules })
 	catch _:_ ->
-		{error, {bad_format, storage_modules, "an array of \"[number],[address]\""}, L}
+		{error, {bad_format, storage_modules, "an array of "
+				"\"{number},{address}[,repack_in_place,{to_packing}]\""}, L}
 	end;
 parse_options([{<<"storage_modules">>, Bin} | _], _) ->
 	{error, {bad_type, storage_modules, array}, Bin};
+
+parse_options([{<<"repack_batch_size">>, N} | Rest], Config) when is_integer(N) ->
+	parse_options(Rest, Config#config{ repack_batch_size = N });
+parse_options([{<<"repack_batch_size">>, Opt} | _], _) ->
+	{error, {bad_type, repack_batch_size, number}, Opt};
 
 parse_options([{<<"polling">>, Frequency} | Rest], Config) when is_integer(Frequency) ->
 	parse_options(Rest, Config#config{ polling = Frequency });
@@ -480,10 +510,18 @@ parse_options([{<<"block_throttle_by_solution_interval">>, D} | Rest], Config)
 
 parse_options([{<<"defragment_modules">>, L} | Rest], Config) when is_list(L) ->
 	try
-		DefragModules = [parse_storage_module(Bin) || Bin <- L],
+		DefragModules =
+			lists:foldr(
+				fun(Bin, Acc) ->
+					{ok, M} = parse_storage_module(Bin),
+					[M | Acc]
+				end,
+				[],
+				L
+			),
 		parse_options(Rest, Config#config{ defragmentation_modules = DefragModules })
 	catch _:_ ->
-		{error, {bad_format, defragment_modules, "an array of \"[number],[address]\""}, L}
+		{error, {bad_format, defragment_modules, "an array of \"{number},{address}\""}, L}
 	end;
 parse_options([{<<"defragment_modules">>, Bin} | _], _) ->
 	{error, {bad_type, defragment_modules, array}, Bin};
@@ -589,7 +627,24 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 			MiningAddr when byte_size(MiningAddr) == 43 ->
 				{spora_2_6, ar_util:decode(MiningAddr)}
 		end,
-	{RangeSize, RangeNumber, Packing}.
+	{ok, {RangeSize, RangeNumber, Packing}}.
+
+parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
+	Packing =
+		case PackingBin of
+			<<"unpacked">> ->
+				unpacked;
+			MiningAddr when byte_size(MiningAddr) == 43 ->
+				{spora_2_6, ar_util:decode(MiningAddr)}
+		end,
+	ToPacking =
+		case ToPackingBin of
+			<<"unpacked">> ->
+				unpacked;
+			ToMiningAddr when byte_size(ToMiningAddr) == 43 ->
+				{spora_2_6, ar_util:decode(ToMiningAddr)}
+		end,
+	{repack_in_place, {{RangeSize, RangeNumber, Packing}, ToPacking}}.
 
 safe_map(Fun, List) ->
 	try
@@ -724,6 +779,8 @@ log_config_value(start_from_block, FieldValue) ->
 	format_binary(FieldValue);
 log_config_value(storage_modules, FieldValue) ->
 	[format_storage_module(StorageModule) || StorageModule <- FieldValue];
+log_config_value(repack_in_place_storage_modules, FieldValue) ->
+	[format_storage_module(StorageModule) || {StorageModule, _} <- FieldValue];
 log_config_value(_, FieldValue) ->
 	FieldValue.
 
