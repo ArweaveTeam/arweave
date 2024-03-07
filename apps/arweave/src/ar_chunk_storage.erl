@@ -24,11 +24,9 @@
 	packing_map = #{},
 	repack_cursor = 0,
 	prev_repack_cursor = 0,
+	target_packing = none,
 	repacking_complete = false
 }).
-
-%% The number of bytes fetched from disk at a time during repacking.
--define(REPACK_INTERVAL_SIZE, (262144 * 100)).
 
 %%%===================================================================
 %%% Public interface.
@@ -196,7 +194,7 @@ run_defragmentation() ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init(StoreID) ->
+init({StoreID, RepackInPlacePacking}) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
@@ -224,7 +222,35 @@ init(StoreID) ->
 		end,
 		FileIndex
 	),
+	warn_custom_chunk_group_size(StoreID),
+	case RepackInPlacePacking of
+		none ->
+			{ok, #state{ file_index = FileIndex2, store_id = StoreID }};
+		Packing ->
+			%% We use the cursor to speed up the search for the place where
+			%% the repacking should start in case the synced intervals are numerous
+			%% and we have already repacked a bunch of them.
+			Cursor =
+				case read_repack_cursor(StoreID, Packing) of
+					0 ->
+						case remove_repack_cursor(StoreID) of
+							ok ->
+								0;
+							Error ->
+								?LOG_ERROR([{event, failed_to_remove_file},
+										{error, io_lib:format("~p", [Error])}]),
+								timer:sleep(2000),
+								erlang:halt()
+						end;
+					C ->
+						C
+				end,
+			gen_server:cast(self(), {repack, infinity, Packing}),
+			{ok, #state{ file_index = FileIndex2, store_id = StoreID,
+					repack_cursor = Cursor, target_packing = Packing }}
+	end.
 
+warn_custom_chunk_group_size(StoreID) ->
 	case StoreID == "default" andalso get_chunk_group_size() /= ?CHUNK_GROUP_SIZE of
 		true ->
 			%% This warning applies to all store ids, but we will only print it when loading
@@ -236,9 +262,7 @@ init(StoreID) ->
 			?LOG_WARNING(WarningMessage);
 		false ->
 			ok
-	end,
-	{ok, #state{ file_index = FileIndex2, store_id = StoreID,
-			repack_cursor = read_repack_cursor(StoreID) }}.
+	end.
 
 handle_cast(store_repack_cursor, #state{ repacking_complete = true } = State) ->
 	{noreply, State};
@@ -247,11 +271,13 @@ handle_cast(store_repack_cursor,
 	ar_util:cast_after(30000, self(), store_repack_cursor),
 	{noreply, State};
 handle_cast(store_repack_cursor,
-		#state{ repack_cursor = Cursor, store_id = StoreID } = State) ->
+		#state{ repack_cursor = Cursor, store_id = StoreID,
+				target_packing = TargetPacking } = State) ->
 	ar_util:cast_after(30000, self(), store_repack_cursor),
 	ar:console("Repacked up to ~B, scanning further..~n", [Cursor]),
-	?LOG_INFO([{event, repacked_partially}, {cursor, Cursor}]),
-	store_repack_cursor(Cursor, StoreID),
+	?LOG_INFO([{event, repacked_partially},
+			{storage_module, StoreID}, {cursor, Cursor}]),
+	store_repack_cursor(Cursor, StoreID, TargetPacking),
 	{noreply, State#state{ prev_repack_cursor = Cursor }};
 
 handle_cast(repacking_complete, State) ->
@@ -335,10 +361,12 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 									Packing, ar_data_sync, StoreID) of
 								ok ->
 									?LOG_DEBUG([{event, repacked_chunk},
+											{storage_module, StoreID},
 											{offset, Offset},
 											{packing, encode_packing(Packing)}]);
 								Error ->
 									?LOG_ERROR([{event, failed_to_record_repacked_chunk},
+											{storage_module, StoreID},
 											{offset, Offset},
 											{packing, encode_packing(Packing)},
 											{error, io_lib:format("~p", [Error])}])
@@ -347,6 +375,7 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 									repack_cursor = Offset, prev_repack_cursor = PrevCursor }};
 						Error2 ->
 							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
+									{storage_module, StoreID},
 									{offset, Offset},
 									{packing, encode_packing(Packing)},
 									{error, io_lib:format("~p", [Error2])}]),
@@ -354,6 +383,7 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 					end;
 				Error3 ->
 					?LOG_ERROR([{event, failed_to_remove_repacked_chunk_from_sync_record},
+							{storage_module, StoreID},
 							{offset, Offset},
 							{packing, encode_packing(Packing)},
 							{error, io_lib:format("~p", [Error3])}]),
@@ -369,9 +399,10 @@ handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {info, io_lib:format("~p", [Info])}]),
 	{noreply, State}.
 
-terminate(_Reason, #state{ repack_cursor = Cursor, store_id = StoreID }) ->
+terminate(_Reason, #state{ repack_cursor = Cursor, store_id = StoreID,
+		target_packing = TargetPacking }) ->
 	sync_and_close_files(),
-	store_repack_cursor(Cursor, StoreID),
+	store_repack_cursor(Cursor, StoreID, TargetPacking),
 	ok.
 
 %%%===================================================================
@@ -382,12 +413,12 @@ get_chunk_group_size() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.chunk_storage_file_size.
 
-read_repack_cursor(StoreID) ->
-	Filepath = get_filepath("repack_cursor", StoreID),
+read_repack_cursor(StoreID, TargetPacking) ->
+	Filepath = get_filepath("repack_in_place_cursor", StoreID),
 	case file:read_file(Filepath) of
 		{ok, Bin} ->
 			case catch binary_to_term(Bin) of
-				Cursor when is_integer(Cursor) ->
+				{Cursor, TargetPacking} when is_integer(Cursor) ->
 					Cursor;
 				_ ->
 					0
@@ -396,11 +427,22 @@ read_repack_cursor(StoreID) ->
 			0
 	end.
 
-store_repack_cursor(0, _StoreID) ->
+remove_repack_cursor(StoreID) ->
+	Filepath = get_filepath("repack_in_place_cursor", StoreID),
+	case file:delete(Filepath) of
+		ok ->
+			ok;
+		{error, enoent} ->
+			ok;
+		Error ->
+			Error
+	end.
+
+store_repack_cursor(0, _StoreID, _TargetPacking) ->
 	ok;
-store_repack_cursor(Cursor, StoreID) ->
-	Filepath = get_filepath("repack_cursor", StoreID),
-	file:write_file(Filepath, term_to_binary(Cursor)).
+store_repack_cursor(Cursor, StoreID, TargetPacking) ->
+	Filepath = get_filepath("repack_in_place_cursor", StoreID),
+	file:write_file(Filepath, term_to_binary({Cursor, TargetPacking})).
 
 get_filepath(Name, StoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -734,8 +776,11 @@ chunk_offset_list_to_map(ChunkOffsets) ->
 repack(Cursor, RightBound, Packing, StoreID) ->
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ?MODULE, StoreID) of
 		not_found ->
-			ar:console("Repacking complete.~n", []),
+			ar:console("~n~nRepacking is complete! We suggest you stop the node, rename "
+					"the storage module folder to reflect the new packing, and start the "
+					"node with the new storage module.~n", []),
 			?LOG_INFO([{event, repacking_complete},
+					{storage_module, StoreID},
 					{target_packing, encode_packing(Packing)}]),
 			Server = list_to_atom("ar_chunk_storage_" ++ StoreID),
 			gen_server:cast(Server, repacking_complete),
@@ -745,7 +790,7 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 			case ar_sync_record:get_next_synced_interval(Start2, End, Packing, ar_data_sync,
 					StoreID) of
 				not_found ->
-					repack(Start, End, End, RightBound, Packing, StoreID);
+					repack(Start2, End, End, RightBound, Packing, StoreID);
 				{End3, Start3} when Start3 > Start2 ->
 					repack(Start2, Start3, End3, RightBound, Packing, StoreID);
 				{End3, _Start3} ->
@@ -756,6 +801,8 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 repack(Start, End, NextCursor, RightBound, Packing, StoreID) when Start >= End ->
 	repack(NextCursor, RightBound, Packing, StoreID);
 repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
+	{ok, Config} = application:get_env(arweave, config),
+	RepackIntervalSize = 262144 * Config#config.repack_batch_size,
 	Server = list_to_atom("ar_chunk_storage_" ++ StoreID),
 	CheckPackingBuffer =
 		case ar_packing_server:is_buffer_full() of
@@ -771,18 +818,19 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 			continue ->
 				continue;
 			ok ->
-				case catch get_range(Start, ?REPACK_INTERVAL_SIZE, StoreID) of
+				case catch get_range(Start, RepackIntervalSize, StoreID) of
 					[] ->
-						Start2 = Start + ?REPACK_INTERVAL_SIZE,
+						Start2 = Start + RepackIntervalSize,
 						gen_server:cast(Server, {repack, Start2, End, NextCursor, RightBound,
 								RequiredPacking}),
 						continue;
 					{'EXIT', _Exc} ->
 						?LOG_ERROR([{event, failed_to_read_chunk_range},
+								{storage_module, StoreID},
 								{start, Start},
-								{size, ?REPACK_INTERVAL_SIZE},
+								{size, RepackIntervalSize},
 								{store_id, StoreID}]),
-						Start2 = Start + ?REPACK_INTERVAL_SIZE,
+						Start2 = Start + RepackIntervalSize,
 						gen_server:cast(Server, {repack, Start2, End, NextCursor, RightBound,
 								RequiredPacking}),
 						continue;
@@ -801,10 +849,11 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 						{ok, Map, MetadataMap};
 					{error, Error} ->
 						?LOG_ERROR([{event, failed_to_read_chunk_metadata_range},
+								{storage_module, StoreID},
 								{error, io_lib:format("~p", [Error])},
 								{left, Min},
 								{right, Max}]),
-						Start3 = Start + ?REPACK_INTERVAL_SIZE,
+						Start3 = Start + RepackIntervalSize,
 						gen_server:cast(Server, {repack, Start3, End, NextCursor, RightBound,
 								RequiredPacking}),
 						continue
@@ -814,7 +863,7 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 		continue ->
 			ok;
 		{ok, Map2, MetadataMap2} ->
-			Start4 = Start + ?REPACK_INTERVAL_SIZE,
+			Start4 = Start + RepackIntervalSize,
 			gen_server:cast(Server, {repack, Start4, End, NextCursor, RightBound,
 					RequiredPacking}),
 			maps:fold(
@@ -824,16 +873,21 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 						ok;
 					(AbsoluteOffset, {_, TXRoot, _, _, _, ChunkSize}, ok) ->
 						PaddedOffset = ar_data_sync:get_chunk_padded_offset(AbsoluteOffset),
-						case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync) of
-							{{true, RequiredPacking}, StoreID} ->
+						case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
+							{true, RequiredPacking} ->
 								?LOG_WARNING([{event,
 											repacking_process_chunk_already_repacked},
+										{storage_module, StoreID},
 										{packing, encode_packing(RequiredPacking)},
 										{offset, AbsoluteOffset}]),
 								ok;
-							{{true, Packing}, StoreID} ->
+							{true, Packing} ->
 								case maps:get(PaddedOffset, Map2, not_found) of
 									not_found ->
+										?LOG_WARNING([{event,
+												chunk_not_found_in_chunk_storage},
+											{storage_module, StoreID},
+											{offset, PaddedOffset}]),
 										ok;
 									Chunk ->
 										Ref = make_ref(),
@@ -841,12 +895,20 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 												{register_packing_ref, Ref, PaddedOffset}),
 										ar_util:cast_after(300000, Server,
 												{expire_repack_request, Ref}),
-										ar_packing_server:request_repack(Ref,
+										ar_packing_server:request_repack(Ref, whereis(Server),
 												{RequiredPacking, Packing, Chunk,
 													AbsoluteOffset, TXRoot, ChunkSize}),
 										ok
 								end;
-							_ ->
+							true ->
+								?LOG_WARNING([{event, no_packing_information_for_the_chunk},
+										{storage_module, StoreID},
+										{offset, PaddedOffset}]),
+								ok;
+							false ->
+								?LOG_WARNING([{event, chunk_not_found_in_sync_record},
+										{storage_module, StoreID},
+										{offset, PaddedOffset}]),
 								ok
 						end
 				end,

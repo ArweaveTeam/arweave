@@ -27,11 +27,19 @@ init([]) ->
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			Name = list_to_atom("ar_chunk_storage_" ++ StoreID),
-			?CHILD_WITH_ARGS(ar_chunk_storage, worker, Name, [Name, StoreID])
+			?CHILD_WITH_ARGS(ar_chunk_storage, worker, Name, [Name, {StoreID, none}])
 		end,
 		Config#config.storage_modules
 	),
 	DefaultChunkStorageWorker = ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
-		ar_chunk_storage_default, [ar_chunk_storage_default, "default"]),
-	Workers = [DefaultChunkStorageWorker | ConfiguredWorkers],
+		ar_chunk_storage_default, [ar_chunk_storage_default, {"default", none}]),
+	RepackInPlaceWorkers = lists:map(
+		fun({StorageModule, Packing}) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			Name = list_to_atom("ar_chunk_storage_" ++ StoreID),
+			?CHILD_WITH_ARGS(ar_chunk_storage, worker, Name, [Name, {StoreID, Packing}])
+		end,
+		Config#config.repack_in_place_storage_modules
+	),
+	Workers = [DefaultChunkStorageWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers,
 	{ok, {{one_for_one, 5, 10}, Workers}}.

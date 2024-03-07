@@ -42,9 +42,12 @@ id({BucketSize, Bucket, Packing}) ->
 			[BucketSize, Bucket, PackingString]))).
 
 %% @doc Return the storage module with the given identifier or not_found.
+%% Search across both attached modules and repacked in-place modules.
 get_by_id(ID) ->
 	{ok, Config} = application:get_env(arweave, config),
-	get_by_id(ID, Config#config.storage_modules).
+	RepackInPlaceModules = [element(1, El)
+			|| El <- Config#config.repack_in_place_storage_modules],
+	get_by_id(ID, Config#config.storage_modules ++ RepackInPlaceModules).
 
 get_by_id(_ID, []) ->
 	not_found;

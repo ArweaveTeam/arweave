@@ -84,12 +84,39 @@ show_help() ->
 					") where packing is either a mining address or \"unpacked\"."
 					" Example: storage_module 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI. "
 					"To configure a module of a custom size, set "
-					"storage_module [number],[size_in_bytes],[packing]. For instance, "
+					"storage_module {number},{size_in_bytes},{packing}. For instance, "
 					"storage_module "
 					"22,1000000000000,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI will be "
 					"syncing the weave data between the offsets 22 TB and 23 TB. Make sure "
 					"the corresponding disk contains some extra space for the proofs and "
-					"other metadata, about 10% of the configured size."},
+					"other metadata, about 10% of the configured size."
+
+					"You may repack a storage module in-place. To do that, specify "
+					"storage_module "
+					"{partition_number},{packing},repack_in_place,{target_packing}. "
+					"For example, if you want to repack a storage module "
+					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI to the new address "
+					"Q5EfKawrRazp11HEDf_NJpxjYMV385j21nlQNjR8_pY, specify "
+					"storage_module "
+					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI,repack_in_place,"
+					"Q5EfKawrRazp11HEDf_NJpxjYMV385j21nlQNjR8_pY. This storage module "
+					"will only do the repacking - it won't be used for mining and won't "
+					"serve any data to peers. Once the repacking is complete, a message will "
+					"be logged to the file and written to the console. We suggest you rename "
+					"the storage module folder according to the new packing then."
+
+					" If you changed your mind and want to repack "
+					"a module already being repacked to the yet different packing, simply "
+					"restart the node specifying the corresponding packing. E.g., in "
+					"the example above, you can restart with storage_module "
+					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI,repack_in_place,unpacked."
+					" The node will unpack everything that was repacked to "
+					"Q5EfKawrRazp11HEDf_NJpxjYMV385j21nlQNjR8_pY and also unpack everything "
+					"that is still packed with En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI."
+			},
+			{"repack_batch_size", io_lib:format("The number of chunk fetched from disk "
+				"at a time during in-place repacking. Default: ~B.",
+				[?DEFAULT_REPACK_BATCH_SIZE])},
 			{"polling (num)", lists:flatten(
 					io_lib:format(
 						"Ask some peers about new blocks every N seconds. Default is ~p.",
@@ -361,14 +388,24 @@ parse_cli_args(["data_dir", DataDir | Rest], C) ->
 parse_cli_args(["log_dir", Dir | Rest], C) ->
 	parse_cli_args(Rest, C#config{ log_dir = Dir });
 parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
-	StorageModules = C#config.storage_modules,
 	try
-		StorageModule = ar_config:parse_storage_module(StorageModuleString),
-		parse_cli_args(Rest, C#config{ storage_modules = [StorageModule | StorageModules] })
+		case ar_config:parse_storage_module(StorageModuleString) of
+			{ok, StorageModule} ->
+				StorageModules = C#config.storage_modules,
+				parse_cli_args(Rest, C#config{
+						storage_modules = [StorageModule | StorageModules] });
+			{repack_in_place, StorageModule} ->
+				StorageModules = C#config.repack_in_place_storage_modules,
+				parse_cli_args(Rest, C#config{
+						repack_in_place_storage_modules = [StorageModule | StorageModules] })
+		end
 	catch _:_ ->
-		io:format("~nstorage_module value must be in the [number],[address] format.~n~n"),
+		io:format("~nstorage_module value must be "
+				"in the {number},{address}[,repack_in_place,{to_packing}] format.~n~n"),
 		erlang:halt()
 	end;
+parse_cli_args(["repack_batch_size", N | Rest], C) ->
+	parse_cli_args(Rest, C#config{ repack_batch_size = list_to_integer(N) });
 parse_cli_args(["polling", Frequency | Rest], C) ->
 	parse_cli_args(Rest, C#config{ polling = list_to_integer(Frequency) });
 parse_cli_args(["block_pollers", N | Rest], C) ->
@@ -506,11 +543,11 @@ parse_cli_args(["block_throttle_by_solution_interval", Num | Rest], C) ->
 parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
 	DefragModules = C#config.defragmentation_modules,
 	try
-		DefragModule = ar_config:parse_storage_module(DefragModuleString),
+		{ok, DefragModule} = ar_config:parse_storage_module(DefragModuleString),
 		DefragModules2 = [DefragModule | DefragModules],
 		parse_cli_args(Rest, C#config{ defragmentation_modules = DefragModules2 })
 	catch _:_ ->
-		io:format("~ndefragment_module value must be in the [number],[address] format.~n~n"),
+		io:format("~ndefragment_module value must be in the {number},{address} format.~n~n"),
 		erlang:halt()
 	end;
 parse_cli_args(["tls_cert_file", CertFilePath | Rest], C) ->
@@ -601,6 +638,7 @@ start(Config) ->
 		false ->
 			ok
 	end,
+	validate_repack_in_place_config(Config),
 	validate_cm_pool_config(Config),
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
@@ -613,6 +651,24 @@ start(Config) ->
 			ok
 	end,
 	start_dependencies().
+
+validate_repack_in_place_config(Config) ->
+	Modules = [ar_storage_module:id(M) || M <- Config#config.storage_modules],
+	validate_repack_in_place_config(Config#config.repack_in_place_storage_modules, Modules).
+
+validate_repack_in_place_config([], _Modules) ->
+	ok;
+validate_repack_in_place_config([{Module, _ToPacking} | L], Modules) ->
+	ID = ar_storage_module:id(Module),
+	case lists:member(ID, Modules) of
+		true ->
+			io:format("~nCannot use the storage module ~s "
+					"while it is being repacked in place.~n~n", [ID]),
+			timer:sleep(2000),
+			erlang:halt();
+		false ->
+			validate_repack_in_place_config(L, Modules)
+	end.
 
 validate_cm_pool_config(Config) ->
 	case {Config#config.coordinated_mining, Config#config.is_pool_server} of
