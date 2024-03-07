@@ -13,6 +13,8 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(CACHE_TTL_MS, 2000).
+
 -record(state, {
 	partition_upper_bound = 0,
 	io_threads = #{},
@@ -195,6 +197,7 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID, #state{ io_threads = Th
 	State;
 start_io_thread(PartitionNumber, MiningAddress, StoreID,
 		#state{ io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
+	Now = os:system_time(millisecond),
 	Thread =
 		spawn(
 			fun() ->
@@ -204,7 +207,7 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 					_ ->
 						ar_chunk_storage:open_files(StoreID)
 				end,
-				io_thread(PartitionNumber, MiningAddress, StoreID)
+				io_thread(PartitionNumber, MiningAddress, StoreID, #{}, Now)
 			end
 		),
 	Ref = monitor(process, Thread),
@@ -223,11 +226,21 @@ handle_io_thread_down(Ref, Reason,
 	start_io_thread(PartitionNumber, MiningAddress, StoreID,
 			State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }).
 
-io_thread(PartitionNumber, MiningAddress, StoreID) ->
+io_thread(PartitionNumber, MiningAddress, StoreID, Cache, LastClearTime) ->
 	receive
 		{WhichChunk, {Worker, Candidate, RecallRangeStart}} ->
-			read_range(WhichChunk, Worker, Candidate, RecallRangeStart, StoreID),
-			io_thread(PartitionNumber, MiningAddress, StoreID)
+			Now = os:system_time(millisecond),
+			{Cache2, LastClearTime2} =
+				case (Now - LastClearTime) > (?CACHE_TTL_MS div 2) of
+					true ->
+						{clear_cached_chunks(Cache), Now};
+					false ->
+						{Cache, LastClearTime}
+				end,
+			{ChunkOffsets, Cache3} =
+				get_chunks(WhichChunk, Candidate, RecallRangeStart, StoreID, Cache2),
+			send_chunks(WhichChunk, Worker, Candidate, RecallRangeStart, ChunkOffsets),
+			io_thread(PartitionNumber, MiningAddress, StoreID, Cache3, LastClearTime2)
 	end.
 
 get_packed_intervals(Start, End, MiningAddress, "default", Intervals) ->
@@ -242,6 +255,73 @@ get_packed_intervals(Start, End, MiningAddress, "default", Intervals) ->
 get_packed_intervals(_Start, _End, _ReplicaID, _StoreID, _Intervals) ->
 	no_interval_check_implemented_for_non_default_store.
 
+clear_cached_chunks(Cache) ->
+	Now = os:system_time(millisecond),
+	CutoffTime = Now - ?CACHE_TTL_MS,
+	maps:filter(
+		fun(_CachedRangeStart, {CachedTime, _ChunkOffsets}) ->
+			%% Remove all ranges that were cached before the CutoffTime
+			%% true: keep
+			%% false: remove
+			case CachedTime > CutoffTime of
+				true ->
+					true;
+				false ->
+					false
+			end
+		end,
+		Cache).
+
+get_chunks(WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
+	Now = os:system_time(millisecond),
+	case maps:get(RangeStart, Cache, not_found) of
+		not_found ->	
+			ChunkOffsets = read_range(WhichChunk, Candidate, RangeStart, StoreID),
+			Cache2 = maps:put(RangeStart, {Now, ChunkOffsets}, Cache),
+			{ChunkOffsets, Cache2};
+		{_CachedTime, ChunkOffsets} ->
+			?LOG_DEBUG([{event, mining_debug_read_cached_recall_range},
+				{pid, self()}, {range_start, RangeStart},
+				{store_id, StoreID}]),
+			{ChunkOffsets, Cache}
+	end.
+
+read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
+	StartTime = erlang:monotonic_time(),
+	#mining_candidate{ mining_address = MiningAddress } = Candidate,
+	Intervals = get_packed_intervals(RangeStart, RangeStart + ?RECALL_RANGE_SIZE,
+			MiningAddress, StoreID, ar_intervals:new()),
+	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, ?RECALL_RANGE_SIZE, StoreID),
+	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
+	log_read_range(Candidate, WhichChunk, length(ChunkOffsets), StartTime),
+	ChunkOffsets2.
+
+send_chunks(WhichChunk, Worker, Candidate, RangeStart, ChunkOffsets) ->
+	NonceMax = max(0, (?RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE - 1)),
+	send_chunks(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets).
+
+send_chunks(_WhichChunk, _Worker, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
+		when Nonce > NonceMax ->
+	ok;
+send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, []) ->
+	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
+	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, []);
+send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
+		[{EndOffset, Chunk} | ChunkOffsets])
+		%% Only 256 KiB chunks are supported at this point.
+		when RangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
+	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
+	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax,
+		[{EndOffset, Chunk} | ChunkOffsets]);
+send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
+		[{EndOffset, _Chunk} | ChunkOffsets])
+		when RangeStart + Nonce * ?DATA_CHUNK_SIZE >= EndOffset ->
+	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets);
+send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
+		[{_EndOffset, Chunk} | ChunkOffsets]) ->
+	ar_mining_worker:recall_chunk(Worker, WhichChunk, Chunk, Nonce, Candidate),
+	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
+
 filter_by_packing([], _Intervals, _StoreID) ->
 	[];
 filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = StoreID) ->
@@ -253,40 +333,6 @@ filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = St
 	end;
 filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
-
-read_range(WhichChunk, Worker, Candidate, RangeStart, StoreID) ->
-	StartTime = erlang:monotonic_time(),
-	Size = ?RECALL_RANGE_SIZE,
-	#mining_candidate{ mining_address = MiningAddress } = Candidate,
-	Intervals = get_packed_intervals(RangeStart, RangeStart + Size,
-			MiningAddress, StoreID, ar_intervals:new()),
-	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, Size, StoreID),
-	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	NonceMax = max(0, (Size div ?DATA_CHUNK_SIZE - 1)),
-	read_range(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets2),
-	log_read_range(Candidate, WhichChunk, length(ChunkOffsets), StartTime).
-
-read_range(_WhichChunk, _Worker, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
-		when Nonce > NonceMax ->
-	ok;
-read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, []) ->
-	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
-	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, []);
-read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
-		[{EndOffset, Chunk} | ChunkOffsets])
-		%% Only 256 KiB chunks are supported at this point.
-		when RangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
-	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
-	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax,
-		[{EndOffset, Chunk} | ChunkOffsets]);
-read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
-		[{EndOffset, _Chunk} | ChunkOffsets])
-		when RangeStart + Nonce * ?DATA_CHUNK_SIZE >= EndOffset ->
-	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets);
-read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
-		[{_EndOffset, Chunk} | ChunkOffsets]) ->
-	ar_mining_worker:recall_chunk(Worker, WhichChunk, Chunk, Nonce, Candidate),
-	read_range(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
 
 log_read_range(Candidate, WhichChunk, FoundChunks, StartTime) ->
 	EndTime = erlang:monotonic_time(),
