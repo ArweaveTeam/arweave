@@ -253,12 +253,20 @@ register() ->
 				"The overall mining rate is inidcated by 'total'."}
 	]),
 	prometheus_gauge:new([
+		{name, cm_h1_batch},
+		{labels, [peer, direction]},
+		{help, "The average number of H1 hashes exchanged with a coordinated mining peer in "
+				"each batch. The peer label indicates the peer that the value is exchanged "
+				"with, and the direction label can be 'to' or 'from'."}
+	]),
+	prometheus_gauge:new([
 		{name, cm_h1_rate},
 		{labels, [peer, direction]},
 		{help, "The number of H1 hashes exchanged with a coordinated mining peer per second. "
 				"The peer label indicates the peer that the value is exchanged with, and the "
 				"direction label can be 'to' or 'from'."}
 	]),
+
 	prometheus_gauge:new([
 		{name, cm_h2_count},
 		{labels, [peer, direction]},
