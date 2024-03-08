@@ -229,17 +229,10 @@ handle_io_thread_down(Ref, Reason,
 io_thread(PartitionNumber, MiningAddress, StoreID, Cache, LastClearTime) ->
 	receive
 		{WhichChunk, {Worker, Candidate, RecallRangeStart}} ->
-			Now = os:system_time(millisecond),
-			{Cache2, LastClearTime2} =
-				case (Now - LastClearTime) > (?CACHE_TTL_MS div 2) of
-					true ->
-						{clear_cached_chunks(Cache), Now};
-					false ->
-						{Cache, LastClearTime}
-				end,
-			{ChunkOffsets, Cache3} =
-				get_chunks(WhichChunk, Candidate, RecallRangeStart, StoreID, Cache2),
+			{ChunkOffsets, Cache2} =
+				get_chunks(WhichChunk, Candidate, RecallRangeStart, StoreID, Cache),
 			send_chunks(WhichChunk, Worker, Candidate, RecallRangeStart, ChunkOffsets),
+			{Cache3, LastClearTime2} = maybe_clear_cached_chunks(Cache2, LastClearTime),
 			io_thread(PartitionNumber, MiningAddress, StoreID, Cache3, LastClearTime2)
 	end.
 
@@ -255,24 +248,45 @@ get_packed_intervals(Start, End, MiningAddress, "default", Intervals) ->
 get_packed_intervals(_Start, _End, _ReplicaID, _StoreID, _Intervals) ->
 	no_interval_check_implemented_for_non_default_store.
 
-clear_cached_chunks(Cache) ->
+maybe_clear_cached_chunks(Cache, LastClearTime) ->
 	Now = os:system_time(millisecond),
-	CutoffTime = Now - ?CACHE_TTL_MS,
-	maps:filter(
-		fun(_CachedRangeStart, {CachedTime, _ChunkOffsets}) ->
-			%% Remove all ranges that were cached before the CutoffTime
-			%% true: keep
-			%% false: remove
-			case CachedTime > CutoffTime of
-				true ->
-					true;
-				false ->
-					false
-			end
-		end,
-		Cache).
+	case (Now - LastClearTime) > (?CACHE_TTL_MS div 2) of
+		true ->
+			CutoffTime = Now - ?CACHE_TTL_MS,
+			Cache2 = maps:filter(
+				fun(_CachedRangeStart, {CachedTime, _ChunkOffsets}) ->
+					%% Remove all ranges that were cached before the CutoffTime
+					%% true: keep
+					%% false: remove
+					case CachedTime > CutoffTime of
+						true ->
+							true;
+						false ->
+							false
+					end
+				end,
+				Cache),
+			{Cache2, Now};
+		false ->
+			{Cache, LastClearTime}
+	end.
 
+%% @doc When we're reading a range for a CM peer we'll cache it temporarily in case
+%% that peer has broken up the batch of H1s into multiple requests. The temporary cache
+%% prevents us from reading the same range from disk multiple times.
+%% 
+%% However if the request is from our local miner there's no need to cache since the H1
+%% batch is always handled all at once.
 get_chunks(WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
+	case Candidate#mining_candidate.cm_lead_peer of
+		not_set ->
+			ChunkOffsets = read_range(WhichChunk, Candidate, RangeStart, StoreID),
+			{ChunkOffsets, Cache};
+		_ ->
+			cached_read_range(WhichChunk, Candidate, RangeStart, StoreID, Cache)
+	end.
+
+cached_read_range(WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
 	Now = os:system_time(millisecond),
 	case maps:get(RangeStart, Cache, not_found) of
 		not_found ->	
