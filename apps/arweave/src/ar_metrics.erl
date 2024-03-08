@@ -255,9 +255,12 @@ register() ->
 	prometheus_gauge:new([
 		{name, cm_h1_batch},
 		{labels, [peer, direction]},
-		{help, "The average number of H1 hashes exchanged with a coordinated mining peer in "
-				"each batch. The peer label indicates the peer that the value is exchanged "
-				"with, and the direction label can be 'to' or 'from'."}
+		{help, "The number of coordinated mining batches of H1 hashes processed per second. "
+				"When direction is 'to' that indicates the number of batches sent over HTTP "
+				"to 'peer'. When direction is 'from' that indicates the number of batches "
+			    "that get processed (read and hashed) from 'peer' - note: because a peer may "
+				"aggregate incoming batches before processing them the 'to' and 'from' "
+				"numbers may not match."}
 	]),
 	prometheus_gauge:new([
 		{name, cm_h1_rate},

@@ -33,8 +33,8 @@
 	current_read_mibps = 0.0,
 	average_hash_hps = 0.0,
 	current_hash_hps = 0.0,
-	average_batch_to_peer = 0.0,
-	average_batch_from_peer = 0.0,
+	average_batches_to_peer = 0.0,
+	average_batches_from_peer = 0.0,
 	average_h1_to_peer_hps = 0.0,
 	current_h1_to_peer_hps = 0.0,
 	average_h1_from_peer_hps = 0.0,
@@ -59,8 +59,8 @@
 
 -record(peer_report, {
 	peer,
-	average_batch_to_peer,
-	average_batch_from_peer,
+	average_batches_to_peer,
+	average_batches_from_peer,
 	average_h1_to_peer_hps,
 	current_h1_to_peer_hps,
 	average_h1_from_peer_hps,
@@ -259,15 +259,23 @@ increment_count(Key, Amount) ->
 reset_count(Key, Now) ->
 	ets:insert(?MODULE, [{Key, Now, 0, 0}]).
 
+get_average_count_by_time(Key, Now) ->
+	{_AvgSamples, AvgCount} = get_average_by_time(Key, Now),
+	AvgCount.
+
+get_average_samples_by_time(Key, Now) ->
+	{AvgSamples, _AvgCount} = get_average_by_time(Key, Now),
+	AvgSamples.
+
 get_average_by_time(Key, Now) ->
 	case ets:lookup(?MODULE, Key) of 
 		[] ->
-			0.0;
+			{0.0, 0.0};
 		[{_, Start, _Samples, _Count}] when Now - Start =:= 0 ->
-			0.0;
-		[{_, Start, _Samples, Count}] ->
+			{0.0, 0.0};
+		[{_, Start, Samples, Count}] ->
 			Elapsed = (Now - Start) / 1000,
-			Count / Elapsed
+			{Samples / Elapsed, Count / Elapsed}
 	end.
 
 get_average_by_samples(Key) ->
@@ -331,7 +339,7 @@ get_partition_data_size(PartitionNumber) ->
     lists:sum(Sizes).
 
 vdf_speed(Now) ->
-	case get_average_by_time(vdf, Now) of
+	case get_average_count_by_time(vdf, Now) of
 		0.0 ->
 			undefined;
 		StepsPerSecond ->
@@ -340,8 +348,8 @@ vdf_speed(Now) ->
 	end.
 
 get_hash_hps(PoA1Multiplier, PartitionNumber, TotalCurrent, Now) ->
-	H1 = get_average_by_time({partition, PartitionNumber, h1, TotalCurrent}, Now),
-	H2 = get_average_by_time({partition, PartitionNumber, h2, TotalCurrent}, Now),
+	H1 = get_average_count_by_time({partition, PartitionNumber, h1, TotalCurrent}, Now),
+	H2 = get_average_count_by_time({partition, PartitionNumber, h2, TotalCurrent}, Now),
 	(H1 / PoA1Multiplier) + H2.
 
 %% @doc calculate the maximum hash rate (in MiB per second read from disk) for the given VDF
@@ -389,8 +397,6 @@ generate_report(Height, Partitions, Peers, WeaveSize, Now) ->
 		h2_solution = get_count(h2_solution),
 		confirmed_block = get_count(confirmed_block),
 		total_data_size = TotalDataSize,
-		average_batch_to_peer = get_overall_average(peer, h1_to_peer, current),
-		average_batch_from_peer = get_overall_average(peer, h1_from_peer, current),
 		total_h2_to_peer = get_overall_total(peer, h2_to_peer, total),
 		total_h2_from_peer = get_overall_total(peer, h2_from_peer, total)
 	},
@@ -424,8 +430,8 @@ generate_partition_report(PoA1Multiplier, PartitionNumber, Report, WeaveSize) ->
 	PartitionReport = #partition_report{
 		partition_number = PartitionNumber,
 		data_size = DataSize,
-		average_read_mibps = get_average_by_time({partition, PartitionNumber, read, total}, Now) / 4,
-		current_read_mibps = get_average_by_time({partition, PartitionNumber, read, current}, Now) / 4,
+		average_read_mibps = get_average_count_by_time({partition, PartitionNumber, read, total}, Now) / 4,
+		current_read_mibps = get_average_count_by_time({partition, PartitionNumber, read, current}, Now) / 4,
 		average_hash_hps = get_hash_hps(PoA1Multiplier, PartitionNumber, total, Now),
 		current_hash_hps = get_hash_hps(PoA1Multiplier, PartitionNumber, current, Now),
 		optimal_read_mibps = optimal_partition_read_mibps(
@@ -450,7 +456,7 @@ generate_partition_report(PoA1Multiplier, PartitionNumber, Report, WeaveSize) ->
 		partitions = Partitions ++ [PartitionReport] }.
 
 generate_peer_reports(Peers, Report) ->
-		lists:foldr(
+	lists:foldr(
 		fun(Peer, Acc) ->
 			generate_peer_report(Peer, Acc)
 		end,
@@ -462,18 +468,26 @@ generate_peer_report(Peer, Report) ->
 	#report{
 		now = Now,
 		peers = Peers,
+		average_batches_to_peer = AverageBatchesToPeer,
+		average_batches_from_peer = AverageBatchesFromPeer,
 		average_h1_to_peer_hps = AverageH1ToPeer,
 		current_h1_to_peer_hps = CurrentH1ToPeer,
 		average_h1_from_peer_hps = AverageH1FromPeer,
 		current_h1_from_peer_hps = CurrentH1FromPeer } = Report,
 	PeerReport = #peer_report{
 		peer = Peer,
-		average_batch_to_peer = get_average_by_samples({peer, Peer, h1_to_peer, current}),
-		average_batch_from_peer = get_average_by_samples({peer, Peer, h1_from_peer, current}),
-		average_h1_to_peer_hps = get_average_by_time({peer, Peer, h1_to_peer, total}, Now),
-		current_h1_to_peer_hps = get_average_by_time({peer, Peer, h1_to_peer, current}, Now),
-		average_h1_from_peer_hps = get_average_by_time({peer, Peer, h1_from_peer, total}, Now),
-		current_h1_from_peer_hps = get_average_by_time({peer, Peer, h1_from_peer, current}, Now),
+		average_batches_to_peer =
+			get_average_samples_by_time({peer, Peer, h1_to_peer, total}, Now),
+        average_batches_from_peer =
+			get_average_samples_by_time({peer, Peer, h1_from_peer, total}, Now),
+		average_h1_to_peer_hps =
+			get_average_count_by_time({peer, Peer, h1_to_peer, total}, Now),
+		current_h1_to_peer_hps =
+			get_average_count_by_time({peer, Peer, h1_to_peer, current}, Now),
+		average_h1_from_peer_hps =
+			get_average_count_by_time({peer, Peer, h1_from_peer, total}, Now),
+		current_h1_from_peer_hps =
+			get_average_count_by_time({peer, Peer, h1_from_peer, current}, Now),
 		total_h2_to_peer = get_count({peer, Peer, h2_to_peer, total}),
 		total_h2_from_peer = get_count({peer, Peer, h2_from_peer, total})
 	},
@@ -483,8 +497,14 @@ generate_peer_report(Peer, Report) ->
 
 	Report#report{
 		peers = Peers ++ [PeerReport],
-		average_h1_to_peer_hps = AverageH1ToPeer + PeerReport#peer_report.average_h1_to_peer_hps,
-		current_h1_to_peer_hps = CurrentH1ToPeer + PeerReport#peer_report.current_h1_to_peer_hps,
+		average_batches_to_peer =
+			AverageBatchesToPeer + PeerReport#peer_report.average_batches_to_peer,
+		average_batches_from_peer =
+			AverageBatchesFromPeer + PeerReport#peer_report.average_batches_from_peer,
+		average_h1_to_peer_hps =
+			AverageH1ToPeer + PeerReport#peer_report.average_h1_to_peer_hps,
+		current_h1_to_peer_hps =
+			CurrentH1ToPeer + PeerReport#peer_report.current_h1_to_peer_hps,
 		average_h1_from_peer_hps =
 			AverageH1FromPeer + PeerReport#peer_report.average_h1_from_peer_hps,
 		current_h1_from_peer_hps =
@@ -513,8 +533,8 @@ set_metrics(Report) ->
 	prometheus_gauge:set(mining_rate, [hash, total],  Report#report.current_hash_hps),
 	prometheus_gauge:set(mining_rate, [ideal_read, total],  Report#report.optimal_overall_read_mibps),
 	prometheus_gauge:set(mining_rate, [ideal_hash, total],  Report#report.optimal_overall_hash_hps),
-	prometheus_gauge:set(cm_h1_batch, [total, to], Report#report.average_batch_to_peer),
-	prometheus_gauge:set(cm_h1_batch, [total, from], Report#report.average_batch_from_peer),
+	prometheus_gauge:set(cm_h1_batch, [total, to], Report#report.average_batches_to_peer),
+	prometheus_gauge:set(cm_h1_batch, [total, from], Report#report.average_batches_from_peer),
 	prometheus_gauge:set(cm_h1_rate, [total, to], Report#report.current_h1_to_peer_hps),
 	prometheus_gauge:set(cm_h1_rate, [total, from], Report#report.current_h1_from_peer_hps),
 	prometheus_gauge:set(cm_h2_count, [total, to], Report#report.total_h2_to_peer),
@@ -541,9 +561,9 @@ set_peer_metrics([]) ->
 set_peer_metrics([PeerReport | PeerReports]) ->
 	Peer = ar_util:format_peer(PeerReport#peer_report.peer),
 	prometheus_gauge:set(cm_h1_batch, [Peer, to],
-		PeerReport#peer_report.average_batch_to_peer),
+		PeerReport#peer_report.average_batches_to_peer),
 	prometheus_gauge:set(cm_h1_batch, [Peer, from],
-		PeerReport#peer_report.average_batch_from_peer),
+		PeerReport#peer_report.average_batches_from_peer),
 	prometheus_gauge:set(cm_h1_rate, [Peer, to],
 		PeerReport#peer_report.current_h1_to_peer_hps),
 	prometheus_gauge:set(cm_h1_rate, [Peer, from],
@@ -684,8 +704,8 @@ format_peer_report(Report) ->
 
 format_peer_total_row(Report) ->
 	#report{
-		average_batch_to_peer = AverageBatchTo,
-		average_batch_from_peer = AverageBatchFrom,
+		average_batches_to_peer = AverageBatchTo,
+		average_batches_from_peer = AverageBatchFrom,
 		average_h1_to_peer_hps = AverageH1To,
 		current_h1_to_peer_hps = CurrentH1To,
 		average_h1_from_peer_hps = AverageH1From,
@@ -709,8 +729,8 @@ format_peer_rows([PeerReport | PeerReports]) ->
 format_peer_row(PeerReport) ->
 	#peer_report{
 		peer = Peer,
-		average_batch_to_peer = AverageBatchTo,
-		average_batch_from_peer = AverageBatchFrom,
+		average_batches_to_peer = AverageBatchTo,
+		average_batches_from_peer = AverageBatchFrom,
 		average_h1_to_peer_hps = AverageH1To,
 		current_h1_to_peer_hps = CurrentH1To,
 		average_h1_from_peer_hps = AverageH1From,
@@ -781,17 +801,24 @@ test_local_stats(Fun, Stat) ->
 	
 	?assert(TotalStart1 /= TotalStart2),
 	?assert(CurrentStart1 /= CurrentStart2),
-	?assertEqual(0.0, get_average_by_time({partition, 1, Stat, total}, TotalStart1)),
-	?assertEqual(0.0, get_average_by_time({partition, 1, Stat, current}, CurrentStart1)),
-	?assertEqual(0.0, get_average_by_time({partition, 2, Stat, total}, TotalStart2)),
-	?assertEqual(0.0, get_average_by_time({partition, 2, Stat, current}, CurrentStart2)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, CurrentStart1)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2)),
 
-	?assertEqual(6.0, get_average_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
-	?assertEqual(0.25, get_average_by_time({partition, 1, Stat, current}, CurrentStart1 + 12000)),
-	?assertEqual(0.5, get_average_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-	?assertEqual(8.0, get_average_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-	?assertEqual(0.0, get_average_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-	?assertEqual(0.0, get_average_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+	?assertEqual(6.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.25, get_average_count_by_time({partition, 1, Stat, current}, CurrentStart1 + 12000)),
+	?assertEqual(0.5, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+
+	?assertEqual(6.0, get_average_samples_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.25, get_average_samples_by_time({partition, 1, Stat, current}, CurrentStart1 + 12000)),
+	?assertEqual(0.5, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
 
 	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, total})),
 	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, current})),
@@ -803,12 +830,19 @@ test_local_stats(Fun, Stat) ->
 	Now = CurrentStart2 + 1000,
 	reset_count({partition, 1, Stat, current}, Now),
 	?assertEqual(Now, get_start({partition, 1, Stat, current})),
-	?assertEqual(6.0, get_average_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
-	?assertEqual(0.0, get_average_by_time({partition, 1, Stat, current}, Now + 12000)),
-	?assertEqual(0.5, get_average_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-	?assertEqual(8.0, get_average_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-	?assertEqual(0.0, get_average_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-	?assertEqual(0.0, get_average_by_time({partition, 3, Stat, current}, CurrentStart1 + 250)),
+	?assertEqual(6.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.5, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, CurrentStart1 + 250)),
+
+	?assertEqual(6.0, get_average_samples_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.5, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, CurrentStart1 + 250)),
 
 	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, total})),
 	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, current})),
@@ -818,12 +852,19 @@ test_local_stats(Fun, Stat) ->
 	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, current})),
 
 	reset_all_stats(),
-	?assertEqual(0.0, get_average_by_time({partition, 1, Stat, total}, Now + 500)),
-	?assertEqual(0.0, get_average_by_time({partition, 1, Stat, current}, Now + 12000)),
-	?assertEqual(0.0, get_average_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-	?assertEqual(0.0, get_average_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-	?assertEqual(0.0, get_average_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-	?assertEqual(0.0, get_average_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, total}, Now + 500)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+
+	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, total}, Now + 500)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
 
 	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, total})),
 	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, current})),
@@ -840,15 +881,18 @@ test_vdf_stats() ->
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
 
-	?assertEqual(0.0, get_average_by_time(vdf, Start)),
-	?assertEqual(6.0, get_average_by_time(vdf, Start + 500)),
+	?assertEqual(0.0, get_average_count_by_time(vdf, Start)),
+	?assertEqual(6.0, get_average_count_by_time(vdf, Start + 500)),
+	?assertEqual(0.0, get_average_samples_by_time(vdf, Start)),
+	?assertEqual(6.0, get_average_samples_by_time(vdf, Start + 500)),
 	?assertEqual(1.0, get_average_by_samples(vdf)),
 
 	Now = Start + 1000,
 	?assertEqual(1.0/3.0, vdf_speed(Now)),
 	?assertEqual(Now, get_start(vdf)),
 	?assertEqual(undefined, vdf_speed(Now)),
-	?assertEqual(0.0, get_average_by_time(vdf, Now + 500)),
+	?assertEqual(0.0, get_average_count_by_time(vdf, Now + 500)),
+	?assertEqual(0.0, get_average_samples_by_time(vdf, Now + 500)),
 	?assertEqual(0.0, get_average_by_samples(vdf)),
 	?assertEqual(undefined, vdf_speed(Now + 500)),
 
@@ -859,7 +903,8 @@ test_vdf_stats() ->
 	ar_mining_stats:vdf_computed(),
 	reset_all_stats(),
 	?assertEqual(undefined, get_start(vdf)),
-	?assertEqual(0.0, get_average_by_time(vdf, 1000)),
+	?assertEqual(0.0, get_average_count_by_time(vdf, 1000)),
+	?assertEqual(0.0, get_average_samples_by_time(vdf, 1000)),
 	?assertEqual(0.0, get_average_by_samples(vdf)),
 	?assertEqual(undefined, vdf_speed(1000)).
 
@@ -922,17 +967,27 @@ test_peer_stats(Fun, Stat) ->
 	
 	?assert(TotalStart1 /= TotalStart2),
 	?assert(CurrentStart1 /= CurrentStart2),
-	?assertEqual(0.0, get_average_by_time({peer, Peer1, Stat, total}, TotalStart1)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer1, Stat, current}, CurrentStart1)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer2, Stat, total}, TotalStart2)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer2, Stat, current}, CurrentStart2)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer1, Stat, total}, TotalStart1)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer1, Stat, current}, CurrentStart1)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer2, Stat, total}, TotalStart2)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer2, Stat, current}, CurrentStart2)),
+	?assertEqual(60.0, get_average_count_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(2.5, get_average_count_by_time({peer, Peer1, Stat, current}, CurrentStart1 + 12000)),
+	?assertEqual(5.0, get_average_count_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(80.0, get_average_count_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer3, Stat, current}, TotalStart1 + 250)),
 
-	?assertEqual(60.0, get_average_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
-	?assertEqual(2.5, get_average_by_time({peer, Peer1, Stat, current}, CurrentStart1 + 12000)),
-	?assertEqual(5.0, get_average_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
-	?assertEqual(80.0, get_average_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer3, Stat, current}, TotalStart1 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer1, Stat, total}, TotalStart1)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer1, Stat, current}, CurrentStart1)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer2, Stat, total}, TotalStart2)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer2, Stat, current}, CurrentStart2)),
+	?assertEqual(6.0, get_average_samples_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.25, get_average_samples_by_time({peer, Peer1, Stat, current}, CurrentStart1 + 12000)),
+	?assertEqual(0.5, get_average_samples_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_samples_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer3, Stat, current}, TotalStart1 + 250)),
 
 	?assertEqual(10.0, get_average_by_samples({peer, Peer1, Stat, total})),
 	?assertEqual(10.0, get_average_by_samples({peer, Peer1, Stat, current})),
@@ -944,12 +999,19 @@ test_peer_stats(Fun, Stat) ->
 	Now = CurrentStart2 + 1000,
 	reset_count({peer, Peer1, Stat, current}, Now),
 	?assertEqual(Now, get_start({peer, Peer1, Stat, current})),
-	?assertEqual(60.0, get_average_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer1, Stat, current}, Now + 12000)),
-	?assertEqual(5.0, get_average_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
-	?assertEqual(80.0, get_average_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer3, Stat, current}, CurrentStart1 + 250)),
+	?assertEqual(60.0, get_average_count_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer1, Stat, current}, Now + 12000)),
+	?assertEqual(5.0, get_average_count_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(80.0, get_average_count_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer3, Stat, current}, CurrentStart1 + 250)),
+
+	?assertEqual(6.0, get_average_samples_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer1, Stat, current}, Now + 12000)),
+	?assertEqual(0.5, get_average_samples_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_samples_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer3, Stat, current}, CurrentStart1 + 250)),
 
 	?assertEqual(10.0, get_average_by_samples({peer, Peer1, Stat, total})),
 	?assertEqual(0.0, get_average_by_samples({peer, Peer1, Stat, current})),
@@ -959,12 +1021,19 @@ test_peer_stats(Fun, Stat) ->
 	?assertEqual(0.0, get_average_by_samples({peer, Peer3, Stat, current})),
 
 	reset_all_stats(),
-	?assertEqual(0.0, get_average_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer1, Stat, current}, Now + 12000)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
-	?assertEqual(0.0, get_average_by_time({peer, Peer3, Stat, current}, CurrentStart1 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer1, Stat, current}, Now + 12000)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({peer, Peer3, Stat, current}, CurrentStart1 + 250)),
+
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer1, Stat, current}, Now + 12000)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({peer, Peer3, Stat, current}, CurrentStart1 + 250)),
 
 	?assertEqual(0.0, get_average_by_samples({peer, Peer1, Stat, total})),
 	?assertEqual(0.0, get_average_by_samples({peer, Peer1, Stat, current})),
@@ -1182,8 +1251,8 @@ test_report(PoA1Multiplier) ->
 		current_read_mibps = 1.25,
 		average_hash_hps = TotalHash,
 		current_hash_hps = TotalHash,
-		average_batch_to_peer = 10.0,
-		average_batch_from_peer = 10.0,
+		average_batches_to_peer = 5.0,
+		average_batches_from_peer = 5.0,
 		average_h1_to_peer_hps = 50.0,
 		current_h1_to_peer_hps = 50.0,
 		average_h1_from_peer_hps = 50.0,
@@ -1225,8 +1294,8 @@ test_report(PoA1Multiplier) ->
 		peers = [
 			#peer_report{
 				peer = Peer3,
-				average_batch_to_peer = 0.0,
-				average_batch_from_peer = 0.0,
+				average_batches_to_peer = 0.0,
+				average_batches_from_peer = 0.0,
 				average_h1_to_peer_hps = 0.0,
 				current_h1_to_peer_hps = 0.0,
 				average_h1_from_peer_hps = 0.0,
@@ -1236,8 +1305,8 @@ test_report(PoA1Multiplier) ->
 			},
 			#peer_report{
 				peer = Peer2,
-				average_batch_to_peer = 10.0,
-				average_batch_from_peer = 10.0,
+				average_batches_to_peer = 2.0,
+				average_batches_from_peer = 3.0,
 				average_h1_to_peer_hps = 20.0,
 				current_h1_to_peer_hps = 20.0,
 				average_h1_from_peer_hps = 30.0,
@@ -1247,8 +1316,8 @@ test_report(PoA1Multiplier) ->
 			},
 			#peer_report{
 				peer = Peer1,
-				average_batch_to_peer = 10.0,
-				average_batch_from_peer = 10.0,
+				average_batches_to_peer = 3.0,
+				average_batches_from_peer = 2.0,
 				average_h1_to_peer_hps = 30.0,
 				current_h1_to_peer_hps = 30.0,
 				average_h1_from_peer_hps = 20.0,
