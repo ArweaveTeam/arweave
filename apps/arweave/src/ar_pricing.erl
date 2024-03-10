@@ -150,18 +150,18 @@ get_v2_price_per_gib_minute_two_difficulty(
 		end,
 	%% The following walks through the math of calculating the price per GiB per minute.
 	%% However to reduce rounding errors due to divs, the uncommented equation at the
-	%% end is used instead. Logically they should be the same. Notably the '* 2' in
-	%% SolutionsPerPartitionPerBlock and the 'div 2' in PricePerGiBPerMinute cancel each
-	%% other out.
+	%% end is used instead. Logically they should be the same. Notably the '* ?TARGET_TIME' in
+	%% SolutionsPerPartitionPerBlock and the 'div ?TARGET_TIME' in PricePerGiBPerSecond cancel
+	%% each other out.
 	%%
 	%% SolutionsPerPartitionPerSecond =
 	%%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
-	%% SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
-	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerMinute * 2,
+	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_TIME,
 	%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
 	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
 	%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
-	%% PricePerGiBPerMinute = PricePerGibPerBlock div 2,
+	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_TIME
+	%% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
 	PricePerGiBPerMinute = 
 		(
 			(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) *
@@ -233,18 +233,18 @@ get_v2_price_per_gib_minute_one_difficulty(
 		end,
 	%% The following walks through the math of calculating the price per GiB per minute.
 	%% However to reduce rounding errors due to divs, the uncommented equation at the
-	%% end is used instead. Logically they should be the same. Notably the '* 2' in
-	%% SolutionsPerPartitionPerBlock and the 'div 2' in PricePerGiBPerMinute cancel each
-	%% other out.
+	%% end is used instead. Logically they should be the same. Notably the '* ?TARGET_TIME' in
+	%% SolutionsPerPartitionPerBlock and the 'div ?TARGET_TIME' in PricePerGiBPerSecond cancel
+	%% each other out.
 	%%
 	%% SolutionsPerPartitionPerSecond =
 	%%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
-	%% SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
-	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerMinute * 2,
+	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_TIME,
 	%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
 	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
 	%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
-	%% PricePerGiBPerMinute = PricePerGibPerBlock div 2,
+	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_TIME
+	%% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
 	PricePerGiBPerMinute = 
 		(
 			(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) *
@@ -866,7 +866,7 @@ log_price_metrics(Event,
 network_data_size(
 		AverageHashRate, IntervalTotal, VDFIntervalTotal, SolutionsPerPartitionPerVDFStep) ->
 	SolutionsPerPartitionPerBlock =
-		(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * 60 * 2) div IntervalTotal,
+		(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * ?TARGET_TIME) div IntervalTotal,
 	EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
 	EstimatedPartitionCount * (?PARTITION_SIZE).
 

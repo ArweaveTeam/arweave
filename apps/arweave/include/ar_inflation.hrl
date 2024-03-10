@@ -4,7 +4,9 @@
 -include_lib("arweave/include/ar.hrl").
 
 %% An estimation for the number of blocks produced in a year.
--define(BLOCKS_PER_YEAR, (30 * 24 * 365)).
+%% Note: I've confirmed that when TARGET_TIME = 120 the following equation is
+%% exactly equal to `30 * 24 * 365` when executed within an Erlang shell (i.e. 262800).
+-define(BLOCKS_PER_YEAR, ((60 * 60 * 24 * 365) div ?TARGET_TIME)).
 
 %% An approximation of the natural logarithm of 2,
 %% expressed as a decimal fraction, with the precision of math:log.
