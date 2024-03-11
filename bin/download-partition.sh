@@ -44,6 +44,7 @@ download_and_verify() {
   done
 
   if [ $success -eq 0 ]; then
+    rm -f "$path"
     echo "Failed to download $path after 3 attempts. File deleted."
   fi
 }
