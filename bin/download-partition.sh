@@ -25,16 +25,27 @@ lines_processed=0
 download_and_verify() {
   local url=$1
   local path=$2
-  local etag=$(curl -sI "$url" | grep -i etag | awk '{print $2}' | tr -d '"\r\n')
+  local etag=$(curl -sI "$url" | grep -i etag | awk '{print $2}' | tr -d '\"\r\n')
+  local attempt=0
+  local success=0
 
-  # Download the file using wget, preserving the directory structure
-  wget -q -c -O "$path" "$url"
-  local md5_downloaded=$(md5sum "$path" | awk '{print $1}')
-
-  if [[ "$etag" != "$md5_downloaded" ]]; then
-    echo "MD5 mismatch for $path. Expected $etag, got $md5_downloaded. Retrying..."
-    rm -f "$path"
+  while [ $attempt -lt 3 ]; do
+    # Download the file using wget, preserving the directory structure
     wget -q -c -O "$path" "$url"
+    local md5_downloaded=$(md5sum "$path" | awk '{print $1}')
+
+    if [[ "$etag" == "$md5_downloaded" ]]; then
+      success=1
+      break
+    else
+      echo "MD5 mismatch for $path. Expected $etag, got $md5_downloaded. Retrying..."
+      rm -f "$path"
+      ((attempt++))
+    fi
+  done
+
+  if [ $success -eq 0 ]; then
+    echo "Failed to download $path after 3 attempts. File deleted."
   fi
 }
 
