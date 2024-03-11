@@ -39,7 +39,6 @@ download_and_verify() {
       break
     else
       echo "MD5 mismatch for $path. Expected $etag, got $md5_downloaded. Retrying..."
-      rm -f "$path"
       ((attempt++))
     fi
   done
