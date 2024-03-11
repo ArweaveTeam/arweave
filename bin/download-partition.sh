@@ -21,6 +21,23 @@ concurrent_downloads=0
 # Counter for the number of lines processed
 lines_processed=0
 
+# Function to download and verify file
+download_and_verify() {
+  local url=$1
+  local path=$2
+  local etag=$(curl -sI "$url" | grep -i etag | awk '{print $2}' | tr -d '"\r\n')
+
+  # Download the file using wget, preserving the directory structure
+  wget -q -c -O "$path" "$url"
+  local md5_downloaded=$(md5sum "$path" | awk '{print $1}')
+
+  if [[ "$etag" != "$md5_downloaded" ]]; then
+    echo "MD5 mismatch for $path. Expected $etag, got $md5_downloaded. Retrying..."
+    rm -f "$path"
+    wget -q -c -O "$path" "$url"
+  fi
+}
+
 # Read each line from the input file
 while IFS= read -r line; do
   # Skip empty lines
@@ -36,11 +53,10 @@ while IFS= read -r line; do
 
   # Create the directory structure for the file
   mkdir -p "$(dirname "$relative_path")"
-
   echo "Downloading $line to ./$relative_path"
 
-  # Download the file using wget in the background, preserving the directory structure
-  wget -q -c -O "$relative_path" "$line" &
+  # Call download_and_verify function in the background
+  download_and_verify "$line" "$relative_path" &
 
   # Increment the concurrent downloads counter
   ((concurrent_downloads++))
