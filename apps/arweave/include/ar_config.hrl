@@ -188,7 +188,6 @@
 	cm_peers = [],
 	cm_poll_interval = ?DEFAULT_CM_POLL_INTERVAL_MS,
 	cm_out_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS,
-	cm_in_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS,
 	is_pool_server = false,
 	is_pool_client = false,
 	pool_server_address = not_set,
