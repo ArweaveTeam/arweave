@@ -25,26 +25,29 @@ lines_processed=0
 download_and_verify() {
   local url=$1
   local path=$2
-  local etag=$(curl -sI "$url" | grep -i etag | awk '{print $2}' | tr -d '\"\r\n')
+  # Fetch the expected file size from the Content-Length HTTP header
+  local expected_size=$(curl -sI "$url" | grep -i Content-Length | awk '{print $2}' | tr -d '\r')
+
   local attempt=0
   local success=0
 
   while [ $attempt -lt 3 ]; do
     # Download the file using wget, preserving the directory structure
     wget -q -c -O "$path" "$url"
-    local md5_downloaded=$(md5sum "$path" | awk '{print $1}')
+    # Get the actual size of the downloaded file
+    local actual_size=$(stat -c %s "$path")
 
-    if [[ "$etag" == "$md5_downloaded" ]]; then
+    if [[ "$expected_size" == "$actual_size" ]]; then
       success=1
       break
     else
-      echo "MD5 mismatch for $path. Expected $etag, got $md5_downloaded. Retrying..."
+      echo "File size mismatch for $path. Expected $expected_size, got $actual_size. Retrying..."
       ((attempt++))
     fi
   done
 
   if [ $success -eq 0 ]; then
-    echo "Failed to download $path after 3 attempts. File deleted."
+    echo "Failed to download $path after 3 attempts."
   fi
 }
 
