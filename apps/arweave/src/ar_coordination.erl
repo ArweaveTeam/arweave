@@ -20,9 +20,7 @@
 	last_peer_response = #{},
 	peers_by_partition = #{},
 	out_batches = #{},
-	in_batches = #{},
-	out_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS,
-	in_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS
+	out_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS
 }).
 
 -define(START_DELAY, 1000).
@@ -141,8 +139,7 @@ init([]) ->
 			}
 	end,
 	{ok, State2#state{
-		out_batch_timeout = Config#config.cm_out_batch_timeout,
-		in_batch_timeout = Config#config.cm_in_batch_timeout }}.
+		out_batch_timeout = Config#config.cm_out_batch_timeout }}.
 
 %% Helper function to see state while testing and later for monitoring API
 handle_call(get_public_state, _From, State) ->
@@ -171,8 +168,7 @@ handle_call(Request, _From, State) ->
 handle_cast(check_batches, State) ->
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
 	OutBatches = check_out_batches(State),
-	InBatches = check_in_batches(State),
-	{noreply, State#state{ out_batches = OutBatches, in_batches = InBatches }};
+	{noreply, State#state{ out_batches = OutBatches }};
 
 handle_cast({computed_h1, ShareableCandidate, H1, Nonce}, State) ->
 	#state{ out_batches = OutBatches } = State,
@@ -192,30 +188,12 @@ handle_cast({computed_h1, ShareableCandidate, H1, Nonce}, State) ->
 	end,
 	{noreply, State#state{ out_batches = OutBatches2 }};
 
-handle_cast({compute_h2_for_peer, InCandidate}, State) ->
-	#state{ in_batches = InBatches } = State,
-	#mining_candidate{
-		cm_lead_peer = Peer,
-		partition_number = Partition1,
-		partition_number2 = Partition2,
-		h0 = H0 } = InCandidate,
-
-	CacheKey = {Peer, Partition1, Partition2, H0},
-	Now = os:system_time(millisecond),
-	{Start, Candidate} = maps:get(CacheKey, InBatches,
-		{Now, InCandidate#mining_candidate{ cm_h1_list = [] }}),
-
-	H1List = Candidate#mining_candidate.cm_h1_list ++ InCandidate#mining_candidate.cm_h1_list,
-	Candidate2 = Candidate#mining_candidate{ cm_h1_list = H1List },
-
-	InBatches2 = case length(H1List) >= ?BATCH_SIZE_LIMIT of
-		true ->
-			ar_mining_server:compute_h2_for_peer(Candidate2),
-			maps:remove(CacheKey, InBatches);
-		false ->
-			maps:put(CacheKey, {Start, Candidate2}, InBatches)
-	end,
-	{noreply, State#state{ in_batches = InBatches2 }};
+handle_cast({compute_h2_for_peer, Candidate}, State) ->
+	%% No don't need to batch inbound batches since ar_mining_io will cache the recall
+	%% range for a short period greatly lowering the cost of processing the same
+	%% multiple times across several batches.
+	ar_mining_server:compute_h2_for_peer(Candidate),
+	{noreply, State};
 
 handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
@@ -331,24 +309,6 @@ check_out_batches(State) ->
 			end
 		end,
 		OutBatches
-	).
-
-check_in_batches(#state{ in_batches = InBatches }) when map_size(InBatches) == 0 ->
-	InBatches;
-check_in_batches(State) ->
-	#state{ in_batches = InBatches, in_batch_timeout = BatchTimeout } = State,
-	Now = os:system_time(millisecond),
-	maps:filter(
-		fun	(_CacheRef, {Start, Candidate}) ->
-			case Now - Start >= BatchTimeout of
-				true ->
-					ar_mining_server:compute_h2_for_peer(Candidate),
-					false;
-				false ->
-					true
-			end
-		end,
-		InBatches
 	).
 
 get_peers(PartitionNumber, State) ->
