@@ -7,6 +7,122 @@
 
 -define(DISTANT_FUTURE_BLOCK_HEIGHT, 262800000). %% 1,000 years from genesis
 
+get_price_per_gib_minute_mainnet_test_() ->
+	ar_test_node:test_with_mainnet_pricing(fun test_price_per_gib_minute_mainnet/0).
+
+test_price_per_gib_minute_mainnet() ->
+	%% Pre-2.7.2.
+	?assert(1376850 < ar_fork:height_2_7_2()),
+	LockedRewards1376850 = lists:sublist(
+			binary_to_term(locked_rewards_1376850_fixture()),
+			?BLOCK_TIME_HISTORY_BLOCKS),
+	BlockTimeHistory1376850 = lists:sublist(
+			binary_to_term(block_time_history_1376850_fixture()),
+			?BLOCK_TIME_HISTORY_BLOCKS),
+	Price1376850 = ar_pricing:get_price_per_gib_minute(1376850, LockedRewards1376850,
+			BlockTimeHistory1376850, 1),
+	?assertEqual(433, (433 * 9 + Price1376850) div 10),
+
+	%% Pre-2.7.2, case 2.
+	?assert(1382750 < ar_fork:height_2_7_2()),
+	LockedRewards1382750 = lists:sublist(
+			lists:nthtail(10, binary_to_term(locked_rewards_1382760_fixture())),
+				?BLOCK_TIME_HISTORY_BLOCKS),
+	BlockTimeHistory1382750 = lists:sublist(
+			lists:nthtail(10, binary_to_term(block_time_history_1382760_fixture())),
+				?BLOCK_TIME_HISTORY_BLOCKS),
+	Price1382750 = ar_pricing:get_price_per_gib_minute(1382750, LockedRewards1382750,
+			BlockTimeHistory1382750, 1),
+	?assertEqual(461, (461 * 9 + Price1382750) div 10).
+
+	%% Post-2.7.2, 100x difficulty drop, all blocks are one-chunk blocks.
+	%LogBlocks = [0, 50, 100, 1000, 2000, 5000, 10000, 15000, 21600,
+	%		21650, 22600, 23600],
+	%model_price(LogBlocks, 100, 1.0, LockedRewards1382750, BlockTimeHistory1382750),
+	%% Post-2.7.2, 100x difficulty drop, 50% blocks are one-chunk blocks.
+	%model_price(LogBlocks, 100, 0.5, LockedRewards1382750, BlockTimeHistory1382750),
+	%% Post-2.7.2, 10x difficulty drop, 1% blocks are one-chunk blocks.
+	%model_price(LogBlocks, 10, 0.01, LockedRewards1382750, BlockTimeHistory1382750).
+
+model_price(LogBlocks, DiffModifier, ChunkOneProb, BaseLockedRewards, BaseBlockTimeHistory) ->
+	BaseHeight = ar_fork:height_2_7_2() + 20,
+	?assert(BaseHeight rem 50 == 0),
+	N = ?BLOCK_TIME_HISTORY_BLOCKS,
+	StartingPrice = 464,
+	HashRate = lists:sum([element(2, El) || El <- BaseLockedRewards]) div N div DiffModifier,
+	AvgReward = lists:sum([element(3, El) || El <- BaseLockedRewards]) div N,
+	AvgBlockInterval = lists:sum([element(1, El) || El <- BaseBlockTimeHistory]) div N,
+	AvgVDFInterval = lists:sum([element(2, El) || El <- BaseBlockTimeHistory]) div N,
+	Addr = element(1, hd(BaseLockedRewards)),
+	Denomination = element(4, hd(BaseLockedRewards)),
+
+	?debugFmt("Diff modifier: ~Bx, one-chunk prob: ~.2f.~n", [DiffModifier, ChunkOneProb]),
+	lists:foldl(
+		fun(Offset, {EMA, LockedRewardsAcc, BlockTimeHistoryAcc}) ->
+			Height = BaseHeight + Offset,
+			ChunkCount =
+				case rand:uniform() >= ChunkOneProb of
+					true ->
+						2;
+					_ ->
+						1
+				end,
+			V2Price = ar_pricing:get_v2_price_per_gib_minute(Height, LockedRewardsAcc,
+					BlockTimeHistoryAcc, Denomination),
+			{Price, PriceBeforeCapping} = ar_pricing_transition:get_transition_price(Height,
+					V2Price),
+			EMA2 =
+				case Height rem 50 of
+					0 ->
+						(EMA * 9 + Price) div 10;
+					_ ->
+						EMA
+				end,
+			case lists:member(Offset, LogBlocks) of
+				true ->
+					?debugFmt("Height: ~B (~B blocks since fork), EMA: ~B, Price: ~B, "
+							"Price before capping: ~B, new EMA: ~B.~n",
+							[Height, Offset, EMA, Price, PriceBeforeCapping, EMA2]);
+				false ->
+					ok
+			end,
+			FakeLockedRewards = [{Addr, HashRate, AvgReward, Denomination}
+					|| _ <- lists:seq(1, 50)],
+			LockedRewards = lists:sublist(FakeLockedRewards ++ LockedRewardsAcc, N),
+			FakeBlockTimeHistory = [{AvgBlockInterval, AvgVDFInterval, ChunkCount}
+					|| _ <- lists:seq(1, 50)],
+			BlockTimeHistory = lists:sublist(FakeBlockTimeHistory ++ BlockTimeHistoryAcc, N),
+			erlang:garbage_collect(),
+			{EMA2, LockedRewards, BlockTimeHistory}
+		end,
+		{StartingPrice, BaseLockedRewards, BaseBlockTimeHistory},
+		lists:seq(0, lists:last(LogBlocks), 50)
+	).
+
+locked_rewards_1376850_fixture() ->
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/locked_rewards.1376850.bin"),
+	{ok, FileData} = file:read_file(Path),
+	FileData.
+
+block_time_history_1376850_fixture() ->
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/block_time_history.1376850.bin"),
+	{ok, FileData} = file:read_file(Path),
+	FileData.
+
+locked_rewards_1382760_fixture() ->
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/locked_rewards.1382760.bin"),
+	{ok, FileData} = file:read_file(Path),
+	FileData.
+
+block_time_history_1382760_fixture() ->
+	{ok, Cwd} = file:get_cwd(),
+	Path = filename:join(Cwd, "./apps/arweave/test/block_time_history.1382760.bin"),
+	{ok, FileData} = file:read_file(Path),
+	FileData.
+
 get_price_per_gib_minute_test_() ->
 	[
 		{timeout, 30, fun test_price_per_gib_minute_pre_block_time_history/0},

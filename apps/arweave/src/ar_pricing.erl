@@ -5,6 +5,21 @@
 		get_miner_reward_endowment_pool_debt_supply/1, recalculate_price_per_gib_minute/1,
 		redenominate/3, may_be_redenominate/1]).
 
+-ifdef(DEBUG).
+-export([debug_recall_range_size/0, debug_partition_size/0, debug_n_replications/1,
+		debug_double_signing_reward_sample_size/0,
+		debug_reward_history_blocks/0, debug_block_time_history_blocks/0,
+		debug_reset_kryder_plus_latch_threshold/0, debug_total_supply/0,
+		debug_redenomination_threshold/0, debug_redenomination_delay_blocks/0,
+		debug_mining_reward_multiplier/0, debug_poa_diff_multiplier/0]).
+
+-export([debug_price_2_6_8_transition_start/0, debug_price_2_6_8_transition_blocks/0,
+		debug_price_2_7_2_transition_start/0, debug_price_2_7_2_transition_blocks/0,
+		debug_price_per_gib_minute_pre_transition/0,
+		debug_price_2_7_2_per_gib_minute_upper_bound/0,
+		debug_price_2_7_2_per_gib_minute_lower_bound/0]).
+-endif.
+
 %% 2.5 exports.
 -export([get_tx_fee/4, get_miner_reward_and_endowment_pool/1, get_tx_fee_pre_fork_2_4/4,
 		usd_to_ar_rate/1, usd_to_ar/3, recalculate_usd_to_ar_rate/1, usd_to_ar_pre_fork_2_4/3,
@@ -42,7 +57,8 @@
 %% Also, the returned price is always at least 1 Winston.
 get_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination) ->
 	V2Price = get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination),
-	ar_pricing_transition:get_transition_price(Height, V2Price).
+	{Price, _PriceBeforeCapping} = ar_pricing_transition:get_transition_price(Height, V2Price),
+	Price.
 
 get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination) ->
 	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(LockedRewards, Denomination),
@@ -50,11 +66,12 @@ get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denominatio
 	Fork_2_7 = ar_fork:height_2_7(),
 	Fork_2_7_2 = ar_fork:height_2_7_2(),
 
+	BlockTimeHistoryBlocks = ?BLOCK_TIME_HISTORY_BLOCKS,
 	case Height of
-		_ when Height - ?BLOCK_TIME_HISTORY_BLOCKS >= Fork_2_7_2 ->
+		_ when Height - BlockTimeHistoryBlocks >= Fork_2_7_2 ->
 			get_v2_price_per_gib_minute_two_difficulty(
 				Height, LockedRewards, BlockTimeHistory, HashRateTotal, RewardTotal);
-		_ when Height - ?BLOCK_TIME_HISTORY_BLOCKS >= Fork_2_7 ->
+		_ when Height - BlockTimeHistoryBlocks >= Fork_2_7 ->
 			%% Calculate (but ignore) the price as it will be determined after 2.7.2 - this is
 			%% so we can log the data to better predict how the price will move.
 			get_v2_price_per_gib_minute_two_difficulty(
@@ -869,6 +886,65 @@ network_data_size(
 		(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * ?TARGET_TIME) div IntervalTotal,
 	EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
 	EstimatedPartitionCount * (?PARTITION_SIZE).
+
+-ifdef(DEBUG).
+debug_partition_size() ->
+	2097152. % 8 * 256 * 1024
+
+debug_recall_range_size() ->
+	(512 * 1024).
+
+debug_n_replications(_MACRO_Height) ->
+	200.
+
+debug_double_signing_reward_sample_size() ->
+	2.
+
+debug_reward_history_blocks() ->
+	3.
+
+debug_block_time_history_blocks() ->
+	3.
+
+debug_reset_kryder_plus_latch_threshold() ->
+	100_000_000_000.
+
+debug_total_supply() ->
+	1500000000000.
+
+debug_redenomination_threshold() ->
+	1350000000000.
+
+debug_redenomination_delay_blocks() ->
+	2.
+
+debug_mining_reward_multiplier() ->
+	{2, 10000}.
+
+debug_poa_diff_multiplier() ->
+	1.
+
+debug_price_2_6_8_transition_start() ->
+	2.
+
+debug_price_2_6_8_transition_blocks() ->
+	2.
+
+debug_price_2_7_2_transition_start() ->
+	4.
+
+debug_price_2_7_2_transition_blocks() ->
+	2.
+
+debug_price_per_gib_minute_pre_transition() ->
+	8162.
+
+debug_price_2_7_2_per_gib_minute_upper_bound() ->
+	30000.
+
+debug_price_2_7_2_per_gib_minute_lower_bound() ->
+	0.
+-endif.
 
 %%%===================================================================
 %%% Tests.

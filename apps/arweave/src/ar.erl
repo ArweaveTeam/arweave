@@ -550,7 +550,7 @@ parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 	end;
 parse_cli_args(["cm_out_batch_timeout", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ cm_out_batch_timeout = list_to_integer(Num) });
-parse_cli_args(["cm_in_batch_timeout", Num | Rest], C) ->
+parse_cli_args(["cm_in_batch_timeout", _Num | Rest], C) ->
 	?LOG_WARNING("Deprecated option found 'cm_in_batch_timeout': "
 		" this option has been removed and is now a no-op.", []),
 	parse_cli_args(Rest, C#config{ });

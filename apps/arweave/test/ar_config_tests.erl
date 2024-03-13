@@ -12,6 +12,7 @@ parse_config() ->
 	{ok, ParsedConfig} = ar_config:parse(config_fixture()),
 	ExpectedBlockHash = ar_util:decode(
 			<<"lfoR_PyKV6t7Z6Xi2QJZlZ0JWThh0Ke7Zc5Q82CSshUhFGcjiYufP234ph1mVofX">>),
+	PartitionSize = ?PARTITION_SIZE,
 	?assertMatch(#config{
 		init = true,
 		port = 1985,
@@ -33,9 +34,9 @@ parse_config() ->
 		block_gossip_peers = [{159,203,158,108,1984}, {150,150,150,150, 1983}],
 		data_dir = "some_data_dir",
 		log_dir = "log_dir",
-		storage_modules = [{?PARTITION_SIZE, 0, unpacked},
-				{?PARTITION_SIZE, 2, {spora_2_6, ExpectedMiningAddr}},
-				{?PARTITION_SIZE, 100, unpacked},
+		storage_modules = [{PartitionSize, 0, unpacked},
+				{PartitionSize, 2, {spora_2_6, ExpectedMiningAddr}},
+				{PartitionSize, 100, unpacked},
 				{1, 0, unpacked},
 				{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}}],
 		polling = 10,
@@ -109,9 +110,9 @@ parse_config() ->
 		run_defragmentation = true,
 		defragmentation_trigger_threshold = 1_000,
 		defragmentation_modules = [
-			{?PARTITION_SIZE, 0, unpacked},
-			{?PARTITION_SIZE, 2, {spora_2_6, ExpectedMiningAddr}},
-			{?PARTITION_SIZE, 100, unpacked},
+			{PartitionSize, 0, unpacked},
+			{PartitionSize, 2, {spora_2_6, ExpectedMiningAddr}},
+			{PartitionSize, 100, unpacked},
 			{1, 0, unpacked},
 			{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}}
 		],

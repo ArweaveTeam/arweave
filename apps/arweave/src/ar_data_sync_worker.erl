@@ -219,7 +219,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 					ok;
 				false ->
 					case ar_http_iface_client:get_chunk_binary(Peer, Start2, any) of
-						{ok, #{ chunk := Chunk } = Proof, Time, TransferSize} ->
+						{ok, #{ chunk := Chunk } = Proof, _Time, _TransferSize} ->
 							%% In case we fetched a packed small chunk,
 							%% we may potentially skip some chunks by
 							%% continuing with Start2 + byte_size(Chunk) - the skip

@@ -5,11 +5,13 @@
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, remote_call/4]).
+		valid_solution/0, remote_call/4,
+		test_with_mainnet_pricing/1]).
 
 %% The "legacy" interface.
 -export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1,
-		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peers/0, stop_peer/1,
+		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
+		stop_peers/0, stop_peer/1,
 		connect_to_peer/1, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
@@ -418,6 +420,47 @@ remote_call(Node, Module, Function, Args, Timeout) ->
 			?assertMatch({ok, _}, Result),
 			element(2, Result)
 	end.
+
+%% Set the pricing constants to the mainnet values.
+test_with_mainnet_pricing(TestFun) ->
+	test_with_mocked_functions(
+		[
+			{ar_fork, height_2_6_8, fun() -> 1189560 end},
+			{ar_fork, height_2_7, fun() -> 1275480 end},
+			{ar_fork, height_2_7_1, fun() -> 1316410 end},
+			{ar_fork, height_2_7_2, fun() -> 1391330 end},
+
+			{ar_pricing, debug_recall_range_size, fun() -> 104857600 end},
+			{ar_pricing, debug_partition_size, fun() -> 3_600_000_000_000 end},
+			{ar_pricing, debug_n_replications, fun(_) -> 20 end},
+			{ar_pricing, debug_double_signing_reward_sample_size, fun() -> 100 end},
+			{ar_pricing, debug_reward_history_blocks, fun() -> (30 * 24 * 30) end},
+			{ar_pricing, debug_block_time_history_blocks, fun() -> (30 * 24 * 30) end},
+			{ar_pricing, debug_poa_diff_multiplier, fun() -> 100 end},
+
+			{ar_pricing, debug_reset_kryder_plus_latch_threshold,
+					fun() -> 10_000_000_000_000_000 end},
+			{ar_pricing, debug_total_supply,
+					fun() -> 66_000_015_859_279_336_957 end},
+			{ar_pricing, debug_redenomination_threshold,
+					fun() -> 1000_000_000_000_000_000 end},
+			{ar_pricing, debug_redenomination_delay_blocks, fun() -> 100 end},
+			{ar_pricing, debug_mining_reward_multiplier, fun() -> {2, 10} end},
+
+			{ar_pricing, debug_price_2_6_8_transition_start, fun() -> 179505 end},
+			{ar_pricing, debug_price_2_6_8_transition_blocks,
+					fun() -> (30 * 24 * 30 * 18) end},
+			{ar_pricing, debug_price_2_7_2_transition_start, fun() -> 361910 end},
+			{ar_pricing, debug_price_2_7_2_transition_blocks,
+					fun() -> (30 * 24 * 30 * 24) end},
+			{ar_pricing, debug_price_per_gib_minute_pre_transition,
+					fun() -> 400 end},
+			{ar_pricing, debug_price_2_7_2_per_gib_minute_upper_bound,
+					fun() -> 340 end},
+			{ar_pricing, debug_price_2_7_2_per_gib_minute_lower_bound,
+					fun() -> 170 end}
+		],
+		TestFun).
 
 %%%===================================================================
 %%% Legacy public interface.

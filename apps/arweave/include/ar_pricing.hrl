@@ -6,7 +6,7 @@
 
 %% The target number of replications.
 -ifdef(DEBUG).
--define(N_REPLICATIONS, fun(_MACRO_Height) -> 200 end).
+	-define(N_REPLICATIONS, ar_pricing:debug_n_replications).
 -else.
 -define(N_REPLICATIONS, fun(MACRO_Height) ->
 	MACRO_Forks = {
@@ -32,7 +32,7 @@ end).
 %% ?DOUBLE_SIGNING_PROVER_REWARD_SHARE of the minimum reward among the preceding
 %% ?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE blocks.
 -ifdef(DEBUG).
--define(DOUBLE_SIGNING_REWARD_SAMPLE_SIZE, 2).
+	-define(DOUBLE_SIGNING_REWARD_SAMPLE_SIZE, ar_pricing:debug_double_signing_reward_sample_size()).
 -else.
 -define(DOUBLE_SIGNING_REWARD_SAMPLE_SIZE, 100).
 -endif.
@@ -58,7 +58,7 @@ end).
 -ifdef(DEBUG).
 	% testnet value should have same ratio 30:1 to VDF_DIFFICULTY_RETARGET
 	% BUT. For tests we are using old value
-	-define(REWARD_HISTORY_BLOCKS, 3).
+	-define(REWARD_HISTORY_BLOCKS, ar_pricing:debug_reward_history_blocks()).
 -else.
 	-ifndef(REWARD_HISTORY_BLOCKS).
 		-define(REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
@@ -66,7 +66,7 @@ end).
 -endif.
 
 -ifdef(DEBUG).
-	-define(BLOCK_TIME_HISTORY_BLOCKS, 3).
+	-define(BLOCK_TIME_HISTORY_BLOCKS, ar_pricing:debug_block_time_history_blocks()).
 -else.
 	-ifndef(BLOCK_TIME_HISTORY_BLOCKS).
 		-define(BLOCK_TIME_HISTORY_BLOCKS, (30 * 24 * 30)).
@@ -99,7 +99,7 @@ end).
 %% we open the latch (and will increase the fees again when/if the endowment is empty).
 %% The value is redenominated according the denomination used at the time.
 -ifdef(DEBUG).
--define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 100_000_000_000).
+	-define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, ar_pricing:debug_reset_kryder_plus_latch_threshold()).
 -else.
 -define(RESET_KRYDER_PLUS_LATCH_THRESHOLD, 10_000_000_000_000_000).
 -endif.
@@ -111,7 +111,7 @@ end).
 	%% The debug constant is not always actually equal to the sum of genesis balances plust
 	%% the total emission. We just set a relatively low value so that we can reproduce
 	%% autoredenomination in tests.
-	-define(TOTAL_SUPPLY, 1500000000000).
+	-define(TOTAL_SUPPLY, ar_pricing:debug_total_supply()).
 -else.
 	-ifdef(FORKS_RESET).
 		%% This value should be ideally adjusted if the genesis balances
@@ -125,7 +125,7 @@ end).
 %% Re-denominate AR (multiply by 1000) when the available supply falls below this
 %% number of units.
 -ifdef(DEBUG).
--define(REDENOMINATION_THRESHOLD, 1350000000000).
+	-define(REDENOMINATION_THRESHOLD, ar_pricing:debug_redenomination_threshold()).
 -else.
 -define(REDENOMINATION_THRESHOLD, 1000_000_000_000_000_000).
 -endif.
@@ -136,7 +136,7 @@ end).
 %% an attack where a post-redenomination transaction is included in a pre-redenomination
 %% block, potentially charging the user a thousand times the intended fee or transfer amount.
 -ifdef(DEBUG).
--define(REDENOMINATION_DELAY_BLOCKS, 2).
+	-define(REDENOMINATION_DELAY_BLOCKS, ar_pricing:debug_redenomination_delay_blocks()).
 -else.
 -define(REDENOMINATION_DELAY_BLOCKS, 100).
 -endif.
@@ -244,7 +244,7 @@ end).
 %% where X is the amount sent to the endowment pool.
 %% Used until the transition to the new fee calculation method is complete.
 -ifdef(DEBUG).
--define(MINING_REWARD_MULTIPLIER, {2, 10000}).
+	-define(MINING_REWARD_MULTIPLIER, ar_pricing:debug_mining_reward_multiplier()).
 -else.
 -define(MINING_REWARD_MULTIPLIER, {2, 10}).
 -endif.

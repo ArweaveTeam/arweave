@@ -20,26 +20,29 @@
 %%%===================================================================
 
 %% @doc Return the storage module identifier.
-id({BucketSize, Bucket, Packing}) when BucketSize == ?PARTITION_SIZE ->
-	PackingString =
-		case Packing of
-			{spora_2_6, Addr} ->
-				ar_util:encode(Addr);
-			_ ->
-				atom_to_list(Packing)
-		end,
-	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
-			[Bucket, PackingString])));
 id({BucketSize, Bucket, Packing}) ->
-	PackingString =
-		case Packing of
-			{spora_2_6, Addr} ->
-				ar_util:encode(Addr);
-			_ ->
-				atom_to_list(Packing)
-		end,
-	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
-			[BucketSize, Bucket, PackingString]))).
+	case BucketSize == ?PARTITION_SIZE of
+		true ->
+			PackingString =
+				case Packing of
+					{spora_2_6, Addr} ->
+						ar_util:encode(Addr);
+					_ ->
+						atom_to_list(Packing)
+				end,
+			binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
+					[Bucket, PackingString])));
+		false ->
+			PackingString =
+				case Packing of
+					{spora_2_6, Addr} ->
+						ar_util:encode(Addr);
+					_ ->
+						atom_to_list(Packing)
+				end,
+			binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
+					[BucketSize, Bucket, PackingString])))
+	end.
 
 %% @doc Return the storage module with the given identifier or not_found.
 get_by_id(ID) ->

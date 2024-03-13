@@ -16,17 +16,17 @@
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
 -ifdef(DEBUG).
--define(PARTITION_SIZE, 2097152). % 8 * 256 * 1024
+	-define(PARTITION_SIZE, ar_pricing:debug_partition_size()). % 8 * 256 * 1024
 -else.
--define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
+	-define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.
 
 %% The size of a recall range. The first range is randomly chosen from the given
 %% mining partition. The second range is chosen from the entire weave.
 -ifdef(DEBUG).
--define(RECALL_RANGE_SIZE, (512 * 1024)).
+	-define(RECALL_RANGE_SIZE, ar_pricing:debug_recall_range_size()).
 -else.
--define(RECALL_RANGE_SIZE, 104857600). % == 100 * 1024 * 1024
+	-define(RECALL_RANGE_SIZE, 104857600). % == 100 * 1024 * 1024
 -endif.
 
 -ifdef(FORKS_RESET).
@@ -69,13 +69,12 @@
 
 %% Increase the difficulty of PoA1 solutions by this multiplier (e.g. 100x).
 -ifdef(DEBUG).
--define(POA1_DIFF_MULTIPLIER, 1).
+	-define(POA1_DIFF_MULTIPLIER, ar_pricing:debug_poa_diff_multiplier()).
 -else.
--ifndef(POA1_DIFF_MULTIPLIER).
--define(POA1_DIFF_MULTIPLIER, 100).
+	-ifndef(POA1_DIFF_MULTIPLIER).
+		-define(POA1_DIFF_MULTIPLIER, 100).
+	-endif.
 -endif.
--endif.
-
 
 %% The number of nonce limiter steps sharing the entropy. We add the entropy
 %% from a past block every so often. If we did not add any entropy at all, even

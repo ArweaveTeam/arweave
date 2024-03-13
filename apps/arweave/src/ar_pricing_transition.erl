@@ -38,7 +38,7 @@
 %% The number of blocks which have to pass since the 2.6.8 fork before we
 %% start mixing in the new fee calculation method.
 -ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_START, 2).
+	-define(PRICE_2_6_8_TRANSITION_START, ar_pricing:debug_price_2_6_8_transition_start()).
 -else.
 	-ifndef(PRICE_2_6_8_TRANSITION_START).
 		-ifdef(FORKS_RESET).
@@ -63,7 +63,7 @@
 %% Let B = TransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS - (height + 1).
 %% Then price per GiB-minute = price old * B / (A + B) + price new * A / (A + B).
 -ifdef(DEBUG).
-	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 2).
+	-define(PRICE_2_6_8_TRANSITION_BLOCKS, ar_pricing:debug_price_2_6_8_transition_blocks()).
 -else.
 	-ifndef(PRICE_2_6_8_TRANSITION_BLOCKS).
 		-ifdef(FORKS_RESET).
@@ -82,7 +82,7 @@
 %% Note: Even though this constant is related to the *2.7.2* fork we count the blocks
 %% since the *2.6.8* fork for easier comparison with ?PRICE_2_6_8_TRANSITION_START
 -ifdef(DEBUG).
-	-define(PRICE_2_7_2_TRANSITION_START, 4).
+	-define(PRICE_2_7_2_TRANSITION_START, ar_pricing:debug_price_2_7_2_transition_start()).
 -else.
 	-ifndef(PRICE_2_7_2_TRANSITION_START).
 		-ifdef(FORKS_RESET).
@@ -107,7 +107,7 @@
 %% Let B = TransitionStart + ?PRICE_2_7_2_TRANSITION_START - (height + 1).
 %% Then price per GiB-minute = price cap * B / (A + B) + price new * A / (A + B).
 -ifdef(DEBUG).
-	-define(PRICE_2_7_2_TRANSITION_BLOCKS, 2).
+	-define(PRICE_2_7_2_TRANSITION_BLOCKS, ar_pricing:debug_price_2_7_2_transition_blocks()).
 -else.
 	-ifndef(PRICE_2_7_2_TRANSITION_BLOCKS).
 		-ifdef(FORKS_RESET).
@@ -121,7 +121,7 @@
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, 8162).
+	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, ar_pricing:debug_price_per_gib_minute_pre_transition()).
 -else.
 	%% STATIC_2_6_8_FEE_WINSTON / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
 	%% = ~400 Winston per GiB per minute.
@@ -129,7 +129,7 @@
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, 30000).
+	-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, ar_pricing:debug_price_2_7_2_per_gib_minute_upper_bound()).
 -else.
 	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND).
 		%% 714_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
@@ -139,7 +139,7 @@
 -endif.
 
 -ifdef(DEBUG).
-	-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, 0).
+	-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, ar_pricing:debug_price_2_7_2_per_gib_minute_lower_bound()).
 -else.
 	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND).
 		%% 357_000_000_000 / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
@@ -166,7 +166,8 @@ get_transition_price(Height, V2Price) ->
 
 	case Height of
 		_ when Height < StaticPricingHeight ->
-			ar_pricing_transition:static_price();
+			StaticPrice = ar_pricing_transition:static_price(),
+			{StaticPrice, StaticPrice};
 		_ when Height < PriceTransitionEnd ->
 			%% Interpolate between the pre-transition price and the new price.
 			Interval1 = Height - PriceTransitionStart,
@@ -180,9 +181,9 @@ get_transition_price(Height, V2Price) ->
 				{transition_start, PriceTransitionStart}, {transition_end, PriceTransitionEnd},
 				{interval1, Interval1}, {interval2, Interval2},
 				{interpolated_price, InterpolatedPrice}, {price, PricePerGiBPerMinute}]),
-			PricePerGiBPerMinute;
+			{PricePerGiBPerMinute, InterpolatedPrice};
 		_ ->
-			V2Price
+			{V2Price, V2Price}
 	end.
 
 static_price() ->
@@ -223,7 +224,6 @@ transition_length(Height) ->
 		_ ->
 			ar_pricing_transition:transition_length_2_6_8()
 	end.
-
 
 %%%===================================================================
 %%% Private functions
