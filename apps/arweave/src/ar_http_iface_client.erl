@@ -678,8 +678,19 @@ get_jobs(Peer, PrevOutput) ->
 	})).
 
 get_peer_and_path_from_url(URL) ->
-	#{ host := Host, port := Port, path := P } = uri_string:parse(URL),
-	{{binary_to_list(Host), Port}, binary_to_list(P)}.
+	#{ host := Host, path := P } = Parsed = uri_string:parse(URL),
+	Peer = case maps:get(port, Parsed, undefined) of
+		undefined ->
+			case maps:get(scheme, Parsed, undefined) of
+				"https" ->
+					{binary_to_list(Host), 443};
+				_ ->
+					{binary_to_list(Host), 1984}
+			end;
+		Port ->
+			{binary_to_list(Host), Port}
+	end,
+	{Peer, binary_to_list(P)}.
 
 %% @doc Post the partial solution to the pool or coordinated mining exit peer.
 post_partial_solution(Peer, Solution) ->

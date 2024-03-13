@@ -181,12 +181,23 @@ call_webhook(URL, Headers, Entity, Event) ->
 	do_call_webhook(URL, Headers, Entity, Event, 0).
 
 do_call_webhook(URL, Headers, Entity, Event, N) when N < ?NUMBER_OF_TRIES ->
-	#{ host := Host, port := Port, path := Path } = Map = uri_string:parse(URL),
+	#{ host := Host, path := Path } = Map = uri_string:parse(URL),
 	Query = maps:get(query, Map, <<>>),
+	Peer = case maps:get(port, Map, undefined) of
+		undefined ->
+			case maps:get(scheme, Map, undefined) of
+				"https" ->
+					{binary_to_list(Host), 443};
+				_ ->
+					{binary_to_list(Host), 1984}
+			end;
+		Port ->
+			{binary_to_list(Host), Port}
+	end,
 	case catch
 		ar_http:req(#{
 			method => post,
-			peer => {binary_to_list(Host), Port},
+			peer => Peer,
 			path => binary_to_list(<<Path/binary, Query/binary>>),
 			headers => ?BASE_HEADERS ++ Headers,
 			body => to_json(Entity),
