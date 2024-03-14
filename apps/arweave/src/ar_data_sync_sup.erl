@@ -42,7 +42,8 @@ init([]) ->
 	StorageModuleWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
-			Name = list_to_atom("ar_data_sync_" ++ StoreID),
+			StoreLabel = ar_storage_module:label(StorageModule),
+			Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
 			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
 		end,
 		Config#config.storage_modules
@@ -52,7 +53,8 @@ init([]) ->
 	RepackInPlaceWorkers = lists:map(
 		fun({StorageModule, TargetPacking}) ->
 			StoreID = ar_storage_module:id(StorageModule),
-			Name = list_to_atom("ar_data_sync_" ++ StoreID),
+			StoreLabel = ar_storage_module:label(StorageModule),
+			Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
 			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
 		end,
 		Config#config.repack_in_place_storage_modules

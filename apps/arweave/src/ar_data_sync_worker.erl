@@ -139,7 +139,8 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 					read_range2(MessagesRemaining,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				not_found ->
-					gen_server:cast(list_to_atom("ar_data_sync_" ++ OriginStoreID),
+					Label = ar_storage_module:label_by_id(OriginStoreID),
+					gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
 							{invalidate_bad_data_record, {Start, AbsoluteOffset, ChunksIndex,
 							OriginStoreID, 1}}),
 					read_range2(MessagesRemaining-1,
@@ -167,9 +168,11 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 									Packing, RelativeOffset, ChunkSize, Chunk,
 									UnpackedChunk, TargetStoreID, ChunkDataKey},
 							gen_server:cast(list_to_atom("ar_data_sync_"
-									++ TargetStoreID), {pack_and_store_chunk, Args}),
+									++ ar_storage_module:label_by_id(TargetStoreID)),
+									{pack_and_store_chunk, Args}),
 							read_range2(MessagesRemaining-1,
-								{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
+								{Start + ChunkSize, End, OriginStoreID, TargetStoreID,
+								 SkipSmall});
 						Reply ->
 							?LOG_ERROR([{event, chunk_record_not_found},
 									{absolute_end_offset, AbsoluteOffset},
@@ -219,14 +222,15 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 					ok;
 				false ->
 					case ar_http_iface_client:get_chunk_binary(Peer, Start2, any) of
-						{ok, #{ chunk := Chunk } = Proof, Time, TransferSize} ->
+						{ok, #{ chunk := Chunk } = Proof, _Time, _TransferSize} ->
 							%% In case we fetched a packed small chunk,
 							%% we may potentially skip some chunks by
 							%% continuing with Start2 + byte_size(Chunk) - the skip
 							%% chunks will be then requested later.
 							Start3 = ar_data_sync:get_chunk_padded_offset(
 									Start2 + byte_size(Chunk)) + 1,
-							gen_server:cast(list_to_atom("ar_data_sync_" ++ TargetStoreID),
+							Label = ar_storage_module:label_by_id(TargetStoreID),
+							gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
 									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});

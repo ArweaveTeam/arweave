@@ -604,7 +604,7 @@ handle_cast({join, RecentBI}, State) ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
 			{ok, Config} = application:get_env(arweave, config),
-			[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:id(Module)),
+			[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:label(Module)),
 					{cut, Offset}) || Module <- Config#config.storage_modules],
 			ok = ar_chunk_storage:cut(Offset, StoreID),
 			ok = ar_sync_record:cut(Offset, ?MODULE, StoreID),
@@ -1644,8 +1644,9 @@ remove_range(Start, End, Ref, ReplyTo) ->
 	RefL = [make_ref() || _ <- StoreIDs],
 	PID = spawn(fun() -> ReplyFun(ReplyFun, sets:from_list(RefL)) end),
 	lists:foreach(
-		fun({StoreID, R}) ->
-			GenServerID = list_to_atom("ar_data_sync_" ++ StoreID),
+		fun({StorageID, R}) ->
+			GenServerID = list_to_atom("ar_data_sync_"
+					++ ar_storage_module:label_by_id(StorageID)),
 			gen_server:cast(GenServerID, {remove_range, End, Start + 1, R, PID})
 		end,
 		lists:zip(StoreIDs, RefL)
@@ -3173,7 +3174,8 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 					increment_chunk_cache_size(),
 					Args2 = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
-					gen_server:cast(list_to_atom("ar_data_sync_" ++ StoreID6),
+					Label = ar_storage_module:label_by_id(StoreID6),
+					gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
 							{pack_and_store_chunk, Args2}),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 							false, Args}),

@@ -64,7 +64,7 @@ start_link(Name, StoreID) ->
 
 %% @doc Return the set of intervals.
 get(ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
+	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {get, ID}, 20000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -74,7 +74,7 @@ get(ID, StoreID) ->
 
 %% @doc Return the set of intervals.
 get(ID, Type, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
+	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {get, Type, ID}, 20000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -85,7 +85,7 @@ get(ID, Type, StoreID) ->
 %% @doc Add the given interval to the record with the
 %% given ID. Store the changes on disk before returning ok.
 add(End, Start, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
+	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {add, End, Start, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -97,7 +97,7 @@ add(End, Start, ID, StoreID) ->
 %% given ID and Type. Store the changes on disk before
 %% returning ok.
 add(End, Start, Type, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
+	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {add, End, Start, Type, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -109,7 +109,7 @@ add(End, Start, Type, ID, StoreID) ->
 %% with the given ID. Store the changes on disk before
 %% returning ok.
 delete(End, Start, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
+	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {delete, End, Start, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -121,7 +121,7 @@ delete(End, Start, ID, StoreID) ->
 %% Offset from the record. Store the changes on disk
 %% before returning ok.
 cut(Offset, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ StoreID),
+	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {cut, Offset, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -584,13 +584,23 @@ store_state(State) ->
 				fun	({ar_data_sync, Type}, TypeRecord) ->
 						Type2 =
 							case Type of
-								{spora_2_6, _Addr} ->
-									spora_2_6;
+								{spora_2_6, Addr} ->
+									AddrLabel = ar_storage_module:address_label(Addr),
+									list_to_atom("spora_2_6_" ++ AddrLabel);
 								_ ->
 									Type
 							end,
+						StoreLabel =
+							case StoreID of
+								"default" ->
+									"default";
+								_ ->
+									StorageModule = ar_storage_module:get_by_id(StoreID),
+									ar_storage_module:label(StorageModule)
+							end,
 						ar_mining_stats:set_storage_module_data_size(
-							StoreID, Type2, PartitionNumber, StorageModuleSize, StorageModuleIndex,
+							StoreLabel, Type2, PartitionNumber, StorageModuleSize,
+							StorageModuleIndex,
 							ar_intervals:sum(TypeRecord));
 					(_, _) ->
 						ok
