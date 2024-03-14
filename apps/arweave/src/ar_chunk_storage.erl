@@ -802,7 +802,7 @@ repack(Start, End, NextCursor, RightBound, Packing, StoreID) when Start >= End -
 	repack(NextCursor, RightBound, Packing, StoreID);
 repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
-	RepackIntervalSize = 262144 * Config#config.repack_batch_size,
+	RepackIntervalSize = ?DATA_CHUNK_SIZE * Config#config.repack_batch_size,
 	Server = list_to_atom("ar_chunk_storage_" ++ StoreID),
 	CheckPackingBuffer =
 		case ar_packing_server:is_buffer_full() of
