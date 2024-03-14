@@ -42,6 +42,7 @@ init([]) ->
 	ets:new(ar_tx_db, [set, public, named_table]),
 	ets:new(ar_packing_server, [set, public, named_table]),
 	ets:new(ar_nonce_limiter, [set, public, named_table]),
+	ets:new(ar_storage_module, [set, public, named_table]),
 	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_discovery, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_sync_worker_master, [set, public, named_table]),

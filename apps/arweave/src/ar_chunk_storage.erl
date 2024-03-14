@@ -51,7 +51,7 @@ put(Offset, Chunk) ->
 %% @doc Store the chunk under the given end offset,
 %% bytes Offset - ?DATA_CHUNK_SIIZE, Offset - ?DATA_CHUNK_SIIZE + 1, .., Offset - 1.
 put(Offset, Chunk, StoreID) ->
-	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {put, Offset, Chunk}) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -163,7 +163,7 @@ delete(Offset) ->
 
 %% @doc Remove the chunk with the given end offset.
 delete(Offset, StoreID) ->
-	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
 	case catch gen_server:call(GenServerID, {delete, Offset}, 20000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -782,7 +782,8 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 			?LOG_INFO([{event, repacking_complete},
 					{storage_module, StoreID},
 					{target_packing, encode_packing(Packing)}]),
-			Server = list_to_atom("ar_chunk_storage_" ++ StoreID),
+			Server = list_to_atom("ar_chunk_storage_"
+					++ ar_storage_module:label_by_id(StoreID)),
 			gen_server:cast(Server, repacking_complete),
 			ok;
 		{End, Start} ->
@@ -803,7 +804,7 @@ repack(Start, End, NextCursor, RightBound, Packing, StoreID) when Start >= End -
 repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	RepackIntervalSize = ?DATA_CHUNK_SIZE * Config#config.repack_batch_size,
-	Server = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	Server = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
 	CheckPackingBuffer =
 		case ar_packing_server:is_buffer_full() of
 			true ->
@@ -1118,7 +1119,7 @@ test_cross_file_not_aligned() ->
 			ar_chunk_storage:get(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2)).
 
 clear(StoreID) ->
-	GenServerID = list_to_atom("ar_chunk_storage_" ++ StoreID),
+	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
 	ok = gen_server:call(GenServerID, reset).
 
 assert_get(Expected, Offset) ->
