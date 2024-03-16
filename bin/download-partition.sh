@@ -59,7 +59,7 @@ while IFS= read -r line; do
   fi
 
   # Dynamically determine the base URL for the current line, extracting the first three segments
-  base_url=$(echo "$line" | cut -d'/' -f1-6)/
+  base_url=$(echo "$line" | cut -d'/' -f1-5)/
 
   # Remove the base URL to get the relative path
   relative_path="${line#$base_url}"
