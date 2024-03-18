@@ -91,6 +91,7 @@ jobs:
             epmd -relaxed_command_check -daemon
           fi
       - name: ${{ matrix.core_test_mod }}.erl
+        id: tests
         run: |
           rm -f *.out || true
           EXIT_CODE=0
@@ -157,4 +158,8 @@ jobs:
               fi
             fi
           done
+          echo "::set-output name=exit_code::$EXIT_CODE" # Set the exit_code output variable
           exit $EXIT_CODE # exit with the exit code of the tests
+      - name: Cleanup successful test
+        if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
+        run: rm -rf .tmp _build
