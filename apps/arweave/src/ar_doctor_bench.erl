@@ -17,10 +17,23 @@ main(Args) ->
 	bench_read(Args).
 
 help() ->
-	ar:console("data-doctor bench duration data_dir storage_module [storage_module] [...]~n"),
+	ar:console("data-doctor bench <duration> <data_dir> <storage_module> [<storage_module> ...]~n"),
 	ar:console("  duration: How long, in seconds, to run the benchmark for.~n"), 
-	ar:console("            During the run data will be logged to ~p in the format:~n", [?OUTPUT_FILENAME]),
-	ar:console("            '~s'~n", [?FILE_FORMAT]).
+	ar:console("  data_dir: Full path to your data_dir.~n"), 
+	ar:console("  storage_module: List of storage modules in same format used for Arweave ~n"),
+	ar:console("                  configuration (e.g. 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI).~n"), 
+	ar:console("                  It's recommended that you specify all configured storage_modules ~n"),
+	ar:console("                  in order to benchmark the overall system performance including  ~n"),
+	ar:console("                  any data busses that are shared across disks.~n"), 
+	ar:console("~n"), 
+	ar:console("Example:~n"), 
+	ar:console("data-doctor bench 60 /mnt/arweave-data 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI \\~n"),
+	ar:console("    1,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI \\~n"),
+	ar:console("    2,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI \\~n"),
+	ar:console("    3,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI~n"),
+	ar:console("~n"), 
+	ar:console("Note: During the run data will be logged to ~p in the format:~n", [?OUTPUT_FILENAME]),
+	ar:console("      '~s'~n", [?FILE_FORMAT]).
 
 bench_read(Args) when length(Args) < 3 ->
 	false;
