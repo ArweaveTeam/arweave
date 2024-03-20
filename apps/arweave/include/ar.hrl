@@ -63,26 +63,14 @@
 %% The difficulty a new weave is started with.
 -define(DEFAULT_DIFF, 6).
 
--ifndef(TARGET_TIME).
--define(TARGET_TIME, 120).
--endif.
+-define(TARGET_BLOCK_TIME, 120).
 
 -ifndef(RETARGET_BLOCKS).
 -define(RETARGET_BLOCKS, 10).
 -endif.
 
-%% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is bigger than
-%% or equal to ?RETARGET_TOLERANCE_UPPER_BOUND or smaller than or equal to
-%% ?RETARGET_TOLERANCE_LOWER_BOUND.
--define(RETARGET_TOLERANCE_UPPER_BOUND, ((?TARGET_TIME * ?RETARGET_BLOCKS) + ?TARGET_TIME)).
-
-%% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is bigger than
-%% or equal to ?RETARGET_TOLERANCE_UPPER_BOUND or smaller than or equal to
-%% ?RETARGET_TOLERANCE_LOWER_BOUND.
--define(RETARGET_TOLERANCE_LOWER_BOUND, ((?TARGET_TIME * ?RETARGET_BLOCKS) - ?TARGET_TIME)).
-
 %% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is more than
-%% 1.1 times bigger or smaller than ?TARGET_TIME * ?RETARGET_BLOCKS. Was used before
+%% 1.1 times bigger or smaller than ?TARGET_BLOCK_TIME * ?RETARGET_BLOCKS. Was used before
 %% the fork 2.5 where we got rid of the floating point calculations.
 -define(RETARGET_TOLERANCE, 0.1).
 
@@ -205,9 +193,6 @@
 %% HTTP requests after posting an invalid block.
 -define(BAD_BLOCK_BAN_TIME, 24 * 60 * 60).
 
-%% Delay before mining rewards manifest.
--define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
-
 %% A part of transaction propagation delay independent from the size, in seconds.
 -ifdef(DEBUG).
 -define(BASE_TX_PROPAGATION_DELAY, 0).
@@ -280,22 +265,17 @@
 %% Can be overriden by a command line argument.
 -define(NUM_EMITTER_PROCESSES, 16).
 
-%% Target number of blocks per year.
--define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME / 60))).
-
 %% The adjustment of difficutly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
 -ifdef(DEBUG).
 -define(RANDOMX_KEY_SWAP_FREQ, (?STORE_BLOCKS_BEHIND_CURRENT + 1)).
 -define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
 -define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
--define(RANDOMX_STATE_POLL_INTERVAL, 2).
 -define(RANDOMX_KEEP_KEY, 3).
 -else.
 -define(RANDOMX_KEY_SWAP_FREQ, 2000).
 -define(RANDOMX_MIN_KEY_GEN_AHEAD, (30 + ?STORE_BLOCKS_BEHIND_CURRENT)).
 -define(RANDOMX_MAX_KEY_GEN_AHEAD, (90 + ?STORE_BLOCKS_BEHIND_CURRENT)).
--define(RANDOMX_STATE_POLL_INTERVAL, ?TARGET_TIME).
 -define(RANDOMX_KEEP_KEY, ?STORE_BLOCKS_BEHIND_CURRENT).
 -endif.
 

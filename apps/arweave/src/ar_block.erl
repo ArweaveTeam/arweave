@@ -648,7 +648,8 @@ get_packing_threshold(B, SearchSpaceUpperBound) ->
 shift_packing_2_5_threshold(0) ->
 	0;
 shift_packing_2_5_threshold(Threshold) ->
-	Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * (?TARGET_TIME),
+	TargetTime = ar_testnet:target_block_time(ar_fork:height_2_5()),
+	Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * TargetTime,
 	max(0, Threshold - Shift).
 
 validate_block_time_history_hash(H, BlockTimeHistory) ->

@@ -150,17 +150,17 @@ get_v2_price_per_gib_minute_two_difficulty(
 		end,
 	%% The following walks through the math of calculating the price per GiB per minute.
 	%% However to reduce rounding errors due to divs, the uncommented equation at the
-	%% end is used instead. Logically they should be the same. Notably the '* ?TARGET_TIME' in
-	%% SolutionsPerPartitionPerBlock and the 'div ?TARGET_TIME' in PricePerGiBPerSecond cancel
+	%% end is used instead. Logically they should be the same. Notably the '* ?TARGET_BLOCK_TIME' in
+	%% SolutionsPerPartitionPerBlock and the 'div ?TARGET_BLOCK_TIME' in PricePerGiBPerSecond cancel
 	%% each other out.
 	%%
 	%% SolutionsPerPartitionPerSecond =
 	%%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
-	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_TIME,
+	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_BLOCK_TIME,
 	%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
 	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
 	%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
-	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_TIME
+	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_BLOCK_TIME
 	%% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
 	PricePerGiBPerMinute = 
 		(
@@ -233,17 +233,17 @@ get_v2_price_per_gib_minute_one_difficulty(
 		end,
 	%% The following walks through the math of calculating the price per GiB per minute.
 	%% However to reduce rounding errors due to divs, the uncommented equation at the
-	%% end is used instead. Logically they should be the same. Notably the '* ?TARGET_TIME' in
-	%% SolutionsPerPartitionPerBlock and the 'div ?TARGET_TIME' in PricePerGiBPerSecond cancel
+	%% end is used instead. Logically they should be the same. Notably the '* ?TARGET_BLOCK_TIME' in
+	%% SolutionsPerPartitionPerBlock and the 'div ?TARGET_BLOCK_TIME' in PricePerGiBPerSecond cancel
 	%% each other out.
 	%%
 	%% SolutionsPerPartitionPerSecond =
 	%%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
-	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_TIME,
+	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_BLOCK_TIME,
 	%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
 	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
 	%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
-	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_TIME
+	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_BLOCK_TIME
 	%% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
 	PricePerGiBPerMinute = 
 		(
@@ -734,9 +734,9 @@ get_gb_cost_per_block_at_datetime(DT, Height) ->
 	case Height >= ar_fork:height_2_5() of
 		true ->
 			{Dividend, Divisor} = get_gb_cost_per_year_at_datetime(DT, Height),
-			{Dividend, Divisor * ?BLOCKS_PER_YEAR};
+			{Dividend, Divisor * ar_inflation:blocks_per_year(Height)};
 		false ->
-			get_gb_cost_per_year_at_datetime(DT, Height) / ?BLOCKS_PER_YEAR
+			get_gb_cost_per_year_at_datetime(DT, Height) / ar_inflation:blocks_per_year(Height)
 	end.
 
 %% @doc Return the cost in USD of storing 1 GB per year. Estmimated from empirical data.
@@ -847,8 +847,8 @@ log_price_metrics(Event,
 		OneChunkCount, TwoChunkCount, SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute) ->
 
 	AverageHashRate = HashRateTotal div RewardHistoryLength,
-	EstimatedDataSizeInBytes = network_data_size(AverageHashRate, IntervalTotal, VDFIntervalTotal,
-			SolutionsPerPartitionPerVDFStep),
+	EstimatedDataSizeInBytes = network_data_size(Height,
+			AverageHashRate, IntervalTotal, VDFIntervalTotal, SolutionsPerPartitionPerVDFStep),
 
 	prometheus_gauge:set(poa_count, [1], OneChunkCount),
 	prometheus_gauge:set(poa_count, [2], TwoChunkCount),
@@ -863,10 +863,11 @@ log_price_metrics(Event,
 		{solutions_per_partition_per_vdf_step, SolutionsPerPartitionPerVDFStep},
 		{data_size, EstimatedDataSizeInBytes}, {price, PricePerGiBPerMinute}]).
 
-network_data_size(
+network_data_size(Height,
 		AverageHashRate, IntervalTotal, VDFIntervalTotal, SolutionsPerPartitionPerVDFStep) ->
+	TargetTime = ar_testnet:target_block_time(Height),
 	SolutionsPerPartitionPerBlock =
-		(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * ?TARGET_TIME) div IntervalTotal,
+		(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * TargetTime) div IntervalTotal,
 	EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
 	EstimatedPartitionCount * (?PARTITION_SIZE).
 

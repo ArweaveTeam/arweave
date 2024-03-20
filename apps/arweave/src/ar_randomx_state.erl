@@ -171,6 +171,14 @@ cache_key_block(B) ->
 			ok
 	end.
 
+-ifdef(DEBUG).
+poll_interval(Height) ->
+	2.
+-else.
+poll_interval(Height) ->
+	ar_testnet:target_block_time(Height).
+-endif.
+
 poll_new_blocks(State) ->
 	case ar_node:is_joined() of
 		false ->
@@ -185,7 +193,7 @@ poll_new_blocks(State) ->
 					State;
 				_ ->
 					NewState = handle_new_height(State, Height),
-					timer:send_after(?RANDOMX_STATE_POLL_INTERVAL * 1000, poll_new_blocks),
+					timer:send_after(poll_interval(Height) * 1000, poll_new_blocks),
 					NewState
 			end
 	end.
