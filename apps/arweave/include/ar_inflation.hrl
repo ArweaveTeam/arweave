@@ -3,11 +3,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 
-%% An estimation for the number of blocks produced in a year.
-%% Note: I've confirmed that when TARGET_TIME = 120 the following equation is
-%% exactly equal to `30 * 24 * 365` when executed within an Erlang shell (i.e. 262800).
--define(BLOCKS_PER_YEAR, ((60 * 60 * 24 * 365) div ?TARGET_TIME)).
-
 %% An approximation of the natural logarithm of 2,
 %% expressed as a decimal fraction, with the precision of math:log.
 -define(LN2, {6931471805599453, 10000000000000000}).
@@ -29,11 +24,20 @@
 -define(FORK_15_HEIGHT, ?FORK_1_6).
 -endif.
 
-%% BLOCK_PER_YEAR macro prior to 1.5.0.0 release.
--define(PRE_15_BLOCK_PER_YEAR, 525600 / (?TARGET_TIME / 60) ).
+%% Blocks per year prior to 1.5.0.0 release.
+-define(PRE_15_BLOCKS_PER_YEAR, 525600 / (120 / 60)).
+
+%% Blocks per year prior to 2.5.0.0 release.
+-define(PRE_25_BLOCKS_PER_YEAR, (525600 / (120 / 60))).
 
 %% The number of extra tokens to grant for blocks between the 1.5.0.0 release
 %% and the end of year one.
+%% 
+%% calculate_post_15_y1_extra() ->
+%%     Pre15 = erlang:trunc(sum_rewards(fun calculate/1, 0, ?FORK_15_HEIGHT)),
+%%     Base = erlang:trunc(sum_rewards(fun calculate_base/1, 0, ?FORK_15_HEIGHT)),
+%%     Post15Diff = Base - Pre15,
+%%     erlang:trunc(Post15Diff / (?BLOCKS_PER_YEAR - ?FORK_15_HEIGHT)).
 -define(POST_15_Y1_EXTRA, 13275279633337).
 
 -endif.

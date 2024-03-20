@@ -2,7 +2,7 @@
 %%% the Arweave main network.
 -module(ar_inflation).
 
--export([calculate/1, calculate_post_15_y1_extra/0]).
+-export([calculate/1, blocks_per_year/1]).
 
 -include_lib("arweave/include/ar_inflation.hrl").
 
@@ -24,7 +24,7 @@ calculate(Height) ->
 
 calculate2(Height) when Height =< ?FORK_15_HEIGHT ->
 	pre_15_calculate(Height);
-calculate2(Height) when Height =< ?BLOCKS_PER_YEAR ->
+calculate2(Height) when Height =< ?PRE_25_BLOCKS_PER_YEAR ->
     calculate_base(Height) + ?POST_15_Y1_EXTRA;
 calculate2(Height) ->
 	case Height >= ar_fork:height_2_5() of
@@ -34,33 +34,35 @@ calculate2(Height) ->
 			calculate_base_pre_fork_2_5(Height)
 	end.
 
-%% @doc Calculate the value used in the ?POST_15_Y1_EXTRA macro.
-%% The value is memoized to avoid frequent large computational load.
-calculate_post_15_y1_extra() ->
-    Pre15 = erlang:trunc(sum_rewards(fun calculate/1, 0, ?FORK_15_HEIGHT)),
-    Base = erlang:trunc(sum_rewards(fun calculate_base/1, 0, ?FORK_15_HEIGHT)),
-    Post15Diff = Base - Pre15,
-    erlang:trunc(Post15Diff / (?BLOCKS_PER_YEAR - ?FORK_15_HEIGHT)).
+%% @doc An estimation for the number of blocks produced in a year.
+%% Note: I've confirmed that when TARGET_BLOCK_TIME = 120 the following equation is
+%% exactly equal to `30 * 24 * 365` when executed within an Erlang shell (i.e. 262800).
+blocks_per_year(Height) ->
+	((60 * 60 * 24 * 365) div ar_testnet:target_block_time(Height)).
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
 %% @doc Pre-1.5.0.0 style reward calculation.
-pre_15_calculate(Height) when Height =< ?REWARD_DELAY ->
-	1;
 pre_15_calculate(Height) ->
-	?WINSTON_PER_AR
-		* 0.2
-		* ?GENESIS_TOKENS
-		* math:pow(2, -(Height - ?REWARD_DELAY) / ?PRE_15_BLOCK_PER_YEAR)
-		* math:log(2)
-        / ?PRE_15_BLOCK_PER_YEAR.
+	RewardDelay = (?PRE_15_BLOCKS_PER_YEAR)/4,
+	case Height =< RewardDelay of
+		true ->
+			1;
+		false ->
+			?WINSTON_PER_AR
+				* 0.2
+				* ?GENESIS_TOKENS
+				* math:pow(2, -(Height - RewardDelay) / ?PRE_15_BLOCKS_PER_YEAR)
+				* math:log(2)
+				/ ?PRE_15_BLOCKS_PER_YEAR
+	end.
 
 calculate_base(Height) ->
 	{Ln2Dividend, Ln2Divisor} = ?LN2,
 	Dividend = Height * Ln2Dividend,
-	Divisor = ?BLOCKS_PER_YEAR * Ln2Divisor,
+	Divisor = blocks_per_year(Height) * Ln2Divisor,
 	Precision = ?INFLATION_NATURAL_EXPONENT_DECIMAL_FRACTION_PRECISION,
 	{EXDividend, EXDivisor} = ar_fraction:natural_exponent({Dividend, Divisor}, Precision),
 	?GENESIS_TOKENS
@@ -70,7 +72,7 @@ calculate_base(Height) ->
 		* Ln2Dividend
 		div (
 			10
-			* ?BLOCKS_PER_YEAR
+			* blocks_per_year(Height)
 			* Ln2Divisor
 			* EXDividend
 		).
@@ -80,10 +82,10 @@ calculate_base_pre_fork_2_5(Height) ->
 		* (
 			0.2
 			* ?GENESIS_TOKENS
-			* math:pow(2, -(Height) / ?BLOCK_PER_YEAR)
+			* math:pow(2, -(Height) / ?PRE_25_BLOCKS_PER_YEAR)
 			* math:log(2)
 		)
-		/ ?BLOCK_PER_YEAR.
+		/ ?PRE_25_BLOCKS_PER_YEAR.
 
 %%%===================================================================
 %%% Tests.
@@ -175,8 +177,8 @@ year_sum_rewards(YearNum) ->
 year_sum_rewards(YearNum, Fun) ->
     sum_rewards(
         Fun,
-        (YearNum * ?BLOCKS_PER_YEAR),
-        ((YearNum + 1) * ?BLOCKS_PER_YEAR)
+        (YearNum * trunc(?PRE_25_BLOCKS_PER_YEAR)),
+        ((YearNum + 1) * trunc(?PRE_25_BLOCKS_PER_YEAR))
     ).
 
 %% @doc Calculate the reward sum between two blocks.

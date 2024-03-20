@@ -1,12 +1,17 @@
 -module(ar_testnet).
 
--export([is_testnet/0, height_testnet_fork/0, top_up_test_wallet/2, reward_history_blocks/1]).
+-export([is_testnet/0, height_testnet_fork/0, top_up_test_wallet/2,
+			reward_history_blocks/1, target_block_time/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 
 -ifndef(TESTNET_REWARD_HISTORY_BLOCKS).
 -define(TESTNET_REWARD_HISTORY_BLOCKS, ?REWARD_HISTORY_BLOCKS).
+-endif.
+
+-ifndef(TESTNET_TARGET_BLOCK_TIME).
+-define(TESTNET_TARGET_BLOCK_TIME, ?TARGET_BLOCK_TIME).
 -endif.
 
 -ifndef(TESTNET_FORK_HEIGHT).
@@ -52,4 +57,17 @@ reward_history_blocks(Height) ->
 -else.
 reward_history_blocks(_Height) ->
 	?REWARD_HISTORY_BLOCKS.
+-endif.
+
+-ifdef(TESTNET).
+target_block_time(Height) ->
+	case Height >= height_testnet_fork() of
+		true ->
+			?TESTNET_TARGET_BLOCK_TIME;
+		false ->
+			?TARGET_BLOCK_TIME
+	end.
+-else.
+target_block_time(_Height) ->
+	?TARGET_BLOCK_TIME.
 -endif.
