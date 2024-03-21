@@ -2128,6 +2128,8 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	receive
 		ok ->
 			{200, #{}, <<>>, Req};
+		temporary ->
+			{303, #{}, <<>>, Req};
 		{error, data_root_not_found} ->
 			{400, #{}, jiffy:encode(#{ error => data_root_not_found }), Req};
 		{error, exceeds_disk_pool_size_limit} ->
