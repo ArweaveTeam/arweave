@@ -221,7 +221,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	Data1 = crypto:strong_rand_bytes(
 		(?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
 	),
-	Chunks1 = split(?DATA_CHUNK_SIZE, Data1),
+	Chunks1 = imperfect_split(Data1),
 	{DataRoot1, _} = ar_merkle:generate_tree(
 		ar_tx:sized_chunks_to_sized_chunk_ids(
 			ar_tx:chunks_to_size_tagged_chunks(Chunks1)
@@ -249,7 +249,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB - 1
 		) * 1024 * 1024
 	),
-	Chunks2 = split(Data2),
+	Chunks2 = imperfect_split(Data2),
 	{DataRoot2, _} = ar_merkle:generate_tree(
 		ar_tx:sized_chunks_to_sized_chunk_ids(
 			ar_tx:chunks_to_size_tagged_chunks(Chunks2)
@@ -275,7 +275,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		byte_size(Data2),
 	?assert(Left < ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024),
 	Data3 = crypto:strong_rand_bytes(Left + 1),
-	Chunks3 = split(Data3),
+	Chunks3 = imperfect_split(Data3),
 	{DataRoot3, _} = ar_merkle:generate_tree(
 		ar_tx:sized_chunks_to_sized_chunk_ids(
 			ar_tx:chunks_to_size_tagged_chunks(Chunks3)
@@ -303,12 +303,14 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	true = ar_util:do_until(
 		fun() ->
 			%% After a block is mined, the chunks receive their absolute offsets, which
-			%% end up above the rebase threshold and so the node discovers the very last
-			%% chunks of the last two transactions are invalid under these offsets and
-			%% frees up 131072 + 131072 bytes in the disk pool => we can submit a 262144-byte
-			%% chunk.
+			%% end up above the strict data split threshold and so the node discovers
+			%% the very last chunks of the last two transactions are invalid under these
+			%% offsets and frees up 131072 + 131072 bytes in the disk pool => we can submit
+			%% a 262144-byte chunk. Also, expect 303 instead of 200 because the last block
+			%% was large such that the configured partitions do not cover at least two
+			%% times as much space ahead of the current weave size.
 			case ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof3)) of
-				{ok, {{<<"200">>, _}, _, _, _, _}} ->
+				{ok, {{<<"303">>, _}, _, _, _, _}} ->
 					true;
 				_ ->
 					false
@@ -1012,23 +1014,24 @@ v2_standard_split_get_chunks(<< _:262144/binary, LastChunk/binary >> = Rest, Chu
 v2_standard_split_get_chunks(<< Chunk:262144/binary, Rest/binary >>, Chunks, MinSize) ->
     v2_standard_split_get_chunks(Rest, [Chunk | Chunks], MinSize).
 
-split(Data) ->
-	split(?DATA_CHUNK_SIZE, Data).
+imperfect_split(Data) ->
+	imperfect_split(?DATA_CHUNK_SIZE, Data).
 
-split(_ChunkSize, Bin) when byte_size(Bin) == 0 ->
+imperfect_split(_ChunkSize, Bin) when byte_size(Bin) == 0 ->
 	[];
-split(ChunkSize, Bin) when byte_size(Bin) < ChunkSize ->
+imperfect_split(ChunkSize, Bin) when byte_size(Bin) < ChunkSize ->
 	[Bin];
-split(ChunkSize, Bin) ->
+imperfect_split(ChunkSize, Bin) ->
 	<<ChunkBin:ChunkSize/binary, Rest/binary>> = Bin,
 	HalfSize = ChunkSize div 2,
 	case byte_size(Rest) < HalfSize of
 		true ->
-			HalfSize = ChunkSize div 2,
 			<<ChunkBin2:HalfSize/binary, Rest2/binary>> = Bin,
+			%% If Rest is <<>>, both chunks are HalfSize - the chunks are invalid
+			%% after the strict data split threshold.
 			[ChunkBin2, Rest2];
 		false ->
-			[ChunkBin | split(ChunkSize, Rest)]
+			[ChunkBin | imperfect_split(ChunkSize, Rest)]
 	end.
 
 build_proofs(B, TX, Chunks) ->

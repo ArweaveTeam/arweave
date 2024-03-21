@@ -14,7 +14,8 @@
 		get_recent_txs_map/0, get_mempool_size/0,
 		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
 		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2,
-		get_partition_number/1, get_max_partition_number/1]).
+		get_partition_number/1, get_max_partition_number/1,
+		get_current_weave_size/0, get_recent_max_block_size/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -292,6 +293,18 @@ get_max_partition_number(infinity) ->
 	infinity;
 get_max_partition_number(PartitionUpperBound) ->
 	max(0, PartitionUpperBound div ?PARTITION_SIZE - 1).
+
+%% @doc Return the current weave size. Assume the node has joined the network and
+%% initialized the state.
+get_current_weave_size() ->
+	[{_, WeaveSize}] = ets:lookup(node_state, weave_size),
+	WeaveSize.
+
+%% @doc Return the maximum block size among the latest ?BLOCK_INDEX_HEAD_LEN blocks.
+%% Assume the node has joined the network and initialized the state.
+get_recent_max_block_size() ->
+	[{_, MaxBlockSize}] = ets:lookup(node_state, recent_max_block_size),
+	MaxBlockSize.
 
 %%%===================================================================
 %%% Tests.

@@ -1,13 +1,18 @@
 -module(ar_storage_module).
 
 -export([id/1, label/1, address_label/1, packing_label/1, label_by_id/1,
-		get_by_id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2]).
+		get_by_id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2,
+		has_any/1, has_range/2]).
+
+-export([get_unique_sorted_intervals/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+
+-include_lib("eunit/include/eunit.hrl").
 
 %% The overlap makes sure a 100 MiB recall range can always be fetched
 %% from a single storage module.
@@ -159,6 +164,23 @@ get_all(Start, End) ->
 	{ok, Config} = application:get_env(arweave, config),
 	get_all(Start, End, Config#config.storage_modules, []).
 
+%% @doc Return true if the given Offset belongs to at least one storage module.
+has_any(Offset) ->
+	{ok, Config} = application:get_env(arweave, config),
+	has_any(Offset, Config#config.storage_modules).
+
+%% @doc Return true if the given range is covered by the configured storage modules.
+has_range(Start, End) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case ets:lookup(?MODULE, unique_sorted_intervals) of
+		[] ->
+			Intervals = get_unique_sorted_intervals(Config#config.storage_modules),
+			ets:insert(?MODULE, {unique_sorted_intervals, Intervals}),
+			has_range(Start, End, Intervals);
+		[{_, Intervals}] ->
+			has_range(Start, End, Intervals)
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -200,6 +222,41 @@ get_all(Start, End, [StorageModule | StorageModules], FoundModules) ->
 get_all(_Start, _End, [], FoundModules) ->
 	FoundModules.
 
+has_any(_Offset, []) ->
+	false;
+has_any(Offset, [{BucketSize, Bucket, _Packing} | StorageModules]) ->
+	case Offset > Bucket * BucketSize andalso Offset =< (Bucket + 1) * BucketSize + ?OVERLAP of
+		true ->
+			true;
+		false ->
+			has_any(Offset, StorageModules)
+	end.
+
+get_unique_sorted_intervals(StorageModules) ->
+	get_unique_sorted_intervals(StorageModules, ar_intervals:new()).
+
+get_unique_sorted_intervals([], Intervals) ->
+	[{Start, End} || {End, Start} <- ar_intervals:to_list(Intervals)];
+get_unique_sorted_intervals([{BucketSize, Bucket, _Packing} | StorageModules], Intervals) ->
+	End = (Bucket + 1) * BucketSize,
+	Start = Bucket * BucketSize,
+	get_unique_sorted_intervals(StorageModules, ar_intervals:add(Intervals, End, Start)).
+
+has_range(PartitionStart, PartitionEnd, _Intervals)
+		when PartitionStart >= PartitionEnd ->
+	true;
+has_range(_PartitionStart, _PartitionEnd, []) ->
+	false;
+has_range(PartitionStart, _PartitionEnd, [{Start, _End} | _Intervals])
+		when PartitionStart < Start ->
+	%% The given intervals are unique and sorted.
+	false;
+has_range(PartitionStart, PartitionEnd, [{_Start, End} | Intervals])
+		when PartitionStart >= End ->
+	has_range(PartitionStart, PartitionEnd, Intervals);
+has_range(_PartitionStart, PartitionEnd, [{_Start, End} | Intervals]) ->
+	has_range(End, PartitionEnd, Intervals).
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -223,6 +280,23 @@ label_test() ->
 	?assertEqual("storage_module_524288_2_3",
 		label({524288, 2, {spora_2_6, <<"s÷">>}})).
 
+has_any_test() ->
+	?assertEqual(false, has_any(0, [])),
+	?assertEqual(false, has_any(0, [{10, 1, p}])),
+	?assertEqual(false, has_any(10, [{10, 1, p}])),
+	?assertEqual(true, has_any(11, [{10, 1, p}])),
+	?assertEqual(true, has_any(20 + ?OVERLAP, [{10, 1, p}])),
+	?assertEqual(false, has_any(20 + ?OVERLAP + 1, [{10, 1, p}])).
 
+get_unique_sorted_intervals_test() ->
+	?assertEqual([{0, 24}, {90, 120}],
+			get_unique_sorted_intervals([{10, 0, p}, {30, 3, p}, {20, 0, p}, {12, 1, p}])).
 
-
+has_range_test() ->
+	?assertEqual(false, has_range(0, 10, [])),
+	?assertEqual(false, has_range(0, 10, [{0, 9}])),
+	?assertEqual(true, has_range(0, 10, [{0, 10}])),
+	?assertEqual(true, has_range(0, 10, [{0, 11}])),
+	?assertEqual(true, has_range(0, 10, [{0, 9}, {9, 10}])),
+	?assertEqual(true, has_range(5, 10, [{0, 9}, {9, 10}])),
+	?assertEqual(true, has_range(5, 10, [{0, 2}, {2, 9}, {9, 10}])).

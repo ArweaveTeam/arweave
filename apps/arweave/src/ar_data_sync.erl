@@ -135,7 +135,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 				case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
 					{ok, _DiskPoolChunk} ->
 						%% The chunk is already in disk pool.
-						synced;
+						{synced_disk_pool, EndOffset2};
 					not_found ->
 						case DataRootOffsetReply of
 							not_found ->
@@ -165,6 +165,13 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	case CheckSynced of
 		synced ->
 			ok;
+		{synced_disk_pool, EndOffset4} ->
+			case is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset4) of
+				false ->
+					temporary;
+				true ->
+					ok
+			end;
 		{error, _} = Error4 ->
 			Error4;
 		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesBase3, PassesStrict3,
@@ -200,10 +207,42 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
 									{2, ChunkSize}),
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
-							ok
+							case is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset3) of
+								false ->
+									temporary;
+								true ->
+									ok
+							end
 					end
 			end
 	end.
+
+%% @doc Return true if we expect the chunk with the given data root index value and
+%% relative end offset to end up in one of the configured storage modules.
+is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset) ->
+	WeaveSize = ar_node:get_current_weave_size(),
+	case DataRootOffsetReply of
+		not_found ->
+			%% A chunk from a pending transaction.
+			is_offset_vicinity_covered(WeaveSize);
+		{ok, {TXStartOffset, _}} ->
+			WeaveSize = ar_node:get_current_weave_size(),
+			Size = ar_node:get_recent_max_block_size(),
+			AbsoluteEndOffset = TXStartOffset + EndOffset,
+			case AbsoluteEndOffset > WeaveSize - Size * 4 of
+				true ->
+					%% A relatively recent offset - do not expect this chunk to be
+					%% persisted unless we have some storage modules configured for
+					%% the space ahead (the data may be rearranged during after a reorg).
+					is_offset_vicinity_covered(AbsoluteEndOffset);
+				false ->
+					ar_storage_module:has_any(AbsoluteEndOffset)
+			end
+	end.
+
+is_offset_vicinity_covered(Offset) ->
+	Size = ar_node:get_recent_max_block_size(),
+	ar_storage_module:has_range(max(0, Offset - Size * 2), Offset + Size * 2).
 
 %% @doc Notify the server about the new pending data root (added to mempool).
 %% The server may accept pending chunks and store them in the disk pool.
