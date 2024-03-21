@@ -396,8 +396,10 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
 	{Rate, ScheduledRate} = {B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate},
+	RecentBI2 = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
 	ets:insert(node_state, [
-		{recent_block_index,	lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN)},
+		{recent_block_index,	RecentBI2},
+		{recent_max_block_size, get_max_block_size(RecentBI2)},
 		{is_joined,				true},
 		{current,				Current},
 		{timestamp,				B#block.timestamp},
@@ -1023,6 +1025,17 @@ get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
 		lists:sublist(BlockTXPairs, ?MAX_TX_ANCHOR_DEPTH)
 	).
 
+get_max_block_size([_SingleElement]) ->
+	0;
+get_max_block_size([{_BH, WeaveSize, _TXRoot} | BI]) ->
+	get_max_block_size(BI, WeaveSize, 0).
+
+get_max_block_size([], _WeaveSize, Max) ->
+	Max;
+get_max_block_size([{_BH, PrevWeaveSize, _TXRoot} | BI], WeaveSize, Max) ->
+	Max2 = max(Max, WeaveSize - PrevWeaveSize),
+	get_max_block_size(BI, PrevWeaveSize, Max2).
+
 apply_block(State) ->
 	case ar_block_cache:get_earliest_not_validated_from_longest_chain(block_cache) of
 		not_found ->
@@ -1536,6 +1549,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	ar_storage:store_block_time_history_part(AddedBlocks, lists:last(PrevBlocks)),
 	ets:insert(node_state, [
 		{recent_block_index,	RecentBI2},
+		{recent_max_block_size, get_max_block_size(RecentBI2)},
 		{current,				B#block.indep_hash},
 		{timestamp,				B#block.timestamp},
 		{wallet_list,			B#block.wallet_list},
