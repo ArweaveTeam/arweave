@@ -242,7 +242,7 @@ is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset) ->
 is_tip_covered() ->
 	WeaveSize = ar_node:get_current_weave_size(),
 	Size = ar_node:get_recent_max_block_size(),
-	ar_storage_module:has_range(WeaveSize - Size * 2, WeaveSize + Size * 2).
+	ar_storage_module:has_range(max(0, WeaveSize - Size * 2), WeaveSize + Size * 2).
 
 %% @doc Notify the server about the new pending data root (added to mempool).
 %% The server may accept pending chunks and store them in the disk pool.
