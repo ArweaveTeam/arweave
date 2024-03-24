@@ -66,7 +66,7 @@ while IFS= read -r line; do
 
   # Create the directory structure for the file
   mkdir -p "$(dirname "$relative_path")"
-  echo "Downloading $line to ./$relative_path"
+  echo "Downloading ($((lines_processed+1))/$total_lines) $line to ./$relative_path"
 
   # Call download_and_verify function in the background
   download_and_verify "$line" "$relative_path" &
@@ -75,13 +75,10 @@ while IFS= read -r line; do
   ((concurrent_downloads++))
   ((lines_processed++))
 
-  # If the number of concurrent downloads reaches the max, wait for all to complete before continuing
+  # If max concurrent downloads reached, wait for one to finish before continuing
   if (( concurrent_downloads >= max_concurrent_downloads )); then
-    wait
-    concurrent_downloads=0
-    # Calculate and print the remaining lines (files) to download
-    remaining_lines=$((total_lines - lines_processed))
-    echo "Remaining files to download: $remaining_lines"
+    wait -n
+    ((concurrent_downloads--))
   fi
 done < "$input_file" # Read URLs from the input file specified as the second argument
 
