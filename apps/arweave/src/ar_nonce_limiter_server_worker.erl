@@ -140,7 +140,7 @@ push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
 							State
 					end;
 				{error, Error} ->
-					log_failure(Peer, SessionKey, Update, [{reason, io_lib:format("~p", [Error])}]),
+					log_failure(Peer, SessionKey, Update, Error, []),
 					State
 			end
 	end.
@@ -155,20 +155,30 @@ push_session(SessionKey, Session, Peer, Format) ->
 					ok;
 				{ok, #nonce_limiter_update_response{ step_number = ClientStepNumber,
 						session_found = ReportedSessionFound }} ->
-					log_failure(Peer, SessionKey, Update,
+					log_failure(Peer, SessionKey, Update, behind_client,
 						[{client_step_number, ClientStepNumber},
 						{session_found, ReportedSessionFound}]);
 				{error, Error} ->
-					log_failure(Peer, SessionKey, Update, [{reason, io_lib:format("~p", [Error])}])
+					log_failure(Peer, SessionKey, Update, Error, [])
 			end
 	end.
 
-log_failure(Peer, SessionKey, Update, Extra) ->
+log_failure(Peer, SessionKey, Update, Error, Extra) ->
 	{SessionSeed, SessionInterval, NextVDFDifficulty} = SessionKey,
 	StepNumber = Update#nonce_limiter_update.session#vdf_session.step_number,
-	?LOG_WARNING([{event, failed_to_push_nonce_limiter_update_to_peer},
+	Log = [{event, failed_to_push_nonce_limiter_update_to_peer},
+			{reason, io_lib:format("~p", [Error])},
 			{peer, ar_util:format_peer(Peer)},
 			{session_seed, ar_util:encode(SessionSeed)},
 			{session_interval, SessionInterval},
 			{session_difficulty, NextVDFDifficulty},
-			{server_step_number, StepNumber}] ++ Extra).
+			{server_step_number, StepNumber}] ++ Extra,
+
+	case Error of
+		behind_client -> ?LOG_DEBUG(Log);
+		{shutdown, econnrefused} -> ?LOG_DEBUG(Log);
+		{shutdown, timeout} -> ?LOG_DEBUG(Log);
+		timeout -> ?LOG_DEBUG(Log);
+		_ -> ?LOG_WARNING(Log)
+	end.
+
