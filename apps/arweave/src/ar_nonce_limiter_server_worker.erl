@@ -179,6 +179,7 @@ log_failure(Peer, SessionKey, Update, Error, Extra) ->
 		{shutdown, econnrefused} -> ?LOG_DEBUG(Log);
 		{shutdown, timeout} -> ?LOG_DEBUG(Log);
 		timeout -> ?LOG_DEBUG(Log);
+		{<<"400">>, <<>>} -> ?LOG_DEBUG(Log);
 		_ -> ?LOG_WARNING(Log)
 	end.
 
