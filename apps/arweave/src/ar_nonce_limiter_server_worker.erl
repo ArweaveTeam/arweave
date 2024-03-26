@@ -178,8 +178,11 @@ log_failure(Peer, SessionKey, Update, Error, Extra) ->
 		behind_client -> ?LOG_DEBUG(Log);
 		{shutdown, econnrefused} -> ?LOG_DEBUG(Log);
 		{shutdown, timeout} -> ?LOG_DEBUG(Log);
+		{shutdown, ehostunreach} -> ?LOG_DEBUG(Log);
+		{closed, "The connection was lost."} -> ?LOG_DEBUG(Log);
 		timeout -> ?LOG_DEBUG(Log);
 		{<<"400">>, <<>>} -> ?LOG_DEBUG(Log);
+		{<<"503">>, <<"{\"error\":\"not_joined\"}">>} -> ?LOG_DEBUG(Log);
 		_ -> ?LOG_WARNING(Log)
 	end.
 
