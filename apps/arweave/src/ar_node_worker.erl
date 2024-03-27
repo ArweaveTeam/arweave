@@ -53,6 +53,10 @@
 -define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 10).
 -endif.
 
+-ifndef(LOCALNET_BALANCE).
+-define(LOCALNET_BALANCE, 1000000000000).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -120,7 +124,7 @@ init([]) ->
 		{false, true, _} ->
 			Config2 = Config#config{ init = false },
 			application:set_env(arweave, config, Config2),
-			InitialBalance = ?AR(1000000000000),
+			InitialBalance = ?AR(?LOCALNET_BALANCE),
 			[B0] = ar_weave:init([{Config#config.mining_addr, InitialBalance, <<>>}],
 					ar_retarget:switch_to_linear_diff(Config#config.diff)),
 			RootHash0 = B0#block.wallet_list,
