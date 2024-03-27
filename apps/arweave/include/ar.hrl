@@ -232,6 +232,15 @@
 %% Transaction headers directory, relative to the data dir.
 -define(TX_DIR, "txs").
 
+%% Disk cache directory, relative to the data dir.
+-define(DISK_CACHE_DIR, "disk_cache").
+
+%% Block headers directory, relative to the disk cache directory.
+-define(DISK_CACHE_BLOCK_DIR, "blocks").
+
+%% Transaction headers directory, relative to the disk cache directory.
+-define(DISK_CACHE_TX_DIR, "txs").
+
 %% Directory with files indicating completed storage migrations, relative to the data dir.
 -define(STORAGE_MIGRATIONS_DIR, "data/storage_migrations").
 

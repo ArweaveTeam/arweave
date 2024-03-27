@@ -17,10 +17,6 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
--define(DISK_CACHE_DIR, "disk_cache").
--define(DISK_CACHE_BLOCK_DIR, "blocks").
--define(DISK_CACHE_TX_DIR, "txs").
-
 %% Internal state definition.
 -record(state, {
 	limit_max,
