@@ -128,7 +128,8 @@ handle_cast({set_difficulty, DiffPair}, State) ->
 	{noreply, State#state{ diff_pair = DiffPair }};
 
 handle_cast({set_cache_limits, ChunkCacheLimit, VDFQueueLimit}, State) ->
-	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit, vdf_queue_limit = VDFQueueLimit }};
+	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit,
+			vdf_queue_limit = VDFQueueLimit }};
 
 handle_cast({reset, DiffPair}, State) ->
 	State2 = update_sessions(sets:new(), State),
@@ -346,12 +347,11 @@ handle_task({computed_h0, Candidate}, State) ->
 	{noreply, State3};
 
 handle_task({computed_h1, Candidate}, State) ->
-	#state{ diff_pair = DiffPair } = State,
 	#mining_candidate{ h1 = H1, chunk1 = Chunk1, session_key = SessionKey } = Candidate,
 	case h1_passes_diff_checks(H1, Candidate, State) of
 		true ->
 			?LOG_INFO([{event, found_h1_solution}, {worker, State#state.name},
-				{h1, ar_util:encode(H1)}, {difficulty, DiffPair}]),
+				{h1, ar_util:encode(H1)}, {difficulty, get_difficulty(State, Candidate)}]),
 			ar_mining_stats:h1_solution(),
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
@@ -379,6 +379,13 @@ handle_task({computed_h1, Candidate}, State) ->
 						false ->
 							ok;
 						true ->
+							DiffPair =
+								case get_partial_difficulty(State, Candidate) of
+									not_set ->
+										get_difficulty(State, Candidate);
+									PartialDiffPair ->
+										PartialDiffPair
+								end,
 							ar_coordination:computed_h1(Candidate, DiffPair)
 					end,
 					%% Decrement 1 for chunk1:
