@@ -10,7 +10,7 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
 
--import(ar_test_node, [stop/0, assert_wait_until_height/2, post_block/2, send_new_block/2]).
+-import(ar_test_node, [assert_wait_until_height/2, post_block/2, send_new_block/2]).
 
 %% we have to wait to let the ar_events get processed whenever we apply a VDF step
 -define(WAIT_TIME, 1000).
@@ -51,7 +51,7 @@ setup_external_update() ->
 		end
 	),
 
-	?assertEqual(5, ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
+	?assert(5 == ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
 	{Pid, Config}.
 
 cleanup_external_update({Pid, Config}) ->
@@ -712,49 +712,49 @@ test_mining_session() ->
 		apply_external_update(SessionKey0, [], 2, true, undefined),
 		"Partial session0, should mine"),
 	timer:sleep(?WAIT_TIME),
-	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([SessionKey0], sets:to_list(ar_mining_server:active_sessions())),
 	?assertEqual([2], mined_steps()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey0, [3], 4, false, undefined),
 		"Full session0, should mine"),
 	timer:sleep(?WAIT_TIME),
-	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([SessionKey0], sets:to_list(ar_mining_server:active_sessions())),
 	?assertEqual([4, 3], mined_steps()),
 	?assertEqual(
 		#nonce_limiter_update_response{ step_number = 4 },
 		apply_external_update(SessionKey0, [], 4, true, undefined),
 		"Repeat step, should not mine"),
 	timer:sleep(?WAIT_TIME),
-	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([SessionKey0], sets:to_list(ar_mining_server:active_sessions())),
 	?assertEqual([], mined_steps()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey1, [], 6, true, SessionKey0),
 		"Partial session1, should not mine"),
 	timer:sleep(?WAIT_TIME),
-	?assertEqual(sets:from_list([SessionKey0]), ar_mining_server:active_sessions()),
+	?assertEqual([SessionKey0], sets:to_list(ar_mining_server:active_sessions())),
 	?assertEqual([], mined_steps()),
 	?assertEqual(
 		ok,
 		apply_external_update(SessionKey1, [5], 6, false, SessionKey0),
 		"Full session1, should mine"),
 	timer:sleep(?WAIT_TIME),
-	?assertEqual(sets:from_list([SessionKey0, SessionKey1]), ar_mining_server:active_sessions()),
+	assert_sessions_equal([SessionKey0, SessionKey1], ar_mining_server:active_sessions()),
 	?assertEqual([6, 5], mined_steps()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey3, [], 16, true, SessionKey2),
 		"Partial session3, should not mine"),
 	timer:sleep(?WAIT_TIME),
-	?assertEqual(sets:from_list([SessionKey0, SessionKey1]), ar_mining_server:active_sessions()),
+	assert_sessions_equal([SessionKey0, SessionKey1], ar_mining_server:active_sessions()),
 	?assertEqual([], mined_steps()),
 	?assertEqual(
 		#nonce_limiter_update_response{ session_found = false },
 		apply_external_update(SessionKey3, [15], 16, true, SessionKey2),
 		"Full session3, should not mine"),
 	timer:sleep(?WAIT_TIME),
-	?assertEqual(sets:from_list([SessionKey0, SessionKey1]), ar_mining_server:active_sessions()),
+	assert_sessions_equal([SessionKey0, SessionKey1], ar_mining_server:active_sessions()),
 	?assertEqual([], mined_steps()),
 	%% Current session is only updated when applying a new tip block, not when applying a VDF step
 	%% from a VDF server.
@@ -993,3 +993,6 @@ mock_add_task() ->
 			ets:insert(add_task, {Worker, TaskType, Candidate#mining_candidate.step_number})
 		end
 	}.
+
+assert_sessions_equal(List, Set) ->
+	?assertEqual(lists:sort(List), lists:sort(sets:to_list(Set))).
