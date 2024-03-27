@@ -330,7 +330,7 @@ send_h1(Candidate, State) ->
 		none ->
 			ok;
 		Peer ->
-			spawn(fun() -> 
+			spawn(fun() ->
 				ar_http_iface_client:cm_h1_send(Peer, Candidate)
 			end),
 			case Peer of
