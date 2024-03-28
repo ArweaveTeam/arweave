@@ -680,6 +680,8 @@ write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, TXID) ->
 				case ar_data_sync:add_chunk(DataRoot, DataPath, Chunk, Offset - 1, TXSize) of
 					ok ->
 						Acc;
+					temporary ->
+						Acc;
 					{error, Reason} ->
 						?LOG_WARNING([{event, failed_to_write_tx_chunk},
 								{tx, ar_util:encode(TXID)},
