@@ -478,8 +478,15 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 	end.
 
 process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache) ->
-	#mining_solution{ solution_hash = SolutionH } = Solution,
-	Diff = ar_node:get_current_diff(),
+	#mining_solution{ solution_hash = SolutionH, recall_byte2 = RecallByte2 } = Solution,
+	IsPoA1 = (RecallByte2 == undefined),
+	{PoA1Diff, PoA2Diff} = ar_node:get_current_diff(),
+	Diff = case IsPoA1 of
+		true ->
+			PoA1Diff;
+		false ->
+			PoA2Diff
+	end,
 	case binary:decode_unsigned(SolutionH, big) > Diff of
 		false ->
 			#partial_solution_response{ status = <<"accepted">> };
