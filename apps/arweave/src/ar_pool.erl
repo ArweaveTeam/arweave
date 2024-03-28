@@ -478,9 +478,9 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 	end.
 
 process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache) ->
-	#mining_solution{ solution_hash = SolutionH } = Solution,
-	Diff = ar_node:get_current_diff(),
-	case binary:decode_unsigned(SolutionH, big) > Diff of
+	#mining_solution{ solution_hash = SolutionH, recall_byte2 = RecallByte2 } = Solution,
+	IsPoA1 = (RecallByte2 == undefined),
+	case ar_node_utils:passes_diff_check(SolutionH, IsPoA1, ar_node:get_current_diff()) of
 		false ->
 			#partial_solution_response{ status = <<"accepted">> };
 		true ->
@@ -645,7 +645,7 @@ process_partial_solution_test_() ->
 						false
 				end
 			end},
-		{ar_node, get_current_diff, fun() -> ?MAX_DIFF end}],
+		{ar_node, get_current_diff, fun() -> {?MAX_DIFF, ?MAX_DIFF} end}],
 		fun test_process_partial_solution/0
 	).
 
@@ -805,7 +805,7 @@ process_solution_test_() ->
 						false
 				end
 			end},
-		{ar_node, get_current_diff, fun() -> 0 end},
+		{ar_node, get_current_diff, fun() -> {0, 0} end},
 		{ar_nonce_limiter, get_step_checkpoints,
 			fun(S, {N, SIN, D}) ->
 				case {S, N, SIN, D} of
