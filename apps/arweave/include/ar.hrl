@@ -16,6 +16,12 @@
 	-endif.
 -endif.
 
+%% When a request is received without specifing the X-Network header, this network name
+%% is assumed.
+-ifndef(DEFAULT_NETWORK_NAME).
+	-define(DEFAULT_NETWORK_NAME, "arweave.N.1").
+-endif.
+
 %% The current release number of the arweave client software.
 %% @deprecated Not used apart from being included in the /info response.
 -define(CLIENT_VERSION, 5).
@@ -63,7 +69,9 @@
 %% The difficulty a new weave is started with.
 -define(DEFAULT_DIFF, 6).
 
+-ifndef(TARGET_BLOCK_TIME).
 -define(TARGET_BLOCK_TIME, 120).
+-endif.
 
 -ifndef(RETARGET_BLOCKS).
 -define(RETARGET_BLOCKS, 10).
