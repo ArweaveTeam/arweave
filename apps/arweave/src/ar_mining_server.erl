@@ -667,7 +667,8 @@ may_be_empty_poa(not_set) ->
 may_be_empty_poa(#poa{} = PoA) ->
 	PoA.
 
-handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff, State) ->
+handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
+		PartialDiff, State) ->
 	true = is_integer(StepNumber),
 	ar_mining_stats:vdf_computed(),
 
@@ -699,7 +700,7 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound, Part
 				step_number = StepNumber,
 				nonce_limiter_output = Output,
 				partition_upper_bound = PartitionUpperBound,
-				partial_diff = PartialDiff
+				cm_diff = PartialDiff
 			},
 			distribute_output(Candidate, State3),
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},

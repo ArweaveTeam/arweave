@@ -330,7 +330,7 @@ send_h1(Candidate, State) ->
 		none ->
 			ok;
 		Peer ->
-			spawn(fun() -> 
+			spawn(fun() ->
 				ar_http_iface_client:cm_h1_send(Peer, Candidate)
 			end),
 			case Peer of
@@ -356,7 +356,7 @@ add_mining_peer({Peer, StorageModules}, State) ->
 	Partitions = lists:map(
 		fun({PartitionId, _PartitionSize, _PackingAddr}) -> PartitionId end, StorageModules),
 	?LOG_INFO([{event, cm_peer_updated},
-		{peer, ar_util:format_peer(Peer)}, {partitions, Partitions}]),
+		{peer, ar_util:format_peer(Peer)}, {partitions, io_lib:format("~p", [Partitions])}]),
 	PeersByPartition =
 		lists:foldl(
 			fun(PartitionId, Acc) ->

@@ -23,7 +23,8 @@
 	chunk_cache_size			= #{},
 	chunk_cache_limit			= 0,
 	vdf_queue_limit				= 0,
-	latest_vdf_step_number		= 0
+	latest_vdf_step_number		= 0,
+	is_pool_client				= false
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -116,7 +117,8 @@ init(Partition) ->
 	gen_server:cast(self(), handle_task),
 	gen_server:cast(self(), check_worker_status),
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], 0),
-	{ok, #state{ name = Name, partition_number = Partition }}.
+	{ok, #state{ name = Name, partition_number = Partition,
+			is_pool_client = ar_pool:is_client() }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -126,7 +128,8 @@ handle_cast({set_difficulty, DiffPair}, State) ->
 	{noreply, State#state{ diff_pair = DiffPair }};
 
 handle_cast({set_cache_limits, ChunkCacheLimit, VDFQueueLimit}, State) ->
-	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit, vdf_queue_limit = VDFQueueLimit }};
+	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit,
+			vdf_queue_limit = VDFQueueLimit }};
 
 handle_cast({reset, DiffPair}, State) ->
 	State2 = update_sessions(sets:new(), State),
@@ -344,12 +347,11 @@ handle_task({computed_h0, Candidate}, State) ->
 	{noreply, State3};
 
 handle_task({computed_h1, Candidate}, State) ->
-	#state{ diff_pair = DiffPair } = State,
 	#mining_candidate{ h1 = H1, chunk1 = Chunk1, session_key = SessionKey } = Candidate,
 	case h1_passes_diff_checks(H1, Candidate, State) of
 		true ->
 			?LOG_INFO([{event, found_h1_solution}, {worker, State#state.name},
-				{h1, ar_util:encode(H1)}, {difficulty, DiffPair}]),
+				{h1, ar_util:encode(H1)}, {difficulty, get_difficulty(State, Candidate)}]),
 			ar_mining_stats:h1_solution(),
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
@@ -377,6 +379,13 @@ handle_task({computed_h1, Candidate}, State) ->
 						false ->
 							ok;
 						true ->
+							DiffPair =
+								case get_partial_difficulty(State, Candidate) of
+									not_set ->
+										get_difficulty(State, Candidate);
+									PartialDiffPair ->
+										PartialDiffPair
+								end,
 							ar_coordination:computed_h1(Candidate, DiffPair)
 					end,
 					%% Decrement 1 for chunk1:
@@ -407,14 +416,14 @@ handle_task({computed_h2, Candidate}, State) ->
 			?LOG_INFO([{event, found_h2_solution},
 					{worker, State#state.name},
 					{h2, ar_util:encode(H2)},
-					{difficulty, get_difficulty(false, State, Candidate)}]),
+					{difficulty, get_difficulty(State, Candidate)},
+					{partial_difficulty, get_partial_difficulty(State, Candidate)}]),
 			ar_mining_stats:h2_solution();
 		partial ->
-			PartialDiff = Candidate#mining_candidate.partial_diff,
 			?LOG_INFO([{event, found_h2_partial_solution},
 					{worker, State#state.name},
 					{h2, ar_util:encode(H2)},
-					{partial_difficulty, PartialDiff}])
+					{partial_difficulty, get_partial_difficulty(State, Candidate)}])
 	end,
 	case {PassesDiffChecks, Peer} of
 		{false, _} ->
@@ -484,6 +493,7 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
 h1_passes_diff_checks(H1, Candidate, State) ->
 	passes_diff_checks(H1, true, Candidate, State).
 
@@ -491,17 +501,22 @@ h2_passes_diff_checks(H2, Candidate, State) ->
 	passes_diff_checks(H2, false, Candidate, State).
 
 passes_diff_checks(SolutionHash, IsPoA1, Candidate, State) ->
-	DiffPair = get_difficulty(IsPoA1, State, Candidate),
+	DiffPair = get_difficulty(State, Candidate),
 	case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1, DiffPair) of
 		true ->
 			true;
 		false ->
-			PartialDiff = Candidate#mining_candidate.partial_diff,
-			case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1, PartialDiff) of
-				true ->
-					partial;
-				false ->
-					false
+			case get_partial_difficulty(State, Candidate) of
+				not_set ->
+					false;
+				PartialDiffPair ->
+					case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1,
+							PartialDiffPair) of
+						true ->
+							partial;
+						false ->
+							false
+					end
 			end
 	end.
 
@@ -713,11 +728,14 @@ cache_h1_list(
 	State2 = cache_chunk({chunk1, H1}, Candidate#mining_candidate{ nonce = Nonce }, State),
 	cache_h1_list(Candidate, H1List, State2).
 
-get_difficulty(true, State, _Candidate) ->
+get_difficulty(State, #mining_candidate{ cm_diff = not_set }) ->
 	State#state.diff_pair;
-get_difficulty(false, State, #mining_candidate{ cm_diff = not_set }) ->
-	State#state.diff_pair;
-get_difficulty(false, _State, #mining_candidate{ cm_diff = DiffPair }) ->
+get_difficulty(_State, #mining_candidate{ cm_diff = DiffPair }) ->
+	DiffPair.
+
+get_partial_difficulty(#state{ is_pool_client = false }, _Candidate) ->
+	not_set;
+get_partial_difficulty(_State, #mining_candidate{ cm_diff = DiffPair }) ->
 	DiffPair.
 
 nonce_max() ->
