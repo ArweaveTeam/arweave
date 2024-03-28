@@ -152,6 +152,11 @@ name_route([<<"chunk">>, _Offset]) ->
 name_route([<<"chunk2">>, _Offset]) ->
 	"/chunk2/{offset}";
 
+name_route([<<"chunk_proof">>, _Offset]) ->
+	"/chunk_proof/{offset}";
+name_route([<<"chunk_proof2">>, _Offset]) ->
+	"/chunk_proof2/{offset}";
+
 name_route([<<"data_sync_record">>, _Start, _Limit]) ->
 	"/data_sync_record/{start}/{limit}";
 

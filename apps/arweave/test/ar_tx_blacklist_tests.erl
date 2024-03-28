@@ -436,7 +436,7 @@ assert_does_not_accept_offsets(BadOffsets) ->
 	).
 
 decode_chunk(EncodedProof) ->
-	ar_serialize:json_map_to_chunk_proof(
+	ar_serialize:json_map_to_poa_map(
 		jiffy:decode(EncodedProof, [return_maps])
 	).
 

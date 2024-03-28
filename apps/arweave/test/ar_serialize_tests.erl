@@ -129,17 +129,28 @@ block_announcement_response_to_binary_test() ->
 	?assertEqual({ok, A4}, ar_serialize:binary_to_block_announcement_response(
 			ar_serialize:block_announcement_response_to_binary(A4))).
 
-poa_to_binary_test() ->
+poa_map_to_binary_test() ->
 	Proof = #{ chunk => crypto:strong_rand_bytes(1), data_path => <<>>,
 			tx_path => <<>>, packing => unpacked },
-	?assertEqual({ok, Proof}, ar_serialize:binary_to_poa(ar_serialize:poa_to_binary(Proof))),
+	?assertEqual({ok, Proof},
+			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof))),
 	Proof2 = Proof#{ chunk => crypto:strong_rand_bytes(256 * 1024) },
-	?assertEqual({ok, Proof2}, ar_serialize:binary_to_poa(ar_serialize:poa_to_binary(Proof2))),
+	?assertEqual({ok, Proof2},
+			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof2))),
 	Proof3 = Proof2#{ data_path => crypto:strong_rand_bytes(1024),
 			packing => spora_2_5, tx_path => crypto:strong_rand_bytes(1024) },
-	?assertEqual({ok, Proof3}, ar_serialize:binary_to_poa(ar_serialize:poa_to_binary(Proof3))),
+	?assertEqual({ok, Proof3},
+			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof3))),
 	Proof4 = Proof3#{ packing => {spora_2_6, crypto:strong_rand_bytes(33)} },
-	?assertEqual({ok, Proof4}, ar_serialize:binary_to_poa(ar_serialize:poa_to_binary(Proof4))).
+	?assertEqual({ok, Proof4},
+			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof4))).
+
+poa_no_chunk_map_to_binary_test() ->
+	Proof = #{ data_path => crypto:strong_rand_bytes(500),
+		tx_path => crypto:strong_rand_bytes(250) },
+	?assertEqual({ok, Proof},
+			ar_serialize:binary_to_no_chunk_map(
+				ar_serialize:poa_no_chunk_map_to_binary(Proof))).
 
 block_index_to_binary_test() ->
 	lists:foreach(

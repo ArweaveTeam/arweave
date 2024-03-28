@@ -7,7 +7,11 @@
 		block_announcement_to_binary/1, binary_to_block_announcement/1,
 		binary_to_block_announcement_response/1, block_announcement_response_to_binary/1,
 		tx_to_binary/1, binary_to_tx/1,
-		poa_to_binary/1, binary_to_poa/1,
+
+		poa_map_to_binary/1, binary_to_poa/1,
+		poa_no_chunk_map_to_binary/1, binary_to_no_chunk_map/1,
+		poa_map_to_json_map/1, poa_no_chunk_map_to_json_map/1, json_map_to_poa_map/1,
+
 		block_index_to_binary/1, binary_to_block_index/1, encode_double_signing_proof/1,
 		json_struct_to_poa/1, poa_to_json_struct/1,
 		tx_to_json_struct/1, json_struct_to_tx/1, json_struct_to_v1_tx/1,
@@ -16,7 +20,7 @@
 		block_index_to_json_struct/1, json_struct_to_block_index/1,
 		jsonify/1, dejsonify/1, json_decode/1, json_decode/2,
 		query_to_json_struct/1, json_struct_to_query/1,
-		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1, encode_int/2, encode_bin/2,
+		encode_int/2, encode_bin/2,
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
 		reward_history_to_binary/1, binary_to_reward_history/1,
 		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
@@ -946,7 +950,7 @@ encode_missing_tx_indices([], Encoded) ->
 encode_missing_tx_indices([Index | Indices], Encoded) ->
 	encode_missing_tx_indices(Indices, [<< Index:16 >> | Encoded]).
 
-poa_to_binary(#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath,
+poa_map_to_binary(#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath,
 		packing := Packing }) ->
 	Packing2 =
 		case Packing of
@@ -959,6 +963,9 @@ poa_to_binary(#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath,
 		end,
 	<< (encode_bin(Chunk, 24))/binary, (encode_bin(TXPath, 24))/binary,
 			(encode_bin(DataPath, 24))/binary, (encode_bin(Packing2, 8))/binary >>.
+
+poa_no_chunk_map_to_binary(#{ tx_path := TXPath, data_path := DataPath }) ->
+	<< (encode_bin(TXPath, 24))/binary, (encode_bin(DataPath, 24))/binary >>.
 
 binary_to_poa(<< ChunkSize:24, Chunk:ChunkSize/binary,
 		TXPathSize:24, TXPath:TXPathSize/binary,
@@ -989,6 +996,12 @@ binary_to_poa(<< ChunkSize:24, Chunk:ChunkSize/binary,
 					packing => Packing2 }}
 	end;
 binary_to_poa(_Rest) ->
+	{error, invalid_input}.
+
+binary_to_no_chunk_map(<< TXPathSize:24, TXPath:TXPathSize/binary,
+		DataPathSize:24, DataPath:DataPathSize/binary >>) ->
+	{ok, #{ data_path => DataPath, tx_path => TXPath }};
+binary_to_no_chunk_map(_Rest) ->
 	{error, invalid_input}.
 
 block_index_to_binary(BI) ->
@@ -1548,7 +1561,7 @@ json_struct_to_block_index(JSONStruct) ->
 		JSONStruct
 	).
 
-chunk_proof_to_json_map(Map) ->
+poa_map_to_json_map(Map) ->
 	#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath, packing := Packing } = Map,
 	SerializedPacking =
 		case Packing of
@@ -1572,7 +1585,20 @@ chunk_proof_to_json_map(Map) ->
 			Map2#{ end_offset => integer_to_binary(EndOffset) }
 	end.
 
-json_map_to_chunk_proof(JSON) ->
+poa_no_chunk_map_to_json_map(Map) ->
+	#{ tx_path := TXPath, data_path := DataPath } = Map,
+	Map2 = #{
+		tx_path => ar_util:encode(TXPath),
+		data_path => ar_util:encode(DataPath)
+	},
+	case maps:get(end_offset, Map, not_found) of
+		not_found ->
+			Map2;
+		EndOffset ->
+			Map2#{ end_offset => integer_to_binary(EndOffset) }
+	end.
+
+json_map_to_poa_map(JSON) ->
 	Map = #{
 		data_root => ar_util:decode(maps:get(<<"data_root">>, JSON, <<>>)),
 		chunk => ar_util:decode(maps:get(<<"chunk">>, JSON)),
