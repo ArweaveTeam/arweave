@@ -1164,6 +1164,13 @@ wait_until_syncs_chunk(Offset, ExpectedProof) ->
 			case ar_test_node:get_chunk(main, Offset) of
 				{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
 					Proof = jiffy:decode(ProofJSON, [return_maps]),
+					{ok, {{<<"200">>, _}, _, NoChunkProofJSON, _, _}}
+						= ar_test_node:get_chunk_proof(main, Offset),
+					NoChunkProof = jiffy:decode(NoChunkProofJSON, [return_maps]),
+					?assertEqual(maps:get(<<"data_path">>, Proof),
+							maps:get(<<"data_path">>, NoChunkProof)),
+					?assertEqual(maps:get(<<"tx_path">>, Proof),
+							maps:get(<<"tx_path">>, NoChunkProof)),
 					maps:fold(
 						fun	(_Key, _Value, false) ->
 								false;
@@ -1198,7 +1205,7 @@ wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 						false ->
 							case ar_test_node:get_chunk(Node, EndOffset) of
 								{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
-									FetchedProof = ar_serialize:json_map_to_chunk_proof(
+									FetchedProof = ar_serialize:json_map_to_poa_map(
 										jiffy:decode(EncodedProof, [return_maps])
 									),
 									ExpectedProof = #{

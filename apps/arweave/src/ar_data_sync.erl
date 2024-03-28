@@ -5,7 +5,8 @@
 -export([start_link/2, join/1, add_tip_block/2, add_block/2,
 		is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
-		get_chunk/2, get_tx_data/1, get_tx_data/2, get_tx_offset/1, has_data_root/2,
+		get_chunk/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
+		get_tx_offset/1, has_data_root/2,
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
 		get_chunk_by_byte/2, read_chunk/4, decrement_chunk_cache_size/0,
@@ -296,6 +297,23 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 			{error, chunk_not_found}
 	end.
 
+%% @doc Fetch the merkle proofs for the chunk corresponding to Offset.
+get_chunk_proof(Offset, Options) ->
+	IsRecorded = ar_sync_record:is_recorded(Offset, ?MODULE),
+	SeekOffset =
+		case maps:get(bucket_based_offset, Options, true) of
+			true ->
+				get_chunk_seek_offset(Offset);
+			false ->
+				Offset
+		end,
+	case IsRecorded of
+		{{true, StoredPacking}, StoreID} ->
+			get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID);
+		_ ->
+			{error, chunk_not_found}
+	end.
+
 %% @doc Fetch the transaction data. Return {error, tx_data_too_big} if
 %% the size is bigger than ?MAX_SERVED_TX_DATA_SIZE, unless the limitation
 %% is disabled in the configuration.
@@ -437,6 +455,22 @@ read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
 						{_EndOffset, Chunk} ->
 							{ok, {Chunk, DataPath}}
 					end
+			end;
+		Error ->
+			Error
+	end.
+
+%% The first and last arguments are introduced to match the read_chunk/4 signature.
+read_data_path(_Offset, ChunkDataDB, ChunkDataKey, _StoreID) ->
+	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
+		not_found ->
+			not_found;
+		{ok, Value} ->
+			case binary_to_term(Value) of
+				{_Chunk, DataPath} ->
+					{ok, DataPath};
+				DataPath ->
+					{ok, DataPath}
 			end;
 		Error ->
 			Error
@@ -1397,7 +1431,7 @@ remove_expired_disk_pool_data_roots() ->
 	).
 
 get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
-	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID) of
+	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, true) of
 		{error, Reason} ->
 			{error, Reason};
 		{ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath} ->
@@ -1451,11 +1485,38 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
 			end
 	end.
 
-%% @doc Read the chunk as well as its metadata.
-%% Response is of the format:
+get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID) ->
+	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, false) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, DataPath, AbsoluteOffset, TXRoot, ChunkSize, TXPath} ->
+			CheckProof =
+				case validate_fetched_chunk({AbsoluteOffset, DataPath, TXPath, TXRoot,
+						ChunkSize, StoreID}) of
+					{true, ID} ->
+						ID;
+					false ->
+						error
+				end,
+			case CheckProof of
+				error ->
+					%% Proof was read but could not be validated.
+					{error, chunk_not_found};
+				_ ->
+					Proof = #{ data_path => DataPath, tx_path => TXPath },
+					{ok, Proof}
+			end
+	end.
+
+%% @doc Read the chunk metadata and optionally the chunk itself.
+%%
+%% When ReadChunk=true, the response is of the format:
 %% {ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
+%%
+%% Otherwise, the format is
+%% {ok, DataPath, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
 read_chunk_with_metadata(
-		Offset, SeekOffset, StoredPacking, StoreID) ->
+		Offset, SeekOffset, StoredPacking, StoreID, ReadChunk) ->
 	case get_chunk_by_byte({chunks_index, StoreID}, SeekOffset) of
 		{error, _} ->
 			{error, chunk_not_found};
@@ -1472,7 +1533,14 @@ read_chunk_with_metadata(
 			end,
 			{error, chunk_not_found};
 		{ok, _, {AbsoluteOffset, ChunkDataKey, TXRoot, _, TXPath, _, ChunkSize}} ->
-			case read_chunk(AbsoluteOffset, {chunk_data_db, StoreID}, ChunkDataKey, StoreID) of
+			ReadFun =
+				case ReadChunk of
+					true ->
+						fun read_chunk/4;
+					_ ->
+						fun read_data_path/4
+				end,
+			case ReadFun(AbsoluteOffset, {chunk_data_db, StoreID}, ChunkDataKey, StoreID) of
 				not_found ->
 					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset,
 							{chunks_index, StoreID}, StoreID, 1}),
@@ -1492,7 +1560,9 @@ read_chunk_with_metadata(
 							{error, chunk_not_found};
 						true ->
 							{ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
-					end
+					end;
+				{ok, DataPath} ->
+					{ok, DataPath, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
 			end
 	end.
 
