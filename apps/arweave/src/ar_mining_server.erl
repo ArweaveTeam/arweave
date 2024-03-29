@@ -14,6 +14,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
@@ -30,6 +31,8 @@
 	merkle_rebase_threshold		= infinity,
 	is_pool_client				= false
 }).
+
+-define(FETCH_POA_FROM_PEERS_TIMEOUT_MS, 10000).
 
 %%%===================================================================
 %%% Public interface.
@@ -230,6 +233,12 @@ handle_info({garbage_collect, StartTime, GCResult}, State) ->
 	end,
 	{noreply, State};
 
+handle_info({fetched_last_moment_proof, _}, State) ->
+    %% This is a no-op to handle "slow" response from peers that were queried by `fetch_poa_from_peers`
+    %% Only the first peer to respond with a PoA will be handled, all other responses will fall through to here
+    %% an be ignored.
+	{noreply, State};
+
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
@@ -240,6 +249,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
 get_worker(Partition, State) ->
 	maps:get(Partition, State#state.workers, not_found).
 
@@ -552,18 +562,25 @@ prepare_solution(poa1, Candidate,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
 	case read_poa(RecallByte1, Chunk1, MiningAddress) of
 		error ->
-			{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
-					PartitionNumber, PartitionUpperBound),
-			?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
-					{recall_byte1, RecallByte1},
-					{recall_range_start1, RecallRange1Start},
-					{nonce, Nonce},
-					{partition, PartitionNumber},
-					{mining_address, ar_util:safe_encode(MiningAddress)}]),
-			ar:console("WARNING: we have mined a block but failed to fetch "
-					"the chunk proofs required for publishing it. "
-					"Check logs for more details~n"),
-			error;
+			ar:console("WARNING: we have mined a block but did not find the PoA1 proofs "
+					"locally - searching the peers...~n"),
+			case fetch_poa_from_peers(RecallByte1) of
+				not_found ->
+					{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
+							PartitionNumber, PartitionUpperBound),
+					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
+							{recall_byte1, RecallByte1},
+							{recall_range_start1, RecallRange1Start},
+							{nonce, Nonce},
+							{partition, PartitionNumber},
+							{mining_address, ar_util:safe_encode(MiningAddress)}]),
+					ar:console("WARNING: we have mined a block but failed to find "
+							"the PoA1 proofs required for publishing it. "
+							"Check logs for more details~n"),
+					error;
+				PoA1 ->
+					Solution#mining_solution{ poa1 = PoA1 }
+			end;
 		PoA1 ->
 			Solution#mining_solution{ poa1 = PoA1 }
 	end;
@@ -576,18 +593,25 @@ prepare_solution(poa2, Candidate,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
 	case read_poa(RecallByte2, Chunk2, MiningAddress) of
 		error ->
-			{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-					PartitionNumber, PartitionUpperBound),
-			?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
-					{recall_byte2, RecallByte2},
-					{recall_range_start2, RecallRange2Start},
-					{nonce, Nonce},
-					{partition, PartitionNumber},
-					{mining_address, ar_util:safe_encode(MiningAddress)}]),
-			ar:console("WARNING: we have mined a block but failed to fetch "
-					"the chunk proofs required for publishing it. "
-					"Check logs for more details~n"),
-			error;
+			ar:console("WARNING: we have mined a block but did not find the PoA2 proofs "
+					"locally - searching the peers...~n"),
+			case fetch_poa_from_peers(RecallByte2) of
+				not_found ->
+					{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+							PartitionNumber, PartitionUpperBound),
+					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
+							{recall_byte2, RecallByte2},
+							{recall_range_start2, RecallRange2Start},
+							{nonce, Nonce},
+							{partition, PartitionNumber},
+							{mining_address, ar_util:safe_encode(MiningAddress)}]),
+					ar:console("WARNING: we have mined a block but failed to find "
+							"the PoA2 proofs required for publishing it. "
+							"Check logs for more details~n"),
+					error;
+				PoA2 ->
+					prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
+			end;
 		PoA2 ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
 	end;
@@ -666,6 +690,43 @@ may_be_empty_poa(not_set) ->
 	#poa{};
 may_be_empty_poa(#poa{} = PoA) ->
 	PoA.
+
+fetch_poa_from_peers(RecallByte) ->
+	Peers = ar_data_discovery:get_bucket_peers(RecallByte div ?NETWORK_DATA_BUCKET_SIZE),
+	From = self(),
+	lists:foreach(
+		fun(Peer) ->
+			spawn(
+				fun() ->
+					?LOG_INFO([{event, last_moment_proof_search},
+							{peer, ar_util:format_peer(Peer)}]),
+					case fetch_poa_from_peer(Peer, RecallByte) of
+						not_found ->
+							ok;
+						PoA ->
+							From ! {fetched_last_moment_proof, PoA}
+					end
+				end)
+		end,
+		Peers
+	),
+	receive
+         %% The first spawned process to fetch a PoA from a peer will trigger this `receive` and allow
+         %% `fetch_poa_from_peers` to exit. All other processes that complete later will trigger the
+         %% `handle_info({fetched_last_moment_proof, _}, State) ->` above (which is a no-op)
+		{fetched_last_moment_proof, PoA} ->
+			PoA
+		after ?FETCH_POA_FROM_PEERS_TIMEOUT_MS ->
+			not_found
+	end.
+
+fetch_poa_from_peer(Peer, RecallByte) ->
+	case ar_http_iface_client:get_chunk_binary(Peer, RecallByte + 1, any) of
+		{ok, #{ data_path := DataPath, tx_path := TXPath }, _, _} ->
+			#poa{ data_path = DataPath, tx_path = TXPath };
+		_ ->
+			not_found
+	end.
 
 handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 		PartialDiff, State) ->
