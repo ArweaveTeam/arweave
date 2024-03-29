@@ -218,6 +218,12 @@ handle_info({garbage_collect, StartTime, GCResult}, State) ->
 	end,
 	{noreply, State};
 
+handle_info({fetched_last_moment_proof, _}, State) ->
+    %% This is a no-op to handle "slow" response from peers that were queried by `fetch_poa_from_peers`
+    %% Only the first peer to respond with a PoA will be handled, all other responses will fall through to here
+    %% an be ignored.
+	{noreply, State};
+
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
@@ -433,20 +439,35 @@ handle_task({computed_h2, Candidate}, State) ->
 		_ ->
 			{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, Partition1,
 					Nonce, PartitionUpperBound),
-			PoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, MiningAddress),
+			LocalPoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, MiningAddress),
+			PoA2 =
+				case LocalPoA2 of
+					error ->
+						ar:console("WARNING: we have found an H2 solution but did not find "
+							"the PoA2 proofs locally - searching the peers...~n"),
+						case ar_mining_server:fetch_poa_from_peers(RecallByte2) of
+							not_found ->
+								?LOG_WARNING([{event,
+										mined_block_but_failed_to_read_second_chunk_proof},
+										{worker, State#state.name},
+										{recall_byte2, RecallByte2},
+										{mining_address, ar_util:safe_encode(MiningAddress)}]),
+								ar:console("WARNING: we found an H2 solution but failed to find "
+										"the proof for the second chunk. See logs for more "
+										"details.~n"),
+								not_found;
+							PeerPoA2 ->
+								PeerPoA2
+						end;
+					_ ->
+						LocalPoA2
+				end,
 			case PoA2 of
-				error ->
-					?LOG_WARNING([{event,
-							mined_block_but_failed_to_read_second_chunk_proof},
-							{worker, State#state.name},
-							{recall_byte2, RecallByte2},
-							{mining_address, ar_util:safe_encode(MiningAddress)}]),
-					ar:console("WARNING: we found a solution but failed to read "
-							"the proof for the second chunk. See logs for more "
-							"details.~n");
+				not_found ->
+					ok;
 				_ ->
 					ar_coordination:computed_h2_for_peer(
-						Candidate#mining_candidate{ poa2 = PoA2 })
+							Candidate#mining_candidate{ poa2 = PoA2 })
 			end
 	end,
 	{noreply, State};
