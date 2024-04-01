@@ -25,29 +25,45 @@ lines_processed=0
 download_and_verify() {
   local url=$1
   local path=$2
+
   # Fetch the expected file size from the Content-Length HTTP header
   local expected_size=$(curl -sI "$url" | grep -i Content-Length | awk '{print $2}' | tr -d '\r')
 
   local attempt=0
   local success=0
 
-  while [ $attempt -lt 3 ]; do
+  while [ $attempt -lt 5 ]; do
     # Download the file using wget, preserving the directory structure
-    wget -q -c -O "$path" "$url"
-    # Get the actual size of the downloaded file
-    local actual_size=$(stat -c %s "$path")
+    wget_output=$(wget -c -O "$path" "$url" 2>&1)
+    wget_exit_code=$?
 
-    if [[ "$expected_size" == "$actual_size" ]]; then
-      success=1
-      break
+    if [ $wget_exit_code -eq 0 ]; then
+      # Get the actual size of the downloaded file
+      local actual_size=$(stat -c %s "$path")
+      if [[ "$expected_size" == "$actual_size" ]]; then
+        success=1
+        break
+      elif [[ "$actual_size" -gt "$expected_size" ]]; then
+        echo "Actual size greater than expected for $path. Expected $expected_size, got $actual_size. Deleting file and retrying..."
+        rm -f "$path"
+      else
+        echo "File size mismatch for $path. Expected $expected_size, got $actual_size. Retrying..."
+      fi
     else
-      echo "File size mismatch for $path. Expected $expected_size, got $actual_size. Retrying..."
-      ((attempt++))
+      if echo "$wget_output" | grep -q "416 Requested Range Not Satisfiable"; then
+        echo "Received 416 error for $path. Deleting the file and retrying..."
+        rm -f "$path"
+      else
+        echo "Failed to download $path. Error: $wget_output. Retrying..."
+      fi
     fi
+
+    sleep 3
+    ((attempt++))
   done
 
   if [ $success -eq 0 ]; then
-    echo "Failed to download $path after 3 attempts."
+    echo "Failed to download $path after 5 attempts."
   fi
 }
 
