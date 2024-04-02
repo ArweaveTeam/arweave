@@ -197,6 +197,7 @@
 	is_pool_client = false,
 	pool_server_address = not_set,
 	pool_api_key = not_set,
+	pool_worker_name = not_set,
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE
 }).
