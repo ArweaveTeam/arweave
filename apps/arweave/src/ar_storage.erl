@@ -418,9 +418,6 @@ wallet_list_chunk_relative_filepath(Position, RootHash) ->
 		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
 	])).
 
-read_account2(Addr, _RootHash, _Pos, _Left, _Right, _DataDir, [last, {LargestAddr, _} | _L],
-		_RightFileFound) when Addr > LargestAddr ->
-	{0, <<>>};
 read_account2(Addr, RootHash, Pos, Left, Right, DataDir, [last | L], RightFileFound) ->
 	read_account2(Addr, RootHash, Pos, Left, Right, DataDir, L, RightFileFound);
 read_account2(Addr, RootHash, Pos, _Left, Right, DataDir, [{LargestAddr, _} | _L],

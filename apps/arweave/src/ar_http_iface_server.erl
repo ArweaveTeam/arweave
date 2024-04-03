@@ -212,6 +212,10 @@ name_route([<<"wallet_list">>, _Root, _Cursor]) ->
 	"/wallet_list/{root_hash}/{cursor}";
 name_route([<<"wallet_list">>, _Root, _Addr, <<"balance">>]) ->
 	"/wallet_list/{root_hash}/{addr}/balance";
+name_route([<<"wallet_list">>, _Root, _Addr, <<"last_tx">>]) ->
+	"/wallet_list/{root_hash}/{addr}/last_tx";
+name_route([<<"wallet_list">>, _Root, _Addr, <<"info">>]) ->
+	"/wallet_list/{root_hash}/{addr}/info";
 
 name_route([<<"block_index">>, _From, _To]) ->
 	"/block_index/{from}/{to}";
@@ -234,6 +238,10 @@ name_route([<<"block">>, _Type, _IDBin, _Field]) ->
 	"/block/{type}/{id_bin}/{field}";
 name_route([<<"block">>, <<"height">>, _Height, <<"wallet">>, _Addr, <<"balance">>]) ->
 	"/block/height/{height}/wallet/{addr}/balance";
+name_route([<<"block">>, <<"height">>, _Height, <<"wallet">>, _Addr, <<"last_tx">>]) ->
+	"/block/height/{height}/wallet/{addr}/last_tx";
+name_route([<<"block">>, <<"height">>, _Height, <<"wallet">>, _Addr, <<"info">>]) ->
+	"/block/height/{height}/wallet/{addr}/info";
 name_route([<<"block">>, <<"current">>]) ->
 	"/block/current";
 

@@ -4,7 +4,10 @@
 %%% following, and uncle blocks.
 -module(ar_wallets).
 
--export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
+-export([start_link/1, get/1, get/2, get_chunk/2,
+		get_balance/1, get_balance/2,
+		get_last_tx/1, get_last_tx/2,
+		get_account_info/2,
 		apply_block/2, add_wallets/4, set_current/3, get_size/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
@@ -46,12 +49,35 @@ get_balance(Address) ->
 	gen_server:call(?MODULE, {get_balance, Address}, infinity).
 
 %% @doc Return balance of the given wallet in the given wallet tree.
+%%
+%% Return {error, not_found} if the given root hash is not found in the
+%% in-memory account tree DAG.
+%%
+%% If the tree is found but it does not contain the given address, return 0.
 get_balance(RootHash, Address) ->
 	gen_server:call(?MODULE, {get_balance, RootHash, Address}, infinity).
 
 %% @doc Return the anchor (last_tx) of the given wallet in the latest wallet tree.
 get_last_tx(Address) ->
 	gen_server:call(?MODULE, {get_last_tx, Address}, infinity).
+
+%% @doc Return the anchor (last_tx) of the given wallet in the given wallet tree.
+%%
+%% Return {error, not_found} if the given root hash is not found in the
+%% in-memory account tree DAG.
+%%
+%% If the tree is found but it does not contain the given address, return <<>>.
+get_last_tx(RootHash, Address) ->
+	gen_server:call(?MODULE, {get_last_tx, RootHash, Address}, infinity).
+
+%% @doc Return the information about the given wallet in the given wallet tree.
+%%
+%% Return {error, not_found} if the given root hash is not found in the
+%% in-memory account tree DAG.
+%%
+%% If the tree is found but it does not contain the given address, return {0, <<>>, 1, true}.
+get_account_info(RootHash, Address) ->
+	gen_server:call(?MODULE, {get_account_info, RootHash, Address}, infinity).
 
 %% @doc Compute and cache the account tree for the given new block and its previous block.
 apply_block(B, PrevB) ->
@@ -156,6 +182,36 @@ handle_call({get_last_tx, Address}, _From, DAG) ->
 				LastTX
 		end,
 	DAG};
+
+handle_call({get_last_tx, RootHash, Address}, _From, DAG) ->
+	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
+		{error, _} = Error ->
+			{reply, Error, DAG};
+		Tree ->
+			case ar_patricia_tree:get(Address, Tree) of
+				not_found ->
+					{reply, <<>>, DAG};
+				{_Balance, LastTX} ->
+					{reply, LastTX, DAG};
+				{_Balance, LastTX, _Denomination, _MiningPermission} ->
+					{reply, LastTX, DAG}
+			end
+	end;
+
+handle_call({get_account_info, RootHash, Address}, _From, DAG) ->
+	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
+		{error, _} = Error ->
+			{reply, Error, DAG};
+		Tree ->
+			case ar_patricia_tree:get(Address, Tree) of
+				not_found ->
+					{reply, {0, <<>>, 1, true}, DAG};
+				{Balance, LastTX} ->
+					{reply, {Balance, LastTX, 1, true}, DAG};
+				{Balance, LastTX, Denomination, MiningPermission} ->
+					{reply, {Balance, LastTX, Denomination, MiningPermission}, DAG}
+			end
+	end;
 
 handle_call({apply_block, B, PrevB}, _From, DAG) ->
 	{Reply, DAG2} = apply_block(B, PrevB, DAG),

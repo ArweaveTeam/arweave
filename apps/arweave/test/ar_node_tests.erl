@@ -5,8 +5,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [
-		wait_until_receives_txs/1, sign_v1_tx/3, read_block_when_stored/1]).
+-import(ar_test_node, [sign_v1_tx/3, read_block_when_stored/1]).
 
 ar_node_interface_test_() ->
 	{timeout, 300, fun test_ar_node_interface/0}.

@@ -1040,6 +1040,11 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid
 	end;
 
 %% Return the balance of the given address from the wallet tree with the given root hash.
+%%
+%% Return 404 {"error": "account_data_not_found"} if the given root hash is not found
+%% in memory or on disk.
+%%
+%% If the tree is found but it does not contain the given address, return 200 "0".
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req,
 		_Pid) ->
 	case ar_node:is_joined() of
@@ -1052,14 +1057,52 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">
 				{_, {error, invalid}} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
 				{{ok, RootHash}, {ok, Addr}} ->
-					case ar_wallets:get_balance(RootHash, Addr) of
-						{error, not_found} ->
-							{404, #{}, jiffy:encode(#{ error => root_hash_not_found }), Req};
-						Balance when is_integer(Balance) ->
-							{200, #{}, integer_to_binary(Balance), Req};
-						_Error ->
-							{500, #{}, <<>>, Req}
-					end
+					handle_get_block_wallet_data2(Addr, RootHash, balance, Req)
+			end
+	end;
+
+%% Return the last TX ID of the given address from the wallet tree with the given root hash.
+%%
+%% Return 404 {"error": "account_data_not_found"} if the given root hash is not found
+%% in memory or on disk.
+%%
+%% If the tree is found but it does not contain the given address, return 200 "".
+handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"last_tx">>], Req,
+		_Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case {ar_util:safe_decode(EncodedRootHash), ar_util:safe_decode(EncodedAddr)} of
+				{{error, invalid}, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
+				{_, {error, invalid}} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
+				{{ok, RootHash}, {ok, Addr}} ->
+					handle_get_block_wallet_data2(Addr, RootHash, last_tx, Req)
+			end
+	end;
+
+%% Return the info about the given address from the wallet tree with the given root hash.
+%%
+%% Return 404 {"error": "account_data_not_found"} if the given root hash is not found
+%% in memory or on disk.
+%%
+%% If the tree is found but it does not contain the given address,
+%% return 200 {"balance": "0", "last_tx": "", "denomination": 1, "mining_permission": true}.
+handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"info">>], Req,
+		_Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case {ar_util:safe_decode(EncodedRootHash), ar_util:safe_decode(EncodedAddr)} of
+				{{error, invalid}, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
+				{_, {error, invalid}} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
+				{{ok, RootHash}, {ok, Addr}} ->
+					handle_get_block_wallet_data2(Addr, RootHash, info, Req)
 			end
 	end;
 
@@ -1079,12 +1122,8 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
 				{ok, AddrOK} ->
-					case ar_node:get_balance(AddrOK) of
-						node_unavailable ->
-							{503, #{}, <<"Internal timeout.">>, Req};
-						Balance ->
-							{200, #{}, integer_to_binary(Balance), Req}
-					end
+					Balance = ar_wallets:get_balance(AddrOK),
+					{200, #{}, integer_to_binary(Balance), Req}
 			end
 	end;
 
@@ -1116,11 +1155,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
 				{ok, AddrOK} ->
-					{200, #{},
-						ar_util:encode(
-							?OK(ar_node:get_last_tx(AddrOK))
-						),
-					Req}
+					{200, #{}, ar_util:encode(ar_wallets:get_last_tx(AddrOK)), Req}
 			end
 	end;
 
@@ -1165,10 +1200,41 @@ handle(<<"GET">>, [<<"block">>, Type, ID, Field], Req, _Pid)
 	end;
 
 %% Return the balance of the given wallet at the given block.
+%%
+%% Return 404 {"error": "block_not_found"} if the given block is not found.
+%%
+%% Return 404 {"error": "account_data_not_found"} if the account tree root hash
+%% of the given blockis not found in memory or on disk.
+%%
+%% If the account tree is found but it does not contain the given address, return 200 "0".
 handle(<<"GET">>, [<<"block">>, <<"height">>, Height, <<"wallet">>, Addr, <<"balance">>], Req,
 		_Pid) ->
-	ok = ar_semaphore:acquire(get_wallet_list, infinity),
-	handle_get_block_wallet_balance(Height, Addr, Req);
+	handle_get_block_wallet_data(Height, Addr, balance, Req);
+
+%% Return the last TX ID of the given wallet at the given block.
+%%
+%% Return 404 {"error": "block_not_found"} if the given block is not found.
+%%
+%% Return 404 {"error": "account_data_not_found"} if the account tree root hash
+%% of the given blockis not found in memory or on disk.
+%%
+%% If the account tree is found but it does not contain the given address, return 200 "".
+handle(<<"GET">>, [<<"block">>, <<"height">>, Height, <<"wallet">>, Addr, <<"last_tx">>], Req,
+		_Pid) ->
+	handle_get_block_wallet_data(Height, Addr, last_tx, Req);
+
+%% Return the info about the given wallet at the given block.
+%%
+%% Return 404 {"error": "block_not_found"} if the given block is not found.
+%%
+%% Return 404 {"error": "account_data_not_found"} if the account tree root hash
+%% of the given blockis not found in memory or on disk.
+%%
+%% If the account tree is found but it does not contain the given address,
+%% return 200 {"balance": "0", "last_tx": "", "denomination": 1, "mining_permission": true}.
+handle(<<"GET">>, [<<"block">>, <<"height">>, Height, <<"wallet">>, Addr, <<"info">>], Req,
+		_Pid) ->
+	handle_get_block_wallet_data(Height, Addr, info, Req);
 
 %% Return the current block.
 %% GET request to endpoint /block/current.
@@ -2851,7 +2917,7 @@ process_request(get_block, [Type, ID, Field], Req) ->
 			{421, #{}, <<"Subfield block querying is disabled on this node.">>, Req}
 	end.
 
-handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
+handle_get_block_wallet_data(EncodedHeight, EncodedAddr, Field, Req) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -2881,8 +2947,8 @@ handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
 								#block{ wallet_list = RootHash } ->
 									case ar_util:safe_decode(EncodedAddr) of
 										{ok, Addr} ->
-											handle_get_block_wallet_balance2(Addr, RootHash,
-													Req);
+											handle_get_block_wallet_data2(Addr, RootHash,
+													Field, Req);
 										{error, invalid} ->
 											{400, #{}, jiffy:encode(#{
 													error => invalid_address }), Req}
@@ -2894,24 +2960,44 @@ handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
 			end
 	end.
 
-handle_get_block_wallet_balance2(Addr, RootHash, Req) ->
-	case ar_wallets:get_balance(RootHash, Addr) of
+handle_get_block_wallet_data2(Addr, RootHash, Field, Req) ->
+	case ar_wallets:get_account_info(RootHash, Addr) of
 		{error, not_found} ->
-			handle_get_block_wallet_balance3(Addr, RootHash, Req);
-		Balance when is_integer(Balance) ->
-			{200, #{}, integer_to_binary(Balance), Req};
+			handle_get_block_wallet_data3(Addr, RootHash, Field, Req);
+		{_, _, _, _} = Info ->
+			handle_get_block_wallet_data_reply(Info, Field, Req);
 		_Error ->
 			{500, #{}, <<>>, Req}
 	end.
 
-handle_get_block_wallet_balance3(Addr, RootHash, Req) ->
+handle_get_block_wallet_data_reply(Info, Field, Req) ->
+	{Balance, LastTX, Denomination, MiningPermission} = Info,
+	case Field of
+		balance ->
+			{200, #{}, integer_to_binary(Balance), Req};
+		last_tx ->
+			{200, #{}, ar_util:encode(LastTX), Req};
+		info ->
+			{200, #{}, jiffy:encode(#{ balance => integer_to_binary(Balance),
+					last_tx => ar_util:encode(LastTX),
+					denomination => Denomination,
+					mining_permission => MiningPermission }), Req}
+	end.
+
+handle_get_block_wallet_data3(Addr, RootHash, Field, Req) ->
+	ok = ar_semaphore:acquire(get_wallet_list, infinity),
 	case ar_storage:read_account(Addr, RootHash) of
 		not_found ->
 			{404, #{}, jiffy:encode(#{ error => account_data_not_found }), Req};
-		{Balance, _LastTX} ->
-			{200, #{}, integer_to_binary(Balance), Req};
-		{Balance, _LastTX, _Denomination, _MiningPermission} ->
-			{200, #{}, integer_to_binary(Balance), Req}
+		Reply ->
+			Reply2 =
+				case Reply of
+					{Balance, LastTX} ->
+						{Balance, LastTX, 1, true};
+					{_, _, _, _} = Info ->
+						Info
+				end,
+			handle_get_block_wallet_data_reply(Reply2, Field, Req)
 	end.
 
 process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
