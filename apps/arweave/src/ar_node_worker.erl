@@ -740,6 +740,7 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 						end}]),
 			ar_block_cache:add(block_cache, B),
 			ar_events:send(solution, {accepted, #{ indep_hash => H, source => Source }}),
+			ar_events:send(block, {new, B, #{ source => miner }}),
 			apply_block(State);
 		_Steps ->
 			ar_events:send(solution,
@@ -1448,12 +1449,6 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
 
 apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	?LOG_DEBUG([{event, apply_validated_block}, {block, ar_util:encode(B#block.indep_hash)}]),
-	case ar_watchdog:is_mined_block(B) of
-		true ->
-			ar_events:send(block, {new, B, #{ source => miner }});
-		false ->
-			ok
-	end,
 	[{_, CDiff}] = ets:lookup(node_state, cumulative_diff),
 	case B#block.cumulative_diff =< CDiff of
 		true ->
