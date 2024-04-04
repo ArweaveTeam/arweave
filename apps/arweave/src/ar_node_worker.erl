@@ -165,7 +165,9 @@ init([]) ->
 		tags => [],
 		blocks_missing_txs => sets:new(),
 		missing_txs_lookup_processes => #{},
-		task_queue => gb_sets:new()
+		task_queue => gb_sets:new(),
+		solution_cache => #{},
+		solution_cache_records => queue:new()
 	}}.
 
 get_block_index_at_state(BI, Config) ->
@@ -467,7 +469,9 @@ handle_info({event, miner, {found_solution, miner, _Solution, _PoACache, _PoA2Ca
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
 handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cache}}, State) ->
-	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, State);
+	[{_, PrevH}] = ets:lookup(node_state, current),
+	PrevB = ar_block_cache:get(block_cache, PrevH),
+	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, PrevB, State);
 
 handle_info({event, miner, _}, State) ->
 	{noreply, State};
@@ -631,7 +635,7 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
 		not_found ->
 			%% The block should have been pruned while we were fetching the missing txs.
 			{noreply, State};
-		{B, {not_validated, _}} ->
+		{B, {{not_validated, _}, _}} ->
 			case ar_block_cache:get(block_cache, B#block.previous_block) of
 				not_found ->
 					ok;
@@ -753,24 +757,107 @@ get_max_block_size([{_BH, PrevWeaveSize, _TXRoot} | BI], WeaveSize, Max) ->
 apply_block(State) ->
 	case ar_block_cache:get_earliest_not_validated_from_longest_chain(block_cache) of
 		not_found ->
-			%% Nothing to do - we are at the longest known chain already.
-			{noreply, State};
-		{B, [PrevB | _PrevBlocks], {{not_validated, awaiting_nonce_limiter_validation},
-				_Timestamp}} ->
-			H = B#block.indep_hash,
-			case maps:get({nonce_limiter_validation_scheduled, H}, State, false) of
-				true ->
-					%% Waiting until the nonce limiter chain is validated.
-					{noreply, State};
-				false ->
-					?LOG_DEBUG([{event, schedule_nonce_limiter_validation},
-						{block, ar_util:encode(B#block.indep_hash)}]),
-					request_nonce_limiter_validation(B, PrevB),
-					{noreply, State#{ {nonce_limiter_validation_scheduled, H} => true }}
-			end;
-		{B, PrevBlocks, {{not_validated, nonce_limiter_validated}, Timestamp}} ->
-			apply_block(B, PrevBlocks, Timestamp, State)
+			maybe_rebase(State);
+		Args ->
+			%% Cancel the pending rebase, if there is one.
+			State2 = State#{ pending_rebase => false },
+			apply_block(Args, State2)
 	end.
+
+apply_block({B, [PrevB | _PrevBlocks], {{not_validated, awaiting_nonce_limiter_validation},
+		_Timestamp}}, State) ->
+	H = B#block.indep_hash,
+	case maps:get({nonce_limiter_validation_scheduled, H}, State, false) of
+		true ->
+			%% Waiting until the nonce limiter chain is validated.
+			{noreply, State};
+		false ->
+			?LOG_DEBUG([{event, schedule_nonce_limiter_validation},
+				{block, ar_util:encode(B#block.indep_hash)}]),
+			request_nonce_limiter_validation(B, PrevB),
+			{noreply, State#{ {nonce_limiter_validation_scheduled, H} => true }}
+	end;
+apply_block({B, PrevBlocks, {{not_validated, nonce_limiter_validated}, Timestamp}}, State) ->
+	apply_block(B, PrevBlocks, Timestamp, State).
+
+maybe_rebase(#{ pending_rebase := {PrevH, H} } = State) ->
+	case ar_block_cache:get_block_and_status(block_cache, PrevH) of
+		not_found ->
+			{noreply, State};
+		{PrevB, {validated, _}} ->
+			case get_cached_solution(H, State) of
+				not_found ->
+					?LOG_WARNING([{event, failed_to_find_cached_solution_for_rebasing},
+							{h, ar_util:encode(H)},
+							{prev_h, ar_util:encode(PrevH)}]),
+					{noreply, State};
+				Args ->
+					SolutionH = (element(2, Args))#mining_solution.solution_hash,
+					?LOG_INFO([{event, rebasing_block},
+							{h, ar_util:encode(H)},
+							{prev_h, ar_util:encode(PrevH)},
+							{solution_h, ar_util:encode(SolutionH)},
+							{expected_new_height, PrevB#block.height + 1}]),
+					handle_found_solution(Args, PrevB, State)
+				end;
+		{B, {Status, Timestamp}} ->
+			PrevBlocks = ar_block_cache:get_fork_blocks(block_cache, B),
+			Args = {B, PrevBlocks, {Status, Timestamp}},
+			apply_block(Args, State)
+	end;
+maybe_rebase(State) ->
+	[{_, H}] = ets:lookup(node_state, current),
+	B = ar_block_cache:get(block_cache, H),
+	{ok, Config} = application:get_env(arweave, config),
+	case B#block.reward_addr == Config#config.mining_addr of
+		false ->
+			{noreply, State};
+		true ->
+			case ar_block_cache:get_siblings(block_cache, B) of
+				[] ->
+					{noreply, State};
+				Siblings ->
+					maybe_rebase(B, Siblings, State)
+			end
+	end.
+
+maybe_rebase(_B, [], State) ->
+	{noreply, State};
+maybe_rebase(B, [Sib | Siblings], State) ->
+	#block{ nonce_limiter_info = Info, cumulative_diff = CDiff } = B,
+	#block{ nonce_limiter_info = SibInfo, cumulative_diff = SibCDiff } = Sib,
+	StepNumber = Info#nonce_limiter_info.global_step_number,
+	SibStepNumber = SibInfo#nonce_limiter_info.global_step_number,
+	case {CDiff == SibCDiff, StepNumber > SibStepNumber,
+			Sib#block.reward_addr == B#block.reward_addr} of
+		{true, true, false} ->
+			%% See if the solution is cached to avoid wasting time.
+			case get_cached_solution(B#block.indep_hash, State) of
+				not_found ->
+					maybe_rebase(B, Siblings, State);
+				_Args ->
+					rebase(B, Sib, State)
+			end;
+		_ ->
+			maybe_rebase(B, Siblings, State)
+	end.
+
+rebase(B, PrevB, State) ->
+	H = B#block.indep_hash,
+	PrevH = PrevB#block.indep_hash,
+	gen_server:cast(?MODULE, apply_block),
+	PrevBlocks = ar_block_cache:get_fork_blocks(block_cache, PrevB),
+	{_, {Status, Timestamp}} = ar_block_cache:get_block_and_status(block_cache, PrevH),
+	State2 = State#{ pending_rebase => {PrevH, H} },
+	case Status of
+		validated ->
+			{noreply, State2};
+		_ ->
+			apply_block({PrevB, PrevBlocks, {Status, Timestamp}}, State2)
+	end.
+
+get_cached_solution(H, State) ->
+	maps:get(H, maps:get(solution_cache, State), not_found).
 
 apply_block(B, PrevBlocks, Timestamp, State) ->
 	#{ blocks_missing_txs := BlocksMissingTXs } = State,
@@ -964,8 +1051,11 @@ pack_block_with_transactions(B, PrevB) ->
 				[ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}) | Addresses2]
 		end,
 	Accounts = ar_wallets:get(PrevB#block.wallet_list, Addresses3),
-	[{_, BlockAnchors}] = ets:lookup(node_state, block_anchors),
-	[{_, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
+	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
+	PrevBlocks = ar_block_cache:get_fork_blocks(block_cache, B),
+	BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
+	BlockTXPairs3 = tl(BlockTXPairs2),
+	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs3),
 	ValidTXs = ar_tx_replay_pool:pick_txs_to_mine({BlockAnchors, RecentTXMap, Height - 1,
 			RedenominationHeight, Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
 			PrevDenomination, B#block.timestamp, Accounts, TXs}),
@@ -1651,7 +1741,7 @@ dump_mempool(TXs, MempoolSize) ->
 			?LOG_ERROR([{event, failed_to_dump_mempool}, {reason, Reason}])
 	end.
 
-handle_found_solution(Args, State) ->
+handle_found_solution(Args, PrevB, State) ->
 	{Source, Solution, PoACache, PoA2Cache} = Args,
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
@@ -1673,8 +1763,9 @@ handle_found_solution(Args, State) ->
 	} = Solution,
 	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 
-	[{_, PrevH}] = ets:lookup(node_state, current),
-	[{_, PrevTimestamp}] = ets:lookup(node_state, timestamp),
+	#block{ indep_hash = PrevH, timestamp = PrevTimestamp,
+			wallet_list = WalletList,
+			nonce_limiter_info = PrevNonceLimiterInfo } = PrevB,
 	Now = os:system_time(second),
 	MaxDeviation = ar_block:get_max_timestamp_deviation(),
 	Timestamp =
@@ -1690,15 +1781,13 @@ handle_found_solution(Args, State) ->
 				Now
 		end,
 
-	[{wallet_list, WalletList}] = ets:lookup(node_state, wallet_list),
 	IsBanned = ar_node_utils:is_account_banned(MiningAddress,
 			ar_wallets:get(WalletList, MiningAddress)),
 
 	%% Check the solution is ahead of the previous solution on the timeline.
-	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 	NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
 			output = NonceLimiterOutput,
-			prev_output = TipNonceLimiterInfo#nonce_limiter_info.output },
+			prev_output = PrevNonceLimiterInfo#nonce_limiter_info.output },
 	PassesTimelineCheck =
 		case IsBanned of
 			true ->
@@ -1707,7 +1796,7 @@ handle_found_solution(Args, State) ->
 				{false, address_banned};
 			false ->
 				case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
-						TipNonceLimiterInfo) of
+						PrevNonceLimiterInfo) of
 					false ->
 						ar_events:send(solution, {stale, #{ source => Source }}),
 						{false, timeline};
@@ -1719,7 +1808,7 @@ handle_found_solution(Args, State) ->
 	%% Check solution seed.
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			next_vdf_difficulty = PrevNextVDFDifficulty,
-			global_step_number = PrevStepNumber } = TipNonceLimiterInfo,
+			global_step_number = PrevStepNumber } = PrevNonceLimiterInfo,
 	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PassesSeedCheck =
 		case PassesTimelineCheck of
@@ -1737,7 +1826,11 @@ handle_found_solution(Args, State) ->
 		end,
 
 	%% Check solution difficulty
-	DiffPair = {_PoA1Diff, Diff} = get_current_diff(Timestamp),
+	PrevDiffPair = ar_difficulty:diff_pair(PrevB),
+	LastRetarget = PrevB#block.last_retarget,
+	PrevTS = PrevB#block.timestamp,
+	DiffPair = {_PoA1Diff, Diff} = ar_retarget:maybe_retarget(PrevB#block.height + 1,
+			PrevDiffPair, Timestamp, LastRetarget, PrevTS),
 	PassesDiffCheck =
 		case PassesSeedCheck of
 			{false, Reason2} ->
@@ -1776,7 +1869,6 @@ handle_found_solution(Args, State) ->
 				end
 		end,
 
-	PrevB = ar_block_cache:get(block_cache, PrevH),
 	CorrectRebaseThreshold =
 		case PassesKeyCheck of
 			{false, Reason4} ->
@@ -1831,7 +1923,7 @@ handle_found_solution(Args, State) ->
 								[_, PrevStepOutput | _] ->
 									PrevStepOutput;
 								_ ->
-									TipNonceLimiterInfo#nonce_limiter_info.output
+									PrevNonceLimiterInfo#nonce_limiter_info.output
 							end,
 						PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
 								PrevOutput, PrevStepNumber, StepNumber, PrevNextSeed),
@@ -1930,7 +2022,7 @@ handle_found_solution(Args, State) ->
 						end}]),
 			ar_block_cache:add(block_cache, B),
 			ar_events:send(solution, {accepted, #{ indep_hash => H, source => Source }}),
-			apply_block(State);
+			apply_block(update_solution_cache(H, Args, State));
 		_Steps ->
 			ar_events:send(solution,
 					{rejected, #{ reason => bad_vdf, source => Source }}),
@@ -1941,4 +2033,28 @@ handle_found_solution(Args, State) ->
 					{prev_next_seed, ar_util:encode(PrevNextSeed)},
 					{output, ar_util:encode(NonceLimiterOutput)}]),
 			{noreply, State}
+	end.
+
+update_solution_cache(H, Args, State) ->
+	%% Maintain a cache of mining solutions for potential reuse in rebasing.
+	%%
+	%% - We only want to cache 5 solutions at max.
+	%% - If we exceed 5, we remove the oldest one from the solution_cache.
+	%% - solution_cache_records is only used to track which solution is oldest.
+	#{ solution_cache := Map, solution_cache_records := Q } = State,
+	case maps:is_key(H, Map) of
+		true ->
+			State;
+		false ->
+			Q2 = queue:in(H, Q),
+			Map2 = maps:put(H, Args, Map),
+			{Map3, Q3} =
+				case queue:len(Q2) > 5 of
+					true ->
+						{{value, H2}, Q4} = queue:out(Q2),
+						{maps:remove(H2, Map2), Q4};
+					false ->
+						{Map2, Q2}
+				end,
+			State#{ solution_cache => Map3, solution_cache_records => Q3 }
 	end.
