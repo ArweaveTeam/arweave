@@ -61,7 +61,9 @@ test_single_node_two_chunk_coordinated_mining() ->
 
 test_coordinated_mining_retarget() ->
 	%% Assert that a difficulty retarget is handled correctly.
-	[Node1, Node2, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(2),
+	[Node1, Node2, ExitNode, ValidatorNode] = ar_test_node:start_coordinated(2),
+	?debugFmt("~nnode1: ~p~nnode2: ~p~nexit node: ~p~nvalidator: ~p~n",
+			[Node1, Node2, ExitNode, ValidatorNode]),
 	lists:foreach(
 		fun(Height) ->
 			mine_in_parallel([Node1, Node2], ValidatorNode, Height)

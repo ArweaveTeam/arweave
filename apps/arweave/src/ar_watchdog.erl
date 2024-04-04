@@ -35,7 +35,7 @@ mined_block(BH, Height, PrevH) ->
 	gen_server:cast(?MODULE, {mined_block, BH, Height, PrevH}).
 
 is_mined_block(Block) ->
-	gen_server:call(?MODULE, {is_mined_block, Block#block.indep_hash}).
+	gen_server:call(?MODULE, {is_mined_block, Block#block.indep_hash}, infinity).
 
 %%--------------------------------------------------------------------
 %% @doc

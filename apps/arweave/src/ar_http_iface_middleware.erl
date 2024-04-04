@@ -836,7 +836,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 				{ok, BH} ->
 					Fork_2_6 = ar_fork:height_2_6(),
 					case ar_block_cache:get_block_and_status(block_cache, BH) of
-						{#block{ height = Height, reward_history = RewardHistory }, Status}
+						{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
 								when (Status == on_chain orelse Status == validated),
 									Height >= Fork_2_6 ->
 							{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory),
@@ -859,7 +859,7 @@ handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
 					Fork_2_7 = ar_fork:height_2_7(),
 					case ar_block_cache:get_block_and_status(block_cache, BH) of
 						{#block{ height = Height,
-									block_time_history = BlockTimeHistory }, Status}
+									block_time_history = BlockTimeHistory }, {Status, _}}
 								when (Status == on_chain orelse Status == validated),
 									Height >= Fork_2_7 ->
 							{200, #{}, ar_serialize:block_time_history_to_binary(

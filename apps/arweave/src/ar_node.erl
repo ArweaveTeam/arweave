@@ -241,7 +241,7 @@ get_partition_upper_bound(BI) ->
 
 get_recent_partition_upper_bound_by_prev_h(H, Diff) ->
 	case ar_block_cache:get_block_and_status(block_cache, H) of
-		{_B, on_chain} ->
+		{_B, {on_chain, _}} ->
 			[{_, BI}] = ets:lookup(node_state, recent_block_index),
 			Genesis = length(BI) =< ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
 			get_recent_partition_upper_bound_by_prev_h(H, Diff, BI, Genesis);
