@@ -282,7 +282,7 @@ scan_blocks_for_deposits(LastConfirmedBlockHeight, DepositAddress) ->
 	case LastConfirmedBlockHeight > LastScannedBlockHeight of
 		true ->
 			%% Scan all blocks since the last one we scanned. Unless it's been a while
-			%% since we scanned, in which case cap the the history of blocks scanned to
+			%% since we scanned, in which case cap the history of blocks scanned to
 			%% ?MAX_BLOCK_SCAN.
 			ScanBlockHeight = max(
 				LastScannedBlockHeight,

@@ -119,7 +119,7 @@ wallet_filepath2(Wallet) ->
 	Filename = lists:flatten([binary_to_list(Wallet), ".json"]),
 	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
-%% @doc Read the keyfile for the the key with the given address from disk.
+%% @doc Read the keyfile for the key with the given address from disk.
 %% Return not_found if arweave_keyfile_[addr].json or [addr].json is not found
 %% in [data_dir]/?WALLET_DIR.
 load_key(Addr) ->
