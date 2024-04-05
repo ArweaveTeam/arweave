@@ -71,7 +71,7 @@
 %% So how many new datapoints will it take to reduce the contribution of an earlier datapoint
 %% to "virtually" 0?
 %%
-%% If we assume "virtually 0" is the the same as 1% of its true value (i.e. if the datapoint was
+%% If we assume "virtually 0" is the same as 1% of its true value (i.e. if the datapoint was
 %% originaly 100, it now contributes 1 to the average), then we can use a similar equation as
 %% the SUCCESS_ALPHA equation to determine how many datapoints materially contribute to the average:
 %%

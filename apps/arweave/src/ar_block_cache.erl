@@ -388,7 +388,7 @@ remove(Tab, H) ->
 get_checkpoint_block(RecentBI) ->
 	get_checkpoint_block2(RecentBI, 1, ?CHECKPOINT_DEPTH).
 
-%% @doc Prune the cache.  Discard all blocks deeper than Depth from the tip and and
+%% @doc Prune the cache.  Discard all blocks deeper than Depth from the tip and
 %% all of their children that are not on_chain.
 %% 
 %% Height 99              A    B' C

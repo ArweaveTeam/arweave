@@ -232,7 +232,7 @@ utility(#tx{ reward = Reward }, _Size) ->
 get_wallet_fee_pre_fork_2_4(Diff, Height) ->
 	case Height >= ar_fork:height_2_2() of
 		true ->
-			%% Scale the wallet fee so that is is always roughly 0.1$.
+			%% Scale the wallet fee so that is always roughly 0.1$.
 			{Dividend, Divisor} = ?WALLET_GEN_FEE_USD,
 			ar_pricing:usd_to_ar_pre_fork_2_4(
 				Dividend / Divisor,
