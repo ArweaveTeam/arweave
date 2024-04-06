@@ -491,13 +491,17 @@ prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
 	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
 			StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficulty),
-	case LastStepCheckpoints of
-		not_found ->
-			error;
-		_ ->
-			prepare_solution(steps, Candidate, Solution#mining_solution{
-				last_step_checkpoints = LastStepCheckpoints })
-	end;
+	LastStepCheckpoints2 =
+		case LastStepCheckpoints of
+			not_found ->
+				?LOG_WARNING([{event,
+						found_solution_but_failed_to_find_last_step_checkpoints}]),
+				[];
+			_ ->
+				LastStepCheckpoints
+		end,
+	prepare_solution(steps, Candidate, Solution#mining_solution{
+			last_step_checkpoints = LastStepCheckpoints2 });
 
 prepare_solution(steps, Candidate, Solution) ->
 	#mining_candidate{ step_number = StepNumber } = Candidate,
@@ -541,6 +545,7 @@ prepare_solution(proofs, Candidate, Solution) ->
 			PartitionUpperBound),
 	case { H1, H2 } of
 		{not_set, not_set} ->
+			?LOG_WARNING([{event, found_solution_but_h1_h2_not_set}]),
 			error;
 		{H1, not_set} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{
@@ -622,6 +627,7 @@ prepare_solution(_, _Candidate, Solution) ->
 	Solution.
 
 post_solution(error, _State) ->
+	?LOG_WARNING([{event, found_solution_but_could_not_build_a_block}]),
 	error;
 post_solution(Solution, State) ->
 	{ok, Config} = application:get_env(arweave, config),

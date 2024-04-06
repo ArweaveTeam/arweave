@@ -633,7 +633,7 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 				= ar_nonce_limiter:get_seed_data(StepNumber, PrevB),
 			LastStepCheckpoints2 =
 				case LastStepCheckpoints of
-					not_found ->
+					Empty when Empty == not_found orelse Empty == [] ->
 						PrevOutput =
 							case Steps of
 								[_, PrevStepOutput | _] ->
