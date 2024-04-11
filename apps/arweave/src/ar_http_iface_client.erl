@@ -1360,7 +1360,7 @@ pool_client_headers() ->
 	case Config#config.pool_worker_name of
 		not_set ->
 			Headers1;
-		Worker_name ->
+		WorkerName ->
 			add_header(<<"worker">>, Worker_name, Headers1)
 	end.
 
