@@ -312,7 +312,7 @@ show_help() ->
 					"exit peer in the coordinated mining setup or a standalone node."},
 			{"pool_api_key", "API key for the requests to the pool."},
 			{"pool_server_address", "The pool address"},
-			{"pool_worker_name", "The pool worker name"}
+			{"pool_worker_name", "(optional) The pool worker name"}
 		]
 	),
 	erlang:halt().
