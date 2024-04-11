@@ -1359,9 +1359,9 @@ pool_client_headers() ->
 	Headers = add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()),
 	case Config#config.pool_worker_name of
 		not_set ->
-			Headers1;
+			Headers;
 		WorkerName ->
-			add_header(<<"worker">>, Worker_name, Headers1)
+			add_header(<<"worker">>, WorkerName, Headers)
 	end.
 
 add_header(Name, Value, Headers) when is_binary(Name) andalso is_binary(Value) ->
