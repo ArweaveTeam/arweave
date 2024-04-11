@@ -1356,7 +1356,7 @@ cm_p2p_headers() ->
 
 pool_client_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
-	Headers1 = add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()),
+	Headers = add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()),
 	case Config#config.pool_worker_name of
 		not_set ->
 			Headers1;
