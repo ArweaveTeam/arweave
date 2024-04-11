@@ -313,7 +313,7 @@ show_help() ->
 			{"pool_api_key", "API key for the requests to the pool."},
 			{"pool_server_address", "The pool address"},
 			{"pool_worker_name", "(optional) The pool worker name. "
-					"Useful if you have multiple machines (or replicas)"
+					"Useful if you have multiple machines (or replicas) "
 					"and you want to monitor them separately on pool"}
 		]
 	),
