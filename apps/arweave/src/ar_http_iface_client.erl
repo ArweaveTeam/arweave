@@ -754,6 +754,8 @@ post_pool_cm_jobs(Peer, Payload) ->
 post_cm_partition_table_to_pool(Peer, Payload) ->
 	{pool, URL} = Peer,
 	{Peer2, BasePath} = get_peer_and_path_from_url(URL),
+	Headers = pool_client_headers(),
+	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
 	handle_cm_partition_table_response(ar_http:req(#{
 		peer => Peer2,
 		method => post,
@@ -761,7 +763,7 @@ post_cm_partition_table_to_pool(Peer, Payload) ->
 		body => Payload,
 		timeout => 10 * 1000,
 		connect_timeout => 2000,
-		headers => pool_client_headers(),
+		headers => Headers2,
 		is_peer_request => false
 	})).
 
