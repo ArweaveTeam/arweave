@@ -3171,24 +3171,29 @@ handle_mining_h1(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
-				{true, true} ->
-					PoolPeer = ar_pool:pool_peer(),
-					spawn(fun() ->
-						ar_http_iface_client:cm_h1_send(PoolPeer, Body) end);
-				_ ->
-					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
-						{ok, JSON} ->
-							case catch ar_serialize:json_map_to_candidate(JSON) of
-								{'EXIT', _} ->
-									{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-								Candidate ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					case catch ar_serialize:json_map_to_candidate(JSON) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+						Candidate ->
+							case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+								{true, true} ->
+									PoolPeer = ar_pool:pool_peer(),
+									Jobs = #pool_cm_jobs{ h1_to_h2_jobs = [Candidate] },
+									Payload = ar_serialize:jsonify(
+											ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
+									spawn(fun() ->
+										ar_http_iface_client:post_pool_cm_jobs(PoolPeer,
+												Payload) end),
+									{200, #{}, <<>>, Req2};
+								_ ->
 									ar_coordination:compute_h2_for_peer(Peer, Candidate),
 									{200, #{}, <<>>, Req}
-							end;
-						{error, _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
-					end
+							end
+					end;
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req}
@@ -3198,27 +3203,32 @@ handle_mining_h2(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
-				{true, true} ->
-					PoolPeer = ar_pool:pool_peer(),
-					spawn(fun() ->
-						ar_http_iface_client:cm_h2_send(PoolPeer, Body) end);
-				_ ->
-					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
-						{ok, JSON} ->
-							case catch ar_serialize:json_map_to_candidate(JSON) of
-								{'EXIT', _} ->
-									{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-								Candidate ->
-									?LOG_INFO([{event, h2_received},
-											{peer, ar_util:format_peer(Peer)}]),
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					case catch ar_serialize:json_map_to_candidate(JSON) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+						Candidate ->
+							?LOG_INFO([{event, h2_received},
+									{peer, ar_util:format_peer(Peer)}]),
+							case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+								{true, true} ->
+									PoolPeer = ar_pool:pool_peer(),
+									Jobs = #pool_cm_jobs{ h1_read_jobs = [Candidate] },
+									Payload = ar_serialize:jsonify(
+											ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
+									spawn(fun() ->
+										ar_http_iface_client:cm_h2_send(PoolPeer,
+												Payload) end),
+									{200, #{}, <<>>, Req2};
+								_ ->
 									ar_mining_server:prepare_and_post_solution(Candidate),
 									ar_mining_stats:h2_received_from_peer(Peer),
 									{200, #{}, <<>>, Req}
-							end;
-						{error, _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
-					end
+							end
+					end;
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req}
