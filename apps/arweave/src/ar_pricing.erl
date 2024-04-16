@@ -84,7 +84,7 @@ get_v2_price_per_gib_minute_two_difficulty(
 				}
 			end,
 			{0, 0, 0, 0},
-			BlockTimeHistory
+			lists:sublist(BlockTimeHistory, (15 * 30 * 24))
 		),
 	%% The intent of the SolutionsPerPartitionPerVDFStep is to estimate network replica
 	%% count (how many copies of the weave are stored across the network).
@@ -172,7 +172,7 @@ get_v2_price_per_gib_minute_two_difficulty(
 			IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
 		),
 	log_price_metrics(get_v2_price_per_gib_minute_two_difficulty,
-		Height, length(LockedRewards), HashRateTotal, RewardTotal, 
+		Height, (15 * 30 * 24), HashRateTotal, RewardTotal, 
 		IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount,
 		SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute),
 	PricePerGiBPerMinute.
@@ -410,6 +410,12 @@ recalculate_price_per_gib_minute(B) ->
 		_ ->
 			case is_price_adjustment_height(Height) of
 				false ->
+					?LOG_DEBUG([{event, checking_price}]),
+					LockedRewards = ar_rewards:get_locked_rewards(B),
+					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
+							?BLOCK_TIME_HISTORY_BLOCKS),
+					get_price_per_gib_minute(Height,
+							LockedRewards, BlockTimeHistory2, Denomination),
 					{Price, ScheduledPrice};
 				true ->
 					%% price_per_gib_minute = scheduled_price_per_gib_minute
