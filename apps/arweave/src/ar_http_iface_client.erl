@@ -741,14 +741,24 @@ get_pool_cm_jobs(Peer) ->
 	})).
 
 post_pool_cm_jobs(Peer, Payload) ->
+	{Peer3, Headers, BasePath, IsPeerRequest} =
+		case Peer of
+			{pool, URL} ->
+				{Peer2, Path2} = get_peer_and_path_from_url(URL),
+				{Peer2, pool_client_headers(), Path2, false};
+			_ ->
+				{Peer, cm_p2p_headers(), "", true}
+		end,
+	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
 	handle_post_pool_cm_jobs_response(ar_http:req(#{
-		peer => Peer,
+		peer => Peer3,
 		method => post,
-		path => "/pool_cm_jobs",
+		path => BasePath ++ "/pool_cm_jobs",
 		body => Payload,
-		timeout => 5 * 1000,
-		connect_timeout => 1000,
-		headers => cm_p2p_headers()
+		timeout => 10 * 1000,
+		connect_timeout => 2000,
+		headers => Headers2,
+		is_peer_request => IsPeerRequest
 	})).
 
 post_cm_partition_table_to_pool(Peer, Payload) ->
