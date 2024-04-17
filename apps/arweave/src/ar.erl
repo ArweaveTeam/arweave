@@ -311,7 +311,10 @@ show_help() ->
 			{"is_pool_client", "Configure the node as a pool client. The node may be an "
 					"exit peer in the coordinated mining setup or a standalone node."},
 			{"pool_api_key", "API key for the requests to the pool."},
-			{"pool_server_address", "The pool address"}
+			{"pool_server_address", "The pool address"},
+			{"pool_worker_name", "(optional) The pool worker name. "
+					"Useful if you have multiple machines (or replicas) "
+					"and you want to monitor them separately on pool"}
 		]
 	),
 	erlang:halt().
@@ -601,6 +604,8 @@ parse_cli_args(["pool_api_key", Key | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_api_key = list_to_binary(Key) });
 parse_cli_args(["pool_server_address", Host | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_server_address = list_to_binary(Host) });
+parse_cli_args(["pool_worker_name", Host | Rest], C) ->
+	parse_cli_args(Rest, C#config{ pool_worker_name = list_to_binary(Host) });
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->

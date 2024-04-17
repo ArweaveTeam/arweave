@@ -1358,7 +1358,13 @@ cm_p2p_headers() ->
 
 pool_client_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
-	add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()).
+	Headers = add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()),
+	case Config#config.pool_worker_name of
+		not_set ->
+			Headers;
+		WorkerName ->
+			add_header(<<"worker">>, WorkerName, Headers)
+	end.
 
 add_header(Name, Value, Headers) when is_binary(Name) andalso is_binary(Value) ->
 	[{Name, Value} | Headers];
