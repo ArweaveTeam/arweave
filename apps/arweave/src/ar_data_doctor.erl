@@ -20,6 +20,8 @@ main(Args) ->
 			ar_doctor_merge:main(tl(Args));
 		"bench" ->
 			ar_doctor_bench:main(tl(Args));
+		"dump" ->
+			ar_doctor_dump:main(tl(Args));
 		_ ->
 			false
 	end,
@@ -36,4 +38,7 @@ help() ->
 	ar_doctor_merge:help(),
 	ar:console("~n"),
 	ar_doctor_bench:help(),
+	ar:console("~n"),
+	ar_doctor_dump:help(),
 	ar:console("~n").
+

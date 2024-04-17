@@ -13,7 +13,7 @@
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
 		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
 		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1,
-		migrate_tx_record/1, migrate_block_record/1, read_account/2]).
+		migrate_tx_record/1, migrate_block_record/1, read_account/2, read_block_from_file/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -985,6 +985,21 @@ is_file(Filepath) ->
 			false
 	end.
 
+read_block_from_file(Filename, Encoding) ->
+	case read_file_raw(Filename) of
+		{ok, Bin} ->
+			case Encoding of
+				json ->
+					parse_block_json(Bin);
+				binary ->
+					parse_block_binary(Bin)
+			end;
+		{error, Reason} ->
+			?LOG_WARNING([{event, error_reading_block},
+					{error, io_lib:format("~p", [Reason])}]),
+			unavailable
+	end.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -1052,21 +1067,6 @@ write_full_block2(BShadow, _) ->
 			ok;
 		Error ->
 			Error
-	end.
-
-read_block_from_file(Filename, Encoding) ->
-	case read_file_raw(Filename) of
-		{ok, Bin} ->
-			case Encoding of
-				json ->
-					parse_block_json(Bin);
-				binary ->
-					parse_block_binary(Bin)
-			end;
-		{error, Reason} ->
-			?LOG_WARNING([{event, error_reading_block},
-					{error, io_lib:format("~p", [Reason])}]),
-			unavailable
 	end.
 
 parse_block_json(JSON) ->
