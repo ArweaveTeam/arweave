@@ -30,14 +30,14 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 set_largest_seen_upper_bound(PartitionUpperBound) ->
-	gen_server:call(?MODULE, {set_largest_seen_upper_bound, PartitionUpperBound}, 30000).
+	gen_server:call(?MODULE, {set_largest_seen_upper_bound, PartitionUpperBound}, 60000).
 
 get_partitions() ->
-	gen_server:call(?MODULE, get_partitions, 30000).
+	gen_server:call(?MODULE, get_partitions, 60000).
 
 read_recall_range(WhichChunk, Worker, Candidate, RecallRangeStart) ->
 	gen_server:call(?MODULE,
-			{read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}, 30000).
+			{read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}, 60000).
 
 get_partitions(PartitionUpperBound) when PartitionUpperBound =< 0 ->
 	[];

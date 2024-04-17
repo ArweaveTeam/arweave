@@ -693,6 +693,7 @@ parse_webhook([], Webhook) ->
 parse_webhook_events([Event | Rest], Events) ->
 	case Event of
 		<<"transaction">> -> parse_webhook_events(Rest, [transaction | Events]);
+		<<"transaction_data">> -> parse_webhook_events(Rest, [transaction_data | Events]);
 		<<"block">> -> parse_webhook_events(Rest, [block | Events]);
 		_ -> error
 	end;

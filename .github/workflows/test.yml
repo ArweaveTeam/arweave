@@ -37,6 +37,7 @@ jobs:
             ar_pricing,
             ar_retarget,
             ar_serialize,
+            ar_storage_module,
             ar_storage,
             ar_storage_module,
             ar_sync_buckets,

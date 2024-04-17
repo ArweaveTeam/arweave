@@ -70,7 +70,7 @@ get_serialized_sync_buckets() ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(data_sync),
+	ok = ar_events:subscribe(sync_record),
 	{ok, Config} = application:get_env(arweave, config),
 	SyncRecord =
 		lists:foldl(
@@ -127,25 +127,25 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, data_sync, {add_range, Start, End, _StoreID}}, State) ->
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, _StoreID}}, State) ->
 	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
 	SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
 	SyncBuckets2 = ar_sync_buckets:add(End, Start, SyncBuckets),
 	{noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }};
 
-handle_info({event, data_sync, {cut, Offset}}, State) ->
+handle_info({event, sync_record, {global_cut, Offset}}, State) ->
 	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
 	SyncRecord2 = ar_intervals:cut(SyncRecord, Offset),
 	SyncBuckets2 = ar_sync_buckets:cut(Offset, SyncBuckets),
 	{noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }};
 
-handle_info({event, data_sync, {remove_range, Start, End}}, State) ->
+handle_info({event, sync_record, {global_remove_range, Start, End}}, State) ->
 	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
 	SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
 	SyncBuckets2 = ar_sync_buckets:delete(End, Start, SyncBuckets),
 	{noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }};
 
-handle_info({event, data_sync, _}, State) ->
+handle_info({event, sync_record, _}, State) ->
 	{noreply, State};
 
 handle_info(Message, State) ->

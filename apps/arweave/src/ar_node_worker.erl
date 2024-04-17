@@ -1733,6 +1733,7 @@ return_orphaned_txs_to_mempool(H, H) ->
 return_orphaned_txs_to_mempool(H, BaseH) ->
 	#block{ txs = TXs, previous_block = PrevH } = ar_block_cache:get(block_cache, H),
 	lists:foreach(fun(TX) ->
+		ar_events:send(tx, {orphaned, TX}),
 		ar_events:send(tx, {ready_for_mining, TX}),
 		%% Add it to the mempool here even though have triggered an event - processes
 		%% do not handle their own events.

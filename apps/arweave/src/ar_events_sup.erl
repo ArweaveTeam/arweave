@@ -34,7 +34,8 @@ init([]) ->
 	{ok, {{one_for_one, 5, 10}, [
 		%% Events: remaining_disk_space.
 		?CHILD(ar_events, disksup, worker),
-		%% Events: new, ready_for_mining, dropped.
+		%% Events: new, ready_for_mining, orphaned, emitting_scheduled,
+		%% preparing_unblacklisting, ready_for_unblacklisting, registered_offset.
 		?CHILD(ar_events, tx, worker),
 		%% Events: discovered, rejected, new, double_signing.
 		?CHILD(ar_events, block, worker),
@@ -51,8 +52,8 @@ init([]) ->
 		?CHILD(ar_events, miner, worker),
 		%% Events: removed_file.
 		?CHILD(ar_events, chunk_storage, worker),
-		%% Events: add_range, remove_range, cut.
-		?CHILD(ar_events, data_sync, worker),
+		%% Events: add_range, remove_range, global_remove_range, cut, global_cut.
+		?CHILD(ar_events, sync_record, worker),
 		%% Events: rejected, stale, partial, accepted.
 		?CHILD(ar_events, solution, worker),
 		%% Used for the testing purposes.

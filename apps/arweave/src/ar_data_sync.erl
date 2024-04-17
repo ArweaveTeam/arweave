@@ -6,7 +6,7 @@
 		is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
-		get_tx_offset/1, has_data_root/2,
+		get_tx_offset/1, get_tx_offset_data_in_range/2, has_data_root/2,
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
 		get_chunk_by_byte/2, read_chunk/4, decrement_chunk_cache_size/0,
@@ -371,8 +371,6 @@ get_tx_data(TXID) ->
 %% the size is bigger than SizeLimit.
 get_tx_data(TXID, SizeLimit) ->
 	case get_tx_offset(TXID) of
-		{error, not_joined} ->
-			{error, not_joined};
 		{error, not_found} ->
 			{error, not_found};
 		{error, failed_to_read_tx_offset} ->
@@ -390,6 +388,14 @@ get_tx_data(TXID, SizeLimit) ->
 get_tx_offset(TXID) ->
 	TXIndex = {tx_index, "default"},
 	get_tx_offset(TXIndex, TXID).
+
+%% @doc Return {ok, [{TXID, AbsoluteStartOffset, AbsoluteEndOffset}, ...]}
+%% where AbsoluteStartOffset, AbsoluteEndOffset are transaction borders
+%% (not clipped by the given range) for all TXIDs intersecting the given range.
+get_tx_offset_data_in_range(Start, End) ->
+	TXIndex = {tx_index, "default"},
+	TXOffsetIndex = {tx_offset_index, "default"},
+	get_tx_offset_data_in_range(TXOffsetIndex, TXIndex, Start, End).
 
 %% @doc Return true if the given {DataRoot, DataSize} is in the mempool
 %% or in the index.
@@ -681,7 +687,7 @@ handle_cast({join, RecentBI}, State) ->
 					{cut, Offset}) || Module <- Config#config.storage_modules],
 			ok = ar_chunk_storage:cut(Offset, StoreID),
 			ok = ar_sync_record:cut(Offset, ?MODULE, StoreID),
-			ar_events:send(data_sync, {cut, Offset}),
+			ar_events:send(sync_record, {global_cut, Offset}),
 			reset_orphaned_data_roots_disk_pool_timestamps(OrphanedDataRoots)
 	end,
 	BI = ar_block_index:get_list_by_hash(element(1, lists:last(RecentBI))),
@@ -742,7 +748,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	reset_orphaned_data_roots_disk_pool_timestamps(OrphanedDataRoots),
 	ok = ar_chunk_storage:cut(BlockStartOffset, StoreID),
 	ok = ar_sync_record:cut(BlockStartOffset, ?MODULE, StoreID),
-	ar_events:send(data_sync, {cut, BlockStartOffset}),
+	ar_events:send(sync_record, {global_cut, BlockStartOffset}),
 	DiskPoolThreshold = get_disk_pool_threshold(BI),
 	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
 	State2 = State#sync_data_state{ weave_size = WeaveSize,
@@ -1699,6 +1705,53 @@ get_tx_offset(TXIndex, TXID) ->
 			{error, failed_to_read_offset}
 	end.
 
+get_tx_offset_data_in_range(TXOffsetIndex, TXIndex, Start, End) ->
+	case ar_kv:get_prev(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>) of
+		none ->
+			get_tx_offset_data_in_range2(TXOffsetIndex, TXIndex, Start, End);
+		{ok, << Start2:?OFFSET_KEY_BITSIZE >>, _} ->
+			get_tx_offset_data_in_range2(TXOffsetIndex, TXIndex, Start2, End);
+		Error ->
+			Error
+	end.
+
+get_tx_offset_data_in_range2(TXOffsetIndex, TXIndex, Start, End) ->
+	case ar_kv:get_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
+			<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
+		{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
+			{ok, []};
+		{ok, Map} ->
+			case maps:fold(
+				fun
+					(_, _Value, {error, _} = Error) ->
+						Error;
+					(_, TXID, Acc) ->
+						case get_tx_offset(TXIndex, TXID) of
+							{ok, {EndOffset, Size}} ->
+								case EndOffset =< Start of
+									true ->
+										Acc;
+									false ->
+										[{TXID, EndOffset - Size, EndOffset} | Acc]
+								end;
+							not_found ->
+								Acc;
+							Error ->
+								Error
+						end
+				end,
+				[],
+				Map
+			) of
+				{error, _} = Error ->
+					Error;
+				List ->
+					{ok, lists:reverse(List)}
+			end;
+		Error ->
+			Error
+	end.
+
 get_tx_data(Start, End, Chunks) when Start >= End ->
 	{ok, iolist_to_binary(Chunks)};
 get_tx_data(Start, End, Chunks) ->
@@ -1736,7 +1789,7 @@ remove_range(Start, End, Ref, ReplyTo) ->
 			case sets:is_empty(StorageRefs) of
 				true ->
 					ReplyTo ! {removed_range, Ref},
-					ar_events:send(data_sync, {remove_range, Start, End});
+					ar_events:send(sync_record, {global_remove_range, Start, End});
 				false ->
 					receive
 						{removed_range, StorageRef} ->
@@ -2174,6 +2227,8 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 						case ar_kv:put({tx_index, StoreID}, TXID,
 								term_to_binary({AbsoluteEndOffset, TXSize})) of
 							ok ->
+								ar_events:send(tx, {registered_offset, TXID, AbsoluteEndOffset,
+										TXSize}),
 								ar_tx_blacklist:notify_about_added_tx(TXID, AbsoluteEndOffset,
 										AbsoluteStartOffset),
 								TXEndOffset;
@@ -2699,7 +2754,6 @@ update_chunks_index2(Args, State) ->
 			PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
 			case ar_sync_record:add(PaddedOffset, StartOffset, Packing, ?MODULE, StoreID) of
 				ok ->
-					ar_events:send(data_sync, {add_range, StartOffset, PaddedOffset, StoreID}),
 					ok;
 				{error, Reason} ->
 					?LOG_ERROR([{event, failed_to_update_sync_record}, {reason, Reason},

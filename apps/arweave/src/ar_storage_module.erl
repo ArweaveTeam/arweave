@@ -2,7 +2,7 @@
 
 -export([id/1, label/1, address_label/1, packing_label/1, label_by_id/1,
 		get_by_id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2,
-		has_any/1, has_range/2]).
+		has_any/1, has_range/2, get_cover/3]).
 
 -export([get_unique_sorted_intervals/1]).
 
@@ -181,6 +181,36 @@ has_range(Start, End) ->
 			has_range(Start, End, Intervals)
 	end.
 
+%% @doc Return the list of at least one {Start, End, StoreID} covering the given range
+%% or not_found. The given StoreID (may be none) has a higher chance to be picked in case
+%% there are several storage modules covering the same range.
+%%
+%%                            0     6     10    14      20          30
+%%                            |--- sm_1 ---|--- sm_2 ---|--- sm_3 ---|
+%%                                         |----sm_4----|
+%%
+%% 1. get_cover(2, 8, none):       2<--->8
+%% 2. get_cover(7, 13, none):          7<--------->13
+%% 3. get_cover(7, 25, none):          7<-------------------->25
+%% 4. get_cover(7, 25, sm4):           7<-------------------->25
+%%
+%% 1. returns [{2, 8, sm_1}]
+%% 2. returns [{7, 10, sm1}, {10, 13, sm_2}]
+%% 3. returns [{7, 10, sm1}, {10, 20, sm_2}, {20, 25, sm_3}]
+%% 4. returns [{7, 10, sm1}, {10, 20, sm_4}, {20, 25, sm_3}]
+get_cover(Start, End, MaybeStoreID) ->
+	{ok, Config} = application:get_env(arweave, config),
+	SortedStorageModules = sort_storage_modules_by_left_bound(
+			Config#config.storage_modules, MaybeStoreID),
+	case get_cover2(Start, End, SortedStorageModules) of
+		[] ->
+			not_found;
+		not_found ->
+			not_found;
+		Cover ->
+			Cover
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -191,7 +221,6 @@ id(BucketSize, Bucket, PackingString) when BucketSize == ?PARTITION_SIZE ->
 id(BucketSize, Bucket, PackingString) ->
 	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
 			[BucketSize, Bucket, PackingString]))).
-
 
 get(Offset, Packing, [{BucketSize, Bucket, _Packing} | StorageModules], StorageModule)
 		when Offset =< BucketSize * Bucket
@@ -257,6 +286,51 @@ has_range(PartitionStart, PartitionEnd, [{_Start, End} | Intervals])
 has_range(_PartitionStart, PartitionEnd, [{_Start, End} | Intervals]) ->
 	has_range(End, PartitionEnd, Intervals).
 
+sort_storage_modules_by_left_bound(StorageModules, MaybeStoreID) ->
+	lists:sort(
+		fun({BucketSize1, Bucket1, _} = M1, {BucketSize2, Bucket2, _} = M2) ->
+			Start1 = BucketSize1 * Bucket1,
+			Start2 = BucketSize2 * Bucket2,
+			case Start1 =< Start2 of
+				false ->
+					false;
+				true ->
+					case Start1 == Start2 of
+						true ->
+							StoreID1 = ar_storage_module:id(M1),
+							StoreID2 = ar_storage_module:id(M2),
+							StoreID1 == MaybeStoreID orelse StoreID2 /= MaybeStoreID;
+						false ->
+							true
+					end
+			end
+		end,
+		StorageModules
+	).
+
+get_cover2(Start, End, _StorageModules)
+		when Start >= End ->
+	[];
+get_cover2(_Start, _End, []) ->
+	not_found;
+get_cover2(Start, _End, [{BucketSize, Bucket, _Packing} | _StorageModules])
+		when BucketSize * Bucket > Start ->
+	not_found;
+get_cover2(Start, End, [{BucketSize, Bucket, _Packing} | StorageModules])
+		when BucketSize * Bucket + BucketSize =< Start ->
+	get_cover2(Start, End, StorageModules);
+get_cover2(Start, End, [{BucketSize, Bucket, _Packing} = StorageModule | StorageModules]) ->
+	Start2 = BucketSize * Bucket,
+	End2 = Start2 + BucketSize,
+	End3 = min(End, End2),
+	StoreID = ar_storage_module:id(StorageModule),
+	case get_cover2(End3, End, StorageModules) of
+		not_found ->
+			not_found;
+		List ->
+			[{Start, End3, StoreID} | List]
+	end.
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -300,3 +374,28 @@ has_range_test() ->
 	?assertEqual(true, has_range(0, 10, [{0, 9}, {9, 10}])),
 	?assertEqual(true, has_range(5, 10, [{0, 9}, {9, 10}])),
 	?assertEqual(true, has_range(5, 10, [{0, 2}, {2, 9}, {9, 10}])).
+
+sort_storage_modules_by_left_bound_test() ->
+	?assertEqual([], sort_storage_modules_by_left_bound([], none)),
+	?assertEqual([{1, 0, p}], sort_storage_modules_by_left_bound([{1, 0, p}], none)),
+	?assertEqual([{10, 0, p}, {10, 1, p}, {10, 2, p}],
+			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 2, p}], none)),
+	?assertEqual([{10, 0, p}, {7, 1, p}, {10, 1, p}, {10, 2, p}],
+			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 2, p},
+					{7, 1, p}], none)),
+	?assertEqual([{10, 0, p}, {10, 1, p}, {10, 1, p2}],
+			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}], none)),
+	?assertEqual([{10, 0, p}, {10, 1, p2}, {10, 1, p}],
+			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}],
+					"storage_module_10_1_p2")).
+
+get_cover2_test() ->
+	?assertEqual(not_found, get_cover2(0, 1, [])),
+	?assertEqual([{0, 1, "storage_module_1_0_p"}], get_cover2(0, 1, [{1, 0, p}])),
+	?assertEqual([{0, 1, "storage_module_1_0_p"}, {1, 2, "storage_module_1_1_p"}],
+			get_cover2(0, 2, [{1, 0, p}, {1, 1, p}])),
+	?assertEqual(not_found, get_cover2(0, 2, [{1, 0, p}, {1, 2, p}])),
+	?assertEqual([{0, 2, "storage_module_2_0_p"}],
+			get_cover2(0, 2, [{2, 0, p}, {1, 0, p}])),
+	?assertEqual([{0, 2, "storage_module_2_0_p"}, {2, 3, "storage_module_3_0_p"}],
+			get_cover2(0, 3, [{2, 0, p}, {3, 0, p}])).
