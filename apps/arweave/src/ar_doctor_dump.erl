@@ -11,9 +11,9 @@ main(Args) ->
 help() ->
 	ar:console("data-doctor dump <data_dir> <output_dir>~n"),
 	ar:console("  data_dir: Full path to your data_dir.~n"), 
-	ar:console("  output_dir: Full path to a directory where the dumped data wil be written.~n"), 
+	ar:console("  output_dir: Full path to a directory where the dumped data will be written.~n"), 
 	ar:console("~nExample:~n"), 
-	ar:console("data-doctor bench 60 /mnt/arweave-data /mnt/output~n").
+	ar:console("data-doctor dump /mnt/arweave-data /mnt/output~n").
 
 dump(Args) when length(Args) < 2 ->
 	false;
