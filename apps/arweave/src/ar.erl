@@ -48,15 +48,31 @@ show_help() ->
 			)
 		end,
 		[
-			{"config_file (path)", "Load the configuration from the specified JSON file."
-				" The keys in the root object are mapped to the command line arguments "
-				"described here. Additionally, you may specify a semaphores key. Its value "
-				"has to be a nested JSON object where keys are some of: get_chunk, "
-				"get_and_pack_chunk, get_tx_data, post_chunk, post_tx, get_block_index, "
-				"get_wallet_list, get_sync_record. For instance, your"
-				" config file contents may look like {\"semaphores\": {\"post_tx\": 100}}."
-				" In this case, the node will validate up to 100 incoming transactions in "
-				"parallel."},
+			{"config_file (path)", io_lib:format("Load the configuration from the "
+				"specified JSON file.~n~n"
+				"The configuration file is currently the only place where you may configure "
+				"webhooks and tune semaphores.~n~n"
+				"An example:~n~n"
+				"{~n"
+				"  \"webhooks\": [~n"
+				"    {~n"
+				"      \"events\": [\"transaction\", \"block\"],~n"
+				"      \"url\": \"https://example.com/block_or_tx\",~n"
+				"      \"headers\": {~n"
+				"        \"Authorization\": \"Bearer 123\"~n"
+				"       }~n"
+				"    },~n"
+				"    {~n"
+				"      \"events\": [\"transaction_data\"],~n"
+				"      \"url\": \"http://127.0.0.1:1985/tx_data\"~n"
+				"    },~n"
+				"  \"semaphores\": {\"post_tx\": 100}~n"
+				"}~n~n"
+				"100 means the node will validate up to 100 incoming transactions in "
+				"parallel.~n"
+				"The supported semaphore keys are get_chunk, get_and_pack_chunk, get_tx_data, "
+				"post_chunk, post_tx, get_block_index, get_wallet_list, get_sync_record.~n~n",
+				[])},
 			{"peer (IP:port)", "Join a network on a peer (or set of peers)."},
 			{"block_gossip_peer (IP:port)", "Optionally specify peer(s) to always"
 					" send blocks to."},

@@ -4,6 +4,7 @@
 
 -export([start_link/2, get/2, get/3, add/4, add/5, delete/4, cut/3, is_recorded/2,
 		is_recorded/3, is_recorded/4, get_next_synced_interval/4, get_next_synced_interval/5,
+		get_next_unsynced_interval/4,
 		get_interval/3, get_intersection_size/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -191,25 +192,36 @@ is_recorded(Offset, Type, ID, StoreID) ->
 	end.
 
 %% @doc Return the lowest synced interval with the end offset strictly above the given Offset
-%% and with the right bound at most RightBound.
+%% and at most EndOffsetUpperBound.
 %% Return not_found if there are no such intervals.
-get_next_synced_interval(Offset, RightBound, ID, StoreID) ->
+get_next_synced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, StoreID}) of
 		[] ->
 			not_found;
 		[{_, TID}] ->
-			ar_ets_intervals:get_next_interval(TID, Offset, RightBound)
+			ar_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
+	end.
+
+%% @doc Return the lowest unsynced interval with the end offset strictly above the given Offset
+%% and at most EndOffsetUpperBound.
+%% Return not_found if there are no such intervals.
+get_next_unsynced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
+	case ets:lookup(sync_records, {ID, StoreID}) of
+		[] ->
+			not_found;
+		[{_, TID}] ->
+			ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
 	end.
 
 %% @doc Return the lowest synced interval with the end offset strictly above the given Offset
-%% and with the right bound at most RightBound.
+%% and at most EndOffsetUpperBound.
 %% Return not_found if there are no such intervals.
-get_next_synced_interval(Offset, RightBound, Type, ID, StoreID) ->
+get_next_synced_interval(Offset, EndOffsetUpperBound, Type, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, Type, StoreID}) of
 		[] ->
 			not_found;
 		[{_, TID}] ->
-			ar_ets_intervals:get_next_interval(TID, Offset, RightBound)
+			ar_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
 	end.
 
 %% @doc Return the interval containing the given Offset, including the right bound,
@@ -252,7 +264,7 @@ init(StoreID) ->
 		end,
 	StateDB = {sync_record, StoreID},
 	ok = ar_kv:open(Dir, StateDB),
-	{SyncRecordByID, SyncRecordByIDType, WAL} = read_sync_records(StateDB),
+	{SyncRecordByID, SyncRecordByIDType, WAL} = read_sync_records(StateDB, StoreID),
 	initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
 	initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
 	gen_server:cast(self(), store_state),
@@ -285,6 +297,12 @@ handle_call({add, End, Start, ID}, _From, State) ->
 	ar_ets_intervals:add(TID, End, Start),
 	State2 = State#state{ sync_record_by_id = SyncRecordByID2 },
 	{Reply, State3} = update_write_ahead_log({add, {End, Start, ID}}, StateDB, State2),
+	case Reply of
+		ok ->
+			emit_add_range(Start, End, ID, StoreID);
+		_ ->
+			ok
+	end,
 	{reply, Reply, State3};
 
 handle_call({add, End, Start, Type, ID}, _From, State) ->
@@ -303,6 +321,12 @@ handle_call({add, End, Start, Type, ID}, _From, State) ->
 	State2 = State#state{ sync_record_by_id = SyncRecordByID2,
 			sync_record_by_id_type = SyncRecordByIDType2 },
 	{Reply, State3} = update_write_ahead_log({{add, Type}, {End, Start, ID}}, StateDB, State2),
+	case Reply of
+		ok ->
+			emit_add_range(Start, End, ID, StoreID);
+		_ ->
+			ok
+	end,
 	{reply, Reply, State3};
 
 handle_call({delete, End, Start, ID}, _From, State) ->
@@ -336,6 +360,12 @@ handle_call({delete, End, Start, ID}, _From, State) ->
 	State2 = State#state{ sync_record_by_id = SyncRecordByID2,
 			sync_record_by_id_type = SyncRecordByIDType2 },
 	{Reply, State3} = update_write_ahead_log({delete, {End, Start, ID}}, StateDB, State2),
+	case Reply of
+		ok ->
+			emit_remove_range(Start, End, StoreID);
+		_ ->
+			ok
+	end,
 	{reply, Reply, State3};
 
 handle_call({cut, Offset, ID}, _From, State) ->
@@ -369,6 +399,12 @@ handle_call({cut, Offset, ID}, _From, State) ->
 	State2 = State#state{ sync_record_by_id = SyncRecordByID2,
 			sync_record_by_id_type = SyncRecordByIDType2 },
 	{Reply, State3} = update_write_ahead_log({cut, {Offset, ID}}, StateDB, State2),
+	case Reply of
+		ok ->
+			emit_cut(Offset, StoreID);
+		_ ->
+			ok
+	end,
 	{reply, Reply, State3};
 
 handle_call(Request, _From, State) ->
@@ -440,7 +476,7 @@ is_recorded2(Offset, {ID, Type, StoreID}, ID, StoreID) ->
 is_recorded2(Offset, Key, ID, StoreID) ->
 	is_recorded2(Offset, ets:next(sync_records, Key), ID, StoreID).
 
-read_sync_records(StateDB) ->
+read_sync_records(StateDB, StoreID) ->
 	{SyncRecordByID, SyncRecordByIDType} =
 		case ar_kv:get(StateDB, ?SYNC_RECORDS_KEY) of
 			not_found ->
@@ -449,10 +485,10 @@ read_sync_records(StateDB) ->
 				binary_to_term(V)
 		end,
 	{SyncRecordByID2, SyncRecordByIDType2, WAL} =
-		replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB),
+		replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB, StoreID),
 	{SyncRecordByID2, SyncRecordByIDType2, WAL}.
 
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB) ->
+replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB, StoreID) ->
 	WAL =
 		case ar_kv:get(StateDB, ?WAL_COUNT_KEY) of
 			not_found ->
@@ -460,14 +496,15 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB) ->
 			{ok, V} ->
 				binary:decode_unsigned(V)
 		end,
-	replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, WAL, StateDB).
+	replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, WAL, StateDB, StoreID).
 
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, WAL, StateDB) ->
-	replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, 1, WAL, StateDB).
+replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, WAL, StateDB, StoreID) ->
+	replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, 1, WAL, StateDB, StoreID).
 
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, _StateDB) when N > WAL ->
+replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, _StateDB, _StoreID)
+		when N > WAL ->
 	{SyncRecordByID, SyncRecordByIDType, WAL};
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB) ->
+replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, StoreID) ->
 	case ar_kv:get(StateDB, binary:encode_unsigned(N)) of
 		not_found ->
 			%% The VM crashed after recording the number.
@@ -479,9 +516,10 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB) ->
 					{End, Start, ID} = Params,
 					SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
 					SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+					emit_add_range(Start, End, ID, StoreID),
 					SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
 					replay_write_ahead_log(
-						SyncRecordByID2, SyncRecordByIDType, N + 1, WAL, StateDB);
+						SyncRecordByID2, SyncRecordByIDType, N + 1, WAL, StateDB, StoreID);
 				{add, Type} ->
 					{End, Start, ID} = Params,
 					SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
@@ -489,13 +527,15 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB) ->
 					SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
 					ByType = maps:get({ID, Type}, SyncRecordByIDType, ar_intervals:new()),
 					ByType2 = ar_intervals:add(ByType, End, Start),
+					emit_add_range(Start, End, ID, StoreID),
 					SyncRecordByIDType2 = maps:put({ID, Type}, ByType2, SyncRecordByIDType),
 					replay_write_ahead_log(
-						SyncRecordByID2, SyncRecordByIDType2, N + 1, WAL, StateDB);
+						SyncRecordByID2, SyncRecordByIDType2, N + 1, WAL, StateDB, StoreID);
 				delete ->
 					{End, Start, ID} = Params,
 					SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
 					SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
+					emit_remove_range(Start, End, StoreID),
 					SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
 					SyncRecordByIDType2 =
 						maps:map(
@@ -508,11 +548,12 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB) ->
 							SyncRecordByIDType
 						),
 					replay_write_ahead_log(
-						SyncRecordByID2, SyncRecordByIDType2, N + 1, WAL, StateDB);
+						SyncRecordByID2, SyncRecordByIDType2, N + 1, WAL, StateDB, StoreID);
 				cut ->
 					{Offset, ID} = Params,
 					SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
 					SyncRecord2 = ar_intervals:cut(SyncRecord, Offset),
+					emit_cut(Offset, StoreID),
 					SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
 					SyncRecordByIDType2 =
 						maps:map(
@@ -525,9 +566,18 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB) ->
 							SyncRecordByIDType
 						),
 					replay_write_ahead_log(
-						SyncRecordByID2, SyncRecordByIDType2, N + 1, WAL, StateDB)
+						SyncRecordByID2, SyncRecordByIDType2, N + 1, WAL, StateDB, StoreID)
 			end
 	end.
+
+emit_add_range(Start, End, ID, StoreID) ->
+	ar_events:send(sync_record, {add_range, Start, End, ID, StoreID}).
+
+emit_remove_range(Start, End, StoreID) ->
+	ar_events:send(sync_record, {remove_range, Start, End, StoreID}).
+
+emit_cut(Offset, StoreID) ->
+	ar_events:send(sync_record, {cut, Offset, StoreID}).
 
 initialize_sync_record_by_id_ets(SyncRecordByID, StoreID) ->
 	Iterator = maps:iterator(SyncRecordByID),
