@@ -30,7 +30,7 @@
 		json_map_to_candidate/1,
 		jobs_to_json_struct/1, json_struct_to_jobs/1,
 		partial_solution_response_to_json_struct/1,
-		pool_cm_jobs_to_json_struct/1, json_struct_to_pool_cm_jobs/1]).
+		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
@@ -1937,16 +1937,9 @@ pool_cm_h1_to_h2_job_to_json_struct(Job) ->
 pool_cm_h1_read_job_to_json_struct(Job) ->
 	candidate_to_json_struct(Job).
 
-json_struct_to_pool_cm_jobs(Struct) ->
-	{Keys} = Struct,
-	H1ToH2Jobs = [json_struct_to_pool_cm_h1_to_h2_job(Job)
-			|| Job <- proplists:get_value(<<"h1_to_h2_jobs">>, Keys, [])],
-	H1ReadJobs = [json_struct_to_pool_cm_h1_read_jobs(Job)
-			|| Job <- proplists:get_value(<<"h1_read_jobs">>, Keys, [])],
+json_map_to_pool_cm_jobs(Map) ->
+	H1ToH2Jobs = [json_map_to_candidate(Job)
+			|| Job <- maps:get(<<"h1_to_h2_jobs">>, Map, [])],
+	H1ReadJobs = [json_map_to_candidate(Job)
+			|| Job <- maps:get(<<"h1_read_jobs">>, Map, [])],
 	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs }.
-
-json_struct_to_pool_cm_h1_to_h2_job(Struct) ->
-	json_map_to_candidate(Struct).
-
-json_struct_to_pool_cm_h1_read_jobs(Struct) ->
-	json_map_to_candidate(Struct).
