@@ -2640,8 +2640,8 @@ handle_post_pool_cm_jobs2(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case catch ar_serialize:json_struct_to_pool_cm_jobs(
-					ar_serialize:dejsonify(Body)) of		
+			case catch ar_serialize:json_map_to_pool_cm_jobs(
+					element(2, ar_serialize:json_decode(Body, [{return_maps, true}]))) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
 				Jobs ->

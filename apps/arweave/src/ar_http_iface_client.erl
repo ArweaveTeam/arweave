@@ -778,7 +778,8 @@ post_cm_partition_table_to_pool(Peer, Payload) ->
 	})).
 
 handle_get_pool_cm_jobs_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	case catch ar_serialize:json_struct_to_pool_cm_jobs(ar_serialize:dejsonify(Body)) of
+	case catch ar_serialize:json_map_to_pool_cm_jobs(
+			element(2, ar_serialize:json_decode(Body, [{return_maps, true}]))) of
 		{'EXIT', _} ->
 			{error, invalid_json};
 		Jobs ->
