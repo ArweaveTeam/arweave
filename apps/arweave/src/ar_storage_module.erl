@@ -6,6 +6,8 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("eunit/include/eunit.hrl").
+
 
 %% The overlap makes sure a 100 MiB recall range can always be fetched
 %% from a single storage module.
@@ -20,16 +22,6 @@
 %%%===================================================================
 
 %% @doc Return the storage module identifier.
-id({BucketSize, Bucket, Packing}) when BucketSize == ?PARTITION_SIZE ->
-	PackingString =
-		case Packing of
-			{spora_2_6, Addr} ->
-				ar_util:encode(Addr);
-			_ ->
-				atom_to_list(Packing)
-		end,
-	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
-			[Bucket, PackingString])));
 id({BucketSize, Bucket, Packing}) ->
 	PackingString =
 		case Packing of
@@ -38,11 +30,10 @@ id({BucketSize, Bucket, Packing}) ->
 			_ ->
 				atom_to_list(Packing)
 		end,
-	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
-			[BucketSize, Bucket, PackingString]))).
+	id(BucketSize, Bucket, PackingString).
 
 %% @doc Return the obscure unique label for the given storage module.
-label({_BucketSize, _Bucket, Packing} = StorageModule) ->
+label({BucketSize, Bucket, Packing} = StorageModule) ->
 	StoreID = ar_storage_module:id(StorageModule),
 	case ets:lookup(?MODULE, {label, StoreID}) of
 		[] ->
@@ -53,17 +44,7 @@ label({_BucketSize, _Bucket, Packing} = StorageModule) ->
 					_ ->
 						atom_to_list(Packing)
 				end,
-			Label =
-				case StoreID of
-					"default" ->
-						"default";
-					_ ->
-						Parts = binary:split(list_to_binary(StoreID), <<"_">>, [global]),
-						Tail = tl(lists:reverse(Parts)),
-						Parts2 = lists:reverse([list_to_binary(PackingLabel) | Tail]),
-						Parts3 = [binary_to_list(El) || El <- Parts2],
-						string:join(Parts3, "_")
-				end,
+			Label = id(BucketSize, Bucket, PackingLabel),
 			ets:insert(?MODULE, {{label, StoreID}, Label}),
 			Label;
 		[{_, Label}] ->
@@ -176,6 +157,14 @@ get_all(Start, End) ->
 %%% Private functions.
 %%%===================================================================
 
+id(BucketSize, Bucket, PackingString) when BucketSize == ?PARTITION_SIZE ->
+	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
+			[Bucket, PackingString])));
+id(BucketSize, Bucket, PackingString) ->
+	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
+			[BucketSize, Bucket, PackingString]))).
+
+
 get(Offset, Packing, [{BucketSize, Bucket, _Packing} | StorageModules], StorageModule)
 		when Offset =< BucketSize * Bucket
 				orelse Offset > BucketSize * (Bucket + 1) + ?OVERLAP ->
@@ -204,3 +193,30 @@ get_all(Start, End, [StorageModule | StorageModules], FoundModules) ->
 	get_all(Start, End, StorageModules, [StorageModule | FoundModules]);
 get_all(_Start, _End, [], FoundModules) ->
 	FoundModules.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+label_test() ->
+	?assertEqual("storage_module_0_1",
+		label({?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}})),
+	?assertEqual("storage_module_0_1",
+		label({?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}})),
+	?assertEqual("storage_module_2_1",
+		label({?PARTITION_SIZE, 2, {spora_2_6, <<"a">>}})),
+	?assertEqual("storage_module_0_2",
+		label({?PARTITION_SIZE, 0, {spora_2_6, <<"b">>}})),
+	?assertEqual("storage_module_524288_3_2",
+		label({524288, 3, {spora_2_6, <<"b">>}})),
+	?assertEqual("storage_module_2_unpacked",
+		label({?PARTITION_SIZE, 2, unpacked})),
+	%% force a _ in the encoded address
+	?assertEqual("storage_module_2_3",
+		label({?PARTITION_SIZE, 2, {spora_2_6, <<"s÷">>}})),
+	?assertEqual("storage_module_524288_2_3",
+		label({524288, 2, {spora_2_6, <<"s÷">>}})).
+
+
+
+

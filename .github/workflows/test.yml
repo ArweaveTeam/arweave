@@ -38,6 +38,7 @@ jobs:
             ar_retarget,
             ar_serialize,
             ar_storage,
+            ar_storage_module,
             ar_sync_buckets,
             ar_tx,
             ar_tx_db,
