@@ -705,7 +705,7 @@ fetch_poa_from_peers(RecallByte) ->
 			spawn(
 				fun() ->
 					?LOG_INFO([{event, last_moment_proof_search},
-							{peer, ar_util:format_peer(Peer)}]),
+							{peer, ar_util:format_peer(Peer)}, {recall_byte, RecallByte}]),
 					case fetch_poa_from_peer(Peer, RecallByte) of
 						not_found ->
 							ok;
