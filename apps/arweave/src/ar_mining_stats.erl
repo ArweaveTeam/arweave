@@ -168,7 +168,8 @@ set_storage_module_data_size(
 		prometheus_gauge:set(v2_index_data_size_by_packing,
 			[StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex],
 			DataSize),
-		ets:insert(?MODULE, {{partition, PartitionNumber, storage_module, StoreID}, DataSize})
+		ets:insert(?MODULE, {
+			{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize})
 	catch
 		error:badarg ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
@@ -334,7 +335,7 @@ get_overall_average(PartitionPeer, Stat, TotalCurrent) ->
 	end.
 
 get_partition_data_size(PartitionNumber) ->
-    Pattern = {{partition, PartitionNumber, storage_module, '_'}, '$1'},
+    Pattern = {{partition, PartitionNumber, storage_module, '_', packing, '_'}, '$1'},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
     lists:sum(Sizes).
 
@@ -922,16 +923,18 @@ test_data_size_stats() ->
 
 	ar_mining_stats:set_storage_module_data_size(store_id1, unpacked, 1, 100, 1, 100),
 	ar_mining_stats:set_storage_module_data_size(store_id2, unpacked, 1, 300, 2, 200),
+	ar_mining_stats:set_storage_module_data_size(store_id2, spora_2_6_1, 1, 300, 2, 150),
+	ar_mining_stats:set_storage_module_data_size(store_id2, spora_2_6_2, 1, 300, 2, 75),
 	ar_mining_stats:set_storage_module_data_size(store_id3, unpacked, 1, 200, 3, 50),
 	ar_mining_stats:set_storage_module_data_size(store_id4, unpacked, 2, 300, 1, 200),
 
-	?assertEqual(350, get_partition_data_size(1)),
+	?assertEqual(575, get_partition_data_size(1)),
 	?assertEqual(200, get_partition_data_size(2)),
 
 	ar_mining_stats:set_storage_module_data_size(store_id2, unpacked, 1, 300, 2, 100),
 	ar_mining_stats:set_storage_module_data_size(store_id5, unpacked, 2, 100, 2, 100),
 
-	?assertEqual(250, get_partition_data_size(1)),
+	?assertEqual(475, get_partition_data_size(1)),
 	?assertEqual(300, get_partition_data_size(2)),
 
 	reset_all_stats(),
