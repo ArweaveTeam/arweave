@@ -164,9 +164,11 @@ set_total_data_size(DataSize) ->
 
 set_storage_module_data_size(
 		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
-	try
+	StoreLabel = ar_storage_module:label_by_id(StoreID),
+	PackingLabel = ar_storage_module:packing_label(Packing),
+	try	
 		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex],
+			[StoreLabel, PackingLabel, PartitionNumber, StorageModuleSize, StorageModuleIndex],
 			DataSize),
 		ets:insert(?MODULE, {
 			{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize})
@@ -174,21 +176,27 @@ set_storage_module_data_size(
 		error:badarg ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
-				{store_id, StoreID}, {packing, Packing}, {partition_number, PartitionNumber},
-				{storage_module_size, StorageModuleSize}, {storage_module_index, StorageModuleIndex},
-				{data_size, DataSize}]);
+				{store_id, StoreID}, {store_label, StoreLabel},
+				{packing, ar_chunk_storage:encode_packing(Packing)},
+				{packing_label, PackingLabel},
+				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
+				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
 		error:{unknown_metric,default,v2_index_data_size_by_packing} ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
-				{store_id, StoreID}, {packing, Packing}, {partition_number, PartitionNumber},
-				{storage_module_size, StorageModuleSize}, {storage_module_index, StorageModuleIndex},
-				{data_size, DataSize}]);
+				{store_id, StoreID}, {store_label, StoreLabel},
+				{packing, ar_chunk_storage:encode_packing(Packing)},
+				{packing_label, PackingLabel},
+				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
+				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
 		Type:Reason ->
 			?LOG_ERROR([{event, set_storage_module_data_size_failed},
 				{type, Type}, {reason, Reason},
-				{store_id, StoreID}, {packing, Packing}, {partition_number, PartitionNumber},
-				{storage_module_size, StorageModuleSize}, {storage_module_index, StorageModuleIndex},
-				{data_size, DataSize} ])
+				{store_id, StoreID}, {store_label, StoreLabel},
+				{packing, ar_chunk_storage:encode_packing(Packing)},
+				{packing_label, PackingLabel},
+				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
+				{storage_module_index, StorageModuleIndex}, {data_size, DataSize} ])
 	end.
 
 mining_paused() ->
@@ -335,7 +343,12 @@ get_overall_average(PartitionPeer, Stat, TotalCurrent) ->
 	end.
 
 get_partition_data_size(PartitionNumber) ->
-    Pattern = {{partition, PartitionNumber, storage_module, '_', packing, '_'}, '$1'},
+	{ok, Config} = application:get_env(arweave, config),
+	MiningAddress = Config#config.mining_addr,
+    Pattern = {
+		{partition, PartitionNumber, storage_module, '_', packing, {spora_2_6, MiningAddress}},
+		'$1'
+	},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
     lists:sum(Sizes).
 
