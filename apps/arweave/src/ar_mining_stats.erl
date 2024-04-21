@@ -770,24 +770,60 @@ format_vdf_speed(VDFSpeed) ->
 %%%===================================================================
 
 mining_stats_test_() ->
-	[
-		{timeout, 30, fun test_read_stats/0},
-		{timeout, 30, fun test_h1_stats/0},
-		{timeout, 30, fun test_h2_stats/0},
-		{timeout, 30, fun test_vdf_stats/0},
-		{timeout, 30, fun test_data_size_stats/0},
-		{timeout, 30, fun test_h1_sent_to_peer_stats/0},
-		{timeout, 30, fun test_h1_received_from_peer_stats/0},
-		{timeout, 30, fun test_h2_peer_stats/0},
-		{timeout, 30, fun test_optimal_stats_poa1_multiple_1/0},
-		{timeout, 30, fun test_optimal_stats_poa1_multiple_2/0},
-		{timeout, 30, fun test_report_poa1_multiple_1/0},
-		ar_test_node:test_with_mocked_functions(
-			[
-				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
-			],
-			fun test_report_poa1_multiple_2/0)
-	].
+    {
+        setup,
+        fun setup_env/0,  % Function to setup the environment
+        fun cleanup_env/1, % Function to cleanup the environment
+        [
+            {timeout, 30, fun test_read_stats/0},
+            {timeout, 30, fun test_h1_stats/0},
+            {timeout, 30, fun test_h2_stats/0},
+            {timeout, 30, fun test_vdf_stats/0},
+            {timeout, 30, fun test_data_size_stats/0},
+            {timeout, 30, fun test_h1_sent_to_peer_stats/0},
+            {timeout, 30, fun test_h1_received_from_peer_stats/0},
+            {timeout, 30, fun test_h2_peer_stats/0},
+            {timeout, 30, fun test_optimal_stats_poa1_multiple_1/0},
+            {timeout, 30, fun test_optimal_stats_poa1_multiple_2/0},
+            {timeout, 30, fun test_report_poa1_multiple_1/0},
+            ar_test_node:test_with_mocked_functions(
+                [
+                    {ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
+                ],
+                fun test_report_poa1_multiple_2/0
+            )
+        ]
+    }.
+
+setup_env() ->
+    {ok, Config} = application:get_env(arweave, config),
+	MiningAddress = <<"MINING">>,
+	PackingAddress = <<"PACKING">>,
+	StorageModules = [
+		%% partition 1
+		{floor(0.1 * ?PARTITION_SIZE), 10, unpacked},
+		{floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}},
+		{floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}},
+		{floor(0.3 * ?PARTITION_SIZE), 4, unpacked},
+		{floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}},
+		{floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}},
+		{floor(0.2 * ?PARTITION_SIZE), 8, unpacked},
+		{floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}},
+		{floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}},
+		%% partition 2
+		{?PARTITION_SIZE, 2, unpacked},
+		{?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}},
+		{?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}
+	],
+    application:set_env(arweave, config,
+		Config#config{
+			storage_modules = StorageModules,
+			mining_addr = MiningAddress
+	}),
+    Config.
+
+cleanup_env(Config) ->
+    application:set_env(arweave, config, Config).
 
 test_read_stats() ->
 	test_local_stats(fun chunk_read/1, read).
@@ -934,21 +970,64 @@ test_data_size_stats() ->
 	ar_mining_stats:set_total_data_size(500),
 	?assertEqual(500, get_total_data_size()),
 
-	ar_mining_stats:set_storage_module_data_size(store_id1, unpacked, 1, 100, 1, 100),
-	ar_mining_stats:set_storage_module_data_size(store_id2, unpacked, 1, 300, 2, 200),
-	ar_mining_stats:set_storage_module_data_size(store_id2, spora_2_6_1, 1, 300, 2, 150),
-	ar_mining_stats:set_storage_module_data_size(store_id2, spora_2_6_2, 1, 300, 2, 75),
-	ar_mining_stats:set_storage_module_data_size(store_id3, unpacked, 1, 200, 3, 50),
-	ar_mining_stats:set_storage_module_data_size(store_id4, unpacked, 2, 300, 1, 200),
+	MiningAddress = <<"MINING">>,
+	PackingAddress = <<"PACKING">>,
 
-	?assertEqual(575, get_partition_data_size(1)),
-	?assertEqual(200, get_partition_data_size(2)),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, unpacked}),
+		unpacked, 1, floor(0.1 * ?PARTITION_SIZE), 10, 101),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 102),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}}),
+		{spora_2_6, PackingAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 103),
 
-	ar_mining_stats:set_storage_module_data_size(store_id2, unpacked, 1, 300, 2, 100),
-	ar_mining_stats:set_storage_module_data_size(store_id5, unpacked, 2, 100, 2, 100),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, unpacked}),
+		unpacked, 1, floor(0.3 * ?PARTITION_SIZE), 4, 111),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 112),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}}),
+		{spora_2_6, PackingAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 113),
 
-	?assertEqual(475, get_partition_data_size(1)),
-	?assertEqual(300, get_partition_data_size(2)),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
+		unpacked, 2, ?PARTITION_SIZE, 2, 201),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 202),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
+		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 203),
+
+	?assertEqual(214, get_partition_data_size(1)),
+	?assertEqual(202, get_partition_data_size(2)),
+
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, unpacked}),
+		unpacked, 1, floor(0.2 * ?PARTITION_SIZE), 8, 121),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 122),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}}),
+		{spora_2_6, PackingAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 123),
+
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
+		unpacked, 2, ?PARTITION_SIZE, 2, 51),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 52),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
+		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 53),
+	
+	?assertEqual(336, get_partition_data_size(1)),
+	?assertEqual(52, get_partition_data_size(2)),
 
 	reset_all_stats(),
 	?assertEqual(0, get_total_data_size()),
@@ -1178,7 +1257,7 @@ test_report_poa1_multiple_2() ->
 test_report(PoA1Multiplier) ->
 	ar_mining_stats:pause_performance_reports(120000),
 	reset_all_stats(),
-	MiningAddress = crypto:strong_rand_bytes(32),
+	MiningAddress = <<"MINING">>,
 	Partitions = [
 		{1, MiningAddress},
 		{2, MiningAddress},
@@ -1192,10 +1271,21 @@ test_report(PoA1Multiplier) ->
 	Now = erlang:monotonic_time(millisecond),
 	WeaveSize = floor(10 * ?PARTITION_SIZE),
 	ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
-	ar_mining_stats:set_storage_module_data_size(store_id1, unpacked, 1, floor(0.1 * ?PARTITION_SIZE), 1, floor(0.1 * ?PARTITION_SIZE)),
-	ar_mining_stats:set_storage_module_data_size(store_id2, unpacked, 1, floor(0.3 * ?PARTITION_SIZE), 2, floor(0.2 * ?PARTITION_SIZE)),
-	ar_mining_stats:set_storage_module_data_size(store_id3, unpacked, 1, floor(0.2 * ?PARTITION_SIZE), 3, floor(0.05 * ?PARTITION_SIZE)),
-	ar_mining_stats:set_storage_module_data_size(store_id4, unpacked, 2, ?PARTITION_SIZE, 1, floor(0.25 * ?PARTITION_SIZE)),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10,
+		floor(0.1 * ?PARTITION_SIZE)),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4,
+		floor(0.2 * ?PARTITION_SIZE)),
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8,
+		floor(0.05 * ?PARTITION_SIZE)),	
+	ar_mining_stats:set_storage_module_data_size(
+		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
+		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, floor(0.25 * ?PARTITION_SIZE)),
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
