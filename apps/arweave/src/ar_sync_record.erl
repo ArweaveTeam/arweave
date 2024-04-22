@@ -582,24 +582,8 @@ store_state(State) ->
 		ok ->
 			maps:map(
 				fun	({ar_data_sync, Type}, TypeRecord) ->
-						Type2 =
-							case Type of
-								{spora_2_6, Addr} ->
-									AddrLabel = ar_storage_module:address_label(Addr),
-									list_to_atom("spora_2_6_" ++ AddrLabel);
-								_ ->
-									Type
-							end,
-						StoreLabel =
-							case StoreID of
-								"default" ->
-									"default";
-								_ ->
-									StorageModule = ar_storage_module:get_by_id(StoreID),
-									ar_storage_module:label(StorageModule)
-							end,
 						ar_mining_stats:set_storage_module_data_size(
-							StoreLabel, Type2, PartitionNumber, StorageModuleSize,
+							StoreID, Type, PartitionNumber, StorageModuleSize,
 							StorageModuleIndex,
 							ar_intervals:sum(TypeRecord));
 					(_, _) ->

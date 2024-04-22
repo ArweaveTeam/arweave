@@ -1,6 +1,6 @@
 -module(ar_storage_module).
 
--export([id/1, label/1, address_label/1, label_by_id/1,
+-export([id/1, label/1, address_label/1, packing_label/1, label_by_id/1,
 		get_by_id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -68,6 +68,12 @@ address_label(Addr) ->
 		[{_, Label}] ->
 			integer_to_list(Label)
 	end.
+
+packing_label({spora_2_6, Addr}) ->
+	AddrLabel = ar_storage_module:address_label(Addr),
+	list_to_atom("spora_2_6_" ++ AddrLabel);
+packing_label(Packing) ->
+	Packing.
 
 %% @doc Return the obscure unique label for the given store ID.
 label_by_id("default") ->
