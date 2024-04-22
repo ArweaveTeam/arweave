@@ -1667,7 +1667,8 @@ candidate_to_json_struct(
 		seed = Seed,
 		session_key = SessionKey,
 		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber
+		step_number = StepNumber,
+		label = Label
 	}) ->
 	JSON = [
 		{cm_diff, diff_pair_to_json_list(DiffPair)},
@@ -1683,7 +1684,8 @@ candidate_to_json_struct(
 		{session_key, session_key_json_struct(SessionKey)},
 		{start_interval_number, integer_to_binary(StartIntervalNumber)},
 		{step_number, integer_to_binary(StepNumber)},
-		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)}
+		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
+		{label, Label}
 	],
 
 	JSON2 = encode_if_set(JSON, h1, H1, fun ar_util:encode/1),
@@ -1728,6 +1730,7 @@ json_map_to_candidate(JSON) ->
 	SessionKey = json_struct_to_session_key(maps:get(<<"session_key">>, JSON)),
 	StartIntervalNumber = binary_to_integer(maps:get(<<"start_interval_number">>, JSON)),
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
+	Label = maps:get(<<"label">>, JSON, <<"not_set">>),
 
 	#mining_candidate{
 		cm_diff = DiffPair,
@@ -1748,7 +1751,8 @@ json_map_to_candidate(JSON) ->
 		seed = Seed,
 		session_key = SessionKey,
 		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber
+		step_number = StepNumber,
+		label = Label
 	}.
 
 json_struct_to_h1_list(JSON) ->
