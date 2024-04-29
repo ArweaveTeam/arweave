@@ -105,7 +105,7 @@ init([]) ->
 	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
 	ar:console("RandomX dataset initialisation complete.~n", []),
 	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
-	{H0, H1} = ar_bench_hash:run_benchmark(),
+	{H0, H1} = ar_bench_hash:run_benchmark(PackingStateRef),
 	H0String = io_lib:format("~.3f", [H0 / 1000]),
 	H1String = io_lib:format("~.3f", [H1 / 1000]),
 	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
