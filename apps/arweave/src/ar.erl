@@ -6,7 +6,8 @@
 -behaviour(application).
 
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
-		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0, start/0,
+		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0,
+		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, tests/2, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2]).
@@ -839,6 +840,12 @@ benchmark_packing(Args) ->
 
 benchmark_vdf() ->
 	ar_bench_vdf:run_benchmark(),
+	erlang:halt().
+
+benchmark_hash() ->
+	benchmark_hash([]).
+benchmark_hash(Args) ->
+	ar_bench_hash:run_benchmark_from_cli(Args),
 	erlang:halt().
 
 shutdown([NodeName]) ->

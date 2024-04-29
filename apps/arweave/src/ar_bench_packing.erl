@@ -59,11 +59,11 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF) ->
 	io:format("~12s: ~p~n", ["VDF", VDF]),
 	io:format("~n"),
 
-	generate_input(TotalMegaBytes, NumWorkers,  Root, RewardAddress),
+	Permutation = {TotalMegaBytes, JIT, LargePages, HardwareAES},
+	generate_input(Permutation, NumWorkers,  Root, RewardAddress),
 
 	start_vdf(VDF),
 
-	Permutation = {TotalMegaBytes, JIT, LargePages, HardwareAES},
 	case Test of
 		baseline_pack ->
 			run_dirty_benchmark(baseline_pack, Permutation, NumWorkers, Root, RewardAddress);
@@ -122,7 +122,7 @@ unpacked_filename(TotalMegaBytes) ->
 packed_filename(TotalMegaBytes) ->
 	io_lib:format("benchmark.input.~p.packed", [TotalMegaBytes]).
 
-generate_input(TotalMegaBytes, NumWorkers, Root, RewardAddress) ->
+generate_input({TotalMegaBytes, _, _, _} = Permutation, NumWorkers, Root, RewardAddress) ->
 	TotalBytes = TotalMegaBytes * ?MiB,
 
 	UnpackedFilename = unpacked_filename(TotalMegaBytes),
@@ -148,11 +148,11 @@ generate_input(TotalMegaBytes, NumWorkers, Root, RewardAddress) ->
 					ok;
 				true ->
 					file:delete(PackedFilename),
-					write_packed_data(UnpackedFilename, PackedFilename,
+					write_packed_data(Permutation, UnpackedFilename, PackedFilename,
 						TotalMegaBytes, NumWorkers, Root, RewardAddress)
 			end;
 		{error, _} ->
-			write_packed_data(UnpackedFilename, PackedFilename,
+			write_packed_data(Permutation, UnpackedFilename, PackedFilename,
 						TotalMegaBytes, NumWorkers, Root, RewardAddress)
 	end.
 
@@ -173,11 +173,11 @@ write_chunks_loop(File, RemainingBytes, ChunkSize) ->
     file:write(File, Data),
     write_chunks_loop(File, RemainingBytes - BytesToWrite, ChunkSize).
 
-write_packed_data(UnpackedFilename, PackedFilename,
+write_packed_data({_, JIT, LargePages, _}, UnpackedFilename, PackedFilename,
 		TotalMegaBytes, NumWorkers, Root, RewardAddress) ->
 	io:format("Generating input file: ~s~n", [PackedFilename]),
 	{ok, RandomXState} = ar_bench_timer:record({init},
-		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, 1, 1, NumWorkers]),
+		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
 
 	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
 	PackedFileHandle = open_file(PackedFilename, [write, binary]),
