@@ -92,13 +92,10 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 								case throttle_by_solution_hash(B#block.hash, HashTimestamps,
 										ThrottleBySolutionInterval) of
 									{true, HashTimestamps2} ->
-										Info = B#block.nonce_limiter_info,
-										StepNumber
-											= Info#nonce_limiter_info.global_step_number,
 										?LOG_INFO([{event, processing_block},
 												{peer, ar_util:format_peer(Peer)},
 												{height, B#block.height},
-												{step_number, StepNumber},
+												{step_number, ar_block:vdf_step_number(B)},
 												{block, ar_util:encode(B#block.indep_hash)},
 												{miner_address,
 														ar_util:encode(B#block.reward_addr)},
@@ -431,9 +428,9 @@ validate_poa_against_cached_poa(B, CacheB) ->
 
 pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) ->
 	BlockInfo = B#block.nonce_limiter_info,
-	StepNumber = BlockInfo#nonce_limiter_info.global_step_number,
+	StepNumber = ar_block:vdf_step_number(B),
 	PrevBlockInfo = PrevB#block.nonce_limiter_info,
-	PrevStepNumber = PrevBlockInfo#nonce_limiter_info.global_step_number,
+	PrevStepNumber = ar_block:vdf_step_number(PrevB),
 	CurrentStepNumber =
 		case ar_nonce_limiter:get_current_step_number(PrevB) of
 			not_found ->
@@ -543,7 +540,7 @@ pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer) ->
 			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 			vdf_difficulty = VDFDifficulty,
 			next_partition_upper_bound = NextPartitionUpperBound } = Info,
-	StepNumber = (B#block.nonce_limiter_info)#nonce_limiter_info.global_step_number,
+	StepNumber = ar_block:vdf_step_number(B),
 	ExpectedSeedData = ar_nonce_limiter:get_seed_data(StepNumber, PrevB),
 	case ExpectedSeedData == {Seed, NextSeed, PartitionUpperBound,
 			NextPartitionUpperBound, VDFDifficulty} of

@@ -454,7 +454,7 @@ get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
 	Fork_2_7 = ar_fork:height_2_7(),
 	true = Height >= Fork_2_7,
 	ExpectedLength = min(Height - Fork_2_7 + 1,
-			?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+			ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
 	true = length(ExpectedBlockTimeHistoryHashes) == min(Height - Fork_2_7 + 1,
 			?STORE_BLOCKS_BEHIND_CURRENT),
 	case ar_http:req(#{
@@ -467,7 +467,7 @@ get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			case ar_serialize:binary_to_block_time_history(Body) of
 				{ok, BlockTimeHistory} when length(BlockTimeHistory) == ExpectedLength ->
-					case validate_block_time_history_hashes(BlockTimeHistory,
+					case ar_block_time_history:validate_hashes(BlockTimeHistory,
 							ExpectedBlockTimeHistoryHashes) of
 						true ->
 							{ok, BlockTimeHistory};
@@ -554,17 +554,6 @@ get_previous_vdf_session(Peer) ->
 			{error, {Status, ResponseBody}};
 		Reply ->
 			Reply
-	end.
-
-validate_block_time_history_hashes(_BlockTimeHistory, []) ->
-	true;
-validate_block_time_history_hashes(BlockTimeHistory, [H | ExpectedBlockTimeHistoryHashes]) ->
-	case ar_block:validate_block_time_history_hash(H, BlockTimeHistory) of
-		true ->
-			validate_block_time_history_hashes(tl(BlockTimeHistory),
-					ExpectedBlockTimeHistoryHashes);
-		false ->
-			false
 	end.
 
 get_cm_partition_table(Peer) ->

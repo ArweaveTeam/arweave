@@ -191,7 +191,7 @@ store_reward_history_part([]) ->
 	ok;
 store_reward_history_part(Blocks) ->
 	store_reward_history_part2([{B#block.indep_hash, {B#block.reward_addr,
-			ar_difficulty:get_hash_rate(B), B#block.reward,
+			ar_difficulty:get_hash_rate_fixed_ratio(B), B#block.reward,
 			B#block.denomination}} || B <- Blocks]).
 
 store_reward_history_part2([]) ->
@@ -211,19 +211,8 @@ store_reward_history_part2([{H, El} | History]) ->
 store_block_time_history_part([], _PrevB) ->
 	ok;
 store_block_time_history_part(Blocks, PrevB) ->
-	History = get_block_time_history_from_blocks(Blocks, PrevB),
+	History = ar_block_time_history:get_history_from_blocks(Blocks, PrevB),
 	store_block_time_history_part2(History).
-
-get_block_time_history_from_blocks([], _PrevB) ->
-	[];
-get_block_time_history_from_blocks([B | Blocks], PrevB) ->
-	case B#block.height >= ar_fork:height_2_7() of
-		false ->
-			get_block_time_history_from_blocks(Blocks, B);
-		true ->
-			[{B#block.indep_hash, ar_block:get_block_time_history_element(B, PrevB)}
-					| get_block_time_history_from_blocks(Blocks, B)]
-	end.
 
 store_block_time_history_part2([]) ->
 	ok;

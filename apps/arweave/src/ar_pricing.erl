@@ -1,7 +1,7 @@
 -module(ar_pricing).
 
 %% 2.6 exports.
--export([get_price_per_gib_minute/4, get_tx_fee/1,
+-export([get_price_per_gib_minute/2, get_tx_fee/1,
 		get_miner_reward_endowment_pool_debt_supply/1, recalculate_price_per_gib_minute/1,
 		redenominate/3, may_be_redenominate/1]).
 
@@ -12,7 +12,7 @@
 		get_expected_min_decline_rate/6]).
 
 %% For tests.
--export([get_v2_price_per_gib_minute/4]).
+-export([get_v2_price_per_gib_minute/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_inflation.hrl").
@@ -40,52 +40,27 @@
 %% network hash rates and block rewards. The total reward used in calculations
 %% is at least 1 Winston, even if all block rewards from the given history are 0.
 %% Also, the returned price is always at least 1 Winston.
-get_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination) ->
-	V2Price = get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination),
+get_price_per_gib_minute(Height, B) ->
+	V2Price = get_v2_price_per_gib_minute(Height, B),
 	ar_pricing_transition:get_transition_price(Height, V2Price).
 
-get_v2_price_per_gib_minute(Height, LockedRewards, BlockTimeHistory, Denomination) ->
-	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(LockedRewards, Denomination),
-
-	Fork_2_7 = ar_fork:height_2_7(),
-	Fork_2_7_2 = ar_fork:height_2_7_2(),
+get_v2_price_per_gib_minute(Height, B) ->
+	OneDifficultyHeight = ar_fork:height_2_7() + ar_block_time_history:history_length(),
+	TwoDifficultyHeight = ar_fork:height_2_7_2() + ar_block_time_history:history_length(),
 
 	case Height of
-		_ when Height - ?BLOCK_TIME_HISTORY_BLOCKS >= Fork_2_7_2 ->
-			get_v2_price_per_gib_minute_two_difficulty(
-				Height, LockedRewards, BlockTimeHistory, HashRateTotal, RewardTotal);
-		_ when Height - ?BLOCK_TIME_HISTORY_BLOCKS >= Fork_2_7 ->
-			%% Calculate (but ignore) the price as it will be determined after 2.7.2 - this is
-			%% so we can log the data to better predict how the price will move.
-			get_v2_price_per_gib_minute_two_difficulty(
-				Height, LockedRewards, BlockTimeHistory, HashRateTotal, RewardTotal),
-			get_v2_price_per_gib_minute_one_difficulty(
-				Height, LockedRewards, BlockTimeHistory, HashRateTotal, RewardTotal);
+		_ when Height >= TwoDifficultyHeight ->
+			get_v2_price_per_gib_minute_two_difficulty(Height, B);
+		_ when Height >= OneDifficultyHeight ->
+			get_v2_price_per_gib_minute_one_difficulty(Height, B);
 		_ ->
-			get_v2_price_per_gib_minute_simple(HashRateTotal, RewardTotal)
+			get_v2_price_per_gib_minute_simple(B)
 	end.
 
-get_v2_price_per_gib_minute_two_difficulty(
-		Height, LockedRewards, BlockTimeHistory, HashRateTotal, RewardTotal) ->
+get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
+	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(B),
 	{IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount} =
-		lists:foldl(
-			fun({BlockInterval, VDFInterval, ChunkCount}, {Acc1, Acc2, Acc3, Acc4}) ->
-				{
-					Acc1 + BlockInterval,
-					Acc2 + VDFInterval,
-					case ChunkCount of
-						1 -> Acc3 + 1;
-						_ -> Acc3
-					end,
-					case ChunkCount of
-						1 -> Acc4;
-						_ -> Acc4 + 1
-					end
-				}
-			end,
-			{0, 0, 0, 0},
-			BlockTimeHistory
-		),
+		ar_block_time_history:sum_history(B),
 	%% The intent of the SolutionsPerPartitionPerVDFStep is to estimate network replica
 	%% count (how many copies of the weave are stored across the network).
 	%% The logic behind this is complex - an explanation from @vird:
@@ -172,32 +147,15 @@ get_v2_price_per_gib_minute_two_difficulty(
 			IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
 		),
 	log_price_metrics(get_v2_price_per_gib_minute_two_difficulty,
-		Height, length(LockedRewards), HashRateTotal, RewardTotal, 
+		Height, HashRateTotal, RewardTotal, 
 		IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount,
 		SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute),
 	PricePerGiBPerMinute.
 
-get_v2_price_per_gib_minute_one_difficulty(
-		Height, LockedRewards, BlockTimeHistory, HashRateTotal, RewardTotal) ->
+get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
+	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(B),
 	{IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount} =
-		lists:foldl(
-			fun({BlockInterval, VDFInterval, ChunkCount}, {Acc1, Acc2, Acc3, Acc4}) ->
-				{
-					Acc1 + BlockInterval,
-					Acc2 + VDFInterval,
-					case ChunkCount of
-						1 -> Acc3 + 1;
-						_ -> Acc3
-					end,
-					case ChunkCount of
-						1 -> Acc4;
-						_ -> Acc4 + 1
-					end
-				}
-			end,
-			{0, 0, 0, 0},
-			BlockTimeHistory
-		),
+		ar_block_time_history:sum_history(B),
 	%% The intent of the SolutionsPerPartitionPerVDFStep is to estimate network replica
 	%% count (how many copies of the weave are stored across the network).
 	%% The logic behind this is complex - an explanation from @vird:
@@ -255,12 +213,13 @@ get_v2_price_per_gib_minute_one_difficulty(
 			IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
 		),
 	log_price_metrics(get_v2_price_per_gib_minute_one_difficulty,
-		Height, length(LockedRewards), HashRateTotal, RewardTotal, 
+		Height, HashRateTotal, RewardTotal, 
 		IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount,
 		SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute),
 	PricePerGiBPerMinute.
 
-get_v2_price_per_gib_minute_simple(HashRateTotal, RewardTotal) ->
+get_v2_price_per_gib_minute_simple(B) ->
+	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(B),
 	%% 2 recall ranges per partition per second.
 	SolutionsPerPartitionPerSecond = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
 	SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
@@ -399,11 +358,7 @@ recalculate_price_per_gib_minute(B) ->
 					%% price_per_gib_minute = scheduled_price_per_gib_minute
 					%% scheduled_price_per_gib_minute = get_price_per_gib_minute() capped to
 					%%                                  0.5x to 2x of old price_per_gib_minute
-					LockedRewards = ar_rewards:get_locked_rewards(B),
-					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
-							?BLOCK_TIME_HISTORY_BLOCKS),
-					Price2 = min(Price * 2, get_price_per_gib_minute(Height,
-							LockedRewards, BlockTimeHistory2, Denomination)),
+					Price2 = min(Price * 2, get_price_per_gib_minute(Height, B)),
 					Price3 = max(Price div 2, Price2),
 					{ScheduledPrice, Price3}
 			end;
@@ -417,11 +372,7 @@ recalculate_price_per_gib_minute(B) ->
 					%% 		get_price_per_gib_minute() 
 					%%		EMA'ed with scheduled_price_per_gib_minute at 0.1 alpha
 					%%		and then capped to 0.5x to 2x of scheduled_price_per_gib_minute
-					LockedRewards = ar_rewards:get_locked_rewards(B),
-					BlockTimeHistory2 = lists:sublist(BlockTimeHistory,
-							?BLOCK_TIME_HISTORY_BLOCKS),
-					TargetPrice = get_price_per_gib_minute(Height,
-							LockedRewards, BlockTimeHistory2, Denomination),
+					TargetPrice = get_price_per_gib_minute(Height, B),
 					EMAPrice = (9 * ScheduledPrice + TargetPrice) div 10,
 					Price2 = min(ScheduledPrice * 2, EMAPrice),
 					Price3 = max(ScheduledPrice div 2, Price2),
@@ -843,9 +794,10 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
 	{Rate, CappedScheduledRate}.
 
 log_price_metrics(Event,
-		Height, RewardHistoryLength, HashRateTotal, RewardTotal, IntervalTotal, VDFIntervalTotal,
+		Height, HashRateTotal, RewardTotal, IntervalTotal, VDFIntervalTotal,
 		OneChunkCount, TwoChunkCount, SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute) ->
 
+	RewardHistoryLength = ar_testnet:reward_history_blocks(Height),
 	AverageHashRate = HashRateTotal div RewardHistoryLength,
 	EstimatedDataSizeInBytes = network_data_size(Height,
 			AverageHashRate, IntervalTotal, VDFIntervalTotal, SolutionsPerPartitionPerVDFStep),

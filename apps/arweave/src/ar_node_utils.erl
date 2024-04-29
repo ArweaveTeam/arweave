@@ -46,7 +46,7 @@ update_accounts(B, PrevB, Accounts) ->
 	Denomination = PrevB#block.denomination,
 	DebtSupply = PrevB#block.debt_supply,
 	TXs = B#block.txs,
-	BlockInterval = ar_block:compute_block_interval(PrevB),
+	BlockInterval = ar_block_time_history:compute_block_interval(PrevB),
 	Args =
 		get_miner_reward_and_endowment_pool({EndowmentPool, DebtSupply, TXs,
 				B#block.reward_addr, B#block.weave_size, B#block.height, B#block.timestamp,
@@ -467,7 +467,7 @@ validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 	#block{ reward = Reward, reward_history_hash = RewardHistoryHash,
 			denomination = Denomination, height = Height } = NewB,
 	#block{ reward_history = RewardHistory } = OldB,
-	HashRate = ar_difficulty:get_hash_rate(NewB),
+	HashRate = ar_difficulty:get_hash_rate_fixed_ratio(NewB),
 	RewardAddr = NewB#block.reward_addr,
 	LockedRewards = ar_rewards:trim_locked_rewards(Height,
 		[{RewardAddr, HashRate, Reward, Denomination} | RewardHistory]),
@@ -486,9 +486,8 @@ validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors, Rece
 					RecentTXMap});
 		true ->
 			#block{ block_time_history_hash = HistoryHash } = NewB,
-			History2 = lists:sublist(ar_block:update_block_time_history(NewB, OldB),
-					?BLOCK_TIME_HISTORY_BLOCKS),
-			case ar_block:block_time_history_hash(History2) of
+			History = ar_block_time_history:update_history(NewB, OldB),
+			case ar_block_time_history:hash(History) of
 				HistoryHash ->
 					validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors,
 							RecentTXMap});

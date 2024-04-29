@@ -68,10 +68,10 @@ init(WalletList, Diff, GenesisDataSize) ->
 			false ->
 				RewardKey = element(2, ar_wallet:new()),
 				RewardAddr = ar_wallet:to_address(RewardKey),
-				HashRate = ar_difficulty:get_hash_rate(B0),
+				HashRate = ar_difficulty:get_hash_rate_fixed_ratio(B0),
 				RewardHistory = [{RewardAddr, HashRate, 10, 1}],
-				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(0, RewardHistory,
-						[], 1),
+				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(0, 
+						B0#block{ reward_history = RewardHistory, denomination = 1 }),
 				B0#block{ hash = crypto:strong_rand_bytes(32),
 						nonce = 0, recall_byte = 0, partition_number = 0,
 						reward_key = RewardKey, reward_addr = RewardAddr,
@@ -98,7 +98,7 @@ init(WalletList, Diff, GenesisDataSize) ->
 					merkle_rebase_support_threshold = ?STRICT_DATA_SPLIT_THRESHOLD * 2,
 					chunk_hash = crypto:strong_rand_bytes(32),
 					block_time_history = InitialHistory,
-					block_time_history_hash = ar_block:block_time_history_hash(InitialHistory)
+					block_time_history_hash = ar_block_time_history:hash(InitialHistory)
 				};
 			true ->
 				B1

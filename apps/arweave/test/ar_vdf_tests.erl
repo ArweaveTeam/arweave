@@ -197,7 +197,7 @@ test_vdf_reset_mid_checkpoint_() ->
 	ok.
 
 compute_next_vdf_difficulty_test_block() ->
-	Height1 = max(?BLOCK_TIME_HISTORY_BLOCKS, ?REWARD_HISTORY_BLOCKS),
+	Height1 = max(ar_block_time_history:history_length(), ?REWARD_HISTORY_BLOCKS),
 	Height2 = Height1 + ?VDF_DIFFICULTY_RETARGET - Height1 rem ?VDF_DIFFICULTY_RETARGET,
 	#block{
 		height = Height2-1,
@@ -206,7 +206,7 @@ compute_next_vdf_difficulty_test_block() ->
 			next_vdf_difficulty = 10000
 		},
 		reward_history = lists:duplicate(?REWARD_HISTORY_BLOCKS, {<<>>, 10000, 10, 1}),
-		block_time_history = lists:duplicate(?BLOCK_TIME_HISTORY_BLOCKS, {129, 135, 1}),
+		block_time_history = lists:duplicate(ar_block_time_history:history_length(), {129, 135, 1}),
 		price_per_gib_minute = 10000,
 		scheduled_price_per_gib_minute = 15000
 	}.

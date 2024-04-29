@@ -65,14 +65,6 @@ end).
 	-endif.
 -endif.
 
--ifdef(DEBUG).
-	-define(BLOCK_TIME_HISTORY_BLOCKS, 3).
--else.
-	-ifndef(BLOCK_TIME_HISTORY_BLOCKS).
-		-define(BLOCK_TIME_HISTORY_BLOCKS, (30 * 24 * 30)).
-	-endif.
--endif.
-
 %% The prices are re-estimated every so many blocks.
 -ifdef(DEBUG).
 -define(PRICE_ADJUSTMENT_FREQUENCY, 2).
