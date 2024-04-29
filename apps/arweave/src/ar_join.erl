@@ -1,6 +1,6 @@
 -module(ar_join).
 
--export([start/1, set_block_time_history/2]).
+-export([start/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -24,14 +24,6 @@
 %% @doc Start a process that will attempt to download the block index and the latest blocks.
 start(Peers) ->
 	spawn(fun() -> process_flag(trap_exit, true), start2(filter_peers(Peers)) end).
-
-set_block_time_history([], _BlockTimeHistory) ->
-	[];
-set_block_time_history(Blocks, []) ->
-	Blocks;
-set_block_time_history([B | Blocks], BlockTimeHistory) ->
-	[B#block{ block_time_history = BlockTimeHistory }
-			| set_block_time_history(Blocks, tl(BlockTimeHistory))].
 
 %%%===================================================================
 %%% Private functions.
@@ -234,8 +226,8 @@ do_join(Peers, B, BI) ->
 	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
 			| get_block_trail(WorkerQ, PeerQ, Trail, Retries)],
 	ar:console("Downloaded the block trail successfully.~n", []),
-	Blocks2 = may_be_set_reward_history(Blocks, Peers),
-	Blocks3 = may_be_set_block_time_history(Blocks2, Peers),
+	Blocks2 = maybe_set_reward_history(Blocks, Peers),
+	Blocks3 = maybe_set_block_time_history(Blocks2, Peers),
 	ar_node_worker ! {join, B#block.height, BI, Blocks3},
 	join_peers(Peers).
 
@@ -433,7 +425,7 @@ request_block(H, WorkerQ, PeerQ) ->
 	W ! {get_block_shadow, H, Peer, self()},
 	{queue:in(W, WorkerQ2), queue:in(Peer, PeerQ2)}.
 
-may_be_set_reward_history(Blocks, Peers) ->
+maybe_set_reward_history(Blocks, Peers) ->
 	L = [B#block.reward_history_hash || B <- lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT)],
 	case ar_http_iface_client:get_reward_history(Peers, hd(Blocks), L) of
 		{ok, RewardHistory} ->
@@ -446,15 +438,13 @@ may_be_set_reward_history(Blocks, Peers) ->
 			erlang:halt()
 	end.
 
-may_be_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
-	Fork_2_7 = ar_fork:height_2_7(),
-	case Height >= Fork_2_7 of
+maybe_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
+	case Height >= ar_fork:height_2_7() of
 		true ->
-			Len = min(Height - Fork_2_7 + 1, ?STORE_BLOCKS_BEHIND_CURRENT),
-			L = [B#block.block_time_history_hash || B <- lists:sublist(Blocks, Len)],
-			case ar_http_iface_client:get_block_time_history(Peers, hd(Blocks), L) of
+			case ar_http_iface_client:get_block_time_history(
+					Peers, hd(Blocks), ar_block_time_history:get_hashes(Blocks)) of
 				{ok, BlockTimeHistory} ->
-					set_block_time_history(Blocks, BlockTimeHistory);
+					ar_block_time_history:set_history(Blocks, BlockTimeHistory);
 				_ ->
 					ar:console("Failed to fetch the block time history for the block ~s from "
 							"any of the peers. Consider changing the peers.~n",

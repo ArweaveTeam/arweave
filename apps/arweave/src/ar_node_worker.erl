@@ -714,13 +714,11 @@ handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cach
 			}, PrevB),
 			
 			BlockTimeHistory2 = lists:sublist(
-				ar_block:update_block_time_history(UnsignedB, PrevB),
-				?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
-			BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, ?BLOCK_TIME_HISTORY_BLOCKS),
+				ar_block_time_history:update_history(UnsignedB, PrevB),
+				ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
 			UnsignedB2 = UnsignedB#block{
 				block_time_history = BlockTimeHistory2,
-				block_time_history_hash = ar_block:block_time_history_hash(
-						BlockTimeHistory3)
+				block_time_history_hash = ar_block_time_history:hash(BlockTimeHistory2)
 			},
 			SignedH = ar_block:generate_signed_hash(UnsignedB2),
 			PrevCDiff = PrevB#block.cumulative_diff,
@@ -1148,8 +1146,8 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 					B3 =
 						case B#block.height >= ar_fork:height_2_7() of
 							true ->
-								BlockTimeHistory2 = ar_block:update_block_time_history(B, PrevB),
-								Len2 = ?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT,
+								BlockTimeHistory2 = ar_block_time_history:update_history(B, PrevB),
+								Len2 = ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT,
 								BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, Len2),
 								B2#block{ block_time_history = BlockTimeHistory3 };
 							false ->
@@ -1651,7 +1649,7 @@ record_economic_metrics2(B, PrevB) ->
 	{PoA1Diff, Diff} = ar_difficulty:diff_pair(B),
 	prometheus_gauge:set(log_diff, [poa1], ar_retarget:switch_to_log_diff(PoA1Diff)),
 	prometheus_gauge:set(log_diff, [poa2], ar_retarget:switch_to_log_diff(Diff)),
-	prometheus_gauge:set(network_hashrate, ar_difficulty:get_hash_rate(B)),
+	prometheus_gauge:set(network_hashrate, ar_difficulty:get_hash_rate_fixed_ratio(B)),
 	prometheus_gauge:set(endowment_pool, B#block.reward_pool),
 	Period_200_Years = 200 * 365 * 24 * 60 * 60,
 	Burden = ar_pricing:get_storage_cost(B#block.weave_size, B#block.timestamp,
@@ -1667,7 +1665,7 @@ record_economic_metrics2(B, PrevB) ->
 					|| {_, _, R, _} <- RewardHistory]), RewardHistorySize),
 			prometheus_gauge:set(average_block_reward, AverageBlockReward),
 			prometheus_gauge:set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
-			BlockInterval = ar_block:compute_block_interval(PrevB),
+			BlockInterval = ar_block_time_history:compute_block_interval(PrevB),
 			Args = {PrevB#block.reward_pool, PrevB#block.debt_supply, B#block.txs,
 					B#block.weave_size, B#block.height, PrevB#block.price_per_gib_minute,
 					PrevB#block.kryder_plus_rate_multiplier_latch,
@@ -1719,10 +1717,8 @@ record_economic_metrics2(B, PrevB) ->
 record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
 	case Height >= ar_fork:height_2_6() of
 		true ->
-			#nonce_limiter_info{ global_step_number = StepNumber }
-					= B#block.nonce_limiter_info,
-			#nonce_limiter_info{ global_step_number = PrevBStepNumber }
-					= PrevB#block.nonce_limiter_info,
+			StepNumber = ar_block:vdf_step_number(B),
+			PrevBStepNumber = ar_block:vdf_step_number(PrevB),
 			prometheus_gauge:set(block_vdf_time, StepNumber - PrevBStepNumber);
 		false ->
 			ok
@@ -1859,7 +1855,7 @@ start_from_state(BI, Height) ->
 			Height2 = Height - Skipped,
 			RewardHistoryBI = ar_rewards:trim_reward_history(Height, BI2),
 			BlockTimeHistoryBI = lists:sublist(BI2,
-					?BLOCK_TIME_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+					ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
 			case {ar_storage:read_reward_history(RewardHistoryBI),
 					ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI)} of
 				{not_found, _} ->
@@ -1868,7 +1864,7 @@ start_from_state(BI, Height) ->
 					block_time_history_not_found;
 				{RewardHistory, BlockTimeHistory} ->
 					Blocks2 = ar_rewards:set_reward_history(Blocks, RewardHistory),
-					Blocks3 = ar_join:set_block_time_history(Blocks2, BlockTimeHistory),
+					Blocks3 = ar_block_time_history:set_history(Blocks2, BlockTimeHistory),
 					self() ! {join_from_state, Height2, BI2, Blocks3},
 					ok
 			end

@@ -4,7 +4,7 @@
 	trim_locked_rewards/2, trim_reward_history/2, get_oldest_locked_address/1,
 	lock_reward/2, has_locked_reward/2, 
 	reward_history_hash/1, validate_reward_history_hashes/3,
-	get_total_reward_for_address/2, get_locked_totals/2,
+	get_total_reward_for_address/2, get_locked_totals/1,
 	apply_rewards/2, apply_reward/4]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -50,7 +50,7 @@ get_oldest_locked_address(B) ->
 lock_reward(B, RewardHistory) ->
 	Height = B#block.height,
 	Reward = B#block.reward,
-	HashRate = ar_difficulty:get_hash_rate(B),
+	HashRate = ar_difficulty:get_hash_rate_fixed_ratio(B),
 	Denomination = B#block.denomination,
 	RewardAddr = B#block.reward_addr,
 	trim_reward_history(Height, 
@@ -99,7 +99,9 @@ get_total_reward_for_address(Addr, [{Addr, _, Reward, RewardDenomination} | Lock
 get_total_reward_for_address(Addr, [_ | LockedRewards], Denomination, Total) ->
 	get_total_reward_for_address(Addr, LockedRewards, Denomination, Total).
 
-get_locked_totals(LockedRewards, Denomination) ->
+get_locked_totals(B) ->
+	Denomination = B#block.denomination,
+	LockedRewards = ar_rewards:get_locked_rewards(B),
 	get_locked_totals(LockedRewards, Denomination, 0, 0).
 
 get_locked_totals([], _Denomination, HashRateTotal, RewardTotal) ->

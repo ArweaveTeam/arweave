@@ -35,127 +35,185 @@ get_price_per_gib_minute_test_() ->
 %% new algorithm.
 test_price_per_gib_minute_pre_block_time_history() ->
 	Start = ar_pricing_transition:transition_start_2_6_8(),
+	B = #block{
+		reward_history = reward_history(1, 1), block_time_history = block_time_history(1, 1) },
 	?assertEqual(ar_pricing_transition:static_price(),
-		ar_pricing:get_price_per_gib_minute(Start, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(Start, B),
 		"Before we have enough block time history").
 
 test_price_per_gib_minute_transition_phases() ->
 	%% V2 price when calculated with:
 	%% - reward_history(1, 1)
-	%% - vdf(1, 1)
+	%% - block_time_history(1, 1)
 	%% - PoA1 difficulty multiplier of 1
+	B = #block{
+		reward_history = reward_history(1, 1), block_time_history = block_time_history(1, 1) },
 	V2Price = 61440,
 	?assertEqual(V2Price,
-		ar_pricing:get_v2_price_per_gib_minute(10, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_v2_price_per_gib_minute(10, B),
 		"V2 Price"),
 	%% Static price
 	?assertEqual(ar_pricing_transition:static_price(),
-		ar_pricing:get_price_per_gib_minute(4, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(4, B),
 		"Static price"),
 	%% 2.6.8 start
 	?assertEqual(ar_pricing_transition:static_price(),
-		ar_pricing:get_price_per_gib_minute(5, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(5, B),
 		"2.6.8 start price"),
 	%% 2.6.8 transition, pre-2.7.2
 	%% 1/20 interpolation from 8162 to 61440
 	?assertEqual(10825,
-		ar_pricing:get_price_per_gib_minute(6, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(6, B),
 		"2.6.8 transition, pre-2.7.2 activation price"),
 	%% 2.6.8 transition, post-2.7.2, pre-cap
 	%% 5/20 interpolation from 8162 to 61440
 	?assertEqual(21481,
-		ar_pricing:get_price_per_gib_minute(10, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(10, B),
 		"2.6.8 transition, at 2.7.2 activation price"),
 	%% 6/20 interpolation from 8162 to 61440
 	?assertEqual(24145,
-		ar_pricing:get_price_per_gib_minute(11, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(11, B),
 		"2.6.8 transition, post 2.7.2 activation, pre-cap price"),
 	%% 2.6.8 transition, post-2.7.2, post-cap
 	?assertEqual(30_000,
-		ar_pricing:get_price_per_gib_minute(14, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(14, B),
 		"2.6.8 transition, post 2.7.2 activation, post-cap price"),
 	%% 2.7.2 start
 	?assertEqual(30_000,
-		ar_pricing:get_price_per_gib_minute(15, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(15, B),
 		"2.7.2 start price"),
 	%% 2.7.2 transition, before 2.6.8 end
 	%% 5/40 interpolation from 30000 to 61440
 	?assertEqual(33930,
-		ar_pricing:get_price_per_gib_minute(20, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(20, B),
 		"2.7.2 transition price, before 2.6.8 end"),
 	%% 2.7.2 transition, at 2.6.8 end
 	%% 10/40 interpolation from 30000 to 61440
 	?assertEqual(37860,
-		ar_pricing:get_price_per_gib_minute(25, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(25, B),
 		"2.7.2 transition price, at 2.6.8 end"),
 	%% 2.7.2 transition, after 2.6.8 end
 	%% 11/40 interpolation from 30000 to 61440
 	?assertEqual(38646,
-		ar_pricing:get_price_per_gib_minute(26, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(26, B),
 		"2.7.2 transition price, after 2.6.8 end"),
 	%% 2.7.2 end
 	?assertEqual(V2Price,
-		ar_pricing:get_price_per_gib_minute(55, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(55, B),
 		"2.7.2 end price"),
 	%% v2 price
 	?assertEqual(V2Price,
-		ar_pricing:get_price_per_gib_minute(56, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(56, B),
 		"After 2.7.2 transition end").
 
 test_v2_price() ->
 	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() + 
 		ar_pricing_transition:transition_length(ar_pricing_transition:transition_start_2_7_2()),
-	do_price_per_gib_minute_post_transition(AtTransitionEnd, 61440, 122880, 122880),
+
+	%% 2 chunks per partition when running tests
+	%% If we get 1 solution per chunk (or 2 per partition), then we expect a price of 61440
+	%%   that's our "baseline" for the purposes of this explanation
+	%% AllOneChunkBaseline: 1x baseline
+	%%   - 3 1-chunk blocks, 0 2-chunk blocks
+	%%   => 3/3 solutions per chunk
+	%%   => 2 per partition
+	%% AllTwoChunkBaseline: 2x baseline
+	%%   - 0 1-chunk blocks, 3 2-chunk blocks
+	%%   => max, 2 solutions per chunk
+	%%   => 4 per partition
+	%% MixedChunkBaseline: 1.5x baseline
+	%%   - 2 1-chunk blocks, 1 2-chunk blocks
+	%%   => 3/2 solutions per chunk
+	%%   => 3 per partition
+	do_price_per_gib_minute_post_transition(AtTransitionEnd, 61440, 122880, 92160),
 	BeyondTransition = AtTransitionEnd + 1000,
-	do_price_per_gib_minute_post_transition(BeyondTransition, 61440, 122880, 122880).
+	do_price_per_gib_minute_post_transition(BeyondTransition, 61440, 122880, 92160).
 
 test_v2_price_with_poa1_diff_multiplier() ->
 	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() + 
 		ar_pricing_transition:transition_length(ar_pricing_transition:transition_start_2_7_2()),
-	do_price_per_gib_minute_post_transition(AtTransitionEnd, 30720, 92160, 61440),
+
+	%% 2 chunks per partition when running tests
+	%% If we get 1 solution per chunk (or 2 per partition), then we expect a price of 61440
+	%%   that's our "baseline" for the purposes of this explanation
+	%%
+	%% Note: in these tests teh poa1 difficulty modifier is set to 2, which changes the 
+	%%       number of solutions per chunk.
+	%%
+	%% AllOneChunkBaseline: 0.5x baseline
+	%%   - 3 1-chunk blocks, 0 2-chunk blocks
+	%%   => 3/(3*2) solutions per chunk
+	%%   => 1 per partition
+	%% AllTwoChunkBaseline: 1.5x baseline
+	%%   - 0 1-chunk blocks, 3 2-chunk blocks
+	%%   => max, (2+1)/2 solutions per chunk
+	%%   => 3 per partition
+	%% MixedChunkBaseline: 0.5x baseline
+	%%   - 2 1-chunk blocks, 1 2-chunk blocks
+	%%   => 3/4 solutions per chunk 
+	%%   => 1.5 per partition
+	%%   => Since we deal in integers, that gets rounded to 1 per partition
+	do_price_per_gib_minute_post_transition(AtTransitionEnd, 30720, 92160, 30720),
 	BeyondTransition = AtTransitionEnd + 1000,
-	do_price_per_gib_minute_post_transition(BeyondTransition, 30720, 92160, 61440).
+	do_price_per_gib_minute_post_transition(BeyondTransition, 30720, 92160, 30720).
 
 do_price_per_gib_minute_post_transition(Height,
 		AllOneChunkBaseline, AllTwoChunkBaseline, MixedChunkBaseline) ->
+	
 	PoA1DiffMultiplier = ar_difficulty:poa1_diff_multiplier(Height),
+	B0 = #block{
+		reward_history = reward_history(1, 1), block_time_history = block_time_history(1, 1) },
 	?assertEqual(AllOneChunkBaseline,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B0),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
+	B1 = #block{
+		reward_history = reward_history(1, 10), block_time_history = block_time_history(1, 1) },
 	?assertEqual(AllOneChunkBaseline * 10,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 10), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B1),
 		io_lib:format(
 			"hash_rate: low, reward: high, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
+	B2 = #block{
+		reward_history = reward_history(10, 1), block_time_history = block_time_history(1, 1) },
 	?assertEqual(AllOneChunkBaseline div 10,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(10, 1), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B2),
 		io_lib:format(
 			"hash_rate: high, reward: low, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
+	B3 = #block{
+		reward_history = reward_history(10, 10), block_time_history = block_time_history(1, 1) },
 	?assertEqual(AllOneChunkBaseline,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(10, 10), vdf(1, 1), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B3),
 		io_lib:format(
 			"hash_rate: high, reward: high, vdf: perfect, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
+	B4 = #block{
+		reward_history = reward_history(1, 1), block_time_history = block_time_history(10, 1) },
 	?assertEqual(AllOneChunkBaseline div 10,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(10, 1), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B4),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: slow, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
+	B5 = #block{
+		reward_history = reward_history(1, 1), block_time_history = block_time_history(1, 10) },
 	?assertEqual(AllOneChunkBaseline * 10,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), vdf(1, 10), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B5),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: fast, chunks: all_one, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
+	B6 = #block{
+		reward_history = reward_history(1, 1), block_time_history = all_two_chunks() },
 	?assertEqual(AllTwoChunkBaseline,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), all_two_chunks(), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B6),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: perfect, chunks: all_two, poa1_diff: ~B",
 			[PoA1DiffMultiplier])),
+	B7 = #block{
+		reward_history = reward_history(1, 1), block_time_history = mix_chunks() },
 	?assertEqual(MixedChunkBaseline,
-		ar_pricing:get_price_per_gib_minute(Height, reward_history(1, 1), mix_chunks(), 0),
+		ar_pricing:get_price_per_gib_minute(Height, B7),
 		io_lib:format(
 			"hash_rate: low, reward: low, vdf: perfect, chunks: mix, poa1_diff: ~B",
 			[PoA1DiffMultiplier])).
@@ -167,7 +225,7 @@ reward_history(HashRate, Reward) ->
 		{crypto:strong_rand_bytes(32), 3*HashRate, 3*Reward, 0}
 	].
 
-vdf(BlockInterval, VDFSteps) ->
+block_time_history(BlockInterval, VDFSteps) ->
 	[
 		{BlockInterval*10, VDFSteps*10, 1},
 		{BlockInterval*20, VDFSteps*20, 1},
@@ -185,11 +243,7 @@ mix_chunks() ->
 	[
 		{10, 10, 1},
 		{20, 20, 2},
-		{30, 30, 1},
-		{40, 40, 2},
-		{50, 50, 2},
-		{60, 60, 2},
-		{70, 70, 1}
+		{30, 30, 1}
 	].
 
 recalculate_price_per_gib_minute_test_block() ->
@@ -266,7 +320,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	B1 = ar_node:get_current_block(),
 	?assertEqual(10, B1#block.reward),
 	?assertEqual(10, get_reserved_balance(B1#block.reward_addr)),
-	?assertEqual(1, ar_difficulty:get_hash_rate(B1)),
+	?assertEqual(1, ar_difficulty:get_hash_rate_fixed_ratio(B1)),
 	MinerAddr = ar_wallet:to_address(MinerPub),
 	?assertEqual([{MinerAddr, 1, 10, 1}, {B0#block.reward_addr, 1, 10, 1}],
 			B1#block.reward_history),
@@ -310,8 +364,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	%% We are at the height ?PRICE_2_6_8_TRANSITION_START + ?PRICE_2_6_8_TRANSITION_BLOCKS
 	%% so the new algorithm kicks in which estimates the expected block reward and takes
 	%% the missing amount from the endowment pool or takes on debt.
-	AvgBlockTime4 = lists:sum([element(1, El)
-			|| El <- lists:sublist(B3#block.block_time_history, 3)]) div 3,
+	AvgBlockTime4 = ar_block_time_history:compute_block_interval(B3),
 	ExpectedReward4 = max(ar_inflation:calculate(4), B3#block.price_per_gib_minute
 			* ?N_REPLICATIONS(B4#block.height)
 			* AvgBlockTime4 div 60
@@ -325,9 +378,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual(B4#block.price_per_gib_minute, B3#block.scheduled_price_per_gib_minute),
 	PricePerGiBMinute3 = B3#block.price_per_gib_minute,
 	?assertEqual(max(PricePerGiBMinute3 div 2, min(PricePerGiBMinute3 * 2,
-			ar_pricing:get_price_per_gib_minute(B3#block.height,
-				lists:sublist(B3#block.reward_history, 3),
-				lists:sublist(B3#block.block_time_history, 3), 1))),
+			ar_pricing:get_price_per_gib_minute(B3#block.height, B3))),
 			B4#block.scheduled_price_per_gib_minute),
 	%% The Kryder+ rate multiplier is 2 now so the fees should have doubled.
 	?assert(lists:member(ar_test_node:get_optimistic_tx_price(main, 1024), [Fee * 2, Fee * 2 + 1])),
@@ -341,8 +392,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	ar_test_node:assert_wait_until_height(peer1, 5),
 	B5 = ar_node:get_current_block(),
 	?assertEqual(20, get_balance(MinerPub)),
-	AvgBlockTime5 = lists:sum([element(1, El)
-			|| El <- lists:sublist(B4#block.block_time_history, 3)]) div 3,
+	AvgBlockTime5 = ar_block_time_history:compute_block_interval(B4),
 	ExpectedReward5 = max(B4#block.price_per_gib_minute
 			* ?N_REPLICATIONS(B5#block.height)
 			* AvgBlockTime5 div 60
@@ -384,9 +434,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	ScheduledPricePerGiBMinute5 = B5#block.scheduled_price_per_gib_minute,
 	?assertEqual(
 		max(ScheduledPricePerGiBMinute5 div 2,
-			min(ar_pricing:get_price_per_gib_minute(B5#block.height,
-					lists:sublist(B5#block.reward_history, 3),
-					lists:sublist(B5#block.block_time_history, 3), 1),
+			min(ar_pricing:get_price_per_gib_minute(B5#block.height, B5),
 				ScheduledPricePerGiBMinute5 * 2)),
 			B6#block.scheduled_price_per_gib_minute),
 	assert_new_account_fee(),
@@ -485,8 +533,8 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertMatch({ok, {{<<"400">>, _}, _, _, _, _}}, ar_test_node:post_tx_to_peer(main, TX10)),
 	?assertEqual({ok, ["invalid_denomination"]}, ar_tx_db:get_error_codes(TX10#tx.id)),
 	{Reward11, _} = ar_test_node:get_tx_price(main, 0, ar_wallet:to_address(Pub5)),
-	?assert(ar_difficulty:get_hash_rate(B11) > 1),
-	?assertEqual(lists:sublist([{MinerAddr, ar_difficulty:get_hash_rate(B11), B11#block.reward, 1}
+	?assert(ar_difficulty:get_hash_rate_fixed_ratio(B11) > 1),
+	?assertEqual(lists:sublist([{MinerAddr, ar_difficulty:get_hash_rate_fixed_ratio(B11), B11#block.reward, 1}
 			| B10#block.reward_history],
 			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
 			B11#block.reward_history),
@@ -511,7 +559,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	%% Setting the price scheduled on height=10.
 	?assertEqual(B11#block.scheduled_price_per_gib_minute * 1000,
 			B12#block.price_per_gib_minute),
-	?assertEqual([{MinerAddr, ar_difficulty:get_hash_rate(B12), B12#block.reward, 2} | B11#block.reward_history],
+	?assertEqual([{MinerAddr, ar_difficulty:get_hash_rate_fixed_ratio(B12), B12#block.reward, 2} | B11#block.reward_history],
 			B12#block.reward_history),
 	TX12 = ar_test_node:sign_tx(main, Key3, #{ denomination => 0, quantity => 10,
 			target => ar_wallet:to_address(Pub5) }),
@@ -544,8 +592,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	ar_test_node:assert_wait_until_height(peer1, 13),
 	B13 = ar_node:get_current_block(),
 	Reward17_2 = erlang:ceil(Reward17 / 1000) * 1000,
-	AvgBlockTime13 = lists:sum([element(1, El)
-			|| El <- lists:sublist(B12#block.block_time_history, 3)]) div 3,
+	AvgBlockTime13 = ar_block_time_history:compute_block_interval(B12),
 	BaseReward13 =
 		B12#block.price_per_gib_minute
 		* ?N_REPLICATIONS(B13#block.height)
@@ -576,18 +623,15 @@ test_auto_redenomination_and_endowment_debt() ->
 	ScheduledPricePerGiBMinute13 = B13#block.scheduled_price_per_gib_minute,
 	?assertEqual(
 		max(ScheduledPricePerGiBMinute13 div 2, min(
-			ar_pricing:get_price_per_gib_minute(B13#block.height,
-					lists:sublist(B13#block.reward_history, 3),
-					lists:sublist(B13#block.block_time_history, 3), 2),
+			ar_pricing:get_price_per_gib_minute(B13#block.height, B13),
 			ScheduledPricePerGiBMinute13 * 2
 		)), B14#block.scheduled_price_per_gib_minute).
 
 time_diff(#block{ timestamp = TS }, #block{ timestamp = PrevTS }) ->
 	TS - PrevTS.
 
-vdf_diff(#block{ nonce_limiter_info = Info }, #block{ nonce_limiter_info = PrevInfo }) ->
-	Info#nonce_limiter_info.global_step_number
-			- PrevInfo#nonce_limiter_info.global_step_number.
+vdf_diff(B, PrevB) ->
+	ar_block:vdf_step_number(B) - ar_block:vdf_step_number(PrevB).
 
 chunk_count(#block{ recall_byte2 = undefined }) ->
 	1;

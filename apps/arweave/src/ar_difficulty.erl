@@ -1,6 +1,6 @@
 -module(ar_difficulty).
 
--export([get_hash_rate/1, next_cumulative_diff/3, multiply_diff_pre_fork_2_5/2,
+-export([get_hash_rate_fixed_ratio/1, next_cumulative_diff/3, multiply_diff_pre_fork_2_5/2,
 			diff_pair/1, poa1_diff_multiplier/1, poa1_diff/2, scale_diff/3,
 			min_difficulty/1, switch_to_randomx_fork_diff/1]).
 
@@ -12,7 +12,7 @@
 %%%===================================================================
 
 %% @doc Return the block time hash rate for the given difficulty.
-get_hash_rate(Block) ->
+get_hash_rate_fixed_ratio(Block) ->
 	Multiplier = poa1_diff_multiplier(Block#block.height),
 	HashRate = ?MAX_DIFF div (?MAX_DIFF - Block#block.diff),
 	case Multiplier > 1 of

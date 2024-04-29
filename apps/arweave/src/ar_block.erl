@@ -5,7 +5,6 @@
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
 		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2,
-		block_time_history_hash/1, get_block_time_history_element/2,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
 		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
@@ -13,10 +12,8 @@
 		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
 		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
-		get_packing_threshold/2, 
-		validate_block_time_history_hash/2, update_block_time_history/2,
-		compute_block_interval/1, compute_next_vdf_difficulty/1,
-		validate_proof_size/1]).
+		get_packing_threshold/2, compute_next_vdf_difficulty/1,
+		validate_proof_size/1, vdf_step_number/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -179,30 +176,13 @@ compute_h2(H1, Chunk, H0) ->
 compute_solution_h(H0, Preimage) ->
 	crypto:hash(sha256, << H0:32/binary, Preimage/binary >>).
 
-compute_block_interval(OldB) ->
-	Height = OldB#block.height + 1,
-	case Height - ?BLOCK_TIME_HISTORY_BLOCKS >= ar_fork:height_2_7() of
-		true ->
-			IntervalTotal =
-				lists:foldl(
-					fun({BlockInterval, _VDFInterval, _ChunkCount}, Acc) ->
-						Acc + BlockInterval
-					end,
-					0,
-					lists:sublist(OldB#block.block_time_history, ?BLOCK_TIME_HISTORY_BLOCKS)
-				),
-			IntervalTotal div ?BLOCK_TIME_HISTORY_BLOCKS;
-		false -> 120
-	end.
-
 compute_next_vdf_difficulty(PrevB) ->
 	Height = PrevB#block.height + 1,
 	#nonce_limiter_info{
 		vdf_difficulty = VDFDifficulty,
 		next_vdf_difficulty = NextVDFDifficulty
 	} = PrevB#block.nonce_limiter_info,
-	case Height - ?BLOCK_TIME_HISTORY_BLOCKS > ar_fork:height_2_7()
-			andalso Height - ?VDF_HISTORY_CUT - 1 > ar_fork:height_2_7() of
+	case ar_block_time_history:has_history(Height) of
 		true ->
 			case (Height rem ?VDF_DIFFICULTY_RETARGET == 0) andalso
 					(VDFDifficulty == NextVDFDifficulty) of
@@ -212,8 +192,7 @@ compute_next_vdf_difficulty(PrevB) ->
 					case Height < ar_fork:height_2_7_1() of
 						true ->
 							HistoryPart = lists:nthtail(?VDF_HISTORY_CUT,
-									lists:sublist(PrevB#block.block_time_history,
-											?BLOCK_TIME_HISTORY_BLOCKS)),
+									ar_block_time_history:get_history(PrevB)),
 							{IntervalTotal, VDFIntervalTotal} =
 								lists:foldl(
 									fun({BlockInterval, VDFInterval, _ChunkCount}, {Acc1, Acc2}) ->
@@ -236,8 +215,7 @@ compute_next_vdf_difficulty(PrevB) ->
 							NewVDFDifficulty;
 						false ->
 							HistoryPartCut1 = lists:nthtail(?VDF_HISTORY_CUT,
-								lists:sublist(PrevB#block.block_time_history,
-										?BLOCK_TIME_HISTORY_BLOCKS)),
+								ar_block_time_history:get_history(PrevB)),
 							HistoryPart = lists:sublist(HistoryPartCut1, ?VDF_DIFFICULTY_RETARGET),
 							{IntervalTotal, VDFIntervalTotal} =
 								lists:foldl(
@@ -393,19 +371,6 @@ indep_hash(BDS, B) ->
 			ar_deep_hash:hash([BDS, B#block.hash, B#block.nonce])
 	end.
 
-block_time_history_hash(BlockTimeHistory) ->
-	block_time_history_hash(BlockTimeHistory,
-			[ar_serialize:encode_int(length(BlockTimeHistory), 8)]).
-
-block_time_history_hash([], IOList) ->
-	crypto:hash(sha256, iolist_to_binary(IOList));
-block_time_history_hash([{BlockInterval, VDFInterval, ChunkCount} | History], IOList) ->
-	BlockIntervalBin = ar_serialize:encode_int(BlockInterval, 8),
-	VDFIntervalBin = ar_serialize:encode_int(VDFInterval, 8),
-	ChunkCountBin = ar_serialize:encode_int(ChunkCount, 8),
-	block_time_history_hash(History,
-			[BlockIntervalBin, VDFIntervalBin, ChunkCountBin | IOList]).
-
 %% @doc Verify the block signature.
 verify_signature(BlockPreimage, PrevCDiff,
 		#block{ signature = Signature, reward_key = {?DEFAULT_KEY_TYPE, Pub} = RewardKey,
@@ -512,6 +477,9 @@ get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
 			+ RecallRange1Offset rem min(?PARTITION_SIZE, PartitionUpperBound),
 	RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
 	{RecallRange1Start, RecallRange2Start}.
+
+vdf_step_number(#block{ nonce_limiter_info = Info }) ->
+	Info#nonce_limiter_info.global_step_number.
 
 %%%===================================================================
 %%% Private functions.
@@ -651,33 +619,6 @@ shift_packing_2_5_threshold(Threshold) ->
 	TargetTime = ar_testnet:target_block_time(ar_fork:height_2_5()),
 	Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * TargetTime,
 	max(0, Threshold - Shift).
-
-validate_block_time_history_hash(H, BlockTimeHistory) ->
-	H == ar_block:block_time_history_hash(lists:sublist(BlockTimeHistory,
-			?BLOCK_TIME_HISTORY_BLOCKS)).
-
-update_block_time_history(B, PrevB) ->
-	case B#block.height >= ar_fork:height_2_7() of
-		false ->
-			PrevB#block.block_time_history;
-		true ->
-			[get_block_time_history_element(B, PrevB) | PrevB#block.block_time_history]
-	end.
-
-get_block_time_history_element(B, PrevB) ->
-	BlockInterval = max(1, B#block.timestamp - PrevB#block.timestamp),
-	VDFInterval = vdf_step_number(B) - vdf_step_number(PrevB),
-	ChunkCount =
-		case B#block.recall_byte2 of
-			undefined ->
-				1;
-			_ ->
-				2
-		end,
-	{BlockInterval, VDFInterval, ChunkCount}.
-
-vdf_step_number(#block{ nonce_limiter_info = Info }) ->
-	Info#nonce_limiter_info.global_step_number.
 
 verify_tx_root(B) ->
 	B#block.tx_root == generate_tx_root_for_block(B).
