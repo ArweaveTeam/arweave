@@ -584,7 +584,7 @@ prepare_solution(poa1, Candidate,
 							"Check logs for more details~n"),
 					error;
 				PoA1 ->
-					Solution#mining_solution{ poa1 = PoA1 }
+					Solution#mining_solution{ poa1 = PoA1#poa{ chunk = Chunk1 } }
 			end;
 		PoA1 ->
 			Solution#mining_solution{ poa1 = PoA1 }
@@ -615,7 +615,8 @@ prepare_solution(poa2, Candidate,
 							"Check logs for more details~n"),
 					error;
 				PoA2 ->
-					prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
+					prepare_solution(poa1, Candidate,
+							Solution#mining_solution{ poa2 = PoA2#poa{ chunk = Chunk2 } })
 			end;
 		PoA2 ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
