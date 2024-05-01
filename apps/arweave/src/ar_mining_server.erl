@@ -566,7 +566,15 @@ prepare_solution(poa1, Candidate,
 		chunk1 = Chunk1, h0 = H0, nonce = Nonce,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
 	case read_poa(RecallByte1, Chunk1, MiningAddress) of
-		error ->
+		{ok, PoA1} ->
+			Solution#mining_solution{ poa1 = PoA1 };
+		_ ->
+			Modules = ar_storage_module:get_all(RecallByte1 + 1),
+			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+			?LOG_ERROR([{event, failed_to_find_poa_proofs_locally},
+					{tags, [solution_proofs]},
+					{recall_byte, RecallByte1},
+					{modules_covering_recall_byte, ModuleIDs}]),
 			ar:console("WARNING: we have mined a block but did not find the PoA1 proofs "
 					"locally - searching the peers...~n"),
 			case fetch_poa_from_peers(RecallByte1) of
@@ -585,9 +593,7 @@ prepare_solution(poa1, Candidate,
 					error;
 				PoA1 ->
 					Solution#mining_solution{ poa1 = PoA1#poa{ chunk = Chunk1 } }
-			end;
-		PoA1 ->
-			Solution#mining_solution{ poa1 = PoA1 }
+			end
 	end;
 prepare_solution(poa2, Candidate,
 		#mining_solution{ poa2 = #poa{ chunk = <<>> } } = Solution) ->
@@ -597,14 +603,23 @@ prepare_solution(poa2, Candidate,
 		chunk2 = Chunk2, h0 = H0, nonce = Nonce,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
 	case read_poa(RecallByte2, Chunk2, MiningAddress) of
-		error ->
+		{ok, PoA2} ->
+			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
+		_ ->
+			Modules = ar_storage_module:get_all(RecallByte2 + 1),
+			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+			?LOG_ERROR([{event, failed_to_find_poa2_proofs_locally},
+					{tags, [solution_proofs]},
+					{recall_byte2, RecallByte2},
+					{modules_covering_recall_byte2, ModuleIDs}]),
 			ar:console("WARNING: we have mined a block but did not find the PoA2 proofs "
 					"locally - searching the peers...~n"),
 			case fetch_poa_from_peers(RecallByte2) of
 				not_found ->
 					{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 							PartitionNumber, PartitionUpperBound),
-					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
+					?LOG_ERROR([{event, mined_block_but_failed_to_read_chunk_proofs},
+							{tags, [solution_proofs]},
 							{recall_byte2, RecallByte2},
 							{recall_range_start2, RecallRange2Start},
 							{nonce, Nonce},
@@ -617,9 +632,7 @@ prepare_solution(poa2, Candidate,
 				PoA2 ->
 					prepare_solution(poa1, Candidate,
 							Solution#mining_solution{ poa2 = PoA2#poa{ chunk = Chunk2 } })
-			end;
-		PoA2 ->
-			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 })
+			end
 	end;
 prepare_solution(poa2, Candidate,
 		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
@@ -779,20 +792,26 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 	{noreply, State3}.
 
 read_poa(RecallByte, Chunk, MiningAddress) ->
-	PoA = read_poa(RecallByte, MiningAddress),
-	case {Chunk, PoA} of
-		{_, error} -> error;
-		{not_set, _} -> PoA;
-		{Chunk, #poa{ chunk = Chunk }} -> PoA;
-		_ -> error
+	PoAReply = read_poa(RecallByte, MiningAddress),
+	case {Chunk, PoAReply} of
+		{not_set, _} ->
+			PoAReply;
+		{Chunk, {ok, #poa{ chunk = Chunk }}} ->
+			PoAReply;
+		{_Chunk, {ok, #poa{}}} ->
+			{error, chunk_mismatch};
+		{_, Error} ->
+			Error
 	end.
+
 read_poa(RecallByte, MiningAddress) ->
-	Options = #{ pack => true, packing => {spora_2_6, MiningAddress} },
+	Options = #{ pack => true, packing => {spora_2_6, MiningAddress},
+			is_miner_request => true },
 	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
 		{ok, #{ chunk := Chunk, tx_path := TXPath, data_path := DataPath }} ->
-			#poa{ option = 1, chunk = Chunk, tx_path = TXPath, data_path = DataPath };
-		_ ->
-			error
+			{ok, #poa{ option = 1, chunk = Chunk, tx_path = TXPath, data_path = DataPath }};
+		Error ->
+			Error
 	end.
 
 validate_solution(Solution, DiffPair) ->

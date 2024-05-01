@@ -442,7 +442,9 @@ handle_task({computed_h2, Candidate}, State) ->
 			LocalPoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, MiningAddress),
 			PoA2 =
 				case LocalPoA2 of
-					error ->
+					{ok, LocalPoA3} ->
+						LocalPoA3;
+					_ ->
 						ar:console("WARNING: we have found an H2 solution but did not find "
 							"the PoA2 proofs locally - searching the peers...~n"),
 						case ar_mining_server:fetch_poa_from_peers(RecallByte2) of
@@ -458,9 +460,7 @@ handle_task({computed_h2, Candidate}, State) ->
 								not_found;
 							PeerPoA2 ->
 								PeerPoA2
-						end;
-					_ ->
-						LocalPoA2
+						end
 				end,
 			case PoA2 of
 				not_found ->
