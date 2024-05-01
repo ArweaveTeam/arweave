@@ -329,10 +329,41 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 			false ->
 				Offset
 		end,
+	IsMinerRequest = maps:get(is_miner_request, Options, false),
 	case IsRecorded of
 		{{true, StoredPacking}, StoreID} ->
-			get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID);
+			get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
+					IsMinerRequest);
+		{true, StoreID} ->
+			case IsMinerRequest of
+				false ->
+					ok;
+				true ->
+					UnpackedReply = ar_sync_record:is_recorded(Offset, {?MODULE, unpacked}),
+					?LOG_ERROR([{event, chunk_record_not_associated_with_packing},
+							{tags, [solution_proofs]},
+							{store_id, StoreID},
+							{seek_offset, SeekOffset},
+							{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}])
+			end,
+			{error, chunk_not_found};
 		_ ->
+			case IsMinerRequest of
+				false ->
+					ok;
+				true ->
+					UnpackedReply = ar_sync_record:is_recorded(Offset, {?MODULE, unpacked}),
+					Modules = ar_storage_module:get_all(Offset),
+					ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+					RootRecords = [ets:lookup(sync_records, {?MODULE, ID})
+							|| ID <- ModuleIDs],
+					?LOG_ERROR([{event, chunk_record_not_found},
+							{tags, [solution_proofs]},
+							{modules_covering_offset, ModuleIDs},
+							{root_sync_records, RootRecords},
+							{seek_offset, SeekOffset},
+							{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}])
+			end,
 			{error, chunk_not_found}
 	end.
 
@@ -1475,14 +1506,15 @@ remove_expired_disk_pool_data_roots() ->
 		ar_disk_pool_data_roots
 	).
 
-get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
-	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, true) of
+get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequest) ->
+	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, true,
+			IsMinerRequest) of
 		{error, Reason} ->
 			{error, Reason};
 		{ok, {Chunk, DataPath}, AbsoluteOffset, TXRoot, ChunkSize, TXPath} ->
 			ChunkID =
 				case validate_fetched_chunk({AbsoluteOffset, DataPath, TXPath, TXRoot,
-						ChunkSize, StoreID}) of
+						ChunkSize, StoreID, IsMinerRequest}) of
 					{true, ID} ->
 						ID;
 					false ->
@@ -1503,6 +1535,13 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
 				end,
 			case {PackResult, ChunkID} of
 				{{error, Reason}, _} ->
+					?LOG_ERROR([{event, failed_to_repack_chunk},
+							{tags, [solution_proofs]},
+							{packing, ar_chunk_storage:encode_packing(Packing)},
+							{stored_packing, ar_chunk_storage:encode_packing(StoredPacking)},
+							{absolute_end_offset, AbsoluteOffset},
+							{store_id, StoreID},
+							{error, io_lib:format("~p", [Reason])}]),
 					{error, Reason};
 				{{ok, PackedChunk, none}, _} ->
 					%% PackedChunk is the requested format.
@@ -1517,12 +1556,22 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
 							end_offset => AbsoluteOffset },
 					{ok, Proof};
 				{{ok, PackedChunk, MaybeUnpackedChunk}, _} ->
-					case ar_tx:generate_chunk_id(MaybeUnpackedChunk) == ChunkID of
+					ComputedChunkID = ar_tx:generate_chunk_id(MaybeUnpackedChunk),
+					case ComputedChunkID == ChunkID of
 						true ->
 							Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
 									data_path => DataPath, tx_path => TXPath },
 							{ok, Proof};
 						false ->
+							?LOG_ERROR([{event, fetched_chunk_invalid_packing_id},
+									{tags, [solution_proofs]},
+									{packing, ar_chunk_storage:encode_packing(Packing)},
+									{stored_packing,
+										ar_chunk_storage:encode_packing(StoredPacking)},
+									{absolute_end_offset, AbsoluteOffset},
+									{store_id, StoreID},
+									{expected_chunk_id, ar_util:encode(ChunkID)},
+									{chunk_id, ar_util:encode(ComputedChunkID)}]),
 							invalidate_bad_data_record({AbsoluteOffset - ChunkSize,
 								AbsoluteOffset, {chunks_index, StoreID}, StoreID, 4}),
 							{error, chunk_not_found}
@@ -1531,13 +1580,13 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID) ->
 	end.
 
 get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID) ->
-	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, false) of
+	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, false, false) of
 		{error, Reason} ->
 			{error, Reason};
 		{ok, DataPath, AbsoluteOffset, TXRoot, ChunkSize, TXPath} ->
 			CheckProof =
 				case validate_fetched_chunk({AbsoluteOffset, DataPath, TXPath, TXRoot,
-						ChunkSize, StoreID}) of
+						ChunkSize, StoreID, false}) of
 					{true, ID} ->
 						ID;
 					false ->
@@ -1561,19 +1610,42 @@ get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID) ->
 %% Otherwise, the format is
 %% {ok, DataPath, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
 read_chunk_with_metadata(
-		Offset, SeekOffset, StoredPacking, StoreID, ReadChunk) ->
+		Offset, SeekOffset, StoredPacking, StoreID, ReadChunk, IsMinerRequest) ->
 	case get_chunk_by_byte({chunks_index, StoreID}, SeekOffset) of
-		{error, _} ->
+		{error, Err} ->
+			case IsMinerRequest of
+				true ->
+					Modules = ar_storage_module:get_all(SeekOffset),
+					ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+					?LOG_ERROR([{event, failed_to_fetch_chunk_metadata},
+							{tags, [solution_proofs]},
+							{seek_offset, SeekOffset},
+							{store_id, StoreID},
+							{stored_packing, ar_chunk_storage:encode_packing(StoredPacking)},
+							{modules_covering_seek_offset, ModuleIDs},
+							{error, io_lib:format("~p", [Err])}]);
+				false ->
+					ok
+			end,
 			{error, chunk_not_found};
 		{ok, _, {AbsoluteOffset, _, _, _, _, _, ChunkSize}}
 				when AbsoluteOffset - SeekOffset >= ChunkSize ->
 			case ar_sync_record:delete(AbsoluteOffset - ChunkSize, SeekOffset - 1, ?MODULE,
 					StoreID) of
 				ok ->
-					?LOG_DEBUG([{event, clean_up_sync_record_false_positive},
-							{left, SeekOffset - 1}, {right, AbsoluteOffset - ChunkSize}]);
+					Modules = ar_storage_module:get_all(SeekOffset),
+					ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+					?LOG_ERROR([{event, clean_up_sync_record_false_positive},
+							{tags, [solution_proofs]},
+							{seek_offset, SeekOffset},
+							{end_offset, AbsoluteOffset},
+							{store_id, StoreID},
+							{stored_packing, ar_chunk_storage:encode_packing(StoredPacking)},
+							{modules_covering_seek_offset, ModuleIDs},
+							{chunk_size, ChunkSize}]);
 				Err ->
-					?LOG_WARNING([{event, failed_to_clean_up_sync_record},
+					?LOG_ERROR([{event, failed_to_clean_up_sync_record},
+							{tags, [solution_proofs]},
 							{error, io_lib:format("~p", [Err])}])
 			end,
 			{error, chunk_not_found};
@@ -1587,11 +1659,27 @@ read_chunk_with_metadata(
 				end,
 			case ReadFun(AbsoluteOffset, {chunk_data_db, StoreID}, ChunkDataKey, StoreID) of
 				not_found ->
+					case IsMinerRequest of
+						true ->
+							Modules = ar_storage_module:get_all(SeekOffset),
+							ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+							?LOG_ERROR([{event, failed_to_read_chunk_data_path},
+									{tags, [solution_proofs]},
+									{seek_offset, SeekOffset},
+									{store_id, StoreID},
+									{stored_packing,
+										ar_chunk_storage:encode_packing(StoredPacking)},
+									{modules_covering_seek_offset, ModuleIDs},
+									{chunk_data_key, ar_util:encode(ChunkDataKey)}]);
+						false ->
+							ok
+					end,
 					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset,
 							{chunks_index, StoreID}, StoreID, 1}),
 					{error, chunk_not_found};
 				{error, Error} ->
 					?LOG_ERROR([{event, failed_to_read_chunk},
+							{tags, [solution_proofs]},
 							{reason, io_lib:format("~p", [Error])},
 							{chunk_data_key, ar_util:encode(ChunkDataKey)},
 							{absolute_end_offset, Offset}]),
@@ -1600,6 +1688,19 @@ read_chunk_with_metadata(
 					case ar_sync_record:is_recorded(Offset, StoredPacking, ?MODULE,
 							StoreID) of
 						false ->
+							Modules = ar_storage_module:get_all(SeekOffset),
+							ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+							RootRecords = [ets:lookup(sync_records, {?MODULE, ID})
+									|| ID <- ModuleIDs],
+							?LOG_ERROR([{event,
+									chunk_metadata_read_sync_record_race_condition},
+								{tags, [solution_proofs]},
+								{seek_offset, SeekOffset},
+								{storeID, StoreID},
+								{modules_covering_seek_offset, ModuleIDs},
+								{root_sync_records, RootRecords},
+								{stored_packing,
+									ar_chunk_storage:encode_packing(StoredPacking)}]),
 							%% The chunk should have been re-packed
 							%% in the meantime - very unlucky timing.
 							{error, chunk_not_found};
@@ -1647,10 +1748,19 @@ invalidate_bad_data_record({Start, End, ChunksIndex, StoreID, Case}) ->
 	end.
 
 validate_fetched_chunk(Args) ->
-	{Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID} = Args,
+	{Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID, IsMinerRequest} = Args,
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case Offset > T orelse not ar_node:is_joined() of
 		true ->
+			case IsMinerRequest of
+				true ->
+					?LOG_ERROR([{event, miner_requested_disk_pool_chunk},
+							{tags, [solution_proofs]},
+							{disk_pool_threshold, T},
+							{end_offset, Offset}]);
+				false ->
+					ok
+			end,
 			{true, none};
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
@@ -1660,19 +1770,31 @@ validate_fetched_chunk(Args) ->
 					BlockSize = BlockEnd - BlockStart,
 					ChunkOffset = Offset - BlockStart - 1,
 					case validate_proof2({TXRoot, ChunkOffset, BlockSize, DataPath, TXPath,
-							ChunkSize, ValidateDataPathRuleset}) of
+							ChunkSize, ValidateDataPathRuleset, IsMinerRequest}) of
 						{true, ChunkID} ->
 							{true, ChunkID};
 						false ->
+							case IsMinerRequest of
+								true ->
+									?LOG_ERROR([{event, failed_to_validate_chunk_proofs},
+											{tags, [solution_proofs]},
+											{absolute_end_offset, Offset},
+											{store_id, StoreID}]);
+								false ->
+									ok
+							end,
 							StartOffset = Offset - ChunkSize,
 							invalidate_bad_data_record({StartOffset, Offset,
 									{chunks_index, StoreID}, StoreID, 2}),
 							false
 					end;
 				{_BlockStart, _BlockEnd, TXRoot2} ->
-					?LOG_WARNING([{event, stored_chunk_invalid_tx_root},
-							{byte, Offset - 1}, {tx_root, ar_util:encode(TXRoot2)},
-							{stored_tx_root, ar_util:encode(TXRoot)}]),
+					?LOG_ERROR([{event, stored_chunk_invalid_tx_root},
+							{tags, [solution_proofs]},
+							{end_offset, Offset},
+							{tx_root, ar_util:encode(TXRoot2)},
+							{stored_tx_root, ar_util:encode(TXRoot)},
+							{store_id, StoreID}]),
 					invalidate_bad_data_record({Offset - ChunkSize, Offset,
 							{chunks_index, StoreID}, StoreID, 3}),
 					false
@@ -2593,9 +2715,17 @@ validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataP
 	end.
 
 validate_proof2(Args) ->
-	{TXRoot, Offset, BlockSize, DataPath, TXPath, ChunkSize, ValidateDataPathRuleset} = Args,
+	{TXRoot, Offset, BlockSize, DataPath, TXPath, ChunkSize,
+			ValidateDataPathRuleset, IsMinerRequest} = Args,
 	case ar_merkle:validate_path(TXRoot, Offset, BlockSize, TXPath) of
 		false ->
+			case IsMinerRequest of
+				true ->
+					?LOG_ERROR([{event, failed_to_validate_tx_path},
+							{tags, [solution_proofs]}]);
+				false ->
+					ok
+			end,
 			false;
 		{DataRoot, TXStartOffset, TXEndOffset} ->
 			TXSize = TXEndOffset - TXStartOffset,
@@ -2605,11 +2735,28 @@ validate_proof2(Args) ->
 				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
 					case ChunkEndOffset - ChunkStartOffset == ChunkSize of
 						false ->
+							case IsMinerRequest of
+								true ->
+									?LOG_ERROR([{event, failed_to_validate_data_path_offset},
+											{tags, [solution_proofs]},
+											{chunk_end_offset, ChunkEndOffset},
+											{chunk_start_offset, ChunkStartOffset},
+											{chunk_size, ChunkSize}]);
+								false ->
+									ok
+							end,
 							false;
 						true ->
 							{true, ChunkID}
 					end;
 				_ ->
+					case IsMinerRequest of
+						true ->
+							?LOG_ERROR([{event, failed_to_validate_data_path},
+									{tags, [solution_proofs]}]);
+						false ->
+							ok
+					end,
 					false
 			end
 	end.
