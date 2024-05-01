@@ -6,7 +6,7 @@
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
 	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peers/1, get_peer/1,
 	update_peer/2, remove_peer/1, garbage_collect/0, is_exit_peer/0, get_peer_partitions/1,
-	get_unique_partitions/2
+	get_unique_partitions_list/0, get_unique_partitions_set/0, get_unique_partitions_set/2
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -250,7 +250,7 @@ handle_cast(refetch_pool_peer_partitions, State) ->
 			fun	({pool, _}, _Value, Acc) ->
 					Acc;
 				(_Peer, {_, Partitions}, Acc) ->
-					get_unique_partitions(Partitions, Acc)
+					get_unique_partitions_set(Partitions, Acc)
 			end,
 			sets:new(),
 			State#state.last_peer_response
@@ -403,10 +403,17 @@ refetch_peer_partitions(Peers) ->
 refetch_pool_peer_partitions() ->
 	gen_server:cast(?MODULE, refetch_pool_peer_partitions).
 
-get_unique_partitions([], UniquePartitions) ->
+get_unique_partitions_list() ->
+	Set = get_unique_partitions_set(ar_mining_io:get_partitions(), sets:new()),
+	lists:sort(sets:to_list(Set)).
+
+get_unique_partitions_set() ->
+	get_unique_partitions_set(ar_mining_io:get_partitions(), sets:new()).
+
+get_unique_partitions_set([], UniquePartitions) ->
 	UniquePartitions;
-get_unique_partitions([{PartitionID, MiningAddress} | Partitions], UniquePartitions) ->
-	get_unique_partitions(
+get_unique_partitions_set([{PartitionID, MiningAddress} | Partitions], UniquePartitions) ->
+	get_unique_partitions_set(
 		Partitions,
 		sets:add_element(
 			{[
@@ -417,9 +424,9 @@ get_unique_partitions([{PartitionID, MiningAddress} | Partitions], UniquePartiti
 			UniquePartitions
 		)
 	);
-get_unique_partitions([{PartitionID, BucketSize, MiningAddress} | Partitions],
+get_unique_partitions_set([{PartitionID, BucketSize, MiningAddress} | Partitions],
 		UniquePartitions) ->
-	get_unique_partitions(
+	get_unique_partitions_set(
 		Partitions,
 		sets:add_element(
 			{[

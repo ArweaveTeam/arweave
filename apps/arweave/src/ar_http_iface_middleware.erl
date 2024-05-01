@@ -1348,18 +1348,19 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) 
 				false ->
 					not_joined(Req);
 				true ->
-					LocalPartitions = get_unique_partitions(),
 					Partitions =
 						case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
 							{true, true} ->
 								PoolPeer = ar_pool:pool_peer(),
 								PoolPartitions = ar_coordination:get_peer_partitions(PoolPeer),
-								ar_coordination:get_unique_partitions(PoolPartitions,
-										LocalPartitions);
+								LocalPartitions = ar_coordination:get_unique_partitions_set(),
+								lists:sort(sets:to_list(
+										ar_coordination:get_unique_partitions_set(
+												PoolPartitions, LocalPartitions)));
 							_ ->
-								LocalPartitions
+								ar_coordination:get_unique_partitions_list()
 						end,
-					JSON = ar_serialize:jsonify(lists:sort(sets:to_list(Partitions))),
+					JSON = ar_serialize:jsonify(Partitions),
 					{200, #{}, JSON, Req}
 			end;
 		{reject, {Status, Headers, Body}} ->
@@ -3163,9 +3164,6 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 				{path, cowboy_req:path(Req)}, {peer, ar_util:format_peer(Peer)}]),
 		{error, timeout}
 	end.
-
-get_unique_partitions() ->
-	ar_coordination:get_unique_partitions(ar_mining_io:get_partitions(), sets:new()).
 
 handle_mining_h1(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),

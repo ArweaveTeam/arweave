@@ -16,7 +16,7 @@
 		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
 		cm_publish_send/2, get_jobs/2, post_partial_solution/2,
-		get_pool_cm_jobs/1, post_pool_cm_jobs/2, post_cm_partition_table_to_pool/2]).
+		get_pool_cm_jobs/2, post_pool_cm_jobs/2, post_cm_partition_table_to_pool/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -721,7 +721,7 @@ post_partial_solution(Peer, Solution) ->
 		is_peer_request => IsPeerRequest
 	})).
 
-get_pool_cm_jobs(Peer) ->
+get_pool_cm_jobs(Peer, Jobs) ->
 	{Peer3, Headers, BasePath, IsPeerRequest} =
 		case Peer of
 			{pool, URL} ->
@@ -730,13 +730,16 @@ get_pool_cm_jobs(Peer) ->
 			_ ->
 				{Peer, cm_p2p_headers(), "", true}
 		end,
+	Struct = ar_serialize:pool_cm_jobs_to_json_struct(Jobs),
+	Payload = ar_serialize:jsonify(Struct),
 	handle_get_pool_cm_jobs_response(ar_http:req(#{
 		peer => Peer3,
-		method => get,
+		method => post,
 		path => BasePath ++ "/pool_cm_jobs",
 		timeout => 5 * 1000,
 		connect_timeout => 1000,
 		headers => Headers,
+		body => Payload,
 		is_peer_request => IsPeerRequest
 	})).
 

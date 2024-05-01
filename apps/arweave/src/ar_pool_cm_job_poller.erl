@@ -43,7 +43,9 @@ handle_call(Request, _From, State) ->
 
 handle_cast(fetch_cm_jobs, State) ->
 	Peer = ar_pool:pool_peer(),
-	case ar_http_iface_client:get_pool_cm_jobs(Peer) of
+	Partitions = ar_coordination:get_unique_partitions_list(),
+	PartitionJobs = #pool_cm_jobs{ partitions = Partitions },
+	case ar_http_iface_client:get_pool_cm_jobs(Peer, PartitionJobs) of
 		{ok, Jobs} ->
 			push_cm_jobs_to_cm_peers(Jobs),
 			ar_pool:process_cm_jobs(Jobs, Peer),
