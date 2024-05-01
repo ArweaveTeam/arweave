@@ -346,7 +346,7 @@ count_by_response_type(ErrorResponse, Responses) ->
 		Responses
 	).
 
-%% @doc Count the occurances in the list based on the predicate.
+%% @doc Count the occurrences in the list based on the predicate.
 count_by(Pred, List) ->
 	maps:map(fun (_, Value) -> length(Value) end, group(Pred, List)).
 
