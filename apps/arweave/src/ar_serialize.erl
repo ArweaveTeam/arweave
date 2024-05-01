@@ -1925,10 +1925,12 @@ partial_solution_response_to_json_struct(Response) ->
 	{[{<<"indep_hash">>, ar_util:encode(H)}, {<<"status">>, S}]}.
 
 pool_cm_jobs_to_json_struct(Jobs) ->
-	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs } = Jobs,
+	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs,
+			partitions = Partitions } = Jobs,
 	{[
 		{h1_to_h2_jobs, [pool_cm_h1_to_h2_job_to_json_struct(Job) || Job <- H1ToH2Jobs]},
-		{h1_read_jobs, [pool_cm_h1_read_job_to_json_struct(Job) || Job <- H1ReadJobs]}
+		{h1_read_jobs, [pool_cm_h1_read_job_to_json_struct(Job) || Job <- H1ReadJobs]},
+		{partitions, Partitions}
 	]}.
 
 pool_cm_h1_to_h2_job_to_json_struct(Job) ->

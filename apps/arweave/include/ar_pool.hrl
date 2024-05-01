@@ -41,7 +41,12 @@
 }).
 
 %% @doc A set of coordinated mining jobs provided by the pool.
+%%
+%% Miners fetch and submit pool CM jobs via the same POST /pool_cm_jobs endpoint.
+%% When miners fetch jobs, they specify the partitions and leave the job fields empty.
+%% When miners submit jobs, they leave the partitions field empty.
 -record(pool_cm_jobs, {
 	h1_to_h2_jobs = [], % [#mining_candidate{}]
-	h1_read_jobs = [] % [#mining_candidate{}]
+	h1_read_jobs = [], % [#mining_candidate{}]
+	partitions = [] % a list of {[{bucket, ...}, {bucketsize, ...}, {addr, ...}]} JSON structs
 }).
