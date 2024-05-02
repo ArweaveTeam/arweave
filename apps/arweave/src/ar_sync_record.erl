@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([start_link/2, get/2, get/3, add/4, add/5, delete/4, cut/3, is_recorded/2,
-		is_recorded/3, is_recorded/4, get_next_synced_interval/4, get_next_synced_interval/5,
+		is_recorded/3, is_recorded/4, is_recorded_any/3,
+		get_next_synced_interval/4, get_next_synced_interval/5,
 		get_next_unsynced_interval/4,
 		get_interval/3, get_intersection_size/4]).
 

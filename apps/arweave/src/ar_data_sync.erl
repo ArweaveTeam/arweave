@@ -315,11 +315,15 @@ maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
 %%						| buckets on the left; true by default.
 get_chunk(Offset, #{ packing := Packing } = Options) ->
 	Pack = maps:get(pack, Options, true),
+	IsMinerRequest = maps:get(is_miner_request, Options, false),
 	IsRecorded =
-		case Pack of
-			false ->
+		case {IsMinerRequest, Pack} of
+			{true, _} ->
+				StorageModules = ar_storage_module:get_all(Offset),
+				ar_sync_record:is_recorded_any(Offset, ?MODULE, StorageModules);
+			{false, false} ->
 				ar_sync_record:is_recorded(Offset, {?MODULE, Packing});
-			true ->
+			{false, true} ->
 				ar_sync_record:is_recorded(Offset, ?MODULE)
 		end,
 	SeekOffset =
@@ -329,7 +333,6 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 			false ->
 				Offset
 		end,
-	IsMinerRequest = maps:get(is_miner_request, Options, false),
 	case IsRecorded of
 		{{true, StoredPacking}, StoreID} ->
 			get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
