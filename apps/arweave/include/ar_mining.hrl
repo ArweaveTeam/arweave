@@ -28,7 +28,8 @@
 	seed = not_set, %% serialized
 	session_key = not_set, %% serialized
 	start_interval_number = not_set, %% serialized
-	step_number = not_set %% serialized
+	step_number = not_set, %% serialized
+	label = <<"not_set">> %% not atom, for prevent atom table pollution DoS
 }).
 
 -record(mining_solution, {

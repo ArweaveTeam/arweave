@@ -64,7 +64,7 @@ computed_h1(Candidate, DiffPair) ->
 		h1 = not_set,
 		h2 = not_set,
 		nonce = not_set,
-		poa2 = not_set,		
+		poa2 = not_set,
 		preimage = not_set
 	},
 	gen_server:cast(?MODULE, {computed_h1, ShareableCandidate, H1, Nonce}).
@@ -330,8 +330,9 @@ send_h1(Candidate, State) ->
 		none ->
 			ok;
 		Peer ->
+			Candidate2 = Candidate#mining_candidate { label = <<"cm">> },
 			spawn(fun() ->
-				ar_http_iface_client:cm_h1_send(Peer, Candidate)
+				ar_http_iface_client:cm_h1_send(Peer, Candidate2)
 			end),
 			case Peer of
 				{pool, _} ->
