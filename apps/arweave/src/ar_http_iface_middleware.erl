@@ -3119,16 +3119,31 @@ handle_post_vdf3(Req, Pid, Peer) ->
 	end.
 
 handle_get_vdf(Req, Call, Format) ->
-	Peer = ar_http_util:arweave_peer(Req),
-	case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
-		[] ->
-			{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
-		[{_, _RawPeer}] ->
-			handle_get_vdf2(Req, Call, Format)
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(public_vdf_server, Config#config.enable) of
+		true ->
+			handle_get_vdf2(Req, Call, Format);
+		false ->
+			Peer = ar_http_util:arweave_peer(Req),
+			case ets:lookup(ar_peers, {vdf_client_peer, Peer}) of
+				[] ->
+					{400, #{}, jiffy:encode(#{ error => not_our_vdf_client }), Req};
+				[{_, _RawPeer}] ->
+					handle_get_vdf2(Req, Call, Format)
+			end
 	end.
 
 handle_get_vdf2(Req, Call, Format) ->
-	case gen_server:call(ar_nonce_limiter_server, Call) of
+	Update =
+		case Call of
+			get_update ->
+				ar_nonce_limiter_server:get_update();
+			get_session ->
+				ar_nonce_limiter_server:get_full_update();
+			get_previous_session ->
+				ar_nonce_limiter_server:get_full_prev_update()
+		end,
+	case Update of
 		not_found ->
 			{404, #{}, <<>>, Req};
 		Update ->
