@@ -20,6 +20,11 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 
 ## Requirements
 
+The full arweave node functionality is only supported on Linux, but it is possible to run a
+VDF Server on MacOS. Refer to the [mining VDF guide](https://docs.arweave.org/developers/mining/mining-vdf)
+for more information on running your own VDF server.
+
+**General requirements:**
 - OpenSSL 1.1.1+
 - OpenSSL development headers
 - GCC or Clang (GCC 8+ recommended)
@@ -29,15 +34,36 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 - SQLite3 headers (libsqlite3-dev on Ubuntu)
 - GNU MP (libgmp-dev on Ubuntu)
 
-To install the dependencies on Ubuntu 22 (recommended), run:
+<details>
+  <summary>To install the dependencies on <b>Ubuntu 22 (recommended)</b>:</summary>
+  </br>
 
-```sh
-sudo apt install libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
-```
+  ```sh
+  sudo apt install libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
+  ```
 
-On some systems you might need to install `libncurses-dev`.
+  On some systems you might need to install `libncurses-dev`.
+</details>
+</br>
+<details>
+  <summary>To install the dependencies <b>MacOS</b>:</summary>  
+  </br>
 
-Download the repo:
+  1. Install [Homebrew](https://brew.sh/)
+  2. Install dependencies
+  ```sh
+  brew install gmp openssl@1.1 erlang cmake pkg-config
+  ```
+
+  **Notes:** 
+  1. This process has only been tested on a fresh install of MacOS Ventura running on a Mac Mini M2. It may or may not work on other configurations.
+  2. We have not validated mining or packing on MacOS, but as of May, 2024 the M2 provides the fastest known VDF implementation and so makes a good candidate for [VDF Servers](https://docs.arweave.org/developers/mining/mining-vdf).
+
+</details>
+</br>
+
+
+**Download the repo:**
 
 ```sh
 $ git clone --recursive https://github.com/ArweaveTeam/arweave.git
@@ -47,13 +73,13 @@ $ cd arweave
 Increase the [open file
 limits](https://docs.arweave.org/info/mining/mining-guide#preparation-file-descriptors-limit).
 
-Run in the development mode:
+**Run in the development mode:**
 
 ```sh
 ./arweave-server peer 188.166.200.45 peer 188.166.192.169 peer 163.47.11.64 peer 139.59.51.59 peer 138.197.232.192
 ```
 
-Make a production build:
+**Make a production build:**
 
 ```sh
 $ ./rebar3 as prod tar
