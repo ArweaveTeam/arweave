@@ -31,8 +31,8 @@ for more information on running your own VDF server.
 - Erlang OTP v24, with OpenSSL support
 - GNU Make
 - CMake (CMake version > 3.10.0)
-- SQLite3 headers (libsqlite3-dev on Ubuntu)
-- GNU MP (libgmp-dev on Ubuntu)
+- SQLite3 header
+- GNU MP
 
 <details>
   <summary>To install the dependencies on <b>Ubuntu 22 (recommended)</b>:</summary>
@@ -46,7 +46,7 @@ for more information on running your own VDF server.
 </details>
 </br>
 <details>
-  <summary>To install the dependencies <b>MacOS</b>:</summary>  
+  <summary>To install the dependencies on <b>MacOS</b>:</summary>  
   </br>
 
   1. Install [Homebrew](https://brew.sh/)
@@ -76,7 +76,12 @@ limits](https://docs.arweave.org/info/mining/mining-guide#preparation-file-descr
 **Run in the development mode:**
 
 ```sh
-./arweave-server peer 188.166.200.45 peer 188.166.192.169 peer 163.47.11.64 peer 139.59.51.59 peer 138.197.232.192
+./arweave-server \
+peer ams-1.eu-central-1.arweave.net \
+peer fra-1.eu-central-2.arweave.net \
+peer sgp-1.ap-central-2.arweave.net \
+peer blr-1.ap-central-1.arweave.net \
+peer sfo-1.na-west-1.arweave.net
 ```
 
 **Make a production build:**
