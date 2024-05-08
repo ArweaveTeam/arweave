@@ -3,7 +3,7 @@
 -module(ar_block_cache).
 
 -export([new/2, initialize_from_list/2, add/2, mark_nonce_limiter_validated/2,
-		mark_nonce_limiter_validation_scheduled/2, add_validated/2,
+		add_validated/2,
 		mark_tip/2, get/2, get_earliest_not_validated_from_longest_chain/1,
 		get_longest_chain_cache/1,
 		get_block_and_status/2, remove/2, get_checkpoint_block/1, prune/2,
@@ -23,7 +23,7 @@
 %% none: null status
 -type validation_status() :: on_chain | validated | not_validated | none.
 -type nonce_limiter_validation_status() :: nonce_limiter_validated | 
-	nonce_limiter_validation_scheduled | awaiting_nonce_limiter_validation.
+	awaiting_nonce_limiter_validation.
 -type block_status() :: validation_status() | {not_validated, nonce_limiter_validation_status()}.
 
 %% @doc ETS table: block_cache
@@ -157,25 +157,12 @@ get_fork_length(Tab, Branch) ->
 
 %% @doc Update the status of the given block to 'nonce_limiter_validated'.
 %% Do nothing if the block is not found in cache or if its status is
-%% not 'nonce_limiter_validation_scheduled'.
-mark_nonce_limiter_validated(Tab, H) ->
-	case ets:lookup(Tab, {block, H}) of
-		[{_, {B, {not_validated, nonce_limiter_validation_scheduled}, Timestamp, Children}}] ->
-			insert(Tab, {{block, H}, {B,
-					{not_validated, nonce_limiter_validated}, Timestamp, Children}});
-		_ ->
-			ok
-	end.
-
-%% @doc Update the status of the given block to 'nonce_limiter_validation_scheduled'.
-%% Do nothing if the block is not found in cache or if its status is
 %% not 'awaiting_nonce_limiter_validation'.
-mark_nonce_limiter_validation_scheduled(Tab, H) ->
+mark_nonce_limiter_validated(Tab, H) ->
 	case ets:lookup(Tab, {block, H}) of
 		[{_, {B, {not_validated, awaiting_nonce_limiter_validation}, Timestamp, Children}}] ->
 			insert(Tab, {{block, H}, {B,
-					{not_validated, nonce_limiter_validation_scheduled}, Timestamp,
-					Children}});
+					{not_validated, nonce_limiter_validated}, Timestamp, Children}});
 		_ ->
 			ok
 	end.
@@ -268,10 +255,6 @@ get_longest_chain_block_txs_pairs(_Tab, _H, 0, _PrevStatus, _PrevH, Pairs, NotOn
 get_longest_chain_block_txs_pairs(Tab, H, N, PrevStatus, PrevH, Pairs, NotOnChainCount) ->
 	case ets:lookup(Tab, {block, H}) of
 		[{_, {B, {not_validated, awaiting_nonce_limiter_validation}, _Timestamp,
-				_Children}}] ->
-			get_longest_chain_block_txs_pairs(Tab, B#block.previous_block,
-					?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0);
-		[{_, {B, {not_validated, nonce_limiter_validation_scheduled}, _Timestamp,
 				_Children}}] ->
 			get_longest_chain_block_txs_pairs(Tab, B#block.previous_block,
 					?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0);
@@ -1509,9 +1492,7 @@ block_cache_test() ->
 	%% 1		B12/not_validated    B13/on_chain
 	%%					  \              /
 	%% 0					B11/on_chain
-	mark_nonce_limiter_validation_scheduled(bcache_test, crypto:strong_rand_bytes(48)),
 	mark_nonce_limiter_validated(bcache_test, crypto:strong_rand_bytes(48)),
-	mark_nonce_limiter_validation_scheduled(bcache_test, block_id(B13)),
 	mark_nonce_limiter_validated(bcache_test, block_id(B13)),
 	?assertEqual({B13, on_chain}, get_block_and_status(bcache_test, block_id(B13))),
 	?assertMatch({B14, {not_validated, awaiting_nonce_limiter_validation}},
@@ -1531,10 +1512,9 @@ block_cache_test() ->
 	%% 1		B12/not_validated    B13/on_chain
 	%%					  \              /
 	%% 0					B11/on_chain
-	mark_nonce_limiter_validation_scheduled(bcache_test, block_id(B14)),
-	?assertMatch({B14, {not_validated, nonce_limiter_validation_scheduled}},
+	?assertMatch({B14, {not_validated, awaiting_nonce_limiter_validation}},
 			get_block_and_status(bcache_test, block_id(B14))),
-	?assertMatch({B14, [B13], {{not_validated, nonce_limiter_validation_scheduled}, _}},
+	?assertMatch({B14, [B13], {{not_validated, awaiting_nonce_limiter_validation}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	assert_longest_chain([B13, B11], 0),
 	assert_tip(block_id(B13)),
@@ -1620,7 +1600,6 @@ block_cache_test() ->
 	%%					  \              /
 	%% 0					B11/on_chain
 	add(bcache_test, B16 = on_top(random_block_after_repacking(4), B15)),
-	mark_nonce_limiter_validation_scheduled(bcache_test, block_id(B16)),
 	?assertMatch({B15, [B14, B13], {{not_validated, awaiting_nonce_limiter_validation}, _}},
 			get_earliest_not_validated_from_longest_chain(bcache_test)),
 	assert_longest_chain([B14, B13, B11], 1),

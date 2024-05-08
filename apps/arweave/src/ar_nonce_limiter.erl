@@ -306,9 +306,8 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			case ar_config:use_remote_vdf_server() of
 				true ->
 					%% Wait for our VDF server(s) to validate the remaining steps.
-					spawn(fun() ->
-						timer:sleep(1000),
-						request_validation(H, Info, PrevInfo) end);
+					%% Alternatively, the network may abandon this block.
+					spawn(fun() -> ar_events:send(nonce_limiter, {refuse_validation, H}) end);
 				false ->
 					%% Validate the remaining steps.
 					StartOutput2 = case NumAlreadyComputed of
@@ -1161,9 +1160,9 @@ apply_external_update2(Update, State) ->
 %% @param NumSteps Number of Session steps to apply. Steps are sorted in descending order.
 %% @param UpperBound Upper bound of the session pushed by the VDF server
 %%
-%% Note: an important job of this function is to ensure that VDF steps are only processed once.
-%% We truncate Session.steps such the previously processed steps are not sent to
-%% send_events_for_external_update.
+%% Note: we do not take the VDF steps from Session but accept them separately in Steps,
+%% where only unique steps are included to ensure that VDF steps are only processed once.
+%% In the first place, it is important for avoiding extra mining work.
 apply_external_update3(State, SessionKey, Session, Steps) ->
 	#state{ last_external_update = {Peer, _} } = State,
 

@@ -46,7 +46,8 @@ init([]) ->
 		%% Events: account_tree_initialized, initialized,
 		%% new_tip, checkpoint_block, search_space_upper_bound.
 		?CHILD(ar_events, node_state, worker),
-		%% Events: initialized, valid, invalid, validation_error, computed_output.
+		%% Events: initialized, valid, invalid, validation_error, refuse_validation,
+		%% computed_output.
 		?CHILD(ar_events, nonce_limiter, worker),
 		%% Events: found_solution.
 		?CHILD(ar_events, miner, worker),
