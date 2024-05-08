@@ -343,18 +343,21 @@ get_next_by_prefix2({DB, CF}, PrefixBitSize, KeyBitSize, OffsetBinary) ->
 			%% of the offset.
 			{error, temporary_error};
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, {seek, OffsetBinary}) of
-				{error, invalid_iterator} ->
-					%% There is no bigger or equal key sharing the prefix.
-					%% Query one more time with prefix + 1.
-					SuffixBitSize = KeyBitSize - PrefixBitSize,
-					<< Prefix:PrefixBitSize, _:SuffixBitSize >> = OffsetBinary,
-					NextPrefixSmallestBytes = << (Prefix + 1):PrefixBitSize,
-							0:SuffixBitSize >>,
-					rocksdb:iterator_move(Iterator, {seek, NextPrefixSmallestBytes});
-				Reply ->
-					Reply
-			end;
+			Reply2 =
+				case rocksdb:iterator_move(Iterator, {seek, OffsetBinary}) of
+					{error, invalid_iterator} ->
+						%% There is no bigger or equal key sharing the prefix.
+						%% Query one more time with prefix + 1.
+						SuffixBitSize = KeyBitSize - PrefixBitSize,
+						<< Prefix:PrefixBitSize, _:SuffixBitSize >> = OffsetBinary,
+						NextPrefixSmallestBytes = << (Prefix + 1):PrefixBitSize,
+								0:SuffixBitSize >>,
+						rocksdb:iterator_move(Iterator, {seek, NextPrefixSmallestBytes});
+					Reply ->
+						Reply
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply2;
 		Error ->
 			Error
 	end.
@@ -384,24 +387,30 @@ get_next(Name, Cursor, RetryCount) ->
 get_next2({DB, CF}, Cursor) ->
 	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, Cursor) of
-				{error, invalid_iterator} ->
-					none;
-				Reply ->
-					Reply
-			end;
+			Reply2 =
+				case rocksdb:iterator_move(Iterator, Cursor) of
+					{error, invalid_iterator} ->
+						none;
+					Reply ->
+						Reply
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply2;
 		Error ->
 			Error
 	end;
 get_next2(DB, Cursor) ->
 	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, Cursor) of
-				{error, invalid_iterator} ->
-					none;
-				Reply ->
-					Reply
-			end;
+			Reply2 =
+				case rocksdb:iterator_move(Iterator, Cursor) of
+					{error, invalid_iterator} ->
+						none;
+					Reply ->
+						Reply
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply2;
 		Error ->
 			Error
 	end.
@@ -431,24 +440,30 @@ get_prev(Name, Cursor, RetryCount) ->
 get_prev2({DB, CF}, OffsetBinary) ->
 	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
-				{error, invalid_iterator} ->
-					none;
-				Reply ->
-					Reply
-			end;
+			Reply2 =
+				case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
+					{error, invalid_iterator} ->
+						none;
+					Reply ->
+						Reply
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply2;
 		Error ->
 			Error
 	end;
 get_prev2(DB, OffsetBinary) ->
 	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
-				{error, invalid_iterator} ->
-					none;
-				Reply ->
-					Reply
-			end;
+			Reply2 =
+				case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
+					{error, invalid_iterator} ->
+						none;
+					Reply ->
+						Reply
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply2;
 		Error ->
 			Error
 	end.
@@ -478,28 +493,34 @@ get_range2(Name, Start, RetryCount) ->
 get_range3({DB, CF}, StartOffsetBinary) ->
 	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
-				{ok, Key, Value} ->
-					get_range4(Iterator, #{ Key => Value });
-				{error, invalid_iterator} ->
-					{ok, #{}};
-				{error, Reason} ->
-					{error, Reason}
-			end;
+			Reply =
+				case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
+					{ok, Key, Value} ->
+						get_range4(Iterator, #{ Key => Value });
+					{error, invalid_iterator} ->
+						{ok, #{}};
+					{error, Reason} ->
+						{error, Reason}
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply;
 		Error ->
 			Error
 	end;
 get_range3(DB, StartOffsetBinary) ->
 	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
-				{ok, Key, Value} ->
-					get_range4(Iterator, #{ Key => Value });
-				{error, invalid_iterator} ->
-					{ok, #{}};
-				{error, Reason} ->
-					{error, Reason}
-			end;
+			Reply =
+				case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
+					{ok, Key, Value} ->
+						get_range4(Iterator, #{ Key => Value });
+					{error, invalid_iterator} ->
+						{ok, #{}};
+					{error, Reason} ->
+						{error, Reason}
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply;
 		Error ->
 			Error
 	end.
@@ -530,32 +551,38 @@ get_range2(Name, Start, End, RetryCount) ->
 get_range3({DB, CF}, StartOffsetBinary, EndOffsetBinary) ->
 	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
-				{ok, Key, _Value} when Key > EndOffsetBinary ->
-					{ok, #{}};
-				{ok, Key, Value} ->
-					get_range4(Iterator, #{ Key => Value }, EndOffsetBinary);
-				{error, invalid_iterator} ->
-					{ok, #{}};
-				{error, Reason} ->
-					{error, Reason}
-			end;
+			Reply =
+				case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
+					{ok, Key, _Value} when Key > EndOffsetBinary ->
+						{ok, #{}};
+					{ok, Key, Value} ->
+						get_range4(Iterator, #{ Key => Value }, EndOffsetBinary);
+					{error, invalid_iterator} ->
+						{ok, #{}};
+					{error, Reason} ->
+						{error, Reason}
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply;
 		Error ->
 			Error
 	end;
 get_range3(DB, StartOffsetBinary, EndOffsetBinary) ->
 	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
-				{ok, Key, _Value} when Key > EndOffsetBinary ->
-					{ok, #{}};
-				{ok, Key, Value} ->
-					get_range4(Iterator, #{ Key => Value }, EndOffsetBinary);
-				{error, invalid_iterator} ->
-					{ok, #{}};
-				{error, Reason} ->
-					{error, Reason}
-			end;
+			Reply =
+				case rocksdb:iterator_move(Iterator, {seek, StartOffsetBinary}) of
+					{ok, Key, _Value} when Key > EndOffsetBinary ->
+						{ok, #{}};
+					{ok, Key, Value} ->
+						get_range4(Iterator, #{ Key => Value }, EndOffsetBinary);
+					{error, invalid_iterator} ->
+						{ok, #{}};
+					{error, Reason} ->
+						{error, Reason}
+				end,
+			rocksdb:iterator_close(Iterator),
+			Reply;
 		Error ->
 			Error
 	end.
