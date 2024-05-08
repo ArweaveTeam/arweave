@@ -50,6 +50,7 @@ handle_cast(resolve_raw_peer, #state{ raw_peer = RawPeer } = State) ->
 			{noreply, State#state{ peer = Peer }};
 		{error, Reason} ->
 			?LOG_WARNING([{event, failed_to_resolve_vdf_client_peer},
+					{peer, RawPeer},
 					{reason, io_lib:format("~p", [Reason])}]),
 			ar_util:cast_after(10000, self(), resolve_raw_peer),
 			{noreply, State}
