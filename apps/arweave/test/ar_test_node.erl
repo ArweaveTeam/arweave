@@ -225,7 +225,7 @@ base_cm_config(Peers) ->
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
-				serve_wallet_lists, pack_served_chunks],
+				serve_wallet_lists, pack_served_chunks, public_vdf_server],
 		mining_server_chunk_cache_size_limit = 4,
 		debug = true,
 		peers = Peers,

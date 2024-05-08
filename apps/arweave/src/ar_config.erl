@@ -23,7 +23,7 @@ use_remote_vdf_server() ->
 
 pull_from_remote_vdf_server() ->
 	{ok, Config} = application:get_env(arweave, config),
-	lists:member(vdf_server_pull, Config#config.enable).
+	not lists:member(vdf_server_pull, Config#config.disable).
 
 parse(Config) when is_binary(Config) ->
 	case ar_serialize:json_decode(Config) of
@@ -577,7 +577,7 @@ parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | Rest], Config)
 parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | _], _) ->
 	{error, {bad_type, cm_out_batch_timeout, number}, CMBatchTimeout};
 
-parse_options([{<<"cm_in_batch_timeout">>, CMBatchTimeout} | Rest], Config) ->
+parse_options([{<<"cm_in_batch_timeout">>, _CMBatchTimeout} | Rest], Config) ->
 	?LOG_WARNING("Deprecated option found 'cm_in_batch_timeout': "
 		" this option has been removed and is a no-op.", []),
 	parse_options(Rest, Config);

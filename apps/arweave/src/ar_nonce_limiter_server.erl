@@ -2,18 +2,15 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, make_full_nonce_limiter_update/2, make_partial_nonce_limiter_update/4]).
+-export([start_link/0, make_full_nonce_limiter_update/2, make_partial_nonce_limiter_update/4,
+		get_update/0, get_full_update/0, get_full_prev_update/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--record(state, {
-	partial_update,
-	full_update,
-	full_prev_update
-}).
+-record(state, {}).
 
 %%%===================================================================
 %%% Public interface.
@@ -33,6 +30,33 @@ make_partial_nonce_limiter_update(SessionKey, Session, StepNumber, Output) ->
 make_full_nonce_limiter_update(SessionKey, Session) ->
 	make_nonce_limiter_update(SessionKey, Session, false).
 
+%% @doc Return the minimal VDF update, i.e., the latest computed output.
+get_update() ->
+	case ets:lookup(?MODULE, partial_update) of
+		[] ->
+			not_found;
+		[{_, PartialUpdate}] ->
+			PartialUpdate
+	end.
+
+%% @doc Return the "full update" including the latest VDF session.
+get_full_update() ->
+	case ets:lookup(?MODULE, full_update) of
+		[] ->
+			not_found;
+		[{_, Session}] ->
+			Session
+	end.
+
+%% @doc Return the "full previous update" including the latest but one VDF session.
+get_full_prev_update() ->
+	case ets:lookup(?MODULE, full_prev_update) of
+		[] ->
+			not_found;
+		[{_, PrevSession}] ->
+			PrevSession
+	end.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -41,24 +65,6 @@ init([]) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	{ok, #state{}}.
-
-handle_call(get_update, _From, #state{ partial_update = undefined } = State) ->
-	{reply, not_found, State};
-handle_call(get_update, _From, State) ->
-	#state{ partial_update = PartialUpdate } = State,
-	{reply, PartialUpdate, State};
-
-handle_call(get_session, _From, #state{ full_update = undefined } = State) ->
-	{reply, not_found, State};
-handle_call(get_session, _From, State) ->
-	#state{ full_update = FullUpdate } = State,
-	{reply, FullUpdate, State};
-
-handle_call(get_previous_session, _From, #state{ full_prev_update = undefined } = State) ->
-	{reply, not_found, State};
-handle_call(get_previous_session, _From, State) ->
-	#state{ full_prev_update = FullPrevUpdate } = State,
-	{reply, FullPrevUpdate, State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -83,8 +89,11 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 					StepNumber, Output),
 			FullUpdate = make_full_nonce_limiter_update(SessionKey, Session),
 			FullPrevUpdate = make_full_nonce_limiter_update(PrevSessionKey, PrevSession),
-			{noreply, State#state{ partial_update = PartialUpdate, full_update = FullUpdate,
-						full_prev_update = FullPrevUpdate }}
+			ets:insert(?MODULE, [
+				{partial_update, PartialUpdate},
+				{full_update, FullUpdate},
+				{full_prev_update, FullPrevUpdate}]),
+			{noreply, State}
 	end;
 
 handle_info({event, nonce_limiter, _Args}, State) ->
