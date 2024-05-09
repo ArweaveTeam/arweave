@@ -43,7 +43,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(fetch_cm_jobs, State) ->
 	Peer = ar_pool:pool_peer(),
-	Partitions = ar_coordination:get_unique_partitions_list(),
+	Partitions = ar_coordination:get_cluster_partitions_list(),
 	PartitionJobs = #pool_cm_jobs{ partitions = Partitions },
 	case ar_http_iface_client:get_pool_cm_jobs(Peer, PartitionJobs) of
 		{ok, Jobs} ->

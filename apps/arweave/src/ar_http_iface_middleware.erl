@@ -1351,13 +1351,14 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) 
 					Partitions =
 						case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
 							{true, true} ->
-								PoolPeer = ar_pool:pool_peer(),
-								PoolPartitions = ar_coordination:get_peer_partitions(PoolPeer),
-								LocalPartitions = ar_coordination:get_unique_partitions_set(),
-								lists:sort(sets:to_list(
-										ar_coordination:get_unique_partitions_set(
-												PoolPartitions, LocalPartitions)));
+								%% When we work with a pool, the exit node shares
+								%% the information about external partitions with
+								%% every internal miner.
+								ar_coordination:get_self_plus_external_partitions_list();
 							_ ->
+								%% CM miners ask each other about their local
+								%% partitions. A CM exit node is not an exception - it
+								%% does NOT aggregate peer partitions in this case.
 								ar_coordination:get_unique_partitions_list()
 						end,
 					JSON = ar_serialize:jsonify(Partitions),
