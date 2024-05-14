@@ -297,7 +297,12 @@ cached_read_range(WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
 		{_CachedTime, ChunkOffsets} ->
 			?LOG_DEBUG([{event, mining_debug_read_cached_recall_range},
 				{pid, self()}, {range_start, RangeStart},
-				{store_id, StoreID}]),
+				{store_id, StoreID},
+				{partition_number, Candidate#mining_candidate.partition_number},
+				{partition_number2, Candidate#mining_candidate.partition_number2},
+				{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
+				{cache_ref, Candidate#mining_candidate.cache_ref},
+				{session, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),
 			{ChunkOffsets, Cache}
 	end.
 

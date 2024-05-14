@@ -7,10 +7,8 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("arweave/include/ar_pool.hrl").
 
