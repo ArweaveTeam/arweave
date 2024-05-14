@@ -7,8 +7,6 @@
 		chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
 		get_addresses/1, get_weave_size_increase/2, utility/1]).
 
--export([get_wallet_fee_pre_fork_2_4/2]).
-
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -228,20 +226,6 @@ utility(#tx{ format = 1, reward = Reward, data_size = DataSize }, _Size)
 	{1, Reward};
 utility(#tx{ reward = Reward }, _Size) ->
 	{2, Reward}.
-
-get_wallet_fee_pre_fork_2_4(Diff, Height) ->
-	case Height >= ar_fork:height_2_2() of
-		true ->
-			%% Scale the wallet fee so that is always roughly 0.1$.
-			{Dividend, Divisor} = ?WALLET_GEN_FEE_USD,
-			ar_pricing:usd_to_ar_pre_fork_2_4(
-				Dividend / Divisor,
-				Diff,
-				Height
-			);
-		false ->
-			?WALLET_GEN_FEE
-	end.
 
 %%%===================================================================
 %%% Private functions.
