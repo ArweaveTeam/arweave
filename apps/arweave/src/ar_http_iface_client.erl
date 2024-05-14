@@ -19,7 +19,6 @@
 		get_pool_cm_jobs/2, post_pool_cm_jobs/2, post_cm_partition_table_to_pool/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
@@ -556,78 +555,23 @@ get_previous_vdf_session(Peer) ->
 			Reply
 	end.
 
+%% -----------------------------------------------------------------------------
+%% Coordinated Mining and Pool Request
+%% -----------------------------------------------------------------------------
+
 get_cm_partition_table(Peer) ->
-	{Peer3, Headers, BasePath, IsPeerRequest} =
-		case Peer of
-			{pool, URL} ->
-				{Peer2, Path2} = get_peer_and_path_from_url(URL),
-				{Peer2, pool_client_headers(), Path2, false};
-			_ ->
-				{Peer, cm_p2p_headers(), "", true}
-		end,
-	handle_cm_partition_table_response(ar_http:req(#{
-		peer => Peer3,
-		method => get,
-		path => BasePath ++ "/coordinated_mining/partition_table",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => Headers,
-		is_peer_request => IsPeerRequest
-	})).
+	Req = build_cm_or_pool_request(get, Peer, "/coordinated_mining/partition_table"),
+	handle_cm_partition_table_response(ar_http:req(Req)).
 
 cm_h1_send(Peer, Candidate) ->
-	{Peer3, Headers, BasePath, IsPeerRequest} =
-		case Peer of
-			{pool, URL} ->
-				{Peer2, Path2} = get_peer_and_path_from_url(URL),
-				{Peer2, pool_client_headers(), Path2, false};
-			_ ->
-				{Peer, cm_p2p_headers(), "", true}
-		end,
-	JSON =
-		case is_binary(Candidate) of
-			true ->
-				Candidate;
-			false ->
-				ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate))
-		end,
-	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer3,
-		method => post,
-		path => BasePath ++ "/coordinated_mining/h1",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => Headers,
-		body => JSON,
-		is_peer_request => IsPeerRequest
-	})).
+	JSON = ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate)),
+	Req = build_cm_or_pool_request(post, Peer, "/coordinated_mining/h1", JSON),
+	handle_cm_noop_response(ar_http:req(Req)).
 
 cm_h2_send(Peer, Candidate) ->
-	{Peer3, Headers, BasePath, IsPeerRequest} =
-		case Peer of
-			{pool, URL} ->
-				{Peer2, Path2} = get_peer_and_path_from_url(URL),
-				{Peer2, pool_client_headers(), Path2, false};
-			_ ->
-				{Peer, cm_p2p_headers(), "", true}
-		end,
-	JSON =
-		case is_binary(Candidate) of
-			true ->
-				Candidate;
-			false ->
-				ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate))
-		end,
-	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer3,
-		method => post,
-		path => BasePath ++ "/coordinated_mining/h2",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => Headers,
-		body => JSON,
-		is_peer_request => IsPeerRequest
-	})).
+	JSON = ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate)),
+	Req = build_cm_or_pool_request(post, Peer, "/coordinated_mining/h2", JSON),
+	handle_cm_noop_response(ar_http:req(Req)).
 
 cm_publish_send(Peer, Solution) ->
 	?LOG_DEBUG([{event, cm_publish_send}, {peer, ar_util:format_peer(Peer)},
@@ -635,35 +579,50 @@ cm_publish_send(Peer, Solution) ->
 		{step_number, Solution#mining_solution.step_number},
 		{start_interval_number, Solution#mining_solution.start_interval_number},
 		{seed, ar_util:encode(Solution#mining_solution.seed)}]),
-	JSON = ar_serialize:solution_to_json_struct(Solution),
-	handle_cm_noop_response(ar_http:req(#{
-		peer => Peer,
-		method => post,
-		path => "/coordinated_mining/publish",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
-		headers => cm_p2p_headers(),
-		body => ar_serialize:jsonify(JSON)
-	})).
+	JSON = ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution)),
+	Req = build_cm_or_pool_request(post, Peer, "/coordinated_mining/publish", JSON),
+	handle_cm_noop_response(ar_http:req(Req)).
 
 %% @doc Fetch the jobs from the pool or coordinated mining exit peer.
 get_jobs(Peer, PrevOutput) ->
-	{Peer3, Headers, BasePath, IsPeerRequest} =
-		case Peer of
-			{pool, URL} ->
-				{Peer2, Path2} = get_peer_and_path_from_url(URL),
-				{Peer2, pool_client_headers(), Path2, false};
-			_ ->
-				{Peer, cm_p2p_headers(), "", true}
+	Req = build_cm_or_pool_request(get, Peer,
+		"/jobs/" ++ binary_to_list(ar_util:encode(PrevOutput))),
+	handle_get_jobs_response(ar_http:req(Req)).
+
+%% @doc Post the partial solution to the pool or coordinated mining exit peer.
+post_partial_solution(Peer, Solution) ->
+	Payload =
+		case is_binary(Solution) of
+			true ->
+				Solution;
+			false ->
+				ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution))
 		end,
-	handle_get_jobs_response(ar_http:req(#{
-		peer => Peer3,
-		method => get,
-		path => BasePath ++ "/jobs/" ++ binary_to_list(ar_util:encode(PrevOutput)),
-		timeout => 5 * 1000,
-		connect_timeout => 1000,
-		headers => Headers,
-		is_peer_request => IsPeerRequest
+	Req = build_cm_or_pool_request(post, Peer, "/partial_solution", Payload),
+	handle_post_partial_solution_response(ar_http:req(Req#{
+		timeout => 20 * 1000,
+		connect_timeout => 5 * 1000
+	})).
+
+get_pool_cm_jobs(Peer, Jobs) ->
+	JSON = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
+	Req = build_cm_or_pool_request(post, Peer, "/pool_cm_jobs", JSON),
+	handle_get_pool_cm_jobs_response(ar_http:req(Req#{
+		connect_timeout => 1000
+	})).
+
+post_pool_cm_jobs(Peer, Payload) ->
+	Req = build_cm_or_pool_request(post, Peer, "/pool_cm_jobs", Payload),
+	handle_post_pool_cm_jobs_response(ar_http:req(Req#{
+		timeout => 10 * 1000,
+		connect_timeout => 2000
+	})).
+
+post_cm_partition_table_to_pool(Peer, Payload) ->
+	Req = build_cm_or_pool_request(post, Peer, "/coordinated_mining/partition_table", Payload),
+	handle_cm_partition_table_response(ar_http:req(Req#{
+		timeout => 10 * 1000,
+		connect_timeout => 2000
 	})).
 
 get_peer_and_path_from_url(URL) ->
@@ -681,8 +640,9 @@ get_peer_and_path_from_url(URL) ->
 	end,
 	{Peer, binary_to_list(P)}.
 
-%% @doc Post the partial solution to the pool or coordinated mining exit peer.
-post_partial_solution(Peer, Solution) ->
+build_cm_or_pool_request(Method, Peer, Path) ->
+	build_cm_or_pool_request(Method, Peer, Path, <<>>).
+build_cm_or_pool_request(Method, Peer, Path, Body) ->
 	{Peer3, Headers, BasePath, IsPeerRequest} =
 		case Peer of
 			{pool, URL} ->
@@ -691,83 +651,22 @@ post_partial_solution(Peer, Solution) ->
 			_ ->
 				{Peer, cm_p2p_headers(), "", true}
 		end,
-	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
-	Payload =
-		case is_binary(Solution) of
-			true ->
-				Solution;
-			false ->
-				ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution))
-		end,
-	handle_post_partial_solution_response(ar_http:req(#{
+	Headers2 = case Method of
+		get ->
+			Headers;
+		_ ->
+			add_header(<<"content-type">>, <<"application/json">>, Headers)
+	end,
+	#{
 		peer => Peer3,
-		method => post,
-		path => BasePath ++ "/partial_solution/",
-		timeout => 20 * 1000,
-		connect_timeout => 5 * 1000,
-		headers => Headers2,
-		body => Payload,
-		is_peer_request => IsPeerRequest
-	})).
-
-get_pool_cm_jobs(Peer, Jobs) ->
-	{Peer3, Headers, BasePath, IsPeerRequest} =
-		case Peer of
-			{pool, URL} ->
-				{Peer2, Path2} = get_peer_and_path_from_url(URL),
-				{Peer2, pool_client_headers(), Path2, false};
-			_ ->
-				{Peer, cm_p2p_headers(), "", true}
-		end,
-	Struct = ar_serialize:pool_cm_jobs_to_json_struct(Jobs),
-	Payload = ar_serialize:jsonify(Struct),
-	handle_get_pool_cm_jobs_response(ar_http:req(#{
-		peer => Peer3,
-		method => post,
-		path => BasePath ++ "/pool_cm_jobs",
+		method => Method,
+		path => BasePath ++ Path,
 		timeout => 5 * 1000,
-		connect_timeout => 1000,
-		headers => Headers,
-		body => Payload,
-		is_peer_request => IsPeerRequest
-	})).
-
-post_pool_cm_jobs(Peer, Payload) ->
-	{Peer3, Headers, BasePath, IsPeerRequest} =
-		case Peer of
-			{pool, URL} ->
-				{Peer2, Path2} = get_peer_and_path_from_url(URL),
-				{Peer2, pool_client_headers(), Path2, false};
-			_ ->
-				{Peer, cm_p2p_headers(), "", true}
-		end,
-	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
-	handle_post_pool_cm_jobs_response(ar_http:req(#{
-		peer => Peer3,
-		method => post,
-		path => BasePath ++ "/pool_cm_jobs",
-		body => Payload,
-		timeout => 10 * 1000,
-		connect_timeout => 2000,
+		connect_timeout => 500,
 		headers => Headers2,
+		body => Body,
 		is_peer_request => IsPeerRequest
-	})).
-
-post_cm_partition_table_to_pool(Peer, Payload) ->
-	{pool, URL} = Peer,
-	{Peer2, BasePath} = get_peer_and_path_from_url(URL),
-	Headers = pool_client_headers(),
-	Headers2 = add_header(<<"content-type">>, <<"application/json">>, Headers),
-	handle_cm_partition_table_response(ar_http:req(#{
-		peer => Peer2,
-		method => post,
-		path => BasePath ++ "/coordinated_mining/partition_table",
-		body => Payload,
-		timeout => 10 * 1000,
-		connect_timeout => 2000,
-		headers => Headers2,
-		is_peer_request => false
-	})).
+	}.
 
 handle_get_pool_cm_jobs_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	case catch ar_serialize:json_map_to_pool_cm_jobs(
