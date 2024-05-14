@@ -6,10 +6,9 @@
 		redenominate/3, may_be_redenominate/1]).
 
 %% 2.5 exports.
--export([get_tx_fee/4, get_miner_reward_and_endowment_pool/1, get_tx_fee_pre_fork_2_4/4,
-		usd_to_ar_rate/1, usd_to_ar/3, recalculate_usd_to_ar_rate/1, usd_to_ar_pre_fork_2_4/3,
-		get_miner_reward_and_endowment_pool_pre_fork_2_4/1, get_storage_cost/4,
-		get_expected_min_decline_rate/6]).
+-export([get_tx_fee/4, get_miner_reward_and_endowment_pool/1,
+		usd_to_ar_rate/1, usd_to_ar/3, recalculate_usd_to_ar_rate/1,
+		get_storage_cost/4, get_expected_min_decline_rate/6]).
 
 %% For tests.
 -export([get_v2_price_per_gib_minute/2]).
@@ -453,47 +452,6 @@ get_miner_reward_and_endowment_pool(Args) ->
 			{BaseReward + Take, Pool2 - Take}
 	end.
 
-%% @doc Calculate the transaction fee.
-get_tx_fee_pre_fork_2_4(Size, Diff, Height, Timestamp) ->
-	GBs = (?TX_SIZE_BASE + Size) / (1024 * 1024 * 1024),
-	true = Height >= ar_fork:height_2_0(),
-	PerGB =
-		usd_to_ar_pre_fork_2_4(
-			get_perpetual_gb_cost_at_timestamp(Timestamp, Height),
-			Diff,
-			Height
-		),
-	StorageCost = PerGB * GBs,
-	HashingCost = StorageCost,
-	MaintenanceCost = erlang:trunc(StorageCost + HashingCost),
-	MinerFeeShare = get_miner_fee_share(MaintenanceCost, Height),
-	MaintenanceCost + MinerFeeShare.
-
-%% @doc Return the miner reward and the new endowment pool.
-get_miner_reward_and_endowment_pool_pre_fork_2_4({Pool, TXs, unclaimed, _, _, _, _}) ->
-	{0, Pool + lists:sum([TX#tx.reward || TX <- TXs])};
-get_miner_reward_and_endowment_pool_pre_fork_2_4(Args) ->
-	{Pool, TXs, _RewardAddr, WeaveSize, Height, Diff, Timestamp} = Args,
-	true = Height >= ar_fork:height_2_0(),
-	Inflation = trunc(ar_inflation:calculate(Height)),
-	{PoolFeeShare, MinerFeeShare} = distribute_transaction_fees(TXs, Height),
-	BaseReward = Inflation + MinerFeeShare,
-	StorageCostPerGBPerBlock =
-		usd_to_ar_pre_fork_2_4(
-			get_gb_cost_per_block_at_timestamp(Timestamp, Height),
-			Diff,
-			Height
-		),
-	Burden = trunc(WeaveSize * StorageCostPerGBPerBlock / (1024 * 1024 * 1024)),
-	Pool2 = Pool + PoolFeeShare,
-	case BaseReward >= Burden of
-		true ->
-			{BaseReward, Pool2};
-		false ->
-			Take = min(Pool2, Burden - BaseReward),
-			{BaseReward + Take, Pool2 - Take}
-	end.
-
 %% @doc Return the effective USD to AR rate corresponding to the given block
 %% considering its previous block.
 usd_to_ar_rate(#block{ height = PrevHeight } = PrevB) ->
@@ -538,18 +496,6 @@ recalculate_usd_to_ar_rate(#block{ height = PrevHeight } = B) ->
 					recalculate_usd_to_ar_rate2(B)
 			end
 	end.
-
-%% @doc Return the amount of AR the given number of USD is worth.
-usd_to_ar_pre_fork_2_4(USD, Diff, Height) ->
-	InitialDiff =
-		ar_retarget:switch_to_linear_diff_pre_fork_2_4(?INITIAL_USD_TO_AR_DIFF(Height)()),
-	MaxDiff = ?MAX_DIFF,
-	DeltaP = (MaxDiff - InitialDiff) / (MaxDiff - Diff),
-	InitialInflation = ar_inflation:calculate(?INITIAL_USD_TO_AR_HEIGHT(Height)()),
-	DeltaInflation = ar_inflation:calculate(Height) / InitialInflation,
-	erlang:trunc(
-		(USD * ?WINSTON_PER_AR * DeltaInflation) / (?INITIAL_USD_PER_AR(Height)() * DeltaP)
-	).
 
 %% @doc Return an estimation for the minimum required decline rate making the given
 %% Amount (in Winston) sufficient to subsidize storage for Period seconds starting from
