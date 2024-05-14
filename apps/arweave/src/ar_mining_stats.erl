@@ -12,7 +12,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
@@ -327,20 +326,6 @@ get_overall_total(PartitionPeer, Stat, TotalCurrent) ->
     Matches = ets:match(?MODULE, Pattern),
 	Counts = [Count || [Count] <- Matches],
 	lists:sum(Counts).
-
-get_overall_average(PartitionPeer, Stat, TotalCurrent) ->
-	Pattern = {{PartitionPeer, '_', Stat, TotalCurrent}, '_', '$1', '$2'},
-    Matches = ets:match(?MODULE, Pattern),
-	Counts = [Count || [_, Count] <- Matches],
-	AllSamples = [Samples || [Samples, _] <- Matches],
-	TotalCount = lists:sum(Counts),
-	TotalSamples = lists:sum(AllSamples),
-	case TotalSamples > 0 of
-		true ->
-			TotalCount / TotalSamples;
-		false ->
-			0
-	end.
 
 get_partition_data_size(PartitionNumber) ->
 	{ok, Config} = application:get_env(arweave, config),

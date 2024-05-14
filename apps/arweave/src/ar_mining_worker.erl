@@ -285,7 +285,8 @@ handle_task({chunk2, Candidate}, State) ->
 						{partition_number2, Candidate#mining_candidate.partition_number2},
 						{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
 						{cache_ref, Candidate#mining_candidate.cache_ref},
-						{nonce, Candidate#mining_candidate.nonce}])
+						{nonce, Candidate#mining_candidate.nonce},
+						{session, ar_nonce_limiter:encode_session_key(SessionKey)}])
 			end,
 			{noreply, State2}
 	end;
@@ -497,9 +498,9 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 			%% later if we find that this causes unacceptable memory bloat.
 			RecallRangeChunks = nonce_max() + 1,
 			State2 = update_chunk_cache_size(RecallRangeChunks, SessionKey, State),
-			%% First flag all nonces in the range as do_not_cache, then cache the specific nonces
-			%% inclueded in the H1 list. This will make sure we don't cache the chunk2s that are
-			%% read for the missing nonces.
+			%% First flag all nonces in the range as do_not_cache, then cache the specific
+			%% nonces included in the H1 list. This will make sure we don't cache the chunk2s
+			%% that are read for the missing nonces.
 			State3 = do_not_cache(Candidate3, State2),
 			{noreply, cache_h1_list(Candidate3, H1List, State3)};
 		false ->
@@ -548,11 +549,24 @@ maybe_warn_about_lag(Q, Name) ->
 		false ->
 			case gb_sets:take_smallest(Q) of
 				{{_Priority, _ID, {compute_h0, _}}, Q3} ->
+					%% Since we sample the queue asynchronously, we expect there to regularly
+					%% be a queue of length 1 (i.e. a task may have just been added to the
+					%% queue when we run this check).
+					%% 
+					%% To further reduce log spam, we'll only warn if the queue is greater
+					%% than 2. We really only care if a queue is consistently long or if
+					%% it's getting longer. Temporary blips are fine. We may incrase
+					%% the threshold in the future.
 					N = count_h0_tasks(Q3) + 1,
-					?LOG_WARNING([
-						{event, mining_worker_lags_behind_the_nonce_limiter},
-						{worker, Name},
-						{step_count, N}]);
+					case N > 2 of
+						true ->
+							?LOG_WARNING([
+								{event, mining_worker_lags_behind_the_nonce_limiter},
+								{worker, Name},
+								{step_count, N}]);
+						false ->
+							ok
+					end;
 				_ ->
 					ok
 			end
@@ -601,16 +615,16 @@ update_sessions(ActiveSessions, State) ->
 	State3 = add_sessions(AddedSessions, State2),
 	State3#state{ active_sessions = ActiveSessions }.
 
+%% We no longer have to do anything when adding a session as the chunk cache will be
+%% automatically created the first time it is updated. This function now serves to log
+%% the sessions being added.
 add_sessions([], State) ->
 	State;
 add_sessions([SessionKey | AddedSessions], State) ->
 	?LOG_DEBUG([{event, mining_debug_add_session},
 		{worker, State#state.name}, {partition, State#state.partition_number},
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
-	State2 = State#state{
-		chunk_cache = maps:put(SessionKey, #{}, State#state.chunk_cache)
-	},
-	add_sessions(AddedSessions, State2).
+	add_sessions(AddedSessions, State).
 
 remove_sessions([], State) ->
 	State;
