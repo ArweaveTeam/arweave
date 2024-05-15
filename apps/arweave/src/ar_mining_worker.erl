@@ -503,11 +503,11 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 			State3 = do_not_cache(Candidate3, State2),
 			{noreply, cache_h1_list(Candidate3, H1List, State3)};
 		false ->
-			%% This can happen if the remote peer has an outdated partition table
-			?LOG_WARNING([{event, cm_outdated_partition_table},
-				{worker, State#state.name},
-				{partition_number, Candidate3#mining_candidate.partition_number2},
-				{cm_peer, ar_util:format_peer(Peer)}]),
+			%% This can happen for two reasons:
+			%% 1. (most common) Remote peer has requested a range we don't have from a
+			%%    partition that we do have.
+			%% 2. (rare, but possible) Remote peer has an outdated partition table and we
+			%%    don't even have the requested partition.
 			{noreply, State}
 	end.
 

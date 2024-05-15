@@ -378,12 +378,11 @@ get_peer(PartitionNumber, State) ->
 send_h1(Candidate, State) ->
 	#mining_candidate{
 		partition_number2 = PartitionNumber2, cm_h1_list = H1List } = Candidate,
-	Peer = get_peer(PartitionNumber2, State),
 	case get_peer(PartitionNumber2, State) of
 		none ->
 			ok;
 		Peer ->
-			Candidate2 = Candidate#mining_candidate { label = <<"cm">> },
+			Candidate2 = Candidate#mining_candidate{ label = <<"cm">> },
 			spawn(fun() ->
 				ar_http_iface_client:cm_h1_send(Peer, Candidate2)
 			end),
@@ -438,6 +437,7 @@ remove_mining_peer(Peer, State) ->
 
 refetch_peer_partitions(Peers) ->
 	spawn(fun() ->
+		
 		ar_util:pmap(
 			fun(Peer) ->
 				case ar_http_iface_client:get_cm_partition_table(Peer) of
