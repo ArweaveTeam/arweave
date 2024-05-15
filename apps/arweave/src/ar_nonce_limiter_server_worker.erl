@@ -129,8 +129,15 @@ push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
 							%% Client requested the full session
 							PrevSessionKey = Session#vdf_session.prev_session_key,
 							PrevSession = ar_nonce_limiter:get_session(PrevSessionKey),
-							push_session(PrevSessionKey, PrevSession, Peer, Format),
-							push_session(SessionKey, Session, Peer, Format),
+							case push_session(PrevSessionKey, PrevSession, Peer, Format) of
+								ok ->
+									%% Do not push the new session until the previous
+									%% session is in line with our view (i.e., has steps
+									%% at least up to StepNumber where the new session begins).
+									push_session(SessionKey, Session, Peer, Format);
+								fail ->
+									ok
+							end,
 							State;
 						{true, true, true, false} ->
 							%% Client requested missing steps
@@ -158,9 +165,11 @@ push_session(SessionKey, Session, Peer, Format) ->
 						session_found = ReportedSessionFound }} ->
 					log_failure(Peer, SessionKey, Update, behind_client,
 						[{client_step_number, ClientStepNumber},
-						{session_found, ReportedSessionFound}]);
+						{session_found, ReportedSessionFound}]),
+					fail;
 				{error, Error} ->
-					log_failure(Peer, SessionKey, Update, Error, [])
+					log_failure(Peer, SessionKey, Update, Error, []),
+					fail
 			end
 	end.
 
