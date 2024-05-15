@@ -307,6 +307,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 				true ->
 					%% Wait for our VDF server(s) to validate the remaining steps.
 					%% Alternatively, the network may abandon this block.
+					ar_nonce_limiter_client:request_sessions(),
 					spawn(fun() -> ar_events:send(nonce_limiter, {refuse_validation, H}) end);
 				false ->
 					%% Validate the remaining steps.

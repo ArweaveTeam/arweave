@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0]).
+-export([start_link/0, request_sessions/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -20,6 +20,11 @@
 %% @doc Start the server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Pick a server from the list of configured VDF servers and request complete
+%% VDF sessions from them. Failures to resolve a domain of make a request are not retried.
+request_sessions() ->
+	gen_server:cast(?MODULE, request_sessions).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -89,6 +94,23 @@ handle_cast(pull, State) ->
 							{error, io_lib:format("~p", [Reason])}]),
 					%% Try another server, if there are any.
 					{noreply, State#state{ remote_servers = queue:in(RawPeer, Q2) }}
+			end
+	end;
+
+handle_cast(request_sessions, State) ->
+	#state{ remote_servers = Q } = State,
+	{{value, RawPeer}, Q2} = queue:out(Q),
+	State2 = State#state{ remote_servers = queue:in(RawPeer, Q2) },
+	case resolve_peer(RawPeer) of
+		error ->
+			%% Push the peer to the back of the queue.
+			{noreply, State2};
+		{ok, Peer} ->
+			case fetch_and_apply_session_and_previous_session(Peer) of
+				ok ->
+					{noreply, State};
+				_ ->
+					{noreply, State2}
 			end
 	end;
 
