@@ -5,8 +5,9 @@
 -export([
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
 	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peers/1, get_peer/1,
-	update_peer/2, remove_peer/1, garbage_collect/0, is_exit_peer/0, get_peer_partitions/1,
-	get_unique_partitions_list/0, get_unique_partitions_set/0, get_unique_partitions_set/2
+	update_peer/2, remove_peer/1, garbage_collect/0, is_exit_peer/0,
+	get_unique_partitions_list/0, get_self_plus_external_partitions_list/0,
+	get_cluster_partitions_list/0
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -36,6 +37,7 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
 %% @doc Start the gen_server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -104,10 +106,32 @@ is_exit_peer() ->
 	Config#config.coordinated_mining == true andalso
 			Config#config.cm_exit_peer == not_set.
 
-%% @doc Return the list of the partitions of the given Peer, to the best
-%% of our knowledge.
-get_peer_partitions(Peer) ->
-	gen_server:call(?MODULE, {get_peer_partitions, Peer}, infinity).
+%% @doc Return a list of unique partitions including local partitions and all of
+%% external (relevant pool peers') partitions.
+%%
+%% A single partition in the following format:
+%% {[
+%%   {bucket, PartitionID},
+%%   {bucketsize, ?PARTITION_SIZE},
+%%   {addr, EncodedMiningAddress}
+%% ]}
+get_self_plus_external_partitions_list() ->
+	PoolPeer = ar_pool:pool_peer(),
+	PoolPartitions = get_peer_partitions(PoolPeer),
+	LocalPartitions = get_unique_partitions_set(),
+	lists:sort(sets:to_list(get_unique_partitions_set(PoolPartitions, LocalPartitions))).
+
+%% @doc Return a list of unique partitions including local partitions and all of
+%% CM peers' partitions.
+%%
+%% A single partition in the following format:
+%% {[
+%%   {bucket, PartitionID},
+%%   {bucketsize, ?PARTITION_SIZE},
+%%   {addr, EncodedMiningAddress}
+%% ]}
+get_cluster_partitions_list() ->
+	gen_server:call(?MODULE, get_cluster_partitions_list, infinity).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -160,6 +184,30 @@ handle_call({get_peer_partitions, Peer}, _From, State) ->
 		{true, Partitions} ->
 			{reply, Partitions, State}
 	end;
+
+handle_call(get_cluster_partitions_list, _From, State) ->
+	PeerPartitions =
+		maps:fold(
+			fun(PartitionID, Items, Acc) ->
+				lists:foldl(
+					fun	({{pool, _}, _}, Acc2) ->
+							Acc2;
+						({_Peer, PackingAddr}, Acc2) ->
+							sets:add_element({[
+									{bucket, PartitionID},
+									{bucketsize, ?PARTITION_SIZE},
+									{addr, ar_util:encode(PackingAddr)}
+								]}, Acc2)
+					end,
+					Acc,
+					Items
+				)
+			end,
+			sets:new(),
+			State#state.peers_by_partition
+		),
+	Set = get_unique_partitions_set(ar_mining_io:get_partitions(), PeerPartitions),
+	{reply, lists:sort(sets:to_list(Set)), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -291,6 +339,11 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+%% @doc Return the list of the partitions of the given Peer, to the best
+%% of our knowledge.
+get_peer_partitions(Peer) ->
+	gen_server:call(?MODULE, {get_peer_partitions, Peer}, infinity).
+
 check_out_batches(#state{out_batches = OutBatches}) when map_size(OutBatches) == 0 ->
 	OutBatches;
 check_out_batches(State) ->
@@ -312,7 +365,7 @@ check_out_batches(State) ->
 	).
 
 get_peers(PartitionNumber, State) ->
-	maps:get(PartitionNumber, State#state.peers_by_partition, []).
+	[element(1, El) || El <- maps:get(PartitionNumber, State#state.peers_by_partition, [])].
 
 get_peer(PartitionNumber, State) ->
 	case get_peers(PartitionNumber, State) of
@@ -355,14 +408,17 @@ send_h2(Peer, Candidate) ->
 
 add_mining_peer({Peer, StorageModules}, State) ->
 	Partitions = lists:map(
-		fun({PartitionId, _PartitionSize, _PackingAddr}) -> PartitionId end, StorageModules),
+		fun({PartitionID, _PartitionSize, PackingAddr}) ->
+			{PartitionID, PackingAddr} end, StorageModules),
 	?LOG_INFO([{event, cm_peer_updated},
-		{peer, ar_util:format_peer(Peer)}, {partitions, io_lib:format("~p", [Partitions])}]),
+		{peer, ar_util:format_peer(Peer)},
+		{partitions, io_lib:format("~p",
+			[[{ID, ar_util:encode(Addr)} || {ID, Addr} <- Partitions]])}]),
 	PeersByPartition =
 		lists:foldl(
-			fun(PartitionId, Acc) ->
-				Peers = maps:get(PartitionId, Acc, []),
-				maps:put(PartitionId, [Peer | Peers], Acc)
+			fun({PartitionID, PackingAddr}, Acc) ->
+				Items = maps:get(PartitionID, Acc, []),
+				maps:put(PartitionID, [{Peer, PackingAddr} | Items], Acc)
 			end,
 			State#state.peers_by_partition,
 			Partitions
@@ -371,8 +427,9 @@ add_mining_peer({Peer, StorageModules}, State) ->
 
 remove_mining_peer(Peer, State) ->
 	PeersByPartition = maps:fold(
-		fun(PartitionId, Peers, Acc) ->
-			maps:put(PartitionId, lists:delete(Peer, Peers), Acc)
+		fun(PartitionID, Peers, Acc) ->
+			Peers2 = [{Peer2, Addr} || {Peer2, Addr} <- Peers, Peer2 /= Peer],
+			maps:put(PartitionID, Peers2, Acc)
 		end,
 		#{},
 		State#state.peers_by_partition
