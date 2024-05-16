@@ -522,7 +522,7 @@ get_vdf_update(Peer) ->
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
-			not_found;
+			{error, not_found};
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
 			{error, {Status, ResponseBody}};
 		Reply ->
@@ -535,7 +535,7 @@ get_vdf_session(Peer) ->
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
-			not_found;
+			{error, not_found};
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
 			{error, {Status, ResponseBody}};
 		Reply ->
@@ -548,7 +548,7 @@ get_previous_vdf_session(Peer) ->
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
-			not_found;
+			{error, not_found};
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
 			{error, {Status, ResponseBody}};
 		Reply ->
