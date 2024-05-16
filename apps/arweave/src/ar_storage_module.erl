@@ -84,8 +84,15 @@ packing_label(Packing) ->
 label_by_id("default") ->
 	"default";
 label_by_id(StoreID) ->
-	M = get_by_id(StoreID),
-	label(M).
+	case get_by_id(StoreID) of
+		not_found ->
+			%% Occurs in tests on application shutdown.
+			?LOG_WARNING([{event, store_id_for_label_not_found},
+					{store_id, StoreID}]),
+			"error";
+		M ->
+			label(M)
+	end.
 
 %% @doc Return the storage module with the given identifier or not_found.
 %% Search across both attached modules and repacked in-place modules.
