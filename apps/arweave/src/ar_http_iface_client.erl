@@ -556,7 +556,7 @@ get_previous_vdf_session(Peer) ->
 	end.
 
 %% -----------------------------------------------------------------------------
-%% Coordinated Mining and Pool Request
+%% Coordinated Mining and Pool Requests
 %% -----------------------------------------------------------------------------
 
 get_cm_partition_table(Peer) ->

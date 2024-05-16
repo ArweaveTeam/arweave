@@ -2,7 +2,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
-		set_total_data_size/1, set_storage_module_data_size/6,
+		set_total_data_size/1, set_storage_module_data_size/3,
 		vdf_computed/0, raw_read_rate/2, chunk_read/1, h1_computed/1, h2_computed/1,
 		h1_solution/0, h2_solution/0, block_found/0,
 		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1]).
@@ -157,16 +157,18 @@ set_total_data_size(DataSize) ->
 				{type, Type}, {reason, Reason}, {data_size, DataSize}])
 	end.
 
-set_storage_module_data_size(
-		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
+set_storage_module_data_size(PartitionNumber, StorageModule, DataSize) ->
+	{BucketSize, Bucket, Packing} = StorageModule,
+	StoreID = ar_storage_module:id(StorageModule),
 	StoreLabel = ar_storage_module:label_by_id(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	try	
 		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreLabel, PackingLabel, PartitionNumber, StorageModuleSize, StorageModuleIndex],
+			[StoreLabel, PackingLabel, PartitionNumber, BucketSize, Bucket],
 			DataSize),
 		ets:insert(?MODULE, {
-			{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize})
+			{partition, PartitionNumber, storage_module, StorageModule},
+			DataSize})
 	catch
 		error:badarg ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
@@ -174,24 +176,24 @@ set_storage_module_data_size(
 				{store_id, StoreID}, {store_label, StoreLabel},
 				{packing, ar_chunk_storage:encode_packing(Packing)},
 				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
+				{partition_number, PartitionNumber}, {storage_module_size, BucketSize},
+				{storage_module_index, Bucket}, {data_size, DataSize}]);
 		error:{unknown_metric,default,v2_index_data_size_by_packing} ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
 				{store_id, StoreID}, {store_label, StoreLabel},
 				{packing, ar_chunk_storage:encode_packing(Packing)},
 				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
+				{partition_number, PartitionNumber}, {storage_module_size, BucketSize},
+				{storage_module_index, Bucket}, {data_size, DataSize}]);
 		Type:Reason ->
 			?LOG_ERROR([{event, set_storage_module_data_size_failed},
 				{type, Type}, {reason, Reason},
 				{store_id, StoreID}, {store_label, StoreLabel},
 				{packing, ar_chunk_storage:encode_packing(Packing)},
 				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize} ])
+				{partition_number, PartitionNumber}, {storage_module_size, BucketSize},
+				{storage_module_index, Bucket}, {data_size, DataSize} ])
 	end.
 
 mining_paused() ->
@@ -327,7 +329,7 @@ get_partition_data_size(PartitionNumber) ->
 	{ok, Config} = application:get_env(arweave, config),
 	MiningAddress = Config#config.mining_addr,
     Pattern = {
-		{partition, PartitionNumber, storage_module, '_', packing, {spora_2_6, MiningAddress}},
+		{partition, PartitionNumber, storage_module, {'_', '_', {spora_2_6, MiningAddress}}},
 		'$1'
 	},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
@@ -931,57 +933,42 @@ test_data_size_stats() ->
 	PackingAddress = <<"PACKING">>,
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, unpacked}),
-		unpacked, 1, floor(0.1 * ?PARTITION_SIZE), 10, 101),
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, unpacked}, 101),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 102),
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}, 102),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 103),
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}}, 103),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, unpacked}),
-		unpacked, 1, floor(0.3 * ?PARTITION_SIZE), 4, 111),
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, unpacked}, 111),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 112),
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}, 112),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 113),
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}}, 113),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
-		unpacked, 2, ?PARTITION_SIZE, 2, 201),
+		2, {?PARTITION_SIZE, 2, unpacked}, 201),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 202),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}, 202),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 203),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}, 203),
 
 	?assertEqual(214, get_partition_data_size(1)),
 	?assertEqual(202, get_partition_data_size(2)),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, unpacked}),
-		unpacked, 1, floor(0.2 * ?PARTITION_SIZE), 8, 121),
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, unpacked}, 121),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 122),
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}, 122),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 123),
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}}, 123),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
-		unpacked, 2, ?PARTITION_SIZE, 2, 51),
+		2, {?PARTITION_SIZE, 2, unpacked}, 51),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 52),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}, 52),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 53),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}, 53),
 	
 	?assertEqual(336, get_partition_data_size(1)),
 	?assertEqual(52, get_partition_data_size(2)),
@@ -1229,20 +1216,17 @@ test_report(PoA1Multiplier) ->
 	WeaveSize = floor(10 * ?PARTITION_SIZE),
 	ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10,
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}},
 		floor(0.1 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4,
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}},
 		floor(0.2 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8,
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}},
 		floor(0.05 * ?PARTITION_SIZE)),	
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, floor(0.25 * ?PARTITION_SIZE)),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}},
+		floor(0.25 * ?PARTITION_SIZE)),
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),

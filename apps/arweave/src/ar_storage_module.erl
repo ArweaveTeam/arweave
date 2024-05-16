@@ -6,7 +6,6 @@
 
 -export([get_unique_sorted_intervals/1]).
 
--include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").

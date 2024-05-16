@@ -555,7 +555,7 @@ maybe_warn_about_lag(Q, Name) ->
 					%% 
 					%% To further reduce log spam, we'll only warn if the queue is greater
 					%% than 2. We really only care if a queue is consistently long or if
-					%% it's getting longer. Temporary blips are fine. We may incrase
+					%% it's getting longer. Temporary blips are fine. We may increase
 					%% the threshold in the future.
 					N = count_h0_tasks(Q3) + 1,
 					case N > 2 of
