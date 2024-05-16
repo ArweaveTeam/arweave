@@ -2,7 +2,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
-		set_total_data_size/1, set_storage_module_data_size/6,
+		set_total_data_size/1, set_storage_module_data_size/3,
 		vdf_computed/0, raw_read_rate/2, chunk_read/1, h1_computed/1, h2_computed/1,
 		h1_solution/0, h2_solution/0, block_found/0,
 		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1]).
@@ -12,7 +12,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
@@ -33,8 +32,6 @@
 	current_read_mibps = 0.0,
 	average_hash_hps = 0.0,
 	current_hash_hps = 0.0,
-	average_batches_to_peer = 0.0,
-	average_batches_from_peer = 0.0,
 	average_h1_to_peer_hps = 0.0,
 	current_h1_to_peer_hps = 0.0,
 	average_h1_from_peer_hps = 0.0,
@@ -59,8 +56,6 @@
 
 -record(peer_report, {
 	peer,
-	average_batches_to_peer,
-	average_batches_from_peer,
 	average_h1_to_peer_hps,
 	current_h1_to_peer_hps,
 	average_h1_from_peer_hps,
@@ -162,16 +157,18 @@ set_total_data_size(DataSize) ->
 				{type, Type}, {reason, Reason}, {data_size, DataSize}])
 	end.
 
-set_storage_module_data_size(
-		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
+set_storage_module_data_size(PartitionNumber, StorageModule, DataSize) ->
+	{BucketSize, Bucket, Packing} = StorageModule,
+	StoreID = ar_storage_module:id(StorageModule),
 	StoreLabel = ar_storage_module:label_by_id(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	try	
 		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreLabel, PackingLabel, PartitionNumber, StorageModuleSize, StorageModuleIndex],
+			[StoreLabel, PackingLabel, PartitionNumber, BucketSize, Bucket],
 			DataSize),
 		ets:insert(?MODULE, {
-			{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize})
+			{partition, PartitionNumber, storage_module, StorageModule},
+			DataSize})
 	catch
 		error:badarg ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
@@ -179,24 +176,24 @@ set_storage_module_data_size(
 				{store_id, StoreID}, {store_label, StoreLabel},
 				{packing, ar_chunk_storage:encode_packing(Packing)},
 				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
+				{partition_number, PartitionNumber}, {storage_module_size, BucketSize},
+				{storage_module_index, Bucket}, {data_size, DataSize}]);
 		error:{unknown_metric,default,v2_index_data_size_by_packing} ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
 				{store_id, StoreID}, {store_label, StoreLabel},
 				{packing, ar_chunk_storage:encode_packing(Packing)},
 				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
+				{partition_number, PartitionNumber}, {storage_module_size, BucketSize},
+				{storage_module_index, Bucket}, {data_size, DataSize}]);
 		Type:Reason ->
 			?LOG_ERROR([{event, set_storage_module_data_size_failed},
 				{type, Type}, {reason, Reason},
 				{store_id, StoreID}, {store_label, StoreLabel},
 				{packing, ar_chunk_storage:encode_packing(Packing)},
 				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize} ])
+				{partition_number, PartitionNumber}, {storage_module_size, BucketSize},
+				{storage_module_index, Bucket}, {data_size, DataSize} ])
 	end.
 
 mining_paused() ->
@@ -328,25 +325,11 @@ get_overall_total(PartitionPeer, Stat, TotalCurrent) ->
 	Counts = [Count || [Count] <- Matches],
 	lists:sum(Counts).
 
-get_overall_average(PartitionPeer, Stat, TotalCurrent) ->
-	Pattern = {{PartitionPeer, '_', Stat, TotalCurrent}, '_', '$1', '$2'},
-    Matches = ets:match(?MODULE, Pattern),
-	Counts = [Count || [_, Count] <- Matches],
-	AllSamples = [Samples || [Samples, _] <- Matches],
-	TotalCount = lists:sum(Counts),
-	TotalSamples = lists:sum(AllSamples),
-	case TotalSamples > 0 of
-		true ->
-			TotalCount / TotalSamples;
-		false ->
-			0
-	end.
-
 get_partition_data_size(PartitionNumber) ->
 	{ok, Config} = application:get_env(arweave, config),
 	MiningAddress = Config#config.mining_addr,
     Pattern = {
-		{partition, PartitionNumber, storage_module, '_', packing, {spora_2_6, MiningAddress}},
+		{partition, PartitionNumber, storage_module, {'_', '_', {spora_2_6, MiningAddress}}},
 		'$1'
 	},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
@@ -482,18 +465,12 @@ generate_peer_report(Peer, Report) ->
 	#report{
 		now = Now,
 		peers = Peers,
-		average_batches_to_peer = AverageBatchesToPeer,
-		average_batches_from_peer = AverageBatchesFromPeer,
 		average_h1_to_peer_hps = AverageH1ToPeer,
 		current_h1_to_peer_hps = CurrentH1ToPeer,
 		average_h1_from_peer_hps = AverageH1FromPeer,
 		current_h1_from_peer_hps = CurrentH1FromPeer } = Report,
 	PeerReport = #peer_report{
 		peer = Peer,
-		average_batches_to_peer =
-			get_average_samples_by_time({peer, Peer, h1_to_peer, total}, Now),
-        average_batches_from_peer =
-			get_average_samples_by_time({peer, Peer, h1_from_peer, total}, Now),
 		average_h1_to_peer_hps =
 			get_average_count_by_time({peer, Peer, h1_to_peer, total}, Now),
 		current_h1_to_peer_hps =
@@ -511,10 +488,6 @@ generate_peer_report(Peer, Report) ->
 
 	Report#report{
 		peers = Peers ++ [PeerReport],
-		average_batches_to_peer =
-			AverageBatchesToPeer + PeerReport#peer_report.average_batches_to_peer,
-		average_batches_from_peer =
-			AverageBatchesFromPeer + PeerReport#peer_report.average_batches_from_peer,
 		average_h1_to_peer_hps =
 			AverageH1ToPeer + PeerReport#peer_report.average_h1_to_peer_hps,
 		current_h1_to_peer_hps =
@@ -547,8 +520,6 @@ set_metrics(Report) ->
 	prometheus_gauge:set(mining_rate, [hash, total],  Report#report.current_hash_hps),
 	prometheus_gauge:set(mining_rate, [ideal_read, total],  Report#report.optimal_overall_read_mibps),
 	prometheus_gauge:set(mining_rate, [ideal_hash, total],  Report#report.optimal_overall_hash_hps),
-	prometheus_gauge:set(cm_h1_batch, [total, to], Report#report.average_batches_to_peer),
-	prometheus_gauge:set(cm_h1_batch, [total, from], Report#report.average_batches_from_peer),
 	prometheus_gauge:set(cm_h1_rate, [total, to], Report#report.current_h1_to_peer_hps),
 	prometheus_gauge:set(cm_h1_rate, [total, from], Report#report.current_h1_from_peer_hps),
 	prometheus_gauge:set(cm_h2_count, [total, to], Report#report.total_h2_to_peer),
@@ -574,10 +545,6 @@ set_peer_metrics([]) ->
 	ok;
 set_peer_metrics([PeerReport | PeerReports]) ->
 	Peer = ar_util:format_peer(PeerReport#peer_report.peer),
-	prometheus_gauge:set(cm_h1_batch, [Peer, to],
-		PeerReport#peer_report.average_batches_to_peer),
-	prometheus_gauge:set(cm_h1_batch, [Peer, from],
-		PeerReport#peer_report.average_batches_from_peer),
 	prometheus_gauge:set(cm_h1_rate, [Peer, to],
 		PeerReport#peer_report.current_h1_to_peer_hps),
 	prometheus_gauge:set(cm_h1_rate, [Peer, from],
@@ -593,8 +560,6 @@ clear_metrics() ->
 	prometheus_gauge:set(mining_rate, [read, total], 0),
 	prometheus_gauge:set(mining_rate, [hash, total],  0),
 	prometheus_gauge:set(mining_rate, [ideal, total],  0),
-	prometheus_gauge:set(cm_h1_batch, [total, to], 0),
-	prometheus_gauge:set(cm_h1_batch, [total, from], 0),
 	prometheus_gauge:set(cm_h1_rate, [total, to], 0),
 	prometheus_gauge:set(cm_h1_rate, [total, from], 0),
 	prometheus_gauge:set(cm_h2_count, [total, to], 0),
@@ -615,8 +580,6 @@ clear_peer_metrics([]) ->
 	ok;
 clear_peer_metrics([PeerReport | PeerReports]) ->
 	Peer = ar_util:format_peer(PeerReport#peer_report.peer),
-	prometheus_gauge:set(cm_h1_batch, [Peer, to], 0),
-	prometheus_gauge:set(cm_h1_batch, [Peer, from], 0),
 	prometheus_gauge:set(cm_h1_rate, [Peer, to], 0),
 	prometheus_gauge:set(cm_h1_rate, [Peer, from], 0),
 	prometheus_gauge:set(cm_h2_count, [Peer, to], 0),
@@ -707,19 +670,17 @@ format_peer_report(Report) ->
 	Header = 
 		"\n"
 		"Coordinated mining cluster stats:\n"
-		"+----------------------+-----------+--------------+--------------+----------+-------------+-------------+--------+--------+\n"
-        "|                 Peer | Out Batch | H1 Out (Cur) | H1 Out (Avg) | In Batch | H1 In (Cur) | H1 In (Avg) | H2 Out |  H2 In |\n"
-		"+----------------------+-----------+--------------+--------------+----------+-------------+-------------+--------+--------+\n",
+		"+----------------------+--------------+--------------+-------------+-------------+--------+--------+\n"
+        "|                 Peer | H1 Out (Cur) | H1 Out (Avg) | H1 In (Cur) | H1 In (Avg) | H2 Out |  H2 In |\n"
+		"+----------------------+--------------+--------------+-------------+-------------+--------+--------+\n",
 	TotalRow = format_peer_total_row(Report),
 	PartitionRows = format_peer_rows(Report#report.peers),
     Footer =
-		"+----------------------+-----------+--------------+--------------+----------+-------------+-------------+--------+--------+\n",
+		"+----------------------+--------------+--------------+-------------+-------------+--------+--------+\n",
 	io_lib:format("~s~s~s~s", [Header, TotalRow, PartitionRows, Footer]).
 
 format_peer_total_row(Report) ->
 	#report{
-		average_batches_to_peer = AverageBatchTo,
-		average_batches_from_peer = AverageBatchFrom,
 		average_h1_to_peer_hps = AverageH1To,
 		current_h1_to_peer_hps = CurrentH1To,
 		average_h1_from_peer_hps = AverageH1From,
@@ -727,10 +688,10 @@ format_peer_total_row(Report) ->
 		total_h2_to_peer = TotalH2To,
 		total_h2_from_peer = TotalH2From } = Report,
     io_lib:format(
-		"|                  All | ~9B | ~8B h/s | ~8B h/s | ~8B | ~7B h/s | ~7B h/s | ~6B | ~6B |\n",
+		"|                  All | ~8B h/s | ~8B h/s | ~7B h/s | ~7B h/s | ~6B | ~6B |\n",
 		[
-			floor(AverageBatchTo), floor(CurrentH1To), floor(AverageH1To),
-			floor(AverageBatchFrom), floor(CurrentH1From), floor(AverageH1From),
+			floor(CurrentH1To), floor(AverageH1To),
+			floor(CurrentH1From), floor(AverageH1From),
 			TotalH2To, TotalH2From
 		]).
 
@@ -743,8 +704,6 @@ format_peer_rows([PeerReport | PeerReports]) ->
 format_peer_row(PeerReport) ->
 	#peer_report{
 		peer = Peer,
-		average_batches_to_peer = AverageBatchTo,
-		average_batches_from_peer = AverageBatchFrom,
 		average_h1_to_peer_hps = AverageH1To,
 		current_h1_to_peer_hps = CurrentH1To,
 		average_h1_from_peer_hps = AverageH1From,
@@ -752,11 +711,11 @@ format_peer_row(PeerReport) ->
 		total_h2_to_peer = TotalH2To,
 		total_h2_from_peer = TotalH2From } = PeerReport,
     io_lib:format(
-		"| ~20s | ~9B | ~8B h/s | ~8B h/s | ~8B | ~7B h/s | ~7B h/s | ~6B | ~6B |\n",
+		"| ~20s | ~8B h/s | ~8B h/s | ~7B h/s | ~7B h/s | ~6B | ~6B |\n",
 		[
 			ar_util:format_peer(Peer),
-			floor(AverageBatchTo), floor(CurrentH1To), floor(AverageH1To), 
-			floor(AverageBatchFrom), floor(CurrentH1From), floor(AverageH1From), 
+			floor(CurrentH1To), floor(AverageH1To), 
+			floor(CurrentH1From), floor(AverageH1From), 
 			TotalH2To, TotalH2From
 		]).
 
@@ -974,57 +933,42 @@ test_data_size_stats() ->
 	PackingAddress = <<"PACKING">>,
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, unpacked}),
-		unpacked, 1, floor(0.1 * ?PARTITION_SIZE), 10, 101),
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, unpacked}, 101),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 102),
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}, 102),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 103),
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}}, 103),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, unpacked}),
-		unpacked, 1, floor(0.3 * ?PARTITION_SIZE), 4, 111),
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, unpacked}, 111),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 112),
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}, 112),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 113),
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}}, 113),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
-		unpacked, 2, ?PARTITION_SIZE, 2, 201),
+		2, {?PARTITION_SIZE, 2, unpacked}, 201),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 202),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}, 202),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 203),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}, 203),
 
 	?assertEqual(214, get_partition_data_size(1)),
 	?assertEqual(202, get_partition_data_size(2)),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, unpacked}),
-		unpacked, 1, floor(0.2 * ?PARTITION_SIZE), 8, 121),
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, unpacked}, 121),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 122),
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}, 122),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 123),
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}}, 123),
 
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
-		unpacked, 2, ?PARTITION_SIZE, 2, 51),
+		2, {?PARTITION_SIZE, 2, unpacked}, 51),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 52),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}, 52),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 53),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}, 53),
 	
 	?assertEqual(336, get_partition_data_size(1)),
 	?assertEqual(52, get_partition_data_size(2)),
@@ -1272,20 +1216,17 @@ test_report(PoA1Multiplier) ->
 	WeaveSize = floor(10 * ?PARTITION_SIZE),
 	ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10,
+		1, {floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}},
 		floor(0.1 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4,
+		1, {floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}},
 		floor(0.2 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8,
+		1, {floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}},
 		floor(0.05 * ?PARTITION_SIZE)),	
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, floor(0.25 * ?PARTITION_SIZE)),
+		2, {?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}},
+		floor(0.25 * ?PARTITION_SIZE)),
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
@@ -1357,8 +1298,6 @@ test_report(PoA1Multiplier) ->
 		current_read_mibps = 1.25,
 		average_hash_hps = TotalHash,
 		current_hash_hps = TotalHash,
-		average_batches_to_peer = 5.0,
-		average_batches_from_peer = 5.0,
 		average_h1_to_peer_hps = 50.0,
 		current_h1_to_peer_hps = 50.0,
 		average_h1_from_peer_hps = 50.0,
@@ -1400,8 +1339,6 @@ test_report(PoA1Multiplier) ->
 		peers = [
 			#peer_report{
 				peer = Peer3,
-				average_batches_to_peer = 0.0,
-				average_batches_from_peer = 0.0,
 				average_h1_to_peer_hps = 0.0,
 				current_h1_to_peer_hps = 0.0,
 				average_h1_from_peer_hps = 0.0,
@@ -1411,8 +1348,6 @@ test_report(PoA1Multiplier) ->
 			},
 			#peer_report{
 				peer = Peer2,
-				average_batches_to_peer = 2.0,
-				average_batches_from_peer = 3.0,
 				average_h1_to_peer_hps = 20.0,
 				current_h1_to_peer_hps = 20.0,
 				average_h1_from_peer_hps = 30.0,
@@ -1422,8 +1357,6 @@ test_report(PoA1Multiplier) ->
 			},
 			#peer_report{
 				peer = Peer1,
-				average_batches_to_peer = 3.0,
-				average_batches_from_peer = 2.0,
 				average_h1_to_peer_hps = 30.0,
 				current_h1_to_peer_hps = 30.0,
 				average_h1_from_peer_hps = 20.0,

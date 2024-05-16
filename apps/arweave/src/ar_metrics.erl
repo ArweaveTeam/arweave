@@ -2,8 +2,6 @@
 
 -export([register/0, get_status_class/1]).
 
--include_lib("arweave/include/ar_pricing.hrl").
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -251,16 +249,6 @@ register() ->
 				"'ideal' tracks the ideal read rate given the current VDF step time and amount of "
 				"data synced. The partition label breaks the mining rate down by partition. "
 				"The overall mining rate is inidcated by 'total'."}
-	]),
-	prometheus_gauge:new([
-		{name, cm_h1_batch},
-		{labels, [peer, direction]},
-		{help, "The number of coordinated mining batches of H1 hashes processed per second. "
-				"When direction is 'to' that indicates the number of batches sent over HTTP "
-				"to 'peer'. When direction is 'from' that indicates the number of batches "
-			    "that get processed (read and hashed) from 'peer' - note: because a peer may "
-				"aggregate incoming batches before processing them the 'to' and 'from' "
-				"numbers may not match."}
 	]),
 	prometheus_gauge:new([
 		{name, cm_h1_rate},

@@ -49,8 +49,10 @@
 	%% The partition covered by the storage module.
 	partition_number,
 	%% The size in bytes of the storage module; undefined for the "default" storage.
+	%% aka BucketSize
 	storage_module_size,
 	%% The index of the storage module; undefined for the "default" storage.
+	%% aka Bucket
 	storage_module_index,
 	%% The number of entries in the write-ahead log.
 	wal
@@ -633,10 +635,12 @@ store_state(State) ->
 		ok ->
 			maps:map(
 				fun	({ar_data_sync, Type}, TypeRecord) ->
+						%% Assert that the StorageModuleSize, StorageModuleIndex, and Type
+						%% match storage module referenced by StoreID (they should)
+						StorageModule = {StorageModuleSize, StorageModuleIndex, Type} = 
+							ar_storage_module:get_by_id(StoreID),
 						ar_mining_stats:set_storage_module_data_size(
-							StoreID, Type, PartitionNumber, StorageModuleSize,
-							StorageModuleIndex,
-							ar_intervals:sum(TypeRecord));
+							PartitionNumber, StorageModule, ar_intervals:sum(TypeRecord));
 					(_, _) ->
 						ok
 				end,
