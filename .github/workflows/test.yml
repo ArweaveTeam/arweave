@@ -13,15 +13,11 @@ jobs:
           submodules: "recursive"
       - name: Build arweave test sources
         run: |
-          rm -rf _build build.tar.gz || true
+          rm -rf _build || true
           ./ar-rebar3 test compile
           chmod -R u+w ./_build
-          tar --dereference -czf build.tar.gz _build
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: build
-          path: build.tar.gz
+          mv ./_build ./_build_${{ github.run_id }}
+          tar --dereference -czf /tmp/arweave_build_${{ github.run_id }}.tar.gz _build_${{ github.run_id }}
 
   eunit-tests:
     needs: build
@@ -99,14 +95,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
-      - name: Restore extracted build
-        uses: actions/download-artifact@v4
-        with:
-          name: build
-          path: .
       - name: Extract build artifact
         run: |
-          tar -xzf build.tar.gz
+          if [ ! -d "_build_${{ github.run_id }}" ]; then
+            tar -xzf /tmp/arweave_build_${{ github.run_id }}.tar.gz
+          fi
       - name: Restart epmd
         run: |
           if ! pgrep -x "epmd" > /dev/null
@@ -119,11 +112,11 @@ jobs:
         run: |
           rm -f *.out || true
           EXIT_CODE=0
-          export PATH=$(pwd)/_build/erts/bin:$PATH
+          export PATH=$(pwd)/_build_${{ github.run_id }}/erts/bin:$PATH
           export ERL_EPMD_ADDRESS=127.0.0.1
           export TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
           export NAMESPACE="${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}"
-          export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build/test/lib/*/ebin) $(pwd)/_build/test/lib/arweave/test -config $(pwd)/config/sys.config"
+          export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build_${{ github.run_id }}/test/lib/*/ebin) $(pwd)/_build_${{ github.run_id }}/test/lib/arweave/test -config $(pwd)/config/sys.config"
           RETRYABLE=1
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
@@ -186,3 +179,16 @@ jobs:
           done
           echo "::set-output name=exit_code::$EXIT_CODE" # Set the exit_code output variable
           exit $EXIT_CODE # exit with the exit code of the tests
+      - name: Cleanup successful test
+        if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
+        run: rm -rf logs *.out
+
+  cleanup:
+    needs: eunit-tests
+    runs-on: self-hosted
+    if: ${{ always() }}
+    steps:
+      - name: Cleanup build directories
+        run: |
+          rm -rf /tmp/arweave_build_${{ github.run_id }}
+          rm -rf _build_${{ github.run_id }}
