@@ -6,7 +6,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -export([setup_nodes/0, setup_nodes/2, imperfect_split/1, build_proofs/3, build_proofs/5,
-            tx/2, tx/3, tx/4, 
+            tx/2, tx/3, tx/4, wait_until_syncs_chunk/2, 
             wait_until_syncs_chunks/1, wait_until_syncs_chunks/2, wait_until_syncs_chunks/3,
             get_tx_offset/2, get_tx_data/1,
             post_random_blocks/1, get_records_with_proofs/3, post_proofs/4,

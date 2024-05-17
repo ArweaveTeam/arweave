@@ -190,10 +190,7 @@ jobs:
     runs-on: self-hosted
     if: ${{ always() }}
     steps:
-      - name: Print GITHUB_WORKSPACE
-        run: |
-          echo "GITHUB_WORKSPACE is set to: $GITHUB_WORKSPACE"
       - name: Cleanup build directories
         run: |
           rm -rf /tmp/arweave_build_${{ github.run_id }}.tar.gz
-          find $GITHUB_WORKSPACE -type d -name "_build_${{ github.run_id }}" -exec rm -rf {} +
+          find /home/runner -type d -name "_build_${{ github.run_id }}" -exec rm -rf {} +
