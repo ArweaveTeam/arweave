@@ -84,12 +84,13 @@ jobs:
         uses: actions/cache@v3
         with:
           path: _build
-          key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', 'rebar.config', 'rebar.lock', 'ar-rebar3') }}
+          key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', '.github/**', 'rebar.config', 'rebar.lock', 'ar-rebar3') }}
           restore-keys: |
             ${{ runner.os }}-build-
       - name: Extract build cache
         if: steps.cache-build.outputs.cache-hit == 'true'
         run: |
+          rm -rf _build || true
           tar -xzf build.tar.gz
       - name: Build arweave test sources
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -103,7 +104,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: build.tar.gz
-          key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', 'rebar.config', 'rebar.lock', 'ar-rebar3') }}
+          key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', '.github/**',  'rebar.config', 'rebar.lock', 'ar-rebar3') }}
       - name: Restart epmd
         run: |
           if ! pgrep -x "epmd" > /dev/null
