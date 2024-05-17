@@ -18,29 +18,13 @@ jobs:
           chmod -R u+w ./_build
           tar --dereference -czf build.tar.gz _build
       - name: Upload build artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build
           path: build.tar.gz
 
-  setup:
-    needs: build
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
-      - name: Download build artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: build
-          path: .
-      - name: Extract build artifact
-        run: |
-          tar -xzf build.tar.gz
-
   eunit-tests:
-    needs: setup
+    needs: build
     runs-on: self-hosted
     strategy:
       fail-fast: true
@@ -116,7 +100,7 @@ jobs:
         with:
           submodules: "recursive"
       - name: Restore extracted build
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: build
           path: .
