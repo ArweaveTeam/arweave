@@ -87,17 +87,22 @@ jobs:
           key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', 'rebar.config', 'rebar.lock', 'ar-rebar3') }}
           restore-keys: |
             ${{ runner.os }}-build-
+      - name: Extract build cache
+        if: steps.cache-build.outputs.cache-hit == 'true'
+        run: |
+          tar -xzf build.tar.gz
       - name: Build arweave test sources
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           rm -rf _build || true
           ./ar-rebar3 test compile
           chmod -R u+w ./_build
+          tar -czf _build.tar.gz build
       - name: Save build cache
         if: steps.cache-build.outputs.cache-hit != 'true'
         uses: actions/cache@v3
         with:
-          path: _build
+          path: build.tar.gz
           key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', 'rebar.config', 'rebar.lock', 'ar-rebar3') }}
       - name: Restart epmd
         run: |
@@ -178,3 +183,6 @@ jobs:
           done
           echo "::set-output name=exit_code::$EXIT_CODE" # Set the exit_code output variable
           exit $EXIT_CODE # exit with the exit code of the tests
+      - name: Cleanup successful test
+        if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
+        run: rm -rf _build
