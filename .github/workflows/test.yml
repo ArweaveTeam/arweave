@@ -98,7 +98,7 @@ jobs:
           rm -rf _build || true
           ./ar-rebar3 test compile
           chmod -R u+w ./_build
-          tar -czf _build.tar.gz build
+          tar -czf build.tar.gz _build
       - name: Save build cache
         if: steps.cache-build.outputs.cache-hit != 'true'
         uses: actions/cache@v3
