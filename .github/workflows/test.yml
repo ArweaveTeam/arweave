@@ -95,10 +95,10 @@ jobs:
       - name: Build arweave test sources
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
-          rm -rf _build || true
+          rm -rf _build build.tar.gz || true
           ./ar-rebar3 test compile
           chmod -R u+w ./_build
-          tar -czf build.tar.gz _build
+          tar --dereference -czf build.tar.gz _build
       - name: Save build cache
         if: steps.cache-build.outputs.cache-hit != 'true'
         uses: actions/cache@v3
@@ -186,4 +186,4 @@ jobs:
           exit $EXIT_CODE # exit with the exit code of the tests
       - name: Cleanup successful test
         if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
-        run: rm -rf _build
+        run: rm -rf _build logs *.out
