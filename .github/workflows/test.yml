@@ -16,8 +16,7 @@ jobs:
           rm -rf _build || true
           ./ar-rebar3 test compile
           chmod -R u+w ./_build
-          mv ./_build ./_build_${{ github.run_id }}
-          tar --dereference -czf /tmp/arweave_build_${{ github.run_id }}.tar.gz _build_${{ github.run_id }}
+          tar --dereference -czf /tmp/arweave_build_${{ github.run_id }}.tar.gz _build
 
   eunit-tests:
     needs: build
@@ -98,7 +97,9 @@ jobs:
       - name: Extract build artifact
         run: |
           if [ ! -d "_build_${{ github.run_id }}" ]; then
+            rm -rf _build || true
             tar -xzf /tmp/arweave_build_${{ github.run_id }}.tar.gz
+            mv ./_build ./_build_${{ github.run_id }}
           fi
       - name: Restart epmd
         run: |
