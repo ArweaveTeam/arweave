@@ -82,8 +82,7 @@ jobs:
       - name: Build arweave test sources
         run: |
           rm -rf .tmp _build || true
-          nix build .#packages.x86_64-linux.arweave
-          cp -Lr result _build
+          ./rebar3 as test compile
           chmod -R u+w ./_build
       - name: Restart epmd
         run: |
