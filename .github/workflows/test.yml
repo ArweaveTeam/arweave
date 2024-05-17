@@ -100,7 +100,7 @@ jobs:
           export ERL_EPMD_ADDRESS=127.0.0.1
           export TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
           export NAMESPACE="${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}"
-          export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build/test/rel/arweave/lib/*/ebin) $(pwd)/_build/test/lib/arweave/test -config $(pwd)/config/sys.config"
+          export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build/test/lib/*/ebin) $(pwd)/_build/test/lib/arweave/test -config $(pwd)/config/sys.config"
           RETRYABLE=1
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
@@ -108,7 +108,7 @@ jobs:
             set -x
             erl $ERL_TEST_OPTS -noshell -name main-${NAMESPACE}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out
             EXIT_CODE=${PIPESTATUS[0]}
-            set + x
+            set +x
             set -e
             # For debugging purposes, print the peer1 output if the tests failed
             if [[ $EXIT_CODE -ne 0 ]]; then
