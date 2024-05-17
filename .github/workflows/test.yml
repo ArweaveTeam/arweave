@@ -3,8 +3,44 @@ on:
   workflow_dispatch:
   push:
     branches: ["**"]
+
 jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: Build arweave test sources
+        run: |
+          rm -rf _build build.tar.gz || true
+          ./ar-rebar3 test compile
+          chmod -R u+w ./_build
+          tar --dereference -czf build.tar.gz _build
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: build
+          path: build.tar.gz
+
+  setup:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: Download build artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: build
+          path: .
+      - name: Extract build artifact
+        run: |
+          tar -xzf build.tar.gz
+
   eunit-tests:
+    needs: setup
     runs-on: self-hosted
     strategy:
       fail-fast: true
@@ -79,32 +115,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
-      - name: Cache build
-        id: cache-build
-        uses: actions/cache@v3
+      - name: Restore extracted build
+        uses: actions/download-artifact@v3
         with:
-          path: build.tar.gz
-          key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', '.github/**', 'rebar.config', 'rebar.lock', 'ar-rebar3') }}
-          restore-keys: |
-            ${{ runner.os }}-build-
-      - name: Extract build cache
-        if: steps.cache-build.outputs.cache-hit == 'true'
+          name: build
+          path: .
+      - name: Extract build artifact
         run: |
-          rm -rf _build || true
           tar -xzf build.tar.gz
-      - name: Build arweave test sources
-        if: steps.cache-build.outputs.cache-hit != 'true'
-        run: |
-          rm -rf _build build.tar.gz || true
-          ./ar-rebar3 test compile
-          chmod -R u+w ./_build
-          tar --dereference -czf build.tar.gz _build
-      - name: Save build cache
-        if: steps.cache-build.outputs.cache-hit != 'true'
-        uses: actions/cache@v3
-        with:
-          path: build.tar.gz
-          key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', '.github/**',  'rebar.config', 'rebar.lock', 'ar-rebar3') }}
       - name: Restart epmd
         run: |
           if ! pgrep -x "epmd" > /dev/null
@@ -184,6 +202,3 @@ jobs:
           done
           echo "::set-output name=exit_code::$EXIT_CODE" # Set the exit_code output variable
           exit $EXIT_CODE # exit with the exit code of the tests
-      - name: Cleanup successful test
-        if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
-        run: rm -rf _build logs *.out
