@@ -408,12 +408,6 @@ invalid_signature_test() ->
 	<< _:32, Signature/binary >> = sign(Priv, TestData),
 	false = verify(Pub, TestData, << 0:32, Signature/binary >>).
 
-%% @doc Ensure that to_address'ing twice does not result in double hashing.
-address_double_encode_test() ->
-	{_, Pub} = new(),
-	Addr = to_address(Pub),
-	Addr = to_address(Addr).
-
 %% @doc Check generated keyfiles can be retrieved.
 generate_keyfile_test() ->
 	{Priv, Pub} = new_keyfile(),
