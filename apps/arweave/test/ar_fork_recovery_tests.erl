@@ -202,3 +202,77 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 		false ->
 			fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff)
 	end.
+
+	fork_recovery_test_() ->
+		{timeout, 300, fun test_fork_recovery/0}.
+	
+	test_fork_recovery() ->
+		test_fork_recovery(original_split).
+	
+	test_fork_recovery(Split) ->
+		Wallet = ar_test_data_sync:setup_nodes(),
+		{TX1, Chunks1} = ar_test_data_sync:tx(Wallet, {Split, 13}, v2, ?AR(10)),
+		?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(TX1#tx.id)]),
+		B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
+		?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(B1#block.indep_hash),
+				B1#block.height]),
+		Proofs1 = ar_test_data_sync:post_proofs(main, B1, TX1, Chunks1),
+		ar_test_data_sync:wait_until_syncs_chunks(Proofs1),
+		UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
+		ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs1, UpperBound),
+		ar_test_node:disconnect_from(peer1),
+		{PeerTX2, PeerChunks2} = ar_test_data_sync:tx(Wallet, {Split, 15}, v2, ?AR(10)),
+		{PeerTX3, PeerChunks3} = ar_test_data_sync:tx(Wallet, {Split, 17}, v2, ?AR(10)),
+		?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
+		?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX3#tx.id)]),
+		PeerB2 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
+				[PeerTX2, PeerTX3]),
+		?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(PeerB2#block.indep_hash),
+				PeerB2#block.height]),
+		{MainTX2, MainChunks2} = ar_test_data_sync:tx(Wallet, {Split, 14}, v2, ?AR(10)),
+		?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MainTX2#tx.id)]),
+		MainB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
+				[MainTX2]),
+		?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB2#block.indep_hash),
+				MainB2#block.height]),
+		_PeerProofs2 = ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2),
+		_PeerProofs3 = ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX3, PeerChunks3),
+		{PeerTX4, PeerChunks4} = ar_test_data_sync:tx(Wallet, {Split, 22}, v2, ?AR(10)),
+		?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX4#tx.id)]),
+		PeerB3 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
+				[PeerTX4]),
+		?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(PeerB3#block.indep_hash),
+				PeerB3#block.height]),
+		_PeerProofs4 = ar_test_data_sync:post_proofs(peer1, PeerB3, PeerTX4, PeerChunks4),
+		ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
+		MainProofs2 = ar_test_data_sync:post_proofs(main, MainB2, MainTX2, MainChunks2),
+		{MainTX3, MainChunks3} = ar_test_data_sync:tx(Wallet, {Split, 16}, v2, ?AR(10)),
+		?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MainTX3#tx.id)]),
+		MainB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
+				[MainTX3]),
+		?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB3#block.indep_hash),
+				MainB3#block.height]),
+		ar_test_node:connect_to_peer(peer1),
+		MainProofs3 = ar_test_data_sync:post_proofs(main, MainB3, MainTX3, MainChunks3),
+		UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
+		ar_test_data_sync:wait_until_syncs_chunks(peer1, MainProofs2, UpperBound2),
+		ar_test_data_sync:wait_until_syncs_chunks(peer1, MainProofs3, UpperBound2),
+		ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs1, infinity),
+		%% The peer1 node will return the orphaned transactions to the mempool
+		%% and gossip them.
+		?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
+		?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX4#tx.id)]),
+		ar_test_node:post_tx_to_peer(main, PeerTX2),
+		ar_test_node:post_tx_to_peer(main, PeerTX4),
+		ar_test_node:assert_wait_until_receives_txs([PeerTX2, PeerTX4]),
+		MainB4 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
+		?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB4#block.indep_hash),
+				MainB4#block.height]),
+		Proofs4 = ar_test_data_sync:post_proofs(main, MainB4, PeerTX4, PeerChunks4),
+		%% We did not submit proofs for PeerTX4 to main - they are supposed to be still stored
+		%% in the disk pool.
+		ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs4, infinity),
+		UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
+		ar_test_data_sync:wait_until_syncs_chunks(Proofs4, UpperBound3),
+		ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2).
+	
