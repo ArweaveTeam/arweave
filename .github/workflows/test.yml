@@ -83,7 +83,7 @@ jobs:
         id: cache-build
         uses: actions/cache@v3
         with:
-          path: _build
+          path: build.tar.gz
           key: ${{ runner.os }}-build-${{ hashFiles('apps/**', 'config/**', '.github/**', 'rebar.config', 'rebar.lock', 'ar-rebar3') }}
           restore-keys: |
             ${{ runner.os }}-build-
