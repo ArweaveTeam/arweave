@@ -76,12 +76,14 @@ try_boot_peer(Node, Retries) ->
     Cookie = erlang:get_cookie(),
     Paths = code:get_path(),
     filelib:ensure_dir("./.tmp"),
+	Schedulers = erlang:system_info(schedulers_online),
     Cmd = io_lib:format(
-        "erl -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
+        "erl +S ~B:~B -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s no_auto_join packing_rate 20 " ++
 		"> ~s-~s.out 2>&1 &",
-        [NodeName, string:join(Paths, " "), Cookie, Port, NodeName, Node,
-			get_node_namespace()]),
+        [Schedulers, Schedulers, NodeName, string:join(Paths, " "), Cookie, Port, NodeName,
+			Node, get_node_namespace()]),
+	io:format("Launching peer: ~s~n", [Cmd]),
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->

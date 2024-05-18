@@ -128,7 +128,7 @@ jobs:
             RETRYABLE=0
             set +e
             set -x
-            erl $ERL_TEST_OPTS -noshell -name main-${NAMESPACE}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out
+            erl +S 8:8 $ERL_TEST_OPTS -noshell -name main-${NAMESPACE}@127.0.0.1 -setcookie ${{ matrix.core_test_mod }} -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out
             EXIT_CODE=${PIPESTATUS[0]}
             set +x
             set -e
@@ -187,7 +187,7 @@ jobs:
           exit $EXIT_CODE # exit with the exit code of the tests
       - name: Cleanup successful test
         if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
-        run: rm -rf logs *.out
+        run: rm -rf logs *.out .tmp
 
   cleanup:
     needs: eunit-tests
