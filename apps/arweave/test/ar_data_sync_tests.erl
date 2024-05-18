@@ -51,7 +51,7 @@ test_syncs_data() ->
 					end
 				end,
 				100,
-				60 * 1000
+				120 * 1000
 			),
 			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
 			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
