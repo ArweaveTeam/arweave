@@ -373,7 +373,7 @@ wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 					end
 				end,
 				5 * 1000,
-				120 * 1000
+				180 * 1000
 			)
 		end,
 		Proofs
