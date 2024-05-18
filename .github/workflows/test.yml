@@ -200,5 +200,5 @@ jobs:
           find /home/runner -type d -name "_build_${{ github.run_id }}" -exec rm -rf {} +
       - name: Cleanup old build artifacts
         run: |
-          find /tmp -name "arweave_build_*" -type f -mtime +7 -exec rm -f {} +
+          find /tmp -maxdepth 1 -name "arweave_build_*" -type f -mtime +7 -exec rm -f {} +
           find /home/runner -name "_build_*" -type d -mtime +7 -exec rm -rf {} +
