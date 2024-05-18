@@ -192,9 +192,13 @@ jobs:
   cleanup:
     needs: eunit-tests
     runs-on: self-hosted
-    if: ${{ always() }}
+    if: ${{ success() && needs.eunit-tests.result == 'success' }}
     steps:
       - name: Cleanup build directories
         run: |
           rm -rf /tmp/arweave_build_${{ github.run_id }}.tar.gz
           find /home/runner -type d -name "_build_${{ github.run_id }}" -exec rm -rf {} +
+      - name: Cleanup old build artifacts
+        run: |
+          find /tmp -maxdepth 1 -name "arweave_build_*" -type f -mtime +7 -exec rm -f {} +
+          find /home/runner -name "_build_*" -type d -mtime +7 -exec rm -rf {} +
