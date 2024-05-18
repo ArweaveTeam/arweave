@@ -187,7 +187,7 @@ jobs:
           exit $EXIT_CODE # exit with the exit code of the tests
       - name: Cleanup successful test
         if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
-        run: rm -rf logs *.out
+        run: rm -rf logs *.out .tmp
 
   cleanup:
     needs: eunit-tests
