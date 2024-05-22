@@ -1357,7 +1357,7 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) 
 								%% CM miners ask each other about their local
 								%% partitions. A CM exit node is not an exception - it
 								%% does NOT aggregate peer partitions in this case.
-								ar_coordination:get_unique_partitions_list()
+								ar_coordination:get_partition_table()
 						end,
 					JSON = ar_serialize:jsonify(Partitions),
 					{200, #{}, JSON, Req}

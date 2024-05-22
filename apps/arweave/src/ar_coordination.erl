@@ -6,7 +6,7 @@
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
 	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peers/1, get_peer/1,
 	update_peer/2, remove_peer/1, garbage_collect/0, is_exit_peer/0,
-	get_unique_partitions_list/0, get_self_plus_external_partitions_list/0,
+	get_partition_table/0, get_self_plus_external_partitions_list/0,
 	get_cluster_partitions_list/0
 ]).
 
@@ -461,9 +461,21 @@ refetch_peer_partitions(Peers) ->
 refetch_pool_peer_partitions() ->
 	gen_server:cast(?MODULE, refetch_pool_peer_partitions).
 
-get_unique_partitions_list() ->
-	Set = get_unique_partitions_set(ar_mining_io:get_partitions(), sets:new()),
-	lists:sort(sets:to_list(Set)).
+get_partition_table() ->
+	lists:foldl(
+		fun({BucketSize, Bucket, {spora_2_6, MiningAddress}}, Acc) ->
+			[
+				{[
+					{bucket, Bucket},
+					{bucketsize, BucketSize},
+					{addr, ar_util:encode(MiningAddress)}
+				]}
+				| Acc
+			]
+		end,
+		sets:new(),
+		ar_mining_io:get_storage_modules()
+	)
 
 get_unique_partitions_set() ->
 	get_unique_partitions_set(ar_mining_io:get_partitions(), sets:new()).
