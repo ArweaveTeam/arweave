@@ -1286,7 +1286,7 @@ handle(<<"GET">>, [<<"vdf">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_update, 1)
+			handle_get_vdf(Req, get_update, 2)
 	end;
 
 %% Serve an VDF update to a configured VDF client.
@@ -1306,7 +1306,7 @@ handle(<<"GET">>, [<<"vdf">>, <<"session">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_session, 1)
+			handle_get_vdf(Req, get_session, 2)
 	end;
 
 %% Serve the current VDF session to a configured VDF client.
@@ -1336,7 +1336,7 @@ handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			handle_get_vdf(Req, get_previous_session, 1)
+			handle_get_vdf(Req, get_previous_session, 2)
 	end;
 
 %% Serve the previous VDF session to a configured VDF client.
