@@ -1319,6 +1319,16 @@ handle(<<"GET">>, [<<"vdf2">>, <<"session">>], Req, _Pid) ->
 			handle_get_vdf(Req, get_session, 2)
 	end;
 
+%% Serve the current VDF session to a configured VDF client.
+%% GET request to /vdf3/session.
+handle(<<"GET">>, [<<"vdf3">>, <<"session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_session, 3)
+	end;
+
 %% Serve the previous VDF session to a configured VDF client.
 %% GET request to /vdf/previous_session.
 handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
@@ -3096,7 +3106,7 @@ handle_post_vdf2(Req, Pid, Peer) ->
 handle_post_vdf3(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:binary_to_nonce_limiter_update(Body) of
+			case ar_serialize:binary_to_nonce_limiter_update(2, Body) of
 				{ok, Update} ->
 					case ar_nonce_limiter:apply_external_update(Update, Peer) of
 						ok ->
