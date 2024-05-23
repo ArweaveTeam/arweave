@@ -118,13 +118,12 @@ make_nonce_limiter_update(_SessionKey, not_found, _IsPartial) ->
 	not_found;
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
-	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
 	StepCheckpointsMap = Session#vdf_session.step_checkpoints_map,
 	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
 	RecentStepNumbers = get_recent_step_numbers(StepNumber),
 	StepCheckpointsMap2 = maps:with(RecentStepNumbers, StepCheckpointsMap),
 	#nonce_limiter_update{ session_key = SessionKey,
-			is_partial = IsPartial, checkpoints = Checkpoints,
+			is_partial = IsPartial,
 			session = Session#vdf_session{ step_checkpoints_map = StepCheckpointsMap2 } }.
 
 get_recent_step_numbers(StepNumber) ->

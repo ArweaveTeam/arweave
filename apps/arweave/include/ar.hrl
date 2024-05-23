@@ -406,7 +406,6 @@
 -record(nonce_limiter_update, {
 	session_key,
 	session,
-	checkpoints,
 	is_partial = true
 }).
 
