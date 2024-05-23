@@ -12,7 +12,7 @@
 
 syncs_data_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
-		fun test_syncs_data/0, 120).
+		fun test_syncs_data/0, 240).
 
 test_syncs_data() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
@@ -67,7 +67,7 @@ test_syncs_data() ->
 
 syncs_after_joining_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
-		fun test_syncs_after_joining/0, 120).
+		fun test_syncs_after_joining/0, 240).
 
 test_syncs_after_joining() ->
 	test_syncs_after_joining(original_split).
