@@ -647,7 +647,8 @@ handle_cast({validated_steps, Args}, State) ->
 							{step_number, StepNumber}]),
 						{_, Steps2} =
 							get_step_range(Steps, StepNumber, CurrentStepNumber + 1, StepNumber),
-						update_session(Session, StepNumber, LastStepCheckpoints, Steps2, #{});
+						update_session(Session, StepNumber,
+								#{ StepNumber => LastStepCheckpoints }, Steps2);
 					false ->
 						Session
 				end,
@@ -718,7 +719,8 @@ handle_info({computed, Args}, State) ->
 				{output, ar_util:encode(Output)}]),
 			{noreply, State};
 		true ->
-			Session2 = update_session(Session, StepNumber, Checkpoints, [Output], #{}),
+			Session2 = update_session(Session, StepNumber,
+					#{ StepNumber => Checkpoints }, [Output]),
 			State2 = cache_session(State, CurrentSessionKey, Session2),
 			?LOG_DEBUG([{event, new_vdf_step}, {source, computed},
 				{session_key, encode_session_key(CurrentSessionKey)}, {step_number, StepNumber}]),
@@ -747,11 +749,10 @@ session_key(NextSeed, StepNumber, NextVDFDifficulty) ->
 get_session(SessionKey, #state{ session_by_key = SessionByKey }) ->
 	maps:get(SessionKey, SessionByKey, not_found).
 
-update_session(Session, StepNumber, Checkpoints, Steps, StepCheckpointsMap) ->
+update_session(Session, StepNumber, StepCheckpointsMap, Steps) ->
 	#vdf_session{ step_checkpoints_map = Map } = Session,
-	Map2 = maps:put(StepNumber, Checkpoints, Map),
-	Map3 = maps:merge(StepCheckpointsMap, Map2),
-	update_session(Session#vdf_session{ step_checkpoints_map = Map3 }, StepNumber, Steps).
+	Map2 = maps:merge(StepCheckpointsMap, Map),
+	update_session(Session#vdf_session{ step_checkpoints_map = Map2 }, StepNumber, Steps).
 
 update_session(Session, StepNumber, Steps) ->
 	#vdf_session{ steps = CurrentSteps } = Session,
@@ -1075,7 +1076,7 @@ apply_external_update2(Update, State) ->
 			session = #vdf_session{
 				step_checkpoints_map = StepCheckpointsMap,
 				prev_session_key = PrevSessionKey, step_number = StepNumber } = Session,
-			checkpoints = Checkpoints, is_partial = IsPartial } = Update,
+			is_partial = IsPartial } = Update,
 	{_SessionSeed, SessionInterval, _SessionVDFDifficulty} = SessionKey,
 	case get_session(SessionKey, State) of
 		not_found ->
@@ -1114,8 +1115,8 @@ apply_external_update2(Update, State) ->
 			case CurrentStepNumber + 1 == StepNumber of
 				true ->
 					[Output | _] = Session#vdf_session.steps,
-					CurrentSession2 = update_session(CurrentSession, StepNumber, Checkpoints,
-							[Output], StepCheckpointsMap),
+					CurrentSession2 = update_session(CurrentSession, StepNumber,
+							StepCheckpointsMap, [Output]),
 					State2 = apply_external_update3(State, SessionKey, CurrentSession2, [Output]),
 					{reply, ok, State2};
 				false ->

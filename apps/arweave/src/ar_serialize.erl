@@ -363,7 +363,9 @@ binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 %% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
 nonce_limiter_update_to_binary(2 = _Format, #nonce_limiter_update{
 			session_key = {NextSeed, Interval, NextVDFDifficulty},
-		session = Session, checkpoints = Checkpoints, is_partial = IsPartial }) ->
+		session = Session, is_partial = IsPartial }) ->
+	#vdf_session{ step_number = StepNumber, step_checkpoints_map = Map } = Session,
+	Checkpoints = maps:get(StepNumber, Map, []),
 	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
 	CheckpointLen = length(Checkpoints),
 	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
@@ -432,9 +434,9 @@ binary_to_nonce_limiter_update(2, % Format
 		when UpperBoundSize > 0, StepsLen > 0, CheckpointLen == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
 	NextUpperBound2 = case NextUpperBoundSize of 0 -> undefined; _ -> NextUpperBound end,
 	Update = #nonce_limiter_update{ session_key = {NextSeed, Interval, NextVDFDifficulty},
-			checkpoints = parse_32b_list(Checkpoints),
 			is_partial = case IsPartial of 0 -> false; _ -> true end,
 			session = Session = #vdf_session{ step_number = StepNumber, seed = Seed,
+					step_checkpoints_map = #{ StepNumber => parse_32b_list(Checkpoints) },
 					upper_bound = UpperBound, next_upper_bound = NextUpperBound2,
 					steps = parse_32b_list(Steps) } },
 	case decode_session_key(PrevSessionKeyBin) of
@@ -466,7 +468,6 @@ binary_to_nonce_limiter_update(3, % Format = 3.
 		{ok, StepCheckpointsMap} ->
 			Update = #nonce_limiter_update{
 					session_key = {NextSeed, Interval, NextVDFDifficulty},
-					checkpoints = maps:get(StepNumber, StepCheckpointsMap),
 					is_partial = case IsPartial of 0 -> false; _ -> true end,
 					session = Session = #vdf_session{ step_number = StepNumber, seed = Seed,
 							upper_bound = UpperBound, next_upper_bound = NextUpperBound2,
@@ -477,8 +478,8 @@ binary_to_nonce_limiter_update(3, % Format = 3.
 					{ok, Update};
 				error ->
 					{error, invalid1};
-				SessionKey ->
-					Session2 = Session#vdf_session{ prev_session_key = SessionKey },
+				PrevSessionKey ->
+					Session2 = Session#vdf_session{ prev_session_key = PrevSessionKey },
 					{ok, Update#nonce_limiter_update{ session = Session2 }}
 			end
 	end;
