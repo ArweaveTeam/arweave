@@ -476,13 +476,22 @@ handle_call({get_latest_step_triplets, SessionKey, N}, _From, State) ->
 		not_found ->
 			{reply, [], State};
 		#vdf_session{ step_number = StepNumber, steps = Steps,
+				step_checkpoints_map = Map,
 				upper_bound = UpperBound, next_upper_bound = NextUpperBound } ->
 			{_, IntervalNumber, _} = SessionKey,
 			IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
 			ResetPoint = get_entropy_reset_point(IntervalStart, StepNumber),
-			{reply,
-				get_triplets(StepNumber, Steps, ResetPoint, UpperBound, NextUpperBound, N),
-				State}
+			Triplets = get_triplets(StepNumber, Steps, ResetPoint, UpperBound,
+					NextUpperBound, N),
+			{Triplets2, NSkipped} = filter_step_triplets_with_checkpoints(Triplets, Map),
+			case NSkipped > 0 of
+				true ->
+					?LOG_INFO([{event, missing_step_checkpoints},
+							{count, NSkipped}]);
+				false ->
+					ok
+			end,
+			{reply, Triplets2, State}
 	end;
 
 handle_call({get_step_checkpoints, StepNumber, SessionKey}, _From, State) ->
@@ -1327,7 +1336,6 @@ get_triplets(_StepNumber, _Steps, _ResetPoint, _UpperBound, _NextUpperBound, 0) 
 	[];
 get_triplets(_StepNumber, [], _ResetPoint, _UpperBound, _NextUpperBound, _N) ->
 	[];
-
 get_triplets(StepNumber, [Step | Steps], ResetPoint, UpperBound, NextUpperBound, N) ->
 	U =
 		case ResetPoint of
@@ -1340,6 +1348,18 @@ get_triplets(StepNumber, [Step | Steps], ResetPoint, UpperBound, NextUpperBound,
 		end,
 	[{Step, StepNumber, U}
 		| get_triplets(StepNumber - 1, Steps, ResetPoint, UpperBound, NextUpperBound, N - 1)].
+
+filter_step_triplets_with_checkpoints([], _Map) ->
+	{[], 0};
+filter_step_triplets_with_checkpoints([{_, StepNumber, _} = Triplet | Triplets], Map) ->
+	case maps:is_key(StepNumber, Map) of
+		true ->
+			{List, NSkipped} = filter_step_triplets_with_checkpoints(Triplets, Map),
+			{[Triplet | List], NSkipped};
+		false ->
+			{List, NSkipped} = filter_step_triplets_with_checkpoints(Triplets, Map),
+			{List, NSkipped + 1}
+	end.
 
 %%%===================================================================
 %%% Tests.
