@@ -12,7 +12,7 @@
 	peer,
 	raw_peer,
 	pause_until = 0,
-	format = 1
+	format = 2
 }).
 
 %% The frequency of re-resolving the domain names of the VDF client peers (who are
