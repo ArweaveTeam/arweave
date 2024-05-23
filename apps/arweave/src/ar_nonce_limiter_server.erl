@@ -12,6 +12,10 @@
 
 -record(state, {}).
 
+%% @doc The number of steps for which we include step checkpoints in the full session update.
+%% Does not apply to previous session updates.
+-define(SESSION_UPDATE_INCLUDE_STEP_CHECKPOINTS_COUNT, 100).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -109,12 +113,27 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
 make_nonce_limiter_update(_SessionKey, not_found, _IsPartial) ->
 	not_found;
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	StepNumber = Session#vdf_session.step_number,
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map, []),
+	StepCheckpointsMap = Session#vdf_session.step_checkpoints_map,
 	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
+	RecentStepNumbers = get_recent_step_numbers(StepNumber),
+	StepCheckpointsMap2 = maps:with(RecentStepNumbers, StepCheckpointsMap),
 	#nonce_limiter_update{ session_key = SessionKey,
 			is_partial = IsPartial, checkpoints = Checkpoints,
-			session = Session#vdf_session{ step_checkpoints_map = #{} } }.
+			session = Session#vdf_session{ step_checkpoints_map = StepCheckpointsMap2 } }.
+
+get_recent_step_numbers(StepNumber) ->
+	get_recent_step_numbers(StepNumber, 0).
+
+get_recent_step_numbers(_, Taken)
+		when Taken == ?SESSION_UPDATE_INCLUDE_STEP_CHECKPOINTS_COUNT ->
+	[];
+get_recent_step_numbers(-1, _Taken) ->
+	[];
+get_recent_step_numbers(StepNumber, Taken) ->
+	[StepNumber | get_recent_step_numbers(StepNumber - 1, Taken + 1)].
