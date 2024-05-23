@@ -13,6 +13,8 @@
 	remote_servers
 }).
 
+-define(PULL_FREQUENCY_MS, 800).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -39,68 +41,94 @@ init([]) ->
 			gen_server:cast(?MODULE, pull)
 	end,
 	{ok, Config} = application:get_env(arweave, config),
-	RawPeers = queue:from_list(Config#config.nonce_limiter_server_trusted_peers),
-	{ok, #state{ remote_servers = RawPeers }}.
+	RawPeersWithTimestamp = queue:from_list([{RawPeer, 0}
+			|| RawPeer <- Config#config.nonce_limiter_server_trusted_peers]),
+	{ok, #state{ remote_servers = RawPeersWithTimestamp }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast(pull, State) ->
-	ar_util:cast_after(800, ?MODULE, pull),
 	#state{ remote_servers = Q } = State,
-	{{value, RawPeer}, Q2} = queue:out(Q),
-	State2 = State#state{ remote_servers = queue:in(RawPeer, Q2) },
-	case resolve_peer(RawPeer) of
-		error ->
-			%% Push the peer to the back of the queue.
-			{noreply, State2};
-		{ok, Peer} ->
-			case ar_http_iface_client:get_vdf_update(Peer) of
-				{ok, Update} ->
-					#nonce_limiter_update{ session = #vdf_session{
-							step_number = SessionStepNumber } } = Update,
-					case ar_nonce_limiter:apply_external_update(Update, Peer) of
-						ok ->
-							{noreply, State};
-						#nonce_limiter_update_response{ session_found = false } ->
-							case fetch_and_apply_session_and_previous_session(Peer) of
+	{{value, {RawPeer, Timestamp}}, Q2} = queue:out(Q),
+	Now = erlang:monotonic_time(millisecond),
+	State2 = State#state{ remote_servers = queue:in({RawPeer, Now}, Q2) },
+	case Now < Timestamp + 500 of
+		true ->
+			ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
+			{noreply, State};
+		false ->
+			case resolve_peer(RawPeer) of
+				error ->
+					?LOG_WARNING([{event, failed_to_resolve_peer},
+							{raw_peer, io_lib:format("~p", [RawPeer])}]),
+					gen_server:cast(?MODULE, pull),
+					%% Push the peer to the back of the queue.
+					{noreply, State2};
+				{ok, Peer} ->
+					case ar_http_iface_client:get_vdf_update(Peer) of
+						{ok, Update} ->
+							#nonce_limiter_update{ session = #vdf_session{
+									step_number = SessionStepNumber } } = Update,
+							case ar_nonce_limiter:apply_external_update(Update, Peer) of
 								ok ->
+									ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
 									{noreply, State};
+								#nonce_limiter_update_response{ session_found = false } ->
+									case fetch_and_apply_session_and_previous_session(Peer) of
+										ok ->
+											ar_util:cast_after(?PULL_FREQUENCY_MS,
+													?MODULE, pull),
+											{noreply, State};
+										_ ->
+											gen_server:cast(?MODULE, pull),
+											{noreply, State2}
+									end;
+								#nonce_limiter_update_response{ step_number = StepNumber }
+										when StepNumber >= SessionStepNumber ->
+									%% We are ahead of this server; try another one,
+									%% if there are any.
+									gen_server:cast(?MODULE, pull),
+									{noreply, State2};
 								_ ->
-									{noreply, State2}
+									%% We have received a partial session, but there's a gap in the
+									%% step numbers, e.g., the update we received is at step 100,
+									%% but our last seen step was 90.
+									case fetch_and_apply_session(Peer) of
+										ok ->
+											ar_util:cast_after(?PULL_FREQUENCY_MS,
+													?MODULE, pull),
+											{noreply, State};
+										_ ->
+											gen_server:cast(?MODULE, pull),
+											{noreply, State2}
+									end
 							end;
-						#nonce_limiter_update_response{ step_number = StepNumber }
-								when StepNumber >= SessionStepNumber ->
-							%% We are ahead of this server; try another one, if there are any.
+						{error, not_found} ->
+							?LOG_WARNING([{event, failed_to_fetch_vdf_update},
+									{peer, ar_util:format_peer(Peer)},
+									{error, not_found}]),
+							%% The server might be restarting.
+							%% Try another one, if there are any.
+							gen_server:cast(?MODULE, pull),
 							{noreply, State2};
-						_ ->
-							%% We have received a partial session, but there's a gap in the
-							%% step numbers, e.g., the update we received is at step 100,
-							%% but our last seen step was 90.
-							case fetch_and_apply_session(Peer) of
-								ok ->
-									{noreply, State};
-								_ ->
-									{noreply, State2}
-							end
-					end;
-				{error, not_found} ->
-					%% The server might be restarting. Try another one, if there are any.
-					{noreply, State#state{ remote_servers = queue:in(RawPeer, Q2) }};
-				{error, Reason} ->
-					?LOG_WARNING([{event, failed_to_fetch_vdf_update},
-							{peer, ar_util:format_peer(Peer)},
-							{error, io_lib:format("~p", [Reason])}]),
-					%% Try another server, if there are any.
-					{noreply, State#state{ remote_servers = queue:in(RawPeer, Q2) }}
+						{error, Reason} ->
+							?LOG_WARNING([{event, failed_to_fetch_vdf_update},
+									{peer, ar_util:format_peer(Peer)},
+									{error, io_lib:format("~p", [Reason])}]),
+							%% Try another server, if there are any.
+							gen_server:cast(?MODULE, pull),
+							{noreply, State2}
+					end
 			end
 	end;
 
 handle_cast(request_sessions, State) ->
 	#state{ remote_servers = Q } = State,
-	{{value, RawPeer}, Q2} = queue:out(Q),
-	State2 = State#state{ remote_servers = queue:in(RawPeer, Q2) },
+	{{value, {RawPeer, _Timestamp}}, Q2} = queue:out(Q),
+	Now = erlang:monotonic_time(millisecond),
+	State2 = State#state{ remote_servers = queue:in({RawPeer, Now}, Q2) },
 	case resolve_peer(RawPeer) of
 		error ->
 			%% Push the peer to the back of the queue.
