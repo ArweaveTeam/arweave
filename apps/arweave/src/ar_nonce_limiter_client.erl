@@ -14,6 +14,7 @@
 }).
 
 -define(PULL_FREQUENCY_MS, 800).
+-define(PULL_THROTTLE_MS, 200).
 
 %%%===================================================================
 %%% Public interface.
@@ -41,7 +42,8 @@ init([]) ->
 			gen_server:cast(?MODULE, pull)
 	end,
 	{ok, Config} = application:get_env(arweave, config),
-	RawPeersWithTimestamp = queue:from_list([{RawPeer, 0}
+	Now =  erlang:system_time(millisecond),
+	RawPeersWithTimestamp = queue:from_list([{RawPeer, Now-?PULL_THROTTLE_MS}
 			|| RawPeer <- Config#config.nonce_limiter_server_trusted_peers]),
 	{ok, #state{ remote_servers = RawPeersWithTimestamp }}.
 
@@ -52,11 +54,11 @@ handle_call(Request, _From, State) ->
 handle_cast(pull, State) ->
 	#state{ remote_servers = Q } = State,
 	{{value, {RawPeer, Timestamp}}, Q2} = queue:out(Q),
-	Now = erlang:monotonic_time(millisecond),
+	Now = erlang:system_time(millisecond),
 	State2 = State#state{ remote_servers = queue:in({RawPeer, Now}, Q2) },
-	case Now < Timestamp + 500 of
+	case Now < Timestamp + ?PULL_THROTTLE_MS of
 		true ->
-			ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
+			ar_util:cast_after(?PULL_THROTTLE_MS, ?MODULE, pull),
 			{noreply, State};
 		false ->
 			case resolve_peer(RawPeer) of
@@ -65,7 +67,7 @@ handle_cast(pull, State) ->
 							{raw_peer, io_lib:format("~p", [RawPeer])}]),
 					gen_server:cast(?MODULE, pull),
 					%% Push the peer to the back of the queue.
-					{noreply, State2};
+					{noreply, State2}; 
 				{ok, Peer} ->
 					case ar_http_iface_client:get_vdf_update(Peer) of
 						{ok, Update} ->
@@ -127,7 +129,7 @@ handle_cast(pull, State) ->
 handle_cast(request_sessions, State) ->
 	#state{ remote_servers = Q } = State,
 	{{value, {RawPeer, _Timestamp}}, Q2} = queue:out(Q),
-	Now = erlang:monotonic_time(millisecond),
+	Now = erlang:system_time(millisecond),
 	State2 = State#state{ remote_servers = queue:in({RawPeer, Now}, Q2) },
 	case resolve_peer(RawPeer) of
 		error ->
