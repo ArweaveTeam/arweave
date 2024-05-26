@@ -3146,18 +3146,17 @@ handle_get_vdf2(Req, Call, Format) ->
 	Update =
 		case Call of
 			get_update ->
-				ar_nonce_limiter_server:get_update();
+				ar_nonce_limiter_server:get_update(Format);
 			get_session ->
-				ar_nonce_limiter_server:get_full_update();
+				ar_nonce_limiter_server:get_full_update(Format);
 			get_previous_session ->
-				ar_nonce_limiter_server:get_full_prev_update()
+				ar_nonce_limiter_server:get_full_prev_update(Format)
 		end,
 	case Update of
 		not_found ->
 			{404, #{}, <<>>, Req};
 		Update ->
-			Bin = ar_serialize:nonce_limiter_update_to_binary(Format, Update),
-			{200, #{}, Bin, Req}
+			{200, #{}, Update, Req}
 	end.
 
 read_complete_body(Req, Pid) ->
