@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, make_full_nonce_limiter_update/2, make_partial_nonce_limiter_update/4,
-		get_update/0, get_full_update/0, get_full_prev_update/0]).
+		get_update/1, get_full_update/1, get_full_prev_update/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -35,8 +35,8 @@ make_full_nonce_limiter_update(SessionKey, Session) ->
 	make_nonce_limiter_update(SessionKey, Session, false).
 
 %% @doc Return the minimal VDF update, i.e., the latest computed output.
-get_update() ->
-	case ets:lookup(?MODULE, partial_update) of
+get_update(Format) ->
+	case ets:lookup(?MODULE, {partial_update, Format}) of
 		[] ->
 			not_found;
 		[{_, PartialUpdate}] ->
@@ -44,8 +44,8 @@ get_update() ->
 	end.
 
 %% @doc Return the "full update" including the latest VDF session.
-get_full_update() ->
-	case ets:lookup(?MODULE, full_update) of
+get_full_update(Format) ->
+	case ets:lookup(?MODULE, {full_update, Format}) of
 		[] ->
 			not_found;
 		[{_, Session}] ->
@@ -53,8 +53,8 @@ get_full_update() ->
 	end.
 
 %% @doc Return the "full previous update" including the latest but one VDF session.
-get_full_prev_update() ->
-	case ets:lookup(?MODULE, full_prev_update) of
+get_full_prev_update(Format) ->
+	case ets:lookup(?MODULE, {full_prev_update, Format}) of
 		[] ->
 			not_found;
 		[{_, PrevSession}] ->
@@ -92,11 +92,33 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 			PartialUpdate = make_partial_nonce_limiter_update(SessionKey, Session,
 					StepNumber, Output),
 			FullUpdate = make_full_nonce_limiter_update(SessionKey, Session),
-			FullPrevUpdate = make_full_nonce_limiter_update(PrevSessionKey, PrevSession),
-			ets:insert(?MODULE, [
-				{partial_update, PartialUpdate},
-				{full_update, FullUpdate},
-				{full_prev_update, FullPrevUpdate}]),
+
+			PartialUpdateBin2 = ar_serialize:nonce_limiter_update_to_binary(2, PartialUpdate),
+			PartialUpdateBin3 = ar_serialize:nonce_limiter_update_to_binary(3, PartialUpdate),
+			FullUpdateBin2 = ar_serialize:nonce_limiter_update_to_binary(2, FullUpdate),
+			FullUpdateBin3 = ar_serialize:nonce_limiter_update_to_binary(3, FullUpdate),
+			Keys = [
+				{{partial_update, 2}, PartialUpdateBin2},
+				{{partial_update, 3}, PartialUpdateBin3},
+				{{full_update, 2}, FullUpdateBin2},
+				{{full_update, 3}, FullUpdateBin3}
+			],
+			Keys2 =
+				case PrevSession of
+					not_found ->
+						Keys;
+					_ ->
+						FullPrevUpdate = make_full_nonce_limiter_update(
+								PrevSessionKey, PrevSession),
+						FullPrevUpdateBin2 = ar_serialize:nonce_limiter_update_to_binary(
+								2, FullPrevUpdate),
+						FullPrevUpdateBin3 = ar_serialize:nonce_limiter_update_to_binary(
+								3, FullPrevUpdate),
+						Keys ++ [
+							{{full_prev_update, 2}, FullPrevUpdateBin2},
+							{{full_prev_update, 3}, FullPrevUpdateBin3}]
+				end,
+			ets:insert(?MODULE, Keys2),
 			{noreply, State}
 	end;
 
