@@ -14,6 +14,7 @@
 }).
 
 -define(PULL_FREQUENCY_MS, 800).
+-define(NO_UPDATE_PULL_FREQUENCY_MS, 200).
 -define(PULL_THROTTLE_MS, 200).
 
 %%%===================================================================
@@ -79,32 +80,32 @@ handle_cast(pull, State) ->
 									{noreply, State};
 								#nonce_limiter_update_response{ session_found = false } ->
 									case fetch_and_apply_session_and_previous_session(Peer) of
-										ok ->
+										{error, _} ->
+											gen_server:cast(?MODULE, pull),
+											{noreply, State2};
+										_ ->
 											ar_util:cast_after(?PULL_FREQUENCY_MS,
 													?MODULE, pull),
-											{noreply, State};
-										_ ->
-											gen_server:cast(?MODULE, pull),
-											{noreply, State2}
+											{noreply, State}
 									end;
 								#nonce_limiter_update_response{ step_number = StepNumber }
 										when StepNumber >= SessionStepNumber ->
-									%% We are ahead of this server; try another one,
-									%% if there are any.
-									gen_server:cast(?MODULE, pull),
-									{noreply, State2};
+									%% We are ahead of this server. Re-try soon.
+									ar_util:cast_after(?NO_UPDATE_PULL_FREQUENCY_MS,
+											?MODULE, pull),
+									{noreply, State};
 								_ ->
 									%% We have received a partial session, but there's a gap in the
 									%% step numbers, e.g., the update we received is at step 100,
 									%% but our last seen step was 90.
 									case fetch_and_apply_session(Peer) of
+										{error, _} ->
+											gen_server:cast(?MODULE, pull),
+											{noreply, State2};
 										ok ->
 											ar_util:cast_after(?PULL_FREQUENCY_MS,
 													?MODULE, pull),
-											{noreply, State};
-										_ ->
-											gen_server:cast(?MODULE, pull),
-											{noreply, State2}
+											{noreply, State}
 									end
 							end;
 						{error, not_found} ->
@@ -137,10 +138,10 @@ handle_cast(request_sessions, State) ->
 			{noreply, State2};
 		{ok, Peer} ->
 			case fetch_and_apply_session_and_previous_session(Peer) of
-				ok ->
-					{noreply, State};
+				{error, _} ->
+					{noreply, State2};
 				_ ->
-					{noreply, State2}
+					{noreply, State}
 			end
 	end;
 
