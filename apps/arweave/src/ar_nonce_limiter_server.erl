@@ -14,7 +14,7 @@
 
 %% @doc The number of steps for which we include step checkpoints in the full session update.
 %% Does not apply to previous session updates.
--define(SESSION_UPDATE_INCLUDE_STEP_CHECKPOINTS_COUNT, 100).
+-define(SESSION_UPDATE_INCLUDE_STEP_CHECKPOINTS_COUNT, 20).
 
 %%%===================================================================
 %%% Public interface.
