@@ -538,6 +538,10 @@ process_h1_to_h2_jobs([Candidate | Jobs], Peer, Partitions) ->
 process_h1_read_jobs([], _Partitions) ->
 	ok;
 process_h1_read_jobs([Candidate | Jobs], Partitions) ->
+	#mining_candidate{ h0 = H0, h1 = H1, h2 = H2,
+		partition_number = PartitionID, partition_number2 = PartitionID2 } = Candidate,
+	?LOG_DEBUG([{event, h1_read_job_process}, {h0, ar_util:encode(H0)}, {h1, ar_util:encode(H1)}, {h2, ar_util:encode(H2)},
+		{partition_id, PartitionID}, {partition_id2, PartitionID2}]),
 	case we_have_partition_for_the_first_recall_byte(Candidate, Partitions) of
 		true ->
 			ar_mining_server:prepare_and_post_solution(Candidate),

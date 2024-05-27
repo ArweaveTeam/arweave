@@ -8,6 +8,7 @@
 
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pool.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -75,6 +76,16 @@ terminate(_Reason, _State) ->
 push_cm_jobs_to_cm_peers(Jobs) ->
 	{ok, Config} = application:get_env(arweave, config),
 	Peers = Config#config.cm_peers,
+	#pool_cm_jobs{ h1_read_jobs = H1ReadJobs } = Jobs,
+	lists:foreach(
+		fun(H1ReadJob) ->
+			#mining_candidate{ h0 = H0, h1 = H1, h2 = H2,
+				partition_number = PartitionID, partition_number2 = PartitionID2 } = H1ReadJob,
+			?LOG_DEBUG([{event, h1_read_job_route}, {h0, ar_util:encode(H0)}, {h1, ar_util:encode(H1)}, {h2, ar_util:encode(H2)},
+				{partition_id, PartitionID}, {partition_id2, PartitionID2}, {peers, Peers}])
+		end,
+		H1ReadJobs
+	),
 	Payload = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
 	push_cm_jobs_to_cm_peers(Payload, Peers).
 
