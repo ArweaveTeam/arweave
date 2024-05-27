@@ -98,12 +98,7 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	case is_vdf_server() of
-		false ->
-			{noreply, State};
-		true ->
-			handle_computed_output(Args, State)
-	end;
+	handle_computed_output(Args, State);
 
 handle_info({event, nonce_limiter, _Args}, State) ->
 	{noreply, State};
@@ -140,15 +135,6 @@ make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 	#nonce_limiter_update{ session_key = SessionKey,
 			is_partial = IsPartial,
 			session = Session#vdf_session{ step_checkpoints_map = StepCheckpointsMap2 } }.
-
-is_vdf_server() ->
-	{ok, Config} = application:get_env(arweave, config),
-	case Config#config.nonce_limiter_client_peers of
-		[] ->
-			false;
-		_ ->
-			true
-	end.
 
 handle_computed_output(Args, State) ->
 	{SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
