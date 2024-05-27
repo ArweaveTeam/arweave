@@ -12,6 +12,10 @@
 
 -record(state, {}).
 
+%% @doc The number of steps and the corresponding step checkpoints to include in every
+%% regular update.
+-define(REGULAR_UPDATE_INCLUDE_STEPS_COUNT, 2).
+
 %% @doc The number of steps for which we include step checkpoints in the full session update.
 %% Does not apply to previous session updates.
 -define(SESSION_UPDATE_INCLUDE_STEP_CHECKPOINTS_COUNT, 20).
@@ -24,10 +28,25 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 make_partial_nonce_limiter_update(SessionKey, Session, StepNumber, Output) ->
+	#vdf_session{ steps = Steps, step_number = SessionStepNumber } = Session,
+	StepNumberMinusOne = StepNumber - 1,
+	Steps2 =
+		case SessionStepNumber of
+			StepNumber ->
+				Steps;
+			StepNumberMinusOne ->
+				[Output | Steps];
+			_ ->
+				?LOG_WARNING([{event, vdf_gap},
+						{session_step_number, SessionStepNumber},
+						{computed_output, StepNumber}]),
+				[Output]
+		end,
 	make_nonce_limiter_update(
 		SessionKey,
 		Session#vdf_session{
-			step_number = StepNumber, steps = [Output]
+			step_number = StepNumber,
+			steps = lists:sublist(Steps2, ?REGULAR_UPDATE_INCLUDE_STEPS_COUNT)
 		},
 		true).
 

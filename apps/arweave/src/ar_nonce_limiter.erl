@@ -1079,8 +1079,7 @@ apply_external_update2(Update, State) ->
 	case get_session(SessionKey, State) of
 		not_found ->
 			apply_external_update_session_not_found(Update, State);
-		CurrentSession ->
-			#vdf_session{ step_number = CurrentStepNumber } = CurrentSession,
+		#vdf_session{ step_number = CurrentStepNumber } = CurrentSession ->
 			case CurrentStepNumber >= StepNumber of
 				true ->
 					%% Inform the peer we are ahead.
@@ -1140,16 +1139,20 @@ apply_external_update3(Update, CurrentSession, State) ->
 	#nonce_limiter_update{ session_key = SessionKey,
 			session = #vdf_session{
 				step_checkpoints_map = StepCheckpointsMap,
-				step_number = StepNumber } = Session,
+				step_number = StepNumber,
+				steps = Steps } = Session,
 			is_partial = IsPartial } = Update,
 	#vdf_session{ step_number = CurrentStepNumber } = CurrentSession,
 	%% CurrentStepNumber < StepNumber by construction.
-	case CurrentStepNumber + 1 == StepNumber of
+	StepCount = length(Steps),
+	StartStepNumber = StepNumber - StepCount,
+	case CurrentStepNumber >= StartStepNumber of
 		true ->
-			[Output | _] = Session#vdf_session.steps,
+			Steps2 = lists:sublist(Steps,
+					StepNumber - max(CurrentStepNumber, StartStepNumber)),
 			CurrentSession2 = update_session(CurrentSession, StepNumber,
-					StepCheckpointsMap, [Output]),
-			State2 = apply_external_update4(State, SessionKey, CurrentSession2, [Output]),
+					StepCheckpointsMap, Steps2),
+			State2 = apply_external_update4(State, SessionKey, CurrentSession2, Steps2),
 			{reply, ok, State2};
 		false ->
 			case IsPartial of
@@ -1168,7 +1171,7 @@ apply_external_update3(Update, CurrentSession, State) ->
 					%% Handle the case where the VDF client has dropped of the
 					%% network briefly and the VDF server has advanced several
 					%% steps within the same session. In this case the client has
-					%% noticed the gap and requested the  full VDF session be sent -
+					%% noticed the gap and requested the full VDF session be sent -
 					%% which may contain previously processed steps in a addition to
 					%% the missing ones.
 					%%
