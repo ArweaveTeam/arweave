@@ -99,8 +99,17 @@ handle_cast(pull, State) ->
 											{noreply, State2}
 									end;
 								#nonce_limiter_update_response{ step_number = StepNumber }
-										when StepNumber >= SessionStepNumber ->
-									%% We are ahead of this server. Re-try soon.
+										when StepNumber > SessionStepNumber ->
+									%% We are ahead of the server - may be, it is not
+									%% the fastest server in the list so try another one,
+									%% if there are more servers in the configuration
+									%% and they are not on timeout.
+									gen_server:cast(?MODULE, pull),
+									{noreply, State2#state{
+											remote_servers = RotatedServers }};
+								#nonce_limiter_update_response{ step_number = StepNumber }
+										when StepNumber == SessionStepNumber ->
+									%% We are in sync with the server. Re-try soon.
 									ar_util:cast_after(?NO_UPDATE_PULL_FREQUENCY_MS,
 											?MODULE, pull),
 									{noreply, State2};
