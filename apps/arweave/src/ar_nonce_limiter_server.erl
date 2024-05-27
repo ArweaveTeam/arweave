@@ -139,10 +139,20 @@ terminate(_Reason, _State) ->
 make_nonce_limiter_update(_SessionKey, not_found, _IsPartial) ->
 	not_found;
 make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
-	StepNumber = Session#vdf_session.step_number,
-	StepCheckpointsMap = Session#vdf_session.step_checkpoints_map,
+	#vdf_session{ step_number = StepNumber, steps = Steps,
+			step_checkpoints_map = StepCheckpointsMap } = Session,
 	%% Clear the step_checkpoints_map to cut down on the amount of data pushed to each client.
-	RecentStepNumbers = get_recent_step_numbers(StepNumber),
+	RecentStepNumbers =
+		case IsPartial of
+			false ->
+				%% There is an upper bound on the number of steps with step checkpoints
+				%% because the total number of steps in the session updates is often large.
+				get_recent_step_numbers(StepNumber);
+			true ->
+				%% Include step checkpoints for every step included in the regular
+				%% update.
+				get_recent_step_numbers_from_steps(StepNumber, Steps)
+		end,
 	StepCheckpointsMap2 = maps:with(RecentStepNumbers, StepCheckpointsMap),
 	#nonce_limiter_update{ session_key = SessionKey,
 			is_partial = IsPartial,
@@ -158,3 +168,8 @@ get_recent_step_numbers(-1, _Taken) ->
 	[];
 get_recent_step_numbers(StepNumber, Taken) ->
 	[StepNumber | get_recent_step_numbers(StepNumber - 1, Taken + 1)].
+
+get_recent_step_numbers_from_steps(_StepNumber, []) ->
+	[];
+get_recent_step_numbers_from_steps(StepNumber, [_Step | Steps]) ->
+	[StepNumber | get_recent_step_numbers_from_steps(StepNumber - 1, Steps)].
