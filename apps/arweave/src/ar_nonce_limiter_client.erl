@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, request_sessions/0]).
+-export([start_link/0, maybe_request_sessions/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -10,7 +10,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {
-	remote_servers
+	remote_servers,
+	latest_session_keys = #{}
 }).
 
 -define(PULL_FREQUENCY_MS, 800).
@@ -25,10 +26,16 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% @doc Pick a server from the list of configured VDF servers and request complete
-%% VDF sessions from them. Failures to resolve a domain of make a request are not retried.
-request_sessions() ->
-	gen_server:cast(?MODULE, request_sessions).
+%% @doc Look at the session key of the last update from the VDF server we are currently
+%% working with and in case it does not match the given session key, request complete
+%% sessions from this VDF server.
+%%
+%% The client may need this additional request around a VDF reset when a new session is
+%% created but the previous session is not completed because the VDF server instantiated
+%% the new session before sending the last computed output(s) of the previous session to
+%% the client.
+maybe_request_sessions(SessionKey) ->
+	gen_server:cast(?MODULE, {maybe_request_sessions, SessionKey}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -56,7 +63,7 @@ handle_cast(pull, State) ->
 	#state{ remote_servers = Q } = State,
 	{{value, {RawPeer, Timestamp}}, Q2} = queue:out(Q),
 	Now = erlang:system_time(millisecond),
-	State2 = State#state{ remote_servers = queue:in({RawPeer, Now}, Q2) },
+	RotatedServers = queue:in({RawPeer, Now}, Q2),
 	case Now < Timestamp + ?PULL_THROTTLE_MS of
 		true ->
 			ar_util:cast_after(?PULL_THROTTLE_MS, ?MODULE, pull),
@@ -68,44 +75,48 @@ handle_cast(pull, State) ->
 							{raw_peer, io_lib:format("~p", [RawPeer])}]),
 					gen_server:cast(?MODULE, pull),
 					%% Push the peer to the back of the queue.
-					{noreply, State2}; 
+					{noreply, State#state{ remote_servers = RotatedServers }};
 				{ok, Peer} ->
 					case ar_http_iface_client:get_vdf_update(Peer) of
 						{ok, Update} ->
-							#nonce_limiter_update{ session = #vdf_session{
-									step_number = SessionStepNumber } } = Update,
+							#nonce_limiter_update{ session_key = SessionKey,
+									session = #vdf_session{
+											step_number = SessionStepNumber } } = Update,
+							State2 = update_latest_session_key(Peer, SessionKey, State),
 							case ar_nonce_limiter:apply_external_update(Update, Peer) of
 								ok ->
 									ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
-									{noreply, State};
+									{noreply, State2};
 								#nonce_limiter_update_response{ session_found = false } ->
 									case fetch_and_apply_session_and_previous_session(Peer) of
 										{error, _} ->
 											gen_server:cast(?MODULE, pull),
-											{noreply, State2};
+											{noreply, State2#state{
+													remote_servers = RotatedServers }};
 										_ ->
 											ar_util:cast_after(?PULL_FREQUENCY_MS,
 													?MODULE, pull),
-											{noreply, State}
+											{noreply, State2}
 									end;
 								#nonce_limiter_update_response{ step_number = StepNumber }
 										when StepNumber >= SessionStepNumber ->
 									%% We are ahead of this server. Re-try soon.
 									ar_util:cast_after(?NO_UPDATE_PULL_FREQUENCY_MS,
 											?MODULE, pull),
-									{noreply, State};
+									{noreply, State2};
 								_ ->
-									%% We have received a partial session, but there's a gap in the
-									%% step numbers, e.g., the update we received is at step 100,
-									%% but our last seen step was 90.
+									%% We have received a partial session, but there's a gap
+									%% in the step numbers, e.g., the update we received is at
+									%% step 100, but our last seen step was 90.
 									case fetch_and_apply_session(Peer) of
 										{error, _} ->
 											gen_server:cast(?MODULE, pull),
-											{noreply, State2};
+											{noreply, State2#state{
+													remote_servers = RotatedServers }};
 										ok ->
 											ar_util:cast_after(?PULL_FREQUENCY_MS,
 													?MODULE, pull),
-											{noreply, State}
+											{noreply, State2}
 									end
 							end;
 						{error, not_found} ->
@@ -115,19 +126,19 @@ handle_cast(pull, State) ->
 							%% The server might be restarting.
 							%% Try another one, if there are any.
 							gen_server:cast(?MODULE, pull),
-							{noreply, State2};
+							{noreply, State#state{ remote_servers = RotatedServers }};
 						{error, Reason} ->
 							?LOG_WARNING([{event, failed_to_fetch_vdf_update},
 									{peer, ar_util:format_peer(Peer)},
 									{error, io_lib:format("~p", [Reason])}]),
 							%% Try another server, if there are any.
 							gen_server:cast(?MODULE, pull),
-							{noreply, State2}
+							{noreply, State#state{ remote_servers = RotatedServers }}
 					end
 			end
 	end;
 
-handle_cast(request_sessions, State) ->
+handle_cast({maybe_request_sessions, SessionKey}, State) ->
 	#state{ remote_servers = Q } = State,
 	{{value, {RawPeer, _Timestamp}}, Q2} = queue:out(Q),
 	Now = erlang:system_time(millisecond),
@@ -137,11 +148,17 @@ handle_cast(request_sessions, State) ->
 			%% Push the peer to the back of the queue.
 			{noreply, State2};
 		{ok, Peer} ->
-			case fetch_and_apply_session_and_previous_session(Peer) of
-				{error, _} ->
-					{noreply, State2};
+			case get_latest_session_key(Peer, State) of
+				SessionKey ->
+					%% No reason to make extra requests.
+					{noreply, State};
 				_ ->
-					{noreply, State}
+					case fetch_and_apply_session_and_previous_session(Peer) of
+						{error, _} ->
+							{noreply, State2};
+						_ ->
+							{noreply, State}
+					end
 			end
 	end;
 
@@ -207,3 +224,11 @@ fetch_and_apply_session(Peer) ->
 					{error, io_lib:format("~p", [Reason])}]),
 			Error
 	end.
+
+get_latest_session_key(Peer, State) ->
+	#state{ latest_session_keys = Map } = State,
+	maps:get(Peer, Map, not_found).
+
+update_latest_session_key(Peer, SessionKey, State) ->
+	#state{ latest_session_keys = Map } = State,
+	State#state{ latest_session_keys = maps:put(Peer, SessionKey, Map) }.
