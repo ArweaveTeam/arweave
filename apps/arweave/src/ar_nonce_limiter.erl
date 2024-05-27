@@ -1074,117 +1074,124 @@ apply_external_update2(Update, State) ->
 	#state{ last_external_update = {Peer, _} } = State,
 	#nonce_limiter_update{ session_key = SessionKey,
 			session = #vdf_session{
-				step_checkpoints_map = StepCheckpointsMap,
-				prev_session_key = PrevSessionKey, step_number = StepNumber } = Session,
-			is_partial = IsPartial } = Update,
-	{_SessionSeed, SessionInterval, _SessionVDFDifficulty} = SessionKey,
+				step_number = StepNumber }
+			} = Update,
 	case get_session(SessionKey, State) of
 		not_found ->
-			case IsPartial of
-				true ->
-					%% Inform the peer we have not initialized the corresponding session yet.
-					?LOG_DEBUG([{event, apply_external_vdf},
-						{result, session_not_found},
-						{vdf_server, ar_util:format_peer(Peer)},
-						{is_partial, IsPartial},
-						{session_key, encode_session_key(SessionKey)},
-						{server_step_number, StepNumber}]),
-					{reply, #nonce_limiter_update_response{ session_found = false }, State};
-				false ->
-					%% Handle the case where The VDF server has processed a block and re-allocated
-					%% steps from the previous session to the new session. In this case we only
-					%% want to apply new steps - steps in Session that weren't already applied as
-					%% part of PrevSession.
-
-					%% Start after the last step of the previous session
-					RangeStart = case get_session(PrevSessionKey, State) of
-						not_found -> 0;
-						PrevSession -> PrevSession#vdf_session.step_number + 1
-					end,
-					%% But start no later than the beginning of the session 2 after PrevSession.
-					%% This is because the steps in that session - which may have been previously
-					%% computed - have now been invalidated.
-					NextSessionStart = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
-					{_, Steps} = get_step_range(
-						Session, min(RangeStart, NextSessionStart), StepNumber),					
-					State2 = apply_external_update3(State, SessionKey, Session, Steps),
-					{reply, ok, State2}
-			end;
+			apply_external_update_session_not_found(Update, State);
 		CurrentSession ->
 			#vdf_session{ step_number = CurrentStepNumber } = CurrentSession,
-			case CurrentStepNumber + 1 == StepNumber of
+			case CurrentStepNumber >= StepNumber of
 				true ->
-					[Output | _] = Session#vdf_session.steps,
-					CurrentSession2 = update_session(CurrentSession, StepNumber,
-							StepCheckpointsMap, [Output]),
-					State2 = apply_external_update3(State, SessionKey, CurrentSession2, [Output]),
-					{reply, ok, State2};
+					%% Inform the peer we are ahead.
+					?LOG_DEBUG([{event, apply_external_vdf},
+							{result, ahead_of_server},
+							{vdf_server, ar_util:format_peer(Peer)},
+							{session_key, encode_session_key(SessionKey)},
+							{client_step_number, CurrentStepNumber},
+							{server_step_number, StepNumber}]),
+					{reply, #nonce_limiter_update_response{
+							step_number = CurrentStepNumber }, State};
 				false ->
-					case CurrentStepNumber >= StepNumber of
-						true ->
-							%% Inform the peer we are ahead.
-							?LOG_DEBUG([{event, apply_external_vdf},
-								{result, ahead_of_server},
-								{vdf_server, ar_util:format_peer(Peer)},
-								{session_key, encode_session_key(SessionKey)},
-								{client_step_number, CurrentStepNumber},
-								{server_step_number, StepNumber}]),
-							{reply, #nonce_limiter_update_response{
-											step_number = CurrentStepNumber }, State};
-						false ->
-							case IsPartial of
-								true ->
-									%% Inform the peer we miss some steps.
-									?LOG_DEBUG([{event, apply_external_vdf},
-										{result, missing_steps},
-										{vdf_server, ar_util:format_peer(Peer)},
-										{is_partial, IsPartial},
-										{session_key, encode_session_key(SessionKey)},
-										{client_step_number, CurrentStepNumber},
-										{server_step_number, StepNumber}]),
-									{reply, #nonce_limiter_update_response{
-											step_number = CurrentStepNumber }, State};
-								false ->
-									%% Handle the case where the VDF client has dropped of the
-									%% network briefly and the VDF server has advanced several
-									%% steps within the same session. In this case the client has
-									%% noticed the gap and requested the  full VDF session be sent -
-									%% which may contain previously processed steps in a addition to
-									%% the missing ones.
-									%% 
-									%% To avoid processing those steps twice, the client grabs
-									%% CurrentStepNumber (our most recently processed step number)
-									%% and ignores it and any lower steps found in Session.
-									{_, Steps} = get_step_range(
-											Session, CurrentStepNumber + 1, StepNumber),
-									State2 = apply_external_update3(State,
-										SessionKey, Session, Steps),
-									{reply, ok, State2}
-							end
-					end
+					apply_external_update3(Update, CurrentSession, State)
 			end
 	end.
 
-%% @doc Final step of applying a VDF update pushed by a VDF server
-%% @param SessionKey Session key of the session pushed by the VDF server
-%% @param PrevSessionKey Session key of the session before the session pushed by the VDF server
-%% @param Session Session to apply (either the session pushed by the VDF server or the one tracked
-%%                by ar_nonce_limiter state)
-%% @param SessionByKey Session map maintained by ar_nonce_limiter state
-%% @param NumSteps Number of Session steps to apply. Steps are sorted in descending order.
-%% @param UpperBound Upper bound of the session pushed by the VDF server
-%%
+apply_external_update_session_not_found(Update, State) ->
+	#state{ last_external_update = {Peer, _} } = State,
+	#nonce_limiter_update{ session_key = SessionKey,
+			session = #vdf_session{
+				prev_session_key = PrevSessionKey, step_number = StepNumber } = Session,
+			is_partial = IsPartial } = Update,
+	{_SessionSeed, SessionInterval, _SessionVDFDifficulty} = SessionKey,
+	case IsPartial of
+		true ->
+			%% Inform the peer we have not initialized the corresponding session yet.
+			?LOG_DEBUG([{event, apply_external_vdf},
+				{result, session_not_found},
+				{vdf_server, ar_util:format_peer(Peer)},
+				{is_partial, IsPartial},
+				{session_key, encode_session_key(SessionKey)},
+				{server_step_number, StepNumber}]),
+			{reply, #nonce_limiter_update_response{ session_found = false }, State};
+		false ->
+			%% Handle the case where The VDF server has processed a block and re-allocated
+			%% steps from the previous session to the new session. In this case we only
+			%% want to apply new steps - steps in Session that weren't already applied as
+			%% part of PrevSession.
+
+			%% Start after the last step of the previous session
+			RangeStart = case get_session(PrevSessionKey, State) of
+				not_found -> 0;
+				PrevSession -> PrevSession#vdf_session.step_number + 1
+			end,
+			%% But start no later than the beginning of the session 2 after PrevSession.
+			%% This is because the steps in that session - which may have been previously
+			%% computed - have now been invalidated.
+			NextSessionStart = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
+			{_, Steps} = get_step_range(Session,
+					min(RangeStart, NextSessionStart), StepNumber),
+			State2 = apply_external_update4(State, SessionKey, Session, Steps),
+			{reply, ok, State2}
+	end.
+
+apply_external_update3(Update, CurrentSession, State) ->
+	#state{ last_external_update = {Peer, _} } = State,
+	#nonce_limiter_update{ session_key = SessionKey,
+			session = #vdf_session{
+				step_checkpoints_map = StepCheckpointsMap,
+				step_number = StepNumber } = Session,
+			is_partial = IsPartial } = Update,
+	#vdf_session{ step_number = CurrentStepNumber } = CurrentSession,
+	%% CurrentStepNumber < StepNumber by construction.
+	case CurrentStepNumber + 1 == StepNumber of
+		true ->
+			[Output | _] = Session#vdf_session.steps,
+			CurrentSession2 = update_session(CurrentSession, StepNumber,
+					StepCheckpointsMap, [Output]),
+			State2 = apply_external_update4(State, SessionKey, CurrentSession2, [Output]),
+			{reply, ok, State2};
+		false ->
+			case IsPartial of
+				true ->
+					%% Inform the peer we miss some steps.
+					?LOG_DEBUG([{event, apply_external_vdf},
+							{result, missing_steps},
+							{vdf_server, ar_util:format_peer(Peer)},
+							{is_partial, IsPartial},
+							{session_key, encode_session_key(SessionKey)},
+							{client_step_number, CurrentStepNumber},
+							{server_step_number, StepNumber}]),
+					{reply, #nonce_limiter_update_response{
+							step_number = CurrentStepNumber }, State};
+				false ->
+					%% Handle the case where the VDF client has dropped of the
+					%% network briefly and the VDF server has advanced several
+					%% steps within the same session. In this case the client has
+					%% noticed the gap and requested the  full VDF session be sent -
+					%% which may contain previously processed steps in a addition to
+					%% the missing ones.
+					%%
+					%% To avoid processing those steps twice, the client grabs
+					%% CurrentStepNumber (our most recently processed step number)
+					%% and ignores it and any lower steps found in Session.
+					{_, Steps} = get_step_range(Session, CurrentStepNumber + 1, StepNumber),
+					State2 = apply_external_update4(State, SessionKey, Session, Steps),
+					{reply, ok, State2}
+			end
+	end.
+
 %% Note: we do not take the VDF steps from Session but accept them separately in Steps,
 %% where only unique steps are included to ensure that VDF steps are only processed once.
 %% In the first place, it is important for avoiding extra mining work.
-apply_external_update3(State, SessionKey, Session, Steps) ->
+apply_external_update4(State, SessionKey, Session, Steps) ->
 	#state{ last_external_update = {Peer, _} } = State,
 
 	?LOG_DEBUG([{event, new_vdf_step}, {source, apply_external_vdf},
-		{vdf_server, ar_util:format_peer(Peer)},
-		{session_key, encode_session_key(SessionKey)},
-		{step_number, Session#vdf_session.step_number},
-		{length, length(Steps)}]),
+			{vdf_server, ar_util:format_peer(Peer)},
+			{session_key, encode_session_key(SessionKey)},
+			{step_number, Session#vdf_session.step_number},
+			{length, length(Steps)}]),
 
 	State2 = cache_session(State, SessionKey, Session),
 	send_events_for_external_update(SessionKey, Session#vdf_session{ steps = Steps }),
