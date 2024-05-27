@@ -39,9 +39,15 @@ end).
 		[<<"vdf">>] ->
 			{get_vdf, maps:get(get_vdf, LimitByIP, 180)};
 		[<<"vdf">>, <<"session">>] ->
-			{get_vdf, maps:get(get_vdf, LimitByIP, 180)};
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 120)};
+		[<<"vdf2">>, <<"session">>] ->
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 120)};
+		[<<"vdf3">>, <<"session">>] ->
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 120)};
 		[<<"vdf">>, <<"previous_session">>] ->
-			{get_vdf, maps:get(get_vdf, LimitByIP, 180)};
+			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, 60)};
+		[<<"vdf2">>, <<"previous_session">>] ->
+			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, 60)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}
 	end
@@ -74,9 +80,15 @@ end).
 		[<<"vdf">>] ->
 			{get_vdf, maps:get(get_vdf, LimitByIP, 180)};
 		[<<"vdf">>, <<"session">>] ->
-			{get_vdf, maps:get(get_vdf, LimitByIP, 180)};
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 30)};
+		[<<"vdf2">>, <<"session">>] ->
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 30)};
+		[<<"vdf3">>, <<"session">>] ->
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 30)};
 		[<<"vdf">>, <<"previous_session">>] ->
-			{get_vdf, maps:get(get_vdf, LimitByIP, 180)};
+			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, 10)};
+		[<<"vdf2">>, <<"previous_session">>] ->
+			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, 10)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}
 	end
