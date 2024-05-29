@@ -69,8 +69,8 @@ handle_cast(pull, State) ->
 			ar_util:cast_after(?PULL_THROTTLE_MS, ?MODULE, pull),
 			{noreply, State};
 		false ->
-			case resolve_peer(RawPeer) of
-				error ->
+			case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
+				{error, _} ->
 					?LOG_WARNING([{event, failed_to_resolve_peer},
 							{raw_peer, io_lib:format("~p", [RawPeer])}]),
 					gen_server:cast(?MODULE, pull),
@@ -152,8 +152,8 @@ handle_cast({maybe_request_sessions, SessionKey}, State) ->
 	{{value, {RawPeer, _Timestamp}}, Q2} = queue:out(Q),
 	Now = erlang:system_time(millisecond),
 	State2 = State#state{ remote_servers = queue:in({RawPeer, Now}, Q2) },
-	case resolve_peer(RawPeer) of
-		error ->
+	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
+		{error, _} ->
 			%% Push the peer to the back of the queue.
 			{noreply, State2};
 		{ok, Peer} ->
@@ -185,19 +185,6 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-resolve_peer(RawPeer) ->
-	case ets:lookup(ar_nonce_limiter, {vdf_server_raw_peer, RawPeer}) of
-		[{_, Peer}] ->
-			{ok, Peer};
-		_ ->
-			case ar_util:safe_parse_peer(RawPeer) of
-				{ok, Peer} ->
-					{ok, Peer};
-				_ ->
-					error
-			end
-	end.
 
 fetch_and_apply_session_and_previous_session(Peer) ->
 	case ar_http_iface_client:get_vdf_session(Peer) of

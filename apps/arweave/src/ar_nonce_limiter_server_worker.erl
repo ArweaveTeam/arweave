@@ -9,17 +9,20 @@
 -include_lib("arweave/include/ar.hrl").
 
 -record(state, {
-	peer,
 	raw_peer,
 	pause_until = 0,
 	format = 2
 }).
 
-%% The frequency of re-resolving the domain names of the VDF client peers (who are
-%% configured via the domain names as opposed to IP addresses).
--define(RESOLVE_DOMAIN_NAME_FREQUENCY_MS, 30000).
-
 -define(NONCE_LIMITER_UPDATE_VERSION, 67).
+
+%% The frequency in milliseconds of re-resolving the domain name of the client,
+%% if the client is configured via the domain name.
+%%
+%% ar_nonce_limiter_server_worker periodically re-resolves and caches the address
+%% of the corresponding client such that they can be identified upon request,
+%% unless we are configured as a public VDF server.
+-define(RE_RESOLVE_PEER_DOMAIN_MS, (30 * 1000)).
 
 %%%===================================================================
 %%% Public interface.
@@ -36,46 +39,43 @@ start_link(Name, RawPeer) ->
 init(RawPeer) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
-	gen_server:cast(self(), resolve_raw_peer),
+	case ar_config:is_public_vdf_server() of
+		false ->
+			gen_server:cast(self(), re_resolve_peer_domain);
+		true ->
+			ok
+	end,
 	{ok, #state{ raw_peer = RawPeer }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast(resolve_raw_peer, #state{ raw_peer = RawPeer } = State) ->
+handle_cast(re_resolve_peer_domain, #state{ raw_peer = RawPeer } = State) ->
 	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_client_peer) of
-		{ok, Peer} ->
-			ar_util:cast_after(?RESOLVE_DOMAIN_NAME_FREQUENCY_MS, self(), resolve_raw_peer),
-			{noreply, State#state{ peer = Peer }};
-		{error, Reason} ->
-			?LOG_WARNING([{event, failed_to_resolve_vdf_client_peer},
-					{peer, RawPeer},
-					{reason, io_lib:format("~p", [Reason])}]),
-			ar_util:cast_after(10000, self(), resolve_raw_peer),
-			{noreply, State}
-	end;
+		{ok, _} ->
+			ok;
+		Error ->
+			?LOG_WARNING([{event, failed_to_re_resolve_peer_domain},
+					{error, io_lib:format("~p", [Error])},
+					{peer, io_lib:format("~p", [RawPeer])}])
+	end,
+	ar_util:cast_after(?RE_RESOLVE_PEER_DOMAIN_MS, ?MODULE, re_resolve_peer_domain),
+	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, nonce_limiter, _Event}, #state{ peer = undefined } = State) ->
-	{noreply, State};
 handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
-	#state{ peer = Peer, pause_until = Timestamp, format = Format } = State,
-	{SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
-	CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
-	case os:system_time(second) < Timestamp of
-		true ->
+	#state{ raw_peer = RawPeer } = State,
+	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_client_peer) of
+		{error, _} ->
+			?LOG_WARNING([{event, failed_to_resolve_vdf_client_peer_before_push},
+					{raw_peer, io_lib:format("~p", [RawPeer])}]),
 			{noreply, State};
-		false ->
-			case StepNumber < CurrentStepNumber of
-				true ->
-					{noreply, State};
-				false ->
-					{noreply, push_update(SessionKey, StepNumber, Output, Peer, Format, State)}
-			end
+		{ok, Peer} ->
+			handle_computed_output(Peer, Args, State)
 	end;
 
 handle_info({event, nonce_limiter, _Args}, State) ->
@@ -91,6 +91,22 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+handle_computed_output(Peer, Args, State) ->
+	#state{ pause_until = Timestamp, format = Format } = State,
+	{SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
+	CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
+	case os:system_time(second) < Timestamp of
+		true ->
+			{noreply, State};
+		false ->
+			case StepNumber < CurrentStepNumber of
+				true ->
+					{noreply, State};
+				false ->
+					{noreply, push_update(SessionKey, StepNumber, Output, Peer, Format, State)}
+			end
+	end.
 
 push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
 	Session = ar_nonce_limiter:get_session(SessionKey),
@@ -195,4 +211,3 @@ log_failure(Peer, SessionKey, Update, Error, Extra) ->
 		{<<"503">>, <<"{\"error\":\"not_joined\"}">>} -> ?LOG_DEBUG(Log);
 		_ -> ?LOG_WARNING(Log)
 	end.
-
