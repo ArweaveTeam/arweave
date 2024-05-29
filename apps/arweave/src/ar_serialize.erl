@@ -382,7 +382,19 @@ nonce_limiter_update_to_binary(3 = _Format, #nonce_limiter_update{
 	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
 			Interval:64, IsPartialBin/binary, CheckpointsMapSize:24,
 			CheckpointsMapBin:CheckpointsMapSize/binary,
-			(encode_vdf_session(2, Session))/binary >>.
+			(encode_vdf_session(2, Session))/binary >>;
+
+nonce_limiter_update_to_binary(4 = _Format, #nonce_limiter_update{
+			session_key = {NextSeed, Interval, NextVDFDifficulty},
+			session = Session, is_partial = IsPartial }) ->
+	#vdf_session{ step_checkpoints_map = Map } = Session,
+	CheckpointsMapBin = encode_step_checkpoints_map(Map),
+	CheckpointsMapSize = byte_size(CheckpointsMapBin),
+	IsPartialBin = case IsPartial of true -> << 1:8 >>; _ -> << 0:8 >> end,
+	<< NextSeed:48/binary, (ar_serialize:encode_int(NextVDFDifficulty, 8))/binary,
+			Interval:64, IsPartialBin/binary, CheckpointsMapSize:24,
+			CheckpointsMapBin:CheckpointsMapSize/binary,
+			(encode_vdf_session(4, Session))/binary >>.
 
 encode_step_checkpoints_map(Map) ->
 	encode_step_checkpoints_map(maps:keys(Map), Map, <<>>).
@@ -484,6 +496,44 @@ binary_to_nonce_limiter_update(3, % Format = 3.
 			end
 	end;
 binary_to_nonce_limiter_update(3, _Bin) ->
+	{error, invalid2};
+
+binary_to_nonce_limiter_update(4, % Format = 4.
+			<< NextSeed:48/binary,
+			NextVDFDifficultySize:8, NextVDFDifficulty:(NextVDFDifficultySize * 8),
+			Interval:64, IsPartial:8,
+			CheckpointsMapSize:24, CheckpointsMapBin:CheckpointsMapSize/binary,
+			StepNumber:64, Seed:48/binary, UpperBoundSize:8, UpperBound:(UpperBoundSize * 8),
+			NextUpperBoundSize:8, NextUpperBound:(NextUpperBoundSize * 8),
+			StepsLen:16, Steps:(StepsLen * 32)/binary,
+			VDFDifficultySize:8, VDFDifficulty:(VDFDifficultySize * 8),
+			PrevSessionKeyBin/binary >>)
+		when UpperBoundSize > 0, StepsLen > 0 ->
+	NextUpperBound2 = case NextUpperBoundSize of 0 -> undefined; _ -> NextUpperBound end,
+	case decode_step_checkpoints_map(CheckpointsMapBin, #{}) of
+		{error, _} = Error ->
+			Error;
+		{ok, StepCheckpointsMap} ->
+			Update = #nonce_limiter_update{
+					session_key = {NextSeed, Interval, NextVDFDifficulty},
+					is_partial = case IsPartial of 0 -> false; _ -> true end,
+					session = Session = #vdf_session{ step_number = StepNumber, seed = Seed,
+							upper_bound = UpperBound, next_upper_bound = NextUpperBound2,
+							vdf_difficulty = VDFDifficulty,
+							next_vdf_difficulty = NextVDFDifficulty,
+							steps = parse_32b_list(Steps),
+							step_checkpoints_map = StepCheckpointsMap } },
+			case decode_session_key(PrevSessionKeyBin) of
+				undefined ->
+					{ok, Update};
+				error ->
+					{error, invalid1};
+				PrevSessionKey ->
+					Session2 = Session#vdf_session{ prev_session_key = PrevSessionKey },
+					{ok, Update#nonce_limiter_update{ session = Session2 }}
+			end
+	end;
+binary_to_nonce_limiter_update(4, _Bin) ->
 	{error, invalid2};
 
 binary_to_nonce_limiter_update(_, _Bin) ->

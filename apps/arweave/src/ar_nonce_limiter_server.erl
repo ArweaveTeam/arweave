@@ -155,11 +155,13 @@ handle_computed_output(Args, State) ->
 			PartialUpdateBin3 = ar_serialize:nonce_limiter_update_to_binary(3, PartialUpdate),
 			FullUpdateBin2 = ar_serialize:nonce_limiter_update_to_binary(2, FullUpdate),
 			FullUpdateBin3 = ar_serialize:nonce_limiter_update_to_binary(3, FullUpdate),
+			FullUpdateBin4 = ar_serialize:nonce_limiter_update_to_binary(4, FullUpdate),
 			Keys = [
 				{{partial_update, 2}, PartialUpdateBin2},
 				{{partial_update, 3}, PartialUpdateBin3},
 				{{full_update, 2}, FullUpdateBin2},
-				{{full_update, 3}, FullUpdateBin3}
+				{{full_update, 3}, FullUpdateBin3},
+				{{full_update, 4}, FullUpdateBin4}
 			],
 			Keys2 =
 				case PrevSession of
@@ -172,9 +174,12 @@ handle_computed_output(Args, State) ->
 								2, FullPrevUpdate),
 						FullPrevUpdateBin3 = ar_serialize:nonce_limiter_update_to_binary(
 								3, FullPrevUpdate),
+						FullPrevUpdateBin4 = ar_serialize:nonce_limiter_update_to_binary(
+								4, FullPrevUpdate),
 						Keys ++ [
 							{{full_prev_update, 2}, FullPrevUpdateBin2},
-							{{full_prev_update, 3}, FullPrevUpdateBin3}]
+							{{full_prev_update, 3}, FullPrevUpdateBin3},
+							{{full_prev_update, 4}, FullPrevUpdateBin4}]
 				end,
 			ets:insert(?MODULE, Keys2),
 			{noreply, State}

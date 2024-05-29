@@ -1329,6 +1329,16 @@ handle(<<"GET">>, [<<"vdf3">>, <<"session">>], Req, _Pid) ->
 			handle_get_vdf(Req, get_session, 3)
 	end;
 
+%% Serve the current VDF session to a configured VDF client.
+%% GET request to /vdf3/session.
+handle(<<"GET">>, [<<"vdf4">>, <<"session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_session, 4)
+	end;
+
 %% Serve the previous VDF session to a configured VDF client.
 %% GET request to /vdf/previous_session.
 handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
@@ -1347,6 +1357,16 @@ handle(<<"GET">>, [<<"vdf2">>, <<"previous_session">>], Req, _Pid) ->
 			not_joined(Req);
 		true ->
 			handle_get_vdf(Req, get_previous_session, 2)
+	end;
+
+%% Serve the previous VDF session to a configured VDF client.
+%% GET request to /vdf4/previous_session.
+handle(<<"GET">>, [<<"vdf4">>, <<"previous_session">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_get_vdf(Req, get_previous_session, 4)
 	end;
 
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) ->
@@ -3106,7 +3126,17 @@ handle_post_vdf2(Req, Pid, Peer) ->
 handle_post_vdf3(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:binary_to_nonce_limiter_update(2, Body) of
+			Format =
+				case ar_config:compute_own_vdf() of
+					true ->
+						%% If we compute our own VDF, we need to know the VDF difficulties
+						%% so that we can continue extending the new session.
+						%% The VDF difficulties have been introduced in the format number 4.
+						4;
+					false ->
+						2
+				end,
+			case ar_serialize:binary_to_nonce_limiter_update(Format, Body) of
 				{ok, Update} ->
 					case ar_nonce_limiter:apply_external_update(Update, Peer) of
 						ok ->
@@ -3117,7 +3147,7 @@ handle_post_vdf3(Req, Pid, Peer) ->
 					end;
 				{error, _} ->
 					%% We couldn't deserialize the update, ask for a different format
-					Response = #nonce_limiter_update_response{ format = 2 },
+					Response = #nonce_limiter_update_response{ format = Format },
 					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
 					{202, #{}, Bin, Req}
 			end;

@@ -530,10 +530,20 @@ get_vdf_update(Peer) ->
 	end.
 
 get_vdf_session(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf3/session",
+	{Path, Format} =
+		case ar_config:compute_own_vdf() of
+			true ->
+				%% If we compute our own VDF, we need to know the VDF difficulties
+				%% so that we can continue extending the new session. The VDF difficulties
+				%% have been introduced in the format number 4.
+				{"/vdf4/session", 4};
+			false ->
+				{"/vdf3/session", 3}
+		end,
+	case ar_http:req(#{ peer => Peer, method => get, path => Path,
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
-			ar_serialize:binary_to_nonce_limiter_update(3, Bin);
+			ar_serialize:binary_to_nonce_limiter_update(Format, Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
 			{error, not_found};
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->
@@ -543,10 +553,20 @@ get_vdf_session(Peer) ->
 	end.
 
 get_previous_vdf_session(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2/previous_session",
+	{Path, Format} =
+		case ar_config:compute_own_vdf() of
+			true ->
+				%% If we compute our own VDF, we need to know the VDF difficulties
+				%% so that we can continue extending the new session. The VDF difficulties
+				%% have been introduced in the format number 4.
+				{"/vdf4/previous_session", 4};
+			false ->
+				{"/vdf2/previous_session", 2}
+		end,
+	case ar_http:req(#{ peer => Peer, method => get, path => Path,
 			timeout => 10000, headers => p2p_headers() }) of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
-			ar_serialize:binary_to_nonce_limiter_update(2, Bin);
+			ar_serialize:binary_to_nonce_limiter_update(Format, Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
 			{error, not_found};
 		{ok, {{Status, _}, _, ResponseBody, _, _}} ->

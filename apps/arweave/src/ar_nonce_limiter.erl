@@ -303,7 +303,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 		{RemainingStepsToValidate, NumAlreadyComputed}
 		  		when StartStepNumber + NumAlreadyComputed < StepNumber ->
-			case ar_config:use_remote_vdf_server() of
+			case ar_config:use_remote_vdf_server() and not ar_config:compute_own_vdf() of
 				true ->
 					%% Wait for our VDF server(s) to validate the remaining steps.
 					%% Alternatively, the network may abandon this block.
@@ -417,16 +417,14 @@ init([]) ->
 			_ ->
 				#state{}
 		end,
-	State2 =
-		case ar_config:use_remote_vdf_server() of
-			false ->
-				State;
-			true ->
-				resolve_remote_server_raw_peers(),
-				gen_server:cast(?MODULE, check_external_vdf_server_input),
-				State#state{ autocompute = false }
-		end,
-	{ok, start_worker(State2)}.
+	case ar_config:use_remote_vdf_server() and not ar_config:compute_own_vdf() of
+		true ->
+			resolve_remote_server_raw_peers(),
+			gen_server:cast(?MODULE, check_external_vdf_server_input);
+		false ->
+			ok
+	end,
+	{ok, start_worker(State#state{ autocompute = ar_config:compute_own_vdf() })}.
 
 resolve_remote_server_raw_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -680,6 +678,11 @@ handle_cast(Cast, State) ->
 handle_info({event, node_state, {new_tip, B, PrevB}}, State) ->
 	{noreply, apply_tip(B, PrevB, State)};
 
+handle_info({event, node_state, {checkpoint_block, _B}},
+		#state{ current_session_key = undefined } = State) ->
+	%% The server has been restarted after a crash and a base block has not been
+	%% applied yet.
+	{noreply, State};
 handle_info({event, node_state, {checkpoint_block, B}}, State) ->
 	case B#block.height < ar_fork:height_2_6() of
 		true ->
