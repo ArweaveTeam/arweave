@@ -11,7 +11,7 @@
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_current_session/0,
 		get_current_sessions/0,
-		compute/3, resolve_remote_server_raw_peers/0,
+		compute/3,
 		maybe_add_entropy/4, mix_seed/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -419,29 +419,11 @@ init([]) ->
 		end,
 	case ar_config:use_remote_vdf_server() and not ar_config:compute_own_vdf() of
 		true ->
-			resolve_remote_server_raw_peers(),
 			gen_server:cast(?MODULE, check_external_vdf_server_input);
 		false ->
 			ok
 	end,
 	{ok, start_worker(State#state{ autocompute = ar_config:compute_own_vdf() })}.
-
-resolve_remote_server_raw_peers() ->
-	{ok, Config} = application:get_env(arweave, config),
-	resolve_remote_server_raw_peers(Config#config.nonce_limiter_server_trusted_peers),
-	timer:apply_after(10000, ?MODULE, resolve_remote_server_raw_peers, []).
-
-resolve_remote_server_raw_peers([]) ->
-	ok;
-resolve_remote_server_raw_peers([RawPeer | RawPeers]) ->
-	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
-		{ok, _Peer} ->
-			resolve_remote_server_raw_peers(RawPeers);
-		{error, Reason} ->
-			?LOG_WARNING([{event, failed_to_resolve_vdf_server_peer},
-					{reason, io_lib:format("~p", [Reason])}]),
-			resolve_remote_server_raw_peers(RawPeers)
-	end.
 
 get_blocks() ->
 	B = ar_node:get_current_block(),

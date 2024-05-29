@@ -414,6 +414,18 @@ encode_vdf_session(2 = _Format, #vdf_session{ step_number = StepNumber, seed = S
 	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
 			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
 			(iolist_to_binary(Steps))/binary,
+			(encode_session_key(2, PrevSessionKey))/binary >>;
+
+encode_vdf_session(4 = _Format, #vdf_session{
+		step_number = StepNumber, seed = Seed, steps = Steps,
+		prev_session_key = PrevSessionKey,
+		upper_bound = UpperBound, next_upper_bound = NextUpperBound,
+		vdf_difficulty = VDFDifficulty }) ->
+	StepsLen = length(Steps),
+	<< StepNumber:64, Seed:48/binary, (encode_int(UpperBound, 8))/binary,
+			(encode_int(NextUpperBound, 8))/binary, StepsLen:16,
+			(iolist_to_binary(Steps))/binary,
+			(encode_int(VDFDifficulty, 8))/binary,
 			(encode_session_key(2, PrevSessionKey))/binary >>.
 
 encode_session_key(undefined) ->
