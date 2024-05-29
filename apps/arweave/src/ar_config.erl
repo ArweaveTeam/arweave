@@ -1,7 +1,7 @@
 -module(ar_config).
 
--export([use_remote_vdf_server/0, pull_from_remote_vdf_server/0, parse/1,
-		parse_storage_module/1, log_config/1]).
+-export([use_remote_vdf_server/0, pull_from_remote_vdf_server/0, compute_own_vdf/0,
+		parse/1, parse_storage_module/1, log_config/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -24,6 +24,17 @@ use_remote_vdf_server() ->
 pull_from_remote_vdf_server() ->
 	{ok, Config} = application:get_env(arweave, config),
 	not lists:member(vdf_server_pull, Config#config.disable).
+
+compute_own_vdf() ->
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.nonce_limiter_server_trusted_peers of
+		[] ->
+			%% Not a VDF client - compute VDF unless explicitly disabled.
+			not lists:member(compute_own_vdf, Config#config.disable);
+		_ ->
+			%% Computing your own VDF needs to be explicitly enabled on a VDF client.
+			lists:member(compute_own_vdf, Config#config.enable)
+	end.
 
 parse(Config) when is_binary(Config) ->
 	case ar_serialize:json_decode(Config) of

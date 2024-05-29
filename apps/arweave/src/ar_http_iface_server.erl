@@ -123,11 +123,15 @@ name_route([<<"vdf2">>, <<"session">>]) ->
 	"/vdf2/session";
 name_route([<<"vdf3">>, <<"session">>]) ->
 	"/vdf3/session";
+name_route([<<"vdf4">>, <<"session">>]) ->
+	"/vdf4/session";
 
 name_route([<<"vdf">>, <<"previous_session">>]) ->
 	"/vdf/previous_session";
 name_route([<<"vdf2">>, <<"previous_session">>]) ->
 	"/vdf2/previous_session";
+name_route([<<"vdf4">>, <<"previous_session">>]) ->
+	"/vdf4/previous_session";
 
 name_route([<<"tx">>, <<"pending">>]) ->
 	"/tx/pending";
