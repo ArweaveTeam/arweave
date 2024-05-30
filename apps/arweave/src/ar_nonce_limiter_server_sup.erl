@@ -21,18 +21,19 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case Config#config.nonce_limiter_client_peers of
-		[] ->
+	case ar_config:is_vdf_server() of
+		false ->
 			ignore;
-		Peers ->
+		true ->
+			{ok, Config} = application:get_env(arweave, config),
 			Workers = lists:map(
 				fun(Peer) ->
 					Name = list_to_atom("ar_nonce_limiter_server_worker_"
 							++ ar_util:peer_to_str(Peer)),
-					?CHILD_WITH_ARGS(ar_nonce_limiter_server_worker, worker, Name, [Name, Peer])
+					?CHILD_WITH_ARGS(ar_nonce_limiter_server_worker,
+							worker, Name, [Name, Peer])
 				end,
-				Peers
+				Config#config.nonce_limiter_client_peers
 			),
 			Workers2 = [?CHILD(ar_nonce_limiter_server, worker) | Workers],
 			{ok, {{one_for_one, 5, 10}, Workers2}}
