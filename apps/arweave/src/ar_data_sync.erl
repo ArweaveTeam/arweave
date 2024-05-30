@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, join/1, add_tip_block/2, add_block/2,
+-export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2,
 		is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
@@ -23,7 +23,6 @@
 -include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_sync_buckets.hrl").
--include_lib("arweave/include/ar_chunk_storage.hrl").
 
 -ifdef(DEBUG).
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5000).
@@ -34,6 +33,9 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+name(StoreID) ->
+	list_to_atom("ar_data_sync_" ++ ar_storage_module:label_by_id(StoreID)).
 
 start_link(Name, StoreID) ->
 	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
@@ -937,28 +939,30 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 						false
 				end
 		end,
-	AllPeersIntervals2 =
-		case IsSyncQueueBusy of
-			true ->
-				AllPeersIntervals;
-			false ->
-				case Start >= DiskPoolThreshold of
-					true ->
-						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
-						AllPeersIntervals;
-					false ->
-						%% All checks have pased, find and enqueue intervals for one
-						%% sync bucket worth of chunks starting at offset Start
-						find_peer_intervals(
-							Start, min(End, DiskPoolThreshold), StoreID, AllPeersIntervals)
-				end
-		end,
+	case IsSyncQueueBusy of
+		true ->
+			ok;
+		false ->
+			case Start >= DiskPoolThreshold of
+				true ->
+					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
+				false ->
+					%% All checks have passed, find and enqueue intervals for one
+					%% sync bucket worth of chunks starting at offset Start
+					ar_peer_intervals:fetch(
+						Start, min(End, DiskPoolThreshold), StoreID, AllPeersIntervals)
+			end
+	end,
+
+	{noreply, State};
+
+handle_cast({update_all_peers_intervals, AllPeersIntervals}, State) ->
 	%% While we are working through the storage_module range we'll maintain a cache
 	%% of the mapping of peers to their advertised intervals. This ensures we don't query
 	%% each peer's /data_sync_record endpoint too often. Once we've made a full pass through
 	%% the range, we'll clear the cache so that we can incorporate any peer interval changes
 	%% the next time through.
-	{noreply, State#sync_data_state{ all_peers_intervals = AllPeersIntervals2 }};
+	{noreply, State#sync_data_state{ all_peers_intervals = AllPeersIntervals }};
 
 handle_cast({enqueue_intervals, []}, State) ->
 	{noreply, State};
@@ -1466,25 +1470,29 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 handle_info({event, disksup, _}, State) ->
 	{noreply, State};
 
-handle_info({'EXIT', _PID, normal}, State) ->
+handle_info({'EXIT', PID, normal}, #sync_data_state{ store_id = StoreID } = State) ->
+	?LOG_INFO([{event, normal_exit}, {pid, PID}, {module, ?MODULE}, {store_id, StoreID}]),
 	{noreply, State};
 
-handle_info({'DOWN', _,  process, _, normal}, State) ->
+handle_info({'DOWN', _,  process, _, normal},  #sync_data_state{ store_id = StoreID } = State) ->
+	?LOG_INFO([{event, normal_down}, {module, ?MODULE}, {store_id, StoreID}]),
 	{noreply, State};
-handle_info({'DOWN', _,  process, _, noproc}, State) ->
+handle_info({'DOWN', _,  process, _, noproc},  #sync_data_state{ store_id = StoreID } = State) ->
+	?LOG_INFO([{event, noproc_down}, {module, ?MODULE}, {store_id, StoreID}]),
 	{noreply, State};
-handle_info({'DOWN', _,  process, _, Reason}, State) ->
+handle_info({'DOWN', _,  process, _, Reason},  #sync_data_state{ store_id = StoreID } = State) ->
 	?LOG_WARNING([{event, collect_intervals_job_failed},
-			{reason, io_lib:format("~p", [Reason])}, {action, spawning_another_one}]),
+			{reason, io_lib:format("~p", [Reason])}, {action, spawning_another_one},
+			{store_id, StoreID}]),
 	gen_server:cast(self(), collect_peer_intervals),
 	{noreply, State};
 
-handle_info(Message, State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+handle_info(Message,  #sync_data_state{ store_id = StoreID } = State) ->
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {store_id, StoreID}, {message, Message}]),
 	{noreply, State}.
 
-terminate(Reason, State) ->
-	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, io_lib:format("~p", [Reason])}]),
+terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {store_id, StoreID}, {reason, io_lib:format("~p", [Reason])}]),
 	store_sync_state(State).
 
 %%%===================================================================
@@ -2502,133 +2510,6 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 					Intervals2 = [{StoreID, {Start3, End2}} | Intervals],
 					get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID,
 							End2, RangeEnd, Intervals2)
-			end
-	end.
-
-find_peer_intervals(Start, End, StoreID, _AllPeersIntervals) when Start >= End ->
-	%% We've reached the end of the range, next time through we'll start with a clear cache.
-	?LOG_DEBUG([{event, find_peer_intervals_end}, {pid, self()}, {store_id, StoreID},
-		{start, Start}]),
-	#{};
-find_peer_intervals(Start, End, StoreID, AllPeersIntervals) ->
-	End2 = min(ar_util:ceil_int(Start, ?NETWORK_DATA_BUCKET_SIZE), End),
-	UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
-
-	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
-	{ok, Config} = application:get_env(arweave, config),
-	Peers =
-		case Config#config.sync_from_local_peers_only of
-			true ->
-				Config#config.local_peers;
-			false ->
-				ar_data_discovery:get_bucket_peers(Bucket)
-		end,
-
-	%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-	gen_server:cast(self(), {collect_peer_intervals, End2, End}),
-
-	%% The updated AllPeersIntervals cache is returned so it can be added to the State
-	case ar_intervals:is_empty(UnsyncedIntervals) of
-		true ->
-			AllPeersIntervals;
-		false ->
-			find_peer_intervals2(Start, Peers, UnsyncedIntervals, AllPeersIntervals)
-	end.
-
-%% @doc Collect the unsynced intervals between Start and End excluding the blocklisted
-%% intervals.
-get_unsynced_intervals(Start, End, StoreID) ->
-	UnsyncedIntervals = get_unsynced_intervals(Start, End, ar_intervals:new(), StoreID),
-	BlacklistedIntervals = ar_tx_blacklist:get_blacklisted_intervals(Start, End),
-	ar_intervals:outerjoin(BlacklistedIntervals, UnsyncedIntervals).
-
-get_unsynced_intervals(Start, End, Intervals, _StoreID) when Start >= End ->
-	Intervals;
-get_unsynced_intervals(Start, End, Intervals, StoreID) ->
-	case ar_sync_record:get_next_synced_interval(Start, End, ?MODULE, StoreID) of
-		not_found ->
-			ar_intervals:add(Intervals, End, Start);
-		{End2, Start2} ->
-			case Start2 > Start of
-				true ->
-					End3 = min(Start2, End),
-					get_unsynced_intervals(End2, End,
-							ar_intervals:add(Intervals, End3, Start), StoreID);
-				_ ->
-					get_unsynced_intervals(End2, End, Intervals, StoreID)
-			end
-	end.
-
-find_peer_intervals2(Start, Peers, UnsyncedIntervals, AllPeersIntervals) ->
-	Intervals =
-		ar_util:pmap(
-			fun(Peer) ->
-				case get_peer_intervals(Peer, Start, UnsyncedIntervals, AllPeersIntervals) of
-					{ok, SoughtIntervals, PeerIntervals, Left} ->
-						{Peer, SoughtIntervals, PeerIntervals, Left};
-					{error, Reason} ->
-						?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
-								{peer, ar_util:format_peer(Peer)},
-								{reason, io_lib:format("~p", [Reason])}]),
-						ok
-				end
-			end,
-			Peers
-		),
-	EnqueueIntervals =
-		lists:foldl(
-			fun	({Peer, SoughtIntervals, _, _}, Acc) ->
-					case ar_intervals:is_empty(SoughtIntervals) of
-						true ->
-							Acc;
-						false ->
-							[{Peer, SoughtIntervals} | Acc]
-					end;
-				(_, Acc) ->
-					Acc
-			end,
-			[],
-			Intervals
-		),
-	gen_server:cast(self(), {enqueue_intervals, EnqueueIntervals}),
-
-	%% Update and return AllPeersIntervals
-	lists:foldl(
-		fun	({Peer, _, PeerIntervals, Left}, Acc) ->
-				case ar_intervals:is_empty(PeerIntervals) of
-					true ->
-						Acc;
-					false ->
-						Right = element(1, ar_intervals:largest(PeerIntervals)),
-						maps:put(Peer, {Right, Left, PeerIntervals}, Acc)
-				end;
-			(_, Acc) ->
-				Acc
-		end,
-		AllPeersIntervals,
-		Intervals
-	).
-
-%% @doc
-%% @return {ok, Intervals, PeerIntervals, Left} | Error
-%% Intervals: the intersection of the intervals we are looking for and the intervals that
-%%            the peer advertises
-%% PeerIntervals: all of the intervals (up to ?MAX_SHARED_SYNCED_INTERVALS_COUNT total
-%%                intervals) that the peer advertises starting at offset Left.
-get_peer_intervals(Peer, Left, SoughtIntervals, CachedIntervals) ->
-	Limit = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
-	Right = element(1, ar_intervals:largest(SoughtIntervals)),
-	case maps:get(Peer, CachedIntervals, not_found) of
-		{Right2, Left2, PeerIntervals} when Right2 >= Right, Left2 =< Left ->
-			{ok, ar_intervals:intersection(PeerIntervals, SoughtIntervals), PeerIntervals,
-					Left2};
-		_ ->
-			case ar_http_iface_client:get_sync_record(Peer, Left + 1, Limit) of
-				{ok, PeerIntervals2} ->
-					{ok, ar_intervals:intersection(PeerIntervals2, SoughtIntervals),
-							PeerIntervals2, Left};
-				Error ->
-					Error
 			end
 	end.
 
