@@ -10,7 +10,10 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--record(state, {}).
+-record(state, {
+	session_key,
+	step_number
+}).
 
 %% @doc The number of steps and the corresponding step checkpoints to include in every
 %% regular update.
@@ -136,6 +139,10 @@ make_nonce_limiter_update(SessionKey, Session, IsPartial) ->
 			is_partial = IsPartial,
 			session = Session#vdf_session{ step_checkpoints_map = StepCheckpointsMap2 } }.
 
+handle_computed_output({SessionKey, StepNumber, _, _},
+		#state{ session_key = SessionKey, step_number = CurrentStepNumber } = State)
+			when CurrentStepNumber >= StepNumber ->
+	{noreply, State};
 handle_computed_output(Args, State) ->
 	{SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
 	case ar_nonce_limiter:get_session(SessionKey) of
@@ -182,7 +189,7 @@ handle_computed_output(Args, State) ->
 							{{full_prev_update, 4}, FullPrevUpdateBin4}]
 				end,
 			ets:insert(?MODULE, Keys2),
-			{noreply, State}
+			{noreply, State#state{ session_key = SessionKey, step_number = StepNumber }}
 	end.
 
 get_recent_step_numbers(StepNumber) ->
