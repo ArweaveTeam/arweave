@@ -122,7 +122,7 @@ handle_cast(pull, State) ->
 											gen_server:cast(?MODULE, pull),
 											{noreply, State2#state{
 													remote_servers = RotatedServers }};
-										ok ->
+										_ ->
 											ar_util:cast_after(?PULL_FREQUENCY_MS,
 													?MODULE, pull),
 											{noreply, State2}
