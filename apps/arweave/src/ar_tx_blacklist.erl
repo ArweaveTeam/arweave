@@ -476,27 +476,27 @@ parse_binary(Binary) ->
 				<<>> ->
 					false;
 				TXIDOrRange ->
-					case ar_util:safe_decode(TXIDOrRange) of
-						{error, invalid} ->
-							case binary:split(TXIDOrRange, <<",">>, [global]) of
-								[StartBin, EndBin] ->
-									case {catch binary_to_integer(StartBin),
-											catch binary_to_integer(EndBin)} of
-										{Start, End} when is_integer(Start),
-												is_integer(End), End > Start, Start >= 0 ->
-											{true, {End, Start}};
-										_ ->
-											?LOG_WARNING([{event, failed_to_parse_line},
-													{line, Line}]),
-											false
-									end;
+					case binary:split(TXIDOrRange, <<",">>, [global]) of
+						[StartBin, EndBin] ->
+							case {catch binary_to_integer(StartBin),
+									catch binary_to_integer(EndBin)} of
+								{Start, End} when is_integer(Start),
+									is_integer(End), End > Start, Start >= 0 ->
+									{true, {End, Start}};
 								_ ->
 									?LOG_WARNING([{event, failed_to_parse_line},
-											{line, Line}]),
+													{line, Line}]),
 									false
 							end;
-						{ok, TXID} ->
-							{true, TXID}
+						_ ->
+							case ar_util:safe_decode(TXIDOrRange) of
+								{error, invalid} ->
+									?LOG_WARNING([{event, failed_to_parse_line},
+											{line, Line}]),
+									false;
+								{ok, TXID} ->
+									{true, TXID}
+							end
 					end
 			end
 		end,
