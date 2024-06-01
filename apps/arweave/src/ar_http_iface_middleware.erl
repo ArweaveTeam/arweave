@@ -178,10 +178,10 @@ handle4(Method, SplitPath, Req, Pid) ->
 %% Return network information from a given node.
 %% GET request to endpoint /info.
 handle(<<"GET">>, [], Req, _Pid) ->
-	return_info(Req);
+	{200, #{}, ar_serialize:jsonify(ar_info:get_info()), Req};
 
 handle(<<"GET">>, [<<"info">>], Req, _Pid) ->
-	return_info(Req);
+	{200, #{}, ar_serialize:jsonify(ar_info:get_info()), Req};
 
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
 	case ar_util:safe_decode(EncodedTXID) of
@@ -2146,7 +2146,7 @@ get_data_root_from_headers(Req) ->
 parse_chunk(Req, Pid) ->
 	case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
 					case catch ar_serialize:json_map_to_poa_map(JSON) of
 						{'EXIT', _} ->
@@ -2306,46 +2306,6 @@ decode_block(Bin, binary) ->
 			{error, {Exception, Reason}}
 	end.
 
-%% @doc Generate and return an informative JSON object regarding the state of the node.
-return_info(Req) ->
-	{Time, Current} =
-		timer:tc(fun() -> ar_node:get_current_block_hash() end),
-	{Time2, Height} =
-		timer:tc(fun() -> ar_node:get_height() end),
-	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
-	{200, #{},
-		ar_serialize:jsonify(
-			{
-				[
-					{network, list_to_binary(?NETWORK_NAME)},
-					{version, ?CLIENT_VERSION},
-					{release, ?RELEASE_NUMBER},
-					{height,
-						case Height of
-							not_joined -> -1;
-							H -> H
-						end
-					},
-					{current,
-						case is_atom(Current) of
-							true -> atom_to_binary(Current, utf8);
-							false -> ar_util:encode(Current)
-						end
-					},
-					{blocks, BlockCount},
-					{peers, prometheus_gauge:value(arweave_peer_count)},
-					{queue_length,
-						element(
-							2,
-							erlang:process_info(whereis(ar_node_worker), message_queue_len)
-						)
-					},
-					{node_state_latency, (Time + Time2) div 2}
-				]
-			}
-		),
-	Req}.
-
 %% @doc Convenience function for lists:keyfind(Key, 1, List). Returns Value, not {Key, Value}.
 val_for_key(K, L) ->
 	case lists:keyfind(K, 1, L) of
@@ -2438,6 +2398,7 @@ collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
 
 post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	Peer = ar_http_util:arweave_peer(Req),
+	?LOG_ERROR([{event, post_block}, {peer, ar_util:format_peer(Peer)}, {received_timestamp, ReceiveTimestamp}]),
 	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
 			post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp);
@@ -2673,7 +2634,7 @@ handle_post_pool_cm_jobs2(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case catch ar_serialize:json_map_to_pool_cm_jobs(
-					element(2, ar_serialize:json_decode(Body, [{return_maps, true}]))) of
+					element(2, ar_serialize:json_decode(Body, [return_maps]))) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
 				Jobs ->
@@ -3224,7 +3185,7 @@ handle_mining_h1(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
 					case catch ar_serialize:json_map_to_candidate(JSON) of
 						{'EXIT', _} ->
@@ -3256,7 +3217,7 @@ handle_mining_h2(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
 					case catch ar_serialize:json_map_to_candidate(JSON) of
 						{'EXIT', _} ->
@@ -3291,7 +3252,7 @@ handle_mining_cm_publish(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
 					case catch ar_serialize:json_map_to_solution(JSON) of
 						{'EXIT', _} ->

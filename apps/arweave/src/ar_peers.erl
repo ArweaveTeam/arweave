@@ -490,7 +490,7 @@ discover_peers([Peer | Peers]) ->
 			case check_peer(Peer, is_public_peer(Peer)) of
 				ok ->
 					case ar_http_iface_client:get_info(Peer, release) of
-						{<<"release">>, Release} when is_integer(Release) ->
+						Release when is_integer(Release) ->
 							maybe_add_peer(Peer, Release);
 						_ ->
 							ok
@@ -537,7 +537,7 @@ load_peers(Peers) ->
 	load_peers(Peers3).
 
 load_peer({Peer, Performance}) ->
-	case ar_http_iface_client:get_info(Peer, name) of
+	case ar_http_iface_client:get_info(Peer, network) of
 		info_unavailable ->
 			?LOG_DEBUG([{event, peer_unavailable}, {peer, ar_util:format_peer(Peer)}]),
 			ok;

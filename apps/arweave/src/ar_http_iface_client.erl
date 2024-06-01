@@ -690,7 +690,7 @@ build_cm_or_pool_request(Method, Peer, Path, Body) ->
 
 handle_get_pool_cm_jobs_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	case catch ar_serialize:json_map_to_pool_cm_jobs(
-			element(2, ar_serialize:json_decode(Body, [{return_maps, true}]))) of
+			element(2, ar_serialize:json_decode(Body, [return_maps]))) of
 		{'EXIT', _} ->
 			{error, invalid_json};
 		Jobs ->
@@ -1086,8 +1086,7 @@ get_info(Peer, Type) ->
 	case get_info(Peer) of
 		info_unavailable -> info_unavailable;
 		Info ->
-			{Type, X} = lists:keyfind(Type, 1, Info),
-			X
+			maps:get(Type, Info)
 	end.
 get_info(Peer) ->
 	case
@@ -1100,7 +1099,13 @@ get_info(Peer) ->
 			timeout => 2 * 1000
 		})
 	of
-		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> process_get_info_json(JSON);
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> 
+			case ar_serialize:json_decode(JSON, [return_maps]) of
+				{ok, JsonMap} ->
+					ar_serialize:json_map_to_info_map(JsonMap);
+				{error, _} ->
+					info_unavailable
+			end;
 		_ -> info_unavailable
 	end.
 
@@ -1123,35 +1128,6 @@ get_peers(Peer) ->
 	catch _:_ -> unavailable
 	end.
 
-%% @doc Produce a key value list based on a /info response.
-process_get_info_json(JSON) ->
-	case ar_serialize:json_decode(JSON) of
-		{ok, {Props}} ->
-			process_get_info(Props);
-		{error, _} ->
-			info_unavailable
-	end.
-
-process_get_info(Props) ->
-	Keys = [<<"network">>, <<"version">>, <<"height">>, <<"blocks">>, <<"peers">>],
-	case safe_get_vals(Keys, Props) of
-		error ->
-			info_unavailable;
-		{ok, [NetworkName, ClientVersion, Height, Blocks, Peers]} ->
-			ReleaseNumber =
-				case lists:keyfind(<<"release">>, 1, Props) of
-					false -> 0;
-					R -> R
-				end,
-			[
-				{name, NetworkName},
-				{version, ClientVersion},
-				{height, Height},
-				{blocks, Blocks},
-				{peers, Peers},
-				{release, ReleaseNumber}
-			]
-	end.
 
 %% @doc Process the response of an /block call.
 handle_block_response(_Peer, _Encoding, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
@@ -1294,16 +1270,3 @@ add_header(Name, Value, Headers) ->
 	?LOG_ERROR([{event, invalid_header}, {name, Name}, {value, Value}]),
 	Headers.
 
-%% @doc Return values for keys - or error if any key is missing.
-safe_get_vals(Keys, Props) ->
-	case lists:foldl(fun
-			(_, error) -> error;
-			(Key, Acc) ->
-				case lists:keyfind(Key, 1, Props) of
-					{_, Val} -> [Val | Acc];
-					_		 -> error
-				end
-			end, [], Keys) of
-		error -> error;
-		Vals  -> {ok, lists:reverse(Vals)}
-	end.
