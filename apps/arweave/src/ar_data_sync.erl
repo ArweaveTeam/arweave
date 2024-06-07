@@ -974,7 +974,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
 	%% 2. So that we limit the risk of blocking on one particularly slow peer.
 	%%
-	%% We do a probabilistic ditribution:
+	%% We do a probabilistic distribution:
 	%% 1. We shuffle the peers list so that the ordering differs from call to call
 	%% 2. We cap the number of chunks to enqueue per peer - at roughly 50% more than
 	%%    their "fair" share (i.e. ?DEFAULT_SYNC_BUCKET_SIZE / NumPeers).
