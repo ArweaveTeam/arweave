@@ -8,7 +8,7 @@
 		get_longest_chain_cache/1,
 		get_block_and_status/2, remove/2, get_checkpoint_block/1, prune/2,
 		get_by_solution_hash/5, is_known_solution_hash/2,
-		get_siblings/2, get_fork_blocks/2]).
+		get_siblings/2, get_fork_blocks/2, update_timestamp/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -454,6 +454,29 @@ get_siblings(Tab, B) ->
 				[],
 				Children
 			)
+	end.
+
+update_timestamp(Tab, H, ReceiveTimestamp) ->
+	case ets:lookup(Tab, {block, H}) of
+		[{_, {B, Status, Timestamp, Children}}] ->
+			case B#block.receive_timestamp of
+				undefined ->
+					insert(Tab, {
+							{block, H},
+							{
+								B#block{receive_timestamp = ReceiveTimestamp},
+								Status,
+								Timestamp,
+								Children
+							}
+						}, false);
+				_ ->
+					ok
+			end;
+		[] ->
+			?LOG_ERROR([
+				{event, ignored_block_missing_from_cache}, {block, ar_util:encode(H)}]),
+			not_found
 	end.
 
 %%%===================================================================

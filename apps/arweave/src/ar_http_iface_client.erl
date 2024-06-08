@@ -1095,7 +1095,7 @@ get_info(Peer) ->
 			peer => Peer,
 			path => "/info",
 			headers => p2p_headers(),
-			connect_timeout => 500,
+			connect_timeout => 1000,
 			timeout => 2 * 1000
 		})
 	of
