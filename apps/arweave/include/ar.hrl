@@ -122,6 +122,15 @@
 -define(SUGGESTED_TX_ANCHOR_DEPTH, 6).
 -endif.
 
+%% The number of blocks returned in the /info 'recent' field
+-ifdef(DEBUG).
+-define(INFO_BLOCKS, 5).
+-define(INFO_BLOCKS_WITHOUT_TIMESTAMP, 2).
+-else.
+-define(INFO_BLOCKS, 10).
+-define(INFO_BLOCKS_WITHOUT_TIMESTAMP, 5).
+-endif.
+
 %% How long to wait before giving up on test(s).
 -define(TEST_TIMEOUT, 90 * 60).
 

@@ -42,5 +42,26 @@ get_info() ->
         %%   "id": <indep_hash>,
         %%   "received": <received_timestamp>"
         %% }
-        recent => []
+        recent => get_recent_blocks(Height)
     }.
+
+get_recent_blocks(CurrentHeight) ->
+    lists:foldl(
+        fun({H, _WeaveSize, _TXRoot}, Acc) ->
+            Acc ++ [#{
+                id => ar_util:encode(H),
+                received => get_block_timestamp(H, length(Acc))
+            }]
+        end,
+        [],
+        lists:sublist(ar_block_index:get_list(CurrentHeight), ?INFO_BLOCKS)
+    ).
+
+get_block_timestamp(H, Depth) when Depth =< ?INFO_BLOCKS_WITHOUT_TIMESTAMP ->
+    "pending";
+get_block_timestamp(H, _Depth) ->
+    B = ar_block_cache:get(block_cache, H),
+    case B#block.receive_timestamp of
+        undefined -> "pending";
+        Timestamp -> ar_util:timestamp_to_seconds(Timestamp)
+    end.

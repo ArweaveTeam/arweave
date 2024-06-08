@@ -2318,6 +2318,7 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 		solution_hash = SolutionH }, Req) ->
 	case ar_ignore_registry:member(H) of
 		true ->
+			ar_block_cache:update_timestamp(block_cache, H, erlang:timestamp()),
 			{208, #{}, <<>>, Req};
 		false ->
 			case ar_node:get_block_shadow_from_cache(PrevH) of
@@ -2398,7 +2399,6 @@ collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
 
 post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	Peer = ar_http_util:arweave_peer(Req),
-	?LOG_ERROR([{event, post_block}, {peer, ar_util:format_peer(Peer)}, {received_timestamp, ReceiveTimestamp}]),
 	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
 			post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp);
@@ -2435,6 +2435,7 @@ post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp
 				{ok, BH} when byte_size(BH) =< 48 ->
 					case ar_ignore_registry:member(BH) of
 						true ->
+							ar_block_cache:update_timestamp(block_cache, BH, ReceiveTimestamp),
 							{208, #{}, <<"Block already processed.">>, Req};
 						false ->
 							post_block(read_body, Peer, {Req, Pid, Encoding},
