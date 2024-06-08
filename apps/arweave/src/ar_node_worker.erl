@@ -218,7 +218,7 @@ validate_trusted_peers(Config) ->
 filter_valid_peers(Peers) ->
 	lists:filter(
 		fun(Peer) ->
-			case ar_http_iface_client:get_info(Peer, name) of
+			case ar_http_iface_client:get_info(Peer, network) of
 				info_unavailable ->
 					io:format("~n\tPeer ~s is not available.~n~n",
 							[ar_util:format_peer(Peer)]),

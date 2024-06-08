@@ -235,7 +235,7 @@ candidate_to_json_struct_test() ->
 
 	Test = fun(Candidate) ->
         JSON = ar_serialize:jsonify(ar_serialize:candidate_to_json_struct(Candidate)),
-		{ok, JSONStruct} = ar_serialize:json_decode(JSON, [{return_maps, true}]),
+		{ok, JSONStruct} = ar_serialize:json_decode(JSON, [return_maps]),
         CandidateAfter = ar_serialize:json_map_to_candidate(JSONStruct),
         ExpectedCandidate = Candidate#mining_candidate{
             cache_ref = not_set,
@@ -297,7 +297,7 @@ solution_to_json_struct_test() ->
 
 	Test = fun(Solution) ->
         JSON = ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution)),
-		{ok, JSONStruct} = ar_serialize:json_decode(JSON, [{return_maps, true}]),
+		{ok, JSONStruct} = ar_serialize:json_decode(JSON, [return_maps]),
         SolutionAfter = ar_serialize:json_map_to_solution(JSONStruct),
         ?assertEqual(Solution, SolutionAfter)
     end,

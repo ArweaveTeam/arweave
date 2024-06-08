@@ -235,8 +235,9 @@ get_tx(ID) ->
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 test_get_info(_) ->
-	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info(ar_test_node:peer_ip(main), name)),
-	?assertEqual({<<"release">>, ?RELEASE_NUMBER},
+	?assertEqual(<<?NETWORK_NAME>>,
+			ar_http_iface_client:get_info(ar_test_node:peer_ip(main), network)),
+	?assertEqual(?RELEASE_NUMBER,
 			ar_http_iface_client:get_info(ar_test_node:peer_ip(main), release)),
 	?assertEqual(
 		?CLIENT_VERSION,

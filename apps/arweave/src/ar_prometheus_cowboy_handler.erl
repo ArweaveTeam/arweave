@@ -7,6 +7,8 @@
 
 -export([init/2, terminate/3]).
 
+-include_lib("arweave/include/ar.hrl").
+
 %% ===================================================================
 %% cowboy_handler callbacks
 %% ===================================================================
@@ -56,4 +58,5 @@ gen_metrics_response(Registry, Request) ->
 			#{ path => URI, headers => GetHeader, registry => Registry,
 				standalone => false}),
 	Headers = prometheus_cowboy:to_cowboy_headers(RespHeaders),
-	cowboy_req:reply(Code, maps:from_list(Headers), Body, Request).
+	Headers2 = maps:merge(?CORS_HEADERS, maps:from_list(Headers)),
+	cowboy_req:reply(Code, Headers2, Body, Request).
