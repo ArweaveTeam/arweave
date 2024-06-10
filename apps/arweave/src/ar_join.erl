@@ -427,6 +427,12 @@ request_block(H, WorkerQ, PeerQ) ->
 
 maybe_set_reward_history(Blocks, Peers) ->
 	L = [B#block.reward_history_hash || B <- lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT)],
+	lists:foreach(
+		fun(#block{reward_history_hash = RewardHistoryHash}) ->
+			?LOG_ERROR([{reward_history, ar_util:encode(RewardHistoryHash)}])
+		end,
+		Blocks
+	),
 	case ar_http_iface_client:get_reward_history(Peers, hd(Blocks), L) of
 		{ok, RewardHistory} ->
 			ar_rewards:set_reward_history(Blocks, RewardHistory);

@@ -312,6 +312,8 @@ reward_history_to_binary(RewardHistory) ->
 reward_history_to_binary([], IOList) ->
 	iolist_to_binary(IOList);
 reward_history_to_binary([{Addr, HashRate, Reward, Denomination} | RewardHistory], IOList) ->
+	?LOG_ERROR([{event, reward_history_to_binary}, {addr, ar_util:encode(Addr)},
+			{hash_rate, HashRate}, {reward, Reward}, {denomination, Denomination}]),
 	reward_history_to_binary(RewardHistory, [Addr, ar_serialize:encode_int(HashRate, 8),
 			ar_serialize:encode_int(Reward, 8), << Denomination:24 >> | IOList]).
 

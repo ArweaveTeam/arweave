@@ -835,6 +835,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 			case ar_util:safe_decode(EncodedBH) of
 				{ok, BH} ->
 					Fork_2_6 = ar_fork:height_2_6(),
+					?LOG_ERROR([{event, get_reward_history}, {block_hash, ar_util:encode(BH)}]),
 					case ar_block_cache:get_block_and_status(block_cache, BH) of
 						{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
 								when (Status == on_chain orelse Status == validated),
