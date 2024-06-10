@@ -1471,14 +1471,11 @@ handle_info({event, disksup, _}, State) ->
 	{noreply, State};
 
 handle_info({'EXIT', PID, normal}, #sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_INFO([{event, normal_exit}, {pid, PID}, {module, ?MODULE}, {store_id, StoreID}]),
 	{noreply, State};
 
 handle_info({'DOWN', _,  process, _, normal},  #sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_INFO([{event, normal_down}, {module, ?MODULE}, {store_id, StoreID}]),
 	{noreply, State};
 handle_info({'DOWN', _,  process, _, noproc},  #sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_INFO([{event, noproc_down}, {module, ?MODULE}, {store_id, StoreID}]),
 	{noreply, State};
 handle_info({'DOWN', _,  process, _, Reason},  #sync_data_state{ store_id = StoreID } = State) ->
 	?LOG_WARNING([{event, collect_intervals_job_failed},
