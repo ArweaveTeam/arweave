@@ -39,7 +39,7 @@ for more information on running your own VDF server.
   </br>
 
   ```sh
-  sudo apt install libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
+  sudo apt install erlang libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
   ```
 
   On some systems you might need to install `libncurses-dev`.
