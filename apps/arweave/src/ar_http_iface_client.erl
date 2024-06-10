@@ -420,6 +420,8 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			case ar_serialize:binary_to_reward_history(Body) of
 				{ok, RewardHistory} when length(RewardHistory) == ExpectedLength ->
+					?LOG_ERROR([{event, received_reward_history_of_expected_length},
+							{height, Height}]),
 					case ar_rewards:validate_reward_history_hashes(Height, RewardHistory,
 							ExpectedRewardHistoryHashes) of
 						true ->

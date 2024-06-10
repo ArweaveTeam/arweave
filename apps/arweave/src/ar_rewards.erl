@@ -74,7 +74,9 @@ validate_reward_history_hashes(Height, RewardHistory, [H | ExpectedRewardHistory
 	end.
 
 validate_reward_history_hash(Height, H, RewardHistory) ->
-	H == reward_history_hash(trim_locked_rewards(Height, RewardHistory)).
+	RH = reward_history_hash(trim_locked_rewards(Height, RewardHistory)),
+	?LOG_ERROR([{event, validate_reward_history_hash}, {expected_hash, ar_util:encode(H)}, {computed_hash, ar_util:encode(RH)}]),
+	H == RH.
 
 reward_history_hash(LockedRewards) ->
 	reward_history_hash(LockedRewards, [ar_serialize:encode_int(length(LockedRewards), 8)]).
