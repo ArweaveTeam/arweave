@@ -44,7 +44,7 @@ dump_blocks(Cursor, MinHeight, OutputDir) ->
 						case B#block.height >= MinHeight of
 							true ->
 								io:format("Block: ~p / ~p", [B#block.height, H]),
-								JsonFilename = io_lib:format("~B.json", [B#block.height]),
+								JsonFilename = io_lib:format("~s.json", [ar_util:encode(B#block.indep_hash)]),
 								OutputFilePath = filename:join([OutputDir, "blocks", JsonFilename]),
 								case file:read_file_info(OutputFilePath) of
 									{ok, _FileInfo} ->
