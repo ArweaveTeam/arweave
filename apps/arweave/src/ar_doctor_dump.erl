@@ -43,14 +43,16 @@ dump_blocks(Cursor, MinHeight, OutputDir) ->
 					{ok, B} ->
 						case B#block.height >= MinHeight of
 							true ->
+								io:format("Block: ~p / ~p", [B#block.height, H]),
 								JsonFilename = io_lib:format("~B.json", [B#block.height]),
 								OutputFilePath = filename:join([OutputDir, "blocks", JsonFilename]),
 								case file:read_file_info(OutputFilePath) of
 									{ok, _FileInfo} ->
+										io:format(" ... skipping~n"),
 										ok; % File exists, do nothing
 									{error, enoent} ->
+										io:format(" ... writing~n"),
 										% File does not exist, proceed with processing
-										io:format("Block: ~p / ~p~n", [B#block.height, H]),
 										dump_txs(B#block.txs, OutputDir),
 										Json = ar_serialize:block_to_json_struct(B),
 										JsonString = ar_serialize:jsonify(Json),
