@@ -114,9 +114,9 @@ init([]) ->
 								Error ->
 									ar:console("~n~n\tFailed to read the local state: ~p.~n",
 											[Error]),
-									timer:sleep(1000),
 									?LOG_INFO([{event, failed_to_read_local_state},
 											{reason, io_lib:format("~p", [Error])}]),
+									timer:sleep(1000),
 									erlang:halt()
 							end
 					end
@@ -189,7 +189,7 @@ get_block_index_at_state2([_ | BI], H) ->
 block_index_not_found() ->
 	ar:console("~n~n\tThe local state is empty, consider joining the network "
 			"via the trusted peers.~n"),
-	?LOG_INFO([{event, empty_local_state}]),
+	?LOG_ERROR([{event, empty_local_state}]),
 	timer:sleep(1000),
 	erlang:halt().
 
@@ -1346,6 +1346,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		end,
 		tl(lists:reverse(PrevBlocks))
 	),
+
 	ar_storage:update_block_index(B#block.height, OrphanCount, AddedBIElements),
 	ar_storage:store_reward_history_part(AddedBlocks),
 	ar_storage:store_block_time_history_part(AddedBlocks, lists:last(PrevBlocks)),
@@ -1653,6 +1654,7 @@ start_from_state([#block{} = GenesisB]) ->
 start_from_state(BI, Height) ->
 	case read_recent_blocks(BI, min(length(BI) - 1, ?START_FROM_STATE_SEARCH_DEPTH)) of
 		not_found ->
+			?LOG_ERROR([{event, start_from_state}, {reason, block_headers_not_found}]),
 			block_headers_not_found;
 		{Skipped, Blocks} ->
 			BI2 = lists:nthtail(Skipped, BI),

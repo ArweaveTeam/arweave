@@ -91,6 +91,7 @@ jobs:
             ar_poller_tests,
             ar_reject_chunks_tests,
             ar_semaphore_tests,
+            ar_start_from_block_tests,
             ar_tx_blacklist_tests,
             ar_tx_replay_pool_tests,
             ar_vdf_tests,

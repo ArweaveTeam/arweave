@@ -606,6 +606,9 @@ delete_range(Name, Start, End, RetryCount) ->
 							Error
 					end
 			end;
+		{error, {error, Error}} ->
+			%% Sometimes rocksdb seems to double nest errors
+			{error, Error};
 		Reply ->
 			Reply
 	end.
