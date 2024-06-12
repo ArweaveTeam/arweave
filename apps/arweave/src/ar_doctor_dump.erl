@@ -10,17 +10,18 @@ main(Args) ->
 	dump(Args).
 
 help() ->
-	ar:console("data-doctor dump <min_height> <data_dir> <output_dir>~n"),
+	ar:console("data-doctor dump <min_height> <max_height> <data_dir> <output_dir>~n"),
 	ar:console("  min_height: The minimum height of the blocks to dump.~n"),
+	ar:console("  max_height: The maximum height of the blocks to dump.~n"),
 	ar:console("  data_dir: Full path to your data_dir.~n"), 
 	ar:console("  output_dir: Full path to a directory where the dumped data will be written.~n"), 
 	ar:console("~nExample:~n"), 
 	ar:console("data-doctor dump /mnt/arweave-data /mnt/output~n").
 
-dump(Args) when length(Args) < 3 ->
+dump(Args) when length(Args) < 4 ->
 	false;
 dump(Args) ->
-	[MinHeight, DataDir, OutputDir] = Args,
+	[MinHeight, MaxHeight, DataDir, OutputDir] = Args,
 
 	ok = filelib:ensure_dir(filename:join([OutputDir, "blocks", "dummy"])),
 	ok = filelib:ensure_dir(filename:join([OutputDir, "txs", "dummy"])),
@@ -30,10 +31,10 @@ dump(Args) ->
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
 
-	dump_blocks(<<>>, list_to_integer(MinHeight), OutputDir),
+	dump_blocks(<<>>, list_to_integer(MinHeight), list_to_integer(MaxHeight), OutputDir),
 	true.
 
-dump_blocks(Cursor, MinHeight, OutputDir) ->
+dump_blocks(Cursor, MinHeight, MaxHeight, OutputDir) ->
 	case ar_kv:get_next(block_db, Cursor) of
         {ok, BH, Bin} ->
             % Process the value here if needed
@@ -41,7 +42,7 @@ dump_blocks(Cursor, MinHeight, OutputDir) ->
 			try
 				case ar_serialize:binary_to_block(Bin) of
 					{ok, B} ->
-						case B#block.height >= MinHeight of
+						case B#block.height >= MinHeight andalso B#block.height =< MaxHeight of
 							true ->
 								io:format("Block: ~p / ~p", [B#block.height, H]),
 								JsonFilename = io_lib:format("~s.json", [ar_util:encode(B#block.indep_hash)]),
@@ -71,7 +72,7 @@ dump_blocks(Cursor, MinHeight, OutputDir) ->
 
 			<< Start:384 >> = BH,
 			NextCursor = << (Start + 1):384 >>,
-            dump_blocks(NextCursor, MinHeight, OutputDir); % Recursive call with the new cursor
+            dump_blocks(NextCursor, MinHeight, MaxHeight, OutputDir); % Recursive call with the new cursor
         none ->
             io:format("No more entries.~n")
     end.
