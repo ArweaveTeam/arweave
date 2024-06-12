@@ -38,18 +38,21 @@ dump_blocks(Cursor, MinHeight, OutputDir) ->
         {ok, BH, Bin} ->
             % Process the value here if needed
 			H = ar_util:encode(BH),
-			{ok, B} = ar_serialize:binary_to_block(Bin),
-
-			case B#block.height >= MinHeight of
-				true ->
-					io:format("Block: ~p / ~p~n", [B#block.height, H]),
-					dump_txs(B#block.txs, OutputDir),
-					Json = ar_serialize:block_to_json_struct(B),
-					JsonString = ar_serialize:jsonify(Json),
-					JsonFilename = io_lib:format("~B.json", [B#block.height]),
-					OutputFilePath = filename:join([OutputDir, "blocks", JsonFilename]),
-					file:write_file(OutputFilePath, JsonString);
-				false ->
+			case ar_serialize:binary_to_block(Bin) of
+				{ok, B} ->
+					case B#block.height >= MinHeight of
+						true ->
+							io:format("Block: ~p / ~p~n", [B#block.height, H]),
+							dump_txs(B#block.txs, OutputDir),
+								Json = ar_serialize:block_to_json_struct(B),
+								JsonString = ar_serialize:jsonify(Json),
+								JsonFilename = io_lib:format("~B.json", [B#block.height]),
+								OutputFilePath = filename:join([OutputDir, "blocks", JsonFilename]),
+							file:write_file(OutputFilePath, JsonString);
+						false ->
+							ok
+					end;
+				_ ->
 					ok
 			end,
 
