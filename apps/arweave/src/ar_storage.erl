@@ -34,14 +34,12 @@ start_link() ->
 
 %% @doc Read the entire stored block index.
 read_block_index() ->
-	%% Use a key that is bigger than any << Height:256 >> (<<"a">> > << Height:256 >>)
-	%% to retrieve the largest stored Height.
-	case ar_kv:get_prev(block_index_db, <<"a">>) of
-		none ->
+	case block_index_tip() of
+		not_found ->
 			not_found;
-		{ok, << Height:256 >>, V} ->
-			{ok, Map} = ar_kv:get_range(block_index_db, << 0:256 >>, << (Height - 1):256 >>),
-			read_block_index_from_map(maps:put(<< Height:256 >>, V, Map), 0, Height, <<>>, [])
+		{Height,{H, _, _, PrevH}} ->
+			{ok, Map} = ar_kv:get_range(block_index_db, << 0:256 >>, << Height:256 >>),
+			read_block_index_from_map(Map, 0, Height, <<>>, [])
 	end.
 
 read_block_index_from_map(_Map, Height, End, _PrevH, BI) when Height > End ->
@@ -86,7 +84,7 @@ read_block_time_history(_Height, []) ->
 	[];
 read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI]) ->
 	case Height < ar_fork:height_2_7() of
-		true ->
+	true ->
 			[];
 		false ->
 			case read_block_time_history(Height - 1, BI) of
@@ -109,22 +107,24 @@ read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI]) ->
 store_block_index(BI) ->
 	%% Use a key that is bigger than any << Height:256 >> (<<"a">> > << Height:256 >>)
 	%% to retrieve the largest stored Height.
+	NewHeight = length(BI) - 1,
 	case ar_kv:get_prev(block_index_db, <<"a">>) of
 		none ->
-			update_block_index(0, 0, lists:reverse(BI));
-		{ok, << Height:256 >>, _V} ->
-			Height2 = length(BI) - 1,
-			Height3 = max(0, min(Height, Height2) - ?STORE_BLOCKS_BEHIND_CURRENT),
-			{ok, V} = ar_kv:get(block_index_db, << Height3:256 >>),
-			{H, WeaveSize, TXRoot} = lists:nth(Height2 - Height3 + 1, BI),
+			update_block_index(NewHeight, 0, lists:reverse(BI));
+		{ok, << StoredHeight:256 >>, _V} ->
+			%% RootHeight should a historical height shared by botht he stored BI and the
+			%% new BI
+			RootHeight = max(0, min(StoredHeight, NewHeight) - ?STORE_BLOCKS_BEHIND_CURRENT),
+			{ok, V} = ar_kv:get(block_index_db, << RootHeight:256 >>),
+			{H, WeaveSize, TXRoot} = lists:nth(NewHeight - RootHeight + 1, BI),
 			case binary_to_term(V) of
 				{H, WeaveSize, TXRoot, _PrevH} ->
-					BI2 = lists:reverse(lists:sublist(BI, Height2 - Height3)),
-					update_block_index(Height, Height - Height3, BI2);
+					BI2 = lists:reverse(lists:sublist(BI, NewHeight - RootHeight)),
+					update_block_index(NewHeight, StoredHeight - RootHeight, BI2);
 				{H2, _, _, _} ->
 					?LOG_ERROR([{event, failed_to_store_block_index},
 							{reason, no_intersection},
-							{height, Height3},
+							{height, RootHeight},
 							{stored_hash, ar_util:encode(H2)},
 							{expected_hash, ar_util:encode(H)}]),
 					{error, block_index_no_recent_intersection}
@@ -134,21 +134,45 @@ store_block_index(BI) ->
 	end.
 
 %% @doc Record the block index update on disk. Remove the orphans, if any.
-update_block_index(TipHeight, OrphanCount, BI) ->
-	%% Height of the earliest orphaned block. This height and higher will be deleted from
-	%% the block index. If OrphanCount is 0, then no blocks will be deleted from the block index.
-	OrphanHeight = TipHeight - OrphanCount + 1,
-	%% Record the contents of BI starting at this height. Whether there are 1 or 0 orphans
-	%% we update the index starting at the same height (the tip). Only when OrphanCount is > 1 do
-	%% need to rewrite the index starting at a lower height.
-	IndexHeight = TipHeight - max(0, OrphanCount-1),
+
+update_block_index(NewTipHeight, OrphanCount, _BI) 
+		when NewTipHeight < 0 orelse OrphanCount < 0 ->
+	{error, badarg};
+update_block_index(NewTipHeight, OrphanCount, BI) ->
+	%% Record the contents of BI starting at this height - the entry at IndexHeight will
+	%% be the first entry written (perhaps replacing an existing entry at that height)
+	CurTipHeight = case block_index_tip() of
+		not_found ->
+			-1;
+		{Height, _} ->
+			Height
+	end,
+	%% IndexHeight is by default one beyond the current tip, this only changes if we have
+	%% orphans (which will be deleted).
+	IndexHeight = (CurTipHeight + 1) - OrphanCount,
+
+	case IndexHeight + length(BI) - 1 == NewTipHeight of
+		true ->
+			update_block_index2(IndexHeight, OrphanCount, BI);
+		false ->
+			?LOG_ERROR([{event, failed_to_update_block_index},
+				{reason, block_index_gap},
+				{cur_tip_height, CurTipHeight},
+				{new_tip_height, NewTipHeight},
+				{index_height, IndexHeight},
+				{orphan_count, OrphanCount},
+				{block_count, length(BI)}]),
+			{error, not_found}
+	end.
+
+update_block_index2(IndexHeight, OrphanCount, BI) ->
 	%% 1. Delete all the orphaned blocks from the block index
 	case ar_kv:delete_range(block_index_db,
-			<< OrphanHeight:256 >>, << (TipHeight + 1):256 >>) of
+			<< IndexHeight:256 >>, << (IndexHeight + OrphanCount):256 >>) of
 		ok ->
 			case IndexHeight of
 				0 ->
-					update_block_index2(0, <<>>, BI);
+					update_block_index3(0, <<>>, BI);
 				_ ->
 					%% 2. Add all the entries in BI to the block index
 					%% BI will include the new tip block at the current height, as well as any new
@@ -161,25 +185,25 @@ update_block_index(TipHeight, OrphanCount, BI) ->
 							{error, not_found};
 						{ok, Bin} ->
 							{PrevH, _, _, _} = binary_to_term(Bin),
-							update_block_index2(IndexHeight, PrevH, BI)
+							update_block_index3(IndexHeight, PrevH, BI)
 					end
 			end;
 		{error, Error} ->
 			?LOG_ERROR([{event, failed_to_update_block_index},
 					{reason, failed_to_remove_orphaned_range},
-					{range_start, OrphanHeight},
-					{range_end, TipHeight + 1},
+					{range_start, IndexHeight},
+					{range_end, IndexHeight + OrphanCount},
 					{reason, io_lib:format("~p", [Error])}]),
 			{error, Error}
 	end.
 
-update_block_index2(_Height, _PrevH, []) ->
+update_block_index3(_Height, _PrevH, []) ->
 	ok;
-update_block_index2(Height, PrevH, [{H, WeaveSize, TXRoot} | BI]) ->
+update_block_index3(Height, PrevH, [{H, WeaveSize, TXRoot} | BI]) ->
 	Bin = term_to_binary({H, WeaveSize, TXRoot, PrevH}),
 	case ar_kv:put(block_index_db, << Height:256 >>, Bin) of
 		ok ->
-			update_block_index2(Height + 1, H, BI);
+			update_block_index3(Height + 1, H, BI);
 		Error ->
 			?LOG_ERROR([{event, failed_to_update_block_index},
 					{height, Height},
@@ -1038,6 +1062,16 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+block_index_tip() ->
+	%% Use a key that is bigger than any << Height:256 >> (<<"a">> > << Height:256 >>)
+	%% to retrieve the largest stored Height.
+	case ar_kv:get_prev(block_index_db, <<"a">>) of
+		none ->
+			not_found;
+		{ok, << Height:256 >>, V} ->
+			{Height, binary_to_term(V)}
+	end.
+
 write_block(B) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case lists:member(disk_logging, Config#config.enable) of
@@ -1463,3 +1497,204 @@ read_wallet_list_chunks_test() ->
 
 random_wallet() ->
 	{crypto:strong_rand_bytes(32), {rand:uniform(1000000000), crypto:strong_rand_bytes(32)}}.
+
+update_block_index_test_() ->
+	[
+		{timeout, 20, fun test_update_block_index/0}
+	].
+
+test_update_block_index() ->
+	ar_kv:delete_range(block_index_db, <<0:256>>, <<"a">>),
+
+	?assertEqual(
+		{error, not_found},
+		update_block_index(2, 0, [
+			{<<"hash_a">>, 0, <<"root_a">>}
+		]),
+		"Gap on empty index"
+	),
+
+	?assertEqual(
+		{error, badarg},
+		update_block_index(-1, 0, [
+			{<<"hash_a">>, 0, <<"root_a">>}
+		]),
+		"Negative tip"
+	),
+	
+	?assertEqual(
+		{error, badarg},
+		update_block_index(0, -1, [
+			{<<"hash_a">>, 0, <<"root_a">>}
+		]),
+		"Negative orphan count"
+	),
+
+	?assertEqual(
+		{error, not_found},
+		update_block_index(0, 1, [
+			{<<"hash_a">>, 0, <<"root_a">>}
+		]),
+		"Orphan on empty index"
+	),
+	?assertEqual(
+		ok,
+		update_block_index(0, 0, [
+			{<<"hash_a">>, 0, <<"root_a">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_a">>, 0, <<"root_a">>}
+	], read_block_index()),
+
+	?assertEqual(
+		{error, not_found},
+		update_block_index(2, 0, [
+			{<<"hash_b">>, 0, <<"root_b">>}
+		]),
+		"Gap on non-empty index"
+	),
+
+	?assertEqual(
+		ok,
+		update_block_index(1, 0, [
+			{<<"hash_b">>, 0, <<"root_b">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_b">>, 0, <<"root_b">>},
+		{<<"hash_a">>, 0, <<"root_a">>}
+	], read_block_index()),
+
+	?assertEqual(
+		{error, not_found},
+		update_block_index(0, 3, [
+			{<<"hash_c">>, 0, <<"root_c">>}
+		]),
+		"Too many orphans"
+	),
+
+	?assertEqual(
+		ok,
+		update_block_index(2, 0, [
+			{<<"hash_c">>, 0, <<"root_c">>}
+		])
+	),
+	?assertEqual(
+		ok,
+		update_block_index(3, 0, [
+			{<<"hash_d">>, 0, <<"root_d">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_d">>, 0, <<"root_d">>},
+		{<<"hash_c">>, 0, <<"root_c">>},
+		{<<"hash_b">>, 0, <<"root_b">>},
+		{<<"hash_a">>, 0, <<"root_a">>}
+	], read_block_index()),
+
+	%% Orphan: 2 for 1
+	?assertEqual(
+		ok,
+			update_block_index(4, 1, [
+				{<<"hash_e">>, 0, <<"root_e">>},
+				{<<"hash_f">>, 0, <<"root_f">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_f">>, 0, <<"root_f">>},
+		{<<"hash_e">>, 0, <<"root_e">>},
+		{<<"hash_c">>, 0, <<"root_c">>},
+		{<<"hash_b">>, 0, <<"root_b">>},
+		{<<"hash_a">>, 0, <<"root_a">>}
+	], read_block_index()),
+
+	%% Orphan: 1 for 1
+	?assertEqual(
+		ok,
+			update_block_index(4, 1, [
+				{<<"hash_g">>, 0, <<"root_g">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_g">>, 0, <<"root_g">>},
+		{<<"hash_e">>, 0, <<"root_e">>},
+		{<<"hash_c">>, 0, <<"root_c">>},
+		{<<"hash_b">>, 0, <<"root_b">>},
+		{<<"hash_a">>, 0, <<"root_a">>}
+	], read_block_index()),
+
+	%% Orphan: 1 for 2
+	?assertEqual(
+		ok,
+			update_block_index(3, 2, [
+				{<<"hash_h">>, 0, <<"root_h">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_h">>, 0, <<"root_h">>},
+		{<<"hash_c">>, 0, <<"root_c">>},
+		{<<"hash_b">>, 0, <<"root_b">>},
+		{<<"hash_a">>, 0, <<"root_a">>}
+	], read_block_index()),
+
+	%% Orphan: 1 for 3
+	?assertEqual(
+		ok,
+			update_block_index(1, 3, [
+				{<<"hash_i">>, 0, <<"root_i">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_i">>, 0, <<"root_i">>},
+		{<<"hash_a">>, 0, <<"root_a">>}
+	], read_block_index()),
+
+	%% Orphan: 2 for 2
+	?assertEqual(
+		ok,
+			update_block_index(1, 2, [
+				{<<"hash_j">>, 0, <<"root_j">>},
+				{<<"hash_k">>, 0, <<"root_k">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_k">>, 0, <<"root_k">>},
+		{<<"hash_j">>, 0, <<"root_j">>}
+	], read_block_index()),
+
+
+	%% Orphan: 3 for 1
+	?assertEqual(
+		ok,
+			update_block_index(3, 1, [
+				{<<"hash_l">>, 0, <<"root_l">>},
+				{<<"hash_m">>, 0, <<"root_m">>},
+				{<<"hash_n">>, 0, <<"root_n">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_n">>, 0, <<"root_n">>},
+		{<<"hash_m">>, 0, <<"root_m">>},
+		{<<"hash_l">>, 0, <<"root_l">>},
+		{<<"hash_j">>, 0, <<"root_j">>}
+	], read_block_index()),
+
+
+	%% Replace all but genesis
+	?assertEqual(
+		ok,
+			update_block_index(2, 3, [
+				{<<"hash_o">>, 0, <<"root_o">>},
+				{<<"hash_p">>, 0, <<"root_p">>}
+		])
+	),
+	?assertEqual([
+		{<<"hash_p">>, 0, <<"root_p">>},
+		{<<"hash_o">>, 0, <<"root_o">>},
+		{<<"hash_j">>, 0, <<"root_j">>}
+	], read_block_index()).
+
+
+
+

@@ -1,16 +1,16 @@
 -module(ar_test_node).
 
 %% The new, more flexible, and more user-friendly interface.
--export([wait_until_joined/0,
+-export([get_config/1,set_config/2, wait_until_joined/0, restart/0, restart/1,
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4]).
 
 %% The "legacy" interface.
--export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4, stop/0, stop/1,
-		start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1, stop_peers/0, stop_peer/1,
-		connect_to_peer/1, disconnect_from/1,
+-export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4,
+		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
+		stop_peers/0, stop_peer/1, connect_to_peer/1, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 
@@ -94,6 +94,9 @@ try_boot_peer(Node, Retries) ->
             try_boot_peer(Node, Retries - 1)
     end.
 
+self_node() ->
+	list_to_atom(get_node()).
+
 peer_name(Node) ->
 	list_to_atom(
 		atom_to_list(Node) ++ "-" ++ get_node_namespace() ++ "@127.0.0.1"
@@ -134,6 +137,12 @@ wait_until_joined() ->
 		100,
 		60 * 1000
 	 ).
+
+get_config(Node) ->
+	remote_call(Node, application, get_env, [arweave, config]).
+
+set_config(Node, Config) ->
+	remote_call(Node, application, set_env, [arweave, config, Config]).
 
 %% @doc Start a node with the given genesis block and configuration.
 start_node(B0, Config) ->
@@ -425,28 +434,28 @@ remote_call(Node, Module, Function, Args, Timeout) ->
 %%% Legacy public interface.
 %%%===================================================================
 
-%% @doc Start a fresh main node.
+%% @doc Start a fresh node.
 start() ->
 	[B0] = ar_weave:init(),
 	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 			element(2, application:get_env(arweave, config))).
 
-%% @doc Start a fresh main node with the given genesis block.
+%% @doc Start a fresh node with the given genesis block.
 start(B0) ->
 	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 			element(2, application:get_env(arweave, config))).
 
-%% @doc Start a fresh main node with the given genesis block and mining address.
+%% @doc Start a fresh node with the given genesis block and mining address.
 start(B0, RewardAddr) ->
 	start(B0, RewardAddr, element(2, application:get_env(arweave, config))).
 
-%% @doc Start a fresh main node with the given genesis block, mining address, and config.
+%% @doc Start a fresh node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
 	StorageModules = lists:flatten([[{20 * 1024 * 1024, N, {spora_2_6, RewardAddr}},
 			{20 * 1024 * 1024, N, spora_2_5}] || N <- lists:seq(0, 8)]),
 	start(B0, RewardAddr, Config, StorageModules).
 
-%% @doc Start a fresh main node with the given genesis block, mining address, config,
+%% @doc Start a fresh node with the given genesis block, mining address, config,
 %% and storage modules.
 %%
 %% Note: the Config provided here is written to disk. This is fine if it's the default Config,
@@ -478,7 +487,15 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	wait_until_joined(),
 	wait_until_syncs_genesis_data().
 
+restart() ->
+	stop(),
+	ar:start_dependencies(),
+	wait_until_joined(),
+	wait_until_syncs_genesis_data().
 
+restart(Node) ->
+	remote_call(Node, ?MODULE, restart, []).
+	
 start_peer(Node, Args) when is_list(Args) ->
 	remote_call(Node, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
 	wait_until_joined(Node),
@@ -674,18 +691,19 @@ connect_to_peer(Node) ->
 	ar_http:unblock_peer_connections(),
 	remote_call(Node, ar_http, unblock_peer_connections, []),
 	Peer = peer_ip(Node),
+	Self = self_node(),
 	%% Make requests to the nodes to make them discover each other.
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
 			path => "/info",
-			headers => p2p_headers(main)
+			headers => p2p_headers(Self)
 		}),
 	true = ar_util:do_until(
 		fun() ->
 			Peers = remote_call(Node, ar_peers, get_peers, [lifetime]),
-			lists:member(peer_ip(main), Peers)
+			lists:member(peer_ip(Self), Peers)
 		end,
 		200,
 		5000
@@ -693,7 +711,7 @@ connect_to_peer(Node) ->
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => peer_ip(main),
+			peer => peer_ip(Self),
 			path => "/info",
 			headers => p2p_headers(Node)
 		}),
@@ -1152,8 +1170,13 @@ assert_data_not_found(Node, TXID) ->
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).
 
 get_node_namespace() ->
-	Parts = string:tokens(atom_to_list(node()), "-@"), % Split the node name at '-' and '@'
-	lists:nth(2, Parts). % Retrieve the element between the '-' and '@'
+	lists:nth(2, split_node_name()). % Retrieve the element between the '-' and '@'
+
+get_node() ->
+	lists:nth(1, split_node_name()). % Retrieve the element before the '-'
+
+split_node_name() ->
+	string:tokens(atom_to_list(node()), "-@").
 
 get_unused_port() ->
   {ok, ListenSocket} = gen_tcp:listen(0, [{port, 0}]),

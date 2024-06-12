@@ -1470,12 +1470,12 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 handle_info({event, disksup, _}, State) ->
 	{noreply, State};
 
-handle_info({'EXIT', PID, normal}, #sync_data_state{ store_id = StoreID } = State) ->
+handle_info({'EXIT', _PID, normal}, State) ->
 	{noreply, State};
 
-handle_info({'DOWN', _,  process, _, normal},  #sync_data_state{ store_id = StoreID } = State) ->
+handle_info({'DOWN', _,  process, _, normal}, State) ->
 	{noreply, State};
-handle_info({'DOWN', _,  process, _, noproc},  #sync_data_state{ store_id = StoreID } = State) ->
+handle_info({'DOWN', _,  process, _, noproc}, State) ->
 	{noreply, State};
 handle_info({'DOWN', _,  process, _, Reason},  #sync_data_state{ store_id = StoreID } = State) ->
 	?LOG_WARNING([{event, collect_intervals_job_failed},
