@@ -42,23 +42,18 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
 			end
 	end.
 
+get_data_path_validation_ruleset(BlockStartOffset) ->
+	get_data_path_validation_ruleset(BlockStartOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD,
+			?STRICT_DATA_SPLIT_THRESHOLD).
+
 %% @doc Validate a proof of access.
 validate(Args) ->
-	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing, ExpectedChunkID} = Args,
-	#poa{ chunk = Chunk } = SPoA,
-	StrictDataSplitThreshold = ?STRICT_DATA_SPLIT_THRESHOLD,
-	MerkleRebaseSupportThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
+	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing, SubChunkIndex,
+			ExpectedChunkID} = Args,
+	#poa{ chunk = Chunk, unpacked_chunk = UnpackedChunk } = SPoA,
 	TXPath = SPoA#poa.tx_path,
-	RecallBucketOffset =
-		case RecallOffset >= StrictDataSplitThreshold of
-			true ->
-				get_padded_offset(RecallOffset + 1, StrictDataSplitThreshold)
-						- (?DATA_CHUNK_SIZE) - BlockStartOffset;
-			false ->
-				RecallOffset - BlockStartOffset
-		end,
-	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset,
-			MerkleRebaseSupportThreshold, StrictDataSplitThreshold),
+	RecallBucketOffset = get_recall_bucket_offset(RecallOffset, BlockStartOffset),
+	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset),
 	case ar_merkle:validate_path(TXRoot, RecallBucketOffset, BlockSize, TXPath) of
 		false ->
 			false;
@@ -73,26 +68,9 @@ validate(Args) ->
 				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
 					case ExpectedChunkID of
 						not_set ->
-							ChunkSize = ChunkEndOffset - ChunkStartOffset,
-							AbsoluteEndOffset = BlockStartOffset + TXStartOffset
-									+ ChunkEndOffset,
-							prometheus_counter:inc(
-								validating_packed_spora,
-								[ar_packing_server:packing_atom(Packing)]),
-							case ar_packing_server:unpack(Packing, AbsoluteEndOffset, TXRoot,
-									Chunk, ChunkSize) of
-								{error, _} ->
-									false;
-								{exception, _} ->
-									error;
-								{ok, Unpacked} ->
-									case ChunkID == ar_tx:generate_chunk_id(Unpacked) of
-										false ->
-											false;
-										true ->
-											{true, ChunkID}
-									end
-							end;
+							validate2(Packing, {ChunkID, ChunkStartOffset,
+									ChunkEndOffset, BlockStartOffset, TXStartOffset,
+									TXRoot, Chunk, UnpackedChunk, SubChunkIndex});
 						_ ->
 							case ChunkID == ExpectedChunkID of
 								false ->
@@ -102,6 +80,81 @@ validate(Args) ->
 							end
 					end
 			end
+	end.
+
+get_recall_bucket_offset(RecallOffset, BlockStartOffset) ->
+	case RecallOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
+		true ->
+			get_padded_offset(RecallOffset + 1, ?STRICT_DATA_SPLIT_THRESHOLD)
+					- (?DATA_CHUNK_SIZE) - BlockStartOffset;
+		false ->
+			RecallOffset - BlockStartOffset
+	end.
+
+validate2({spora_2_6, _} = Packing, Args) ->
+	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
+			TXRoot, Chunk, _UnpackedChunk, _SubChunkIndex} = Args,
+	ChunkSize = ChunkEndOffset - ChunkStartOffset,
+	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
+	prometheus_counter:inc(validating_packed_spora, [ar_packing_server:packing_atom(Packing)]),
+	case ar_packing_server:unpack(Packing, AbsoluteEndOffset, TXRoot, Chunk, ChunkSize) of
+		{error, _} ->
+			false;
+		{exception, _} ->
+			error;
+		{ok, Unpacked} ->
+			case ChunkID == ar_tx:generate_chunk_id(Unpacked) of
+				false ->
+					false;
+				true ->
+					{true, ChunkID}
+			end
+	end;
+validate2({composite, _, _} = Packing, Args) ->
+	{_ChunkID, ChunkStartOffset, ChunkEndOffset, _BlockStartOffset, _TXStartOffset,
+			_TXRoot, _Chunk, UnpackedChunk, _SubChunkIndex} = Args,
+	ChunkSize = ChunkEndOffset - ChunkStartOffset,
+	case ChunkSize > ?DATA_CHUNK_SIZE of
+		true ->
+			false;
+		false ->
+			PaddingSize = ?DATA_CHUNK_SIZE - ChunkSize,
+			case binary:part(UnpackedChunk, ChunkSize, PaddingSize) of
+				<< 0:(PaddingSize * 8) >> ->
+					validate3(Packing, Args);
+				_ ->
+					false
+			end
+	end.
+
+validate3({composite, _Addr, _PackingDifficulty} = Packing, Args) ->
+	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
+			TXRoot, Chunk, UnpackedChunk, SubChunkIndex} = Args,
+	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
+	SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	SubChunkStartOffset = SubChunkIndex * SubChunkSize,
+	%% We always expect the provided unpacked chunks to be padded (if necessary)
+	%% to 256 KiB.
+	UnpackedSubChunk = binary:part(UnpackedChunk, SubChunkStartOffset, SubChunkSize),
+	PackingAtom = ar_packing_server:packing_atom(Packing),
+	prometheus_counter:inc(validating_packed_spora, [PackingAtom]),
+	case ar_packing_server:unpack_sub_chunk(Packing, AbsoluteEndOffset, TXRoot, Chunk,
+			SubChunkStartOffset) of
+		{error, _} ->
+			false;
+		{exception, _} ->
+			error;
+		{ok, UnpackedSubChunk} ->
+			ChunkSize = ChunkEndOffset - ChunkStartOffset,
+			UnpackedChunkNoPadding = binary:part(UnpackedChunk, 0, ChunkSize),
+			case ChunkID == ar_tx:generate_chunk_id(UnpackedChunkNoPadding) of
+				false ->
+					false;
+				true ->
+					{true, ChunkID}
+			end;
+		{ok, _UnexpectedSubChunk} ->
+			false
 	end.
 
 %% @doc Return the smallest multiple of 256 KiB counting from StrictDataSplitThreshold

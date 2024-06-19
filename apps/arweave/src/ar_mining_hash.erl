@@ -139,8 +139,10 @@ hashing_thread(RandomXStateRef) ->
 		{compute, h0, Worker, Candidate} ->
 			#mining_candidate{
 				mining_address = MiningAddress, nonce_limiter_output = Output,
-				partition_number = PartitionNumber, seed = Seed } = Candidate,
-			H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress, RandomXStateRef),
+				partition_number = PartitionNumber, seed = Seed,
+				packing_difficulty = PackingDifficulty } = Candidate,
+			H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress,
+					PackingDifficulty, RandomXStateRef),
 			ar_mining_worker:computed_hash(Worker, computed_h0, H0, undefined, Candidate),
 			hashing_thread(RandomXStateRef);
 		{compute, h1, Worker, Candidate} ->

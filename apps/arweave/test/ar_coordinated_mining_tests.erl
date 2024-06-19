@@ -205,13 +205,13 @@ test_partition_table() ->
 	
 	?assertEqual(
 		{ok, [
-			{0, ?PARTITION_SIZE, MiningAddr},
-			{1, ?PARTITION_SIZE, MiningAddr},
-			{2, ?PARTITION_SIZE, MiningAddr},
-			{8, ?PARTITION_SIZE, MiningAddr},
-			{9, ?PARTITION_SIZE, MiningAddr},
-			{30, ?PARTITION_SIZE, MiningAddr},
-			{31, ?PARTITION_SIZE, MiningAddr}
+			{0, ?PARTITION_SIZE, MiningAddr, 0},
+			{1, ?PARTITION_SIZE, MiningAddr, 0},
+			{2, ?PARTITION_SIZE, MiningAddr, 0},
+			{8, ?PARTITION_SIZE, MiningAddr, 0},
+			{9, ?PARTITION_SIZE, MiningAddr, 0},
+			{30, ?PARTITION_SIZE, MiningAddr, 0},
+			{31, ?PARTITION_SIZE, MiningAddr, 0}
 		]},
 		ar_http_iface_client:get_cm_partition_table(Peer)
 	).
@@ -335,8 +335,14 @@ test_peers_by_partition() ->
 %% --------------------------------------------------------------------
 
 assert_peers(ExpectedPeers, Node, Partition) ->
-	Peers = ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]),
-	?assertEqual(lists:sort(ExpectedPeers), lists:sort(Peers)).
+	?assert(ar_util:do_until(
+		fun() ->
+			Peers = ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]),
+			lists:sort(ExpectedPeers) == lists:sort(Peers)
+		end,
+		200,
+		5000
+	)).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 	wait_for_each_node(

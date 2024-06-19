@@ -23,14 +23,30 @@ static ErlNifFunc nif_funcs[] = {
 	{"hash_fast_verify_nif", 6, hash_fast_verify_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"randomx_encrypt_chunk_nif", 7, randomx_encrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"randomx_decrypt_chunk_nif", 8, randomx_decrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"randomx_reencrypt_chunk_nif", 10, randomx_reencrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"hash_fast_long_with_entropy_nif", 6, hash_fast_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"hash_light_long_with_entropy_nif", 6, hash_light_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"bulk_hash_fast_long_with_entropy_nif", 14, bulk_hash_fast_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_reencrypt_chunk_nif", 10, randomx_reencrypt_chunk_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_encrypt_composite_chunk_nif", 9, randomx_encrypt_composite_chunk_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_decrypt_composite_chunk_nif", 10, randomx_decrypt_composite_chunk_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_decrypt_composite_sub_chunk_nif", 10, randomx_decrypt_composite_sub_chunk_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_reencrypt_legacy_to_composite_chunk_nif", 11,
+		randomx_reencrypt_legacy_to_composite_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_reencrypt_composite_to_composite_chunk_nif", 13,
+		randomx_reencrypt_composite_to_composite_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"hash_fast_long_with_entropy_nif", 6, hash_fast_long_with_entropy_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"hash_light_long_with_entropy_nif", 6, hash_light_long_with_entropy_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"bulk_hash_fast_long_with_entropy_nif", 14, bulk_hash_fast_long_with_entropy_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"vdf_sha2_nif", 5, vdf_sha2_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"vdf_parallel_sha_verify_nif", 8, vdf_parallel_sha_verify_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"vdf_parallel_sha_verify_with_reset_nif", 10, vdf_parallel_sha_verify_with_reset_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND}
+	{"vdf_parallel_sha_verify_nif", 8, vdf_parallel_sha_verify_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"vdf_parallel_sha_verify_with_reset_nif", 10, vdf_parallel_sha_verify_with_reset_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
 ERL_NIF_INIT(ar_mine_randomx, nif_funcs, load, NULL, NULL, NULL);
@@ -335,6 +351,106 @@ static ERL_NIF_TERM encrypt_chunk(ErlNifEnv* envPtr,
 	}
 
 	return encryptedChunkTerm;
+}
+
+static ERL_NIF_TERM encrypt_composite_chunk(ErlNifEnv* envPtr,
+		randomx_vm *vmPtr, ErlNifBinary *inputDataPtr, ErlNifBinary *inputChunkPtr,
+		const int subChunkCount, const int iterations,
+		const int randomxRoundCount, const int jitEnabled,
+		const int largePagesEnabled, const int hardwareAESEnabled) {
+
+	unsigned char *paddedChunk = (unsigned char*)malloc(MAX_CHUNK_SIZE);
+	if (inputChunkPtr->size == MAX_CHUNK_SIZE) {
+		memcpy(paddedChunk, inputChunkPtr->data, inputChunkPtr->size);
+	} else {
+		memset(paddedChunk, 0, MAX_CHUNK_SIZE);
+		memcpy(paddedChunk, inputChunkPtr->data, inputChunkPtr->size);
+	}
+
+	ERL_NIF_TERM encryptedChunkTerm;
+	unsigned char* encryptedChunk = enif_make_new_binary(envPtr, MAX_CHUNK_SIZE,
+			&encryptedChunkTerm);
+	// Both MAX_CHUNK_SIZE and subChunkCount are multiples of 64 so all sub-chunks
+	// are of the same size.
+	uint32_t subChunkSize = MAX_CHUNK_SIZE / subChunkCount;
+	uint32_t offset = 0;
+	unsigned char key[PACKING_KEY_SIZE];
+	for (int i = 0; i < subChunkCount; i++) {
+		unsigned char* subChunk = paddedChunk + offset;
+		unsigned char* encryptedSubChunk = (unsigned char*)malloc(subChunkSize);
+
+		// 3 bytes is sufficient to represent offsets up to at most MAX_CHUNK_SIZE.
+		int offsetByteSize = 3;
+		unsigned char offsetBytes[offsetByteSize];
+		for (int k = 0; k < offsetByteSize; k++) {
+			offsetBytes[k] = ((offset + subChunkSize) >> (8 * (offsetByteSize - 1 - k))) & 0xFF;
+		}
+		SHA256_CTX sha256;
+		SHA256_Init(&sha256);
+		SHA256_Update(&sha256, inputDataPtr->data, inputDataPtr->size);
+		SHA256_Update(&sha256, offsetBytes, offsetByteSize);
+		SHA256_Final(key, &sha256);
+
+		for (int j = 0; j < iterations; j++) {
+			randomx_encrypt_chunk(
+				vmPtr, key, PACKING_KEY_SIZE, subChunk, subChunkSize,
+				encryptedSubChunk, randomxRoundCount);
+			if (j < iterations - 1) {
+				memcpy(subChunk, encryptedSubChunk, subChunkSize);
+			}
+		}
+		memcpy(encryptedChunk + offset, encryptedSubChunk, subChunkSize);
+		free(encryptedSubChunk);
+		offset += subChunkSize;
+	}
+	free(paddedChunk);
+	return encryptedChunkTerm;
+}
+
+static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
+		randomx_vm *vmPtr, ErlNifBinary *inputDataPtr, ErlNifBinary *inputChunkPtr,
+		const int outChunkLen, const int subChunkCount, const int iterations,
+		const int randomxRoundCount, const int jitEnabled,
+		const int largePagesEnabled, const int hardwareAESEnabled) {
+
+	ERL_NIF_TERM decryptedChunkTerm;
+	unsigned char* decryptedChunk = enif_make_new_binary(envPtr, outChunkLen,
+			&decryptedChunkTerm);
+	unsigned char* decryptedSubChunk;
+	// Both MAX_CHUNK_SIZE and subChunkCount are multiples of 64 so all sub-chunks
+	// are of the same size.
+	uint32_t subChunkSize = outChunkLen / subChunkCount;
+	uint32_t offset = 0;
+	unsigned char key[PACKING_KEY_SIZE];
+	for (int i = 0; i < subChunkCount; i++) {
+		unsigned char* subChunk = inputChunkPtr->data + offset;
+		decryptedSubChunk = (unsigned char*)malloc(subChunkSize);
+
+		// 3 bytes is sufficient to represent offsets up to at most MAX_CHUNK_SIZE.
+		int offsetByteSize = 3;
+		unsigned char offsetBytes[offsetByteSize];
+		for (int k = 0; k < offsetByteSize; k++) {
+			offsetBytes[k] = ((offset + subChunkSize) >> (8 * (offsetByteSize - 1 - k))) & 0xFF;
+		}
+		SHA256_CTX sha256;
+		SHA256_Init(&sha256);
+		SHA256_Update(&sha256, inputDataPtr->data, inputDataPtr->size);
+		SHA256_Update(&sha256, offsetBytes, offsetByteSize);
+		SHA256_Final(key, &sha256);
+
+		for (int j = 0; j < iterations; j++) {
+			randomx_decrypt_chunk(
+				vmPtr, key, PACKING_KEY_SIZE, subChunk, subChunkSize,
+				decryptedSubChunk, randomxRoundCount);
+			if (j < iterations - 1) {
+				memcpy(subChunk, decryptedSubChunk, subChunkSize);
+			}
+		}
+		memcpy(decryptedChunk + offset, decryptedSubChunk, subChunkSize);
+		free(decryptedSubChunk);
+		offset += subChunkSize;
+	}
+	return decryptedChunkTerm;
 }
 
 static ERL_NIF_TERM randomx_hash_nif(
@@ -910,7 +1026,463 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(
 	return ok_tuple2(envPtr, reencryptedChunkTerm, decryptedChunkTerm);
 }
 
+static ERL_NIF_TERM randomx_encrypt_composite_chunk_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[]
+) {
+	// RandomX rounds per sub-chunk.
+	int randomxRoundCount;
+	// RandomX iterations (randomxRoundCount each) per sub-chunk.
+	int iterations;
+	// The number of sub-chunks in the chunk.
+	int subChunkCount;
+	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	struct state* statePtr;
+	ErlNifBinary inputData;
+	ErlNifBinary inputChunk;
 
+	if (argc != 9) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk) ||
+		inputChunk.size == 0 ||
+		inputChunk.size > MAX_CHUNK_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[3], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &randomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[7], &iterations) ||
+		iterations < 1) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[8], &subChunkCount) ||
+		subChunkCount < 1 ||
+		MAX_CHUNK_SIZE % subChunkCount != 0 ||
+		(MAX_CHUNK_SIZE / subChunkCount) % 64 != 0 ||
+		subChunkCount > (MAX_CHUNK_SIZE / 64)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
+	if (vmPtr == NULL) {
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
+		return error(envPtr, "randomx_create_vm failed");
+	}
+
+	ERL_NIF_TERM encryptedChunkTerm = encrypt_composite_chunk(envPtr, vmPtr, &inputData,
+			&inputChunk, subChunkCount, iterations, randomxRoundCount,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled);
+	destroy_vm(statePtr, vmPtr);
+	return ok_tuple(envPtr, encryptedChunkTerm);
+}
+
+static ERL_NIF_TERM randomx_decrypt_composite_chunk_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[]
+) {
+	int outChunkLen;
+	// RandomX rounds per sub-chunk.
+	int randomxRoundCount;
+	// RandomX iterations (randomxRoundCount each) per sub-chunk.
+	int iterations;
+	// The number of sub-chunks in the chunk.
+	int subChunkCount;
+	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	struct state* statePtr;
+	ErlNifBinary inputData;
+	ErlNifBinary inputChunk;
+
+	if (argc != 10) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[3], &outChunkLen) ||
+		outChunkLen > MAX_CHUNK_SIZE ||
+		outChunkLen < 64 ||
+		inputChunk.size != outChunkLen) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[7], &randomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[8], &iterations) ||
+		iterations < 1) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[9], &subChunkCount) ||
+		subChunkCount < 1 ||
+		outChunkLen % subChunkCount != 0 ||
+		(outChunkLen / subChunkCount) % 64 != 0 ||
+		subChunkCount > (outChunkLen / 64)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
+	if (vmPtr == NULL) {
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
+		return error(envPtr, "randomx_create_vm failed");
+	}
+	ERL_NIF_TERM decryptedChunkTerm = decrypt_composite_chunk(envPtr, vmPtr,
+			&inputData, &inputChunk, outChunkLen, subChunkCount, iterations,
+			randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled);
+
+	destroy_vm(statePtr, vmPtr);
+
+	return ok_tuple(envPtr, decryptedChunkTerm);
+}
+
+static ERL_NIF_TERM randomx_decrypt_composite_sub_chunk_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[]
+) {
+	int outChunkLen;
+	// RandomX rounds per sub-chunk.
+	int randomxRoundCount;
+	// RandomX iterations (randomxRoundCount each) per sub-chunk.
+	int iterations;
+	// The relative sub-chunk start offset. We add the chunk size to it, encode the result,
+	// add it to the base packing key, and SHA256-hash it to get the packing key.
+	uint32_t offset;
+	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	struct state* statePtr;
+	ErlNifBinary inputData;
+	ErlNifBinary inputChunk;
+
+	if (argc != 10) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[3], &outChunkLen) ||
+		outChunkLen > MAX_CHUNK_SIZE ||
+		outChunkLen < 64 ||
+		inputChunk.size != outChunkLen ) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[7], &randomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[8], &iterations) ||
+		iterations < 1) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_uint(envPtr, argv[9], &offset) ||
+		offset < 0 ||
+		offset > MAX_CHUNK_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+
+	int isRandomxReleased;
+	ERL_NIF_TERM decryptedSubChunkTerm;
+	unsigned char* decryptedSubChunk = enif_make_new_binary(envPtr, outChunkLen,
+			&decryptedSubChunkTerm);
+	uint32_t subChunkSize = outChunkLen;
+	unsigned char key[PACKING_KEY_SIZE];
+
+	randomx_vm *vmPtr = create_vm(statePtr, 1,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
+	if (vmPtr == NULL) {
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
+		return error(envPtr, "randomx_create_vm failed");
+	}
+
+	unsigned char* subChunk = (unsigned char*)malloc(inputChunk.size);
+	memcpy(subChunk, inputChunk.data, inputChunk.size);
+
+	// 3 bytes is sufficient to represent offsets up to at most MAX_CHUNK_SIZE.
+	int offsetByteSize = 3;
+	unsigned char offsetBytes[offsetByteSize];
+	for (int k = 0; k < offsetByteSize; k++) {
+		offsetBytes[k] = ((offset + subChunkSize) >> (8 * (offsetByteSize - 1 - k))) & 0xFF;
+	}
+	SHA256_CTX sha256;
+	SHA256_Init(&sha256);
+	SHA256_Update(&sha256, inputData.data, inputData.size);
+	SHA256_Update(&sha256, offsetBytes, offsetByteSize);
+	SHA256_Final(key, &sha256);
+
+	for (int j = 0; j < iterations; j++) {
+		randomx_decrypt_chunk(vmPtr, key, PACKING_KEY_SIZE, subChunk, subChunkSize,
+			decryptedSubChunk, randomxRoundCount);
+		if (j < iterations - 1) {
+			memcpy(subChunk, decryptedSubChunk, subChunkSize);
+		}
+	}
+	free(subChunk);
+	destroy_vm(statePtr, vmPtr);
+
+	return ok_tuple(envPtr, decryptedSubChunkTerm);
+}
+
+static ERL_NIF_TERM randomx_reencrypt_legacy_to_composite_chunk_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[]
+) {
+	int decryptRandomxRoundCount, encryptRandomxRoundCount;
+	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	int subChunkCount, iterations;
+	struct state* statePtr;
+	ErlNifBinary decryptKey;
+	ErlNifBinary encryptKey;
+	ErlNifBinary inputChunk;
+
+	if (argc != 11) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &decryptKey)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &encryptKey)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) ||
+			inputChunk.size != MAX_CHUNK_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[7], &decryptRandomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[8], &encryptRandomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[9], &iterations) ||
+		iterations < 1) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[10], &subChunkCount) ||
+		subChunkCount < 1 ||
+		MAX_CHUNK_SIZE % subChunkCount != 0 ||
+		(MAX_CHUNK_SIZE / subChunkCount) % 64 != 0 ||
+		subChunkCount > (MAX_CHUNK_SIZE / 64)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
+	if (vmPtr == NULL) {
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
+		return error(envPtr, "randomx_create_vm failed");
+	}
+
+	unsigned char decryptedChunk[MAX_CHUNK_SIZE];
+	ERL_NIF_TERM decryptedChunkTerm = decrypt_chunk(envPtr, vmPtr,
+		decryptKey.data, decryptKey.size, inputChunk.data, inputChunk.size,
+		decryptedChunk, inputChunk.size, decryptRandomxRoundCount);
+	ErlNifBinary decryptedChunkBin;
+    if (!enif_inspect_binary(envPtr, decryptedChunkTerm, &decryptedChunkBin)) {
+		destroy_vm(statePtr, vmPtr);
+        return enif_make_badarg(envPtr);
+    }
+	ERL_NIF_TERM reencryptedChunkTerm = encrypt_composite_chunk(envPtr, vmPtr, &encryptKey,
+			&decryptedChunkBin, subChunkCount, iterations, encryptRandomxRoundCount,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled);
+	destroy_vm(statePtr, vmPtr);
+	return ok_tuple2(envPtr, reencryptedChunkTerm, decryptedChunkTerm);
+}
+
+static ERL_NIF_TERM randomx_reencrypt_composite_to_composite_chunk_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[]
+) {
+	int decryptRandomxRoundCount, encryptRandomxRoundCount;
+	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	int decryptSubChunkCount, encryptSubChunkCount, decryptIterations, encryptIterations;
+	struct state* statePtr;
+	ErlNifBinary decryptKey;
+	ErlNifBinary encryptKey;
+	ErlNifBinary inputChunk;
+	ERL_NIF_TERM inputChunkTerm;
+
+	if (argc != 13) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &decryptKey)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &encryptKey)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) ||
+			inputChunk.size != MAX_CHUNK_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	inputChunkTerm = argv[3];
+	if (!enif_get_int(envPtr, argv[4], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[7], &decryptRandomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[8], &encryptRandomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[9], &decryptIterations) ||
+		decryptIterations < 1) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[10], &encryptIterations) ||
+		encryptIterations < 1) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[11], &decryptSubChunkCount) ||
+		decryptSubChunkCount < 1 ||
+		MAX_CHUNK_SIZE % decryptSubChunkCount != 0 ||
+		(MAX_CHUNK_SIZE / decryptSubChunkCount) % 64 != 0 ||
+		decryptSubChunkCount > (MAX_CHUNK_SIZE / 64)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[12], &encryptSubChunkCount) ||
+		encryptSubChunkCount < 1 ||
+		MAX_CHUNK_SIZE % encryptSubChunkCount != 0 ||
+		(MAX_CHUNK_SIZE / encryptSubChunkCount) % 64 != 0 ||
+		encryptSubChunkCount > (MAX_CHUNK_SIZE / 64)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	int isRandomxReleased;
+	randomx_vm *vmPtr = create_vm(statePtr, 1,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
+	if (vmPtr == NULL) {
+		if (isRandomxReleased != 0) {
+			return error(envPtr, "state has been released");
+		}
+		return error(envPtr, "randomx_create_vm failed");
+	}
+
+	int keysMatch = 0;
+	if (decryptKey.size == encryptKey.size) {
+		if (memcmp(decryptKey.data, encryptKey.data, decryptKey.size) == 0) {
+			keysMatch = 1;
+		}
+	}
+	int encryptionsMatch = 0;
+	if (keysMatch && (decryptSubChunkCount == encryptSubChunkCount) &&
+			(decryptRandomxRoundCount == encryptRandomxRoundCount)) {
+		encryptionsMatch = 1;
+	}
+
+	if (encryptionsMatch && (encryptIterations <= decryptIterations)) {
+		destroy_vm(statePtr, vmPtr);
+		return enif_make_badarg(envPtr);
+	}
+
+	unsigned char decryptedChunk[MAX_CHUNK_SIZE];
+	ErlNifBinary *decryptedChunkBinPtr;
+	ERL_NIF_TERM decryptedChunkTerm;
+	if (!encryptionsMatch) {
+		decryptedChunkTerm = decrypt_composite_chunk(envPtr, vmPtr,
+				&decryptKey, &inputChunk, inputChunk.size, decryptSubChunkCount,
+				decryptIterations, decryptRandomxRoundCount, jitEnabled,
+				largePagesEnabled, hardwareAESEnabled);
+		ErlNifBinary decryptedChunkBin;
+		if (!enif_inspect_binary(envPtr, decryptedChunkTerm, &decryptedChunkBin)) {
+			destroy_vm(statePtr, vmPtr);
+			return enif_make_badarg(envPtr);
+		}
+		decryptedChunkBinPtr = &decryptedChunkBin;
+	} else {
+		decryptedChunkBinPtr = &inputChunk;
+		decryptedChunkTerm = inputChunkTerm;
+	}
+	int iterations = encryptIterations;
+	if (encryptionsMatch) {
+		iterations = encryptIterations - decryptIterations;
+	}
+
+	ERL_NIF_TERM reencryptedChunkTerm = encrypt_composite_chunk(envPtr, vmPtr, &encryptKey,
+			decryptedChunkBinPtr, encryptSubChunkCount, iterations, encryptRandomxRoundCount,
+			jitEnabled, largePagesEnabled, hardwareAESEnabled);
+	destroy_vm(statePtr, vmPtr);
+	return ok_tuple2(envPtr, reencryptedChunkTerm, decryptedChunkTerm);
+}
 
 static ERL_NIF_TERM hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
