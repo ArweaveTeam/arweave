@@ -25,9 +25,10 @@ init([]) ->
 	%% currently exceed the weave size. Those workers will just lie dormant until the
 	%% weave size grows to meet them.
 	MiningWorkers = lists:map(
-		fun({Partition, _}) ->
+		fun({Partition, _MiningAddr, PackingDifficulty}) ->
 			?CHILD_WITH_ARGS(
-				ar_mining_worker, worker, ar_mining_worker:name(Partition), [Partition])
+				ar_mining_worker, worker, ar_mining_worker:name(Partition, PackingDifficulty),
+					[Partition, PackingDifficulty])
 		end,
 		ar_mining_io:get_partitions(infinity)
 	),

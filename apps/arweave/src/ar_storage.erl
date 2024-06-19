@@ -583,13 +583,21 @@ migrate_block_record({block, Nonce, PrevH, TS, Last, Diff, Height, Hash, H,
 		TXs, TXRoot, TXTree, HL, HLMerkle, WL, RewardAddr, Tags, RewardPool,
 		WeaveSize, BlockSize, CDiff, SizeTaggedTXs, PoA, Rate, ScheduledRate,
 		Packing_2_5_Threshold, StrictDataSplitThreshold}) ->
+	PoA_2 =
+		case PoA of
+			{poa, O, TXPath, DataPath, Chunk} ->
+				#poa{ option = O, tx_path = TXPath, data_path = DataPath,
+						chunk = Chunk };
+			#poa{} ->
+				PoA
+		end,
 	#block{ nonce = Nonce, previous_block = PrevH, timestamp = TS,
 			last_retarget = Last, diff = Diff, height = Height, hash = Hash,
 			indep_hash = H, txs = TXs, tx_root = TXRoot, tx_tree = TXTree,
 			hash_list = HL, hash_list_merkle = HLMerkle, wallet_list = WL,
 			reward_addr = RewardAddr, tags = Tags, reward_pool = RewardPool,
 			weave_size = WeaveSize, block_size = BlockSize, cumulative_diff = CDiff,
-			size_tagged_txs = SizeTaggedTXs, poa = PoA, usd_to_ar_rate = Rate,
+			size_tagged_txs = SizeTaggedTXs, poa = PoA_2, usd_to_ar_rate = Rate,
 			scheduled_usd_to_ar_rate = ScheduledRate,
 			packing_2_5_threshold = Packing_2_5_Threshold,
 			strict_data_split_threshold = StrictDataSplitThreshold }.

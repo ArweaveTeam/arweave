@@ -98,12 +98,13 @@ show_help() ->
 					"a particular data range. The data and metadata related to the module "
 					"are stored in a dedicated folder "
 					"([data_dir]/storage_modules/storage_module_[partition_number]_[packing]/"
-					") where packing is either a mining address or \"unpacked\"."
-					" Example: storage_module 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI. "
+					") where packing is either a mining address + : + packing difficulty "
+					"(integer), or \"unpacked\"."
+					" Example: storage_module 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI:1. "
 					"To configure a module of a custom size, set "
 					"storage_module {number},{size_in_bytes},{packing}. For instance, "
 					"storage_module "
-					"22,1000000000000,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI will be "
+					"22,1000000000000,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI:1 will be "
 					"syncing the weave data between the offsets 22 TB and 23 TB. Make sure "
 					"the corresponding disk contains some extra space for the proofs and "
 					"other metadata, about 10% of the configured size."
@@ -112,11 +113,11 @@ show_help() ->
 					"storage_module "
 					"{partition_number},{packing},repack_in_place,{target_packing}. "
 					"For example, if you want to repack a storage module "
-					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI to the new address "
+					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI:1 to the new address "
 					"Q5EfKawrRazp11HEDf_NJpxjYMV385j21nlQNjR8_pY, specify "
 					"storage_module "
-					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI,repack_in_place,"
-					"Q5EfKawrRazp11HEDf_NJpxjYMV385j21nlQNjR8_pY. This storage module "
+					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI:1,repack_in_place,"
+					"Q5EfKawrRazp11HEDf_NJpxjYMV385j21nlQNjR8_pY:1. This storage module "
 					"will only do the repacking - it won't be used for mining and won't "
 					"serve any data to peers. Once the repacking is complete, a message will "
 					"be logged to the file and written to the console. We suggest you rename "
@@ -126,10 +127,10 @@ show_help() ->
 					"a module already being repacked to the yet different packing, simply "
 					"restart the node specifying the corresponding packing. E.g., in "
 					"the example above, you can restart with storage_module "
-					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI,repack_in_place,unpacked."
+					"22,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI:1,repack_in_place,unpacked."
 					" The node will unpack everything that was repacked to "
 					"Q5EfKawrRazp11HEDf_NJpxjYMV385j21nlQNjR8_pY and also unpack everything "
-					"that is still packed with En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI."
+					"that is still packed with En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI:1."
 			},
 			{"repack_batch_size", io_lib:format("The number of chunk fetched from disk "
 				"at a time during in-place repacking. Default: ~B.",
@@ -293,9 +294,11 @@ show_help() ->
 				"Run defragmentation of the chunk storage files from the given storage module."
 				" Assumes the run_defragmentation flag is provided."},
 			{"tls_cert_file",
-				"Optional path to the TLS certificate file for TLS support, depends on 'tls_key_file' being set as well."},
+				"Optional path to the TLS certificate file for TLS support, "
+				"depends on 'tls_key_file' being set as well."},
 			{"tls_key_file",
-				"The path to the TLS key file for TLS support, depends on 'tls_cert_file' being set as well."},
+				"The path to the TLS key file for TLS support, depends "
+				"on 'tls_cert_file' being set as well."},
 			{"coordinated_mining", "Enable coordinated mining. If you are a solo pool miner "
 					"coordinating on a replica with other pool miners, set this flag too. "
 					"To connect the internal nodes, set cm_api_secret, cm_peer, "
@@ -309,10 +312,11 @@ show_help() ->
 			{"cm_poll_interval", io_lib:format("The frequency in milliseconds of asking the "
 					"other nodes in the coordinated mining setup about their partition "
 					"tables. Default is ~B.", [?DEFAULT_CM_POLL_INTERVAL_MS])},
-			{"cm_out_batch_timeout (num)", io_lib:format("The frequency in milliseconds of sending "
-					"other nodes in the coordinated mining setup a batch of H1 values to hash. "
-					"A higher value reduces network traffic, a lower value reduces hashing latency."
-					"Default is ~B.", [?DEFAULT_CM_BATCH_TIMEOUT_MS])},
+			{"cm_out_batch_timeout (num)", io_lib:format("The frequency in milliseconds of "
+					"sending other nodes in the coordinated mining setup a batch of H1 "
+					"values to hash. A higher value reduces network traffic, a lower value "
+					"reduces hashing latency. Default is ~B.",
+					[?DEFAULT_CM_BATCH_TIMEOUT_MS])},
 			{"cm_in_batch_timeout", "DEPRECATED. Does not affect anything."},
 			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
 					"set coordinated_mining, cm_api_secret, and cm_exit_peer. The same "
@@ -465,7 +469,8 @@ parse_cli_args(["mining_server_chunk_cache_size_limit", Num | Rest], C) ->
 parse_cli_args(["max_emitters", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
 parse_cli_args(["disk_space", Size | Rest], C) ->
-	parse_cli_args(Rest, C#config{ disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
+	parse_cli_args(Rest,
+			C#config{ disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
 parse_cli_args(["disk_space_check_frequency", Frequency | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 		disk_space_check_frequency = list_to_integer(Frequency) * 1000
@@ -609,7 +614,7 @@ parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 	end;
 parse_cli_args(["cm_out_batch_timeout", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ cm_out_batch_timeout = list_to_integer(Num) });
-parse_cli_args(["cm_in_batch_timeout", Num | Rest], C) ->
+parse_cli_args(["cm_in_batch_timeout", _Num | Rest], C) ->
 	?LOG_WARNING("Deprecated option found 'cm_in_batch_timeout': "
 		" this option has been removed and is now a no-op.", []),
 	parse_cli_args(Rest, C#config{ });

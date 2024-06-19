@@ -269,7 +269,8 @@ register() ->
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
 		{labels, [partition]},
-		{help, "The number of chunks fetched during mining and not processed yet."}
+		{help, "The number of chunks (measured in 8192-byte sub-chunks) "
+			"fetched during mining and not processed yet."}
 	]),
 	prometheus_gauge:new([
 		{name, mining_server_task_queue_len},
@@ -403,11 +404,12 @@ register() ->
 		{labels, [type, packing, trigger]},
 		{buckets, [1, 5, 10, 50, 100, 500, 1000]},
 		{help, "The packing/unpacking time in milliseconds. The type label indicates what "
-				"type of operation was requested either: 'pack' or 'unpack'. The packing "
+				"type of operation was requested either: 'pack', 'unpack',"
+				"or 'unpack_sub_chunk'. The packing "
 				"label differs based on the type. If type is 'unpack' then the packing label "
 				"indicates the format of the chunk before being unpacked. If type is 'pack' "
 				"then the packing label indicates the format that the chunk will be packed "
-				"to. In all cases its value can be 'spora_2_5' or 'spora_2_6'. "
+				"to. In all cases its value can be 'spora_2_5', 'spora_2_6', or 'composite'. "
 				"The trigger label shows where the request was triggered: "
 				"'external' (e.g. an HTTP request) or 'internal' (e.g. during syncing or "
 				"repacking)."}
@@ -416,11 +418,13 @@ register() ->
 		{name, packing_requests},
 		{labels, [type, packing, from]},
 		{help, "The number of packing requests received. The type label indicates what "
-				"type of operation was requested either: 'pack' or 'unpack'. The packing "
+				"type of operation was requested either: 'pack', 'unpack', or "
+				"'unpack_sub_chunk'. The packing "
 				"label differs based on the type. If type is 'unpack' then the packing label "
 				"indicates the format of the chunk before being unpacked. If type is 'pack' "
 				"then the packing label indicates the format that the chunk will be packed "
-				"to. In all cases its value can be 'unpacked', 'spora_2_5', or 'spora_2_6'. "
+				"to. In all cases its value can be 'unpacked', 'spora_2_5', 'spora_2_6' or"
+				" 'composite'. "
 				"The from label shows where the request was initiated (e.g. the "
 				"calling function, or message). "}
 	]),
@@ -428,7 +432,7 @@ register() ->
 		{name, validating_packed_spora},
 		{labels, [packing]},
 		{help, "The number of SPoRA solutions based on packed chunks entered validation. "
-				"The packing label can be 'spora_2_5' or 'spora_2_6'."}
+				"The packing label can be 'spora_2_5', 'spora_2_6', or 'composite'."}
 	]),
 	prometheus_gauge:new([
 		{name, packing_latency_benchmark},
@@ -437,7 +441,8 @@ register() ->
 				"benchmark is being recorded - 'protocol' records the ?PACKING_LATENCY "
 				"value, and 'init' records the latency sampled at node startup. "
 				"The type label can be 'pack' or 'unpack'. The packing label can be "
-				"'spora_2_5' or 'spora_2_6'. The 'packing_duration_milliseconds' metric "
+				"'spora_2_5', 'spora_2_6', or 'composite'. "
+				"The 'packing_duration_milliseconds' metric "
 				"records the actual latency observed during node operation."}
 	]),
 	prometheus_gauge:new([

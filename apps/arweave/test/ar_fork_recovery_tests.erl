@@ -152,7 +152,10 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
 			ok;
 		{event, block, {new, #block{ indep_hash = B2H }, _Peer3}} ->
-			?assert(false, "Unexpected block acceptance")
+			?assert(false, "Unexpected block acceptance");
+		{event, block, Other} ->
+			?debugFmt("Unexpected block event: ~p", [Other]),
+			?assert(false, "Unexpected block event")
 	after 5000 ->
 		?assert(false, "Timed out waiting for the node to pre-validate the fake "
 				"block.")
@@ -169,15 +172,14 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 	#block{
 		partition_number = PartitionNumber,
 		previous_solution_hash = PrevSolutionH,
-		nonce_limiter_info = #nonce_limiter_info{ output = Output,
+		nonce_limiter_info = #nonce_limiter_info{
 				partition_upper_bound = PartitionUpperBound },
 		diff = Diff
 	} = B,
 	B2 = B#block{ cumulative_diff = CDiff },
 	Wallet = ar_wallet:new(),
 	RewardAddr2 = ar_wallet:to_address(Wallet),
-	Seed = (PrevB#block.nonce_limiter_info)#nonce_limiter_info.seed,
-	H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, RewardAddr2),
+	H0 = ar_block:compute_h0(B, PrevB),
 	{RecallByte, _RecallRange2Start} = ar_block:get_recall_range(H0, PartitionNumber,
 			PartitionUpperBound),
 	{ok, #{ data_path := DataPath, tx_path := TXPath,
@@ -186,18 +188,32 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 	{H1, Preimage} = ar_block:compute_h1(H0, 0, Chunk),
 	case binary:decode_unsigned(H1) > Diff of
 		true ->
+			PoA = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 			B3 = B2#block{ hash = H1, hash_preimage = Preimage, reward_addr = RewardAddr2,
 					reward_key = element(2, Wallet), recall_byte = RecallByte, nonce = 0,
-					recall_byte2 = undefined, poa = #poa{ chunk = Chunk, data_path = DataPath,
+					recall_byte2 = undefined, poa2 = #poa{},
+					unpacked_chunk2_hash = undefined,
+					poa = #poa{ chunk = Chunk, data_path = DataPath,
 							tx_path = TXPath },
 					chunk_hash = crypto:hash(sha256, Chunk) },
+			B4 =
+				case ar_fork:height_2_8() of
+					0 ->
+						{ok, #{ chunk := UnpackedChunk } } = ar_data_sync:get_chunk(
+								RecallByte + 1, #{ pack => true, packing => unpacked }),
+						B3#block{ packing_difficulty = 1,
+								poa = PoA#poa{ unpacked_chunk = UnpackedChunk },
+								unpacked_chunk_hash = crypto:hash(sha256, UnpackedChunk) };
+					_ ->
+						B3
+				end,
 			PrevCDiff = PrevB#block.cumulative_diff,
-			SignedH = ar_block:generate_signed_hash(B3),
+			SignedH = ar_block:generate_signed_hash(B4),
 			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
 					SignedH/binary >>,
 			Signature = ar_wallet:sign(element(1, Wallet), SignaturePreimage),
-			B3#block{ indep_hash = ar_block:indep_hash2(SignedH, Signature),
+			B4#block{ indep_hash = ar_block:indep_hash2(SignedH, Signature),
 					signature = Signature };
 		false ->
 			fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff)

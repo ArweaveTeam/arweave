@@ -100,36 +100,36 @@ test_partitions() ->
 	ar_mining_io:set_largest_seen_upper_bound(?PARTITION_SIZE),
 	?assertEqual([], ar_mining_io:get_partitions(0)),
 	?assertEqual([
-			{0, MiningAddress}],
+			{0, MiningAddress, 0}],
 		ar_mining_io:get_partitions()),
 
 	ar_mining_io:set_largest_seen_upper_bound(trunc(2.5 * ?PARTITION_SIZE)),
 	?assertEqual([
-			{0, MiningAddress}],
+			{0, MiningAddress, 0}],
 		ar_mining_io:get_partitions(?PARTITION_SIZE)),
 	?assertEqual([
-			{0, MiningAddress},
-			{1, MiningAddress}],
+			{0, MiningAddress, 0},
+			{1, MiningAddress, 0}],
 		ar_mining_io:get_partitions()),
 
 	ar_mining_io:set_largest_seen_upper_bound(trunc(5 * ?PARTITION_SIZE)),
 	?assertEqual([
-			{0, MiningAddress},
-			{1, MiningAddress}],
+			{0, MiningAddress, 0},
+			{1, MiningAddress, 0}],
 		ar_mining_io:get_partitions(trunc(2.5 * ?PARTITION_SIZE))),
 	?assertEqual([
-			{0, MiningAddress},
-			{1, MiningAddress},
-			{2, MiningAddress},
-			{3, MiningAddress},
-			{4, MiningAddress}],
+			{0, MiningAddress, 0},
+			{1, MiningAddress, 0},
+			{2, MiningAddress, 0},
+			{3, MiningAddress, 0},
+			{4, MiningAddress, 0}],
 		ar_mining_io:get_partitions()),
 	?assertEqual([
-			{0, MiningAddress},
-			{1, MiningAddress},
-			{2, MiningAddress},
-			{3, MiningAddress},
-			{4, MiningAddress}],
+			{0, MiningAddress, 0},
+			{1, MiningAddress, 0},
+			{2, MiningAddress, 0},
+			{3, MiningAddress, 0},
+			{4, MiningAddress, 0}],
 		ar_mining_io:get_partitions(trunc(5 * ?PARTITION_SIZE))).
 
 default_candidate() ->
@@ -159,7 +159,7 @@ get_recall_chunks() ->
 				ChunkOffsets
 			)
 	end.
-	
+
 assert_chunks_read(ExpectedChunks) ->
 	?assertEqual(ExpectedChunks, ets:tab2list(?MODULE)),
 	ets:delete_all_objects(?MODULE).
