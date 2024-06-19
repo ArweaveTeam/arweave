@@ -1558,20 +1558,30 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
 							data_path => DataPath, tx_path => TXPath },
 					{ok, Proof};
-				{{ok, PackedChunk, _}, none} ->
+				{{ok, PackedChunk, MaybeUnpackedChunk}, none} ->
 					%% PackedChunk is the requested format, but the ChunkID could
 					%% not be determined
 					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
 							data_path => DataPath, tx_path => TXPath,
 							end_offset => AbsoluteOffset },
-					{ok, Proof};
+					case MaybeUnpackedChunk of
+						none ->
+							{ok, Proof};
+						_ ->
+							{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }}
+					end;
 				{{ok, PackedChunk, MaybeUnpackedChunk}, _} ->
 					ComputedChunkID = ar_tx:generate_chunk_id(MaybeUnpackedChunk),
 					case ComputedChunkID == ChunkID of
 						true ->
 							Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
 									data_path => DataPath, tx_path => TXPath },
-							{ok, Proof};
+							case MaybeUnpackedChunk of
+								none ->
+									{ok, Proof};
+								_ ->
+									{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }}
+							end;
 						false ->
 							?LOG_ERROR([{event, fetched_chunk_invalid_packing_id},
 									{tags, [solution_proofs]},

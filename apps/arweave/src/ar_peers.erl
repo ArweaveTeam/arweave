@@ -115,9 +115,9 @@
 	invalid_poa2,
 	invalid_nonce_limiter,
 	invalid_nonce_limiter_cache_mismatch,
-	invalid_chunk_hash,
-	invalid_chunk2_hash
+	invalid_packing_difficulty
 ]).
+
 -define(BLOCK_REJECTION_IGNORE, [
 	invalid_signature,
 	invalid_proof_size,

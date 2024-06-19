@@ -42,6 +42,14 @@ setup_all_post_2_7() ->
 	start_node(),
 	{Cleanup, Functions}.
 
+setup_all_post_2_8() ->
+	{Setup, Cleanup} = ar_test_node:mock_functions([
+		{ar_fork, height_2_8, fun() -> 0 end}
+		]),
+	Functions = Setup(),
+	start_node(),
+	{Cleanup, Functions}.
+
 cleanup_all_post_fork({Cleanup, Functions}) ->
 	Cleanup(Functions).
 
@@ -60,8 +68,23 @@ post_2_7_test_() ->
 			instantiator(fun test_reject_block_invalid_wallet_list/1),
 			instantiator(fun test_mitm_poa_chunk_tamper_warn/1),
 			instantiator(fun test_mitm_poa2_chunk_tamper_warn/1),
-			instantiator(fun test_reject_block_invalid_chunk_hash_ban/1),
-			instantiator(fun test_reject_block_invalid_chunk2_hash_ban/1),
+			instantiator(fun test_reject_block_invalid_proof_size/1),
+			instantiator(fun test_cached_poa/1)
+		]}
+	}.
+
+post_2_8_test_() ->
+	{setup, fun setup_all_post_2_8/0, fun cleanup_all_post_fork/1,
+		{foreach, fun reset_node/0, [
+			instantiator(fun test_reject_block_invalid_packing_difficulty/1),
+			instantiator(fun test_reject_block_invalid_denomination/1),
+			instantiator(fun test_reject_block_invalid_kryder_plus_rate_multiplier/1),
+			instantiator(fun test_reject_block_invalid_kryder_plus_rate_multiplier_latch/1),
+			instantiator(fun test_reject_block_invalid_endowment_pool/1),
+			instantiator(fun test_reject_block_invalid_debt_supply/1),
+			instantiator(fun test_reject_block_invalid_wallet_list/1),
+			instantiator(fun test_mitm_poa_chunk_tamper_warn/1),
+			instantiator(fun test_mitm_poa2_chunk_tamper_warn/1),
 			instantiator(fun test_reject_block_invalid_proof_size/1),
 			instantiator(fun test_cached_poa/1)
 		]}
@@ -70,6 +93,7 @@ post_2_7_test_() ->
 %% ------------------------------------------------------------------------------------------
 %% post_2_7_test_
 %% ------------------------------------------------------------------------------------------
+
 test_mitm_poa_chunk_tamper_warn({_Key, B, _PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa.chunk is tampered with.
 	ok = ar_events:subscribe(block),
@@ -89,29 +113,6 @@ test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_second_chunk),
 	assert_not_banned(ar_test_node:peer_ip(main)).
-
-test_reject_block_invalid_chunk_hash_ban({Key, B, PrevB}) ->
-	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk doesn't match
-	%% the chunk_hash
-	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:peer_ip(main)),
-	B2 = sign_block(B#block{
-		poa = #poa{ chunk = <<>> },
-		chunk_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
-	post_block(B2, invalid_chunk_hash),
-	assert_banned(ar_test_node:peer_ip(main)).
-
-test_reject_block_invalid_chunk2_hash_ban({Key, B, PrevB}) ->
-	%% Verify that, in 2.7, we will ban a peer when a locally-loaded chunk2 doesn't match
-	%% the chunk2_hash
-	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:peer_ip(main)),
-	B2 = sign_block(B#block{
-		recall_byte2 = 1000,
-		poa2 = #poa{ chunk = <<>> },
-		chunk2_hash = crypto:strong_rand_bytes(32) }, PrevB, Key),
-	post_block(B2, invalid_chunk2_hash),
-	assert_banned(ar_test_node:peer_ip(main)).
 
 test_reject_block_invalid_proof_size({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
@@ -193,6 +194,7 @@ assert_not_banned(Peer) ->
 %% ------------------------------------------------------------------------------------------
 %% post_2_6_test_
 %% ------------------------------------------------------------------------------------------
+
 test_reject_block_invalid_miner_reward({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
 	B2 = sign_block(B#block{ reward = 0 }, PrevB, Key),
@@ -236,8 +238,30 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 	post_block(B2, invalid_wallet_list).
 
 %% ------------------------------------------------------------------------------------------
+%% post_2_8_test_
+%% ------------------------------------------------------------------------------------------
+
+test_reject_block_invalid_packing_difficulty({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	assert_not_banned(ar_test_node:peer_ip(main)),
+	B2 = sign_block(B#block{ packing_difficulty = 33 }, PrevB, Key),
+	post_block(B2, invalid_first_unpacked_chunk),
+	assert_not_banned(ar_test_node:peer_ip(main)),
+	C = crypto:strong_rand_bytes(262144),
+	PackedC = crypto:strong_rand_bytes(262144 div 32),
+	UH = crypto:hash(sha256, C),
+	H = crypto:hash(sha256, PackedC),
+	PoA = B#block.poa,
+	B3 = sign_block(B#block{ packing_difficulty = 33,
+		poa = PoA#poa{ unpacked_chunk = C, chunk = PackedC }, unpacked_chunk_hash = UH,
+				chunk_hash = H }, PrevB, Key),
+	post_block(B3, invalid_packing_difficulty),
+	assert_banned(ar_test_node:peer_ip(main)).
+
+%% ------------------------------------------------------------------------------------------
 %% Others tests
 %% ------------------------------------------------------------------------------------------
+
 add_external_block_with_invalid_timestamp_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_7, fun() -> 0 end}],
 		fun test_add_external_block_with_invalid_timestamp/0).
@@ -562,7 +586,8 @@ test_send_block2() ->
 			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement2) }),
 	Response2 = ar_serialize:binary_to_block_announcement_response(Body2),
-	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
+	%% We always report missing chunk currently.
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
 			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response2),
 	Announcement3 = Announcement#block_announcement{ recall_byte = 100000000000000 },
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
@@ -641,7 +666,8 @@ test_send_block2() ->
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,
 					recall_byte = 0 }) }),
-	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
+	%% We always report missing chunk currently.
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
 			missing_tx_indices = [] }},
 			ar_serialize:binary_to_block_announcement_response(Body5)),
 	{ok, {{<<"200">>, _}, _, Body6, _, _}} = ar_http:req(#{ method => post,
@@ -650,7 +676,8 @@ test_send_block2() ->
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,
 					recall_byte = 1024 }) }),
-	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
+	%% We always report missing chunk currently.
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
 			missing_tx_indices = [] }},
 			ar_serialize:binary_to_block_announcement_response(Body6)).
 

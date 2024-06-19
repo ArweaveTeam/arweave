@@ -392,7 +392,7 @@ nif_repack_chunks(WorkerID,
 	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
-        {ok, PackedChunk} ->
+        {ok, PackedChunk} -> % TODO
 			{ok, RepackedChunk} = ar_mine_randomx:randomx_reencrypt_chunk_nif(
 				RandomXState, Key, Key, PackedChunk, ChunkSize,
 				?RANDOMX_PACKING_ROUNDS_2_6, ?RANDOMX_PACKING_ROUNDS_2_6,

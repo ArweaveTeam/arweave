@@ -205,13 +205,13 @@ test_partition_table() ->
 	
 	?assertEqual(
 		{ok, [
-			{0, ?PARTITION_SIZE, MiningAddr},
-			{1, ?PARTITION_SIZE, MiningAddr},
-			{2, ?PARTITION_SIZE, MiningAddr},
-			{8, ?PARTITION_SIZE, MiningAddr},
-			{9, ?PARTITION_SIZE, MiningAddr},
-			{30, ?PARTITION_SIZE, MiningAddr},
-			{31, ?PARTITION_SIZE, MiningAddr}
+			{0, ?PARTITION_SIZE, MiningAddr, 0},
+			{1, ?PARTITION_SIZE, MiningAddr, 0},
+			{2, ?PARTITION_SIZE, MiningAddr, 0},
+			{8, ?PARTITION_SIZE, MiningAddr, 0},
+			{9, ?PARTITION_SIZE, MiningAddr, 0},
+			{30, ?PARTITION_SIZE, MiningAddr, 0},
+			{31, ?PARTITION_SIZE, MiningAddr, 0}
 		]},
 		ar_http_iface_client:get_cm_partition_table(Peer)
 	).

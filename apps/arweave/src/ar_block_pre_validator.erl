@@ -220,10 +220,6 @@ pre_validate_proof_sizes(B, PrevB, Peer) ->
 			invalid
 	end.
 
-may_be_pre_validate_first_chunk_hash(#block{ poa = #poa{ chunk = <<>> } } = B, PrevB, Peer) ->
-	%% The chunk has not been sent along (we should have informed the sender we've got
-	%% the chunk so we can read it locally) => validate the chunk hash later.
-	may_be_pre_validate_second_chunk_hash(B, PrevB, Peer);
 may_be_pre_validate_first_chunk_hash(B, PrevB, Peer) ->
 	case crypto:hash(sha256, (B#block.poa)#poa.chunk) == B#block.chunk_hash of
 		false ->
@@ -243,13 +239,8 @@ may_be_pre_validate_second_chunk_hash(#block{ recall_byte2 = undefined } = B, Pr
 			invalid;
 		true ->
 			%% The block is not supposed to have the second chunk.
-			pre_validate_indep_hash(B, PrevB, Peer)
+			may_be_pre_validate_first_unpacked_chunk_hash(B, PrevB, Peer)
 	end;
-may_be_pre_validate_second_chunk_hash(#block{ poa2 = #poa{ chunk = <<>> } } = B, PrevB,
-		Peer) ->
-	%% The second chunk has not been sent along (we should have informed the sender we've got
-	%% the chunk so we can read it locally) => validate the second chunk hash later.
-	pre_validate_indep_hash(B, PrevB, Peer);
 may_be_pre_validate_second_chunk_hash(B, PrevB, Peer) ->
 	case crypto:hash(sha256, (B#block.poa2)#poa.chunk) == B#block.chunk2_hash of
 		false ->
@@ -257,7 +248,68 @@ may_be_pre_validate_second_chunk_hash(B, PrevB, Peer) ->
 			ar_events:send(block, {rejected, invalid_second_chunk, B#block.indep_hash, Peer}),
 			invalid;
 		true ->
+			may_be_pre_validate_first_unpacked_chunk_hash(B, PrevB, Peer)
+	end.
+
+may_be_pre_validate_first_unpacked_chunk_hash(
+		#block{ packing_difficulty = PackingDifficulty } = B, PrevB, Peer)
+			when PackingDifficulty >= 1 ->
+	PoA = B#block.poa,
+	case crypto:hash(sha256, PoA#poa.unpacked_chunk) == B#block.unpacked_chunk_hash
+			%% The unpacked chunk is expected to be 0-padded when smaller than
+			%% ?DATA_CHUNK_SIZE.
+			andalso byte_size(PoA#poa.unpacked_chunk) == ?DATA_CHUNK_SIZE of
+		false ->
+			post_block_reject_warn(B, check_first_unpacked_chunk, Peer),
+			ar_events:send(block, {rejected, invalid_first_unpacked_chunk,
+					B#block.indep_hash, Peer}),
+			invalid;
+		true ->
+			may_be_pre_validate_second_unpacked_chunk_hash(B, PrevB, Peer)
+	end;
+may_be_pre_validate_first_unpacked_chunk_hash(B, PrevB, Peer) ->
+	#block{ poa = PoA, poa2 = PoA2 } = B,
+	#block{ unpacked_chunk_hash = UnpackedChunkHash,
+			unpacked_chunk2_hash = UnpackedChunk2Hash } = B,
+	case {UnpackedChunkHash, UnpackedChunk2Hash} == {undefined, undefined} of
+		false ->
+			post_block_reject_warn(B, check_first_unpacked_chunk_hash, Peer),
+			ar_events:send(block, {rejected, invalid_first_unpacked_chunk_hash,
+					B#block.indep_hash, Peer}),
+			invalid;
+		true ->
+			pre_validate_indep_hash(B#block{
+					poa = PoA#poa{ unpacked_chunk = <<>> },
+					poa2 = PoA2#poa{ unpacked_chunk = <<>> } }, PrevB, Peer)
+	end.
+
+may_be_pre_validate_second_unpacked_chunk_hash(
+		#block{ recall_byte2 = RecallByte2 } = B, PrevB, Peer)
+			when RecallByte2 /= undefined ->
+	PoA2 = B#block.poa2,
+	case crypto:hash(sha256, PoA2#poa.unpacked_chunk) == B#block.unpacked_chunk2_hash
+			%% The unpacked chunk is expected to be 0-padded when smaller than
+			%% ?DATA_CHUNK_SIZE.
+			andalso byte_size(PoA2#poa.unpacked_chunk) == ?DATA_CHUNK_SIZE of
+		false ->
+			post_block_reject_warn(B, check_second_unpacked_chunk, Peer),
+			ar_events:send(block, {rejected, invalid_second_unpacked_chunk,
+					B#block.indep_hash, Peer}),
+			invalid;
+		true ->
 			pre_validate_indep_hash(B, PrevB, Peer)
+	end;
+may_be_pre_validate_second_unpacked_chunk_hash(B, PrevB, Peer) ->
+	#block{ poa2 = PoA2 } = B,
+	case B#block.unpacked_chunk2_hash == undefined of
+		false ->
+			post_block_reject_warn(B, check_second_unpacked_chunk_hash, Peer),
+			ar_events:send(block, {rejected, invalid_second_unpacked_chunk_hash,
+					B#block.indep_hash, Peer}),
+			invalid;
+		true ->
+			pre_validate_indep_hash(B#block{
+					poa2 = PoA2#poa{ unpacked_chunk = <<>> } }, PrevB, Peer)
 	end.
 
 pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer) ->
@@ -302,7 +354,9 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 					global_step_number = StepNumber, seed = Seed,
 					partition_upper_bound = UpperBound,
 					last_step_checkpoints = LastStepCheckpoints },
-			chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash } = B,
+			chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
+			unpacked_chunk_hash = UnpackedChunkHash,
+			unpacked_chunk2_hash = UnpackedChunk2Hash } = B,
 	H = B#block.indep_hash,
 	CDiff = B#block.cumulative_diff,
 	PrevCDiff = PrevB#block.cumulative_diff,
@@ -319,6 +373,8 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 							seed = Seed, partition_upper_bound = UpperBound,
 							global_step_number = StepNumber },
 					chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
+					unpacked_chunk_hash = UnpackedChunkHash,
+					unpacked_chunk2_hash = UnpackedChunk2Hash,
 					poa = #poa{ chunk = Chunk }, poa2 = #poa{ chunk = Chunk2 },
 					recall_byte2 = RecallByte2 } = CacheB ->
 				may_be_report_double_signing(B, CacheB),
@@ -510,17 +566,29 @@ pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer) ->
 					gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer}}),
 					enqueued;
 				false ->
-					pre_validate_quick_pow(B, PrevB, false, Peer)
+					pre_validate_packing_difficulty(B, PrevB, false, Peer)
 			end
 	end.
 
+pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer) ->
+	case {B#block.packing_difficulty, B#block.height >= ar_fork:height_2_8()} of
+		{0, false} ->
+			pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer);
+		{_PackingDifficulty, true} ->
+			case ar_block:validate_packing_difficulty(B#block.packing_difficulty) of
+				true ->
+					pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer);
+				false ->
+					post_block_reject_warn_and_error_dump(B, check_packing_difficulty, Peer),
+					ar_events:send(block, {rejected, invalid_packing_difficulty,
+							B#block.indep_hash, Peer}),
+					invalid
+			end % The deserialization code does not allow non-zero packing difficulty pre-fork.
+	end.
+
 pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
-	#block{ hash_preimage = HashPreimage, nonce_limiter_info = NonceLimiterInfo,
-			partition_number = PartitionNumber, reward_addr = RewardAddr } = B,
-	PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
-	Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
-	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
-	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, RewardAddr),
+	#block{ hash_preimage = HashPreimage } = B,
+	H0 = ar_block:compute_h0(B, PrevB),
 	SolutionHash = ar_block:compute_solution_h(H0, HashPreimage),
 	case ar_node_utils:block_passes_diff_check(SolutionHash, B) of
 		false ->
@@ -566,7 +634,7 @@ pre_validate_partition_number(B, PrevB, PartitionUpperBound, SolutionResigned, P
 	end.
 
 pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
-	Max = max(0, (?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1),
+	Max = ar_block:get_max_nonce(B#block.packing_difficulty),
 	case B#block.nonce > Max of
 		true ->
 			post_block_reject_warn_and_error_dump(B, check_nonce, Peer),
@@ -577,72 +645,17 @@ pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
 				true ->
 					accept_block(B, Peer, false);
 				false ->
-					pre_validate_may_be_fetch_first_chunk(B, PrevB, PartitionUpperBound, Peer)
+					pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer)
 			end
 	end.
 
-pre_validate_may_be_fetch_first_chunk(#block{ recall_byte = RecallByte,
-		poa = #poa{ chunk = <<>> } } = B, PrevB, PartitionUpperBound, Peer)
-			when RecallByte /= undefined ->
-	case ar_data_sync:get_chunk(RecallByte + 1, #{ pack => true,
-			packing => {spora_2_6, B#block.reward_addr}, bucket_based_offset => true }) of
-		{ok, #{ chunk := Chunk }} ->
-			prometheus_counter:inc(block2_fetched_chunks),
-			case crypto:hash(sha256, Chunk) == B#block.chunk_hash of
-				false ->
-					post_block_reject_warn_and_error_dump(B, check_chunk_hash, Peer),
-					ar_events:send(block, {rejected, invalid_chunk_hash, B#block.indep_hash,
-							Peer}),
-					invalid;
-				true ->
-					B2 = B#block{ poa = (B#block.poa)#poa{ chunk = Chunk } },
-					pre_validate_may_be_fetch_second_chunk(B2, PrevB, PartitionUpperBound,
-							Peer)
-			end;
-		_ ->
-			ar_events:send(block, {rejected, failed_to_fetch_first_chunk, B#block.indep_hash,
-					Peer}),
-			invalid
-	end;
-pre_validate_may_be_fetch_first_chunk(B, PrevB, PartitionUpperBound, Peer) ->
-	pre_validate_may_be_fetch_second_chunk(B, PrevB, PartitionUpperBound, Peer).
-
-pre_validate_may_be_fetch_second_chunk(#block{ recall_byte2 = RecallByte2,
-		poa2 = #poa{ chunk = <<>> } } = B, PrevB, PartitionUpperBound, Peer)
-		  when RecallByte2 /= undefined ->
-	case ar_data_sync:get_chunk(RecallByte2 + 1, #{ pack => true,
-			packing => {spora_2_6, B#block.reward_addr}, bucket_based_offset => true }) of
-		{ok, #{ chunk := Chunk }} ->
-			prometheus_counter:inc(block2_fetched_chunks),
-			case crypto:hash(sha256, Chunk) == B#block.chunk2_hash of
-				false ->
-					post_block_reject_warn_and_error_dump(B, check_chunk2_hash, Peer),
-					ar_events:send(block, {rejected, invalid_chunk2_hash, B#block.indep_hash,
-							Peer}),
-					invalid;
-				true ->
-					B2 = B#block{ poa2 = (B#block.poa2)#poa{ chunk = Chunk } },
-					pre_validate_pow_2_6(B2, PrevB, PartitionUpperBound, Peer)
-			end;
-		_ ->
-			ar_events:send(block, {rejected, failed_to_fetch_second_chunk, B#block.indep_hash,
-					Peer}),
-			invalid
-	end;
-pre_validate_may_be_fetch_second_chunk(B, PrevB, PartitionUpperBound, Peer) ->
-	pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer).
-
 pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
-	NonceLimiterInfo = B#block.nonce_limiter_info,
-	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
-	PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
-	Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
-	H0 = ar_block:compute_h0(NonceLimiterOutput, B#block.partition_number, Seed,
-			B#block.reward_addr),
+	H0 = ar_block:compute_h0(B, PrevB),
 	Chunk1 = (B#block.poa)#poa.chunk,
 	{H1, Preimage1} = ar_block:compute_h1(H0, B#block.nonce, Chunk1),
 	DiffPair = ar_difficulty:diff_pair(B),
-	case H1 == B#block.hash andalso ar_node_utils:h1_passes_diff_check(H1, DiffPair)
+	case H1 == B#block.hash andalso ar_node_utils:h1_passes_diff_check(H1, DiffPair,
+				B#block.packing_difficulty)
 			andalso Preimage1 == B#block.hash_preimage
 			andalso B#block.recall_byte2 == undefined
 			andalso B#block.chunk2_hash == undefined of
@@ -651,7 +664,8 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 		false ->
 			Chunk2 = (B#block.poa2)#poa.chunk,
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
-			case H2 == B#block.hash andalso ar_node_utils:h2_passes_diff_check(H2, DiffPair)
+			case H2 == B#block.hash andalso ar_node_utils:h2_passes_diff_check(H2, DiffPair,
+						B#block.packing_difficulty)
 					andalso Preimage2 == B#block.hash_preimage of
 				true ->
 					pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer);
@@ -665,14 +679,17 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			B#block.partition_number, PartitionUpperBound),
-	RecallByte1 = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
+	RecallByte1 = ar_block:get_recall_byte(RecallRange1Start, B#block.nonce,
+			B#block.packing_difficulty),
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
-	ArgCache = {BlockStart1, RecallByte1, TXRoot1, BlockSize1,
-			{spora_2_6, B#block.reward_addr}},
+	%% The packing difficulty >0 is only allowed after the 2.8 hard fork (validated earlier
+	%% here), and the composite packing is only possible for packing difficulty >= 1.
+	Packing = ar_block:get_packing(B#block.packing_difficulty, B#block.reward_addr),
+	ArgCache = {BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing},
 	case RecallByte1 == B#block.recall_byte andalso
 			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, B#block.poa,
-					{spora_2_6, B#block.reward_addr}, not_set}) of
+					Packing, not_set}) of
 		error ->
 			?LOG_ERROR([{event, failed_to_validate_proof_of_access},
 					{block, ar_util:encode(B#block.indep_hash)}]),
@@ -691,16 +708,16 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 				true ->
 					pre_validate_nonce_limiter(B2, PrevB, Peer);
 				false ->
-					RecallByte2 = RecallRange2Start + B#block.nonce * ?DATA_CHUNK_SIZE,
+					RecallByte2 = ar_block:get_recall_byte(RecallRange2Start, B#block.nonce,
+							B#block.packing_difficulty),
 					{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
 							RecallByte2),
 					BlockSize2 = BlockEnd2 - BlockStart2,
-					ArgCache2 = {BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-							{spora_2_6, B#block.reward_addr}},
+					ArgCache2 = {BlockStart2, RecallByte2, TXRoot2, BlockSize2, Packing},
 					case RecallByte2 == B#block.recall_byte2 andalso
 							ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
 									B#block.poa2,
-									{spora_2_6, B#block.reward_addr}, not_set}) of
+									Packing, not_set}) of
 						error ->
 							?LOG_ERROR([{event, failed_to_validate_proof_of_access},
 									{block, ar_util:encode(B#block.indep_hash)}]),

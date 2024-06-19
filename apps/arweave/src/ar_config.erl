@@ -648,6 +648,11 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 		case PackingBin of
 			<<"unpacked">> ->
 				unpacked;
+			<< MiningAddr:43/binary, ":", PackingDifficultyBin/binary >> ->
+				PackingDifficulty = binary_to_integer(PackingDifficultyBin),
+				true = PackingDifficulty >= 1
+						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
+				{composite, ar_util:decode(MiningAddr), PackingDifficulty};
 			MiningAddr when byte_size(MiningAddr) == 43 ->
 				{spora_2_6, ar_util:decode(MiningAddr)}
 		end,
@@ -658,6 +663,11 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
 		case PackingBin of
 			<<"unpacked">> ->
 				unpacked;
+			<< MiningAddr:43/binary, ":", PackingDifficultyBin/binary >> ->
+				PackingDifficulty = binary_to_integer(PackingDifficultyBin),
+				true = PackingDifficulty >= 1
+						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
+				{composite, ar_util:decode(MiningAddr), PackingDifficulty};
 			MiningAddr when byte_size(MiningAddr) == 43 ->
 				{spora_2_6, ar_util:decode(MiningAddr)}
 		end,
@@ -665,6 +675,11 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
 		case ToPackingBin of
 			<<"unpacked">> ->
 				unpacked;
+			<< ToMiningAddr:43/binary, ":", ToPackingDifficultyBin/binary >> ->
+				ToPackingDifficulty = binary_to_integer(ToPackingDifficultyBin),
+				true = ToPackingDifficulty >= 1
+						andalso ToPackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
+				{composite, ar_util:decode(ToMiningAddr), ToPackingDifficulty};
 			ToMiningAddr when byte_size(ToMiningAddr) == 43 ->
 				{spora_2_6, ar_util:decode(ToMiningAddr)}
 		end,
@@ -815,5 +830,7 @@ format_binary(Address) ->
 	ar_util:encode(Address).
 format_storage_module({RangeSize, RangeNumber, {spora_2_6, MiningAddress}}) ->
 	{RangeSize, RangeNumber, {spora_2_6, format_binary(MiningAddress)}};
+format_storage_module({RangeSize, RangeNumber, {composite, MiningAddress, PackingDiff}}) ->
+	{RangeSize, RangeNumber, {composite, format_binary(MiningAddress), PackingDiff}};
 format_storage_module(StorageModule) ->
 	StorageModule.

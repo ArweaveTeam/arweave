@@ -169,15 +169,14 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 	#block{
 		partition_number = PartitionNumber,
 		previous_solution_hash = PrevSolutionH,
-		nonce_limiter_info = #nonce_limiter_info{ output = Output,
+		nonce_limiter_info = #nonce_limiter_info{
 				partition_upper_bound = PartitionUpperBound },
 		diff = Diff
 	} = B,
 	B2 = B#block{ cumulative_diff = CDiff },
 	Wallet = ar_wallet:new(),
 	RewardAddr2 = ar_wallet:to_address(Wallet),
-	Seed = (PrevB#block.nonce_limiter_info)#nonce_limiter_info.seed,
-	H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, RewardAddr2),
+	H0 = ar_block:compute_h0(B, PrevB),
 	{RecallByte, _RecallRange2Start} = ar_block:get_recall_range(H0, PartitionNumber,
 			PartitionUpperBound),
 	{ok, #{ data_path := DataPath, tx_path := TXPath,

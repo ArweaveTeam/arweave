@@ -3,7 +3,8 @@
 -export([block_field_size_limit/1, verify_timestamp/2,
 		get_max_timestamp_deviation/0, verify_last_retarget/2, verify_weave_size/3,
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
-		compute_h0/4, compute_h0/5, compute_h1/3, compute_h2/3, compute_solution_h/2,
+		compute_h0/2, compute_h0/5, compute_h0/6,
+		compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
@@ -13,7 +14,9 @@
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
 		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
 		get_packing_threshold/2, compute_next_vdf_difficulty/1,
-		validate_proof_size/1, vdf_step_number/1]).
+		validate_proof_size/1, vdf_step_number/1, get_packing/2,
+		validate_packing_difficulty/2, validate_packing_difficulty/1,
+		get_max_nonce/1, get_recall_range_size/1, get_recall_byte/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -155,13 +158,35 @@ compute_hash_list_merkle(B) ->
 
 %% @doc Compute "h0" - a cryptographic hash used as a source of entropy when choosing
 %% two recall ranges on the weave as unlocked by the given nonce limiter output.
-compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr) ->
-	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
-	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, RandomXStateRef).
+compute_h0(B, PrevB) ->
+	#block{ nonce_limiter_info = NonceLimiterInfo,
+			partition_number = PartitionNumber, reward_addr = MiningAddr,
+			packing_difficulty = PackingDifficulty } = B,
+	PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
+	Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
+	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
+	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty).
 
-compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, RandomXStateRef) ->
-	ar_mine_randomx:hash_fast(RandomXStateRef, << NonceLimiterOutput:32/binary,
-			PartitionNumber:256, Seed:32/binary, MiningAddr/binary >>).
+%% @doc Compute "h0" - a cryptographic hash used as a source of entropy when choosing
+%% two recall ranges on the weave as unlocked by the given nonce limiter output.
+compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty) ->
+	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
+	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
+			RandomXStateRef).
+
+compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
+		RandomXStateRef) ->
+	Preimage =
+		case PackingDifficulty of
+			0 ->
+				<< NonceLimiterOutput:32/binary,
+					PartitionNumber:256, Seed:32/binary, MiningAddr/binary >>;
+			_ ->
+				<< NonceLimiterOutput:32/binary,
+					PartitionNumber:256, Seed:32/binary, MiningAddr/binary,
+					PackingDifficulty:8 >>
+		end,
+	ar_mine_randomx:hash_fast(RandomXStateRef, Preimage).
 
 %% @doc Compute "h1" - a cryptographic hash which is either the hash of a solution not
 %% involving the second chunk or a carrier of the information about the first chunk
@@ -251,7 +276,8 @@ compute_next_vdf_difficulty(PrevB) ->
 validate_proof_size(PoA) ->
 	byte_size(PoA#poa.tx_path) =< ?MAX_TX_PATH_SIZE andalso
 			byte_size(PoA#poa.data_path) =< ?MAX_DATA_PATH_SIZE andalso
-			byte_size(PoA#poa.chunk) =< ?DATA_CHUNK_SIZE.
+			byte_size(PoA#poa.chunk) =< ?DATA_CHUNK_SIZE andalso
+			byte_size(PoA#poa.unpacked_chunk) =< ?DATA_CHUNK_SIZE.
 
 %% @doc Compute the block identifier (also referred to as "independent hash").
 indep_hash(B) ->
@@ -290,7 +316,10 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		merkle_rebase_support_threshold = RebaseThreshold,
 		poa = #poa{ data_path = DataPath, tx_path = TXPath },
 		poa2 = #poa{ data_path = DataPath2, tx_path = TXPath2 },
-		chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash }) ->
+		chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
+		packing_difficulty = PackingDifficulty,
+		unpacked_chunk_hash = UnpackedChunkHash,
+		unpacked_chunk2_hash = UnpackedChunk2Hash }) ->
 	GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
 	Nonce2 = binary:encode_unsigned(Nonce),
 	%% The only block where reward_address may be unclaimed
@@ -320,6 +349,15 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 						ar_serialize:encode_int(NextVDFDifficulty, 8)};
 			false ->
 				{<<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>}
+		end,
+	{PackingDifficultyBin, UnpackedChunkHashBin, UnpackedChunk2HashBin} =
+		case Height >= ar_fork:height_2_8() of
+			true ->
+				{<< PackingDifficulty:8 >>,
+						ar_serialize:encode_bin(UnpackedChunkHash, 8),
+						ar_serialize:encode_bin(UnpackedChunk2Hash, 8)};
+			false ->
+				{<<>>, <<>>, <<>>}
 		end,
 	%% The elements must be either fixed-size or separated by the size separators (
 	%% the ar_serialize:encode_* functions).
@@ -357,7 +395,9 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			(encode_int(PrevCDiff, 16))/binary, RebaseThresholdBin/binary,
 			DataPathBin/binary, TXPathBin/binary, DataPath2Bin/binary, TXPath2Bin/binary,
 			ChunkHashBin/binary, Chunk2HashBin/binary, BlockTimeHistoryHashBin/binary,
-			VDFDifficultyBin/binary, NextVDFDifficultyBin/binary >>,
+			VDFDifficultyBin/binary, NextVDFDifficultyBin/binary,
+			PackingDifficultyBin/binary, UnpackedChunkHashBin/binary,
+			UnpackedChunk2HashBin/binary >>,
 	crypto:hash(sha256, Segment).
 
 %% @doc Compute the block identifier from the signed hash and block signature.
@@ -483,6 +523,45 @@ get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
 
 vdf_step_number(#block{ nonce_limiter_info = Info }) ->
 	Info#nonce_limiter_info.global_step_number.
+
+get_packing(PackingDifficulty, MiningAddress) ->
+	case PackingDifficulty >= 1 of
+		true ->
+			{composite, MiningAddress, PackingDifficulty};
+		false ->
+			{spora_2_6, MiningAddress}
+	end.
+
+validate_packing_difficulty(Height, PackingDifficulty) ->
+	case Height >= ar_fork:height_2_8() of
+		true ->
+			validate_packing_difficulty(PackingDifficulty);
+		false ->
+			PackingDifficulty == 0
+	end.
+
+validate_packing_difficulty(PackingDifficulty) ->
+	PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY.
+
+get_max_nonce(0) ->
+	get_max_nonce2((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE);
+get_max_nonce(PackingDifficulty) ->
+	AdjustedRecallRangeSize = ?RECALL_RANGE_SIZE div PackingDifficulty,
+	NonceCount = AdjustedRecallRangeSize div (?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE),
+	get_max_nonce2(NonceCount).
+
+get_max_nonce2(NonceCount) ->
+	max(0, NonceCount - 1).
+
+get_recall_range_size(0) ->
+	?RECALL_RANGE_SIZE;
+get_recall_range_size(PackingDifficulty) ->
+	?RECALL_RANGE_SIZE div PackingDifficulty.
+
+get_recall_byte(RecallRangeStart, Nonce, 0) ->
+	RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE;
+get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
+	RecallRangeStart + Nonce * ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE.
 
 %%%===================================================================
 %%% Private functions.

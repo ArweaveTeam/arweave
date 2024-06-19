@@ -2,7 +2,7 @@
 
 -export([get_hash_rate_fixed_ratio/1, next_cumulative_diff/3, multiply_diff_pre_fork_2_5/2,
 			diff_pair/1, poa1_diff_multiplier/1, poa1_diff/2, scale_diff/3,
-			min_difficulty/1, switch_to_randomx_fork_diff/1]).
+			min_difficulty/1, switch_to_randomx_fork_diff/1, sub_diff/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -71,6 +71,27 @@ scale_diff(Diff, {ScaleDividend, ScaleDivisor}, Height) ->
 		MinDiff,
 		MaxDiff - 1
 	).
+
+%% @doc Return the new difficulty computed such that N candidates have approximately the same
+%% chances with the new difficulty as a single candidate with the Diff difficulty.
+%%
+%% Let the probability a candidate satisfies the new difficulty be x.
+%% Let the probability a candidate satisfies the old diffiuclty be p.
+%% Then, the probability at least one of the N candidates satisfies
+%% the new difficulty is 1 - (1 - x) ^ N. We want it to be equal to p.
+%% So, (1 - x) ^ N = 1 - p => x = 1 - 32th root of (1 - p).
+%% The first three terms of the infinite series of (1 - p) ^ (1 / 32) are
+%% 1 - (1 / 32) * p - (31 * p ^ 2)/(2 * 32 ^ 2).
+%% Therefore, x is approximately p/32 + 31 * (p ^ 2) / (2 * 32 ^ 2).
+%% x = NewReverseDiff / MaxDiff, p = ReverseDiff / MaxDiff.
+sub_diff(Diff, N) ->
+	MaxDiff = ?MAX_DIFF,
+	ReverseDiff = MaxDiff - Diff,
+	MaxDiffSquared = MaxDiff * MaxDiff,
+	ReverseDiffSquared = ReverseDiff * ReverseDiff,
+	Dividend = 2 * N * ReverseDiff * MaxDiff + (N - 1) * ReverseDiffSquared,
+	Divisor = 2 * N * N * MaxDiffSquared,
+	(MaxDiff * Divisor - Dividend  * MaxDiff) div Divisor.
 
 -ifdef(DEBUG).
 min_difficulty(_Height) ->

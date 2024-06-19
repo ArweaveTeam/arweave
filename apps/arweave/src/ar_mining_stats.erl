@@ -415,7 +415,7 @@ generate_report(Height, Partitions, Peers, WeaveSize, Now) ->
 
 generate_partition_reports(PoA1Multiplier, Partitions, Report, WeaveSize) ->
 	lists:foldr(
-		fun({PartitionNumber, _ReplicaID}, Acc) ->
+		fun({PartitionNumber, _MiningAddr, _PackingDifficulty}, Acc) ->
 			generate_partition_report(PoA1Multiplier, PartitionNumber, Acc, WeaveSize)
 		end,
 		Report,
@@ -438,8 +438,10 @@ generate_partition_report(PoA1Multiplier, PartitionNumber, Report, WeaveSize) ->
 	PartitionReport = #partition_report{
 		partition_number = PartitionNumber,
 		data_size = DataSize,
-		average_read_mibps = get_average_count_by_time({partition, PartitionNumber, read, total}, Now) / 4,
-		current_read_mibps = get_average_count_by_time({partition, PartitionNumber, read, current}, Now) / 4,
+		average_read_mibps = get_average_count_by_time(
+				{partition, PartitionNumber, read, total}, Now) / 4,
+		current_read_mibps = get_average_count_by_time(
+				{partition, PartitionNumber, read, current}, Now) / 4,
 		average_hash_hps = get_hash_hps(PoA1Multiplier, PartitionNumber, total, Now),
 		current_hash_hps = get_hash_hps(PoA1Multiplier, PartitionNumber, current, Now),
 		optimal_read_mibps = optimal_partition_read_mibps(
@@ -1229,9 +1231,9 @@ test_report(PoA1Multiplier) ->
 	reset_all_stats(),
 	MiningAddress = <<"MINING">>,
 	Partitions = [
-		{1, MiningAddress},
-		{2, MiningAddress},
-		{3, MiningAddress}
+		{1, MiningAddress, 0},
+		{2, MiningAddress, 0},
+		{3, MiningAddress, 0}
 	],
 	Peer1 = ar_test_node:peer_ip(peer1),
 	Peer2 = ar_test_node:peer_ip(peer2),
@@ -1392,4 +1394,3 @@ test_report(PoA1Multiplier) ->
 		]
 	},
 	Report2).
-	

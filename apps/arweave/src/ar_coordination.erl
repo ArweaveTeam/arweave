@@ -53,11 +53,12 @@ computed_h1(Candidate, DiffPair) ->
 		h1 = H1,
 		nonce = Nonce
 	} = Candidate,
-	%% prepare Candidate to be shared with a remote miner.
-	%% 1. Add the current difficulty (the remote peer will use this instead of its local difficulty)
+	%% Prepare Candidate to be shared with a remote miner.
+	%% 1. Add the current difficulty (the remote peer will use this instead of
+	%%    its local difficulty).
 	%% 2. Remove any data that's not needed by the peer. This cuts down on the volume of data
 	%%    shared.
-	%% 3. The peer field will be set to this peer's address by the remote miner
+	%% 3. The peer field will be set to this peer's address by the remote miner.
 	ShareableCandidate = Candidate#mining_candidate{
 		chunk1 = not_set,
 		chunk2 = not_set,
@@ -115,6 +116,14 @@ is_exit_peer() ->
 %%   {bucketsize, ?PARTITION_SIZE},
 %%   {addr, EncodedMiningAddress}
 %% ]}
+%%
+%% A single partition with the composite packing is in the following format:
+%% {[
+%%   {bucket, PartitionID},
+%%   {bucketsize, ?PARTITION_SIZE},
+%%   {addr, EncodedMiningAddress},
+%%   {pdiff, PackingDifficulty}
+%% ]}
 get_self_plus_external_partitions_list() ->
 	PoolPeer = ar_pool:pool_peer(),
 	PoolPartitions = get_peer_partitions(PoolPeer),
@@ -129,6 +138,14 @@ get_self_plus_external_partitions_list() ->
 %%   {bucket, PartitionID},
 %%   {bucketsize, ?PARTITION_SIZE},
 %%   {addr, EncodedMiningAddress}
+%% ]}
+%%
+%% A single partition with the composite packing is in the following format:
+%% {[
+%%   {bucket, PartitionID},
+%%   {bucketsize, ?PARTITION_SIZE},
+%%   {addr, EncodedMiningAddress},
+%%   {pdiff, PackingDifficulty}
 %% ]}
 get_cluster_partitions_list() ->
 	gen_server:call(?MODULE, get_cluster_partitions_list, infinity).
@@ -189,14 +206,12 @@ handle_call(get_cluster_partitions_list, _From, State) ->
 		maps:fold(
 			fun(PartitionID, Items, Acc) ->
 				lists:foldl(
-					fun	({{pool, _}, _}, Acc2) ->
+					fun	({{pool, _}, _, _}, Acc2) ->
 							Acc2;
-						({_Peer, PackingAddr}, Acc2) ->
-							sets:add_element({[
-									{bucket, PartitionID},
-									{bucketsize, ?PARTITION_SIZE},
-									{addr, ar_util:encode(PackingAddr)}
-								]}, Acc2)
+						({_Peer, PackingAddr, PackingDifficulty}, Acc2) ->
+							sets:add_element(ar_serialize:partition_to_json_struct(
+									PartitionID, ?PARTITION_SIZE, PackingAddr,
+									PackingDifficulty), Acc2)
 					end,
 					Acc,
 					Items
@@ -406,17 +421,18 @@ send_h2(Peer, Candidate) ->
 
 add_mining_peer({Peer, StorageModules}, State) ->
 	Partitions = lists:map(
-		fun({PartitionID, _PartitionSize, PackingAddr}) ->
-			{PartitionID, PackingAddr} end, StorageModules),
+		fun({PartitionID, _PartitionSize, PackingAddr, PackingDifficulty}) ->
+			{PartitionID, PackingAddr, PackingDifficulty} end, StorageModules),
 	?LOG_INFO([{event, cm_peer_updated},
 		{peer, ar_util:format_peer(Peer)},
 		{partitions, io_lib:format("~p",
-			[[{ID, ar_util:encode(Addr)} || {ID, Addr} <- Partitions]])}]),
+			[[{ID, ar_util:encode(Addr), PackingDifficulty}
+				|| {ID, Addr, PackingDifficulty} <- Partitions]])}]),
 	PeersByPartition =
 		lists:foldl(
-			fun({PartitionID, PackingAddr}, Acc) ->
+			fun({PartitionID, PackingAddr, PackingDifficulty}, Acc) ->
 				Items = maps:get(PartitionID, Acc, []),
-				maps:put(PartitionID, [{Peer, PackingAddr} | Items], Acc)
+				maps:put(PartitionID, [{Peer, PackingAddr, PackingDifficulty} | Items], Acc)
 			end,
 			State#state.peers_by_partition,
 			Partitions
@@ -426,7 +442,8 @@ add_mining_peer({Peer, StorageModules}, State) ->
 remove_mining_peer(Peer, State) ->
 	PeersByPartition = maps:fold(
 		fun(PartitionID, Peers, Acc) ->
-			Peers2 = [{Peer2, Addr} || {Peer2, Addr} <- Peers, Peer2 /= Peer],
+			Peers2 = [{Peer2, Addr, PackingDifficulty}
+					|| {Peer2, Addr, PackingDifficulty} <- Peers, Peer2 /= Peer],
 			maps:put(PartitionID, Peers2, Acc)
 		end,
 		#{},
@@ -469,30 +486,20 @@ get_unique_partitions_set() ->
 
 get_unique_partitions_set([], UniquePartitions) ->
 	UniquePartitions;
-get_unique_partitions_set([{PartitionID, MiningAddress} | Partitions], UniquePartitions) ->
-	get_unique_partitions_set(
-		Partitions,
-		sets:add_element(
-			{[
-				{bucket, PartitionID},
-				{bucketsize, ?PARTITION_SIZE},
-				{addr, ar_util:encode(MiningAddress)}
-			]},
-			UniquePartitions
-		)
-	);
-get_unique_partitions_set([{PartitionID, BucketSize, MiningAddress} | Partitions],
+get_unique_partitions_set([{PartitionID, MiningAddress, PackingDifficulty} | Partitions],
 		UniquePartitions) ->
 	get_unique_partitions_set(
 		Partitions,
+		sets:add_element(ar_serialize:partition_to_json_struct(PartitionID, ?PARTITION_SIZE,
+				MiningAddress, PackingDifficulty), UniquePartitions)
+	);
+get_unique_partitions_set([{PartitionID, BucketSize, MiningAddress, PackingDifficulty}
+		| Partitions], UniquePartitions) ->
+	get_unique_partitions_set(
+		Partitions,
 		sets:add_element(
-			{[
-				{bucket, PartitionID},
-				{bucketsize, BucketSize},
-				{addr, ar_util:encode(MiningAddress)}
-			]},
-			UniquePartitions
-		)
+			ar_serialize:partition_to_json_struct(PartitionID, BucketSize,
+					MiningAddress, PackingDifficulty), UniquePartitions)
 	).
 
 refetch_pool_peer_partitions(UniquePeerPartitions) ->

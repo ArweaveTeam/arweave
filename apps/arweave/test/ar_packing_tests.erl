@@ -417,21 +417,10 @@ test_request_unpack() ->
 				H = element(1, lists:nth(Height + 1, lists:reverse(BILast))),
 				B = ar_test_node:read_block_when_stored(H),
 				PoA = B#block.poa,
-				BI = lists:reverse(lists:sublist(lists:reverse(BILast), Height)),
-				PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
-				PrevSeed =
-					case B#block.height == ar_fork:height_2_6() of
-						true ->
-							element(1, lists:nth(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI));
-						false ->
-							PrevNonceLimiterInfo#nonce_limiter_info.seed
-					end,
 				NonceLimiterInfo = B#block.nonce_limiter_info,
-				Output = NonceLimiterInfo#nonce_limiter_info.output,
 				PartitionUpperBound =
 						NonceLimiterInfo#nonce_limiter_info.partition_upper_bound,
-				H0 = ar_block:compute_h0(Output, B#block.partition_number, PrevSeed,
-						B#block.reward_addr),
+				H0 = ar_block:compute_h0(B, PrevB),
 				{RecallRange1Start, _} = ar_block:get_recall_range(H0,
 						B#block.partition_number, PartitionUpperBound),
 				RecallByte = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
