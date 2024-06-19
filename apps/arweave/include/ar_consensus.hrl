@@ -8,9 +8,20 @@
 %% 360/8 = 45
 -define(PACKING_DIFFICULTY_2_6, 45).
 
--define(RANDOMX_PACKING_ROUNDS, 8 * (?PACKING_DIFFICULTY)).
+%% The basic packing difficulty of an atomic sub-chunk. The packing cost of a chunk
+%% is a sum of the packing costs of its atomic sub-chunks where every atomic sub-chunk's
+%% packing cost is a multiple of the basic atomic sub-chunk packing cost.
+-define(BASIC_ATOMIC_SUB_CHUNK_PACKING_DIFFICULTY, 1).
 
+%% The size in bytes of the atomic sub-chunk.
+-define(ATOMIC_SUB_CHUNK_SIZE, 8192). % 1/32 of 256 KiB.
+
+-define(RANDOMX_PACKING_ROUNDS, 8 * (?PACKING_DIFFICULTY)).
 -define(RANDOMX_PACKING_ROUNDS_2_6, 8 * (?PACKING_DIFFICULTY_2_6)).
+
+-define(RANDOMX_ATOMIC_SUB_CHUNK_PACKING_ROUNDS_PER_ITERATION, 8).
+
+-define(BASIC_PACKING_ROUNDS_2_8, 8 * (?BASIC_ATOMIC_SUB_CHUNK_PACKING_DIFFICULTY)).
 
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
@@ -75,7 +86,6 @@
 -define(POA1_DIFF_MULTIPLIER, 100).
 -endif.
 -endif.
-
 
 %% The number of nonce limiter steps sharing the entropy. We add the entropy
 %% from a past block every so often. If we did not add any entropy at all, even

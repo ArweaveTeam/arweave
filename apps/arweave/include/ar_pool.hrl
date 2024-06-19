@@ -48,5 +48,7 @@
 -record(pool_cm_jobs, {
 	h1_to_h2_jobs = [], % [#mining_candidate{}]
 	h1_read_jobs = [], % [#mining_candidate{}]
-	partitions = [] % a list of {[{bucket, ...}, {bucketsize, ...}, {addr, ...}]} JSON structs
+	%% A list of {[{bucket, ...}, {bucketsize, ...}, {addr, ...}]} or
+	%% {[{bucket, ...}, {bucketsize, ...}, {addr, ...}, {pdiff, ...}]} JSON structs.
+	partitions = []
 }).

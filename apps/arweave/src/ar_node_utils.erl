@@ -2,8 +2,8 @@
 -module(ar_node_utils).
 
 -export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6,
-	h1_passes_diff_check/2, h2_passes_diff_check/2, solution_passes_diff_check/2,
-	block_passes_diff_check/1, block_passes_diff_check/2, passes_diff_check/3,
+	h1_passes_diff_check/3, h2_passes_diff_check/3, solution_passes_diff_check/2,
+	block_passes_diff_check/1, block_passes_diff_check/2, passes_diff_check/4,
 	update_account/6, is_account_banned/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -78,16 +78,17 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 			{invalid, Reason}
 	end.
 
-h1_passes_diff_check(H1, DiffPair) ->
-	passes_diff_check(H1, true, DiffPair).
+h1_passes_diff_check(H1, DiffPair, PackingDifficulty) ->
+	passes_diff_check(H1, true, DiffPair, PackingDifficulty).
 
-h2_passes_diff_check(H2, DiffPair) ->
-	passes_diff_check(H2, false, DiffPair).
+h2_passes_diff_check(H2, DiffPair, PackingDifficulty) ->
+	passes_diff_check(H2, false, DiffPair, PackingDifficulty).
 
 solution_passes_diff_check(Solution, DiffPair) ->
 	SolutionHash = Solution#mining_solution.solution_hash,
+	PackingDifficulty = Solution#mining_solution.packing_difficulty,
 	IsPoA1 = ar_mining_server:is_one_chunk_solution(Solution),
-	passes_diff_check(SolutionHash, IsPoA1, DiffPair).
+	passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty).
 
 block_passes_diff_check(Block) ->
 	SolutionHash = Block#block.hash,
@@ -95,19 +96,33 @@ block_passes_diff_check(Block) ->
 
 block_passes_diff_check(SolutionHash, Block) ->
 	IsPoA1 = (Block#block.recall_byte2 == undefined),
+	PackingDifficulty = Block#block.packing_difficulty,
 	DiffPair = ar_difficulty:diff_pair(Block),
-	passes_diff_check(SolutionHash, IsPoA1, DiffPair).
+	passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty).
 
-passes_diff_check(_SolutionHash, _IsPoA1, not_set) ->
+passes_diff_check(_SolutionHash, _IsPoA1, not_set, _PackingDifficulty) ->
 	false;
-passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}) ->
-	Diff2 = case IsPoA1 of
-		true ->
-			PoA1Diff;
-		false ->
-			Diff
-	end,
-	binary:decode_unsigned(SolutionHash) > Diff2.
+passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}, PackingDifficulty) ->
+	Diff2 =
+		case IsPoA1 of
+			true ->
+				PoA1Diff;
+			false ->
+				Diff
+		end,
+	Diff3 =
+		case PackingDifficulty of
+			0 ->
+				Diff2;
+			_ ->
+				SubDiff = ar_difficulty:sub_diff(Diff2,
+						?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+				ar_difficulty:scale_diff(SubDiff, {1, PackingDifficulty},
+						%% The minimal difficulty height. It does not change at the
+						%% packing difficulty fork.
+						ar_fork:height_2_8())
+		end,
+	binary:decode_unsigned(SolutionHash) > Diff3.
 
 update_account(Addr, Balance, LastTX, 1, true, Accounts) ->
 	maps:put(Addr, {Balance, LastTX}, Accounts);
