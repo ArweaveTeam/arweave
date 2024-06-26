@@ -21,7 +21,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	%% We'll create workers for all configured parititions - even those partitions that
+	%% We'll create workers for all configured partitions - even those partitions that
 	%% currently exceed the weave size. Those workers will just lie dormant until the
 	%% weave size grows to meet them.
 	MiningWorkers = lists:map(

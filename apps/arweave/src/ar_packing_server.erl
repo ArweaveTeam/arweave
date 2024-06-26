@@ -303,7 +303,7 @@ worker(ThrottleDelay, RandomXStateRef) ->
 							ChunkSize}}},
 					case Unpacked of
 						none ->
-							%% When RequestdPacking and Packing are the same and neither is
+							%% When RequestedPacking and Packing are the same and neither is
 							%% unpacked, then the repack does no work and just returns
 							%% the original chunk. In this case we don't need a throttle.
 							ok;
@@ -417,8 +417,8 @@ repack(RequestedPacking, StoredPacking,
 		_ChunkOffset, _TXRoot, Chunk, _ChunkSize, _RandomXStateRef, _External)
 		when StoredPacking == RequestedPacking ->
 	%% StoredPacking and Packing are in the same format and neither is unpacked. To
-	%% avoid uneccessary unpacking we'll return none for the UnpackedChunk. If a caller
-	%% needs the UnpackedChunk they should call unpack explicity.
+	%% avoid unnecessary unpacking we'll return none for the UnpackedChunk. If a caller
+	%% needs the UnpackedChunk they should call unpack explicitly.
 	{ok, Chunk, none};
 repack(RequestedPacking, StoredPacking,
 		ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, External) ->
