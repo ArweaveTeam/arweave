@@ -700,8 +700,13 @@ handle_info({computed, Args}, State) ->
 	gen_server:cast(?MODULE, schedule_step),
 	case PrevOutput == SessionOutput2 of
 		false ->
-			?LOG_INFO([{event, computed_for_outdated_key}, {step_number, StepNumber},
-				{output, ar_util:encode(Output)}]),
+			case ar_config:use_remote_vdf_server() of
+				true ->
+					ok;
+				false ->
+					?LOG_WARNING([{event, computed_for_outdated_key}, {step_number, StepNumber},
+						{output, ar_util:encode(Output)}])
+			end,
 			{noreply, State};
 		true ->
 			Session2 = update_session(Session, StepNumber,
