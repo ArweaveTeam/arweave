@@ -10,7 +10,7 @@ let
   };
 
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreFilterWith;
-  inherit (pkgs) stdenv lib beamPackages fetchFromGitHub fetchFromGitLab fetchHex;
+  inherit (pkgs) stdenv lib beamPackages fetchFromGitHub fetchHex fetchurl;
 
   randomx = fetchFromGitHub {
     owner = "ArweaveTeam";
@@ -43,16 +43,16 @@ let
 
   erlang-rocksdb = buildRebar rec {
     name = "erlang-rocksdb";
-    version = "ed4d05d58d174485f883b5cd3e057c64d9e7ff3a";
+    version = "2b134b2fddaf674b73ca5a096759b488b40fafc0";
     beamDeps = [ beamPackages.pc ];
     nativeBuildInputs = [ pkgs.cmake ];
     buildInputs = [ pkgs.getconf ];
     configurePhase = "true";
-    src = fetchFromGitLab {
-      owner = "arweave1";
+    src = fetchFromGitHub {
+      owner = "ArweaveTeam";
       repo = name;
       rev = version;
-      sha256 = "1avgvqwnk780db6z2l66dk73ly3abvh2qqf357al60bzky4545yv";
+      sha256 = "sha256-hSqQsLEg1d/WdvwZxYlFbTS8wXdAfkDVddVJT+69nz8=";
     };
     postInstall = ''
       mv $out/lib/erlang/lib/erlang-rocksdb-${version} $out/lib/erlang/lib/rocksdb-1.6.0
