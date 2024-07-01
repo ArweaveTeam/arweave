@@ -16,7 +16,7 @@
 	-endif.
 -endif.
 
-%% When a request is received without specifing the X-Network header, this network name
+%% When a request is received without specifying the X-Network header, this network name
 %% is assumed.
 -ifndef(DEFAULT_NETWORK_NAME).
 	-define(DEFAULT_NETWORK_NAME, "arweave.N.1").
@@ -279,10 +279,10 @@
 %% Number of transaction propagation processes to spawn.
 %% Each emitter picks the most valued transaction from the queue
 %% and propagates it to the chosen peers.
-%% Can be overriden by a command line argument.
+%% Can be overridden by a command line argument.
 -define(NUM_EMITTER_PROCESSES, 16).
 
-%% The adjustment of difficutly going from SHA-384 to RandomX.
+%% The adjustment of difficultly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
 -ifdef(DEBUG).
 -define(RANDOMX_KEY_SWAP_FREQ, (?STORE_BLOCKS_BEHIND_CURRENT + 1)).
