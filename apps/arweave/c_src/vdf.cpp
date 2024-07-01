@@ -1,5 +1,7 @@
 #include <thread>
+#include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <vector>
 #include <mutex>
 #include <openssl/sha.h>
@@ -68,7 +70,7 @@ void _vdf_sha2(unsigned char* saltBuffer, unsigned char* seed, unsigned char* ou
 		for(int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn  = checkpointIdx == 0               ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE*(checkpointIdx-1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out  : (outCheckpoint + VDF_SHA_HASH_SIZE*checkpointIdx);
-			
+
 			{
 				SHA256_CTX sha256;
 				SHA256_Init(&sha256);
@@ -96,7 +98,7 @@ void _vdf_sha2(unsigned char* saltBuffer, unsigned char* seed, unsigned char* ou
 		for(int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn  = checkpointIdx == 0               ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE*(checkpointIdx-1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out  : (outCheckpoint + VDF_SHA_HASH_SIZE*checkpointIdx);
-			
+
 			{
 				SHA256_CTX sha256;
 				SHA256_Init(&sha256);
@@ -175,10 +177,10 @@ void _vdf_sha_verify_thread(vdf_sha_verify_thread_arg* _arg) {
 		unsigned char  saltBuffer[SALT_SIZE];
 		memcpy(saltBuffer, arg->job->startSaltBuffer, SALT_SIZE);
 		long_add(saltBuffer, arg->checkpointIdx*(1+arg->job->skipCheckpointCount));
-		
+
 		// unrolled for memcpy inject
 		// _vdf_sha2(saltBuffer, in, expdOut, NULL, 0, arg->job->skipCheckpointCount, arg->job->hashingIterationsSha);
-		
+
 		// do not rewrite in
 		unsigned char inCopy[VDF_SHA_HASH_SIZE];
 		memcpy(inCopy, in, VDF_SHA_HASH_SIZE);
@@ -257,16 +259,16 @@ bool vdf_parallel_sha_verify(unsigned char* startSaltBuffer, unsigned char* seed
 		} else {
 			sha_temp_result = inCheckpoint + (checkpointCount-1)*VDF_SHA_HASH_SIZE;
 		}
-		
+
 		unsigned char finalSaltBuffer[SALT_SIZE];
 		memcpy(finalSaltBuffer, startSaltBuffer, SALT_SIZE);
 		long_add(finalSaltBuffer, checkpointCount*(1+skipCheckpointCount));
-		
+
 		unsigned char* outFullCheckpoint = outCheckpoint + checkpointCount*(1+skipCheckpointCount)*VDF_SHA_HASH_SIZE;
-		
+
 		// unrolled for memcpy inject
 		// _vdf_sha2(finalSaltBuffer, sha_temp_result, expdOut, NULL, 0, skipCheckpointCount, hashingIterations);
-		
+
 		// do not rewrite in
 		unsigned char inCopy[VDF_SHA_HASH_SIZE];
 		memcpy(inCopy, sha_temp_result, VDF_SHA_HASH_SIZE);
@@ -324,24 +326,24 @@ void _vdf_sha_verify_with_reset_thread(vdf_sha_verify_thread_arg* _arg) {
 		unsigned char  saltBuffer[SALT_SIZE];
 		memcpy(saltBuffer, arg->job->startSaltBuffer, SALT_SIZE);
 		long_add(saltBuffer, arg->checkpointIdx*(1+arg->job->skipCheckpointCount));
-		
+
 		// unrolled for memcpy inject and reset_mix
 		// _vdf_sha2(saltBuffer, in, expdOut, NULL, 0, arg->job->skipCheckpointCount, arg->job->hashingIterationsSha);
-		
+
 		// do not rewrite in
 		unsigned char inCopy[VDF_SHA_HASH_SIZE];
 		memcpy(inCopy, in, VDF_SHA_HASH_SIZE);
-		
+
 		if (fast_rev_cmp256(saltBuffer, arg->job->resetStepNumberBin256)) {
 			reset_mix(inCopy, inCopy, arg->job->resetSeed);
 		}
-		
+
 		for(int i=0;i<=arg->job->skipCheckpointCount;i++) {
 			_vdf_sha2(saltBuffer, inCopy, expdOut, NULL, 0, 0, arg->job->hashingIterationsSha);
 			memcpy(outFullCheckpoint, expdOut, VDF_SHA_HASH_SIZE);
 			outFullCheckpoint += VDF_SHA_HASH_SIZE;
 			memcpy(inCopy, expdOut, VDF_SHA_HASH_SIZE);
-			
+
 			if (fast_rev_cmp256(saltBuffer, arg->job->resetStepNumberBin256)) {
 				reset_mix(inCopy, inCopy, arg->job->resetSeed);
 			}
@@ -417,30 +419,30 @@ bool vdf_parallel_sha_verify_with_reset(unsigned char* startSaltBuffer, unsigned
 		} else {
 			sha_temp_result = inCheckpoint + (checkpointCount-1)*VDF_SHA_HASH_SIZE;
 		}
-		
+
 		unsigned char finalSaltBuffer[SALT_SIZE];
 		memcpy(finalSaltBuffer, startSaltBuffer, SALT_SIZE);
 		long_add(finalSaltBuffer, checkpointCount*(1+skipCheckpointCount));
-		
+
 		unsigned char* outFullCheckpoint = outCheckpoint + checkpointCount*(1+skipCheckpointCount)*VDF_SHA_HASH_SIZE;
-		
+
 		// unrolled for memcpy inject
 		// _vdf_sha2(finalSaltBuffer, sha_temp_result, expdOut, NULL, 0, skipCheckpointCount, hashingIterations);
-		
+
 		// do not rewrite in
 		unsigned char inCopy[VDF_SHA_HASH_SIZE];
 		memcpy(inCopy, sha_temp_result, VDF_SHA_HASH_SIZE);
-		
+
 		if (fast_rev_cmp256(finalSaltBuffer, resetStepNumberBin256)) {
 			reset_mix(inCopy, inCopy, resetSeed);
 		}
-		
+
 		for(int i=0;i<=skipCheckpointCount;i++) {
 			_vdf_sha2(finalSaltBuffer, inCopy, expdOut, NULL, 0, 0, hashingIterations);
 			memcpy(outFullCheckpoint, expdOut, VDF_SHA_HASH_SIZE);
 			outFullCheckpoint += VDF_SHA_HASH_SIZE;
 			memcpy(inCopy, expdOut, VDF_SHA_HASH_SIZE);
-			
+
 			if (fast_rev_cmp256(finalSaltBuffer, resetStepNumberBin256)) {
 				reset_mix(inCopy, inCopy, resetSeed);
 			}
