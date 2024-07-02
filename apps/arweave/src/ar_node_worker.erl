@@ -101,11 +101,11 @@ init([]) ->
 		{true, _, _} ->
 			case ar_storage:read_block_index() of
 				not_found ->
-					block_index_not_found();
+					block_index_not_found([]);
 				BI ->
 					case get_block_index_at_state(BI, Config) of
 						not_found ->
-							block_index_not_found();
+							block_index_not_found(BI);
 						BI2 ->
 							Height = length(BI2) - 1,
 							case start_from_state(BI2, Height) of
@@ -186,12 +186,22 @@ get_block_index_at_state2([{H, _, _} | _] = BI, H) ->
 get_block_index_at_state2([_ | BI], H) ->
 	get_block_index_at_state2(BI, H).
 
-block_index_not_found() ->
+block_index_not_found([]) ->
 	ar:console("~n~n\tThe local state is empty, consider joining the network "
 			"via the trusted peers.~n"),
-	?LOG_ERROR([{event, empty_local_state}]),
+	?LOG_INFO([{event, local_state_empty}]),
+	timer:sleep(1000),
+	erlang:halt();
+block_index_not_found(BI) ->
+	{Last, _, _} = hd(BI),
+	{First, _, _} = lists:last(BI),
+	ar:console("~n~n\tThe local state is missing the target block. Available height range: ~p to ~p.~n",
+			[ar_util:encode(First), ar_util:encode(Last)]),
+	?LOG_INFO([{event, local_state_missing_target},
+			{first, ar_util:encode(First)}, {last, ar_util:encode(Last)}]),
 	timer:sleep(1000),
 	erlang:halt().
+
 
 validate_trusted_peers(#config{ peers = [] }) ->
 	ok;
