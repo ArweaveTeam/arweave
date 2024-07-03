@@ -35,6 +35,7 @@ show_help() ->
 	io:format("  baseline_pack~n"),
 	io:format("  baseline_repack~n"),
 	io:format("  nif_repack~n"),
+	io:format("  baseline_pack_composite~n"),
 	erlang:halt().
 
 run_benchmark(Test, JIT, LargePages, HardwareAES, VDF) ->
@@ -71,6 +72,8 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF) ->
 			run_dirty_benchmark(baseline_repack, Permutation, NumWorkers, Root, RewardAddress);
 		nif_repack ->
 			run_dirty_benchmark(nif_repack, Permutation, NumWorkers, Root, RewardAddress);
+		baseline_pack_composite ->
+			run_dirty_benchmark(baseline_pack_composite, Permutation, NumWorkers, Root, RewardAddress);
 		_ ->
 			show_help()
 	end,
@@ -230,7 +233,11 @@ run_dirty_test(nif_repack, {TotalMegaBytes, _, _, _} = Permutation,
 		packed_filename(TotalMegaBytes),
 		output_filename(nif_repack, Permutation),
 		fun nif_repack_chunks/5,
-		Permutation, RandomXState, Root, RewardAddress, NumWorkers).
+		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
+run_dirty_test(baseline_pack_composite, Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
+	run_dirty_pack_test(baseline_pack_composite, Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers).
 
 run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation,
 		RandomXState, Root, RewardAddress, NumWorkers) ->
@@ -244,6 +251,25 @@ run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation,
 	ar_bench_timer:record({wall}, fun dirty_test/4, [
 		Permutation,
 		fun baseline_pack_chunks/5,
+		Args,
+		NumWorkers
+	]),
+
+	file:close(UnpackedFileHandle),
+	file:close(PackedFileHandle);
+
+run_dirty_pack_test(baseline_pack_composite, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, RewardAddress, NumWorkers) ->
+	UnpackedFilename = unpacked_filename(TotalMegaBytes),
+	PackedFilename = output_filename(baseline_pack, Permutation),
+	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
+	PackedFileHandle = open_file(PackedFilename, [write, binary]),
+
+	io:format("packing..."),
+	Args = {RandomXState, UnpackedFileHandle, PackedFileHandle, Root, RewardAddress},
+	ar_bench_timer:record({wall}, fun dirty_test/4, [
+		Permutation,
+		fun baseline_pack_composite_chunks/5,
 		Args,
 		NumWorkers
 	]),
@@ -323,6 +349,41 @@ baseline_pack_chunks(WorkerID,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
 	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
+	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
+	RemainingSize = case ReadResult of
+        {ok, UnpackedChunk} ->
+			{ok, PackedChunk} = ar_mine_randomx:randomx_encrypt_chunk_nif(
+				RandomXState, Key, UnpackedChunk, ?RANDOMX_PACKING_ROUNDS_2_6,
+				JIT, LargePages, HardwareAES),
+			file:pwrite(PackedFileHandle, Offset, PackedChunk),
+			(Size - ChunkSize);
+        eof ->
+            0;
+        {error, Reason} ->
+            io:format("Error reading file: ~p~n", [Reason]),
+			0
+    end,
+	baseline_pack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
+
+%% --------------------------------------------------------------------------------------------
+%% Baseline Packing 2.8 Test
+%% --------------------------------------------------------------------------------------------
+% TODO merge with Packing Test with 1 extra parameter
+% TODO diff other than 1
+
+baseline_pack_composite_chunks(_WorkerID, _Permutation, _Args, _Offset, Size) when Size =< 0 ->
+	ok;
+baseline_pack_composite_chunks(WorkerID,
+		{
+			_, JIT, LargePages, HardwareAES
+		} = Permutation,
+		{
+			RandomXState, UnpackedFileHandle, PackedFileHandle, 
+			Root, RewardAddress
+		} = Args,
+		Offset, Size) ->
+	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
+	{composite, Key} = ar_packing_server:chunk_key({composite, RewardAddress, 1}, Offset, Root),
 	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
         {ok, UnpackedChunk} ->
