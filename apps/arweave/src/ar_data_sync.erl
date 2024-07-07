@@ -1470,7 +1470,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 handle_info({event, disksup, _}, State) ->
 	{noreply, State};
 
-handle_info({'EXIT', _, normal}, State) ->
+handle_info({'EXIT', _PID, normal}, State) ->
 	{noreply, State};
 
 handle_info({'DOWN', _,  process, _, normal}, State) ->

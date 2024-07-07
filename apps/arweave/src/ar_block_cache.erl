@@ -474,8 +474,6 @@ update_timestamp(Tab, H, ReceiveTimestamp) ->
 					ok
 			end;
 		[] ->
-			?LOG_ERROR([
-				{event, ignored_block_missing_from_cache}, {block, ar_util:encode(H)}]),
 			not_found
 	end.
 

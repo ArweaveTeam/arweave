@@ -124,11 +124,11 @@
 
 %% The number of blocks returned in the /info 'recent' field
 -ifdef(DEBUG).
--define(INFO_BLOCKS, 5).
--define(INFO_BLOCKS_WITHOUT_TIMESTAMP, 2).
+-define(RECENT_BLOCKS, 5).
+-define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 2).
 -else.
--define(INFO_BLOCKS, 10).
--define(INFO_BLOCKS_WITHOUT_TIMESTAMP, 5).
+-define(RECENT_BLOCKS, 10).
+-define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 5).
 -endif.
 
 %% How long to wait before giving up on test(s).
