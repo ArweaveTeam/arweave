@@ -1086,7 +1086,7 @@ get_info(Peer, Type) ->
 	case get_info(Peer) of
 		info_unavailable -> info_unavailable;
 		Info ->
-			maps:get(Type, Info)
+			maps:get(atom_to_binary(Type), Info)
 	end.
 get_info(Peer) ->
 	case
@@ -1102,7 +1102,7 @@ get_info(Peer) ->
 		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> 
 			case ar_serialize:json_decode(JSON, [return_maps]) of
 				{ok, JsonMap} ->
-					ar_serialize:json_map_to_info_map(JsonMap);
+					JsonMap;
 				{error, _} ->
 					info_unavailable
 			end;

@@ -30,7 +30,7 @@
 		json_map_to_candidate/1,
 		jobs_to_json_struct/1, json_struct_to_jobs/1,
 		partial_solution_response_to_json_struct/1,
-		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1, json_map_to_info_map/1]).
+		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
@@ -1406,7 +1406,6 @@ json_struct_to_poa({JSONStruct}) ->
 		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct))
 	}.
 
-% FIXME. remove [return_maps] in ar_http_iface_middleware and make code uniform
 json_struct_to_poa_from_map(JSONStruct) ->
 	#poa{
 		option = binary_to_integer(maps:get(<<"option">>, JSONStruct)),
@@ -1967,19 +1966,6 @@ json_map_to_solution(JSON) ->
 		step_number = StepNumber,
 		steps = Steps
 	}.
-
-json_map_to_info_map(JSONMap) ->
-	lists:foldl(
-        fun(Key, Acc) ->
-            BinaryKey = atom_to_binary(Key, utf8),
-            case maps:get(BinaryKey, JSONMap, undefined) of
-                undefined -> Acc;
-                Value -> maps:put(Key, Value, Acc)
-            end
-        end,
-        #{},
-        ar_info:get_keys()
-    ).
 
 encode_if_set(JSON, _JSONProperty, not_set, _Encoder) ->
 	JSON;

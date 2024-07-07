@@ -3,12 +3,15 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 
-recent_test_() ->
+recent_blocks_test_() ->
 	[
 		{timeout, 120, fun test_recent_blocks_post/0},
 		{timeout, 120, fun test_recent_blocks_announcement/0}
 	].
 
+%% -------------------------------------------------------------------------------------------
+%% Recent blocks tests
+%% -------------------------------------------------------------------------------------------
 test_recent_blocks_post() ->
 	test_recent_blocks(post).
 
@@ -20,12 +23,11 @@ test_recent_blocks(Type) ->
 	ar_test_node:start_peer(peer1, B0),
 	GenesisBlock = [#{
 		<<"id">> => ar_util:encode(B0#block.indep_hash),
-		<<"received">> => "pending"
+		<<"received">> => <<"pending">>
 	}],
-	?assertEqual(GenesisBlock, 
-		ar_http_iface_client:get_info(ar_test_node:peer_ip(peer1), recent)),
+	?assertEqual(GenesisBlock, get_recent(ar_test_node:peer_ip(peer1), blocks)),
 
-	TargetHeight = ?INFO_BLOCKS+2,
+	TargetHeight = ?RECENT_BLOCKS+2,
 	PeerBI = lists:foldl(
 		fun(Height, _Acc) ->
 			ar_test_node:mine(peer1),
@@ -37,7 +39,7 @@ test_recent_blocks(Type) ->
 	%% Peer1 recent has no timestamps since it hasn't received any of its own blocks
 	%% gossipped back
 	?assertEqual(expected_blocks(peer1, PeerBI, true), 
-		ar_http_iface_client:get_info(ar_test_node:peer_ip(peer1), recent)),
+		get_recent(ar_test_node:peer_ip(peer1), blocks)),
 
 	%% Share blocks to peer1
 	lists:foreach(
@@ -63,7 +65,7 @@ test_recent_blocks(Type) ->
 	%% Peer1 recent should now have timestamps, but also black out the most recent
 	%% ones.
 	?assertEqual(expected_blocks(peer1, PeerBI), 
-		ar_http_iface_client:get_info(ar_test_node:peer_ip(peer1), recent)).
+		get_recent(ar_test_node:peer_ip(peer1), blocks)).
 
 expected_blocks(Node, BI) ->
 	expected_blocks(Node, BI, false).
@@ -72,10 +74,10 @@ expected_blocks(Node, BI, ForcePending) ->
 		fun({H, _WeaveSize, _TXRoot}, Acc) ->
 			B = ar_test_node:remote_call(Node, ar_block_cache, get, [block_cache, H]),
 			Timestamp = case ForcePending of
-				true -> "pending";
+				true -> <<"pending">>;
 				false ->
-					case length(Acc) >= (?INFO_BLOCKS - ?INFO_BLOCKS_WITHOUT_TIMESTAMP - 1) of
-						true -> "pending";
+					case length(Acc) >= (?RECENT_BLOCKS - ?RECENT_BLOCKS_WITHOUT_TIMESTAMP - 1) of
+						true -> <<"pending">>;
 						false -> ar_util:timestamp_to_seconds(B#block.receive_timestamp)
 					end
 				end,
@@ -85,5 +87,31 @@ expected_blocks(Node, BI, ForcePending) ->
 			} | Acc]
 		end,
 		[],
-		lists:reverse(lists:sublist(BI, ?INFO_BLOCKS))
+		lists:reverse(lists:sublist(BI, ?RECENT_BLOCKS))
 	).
+
+get_recent(Peer, Type) ->
+	case get_recent(Peer) of
+		info_unavailable -> info_unavailable;
+		Info ->
+			maps:get(atom_to_binary(Type), Info)
+	end.
+get_recent(Peer) ->
+	case
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/recent",
+			connect_timeout => 1000,
+			timeout => 2 * 1000
+		})
+	of
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> 
+			case ar_serialize:json_decode(JSON, [return_maps]) of
+				{ok, JsonMap} ->
+					JsonMap;
+				{error, _} ->
+					info_unavailable
+			end;
+		_ -> info_unavailable
+	end.
