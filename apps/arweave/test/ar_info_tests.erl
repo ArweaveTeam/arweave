@@ -22,8 +22,7 @@ test_recent_blocks(Type) ->
 		<<"id">> => ar_util:encode(B0#block.indep_hash),
 		<<"received">> => "pending"
 	}],
-	?assertEqual(GenesisBlock, 
-		ar_http_iface_client:get_info(ar_test_node:peer_ip(peer1), recent)),
+	?assertEqual(GenesisBlock, get_recent(ar_test_node:peer_ip(peer1), blocks)),
 
 	TargetHeight = ?INFO_BLOCKS+2,
 	PeerBI = lists:foldl(
@@ -37,7 +36,7 @@ test_recent_blocks(Type) ->
 	%% Peer1 recent has no timestamps since it hasn't received any of its own blocks
 	%% gossipped back
 	?assertEqual(expected_blocks(peer1, PeerBI, true), 
-		ar_http_iface_client:get_info(ar_test_node:peer_ip(peer1), recent)),
+		get_recent(ar_test_node:peer_ip(peer1), blocks)),
 
 	%% Share blocks to peer1
 	lists:foreach(
@@ -63,7 +62,7 @@ test_recent_blocks(Type) ->
 	%% Peer1 recent should now have timestamps, but also black out the most recent
 	%% ones.
 	?assertEqual(expected_blocks(peer1, PeerBI), 
-		ar_http_iface_client:get_info(ar_test_node:peer_ip(peer1), recent)).
+		get_recent(ar_test_node:peer_ip(peer1), blocks)).
 
 expected_blocks(Node, BI) ->
 	expected_blocks(Node, BI, false).
@@ -87,3 +86,29 @@ expected_blocks(Node, BI, ForcePending) ->
 		[],
 		lists:reverse(lists:sublist(BI, ?INFO_BLOCKS))
 	).
+
+get_recent(Peer, Type) ->
+	case get_recent(Peer) of
+		info_unavailable -> info_unavailable;
+		Info ->
+			maps:get(atom_to_binary(Type), Info)
+	end.
+get_recent(Peer) ->
+	case
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/recent",
+			connect_timeout => 1000,
+			timeout => 2 * 1000
+		})
+	of
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> 
+			case ar_serialize:json_decode(JSON, [return_maps]) of
+				{ok, JsonMap} ->
+					JsonMap;
+				{error, _} ->
+					info_unavailable
+			end;
+		_ -> info_unavailable
+	end.
