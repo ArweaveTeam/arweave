@@ -43,7 +43,7 @@ let
 
   erlang-rocksdb = buildRebar rec {
     name = "erlang-rocksdb";
-    version = "2b134b2fddaf674b73ca5a096759b488b40fafc0";
+    version = "f580865c0bc18b0302a6190d7fa85e68ec0762e0";
     beamDeps = [ beamPackages.pc ];
     nativeBuildInputs = [ pkgs.cmake ];
     buildInputs = [ pkgs.getconf ];
