@@ -112,7 +112,7 @@ store_block_index(BI) ->
 		none ->
 			update_block_index(NewHeight, 0, lists:reverse(BI));
 		{ok, << StoredHeight:256 >>, _V} ->
-			%% RootHeight should a historical height shared by botht he stored BI and the
+			%% RootHeight should a historical height shared by both the stored BI and the
 			%% new BI
 			RootHeight = max(0, min(StoredHeight, NewHeight) - ?STORE_BLOCKS_BEHIND_CURRENT),
 			{ok, V} = ar_kv:get(block_index_db, << RootHeight:256 >>),

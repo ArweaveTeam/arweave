@@ -124,10 +124,8 @@
 
 %% The number of blocks returned in the /info 'recent' field
 -ifdef(DEBUG).
--define(RECENT_BLOCKS, 5).
 -define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 2).
 -else.
--define(RECENT_BLOCKS, 10).
 -define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 5).
 -endif.
 

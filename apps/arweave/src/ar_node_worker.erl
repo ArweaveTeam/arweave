@@ -1310,11 +1310,12 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	log_tip(B),
 	maybe_report_n_confirmations(B, RecentBI),
 	PrevB = hd(PrevBlocks),
+	ForkRootB = lists:last(PrevBlocks), %% The root of any detected fork
 	prometheus_gauge:set(block_time, B#block.timestamp - PrevB#block.timestamp),
 	record_economic_metrics(B, PrevB),
-	record_fork_depth(Orphans),
+	ar_chain_stats:log_fork(Orphans, ForkRootB),
 	record_vdf_metrics(B, PrevB),
-	return_orphaned_txs_to_mempool(CurrentH, (lists:last(PrevBlocks))#block.indep_hash),
+	return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash),
 	lists:foldl(
 		fun (CurrentB, start) ->
 				CurrentB;
@@ -1359,7 +1360,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 
 	ar_storage:update_block_index(B#block.height, OrphanCount, AddedBIElements),
 	ar_storage:store_reward_history_part(AddedBlocks),
-	ar_storage:store_block_time_history_part(AddedBlocks, lists:last(PrevBlocks)),
+	ar_storage:store_block_time_history_part(AddedBlocks, ForkRootB),
 	ets:insert(node_state, [
 		{recent_block_index,	RecentBI2},
 		{recent_max_block_size, get_max_block_size(RecentBI2)},
@@ -1439,18 +1440,6 @@ maybe_report_n_confirmations(B, BI) ->
 		false ->
 			do_nothing
 	end.
-
-record_fork_depth(Orphans) ->
-	record_fork_depth(Orphans, 0).
-
-record_fork_depth([], 0) ->
-	ok;
-record_fork_depth([], N) ->
-	prometheus_histogram:observe(fork_recovery_depth, N),
-	ok;
-record_fork_depth([H | Orphans], N) ->
-	?LOG_INFO([{event, orphaning_block}, {block, ar_util:encode(H)}, {depth, N}]),
-	record_fork_depth(Orphans, N + 1).
 
 record_economic_metrics(B, PrevB) ->
 	case B#block.height >= ar_fork:height_2_5() of

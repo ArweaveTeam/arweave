@@ -9,6 +9,11 @@ recent_blocks_test_() ->
 		{timeout, 120, fun test_recent_blocks_announcement/0}
 	].
 
+% recent_forks_test_() ->
+% 	[
+% 		{timeout, 120, fun test_recent_forks/0}
+% 	].
+
 %% -------------------------------------------------------------------------------------------
 %% Recent blocks tests
 %% -------------------------------------------------------------------------------------------
@@ -27,7 +32,7 @@ test_recent_blocks(Type) ->
 	}],
 	?assertEqual(GenesisBlock, get_recent(ar_test_node:peer_ip(peer1), blocks)),
 
-	TargetHeight = ?RECENT_BLOCKS+2,
+	TargetHeight = ?CHECKPOINT_DEPTH+2,
 	PeerBI = lists:foldl(
 		fun(Height, _Acc) ->
 			ar_test_node:mine(peer1),
@@ -76,7 +81,7 @@ expected_blocks(Node, BI, ForcePending) ->
 			Timestamp = case ForcePending of
 				true -> <<"pending">>;
 				false ->
-					case length(Acc) >= (?RECENT_BLOCKS - ?RECENT_BLOCKS_WITHOUT_TIMESTAMP - 1) of
+					case length(Acc) > (?CHECKPOINT_DEPTH - ?RECENT_BLOCKS_WITHOUT_TIMESTAMP - 1) of
 						true -> <<"pending">>;
 						false -> ar_util:timestamp_to_seconds(B#block.receive_timestamp)
 					end
@@ -87,8 +92,58 @@ expected_blocks(Node, BI, ForcePending) ->
 			} | Acc]
 		end,
 		[],
-		lists:reverse(lists:sublist(BI, ?RECENT_BLOCKS))
+		lists:reverse(lists:sublist(BI, ?CHECKPOINT_DEPTH))
 	).
+
+%% -------------------------------------------------------------------------------------------
+%% Recent forks tests
+%% -------------------------------------------------------------------------------------------
+test_recent_forks() ->
+	StartTime = os:system_time(seconds),
+	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
+	ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:start_peer(peer2, B0),
+    ar_test_node:connect_to_peer(peer1),
+    ar_test_node:connect_to_peer(peer2),
+   
+    %% Mine a few blocks, shared by both peers
+    ar_test_node:mine(peer1),
+    ar_test_node:wait_until_height(peer1, 1),
+    ar_test_node:wait_until_height(peer2, 1),
+    ar_test_node:mine(peer2),
+    ar_test_node:wait_until_height(peer1, 2),
+    ar_test_node:wait_until_height(peer2, 2),
+    ar_test_node:mine(peer1),
+    ar_test_node:wait_until_height(peer1, 3),
+    ar_test_node:wait_until_height(peer2, 3),
+
+    %% Disconnect peers, and have peer1 mine 1 block, and peer2 mine 3
+    ar_test_node:disconnect_from(peer1),
+    ar_test_node:disconnect_from(peer2),
+
+    ar_test_node:mine(peer1),
+    ar_test_node:wait_until_height(peer1, 4),
+
+    ar_test_node:mine(peer2),
+    ar_test_node:wait_until_height(peer2, 4),
+    ar_test_node:mine(peer2),
+    ar_test_node:wait_until_height(peer2, 5),
+    ar_test_node:mine(peer2),
+    ar_test_node:wait_until_height(peer2, 6),
+
+    %% Reconnect the peers. This will orphan peer1's block
+    ar_test_node:connect_to_peer(peer1),
+    ar_test_node:connect_to_peer(peer2),
+
+    ar_test_node:wait_until_height(peer1, 6),
+    ar_test_node:wait_until_height(peer2, 6),
+    ar_test_node:wait_until_height(6),
+
+    ar_test_node:disconnect_from(peer1),
+    ar_test_node:disconnect_from(peer2),
+
+	?LOG_ERROR(get_recent(ar_test_node:peer_ip(peer1), forks)).
 
 get_recent(Peer, Type) ->
 	case get_recent(Peer) of
