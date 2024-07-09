@@ -7,6 +7,7 @@
 -export([get_info/0, get_recent/0]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_chain_stats.hrl").
 
 get_info() ->
 	{Time, Current} =
@@ -40,11 +41,18 @@ get_info() ->
 
 get_recent() ->
     #{
-        %% {
+        %% #{
         %%   "id": <indep_hash>,
         %%   "received": <received_timestamp>"
         %% }
-        <<"blocks">> => get_recent_blocks(ar_node:get_height())
+        <<"blocks">> => get_recent_blocks(ar_node:get_height()),
+        %% #{
+        %%   "id": <hash_of_block_ids>,
+        %%   "height": <height_of_first_orphaned_block>,
+        %%   "timestamp": <timestamp_of_when_fork_was_abandoned>
+        %%   "blocks": [<block_id>, <block_id>, ...]
+        %% }
+        <<"forks">> => get_recent_forks()
     }.
 
 get_recent_blocks(CurrentHeight) ->
@@ -56,7 +64,23 @@ get_recent_blocks(CurrentHeight) ->
             }]
         end,
         [],
-        lists:sublist(ar_block_index:get_list(CurrentHeight), ?RECENT_BLOCKS)
+        lists:sublist(ar_block_index:get_list(CurrentHeight), ?CHECKPOINT_DEPTH)
+    ).
+
+get_recent_forks() ->
+    lists:foldl(
+        fun(Fork, Acc) ->
+            #fork{ 
+                id = ID, height = Height, timestamp = Timestamp, block_ids = BlockIDs} = Fork,
+            Acc ++ [#{
+                <<"id">> => ar_util:encode(ID),
+                <<"height">> => Height,
+                <<"timestamp">> => Timestamp div 1000,
+                <<"blocks">> => [ ar_util:encode(BlockID) || BlockID <- BlockIDs ]
+            }]
+        end,
+        [],
+        ar_chain_stats:get_forks(0)
     ).
 
 get_block_timestamp(H, Depth) when Depth < ?RECENT_BLOCKS_WITHOUT_TIMESTAMP ->

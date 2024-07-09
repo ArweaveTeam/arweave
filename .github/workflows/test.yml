@@ -41,6 +41,7 @@ jobs:
             ar,
             ar_block,
             ar_block_cache,
+            ar_chain_stats,
             ar_chunk_storage,
             ar_data_sync_worker_master,
             ar_deep_hash,
