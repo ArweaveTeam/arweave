@@ -184,8 +184,13 @@ handle(<<"GET">>, [<<"info">>], Req, _Pid) ->
 	{200, #{}, ar_serialize:jsonify(ar_info:get_info()), Req};
 
 handle(<<"GET">>, [<<"recent">>], Req, _Pid) ->
-	{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req};
-
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req}
+	end;
+	
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
 	case ar_util:safe_decode(EncodedTXID) of
 		{error, invalid} ->
@@ -2321,7 +2326,7 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 		solution_hash = SolutionH }, Req) ->
 	case ar_ignore_registry:member(H) of
 		true ->
-			ar_block_cache:update_timestamp(block_cache, H, erlang:timestamp()),
+			check_block_receive_timestamp(H),
 			{208, #{}, <<>>, Req};
 		false ->
 			case ar_node:get_block_shadow_from_cache(PrevH) of
@@ -2438,7 +2443,7 @@ post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp
 				{ok, BH} when byte_size(BH) =< 48 ->
 					case ar_ignore_registry:member(BH) of
 						true ->
-							ar_block_cache:update_timestamp(block_cache, BH, ReceiveTimestamp),
+							check_block_receive_timestamp(BH),
 							{208, #{}, <<"Block already processed.">>, Req};
 						false ->
 							post_block(read_body, Peer, {Req, Pid, Encoding},
@@ -2507,6 +2512,21 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 			ok
 	end,
 	{200, #{}, <<"OK">>, Req}.
+
+check_block_receive_timestamp(H) ->
+	case ar_block_cache:get(block_cache, H) of
+		not_found ->
+			not_found;
+		B ->
+			case B#block.receive_timestamp of
+				undefined ->
+					%% This node mined block H and this is the first time it's been
+					%% gossipped back to it. Update the node's receive_timestamp.
+					ar_events:send(block, {mined_block_received, H, erlang:timestamp()});
+				_ ->
+					ok
+			end
+	end.
 
 handle_post_partial_solution(Req, Pid) ->
 	{ok, Config} = application:get_env(arweave, config),

@@ -37,7 +37,7 @@ init([]) ->
 		%% Events: new, ready_for_mining, orphaned, emitting_scheduled,
 		%% preparing_unblacklisting, ready_for_unblacklisting, registered_offset.
 		?CHILD(ar_events, tx, worker),
-		%% Events: discovered, rejected, new, double_signing.
+		%% Events: discovered, rejected, new, double_signing, mined_block_received.
 		?CHILD(ar_events, block, worker),
 		%% Events: unpacked, packed.
 		?CHILD(ar_events, chunk, worker),

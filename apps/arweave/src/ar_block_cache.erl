@@ -215,6 +215,16 @@ get(Tab, H) ->
 			B
 	end.
 
+%% @doc Get the block and its status from cache.
+%% Returns not_found if the block is not in cache.
+get_block_and_status(Tab, H) ->
+	case ets:lookup(Tab, {block, H}) of
+		[] ->
+			not_found;
+		[{_, {B, Status, Timestamp, _Children}}] ->
+			{B, {Status, Timestamp}}
+	end.
+
 %% @doc Get a {block, previous blocks, status} tuple for the earliest block from
 %% the longest chain, which has not been validated yet. The previous blocks are
 %% sorted from newest to oldest. The last one is a block from the current fork.
@@ -296,16 +306,6 @@ tx_id(#tx{ id = ID }) ->
 	ID;
 tx_id(TXID) ->
 	TXID.
-
-%% @doc Get the block and its status from cache.
-%% Returns not_found if the block is not in cache.
-get_block_and_status(Tab, H) ->
-	case ets:lookup(Tab, {block, H}) of
-		[] ->
-			not_found;
-		[{_, {B, Status, Timestamp, _Children}}] ->
-			{B, {Status, Timestamp}}
-	end.
 
 %% @doc Mark the given block as the tip block. Mark the previous blocks as on-chain.
 %% Mark the on-chain blocks from other forks as validated. Raises invalid_tip if
@@ -458,6 +458,8 @@ get_siblings(Tab, B) ->
 
 update_timestamp(Tab, H, ReceiveTimestamp) ->
 	case ets:lookup(Tab, {block, H}) of
+		[] ->
+			not_found;
 		[{_, {B, Status, Timestamp, Children}}] ->
 			case B#block.receive_timestamp of
 				undefined ->
@@ -472,9 +474,7 @@ update_timestamp(Tab, H, ReceiveTimestamp) ->
 						}, false);
 				_ ->
 					ok
-			end;
-		[] ->
-			not_found
+			end
 	end.
 
 %%%===================================================================

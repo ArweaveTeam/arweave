@@ -43,9 +43,10 @@ get_recent() ->
     #{
         %% #{
         %%   "id": <indep_hash>,
-        %%   "received": <received_timestamp>"
+        %%   "received": <received_timestamp>",
+        %%   "height": <height>
         %% }
-        <<"blocks">> => get_recent_blocks(ar_node:get_height()),
+        <<"blocks">> => get_recent_blocks(),
         %% #{
         %%   "id": <hash_of_block_ids>,
         %%   "height": <height_of_first_orphaned_block>,
@@ -55,40 +56,56 @@ get_recent() ->
         <<"forks">> => get_recent_forks()
     }.
 
-get_recent_blocks(CurrentHeight) ->
-    lists:foldl(
-        fun({H, _WeaveSize, _TXRoot}, Acc) ->
-            Acc ++ [#{
+%% @doc Return the the most recent blocks in reverse chronological order.
+%% 
+%% There are a few list reversals that happen here:
+%% 1. get_block_anchors returns the blocks in reverse chronological order (latest block first)
+%% 2. [Element | Acc] reverses the list into chronological order (latest block last)
+%% 3. The final lists:reverse puts the list back into reverse chronological order
+%%    (latest block first)
+get_recent_blocks() ->
+    Anchors = lists:sublist(ar_node:get_block_anchors(), ?CHECKPOINT_DEPTH),
+    Blocks = lists:foldl(
+        fun(H, Acc) ->
+            B = ar_block_cache:get(block_cache, H),
+            [#{
                 <<"id">> => ar_util:encode(H),
-                <<"received">> => get_block_timestamp(H, length(Acc))
-            }]
+                <<"received">> => get_block_timestamp(B, length(Acc)),
+                <<"height">> => B#block.height
+            } | Acc]
         end,
         [],
-        lists:sublist(ar_block_index:get_list(CurrentHeight), ?CHECKPOINT_DEPTH)
-    ).
+        Anchors
+    ),
+    lists:reverse(Blocks).
 
+%% @doc Return the the most recent forks in reverse chronological order.
 get_recent_forks() ->
-    lists:foldl(
-        fun(Fork, Acc) ->
-            #fork{ 
-                id = ID, height = Height, timestamp = Timestamp, block_ids = BlockIDs} = Fork,
-            Acc ++ [#{
-                <<"id">> => ar_util:encode(ID),
-                <<"height">> => Height,
-                <<"timestamp">> => Timestamp div 1000,
-                <<"blocks">> => [ ar_util:encode(BlockID) || BlockID <- BlockIDs ]
-            }]
-        end,
-        [],
-        ar_chain_stats:get_forks(0)
-    ).
-
-get_block_timestamp(H, Depth) when Depth < ?RECENT_BLOCKS_WITHOUT_TIMESTAMP ->
-    <<"pending">>;
-get_block_timestamp(H, _Depth) ->
-    B = ar_block_cache:get(block_cache, H),
-    case B#block.receive_timestamp of
-        undefined -> <<"pending">>;
-        Timestamp -> ar_util:timestamp_to_seconds(Timestamp)
+    CutOffTime = os:system_time(seconds) - ?RECENT_FORKS_AGE,
+    case ar_chain_stats:get_forks(CutOffTime) of
+        {error, _} -> error;
+        Forks ->
+            lists:foldl(
+                fun(Fork, Acc) ->
+                    #fork{ 
+                        id = ID, height = Height, timestamp = Timestamp, 
+                        block_ids = BlockIDs} = Fork,
+                    [#{
+                        <<"id">> => ar_util:encode(ID),
+                        <<"height">> => Height,
+                        <<"timestamp">> => Timestamp div 1000,
+                        <<"blocks">> => [ ar_util:encode(BlockID) || BlockID <- BlockIDs ]
+                    } | Acc]
+                end,
+                [],
+                lists:sublist(Forks, ?RECENT_FORKS_LENGTH)
+            )
     end.
+
+get_block_timestamp(B, Depth)
+        when Depth < ?RECENT_BLOCKS_WITHOUT_TIMESTAMP orelse
+            B#block.receive_timestamp =:= undefined ->
+    <<"pending">>;
+get_block_timestamp(B, _Depth) ->
+    ar_util:timestamp_to_seconds(B#block.receive_timestamp).
 

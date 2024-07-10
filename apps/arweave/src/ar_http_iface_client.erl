@@ -1086,7 +1086,7 @@ get_info(Peer, Type) ->
 	case get_info(Peer) of
 		info_unavailable -> info_unavailable;
 		Info ->
-			maps:get(atom_to_binary(Type), Info)
+			maps:get(atom_to_binary(Type), Info, info_unavailable)
 	end.
 get_info(Peer) ->
 	case
