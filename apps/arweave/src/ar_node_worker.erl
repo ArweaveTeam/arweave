@@ -534,6 +534,10 @@ handle_info({event, block, {new, B, _Source}}, State) ->
 			{noreply, State}
 	end;
 
+handle_info({event, block, {mined_block_received, H, ReceiveTimestamp}}, State) ->
+	ar_block_cache:update_timestamp(block_cache, H, ReceiveTimestamp),
+	{noreply, State};
+
 handle_info({event, block, _}, State) ->
 	{noreply, State};
 

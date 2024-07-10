@@ -492,6 +492,8 @@ discover_peers([Peer | Peers]) ->
 					case ar_http_iface_client:get_info(Peer, release) of
 						Release when is_integer(Release) ->
 							maybe_add_peer(Peer, Release);
+						info_unavailable ->
+							maybe_add_peer(Peer, 0);
 						_ ->
 							ok
 					end;

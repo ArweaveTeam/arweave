@@ -181,8 +181,12 @@ get_current_usd_to_ar_rate() ->
 %% the hashes of the recent blocks that can be used in transactions as anchors.
 %% @end
 get_block_anchors() ->
-	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
-	BlockAnchors.
+	case ets:lookup(node_state, block_anchors) of
+		[{block_anchors, BlockAnchors}] ->
+			BlockAnchors;
+		[] ->
+			not_joined
+	end.
 
 %% @doc Return a map TXID -> ok containing all the recent transaction identifiers.
 %% Used for preventing replay attacks.
