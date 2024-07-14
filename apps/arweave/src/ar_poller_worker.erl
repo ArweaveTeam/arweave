@@ -28,7 +28,6 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	[ok] = ar_events:subscribe([node_state]),
 	State = #state{ polling_frequency_ms = Config#config.polling * 1000 },

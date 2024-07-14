@@ -342,6 +342,7 @@ resolve_and_cache_peer(RawPeer, Type) ->
 %%%===================================================================
 
 init([]) ->
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(block),
 	load_peers(),

@@ -83,6 +83,7 @@ set_reward_addr(Addr) ->
 %%%===================================================================
 
 init([]) ->
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	[ok, ok, ok, ok, ok] = ar_events:subscribe([tx, block, nonce_limiter, miner, node_state]),
 	%% Initialize RandomX.
@@ -901,8 +902,7 @@ apply_block2(BShadow, PrevBlocks, Timestamp, State) ->
 			Self = self(),
 			monitor(
 				process,
-				PID = spawn(fun() -> process_flag(trap_exit, true),
-						get_missing_txs_and_retry(BShadow, Self) end)
+				PID = spawn(fun() -> get_missing_txs_and_retry(BShadow, Self) end)
 			),
 			BH = BShadow#block.indep_hash,
 			{noreply, State#{

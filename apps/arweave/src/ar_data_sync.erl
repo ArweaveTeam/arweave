@@ -611,6 +611,7 @@ debug_get_disk_pool_chunks(Cursor) ->
 
 init({"default" = StoreID, _}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
+	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
@@ -677,6 +678,7 @@ init({"default" = StoreID, _}) ->
 	{ok, State2};
 init({StoreID, RepackInPlacePacking}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
+	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),

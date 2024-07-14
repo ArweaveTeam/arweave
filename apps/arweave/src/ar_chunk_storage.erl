@@ -195,6 +195,7 @@ run_defragmentation() ->
 %%%===================================================================
 
 init({StoreID, RepackInPlacePacking}) ->
+	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,

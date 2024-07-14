@@ -138,7 +138,6 @@ get_cluster_partitions_list() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),

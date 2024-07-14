@@ -66,7 +66,6 @@ garbage_collect() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	State =
 		lists:foldl(
 			fun	({PartitionNumber, MiningAddress, StoreID}, Acc) ->

@@ -26,7 +26,6 @@ start_link() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
 		{true, true} ->
 			gen_server:cast(self(), fetch_cm_jobs);

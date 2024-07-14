@@ -251,6 +251,7 @@ get_intersection_size(End, Start, ID, StoreID) ->
 %%%===================================================================
 
 init(StoreID) ->
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	{Dir, StorageModuleSize, StorageModuleIndex, PartitionNumber} =
 		case StoreID of

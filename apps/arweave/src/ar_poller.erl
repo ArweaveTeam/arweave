@@ -54,7 +54,6 @@ resume() ->
 %%%===================================================================
 
 init(Workers) ->
-	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(node_state),
 	case ar_node:is_joined() of
 		true ->

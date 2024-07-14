@@ -77,11 +77,13 @@ get_size() ->
 %%%===================================================================
 
 init([{blocks, []} | _]) ->
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
 	ar_node_worker ! wallets_ready,
 	{ok, DAG};
 init([{blocks, Blocks} | Args]) ->
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, {init, Blocks, Args}),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),

@@ -88,7 +88,6 @@ get_full_prev_update(Format) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	{ok, #state{}}.
 

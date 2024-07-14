@@ -36,6 +36,7 @@ get_forks(StartTime) ->
 %%% Generic server callbacks.
 %%%===================================================================
 init([]) ->
+    %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "forks_db"), forks_db),
     {ok, #{}}.

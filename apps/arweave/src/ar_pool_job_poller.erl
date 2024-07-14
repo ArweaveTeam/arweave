@@ -25,7 +25,6 @@ start_link() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	case ar_pool:is_client() of
 		true ->
 			gen_server:cast(self(), fetch_jobs);

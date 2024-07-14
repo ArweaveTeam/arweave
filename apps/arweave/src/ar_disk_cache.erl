@@ -140,6 +140,7 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),

@@ -55,7 +55,6 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, pre_validate),
 	ok = ar_events:subscribe(block),
 	{ok, Config} = application:get_env(arweave, config),

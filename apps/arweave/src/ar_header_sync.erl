@@ -59,6 +59,7 @@ remove_block(Height) ->
 
 init([]) ->
 	?LOG_INFO([{event, ar_header_sync_start}]),
+	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([tx, disksup]),
 	{ok, Config} = application:get_env(arweave, config),
@@ -440,6 +441,7 @@ process_item(Queue) ->
 				true ->
 					monitor(process, spawn(
 						fun() ->
+							%% Trap exit to avoid corrupting any open files on quit..
 							process_flag(trap_exit, true),
 							case download_block(H, H2, TXRoot) of
 								{error, _Reason} ->
