@@ -294,8 +294,7 @@ get_sync_record(Peer) ->
 
 get_sync_record(Peer, Start, Limit) ->
 	Headers = [{<<"Content-Type">>, <<"application/etf">>}],
-	StartTime = erlang:monotonic_time(),
-	Response = handle_sync_record_response(ar_http:req(#{
+	handle_sync_record_response(ar_http:req(#{
 		peer => Peer,
 		method => get,
 		path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
@@ -304,11 +303,7 @@ get_sync_record(Peer, Start, Limit) ->
 		connect_timeout => 5000,
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers
-	}), Start, Limit),
-	ElapsedTime = erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, millisecond),
-	?LOG_DEBUG([{event, get_sync_record}, {peer, ar_util:format_peer(Peer)}, 
-		{elapsed, ElapsedTime}]),
-	Response.
+	}), Start, Limit).
 
 get_chunk_binary(Peer, Offset, RequestedPacking) ->
 	PackingBinary =

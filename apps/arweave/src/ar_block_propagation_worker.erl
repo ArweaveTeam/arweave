@@ -40,7 +40,6 @@ handle_cast({send_block, SendFun, RetryCount, From}, State) ->
 	end;
 
 handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From}, State) ->
-	?LOG_DEBUG([{event, send_block2}, {peer, ar_util:format_peer(Peer)}]),
 	case SendAnnouncementFun() of
 		{ok, {{<<"412">>, _}, _, _, _, _}} when RetryCount > 0 ->
 			ar_util:cast_after(2000, self(),
@@ -92,8 +91,8 @@ handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
-	?LOG_WARNING([{event, terminate}, {module, ?MODULE}]),
+terminate(Reason, _State) ->
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
 	ok.
 
 %%%===================================================================
