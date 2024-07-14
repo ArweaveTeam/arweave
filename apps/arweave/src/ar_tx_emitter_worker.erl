@@ -23,7 +23,6 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -55,6 +54,9 @@ handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
 				end,
 			Reply = SendFun(),
 			PropagationTimeUs = timer:now_diff(erlang:timestamp(), StartedAt),
+			?LOG_DEBUG([{event, tx_propagated}, {txid, ar_util:encode(TXID)},
+				{peer, ar_util:format_peer(Peer)}, {reply, Reply},
+				{elapsed, PropagationTimeUs / 1000}]),
 			record_propagation_status(Reply),
 			record_propagation_rate(tx_propagated_size(TX), PropagationTimeUs)
 	end,
@@ -87,7 +89,8 @@ handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, _State) ->
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
 	ok.
 
 %%%===================================================================

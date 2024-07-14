@@ -117,7 +117,6 @@ process_cm_jobs(Jobs, Peer) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(solution),
 	{ok, #state{}}.
 

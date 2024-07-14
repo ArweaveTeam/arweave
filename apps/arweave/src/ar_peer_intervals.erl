@@ -17,7 +17,6 @@ fetch(Start, End, StoreID, _AllPeersIntervals) when Start >= End ->
 	gen_server:cast(ar_data_sync:name(StoreID), {update_all_peers_intervals, #{}});
 fetch(Start, End, StoreID, AllPeersIntervals) ->
 	spawn_link(fun() ->
-		process_flag(trap_exit, true),
 		try
 			End2 = min(ar_util:ceil_int(Start, ?NETWORK_DATA_BUCKET_SIZE), End),
 			UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),

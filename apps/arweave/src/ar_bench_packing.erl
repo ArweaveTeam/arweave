@@ -298,7 +298,6 @@ dirty_test({TotalMegaBytes, _, _, _} = Permutation, WorkerFun, Args, NumWorkers)
 	io:format("~n").
 
 dirty_worker(WorkerID, Permutation, WorkerFun, Args, Offset, Size) ->
-	process_flag(trap_exit, true),
 	ar_bench_timer:record({total, WorkerID}, WorkerFun, [
 			WorkerID,
 			Permutation,

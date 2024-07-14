@@ -43,7 +43,6 @@ garbage_collect() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	State = lists:foldl(
 		fun(_, Acc) -> start_hashing_thread(Acc) end,

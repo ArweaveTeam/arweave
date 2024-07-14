@@ -97,7 +97,6 @@ start_link() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
 	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "

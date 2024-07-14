@@ -44,7 +44,6 @@ get_rates_json() ->
 %%% Generic server callbacks.
 %%%===================================================================
 init([]) ->
-	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(node_state),
 	{ok, Config} = application:get_env(arweave, config),
 	ar_p3_config:validate_config(Config).

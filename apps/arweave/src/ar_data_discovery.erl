@@ -72,7 +72,6 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, _} = timer:apply_interval(
 		?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, ?MODULE, collect_peers, []),
 	gen_server:cast(?MODULE, update_network_data_map),
@@ -100,7 +99,6 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 		{{value, Peer}, Queue} ->
 			monitor(process, spawn_link(
 				fun() ->
-					process_flag(trap_exit, true),
 					case ar_http_iface_client:get_sync_buckets(Peer) of
 						{ok, SyncBuckets} ->
 							gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer,
@@ -156,9 +154,6 @@ handle_cast({remove_peer, Peer}, State) ->
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
-
-handle_info({'EXIT', _, normal}, State) ->
-	{noreply, State};
 
 handle_info({'DOWN', _,  process, _, _}, #state{ peers_pending = N } = State) ->
 	{noreply, State#state{ peers_pending = N - 1 }};

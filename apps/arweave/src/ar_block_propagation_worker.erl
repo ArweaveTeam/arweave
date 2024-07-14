@@ -22,7 +22,6 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -41,6 +40,7 @@ handle_cast({send_block, SendFun, RetryCount, From}, State) ->
 	end;
 
 handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From}, State) ->
+	?LOG_DEBUG([{event, send_block2}, {peer, ar_util:format_peer(Peer)}]),
 	case SendAnnouncementFun() of
 		{ok, {{<<"412">>, _}, _, _, _, _}} when RetryCount > 0 ->
 			ar_util:cast_after(2000, self(),
@@ -93,6 +93,7 @@ handle_info(Info, State) ->
 	{noreply, State}.
 
 terminate(_Reason, _State) ->
+	?LOG_WARNING([{event, terminate}, {module, ?MODULE}]),
 	ok.
 
 %%%===================================================================

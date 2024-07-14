@@ -143,6 +143,7 @@ notify_about_added_tx(TXID, End, Start) ->
 
 init([]) ->
 	ok = initialize_state(),
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(tx),
 	gen_server:cast(?MODULE, refresh_blacklist),

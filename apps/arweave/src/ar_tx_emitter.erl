@@ -41,7 +41,6 @@ start_link(Name, Workers) ->
 %%%===================================================================
 
 init(Workers) ->
-	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, process_chunk),
 	{ok, #state{ workers = queue:from_list(Workers), currently_emitting = sets:new() }}.
 
@@ -92,6 +91,8 @@ handle_info({timeout, TXID, Peer}, State) ->
 			%% Should have been emitted.
 			{noreply, State};
 		true ->
+			?LOG_DEBUG([{event, tx_propagation_timeout}, {txid, ar_util:encode(TXID)},
+					{peer, ar_util:format_peer(Peer)}]),
 			Emitting2 = sets:del_element({TXID, Peer}, Emitting),
 			case sets:is_empty(Emitting2) of
 				true ->

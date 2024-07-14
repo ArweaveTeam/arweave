@@ -42,7 +42,6 @@ maybe_request_sessions(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	case ar_config:use_remote_vdf_server() andalso ar_config:pull_from_remote_vdf_server() of
 		false ->
 			ok;

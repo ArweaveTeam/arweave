@@ -106,7 +106,6 @@ req(Args, ReestablishedConnection) ->
 %%% ==================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, #state{}}.
 
 handle_call({get_connection, Args}, From,

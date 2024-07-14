@@ -49,7 +49,6 @@ start_link(Name, Workers) ->
 %% @end
 %%--------------------------------------------------------------------
 init(Workers) ->
-	process_flag(trap_exit, true),
 	ar_events:subscribe(block),
 	WorkerMap = lists:foldl(fun(W, Acc) -> maps:put(W, free, Acc) end, #{}, Workers),
 	State = #state{ workers = WorkerMap },

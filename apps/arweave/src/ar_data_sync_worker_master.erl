@@ -76,7 +76,6 @@ read_range(Start, End, OriginStoreID, TargetStoreID, SkipSmall) ->
 %%%===================================================================
 
 init(Workers) ->
-	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, process_main_queue),
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 

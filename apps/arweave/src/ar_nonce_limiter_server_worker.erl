@@ -37,7 +37,6 @@ start_link(Name, RawPeer) ->
 %%%===================================================================
 
 init(RawPeer) ->
-	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	case ar_config:is_public_vdf_server() of
 		false ->

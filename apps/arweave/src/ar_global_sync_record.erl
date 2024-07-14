@@ -69,7 +69,6 @@ get_serialized_sync_buckets() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(sync_record),
 	{ok, Config} = application:get_env(arweave, config),
 	SyncRecord =

@@ -88,6 +88,7 @@ is_one_chunk_solution(Solution) ->
 %%%===================================================================
 
 init([]) ->
+	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
 	ar_chunk_storage:open_files("default"),
