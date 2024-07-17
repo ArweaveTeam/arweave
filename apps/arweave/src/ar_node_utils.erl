@@ -3,8 +3,8 @@
 
 -export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6,
 	h1_passes_diff_check/2, h2_passes_diff_check/2, solution_passes_diff_check/2,
-	block_passes_diff_check/1, block_passes_diff_check/2, passes_diff_check/3,
-	update_account/6, is_account_banned/2]).
+	candidate_passes_diff_check/2, block_passes_diff_check/1, block_passes_diff_check/2,
+	passes_diff_check/3, update_account/6, is_account_banned/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -83,6 +83,12 @@ h1_passes_diff_check(H1, DiffPair) ->
 
 h2_passes_diff_check(H2, DiffPair) ->
 	passes_diff_check(H2, false, DiffPair).
+
+candidate_passes_diff_check(
+		#mining_candidate{ h2 = not_set } = Candidate, DiffPair) ->
+	passes_diff_check(Candidate#mining_candidate.h1, true, DiffPair);
+candidate_passes_diff_check(Candidate, DiffPair) ->
+	passes_diff_check(Candidate#mining_candidate.h2, false, DiffPair).
 
 solution_passes_diff_check(Solution, DiffPair) ->
 	SolutionHash = Solution#mining_solution.solution_hash,

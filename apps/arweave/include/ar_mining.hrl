@@ -29,29 +29,28 @@
 	session_key = not_set, %% serialized
 	start_interval_number = not_set, %% serialized
 	step_number = not_set, %% serialized
-	label = <<"not_set">> %% not atom, for prevent atom table pollution DoS
+	label = <<"not_set">> %% not atom, in order to prevent atom table pollution DoS
 }).
 
 -record(mining_solution, {
-	last_step_checkpoints = [],
-	merkle_rebase_threshold = 0,
+	last_step_checkpoints = [], 
+	mining_address = << 0:256 >>,
 	next_seed = << 0:(8 * 48) >>,
 	next_vdf_difficulty = 0,
 	nonce = 0,
 	nonce_limiter_output = << 0:256 >>,
 	partition_number = 0,
+	partition_upper_bound = 0,
 	poa1 = #poa{},
 	poa2 = #poa{},
 	preimage = << 0:256 >>,
 	recall_byte1 = 0,
 	recall_byte2 = undefined,
+	seed = << 0:(8 * 48) >>,
 	solution_hash = << 0:256 >>,
 	start_interval_number = 0,
 	step_number = 0,
-	steps = [],
-	seed = << 0:(8 * 48) >>,
-	mining_address = << 0:256 >>,
-	partition_upper_bound = 0
+	steps = []
 }).
 
 -endif.

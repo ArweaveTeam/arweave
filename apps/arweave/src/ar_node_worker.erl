@@ -1890,8 +1890,9 @@ handle_found_solution(Args, PrevB, State) ->
 	HaveSteps =
 		case CorrectRebaseThreshold of
 			{false, Reason5} ->
-				?LOG_WARNING([{event, ignore_mining_solution},
+				?LOG_WARNING([{event, solution_rejected},
 					{reason, Reason5}, {solution, ar_util:encode(SolutionH)}]),
+				ar_mining_stats:solution(rejected),
 				false;
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed,
@@ -1913,9 +1914,11 @@ handle_found_solution(Args, PrevB, State) ->
 		not_found ->
 			ar_events:send(solution,
 					{rejected, #{ reason => vdf_not_found, source => Source }}),
-			?LOG_WARNING([{event, did_not_find_steps_for_mined_block},
+			?LOG_WARNING([{event, solution_rejected},
+					{reason, did_not_find_steps},
 					{seed, ar_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
 					{step_number, StepNumber}]),
+			ar_mining_stats:solution(rejected),
 			{noreply, State};
 		[NonceLimiterOutput | _] = Steps ->
 			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
@@ -2025,18 +2028,21 @@ handle_found_solution(Args, PrevB, State) ->
 							undefined -> 1;
 							_ -> 2
 						end}]),
+			ar_mining_stats:solution(accepted),
 			ar_block_cache:add(block_cache, B),
 			ar_events:send(solution, {accepted, #{ indep_hash => H, source => Source }}),
 			apply_block(update_solution_cache(H, Args, State));
 		_Steps ->
 			ar_events:send(solution,
 					{rejected, #{ reason => bad_vdf, source => Source }}),
-			?LOG_ERROR([{event, bad_steps},
+			?LOG_ERROR([{event, solution_rejected},
+					{reason, bad_steps},
 					{prev_block, ar_util:encode(PrevH)},
 					{step_number, StepNumber},
 					{prev_step_number, PrevStepNumber},
 					{prev_next_seed, ar_util:encode(PrevNextSeed)},
 					{output, ar_util:encode(NonceLimiterOutput)}]),
+			ar_mining_stats:solution(rejected),
 			{noreply, State}
 	end.
 
