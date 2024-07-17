@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, 
-		compute_h2_for_peer/1, prepare_and_post_solution/1, post_solution/1, read_poa/3,
+		compute_h2_for_peer/1, prepare_and_post_solution/2, post_solution/1, read_poa/3,
 		get_recall_bytes/4, active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1]).
 -export([pause/0]).
@@ -66,8 +66,8 @@ add_pool_job(SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialD
 	Args = {SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff},
 	gen_server:cast(?MODULE, {add_pool_job, Args}).
 
-prepare_and_post_solution(Candidate) ->
-	gen_server:cast(?MODULE, {prepare_and_post_solution, Candidate}).
+prepare_and_post_solution(Level, Candidate) ->
+	gen_server:cast(?MODULE, {prepare_and_post_solution, Level, Candidate}).
 
 post_solution(Solution) ->
 	gen_server:cast(?MODULE, {post_solution, Solution}).
@@ -165,8 +165,8 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	end,
 	{noreply, State};
 
-handle_cast({prepare_and_post_solution, Candidate}, State) ->
-	prepare_and_post_solution(Candidate, State),
+handle_cast({prepare_and_post_solution, Level, Candidate}, State) ->
+	prepare_and_post_solution(Level, Candidate, State),
 	{noreply, State};
 
 handle_cast({post_solution, Solution}, State) ->
@@ -449,12 +449,12 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 	RelativeOffset = Nonce * (?DATA_CHUNK_SIZE),
 	{RecallRange1Start + RelativeOffset, RecallRange2Start + RelativeOffset}.
 
-prepare_and_post_solution(Candidate, State) ->
-	Solution = prepare_solution(Candidate, State),
+prepare_and_post_solution(Level, Candidate, State) ->
+	Solution = prepare_solution(Level, Candidate, State),
 	post_solution(Solution, State).
 
-prepare_solution(Candidate, State) ->
-	#state{ merkle_rebase_threshold = RebaseThreshold, is_pool_client = IsPoolClient } = State,
+prepare_solution(Level, Candidate, State) ->
+	#state{ is_pool_client = IsPoolClient } = State,
 	#mining_candidate{
 		mining_address = MiningAddress, next_seed = NextSeed, 
 		next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
@@ -464,8 +464,8 @@ prepare_solution(Candidate, State) ->
 	} = Candidate,
 	
 	Solution = #mining_solution{
+		level = Level, %% 'network' or 'partial'
 		mining_address = MiningAddress,
-		merkle_rebase_threshold = RebaseThreshold,
 		next_seed = NextSeed,
 		next_vdf_difficulty = NextVDFDifficulty,
 		nonce = Nonce,
@@ -481,12 +481,12 @@ prepare_solution(Candidate, State) ->
 	%% A pool client does not validate VDF before sharing a solution.
 	case IsPoolClient of
 		true ->
-			prepare_solution(proofs, Candidate, Solution);
+			prepare_solution_proofs(Candidate, Solution);
 		false ->
-			prepare_solution(last_step_checkpoints, Candidate, Solution)
+			prepare_solution_last_step_checkpoints(Candidate, Solution)
 	end.
 
-prepare_solution(last_step_checkpoints, Candidate, Solution) ->
+prepare_solution_last_step_checkpoints(Candidate, Solution) ->
 	#mining_candidate{
 		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
@@ -501,11 +501,12 @@ prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 			_ ->
 				LastStepCheckpoints
 		end,
-	prepare_solution(steps, Candidate, Solution#mining_solution{
-			last_step_checkpoints = LastStepCheckpoints2 });
+	prepare_solution_steps(Candidate, Solution#mining_solution{
+			last_step_checkpoints = LastStepCheckpoints2 }).
 
-prepare_solution(steps, Candidate, Solution) ->
+prepare_solution_steps(Candidate, Solution) ->
 	#mining_candidate{ step_number = StepNumber } = Candidate,
+	#mining_solution{ level = Level } = Solution,
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 	#nonce_limiter_info{ global_step_number = PrevStepNumber, next_seed = PrevNextSeed,
 			next_vdf_difficulty = PrevNextVDFDifficulty } = TipNonceLimiterInfo,
@@ -515,7 +516,8 @@ prepare_solution(steps, Candidate, Solution) ->
 					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty),
 			case Steps of
 				not_found ->
-					?LOG_WARNING([{event, found_solution_but_failed_to_find_checkpoints},
+					?LOG_WARNING([{event, solution_rejected}, {level, Level},
+							{reason, failed_to_find_checkpoints},
 							{start_step_number, PrevStepNumber},
 							{next_step_number, StepNumber},
 							{next_seed, ar_util:safe_encode(PrevNextSeed)},
@@ -523,45 +525,50 @@ prepare_solution(steps, Candidate, Solution) ->
 					ar:console("WARNING: found a solution but failed to find checkpoints, "
 							"start step number: ~B, end step number: ~B, next_seed: ~s.",
 							[PrevStepNumber, StepNumber, PrevNextSeed]),
+					ar_mining_stats:solution(Level, rejected),
 					error;
 				_ ->
-					prepare_solution(proofs, Candidate,
+					prepare_solution_proofs(Candidate,
 							Solution#mining_solution{ steps = Steps })
 			end;
 		false ->
-			?LOG_WARNING([{event, found_solution_but_stale_step_number},
-							{start_step_number, PrevStepNumber},
-							{next_step_number, StepNumber},
-							{next_seed, ar_util:safe_encode(PrevNextSeed)},
-							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
+			?LOG_WARNING([{event, solution_rejected}, {level, Level},
+					{reason, stale_step_number},
+					{start_step_number, PrevStepNumber},
+					{next_step_number, StepNumber},
+					{next_seed, ar_util:safe_encode(PrevNextSeed)},
+					{next_vdf_difficulty, PrevNextVDFDifficulty}]),
+			ar_mining_stats:solution(Level, rejected),
 			error
-	end;
+	end.
 
-prepare_solution(proofs, Candidate, Solution) ->
+prepare_solution_proofs(Candidate, Solution) ->
 	#mining_candidate{
 		h0 = H0, h1 = H1, h2 = H2, nonce = Nonce, partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
-	#mining_solution{ poa1 = PoA1, poa2 = PoA2 } = Solution,
+	#mining_solution{ level = Level, poa1 = PoA1, poa2 = PoA2 } = Solution,
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 			PartitionUpperBound),
 	case { H1, H2 } of
 		{not_set, not_set} ->
-			?LOG_WARNING([{event, found_solution_but_h1_h2_not_set}]),
+			?LOG_WARNING([{event, solution_rejected}, {level, Level},
+					{reason, h1_h2_not_set}]),
+			ar_mining_stats:solution(Level, rejected),
 			error;
 		{H1, not_set} ->
-			prepare_solution(poa1, Candidate, Solution#mining_solution{
+			prepare_solution_poa1(Candidate, Solution#mining_solution{
 				solution_hash = H1, recall_byte1 = RecallByte1,
 				poa1 = may_be_empty_poa(PoA1), poa2 = #poa{} });
 		{_, H2} ->
-			prepare_solution(poa2, Candidate, Solution#mining_solution{
+			prepare_solution_poa2(Candidate, Solution#mining_solution{
 				solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
 				poa1 = may_be_empty_poa(PoA1), poa2 = may_be_empty_poa(PoA2) })
-	end;
+	end.
 
-prepare_solution(poa1, Candidate,
+prepare_solution_poa1(Candidate,
 		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
 	#mining_solution{
-		mining_address = MiningAddress, partition_number = PartitionNumber,
+		level = Level, mining_address = MiningAddress, partition_number = PartitionNumber,
 		recall_byte1 = RecallByte1 } = Solution,
 	#mining_candidate{
 		chunk1 = Chunk1, h0 = H0, nonce = Nonce,
@@ -582,7 +589,8 @@ prepare_solution(poa1, Candidate,
 				not_found ->
 					{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
 							PartitionNumber, PartitionUpperBound),
-					?LOG_WARNING([{event, mined_block_but_failed_to_read_chunk_proofs},
+					?LOG_WARNING([{event, solution_rejected}, {level, Level},
+							{reason, failed_to_read_chunk_proofs},
 							{recall_byte1, RecallByte1},
 							{recall_range_start1, RecallRange1Start},
 							{nonce, Nonce},
@@ -591,21 +599,22 @@ prepare_solution(poa1, Candidate,
 					ar:console("WARNING: we have mined a block but failed to find "
 							"the PoA1 proofs required for publishing it. "
 							"Check logs for more details~n"),
+					ar_mining_stats:solution(Level, rejected),
 					error;
 				PoA1 ->
 					Solution#mining_solution{ poa1 = PoA1#poa{ chunk = Chunk1 } }
 			end
-	end;
-prepare_solution(poa2, Candidate,
+	end.
+prepare_solution_poa2(Candidate,
 		#mining_solution{ poa2 = #poa{ chunk = <<>> } } = Solution) ->
-	#mining_solution{ mining_address = MiningAddress, partition_number = PartitionNumber,
-		recall_byte2 = RecallByte2 } = Solution,
+	#mining_solution{ level = Level, mining_address = MiningAddress,
+		partition_number = PartitionNumber, recall_byte2 = RecallByte2 } = Solution,
 	#mining_candidate{
 		chunk2 = Chunk2, h0 = H0, nonce = Nonce,
 		partition_upper_bound = PartitionUpperBound } = Candidate,
 	case read_poa(RecallByte2, Chunk2, MiningAddress) of
 		{ok, PoA2} ->
-			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
+			prepare_solution_poa1(Candidate, Solution#mining_solution{ poa2 = PoA2 });
 		_ ->
 			Modules = ar_storage_module:get_all(RecallByte2 + 1),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
@@ -619,7 +628,8 @@ prepare_solution(poa2, Candidate,
 				not_found ->
 					{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 							PartitionNumber, PartitionUpperBound),
-					?LOG_ERROR([{event, mined_block_but_failed_to_read_chunk_proofs},
+					?LOG_ERROR([{event, solution_rejected}, {level, Level},
+							{reason, failed_to_read_chunk_proofs},
 							{tags, [solution_proofs]},
 							{recall_byte2, RecallByte2},
 							{recall_range_start2, RecallRange2Start},
@@ -629,20 +639,18 @@ prepare_solution(poa2, Candidate,
 					ar:console("WARNING: we have mined a block but failed to find "
 							"the PoA2 proofs required for publishing it. "
 							"Check logs for more details~n"),
+					ar_mining_stats:solution(Level, rejected),
 					error;
 				PoA2 ->
-					prepare_solution(poa1, Candidate,
+					prepare_solution_poa1(Candidate,
 							Solution#mining_solution{ poa2 = PoA2#poa{ chunk = Chunk2 } })
 			end
 	end;
-prepare_solution(poa2, Candidate,
+prepare_solution_poa2(Candidate,
 		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
-	prepare_solution(poa1, Candidate, Solution);
-prepare_solution(_, _Candidate, Solution) ->
-	Solution.
+	prepare_solution_poa1(Candidate, Solution).
 
 post_solution(error, _State) ->
-	?LOG_WARNING([{event, found_solution_but_could_not_build_a_block}]),
 	error;
 post_solution(Solution, State) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -655,13 +663,14 @@ post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
 post_solution(not_set, Solution, State) ->
 	#state{ diff_pair = DiffPair } = State,
 	#mining_solution{
-		mining_address = MiningAddress, nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber, recall_byte1 = RecallByte1,
-		recall_byte2 = RecallByte2,
+		level = Level, mining_address = MiningAddress,
+		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
+		recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
 		solution_hash = H, step_number = StepNumber } = Solution,
 	case validate_solution(Solution, DiffPair) of
 		error ->
-			?LOG_WARNING([{event, failed_to_validate_solution},
+			?LOG_WARNING([{event, solution_rejected}, {level, Level},
+					{reason, failed_to_validate_solution},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
 					{mining_address, ar_util:safe_encode(MiningAddress)},
@@ -670,9 +679,10 @@ post_solution(not_set, Solution, State) ->
 					{solution_h, ar_util:safe_encode(H)},
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
-					"details~n");
+					"details~n"),
+			ar_mining_stats:solution(Level, rejected);
 		{false, Reason} ->
-			?LOG_WARNING([{event, found_invalid_solution},
+			?LOG_WARNING([{event, solution_rejected}, {level, Level},
 					{reason, Reason},
 					{partition, PartitionNumber},
 					{step_number, StepNumber},
@@ -682,7 +692,8 @@ post_solution(not_set, Solution, State) ->
 					{solution_h, ar_util:safe_encode(H)},
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
-					"details~n");
+					"details~n"),
+			ar_mining_stats:solution(Level, rejected);
 		{true, PoACache, PoA2Cache} ->
 			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
 	end;
@@ -697,14 +708,17 @@ post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
 					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end;
 post_solution(ExitPeer, Solution, _State) ->
+	#mining_solution{ level = Level } = Solution,
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
 		{ok, _} ->
 			ok;
 		{error, Reason} ->
-			?LOG_WARNING([{event, found_solution_but_failed_to_reach_exit_node},
-					{reason, io_lib:format("~p", [Reason])}]),
+			?LOG_WARNING([{event, solution_rejected}, {level, Level},
+					{reason, failed_to_reach_exit_node},
+					{message, io_lib:format("~p", [Reason])}]),
 			ar:console("We found a solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])])
+					"error: ~p.", [io_lib:format("~p", [Reason])]),
+			ar_mining_stats:solution(Level, rejected)
 	end.
 
 may_be_empty_poa(not_set) ->

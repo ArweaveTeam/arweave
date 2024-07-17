@@ -4,7 +4,7 @@
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
 		set_total_data_size/1, set_storage_module_data_size/6,
 		vdf_computed/0, raw_read_rate/2, chunk_read/1, h1_computed/1, h2_computed/1,
-		h1_solution/0, h2_solution/0, block_found/0,
+		solution/2, block_found/0,
 		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -22,8 +22,8 @@
 -record(report, {
 	now,
 	vdf_speed = undefined,
-	h1_solution = 0,
-	h2_solution = 0,
+	solutions = #{},
+	blocks = #{},
 	confirmed_block = 0,
 	total_data_size = 0,
 	optimal_overall_read_mibps = 0.0,
@@ -135,11 +135,8 @@ h2_sent_to_peer(Peer) ->
 h2_received_from_peer(Peer) ->
 	increment_count({peer, Peer, h2_from_peer, total}).
 
-h1_solution() ->
-	increment_count(h1_solution).
-
-h2_solution() ->
-	increment_count(h2_solution).
+solution(Level, Status) ->
+	increment_count({solution, Level, Status}).
 
 block_found() ->
 	increment_count(confirmed_block).
@@ -365,6 +362,12 @@ optimal_partition_hash_hps(PoA1Multiplier, VDFSpeed, PartitionDataSize, TotalDat
 	H2Optimal = BasePartitionHashes * min(1.0, (TotalDataSize / WeaveSize)),
 	H1Optimal + H2Optimal.
 
+get_solutions(Level) ->
+	#{
+		found => get_count({solution, Level, found}),
+		rejected => get_count({solution, Level, rejected})
+	}.
+
 generate_report() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Height = ar_node:get_height(),
@@ -387,8 +390,7 @@ generate_report(Height, Partitions, Peers, WeaveSize, Now) ->
 	Report = #report{
 		now = Now,
 		vdf_speed = VDFSpeed,
-		h1_solution = get_count(h1_solution),
-		h2_solution = get_count(h2_solution),
+		solutions = get_solutions(network),
 		confirmed_block = get_count(confirmed_block),
 		total_data_size = TotalDataSize,
 		total_h2_to_peer = get_overall_total(peer, h2_to_peer, total),
@@ -590,12 +592,9 @@ format_report(Report, WeaveSize) ->
 		"================================================= Mining Performance Report =================================================\n"
 		"\n"
 		"VDF Speed:       ~s\n"
-		"H1 Solutions:     ~B\n"
-		"H2 Solutions:     ~B\n"
 		"Confirmed Blocks: ~B\n"
 		"\n",
-		[format_vdf_speed(Report#report.vdf_speed), Report#report.h1_solution,
-			Report#report.h2_solution, Report#report.confirmed_block]
+		[format_vdf_speed(Report#report.vdf_speed), Report#report.confirmed_block]
 	),
 	PartitionTable = format_partition_report(Report, WeaveSize),
 	PeerTable = format_peer_report(Report),
@@ -603,16 +602,36 @@ format_report(Report, WeaveSize) ->
     io_lib:format("\n~s~s~s", [Preamble, PartitionTable, PeerTable]).
 
 format_partition_report(Report, WeaveSize) ->
-	Header = 
+	BlocksHeader =
+		"Solution and block stats:\n"
+		"+--------------+-----------------+------------------+-----------------+----------------+------------------+\n"
+		"| Sol'ns Found | Sol'ns Rejected | Blocks Published | Blocks Orphaned | Blocks Rebased | Blocks Confirmed |\n"
+		"+--------------+-----------------+------------------+-----------------+----------------+------------------+\n",
+	BlocksRow = format_blocks_row(Report),
+	BlocksFooter =
+		"+--------------+-----------------+-----------------+-----------------+-----------------+------------------+\n\n",
+	MiningHeader =
 		"Local mining stats:\n"
 		"+-----------+-----------+----------+---------------+---------------+---------------+------------+------------+--------------+\n"
         "| Partition | Data Size | % of Max |   Read (Cur)  |   Read (Avg)  |  Read (Ideal) | Hash (Cur) | Hash (Avg) | Hash (Ideal) |\n"
 		"+-----------+-----------+----------+---------------+---------------+---------------+------------+------------+--------------+\n",
 	TotalRow = format_partition_total_row(Report, WeaveSize),
 	PartitionRows = format_partition_rows(Report#report.partitions),
-    Footer =
+    MiningFooter =
 		"+-----------+-----------+----------+---------------+---------------+---------------+------------+------------+--------------+\n",
-	io_lib:format("~s~s~s~s", [Header, TotalRow, PartitionRows, Footer]).
+	io_lib:format("~s~s~s~s~s~s~s",
+			[BlocksHeader, BlocksRow, BlocksFooter, MiningHeader, TotalRow, PartitionRows, MiningFooter]).
+
+
+format_blocks_row(Report) ->
+	Found = maps:get(found, Report#report.solutions, 0),
+	Rejected = maps:get(rejected, Report#report.solutions, 0),
+	Published = maps:get(published, Report#report.blocks, 0),
+	Orphaned = maps:get(orphaned, Report#report.blocks, 0),
+	Rebased = maps:get(rebased, Report#report.blocks, 0),
+	Confirmed = maps:get(confirmed, Report#report.blocks, 0),
+	io_lib:format("| ~12B | ~15B | ~16B | ~15B | ~14B | ~16B |\n",
+		[Found, Rejected, Published, Orphaned, Rebased, Confirmed]).
 
 format_partition_total_row(Report, WeaveSize) ->
 	#report{
@@ -1245,9 +1264,10 @@ test_report(PoA1Multiplier) ->
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
 	ar_mining_stats:vdf_computed(),
-	ar_mining_stats:h1_solution(),
-	ar_mining_stats:h2_solution(),
-	ar_mining_stats:h2_solution(),
+	ar_mining_stats:solution(network, found),
+	ar_mining_stats:solution(network, found),
+	ar_mining_stats:solution(network, found),
+	ar_mining_stats:solution(network, rejected),
 	ar_mining_stats:block_found(),
 	ar_mining_stats:chunk_read(1),
 	ar_mining_stats:chunk_read(1),
@@ -1303,8 +1323,10 @@ test_report(PoA1Multiplier) ->
 	?assertEqual(#report{ 
 		now = Now+1000,
 		vdf_speed = 1.0 / 3.0,
-		h1_solution = 1,
-		h2_solution = 2,
+		solutions = #{
+			found => 3,
+			rejected => 1
+		},
 		confirmed_block = 1,
 		total_data_size = floor(0.6 * ?PARTITION_SIZE),
 		optimal_overall_read_mibps = 190.7998163223283,

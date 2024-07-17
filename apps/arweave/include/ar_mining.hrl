@@ -33,25 +33,25 @@
 }).
 
 -record(mining_solution, {
-	last_step_checkpoints = [],
-	merkle_rebase_threshold = 0,
+	level = undefined, %% not serialized. Can be 'network' or 'partial'
+	last_step_checkpoints = [], 
+	mining_address = << 0:256 >>,
 	next_seed = << 0:(8 * 48) >>,
 	next_vdf_difficulty = 0,
 	nonce = 0,
 	nonce_limiter_output = << 0:256 >>,
 	partition_number = 0,
+	partition_upper_bound = 0,
 	poa1 = #poa{},
 	poa2 = #poa{},
 	preimage = << 0:256 >>,
 	recall_byte1 = 0,
 	recall_byte2 = undefined,
+	seed = << 0:(8 * 48) >>,
 	solution_hash = << 0:256 >>,
 	start_interval_number = 0,
 	step_number = 0,
-	steps = [],
-	seed = << 0:(8 * 48) >>,
-	mining_address = << 0:256 >>,
-	partition_upper_bound = 0
+	steps = []
 }).
 
 -endif.
