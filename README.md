@@ -21,7 +21,7 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 ## Requirements
 
 The full arweave node functionality is only supported on Linux, but it is possible to run a
-VDF Server on MacOS. Refer to the [mining VDF guide](https://docs.arweave.org/developers/mining/mining-vdf)
+VDF Server on MacOS. Refer to the [mining VDF guide](https://docs.arweave.org/developers/mining/vdf)
 for more information on running your own VDF server.
 
 **General requirements:**
@@ -57,7 +57,7 @@ for more information on running your own VDF server.
 
   **Notes:** 
   1. This process has only been tested on a fresh install of MacOS Ventura running on a Mac Mini M2. It may or may not work on other configurations.
-  2. We have not validated mining or packing on MacOS, but as of May, 2024 the M2 provides the fastest known VDF implementation and so makes a good candidate for [VDF Servers](https://docs.arweave.org/developers/mining/mining-vdf).
+  2. We have not validated mining or packing on MacOS, but as of May, 2024 the M2 provides the fastest known VDF implementation and so makes a good candidate for [VDF Servers](https://docs.arweave.org/developers/mining/vdf).
 
 </details>
 </br>
