@@ -511,7 +511,7 @@ log_report(ReportString) ->
 log_report_lines([]) ->
 	ok;
 log_report_lines([Line | Lines]) ->
-	?LOG_INFO(Line),
+	?LOG_ERROR(Line),
 	log_report_lines(Lines).
 
 set_metrics(Report) ->

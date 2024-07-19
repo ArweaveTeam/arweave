@@ -364,7 +364,7 @@ handle_task({computed_h1, Candidate}, State) ->
 				{difficulty, get_difficulty(State, Candidate)},
 				{partial_difficulty, get_partial_difficulty(State, Candidate)}]),
 			ar_mining_stats:solution(DiffCheck, found),
-			ar_mining_server:prepare_and_post_solution(DiffCheck, Candidate)
+			ar_mining_router:prepare_solution(DiffCheck, Candidate)
 	end,
 	case DiffCheck of
 		network ->
@@ -430,7 +430,7 @@ handle_task({computed_h2, Candidate}, State) ->
 		{false, _} ->
 			ok;
 		{_, not_set} ->
-			ar_mining_server:prepare_and_post_solution(DiffCheck, Candidate);
+			ar_mining_router:prepare_solution(DiffCheck, Candidate);
 		_ ->
 			{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, Partition1,
 					Nonce, PartitionUpperBound),
@@ -518,7 +518,7 @@ h2_passes_diff_checks(H2, Candidate, State) ->
 	passes_diff_checks(H2, false, Candidate, State).
 
 %% @doc 
-%% If the solution passes the network difficulty: true
+%% If the solution passes the network difficulty: network
 %% If the solution passes a pool's partial difficulty: partial
 %% If the solution passes neither: false
 passes_diff_checks(SolutionHash, IsPoA1, Candidate, State) ->

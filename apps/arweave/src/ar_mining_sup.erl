@@ -32,6 +32,7 @@ init([]) ->
 		ar_mining_io:get_partitions(infinity)
 	),
 	Children = MiningWorkers ++ [
+		?CHILD(ar_mining_router, worker),
 		?CHILD(ar_mining_server, worker),
 		?CHILD(ar_mining_hash, worker),
 		?CHILD(ar_mining_io, worker),

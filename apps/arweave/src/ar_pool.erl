@@ -539,7 +539,7 @@ process_h1_read_jobs([], _Partitions) ->
 process_h1_read_jobs([Candidate | Jobs], Partitions) ->
 	case we_have_partition_for_the_first_recall_byte(Candidate, Partitions) of
 		true ->
-			ar_mining_server:prepare_and_post_solution(Candidate),
+			ar_mining_router:prepare_solution(Candidate),
 			ar_mining_stats:h2_received_from_peer(pool);
 		false ->
 			ok

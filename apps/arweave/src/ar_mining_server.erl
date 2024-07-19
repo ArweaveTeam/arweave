@@ -4,9 +4,9 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, 
-		compute_h2_for_peer/1, prepare_and_post_solution/2, post_solution/1, read_poa/3,
-		get_recall_bytes/4, active_sessions/0, encode_sessions/1, add_pool_job/6,
-		is_one_chunk_solution/1]).
+		prepare_solution/3, validate_solution/1,
+		compute_h2_for_peer/1, read_poa/3, get_recall_bytes/4, active_sessions/0,
+		encode_sessions/1, add_pool_job/6, is_one_chunk_solution/1]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -28,8 +28,7 @@
 	chunk_cache_limit 			= 0,
 	gc_frequency_ms				= undefined,
 	gc_process_ref				= undefined,
-	merkle_rebase_threshold		= infinity,
-	is_pool_client				= false
+	merkle_rebase_threshold		= infinity
 }).
 
 -define(FETCH_POA_FROM_PEERS_TIMEOUT_MS, 10000).
@@ -66,12 +65,6 @@ add_pool_job(SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialD
 	Args = {SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff},
 	gen_server:cast(?MODULE, {add_pool_job, Args}).
 
-prepare_and_post_solution(Level, Candidate) ->
-	gen_server:cast(?MODULE, {prepare_and_post_solution, Level, Candidate}).
-
-post_solution(Solution) ->
-	gen_server:cast(?MODULE, {post_solution, Solution}).
-
 active_sessions() ->
 	gen_server:call(?MODULE, active_sessions).
 
@@ -82,6 +75,12 @@ encode_sessions(Sessions) ->
 
 is_one_chunk_solution(Solution) ->
 	Solution#mining_solution.recall_byte2 == undefined.
+
+prepare_solution(Level, Candidate, SkipVDF) ->
+	gen_server:cast(?MODULE, {prepare_solution, Level, Candidate, SkipVDF}).
+
+validate_solution(Solution) ->
+	gen_server:cast(?MODULE, {validate_solution, Solution}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -102,8 +101,7 @@ init([]) ->
 	),
 
 	{ok, #state{
-		workers = Workers,
-		is_pool_client = ar_pool:is_client()
+		workers = Workers
 	}}.
 
 handle_call(active_sessions, _From, State) ->
@@ -165,14 +163,6 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	end,
 	{noreply, State};
 
-handle_cast({prepare_and_post_solution, Level, Candidate}, State) ->
-	prepare_and_post_solution(Level, Candidate, State),
-	{noreply, State};
-
-handle_cast({post_solution, Solution}, State) ->
-	post_solution(Solution, State),
-	{noreply, State};
-
 handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = State) ->
 	%% Reading recall ranges from disk causes a large amount of binary data to be allocated and
 	%% references to that data is spread among all the different mining processes. Because of this
@@ -198,6 +188,82 @@ handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = Stat
 	{noreply, State};
 handle_cast({manual_garbage_collect, _}, State) ->
 	%% Does not originate from the running instance of the server; happens in tests.
+	{noreply, State};
+
+handle_cast({prepare_solution, Level, Candidate, SkipVDF}, State) ->
+	#mining_candidate{
+		mining_address = MiningAddress, next_seed = NextSeed, 
+		next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
+		partition_upper_bound = PartitionUpperBound, poa2 = PoA2, preimage = Preimage,
+		seed = Seed, start_interval_number = StartIntervalNumber, step_number = StepNumber
+	} = Candidate,
+	
+	Solution = #mining_solution{
+		level = Level, %% 'network' or 'partial'
+		mining_address = MiningAddress,
+		next_seed = NextSeed,
+		next_vdf_difficulty = NextVDFDifficulty,
+		nonce = Nonce,
+		nonce_limiter_output = NonceLimiterOutput,
+		partition_number = PartitionNumber,
+		partition_upper_bound = PartitionUpperBound,
+		poa2 = PoA2,
+		preimage = Preimage,
+		seed = Seed,
+		start_interval_number = StartIntervalNumber,
+		step_number = StepNumber
+	},
+	
+	Solution2 = case SkipVDF of
+		true ->
+			prepare_solution_proofs(Candidate, Solution);
+		false ->
+			prepare_solution_last_step_checkpoints(Candidate, Solution)
+	end,
+	case Solution2 of
+		error -> ok;
+		_ -> ar_mining_router:post_solution(Solution2)
+	end,
+	{noreply, State};
+
+handle_cast({validate_solution, Solution}, State) ->
+	#state{ diff_pair = DiffPair } = State,
+	#mining_solution{
+		level = Level, mining_address = MiningAddress,
+		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
+		recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+		solution_hash = H, step_number = StepNumber } = Solution,
+	case validate_solution(Solution, DiffPair) of
+		error ->
+			?LOG_WARNING([{event, solution_rejected}, {level, Level},
+					{reason, failed_to_validate_solution},
+					{partition, PartitionNumber},
+					{step_number, StepNumber},
+					{mining_address, ar_util:safe_encode(MiningAddress)},
+					{recall_byte1, RecallByte1},
+					{recall_byte2, RecallByte2},
+					{solution_h, ar_util:safe_encode(H)},
+					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
+			ar:console("WARNING: we failed to validate our solution. Check logs for more "
+					"details~n"),
+			ar_mining_stats:solution(Level, rejected);
+		{false, Reason} ->
+			?LOG_WARNING([{event, solution_rejected}, {level, Level},
+					{reason, Reason},
+					{partition, PartitionNumber},
+					{step_number, StepNumber},
+					{mining_address, ar_util:safe_encode(MiningAddress)},
+					{recall_byte1, RecallByte1},
+					{recall_byte2, RecallByte2},
+					{solution_h, ar_util:safe_encode(H)},
+					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
+			ar:console("WARNING: the solution we found is invalid. Check logs for more "
+					"details~n"),
+			ar_mining_stats:solution(Level, rejected);
+		{true, PoACache, PoA2Cache} ->
+			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
+	end,
 	{noreply, State};
 
 handle_cast(Cast, State) ->
@@ -449,43 +515,6 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 	RelativeOffset = Nonce * (?DATA_CHUNK_SIZE),
 	{RecallRange1Start + RelativeOffset, RecallRange2Start + RelativeOffset}.
 
-prepare_and_post_solution(Level, Candidate, State) ->
-	Solution = prepare_solution(Level, Candidate, State),
-	post_solution(Solution, State).
-
-prepare_solution(Level, Candidate, State) ->
-	#state{ is_pool_client = IsPoolClient } = State,
-	#mining_candidate{
-		mining_address = MiningAddress, next_seed = NextSeed, 
-		next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
-		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
-		partition_upper_bound = PartitionUpperBound, poa2 = PoA2, preimage = Preimage,
-		seed = Seed, start_interval_number = StartIntervalNumber, step_number = StepNumber
-	} = Candidate,
-	
-	Solution = #mining_solution{
-		level = Level, %% 'network' or 'partial'
-		mining_address = MiningAddress,
-		next_seed = NextSeed,
-		next_vdf_difficulty = NextVDFDifficulty,
-		nonce = Nonce,
-		nonce_limiter_output = NonceLimiterOutput,
-		partition_number = PartitionNumber,
-		partition_upper_bound = PartitionUpperBound,
-		poa2 = PoA2,
-		preimage = Preimage,
-		seed = Seed,
-		start_interval_number = StartIntervalNumber,
-		step_number = StepNumber
-	},
-	%% A pool client does not validate VDF before sharing a solution.
-	case IsPoolClient of
-		true ->
-			prepare_solution_proofs(Candidate, Solution);
-		false ->
-			prepare_solution_last_step_checkpoints(Candidate, Solution)
-	end.
-
 prepare_solution_last_step_checkpoints(Candidate, Solution) ->
 	#mining_candidate{
 		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
@@ -649,77 +678,6 @@ prepare_solution_poa2(Candidate,
 prepare_solution_poa2(Candidate,
 		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
 	prepare_solution_poa1(Candidate, Solution).
-
-post_solution(error, _State) ->
-	error;
-post_solution(Solution, State) ->
-	{ok, Config} = application:get_env(arweave, config),
-	post_solution(Config#config.cm_exit_peer, Solution, State).
-
-post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
-	%% When posting a partial solution the pool client will skip many of the validation steps
-	%% that are normally performed before sharing a solution.
-	ar_pool:post_partial_solution(Solution);
-post_solution(not_set, Solution, State) ->
-	#state{ diff_pair = DiffPair } = State,
-	#mining_solution{
-		level = Level, mining_address = MiningAddress,
-		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
-		recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-		solution_hash = H, step_number = StepNumber } = Solution,
-	case validate_solution(Solution, DiffPair) of
-		error ->
-			?LOG_WARNING([{event, solution_rejected}, {level, Level},
-					{reason, failed_to_validate_solution},
-					{partition, PartitionNumber},
-					{step_number, StepNumber},
-					{mining_address, ar_util:safe_encode(MiningAddress)},
-					{recall_byte1, RecallByte1},
-					{recall_byte2, RecallByte2},
-					{solution_h, ar_util:safe_encode(H)},
-					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
-			ar:console("WARNING: we failed to validate our solution. Check logs for more "
-					"details~n"),
-			ar_mining_stats:solution(Level, rejected);
-		{false, Reason} ->
-			?LOG_WARNING([{event, solution_rejected}, {level, Level},
-					{reason, Reason},
-					{partition, PartitionNumber},
-					{step_number, StepNumber},
-					{mining_address, ar_util:safe_encode(MiningAddress)},
-					{recall_byte1, RecallByte1},
-					{recall_byte2, RecallByte2},
-					{solution_h, ar_util:safe_encode(H)},
-					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
-			ar:console("WARNING: the solution we found is invalid. Check logs for more "
-					"details~n"),
-			ar_mining_stats:solution(Level, rejected);
-		{true, PoACache, PoA2Cache} ->
-			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
-	end;
-post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
-	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution) of
-		{ok, _} ->
-			ok;
-		{error, Reason} ->
-			?LOG_WARNING([{event, found_partial_solution_but_failed_to_reach_exit_node},
-					{reason, io_lib:format("~p", [Reason])}]),
-			ar:console("We found a partial solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])])
-	end;
-post_solution(ExitPeer, Solution, _State) ->
-	#mining_solution{ level = Level } = Solution,
-	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
-		{ok, _} ->
-			ok;
-		{error, Reason} ->
-			?LOG_WARNING([{event, solution_rejected}, {level, Level},
-					{reason, failed_to_reach_exit_node},
-					{message, io_lib:format("~p", [Reason])}]),
-			ar:console("We found a solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])]),
-			ar_mining_stats:solution(Level, rejected)
-	end.
 
 may_be_empty_poa(not_set) ->
 	#poa{};
