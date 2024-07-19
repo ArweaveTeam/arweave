@@ -355,24 +355,25 @@ handle_task({computed_h0, Candidate}, State) ->
 
 handle_task({computed_h1, Candidate}, State) ->
 	#mining_candidate{ h1 = H1, chunk1 = Chunk1, session_key = SessionKey } = Candidate,
-	case h1_passes_diff_checks(H1, Candidate, State) of
-		true ->
-			?LOG_INFO([{event, found_h1_solution}, {worker, State#state.name},
-				{h1, ar_util:encode(H1)}, {difficulty, get_difficulty(State, Candidate)}]),
-			ar_mining_stats:h1_solution(),
+	DiffCheck = h1_passes_diff_checks(H1, Candidate, State),
+	case DiffCheck of
+		false -> ok;
+		_ ->
+			?LOG_INFO([{event, solution_found}, {level, DiffCheck}, {worker, State#state.name},
+				{h1, ar_util:encode(H1)},
+				{difficulty, get_difficulty(State, Candidate)},
+				{partial_difficulty, get_partial_difficulty(State, Candidate)}]),
+			ar_mining_stats:solution(DiffCheck, found),
+			ar_mining_router:prepare_solution(DiffCheck, Candidate)
+	end,
+	case DiffCheck of
+		network ->
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
 			%% necessary below)
 			State2 = remove_chunk_from_cache(Candidate, State),
-			ar_mining_server:prepare_and_post_solution(Candidate),
 			{noreply, State2};
-		Result ->
-			case Result of
-				partial ->
-					ar_mining_server:prepare_and_post_solution(Candidate);
-				_ ->
-					ok
-			end,
+		_ ->
 			{ok, Config} = application:get_env(arweave, config),
 			case cycle_chunk_cache(Candidate, {chunk1, Chunk1, H1}, State) of
 				{cached, State2} ->
@@ -415,28 +416,21 @@ handle_task({computed_h2, Candidate}, State) ->
 		nonce = Nonce, partition_number = Partition1, 
 		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
 	} = Candidate,
-	PassesDiffChecks = h2_passes_diff_checks(H2, Candidate, State),
-	case PassesDiffChecks of
-		false ->
-			ok;
-		true ->
-			?LOG_INFO([{event, found_h2_solution},
-					{worker, State#state.name},
-					{h2, ar_util:encode(H2)},
-					{difficulty, get_difficulty(State, Candidate)},
-					{partial_difficulty, get_partial_difficulty(State, Candidate)}]),
-			ar_mining_stats:h2_solution();
-		partial ->
-			?LOG_INFO([{event, found_h2_partial_solution},
-					{worker, State#state.name},
-					{h2, ar_util:encode(H2)},
-					{partial_difficulty, get_partial_difficulty(State, Candidate)}])
+	DiffCheck = h2_passes_diff_checks(H2, Candidate, State),
+	case DiffCheck of
+		false -> ok;
+		_ ->
+			?LOG_INFO([{event, solution_found}, {level, DiffCheck}, {worker, State#state.name},
+				{h2, ar_util:encode(H2)},
+				{difficulty, get_difficulty(State, Candidate)},
+				{partial_difficulty, get_partial_difficulty(State, Candidate)}]),
+			ar_mining_stats:solution(DiffCheck, found)
 	end,
-	case {PassesDiffChecks, Peer} of
+	case {DiffCheck, Peer} of
 		{false, _} ->
 			ok;
 		{_, not_set} ->
-			ar_mining_server:prepare_and_post_solution(Candidate);
+			ar_mining_router:prepare_solution(DiffCheck, Candidate);
 		_ ->
 			{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, Partition1,
 					Nonce, PartitionUpperBound),
@@ -450,14 +444,15 @@ handle_task({computed_h2, Candidate}, State) ->
 							"the PoA2 proofs locally - searching the peers...~n"),
 						case ar_mining_server:fetch_poa_from_peers(RecallByte2) of
 							not_found ->
-								?LOG_WARNING([{event,
-										mined_block_but_failed_to_read_second_chunk_proof},
-										{worker, State#state.name},
-										{recall_byte2, RecallByte2},
-										{mining_address, ar_util:safe_encode(MiningAddress)}]),
+								?LOG_WARNING([{event, solution_rejected}, {level, DiffCheck},
+									{reason, failed_to_read_second_chunk_proof},
+									{worker, State#state.name}, {h2, ar_util:encode(H2)},
+									{recall_byte2, RecallByte2},
+									{mining_address, ar_util:safe_encode(MiningAddress)}]),
 								ar:console("WARNING: we found an H2 solution but failed to find "
 										"the proof for the second chunk. See logs for more "
 										"details.~n"),
+								ar_mining_stats:solution(DiffCheck, rejected),
 								not_found;
 							PeerPoA2 ->
 								PeerPoA2
@@ -522,11 +517,15 @@ h1_passes_diff_checks(H1, Candidate, State) ->
 h2_passes_diff_checks(H2, Candidate, State) ->
 	passes_diff_checks(H2, false, Candidate, State).
 
+%% @doc 
+%% If the solution passes the network difficulty: network
+%% If the solution passes a pool's partial difficulty: partial
+%% If the solution passes neither: false
 passes_diff_checks(SolutionHash, IsPoA1, Candidate, State) ->
 	DiffPair = get_difficulty(State, Candidate),
 	case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1, DiffPair) of
 		true ->
-			true;
+			network;
 		false ->
 			case get_partial_difficulty(State, Candidate) of
 				not_set ->

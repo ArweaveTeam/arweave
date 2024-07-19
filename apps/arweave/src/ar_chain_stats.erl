@@ -3,6 +3,7 @@
 -behaviour(gen_server).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_chain_stats.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -38,7 +39,9 @@ get_forks(StartTime) ->
 init([]) ->
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "forks_db"), forks_db),
+    {ok, Config} = application:get_env(arweave, config),
+    RocksDBDir = filename:join(Config#config.data_dir, ?ROCKS_DB_DIR),
+	ok = ar_kv:open(filename:join(RocksDBDir, "forks_db"), forks_db),
     {ok, #{}}.
 
 handle_call({get_forks, StartTime}, _From, State) ->

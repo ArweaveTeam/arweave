@@ -408,7 +408,6 @@ dummy_candidate() ->
 dummy_solution() ->
 	#mining_solution{
 		last_step_checkpoints = [],
-		merkle_rebase_threshold = rand:uniform(1024),
 		mining_address = crypto:strong_rand_bytes(32),
 		next_seed = crypto:strong_rand_bytes(32),
 		next_vdf_difficulty = rand:uniform(1024),
