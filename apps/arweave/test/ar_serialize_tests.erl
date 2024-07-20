@@ -247,7 +247,7 @@ candidate_to_json_struct_test() ->
     end,
 
 	DefaultCandidate = #mining_candidate{
-        cm_diff = {rand:uniform(1024), rand:uniform(1024)},
+        diff_pair = {rand:uniform(1024), rand:uniform(1024)},
 		cm_h1_list = [
 			{crypto:strong_rand_bytes(32), rand:uniform(100)},
 			{crypto:strong_rand_bytes(32), rand:uniform(100)},

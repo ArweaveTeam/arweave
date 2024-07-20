@@ -23,8 +23,7 @@
 	chunk_cache_size			= #{},
 	chunk_cache_limit			= 0,
 	vdf_queue_limit				= 0,
-	latest_vdf_step_number		= 0,
-	is_pool_client				= false
+	latest_vdf_step_number		= 0
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -117,8 +116,7 @@ init(Partition) ->
 	gen_server:cast(self(), handle_task),
 	gen_server:cast(self(), check_worker_status),
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], 0),
-	{ok, #state{ name = Name, partition_number = Partition,
-			is_pool_client = ar_pool:is_client() }}.
+	{ok, #state{ name = Name, partition_number = Partition }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -279,7 +277,7 @@ handle_task({chunk2, Candidate}, State) ->
 				not_set ->
 					ok;
 				_ ->
-					?LOG_ERROR([{event, cm_chunk2_cached_before_chunk1},
+					?LOG_INFO([{event, cm_chunk2_cached_before_chunk1},
 						{worker, State#state.name},
 						{partition_number, Candidate#mining_candidate.partition_number},
 						{partition_number2, Candidate#mining_candidate.partition_number2},
@@ -355,116 +353,50 @@ handle_task({computed_h0, Candidate}, State) ->
 
 handle_task({computed_h1, Candidate}, State) ->
 	#mining_candidate{ h1 = H1, chunk1 = Chunk1, session_key = SessionKey } = Candidate,
-	DiffCheck = h1_passes_diff_checks(H1, Candidate, State),
+	DiffPair = get_difficulty(State, Candidate),
+	DiffCheck = ar_node_utils:h1_passes_diff_check(H1, DiffPair),
 	case DiffCheck of
 		false -> ok;
 		_ ->
 			?LOG_INFO([{event, solution_found}, {worker, State#state.name},
-				{h1, ar_util:encode(H1)},
-				{difficulty, get_difficulty(State, Candidate)},
-				{partial_difficulty, get_partial_difficulty(State, Candidate)}]),
+				{h1, ar_util:encode(H1)}, {difficulty, DiffPair}]),
 			ar_mining_stats:solution(found),
 			ar_mining_router:prepare_solution(Candidate)
 	end,
-	case DiffCheck of
-		network ->
-			%% Decrement 1 for chunk1:
-			%% Since we found a solution we won't need chunk2 (and it will be evicted if
-			%% necessary below)
-			State2 = remove_chunk_from_cache(Candidate, State),
+
+	case cycle_chunk_cache(Candidate, {chunk1, Chunk1, H1}, State) of
+		{cached, State2} ->
+			%% Chunk2 hasn't been read yet, so we cache Chunk1 and wait for
+			%% Chunk2 to be read.
 			{noreply, State2};
-		_ ->
-			{ok, Config} = application:get_env(arweave, config),
-			case cycle_chunk_cache(Candidate, {chunk1, Chunk1, H1}, State) of
-				{cached, State2} ->
-					%% Chunk2 hasn't been read yet, so we cache Chunk1 and wait for
-					%% Chunk2 to be read.
-					{noreply, State2};
-				{do_not_cache, State2} ->
-					%% This node does not store Chunk2. If we're part of a coordinated
-					%% mining set, we can try one of our peers, otherwise we're done.
-					case Config#config.coordinated_mining of
-						false ->
-							ok;
-						true ->
-							DiffPair =
-								case get_partial_difficulty(State, Candidate) of
-									not_set ->
-										get_difficulty(State, Candidate);
-									PartialDiffPair ->
-										PartialDiffPair
-								end,
-							ar_coordination:computed_h1(Candidate, DiffPair)
-					end,
-					%% Decrement 1 for chunk1:
-					%% do_not_cache indicates chunk2 was not and will not be read or cached
-					{noreply, update_chunk_cache_size(-1, SessionKey, State2)};
-				{{chunk2, Chunk2}, State2} ->
-					%% Chunk2 has already been read, so we can compute H2 now.
-					ar_mining_hash:compute_h2(
-						self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
-					%% Decrement 2 for chunk1 and chunk2:
-					%% 1. chunk2 was previously read and cached
-					%% 2. chunk1 that was just read and used to compute H1	
-					{noreply, update_chunk_cache_size(-2, SessionKey, State2)}
-			end
+		{do_not_cache, State2} ->
+			%% This node does not store Chunk2. If we're part of a coordinated
+			%% mining set, we can try one of our peers, otherwise we're done.
+			ar_mining_router:route_h1(Candidate, DiffPair),
+			%% Decrement 1 for chunk1:
+			%% do_not_cache indicates chunk2 was not and will not be read or cached
+			{noreply, update_chunk_cache_size(-1, SessionKey, State2)};
+		{{chunk2, Chunk2}, State2} ->
+			%% Chunk2 has already been read, so we can compute H2 now.
+			ar_mining_hash:compute_h2(
+				self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
+			%% Decrement 2 for chunk1 and chunk2:
+			%% 1. chunk2 was previously read and cached
+			%% 2. chunk1 that was just read and used to compute H1	
+			{noreply, update_chunk_cache_size(-2, SessionKey, State2)}
 	end;
 
 handle_task({computed_h2, Candidate}, State) ->
-	#mining_candidate{
-		chunk2 = Chunk2, h0 = H0, h2 = H2, mining_address = MiningAddress,
-		nonce = Nonce, partition_number = Partition1, 
-		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
-	} = Candidate,
-	DiffCheck = h2_passes_diff_checks(H2, Candidate, State),
+	#mining_candidate{ h2 = H2 } = Candidate,
+	DiffPair = get_difficulty(State, Candidate),
+	DiffCheck = ar_node_utils:h2_passes_diff_check(H2, DiffPair),
 	case DiffCheck of
 		false -> ok;
 		_ ->
 			?LOG_INFO([{event, solution_found}, {worker, State#state.name},
-				{h2, ar_util:encode(H2)},
-				{difficulty, get_difficulty(State, Candidate)},
-				{partial_difficulty, get_partial_difficulty(State, Candidate)}]),
-			ar_mining_stats:solution(found)
-	end,
-	case {DiffCheck, Peer} of
-		{false, _} ->
-			ok;
-		{_, not_set} ->
-			ar_mining_router:prepare_solution(Candidate);
-		_ ->
-			{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, Partition1,
-					Nonce, PartitionUpperBound),
-			LocalPoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, MiningAddress),
-			PoA2 =
-				case LocalPoA2 of
-					{ok, LocalPoA3} ->
-						LocalPoA3;
-					_ ->
-						ar:console("WARNING: we have found an H2 solution but did not find "
-							"the PoA2 proofs locally - searching the peers...~n"),
-						case ar_mining_server:fetch_poa_from_peers(RecallByte2) of
-							not_found ->
-								?LOG_WARNING([{event, solution_rejected},
-									{reason, failed_to_read_second_chunk_proof},
-									{worker, State#state.name}, {h2, ar_util:encode(H2)},
-									{recall_byte2, RecallByte2},
-									{mining_address, ar_util:safe_encode(MiningAddress)}]),
-								ar:console("WARNING: we found an H2 solution but failed to find "
-										"the proof for the second chunk. See logs for more "
-										"details.~n"),
-								ar_mining_stats:solution(rejected),
-								not_found;
-							PeerPoA2 ->
-								PeerPoA2
-						end
-				end,
-			case PoA2 of
-				not_found ->
-					ok;
-				_ ->
-					ar_coordination:computed_h2_for_peer(
-							Candidate#mining_candidate{ poa2 = PoA2 })
-			end
+				{h2, ar_util:encode(H2)}, {difficulty, DiffPair}]),
+			ar_mining_stats:solution(found),
+			ar_mining_router:route_h2(Candidate)
 	end,
 	{noreply, State};
 
@@ -510,36 +442,6 @@ handle_task({compute_h2_for_peer, Candidate}, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-h1_passes_diff_checks(H1, Candidate, State) ->
-	passes_diff_checks(H1, true, Candidate, State).
-
-h2_passes_diff_checks(H2, Candidate, State) ->
-	passes_diff_checks(H2, false, Candidate, State).
-
-%% @doc 
-%% If the solution passes the network difficulty: network
-%% If the solution passes a pool's partial difficulty: partial
-%% If the solution passes neither: false
-passes_diff_checks(SolutionHash, IsPoA1, Candidate, State) ->
-	DiffPair = get_difficulty(State, Candidate),
-	case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1, DiffPair) of
-		true ->
-			network;
-		false ->
-			case get_partial_difficulty(State, Candidate) of
-				not_set ->
-					false;
-				PartialDiffPair ->
-					case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1,
-							PartialDiffPair) of
-						true ->
-							partial;
-						false ->
-							false
-					end
-			end
-	end.
 
 maybe_warn_about_lag(Q, Name) ->
 	case gb_sets:is_empty(Q) of
@@ -762,14 +664,9 @@ cache_h1_list(
 	State2 = cache_chunk({chunk1, H1}, Candidate#mining_candidate{ nonce = Nonce }, State),
 	cache_h1_list(Candidate, H1List, State2).
 
-get_difficulty(State, #mining_candidate{ cm_diff = not_set }) ->
+get_difficulty(State, #mining_candidate{ diff_pair = not_set }) ->
 	State#state.diff_pair;
-get_difficulty(_State, #mining_candidate{ cm_diff = DiffPair }) ->
-	DiffPair.
-
-get_partial_difficulty(#state{ is_pool_client = false }, _Candidate) ->
-	not_set;
-get_partial_difficulty(_State, #mining_candidate{ cm_diff = DiffPair }) ->
+get_difficulty(_State, #mining_candidate{ diff_pair = DiffPair }) ->
 	DiffPair.
 
 nonce_max() ->

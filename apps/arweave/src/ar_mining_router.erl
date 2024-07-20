@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, prepare_solution/1, post_solution/1]).
+-export([start_link/0, prepare_solution/1, route_solution/1, route_h1/2, route_h2/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -28,9 +28,23 @@ prepare_solution(Candidate) ->
 	{ok, Config} = application:get_env(arweave, config),
 	ar_mining_server:prepare_solution(Candidate, Config#config.is_pool_client).
 
-post_solution(Solution) ->
+route_solution(Solution) ->
 	{ok, Config} = application:get_env(arweave, config),
-	post_solution(Config#config.cm_exit_peer, Config#config.is_pool_client, Solution).
+	route_solution(Config#config.cm_exit_peer, Config#config.is_pool_client, Solution).
+
+route_h1(Candidate, DiffPair) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.coordinated_mining of
+		false ->
+			ok;
+		true ->
+			ar_coordination:computed_h1(Candidate, DiffPair)
+	end.
+
+route_h2(#mining_candidate{ cm_lead_peer = not_set } = Candidate) ->
+	prepare_solution(Candidate);
+route_h2(Candidate) ->
+	ar_coordination:computed_h2_for_peer(Candidate).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -58,13 +72,13 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-post_solution(not_set, true, Solution) ->
+route_solution(not_set, true, Solution) ->
 	%% When posting a partial solution the pool client will skip many of the validation steps
 	%% that are normally performed before sharing a solution.
 	ar_pool:post_partial_solution(Solution);
-post_solution(not_set, _IsPoolClient, Solution) ->
+route_solution(not_set, _IsPoolClient, Solution) ->
 	ar_mining_server:validate_solution(Solution);
-post_solution(ExitPeer, true, Solution) ->
+route_solution(ExitPeer, true, Solution) ->
 	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution) of
 		{ok, _} ->
 			ok;
@@ -74,7 +88,7 @@ post_solution(ExitPeer, true, Solution) ->
 			ar:console("We found a partial solution but failed to reach the exit node, "
 					"error: ~p.", [io_lib:format("~p", [Reason])])
 	end;
-post_solution(ExitPeer, _IsPoolClient, Solution) ->
+route_solution(ExitPeer, _IsPoolClient, Solution) ->
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
 		{ok, _} ->
 			ok;

@@ -9,7 +9,8 @@
 	cache_ref = not_set, %% not serialized
 	chunk1 = not_set, %% not serialized
 	chunk2 = not_set, %% not serialized
-	cm_diff = not_set, %% serialized. set to the difficulty used by the H1 miner
+	diff_pair = not_set, %% serialized. set to the difficulty associated with this candidate.
+						 %% diff_pair can be set by CM peers or a pool server.
 	cm_h1_list = [], %% serialized. list of {h1, nonce} pairs
 	cm_lead_peer = not_set, %% not serialized. if set, this candidate came from another peer
 	h0 = not_set, %% serialized

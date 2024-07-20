@@ -5,7 +5,7 @@
 
 -export([start_link/0, start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, 
 		prepare_solution/2, validate_solution/1,
-		compute_h2_for_peer/1, read_poa/3, get_recall_bytes/4, active_sessions/0,
+		compute_h2_for_peer/1, load_poa/2, get_recall_bytes/4, active_sessions/0,
 		encode_sessions/1, add_pool_job/6, is_one_chunk_solution/1]).
 -export([pause/0]).
 
@@ -222,7 +222,7 @@ handle_cast({prepare_solution, Candidate, SkipVDF}, State) ->
 	end,
 	case Solution2 of
 		error -> ok;
-		_ -> ar_mining_router:post_solution(Solution2)
+		_ -> ar_mining_router:route_solution(Solution2)
 	end,
 	{noreply, State};
 
@@ -594,84 +594,17 @@ prepare_solution_proofs(Candidate, Solution) ->
 
 prepare_solution_poa1(Candidate,
 		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
-	#mining_solution{
-		mining_address = MiningAddress, partition_number = PartitionNumber,
-		recall_byte1 = RecallByte1 } = Solution,
-	#mining_candidate{
-		chunk1 = Chunk1, h0 = H0, nonce = Nonce,
-		partition_upper_bound = PartitionUpperBound } = Candidate,
-	case read_poa(RecallByte1, Chunk1, MiningAddress) of
-		{ok, PoA1} ->
-			Solution#mining_solution{ poa1 = PoA1 };
-		_ ->
-			Modules = ar_storage_module:get_all(RecallByte1 + 1),
-			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-			?LOG_ERROR([{event, failed_to_find_poa_proofs_locally},
-					{tags, [solution_proofs]},
-					{recall_byte, RecallByte1},
-					{modules_covering_recall_byte, ModuleIDs}]),
-			ar:console("WARNING: we have mined a block but did not find the PoA1 proofs "
-					"locally - searching the peers...~n"),
-			case fetch_poa_from_peers(RecallByte1) of
-				not_found ->
-					{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
-							PartitionNumber, PartitionUpperBound),
-					?LOG_WARNING([{event, solution_rejected},
-							{reason, failed_to_read_chunk_proofs},
-							{recall_byte1, RecallByte1},
-							{recall_range_start1, RecallRange1Start},
-							{nonce, Nonce},
-							{partition, PartitionNumber},
-							{mining_address, ar_util:safe_encode(MiningAddress)}]),
-					ar:console("WARNING: we have mined a block but failed to find "
-							"the PoA1 proofs required for publishing it. "
-							"Check logs for more details~n"),
-					ar_mining_stats:solution(rejected),
-					error;
-				PoA1 ->
-					Solution#mining_solution{ poa1 = PoA1#poa{ chunk = Chunk1 } }
-			end
+	#mining_solution{ recall_byte1 = RecallByte1 } = Solution,
+	case load_poa(RecallByte1, Candidate) of
+		not_found -> error;
+		PoA -> Solution#mining_solution{ poa1 = PoA }
 	end.
 prepare_solution_poa2(Candidate,
 		#mining_solution{ poa2 = #poa{ chunk = <<>> } } = Solution) ->
-	#mining_solution{ mining_address = MiningAddress,
-		partition_number = PartitionNumber, recall_byte2 = RecallByte2 } = Solution,
-	#mining_candidate{
-		chunk2 = Chunk2, h0 = H0, nonce = Nonce,
-		partition_upper_bound = PartitionUpperBound } = Candidate,
-	case read_poa(RecallByte2, Chunk2, MiningAddress) of
-		{ok, PoA2} ->
-			prepare_solution_poa1(Candidate, Solution#mining_solution{ poa2 = PoA2 });
-		_ ->
-			Modules = ar_storage_module:get_all(RecallByte2 + 1),
-			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-			?LOG_ERROR([{event, failed_to_find_poa2_proofs_locally},
-					{tags, [solution_proofs]},
-					{recall_byte2, RecallByte2},
-					{modules_covering_recall_byte2, ModuleIDs}]),
-			ar:console("WARNING: we have mined a block but did not find the PoA2 proofs "
-					"locally - searching the peers...~n"),
-			case fetch_poa_from_peers(RecallByte2) of
-				not_found ->
-					{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-							PartitionNumber, PartitionUpperBound),
-					?LOG_ERROR([{event, solution_rejected},
-							{reason, failed_to_read_chunk_proofs},
-							{tags, [solution_proofs]},
-							{recall_byte2, RecallByte2},
-							{recall_range_start2, RecallRange2Start},
-							{nonce, Nonce},
-							{partition, PartitionNumber},
-							{mining_address, ar_util:safe_encode(MiningAddress)}]),
-					ar:console("WARNING: we have mined a block but failed to find "
-							"the PoA2 proofs required for publishing it. "
-							"Check logs for more details~n"),
-					ar_mining_stats:solution(rejected),
-					error;
-				PoA2 ->
-					prepare_solution_poa1(Candidate,
-							Solution#mining_solution{ poa2 = PoA2#poa{ chunk = Chunk2 } })
-			end
+	#mining_solution{ recall_byte2 = RecallByte2 } = Solution,
+	case load_poa(RecallByte2, Candidate) of
+		not_found -> error;
+		PoA -> Solution#mining_solution{ poa2 = PoA }
 	end;
 prepare_solution_poa2(Candidate,
 		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
@@ -752,7 +685,7 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 				step_number = StepNumber,
 				nonce_limiter_output = Output,
 				partition_upper_bound = PartitionUpperBound,
-				cm_diff = PartialDiff
+				diff_pair = PartialDiff
 			},
 			distribute_output(Candidate, State3),
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
@@ -761,6 +694,49 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
 	end,
 	{noreply, State3}.
+
+load_poa(RecallByte, Candidate) ->
+	#mining_candidate{ chunk1 = Chunk1, chunk2 = Chunk2, 
+			h1 = H1, h2 = H2, nonce = Nonce,
+			mining_address = MiningAddress,
+			partition_number = PartitionNumber } = Candidate,
+	{Chunk, WhichHash} = case {H1, H2} of
+		{H1, not_set} ->
+			{Chunk1, "H1"};
+		{_, H2} ->
+			{Chunk2, "H2"}
+	end,
+
+	case read_poa(RecallByte, Chunk, MiningAddress) of
+		{ok, PoA} ->
+			PoA;
+		_ ->
+			Modules = ar_storage_module:get_all(RecallByte + 1),
+			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+			?LOG_ERROR([{event, failed_to_find_poa_proofs_locally},
+					{tags, [solution_proofs]},
+					{recall_byte, RecallByte},
+					{modules_covering_recall_byte, ModuleIDs}]),
+			ar:console(io_lib:format("WARNING: we have found an ~s solution but did not "
+					"find the PoA proofs locally - searching the peers...~n", [WhichHash])),
+			case fetch_poa_from_peers(RecallByte) of
+				not_found ->
+					?LOG_WARNING([{event, solution_rejected},
+							{reason, failed_to_read_chunk_proofs},
+							{which_hash, WhichHash},
+							{recall_byte, RecallByte},
+							{nonce, Nonce},
+							{partition, PartitionNumber},
+							{mining_address, ar_util:safe_encode(MiningAddress)}]),
+					ar:console(io_lib:format("WARNING: we have found an ~s solution but "
+							"failed to find the PoA proofs required for publishing it. "
+							"Check logs for more details~n", [WhichHash])),
+					ar_mining_stats:solution(rejected),
+					not_found;
+				PoA ->
+					PoA#poa{ chunk = Chunk }
+			end
+	end.
 
 read_poa(RecallByte, Chunk, MiningAddress) ->
 	PoAReply = read_poa(RecallByte, MiningAddress),

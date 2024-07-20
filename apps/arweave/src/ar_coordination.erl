@@ -61,7 +61,7 @@ computed_h1(Candidate, DiffPair) ->
 	ShareableCandidate = Candidate#mining_candidate{
 		chunk1 = not_set,
 		chunk2 = not_set,
-		cm_diff = DiffPair,
+		diff_pair = DiffPair,
 		cm_lead_peer = not_set,
 		h1 = not_set,
 		h2 = not_set,
@@ -243,8 +243,20 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	{noreply, State};
 
 handle_cast({computed_h2_for_peer, Candidate}, State) ->
-	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
-	send_h2(Peer, Candidate),
+	#mining_candidate{
+		h0 = H0, nonce = Nonce, partition_number = Partition1, 
+		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer
+	} = Candidate,
+
+	{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, Partition1,
+		Nonce, PartitionUpperBound),
+	PoA = ar_mining_server:load_poa(RecallByte2, Candidate),
+	case PoA of
+		not_found ->
+			ok;
+		_ ->
+			send_h2(Peer, Candidate#mining_candidate{ poa2 = PoA })
+	end,
 	{noreply, State};
 
 handle_cast(refetch_peer_partitions, State) ->

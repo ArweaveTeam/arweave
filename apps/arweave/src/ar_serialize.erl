@@ -1756,7 +1756,7 @@ binary_to_signature_type(List) ->
 
 candidate_to_json_struct(
 	#mining_candidate{
-		cm_diff = DiffPair,
+		diff_pair = DiffPair,
 		cm_h1_list = H1List,
 		h0 = H0,
 		h1 = H1,
@@ -1778,7 +1778,8 @@ candidate_to_json_struct(
 		label = Label
 	}) ->
 	JSON = [
-		{cm_diff, diff_pair_to_json_list(DiffPair)},
+		%% cm_diff is the legacy name, kept for backwards compatibiltiy
+		{cm_diff, diff_pair_to_json_list(DiffPair)}, 
 		{cm_h1_list, h1_list_to_json_struct(H1List)},
 		{mining_address, ar_util:encode(MiningAddress)},
 		{h0, ar_util:encode(H0)},
@@ -1840,7 +1841,7 @@ json_map_to_candidate(JSON) ->
 	Label = maps:get(<<"label">>, JSON, <<"not_set">>),
 
 	#mining_candidate{
-		cm_diff = DiffPair,
+		diff_pair = DiffPair,
 		cm_h1_list = H1List,
 		h0 = H0,
 		h1 = H1,

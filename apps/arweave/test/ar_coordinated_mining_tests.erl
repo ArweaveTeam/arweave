@@ -389,7 +389,7 @@ assert_empty_cache(_Node) ->
 
 dummy_candidate() ->
 	#mining_candidate{
-		cm_diff = {rand:uniform(1024), rand:uniform(1024)},
+		diff_pair = {rand:uniform(1024), rand:uniform(1024)},
 		h0 = crypto:strong_rand_bytes(32),
 		h1 = crypto:strong_rand_bytes(32),
 		mining_address = crypto:strong_rand_bytes(32),
