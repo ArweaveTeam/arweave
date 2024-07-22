@@ -36,7 +36,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, is_client/0, get_current_session_key_seed_pairs/0, get_jobs/1,
-		get_latest_job/0, cache_jobs/1, process_partial_solution/1,
+		get_latest_job/0, cache_jobs/1, process_partial_solution/2,
 		post_partial_solution/1, pool_peer/0, process_cm_jobs/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -87,8 +87,15 @@ cache_jobs(Jobs) ->
 
 %% @doc Validate the given (partial) solution. If the solution is eligible for
 %% producing a block, produce and publish a block.
-process_partial_solution(Solution) ->
-	gen_server:call(?MODULE, {process_partial_solution, Solution}, infinity).
+process_partial_solution(Solution, Ref) ->
+	PoA1 = Solution#mining_solution.poa1,
+	PoA2 = Solution#mining_solution.poa2,
+	case ar_block:validate_proof_size(PoA1) andalso ar_block:validate_proof_size(PoA2) of
+		true ->
+			process_partial_solution_field_size(Solution, Ref);
+		false ->
+			ar_mining_router:reject_solution(Solution, bad_poa, [], Ref)
+	end.
 
 %% @doc Send the partial solution to the pool.
 post_partial_solution(Solution) ->
@@ -141,16 +148,6 @@ handle_call(get_latest_job, _From, State) ->
 					partition_upper_bound = U }, State}
 	end;
 
-handle_call({process_partial_solution, Solution}, From, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	Ref = make_ref(),
-	case process_partial_solution(Solution, Ref) of
-		noreply ->
-			{noreply, State#state{ request_pid_by_ref = maps:put(Ref, From, Map) }};
-		Reply ->
-			{reply, Reply, State}
-	end;
-
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
@@ -201,59 +198,6 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, solution,
-		{rejected, #{ reason := mining_address_banned, source := {pool, Ref} }}}, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	PID = maps:get(Ref, Map),
-	gen_server:reply(PID,
-			#partial_solution_response{ status = <<"rejected_mining_address_banned">> }),
-	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
-
-handle_info({event, solution,
-		{rejected, #{ reason := missing_key_file, source := {pool, Ref} }}}, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	PID = maps:get(Ref, Map),
-	gen_server:reply(PID,
-			#partial_solution_response{ status = <<"rejected_missing_key_file">> }),
-	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
-
-handle_info({event, solution,
-		{rejected, #{ reason := vdf_not_found, source := {pool, Ref} }}}, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	PID = maps:get(Ref, Map),
-	gen_server:reply(PID, #partial_solution_response{ status = <<"rejected_vdf_not_found">> }),
-	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
-
-handle_info({event, solution,
-		{rejected, #{ reason := bad_vdf, source := {pool, Ref} }}}, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	PID = maps:get(Ref, Map),
-	gen_server:reply(PID, #partial_solution_response{ status = <<"rejected_bad_vdf">> }),
-	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
-
-handle_info({event, solution, {partial, #{ source := {pool, Ref} }}}, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	PID = maps:get(Ref, Map),
-	gen_server:reply(PID, #partial_solution_response{ status = <<"accepted">> }),
-	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
-
-handle_info({event, solution, {stale, #{ source := {pool, Ref} }}}, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	PID = maps:get(Ref, Map),
-	gen_server:reply(PID, #partial_solution_response{ status = <<"stale">> }),
-	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
-
-handle_info({event, solution,
-		{accepted, #{ indep_hash := H, source := {pool, Ref} }}}, State) ->
-	#state{ request_pid_by_ref = Map } = State,
-	PID = maps:get(Ref, Map),
-	gen_server:reply(PID,
-			#partial_solution_response{ indep_hash = H, status = <<"accepted_block">> }),
-	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
-
-handle_info({event, solution, _Event}, State) ->
-	{noreply, State};
-
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
@@ -300,16 +244,6 @@ collect_jobs(_Jobs, _PrevO, _N, _PartialDiff) ->
 	%% PartialDiff mismatch.
 	[].
 
-process_partial_solution(Solution, Ref) ->
-	PoA1 = Solution#mining_solution.poa1,
-	PoA2 = Solution#mining_solution.poa2,
-	case ar_block:validate_proof_size(PoA1) andalso ar_block:validate_proof_size(PoA2) of
-		true ->
-			process_partial_solution_field_size(Solution, Ref);
-		false ->
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }
-	end.
-
 process_partial_solution_field_size(Solution, Ref) ->
 	#mining_solution{
 		nonce_limiter_output = Output,
@@ -332,7 +266,7 @@ process_partial_solution_field_size(Solution, Ref) ->
 			%% We are not strict about the first chunk here to simplify tests.
 			process_partial_solution_poa2_size(Solution, Ref);
 		_ ->
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }
+			ar_mining_router:reject_solution(Solution, bad_poa, [], Ref)
 	end.
 
 process_partial_solution_poa2_size(Solution, Ref) ->
@@ -345,7 +279,7 @@ process_partial_solution_poa2_size(Solution, Ref) ->
 				{<<>>, <<>>, <<>>} ->
 					process_partial_solution_partition_number(Solution, Ref);
 				_ ->
-					#partial_solution_response{ status = <<"rejected_bad_poa">> }
+					ar_mining_router:reject_solution(Solution, bad_poa, [], Ref)
 			end;
 		false ->
 			process_partial_solution_partition_number(Solution, Ref)
@@ -359,7 +293,7 @@ process_partial_solution_partition_number(Solution, Ref) ->
 		false ->
 			process_partial_solution_nonce(Solution, Ref);
 		true ->
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }
+			ar_mining_router:reject_solution(Solution, bad_poa, [], Ref)
 	end.
 
 process_partial_solution_nonce(Solution, Ref) ->
@@ -368,7 +302,7 @@ process_partial_solution_nonce(Solution, Ref) ->
 		false ->
 			process_partial_solution_quick_pow(Solution, Ref);
 		true ->
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }
+			ar_mining_router:reject_solution(Solution, bad_poa, [], Ref)
 	end.
 
 process_partial_solution_quick_pow(Solution, Ref) ->
@@ -386,7 +320,7 @@ process_partial_solution_quick_pow(Solution, Ref) ->
 			process_partial_solution_pow(Solution, Ref, H0);
 		_ ->
 			%% Solution hash mismatch (pattern matching against solution_hash = SolutionH).
-			#partial_solution_response{ status = <<"rejected_wrong_hash">> }
+			ar_mining_router:reject_solution(Solution, wrong_hash, [], Ref)
 	end.
 
 process_partial_solution_pow(Solution, Ref, H0) ->
@@ -406,7 +340,7 @@ process_partial_solution_pow(Solution, Ref, H0) ->
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
 			case H2 == SolutionH andalso Preimage2 == Preimage of
 				false ->
-					#partial_solution_response{ status = <<"rejected_wrong_hash">> };
+					ar_mining_router:reject_solution(Solution, wrong_hash, [], Ref);
 				true ->
 					process_partial_solution_partition_upper_bound(Solution, Ref, H0, H1)
 			end
@@ -421,7 +355,7 @@ process_partial_solution_partition_upper_bound(Solution, Ref, H0, H1) ->
 		true ->
 			process_partial_solution_poa(Solution, Ref, H0, H1);
 		_ ->
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }
+			ar_mining_router:reject_solution(Solution, bad_poa, [], Ref)
 	end.
 
 process_partial_solution_poa(Solution, Ref, H0, H1) ->
@@ -446,9 +380,9 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 					{spora_2_6, MiningAddress}, not_set}) of
 		error ->
 			?LOG_ERROR([{event, pool_failed_to_validate_proof_of_access}]),
-			#partial_solution_response{ status = <<"rejected_bad_poa">> };
+			ar_mining_router:reject_solution(Solution, bad_poa, [], Ref);
 		false ->
-			#partial_solution_response{ status = <<"rejected_bad_poa">> };
+			ar_mining_router:reject_solution(Solution, bad_poa, [], Ref);
 		{true, ChunkID} when H1 == SolutionH ->
 			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
 					{spora_2_6, MiningAddress}}, ChunkID},
@@ -464,9 +398,9 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 									PoA2, {spora_2_6, MiningAddress}, not_set}) of
 				error ->
 					?LOG_ERROR([{event, pool_failed_to_validate_proof_of_access}]),
-					#partial_solution_response{ status = <<"rejected_bad_poa">> };
+					ar_mining_router:reject_solution(Solution, bad_poa, [], Ref);
 				false ->
-					#partial_solution_response{ status = <<"rejected_bad_poa">> };
+					ar_mining_router:reject_solution(Solution, bad_poa, [], Ref);
 				{true, Chunk2ID} ->
 					PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2, BlockSize2,
 							{spora_2_6, MiningAddress}}, Chunk2ID},
@@ -481,7 +415,7 @@ process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache) ->
 	IsPoA1 = (RecallByte2 == undefined),
 	case ar_node_utils:passes_diff_check(SolutionH, IsPoA1, ar_node:get_current_diff()) of
 		false ->
-			#partial_solution_response{ status = <<"accepted">> };
+			ar_mining_router:accept_solution(Solution, Ref);
 		true ->
 			process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache)
 	end.
@@ -502,11 +436,11 @@ process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache) ->
 	MayBeUpperBound = ar_nonce_limiter:get_active_partition_upper_bound(StepNumber, SessionKey),
 	case {MayBeLastStepCheckpoints, MayBeSeed, MayBeUpperBound} of
 		{not_found, _, _} ->
-			#partial_solution_response{ status = <<"rejected_vdf_not_found">> };
+			ar_mining_router:reject_solution(Solution, vdf_not_found, [], Ref);
 		{_, not_found, _} ->
-			#partial_solution_response{ status = <<"rejected_vdf_not_found">> };
+			ar_mining_router:reject_solution(Solution, vdf_not_found, [], Ref);
 		{_, _, not_found} ->
-			#partial_solution_response{ status = <<"rejected_vdf_not_found">> };
+			ar_mining_router:reject_solution(Solution, vdf_not_found, [], Ref);
 		{[Output | _] = LastStepCheckpoints, Seed, PartitionUpperBound} ->
 			Solution2 =
 				Solution#mining_solution{
@@ -520,7 +454,7 @@ process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache) ->
 		_ ->
 			%% {Output, Seed, PartitionUpperBound} mismatch (pattern matching against
 			%% the solution fields deconstructed above).
-			#partial_solution_response{ status = <<"rejected_bad_vdf">> }
+			ar_mining_router:reject_solution(Solution, bad_vdf, [], Ref)
 	end.
 
 process_h1_to_h2_jobs([], _Peer, _Partitions) ->
@@ -539,6 +473,7 @@ process_h1_read_jobs([], _Partitions) ->
 process_h1_read_jobs([Candidate | Jobs], Partitions) ->
 	case we_have_partition_for_the_first_recall_byte(Candidate, Partitions) of
 		true ->
+			%% Solution received
 			ar_mining_router:prepare_solution(Candidate),
 			ar_mining_stats:h2_received_from_peer(pool);
 		false ->
@@ -662,66 +597,66 @@ test_process_partial_solution() ->
 	TestCases = [
 		{"Bad proof size 1",
 			#mining_solution{ poa1 = #poa{ tx_path = << 0:(2177 * 8) >> } },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad proof size 2",
 			#mining_solution{ poa2 = #poa{ tx_path = << 0:(2177 * 8) >> } },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad proof size 3",
 			#mining_solution{ poa1 = #poa{ data_path = << 0:(349505 * 8) >> } },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad proof size 4",
 			#mining_solution{ poa2 = #poa{ data_path = << 0:(349505 * 8) >> } },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 1",
 			#mining_solution{ next_seed = <<>> },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 2",
 			#mining_solution{ seed = <<>> },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 3",
 			#mining_solution{ preimage = <<>> },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 4",
 			#mining_solution{ mining_address = <<>> },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 5",
 			#mining_solution{ nonce_limiter_output = <<>> },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 6",
 			#mining_solution{ solution_hash = <<>> },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 7",
 			#mining_solution{ poa1 = #poa{ chunk = << 0:((?DATA_CHUNK_SIZE + 1) * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 8",
 			#mining_solution{ poa2 = #poa{ chunk = << 0:((?DATA_CHUNK_SIZE + 1) * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 
 		{"Bad partition number",
 			#mining_solution{ partition_number = 1 },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad nonce",
 			#mining_solution{ nonce = 2 }, % We have 2 nonces per recall range in debug mode.
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad quick pow",
 			#mining_solution{},
-			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
+			#solution_response{ status = <<"rejected_wrong_hash">> }},
 		{"Bad pow",
 			#mining_solution{ nonce = 1, solution_hash = SolutionHQuick },
-			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
+			#solution_response{ status = <<"rejected_wrong_hash">> }},
 		{"Bad partition upper bound",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH, preimage = Preimage1 },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad poa 1",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH, preimage = Preimage1,
 					partition_upper_bound = 1 },
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad poa 2",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad poa 3",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
@@ -730,7 +665,7 @@ test_process_partial_solution() ->
 						data_path = << 0:(349504 * 8) >> },
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 
 		{"Two-chunk bad poa 1",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
@@ -740,7 +675,7 @@ test_process_partial_solution() ->
 						data_path = << 0:(349504 * 8) >> },
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
+			#solution_response{ status = <<"rejected_wrong_hash">> }},
 		{"Two-chunk bad poa 2",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage2, partition_upper_bound = 1,
@@ -749,7 +684,7 @@ test_process_partial_solution() ->
 						data_path = << 0:(349504 * 8) >> },
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
+			#solution_response{ status = <<"rejected_wrong_hash">> }},
 		{"Two-chunk bad poa 3",
 			#mining_solution{ nonce = 1, solution_hash = H2,
 					preimage = Preimage2, partition_upper_bound = 1,
@@ -758,7 +693,7 @@ test_process_partial_solution() ->
 						data_path = << 0:(349504 * 8) >> },
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+			#solution_response{ status = <<"rejected_bad_poa">> }},
 
 		{"Accepted",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
@@ -766,7 +701,7 @@ test_process_partial_solution() ->
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"accepted">> }},
+			#solution_response{ status = <<"accepted">> }},
 		{"Accepted 2",
 			#mining_solution{ nonce = 1, solution_hash = H2,
 					preimage = Preimage2, partition_upper_bound = 1,
@@ -775,7 +710,7 @@ test_process_partial_solution() ->
 						data_path = << 0:(349504 * 8) >> },
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"accepted">> }}
+			#solution_response{ status = <<"accepted">> }}
 	],
 	lists:foreach(
 		fun({Title, Solution, ExpectedReply}) ->
@@ -863,42 +798,42 @@ test_process_solution() ->
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
+			#solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"VDF not found 2",
 			#mining_solution{ next_seed = << 11:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
+			#solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"VDF not found 3",
 			#mining_solution{ next_seed = << 12:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
+			#solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"Bad VDF 1",
 			#mining_solution{ next_seed = << 1:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
+			#solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Bad VDF 2",
 			#mining_solution{ next_seed = << 2:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
+			#solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Bad VDF 3",
 			#mining_solution{ next_seed = << 3:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
 					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
+			#solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Accepted",
 			#mining_solution{ next_seed = << 4:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,

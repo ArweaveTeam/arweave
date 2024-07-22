@@ -2558,8 +2558,9 @@ handle_post_partial_solution_pool_server(Req, Pid) ->
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
 				Solution ->
-					Response = ar_pool:process_partial_solution(Solution),
-					JSON = ar_serialize:partial_solution_response_to_json_struct(Response),
+					ar_mining_router:received_solution(Solution, []),
+					Response = ar_mining_router:route_solution(Solution),
+					JSON = ar_serialize:solution_response_to_json_struct(Response),
 					{200, #{}, ar_serialize:jsonify(JSON), Req2}
 			end;
 		{error, body_size_too_large} ->
@@ -2571,8 +2572,15 @@ handle_post_partial_solution_pool_server(Req, Pid) ->
 handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			ar_pool:post_partial_solution(Body),
-			{200, #{}, jiffy:encode(#{}), Req2};
+			case catch ar_serialize:json_map_to_solution(
+				jiffy:decode(Body, [return_maps])) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+				Solution ->
+					ar_mining_router:received_solution(Solution, []),
+					ar_pool:post_partial_solution(Solution),
+					{200, #{}, jiffy:encode(#{}), Req2}
+			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
 		{error, timeout} ->
@@ -3261,6 +3269,7 @@ handle_mining_h2(Req, Pid) ->
 									{200, #{}, <<>>, Req2};
 								_ ->
 									ar_mining_stats:h2_received_from_peer(Peer),
+									ar_mining_router:received_solution(Candidate, h2),
 									ar_mining_router:prepare_solution(Candidate),
 									{200, #{}, <<>>, Req}
 							end
@@ -3276,24 +3285,19 @@ handle_mining_cm_publish(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [return_maps]) of
-				{ok, JSON} ->
-					case catch ar_serialize:json_map_to_solution(JSON) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-						Solution ->
-							ar:console("Block candidate ~p from ~p ~n", [
-								ar_util:encode(Solution#mining_solution.solution_hash),
-								ar_util:format_peer(Peer)]),
-							?LOG_INFO("Block candidate ~p from ~p ~n", [
-								ar_util:encode(Solution#mining_solution.solution_hash),
-								ar_util:format_peer(Peer)]),
-							ar_mining_router:route_solution(Solution),
-							{200, #{}, <<>>, Req}
-					end;
-				{error, _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			case catch ar_serialize:json_map_to_solution(
+					jiffy:decode(Body, [return_maps])) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+				Solution ->
+					ar_mining_router:received_solution(Solution,
+						[{peer, ar_util:format_peer(Peer)}]),
+					Response = ar_mining_router:route_solution(Solution),
+					JSON = ar_serialize:solution_response_to_json_struct(Response),
+					{200, #{}, ar_serialize:jsonify(JSON), Req2}
 			end;
 		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{500, #{}, <<"Handler timeout">>, Req}
 	end.

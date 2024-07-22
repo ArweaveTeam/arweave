@@ -228,38 +228,11 @@ handle_cast({prepare_solution, Candidate, SkipVDF}, State) ->
 
 handle_cast({validate_solution, Solution}, State) ->
 	#state{ diff_pair = DiffPair } = State,
-	#mining_solution{
-		mining_address = MiningAddress,
-		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
-		recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-		solution_hash = H, step_number = StepNumber } = Solution,
 	case validate_solution(Solution, DiffPair) of
 		error ->
-			?LOG_WARNING([{event, solution_rejected},
-					{reason, failed_to_validate_solution},
-					{partition, PartitionNumber},
-					{step_number, StepNumber},
-					{mining_address, ar_util:safe_encode(MiningAddress)},
-					{recall_byte1, RecallByte1},
-					{recall_byte2, RecallByte2},
-					{solution_h, ar_util:safe_encode(H)},
-					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
-			ar:console("WARNING: we failed to validate our solution. Check logs for more "
-					"details~n"),
-			ar_mining_stats:solution(rejected);
+			ar_mining_router:reject_solution(Solution, failed_to_validate_solution, []);
 		{false, Reason} ->
-			?LOG_WARNING([{event, solution_rejected},
-					{reason, Reason},
-					{partition, PartitionNumber},
-					{step_number, StepNumber},
-					{mining_address, ar_util:safe_encode(MiningAddress)},
-					{recall_byte1, RecallByte1},
-					{recall_byte2, RecallByte2},
-					{solution_h, ar_util:safe_encode(H)},
-					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
-			ar:console("WARNING: the solution we found is invalid. Check logs for more "
-					"details~n"),
-			ar_mining_stats:solution(rejected);
+			ar_mining_router:reject_solution(Solution, Reason, []);
 		{true, PoACache, PoA2Cache} ->
 			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
 	end,
@@ -543,29 +516,18 @@ prepare_solution_steps(Candidate, Solution) ->
 					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty),
 			case Steps of
 				not_found ->
-					?LOG_WARNING([{event, solution_rejected},
-							{reason, failed_to_find_checkpoints},
-							{start_step_number, PrevStepNumber},
-							{next_step_number, StepNumber},
-							{next_seed, ar_util:safe_encode(PrevNextSeed)},
-							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
-					ar:console("WARNING: found a solution but failed to find checkpoints, "
-							"start step number: ~B, end step number: ~B, next_seed: ~s.",
-							[PrevStepNumber, StepNumber, PrevNextSeed]),
-					ar_mining_stats:solution(rejected),
+					ar_mining_router:reject_solution(Solution, failed_to_find_checkpoints,
+						[{prev_next_seed, ar_util:safe_encode(PrevNextSeed)},
+						 {prev_step_number, PrevStepNumber}]),
 					error;
 				_ ->
 					prepare_solution_proofs(Candidate,
 							Solution#mining_solution{ steps = Steps })
 			end;
 		false ->
-			?LOG_WARNING([{event, solution_rejected},
-					{reason, stale_step_number},
-					{start_step_number, PrevStepNumber},
-					{next_step_number, StepNumber},
-					{next_seed, ar_util:safe_encode(PrevNextSeed)},
-					{next_vdf_difficulty, PrevNextVDFDifficulty}]),
-			ar_mining_stats:solution(rejected),
+			ar_mining_router:reject_solution(Solution, stale_step_number,
+						[{prev_next_seed, ar_util:safe_encode(PrevNextSeed)},
+						 {prev_step_number, PrevStepNumber}]),
 			error
 	end.
 
@@ -578,9 +540,7 @@ prepare_solution_proofs(Candidate, Solution) ->
 			PartitionUpperBound),
 	case { H1, H2 } of
 		{not_set, not_set} ->
-			?LOG_WARNING([{event, solution_rejected},
-					{reason, h1_h2_not_set}]),
-			ar_mining_stats:solution(rejected),
+			ar_mining_router:reject_solution(Solution, h1_h2_not_set, []),
 			error;
 		{H1, not_set} ->
 			prepare_solution_poa1(Candidate, Solution#mining_solution{
@@ -596,14 +556,18 @@ prepare_solution_poa1(Candidate,
 		#mining_solution{ poa1 = #poa{ chunk = <<>> } } = Solution) ->
 	#mining_solution{ recall_byte1 = RecallByte1 } = Solution,
 	case load_poa(RecallByte1, Candidate) of
-		not_found -> error;
+		not_found ->
+			ar_mining_router:reject_solution(Solution, failed_to_read_chunk_proofs, []),
+			error;
 		PoA -> Solution#mining_solution{ poa1 = PoA }
 	end.
 prepare_solution_poa2(Candidate,
 		#mining_solution{ poa2 = #poa{ chunk = <<>> } } = Solution) ->
 	#mining_solution{ recall_byte2 = RecallByte2 } = Solution,
 	case load_poa(RecallByte2, Candidate) of
-		not_found -> error;
+		not_found ->
+			ar_mining_router:reject_solution(Solution, failed_to_read_chunk_proofs, []),
+			error;
 		PoA -> Solution#mining_solution{ poa2 = PoA }
 	end;
 prepare_solution_poa2(Candidate,
@@ -697,14 +661,10 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 
 load_poa(RecallByte, Candidate) ->
 	#mining_candidate{ chunk1 = Chunk1, chunk2 = Chunk2, 
-			h1 = H1, h2 = H2, nonce = Nonce,
-			mining_address = MiningAddress,
-			partition_number = PartitionNumber } = Candidate,
-	{Chunk, WhichHash} = case {H1, H2} of
-		{H1, not_set} ->
-			{Chunk1, "H1"};
-		{_, H2} ->
-			{Chunk2, "H2"}
+			h1 = H1, h2 = H2, mining_address = MiningAddress } = Candidate,
+	Chunk = case {H1, H2} of
+		{H1, not_set} -> Chunk1;
+		{_, H2} -> Chunk2
 	end,
 
 	case read_poa(RecallByte, Chunk, MiningAddress) of
@@ -717,21 +677,10 @@ load_poa(RecallByte, Candidate) ->
 					{tags, [solution_proofs]},
 					{recall_byte, RecallByte},
 					{modules_covering_recall_byte, ModuleIDs}]),
-			ar:console(io_lib:format("WARNING: we have found an ~s solution but did not "
-					"find the PoA proofs locally - searching the peers...~n", [WhichHash])),
+			ar:console("WARNING: we have found a solution but did not "
+					"find the PoA proofs locally - searching the peers...~n"),
 			case fetch_poa_from_peers(RecallByte) of
 				not_found ->
-					?LOG_WARNING([{event, solution_rejected},
-							{reason, failed_to_read_chunk_proofs},
-							{which_hash, WhichHash},
-							{recall_byte, RecallByte},
-							{nonce, Nonce},
-							{partition, PartitionNumber},
-							{mining_address, ar_util:safe_encode(MiningAddress)}]),
-					ar:console(io_lib:format("WARNING: we have found an ~s solution but "
-							"failed to find the PoA proofs required for publishing it. "
-							"Check logs for more details~n", [WhichHash])),
-					ar_mining_stats:solution(rejected),
 					not_found;
 				PoA ->
 					PoA#poa{ chunk = Chunk }

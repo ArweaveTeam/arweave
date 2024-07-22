@@ -34,12 +34,6 @@
 	partition_upper_bound = 0
 }).
 
-%% @doc Partial solution validation response.
--record(partial_solution_response, {
-	indep_hash = <<>>,
-	status = <<>>
-}).
-
 %% @doc A set of coordinated mining jobs provided by the pool.
 %%
 %% Miners fetch and submit pool CM jobs via the same POST /pool_cm_jobs endpoint.

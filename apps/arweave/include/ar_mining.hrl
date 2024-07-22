@@ -54,4 +54,10 @@
 	steps = []
 }).
 
+%% @doc Solution validation response.
+-record(solution_response, {
+	indep_hash = <<>>,
+	status = <<>>
+}).
+
 -endif.

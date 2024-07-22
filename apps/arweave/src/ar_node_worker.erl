@@ -18,8 +18,6 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -1796,14 +1794,13 @@ handle_found_solution(Args, PrevB, State) ->
 	PassesTimelineCheck =
 		case IsBanned of
 			true ->
-				ar_events:send(solution, {rejected, #{ reason => mining_address_banned,
-						source => Source }}),
+				ar_mining_router:reject_solution(Solution, address_banned, [], Source),
 				{false, address_banned};
 			false ->
 				case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
 						PrevNonceLimiterInfo) of
 					false ->
-						ar_events:send(solution, {stale, #{ source => Source }}),
+						ar_mining_router:reject_solution(Solution, stale, [], Source),
 						{false, timeline};
 					true ->
 						true
@@ -1823,7 +1820,7 @@ handle_found_solution(Args, PrevB, State) ->
 				case {IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
 						== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty} of
 					false ->
-						ar_events:send(solution, {stale, #{ source => Source }}),
+						ar_mining_router:reject_solution(Solution, stale, [], Source),
 						{false, seed_data};
 					true ->
 						true
@@ -1843,7 +1840,7 @@ handle_found_solution(Args, PrevB, State) ->
 			true ->
 				case ar_node_utils:solution_passes_diff_check(Solution, DiffPair) of
 					false ->
-						ar_events:send(solution, {partial, #{ source => Source }}),
+						ar_mining_router:accept_solution(Solution, Source),
 						{false, diff};
 					true ->
 						true
@@ -1866,8 +1863,8 @@ handle_found_solution(Args, PrevB, State) ->
 			true ->
 				case RewardKey of
 					not_found ->
-						ar_events:send(solution,
-							{rejected, #{ reason => missing_key_file, source => Source }}),
+						ar_mining_router:reject_solution(
+							Solution, missing_key_file, [], Source),
 						{false, wallet_not_found};
 					_ ->
 						true
@@ -1890,9 +1887,7 @@ handle_found_solution(Args, PrevB, State) ->
 	HaveSteps =
 		case CorrectRebaseThreshold of
 			{false, Reason5} ->
-				?LOG_WARNING([{event, solution_rejected},
-					{reason, Reason5}, {solution, ar_util:encode(SolutionH)}]),
-				ar_mining_stats:solution(rejected),
+				ar_mining_router:reject_solution(Solution, Reason5, []),
 				false;
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed,
@@ -1912,13 +1907,10 @@ handle_found_solution(Args, PrevB, State) ->
 		false ->
 			{noreply, State};
 		not_found ->
-			ar_events:send(solution,
-					{rejected, #{ reason => vdf_not_found, source => Source }}),
-			?LOG_WARNING([{event, solution_rejected},
-					{reason, did_not_find_steps},
-					{seed, ar_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
-					{step_number, StepNumber}]),
-			ar_mining_stats:solution(rejected),
+			ar_mining_router:reject_solution(Solution, vdf_not_found, [
+				{prev_next_seed, ar_util:encode(PrevNextSeed)},
+				{prev_step_number, PrevStepNumber}
+			], Source),
 			{noreply, State};
 		[NonceLimiterOutput | _] = Steps ->
 			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
@@ -2028,21 +2020,15 @@ handle_found_solution(Args, PrevB, State) ->
 							undefined -> 1;
 							_ -> 2
 						end}]),
-			ar_mining_stats:solution(accepted),
 			ar_block_cache:add(block_cache, B),
-			ar_events:send(solution, {accepted, #{ indep_hash => H, source => Source }}),
+			ar_mining_router:accept_block_solution(Solution, H, Source),
 			apply_block(update_solution_cache(H, Args, State));
 		_Steps ->
-			ar_events:send(solution,
-					{rejected, #{ reason => bad_vdf, source => Source }}),
-			?LOG_ERROR([{event, solution_rejected},
-					{reason, bad_steps},
+			ar_mining_router:reject_solution(Solution, bad_vdf, [
 					{prev_block, ar_util:encode(PrevH)},
-					{step_number, StepNumber},
-					{prev_step_number, PrevStepNumber},
 					{prev_next_seed, ar_util:encode(PrevNextSeed)},
-					{output, ar_util:encode(NonceLimiterOutput)}]),
-			ar_mining_stats:solution(rejected),
+					{prev_step_number, PrevStepNumber}
+				], Source),
 			{noreply, State}
 	end.
 

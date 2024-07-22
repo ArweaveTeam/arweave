@@ -55,8 +55,6 @@ init([]) ->
 		?CHILD(ar_events, chunk_storage, worker),
 		%% Events: add_range, remove_range, global_remove_range, cut, global_cut.
 		?CHILD(ar_events, sync_record, worker),
-		%% Events: rejected, stale, partial, accepted.
-		?CHILD(ar_events, solution, worker),
 		%% Used for the testing purposes.
 		?CHILD(ar_events, testing, worker)
 	]}}.

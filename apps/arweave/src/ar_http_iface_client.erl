@@ -619,7 +619,7 @@ post_partial_solution(Peer, Solution) ->
 				ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution))
 		end,
 	Req = build_cm_or_pool_request(post, Peer, "/partial_solution", Payload),
-	handle_post_partial_solution_response(ar_http:req(Req#{
+	handle_post_solution_response(ar_http:req(Req#{
 		timeout => 20 * 1000,
 		connect_timeout => 5 * 1000
 	})).
@@ -704,14 +704,14 @@ handle_post_pool_cm_jobs_response({ok, {{<<"200">>, _}, _, _, _, _}}) ->
 handle_post_pool_cm_jobs_response(Reply) ->
 	{error, Reply}.
 
-handle_post_partial_solution_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+handle_post_solution_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	case catch jiffy:decode(Body, [return_maps]) of
 		{'EXIT', _} ->
 			{error, invalid_json};
 		Response ->
 			{ok, Response}
 	end;
-handle_post_partial_solution_response(Reply) ->
+handle_post_solution_response(Reply) ->
 	{error, Reply}.
 
 handle_get_jobs_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->

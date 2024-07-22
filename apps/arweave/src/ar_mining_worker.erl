@@ -358,9 +358,8 @@ handle_task({computed_h1, Candidate}, State) ->
 	case DiffCheck of
 		false -> ok;
 		_ ->
-			?LOG_INFO([{event, solution_found}, {worker, State#state.name},
-				{h1, ar_util:encode(H1)}, {difficulty, DiffPair}]),
-			ar_mining_stats:solution(found),
+			ar_mining_router:found_solution(Candidate, h1,
+				[{worker, State#state.name}, {difficulty, DiffPair}]),
 			ar_mining_router:prepare_solution(Candidate)
 	end,
 
@@ -393,9 +392,8 @@ handle_task({computed_h2, Candidate}, State) ->
 	case DiffCheck of
 		false -> ok;
 		_ ->
-			?LOG_INFO([{event, solution_found}, {worker, State#state.name},
-				{h2, ar_util:encode(H2)}, {difficulty, DiffPair}]),
-			ar_mining_stats:solution(found),
+			ar_mining_router:found_solution(Candidate, h2,
+				[{worker, State#state.name}, {difficulty, DiffPair}]),
 			ar_mining_router:route_h2(Candidate)
 	end,
 	{noreply, State};

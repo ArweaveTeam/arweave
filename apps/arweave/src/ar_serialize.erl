@@ -29,7 +29,7 @@
 		candidate_to_json_struct/1, solution_to_json_struct/1, json_map_to_solution/1,
 		json_map_to_candidate/1,
 		jobs_to_json_struct/1, json_struct_to_jobs/1,
-		partial_solution_response_to_json_struct/1,
+		solution_response_to_json_struct/1,
 		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -2032,8 +2032,8 @@ json_struct_to_job(Struct) ->
 	#job{ output = Output, global_step_number = StepNumber,
 			partition_upper_bound = PartitionUpperBound }.
 
-partial_solution_response_to_json_struct(Response) ->
-	#partial_solution_response{ indep_hash = H, status = S } = Response,
+solution_response_to_json_struct(Response) ->
+	#solution_response{ indep_hash = H, status = S } = Response,
 	{[{<<"indep_hash">>, ar_util:encode(H)}, {<<"status">>, S}]}.
 
 pool_cm_jobs_to_json_struct(Jobs) ->

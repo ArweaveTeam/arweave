@@ -389,16 +389,16 @@ partial_solution_to_json_struct_test() ->
 		TestCases
 	).
 
-partial_solution_response_to_json_struct_test() ->
+solution_response_to_json_struct_test() ->
 	TestCases = [
-		{#partial_solution_response{}, <<>>, <<>>},
-		{#partial_solution_response{ indep_hash = <<"H">>, status = <<"S">>},
+		{#solution_response{}, <<>>, <<>>},
+		{#solution_response{ indep_hash = <<"H">>, status = <<"S">>},
 				<<"H">>, <<"S">>}
 	],
 	lists:foreach(
 		fun({Case, ExpectedH, ExpectedStatus}) ->
 			{Struct} = ar_serialize:dejsonify(ar_serialize:jsonify(
-					ar_serialize:partial_solution_response_to_json_struct(Case))),
+					ar_serialize:solution_response_to_json_struct(Case))),
 			?assertEqual(ExpectedH,
 					ar_util:decode(proplists:get_value(<<"indep_hash">>, Struct))),
 			?assertEqual(ExpectedStatus, proplists:get_value(<<"status">>, Struct))
