@@ -35,9 +35,9 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, is_client/0, get_current_session_key_seed_pairs/0, get_jobs/1,
-		get_latest_job/0, cache_jobs/1, process_partial_solution/2,
-		post_partial_solution/1, pool_peer/0, process_cm_jobs/2]).
+-export([start_link/0, is_client/0, get_current_session_key_seed_pairs/0, 
+		generate_jobs/1, get_latest_job/0, cache_jobs/1, get_cached_jobs/1,
+		process_partial_solution/2, post_partial_solution/1, pool_peer/0, process_cm_jobs/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -51,8 +51,7 @@
 	%% The most recent keys come first.
 	session_keys = [],
 	%% Key => [{Output, StepNumber, PartitionUpperBound, Seed, Diff}, ...]
-	jobs_by_session_key = maps:new(),
-	request_pid_by_ref = maps:new()
+	jobs_by_session_key = maps:new()
 }).
 
 %%%===================================================================
@@ -72,9 +71,41 @@ is_client() ->
 get_current_session_key_seed_pairs() ->
 	gen_server:call(?MODULE, get_current_session_key_seed_pairs, infinity).
 
+generate_jobs(PrevOutput) ->
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', diff_pair},
+					{'==', '$1', nonce_limiter_info}}], ['$_']}]
+		),
+	DiffPair = proplists:get_value(diff_pair, Props),
+	Info = proplists:get_value(nonce_limiter_info, Props),
+	Result = ar_util:do_until(
+		fun() ->
+			S = ar_nonce_limiter:get_step_triplets(Info, PrevOutput, ?GET_JOBS_COUNT),
+			case S of
+				[] ->
+					false;
+				_ ->
+					{ok, S}
+			end
+		end,
+		200,
+		(?GET_JOBS_TIMEOUT_S) * 1000
+	),
+	Steps = case Result of {ok, S} -> S; _ -> [] end,
+	{NextSeed, IntervalNumber, NextVDFDiff} = ar_nonce_limiter:session_key(Info),
+	JobList = [#job{ output = O, global_step_number = SN,
+			partition_upper_bound = U } || {O, SN, U} <- Steps],
+	#jobs{ jobs = JobList, seed = Info#nonce_limiter_info.seed,
+			next_seed = NextSeed, interval_number = IntervalNumber,
+			next_vdf_difficulty = NextVDFDiff, partial_diff = DiffPair }.
+
 %% @doc Return a set of the most recent cached jobs.
-get_jobs(PrevOutput) ->
-	gen_server:call(?MODULE, {get_jobs, PrevOutput}, infinity).
+get_cached_jobs(PrevOutput) ->
+	gen_server:call(?MODULE, {get_cached_jobs, PrevOutput}, infinity).
 
 %% @doc Return the most recent cached #job{}. Return an empty record if the
 %% cache is empty.
@@ -133,10 +164,10 @@ handle_call(get_current_session_key_seed_pairs, _From, State) ->
 	KeySeedPairs = [{Key, element(4, hd(maps:get(Key, JobsBySessionKey)))} || Key <- Keys],
 	{reply, KeySeedPairs, State};
 
-handle_call({get_jobs, PrevOutput}, _From, State) ->
+handle_call({get_cached_jobs, PrevOutput}, _From, State) ->
 	SessionKeys = State#state.session_keys,
 	JobCache = State#state.jobs_by_session_key,
-	{reply, get_jobs(PrevOutput, SessionKeys, JobCache), State};
+	{reply, get_cached_jobs(PrevOutput, SessionKeys, JobCache), State};
 
 handle_call(get_latest_job, _From, State) ->
 	case State#state.session_keys of
@@ -209,13 +240,13 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-get_jobs(PrevOutput, SessionKeys, JobCache) ->
+get_cached_jobs(PrevOutput, SessionKeys, JobCache) ->
 	case SessionKeys of
 		[] ->
 			#jobs{};
 		[{NextSeed, Interval, NextVDFDifficulty} = SessionKey | _] ->
 			Jobs = maps:get(SessionKey, JobCache),
-			{Seed, PartialDiff, Jobs2} = collect_jobs(Jobs, PrevOutput, ?GET_JOBS_COUNT),
+			{Seed, PartialDiff, Jobs2} = collect_cached_jobs(Jobs, PrevOutput, ?GET_JOBS_COUNT),
 			Jobs3 = [#job{ output = O, global_step_number = SN,
 					partition_upper_bound = U } || {O, SN, U} <- Jobs2],
 			#jobs{ jobs = Jobs3, seed = Seed, partial_diff = PartialDiff,
@@ -223,24 +254,24 @@ get_jobs(PrevOutput, SessionKeys, JobCache) ->
 					interval_number = Interval, next_vdf_difficulty = NextVDFDifficulty }
 	end.
 
-collect_jobs([], _PrevO, _N) ->
+collect_cached_jobs([], _PrevO, _N) ->
 	{<<>>, {0, 0}, []};
-collect_jobs(_Jobs, _PrevO, 0) ->
+collect_cached_jobs(_Jobs, _PrevO, 0) ->
 	{<<>>, {0, 0}, []};
-collect_jobs([{O, _SN, _U, _S, _PartialDiff} | _Jobs], O, _N) ->
+collect_cached_jobs([{O, _SN, _U, _S, _PartialDiff} | _Jobs], O, _N) ->
 	{<<>>, {0, 0}, []};
-collect_jobs([{O, SN, U, S, PartialDiff} | Jobs], PrevO, N) ->
-	{S, PartialDiff, [{O, SN, U} | collect_jobs(Jobs, PrevO, N - 1, PartialDiff)]}.
+collect_cached_jobs([{O, SN, U, S, PartialDiff} | Jobs], PrevO, N) ->
+	{S, PartialDiff, [{O, SN, U} | collect_cached_jobs(Jobs, PrevO, N - 1, PartialDiff)]}.
 
-collect_jobs([], _PrevO, _N, _PartialDiff) ->
+collect_cached_jobs([], _PrevO, _N, _PartialDiff) ->
 	[];
-collect_jobs(_Jobs, _PrevO, 0, _PartialDiff) ->
+collect_cached_jobs(_Jobs, _PrevO, 0, _PartialDiff) ->
 	[];
-collect_jobs([{O, _SN, _U, _S, _PartialDiff} | _Jobs], O, _N, _PartialDiff2) ->
+collect_cached_jobs([{O, _SN, _U, _S, _PartialDiff} | _Jobs], O, _N, _PartialDiff2) ->
 	[];
-collect_jobs([{O, SN, U, _S, PartialDiff} | Jobs], PrevO, N, PartialDiff) ->
-	[{O, SN, U} | collect_jobs(Jobs, PrevO, N - 1, PartialDiff)];
-collect_jobs(_Jobs, _PrevO, _N, _PartialDiff) ->
+collect_cached_jobs([{O, SN, U, _S, PartialDiff} | Jobs], PrevO, N, PartialDiff) ->
+	[{O, SN, U} | collect_cached_jobs(Jobs, PrevO, N - 1, PartialDiff)];
+collect_cached_jobs(_Jobs, _PrevO, _N, _PartialDiff) ->
 	%% PartialDiff mismatch.
 	[].
 
@@ -506,10 +537,10 @@ we_have_partition_for_the_second_recall_byte(Candidate, [_Partition | Partitions
 %%%===================================================================
 
 get_jobs_test() ->
-	?assertEqual(#jobs{}, get_jobs(<<>>, [], maps:new())),
+	?assertEqual(#jobs{}, get_cached_jobs(<<>>, [], maps:new())),
 
 	?assertEqual(#jobs{ next_seed = ns, interval_number = in, next_vdf_difficulty = nvd },
-			get_jobs(o, [{ns, in, nvd}],
+			get_cached_jobs(o, [{ns, in, nvd}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
 
 	?assertEqual(#jobs{ jobs = [#job{ output = o, global_step_number = gsn,
@@ -519,7 +550,7 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(a, [{ns, in, nvd}],
+			get_cached_jobs(a, [{ns, in, nvd}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}] })),
 
 	%% d2 /= d (the difficulties are different) => only take the latest job.
@@ -530,7 +561,7 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(a, [{ns, in, nvd}, {ns2, in2, nvd2}],
+			get_cached_jobs(a, [{ns, in, nvd}, {ns2, in2, nvd2}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}, {o2, gsn2, u2, s, d2}],
 							%% Same difficulty, but a different VDF session => not picked.
 							{ns2, in2, nvd2} => [{o3, gsn3, u3, s3, d}] })),
@@ -544,7 +575,7 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(a, [{ns, in, nvd}, {ns2, in2, nvd2}],
+			get_cached_jobs(a, [{ns, in, nvd}, {ns2, in2, nvd2}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}, {o2, gsn2, u2, s, d}],
 							{ns2, in2, nvd2} => [{o2, gsn2, u2, s2, d2}] })),
 
@@ -556,7 +587,7 @@ get_jobs_test() ->
 						next_seed = ns,
 						interval_number = in,
 						next_vdf_difficulty = nvd },
-			get_jobs(o2, [{ns, in, nvd}, {ns2, in2, nvd2}],
+			get_cached_jobs(o2, [{ns, in, nvd}, {ns2, in2, nvd2}],
 						#{ {ns, in, nvd} => [{o, gsn, u, s, d}, {o2, gsn2, u2, s, d}],
 							{ns2, in2, nvd2} => [{o2, gsn2, u2, s2, d2}] })).
 

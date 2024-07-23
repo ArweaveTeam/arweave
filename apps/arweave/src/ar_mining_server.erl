@@ -518,6 +518,7 @@ prepare_solution_steps(Candidate, Solution) ->
 				not_found ->
 					ar_mining_router:reject_solution(Solution, failed_to_find_checkpoints,
 						[{prev_next_seed, ar_util:safe_encode(PrevNextSeed)},
+						 {prev_next_vdf_difficulty, PrevNextVDFDifficulty},
 						 {prev_step_number, PrevStepNumber}]),
 					error;
 				_ ->
@@ -527,6 +528,7 @@ prepare_solution_steps(Candidate, Solution) ->
 		false ->
 			ar_mining_router:reject_solution(Solution, stale_step_number,
 						[{prev_next_seed, ar_util:safe_encode(PrevNextSeed)},
+						 {prev_next_vdf_difficulty, PrevNextVDFDifficulty},
 						 {prev_step_number, PrevStepNumber}]),
 			error
 	end.

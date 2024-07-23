@@ -1378,109 +1378,85 @@ handle(<<"GET">>, [<<"vdf4">>, <<"previous_session">>], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) ->
-	case check_cm_api_secret(Req) of
-		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					Partitions =
-						case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
-							{true, true} ->
-								%% When we work with a pool, the exit node shares
-								%% the information about external partitions with
-								%% every internal miner.
-								ar_coordination:get_self_plus_external_partitions_list();
-							_ ->
-								%% CM miners ask each other about their local
-								%% partitions. A CM exit node is not an exception - it
-								%% does NOT aggregate peer partitions in this case.
-								ar_coordination:get_unique_partitions_list()
-						end,
-					JSON = ar_serialize:jsonify(Partitions),
-					{200, #{}, JSON, Req}
-			end;
-		{reject, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+	case validate_cm_request(Req) of
+		true ->
+			Partitions =
+				case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+					{true, true} ->
+						%% When we work with a pool, the exit node shares
+						%% the information about external partitions with
+						%% every internal miner.
+						ar_coordination:get_self_plus_external_partitions_list();
+					_ ->
+						%% CM miners ask each other about their local
+						%% partitions. A CM exit node is not an exception - it
+						%% does NOT aggregate peer partitions in this case.
+						ar_coordination:get_unique_partitions_list()
+				end,
+			JSON = ar_serialize:jsonify(Partitions),
+			{200, #{}, JSON, Req};
+		FailureResponse ->
+			FailureResponse
 	end;
+
 
 % If somebody want to make GUI, monitoring tool
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
-	case check_cm_api_secret(Req) of
-		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					{ok, {LastPeerResponse}} = ar_coordination:get_public_state(),
-					Peers = maps:fold(fun(Peer, Value, Acc) ->
-						{AliveStatus, PartitionList} = Value,
-						Table = lists:map(
-							fun	(ListValue) ->
-								{Bucket, BucketSize, Addr} = ListValue,
-								{[
-									{bucket, Bucket},
-									{bucketsize, BucketSize},
-									{addr, ar_util:encode(Addr)}
-								]}
-							end,
-							PartitionList
-						),
-						Val = {[
-							{peer, list_to_binary(ar_util:format_peer(Peer))},
-							{alive, AliveStatus},
-							{partition_table, Table}
-						]},
-						[Val | Acc]
-						end,
-						[],
-						LastPeerResponse
-					),
-				{200, #{}, ar_serialize:jsonify(Peers), Req}
-			end;
-		{reject, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+	case validate_cm_request(Req) of
+		true ->
+			{ok, {LastPeerResponse}} = ar_coordination:get_public_state(),
+			Peers = maps:fold(fun(Peer, Value, Acc) ->
+				{AliveStatus, PartitionList} = Value,
+				Table = lists:map(
+					fun	(ListValue) ->
+						{Bucket, BucketSize, Addr} = ListValue,
+						{[
+							{bucket, Bucket},
+							{bucketsize, BucketSize},
+							{addr, ar_util:encode(Addr)}
+						]}
+					end,
+					PartitionList
+				),
+				Val = {[
+					{peer, list_to_binary(ar_util:format_peer(Peer))},
+					{alive, AliveStatus},
+					{partition_table, Table}
+				]},
+				[Val | Acc]
+				end,
+				[],
+				LastPeerResponse
+			),
+			{200, #{}, ar_serialize:jsonify(Peers), Req};
+		FailureResponse ->
+			FailureResponse
 	end;
 
 %% POST request to /coordinated_mining/h1.
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"h1">>], Req, Pid) ->
-	case check_cm_api_secret(Req) of
-		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					handle_mining_h1(Req, Pid)
-			end;
-		{reject, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+	case validate_cm_request(Req) of
+		true ->
+			handle_mining_h1(Req, Pid);
+		FailureResponse ->
+			FailureResponse
 	end;
 
 %% POST request to /coordinated_mining/h2.
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"h2">>], Req, Pid) ->
-	case check_cm_api_secret(Req) of
-		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					handle_mining_h2(Req, Pid)
-			end;
-		{reject, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+	case validate_cm_request(Req) of
+		true ->
+			handle_mining_h2(Req, Pid);
+		FailureResponse ->
+			FailureResponse
 	end;
 
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"publish">>], Req, Pid) ->
-	case check_cm_api_secret(Req) of
-		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					handle_mining_cm_publish(Req, Pid)
-			end;
-		{reject, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+	case validate_cm_request(Req) of
+		true ->
+			handle_post_solution(Req, Pid);
+		FailureResponse ->
+			FailureResponse
 	end;
 
 %% Catch case for requests made to unknown endpoints.
@@ -2539,18 +2515,19 @@ handle_post_partial_solution(Req, Pid) ->
 				{reject, {Status, Headers, Body}} ->
 					{Status, Headers, Body, Req};
 				pass ->
-					handle_post_partial_solution_pool_server(Req, Pid)
+					handle_post_solution(Req, Pid)
 			end;
 		{_, true} ->
 			case check_cm_api_secret(Req) of
 				{reject, {Status, Headers, Body}} ->
 					{Status, Headers, Body, Req};
 				pass ->
-					handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid)
+					handle_post_solution(Req, Pid)
 			end
 	end.
 
-handle_post_partial_solution_pool_server(Req, Pid) ->
+handle_post_solution(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			case catch ar_serialize:json_map_to_solution(
@@ -2558,28 +2535,11 @@ handle_post_partial_solution_pool_server(Req, Pid) ->
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
 				Solution ->
-					ar_mining_router:received_solution(Solution, []),
+					ar_mining_router:received_solution(Solution,
+						[{peer, ar_util:format_peer(Peer)}]),
 					Response = ar_mining_router:route_solution(Solution),
 					JSON = ar_serialize:solution_response_to_json_struct(Response),
 					{200, #{}, ar_serialize:jsonify(JSON), Req2}
-			end;
-		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req};
-		{error, timeout} ->
-			{500, #{}, <<"Handler timeout">>, Req}
-	end.
-
-handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
-	case read_complete_body(Req, Pid) of
-		{ok, Body, Req2} ->
-			case catch ar_serialize:json_map_to_solution(
-				jiffy:decode(Body, [return_maps])) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-				Solution ->
-					ar_mining_router:received_solution(Solution, []),
-					ar_pool:post_partial_solution(Solution),
-					{200, #{}, jiffy:encode(#{}), Req2}
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
@@ -2598,53 +2558,20 @@ handle_get_jobs(PrevOutput, Req) ->
 				{reject, {Status, Headers, Body}} ->
 					{Status, Headers, Body, Req};
 				pass ->
-					handle_get_jobs_pool_server(PrevOutput, Req)
+					Jobs = ar_pool:generate_jobs(PrevOutput),
+					JSON = ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)),
+					{200, #{}, JSON, Req}
 			end;
 		{_, true} ->
 			case check_cm_api_secret(Req) of
 				{reject, {Status, Headers, Body}} ->
 					{Status, Headers, Body, Req};
 				pass ->
-					handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req)
+					Jobs = ar_pool:get_cached_jobs(PrevOutput),
+					JSON = ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)),
+					{200, #{}, JSON, Req}
 			end
 	end.
-
-handle_get_jobs_pool_server(PrevOutput, Req) ->
-	Props =
-		ets:select(
-			node_state,
-			[{{'$1', '$2'},
-				[{'or',
-					{'==', '$1', diff_pair},
-					{'==', '$1', nonce_limiter_info}}], ['$_']}]
-		),
-	DiffPair = proplists:get_value(diff_pair, Props),
-	Info = proplists:get_value(nonce_limiter_info, Props),
-	Result = ar_util:do_until(
-		fun() ->
-			S = ar_nonce_limiter:get_step_triplets(Info, PrevOutput, ?GET_JOBS_COUNT),
-			case S of
-				[] ->
-					false;
-				_ ->
-					{ok, S}
-			end
-		end,
-		200,
-		(?GET_JOBS_TIMEOUT_S) * 1000
-	),
-	Steps = case Result of {ok, S} -> S; _ -> [] end,
-	{NextSeed, IntervalNumber, NextVDFDiff} = ar_nonce_limiter:session_key(Info),
-	JobList = [#job{ output = O, global_step_number = SN,
-			partition_upper_bound = U } || {O, SN, U} <- Steps],
-	Jobs = #jobs{ jobs = JobList, seed = Info#nonce_limiter_info.seed,
-			next_seed = NextSeed, interval_number = IntervalNumber,
-			next_vdf_difficulty = NextVDFDiff, partial_diff = DiffPair },
-	{200, #{}, ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)), Req}.
-
-handle_get_jobs_cm_exit_peer_pool_client(PrevOutput, Req) ->
-	{200, #{}, ar_serialize:jsonify(
-			ar_serialize:jobs_to_json_struct(ar_pool:get_jobs(PrevOutput))), Req}.
 
 %% Only for cm miners that are NOT exit peers.
 handle_post_pool_cm_jobs(Req, Pid) ->
@@ -3213,6 +3140,19 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 		{error, timeout}
 	end.
 
+validate_cm_request(Req) ->
+	case check_cm_api_secret(Req) of
+		pass ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					true
+			end;
+		{reject, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
+	end.
+
 handle_mining_h1(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
@@ -3279,25 +3219,4 @@ handle_mining_h2(Req, Pid) ->
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req}
-	end.
-
-handle_mining_cm_publish(Req, Pid) ->
-	Peer = ar_http_util:arweave_peer(Req),
-	case read_complete_body(Req, Pid) of
-		{ok, Body, Req2} ->
-			case catch ar_serialize:json_map_to_solution(
-					jiffy:decode(Body, [return_maps])) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-				Solution ->
-					ar_mining_router:received_solution(Solution,
-						[{peer, ar_util:format_peer(Peer)}]),
-					Response = ar_mining_router:route_solution(Solution),
-					JSON = ar_serialize:solution_response_to_json_struct(Response),
-					{200, #{}, ar_serialize:jsonify(JSON), Req2}
-			end;
-		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req};
-		{error, timeout} ->
-			{500, #{}, <<"Handler timeout">>, Req}
 	end.
