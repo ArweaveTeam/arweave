@@ -1,4 +1,4 @@
-{ pkgs, crashDumpsDir ? null, erlangCookie ? null }:
+{ pkgs, crashDumpsDir ? null, erlangCookie ? null, vcPatches ? [ ] }:
 
 
 let
@@ -367,7 +367,7 @@ let
     path: type:
       srcIgnored path type;
 
-  arweaveVersion = "2.6.10";
+  arweaveVersion = "2.7.4";
 
   mkArweaveApp = { installPhase, profile, releaseType }:
     beamPackages.rebar3Relx {
@@ -379,6 +379,7 @@ let
         src = arweaveSources;
         name = "arweave-source";
       };
+      patches = vcPatches;
       plugins = [
         pkgs.beamPackages.pc
         rebar3_archive_plugin
@@ -503,13 +504,7 @@ let
     '';
   };
 in
-pkgs.symlinkJoin {
-  name = "arweave";
-  version = arweaveVersion;
-  paths = [
-    arweaveTestProfile
-    arweaveProdProfile
-  ];
+{
+  inherit arweaveTestProfile arweaveProdProfile;
+  arweave = arweaveProdProfile;
 }
-
-

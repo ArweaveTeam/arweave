@@ -324,4 +324,13 @@ in
     description = "The generated Arweave config file";
   };
 
+  patches = mkOption {
+    type = types.listOf (types.either types.path types.str);
+    default = [ ];
+    example = [ "https://example.com/patch1" ];
+    description = ''
+      List of paths to apply to version control system before building from sources
+    '';
+  };
+
 }

@@ -2,7 +2,12 @@
 
 let
   cfg = config.services.arweave;
-  arweavePkg = pkgs.callPackage ./arweave.nix { inherit pkgs; crashDumpsDir = cfg.crashDumpsDir; erlangCookie = cfg.erlangCookie; };
+  arweavePkg = (pkgs.callPackage ./arweave.nix {
+    inherit pkgs;
+    crashDumpsDir = cfg.crashDumpsDir;
+    erlangCookie = cfg.erlangCookie;
+    vcPatches = cfg.patches;
+  }).arweave;
   generatedConfigFile = "${import ./generate-config.nix { arweaveConfig = cfg; inherit pkgs; }}";
   arweave-service-start =
     let
