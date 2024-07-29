@@ -113,7 +113,14 @@ terminate(_Reason, _State) ->
 
 start_hashing_thread(State) ->
 	#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs } = State,
-	Thread = spawn_link(fun hashing_thread/0),
+	ThreadName = list_to_atom("ar_mining_hash_thread_" ++ integer_to_list(queue:len(Threads))),
+	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
+	Thread = spawn_link(
+		fun() ->
+			%%register(ThreadName, self()),
+			hashing_thread(RandomXStateRef)
+		end
+	),
 	Ref = monitor(process, Thread),
 	Threads2 = queue:in(Thread, Threads),
 	Refs2 = maps:put(Ref, Thread, Refs),
@@ -129,25 +136,25 @@ handle_hashing_thread_down(Ref, Reason,
 	start_hashing_thread(State#state{ hashing_threads = Threads2,
 			hashing_thread_monitor_refs = Refs2 }).
 
-hashing_thread() ->
+hashing_thread(RandomXStateRef) ->
 	receive
 		{compute, h0, Worker, Candidate} ->
 			#mining_candidate{
 				mining_address = MiningAddress, nonce_limiter_output = Output,
 				partition_number = PartitionNumber, seed = Seed } = Candidate,
-			H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress),
+			H0 = ar_block:compute_h0(Output, PartitionNumber, Seed, MiningAddress, RandomXStateRef),
 			ar_mining_worker:computed_hash(Worker, computed_h0, H0, undefined, Candidate),
-			hashing_thread();
+			hashing_thread(RandomXStateRef);
 		{compute, h1, Worker, Candidate} ->
 			#mining_candidate{ h0 = H0, nonce = Nonce, chunk1 = Chunk1 } = Candidate,
 			{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk1),
 			ar_mining_worker:computed_hash(Worker, computed_h1, H1, Preimage, Candidate),
-			hashing_thread();
+			hashing_thread(RandomXStateRef);
 		{compute, h2, Worker, Candidate} ->
 			#mining_candidate{ h0 = H0, h1 = H1, chunk2 = Chunk2 } = Candidate,
 			{H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
 			ar_mining_worker:computed_hash(Worker, computed_h2, H2, Preimage, Candidate),
-			hashing_thread()
+			hashing_thread(RandomXStateRef)
 	end.
 
 pick_hashing_thread(Threads) ->

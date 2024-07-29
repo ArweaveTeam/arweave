@@ -3,7 +3,7 @@
 -export([block_field_size_limit/1, verify_timestamp/2,
 		get_max_timestamp_deviation/0, verify_last_retarget/2, verify_weave_size/3,
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
-		compute_h0/4, compute_h1/3, compute_h2/3, compute_solution_h/2,
+		compute_h0/4, compute_h0/5, compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
@@ -157,6 +157,9 @@ compute_hash_list_merkle(B) ->
 %% two recall ranges on the weave as unlocked by the given nonce limiter output.
 compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr) ->
 	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
+	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, RandomXStateRef).
+
+compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, RandomXStateRef) ->
 	ar_mine_randomx:hash_fast(RandomXStateRef, << NonceLimiterOutput:32/binary,
 			PartitionNumber:256, Seed:32/binary, MiningAddr/binary >>).
 

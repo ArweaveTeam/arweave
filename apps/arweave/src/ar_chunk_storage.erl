@@ -64,11 +64,11 @@ put(Offset, Chunk, StoreID) ->
 open_files(StoreID) ->
 	ets:foldl(
 		fun ({{Key, ID}, Filepath}, _) when ID == StoreID ->
-				case erlang:get({cfile, Key}) of
+				case erlang:get({cfile, {Key, ID}}) of
 					undefined ->
 						case file:open(Filepath, [read, raw, binary]) of
 							{ok, F} ->
-								erlang:put({cfile, Key}, F);
+								erlang:put({cfile, {Key, ID}}, F);
 							_ ->
 								ok
 						end;

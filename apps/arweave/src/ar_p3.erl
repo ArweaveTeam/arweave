@@ -21,7 +21,7 @@
 allow_request(Req) ->
 	case catch gen_server:call(?MODULE, {allow_request, Req}) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			{error, timeout};
+			{false, timeout};
 		Reply ->
 			Reply
 	end.
