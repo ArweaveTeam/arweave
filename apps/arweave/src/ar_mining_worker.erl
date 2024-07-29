@@ -57,7 +57,6 @@ add_task(Worker, TaskType, Candidate, ExtraArgs) ->
 	gen_server:cast(Worker, {add_task, {TaskType, Candidate, ExtraArgs}}).
 
 add_delayed_task(Worker, TaskType, Candidate) ->
-	% ?LOG_DEBUG([{event, mining_debug_add_delayed_task}, {worker, Worker}, {task, TaskType}]),
 	%% Delay task by random amount between ?TASK_CHECK_FREQUENCY_MS and 2*?TASK_CHECK_FREQUENCY_MS
 	%% The reason for the randomization to avoid a glut tasks to all get added at the same time - 
 	%% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
@@ -251,12 +250,13 @@ add_task({TaskType, Candidate, _ExtraArgs} = Task, State) ->
 
 chunks_read(WhichChunk, Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets, Count, State)
 		when Nonce > NonceMax ->
-	case WhichChunk of
+	Partition = case WhichChunk of
 		chunk1 ->
-			ar_mining_stats:chunks_read(Candidate#mining_candidate.partition_number, Count);
+			Candidate#mining_candidate.partition_number;
 		chunk2 ->
-			ar_mining_stats:chunks_read(Candidate#mining_candidate.partition_number2, Count)
+			Candidate#mining_candidate.partition_number2
 	end,
+	ar_mining_stats:chunks_read(Partition, Count),
 	State;
 chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, [], Count, State) ->
 	gen_server:cast(self(),

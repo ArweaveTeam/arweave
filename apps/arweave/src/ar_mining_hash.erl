@@ -113,11 +113,9 @@ terminate(_Reason, _State) ->
 
 start_hashing_thread(State) ->
 	#state{ hashing_threads = Threads, hashing_thread_monitor_refs = Refs } = State,
-	ThreadName = list_to_atom("ar_mining_hash_thread_" ++ integer_to_list(queue:len(Threads))),
 	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
 	Thread = spawn_link(
 		fun() ->
-			%%register(ThreadName, self()),
 			hashing_thread(RandomXStateRef)
 		end
 	),

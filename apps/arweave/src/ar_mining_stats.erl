@@ -365,14 +365,9 @@ get_hash_hps(PoA1Multiplier, PartitionNumber, TotalCurrent, Now) ->
 optimal_partition_read_mibps(undefined, _PartitionDataSize, _TotalDataSize, _WeaveSize) ->
 	0.0;	
 optimal_partition_read_mibps(VDFSpeed, PartitionDataSize, TotalDataSize, WeaveSize) ->
-	Chunk1Read = (100.0 / VDFSpeed) * min(1.0, (PartitionDataSize / ?PARTITION_SIZE)),
-	Chunk2Read = Chunk1Read * min(1.0, (TotalDataSize / WeaveSize)),
-	?LOG_DEBUG([{event, optimal_partition_read_mibps},
-		{vdf_speed, VDFSpeed}, {partition_data_size, PartitionDataSize},
-		{total_data_size, TotalDataSize}, {weave_size, WeaveSize},
-		{chunk1_read, Chunk1Read}, {chunk2_read, Chunk2Read},
-		{optimal_read_mibps, Chunk1Read + Chunk2Read}]),
-	Chunk1Read + Chunk2Read.
+	(100.0 / VDFSpeed) *
+	min(1.0, (PartitionDataSize / ?PARTITION_SIZE)) *
+	(1 + min(1.0, (TotalDataSize / WeaveSize))).
 
 %% @doc calculate the maximum hash rate (in hashes per second) for the given VDF speed
 %% at the current weave size.
@@ -750,9 +745,9 @@ mining_stats_test_() ->
         fun setup_env/0,  % Function to setup the environment
         fun cleanup_env/1, % Function to cleanup the environment
         [
-            % {timeout, 30, fun test_read_stats/0},
-            % {timeout, 30, fun test_h1_stats/0},
-            % {timeout, 30, fun test_h2_stats/0},
+            {timeout, 30, fun test_read_stats/0},
+            {timeout, 30, fun test_h1_stats/0},
+            {timeout, 30, fun test_h2_stats/0},
             {timeout, 30, fun test_vdf_stats/0},
             {timeout, 30, fun test_data_size_stats/0},
             {timeout, 30, fun test_h1_sent_to_peer_stats/0},
@@ -800,103 +795,103 @@ setup_env() ->
 cleanup_env(Config) ->
     application:set_env(arweave, config, Config).
 
-% test_read_stats() ->
-% 	test_local_stats(fun chunk_read/1, read).
+test_read_stats() ->
+	test_local_stats(fun chunks_read/2, read).
 
-% test_h1_stats() ->
-% 	test_local_stats(fun h1_computed/1, h1).
+test_h1_stats() ->
+	test_local_stats(fun h1_computed/2, h1).
 
-% test_h2_stats() ->
-% 	test_local_stats(fun h2_computed/1, h2).
+test_h2_stats() ->
+	test_local_stats(fun h2_computed/2, h2).
 
-% test_local_stats(Fun, Stat) ->
-% 	ar_mining_stats:pause_performance_reports(120000),
-% 	reset_all_stats(),
-% 	Fun(1),
-% 	TotalStart1 = get_start({partition, 1, Stat, total}),
-% 	CurrentStart1 = get_start({partition, 1, Stat, current}),
-% 	timer:sleep(1000),
-% 	Fun(1),
-% 	Fun(1),
+test_local_stats(Fun, Stat) ->
+	ar_mining_stats:pause_performance_reports(120000),
+	reset_all_stats(),
+	Fun(1, 1),
+	TotalStart1 = get_start({partition, 1, Stat, total}),
+	CurrentStart1 = get_start({partition, 1, Stat, current}),
+	timer:sleep(1000),
+	Fun(1, 1),
+	Fun(1, 1),
 	
-% 	Fun(2),
-% 	TotalStart2 = get_start({partition, 2, Stat, total}),
-% 	CurrentStart2 = get_start({partition, 2, Stat, current}),
-% 	Fun(2),
+	Fun(2, 1),
+	TotalStart2 = get_start({partition, 2, Stat, total}),
+	CurrentStart2 = get_start({partition, 2, Stat, current}),
+	Fun(2, 1),
 	
-% 	?assert(TotalStart1 /= TotalStart2),
-% 	?assert(CurrentStart1 /= CurrentStart2),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, CurrentStart1)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2)),
+	?assert(TotalStart1 /= TotalStart2),
+	?assert(CurrentStart1 /= CurrentStart2),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, CurrentStart1)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2)),
 
-% 	?assertEqual(6.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
-% 	?assertEqual(0.25, get_average_count_by_time({partition, 1, Stat, current}, CurrentStart1 + 12000)),
-% 	?assertEqual(0.5, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-% 	?assertEqual(8.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+	?assertEqual(6.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.25, get_average_count_by_time({partition, 1, Stat, current}, CurrentStart1 + 12000)),
+	?assertEqual(0.5, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
 
-% 	?assertEqual(6.0, get_average_samples_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
-% 	?assertEqual(0.25, get_average_samples_by_time({partition, 1, Stat, current}, CurrentStart1 + 12000)),
-% 	?assertEqual(0.5, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-% 	?assertEqual(8.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+	?assertEqual(6.0, get_average_samples_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.25, get_average_samples_by_time({partition, 1, Stat, current}, CurrentStart1 + 12000)),
+	?assertEqual(0.5, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
 
-% 	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, total})),
-% 	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, current})),
-% 	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, total})),
-% 	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, current})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, total})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, current})),
+	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, total})),
+	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, current})),
+	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, total})),
+	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, current})),
+	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, total})),
+	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, current})),
 
-% 	Now = CurrentStart2 + 1000,
-% 	reset_count({partition, 1, Stat, current}, Now),
-% 	?assertEqual(Now, get_start({partition, 1, Stat, current})),
-% 	?assertEqual(6.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, Now + 12000)),
-% 	?assertEqual(0.5, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-% 	?assertEqual(8.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, CurrentStart1 + 250)),
+	Now = CurrentStart2 + 1000,
+	reset_count({partition, 1, Stat, current}, Now),
+	?assertEqual(Now, get_start({partition, 1, Stat, current})),
+	?assertEqual(6.0, get_average_count_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.5, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, CurrentStart1 + 250)),
 
-% 	?assertEqual(6.0, get_average_samples_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, current}, Now + 12000)),
-% 	?assertEqual(0.5, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-% 	?assertEqual(8.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, CurrentStart1 + 250)),
+	?assertEqual(6.0, get_average_samples_by_time({partition, 1, Stat, total}, TotalStart1 + 500)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.5, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(8.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, CurrentStart1 + 250)),
 
-% 	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, total})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, current})),
-% 	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, total})),
-% 	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, current})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, total})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, current})),
+	?assertEqual(1.0, get_average_by_samples({partition, 1, Stat, total})),
+	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, current})),
+	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, total})),
+	?assertEqual(1.0, get_average_by_samples({partition, 2, Stat, current})),
+	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, total})),
+	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, current})),
 
-% 	reset_all_stats(),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, total}, Now + 500)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, Now + 12000)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-% 	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+	reset_all_stats(),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, total}, Now + 500)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_count_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
 
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, total}, Now + 500)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, current}, Now + 12000)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
-% 	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, total}, Now + 500)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 1, Stat, current}, Now + 12000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 2, Stat, total}, TotalStart2 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 2, Stat, current}, CurrentStart2 + 250)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, total}, TotalStart1 + 4000)),
+	?assertEqual(0.0, get_average_samples_by_time({partition, 3, Stat, current}, TotalStart1 + 250)),
 
-% 	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, total})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, current})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 2, Stat, total})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 2, Stat, current})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, total})),
-% 	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, current})).
+	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, total})),
+	?assertEqual(0.0, get_average_by_samples({partition, 1, Stat, current})),
+	?assertEqual(0.0, get_average_by_samples({partition, 2, Stat, total})),
+	?assertEqual(0.0, get_average_by_samples({partition, 2, Stat, current})),
+	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, total})),
+	?assertEqual(0.0, get_average_by_samples({partition, 3, Stat, current})).
 
 test_vdf_stats() ->
 	ar_mining_stats:pause_performance_reports(120000),
@@ -934,16 +929,14 @@ test_vdf_stats() ->
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
+	WeaveSize = floor(2 * ?PARTITION_SIZE),
+	ets:insert(node_state, [{weave_size, WeaveSize}]),
+
 	ar_mining_stats:pause_performance_reports(120000),
 	reset_all_stats(),
 	?assertEqual(0, get_total_minable_data_size()),
 	?assertEqual(0, get_partition_data_size(1)),
 	?assertEqual(0, get_partition_data_size(2)),
-
-	ar_mining_stats:set_total_data_size(1000),
-	?assertEqual(1000, get_total_minable_data_size()),
-	ar_mining_stats:set_total_data_size(500),
-	?assertEqual(500, get_total_minable_data_size()),
 
 	MiningAddress = <<"MINING">>,
 	PackingAddress = <<"PACKING">>,
@@ -980,6 +973,7 @@ test_data_size_stats() ->
 
 	?assertEqual(214, get_partition_data_size(1)),
 	?assertEqual(202, get_partition_data_size(2)),
+	?assertEqual(214, get_total_minable_data_size()),
 
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, unpacked}),
@@ -1003,6 +997,7 @@ test_data_size_stats() ->
 	
 	?assertEqual(336, get_partition_data_size(1)),
 	?assertEqual(52, get_partition_data_size(2)),
+	?assertEqual(336, get_total_minable_data_size()),
 
 	reset_all_stats(),
 	?assertEqual(0, get_total_minable_data_size()),
@@ -1245,6 +1240,7 @@ test_report(PoA1Multiplier) ->
 
 	Now = erlang:monotonic_time(millisecond),
 	WeaveSize = floor(10 * ?PARTITION_SIZE),
+	ets:insert(node_state, [{weave_size, WeaveSize}]),
 	ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
@@ -1268,9 +1264,11 @@ test_report(PoA1Multiplier) ->
 	ar_mining_stats:h2_solution(),
 	ar_mining_stats:h2_solution(),
 	ar_mining_stats:block_found(),
-	ar_mining_stats:chunks_read(1, 3),
+	ar_mining_stats:chunks_read(1, 1),
+	ar_mining_stats:chunks_read(1, 2),
 	ar_mining_stats:chunks_read(2, 2),
-	ar_mining_stats:h1_computed(1, 3),
+	ar_mining_stats:h1_computed(1, 2),
+	ar_mining_stats:h1_computed(1, 1),
 	ar_mining_stats:h2_computed(1, 2),
 	ar_mining_stats:h1_computed(2, 4),
 	ar_mining_stats:h1_sent_to_peer(Peer1, 10),
@@ -1306,8 +1304,8 @@ test_report(PoA1Multiplier) ->
 		TotalHash, Partition1Hash, Partition2Hash,
 		TotalOptimal, Partition1Optimal, Partition2Optimal
 	} = case PoA1Multiplier of
-		1 -> {9.0, 5.0, 4.0, 763.1992652893132, 445.19926815033614, 317.99999713897705};
-		2 -> {6.5, 3.5, 3.0, 403.1996086120671, 235.19961147309004, 167.99999713897705}
+		1 -> {9.0, 5.0, 4.0, 763.1992309570705, 445.19924812320824, 317.9999828338623};
+		2 -> {5.5, 3.5, 2.0, 403.19957427982445, 235.19959144596214, 167.9999828338623}
 	end,
 
 	?assertEqual(#report{ 
@@ -1316,8 +1314,10 @@ test_report(PoA1Multiplier) ->
 		h1_solution = 1,
 		h2_solution = 2,
 		confirmed_block = 1,
-		total_data_size = floor(0.6 * ?PARTITION_SIZE),
-		optimal_overall_read_mibps = 190.7998163223283,
+		total_data_size = 
+			floor(0.1 * ?PARTITION_SIZE) + floor(0.2 * ?PARTITION_SIZE) +
+			floor(0.05 * ?PARTITION_SIZE) + floor(0.25 * ?PARTITION_SIZE),
+		optimal_overall_read_mibps = 190.79980773926764,
 		optimal_overall_hash_hps = TotalOptimal,
 		average_read_mibps = 1.25,
 		current_read_mibps = 1.25,
@@ -1343,7 +1343,7 @@ test_report(PoA1Multiplier) ->
 			#partition_report{
 				partition_number = 2,
 				data_size = floor(0.25 * ?PARTITION_SIZE),
-				optimal_read_mibps = 79.49999928474426,
+				optimal_read_mibps = 79.49999570846558,
 				average_read_mibps = 0.5,
 				current_read_mibps = 0.5,
 				optimal_hash_hps = Partition2Optimal,
@@ -1353,7 +1353,7 @@ test_report(PoA1Multiplier) ->
 			#partition_report{
 				partition_number = 1,
 				data_size = 734002,
-				optimal_read_mibps = 111.299817037584039,
+				optimal_read_mibps = 111.29981203080206,
 				average_read_mibps = 0.75,
 				current_read_mibps = 0.75,
 				optimal_hash_hps = Partition1Optimal,

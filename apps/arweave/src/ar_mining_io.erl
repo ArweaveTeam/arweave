@@ -348,8 +348,6 @@ log_read_range(Candidate, WhichChunk, FoundChunks, StartTime) ->
 
 	% ?LOG_DEBUG([{event, mining_debug_read_recall_range},
 	% 		{thread, self()},
-	% 		{start_time, monotonic_time_to_ms_since_epoch(StartTime)},
-	% 		{end_time, monotonic_time_to_ms_since_epoch(EndTime)},
 	% 		{elapsed_time_ms, ElapsedTime},
 	% 		{chunks_read, FoundChunks},
 	% 		{mib_read, FoundChunks / 4},
@@ -357,25 +355,6 @@ log_read_range(Candidate, WhichChunk, FoundChunks, StartTime) ->
 	% 		{chunk, WhichChunk},
 	% 		{partition_number, PartitionNumber}]),
 	ok.
-
-monotonic_time_to_ms_since_epoch(MonotonicTime) ->
-    % Convert monotonic time to native time unit
-    NativeTime = erlang:convert_time_unit(MonotonicTime, native, nanosecond),
-    
-    % Get the current system time in nanoseconds
-    NowNative = erlang:system_time(nanosecond),
-    
-    % Get the current monotonic time in nanoseconds
-    NowMonotonic = erlang:monotonic_time(nanosecond),
-    
-    % Calculate the offset
-    Offset = NowNative - NowMonotonic,
-    
-    % Apply the offset to the input time
-    EpochNanoseconds = NativeTime + Offset,
-    
-    % Convert nanoseconds to milliseconds
-    EpochNanoseconds div 1_000_000.
 
 find_thread(PartitionNumber, MiningAddress, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, maps:iterator(Threads)),
