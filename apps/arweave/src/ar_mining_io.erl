@@ -198,11 +198,9 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID, #state{ io_threads = Th
 start_io_thread(PartitionNumber, MiningAddress, StoreID,
 		#state{ io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
 	Now = os:system_time(millisecond),
-	ThreadName = list_to_atom("ar_mining_io_thread_" ++ StoreID),
 	Thread =
 		spawn(
 			fun() ->
-				register(ThreadName, self()),
 				case StoreID of
 					"default" ->
 						ok;
@@ -215,7 +213,7 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 	Ref = monitor(process, Thread),
 	Threads2 = maps:put({PartitionNumber, MiningAddress, StoreID}, Thread, Threads),
 	Refs2 = maps:put(Ref, {PartitionNumber, MiningAddress, StoreID}, Refs),
-	?LOG_DEBUG([{event, started_io_mining_thread}, {thread_name, ThreadName},
+	?LOG_DEBUG([{event, started_io_mining_thread},
 			{partition_number, PartitionNumber},
 			{mining_addr, ar_util:safe_encode(MiningAddress)}, {store_id, StoreID}]),
 	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }.
