@@ -121,6 +121,8 @@ h2_computed(PartitionNumber) ->
 	increment_count({partition, PartitionNumber, h2, total}),
 	increment_count({partition, PartitionNumber, h2, current}).
 
+h1_sent_to_peer({pool, _}, H1Count) ->
+	h1_sent_to_peer(pool, H1Count);
 h1_sent_to_peer(Peer, H1Count) ->
 	increment_count({peer, Peer, h1_to_peer, total}, H1Count),
 	increment_count({peer, Peer, h1_to_peer, current}, H1Count).
@@ -129,6 +131,8 @@ h1_received_from_peer(Peer, H1Count) ->
 	increment_count({peer, Peer, h1_from_peer, total}, H1Count),
 	increment_count({peer, Peer, h1_from_peer, current}, H1Count).
 
+h2_sent_to_peer({pool, _}) ->
+	h2_sent_to_peer(pool);
 h2_sent_to_peer(Peer) ->
 	increment_count({peer, Peer, h2_to_peer, total}).
 

@@ -3209,7 +3209,10 @@ handle_mining_h2(Req, Pid) ->
 									{200, #{}, <<>>, Req2};
 								_ ->
 									ar_mining_stats:h2_received_from_peer(Peer),
-									ar_mining_router:received_solution(Candidate, h2),
+									ar_mining_router:received_solution(Candidate, [
+										{peer, ar_util:format_peer(Peer)}
+									]),
+									%% xxx: prepare_solution, need response
 									ar_mining_router:prepare_solution(Candidate),
 									{200, #{}, <<>>, Req}
 							end

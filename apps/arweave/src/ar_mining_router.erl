@@ -4,9 +4,10 @@
 
 -export([start_link/0,
 	prepare_solution/1, route_solution/1,
-	found_solution/3, received_solution/2, received_solution/3,
+	found_solution/2, received_solution/2,
 	reject_solution/3, reject_solution/4,
-	accept_solution/1, accept_solution/2, accept_block_solution/2, accept_block_solution/3,
+	accept_solution/1, accept_solution/2,
+	accept_block_solution/2, accept_block_solution/3,
 	route_h1/2, route_h2/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -29,28 +30,24 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 	
-prepare_solution(Candidate) ->
+prepare_solution(#mining_candidate{} = Candidate) ->
 	%% A pool client does not validate VDF before sharing a solution.
 	{ok, Config} = application:get_env(arweave, config),
 	ar_mining_server:prepare_solution(Candidate, Config#config.is_pool_client).
 
-route_solution(Solution) ->
+route_solution(#mining_solution{} = Solution) ->
 	{ok, Config} = application:get_env(arweave, config),
+	%% XXX: handle timeout
 	gen_server:call(?MODULE, {route_solution, Config, Solution}).
 
-found_solution(#mining_candidate{} = Candidate, WhichHash, ExtraLogs) ->
+found_solution(#mining_candidate{} = Candidate, ExtraLogs) ->
 	#mining_candidate{
 		mining_address = MiningAddress,
 		nonce_limiter_output = NonceLimiterOutput,
 		seed = Seed, next_seed = NextSeed, 
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
 
-	{Hash, PartitionNumber} = case WhichHash of 
-		h1 ->
-			{Candidate#mining_candidate.h1, Candidate#mining_candidate.partition_number};
-		h2 ->
-			{Candidate#mining_candidate.h2, Candidate#mining_candidate.partition_number2}
-	end,
+	{Hash, PartitionNumber} = select_hash(Candidate),
 	?LOG_INFO([
 		{event, solution_lifecycle},
 		{status, found},
@@ -65,23 +62,18 @@ found_solution(#mining_candidate{} = Candidate, WhichHash, ExtraLogs) ->
 		ExtraLogs),		
 	ar_mining_stats:solution(found).
 
-received_solution(#mining_candidate{} = Candidate, WhichHash, ExtraLogs) ->
+received_solution(#mining_candidate{} = Candidate, ExtraLogs) ->
 	#mining_candidate{
 		mining_address = MiningAddress,
 		nonce_limiter_output = NonceLimiterOutput,
 		seed = Seed, next_seed = NextSeed, 
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
 
-	{Hash, PartitionNumber} = case WhichHash of 
-		h1 ->
-			{Candidate#mining_candidate.h1, Candidate#mining_candidate.partition_number};
-		h2 ->
-			{Candidate#mining_candidate.h2, Candidate#mining_candidate.partition_number2}
-	end,
+	{Hash, PartitionNumber} = select_hash(Candidate),
 	received_solution(Hash, MiningAddress, PartitionNumber, Seed, NextSeed,
-		StartIntervalNumber, StepNumber, NonceLimiterOutput, ExtraLogs).
+		StartIntervalNumber, StepNumber, NonceLimiterOutput, ExtraLogs);
 
-received_solution(Solution, ExtraLogs) ->
+received_solution(#mining_solution{} = Solution, ExtraLogs) ->
 	#mining_solution{
 		mining_address = MiningAddress,
 		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
@@ -90,37 +82,32 @@ received_solution(Solution, ExtraLogs) ->
 	received_solution(H, MiningAddress, PartitionNumber, Seed, NextSeed, StartIntervalNumber,
 		StepNumber, NonceLimiterOutput, ExtraLogs).
 	
-reject_solution(Solution, Reason, ExtraLogs) ->
+reject_solution(#mining_candidate{} = Candidate, Reason, ExtraLogs) ->
+	#mining_candidate{
+		mining_address = MiningAddress,
+		nonce_limiter_output = NonceLimiterOutput,
+		seed = Seed, next_seed = NextSeed, 
+		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
+
+	{Hash, PartitionNumber} = select_hash(Candidate),
+	reject_solution(Reason, Hash, MiningAddress, PartitionNumber, Seed, NextSeed,
+		StartIntervalNumber, StepNumber, NonceLimiterOutput, ExtraLogs);
+
+reject_solution(#mining_solution{} = Solution, Reason, ExtraLogs) ->
 	#mining_solution{
 		mining_address = MiningAddress,
 		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
-		recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
 		solution_hash = H, seed = Seed, next_seed = NextSeed, 
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Solution,
-	ar:console("WARNING: solution was rejected. Check logs for more details~n"),
-	?LOG_WARNING([
-		{event, solution_lifecycle},
-		{status, rejected},
-		{reason, Reason},
-		{hash, ar_util:safe_encode(H)},
-		{mining_address, ar_util:safe_encode(MiningAddress)},
-		{partition, PartitionNumber},
-		{recall_byte1, RecallByte1},
-		{recall_byte2, RecallByte2},
-		{seed, Seed},
-		{next_seed, NextSeed},
-		{start_interval_number, StartIntervalNumber},
-		{step_number, StepNumber},
-		{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}] ++
-		ExtraLogs),		
-	ar_mining_stats:solution(rejected).
+	reject_solution(Reason, H, MiningAddress, PartitionNumber,
+		Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ExtraLogs).
 
-reject_solution(Solution, Reason, ExtraLogs, Ref) ->
+reject_solution(#mining_solution{} = Solution, Reason, ExtraLogs, Ref) ->
 	reject_solution(Solution, Reason, ExtraLogs),
 	Status = iolist_to_binary([<<"rejected_">>, atom_to_binary(Reason)]),
 	gen_server:cast(?MODULE, {solution_response, Status, <<>>, Ref}).
 
-accept_solution(Solution) ->
+accept_solution(#mining_solution{} = Solution) ->
 	#mining_solution{ mining_address = MiningAddress, solution_hash = H } = Solution,
 	?LOG_WARNING([
 		{event, solution_lifecycle},
@@ -129,11 +116,11 @@ accept_solution(Solution) ->
 		{mining_address, ar_util:safe_encode(MiningAddress)}]),		
 	ar_mining_stats:solution(accepted).
 
-accept_solution(Solution, Ref) ->
+accept_solution(#mining_solution{} = Solution, Ref) ->
 	accept_solution(Solution),
 	gen_server:cast(?MODULE, {solution_response, <<"accepted">>, <<>>, Ref}).
 
-accept_block_solution(Solution, BlockH) ->
+accept_block_solution(#mining_solution{} = Solution, BlockH) ->
 	#mining_solution{ mining_address = MiningAddress, solution_hash = H } = Solution,
 	?LOG_WARNING([
 		{event, solution_lifecycle},
@@ -143,11 +130,11 @@ accept_block_solution(Solution, BlockH) ->
 		{block_hash, ar_util:safe_encode(BlockH)}]),		
 	ar_mining_stats:solution(accepted).
 
-accept_block_solution(Solution, BlockH, Ref) ->
+accept_block_solution(#mining_solution{} = Solution, BlockH, Ref) ->
 	accept_block_solution(Solution, BlockH),
 	gen_server:cast(?MODULE, {solution_response, <<"accepted_block">>, BlockH, Ref}).
 
-route_h1(Candidate, DiffPair) ->
+route_h1(#mining_candidate{} = Candidate, DiffPair) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.coordinated_mining of
 		false ->
@@ -158,7 +145,7 @@ route_h1(Candidate, DiffPair) ->
 
 route_h2(#mining_candidate{ cm_lead_peer = not_set } = Candidate) ->
 	prepare_solution(Candidate);
-route_h2(Candidate) ->
+route_h2(#mining_candidate{} = Candidate) ->
 	ar_coordination:computed_h2_for_peer(Candidate).
 
 %%%===================================================================
@@ -220,6 +207,24 @@ received_solution(Hash, MiningAddress, PartitionNumber, Seed, NextSeed,
 		ExtraLogs),
 	ar_mining_stats:solution(received).
 
+reject_solution(Reason, H, MiningAddress, PartitionNumber,
+		Seed, NextSeed, StartIntervalNumber, StepNumber, NonceLimiterOutput, ExtraLogs) ->
+	ar:console("WARNING: solution was rejected. Check logs for more details~n"),
+	?LOG_WARNING([
+		{event, solution_lifecycle},
+		{status, rejected},
+		{reason, Reason},
+		{hash, ar_util:safe_encode(H)},
+		{mining_address, ar_util:safe_encode(MiningAddress)},
+		{partition, PartitionNumber},
+		{seed, Seed},
+		{next_seed, NextSeed},
+		{start_interval_number, StartIntervalNumber},
+		{step_number, StepNumber},
+		{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}] ++
+		ExtraLogs),		
+	ar_mining_stats:solution(rejected).
+
 route_solution(#config{ is_pool_server = true }, Solution, Ref) ->
 	ar_pool:process_partial_solution(Solution, Ref);
 route_solution(#config{ cm_exit_peer = not_set, is_pool_client = true }, Solution, Ref) ->
@@ -250,3 +255,8 @@ route_solution(#config{ cm_exit_peer = ExitPeer, is_pool_client = false }, Solut
 					"error: ~p.", [io_lib:format("~p", [Reason])]),
 			ar_mining_stats:solution(rejected)
 	end.
+
+select_hash(#mining_candidate{ h2 = not_set } = Candidate) ->
+	{Candidate#mining_candidate.h1, Candidate#mining_candidate.partition_number};
+select_hash(#mining_candidate{} = Candidate) ->
+	{Candidate#mining_candidate.h2, Candidate#mining_candidate.partition_number2}.

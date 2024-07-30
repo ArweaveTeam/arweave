@@ -253,7 +253,7 @@ handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	PoA = ar_mining_server:load_poa(RecallByte2, Candidate),
 	case PoA of
 		not_found ->
-			ok;
+			ar_mining_router:reject_solution(Candidate, failed_to_read_chunk_proofs, []);
 		_ ->
 			send_h2(Peer, Candidate#mining_candidate{ poa2 = PoA })
 	end,
@@ -397,24 +397,14 @@ send_h1(Candidate, State) ->
 			spawn(fun() ->
 				ar_http_iface_client:cm_h1_send(Peer, Candidate2)
 			end),
-			case Peer of
-				{pool, _} ->
-					ar_mining_stats:h1_sent_to_peer(pool, length(H1List));
-				_ ->
-					ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
-			end
+			ar_mining_stats:h1_sent_to_peer(Peer, length(H1List))
 	end.
 
 send_h2(Peer, Candidate) ->
 	spawn(fun() ->
 		ar_http_iface_client:cm_h2_send(Peer, Candidate)
 	end),
-	case Peer of
-		{pool, _} ->
-			ar_mining_stats:h2_sent_to_peer(pool);
-		_ ->
-			ar_mining_stats:h2_sent_to_peer(Peer)
-	end.
+	ar_mining_stats:h2_sent_to_peer(Peer).
 
 add_mining_peer({Peer, StorageModules}, State) ->
 	Partitions = lists:map(
