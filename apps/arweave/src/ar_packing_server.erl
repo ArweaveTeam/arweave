@@ -136,6 +136,7 @@ init([]) ->
 			ActualRatePack_2_5, ActualRatePack_2_6, ActualRateUnpack_2_5,
 			ActualRateUnpack_2_6}),
 	SpawnSchedulers = min(SchedulersRequired, Schedulers),
+	ar:console("~nStarting ~B packing threads.~n", [SpawnSchedulers]),
 	%% Since the total rate of spawned processes might exceed the desired rate,
 	%% artificially throttle processes uniformly.
 	ThrottleDelay = calculate_throttle_delay(SpawnSchedulers, PackingRate),

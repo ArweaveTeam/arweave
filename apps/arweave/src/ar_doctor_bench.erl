@@ -46,6 +46,7 @@ bench_read(Args) ->
 	application:set_env(arweave, config, Config),
 
 	ar_kv_sup:start_link(),
+	ar_storage_sup:start_link(),
 	ar_sync_record_sup:start_link(),
 	ar_chunk_storage_sup:start_link(),
 
@@ -76,11 +77,12 @@ bench_read(Args) ->
 parse_storage_modules([], StorageModules) ->
 	StorageModules;
 parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModules) ->
-	StorageModule = ar_config:parse_storage_module(StorageModuleConfig),
+	{ok, StorageModule} = ar_config:parse_storage_module(StorageModuleConfig),
 	parse_storage_modules(StorageModuleConfigs, StorageModules ++ [StorageModule]).
 	
-read_storage_module(DataDir, StorageModule, StopTime) ->
+read_storage_module(_DataDir, StorageModule, StopTime) ->
 	StoreID = ar_storage_module:id(StorageModule),
+	ar_chunk_storage:open_files(StoreID),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),	
 
 	OutputFileName = string:replace(?OUTPUT_FILENAME, "<storage_module>", StoreID),

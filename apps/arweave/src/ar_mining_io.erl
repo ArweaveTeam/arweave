@@ -213,7 +213,8 @@ start_io_thread(PartitionNumber, MiningAddress, StoreID,
 	Ref = monitor(process, Thread),
 	Threads2 = maps:put({PartitionNumber, MiningAddress, StoreID}, Thread, Threads),
 	Refs2 = maps:put(Ref, {PartitionNumber, MiningAddress, StoreID}, Refs),
-	?LOG_DEBUG([{event, started_io_mining_thread}, {partition_number, PartitionNumber},
+	?LOG_DEBUG([{event, started_io_mining_thread},
+			{partition_number, PartitionNumber},
 			{mining_addr, ar_util:safe_encode(MiningAddress)}, {store_id, StoreID}]),
 	State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }.
 
@@ -231,7 +232,8 @@ io_thread(PartitionNumber, MiningAddress, StoreID, Cache, LastClearTime) ->
 		{WhichChunk, {Worker, Candidate, RecallRangeStart}} ->
 			{ChunkOffsets, Cache2} =
 				get_chunks(WhichChunk, Candidate, RecallRangeStart, StoreID, Cache),
-			send_chunks(WhichChunk, Worker, Candidate, RecallRangeStart, ChunkOffsets),
+			ar_mining_worker:chunks_read(
+				Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets),
 			{Cache3, LastClearTime2} = maybe_clear_cached_chunks(Cache2, LastClearTime),
 			io_thread(PartitionNumber, MiningAddress, StoreID, Cache3, LastClearTime2)
 	end.
@@ -315,32 +317,6 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 	log_read_range(Candidate, WhichChunk, length(ChunkOffsets), StartTime),
 	ChunkOffsets2.
 
-send_chunks(WhichChunk, Worker, Candidate, RangeStart, ChunkOffsets) ->
-	NonceMax = max(0, (?RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE - 1)),
-	send_chunks(WhichChunk, Worker, Candidate, RangeStart, 0, NonceMax, ChunkOffsets).
-
-send_chunks(_WhichChunk, _Worker, _Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets)
-		when Nonce > NonceMax ->
-	ok;
-send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, []) ->
-	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
-	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, []);
-send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
-		[{EndOffset, Chunk} | ChunkOffsets])
-		%% Only 256 KiB chunks are supported at this point.
-		when RangeStart + Nonce * ?DATA_CHUNK_SIZE < EndOffset - ?DATA_CHUNK_SIZE ->
-	ar_mining_worker:recall_chunk(Worker, skipped, WhichChunk, Nonce, Candidate),
-	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax,
-		[{EndOffset, Chunk} | ChunkOffsets]);
-send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
-		[{EndOffset, _Chunk} | ChunkOffsets])
-		when RangeStart + Nonce * ?DATA_CHUNK_SIZE >= EndOffset ->
-	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets);
-send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce, NonceMax,
-		[{_EndOffset, Chunk} | ChunkOffsets]) ->
-	ar_mining_worker:recall_chunk(Worker, WhichChunk, Chunk, Nonce, Candidate),
-	send_chunks(WhichChunk, Worker, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets).
-
 filter_by_packing([], _Intervals, _StoreID) ->
 	[];
 filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = StoreID) ->
@@ -361,31 +337,22 @@ log_read_range(Candidate, WhichChunk, FoundChunks, StartTime) ->
 		false -> 0
 	end,
 
-	#mining_candidate{
-		partition_number = Partition1, partition_number2 = Partition2 } = Candidate,
-
 	PartitionNumber = case WhichChunk of
-		chunk1 -> Partition1;
-		chunk2 -> Partition2
+		chunk1 -> Candidate#mining_candidate.partition_number;
+		chunk2 -> Candidate#mining_candidate.partition_number2
 	end,
 
-	ar_mining_stats:raw_read_rate(PartitionNumber, ReadRate).
+	ar_mining_stats:raw_read_rate(PartitionNumber, ReadRate),
 
 	% ?LOG_DEBUG([{event, mining_debug_read_recall_range},
-	% 		{worker, Worker},
 	% 		{thread, self()},
 	% 		{elapsed_time_ms, ElapsedTime},
+	% 		{chunks_read, FoundChunks},
+	% 		{mib_read, FoundChunks / 4},
 	% 		{read_rate_mibps, ReadRate},
 	% 		{chunk, WhichChunk},
-	% 		{range_start, RangeStart},
-	% 		{size, ?RECALL_RANGE_SIZE},
-	% 		{h0, ar_util:safe_encode(H0)},
-	% 		{step_number, StepNumber},
-	% 		{output, ar_util:safe_encode(Output)},
-	% 		{partition_number, PartitionNumber},
-	% 		{store_id, StoreID},
-	% 		{found_chunks, FoundChunks},
-	% 		{found_chunks_with_required_packing, FoundChunksWithRequiredPacking}]).
+	% 		{partition_number, PartitionNumber}]),
+	ok.
 
 find_thread(PartitionNumber, MiningAddress, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, maps:iterator(Threads)),

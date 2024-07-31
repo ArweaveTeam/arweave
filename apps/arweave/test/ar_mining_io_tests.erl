@@ -8,8 +8,8 @@
 
 -define(WEAVE_SIZE, trunc(2.5 * ?PARTITION_SIZE)).
 
-recall_chunk(_Worker, WhichChunk, Chunk, Nonce, Candidate) ->
-	ets:insert(?MODULE, {WhichChunk, Nonce, Chunk, Candidate}).
+chunks_read(_Worker, WhichChunk, Candidate, RangeStart, ChunkOffsets) ->
+	ets:insert(?MODULE, {WhichChunk, Candidate, RangeStart, ChunkOffsets}).
 
 setup_all() ->
 	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
@@ -19,7 +19,7 @@ setup_all() ->
 		[[{?PARTITION_SIZE, N, {spora_2_6, RewardAddr}}] || N <- lists:seq(0, 8)]),
 	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
 	{Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_mining_worker, recall_chunk, fun recall_chunk/5}
+		{ar_mining_worker, chunks_read, fun chunks_read/5}
 	]),
 	Functions = Setup(),
 	{Cleanup, Functions}.
@@ -38,7 +38,6 @@ read_recall_range_test_() ->
 		{foreach, fun setup_one/0, fun cleanup_one/1,
 		[
 			{timeout, 30, fun test_read_recall_range/0},
-			{timeout, 30, fun test_io_threads/0},
 			{timeout, 30, fun test_partitions/0}
 		]}
     }.
@@ -46,70 +45,50 @@ read_recall_range_test_() ->
 test_read_recall_range() ->
 	Candidate = default_candidate(),
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, self(), Candidate, 0)),
-	wait_for_io(2),
+	wait_for_io(1),
 	[Chunk1, Chunk2] = get_recall_chunks(),
-	assert_recall_chunks([{chunk1, 0, Chunk1, Candidate}, {chunk1, 1, Chunk2, Candidate}]),
+	assert_chunks_read([{chunk1, Candidate, 0, [
+		{?DATA_CHUNK_SIZE, Chunk1},
+		{?DATA_CHUNK_SIZE*2, Chunk2}]}]),
 
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, self(), Candidate, ?DATA_CHUNK_SIZE div 2)),
-	wait_for_io(2),
-	assert_recall_chunks([{chunk1, 0, Chunk1, Candidate}, {chunk1, 1, Chunk2, Candidate}]),
+	wait_for_io(1),
+	[Chunk1, Chunk2, Chunk3] = get_recall_chunks(),
+	assert_chunks_read([{chunk1, Candidate, ?DATA_CHUNK_SIZE div 2, [
+		{?DATA_CHUNK_SIZE, Chunk1},
+		{?DATA_CHUNK_SIZE*2, Chunk2},
+		{?DATA_CHUNK_SIZE*3, Chunk3}]}]),
 
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, self(), Candidate, ?DATA_CHUNK_SIZE)),
-	wait_for_io(2),
+	wait_for_io(1),
 	[Chunk2, Chunk3] = get_recall_chunks(),
-	assert_recall_chunks([{chunk1, 0, Chunk2, Candidate}, {chunk1, 1, Chunk3, Candidate}]),
+	assert_chunks_read([{chunk1, Candidate, ?DATA_CHUNK_SIZE, [
+		{?DATA_CHUNK_SIZE*2, Chunk2},
+		{?DATA_CHUNK_SIZE*3, Chunk3}]}]),
 
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk2, self(), Candidate,
 		?PARTITION_SIZE - ?DATA_CHUNK_SIZE)),
-	wait_for_io(2),
+	wait_for_io(1),
 	[Chunk4, Chunk5] = get_recall_chunks(),
-	assert_recall_chunks([{chunk2, 0, Chunk4, Candidate}, {chunk2, 1, Chunk5, Candidate}]),
+	assert_chunks_read([{chunk2, Candidate, ?PARTITION_SIZE - ?DATA_CHUNK_SIZE, [
+		{?PARTITION_SIZE, Chunk4},
+		{?PARTITION_SIZE + ?DATA_CHUNK_SIZE, Chunk5}]}]),
 
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk2, self(), Candidate, ?PARTITION_SIZE)),
-	wait_for_io(2),
+	wait_for_io(1),
 	[Chunk5, Chunk6] = get_recall_chunks(),
-	assert_recall_chunks([{chunk2, 0, Chunk5, Candidate}, {chunk2, 1, Chunk6, Candidate}]),
+	assert_chunks_read([{chunk2, Candidate, ?PARTITION_SIZE, [
+		{?PARTITION_SIZE + ?DATA_CHUNK_SIZE, Chunk5},
+		{?PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), Chunk6}]}]),
 
 	?assertEqual(true, ar_mining_io:read_recall_range(chunk1, self(), Candidate,
 		?WEAVE_SIZE - ?DATA_CHUNK_SIZE)),
-	wait_for_io(2),
-	[Chunk7, _Chunk8] = get_recall_chunks(),
-	assert_recall_chunks([{chunk1, 0, Chunk7, Candidate}, {skipped, 1, chunk1, Candidate}]),
+	wait_for_io(1),
+	[Chunk7] = get_recall_chunks(),
+	assert_chunks_read([{chunk1, Candidate, ?WEAVE_SIZE - ?DATA_CHUNK_SIZE, [
+		{?WEAVE_SIZE, Chunk7}]}]),
 
 	?assertEqual(false, ar_mining_io:read_recall_range(chunk1, self(), Candidate, ?WEAVE_SIZE)).
-
-test_io_threads() ->
-	Candidate = default_candidate(),
-
-	%% Assert that ar_mining_io uses multiple threads when reading from different partitions.
-	%% We do this indirectly by comparing the time to read repeatedly from one partition vs.
-	%% the time to read from multiple partitions.
-	Iterations = 3000,
-
-    SingleThreadStart = os:system_time(microsecond),
-    lists:foreach(
-		fun(_) ->
-			?assertEqual(true, ar_mining_io:read_recall_range(chunk1, self(), Candidate, 0))
-		end,
-		lists:seq(1, Iterations)),
-	wait_for_io(2*Iterations),
-    SingleThreadTime = os:system_time(microsecond) - SingleThreadStart,
-	ets:delete_all_objects(?MODULE),
-
-	MultiThreadStart = os:system_time(microsecond),
-    lists:foreach(
-		fun(I) ->
-			Offset = (I * 2 * ?DATA_CHUNK_SIZE) rem ?WEAVE_SIZE,
-			?assertEqual(true, ar_mining_io:read_recall_range(chunk1, self(), Candidate, Offset))
-		end,
-		lists:seq(1, Iterations)),
-	wait_for_io(2*Iterations),
-    MultiThreadTime = os:system_time(microsecond) - MultiThreadStart,
-	ets:delete_all_objects(?MODULE),
-	?assert(SingleThreadTime > 1.5 * MultiThreadTime,
-		lists:flatten(io_lib:format(
-			"Multi-thread time (~p) not twice as fast as single-thread time (~p)",
-			[MultiThreadTime, SingleThreadTime]))).	
 
 test_partitions() ->
 	Candidate = default_candidate(),
@@ -170,8 +149,17 @@ wait_for_io(NumChunks) ->
 	?assertEqual(true, Result, "Timeout while waiting to read chunks").
 
 get_recall_chunks() ->
-	lists:map(fun({_, _, Chunk, _}) -> Chunk end, lists:sort(ets:tab2list(?MODULE))).
+	case ets:tab2list(?MODULE) of
+		[] -> [];
+		[{_WhichChunk, _Candidate, _RangeStart, ChunkOffsets}] -> 
+			lists:map(
+				fun({_Offset, Chunk}) -> 
+					Chunk
+				end,
+				ChunkOffsets
+			)
+	end.
 	
-assert_recall_chunks(ExpectedChunks) ->
-	?assertEqual(lists:sort(ExpectedChunks), lists:sort(ets:tab2list(?MODULE))),
+assert_chunks_read(ExpectedChunks) ->
+	?assertEqual(ExpectedChunks, ets:tab2list(?MODULE)),
 	ets:delete_all_objects(?MODULE).

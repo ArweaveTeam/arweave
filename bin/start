@@ -7,11 +7,38 @@ SCRIPT_DIR="$(dirname "$0")"
 # Sets $ARWEAVE and $ARWEAVE_* variables
 source $SCRIPT_DIR/arweave.env
 
+# Initialize arrays for Erlang and Arweave arguments
+ERLANG_ARGS=()
+ARWEAVE_ARGS=()
+
+echo "$@"
+
+# Check if -- exists in the arguments
+if [[ "$*" == *" -- "* ]]; then
+    parsing_erlang=true
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            parsing_erlang=false
+            continue
+        fi
+        if $parsing_erlang; then
+            ERLANG_ARGS+=("$arg")
+        else
+            ARWEAVE_ARGS+=("$arg")
+        fi
+    done
+else
+    # If no --, all arguments go to Arweave
+    ARWEAVE_ARGS=("$@")
+fi
+
+echo "Custom Erlang Options: ${ERLANG_ARGS[@]}"
+
 while true; do
     echo Launching Erlang Virtual Machine...
     if
         # -run ar main: call ar:main() on launch
-        $ARWEAVE $ARWEAVE_COMMAND $ARWEAVE_OPTS -run ar main $RANDOMX_JIT "$@"
+        $ARWEAVE $ARWEAVE_COMMAND $ARWEAVE_OPTS ${ERLANG_ARGS[@]} -run ar main $RANDOMX_JIT ${ARWEAVE_ARGS[@]}
     then
         echo "Arweave Heartbeat: Server terminated safely."
         exit 0

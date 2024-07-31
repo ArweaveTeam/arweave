@@ -3,7 +3,7 @@
 
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
 		set_total_data_size/1, set_storage_module_data_size/6,
-		vdf_computed/0, raw_read_rate/2, chunk_read/1, h1_computed/1, h2_computed/1,
+		vdf_computed/0, raw_read_rate/2, chunks_read/2, h1_computed/2, h2_computed/2,
 		h1_solution/0, h2_solution/0, block_found/0,
 		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1]).
 
@@ -109,17 +109,17 @@ vdf_computed() ->
 raw_read_rate(PartitionNumber, ReadRate) ->
 	prometheus_gauge:set(mining_rate, [raw_read, PartitionNumber], ReadRate).
 
-chunk_read(PartitionNumber) ->
-	increment_count({partition, PartitionNumber, read, total}),
-	increment_count({partition, PartitionNumber, read, current}).
+chunks_read(PartitionNumber, Count) ->
+	increment_count({partition, PartitionNumber, read, total}, Count),
+	increment_count({partition, PartitionNumber, read, current}, Count).
 
-h1_computed(PartitionNumber) ->
-	increment_count({partition, PartitionNumber, h1, total}),
-	increment_count({partition, PartitionNumber, h1, current}).
+h1_computed(PartitionNumber, Count) ->
+	increment_count({partition, PartitionNumber, h1, total}, Count),
+	increment_count({partition, PartitionNumber, h1, current}, Count).
 
-h2_computed(PartitionNumber) ->
-	increment_count({partition, PartitionNumber, h2, total}),
-	increment_count({partition, PartitionNumber, h2, current}).
+h2_computed(PartitionNumber, Count) ->
+	increment_count({partition, PartitionNumber, h2, total}, Count),
+	increment_count({partition, PartitionNumber, h2, current}, Count).
 
 h1_sent_to_peer(Peer, H1Count) ->
 	increment_count({peer, Peer, h1_to_peer, total}, H1Count),
@@ -253,6 +253,9 @@ reset_all_stats() ->
 %% If the Key doesn't exist, it is initialized with the current timestamp and a count of Amount
 increment_count(Key) ->
 	increment_count(Key, 1).
+
+increment_count(_Key, 0) ->
+	ok;
 increment_count(Key, Amount) ->
 	ets:update_counter(?MODULE, Key,
 		[{3, 1}, {4, Amount}], 						%% increment samples by 1, count by Amount
@@ -308,13 +311,24 @@ get_start(Key) ->
 			Start
 	end.
 
-get_total_data_size() ->
-	case ets:lookup(?MODULE, total_data_size) of 
-		[] ->
-			0;
-		[{_, TotalDataSize}] ->
-			TotalDataSize
-	end.
+get_total_minable_data_size() ->
+	{ok, Config} = application:get_env(arweave, config),
+	MiningAddress = Config#config.mining_addr,
+    Pattern = {
+		{partition, '_', storage_module, '_', packing, {spora_2_6, MiningAddress}},
+		'$1'
+	},
+	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
+	TotalDataSize = lists:sum(Sizes),
+
+	WeaveSize = ar_node:get_weave_size(),
+	TipPartition = ar_node:get_max_partition_number(WeaveSize) + 1,
+	TipPartitionSize = get_partition_data_size(TipPartition),
+	?LOG_DEBUG([{event, get_total_minable_data_size},
+		{total_data_size, TotalDataSize}, {weave_size, WeaveSize},
+		{tip_partition, TipPartition}, {tip_partition_size, TipPartitionSize},
+		{total_minable_data_size, TotalDataSize - TipPartitionSize}	]),
+	TotalDataSize - TipPartitionSize.
 
 get_overall_total(PartitionPeer, Stat, TotalCurrent) ->
 	Pattern = {{PartitionPeer, '_', Stat, TotalCurrent}, '_', '_', '$1'},
@@ -383,7 +397,7 @@ generate_report(_Height, [], _Peers, _WeaveSize, Now) ->
 generate_report(Height, Partitions, Peers, WeaveSize, Now) ->
 	PoA1Multiplier = ar_difficulty:poa1_diff_multiplier(Height),
 	VDFSpeed = vdf_speed(Now),
-	TotalDataSize = get_total_data_size(),
+	TotalDataSize = get_total_minable_data_size(),
 	Report = #report{
 		now = Now,
 		vdf_speed = VDFSpeed,
@@ -782,28 +796,28 @@ cleanup_env(Config) ->
     application:set_env(arweave, config, Config).
 
 test_read_stats() ->
-	test_local_stats(fun chunk_read/1, read).
+	test_local_stats(fun chunks_read/2, read).
 
 test_h1_stats() ->
-	test_local_stats(fun h1_computed/1, h1).
+	test_local_stats(fun h1_computed/2, h1).
 
 test_h2_stats() ->
-	test_local_stats(fun h2_computed/1, h2).
+	test_local_stats(fun h2_computed/2, h2).
 
 test_local_stats(Fun, Stat) ->
 	ar_mining_stats:pause_performance_reports(120000),
 	reset_all_stats(),
-	Fun(1),
+	Fun(1, 1),
 	TotalStart1 = get_start({partition, 1, Stat, total}),
 	CurrentStart1 = get_start({partition, 1, Stat, current}),
 	timer:sleep(1000),
-	Fun(1),
-	Fun(1),
+	Fun(1, 1),
+	Fun(1, 1),
 	
-	Fun(2),
+	Fun(2, 1),
 	TotalStart2 = get_start({partition, 2, Stat, total}),
 	CurrentStart2 = get_start({partition, 2, Stat, current}),
-	Fun(2),
+	Fun(2, 1),
 	
 	?assert(TotalStart1 /= TotalStart2),
 	?assert(CurrentStart1 /= CurrentStart2),
@@ -915,16 +929,14 @@ test_vdf_stats() ->
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
+	WeaveSize = floor(2 * ?PARTITION_SIZE),
+	ets:insert(node_state, [{weave_size, WeaveSize}]),
+
 	ar_mining_stats:pause_performance_reports(120000),
 	reset_all_stats(),
-	?assertEqual(0, get_total_data_size()),
+	?assertEqual(0, get_total_minable_data_size()),
 	?assertEqual(0, get_partition_data_size(1)),
 	?assertEqual(0, get_partition_data_size(2)),
-
-	ar_mining_stats:set_total_data_size(1000),
-	?assertEqual(1000, get_total_data_size()),
-	ar_mining_stats:set_total_data_size(500),
-	?assertEqual(500, get_total_data_size()),
 
 	MiningAddress = <<"MINING">>,
 	PackingAddress = <<"PACKING">>,
@@ -961,6 +973,7 @@ test_data_size_stats() ->
 
 	?assertEqual(214, get_partition_data_size(1)),
 	?assertEqual(202, get_partition_data_size(2)),
+	?assertEqual(214, get_total_minable_data_size()),
 
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, unpacked}),
@@ -984,9 +997,10 @@ test_data_size_stats() ->
 	
 	?assertEqual(336, get_partition_data_size(1)),
 	?assertEqual(52, get_partition_data_size(2)),
+	?assertEqual(336, get_total_minable_data_size()),
 
 	reset_all_stats(),
-	?assertEqual(0, get_total_data_size()),
+	?assertEqual(0, get_total_minable_data_size()),
 	?assertEqual(0, get_partition_data_size(1)),
 	?assertEqual(0, get_partition_data_size(2)).
 
@@ -1226,6 +1240,7 @@ test_report(PoA1Multiplier) ->
 
 	Now = erlang:monotonic_time(millisecond),
 	WeaveSize = floor(10 * ?PARTITION_SIZE),
+	ets:insert(node_state, [{weave_size, WeaveSize}]),
 	ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
@@ -1249,20 +1264,13 @@ test_report(PoA1Multiplier) ->
 	ar_mining_stats:h2_solution(),
 	ar_mining_stats:h2_solution(),
 	ar_mining_stats:block_found(),
-	ar_mining_stats:chunk_read(1),
-	ar_mining_stats:chunk_read(1),
-	ar_mining_stats:chunk_read(1),
-	ar_mining_stats:chunk_read(2),
-	ar_mining_stats:chunk_read(2),
-	ar_mining_stats:h1_computed(1),
-	ar_mining_stats:h1_computed(1),
-	ar_mining_stats:h1_computed(1),
-	ar_mining_stats:h2_computed(1),
-	ar_mining_stats:h2_computed(1),
-	ar_mining_stats:h1_computed(2),
-	ar_mining_stats:h1_computed(2),
-	ar_mining_stats:h2_computed(2),
-	ar_mining_stats:h2_computed(2),
+	ar_mining_stats:chunks_read(1, 1),
+	ar_mining_stats:chunks_read(1, 2),
+	ar_mining_stats:chunks_read(2, 2),
+	ar_mining_stats:h1_computed(1, 2),
+	ar_mining_stats:h1_computed(1, 1),
+	ar_mining_stats:h2_computed(1, 2),
+	ar_mining_stats:h1_computed(2, 4),
 	ar_mining_stats:h1_sent_to_peer(Peer1, 10),
 	ar_mining_stats:h1_sent_to_peer(Peer1, 5),
 	ar_mining_stats:h1_sent_to_peer(Peer1, 15),
@@ -1296,8 +1304,8 @@ test_report(PoA1Multiplier) ->
 		TotalHash, Partition1Hash, Partition2Hash,
 		TotalOptimal, Partition1Optimal, Partition2Optimal
 	} = case PoA1Multiplier of
-		1 -> {9.0, 5.0, 4.0, 763.1992652893132, 445.19926815033614, 317.99999713897705};
-		2 -> {6.5, 3.5, 3.0, 403.1996086120671, 235.19961147309004, 167.99999713897705}
+		1 -> {9.0, 5.0, 4.0, 763.1992309570705, 445.19924812320824, 317.9999828338623};
+		2 -> {5.5, 3.5, 2.0, 403.19957427982445, 235.19959144596214, 167.9999828338623}
 	end,
 
 	?assertEqual(#report{ 
@@ -1306,8 +1314,10 @@ test_report(PoA1Multiplier) ->
 		h1_solution = 1,
 		h2_solution = 2,
 		confirmed_block = 1,
-		total_data_size = floor(0.6 * ?PARTITION_SIZE),
-		optimal_overall_read_mibps = 190.7998163223283,
+		total_data_size = 
+			floor(0.1 * ?PARTITION_SIZE) + floor(0.2 * ?PARTITION_SIZE) +
+			floor(0.05 * ?PARTITION_SIZE) + floor(0.25 * ?PARTITION_SIZE),
+		optimal_overall_read_mibps = 190.79980773926764,
 		optimal_overall_hash_hps = TotalOptimal,
 		average_read_mibps = 1.25,
 		current_read_mibps = 1.25,
@@ -1333,7 +1343,7 @@ test_report(PoA1Multiplier) ->
 			#partition_report{
 				partition_number = 2,
 				data_size = floor(0.25 * ?PARTITION_SIZE),
-				optimal_read_mibps = 79.49999928474426,
+				optimal_read_mibps = 79.49999570846558,
 				average_read_mibps = 0.5,
 				current_read_mibps = 0.5,
 				optimal_hash_hps = Partition2Optimal,
@@ -1343,7 +1353,7 @@ test_report(PoA1Multiplier) ->
 			#partition_report{
 				partition_number = 1,
 				data_size = 734002,
-				optimal_read_mibps = 111.299817037584039,
+				optimal_read_mibps = 111.29981203080206,
 				average_read_mibps = 0.75,
 				current_read_mibps = 0.75,
 				optimal_hash_hps = Partition1Optimal,
