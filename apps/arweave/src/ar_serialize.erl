@@ -2040,16 +2040,10 @@ pool_cm_jobs_to_json_struct(Jobs) ->
 	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs,
 			partitions = Partitions } = Jobs,
 	{[
-		{h1_to_h2_jobs, [pool_cm_h1_to_h2_job_to_json_struct(Job) || Job <- H1ToH2Jobs]},
-		{h1_read_jobs, [pool_cm_h1_read_job_to_json_struct(Job) || Job <- H1ReadJobs]},
+		{h1_to_h2_jobs, [candidate_to_json_struct(Job) || Job <- H1ToH2Jobs]},
+		{h1_read_jobs, [candidate_to_json_struct(Job) || Job <- H1ReadJobs]},
 		{partitions, Partitions}
 	]}.
-
-pool_cm_h1_to_h2_job_to_json_struct(Job) ->
-	candidate_to_json_struct(Job).
-
-pool_cm_h1_read_job_to_json_struct(Job) ->
-	candidate_to_json_struct(Job).
 
 json_map_to_pool_cm_jobs(Map) ->
 	H1ToH2Jobs = [json_map_to_candidate(Job)

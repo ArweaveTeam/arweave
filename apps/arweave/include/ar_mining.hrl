@@ -28,6 +28,7 @@
 	preimage = not_set, %% serialized. this can be either the h1 or h2 preimage
 	seed = not_set, %% serialized
 	session_key = not_set, %% serialized
+	solution_peer = not_set, %% serialized. if set, the winning hash came from another peer
 	start_interval_number = not_set, %% serialized
 	step_number = not_set, %% serialized
 	label = <<"not_set">> %% not atom, in order to prevent atom table pollution DoS
@@ -49,6 +50,7 @@
 	recall_byte2 = undefined,
 	seed = << 0:(8 * 48) >>,
 	solution_hash = << 0:256 >>,
+	solution_peer = not_set, %% serialized. if set, the solution hash came from another peer
 	start_interval_number = 0,
 	step_number = 0,
 	steps = []

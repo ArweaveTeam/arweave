@@ -35,7 +35,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, is_client/0, get_current_session_key_seed_pairs/0, 
+-export([start_link/0, is_client/0, is_server/0, get_current_session_key_seed_pairs/0, 
 		generate_jobs/1, get_latest_job/0, cache_jobs/1, get_cached_jobs/1,
 		process_partial_solution/2, post_partial_solution/1, pool_peer/0, process_cm_jobs/2]).
 
@@ -66,6 +66,10 @@ start_link() ->
 is_client() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.is_pool_client == true.
+
+is_server() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.is_pool_server == true.
 
 %% @doc Return a list of up to two most recently cached VDF session key, seed pairs.
 get_current_session_key_seed_pairs() ->

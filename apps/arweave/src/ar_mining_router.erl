@@ -233,24 +233,14 @@ route_solution(#config{ cm_exit_peer = not_set, is_pool_client = true }, Solutio
 	ar_pool:post_partial_solution(Solution);
 route_solution(#config{ cm_exit_peer = not_set, is_pool_client = false }, Solution, Ref) ->
 	ar_mining_server:validate_solution(Solution);
-route_solution(#config{ cm_exit_peer = ExitPeer, is_pool_client = true }, Solution, Ref) ->
+route_solution(#config{ cm_exit_peer = ExitPeer }, Solution, Ref) ->
 	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution) of
 		{ok, _} ->
 			ok;
 		{error, Reason} ->
-			?LOG_WARNING([{event, found_partial_solution_but_failed_to_reach_exit_node},
-					{reason, io_lib:format("~p", [Reason])}]),
-			ar:console("We found a partial solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])])
-	end;
-route_solution(#config{ cm_exit_peer = ExitPeer, is_pool_client = false }, Solution, Ref) ->
-	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
-		{ok, _} ->
-			ok;
-		{error, Reason} ->
 			?LOG_WARNING([{event, solution_rejected},
-					{reason, failed_to_reach_exit_node},
-					{message, io_lib:format("~p", [Reason])}]),
+				{reason, failed_to_reach_exit_node},
+				{message, io_lib:format("~p", [Reason])}]),
 			ar:console("We found a solution but failed to reach the exit node, "
 					"error: ~p.", [io_lib:format("~p", [Reason])]),
 			ar_mining_stats:solution(rejected)

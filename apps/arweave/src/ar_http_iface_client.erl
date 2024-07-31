@@ -15,7 +15,7 @@
 		get_block_time_history/3,
 		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
 		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
-		cm_publish_send/2, get_jobs/2, post_partial_solution/2,
+		get_jobs/2, post_partial_solution/2,
 		get_pool_cm_jobs/2, post_pool_cm_jobs/2, post_cm_partition_table_to_pool/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -595,16 +595,6 @@ cm_h2_send(Peer, Candidate) ->
 		timeout => 20 * 1000,
 		connect_timeout => 5 * 1000
 	})).
-
-cm_publish_send(Peer, Solution) ->
-	?LOG_DEBUG([{event, cm_publish_send}, {peer, ar_util:format_peer(Peer)},
-		{solution, ar_util:encode(Solution#mining_solution.solution_hash)},
-		{step_number, Solution#mining_solution.step_number},
-		{start_interval_number, Solution#mining_solution.start_interval_number},
-		{seed, ar_util:encode(Solution#mining_solution.seed)}]),
-	JSON = ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution)),
-	Req = build_cm_or_pool_request(post, Peer, "/coordinated_mining/publish", JSON),
-	handle_cm_noop_response(ar_http:req(Req)).
 
 %% @doc Fetch the jobs from the pool or coordinated mining exit peer.
 get_jobs(Peer, PrevOutput) ->

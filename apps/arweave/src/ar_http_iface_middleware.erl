@@ -475,82 +475,6 @@ handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 	erlang:put(post_block2, true),
 	post_block(request, {Req, Pid, binary}, erlang:timestamp());
 
-%% Accept a (partial) solution from a pool or a CM node and validate it.
-%%
-%% If the node is a CM exit node and a pool client, send the given solution to
-%% the pool and return an empty JSON object.
-%%
-%% If the node is a pool server, return a JSON object:
-%% {
-%%   "indep_hash": "",
-%%   "status": ""
-%% },
-%% where the status is one of "accepted", "accepted_block", "rejected_bad_poa",
-%% "rejected_wrong_hash", "rejected_bad_vdf", "rejected_mining_address_banned",
-%% "stale", "rejected_vdf_not_found", "rejected_missing_key_file".
-%% If the solution is partial, "indep_hash" string is empty.
-handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		true ->
-			handle_post_partial_solution(Req, Pid);
-		false ->
-			not_joined(Req)
-	end;
-
-%% Return the information about up to ?GET_JOBS_COUNT latest VDF steps and a difficulty.
-%%
-%% If the given VDF output is present in the latest 10 VDF steps, return only the steps
-%% strictly above the given output. If the given output is our latest output,
-%% wait for up to ?GET_JOBS_TIMEOUT_S and return an empty list if no new steps are
-%% computed by the time. Also, only return the steps strictly above the latest block.
-%%
-%% If we are a pool server, return the current network difficulty along with the VDF
-%% information.
-%%
-%% If we are a CM exit node and a pool client, return the partial difficulty provided
-%% by the pool.
-%%
-%% Return a JSON object:
-%% {
-%%   "jobs":
-%%     [
-%%       {"nonce_limiter_output": "...", "step_number": "...", "partition_upper_bound": "..."},
-%%       ...
-%%     ],
-%%   "partial_diff": "...",
-%%   "next_seed": "...",
-%%   "interval_number": "...",
-%%   "next_vdf_difficulty": "..."
-%% }
-handle(<<"GET">>, [<<"jobs">>, EncodedPrevOutput], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_util:safe_decode(EncodedPrevOutput) of
-				{ok, PrevOutput} ->
-					handle_get_jobs(PrevOutput, Req);
-				{error, invalid} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_prev_output }), Req}
-			end
-	end;
-
-handle(<<"GET">>, [<<"jobs">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_jobs(<<>>, Req)
-	end;
-
-handle(<<"POST">>, [<<"pool_cm_jobs">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_post_pool_cm_jobs(Req, Pid)
-	end;
-
 %% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
@@ -1377,6 +1301,70 @@ handle(<<"GET">>, [<<"vdf4">>, <<"previous_session">>], Req, _Pid) ->
 			handle_get_vdf(Req, get_previous_session, 4)
 	end;
 
+%%%===================================================================
+%%% CM and Pool endpoints.
+%%%===================================================================
+
+%% Accept a (partial) solution from a pool or a CM node and validate it.
+%%
+%% If the node is a CM exit node and a pool client, send the given solution to
+%% the pool and return an empty JSON object.
+%%
+%% If the node is a pool server, return a JSON object:
+%% {
+%%   "indep_hash": "",
+%%   "status": ""
+%% },
+%% where the status is one of "accepted", "accepted_block", "rejected_bad_poa",
+%% "rejected_wrong_hash", "rejected_bad_vdf", "rejected_mining_address_banned",
+%% "stale", "rejected_vdf_not_found", "rejected_missing_key_file".
+%% If the solution is partial, "indep_hash" string is empty.
+handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
+	ar_http_iface_cm_pool:handle_post_solution(Req, Pid);
+
+%% Deprecated. Use POST /partial_solution instead.
+handle(<<"POST">>, [<<"coordinated_mining">>, <<"publish">>], Req, Pid) ->
+	ar_http_iface_cm_pool:handle_post_solution(Req, Pid);
+
+%% Return the information about up to ?GET_JOBS_COUNT latest VDF steps and a difficulty.
+%%
+%% If the given VDF output is present in the latest 10 VDF steps, return only the steps
+%% strictly above the given output. If the given output is our latest output,
+%% wait for up to ?GET_JOBS_TIMEOUT_S and return an empty list if no new steps are
+%% computed by the time. Also, only return the steps strictly above the latest block.
+%%
+%% If we are a pool server, return the current network difficulty along with the VDF
+%% information.
+%%
+%% If we are a CM exit node and a pool client, return the partial difficulty provided
+%% by the pool.
+%%
+%% Return a JSON object:
+%% {
+%%   "jobs":
+%%     [
+%%       {"nonce_limiter_output": "...", "step_number": "...", "partition_upper_bound": "..."},
+%%       ...
+%%     ],
+%%   "partial_diff": "...",
+%%   "next_seed": "...",
+%%   "interval_number": "...",
+%%   "next_vdf_difficulty": "..."
+%% }
+handle(<<"GET">>, [<<"jobs">>, EncodedPrevOutput], Req, Pid) ->
+	ar_http_iface_cm_pool:handle_get_jobs(EncodedPrevOutput, Req, Pid);
+
+handle(<<"GET">>, [<<"jobs">>], Req, Pid) ->
+	ar_http_iface_cm_pool:handle_get_jobs(<<>>, Req, Pid);
+
+handle(<<"POST">>, [<<"pool_cm_jobs">>], Req, Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_post_pool_cm_jobs(Req, Pid)
+	end;
+
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) ->
 	case validate_cm_request(Req) of
 		true ->
@@ -1451,13 +1439,7 @@ handle(<<"POST">>, [<<"coordinated_mining">>, <<"h2">>], Req, Pid) ->
 			FailureResponse
 	end;
 
-handle(<<"POST">>, [<<"coordinated_mining">>, <<"publish">>], Req, Pid) ->
-	case validate_cm_request(Req) of
-		true ->
-			handle_post_solution(Req, Pid);
-		FailureResponse ->
-			FailureResponse
-	end;
+
 
 %% Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
@@ -2501,75 +2483,6 @@ check_block_receive_timestamp(H) ->
 					ar_events:send(block, {mined_block_received, H, erlang:timestamp()});
 				_ ->
 					ok
-			end
-	end.
-
-handle_post_partial_solution(Req, Pid) ->
-	{ok, Config} = application:get_env(arweave, config),
-	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {Config#config.is_pool_server, CMExitNode} of
-		{false, false} ->
-			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
-		{true, _} ->
-			case check_internal_api_secret(Req) of
-				{reject, {Status, Headers, Body}} ->
-					{Status, Headers, Body, Req};
-				pass ->
-					handle_post_solution(Req, Pid)
-			end;
-		{_, true} ->
-			case check_cm_api_secret(Req) of
-				{reject, {Status, Headers, Body}} ->
-					{Status, Headers, Body, Req};
-				pass ->
-					handle_post_solution(Req, Pid)
-			end
-	end.
-
-handle_post_solution(Req, Pid) ->
-	Peer = ar_http_util:arweave_peer(Req),
-	case read_complete_body(Req, Pid) of
-		{ok, Body, Req2} ->
-			case catch ar_serialize:json_map_to_solution(
-					jiffy:decode(Body, [return_maps])) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-				Solution ->
-					ar_mining_router:received_solution(Solution,
-						[{peer, ar_util:format_peer(Peer)}]),
-					Response = ar_mining_router:route_solution(Solution),
-					JSON = ar_serialize:solution_response_to_json_struct(Response),
-					{200, #{}, ar_serialize:jsonify(JSON), Req2}
-			end;
-		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req};
-		{error, timeout} ->
-			{500, #{}, <<"Handler timeout">>, Req}
-	end.
-
-handle_get_jobs(PrevOutput, Req) ->
-	{ok, Config} = application:get_env(arweave, config),
-	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {Config#config.is_pool_server, CMExitNode} of
-		{false, false} ->
-			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
-		{true, _} ->
-			case check_internal_api_secret(Req) of
-				{reject, {Status, Headers, Body}} ->
-					{Status, Headers, Body, Req};
-				pass ->
-					Jobs = ar_pool:generate_jobs(PrevOutput),
-					JSON = ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)),
-					{200, #{}, JSON, Req}
-			end;
-		{_, true} ->
-			case check_cm_api_secret(Req) of
-				{reject, {Status, Headers, Body}} ->
-					{Status, Headers, Body, Req};
-				pass ->
-					Jobs = ar_pool:get_cached_jobs(PrevOutput),
-					JSON = ar_serialize:jsonify(ar_serialize:jobs_to_json_struct(Jobs)),
-					{200, #{}, JSON, Req}
 			end
 	end.
 

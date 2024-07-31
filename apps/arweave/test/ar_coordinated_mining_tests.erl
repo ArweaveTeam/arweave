@@ -127,7 +127,7 @@ test_no_secret() ->
 	?assertMatch(
 		{error, {ok, {{<<"421">>, _}, _, 
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
+		ar_http_iface_client:post_partial_solution(Peer, dummy_solution())).
 
 test_bad_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
@@ -150,7 +150,7 @@ test_bad_secret() ->
 	?assertMatch(
 		{error, {ok, {{<<"421">>, _}, _, 
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
+		ar_http_iface_client:post_partial_solution(Peer, dummy_solution())).
 
 test_partition_table() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ?PARTITION_SIZE),
