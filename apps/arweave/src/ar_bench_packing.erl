@@ -39,6 +39,8 @@ show_help() ->
 	io:format("  baseline_pack~n"),
 	io:format("  baseline_repack~n"),
 	io:format("  nif_repack~n"),
+	io:format("  nif_repack_legacy_to_composite~n"),
+	io:format("  nif_repack_composite_to_composite~n"),
 	io:format("  baseline_pack_composite~n"),
 	erlang:halt().
 
@@ -47,8 +49,10 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, Iterations, Rounds) ->
 	ets:new(offsets, [set, named_table, public]),
 	EncodedRoot = <<"OIgTTxuEPklMR47Ho8VWnNr1Uh6TNjzxwIs38yuqBK0">>,
 	Root = ar_util:decode(EncodedRoot),
-	EncodedRewardAddress = <<"mvK6e65dcD6XNYDHUVxMa7-d6wVP535Ummtvb8OCUtQ">>,
-	RewardAddress = ar_util:decode(EncodedRewardAddress),
+	EncodedSrcAddress = <<"mvK6e65dcD6XNYDHUVxMa7-d6wVP535Ummtvb8OCUtQ">>,
+	SrcAddress = ar_util:decode(EncodedSrcAddress),
+	EncodedDstAddress = <<"ymvkTAt6DVo0LaV3SH4TPLvzCmn5TIqvCcv1pHWt2Zs">>,
+	DstAddress = ar_util:decode(EncodedDstAddress),
 
 	NumWorkers = erlang:system_info(dirty_cpu_schedulers_online),
 
@@ -68,19 +72,23 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, Iterations, Rounds) ->
 	io:format("~n"),
 
 	Permutation = {TotalMegaBytes, JIT, LargePages, HardwareAES},
-	generate_input(Permutation, NumWorkers,  Root, RewardAddress),
+	generate_input(Permutation, NumWorkers,  Root, SrcAddress),
 
 	start_vdf(VDF),
 
 	case Test of
 		baseline_pack ->
-			run_dirty_benchmark(baseline_pack, Permutation, NumWorkers, Root, RewardAddress, Iterations, Rounds);
+			run_dirty_benchmark(baseline_pack, Permutation, NumWorkers, Root, SrcAddress, DstAddress, Iterations, Rounds);
 		baseline_repack ->
-			run_dirty_benchmark(baseline_repack, Permutation, NumWorkers, Root, RewardAddress, Iterations, Rounds);
+			run_dirty_benchmark(baseline_repack, Permutation, NumWorkers, Root, SrcAddress, DstAddress, Iterations, Rounds);
 		nif_repack ->
-			run_dirty_benchmark(nif_repack, Permutation, NumWorkers, Root, RewardAddress, Iterations, Rounds);
+			run_dirty_benchmark(nif_repack, Permutation, NumWorkers, Root, SrcAddress, DstAddress, Iterations, Rounds);
+		nif_repack_legacy_to_composite ->
+			run_dirty_benchmark(nif_repack_legacy_to_composite, Permutation, NumWorkers, Root, SrcAddress, DstAddress, Iterations, Rounds);
+		nif_repack_composite_to_composite ->
+			run_dirty_benchmark(nif_repack_composite_to_composite, Permutation, NumWorkers, Root, SrcAddress, DstAddress, Iterations, Rounds);
 		baseline_pack_composite ->
-			run_dirty_benchmark(baseline_pack_composite, Permutation, NumWorkers, Root, RewardAddress, Iterations, Rounds);
+			run_dirty_benchmark(baseline_pack_composite, Permutation, NumWorkers, Root, SrcAddress, DstAddress, Iterations, Rounds);
 		_ ->
 			show_help()
 	end,
@@ -132,7 +140,7 @@ unpacked_filename(TotalMegaBytes) ->
 packed_filename(TotalMegaBytes) ->
 	io_lib:format("benchmark.input.~p.packed", [TotalMegaBytes]).
 
-generate_input({TotalMegaBytes, _, _, _} = Permutation, NumWorkers, Root, RewardAddress) ->
+generate_input({TotalMegaBytes, _, _, _} = Permutation, NumWorkers, Root, SrcAddress) ->
 	TotalBytes = TotalMegaBytes * ?MiB,
 
 	UnpackedFilename = unpacked_filename(TotalMegaBytes),
@@ -159,11 +167,11 @@ generate_input({TotalMegaBytes, _, _, _} = Permutation, NumWorkers, Root, Reward
 				true ->
 					file:delete(PackedFilename),
 					write_packed_data(Permutation, UnpackedFilename, PackedFilename,
-						TotalMegaBytes, NumWorkers, Root, RewardAddress)
+						TotalMegaBytes, NumWorkers, Root, SrcAddress)
 			end;
 		{error, _} ->
 			write_packed_data(Permutation, UnpackedFilename, PackedFilename,
-						TotalMegaBytes, NumWorkers, Root, RewardAddress)
+						TotalMegaBytes, NumWorkers, Root, SrcAddress)
 	end.
 
 write_random_data(UnpackedFilename, TotalBytes) ->
@@ -184,7 +192,7 @@ write_chunks_loop(File, RemainingBytes, ChunkSize) ->
 	write_chunks_loop(File, RemainingBytes - BytesToWrite, ChunkSize).
 
 write_packed_data({_, JIT, LargePages, _}, UnpackedFilename, PackedFilename,
-		TotalMegaBytes, NumWorkers, Root, RewardAddress) ->
+		TotalMegaBytes, NumWorkers, Root, SrcAddress) ->
 	io:format("Generating input file: ~s~n", [PackedFilename]),
 	{ok, RandomXState} = ar_bench_timer:record({init},
 		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
@@ -193,7 +201,7 @@ write_packed_data({_, JIT, LargePages, _}, UnpackedFilename, PackedFilename,
 	PackedFileHandle = open_file(PackedFilename, [write, binary]),
 	dirty_test({TotalMegaBytes, 1, 1, 1},
 		fun baseline_pack_chunks/5,
-		{RandomXState, UnpackedFileHandle, PackedFileHandle, Root, RewardAddress},
+		{RandomXState, UnpackedFileHandle, PackedFileHandle, Root, SrcAddress},
 		NumWorkers),
 	
 	file:close(PackedFileHandle),
@@ -217,44 +225,58 @@ vdf_worker(Input) ->
 %% Test Runners
 %% --------------------------------------------------------------------------------------------
 
-run_dirty_benchmark(Test, {_, JIT, LargePages, _} = Permutation, NumWorkers, Root, RewardAddress, Iterations, Rounds) ->
+run_dirty_benchmark(Test, {_, JIT, LargePages, _} = Permutation, NumWorkers, Root, SrcAddress, DstAddress, Iterations, Rounds) ->
 	{ok, RandomXState} = ar_bench_timer:record({init},
 		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
 
-	run_dirty_test(Test, Permutation, RandomXState, Root, RewardAddress, NumWorkers, Iterations, Rounds).
+	run_dirty_test(Test, Permutation, RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds).
 
 run_dirty_test(baseline_pack, Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, Iterations, Rounds) ->
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
 	run_dirty_pack_test(baseline_pack, Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, Iterations, Rounds);
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds);
 run_dirty_test(baseline_repack, {TotalMegaBytes, _, _, _} = Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, _Iterations, _Rounds) ->
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
 	run_dirty_repack_test(
 		packed_filename(TotalMegaBytes),
 		output_filename(baseline_repack, Permutation),
 		fun baseline_repack_chunks/5,
-		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
+		Permutation, RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds);
 run_dirty_test(nif_repack, {TotalMegaBytes, _, _, _} = Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, _Iterations, _Rounds) ->
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
 	run_dirty_repack_test(
 		packed_filename(TotalMegaBytes),
 		output_filename(nif_repack, Permutation),
 		fun nif_repack_chunks/5,
-		Permutation, RandomXState, Root, RewardAddress, NumWorkers);
+		Permutation, RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds);
+run_dirty_test(nif_repack_legacy_to_composite, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
+	run_dirty_repack_test(
+		packed_filename(TotalMegaBytes),
+		output_filename(nif_repack_legacy_to_composite, Permutation),
+		fun nif_repack_legacy_to_composite_chunks/5,
+		Permutation, RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds);
+run_dirty_test(nif_repack_composite_to_composite, {TotalMegaBytes, _, _, _} = Permutation,
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
+	run_dirty_repack_test(
+		packed_filename(TotalMegaBytes),
+		output_filename(nif_repack_composite_to_composite, Permutation),
+		fun nif_repack_composite_to_composite_chunks/5,
+		Permutation, RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds);
 run_dirty_test(baseline_pack_composite, Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, Iterations, Rounds) ->
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
 	run_dirty_pack_test(baseline_pack_composite, Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, Iterations, Rounds).
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds).
 
 run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, _Iterations, _Rounds) ->
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, _Iterations, _Rounds) ->
 	UnpackedFilename = unpacked_filename(TotalMegaBytes),
 	PackedFilename = output_filename(baseline_pack, Permutation),
 	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
 	PackedFileHandle = open_file(PackedFilename, [write, binary]),
 
 	io:format("packing..."),
-	Args = {RandomXState, UnpackedFileHandle, PackedFileHandle, Root, RewardAddress},
+	Args = {RandomXState, UnpackedFileHandle, PackedFileHandle, Root, SrcAddress, DstAddress},
 	ar_bench_timer:record({wall}, fun dirty_test/4, [
 		Permutation,
 		fun baseline_pack_chunks/5,
@@ -266,14 +288,14 @@ run_dirty_pack_test(baseline_pack, {TotalMegaBytes, _, _, _} = Permutation,
 	file:close(PackedFileHandle);
 
 run_dirty_pack_test(baseline_pack_composite, {TotalMegaBytes, _, _, _} = Permutation,
-		RandomXState, Root, RewardAddress, NumWorkers, Iterations, Rounds) ->
+		RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
 	UnpackedFilename = unpacked_filename(TotalMegaBytes),
 	PackedFilename = output_filename(baseline_pack, Permutation),
 	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
 	PackedFileHandle = open_file(PackedFilename, [write, binary]),
 
 	io:format("packing..."),
-	Args = {RandomXState, UnpackedFileHandle, PackedFileHandle, Root, RewardAddress, Iterations, Rounds},
+	Args = {RandomXState, UnpackedFileHandle, PackedFileHandle, Root, SrcAddress, DstAddress, Iterations, Rounds},
 	ar_bench_timer:record({wall}, fun dirty_test/4, [
 		Permutation,
 		fun baseline_pack_composite_chunks/5,
@@ -286,7 +308,7 @@ run_dirty_pack_test(baseline_pack_composite, {TotalMegaBytes, _, _, _} = Permuta
 
 run_dirty_repack_test(
 		InputFileName, OutputFileName, WorkerFun,
-		Permutation, RandomXState, Root, RewardAddress, NumWorkers) ->
+		Permutation, RandomXState, Root, SrcAddress, DstAddress, NumWorkers, Iterations, Rounds) ->
 	InputFileHandle = open_file(InputFileName, [read, binary]),
 	OutputFileHandle = open_file(OutputFileName, [write, binary]),
 
@@ -294,7 +316,7 @@ run_dirty_repack_test(
 	Args = {
 		RandomXState,
 		InputFileHandle, OutputFileHandle,
-		Root, RewardAddress
+		Root, SrcAddress, DstAddress, Iterations, Rounds
 	},
 	ar_bench_timer:record({wall}, fun dirty_test/4, [
 		Permutation,
@@ -351,11 +373,11 @@ baseline_pack_chunks(WorkerID,
 		} = Permutation,
 		{
 			RandomXState, UnpackedFileHandle, PackedFileHandle, 
-			Root, RewardAddress
+			Root, _SrcAddress, DstAddress
 		} = Args,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
+	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, DstAddress}, Offset, Root),
 	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
 		{ok, UnpackedChunk} ->
@@ -386,11 +408,11 @@ baseline_pack_composite_chunks(WorkerID,
 		} = Permutation,
 		{
 			RandomXState, UnpackedFileHandle, PackedFileHandle, 
-			Root, RewardAddress, Iterations, Rounds
+			Root, _SrcAddress, DstAddress, Iterations, Rounds
 		} = Args,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{composite, Key} = ar_packing_server:chunk_key({composite, RewardAddress, Iterations}, Offset, Root),
+	{composite, Key} = ar_packing_server:chunk_key({composite, DstAddress, Iterations}, Offset, Root),
 	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
 		{ok, UnpackedChunk} ->
@@ -419,19 +441,20 @@ baseline_repack_chunks(WorkerID,
 		} = Permutation,
 		{
 			RandomXState, PackedFileHandle, RepackedFileHandle,
-			Root, RewardAddress
+			Root, SrcAddress, DstAddress, _Iterations, _Rounds
 		} = Args,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
+	{spora_2_6, UnpackKey} = ar_packing_server:chunk_key({spora_2_6, SrcAddress}, Offset, Root),
+	{spora_2_6, PackKey} = ar_packing_server:chunk_key({spora_2_6, DstAddress}, Offset, Root),
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
 		{ok, PackedChunk} ->
 			{ok, UnpackedChunk} = ar_mine_randomx:randomx_decrypt_chunk_nif(
-				RandomXState, Key, PackedChunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS_2_6,
+				RandomXState, UnpackKey, PackedChunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),
 			{ok, RepackedChunk} =ar_mine_randomx:randomx_encrypt_chunk_nif(
-				RandomXState, Key, UnpackedChunk, ?RANDOMX_PACKING_ROUNDS_2_6,
+				RandomXState, PackKey, UnpackedChunk, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),	
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
@@ -454,16 +477,17 @@ nif_repack_chunks(WorkerID,
 		} = Permutation,
 		{
 			RandomXState, PackedFileHandle, RepackedFileHandle,
-			Root, RewardAddress
+			Root, SrcAddress, DstAddress, _Iterations, _Rounds
 		} = Args,
 		Offset, Size) ->
 	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
+	{spora_2_6, UnpackKey} = ar_packing_server:chunk_key({spora_2_6, SrcAddress}, Offset, Root),
+	{spora_2_6, PackKey} = ar_packing_server:chunk_key({spora_2_6, DstAddress}, Offset, Root),
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
-		{ok, PackedChunk} -> % TODO
-			{ok, RepackedChunk} = ar_mine_randomx:randomx_reencrypt_chunk_nif(
-				RandomXState, Key, Key, PackedChunk, ChunkSize,
+		{ok, PackedChunk} ->
+			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_chunk_nif(
+				RandomXState, UnpackKey, PackKey, PackedChunk, ChunkSize,
 				?RANDOMX_PACKING_ROUNDS_2_6, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
@@ -475,6 +499,70 @@ nif_repack_chunks(WorkerID,
 			0
 	end,
 	nif_repack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
+
+nif_repack_legacy_to_composite_chunks(_WorkerID, _Permutation, _Args, _Offset, Size) when Size =< 0 ->
+	ok;
+nif_repack_legacy_to_composite_chunks(WorkerID,
+		{
+			_, JIT, LargePages, HardwareAES
+		} = Permutation,
+		{
+			RandomXState, PackedFileHandle, RepackedFileHandle,
+			Root, SrcAddress, DstAddress, Iterations, Rounds
+		} = Args,
+		Offset, Size) ->
+	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
+	{spora_2_6, UnpackKey} = ar_packing_server:chunk_key({spora_2_6, SrcAddress}, Offset, Root),
+	{composite, PackKey} = ar_packing_server:chunk_key({composite, DstAddress, Iterations}, Offset, Root),
+	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
+	RemainingSize = case ReadResult of
+		{ok, PackedChunk} ->
+			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_legacy_to_composite_chunk_nif(
+				RandomXState, UnpackKey, PackKey, PackedChunk,
+				JIT, LargePages, HardwareAES,
+				?RANDOMX_PACKING_ROUNDS_2_6, Rounds, Iterations, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT
+				),
+			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
+			(Size - ChunkSize);
+		eof ->
+			0;
+		{error, Reason} ->
+			io:format("Error reading file: ~p~n", [Reason]),
+			0
+	end,
+	nif_repack_legacy_to_composite_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
+
+nif_repack_composite_to_composite_chunks(_WorkerID, _Permutation, _Args, _Offset, Size) when Size =< 0 ->
+	ok;
+nif_repack_composite_to_composite_chunks(WorkerID,
+		{
+			_, JIT, LargePages, HardwareAES
+		} = Permutation,
+		{
+			RandomXState, PackedFileHandle, RepackedFileHandle,
+			Root, SrcAddress, DstAddress, Iterations, Rounds
+		} = Args,
+		Offset, Size) ->
+	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
+	{composite, UnpackKey} = ar_packing_server:chunk_key({composite, SrcAddress, Iterations}, Offset, Root),
+	{composite, PackKey} = ar_packing_server:chunk_key({composite, DstAddress, Iterations}, Offset, Root),
+	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
+	RemainingSize = case ReadResult of
+		{ok, PackedChunk} ->
+			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_composite_to_composite_chunk_nif(
+				RandomXState, UnpackKey, PackKey, PackedChunk,
+				?RANDOMX_PACKING_ROUNDS_2_6, Rounds, Iterations, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT,
+				JIT, LargePages, HardwareAES),
+			
+			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
+			(Size - ChunkSize);
+		eof ->
+			0;
+		{error, Reason} ->
+			io:format("Error reading file: ~p~n", [Reason]),
+			0
+	end,
+	nif_repack_composite_to_composite_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% Helpers
