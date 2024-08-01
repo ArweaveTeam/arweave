@@ -18,11 +18,11 @@ run_benchmark_from_cli(Args) ->
 	run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, Iterations, Rounds).
 
 get_flag_value([], _, DefaultValue) ->
-    DefaultValue;
+	DefaultValue;
 get_flag_value([Flag | [Value | _Tail]], TargetFlag, _DefaultValue) when Flag == TargetFlag ->
-    Value;
+	Value;
 get_flag_value([_ | Tail], TargetFlag, DefaultValue) ->
-    get_flag_value(Tail, TargetFlag, DefaultValue).
+	get_flag_value(Tail, TargetFlag, DefaultValue).
 
 show_help() ->
 	io:format("~nUsage: benchmark-packing [options]~n"),
@@ -168,20 +168,20 @@ generate_input({TotalMegaBytes, _, _, _} = Permutation, NumWorkers, Root, Reward
 
 write_random_data(UnpackedFilename, TotalBytes) ->
 	io:format("Generating input file: ~s~n", [UnpackedFilename]),
-    File = open_file(UnpackedFilename, [write, binary, raw]),
-    write_chunks(File, TotalBytes),
-    file:close(File).
+	File = open_file(UnpackedFilename, [write, binary, raw]),
+	write_chunks(File, TotalBytes),
+	file:close(File).
 write_chunks(File, TotalBytes) ->
-    ChunkSize = 1024*1024, % 1MB
-    RemainingBytes = TotalBytes,
-    write_chunks_loop(File, RemainingBytes, ChunkSize).
+	ChunkSize = 1024*1024, % 1MB
+	RemainingBytes = TotalBytes,
+	write_chunks_loop(File, RemainingBytes, ChunkSize).
 write_chunks_loop(_File, 0, _) ->
-    ok;
+	ok;
 write_chunks_loop(File, RemainingBytes, ChunkSize) ->
-    BytesToWrite = min(RemainingBytes, ChunkSize),
-    Data = crypto:strong_rand_bytes(BytesToWrite),
-    file:write(File, Data),
-    write_chunks_loop(File, RemainingBytes - BytesToWrite, ChunkSize).
+	BytesToWrite = min(RemainingBytes, ChunkSize),
+	Data = crypto:strong_rand_bytes(BytesToWrite),
+	file:write(File, Data),
+	write_chunks_loop(File, RemainingBytes - BytesToWrite, ChunkSize).
 
 write_packed_data({_, JIT, LargePages, _}, UnpackedFilename, PackedFilename,
 		TotalMegaBytes, NumWorkers, Root, RewardAddress) ->
@@ -338,7 +338,7 @@ dirty_worker(WorkerID, Permutation, WorkerFun, Args, Offset, Size) ->
 			Offset,
 			Size
 		]),
-    exit(normal).
+	exit(normal).
 
 %% --------------------------------------------------------------------------------------------
 %% Baseline Packing Test
@@ -358,18 +358,18 @@ baseline_pack_chunks(WorkerID,
 	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
 	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
-        {ok, UnpackedChunk} ->
+		{ok, UnpackedChunk} ->
 			{ok, PackedChunk} = ar_mine_randomx:randomx_encrypt_chunk_nif(
 				RandomXState, Key, UnpackedChunk, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),
 			file:pwrite(PackedFileHandle, Offset, PackedChunk),
 			(Size - ChunkSize);
-        eof ->
-            0;
-        {error, Reason} ->
-            io:format("Error reading file: ~p~n", [Reason]),
+		eof ->
+			0;
+		{error, Reason} ->
+			io:format("Error reading file: ~p~n", [Reason]),
 			0
-    end,
+	end,
 	baseline_pack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
@@ -393,19 +393,19 @@ baseline_pack_composite_chunks(WorkerID,
 	{composite, Key} = ar_packing_server:chunk_key({composite, RewardAddress, Iterations}, Offset, Root),
 	ReadResult = file:pread(UnpackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
-        {ok, UnpackedChunk} ->
+		{ok, UnpackedChunk} ->
 			{ok, PackedChunk} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
 				RandomXState, Key, UnpackedChunk,
 				JIT, LargePages, HardwareAES,
 				Rounds, Iterations, 32),
 			file:pwrite(PackedFileHandle, Offset, PackedChunk),
 			(Size - ChunkSize);
-        eof ->
-            0;
-        {error, Reason} ->
-            io:format("Error reading file: ~p~n", [Reason]),
+		eof ->
+			0;
+		{error, Reason} ->
+			io:format("Error reading file: ~p~n", [Reason]),
 			0
-    end,
+	end,
 	baseline_pack_composite_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
@@ -426,7 +426,7 @@ baseline_repack_chunks(WorkerID,
 	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
-        {ok, PackedChunk} ->
+		{ok, PackedChunk} ->
 			{ok, UnpackedChunk} = ar_mine_randomx:randomx_decrypt_chunk_nif(
 				RandomXState, Key, PackedChunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),
@@ -435,12 +435,12 @@ baseline_repack_chunks(WorkerID,
 				JIT, LargePages, HardwareAES),	
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
-        eof ->
-            0;
-        {error, Reason} ->
-            io:format("Error reading file: ~p~n", [Reason]),
+		eof ->
+			0;
+		{error, Reason} ->
+			io:format("Error reading file: ~p~n", [Reason]),
 			0
-    end,
+	end,
 	baseline_repack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
@@ -461,19 +461,19 @@ nif_repack_chunks(WorkerID,
 	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, RewardAddress}, Offset, Root),
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
-        {ok, PackedChunk} -> % TODO
+		{ok, PackedChunk} -> % TODO
 			{ok, RepackedChunk} = ar_mine_randomx:randomx_reencrypt_chunk_nif(
 				RandomXState, Key, Key, PackedChunk, ChunkSize,
 				?RANDOMX_PACKING_ROUNDS_2_6, ?RANDOMX_PACKING_ROUNDS_2_6,
 				JIT, LargePages, HardwareAES),
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
-        eof ->
-            0;
-        {error, Reason} ->
-            io:format("Error reading file: ~p~n", [Reason]),
+		eof ->
+			0;
+		{error, Reason} ->
+			io:format("Error reading file: ~p~n", [Reason]),
 			0
-    end,
+	end,
 	nif_repack_chunks(WorkerID, Permutation, Args, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
