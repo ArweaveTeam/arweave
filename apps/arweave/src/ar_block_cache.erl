@@ -35,7 +35,7 @@
 %% longest_chain => [{BlockHash, [TXIDs]}]
 %%  - the top ?STORE_BLOCKS_BEHIND_CURRENT blocks of the longest chain
 %% tip -> BlockHash
-%%   - curent block chain tip
+%%   - current block chain tip
 %% links -> gb_set({Height, BlockHash})
 %%   - all blocks in the cache sorted by height. This is used when pruning the cache and
 %%     discarding all blocks below a certain height (and all off-chain children of those blocks
@@ -309,7 +309,7 @@ tx_id(TXID) ->
 
 %% @doc Mark the given block as the tip block. Mark the previous blocks as on-chain.
 %% Mark the on-chain blocks from other forks as validated. Raises invalid_tip if
-%% one of the preceeding blocks is not validated. Raises not_found if the block
+%% one of the preceding blocks is not validated. Raises not_found if the block
 %% is not found.
 %%
 %% Setting a new tip can cause some branches to be invalidated by the checkpoint, so we need

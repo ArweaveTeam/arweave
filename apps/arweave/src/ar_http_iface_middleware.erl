@@ -104,7 +104,7 @@ handle(Peer, Req, Pid) ->
 	%% We break the P3 handling into two steps:
 	%% 1. Before the request is processed, ar_p3:allow_request checks whether this is a
 	%%    P3 request and if so it validates the header and applies the charge
-	%% 2. After the request is processed, handle_p3_response checks if the requet failed,
+	%% 2. After the request is processed, handle_p3_response checks if the request failed,
 	%%	  if so it reverses the charge
 	%%
 	%% This two-step process is needed to ensure clients aren't charged for failed requests.
@@ -1260,7 +1260,7 @@ handle(<<"GET">>, [<<"balance">>, Addr, Network, Token], Req, _Pid) ->
 handle(<<"GET">>, [<<"rates">>], Req, _Pid) ->
 	{200, #{}, ar_p3:get_rates_json(), Req};
 
-%% Return the current block hieght, or 500.
+%% Return the current block height, or 500.
 handle(Method, [<<"height">>], Req, _Pid)
 		when (Method == <<"GET">>) or (Method == <<"HEAD">>) ->
 	case ar_node:is_joined() of
