@@ -1571,30 +1571,30 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 							{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }}
 					end;
 				{{ok, PackedChunk, MaybeUnpackedChunk}, _} ->
-					ComputedChunkID = ar_tx:generate_chunk_id(MaybeUnpackedChunk),
-					case ComputedChunkID == ChunkID of
-						true ->
-							Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
-									data_path => DataPath, tx_path => TXPath },
-							case MaybeUnpackedChunk of
-								none ->
-									{ok, Proof};
-								_ ->
-									{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }}
-							end;
-						false ->
-							?LOG_ERROR([{event, fetched_chunk_invalid_packing_id},
-									{tags, [solution_proofs]},
-									{packing, ar_chunk_storage:encode_packing(Packing)},
-									{stored_packing,
-										ar_chunk_storage:encode_packing(StoredPacking)},
-									{absolute_end_offset, AbsoluteOffset},
-									{store_id, StoreID},
-									{expected_chunk_id, ar_util:encode(ChunkID)},
-									{chunk_id, ar_util:encode(ComputedChunkID)}]),
-							invalidate_bad_data_record({AbsoluteOffset - ChunkSize,
-								AbsoluteOffset, {chunks_index, StoreID}, StoreID, 4}),
-							{error, chunk_not_found}
+					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
+							data_path => DataPath, tx_path => TXPath },
+					case MaybeUnpackedChunk of
+						none ->
+							{ok, Proof};
+						_ ->
+							ComputedChunkID = ar_tx:generate_chunk_id(MaybeUnpackedChunk),
+							case ComputedChunkID == ChunkID of
+								true ->
+									{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }};
+								false ->
+									?LOG_ERROR([{event, fetched_chunk_invalid_packing_id},
+											{tags, [solution_proofs]},
+											{packing, ar_chunk_storage:encode_packing(Packing)},
+											{stored_packing,
+												ar_chunk_storage:encode_packing(StoredPacking)},
+											{absolute_end_offset, AbsoluteOffset},
+											{store_id, StoreID},
+											{expected_chunk_id, ar_util:encode(ChunkID)},
+											{chunk_id, ar_util:encode(ComputedChunkID)}]),
+									invalidate_bad_data_record({AbsoluteOffset - ChunkSize,
+										AbsoluteOffset, {chunks_index, StoreID}, StoreID, 4}),
+									{error, chunk_not_found}
+							end
 					end
 			end
 	end.

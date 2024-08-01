@@ -109,45 +109,62 @@ randomx_decrypt_sub_chunk(Packing, RandomxState, Key, Chunk, SubChunkStartOffset
 
 -ifdef(DEBUG).
 
+randomx_encrypt_chunk({composite, _, PackingDifficulty} = Packing, _State, Key, Chunk) ->
+	Options = [{encrypt, true}, {padding, zero}],
+	IV = binary:part(Key, {0, 16}),
+	SubChunks = split_into_sub_chunks(ar_packing_server:pad_chunk(Chunk)),
+	{ok, iolist_to_binary(lists:map(
+			fun({SubChunkStartOffset, SubChunk}) ->
+				Key2 = crypto:hash(sha256, << Key/binary, SubChunkStartOffset:24 >>),
+				lists:foldl(
+					fun(_, Acc) ->
+						crypto:crypto_one_time(aes_256_cbc, Key2, IV, Acc, Options)
+					end,
+					SubChunk,
+					lists:seq(1, PackingDifficulty)
+				)
+			end,
+			SubChunks))};
 randomx_encrypt_chunk(Packing, _State, Key, Chunk) ->
 	Options = [{encrypt, true}, {padding, zero}],
 	IV = binary:part(Key, {0, 16}),
-	Iterations =
-		case Packing of
-			{composite, _Addr, PackingDifficulty} ->
-				PackingDifficulty;
-			_ ->
-				1
-		end,
-	{ok, lists:foldl(
-			fun(_, Acc) ->
-				crypto:crypto_one_time(aes_256_cbc, Key, IV, Acc, Options)
-			end,
-			ar_packing_server:pad_chunk(Chunk),
-			lists:seq(1, Iterations))}.
+	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
 
+split_into_sub_chunks(Chunk) ->
+	split_into_sub_chunks(Chunk, 0).
+
+split_into_sub_chunks(<<>>, _StartOffset) ->
+	[];
+split_into_sub_chunks(<< SubChunk:8192/binary, Rest/binary >>, StartOffset) ->
+	[{StartOffset, SubChunk} | split_into_sub_chunks(Rest, StartOffset + 8192)].
+
+randomx_decrypt_chunk2(_RandomxState, Key, Chunk, _ChunkSize,
+		{composite, _, PackingDifficulty} = Packing) ->
+	Options = [{encrypt, false}],
+	IV = binary:part(Key, {0, 16}),
+	SubChunks = split_into_sub_chunks(Chunk),
+	{ok, iolist_to_binary(lists:map(
+			fun({SubChunkStartOffset, SubChunk}) ->
+				Key2 = crypto:hash(sha256, << Key/binary, SubChunkStartOffset:24 >>),
+				lists:foldl(
+					fun(_, Acc) ->
+						crypto:crypto_one_time(aes_256_cbc, Key2, IV, Acc, Options)
+					end,
+					SubChunk,
+					lists:seq(1, PackingDifficulty)
+				)
+			end,
+			SubChunks))};
 randomx_decrypt_chunk2(_RandomxState, Key, Chunk, _ChunkSize, Packing) ->
 	Options = [{encrypt, false}],
 	IV = binary:part(Key, {0, 16}),
-	Iterations =
-		case Packing of
-			{composite, _Addr, PackingDifficulty} ->
-				PackingDifficulty;
-			_ ->
-				1
-		end,
-	{ok, lists:foldl(
-		fun(_, Acc) ->
-			crypto:crypto_one_time(aes_256_cbc, Key, IV, Acc, Options)
-		end,
-		Chunk,
-		lists:seq(1, Iterations))}.
+	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
 
 randomx_decrypt_sub_chunk2(Packing, _RandomxState, Key, Chunk, SubChunkStartOffset) ->
 	{_, _, Iterations} = Packing,
 	Options = [{encrypt, false}],
 	Key2 = crypto:hash(sha256, << Key/binary, SubChunkStartOffset:24 >>),
-	IV = binary:part(Key2, {0, 16}),
+	IV = binary:part(Key, {0, 16}),
 	{ok, lists:foldl(fun(_, Acc) ->
 			crypto:crypto_one_time(aes_256_cbc, Key2, IV, Acc, Options)
 		end, Chunk, lists:seq(1, Iterations))}.

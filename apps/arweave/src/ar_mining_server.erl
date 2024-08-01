@@ -34,7 +34,12 @@
 	allow_composite_packing		= false
 }).
 
+-ifdef(DEBUG).
+-define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 0).
+-else.
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 10).
+-endif.
+
 -define(FETCH_POA_FROM_PEERS_TIMEOUT_MS, 10000).
 
 %%%===================================================================
@@ -595,10 +600,11 @@ prepare_solution(poa1, Candidate,
 			ar_block:get_packing(PackingDifficulty, MiningAddress)) of
 		{ok, PoA1} ->
 			Solution#mining_solution{ poa1 = PoA1 };
-		_ ->
+		{error, Error} ->
 			Modules = ar_storage_module:get_all(RecallByte1 + 1),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
 			?LOG_ERROR([{event, failed_to_find_poa_proofs_locally},
+					{error, io_lib:format("~p", [Error])},
 					{tags, [solution_proofs]},
 					{recall_byte, RecallByte1},
 					{modules_covering_recall_byte, ModuleIDs}]),
@@ -634,10 +640,11 @@ prepare_solution(poa2, Candidate,
 			ar_block:get_packing(PackingDifficulty, MiningAddress)) of
 		{ok, PoA2} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
-		_ ->
+		{error, Error} ->
 			Modules = ar_storage_module:get_all(RecallByte2 + 1),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
 			?LOG_ERROR([{event, failed_to_find_poa2_proofs_locally},
+					{error, io_lib:format("~p", [Error])},
 					{tags, [solution_proofs]},
 					{recall_byte2, RecallByte2},
 					{modules_covering_recall_byte2, ModuleIDs}]),
@@ -823,18 +830,38 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 	end,
 	{noreply, State3}.
 
-read_poa(RecallByte, Chunk, Packing) ->
+read_poa(RecallByte, ChunkOrSubChunk, Packing) ->
 	PoAReply = read_poa(RecallByte, Packing),
-	case {Chunk, PoAReply} of
-		{not_set, _} ->
+	case {ChunkOrSubChunk, PoAReply, Packing} of
+		{not_set, _PoAReply, _Packing} ->
 			PoAReply;
-		{Chunk, {ok, #poa{ chunk = Chunk }}} ->
+		{ChunkOrSubChunk, {ok, #poa{ chunk = Chunk } = PoA}, {composite, _, _}} ->
+			case sub_chunk_belongs_to_chunk(ChunkOrSubChunk, Chunk) of
+				true ->
+					{ok, PoA#poa{ chunk = ChunkOrSubChunk }};
+				false ->
+					{error, sub_chunk_mismatch};
+				Error2 ->
+					Error2
+			end;
+		{Chunk, {ok, #poa{ chunk = Chunk }}, _Packing} ->
 			PoAReply;
-		{_Chunk, {ok, #poa{}}} ->
+		{_Chunk, {ok, #poa{}}, _Packing} ->
 			{error, chunk_mismatch};
-		{_, Error} ->
+		{_Chunk, Error, _Packing} ->
 			Error
 	end.
+
+sub_chunk_belongs_to_chunk(SubChunk,
+		<< SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, _Rest/binary >>) ->
+	true;
+sub_chunk_belongs_to_chunk(SubChunk,
+		<< _SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>) ->
+	sub_chunk_belongs_to_chunk(SubChunk, Rest);
+sub_chunk_belongs_to_chunk(_SubChunk, <<>>) ->
+	false;
+sub_chunk_belongs_to_chunk(_SubChunk, _Chunk) ->
+	{error, uneven_chunk}.
 
 read_poa(RecallByte, Packing) ->
 	Options = #{ pack => true, packing => Packing, is_miner_request => true },

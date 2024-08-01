@@ -1454,7 +1454,7 @@ poa_to_json_struct(POA) ->
 			<<>> ->
 				Fields;
 			UnpackedChunk ->
-				{unpacked_chunk, UnpackedChunk}
+				Fields ++ [{unpacked_chunk, ar_util:encode(UnpackedChunk)}]
 		end,
 	{Fields2}.
 

@@ -84,6 +84,8 @@ scale_diff(Diff, {ScaleDividend, ScaleDivisor}, Height) ->
 %% 1 - (1 / 32) * p - (31 * p ^ 2)/(2 * 32 ^ 2).
 %% Therefore, x is approximately p/32 + 31 * (p ^ 2) / (2 * 32 ^ 2).
 %% x = NewReverseDiff / MaxDiff, p = ReverseDiff / MaxDiff.
+sub_diff(infinity, _N) ->
+	infinity;
 sub_diff(Diff, N) ->
 	MaxDiff = ?MAX_DIFF,
 	ReverseDiff = MaxDiff - Diff,

@@ -395,7 +395,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 		when MiningNodeCount == 2 orelse MiningNodeCount == 3 ->
 	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
 	RangeNumber = lists:nth(N, [0, 2, 4]),
-	[{?PARTITION_SIZE, RangeNumber, {spora_2_6, RewardAddr}}].
+	[{?PARTITION_SIZE, RangeNumber, get_default_storage_module_packing(RewardAddr)}].
 
 remote_call(Node, Module, Function, Args) ->
 	remote_call(Node, Module, Function, Args, 30000).
@@ -451,8 +451,8 @@ start(B0, RewardAddr) ->
 
 %% @doc Start a fresh node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
-	StorageModules = lists:flatten([[{20 * 1024 * 1024, N, {spora_2_6, RewardAddr}},
-			{20 * 1024 * 1024, N, spora_2_5}] || N <- lists:seq(0, 8)]),
+	StorageModules = [{20 * 1024 * 1024, N, get_default_storage_module_packing(RewardAddr)}
+			|| N <- lists:seq(0, 8)],
 	start(B0, RewardAddr, Config, StorageModules).
 
 %% @doc Start a fresh node with the given genesis block, mining address, config,
@@ -673,8 +673,7 @@ join(JoinOnNode, Rejoin) ->
 			clean_up_and_stop()
 	end,
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModulePacking = case ar_fork:height_2_6() of infinity -> spora_2_5;
-			_ -> {spora_2_6, RewardAddr} end,
+	StorageModulePacking = get_default_storage_module_packing(RewardAddr),
 	StorageModules = [{20 * 1024 * 1024, N, StorageModulePacking} || N <- lists:seq(0, 4)],
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
@@ -685,6 +684,14 @@ join(JoinOnNode, Rejoin) ->
 	}),
 	ar:start_dependencies(),
 	whereis(ar_node_worker).
+
+get_default_storage_module_packing(RewardAddr) ->
+	case ar_fork:height_2_8() of
+		infinity ->
+			{spora_2_6, RewardAddr};
+		_ ->
+			{composite, RewardAddr, 1}
+	end.
 
 connect_to_peer(Node) ->
 	%% Unblock connections possibly blocked in the prior test code.
