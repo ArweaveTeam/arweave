@@ -305,9 +305,12 @@ let
 
       : "''${ERL_EPMD_ADDRESS:=127.0.0.1}"
       export ERL_EPMD_ADDRESS
+      ARWEAVE_OPTS="+Ktrue +A1024 +SDio1024 \
+        +MBsbct 103424 +MBsmbcs 10240 +MBlmbcs 410629 +MBmmmbc 1024 +MBas aobf \
+        +sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long \
+        +swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi"
 
-      erl +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi \
-       -pa $(echo $PROFILE_DIR/lib/*/ebin) \
+      erl $ARWEAVE_OPTS -pa $(echo $PROFILE_DIR/lib/*/ebin) \
        -config $ROOT_DIR/config/sys.config \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
@@ -343,11 +346,14 @@ let
       export EMU="beam"
       export TERM="dumb"
       BOOTFILE=$(echo $PROFILE_DIR/releases/*/start.boot | sed -e "s/\.boot$//")
+      ARWEAVE_OPTS="+Ktrue +A1024 +SDio1024 \
+        +MBsbct 103424 +MBsmbcs 10240 +MBlmbcs 410629 +MBmmmbc 1024 +MBas aobf \
+        +sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long \
+        +swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi"
 
       erlexec -noinput +Bd -boot "$BOOTFILE" \
        -config $ROOT_DIR/config/sys.config \
-       -mode embedded \
-       +MBas aobf +MBlmbcs 512 +A100 +SDio100 +A100 +SDio100 +Bi -pa $(echo $PROFILE_DIR/lib/*/ebin) \
+       -mode embedded $ARWEAVE_OPTS -pa $(echo $PROFILE_DIR/lib/*/ebin) \
        -args_file $ROOT_DIR/config/vm.args.dev \
        -run ar main $RANDOMX_JIT "$@"
     '';
