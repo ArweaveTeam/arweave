@@ -1045,12 +1045,17 @@ get_chunk_hash(#poa{ chunk = Chunk }, Height) ->
 			end
 	end.
 
-get_unpacked_chunk_hash(PoA, PackingDifficulty) ->
+get_unpacked_chunk_hash(PoA, PackingDifficulty, RecallByte) ->
 	case PackingDifficulty >= 1 of
 		false ->
 			undefined;
 		true ->
-			crypto:hash(sha256, PoA#poa.unpacked_chunk)
+			case RecallByte of
+				undefined ->
+					undefined;
+				_ ->
+					crypto:hash(sha256, PoA#poa.unpacked_chunk)
+			end
 	end.
 
 pack_block_with_transactions(B, PrevB) ->
@@ -2017,8 +2022,10 @@ handle_found_solution(Args, PrevB, State) ->
 				chunk_hash = get_chunk_hash(PoA1, Height),
 				chunk2_hash = get_chunk_hash(PoA2, Height),
 				packing_difficulty = PackingDifficulty,
-				unpacked_chunk_hash = get_unpacked_chunk_hash(PoA1, PackingDifficulty),
-				unpacked_chunk2_hash = get_unpacked_chunk_hash(PoA2, PackingDifficulty)
+				unpacked_chunk_hash = get_unpacked_chunk_hash(
+						PoA1, PackingDifficulty, RecallByte1),
+				unpacked_chunk2_hash = get_unpacked_chunk_hash(
+						PoA2, PackingDifficulty, RecallByte2)
 			}, PrevB),
 			
 			BlockTimeHistory2 = lists:sublist(

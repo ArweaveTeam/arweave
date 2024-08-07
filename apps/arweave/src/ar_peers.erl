@@ -127,7 +127,11 @@
 	invalid_hash,
 	invalid_timestamp,
 	invalid_resigned_solution_hash,
-	invalid_nonce_limiter_global_step_number
+	invalid_nonce_limiter_global_step_number,
+	invalid_first_unpacked_chunk,
+	invalid_second_unpacked_chunk,
+	invalid_first_unpacked_chunk_hash,
+	invalid_second_unpacked_chunk_hash
 ]).
 
 %% We only do scoring of this many TCP ports per IP address. When there are not enough slots,

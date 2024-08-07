@@ -352,9 +352,15 @@ split_into_sub_chunks([{EndOffset, _Chunk} | ChunkOffsets], Offset, SubChunkOffs
 	split_into_sub_chunks(ChunkOffsets, Offset, SubChunkOffsets);
 split_into_sub_chunks([{EndOffset, Chunk} | ChunkOffsets], Offset, SubChunkOffsets) ->
 	SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
-	PartSize = ((EndOffset - Offset + SubChunkSize - 1) div SubChunkSize) * SubChunkSize,
-	StartOffset = ?DATA_CHUNK_SIZE - PartSize,
-	case catch binary:part(Chunk, StartOffset, PartSize) of
+	PartSize =
+		case Offset + ?DATA_CHUNK_SIZE =< EndOffset of
+			true ->
+				?DATA_CHUNK_SIZE;
+			false ->
+				((EndOffset - Offset - 1) div SubChunkSize + 1) * SubChunkSize
+		end,
+	RelativeStartOffset = ?DATA_CHUNK_SIZE - PartSize,
+	case catch binary:part(Chunk, RelativeStartOffset, PartSize) of
 		{'EXIT', _} ->
 			?LOG_ERROR([{event, failed_to_split_chunk_into_sub_chunks},
 					{chunk_size, byte_size(Chunk)},
@@ -362,6 +368,7 @@ split_into_sub_chunks([{EndOffset, Chunk} | ChunkOffsets], Offset, SubChunkOffse
 					{part_between_recall_range_start_and_end_offset, PartSize}]),
 			split_into_sub_chunks(ChunkOffsets, EndOffset, SubChunkOffsets);
 		Part ->
+			StartOffset = EndOffset - ?DATA_CHUNK_SIZE + RelativeStartOffset,
 			SubChunkOffsets2 = split_into_sub_chunks2(Part, StartOffset, SubChunkOffsets),
 			split_into_sub_chunks(ChunkOffsets, EndOffset, SubChunkOffsets2)
 	end.
