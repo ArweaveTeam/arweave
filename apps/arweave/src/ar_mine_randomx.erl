@@ -128,7 +128,8 @@ randomx_encrypt_chunk({composite, _, PackingDifficulty} = Packing, _State, Key, 
 randomx_encrypt_chunk(Packing, _State, Key, Chunk) ->
 	Options = [{encrypt, true}, {padding, zero}],
 	IV = binary:part(Key, {0, 16}),
-	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)}.
+	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV,
+			ar_packing_server:pad_chunk(Chunk), Options)}.
 
 split_into_sub_chunks(Chunk) ->
 	split_into_sub_chunks(Chunk, 0).

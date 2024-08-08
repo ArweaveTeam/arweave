@@ -75,7 +75,7 @@ validate(Args) ->
 						not_set ->
 							validate2(Packing, {ChunkID, ChunkStartOffset,
 									ChunkEndOffset, BlockStartOffset, TXStartOffset,
-									RecallChunkOffset, TXRoot, Chunk, UnpackedChunk});
+									RecallOffset, TXRoot, Chunk, UnpackedChunk});
 						_ ->
 							case ChunkID == ExpectedChunkID of
 								false ->
@@ -89,7 +89,7 @@ validate(Args) ->
 
 validate2({spora_2_6, _} = Packing, Args) ->
 	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
-			_RecallChunkOffset, TXRoot, Chunk, _UnpackedChunk} = Args,
+			_RecallOffset, TXRoot, Chunk, _UnpackedChunk} = Args,
 	ChunkSize = ChunkEndOffset - ChunkStartOffset,
 	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
 	prometheus_counter:inc(validating_packed_spora, [ar_packing_server:packing_atom(Packing)]),
@@ -108,7 +108,7 @@ validate2({spora_2_6, _} = Packing, Args) ->
 	end;
 validate2({composite, _, _} = Packing, Args) ->
 	{_ChunkID, ChunkStartOffset, ChunkEndOffset, _BlockStartOffset, _TXStartOffset,
-			_RecallChunkOffset, _TXRoot, _Chunk, UnpackedChunk} = Args,
+			_RecallOffset, _TXRoot, _Chunk, UnpackedChunk} = Args,
 	ChunkSize = ChunkEndOffset - ChunkStartOffset,
 	case ChunkSize > ?DATA_CHUNK_SIZE of
 		true ->
@@ -125,10 +125,11 @@ validate2({composite, _, _} = Packing, Args) ->
 
 validate3({composite, _, PackingDifficulty} = Packing, Args) ->
 	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
-			RecallChunkOffset, TXRoot, Chunk, UnpackedChunk} = Args,
+			RecallOffset, TXRoot, Chunk, UnpackedChunk} = Args,
 	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
 	{SubChunkSize, SubChunkStartOffset} = get_sub_chunk_size_and_start_offset(
-			RecallChunkOffset - ChunkStartOffset, PackingDifficulty),
+			RecallOffset - BlockStartOffset - TXStartOffset - ChunkStartOffset,
+			PackingDifficulty),
 	%% We always expect the provided unpacked chunks to be padded (if necessary)
 	%% to 256 KiB.
 	UnpackedSubChunk = binary:part(UnpackedChunk, SubChunkStartOffset, SubChunkSize),
@@ -158,7 +159,7 @@ validate3({composite, _, PackingDifficulty} = Packing, Args) ->
 get_sub_chunk_size_and_start_offset(O, D)
 		when D >= 1, D =< ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT ->
 	Size = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
-	{Size, Size * (O div Size)}.
+	{Size, O - O rem Size}.
 
 %% @doc Return the smallest multiple of 256 KiB counting from StrictDataSplitThreshold
 %% bigger than or equal to Offset.

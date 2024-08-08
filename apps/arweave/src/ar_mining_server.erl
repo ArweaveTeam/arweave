@@ -832,10 +832,8 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 
 read_poa(RecallByte, ChunkOrSubChunk, Packing) ->
 	PoAReply = read_poa(RecallByte, Packing),
-	case {ChunkOrSubChunk, PoAReply, Packing} of
-		{not_set, _PoAReply, _Packing} ->
-			PoAReply;
-		{ChunkOrSubChunk, {ok, #poa{ chunk = Chunk } = PoA}, {composite, _, _}} ->
+	case {PoAReply, Packing} of
+		{{ok, #poa{ chunk = Chunk } = PoA}, {composite, _, _}} ->
 			case sub_chunk_belongs_to_chunk(ChunkOrSubChunk, Chunk) of
 				true ->
 					{ok, PoA#poa{ chunk = ChunkOrSubChunk }};
@@ -844,11 +842,11 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing) ->
 				Error2 ->
 					Error2
 			end;
-		{Chunk, {ok, #poa{ chunk = Chunk }}, _Packing} ->
+		{{ok, #poa{ chunk = ChunkOrSubChunk }}, _Packing} ->
 			PoAReply;
-		{_Chunk, {ok, #poa{}}, _Packing} ->
+		{{ok, #poa{}}, _Packing} ->
 			{error, chunk_mismatch};
-		{_Chunk, Error, _Packing} ->
+		{Error, _Packing} ->
 			Error
 	end.
 

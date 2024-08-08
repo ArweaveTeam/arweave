@@ -271,7 +271,6 @@ chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, [], StepSize, Co
 			StepSize, Count, State);
 chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax,
 		[{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State)
-		%% Only 256 KiB chunks are supported at this point.
 		when RangeStart + Nonce * StepSize < EndOffset - StepSize ->
 	gen_server:cast(self(),
 			{remove_chunk_from_cache, Candidate#mining_candidate{ nonce = Nonce }}),
