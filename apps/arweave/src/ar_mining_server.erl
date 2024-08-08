@@ -832,8 +832,17 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 
 read_poa(RecallByte, ChunkOrSubChunk, Packing) ->
 	PoAReply = read_poa(RecallByte, Packing),
-	case {PoAReply, Packing} of
-		{{ok, #poa{ chunk = Chunk } = PoA}, {composite, _, _}} ->
+	case {ChunkOrSubChunk, PoAReply, Packing} of
+		{not_set, {ok, {#poa{ chunk = Chunk } = PoA, EndOffset, ChunkSize}}, {composite, _, _}} ->
+			case get_sub_chunk_start_offset(RecallByte, EndOffset - ChunkSize) of
+				{ok, SubChunkStartOffset} ->
+					SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+					SubChunk = binary:part(Chunk, SubChunkStartOffset, SubChunkSize),
+					{ok, PoA#poa{ chunk = SubChunk }};
+				Error ->
+					Error
+			end;
+		{_ChunkOrSubChunk, {ok, {#poa{ chunk = Chunk } = PoA, _, _}}, {composite, _, _}} ->
 			case sub_chunk_belongs_to_chunk(ChunkOrSubChunk, Chunk) of
 				true ->
 					{ok, PoA#poa{ chunk = ChunkOrSubChunk }};
@@ -842,13 +851,20 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing) ->
 				Error2 ->
 					Error2
 			end;
-		{{ok, #poa{ chunk = ChunkOrSubChunk }}, _Packing} ->
-			PoAReply;
-		{{ok, #poa{}}, _Packing} ->
+		{_ChunkOrSubChunk, {ok, {#poa{ chunk = ChunkOrSubChunk } = PoA, _, _}}, _Packing} ->
+			{ok, PoA};
+		{_ChunkOrSubChunk, {ok, {#poa{}, _, _}}, _Packing} ->
 			{error, chunk_mismatch};
-		{Error, _Packing} ->
+		{_ChunkOrSubChunk, Error, _Packing} ->
 			Error
 	end.
+
+get_sub_chunk_start_offset(RecallByte, ChunkStartOffset) when ChunkStartOffset =< RecallByte ->
+	RelativeStartOffset = RecallByte - ChunkStartOffset,
+	SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	{ok, RelativeStartOffset - RelativeStartOffset rem SubChunkSize};
+get_sub_chunk_start_offset(_RecallByte, _ChunkStartOffset) ->
+	{error, invalid_offset}.
 
 sub_chunk_belongs_to_chunk(SubChunk,
 		<< SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, _Rest/binary >>) ->
@@ -864,20 +880,22 @@ sub_chunk_belongs_to_chunk(_SubChunk, _Chunk) ->
 read_poa(RecallByte, Packing) ->
 	Options = #{ pack => true, packing => Packing, is_miner_request => true },
 	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
-		{ok, #{ chunk := Chunk, tx_path := TXPath, data_path := DataPath } = Proof} ->
+		{ok, Proof} ->
+			#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath,
+				absolute_end_offset := EndOffset, chunk_size := ChunkSize } = Proof,
 			case Packing of
 				{composite, _Addr, _PackingDifficulty} ->
 					case maps:get(unpacked_chunk, Proof, not_found) of
 						not_found ->
 							read_unpacked_chunk(RecallByte, Proof);
 						UnpackedChunk ->
-							{ok, #poa{ option = 1, chunk = Chunk,
+							{ok, {#poa{ option = 1, chunk = Chunk,
 								unpacked_chunk = ar_packing_server:pad_chunk(UnpackedChunk),
-								tx_path = TXPath, data_path = DataPath }}
+								tx_path = TXPath, data_path = DataPath }, EndOffset, ChunkSize}}
 					end;
 				_ ->
-					{ok, #poa{ option = 1, chunk = Chunk,
-							tx_path = TXPath, data_path = DataPath }}
+					{ok, {#poa{ option = 1, chunk = Chunk,
+							tx_path = TXPath, data_path = DataPath }, EndOffset, ChunkSize}}
 			end;
 		Error ->
 			Error
@@ -886,10 +904,11 @@ read_poa(RecallByte, Packing) ->
 read_unpacked_chunk(RecallByte, Proof) ->
 	Options = #{ pack => true, packing => unpacked, is_miner_request => true },
 	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
-		{ok, #{ chunk := UnpackedChunk, tx_path := TXPath, data_path := DataPath }} ->
-			{ok, #poa{ option = 1, chunk = maps:get(chunk, Proof),
+		{ok, #{ chunk := UnpackedChunk, tx_path := TXPath, data_path := DataPath,
+				absolute_end_offset := EndOffset, chunk_size := ChunkSize }} ->
+			{ok, {#poa{ option = 1, chunk = maps:get(chunk, Proof),
 				unpacked_chunk = ar_packing_server:pad_chunk(UnpackedChunk),
-				tx_path = TXPath, data_path = DataPath }};
+				tx_path = TXPath, data_path = DataPath }, EndOffset, ChunkSize}};
 		Error ->
 			Error
 	end.

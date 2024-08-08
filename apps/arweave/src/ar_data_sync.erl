@@ -1556,14 +1556,17 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 				{{ok, PackedChunk, none}, _} ->
 					%% PackedChunk is the requested format.
 					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
-							data_path => DataPath, tx_path => TXPath },
+							data_path => DataPath, tx_path => TXPath,
+							absolute_end_offset => AbsoluteOffset,
+							chunk_size => ChunkSize },
 					{ok, Proof};
 				{{ok, PackedChunk, MaybeUnpackedChunk}, none} ->
 					%% PackedChunk is the requested format, but the ChunkID could
 					%% not be determined
 					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
 							data_path => DataPath, tx_path => TXPath,
-							end_offset => AbsoluteOffset },
+							absolute_end_offset => AbsoluteOffset,
+							chunk_size => ChunkSize },
 					case MaybeUnpackedChunk of
 						none ->
 							{ok, Proof};
@@ -1572,7 +1575,9 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 					end;
 				{{ok, PackedChunk, MaybeUnpackedChunk}, _} ->
 					Proof = #{ tx_root => TXRoot, chunk => PackedChunk,
-							data_path => DataPath, tx_path => TXPath },
+							data_path => DataPath, tx_path => TXPath,
+							absolute_end_offset => AbsoluteOffset,
+							chunk_size => ChunkSize },
 					case MaybeUnpackedChunk of
 						none ->
 							{ok, Proof};
