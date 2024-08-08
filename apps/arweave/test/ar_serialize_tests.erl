@@ -143,7 +143,10 @@ poa_map_to_binary_test() ->
 			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof3))),
 	Proof4 = Proof3#{ packing => {spora_2_6, crypto:strong_rand_bytes(33)} },
 	?assertEqual({ok, Proof4},
-			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof4))).
+			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof4))),
+	Proof5 = Proof3#{ packing => {composite, crypto:strong_rand_bytes(33), 2} },
+	?assertEqual({ok, Proof5},
+			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof5))).
 
 poa_no_chunk_map_to_binary_test() ->
 	Proof = #{ data_path => crypto:strong_rand_bytes(500),

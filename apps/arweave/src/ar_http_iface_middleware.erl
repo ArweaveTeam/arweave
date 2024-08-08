@@ -487,7 +487,8 @@ handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 %% },
 %% where the status is one of "accepted", "accepted_block", "rejected_bad_poa",
 %% "rejected_wrong_hash", "rejected_bad_vdf", "rejected_mining_address_banned",
-%% "stale", "rejected_vdf_not_found", "rejected_missing_key_file".
+%% "stale", "rejected_vdf_not_found", "rejected_missing_key_file",
+%% "rejected_invalid_packing_difficulty".
 %% If the solution is partial, "indep_hash" string is empty.
 handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 	case ar_node:is_joined() of
@@ -1417,12 +1418,9 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
 						{AliveStatus, PartitionList} = Value,
 						Table = lists:map(
 							fun	(ListValue) ->
-								{Bucket, BucketSize, Addr} = ListValue,
-								{[
-									{bucket, Bucket},
-									{bucketsize, BucketSize},
-									{addr, ar_util:encode(Addr)}
-								]}
+								{Bucket, BucketSize, Addr, PackingDifficulty} = ListValue,
+								ar_serialize:partition_to_json_struct(Bucket, BucketSize,
+									Addr, PackingDifficulty)
 							end,
 							PartitionList
 						),
@@ -1999,11 +1997,25 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								unpacked;
 							<<"spora_2_5">> ->
 								spora_2_5;
-							<< Type:10/binary, Addr:44/binary >>
-									when Type == <<"spora_2_6_">> ->
+							<< "spora_2_6_", Addr:43/binary >> ->
 								case ar_util:safe_decode(Addr) of
 									{ok, DecodedAddr} ->
 										{spora_2_6, DecodedAddr};
+									_ ->
+										any
+								end;
+							<< "composite_", Addr:43/binary, ":",
+									PackingDifficultyBin/binary >> ->
+								case catch binary_to_integer(PackingDifficultyBin) of
+									PackingDifficulty when is_integer(PackingDifficulty),
+											PackingDifficulty >= 0,
+											PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
+										case ar_util:safe_decode(Addr) of
+											{ok, DecodedAddr} ->
+												{composite, DecodedAddr, PackingDifficulty};
+											_ ->
+												any
+										end;
 									_ ->
 										any
 								end;
@@ -2046,7 +2058,8 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 									bucket_based_offset => IsBucketBasedOffset },
 							case ar_data_sync:get_chunk(Offset, Args) of
 								{ok, Proof} ->
-									Proof2 = Proof#{ packing => ReadPacking },
+									Proof2 = maps:remove(unpacked_chunk,
+											Proof#{ packing => ReadPacking }),
 									Reply =
 										case Encoding of
 											json ->
@@ -2322,8 +2335,7 @@ val_for_key(K, L) ->
 	end.
 
 handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = PrevH,
-		tx_prefixes = Prefixes, recall_byte = RecallByte, recall_byte2 = RecallByte2,
-		solution_hash = SolutionH }, Req) ->
+		tx_prefixes = Prefixes, recall_byte2 = RecallByte2 }, Req) ->
 	case ar_ignore_registry:member(H) of
 		true ->
 			check_block_receive_timestamp(H),
@@ -2332,62 +2344,22 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 			case ar_node:get_block_shadow_from_cache(PrevH) of
 				not_found ->
 					{412, #{}, <<>>, Req};
-				#block{ height = Height } ->
+				#block{} ->
 					Indices = collect_missing_tx_indices(Prefixes),
-					IsSolutionHashKnown =
-						case SolutionH of
-							undefined ->
-								false;
-							_ ->
-								ar_block_cache:is_known_solution_hash(block_cache, SolutionH)
-						end,
-					MissingChunk =
-						case {IsSolutionHashKnown, RecallByte} of
-							{true, _} ->
-								false;
-							{false, undefined} ->
-								true;
-							_ ->
-								prometheus_counter:inc(block_announcement_reported_chunks),
-								case {ar_sync_record:is_recorded(RecallByte + 1,
-										ar_data_sync), Height + 1 >= ar_fork:height_2_6()} of
-									{{{true, spora_2_5}, _StoreID}, false} ->
-										false;
-									{{{true, _}, _StoreID}, true} ->
-										false;
-									_ ->
-										prometheus_counter:inc(
-												block_announcement_missing_chunks),
-										true
-								end
-						end,
-					MissingChunk2 =
-						case {IsSolutionHashKnown, RecallByte2} of
-							{true, _} ->
-								false;
-							{false, undefined} ->
-								undefined;
-							_ ->
-								prometheus_counter:inc(block_announcement_reported_chunks),
-								case {ar_sync_record:is_recorded(RecallByte2 + 1,
-										ar_data_sync), Height + 1 >= ar_fork:height_2_6()} of
-									{_, false} ->
-										undefined;
-									{{{true, _}, _}, true} ->
-										false;
-									_ ->
-										prometheus_counter:inc(
-												block_announcement_missing_chunks),
-										true
-								end
-						end,
 					prometheus_counter:inc(block_announcement_reported_transactions,
 							length(Prefixes)),
 					prometheus_counter:inc(block_announcement_missing_transactions,
 							length(Indices)),
-					Response = #block_announcement_response{ missing_chunk = MissingChunk,
-							missing_tx_indices = Indices, missing_chunk2 = MissingChunk2 },
-					{200, #{}, ar_serialize:block_announcement_response_to_binary(Response),
+					Response = #block_announcement_response{ missing_chunk = true,
+							missing_tx_indices = Indices },
+					Response2 =
+						case RecallByte2 == undefined of
+							true ->
+								Response;
+							false ->
+								Response#block_announcement_response{ missing_chunk2 = true }
+						end,
+					{200, #{}, ar_serialize:block_announcement_response_to_binary(Response2),
 							Req}
 			end
 	end.

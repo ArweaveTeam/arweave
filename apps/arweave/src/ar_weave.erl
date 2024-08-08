@@ -37,7 +37,7 @@ init(WalletList, Diff, GenesisDataSize) ->
 	TXs = [TX],
 	AccountTree = ar_patricia_tree:from_proplist([{A, {B, LTX}}
 			|| {A, B, LTX} <- WalletList2]),
-	WLH = element(1, ar_block:hash_wallet_list(AccountTree)),
+	WLH = element(1, ar_block:hash_wallet_list(AccountTree, 0)),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, 0),
 	BlockSize = case SizeTaggedTXs of [] -> 0; _ -> element(2, lists:last(SizeTaggedTXs)) end,
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],

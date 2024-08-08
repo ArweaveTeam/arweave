@@ -10,6 +10,7 @@ typedef enum {
 const int BIG_NUM_SIZE = 32;
 typedef unsigned char bigInt[32];
 const int MAX_CHUNK_SIZE = 256*1024;
+const int PACKING_KEY_SIZE = 32;
 
 struct workerThread {
 	ErlNifTid threadId;
@@ -58,6 +59,12 @@ static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv*, int, const ERL_NIF_TERM [])
 static ERL_NIF_TERM randomx_encrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_decrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_reencrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+
+static ERL_NIF_TERM randomx_encrypt_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+static ERL_NIF_TERM randomx_decrypt_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+static ERL_NIF_TERM randomx_decrypt_composite_sub_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+static ERL_NIF_TERM randomx_reencrypt_legacy_to_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+static ERL_NIF_TERM randomx_reencrypt_composite_to_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
 static ERL_NIF_TERM hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM hash_light_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);

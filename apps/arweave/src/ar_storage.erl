@@ -583,13 +583,21 @@ migrate_block_record({block, Nonce, PrevH, TS, Last, Diff, Height, Hash, H,
 		TXs, TXRoot, TXTree, HL, HLMerkle, WL, RewardAddr, Tags, RewardPool,
 		WeaveSize, BlockSize, CDiff, SizeTaggedTXs, PoA, Rate, ScheduledRate,
 		Packing_2_5_Threshold, StrictDataSplitThreshold}) ->
+	PoA_2 =
+		case PoA of
+			{poa, O, TXPath, DataPath, Chunk} ->
+				#poa{ option = O, tx_path = TXPath, data_path = DataPath,
+						chunk = Chunk };
+			#poa{} ->
+				PoA
+		end,
 	#block{ nonce = Nonce, previous_block = PrevH, timestamp = TS,
 			last_retarget = Last, diff = Diff, height = Height, hash = Hash,
 			indep_hash = H, txs = TXs, tx_root = TXRoot, tx_tree = TXTree,
 			hash_list = HL, hash_list_merkle = HLMerkle, wallet_list = WL,
 			reward_addr = RewardAddr, tags = Tags, reward_pool = RewardPool,
 			weave_size = WeaveSize, block_size = BlockSize, cumulative_diff = CDiff,
-			size_tagged_txs = SizeTaggedTXs, poa = PoA, usd_to_ar_rate = Rate,
+			size_tagged_txs = SizeTaggedTXs, poa = PoA_2, usd_to_ar_rate = Rate,
 			scheduled_usd_to_ar_rate = ScheduledRate,
 			packing_2_5_threshold = Packing_2_5_Threshold,
 			strict_data_split_threshold = StrictDataSplitThreshold }.
@@ -855,7 +863,7 @@ read_tx_data(TX) ->
 	end.
 
 write_wallet_list(Height, Tree) ->
-	{RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
+	{RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree, Height),
 	store_account_tree_update(Height, RootHash, UpdateMap),
 	erlang:garbage_collect(),
 	RootHash.
@@ -1366,13 +1374,13 @@ test_store_and_retrieve_wallet_list() ->
 	?assertEqual({0, TXID}, read_account(Addr, WalletListHash2)),
 	?assertEqual({0, TXID2}, read_account(Addr2, WalletListHash2)),
 	assert_wallet_trees_equal(ExpectedWL2, ActualWL2),
-	{WalletListHash, ActualWL3, _UpdateMap} = ar_block:hash_wallet_list(ActualWL),
+	{WalletListHash, ActualWL3, _UpdateMap} = ar_block:hash_wallet_list(ActualWL, 0),
 	Addr3 = << (binary:part(Addr, 0, 3))/binary, (crypto:strong_rand_bytes(29))/binary >>,
 	TXID3 = crypto:strong_rand_bytes(32),
 	TXID4 = crypto:strong_rand_bytes(32),
 	ActualWL4 = ar_patricia_tree:insert(Addr3, {100, TXID3},
 			ar_patricia_tree:insert(Addr2, {0, TXID4}, ActualWL3)),
-	{WalletListHash3, ActualWL5, UpdateMap2} = ar_block:hash_wallet_list(ActualWL4),
+	{WalletListHash3, ActualWL5, UpdateMap2} = ar_block:hash_wallet_list(ActualWL4, 0),
 	store_account_tree_update(1, WalletListHash3, UpdateMap2),
 	?assertEqual({100, TXID3}, read_account(Addr3, WalletListHash3)),
 	?assertEqual({0, TXID4}, read_account(Addr2, WalletListHash3)),
@@ -1383,23 +1391,23 @@ test_store_and_retrieve_wallet_list() ->
 test_store_and_retrieve_wallet_list_permutations() ->
 	lists:foreach(
 		fun(Permutation) ->
-			store_and_retrieve_wallet_list(Permutation)
+			store_and_retrieve_wallet_list(Permutation, 0)
 		end,
 		permutations([ <<"a">>, <<"aa">>, <<"ab">>, <<"bb">>, <<"b">>, <<"aaa">> ])),
 	lists:foreach(
 		fun(Permutation) ->
-			store_and_retrieve_wallet_list(Permutation)
+			store_and_retrieve_wallet_list(Permutation, 0)
 		end,
 		permutations([ <<"a">>, <<"aa">>, <<"aaa">>, <<"aaaa">>, <<"aaaaa">> ])),
-	store_and_retrieve_wallet_list([ <<"a">>, <<"aa">>, <<"ab">>, <<"b">> ]),
-	store_and_retrieve_wallet_list([ <<"aa">>, <<"a">>, <<"ab">> ]),
-	store_and_retrieve_wallet_list([ <<"aaa">>, <<"bbb">>, <<"aab">>, <<"ab">>, <<"a">> ]),
+	store_and_retrieve_wallet_list([ <<"a">>, <<"aa">>, <<"ab">>, <<"b">> ], 0),
+	store_and_retrieve_wallet_list([ <<"aa">>, <<"a">>, <<"ab">> ], 0),
+	store_and_retrieve_wallet_list([ <<"aaa">>, <<"bbb">>, <<"aab">>, <<"ab">>, <<"a">> ], 0),
 	store_and_retrieve_wallet_list([
 		<<"aaaa">>, <<"aaab">>, <<"aaac">>,
 		<<"aaa">>, <<"aab">>, <<"aac">>,
 		<<"aa">>, <<"ab">>, <<"ac">>,
 		<<"a">>, <<"b">>, <<"c">>
-	]),
+	], 0),
 	store_and_retrieve_wallet_list([
 		<<"a">>, <<"b">>, <<"c">>,
 		<<"aa">>, <<"ab">>, <<"ac">>,
@@ -1409,7 +1417,7 @@ test_store_and_retrieve_wallet_list_permutations() ->
 		<<"aa">>, <<"ab">>, <<"ac">>,
 		<<"aaa">>, <<"aab">>, <<"aac">>,
 		<<"aaaa">>, <<"aaab">>, <<"aaac">>
-	]),
+	], 0),
 	store_and_retrieve_wallet_list([
 		<<"aaaa">>, <<"aaa">>, <<"aa">>, <<"a">>,
 		<<"aaab">>, <<"aab">>, <<"ab">>, <<"b">>,
@@ -1417,42 +1425,42 @@ test_store_and_retrieve_wallet_list_permutations() ->
 		<<"aaaa">>, <<"aaa">>, <<"aa">>, <<"a">>,
 		<<"aaab">>, <<"aab">>, <<"ab">>, <<"b">>,
 		<<"aaac">>, <<"aac">>, <<"ac">>, <<"c">>
-	]),
+	], 0),
 	store_and_retrieve_wallet_list([
 		<<"aaaa">>, <<"aaab">>, <<"aaac">>,
 		<<"a">>, <<"aa">>, <<"aaa">>,
 		<<"aaaa">>, <<"aaab">>, <<"aaac">>
-	]),
+	], 0),
 	ok.
 
-store_and_retrieve_wallet_list(Keys) ->
+store_and_retrieve_wallet_list(Keys, Height) ->
 	MinBinary = <<>>,
 	MaxBinary = << <<1:1>> || _ <- lists:seq(1, 512) >>,
 	ar_kv:delete_range(account_tree_db, MinBinary, MaxBinary),
-	store_and_retrieve_wallet_list(Keys, ar_patricia_tree:new(), maps:new(), false).
+	store_and_retrieve_wallet_list(Keys, ar_patricia_tree:new(), maps:new(), false, Height).
 
-store_and_retrieve_wallet_list([], Tree, InsertedKeys, IsUpdate) ->
-	store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate);
-store_and_retrieve_wallet_list([Key | Keys], Tree, InsertedKeys, IsUpdate) ->
+store_and_retrieve_wallet_list([], Tree, InsertedKeys, IsUpdate, Height) ->
+	store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate, Height);
+store_and_retrieve_wallet_list([Key | Keys], Tree, InsertedKeys, IsUpdate, Height) ->
 	TXID = crypto:strong_rand_bytes(32),
 	Balance = rand:uniform(1000000000),
 	Tree2 = ar_patricia_tree:insert(Key, {Balance, TXID}, Tree),
 	InsertedKeys2 = maps:put(Key, {Balance, TXID}, InsertedKeys),
 	case rand:uniform(2) of
 		1 ->
-			Tree3 = store_and_retrieve_wallet_list2(Tree2, InsertedKeys2, IsUpdate),
-			store_and_retrieve_wallet_list(Keys, Tree3, InsertedKeys2, true);
+			Tree3 = store_and_retrieve_wallet_list2(Tree2, InsertedKeys2, IsUpdate, Height),
+			store_and_retrieve_wallet_list(Keys, Tree3, InsertedKeys2, true, Height);
 		_ ->
-			store_and_retrieve_wallet_list(Keys, Tree2, InsertedKeys2, IsUpdate)
+			store_and_retrieve_wallet_list(Keys, Tree2, InsertedKeys2, IsUpdate, Height)
 	end.
 
-store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate) ->
+store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate, Height) ->
 	{WalletListHash, Tree2} =
 		case IsUpdate of
 			false ->
 				{write_wallet_list(0, Tree), Tree};
 			_ ->
-				{R, T, Map} = ar_block:hash_wallet_list(Tree),
+				{R, T, Map} = ar_block:hash_wallet_list(Tree, Height),
 				store_account_tree_update(0, R, Map),
 				{R, T}
 		end,

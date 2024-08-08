@@ -1,6 +1,6 @@
 -module(ar_storage_module).
 
--export([id/1, label/1, address_label/1, packing_label/1, label_by_id/1,
+-export([id/1, label/1, address_label/1, address_label/2, packing_label/1, label_by_id/1,
 		get_by_id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2,
 		has_any/1, has_range/2, get_cover/3]).
 
@@ -32,6 +32,9 @@ id({BucketSize, Bucket, Packing}) ->
 		case Packing of
 			{spora_2_6, Addr} ->
 				ar_util:encode(Addr);
+			{composite, Addr, PackingDiff} ->
+				<< (ar_util:encode(Addr))/binary, ":",
+						(integer_to_binary(PackingDiff))/binary >>;
 			_ ->
 				atom_to_list(Packing)
 		end,
@@ -46,6 +49,8 @@ label({BucketSize, Bucket, Packing} = StorageModule) ->
 				case Packing of
 					{spora_2_6, Addr} ->
 						ar_storage_module:address_label(Addr);
+					{composite, Addr, PackingDifficulty} ->
+						ar_storage_module:address_label(Addr, PackingDifficulty);
 					_ ->
 						atom_to_list(Packing)
 				end,
@@ -58,7 +63,13 @@ label({BucketSize, Bucket, Packing} = StorageModule) ->
 
 %% @doc Return the obscure unique label for the given packing address.
 address_label(Addr) ->
-	case ets:lookup(?MODULE, {address_label, Addr}) of
+	address_label(Addr, 0).
+
+%% @doc Return the obscure unique label for the given
+%% packing address + packing difficulty pair.
+address_label(Addr, PackingDifficulty) ->
+	Key = {Addr, PackingDifficulty},
+	case ets:lookup(?MODULE, {address_label, Key}) of
 		[] ->
 			Label =
 				case ets:lookup(?MODULE, last_address_label) of
@@ -67,7 +78,7 @@ address_label(Addr) ->
 					[{_, Counter}] ->
 						Counter + 1
 				end,
-			ets:insert(?MODULE, {{address_label, Addr}, Label}),
+			ets:insert(?MODULE, {{address_label, Key}, Label}),
 			ets:insert(?MODULE, {last_address_label, Label}),
 			integer_to_list(Label);
 		[{_, Label}] ->
@@ -77,6 +88,9 @@ address_label(Addr) ->
 packing_label({spora_2_6, Addr}) ->
 	AddrLabel = ar_storage_module:address_label(Addr),
 	list_to_atom("spora_2_6_" ++ AddrLabel);
+packing_label({composite, Addr, PackingDifficulty}) ->
+	AddrLabel = ar_storage_module:address_label(Addr, PackingDifficulty),
+	list_to_atom("composite_" ++ AddrLabel);
 packing_label(Packing) ->
 	Packing.
 
@@ -359,7 +373,13 @@ label_test() ->
 	?assertEqual("storage_module_2_3",
 		label({?PARTITION_SIZE, 2, {spora_2_6, <<"s÷">>}})),
 	?assertEqual("storage_module_524288_2_3",
-		label({524288, 2, {spora_2_6, <<"s÷">>}})).
+		label({524288, 2, {spora_2_6, <<"s÷">>}})),
+	?assertEqual("storage_module_524288_3_4",
+		label({524288, 3, {composite, <<"b">>, 1}})),
+	?assertEqual("storage_module_524288_3_4",
+		label({524288, 3, {composite, <<"b">>, 1}})),
+	?assertEqual("storage_module_524288_3_5",
+		label({524288, 3, {composite, <<"b">>, 2}})).
 
 has_any_test() ->
 	?assertEqual(false, has_any(0, [])),

@@ -315,7 +315,10 @@ get_chunk_binary(Peer, Offset, RequestedPacking) ->
 			spora_2_5 ->
 				<<"spora_2_5">>;
 			{spora_2_6, Addr} ->
-				iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)])
+				iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)]);
+			{composite, Addr, PackingDifficulty} ->
+				iolist_to_binary([<<"composite_">>, ar_util:encode(Addr),
+						":", integer_to_binary(PackingDifficulty)])
 		end,
 	Headers = [{<<"x-packing">>, PackingBinary},
 			%% The nodes not upgraded to the 2.5 version would ignore this header.
@@ -1219,7 +1222,22 @@ handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 								DecodedPartition = {
 									Bucket,
 									BucketSize,
-									ar_util:decode(EncodedAddr)
+									ar_util:decode(EncodedAddr),
+									0
+								},
+								{ok, [DecodedPartition | Acc]};
+							{[
+								{<<"bucket">>, Bucket},
+								{<<"bucketsize">>, BucketSize},
+								{<<"addr">>, EncodedAddr},
+								{<<"pdiff">>, PackingDifficulty}
+							]} when is_integer(PackingDifficulty), PackingDifficulty >= 0,
+									PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
+								DecodedPartition = {
+									Bucket,
+									BucketSize,
+									ar_util:decode(EncodedAddr),
+									PackingDifficulty
 								},
 								{ok, [DecodedPartition | Acc]};
 							_ ->

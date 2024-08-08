@@ -20,11 +20,15 @@
   "storage_modules": [
     "0,unpacked",
     "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
+    "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw:1",
+    "2,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw:32",
     "100,unpacked",
     "1,unpacked,repack_in_place,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
+    "1,unpacked,repack_in_place,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw:2",
     "0,1,unpacked",
     "14,1000000000000,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
-    "1,1,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw,repack_in_place,unpacked"
+    "1,1,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw,repack_in_place,unpacked",
+    "1,1,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw:1,repack_in_place,unpacked"
   ],
   "repack_batch_size": 200,
   "polling": 10,

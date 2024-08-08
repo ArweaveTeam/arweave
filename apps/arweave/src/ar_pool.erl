@@ -231,6 +231,14 @@ handle_info({event, solution,
 	gen_server:reply(PID, #partial_solution_response{ status = <<"rejected_bad_vdf">> }),
 	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
 
+handle_info({event, solution,
+		{rejected, #{ reason := invalid_packing_difficulty, source := {pool, Ref} }}}, State) ->
+	#state{ request_pid_by_ref = Map } = State,
+	PID = maps:get(Ref, Map),
+	gen_server:reply(PID,
+			#partial_solution_response{ status = <<"rejected_invalid_packing_difficulty">> }),
+	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
+
 handle_info({event, solution, {partial, #{ source := {pool, Ref} }}}, State) ->
 	#state{ request_pid_by_ref = Map } = State,
 	PID = maps:get(Ref, Map),
@@ -317,32 +325,71 @@ process_partial_solution_field_size(Solution, Ref) ->
 		next_seed = NextSeed,
 		mining_address = MiningAddress,
 		preimage = Preimage,
-		solution_hash = SolutionH,
-		poa1 = #poa{ chunk = C1 },
-		poa2 = #poa{ chunk = C2 }
+		solution_hash = SolutionH
 	} = Solution,
 	%% We have less strict deserialization in the pool pipeline to simplify
 	%% the pool "proxy" implementation. Therefore, we validate the field sizes here
 	%% and return the "rejected_bad_poa" status in case of a failure.
 	case {byte_size(Output), byte_size(Seed), byte_size(NextSeed), byte_size(MiningAddress),
-			byte_size(Preimage), byte_size(SolutionH), byte_size(C1), byte_size(C2)} of
-		{32, 48, 48, 32, 32, 32, L1, L2} when L1 =< ?DATA_CHUNK_SIZE, L2 =< ?DATA_CHUNK_SIZE ->
-			%% The second chunk may be either empty or 256 KiB. ar_poa:validate/1 does
-			%% the proper verification - here we simply protect against payload size abuse.
-			%% We are not strict about the first chunk here to simplify tests.
-			process_partial_solution_poa2_size(Solution, Ref);
+			byte_size(Preimage), byte_size(SolutionH)} of
+		{32, 48, 48, 32, 32, 32} ->
+			case assert_chunk_sizes(Solution) of
+				{true, Solution2} ->
+					process_partial_solution_poa2_size(Solution2, Ref);
+				{false, _} ->
+					#partial_solution_response{ status = <<"rejected_bad_poa">> }
+			end;
 		_ ->
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }
 	end.
 
+assert_chunk_sizes(Solution) ->
+	#mining_solution{
+		packing_difficulty = PackingDifficulty,
+		recall_byte2 = RecallByte2,
+		poa1 = #poa{ chunk = C1, unpacked_chunk = U1 } = PoA1,
+		poa2 = #poa{ chunk = C2, unpacked_chunk = U2 } = PoA2
+	} = Solution,
+	SolutionResetUnpackedChunk2 = Solution#mining_solution{
+			poa2 = PoA2#poa{ unpacked_chunk = <<>> }
+	},
+	SolutionResetUnpackedChunks = SolutionResetUnpackedChunk2#mining_solution{
+			poa1 = PoA1#poa{ unpacked_chunk = <<>> }
+	},
+	C1Size = byte_size(C1),
+	C2Size = byte_size(C2),
+	U1Size = byte_size(U1),
+	U2Size = byte_size(U2),
+	IsC1FullSize = C1Size == ?DATA_CHUNK_SIZE,
+	IsC1SubChunkSize = C1Size == ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	IsC2Empty = C2Size == 0,
+	IsC2FullSize = C2Size == ?DATA_CHUNK_SIZE,
+	IsC2SubChunkSize = C2Size == ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	%% When the packing is composite (packing_difficulty >= 1), The unpacked chunk is
+	%% expected to be 0-padded when smaller than ?DATA_CHUNK_SIZE.
+	IsU1FullSize = U1Size == ?DATA_CHUNK_SIZE,
+	IsU2FullSize = U2Size == ?DATA_CHUNK_SIZE,
+	case {PackingDifficulty >= 1, RecallByte2} of
+		{false, undefined} ->
+			{IsC1FullSize andalso IsC2Empty, SolutionResetUnpackedChunks};
+		{true, undefined} ->
+			{IsC1SubChunkSize andalso IsC2Empty andalso IsU1FullSize,
+					SolutionResetUnpackedChunk2};
+		{false, _} ->
+			{IsC1FullSize andalso IsC2FullSize, SolutionResetUnpackedChunks};
+		{true, _} ->
+			{IsC1SubChunkSize andalso IsC2SubChunkSize
+					andalso IsU1FullSize andalso IsU2FullSize, Solution}
+	end.
+
 process_partial_solution_poa2_size(Solution, Ref) ->
 	#mining_solution{
-		poa2 = #poa{ chunk = C, data_path = DP, tx_path = TP }
+		poa2 = #poa{ chunk = C, data_path = DP, tx_path = TP, unpacked_chunk = U }
 	} = Solution,
 	case ar_mining_server:is_one_chunk_solution(Solution) of
 		true ->
-			case {C, DP, TP} of
-				{<<>>, <<>>, <<>>} ->
+			case {C, DP, TP, U} of
+				{<<>>, <<>>, <<>>, <<>>} ->
 					process_partial_solution_partition_number(Solution, Ref);
 				_ ->
 					#partial_solution_response{ status = <<"rejected_bad_poa">> }
@@ -357,13 +404,22 @@ process_partial_solution_partition_number(Solution, Ref) ->
 	Max = ar_node:get_max_partition_number(PartitionUpperBound),
 	case PartitionNumber > Max of
 		false ->
-			process_partial_solution_nonce(Solution, Ref);
+			process_partial_solution_packing_difficulty(Solution, Ref);
 		true ->
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }
 	end.
 
+process_partial_solution_packing_difficulty(Solution, Ref) ->
+	#mining_solution{ packing_difficulty = PackingDifficulty } = Solution,
+	case ar_block:validate_packing_difficulty(PackingDifficulty) of
+		true ->
+			process_partial_solution_nonce(Solution, Ref);
+		false ->
+			#partial_solution_response{ status = <<"rejected_bad_poa">> }
+	end.
+
 process_partial_solution_nonce(Solution, Ref) ->
-	Max = max(0, (?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1),
+	Max = ar_block:get_max_nonce(Solution#mining_solution.packing_difficulty),
 	case Solution#mining_solution.nonce > Max of
 		false ->
 			process_partial_solution_quick_pow(Solution, Ref);
@@ -378,9 +434,11 @@ process_partial_solution_quick_pow(Solution, Ref) ->
 		seed = Seed,
 		mining_address = MiningAddress,
 		preimage = Preimage,
-		solution_hash = SolutionH
+		solution_hash = SolutionH,
+		packing_difficulty = PackingDifficulty
 	} = Solution,
-	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress),
+	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress,
+			PackingDifficulty),
 	case ar_block:compute_solution_h(H0, Preimage) of
 		SolutionH ->
 			process_partial_solution_pow(Solution, Ref, H0);
@@ -398,11 +456,16 @@ process_partial_solution_pow(Solution, Ref, H0) ->
 		poa2 = #poa{ chunk = Chunk2 }
 	} = Solution,
 	{H1, Preimage1} = ar_block:compute_h1(H0, Nonce, Chunk1),
-	case H1 == SolutionH andalso Preimage1 == Preimage
-			andalso ar_mining_server:is_one_chunk_solution(Solution) of
-		true ->
+
+	case {H1 == SolutionH andalso Preimage1 == Preimage,
+			ar_mining_server:is_one_chunk_solution(Solution)} of
+		{true, false} ->
+			#partial_solution_response{ status = <<"rejected_bad_poa">> };
+		{true, true} ->
 			process_partial_solution_partition_upper_bound(Solution, Ref, H0, H1);
-		false ->
+		{false, true} ->
+			#partial_solution_response{ status = <<"rejected_bad_poa">> };
+		{false, false} ->
 			{H2, Preimage2} = ar_block:compute_h2(H1, Chunk2, H0),
 			case H2 == SolutionH andalso Preimage2 == Preimage of
 				false ->
@@ -434,34 +497,37 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 		mining_address = MiningAddress,
 		solution_hash = SolutionH,
 		recall_byte2 = RecallByte2,
-		poa2 = PoA2
+		poa2 = PoA2,
+		packing_difficulty = PackingDifficulty
 	} = Solution,
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
-	ComputedRecallByte1 = RecallRange1Start + Nonce * ?DATA_CHUNK_SIZE,
+	ComputedRecallByte1 = ar_block:get_recall_byte(RecallRange1Start, Nonce,
+			PackingDifficulty),
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(ComputedRecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
+	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
 	case RecallByte1 == ComputedRecallByte1 andalso
 			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-					{spora_2_6, MiningAddress}, not_set}) of
+					Packing, not_set}) of
 		error ->
 			?LOG_ERROR([{event, pool_failed_to_validate_proof_of_access}]),
 			#partial_solution_response{ status = <<"rejected_bad_poa">> };
 		false ->
 			#partial_solution_response{ status = <<"rejected_bad_poa">> };
 		{true, ChunkID} when H1 == SolutionH ->
-			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
-					{spora_2_6, MiningAddress}}, ChunkID},
+			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing}, ChunkID},
 			PoA2Cache = undefined,
 			process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache);
 		{true, ChunkID} ->
-			ComputedRecallByte2 = RecallRange2Start + Nonce * ?DATA_CHUNK_SIZE,
+			ComputedRecallByte2 = ar_block:get_recall_byte(RecallRange2Start, Nonce,
+					PackingDifficulty),
 			{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
 					ComputedRecallByte2),
 			BlockSize2 = BlockEnd2 - BlockStart2,
 			case RecallByte2 == ComputedRecallByte2 andalso
 					ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-									PoA2, {spora_2_6, MiningAddress}, not_set}) of
+									PoA2, Packing, not_set}) of
 				error ->
 					?LOG_ERROR([{event, pool_failed_to_validate_proof_of_access}]),
 					#partial_solution_response{ status = <<"rejected_bad_poa">> };
@@ -469,17 +535,19 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 					#partial_solution_response{ status = <<"rejected_bad_poa">> };
 				{true, Chunk2ID} ->
 					PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-							{spora_2_6, MiningAddress}}, Chunk2ID},
+							Packing}, Chunk2ID},
 					PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
-							{spora_2_6, MiningAddress}}, ChunkID},
+							Packing}, ChunkID},
 					process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache)
 			end
 	end.
 
 process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache) ->
-	#mining_solution{ solution_hash = SolutionH, recall_byte2 = RecallByte2 } = Solution,
+	#mining_solution{ solution_hash = SolutionH, recall_byte2 = RecallByte2,
+			packing_difficulty = PackingDifficulty } = Solution,
 	IsPoA1 = (RecallByte2 == undefined),
-	case ar_node_utils:passes_diff_check(SolutionH, IsPoA1, ar_node:get_current_diff()) of
+	case ar_node_utils:passes_diff_check(SolutionH, IsPoA1, ar_node:get_current_diff(),
+			PackingDifficulty) of
 		false ->
 			#partial_solution_response{ status = <<"accepted">> };
 		true ->
@@ -549,8 +617,9 @@ process_h1_read_jobs([Candidate | Jobs], Partitions) ->
 we_have_partition_for_the_first_recall_byte(_Candidate, []) ->
 	false;
 we_have_partition_for_the_first_recall_byte(
-		#mining_candidate{ mining_address = Addr, partition_number = PartitionID },
-		[{PartitionID, Addr} | _Partitions]) ->
+		#mining_candidate{ mining_address = Addr, partition_number = PartitionID,
+				packing_difficulty = PackingDifficulty },
+		[{PartitionID, Addr, PackingDifficulty} | _Partitions]) ->
 	true;
 we_have_partition_for_the_first_recall_byte(Candidate, [_Partition | Partitions]) ->
 	%% Mining address or partition number mismatch.
@@ -559,8 +628,9 @@ we_have_partition_for_the_first_recall_byte(Candidate, [_Partition | Partitions]
 we_have_partition_for_the_second_recall_byte(_Candidate, []) ->
 	false;
 we_have_partition_for_the_second_recall_byte(
-		#mining_candidate{ mining_address = Addr, partition_number2 = PartitionID },
-		[{PartitionID, Addr} | _Partitions]) ->
+		#mining_candidate{ mining_address = Addr, partition_number2 = PartitionID,
+				packing_difficulty = PackingDifficulty },
+		[{PartitionID, Addr, PackingDifficulty} | _Partitions]) ->
 	true;
 we_have_partition_for_the_second_recall_byte(Candidate, [_Partition | Partitions]) ->
 	%% Mining address or partition number mismatch.
@@ -628,8 +698,8 @@ get_jobs_test() ->
 process_partial_solution_test_() ->
 	ar_test_node:test_with_mocked_functions([
 		{ar_block, compute_h0,
-			fun(O, P, S, M) ->
-					crypto:hash(sha256, << O/binary, P:256, S/binary, M/binary >>) end},
+			fun(O, P, S, M, PD) ->
+					crypto:hash(sha256, << O/binary, P:256, S/binary, M/binary, PD:8 >>) end},
 		{ar_block_index, get_block_bounds,
 			fun(_Byte) ->
 				{10, 110, << 1:256 >>}
@@ -637,8 +707,13 @@ process_partial_solution_test_() ->
 		{ar_poa, validate,
 			fun(Args) ->
 				PoA = #poa{ tx_path = << 0:(2176 * 8) >>, data_path = << 0:(349504 * 8) >> },
+				PoA2 = PoA#poa{ chunk = << 0:(262144 * 8) >> },
+				CPoA = PoA#poa{ chunk = << 0:(8192 * 8) >>,
+						unpacked_chunk = << 1:(262144 * 8) >> },
 				case Args of
-					{10, _, << 1:256 >>, 100, PoA, {spora_2_6, << 0:256 >>}, not_set} ->
+					{10, _, << 1:256 >>, 100, PoA2, {spora_2_6, << 0:256 >>}, not_set} ->
+						{true, << 2:256 >>};
+					{10, _, << 1:256 >>, 100, CPoA, {composite, << 0:256 >>, 1}, not_set} ->
 						{true, << 2:256 >>};
 					_ ->
 						false
@@ -651,75 +726,101 @@ process_partial_solution_test_() ->
 test_process_partial_solution() ->
 	Zero = << 0:256 >>,
 	Zero48 = << 0:(8*48) >>,
-	H0 = ar_block:compute_h0(Zero, 0, Zero48, Zero),
+	H0 = ar_block:compute_h0(Zero, 0, Zero48, Zero, 0),
 	SolutionHQuick = ar_block:compute_solution_h(H0, Zero),
-	{H1, Preimage1} = ar_block:compute_h1(H0, 1, <<>>),
+	C = << 0:(262144 * 8) >>,
+	{H1, Preimage1} = ar_block:compute_h1(H0, 1, C),
 	SolutionH = ar_block:compute_solution_h(H0, Preimage1),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0, 0, 1),
 	RecallByte1 = RecallRange1Start + 1 * ?DATA_CHUNK_SIZE,
-	{H2, Preimage2} = ar_block:compute_h2(H1, <<>>, H0),
+	{H2, Preimage2} = ar_block:compute_h2(H1, C, H0),
 	RecallByte2 = RecallRange2Start + 1 * ?DATA_CHUNK_SIZE,
+	PoA = #poa{ chunk = C },
+	CompositeSubChunk = << 0:(8192 * 8) >>,
+	CPoA = #poa{ chunk = CompositeSubChunk },
+	CH0 = ar_block:compute_h0(Zero, 0, Zero48, Zero, 1),
+	{CH1, CPreimage1} = ar_block:compute_h1(CH0, 1, CompositeSubChunk),
+	CSolutionH = ar_block:compute_solution_h(CH0, CPreimage1),
+	{CRecallRange1Start, CRecallRange2Start} = ar_block:get_recall_range(CH0, 0, 1),
+	CRecallByte1 = CRecallRange1Start + 1 * ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	{CH2, CPreimage2} = ar_block:compute_h2(CH1, CompositeSubChunk, CH0),
+	CRecallByte2 = CRecallRange2Start + 1 * ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
 	TestCases = [
+		{"Bad proof size 0",
+			#mining_solution{ poa1 = #poa{} }, % Empty chunk.
+			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad proof size 1",
-			#mining_solution{ poa1 = #poa{ tx_path = << 0:(2177 * 8) >> } },
+			#mining_solution{ poa1 = #poa{ chunk = C, tx_path = << 0:(2177 * 8) >> } },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad proof size 2",
-			#mining_solution{ poa2 = #poa{ tx_path = << 0:(2177 * 8) >> } },
+			#mining_solution{ poa1 = PoA,
+					poa2 = #poa{ chunk = C, tx_path = << 0:(2177 * 8) >> } },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad proof size 3",
-			#mining_solution{ poa1 = #poa{ data_path = << 0:(349505 * 8) >> } },
+			#mining_solution{ poa1 = #poa{ chunk = C, data_path = << 0:(349505 * 8) >> } },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad proof size 4",
-			#mining_solution{ poa2 = #poa{ data_path = << 0:(349505 * 8) >> } },
+			#mining_solution{ poa1 = PoA,
+					poa2 = #poa{ chunk = C, data_path = << 0:(349505 * 8) >> } },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 1",
-			#mining_solution{ next_seed = <<>> },
+			#mining_solution{ next_seed = <<>>, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 2",
-			#mining_solution{ seed = <<>> },
+			#mining_solution{ seed = <<>>, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 3",
-			#mining_solution{ preimage = <<>> },
+			#mining_solution{ preimage = <<>>, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 4",
-			#mining_solution{ mining_address = <<>> },
+			#mining_solution{ mining_address = <<>>, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 5",
-			#mining_solution{ nonce_limiter_output = <<>> },
+			#mining_solution{ nonce_limiter_output = <<>>, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 6",
-			#mining_solution{ solution_hash = <<>> },
+			#mining_solution{ solution_hash = <<>>, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 7",
 			#mining_solution{ poa1 = #poa{ chunk = << 0:((?DATA_CHUNK_SIZE + 1) * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad field size 8",
-			#mining_solution{ poa2 = #poa{ chunk = << 0:((?DATA_CHUNK_SIZE + 1) * 8) >> }},
+			#mining_solution{ poa1 = PoA,
+					poa2 = #poa{ chunk = << 0:((?DATA_CHUNK_SIZE + 1) * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 
 		{"Bad partition number",
-			#mining_solution{ partition_number = 1 },
+			#mining_solution{ partition_number = 1, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad nonce",
-			#mining_solution{ nonce = 2 }, % We have 2 nonces per recall range in debug mode.
+			#mining_solution{ poa1 = PoA,
+					nonce = 2 }, % We have 2 nonces per recall range in debug mode.
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad quick pow",
-			#mining_solution{},
+			#mining_solution{ poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
 		{"Bad pow",
-			#mining_solution{ nonce = 1, solution_hash = SolutionHQuick },
+			#mining_solution{ nonce = 1, solution_hash = SolutionHQuick,
+					preimage = Preimage1, partition_upper_bound = 1,
+					recall_byte1 = RecallByte1,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
 		{"Bad partition upper bound",
-			#mining_solution{ nonce = 1, solution_hash = SolutionH, preimage = Preimage1 },
+			#mining_solution{ nonce = 1, solution_hash = SolutionH,
+					preimage = Preimage1, partition_upper_bound = 0,
+					recall_byte1 = RecallByte1,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad poa 1",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH, preimage = Preimage1,
-					partition_upper_bound = 1 },
+					partition_upper_bound = 1, poa1 = PoA },
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad poa 2",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Bad poa 3",
@@ -728,7 +829,7 @@ test_process_partial_solution() ->
 					recall_byte1 = RecallByte1,
 					poa2 = #poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> },
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 
@@ -736,27 +837,27 @@ test_process_partial_solution() ->
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1, recall_byte2 = 0,
-					poa2 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa2 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> },
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
+			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 		{"Two-chunk bad poa 2",
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage2, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1, recall_byte2 = 0,
-					poa2 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa2 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> },
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_wrong_hash">> }},
 		{"Two-chunk bad poa 3",
 			#mining_solution{ nonce = 1, solution_hash = H2,
 					preimage = Preimage2, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1, recall_byte2 = 0,
-					poa2 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa2 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> },
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
 
@@ -764,17 +865,57 @@ test_process_partial_solution() ->
 			#mining_solution{ nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"accepted">> }},
 		{"Accepted 2",
 			#mining_solution{ nonce = 1, solution_hash = H2,
 					preimage = Preimage2, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-					poa2 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa2 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> },
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
+			#partial_solution_response{ status = <<"accepted">> }},
+
+		{"No unpacked chunk",
+			#mining_solution{ nonce = 1, solution_hash = CSolutionH,
+					preimage = CPreimage1, partition_upper_bound = 1,
+					recall_byte1 = CRecallByte1,
+					packing_difficulty = 1,
+					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >> }},
+			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+		{"Accepted packing difficulty=1",
+			#mining_solution{ nonce = 1, solution_hash = CSolutionH,
+					preimage = CPreimage1, partition_upper_bound = 1,
+					recall_byte1 = CRecallByte1,
+					packing_difficulty = 1,
+					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >>,
+						unpacked_chunk = << 1:(262144 * 8) >> }},
+			#partial_solution_response{ status = <<"accepted">> }},
+		{"No second unpacked chunk",
+			#mining_solution{ nonce = 1, solution_hash = CH2,
+					preimage = CPreimage2, partition_upper_bound = 1,
+					recall_byte1 = CRecallByte1, recall_byte2 = CRecallByte2,
+					packing_difficulty = 1,
+					poa2 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >> },
+					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >> }},
+			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
+		{"Accepted two-chunk packing difficulty=1",
+			#mining_solution{ nonce = 1, solution_hash = CH2,
+					preimage = CPreimage2, partition_upper_bound = 1,
+					recall_byte1 = CRecallByte1, recall_byte2 = CRecallByte2,
+					packing_difficulty = 1,
+					poa2 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >>,
+						unpacked_chunk = << 1:(262144 * 8) >> },
+					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >>,
+						unpacked_chunk = << 1:(262144 * 8) >>}},
 			#partial_solution_response{ status = <<"accepted">> }}
 	],
 	lists:foreach(
@@ -788,8 +929,8 @@ test_process_partial_solution() ->
 process_solution_test_() ->
 	ar_test_node:test_with_mocked_functions([
 		{ar_block, compute_h0,
-			fun(O, P, S, M) ->
-					crypto:hash(sha256, << O/binary, P:256, S/binary, M/binary >>) end},
+			fun(O, P, S, M, PD) ->
+				crypto:hash(sha256, << O/binary, P:256, S/binary, M/binary, PD:8 >>) end},
 		{ar_block_index, get_block_bounds,
 			fun(_Byte) ->
 				{10, 110, << 1:256 >>}
@@ -797,8 +938,13 @@ process_solution_test_() ->
 		{ar_poa, validate,
 			fun(Args) ->
 				PoA = #poa{ tx_path = << 0:(2176 * 8) >>, data_path = << 0:(349504 * 8) >> },
+				PoA2 = PoA#poa{ chunk = << 0:(262144 * 8) >> },
+				CPoA = PoA#poa{ chunk = << 0:(8192 * 8) >>,
+						unpacked_chunk = << 1:(262144 * 8) >> },
 				case Args of
-					{10, _, << 1:256 >>, 100, PoA, {spora_2_6, << 0:256 >>}, not_set} ->
+					{10, _, << 1:256 >>, 100, PoA2, {spora_2_6, << 0:256 >>}, not_set} ->
+						{true, << 2:256 >>};
+					{10, _, << 1:256 >>, 100, CPoA, {composite, << 0:256 >>, 2}, not_set} ->
 						{true, << 2:256 >>};
 					_ ->
 						false
@@ -851,61 +997,82 @@ process_solution_test_() ->
 test_process_solution() ->
 	Zero = << 0:256 >>,
 	Zero48 = << 0:(48*8) >>,
-	H0 = ar_block:compute_h0(Zero, 0, Zero48, Zero),
-	{_H1, Preimage1} = ar_block:compute_h1(H0, 1, <<>>),
+	C = << 0:(262144 * 8) >>,
+	H0 = ar_block:compute_h0(Zero, 0, Zero48, Zero, 0),
+	{_H1, Preimage1} = ar_block:compute_h1(H0, 1, C),
 	SolutionH = ar_block:compute_solution_h(H0, Preimage1),
 	{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0, 0, 1),
 	RecallByte1 = RecallRange1Start + 1 * ?DATA_CHUNK_SIZE,
+	PoA = #poa{ chunk = C },
+	CompositeSubChunk = << 0:(8192 * 8) >>,
+	CPoA = #poa{ chunk = CompositeSubChunk },
+	CH0 = ar_block:compute_h0(Zero, 0, Zero48, Zero, 2),
+	{_CH1, CPreimage1} = ar_block:compute_h1(CH0, 1, CompositeSubChunk),
+	CSolutionH = ar_block:compute_solution_h(CH0, CPreimage1),
+	{CRecallRange1Start, _CRecallRange2Start} = ar_block:get_recall_range(CH0, 0, 1),
+	CRecallByte1 = CRecallRange1Start + 1 * ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
 	TestCases = [
 		{"VDF not found",
 			#mining_solution{ next_seed = << 10:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"VDF not found 2",
 			#mining_solution{ next_seed = << 11:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"VDF not found 3",
 			#mining_solution{ next_seed = << 12:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_vdf_not_found">> }},
 		{"Bad VDF 1",
 			#mining_solution{ next_seed = << 1:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Bad VDF 2",
 			#mining_solution{ next_seed = << 2:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Bad VDF 3",
 			#mining_solution{ next_seed = << 3:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
 			#partial_solution_response{ status = <<"rejected_bad_vdf">> }},
 		{"Accepted",
 			#mining_solution{ next_seed = << 4:(48*8) >>, nonce = 1, solution_hash = SolutionH,
 					preimage = Preimage1, partition_upper_bound = 1,
 					recall_byte1 = RecallByte1,
-					poa1 = #poa{ tx_path = << 0:(2176 * 8) >>,
+					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			noreply}
+			noreply},
+		{"Accepted packing diff=2",
+			#mining_solution{ next_seed = << 4:(48*8) >>, nonce = 1,
+					solution_hash = CSolutionH,
+					preimage = CPreimage1, partition_upper_bound = 1,
+					recall_byte1 = CRecallByte1,
+					packing_difficulty = 2,
+					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
+						data_path = << 0:(349504 * 8) >>,
+						unpacked_chunk = << 1:(262144 * 8) >> }},
+			%% The difficulty is about 32 times higher now (because we can try 32x nonces).
+			%% The inputs are deterministic.
+			#partial_solution_response{ status = <<"accepted">> }}
 	],
 	lists:foreach(
 		fun({Title, Solution, ExpectedReply}) ->

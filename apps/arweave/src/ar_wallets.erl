@@ -236,7 +236,8 @@ initialize_state(Blocks, Tree) ->
 	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	{DAG3, LastB} = lists:foldl(
 		fun (B, start) ->
-				{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
+				Height = B#block.height,
+				{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree, Height),
 				gen_server:cast(ar_storage, {store_account_tree_update, B#block.height,
 						RootHash, UpdateMap}),
 				RootHash = B#block.wallet_list,
@@ -330,6 +331,7 @@ apply_block2(B, PrevB, DAG) ->
 	end.
 
 apply_block2(B, PrevB, Args, Tree, DAG) ->
+	Height = B#block.height,
 	{EndowmentPool, MinerReward, DebtSupply, KryderPlusRateMultiplierLatch,
 			KryderPlusRateMultiplier, Accounts} = Args,
 	Denomination = PrevB#block.denomination,
@@ -354,7 +356,7 @@ apply_block2(B, PrevB, Args, Tree, DAG) ->
 			{{error, invalid_kryder_plus_rate_multiplier}, DAG};
 		_ ->
 			Tree2 = apply_diff(Accounts, Tree),
-			{RootHash2, _, UpdateMap} = ar_block:hash_wallet_list(Tree2),
+			{RootHash2, _, UpdateMap} = ar_block:hash_wallet_list(Tree2, Height),
 			case B#block.wallet_list == RootHash2 of
 				true ->
 					RootHash = PrevB#block.wallet_list,
@@ -372,7 +374,7 @@ set_current(DAG, RootHash, Height, PruneDepth) ->
 		ar_diff_dag:move_sink(DAG, RootHash, fun apply_diff/2, fun reverse_diff/2),
 		RootHash,
 		fun(Tree, Meta) ->
-			{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
+			{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree, Height),
 			gen_server:cast(ar_storage, {store_account_tree_update, Height, RootHash,
 					UpdateMap}),
 			{RootHash, UpdatedTree, Meta}
@@ -442,7 +444,7 @@ get_account_tree_range(Tree, Cursor) ->
 compute_hash(Tree, Diff, Height) ->
 	Tree2 = apply_diff(Diff, Tree),
 	true = Height >= ar_fork:height_2_2(),
-	element(1, ar_block:hash_wallet_list(Tree2)).
+	element(1, ar_block:hash_wallet_list(Tree2, Height)).
 
 maybe_add_node(DAG, RootHash, RootHash, _Wallets, _Metadata) ->
 	%% The wallet list has not changed - there are no transactions
