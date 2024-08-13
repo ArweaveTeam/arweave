@@ -2,7 +2,14 @@
 
 ARWEAVE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-source $ARWEAVE_DIR/testnet/testnet_nodes.sh
+ALL_NODES+=(
+testnet-1
+testnet-2
+testnet-3
+testnet-4
+testnet-5
+testnet-6
+)
 
 # Get the current hostname
 current_host=$(hostname -f)
