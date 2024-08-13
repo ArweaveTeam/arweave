@@ -1,0 +1,25 @@
+{
+    "storage_modules": [
+        "51,1099511627776,peHwdWtsEr27dC7SeTT1hoympOePTO7vlJt2zhQMAtg",
+        "137969,1073741824,peHwdWtsEr27dC7SeTT1hoympOePTO7vlJt2zhQMAtg",
+        "137970,1073741824,peHwdWtsEr27dC7SeTT1hoympOePTO7vlJt2zhQMAtg"
+    ],
+    "mining_addr": "peHwdWtsEr27dC7SeTT1hoympOePTO7vlJt2zhQMAtg",
+    "peers": [
+        "testnet-1.arweave.net",
+        "testnet-2.arweave.net",
+        "testnet-4.arweave.net",
+        "testnet-5.arweave.net",
+        "testnet-6.arweave.net"
+    ],
+    "vdf_server_trusted_peers": [
+        "testnet-4.arweave.net"
+    ],
+    "debug": true,
+    "mine": true,
+    "enable": [
+        "remove_orphaned_storage_module_data"
+    ],
+    "data_dir": "/arweave-data",
+    "requests_per_minute_limit": 9000
+}
