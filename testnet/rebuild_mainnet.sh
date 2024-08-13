@@ -13,7 +13,7 @@ rm -rf /arweave-build/mainnet/*
 echo "$0 $@" > /arweave-build/mainnet/build.command
 
 cd $ARWEAVE_DIR
-rm $ARWEAVE_DIR/_build/prod/rel/arweave/*.tar.gz
+rm -rf $ARWEAVE_DIR/_build/prod/rel/arweave/*
 $ARWEAVE_DIR/rebar3 as prod tar
 tar xf $ARWEAVE_DIR/_build/prod/rel/arweave/arweave-*.tar.gz -C /arweave-build/mainnet
 
