@@ -931,8 +931,9 @@ validate_solution(Solution, DiffPair) ->
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
+	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
 	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-			Packing, not_set}) of
+			Packing, SubChunkIndex, not_set}) of
 		{true, ChunkID} ->
 			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing}, ChunkID},
 			case ar_node_utils:h1_passes_diff_check(H1, DiffPair, PackingDifficulty) of
@@ -964,7 +965,7 @@ validate_solution(Solution, DiffPair) ->
 									BlockSize2 = BlockEnd2 - BlockStart2,
 									case ar_poa:validate({BlockStart2, RecallByte2, TXRoot2,
 											BlockSize2, PoA2,
-											Packing, not_set}) of
+											Packing, SubChunkIndex, not_set}) of
 										{true, Chunk2ID} ->
 											PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2,
 													BlockSize2, Packing}, Chunk2ID},

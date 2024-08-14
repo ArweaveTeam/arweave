@@ -683,13 +683,16 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 			B#block.packing_difficulty),
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
+	PackingDifficulty = B#block.packing_difficulty,
+	Nonce = B#block.nonce,
 	%% The packing difficulty >0 is only allowed after the 2.8 hard fork (validated earlier
 	%% here), and the composite packing is only possible for packing difficulty >= 1.
-	Packing = ar_block:get_packing(B#block.packing_difficulty, B#block.reward_addr),
-	ArgCache = {BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing},
+	Packing = ar_block:get_packing(PackingDifficulty, B#block.reward_addr),
+	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
+	ArgCache = {BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing, SubChunkIndex},
 	case RecallByte1 == B#block.recall_byte andalso
 			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, B#block.poa,
-					Packing, not_set}) of
+					Packing, SubChunkIndex, not_set}) of
 		error ->
 			?LOG_ERROR([{event, failed_to_validate_proof_of_access},
 					{block, ar_util:encode(B#block.indep_hash)}]),
@@ -713,11 +716,11 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 					{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
 							RecallByte2),
 					BlockSize2 = BlockEnd2 - BlockStart2,
-					ArgCache2 = {BlockStart2, RecallByte2, TXRoot2, BlockSize2, Packing},
+					ArgCache2 = {BlockStart2, RecallByte2, TXRoot2, BlockSize2, Packing,
+							SubChunkIndex},
 					case RecallByte2 == B#block.recall_byte2 andalso
 							ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-									B#block.poa2,
-									Packing, not_set}) of
+									B#block.poa2, Packing, SubChunkIndex, not_set}) of
 						error ->
 							?LOG_ERROR([{event, failed_to_validate_proof_of_access},
 									{block, ar_util:encode(B#block.indep_hash)}]),

@@ -411,7 +411,8 @@ test_request_unpack() ->
 			lists:seq(1, 5)
 		),
 		BILast = ar_node:get_block_index(),
-		LastB = ar_test_node:read_block_when_stored(element(1, lists:nth(10, lists:reverse(BILast)))),
+		LastB = ar_test_node:read_block_when_stored(
+				element(1, lists:nth(10, lists:reverse(BILast)))),
 		lists:foldl(
 			fun(Height, PrevB) ->
 				H = element(1, lists:nth(Height + 1, lists:reverse(BILast))),
@@ -423,7 +424,13 @@ test_request_unpack() ->
 				H0 = ar_block:compute_h0(B, PrevB),
 				{RecallRange1Start, _} = ar_block:get_recall_range(H0,
 						B#block.partition_number, PartitionUpperBound),
-				RecallByte = RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE,
+				RecallByte =
+					case Height >= ar_fork:height_2_8() of
+						false ->
+							RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE;
+						true ->
+							RecallRange1Start + (B#block.nonce div 32) * ?DATA_CHUNK_SIZE
+					end,
 				{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte),
 				?debugFmt("Mined a block. "
 						"Computed recall byte: ~B, block's recall byte: ~p. "
@@ -434,9 +441,17 @@ test_request_unpack() ->
 						ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
 						BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
 				?assertEqual(RecallByte, B#block.recall_byte),
+				SubChunkIndex = ar_block:get_sub_chunk_index(B#block.packing_difficulty,
+						B#block.nonce),
+				Packing =
+					case Height >= ar_fork:height_2_8() of
+						false ->
+							{spora_2_6, B#block.reward_addr};
+						true ->
+							{composite, B#block.reward_addr, B#block.packing_difficulty}
+					end,
 				?assertMatch({true, _}, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-						BlockEnd - BlockStart, PoA,
-						{spora_2_6, B#block.reward_addr}, not_set})),
+						BlockEnd - BlockStart, PoA, Packing, SubChunkIndex, not_set})),
 				B
 			end,
 			LastB,

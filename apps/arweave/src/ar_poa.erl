@@ -42,23 +42,18 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
 			end
 	end.
 
+get_data_path_validation_ruleset(BlockStartOffset) ->
+	get_data_path_validation_ruleset(BlockStartOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD,
+			?STRICT_DATA_SPLIT_THRESHOLD).
+
 %% @doc Validate a proof of access.
 validate(Args) ->
-	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing, ExpectedChunkID} = Args,
+	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing, SubChunkIndex,
+			ExpectedChunkID} = Args,
 	#poa{ chunk = Chunk, unpacked_chunk = UnpackedChunk } = SPoA,
-	StrictDataSplitThreshold = ?STRICT_DATA_SPLIT_THRESHOLD,
-	MerkleRebaseSupportThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 	TXPath = SPoA#poa.tx_path,
-	RecallBucketOffset =
-		case RecallOffset >= StrictDataSplitThreshold of
-			true ->
-				get_padded_offset(RecallOffset + 1, StrictDataSplitThreshold)
-						- (?DATA_CHUNK_SIZE) - BlockStartOffset;
-			false ->
-				RecallOffset - BlockStartOffset
-		end,
-	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset,
-			MerkleRebaseSupportThreshold, StrictDataSplitThreshold),
+	RecallBucketOffset = get_recall_bucket_offset(RecallOffset, BlockStartOffset),
+	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset),
 	case ar_merkle:validate_path(TXRoot, RecallBucketOffset, BlockSize, TXPath) of
 		false ->
 			false;
@@ -75,7 +70,7 @@ validate(Args) ->
 						not_set ->
 							validate2(Packing, {ChunkID, ChunkStartOffset,
 									ChunkEndOffset, BlockStartOffset, TXStartOffset,
-									RecallOffset, TXRoot, Chunk, UnpackedChunk});
+									TXRoot, Chunk, UnpackedChunk, SubChunkIndex});
 						_ ->
 							case ChunkID == ExpectedChunkID of
 								false ->
@@ -87,9 +82,18 @@ validate(Args) ->
 			end
 	end.
 
+get_recall_bucket_offset(RecallOffset, BlockStartOffset) ->
+	case RecallOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
+		true ->
+			get_padded_offset(RecallOffset + 1, ?STRICT_DATA_SPLIT_THRESHOLD)
+					- (?DATA_CHUNK_SIZE) - BlockStartOffset;
+		false ->
+			RecallOffset - BlockStartOffset
+	end.
+
 validate2({spora_2_6, _} = Packing, Args) ->
 	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
-			_RecallOffset, TXRoot, Chunk, _UnpackedChunk} = Args,
+			TXRoot, Chunk, _UnpackedChunk, _SubChunkIndex} = Args,
 	ChunkSize = ChunkEndOffset - ChunkStartOffset,
 	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
 	prometheus_counter:inc(validating_packed_spora, [ar_packing_server:packing_atom(Packing)]),
@@ -108,7 +112,7 @@ validate2({spora_2_6, _} = Packing, Args) ->
 	end;
 validate2({composite, _, _} = Packing, Args) ->
 	{_ChunkID, ChunkStartOffset, ChunkEndOffset, _BlockStartOffset, _TXStartOffset,
-			_RecallOffset, _TXRoot, _Chunk, UnpackedChunk} = Args,
+			_TXRoot, _Chunk, UnpackedChunk, _SubChunkIndex} = Args,
 	ChunkSize = ChunkEndOffset - ChunkStartOffset,
 	case ChunkSize > ?DATA_CHUNK_SIZE of
 		true ->
@@ -123,13 +127,12 @@ validate2({composite, _, _} = Packing, Args) ->
 			end
 	end.
 
-validate3({composite, _, PackingDifficulty} = Packing, Args) ->
+validate3({composite, _Addr, _PackingDifficulty} = Packing, Args) ->
 	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
-			RecallOffset, TXRoot, Chunk, UnpackedChunk} = Args,
+			TXRoot, Chunk, UnpackedChunk, SubChunkIndex} = Args,
 	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-	{SubChunkSize, SubChunkStartOffset} = get_sub_chunk_size_and_start_offset(
-			RecallOffset - BlockStartOffset - TXStartOffset - ChunkStartOffset,
-			PackingDifficulty),
+	SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	SubChunkStartOffset = SubChunkIndex * SubChunkSize,
 	%% We always expect the provided unpacked chunks to be padded (if necessary)
 	%% to 256 KiB.
 	UnpackedSubChunk = binary:part(UnpackedChunk, SubChunkStartOffset, SubChunkSize),
@@ -153,13 +156,6 @@ validate3({composite, _, PackingDifficulty} = Packing, Args) ->
 		{ok, _UnexpectedSubChunk} ->
 			false
 	end.
-
-%% @doc Return the size of an individual sub-chunk and the relative start offset for the
-%% given byte offset within a chunk and a packing difficulty.
-get_sub_chunk_size_and_start_offset(O, D)
-		when D >= 1, D =< ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT ->
-	Size = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
-	{Size, O - O rem Size}.
 
 %% @doc Return the smallest multiple of 256 KiB counting from StrictDataSplitThreshold
 %% bigger than or equal to Offset.

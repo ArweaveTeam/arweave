@@ -3,8 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, set_largest_seen_upper_bound/1, 
-			get_partitions/0, get_partitions/1, read_recall_range/4, garbage_collect/0,
-			get_recall_step_size/1]).
+			get_partitions/0, get_partitions/1, read_recall_range/4, garbage_collect/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -336,57 +335,8 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			MiningAddress, PackingDifficulty, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, RecallRangeSize, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	ChunkOffsets3 = maybe_split_into_sub_chunks(ChunkOffsets2, PackingDifficulty, RangeStart),
 	log_read_range(Candidate, WhichChunk, length(ChunkOffsets), StartTime),
-	ChunkOffsets3.
-
-maybe_split_into_sub_chunks(ChunkOffsets, 0, _RangeStart) ->
-	ChunkOffsets;
-maybe_split_into_sub_chunks(ChunkOffsets, _PackingDifficulty, RangeStart) ->
-	split_into_sub_chunks(ChunkOffsets, RangeStart, []).
-
-split_into_sub_chunks([], _Offset, SubChunkOffsets) ->
-	lists:reverse(SubChunkOffsets);
-split_into_sub_chunks([{EndOffset, _Chunk} | ChunkOffsets], Offset, SubChunkOffsets)
-		when Offset >= EndOffset ->
-	split_into_sub_chunks(ChunkOffsets, Offset, SubChunkOffsets);
-split_into_sub_chunks([{EndOffset, Chunk} | ChunkOffsets], Offset, SubChunkOffsets) ->
-	SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
-	PartSize =
-		case Offset + ?DATA_CHUNK_SIZE =< EndOffset of
-			true ->
-				?DATA_CHUNK_SIZE;
-			false ->
-				((EndOffset - Offset - 1) div SubChunkSize + 1) * SubChunkSize
-		end,
-	RelativeStartOffset = ?DATA_CHUNK_SIZE - PartSize,
-	case catch binary:part(Chunk, RelativeStartOffset, PartSize) of
-		{'EXIT', _} ->
-			?LOG_ERROR([{event, failed_to_split_chunk_into_sub_chunks},
-					{chunk_size, byte_size(Chunk)},
-					{end_offset, EndOffset},
-					{part_between_recall_range_start_and_end_offset, PartSize}]),
-			split_into_sub_chunks(ChunkOffsets, EndOffset, SubChunkOffsets);
-		Part ->
-			StartOffset = EndOffset - ?DATA_CHUNK_SIZE + RelativeStartOffset,
-			SubChunkOffsets2 = split_into_sub_chunks2(Part, StartOffset, SubChunkOffsets),
-			split_into_sub_chunks(ChunkOffsets, EndOffset, SubChunkOffsets2)
-	end.
-
-split_into_sub_chunks2(<<>>, _StartOffset, SubChunkOffsets) ->
-	SubChunkOffsets;
-split_into_sub_chunks2(<< SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>,
-		StartOffset, SubChunkOffsets) ->
-	EndOffset = StartOffset + ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
-	split_into_sub_chunks2(Rest, EndOffset, [{EndOffset, SubChunk} | SubChunkOffsets]).
-
-get_recall_step_size(#mining_candidate{ packing_difficulty = PackingDifficulty }) ->
-	case PackingDifficulty >= 1 of
-		true ->
-			?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE;
-		false ->
-			?DATA_CHUNK_SIZE
-	end.
+	ChunkOffsets2.
 
 filter_by_packing([], _Intervals, _StoreID) ->
 	[];

@@ -507,9 +507,10 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(ComputedRecallByte1),
 	BlockSize1 = BlockEnd1 - BlockStart1,
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
+	SubChunkIndex = ar_block:get_packing_difficulty(PackingDifficulty, Nonce),
 	case RecallByte1 == ComputedRecallByte1 andalso
 			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
-					Packing, not_set}) of
+					Packing, SubChunkIndex, not_set}) of
 		error ->
 			?LOG_ERROR([{event, pool_failed_to_validate_proof_of_access}]),
 			#partial_solution_response{ status = <<"rejected_bad_poa">> };
@@ -527,7 +528,7 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 			BlockSize2 = BlockEnd2 - BlockStart2,
 			case RecallByte2 == ComputedRecallByte2 andalso
 					ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-									PoA2, Packing, not_set}) of
+									PoA2, Packing, SubChunkIndex, not_set}) of
 				error ->
 					?LOG_ERROR([{event, pool_failed_to_validate_proof_of_access}]),
 					#partial_solution_response{ status = <<"rejected_bad_poa">> };

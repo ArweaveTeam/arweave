@@ -137,11 +137,13 @@ handle_cast({set_sessions, ActiveSessions}, State) ->
 handle_cast({chunks_read, {WhichChunk, Candidate, RangeStart, ChunkOffsets}}, State) ->
 	case is_session_valid(State, Candidate) of
 		true ->
-			MaxNonce = ar_block:get_max_nonce(Candidate#mining_candidate.packing_difficulty),
-			StepSize = ar_mining_io:get_recall_step_size(Candidate),
+			PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
+			MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
+			StepSize = ar_block:get_recall_step_size(PackingDifficulty),
+			NonceIncrement = ar_block:get_nonces_per_chunk(PackingDifficulty),
 			State2 = chunks_read(
-					WhichChunk, Candidate, RangeStart, 0, MaxNonce, ChunkOffsets,
-					StepSize, 0, State),
+					WhichChunk, Candidate, RangeStart, 0, NonceIncrement, MaxNonce,
+					ChunkOffsets, StepSize, 0, State),
 			{noreply, State2};
 		false ->
 			?LOG_DEBUG([{event, mining_debug_add_stale_chunks},
@@ -254,8 +256,8 @@ add_task({TaskType, Candidate, _ExtraArgs} = Task, State) ->
 	prometheus_gauge:inc(mining_server_task_queue_len, [TaskType]),
 	State#state{ task_queue = Q2 }.
 
-chunks_read(WhichChunk, Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets,
-		_StepSize, Count, State) when Nonce > NonceMax ->
+chunks_read(WhichChunk, Candidate, _RangeStart, Nonce, _NonceIncrement, NonceMax,
+		_ChunkOffsets, _StepSize, Count, State) when Nonce > NonceMax ->
 	Partition = case WhichChunk of
 		chunk1 ->
 			Candidate#mining_candidate.partition_number;
@@ -264,37 +266,51 @@ chunks_read(WhichChunk, Candidate, _RangeStart, Nonce, NonceMax, _ChunkOffsets,
 	end,
 	ar_mining_stats:chunks_read(Partition, Count),
 	State;
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, [], StepSize, Count, State) ->
+chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
+		[], StepSize, Count, State) ->
 	gen_server:cast(self(),
 			{remove_chunk_from_cache, Candidate#mining_candidate{ nonce = Nonce }}),
-	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, [],
-			StepSize, Count, State);
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax,
+	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement,
+			NonceMax, [], StepSize, Count, State);
+chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
 		[{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State)
-		when RangeStart + Nonce * StepSize < EndOffset - StepSize ->
+		when RangeStart + Nonce * StepSize < EndOffset - ?DATA_CHUNK_SIZE ->
 	gen_server:cast(self(),
 			{remove_chunk_from_cache, Candidate#mining_candidate{ nonce = Nonce }}),
-	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax,
-			[{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State);
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax,
+	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement,
+			NonceMax, [{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State);
+chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
 		[{EndOffset, _Chunk} | ChunkOffsets], StepSize, Count, State)
 		when RangeStart + Nonce * StepSize >= EndOffset ->
-	chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax, ChunkOffsets,
-			StepSize, Count, State);
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceMax,
+	chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
+			ChunkOffsets, StepSize, Count, State);
+chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
 		[{_EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State) ->
-	State2 = case WhichChunk of
-		chunk1 ->
-			Candidate2 = Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce },
-			ar_mining_hash:compute_h1(self(), Candidate2),
-			State;
-		chunk2 ->
-			Candidate2 = Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce },
-			handle_chunk2(Candidate2, State)
-	end,
+	State2 = chunks_read2(WhichChunk, Chunk, Candidate, Nonce, State),
 	chunks_read(
-		WhichChunk, Candidate, RangeStart, Nonce + 1, NonceMax, ChunkOffsets,
-		StepSize, Count + 1, State2).
+		WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement, NonceMax,
+		ChunkOffsets, StepSize, Count + 1, State2).
+
+chunks_read2(chunk1, Chunk, #mining_candidate{ packing_difficulty = 0 } = Candidate,
+		Nonce, State) ->
+	Candidate2 = Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce },
+	ar_mining_hash:compute_h1(self(), Candidate2),
+	State;
+chunks_read2(chunk2, Chunk, #mining_candidate{ packing_difficulty = 0 } = Candidate,
+		Nonce, State) ->
+	Candidate2 = Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce },
+	handle_chunk2(Candidate2, State);
+chunks_read2(_WhichChunk, <<>>, _Candidate, _Nonce, State) ->
+	State;
+chunks_read2(chunk1, << SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>,
+		Candidate, Nonce, State) ->
+	Candidate2 = Candidate#mining_candidate{ chunk1 = SubChunk, nonce = Nonce },
+	ar_mining_hash:compute_h1(self(), Candidate2),
+	chunks_read2(chunk1, Rest, Candidate, Nonce + 1, State);
+chunks_read2(chunk2, << SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>,
+		Candidate, Nonce, State) ->
+	Candidate2 = Candidate#mining_candidate{ chunk2 = SubChunk, nonce = Nonce },
+	chunks_read2(chunk2, Rest, Candidate, Nonce + 1, handle_chunk2(Candidate2, State)).
 
 handle_chunk2(Candidate, State) ->
 	#mining_candidate{ chunk2 = Chunk2, session_key = SessionKey } = Candidate,
@@ -349,17 +365,21 @@ priority(compute_h0, StepNumber) ->
 	{6, -StepNumber}.
 
 handle_task({chunk1, Candidate, [RangeStart, ChunkOffsets]}, State) ->
-	MaxNonce = ar_block:get_max_nonce(Candidate#mining_candidate.packing_difficulty),
-	StepSize = ar_mining_io:get_recall_step_size(Candidate),
-	State2 = chunks_read(chunk1, Candidate, RangeStart, 0, MaxNonce, ChunkOffsets,
-			StepSize, 0, State),
+	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
+	MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
+	StepSize = ar_block:get_recall_step_size(PackingDifficulty),
+	NonceIncrement = ar_block:get_nonces_per_chunk(PackingDifficulty),
+	State2 = chunks_read(chunk1, Candidate, RangeStart, 0, NonceIncrement, MaxNonce,
+			ChunkOffsets, StepSize, 0, State),
 	{noreply, State2};
 
 handle_task({chunk2, Candidate, [RangeStart, ChunkOffsets]}, State) ->
-	MaxNonce = ar_block:get_max_nonce(Candidate#mining_candidate.packing_difficulty),
-	StepSize = ar_mining_io:get_recall_step_size(Candidate),
-	State2 = chunks_read(chunk2, Candidate, RangeStart, 0, MaxNonce, ChunkOffsets,
-			StepSize, 0, State),
+	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
+	MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
+	StepSize = ar_block:get_recall_step_size(PackingDifficulty),
+	NonceIncrement = ar_block:get_nonces_per_chunk(PackingDifficulty),
+	State2 = chunks_read(chunk2, Candidate, RangeStart, 0, NonceIncrement, MaxNonce,
+			ChunkOffsets, StepSize, 0, State),
 	{noreply, State2};
 
 handle_task({compute_h0, Candidate, _ExtraArgs}, State) ->

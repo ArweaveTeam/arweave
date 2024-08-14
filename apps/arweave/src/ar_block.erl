@@ -16,7 +16,8 @@
 		get_packing_threshold/2, compute_next_vdf_difficulty/1,
 		validate_proof_size/1, vdf_step_number/1, get_packing/2,
 		validate_packing_difficulty/2, validate_packing_difficulty/1,
-		get_max_nonce/1, get_recall_range_size/1, get_recall_byte/3]).
+		get_max_nonce/1, get_recall_range_size/1, get_recall_byte/3,
+		get_recall_step_size/1, get_nonces_per_chunk/1, get_sub_chunk_index/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -544,14 +545,10 @@ validate_packing_difficulty(PackingDifficulty) ->
 	PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY.
 
 get_max_nonce(0) ->
-	get_max_nonce2((?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE);
-get_max_nonce(PackingDifficulty) ->
-	AdjustedRecallRangeSize = ?RECALL_RANGE_SIZE div PackingDifficulty,
-	NonceCount = AdjustedRecallRangeSize div (?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE),
-	get_max_nonce2(NonceCount).
-
-get_max_nonce2(NonceCount) ->
-	max(0, NonceCount - 1).
+	max(0, (?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1);
+get_max_nonce(PackingDifficulty) when PackingDifficulty >= 1 ->
+	Max0 = get_max_nonce(0),
+	(Max0 + 1) * ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT - 1.
 
 get_recall_range_size(0) ->
 	?RECALL_RANGE_SIZE;
@@ -561,7 +558,33 @@ get_recall_range_size(PackingDifficulty) ->
 get_recall_byte(RecallRangeStart, Nonce, 0) ->
 	RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE;
 get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
-	RecallRangeStart + Nonce * ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE.
+	ChunkNumber = Nonce div ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT,
+	RecallRangeStart + ChunkNumber * ?DATA_CHUNK_SIZE.
+
+%% @doc Return the number of bytes - how far each mining nonce increment shifts the
+%% recall byte.
+get_recall_step_size(PackingDifficulty) ->
+	case PackingDifficulty >= 1 of
+		true ->
+			?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE;
+		false ->
+			?DATA_CHUNK_SIZE
+	end.
+
+%% @doc Return the number of mining nonces contained in each data chunk.
+get_nonces_per_chunk(PackingDifficulty) ->
+	case PackingDifficulty >= 1 of
+		true ->
+			?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT;
+		false ->
+			1
+	end.
+
+%% @doc Return the 0-based sub-chunk index the mining nonce is pointing to.
+get_sub_chunk_index(0, _Nonce) ->
+	-1;
+get_sub_chunk_index(PackingDifficulty, Nonce) when PackingDifficulty >= 1 ->
+	Nonce rem ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT.
 
 %%%===================================================================
 %%% Private functions.
