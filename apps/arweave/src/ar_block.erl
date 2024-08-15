@@ -12,7 +12,9 @@
 		hash_wallet_list/1, generate_hash_list_for_block/2,
 		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
-		test_wallet_list_performance/2, poa_to_list/1, shift_packing_2_5_threshold/1,
+		test_wallet_list_performance/0, test_wallet_list_performance/1,
+		test_wallet_list_performance/2, test_wallet_list_performance/3,
+		poa_to_list/1, shift_packing_2_5_threshold/1,
 		get_packing_threshold/2, compute_next_vdf_difficulty/1,
 		validate_proof_size/1, vdf_step_number/1, get_packing/2,
 		validate_packing_difficulty/2, validate_packing_difficulty/1,
@@ -797,8 +799,33 @@ generate_size_tagged_list_from_txs_test() ->
 					#tx{ id = <<"5">>, format = 2 },
 					#tx{ id = <<"6">>, format = 2, data_size = 262144 }], Fork_2_5)).
 
-test_wallet_list_performance(Length, Denominations) ->
-	io:format("# ~B wallets~n", [Length]),
+test_wallet_list_performance() ->
+	test_wallet_list_performance(250_000, ar_deep_hash, mixed).
+
+test_wallet_list_performance(Length) ->
+	test_wallet_list_performance(Length, ar_deep_hash, mixed).
+
+test_wallet_list_performance(Length, Algo) ->
+	test_wallet_list_performance(Length, Algo, mixed).
+
+test_wallet_list_performance(Length, Algo, Denominations) ->
+	SupportedAlgos = [ar_deep_hash, no_ar_deep_hash_sha384, sha256],
+	case lists:member(Algo, SupportedAlgos) of
+		false ->
+			io:format("Supported Algo: ~p~n", [SupportedAlgos]);
+		true ->
+			SupportedDenominations = [old, new, mixed],
+			case lists:member(Denominations, SupportedDenominations) of
+				false ->
+					io:format("Supported Algo: ~p~n", [SupportedDenominations]);
+				true ->
+					test_wallet_list_performance2(Length, Algo, Denominations)
+			end
+	end.
+
+test_wallet_list_performance2(Length, Algo, Denominations) ->
+
+	io:format("# ~B wallets, denominations: ~p, algo: ~p~n", [Length, Denominations, Algo]),
 	io:format("============~n"),
 	WL = [random_wallet() || _ <- lists:seq(1, Length)],
 	{Time1, T1} =
@@ -807,18 +834,18 @@ test_wallet_list_performance(Length, Denominations) ->
 				lists:foldl(
 					fun({A, B, LastTX}, Acc) ->
 						case Denominations of
-							default ->
+							old ->
 								ar_patricia_tree:insert(A, {B, LastTX}, Acc);
 							new ->
 								ar_patricia_tree:insert(A, {B, LastTX,
-										1 + rand:uniform(10)}, Acc);
+										1 + rand:uniform(10), true}, Acc);
 							mixed ->
 								case rand:uniform(2) == 1 of
 									true ->
 										ar_patricia_tree:insert(A, {B, LastTX}, Acc);
 									false ->
 										ar_patricia_tree:insert(A, {B, LastTX,
-												1 + rand:uniform(10)}, Acc)
+												1 + rand:uniform(10), true}, Acc)
 								end
 						end
 					end,
@@ -840,8 +867,25 @@ test_wallet_list_performance(Length, Denominations) ->
 	io:format("                                | ~B bytes~n", [byte_size(Binary)]),
 	ComputeHashFun =
 		fun	(Addr, {Balance, LastTX}) ->
-				EncodedBalance = binary:encode_unsigned(Balance),
-				ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
+				case Algo of
+					ar_deep_hash ->
+						EncodedBalance = binary:encode_unsigned(Balance),
+						ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
+					_ ->
+						Denomination = 0,
+						MiningPermissionBin = <<1>>,
+						Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
+								(ar_serialize:encode_int(Balance, 8))/binary,
+								(ar_serialize:encode_bin(LastTX, 8))/binary,
+								(ar_serialize:encode_int(Denomination, 8))/binary,
+								MiningPermissionBin/binary >>,
+						case Algo of
+							no_ar_deep_hash_sha384 ->
+								crypto:hash(sha384, Preimage);
+							sha256 ->
+								crypto:hash(sha256, Preimage)
+						end
+				end;
 			(Addr, {Balance, LastTX, Denomination, MiningPermission}) ->
 				MiningPermissionBin =
 					case MiningPermission of
@@ -855,7 +899,12 @@ test_wallet_list_performance(Length, Denominations) ->
 						(ar_serialize:encode_bin(LastTX, 8))/binary,
 						(ar_serialize:encode_int(Denomination, 8))/binary,
 						MiningPermissionBin/binary >>,
-				crypto:hash(sha384, Preimage)
+				case Algo of
+					sha256 ->
+						crypto:hash(sha256, Preimage);
+					_ ->
+						crypto:hash(sha384, Preimage)
+				end
 		end,
 	{Time3, {_, T2, _}} =
 		timer:tc(fun() -> ar_patricia_tree:compute_hash(T1, ComputeHashFun) end),
