@@ -310,7 +310,13 @@ chunks_read2(chunk1, << SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, 
 chunks_read2(chunk2, << SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>,
 		Candidate, Nonce, State) ->
 	Candidate2 = Candidate#mining_candidate{ chunk2 = SubChunk, nonce = Nonce },
-	chunks_read2(chunk2, Rest, Candidate, Nonce + 1, handle_chunk2(Candidate2, State)).
+	chunks_read2(chunk2, Rest, Candidate, Nonce + 1, handle_chunk2(Candidate2, State));
+chunks_read2(WhichChunk, Rest, _Candidate, Nonce, State) ->
+	?LOG_ERROR([{event, failed_to_split_chunk_into_sub_chunks},
+			{remaining_size, byte_size(Rest)},
+			{nonce, Nonce},
+			{chunk, WhichChunk}]),
+	State.
 
 handle_chunk2(Candidate, State) ->
 	#mining_candidate{ chunk2 = Chunk2, session_key = SessionKey } = Candidate,
