@@ -152,7 +152,10 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
 			ok;
 		{event, block, {new, #block{ indep_hash = B2H }, _Peer3}} ->
-			?assert(false, "Unexpected block acceptance")
+			?assert(false, "Unexpected block acceptance");
+		{event, block, Other} ->
+			?debugFmt("Unexpected block event: ~p", [Other]),
+			?assert(false, "Unexpected block event")
 	after 5000 ->
 		?assert(false, "Timed out waiting for the node to pre-validate the fake "
 				"block.")
@@ -188,7 +191,8 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 			PoA = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 			B3 = B2#block{ hash = H1, hash_preimage = Preimage, reward_addr = RewardAddr2,
 					reward_key = element(2, Wallet), recall_byte = RecallByte, nonce = 0,
-					recall_byte2 = undefined, poa = #poa{ chunk = Chunk, data_path = DataPath,
+					recall_byte2 = undefined, poa2 = #poa{},
+					poa = #poa{ chunk = Chunk, data_path = DataPath,
 							tx_path = TXPath },
 					chunk_hash = crypto:hash(sha256, Chunk) },
 			B4 =

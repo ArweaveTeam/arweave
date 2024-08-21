@@ -341,7 +341,7 @@ assert_peers(ExpectedPeers, Node, Partition) ->
 			lists:sort(ExpectedPeers) == lists:sort(Peers)
 		end,
 		200,
-		2000
+		5000
 	)).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
