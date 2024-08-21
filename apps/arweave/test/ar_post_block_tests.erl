@@ -244,7 +244,8 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 test_reject_block_invalid_packing_difficulty({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
 	assert_not_banned(ar_test_node:peer_ip(main)),
-	B2 = sign_block(B#block{ packing_difficulty = 33 }, PrevB, Key),
+	B2 = sign_block(B#block{ unpacked_chunk_hash = <<>>,
+			packing_difficulty = 33 }, PrevB, Key),
 	post_block(B2, invalid_first_unpacked_chunk),
 	assert_not_banned(ar_test_node:peer_ip(main)),
 	C = crypto:strong_rand_bytes(262144),
