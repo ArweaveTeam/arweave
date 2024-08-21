@@ -935,7 +935,8 @@ validate_solution(Solution, DiffPair) ->
 	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
 			Packing, SubChunkIndex, not_set}) of
 		{true, ChunkID} ->
-			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing}, ChunkID},
+			PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing,
+					SubChunkIndex}, ChunkID},
 			case ar_node_utils:h1_passes_diff_check(H1, DiffPair, PackingDifficulty) of
 				true ->
 					%% validates solution_hash
@@ -968,7 +969,8 @@ validate_solution(Solution, DiffPair) ->
 											Packing, SubChunkIndex, not_set}) of
 										{true, Chunk2ID} ->
 											PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2,
-													BlockSize2, Packing}, Chunk2ID},
+													BlockSize2, Packing, SubChunkIndex},
+													Chunk2ID},
 											{true, PoACache, PoA2Cache};
 										error ->
 											error;
