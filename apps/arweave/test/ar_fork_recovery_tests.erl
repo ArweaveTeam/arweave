@@ -192,6 +192,7 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 			B3 = B2#block{ hash = H1, hash_preimage = Preimage, reward_addr = RewardAddr2,
 					reward_key = element(2, Wallet), recall_byte = RecallByte, nonce = 0,
 					recall_byte2 = undefined, poa2 = #poa{},
+					unpacked_chunk2_hash = undefined,
 					poa = #poa{ chunk = Chunk, data_path = DataPath,
 							tx_path = TXPath },
 					chunk_hash = crypto:hash(sha256, Chunk) },
