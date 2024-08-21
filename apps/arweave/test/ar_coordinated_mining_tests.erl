@@ -335,8 +335,14 @@ test_peers_by_partition() ->
 %% --------------------------------------------------------------------
 
 assert_peers(ExpectedPeers, Node, Partition) ->
-	Peers = ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]),
-	?assertEqual(lists:sort(ExpectedPeers), lists:sort(Peers)).
+	?assert(ar_util:do_until(
+		fun() ->
+			Peers = ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]),
+			lists:sort(ExpectedPeers) == lists:sort(Peers)
+		end,
+		200,
+		2000
+	)).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 	wait_for_each_node(
