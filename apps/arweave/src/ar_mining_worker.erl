@@ -783,12 +783,8 @@ try_to_reserve_cache_space(SessionKey, State) ->
 	case total_cache_size(State) =< State#state.chunk_cache_limit of
 		true ->
 			%% reserve for both h1 and h2
-			?LOG_INFO("DEBUG: reserving; limit=~B reserving=~B", [State#state.chunk_cache_limit,
-									2 * recall_range_sub_chunks()]),
 			{true, update_chunk_cache_size(2 * recall_range_sub_chunks(), SessionKey, State)};
 		false ->
-			?LOG_INFO("DEBUG: full; limit=~B totalsize=~B", [State#state.chunk_cache_limit,
-											total_cache_size(State)]),
 			false
 	end.
 
