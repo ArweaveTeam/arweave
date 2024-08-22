@@ -494,13 +494,21 @@ discover_peers([Peer | Peers]) ->
 		false ->
 			case check_peer(Peer, is_public_peer(Peer)) of
 				ok ->
-					case ar_http_iface_client:get_info(Peer, release) of
-						Release when is_integer(Release) ->
-							maybe_add_peer(Peer, Release);
+					case ar_http_iface_client:get_info(Peer) of
 						info_unavailable ->
-							maybe_add_peer(Peer, 0);
-						_ ->
-							ok
+							ok;
+						Info ->
+							case maps:get(atom_to_binary(network), Info, no_key) of
+								<<?NETWORK_NAME>> ->
+									case maps:get(atom_to_binary(release), Info, no_key) of
+										Release when is_integer(Release) ->
+											maybe_add_peer(Peer, Release);
+										no_key ->
+											maybe_add_peer(Peer, 0)
+									end;
+								_ ->
+									ok
+							end
 					end;
 				_ ->
 					ok
