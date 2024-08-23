@@ -1,7 +1,7 @@
 -module(ar_randomx_state).
 
 -export([init/2, init/4, start/0, start_block_polling/0, reset/0, hash/2,
-		hash_long_with_entropy/2, randomx_state_by_height/1, swap_height/1, get_key_block/1,
+		randomx_state_by_height/1, swap_height/1, get_key_block/1,
 		debug_server/0]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -61,17 +61,6 @@ hash(Height, Data) ->
 		{key, Key} ->
 			LightState = ar_mine_randomx:init_light(Key),
 			ar_mine_randomx:hash_light(LightState, Data)
-	end.
-
-hash_long_with_entropy(Height, Data) ->
-	case randomx_state_by_height(Height) of
-		{state, {fast, FastState}} ->
-			ar_mine_randomx:hash_fast_long_with_entropy(FastState, Data);
-		{state, {light, LightState}} ->
-			ar_mine_randomx:hash_light_long_with_entropy(LightState, Data);
-		{key, Key} ->
-			LightState = ar_mine_randomx:init_light(Key),
-			ar_mine_randomx:hash_light_long_with_entropy(LightState, Data)
 	end.
 
 randomx_state_by_height(Height) when is_integer(Height) andalso Height >= 0 ->
