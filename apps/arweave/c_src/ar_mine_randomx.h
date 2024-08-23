@@ -53,9 +53,6 @@ static ERL_NIF_TERM hash_fast_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM hash_light_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_hash_nif(ErlNifEnv*, int, const ERL_NIF_TERM [], hashing_mode);
 
-static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
-static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
-
 static ERL_NIF_TERM randomx_encrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_decrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_reencrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
@@ -66,10 +63,7 @@ static ERL_NIF_TERM randomx_decrypt_composite_sub_chunk_nif(ErlNifEnv*, int, con
 static ERL_NIF_TERM randomx_reencrypt_legacy_to_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_reencrypt_composite_to_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
-static ERL_NIF_TERM hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
-static ERL_NIF_TERM hash_light_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[], hashing_mode hashingMode);
-static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
 static ERL_NIF_TERM release_state_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
