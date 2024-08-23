@@ -6,18 +6,15 @@
 		randomx_encrypt_chunk/4,
 		randomx_decrypt_chunk/5,
 		randomx_decrypt_sub_chunk/5,
-		randomx_reencrypt_chunk/7,
-		hash_fast_long_with_entropy/2, hash_light_long_with_entropy/2]).
+		randomx_reencrypt_chunk/7]).
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
 -export([init_light_nif/3, hash_light_nif/5, init_fast_nif/4, hash_fast_nif/5,
-		release_state_nif/1, jit/0, large_pages/0, hardware_aes/0, bulk_hash_fast_nif/13,
-		hash_fast_verify_nif/6, randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
+		release_state_nif/1, jit/0, large_pages/0, hardware_aes/0,
+		randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
 		randomx_reencrypt_chunk_nif/10,
-		hash_fast_long_with_entropy_nif/6, hash_light_long_with_entropy_nif/6,
-		bulk_hash_fast_long_with_entropy_nif/14,
-		vdf_sha2_nif/5, vdf_parallel_sha_verify_nif/8,
+		vdf_sha2_nif/5,
 		vdf_parallel_sha_verify_with_reset_nif/10,
 
 		randomx_encrypt_composite_chunk_nif/9,
@@ -305,31 +302,6 @@ packing_rounds({spora_2_6, _Addr}) ->
 -endif.
 
 -ifdef(DEBUG).
-hash_fast_long_with_entropy(FastState, Data) ->
-	Hash = crypto:hash(sha256, << FastState/binary, Data/binary >>),
-	%% 256 bytes of entropy for tests (in practice we generate 256 KiB of entropy).
-	Entropy = iolist_to_binary([Hash || _ <- lists:seq(1, 8)]),
-	{Hash, Entropy}.
--else.
-hash_fast_long_with_entropy(FastState, Data) ->
-	{ok, Hash, Entropy} =
-		hash_fast_long_with_entropy_nif(FastState, Data, ?RANDOMX_WITH_ENTROPY_ROUNDS, jit(),
-				large_pages(), hardware_aes()),
-	{Hash, Entropy}.
--endif.
-
--ifdef(DEBUG).
-hash_light_long_with_entropy(LightState, Data) ->
-	hash_fast_long_with_entropy(LightState, Data).
--else.
-hash_light_long_with_entropy(LightState, Data) ->
-	{ok, Hash, Entropy} =
-		hash_light_long_with_entropy_nif(LightState, Data, ?RANDOMX_WITH_ENTROPY_ROUNDS, jit(),
-				large_pages(), hardware_aes()),
-	{Hash, Entropy}.
--endif.
-
--ifdef(DEBUG).
 release_state(_State) ->
 	ok.
 -else.
@@ -384,26 +356,6 @@ init_light_nif(_Key, _JIT, _LargePages) ->
 hash_fast_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
-bulk_hash_fast_nif(
-	_State,
-	_Nonce1,
-	_Nonce2,
-	_BDS,
-	_PrevH,
-	_PartitionUpperBound,
-	_PIDs,
-	_ProxyPIDs,
-	_Ref,
-	_Iterations,
-	_JIT,
-	_LargePages,
-	_HardwareAES
-) ->
-	erlang:nif_error(nif_not_loaded).
-
-hash_fast_verify_nif(_State, _Diff, _Preimage, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
 hash_light_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
@@ -418,37 +370,10 @@ randomx_reencrypt_chunk_nif(_State, _DecryptKey, _EncryptKey, _Chunk, _ChunkSize
 		_DecryptRoundCount, _EncryptRoundCount, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
-hash_fast_long_with_entropy_nif(_State, _Data, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-hash_light_long_with_entropy_nif(_State, _Data, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-bulk_hash_fast_long_with_entropy_nif(
-	_State,
-	_Nonce1,
-	_Nonce2,
-	_BDS,
-	_PrevH,
-	_PartitionUpperBound,
-	_PIDs,
-	_ProxyPIDs,
-	_Ref,
-	_Iterations,
-	_RoundCount,
-	_JIT,
-	_LargePages,
-	_HardwareAES
-) ->
-	erlang:nif_error(nif_not_loaded).
-
 release_state_nif(_State) ->
 	erlang:nif_error(nif_not_loaded).
 
 vdf_sha2_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount, _Iterations) ->
-	erlang:nif_error(nif_not_loaded).
-vdf_parallel_sha_verify_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount,
-		_Iterations, _InCheckpoint, _InRes, _MaxThreadCount) ->
 	erlang:nif_error(nif_not_loaded).
 vdf_parallel_sha_verify_with_reset_nif(_Salt, _PrevState, _CheckpointCount,
 		_skipCheckpointCount, _Iterations, _InCheckpoint, _InRes, _ResetSalt, _ResetSeed,
