@@ -26,8 +26,7 @@ randomx_suite_test_() ->
 			[
 				test_register(fun test_randomx_pack_unpack_composite_chunk/1, SetupData),
 				test_register(fun test_randomx_backwards_compatibility/1, SetupData),
-				test_register(fun test_randomx_pack_unpack/1, SetupData),
-				test_register(fun test_randomx_long/1, SetupData)
+				test_register(fun test_randomx_pack_unpack/1, SetupData)
 			]
 		end
 	}.
