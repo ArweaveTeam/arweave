@@ -1,5 +1,4 @@
 #include <stdbool.h>
-#include <gmp.h>
 #include "randomx.h"
 
 const int SALT_SIZE = 32;

@@ -2,7 +2,6 @@
 #include <string.h>
 #include "randomx.h"
 #include "ar_mine_randomx.h"
-#include <gmp.h>
 #include <openssl/sha.h>
 #include "sha-256.h"
 #include "randomx_long_with_entropy.h"

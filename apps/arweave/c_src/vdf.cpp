@@ -5,7 +5,6 @@
 #include <vector>
 #include <mutex>
 #include <openssl/sha.h>
-#include <gmp.h>
 #include "vdf.h"
 
 struct vdf_sha_thread_arg {
