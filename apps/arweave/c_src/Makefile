@@ -55,15 +55,15 @@ else ifeq ($(UNAME_SYS), Linux)
 endif
 
 ifneq (, $(shell which pkg-config))
-	CFLAGS += `pkg-config --cflags gmp openssl`
-	CXXFLAGS += `pkg-config --cflags gmp openssl`
-	LDFLAGS += `pkg-config --libs gmp openssl`
+	CFLAGS += `pkg-config --cflags openssl`
+	CXXFLAGS += `pkg-config --cflags openssl`
+	LDFLAGS += `pkg-config --libs openssl`
 endif
 
 CFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I /usr/local/include -I ../lib/RandomX/src
 CXXFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I ../lib/RandomX/src -std=c++11
 
-LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lei -lgmp -lssl -lcrypto ../lib/RandomX/build/librandomx.a
+LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lei -lssl -lcrypto ../lib/RandomX/build/librandomx.a
 
 # Verbosity.
 

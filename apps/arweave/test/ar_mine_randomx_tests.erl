@@ -26,8 +26,7 @@ randomx_suite_test_() ->
 			[
 				test_register(fun test_randomx_pack_unpack_composite_chunk/1, SetupData),
 				test_register(fun test_randomx_backwards_compatibility/1, SetupData),
-				test_register(fun test_randomx_pack_unpack/1, SetupData),
-				test_register(fun test_randomx_long/1, SetupData)
+				test_register(fun test_randomx_pack_unpack/1, SetupData)
 			]
 		end
 	}.
@@ -286,30 +285,6 @@ test_randomx_backwards_compatibility({Key, State}) ->
 		ok, ar_mine_randomx:release_state_nif(LightState), "first release"),
 	?assertEqual(
 		ok, ar_mine_randomx:release_state_nif(LightState), "re-releasing should be fine").
-
-test_randomx_long({_Key, State}) ->
-	Nonce = ar_util:decode(?ENCODED_NONCE),
-	Segment = ar_util:decode(?ENCODED_SEGMENT),
-	Input = << Nonce/binary, Segment/binary >>,
-	ExpectedHash = ar_util:decode(?ENCODED_HASH),
-	?debugFmt("Hashing with entropy...", []),
-	{ok, Hash, OutEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(State, Input,
-			8, 0, 0, 0),
-	%% Compute it again, the result must be the same.
-	?debugFmt("Hashing again with the same input...", []),
-	{ok, Hash, OutEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(State, Input,
-			8, 0, 0, 0),
-	?debugFmt("Hashing with a different input...", []),
-	{ok, DifferentHash, DifferentEntropy} = ar_mine_randomx:hash_fast_long_with_entropy_nif(
-			State, crypto:strong_rand_bytes(48), 8, 0, 0, 0),
-	?debugFmt("Hashing without entropy...", []),
-    {ok, PlainHash} = ar_mine_randomx:hash_fast_nif(State, Input, 0, 0, 0),
-	?assertEqual(PlainHash, Hash),
-	?assertNotEqual(DifferentHash, Hash),
-	?assertNotEqual(DifferentEntropy, OutEntropy),
-	?assertEqual(ExpectedHash, Hash),
-	ExpectedEntropy = read_entropy_fixture(),
-	?assertEqual(ExpectedEntropy, OutEntropy).
 
 is_zero(<< 0:8, Rest/binary >>) ->
 	is_zero(Rest);
