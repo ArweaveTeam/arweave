@@ -5,7 +5,7 @@
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, remote_call/4]).
+		valid_solution/0, remote_call/4, load_fixture/1]).
 
 %% The "legacy" interface.
 -export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4,
@@ -288,6 +288,12 @@ get_difficulty_for_invalid_hash() ->
 	%% Set the difficulty just high enough to exclude the invalid_solution(), this lets
 	%% us selectively disable one- or two-chunk mining in tests.
 	binary:decode_unsigned(invalid_solution(), big) + 1.
+
+load_fixture(Fixture) ->
+	Dir = filename:dirname(?FILE),
+	FixtureFilename = filename:join([Dir, "fixtures", Fixture]),
+	{ok, Data} = file:read_file(FixtureFilename),
+	Data.
 
 %%%===================================================================
 %%% Private functions.

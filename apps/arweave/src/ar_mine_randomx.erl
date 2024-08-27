@@ -2,7 +2,7 @@
 
 -on_load(init_nif/0).
 
--export([init_fast/2, hash_fast/2, init_light/1, hash_light/2, release_state/1,
+-export([init_fast/2, hash_fast/2, init_light/1, hash_light/2,
 		randomx_encrypt_chunk/4,
 		randomx_decrypt_chunk/5,
 		randomx_decrypt_sub_chunk/5,
@@ -11,7 +11,7 @@
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
 -export([init_light_nif/3, hash_light_nif/5, init_fast_nif/4, hash_fast_nif/5,
-		release_state_nif/1, jit/0, large_pages/0, hardware_aes/0,
+		jit/0, large_pages/0, hardware_aes/0,
 		randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
 		randomx_reencrypt_chunk_nif/10,
 		vdf_sha2_nif/5,
@@ -27,9 +27,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
-
--define(RANDOMX_WITH_ENTROPY_ROUNDS, 8).
 
 %%%===================================================================
 %%% Public interface.
@@ -301,21 +298,6 @@ packing_rounds({spora_2_6, _Addr}) ->
 	?RANDOMX_PACKING_ROUNDS_2_6.
 -endif.
 
--ifdef(DEBUG).
-release_state(_State) ->
-	ok.
--else.
-release_state(RandomxState) ->
-	case release_state_nif(RandomxState) of
-		ok ->
-			?LOG_INFO([{event, released_randomx_state}]),
-			ok;
-		{error, Reason} ->
-			?LOG_WARNING([{event, failed_to_release_randomx_state}, {reason, Reason}]),
-			error
-	end.
--endif.
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -368,9 +350,6 @@ randomx_decrypt_chunk_nif(_State, _Data, _Chunk, _OutSize, _RoundCount, _JIT, _L
 
 randomx_reencrypt_chunk_nif(_State, _DecryptKey, _EncryptKey, _Chunk, _ChunkSize,
 		_DecryptRoundCount, _EncryptRoundCount, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-release_state_nif(_State) ->
 	erlang:nif_error(nif_not_loaded).
 
 vdf_sha2_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount, _Iterations) ->
