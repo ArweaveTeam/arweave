@@ -86,9 +86,6 @@ init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	[ok, ok, ok, ok, ok] = ar_events:subscribe([tx, block, nonce_limiter, miner, node_state]),
-	%% Initialize RandomX.
-	ar_randomx_state:start(),
-	ar_randomx_state:start_block_polling(),
 	%% Read persisted mempool.
 	ar_mempool:load_from_disk(),
 	%% Join the network.

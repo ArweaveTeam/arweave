@@ -189,7 +189,7 @@ compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficu
 					PartitionNumber:256, Seed:32/binary, MiningAddr/binary,
 					PackingDifficulty:8 >>
 		end,
-	ar_mine_randomx:hash_fast(RandomXStateRef, Preimage).
+	ar_mine_randomx:hash(RandomXStateRef, Preimage).
 
 %% @doc Compute "h1" - a cryptographic hash which is either the hash of a solution not
 %% involving the second chunk or a carrier of the information about the first chunk

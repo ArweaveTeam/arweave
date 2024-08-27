@@ -1839,18 +1839,11 @@ handle_get_block(H, Req, Pid, Encoding) ->
 	end.
 
 handle_get_block2(H, Req, Encoding) ->
-	ReadB =
-		case ar_randomx_state:get_key_block(H) of
-			not_found ->
-				ar_storage:read_block(H);
-			{ok, B} ->
-				B
-		end,
-	case ReadB of
+	case ar_storage:read_block(H) of
 		unavailable ->
 			{404, #{}, <<"Block not found.">>, Req};
-		#block{} ->
-			handle_get_block3(ReadB, Req, Encoding)
+		#block{} = B ->
+			handle_get_block3(B, Req, Encoding)
 	end.
 
 handle_get_block3(B, Req, Encoding) ->
