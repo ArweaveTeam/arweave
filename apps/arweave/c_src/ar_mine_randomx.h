@@ -65,8 +65,6 @@ static ERL_NIF_TERM randomx_reencrypt_composite_to_composite_chunk_nif(ErlNifEnv
 
 static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[], hashing_mode hashingMode);
 
-static ERL_NIF_TERM release_state_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
-
 static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM solution_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM ok_tuple(ErlNifEnv*, ERL_NIF_TERM);
