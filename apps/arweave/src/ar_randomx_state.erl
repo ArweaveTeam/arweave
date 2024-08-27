@@ -160,14 +160,6 @@ cache_key_block(B) ->
 			ok
 	end.
 
--ifdef(DEBUG).
-poll_interval(Height) ->
-	2.
--else.
-poll_interval(Height) ->
-	ar_testnet:target_block_time(Height).
--endif.
-
 poll_new_blocks(State) ->
 	case ar_node:is_joined() of
 		false ->
@@ -175,102 +167,13 @@ poll_new_blocks(State) ->
 			timer:send_after(1000, poll_new_blocks),
 			State;
 		true ->
-			Height = ar_node:get_height(),
-			case Height - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_6() of
-				true ->
-					self() ! reset,
-					State;
-				_ ->
-					NewState = handle_new_height(State, Height),
-					timer:send_after(poll_interval(Height) * 1000, poll_new_blocks),
-					NewState
-			end
-	end.
-
-handle_new_height(State, CurrentHeight) ->
-	State1 = remove_old_randomx_states(State, CurrentHeight),
-	case ensure_initialized(State1, swap_height(CurrentHeight)) of
-		{started, State2} ->
-			maybe_init_next(State2, CurrentHeight);
-		did_not_start ->
-			maybe_init_next(State1, CurrentHeight)
-	end.
-
-remove_old_randomx_states(State, CurrentHeight) ->
-	Threshold = swap_height(CurrentHeight - ?RANDOMX_KEEP_KEY),
-	IsOutdated = fun(SwapHeight) ->
-		SwapHeight < Threshold
-	end,
-	RandomxStates = State#state.randomx_states,
-	RemoveKeys = lists:filter(
-		IsOutdated,
-		maps:keys(RandomxStates)
-	),
-	%% RandomX allocates the memory for the dataset internally, bypassing enif_alloc.
-	%% This presumably causes GC to be very reluctant to release the memory. Here we
-	%% explicitly trigger the release. It is scheduled to happen after some time to account
-	%% for other processes possibly still using it. In case some process is still using it,
-	%% the release call will fail, leaving it for GC to handle.
-	lists:foreach(
-		fun(Key) ->
-			{_, S} = maps:get(Key, RandomxStates),
-			timer:apply_after(60000, ar_mine_randomx, release_state, [S])
-		end,
-		RemoveKeys
-	),
-	State#state{
-		randomx_states = maps_remove_multi(RemoveKeys, RandomxStates)
-	}.
-
-maps_remove_multi([], Map) ->
-	Map;
-maps_remove_multi([Key | Keys], Map) ->
-	maps_remove_multi(Keys, maps:remove(Key, Map)).
-
-maybe_init_next(State, CurrentHeight) ->
-	NextSwapHeight = swap_height(CurrentHeight) + ?RANDOMX_KEY_SWAP_FREQ,
-	case NextSwapHeight - State#state.next_key_gen_ahead of
-		_InitHeight when CurrentHeight >= _InitHeight ->
-			case ensure_initialized(State, NextSwapHeight) of
-				{started, NewState} -> set_next_key_gen_ahead(NewState);
-				did_not_start -> State
-			end;
-		_ ->
+			self() ! reset,
 			State
-	end.
-
-ensure_initialized(State, SwapHeight) ->
-	case maps:find(SwapHeight, State#state.randomx_states) of
-		{ok, _} ->
-			did_not_start;
-		error ->
-			{started, start_init(State, SwapHeight)}
 	end.
 
 get_key_from_cache(State, Height) ->
 	maps:get(swap_height(Height), State#state.key_cache, key_not_found).
 
-start_init(State, SwapHeight) ->
-	Server = self(),
-	spawn_link(fun() ->
-		init(Server, SwapHeight, 1)
-	end),
-	State#state{
-		randomx_states = maps:put(SwapHeight, initializing, State#state.randomx_states)
-	}.
-
-init(Server, SwapHeight, Threads) ->
-	case randomx_key(SwapHeight) of
-		{ok, Key} ->
-			init(Server, SwapHeight, Key, Threads);
-		unavailable ->
-			?LOG_WARNING([
-				{event, ar_randomx_state_failed_to_read_or_download_key_block},
-				{swap_height, SwapHeight}
-			]),
-			timer:sleep(5000),
-			init(Server, SwapHeight, Threads)
-	end.
 
 %% @doc Return the key used in RandomX by key swap height. The key is the
 %% dependent hash from the block at the previous swap height. If RandomX is used

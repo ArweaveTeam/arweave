@@ -32,7 +32,6 @@ static ErlNifFunc nif_funcs[] = {
 		randomx_reencrypt_legacy_to_composite_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"randomx_reencrypt_composite_to_composite_chunk_nif", 13,
 		randomx_reencrypt_composite_to_composite_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"vdf_sha2_nif", 5, vdf_sha2_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"vdf_parallel_sha_verify_with_reset_nif", 10, vdf_parallel_sha_verify_with_reset_nif,
 		ERL_NIF_DIRTY_JOB_CPU_BOUND}
@@ -1150,24 +1149,6 @@ static ERL_NIF_TERM randomx_reencrypt_composite_to_composite_chunk_nif(
 			jitEnabled, largePagesEnabled, hardwareAESEnabled);
 	destroy_vm(statePtr, vmPtr);
 	return ok_tuple2(envPtr, reencryptedChunkTerm, decryptedChunkTerm);
-}
-
-static ERL_NIF_TERM release_state_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
-{
-	struct state* statePtr;
-
-	if (argc != 1) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
-		return error(envPtr, "failed to read state");
-	}
-	if (enif_rwlock_tryrwlock(statePtr->lockPtr) != 0) {
-		return error(envPtr, "failed to acquire the state lock, the state is being used");
-	}
-	release_randomx(statePtr);
-	enif_rwlock_rwunlock(statePtr->lockPtr);
-	return enif_make_atom(envPtr, "ok");
 }
 
 // Utility functions.
