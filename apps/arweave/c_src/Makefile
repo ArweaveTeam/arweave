@@ -20,8 +20,6 @@ ERL_INTERFACE_LIB_DIR ?= $(shell erl -noshell -eval 'io:format("~ts", [code:lib_
 
 C_SRC_DIR = $(CURDIR)
 C_SRC_OUTPUT ?= $(CURDIR)/../priv/arweave.so
-TESTS_DIR = $(CURDIR)/tests
-TESTS_OUTPUT = $(TESTS_DIR)/tests
 
 # System type and C compiler/flags.
 
@@ -77,14 +75,7 @@ link_verbose_0 = @echo " LD    " $(@F);
 link_verbose = $(link_verbose_$(V))
 
 ALL_LIB_SOURCES := $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/*.cpp)
-ENIF_SOURCES := $(wildcard $(C_SRC_DIR)/ar_*.c $(C_SRC_DIR)/ar_*.cpp)
-C_SOURCES := $(filter-out $(ENIF_SOURCES), $(ALL_LIB_SOURCES))
-TESTS_SOURCES = $(wildcard $(TESTS_DIR)/*.cpp)
-
 ALL_LIB_OBJECTS = $(addsuffix .o, $(basename $(ALL_LIB_SOURCES)))
-ENIF_OBJECTS = $(addsuffix .o, $(basename $(ENIF_SOURCES)))
-C_OBJECTS = $(addsuffix .o, $(basename $(C_SOURCES)))
-TESTS_OBJECTS = $(addsuffix .o, $(basename $(TESTS_SOURCES)))
 
 COMPILE_C = $(c_verbose) $(CC) $(CFLAGS) $(CPPFLAGS) -c
 COMPILE_CPP = $(cpp_verbose) $(CXX) $(CXXFLAGS) $(CPPFLAGS) -c
@@ -105,13 +96,8 @@ $(C_SRC_OUTPUT): $(ALL_LIB_OBJECTS)
 %.o: %.cpp
 	$(COMPILE_CPP) $(OUTPUT_OPTION) $<
 
-$(TESTS_OUTPUT): $(C_OBJECTS) $(TESTS_OBJECTS)
-	$(link_verbose) $(CXX) $(C_OBJECTS) $(TESTS_OBJECTS) $(LDFLAGS) $(LDLIBS) -o $(TESTS_OUTPUT)
-
-tests: $(TESTS_OUTPUT)
-
 clean:
-	@rm -f $(C_SRC_OUTPUT) $(TESTS_OUTPUT) $(ALL_LIB_OBJECTS) $(TESTS_OBJECTS)
+	@rm -f $(C_SRC_OUTPUT) $(ALL_LIB_OBJECTS)
 
 
 

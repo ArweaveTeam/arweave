@@ -33,8 +33,6 @@ init([]) ->
 	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_http, [set, public, named_table]),
 	ets:new(ar_blacklist_middleware, [set, public, named_table]),
-	ets:new(ar_randomx_state_key_blocks, [set, public, named_table]),
-	ets:new(ar_randomx_state_key_heights, [ordered_set, public, named_table]),
 	ets:new(blacklist, [set, public, named_table]),
 	ets:new(ignored_ids, [bag, public, named_table]),
 	ets:new(ar_tx_emitter_recently_emitted, [set, public, named_table]),
