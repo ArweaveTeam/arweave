@@ -268,7 +268,7 @@ chunks_read(WhichChunk, Candidate, _RangeStart, Nonce, _NonceIncrement, NonceMax
 chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
 		[], StepSize, Count, State) ->
 	gen_server:cast(self(),
-			{remove_chunk_from_cache, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT,
+			{remove_chunk_from_cache, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 				Candidate#mining_candidate{ nonce = Nonce }}),
 	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement,
 			NonceMax, [], StepSize, Count, State);
@@ -276,7 +276,7 @@ chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
 		[{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State)
 		when RangeStart + Nonce * StepSize < EndOffset - ?DATA_CHUNK_SIZE ->
 	gen_server:cast(self(),
-			{remove_chunk_from_cache, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT,
+			{remove_chunk_from_cache, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 				Candidate#mining_candidate{ nonce = Nonce }}),
 	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement,
 			NonceMax, [{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State);
@@ -300,15 +300,15 @@ chunks_read2(chunk1, Chunk, #mining_candidate{ packing_difficulty = 0 } = Candid
 chunks_read2(chunk2, Chunk, #mining_candidate{ packing_difficulty = 0 } = Candidate,
 		Nonce, State) ->
 	Candidate2 = Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce },
-	handle_chunk2(Candidate2, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT, State);
+	handle_chunk2(Candidate2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT, State);
 chunks_read2(_WhichChunk, <<>>, _Candidate, _Nonce, State) ->
 	State;
-chunks_read2(chunk1, << SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>,
+chunks_read2(chunk1, << SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>,
 		Candidate, Nonce, State) ->
 	Candidate2 = Candidate#mining_candidate{ chunk1 = SubChunk, nonce = Nonce },
 	ar_mining_hash:compute_h1(self(), Candidate2),
 	chunks_read2(chunk1, Rest, Candidate, Nonce + 1, State);
-chunks_read2(chunk2, << SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>,
+chunks_read2(chunk2, << SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>,
 		Candidate, Nonce, State) ->
 	Candidate2 = Candidate#mining_candidate{ chunk2 = SubChunk, nonce = Nonce },
 	chunks_read2(chunk2, Rest, Candidate, Nonce + 1, handle_chunk2(Candidate2, 1, State));
@@ -789,7 +789,7 @@ try_to_reserve_cache_space(SessionKey, State) ->
 	end.
 
 recall_range_sub_chunks() ->
-	?RECALL_RANGE_SIZE div ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE.
+	?RECALL_RANGE_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
 
 do_not_cache(Candidate, State) ->
 	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
@@ -852,7 +852,7 @@ remove_chunk_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate,
 	end.
 
 get_sub_chunk_count(#mining_candidate{ packing_difficulty = 0 }) ->
-	?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT;
+	?COMPOSITE_PACKING_SUB_CHUNK_COUNT;
 get_sub_chunk_count(_Candidate) ->
 	1.
 

@@ -115,8 +115,7 @@ passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}, PackingDifficulty) ->
 			0 ->
 				Diff2;
 			_ ->
-				SubDiff = ar_difficulty:sub_diff(Diff2,
-						?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+				SubDiff = ar_difficulty:sub_diff(Diff2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 				ar_difficulty:scale_diff(SubDiff, {1, PackingDifficulty},
 						%% The minimal difficulty height. It does not change at the
 						%% packing difficulty fork.

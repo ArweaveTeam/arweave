@@ -35,7 +35,7 @@
 encode_packing({spora_2_6, Addr}) ->
 	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
 encode_packing({composite, Addr, PackingDifficulty}) ->
-	"composite_" ++ binary_to_list(ar_util:encode(Addr)) ++ ":"
+	"composite_" ++ binary_to_list(ar_util:encode(Addr)) ++ "."
 			++ integer_to_list(PackingDifficulty);
 encode_packing(spora_2_5) ->
 	"spora_2_5";
