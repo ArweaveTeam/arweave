@@ -80,7 +80,7 @@ unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 %%
 %% Return {ok, UnpackedSubChunk} or {error, invalid_packed_size}.
 unpack_sub_chunk(Packing, AbsoluteEndOffset, TXRoot, Chunk, SubChunkStartOffset) ->
-	case byte_size(Chunk) == ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE of
+	case byte_size(Chunk) == ?COMPOSITE_PACKING_SUB_CHUNK_SIZE of
 		false ->
 			{error, invalid_packed_size};
 		true ->

@@ -41,7 +41,7 @@ run_benchmark_from_cli(Args) ->
 	VDF = list_to_integer(get_flag_value(Args, "vdf", "0")),
 	PackingDifficulty = list_to_integer(get_flag_value(Args, "pdiff", "1")),
 	Rounds = list_to_integer(get_flag_value(Args, "rounds",
-		integer_to_list(?PACKING_DIFFICULTY_ONE_ROUND_COUNT))),
+		integer_to_list(?COMPOSITE_PACKING_ROUND_COUNT))),
 	run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, PackingDifficulty, Rounds).
 
 get_flag_value([], _, DefaultValue) ->
@@ -407,7 +407,7 @@ baseline_pack_composite_chunks(WorkerID, Config, Offset, Size) ->
 			{ok, PackedChunk} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
 				RandomXState, Key, UnpackedChunk,
 				JIT, LargePages, HardwareAES,
-				Rounds, PackingDifficulty, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+				Rounds, PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 			file:pwrite(PackedFileHandle, Offset, PackedChunk),
 			(Size - ChunkSize);
 		eof ->
@@ -519,8 +519,8 @@ nif_repack_legacy_to_composite_chunks(WorkerID, Config, Offset, Size) ->
 			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_legacy_to_composite_chunk_nif(
 				RandomXState, UnpackKey, PackKey, PackedChunk,
 				JIT, LargePages, HardwareAES,
-				?RANDOMX_PACKING_ROUNDS_2_6, Rounds, PackingDifficulty, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT
-				),
+				?RANDOMX_PACKING_ROUNDS_2_6, Rounds, PackingDifficulty,
+				?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);
 		eof ->
@@ -556,7 +556,7 @@ nif_repack_composite_to_composite_chunks(WorkerID, Config, Offset, Size) ->
 			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_composite_to_composite_chunk_nif(
 				RandomXState, UnpackKey, PackKey, PackedChunk, JIT, LargePages, HardwareAES,
 				Rounds, Rounds, PackingDifficulty, PackingDifficulty,
-				?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+				?COMPOSITE_PACKING_SUB_CHUNK_COUNT, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 			
 			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
 			(Size - ChunkSize);

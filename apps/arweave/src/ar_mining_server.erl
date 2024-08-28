@@ -836,7 +836,7 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing) ->
 		{not_set, {ok, {#poa{ chunk = Chunk } = PoA, EndOffset, ChunkSize}}, {composite, _, _}} ->
 			case get_sub_chunk_start_offset(RecallByte, EndOffset - ChunkSize) of
 				{ok, SubChunkStartOffset} ->
-					SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+					SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 					SubChunk = binary:part(Chunk, SubChunkStartOffset, SubChunkSize),
 					{ok, PoA#poa{ chunk = SubChunk }};
 				Error ->
@@ -861,16 +861,16 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing) ->
 
 get_sub_chunk_start_offset(RecallByte, ChunkStartOffset) when ChunkStartOffset =< RecallByte ->
 	RelativeStartOffset = RecallByte - ChunkStartOffset,
-	SubChunkSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	{ok, RelativeStartOffset - RelativeStartOffset rem SubChunkSize};
 get_sub_chunk_start_offset(_RecallByte, _ChunkStartOffset) ->
 	{error, invalid_offset}.
 
 sub_chunk_belongs_to_chunk(SubChunk,
-		<< SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, _Rest/binary >>) ->
+		<< SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, _Rest/binary >>) ->
 	true;
 sub_chunk_belongs_to_chunk(SubChunk,
-		<< _SubChunk:?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE/binary, Rest/binary >>) ->
+		<< _SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>) ->
 	sub_chunk_belongs_to_chunk(SubChunk, Rest);
 sub_chunk_belongs_to_chunk(_SubChunk, <<>>) ->
 	false;

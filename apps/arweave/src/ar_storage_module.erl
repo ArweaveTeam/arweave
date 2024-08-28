@@ -33,7 +33,7 @@ id({BucketSize, Bucket, Packing}) ->
 			{spora_2_6, Addr} ->
 				ar_util:encode(Addr);
 			{composite, Addr, PackingDiff} ->
-				<< (ar_util:encode(Addr))/binary, ":",
+				<< (ar_util:encode(Addr))/binary, ".",
 						(integer_to_binary(PackingDiff))/binary >>;
 			_ ->
 				atom_to_list(Packing)

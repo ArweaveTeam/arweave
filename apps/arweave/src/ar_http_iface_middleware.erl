@@ -2004,7 +2004,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 									_ ->
 										any
 								end;
-							<< "composite_", Addr:43/binary, ":",
+							<< "composite_", Addr:43/binary, ".",
 									PackingDifficultyBin/binary >> ->
 								case catch binary_to_integer(PackingDifficultyBin) of
 									PackingDifficulty when is_integer(PackingDifficulty),

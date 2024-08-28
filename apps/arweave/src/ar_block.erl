@@ -550,7 +550,7 @@ get_max_nonce(0) ->
 	max(0, (?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1);
 get_max_nonce(PackingDifficulty) when PackingDifficulty >= 1 ->
 	Max0 = get_max_nonce(0),
-	(Max0 + 1) * ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT - 1.
+	(Max0 + 1) * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT - 1.
 
 get_recall_range_size(0) ->
 	?RECALL_RANGE_SIZE;
@@ -560,7 +560,7 @@ get_recall_range_size(PackingDifficulty) ->
 get_recall_byte(RecallRangeStart, Nonce, 0) ->
 	RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE;
 get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
-	ChunkNumber = Nonce div ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT,
+	ChunkNumber = Nonce div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 	RecallRangeStart + ChunkNumber * ?DATA_CHUNK_SIZE.
 
 %% @doc Return the number of bytes - how far each mining nonce increment shifts the
@@ -568,7 +568,7 @@ get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
 get_recall_step_size(PackingDifficulty) ->
 	case PackingDifficulty >= 1 of
 		true ->
-			?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE;
+			?COMPOSITE_PACKING_SUB_CHUNK_SIZE;
 		false ->
 			?DATA_CHUNK_SIZE
 	end.
@@ -577,7 +577,7 @@ get_recall_step_size(PackingDifficulty) ->
 get_nonces_per_chunk(PackingDifficulty) ->
 	case PackingDifficulty >= 1 of
 		true ->
-			?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT;
+			?COMPOSITE_PACKING_SUB_CHUNK_COUNT;
 		false ->
 			1
 	end.
@@ -586,7 +586,7 @@ get_nonces_per_chunk(PackingDifficulty) ->
 get_sub_chunk_index(0, _Nonce) ->
 	-1;
 get_sub_chunk_index(PackingDifficulty, Nonce) when PackingDifficulty >= 1 ->
-	Nonce rem ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT.
+	Nonce rem ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
 
 %%%===================================================================
 %%% Private functions.

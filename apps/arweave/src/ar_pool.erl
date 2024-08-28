@@ -361,10 +361,10 @@ assert_chunk_sizes(Solution) ->
 	U1Size = byte_size(U1),
 	U2Size = byte_size(U2),
 	IsC1FullSize = C1Size == ?DATA_CHUNK_SIZE,
-	IsC1SubChunkSize = C1Size == ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	IsC1SubChunkSize = C1Size == ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	IsC2Empty = C2Size == 0,
 	IsC2FullSize = C2Size == ?DATA_CHUNK_SIZE,
-	IsC2SubChunkSize = C2Size == ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	IsC2SubChunkSize = C2Size == ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	%% When the packing is composite (packing_difficulty >= 1), The unpacked chunk is
 	%% expected to be 0-padded when smaller than ?DATA_CHUNK_SIZE.
 	IsU1FullSize = U1Size == ?DATA_CHUNK_SIZE,
