@@ -359,11 +359,13 @@ static ERL_NIF_TERM encrypt_composite_chunk(ErlNifEnv* envPtr,
 	ERL_NIF_TERM encryptedChunkTerm;
 	unsigned char* encryptedChunk = enif_make_new_binary(envPtr, MAX_CHUNK_SIZE,
 			&encryptedChunkTerm);
-	// Both MAX_CHUNK_SIZE and subChunkCount are multiples of 64 so all sub-chunks
+	// MAX_CHUNK_SIZE / subChunkCount is a multiple of 64 so all sub-chunks
 	// are of the same size.
 	uint32_t subChunkSize = MAX_CHUNK_SIZE / subChunkCount;
 	uint32_t offset = 0;
 	unsigned char key[PACKING_KEY_SIZE];
+	// Encrypt each sub-chunk independently and then concatenate the encrypted sub-chunks
+	// to yield encrypted composite chunk.
 	for (int i = 0; i < subChunkCount; i++) {
 		unsigned char* subChunk = paddedChunk + offset;
 		unsigned char* encryptedSubChunk = (unsigned char*)malloc(subChunkSize);
@@ -371,15 +373,19 @@ static ERL_NIF_TERM encrypt_composite_chunk(ErlNifEnv* envPtr,
 		// 3 bytes is sufficient to represent offsets up to at most MAX_CHUNK_SIZE.
 		int offsetByteSize = 3;
 		unsigned char offsetBytes[offsetByteSize];
+		// Byte string representation of the sub-chunk start offset: i * subChunkSize.
 		for (int k = 0; k < offsetByteSize; k++) {
 			offsetBytes[k] = ((offset + subChunkSize) >> (8 * (offsetByteSize - 1 - k))) & 0xFF;
 		}
+		// Sub-chunk encryption key is the SHA256 hash of the concatenated
+		// input data and the sub-chunk start offset.
 		SHA256_CTX sha256;
 		SHA256_Init(&sha256);
 		SHA256_Update(&sha256, inputDataPtr->data, inputDataPtr->size);
 		SHA256_Update(&sha256, offsetBytes, offsetByteSize);
 		SHA256_Final(key, &sha256);
 
+		// Sequentially encrypt each sub-chunk 'iterations' times.
 		for (int j = 0; j < iterations; j++) {
 			randomx_encrypt_chunk(
 				vmPtr, key, PACKING_KEY_SIZE, subChunk, subChunkSize,
@@ -406,11 +412,13 @@ static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
 	unsigned char* decryptedChunk = enif_make_new_binary(envPtr, outChunkLen,
 			&decryptedChunkTerm);
 	unsigned char* decryptedSubChunk;
-	// Both MAX_CHUNK_SIZE and subChunkCount are multiples of 64 so all sub-chunks
+	// outChunkLen / subChunkCount is a multiple of 64 so all sub-chunks
 	// are of the same size.
 	uint32_t subChunkSize = outChunkLen / subChunkCount;
 	uint32_t offset = 0;
 	unsigned char key[PACKING_KEY_SIZE];
+	// Decrypt each sub-chunk independently and then concatenate the decrypted sub-chunks
+	// to yield encrypted composite chunk.
 	for (int i = 0; i < subChunkCount; i++) {
 		unsigned char* subChunk = inputChunkPtr->data + offset;
 		decryptedSubChunk = (unsigned char*)malloc(subChunkSize);
@@ -418,15 +426,19 @@ static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
 		// 3 bytes is sufficient to represent offsets up to at most MAX_CHUNK_SIZE.
 		int offsetByteSize = 3;
 		unsigned char offsetBytes[offsetByteSize];
+		// Byte string representation of the sub-chunk start offset: i * subChunkSize.
 		for (int k = 0; k < offsetByteSize; k++) {
 			offsetBytes[k] = ((offset + subChunkSize) >> (8 * (offsetByteSize - 1 - k))) & 0xFF;
 		}
+		// Sub-chunk encryption key is the SHA256 hash of the concatenated
+		// input data and the sub-chunk start offset.
 		SHA256_CTX sha256;
 		SHA256_Init(&sha256);
 		SHA256_Update(&sha256, inputDataPtr->data, inputDataPtr->size);
 		SHA256_Update(&sha256, offsetBytes, offsetByteSize);
 		SHA256_Final(key, &sha256);
 
+		// Sequentially decrypt each sub-chunk 'iterations' times.
 		for (int j = 0; j < iterations; j++) {
 			randomx_decrypt_chunk(
 				vmPtr, key, PACKING_KEY_SIZE, subChunk, subChunkSize,
@@ -906,12 +918,15 @@ static ERL_NIF_TERM randomx_decrypt_composite_sub_chunk_nif(
 	for (int k = 0; k < offsetByteSize; k++) {
 		offsetBytes[k] = ((offset + subChunkSize) >> (8 * (offsetByteSize - 1 - k))) & 0xFF;
 	}
+	// Sub-chunk encryption key is the SHA256 hash of the concatenated
+	// input data and the sub-chunk start offset.
 	SHA256_CTX sha256;
 	SHA256_Init(&sha256);
 	SHA256_Update(&sha256, inputData.data, inputData.size);
 	SHA256_Update(&sha256, offsetBytes, offsetByteSize);
 	SHA256_Final(key, &sha256);
 
+	// Sequentially decrypt each sub-chunk 'iterations' times.
 	for (int j = 0; j < iterations; j++) {
 		randomx_decrypt_chunk(vmPtr, key, PACKING_KEY_SIZE, subChunk, subChunkSize,
 			decryptedSubChunk, randomxRoundCount);
