@@ -2,7 +2,7 @@
 
 -on_load(init_nif/0).
 
--export([init_fast/2, hash_fast/2, init_light/1, hash_light/2,
+-export([init_fast/2, init_light/1, hash/2,
 		randomx_encrypt_chunk/4,
 		randomx_decrypt_chunk/5,
 		randomx_decrypt_sub_chunk/5,
@@ -10,7 +10,7 @@
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
--export([init_light_nif/3, hash_light_nif/5, init_fast_nif/4, hash_fast_nif/5,
+-export([hash_nif/5, init_randomx_nif/5,
 		jit/0, large_pages/0, hardware_aes/0,
 		randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
 		randomx_reencrypt_chunk_nif/10,
@@ -35,38 +35,20 @@
 -ifdef(DEBUG).
 init_fast(Key, _Threads) ->
 	Key.
--else.
-init_fast(Key, Threads) ->
-	{ok, FastState} = init_fast_nif(Key, jit(), large_pages(), Threads),
-	FastState.
--endif.
-
--ifdef(DEBUG).
-hash_fast(FastState, Data) ->
-	crypto:hash(sha256, << FastState/binary, Data/binary >>).
--else.
-hash_fast(FastState, Data) ->
-	{ok, Hash} =
-		hash_fast_nif(FastState, Data, jit(), large_pages(), hardware_aes()),
-	Hash.
--endif.
-
--ifdef(DEBUG).
 init_light(Key) ->
 	Key.
+hash(State, Data) ->
+	crypto:hash(sha256, << State/binary, Data/binary >>).
 -else.
+init_fast(Key, Threads) ->
+	{ok, FastState} = init_randomx_nif(Key, ?RANDOMX_HASHING_MODE_FAST, jit(), large_pages(), Threads),
+	FastState.
 init_light(Key) ->
-	{ok, LightState} = init_light_nif(Key, jit(), large_pages()),
+	{ok, LightState} = init_randomx_nif(Key, ?RANDOMX_HASHING_MODE_LIGHT, jit(), large_pages(), 0),
 	LightState.
--endif.
-
--ifdef(DEBUG).
-hash_light(LightState, Data) ->
-	hash_fast(LightState, Data).
--else.
-hash_light(LightState, Data) ->
+hash(State, Data) ->
 	{ok, Hash} =
-		hash_light_nif(LightState, Data, jit(), large_pages(), hardware_aes()),
+		hash_nif(State, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
 -endif.
 
@@ -329,19 +311,13 @@ hardware_aes() ->
 			1
 	end.
 
-init_fast_nif(_Key, _JIT, _LargePages, _Threads) ->
+init_randomx_nif(_Key, _HashingMode, _JIT, _LargePages, _Threads) ->
 	erlang:nif_error(nif_not_loaded).
 
-init_light_nif(_Key, _JIT, _LargePages) ->
+hash_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
-hash_fast_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-hash_light_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_encrypt_chunk_nif(_State, _Data, _Chunk, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
+	randomx_encrypt_chunk_nif(_State, _Data, _Chunk, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
 randomx_decrypt_chunk_nif(_State, _Data, _Chunk, _OutSize, _RoundCount, _JIT, _LargePages,
