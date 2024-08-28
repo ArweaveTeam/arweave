@@ -375,7 +375,13 @@
 	%% of the corresponding transaction. Proofs the inclusion of the chunk
 	%% in the corresponding "data_root" under a particular offset.
 	data_path = <<>>,
+	%% When packing difficulty is 0 chunk stores a full ?DATA_CHUNK_SIZE-sized packed chunk.
+	%% When packing difficulty >= 1, chunk stores a ?COMPOSITE_PACKING_SUB_CHUNK_SIZE-sized
+	%% packed sub-chunk.
 	chunk = <<>>,
+	%% When packing difficulty is 0 unpacked_chunk is <<>>.
+	%% When packing difficulty >= 1, unpacked_chunk stores a full 0-padded
+	%% ?DATA_CHUNK_SIZE-sized unpacked chunk.
 	unpacked_chunk = <<>>
 }).
 
