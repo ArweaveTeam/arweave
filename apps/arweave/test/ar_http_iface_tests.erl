@@ -1005,7 +1005,7 @@ wait_until_syncs_tx_data(TXID) ->
 			end
 		end,
 		100,
-		2000
+		5000
 	).
 
 height(Node) ->
