@@ -46,9 +46,12 @@ reencrypt_composite_chunk(FastState, Key1, Key2, Chunk, PackingRounds1, PackingR
 		SubChunkCount1, SubChunkCount2).
 
 setup() ->
-    {ok, FastState} = ar_mine_randomx:init_fast_nif(
-		?RANDOMX_PACKING_KEY, 0, 0, erlang:system_info(dirty_cpu_schedulers_online)),
-	{ok, LightState} = ar_mine_randomx:init_light_nif(?RANDOMX_PACKING_KEY, 0, 0),
+    {ok, FastState} = ar_mine_randomx:init_randomx_nif(
+		?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, 0, 0,
+			erlang:system_info(dirty_cpu_schedulers_online)),
+	{ok, LightState} = ar_mine_randomx:init_randomx_nif(
+		?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_LIGHT, 0, 0,
+		erlang:system_info(dirty_cpu_schedulers_online)),
     {FastState, LightState}.
 
 test_register(TestFun, Fixture) ->
@@ -407,7 +410,7 @@ test_hash({FastState, LightState}) ->
     Nonce = ar_util:decode(?ENCODED_NONCE),
     Segment = ar_util:decode(?ENCODED_SEGMENT),
     Input = << Nonce/binary, Segment/binary >>,
-    {ok, Hash} = ar_mine_randomx:hash_fast_nif(FastState, Input, 0, 0, 0),
-	?assertEqual(ExpectedHash, Hash),
+	?assertEqual({ok, ExpectedHash},
+			ar_mine_randomx:hash_nif(FastState, Input, 0, 0, 0)),
     ?assertEqual({ok, ExpectedHash},
-			ar_mine_randomx:hash_light_nif(LightState, Input, 0, 0, 0)).
+			ar_mine_randomx:hash_nif(LightState, Input, 0, 0, 0)).

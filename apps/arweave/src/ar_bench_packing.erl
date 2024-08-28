@@ -235,7 +235,8 @@ write_packed_data(Config, UnpackedFilename, PackedFilename) ->
 	} = Config,
 	io:format("Generating input file: ~s~n", [PackedFilename]),
 	{ok, RandomXState} = ar_bench_timer:record({init},
-		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
+		fun ar_mine_randomx:init_randomx_nif/5,
+			[?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, NumWorkers]),
 
 	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
 	PackedFileHandle = open_file(PackedFilename, [write, binary]),
@@ -291,7 +292,8 @@ run_dirty_benchmark(Config) ->
 	end,
 
 	{ok, RandomXState} = ar_bench_timer:record({init},
-		fun ar_mine_randomx:init_fast_nif/4, [?RANDOMX_PACKING_KEY, JIT, LargePages, NumWorkers]),
+		fun ar_mine_randomx:init_randomx_nif/5,
+			[?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, NumWorkers]),
 
 	run_dirty_test(Config2#test_config{randomx_state = RandomXState}).
 

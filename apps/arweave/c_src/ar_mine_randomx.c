@@ -14,10 +14,8 @@ ErlNifResourceType* vdfRandomxVmType;
 #include "ar_mine_vdf.h"
 
 static ErlNifFunc nif_funcs[] = {
-	{"init_fast_nif", 4, init_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"init_light_nif", 3, init_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"hash_fast_nif", 5, hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"hash_light_nif", 5, hash_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"init_randomx_nif", 5, init_randomx_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"hash_nif", 5, randomx_hash_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"randomx_encrypt_chunk_nif", 7, randomx_encrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"randomx_decrypt_chunk_nif", 8, randomx_decrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"randomx_reencrypt_chunk_nif", 10, randomx_reencrypt_chunk_nif,
@@ -74,44 +72,37 @@ static void release_randomx(struct state *statePtr)
 	statePtr->isRandomxReleased = 1;
 }
 
-static ERL_NIF_TERM init_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM init_randomx_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
-	return init(envPtr, argc, argv, HASHING_MODE_FAST);
-}
-
-static ERL_NIF_TERM init_light_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
-{
-	return init(envPtr, argc, argv, HASHING_MODE_LIGHT);
+	return init(envPtr, argc, argv);
 }
 
 static ERL_NIF_TERM init(
 	ErlNifEnv* envPtr,
 	int argc,
-	const ERL_NIF_TERM argv[],
-	hashing_mode mode
+	const ERL_NIF_TERM argv[]
 ) {
 	ErlNifBinary key;
+	hashing_mode mode;
 	struct state *statePtr;
 	ERL_NIF_TERM resource;
 	unsigned int numWorkers;
 	int jitEnabled, largePagesEnabled;
 	randomx_flags flags;
 
-	if (mode == HASHING_MODE_FAST && argc != 4) {
-		return enif_make_badarg(envPtr);
-	} else if (mode == HASHING_MODE_LIGHT && argc != 3) {
-		return enif_make_badarg(envPtr);
-	}
 	if (!enif_inspect_binary(envPtr, argv[0], &key)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (mode == HASHING_MODE_FAST && !enif_get_uint(envPtr, argv[3], &numWorkers)) {
+	if (!enif_get_int(envPtr, argv[1], &mode)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[1], &jitEnabled)) {
+	if (!enif_get_int(envPtr, argv[2], &jitEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &largePagesEnabled)) {
+	if (!enif_get_int(envPtr, argv[3], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_uint(envPtr, argv[4], &numWorkers)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -119,6 +110,7 @@ static ERL_NIF_TERM init(
 	statePtr->cachePtr = NULL;
 	statePtr->datasetPtr = NULL;
 	statePtr->isRandomxReleased = 0;
+	statePtr->mode = mode;
 
 	statePtr->lockPtr = enif_rwlock_create("state_rw_lock");
 	if (statePtr->lockPtr == NULL) {
@@ -253,16 +245,6 @@ static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, struct state *statePtr, const
 	}
 	enif_release_resource(statePtr);
 	return error(envPtr, reason);
-}
-
-static ERL_NIF_TERM hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
-{
-	return randomx_hash_nif(envPtr, argc, argv, HASHING_MODE_FAST);
-}
-
-static ERL_NIF_TERM hash_light_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
-{
-	return randomx_hash_nif(envPtr, argc, argv, HASHING_MODE_LIGHT);
 }
 
 static randomx_vm* create_vm(struct state* statePtr,
@@ -460,8 +442,7 @@ static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
 static ERL_NIF_TERM randomx_hash_nif(
 	ErlNifEnv* envPtr,
 	int argc,
-	const ERL_NIF_TERM argv[],
-	hashing_mode hashingMode
+	const ERL_NIF_TERM argv[]
 ) {
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
@@ -488,7 +469,7 @@ static ERL_NIF_TERM randomx_hash_nif(
 	}
 
 	int isRandomxReleased;
-	randomx_vm *vmPtr = create_vm(statePtr, (hashingMode == HASHING_MODE_FAST), jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
+	randomx_vm *vmPtr = create_vm(statePtr, (statePtr->mode == HASHING_MODE_FAST), jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
 		if (isRandomxReleased != 0) {
 			return error(envPtr, "state has been released");

@@ -134,6 +134,9 @@ end()).
 %% The key to initialize the RandomX state from, for RandomX packing.
 -define(RANDOMX_PACKING_KEY, <<"default arweave 2.5 pack key">>).
 
+-define(RANDOMX_HASHING_MODE_FAST, 0).
+-define(RANDOMX_HASHING_MODE_LIGHT, 1).
+
 %% The original plan was to cap the proof at 262144 (also the maximum chunk size).
 %% The maximum tree depth is then (262144 - 64) / (32 + 32 + 32) = 2730.
 %% Later we added support for offset rebases by recognizing the extra 32 bytes,

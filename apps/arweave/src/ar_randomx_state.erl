@@ -1,6 +1,6 @@
 -module(ar_randomx_state).
 
--export([init/2, init/4, start/0, start_block_polling/0, reset/0, hash/2,
+-export([init/2, init/4, start/0, start_block_polling/0, reset/0,
 		randomx_state_by_height/1, swap_height/1, get_key_block/1,
 		debug_server/0]).
 
@@ -51,17 +51,6 @@ start_block_polling() ->
 
 reset() ->
 	whereis(?MODULE) ! reset.
-
-hash(Height, Data) ->
-	case randomx_state_by_height(Height) of
-		{state, {fast, FastState}} ->
-			ar_mine_randomx:hash_fast(FastState, Data);
-		{state, {light, LightState}} ->
-			ar_mine_randomx:hash_light(LightState, Data);
-		{key, Key} ->
-			LightState = ar_mine_randomx:init_light(Key),
-			ar_mine_randomx:hash_light(LightState, Data)
-	end.
 
 randomx_state_by_height(Height) when is_integer(Height) andalso Height >= 0 ->
 	Ref = make_ref(),
