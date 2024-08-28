@@ -155,7 +155,7 @@ height_2_8() ->
 -else.
 	-ifdef(FORKS_RESET).
 		height_2_8() ->
-			infinity.
+			0.
 	-else.
 		height_2_8() ->
 			infinity.
