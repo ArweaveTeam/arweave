@@ -648,7 +648,7 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 		case PackingBin of
 			<<"unpacked">> ->
 				unpacked;
-			<< MiningAddr:43/binary, ":", PackingDifficultyBin/binary >> ->
+			<< MiningAddr:43/binary, ".", PackingDifficultyBin/binary >> ->
 				PackingDifficulty = binary_to_integer(PackingDifficultyBin),
 				true = PackingDifficulty >= 1
 						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
@@ -663,7 +663,7 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
 		case PackingBin of
 			<<"unpacked">> ->
 				unpacked;
-			<< MiningAddr:43/binary, ":", PackingDifficultyBin/binary >> ->
+			<< MiningAddr:43/binary, ".", PackingDifficultyBin/binary >> ->
 				PackingDifficulty = binary_to_integer(PackingDifficultyBin),
 				true = PackingDifficulty >= 1
 						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
@@ -675,7 +675,7 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
 		case ToPackingBin of
 			<<"unpacked">> ->
 				unpacked;
-			<< ToMiningAddr:43/binary, ":", ToPackingDifficultyBin/binary >> ->
+			<< ToMiningAddr:43/binary, ".", ToPackingDifficultyBin/binary >> ->
 				ToPackingDifficulty = binary_to_integer(ToPackingDifficultyBin),
 				true = ToPackingDifficulty >= 1
 						andalso ToPackingDifficulty =< ?MAX_PACKING_DIFFICULTY,

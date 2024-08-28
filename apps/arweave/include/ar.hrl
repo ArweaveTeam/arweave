@@ -313,19 +313,18 @@
 %% The maximum allowed packing difficulty.
 -define(MAX_PACKING_DIFFICULTY, 32).
 
-%% The number of sub-chunks in a compositely packed chunk with the packing difficulty
-%% between 1 and 32 incl. The composite packing with the packing difficulty 1 matches
-%% approximately the non-composite 2.6 packing in terms of computational costs.
--define(PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT, 32).
+%% The number of sub-chunks in a compositely packed chunk.
+%% The composite packing with the packing difficulty 1 matches approximately the non-composite
+%% 2.6 packing in terms of computational costs.
+-define(COMPOSITE_PACKING_SUB_CHUNK_COUNT, 32).
 
-%% The size of a unit sub-chunk in the compositely packed chunk with the packing difficulty
-%% between 1 and 32 incl.
--define(PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
-		(?DATA_CHUNK_SIZE div ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT)).
+%% The size of a unit sub-chunk in the compositely packed chunk.
+-define(COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+		(?DATA_CHUNK_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT)).
 
 %% The number of RandomX rounds used for a single iteration of packing of a single sub-chunk
-%% during the composite packing with the packing difficulty between 1 and 32 incl.
--define(PACKING_DIFFICULTY_ONE_ROUND_COUNT, 10).
+%% during the composite packing.
+-define(COMPOSITE_PACKING_ROUND_COUNT, 10).
 
 %% Maximum size of a `data_path`, in bytes.
 -define(MAX_PATH_SIZE, (256 * 1024)).

@@ -205,8 +205,8 @@ randomx_encrypt_chunk2({spora_2_6, _Addr}, RandomxState, Key, Chunk) ->
 	end;
 randomx_encrypt_chunk2({composite, _Addr, PackingDifficulty}, RandomxState, Key, Chunk) ->
 	case randomx_encrypt_composite_chunk_nif(RandomxState, Key, Chunk,
-			jit(), large_pages(), hardware_aes(), ?PACKING_DIFFICULTY_ONE_ROUND_COUNT,
-			PackingDifficulty, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT) of
+			jit(), large_pages(), hardware_aes(), ?COMPOSITE_PACKING_ROUND_COUNT,
+			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) of
 		{error, Error} ->
 			{exception, Error};
 		Reply ->
@@ -222,13 +222,13 @@ randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize, {spora_2_6, _Addr}) 
 randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize,
 		{composite, _Addr, PackingDifficulty}) ->
 	randomx_decrypt_composite_chunk_nif(RandomxState, Key, Chunk, ChunkSize,
-			jit(), large_pages(), hardware_aes(), ?PACKING_DIFFICULTY_ONE_ROUND_COUNT,
-			PackingDifficulty, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT).
+			jit(), large_pages(), hardware_aes(), ?COMPOSITE_PACKING_ROUND_COUNT,
+			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT).
 
 randomx_decrypt_sub_chunk2(Packing, RandomxState, Key, Chunk, SubChunkStartOffset) ->
 	{_, _, IterationCount} = Packing,
-	RoundCount = ?PACKING_DIFFICULTY_ONE_ROUND_COUNT,
-	OutSize = ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_SIZE,
+	RoundCount = ?COMPOSITE_PACKING_ROUND_COUNT,
+	OutSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	randomx_decrypt_composite_sub_chunk_nif(RandomxState, Key, Chunk, OutSize,
 		jit(), large_pages(), hardware_aes(), RoundCount, IterationCount, SubChunkStartOffset).
 
@@ -237,9 +237,9 @@ randomx_reencrypt_chunk({composite, Addr1, PackingDifficulty1},
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
 	case randomx_reencrypt_composite_to_composite_chunk_nif(RandomxState, UnpackKey,
 			PackKey, Chunk, jit(), large_pages(), hardware_aes(),
-			?PACKING_DIFFICULTY_ONE_ROUND_COUNT, ?PACKING_DIFFICULTY_ONE_ROUND_COUNT,
+			?COMPOSITE_PACKING_ROUND_COUNT, ?COMPOSITE_PACKING_ROUND_COUNT,
 			PackingDifficulty1, PackingDifficulty2,
-			?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT) of
+			?COMPOSITE_PACKING_SUB_CHUNK_COUNT, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) of
 		{error, Error} ->
 			{exception, Error};
 		{ok, Repacked, RepackInput} ->
@@ -263,8 +263,8 @@ randomx_reencrypt_chunk({spora_2_6, _Addr1}, {composite, _Addr2, PackingDifficul
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
 	case randomx_reencrypt_legacy_to_composite_chunk_nif(RandomxState, UnpackKey,
 			PackKey, Chunk, jit(), large_pages(), hardware_aes(),
-			?RANDOMX_PACKING_ROUNDS_2_6, ?PACKING_DIFFICULTY_ONE_ROUND_COUNT,
-			PackingDifficulty, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT) of
+			?RANDOMX_PACKING_ROUNDS_2_6, ?COMPOSITE_PACKING_ROUND_COUNT,
+			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) of
 		{error, Error} ->
 			{exception, Error};
 		{ok, Repacked, RepackInput} ->
@@ -275,8 +275,8 @@ randomx_reencrypt_chunk(spora_2_5, {composite, _Addr2, PackingDifficulty},
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
 	case randomx_reencrypt_legacy_to_composite_chunk_nif(RandomxState, UnpackKey,
 			PackKey, Chunk, jit(), large_pages(), hardware_aes(),
-			?RANDOMX_PACKING_ROUNDS, ?PACKING_DIFFICULTY_ONE_ROUND_COUNT,
-			PackingDifficulty, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT) of
+			?RANDOMX_PACKING_ROUNDS, ?COMPOSITE_PACKING_ROUND_COUNT,
+			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) of
 		{error, Error} ->
 			{exception, Error};
 		{ok, Repacked, RepackInput} ->

@@ -318,7 +318,7 @@ get_chunk_binary(Peer, Offset, RequestedPacking) ->
 				iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)]);
 			{composite, Addr, PackingDifficulty} ->
 				iolist_to_binary([<<"composite_">>, ar_util:encode(Addr),
-						":", integer_to_binary(PackingDifficulty)])
+						".", integer_to_binary(PackingDifficulty)])
 		end,
 	Headers = [{<<"x-packing">>, PackingBinary},
 			%% The nodes not upgraded to the 2.5 version would ignore this header.
