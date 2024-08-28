@@ -561,29 +561,24 @@ pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer) ->
 					B#block.indep_hash, Peer}),
 			invalid;
 		true ->
+			pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer)
+	end.
+
+pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer) ->
+	case ar_block:validate_packing_difficulty(B#block.height, B#block.packing_difficulty) of
+		false ->
+			post_block_reject_warn_and_error_dump(B, check_packing_difficulty, Peer),
+			ar_events:send(block, {rejected, invalid_packing_difficulty,
+					B#block.indep_hash, Peer}),
+			invalid;
+		true ->
 			case SolutionResigned of
 				true ->
 					gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer}}),
 					enqueued;
 				false ->
-					pre_validate_packing_difficulty(B, PrevB, false, Peer)
+					pre_validate_quick_pow(B, PrevB, false, Peer)
 			end
-	end.
-
-pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer) ->
-	case {B#block.packing_difficulty, B#block.height >= ar_fork:height_2_8()} of
-		{0, false} ->
-			pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer);
-		{_PackingDifficulty, true} ->
-			case ar_block:validate_packing_difficulty(B#block.packing_difficulty) of
-				true ->
-					pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer);
-				false ->
-					post_block_reject_warn_and_error_dump(B, check_packing_difficulty, Peer),
-					ar_events:send(block, {rejected, invalid_packing_difficulty,
-							B#block.indep_hash, Peer}),
-					invalid
-			end % The deserialization code does not allow non-zero packing difficulty pre-fork.
 	end.
 
 pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
