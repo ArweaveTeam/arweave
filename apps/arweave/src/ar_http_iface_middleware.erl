@@ -3260,7 +3260,7 @@ handle_mining_cm_publish(Req, Pid) ->
 							?LOG_INFO("Block candidate ~p from ~p ~n", [
 								ar_util:encode(Solution#mining_solution.solution_hash),
 								ar_util:format_peer(Peer)]),
-							ar_mining_server:post_solution(Solution),
+							ar_mining_server:prepare_and_post_solution(Solution),
 							{200, #{}, <<>>, Req}
 					end;
 				{error, _} ->
