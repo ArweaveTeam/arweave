@@ -4,10 +4,11 @@
 
 -export([
 	start_link/0, computed_h1/2, compute_h2_for_peer/2, computed_h2_for_peer/1,
-	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0, get_peers/1, get_peer/1,
+	get_public_state/0, send_h1_batch_to_peer/0, stat_loop/0,
+	get_peers/1, get_peer/1,
 	update_peer/2, remove_peer/1, garbage_collect/0, is_exit_peer/0,
 	get_unique_partitions_list/0, get_self_plus_external_partitions_list/0,
-	get_cluster_partitions_list/0
+	get_cluster_partitions_list/0, is_coordinated_miner/0
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -106,6 +107,12 @@ is_exit_peer() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.coordinated_mining == true andalso
 			Config#config.cm_exit_peer == not_set.
+
+%% Return true if we are a CM miner in the coordinated mining setup.
+%% A CM miner may be but does not have to be an exit node.
+is_coordinated_miner() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.coordinated_mining == true.
 
 %% @doc Return a list of unique partitions including local partitions and all of
 %% external (relevant pool peers') partitions.

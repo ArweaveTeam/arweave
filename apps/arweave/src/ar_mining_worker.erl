@@ -507,10 +507,8 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 
 handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	#mining_candidate{
-		chunk2 = Chunk2, h0 = H0, h2 = H2, mining_address = MiningAddress,
-		nonce = Nonce, partition_number = Partition1, 
-		partition_upper_bound = PartitionUpperBound, cm_lead_peer = Peer,
-		packing_difficulty = PackingDifficulty
+		chunk2 = Chunk2, h2 = H2,
+		cm_lead_peer = Peer
 	} = Candidate,
 	State2 = hash_computed(h2, Candidate, State),
 	PassesDiffChecks = h2_passes_diff_checks(H2, Candidate, State2),
@@ -536,40 +534,8 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 		{_, not_set} ->
 			ar_mining_server:prepare_and_post_solution(Candidate);
 		_ ->
-			{_RecallByte1, RecallByte2} = ar_mining_server:get_recall_bytes(H0, Partition1,
-					Nonce, PartitionUpperBound, PackingDifficulty),
-			Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
-			LocalPoA2 = ar_mining_server:read_poa(RecallByte2, Chunk2, Packing),
-			PoA2 =
-				case LocalPoA2 of
-					{ok, LocalPoA3} ->
-						LocalPoA3;
-					_ ->
-						ar:console("WARNING: we have found an H2 solution but did not find "
-							"the PoA2 proofs locally - searching the peers...~n"),
-						case ar_mining_server:fetch_poa_from_peers(RecallByte2,
-								PackingDifficulty) of
-							not_found ->
-								?LOG_WARNING([{event,
-										mined_block_but_failed_to_read_second_chunk_proof},
-										{worker, State2#state.name},
-										{recall_byte2, RecallByte2},
-										{mining_address, ar_util:safe_encode(MiningAddress)}]),
-								ar:console("WARNING: we found an H2 solution but failed to find "
-										"the proof for the second chunk. See logs for more "
-										"details.~n"),
-								not_found;
-							PeerPoA2 ->
-								PeerPoA2
-						end
-				end,
-			case PoA2 of
-				not_found ->
-					ok;
-				_ ->
-					ar_coordination:computed_h2_for_peer(
-							Candidate#mining_candidate{ poa2 = PoA2 })
-			end
+			ar_coordination:computed_h2_for_peer(
+					Candidate#mining_candidate{ poa2 = #poa{ chunk = Chunk2 } })
 	end,
 	{noreply, State2};
 
