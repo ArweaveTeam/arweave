@@ -52,6 +52,10 @@ hash(State, Data) ->
 	Hash.
 -endif.
 
+
+randomx_encrypt_chunk(Packing, RandomxState, Key, Chunk) ->
+	randomx_encrypt_chunk2(Packing, RandomxState, Key, Chunk).
+
 randomx_decrypt_chunk(Packing, RandomxState, Key, Chunk, ChunkSize) ->
 	PackedSize = byte_size(Chunk),
 	%% For the spora_2_6 and composite packing schemes we want to confirm

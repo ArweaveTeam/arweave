@@ -6,7 +6,7 @@
 		request_unpack/2, request_unpack/3, request_repack/2, request_repack/3,
 		pack/4, unpack/5, repack/6, unpack_sub_chunk/5,
 		is_buffer_full/0, record_buffer_size_metric/0,
-		pad_chunk/1, unpad_chunk/4]).
+		pad_chunk/1, unpad_chunk/3, unpad_chunk/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
