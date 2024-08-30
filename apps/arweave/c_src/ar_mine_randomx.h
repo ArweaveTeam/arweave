@@ -43,6 +43,7 @@ static int load(ErlNifEnv*, void**, ERL_NIF_TERM);
 static void state_dtor(ErlNifEnv*, void*);
 static void release_randomx(struct state*);
 
+static ERL_NIF_TERM randomx_info_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM init_randomx_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM init(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static boolean init_dataset(randomx_dataset*, randomx_cache*, unsigned int);

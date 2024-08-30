@@ -61,6 +61,7 @@ randomx_suite_test_() ->
 	{setup, fun setup/0,
 		fun (SetupData) ->
 			[
+				test_register(fun test_state/1, SetupData),
 				test_register(fun test_regression/1, SetupData),
 				test_register(fun test_empty_chunk_fails/1, SetupData),
 				test_register(fun test_pack_unpack/1, SetupData),
@@ -79,7 +80,28 @@ randomx_suite_test_() ->
 %% -------------------------------------------------------------------------------------------
 %% spora_2_6 and composite packing tests
 %% -------------------------------------------------------------------------------------------
+test_state({FastState, LightState}) ->
+	%% The legacy dataset size is 568,433,920 bytes. Roughly 30 MiB more than 512 MiB.
+	%% Our nifs don't have access to the raw dataset size used in the RandomX C code, but
+	%% they have access to the dataset item count - which is just the size divided by 64.
+	%% So the expected dataset size is 568,433,920 / 64 = 8,881,780 items.
+	?assertEqual(
+		{ok, fast, 8881780},
+		ar_mine_randomx:randomx_info_nif(FastState)
+	),
+	%% Unfortunately we don't have access to the cache size. The randomx_info_nif will check
+	%% that in fast mode the cache is not initialized, and in light mode the dataset is not
+	%% initialized and return an error if either check fails.
+	?assertEqual(
+		{ok, light, 0},
+		ar_mine_randomx:randomx_info_nif(LightState)
+	).
+
 test_regression({FastState, LightState}) ->
+	%% Test all permutations of:
+	%% 1. Light vs. fast state
+	%% 2. spora_2_6 vs. depth-1 composite vs. depth-2 composite packing
+	%% 3. JIT vs. no JIT
 	test_regression(FastState,
 		"ar_mine_randomx_tests/packed.spora26.bin", 0, [],
 		fun encrypt_chunk/8, fun decrypt_chunk/8),
@@ -96,6 +118,24 @@ test_regression({FastState, LightState}) ->
 		"ar_mine_randomx_tests/packed.composite.2.bin", 0, [2, 32],
 		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
 	test_regression(FastState,
+		"ar_mine_randomx_tests/packed.composite.2.bin", 1, [2, 32],
+		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	test_regression(LightState,
+		"ar_mine_randomx_tests/packed.spora26.bin", 0, [],
+		fun encrypt_chunk/8, fun decrypt_chunk/8),
+	test_regression(LightState,
+		"ar_mine_randomx_tests/packed.spora26.bin", 1, [],
+		fun encrypt_chunk/8, fun decrypt_chunk/8),
+	test_regression(LightState,
+		"ar_mine_randomx_tests/packed.composite.1.bin", 0, [1, 32],
+		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	test_regression(LightState,
+		"ar_mine_randomx_tests/packed.composite.1.bin", 1, [1, 32],
+		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	test_regression(LightState,
+		"ar_mine_randomx_tests/packed.composite.2.bin", 0, [2, 32],
+		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	test_regression(LightState,
 		"ar_mine_randomx_tests/packed.composite.2.bin", 1, [2, 32],
 		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
 	% Key = ar_test_node:load_fixture("ar_mine_randomx_tests/key.bin"),
@@ -119,15 +159,15 @@ test_regression({FastState, LightState}) ->
 
 	ok.
 
-test_regression(FastState, Fixture, JIT, ExtraArgs, EncryptFun, DecryptFun) ->
+test_regression(State, Fixture, JIT, ExtraArgs, EncryptFun, DecryptFun) ->
 	Key = ar_test_node:load_fixture("ar_mine_randomx_tests/key.bin"),
 	UnpackedFixture = ar_test_node:load_fixture("ar_mine_randomx_tests/unpacked.bin"),
 	PackedFixture = ar_test_node:load_fixture(Fixture),
 
-	{ok, Packed} = EncryptFun(FastState, Key, UnpackedFixture, 8, JIT, 0, 0, ExtraArgs),
+	{ok, Packed} = EncryptFun(State, Key, UnpackedFixture, 8, JIT, 0, 0, ExtraArgs),
 	?assertEqual(PackedFixture, Packed),
 
-	{ok, Unpacked} = DecryptFun(FastState, Key, PackedFixture, 8, JIT, 0, 0, ExtraArgs),
+	{ok, Unpacked} = DecryptFun(State, Key, PackedFixture, 8, JIT, 0, 0, ExtraArgs),
 	?assertEqual(UnpackedFixture, Unpacked).
 
 
