@@ -10,7 +10,7 @@
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
--export([hash_nif/5, init_randomx_nif/5,
+-export([hash_nif/5, randomx_info_nif/1, init_randomx_nif/5,
 		jit/0, large_pages/0, hardware_aes/0,
 		randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
 		randomx_reencrypt_chunk_nif/10,
@@ -311,13 +311,16 @@ hardware_aes() ->
 			1
 	end.
 
+randomx_info_nif(_State) ->
+	erlang:nif_error(nif_not_loaded).
+
 init_randomx_nif(_Key, _HashingMode, _JIT, _LargePages, _Threads) ->
 	erlang:nif_error(nif_not_loaded).
 
 hash_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
-	randomx_encrypt_chunk_nif(_State, _Data, _Chunk, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
+randomx_encrypt_chunk_nif(_State, _Data, _Chunk, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
 randomx_decrypt_chunk_nif(_State, _Data, _Chunk, _OutSize, _RoundCount, _JIT, _LargePages,
