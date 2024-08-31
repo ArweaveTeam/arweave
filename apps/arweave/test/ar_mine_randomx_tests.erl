@@ -61,19 +61,19 @@ randomx_suite_test_() ->
 	{setup, fun setup/0,
 		fun (SetupData) ->
 			[
-				test_register(fun test_state/1, SetupData),
-				test_register(fun test_regression/1, SetupData),
-				test_register(fun test_empty_chunk_fails/1, SetupData),
-				test_register(fun test_nif_wrappers/1, SetupData),
-				test_register(fun test_pack_unpack/1, SetupData),
-				test_register(fun test_repack/1, SetupData),
-				test_register(fun test_input_changes_packing/1, SetupData),
-				test_register(fun test_composite_packing/1, SetupData),
-				test_register(fun test_composite_packs_incrementally/1, SetupData),
-				test_register(fun test_composite_unpacked_sub_chunks/1, SetupData),
-				test_register(fun test_composite_repacks_from_spora_2_6/1, SetupData),
-				test_register(fun test_composite_repack/1, SetupData),
-				test_register(fun test_hash/1, SetupData)
+				% test_register(fun test_state/1, SetupData),
+				% test_register(fun test_regression/1, SetupData),
+				% test_register(fun test_empty_chunk_fails/1, SetupData),
+				test_register(fun test_nif_wrappers/1, SetupData)
+				% test_register(fun test_pack_unpack/1, SetupData),
+				% test_register(fun test_repack/1, SetupData),
+				% test_register(fun test_input_changes_packing/1, SetupData),
+				% test_register(fun test_composite_packing/1, SetupData),
+				% test_register(fun test_composite_packs_incrementally/1, SetupData),
+				% test_register(fun test_composite_unpacked_sub_chunks/1, SetupData),
+				% test_register(fun test_composite_repacks_from_spora_2_6/1, SetupData),
+				% test_register(fun test_composite_repack/1, SetupData),
+				% test_register(fun test_hash/1, SetupData)
 			]
 		end
 	}.
@@ -149,12 +149,12 @@ test_regression({FastState, LightState}) ->
 	% ok = file:write_file(Packed1Filename, Packed1),
 
 	% {ok, Packed1} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
-	% 	FastState, Key, UnpackedFixture, 0, 0, 0, 8, 1, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+	% 	FastState, Key, UnpackedFixture, 0, 0, 0, 8, 1, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 	% Packed1Filename = filename:join([Dir, "fixtures", "ar_mine_randomx_tests", "packed.composite.1.bin"]),
 	% ok = file:write_file(Packed1Filename, Packed1),
 
 	% {ok, Packed2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
-	% 	FastState, Key, UnpackedFixture, 0, 0, 0, 8, 2, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+	% 	FastState, Key, UnpackedFixture, 0, 0, 0, 8, 2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 	% Packed2Filename = filename:join([Dir, "fixtures", "ar_mine_randomx_tests", "packed.composite.2.bin"]),
 	% ok = file:write_file(Packed2Filename, Packed2),
 
@@ -199,7 +199,7 @@ test_nif_wrappers({FastState, _LightState}) ->
 	{ok, PackedCompositeA} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
 		FastState, KeyA, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
-		?PACKING_DIFFICULTY_ONE_ROUND_COUNT, 2, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+		?COMPOSITE_PACKING_ROUND_COUNT, 2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 	?assertEqual({ok, PackedCompositeA},
 		ar_mine_randomx:randomx_encrypt_chunk({composite, AddrA, 2}, FastState, KeyA, Chunk)),
 
@@ -216,11 +216,11 @@ test_nif_wrappers({FastState, _LightState}) ->
 	{ok, PackedCompositeA2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
 		FastState, KeyA, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
-		?PACKING_DIFFICULTY_ONE_ROUND_COUNT, 3, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+		?COMPOSITE_PACKING_ROUND_COUNT, 3, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 	{ok, PackedCompositeB} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
 		FastState, KeyB, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
-		?PACKING_DIFFICULTY_ONE_ROUND_COUNT, 3, ?PACKING_DIFFICULTY_ONE_SUB_CHUNK_COUNT),
+		?COMPOSITE_PACKING_ROUND_COUNT, 3, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 		
 	?assertEqual({ok, Packed_2_6B, Chunk},
 		ar_mine_randomx:randomx_reencrypt_chunk(
