@@ -20,8 +20,7 @@
 		randomx_encrypt_composite_chunk_nif/9,
 		randomx_decrypt_composite_chunk_nif/10,
 		randomx_decrypt_composite_sub_chunk_nif/10,
-		randomx_reencrypt_legacy_to_composite_chunk_nif/11,
-		randomx_reencrypt_composite_to_composite_chunk_nif/13
+		randomx_reencrypt_composite_chunk_nif/13
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -269,7 +268,7 @@ randomx_reencrypt_chunk2(SourcePacking, TargetPacking,
 randomx_reencrypt_chunk2({composite, Addr1, PackingDifficulty1},
 		{composite, Addr2, PackingDifficulty2},
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
-	case randomx_reencrypt_composite_to_composite_chunk_nif(RandomxState, UnpackKey,
+	case randomx_reencrypt_composite_chunk_nif(RandomxState, UnpackKey,
 			PackKey, Chunk, jit(), large_pages(), hardware_aes(),
 			?COMPOSITE_PACKING_ROUND_COUNT, ?COMPOSITE_PACKING_ROUND_COUNT,
 			PackingDifficulty1, PackingDifficulty2,
@@ -293,29 +292,15 @@ randomx_reencrypt_chunk2({composite, Addr1, PackingDifficulty1},
 		Reply ->
 			Reply
 	end;
-randomx_reencrypt_chunk2({spora_2_6, _Addr1}, {composite, _Addr2, PackingDifficulty},
+randomx_reencrypt_chunk2(SourcePacking, {composite, _Addr, _PackingDifficulty} = TargetPacking,
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
-	case randomx_reencrypt_legacy_to_composite_chunk_nif(RandomxState, UnpackKey,
-			PackKey, Chunk, jit(), large_pages(), hardware_aes(),
-			?RANDOMX_PACKING_ROUNDS_2_6, ?COMPOSITE_PACKING_ROUND_COUNT,
-			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) of
-		{error, Error} ->
-			{exception, Error};
-		{ok, Repacked, RepackInput} ->
-			Unpadded = ar_packing_server:unpad_chunk(RepackInput, ChunkSize, ?DATA_CHUNK_SIZE),
-			{ok, Repacked, Unpadded}
-	end;
-randomx_reencrypt_chunk2(spora_2_5, {composite, _Addr2, PackingDifficulty},
-		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
-	case randomx_reencrypt_legacy_to_composite_chunk_nif(RandomxState, UnpackKey,
-			PackKey, Chunk, jit(), large_pages(), hardware_aes(),
-			?RANDOMX_PACKING_ROUNDS, ?COMPOSITE_PACKING_ROUND_COUNT,
-			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) of
-		{error, Error} ->
-			{exception, Error};
-		{ok, Repacked, RepackInput} ->
-			Unpadded = ar_packing_server:unpad_chunk(RepackInput, ChunkSize, ?DATA_CHUNK_SIZE),
-			{ok, Repacked, Unpadded}
+	case randomx_decrypt_chunk(SourcePacking, RandomxState, UnpackKey, Chunk, ChunkSize) of
+		{ok, UnpackedChunk} ->
+			{ok, RepackedChunk} = randomx_encrypt_chunk(TargetPacking, RandomxState, PackKey,
+					ar_packing_server:pad_chunk(UnpackedChunk)),
+			{ok, RepackedChunk, UnpackedChunk};
+		Error ->
+			Error
 	end;
 randomx_reencrypt_chunk2(SourcePacking, TargetPacking,
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
@@ -371,12 +356,7 @@ randomx_decrypt_composite_sub_chunk_nif(_State, _Data, _Chunk, _OutSize,
 		_JIT, _LargePages, _HardwareAES, _RoundCount, _IterationCount, _Offset) ->
 	erlang:nif_error(nif_not_loaded).
 
-randomx_reencrypt_legacy_to_composite_chunk_nif(_State, _DecryptKey, _EncryptKey,
-		_Chunk, _JIT, _LargePages, _HardwareAES,
-		_DecryptRoundCount, _EncryptRoundCount, _IterationCount, _SubChunkCount) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_reencrypt_composite_to_composite_chunk_nif(_State,
+randomx_reencrypt_composite_chunk_nif(_State,
 		_DecryptKey, _EncryptKey, _Chunk,
 		_JIT, _LargePages, _HardwareAES,
 		_DecryptRoundCount, _EncryptRoundCount,

@@ -27,10 +27,8 @@ static ErlNifFunc nif_funcs[] = {
 		ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"randomx_decrypt_composite_sub_chunk_nif", 10, randomx_decrypt_composite_sub_chunk_nif,
 		ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"randomx_reencrypt_legacy_to_composite_chunk_nif", 11,
-		randomx_reencrypt_legacy_to_composite_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"randomx_reencrypt_composite_to_composite_chunk_nif", 13,
-		randomx_reencrypt_composite_to_composite_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_reencrypt_composite_chunk_nif", 13,
+		randomx_reencrypt_composite_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"vdf_sha2_nif", 5, vdf_sha2_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"vdf_parallel_sha_verify_with_reset_nif", 10, vdf_parallel_sha_verify_with_reset_nif,
 		ERL_NIF_DIRTY_JOB_CPU_BOUND}
@@ -971,89 +969,7 @@ static ERL_NIF_TERM randomx_decrypt_composite_sub_chunk_nif(
 	return ok_tuple(envPtr, decryptedSubChunkTerm);
 }
 
-static ERL_NIF_TERM randomx_reencrypt_legacy_to_composite_chunk_nif(
-	ErlNifEnv* envPtr,
-	int argc,
-	const ERL_NIF_TERM argv[]
-) {
-	int decryptRandomxRoundCount, encryptRandomxRoundCount;
-	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	int subChunkCount, iterations;
-	struct state* statePtr;
-	ErlNifBinary decryptKey;
-	ErlNifBinary encryptKey;
-	ErlNifBinary inputChunk;
-
-	if (argc != 11) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
-		return error(envPtr, "failed to read state");
-	}
-	if (!enif_inspect_binary(envPtr, argv[1], &decryptKey)) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_inspect_binary(envPtr, argv[2], &encryptKey)) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) ||
-			inputChunk.size != MAX_CHUNK_SIZE) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_int(envPtr, argv[4], &jitEnabled)) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_int(envPtr, argv[5], &largePagesEnabled)) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_int(envPtr, argv[6], &hardwareAESEnabled)) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_int(envPtr, argv[7], &decryptRandomxRoundCount)) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_int(envPtr, argv[8], &encryptRandomxRoundCount)) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_int(envPtr, argv[9], &iterations) ||
-		iterations < 1) {
-		return enif_make_badarg(envPtr);
-	}
-	if (!enif_get_int(envPtr, argv[10], &subChunkCount) ||
-		subChunkCount < 1 ||
-		MAX_CHUNK_SIZE % subChunkCount != 0 ||
-		(MAX_CHUNK_SIZE / subChunkCount) % 64 != 0 ||
-		subChunkCount > (MAX_CHUNK_SIZE / 64)) {
-		return enif_make_badarg(envPtr);
-	}
-
-	int isRandomxReleased;
-	randomx_vm *vmPtr = create_vm(statePtr, (statePtr->mode == HASHING_MODE_FAST),
-			jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
-	if (vmPtr == NULL) {
-		if (isRandomxReleased != 0) {
-			return error(envPtr, "state has been released");
-		}
-		return error(envPtr, "randomx_create_vm failed");
-	}
-
-	unsigned char decryptedChunk[MAX_CHUNK_SIZE];
-	ERL_NIF_TERM decryptedChunkTerm = decrypt_chunk(envPtr, vmPtr,
-		decryptKey.data, decryptKey.size, inputChunk.data, inputChunk.size,
-		decryptedChunk, inputChunk.size, decryptRandomxRoundCount);
-	ErlNifBinary decryptedChunkBin;
-    if (!enif_inspect_binary(envPtr, decryptedChunkTerm, &decryptedChunkBin)) {
-		destroy_vm(statePtr, vmPtr);
-        return enif_make_badarg(envPtr);
-    }
-	ERL_NIF_TERM reencryptedChunkTerm = encrypt_composite_chunk(envPtr, vmPtr, &encryptKey,
-			&decryptedChunkBin, subChunkCount, iterations, encryptRandomxRoundCount,
-			jitEnabled, largePagesEnabled, hardwareAESEnabled);
-	destroy_vm(statePtr, vmPtr);
-	return ok_tuple2(envPtr, reencryptedChunkTerm, decryptedChunkTerm);
-}
-
-static ERL_NIF_TERM randomx_reencrypt_composite_to_composite_chunk_nif(
+static ERL_NIF_TERM randomx_reencrypt_composite_chunk_nif(
 	ErlNifEnv* envPtr,
 	int argc,
 	const ERL_NIF_TERM argv[]

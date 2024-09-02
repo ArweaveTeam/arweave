@@ -59,8 +59,7 @@ static ERL_NIF_TERM randomx_reencrypt_chunk_nif(ErlNifEnv*, int, const ERL_NIF_T
 static ERL_NIF_TERM randomx_encrypt_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_decrypt_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM randomx_decrypt_composite_sub_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
-static ERL_NIF_TERM randomx_reencrypt_legacy_to_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
-static ERL_NIF_TERM randomx_reencrypt_composite_to_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+static ERL_NIF_TERM randomx_reencrypt_composite_chunk_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
 static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[], hashing_mode hashingMode);
 
