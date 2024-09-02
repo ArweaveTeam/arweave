@@ -61,19 +61,19 @@ randomx_suite_test_() ->
 	{setup, fun setup/0,
 		fun (SetupData) ->
 			[
-				% test_register(fun test_state/1, SetupData),
-				% test_register(fun test_regression/1, SetupData),
-				% test_register(fun test_empty_chunk_fails/1, SetupData),
-				test_register(fun test_nif_wrappers/1, SetupData)
-				% test_register(fun test_pack_unpack/1, SetupData),
-				% test_register(fun test_repack/1, SetupData),
-				% test_register(fun test_input_changes_packing/1, SetupData),
-				% test_register(fun test_composite_packing/1, SetupData),
-				% test_register(fun test_composite_packs_incrementally/1, SetupData),
-				% test_register(fun test_composite_unpacked_sub_chunks/1, SetupData),
-				% test_register(fun test_composite_repacks_from_spora_2_6/1, SetupData),
-				% test_register(fun test_composite_repack/1, SetupData),
-				% test_register(fun test_hash/1, SetupData)
+				test_register(fun test_state/1, SetupData),
+				test_register(fun test_regression/1, SetupData),
+				test_register(fun test_empty_chunk_fails/1, SetupData),
+				test_register(fun test_nif_wrappers/1, SetupData),
+				test_register(fun test_pack_unpack/1, SetupData),
+				test_register(fun test_repack/1, SetupData),
+				test_register(fun test_input_changes_packing/1, SetupData),
+				test_register(fun test_composite_packing/1, SetupData),
+				test_register(fun test_composite_packs_incrementally/1, SetupData),
+				test_register(fun test_composite_unpacked_sub_chunks/1, SetupData),
+				test_register(fun test_composite_repacks_from_spora_2_6/1, SetupData),
+				test_register(fun test_composite_repack/1, SetupData),
+				test_register(fun test_hash/1, SetupData)
 			]
 		end
 	}.
@@ -190,51 +190,62 @@ test_nif_wrappers({FastState, _LightState}) ->
 	KeyA = crypto:strong_rand_bytes(32),
 	KeyB= crypto:strong_rand_bytes(32),
 	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 12),
+	%% spora_26 randomx_encrypt_chunk 
 	{ok, Packed_2_6A} = ar_mine_randomx:randomx_encrypt_chunk_nif(
 		FastState, KeyA, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes()),
 	?assertEqual({ok, Packed_2_6A},
 		ar_mine_randomx:randomx_encrypt_chunk({spora_2_6, AddrA}, FastState, KeyA, Chunk)),
 
-	{ok, PackedCompositeA} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
-		FastState, KeyA, Chunk,
-		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
-		?COMPOSITE_PACKING_ROUND_COUNT, 2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
-	?assertEqual({ok, PackedCompositeA},
-		ar_mine_randomx:randomx_encrypt_chunk({composite, AddrA, 2}, FastState, KeyA, Chunk)),
-
-	?assertEqual({ok, Chunk},
-		ar_mine_randomx:randomx_decrypt_chunk(
-			{spora_2_6, AddrA}, FastState, KeyA, Packed_2_6A, byte_size(Chunk))),
-	?assertEqual({ok, Chunk},
-		ar_mine_randomx:randomx_decrypt_chunk(
-			{composite, AddrA, 2}, FastState, KeyA, PackedCompositeA, byte_size(Chunk))),
-
-	{ok, Packed_2_6B} = ar_mine_randomx:randomx_encrypt_chunk_nif(
-		FastState, KeyB, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6,
-		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes()),
+	%% composite randomx_encrypt_composite_chunk
 	{ok, PackedCompositeA2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
 		FastState, KeyA, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
+		?COMPOSITE_PACKING_ROUND_COUNT, 2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
+	?assertEqual({ok, PackedCompositeA2},
+		ar_mine_randomx:randomx_encrypt_chunk({composite, AddrA, 2}, FastState, KeyA, Chunk)),
+
+	%% spora_2_6 randomx_decrypt_chunk
+	?assertEqual({ok, Chunk},
+		ar_mine_randomx:randomx_decrypt_chunk(
+			{spora_2_6, AddrA}, FastState, KeyA, Packed_2_6A, byte_size(Chunk))),
+
+	%% composite randomx_decrypt_composite_chunk
+	?assertEqual({ok, Chunk},
+		ar_mine_randomx:randomx_decrypt_chunk(
+			{composite, AddrA, 2}, FastState, KeyA, PackedCompositeA2, byte_size(Chunk))),
+
+	%% Prepare data for the reencryption tests
+	{ok, Packed_2_6B} = ar_mine_randomx:randomx_encrypt_chunk_nif(
+		FastState, KeyB, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6,
+		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes()),
+	{ok, PackedCompositeA3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+		FastState, KeyA, Chunk,
+		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
 		?COMPOSITE_PACKING_ROUND_COUNT, 3, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
-	{ok, PackedCompositeB} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+	{ok, PackedCompositeB3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
 		FastState, KeyB, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
 		?COMPOSITE_PACKING_ROUND_COUNT, 3, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 		
+	%% spora_2_6 -> spora_2_6 randomx_reencrypt_chunk
 	?assertEqual({ok, Packed_2_6B, Chunk},
 		ar_mine_randomx:randomx_reencrypt_chunk(
 			{spora_2_6, AddrA}, {spora_2_6, AddrB},
 			FastState, KeyA, KeyB, Packed_2_6A, byte_size(Chunk))),
-	?assertEqual({ok, PackedCompositeB, Chunk},
+	
+	%% composite -> composite randomx_reencrypt_chunk
+	?assertEqual({ok, PackedCompositeB3, Chunk},
 		ar_mine_randomx:randomx_reencrypt_chunk(
 			{composite, AddrA, 2}, {composite, AddrB, 3},
-			FastState, KeyA, KeyB, PackedCompositeA, byte_size(Chunk))),
-	?assertEqual({ok, PackedCompositeA2, none},
+			FastState, KeyA, KeyB, PackedCompositeA2, byte_size(Chunk))),
+	?assertEqual({ok, PackedCompositeA3, none},
 		ar_mine_randomx:randomx_reencrypt_chunk(
 			{composite, AddrA, 2}, {composite, AddrA, 3},
-			FastState, KeyA, KeyA, PackedCompositeA, byte_size(Chunk))),	
-	?assertEqual({ok, PackedCompositeB, Chunk},
+			FastState, KeyA, KeyA, PackedCompositeA2, byte_size(Chunk))),	
+	
+	%% spora_2_6 -> composite randomx_reencrypt_chunk
+	?assertEqual({ok, PackedCompositeB3, Chunk},
 		ar_mine_randomx:randomx_reencrypt_chunk(
 			{spora_2_6, AddrA}, {composite, AddrB, 3},
 			FastState, KeyA, KeyB, Packed_2_6A, byte_size(Chunk))),
@@ -243,25 +254,40 @@ test_nif_wrappers({FastState, _LightState}) ->
 test_pack_unpack({FastState, _LightState}) ->
 	test_pack_unpack(FastState, [], fun encrypt_chunk/8, fun decrypt_chunk/8),
 	test_pack_unpack(
-		FastState, [1, 32], fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8).
+		FastState, [1, 32], fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	test_pack_unpack(
+		FastState, [2, 32], fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8).
 
 test_pack_unpack(FastState, ExtraArgs, EncryptFun, DecryptFun) ->
 	%% Add 3 0-bytes at the end to test automatic padding.
 	ChunkWithoutPadding = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 3),
 	Chunk = << ChunkWithoutPadding/binary, 0:24 >>,
 	Key = crypto:strong_rand_bytes(32),
-	{ok, Packed} = EncryptFun(FastState, Key, Chunk, 8, 0, 0, 0, ExtraArgs),
-	?assertEqual(?DATA_CHUNK_SIZE, byte_size(Packed)),
-	{ok, Unpacked} = DecryptFun(FastState, Key, Packed, 8, 0, 0, 0, ExtraArgs),
-	?assertEqual(Unpacked, Chunk),
+	{ok, Packed1} = EncryptFun(FastState, Key, Chunk, 8, 0, 0, 0, ExtraArgs),
+	?assertEqual(?DATA_CHUNK_SIZE, byte_size(Packed1)),
+	?assertEqual({ok, Packed1},
+		EncryptFun(FastState, Key, Chunk, 8, 0, 0, 0, ExtraArgs)),
+	%% Run the decryption twice to test that the nif isn't corrupting any state.
+	{ok, Unpacked1} = DecryptFun(FastState, Key, Packed1, 8, 0, 0, 0, ExtraArgs),
+	?assertEqual(Unpacked1, Chunk),
+	?assertEqual({ok, Unpacked1}, 
+		DecryptFun(FastState, Key, Packed1, 8, 0, 0, 0, ExtraArgs)),
+	%% Run the encryption twice to test that the nif isn't corrupting any state.
 	{ok, Packed2} = EncryptFun(FastState, Key, ChunkWithoutPadding, 8, 0, 0, 0, ExtraArgs),
-	?assertEqual(Packed2, Packed).
+	?assertEqual(Packed2, Packed1),
+	?assertEqual({ok, Packed2},
+		EncryptFun(FastState, Key, ChunkWithoutPadding, 8, 0, 0, 0, ExtraArgs)).
+
 
 test_repack({FastState, _LightState}) ->
 	test_repack(FastState, [], [], fun encrypt_chunk/8, fun reencrypt_chunk/10),
 	test_repack(
 		FastState, [1, 32], [1, 1, 32, 32], 
+		fun encrypt_composite_chunk/8, fun reencrypt_composite_chunk/10),
+	test_repack(
+		FastState, [2, 32], [2, 2, 32, 32], 
 		fun encrypt_composite_chunk/8, fun reencrypt_composite_chunk/10).
+
 
 test_repack(FastState, EncryptArgs, ReencryptArgs, EncryptFun, ReencryptFun) ->
 	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 12),
@@ -278,7 +304,10 @@ test_repack(FastState, EncryptArgs, ReencryptArgs, EncryptFun, ReencryptFun) ->
 	{ok, Repacked2, RepackInput2} =
 			ReencryptFun(FastState, Key1, Key2, Packed1, 8, 10, 0, 0, 0, ReencryptArgs),
 	?assertEqual(Chunk, binary:part(RepackInput2, 0, byte_size(Chunk))),
-	?assertNotEqual(Packed2, Repacked2). 
+	?assertNotEqual(Packed2, Repacked2),
+
+	?assertEqual({ok, Repacked2, RepackInput2},
+			ReencryptFun(FastState, Key1, Key2, Packed1, 8, 10, 0, 0, 0, ReencryptArgs)). 
 
 test_input_changes_packing({FastState, _LightState}) ->
 	test_input_changes_packing(FastState, [], fun encrypt_chunk/8, fun decrypt_chunk/8),
@@ -483,14 +512,14 @@ test_composite_repack({FastState, LightState}) ->
 	Key2 = crypto:strong_rand_bytes(32),
 
 	%% Repacking a composite chunk to different-key higher-diff composite chunk...
-	{ok, Repacked_2_2, RepackInput2} =
+	{ok, RepackedDiffKey_2_3, RepackInput2} =
 			ar_mine_randomx:randomx_reencrypt_composite_to_composite_chunk_nif(FastState,
-					Key, Key2, Packed2, 0, 0, 0, 8, 8, 2, 2, 32, 32),
+					Key, Key2, Packed2, 0, 0, 0, 8, 8, 2, 3, 32, 32),
 	?assertEqual(<< Chunk/binary, 0:(12 * 8) >>, RepackInput2),
-	{ok, Packed2_2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key2,
-			Chunk, 0, 0, 0, 8, 2, 32),
-	?assertNotEqual(Packed2, Packed2_2),
-	?assertEqual(Packed2_2, Repacked_2_2),
+	{ok, Packed2_3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key2,
+			Chunk, 0, 0, 0, 8, 3, 32),
+	?assertNotEqual(Packed2, Packed2_3),
+	?assertEqual(Packed2_3, RepackedDiffKey_2_3),
 	try
 		ar_mine_randomx:randomx_reencrypt_composite_to_composite_chunk_nif(FastState,
 					Key, Key, Packed2, 0, 0, 0, 8, 8, 2, 2, 32, 32),

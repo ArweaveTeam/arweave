@@ -535,7 +535,7 @@ load_peers() ->
 		not_found ->
 			ok;
 		{ok, {_TotalRating, Records}} ->
-			?LOG_INFO([{event, polling_saved_peers}]),
+			?LOG_INFO([{event, polling_saved_peers}, {records, length(Records)}]),
 			ar:console("Polling saved peers...~n"),
 			load_peers(Records),
 			recalculate_total_rating(lifetime),
@@ -904,6 +904,7 @@ store_peers() ->
 					[],
 					?MODULE
 				),
+			?LOG_INFO([{event, store_peers}, {total, Total}, {records, length(Records)}]),
 			ar_storage:write_term(peers, {Total, Records})
 	end.
 
