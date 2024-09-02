@@ -75,12 +75,7 @@ link_verbose_0 = @echo " LD    " $(@F);
 link_verbose = $(link_verbose_$(V))
 
 ALL_LIB_SOURCES := $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/*.cpp)
-ENIF_SOURCES := $(wildcard $(C_SRC_DIR)/ar_*.c $(C_SRC_DIR)/ar_*.cpp)
-C_SOURCES := $(filter-out $(ENIF_SOURCES), $(ALL_LIB_SOURCES))
-
 ALL_LIB_OBJECTS = $(addsuffix .o, $(basename $(ALL_LIB_SOURCES)))
-ENIF_OBJECTS = $(addsuffix .o, $(basename $(ENIF_SOURCES)))
-C_OBJECTS = $(addsuffix .o, $(basename $(C_SOURCES)))
 
 COMPILE_C = $(c_verbose) $(CC) $(CFLAGS) $(CPPFLAGS) -c
 COMPILE_CPP = $(cpp_verbose) $(CXX) $(CXXFLAGS) $(CPPFLAGS) -c
