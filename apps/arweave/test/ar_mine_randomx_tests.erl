@@ -63,16 +63,24 @@ composite_chunk_assert_packs(State) ->
 	ChunkWithoutPadding = crypto:strong_rand_bytes(262144 - 5),
 	Chunk = << ChunkWithoutPadding/binary, 0:(5 * 8) >>,
 	Key = crypto:strong_rand_bytes(32),
-	{ok, Packed} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State, Key, Chunk,
+	{ok, Packed} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State,
+		Key, Chunk,
+		0, 0, 0, 8, 1, 1),
+	%% Do the same again.
+	{ok, Packed} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State,
+		Key, Chunk,
 		0, 0, 0, 8, 1, 1),
 	Key2 = crypto:hash(sha256, << Key/binary, 262144:24 >>),
-	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_chunk_nif(State, Key2, Chunk,
+	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_chunk_nif(State,
+		Key2, Chunk,
 		8, % RANDOMX_PACKING_ROUNDS
 		0, 0, 0),
 	?assertEqual(Packed, Packed2),
-	{ok, Packed3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State, Key,
+	{ok, Packed3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State,
+		Key,
 		ChunkWithoutPadding, 0, 0, 0, 8, 1, 1),
-	{ok, Packed4} = ar_mine_randomx:randomx_encrypt_chunk_nif(State, Key2, ChunkWithoutPadding,
+	{ok, Packed4} = ar_mine_randomx:randomx_encrypt_chunk_nif(State,
+		Key2, ChunkWithoutPadding,
 		8, % RANDOMX_PACKING_ROUNDS
 		0, 0, 0),
 	?assertEqual(Packed3, Packed4).
@@ -83,16 +91,28 @@ composite_chunk_assert_unpacks_packed(State) ->
 	ChunkWithoutPadding = crypto:strong_rand_bytes(262144 - 3),
 	Chunk = << ChunkWithoutPadding/binary, 0:24 >>,
 	Key = crypto:strong_rand_bytes(32),
+	{ok, Packed} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State,
+		Key, Chunk,
+		0, 0, 0, 8, 1, 32),
 	{ok, Packed} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State, Key, Chunk,
 		0, 0, 0, 8, 1, 32),
 	?assertEqual(262144, byte_size(Packed)),
 	{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_chunk_nif(State, Key,
 			Packed, byte_size(Packed), 0, 0, 0, 8, 1, 32),
 	?assertEqual(Unpacked, Chunk),
+	{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_chunk_nif(State, Key,
+			Packed, byte_size(Packed), 0, 0, 0, 8, 1, 32),
+	?assertEqual(Unpacked2, Chunk),
 	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State, Key,
 		ChunkWithoutPadding,
 		0, 0, 0, 8, 1, 32),
-	?assertEqual(Packed2, Packed).
+	?assertEqual(Packed2, Packed),
+	{ok, Unpacked2Rounds} = ar_mine_randomx:randomx_decrypt_composite_chunk_nif(State, Key,
+			Packed, byte_size(Packed), 0, 0, 0, 8, 2, 32),
+	?assertEqual(Unpacked, Chunk),
+	{ok, Unpacked2Rounds2} = ar_mine_randomx:randomx_decrypt_composite_chunk_nif(State, Key,
+			Packed, byte_size(Packed), 0, 0, 0, 8, 2, 32),
+	?assertEqual(Unpacked2Rounds, Unpacked2Rounds2).
 
 composite_chunk_assert_different_input_leads_to_different_packing(State) ->
 	?debugFmt("Asserting composite packing is sensitive to input...", []),
@@ -104,6 +124,9 @@ composite_chunk_assert_different_input_leads_to_different_packing(State) ->
 	{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_chunk_nif(State, Key,
 			Packed, byte_size(Packed), 0, 0, 0, 8, 1, 32),
 	?assertEqual(Unpacked, Chunk),
+	{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_chunk_nif(State, Key,
+			Packed, byte_size(Packed), 0, 0, 0, 8, 1, 32),
+	?assertEqual(Unpacked2, Chunk),
 	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(State, Key, Chunk,
 		0, 0, 0, 8, 1, 32),
 	?assertEqual(Packed2, Packed),
@@ -169,6 +192,9 @@ composite_chunk_assert_unpacks_sub_chunks(State) ->
 		fun({SubChunk, Offset}, Acc) ->
 			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(State,
 					Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 1, Offset),
+			{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(State,
+					Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 1, Offset),
+			?assertEqual(Unpacked, Unpacked2),
 			[Unpacked | Acc]
 		end,
 		[],
@@ -183,6 +209,9 @@ composite_chunk_assert_unpacks_sub_chunks(State) ->
 		fun({SubChunk, Offset}, Acc) ->
 			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(State,
 				Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 3, Offset),
+			{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(State,
+				Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 3, Offset),
+			?assertEqual(Unpacked, Unpacked2),
 			[Unpacked | Acc]
 		end,
 		[],
@@ -358,9 +387,3 @@ test_randomx_pack_unpack({_Key, State}) ->
 		end,
 		Cases
 	).
-
-read_entropy_fixture() ->
-	{ok, Cwd} = file:get_cwd(),
-	Path = filename:join(Cwd, "./apps/arweave/test/ar_mine_randomx_entropy_fixture"),
-	{ok, FileData} = file:read_file(Path),
-	ar_util:decode(FileData).
