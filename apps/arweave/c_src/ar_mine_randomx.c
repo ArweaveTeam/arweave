@@ -408,6 +408,9 @@ static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
 		const int randomxRoundCount, const int jitEnabled,
 		const int largePagesEnabled, const int hardwareAESEnabled) {
 
+	unsigned char *chunk = (unsigned char*)malloc(MAX_CHUNK_SIZE);
+	memcpy(chunk, inputChunkPtr->data, inputChunkPtr->size);
+
 	ERL_NIF_TERM decryptedChunkTerm;
 	unsigned char* decryptedChunk = enif_make_new_binary(envPtr, outChunkLen,
 			&decryptedChunkTerm);
@@ -420,7 +423,7 @@ static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
 	// Decrypt each sub-chunk independently and then concatenate the decrypted sub-chunks
 	// to yield encrypted composite chunk.
 	for (int i = 0; i < subChunkCount; i++) {
-		unsigned char* subChunk = inputChunkPtr->data + offset;
+		unsigned char* subChunk = chunk + offset;
 		decryptedSubChunk = (unsigned char*)malloc(subChunkSize);
 
 		// 3 bytes is sufficient to represent offsets up to at most MAX_CHUNK_SIZE.
@@ -451,6 +454,7 @@ static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
 		free(decryptedSubChunk);
 		offset += subChunkSize;
 	}
+	free(chunk);
 	return decryptedChunkTerm;
 }
 
