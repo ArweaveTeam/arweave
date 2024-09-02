@@ -29,7 +29,7 @@
 	baseline_repack => {true, fun baseline_repack_chunks/4},
 	nif_repack => {true, fun nif_repack_chunks/4},
 	nif_repack_legacy_to_composite => {true, fun nif_repack_legacy_to_composite_chunks/4},
-	nif_repack_composite_to_composite => {true, fun nif_repack_composite_to_composite_chunks/4},
+	nif_repack_composite => {true, fun nif_repack_composite_chunks/4},
 	baseline_pack_composite => {false, fun baseline_pack_composite_chunks/4}
 }).
 
@@ -533,9 +533,9 @@ nif_repack_legacy_to_composite_chunks(WorkerID, Config, Offset, Size) ->
 	end,
 	nif_repack_legacy_to_composite_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
 
-nif_repack_composite_to_composite_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
+nif_repack_composite_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
 	ok;
-nif_repack_composite_to_composite_chunks(WorkerID, Config, Offset, Size) ->
+nif_repack_composite_chunks(WorkerID, Config, Offset, Size) ->
 	#test_config{
 		randomx_state = RandomXState,
 		jit = JIT,
@@ -555,7 +555,7 @@ nif_repack_composite_to_composite_chunks(WorkerID, Config, Offset, Size) ->
 	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
 	RemainingSize = case ReadResult of
 		{ok, PackedChunk} ->
-			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_composite_to_composite_chunk_nif(
+			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_composite_chunk_nif(
 				RandomXState, UnpackKey, PackKey, PackedChunk, JIT, LargePages, HardwareAES,
 				Rounds, Rounds, PackingDifficulty, PackingDifficulty,
 				?COMPOSITE_PACKING_SUB_CHUNK_COUNT, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
@@ -568,7 +568,7 @@ nif_repack_composite_to_composite_chunks(WorkerID, Config, Offset, Size) ->
 			io:format("Error reading file: ~p~n", [Reason]),
 			0
 	end,
-	nif_repack_composite_to_composite_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
+	nif_repack_composite_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% Helpers
