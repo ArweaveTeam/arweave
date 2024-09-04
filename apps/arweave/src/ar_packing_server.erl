@@ -175,16 +175,16 @@ init([]) ->
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
 	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "
 			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
-	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
+	RandomXState = ar_mine_randomx:init_fast(rx512, ?RANDOMX_PACKING_KEY, Schedulers),
 	ar:console("RandomX dataset initialisation complete.~n", []),
-	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
-	{H0, H1} = ar_bench_hash:run_benchmark(PackingStateRef),
+	ets:insert(?MODULE, {randomx_packing_state, RandomXState}),
+	{H0, H1} = ar_bench_hash:run_benchmark(RandomXState),
 	H0String = io_lib:format("~.3f", [H0 / 1000]),
 	H1String = io_lib:format("~.3f", [H1 / 1000]),
 	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
 	?LOG_INFO([{event, hash_benchmark}, {h0_ms, H0String}, {h1_ms, H1String}]),
 	{ActualRatePack_2_5, ActualRatePack_2_6,
-			ActualRateUnpack_2_5, ActualRateUnpack_2_6} = get_packing_latency(PackingStateRef),
+			ActualRateUnpack_2_5, ActualRateUnpack_2_6} = get_packing_latency(RandomXState),
 	PackingLatency = ActualRatePack_2_6,
 	MaxRate = Schedulers * 1000 / PackingLatency,
 	TheoreticalMaxRate = Schedulers * 1000 / (?PACKING_LATENCY_MS),
@@ -206,6 +206,7 @@ init([]) ->
 				end,
 				{ConfiguredRate, SchedulersRequired2}
 		end,
+	
 	record_packing_benchmarks({TheoreticalMaxRate, PackingRate, Schedulers,
 			ActualRatePack_2_5, ActualRatePack_2_6, ActualRateUnpack_2_5,
 			ActualRateUnpack_2_6}),
@@ -215,7 +216,7 @@ init([]) ->
 	%% artificially throttle processes uniformly.
 	ThrottleDelay = calculate_throttle_delay(SpawnSchedulers, PackingRate),
 	Workers = queue:from_list(
-		[spawn_link(fun() -> worker(ThrottleDelay, PackingStateRef) end)
+		[spawn_link(fun() -> worker(ThrottleDelay, RandomXState) end)
 			|| _ <- lists:seq(1, SpawnSchedulers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
 	{ok, Config} = application:get_env(arweave, config),
@@ -517,6 +518,12 @@ repack({composite, _Addr, _PackingDifficulty} = RequestedPacking,
 	repack_no_nif({RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk,
 			ChunkSize, RandomXStateRef, External});
 
+repack({spora_2_6, _StoredAddr} = RequestedPacking,
+		{composite, _Addr, _PackingDifficulty} = StoredPacking,
+			ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, External) ->
+	repack_no_nif({RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk,
+			ChunkSize, RandomXStateRef, External});
+
 repack({composite, _Addr, _PackingDifficulty} = RequestedPacking,
 		spora_2_5 = StoredPacking,
 			ChunkOffset, TXRoot, Chunk, ChunkSize, RandomXStateRef, External) ->
@@ -600,11 +607,11 @@ record_buffer_size_metric() ->
 			ok
 	end.
 
-get_packing_latency(PackingStateRef) ->
+get_packing_latency(RandomXState) ->
 	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	Key = crypto:hash(sha256, crypto:strong_rand_bytes(256)),
-	Pack = [PackingStateRef, Key, Chunk],
-	Unpack = [PackingStateRef, Key, Chunk, ?DATA_CHUNK_SIZE],
+	Pack = [RandomXState, Key, Chunk],
+	Unpack = [RandomXState, Key, Chunk, ?DATA_CHUNK_SIZE],
 	Addr = crypto:strong_rand_bytes(32),
 	%% Run each randomx routine Repetitions times and return the minimum runtime. We use
 	%% minimum rather than average since it more closely approximates the fastest that this
@@ -708,35 +715,60 @@ pack_test() ->
 				crypto:strong_rand_bytes(32)}
 	],
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
-	RandomXState = ar_mine_randomx:init_fast(<<1>>, Schedulers),
+	State512 = ar_mine_randomx:init_fast(rx512, <<1>>, Schedulers),
+	State4096 = ar_mine_randomx:init_fast(rx4096, <<1>>, Schedulers),
 	PackedList = lists:flatten(lists:map(
 		fun({Chunk, Offset, TXRoot}) ->
 			ECDSA = ar_wallet:to_address(ar_wallet:new({ecdsa, secp256k1})),
 			EDDSA = ar_wallet:to_address(ar_wallet:new({eddsa, ed25519})),
 			{ok, Chunk, already_packed} = pack(unpacked, Offset, TXRoot, Chunk,
-					RandomXState, external),
+					State512, external),
 			{ok, Packed, was_not_already_packed} = pack(spora_2_5, Offset, TXRoot, Chunk,
-					RandomXState, external),
+					State512, external),
 			{ok, Packed2, was_not_already_packed} = pack({spora_2_6, ECDSA}, Offset, TXRoot,
-					Chunk, RandomXState, external),
+					Chunk, State512, external),
 			{ok, Packed3, was_not_already_packed} = pack({spora_2_6, EDDSA}, Offset, TXRoot,
-					Chunk, RandomXState, external),
+					Chunk, State512, external),
+			{ok, Packed4, was_not_already_packed} = pack({composite, ECDSA, 1}, Offset, TXRoot,
+					Chunk, State4096, external),
+			{ok, Packed5, was_not_already_packed} = pack({composite, EDDSA, 1}, Offset, TXRoot,
+					Chunk, State4096, external),
+			{ok, Packed6, was_not_already_packed} = pack({composite, ECDSA, 2}, Offset, TXRoot,
+					Chunk, State4096, external),
+			{ok, Packed7, was_not_already_packed} = pack({composite, EDDSA, 2}, Offset, TXRoot,
+					Chunk, State4096, external),
 			?assertNotEqual(Packed, Chunk),
 			?assertNotEqual(Packed2, Chunk),
 			?assertNotEqual(Packed3, Chunk),
+			?assertNotEqual(Packed4, Chunk),
+			?assertNotEqual(Packed5, Chunk),
+			?assertNotEqual(Packed6, Chunk),
+			?assertNotEqual(Packed7, Chunk),
 			?assertEqual({ok, Packed, already_unpacked},
-					unpack(unpacked, Offset, TXRoot, Packed, byte_size(Chunk), RandomXState,
+					unpack(unpacked, Offset, TXRoot, Packed, byte_size(Chunk), State512,
 							internal)),
 			?assertEqual({ok, Chunk, was_not_already_unpacked},
-					unpack(spora_2_5, Offset, TXRoot, Packed, byte_size(Chunk), RandomXState,
+					unpack(spora_2_5, Offset, TXRoot, Packed, byte_size(Chunk), State512,
 							internal)),
 			?assertEqual({ok, Chunk, was_not_already_unpacked},
 					unpack({spora_2_6, ECDSA}, Offset, TXRoot, Packed2, byte_size(Chunk),
-							RandomXState, internal)),
+							State512, internal)),
 			?assertEqual({ok, Chunk, was_not_already_unpacked},
 					unpack({spora_2_6, EDDSA}, Offset, TXRoot, Packed3, byte_size(Chunk),
-							RandomXState, internal)),
-			[Packed, Packed2, Packed3]
+							State512, internal)),
+			?assertEqual({ok, Chunk, was_not_already_unpacked},
+					unpack({composite, ECDSA, 1}, Offset, TXRoot, Packed4, byte_size(Chunk),
+							State4096, internal)),
+			?assertEqual({ok, Chunk, was_not_already_unpacked},
+					unpack({composite, EDDSA, 1}, Offset, TXRoot, Packed5, byte_size(Chunk),
+							State4096, internal)),
+			?assertEqual({ok, Chunk, was_not_already_unpacked},
+					unpack({composite, ECDSA, 2}, Offset, TXRoot, Packed6, byte_size(Chunk),
+							State4096, internal)),
+			?assertEqual({ok, Chunk, was_not_already_unpacked},
+					unpack({composite, EDDSA, 2}, Offset, TXRoot, Packed7, byte_size(Chunk),
+							State4096, internal)),
+			[Packed, Packed2, Packed3, Packed4, Packed5, Packed6, Packed7]
 		end,
 		Cases
 	)),
