@@ -12,7 +12,7 @@ run_benchmark_from_cli(Args) ->
 	HardwareAES = list_to_integer(get_flag_value(Args, "hw_aes", "1")),
 
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
-	{ok, RandomXStateRef} = ar_mine_randomx:init_randomx_nif(
+	{ok, RandomXStateRef} = ar_rx512_nif:rx512_init_nif(
 		?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, Schedulers),
 	{H0, H1} = run_benchmark(RandomXStateRef, JIT, LargePages, HardwareAES),
 	H0String = io_lib:format("~.3f", [H0 / 1000]),
@@ -49,7 +49,8 @@ run_benchmark(RandomXStateRef, JIT, LargePages, HardwareAES) ->
 				PartitionNumber = rand:uniform(1000),
 				Data = << NonceLimiterOutput:32/binary,
 					PartitionNumber:256, Seed:32/binary, MiningAddr/binary >>,
-				ar_mine_randomx:hash_nif(RandomXStateRef, Data, JIT, LargePages, HardwareAES)
+				?LOG_ERROR(RandomXStateRef),
+				ar_rx512_nif:rx512_hash_nif(RandomXStateRef, Data, JIT, LargePages, HardwareAES)
 			end,
 			lists:seq(1, Iterations))
 		end),

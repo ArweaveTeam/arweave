@@ -171,14 +171,17 @@ start_link() ->
 %%%===================================================================
 
 init([]) ->
+	?LOG_ERROR([{event, init}, {module, ?MODULE}]),
 	{ok, Config} = application:get_env(arweave, config),
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
 	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "
 			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
 	PackingStateRef = ar_mine_randomx:init_fast(?RANDOMX_PACKING_KEY, Schedulers),
+	?LOG_ERROR([{event, init}, {module, ?MODULE}, {loc, a}]),
 	ar:console("RandomX dataset initialisation complete.~n", []),
 	ets:insert(?MODULE, {randomx_packing_state, PackingStateRef}),
 	{H0, H1} = ar_bench_hash:run_benchmark(PackingStateRef),
+	?LOG_ERROR([{event, init}, {module, ?MODULE}, {loc, b}]),
 	H0String = io_lib:format("~.3f", [H0 / 1000]),
 	H1String = io_lib:format("~.3f", [H1 / 1000]),
 	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
@@ -206,9 +209,11 @@ init([]) ->
 				end,
 				{ConfiguredRate, SchedulersRequired2}
 		end,
+	
 	record_packing_benchmarks({TheoreticalMaxRate, PackingRate, Schedulers,
 			ActualRatePack_2_5, ActualRatePack_2_6, ActualRateUnpack_2_5,
 			ActualRateUnpack_2_6}),
+	?LOG_ERROR([{event, init}, {module, ?MODULE}, {loc, c}]),
 	SpawnSchedulers = min(SchedulersRequired, Schedulers),
 	ar:console("~nStarting ~B packing threads.~n", [SpawnSchedulers]),
 	%% Since the total rate of spawned processes might exceed the desired rate,
@@ -233,6 +238,7 @@ init([]) ->
 	ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
+	?LOG_ERROR([{event, init}, {module, ?MODULE}, {loc, d}]),
 	{ok, #state{
 		workers = Workers, num_workers = SpawnSchedulers }}.
 

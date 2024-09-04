@@ -1,3 +1,14 @@
+#include <erl_nif.h>
+#include <string.h>
+#include <openssl/sha.h>
+#include <ar_nif.h>
+#include "vdf.h"
+
+static int load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info)
+{
+	return 0;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //    SHA
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -122,3 +133,11 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 
 	return ok_tuple(envPtr, outputTermCheckpoint);
 }
+
+static ErlNifFunc nif_funcs[] = {
+	{"vdf_sha2_nif", 5, vdf_sha2_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"vdf_parallel_sha_verify_with_reset_nif", 10, vdf_parallel_sha_verify_with_reset_nif,
+		ERL_NIF_DIRTY_JOB_CPU_BOUND}
+};
+
+ERL_NIF_INIT(ar_vdf_nif, nif_funcs, load, NULL, NULL, NULL);
