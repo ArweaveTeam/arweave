@@ -24,6 +24,7 @@
 -include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
+-include_lib("arweave/include/ar_pool.hrl").
 
 %% @doc Send a JSON-encoded transaction to the given Peer.
 send_tx_json(Peer, TXID, Bin) ->
@@ -605,6 +606,7 @@ cm_publish_send(Peer, Solution) ->
 
 %% @doc Fetch the jobs from the pool or coordinated mining exit peer.
 get_jobs(Peer, PrevOutput) ->
+	prometheus_counter:inc(pool_job_request_count),
 	Req = build_cm_or_pool_request(get, Peer,
 		"/jobs/" ++ binary_to_list(ar_util:encode(PrevOutput))),
 	handle_get_jobs_response(ar_http:req(Req)).
@@ -719,6 +721,7 @@ handle_get_jobs_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 		{'EXIT', _} ->
 			{error, invalid_json};
 		Jobs ->
+			prometheus_counter:inc(pool_total_job_got_count, length(Jobs#jobs.jobs)),
 			{ok, Jobs}
 	end;
 handle_get_jobs_response(Reply) ->

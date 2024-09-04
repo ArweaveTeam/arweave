@@ -467,6 +467,18 @@ register() ->
 			{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
 					"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
 					"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
+	%% --------------------------------------------------------------------------------------------
+	%% Pool related metrics
+	%% --------------------------------------------------------------------------------------------
+	prometheus_counter:new([
+		{name, pool_job_request_count},
+		{help, "The number of requests to pool /job from start of arweave node"}
+	]),
+
+	prometheus_counter:new([
+		{name, pool_total_job_got_count},
+		{help, "The number of jobs received from /job requests."}
+	]),
 
 	%% --------------------------------------------------------------------------------------------
 	%% Debug-only metrics
