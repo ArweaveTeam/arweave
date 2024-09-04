@@ -7,6 +7,8 @@
 #include <openssl/sha.h>
 #include "vdf.h"
 
+extern "C" {
+
 struct vdf_sha_thread_arg {
 	unsigned char* saltBuffer;
 	unsigned char* seed;
@@ -33,7 +35,7 @@ public:
 	int hashingIterationsSha;
 	int hashingIterationsRandomx;
 
-	std::vector<vdf_sha_verify_thread_arg    > _vdf_sha_verify_thread_arg_list;
+	std::vector<vdf_sha_verify_thread_arg> _vdf_sha_verify_thread_arg_list;
 	volatile bool verifyRes;
 	std::mutex lock;
 };
@@ -383,4 +385,6 @@ bool vdf_parallel_sha_verify_with_reset(unsigned char* startSaltBuffer, unsigned
 	}
 
 	return job.verifyRes;
+}
+
 }

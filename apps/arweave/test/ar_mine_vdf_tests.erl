@@ -50,12 +50,12 @@ test_vdf_sha() ->
 	Salt1 = << (1):256 >>,
 	Salt2 = << (2):256 >>,
 
-	{ok, Real1, _OutCheckpointSha} = ar_mine_randomx:vdf_sha2_nif(Salt1, PrevState, 0, 0, ?ITERATIONS_SHA),
+	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_nif(Salt1, PrevState, 0, 0, ?ITERATIONS_SHA),
 	ExpectedHash = soft_implementation_vdf_sha(Salt1, PrevState, ?ITERATIONS_SHA, 0),
 	?assertEqual(ExpectedHash, Real1),
 
-	{ok, RealSha2, OutCheckpointSha2} = ar_mine_randomx:vdf_sha2_nif(Salt2, Real1, ?CHECKPOINT_COUNT-1, 0, ?ITERATIONS_SHA),
-	{ok, RealSha3, OutCheckpointSha3} = ar_mine_randomx:vdf_sha2_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, 0, ?ITERATIONS_SHA),
+	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_nif(Salt2, Real1, ?CHECKPOINT_COUNT-1, 0, ?ITERATIONS_SHA),
+	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, 0, ?ITERATIONS_SHA),
 	ExpectedSha3 = soft_implementation_vdf_sha(Salt1, PrevState, ?ITERATIONS_SHA, ?CHECKPOINT_COUNT),
 	?assertEqual(ExpectedSha3, RealSha2),
 	?assertEqual(ExpectedSha3, RealSha3),
@@ -104,12 +104,12 @@ test_vdf_sha_skip_iterations() ->
 	Salt1 = << (1):256 >>,
 	SaltJump = << (1+?CHECKPOINT_SKIP_COUNT+1):256 >>,
 
-	{ok, Real1, _OutCheckpointSha} = ar_mine_randomx:vdf_sha2_nif(Salt1, PrevState, 0, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_nif(Salt1, PrevState, 0, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
 	ExpectedHash = soft_implementation_vdf_sha(Salt1, PrevState, ?ITERATIONS_SHA, ?CHECKPOINT_SKIP_COUNT),
 	?assertEqual(ExpectedHash, Real1),
 
-	{ok, RealSha2, OutCheckpointSha2} = ar_mine_randomx:vdf_sha2_nif(SaltJump, Real1, ?CHECKPOINT_COUNT-1, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
-	{ok, RealSha3, OutCheckpointSha3} = ar_mine_randomx:vdf_sha2_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_nif(SaltJump, Real1, ?CHECKPOINT_COUNT-1, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
 	ExpectedSha3 = soft_implementation_vdf_sha(Salt1, PrevState, ?ITERATIONS_SHA, (1+?CHECKPOINT_COUNT)*(1+?CHECKPOINT_SKIP_COUNT)-1),
 	?assertEqual(ExpectedSha3, RealSha2),
 	?assertEqual(ExpectedSha3, RealSha3),
