@@ -1,3 +1,7 @@
+#ifndef FEISTEL_MSGSIZE_KEY_CIPHER_H
+#define FEISTEL_MSGSIZE_KEY_CIPHER_H
+
+
 #define FEISTEL_BLOCK_LENGTH 32
 
 #if defined(__cplusplus)
@@ -10,3 +14,5 @@ void feistel_decrypt(const unsigned char *ciphertext, const size_t ciphertext_le
 #if defined(__cplusplus)
 }
 #endif
+
+#endif // FEISTEL_MSGSIZE_KEY_CIPHER_H
