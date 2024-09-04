@@ -432,6 +432,9 @@ test_composite_unpacked_sub_chunks({FastState, _LightState}) ->
 		fun({SubChunk, Offset}, Acc) ->
 			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(FastState,
 					Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 1, Offset),
+			{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(State,
+					Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 1, Offset),
+			?assertEqual(Unpacked, Unpacked2),
 			[Unpacked | Acc]
 		end,
 		[],
@@ -446,6 +449,9 @@ test_composite_unpacked_sub_chunks({FastState, _LightState}) ->
 		fun({SubChunk, Offset}, Acc) ->
 			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(FastState,
 				Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 3, Offset),
+			{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(State,
+				Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 3, Offset),
+			?assertEqual(Unpacked, Unpacked2),
 			[Unpacked | Acc]
 		end,
 		[],
