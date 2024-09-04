@@ -166,12 +166,12 @@ test_vdf_reset_mid_checkpoint_() ->
 
 	Salt1 = << StartSalt1:256 >>,
 	{ok, Output1Part1, LastStepCheckpoints1Part1} =
-		ar_mine_randomx:vdf_sha2_nif(Salt1, PrevOutput, ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
+		ar_vdf_nif:vdf_sha2_nif(Salt1, PrevOutput, ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
 	MixOutput = reset_mix(Output1Part1, ResetSeed),
 
 	Salt2 = << ResetSalt:256 >>,
 	{ok, Output1Part2, LastStepCheckpoints1Part2} =
-		ar_mine_randomx:vdf_sha2_nif(Salt2, MixOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP-ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
+		ar_vdf_nif:vdf_sha2_nif(Salt2, MixOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP-ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
 	Output1 = Output1Part2,
 	LastStepCheckpoints1 = <<
 		LastStepCheckpoints1Part1/binary, Output1Part1/binary,

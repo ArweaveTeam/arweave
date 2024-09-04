@@ -16,7 +16,7 @@ step_number_to_salt_number(StepNumber) ->
 compute(StartStepNumber, PrevOutput, IterationCount) ->
 	Salt = step_number_to_salt_number(StartStepNumber - 1),
 	SaltBinary = << Salt:256 >>,
-	ar_mine_randomx:vdf_sha2_nif(SaltBinary, PrevOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP - 1, 0,
+	ar_vdf_nif:vdf_sha2_nif(SaltBinary, PrevOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP - 1, 0,
 			IterationCount).
 
 -ifdef(DEBUG).
@@ -44,7 +44,7 @@ verify(StartSalt, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
 	RestStepsSize = ?VDF_BYTE_SIZE * (NumHashes - 1),
 	case HashBuffer of
 		<< RestSteps:RestStepsSize/binary, LastStep:?VDF_BYTE_SIZE/binary >> ->
-			case ar_mine_randomx:vdf_parallel_sha_verify_with_reset_nif(StartSaltBinary,
+			case ar_vdf_nif:vdf_parallel_sha_verify_with_reset_nif(StartSaltBinary,
 					PrevOutput, NumHashes - 1, NumCheckpointsBetweenHashes - 1,
 					IterationCount, RestSteps, LastStep, ResetSaltBinary, ResetSeed,
 					ThreadCount) of
