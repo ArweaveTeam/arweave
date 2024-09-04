@@ -520,7 +520,7 @@ get_expected_min_decline_rate(Timestamp, Period, Amount, Size, Rate, Height) ->
 %%% Private functions.
 %%%===================================================================
 
-%% @doc Get the share of the maintenance cost the miner receives for a transation.
+%% @doc Get the share of the maintenance cost the miner receives for a transaction.
 get_miner_fee_share(MaintenanceCost, Height) ->
 	{Dividend, Divisor} = ?MINING_REWARD_MULTIPLIER,
 	case Height >= ar_fork:height_2_5() of

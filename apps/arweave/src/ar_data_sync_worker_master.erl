@@ -226,7 +226,7 @@ max_peer_queue(#performance{ current_rating = 0 } = _Performance, _TotalThroughp
 max_peer_queue(#performance{ current_rating = 0.0 } = _Performance, _TotalThroughput, _WorkerCount) ->
 	undefined;
 max_peer_queue(Performance, TotalThroughput, WorkerCount) ->
-	%% estimate of of this peer's througput
+	%% estimate of of this peer's throughput
 	PeerThroughput = Performance#performance.current_rating,
 	%% The maximum number of tasks we allow to be queued for this peer is related to its
 	%% contribution to our current throughput. Peers with a higher throughput can claim more
