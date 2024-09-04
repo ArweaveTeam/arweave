@@ -12,14 +12,39 @@
 %%%===================================================================
 
 %% @doc Return the block time hash rate for the given difficulty.
-get_hash_rate_fixed_ratio(Block) ->
-	Multiplier = poa1_diff_multiplier(Block#block.height),
-	HashRate = ?MAX_DIFF div (?MAX_DIFF - Block#block.diff),
-	case Multiplier > 1 of
+get_hash_rate_fixed_ratio(B) ->
+	HashRate = ?MAX_DIFF div (?MAX_DIFF - B#block.diff),
+	case B#block.height >= ar_fork:height_2_8() of
 		true ->
-			HashRate * Multiplier div (Multiplier + 1);
+			HashRate;
 		false ->
-			HashRate
+			%% Adjusting the hash rate by
+			%% (TwoChunkCount + OneChunkCount) / TwoChunkCount counts
+			%% the number of all the hashing attempts. In other words,
+			%% the adjusted value is useful when we want to see the total
+			%% amount of CPU work put into mining a block. This is not what
+			%% we use it for. We use it as a denominator when computing
+			%% a share contributed by a single partition - see
+			%% ar_pricing:get_v2_price_per_gib_minute. Therefore, the hash
+			%% rate computed here needs to have the same "units" as
+			%% the hash rate we estimate for the partition -
+			%% the "normalized" hash rate where a recall range only
+			%% produces 4 nonces from one recall range (chunk-1)
+			%% plus up to 400 nonces (chunk-2).
+			%%
+			%% Note that we did not adjust it
+			%% by (TwoChunkCount + OneChunkCount) / TwoChunkCount but by
+			%% Multiplier div (Multiplier + 1), what is wrong as it
+			%% does not account for the average weave share
+			%% estimated by the one-chunk/two-chunk blocks split.
+			Multiplier = poa1_diff_multiplier(B#block.height),
+			HashRate = ?MAX_DIFF div (?MAX_DIFF - B#block.diff),
+			case Multiplier > 1 of
+				true ->
+					HashRate * Multiplier div (Multiplier + 1);
+				false ->
+					HashRate
+			end
 	end.
 
 %% @doc Calculate the cumulative difficulty for the next block.
