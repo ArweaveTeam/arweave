@@ -32,11 +32,9 @@ get_hash_rate_fixed_ratio(B) ->
 			%% produces 4 nonces from one recall range (chunk-1)
 			%% plus up to 400 nonces (chunk-2).
 			%%
-			%% Note that we did not adjust it
+			%% Note that we did not even adjust it
 			%% by (TwoChunkCount + OneChunkCount) / TwoChunkCount but by
-			%% Multiplier div (Multiplier + 1), what is wrong as it
-			%% does not account for the average weave share
-			%% estimated by the one-chunk/two-chunk blocks split.
+			%% 100 div (100 + 1), what is wrong.
 			Multiplier = poa1_diff_multiplier(B#block.height),
 			HashRate = ?MAX_DIFF div (?MAX_DIFF - B#block.diff),
 			case Multiplier > 1 of
