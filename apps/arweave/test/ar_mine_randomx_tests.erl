@@ -12,44 +12,44 @@
 ).
 
 encrypt_chunk(FastState, Key, Chunk, PackingRounds, JIT, LargePages, HardwareAES, _ExtraArgs) ->
-	ar_mine_randomx:randomx_encrypt_chunk_nif(
+	ar_rx512_nif:rx512_encrypt_chunk_nif(
 		FastState, Key, Chunk, PackingRounds, JIT, LargePages, HardwareAES).
 
 decrypt_chunk(FastState, Key, Chunk, PackingRounds, JIT, LargePages, HardwareAES, _ExtraArgs) ->
-	ar_mine_randomx:randomx_decrypt_chunk_nif(
+	ar_rx512_nif:rx512_decrypt_chunk_nif(
 		FastState, Key, Chunk, byte_size(Chunk), PackingRounds, JIT, LargePages, HardwareAES).
 
 reencrypt_chunk(FastState, Key1, Key2, Chunk, PackingRounds1, PackingRounds2,
 		JIT, LargePages, HardwareAES, _ExtraArgs) ->
-	ar_mine_randomx:randomx_reencrypt_chunk_nif(
+	ar_rx512_nif:rx512_reencrypt_chunk_nif(
 		FastState, Key1, Key2, Chunk, byte_size(Chunk), PackingRounds1, PackingRounds2,
 		JIT, LargePages, HardwareAES).
 
 encrypt_composite_chunk(FastState, Key, Chunk, PackingRounds, JIT, LargePages, HardwareAES,
 		[IterationCount, SubChunkCount] = _ExtraArgs) ->
-	ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+	ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(
 		FastState, Key, Chunk, JIT, LargePages, HardwareAES, PackingRounds, 
 		IterationCount, SubChunkCount).
 
 decrypt_composite_chunk(FastState, Key, Chunk, PackingRounds, JIT, LargePages, HardwareAES,
 		[IterationCount, SubChunkCount] = _ExtraArgs) ->
-	ar_mine_randomx:randomx_decrypt_composite_chunk_nif(
+	ar_rx4096_nif:rx4096_decrypt_composite_chunk_nif(
 		FastState, Key, Chunk, byte_size(Chunk), JIT, LargePages, HardwareAES,
 		PackingRounds, IterationCount, SubChunkCount).
 
 reencrypt_composite_chunk(FastState, Key1, Key2, Chunk, PackingRounds1, PackingRounds2,
 		JIT, LargePages, HardwareAES, 
 		[IterationCount1, IterationCount2, SubChunkCount1, SubChunkCount2] = _ExtraArgs) ->
-	ar_mine_randomx:randomx_reencrypt_composite_chunk_nif(
+	ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif(
 		FastState, Key1, Key2, Chunk, JIT, LargePages, HardwareAES,
 		PackingRounds1, PackingRounds2, IterationCount1, IterationCount2,
 		SubChunkCount1, SubChunkCount2).
 
 setup() ->
-    {ok, FastState} = ar_mine_randomx:init_randomx_nif(
+    {ok, FastState} = ar_rx512_nif:rx512_init_nif(
 		?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, 0, 0,
 			erlang:system_info(dirty_cpu_schedulers_online)),
-	{ok, LightState} = ar_mine_randomx:init_randomx_nif(
+	{ok, LightState} = ar_rx512_nif:rx512_init_nif(
 		?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_LIGHT, 0, 0,
 		erlang:system_info(dirty_cpu_schedulers_online)),
     {FastState, LightState}.
@@ -87,14 +87,14 @@ test_state({FastState, LightState}) ->
 	%% So the expected dataset size is 568,433,920 / 64 = 8,881,780 items.
 	?assertEqual(
 		{ok, fast, 8881780},
-		ar_mine_randomx:randomx_info_nif(FastState)
+		ar_rx512_nif:rx512_info_nif(FastState)
 	),
 	%% Unfortunately we don't have access to the cache size. The randomx_info_nif will check
 	%% that in fast mode the cache is not initialized, and in light mode the dataset is not
 	%% initialized and return an error if either check fails.
 	?assertEqual(
 		{ok, light, 0},
-		ar_mine_randomx:randomx_info_nif(LightState)
+		ar_rx512_nif:rx512_info_nif(LightState)
 	).
 
 test_regression({FastState, LightState}) ->
@@ -142,17 +142,17 @@ test_regression({FastState, LightState}) ->
 	% UnpackedFixture = ar_test_node:load_fixture("ar_mine_randomx_tests/unpacked.bin"),
 	% Dir = filename:dirname(?FILE),
 
-	% {ok, Packed1} = ar_mine_randomx:randomx_encrypt_chunk_nif(
+	% {ok, Packed1} = ar_rx512_nif:rx512_encrypt_chunk_nif(
 	% 	FastState, Key, UnpackedFixture, 8, 0, 0, 0),
 	% Packed1Filename = filename:join([Dir, "fixtures", "ar_mine_randomx_tests", "packed.spora26.bin"]),
 	% ok = file:write_file(Packed1Filename, Packed1),
 
-	% {ok, Packed1} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+	% {ok, Packed1} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(
 	% 	FastState, Key, UnpackedFixture, 0, 0, 0, 8, 1, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 	% Packed1Filename = filename:join([Dir, "fixtures", "ar_mine_randomx_tests", "packed.composite.1.bin"]),
 	% ok = file:write_file(Packed1Filename, Packed1),
 
-	% {ok, Packed2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+	% {ok, Packed2} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(
 	% 	FastState, Key, UnpackedFixture, 0, 0, 0, 8, 2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
 	% Packed2Filename = filename:join([Dir, "fixtures", "ar_mine_randomx_tests", "packed.composite.2.bin"]),
 	% ok = file:write_file(Packed2Filename, Packed2),
@@ -193,14 +193,14 @@ test_nif_wrappers(State, Chunk) ->
 	KeyA = crypto:strong_rand_bytes(32),
 	KeyB= crypto:strong_rand_bytes(32),
 	%% spora_26 randomx_encrypt_chunk 
-	{ok, Packed_2_6A} = ar_mine_randomx:randomx_encrypt_chunk_nif(
+	{ok, Packed_2_6A} = ar_rx512_nif:rx512_encrypt_chunk_nif(
 		State, KeyA, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes()),
 	?assertEqual({ok, Packed_2_6A},
 		ar_mine_randomx:randomx_encrypt_chunk({spora_2_6, AddrA}, State, KeyA, Chunk)),
 
 	%% composite randomx_encrypt_composite_chunk
-	{ok, PackedCompositeA2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+	{ok, PackedCompositeA2} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(
 		State, KeyA, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
 		?COMPOSITE_PACKING_ROUND_COUNT, 2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
@@ -218,14 +218,14 @@ test_nif_wrappers(State, Chunk) ->
 			{composite, AddrA, 2}, State, KeyA, PackedCompositeA2, byte_size(Chunk))),
 
 	%% Prepare data for the reencryption tests
-	{ok, Packed_2_6B} = ar_mine_randomx:randomx_encrypt_chunk_nif(
+	{ok, Packed_2_6B} = ar_rx512_nif:rx512_encrypt_chunk_nif(
 		State, KeyB, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes()),
-	{ok, PackedCompositeA3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+	{ok, PackedCompositeA3} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(
 		State, KeyA, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
 		?COMPOSITE_PACKING_ROUND_COUNT, 3, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
-	{ok, PackedCompositeB3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(
+	{ok, PackedCompositeB3} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(
 		State, KeyB, Chunk,
 		ar_mine_randomx:jit(), ar_mine_randomx:large_pages(), ar_mine_randomx:hardware_aes(),
 		?COMPOSITE_PACKING_ROUND_COUNT, 3, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
@@ -388,16 +388,16 @@ test_composite_packing({FastState, _LightState}) ->
 	ChunkWithoutPadding = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 5),
 	Chunk = << ChunkWithoutPadding/binary, 0:(5 * 8) >>,
 	Key = crypto:strong_rand_bytes(32),
-	{ok, Packed} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Chunk,
+	{ok, Packed} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Chunk,
 		0, 0, 0, 8, 1, 1),
 	Key2 = crypto:hash(sha256, << Key/binary, ?DATA_CHUNK_SIZE:24 >>),
-	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_chunk_nif(FastState, Key2, Chunk,
+	{ok, Packed2} = ar_rx512_nif:rx512_encrypt_chunk_nif(FastState, Key2, Chunk,
 		8, % RANDOMX_PACKING_ROUNDS
 		0, 0, 0),
 	?assertEqual(Packed, Packed2),
-	{ok, Packed3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key,
+	{ok, Packed3} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key,
 		ChunkWithoutPadding, 0, 0, 0, 8, 1, 1),
-	{ok, Packed4} = ar_mine_randomx:randomx_encrypt_chunk_nif(FastState, Key2, ChunkWithoutPadding,
+	{ok, Packed4} = ar_rx512_nif:rx512_encrypt_chunk_nif(FastState, Key2, ChunkWithoutPadding,
 		8, % RANDOMX_PACKING_ROUNDS
 		0, 0, 0),
 	?assertEqual(Packed3, Packed4).
@@ -405,18 +405,18 @@ test_composite_packing({FastState, _LightState}) ->
 test_composite_packs_incrementally({FastState, _LightState}) ->
 	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 3),
 	Key = crypto:strong_rand_bytes(32),
-	{ok, Packed1} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Chunk,
+	{ok, Packed1} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Chunk,
 		0, 0, 0, 8, 1, 32),
-	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Packed1,
+	{ok, Packed2} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Packed1,
 		0, 0, 0, 8, 1, 32),
-	{ok, Packed3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Chunk,
+	{ok, Packed3} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Chunk,
 		0, 0, 0, 8, 2, 32),
 	?assertEqual(Packed2, Packed3),
-	{ok, Packed4} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Chunk,
+	{ok, Packed4} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Chunk,
 		0, 0, 0, 8, 3, 32),
-	{ok, Packed5} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Packed1,
+	{ok, Packed5} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Packed1,
 		0, 0, 0, 8, 2, 32),
-	{ok, Packed6} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Packed2,
+	{ok, Packed6} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Packed2,
 		0, 0, 0, 8, 1, 32),
 	?assertEqual(Packed4, Packed5),
 	?assertEqual(Packed4, Packed6).
@@ -425,12 +425,12 @@ test_composite_unpacked_sub_chunks({FastState, _LightState}) ->
 	ChunkWithoutPadding = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 3),
 	Chunk = << ChunkWithoutPadding/binary, 0:24 >>,
 	Key = crypto:strong_rand_bytes(32),
-	{ok, Packed} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Chunk,
+	{ok, Packed} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Chunk,
 		0, 0, 0, 8, 1, 32),
 	SubChunks = split_chunk_into_sub_chunks(Packed, ?DATA_CHUNK_SIZE div 32, 0),
 	UnpackedInSubChunks = iolist_to_binary(lists:reverse(lists:foldl(
 		fun({SubChunk, Offset}, Acc) ->
-			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(FastState,
+			{ok, Unpacked} = ar_rx4096_nif:rx4096_decrypt_composite_sub_chunk_nif(FastState,
 					Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 1, Offset),
 			{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(FastState,
 					Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 1, Offset),
@@ -442,12 +442,12 @@ test_composite_unpacked_sub_chunks({FastState, _LightState}) ->
 	))),
 	?assertEqual(UnpackedInSubChunks, Chunk),
 	Chunk2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 3),
-	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key, Chunk2,
+	{ok, Packed2} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key, Chunk2,
 		0, 0, 0, 8, 3, 32),
 	SubChunks2 = split_chunk_into_sub_chunks(Packed2, ?DATA_CHUNK_SIZE div 32, 0),
 	UnpackedInSubChunks2 = iolist_to_binary(lists:reverse(lists:foldl(
 		fun({SubChunk, Offset}, Acc) ->
-			{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(FastState,
+			{ok, Unpacked} = ar_rx4096_nif:rx4096_decrypt_composite_sub_chunk_nif(FastState,
 				Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 3, Offset),
 			{ok, Unpacked2} = ar_mine_randomx:randomx_decrypt_composite_sub_chunk_nif(FastState,
 				Key, SubChunk, byte_size(SubChunk), 0, 0, 0, 8, 3, Offset),
@@ -470,46 +470,46 @@ split_chunk_into_sub_chunks(Bin, Size, Offset) ->
 test_composite_repack({FastState, _LightState}) ->
 	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 12),
 	Key = crypto:strong_rand_bytes(32),
-	{ok, Packed2} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key,
+	{ok, Packed2} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key,
 			Chunk, 0, 0, 0, 8, 2, 32),
-	{ok, Packed3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key,
+	{ok, Packed3} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key,
 			Chunk, 0, 0, 0, 8, 3, 32),
 	{ok, Repacked_2_3, RepackInput} =
-			ar_mine_randomx:randomx_reencrypt_composite_chunk_nif(FastState,
+			ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif(FastState,
 					Key, Key, Packed2, 0, 0, 0, 8, 8, 2, 3, 32, 32),
 	?assertEqual(Packed2, RepackInput),
 	?assertEqual(Packed3, Repacked_2_3),
 	
 	%% Repacking a composite chunk to same-key higher-diff composite chunk...
 	{ok, Repacked_2_5, RepackInput} =
-			ar_mine_randomx:randomx_reencrypt_composite_chunk_nif(FastState,
+			ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif(FastState,
 					Key, Key, Packed2, 0, 0, 0, 8, 8, 2, 5, 32, 32),
-	{ok, Packed5} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key,
+	{ok, Packed5} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key,
 			Chunk, 0, 0, 0, 8, 5, 32),
 	?assertEqual(Packed5, Repacked_2_5),
 	Key2 = crypto:strong_rand_bytes(32),
 
 	%% Repacking a composite chunk to different-key higher-diff composite chunk...
 	{ok, RepackedDiffKey_2_3, RepackInput2} =
-			ar_mine_randomx:randomx_reencrypt_composite_chunk_nif(FastState,
+			ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif(FastState,
 					Key, Key2, Packed2, 0, 0, 0, 8, 8, 2, 3, 32, 32),
 	?assertEqual(<< Chunk/binary, 0:(12 * 8) >>, RepackInput2),
-	{ok, Packed2_3} = ar_mine_randomx:randomx_encrypt_composite_chunk_nif(FastState, Key2,
+	{ok, Packed2_3} = ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(FastState, Key2,
 			Chunk, 0, 0, 0, 8, 3, 32),
 	?assertNotEqual(Packed2, Packed2_3),
 	?assertEqual(Packed2_3, RepackedDiffKey_2_3),
 	try
-		ar_mine_randomx:randomx_reencrypt_composite_chunk_nif(FastState,
+		ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif(FastState,
 					Key, Key, Packed2, 0, 0, 0, 8, 8, 2, 2, 32, 32),
-		?assert(false, "randomx_reencrypt_composite_chunk_nif to reencrypt "
+		?assert(false, "ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif to reencrypt "
 				"to same diff should have failed")
 	catch error:badarg ->
 		ok
 	end,
 	try
-		ar_mine_randomx:randomx_reencrypt_composite_chunk_nif(FastState,
+		ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif(FastState,
 					Key, Key, Packed2, 0, 0, 0, 8, 8, 2, 1, 32, 32),
-		?assert(false, "randomx_reencrypt_composite_chunk_nif to reencrypt "
+		?assert(false, "ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif to reencrypt "
 				"to lower diff should have failed")
 	catch error:badarg ->
 		ok
@@ -520,7 +520,8 @@ test_hash({FastState, LightState}) ->
     Nonce = ar_util:decode(?ENCODED_NONCE),
     Segment = ar_util:decode(?ENCODED_SEGMENT),
     Input = << Nonce/binary, Segment/binary >>,
+	?LOG_ERROR("test_hash"),
 	?assertEqual({ok, ExpectedHash},
-			ar_mine_randomx:hash_nif(FastState, Input, 0, 0, 0)),
+			ar_rx512_nif:rx512_hash_nif(FastState, Input, 0, 0, 0)),
     ?assertEqual({ok, ExpectedHash},
-			ar_mine_randomx:hash_nif(LightState, Input, 0, 0, 0)).
+			ar_rx512_nif:rx512_hash_nif(LightState, Input, 0, 0, 0)).

@@ -1,7 +1,5 @@
 -module(ar_mine_randomx).
 
--on_load(init_nif/0).
-
 -export([init_fast/2, init_light/1, hash/2,
 		randomx_encrypt_chunk/4,
 		randomx_decrypt_chunk/5,
@@ -10,18 +8,7 @@
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
--export([hash_nif/5, randomx_info_nif/1, init_randomx_nif/5,
-		jit/0, large_pages/0, hardware_aes/0,
-		randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
-		randomx_reencrypt_chunk_nif/10,
-		vdf_sha2_nif/5,
-		vdf_parallel_sha_verify_with_reset_nif/10,
-
-		randomx_encrypt_composite_chunk_nif/9,
-		randomx_decrypt_composite_chunk_nif/10,
-		randomx_decrypt_composite_sub_chunk_nif/10,
-		randomx_reencrypt_composite_chunk_nif/13
-]).
+-export([jit/0, large_pages/0, hardware_aes/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -40,14 +27,15 @@ hash({debug_state, Key}, Data) ->
 	crypto:hash(sha256, << Key/binary, Data/binary >>).
 -else.
 init_fast(Key, Threads) ->
-	{ok, FastState} = init_randomx_nif(Key, ?RANDOMX_HASHING_MODE_FAST, jit(), large_pages(), Threads),
+	{ok, FastState} = ar_rx512_nif:rx512_init_nif(Key, ?RANDOMX_HASHING_MODE_FAST, jit(), large_pages(), Threads),
 	FastState.
 init_light(Key) ->
-	{ok, LightState} = init_randomx_nif(Key, ?RANDOMX_HASHING_MODE_LIGHT, jit(), large_pages(), 0),
+	{ok, LightState} = ar_rx512_nif:rx512_init_nif(Key, ?RANDOMX_HASHING_MODE_LIGHT, jit(), large_pages(), 0),
 	LightState.
 hash(State, Data) ->
+	?LOG_ERROR("hash(State, Data)"),
 	{ok, Hash} =
-		hash_nif(State, Data, jit(), large_pages(), hardware_aes()),
+		ar_rx512_nif:rx512_hash_nif(State, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
 -endif.
 
@@ -148,11 +136,11 @@ split_into_sub_chunks(<< SubChunk:8192/binary, Rest/binary >>, StartOffset) ->
 
 %% DEBUG implementation
 randomx_decrypt_chunk2({debug_state, _}, Key, Chunk, _ChunkSize,
-	{composite, _, PackingDifficulty} = _Packing) ->
-Options = [{encrypt, false}],
-IV = binary:part(Key, {0, 16}),
-SubChunks = split_into_sub_chunks(Chunk),
-{ok, iolist_to_binary(lists:map(
+		{composite, _, PackingDifficulty} = _Packing) ->
+	Options = [{encrypt, false}],
+	IV = binary:part(Key, {0, 16}),
+	SubChunks = split_into_sub_chunks(Chunk),
+	{ok, iolist_to_binary(lists:map(
 		fun({SubChunkStartOffset, SubChunk}) ->
 			Key2 = crypto:hash(sha256, << Key/binary, SubChunkStartOffset:24 >>),
 			lists:foldl(
@@ -170,14 +158,14 @@ randomx_decrypt_chunk2({debug_state, _}, Key, Chunk, _ChunkSize, _Packing) ->
 	{ok, crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options)};
 %% Non-DEBUG implementation
 randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize, spora_2_5) ->
-	randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS,
+	ar_rx512_nif:rx512_decrypt_chunk_nif(RandomxState, Key, Chunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS,
 			jit(), large_pages(), hardware_aes());
 randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize, {spora_2_6, _Addr}) ->
-	randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS_2_6,
+	ar_rx512_nif:rx512_decrypt_chunk_nif(RandomxState, Key, Chunk, ChunkSize, ?RANDOMX_PACKING_ROUNDS_2_6,
 			jit(), large_pages(), hardware_aes());
 randomx_decrypt_chunk2(RandomxState, Key, Chunk, ChunkSize,
 		{composite, _Addr, PackingDifficulty}) ->
-	randomx_decrypt_composite_chunk_nif(RandomxState, Key, Chunk, ChunkSize,
+	ar_rx4096_nif:rx4096_decrypt_composite_chunk_nif(RandomxState, Key, Chunk, ChunkSize,
 			jit(), large_pages(), hardware_aes(), ?COMPOSITE_PACKING_ROUND_COUNT,
 			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT).
 
@@ -195,7 +183,7 @@ randomx_decrypt_sub_chunk2(Packing, RandomxState, Key, Chunk, SubChunkStartOffse
 	{_, _, IterationCount} = Packing,
 	RoundCount = ?COMPOSITE_PACKING_ROUND_COUNT,
 	OutSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	randomx_decrypt_composite_sub_chunk_nif(RandomxState, Key, Chunk, OutSize,
+	ar_rx4096_nif:rx4096_decrypt_composite_sub_chunk_nif(RandomxState, Key, Chunk, OutSize,
 		jit(), large_pages(), hardware_aes(), RoundCount, IterationCount, SubChunkStartOffset).
 
 %% DEBUG implementation
@@ -222,7 +210,7 @@ randomx_encrypt_chunk2(_Packing, {debug_state, _}, Key, Chunk) ->
 			ar_packing_server:pad_chunk(Chunk), Options)};
 %% Non-DEBUG implementation
 randomx_encrypt_chunk2(spora_2_5, RandomxState, Key, Chunk) ->
-	case randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS, jit(),
+	case ar_rx512_nif:rx512_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS, jit(),
 				large_pages(), hardware_aes()) of
 		{error, Error} ->
 			{exception, Error};
@@ -230,7 +218,7 @@ randomx_encrypt_chunk2(spora_2_5, RandomxState, Key, Chunk) ->
 			Reply
 	end;
 randomx_encrypt_chunk2({spora_2_6, _Addr}, RandomxState, Key, Chunk) ->
-	case randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6,
+	case ar_rx512_nif:rx512_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6,
 			jit(), large_pages(), hardware_aes()) of
 		{error, Error} ->
 			{exception, Error};
@@ -238,7 +226,7 @@ randomx_encrypt_chunk2({spora_2_6, _Addr}, RandomxState, Key, Chunk) ->
 			Reply
 	end;
 randomx_encrypt_chunk2({composite, _Addr, PackingDifficulty}, RandomxState, Key, Chunk) ->
-	case randomx_encrypt_composite_chunk_nif(RandomxState, Key, Chunk,
+	case ar_rx4096_nif:rx4096_encrypt_composite_chunk_nif(RandomxState, Key, Chunk,
 			jit(), large_pages(), hardware_aes(), ?COMPOSITE_PACKING_ROUND_COUNT,
 			PackingDifficulty, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) of
 		{error, Error} ->
@@ -268,7 +256,7 @@ randomx_reencrypt_chunk2(SourcePacking, TargetPacking,
 randomx_reencrypt_chunk2({composite, Addr1, PackingDifficulty1},
 		{composite, Addr2, PackingDifficulty2},
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
-	case randomx_reencrypt_composite_chunk_nif(RandomxState, UnpackKey,
+	case ar_rx4096_nif:rx4096_reencrypt_composite_chunk_nif(RandomxState, UnpackKey,
 			PackKey, Chunk, jit(), large_pages(), hardware_aes(),
 			?COMPOSITE_PACKING_ROUND_COUNT, ?COMPOSITE_PACKING_ROUND_COUNT,
 			PackingDifficulty1, PackingDifficulty2,
@@ -306,64 +294,10 @@ randomx_reencrypt_chunk2(SourcePacking, TargetPacking,
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
 	UnpackRounds = packing_rounds(SourcePacking),
 	PackRounds = packing_rounds(TargetPacking),
-	case randomx_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, ChunkSize,
+	case ar_rx512_nif:rx512_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, ChunkSize,
 				UnpackRounds, PackRounds, jit(), large_pages(), hardware_aes()) of
 		{error, Error} ->
 			{exception, Error};
 		Reply ->
 			Reply
 	end.
-
-%% -------------------------------------------------------------------------------------------
-%% NIF functions
-%% -------------------------------------------------------------------------------------------
-randomx_info_nif(_State) ->
-	erlang:nif_error(nif_not_loaded).
-
-init_randomx_nif(_Key, _HashingMode, _JIT, _LargePages, _Threads) ->
-	erlang:nif_error(nif_not_loaded).
-
-hash_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_encrypt_chunk_nif(_State, _Data, _Chunk, _RoundCount, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_decrypt_chunk_nif(_State, _Data, _Chunk, _OutSize, _RoundCount, _JIT, _LargePages,
-		_HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_reencrypt_chunk_nif(_State, _DecryptKey, _EncryptKey, _Chunk, _ChunkSize,
-		_DecryptRoundCount, _EncryptRoundCount, _JIT, _LargePages, _HardwareAES) ->
-	erlang:nif_error(nif_not_loaded).
-
-vdf_sha2_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount, _Iterations) ->
-	erlang:nif_error(nif_not_loaded).
-vdf_parallel_sha_verify_with_reset_nif(_Salt, _PrevState, _CheckpointCount,
-		_skipCheckpointCount, _Iterations, _InCheckpoint, _InRes, _ResetSalt, _ResetSeed,
-		_MaxThreadCount) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_encrypt_composite_chunk_nif(_State, _Key, _Chunk, _JIT, _LargePages, _HardwareAES,
-		_RoundCount, _IterationCount, _SubChunkCount) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_decrypt_composite_chunk_nif(_State, _Data, _Chunk, _OutSize,
-		_JIT, _LargePages, _HardwareAES, _RoundCount, _IterationCount, _SubChunkCount) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_decrypt_composite_sub_chunk_nif(_State, _Data, _Chunk, _OutSize,
-		_JIT, _LargePages, _HardwareAES, _RoundCount, _IterationCount, _Offset) ->
-	erlang:nif_error(nif_not_loaded).
-
-randomx_reencrypt_composite_chunk_nif(_State,
-		_DecryptKey, _EncryptKey, _Chunk,
-		_JIT, _LargePages, _HardwareAES,
-		_DecryptRoundCount, _EncryptRoundCount,
-		_DecryptIterationCount, _EncryptIterationCount,
-		_DecryptSubChunkCount, _EncryptSubChunkCount) ->
-	erlang:nif_error(nif_not_loaded).
-
-init_nif() ->
-	PrivDir = code:priv_dir(arweave),
-	ok = erlang:load_nif(filename:join([PrivDir, "arweave"]), 0).
