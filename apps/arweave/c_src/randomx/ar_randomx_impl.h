@@ -1,7 +1,7 @@
 #ifndef AR_RANDOMX_IMPL_H
 #define AR_RANDOMX_IMPL_H
 
-// Thif file includes the full definitions of any funtion that is shared between the
+// Thif file includes the full definitions of any function that is shared between the
 // rx512 and rx4096 shared libraries. Although ugly this was the only way I could get
 // everything to work without causing symbol conflicts or seg faults once the two .so's
 // are loaded into arweave and the NIFs registered. There may be a better way!
