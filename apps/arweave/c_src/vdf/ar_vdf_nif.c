@@ -4,11 +4,6 @@
 #include <ar_nif.h>
 #include "vdf.h"
 
-static int load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info)
-{
-	return 0;
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //    SHA
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -68,7 +63,6 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	// copypasted from vdf_sha2_nif
 	if (!enif_inspect_binary(envPtr, argv[0], &Salt)) {
 		return enif_make_badarg(envPtr);
 	}
@@ -124,11 +118,15 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 	// NOTE last paramemter will be array later
 	size_t outCheckpointSize = VDF_SHA_HASH_SIZE*(1+checkpointCount)*(1+skipCheckpointCount);
 	ERL_NIF_TERM outputTermCheckpoint;
-	unsigned char* outCheckpoint = enif_make_new_binary(envPtr, outCheckpointSize, &outputTermCheckpoint);
-	bool res = vdf_parallel_sha_verify_with_reset(Salt.data, Seed.data, checkpointCount, skipCheckpointCount, hashingIterations, InRes.data, InCheckpoint.data, outCheckpoint, ResetSalt.data, ResetSeed.data, maxThreadCount);
+	unsigned char* outCheckpoint = enif_make_new_binary(
+		envPtr, outCheckpointSize, &outputTermCheckpoint);
+	bool res = vdf_parallel_sha_verify_with_reset(
+		Salt.data, Seed.data, checkpointCount, skipCheckpointCount, hashingIterations,
+		InRes.data, InCheckpoint.data, outCheckpoint, ResetSalt.data, ResetSeed.data,
+		maxThreadCount);
 	// TODO return all checkpoints
 	if (!res) {
-		return error(envPtr, "verification failed");
+		return error_tuple(envPtr, "verification failed");
 	}
 
 	return ok_tuple(envPtr, outputTermCheckpoint);
@@ -140,4 +138,4 @@ static ErlNifFunc nif_funcs[] = {
 		ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
-ERL_NIF_INIT(ar_vdf_nif, nif_funcs, load, NULL, NULL, NULL);
+ERL_NIF_INIT(ar_vdf_nif, nif_funcs, NULL, NULL, NULL, NULL);

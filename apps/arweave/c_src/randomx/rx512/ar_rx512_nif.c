@@ -67,7 +67,7 @@ static ERL_NIF_TERM rx512_encrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
-		return error(envPtr, "failed to read state");
+		return error_tuple(envPtr, "failed to read state");
 	}
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
@@ -95,9 +95,9 @@ static ERL_NIF_TERM rx512_encrypt_chunk_nif(
 		jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
 		if (isRandomxReleased != 0) {
-			return error(envPtr, "state has been released");
+			return error_tuple(envPtr, "state has been released");
 		}
-		return error(envPtr, "randomx_create_vm failed");
+		return error_tuple(envPtr, "randomx_create_vm failed");
 	}
 
 	ERL_NIF_TERM outChunkTerm = encrypt_chunk(envPtr, vmPtr,
@@ -122,7 +122,7 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
-		return error(envPtr, "failed to read state");
+		return error_tuple(envPtr, "failed to read state");
 	}
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
@@ -153,9 +153,9 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 		jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
 		if (isRandomxReleased != 0) {
-			return error(envPtr, "state has been released");
+			return error_tuple(envPtr, "state has been released");
 		}
-		return error(envPtr, "randomx_create_vm failed");
+		return error_tuple(envPtr, "randomx_create_vm failed");
 	}
 
 	// NOTE. Because randomx_decrypt_chunk will unpack padding too, decrypt always uses the
@@ -187,7 +187,7 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
-		return error(envPtr, "failed to read state");
+		return error_tuple(envPtr, "failed to read state");
 	}
 	if (!enif_inspect_binary(envPtr, argv[1], &decryptKey)) {
 		return enif_make_badarg(envPtr);
@@ -224,9 +224,9 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(
 		jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
 		if (isRandomxReleased != 0) {
-			return error(envPtr, "state has been released");
+			return error_tuple(envPtr, "state has been released");
 		}
-		return error(envPtr, "randomx_create_vm failed");
+		return error_tuple(envPtr, "randomx_create_vm failed");
 	}
 
 	// NOTE. Because randomx_decrypt_chunk will unpack padding too, decrypt always uses the

@@ -1,5 +1,7 @@
+#ifndef VDF_H
+#define VDF_H
+
 #include <stdbool.h>
-#include "randomx.h"
 
 const int SALT_SIZE = 32;
 const int VDF_SHA_HASH_SIZE = 32;
@@ -14,4 +16,6 @@ bool vdf_parallel_sha_verify_with_reset(unsigned char* startSaltBuffer, unsigned
 
 #if defined(__cplusplus)
 }
+#endif
+
 #endif

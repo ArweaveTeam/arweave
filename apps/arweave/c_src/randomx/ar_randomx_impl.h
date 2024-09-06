@@ -148,31 +148,31 @@ static ERL_NIF_TERM info_nif(
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
-		return error(envPtr, "failed to read state");
+		return error_tuple(envPtr, "failed to read state");
 	}
 
 	hashingMode = statePtr->mode;
 
 	if (hashingMode == HASHING_MODE_FAST) {
 		if (statePtr->datasetPtr == NULL) {
-			return error(envPtr, "dataset is not initialized for fast hashing mode");
+			return error_tuple(envPtr, "dataset is not initialized for fast hashing mode");
 		}
 		if (statePtr->cachePtr != NULL) {
-			return error(envPtr, "cache is initialized for fast hashing mode");
+			return error_tuple(envPtr, "cache is initialized for fast hashing mode");
 		}
 		datasetSize = randomx_dataset_item_count();
 		hashingModeTerm = enif_make_atom(envPtr, "fast");
 	} else if (hashingMode == HASHING_MODE_LIGHT) {
 		if (statePtr->datasetPtr != NULL) {
-			return error(envPtr, "dataset is initialized for light hashing mode");
+			return error_tuple(envPtr, "dataset is initialized for light hashing mode");
 		}
 		if (statePtr->cachePtr == NULL) {
-			return error(envPtr, "cache is not initialized for light hashing mode");
+			return error_tuple(envPtr, "cache is not initialized for light hashing mode");
 		}
 		datasetSize = 0;
 		hashingModeTerm = enif_make_atom(envPtr, "light");
 	} else {
-		return error(envPtr, "invalid hashing mode");
+		return error_tuple(envPtr, "invalid hashing mode");
 	}
 
 	ERL_NIF_TERM infoTerm = enif_make_tuple3(envPtr,
@@ -197,7 +197,7 @@ static ERL_NIF_TERM hash_nif(
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
-		return error(envPtr, "failed to read state");
+		return error_tuple(envPtr, "failed to read state");
 	}
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
@@ -216,9 +216,9 @@ static ERL_NIF_TERM hash_nif(
 	randomx_vm *vmPtr = create_vm(statePtr, (statePtr->mode == HASHING_MODE_FAST), jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
 	if (vmPtr == NULL) {
 		if (isRandomxReleased != 0) {
-			return error(envPtr, "state has been released");
+			return error_tuple(envPtr, "state has been released");
 		}
-		return error(envPtr, "randomx_create_vm failed");
+		return error_tuple(envPtr, "randomx_create_vm failed");
 	}
 
 	randomx_calculate_hash(vmPtr, inputData.data, inputData.size, hashPtr);
@@ -345,7 +345,7 @@ static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, state *statePtr, const char* 
 		statePtr->datasetPtr = NULL;
 	}
 	enif_release_resource(statePtr);
-	return error(envPtr, reason);
+	return error_tuple(envPtr, reason);
 }
 
 static randomx_vm* create_vm(state* statePtr,
