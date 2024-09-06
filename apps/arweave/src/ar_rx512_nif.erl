@@ -40,7 +40,5 @@ rx512_reencrypt_chunk_nif(_State, _DecryptKey, _EncryptKey, _Chunk, _ChunkSize,
 	erlang:nif_error(nif_not_loaded).
 
 init_nif() ->
-	?LOG_ERROR("Loading ar_rx512_nif"),
 	PrivDir = code:priv_dir(arweave),
-	ok = erlang:load_nif(filename:join([PrivDir, "rx512_arweave"]), 0),
-	?LOG_ERROR("Loaded ar_rx512_nif").
+	ok = erlang:load_nif(filename:join([PrivDir, "rx512_arweave"]), 0).

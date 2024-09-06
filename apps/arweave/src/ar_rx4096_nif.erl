@@ -52,7 +52,5 @@ rx4096_reencrypt_composite_chunk_nif(_State,
 	erlang:nif_error(nif_not_loaded).
 
 init_nif() ->
-	?LOG_ERROR("Loading ar_rx4096_nif"),
 	PrivDir = code:priv_dir(arweave),
-	ok = erlang:load_nif(filename:join([PrivDir, "rx4096_arweave"]), 0),
-	?LOG_ERROR("Loaded ar_rx4096_nif").
+	ok = erlang:load_nif(filename:join([PrivDir, "rx4096_arweave"]), 0).
