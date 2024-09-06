@@ -33,7 +33,7 @@ init(Server, SwapHeight, Key, Threads) ->
 		"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
 		"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
 	),
-	Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
+	Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(rx512, Key, Threads)}},
 	ar:console("RandomX dataset initialisation for swap height ~p complete.~n", [SwapHeight]).
 
 start() ->
