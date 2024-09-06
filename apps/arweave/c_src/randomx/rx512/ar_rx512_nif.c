@@ -57,7 +57,6 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(ErlNifEnv* envPtr, int argc, const
 
 static void rx512_state_dtor(ErlNifEnv* envPtr, void* objPtr)
 {
-	fprintf(stderr, "rx512_state_dtor: called\n");
 	rx512_state *statePtr = (rx512_state*) objPtr;
 
 	release_randomx(statePtr);
@@ -69,7 +68,6 @@ static void rx512_state_dtor(ErlNifEnv* envPtr, void* objPtr)
 
 static void release_randomx(rx512_state *statePtr)
 {
-	fprintf(stderr, "release_randomx: called\n");
 	if (statePtr->datasetPtr != NULL) {
 		randomx_release_dataset(statePtr->datasetPtr);
 		statePtr->datasetPtr = NULL;
@@ -83,7 +81,6 @@ static void release_randomx(rx512_state *statePtr)
 
 static ERL_NIF_TERM rx512_info_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
-	fprintf(stderr, "rx512_info_nif: called\n");
 	rx512_state* statePtr;
 	unsigned int datasetSize;
 	hashing_mode hashingMode;
@@ -120,14 +117,16 @@ static ERL_NIF_TERM rx512_info_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TE
 		return error(envPtr, "invalid hashing mode");
 	}
 
-
-	return ok_tuple2(envPtr, hashingModeTerm, enif_make_uint(envPtr, datasetSize));
+	ERL_NIF_TERM infoTerm = enif_make_tuple3(envPtr,
+		enif_make_atom(envPtr, "rx512"),
+		hashingModeTerm,
+		enif_make_uint(envPtr, datasetSize));
+	return ok_tuple(envPtr, infoTerm);
 }
 
 
 static ERL_NIF_TERM rx512_init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
-	fprintf(stderr, "rx512_init_nif: called\n");
 	ErlNifBinary key;
 	hashing_mode mode;
 	rx512_state *statePtr;
@@ -209,7 +208,6 @@ static boolean init_dataset(
 	randomx_cache *cachePtr,
 	unsigned int numWorkers
 ) {
-	fprintf(stderr, "init_dataset: called\n");
 	struct workerThread **workerPtrPtr;
 	struct workerThread *workerPtr;
 	unsigned long itemsPerThread;
@@ -267,7 +265,6 @@ static boolean init_dataset(
 
 static void *init_dataset_thread(void *objPtr)
 {
-	fprintf(stderr, "init_dataset_thread: called\n");
 	struct workerThread *workerPtr = (struct workerThread*) objPtr;
 	randomx_init_dataset(
 		workerPtr->datasetPtr,
@@ -279,7 +276,6 @@ static void *init_dataset_thread(void *objPtr)
 
 static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, rx512_state *statePtr, const char* reason)
 {
-	fprintf(stderr, "init_failed: called\n");
 	if (statePtr->lockPtr != NULL) {
 		enif_rwlock_destroy(statePtr->lockPtr);
 		statePtr->lockPtr = NULL;
@@ -299,7 +295,6 @@ static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, rx512_state *statePtr, const 
 static randomx_vm* create_vm(rx512_state* statePtr,
 		int fullMemEnabled, int jitEnabled, int largePagesEnabled, int hardwareAESEnabled,
 		int* isRandomxReleased) {
-	fprintf(stderr, "create_vm: called\n");
 	enif_rwlock_rlock(statePtr->lockPtr);
 	*isRandomxReleased = statePtr->isRandomxReleased;
 	if (statePtr->isRandomxReleased != 0) {
@@ -333,7 +328,6 @@ static randomx_vm* create_vm(rx512_state* statePtr,
 }
 
 static void destroy_vm(rx512_state* statePtr, randomx_vm* vmPtr) {
-	fprintf(stderr, "destroy_vm: called\n");
 	randomx_destroy_vm(vmPtr);
 	enif_rwlock_runlock(statePtr->lockPtr);
 }
@@ -343,39 +337,29 @@ static ERL_NIF_TERM rx512_hash_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	fprintf(stderr, "rx512_hash_nif: called\n");
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
 	rx512_state* statePtr;
 	ErlNifBinary inputData;
 
-	fprintf(stderr, "A\n");
-
 	if (argc != 5) {
 		return enif_make_badarg(envPtr);
 	}
-	fprintf(stderr, "B\n");
 	if (!enif_get_resource(envPtr, argv[0], rx512_stateType, (void**) &statePtr)) {
 		return error(envPtr, "failed to read rx512_state");
 	}
-	fprintf(stderr, "C\n");
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
 	}
-	fprintf(stderr, "D\n");
 	if (!enif_get_int(envPtr, argv[2], &jitEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
-	fprintf(stderr, "E\n");
 	if (!enif_get_int(envPtr, argv[3], &largePagesEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
-	fprintf(stderr, "F\n");
 	if (!enif_get_int(envPtr, argv[4], &hardwareAESEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
-
-	fprintf(stderr, "rx512_hash_nif: jitEnabled: %d, largePagesEnabled: %d, hardwareAESEnabled: %d\n", jitEnabled, largePagesEnabled, hardwareAESEnabled);
 
 	int isRandomxReleased;
 	randomx_vm *vmPtr = create_vm(statePtr, (statePtr->mode == HASHING_MODE_FAST), jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
@@ -399,7 +383,6 @@ static ERL_NIF_TERM decrypt_chunk(ErlNifEnv* envPtr,
 		const unsigned char *inChunk, const size_t inChunkSize,
 		unsigned char* outChunk, const size_t outChunkSize,
 		const int randomxProgramCount) {
-	fprintf(stderr, "decrypt_chunk: called\n");
 	randomx_decrypt_chunk(
 		machine, input, inputSize, inChunk, inChunkSize, outChunk, randomxProgramCount);
 	return make_output_binary(envPtr, outChunk, outChunkSize);
@@ -409,7 +392,6 @@ static ERL_NIF_TERM encrypt_chunk(ErlNifEnv* envPtr,
 		randomx_vm *machine, const unsigned char *input, const size_t inputSize,
 		const unsigned char *inChunk, const size_t inChunkSize,
 		const int randomxProgramCount) {
-	fprintf(stderr, "encrypt_chunk: called\n");
 	ERL_NIF_TERM encryptedChunkTerm;
 	unsigned char* encryptedChunk = enif_make_new_binary(
 										envPtr, MAX_CHUNK_SIZE, &encryptedChunkTerm);
@@ -436,7 +418,6 @@ static ERL_NIF_TERM rx512_encrypt_chunk_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	fprintf(stderr, "rx512_encrypt_chunk_nif: called\n");
 	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	rx512_state* statePtr;
 	ErlNifBinary inputData;
@@ -492,7 +473,6 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	fprintf(stderr, "rx512_decrypt_chunk_nif: called\n");
 	int outChunkLen, randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	rx512_state* statePtr;
 	ErlNifBinary inputData;
@@ -507,7 +487,9 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk)) {
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk) ||
+		inputChunk.size == 0 ||
+		inputChunk.size > MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[3], &outChunkLen)) {
@@ -554,7 +536,6 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	fprintf(stderr, "rx512_reencrypt_chunk_nif: called\n");
 	int chunkSize, decryptRandomxRoundCount, encryptRandomxRoundCount;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	rx512_state* statePtr;
@@ -636,7 +617,6 @@ static ErlNifFunc rx512_funcs[] = {
 
 static int rx512_load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info)
 {
-	fprintf(stderr, "rx512_load: called\n");
 	int flags = ERL_NIF_RT_CREATE;
 	rx512_stateType = enif_open_resource_type(envPtr, NULL, "rx512_state", rx512_state_dtor, flags, NULL);
 	if (rx512_stateType == NULL) {

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <erl_nif.h>
 #include <openssl/sha.h>
+#include "randomx.h"
 #include <ar_nif.h>
 #include "../ar_randomx.h"
 #include "../randomx_long_with_entropy.h"
@@ -135,7 +136,11 @@ static ERL_NIF_TERM rx4096_info_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_T
 	}
 
 
-	return ok_tuple2(envPtr, hashingModeTerm, enif_make_uint(envPtr, datasetSize));
+	ERL_NIF_TERM infoTerm = enif_make_tuple3(envPtr,
+		enif_make_atom(envPtr, "rx4096"),
+		hashingModeTerm,
+		enif_make_uint(envPtr, datasetSize));
+	return ok_tuple(envPtr, infoTerm);
 }
 
 
@@ -351,7 +356,6 @@ static ERL_NIF_TERM rx4096_hash_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	fprintf(stderr, "rx4096_hash_nif: called\n");
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
 	rx4096_state* statePtr;
@@ -375,8 +379,6 @@ static ERL_NIF_TERM rx4096_hash_nif(
 	if (!enif_get_int(envPtr, argv[4], &hardwareAESEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
-
-	fprintf(stderr, "rx4096_hash_nif: jitEnabled: %d, largePagesEnabled: %d, hardwareAESEnabled: %d\n", jitEnabled, largePagesEnabled, hardwareAESEnabled);
 
 	int isRandomxReleased;
 	randomx_vm *vmPtr = create_vm(statePtr, (statePtr->mode == HASHING_MODE_FAST), jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
@@ -608,7 +610,9 @@ static ERL_NIF_TERM rx4096_decrypt_composite_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk)) {
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk) ||
+		inputChunk.size == 0 ||
+		inputChunk.size > MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[3], &outChunkLen) ||
