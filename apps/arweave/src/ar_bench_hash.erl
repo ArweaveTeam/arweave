@@ -2,7 +2,6 @@
 
 -export([run_benchmark_from_cli/1, run_benchmark/1]).
 
--include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 

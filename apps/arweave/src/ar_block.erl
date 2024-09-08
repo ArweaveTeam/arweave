@@ -3,7 +3,7 @@
 -export([block_field_size_limit/1, verify_timestamp/2,
 		get_max_timestamp_deviation/0, verify_last_retarget/2, verify_weave_size/3,
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
-		compute_h0/2, compute_h0/5, compute_h0/6,
+		compute_h0/2, compute_h0/6,
 		compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2,
 		generate_signed_hash/1, verify_signature/3,
@@ -168,17 +168,13 @@ compute_h0(B, PrevB) ->
 	PrevNonceLimiterInfo = PrevB#block.nonce_limiter_info,
 	Seed = PrevNonceLimiterInfo#nonce_limiter_info.seed,
 	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
-	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty).
+	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
+			ar_packing_server:get_packing_state()).
 
 %% @doc Compute "h0" - a cryptographic hash used as a source of entropy when choosing
 %% two recall ranges on the weave as unlocked by the given nonce limiter output.
-compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty) ->
-	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
-	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
-			RandomXStateRef).
-
 compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
-		RandomXStateRef) ->
+		PackingState) ->
 	Preimage =
 		case PackingDifficulty of
 			0 ->
@@ -189,7 +185,9 @@ compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficu
 					PartitionNumber:256, Seed:32/binary, MiningAddr/binary,
 					PackingDifficulty:8 >>
 		end,
-	ar_mine_randomx:hash(RandomXStateRef, Preimage).
+	RandomXState = ar_packing_server:get_randomx_state_by_difficulty(
+		PackingDifficulty, PackingState),
+	ar_mine_randomx:hash(RandomXState, Preimage).
 
 %% @doc Compute "h1" - a cryptographic hash which is either the hash of a solution not
 %% involving the second chunk or a carrier of the information about the first chunk
