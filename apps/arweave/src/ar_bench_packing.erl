@@ -3,7 +3,6 @@
 -export([run_benchmark_from_cli/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -25,24 +24,22 @@
 }).
 
 -define(VALID_TESTS, #{
-	baseline_pack => {false, fun baseline_pack_chunks/4},
-	baseline_repack => {true, fun baseline_repack_chunks/4},
-	nif_repack => {true, fun nif_repack_chunks/4},
-	nif_repack_legacy_to_composite => {true, fun nif_repack_legacy_to_composite_chunks/4},
-	nif_repack_composite => {true, fun nif_repack_composite_chunks/4},
-	baseline_pack_composite => {false, fun baseline_pack_composite_chunks/4}
+	pack_legacy => {false, fun pack_legacy_chunks/4},
+	pack_composite => {false, fun pack_composite_chunks/4},
+	erl_repack_legacy => {true, fun erl_repack_legacy_chunks/4},
+	nif_repack_legacy => {true, fun nif_repack_legacy_chunks/4},
+	nif_repack_composite => {true, fun nif_repack_composite_chunks/4}
 }).
 
 run_benchmark_from_cli(Args) ->
-	Test = list_to_atom(get_flag_value(Args, "test", "baseline_pack")),
+	Test = list_to_atom(get_flag_value(Args, "test", "pack_legacy")),
 	JIT = list_to_integer(get_flag_value(Args, "jit", "1")),
 	LargePages = list_to_integer(get_flag_value(Args, "large_pages", "1")),
 	HardwareAES = list_to_integer(get_flag_value(Args, "hw_aes", "1")),
-	VDF = list_to_integer(get_flag_value(Args, "vdf", "0")),
 	PackingDifficulty = list_to_integer(get_flag_value(Args, "pdiff", "1")),
 	Rounds = list_to_integer(get_flag_value(Args, "rounds",
 		integer_to_list(?COMPOSITE_PACKING_ROUND_COUNT))),
-	run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, PackingDifficulty, Rounds).
+	run_benchmark(Test, JIT, LargePages, HardwareAES, PackingDifficulty, Rounds).
 
 get_flag_value([], _, DefaultValue) ->
 	DefaultValue;
@@ -54,18 +51,17 @@ get_flag_value([_ | Tail], TargetFlag, DefaultValue) ->
 show_help() ->
 	io:format("~nUsage: benchmark-packing [options]~n"),
 	io:format("Options:~n"),
-	io:format("  test <test> (default: baseline_pack)~n"),
+	io:format("  test <test> (default: pack_legacy)~n"),
 	io:format("  mb <megabytes> (default: 16)~n"),
 	io:format("  jit <0|1> (default: 1)~n"),
 	io:format("  large_pages <0|1> (default: 1)~n"),
 	io:format("  hw_aes <0|1> (default: 1)~n"),
-	io:format("  vdf <0|1> (default: 0)~n"),
 	io:format("  pdiff <number> (default: 1)~n"),
 	io:format("  rounds <number> (default: 10)~n"),
 	lists:foreach(fun(Test) -> io:format("  ~p~n", [Test]) end, maps:keys(?VALID_TESTS)),
 	erlang:halt().
 
-run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, PackingDifficulty, Rounds) ->
+run_benchmark(Test, JIT, LargePages, HardwareAES, PackingDifficulty, Rounds) ->
 	timer:sleep(3000),
 	ets:new(offsets, [set, named_table, public]),
 	EncodedRoot = <<"OIgTTxuEPklMR47Ho8VWnNr1Uh6TNjzxwIs38yuqBK0">>,
@@ -100,7 +96,6 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, PackingDifficulty, Rounds
 	io:format("~12s: ~p~n", ["JIT", JIT]),
 	io:format("~12s: ~p~n", ["Large Pages", LargePages]),
 	io:format("~12s: ~p~n", ["HW AES", HardwareAES]),
-	io:format("~12s: ~p~n", ["VDF", VDF]),
 	io:format("~nBenchmark settings (composite only):~n"),
 	io:format("~12s: ~p~n", ["pdiff", PackingDifficulty]),
 	io:format("~12s: ~p~n", ["rounds", Rounds]),
@@ -108,11 +103,9 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, PackingDifficulty, Rounds
 
 	generate_input(Config),
 
-	start_vdf(VDF),
-
 	case lists:member(Test, maps:keys(?VALID_TESTS)) of
 		true ->
-			run_dirty_benchmark(Config);
+			run_benchmark(Config);
 		false ->
 			show_help()
 	end,
@@ -123,21 +116,16 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, PackingDifficulty, Rounds
 	File = open_file("benchmark.results.csv", [append]),
 
 	%% Write the CSV string to the file
-	Output = io_lib:format("~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p~n", [
+	Output = io_lib:format("~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p~n", [
 		erlang:system_time() div 1000000000,
-		Test, TotalMegaBytes, JIT, LargePages, HardwareAES, VDF,
+		Test, TotalMegaBytes, JIT, LargePages, HardwareAES,
 		PackingDifficulty, Rounds,
 		Init, Total]),
 	
 	file:write(File, Output),
 	file:close(File),
 
-	Label = case Test of
-		baseline_pack ->
-			"Chunks Packed";
-		_ ->
-			"Chunks Repacked"
-	end,
+	Label = "Chunks Processed",
 
 	Chunks = (TotalMegaBytes * ?MiB) div ?DATA_CHUNK_SIZE,
 	TimePerChunk = (Total / Chunks) * 1000,
@@ -148,6 +136,7 @@ run_benchmark(Test, JIT, LargePages, HardwareAES, VDF, PackingDifficulty, Rounds
 	io:format("~nBenchmark results:~n"),
 	io:format("~28s: ~p~n", [Label, Chunks]),
 	io:format("~28s: ~.2f~n", ["Total Time (s)", Total]),
+	io:format("~28s: ~.2f~n", ["Init Time (s)", Init]),
 	io:format("~28s: ~.2f~n", ["Time Per Chunk (ms)", TimePerChunk]),
 	io:format("~28s: ~.2f~n", ["Time Per Chunk Per Core (ms)", TimePerChunkPerCore]),
 	io:format("~28s: ~p~n", ["Chunks Per Second", floor(ChunksPerSecond)]),
@@ -228,21 +217,14 @@ write_chunks_loop(File, RemainingBytes, ChunkSize) ->
 	write_chunks_loop(File, RemainingBytes - BytesToWrite, ChunkSize).
 
 write_packed_data(Config, UnpackedFilename, PackedFilename) ->
-	#test_config{
-		num_workers = NumWorkers,
-		jit = JIT,
-		large_pages = LargePages
-	} = Config,
 	io:format("Generating input file: ~s~n", [PackedFilename]),
-	{ok, RandomXState} = ar_bench_timer:record({init},
-		fun ar_rx512_nif:rx512_init_nif/5,
-			[?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, NumWorkers]),
+	{ok, RandomXState} = {ok, RandomXState} = init_randomx_state(Config),
 
 	UnpackedFileHandle = open_file(UnpackedFilename, [read, binary]),
 	PackedFileHandle = open_file(PackedFilename, [write, binary]),
 
-	dirty_test(Config#test_config{
-		test = baseline_pack,
+	test(Config#test_config{
+		test = pack_legacy,
 		randomx_state = RandomXState,
 		input_file = UnpackedFileHandle,
 		output_file = PackedFileHandle
@@ -252,29 +234,12 @@ write_packed_data(Config, UnpackedFilename, PackedFilename) ->
 	file:close(UnpackedFileHandle).
 
 %% --------------------------------------------------------------------------------------------
-%% VDF Background Task
-%% --------------------------------------------------------------------------------------------
-start_vdf(0) ->
-	ok;
-start_vdf(1) ->
-	io:format("~nStarting VDF...~n~n"),
-	Input = crypto:strong_rand_bytes(32),
-	spawn(fun() -> vdf_worker(Input) end).
-
-vdf_worker(Input) ->
-	ar_vdf:compute2(1, Input, ?VDF_DIFFICULTY),
-	vdf_worker(Input).
-
-%% --------------------------------------------------------------------------------------------
 %% Test Runners
 %% --------------------------------------------------------------------------------------------
 
-run_dirty_benchmark(Config) ->
+run_benchmark(Config) ->
 	#test_config{
 		test = Test,
-		num_workers = NumWorkers,
-		jit = JIT,
-		large_pages = LargePages,
 		total_megabytes = TotalMegaBytes
 	} = Config,
 	
@@ -291,26 +256,44 @@ run_dirty_benchmark(Config) ->
 			}
 	end,
 
-	{ok, RandomXState} = ar_bench_timer:record({init},
-		fun ar_rx512_nif:rx512_init_nif/5,
-			[?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, NumWorkers]),
+	{ok, RandomXState} = init_randomx_state(Config),
 
-	run_dirty_test(Config2#test_config{randomx_state = RandomXState}).
+	run_test(Config2#test_config{randomx_state = RandomXState}).
 
-run_dirty_test(Config) ->
+init_randomx_state(Config) ->
+	#test_config{
+		test = Test,
+		num_workers = NumWorkers,
+		jit = JIT,
+		large_pages = LargePages
+	} = Config,
+	case lists:member(Test, [pack_composite, nif_repack_composite]) of
+		true ->
+			ar_bench_timer:record({init},
+				fun ar_rx4096_nif:rx4096_init_nif/5,
+					[?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST, 
+						JIT, LargePages, NumWorkers]);
+		false ->
+			ar_bench_timer:record({init},
+				fun ar_rx512_nif:rx512_init_nif/5,
+					[?RANDOMX_PACKING_KEY, ?RANDOMX_HASHING_MODE_FAST,
+						JIT, LargePages, NumWorkers])
+	end.
+
+run_test(Config) ->
 	#test_config{
 		input_file = InputFileHandle,
 		output_file = OutputFileHandle
 	} = Config,
 
 	io:format("packing..."),
-	ar_bench_timer:record({wall}, fun dirty_test/1, [Config]),
+	ar_bench_timer:record({wall}, fun test/1, [Config]),
 
 	file:close(InputFileHandle),
 	file:close(OutputFileHandle).
 
 %% For now this just encrypts each chunk without adding the offset hash
-dirty_test(Config) ->
+test(Config) ->
 	#test_config{
 		test = Test,
 		total_megabytes = TotalMegaBytes,
@@ -321,7 +304,7 @@ dirty_test(Config) ->
 	WorkerSize = TotalBytes div NumWorkers,
 	{_, WorkerFun} = maps:get(Test, ?VALID_TESTS),
 	Workers = [spawn_monitor(
-		fun() -> dirty_worker(
+		fun() -> worker(
 			N,
 			Config, 
 			WorkerFun,
@@ -338,7 +321,7 @@ dirty_test(Config) ->
 	],
 	io:format("~n").
 
-dirty_worker(WorkerID, Config, WorkerFun, Offset, Size) ->
+worker(WorkerID, Config, WorkerFun, Offset, Size) ->
 	ar_bench_timer:record({total, WorkerID}, WorkerFun, [
 			WorkerID,
 			Config,
@@ -350,9 +333,9 @@ dirty_worker(WorkerID, Config, WorkerFun, Offset, Size) ->
 %% --------------------------------------------------------------------------------------------
 %% Baseline Packing Test
 %% --------------------------------------------------------------------------------------------
-baseline_pack_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
+pack_legacy_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
 	ok;
-baseline_pack_chunks(WorkerID, Config, Offset, Size) ->
+pack_legacy_chunks(WorkerID, Config, Offset, Size) ->
 	#test_config{
 		randomx_state = RandomXState,
 		jit = JIT,
@@ -379,16 +362,16 @@ baseline_pack_chunks(WorkerID, Config, Offset, Size) ->
 			io:format("Error reading file: ~p~n", [Reason]),
 			0
 	end,
-	baseline_pack_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
+	pack_legacy_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% Baseline Packing 2.8 Test
 %% --------------------------------------------------------------------------------------------
 % TODO diff other than 1
 
-baseline_pack_composite_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
+pack_composite_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
 	ok;
-baseline_pack_composite_chunks(WorkerID, Config, Offset, Size) ->
+pack_composite_chunks(WorkerID, Config, Offset, Size) ->
 	#test_config{
 		randomx_state = RandomXState,
 		jit = JIT,
@@ -418,14 +401,14 @@ baseline_pack_composite_chunks(WorkerID, Config, Offset, Size) ->
 			io:format("Error reading file: ~p~n", [Reason]),
 			0
 	end,
-	baseline_pack_composite_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
+	pack_composite_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% Baseline Repacking Test
 %% --------------------------------------------------------------------------------------------
-baseline_repack_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
+erl_repack_legacy_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
 	ok;
-baseline_repack_chunks(WorkerID, Config, Offset, Size) ->
+erl_repack_legacy_chunks(WorkerID, Config, Offset, Size) ->
 	#test_config{
 		randomx_state = RandomXState,
 		jit = JIT,
@@ -457,14 +440,14 @@ baseline_repack_chunks(WorkerID, Config, Offset, Size) ->
 			io:format("Error reading file: ~p~n", [Reason]),
 			0
 	end,
-	baseline_repack_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
+	erl_repack_legacy_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
 
 %% --------------------------------------------------------------------------------------------
 %% NIF Repacking Test
 %% --------------------------------------------------------------------------------------------
-nif_repack_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
+nif_repack_legacy_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
 	ok;
-nif_repack_chunks(WorkerID, Config, Offset, Size) ->
+nif_repack_legacy_chunks(WorkerID, Config, Offset, Size) ->
 	#test_config{
 		randomx_state = RandomXState,
 		jit = JIT,
@@ -494,44 +477,7 @@ nif_repack_chunks(WorkerID, Config, Offset, Size) ->
 			io:format("Error reading file: ~p~n", [Reason]),
 			0
 	end,
-	nif_repack_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
-
-nif_repack_legacy_to_composite_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
-	ok;
-nif_repack_legacy_to_composite_chunks(WorkerID, Config, Offset, Size) ->
-	#test_config{
-		randomx_state = RandomXState,
-		jit = JIT,
-		large_pages = LargePages,
-		hardware_aes = HardwareAES,
-		input_file = PackedFileHandle,
-		output_file = RepackedFileHandle,
-		root = Root,
-		src_address = SrcAddress,
-		dst_address = DstAddress,
-		packing_difficulty = PackingDifficulty,
-		rounds = Rounds
-	} = Config,
-	ChunkSize = min(Size, ?DATA_CHUNK_SIZE),
-	{spora_2_6, UnpackKey} = ar_packing_server:chunk_key({spora_2_6, SrcAddress}, Offset, Root),
-	{composite, PackKey} = ar_packing_server:chunk_key({composite, DstAddress, PackingDifficulty}, Offset, Root),
-	ReadResult = file:pread(PackedFileHandle, Offset, ChunkSize),
-	RemainingSize = case ReadResult of
-		{ok, PackedChunk} ->
-			{ok, RepackedChunk, _} = ar_mine_randomx:randomx_reencrypt_legacy_to_composite_chunk_nif(
-				RandomXState, UnpackKey, PackKey, PackedChunk,
-				JIT, LargePages, HardwareAES,
-				?RANDOMX_PACKING_ROUNDS_2_6, Rounds, PackingDifficulty,
-				?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
-			file:pwrite(RepackedFileHandle, Offset, RepackedChunk),
-			(Size - ChunkSize);
-		eof ->
-			0;
-		{error, Reason} ->
-			io:format("Error reading file: ~p~n", [Reason]),
-			0
-	end,
-	nif_repack_legacy_to_composite_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
+	nif_repack_legacy_chunks(WorkerID, Config, Offset+ChunkSize, RemainingSize).
 
 nif_repack_composite_chunks(_WorkerID, _Config, _Offset, Size) when Size =< 0 ->
 	ok;

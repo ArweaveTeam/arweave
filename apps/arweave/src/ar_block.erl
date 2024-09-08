@@ -170,15 +170,14 @@ compute_h0(B, PrevB) ->
 	NonceLimiterOutput = NonceLimiterInfo#nonce_limiter_info.output,
 	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty).
 
+compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty) ->
+	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
+			ar_packing_server:get_packing_state()).
+
 %% @doc Compute "h0" - a cryptographic hash used as a source of entropy when choosing
 %% two recall ranges on the weave as unlocked by the given nonce limiter output.
-compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty) ->
-	[{_, RandomXStateRef}] = ets:lookup(ar_packing_server, randomx_packing_state),
-	compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
-			RandomXStateRef).
-
 compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficulty,
-		RandomXStateRef) ->
+		PackingState) ->
 	Preimage =
 		case PackingDifficulty of
 			0 ->
@@ -189,7 +188,9 @@ compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddr, PackingDifficu
 					PartitionNumber:256, Seed:32/binary, MiningAddr/binary,
 					PackingDifficulty:8 >>
 		end,
-	ar_mine_randomx:hash(RandomXStateRef, Preimage).
+	RandomXState = ar_packing_server:get_randomx_state_by_difficulty(
+		PackingDifficulty, PackingState),
+	ar_mine_randomx:hash(RandomXState, Preimage).
 
 %% @doc Compute "h1" - a cryptographic hash which is either the hash of a solution not
 %% involving the second chunk or a carrier of the information about the first chunk
