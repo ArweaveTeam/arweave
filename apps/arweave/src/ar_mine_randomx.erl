@@ -85,13 +85,8 @@ randomx_decrypt_sub_chunk(Packing, RandomxState, Key, Chunk, SubChunkStartOffset
 
 randomx_reencrypt_chunk(SourcePacking, TargetPacking,
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) ->
-	case randomx_reencrypt_chunk2(SourcePacking, TargetPacking,
-			RandomxState, UnpackKey, PackKey, Chunk, ChunkSize) of
-		{error, Error} ->
-			{exception, Error};
-		Reply ->
-			Reply
-	end.
+	randomx_reencrypt_chunk2(SourcePacking, TargetPacking, 
+		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize).
 
 %%%===================================================================
 %%% Private functions.
@@ -319,6 +314,8 @@ randomx_reencrypt_chunk2({composite, Addr1, PackingDifficulty1},
 							?DATA_CHUNK_SIZE),
 					{ok, Repacked, Unpadded}
 			end;
+		{error, Error} ->
+			{exception, Error};
 		Reply ->
 			Reply
 	end;
@@ -329,8 +326,13 @@ randomx_reencrypt_chunk2(SourcePacking, TargetPacking,
 		{rx512, RandomxState}, UnpackKey, PackKey, Chunk, ChunkSize) ->
 	UnpackRounds = packing_rounds(SourcePacking),
 	PackRounds = packing_rounds(TargetPacking),
-	ar_rx512_nif:rx512_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk, ChunkSize,
-				UnpackRounds, PackRounds, jit(), large_pages(), hardware_aes());
+	case ar_rx512_nif:rx512_reencrypt_chunk_nif(RandomxState, UnpackKey, PackKey, Chunk,
+			ChunkSize, UnpackRounds, PackRounds, jit(), large_pages(), hardware_aes()) of
+		{error, Error} ->
+			{exception, Error};
+		Reply ->
+			Reply
+	end;
 randomx_reencrypt_chunk2(
 		_SourcePacking, _TargetPacking, _BadState, _UnpackKey, _PackKey, _Chunk, _ChunkSize) ->
 	{error, invalid_randomx_mode}.
