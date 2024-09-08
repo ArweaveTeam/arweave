@@ -112,38 +112,38 @@ test_state({FastState512, LightState512, FastState4096, LightState4096}) ->
 
 test_bad_state(_) ->
 	BadState = {bad_mode, bad_state},
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:info(BadState)),
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:hash(BadState, crypto:strong_rand_bytes(32))),
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:randomx_encrypt_chunk(
 			{spora_2_6, crypto:strong_rand_bytes(32)}, BadState,
 			crypto:strong_rand_bytes(32), crypto:strong_rand_bytes(?DATA_CHUNK_SIZE))),
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:randomx_encrypt_chunk(
 			{composite, 2, crypto:strong_rand_bytes(32)}, BadState,
 			crypto:strong_rand_bytes(32), crypto:strong_rand_bytes(?DATA_CHUNK_SIZE))),
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:randomx_decrypt_chunk(
 			{spora_2_6, crypto:strong_rand_bytes(32)}, BadState,
 			crypto:strong_rand_bytes(32), crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 			?DATA_CHUNK_SIZE)),
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:randomx_decrypt_chunk(
 			{composite, 2, crypto:strong_rand_bytes(32)}, BadState,
 			crypto:strong_rand_bytes(32), crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 			?DATA_CHUNK_SIZE)),
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:randomx_decrypt_sub_chunk(
 			{composite, 2, crypto:strong_rand_bytes(32)}, BadState,
 			crypto:strong_rand_bytes(32), crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),0)),
-	?assertEqual({exception, invalid_randomx_mode},
+	?assertEqual({error, invalid_randomx_mode},
 		ar_mine_randomx:randomx_reencrypt_chunk(
 			{spora_2_6, crypto:strong_rand_bytes(32)}, {spora_2_6, crypto:strong_rand_bytes(32)},
 			BadState, crypto:strong_rand_bytes(32), crypto:strong_rand_bytes(32), 
 			crypto:strong_rand_bytes(?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE)),
-	?assertEqual({exception, invalid_reencrypt_packing},
+	?assertEqual({error, invalid_reencrypt_packing},
 		ar_mine_randomx:randomx_reencrypt_chunk(
 			{composite, 2, crypto:strong_rand_bytes(32)},
 			{composite, 2, crypto:strong_rand_bytes(32)},
@@ -286,7 +286,7 @@ test_nif_wrappers(State512, State4096, Chunk) ->
 			State4096, KeyA, KeyA, PackedCompositeA2, byte_size(Chunk))),	
 	
 	%% spora_2_6 -> composite randomx_reencrypt_chunk
-	?assertEqual({exception, invalid_reencrypt_packing},
+	?assertEqual({error, invalid_reencrypt_packing},
 		ar_mine_randomx:randomx_reencrypt_chunk(
 			{spora_2_6, AddrA}, {composite, AddrB, 3},
 			State512, KeyA, KeyB, Packed_2_6A, byte_size(Chunk))).
