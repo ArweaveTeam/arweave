@@ -2,18 +2,24 @@
 
 -export([run_benchmark_from_cli/1, run_benchmark/1]).
 
--include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 run_benchmark_from_cli(Args) ->
+	RandomX = get_flag_value(Args, "randomx", "512"),
 	JIT = list_to_integer(get_flag_value(Args, "jit", "1")),
 	LargePages = list_to_integer(get_flag_value(Args, "large_pages", "1")),
 	HardwareAES = list_to_integer(get_flag_value(Args, "hw_aes", "1")),
 
+	RandomXMode = case RandomX of
+		"512" -> rx512;
+		"4096" -> rx4096;
+		_ -> show_help()
+	end,
+
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
 	RandomXState = ar_mine_randomx:init_fast2(
-		rx512, ?RANDOMX_PACKING_KEY, JIT, LargePages, Schedulers),
+		RandomXMode, ?RANDOMX_PACKING_KEY, JIT, LargePages, Schedulers),
 	{H0, H1} = run_benchmark(RandomXState, JIT, LargePages, HardwareAES),
 	H0String = io_lib:format("~.3f", [H0 / 1000]),
 	H1String = io_lib:format("~.3f", [H1 / 1000]),
@@ -29,6 +35,7 @@ get_flag_value([_ | Tail], TargetFlag, DefaultValue) ->
 show_help() ->
 	io:format("~nUsage: benchmark-hash [options]~n"),
 	io:format("Options:~n"),
+	io:format("  randomx <512|4096> (default: 512)~n"),
 	io:format("  jit <0|1> (default: 1)~n"),
 	io:format("  large_pages <0|1> (default: 1)~n"),
 	io:format("  hw_aes <0|1> (default: 1)~n"),
