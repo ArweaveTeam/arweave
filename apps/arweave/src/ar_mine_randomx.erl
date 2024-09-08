@@ -41,7 +41,10 @@ hash(State, Data, JIT, LargePages, HardwareAES) ->
 
 randomx_encrypt_chunk(Packing, RandomxState, Key, Chunk) ->
 	case randomx_encrypt_chunk2(Packing, RandomxState, Key, Chunk) of
+		{error, invalid_randomx_mode} ->
+			{error, invalid_randomx_mode};
 		{error, Error} ->
+			%% All other errors are from the NIF, so we treat as an exception
 			{exception, Error};
 		Reply ->
 			Reply
@@ -63,7 +66,10 @@ randomx_decrypt_chunk(Packing, RandomxState, Key, Chunk, ChunkSize) ->
 			ChunkSize
 	end,
 	case randomx_decrypt_chunk2(RandomxState, Key, Chunk, Size, Packing) of
+		{error, invalid_randomx_mode} ->
+			{error, invalid_randomx_mode};
 		{error, Error} ->
+			%% All other errors are from the NIF, so we treat as an exception
 			{exception, Error};
 		{ok, Unpacked} ->
 			%% Validating the padding (for spora_2_6 and composite) and then remove it.
@@ -77,7 +83,10 @@ randomx_decrypt_chunk(Packing, RandomxState, Key, Chunk, ChunkSize) ->
 
 randomx_decrypt_sub_chunk(Packing, RandomxState, Key, Chunk, SubChunkStartOffset) ->
 	case randomx_decrypt_sub_chunk2(Packing, RandomxState, Key, Chunk, SubChunkStartOffset) of
+		{error, invalid_randomx_mode} ->
+			{error, invalid_randomx_mode};
 		{error, Error} ->
+			%% All other errors are from the NIF, so we treat as an exception
 			{exception, Error};
 		Reply ->
 			Reply
@@ -145,7 +154,7 @@ init_fast2(rx4096, Key, JIT, LargePages, Threads) ->
 	{rx4096, FastState};
 init_fast2(RxMode, _Key, _JIT, _LargePages, _Threads) ->
 	?LOG_ERROR([{event, invalid_randomx_mode}, {mode, RxMode}]),
-	{exception, invalid_randomx_mode}.
+	{error, invalid_randomx_mode}.
 init_light2(rx512, Key, JIT, LargePages) ->
 	{ok, LightState} = ar_rx512_nif:rx512_init_nif(Key, ?RANDOMX_HASHING_MODE_LIGHT, JIT, LargePages, 0),
 	{rx512, LightState};
@@ -154,14 +163,14 @@ init_light2(rx4096, Key, JIT, LargePages) ->
 	{rx4096, LightState};
 init_light2(RxMode, _Key, _JIT, _LargePages) ->
 	?LOG_ERROR([{event, invalid_randomx_mode}, {mode, RxMode}]),
-	{exception, invalid_randomx_mode}.
+	{exceperrortion, invalid_randomx_mode}.
 
 info2({rx512, State}) ->
 	ar_rx512_nif:rx512_info_nif(State);
 info2({rx4096, State}) ->
 	ar_rx4096_nif:rx4096_info_nif(State);
 info2(_) ->
-	{exception, invalid_randomx_mode}.
+	{error, invalid_randomx_mode}.
 
 %% -------------------------------------------------------------------------------------------
 %% hash2 and randomx_[encrypt|decrypt|reencrypt]_chunk2
@@ -180,7 +189,7 @@ hash2({rx4096, State}, Data, JIT, LargePages, HardwareAES) ->
 	{ok, Hash} = ar_rx4096_nif:rx4096_hash_nif(State, Data, JIT, LargePages, HardwareAES),
 	Hash;
 hash2(_BadState, _Data, _JIT, _LargePages, _HardwareAES) ->
-	{exception, invalid_randomx_mode}.
+	{error, invalid_randomx_mode}.
 
 %% DEBUG implementation
 randomx_decrypt_chunk2({_, {debug_state, _}}, Key, Chunk, _ChunkSize,
