@@ -547,13 +547,14 @@ validate_packing_difficulty(PackingDifficulty) ->
 	PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY.
 
 get_max_nonce(0) ->
-	max(0, (?RECALL_RANGE_SIZE) div ?DATA_CHUNK_SIZE - 1);
+	max(0, ?LEGACY_RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE - 1);
 get_max_nonce(PackingDifficulty) when PackingDifficulty >= 1 ->
-	Max0 = get_max_nonce(0),
-	(Max0 + 1) * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT - 1.
+	RecallRangeSize = ?RECALL_RANGE_SIZE div PackingDifficulty,
+	MaxChunkNumber = max(0, RecallRangeSize div ?DATA_CHUNK_SIZE - 1),
+	(MaxChunkNumber + 1) * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT - 1.
 
 get_recall_range_size(0) ->
-	?RECALL_RANGE_SIZE;
+	?LEGACY_RECALL_RANGE_SIZE;
 get_recall_range_size(PackingDifficulty) ->
 	?RECALL_RANGE_SIZE div PackingDifficulty.
 
