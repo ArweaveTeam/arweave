@@ -536,11 +536,16 @@ get_packing(PackingDifficulty, MiningAddress) ->
 	end.
 
 validate_packing_difficulty(Height, PackingDifficulty) ->
-	case Height >= ar_fork:height_2_8() of
+	case Height - ?LEGACY_PACKING_EXPIRATION_PERIOD_BLOCKS >= ar_fork:height_2_8() of
 		true ->
-			validate_packing_difficulty(PackingDifficulty);
+			PackingDifficulty >= 1 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY;
 		false ->
-			PackingDifficulty == 0
+			case Height >= ar_fork:height_2_8() of
+				true ->
+					validate_packing_difficulty(PackingDifficulty);
+				false ->
+					PackingDifficulty == 0
+			end
 	end.
 
 validate_packing_difficulty(PackingDifficulty) ->
