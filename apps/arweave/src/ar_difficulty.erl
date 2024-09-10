@@ -81,6 +81,8 @@ poa1_diff(Diff, Height) ->
 %% @doc Scale the difficulty by ScaleDividend/ScaleDivisor.
 %% Example: scale_diff(Diff, {100, 1}, Height) will scale the difficulty by 100, increasing it
 %% Example: scale_diff(Diff, {3, 10}, Height) will scale the difficulty by 3/10, decreasing it
+scale_diff(infinity, _Coeff, _Height) ->
+	infinity;
 scale_diff(Diff, {1, 1}, _Height) ->
 	Diff;
 scale_diff(Diff, {ScaleDividend, ScaleDivisor}, Height) ->
