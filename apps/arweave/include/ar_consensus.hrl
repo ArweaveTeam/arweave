@@ -11,6 +11,10 @@
 -define(RANDOMX_PACKING_ROUNDS, 8 * (?PACKING_DIFFICULTY)).
 -define(RANDOMX_PACKING_ROUNDS_2_6, 8 * (?PACKING_DIFFICULTY_2_6)).
 
+%% Stop supporting the legacy non-composite packing after this number of blocks
+%% passed since the fork 2.8. 365 * 24 * 60 * 60 / 128 = 246375.
+-define(LEGACY_PACKING_EXPIRATION_PERIOD_BLOCKS, (246375 * 4)).
+
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
