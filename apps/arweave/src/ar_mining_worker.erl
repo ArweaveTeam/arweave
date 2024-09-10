@@ -3,8 +3,9 @@
 -behaviour(gen_server).
 
 -export([start_link/2, name/2, reset/2, set_sessions/2, chunks_read/5, computed_hash/5,
-		set_difficulty/2, set_cache_limits/3, add_task/3, garbage_collect/1,
-		recall_range_sub_chunks/0]).
+		set_difficulty/2, set_packing_difficulty/2,
+		set_cache_limits/3, add_task/3, garbage_collect/1,
+		recall_range_sub_chunks/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -18,6 +19,7 @@
 	name						= not_set,
 	partition_number			= not_set,
 	diff_pair					= not_set,
+	packing_difficulty			= 0,
 	task_queue					= gb_sets:new(),
 	active_sessions				= sets:new(),
 	chunk_cache 				= #{},
@@ -85,6 +87,9 @@ computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
 set_difficulty(Worker, DiffPair) ->
 	gen_server:cast(Worker, {set_difficulty, DiffPair}).
 
+set_packing_difficulty(Worker, PackingDifficulty) ->
+	gen_server:cast(Worker, {set_packing_difficulty, PackingDifficulty}).
+
 set_cache_limits(Worker, ChunkCacheLimit, VDFQueueLimit) ->
 	gen_server:cast(Worker, {set_cache_limits, ChunkCacheLimit, VDFQueueLimit}).
 
@@ -121,6 +126,9 @@ handle_call(Request, _From, State) ->
 
 handle_cast({set_difficulty, DiffPair}, State) ->
 	{noreply, State#state{ diff_pair = DiffPair }};
+
+handle_cast({set_packing_difficulty, PackingDifficulty}, State) ->
+	{noreply, State#state{ packing_difficulty = PackingDifficulty }};
 
 handle_cast({set_cache_limits, ChunkCacheLimit, VDFQueueLimit}, State) ->
 	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit,
@@ -425,6 +433,7 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 	Candidate3 = generate_cache_ref(Candidate2),
 	Range1Exists = ar_mining_io:read_recall_range(
 			chunk1, self(), Candidate3, RecallRange1Start),
+	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
 	State3 = case Range1Exists of
 		true ->
 			Range2Exists = ar_mining_io:read_recall_range(
@@ -435,14 +444,16 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 				false ->
 					%% Release just the Range2 cache space we reserved with
 					%% try_to_reserve_cache_space/2
-					State2 = update_chunk_cache_size(-recall_range_sub_chunks(),
+					State2 = update_chunk_cache_size(
+							-recall_range_sub_chunks(PackingDifficulty),
 							SessionKey, State),
 					do_not_cache(Candidate3, State2)
 			end;
 		false ->
 			%% Release the Range1 *and* Range2 cache space we reserved with
 			%% try_to_reserve_cache_space/2
-			update_chunk_cache_size(-(2 * recall_range_sub_chunks()), SessionKey, State)
+			update_chunk_cache_size(
+				-(2 * recall_range_sub_chunks(PackingDifficulty)), SessionKey, State)
 	end,
 	{noreply, State3};
 
@@ -546,7 +557,8 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 		partition_number = Partition1,
 		partition_upper_bound = PartitionUpperBound,
 		cm_h1_list = H1List,
-		cm_lead_peer = Peer
+		cm_lead_peer = Peer,
+		packing_difficulty = PackingDifficulty
 	} = Candidate,
 
 	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
@@ -562,7 +574,8 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 			%% Note: when processing CM requests we always reserve the cache space and proceed
 			%% *even if* this puts us over the chunk cache limit. This may have to be
 			%% revisited later if we find that this causes unacceptable memory bloat.
-			State2 = update_chunk_cache_size(recall_range_sub_chunks(), SessionKey, State),
+			State2 = update_chunk_cache_size(
+					recall_range_sub_chunks(PackingDifficulty), SessionKey, State),
 			%% First flag all nonces in the range as do_not_cache, then cache the specific
 			%% nonces included in the H1 list. This will make sure we don't cache the chunk2s
 			%% that are read for the missing nonces.
@@ -746,16 +759,18 @@ update_chunk_cache_size(Delta, SessionKey, State) ->
 		chunk_cache_size = maps:put(SessionKey, CacheSize + Delta, State#state.chunk_cache_size) }.
 
 try_to_reserve_cache_space(SessionKey, State) ->
+	#state{ packing_difficulty = PackingDifficulty } = State,
 	case total_cache_size(State) =< State#state.chunk_cache_limit of
 		true ->
 			%% reserve for both h1 and h2
-			{true, update_chunk_cache_size(2 * recall_range_sub_chunks(), SessionKey, State)};
+			{true, update_chunk_cache_size(
+					2 * recall_range_sub_chunks(PackingDifficulty), SessionKey, State)};
 		false ->
 			false
 	end.
 
-recall_range_sub_chunks() ->
-	?RECALL_RANGE_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+recall_range_sub_chunks(PackingDifficulty) ->
+	ar_block:get_recall_range_size(PackingDifficulty) div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
 
 do_not_cache(Candidate, State) ->
 	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,

@@ -19,7 +19,7 @@
 -ifdef(DEBUG).
 -define(OVERLAP, (1024 * 1024)).
 -else.
--define(OVERLAP, (?RECALL_RANGE_SIZE)).
+-define(OVERLAP, (?LEGACY_RECALL_RANGE_SIZE)).
 -endif.
 
 %%%===================================================================

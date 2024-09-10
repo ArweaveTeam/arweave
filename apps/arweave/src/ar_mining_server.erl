@@ -5,6 +5,7 @@
 
 -export([start_link/0,
 		start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
+		set_packing_difficulty/1,
 		compute_h2_for_peer/1, prepare_and_post_solution/1,
 		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1, fetch_poa_from_peers/2]).
@@ -31,7 +32,8 @@
 	gc_process_ref				= undefined,
 	merkle_rebase_threshold		= infinity,
 	is_pool_client				= false,
-	allow_composite_packing		= false
+	allow_composite_packing		= false,
+	packing_difficulty			= 0
 }).
 
 -ifdef(DEBUG).
@@ -65,6 +67,9 @@ compute_h2_for_peer(Candidate) ->
 %% Also, a mining session may (in practice, almost always will) span several blocks.
 set_difficulty(DiffPair) ->
 	gen_server:cast(?MODULE, {set_difficulty, DiffPair}).
+
+set_packing_difficulty(PackingDifficulty) ->
+	gen_server:cast(?MODULE, {set_packing_difficulty, PackingDifficulty}).
 
 set_merkle_rebase_threshold(Threshold) ->
 	gen_server:cast(?MODULE, {set_merkle_rebase_threshold, Threshold}).
@@ -155,6 +160,10 @@ handle_cast({start_mining, Args}, State) ->
 
 handle_cast({set_difficulty, DiffPair}, State) ->
 	State2 = set_difficulty(DiffPair, State),
+	{noreply, State2};
+
+handle_cast({set_packing_difficulty, PackingDifficulty}, State) ->
+	State2 = set_packing_difficulty(PackingDifficulty, State),
 	{noreply, State2};
 
 handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
@@ -269,11 +278,20 @@ get_worker(Key, State) ->
 set_difficulty(DiffPair, State) ->
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:set_difficulty(Worker, DiffPair)
+			ar_mining_worker:set_pdifficulty(Worker, DiffPair)
 		end,
 		State#state.workers
 	),
 	State#state{ diff_pair = DiffPair }.
+
+set_packing_difficulty(PackingDifficulty, State) ->
+	maps:foreach(
+		fun(_Partition, Worker) ->
+			ar_mining_worker:set_packing_pdifficulty(Worker, PackingDifficulty)
+		end,
+		State#state.workers
+	),
+	State#state{ packing_difficulty = PackingDifficulty }.
 
 maybe_update_sessions(SessionKey, State) ->
 	CurrentActiveSessions = State#state.active_sessions,
@@ -372,7 +390,7 @@ update_cache_limits(NumActivePartitions, State) ->
 	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
 	IdealStepsPerPartition = 4,
 	IdealRangesPerStep = 2,
-	ChunksPerRange = ar_mining_worker:recall_range_sub_chunks(),
+	ChunksPerRange = ar_mining_worker:recall_range_sub_chunks(State#state.packing_difficulty),
 	IdealCacheLimit = ar_util:ceil_int(
 		IdealStepsPerPartition * IdealRangesPerStep * ChunksPerRange * NumActivePartitions, 100),
 
