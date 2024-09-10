@@ -3,8 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/2, name/2, reset/2, set_sessions/2, chunks_read/5, computed_hash/5,
-		set_difficulty/2, set_packing_difficulty/2,
-		set_cache_limits/3, add_task/3, garbage_collect/1,
+		set_difficulty/2, set_cache_limits/3, add_task/3, garbage_collect/1,
 		recall_range_sub_chunks/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -87,9 +86,6 @@ computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
 set_difficulty(Worker, DiffPair) ->
 	gen_server:cast(Worker, {set_difficulty, DiffPair}).
 
-set_packing_difficulty(Worker, PackingDifficulty) ->
-	gen_server:cast(Worker, {set_packing_difficulty, PackingDifficulty}).
-
 set_cache_limits(Worker, ChunkCacheLimit, VDFQueueLimit) ->
 	gen_server:cast(Worker, {set_cache_limits, ChunkCacheLimit, VDFQueueLimit}).
 
@@ -118,7 +114,7 @@ init({Partition, PackingDifficulty}) ->
 	gen_server:cast(self(), check_worker_status),
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], 0),
 	{ok, #state{ name = Name, partition_number = Partition,
-			is_pool_client = ar_pool:is_client() }}.
+			is_pool_client = ar_pool:is_client(), packing_difficulty = PackingDifficulty }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -127,12 +123,11 @@ handle_call(Request, _From, State) ->
 handle_cast({set_difficulty, DiffPair}, State) ->
 	{noreply, State#state{ diff_pair = DiffPair }};
 
-handle_cast({set_packing_difficulty, PackingDifficulty}, State) ->
-	{noreply, State#state{ packing_difficulty = PackingDifficulty }};
-
 handle_cast({set_cache_limits, ChunkCacheLimit, VDFQueueLimit}, State) ->
-	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit,
-			vdf_queue_limit = VDFQueueLimit }};
+	#state{ packing_difficulty = PackingDifficulty } = State,
+	Multiplier = max(1, PackingDifficulty * 4),
+	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit div Multiplier,
+			vdf_queue_limit = VDFQueueLimit * Multiplier }};
 
 handle_cast({reset, DiffPair}, State) ->
 	State2 = update_sessions(sets:new(), State),
