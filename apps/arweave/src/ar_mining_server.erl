@@ -31,7 +31,8 @@
 	gc_process_ref				= undefined,
 	merkle_rebase_threshold		= infinity,
 	is_pool_client				= false,
-	allow_composite_packing		= false
+	allow_composite_packing		= false,
+	packing_difficulty			= 0
 }).
 
 -ifdef(DEBUG).
@@ -372,7 +373,10 @@ update_cache_limits(NumActivePartitions, State) ->
 	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
 	IdealStepsPerPartition = 4,
 	IdealRangesPerStep = 2,
-	ChunksPerRange = ar_mining_worker:recall_range_sub_chunks(),
+	%% The number of the sub-chunks in the recall range for packing difficulty = 0 is
+	%% the largest. Each mining worker will reduce it according to its packing difficulty
+	%% in set_cache_limits.
+	ChunksPerRange = ar_mining_worker:recall_range_sub_chunks(0),
 	IdealCacheLimit = ar_util:ceil_int(
 		IdealStepsPerPartition * IdealRangesPerStep * ChunksPerRange * NumActivePartitions, 100),
 

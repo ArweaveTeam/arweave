@@ -116,7 +116,11 @@ passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}, PackingDifficulty) ->
 				Diff2;
 			_ ->
 				SubDiff = ar_difficulty:sub_diff(Diff2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
-				ar_difficulty:scale_diff(SubDiff, {1, PackingDifficulty},
+				%% We are introducing composite packing along with reducing the recall range
+				%% from 200 MiB to 50 MiB while keeping the total worth of the nonces constant
+				%% so we want the mining difficulty to be 1 / (PackingDifficulty * 4)
+				%% of the difficulty applied to the 200 MiB-range nonces.
+				ar_difficulty:scale_diff(SubDiff, {1, PackingDifficulty * 4},
 						%% The minimal difficulty height. It does not change at the
 						%% packing difficulty fork.
 						ar_fork:height_2_8())

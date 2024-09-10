@@ -87,7 +87,7 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
 	%%    solutions than 2-chunk solutions. If the PoA1 difficulty is PoA1Mult times higher
 	%%    than the PoA2 difficulty, we'd expect the maximum number of solutions to be:
 	%%    
-	%%    (PoA1Mult + 1) * ?RECALL_RANGE_SIZE div (?DATA_CHUNK_SIZE * PoA1Mult)
+	%%    (PoA1Mult + 1) * RecallRangeSize div (?DATA_CHUNK_SIZE * PoA1Mult)
 	%%    
 	%%    Or basically 1 1-chunk solution for every PoA1Mult 2-chunk solutions in the
 	%%    full-replica case.
@@ -99,16 +99,17 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
 	%%
 	%%    EstimatedSolutionsPerPartition = 
 	%%    (
-	%%      ?RECALL_RANGE_SIZE div PoA1Mult +
-	%%		?RECALL_RANGE_SIZE * TwoChunkCount div (OneChunkCount * PoA1Mult)
+	%%      RecallRangeSize div PoA1Mult +
+	%%		RecallRangeSize * TwoChunkCount div (OneChunkCount * PoA1Mult)
 	%%    ) div (?DATA_CHUNK_SIZE) 
 	%%
 	%% The SolutionsPerPartitionPerVDFStep combines that average weave calculation
 	%% with the expected number of solutions per partition per VDF step to arrive a single
 	%% number that can be used in the PricePerGiBPerMinute calculation.
 	PoA1Mult = ar_difficulty:poa1_diff_multiplier(Height),
+	RecallRangeSize = ar_block:get_recall_range_size(0),
 	MaxSolutionsPerPartition =
-		(PoA1Mult + 1) * ?RECALL_RANGE_SIZE div (?DATA_CHUNK_SIZE * PoA1Mult),
+		(PoA1Mult + 1) * RecallRangeSize div (?DATA_CHUNK_SIZE * PoA1Mult),
 	SolutionsPerPartitionPerVDFStep =
 		case OneChunkCount of
 			0 ->
@@ -118,7 +119,7 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
 				%% equation mentioned above that has been simpplified to limit rounding
 				%% errors:
 				EstimatedSolutionsPerPartition =
-					(OneChunkCount + TwoChunkCount) * ?RECALL_RANGE_SIZE
+					(OneChunkCount + TwoChunkCount) * RecallRangeSize
 					div (?DATA_CHUNK_SIZE * OneChunkCount * PoA1Mult),
 				min(MaxSolutionsPerPartition, EstimatedSolutionsPerPartition)
 		end,
@@ -178,14 +179,15 @@ get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
 	%% The SolutionsPerPartitionPerVDFStep combines that average weave % calculation
 	%% with the expected number of solutions per partition per VDF step to arrive a single
 	%% number that can be used in the PricePerGiBPerMinute calculation.
+	RecallRangeSize = ?LEGACY_RECALL_RANGE_SIZE,
 	SolutionsPerPartitionPerVDFStep =
 		case OneChunkCount of
 			0 ->
-				2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE);
+				2 * RecallRangeSize div (?DATA_CHUNK_SIZE);
 			_ ->
-				min(2 * ?RECALL_RANGE_SIZE,
-						?RECALL_RANGE_SIZE
-							+ ?RECALL_RANGE_SIZE * TwoChunkCount div OneChunkCount)
+				min(2 * RecallRangeSize,
+						RecallRangeSize
+							+ RecallRangeSize * TwoChunkCount div OneChunkCount)
 					div ?DATA_CHUNK_SIZE
 		end,
 	%% The following walks through the math of calculating the price per GiB per minute.
@@ -220,7 +222,7 @@ get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
 get_v2_price_per_gib_minute_simple(B) ->
 	{HashRateTotal, RewardTotal} = ar_rewards:get_locked_totals(B),
 	%% 2 recall ranges per partition per second.
-	SolutionsPerPartitionPerSecond = 2 * (?RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
+	SolutionsPerPartitionPerSecond = 2 * (?LEGACY_RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
 	SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
 	SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerMinute * 2,
 	%% Estimated partition count = hash rate / 2 / solutions per partition per minute.
@@ -340,8 +342,8 @@ may_be_redenominate3(B) ->
 
 %% @doc Return the new current and scheduled prices per byte minute.
 recalculate_price_per_gib_minute(B) ->
-	#block{ height = PrevHeight, block_time_history = BlockTimeHistory,
-			denomination = Denomination, price_per_gib_minute = Price,
+	#block{ height = PrevHeight,
+			price_per_gib_minute = Price,
 			scheduled_price_per_gib_minute = ScheduledPrice } = B,
 	Height = PrevHeight + 1,
 	Fork_2_7 = ar_fork:height_2_7(),
