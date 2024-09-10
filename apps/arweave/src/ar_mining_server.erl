@@ -278,7 +278,7 @@ get_worker(Key, State) ->
 set_difficulty(DiffPair, State) ->
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:set_pdifficulty(Worker, DiffPair)
+			ar_mining_worker:set_difficulty(Worker, DiffPair)
 		end,
 		State#state.workers
 	),
