@@ -8,14 +8,32 @@
 
 const int MAX_CHUNK_SIZE = 256*1024;
 
+static int rx512_load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info);
 static ERL_NIF_TERM rx512_info_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM rx512_init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM rx512_hash_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM rx512_encrypt_chunk_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM rx512_decrypt_chunk_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM rx512_reencrypt_chunk_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 
+static int rx512_load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info)
+{
+	return load(envPtr, priv, info);
+}
+
 static ERL_NIF_TERM rx512_info_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	return info_nif("rx512", envPtr, argc, argv);
+}
+
+static ERL_NIF_TERM rx512_init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
+{
+	return init_nif(envPtr, argc, argv);
+}
+
+static ERL_NIF_TERM rx512_hash_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
+{
+	return hash_nif(envPtr, argc, argv);
 }
 
 static ERL_NIF_TERM decrypt_chunk(ErlNifEnv* envPtr,
@@ -247,8 +265,8 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(
 
 static ErlNifFunc rx512_funcs[] = {
 	{"rx512_info_nif", 1, rx512_info_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"rx512_init_nif", 5, init_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"rx512_hash_nif", 5, hash_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"rx512_init_nif", 5, rx512_init_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"rx512_hash_nif", 5, rx512_hash_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"rx512_encrypt_chunk_nif", 7, rx512_encrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"rx512_decrypt_chunk_nif", 8, rx512_decrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"rx512_reencrypt_chunk_nif", 10, rx512_reencrypt_chunk_nif,
@@ -256,5 +274,5 @@ static ErlNifFunc rx512_funcs[] = {
 };
 
 
-ERL_NIF_INIT(ar_rx512_nif, rx512_funcs, load, NULL, NULL, NULL);
+ERL_NIF_INIT(ar_rx512_nif, rx512_funcs, rx512_load, NULL, NULL, NULL);
 
