@@ -29,16 +29,16 @@ ifeq ($(UNAME_SYS), Darwin)
 		ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M(1|2)"),)
 	  	OSX_CPU_ARCH = arm64
 		endif
-  else
+  	else
 		ifneq ($(shell uname -m | egrep "arm64"),)
 	  	OSX_CPU_ARCH = arm64
-	 	endif
-  endif
+			endif
+	endif
 	CC ?= cc
 	CFLAGS += -std=c99 -arch $(OSX_CPU_ARCH) -finline-functions -Wall -Wmissing-prototypes
 	CXXFLAGS += -arch $(OSX_CPU_ARCH) -finline-functions -Wall
 	LDFLAGS ?= -arch $(OSX_CPU_ARCH)
-	LDFLAGS += -flat_namespace -undefined suppress
+	LDFLAGS += -undefined suppress
 else ifeq ($(UNAME_SYS), FreeBSD)
 	CC ?= cc
 	CFLAGS += -std=c99 -finline-functions -Wall -Wmissing-prototypes

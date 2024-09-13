@@ -15,13 +15,13 @@ extern "C" {
 		assert(machine != nullptr);
 		assert(inputSize == 0 || input != nullptr);
 		alignas(16) uint64_t tempHash[8];
-		int blakeResult = blake2b(tempHash, sizeof(tempHash), input, inputSize, nullptr, 0);
+		int blakeResult = randomx_blake2b(tempHash, sizeof(tempHash), input, inputSize, nullptr, 0);
 		assert(blakeResult == 0);
 		machine->initScratchpad(&tempHash);
 		machine->resetRoundingMode();
 		for (int chain = 0; chain < randomxProgramCount - 1; ++chain) {
 			machine->run(&tempHash);
-			blakeResult = blake2b(tempHash, sizeof(tempHash), machine->getRegisterFile(), sizeof(randomx::RegisterFile), nullptr, 0);
+			blakeResult = randomx_blake2b(tempHash, sizeof(tempHash), machine->getRegisterFile(), sizeof(randomx::RegisterFile), nullptr, 0);
 			assert(blakeResult == 0);
 		}
 		machine->run(&tempHash);
