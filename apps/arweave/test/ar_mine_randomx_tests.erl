@@ -193,7 +193,8 @@ test_regression({FastState512, LightState512, FastState4096, LightState4096}) ->
 		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
 	test_regression(LightState4096,
 		"ar_mine_randomx_tests/packed.composite.2.bin", 1, [2, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8).
+		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	ok.
 
 test_regression(State, Fixture, JIT, ExtraArgs, EncryptFun, DecryptFun) ->
 	Key = ar_test_node:load_fixture("ar_mine_randomx_tests/key.bin"),
