@@ -240,8 +240,6 @@ static void state_dtor(ErlNifEnv* envPtr, void* objPtr)
 {
 	struct state *statePtr = (struct state*) objPtr;
 
-	fprintf(stderr, "state_dtor: %p\n", statePtr);
-
     if (statePtr->datasetPtr != NULL) {
 		randomx_release_dataset(statePtr->datasetPtr);
 		statePtr->datasetPtr = NULL;
@@ -356,8 +354,6 @@ static randomx_vm* create_vm(struct state* statePtr,
 		enif_rwlock_runlock(statePtr->lockPtr);
 		return NULL;
 	}
-
-	fprintf(stderr, "create_vm: %d, %d, %d, %d\n", fullMemEnabled, jitEnabled, largePagesEnabled, hardwareAESEnabled);
 
 	randomx_flags flags = RANDOMX_FLAG_DEFAULT;
 	if (fullMemEnabled) {
