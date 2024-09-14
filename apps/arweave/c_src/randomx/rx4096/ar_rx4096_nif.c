@@ -182,7 +182,7 @@ static ERL_NIF_TERM rx4096_encrypt_composite_chunk_nif(
 	// The number of sub-chunks in the chunk.
 	int subChunkCount;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
 
@@ -254,7 +254,7 @@ static ERL_NIF_TERM rx4096_decrypt_composite_chunk_nif(
 	// The number of sub-chunks in the chunk.
 	int subChunkCount;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
 
@@ -334,7 +334,7 @@ static ERL_NIF_TERM rx4096_decrypt_composite_sub_chunk_nif(
 	// add it to the base packing key, and SHA256-hash it to get the packing key.
 	uint32_t offset;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
 
@@ -433,7 +433,7 @@ static ERL_NIF_TERM rx4096_reencrypt_composite_chunk_nif(
 	int decryptRandomxRoundCount, encryptRandomxRoundCount;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	int decryptSubChunkCount, encryptSubChunkCount, decryptIterations, encryptIterations;
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary decryptKey;
 	ErlNifBinary encryptKey;
 	ErlNifBinary inputChunk;

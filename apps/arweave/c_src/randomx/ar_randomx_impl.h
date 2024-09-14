@@ -1,6 +1,3 @@
-#ifndef AR_RANDOMX_IMPL_H
-#define AR_RANDOMX_IMPL_H
-
 // Thif file includes the full definitions of any function that is shared between the
 // rx512 and rx4096 shared libraries. Although ugly this was the only way I could get
 // everything to work without causing symbol conflicts or seg faults once the two .so's
@@ -31,13 +28,13 @@ typedef enum {
 	HASHING_MODE_LIGHT = 1,
 } hashing_mode;
 
-typedef struct {
+struct state {
 	ErlNifRWLock*     lockPtr;
 	int               isRandomxReleased;
 	hashing_mode      mode;
 	randomx_dataset*  datasetPtr;
 	randomx_cache*    cachePtr;
-} state;
+};
 
 ErlNifResourceType* stateType;
 
@@ -52,17 +49,17 @@ static boolean init_dataset(
 	unsigned int numWorkers
 );
 static void *init_dataset_thread(void *objPtr);
-static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, state *statePtr, const char* reason);
-static randomx_vm* create_vm(state* statePtr,
+static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, struct state *statePtr, const char* reason);
+static randomx_vm* create_vm(struct state* statePtr,
 		int fullMemEnabled, int jitEnabled, int largePagesEnabled, int hardwareAESEnabled,
 		int* isRandomxReleased);
-static void destroy_vm(state* statePtr, randomx_vm* vmPtr);
+static void destroy_vm(struct state* statePtr, randomx_vm* vmPtr);
 
 static ERL_NIF_TERM init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	ErlNifBinary key;
 	hashing_mode mode;
-	state *statePtr;
+	struct state *statePtr;
 	ERL_NIF_TERM resource;
 	unsigned int numWorkers;
 	int jitEnabled, largePagesEnabled;
@@ -84,7 +81,7 @@ static ERL_NIF_TERM init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 		return enif_make_badarg(envPtr);
 	}
 
-	statePtr = enif_alloc_resource(stateType, sizeof(state));
+	statePtr = enif_alloc_resource(stateType, sizeof(struct state));
 	statePtr->cachePtr = NULL;
 	statePtr->datasetPtr = NULL;
 	statePtr->isRandomxReleased = 0;
@@ -139,7 +136,7 @@ static ERL_NIF_TERM init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 static ERL_NIF_TERM info_nif(
     const char* rxSize, ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
-	state* statePtr;
+	struct state* statePtr;
 	unsigned int datasetSize;
 	hashing_mode hashingMode;
 	ERL_NIF_TERM hashingModeTerm;
@@ -190,7 +187,7 @@ static ERL_NIF_TERM hash_nif(
 ) {
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary inputData;
 
 	if (argc != 5) {
@@ -241,7 +238,9 @@ static int load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info)
 
 static void state_dtor(ErlNifEnv* envPtr, void* objPtr)
 {
-	state *statePtr = (state*) objPtr;
+	struct state *statePtr = (struct state*) objPtr;
+
+	fprintf(stderr, "state_dtor: %p\n", statePtr);
 
     if (statePtr->datasetPtr != NULL) {
 		randomx_release_dataset(statePtr->datasetPtr);
@@ -330,7 +329,7 @@ static void *init_dataset_thread(void *objPtr)
 	return NULL;
 }
 
-static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, state *statePtr, const char* reason)
+static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, struct state *statePtr, const char* reason)
 {
 	if (statePtr->lockPtr != NULL) {
 		enif_rwlock_destroy(statePtr->lockPtr);
@@ -348,7 +347,7 @@ static ERL_NIF_TERM init_failed(ErlNifEnv *envPtr, state *statePtr, const char* 
 	return error_tuple(envPtr, reason);
 }
 
-static randomx_vm* create_vm(state* statePtr,
+static randomx_vm* create_vm(struct state* statePtr,
 		int fullMemEnabled, int jitEnabled, int largePagesEnabled, int hardwareAESEnabled,
 		int* isRandomxReleased) {
 	enif_rwlock_rlock(statePtr->lockPtr);
@@ -357,6 +356,8 @@ static randomx_vm* create_vm(state* statePtr,
 		enif_rwlock_runlock(statePtr->lockPtr);
 		return NULL;
 	}
+
+	fprintf(stderr, "create_vm: %d, %d, %d, %d\n", fullMemEnabled, jitEnabled, largePagesEnabled, hardwareAESEnabled);
 
 	randomx_flags flags = RANDOMX_FLAG_DEFAULT;
 	if (fullMemEnabled) {
@@ -383,9 +384,7 @@ static randomx_vm* create_vm(state* statePtr,
 	return vmPtr;
 }
 
-static void destroy_vm(state* statePtr, randomx_vm* vmPtr) {
+static void destroy_vm(struct state* statePtr, randomx_vm* vmPtr) {
 	randomx_destroy_vm(vmPtr);
 	enif_rwlock_runlock(statePtr->lockPtr);
 }
-
-#endif

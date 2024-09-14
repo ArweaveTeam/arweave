@@ -50,23 +50,29 @@ static ERL_NIF_TERM encrypt_chunk(ErlNifEnv* envPtr,
 		randomx_vm *machine, const unsigned char *input, const size_t inputSize,
 		const unsigned char *inChunk, const size_t inChunkSize,
 		const int randomxProgramCount) {
+	fprintf(stderr, "encrypt_chunk\n");
 	ERL_NIF_TERM encryptedChunkTerm;
 	unsigned char* encryptedChunk = enif_make_new_binary(
 										envPtr, MAX_CHUNK_SIZE, &encryptedChunkTerm);
 
+	fprintf(stderr, "A\n");
 	if (inChunkSize < MAX_CHUNK_SIZE) {
 		unsigned char *paddedInChunk = (unsigned char*)malloc(MAX_CHUNK_SIZE);
 		memset(paddedInChunk, 0, MAX_CHUNK_SIZE);
 		memcpy(paddedInChunk, inChunk, inChunkSize);
+		fprintf(stderr, "B1\n");
 		randomx_encrypt_chunk(
 			machine, input, inputSize, paddedInChunk, MAX_CHUNK_SIZE,
 			encryptedChunk, randomxProgramCount);
+		fprintf(stderr, "C\n");
 		free(paddedInChunk);
 	} else {
+		fprintf(stderr, "B2\n");
 		randomx_encrypt_chunk(
 			machine, input, inputSize, inChunk, inChunkSize,
 			encryptedChunk, randomxProgramCount);
 	}
+	fprintf(stderr, "D\n");
 
 	return encryptedChunkTerm;
 }
@@ -77,9 +83,11 @@ static ERL_NIF_TERM rx512_encrypt_chunk_nif(
 	const ERL_NIF_TERM argv[]
 ) {
 	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
+
+	fprintf(stderr, "rx512_encrypt_chunk_nif\n");
 
 	if (argc != 7) {
 		return enif_make_badarg(envPtr);
@@ -108,9 +116,12 @@ static ERL_NIF_TERM rx512_encrypt_chunk_nif(
 		return enif_make_badarg(envPtr);
 	}
 
+	fprintf(stderr, "A\n");
+
 	int isRandomxReleased;
 	randomx_vm *vmPtr = create_vm(statePtr, (statePtr->mode == HASHING_MODE_FAST),
 		jitEnabled, largePagesEnabled, hardwareAESEnabled, &isRandomxReleased);
+	fprintf(stderr, "B\n");
 	if (vmPtr == NULL) {
 		if (isRandomxReleased != 0) {
 			return error_tuple(envPtr, "state has been released");
@@ -118,11 +129,13 @@ static ERL_NIF_TERM rx512_encrypt_chunk_nif(
 		return error_tuple(envPtr, "randomx_create_vm failed");
 	}
 
+	fprintf(stderr, "C\n");
 	ERL_NIF_TERM outChunkTerm = encrypt_chunk(envPtr, vmPtr,
 		inputData.data, inputData.size, inputChunk.data, inputChunk.size, randomxRoundCount);
 
+	fprintf(stderr, "D\n");
 	destroy_vm(statePtr, vmPtr);
-
+	fprintf(stderr, "E\n");
 	return ok_tuple(envPtr, outChunkTerm);
 }
 
@@ -132,7 +145,7 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 	const ERL_NIF_TERM argv[]
 ) {
 	int outChunkLen, randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
 
@@ -196,7 +209,7 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(
 ) {
 	int chunkSize, decryptRandomxRoundCount, encryptRandomxRoundCount;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	state* statePtr;
+	struct state* statePtr;
 	ErlNifBinary decryptKey;
 	ErlNifBinary encryptKey;
 	ErlNifBinary inputChunk;

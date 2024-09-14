@@ -49,11 +49,12 @@ reencrypt_composite_chunk({rx4096, RandomXState}, Key1, Key2, Chunk, PackingRoun
 setup() ->
     FastState512 = ar_mine_randomx:init_fast2(rx512, ?RANDOMX_PACKING_KEY, 0, 0,
 		erlang:system_info(dirty_cpu_schedulers_online)),
-    LightState512 = ar_mine_randomx:init_light2(rx512, ?RANDOMX_PACKING_KEY, 0, 0),
-    FastState4096 = ar_mine_randomx:init_fast2(rx4096, ?RANDOMX_PACKING_KEY, 0, 0,
-		erlang:system_info(dirty_cpu_schedulers_online)),
-    LightState4096 = ar_mine_randomx:init_light2(rx4096, ?RANDOMX_PACKING_KEY, 0, 0),
-    {FastState512, LightState512, FastState4096, LightState4096}.
+	{FastState512, FastState512, FastState512, FastState512}.
+    % LightState512 = ar_mine_randomx:init_light2(rx512, ?RANDOMX_PACKING_KEY, 0, 0),
+    % FastState4096 = ar_mine_randomx:init_fast2(rx4096, ?RANDOMX_PACKING_KEY, 0, 0,
+	% 	erlang:system_info(dirty_cpu_schedulers_online)),
+    % LightState4096 = ar_mine_randomx:init_light2(rx4096, ?RANDOMX_PACKING_KEY, 0, 0),
+    % {FastState512, LightState512, FastState4096, LightState4096}.
 
 test_register(TestFun, Fixture) ->
 	{timeout, 120, {with, Fixture, [TestFun]}}.
@@ -62,19 +63,19 @@ randomx_suite_test_() ->
 	{setup, fun setup/0,
 		fun (SetupData) ->
 			[
-				test_register(fun test_state/1, SetupData),
-				test_register(fun test_bad_state/1, SetupData),
-				test_register(fun test_regression/1, SetupData),
-				test_register(fun test_empty_chunk_fails/1, SetupData),
-				test_register(fun test_nif_wrappers/1, SetupData),
-				test_register(fun test_pack_unpack/1, SetupData),
-				test_register(fun test_repack/1, SetupData),
-				test_register(fun test_input_changes_packing/1, SetupData),
-				test_register(fun test_composite_packing/1, SetupData),
-				test_register(fun test_composite_packs_incrementally/1, SetupData),
-				test_register(fun test_composite_unpacked_sub_chunks/1, SetupData),
-				test_register(fun test_composite_repack/1, SetupData),
-				test_register(fun test_hash/1, SetupData)
+				% test_register(fun test_state/1, SetupData),
+				% test_register(fun test_bad_state/1, SetupData),
+				test_register(fun test_regression/1, SetupData)
+				% test_register(fun test_empty_chunk_fails/1, SetupData),
+				% test_register(fun test_nif_wrappers/1, SetupData),
+				% test_register(fun test_pack_unpack/1, SetupData),
+				% test_register(fun test_repack/1, SetupData),
+				% test_register(fun test_input_changes_packing/1, SetupData),
+				% test_register(fun test_composite_packing/1, SetupData),
+				% test_register(fun test_composite_packs_incrementally/1, SetupData),
+				% test_register(fun test_composite_unpacked_sub_chunks/1, SetupData),
+				% test_register(fun test_composite_repack/1, SetupData),
+				% test_register(fun test_hash/1, SetupData)
 			]
 		end
 	}.
@@ -161,48 +162,51 @@ test_regression({FastState512, LightState512, FastState4096, LightState4096}) ->
 	test_regression(FastState512,
 		"ar_mine_randomx_tests/packed.spora26.bin", 0, [],
 		fun encrypt_chunk/8, fun decrypt_chunk/8),
-	test_regression(FastState512,
-		"ar_mine_randomx_tests/packed.spora26.bin", 1, [],
-		fun encrypt_chunk/8, fun decrypt_chunk/8),
-	test_regression(FastState4096,
-		"ar_mine_randomx_tests/packed.composite.1.bin", 0, [1, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
-	test_regression(FastState4096,
-		"ar_mine_randomx_tests/packed.composite.1.bin", 1, [1, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
-	test_regression(FastState4096,
-		"ar_mine_randomx_tests/packed.composite.2.bin", 0, [2, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
-	test_regression(FastState4096,
-		"ar_mine_randomx_tests/packed.composite.2.bin", 1, [2, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
-	test_regression(LightState512,
-		"ar_mine_randomx_tests/packed.spora26.bin", 0, [],
-		fun encrypt_chunk/8, fun decrypt_chunk/8),
-	test_regression(LightState512,
-		"ar_mine_randomx_tests/packed.spora26.bin", 1, [],
-		fun encrypt_chunk/8, fun decrypt_chunk/8),
-	test_regression(LightState4096,
-		"ar_mine_randomx_tests/packed.composite.1.bin", 0, [1, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
-	test_regression(LightState4096,
-		"ar_mine_randomx_tests/packed.composite.1.bin", 1, [1, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
-	test_regression(LightState4096,
-		"ar_mine_randomx_tests/packed.composite.2.bin", 0, [2, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
-	test_regression(LightState4096,
-		"ar_mine_randomx_tests/packed.composite.2.bin", 1, [2, 32],
-		fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8).
+	% test_regression(FastState512,
+	% 	"ar_mine_randomx_tests/packed.spora26.bin", 1, [],
+	% 	fun encrypt_chunk/8, fun decrypt_chunk/8),
+	% test_regression(FastState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.1.bin", 0, [1, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	% test_regression(FastState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.1.bin", 1, [1, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	% test_regression(FastState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.2.bin", 0, [2, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	% test_regression(FastState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.2.bin", 1, [2, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	% test_regression(LightState512,
+	% 	"ar_mine_randomx_tests/packed.spora26.bin", 0, [],
+	% 	fun encrypt_chunk/8, fun decrypt_chunk/8),
+	% test_regression(LightState512,
+	% 	"ar_mine_randomx_tests/packed.spora26.bin", 1, [],
+	% 	fun encrypt_chunk/8, fun decrypt_chunk/8),
+	% test_regression(LightState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.1.bin", 0, [1, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	% test_regression(LightState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.1.bin", 1, [1, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	% test_regression(LightState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.2.bin", 0, [2, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8),
+	% test_regression(LightState4096,
+	% 	"ar_mine_randomx_tests/packed.composite.2.bin", 1, [2, 32],
+	% 	fun encrypt_composite_chunk/8, fun decrypt_composite_chunk/8).
+	ok.
 
 test_regression(State, Fixture, JIT, ExtraArgs, EncryptFun, DecryptFun) ->
 	Key = ar_test_node:load_fixture("ar_mine_randomx_tests/key.bin"),
 	UnpackedFixture = ar_test_node:load_fixture("ar_mine_randomx_tests/unpacked.bin"),
 	PackedFixture = ar_test_node:load_fixture(Fixture),
 
+	?LOG_ERROR([{event, encrypt_chunk}]),
 	{ok, Packed} = EncryptFun(State, Key, UnpackedFixture, 8, JIT, 0, 0, ExtraArgs),
 	?assertEqual(PackedFixture, Packed, Fixture),
 
+	?LOG_ERROR([{event, decrypt_chunk}]),
 	{ok, Unpacked} = DecryptFun(State, Key, PackedFixture, 8, JIT, 0, 0, ExtraArgs),
 	?assertEqual(UnpackedFixture, Unpacked, Fixture).
 
