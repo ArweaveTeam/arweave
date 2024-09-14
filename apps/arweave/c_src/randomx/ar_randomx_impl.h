@@ -1,3 +1,6 @@
+#ifndef AR_RANDOMX_IMPL_H
+#define AR_RANDOMX_IMPL_H
+
 // Thif file includes the full definitions of any function that is shared between the
 // rx512 and rx4096 shared libraries. Although ugly this was the only way I could get
 // everything to work without causing symbol conflicts or seg faults once the two .so's
@@ -384,3 +387,5 @@ static void destroy_vm(struct state* statePtr, randomx_vm* vmPtr) {
 	randomx_destroy_vm(vmPtr);
 	enif_rwlock_runlock(statePtr->lockPtr);
 }
+
+#endif

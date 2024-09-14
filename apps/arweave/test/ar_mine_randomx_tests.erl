@@ -49,7 +49,6 @@ reencrypt_composite_chunk({rx4096, RandomXState}, Key1, Key2, Chunk, PackingRoun
 setup() ->
     FastState512 = ar_mine_randomx:init_fast2(rx512, ?RANDOMX_PACKING_KEY, 0, 0,
 		erlang:system_info(dirty_cpu_schedulers_online)),
-	% {FastState512, FastState512, FastState512, FastState512}.
     LightState512 = ar_mine_randomx:init_light2(rx512, ?RANDOMX_PACKING_KEY, 0, 0),
     FastState4096 = ar_mine_randomx:init_fast2(rx4096, ?RANDOMX_PACKING_KEY, 0, 0,
 		erlang:system_info(dirty_cpu_schedulers_online)),
