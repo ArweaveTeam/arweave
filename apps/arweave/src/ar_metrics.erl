@@ -1,5 +1,7 @@
 -module(ar_metrics).
 
+-include_lib("arweave/include/ar.hrl").
+
 -export([register/0, get_status_class/1]).
 
 %%%===================================================================
@@ -8,6 +10,14 @@
 
 %% @doc Declare Arweave metrics.
 register() ->
+	%% App info
+	prometheus_gauge:new([
+		{name, arweave_release},
+		{help, "Arweave release number"}
+	]),
+	%% Release number never changes so just set it here.
+	prometheus_gauge:set(arweave_release, ?RELEASE_NUMBER),
+
 	%% Networking.
 	prometheus_counter:new([
 		{name, http_server_accepted_bytes_total},
