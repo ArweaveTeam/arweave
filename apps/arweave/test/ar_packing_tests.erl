@@ -338,9 +338,8 @@ test_request_unpack() ->
 
 
 	packs_chunks_depending_on_packing_threshold_test_() ->
-		ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end},
-				{ar_fork, height_2_6_8, fun() -> 0 end},
-				{ar_fork, height_2_7, fun() -> 0 end}],
+		ar_test_node:test_with_mocked_functions([
+				{ar_fork, height_2_8, fun() -> 10 end}],
 				fun test_packs_chunks_depending_on_packing_threshold/0).
 	
 	test_packs_chunks_depending_on_packing_threshold() ->
@@ -418,10 +417,10 @@ test_request_unpack() ->
 				{RecallRange1Start, _} = ar_block:get_recall_range(H0,
 						B#block.partition_number, PartitionUpperBound),
 				RecallByte =
-					case Height >= ar_fork:height_2_8() of
-						false ->
+					case B#block.packing_difficulty of
+						0 ->
 							RecallRange1Start + B#block.nonce * ?DATA_CHUNK_SIZE;
-						true ->
+						_ ->
 							RecallRange1Start + (B#block.nonce div 32) * ?DATA_CHUNK_SIZE
 					end,
 				{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte),
@@ -436,15 +435,20 @@ test_request_unpack() ->
 				?assertEqual(RecallByte, B#block.recall_byte),
 				SubChunkIndex = ar_block:get_sub_chunk_index(B#block.packing_difficulty,
 						B#block.nonce),
-				Packing =
-					case Height >= ar_fork:height_2_8() of
-						false ->
-							{spora_2_6, B#block.reward_addr};
-						true ->
-							{composite, B#block.reward_addr, B#block.packing_difficulty}
+				{Packing, PoA2} =
+					case B#block.packing_difficulty of
+						0 ->
+							{{spora_2_6, B#block.reward_addr}, PoA};
+						_ ->
+							{ok, #{ chunk := UnpackedChunk }}
+								= ar_data_sync:get_chunk(RecallByte + 1,
+									#{ packing => unpacked, pack => true }),
+							UnpackedChunk2 = ar_packing_server:pad_chunk(UnpackedChunk),
+							{{composite, B#block.reward_addr, B#block.packing_difficulty},
+									PoA#poa{ unpacked_chunk = UnpackedChunk2 }}
 					end,
 				?assertMatch({true, _}, ar_poa:validate({BlockStart, RecallByte, TXRoot,
-						BlockEnd - BlockStart, PoA, Packing, SubChunkIndex, not_set})),
+						BlockEnd - BlockStart, PoA2, Packing, SubChunkIndex, not_set})),
 				B
 			end,
 			LastB,
