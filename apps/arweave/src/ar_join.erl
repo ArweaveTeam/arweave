@@ -426,8 +426,19 @@ request_block(H, WorkerQ, PeerQ) ->
 	{queue:in(W, WorkerQ2), queue:in(Peer, PeerQ2)}.
 
 maybe_set_reward_history(Blocks, Peers) ->
-	L = [B#block.reward_history_hash || B <- lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT)],
-	case ar_http_iface_client:get_reward_history(Peers, hd(Blocks), L) of
+	HeadB = hd(Blocks),
+	ExpectedHashesLen =
+		case HeadB#block.height >= ar_fork:height_2_8() of
+			true ->
+				%% Take one more block.reward_history_hash because after 2.8 we use
+				%% the previous reward history hash to compute the new one.
+				?STORE_BLOCKS_BEHIND_CURRENT + 1;
+			false ->
+				?STORE_BLOCKS_BEHIND_CURRENT
+		end,
+	ExpectedHashes = [B#block.reward_history_hash
+			|| B <- lists:sublist(Blocks, ExpectedHashesLen)],
+	case ar_http_iface_client:get_reward_history(Peers, HeadB, ExpectedHashes) of
 		{ok, RewardHistory} ->
 			ar_rewards:set_reward_history(Blocks, RewardHistory);
 		_ ->

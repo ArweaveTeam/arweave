@@ -581,8 +581,12 @@
 	%% The updated estimation of the number of Winstons it costs the network to store
 	%% one gibibyte for one minute.
 	scheduled_price_per_gib_minute = 0,
-	%% The recursive hash of the network hash rates, block rewards, and mining addresses of
-	%% the latest ?REWARD_HISTORY_BLOCKS blocks.
+	%% The recursive hash of the network hash rates, block rewards, mining addresses,
+	%% and denominations.
+	%% Note that the length of the reward history has increased from
+	%% ?LEGACY_REWARD_HISTORY_BLOCKS to ?REWARD_HISTORY_BLOCKS in 2.8.
+	%% Before 2.8 every new hash was computed over the latest ?REWARD_HISTORY_BLOCKS.
+	%% After 2.8 the new hash is computed from the new history element and the previous hash.
 	reward_history_hash,
 	%% The network hash rates, block rewards, and mining addresses from the latest
 	%% ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT blocks. Used internally, not gossiped.

@@ -949,9 +949,9 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 					B2 =
 						case B#block.height >= ar_fork:height_2_6() of
 							true ->
-								B#block{ 
+								B#block{
 									reward_history =
-										ar_rewards:lock_reward(B, PrevB#block.reward_history)
+										ar_rewards:add_element(B, PrevB#block.reward_history)
 								};
 							false ->
 								B
@@ -960,7 +960,8 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 						case B#block.height >= ar_fork:height_2_7() of
 							true ->
 								BlockTimeHistory2 = ar_block_time_history:update_history(B, PrevB),
-								Len2 = ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT,
+								Len2 = ar_block_time_history:history_length()
+										+ ?STORE_BLOCKS_BEHIND_CURRENT,
 								BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, Len2),
 								B2#block{ block_time_history = BlockTimeHistory3 };
 							false ->
@@ -1056,7 +1057,8 @@ get_unpacked_chunk_hash(PoA, PackingDifficulty, RecallByte) ->
 	end.
 
 pack_block_with_transactions(B, PrevB) ->
-	#block{ reward_history = RewardHistory } = PrevB,
+	#block{ reward_history = RewardHistory,
+			reward_history_hash = PreviousRewardHistoryHash } = PrevB,
 	TXs = collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
 	Rate = ar_pricing:usd_to_ar_rate(PrevB),
 	PricePerGiBMinute = PrevB#block.price_per_gib_minute,
@@ -1103,14 +1105,20 @@ pack_block_with_transactions(B, PrevB) ->
 	DebtSupply2 = ar_pricing:redenominate(DebtSupply, PrevDenomination, Denomination),
 	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
 			Denomination),
-	RewardHistory2 = ar_rewards:lock_reward(B2#block{ reward = Reward2 }, RewardHistory),
+	RewardHistory2 = ar_rewards:add_element(B2#block{ reward = Reward2 }, RewardHistory),
+	%% We are only slicing the locked rewards window here because it is
+	%% only used to compute the hash before 2.8 where the locked rewards
+	%% window was exactly the same as the reward history window (used in pricing.)
+	%% After 2.8 we only use the previous reward history hash and the head
+	%% of the history to compute the new hash.
 	LockedRewards = ar_rewards:trim_locked_rewards(Height, RewardHistory2),
 	B2#block{
 		wallet_list = RootHash,
 		reward_pool = EndowmentPool2,
 		reward = Reward2,
 		reward_history = RewardHistory2,
-		reward_history_hash = ar_rewards:reward_history_hash(LockedRewards),
+		reward_history_hash = ar_rewards:reward_history_hash(Height, PreviousRewardHistoryHash,
+				LockedRewards),
 		debt_supply = DebtSupply2,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier2

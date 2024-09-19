@@ -52,16 +52,34 @@ end).
 %% fluctuate a lot around the fork.
 -define(FORK_2_6_PRE_TRANSITION_USD_TO_AR_RATE, {1, 10}).
 
-%% The number of recent blocks contributing data points to the continuous estimation
-%% of the average price of storing a gibibyte for a minute. Also, the reward history
-%% is used to tracking the reserved mining rewards.
+%% The number of recent blocks with the reserved (temporarily locked) mining rewards.
 -ifdef(DEBUG).
 	% testnet value should have same ratio 30:1 to VDF_DIFFICULTY_RETARGET
 	% BUT. For tests we are using old value
+	-define(LOCKED_REWARDS_BLOCKS, 3).
+-else.
+	-ifndef(LOCKED_REWARDS_BLOCKS).
+		-define(LOCKED_REWARDS_BLOCKS, (30 * 24 * 30)).
+	-endif.
+-endif.
+
+%% The number of recent blocks contributing data points to the continuous estimation
+%% of the average price of storing a gibibyte for a minute. A recent subset of the
+%% reward history is used for tracking the reserved mining rewards.
+-ifdef(DEBUG).
 	-define(REWARD_HISTORY_BLOCKS, 3).
 -else.
 	-ifndef(REWARD_HISTORY_BLOCKS).
-		-define(REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
+		-define(REWARD_HISTORY_BLOCKS, (3 * 30 * 24 * 30)).
+	-endif.
+-endif.
+
+%% The REWARD_HISTORY_BLOCKS before 2.8.
+-ifdef(DEBUG).
+	-define(LEGACY_REWARD_HISTORY_BLOCKS, 3).
+-else.
+	-ifndef(LEGACY_REWARD_HISTORY_BLOCKS).
+		-define(LEGACY_REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
 	-endif.
 -endif.
 

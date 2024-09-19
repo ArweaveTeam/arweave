@@ -85,7 +85,8 @@ init(WalletList, Diff, GenesisDataSize) ->
 							price_per_gib_minute = PricePerGiBMinute,
 							scheduled_price_per_gib_minute = PricePerGiBMinute,
 							reward_history = RewardHistory,
-							reward_history_hash = ar_rewards:reward_history_hash(RewardHistory)
+							reward_history_hash = ar_rewards:reward_history_hash(0, <<>>,
+									RewardHistory)
 						};
 			true ->
 				B0
