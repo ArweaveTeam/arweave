@@ -385,8 +385,10 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual([{MinerAddr, 1, ExpectedReward4, 1}, {MinerAddr, 1, 10, 1},
 			{MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1}, {B0#block.reward_addr, 1, 10, 1}],
 			B4#block.reward_history),
-	?assertEqual(ar_rewards:reward_history_hash([{MinerAddr, 1, ExpectedReward4, 1},
-			{MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1}]), B4#block.reward_history_hash),
+	?assertEqual(
+		ar_rewards:reward_history_hash(B4#block.height, B3#block.reward_history_hash,
+			[{MinerAddr, 1, ExpectedReward4, 1}, {MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1}]),
+		B4#block.reward_history_hash),
 	ar_test_node:mine(),
 	_BI5 = ar_test_node:wait_until_height(5),
 	ar_test_node:assert_wait_until_height(peer1, 5),
@@ -402,9 +404,11 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assertEqual([{MinerAddr, 1, ExpectedReward5, 1}, {MinerAddr, 1, ExpectedReward4, 1},
 			{MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1}, {MinerAddr, 1, 10, 1},
 			{B0#block.reward_addr, 1, 10, 1}], B5#block.reward_history),
-	?assertEqual(ar_rewards:reward_history_hash([{MinerAddr, 1, ExpectedReward5, 1},
-			{MinerAddr, 1, ExpectedReward4, 1},
-			{MinerAddr, 1, 10, 1}]), B5#block.reward_history_hash),
+	?assertEqual(
+		ar_rewards:reward_history_hash(B5#block.height, B4#block.reward_history_hash,
+			[{MinerAddr, 1, ExpectedReward5, 1}, {MinerAddr, 1, ExpectedReward4, 1},
+				{MinerAddr, 1, 10, 1}]),
+		B5#block.reward_history_hash),
 	?assertEqual(1, B5#block.kryder_plus_rate_multiplier_latch),
 	?assertEqual(2, B5#block.kryder_plus_rate_multiplier),
 	%% The price per GiB minute recalculation only happens every two blocks.

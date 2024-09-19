@@ -410,9 +410,16 @@ get_recent_hash_list_diff(Peer, HL) ->
 get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 	#block{ height = Height, indep_hash = H } = B,
 	ExpectedLength = ar_rewards:reward_history_length(Height),
+	DoubleCheckLength =
+		case Height >= ar_fork:height_2_8() of
+			true ->
+				?STORE_BLOCKS_BEHIND_CURRENT + 1;
+			false ->
+				?STORE_BLOCKS_BEHIND_CURRENT
+		end,
 	true = length(ExpectedRewardHistoryHashes) == min(
 													Height - ar_fork:height_2_6() + 1,
-													?STORE_BLOCKS_BEHIND_CURRENT),
+													DoubleCheckLength),
 	case ar_http:req(#{
 				peer => Peer,
 				method => get,

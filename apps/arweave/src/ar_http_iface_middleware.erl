@@ -841,6 +841,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
+			ok = ar_semaphore:acquire(get_reward_history, infinity),
 			case ar_util:safe_decode(EncodedBH) of
 				{ok, BH} ->
 					Fork_2_6 = ar_fork:height_2_6(),
@@ -848,7 +849,9 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 						{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
 								when (Status == on_chain orelse Status == validated),
 									Height >= Fork_2_6 ->
-							{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory),
+							RewardHistory2 = ar_rewards:trim_reward_history(Height,
+									RewardHistory),
+							{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory2),
 									Req};
 						_ ->
 							{404, #{}, <<>>, Req}

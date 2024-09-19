@@ -1,13 +1,18 @@
 -module(ar_testnet).
 
 -export([is_testnet/0, height_testnet_fork/0, top_up_test_wallet/2,
-			reward_history_blocks/1, target_block_time/1]).
+		locked_rewards_blocks/1, reward_history_blocks/1, target_block_time/1,
+		legacy_reward_history_blocks/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 
 -ifndef(TESTNET_REWARD_HISTORY_BLOCKS).
 -define(TESTNET_REWARD_HISTORY_BLOCKS, ?REWARD_HISTORY_BLOCKS).
+-endif.
+
+-ifndef(TESTNET_LEGACY_REWARD_HISTORY_BLOCKS).
+-define(TESTNET_LEGACY_REWARD_HISTORY_BLOCKS, ?LEGACY_REWARD_HISTORY_BLOCKS).
 -endif.
 
 -ifndef(TESTNET_TARGET_BLOCK_TIME).
@@ -47,6 +52,19 @@ top_up_test_wallet(Accounts, _Height) ->
 -endif.
 
 -ifdef(TESTNET).
+locked_rewards_blocks(Height) ->
+	case Height >= height_testnet_fork() of
+		true ->
+			?TESTNET_LOCKED_REWARDS_BLOCKS;
+		false ->
+			?LOCKED_REWARDS_BLOCKS
+	end.
+-else.
+locked_rewards_blocks(_Height) ->
+	?LOCKED_REWARDS_BLOCKS.
+-endif.
+
+-ifdef(TESTNET).
 reward_history_blocks(Height) ->
 	case Height >= height_testnet_fork() of
 		true ->
@@ -57,6 +75,19 @@ reward_history_blocks(Height) ->
 -else.
 reward_history_blocks(_Height) ->
 	?REWARD_HISTORY_BLOCKS.
+-endif.
+
+-ifdef(TESTNET).
+legacy_reward_history_blocks(Height) ->
+	case Height >= height_testnet_fork() of
+		true ->
+			?TESTNET_LEGACY_REWARD_HISTORY_BLOCKS;
+		false ->
+			?LEGACY_REWARD_HISTORY_BLOCKS
+	end.
+-else.
+legacy_reward_history_blocks(_Height) ->
+	?LEGACY_REWARD_HISTORY_BLOCKS.
 -endif.
 
 -ifdef(TESTNET).

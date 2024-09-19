@@ -5,8 +5,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [
-		wait_until_receives_txs/1, sign_v1_tx/3, read_block_when_stored/1]).
+-import(ar_test_node, [sign_v1_tx/3, read_block_when_stored/1]).
 
 ar_node_interface_test_() ->
 	{timeout, 300, fun test_ar_node_interface/0}.
@@ -44,13 +43,13 @@ test_mining_reward() ->
 			{B, TotalLocked + B#block.reward}
 		end,
 		{B1, Reward},
-		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
+		lists:seq(1, ?LOCKED_REWARDS_BLOCKS)
 	),
 	?assertEqual(Reward, ar_node:get_balance(Pub1)),
 
 	%% Unlock one more reward.
 	ar_test_node:mine(),
-	ar_test_node:wait_until_height(?REWARD_HISTORY_BLOCKS + 2),
+	ar_test_node:wait_until_height(?LOCKED_REWARDS_BLOCKS + 2),
 	FinalB = ar_node:get_current_block(),
 	?assertEqual(Reward + 10, ar_node:get_balance(Pub1)),
 	?assertEqual(
@@ -79,7 +78,7 @@ test_multi_node_mining_reward() ->
 			ar_test_node:mine(),
 			ar_test_node:wait_until_height(Height + 1)
 		end,
-		lists:seq(1, ?REWARD_HISTORY_BLOCKS)
+		lists:seq(1, ?LOCKED_REWARDS_BLOCKS)
 	),
 	?assertEqual(Reward, ar_node:get_balance(Pub1)).
 

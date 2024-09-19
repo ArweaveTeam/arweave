@@ -484,12 +484,18 @@ validate_block(denomination, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) -
 validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	#block{ reward = Reward, reward_history_hash = RewardHistoryHash,
 			denomination = Denomination, height = Height } = NewB,
-	#block{ reward_history = RewardHistory } = OldB,
+	#block{ reward_history = RewardHistory,
+			reward_history_hash = PreviousRewardHistoryHash } = OldB,
 	HashRate = ar_difficulty:get_hash_rate_fixed_ratio(NewB),
 	RewardAddr = NewB#block.reward_addr,
+	%% We are only slicing the locked rewards window here because it is
+	%% only used to compute the hash before 2.8 where the locked rewards
+	%% window was exactly the same as the reward history window (used in pricing.)
+	%% After 2.8 we only use the previous reward history hash and the head
+	%% of the history to compute the new hash.
 	LockedRewards = ar_rewards:trim_locked_rewards(Height,
 		[{RewardAddr, HashRate, Reward, Denomination} | RewardHistory]),
-	case ar_rewards:reward_history_hash(LockedRewards) of
+	case ar_rewards:reward_history_hash(Height, PreviousRewardHistoryHash, LockedRewards) of
 		RewardHistoryHash ->
 			validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors,
 					RecentTXMap});
@@ -814,7 +820,7 @@ augment_reward_history(PrevB = #block{ reward_history = RewardHistory }) ->
 
 test_update_accounts_receives_released_reward_and_prover_reward() ->
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
-	?assert(?REWARD_HISTORY_BLOCKS >= 3),
+	?assert(?LOCKED_REWARDS_BLOCKS >= 3),
 	?assert(?DOUBLE_SIGNING_PROVER_REWARD_SHARE == {1, 2}),
 	Accounts = #{},
 	Key = ar_wallet:new(),
@@ -846,7 +852,7 @@ update_accounts_does_not_let_banned_account_take_reward_test_() ->
 
 test_update_accounts_does_not_let_banned_account_take_reward() ->
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
-	?assert(?REWARD_HISTORY_BLOCKS >= 3),
+	?assert(?LOCKED_REWARDS_BLOCKS >= 3),
 	?assert(?DOUBLE_SIGNING_PROVER_REWARD_SHARE == {1, 2}),
 	Accounts = #{},
 	Key = ar_wallet:new(),
