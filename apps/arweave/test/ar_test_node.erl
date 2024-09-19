@@ -400,7 +400,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 		when MiningNodeCount == 2 orelse MiningNodeCount == 3 ->
 	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
 	RangeNumber = lists:nth(N, [0, 2, 4]),
-	[{?PARTITION_SIZE, RangeNumber, get_default_storage_module_packing(RewardAddr)}].
+	[{?PARTITION_SIZE, RangeNumber, get_default_storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
 	remote_call(Node, Module, Function, Args, 30000).
@@ -456,7 +456,7 @@ start(B0, RewardAddr) ->
 
 %% @doc Start a fresh node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
-	StorageModules = [{20 * 1024 * 1024, N, get_default_storage_module_packing(RewardAddr)}
+	StorageModules = [{20 * 1024 * 1024, N, get_default_storage_module_packing(RewardAddr, N)}
 			|| N <- lists:seq(0, 8)],
 	start(B0, RewardAddr, Config, StorageModules).
 
@@ -677,8 +677,8 @@ join(JoinOnNode, Rejoin) ->
 			clean_up_and_stop()
 	end,
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModulePacking = get_default_storage_module_packing(RewardAddr),
-	StorageModules = [{20 * 1024 * 1024, N, StorageModulePacking} || N <- lists:seq(0, 4)],
+	StorageModules = [{20 * 1024 * 1024, N,
+			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
 		mining_addr = RewardAddr,
@@ -689,12 +689,19 @@ join(JoinOnNode, Rejoin) ->
 	ar:start_dependencies(),
 	whereis(ar_node_worker).
 
-get_default_storage_module_packing(RewardAddr) ->
+get_default_storage_module_packing(RewardAddr, Index) ->
 	case ar_fork:height_2_8() of
 		infinity ->
 			{spora_2_6, RewardAddr};
-		_ ->
-			{composite, RewardAddr, 1}
+		0 ->
+			{composite, RewardAddr, 1};
+		_Height ->
+			case Index rem 2 of
+				0 ->
+					{spora_2_6, RewardAddr};
+				_ ->
+					{composite, RewardAddr, 1}
+			end
 	end.
 
 connect_to_peer(Node) ->
