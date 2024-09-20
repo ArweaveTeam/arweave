@@ -361,20 +361,8 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 				ok ->
 					case handle_store_chunk(Offset, Chunk, FileIndex, StoreID) of
 						{ok, FileIndex2} ->
-							case ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE,
-									Packing, ar_data_sync, StoreID) of
-								ok ->
-									?LOG_DEBUG([{event, repacked_chunk},
-											{storage_module, StoreID},
-											{offset, Offset},
-											{packing, encode_packing(Packing)}]);
-								Error ->
-									?LOG_ERROR([{event, failed_to_record_repacked_chunk},
-											{storage_module, StoreID},
-											{offset, Offset},
-											{packing, encode_packing(Packing)},
-											{error, io_lib:format("~p", [Error])}])
-							end,
+							ar_sync_record:add_repacked(Offset, Offset - ?DATA_CHUNK_SIZE,
+									Packing, ar_data_sync, StoreID),
 							{noreply, State2#state{ file_index = FileIndex2,
 									repack_cursor = Offset, prev_repack_cursor = PrevCursor }};
 						Error2 ->
