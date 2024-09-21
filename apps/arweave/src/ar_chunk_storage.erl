@@ -361,7 +361,8 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 				ok ->
 					case handle_store_chunk(Offset, Chunk, FileIndex, StoreID) of
 						{ok, FileIndex2} ->
-							ar_sync_record:add_repacked(Offset, Offset - ?DATA_CHUNK_SIZE,
+							ar_sync_record:add_async(repacked_chunk,
+									Offset, Offset - ?DATA_CHUNK_SIZE,
 									Packing, ar_data_sync, StoreID),
 							{noreply, State2#state{ file_index = FileIndex2,
 									repack_cursor = Offset, prev_repack_cursor = PrevCursor }};

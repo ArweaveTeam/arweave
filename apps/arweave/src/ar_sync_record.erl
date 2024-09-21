@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, get/2, get/3, add/4, add/5, add_repacked/5, delete/4, cut/3,
+-export([start_link/2, get/2, get/3, add/4, add/5, add_async/6, delete/4, cut/3,
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
 		get_next_unsynced_interval/4,
@@ -109,9 +109,9 @@ add(End, Start, Type, ID, StoreID) ->
 
 %% @doc Special case of add/5 for repacked chunks. When repacking the ar_sync_record add
 %% happens at the end so we don't need to block on it to complete.
-add_repacked(End, Start, Type, ID, StoreID) ->
+add_async(Event, End, Start, Type, ID, StoreID) ->
 	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
-	gen_server:cast(GenServerID, {add_repacked, End, Start, Type, ID}).
+	gen_server:cast(GenServerID, {add_async, Event, End, Start, Type, ID}).
 	
 %% @doc Remove the given interval from the record
 %% with the given ID. Store the changes on disk before
@@ -405,16 +405,18 @@ handle_cast(store_state, State) ->
 		?STORE_SYNC_RECORD_FREQUENCY_MS, gen_server, cast, [self(), store_state]),
 	{noreply, State2};
 
-handle_cast({add_repacked, End, Start, Type, ID}, State) ->
+handle_cast({add_async, Event, End, Start, Type, ID}, State) ->
 	{Reply, State2} = add2(End, Start, Type, ID, State),
 	case Reply of
 		ok ->
-			?LOG_DEBUG([{event, repacked_chunk},
+			?LOG_DEBUG([{event, Event},
+					{status, success},
 					{storage_module, ID},
 					{offset, End},
 					{packing, ar_chunk_storage:encode_packing(Type)}]);
 		Error ->
-			?LOG_ERROR([{event, failed_to_record_repacked_chunk},
+			?LOG_ERROR([{event, Event},
+					{status, failed},
 					{storage_module, ID},
 					{offset, End},
 					{packing, ar_chunk_storage:encode_packing(Type)},
