@@ -78,7 +78,7 @@ jobs:
             ar_webhook,
             ar_pool,
 
-            ## Test modules (note: that _tests are implicitly run by a matching prefix name
+            ## Test modules (note: that _tests are implicitly run by a matching prefix name)
             ar_base64_compatibility_tests,
             ar_config_tests,
             ar_difficulty_tests,
