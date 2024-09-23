@@ -404,19 +404,13 @@ get_recent_hash_list_diff(Peer, HL) ->
 	}), HL, Peer).
 
 %% @doc Fetch the reward history from one of the given peers. The reward history
-%% must contain ar_rewards:reward_history_length/1 elements. The reward history
+%% must contain ar_rewards:buffered_reward_history_length/1 elements. The reward history
 %% hashes are validated against the given ExpectedRewardHistoryHashes. Return not_found
 %% if we fail to fetch a reward history of the expected length from any of the peers.
 get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 	#block{ height = Height, indep_hash = H } = B,
-	ExpectedLength = ar_rewards:reward_history_length(Height),
-	DoubleCheckLength =
-		case Height >= ar_fork:height_2_8() of
-			true ->
-				?STORE_BLOCKS_BEHIND_CURRENT + 1;
-			false ->
-				?STORE_BLOCKS_BEHIND_CURRENT
-		end,
+	ExpectedLength = ar_rewards:buffered_reward_history_length(Height),
+	DoubleCheckLength = ar_rewards:expected_hashes_length(Height),
 	true = length(ExpectedRewardHistoryHashes) == min(
 													Height - ar_fork:height_2_6() + 1,
 													DoubleCheckLength),
@@ -433,6 +427,13 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 					case ar_rewards:validate_reward_history_hashes(Height, RewardHistory,
 							ExpectedRewardHistoryHashes) of
 						true ->
+							?LOG_DEBUG([
+								{event, received_valid_reward_history},
+								{peer, ar_util:format_peer(Peer)},
+								{height, Height},
+								{expected_length, ExpectedLength},
+								{length, length(RewardHistory)}
+							]),
 							{ok, RewardHistory};
 						false ->
 							?LOG_WARNING([{event, received_invalid_reward_history},

@@ -57,7 +57,7 @@ get_v2_price_per_gib_minute(Height, B) ->
 	end.
 
 get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
-	{HashRateTotal, RewardTotal} = ar_rewards:get_reward_history_totals(B),
+	{HashRateTotal, RewardTotal, History} = ar_rewards:get_reward_history_totals(B),
 	{IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount} =
 		ar_block_time_history:sum_history(B),
 	%% The intent of the SolutionsPerPartitionPerVDFStep is to estimate network replica
@@ -147,13 +147,13 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
 			IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
 		),
 	log_price_metrics(get_v2_price_per_gib_minute_two_difficulty,
-		Height, HashRateTotal, RewardTotal, 
+		Height, History, HashRateTotal, RewardTotal, 
 		IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount,
 		SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute),
 	PricePerGiBPerMinute.
 
 get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
-	{HashRateTotal, RewardTotal} = ar_rewards:get_reward_history_totals(B),
+	{HashRateTotal, RewardTotal, History} = ar_rewards:get_reward_history_totals(B),
 	{IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount} =
 		ar_block_time_history:sum_history(B),
 	%% The intent of the SolutionsPerPartitionPerVDFStep is to estimate network replica
@@ -214,13 +214,13 @@ get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
 			IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
 		),
 	log_price_metrics(get_v2_price_per_gib_minute_one_difficulty,
-		Height, HashRateTotal, RewardTotal, 
+		Height, History, HashRateTotal, RewardTotal, 
 		IntervalTotal, VDFIntervalTotal, OneChunkCount, TwoChunkCount,
 		SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute),
 	PricePerGiBPerMinute.
 
 get_v2_price_per_gib_minute_simple(B) ->
-	{HashRateTotal, RewardTotal} = ar_rewards:get_reward_history_totals(B),
+	{HashRateTotal, RewardTotal, _History} = ar_rewards:get_reward_history_totals(B),
 	%% 2 recall ranges per partition per second.
 	SolutionsPerPartitionPerSecond = 2 * (?LEGACY_RECALL_RANGE_SIZE) div (?DATA_CHUNK_SIZE),
 	SolutionsPerPartitionPerMinute = SolutionsPerPartitionPerSecond * 60,
@@ -742,10 +742,10 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
 	{Rate, CappedScheduledRate}.
 
 log_price_metrics(Event,
-		Height, HashRateTotal, RewardTotal, IntervalTotal, VDFIntervalTotal,
+		Height, History, HashRateTotal, RewardTotal, IntervalTotal, VDFIntervalTotal,
 		OneChunkCount, TwoChunkCount, SolutionsPerPartitionPerVDFStep, PricePerGiBPerMinute) ->
 
-	RewardHistoryLength = ar_rewards:reward_history_length(Height),
+	RewardHistoryLength = length(History),
 	AverageHashRate = HashRateTotal div RewardHistoryLength,
 	EstimatedDataSizeInBytes = network_data_size(Height,
 			AverageHashRate, IntervalTotal, VDFIntervalTotal, SolutionsPerPartitionPerVDFStep),
@@ -755,7 +755,7 @@ log_price_metrics(Event,
 	prometheus_gauge:set(v2_price_per_gibibyte_minute, PricePerGiBPerMinute),
 	prometheus_gauge:set(network_data_size, EstimatedDataSizeInBytes),
 
-	?LOG_DEBUG([{event, Event}, {height, Height},
+	?LOG_DEBUG([{event, Event}, {height, Height}, {reward_history_length, RewardHistoryLength},
 		{hash_rate_total, HashRateTotal}, {average_hash_rate, AverageHashRate},
 		{reward_total, RewardTotal},
 		{interval_total, IntervalTotal}, {vdf_interval_total, VDFIntervalTotal},

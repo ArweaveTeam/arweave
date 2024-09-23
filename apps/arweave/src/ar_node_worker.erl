@@ -1106,11 +1106,9 @@ pack_block_with_transactions(B, PrevB) ->
 	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
 			Denomination),
 	RewardHistory2 = ar_rewards:add_element(B2#block{ reward = Reward2 }, RewardHistory),
-	%% We are only slicing the locked rewards window here because it is
-	%% only used to compute the hash before 2.8 where the locked rewards
-	%% window was exactly the same as the reward history window (used in pricing.)
-	%% After 2.8 we only use the previous reward history hash and the head
-	%% of the history to compute the new hash.
+	%% Pre-2.8: slice the reward history to compute the hash
+	%% Post-2.8: use the previous reward history hash and the head of the history to compute
+	%% the new hash.
 	LockedRewards = ar_rewards:trim_locked_rewards(Height, RewardHistory2),
 	B2#block{
 		wallet_list = RootHash,
@@ -1118,7 +1116,7 @@ pack_block_with_transactions(B, PrevB) ->
 		reward = Reward2,
 		reward_history = RewardHistory2,
 		reward_history_hash = ar_rewards:reward_history_hash(Height, PreviousRewardHistoryHash,
-				LockedRewards),
+			LockedRewards),
 		debt_supply = DebtSupply2,
 		kryder_plus_rate_multiplier_latch = KryderPlusRateMultiplierLatch,
 		kryder_plus_rate_multiplier = KryderPlusRateMultiplier2
@@ -1682,7 +1680,7 @@ start_from_state(BI, Height) ->
 		{Skipped, Blocks} ->
 			BI2 = lists:nthtail(Skipped, BI),
 			Height2 = Height - Skipped,
-			RewardHistoryBI = ar_rewards:trim_reward_history(Height, BI2),
+			RewardHistoryBI = ar_rewards:trim_buffered_reward_history(Height, BI2),
 			BlockTimeHistoryBI = lists:sublist(BI2,
 					ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
 			case {ar_storage:read_reward_history(RewardHistoryBI),

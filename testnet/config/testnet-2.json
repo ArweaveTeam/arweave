@@ -24,7 +24,9 @@
     "debug": true,
     "mine": true,
     "enable": [
-        "remove_orphaned_storage_module_data"
+        "remove_orphaned_storage_module_data",
+        "randomx_large_pages",
+        "pack_served_chunks"
     ],
     "data_dir": "/arweave-data",
     "requests_per_minute_limit": 9000

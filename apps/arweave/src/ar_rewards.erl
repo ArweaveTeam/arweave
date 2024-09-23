@@ -1,12 +1,13 @@
 -module(ar_rewards).
 
--export([reward_history_length/1, set_reward_history/2, get_locked_rewards/1,
-		trim_locked_rewards/2, get_reward_history/1, trim_reward_history/2,
-		get_oldest_locked_address/1,
+-export([reward_history_length/1, expected_hashes_length/1, buffered_reward_history_length/1, 
+		set_reward_history/2, get_locked_rewards/1,
+		trim_locked_rewards/2, trim_reward_history/2,
+		trim_buffered_reward_history/2, get_oldest_locked_address/1,
 		add_element/2, has_locked_reward/2,
 		reward_history_hash/3, validate_reward_history_hashes/3,
 		get_total_reward_for_address/2, get_reward_history_totals/1,
-		apply_rewards/2, apply_reward/4]).
+		apply_rewards/2, apply_reward/4, log_reward_history/3]).
 
 -include_lib("arweave/include/ar.hrl").
 
@@ -19,6 +20,31 @@ reward_history_length(Height) ->
 			false ->
 				ar_testnet:legacy_reward_history_blocks(Height) + ?STORE_BLOCKS_BEHIND_CURRENT
 		end
+	).
+
+expected_hashes_length(Height) ->
+	case Height >= ar_fork:height_2_8() of
+		true ->
+			%% Take one more block.reward_history_hash because after 2.8 we use
+			%% the previous reward history hash to compute the new one.
+			?STORE_BLOCKS_BEHIND_CURRENT + 1;
+		false ->
+			?STORE_BLOCKS_BEHIND_CURRENT
+		end.
+
+%% @doc The reward history that gets cached in #block and returned by /reward_history has
+%% to be long enough to include:
+%% 1. The current reward history (i.e. reward_history_length(Height))
+%% 2. The reward history that was in use recently
+%%    (i.e. reward_history_length(Height - expected_hashes_length(Height)))
+%% 3. The current locked rewards (i.e. locked_rewards_blocks(Height))
+buffered_reward_history_length(Height) ->
+	max(
+		max(
+			reward_history_length(Height - expected_hashes_length(Height)),
+			reward_history_length(Height)
+		),
+		ar_testnet:locked_rewards_blocks(Height)
 	).
 
 %% @doc Add the corresponding reward history to every block record. We keep
@@ -39,10 +65,6 @@ set_reward_history([B | Blocks], RewardHistory) ->
 get_locked_rewards(B) ->
 	trim_locked_rewards(B#block.height, B#block.reward_history).
 
-%% @doc Return the most recent part of the reward history including the entire sliding window.
-get_reward_history(B) ->
-	trim_reward_history(B#block.height, B#block.reward_history).
-
 %% @doc Trim RewardHistory to just the locked rewards.
 trim_locked_rewards(Height, RewardHistory) ->
 	LockRewardsLength = ar_testnet:locked_rewards_blocks(Height),
@@ -52,6 +74,11 @@ trim_locked_rewards(Height, RewardHistory) ->
 %% sliding window plus a buffer of ?STORE_BLOCKS_BEHIND_CURRENT values.
 trim_reward_history(Height, RewardHistory) ->
 	lists:sublist(RewardHistory, reward_history_length(Height)).
+
+%% @doc See the buffered_reward_history_length/1 function for the distinction between
+%% reward_history_length/1 and buffered_reward_history_length/1.
+trim_buffered_reward_history(Height, RewardHistory) ->
+	lists:sublist(RewardHistory, buffered_reward_history_length(Height)).
 
 get_oldest_locked_address(B) ->
 	LockedRewards = get_locked_rewards(B),
@@ -65,7 +92,7 @@ add_element(B, RewardHistory) ->
 	HashRate = ar_difficulty:get_hash_rate_fixed_ratio(B),
 	Denomination = B#block.denomination,
 	RewardAddr = B#block.reward_addr,
-	trim_reward_history(Height, 
+	trim_buffered_reward_history(Height, 
 		[{RewardAddr, HashRate, Reward, Denomination} | RewardHistory]).
 
 has_locked_reward(_Addr, []) ->
@@ -102,11 +129,9 @@ validate_reward_history_hashes(Height, RewardHistory, [H]) ->
 
 validate_reward_history_hash(Height, PreviousRewardHistoryHash, H, RewardHistory) ->
 	H == reward_history_hash(Height, PreviousRewardHistoryHash,
-			%% We are only slicing the locked rewards window here because it is
-			%% only used to compute the hash before 2.8 where the locked rewards
-			%% window was exactly the same as the reward history window (used in pricing.)
-			%% After 2.8 we only use the previous reward history hash and the head
-			%% of the history to compute the new hash.
+			%% Pre-2.8: slice the reward history to compute the hash
+			%% Post-2.8: use the previous reward history hash and the head of the history to compute
+			%% the new hash.
 			trim_locked_rewards(Height, RewardHistory)).
 
 reward_history_hash(Height, PreviousRewardHistoryHash, History) ->
@@ -150,7 +175,9 @@ get_total_reward_for_address(Addr, [_ | LockedRewards], Denomination, Total) ->
 get_reward_history_totals(B) ->
 	Denomination = B#block.denomination,
 	History = trim_reward_history(B#block.height, B#block.reward_history),
-	get_totals(History, Denomination, 0, 0).
+	log_reward_history("get_reward_history_totals", History, 200),
+	{HashRateTotal, RewardTotal} = get_totals(History, Denomination, 0, 0),
+	{HashRateTotal, RewardTotal, History}.
 
 get_totals([], _Denomination, HashRateTotal, RewardTotal) ->
 	{HashRateTotal, RewardTotal};
@@ -209,3 +236,15 @@ apply_reward(Accounts, RewardAddr, Amount, Denomination) ->
 			ar_node_utils:update_account(RewardAddr, Balance2 + Amount, LastTX,
 				Denomination, MiningPermission, Accounts)
 	end.
+
+log_reward_history(Message, RewardHistory, N) ->
+	Length = length(RewardHistory),
+	LimitedRewardHistory = lists:sublist(RewardHistory, N),
+	LogEntries = lists:map(fun({Addr, HashRate, Reward, Denomination}) ->
+		EncodedAddr = ar_util:encode(Addr),
+		LogHashRate = math:log10(HashRate),
+		io_lib:format("{~s, ~p, ~p, ~p}", 
+						[EncodedAddr, LogHashRate, Reward, Denomination])
+	end, LimitedRewardHistory),
+	LogString = string:join(LogEntries, "; "),
+	?LOG_INFO("~s Length: ~p, Entries: ~s", [Message, Length, LogString]).	

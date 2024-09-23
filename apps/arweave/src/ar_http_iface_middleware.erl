@@ -849,7 +849,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 						{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
 								when (Status == on_chain orelse Status == validated),
 									Height >= Fork_2_6 ->
-							RewardHistory2 = ar_rewards:trim_reward_history(Height,
+							RewardHistory2 = ar_rewards:trim_buffered_reward_history(Height,
 									RewardHistory),
 							{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory2),
 									Req};
