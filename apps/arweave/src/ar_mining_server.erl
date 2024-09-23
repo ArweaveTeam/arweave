@@ -598,7 +598,7 @@ prepare_solution(steps, Candidate, Solution) ->
 							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
 					ar:console("WARNING: found a solution but failed to find checkpoints, "
 							"start step number: ~B, end step number: ~B, next_seed: ~s.",
-							[PrevStepNumber, StepNumber, PrevNextSeed]),
+							[PrevStepNumber, StepNumber, ar_util:safe_encode(PrevNextSeed)]),
 					may_be_leave_it_to_exit_peer(
 							prepare_solution(proofs, Candidate,
 									Solution#mining_solution{ steps = [] }));

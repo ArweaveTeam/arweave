@@ -427,15 +427,7 @@ request_block(H, WorkerQ, PeerQ) ->
 
 maybe_set_reward_history(Blocks, Peers) ->
 	HeadB = hd(Blocks),
-	ExpectedHashesLen =
-		case HeadB#block.height >= ar_fork:height_2_8() of
-			true ->
-				%% Take one more block.reward_history_hash because after 2.8 we use
-				%% the previous reward history hash to compute the new one.
-				?STORE_BLOCKS_BEHIND_CURRENT + 1;
-			false ->
-				?STORE_BLOCKS_BEHIND_CURRENT
-		end,
+	ExpectedHashesLen = ar_rewards:expected_hashes_length(HeadB#block.height),
 	ExpectedHashes = [B#block.reward_history_hash
 			|| B <- lists:sublist(Blocks, ExpectedHashesLen)],
 	case ar_http_iface_client:get_reward_history(Peers, HeadB, ExpectedHashes) of
@@ -445,6 +437,7 @@ maybe_set_reward_history(Blocks, Peers) ->
 			ar:console("Failed to fetch the reward history for the block ~s from "
 					"any of the peers. Consider changing the peers.~n",
 					[ar_util:encode((hd(Blocks))#block.indep_hash)]),
+			?LOG_WARNING([{event, failed_to_fetch_reward_history}]),
 			timer:sleep(1000),
 			erlang:halt()
 	end.

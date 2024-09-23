@@ -488,11 +488,9 @@ validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 			reward_history_hash = PreviousRewardHistoryHash } = OldB,
 	HashRate = ar_difficulty:get_hash_rate_fixed_ratio(NewB),
 	RewardAddr = NewB#block.reward_addr,
-	%% We are only slicing the locked rewards window here because it is
-	%% only used to compute the hash before 2.8 where the locked rewards
-	%% window was exactly the same as the reward history window (used in pricing.)
-	%% After 2.8 we only use the previous reward history hash and the head
-	%% of the history to compute the new hash.
+	%% Pre-2.8: slice the reward history to compute the hash
+	%% Post-2.8: use the previous reward history hash and the head of the history to compute
+	%% the new hash.
 	LockedRewards = ar_rewards:trim_locked_rewards(Height,
 		[{RewardAddr, HashRate, Reward, Denomination} | RewardHistory]),
 	case ar_rewards:reward_history_hash(Height, PreviousRewardHistoryHash, LockedRewards) of
