@@ -129,31 +129,46 @@ block_announcement_response_to_binary_test() ->
 	?assertEqual({ok, A4}, ar_serialize:binary_to_block_announcement_response(
 			ar_serialize:block_announcement_response_to_binary(A4))).
 
-poa_map_to_binary_test() ->
-	Proof = #{ chunk => crypto:strong_rand_bytes(1), data_path => <<>>,
+
+poa_map_to_json(Map) ->
+	jiffy:encode(ar_serialize:poa_map_to_json_map(Map)).
+
+json_to_poa_map(Body) ->
+	{ok, JSON} = ar_serialize:json_decode(Body, [return_maps]),
+	{ok, ar_serialize:json_map_to_poa_map(JSON)}.
+
+poa_map_test() ->
+	test_poa_map(fun ar_serialize:poa_map_to_binary/1, fun ar_serialize:binary_to_poa/1, #{}),
+	test_poa_map(fun poa_map_to_json/1, fun json_to_poa_map/1,
+		#{ data_size => 0, data_root => <<>> }).
+
+test_poa_map(Serialize, Deserialize, BaseProof) ->
+	Proof = BaseProof#{ chunk => crypto:strong_rand_bytes(1), data_path => <<>>,
 			tx_path => <<>>, packing => unpacked },
 	?assertEqual({ok, Proof},
-			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof))),
+			Deserialize(Serialize(Proof))),
 	Proof2 = Proof#{ chunk => crypto:strong_rand_bytes(256 * 1024) },
 	?assertEqual({ok, Proof2},
-			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof2))),
+			Deserialize(Serialize(Proof2))),
 	Proof3 = Proof2#{ data_path => crypto:strong_rand_bytes(1024),
 			packing => spora_2_5, tx_path => crypto:strong_rand_bytes(1024) },
 	?assertEqual({ok, Proof3},
-			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof3))),
+			Deserialize(Serialize(Proof3))),
 	Proof4 = Proof3#{ packing => {spora_2_6, crypto:strong_rand_bytes(33)} },
 	?assertEqual({ok, Proof4},
-			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof4))),
+			Deserialize(Serialize(Proof4))),
 	Proof5 = Proof3#{ packing => {composite, crypto:strong_rand_bytes(33), 2} },
 	?assertEqual({ok, Proof5},
-			ar_serialize:binary_to_poa(ar_serialize:poa_map_to_binary(Proof5))).
+			Deserialize(Serialize(Proof5))).
 
-poa_no_chunk_map_to_binary_test() ->
+poa_no_chunk_map_test() ->
+	test_poa_no_chunk_map(fun ar_serialize:poa_no_chunk_map_to_binary/1, fun ar_serialize:binary_to_no_chunk_map/1).
+
+test_poa_no_chunk_map(Serialize, Deserialize) ->
 	Proof = #{ data_path => crypto:strong_rand_bytes(500),
 		tx_path => crypto:strong_rand_bytes(250) },
 	?assertEqual({ok, Proof},
-			ar_serialize:binary_to_no_chunk_map(
-				ar_serialize:poa_no_chunk_map_to_binary(Proof))).
+			Deserialize(Serialize(Proof))).
 
 block_index_to_binary_test() ->
 	lists:foreach(
