@@ -172,7 +172,7 @@ set_storage_module_data_size(
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
 				{store_id, StoreID}, {store_label, StoreLabel},
-				{packing, ar_chunk_storage:encode_packing(Packing)},
+				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
 				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
@@ -180,7 +180,7 @@ set_storage_module_data_size(
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
 				{store_id, StoreID}, {store_label, StoreLabel},
-				{packing, ar_chunk_storage:encode_packing(Packing)},
+				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
 				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
@@ -188,7 +188,7 @@ set_storage_module_data_size(
 			?LOG_ERROR([{event, set_storage_module_data_size_failed},
 				{type, Type}, {reason, Reason},
 				{store_id, StoreID}, {store_label, StoreLabel},
-				{packing, ar_chunk_storage:encode_packing(Packing)},
+				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
 				{storage_module_index, StorageModuleIndex}, {data_size, DataSize} ])

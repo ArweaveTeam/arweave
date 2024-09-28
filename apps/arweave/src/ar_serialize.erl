@@ -28,7 +28,7 @@
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
 		partition_to_json_struct/4,
 		candidate_to_json_struct/1, solution_to_json_struct/1, json_map_to_solution/1,
-		json_map_to_candidate/1,
+		json_map_to_candidate/1, encode_packing/2, decode_packing/2,
 		jobs_to_json_struct/1, json_struct_to_jobs/1,
 		partial_solution_response_to_json_struct/1,
 		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1]).
@@ -1140,20 +1140,9 @@ encode_missing_tx_indices([Index | Indices], Encoded) ->
 
 poa_map_to_binary(#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath,
 		packing := Packing }) ->
-	Packing2 =
-		case Packing of
-			unpacked ->
-				<<"unpacked">>;
-			spora_2_5 ->
-				<<"spora_2_5">>;
-			{spora_2_6, Addr} ->
-				iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)]);
-			{composite, Addr, PackingDifficulty} ->
-				iolist_to_binary([<<"composite_">>, << PackingDifficulty:8 >>,
-						ar_util:encode(Addr)])
-		end,
+	BinaryPacking = packing_to_binary(Packing),
 	<< (encode_bin(Chunk, 24))/binary, (encode_bin(TXPath, 24))/binary,
-			(encode_bin(DataPath, 24))/binary, (encode_bin(Packing2, 8))/binary >>.
+			(encode_bin(DataPath, 24))/binary, (encode_bin(BinaryPacking, 8))/binary >>.
 
 poa_no_chunk_map_to_binary(#{ tx_path := TXPath, data_path := DataPath }) ->
 	<< (encode_bin(TXPath, 24))/binary, (encode_bin(DataPath, 24))/binary >>.
@@ -1161,37 +1150,14 @@ poa_no_chunk_map_to_binary(#{ tx_path := TXPath, data_path := DataPath }) ->
 binary_to_poa(<< ChunkSize:24, Chunk:ChunkSize/binary,
 		TXPathSize:24, TXPath:TXPathSize/binary,
 		DataPathSize:24, DataPath:DataPathSize/binary,
-		PackingSize:8, Packing:PackingSize/binary >>) ->
-	Packing2 =
-		case Packing of
-			<<"unpacked">> ->
-				unpacked;
-			<<"spora_2_5">> ->
-				spora_2_5;
-			<< "spora_2_6_", Addr/binary >> when byte_size(Addr) =< 64 ->
-				case ar_util:safe_decode(Addr) of
-					{ok, DecodedAddr} ->
-						{spora_2_6, DecodedAddr};
-					_ ->
-						error
-				end;
-			<< "composite_", PackingDifficulty:8, Addr/binary >>
-					when byte_size(Addr) =< 64, PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
-				case ar_util:safe_decode(Addr) of
-					{ok, DecodedAddr} ->
-						{composite, DecodedAddr, PackingDifficulty};
-					_ ->
-						error
-				end;
-			_ ->
-				error
-		end,
-	case Packing2 of
+		PackingSize:8, PackingBinary:PackingSize/binary >>) ->
+	Packing = binary_to_packing(PackingBinary, error),
+	case Packing of
 		error ->
 			{error, invalid_packing};
 		_ ->
 			{ok, #{ chunk => Chunk, data_path => DataPath, tx_path => TXPath,
-					packing => Packing2 }}
+					packing => Packing }}
 	end;
 binary_to_poa(_Rest) ->
 	{error, invalid_input}.
@@ -1771,20 +1737,12 @@ json_struct_to_block_index(JSONStruct) ->
 
 poa_map_to_json_map(Map) ->
 	#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath, packing := Packing } = Map,
-	SerializedPacking =
-		case Packing of
-			unpacked ->
-				<<"unpacked">>;
-			spora_2_5 ->
-				<<"spora_2_5">>;
-			{spora_2_6, Addr} ->
-				iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)])
-		end,
+	BinaryPacking = iolist_to_binary(encode_packing(Packing, true)),
 	Map2 = #{
 		chunk => ar_util:encode(Chunk),
 		tx_path => ar_util:encode(TXPath),
 		data_path => ar_util:encode(DataPath),
-		packing => SerializedPacking
+		packing => BinaryPacking
 	},
 	case maps:get(end_offset, Map, not_found) of
 		not_found ->
@@ -1814,23 +1772,14 @@ json_map_to_poa_map(JSON) ->
 		tx_path => ar_util:decode(maps:get(<<"tx_path">>, JSON, <<>>)),
 		data_size => binary_to_integer(maps:get(<<"data_size">>, JSON, <<"0">>))
 	},
-	Map2 =
-		case maps:get(<<"packing">>, JSON, <<"unpacked">>) of
-			<<"unpacked">> ->
-				maps:put(packing, unpacked, Map);
-			<<"spora_2_5">> ->
-				maps:put(packing, spora_2_5, Map);
-			<< Type:10/binary, Addr/binary >>
-					when Type == <<"spora_2_6_">>, byte_size(Addr) =< 64 ->
-				case ar_util:safe_decode(Addr) of
-					{ok, DecodedAddr} ->
-						maps:put(packing, {spora_2_6, DecodedAddr}, Map);
-					_ ->
-						error(unsupported_packing)
-				end;
-			_ ->
-				error(unsupported_packing)
-		end,
+	PackingJSON = maps:get(<<"packing">>, JSON, <<"unpacked">>),
+	Packing = decode_packing(PackingJSON, error),
+	Map2 = case Packing of
+		error ->
+			error({unsupported_packing, PackingJSON});
+		Packing ->
+			maps:put(packing, Packing, Map)
+	end,
 	case maps:get(<<"offset">>, JSON, none) of
 		none ->
 			Map2;
@@ -2158,6 +2107,82 @@ partition_to_json_struct(Bucket, BucketSize, Addr, PackingDifficulty) ->
 				Fields
 		end,
 	{Fields2}.
+
+encode_packing(any, false) ->
+	"any";
+encode_packing({spora_2_6, Addr}, _Strict) ->
+	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
+encode_packing({composite, Addr, PackingDifficulty}, _Strict) ->
+	"composite_" ++ binary_to_list(ar_util:encode(Addr)) ++ "."
+			++ integer_to_list(PackingDifficulty);
+encode_packing(spora_2_5, _Strict) ->
+	"spora_2_5";
+encode_packing(unpacked, _Strict) ->
+	"unpacked".
+
+decode_packing(<<"unpacked">>, _Error) ->
+	unpacked;
+decode_packing(<<"spora_2_5">>, _Error) ->
+	spora_2_5;
+decode_packing(<< "spora_2_6_", Addr/binary >>, Error) ->
+		case ar_util:safe_decode(Addr) of
+			{ok, DecodedAddr} ->
+				{spora_2_6, DecodedAddr};
+			_ ->
+				Error
+		end;
+decode_packing(<<"composite_", Rest/binary>>, Error) ->
+	case binary:split(Rest, <<".">>, [global]) of
+		[AddrBin, PackingDifficultyBin] ->
+			case catch binary_to_integer(PackingDifficultyBin) of
+				PackingDifficulty when is_integer(PackingDifficulty),
+						PackingDifficulty >= 0,
+						PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
+					case ar_util:safe_decode(AddrBin) of
+						{ok, DecodedAddr} ->
+							{composite, DecodedAddr, PackingDifficulty};
+						_ ->
+							Error
+					end;
+				_ ->
+					Error
+			end;
+		_ ->
+			Error
+	end;
+decode_packing(_, Error) ->
+	Error.
+
+binary_to_packing(<<"unpacked">>, _Error) ->
+	unpacked;
+binary_to_packing(<<"spora_2_5">>, _Error) ->
+	spora_2_5;
+binary_to_packing(<< "spora_2_6_", Addr/binary >>, Error) when byte_size(Addr) =< 64 ->
+	case ar_util:safe_decode(Addr) of
+		{ok, DecodedAddr} ->
+			{spora_2_6, DecodedAddr};
+		_ ->
+			Error
+	end;
+binary_to_packing(<< "composite_", PackingDifficulty:8, Addr/binary >>, Error)
+		when byte_size(Addr) =< 64,
+		PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
+	case ar_util:safe_decode(Addr) of
+		{ok, DecodedAddr} ->
+			{composite, DecodedAddr, PackingDifficulty};
+		_ ->
+			Error
+	end.
+
+packing_to_binary(unpacked) ->
+	<<"unpacked">>;
+packing_to_binary(spora_2_5) ->
+	<<"spora_2_5">>;
+packing_to_binary({spora_2_6, Addr}) ->
+	iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)]);
+packing_to_binary({composite, Addr, PackingDifficulty}) ->
+	iolist_to_binary([<<"composite_">>, << PackingDifficulty:8 >>,
+						ar_util:encode(Addr)]).
 
 pool_cm_jobs_to_json_struct(Jobs) ->
 	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs,

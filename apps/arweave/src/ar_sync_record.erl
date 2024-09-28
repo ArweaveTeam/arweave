@@ -413,13 +413,13 @@ handle_cast({add_async, Event, End, Start, Type, ID}, State) ->
 					{status, success},
 					{storage_module, ID},
 					{offset, End},
-					{packing, ar_chunk_storage:encode_packing(Type)}]);
+					{packing, ar_serialize:encode_packing(Type, true)}]);
 		Error ->
 			?LOG_ERROR([{event, Event},
 					{status, failed},
 					{storage_module, ID},
 					{offset, End},
-					{packing, ar_chunk_storage:encode_packing(Type)},
+					{packing, ar_serialize:encode_packing(Type, true)},
 					{error, io_lib:format("~p", [Error])}])
 	end,
 	{noreply, State2};

@@ -1547,8 +1547,8 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 				{{error, Reason}, _} ->
 					?LOG_ERROR([{event, failed_to_repack_chunk},
 							{tags, [solution_proofs]},
-							{packing, ar_chunk_storage:encode_packing(Packing)},
-							{stored_packing, ar_chunk_storage:encode_packing(StoredPacking)},
+							{packing, ar_serialize:encode_packing(Packing, true)},
+							{stored_packing, ar_serialize:encode_packing(StoredPacking, true)},
 							{absolute_end_offset, AbsoluteOffset},
 							{store_id, StoreID},
 							{error, io_lib:format("~p", [Reason])}]),
@@ -1589,9 +1589,9 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 								false ->
 									?LOG_ERROR([{event, fetched_chunk_invalid_packing_id},
 											{tags, [solution_proofs]},
-											{packing, ar_chunk_storage:encode_packing(Packing)},
+											{packing, ar_serialize:encode_packing(Packing, true)},
 											{stored_packing,
-												ar_chunk_storage:encode_packing(StoredPacking)},
+												ar_serialize:encode_packing(StoredPacking, true)},
 											{absolute_end_offset, AbsoluteOffset},
 											{store_id, StoreID},
 											{expected_chunk_id, ar_util:encode(ChunkID)},
@@ -1646,7 +1646,7 @@ read_chunk_with_metadata(
 							{tags, [solution_proofs]},
 							{seek_offset, SeekOffset},
 							{store_id, StoreID},
-							{stored_packing, ar_chunk_storage:encode_packing(StoredPacking)},
+							{stored_packing, ar_serialize:encode_packing(StoredPacking, true)},
 							{modules_covering_seek_offset, ModuleIDs},
 							{error, io_lib:format("~p", [Err])}]);
 				false ->
@@ -1675,7 +1675,7 @@ read_chunk_with_metadata(
 									{seek_offset, SeekOffset},
 									{store_id, StoreID},
 									{stored_packing,
-										ar_chunk_storage:encode_packing(StoredPacking)},
+										ar_serialize:encode_packing(StoredPacking, true)},
 									{modules_covering_seek_offset, ModuleIDs},
 									{chunk_data_key, ar_util:encode(ChunkDataKey)}]);
 						false ->
@@ -1707,7 +1707,7 @@ read_chunk_with_metadata(
 								{modules_covering_seek_offset, ModuleIDs},
 								{root_sync_records, RootRecords},
 								{stored_packing,
-									ar_chunk_storage:encode_packing(StoredPacking)}]),
+									ar_serialize:encode_packing(StoredPacking, true)}]),
 							%% The chunk should have been re-packed
 							%% in the meantime - very unlucky timing.
 							{error, chunk_not_found};

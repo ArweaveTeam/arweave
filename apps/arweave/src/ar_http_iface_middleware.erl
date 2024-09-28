@@ -1985,39 +1985,10 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 			case << Offset:(?NOTE_SIZE * 8) >> of
 				%% A positive number represented by =< ?NOTE_SIZE bytes.
 				<< Offset:(?NOTE_SIZE * 8) >> ->
-					RequestedPacking =
-						case cowboy_req:header(<<"x-packing">>, Req, not_set) of
-							not_set ->
-								unpacked;
-							<<"unpacked">> ->
-								unpacked;
-							<<"spora_2_5">> ->
-								spora_2_5;
-							<< "spora_2_6_", Addr:43/binary >> ->
-								case ar_util:safe_decode(Addr) of
-									{ok, DecodedAddr} ->
-										{spora_2_6, DecodedAddr};
-									_ ->
-										any
-								end;
-							<< "composite_", Addr:43/binary, ".",
-									PackingDifficultyBin/binary >> ->
-								case catch binary_to_integer(PackingDifficultyBin) of
-									PackingDifficulty when is_integer(PackingDifficulty),
-											PackingDifficulty >= 0,
-											PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
-										case ar_util:safe_decode(Addr) of
-											{ok, DecodedAddr} ->
-												{composite, DecodedAddr, PackingDifficulty};
-											_ ->
-												any
-										end;
-									_ ->
-										any
-								end;
-							_ ->
-								any
-						end,
+					RequestedPacking = ar_serialize:decode_packing(
+						cowboy_req:header(<<"x-packing">>, Req, <<"unpacked">>),
+						any
+					),
 					IsBucketBasedOffset =
 						case cowboy_req:header(<<"x-bucket-based-offset">>, Req, not_set) of
 							not_set ->

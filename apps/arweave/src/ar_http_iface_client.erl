@@ -306,20 +306,7 @@ get_sync_record(Peer, Start, Limit) ->
 	}), Start, Limit).
 
 get_chunk_binary(Peer, Offset, RequestedPacking) ->
-	PackingBinary =
-		case RequestedPacking of
-			any ->
-				<<"any">>;
-			unpacked ->
-				<<"unpacked">>;
-			spora_2_5 ->
-				<<"spora_2_5">>;
-			{spora_2_6, Addr} ->
-				iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)]);
-			{composite, Addr, PackingDifficulty} ->
-				iolist_to_binary([<<"composite_">>, ar_util:encode(Addr),
-						".", integer_to_binary(PackingDifficulty)])
-		end,
+	PackingBinary = iolist_to_binary(ar_serialize:encode_packing(RequestedPacking, false)),
 	Headers = [{<<"x-packing">>, PackingBinary},
 			%% The nodes not upgraded to the 2.5 version would ignore this header.
 			%% It is fine because all offsets before 2.5 are not bucket-based.

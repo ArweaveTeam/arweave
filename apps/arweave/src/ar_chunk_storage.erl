@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, encode_packing/1, put/2, put/3,
+-export([start_link/2, put/2, put/3,
 		open_files/1, get/1, get/2, get/5, read_chunk2/5, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, 
 		list_files/2, run_defragmentation/0]).
@@ -31,16 +31,6 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
-
-encode_packing({spora_2_6, Addr}) ->
-	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
-encode_packing({composite, Addr, PackingDifficulty}) ->
-	"composite_" ++ binary_to_list(ar_util:encode(Addr)) ++ "."
-			++ integer_to_list(PackingDifficulty);
-encode_packing(spora_2_5) ->
-	"spora_2_5";
-encode_packing(unpacked) ->
-	"unpacked".
 
 %% @doc Start the server.
 start_link(Name, StoreID) ->
@@ -370,7 +360,7 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 									{storage_module, StoreID},
 									{offset, Offset},
-									{packing, encode_packing(Packing)},
+									{packing, ar_serialize:encode_packing(Packing, true)},
 									{error, io_lib:format("~p", [Error2])}]),
 							{noreply, State2}
 					end;
@@ -378,7 +368,7 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 					?LOG_ERROR([{event, failed_to_remove_repacked_chunk_from_sync_record},
 							{storage_module, StoreID},
 							{offset, Offset},
-							{packing, encode_packing(Packing)},
+							{packing, ar_serialize:encode_packing(Packing, true)},
 							{error, io_lib:format("~p", [Error3])}]),
 					{noreply, State2}
 			end
@@ -774,7 +764,7 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 					"node with the new storage module.~n", []),
 			?LOG_INFO([{event, repacking_complete},
 					{storage_module, StoreID},
-					{target_packing, encode_packing(Packing)}]),
+					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
 			Server = list_to_atom("ar_chunk_storage_"
 					++ ar_storage_module:label_by_id(StoreID)),
 			gen_server:cast(Server, repacking_complete),
@@ -872,7 +862,8 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 								?LOG_WARNING([{event,
 											repacking_process_chunk_already_repacked},
 										{storage_module, StoreID},
-										{packing, encode_packing(RequiredPacking)},
+										{packing,
+											ar_serialize:encode_packing(RequiredPacking,true)},
 										{offset, AbsoluteOffset}]),
 								ok;
 							{true, Packing} ->
