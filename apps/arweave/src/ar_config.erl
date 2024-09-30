@@ -1,7 +1,7 @@
 -module(ar_config).
 
--export([use_remote_vdf_server/0, pull_from_remote_vdf_server/0, compute_own_vdf/0,
-		is_vdf_server/0, is_public_vdf_server/0,
+-export([validate_config/1, use_remote_vdf_server/0, pull_from_remote_vdf_server/0,
+		compute_own_vdf/0, is_vdf_server/0, is_public_vdf_server/0,
 		parse/1, parse_storage_module/1, log_config/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -12,6 +12,12 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+validate_config(Config) ->
+	validate_init(Config) andalso
+	validate_repack_in_place(Config) andalso
+	validate_cm_pool(Config) andalso
+	validate_storage_modules(Config).
 
 use_remote_vdf_server() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -85,6 +91,10 @@ parse_storage_module(IOList) ->
 %%% Private functions.
 %%%===================================================================
 
+
+%% -------------------------------------------------------------------
+%% @doc Parse the configuration options.
+%% -------------------------------------------------------------------
 parse_options({KVPairs}) when is_list(KVPairs) ->
 	parse_options(KVPairs, #config{});
 parse_options(JsonValue) ->
@@ -842,3 +852,89 @@ format_storage_module({RangeSize, RangeNumber, {composite, MiningAddress, Packin
 	{RangeSize, RangeNumber, {composite, format_binary(MiningAddress), PackingDiff}};
 format_storage_module(StorageModule) ->
 	StorageModule.
+
+%% -------------------------------------------------------------------
+%% @doc Validate the configuration options.
+%% -------------------------------------------------------------------
+validate_init(Config) ->
+	case Config#config.init of
+		true ->
+			case ?NETWORK_NAME of
+				"arweave.N.1" ->
+					io:format("~nCannot start a new network with the mainnet name! "
+							"Use ./bin/start-localnet ... when running from sources "
+							"or compile via ./rebar3 as localnet tar and use "
+							"./bin/start ... as usual.~n~n"),
+					false;
+				_ ->
+					true
+			end;
+		false ->
+			true
+	end.
+validate_repack_in_place(Config) ->
+	Modules = [ar_storage_module:id(M) || M <- Config#config.storage_modules],
+	validate_repack_in_place(Config#config.repack_in_place_storage_modules, Modules).
+
+validate_repack_in_place([], _Modules) ->
+	true;
+validate_repack_in_place([{Module, _ToPacking} | L], Modules) ->
+	ID = ar_storage_module:id(Module),
+	case lists:member(ID, Modules) of
+		true ->
+			io:format("~nCannot use the storage module ~s "
+					"while it is being repacked in place.~n~n", [ID]),
+			false;
+		false ->
+			validate_repack_in_place(L, Modules)
+	end.
+
+validate_cm_pool(Config) ->
+	A = case {Config#config.coordinated_mining, Config#config.is_pool_server} of
+		{true, true} ->
+			io:format("~nThe pool server node cannot participate "
+					"in the coordinated mining.~n~n"),
+			false;
+		_ ->
+			true
+	end,
+	B = case {Config#config.is_pool_server, Config#config.is_pool_client} of
+		{true, true} ->
+			io:format("~nThe node cannot be a pool server and a pool client "
+					"at the same time.~n~n"),
+			false;
+		_ ->
+			true
+	end,
+	C = case {Config#config.is_pool_client, Config#config.mine} of
+		{true, false} ->
+			io:format("~nThe mine flag must be set along with the is_pool_client flag.~n~n"),
+			false;
+		_ ->
+			true
+	end,
+	A andalso B andalso C.
+
+validate_storage_modules(#config{ mine = false }) ->
+	true;
+validate_storage_modules(Config) ->
+	MiningAddr = Config#config.mining_addr,
+	UniquePackingDifficulties = lists:foldl(
+		fun({_, _, {composite, Addr, Difficulty}}, Acc) when Addr =:= MiningAddr ->
+			sets:add_element(Difficulty, Acc);
+		({_, _, {spora_2_6, Addr}}, Acc) when Addr =:= MiningAddr ->
+			sets:add_element(0, Acc);
+		(_, Acc) ->
+			Acc
+		end,
+		sets:new(),
+		Config#config.storage_modules
+	),
+	case sets:size(UniquePackingDifficulties) =< 1 of
+		true ->
+			true;
+		false ->
+			io:format("~nThe node cannot mine multiple packing difficulties "
+					"for the same mining address.~n~n"),
+			false
+	end.
