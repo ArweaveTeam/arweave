@@ -5,9 +5,16 @@
 -include_lib("eunit/include/eunit.hrl").
 
 parse_test_() ->
-	{timeout, 60, fun parse_config/0}.
+	{timeout, 60, fun test_parse_config/0}.
 
-parse_config() ->
+validate_test_() ->
+	[
+		{timeout, 60, fun test_validate_repack_in_place/0},
+		{timeout, 60, fun test_validate_cm_pool/0},
+		{timeout, 60, fun test_validate_storage_modules/0}
+	].
+
+test_parse_config() ->
 	ExpectedMiningAddr = ar_util:decode(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>),
 	{ok, ParsedConfig} = ar_config:parse(config_fixture()),
 	ExpectedBlockHash = ar_util:decode(
@@ -132,3 +139,131 @@ config_fixture() ->
 	Path = filename:join(Cwd, "./apps/arweave/test/ar_config_tests_config_fixture.json"),
 	{ok, FileData} = file:read_file(Path),
 	FileData.
+
+test_validate_repack_in_place() ->
+	Addr1 = crypto:strong_rand_bytes(32),
+	Addr2 = crypto:strong_rand_bytes(32),
+	?assertEqual(true,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = []})),
+	?assertEqual(true,
+			ar_config:validate_config(#config{
+				storage_modules = [{?PARTITION_SIZE, 0, {spora_2_6, Addr1}}],
+				repack_in_place_storage_modules = []})),
+	?assertEqual(true,
+		ar_config:validate_config(#config{
+			storage_modules = [{?PARTITION_SIZE, 0, {spora_2_6, Addr1}}],
+			repack_in_place_storage_modules = [
+				{{?PARTITION_SIZE, 1, {spora_2_6, Addr1}}, {spora_2_6, Addr2}}]})),
+	?assertEqual(false,
+		ar_config:validate_config(#config{
+			storage_modules = [{?PARTITION_SIZE, 0, {spora_2_6, Addr1}}],
+			repack_in_place_storage_modules = [
+				{{?PARTITION_SIZE, 0, {spora_2_6, Addr1}}, {spora_2_6, Addr2}}]})).
+	
+test_validate_cm_pool() ->
+	?assertEqual(false,
+		ar_config:validate_config(
+			#config{coordinated_mining = true, is_pool_server = true})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{coordinated_mining = true, is_pool_server = false})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{coordinated_mining = false, is_pool_server = true})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{coordinated_mining = false, is_pool_server = false})),
+	?assertEqual(false, 
+		ar_config:validate_config(
+			#config{is_pool_server = true, is_pool_client = true, mine = true})),
+	?assertEqual(true, 
+		ar_config:validate_config(
+			#config{is_pool_server = true, is_pool_client = false})),
+	?assertEqual(true, 
+		ar_config:validate_config(
+			#config{is_pool_server = false, is_pool_client = true, mine = true})),
+	?assertEqual(true, 
+		ar_config:validate_config(
+			#config{is_pool_server = false, is_pool_client = false, mine = true})),
+	?assertEqual(false, 
+		ar_config:validate_config(
+			#config{is_pool_client = true, mine = false})),
+	?assertEqual(true, 
+		ar_config:validate_config(
+			#config{is_pool_client = true, mine = true})),
+	?assertEqual(true, 
+		ar_config:validate_config(
+			#config{is_pool_client = false, mine = true})),
+	?assertEqual(true, 
+		ar_config:validate_config(
+			#config{is_pool_client = false, mine = false})).
+
+test_validate_storage_modules() ->
+	Addr1 = crypto:strong_rand_bytes(32),
+	Addr2 = crypto:strong_rand_bytes(32),
+	LegacyPacking = {spora_2_6, Addr1},
+	Composite1Packing = {composite, Addr1, 1},
+	Composite32Packing = {composite, Addr1, 32},
+
+	Unpacked = {?PARTITION_SIZE, 0, unpacked},
+	Legacy = {?PARTITION_SIZE, 1, LegacyPacking},
+	Composite1A = {?PARTITION_SIZE, 2, Composite1Packing},
+	Composite1B = {?PARTITION_SIZE, 4, Composite1Packing},
+	Composite32 = {?PARTITION_SIZE, 3, Composite32Packing},
+
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Unpacked, Legacy, Composite1A, Composite1B, Composite32],
+				mining_addr = Addr1,
+				mine = false})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Unpacked, Legacy, Composite1A, Composite1B, Composite32],
+				mining_addr = Addr2,
+				mine = true})),
+	?assertEqual(false,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Unpacked, Legacy, Composite1A, Composite32],
+				mining_addr = Addr1,
+				mine = true})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Unpacked, Legacy],
+				mining_addr = Addr1,
+				mine = true})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Unpacked, Composite1A, Composite1B],
+				mining_addr = Addr1,
+				mine = true})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Unpacked, Composite32],
+				mining_addr = Addr1,
+				mine = true})),
+	?assertEqual(false,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Legacy, Composite1A],
+				mining_addr = Addr1,
+				mine = true})),
+	?assertEqual(false,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Legacy, Composite32],
+				mining_addr = Addr1,
+				mine = true})),
+	?assertEqual(false,
+		ar_config:validate_config(
+			#config{
+				storage_modules = [Composite1A, Composite32],
+				mining_addr = Addr1,
+				mine = true})).

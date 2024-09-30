@@ -654,24 +654,14 @@ start(Config) ->
 			logger:add_handler(console, logger_std_h, #{level => all});
 		_->
 			ok
-  end,
-	case Config#config.init of
+  	end,
+	case ar_config:validate_config(Config) of
 		true ->
-			case ?NETWORK_NAME of
-				"arweave.N.1" ->
-					io:format("~nCannot start a new network with the mainnet name! "
-							"Use ./bin/start-localnet ... when running from sources "
-							"or compile via ./rebar3 as localnet tar and use "
-							"./bin/start ... as usual.~n~n"),
-					erlang:halt();
-				_ ->
-					ok
-			end;
+			ok;
 		false ->
-			ok
+			timer:sleep(2000),
+			erlang:halt()
 	end,
-	validate_repack_in_place_config(Config),
-	validate_cm_pool_config(Config),
 	ok = application:set_env(arweave, config, Config),
 	filelib:ensure_dir(Config#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
@@ -683,52 +673,6 @@ start(Config) ->
 			ok
 	end,
 	start_dependencies().
-
-validate_repack_in_place_config(Config) ->
-	Modules = [ar_storage_module:id(M) || M <- Config#config.storage_modules],
-	validate_repack_in_place_config(Config#config.repack_in_place_storage_modules, Modules).
-
-validate_repack_in_place_config([], _Modules) ->
-	ok;
-validate_repack_in_place_config([{Module, _ToPacking} | L], Modules) ->
-	ID = ar_storage_module:id(Module),
-	case lists:member(ID, Modules) of
-		true ->
-			io:format("~nCannot use the storage module ~s "
-					"while it is being repacked in place.~n~n", [ID]),
-			timer:sleep(2000),
-			erlang:halt();
-		false ->
-			validate_repack_in_place_config(L, Modules)
-	end.
-
-validate_cm_pool_config(Config) ->
-	case {Config#config.coordinated_mining, Config#config.is_pool_server} of
-		{true, true} ->
-			io:format("~nThe pool server node cannot participate "
-					"in the coordinated mining.~n~n"),
-			timer:sleep(1000),
-			erlang:halt();
-		_ ->
-			ok
-	end,
-	case {Config#config.is_pool_server, Config#config.is_pool_client} of
-		{true, true} ->
-			io:format("~nThe node cannot be a pool server and a pool client "
-					"at the same time.~n~n"),
-			timer:sleep(1000),
-			erlang:halt();
-		_ ->
-			ok
-	end,
-	case {Config#config.is_pool_client, Config#config.mine} of
-		{true, false} ->
-			io:format("~nThe mine flag must be set along with the is_pool_client flag.~n~n"),
-			timer:sleep(1000),
-			erlang:halt();
-		_ ->
-			ok
-	end.
 
 start(normal, _Args) ->
 	{ok, Config} = application:get_env(arweave, config),
