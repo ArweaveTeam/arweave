@@ -3,6 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(dirname "$0")"
+SCRIPT_ACTION="start"
 
 # Sets $ARWEAVE and $ARWEAVE_* variables
 source $SCRIPT_DIR/arweave.env
