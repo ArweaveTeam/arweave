@@ -21,5 +21,5 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	ets:new(ar_kv, [set, public, named_table, {keypos, 2}]),
+	ar_kv:create_ets(),
 	{ok, {{one_for_one, 5, 10}, [?CHILD(ar_kv, worker)]}}.

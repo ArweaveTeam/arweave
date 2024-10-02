@@ -2,8 +2,11 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, open/2, open/3, open/4, put/3, get/2, get_next_by_prefix/4, get_next/2,
-		get_prev/2, get_range/2, get_range/3, delete/2, delete_range/3, count/1]).
+-export([
+	start_link/0, create_ets/0, open/2, open/3, open/4, put/3, get/2,
+	get_next_by_prefix/4, get_next/2, get_prev/2, get_range/2, get_range/3,
+	delete/2, delete_range/3, count/1
+]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -58,6 +61,13 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+
+
+%% @doc Creates a named ETS table.
+%% This function is used within `ar_kv_sup` as well as `ar_test_node` modules.
+create_ets() ->
+	ets:new(?MODULE, [set, public, named_table, {keypos, #db.name}]).
 
 
 

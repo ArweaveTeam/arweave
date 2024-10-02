@@ -328,7 +328,7 @@ write_genesis_files(DataDir, B0) ->
 		end,
 		B0#block.txs
 	),
-	ets:new(ar_kv, [set, public, named_table]),
+	ar_kv:create_ets(),
 	ar_kv:start_link(),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
@@ -499,7 +499,7 @@ restart() ->
 
 restart(Node) ->
 	remote_call(Node, ?MODULE, restart, []).
-	
+
 start_peer(Node, Args) when is_list(Args) ->
 	remote_call(Node, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
 	wait_until_joined(Node),
