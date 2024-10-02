@@ -37,7 +37,7 @@ read_block_index() ->
 	case block_index_tip() of
 		not_found ->
 			not_found;
-		{Height,{H, _, _, PrevH}} ->
+		{Height,{_H, _, _, _PrevH}} ->
 			{ok, Map} = ar_kv:get_range(block_index_db, << 0:256 >>, << Height:256 >>),
 			read_block_index_from_map(Map, 0, Height, <<>>, [])
 	end.
@@ -135,7 +135,7 @@ store_block_index(BI) ->
 
 %% @doc Record the block index update on disk. Remove the orphans, if any.
 
-update_block_index(NewTipHeight, OrphanCount, _BI) 
+update_block_index(NewTipHeight, OrphanCount, _BI)
 		when NewTipHeight < 0 orelse OrphanCount < 0 ->
 	{error, badarg};
 update_block_index(NewTipHeight, OrphanCount, BI) ->
@@ -1529,7 +1529,7 @@ test_update_block_index() ->
 		]),
 		"Negative tip"
 	),
-	
+
 	?assertEqual(
 		{error, badarg},
 		update_block_index(0, -1, [
@@ -1702,7 +1702,3 @@ test_update_block_index() ->
 		{<<"hash_o">>, 0, <<"root_o">>},
 		{<<"hash_j">>, 0, <<"root_j">>}
 	], read_block_index()).
-
-
-
-

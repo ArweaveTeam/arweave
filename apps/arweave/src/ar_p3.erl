@@ -64,10 +64,10 @@ handle_call({reverse_charge, Transaction}, _From, State) ->
 	{
 		reply,
 	 	ar_p3_db:reverse_transaction(
-			Transaction#p3_transaction.address, 
+			Transaction#p3_transaction.address,
 			Transaction#p3_transaction.id),
 		State
-	}; 
+	};
 
 handle_call({get_balance, Address, Asset}, _From, State) ->
 	{reply, ar_p3_db:get_balance(Address, Asset), State};
@@ -178,7 +178,7 @@ validate_mod_seq(ModSeq, _Req, ServiceConfig) when is_integer(ModSeq) ->
 			{error, stale_mod_seq}
 	end;
 validate_mod_seq(_ModSeq, _Req, _ServiceConfig) ->
-	{error, invalid_mod_seq}.	
+	{error, invalid_mod_seq}.
 
 validate_endpoint(Req, ServiceConfig) ->
 	Endpoint = cowboy_req:header(?P3_ENDPOINT_HEADER, Req),
@@ -339,5 +339,6 @@ apply_deposit(TX) ->
 	PublicKey = {TX#tx.signature_type, TX#tx.owner},
 	{ok, _} = ar_p3_db:get_or_create_account(Sender, PublicKey, ?ARWEAVE_AR),
 	{ok, _} = ar_p3_db:post_deposit(Sender, TX#tx.quantity, TX#tx.id),
+	?LOG_INFO([{event, ar_p3}, {op, deposit}, {sender, Sender},
+		{target, TX#tx.target}, {quantity, TX#tx.quantity}]),
 	ok.
-

@@ -3388,7 +3388,7 @@ find_storage_module_for_disk_pool_chunk(Offset) ->
 sort_storage_modules_for_disk_pool_chunk(Modules) ->
 	{ok, Config} = application:get_env(arweave, config),
 	MiningAddress = Config#config.mining_addr,
-    CompareFun = 
+    CompareFun =
 		fun({_, _, {spora_2_6, Addr1}}, {_, _, {spora_2_6, _}}) ->
 			%% Storage modules for our current mining address have the highest priority
 			Addr1 == MiningAddress;
