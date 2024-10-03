@@ -415,7 +415,7 @@ open(#db{} = DbRec0) ->
 
 
 
-%% Attempt to close the database.
+%% Attempt to close the database and remove the ETS entries related to it.
 %% This function WILL NOT perform any actions regarding persistence: it is up to
 %% the user to ensure that both flush/1 and sync_wal/1 functions are called prior
 %% calling this function.
@@ -426,6 +426,7 @@ close(#db{db_handle = Db, name = Name}) ->
 	try
 		case rocksdb:close(Db) of
 			ok ->
+				true = ets:match_delete(?MODULE, #db{db_handle = Db, _ = '_'}),
 				?LOG_INFO([{event, db_operation}, {op, close}, {name, io_lib:format("~p", [Name])}]);
 			{error, CloseError} ->
 				?LOG_ERROR([
