@@ -21,9 +21,6 @@
 	create_if_missing => true,
 	create_missing_column_families => true,
 
-	%% enable atomic_flush for dbs that utilize column families
-	atomic_flush => true,
-
 	%% these are default values, but they must not be overriden;
 	%% otherwise the syncWAL will not work.
 	allow_mmap_reads => false,
@@ -391,6 +388,7 @@ open(#db{
 } = DbRec0) ->
 	case rocksdb:open(Filepath, DbOptions, CfDescriptors) of
 		{ok, Db, Cfs} ->
+			_ = flush(Db),
 			lists:foreach(
 				fun({Cf, CfName}) ->
 					?LOG_INFO([{event, db_operation}, {op, open}, {name, io_lib:format("~p", [CfName])}]),

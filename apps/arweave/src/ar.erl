@@ -276,7 +276,6 @@ show_help() ->
 					"to this peer. You can specify several vdf_client_peer options."},
 			{"debug",
 				"Enable extended logging."},
-			{"repair_rocksdb (file)", "Attempt to repair the given RocksDB database."},
 			{"run_defragmentation",
 				"Run defragmentation of chunk storage files."},
 			{"defragmentation_trigger_threshold",
@@ -556,8 +555,6 @@ parse_cli_args(["vdf_client_peer", RawPeer | Rest],
 	parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [RawPeer | Peers] });
 parse_cli_args(["debug" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ debug = true });
-parse_cli_args(["repair_rocksdb", Path | Rest], #config{ repair_rocksdb = L } = C) ->
-	parse_cli_args(Rest, C#config{ repair_rocksdb = [filename:absname(Path) | L] });
 parse_cli_args(["run_defragmentation" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ run_defragmentation = true });
 parse_cli_args(["defragmentation_trigger_threshold", Num | Rest], C) ->
