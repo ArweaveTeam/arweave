@@ -267,9 +267,10 @@ count(Name) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
+	{ok, Config} = application:get_env(arweave, config),
 	S0 = #state{
-		db_flush_timer = #timer{interval_ms = 1800000},
-		wal_sync_timer = #timer{interval_ms = 60000}
+		db_flush_timer = #timer{interval_ms = Config#config.rocksdb_flush_interval_s * 1000},
+		wal_sync_timer = #timer{interval_ms = Config#config.rocksdb_wal_sync_interval_s * 1000}
 	},
 	S1 = init_db_flush_timer(S0),
 	S2 = init_wal_sync_timer(S1),
@@ -589,13 +590,13 @@ with_db(Name, Op, Callback) ->
 %% The callback will get the database record (#db{}) as an argument.
 with_each_db(Callback) ->
 	ets:foldl(
-		fun(#db{db_handle = Db} = DbRec0, Closed) ->
-				case sets:is_element(Db, Closed) of
+		fun(#db{db_handle = Db} = DbRec0, Acc) ->
+				case sets:is_element(Db, Acc) of
 					true ->
-						Closed;
+						Acc;
 					false ->
 						_ = apply(Callback, [DbRec0]),
-						sets:add_element(Db, Closed)
+						sets:add_element(Db, Acc)
 				end
 		end,
 		sets:new(),
