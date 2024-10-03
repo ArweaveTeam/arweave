@@ -734,13 +734,8 @@ destroy(Name) ->
 
 
 test_close(Name) ->
-	[{_, {DB, _}}] = ets:lookup(?MODULE, Name),
-	ok = rocksdb:close(DB),
-	case ets:lookup(?MODULE, {config, Name}) of
-		[{_, {_, _, _, CfNames}}] ->
-			[ets:delete(?MODULE, {config, Name2}) || Name2 <- CfNames],
-			[ets:delete(?MODULE, Name2) || Name2 <- CfNames];
-		_ ->
-			ets:delete(?MODULE, {config, Name}),
-			ets:delete(?MODULE, Name)
-	end.
+	?WITH_DB(Name, fun(Db) ->
+		_ = flush(Db),
+		_ = sync_wal(Db),
+		_ = close(Db)
+	end).
