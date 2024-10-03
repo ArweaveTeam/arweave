@@ -336,7 +336,7 @@ show_help() ->
 					"Useful if you have multiple machines (or replicas) "
 					"and you want to monitor them separately on pool"},
 			{"rocksdb_flush_interval", "RocksDB flush interval in seconds"},
-			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"},
+			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"}
 		]
 	),
 	erlang:halt().
