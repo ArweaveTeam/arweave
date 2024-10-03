@@ -4,19 +4,22 @@
 
 -module(ar_http_iface_client).
 
--export([send_block_json/3, send_block_binary/3, send_block_binary/4, send_tx_json/3,
-		send_tx_binary/3, send_block_announcement/2, get_block_shadow/2, get_block_shadow/3,
-		get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peer/2, get_tx_data/2,
-		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
-		add_peer/1, get_info/1, get_info/2, get_peers/1, get_time/2, get_height/1,
-		get_block_index/3, get_sync_record/1, get_sync_record/3,
-		get_chunk_binary/3, get_mempool/1, get_sync_buckets/1,
-		get_recent_hash_list/1, get_recent_hash_list_diff/2, get_reward_history/3,
-		get_block_time_history/3,
-		push_nonce_limiter_update/3, get_vdf_update/1, get_vdf_session/1,
-		get_previous_vdf_session/1, get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
-		cm_publish_send/2, get_jobs/2, post_partial_solution/2,
-		get_pool_cm_jobs/2, post_pool_cm_jobs/2, post_cm_partition_table_to_pool/2]).
+-export([send_block_json/3, send_block_binary/3, send_block_binary/4,
+	 send_tx_json/3, send_tx_binary/3, send_block_announcement/2,
+	 get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peer/2,
+	 get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
+	 get_wallet_list/2, add_peer/1, get_info/1, get_info/2, get_peers/1,
+	 get_time/2, get_height/1, get_block_index/3, get_sync_record/1,
+	 get_sync_record/3, get_chunk_binary/3, get_mempool/1,
+	 get_sync_buckets/1, get_recent_hash_list/1,
+	 get_recent_hash_list_diff/2, get_reward_history/3,
+	 get_block_time_history/3, push_nonce_limiter_update/3,
+	 get_vdf_update/1, get_vdf_session/1, get_previous_vdf_session/1,
+	 get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
+	 cm_publish_send/2, get_jobs/2, post_partial_solution/2,
+	 get_pool_cm_jobs/2, post_pool_cm_jobs/2,
+	 post_cm_partition_table_to_pool/2]).
+-export([get_block_shadow/2, get_block_shadow/3, get_block_shadow/4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -122,20 +125,38 @@ get_block(Peer, H, TXIndices) ->
 			{B, Time, Size}
 	end.
 
-%% @doc Retreive a block shadow by hash or height from one of the given peers.
-get_block_shadow([], _ID) ->
-	unavailable;
+%%--------------------------------------------------------------------
+%% @doc get a block shadow using default parameter.
+%% @end
+%%--------------------------------------------------------------------
 get_block_shadow(Peers, ID) ->
-	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	case get_block_shadow(ID, Peer, binary) of
+	get_block_shadow(Peers, ID, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc Retrieve a block shadow by hash or height from one of the given
+%%      peers. Some options can be modified like `rand_min',
+%%      `connect_timeout' and `timeout'.
+%% @see get_block_shadow/4
+%% @end
+%%--------------------------------------------------------------------
+get_block_shadow([], _ID, _Opts) ->
+	unavailable;
+get_block_shadow(Peers, ID, Opts) ->
+	RandMin = maps:get(rand_min, Opts, 5),
+	Random = rand:uniform(min(RandMin, length(Peers))),
+	Peer = lists:nth(Random, Peers),
+	case get_block_shadow(ID, Peer, binary, Opts) of
 		not_found ->
-			get_block_shadow(Peers -- [Peer], ID);
+			get_block_shadow(Peers -- [Peer], ID, Opts);
 		{ok, B, Time, Size} ->
 			{Peer, B, Time, Size}
 	end.
 
-%% @doc Retreive a block shadow by hash or height from the given peer.
-get_block_shadow(ID, Peer, Encoding) ->
+%%--------------------------------------------------------------------
+%% @doc Retrieve a block shadow by hash or height from the given peer.
+%% @end
+%%--------------------------------------------------------------------
+get_block_shadow(ID, Peer, Encoding, _Opts) ->
 	handle_block_response(Peer, Encoding,
 		ar_http:req(#{
 			method => get,
@@ -1102,7 +1123,7 @@ get_info(Peer) ->
 			timeout => 2 * 1000
 		})
 	of
-		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> 
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} ->
 			case ar_serialize:json_decode(JSON, [return_maps]) of
 				{ok, JsonMap} ->
 					JsonMap;

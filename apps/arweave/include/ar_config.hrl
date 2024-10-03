@@ -105,6 +105,9 @@
 %% The default number of chunks fetched from disk at a time during in-place repacking.
 -define(DEFAULT_REPACK_BATCH_SIZE, 100).
 
+%% default filtering value for the peer list (30days)
+-define(CURRENT_PEERS_LIST_FILTER, 30*60*60*24).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,

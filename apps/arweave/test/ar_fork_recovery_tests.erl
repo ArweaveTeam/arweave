@@ -165,7 +165,10 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Assert the nodes have continued building on the original fork.
 	[{H3, _, _} | _] = ar_test_node:wait_until_height(peer1, 2),
 	?assertNotEqual(B2#block.indep_hash, H3),
-	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow(1, ar_test_node:peer_ip(peer1), binary),
+	{_Peer, B3, _Time, _Size} =
+	ar_http_iface_client:get_block_shadow(1,
+		ar_test_node:peer_ip(peer1),
+		binary, #{}),
 	?assertEqual(H2, B3#block.indep_hash).
 
 fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->

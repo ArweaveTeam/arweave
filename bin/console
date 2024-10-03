@@ -8,4 +8,4 @@ SCRIPT_ACTION="remote_console"
 
 # Sets $ARWEAVE and $ARWEAVE_* variables
 source ${SCRIPT_DIR}/arweave.env
-$(ARWEAVE} ${SCRIPT_ACTION}
+${ARWEAVE} ${SCRIPT_ACTION}

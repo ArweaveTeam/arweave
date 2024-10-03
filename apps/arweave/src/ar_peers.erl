@@ -17,6 +17,9 @@
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+-export([set_tag/3, get_tag/2]).
+-export([connected_peer/1, disconnected_peer/1, is_connected_peer/1]).
+-export([get_connection_timestamp_peer/1]).
 
 %% The frequency in seconds of re-resolving DNS of peers configured by domain names.
 -define(STORE_RESOLVED_DOMAIN_S, 60).
@@ -149,24 +152,46 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+%%--------------------------------------------------------------------
 %% @doc Return the list of peers in the given ranking order.
-%% Rating is an estimate of the peer's effective throughput in bytes per millisecond.
+%%      Rating is an estimate of the peer's effective throughput in
+%%      bytes per millisecond.
 %%
-%% 'lifetime' considers all data ever received from this peer and is most useful when we care
-%% more about identifying "good samaritans" rather than maximizing throughput (e.g. when
-%% polling for new blocks are determing which peer's blocks to validated first).
+%%      `lifetime' considers all data ever received from this peer and
+%%      is most useful when we care more about identifying "good
+%%      samaritans" rather than maximizing throughput (e.g. when
+%%      polling for new blocks are determing which peer's blocks to
+%%      validated first).
 %%
-%% 'current' weights recently received data higher than old data and is most useful when we care
-%% more about maximizing throughput (e.g. when syncing chunks).
+%%      `current' weights recently received data higher than old data
+%%      and is most useful when we care more about maximizing throughput
+%%      (e.g. when syncing chunks).
+%%
+%% @end
+%%--------------------------------------------------------------------
 get_peers(Ranking) ->
 	case catch ets:lookup(?MODULE, {peers, Ranking}) of
 		{'EXIT', _} ->
 			[];
 		[] ->
 			[];
+		[{{peers, lifetime}, Peers}] ->
+			Peers;
+		[{{peers, current}, Peers}] ->
+			filter_peers(Peers, {timestamp, ?CURRENT_PEERS_LIST_FILTER});
 		[{_, Peers}] ->
 			Peers
 	end.
+
+filter_peers(Peers, {timestamp, Seconds})
+	when is_integer(Seconds) ->
+		Timefilter = erlang:system_time(seconds) - Seconds,
+		Tag = {connection, last},
+		Pattern = {{ar_tags, ?MODULE, '$1', Tag}, '$3'},
+		Guard = [{'>=', '$3', Timefilter}],
+		Select = ['$1'],
+		TaggedPeers = ets:select(?MODULE, [{Pattern, Guard, Select}]),
+		[ P || T <- TaggedPeers, P <- Peers, T =:= P ].
 
 get_peer_performances(Peers) ->
 	lists:foldl(
@@ -541,6 +566,15 @@ load_peers() ->
 			recalculate_total_rating(lifetime),
 			recalculate_total_rating(current),
 			?LOG_INFO([{event, polled_saved_peers}]),
+			ar:console("Polled saved peers.~n");
+		{ok, {_TotalRating, Records, Tags}} ->
+			?LOG_INFO([{event, polling_saved_peers}, {records, length(Records)}]),
+			ar:console("Polling saved peers...~n"),
+			load_peers(Records),
+			recalculate_total_rating(lifetime),
+			recalculate_total_rating(current),
+			[ ets:insert(?MODULE, {K, V}) || {K, V} <- Tags ],
+			?LOG_INFO([{event, polled_saved_peers}]),
 			ar:console("Polled saved peers.~n")
 	end.
 
@@ -904,13 +938,122 @@ store_peers() ->
 					[],
 					?MODULE
 				),
-			?LOG_INFO([{event, store_peers}, {total, Total}, {records, length(Records)}]),
-			ar_storage:write_term(peers, {Total, Records})
+			Tags = ets:foldl(fun ({{ar_tags, _, _, _}, _} = Tag, Acc) ->
+						[Tag|Acc];
+					     (_, Acc) -> Acc
+					end, [], ?MODULE),
+			?LOG_INFO([{event, store_peers}
+				   , {total, Total}
+				   , {records, length(Records)}
+				   , {tags, length(Tags)}]),
+			ar_storage:write_term(peers, {Total, Records, Tags})
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc internal function to tag a peer.
+%% @end
+%%--------------------------------------------------------------------
+set_tag(Peer, Tag, Value) ->
+	ets:insert(?MODULE, {{ar_tags, ?MODULE, Peer, Tag}, Value}).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc internal function to get tag value set on a peer.
+%% @end
+%%--------------------------------------------------------------------
+get_tag(Peer, Tag) ->
+	Pattern = {{ar_tags, ?MODULE, Peer, Tag}, '$1'},
+	Guard = [],
+	Select = ['$1'],
+	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
+		[] -> {error, not_found};
+		[V] -> {ok, V}
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc defined a peer as connected (in HTTP sense).
+%% @end
+%%--------------------------------------------------------------------
+connected_peer(Peer) ->
+	set_tag(Peer, {connection, last}, erlang:system_time(second)),
+	set_tag(Peer, {connection, active}, true).
+
+%%--------------------------------------------------------------------
+%% @doc defined a peer as disconnected (in HTTP sense).
+%% @end
+%%--------------------------------------------------------------------
+disconnected_peer(Peer) ->
+	set_tag(Peer, {connection, active}, false).
+
+%%--------------------------------------------------------------------
+%% @doc returns peer's timestamp.
+%% @end
+%%--------------------------------------------------------------------
+get_connection_timestamp_peer(Peer) ->
+	case get_tag(Peer, {connection, last}) of
+		{ok, V} -> V;
+		_ -> undefined
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc returns the HTTP connection state of a peer.
+%% @end
+%%--------------------------------------------------------------------
+is_connected_peer(Peer) ->
+	case get_tag(Peer, {connection, active}) of
+		{ok, V} -> V;
+		{error, _} -> false
 	end.
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+connected_peer_test() ->
+	Peer = {100, 117, 109, 98, 1234},
+
+	% drop all objects from the table to start with a clean state
+	ets:delete_all_objects(?MODULE),
+
+	% get all peers connected, it should returns nothing by
+	% default because the table is empty.
+	?assertEqual(undefined, get_connection_timestamp_peer(Peer)),
+
+	% manually add a new peer using set_ranked_peers function.
+	% the node is not connected because gun did not manage the
+	% connection in this test.
+	set_ranked_peers(lifetime, [Peer]),
+	set_ranked_peers(current, [Peer]),
+	?assertEqual(false, is_connected_peer(Peer)),
+	?assertEqual(undefined, get_connection_timestamp_peer(Peer)),
+
+	% force this peer to be connected using connected_peer
+	% function. A timestamp is created.
+	connected_peer(Peer),
+	Timestamp = get_connection_timestamp_peer(Peer),
+	?assertEqual(true, is_connected_peer(Peer)),
+	?assertEqual(Timestamp, get_connection_timestamp_peer(Peer)),
+	?assertNotEqual(undefined, get_connection_timestamp_peer(Peer)),
+	?assertEqual([Peer], get_peers(lifetime)),
+	?assertEqual([Peer], get_peers(current)),
+
+	% Now remove the connection to the peer. A timestamp must
+	% still be there.
+	disconnected_peer(Peer),
+	?assertEqual(false, is_connected_peer(Peer)),
+	?assertNotEqual(undefined, get_connection_timestamp_peer(Peer)),
+	?assertEqual([Peer], get_peers(lifetime)),
+	?assertEqual([Peer], get_peers(current)),
+
+	% let modify manually the timestamp to check get_peers/1
+	% function, and overwrite Peer timestamp with some defined
+	% values.
+	Time = erlang:system_time(second),
+	% Go above the limit
+	Limit = Time-((?CURRENT_PEERS_LIST_FILTER+10)*60*60*24),
+	set_tag(Peer, {connection, last}, Limit),
+	?assertEqual([], get_peers(current)),
+	?assertEqual([Peer], get_peers(lifetime)).
 
 rotate_peer_ports_test() ->
 	Peer = {2, 2, 2, 2, 1},

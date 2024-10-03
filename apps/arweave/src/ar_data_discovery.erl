@@ -7,6 +7,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
 
 -record(state, {
@@ -204,9 +205,8 @@ pick_peers(Peers, PeerLen, N) ->
 
 collect_peers() ->
 	N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-	%% rank peers by their current rating since we care about their recent throughput performance
+	%% rank peers by their current rating since we care out their recent throughput performance
 	collect_peers(lists:sublist(ar_peers:get_peers(current), N)).
-
 collect_peers([Peer | Peers]) ->
 	gen_server:cast(?MODULE, {add_peer, Peer}),
 	collect_peers(Peers);
