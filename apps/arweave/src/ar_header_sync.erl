@@ -482,7 +482,7 @@ check_fork(Height, H, TXRoot) ->
 	end.
 
 download_block(H, H2, TXRoot) ->
-	Peers = ar_peers:get_peers(lifetime),
+	Peers = ar_peers:get_peers(current),
 	case ar_storage:read_block(H) of
 		unavailable ->
 			download_block(Peers, H, H2, TXRoot);
@@ -492,7 +492,8 @@ download_block(H, H2, TXRoot) ->
 
 download_block(Peers, H, H2, TXRoot) ->
 	Fork_2_0 = ar_fork:height_2_0(),
-	case ar_http_iface_client:get_block_shadow(Peers, H) of
+	Opts = #{ rand_min => length(Peers) },
+	case ar_http_iface_client:get_block_shadow(Peers, H, Opts) of
 		unavailable ->
 			?LOG_WARNING([
 				{event, ar_header_sync_failed_to_download_block_header},

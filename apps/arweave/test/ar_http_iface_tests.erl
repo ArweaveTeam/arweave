@@ -458,15 +458,14 @@ test_get_last_tx_single({_, _, _, {_, StaticPub}}) ->
 %% @doc Ensure that blocks can be received via a hash.
 test_get_block_by_hash({B0, _, _, _}) ->
 	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(B0#block.indep_hash,
-			ar_test_node:peer_ip(main), binary),
+			ar_test_node:peer_ip(main), binary, #{}),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
 	?assertEqual(B0#block{ size_tagged_txs = unset, account_tree = undefined, txs = TXIDs,
 			reward_history = [], block_time_history = [] }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
 test_get_block_by_height({B0, _, _, _}) ->
-	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(0, ar_test_node:peer_ip(main),
-			binary),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(0, ar_test_node:peer_ip(main), binary, #{}),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
 	?assertEqual(B0#block{ size_tagged_txs = unset, account_tree = undefined, txs = TXIDs,
 			reward_history = [], block_time_history = [] }, B1).
@@ -474,7 +473,8 @@ test_get_block_by_height({B0, _, _, _}) ->
 test_get_current_block({B0, _, _, _}) ->
 	Peer = ar_test_node:peer_ip(main),
 	{ok, BI} = ar_http_iface_client:get_block_index(Peer, 0, 100),
-	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(hd(BI), Peer, binary),
+	{_Peer, B1, _Time, _Size} =
+	ar_http_iface_client:get_block_shadow(hd(BI), Peer, binary, #{}),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
 	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs, reward_history = [],
 			block_time_history = [], account_tree = undefined }, B1),
