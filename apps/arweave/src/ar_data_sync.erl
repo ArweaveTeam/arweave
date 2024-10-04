@@ -302,7 +302,8 @@ maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
 %%
 %% Options:
 %%	_________________________________________________________________________________________
-%%	packing				| required; spora_2_5 or unpacked or {spora_2_6, <Mining Address>};
+%%	packing				| required; spora_2_5 or unpacked or {spora_2_6, <Mining Address>}
+%%							or {composite, <MiningAddress>, <Difficulty>;
 %%	_________________________________________________________________________________________
 %%	pack				| if false and a packed chunk is requested but stored unpacked or
 %%						| an unpacked chunk is requested but stored packed, return
@@ -3383,24 +3384,24 @@ find_storage_module_for_disk_pool_chunk(Offset) ->
 			ar_storage_module:id(hd(SortedModules))
 	end.
 
-%% @doc ensure we store the disk pool chunk in the most useful storage module. Primarily relevant
-%% for tests and miners that are repacking data between storage modules.
+%% @doc Ensure we store the disk pool chunk in the most useful storage module.
+%% Primarily relevant for tests and miners that are repacking data between storage modules.
 sort_storage_modules_for_disk_pool_chunk(Modules) ->
 	{ok, Config} = application:get_env(arweave, config),
 	MiningAddress = Config#config.mining_addr,
     CompareFun =
-		fun({_, _, {spora_2_6, Addr1}}, {_, _, {spora_2_6, _}}) ->
-			%% Storage modules for our current mining address have the highest priority
-			Addr1 == MiningAddress;
-		({_, _, {spora_2_6, _}}, {_, _, spora_2_5}) ->
-			% spora_2_6 entries come before spora_2_5
-			true;
-		({_, _, spora_2_5}, {_, _, {spora_2_6, _}}) ->
-			% spora_2_5 entries come after spora_2_6
-			false;
-		(_, _) ->
-			% Default fallback for any other cases
-			true
+		fun({_, _, {composite, Addr1, _}}, _) ->
+				%% Storage modules with composite packing
+				%% for our current mining address have the highest priority.
+				Addr1 == MiningAddress;
+			(_, {_, _, {composite, Addr1, _}}) ->
+				Addr1 == MiningAddress;
+			({_, _, {spora_2_6, Addr1}}, _) ->
+				Addr1 == MiningAddress;
+			(_, {_, _, {spora_2_6, Addr1}}) ->
+				Addr1 == MiningAddress;
+			(_, _) ->
+				true
 		end,
     lists:sort(CompareFun, Modules).
 
