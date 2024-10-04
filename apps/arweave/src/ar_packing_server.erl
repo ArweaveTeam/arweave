@@ -582,7 +582,7 @@ repack_no_nif(Args) ->
 	case unpack(StoredPacking, ChunkOffset, TXRoot,
 			Chunk, ChunkSize, PackingState, External) of
 		{ok, Unpacked, _WasAlreadyUnpacked} ->
-			case pack(RequestedPacking, ChunkOffset, TXRoot, Chunk, PackingState, External) of
+			case pack(RequestedPacking, ChunkOffset, TXRoot, Unpacked, PackingState, External) of
 				{ok, Packed, _WasAlreadyPacked} ->
 					{ok, Packed, Unpacked};
 				Error2 ->
