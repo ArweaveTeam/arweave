@@ -63,10 +63,23 @@ start2([]) ->
 	erlang:halt();
 start2(Peers) ->
 	ar:console("Joining the Arweave network...~n"),
-	[{H, _, _} | _ ] = BI = get_block_index(Peers, ?REJOIN_RETRIES),
+	[{H, _, _} | _] = BI = get_block_index(Peers, ?REJOIN_RETRIES),
 	ar:console("Downloaded the block index successfully.~n", []),
 	B = get_block(Peers, H),
-	do_join(Peers, B, BI).
+	ExpectedBIMerkleH = ar_unbalanced_merkle:block_index_to_merkle_root(tl(BI)),
+	case B#block.hash_list_merkle of
+		ExpectedBIMerkleH ->
+			do_join(Peers, B, BI);
+		_ ->
+			{ok, Config} = application:get_env(arweave, config),
+			ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
+			File = filename:join(Config#config.data_dir,
+					"inconsistent_joining_data_dump_" ++ ID),
+			file:write_file(File, term_to_binary({B, Peers, BI})),
+			ar:console("Inconsistent head block and block index. Error dump: ~s.", [File]),
+			timer:sleep(2000),
+			erlang:halt()
+	end.
 
 get_block_index(Peers, Retries) ->
 	case get_block_index(Peers) of
