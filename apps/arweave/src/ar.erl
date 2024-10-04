@@ -276,7 +276,6 @@ show_help() ->
 					"to this peer. You can specify several vdf_client_peer options."},
 			{"debug",
 				"Enable extended logging."},
-			{"repair_rocksdb (file)", "Attempt to repair the given RocksDB database."},
 			{"run_defragmentation",
 				"Run defragmentation of chunk storage files."},
 			{"defragmentation_trigger_threshold",
@@ -335,7 +334,9 @@ show_help() ->
 			{"pool_server_address", "The pool address"},
 			{"pool_worker_name", "(optional) The pool worker name. "
 					"Useful if you have multiple machines (or replicas) "
-					"and you want to monitor them separately on pool"}
+					"and you want to monitor them separately on pool"},
+			{"rocksdb_flush_interval", "RocksDB flush interval in seconds"},
+			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"}
 		]
 	),
 	erlang:halt().
@@ -556,8 +557,6 @@ parse_cli_args(["vdf_client_peer", RawPeer | Rest],
 	parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [RawPeer | Peers] });
 parse_cli_args(["debug" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ debug = true });
-parse_cli_args(["repair_rocksdb", Path | Rest], #config{ repair_rocksdb = L } = C) ->
-	parse_cli_args(Rest, C#config{ repair_rocksdb = [filename:absname(Path) | L] });
 parse_cli_args(["run_defragmentation" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ run_defragmentation = true });
 parse_cli_args(["defragmentation_trigger_threshold", Num | Rest], C) ->
@@ -628,6 +627,10 @@ parse_cli_args(["pool_server_address", Host | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_server_address = list_to_binary(Host) });
 parse_cli_args(["pool_worker_name", Host | Rest], C) ->
 	parse_cli_args(Rest, C#config{ pool_worker_name = list_to_binary(Host) });
+parse_cli_args(["rocksdb_flush_interval", Seconds | Rest], C) ->
+	parse_cli_args(Rest, C#config{ rocksdb_flush_interval_s = list_to_integer(Seconds) });
+parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
+	parse_cli_args(Rest, C#config{ rocksdb_wal_sync_interval_s = list_to_integer(Seconds) });
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->

@@ -13,9 +13,9 @@ help() ->
 	ar:console("data-doctor dump <min_height> <max_height> <data_dir> <output_dir>~n"),
 	ar:console("  min_height: The minimum height of the blocks to dump.~n"),
 	ar:console("  max_height: The maximum height of the blocks to dump.~n"),
-	ar:console("  data_dir: Full path to your data_dir.~n"), 
-	ar:console("  output_dir: Full path to a directory where the dumped data will be written.~n"), 
-	ar:console("~nExample:~n"), 
+	ar:console("  data_dir: Full path to your data_dir.~n"),
+	ar:console("  output_dir: Full path to a directory where the dumped data will be written.~n"),
+	ar:console("~nExample:~n"),
 	ar:console("data-doctor dump /mnt/arweave-data /mnt/output~n").
 
 dump(Args) when length(Args) < 4 ->
@@ -77,7 +77,7 @@ dump_blocks(Cursor, MinHeight, MaxHeight, OutputDir) ->
             io:format("No more entries.~n")
     end.
 
-dump_txs([], OutputDir) ->
+dump_txs([], _OutputDir) ->
 	ok;
 dump_txs([TXID | TXIDs], OutputDir) ->
 	case ar_kv:get(tx_db, TXID) of

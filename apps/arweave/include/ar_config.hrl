@@ -105,6 +105,11 @@
 %% The default number of chunks fetched from disk at a time during in-place repacking.
 -define(DEFAULT_REPACK_BATCH_SIZE, 100).
 
+%% The default rocksdb databases flush interval, 30 minutes.
+-define(DEFAULT_ROCKSDB_FLUSH_INTERVAL_S, 1800).
+%% The default rocksdb WAL sync interval, 1 minute.
+-define(DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S, 60).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -178,7 +183,6 @@
 	nonce_limiter_server_trusted_peers = [],
 	nonce_limiter_client_peers = [],
 	debug = false,
-	repair_rocksdb = [],
 	run_defragmentation = false,
 	defragmentation_trigger_threshold = 1_500_000_000,
 	defragmentation_modules = [],
@@ -199,7 +203,9 @@
 	pool_api_key = not_set,
 	pool_worker_name = not_set,
 	%% Undocumented/unsupported options
-	chunk_storage_file_size = ?CHUNK_GROUP_SIZE
+	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
+	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
+	rocksdb_wal_sync_interval_s = ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S
 }).
 
 -endif.
