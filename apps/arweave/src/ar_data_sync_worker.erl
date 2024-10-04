@@ -107,8 +107,9 @@ read_range2(_MessagesRemaining, {Start, End, _OriginStoreID, _TargetStoreID, _Sk
 read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSmall}) ->
 	ChunksIndex = {chunks_index, OriginStoreID},
 	ChunkDataDB = {chunk_data_db, OriginStoreID},
-	case ar_data_sync:get_chunk_by_byte(ChunksIndex, Start + 1) of
-		{error, invalid_iterator} ->
+	case {ar_sync_record:is_recorded(Start + 1, ar_data_sync, OriginStoreID),
+			ar_data_sync:get_chunk_by_byte(ChunksIndex, Start + 1)} of
+		{_, {error, invalid_iterator}} ->
 			%% get_chunk_by_byte looks for a key with the same prefix or the next
 			%% prefix. Therefore, if there is no such key, it does not make sense to
 			%% look for any key smaller than the prefix + 2 in the next iteration.
@@ -116,13 +117,13 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 					?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
 			Start2 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
 			read_range2(MessagesRemaining, {Start2, End, OriginStoreID, TargetStoreID, SkipSmall});
-		{error, Reason} ->
+		{_, {error, Reason}} ->
 			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
 					{reason, io_lib:format("~p", [Reason])}]);
-		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}} when AbsoluteOffset > End ->
+		{_, {ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}}} when AbsoluteOffset > End ->
 			ok;
-		{ok, _Key, {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
-					RelativeOffset, ChunkSize}} ->
+		{{true, Packing}, {ok, _Key, {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
+					RelativeOffset, ChunkSize}}} ->
 			Skip = SkipSmall andalso AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
 					andalso ChunkSize < ?DATA_CHUNK_SIZE,
 			ReadChunk =
@@ -172,14 +173,31 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 							read_range2(MessagesRemaining-1,
 								{Start + ChunkSize, End, OriginStoreID, TargetStoreID,
 								 SkipSmall});
+						{true, _DifferentPacking} ->
+							%% Unlucky timing - the chunk should have been repacked
+							%% in the meantime.
+							read_range2(MessagesRemaining,
+									{Start, End, OriginStoreID, TargetStoreID, SkipSmall});
 						Reply ->
 							?LOG_ERROR([{event, chunk_record_not_found},
 									{absolute_end_offset, AbsoluteOffset},
 									{ar_sync_record_reply, io_lib:format("~p", [Reply])}]),
 							read_range2(MessagesRemaining,
-								{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall})
+									{Start + ChunkSize, End,
+										OriginStoreID, TargetStoreID, SkipSmall})
 					end
-			end
+			end;
+		{PackingResult, {ok, _Key, {AbsoluteOffset, ChunkDataKey, _TXRoot, DataRoot, _TXPath,
+					RelativeOffset, ChunkSize}}} ->
+			?LOG_ERROR([{event, fetched_chunk_metadata_but_failed_to_find_sync_record_entry},
+					{absolute_offset, AbsoluteOffset},
+					{data_root, ar_util:encode(DataRoot)},
+					{chunk_data_key, ar_util:encode(ChunkDataKey)},
+					{chunk_size, ChunkSize},
+					{relative_offset, RelativeOffset},
+					{packing_result, io_lib:format("~p", [PackingResult])}]),
+			read_range2(MessagesRemaining,
+					{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall})
 	end.
 
 sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}) when Start >= End ->
