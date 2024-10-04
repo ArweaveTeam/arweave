@@ -634,6 +634,18 @@ parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | Rest], Config)
 parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | _], _) ->
 	{error, {bad_type, chunk_storage_file_size, number}, ChunkGroupSize};
 
+parse_options([{<<"rocksdb_flush_interval">>, IntervalS} | Rest], Config)
+  		when is_integer(IntervalS) ->
+	parse_options(Rest, Config#config{ rocksdb_flush_interval_s = IntervalS });
+parse_options([{<<"rocksdb_flush_interval">>, IntervalS} | _], _) ->
+	{error, {bad_type, rocksdb_flush_interval, number}, IntervalS};
+
+parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | Rest], Config)
+  		when is_integer(IntervalS) ->
+	parse_options(Rest, Config#config{ rocksdb_wal_sync_interval_s = IntervalS });
+parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | _], _) ->
+	{error, {bad_type, rocksdb_wal_sync_interval, number}, IntervalS};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
