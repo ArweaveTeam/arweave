@@ -27,7 +27,7 @@
 %% The size of a recall range. The first range is randomly chosen from the given
 %% mining partition. The second range is chosen from the entire weave.
 -ifdef(DEBUG).
--define(RECALL_RANGE_SIZE, (256 * 1024)).
+-define(RECALL_RANGE_SIZE, (128 * 1024)).
 -else.
 -define(RECALL_RANGE_SIZE, 26214400). % == 25 * 1024 * 1024
 -endif.
