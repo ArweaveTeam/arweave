@@ -311,19 +311,78 @@ get_start(Key) ->
 			Start
 	end.
 
-get_total_minable_data_size() ->
+get_packing() ->
 	{ok, Config} = application:get_env(arweave, config),
 	MiningAddress = Config#config.mining_addr,
-    Pattern = {
-		{partition, '_', storage_module, '_', packing, {spora_2_6, MiningAddress}},
-		'$1'
+	Pattern1 = {
+		partition, '_', storage_module, '_', packing, 
+		{spora_2_6, MiningAddress}
+	},
+	Pattern2 = {
+		partition, '_', storage_module, '_', packing,
+		{composite, MiningAddress, '_'}
+	},
+	
+	Results = 
+		ets:match_object(?MODULE, {Pattern1, '_'}) ++
+		ets:match_object(?MODULE, {Pattern2, '_'}),
+
+	% Extract Packings and create a set
+	Packings = [Packing || {{_, _, _, _, _, Packing}, _} <- Results],
+	PackingsSet = sets:from_list(Packings),
+
+	case sets:to_list(PackingsSet) of
+		[SinglePacking] -> SinglePacking;
+		[] -> 
+			% No results found
+			undefined; 
+		MultiplePackings ->
+			% More than one unique packing found
+			?LOG_ERROR([
+				{event, get_packing_failed}, {reason, multiple_unique_packings},
+				{unique_packings, MultiplePackings}]),
+			undefined
+	end.
+
+get_packing_difficulty({composite, _, Difficulty}) ->
+	Difficulty;
+get_packing_difficulty(_) ->
+	0.
+
+get_hashrate_divisor(PackingDifficulty) ->
+	%% Raw hashrate varies based on packing difficulty. Assuming a spora_2_6 base hashrate
+	%% of 404, the raw hashrate at different packing difficulties is:
+	%% spora_2_6: 404
+	%% composite, 1: 404 * 32 / 4 / 1 = 3232
+	%% composite, 2: 404 * 32 / 4 / 2 = 1616
+	%% composite, 32: 404 * 32 / 4 / 32 = 101
+	%%
+	%% Basically:
+	%% - composite packing generate 32x the number of hashes, but they are compared against
+	%%   a higher solution difficulty
+	%% - compsoite uses a 4x lower read recall range which *reduces* the number of hashes
+	%%   4-fold, and increases the solution difficulty
+	%% - finally as the difficulty increases, the number of hashes generated decreases as does
+	%%   the solution difficulty
+	%%
+	%% This function returns a divisor we can use to normalize the hahsrate to 404.
+	case PackingDifficulty of
+		0 ->
+			1.0;
+		_ ->
+			(32.0 / 4.0) / PackingDifficulty
+	end.
+
+get_total_minable_data_size(Packing) ->
+	Pattern = {
+		{partition, '_', storage_module, '_', packing, Packing}, '$1'
 	},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
 	TotalDataSize = lists:sum(Sizes),
 
 	WeaveSize = ar_node:get_weave_size(),
 	TipPartition = ar_node:get_max_partition_number(WeaveSize) + 1,
-	TipPartitionSize = get_partition_data_size(TipPartition),
+	TipPartitionSize = get_partition_data_size(TipPartition, Packing),
 	?LOG_DEBUG([{event, get_total_minable_data_size},
 		{total_data_size, TotalDataSize}, {weave_size, WeaveSize},
 		{tip_partition, TipPartition}, {tip_partition_size, TipPartitionSize},
@@ -336,13 +395,8 @@ get_overall_total(PartitionPeer, Stat, TotalCurrent) ->
 	Counts = [Count || [Count] <- Matches],
 	lists:sum(Counts).
 
-get_partition_data_size(PartitionNumber) ->
-	{ok, Config} = application:get_env(arweave, config),
-	MiningAddress = Config#config.mining_addr,
-    Pattern = {
-		{partition, PartitionNumber, storage_module, '_', packing, {spora_2_6, MiningAddress}},
-		'$1'
-	},
+get_partition_data_size(PartitionNumber, Packing) ->
+	Pattern = {{partition, PartitionNumber, storage_module, '_', packing, Packing }, '$1'},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
     lists:sum(Sizes).
 
@@ -355,17 +409,20 @@ vdf_speed(Now) ->
 			1.0 / StepsPerSecond
 	end.
 
-get_hash_hps(PoA1Multiplier, PartitionNumber, TotalCurrent, Now) ->
+get_hash_hps(PoA1Multiplier, Packing, PartitionNumber, TotalCurrent, Now) ->
 	H1 = get_average_count_by_time({partition, PartitionNumber, h1, TotalCurrent}, Now),
 	H2 = get_average_count_by_time({partition, PartitionNumber, h2, TotalCurrent}, Now),
-	(H1 / PoA1Multiplier) + H2.
+	PackingDifficulty = get_packing_difficulty(Packing),
+	((H1 / PoA1Multiplier) + H2) / get_hashrate_divisor(PackingDifficulty).
 
 %% @doc calculate the maximum hash rate (in MiB per second read from disk) for the given VDF
 %% speed at the current weave size.
-optimal_partition_read_mibps(undefined, _PartitionDataSize, _TotalDataSize, _WeaveSize) ->
+optimal_partition_read_mibps(_Packing, undefined, _PartitionDataSize, _TotalDataSize, _WeaveSize) ->
 	0.0;	
-optimal_partition_read_mibps(VDFSpeed, PartitionDataSize, TotalDataSize, WeaveSize) ->
-	(100.0 / VDFSpeed) *
+optimal_partition_read_mibps(Packing, VDFSpeed, PartitionDataSize, TotalDataSize, WeaveSize) ->
+	PackingDifficulty = get_packing_difficulty(Packing),
+	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty) / ?MiB,
+	(RecallRangeSize / VDFSpeed) *
 	min(1.0, (PartitionDataSize / ?PARTITION_SIZE)) *
 	(1 + min(1.0, (TotalDataSize / WeaveSize))).
 
@@ -397,7 +454,9 @@ generate_report(_Height, [], _Peers, _WeaveSize, Now) ->
 generate_report(Height, Partitions, Peers, WeaveSize, Now) ->
 	PoA1Multiplier = ar_difficulty:poa1_diff_multiplier(Height),
 	VDFSpeed = vdf_speed(Now),
-	TotalDataSize = get_total_minable_data_size(),
+	%% We currently only  support mining against a single data packing format
+	Packing = get_packing(),
+	TotalDataSize = get_total_minable_data_size(Packing),
 	Report = #report{
 		now = Now,
 		vdf_speed = VDFSpeed,
@@ -409,20 +468,23 @@ generate_report(Height, Partitions, Peers, WeaveSize, Now) ->
 		total_h2_from_peer = get_overall_total(peer, h2_from_peer, total)
 	},
 
-	Report2 = generate_partition_reports(PoA1Multiplier, Partitions, Report, WeaveSize),
+	Report2 = generate_partition_reports(
+		PoA1Multiplier, Partitions, Packing, Report, WeaveSize),
 	Report3 = generate_peer_reports(Peers, Report2),
 	Report3.
 
-generate_partition_reports(PoA1Multiplier, Partitions, Report, WeaveSize) ->
+generate_partition_reports(PoA1Multiplier, Partitions, Packing, Report, WeaveSize) ->
 	lists:foldr(
 		fun({PartitionNumber, _MiningAddr, _PackingDifficulty}, Acc) ->
-			generate_partition_report(PoA1Multiplier, PartitionNumber, Acc, WeaveSize)
+			generate_partition_report(
+				PoA1Multiplier, PartitionNumber, Packing, Acc, WeaveSize)
 		end,
 		Report,
 		Partitions
 	).
 
-generate_partition_report(PoA1Multiplier, PartitionNumber, Report, WeaveSize) ->
+generate_partition_report(
+		PoA1Multiplier, PartitionNumber, Packing, Report, WeaveSize) ->
 	#report{
 		now = Now,
 		vdf_speed = VDFSpeed,
@@ -434,7 +496,7 @@ generate_partition_report(PoA1Multiplier, PartitionNumber, Report, WeaveSize) ->
 		current_read_mibps = CurrentRead,
 		average_hash_hps = AverageHash,
 		current_hash_hps = CurrentHash } = Report,
-	DataSize = get_partition_data_size(PartitionNumber),
+	DataSize = get_partition_data_size(PartitionNumber, Packing),
 	PartitionReport = #partition_report{
 		partition_number = PartitionNumber,
 		data_size = DataSize,
@@ -442,10 +504,12 @@ generate_partition_report(PoA1Multiplier, PartitionNumber, Report, WeaveSize) ->
 				{partition, PartitionNumber, read, total}, Now) / 4,
 		current_read_mibps = get_average_count_by_time(
 				{partition, PartitionNumber, read, current}, Now) / 4,
-		average_hash_hps = get_hash_hps(PoA1Multiplier, PartitionNumber, total, Now),
-		current_hash_hps = get_hash_hps(PoA1Multiplier, PartitionNumber, current, Now),
+		average_hash_hps = get_hash_hps(
+			PoA1Multiplier, Packing, PartitionNumber, total, Now),
+		current_hash_hps = get_hash_hps(
+			PoA1Multiplier, Packing, PartitionNumber, current, Now),
 		optimal_read_mibps = optimal_partition_read_mibps(
-			VDFSpeed, DataSize, TotalDataSize, WeaveSize),
+			Packing, VDFSpeed, DataSize, TotalDataSize, WeaveSize),
 		optimal_hash_hps = optimal_partition_hash_hps(
 			PoA1Multiplier, VDFSpeed, DataSize, TotalDataSize, WeaveSize)
 	},
@@ -742,60 +806,25 @@ format_vdf_speed(VDFSpeed) ->
 %%%===================================================================
 
 mining_stats_test_() ->
-    {
-        setup,
-        fun setup_env/0,  % Function to setup the environment
-        fun cleanup_env/1, % Function to cleanup the environment
-        [
-            % {timeout, 30, fun test_read_stats/0},
-            % {timeout, 30, fun test_h1_stats/0},
-            % {timeout, 30, fun test_h2_stats/0},
-            % {timeout, 30, fun test_vdf_stats/0},
-            {timeout, 30, fun test_data_size_stats/0}
-            % {timeout, 30, fun test_h1_sent_to_peer_stats/0},
-            % {timeout, 30, fun test_h1_received_from_peer_stats/0},
-            % {timeout, 30, fun test_h2_peer_stats/0},
-            % {timeout, 30, fun test_optimal_stats_poa1_multiple_1/0},
-            % {timeout, 30, fun test_optimal_stats_poa1_multiple_2/0},
-            % {timeout, 30, fun test_report_poa1_multiple_1/0},
-            % ar_test_node:test_with_mocked_functions(
-            %     [
-            %         {ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
-            %     ],
-            %     fun test_report_poa1_multiple_2/0
-            % )
-        ]
-    }.
-
-setup_env() ->
-    {ok, Config} = application:get_env(arweave, config),
-	MiningAddress = <<"MINING">>,
-	PackingAddress = <<"PACKING">>,
-	StorageModules = [
-		%% partition 1
-		{floor(0.1 * ?PARTITION_SIZE), 10, unpacked},
-		{floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}},
-		{floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}},
-		{floor(0.3 * ?PARTITION_SIZE), 4, unpacked},
-		{floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}},
-		{floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}},
-		{floor(0.2 * ?PARTITION_SIZE), 8, unpacked},
-		{floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}},
-		{floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}},
-		%% partition 2
-		{?PARTITION_SIZE, 2, unpacked},
-		{?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}},
-		{?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}
-	],
-    application:set_env(arweave, config,
-		Config#config{
-			storage_modules = StorageModules,
-			mining_addr = MiningAddress
-	}),
-    Config.
-
-cleanup_env(Config) ->
-    application:set_env(arweave, config, Config).
+    [
+		{timeout, 30, fun test_read_stats/0},
+		{timeout, 30, fun test_h1_stats/0},
+		{timeout, 30, fun test_h2_stats/0},
+		{timeout, 30, fun test_vdf_stats/0},
+		{timeout, 30, fun test_data_size_stats/0},
+		{timeout, 30, fun test_h1_sent_to_peer_stats/0},
+		{timeout, 30, fun test_h1_received_from_peer_stats/0},
+		{timeout, 30, fun test_h2_peer_stats/0},
+		{timeout, 30, fun test_optimal_stats_poa1_multiple_1/0},
+		{timeout, 30, fun test_optimal_stats_poa1_multiple_2/0},
+		{timeout, 30, fun test_report_poa1_multiple_1/0},
+		ar_test_node:test_with_mocked_functions(
+			[
+				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
+			],
+			fun test_report_poa1_multiple_2/0
+		)
+	].
 
 test_read_stats() ->
 	test_local_stats(fun chunks_read/2, read).
@@ -931,80 +960,94 @@ test_vdf_stats() ->
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
-	WeaveSize = floor(2 * ?PARTITION_SIZE),
-	ets:insert(node_state, [{weave_size, WeaveSize}]),
+	{ok, Config} = application:get_env(arweave, config),
+	try
+		application:set_env(arweave, config,
+			Config#config{ mining_addr = <<"MINING">> }),
 
-	ar_mining_stats:pause_performance_reports(120000),
+		WeaveSize = floor(2 * ?PARTITION_SIZE),
+		ets:insert(node_state, [{weave_size, WeaveSize}]),
+
+		ar_mining_stats:pause_performance_reports(120000),
+		do_test_data_size_stats({spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}),
+		do_test_data_size_stats({composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
+		do_test_data_size_stats({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
+	after
+		application:set_env(arweave, config, Config)
+	end.
+
+do_test_data_size_stats(Mining, Packing) ->
 	reset_all_stats(),
-	?assertEqual(0, get_total_minable_data_size()),
-	?assertEqual(0, get_partition_data_size(1)),
-	?assertEqual(0, get_partition_data_size(2)),
-
-	MiningAddress = <<"MINING">>,
-	PackingAddress = <<"PACKING">>,
+	?assertEqual(undefined, get_packing()),
+	?assertEqual(0, get_total_minable_data_size(Mining)),
+	?assertEqual(0, get_partition_data_size(1, Mining)),
+	?assertEqual(0, get_partition_data_size(2, Mining)),
 
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, unpacked}),
 		unpacked, 1, floor(0.1 * ?PARTITION_SIZE), 10, 101),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 102),
+		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, Mining}),
+		Mining, 1, floor(0.1 * ?PARTITION_SIZE), 10, 102),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10, 103),
+		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, Packing}),
+		Packing, 1, floor(0.1 * ?PARTITION_SIZE), 10, 103),
 
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, unpacked}),
 		unpacked, 1, floor(0.3 * ?PARTITION_SIZE), 4, 111),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 112),
+		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, Mining}),
+		Mining, 1, floor(0.3 * ?PARTITION_SIZE), 4, 112),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4, 113),
+		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, Packing}),
+		Packing, 1, floor(0.3 * ?PARTITION_SIZE), 4, 113),
 
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
 		unpacked, 2, ?PARTITION_SIZE, 2, 201),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 202),
+		ar_storage_module:id({?PARTITION_SIZE, 2, Mining}),
+		Mining, 2, ?PARTITION_SIZE, 2, 202),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 203),
+		ar_storage_module:id({?PARTITION_SIZE, 2, Packing}),
+		Packing, 2, ?PARTITION_SIZE, 2, 203),
 
-	?assertEqual(214, get_partition_data_size(1)),
-	?assertEqual(202, get_partition_data_size(2)),
-	?assertEqual(214, get_total_minable_data_size()),
+	?assertEqual(Mining, get_packing()),
+	?assertEqual(214, get_partition_data_size(1, Mining)),
+	?assertEqual(202, get_partition_data_size(2, Mining)),
+	?assertEqual(214, get_total_minable_data_size(Mining)),
 
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, unpacked}),
 		unpacked, 1, floor(0.2 * ?PARTITION_SIZE), 8, 121),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 122),
+		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, Mining}),
+		Mining, 1, floor(0.2 * ?PARTITION_SIZE), 8, 122),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8, 123),
+		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, Packing}),
+		Packing, 1, floor(0.2 * ?PARTITION_SIZE), 8, 123),
 
 	ar_mining_stats:set_storage_module_data_size(
 		ar_storage_module:id({?PARTITION_SIZE, 2, unpacked}),
 		unpacked, 2, ?PARTITION_SIZE, 2, 51),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, 52),
+		ar_storage_module:id({?PARTITION_SIZE, 2, Mining}),
+		Mining, 2, ?PARTITION_SIZE, 2, 52),
 	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, PackingAddress}}),
-		{spora_2_6, PackingAddress}, 2, ?PARTITION_SIZE, 2, 53),
+		ar_storage_module:id({?PARTITION_SIZE, 2, Packing}),
+		Packing, 2, ?PARTITION_SIZE, 2, 53),
 	
-	?assertEqual(336, get_partition_data_size(1)),
-	?assertEqual(52, get_partition_data_size(2)),
-	?assertEqual(336, get_total_minable_data_size()),
+	?assertEqual(Mining, get_packing()),
+	?assertEqual(336, get_partition_data_size(1, Mining)),
+	?assertEqual(52, get_partition_data_size(2, Mining)),
+	?assertEqual(336, get_total_minable_data_size(Mining)),
 
 	reset_all_stats(),
-	?assertEqual(0, get_total_minable_data_size()),
-	?assertEqual(0, get_partition_data_size(1)),
-	?assertEqual(0, get_partition_data_size(2)).
+	?assertEqual(undefined, get_packing()),
+	?assertEqual(0, get_total_minable_data_size(Mining)),
+	?assertEqual(0, get_partition_data_size(1, Mining)),
+	?assertEqual(0, get_partition_data_size(2, Mining)).
 
 test_h1_sent_to_peer_stats() ->
 	test_peer_stats(fun h1_sent_to_peer/2, h1_to_peer).
@@ -1167,31 +1210,44 @@ test_h2_peer_stats() ->
 	?assertEqual(0, get_overall_total(peer, h2_from_peer, total)).
 
 test_optimal_stats_poa1_multiple_1() ->
-	test_optimal_stats(1).
+	test_optimal_stats({spora_2_6, <<"MINING">>}, 1),
+	test_optimal_stats({composite, <<"MINING">>, 1}, 1),
+	test_optimal_stats({composite, <<"MINING">>, 2}, 1).
 
 test_optimal_stats_poa1_multiple_2() ->
-	test_optimal_stats(2).
+	test_optimal_stats({spora_2_6, <<"MINING">>}, 2),
+	test_optimal_stats({composite, <<"MINING">>, 1}, 2),
+	test_optimal_stats({composite, <<"MINING">>, 2}, 2).
 
-test_optimal_stats(PoA1Multiplier) ->
+test_optimal_stats(Packing, PoA1Multiplier) ->
+	PackingDifficulty = get_packing_difficulty(Packing),
+	RecallRangeSize = case PackingDifficulty of
+		0 ->
+			0.5;
+		1 ->
+			0.125;
+		2 ->
+			0.0625
+	end,
 	?assertEqual(0.0, 
 		optimal_partition_read_mibps(
-			undefined, ?PARTITION_SIZE,
+			Packing, undefined, ?PARTITION_SIZE,
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(200.0, 
+	?assertEqual(RecallRangeSize * 2, 
 		optimal_partition_read_mibps(
-			1.0, ?PARTITION_SIZE,
+			Packing, 1.0, ?PARTITION_SIZE,
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(100.0, 
+	?assertEqual(RecallRangeSize, 
 		optimal_partition_read_mibps(
-			2.0, ?PARTITION_SIZE,
+			Packing, 2.0, ?PARTITION_SIZE,
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(50.0, 
+	?assertEqual(RecallRangeSize / 2, 
 		optimal_partition_read_mibps(
-			1.0, floor(0.25 * ?PARTITION_SIZE),
+			Packing, 1.0, floor(0.25 * ?PARTITION_SIZE),
 			floor(10 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
-	?assertEqual(160.0, 
+	?assertEqual(RecallRangeSize * 1.6, 
 		optimal_partition_read_mibps(
-			1.0, ?PARTITION_SIZE,
+			Packing, 1.0, ?PARTITION_SIZE,
 			floor(6 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))),
 
 	{FullWeave, SlowVDF, SmallPartition, SmallWeave} = case PoA1Multiplier of
@@ -1221,176 +1277,229 @@ test_optimal_stats(PoA1Multiplier) ->
 			floor(6 * ?PARTITION_SIZE), floor(10 * ?PARTITION_SIZE))).
 
 test_report_poa1_multiple_1() ->
-	test_report(1).
+	test_report({spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}, 1),
+	test_report({composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}, 1),
+	test_report({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2}, 1).
 
 test_report_poa1_multiple_2() ->
-	test_report(2).
+	test_report({spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}, 2),
+	test_report({composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}, 2),
+	test_report({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2}, 2).
 
-test_report(PoA1Multiplier) ->
-	ar_mining_stats:pause_performance_reports(120000),
-	reset_all_stats(),
-	MiningAddress = <<"MINING">>,
-	Partitions = [
-		{1, MiningAddress, 0},
-		{2, MiningAddress, 0},
-		{3, MiningAddress, 0}
-	],
-	Peer1 = ar_test_node:peer_ip(peer1),
-	Peer2 = ar_test_node:peer_ip(peer2),
-	Peer3 = ar_test_node:peer_ip(peer3),
-	Peers = [Peer1, Peer2, Peer3],
-
-	Now = erlang:monotonic_time(millisecond),
-	WeaveSize = floor(10 * ?PARTITION_SIZE),
-	ets:insert(node_state, [{weave_size, WeaveSize}]),
-	ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
-	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.1 * ?PARTITION_SIZE), 10,
-		floor(0.1 * ?PARTITION_SIZE)),
-	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.3 * ?PARTITION_SIZE), 4,
-		floor(0.2 * ?PARTITION_SIZE)),
-	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 1, floor(0.2 * ?PARTITION_SIZE), 8,
-		floor(0.05 * ?PARTITION_SIZE)),	
-	ar_mining_stats:set_storage_module_data_size(
-		ar_storage_module:id({?PARTITION_SIZE, 2, {spora_2_6, MiningAddress}}),
-		{spora_2_6, MiningAddress}, 2, ?PARTITION_SIZE, 2, floor(0.25 * ?PARTITION_SIZE)),
-	ar_mining_stats:vdf_computed(),
-	ar_mining_stats:vdf_computed(),
-	ar_mining_stats:vdf_computed(),
-	ar_mining_stats:h1_solution(),
-	ar_mining_stats:h2_solution(),
-	ar_mining_stats:h2_solution(),
-	ar_mining_stats:block_found(),
-	ar_mining_stats:chunks_read(1, 1),
-	ar_mining_stats:chunks_read(1, 2),
-	ar_mining_stats:chunks_read(2, 2),
-	ar_mining_stats:h1_computed(1, 2),
-	ar_mining_stats:h1_computed(1, 1),
-	ar_mining_stats:h2_computed(1, 2),
-	ar_mining_stats:h1_computed(2, 4),
-	ar_mining_stats:h1_sent_to_peer(Peer1, 10),
-	ar_mining_stats:h1_sent_to_peer(Peer1, 5),
-	ar_mining_stats:h1_sent_to_peer(Peer1, 15),
-	ar_mining_stats:h1_sent_to_peer(Peer2, 1),
-	ar_mining_stats:h1_sent_to_peer(Peer2, 19),
-	ar_mining_stats:h1_received_from_peer(Peer2, 10),
-	ar_mining_stats:h1_received_from_peer(Peer2, 5),
-	ar_mining_stats:h1_received_from_peer(Peer2, 15),
-	ar_mining_stats:h1_received_from_peer(Peer1, 1),
-	ar_mining_stats:h1_received_from_peer(Peer1, 19),
-	ar_mining_stats:h2_sent_to_peer(Peer1),
-	ar_mining_stats:h2_sent_to_peer(Peer1),
-	ar_mining_stats:h2_sent_to_peer(Peer1),
-	ar_mining_stats:h2_sent_to_peer(Peer2),
-	ar_mining_stats:h2_sent_to_peer(Peer2),
-	ar_mining_stats:h2_received_from_peer(Peer1),
-	ar_mining_stats:h2_received_from_peer(Peer1),
-	ar_mining_stats:h2_received_from_peer(Peer2),
-	ar_mining_stats:h2_received_from_peer(Peer2),
-	ar_mining_stats:h2_received_from_peer(Peer2),
-	
-	Report1 = generate_report(0, [], [], WeaveSize, Now+1000),
-	?assertEqual(#report{ now = Now+1000 }, Report1),
-	log_report(format_report(Report1, WeaveSize)),
-
-	Report2 = generate_report(0, Partitions, Peers, WeaveSize, Now+1000),
-	ReportString = format_report(Report2, WeaveSize),
-	log_report(ReportString),
-
-	{
-		TotalHash, Partition1Hash, Partition2Hash,
-		TotalOptimal, Partition1Optimal, Partition2Optimal
-	} = case PoA1Multiplier of
-		1 -> {9.0, 5.0, 4.0, 763.1992309570705, 445.19924812320824, 317.9999828338623};
-		2 -> {5.5, 3.5, 2.0, 403.19957427982445, 235.19959144596214, 167.9999828338623}
+test_report(Mining, Packing, PoA1Multiplier) ->
+	{ok, Config} = application:get_env(arweave, config),
+	MiningAddress = case Mining of
+		{spora_2_6, Addr} ->
+			Addr;
+		{composite, Addr, _} ->
+			Addr
 	end,
-
-	?assertEqual(#report{ 
-		now = Now+1000,
-		vdf_speed = 1.0 / 3.0,
-		h1_solution = 1,
-		h2_solution = 2,
-		confirmed_block = 1,
-		total_data_size = 
-			floor(0.1 * ?PARTITION_SIZE) + floor(0.2 * ?PARTITION_SIZE) +
-			floor(0.05 * ?PARTITION_SIZE) + floor(0.25 * ?PARTITION_SIZE),
-		optimal_overall_read_mibps = 190.79980773926764,
-		optimal_overall_hash_hps = TotalOptimal,
-		average_read_mibps = 1.25,
-		current_read_mibps = 1.25,
-		average_hash_hps = TotalHash,
-		current_hash_hps = TotalHash,
-		average_h1_to_peer_hps = 50.0,
-		current_h1_to_peer_hps = 50.0,
-		average_h1_from_peer_hps = 50.0,
-		current_h1_from_peer_hps = 50.0,
-		total_h2_to_peer = 5,
-		total_h2_from_peer = 5,
-		partitions = [
-			#partition_report{
-				partition_number = 3,
-				data_size = 0,
-				optimal_read_mibps = 0.0,
-				average_read_mibps = 0.0,
-				current_read_mibps = 0.0,
-				optimal_hash_hps = 0.0,
-				average_hash_hps = 0.0,
-				current_hash_hps = 0.0
-			},
-			#partition_report{
-				partition_number = 2,
-				data_size = floor(0.25 * ?PARTITION_SIZE),
-				optimal_read_mibps = 79.49999570846558,
-				average_read_mibps = 0.5,
-				current_read_mibps = 0.5,
-				optimal_hash_hps = Partition2Optimal,
-				average_hash_hps = Partition2Hash,
-				current_hash_hps = Partition2Hash
-			},
-			#partition_report{
-				partition_number = 1,
-				data_size = 734002,
-				optimal_read_mibps = 111.29981203080206,
-				average_read_mibps = 0.75,
-				current_read_mibps = 0.75,
-				optimal_hash_hps = Partition1Optimal,
-				average_hash_hps = Partition1Hash,
-				current_hash_hps = Partition1Hash
-			}
+	PackingDifficulty = get_packing_difficulty(Mining),
+	DifficultyDivisor = case PackingDifficulty of
+		0 ->
+			1.0;
+		1 ->
+			8.0;
+		2 ->
+			4.0
+	end,
+	RecallRangeSize = case PackingDifficulty of
+		0 ->
+			0.5;
+		1 ->
+			0.125;
+		2 ->
+			0.0625
+	end,
+	StorageModules = [
+		%% partition 1
+		{floor(0.1 * ?PARTITION_SIZE), 10, unpacked},
+		{floor(0.1 * ?PARTITION_SIZE), 10, Mining},
+		{floor(0.1 * ?PARTITION_SIZE), 10, Packing},
+		{floor(0.3 * ?PARTITION_SIZE), 4, unpacked},
+		{floor(0.3 * ?PARTITION_SIZE), 4, Mining},
+		{floor(0.3 * ?PARTITION_SIZE), 4, Packing},
+		{floor(0.2 * ?PARTITION_SIZE), 8, unpacked},
+		{floor(0.2 * ?PARTITION_SIZE), 8, Mining},
+		{floor(0.2 * ?PARTITION_SIZE), 8, Packing},
+		%% partition 2
+		{?PARTITION_SIZE, 2, unpacked},
+		{?PARTITION_SIZE, 2, Mining},
+		{?PARTITION_SIZE, 2, Packing}
+	],
+	
+	try	
+		application:set_env(arweave, config,
+			Config#config{
+				storage_modules = StorageModules,
+				mining_addr = MiningAddress
+			}),
+		ar_mining_stats:pause_performance_reports(120000),
+		reset_all_stats(),
+		Partitions = [
+			{1, MiningAddress, 0},
+			{2, MiningAddress, 0},
+			{3, MiningAddress, 0}
 		],
-		peers = [
-			#peer_report{
-				peer = Peer3,
-				average_h1_to_peer_hps = 0.0,
-				current_h1_to_peer_hps = 0.0,
-				average_h1_from_peer_hps = 0.0,
-				current_h1_from_peer_hps = 0.0,
-				total_h2_to_peer = 0,
-				total_h2_from_peer = 0
-			},
-			#peer_report{
-				peer = Peer2,
-				average_h1_to_peer_hps = 20.0,
-				current_h1_to_peer_hps = 20.0,
-				average_h1_from_peer_hps = 30.0,
-				current_h1_from_peer_hps = 30.0,
-				total_h2_to_peer = 2,
-				total_h2_from_peer = 3
-			},
-			#peer_report{
-				peer = Peer1,
-				average_h1_to_peer_hps = 30.0,
-				current_h1_to_peer_hps = 30.0,
-				average_h1_from_peer_hps = 20.0,
-				current_h1_from_peer_hps = 20.0,
-				total_h2_to_peer = 3,
-				total_h2_from_peer = 2
-			}
-		]
-	},
-	Report2).
+		Peer1 = ar_test_node:peer_ip(peer1),
+		Peer2 = ar_test_node:peer_ip(peer2),
+		Peer3 = ar_test_node:peer_ip(peer3),
+		Peers = [Peer1, Peer2, Peer3],
+
+		Now = erlang:monotonic_time(millisecond),
+		WeaveSize = floor(10 * ?PARTITION_SIZE),
+		ets:insert(node_state, [{weave_size, WeaveSize}]),
+		ar_mining_stats:set_total_data_size(floor(0.6 * ?PARTITION_SIZE)),
+		ar_mining_stats:set_storage_module_data_size(
+			ar_storage_module:id({floor(0.1 * ?PARTITION_SIZE), 10, Mining}),
+			Mining, 1, floor(0.1 * ?PARTITION_SIZE), 10,
+			floor(0.1 * ?PARTITION_SIZE)),
+		ar_mining_stats:set_storage_module_data_size(
+			ar_storage_module:id({floor(0.3 * ?PARTITION_SIZE), 4, Mining}),
+			Mining, 1, floor(0.3 * ?PARTITION_SIZE), 4,
+			floor(0.2 * ?PARTITION_SIZE)),
+		ar_mining_stats:set_storage_module_data_size(
+			ar_storage_module:id({floor(0.2 * ?PARTITION_SIZE), 8, Mining}),
+			Mining, 1, floor(0.2 * ?PARTITION_SIZE), 8,
+			floor(0.05 * ?PARTITION_SIZE)),	
+		ar_mining_stats:set_storage_module_data_size(
+			ar_storage_module:id({?PARTITION_SIZE, 2, Mining}),
+			Mining, 2, ?PARTITION_SIZE, 2, floor(0.25 * ?PARTITION_SIZE)),
+		ar_mining_stats:vdf_computed(),
+		ar_mining_stats:vdf_computed(),
+		ar_mining_stats:vdf_computed(),
+		ar_mining_stats:h1_solution(),
+		ar_mining_stats:h2_solution(),
+		ar_mining_stats:h2_solution(),
+		ar_mining_stats:block_found(),
+		ar_mining_stats:chunks_read(1, 1),
+		ar_mining_stats:chunks_read(1, 2),
+		ar_mining_stats:chunks_read(2, 2),
+		ar_mining_stats:h1_computed(1, 2),
+		ar_mining_stats:h1_computed(1, 1),
+		ar_mining_stats:h2_computed(1, 2),
+		ar_mining_stats:h1_computed(2, 4),
+		ar_mining_stats:h1_sent_to_peer(Peer1, 10),
+		ar_mining_stats:h1_sent_to_peer(Peer1, 5),
+		ar_mining_stats:h1_sent_to_peer(Peer1, 15),
+		ar_mining_stats:h1_sent_to_peer(Peer2, 1),
+		ar_mining_stats:h1_sent_to_peer(Peer2, 19),
+		ar_mining_stats:h1_received_from_peer(Peer2, 10),
+		ar_mining_stats:h1_received_from_peer(Peer2, 5),
+		ar_mining_stats:h1_received_from_peer(Peer2, 15),
+		ar_mining_stats:h1_received_from_peer(Peer1, 1),
+		ar_mining_stats:h1_received_from_peer(Peer1, 19),
+		ar_mining_stats:h2_sent_to_peer(Peer1),
+		ar_mining_stats:h2_sent_to_peer(Peer1),
+		ar_mining_stats:h2_sent_to_peer(Peer1),
+		ar_mining_stats:h2_sent_to_peer(Peer2),
+		ar_mining_stats:h2_sent_to_peer(Peer2),
+		ar_mining_stats:h2_received_from_peer(Peer1),
+		ar_mining_stats:h2_received_from_peer(Peer1),
+		ar_mining_stats:h2_received_from_peer(Peer2),
+		ar_mining_stats:h2_received_from_peer(Peer2),
+		ar_mining_stats:h2_received_from_peer(Peer2),
+		
+		Report1 = generate_report(0, [], [], WeaveSize, Now+1000),
+		?assertEqual(#report{ now = Now+1000 }, Report1),
+		log_report(format_report(Report1, WeaveSize)),
+
+		Report2 = generate_report(0, Partitions, Peers, WeaveSize, Now+1000),
+		ReportString = format_report(Report2, WeaveSize),
+		log_report(ReportString),
+
+		{
+			TotalHash, Partition1Hash, Partition2Hash,
+			TotalOptimal, Partition1Optimal, Partition2Optimal
+		} = case PoA1Multiplier of
+			1 -> {9.0, 5.0, 4.0, 763.1992309570705, 445.19924812320824, 317.9999828338623};
+			2 -> {5.5, 3.5, 2.0, 403.19957427982445, 235.19959144596214, 167.9999828338623}
+		end,
+
+		?assertEqual(#report{ 
+			now = Now+1000,
+			vdf_speed = 1.0 / 3.0,
+			h1_solution = 1,
+			h2_solution = 2,
+			confirmed_block = 1,
+			total_data_size = 
+				floor(0.1 * ?PARTITION_SIZE) + floor(0.2 * ?PARTITION_SIZE) +
+				floor(0.05 * ?PARTITION_SIZE) + floor(0.25 * ?PARTITION_SIZE),
+			optimal_overall_read_mibps = 0.9539990386963382 * 2 * RecallRangeSize,
+			optimal_overall_hash_hps = TotalOptimal,
+			average_read_mibps = 1.25,
+			current_read_mibps = 1.25,
+			average_hash_hps = TotalHash / DifficultyDivisor,
+			current_hash_hps = TotalHash / DifficultyDivisor,
+			average_h1_to_peer_hps = 50.0,
+			current_h1_to_peer_hps = 50.0,
+			average_h1_from_peer_hps = 50.0,
+			current_h1_from_peer_hps = 50.0,
+			total_h2_to_peer = 5,
+			total_h2_from_peer = 5,
+			partitions = [
+				#partition_report{
+					partition_number = 3,
+					data_size = 0,
+					optimal_read_mibps = 0.0,
+					average_read_mibps = 0.0,
+					current_read_mibps = 0.0,
+					optimal_hash_hps = 0.0,
+					average_hash_hps = 0.0,
+					current_hash_hps = 0.0
+				},
+				#partition_report{
+					partition_number = 2,
+					data_size = floor(0.25 * ?PARTITION_SIZE),
+					optimal_read_mibps = 0.3974999785423279 * 2 * RecallRangeSize,
+					average_read_mibps = 0.5,
+					current_read_mibps = 0.5,
+					optimal_hash_hps = Partition2Optimal,
+					average_hash_hps = Partition2Hash / DifficultyDivisor,
+					current_hash_hps = Partition2Hash / DifficultyDivisor
+				},
+				#partition_report{
+					partition_number = 1,
+					data_size = 734002,
+					optimal_read_mibps = 0.5564990601540103 * 2 * RecallRangeSize,
+					average_read_mibps = 0.75,
+					current_read_mibps = 0.75,
+					optimal_hash_hps = Partition1Optimal,
+					average_hash_hps = Partition1Hash / DifficultyDivisor,
+					current_hash_hps = Partition1Hash / DifficultyDivisor
+				}
+			],
+			peers = [
+				#peer_report{
+					peer = Peer3,
+					average_h1_to_peer_hps = 0.0,
+					current_h1_to_peer_hps = 0.0,
+					average_h1_from_peer_hps = 0.0,
+					current_h1_from_peer_hps = 0.0,
+					total_h2_to_peer = 0,
+					total_h2_from_peer = 0
+				},
+				#peer_report{
+					peer = Peer2,
+					average_h1_to_peer_hps = 20.0,
+					current_h1_to_peer_hps = 20.0,
+					average_h1_from_peer_hps = 30.0,
+					current_h1_from_peer_hps = 30.0,
+					total_h2_to_peer = 2,
+					total_h2_from_peer = 3
+				},
+				#peer_report{
+					peer = Peer1,
+					average_h1_to_peer_hps = 30.0,
+					current_h1_to_peer_hps = 30.0,
+					average_h1_from_peer_hps = 20.0,
+					current_h1_from_peer_hps = 20.0,
+					total_h2_to_peer = 3,
+					total_h2_from_peer = 2
+				}
+			]
+		},
+		Report2)
+	after
+		application:set_env(arweave, config, Config)
+	end.
