@@ -3135,6 +3135,13 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 							StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
 							ok = ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE,
 									StoreID),
+							case ar_sync_record:is_recorded(PaddedOffset, ?MODULE) of
+								false ->
+									ar_events:send(sync_record,
+											{global_remove_range, StartOffset, PaddedOffset});
+								_ ->
+									ok
+							end,
 							ok = ar_kv:delete(ChunksIndex, ChunksIndexKey);
 						_ ->
 							%% The entry has been written by the 2.5 version thus has
