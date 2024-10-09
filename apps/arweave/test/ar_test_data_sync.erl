@@ -5,28 +5,38 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--export([setup_nodes/0, setup_nodes/2, imperfect_split/1, build_proofs/3, build_proofs/5,
-            tx/2, tx/3, tx/4, wait_until_syncs_chunk/2, 
-            wait_until_syncs_chunks/1, wait_until_syncs_chunks/2, wait_until_syncs_chunks/3,
-            get_tx_offset/2, get_tx_data/1,
-            post_random_blocks/1, get_records_with_proofs/3, post_proofs/4,
-            generate_random_split/1, generate_random_original_split/1,
-            generate_random_standard_split/0, generate_random_original_v1_split/0]).
+-export([setup_nodes/0, setup_nodes/1,
+		imperfect_split/1, build_proofs/3, build_proofs/5,
+        tx/2, tx/3, tx/4, wait_until_syncs_chunk/2,
+        wait_until_syncs_chunks/1, wait_until_syncs_chunks/2, wait_until_syncs_chunks/3,
+        get_tx_offset/2, get_tx_data/1,
+        post_random_blocks/1, get_records_with_proofs/3, post_proofs/4,
+        generate_random_split/1, generate_random_original_split/1,
+        generate_random_standard_split/0, generate_random_original_v1_split/0]).
 
 
 get_records_with_proofs(B, TX, Chunks) ->
 	[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)].
 
 setup_nodes() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	PeerAddr = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
-	setup_nodes(Addr, PeerAddr).
+	setup_nodes(#{}).
 
-setup_nodes(MainAddr, PeerAddr) ->
+setup_nodes(Options) ->
+	Addr = maps:get(addr, Options, ar_wallet:to_address(ar_wallet:new_keyfile())),
+	PeerAddr = maps:get(peer_addr, Options, ar_wallet:to_address(
+			ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []))),
+	setup_nodes2(Options#{ addr => Addr, peer_addr => PeerAddr }).
+
+setup_nodes2(#{ addr := MainAddr, peer_addr := PeerAddr } = Options) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
-	ar_test_node:start(B0, MainAddr, Config),
+	case maps:get(storage_modules, Options, not_found) of
+		not_found ->
+			ar_test_node:start(B0, MainAddr, Config);
+		StorageModules ->
+			ar_test_node:start(B0, MainAddr, Config, StorageModules)
+	end,
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig),
 	ar_test_node:connect_to_peer(peer1),
