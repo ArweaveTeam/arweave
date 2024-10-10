@@ -169,6 +169,7 @@ start_node(B0, Config, WaitUntilSync) ->
 		peers = Config#config.peers,
 		cm_exit_peer = Config#config.cm_exit_peer,
 		cm_peers = Config#config.cm_peers,
+		local_peers = Config#config.local_peers,
 		mine = Config#config.mine,
 		storage_modules = Config#config.storage_modules
 	},
@@ -192,11 +193,13 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
 	ExitPeer = peer_ip(peer1),
 	ValidatorPeer = peer_ip(main),
+	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
 
 	BaseCMConfig = base_cm_config([ValidatorPeer]),
 	RewardAddr = BaseCMConfig#config.mining_addr,
 	ExitNodeConfig = BaseCMConfig#config{
-		mine = true
+		mine = true,
+		local_peers = [peer_ip(Peer) || Peer <- MinerNodes]
 	},
 	ValidatorNodeConfig = BaseCMConfig#config{
 		mine = false,
@@ -207,15 +210,17 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]), %% exit node
 	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]), %% validator node
-	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
+	
 	lists:foreach(
 		fun(I) ->
 			MinerNode = lists:nth(I, MinerNodes),
 			MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
+			MinerPeerIPs = [peer_ip(Peer) || Peer <- MinerPeers],
 
 			MinerConfig = BaseCMConfig#config{
 				cm_exit_peer = ExitPeer,
-				cm_peers = [peer_ip(Peer) || Peer <- MinerPeers],
+				cm_peers = MinerPeerIPs,
+				local_peers = MinerPeerIPs ++ [ExitPeer],
 				storage_modules = get_cm_storage_modules(RewardAddr, I, MiningNodeCount)
 			},
 			remote_call(MinerNode, ar_test_node, start_node, [B0, MinerConfig])
@@ -271,10 +276,10 @@ get_blocks(Node) ->
 	remote_call(Node, ar_node, get_blocks, []).
 
 invalid_solution() ->
-	<<"00000000000000000000000000000000">>.
+	<<0:256>>.
 
 valid_solution() ->
-	<<"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF">>.
+	<<255:256>>.
 
 mock_to_force_invalid_h1() ->
 	{
@@ -475,6 +480,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		peers = [],
 		cm_exit_peer = not_set,
 		cm_peers = [],
+		local_peers = [],
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
