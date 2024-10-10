@@ -3203,6 +3203,9 @@ handle_mining_h2(Req, Pid) ->
 												Payload) end),
 									{200, #{}, <<>>, Req2};
 								_ ->
+									?LOG_ERROR([{event, h2_received},
+											{peer, ar_util:format_peer(Peer)},
+											{unpacked_chunk, ar_util:encode(Candidate#mining_candidate.poa2#poa.unpacked_chunk)}]),
 									ar_mining_server:prepare_and_post_solution(Candidate),
 									ar_mining_stats:h2_received_from_peer(Peer),
 									{200, #{}, <<>>, Req}

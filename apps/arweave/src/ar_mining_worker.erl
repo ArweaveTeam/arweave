@@ -513,7 +513,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 
 handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	#mining_candidate{
-		chunk2 = Chunk2, h2 = H2,
+		h2 = H2,
 		cm_lead_peer = Peer
 	} = Candidate,
 	State2 = hash_computed(h2, Candidate, State),
@@ -540,8 +540,7 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 		{_, not_set} ->
 			ar_mining_server:prepare_and_post_solution(Candidate);
 		_ ->
-			ar_coordination:computed_h2_for_peer(
-					Candidate#mining_candidate{ poa2 = #poa{ chunk = Chunk2 } })
+			ar_coordination:computed_h2_for_peer(Candidate)
 	end,
 	{noreply, State2};
 

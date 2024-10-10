@@ -509,6 +509,9 @@ prepare_solution(Solution, State) ->
 		h1 = H1,
 		chunk1 = Chunk1
 	},
+	?LOG_ERROR([{event, prepare_solution},
+		{h1, ar_util:encode(H1)},
+		{preimage1, ar_util:encode(Preimage1)}, {preimage, ar_util:encode(Preimage)}]),
 	Candidate3 =
 		case PoA2#poa.chunk of
 			<<>> ->
@@ -750,6 +753,12 @@ prepare_solution(poa2, Candidate, Solution) ->
 							{modules_covering_recall_byte2, ModuleIDs}]),
 					ar:console("WARNING: we have mined a block but did not find the PoA2 "
 							"proofs locally - searching the peers...~n"),
+					Chunk2Binary = case Chunk2 of
+						not_set ->
+							<<>>;
+						_ ->
+							Chunk2
+					end,
 					case fetch_poa_from_peers(RecallByte2, PackingDifficulty) of
 						not_found ->
 							{_RecallRange1Start, RecallRange2Start} =
@@ -765,16 +774,16 @@ prepare_solution(poa2, Candidate, Solution) ->
 							ar:console("WARNING: we have mined a block but failed to find "
 									"the PoA2 proofs required for publishing it. "
 									"Check logs for more details~n"),
-							%% If we are a coordinated miner and not an exit node - the exit node
-							%% will fetch the proofs.
+							%% If we are a coordinated miner and not an exit node - the exit
+							%% node will fetch the proofs.
 							may_be_leave_it_to_exit_peer(
 									prepare_solution(poa1, Candidate,
 											Solution#mining_solution{
-													poa2 = #poa{ chunk = Chunk2 } }));
+													poa2 = #poa{ chunk = Chunk2Binary } }));
 						PoA2 ->
 							prepare_solution(poa1, Candidate,
 									Solution#mining_solution{
-											poa2 = PoA2#poa{ chunk = Chunk2 } })
+											poa2 = PoA2#poa{ chunk = Chunk2Binary } })
 					end
 			end
 	end.
