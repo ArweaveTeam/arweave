@@ -1535,11 +1535,11 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 				case {ChunkID, Packing == StoredPacking, Pack} of
 					{error, _, _} ->
 						%% Chunk was read but could not be validated.
-						{error, chunk_not_found};
+						{error, chunk_failed_validation};
 					{_, false, false} ->
 						%% Requested and stored chunk are in different formats,
 						%% and repacking is disabled.
-						{error, chunk_not_found};
+						{error, chunk_stored_in_different_packing_only};
 					_ ->
 						ar_packing_server:repack(
 							Packing, StoredPacking, AbsoluteOffset, TXRoot, Chunk, ChunkSize)
