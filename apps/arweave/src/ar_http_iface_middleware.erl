@@ -2039,6 +2039,10 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 									{200, #{}, Reply, Req};
 								{error, chunk_not_found} ->
 									{404, #{}, <<>>, Req};
+								{error, chunk_failed_validation} ->
+									{404, #{}, <<>>, Req};
+								{error, chunk_stored_in_different_packing_only} ->
+									{404, #{}, <<>>, Req};
 								{error, not_joined} ->
 									not_joined(Req);
 								{error, failed_to_read_chunk} ->

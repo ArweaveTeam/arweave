@@ -340,9 +340,22 @@ get_packing() ->
 			% More than one unique packing found
 			?LOG_ERROR([
 				{event, get_packing_failed}, {reason, multiple_unique_packings},
-				{unique_packings, MultiplePackings}]),
+				{unique_packings, [format_packing(Packing) || Packing <- MultiplePackings]}
+				]),
 			undefined
 	end.
+
+format_packing({spora_2_6, Addr}) ->
+	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
+format_packing({composite, Addr, Difficulty}) ->
+	"composite_" ++ binary_to_list(ar_util:encode(Addr)) ++ "." ++ integer_to_list(Difficulty);
+format_packing(spora_2_5) ->
+	"spora_2_5";
+format_packing(unpacked) ->
+	"unpacked";
+format_packing(Packing) ->
+	?LOG_ERROR("Unexpected packing: ~p", [Packing]),
+	"unknown".
 
 get_packing_difficulty({composite, _, Difficulty}) ->
 	Difficulty;

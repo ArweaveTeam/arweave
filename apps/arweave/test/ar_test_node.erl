@@ -5,7 +5,8 @@
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, remote_call/4, load_fixture/1]).
+		valid_solution/0, remote_call/4, load_fixture/1,
+		get_default_storage_module_packing/2]).
 
 %% The "legacy" interface.
 -export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4,
