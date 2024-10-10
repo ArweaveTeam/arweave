@@ -147,10 +147,12 @@ handle_info({gun_up, PID, _Protocol}, #state{ status_by_pid = StatusByPID } = St
 			[gen_server:reply(ReplyTo, {ok, PID}) || {ReplyTo, _} <- PendingRequests],
 			StatusByPID2 = maps:put(PID, {connected, MonitorRef, Peer}, StatusByPID),
 			prometheus_gauge:inc(outbound_connections),
+			ar_peers:connected_peer(Peer),
 			{noreply, State#state{ status_by_pid = StatusByPID2 }};
 		{connected, _MonitorRef, Peer} ->
 			?LOG_WARNING([{event, gun_up_pid_already_exists},
 					{peer, ar_util:format_peer(Peer)}]),
+			ar_peers:connected_peer(Peer),
 			{noreply, State}
 	end;
 
@@ -179,6 +181,7 @@ handle_info({gun_error, PID, Reason},
 					prometheus_gauge:dec(outbound_connections),
 					ok
 			end,
+			ar_peers:disconnected_peer(Peer),
 			gun:shutdown(PID),
 			?LOG_DEBUG([{event, connection_error}, {reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
@@ -208,6 +211,7 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
 					prometheus_gauge:dec(outbound_connections),
 					ok
 			end,
+			ar_peers:disconnected_peer(Peer),
 			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
 	end;
 
@@ -226,6 +230,7 @@ handle_info({'DOWN', _Ref, process, PID, Reason},
 					prometheus_gauge:dec(outbound_connections),
 					ok
 			end,
+			ar_peers:disconnected_peer(Peer),
 			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
 	end;
 

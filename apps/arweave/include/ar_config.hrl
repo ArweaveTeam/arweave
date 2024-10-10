@@ -106,6 +106,9 @@
 %% The default number of chunks fetched from disk at a time during in-place repacking.
 -define(DEFAULT_REPACK_BATCH_SIZE, 100).
 
+%% default filtering value for the peer list (30days)
+-define(CURRENT_PEERS_LIST_FILTER, 30*60*60*24).
+
 %% The default rocksdb databases flush interval, 30 minutes.
 -define(DEFAULT_ROCKSDB_FLUSH_INTERVAL_S, 1800).
 %% The default rocksdb WAL sync interval, 1 minute.

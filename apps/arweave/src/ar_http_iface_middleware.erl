@@ -648,7 +648,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 			[
 				list_to_binary(ar_util:format_peer(P))
 			||
-				P <- ar_peers:get_peers(lifetime),
+				P <- ar_peers:get_peers(current),
 				P /= ar_http_util:arweave_peer(Req),
 				ar_peers:is_public_peer(P)
 			]
