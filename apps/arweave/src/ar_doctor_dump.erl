@@ -10,19 +10,16 @@ main(Args) ->
 	dump(Args).
 
 help() ->
-	ar:console("data-doctor dump <min_height> <max_height> <data_dir> <output_dir>~n"),
+	ar:console("data-doctor dump <include_txs> <block_id> <min_height> <data_dir> <output_dir>~n"),
+	ar:console("  include_txs: Whether to include transactions in the dump (true/false).~n"),
+	ar:console("  block_id: The block ID to start the dump from.~n"),
 	ar:console("  min_height: The minimum height of the blocks to dump.~n"),
-	ar:console("  max_height: The maximum height of the blocks to dump.~n"),
 	ar:console("  data_dir: Full path to your data_dir.~n"),
 	ar:console("  output_dir: Full path to a directory where the dumped data will be written.~n"),
 	ar:console("~nExample:~n"),
-	ar:console("data-doctor dump /mnt/arweave-data /mnt/output~n").
+	ar:console("data-doctor dump true ZR7zbobdw55a....pRpUabEkLD0V 100000 /mnt/arweave-data /mnt/output~n").
 
-dump(Args) when length(Args) < 4 ->
-	false;
-dump(Args) ->
-	[MinHeight, MaxHeight, DataDir, OutputDir] = Args,
-
+dump([IncludeTXs, H, MinHeight, DataDir, OutputDir]) ->
 	ok = filelib:ensure_dir(filename:join([OutputDir, "blocks", "dummy"])),
 	ok = filelib:ensure_dir(filename:join([OutputDir, "txs", "dummy"])),
 
@@ -31,18 +28,26 @@ dump(Args) ->
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
 
-	dump_blocks(<<>>, list_to_integer(MinHeight), list_to_integer(MaxHeight), OutputDir),
-	true.
+	dump_blocks(ar_util:decode(H),
+		list_to_integer(MinHeight),
+		OutputDir,
+		list_to_boolean(IncludeTXs)),
+	true;
+dump(_) ->
+	false.
 
-dump_blocks(Cursor, MinHeight, MaxHeight, OutputDir) ->
-	case ar_kv:get_next(block_db, Cursor) of
-        {ok, BH, Bin} ->
-            % Process the value here if needed
-			H = ar_util:encode(BH),
+list_to_boolean("true") -> true;
+list_to_boolean("false") -> false;
+list_to_boolean(_) -> false.
+
+dump_blocks(BH, MinHeight, OutputDir, IncludeTXs) ->
+	H = ar_util:encode(BH),
+	case ar_kv:get(block_db, BH) of
+		{ok, Bin} ->
 			try
 				case ar_serialize:binary_to_block(Bin) of
 					{ok, B} ->
-						case B#block.height >= MinHeight andalso B#block.height =< MaxHeight of
+						case B#block.height >= MinHeight of
 							true ->
 								io:format("Block: ~p / ~p", [B#block.height, H]),
 								JsonFilename = io_lib:format("~s.json", [ar_util:encode(B#block.indep_hash)]),
@@ -54,27 +59,30 @@ dump_blocks(Cursor, MinHeight, MaxHeight, OutputDir) ->
 									{error, enoent} ->
 										io:format(" ... writing~n"),
 										% File does not exist, proceed with processing
-										dump_txs(B#block.txs, OutputDir),
+										case IncludeTXs of
+											true ->
+												dump_txs(B#block.txs, OutputDir);
+											false ->
+												ok
+										end,
 										Json = ar_serialize:block_to_json_struct(B),
 										JsonString = ar_serialize:jsonify(Json),
 										file:write_file(OutputFilePath, JsonString)
-								end;
+								end,
+								PrevBH = B#block.previous_block,
+								dump_blocks(PrevBH, MinHeight, OutputDir, IncludeTXs);
 							false ->
-								ok
+								io:format("Done.~n")
 						end;
 					_ ->
 						ok
 				end
 			catch
 				Type:Reason ->
-					io:format("Error processing cursor ~p: ~p:~p~n", [Cursor, Type, Reason])
-			end,
-
-			<< Start:384 >> = BH,
-			NextCursor = << (Start + 1):384 >>,
-            dump_blocks(NextCursor, MinHeight, MaxHeight, OutputDir); % Recursive call with the new cursor
-        none ->
-            io:format("No more entries.~n")
+					io:format("Error processing block ~p: ~p:~p~n", [H, Type, Reason])
+			end;
+        not_found ->
+            io:format("Block ~p not found.~n", [H])
     end.
 
 dump_txs([], _OutputDir) ->
