@@ -10,11 +10,11 @@
     ],
     "mining_addr": "v0AnxIi2DhwdyKUEHR_GrHjIGJtv1ImSB2z2ZWyQzSc",
     "peers": [
-        "testnet-1.arweave.net",
-        "testnet-2.arweave.net",
-        "testnet-3.arweave.net",
-        "testnet-4.arweave.net",
-        "testnet-6.arweave.net"
+        "testnet-1.arweave.xyz",
+        "testnet-2.arweave.xyz",
+        "testnet-3.arweave.xyz",
+        "testnet-4.arweave.xyz",
+        "testnet-6.arweave.xyz"
     ],
     "debug": true,
     "mine": true,

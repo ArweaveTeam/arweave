@@ -219,9 +219,13 @@ get_trusted_peers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.peers of
 		[] ->
-			ArweavePeers = ["sfo-1.na-west-1.arweave.net", "ams-1.eu-central-1.arweave.net",
-					"fra-1.eu-central-2.arweave.net", "blr-1.ap-central-1.arweave.net",
-					"sgp-1.ap-central-2.arweave.net"],
+			ArweavePeers = [
+				"sfo-1.na-west-1.arweave.xyz",
+				"ams-1.eu-central-1.arweave.xyz",
+				"fra-1.eu-central-2.arweave.xyz",
+				"blr-1.ap-central-1.arweave.xyz",
+				"sgp-1.ap-central-2.arweave.xyz"
+			],
 			resolve_peers(ArweavePeers);
 		Peers ->
 			Peers
