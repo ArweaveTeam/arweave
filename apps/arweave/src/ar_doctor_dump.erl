@@ -17,7 +17,7 @@ help() ->
 	ar:console("  data_dir: Full path to your data_dir.~n"),
 	ar:console("  output_dir: Full path to a directory where the dumped data will be written.~n"),
 	ar:console("~nExample:~n"),
-	ar:console("data-doctor dump true 0 100000 /mnt/arweave-data /mnt/output~n").
+	ar:console("data-doctor dump true ZR7zbobdw55a1z6Tzndi9ikTa_qY29CUx3xeZAInKBodmW7m45VopRpUabEkLD0V 100000 /mnt/arweave-data /mnt/output~n").
 
 dump(Args) when length(Args) < 5 ->
 	false;
