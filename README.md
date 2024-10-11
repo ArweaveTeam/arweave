@@ -77,11 +77,11 @@ limits](https://docs.arweave.org/info/mining/mining-guide#preparation-file-descr
 
 ```sh
 ./arweave-server \
-peer ams-1.eu-central-1.arweave.net \
-peer fra-1.eu-central-2.arweave.net \
-peer sgp-1.ap-central-2.arweave.net \
-peer blr-1.ap-central-1.arweave.net \
-peer sfo-1.na-west-1.arweave.net
+peer ams-1.eu-central-1.arweave.xyz \
+peer fra-1.eu-central-2.arweave.xyz \
+peer sgp-1.ap-central-2.arweave.xyz \
+peer blr-1.ap-central-1.arweave.xyz \
+peer sfo-1.na-west-1.arweave.xyz
 ```
 
 **Make a production build:**
@@ -105,7 +105,7 @@ The tarball is created at `_build/testnet/rel/arweave/arweave-x.y.z.tar.gz`.
 You can join the public testnet now:
 
 ```
-./bin/start peer testnet-1.arweave.net peer testnet-2.arweave.net peer testnet-3.arweave.net
+./bin/start peer testnet-1.arweave.xyz peer testnet-2.arweave.xyz peer testnet-3.arweave.xyz
 ```
 
 We recommend you do not use your mainnet mining address on testnet. Also, do not join the

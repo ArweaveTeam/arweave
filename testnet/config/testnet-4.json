@@ -7,7 +7,7 @@
     ],
     "mining_addr": "hDdptPiuAlrP5RxEHwZoffm7obIyvvBi40T5PPvp57w",
     "vdf_client_peers": [
-        "testnet-3.arweave.net"
+        "testnet-3.arweave.xyz"
     ],
     "header_sync_jobs": 0,
     "debug": true,
