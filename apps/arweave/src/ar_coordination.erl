@@ -265,34 +265,12 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	{noreply, State};
 
 handle_cast({computed_h2_for_peer, Candidate}, State) ->
-	#mining_candidate{
-		cm_lead_peer = Peer, nonce = Nonce, chunk2 = Chunk2,
-		packing_difficulty = PackingDifficulty, partition_number = PartitionNumber,
-		partition_upper_bound = PartitionUpperBound, h0 = H0
-	} = Candidate,
-
-	{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-			PartitionNumber, PartitionUpperBound),
-	RecallByte2 = ar_block:get_recall_byte(RecallRange2Start, Nonce, PackingDifficulty),
-
-	Options = #{ pack => true, packing => unpacked, is_miner_request => true },
-	PoA2 = case ar_data_sync:get_chunk(RecallByte2 + 1, Options) of
-		{ok, Proof} ->
-			#{ chunk := UnpackedChunk, tx_path := TXPath, data_path := DataPath } = Proof,
-			#poa{ 
-				chunk = Chunk2,
-				unpacked_chunk = UnpackedChunk,
-				tx_path = TXPath,
-				data_path = DataPath };
-		Error ->
-			Error
-	end,
-
-	send_h2(Peer, Candidate#mining_candidate{ poa2 = PoA2 }),
+	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
+	send_h2(Peer, Candidate),
 	{noreply, State};
 
 handle_cast(refetch_peer_partitions, State) ->
-	{ok, Config} = application:get_env(arweave, config),	
+	{ok, Config} = application:get_env(arweave, config),
 	Peers = Config#config.cm_peers,
 	Peers2 =
 		case Config#config.cm_exit_peer == not_set
