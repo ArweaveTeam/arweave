@@ -1535,11 +1535,11 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 				case {ChunkID, Packing == StoredPacking, Pack} of
 					{error, _, _} ->
 						%% Chunk was read but could not be validated.
-						{error, chunk_not_found};
+						{error, chunk_failed_validation};
 					{_, false, false} ->
 						%% Requested and stored chunk are in different formats,
 						%% and repacking is disabled.
-						{error, chunk_not_found};
+						{error, chunk_stored_in_different_packing_only};
 					_ ->
 						ar_packing_server:repack(
 							Packing, StoredPacking, AbsoluteOffset, TXRoot, Chunk, ChunkSize)
@@ -3135,6 +3135,13 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 							StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
 							ok = ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE,
 									StoreID),
+							case ar_sync_record:is_recorded(PaddedOffset, ?MODULE) of
+								false ->
+									ar_events:send(sync_record,
+											{global_remove_range, StartOffset, PaddedOffset});
+								_ ->
+									ok
+							end,
 							ok = ar_kv:delete(ChunksIndex, ChunksIndexKey);
 						_ ->
 							%% The entry has been written by the 2.5 version thus has

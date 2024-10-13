@@ -359,7 +359,7 @@ test_request_unpack() ->
 				#{},
 				lists:seq(1, 20)
 			),
-		Wallet = ar_test_data_sync:setup_nodes(MainAddr, PeerAddr),
+		Wallet = ar_test_data_sync:setup_nodes(#{ addr => MainAddr, peer_addr => PeerAddr }),
 		{LegacyProofs, StrictProofs, V1Proofs} = lists:foldl(
 			fun(Height, {Acc1, Acc2, Acc3}) ->
 				{{DR1, Chunks1}, {DR2, Chunks2}, {DR3, Chunks3}} = maps:get(Height, DataMap),
