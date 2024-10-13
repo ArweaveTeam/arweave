@@ -508,9 +508,6 @@ prepare_solution(Solution, State) ->
 		h1 = H1,
 		chunk1 = Chunk1
 	},
-	?LOG_ERROR([{event, prepare_solution},
-		{h1, ar_util:encode(H1)},
-		{preimage1, ar_util:encode(Preimage1)}, {preimage, ar_util:encode(Preimage)}]),
 	Candidate3 =
 		case PoA2#poa.chunk of
 			<<>> ->
@@ -641,11 +638,10 @@ prepare_solution(proofs, Candidate, Solution) ->
 
 prepare_solution(poa1, Candidate, Solution) ->
 	#mining_solution{
-		poa1 = CurrentPoA1,
-		packing_difficulty = PackingDifficulty, mining_address = MiningAddress,
-		recall_byte1 = RecallByte1 } = Solution,
-	#mining_candidate{
-		chunk1 = Chunk1, nonce = Nonce } = Candidate,
+		poa1 = CurrentPoA1, recall_byte1 = RecallByte1,
+		mining_address = MiningAddress, packing_difficulty = PackingDifficulty, 
+	} = Solution,
+	#mining_candidate{ chunk1 = Chunk1, nonce = Nonce } = Candidate,
 
 	case prepare_poa(poa1, Candidate, CurrentPoA1) of
 		{ok, PoA1} ->
