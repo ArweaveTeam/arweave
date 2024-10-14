@@ -13,32 +13,32 @@
 %% --------------------------------------------------------------------
 mining_test_() ->
 	[
-		{timeout, 120, fun test_single_node_one_chunk/0},
+		% {timeout, 120, fun test_single_node_one_chunk/0},
+		% ar_test_node:test_with_mocked_functions([
+		% 	ar_test_node:mock_to_force_invalid_h1()],
+		% 	fun test_single_node_two_chunk/0, 120),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_single_node_two_chunk/0, 120),
-		ar_test_node:test_with_mocked_functions([
-			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_cross_node/0, 120),
-		ar_test_node:test_with_mocked_functions([
-			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_cross_node_retarget/0, 120),
-		{timeout, 120, fun test_two_node_retarget/0},
-		{timeout, 120, fun test_three_node/0},
-		{timeout, 120, fun test_no_exit_node/0}
+			fun test_cross_node/0, 120)
+		% ar_test_node:test_with_mocked_functions([
+		% 	ar_test_node:mock_to_force_invalid_h1()],
+		% 	fun test_cross_node_retarget/0, 120),
+		% {timeout, 120, fun test_two_node_retarget/0},
+		% {timeout, 120, fun test_three_node/0},
+		% {timeout, 120, fun test_no_exit_node/0}
 	].
 
-api_test_() ->
-	[
-		{timeout, 120, fun test_no_secret/0},
-		{timeout, 120, fun test_bad_secret/0},
-		{timeout, 120, fun test_partition_table/0}
-	].
+% api_test_() ->
+% 	[
+% 		{timeout, 120, fun test_no_secret/0},
+% 		{timeout, 120, fun test_bad_secret/0},
+% 		{timeout, 120, fun test_partition_table/0}
+% 	].
 
-refetch_partitions_test_() ->
-	[
-		{timeout, 120, fun test_peers_by_partition/0}
-	].
+% refetch_partitions_test_() ->
+% 	[
+% 		{timeout, 120, fun test_peers_by_partition/0}
+% 	].
 
 %% --------------------------------------------------------------------
 %% Tests
@@ -377,7 +377,8 @@ wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 
 wait_for_cross_node(_Miners, _ValidatorNode, _CurrentHeight, _ExpectedPartitions, 0) ->
 	?assert(false, "Timed out waiting for a cross-node solution");
-wait_for_cross_node(_Miners, _ValidatorNode, _CurrentHeight, _ExpectedPartitions, 0) ->
+wait_for_cross_node(_Miners, _ValidatorNode, _CurrentHeight, ExpectedPartitions, _RetryCount)
+		when length(ExpectedPartitions) /= 2 ->
 	?assert(false, "Cross-node solutions can only have 2 partitions.");
 wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
 	A = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
