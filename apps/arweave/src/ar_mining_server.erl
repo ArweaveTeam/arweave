@@ -639,7 +639,7 @@ prepare_solution(proofs, Candidate, Solution) ->
 prepare_solution(poa1, Candidate, Solution) ->
 	#mining_solution{
 		poa1 = CurrentPoA1, recall_byte1 = RecallByte1,
-		mining_address = MiningAddress, packing_difficulty = PackingDifficulty, 
+		mining_address = MiningAddress, packing_difficulty = PackingDifficulty
 	} = Solution,
 	#mining_candidate{ chunk1 = Chunk1, nonce = Nonce } = Candidate,
 
