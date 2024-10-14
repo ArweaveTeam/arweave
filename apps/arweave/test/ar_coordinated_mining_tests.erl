@@ -13,32 +13,32 @@
 %% --------------------------------------------------------------------
 mining_test_() ->
 	[
-		% {timeout, 120, fun test_single_node_one_chunk/0},
-		% ar_test_node:test_with_mocked_functions([
-		% 	ar_test_node:mock_to_force_invalid_h1()],
-		% 	fun test_single_node_two_chunk/0, 120),
+		{timeout, 120, fun test_single_node_one_chunk/0},
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_cross_node/0, 120)
-		% ar_test_node:test_with_mocked_functions([
-		% 	ar_test_node:mock_to_force_invalid_h1()],
-		% 	fun test_cross_node_retarget/0, 120),
-		% {timeout, 120, fun test_two_node_retarget/0},
-		% {timeout, 120, fun test_three_node/0},
-		% {timeout, 120, fun test_no_exit_node/0}
+			fun test_single_node_two_chunk/0, 120),
+		ar_test_node:test_with_mocked_functions([
+			ar_test_node:mock_to_force_invalid_h1()],
+			fun test_cross_node/0, 120),
+		ar_test_node:test_with_mocked_functions([
+			ar_test_node:mock_to_force_invalid_h1()],
+			fun test_cross_node_retarget/0, 120),
+		{timeout, 120, fun test_two_node_retarget/0},
+		{timeout, 120, fun test_three_node/0},
+		{timeout, 120, fun test_no_exit_node/0}
 	].
 
-% api_test_() ->
-% 	[
-% 		{timeout, 120, fun test_no_secret/0},
-% 		{timeout, 120, fun test_bad_secret/0},
-% 		{timeout, 120, fun test_partition_table/0}
-% 	].
+api_test_() ->
+	[
+		{timeout, 120, fun test_no_secret/0},
+		{timeout, 120, fun test_bad_secret/0},
+		{timeout, 120, fun test_partition_table/0}
+	].
 
-% refetch_partitions_test_() ->
-% 	[
-% 		{timeout, 120, fun test_peers_by_partition/0}
-% 	].
+refetch_partitions_test_() ->
+	[
+		{timeout, 120, fun test_peers_by_partition/0}
+	].
 
 %% --------------------------------------------------------------------
 %% Tests
