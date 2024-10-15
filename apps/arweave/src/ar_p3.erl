@@ -3,7 +3,6 @@
 -behaviour(gen_server).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_p3.hrl").
 
 -export([start_link/0, allow_request/1, reverse_charge/1, get_balance/3, get_rates_json/0]).
@@ -98,7 +97,7 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State}.
 
-terminate(Reason, State) ->
+terminate(_Reason, _State) ->
 	ok.
 
 %%%===================================================================
@@ -206,7 +205,7 @@ validate_signature(DecodedAddress, Req) ->
 	case ar_util:safe_decode(cowboy_req:header(?P3_SIGNATURE_HEADER, Req)) of
 		{ok, DecodedSignature} ->
 			validate_signature(DecodedAddress, DecodedSignature, Req);
-		Result ->
+		_Result ->
 			{error, invalid_signature}
 	end.
 
@@ -221,7 +220,7 @@ validate_signature(DecodedAddress, DecodedSignature, Req) ->
 				false ->
 					{error, invalid_signature}
 			end;
-		Error ->
+		_Error ->
 			{error, invalid_signature}
 	end.
 
