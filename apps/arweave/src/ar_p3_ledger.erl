@@ -64,6 +64,7 @@
 -define(db_dir(PeerAddress), filename:join([get_data_dir(), ?ledger_databases_relative_dir, PeerAddress])).
 -define(log_dir(PeerAddress), filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, ?ledger_databases_relative_dir, PeerAddress])).
 -define(ledger_checkpoint_interval_records, 100).
+-define(shutdown_timeout_ms, 300_000).
 
 -define(booking_constant_suffix, 16#b).
 -define(booking_countertype(T), case T of
@@ -95,6 +96,15 @@ end).
 	assets_map = #{} :: assets_map(),
 	dangling_bookings = 0 :: non_neg_integer()
 }).
+-type cf() :: #cf{}.
+
+-record(timer, {
+	timeout_ms = ?shutdown_timeout_ms :: pos_integer(),
+	armed = false :: boolean(),
+	timer_ref :: reference(),
+	secret_ref :: reference()
+}).
+-type timer() :: #timer{}.
 
 -record(state, {
 	peer_address :: binary(),
@@ -105,15 +115,19 @@ end).
 		?ar_p3_ledger_booking_account_equity => #cf{},
 		?ar_p3_ledger_booking_account_liability => #cf{},
 		?ar_p3_ledger_booking_account_service => #cf{}
-	} :: #{booking_account() := #cf{}}
+	} :: #{booking_account() := cf()},
+	shutdown_timer = #timer{} :: timer()
 }).
 -type state() :: #state{}.
 
 -define(msg_continue_open_rocksdb, {msg_continue_open_rocksdb}).
 -define(msg_continue_load_ledger, {msg_continue_load_current_values}).
+-define(msg_continue_start_shutdown_timer, {msg_continue_start_shutdown_timer}).
 
 -define(msg_call_transfer(DebitBooking, CreditBooking), {msg_call_transfer, DebitBooking, CreditBooking}).
 -define(msg_call_total(), {msg_call_total}).
+
+-define(msg_info_timer_alarm, {msg_info_timer_alarm}).
 
 
 
@@ -311,6 +325,7 @@ handle_continue(?msg_continue_open_rocksdb, #state{
 				}
 			},
 			{noreply, S1, {continue, ?msg_continue_load_ledger}};
+
 		{error, OpenError} ->
 			?LOG_ERROR([{event, db_operation_failed}, {op, open}, {reason, io_lib:format("~p", [OpenError])}]),
 			{stop, {failed_to_open_database, OpenError}, S0}
@@ -339,10 +354,20 @@ handle_continue(?msg_continue_load_ledger, #state{
 			}
 		},
 
-		{noreply, S1}
+		{noreply, S1, {continue, ?msg_continue_start_shutdown_timer}}
 	catch
 		_:E -> {stop, E, S0}
 	end;
+
+handle_continue(?msg_continue_start_shutdown_timer, #state{shutdown_timer = Timer0} = S0) ->
+	Timer1 = maybe_cancel_timer(Timer0),
+	SecretRef = erlang:make_ref(),
+	TimerRef = erlang:send_after(Timer1#timer.timeout_ms, self(), ?msg_info_timer_alarm),
+	S1 = S0#state{shutdown_timer = Timer1#timer{
+		timer_ref = TimerRef,
+		secret_ref = SecretRef
+	}},
+	{noreply, S1};
 
 handle_continue(Request, S0) ->
 	?LOG_WARNING([{event, unhandled_continue}, {continue, Request}]),
@@ -362,10 +387,10 @@ andalso ?is_valid_account(CreditAccount)
 andalso DebitAccount /= CreditAccount ->
 	{ok, S1} = insert_booking(DebitAccount, DebitBooking, S0),
 	{ok, S2} = insert_booking(CreditAccount, CreditBooking, S1),
-	{reply, ok, S2};
+	{reply, ok, maybe_disarm_timer(S2)};
 
 handle_call(?msg_call_transfer(_DebitBooking, _CreditBooking), _From, S0) ->
-	{reply, {error, bad_accounts}, S0};
+	{reply, {error, bad_accounts}, maybe_disarm_timer(S0)};
 
 handle_call(?msg_call_total(), _From, #state{
 	cfs = Cfs
@@ -373,7 +398,7 @@ handle_call(?msg_call_total(), _From, #state{
 	Ret = maps:map(fun(_Account, #cf{assets_map = AssetsMap}) ->
 		AssetsMap
 	end, Cfs),
-	{reply, {ok, Ret}, S0};
+	{reply, {ok, Ret}, maybe_disarm_timer(S0)};
 
 handle_call(Request, _From, S0) ->
 	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
@@ -392,6 +417,13 @@ handle_cast(Cast, S0) ->
 
 -spec handle_info(Msg :: term(), S0 :: state()) ->
 	Ret :: {noreply, S1 :: state()}.
+
+handle_info(?msg_info_timer_alarm, #state{shutdown_timer = #timer{armed = false} = Timer0} = S0) ->
+	{noreply, S0#state{shutdown_timer = Timer0#timer{armed = true}}, {continue, ?msg_continue_start_shutdown_timer}};
+
+handle_info(?msg_info_timer_alarm, S0) ->
+	?LOG_INFO([]),
+	{stop, shutdown, S0};
 
 handle_info(Message, S0) ->
 	?LOG_WARNING([{event, unhandled_info}, {message, Message}]),
@@ -604,6 +636,16 @@ with_peer_ledger_started(PeerAddress, Fun) ->
 		{error, Reason} -> {error, Reason}
 	end.
 
+
+
+maybe_cancel_timer(#timer{timer_ref = TimerRef} = Timer0) ->
+	_ = erlang:cancel_timer(TimerRef),
+	Timer0#timer{timer_ref = undefined, secret_ref = undefined}.
+
+
+
+maybe_disarm_timer(#state{shutdown_timer = Timer0} = S0) ->
+	S0#state{shutdown_timer = Timer0#timer{armed = false}}.
 
 
 %%% ==================================================================
