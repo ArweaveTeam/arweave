@@ -698,31 +698,19 @@ prepare_solution(poa1, Candidate, Solution) ->
 	end;
 
 prepare_solution(poa2, Candidate, Solution) ->
-	#mining_solution{
-		poa2 = CurrentPoA2,
-		packing_difficulty = PackingDifficulty,
-		mining_address = MiningAddress, partition_number = PartitionNumber,
-		recall_byte2 = RecallByte2 } = Solution,
-	#mining_candidate{
-		chunk2 = Chunk2, h0 = H0, nonce = Nonce,
-		partition_upper_bound = PartitionUpperBound } = Candidate,
+	#mining_solution{ poa2 = CurrentPoA2 } = Solution,
+	#mining_candidate{ chunk2 = Chunk2 } = Candidate,
 
 	case prepare_poa(poa2, Candidate, CurrentPoA2) of
 		{ok, PoA2} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
-		{error, Error} ->
-			Chunk2Binary = case Chunk2 of
-				not_set ->
-					<<>>;
-				_ ->
-					Chunk2
-			end,
+		{error, _Error} ->
 			%% If we are a coordinated miner and not an exit node - the exit
 			%% node will fetch the proofs.
 			may_be_leave_it_to_exit_peer(
 				prepare_solution(poa1, Candidate,
 						Solution#mining_solution{
-								poa2 = #poa{ chunk = Chunk2Binary } }))
+								poa2 = #poa{ chunk = Chunk2 } }))
 	end.
 
 prepare_poa(PoAType, Candidate, CurrentPoA) ->
@@ -761,12 +749,6 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 							{modules_covering_recall_byte, ModuleIDs}]),
 					ar:console("WARNING: we have mined a block but did not find the ~p "
 							"proofs locally - searching the peers...~n", [PoAType]),
-					ChunkBinary = case Chunk of
-						not_set ->
-							<<>>;
-						_ ->
-							Chunk
-					end,
 					case fetch_poa_from_peers(RecallByte, PackingDifficulty) of
 						not_found ->
 							?LOG_ERROR([{event, mined_block_but_failed_to_read_chunk_proofs},
@@ -782,7 +764,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 									"Check logs for more details~n", [PoAType]),
 							{error, Error};
 						PoA ->
-							{ok, PoA#poa{ chunk = ChunkBinary }}
+							{ok, PoA#poa{ chunk = Chunk }}
 					end
 			end
 	end.
