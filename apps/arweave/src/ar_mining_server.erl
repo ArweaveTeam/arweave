@@ -699,7 +699,7 @@ prepare_solution(poa1, Candidate, Solution) ->
 
 prepare_solution(poa2, Candidate, Solution) ->
 	#mining_solution{ poa2 = CurrentPoA2 } = Solution,
-	#mining_candidate{chunk2 = Chunk2 } = Candidate,
+	#mining_candidate{ chunk2 = Chunk2 } = Candidate,
 
 	case prepare_poa(poa2, Candidate, CurrentPoA2) of
 		{ok, PoA2} ->
