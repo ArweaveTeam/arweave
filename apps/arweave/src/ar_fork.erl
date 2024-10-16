@@ -158,6 +158,6 @@ height_2_8() ->
 			0.
 	-else.
 		height_2_8() ->
-			infinity.
+			1547120. % Targeting 2024-11-13 14:00 UTC
 	-endif.
 -endif.
