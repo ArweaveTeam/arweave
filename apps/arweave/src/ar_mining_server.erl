@@ -699,7 +699,7 @@ prepare_solution(poa1, Candidate, Solution) ->
 
 prepare_solution(poa2, Candidate, Solution) ->
 	#mining_solution{ poa2 = CurrentPoA2 } = Solution,
-	#mining_candidate{ chunk2 = Chunk2 } = Candidate,
+	#mining_candidate{chunk2 = Chunk2 } = Candidate,
 
 	case prepare_poa(poa2, Candidate, CurrentPoA2) of
 		{ok, PoA2} ->
@@ -749,6 +749,12 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 							{modules_covering_recall_byte, ModuleIDs}]),
 					ar:console("WARNING: we have mined a block but did not find the ~p "
 							"proofs locally - searching the peers...~n", [PoAType]),
+					ChunkBinary = case Chunk of
+						not_set ->
+							<<>>;
+						_ ->
+							Chunk
+					end,
 					case fetch_poa_from_peers(RecallByte, PackingDifficulty) of
 						not_found ->
 							?LOG_ERROR([{event, mined_block_but_failed_to_read_chunk_proofs},
@@ -764,7 +770,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 									"Check logs for more details~n", [PoAType]),
 							{error, Error};
 						PoA ->
-							{ok, PoA#poa{ chunk = Chunk }}
+							{ok, PoA#poa{ chunk = ChunkBinary }}
 					end
 			end
 	end.
