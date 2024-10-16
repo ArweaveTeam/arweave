@@ -673,7 +673,11 @@ prepare_solution(poa1, Candidate, Solution) ->
 									error;
 								{_EndOffset, Chunk} ->
 									SubChunk = get_sub_chunk(Chunk, PackingDifficulty, Nonce),
-									Solution#mining_solution{ poa1 = #poa{ chunk = SubChunk } }
+									%% If we are a coordinated miner and not an exit node -
+									%% the exit node will fetch the proofs.
+									may_be_leave_it_to_exit_peer(
+											Solution#mining_solution{ 
+												poa1 = #poa{ chunk = SubChunk } })
 							end;
 						_ ->
 							Modules = ar_storage_module:get_all(RecallByte1 + 1),
