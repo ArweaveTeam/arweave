@@ -13,18 +13,18 @@
 %% --------------------------------------------------------------------
 mining_test_() ->
 	[
-		{timeout, 120, fun test_single_node_one_chunk_coordinated_mining/0},
+		{timeout, 120, fun test_single_node_one_chunk/0},
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_single_node_two_chunk_coordinated_mining/0, 120),
+			fun test_single_node_two_chunk/0, 120),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_coordinated_mining_two_chunk_concurrency/0, 120),
+			fun test_cross_node/0, 120),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_coordinated_mining_two_chunk_retarget/0, 120),
-		{timeout, 120, fun test_coordinated_mining_retarget/0},
-		{timeout, 120, fun test_coordinated_mining_concurrency/0},
+			fun test_cross_node_retarget/0, 120),
+		{timeout, 120, fun test_two_node_retarget/0},
+		{timeout, 120, fun test_three_node/0},
 		{timeout, 120, fun test_no_exit_node/0}
 	].
 
@@ -43,7 +43,10 @@ refetch_partitions_test_() ->
 %% --------------------------------------------------------------------
 %% Tests
 %% --------------------------------------------------------------------
-test_single_node_one_chunk_coordinated_mining() ->
+
+%% @doc One-node coordinated mining cluster mining a block with one
+%% or two chunks.
+test_single_node_one_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
 	BI = ar_test_node:wait_until_height(ValidatorNode, 1),
@@ -51,7 +54,8 @@ test_single_node_one_chunk_coordinated_mining() ->
 	?assert(byte_size((B#block.poa)#poa.data_path) > 0),
 	assert_empty_cache(Node).
 	
-test_single_node_two_chunk_coordinated_mining() ->
+%% @doc One-node coordinated mining cluster mining a block with two chunks.
+test_single_node_two_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
 	BI = ar_test_node:wait_until_height(ValidatorNode, 1),
@@ -59,11 +63,9 @@ test_single_node_two_chunk_coordinated_mining() ->
 	?assert(byte_size((B#block.poa2)#poa.data_path) > 0),
 	assert_empty_cache(Node).
 
-test_coordinated_mining_retarget() ->
-	%% Assert that a difficulty retarget is handled correctly.
-	[Node1, Node2, ExitNode, ValidatorNode] = ar_test_node:start_coordinated(2),
-	?debugFmt("~nnode1: ~p~nnode2: ~p~nexit node: ~p~nvalidator: ~p~n",
-			[Node1, Node2, ExitNode, ValidatorNode]),
+%% @doc Two-node coordinated mining cluster mining until a difficulty retarget.
+test_two_node_retarget() ->
+	[Node1, Node2, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(2),
 	lists:foreach(
 		fun(Height) ->
 			mine_in_parallel([Node1, Node2], ValidatorNode, Height)
@@ -72,30 +74,32 @@ test_coordinated_mining_retarget() ->
 	assert_empty_cache(Node1),
 	assert_empty_cache(Node2).
 
-test_coordinated_mining_concurrency() ->
-	%% Assert that three nodes mining concurrently don't conflict with each other and that
-	%% each of them are able to win a solution.
+%% @doc Three-node coordinated mining cluster mining until all nodes have contributed
+%% to a solution. This test does not force cross-node solutions.
+test_three_node() ->
 	[Node1, Node2, Node3, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(3),	
 	wait_for_each_node([Node1, Node2, Node3], ValidatorNode, 0, [0, 2, 4]),
 	assert_empty_cache(Node1),
 	assert_empty_cache(Node2),
 	assert_empty_cache(Node3).
 
-test_coordinated_mining_two_chunk_concurrency() ->
-	%% Assert that cross-node solutions still work when two nodes are mining concurrently 
+%% @doc Two-node, mine until a block is found that incorporates hashes from each node.
+test_cross_node() ->
 	[Node1, Node2, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(2),
-	wait_for_each_node([Node1, Node2], ValidatorNode, 0, [0, 2]),
+	wait_for_cross_node([Node1, Node2], ValidatorNode, 0, [0, 2]),
 	assert_empty_cache(Node1),
 	assert_empty_cache(Node2).
 
-test_coordinated_mining_two_chunk_retarget() ->
+%% @doc Two-node, mine through difficulty retarget, then mine until a block is found that
+%% incorporates hashes from each node.
+test_cross_node_retarget() ->
 	[Node1, Node2, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(2),
 	lists:foreach(
 		fun(H) ->
 			mine_in_parallel([Node1, Node2], ValidatorNode, H)
 		end,
 		lists:seq(0, ?RETARGET_BLOCKS)),
-	wait_for_each_node([Node1, Node2], ValidatorNode, ?RETARGET_BLOCKS, [0, 2]),
+	wait_for_cross_node([Node1, Node2], ValidatorNode, ?RETARGET_BLOCKS, [0, 2]),
 	assert_empty_cache(Node1),
 	assert_empty_cache(Node2).
 
@@ -232,6 +236,7 @@ test_peers_by_partition() ->
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
 		cm_exit_peer = not_set,
 		cm_peers = [Peer2, Peer3],
+		local_peers = [Peer2, Peer3],
 		storage_modules = [
 			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
 			{?PARTITION_SIZE, 1, {spora_2_6, MiningAddr}},
@@ -239,6 +244,7 @@ test_peers_by_partition() ->
 		]}, false]),
 	ar_test_node:remote_call(peer2, ar_test_node, start_node, [B0, Config#config{
 		cm_peers = [Peer1, Peer3],
+		local_peers = [Peer1, Peer3],
 		storage_modules = [
 			{?PARTITION_SIZE, 1, {spora_2_6, MiningAddr}},
 			{?PARTITION_SIZE, 2, {spora_2_6, MiningAddr}},
@@ -246,6 +252,7 @@ test_peers_by_partition() ->
 		]}, false]),
 	ar_test_node:remote_call(peer3, ar_test_node, start_node, [B0, Config#config{
 		cm_peers = [Peer1, Peer2],
+		local_peers = [Peer1, Peer2],
 		storage_modules = [
 			{?PARTITION_SIZE, 2, {spora_2_6, MiningAddr}},
 			{?PARTITION_SIZE, 3, {spora_2_6, MiningAddr}},
@@ -299,6 +306,7 @@ test_peers_by_partition() ->
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
 		cm_exit_peer = not_set,
 		cm_peers = [Peer2, Peer3],
+		local_peers = [Peer2, Peer3],
 		storage_modules = [
 			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
 			{?PARTITION_SIZE, 4, {spora_2_6, MiningAddr}},
@@ -353,14 +361,37 @@ wait_for_each_node(
 	?assert(false, "Timed out waiting for all mining nodes to win a solution");
 wait_for_each_node(
 		Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
-	Partition = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
-	Partitions = sets:del_element(Partition, ExpectedPartitions),
-	case sets:is_empty(Partitions) of
+	Partitions = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
+	ExpectedPartitions2 = sets:subtract(ExpectedPartitions, sets:from_list(Partitions)),
+	case sets:is_empty(ExpectedPartitions2) of
 		true ->
 			CurrentHeight+1;
 		false ->
 			wait_for_each_node(
-				Miners, ValidatorNode, CurrentHeight+1, Partitions, RetryCount-1)
+				Miners, ValidatorNode, CurrentHeight+1, ExpectedPartitions2, RetryCount-1)
+	end.
+
+wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
+	wait_for_cross_node(
+		Miners, ValidatorNode, CurrentHeight, sets:from_list(ExpectedPartitions), 20).
+
+wait_for_cross_node(_Miners, _ValidatorNode, _CurrentHeight, _ExpectedPartitions, 0) ->
+	?assert(false, "Timed out waiting for a cross-node solution");
+wait_for_cross_node(_Miners, _ValidatorNode, _CurrentHeight, ExpectedPartitions, _RetryCount)
+		when length(ExpectedPartitions) /= 2 ->
+	?assert(false, "Cross-node solutions can only have 2 partitions.");
+wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
+	A = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
+	Partitions = sets:from_list(A),
+	MinedCrossNodeBlock = 
+		sets:is_subset(Partitions, ExpectedPartitions) andalso 
+		sets:is_subset(ExpectedPartitions, Partitions),
+	case MinedCrossNodeBlock of
+		true ->
+			CurrentHeight+1;
+		false ->
+			wait_for_cross_node(
+				Miners, ValidatorNode, CurrentHeight+1, ExpectedPartitions, RetryCount-1)
 	end.
 	
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
@@ -376,9 +407,17 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 		Miners
 	),
 	{ok, Block} = ar_test_node:http_get_block(Hash, ValidatorNode),
+
 	case Block#block.recall_byte2 of
-		undefined -> ar_node:get_partition_number(Block#block.recall_byte);
-		RecallByte2 -> ar_node:get_partition_number(RecallByte2)
+		undefined -> 
+			[
+				ar_node:get_partition_number(Block#block.recall_byte)
+			];
+		RecallByte2 ->
+			[
+				ar_node:get_partition_number(Block#block.recall_byte), 
+				ar_node:get_partition_number(RecallByte2)
+			]
 	end.
 
 assert_empty_cache(_Node) ->

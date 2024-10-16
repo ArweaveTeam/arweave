@@ -512,10 +512,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 	end;
 
 handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
-	#mining_candidate{
-		chunk2 = Chunk2, h2 = H2,
-		cm_lead_peer = Peer
-	} = Candidate,
+	#mining_candidate{ chunk2 = Chunk2, h2 = H2, cm_lead_peer = Peer } = Candidate,
 	State2 = hash_computed(h2, Candidate, State),
 	PassesDiffChecks = h2_passes_diff_checks(H2, Candidate, State2),
 	case PassesDiffChecks of
@@ -540,8 +537,15 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 		{_, not_set} ->
 			ar_mining_server:prepare_and_post_solution(Candidate);
 		_ ->
-			ar_coordination:computed_h2_for_peer(
-					Candidate#mining_candidate{ poa2 = #poa{ chunk = Chunk2 } })
+			PoA2 = case ar_mining_server:prepare_poa(poa2, Candidate, #poa{}) of
+				{ok, PoA} ->
+					PoA;
+				{error, _Error} ->
+					%% Fallback. This will probably fail later, but prepare_poa/3 should
+					%% have already printed several errors so we'll continue just in case.
+					#poa{ chunk = Chunk2 }
+			end,
+			ar_coordination:computed_h2_for_peer(Candidate#mining_candidate{ poa2 = PoA2 })
 	end,
 	{noreply, State2};
 
