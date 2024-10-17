@@ -7,7 +7,7 @@
 		start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
 		compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
 		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
-		is_one_chunk_solution/1, fetch_poa_from_peers/2]).
+		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/3]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -90,6 +90,28 @@ encode_sessions(Sessions) ->
 
 is_one_chunk_solution(Solution) ->
 	Solution#mining_solution.recall_byte2 == undefined.
+
+%% @doc Use this function every time the miner finds a solution but fails to prepare a block.
+%% It may happen to a standalone miner, a worker in a coordinated mining setup, the exit node,
+%% a pool worker in a pool or the pool server.
+
+-spec log_prepare_solution_failure(
+	Solution :: #mining_solution{},
+	FailureReason :: atom(),
+	AdditionalLogData :: list({atom(), term()})
+) ->
+	Ret :: ok.
+
+log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData) ->
+	#mining_solution{
+		solution_hash = SolutionH,
+		packing_difficulty = PackingDifficulty } = Solution,
+	ar:console("~nFailed to prepare block from the mining solution.. Reason: ~p~n",
+			[FailureReason]),
+	?LOG_ERROR([{event, failed_to_prepare_block_from_mining_solution},
+			{reason, FailureReason},
+			{solution_hash, ar_util:safe_encode(SolutionH)},
+			{packing_difficulty, PackingDifficulty} | AdditionalLogData]).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -590,27 +612,27 @@ prepare_solution(steps, Candidate, Solution) ->
 					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty),
 			case Steps of
 				not_found ->
-					?LOG_WARNING([{event, found_solution_but_failed_to_find_checkpoints},
-							{start_step_number, PrevStepNumber},
-							{next_step_number, StepNumber},
-							{next_seed, ar_util:safe_encode(PrevNextSeed)},
-							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
-					ar:console("WARNING: found a solution but failed to find checkpoints, "
-							"start step number: ~B, end step number: ~B, next_seed: ~s.",
-							[PrevStepNumber, StepNumber, ar_util:safe_encode(PrevNextSeed)]),
+					LogData = [
+						{start_step_number, PrevStepNumber},
+						{next_step_number, StepNumber},
+						{next_seed, ar_util:safe_encode(PrevNextSeed)},
+						{next_vdf_difficulty, PrevNextVDFDifficulty}],
+					?LOG_INFO([{event, found_solution_but_failed_to_find_checkpoints}
+						| LogData]),
 					may_be_leave_it_to_exit_peer(
 							prepare_solution(proofs, Candidate,
-									Solution#mining_solution{ steps = [] }));
+									Solution#mining_solution{ steps = [] }),
+							step_checkpoints_not_found, LogData);
 				_ ->
 					prepare_solution(proofs, Candidate,
 							Solution#mining_solution{ steps = Steps })
 			end;
 		false ->
-			?LOG_WARNING([{event, found_solution_but_stale_step_number},
-							{start_step_number, PrevStepNumber},
-							{next_step_number, StepNumber},
-							{next_seed, ar_util:safe_encode(PrevNextSeed)},
-							{next_vdf_difficulty, PrevNextVDFDifficulty}]),
+			log_prepare_solution_failure(Solution, stale_step_number, [
+					{start_step_number, PrevStepNumber},
+					{next_step_number, StepNumber},
+					{next_seed, ar_util:safe_encode(PrevNextSeed)},
+					{next_vdf_difficulty, PrevNextVDFDifficulty}]),
 			error
 	end;
 
@@ -622,9 +644,10 @@ prepare_solution(proofs, Candidate, Solution) ->
 	#mining_solution{ poa1 = PoA1, poa2 = PoA2 } = Solution,
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
 			PartitionUpperBound, PackingDifficulty),
-	case { H1, H2 } of
+	case {H1, H2} of
 		{not_set, not_set} ->
-			?LOG_WARNING([{event, found_solution_but_h1_h2_not_set}]),
+			%% We should never end up here..
+			log_prepare_solution_failure(Solution, h1_h2_not_set, []),
 			error;
 		{H1, not_set} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{
@@ -641,35 +664,34 @@ prepare_solution(poa1, Candidate, Solution) ->
 		poa1 = CurrentPoA1, recall_byte1 = RecallByte1,
 		mining_address = MiningAddress, packing_difficulty = PackingDifficulty
 	} = Solution,
-	#mining_candidate{ chunk1 = Chunk1, nonce = Nonce } = Candidate,
+	#mining_candidate{ chunk1 = Chunk1, nonce = Nonce,
+			partition_number = PartitionNumber } = Candidate,
 
 	case prepare_poa(poa1, Candidate, CurrentPoA1) of
 		{ok, PoA1} ->
 			Solution#mining_solution{ poa1 = PoA1 };
 		{error, Error} ->
+			Modules = ar_storage_module:get_all(RecallByte1 + 1),
+			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+			LogData = [{recall_byte, RecallByte1},
+					{modules_covering_recall_byte, ModuleIDs},
+					{fetch_proofs_error, io_lib:format("~p", [Error])},
+					{nonce, Nonce},
+					{partition_number, PartitionNumber}],
 			case Chunk1 of
 				not_set ->
 					Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
-					Modules = ar_storage_module:get_all(RecallByte1 + 1),
-					ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-					?LOG_ERROR([{event, failed_to_find_poa1_proofs_for_h2_solution},
+					?LOG_WARNING([{event, failed_to_find_poa1_proofs_for_h2_solution},
 							{error, io_lib:format("~p", [Error])},
-							{tags, [solution_proofs]},
-							{recall_byte, RecallByte1},
-							{packing_difficulty, PackingDifficulty},
-							{modules_covering_recall_byte, ModuleIDs}]),
+							{tags, [solution_proofs]} | LogData]),
 					case ar_storage_module:get(RecallByte1 + 1, Packing) of
 						{_BucketSize, _Bucket, Packing} = StorageModule ->
 							StoreID = ar_storage_module:id(StorageModule),
 							case ar_chunk_storage:get(RecallByte1, StoreID) of
 								not_found ->
-									Modules = ar_storage_module:get_all(RecallByte1 + 1),
-									ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-									?LOG_ERROR([{event, failed_to_read_chunk_for_h2},
-											{tags, [solution_proofs]},
-											{recall_byte, RecallByte1},
-											{packing_difficulty, PackingDifficulty},
-											{modules_covering_recall_byte, ModuleIDs}]),
+									log_prepare_solution_failure(Solution,
+											chunk1_for_h2_solution_not_found,
+											LogData),
 									error;
 								{_EndOffset, Chunk} ->
 									SubChunk = get_sub_chunk(Chunk, PackingDifficulty, Nonce),
@@ -677,40 +699,44 @@ prepare_solution(poa1, Candidate, Solution) ->
 									%% the exit node will fetch the proofs.
 									may_be_leave_it_to_exit_peer(
 											Solution#mining_solution{ 
-												poa1 = #poa{ chunk = SubChunk } })
+												poa1 = #poa{ chunk = SubChunk } },
+											chunk1_proofs_for_h2_solution_not_found,
+											LogData)
 							end;
 						_ ->
-							Modules = ar_storage_module:get_all(RecallByte1 + 1),
-							ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-							?LOG_ERROR([{event, failed_to_find_storage_module_for_h2_poa1_chunk},
-									{tags, [solution_proofs]},
-									{recall_byte, RecallByte1},
-									{packing_difficulty, PackingDifficulty},
-									{modules_covering_recall_byte, ModuleIDs}]),
+							log_prepare_solution_failure(Solution,
+									storage_module_for_chunk1_for_h2_solution_not_found,
+									LogData),
 							error
 					end;
 				_ ->
 					%% If we are a coordinated miner and not an exit node - the exit
 					%% node will fetch the proofs.
 					may_be_leave_it_to_exit_peer(
-						Solution#mining_solution{ poa1 = #poa{ chunk = Chunk1 } })
+						Solution#mining_solution{ poa1 = #poa{ chunk = Chunk1 } },
+						chunk1_proofs_not_found,
+						LogData)
 			end
 	end;
 
 prepare_solution(poa2, Candidate, Solution) ->
-	#mining_solution{ poa2 = CurrentPoA2 } = Solution,
+	#mining_solution{ poa2 = CurrentPoA2, recall_byte2 = RecallByte2 } = Solution,
 	#mining_candidate{ chunk2 = Chunk2 } = Candidate,
 
 	case prepare_poa(poa2, Candidate, CurrentPoA2) of
 		{ok, PoA2} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
 		{error, _Error} ->
+			Modules = ar_storage_module:get_all(RecallByte2 + 1),
+			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+			LogData = [{recall_byte2, RecallByte2}, {modules_covering_recall_byte, ModuleIDs}],
 			%% If we are a coordinated miner and not an exit node - the exit
 			%% node will fetch the proofs.
 			may_be_leave_it_to_exit_peer(
 				prepare_solution(poa1, Candidate,
 						Solution#mining_solution{
-								poa2 = #poa{ chunk = Chunk2 } }))
+								poa2 = #poa{ chunk = Chunk2 } }),
+				chunk2_proofs_not_found, LogData)
 	end.
 
 prepare_poa(PoAType, Candidate, CurrentPoA) ->
@@ -740,15 +766,13 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 				{error, Error} ->
 					Modules = ar_storage_module:get_all(RecallByte + 1),
 					ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-					?LOG_ERROR([{event, failed_to_find_poa_proofs_locally},
+					?LOG_INFO([{event, failed_to_find_poa_proofs_locally},
 							{poa, PoAType},
 							{error, io_lib:format("~p", [Error])},
 							{tags, [solution_proofs]},
 							{recall_byte, RecallByte},
 							{packing_difficulty, PackingDifficulty},
 							{modules_covering_recall_byte, ModuleIDs}]),
-					ar:console("WARNING: we have mined a block but did not find the ~p "
-							"proofs locally - searching the peers...~n", [PoAType]),
 					ChunkBinary = case Chunk of
 						not_set ->
 							<<>>;
@@ -757,7 +781,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 					end,
 					case fetch_poa_from_peers(RecallByte, PackingDifficulty) of
 						not_found ->
-							?LOG_ERROR([{event, mined_block_but_failed_to_read_chunk_proofs},
+							?LOG_INFO([{event, failed_to_fetch_proofs_from_peers},
 									{tags, [solution_proofs]},
 									{poa, PoAType},
 									{recall_byte, RecallByte},
@@ -765,9 +789,6 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 									{partition, PartitionNumber},
 									{mining_address, ar_util:safe_encode(MiningAddress)},
 									{packing_difficulty, PackingDifficulty}]),
-							ar:console("WARNING: we have mined a block but failed to find "
-									"the ~p proofs required for publishing it. "
-									"Check logs for more details~n", [PoAType]),
 							{error, Error};
 						PoA ->
 							{ok, PoA#poa{ chunk = ChunkBinary }}
@@ -789,12 +810,15 @@ is_poa_complete(#poa{ unpacked_chunk = <<>> }, PackingDifficulty)
 is_poa_complete(_, _) ->
 	true.
 
-may_be_leave_it_to_exit_peer(Solution) ->
+may_be_leave_it_to_exit_peer(error, _FailureReason, _AdditionalLogData) ->
+	error;
+may_be_leave_it_to_exit_peer(Solution, FailureReason, AdditionalLogData) ->
 	case ar_coordination:is_coordinated_miner() andalso
 			not ar_coordination:is_exit_peer() of
 		true ->
 			Solution;
 		false ->
+			log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData),
 			error
 	end.
 
