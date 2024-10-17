@@ -647,7 +647,6 @@ init({"default" = StoreID, _}) ->
 		weave_size = maps:get(weave_size, StateMap),
 		disk_pool_cursor = first,
 		disk_pool_threshold = DiskPoolThreshold,
-		mining_address = Config#config.mining_addr,
 		store_id = StoreID
 	},
 	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
@@ -1351,20 +1350,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_info({event, node_state, {initialized, _B}},
-		#sync_data_state{ store_id = "default",
-				disk_pool_threshold = DiskPoolThreshold } = State) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(legacy_storage_repacking, Config#config.enable)
-			orelse lists:member(legacy_storage_unpacked_packing, Config#config.enable) of
-		true ->
-			Addr = Config#config.mining_addr,
-			Packing = {spora_2_6, Addr},
-			ar:console("Initiating the default storage repacking. The upper bound: ~B. "
-					"The new packing: ~s.~n", [DiskPoolThreshold, ar_util:encode(Addr)]),
-			gen_server:cast(ar_chunk_storage_default, {repack, DiskPoolThreshold, Packing});
-		false ->
-			ok
-	end,
+		#sync_data_state{ store_id = "default" } = State) ->
 	{noreply, State};
 handle_info({event, node_state, {initialized, _B}}, State) ->
 	{noreply, may_be_start_syncing(State)};
@@ -3014,8 +3000,7 @@ get_required_chunk_packing(Offset, ChunkSize, #sync_data_state{ store_id = Store
 		false ->
 			case StoreID of
 				"default" ->
-					{ok, Config} = application:get_env(arweave, config),
-					{spora_2_6, Config#config.mining_addr};
+					unpacked;
 				_ ->
 					ar_storage_module:get_packing(StoreID)
 			end
