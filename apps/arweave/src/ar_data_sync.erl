@@ -647,7 +647,6 @@ init({"default" = StoreID, _}) ->
 		weave_size = maps:get(weave_size, StateMap),
 		disk_pool_cursor = first,
 		disk_pool_threshold = DiskPoolThreshold,
-		mining_address = Config#config.mining_addr,
 		store_id = StoreID
 	},
 	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
@@ -3014,8 +3013,7 @@ get_required_chunk_packing(Offset, ChunkSize, #sync_data_state{ store_id = Store
 		false ->
 			case StoreID of
 				"default" ->
-					{ok, Config} = application:get_env(arweave, config),
-					{spora_2_6, Config#config.mining_addr};
+					unpacked;
 				_ ->
 					ar_storage_module:get_packing(StoreID)
 			end
