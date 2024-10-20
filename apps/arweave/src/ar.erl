@@ -200,6 +200,8 @@ show_help() ->
 					" and downloads it from peers.",
 					[?DEFAULT_HEADER_SYNC_JOBS]
 				)},
+			{"data_sync_request_packed_chunks",
+				"Enables requesting the packed chunks from peers."},
 			{"disk_pool_jobs (num)",
 				io_lib:format(
 					"The number of disk pool jobs to run. Default: ~B."
@@ -520,6 +522,8 @@ parse_cli_args(["sync_jobs", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ sync_jobs = list_to_integer(Num) });
 parse_cli_args(["header_sync_jobs", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ header_sync_jobs = list_to_integer(Num) });
+parse_cli_args(["data_sync_request_packed_chunks" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ data_sync_request_packed_chunks = true });
 parse_cli_args(["tx_validators", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ tx_validators = list_to_integer(Num) });
 parse_cli_args(["post_tx_timeout", Num | Rest], C) ->

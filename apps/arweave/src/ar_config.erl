@@ -656,6 +656,11 @@ parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | Rest], Config)
 parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | _], _) ->
 	{error, {bad_type, rocksdb_wal_sync_interval, number}, IntervalS};
 
+parse_options([{<<"data_sync_request_packed_chunks">>, Bool} | Rest], Config) when is_boolean(Bool) ->
+	parse_options(Rest, Config#config{ data_sync_request_packed_chunks = Bool });
+parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | Rest], Config) ->
+	{error, {bad_type, data_sync_request_packed_chunks, boolean}, InvalidValue};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

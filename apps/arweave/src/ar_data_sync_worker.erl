@@ -150,7 +150,7 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 							{absolute_end_offset, AbsoluteOffset},
 							{chunk_data_key, ar_util:encode(ChunkDataKey)},
 							{reason, io_lib:format("~p", [Error])}]),
-					read_range2(MessagesRemaining, 
+					read_range2(MessagesRemaining,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				{ok, {Chunk, DataPath}} ->
 					case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
@@ -238,7 +238,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 				true ->
 					ok;
 				false ->
-					case ar_http_iface_client:get_chunk_binary(Peer, Start2, any) of
+					case ar_http_iface_client:get_chunk_binary(Peer, Start2, get_target_packing(TargetStoreID)) of
 						{ok, #{ chunk := Chunk } = Proof, _Time, _TransferSize} ->
 							%% In case we fetched a packed small chunk,
 							%% we may potentially skip some chunks by
@@ -266,4 +266,11 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							{error, Reason}
 					end
 			end
+	end.
+
+get_target_packing(StoreID) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.data_sync_request_packed_chunks of
+		true -> ar_storage_module:get_packing(StoreID);
+		false -> any
 	end.
