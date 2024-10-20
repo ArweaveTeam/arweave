@@ -26,7 +26,7 @@ jobs:
       max-parallel: 12
       matrix:
         core_test_mod: [
-            ## Long-running tests. Put these first to limit the overall runtime of the 
+            ## Long-running tests. Put these first to limit the overall runtime of the
             ## test suite
             ar_coordinated_mining_tests,
             ar_data_sync_tests,
@@ -62,6 +62,7 @@ jobs:
             # ar_p3,
             # ar_p3_config,
             # ar_p3_db,
+            ar_p3_ledger,
             ar_packing_server,
             ar_patricia_tree,
             ar_peers,
@@ -99,6 +100,7 @@ jobs:
             ar_tx_blacklist_tests,
             ar_tx_replay_pool_tests,
             ar_vdf_tests,
+            ar_p3_ledger_tests,
           ]
     steps:
       - uses: actions/checkout@v4
