@@ -16,7 +16,9 @@
 		prometheus_process_collector,
 		prometheus_httpd,
 		runtime_tools,
-		erl_snowflake
+		erl_snowflake,
+		gproc,
+		msgpack
 	]},
 	{extra_applications, [recon]}
 ]}.

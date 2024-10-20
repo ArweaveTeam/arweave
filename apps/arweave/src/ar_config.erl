@@ -656,6 +656,13 @@ parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | Rest], Config)
 parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | _], _) ->
 	{error, {bad_type, rocksdb_wal_sync_interval, number}, IntervalS};
 
+parse_options([{<<"p3_ledger_checkpoint_interval">>, IntervalRecords} | Rest], Config)
+  		when is_integer(IntervalRecords) andalso IntervalRecords > 0 ->
+	parse_options(Rest, Config#config{ p3_ledger_checkpoint_interval = IntervalRecords });
+parse_options([{<<"p3_ledger_shutdown_timeout">>, ShutdownTimeoutS} | Rest], Config)
+  		when is_integer(ShutdownTimeoutS) andalso ShutdownTimeoutS > 0 ->
+	parse_options(Rest, Config#config{ p3_ledger_shutdown_timeout = ShutdownTimeoutS });
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

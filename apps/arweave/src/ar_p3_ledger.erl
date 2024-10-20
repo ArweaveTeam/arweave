@@ -1,9 +1,88 @@
 %%%
+%%% @doc P3 Ledger implementation.
+%%%
+%%% Every peer is represented by a separate copy of ledger. The ledger process
+%%% registers itself in gproc. Every read and write to the peer ledger is
+%%% serialized via the process mailbox (gen_server:call).
+%%%
+%%% The ledger is written in such a way that it tracks the value movement from
+%%% the node operator perspective; this mean that positive net for an account
+%%% represents received value, while negative net represents provided value.
+%%% This also means that if one needs to find a value from the peer perspective,
+%%% the account total (see below) should be negated.
+%%%
+%%% The ledger itself contains a rocksdb database with three column families,
+%%% one per virtual account:
+%%% - tokens (?ar_p3_ledger_record_account_tokens): an account tracking the
+%%%   token income. Sum of all records in this column family will represent a
+%%%   total amount of token received from the peer in form of deposits;
+%%% - credits (?ar_p3_ledger_record_account_credits): an account tracking the
+%%%   credited value. Sum of all records in this column family will represent
+%%%   an amount of liability for the peer (hence the negative value); the
+%%%   negated value will represent the amount of credits available for the peer;
+%%% - services (?ar_p3_ledger_record_account_services): an account tracking the
+%%%   served value. Sum of all records in this column family will represent an
+%%%   amount of services that were provided to the peer in the past (hence the
+%%%   negative value); The negated value will represent the sum of all services
+%%%   received by the peer.
+%%%
+%%% Each transfer creates two records in two tables: one "in" and one "out".
+%%% The amounts in both records will be the same, which implies that all the
+%%% records amounts are non-negative, which allows for tracking the value
+%%% transfers for both parties, depending on the record interpretation. The ids
+%%% in both records will also (and must) be the same.
+%%% When doing the summation for a virtual account (column family), the default
+%%% interpretation for the records is to calculate values for the node operator.
+%%% The "in" records are considered positive, and the "out" records are
+%%% considered negative.
+%%%
+%%% Record identifier.
+%%%
+%%% The identifier must be sortable in two ways:
+%%% 1. Time. Older records must have bigger identifier.
+%%% 2. Transaction vs Checkpoint. If the checkpoint and the transaction record
+%%%    are created at the same point in time, the checkpoint identifier must be
+%%%    bigger, to ensure the records ordering.
+%%%
+%%% Checkpoints and caching.
+%%%
+%%% Calculating the sum of all records on every database read is not effective.
+%%% To mitigate this calculations, a special type of record is inserted in
+%%% configured intervals: checkpoints. Each checkpoint contains the asset map,
+%%% which contains the sum of all records for a given account, from the node
+%%% operator perspective.
+%%%
+%%% When started, the ledger process will open the database and read all three
+%%% column families from the last record upon reaching the checkpoint. At this
+%%% point the read stops and the summation result is cached in the process
+%%% state.
+%%%
+%%% Shutdown timer.
+%%%
+%%% The started ledger process will eventually terminate when not used for some
+%%% time. The actual timing is defined with `?shutdown_timeout_ms`.
+%%% The way shutdown timer is implemented might seem controversial. Instead of
+%%% using the gen_server callbacks timers, it relies on classic `send_after`
+%%% timers, because callback timers are reset of every incoming message. In case
+%%% of heavily used ledger (for example, the peer is actively draining its
+%%% deposit), this might give undesired overhead. Another effect is that every
+%%% message will drop the timer, including unhandled calls, casts, etc., while
+%%% the classic timer enables us to precisely control which messages have effect
+%%% on shutdown time.
+%%% The unwanted effect for this solution: the actual shutdown time will always
+%%% be in the interval [?shutdown_timeout_ms .. ?shutdown_timeout_ms*2] after
+%%% the last significant message.
 %%%
 -module(ar_p3_ledger).
 
--export([start_link/1, transfer/6, total/1, total_equity/1, total_liability/1, total_service/1]).
+-export([
+	start_link/3, transfer/6, deposit/4, service/4, total/1, total_tokens/1,
+	total_credits/1, total_services/1
+]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+-ifdef(TEST).
+	-export([db_dir/1, via_reg_name/1]).
+-endif.
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -17,39 +96,20 @@
 
 
 
-%% The record (booking or checkpoint) identifier.
-%% The identifier must be sortable in two ways:
-%% 1. Time. Older records must have bigger identifier.
-%% 2. Checkpoint. If the checkpoint and the booking are created at the same
-%%    point in time, the checkpoint identifier must be bigger, to ensure the
-%%    records ordering.
 -type record_id() :: binary().
 
-%% The booking type.
--type booking_type() ::
-	?ar_p3_ledger_booking_type_debit
-	| ?ar_p3_ledger_booking_type_credit.
+-type record_type() ::
+	?ar_p3_ledger_record_type_in
+	| ?ar_p3_ledger_record_type_out.
 
-%% The booking account.
--type booking_account() ::
-	?ar_p3_ledger_booking_account_equity
-	| ?ar_p3_ledger_booking_account_liability
-	| ?ar_p3_ledger_booking_account_service.
+-type record_account() ::
+	?ar_p3_ledger_record_account_tokens
+	| ?ar_p3_ledger_record_account_credits
+	| ?ar_p3_ledger_record_account_services.
 
-%% The booking asset.
--type booking_asset() :: binary().
-
-%% The booking amount.
--type booking_amount() :: non_neg_integer().
-
-%% The booking meta.
--type booking_meta() :: #{binary() := binary()}.
-
-%% The map of assets and their amounts (relative values, considering credits
-%% to be negative).
 -type assets_map() :: #{binary() := integer()}.
 
--export_type([record_id/0, booking_asset/0, booking_amount/0, booking_meta/0]).
+-export_type([record_id/0, record_type/0, record_account/0]).
 
 
 
@@ -61,20 +121,18 @@
 
 -define(via_reg_name(PeerAddress), {n, l, {?MODULE, PeerAddress}}).
 -define(ledger_databases_relative_dir, "p3_ledger").
--define(db_dir(PeerAddress), filename:join([get_data_dir(), ?ledger_databases_relative_dir, PeerAddress])).
--define(log_dir(PeerAddress), filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, ?ledger_databases_relative_dir, PeerAddress])).
--define(ledger_checkpoint_interval_records, 100).
--define(shutdown_timeout_ms, 300_000).
+-define(db_dir(PeerAddress), binary_to_list(filename:join([get_data_dir(), ?ledger_databases_relative_dir, PeerAddress]))).
+-define(log_dir(PeerAddress), binary_to_list(filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, ?ledger_databases_relative_dir, PeerAddress]))).
 
--define(booking_constant_suffix, 16#b).
--define(booking_countertype(T), case T of
-	?ar_p3_ledger_booking_type_debit -> ?ar_p3_ledger_booking_type_credit;
-	?ar_p3_ledger_booking_type_credit -> ?ar_p3_ledger_booking_type_debit
+-define(record_transaction_constant_suffix, 16#b).
+-define(record_countertype(T), case T of
+	?ar_p3_ledger_record_type_in -> ?ar_p3_ledger_record_type_out;
+	?ar_p3_ledger_record_type_out -> ?ar_p3_ledger_record_type_in
 end).
 -define(is_valid_account(Account), (
-	?ar_p3_ledger_booking_account_equity == Account orelse
-	?ar_p3_ledger_booking_account_liability == Account orelse
-	?ar_p3_ledger_booking_account_service == Account
+	?ar_p3_ledger_record_account_tokens == Account orelse
+	?ar_p3_ledger_record_account_credits == Account orelse
+	?ar_p3_ledger_record_account_services == Account
 )).
 
 -define(ledger_db_options, [
@@ -91,40 +149,38 @@ end).
 	]}
 ]).
 
--record(cf, {
+-record(account, {
 	cf_handle :: rocksdb:cf_handle() | undefined,
 	assets_map = #{} :: assets_map(),
-	dangling_bookings = 0 :: non_neg_integer()
+	dangling_records = 0 :: non_neg_integer()
 }).
--type cf() :: #cf{}.
 
 -record(timer, {
-	timeout_ms = ?shutdown_timeout_ms :: pos_integer(),
 	armed = false :: boolean(),
-	timer_ref :: reference(),
-	secret_ref :: reference()
+	timer_ref :: reference() | undefined,
+	secret_ref :: reference() | undefined
 }).
--type timer() :: #timer{}.
 
 -record(state, {
 	peer_address :: binary(),
 	db_dir :: file:filename_all(),
 	log_dir :: file:filename_all(),
+	checkpoint_interval_records :: pos_integer(),
+	shutdown_time_ms :: pos_integer(),
 	db_handle :: rocksdb:db_handle() | undefined,
-	cfs = #{
-		?ar_p3_ledger_booking_account_equity => #cf{},
-		?ar_p3_ledger_booking_account_liability => #cf{},
-		?ar_p3_ledger_booking_account_service => #cf{}
-	} :: #{booking_account() := cf()},
-	shutdown_timer = #timer{} :: timer()
+	accounts = #{
+		?ar_p3_ledger_record_account_tokens => #account{},
+		?ar_p3_ledger_record_account_credits => #account{},
+		?ar_p3_ledger_record_account_services => #account{}
+	} :: #{record_account() := #account{}},
+	shutdown_timer = #timer{} :: #timer{}
 }).
--type state() :: #state{}.
 
 -define(msg_continue_open_rocksdb, {msg_continue_open_rocksdb}).
 -define(msg_continue_load_ledger, {msg_continue_load_current_values}).
 -define(msg_continue_start_shutdown_timer, {msg_continue_start_shutdown_timer}).
 
--define(msg_call_transfer(DebitBooking, CreditBooking), {msg_call_transfer, DebitBooking, CreditBooking}).
+-define(msg_call_transfer(InRecord, OutRecord), {msg_call_transfer, InRecord, OutRecord}).
 -define(msg_call_total(), {msg_call_total}).
 
 -define(msg_info_timer_alarm, {msg_info_timer_alarm}).
@@ -137,65 +193,81 @@ end).
 
 
 
--spec start_link(PeerAddress :: binary()) ->
-	Ret :: {ok, Pid :: pid()}
-		| {error, Reason :: term()}
-		| ignore.
+start_link(CheckpointIntervalRecords, ShutdownTimeoutMs, PeerAddress) ->
+	gen_server:start_link({via, gproc, ?via_reg_name(PeerAddress)}, ?MODULE, [CheckpointIntervalRecords, ShutdownTimeoutMs, PeerAddress], []).
 
-start_link(PeerAddress) ->
-	gen_server:start_link({via, gproc, ?via_reg_name(PeerAddress)}, ?MODULE, [PeerAddress], []).
+
+
+-spec deposit(
+	PeerAddress :: binary(),
+	Asset :: binary(),
+	Amount :: non_neg_integer(),
+	Meta :: #{binary() := binary()}
+) ->
+	Ret :: {ok, Id :: record_id()} | {error, Reason :: term()}.
+
+deposit(PeerAddress, Asset, Amount, Meta) ->
+	transfer(PeerAddress, ?ar_p3_ledger_record_account_tokens, ?ar_p3_ledger_record_account_credits, Asset, Amount, Meta).
+
+
+
+-spec service(
+	PeerAddress :: binary(),
+	Asset :: binary(),
+	Amount :: non_neg_integer(),
+	Meta :: #{binary() := binary()}
+) ->
+	Ret :: {ok, Id :: record_id()} | {error, Reason :: term()}.
+
+service(PeerAddress, Asset, Amount, Meta) ->
+	transfer(PeerAddress, ?ar_p3_ledger_record_account_credits, ?ar_p3_ledger_record_account_services, Asset, Amount, Meta).
 
 
 
 %%%
 %%% @doc Create a new transfer.
 %%%
-%%% Each transfer created two records in two tables: one debit (the "booking")
-%%% and one credit (the "counterbooking"). The amounts in both records will be
-%%% the same, which implies that all the records amounts are non-negative. The
-%%% ids in both records will also (and must) be the same, this is a requirement
-%%% for automatic repair to work properly.
-%%%
-%%% The way to look at the transfer: paying with credited value for debited
-%%% value, while measuring the values in the same units.
+%%% The way to look at the transfer: paying with credited ("out") value for
+%%% debited ("in") value, while measuring the values in the same units.
 %%%
 %%% Examples:
 %%%
-%%% Deposit: In this case the node operator is "paying" for deposited tokens
-%%% with a liability to return it in form of services.
+%%% Note: include the "ar_p3_legder.hrl" file.
+%%%
+%%% Deposit: The node operator is crediting the peer for deposited tokens.
 %%%
 %%% 	transfer(
-%%% 		?ar_p3_ledger_booking_account_equity,
-%%% 		?ar_p3_ledger_booking_account_liability,
+%%% 		?ar_p3_ledger_record_account_tokens,
+%%% 		?ar_p3_ledger_record_account_credits,
 %%% 		<<"arweave/AR">>, 1000, #{...}
 %%% 	).
 %%%
-%%% Service record: In this case the node operator is "refinancing" its
-%%% liability with the actual provided (credited) service.
+%%% Service record: The node operator is gaining back its credits providing the
+%%% actual services.
 %%%
 %%% 	transfer(
-%%% 		?ar_p3_ledger_booking_account_liability,
-%%% 		?ar_p3_ledger_booking_account_service,
+%%% 		?ar_p3_ledger_record_account_credits,
+%%% 		?ar_p3_ledger_record_account_services,
 %%% 		<<"arweave/AR">>, 1000, #{...}
 %%% 	).
 %%%
 
 -spec transfer(
 	PeerAddress :: binary(),
-	DebitAccount :: booking_account(),
-	CreditAccount :: booking_account(),
-	Asset :: booking_asset(),
-	Amount :: booking_amount(),
-	Meta :: booking_meta()
+	InAccount :: record_account(),
+	OutAccount :: record_account(),
+	Asset :: binary(),
+	Amount :: non_neg_integer(),
+	Meta :: #{binary() := binary()}
 ) ->
 	Ret :: {ok, Id :: record_id()} | {error, Reason :: term()}.
 
-transfer(PeerAddress, DebitAccount, CreditAccount, Asset, Amount, Meta) ->
-	DebitBooking = new_booking(?ar_p3_ledger_booking_type_debit, CreditAccount, Asset, Amount, Meta),
-	CreditBooking = new_counterbooking(DebitAccount, DebitBooking),
+transfer(PeerAddress, InAccount, OutAccount, Asset, Amount, Meta) ->
+	InRecord = new_record(?ar_p3_ledger_record_type_in, OutAccount, Asset, Amount, Meta),
+	OutRecord = new_counterrecord(InAccount, InRecord),
 	with_peer_ledger(PeerAddress, fun(Pid) ->
-		case gen_server:call(Pid, ?msg_call_transfer(DebitBooking, CreditBooking)) of
-			ok -> {ok, DebitBooking#ar_p3_ledger_booking_v1.id};
+		case gen_server:call(Pid, ?msg_call_transfer(InRecord, OutRecord)) of
+			ok -> {ok, InRecord#ar_p3_ledger_record_v1.id};
 			{error, _Reason} = E -> E
 		end
 	end).
@@ -207,7 +279,7 @@ transfer(PeerAddress, DebitAccount, CreditAccount, Asset, Amount, Meta) ->
 %%%
 
 -spec total(PeerAddress :: binary()) ->
-	Ret :: {ok, #{booking_account() := assets_map()}}
+	Ret :: {ok, #{record_account() := assets_map()}}
 		| {error, Reason :: term()}.
 
 total(PeerAddress) ->
@@ -218,61 +290,62 @@ total(PeerAddress) ->
 
 
 %%%
-%%% @doc Collect the `total` amounts for equity account.
+%%% @doc Collect the `total` amounts for tokens account.
 %%% Represents the total amount of token received from the peer as deposits.
 %%%
 
--spec total_equity(PeerAddress :: binary()) ->
-	Ret :: {ok, #{booking_account() := assets_map()}}
+-spec total_tokens(PeerAddress :: binary()) ->
+	Ret :: {ok, #{record_account() := assets_map()}}
 		| {error, Reason :: term()}.
 
-
-
-total_equity(PeerAddress) ->
+total_tokens(PeerAddress) ->
 	case total(PeerAddress) of
-		{ok, #{?ar_p3_ledger_booking_account_equity := Amount}} -> {ok, Amount};
+		{ok, #{?ar_p3_ledger_record_account_tokens := Amount}} -> {ok, Amount};
 		E -> E
 	end.
 
 
 
 %%%
-%%% @doc Collect the `total` amounts for liability account.
+%%% @doc Collect the `total` amounts for credits account.
 %%% Represents the total amount of services the node operator 'owes' to the
-%%% peer.
+%%% peer (negative).
 %%%
 
--spec total_liability(PeerAddress :: binary()) ->
-	Ret :: {ok, #{booking_account() := assets_map()}}
+-spec total_credits(PeerAddress :: binary()) ->
+	Ret :: {ok, #{record_account() := assets_map()}}
 		| {error, Reason :: term()}.
 
-
-
-total_liability(PeerAddress) ->
+total_credits(PeerAddress) ->
 	case total(PeerAddress) of
-		{ok, #{?ar_p3_ledger_booking_account_liability := Amount}} -> {ok, Amount};
+		{ok, #{?ar_p3_ledger_record_account_credits := Amount}} -> {ok, Amount};
 		E -> E
 	end.
 
 
 
 %%%
-%%% @doc Collect the `total` amounts for service account.
+%%% @doc Collect the `total` amounts for services account.
 %%% Represents the total amount of services the node operator already served to
-%%% the peer.
+%%% the peer (negative).
 %%%
 
--spec total_service(PeerAddress :: binary()) ->
-	Ret :: {ok, #{booking_account() := assets_map()}}
+-spec total_services(PeerAddress :: binary()) ->
+	Ret :: {ok, #{record_account() := assets_map()}}
 		| {error, Reason :: term()}.
 
-
-
-total_service(PeerAddress) ->
+total_services(PeerAddress) ->
 	case total(PeerAddress) of
-		{ok, #{?ar_p3_ledger_booking_account_service := Amount}} -> {ok, Amount};
+		{ok, #{?ar_p3_ledger_record_account_services := Amount}} -> {ok, Amount};
 		E -> E
 	end.
+
+
+
+-ifdef(TEST).
+	db_dir(PeerAddress) -> ?db_dir(PeerAddress).
+	via_reg_name(PeerAddress) -> ?via_reg_name(PeerAddress).
+-endif.
 
 
 
@@ -282,10 +355,8 @@ total_service(PeerAddress) ->
 
 
 
--spec init([PeerAddress :: binary()]) ->
-	Ret :: {ok, S0 :: state(), {continue, term()}}.
-
-init([PeerAddress]) ->
+init([CheckpointIntervalRecords, ShutdownTimeoutMs, PeerAddress]) ->
+	process_flag(trap_exit, true),
 	DbDir = ?db_dir(PeerAddress),
 	LogDir = ?log_dir(PeerAddress),
 	ok = filelib:ensure_dir(DbDir ++ "/"),
@@ -293,35 +364,33 @@ init([PeerAddress]) ->
 	{ok, #state{
 		peer_address = PeerAddress,
 		db_dir = DbDir,
-		log_dir = LogDir
+		log_dir = LogDir,
+		shutdown_time_ms = ShutdownTimeoutMs,
+		checkpoint_interval_records = CheckpointIntervalRecords
 	}, {continue, ?msg_continue_open_rocksdb}}.
 
 
 
--spec handle_continue(Msg :: term(), S0 :: state()) ->
-	Ret :: {noreply, S1 :: state(), {continue, term()}}
-		| {noreply, S1 :: state()}.
-
 handle_continue(?msg_continue_open_rocksdb, #state{
-	cfs = #{
-		?ar_p3_ledger_booking_account_equity := EquityCf,
-		?ar_p3_ledger_booking_account_liability := LiabilityCf,
-		?ar_p3_ledger_booking_account_service := ServiceCf
-	} = Cfs0
+	accounts = #{
+		?ar_p3_ledger_record_account_tokens := EquityAccount,
+		?ar_p3_ledger_record_account_credits := LiabilityAccount,
+		?ar_p3_ledger_record_account_services := ServiceAccount
+	} = Accounts0
 } = S0) ->
 	case rocksdb:open(S0#state.db_dir, ?ledger_db_options, [
-		{"equity", ?ledger_cf_options},
-		{"liability", ?ledger_cf_options},
+		{"default", ?ledger_cf_options},
+		{"tokens", ?ledger_cf_options},
+		{"credits", ?ledger_cf_options},
 		{"service", ?ledger_cf_options}
 	]) of
-		{ok, DbHandle, [EquityCfHandle, LiabilityCfHandle, ServiceCfHandle]} ->
-			?LOG_INFO([]),
+		{ok, DbHandle, [_Default, EquityAccountHandle, LiabilityAccountHandle, ServiceAccountHandle]} ->
 			S1 = S0#state{
 				db_handle = DbHandle,
-				cfs = Cfs0#{
-					?ar_p3_ledger_booking_account_equity := EquityCf#cf{cf_handle = EquityCfHandle},
-					?ar_p3_ledger_booking_account_liability := LiabilityCf#cf{cf_handle = LiabilityCfHandle},
-					?ar_p3_ledger_booking_account_service := ServiceCf#cf{cf_handle = ServiceCfHandle}
+				accounts = Accounts0#{
+					?ar_p3_ledger_record_account_tokens := EquityAccount#account{cf_handle = EquityAccountHandle},
+					?ar_p3_ledger_record_account_credits := LiabilityAccount#account{cf_handle = LiabilityAccountHandle},
+					?ar_p3_ledger_record_account_services := ServiceAccount#account{cf_handle = ServiceAccountHandle}
 				}
 			},
 			{noreply, S1, {continue, ?msg_continue_load_ledger}};
@@ -332,25 +401,25 @@ handle_continue(?msg_continue_open_rocksdb, #state{
 	end;
 
 handle_continue(?msg_continue_load_ledger, #state{
-	cfs = #{
-		?ar_p3_ledger_booking_account_equity := EquityCf,
-		?ar_p3_ledger_booking_account_liability := LiabilityCf,
-		?ar_p3_ledger_booking_account_service := ServiceCf
-	} = Cfs0
+	accounts = #{
+		?ar_p3_ledger_record_account_tokens := EquityAccount,
+		?ar_p3_ledger_record_account_credits := LiabilityAccount,
+		?ar_p3_ledger_record_account_services := ServiceAccount
+	} = Accounts0
 } = S0) ->
 	try
-		{EquityCfDanglingBookings, EquityCfAssets} = load_assets(?ar_p3_ledger_booking_account_equity, S0),
-		{LiabilityCfDanglingBookings, LiabilityCfAssets} = load_assets(?ar_p3_ledger_booking_account_liability, S0),
-		{ServiceCfDanglingBookings, ServiceCfAssets} = load_assets(?ar_p3_ledger_booking_account_service, S0),
+		{EquityAccountDanglingRecords, EquityAccountAssets} = load_assets(?ar_p3_ledger_record_account_tokens, S0),
+		{LiabilityAccountDanglingRecords, LiabilityAccountAssets} = load_assets(?ar_p3_ledger_record_account_credits, S0),
+		{ServiceAccountDanglingRecords, ServiceAccountAssets} = load_assets(?ar_p3_ledger_record_account_services, S0),
 
 		S1 = S0#state{
-			cfs = Cfs0#{
-				?ar_p3_ledger_booking_account_equity :=
-					EquityCf#cf{assets_map = EquityCfAssets, dangling_bookings = EquityCfDanglingBookings},
-				?ar_p3_ledger_booking_account_liability :=
-					LiabilityCf#cf{assets_map = LiabilityCfAssets, dangling_bookings = LiabilityCfDanglingBookings},
-				?ar_p3_ledger_booking_account_service :=
-					ServiceCf#cf{assets_map = ServiceCfAssets, dangling_bookings = ServiceCfDanglingBookings}
+			accounts = Accounts0#{
+				?ar_p3_ledger_record_account_tokens :=
+					EquityAccount#account{assets_map = EquityAccountAssets, dangling_records = EquityAccountDanglingRecords},
+				?ar_p3_ledger_record_account_credits :=
+					LiabilityAccount#account{assets_map = LiabilityAccountAssets, dangling_records = LiabilityAccountDanglingRecords},
+				?ar_p3_ledger_record_account_services :=
+					ServiceAccount#account{assets_map = ServiceAccountAssets, dangling_records = ServiceAccountDanglingRecords}
 			}
 		},
 
@@ -362,7 +431,7 @@ handle_continue(?msg_continue_load_ledger, #state{
 handle_continue(?msg_continue_start_shutdown_timer, #state{shutdown_timer = Timer0} = S0) ->
 	Timer1 = maybe_cancel_timer(Timer0),
 	SecretRef = erlang:make_ref(),
-	TimerRef = erlang:send_after(Timer1#timer.timeout_ms, self(), ?msg_info_timer_alarm),
+	TimerRef = erlang:send_after(S0#state.shutdown_time_ms, self(), ?msg_info_timer_alarm),
 	S1 = S0#state{shutdown_timer = Timer1#timer{
 		timer_ref = TimerRef,
 		secret_ref = SecretRef
@@ -375,29 +444,26 @@ handle_continue(Request, S0) ->
 
 
 
--spec handle_call(Msg :: term(), From :: {pid(), term()}, S0 :: state()) ->
-	Ret :: {reply, Reply :: term(), S1 :: state()}.
-
 handle_call(?msg_call_transfer(
-	#ar_p3_ledger_booking_v1{id = Id, counterpart = CreditAccount, asset = Asset, amount = Amount} = DebitBooking,
-	#ar_p3_ledger_booking_v1{id = Id, counterpart = DebitAccount, asset = Asset, amount = Amount} = CreditBooking
+	#ar_p3_ledger_record_v1{id = Id, counterpart = OutAccount, asset = Asset, amount = Amount} = InRecord,
+	#ar_p3_ledger_record_v1{id = Id, counterpart = InAccount, asset = Asset, amount = Amount} = OutRecord
 ), _From, S0)
-when ?is_valid_account(DebitAccount)
-andalso ?is_valid_account(CreditAccount)
-andalso DebitAccount /= CreditAccount ->
-	{ok, S1} = insert_booking(DebitAccount, DebitBooking, S0),
-	{ok, S2} = insert_booking(CreditAccount, CreditBooking, S1),
+when ?is_valid_account(InAccount)
+andalso ?is_valid_account(OutAccount)
+andalso InAccount /= OutAccount ->
+	{ok, S1} = insert_record(InAccount, InRecord, S0),
+	{ok, S2} = insert_record(OutAccount, OutRecord, S1),
 	{reply, ok, maybe_disarm_timer(S2)};
 
-handle_call(?msg_call_transfer(_DebitBooking, _CreditBooking), _From, S0) ->
+handle_call(?msg_call_transfer(_InRecord, _OutRecord), _From, S0) ->
 	{reply, {error, bad_accounts}, maybe_disarm_timer(S0)};
 
 handle_call(?msg_call_total(), _From, #state{
-	cfs = Cfs
+	accounts = Accounts
 } = S0) ->
-	Ret = maps:map(fun(_Account, #cf{assets_map = AssetsMap}) ->
+	Ret = maps:map(fun(_Account, #account{assets_map = AssetsMap}) ->
 		AssetsMap
-	end, Cfs),
+	end, Accounts),
 	{reply, {ok, Ret}, maybe_disarm_timer(S0)};
 
 handle_call(Request, _From, S0) ->
@@ -406,23 +472,18 @@ handle_call(Request, _From, S0) ->
 
 
 
--spec handle_cast(Msg :: term(), S0 :: state()) ->
-	Ret :: {noreply, S1 :: state()}.
-
 handle_cast(Cast, S0) ->
 	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
 	{noreply, S0}.
 
 
 
--spec handle_info(Msg :: term(), S0 :: state()) ->
-	Ret :: {noreply, S1 :: state()}.
-
 handle_info(?msg_info_timer_alarm, #state{shutdown_timer = #timer{armed = false} = Timer0} = S0) ->
+	?LOG_DEBUG([{event, shutdown_timer}, {stage, armed}]),
 	{noreply, S0#state{shutdown_timer = Timer0#timer{armed = true}}, {continue, ?msg_continue_start_shutdown_timer}};
 
-handle_info(?msg_info_timer_alarm, S0) ->
-	?LOG_INFO([]),
+handle_info(?msg_info_timer_alarm, #state{shutdown_timer = #timer{armed = true} = _Timer0} = S0) ->
+	?LOG_DEBUG([{event, shutdown_timer}, {stage, terminating}]),
 	{stop, shutdown, S0};
 
 handle_info(Message, S0) ->
@@ -431,10 +492,10 @@ handle_info(Message, S0) ->
 
 
 
--spec terminate(Reason :: term(), S0 :: state()) ->
-	Ret :: term().
-
-terminate(_Reason, _State) ->
+terminate(_Reason, S0) ->
+	_ = db_flush(S0),
+	_ = wal_sync(S0),
+	_ = close(S0),
 	ok.
 
 
@@ -457,57 +518,55 @@ get_base_log_dir() ->
 
 
 
-new_booking_id() ->
-  Bin = erl_snowflake:generate_unsafe(bin),
-  <<Bin/binary, ?booking_constant_suffix:8/unsigned-integer>>.
+new_record_id() ->
+	Bin = erl_snowflake:generate_unsafe(bin),
+	<<Bin/binary, ?record_transaction_constant_suffix:8/unsigned-integer>>.
 
 
 
 new_checkpoint_id(<<Bin:8/binary, N:8/unsigned-integer>>) ->
-  <<Bin/binary, (N + 1):8>>.
+	<<Bin/binary, (N + 1):8>>.
 
 
 
-new_booking(Type, Counterpart, Asset, Amount, Meta) ->
-	new_booking(new_booking_id(), Type, Counterpart, Asset, Amount, Meta).
+new_record(Type, Counterpart, Asset, Amount, Meta) ->
+	new_record(new_record_id(), Type, Counterpart, Asset, Amount, Meta).
 
 
 
-new_booking(Id, Type, Counterpart, Asset, Amount, Meta) ->
-  #ar_p3_ledger_booking_v1{
+new_record(Id, Type, Counterpart, Asset, Amount, Meta) ->
+	#ar_p3_ledger_record_v1{
 		id = Id, type = Type, counterpart = Counterpart,
 		asset = Asset, amount = Amount, meta = Meta
 	}.
 
 
 
-new_counterbooking(Account, Booking) ->
-  Booking#ar_p3_ledger_booking_v1{
-    type = ?booking_countertype(Booking#ar_p3_ledger_booking_v1.type),
-    counterpart = Account
-  }.
+new_counterrecord(Account, Record) ->
+	Record#ar_p3_ledger_record_v1{
+		type = ?record_countertype(Record#ar_p3_ledger_record_v1.type),
+		counterpart = Account
+	}.
 
 
 
-new_checkpoint(BookingId, Assets) ->
-  #ar_p3_ledger_checkpoint_v1{
-    id = new_checkpoint_id(BookingId),
-    assets_map = Assets
-  }.
+new_checkpoint(RecordId, Assets) ->
+	#ar_p3_ledger_checkpoint_v1{
+		id = new_checkpoint_id(RecordId),
+		assets_map = Assets
+	}.
 
 
-%%%
-%%% Loads the list of assets and the cumulative value of each asset from the
-%%% database, considering debit bookings to be positive and credit bookings to
-%%% be negative.
-%%% The function returns a 2-tuple:
-%%% - Dangling bookings counter: the number of bookings that are not yet
-%%% 	inluded into checkpoint;
-%%% - Assets map: ?MODULE:assets_map()
-%%%
-load_assets(Account, #state{db_handle = DbHandle, cfs = Cfs0}) ->
-	Cf = maps:get(Account, Cfs0),
-	case rocksdb:iterator(DbHandle, Cf#cf.cf_handle, []) of
+
+-spec load_assets(Account :: record_account(), S0 :: #state{}) ->
+	Ret :: {
+		DanglingRecords :: non_neg_integer(),
+		Assets :: assets_map()
+	}.
+
+load_assets(AccountName, #state{db_handle = DbHandle, accounts = Accounts0}) ->
+	Account = maps:get(AccountName, Accounts0),
+	case rocksdb:iterator(DbHandle, Account#account.cf_handle, []) of
 		{ok, ItrHandle} -> load_assets_recursive(
 			Account, ItrHandle, rocksdb:iterator_move(ItrHandle, last), {0, #{}}
 		);
@@ -518,27 +577,12 @@ load_assets(Account, #state{db_handle = DbHandle, cfs = Cfs0}) ->
 
 load_assets_recursive(Account, ItrHandle, {ok, _Id, Value}, {Count, AccAssets}) ->
 	case decode_record(Value) of
-		#ar_p3_ledger_booking_v1{
-			type = ?ar_p3_ledger_booking_type_debit,
-			asset = Asset,
-			amount = Amount
-		} ->
+		#ar_p3_ledger_record_v1{asset = Asset} = R0 ->
 			load_assets_recursive(
 				Account,
 				ItrHandle,
 				rocksdb:iterator_move(ItrHandle, prev),
-				{Count + 1, merge_checkpoint_assets(AccAssets, #{Asset => Amount})}
-			);
-		#ar_p3_ledger_booking_v1{
-			type = ?ar_p3_ledger_booking_type_credit,
-			asset = Asset,
-			amount = Amount
-		} ->
-			load_assets_recursive(
-				Account,
-				ItrHandle,
-				rocksdb:iterator_move(ItrHandle, prev),
-				{Count + 1, merge_checkpoint_assets(AccAssets, #{Asset => -1 * Amount})}
+				{Count + 1, merge_checkpoint_assets(AccAssets, #{Asset => record_signed_value(R0)})}
 			);
 		#ar_p3_ledger_checkpoint_v1{assets_map = Assets} ->
 			{Count, merge_checkpoint_assets(AccAssets, Assets)}
@@ -554,49 +598,55 @@ load_assets_recursive(Account, ItrHandle, {error, iterator_closed}, _Acc) ->
 
 
 
+record_signed_value(#ar_p3_ledger_record_v1{type = ?ar_p3_ledger_record_type_in, amount = Amount}) -> Amount;
+record_signed_value(#ar_p3_ledger_record_v1{type = ?ar_p3_ledger_record_type_out, amount = Amount}) -> -1 * Amount.
+
+
 
 merge_checkpoint_assets(Assets0, Assets1) ->
-  maps:fold(fun(Asset, Amount, Acc) ->
-    maps:put(Asset, Amount + maps:get(Asset, Acc, 0), Acc)
-  end, Assets0, Assets1).
+	maps:fold(fun(Asset, Amount, Acc) ->
+		maps:put(Asset, Amount + maps:get(Asset, Acc, 0), Acc)
+	end, Assets0, Assets1).
 
 
 
 %%%
-%%% @doc Inserts the booking into proper rocksdb table and ensures to insert
+%%% @doc Inserts the record into proper rocksdb table and ensures to insert
 %%% checkpoints in configured intervals.
 %%%
 
-insert_booking(
+insert_record(
 	Account,
-	#ar_p3_ledger_booking_v1{id = Id, asset = Asset, amount = Amount} = Booking,
-	#state{db_handle = DbHandle, cfs = Cfs0} = S0
+	#ar_p3_ledger_record_v1{id = Id, asset = Asset} = Record,
+	#state{db_handle = DbHandle, accounts = Accounts0} = S0
 ) ->
-	Cf0 = maps:get(Account, Cfs0),
-	ok = rocksdb:put(DbHandle, Cf0#cf.cf_handle, Id, encode_record(Booking), []),
+	Account0 = maps:get(Account, Accounts0),
+	ok = rocksdb:put(DbHandle, Account0#account.cf_handle, Id, encode_record(Record), []),
 
-	Cf1 = Cf0#cf{
+	SignedAmount = record_signed_value(Record),
+	Account1 = Account0#account{
 		assets_map = maps:update_with(
-			Asset, fun(Amount0) -> Amount0 + Amount end, Amount, Cf0#cf.assets_map),
-		dangling_bookings = Cf0#cf.dangling_bookings + 1
+			Asset, fun(Amount0) -> Amount0 + SignedAmount end, SignedAmount, Account0#account.assets_map),
+		dangling_records = Account0#account.dangling_records + 1
 	},
 
-	Cfs1 = case Cf1 of
-		#cf{assets_map = AssetsMap, dangling_bookings = DanglingBookings}
-		when DanglingBookings == ?ledger_checkpoint_interval_records ->
+	Accounts1 = case Account1 of
+		#account{assets_map = AssetsMap, dangling_records = DanglingRecords}
+		when DanglingRecords >= S0#state.checkpoint_interval_records ->
 			Checkpoint = new_checkpoint(Id, AssetsMap),
-			ok = rocksdb:put(DbHandle, Cf1#cf.cf_handle, Checkpoint#ar_p3_ledger_checkpoint_v1.id, encode_record(Checkpoint), []),
-			Cfs0#{Account := Cf1#cf{dangling_bookings = 0}};
+			ok = rocksdb:put(DbHandle, Account1#account.cf_handle, Checkpoint#ar_p3_ledger_checkpoint_v1.id, encode_record(Checkpoint), []),
+			Accounts0#{Account := Account1#account{dangling_records = 0}};
 		_ ->
-			Cfs0#{Account := Cf1}
+			Accounts0#{Account := Account1}
 	end,
-	{ok, S0#state{cfs = Cfs1}}.
+	{ok, S0#state{accounts = Accounts1}}.
 
 
 
 %%%
 %%% @doc Will call a callback on started ledger process.
 %%%
+
 with_peer_ledger(PeerAddress, Fun) ->
 	case gproc:where(?via_reg_name(PeerAddress)) of
 		undefined -> with_peer_ledger_started(PeerAddress, Fun);
@@ -605,8 +655,11 @@ with_peer_ledger(PeerAddress, Fun) ->
 
 
 
+%%%
 %%% @doc will call a callback on started ledger process only if the ledger
 %%% existed before the call.
+%%%
+
 with_existing_peer_ledger(PeerAddress, Fun) ->
 	case gproc:where(?via_reg_name(PeerAddress)) of
 		undefined ->
@@ -628,6 +681,7 @@ with_existing_peer_ledger(PeerAddress, Fun) ->
 %%% only the first caller will get the `{ok, Pid}` response; others will get
 %%% `{error, {already_started, Pid}}` error and will procees from there.
 %%%
+
 with_peer_ledger_started(PeerAddress, Fun) ->
 	case ar_p3_sup:start_ledger(PeerAddress) of
 		{ok, Pid, _Info} -> apply(Fun, [Pid]);
@@ -638,6 +692,7 @@ with_peer_ledger_started(PeerAddress, Fun) ->
 
 
 
+maybe_cancel_timer(#timer{timer_ref = undefined} = Timer0) -> Timer0;
 maybe_cancel_timer(#timer{timer_ref = TimerRef} = Timer0) ->
 	_ = erlang:cancel_timer(TimerRef),
 	Timer0#timer{timer_ref = undefined, secret_ref = undefined}.
@@ -646,6 +701,49 @@ maybe_cancel_timer(#timer{timer_ref = TimerRef} = Timer0) ->
 
 maybe_disarm_timer(#state{shutdown_timer = Timer0} = S0) ->
 	S0#state{shutdown_timer = Timer0#timer{armed = false}}.
+
+
+
+db_flush(#state{db_handle = undefined}) -> ok;
+db_flush(#state{db_handle = DbHandle}) ->
+	case rocksdb:flush(DbHandle, [{wait, true}, {allow_write_stall, false}]) of
+		{error, FlushError} ->
+			?LOG_ERROR([{event, db_operation_failed}, {op, db_flush}, {reason, io_lib:format("~p", [FlushError])}]),
+			{error, failed};
+		_ ->
+			?LOG_DEBUG([{event, db_operation}, {op, db_flush}]),
+			ok
+	end.
+
+
+
+wal_sync(#state{db_handle = undefined}) -> ok;
+wal_sync(#state{db_handle = DbHandle}) ->
+	case rocksdb:sync_wal(DbHandle) of
+		{error, SyncError} ->
+			?LOG_ERROR([{event, db_operation_failed}, {op, wal_sync}, {reason, io_lib:format("~p", [SyncError])}]),
+			{error, failed};
+		_ ->
+			?LOG_DEBUG([{event, db_operation}, {op, wal_sync}]),
+			ok
+	end.
+
+
+
+close(#state{db_handle = undefined}) -> ok;
+close(#state{db_handle = DbHandle}) ->
+	try
+		case rocksdb:close(DbHandle) of
+			ok ->
+				?LOG_DEBUG([{event, db_operation}, {op, close}]);
+			{error, CloseError} ->
+				?LOG_ERROR([{event, db_operation_failed}, {op, close}, {error, io_lib:format("~p", [CloseError])}])
+		end
+	catch
+		Exc ->
+			?LOG_ERROR([{event, ar_kv_failed}, {op, close}, {reason, io_lib:format("~p", [Exc])}])
+	end.
+
 
 
 %%% ==================================================================
@@ -658,76 +756,149 @@ maybe_disarm_timer(#state{shutdown_timer = Timer0} = S0) ->
 %% One should never change the numbers under these definitions: the stored
 %% records will still have older values, which will lead to failed reads from
 %% the database.
-%% If you want to add a new field into the booking record, consider adding the
+%% If you want to add a new field into the record record, consider adding the
 %% new mapping and append it to the list below.
 %% If, for some reason, you want to change the definitions below, or you want to
-%% remove a field from the booking record, consider creating a new erlang record
-%% (#ar_p3_ledger_booking_vN{}) and support both older and newer erlang records
+%% remove a field from the record record, consider creating a new erlang record
+%% (#ar_p3_ledger_record_vN{}) and support both older and newer erlang records
 %% within this module.
 %% The older records support might be dropped once you're sure these do not
 %% exist in production nodes. This might be the case if:
-%% - The older booking records are "compacted" (deleted) from the database,
-%% 	 since we only need the records from the latest checkpoint and later in
+%% - The older record records are "compacted" (deleted) from the database,
+%%   since we only need the records from the latest checkpoint and later in
 %%   order to be consistent;
 %% - There is a way to migrate the rocksdb records from older to newer format.
 %%
--define(ar_p3_ledger_booking_field_id, 0).
--define(ar_p3_ledger_booking_field_type, 1).
--define(ar_p3_ledger_booking_field_counterpart, 2).
--define(ar_p3_ledger_booking_field_asset, 3).
--define(ar_p3_ledger_booking_field_amount, 4).
--define(ar_p3_ledger_booking_field_meta, 5).
+
+-define(ar_p3_ledger_common_field_version, 0).
+
+-define(ar_p3_ledger_record_field_id, 1).
+-define(ar_p3_ledger_record_field_type, 2).
+-define(ar_p3_ledger_record_field_counterpart, 3).
+-define(ar_p3_ledger_record_field_asset, 4).
+-define(ar_p3_ledger_record_field_amount, 5).
+-define(ar_p3_ledger_record_field_meta, 6).
+
+-define(ar_p3_ledger_checkpoint_field_id, 1).
+-define(ar_p3_ledger_checkpoint_field_assets_map, 2).
 
 
 
-encode_record(#ar_p3_ledger_booking_v1{
+encode_record(#ar_p3_ledger_record_v1{
 	id = Id, type = Type, counterpart = Counterpart,
 	asset = Asset, amount = Amount, meta = Meta
 }) ->
 	Map = #{
-		?ar_p3_ledger_booking_field_id => Id,
-		?ar_p3_ledger_booking_field_type => encode_type(Type),
-		?ar_p3_ledger_booking_field_counterpart => encode_account(Counterpart),
-		?ar_p3_ledger_booking_field_asset => Asset,
-		?ar_p3_ledger_booking_field_amount => Amount,
-		?ar_p3_ledger_booking_field_meta => Meta
+		?ar_p3_ledger_common_field_version => 1,
+		?ar_p3_ledger_record_field_id => Id,
+		?ar_p3_ledger_record_field_type => encode_type(Type),
+		?ar_p3_ledger_record_field_counterpart => encode_account(Counterpart),
+		?ar_p3_ledger_record_field_asset => Asset,
+		?ar_p3_ledger_record_field_amount => Amount,
+		?ar_p3_ledger_record_field_meta => Meta
+	},
+	msgpack:pack(Map);
+
+encode_record(#ar_p3_ledger_checkpoint_v1{id = Id, assets_map = AssetsMap}) ->
+	Map = #{
+		?ar_p3_ledger_common_field_version => 1,
+		?ar_p3_ledger_checkpoint_field_id => Id,
+		?ar_p3_ledger_checkpoint_field_assets_map => AssetsMap
 	},
 	msgpack:pack(Map).
 
 
 
-encode_type(?ar_p3_ledger_booking_type_debit) -> 0;
-encode_type(?ar_p3_ledger_booking_type_credit) -> 1.
+encode_type(?ar_p3_ledger_record_type_in) -> 0;
+encode_type(?ar_p3_ledger_record_type_out) -> 1.
 
 
 
-encode_account(?ar_p3_ledger_booking_account_equity) -> 0;
-encode_account(?ar_p3_ledger_booking_account_liability) -> 1;
-encode_account(?ar_p3_ledger_booking_account_service) -> 2.
+encode_account(?ar_p3_ledger_record_account_tokens) -> 0;
+encode_account(?ar_p3_ledger_record_account_credits) -> 1;
+encode_account(?ar_p3_ledger_record_account_services) -> 2.
 
 
 
 decode_record(Bin) ->
-	#{
-		?ar_p3_ledger_booking_field_id := Id,
-		?ar_p3_ledger_booking_field_type := EncodedType,
-		?ar_p3_ledger_booking_field_counterpart := EncodedCounterpart,
-		?ar_p3_ledger_booking_field_asset := Asset,
-		?ar_p3_ledger_booking_field_amount := Amount,
-		?ar_p3_ledger_booking_field_meta := Meta
-	} = msgpack:unpack(Bin),
-	#ar_p3_ledger_booking_v1{
-		id = Id, type = decode_type(EncodedType), counterpart = decode_account(EncodedCounterpart),
-		asset = Asset, amount = Amount, meta = Meta
-	}.
+	case msgpack:unpack(Bin) of
+		{ok, #{
+			?ar_p3_ledger_common_field_version := 1,
+			?ar_p3_ledger_record_field_id := Id,
+			?ar_p3_ledger_record_field_type := EncodedType,
+			?ar_p3_ledger_record_field_counterpart := EncodedCounterpart,
+			?ar_p3_ledger_record_field_asset := Asset,
+			?ar_p3_ledger_record_field_amount := Amount,
+			?ar_p3_ledger_record_field_meta := Meta
+		}} ->
+			#ar_p3_ledger_record_v1{
+				id = Id, type = decode_type(EncodedType), counterpart = decode_account(EncodedCounterpart),
+				asset = Asset, amount = Amount, meta = Meta
+			};
+		{ok, #{
+			?ar_p3_ledger_common_field_version := 1,
+			?ar_p3_ledger_checkpoint_field_id := Id,
+			?ar_p3_ledger_checkpoint_field_assets_map := AssetsMap
+		}} ->
+			#ar_p3_ledger_checkpoint_v1{id = Id, assets_map = AssetsMap};
+		{error, _Reason} = E ->
+			throw(E);
+		_ ->
+			throw({error, {unexpected_record, Bin}})
+	end.
 
 
 
-decode_type(0) -> ?ar_p3_ledger_booking_type_debit;
-decode_type(1) -> ?ar_p3_ledger_booking_type_credit.
+decode_type(0) -> ?ar_p3_ledger_record_type_in;
+decode_type(1) -> ?ar_p3_ledger_record_type_out.
 
 
 
-decode_account(0) -> ?ar_p3_ledger_booking_account_equity;
-decode_account(1) -> ?ar_p3_ledger_booking_account_liability;
-decode_account(2) -> ?ar_p3_ledger_booking_account_service.
+decode_account(0) -> ?ar_p3_ledger_record_account_tokens;
+decode_account(1) -> ?ar_p3_ledger_record_account_credits;
+decode_account(2) -> ?ar_p3_ledger_record_account_services.
+
+
+
+%%% ==================================================================
+%%% Unit tests.
+%%% ==================================================================
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+
+
+create_transaction_v1_records_test() ->
+	InRecord = new_record(?ar_p3_ledger_record_type_in, ?ar_p3_ledger_record_account_credits, <<"test/TST">>, 1000, #{}),
+	OutRecord = new_counterrecord(?ar_p3_ledger_record_account_tokens, InRecord),
+
+	?assertEqual(InRecord#ar_p3_ledger_record_v1.id, OutRecord#ar_p3_ledger_record_v1.id, "record ids are the same").
+
+
+
+transaction_v1_record_encode_decode_test() ->
+	Record = new_record(?ar_p3_ledger_record_type_in, ?ar_p3_ledger_record_account_credits, <<"test/TST">>, 1000, #{}),
+	EncodedRecord = encode_record(Record),
+
+	?assertEqual(Record, decode_record(EncodedRecord), "decoded record is equal to original record").
+
+
+
+create_checkpoint_v1_record_test() ->
+	Id = new_record_id(),
+	Checkpoint = new_checkpoint(Id, #{<<"test/TST">> => 1000}),
+
+	?assert(Checkpoint#ar_p3_ledger_checkpoint_v1.id > Id, "checkpoint id is greater than original id").
+
+
+
+checkpoint_v1_record_encode_decode_test() ->
+	Checkpoint = new_checkpoint(new_record_id(), #{<<"test/TST">> => 1000}),
+	EncodedCheckpoint = encode_record(Checkpoint),
+
+	?assertEqual(Checkpoint, decode_record(EncodedCheckpoint), "decoded checkpoint is equal to original checkpoint").
+
+
+
+-endif.

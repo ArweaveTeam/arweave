@@ -114,6 +114,11 @@
 %% The default rocksdb WAL sync interval, 1 minute.
 -define(DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S, 60).
 
+%% The default P3 ledger checkpoint interval, 100 records.
+-define(DEFAULT_P3_LEDGER_CHECKPOINT_INTERVAL, 100).
+%% The default P3 ledger shutdown timeout, 1 minute.
+-define(DEFAULT_P3_LEDGER_SHUTDOWN_TIMEOUT, 60).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -210,7 +215,9 @@
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
 	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
-	rocksdb_wal_sync_interval_s = ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S
+	rocksdb_wal_sync_interval_s = ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S,
+	p3_ledger_checkpoint_interval = ?DEFAULT_P3_LEDGER_CHECKPOINT_INTERVAL,
+	p3_ledger_shutdown_timeout = ?DEFAULT_P3_LEDGER_SHUTDOWN_TIMEOUT
 }).
 
 -endif.

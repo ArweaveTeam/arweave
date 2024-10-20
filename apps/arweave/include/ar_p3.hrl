@@ -35,7 +35,8 @@
 
 -record(p3_config, {
 	payments = #{},
-	services = #{}
+	services = #{},
+	ledger = #{}
 }).
 
 -record(p3_account, {

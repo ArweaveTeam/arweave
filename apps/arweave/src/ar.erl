@@ -336,7 +336,9 @@ show_help() ->
 					"Useful if you have multiple machines (or replicas) "
 					"and you want to monitor them separately on pool"},
 			{"rocksdb_flush_interval", "RocksDB flush interval in seconds"},
-			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"}
+			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"},
+			{"p3_ledger_checkpoint_interval", "P3 ledger checkpoint interval in records"},
+			{"p3_ledger_shutdown_timeout", "P3 ledger individual ledger process shutdown timeout in seconds"}
 		]
 	),
 	erlang:halt().
@@ -631,6 +633,10 @@ parse_cli_args(["rocksdb_flush_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_flush_interval_s = list_to_integer(Seconds) });
 parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_wal_sync_interval_s = list_to_integer(Seconds) });
+parse_cli_args(["p3_ledger_checkpoint_interval", Interval | Rest], C) ->
+	parse_cli_args(Rest, C#config{ p3_ledger_checkpoint_interval = list_to_integer(Interval) });
+parse_cli_args(["p3_ledger_shutdown_timeout", Seconds | Rest], C) ->
+	parse_cli_args(Rest, C#config{ p3_ledger_shutdown_timeout = list_to_integer(Seconds) });
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
