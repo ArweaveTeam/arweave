@@ -216,9 +216,11 @@ check_disk_space({unix, darwin}, Port) ->
 	check_disks_susv3(skip_to_eol(Result)).
 
 disk_free_cmd({unix, darwin}, Df, DataDirPath, Port) ->
-	 my_cmd(Df ++ " -Pa " ++ DataDirPath ++ "/", Port);
+	my_cmd(Df ++ " -Pa " ++ DataDirPath ++ "/", Port);
+disk_free_cmd({unix, freebsd}, Df, DataDirPath, Port) ->
+	my_cmd(Df ++ " -P " ++ DataDirPath ++ "/", Port);
 disk_free_cmd({unix, _}, Df, DataDirPath, Port) ->
-	 my_cmd(Df ++ " -Pa -B1 " ++ DataDirPath ++ "/", Port).
+	my_cmd(Df ++ " -Pa -B1 " ++ DataDirPath ++ "/", Port).
 
 %% check for hardware errors in df output
 check_for_hardware_error(DfOutput, ThrowOnError) ->

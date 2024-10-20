@@ -41,8 +41,8 @@ ifeq ($(UNAME_SYS), Darwin)
 	LDFLAGS += -undefined suppress
 else ifeq ($(UNAME_SYS), FreeBSD)
 	CC ?= cc
-	CFLAGS += -std=c99 -finline-functions -Wall -Wmissing-prototypes
-	CXXFLAGS += -finline-functions -Wall
+	CFLAGS += -std=c99 -finline-functions -Wall -Wmissing-prototypes -I/usr/local/include
+	CXXFLAGS += -finline-functions -Wall -I/usr/local/include
 else ifeq ($(UNAME_SYS), Linux)
 	CC ?= gcc
 	CFLAGS += -std=c99 -finline-functions -Wall -Wmissing-prototypes
