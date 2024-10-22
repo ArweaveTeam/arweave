@@ -559,12 +559,18 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
-			{_, Pub} = ar_wallet:new_keyfile(?DEFAULT_KEY_TYPE, WalletAccessCode),
-			ResponseProps = [
-				{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(Pub))},
-				{<<"wallet_access_code">>, WalletAccessCode}
-			],
-			{200, #{}, ar_serialize:jsonify({ResponseProps}), Req};
+			case ar_wallet:new_keyfile(?DEFAULT_KEY_TYPE, WalletAccessCode) of
+				{error, Reason} ->
+					?LOG_ERROR([{event, failed_to_create_new_wallet},
+							{reason, io_lib:format("~p", [Reason])}]),
+					{500, #{}, <<>>, Req};
+				{_, Pub} ->
+					ResponseProps = [
+						{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(Pub))},
+						{<<"wallet_access_code">>, WalletAccessCode}
+					],
+					{200, #{}, ar_serialize:jsonify({ResponseProps}), Req}
+			end;
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;

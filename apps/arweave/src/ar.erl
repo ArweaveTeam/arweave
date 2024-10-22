@@ -756,12 +756,19 @@ start(normal, _Args) ->
 	ar_sup:start_link().
 
 set_mining_address(#config{ mining_addr = not_set } = C) ->
-	W = ar_wallet:get_or_create_wallet([{?RSA_SIGN_ALG, 65537}]),
-	Addr = ar_wallet:to_address(W),
-	ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
-	C2 = C#config{ mining_addr = Addr },
-	application:set_env(arweave, config, C2),
-	set_mining_address(C2);
+	case ar_wallet:get_or_create_wallet([{?RSA_SIGN_ALG, 65537}]) of
+		{error, Reason} ->
+			ar:console("~nFailed to create a wallet, reason: ~p.~n",
+				[io_lib:format("~p", [Reason])]),
+			timer:sleep(500),
+			erlang:halt();
+		W ->
+			Addr = ar_wallet:to_address(W),
+			ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
+			C2 = C#config{ mining_addr = Addr },
+			application:set_env(arweave, config, C2),
+			set_mining_address(C2)
+	end;
 set_mining_address(#config{ mine = false }) ->
 	ok;
 set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer,
@@ -790,10 +797,17 @@ create_wallet([DataDir]) ->
 			create_wallet_fail();
 		true ->
 			ok = application:set_env(arweave, config, #config{ data_dir = DataDir }),
-			W = ar_wallet:new_keyfile({?RSA_SIGN_ALG, 65537}),
-			Addr = ar_wallet:to_address(W),
-			ar:console("Created a wallet with address ~s.~n", [ar_util:encode(Addr)]),
-			erlang:halt()
+			case ar_wallet:new_keyfile({?RSA_SIGN_ALG, 65537}) of
+				{error, Reason} ->
+					ar:console("Failed to create a wallet, reason: ~p.~n~n",
+							[io_lib:format("~p", [Reason])]),
+					timer:sleep(500),
+					erlang:halt();
+				W ->
+					Addr = ar_wallet:to_address(W),
+					ar:console("Created a wallet with address ~s.~n", [ar_util:encode(Addr)]),
+					erlang:halt()
+			end
 	end;
 create_wallet(_) ->
 	create_wallet_fail().
