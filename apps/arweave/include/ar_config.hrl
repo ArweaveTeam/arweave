@@ -141,6 +141,7 @@
 	tx_propagation_parallelization, % DEPRECATED.
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
 	header_sync_jobs = ?DEFAULT_HEADER_SYNC_JOBS,
+	data_sync_request_packed_chunks = false,
 	disk_pool_jobs = ?DEFAULT_DISK_POOL_JOBS,
 	load_key = not_set,
 	disk_space,
