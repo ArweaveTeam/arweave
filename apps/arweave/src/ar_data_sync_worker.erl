@@ -16,7 +16,8 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 
 -record(state, {
-	name = undefined
+	name = undefined,
+	request_packed_chunks = false
 }).
 
  %% # of messages to cast to ar_data_sync at once. Each message carries at least 1 chunk worth
@@ -36,7 +37,11 @@ start_link(Name) ->
 %%%===================================================================
 
 init(Name) ->
-	{ok, #state{ name = Name }}.
+	{ok, Config} = application:get_env(arweave, config),
+	{ok, #state{
+		name = Name,
+		request_packed_chunks = Config#config.data_sync_request_packed_chunks
+	}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -54,7 +59,7 @@ handle_cast({read_range, Args}, State) ->
 
 handle_cast({sync_range, Args}, State) ->
 	StartTime = erlang:monotonic_time(),
-	SyncResult = sync_range(Args),
+	SyncResult = sync_range(Args, State),
 	EndTime = erlang:monotonic_time(),
 	case SyncResult of
 		recast ->
@@ -200,14 +205,14 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 					{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall})
 	end.
 
-sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}) when Start >= End ->
+sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}, _State) when Start >= End ->
 	ok;
-sync_range({Start, End, Peer, _TargetStoreID, 0}) ->
+sync_range({Start, End, Peer, _TargetStoreID, 0}, _State) ->
 	?LOG_DEBUG([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
 	{error, timeout};
-sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
+sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args, State) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
 			true ->
@@ -238,7 +243,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 				true ->
 					ok;
 				false ->
-					case ar_http_iface_client:get_chunk_binary(Peer, Start2, get_target_packing(TargetStoreID)) of
+					case ar_http_iface_client:get_chunk_binary(Peer, Start2, get_target_packing(TargetStoreID, State#state.request_packed_chunks)) of
 						{ok, #{ chunk := Chunk } = Proof, _Time, _TransferSize} ->
 							%% In case we fetched a packed small chunk,
 							%% we may potentially skip some chunks by
@@ -250,7 +255,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 							gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
 									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
-							sync_range({Start3, End, Peer, TargetStoreID, RetryCount});
+							sync_range({Start3, End, Peer, TargetStoreID, RetryCount}, State);
 						{error, timeout} ->
 							?LOG_DEBUG([{event, timeout_fetching_chunk},
 									{peer, ar_util:format_peer(Peer)},
@@ -268,9 +273,5 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args) ->
 			end
 	end.
 
-get_target_packing(StoreID) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case Config#config.data_sync_request_packed_chunks of
-		true -> ar_storage_module:get_packing(StoreID);
-		false -> any
-	end.
+get_target_packing(StoreID, true) -> ar_storage_module:get_packing(StoreID);
+get_target_packing(_StoreID, false) -> any.
