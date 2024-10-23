@@ -88,7 +88,7 @@ terminate(Reason, _State) ->
 read_range({Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall}) when Start >= End ->
 	ok;
 read_range({Start, End, _OriginStoreID, TargetStoreID, _SkipSmall} = Args) ->
-	case ar_data_sync:is_chunk_cache_full() of
+	case ar_data_sync:is_chunk_cache_full(TargetStoreID) of
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
 				true ->
@@ -159,7 +159,8 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 					case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
 							OriginStoreID) of
 						{true, Packing} ->
-							ar_data_sync:increment_chunk_cache_size(),
+							ar_data_sync:increment_chunk_cache_size(
+								TargetStoreID),
 							UnpackedChunk =
 								case Packing of
 									unpacked ->
@@ -211,7 +212,7 @@ sync_range({Start, End, Peer, _TargetStoreID, 0}, _State) ->
 	{error, timeout};
 sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args, State) ->
 	IsChunkCacheFull =
-		case ar_data_sync:is_chunk_cache_full() of
+		case ar_data_sync:is_chunk_cache_full(TargetStoreID) of
 			true ->
 				ar_util:cast_after(500, self(), {sync_range, Args}),
 				true;
@@ -251,7 +252,8 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args, State) ->
 							Label = ar_storage_module:label_by_id(TargetStoreID),
 							gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
 									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
-							ar_data_sync:increment_chunk_cache_size(),
+							ar_data_sync:increment_chunk_cache_size(
+								TargetStoreID),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount}, State);
 						{error, timeout} ->
 							?LOG_DEBUG([{event, timeout_fetching_chunk},

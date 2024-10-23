@@ -78,7 +78,7 @@ handle_cast({expire_repack_chunk_request, Key}, State) ->
 	#state{ store_id = StoreID, packing_map = PackingMap } = State,
 	case maps:get(Key, PackingMap, not_found) of
 		{pack_chunk, {_, DataPath, Offset, DataRoot, _, _, _}} ->
-			ar_data_sync:decrement_chunk_cache_size(),
+			ar_data_sync:decrement_chunk_cache_size(StoreID),
 			DataPathHash = crypto:hash(sha256, DataPath),
 			?LOG_DEBUG([{event, expired_repack_chunk_request},
 					{data_path_hash, ar_util:encode(DataPathHash)},
@@ -164,7 +164,7 @@ process_store_chunk_queue(State, StartLen) ->
 		true ->
 			{{_Offset, _Timestamp, _Ref, ChunkArgs, Args}, Q2} = gb_sets:take_smallest(Q),
 			store_chunk2(ChunkArgs, Args, State),
-			ar_data_sync:decrement_chunk_cache_size(),
+			ar_data_sync:decrement_chunk_cache_size(StoreID),
 			State2 = State#state{ store_chunk_queue = Q2,
 					store_chunk_queue_len = Len - 1,
 					store_chunk_queue_threshold = min(Threshold2 + 1,
