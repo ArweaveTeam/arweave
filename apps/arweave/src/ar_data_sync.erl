@@ -2751,7 +2751,7 @@ pack_and_store_chunk({_, AbsoluteOffset, _, _, _, _, _, _, _, _, _, _},
 pack_and_store_chunk(Args, State) ->
 	{DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, Packing, Offset, ChunkSize, Chunk,
 			UnpackedChunk, OriginStoreID, OriginChunkDataKey} = Args,
-	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
+	#sync_data_state{ store_id = StoreID } = State,
 	RequiredPacking = get_required_chunk_packing(AbsoluteOffset, ChunkSize, State),
 	PackingStatus =
 		case {RequiredPacking, Packing} of
@@ -2769,40 +2769,34 @@ pack_and_store_chunk(Args, State) ->
 			gen_server:cast(DataSyncStorage, {store_chunk, ChunkArgs, ExtraArgs}),
 			{noreply, State};
 		{need_packing, RequiredPacking} ->
-			case maps:is_key({AbsoluteOffset, RequiredPacking}, PackingMap) of
+			case ar_packing_server:is_buffer_full() of
 				true ->
-					decrement_chunk_cache_size(StoreID),
+					ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args}),
 					{noreply, State};
 				false ->
-					case ar_packing_server:is_buffer_full() of
-						true ->
-							ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args}),
-							{noreply, State};
-						false ->
-							{Packing2, Chunk2} =
-								case UnpackedChunk of
-									none ->
-										{Packing, Chunk};
-									_ ->
-										{unpacked, UnpackedChunk}
-								end,
-							DataSyncStorage = ar_data_sync_storage:name(StoreID),
-							PromiseKey = {AbsoluteOffset, RequiredPacking},
-							PromiseArgs = {pack_chunk, {RequiredPacking, DataPath,
-									Offset, DataRoot, TXPath, OriginStoreID,
-									OriginChunkDataKey}},
-							gen_server:cast(DataSyncStorage,
-									{packed_chunk_promise, PromiseKey, PromiseArgs}),
-							RepackArgs = {RequiredPacking, Packing2, Chunk2, AbsoluteOffset,
-									TXRoot, ChunkSize},
-							ar_packing_server:request_repack(
-									AbsoluteOffset,
-									whereis(DataSyncStorage),
-									RepackArgs),
-							ar_util:cast_after(600000, DataSyncStorage,
-									{expire_repack_chunk_request, PromiseKey}),
-							{noreply, State}
-					end
+					{Packing2, Chunk2} =
+						case UnpackedChunk of
+							none ->
+								{Packing, Chunk};
+							_ ->
+								{unpacked, UnpackedChunk}
+						end,
+					DataSyncStorage = ar_data_sync_storage:name(StoreID),
+					PromiseKey = {AbsoluteOffset, RequiredPacking},
+					PromiseArgs = {pack_chunk, {RequiredPacking, DataPath,
+							Offset, DataRoot, TXPath, OriginStoreID,
+							OriginChunkDataKey}},
+					gen_server:cast(DataSyncStorage,
+							{packed_chunk_promise, PromiseKey, PromiseArgs}),
+					RepackArgs = {RequiredPacking, Packing2, Chunk2, AbsoluteOffset,
+							TXRoot, ChunkSize},
+					ar_packing_server:request_repack(
+							AbsoluteOffset,
+							whereis(DataSyncStorage),
+							RepackArgs),
+					ar_util:cast_after(600000, DataSyncStorage,
+							{expire_repack_chunk_request, PromiseKey}),
+					{noreply, State}
 			end
 	end.
 
