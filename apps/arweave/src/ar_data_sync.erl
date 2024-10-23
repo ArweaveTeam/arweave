@@ -672,7 +672,7 @@ init({"default" = StoreID, _}) ->
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
-				Limit2 = min(1000, erlang:ceil(Free * 0.9 / 3 / 262144)),
+				Limit2 = min(10000, erlang:ceil(Free * 0.9 / 3 / 262144)),
 				Limit3 = ar_util:ceil_int(Limit2, 100),
 				Limit3;
 			Limit2 ->
@@ -836,13 +836,15 @@ handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID,
 		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
-	State2 = case ar_data_sync_worker_master:read_range(Start, End, StoreID, OriginStoreID, false) of
-		true ->
-			State#sync_data_state{
-				unsynced_intervals_from_other_storage_modules = Intervals };
-		false ->
-			State
-	end,
+	State2 =
+		case ar_data_sync_worker_master:read_range(Start, End,
+				StoreID, OriginStoreID, false) of
+			true ->
+				State#sync_data_state{
+					unsynced_intervals_from_other_storage_modules = Intervals };
+			false ->
+				State
+		end,
 	ar_util:cast_after(50, self(), sync_data2),
 	{noreply, State2};
 
