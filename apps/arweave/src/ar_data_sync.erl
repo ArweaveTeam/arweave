@@ -1056,7 +1056,7 @@ handle_cast(sync_intervals, State) ->
 			true ->
 				true;
 			false ->
-				case ar_data_sync_worker_master:ready_for_work() of
+				case ar_data_sync_worker_master:ready_for_work(StoreID) of
 					false ->
 						ar_util:cast_after(200, self(), sync_intervals),
 						true;
