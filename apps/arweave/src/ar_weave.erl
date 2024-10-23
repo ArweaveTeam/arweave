@@ -31,7 +31,7 @@ init(WalletList, Diff) ->
 
 %% @doc Create a genesis block with the given accounts and difficulty.
 init(WalletList, Diff, GenesisDataSize) ->
-	Key = ar_wallet:new_keyfile(),
+	{{_, _, _}, {_, _}} = Key = ar_wallet:new_keyfile(),
 	TX = create_genesis_tx(Key, GenesisDataSize),
 	WalletList2 = WalletList ++ [{ar_wallet:to_address(Key), 0, TX#tx.id}],
 	TXs = [TX],
