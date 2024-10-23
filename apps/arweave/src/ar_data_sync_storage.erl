@@ -91,9 +91,16 @@ handle_cast({expire_repack_chunk_request, Key}, State) ->
 	end;
 
 handle_cast({packed_chunk_promise, Key, Args}, State) ->
-	#state{ packing_map = Map } = State,
-	Map2 = maps:put(Key, Args, Map),
-	{noreply, State#state{ packing_map = Map2 }};
+	#state{ packing_map = Map, store_id = StoreID } = State,
+	case maps:is_key(Key, Map) of
+		true ->
+			%% Free up the cache for the duplicate.
+			ar_data_sync:decrement_chunk_cache_size(StoreID),
+			{noreply, State};
+		false ->
+			Map2 = maps:put(Key, Args, Map),
+			{noreply, State#state{ packing_map = Map2 }}
+	end;
 
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
@@ -119,6 +126,8 @@ handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
 			State2 = State#state{ packing_map = maps:remove(Key, PackingMap) },
 			{noreply, store_chunk(ChunkArgs, Args, State2)};
 		_ ->
+			%% Should be a duplicate - no need to do anything as we
+			%% clean up the cache earlier in the packed_chunk_promise handler.
 			{noreply, State}
 	end;
 
