@@ -22,6 +22,16 @@ start_link() ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
+	StorageThreads = lists:map(
+		fun(StorageModule) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			StoreLabel = ar_storage_module:label(StorageModule),
+			Name = list_to_atom("ar_data_sync_writer_" ++ StoreLabel),
+			?CHILD_WITH_ARGS(ar_data_sync_storage, worker,
+					Name, [Name, StoreID])
+		end,
+		Config#config.storage_modules
+	),
 	SyncWorkers = case ar_data_sync_worker_master:is_syncing_enabled() of
 		true ->
 			Workers = lists:map(
@@ -58,6 +68,7 @@ init([]) ->
 		end,
 		Config#config.repack_in_place_storage_modules
 	),
-	Children = SyncWorkers ++ StorageModuleWorkers ++ [DefaultStorageModuleWorker]
+	Children = StorageThreads ++ SyncWorkers
+			++ StorageModuleWorkers ++ [DefaultStorageModuleWorker]
 			++ RepackInPlaceWorkers,
 	{ok, {{one_for_one, 5, 10}, Children}}.
