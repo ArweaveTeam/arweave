@@ -759,15 +759,15 @@ chunk_offset_list_to_map(ChunkOffsets) ->
 repack(Cursor, RightBound, Packing, StoreID) ->
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ?MODULE, StoreID) of
 		not_found ->
-			Label = ar_storage_module:label_by_id(StoreID),
-			ar:console("~n~nRepacking of storage module ~s is complete! "
+			ar:console("~n~nRepacking of ~s is complete! "
 					"We suggest you stop the node, rename "
 					"the storage module folder to reflect the new packing, and start the "
-					"node with the new storage module.~n", [Label]),
+					"node with the new storage module.~n", [StoreID]),
 			?LOG_INFO([{event, repacking_complete},
 					{storage_module, StoreID},
 					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
-			Server = list_to_atom("ar_chunk_storage_" ++ Label),
+			Server = list_to_atom("ar_chunk_storage_"
+					++ ar_storage_module:label_by_id(StoreID)),
 			gen_server:cast(Server, repacking_complete),
 			ok;
 		{End, Start} ->
