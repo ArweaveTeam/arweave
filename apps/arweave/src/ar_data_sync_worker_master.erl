@@ -240,7 +240,7 @@ process_peer_queue(PeerTasks, State) ->
 %% @doc the maximum number of tasks we can have in process - including stasks queued here as well
 %% as those scheduled on ar_data_sync_workers.
 max_tasks(WorkerCount) ->
-	WorkerCount * 50.
+	WorkerCount * 5.
 
 %% @doc The maximum number of tasks we can have queued for a given peer.
 max_peer_queue(_Peformance, 0, _WorkerCount) ->
