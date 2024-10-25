@@ -1833,9 +1833,16 @@ handle_found_solution(Args, PrevB, State) ->
 						case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
 								PrevNonceLimiterInfo) of
 							false ->
+								SolutionVDF =
+									NonceLimiterInfo#nonce_limiter_info.global_step_number,
+								PrevBlockVDF =
+									PrevNonceLimiterInfo#nonce_limiter_info.global_step_number,
 								ar_events:send(solution, {stale, #{ source => Source }}),
 								ar_mining_server:log_prepare_solution_failure(Solution,
-										stale_solution, []),
+									stale_solution, [
+										{solution_vdf, SolutionVDF},
+										{prev_block_vdf, PrevBlockVDF}
+									]),
 								{false, timeline};
 							true ->
 								true

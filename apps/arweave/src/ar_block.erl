@@ -19,7 +19,8 @@
 		validate_proof_size/1, vdf_step_number/1, get_packing/2,
 		validate_packing_difficulty/2, validate_packing_difficulty/1,
 		get_max_nonce/1, get_recall_range_size/1, get_recall_byte/3,
-		get_recall_step_size/1, get_nonces_per_chunk/1, get_sub_chunk_index/2]).
+		get_sub_chunk_size/1, get_nonces_per_chunk/1, get_nonces_per_recall_range/1,
+		get_sub_chunk_index/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -552,13 +553,6 @@ validate_packing_difficulty(Height, PackingDifficulty) ->
 validate_packing_difficulty(PackingDifficulty) ->
 	PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY.
 
-get_max_nonce(0) ->
-	max(0, ?LEGACY_RECALL_RANGE_SIZE div ?DATA_CHUNK_SIZE - 1);
-get_max_nonce(PackingDifficulty) when PackingDifficulty >= 1 ->
-	RecallRangeSize = ?RECALL_RANGE_SIZE div PackingDifficulty,
-	MaxChunkNumber = max(0, RecallRangeSize div ?DATA_CHUNK_SIZE - 1),
-	(MaxChunkNumber + 1) * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT - 1.
-
 get_recall_range_size(0) ->
 	?LEGACY_RECALL_RANGE_SIZE;
 get_recall_range_size(PackingDifficulty) ->
@@ -570,29 +564,35 @@ get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
 	ChunkNumber = Nonce div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 	RecallRangeStart + ChunkNumber * ?DATA_CHUNK_SIZE.
 
-%% @doc Return the number of bytes - how far each mining nonce increment shifts the
-%% recall byte.
-get_recall_step_size(PackingDifficulty) ->
-	case PackingDifficulty >= 1 of
-		true ->
-			?COMPOSITE_PACKING_SUB_CHUNK_SIZE;
-		false ->
-			?DATA_CHUNK_SIZE
-	end.
+%% @doc Return the number of bytes per sub-chunk. This also drives how far each mining nonce
+%% increments the recall byte.
+get_sub_chunk_size(0) ->
+	?DATA_CHUNK_SIZE;
+get_sub_chunk_size(_PackingDifficulty) ->
+	?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
 
 %% @doc Return the number of mining nonces contained in each data chunk.
-get_nonces_per_chunk(PackingDifficulty) ->
-	case PackingDifficulty >= 1 of
-		true ->
-			?COMPOSITE_PACKING_SUB_CHUNK_COUNT;
-		false ->
-			1
-	end.
+get_nonces_per_chunk(0) ->
+	1;
+get_nonces_per_chunk(_PackingDifficulty) ->
+	?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+
+get_nonces_per_recall_range(PackingDifficulty) ->
+	max(1, get_recall_range_size(PackingDifficulty) div get_sub_chunk_size(PackingDifficulty)).
+
+%% @doc For packing difficulty 0 (aka spora_2_6 packing), there is one nonce per chunk, so
+%% the max nonce is the same as the max chunk number. For packing difficulty >= 1 (aka
+%% composite packing), there are ?COMPOSITE_PACKING_SUB_CHUNK_COUNT nonces per chunk.
+get_max_nonce(PackingDifficulty) ->
+	%% The max(...) is included mostly for testing, where the recall range can be less than
+	%% a chunk.
+	max(get_nonces_per_chunk(PackingDifficulty) - 1,
+		get_nonces_per_recall_range(PackingDifficulty) - 1).
 
 %% @doc Return the 0-based sub-chunk index the mining nonce is pointing to.
 get_sub_chunk_index(0, _Nonce) ->
 	-1;
-get_sub_chunk_index(PackingDifficulty, Nonce) when PackingDifficulty >= 1 ->
+get_sub_chunk_index(_PackingDifficulty, Nonce) ->
 	Nonce rem ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
 
 %%%===================================================================
