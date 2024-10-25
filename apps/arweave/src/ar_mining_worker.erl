@@ -3,14 +3,12 @@
 -behaviour(gen_server).
 
 -export([start_link/2, name/2, reset/2, set_sessions/2, chunks_read/5, computed_hash/5,
-		set_difficulty/2, set_cache_limits/3, add_task/3, garbage_collect/1,
-		recall_range_sub_chunks/1]).
+		set_difficulty/2, set_cache_limits/3, add_task/3, garbage_collect/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -21,9 +19,13 @@
 	packing_difficulty			= 0,
 	task_queue					= gb_sets:new(),
 	active_sessions				= sets:new(),
-	chunk_cache 				= #{},
-	chunk_cache_size			= #{},
-	chunk_cache_limit			= 0,
+	%% The sub_chunk_cache stores either the first or second sub-chunk for a given nonce. This
+	%% is because we process both the first and second recall ranges in parallel and don't know
+	%% which data will be available first. For spora_2_6 packing (aka difficulty 0), sub-chunks
+	%% and chunks are the same size (256KiB), for composite packing each sub-chunk is 8KiB.
+	sub_chunk_cache 			= #{},
+	sub_chunk_cache_size		= #{},
+	sub_chunk_cache_limit		= 0,
 	vdf_queue_limit				= 0,
 	latest_vdf_step_number		= 0,
 	is_pool_client				= false,
@@ -86,8 +88,8 @@ computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
 set_difficulty(Worker, DiffPair) ->
 	gen_server:cast(Worker, {set_difficulty, DiffPair}).
 
-set_cache_limits(Worker, ChunkCacheLimit, VDFQueueLimit) ->
-	gen_server:cast(Worker, {set_cache_limits, ChunkCacheLimit, VDFQueueLimit}).
+set_cache_limits(Worker, SubChunkCacheLimit, VDFQueueLimit) ->
+	gen_server:cast(Worker, {set_cache_limits, SubChunkCacheLimit, VDFQueueLimit}).
 
 %% @doc Returns true if the mining candidate belongs to a valid mining session. Always assume
 %% that a coordinated mining candidate is valid (its cm_lead_peer is set)
@@ -123,11 +125,9 @@ handle_call(Request, _From, State) ->
 handle_cast({set_difficulty, DiffPair}, State) ->
 	{noreply, State#state{ diff_pair = DiffPair }};
 
-handle_cast({set_cache_limits, ChunkCacheLimit, VDFQueueLimit}, State) ->
-	#state{ packing_difficulty = PackingDifficulty } = State,
-	Multiplier = max(1, PackingDifficulty * 4),
-	{noreply, State#state{ chunk_cache_limit = ChunkCacheLimit div Multiplier,
-			vdf_queue_limit = VDFQueueLimit * Multiplier }};
+handle_cast({set_cache_limits, SubChunkCacheLimit, VDFQueueLimit}, State) ->
+	{noreply, State#state{ sub_chunk_cache_limit = SubChunkCacheLimit,
+			vdf_queue_limit = VDFQueueLimit }};
 
 handle_cast({reset, DiffPair}, State) ->
 	State2 = update_sessions(sets:new(), State),
@@ -139,13 +139,7 @@ handle_cast({set_sessions, ActiveSessions}, State) ->
 handle_cast({chunks_read, {WhichChunk, Candidate, RangeStart, ChunkOffsets}}, State) ->
 	case is_session_valid(State, Candidate) of
 		true ->
-			PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
-			MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
-			StepSize = ar_block:get_recall_step_size(PackingDifficulty),
-			NonceIncrement = ar_block:get_nonces_per_chunk(PackingDifficulty),
-			State2 = chunks_read(
-					WhichChunk, Candidate, RangeStart, 0, NonceIncrement, MaxNonce,
-					ChunkOffsets, StepSize, 0, State),
+			State2 = process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State),
 			{noreply, State2};
 		false ->
 			?LOG_DEBUG([{event, mining_debug_add_stale_chunks},
@@ -205,8 +199,8 @@ handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 			end
 	end;
 
-handle_cast({remove_chunk_from_cache, SubChunkCount, Candidate}, State) ->
-	{noreply, remove_chunk_from_cache(Candidate, SubChunkCount, State)};
+handle_cast({remove_sub_chunks_from_cache, SubChunkCount, Candidate}, State) ->
+	{noreply, remove_sub_chunks_from_cache(Candidate, SubChunkCount, State)};
 
 handle_cast(check_worker_status, State) ->
 	maybe_warn_about_lag(State#state.task_queue, State#state.name),
@@ -258,8 +252,16 @@ add_task({TaskType, Candidate, _ExtraArgs} = Task, State) ->
 	prometheus_gauge:inc(mining_server_task_queue_len, [TaskType]),
 	State#state{ task_queue = Q2 }.
 
-chunks_read(WhichChunk, Candidate, _RangeStart, Nonce, _NonceIncrement, NonceMax,
-		_ChunkOffsets, _StepSize, Count, State) when Nonce > NonceMax ->
+process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
+	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
+	MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
+	SubChunkSize = ar_block:get_sub_chunk_size(PackingDifficulty),
+	NoncesPerChunk = ar_block:get_nonces_per_chunk(PackingDifficulty),
+	process_chunks(WhichChunk, Candidate, RangeStart, 0, NoncesPerChunk, MaxNonce,
+			ChunkOffsets, SubChunkSize, 0, State).
+
+process_chunks(WhichChunk, Candidate, _RangeStart, Nonce, _NoncesPerChunk, NonceMax,
+		_ChunkOffsets, _SubChunkSize, Count, State) when Nonce > NonceMax ->
 	Partition = case WhichChunk of
 		chunk1 ->
 			Candidate#mining_candidate.partition_number;
@@ -268,92 +270,99 @@ chunks_read(WhichChunk, Candidate, _RangeStart, Nonce, _NonceIncrement, NonceMax
 	end,
 	ar_mining_stats:chunks_read(Partition, Count),
 	State;
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
-		[], StepSize, Count, State) ->
+process_chunks(WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk, NonceMax,
+		[], SubChunkSize, Count, State) ->
+	%% No more ChunkOffsets means no more chunks have been read. Iterate through all the
+	%% remaining nonces and remove the full chunks from the cache.
 	gen_server:cast(self(),
-			{remove_chunk_from_cache, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
+			{remove_sub_chunks_from_cache, NoncesPerChunk,
 				Candidate#mining_candidate{ nonce = Nonce }}),
-	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement,
-			NonceMax, [], StepSize, Count, State);
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
-		[{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State)
-		when RangeStart + Nonce * StepSize < EndOffset - ?DATA_CHUNK_SIZE ->
+	process_chunks(WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
+			NonceMax, [], SubChunkSize, Count, State);
+process_chunks(WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk, NonceMax,
+		[{EndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State)
+		when RangeStart + Nonce * SubChunkSize < EndOffset - ?DATA_CHUNK_SIZE ->
+	%% Nonce falls in a chunk which wasn't read from disk (e.g. because there are holes
+	%% in the recall range).
 	gen_server:cast(self(),
-			{remove_chunk_from_cache, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
+			{remove_sub_chunks_from_cache, NoncesPerChunk,
 				Candidate#mining_candidate{ nonce = Nonce }}),
-	chunks_read(WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement,
-			NonceMax, [{EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State);
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
-		[{EndOffset, _Chunk} | ChunkOffsets], StepSize, Count, State)
-		when RangeStart + Nonce * StepSize >= EndOffset ->
-	chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
-			ChunkOffsets, StepSize, Count, State);
-chunks_read(WhichChunk, Candidate, RangeStart, Nonce, NonceIncrement, NonceMax,
-		[{_EndOffset, Chunk} | ChunkOffsets], StepSize, Count, State) ->
-	State2 = chunks_read2(WhichChunk, Chunk, Candidate, Nonce, State),
-	chunks_read(
-		WhichChunk, Candidate, RangeStart, Nonce + NonceIncrement, NonceIncrement, NonceMax,
-		ChunkOffsets, StepSize, Count + 1, State2).
+	process_chunks(WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
+			NonceMax, [{EndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State);
+process_chunks(WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk, NonceMax,
+		[{EndOffset, _Chunk} | ChunkOffsets], SubChunkSize, Count, State)
+		when RangeStart + Nonce * SubChunkSize >= EndOffset ->
+	%% Nonce falls in a chunk beyond the current chunk offset. Move ahead to the next
+	%% chunk offset.
+	process_chunks(WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk, NonceMax,
+			ChunkOffsets, SubChunkSize, Count, State);
+process_chunks(WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk, NonceMax,
+		[{_EndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State) ->
+	%% Process all sub-chunks in Chunk, and then advance to the next chunk.
+	State2 = process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State),
+	process_chunks(
+		WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk, NonceMax,
+		ChunkOffsets, SubChunkSize, Count + 1, State2).
 
-chunks_read2(chunk1, Chunk, #mining_candidate{ packing_difficulty = 0 } = Candidate,
-		Nonce, State) ->
-	Candidate2 = Candidate#mining_candidate{ chunk1 = Chunk, nonce = Nonce },
-	ar_mining_hash:compute_h1(self(), Candidate2),
-	State;
-chunks_read2(chunk2, Chunk, #mining_candidate{ packing_difficulty = 0 } = Candidate,
-		Nonce, State) ->
-	Candidate2 = Candidate#mining_candidate{ chunk2 = Chunk, nonce = Nonce },
-	handle_chunk2(Candidate2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT, State);
-chunks_read2(_WhichChunk, <<>>, _Candidate, _Nonce, State) ->
-	State;
-chunks_read2(chunk1, << SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>,
-		Candidate, Nonce, State) ->
-	Candidate2 = Candidate#mining_candidate{ chunk1 = SubChunk, nonce = Nonce },
-	ar_mining_hash:compute_h1(self(), Candidate2),
-	chunks_read2(chunk1, Rest, Candidate, Nonce + 1, State);
-chunks_read2(chunk2, << SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>,
-		Candidate, Nonce, State) ->
-	Candidate2 = Candidate#mining_candidate{ chunk2 = SubChunk, nonce = Nonce },
-	chunks_read2(chunk2, Rest, Candidate, Nonce + 1, handle_chunk2(Candidate2, 1, State));
-chunks_read2(WhichChunk, Rest, _Candidate, Nonce, State) ->
+process_all_sub_chunks(_WhichChunk, <<>>, _Candidate, _Nonce, State) ->
+	State;	
+process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State) ->
+	{SubChunk, Rest} = extract_sub_chunk(Chunk, Candidate),
+	Candidate2 = Candidate#mining_candidate{ nonce = Nonce },
+	State2 = process_sub_chunk(WhichChunk, Candidate2, SubChunk, State),
+	process_all_sub_chunks(WhichChunk, Rest, Candidate2, Nonce + 1, State2);
+process_all_sub_chunks(WhichChunk, Rest, _Candidate, Nonce, State) ->
 	?LOG_ERROR([{event, failed_to_split_chunk_into_sub_chunks},
 			{remaining_size, byte_size(Rest)},
 			{nonce, Nonce},
 			{chunk, WhichChunk}]),
 	State.
 
-handle_chunk2(Candidate, SubChunkCount, State) ->
-	#mining_candidate{ chunk2 = Chunk2, session_key = SessionKey } = Candidate,
-	case cycle_chunk_cache(Candidate, {chunk2, Chunk2}, State) of
+%% @doc Return the sub-chunk and the remaining bytes in the chunk. For spora_2_6 packing
+%% (aka difficulty 0), each sub-chunk is the size of a chunk so there are no remaining
+%% bytes.
+extract_sub_chunk(Chunk, #mining_candidate{ packing_difficulty = 0 }) ->
+	{Chunk, <<>>};
+extract_sub_chunk(Chunk, _Candidate) ->
+	<< SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >> = Chunk,
+	{SubChunk, Rest}.
+
+process_sub_chunk(chunk1, Candidate, SubChunk, State) ->
+	ar_mining_hash:compute_h1(self(), Candidate#mining_candidate{ chunk1 = SubChunk }),
+	State;
+process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
+	#mining_candidate{ session_key = SessionKey } = Candidate,
+	Candidate2 = Candidate#mining_candidate{ chunk2 = SubChunk },
+	case cycle_sub_chunk_cache(Candidate2, {chunk2, SubChunk}, State) of
 		{{chunk1, Chunk1, H1}, State2} ->
 			ar_mining_hash:compute_h2(
-				self(), Candidate#mining_candidate{ chunk1 = Chunk1, h1 = H1 }),
+				self(), Candidate2#mining_candidate{ chunk1 = Chunk1, h1 = H1 }),
 			%% Decrement 2 for chunk1 and chunk2:
 			%% 1. chunk1 was previously read and cached
 			%% 2. chunk2 that was just read and will shortly be used to compute h2
-			update_chunk_cache_size(-2 * SubChunkCount, SessionKey, State2);
+			update_sub_chunk_cache_size(-2, SessionKey, State2);
 		{{chunk1, H1}, State2} ->
-			ar_mining_hash:compute_h2(self(), Candidate#mining_candidate{ h1 = H1 }),
+			ar_mining_hash:compute_h2(self(), Candidate2#mining_candidate{ h1 = H1 }),
 			%% Decrement 1 for chunk2:
 			%% we're computing h2 for a peer so chunk1 was not previously read or cached 
 			%% on this node
-			update_chunk_cache_size(-1 * SubChunkCount, SessionKey, State2);
+			update_sub_chunk_cache_size(-1, SessionKey, State2);
 		{do_not_cache, State2} ->
 			%% Decrement 1 for chunk2
 			%% do_not_cache indicates chunk1 was not and will not be read or cached
-			update_chunk_cache_size(-1 * SubChunkCount, SessionKey, State2);
+			update_sub_chunk_cache_size(-1, SessionKey, State2);
 		{cached, State2} ->
-			case Candidate#mining_candidate.cm_lead_peer of
+			case Candidate2#mining_candidate.cm_lead_peer of
 				not_set ->
 					ok;
 				_ ->
 					?LOG_ERROR([{event, cm_chunk2_cached_before_chunk1},
 						{worker, State#state.name},
-						{partition_number, Candidate#mining_candidate.partition_number},
-						{partition_number2, Candidate#mining_candidate.partition_number2},
-						{cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
-						{cache_ref, Candidate#mining_candidate.cache_ref},
-						{nonce, Candidate#mining_candidate.nonce},
+						{partition_number, Candidate2#mining_candidate.partition_number},
+						{partition_number2, Candidate2#mining_candidate.partition_number2},
+						{cm_peer, ar_util:format_peer(Candidate2#mining_candidate.cm_lead_peer)},
+						{cache_ref, Candidate2#mining_candidate.cache_ref},
+						{nonce, Candidate2#mining_candidate.nonce},
 						{session, ar_nonce_limiter:encode_session_key(SessionKey)}])
 			end,
 			State2
@@ -375,21 +384,11 @@ priority(compute_h0, StepNumber) ->
 	{6, -StepNumber}.
 
 handle_task({chunk1, Candidate, [RangeStart, ChunkOffsets]}, State) ->
-	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
-	MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
-	StepSize = ar_block:get_recall_step_size(PackingDifficulty),
-	NonceIncrement = ar_block:get_nonces_per_chunk(PackingDifficulty),
-	State2 = chunks_read(chunk1, Candidate, RangeStart, 0, NonceIncrement, MaxNonce,
-			ChunkOffsets, StepSize, 0, State),
+	State2 = process_chunks(chunk1, Candidate, RangeStart, ChunkOffsets, State),
 	{noreply, State2};
 
 handle_task({chunk2, Candidate, [RangeStart, ChunkOffsets]}, State) ->
-	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
-	MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
-	StepSize = ar_block:get_recall_step_size(PackingDifficulty),
-	NonceIncrement = ar_block:get_nonces_per_chunk(PackingDifficulty),
-	State2 = chunks_read(chunk2, Candidate, RangeStart, 0, NonceIncrement, MaxNonce,
-			ChunkOffsets, StepSize, 0, State),
+	State2 = process_chunks(chunk2, Candidate, RangeStart, ChunkOffsets, State),
 	{noreply, State2};
 
 handle_task({compute_h0, Candidate, _ExtraArgs}, State) ->
@@ -439,16 +438,17 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 				false ->
 					%% Release just the Range2 cache space we reserved with
 					%% try_to_reserve_cache_space/2
-					State2 = update_chunk_cache_size(
-							-recall_range_sub_chunks(PackingDifficulty),
+					State2 = update_sub_chunk_cache_size(
+							-ar_block:get_nonces_per_recall_range(PackingDifficulty),
 							SessionKey, State),
 					do_not_cache(Candidate3, State2)
 			end;
 		false ->
 			%% Release the Range1 *and* Range2 cache space we reserved with
 			%% try_to_reserve_cache_space/2
-			update_chunk_cache_size(
-				-(2 * recall_range_sub_chunks(PackingDifficulty)), SessionKey, State)
+			update_sub_chunk_cache_size(
+				-(2 * ar_block:get_nonces_per_recall_range(PackingDifficulty)),
+				SessionKey, State)
 	end,
 	{noreply, State3};
 
@@ -463,8 +463,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 			%% Decrement 1 for chunk1:
 			%% Since we found a solution we won't need chunk2 (and it will be evicted if
 			%% necessary below)
-			State3 = remove_chunk_from_cache(Candidate,
-					get_sub_chunk_count(Candidate), State2),
+			State3 = remove_sub_chunks_from_cache(Candidate, 1, State2),
 			ar_mining_server:prepare_and_post_solution(Candidate),
 			{noreply, State3};
 		Result ->
@@ -475,8 +474,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 					ok
 			end,
 			{ok, Config} = application:get_env(arweave, config),
-			SubChunkCount = get_sub_chunk_count(Candidate),
-			case cycle_chunk_cache(Candidate, {chunk1, Chunk1, H1}, State2) of
+			case cycle_sub_chunk_cache(Candidate, {chunk1, Chunk1, H1}, State2) of
 				{cached, State3} ->
 					%% Chunk2 hasn't been read yet, so we cache Chunk1 and wait for
 					%% Chunk2 to be read.
@@ -499,15 +497,15 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 					end,
 					%% Decrement 1 for chunk1:
 					%% do_not_cache indicates chunk2 was not and will not be read or cached
-					{noreply, update_chunk_cache_size(-1 * SubChunkCount, SessionKey, State3)};
+					{noreply, update_sub_chunk_cache_size(-1, SessionKey, State3)};
 				{{chunk2, Chunk2}, State3} ->
 					%% Chunk2 has already been read, so we can compute H2 now.
 					ar_mining_hash:compute_h2(
 						self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
 					%% Decrement 2 for chunk1 and chunk2:
 					%% 1. chunk2 was previously read and cached
-					%% 2. chunk1 that was just read and used to compute H1	
-					{noreply, update_chunk_cache_size(-2 * SubChunkCount, SessionKey, State3)}
+					%% 2. chunk1 that was just read and used to compute H1
+					{noreply, update_sub_chunk_cache_size(-2, SessionKey, State3)}
 			end
 	end;
 
@@ -573,8 +571,8 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 			%% Note: when processing CM requests we always reserve the cache space and proceed
 			%% *even if* this puts us over the chunk cache limit. This may have to be
 			%% revisited later if we find that this causes unacceptable memory bloat.
-			State2 = update_chunk_cache_size(
-					recall_range_sub_chunks(PackingDifficulty), SessionKey, State),
+			State2 = update_sub_chunk_cache_size(
+				ar_block:get_nonces_per_recall_range(PackingDifficulty), SessionKey, State),
 			%% First flag all nonces in the range as do_not_cache, then cache the specific
 			%% nonces included in the H1 list. This will make sure we don't cache the chunk2s
 			%% that are read for the missing nonces.
@@ -670,16 +668,17 @@ maybe_warn_about_stale_chunks(State) ->
 			Acc + maps:size(SessionCache)
 		end,
 		0,
-		State#state.chunk_cache),
+		State#state.sub_chunk_cache),
 	TotalCacheSize = total_cache_size(State),
 	case TotalChunkKeys > TotalCacheSize orelse TotalCacheSize < 0 of
 		true ->
 			?LOG_DEBUG([
-				{event, mining_worker_chunk_cache_mismatch},
+				{event, mining_worker_sub_chunk_cache_mismatch},
 				{worker, State#state.name},
 				{partition, State#state.partition_number},
-				{chunk_cache_keys, TotalChunkKeys},
-				{chunk_cache_size, TotalCacheSize}]);
+				{sub_chunk_cache_keys, TotalChunkKeys},
+				{sub_chunk_cache_size, TotalCacheSize},
+				{sub_chunk_cache_limit, State#state.sub_chunk_cache_limit}]);
 		false ->
 			ok
 	end.
@@ -707,11 +706,11 @@ add_sessions([SessionKey | AddedSessions], State) ->
 remove_sessions([], State) ->
 	State;
 remove_sessions([SessionKey | RemovedSessions], State) ->
-	ChunksDiscarded = maps:get(SessionKey, State#state.chunk_cache_size, 0),
+	ChunksDiscarded = maps:get(SessionKey, State#state.sub_chunk_cache_size, 0),
 	TaskQueue = remove_tasks(SessionKey, State#state.task_queue),
 	TasksDiscarded = gb_sets:size(State#state.task_queue) - gb_sets:size(TaskQueue),
 
-	State2 = update_chunk_cache_size(-ChunksDiscarded, SessionKey, State),
+	State2 = update_sub_chunk_cache_size(-ChunksDiscarded, SessionKey, State),
 	?LOG_DEBUG([{event, mining_debug_remove_session},
 		{worker, State#state.name}, {partition, State#state.partition_number},
 		{session, ar_nonce_limiter:encode_session_key(SessionKey)},
@@ -720,8 +719,8 @@ remove_sessions([SessionKey | RemovedSessions], State) ->
 
 	State3 = State2#state{
 		task_queue = TaskQueue,
-		chunk_cache = maps:remove(SessionKey, State#state.chunk_cache),
-		chunk_cache_size = maps:remove(SessionKey, State#state.chunk_cache_size)
+		sub_chunk_cache = maps:remove(SessionKey, State#state.sub_chunk_cache),
+		sub_chunk_cache_size = maps:remove(SessionKey, State#state.sub_chunk_cache_size)
 	},
 	remove_sessions(RemovedSessions, State3).
 
@@ -747,29 +746,29 @@ total_cache_size(State) ->
 			Value + Acc
 		end,
 		0,
-		State#state.chunk_cache_size).
+		State#state.sub_chunk_cache_size).
 
-update_chunk_cache_size(0, _SessionKey, State) ->
+update_sub_chunk_cache_size(0, _SessionKey, State) ->
 	State;
-update_chunk_cache_size(Delta, SessionKey, State) ->
-	CacheSize = maps:get(SessionKey, State#state.chunk_cache_size, 0),
-	prometheus_gauge:inc(mining_server_chunk_cache_size, [State#state.partition_number], Delta),
+update_sub_chunk_cache_size(Delta, SessionKey, State) ->
+	CacheSize = maps:get(SessionKey, State#state.sub_chunk_cache_size, 0),
+	prometheus_gauge:inc(mining_server_chunk_cache_size,
+			[State#state.partition_number], Delta),
 	State#state{
-		chunk_cache_size = maps:put(SessionKey, CacheSize + Delta, State#state.chunk_cache_size) }.
+		sub_chunk_cache_size = maps:put(SessionKey, CacheSize + Delta,
+		State#state.sub_chunk_cache_size) }.
 
 try_to_reserve_cache_space(SessionKey, State) ->
 	#state{ packing_difficulty = PackingDifficulty } = State,
-	case total_cache_size(State) =< State#state.chunk_cache_limit of
+	case total_cache_size(State) =< State#state.sub_chunk_cache_limit of
 		true ->
 			%% reserve for both h1 and h2
-			{true, update_chunk_cache_size(
-					2 * recall_range_sub_chunks(PackingDifficulty), SessionKey, State)};
+			{true, update_sub_chunk_cache_size(
+					2 * ar_block:get_nonces_per_recall_range(PackingDifficulty),
+					SessionKey, State)};
 		false ->
 			false
 	end.
-
-recall_range_sub_chunks(PackingDifficulty) ->
-	ar_block:get_recall_range_size(PackingDifficulty) div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
 
 do_not_cache(Candidate, State) ->
 	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
@@ -782,67 +781,69 @@ do_not_cache(Nonce, NonceMax, Candidate, State) ->
 	State2 = cache_chunk(do_not_cache, Candidate#mining_candidate{ nonce = Nonce }, State),
 	do_not_cache(Nonce + 1, NonceMax, Candidate, State2).
 
-%% @doc The chunk_cache stores either the first or second chunk for a given nonce. This is because
-%% we process both the first and second recall ranges in parallel and don't know
+%% @doc The sub_chunk_cache stores either the first or second chunk for a given nonce. This is
+%% because we process both the first and second recall ranges in parallel and don't know
 %% which data will be available first. The function manages that shared cache slot by either
 %% caching data if its the first to arrive, or "popping" data that was previously cached. The
 %% caller is responsible for taking the appropriate action based on the return value.
 %%
 %% do_not_cache is a special value used to prevent unnecessary data from being cached once a
 %% solution has been found for a given nonce.
-cycle_chunk_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, Data, State)
+cycle_sub_chunk_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, Data, State)
   		when CacheRef /= not_set ->
 	#mining_candidate{ nonce = Nonce, session_key = SessionKey } = Candidate,
-	Cache = State#state.chunk_cache,
+	Cache = State#state.sub_chunk_cache,
 	SessionCache = maps:get(SessionKey, Cache, #{}),
 	case maps:take({CacheRef, Nonce}, SessionCache) of
 		{do_not_cache, SessionCache2} ->
 			Cache2 = maps:put(SessionKey, SessionCache2, Cache),
-			{do_not_cache, State#state{ chunk_cache = Cache2 }};
+			{do_not_cache, State#state{ sub_chunk_cache = Cache2 }};
 		error ->
 			{cached, cache_chunk(Data, Candidate, State)};
 		{CachedData, SessionCache2} ->
 			Cache2 = maps:put(SessionKey, SessionCache2, Cache),
-			{CachedData, State#state{ chunk_cache = Cache2 }}
+			{CachedData, State#state{ sub_chunk_cache = Cache2 }}
 	end.
 
-remove_chunk_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate,
+%% @doc Remove SubChunkCount sub-chunks from the cache starting at
+%% Candidate#mining_candidate.nonce.
+remove_sub_chunks_from_cache(#mining_candidate{ cache_ref = CacheRef }, 0, State)
+		when CacheRef /= not_set ->
+	State;
+remove_sub_chunks_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate,
 		SubChunkCount, State) when CacheRef /= not_set ->
 	#mining_candidate{ nonce = Nonce, session_key = SessionKey } = Candidate,
-	Cache = State#state.chunk_cache,
+	Cache = State#state.sub_chunk_cache,
 	SessionCache = maps:get(SessionKey, Cache, #{}),
-	%% Decrement the cache size by 1 for the (sub-)chunk being removed.
+	%% Decrement the cache size by 1 for each sub-chunk being removed.
 	%% We may decrement the cache size further depending on what's already cached.
-	State2 = update_chunk_cache_size(-1 * SubChunkCount, SessionKey, State),
-	case maps:take({CacheRef, Nonce}, SessionCache) of
+	State2 = update_sub_chunk_cache_size(-1, SessionKey, State),
+	State3 = case maps:take({CacheRef, Nonce}, SessionCache) of
 		{do_not_cache, SessionCache2} ->
 			Cache2 = maps:put(SessionKey, SessionCache2, Cache),
-			State2#state{ chunk_cache = Cache2 };
+			State2#state{ sub_chunk_cache = Cache2 };
 		error ->
 			cache_chunk(do_not_cache, Candidate, State2);
 		{{chunk1, _H1}, SessionCache2} ->
 			%% If we find data from a CM peer, discard it but don't decrement the cache size
 			Cache2 = maps:put(SessionKey, SessionCache2, Cache),
-			State2#state{ chunk_cache = Cache2 };
+			State2#state{ sub_chunk_cache = Cache2 };
 		{_, SessionCache2} ->
 			%% if we find any cached data, discard it and decrement the cache size
 			Cache2 = maps:put(SessionKey, SessionCache2, Cache),
-			update_chunk_cache_size(-1 * SubChunkCount, SessionKey,
-					State2#state{ chunk_cache = Cache2 })
-	end.
-
-get_sub_chunk_count(#mining_candidate{ packing_difficulty = 0 }) ->
-	?COMPOSITE_PACKING_SUB_CHUNK_COUNT;
-get_sub_chunk_count(_Candidate) ->
-	1.
+			update_sub_chunk_cache_size(-1, SessionKey,
+					State2#state{ sub_chunk_cache = Cache2 })
+	end,
+	remove_sub_chunks_from_cache(Candidate#mining_candidate{ nonce = Nonce + 1 },
+		SubChunkCount - 1, State3).
 
 cache_chunk(Data, Candidate, State) ->
 	#mining_candidate{ cache_ref = CacheRef, nonce = Nonce, session_key = SessionKey } = Candidate,
-	Cache = State#state.chunk_cache,
+	Cache = State#state.sub_chunk_cache,
 	SessionCache = maps:get(SessionKey, Cache, #{}),
 	SessionCache2 = maps:put({CacheRef, Nonce}, Data, SessionCache),
 	Cache2 = maps:put(SessionKey, SessionCache2, Cache),
-	State#state{ chunk_cache = Cache2 }.
+	State#state{ sub_chunk_cache = Cache2 }.
 
 cache_h1_list(_Candidate, [], State) ->
 	State;

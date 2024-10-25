@@ -270,11 +270,18 @@ parse_options([{<<"packing_cache_size_limit">>, Limit} | Rest], Config)
 parse_options([{<<"packing_cache_size_limit">>, Limit} | _], _) ->
 	{error, {bad_type, packing_cache_size_limit, number}, Limit};
 
+parse_options([{<<"mining_cache_size_mb">>, Limit} | Rest], Config)
+		when is_integer(Limit) ->
+	parse_options(Rest, Config#config{ mining_cache_size_mb = Limit });
+parse_options([{<<"mining_cache_size_mb">>, Limit} | _], _) ->
+	{error, {bad_type, mining_cache_size_mb, number}, Limit};
+
 parse_options([{<<"mining_server_chunk_cache_size_limit">>, Limit} | Rest], Config)
 		when is_integer(Limit) ->
-	parse_options(Rest, Config#config{ mining_server_chunk_cache_size_limit = Limit });
-parse_options([{<<"mining_server_chunk_cache_size_limit">>, Limit} | _], _) ->
-	{error, {bad_type, mining_server_chunk_cache_size_limit, number}, Limit};
+	?LOG_WARNING("Deprecated option found 'mining_server_chunk_cache_size_limit': "
+			"this option has been removed and is a no-op. Please use mining_cache_size_mb "
+			"instead.", []),
+	parse_options(Rest, Config);
 
 parse_options([{<<"max_emitters">>, Value} | Rest], Config) when is_integer(Value) ->
 	parse_options(Rest, Config#config{ max_emitters = Value });

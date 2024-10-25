@@ -161,8 +161,7 @@ start_node(B0, Config, WaitUntilSync) ->
 		disk_pool_jobs = Config#config.disk_pool_jobs,
 		header_sync_jobs = Config#config.header_sync_jobs,
 		enable = Config#config.enable ++ BaseConfig#config.enable,
-		mining_server_chunk_cache_size_limit
-				= Config#config.mining_server_chunk_cache_size_limit,
+		mining_cache_size_mb = Config#config.mining_cache_size_mb,
 		debug = Config#config.debug,
 		coordinated_mining = Config#config.coordinated_mining,
 		cm_api_secret = Config#config.cm_api_secret,

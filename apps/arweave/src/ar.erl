@@ -165,10 +165,14 @@ show_help() ->
 					"kept in memory by the syncing processes."},
 			{"packing_cache_size_limit (num)", "The approximate maximum number of data chunks "
 					"kept in memory by the packing process."},
-			{"mining_server_chunk_cache_size_limit (num)", "The mining server will not read "
-					"new data unless the number of already fetched unprocessed chunks does "
-					"not exceed this number. When omitted, it is determined based on the "
-					"number of mining partitions and available RAM."},
+			{"mining_cache_size_mb (num)", "The total amount of cache "
+				"(in MiB) allocated to store unprocessed chunks while mining. The mining "
+				"server will only read new data when there is room in the cache to store "
+				"more chunks. This cache is subdivided into sub-caches for each mined "
+				"partition. When omitted, it is determined based on the number of "
+				"mining partitions."},
+			{"mining_server_chunk_cache_size_limit (num)", "DEPRECATED. Use "
+				"mining_cache_size_mb instead."},
 			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
 				"processes to spawn. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
 			{"tx_validators (num)", "Ignored. Set the post_tx key in the semaphores object"
@@ -466,9 +470,14 @@ parse_cli_args(["data_cache_size_limit", Num | Rest], C) ->
 parse_cli_args(["packing_cache_size_limit", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			packing_cache_size_limit = list_to_integer(Num) });
-parse_cli_args(["mining_server_chunk_cache_size_limit", Num | Rest], C) ->
+parse_cli_args(["mining_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
-			mining_server_chunk_cache_size_limit = list_to_integer(Num) });
+			mining_cache_size_mb = list_to_integer(Num) });
+parse_cli_args(["mining_server_chunk_cache_size_limit", _Num | Rest], C) ->
+	?LOG_WARNING("Deprecated option found 'mining_server_chunk_cache_size_limit': "
+			"this option has been removed and is a no-op. Please use mining_cache_size_mb "
+			"instead.", []),
+	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["max_emitters", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
 parse_cli_args(["disk_space", Size | Rest], C) ->

@@ -31,6 +31,8 @@
 	merkle_rebase_threshold		= infinity,
 	is_pool_client				= false,
 	allow_composite_packing		= false,
+	% For now we only support a single packing format when mining, this is the packing
+	% difficulty of that format.
 	packing_difficulty			= 0
 }).
 
@@ -123,18 +125,32 @@ init([]) ->
 	ok = ar_events:subscribe(nonce_limiter),
 	ar_chunk_storage:open_files("default"),
 
+	Partitions = ar_mining_io:get_partitions(infinity),
+
+	%% ar_config:validate_storage_modules/1 ensures that we only mine against a single
+	%% packing format. So we can grab the packing difficulty from any partition.
+	{MiningAddr, PackingDifficulty} = case Partitions of
+        [{_Partition, Addr, Difficulty} | _Rest] -> {Addr, Difficulty};
+        [] -> {undefined, 0}
+    end,
 	Workers = lists:foldl(
-		fun({Partition, _MiningAddr, PackingDifficulty}, Acc) ->
-			maps:put({Partition, PackingDifficulty},
-					ar_mining_worker:name(Partition, PackingDifficulty), Acc)
+		fun({Partition, _Addr, Difficulty}, Acc) ->
+			maps:put({Partition, Difficulty},
+					ar_mining_worker:name(Partition, Difficulty), Acc)
 		end,
 		#{},
-		ar_mining_io:get_partitions(infinity)
+		Partitions
 	),
+
+	?LOG_INFO([{event, mining_server_init},
+			{mining_addr, ar_util:safe_encode(MiningAddr)},
+			{packing_difficulty, PackingDifficulty},
+			{partitions, length(Partitions)}]),
 
 	{ok, #state{
 		workers = Workers,
-		is_pool_client = ar_pool:is_client()
+		is_pool_client = ar_pool:is_client(),
+		packing_difficulty = PackingDifficulty
 	}}.
 
 handle_call(active_sessions, _From, State) ->
@@ -209,15 +225,17 @@ handle_cast({prepare_and_post_solution, CandidateOrSolution}, State) ->
 
 handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = State) ->
 	%% Reading recall ranges from disk causes a large amount of binary data to be allocated and
-	%% references to that data is spread among all the different mining processes. Because of this
-	%% it can take the default garbage collection to clean up all references and deallocate the
-	%% memory - which in turn can cause memory to be exhausted.
+	%% references to that data is spread among all the different mining processes. Because of
+	%% this it can take the default garbage collection to clean up all references and
+	%% deallocate the memory - which in turn can cause memory to be exhausted.
 	%% 
-	%% To address this the mining server will force a garbage collection on all mining processes
-	%% every time we process a few VDF steps. The exact number of VDF steps is determined by
-	%% the chunk cache size limit in order to roughly align garbage collection with when we
-	%% expect all references to a recall range's chunks to be evicted from the cache.
-	?LOG_DEBUG([{event, mining_debug_garbage_collect_start}]),
+	%% To address this the mining server will force a garbage collection on all mining 
+	%% processes every time we process a few VDF steps. The exact number of VDF steps is
+	%% determined by the chunk cache size limit in order to roughly align garbage collection
+	%% with when we expect all references to a recall range's chunks to be evicted from
+	%% the cache.
+	?LOG_DEBUG([{event, mining_debug_garbage_collect_start},
+		{frequency, State#state.gc_frequency_ms}]),
 	ar_mining_io:garbage_collect(),
 	ar_mining_hash:garbage_collect(),
 	erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
@@ -391,56 +409,38 @@ update_cache_limits(State) ->
 update_cache_limits(0, State) ->
 	State;
 update_cache_limits(NumActivePartitions, State) ->
-	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
-	IdealStepsPerPartition = 4,
-	IdealRangesPerStep = 2,
-	%% The number of the sub-chunks in the recall range for packing difficulty = 0 is
-	%% the largest. Each mining worker will reduce it according to its packing difficulty
-	%% in set_cache_limits.
-	ChunksPerRange = ar_mining_worker:recall_range_sub_chunks(0),
-	IdealCacheLimit = ar_util:ceil_int(
-		IdealStepsPerPartition * IdealRangesPerStep * ChunksPerRange * NumActivePartitions, 100),
-
-	{ok, Config} = application:get_env(arweave, config),
-	OverallCacheLimit = case Config#config.mining_server_chunk_cache_size_limit of
-		undefined ->
-			IdealCacheLimit;
-		N ->
-			N
-	end,
-
-	%% We shard the chunk cache across every active worker. Only workers that mine a partition
-	%% included in the current weave are active.
-	NewCacheLimit = max(1, OverallCacheLimit div NumActivePartitions),
-
-	case NewCacheLimit == State#state.chunk_cache_limit of
+	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
+		GarbageCollectionFrequency} =
+			calculate_cache_limits(NumActivePartitions,  State#state.packing_difficulty),
+	case PartitionCacheLimit == State#state.chunk_cache_limit of
 		true ->
 			State;
 		false ->
-			%% Allow enough compute_h0 tasks to be queued to completely refill the chunk cache.
-			VDFQueueLimit = NewCacheLimit div (2 * ChunksPerRange),
 			maps:foreach(
 				fun(_Partition, Worker) ->
-					ar_mining_worker:set_cache_limits(Worker, NewCacheLimit, VDFQueueLimit)
+					ar_mining_worker:set_cache_limits(
+						Worker, PartitionCacheLimit, VDFQueueLimit)
 				end,
 				State#state.workers
 			),
 
 			ar:console(
-				"~nSetting the mining chunk cache size limit to ~B chunks "
-				"(~B chunks per partition).~n", [OverallCacheLimit, NewCacheLimit]),
+				"~nSetting the mining chunk cache size limit to ~B MiB "
+				"(~B sub-chunks per partition).~n",
+					[OverallCacheLimitMiB, PartitionCacheLimit]),
 			?LOG_INFO([{event, update_mining_cache_limits},
-				{limit, OverallCacheLimit}, {per_partition, NewCacheLimit},
-				{vdf_queue_limit, VDFQueueLimit}]),
-			case OverallCacheLimit < IdealCacheLimit of
+				{overall_limit_mb, OverallCacheLimitMiB},
+				{per_partition_sub_chunks, PartitionCacheLimit},
+				{vdf_queue_limit_steps, VDFQueueLimit}]),
+			case OverallCacheLimitMiB < MinimumCacheLimitMiB of
 				true ->
-					ar:console("~nChunk cache size limit is below minimum limit of ~p. "
-						"Mining performance may be impacted.~n"
-						"Consider changing the 'mining_server_chunk_cache_size_limit' option.",
-						[IdealCacheLimit]);
+					ar:console("~nChunk cache size limit (~p MiB) is below minimum limit of "
+						"~p MiB. Mining performance may be impacted.~n"
+						"Consider changing the 'mining_cache_size_mb' option.",
+						[OverallCacheLimitMiB, MinimumCacheLimitMiB]);
 				false -> ok
 			end,
-			GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
+
 			GCRef =
 				case State#state.gc_frequency_ms == undefined of
 					true ->
@@ -454,11 +454,52 @@ update_cache_limits(NumActivePartitions, State) ->
 						State#state.gc_process_ref
 				end,
 			State#state{
-				chunk_cache_limit = NewCacheLimit,
+				chunk_cache_limit = PartitionCacheLimit,
 				gc_frequency_ms = GarbageCollectionFrequency,
 				gc_process_ref = GCRef
 			}
 	end.
+
+calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
+	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
+	IdealStepsPerPartition = 4,
+	IdealRangesPerStep = 2,
+	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
+
+	MinimumCacheLimitMiB = max(
+		1,
+		(IdealStepsPerPartition * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
+			div ?MiB
+	),
+
+	{ok, Config} = application:get_env(arweave, config),
+	OverallCacheLimitMiB = case Config#config.mining_cache_size_mb of
+		undefined ->
+			MinimumCacheLimitMiB;
+		N ->
+			N
+	end,
+
+	%% Convert the overall cache limit from MiB to sub-chunks. Each partition will track
+	%% their cache in terms of sub-chunks where a spora_2_6 sub-chunk is the same as a chunk,
+	%% and a composite sub-chunk is much smaller than a chunk.
+	OverallCacheLimitSubChunks = (OverallCacheLimitMiB * ?MiB) div 
+		ar_block:get_sub_chunk_size(PackingDifficulty),
+
+	%% We shard the chunk cache across every active worker. Only workers that mine a partition
+	%% included in the current weave are active.
+	PartitionCacheLimit = max(1, OverallCacheLimitSubChunks div NumActivePartitions),
+
+	%% Allow enough compute_h0 tasks to be queued to completely refill the chunk cache.
+	VDFQueueLimit = max(
+		1,
+		PartitionCacheLimit div (2 * ar_block:get_nonces_per_recall_range(PackingDifficulty))
+	),
+
+	GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
+
+	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
+		GarbageCollectionFrequency}.
 
 distribute_output(Candidate, State) ->
 	distribute_output(ar_mining_io:get_partitions(), Candidate, State).
@@ -1134,3 +1175,181 @@ validate_solution(Solution, DiffPair) ->
 %% @doc Pause the mining server. Only used in tests.
 pause() ->
 	gen_server:cast(?MODULE, pause).
+
+setup() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config.
+
+cleanup(Config) ->
+	application:set_env(arweave, config, Config).
+
+calculate_cache_limits_test_() ->
+	{setup, fun setup/0, fun cleanup/1,
+		[
+			{timeout, 30, fun test_calculate_cache_limits_default/0},
+			{timeout, 30, fun test_calculate_cache_limits_custom_low/0},
+			{timeout, 30, fun test_calculate_cache_limits_custom_high/0}
+		]
+	}.
+
+test_calculate_cache_limits_default() ->
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config, Config#config{
+		mining_cache_size_mb = undefined
+	}),
+	?assertEqual(
+		{4, 4, 16, 4, 16000},
+		calculate_cache_limits(1, 0)
+	),
+	?assertEqual(
+		{8, 8, 16, 4, 16000},
+		calculate_cache_limits(2, 0)
+	),
+	?assertEqual(
+		{4000, 4000, 16, 4, 16000},
+		calculate_cache_limits(1000, 0)
+	),
+	?assertEqual(
+		{1, 1, 128, 4, 16000},
+		calculate_cache_limits(1, 1)
+	),
+	?assertEqual(
+		{2, 2, 128, 4, 16000},
+		calculate_cache_limits(2, 1)
+	),
+	?assertEqual(
+		{1000, 1000, 128, 4, 16000},
+		calculate_cache_limits(1000, 1)
+	),
+	?assertEqual(
+		{1, 1, 128, 8, 32000},
+		calculate_cache_limits(1, 2)
+	),
+	?assertEqual(
+		{1, 1, 64, 4, 16000},
+		calculate_cache_limits(2, 2)
+	),
+	?assertEqual(
+		{500, 500, 64, 4, 16000},
+		calculate_cache_limits(1000, 2)
+	),
+	?assertEqual(
+		{1, 1, 128, 64, 256000},
+		calculate_cache_limits(1, 32)
+	),
+	?assertEqual(
+		{1, 1, 64, 32, 128000},
+		calculate_cache_limits(2, 32)
+	),
+	?assertEqual(
+		{31, 31, 3, 1, 4000},
+		calculate_cache_limits(1000, 32)
+	).
+
+test_calculate_cache_limits_custom_low() ->
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config, Config#config{
+		mining_cache_size_mb = 1
+	}),
+	?assertEqual(
+		{4, 1, 4, 1, 4000},
+		calculate_cache_limits(1, 0)
+	),
+	?assertEqual(
+		{8, 1, 2, 1, 4000},
+		calculate_cache_limits(2, 0)
+	),
+	?assertEqual(
+		{4000, 1, 1, 1, 4000},
+		calculate_cache_limits(1000, 0)
+	),
+	?assertEqual(
+		{1, 1, 128, 4, 16000},
+		calculate_cache_limits(1, 1)
+	),
+	?assertEqual(
+		{2, 1, 64, 2, 8000},
+		calculate_cache_limits(2, 1)
+	),
+	?assertEqual(
+		{1000, 1, 1, 1, 4000},
+		calculate_cache_limits(1000, 1)
+	),
+	?assertEqual(
+		{1, 1, 128, 8, 32000},
+		calculate_cache_limits(1, 2)
+	),
+	?assertEqual(
+		{1, 1, 64, 4, 16000},
+		calculate_cache_limits(2, 2)
+	),
+	?assertEqual(
+		{500, 1, 1, 1, 4000},
+		calculate_cache_limits(1000, 2)
+	),
+	?assertEqual(
+		{1, 1, 128, 64, 256000},
+		calculate_cache_limits(1, 32)
+	),
+	?assertEqual(
+		{1, 1, 64, 32, 128000},
+		calculate_cache_limits(2, 32)
+	),
+	?assertEqual(
+		{31, 1, 1, 1, 4000},
+		calculate_cache_limits(1000, 32)
+	).
+
+test_calculate_cache_limits_custom_high() ->
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config, Config#config{
+		mining_cache_size_mb = 500_000
+	}),
+	?assertEqual(
+		{4, 500_000, 2_000_000, 500_000, 2_000_000_000},
+		calculate_cache_limits(1, 0)
+	),
+	?assertEqual(
+		{8, 500_000, 1_000_000, 250_000, 1_000_000_000},
+		calculate_cache_limits(2, 0)
+	),
+	?assertEqual(
+		{4000, 500_000, 2_000, 500, 2_000_000},
+		calculate_cache_limits(1000, 0)
+	),
+	?assertEqual(
+		{1, 500_000, 64_000_000, 2_000_000, 8_000_000_000},
+		calculate_cache_limits(1, 1)
+	),
+	?assertEqual(
+		{2, 500_000, 32_000_000, 1_000_000, 4_000_000_000},
+		calculate_cache_limits(2, 1)
+	),
+	?assertEqual(
+		{1000, 500_000, 64_000, 2_000, 8_000_000},
+		calculate_cache_limits(1000, 1)
+	),
+	?assertEqual(
+		{1, 500_000, 64_000_000, 4_000_000, 16_000_000_000},
+		calculate_cache_limits(1, 2)
+	),
+	?assertEqual(
+		{1, 500_000, 32_000_000, 2_000_000, 8_000_000_000},
+		calculate_cache_limits(2, 2)
+	),
+	?assertEqual(
+		{500, 500_000, 64_000, 4_000, 16_000_000},
+		calculate_cache_limits(1000, 2)
+	),
+	?assertEqual(
+		{1, 500_000, 64_000_000, 32_000_000, 128_000_000_000},
+		calculate_cache_limits(1, 32)
+	),
+	?assertEqual(
+		{1, 500_000, 32_000_000, 16_000_000, 64_000_000_000},
+		calculate_cache_limits(2, 32)
+	),
+	?assertEqual(
+		{31, 500_000, 64_000, 32_000, 128_000_000},
+		calculate_cache_limits(1000, 32)
+	).

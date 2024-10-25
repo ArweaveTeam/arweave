@@ -132,7 +132,7 @@
 	diff = ?DEFAULT_DIFF,
 	mining_addr = not_set,
 	hashing_threads = ?NUM_HASHING_PROCESSES,
-	mining_server_chunk_cache_size_limit,
+	mining_cache_size_mb,
 	packing_cache_size_limit,
 	data_cache_size_limit,
 	tx_validators,
