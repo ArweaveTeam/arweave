@@ -1786,10 +1786,11 @@ set_poa_cache(B) ->
 	PoA2 = B#block.poa2,
 	MiningAddress = B#block.reward_addr,
 	PackingDifficulty = B#block.packing_difficulty,
+	ReplicaFormat = B#block.replica_format,
 	Nonce = B#block.nonce,
 	RecallByte1 = B#block.recall_byte,
 	RecallByte2 = B#block.recall_byte2,
-	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
+	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
 	PoACache = compute_poa_cache(B, PoA1, RecallByte1, Nonce, Packing),
 	B2 = B#block{ poa_cache = PoACache },
 	%% Compute PoA2 cache if PoA2 is present.
