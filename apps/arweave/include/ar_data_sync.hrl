@@ -211,5 +211,7 @@
 	%% fragmentation.
 	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
 	%% Cache mapping peers to /data_sync_record responses
-	all_peers_intervals = #{}
+	all_peers_intervals = #{},
+	%% List of local peers used to check if we need to skip block verification.
+	local_peers = []
 }).
