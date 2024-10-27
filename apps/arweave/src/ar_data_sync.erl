@@ -647,7 +647,8 @@ init({"default" = StoreID, _}) ->
 		weave_size = maps:get(weave_size, StateMap),
 		disk_pool_cursor = first,
 		disk_pool_threshold = DiskPoolThreshold,
-		store_id = StoreID
+		store_id = StoreID,
+		local_peers = Config#config.local_peers
 	},
 	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
 			remove_expired_disk_pool_data_roots, []),
@@ -1078,6 +1079,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	Offset = SeekByte - BlockStartOffset,
 	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(BlockStartOffset,
 			get_merkle_rebase_threshold()),
+	IsLocalPeer = lists:member(Peer, State#sync_data_state.local_peers),
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathRuleset) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
@@ -1089,6 +1091,8 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 				true ->
 					decrement_chunk_cache_size(),
 					{noreply, State};
+				false when IsLocalPeer ->
+					{noreply, store_chunk(ChunkArgs, Args, State)};
 				false ->
 					case ar_packing_server:is_buffer_full() of
 						true ->
