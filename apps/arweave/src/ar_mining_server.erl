@@ -409,56 +409,8 @@ update_cache_limits(State) ->
 update_cache_limits(0, State) ->
 	State;
 update_cache_limits(NumActivePartitions, State) ->
-	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
-		GarbageCollectionFrequency} =
-			calculate_cache_limits(NumActivePartitions,  State#state.packing_difficulty),
-	case PartitionCacheLimit == State#state.chunk_cache_limit of
-		true ->
-			State;
-		false ->
-			maps:foreach(
-				fun(_Partition, Worker) ->
-					ar_mining_worker:set_cache_limits(
-						Worker, PartitionCacheLimit, VDFQueueLimit)
-				end,
-				State#state.workers
-			),
-
-			ar:console(
-				"~nSetting the mining chunk cache size limit to ~B MiB "
-				"(~B sub-chunks per partition).~n",
-					[OverallCacheLimitMiB, PartitionCacheLimit]),
-			?LOG_INFO([{event, update_mining_cache_limits},
-				{overall_limit_mb, OverallCacheLimitMiB},
-				{per_partition_sub_chunks, PartitionCacheLimit},
-				{vdf_queue_limit_steps, VDFQueueLimit}]),
-			case OverallCacheLimitMiB < MinimumCacheLimitMiB of
-				true ->
-					ar:console("~nChunk cache size limit (~p MiB) is below minimum limit of "
-						"~p MiB. Mining performance may be impacted.~n"
-						"Consider changing the 'mining_cache_size_mb' option.",
-						[OverallCacheLimitMiB, MinimumCacheLimitMiB]);
-				false -> ok
-			end,
-
-			GCRef =
-				case State#state.gc_frequency_ms == undefined of
-					true ->
-						%% This is the first time setting the garbage collection frequency,
-						%% so kick off the periodic call.
-						Ref = make_ref(),
-						ar_util:cast_after(GarbageCollectionFrequency, ?MODULE,
-								{manual_garbage_collect, Ref}),
-						Ref;
-					false ->
-						State#state.gc_process_ref
-				end,
-			State#state{
-				chunk_cache_limit = PartitionCacheLimit,
-				gc_frequency_ms = GarbageCollectionFrequency,
-				gc_process_ref = GCRef
-			}
-	end.
+	Limits = calculate_cache_limits(NumActivePartitions, State#state.packing_difficulty),
+	maybe_update_cache_limits(Limits, State).
 
 calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
@@ -500,6 +452,55 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 
 	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
 		GarbageCollectionFrequency}.
+
+maybe_update_cache_limits({_, _, PartitionCacheLimit, _, _},
+		#state{chunk_cache_limit = PartitionCacheLimit} = State) ->
+	State;
+maybe_update_cache_limits(Limits, State) ->
+	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
+		GarbageCollectionFrequency} = Limits,
+	maps:foreach(
+		fun(_Partition, Worker) ->
+			ar_mining_worker:set_cache_limits(
+				Worker, PartitionCacheLimit, VDFQueueLimit)
+		end,
+		State#state.workers
+	),
+
+	ar:console(
+		"~nSetting the mining chunk cache size limit to ~B MiB "
+		"(~B sub-chunks per partition).~n",
+			[OverallCacheLimitMiB, PartitionCacheLimit]),
+	?LOG_INFO([{event, update_mining_cache_limits},
+		{overall_limit_mb, OverallCacheLimitMiB},
+		{per_partition_sub_chunks, PartitionCacheLimit},
+		{vdf_queue_limit_steps, VDFQueueLimit}]),
+	case OverallCacheLimitMiB < MinimumCacheLimitMiB of
+		true ->
+			ar:console("~nChunk cache size limit (~p MiB) is below minimum limit of "
+				"~p MiB. Mining performance may be impacted.~n"
+				"Consider changing the 'mining_cache_size_mb' option.",
+				[OverallCacheLimitMiB, MinimumCacheLimitMiB]);
+		false -> ok
+	end,
+
+	GCRef =
+		case State#state.gc_frequency_ms == undefined of
+			true ->
+				%% This is the first time setting the garbage collection frequency,
+				%% so kick off the periodic call.
+				Ref = make_ref(),
+				ar_util:cast_after(GarbageCollectionFrequency, ?MODULE,
+						{manual_garbage_collect, Ref}),
+				Ref;
+			false ->
+				State#state.gc_process_ref
+		end,
+	State#state{
+		chunk_cache_limit = PartitionCacheLimit,
+		gc_frequency_ms = GarbageCollectionFrequency,
+		gc_process_ref = GCRef
+	}.
 
 distribute_output(Candidate, State) ->
 	distribute_output(ar_mining_io:get_partitions(), Candidate, State).
