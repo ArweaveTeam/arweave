@@ -484,22 +484,9 @@ maybe_update_cache_limits(Limits, State) ->
 		false -> ok
 	end,
 
-	GCRef =
-		case State#state.gc_frequency_ms == undefined of
-			true ->
-				%% This is the first time setting the garbage collection frequency,
-				%% so kick off the periodic call.
-				Ref = make_ref(),
-				ar_util:cast_after(GarbageCollectionFrequency, ?MODULE,
-						{manual_garbage_collect, Ref}),
-				Ref;
-			false ->
-				State#state.gc_process_ref
-		end,
-	State#state{
-		chunk_cache_limit = PartitionCacheLimit,
-		gc_frequency_ms = GarbageCollectionFrequency,
-		gc_process_ref = GCRef
+	State2 = reset_gc_timer(GarbageCollectionFrequency, State),
+	State2#state{
+		chunk_cache_limit = PartitionCacheLimit
 	}.
 
 distribute_output(Candidate, State) ->
@@ -1168,6 +1155,19 @@ validate_solution(Solution, DiffPair) ->
 		false ->
 			{false, poa1}
 	end.
+
+reset_gc_timer(GarbageCollectionFrequency, State) ->
+	State2 = maybe_cancel_gc_timer(State),
+	Ref = erlang:make_ref(),
+	ar_util:cast_after(GarbageCollectionFrequency, ?MODULE,
+			{manual_garbage_collect, Ref}),
+	State2#state{ gc_process_ref = Ref, gc_frequency_ms = GarbageCollectionFrequency }.
+
+maybe_cancel_gc_timer(#state{gc_process_ref = undefined} = State) ->
+	State;
+maybe_cancel_gc_timer(State) ->
+	erlang:cancel_timer(State#state.gc_process_ref),
+	State#state{ gc_process_ref = undefined }.
 
 %%%===================================================================
 %%% Public Test interface.
