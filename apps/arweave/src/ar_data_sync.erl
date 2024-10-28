@@ -683,18 +683,20 @@ init({StoreID, RepackInPlacePacking}) ->
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
+	{ok, Config} = application:get_env(arweave, config),
+	State2 = State#sync_data_state{local_peers = Config#config.local_peers},
 	case RepackInPlacePacking of
 		none ->
 			gen_server:cast(self(), process_store_chunk_queue),
 			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-			State2 = State#sync_data_state{
+			State3 = State2#sync_data_state{
 				store_id = StoreID,
 				range_start = RangeStart,
 				range_end = RangeEnd
 			},
-			{ok, may_be_start_syncing(State2)};
+			{ok, may_be_start_syncing(State3)};
 		_ ->
-			{ok, State}
+			{ok, State2}
 	end.
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
@@ -1080,7 +1082,6 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(BlockStartOffset,
 			get_merkle_rebase_threshold()),
 	IsLocalPeer = lists:member(Peer, State#sync_data_state.local_peers),
-	IsCorrectPacking = Packing == ar_storage_module:get_packing(State#sync_data_state.store_id),
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathRuleset) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
@@ -1092,8 +1093,8 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 				true ->
 					decrement_chunk_cache_size(),
 					{noreply, State};
-				false when IsLocalPeer andalso IsCorrectPacking ->
-					{noreply, store_chunk(ChunkArgs, Args, State)};
+				false when IsLocalPeer ->
+					process_valid_fetched_chunk(ChunkArgs, Args, State);
 				false ->
 					case ar_packing_server:is_buffer_full() of
 						true ->
@@ -1111,8 +1112,9 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 									{AbsoluteOffset, unpacked}}),
 							{noreply, State#sync_data_state{
 									packing_map = PackingMap#{
-										{AbsoluteOffset, unpacked} => {unpack_fetched_chunk,
-												Args} } }}
+										{AbsoluteOffset, unpacked} => {unpack_fetched_chunk, Args}
+									}
+							}}
 					end
 			end;
 		false ->
