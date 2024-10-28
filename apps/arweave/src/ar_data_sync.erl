@@ -1080,6 +1080,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(BlockStartOffset,
 			get_merkle_rebase_threshold()),
 	IsLocalPeer = lists:member(Peer, State#sync_data_state.local_peers),
+	IsCorrectPacking = Packing == ar_storage_module:get_packing(State#sync_data_state.store_id),
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathRuleset) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
@@ -1091,7 +1092,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 				true ->
 					decrement_chunk_cache_size(),
 					{noreply, State};
-				false when IsLocalPeer ->
+				false when IsLocalPeer andalso IsCorrectPacking ->
 					{noreply, store_chunk(ChunkArgs, Args, State)};
 				false ->
 					case ar_packing_server:is_buffer_full() of
