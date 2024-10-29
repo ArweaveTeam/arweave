@@ -402,7 +402,7 @@ worker(ThrottleDelay, PackingState) ->
 							{RequestedPacking, Packed, AbsoluteOffset, TXRoot, ChunkSize}}},
 					case RequestedPacking == Packing of
 						true ->
-							%% When RequestdPacking and Packing are the same
+							%% When RequestedPacking and Packing are the same
 							%% the repack does no work and just returns
 							%% the original chunk. In this case we don't need a throttle.
 							ok;

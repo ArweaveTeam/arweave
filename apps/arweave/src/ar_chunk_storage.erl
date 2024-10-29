@@ -188,6 +188,8 @@ run_defragmentation() ->
 %%%===================================================================
 
 init({StoreID, RepackInPlacePacking}) ->
+	?LOG_INFO([{event, ar_chunk_storage_start}, {store_id, StoreID},
+		{repack_in_place, ar_serialize:encode_packing(RepackInPlacePacking, false)}]),
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),

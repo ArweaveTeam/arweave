@@ -677,7 +677,8 @@ init({"default" = StoreID, _}) ->
 	gen_server:cast(self(), process_store_chunk_queue),
 	{ok, State2};
 init({StoreID, RepackInPlacePacking}) ->
-	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
+	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
+		{repack_in_place, ar_serialize:encode_packing(RepackInPlacePacking, false)}]),
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),

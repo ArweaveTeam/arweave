@@ -850,7 +850,13 @@ log_config_value(start_from_block, FieldValue) ->
 log_config_value(storage_modules, FieldValue) ->
 	[format_storage_module(StorageModule) || StorageModule <- FieldValue];
 log_config_value(repack_in_place_storage_modules, FieldValue) ->
-	[format_storage_module(StorageModule) || {StorageModule, _} <- FieldValue];
+	[
+		{
+			format_storage_module(StorageModule),
+			ar_serialize:encode_packing(Packing, false)
+		}
+		|| {StorageModule, Packing} <- FieldValue
+	];
 log_config_value(_, FieldValue) ->
 	FieldValue.
 
