@@ -21,7 +21,8 @@ fi
 
 node=$(hostname -f)
 config_file="$ARWEAVE_DIR/testnet/config/$(hostname -f).json"
-SCREEN_CMD="screen -dmsL arweave /arweave-build/testnet/bin/start config_file $config_file $*"
+blacklist="transaction_blacklist_url \"${BLACKLIST_URL}\""
+SCREEN_CMD="screen -dmsL arweave /arweave-build/testnet/bin/start $blacklist config_file $config_file $*"
 
 echo "$SCREEN_CMD"
 echo "$SCREEN_CMD" > /arweave-build/testnet/run.sh
