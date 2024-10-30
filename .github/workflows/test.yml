@@ -22,11 +22,11 @@ jobs:
     needs: build
     runs-on: self-hosted
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 12
       matrix:
         core_test_mod: [
-            ## Long-running tests. Put these first to limit the overall runtime of the 
+            ## Long-running tests. Put these first to limit the overall runtime of the
             ## test suite
             ar_coordinated_mining_tests,
             ar_data_sync_tests,
