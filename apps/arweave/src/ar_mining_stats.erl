@@ -162,6 +162,12 @@ set_storage_module_data_size(
 	StoreLabel = ar_storage_module:label_by_id(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	try	
+		?LOG_INFO([{event, set_storage_module_data_size},
+			{store_id, StoreID}, {store_label, StoreLabel},
+			{packing, ar_serialize:encode_packing(Packing, true)},
+			{packing_label, PackingLabel},
+			{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
+			{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]),
 		prometheus_gauge:set(v2_index_data_size_by_packing,
 			[StoreLabel, PackingLabel, PartitionNumber, StorageModuleSize, StorageModuleIndex],
 			DataSize),
