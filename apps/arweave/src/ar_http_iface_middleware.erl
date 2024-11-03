@@ -2020,7 +2020,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 												infinity),
 										{RequestedPacking, ok};
 									{_, _} ->
-										{none, {reply, {404, #{}, <<>>, Req}}}
+										{none, {reply, {403, #{}, <<>>, Req}}}
 								end
 						end,
 					case CheckRecords of
