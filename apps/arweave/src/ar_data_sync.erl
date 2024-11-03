@@ -3,14 +3,16 @@
 -behaviour(gen_server).
 
 -export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2,
-		is_chunk_proof_ratio_attractive/3,
+		invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
 		get_tx_offset/1, get_tx_offset_data_in_range/2, has_data_root/2,
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
-		get_chunk_by_byte/2, read_chunk/4, decrement_chunk_cache_size/0,
-		increment_chunk_cache_size/0, get_chunk_padded_offset/1, get_chunk_metadata_range/3]).
+		get_chunk_by_byte/2, get_chunk_seek_offset/1, read_chunk/4, read_data_path/2,
+		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
+		get_chunk_padded_offset/1, get_chunk_metadata_range/3,
+		get_merkle_rebase_threshold/0, should_store_in_chunk_storage/3]).
 
 -export([debug_get_disk_pool_chunks/0]).
 
@@ -20,6 +22,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_sync_buckets.hrl").
@@ -47,6 +50,10 @@ join(RecentBI) ->
 %% @doc Notify the server about the new tip block.
 add_tip_block(BlockTXPairs, RecentBI) ->
 	gen_server:cast(ar_data_sync_default, {add_tip_block, BlockTXPairs, RecentBI}).
+
+invalidate_bad_data_record(Start, End, StoreID, Case) ->
+	gen_server:cast(name(StoreID), {invalidate_bad_data_record,
+		{Start, End, StoreID, Case}}).
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -542,6 +549,8 @@ read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
 			Error
 	end.
 
+read_data_path(ChunkDataDB, ChunkDataKey) ->
+	read_data_path(undefined, ChunkDataDB, ChunkDataKey, undefined).
 %% The first and last arguments are introduced to match the read_chunk/4 signature.
 read_data_path(_Offset, ChunkDataDB, ChunkDataKey, _StoreID) ->
 	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
@@ -721,7 +730,7 @@ handle_cast({join, RecentBI}, State) ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
 			{ok, Config} = application:get_env(arweave, config),
-			[gen_server:cast(list_to_atom("ar_data_sync_" ++ ar_storage_module:label(Module)),
+			[gen_server:cast(name(ar_storage_module:id(Module)),
 					{cut, Offset}) || Module <- Config#config.storage_modules],
 			ok = ar_chunk_storage:cut(Offset, StoreID),
 			ok = ar_sync_record:cut(Offset, ?MODULE, StoreID),
@@ -1584,7 +1593,7 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 											{expected_chunk_id, ar_util:encode(ChunkID)},
 											{chunk_id, ar_util:encode(ComputedChunkID)}]),
 									invalidate_bad_data_record({AbsoluteOffset - ChunkSize,
-										AbsoluteOffset, {chunks_index, StoreID}, StoreID, 4}),
+										AbsoluteOffset, StoreID, 4}),
 									{error, chunk_not_found}
 							end
 					end
@@ -1668,8 +1677,7 @@ read_chunk_with_metadata(
 						false ->
 							ok
 					end,
-					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset,
-							{chunks_index, StoreID}, StoreID, 1}),
+					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset, StoreID, 1}),
 					{error, chunk_not_found};
 				{error, Error} ->
 					?LOG_ERROR([{event, failed_to_read_chunk},
@@ -1706,7 +1714,7 @@ read_chunk_with_metadata(
 			end
 	end.
 
-invalidate_bad_data_record({Start, End, ChunksIndex, StoreID, Case}) ->
+invalidate_bad_data_record({Start, End, StoreID, Case}) ->
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case End > T of
 		true ->
@@ -1726,7 +1734,8 @@ invalidate_bad_data_record({Start, End, ChunksIndex, StoreID, Case}) ->
 					{range_start, PaddedStart2}, {range_end, PaddedEnd}]),
 			case ar_sync_record:delete(PaddedEnd, PaddedStart2, ?MODULE, StoreID) of
 				ok ->
-					case ar_kv:delete(ChunksIndex, << End:?OFFSET_KEY_BITSIZE >>) of
+					ar_sync_record:add(PaddedEnd, PaddedStart2, invalid_chunks, StoreID),
+					case ar_kv:delete({chunks_index, StoreID}, << End:?OFFSET_KEY_BITSIZE >>) of
 						ok ->
 							ok;
 						Error2 ->
@@ -1761,10 +1770,9 @@ validate_fetched_chunk(Args) ->
 				{BlockStart, BlockEnd, TXRoot} ->
 					ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(
 							BlockStart, get_merkle_rebase_threshold()),
-					BlockSize = BlockEnd - BlockStart,
 					ChunkOffset = Offset - BlockStart - 1,
-					case validate_proof2({TXRoot, ChunkOffset, BlockSize, DataPath, TXPath,
-							ChunkSize, ValidateDataPathRuleset, IsMinerRequest}) of
+					case validate_proof2(TXRoot, TXPath, DataPath, BlockStart, BlockEnd,
+							ChunkOffset, ValidateDataPathRuleset, ChunkSize, IsMinerRequest) of
 						{true, ChunkID} ->
 							{true, ChunkID};
 						false ->
@@ -1778,8 +1786,7 @@ validate_fetched_chunk(Args) ->
 									ok
 							end,
 							StartOffset = Offset - ChunkSize,
-							invalidate_bad_data_record({StartOffset, Offset,
-									{chunks_index, StoreID}, StoreID, 2}),
+							invalidate_bad_data_record({StartOffset, Offset, StoreID, 2}),
 							false
 					end;
 				{_BlockStart, _BlockEnd, TXRoot2} ->
@@ -1789,8 +1796,7 @@ validate_fetched_chunk(Args) ->
 							{tx_root, ar_util:encode(TXRoot2)},
 							{stored_tx_root, ar_util:encode(TXRoot)},
 							{store_id, StoreID}]),
-					invalidate_bad_data_record({Offset - ChunkSize, Offset,
-							{chunks_index, StoreID}, StoreID, 3}),
+					invalidate_bad_data_record({Offset - ChunkSize, Offset, StoreID, 3}),
 					false
 			end
 	end.
@@ -1922,10 +1928,8 @@ remove_range(Start, End, Ref, ReplyTo) ->
 	RefL = [make_ref() || _ <- StoreIDs],
 	PID = spawn(fun() -> ReplyFun(ReplyFun, sets:from_list(RefL)) end),
 	lists:foreach(
-		fun({StorageID, R}) ->
-			GenServerID = list_to_atom("ar_data_sync_"
-					++ ar_storage_module:label_by_id(StorageID)),
-			gen_server:cast(GenServerID, {remove_range, End, Start + 1, R, PID})
+		fun({StoreID, R}) ->
+			gen_server:cast(name(StoreID), {remove_range, End, Start + 1, R, PID})
 		end,
 		lists:zip(StoreIDs, RefL)
 	).
@@ -2458,6 +2462,12 @@ store_sync_state(#sync_data_state{ store_id = "default" } = State) ->
 store_sync_state(_State) ->
 	ok.
 
+%% @doc Look to StoreID to find data that TargetStoreID is missing.
+%% Args:
+%%   TargetStoreID - The ID of the storage module to sync to (this module is missing data)
+%%   StoreID - The ID of the storage module to sync from (this module might have the data)
+%%   RangeStart - The start offset of the range to check
+%%   RangeEnd - The end offset of the range to check
 get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeStart,
 		RangeEnd) ->
 	get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeStart,
@@ -2545,78 +2555,93 @@ enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 
 validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathRuleset) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
-	case ar_merkle:validate_path(TXRoot, Offset, BlockSize, TXPath) of
-		false ->
+
+	BlockEndOffset = BlockStartOffset + BlockSize,
+	case ar_poa:validate_paths(TXRoot, TXPath, DataPath, BlockStartOffset,
+			BlockEndOffset, Offset, ValidateDataPathRuleset) of
+		{false, _} ->
 			false;
-		{DataRoot, TXStartOffset, TXEndOffset} ->
+		{true, ChunkProof} ->
+			#chunk_proof{
+				data_root = DataRoot,
+				absolute_offset = AbsoluteOffset,
+				chunk_id = ChunkID,
+				chunk_start_offset = ChunkStartOffset,
+				chunk_end_offset = ChunkEndOffset,
+				tx_start_offset = TXStartOffset,
+				tx_end_offset = TXEndOffset
+			} = ChunkProof,
 			TXSize = TXEndOffset - TXStartOffset,
-			ChunkOffset = Offset - TXStartOffset,
-			case ar_merkle:validate_path(DataRoot, ChunkOffset, TXSize, DataPath,
-					ValidateDataPathRuleset) of
-				false ->
-					false;
-				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
-					AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-					ChunkSize = ChunkEndOffset - ChunkStartOffset,
-					case Packing of
-						unpacked ->
-							case ar_tx:generate_chunk_id(Chunk) == ChunkID of
-								false ->
-									false;
+			ChunkSize = ChunkEndOffset - ChunkStartOffset,
+			AbsoluteEndOffset = AbsoluteOffset + ChunkSize,
+			case Packing of
+				unpacked ->
+					case ar_tx:generate_chunk_id(Chunk) == ChunkID of
+						false ->
+							false;
+						true ->
+							case ChunkSize == byte_size(Chunk) of
 								true ->
-									case ChunkSize == byte_size(Chunk) of
-										true ->
-											{true, DataRoot, TXStartOffset, ChunkEndOffset,
-												TXSize, ChunkSize, ChunkID};
-										false ->
-											false
-									end
-							end;
-						_ ->
-							ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-							Args = {Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize,
-									ChunkID},
-							{need_unpacking, AbsoluteEndOffset, ChunkArgs, Args}
-					end
+									{true, DataRoot, TXStartOffset, ChunkEndOffset,
+										TXSize, ChunkSize, ChunkID};
+								false ->
+									false
+							end
+					end;
+				_ ->
+					ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
+					Args = {Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize,
+							ChunkID},
+					{need_unpacking, AbsoluteEndOffset, ChunkArgs, Args}
 			end
 	end.
 
-validate_proof2(Args) ->
-	{TXRoot, Offset, BlockSize, DataPath, TXPath, ChunkSize,
-			ValidateDataPathRuleset, IsMinerRequest} = Args,
-	case ar_merkle:validate_path(TXRoot, Offset, BlockSize, TXPath) of
-		false ->
-			case IsMinerRequest of
-				true ->
-					?LOG_ERROR([{event, failed_to_validate_tx_path},
-							{tags, [solution_proofs]}]);
+validate_proof2(
+		TXRoot, TXPath, DataPath, BlockStartOffset,
+		BlockEndOffset, BlockRelativeOffset, ValidateDataPathRuleset,
+		ExpectedChunkSize, IsMinerRequest) ->
+	{IsValid, ChunkProof} = ar_poa:validate_paths(
+			TXRoot, TXPath, DataPath, BlockStartOffset,
+			BlockEndOffset, BlockRelativeOffset, ValidateDataPathRuleset),
+	case IsValid of
+		true ->
+			#chunk_proof{
+				chunk_id = ChunkID,
+				chunk_start_offset = ChunkStartOffset,
+				chunk_end_offset = ChunkEndOffset
+			} = ChunkProof,
+			case ChunkEndOffset - ChunkStartOffset == ExpectedChunkSize of
 				false ->
-					ok
-			end,
-			false;
-		{DataRoot, TXStartOffset, TXEndOffset} ->
-			TXSize = TXEndOffset - TXStartOffset,
-			ChunkOffset = Offset - TXStartOffset,
-			case ar_merkle:validate_path(DataRoot, ChunkOffset, TXSize, DataPath,
-					ValidateDataPathRuleset) of
-				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
-					case ChunkEndOffset - ChunkStartOffset == ChunkSize of
-						false ->
-							case IsMinerRequest of
-								true ->
-									?LOG_ERROR([{event, failed_to_validate_data_path_offset},
-											{tags, [solution_proofs]},
-											{chunk_end_offset, ChunkEndOffset},
-											{chunk_start_offset, ChunkStartOffset},
-											{chunk_size, ChunkSize}]);
-								false ->
-									ok
-							end,
-							false;
+					case IsMinerRequest of
 						true ->
-							{true, ChunkID}
-					end;
-				_ ->
+							?LOG_ERROR([{event, failed_to_validate_data_path_offset},
+									{tags, [solution_proofs]},
+									{chunk_end_offset, ChunkEndOffset},
+									{chunk_start_offset, ChunkStartOffset},
+									{chunk_size, ExpectedChunkSize}]);
+						false ->
+							ok
+					end,
+					false;
+				true ->
+					{true, ChunkID}
+			end;
+		false ->
+			#chunk_proof{
+				tx_path_is_valid = TXPathIsValid,
+				data_path_is_valid = DataPathIsValid
+			} = ChunkProof,
+			case {TXPathIsValid, DataPathIsValid} of
+				{invalid, _} ->
+					case IsMinerRequest of
+						true ->
+							?LOG_ERROR([{event, failed_to_validate_tx_path},
+									{tags, [solution_proofs]}]);
+						false ->
+							ok
+					end,
+					false;
+				{_, invalid} ->
 					case IsMinerRequest of
 						true ->
 							?LOG_ERROR([{event, failed_to_validate_data_path},
@@ -3357,9 +3382,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 					increment_chunk_cache_size(),
 					Args2 = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
-					Label = ar_storage_module:label_by_id(StoreID6),
-					gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
-							{pack_and_store_chunk, Args2}),
+					gen_server:cast(name(StoreID6), {pack_and_store_chunk, Args2}),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 							false, Args}),
 					{noreply, cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey,

@@ -338,9 +338,11 @@ get_packing() ->
 			undefined; 
 		MultiplePackings ->
 			% More than one unique packing found
-			?LOG_ERROR([
+			?LOG_WARNING([
 				{event, get_packing_failed}, {reason, multiple_unique_packings},
-				{unique_packings, [format_packing(Packing) || Packing <- MultiplePackings]}
+				{unique_packings,
+					string:join(
+						[format_packing(Packing) || Packing <- MultiplePackings], ", ")}
 				]),
 			undefined
 	end.

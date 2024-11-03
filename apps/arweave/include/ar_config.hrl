@@ -119,6 +119,7 @@
 	init = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	mine = false,
+	verify = false,
 	peers = [],
 	block_gossip_peers = [],
 	local_peers = [],
