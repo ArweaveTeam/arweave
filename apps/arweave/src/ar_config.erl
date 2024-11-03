@@ -1,8 +1,8 @@
 -module(ar_config).
 
--export([validate_config/1, use_remote_vdf_server/0, pull_from_remote_vdf_server/0,
-		compute_own_vdf/0, is_vdf_server/0, is_public_vdf_server/0,
-		parse/1, parse_storage_module/1, log_config/1]).
+-export([validate_config/1, auto_join/0, verify/0, use_remote_vdf_server/0,
+		pull_from_remote_vdf_server/0, compute_own_vdf/0, is_vdf_server/0,
+		is_public_vdf_server/0, parse/1, parse_storage_module/1, log_config/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -15,9 +15,19 @@
 
 validate_config(Config) ->
 	validate_init(Config) andalso
+	validate_storage_modules(Config) andalso
 	validate_repack_in_place(Config) andalso
 	validate_cm_pool(Config) andalso
-	validate_storage_modules(Config).
+	validate_packing_difficulty(Config) andalso
+	validate_verify(Config).
+
+auto_join() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.auto_join andalso not Config#config.verify.
+
+verify() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.verify.
 
 use_remote_vdf_server() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -166,6 +176,13 @@ parse_options([{<<"mine">>, false} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"mine">>, Opt} | _], _) ->
 	{error, {bad_type, mine, boolean}, Opt};
+
+parse_options([{<<"verify">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ verify = true });
+parse_options([{<<"verify">>, false} | Rest], Config) ->
+	parse_options(Rest, Config);
+parse_options([{<<"verify">>, Opt} | _], _) ->
+	{error, {bad_type, verify, boolean}, Opt};
 
 parse_options([{<<"port">>, Port} | Rest], Config) when is_integer(Port) ->
 	parse_options(Rest, Config#config{ port = Port });
@@ -884,6 +901,15 @@ validate_init(Config) ->
 		false ->
 			true
 	end.
+
+validate_storage_modules(#config{ storage_modules = StorageModules }) ->
+	case length(StorageModules) =:= length(lists:usort(StorageModules)) of
+		true ->
+			true;
+		false ->
+			io:format("~nDuplicate value detected in the storage_modules option.~n~n"),
+			false
+	end.
 validate_repack_in_place(Config) ->
 	Modules = [ar_storage_module:id(M) || M <- Config#config.storage_modules],
 	validate_repack_in_place(Config#config.repack_in_place_storage_modules, Modules).
@@ -927,9 +953,9 @@ validate_cm_pool(Config) ->
 	end,
 	A andalso B andalso C.
 
-validate_storage_modules(#config{ mine = false }) ->
+validate_packing_difficulty(#config{ mine = false }) ->
 	true;
-validate_storage_modules(Config) ->
+validate_packing_difficulty(Config) ->
 	MiningAddr = Config#config.mining_addr,
 	UniquePackingDifficulties = lists:foldl(
 		fun({_, _, {composite, Addr, Difficulty}}, Acc) when Addr =:= MiningAddr ->
@@ -950,3 +976,17 @@ validate_storage_modules(Config) ->
 					"for the same mining address.~n~n"),
 			false
 	end.
+
+
+validate_verify(#config{ verify = false }) ->
+	true;
+validate_verify(#config{ verify = true, mine = true }) ->
+	io:format("~nThe verify flag cannot be set together with the mine flag.~n~n"),
+	false;
+validate_verify(#config{ verify = true,
+		repack_in_place_storage_modules = RepackInPlaceStorageModules })
+			when RepackInPlaceStorageModules =/= [] ->
+	io:format("~nThe verify flag cannot be set together with the repack_in_place flag.~n~n"),
+	false;
+validate_verify(_Config) ->
+	true.

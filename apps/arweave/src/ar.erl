@@ -342,7 +342,8 @@ show_help() ->
 					"Useful if you have multiple machines (or replicas) "
 					"and you want to monitor them separately on pool"},
 			{"rocksdb_flush_interval", "RocksDB flush interval in seconds"},
-			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"}
+			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"},
+			{"verify", "Run in verify mode. In verify mode, the node won't join the network and won't compute or request VDF steps. Also no mining or packing."}
 		]
 	),
 	erlang:halt().
@@ -373,6 +374,8 @@ read_config_from_file(Path) ->
 parse_cli_args([], C) -> C;
 parse_cli_args(["mine" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ mine = true });
+parse_cli_args(["verify" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ verify = true });
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->

@@ -37,15 +37,15 @@ start_link(Name, StoreID) ->
 	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
 
 %% @doc Store the chunk under the given end offset,
-%% bytes Offset - ?DATA_CHUNK_SIIZE, Offset - ?DATA_CHUNK_SIIZE + 1, .., Offset - 1.
-put(Offset, Chunk) ->
-	put(Offset, Chunk, "default").
+%% bytes Offset - ?DATA_CHUNK_SIZE, Offset - ?DATA_CHUNK_SIZE + 1, .., Offset - 1.
+put(PaddedOffset, Chunk) ->
+	put(PaddedOffset, Chunk, "default").
 
 %% @doc Store the chunk under the given end offset,
-%% bytes Offset - ?DATA_CHUNK_SIIZE, Offset - ?DATA_CHUNK_SIIZE + 1, .., Offset - 1.
-put(Offset, Chunk, StoreID) ->
+%% bytes Offset - ?DATA_CHUNK_SIZE, Offset - ?DATA_CHUNK_SIZE + 1, .., Offset - 1.
+put(PaddedOffset, Chunk, StoreID) ->
 	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
-	case catch gen_server:call(GenServerID, {put, Offset, Chunk}) of
+	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk}) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -155,9 +155,9 @@ delete(Offset) ->
 	delete(Offset, "default").
 
 %% @doc Remove the chunk with the given end offset.
-delete(Offset, StoreID) ->
+delete(PaddedOffset, StoreID) ->
 	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
-	case catch gen_server:call(GenServerID, {delete, Offset}, 20000) of
+	case catch gen_server:call(GenServerID, {delete, PaddedOffset}, 20000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -297,22 +297,22 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_call({put, Offset, Chunk}, _From, State) when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
+handle_call({put, PaddedOffset, Chunk}, _From, State) when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
 	#state{ file_index = FileIndex, store_id = StoreID } = State,
-	case handle_store_chunk(Offset, Chunk, FileIndex, StoreID) of
+	case handle_store_chunk(PaddedOffset, Chunk, FileIndex, StoreID) of
 		{ok, FileIndex2} ->
 			{reply, ok, State#state{ file_index = FileIndex2 }};
 		Error ->
 			{reply, Error, State}
 	end;
 
-handle_call({delete, Offset}, _From, State) ->
+handle_call({delete, PaddedOffset}, _From, State) ->
 	#state{	file_index = FileIndex, store_id = StoreID } = State,
-	Key = get_key(Offset),
+	Key = get_key(PaddedOffset),
 	Filepath = filepath(Key, FileIndex, StoreID),
-	case ar_sync_record:delete(Offset, Offset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
+	case ar_sync_record:delete(PaddedOffset, PaddedOffset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
 		ok ->
-			case delete_chunk(Offset, Key, Filepath) of
+			case delete_chunk(PaddedOffset, Key, Filepath) of
 				ok ->
 					{reply, ok, State};
 				Error2 ->
@@ -437,11 +437,12 @@ get_filepath(Name, StoreID) ->
 			filename:join([DataDir, "storage_modules", StoreID, ?CHUNK_DIR, Name])
 	end.
 
-handle_store_chunk(Offset, Chunk, FileIndex, StoreID) ->
-	Key = get_key(Offset),
-	case store_chunk(Key, Offset, Chunk, FileIndex, StoreID) of
+handle_store_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
+	Key = get_key(PaddedOffset),
+	case store_chunk(Key, PaddedOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
-			case ar_sync_record:add(Offset, Offset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
+			case ar_sync_record:add(
+					PaddedOffset, PaddedOffset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
 				ok ->
 					ets:insert(chunk_storage_file_index, {{Key, StoreID}, Filepath}),
 					{ok, maps:put(Key, Filepath, FileIndex)};
@@ -456,9 +457,9 @@ get_key(Offset) ->
 	StartOffset = Offset - ?DATA_CHUNK_SIZE,
 	ar_util:floor_int(StartOffset, get_chunk_group_size()).
 
-store_chunk(Key, Offset, Chunk, FileIndex, StoreID) ->
+store_chunk(Key, PaddedOffset, Chunk, FileIndex, StoreID) ->
 	Filepath = filepath(Key, FileIndex, StoreID),
-	store_chunk(Key, Offset, Chunk, Filepath).
+	store_chunk(Key, PaddedOffset, Chunk, Filepath).
 
 filepath(Key, FileIndex, StoreID) ->
 	case maps:get(Key, FileIndex, not_found) of
@@ -468,28 +469,28 @@ filepath(Key, FileIndex, StoreID) ->
 			Filepath
 	end.
 
-store_chunk(Key, Offset, Chunk, Filepath) ->
+store_chunk(Key, PaddedOffset, Chunk, Filepath) ->
 	case erlang:get({write_handle, Filepath}) of
 		undefined ->
 			case file:open(Filepath, [read, write, raw]) of
 				{error, Reason} = Error ->
 					?LOG_ERROR([
 						{event, failed_to_open_chunk_file},
-						{offset, Offset},
+						{padded_offset, PaddedOffset},
 						{file, Filepath},
 						{reason, io_lib:format("~p", [Reason])}
 					]),
 					Error;
 				{ok, F} ->
 					erlang:put({write_handle, Filepath}, F),
-					store_chunk2(Key, Offset, Chunk, Filepath, F)
+					store_chunk2(Key, PaddedOffset, Chunk, Filepath, F)
 			end;
 		F ->
-			store_chunk2(Key, Offset, Chunk, Filepath, F)
+			store_chunk2(Key, PaddedOffset, Chunk, Filepath, F)
 	end.
 
-store_chunk2(Key, Offset, Chunk, Filepath, F) ->
-	StartOffset = Offset - ?DATA_CHUNK_SIZE,
+store_chunk2(Key, PaddedOffset, Chunk, Filepath, F) ->
+	StartOffset = PaddedOffset - ?DATA_CHUNK_SIZE,
 	LeftChunkBorder = ar_util:floor_int(StartOffset, ?DATA_CHUNK_SIZE),
 	ChunkOffset = StartOffset - LeftChunkBorder,
 	RelativeOffset = LeftChunkBorder - Key,
@@ -507,7 +508,7 @@ store_chunk2(Key, Offset, Chunk, Filepath, F) ->
 		{error, Reason} = Error ->
 			?LOG_ERROR([
 				{event, failed_to_write_chunk},
-				{offset, Offset},
+				{padded_offset, PaddedOffset},
 				{file, Filepath},
 				{position, Position},
 				{reason, io_lib:format("~p", [Reason])}
@@ -518,10 +519,10 @@ store_chunk2(Key, Offset, Chunk, Filepath, F) ->
 			{ok, Filepath}
 	end.
 
-delete_chunk(Offset, Key, Filepath) ->
+delete_chunk(PaddedOffset, Key, Filepath) ->
 	case file:open(Filepath, [read, write, raw]) of
 		{ok, F} ->
-			StartOffset = Offset - ?DATA_CHUNK_SIZE,
+			StartOffset = PaddedOffset - ?DATA_CHUNK_SIZE,
 			LeftChunkBorder = ar_util:floor_int(StartOffset, ?DATA_CHUNK_SIZE),
 			RelativeOffset = LeftChunkBorder - Key,
 			Position = RelativeOffset + ?OFFSET_SIZE * (RelativeOffset div ?DATA_CHUNK_SIZE),
