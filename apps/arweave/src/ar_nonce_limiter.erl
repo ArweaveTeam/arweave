@@ -408,22 +408,27 @@ apply_external_update(Update, Peer) ->
 %%%===================================================================
 
 init([]) ->
-	ok = ar_events:subscribe(node_state),
-	State =
-		case ar_node:is_joined() of
-			true ->
-				Blocks = get_blocks(),
-				handle_initialized(Blocks, #state{});
-			_ ->
-				#state{}
-		end,
-	case ar_config:use_remote_vdf_server() and not ar_config:compute_own_vdf() of
+	case ar_config:verify() of
 		true ->
-			gen_server:cast(?MODULE, check_external_vdf_server_input);
+			ignore;
 		false ->
-			ok
-	end,
-	{ok, start_worker(State#state{ autocompute = ar_config:compute_own_vdf() })}.
+			ok = ar_events:subscribe(node_state),
+			State =
+			case ar_node:is_joined() of
+				true ->
+					Blocks = get_blocks(),
+					handle_initialized(Blocks, #state{});
+				_ ->
+					#state{}
+			end,
+			case ar_config:use_remote_vdf_server() and not ar_config:compute_own_vdf() of
+				true ->
+					gen_server:cast(?MODULE, check_external_vdf_server_input);
+				false ->
+					ok
+			end,
+			{ok, start_worker(State#state{ autocompute = ar_config:compute_own_vdf() })}
+	end.
 
 get_blocks() ->
 	B = ar_node:get_current_block(),

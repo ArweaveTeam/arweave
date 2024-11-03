@@ -144,10 +144,8 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 					read_range2(MessagesRemaining,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				not_found ->
-					Label = ar_storage_module:label_by_id(OriginStoreID),
-					gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
-							{invalidate_bad_data_record, {Start, AbsoluteOffset, ChunksIndex,
-							OriginStoreID, 1}}),
+					ar_data_sync:invalidate_bad_data_record(
+						Start, AbsoluteOffset, OriginStoreID, 1),
 					read_range2(MessagesRemaining-1,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall});
 				{error, Error} ->
@@ -172,8 +170,7 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID, SkipSm
 							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
 									Packing, RelativeOffset, ChunkSize, Chunk,
 									UnpackedChunk, TargetStoreID, ChunkDataKey},
-							gen_server:cast(list_to_atom("ar_data_sync_"
-									++ ar_storage_module:label_by_id(TargetStoreID)),
+							gen_server:cast(ar_data_sync:name(TargetStoreID),
 									{pack_and_store_chunk, Args}),
 							read_range2(MessagesRemaining-1,
 								{Start + ChunkSize, End, OriginStoreID, TargetStoreID,

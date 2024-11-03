@@ -1,4 +1,4 @@
--module(ar_nonce_limiter_server_sup).
+-module(ar_verify_chunk_storage_sup).
 
 -behaviour(supervisor).
 
@@ -21,20 +21,20 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	case ar_config:is_vdf_server() andalso not ar_config:verify() of
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.verify of
 		false ->
 			ignore;
 		true ->
-			{ok, Config} = application:get_env(arweave, config),
 			Workers = lists:map(
-				fun(Peer) ->
-					Name = list_to_atom("ar_nonce_limiter_server_worker_"
-							++ ar_util:peer_to_str(Peer)),
-					?CHILD_WITH_ARGS(ar_nonce_limiter_server_worker,
-							worker, Name, [Name, Peer])
+				fun(StorageModule) ->
+					StoreID = ar_storage_module:id(StorageModule),
+					Label = ar_storage_module:label(StorageModule),
+					Name = list_to_atom("ar_verify_chunk_storage_" ++ Label),
+					?CHILD_WITH_ARGS(ar_verify_chunk_storage, worker, Name, [Name, StoreID])
 				end,
-				Config#config.nonce_limiter_client_peers
+				Config#config.storage_modules
 			),
-			Workers2 = [?CHILD(ar_nonce_limiter_server, worker) | Workers],
-			{ok, {{one_for_one, 5, 10}, Workers2}}
+			{ok, {{one_for_one, 5, 10}, Workers}}
 	end.
+	
