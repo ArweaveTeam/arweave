@@ -16,7 +16,7 @@ test_start_from_block() ->
     ar_test_node:start_peer(peer2, B0),
     ar_test_node:connect_to_peer(peer1),
     ar_test_node:connect_to_peer(peer2),
-   
+
     %% Mine a few blocks, shared by both peers
     ar_test_node:mine(peer1),
     ar_test_node:wait_until_height(peer1, 1),
@@ -148,7 +148,7 @@ get_block_index(Peer) ->
     ar_test_node:remote_call(Peer, ar_node, get_blocks, []).
 
 get_reward_history(Peer, H) ->
-    PeerIP = ar_test_node:peer_ip(Peer),
+    PeerIP = ar_test_node:peer_addr(Peer),
     case ar_http:req(#{
         peer => PeerIP,
         method => get,

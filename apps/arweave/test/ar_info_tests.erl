@@ -33,7 +33,7 @@ test_recent_blocks(Type) ->
 		<<"received">> => <<"pending">>,
 		<<"height">> => 0
 	}],
-	?assertEqual(GenesisBlock, get_recent(ar_test_node:peer_ip(peer1), blocks)),
+	?assertEqual(GenesisBlock, get_recent(ar_test_node:peer_addr(peer1), blocks)),
 
 	TargetHeight = ?CHECKPOINT_DEPTH+2,
 	PeerBI = lists:foldl(
@@ -46,8 +46,8 @@ test_recent_blocks(Type) ->
 	),
 	%% Peer1 recent has no timestamps since it hasn't received any of its own blocks
 	%% gossipped back
-	?assertEqual(expected_blocks(peer1, PeerBI, true), 
-		get_recent(ar_test_node:peer_ip(peer1), blocks)),
+	?assertEqual(expected_blocks(peer1, PeerBI, true),
+		get_recent(ar_test_node:peer_addr(peer1), blocks)),
 
 	%% Share blocks to peer1
 	lists:foreach(
@@ -56,7 +56,7 @@ test_recent_blocks(Type) ->
 			B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
 			case Type of
 				post ->
-					ar_test_node:send_new_block(ar_test_node:peer_ip(peer1), B);
+					ar_test_node:send_new_block(ar_test_node:peer_addr(peer1), B);
 				announcement ->
 					Announcement = #block_announcement{ indep_hash = H,
 						previous_block = B#block.previous_block,
@@ -65,7 +65,7 @@ test_recent_blocks(Type) ->
 						solution_hash = B#block.hash,
 						tx_prefixes = [] },
 					ar_http_iface_client:send_block_announcement(
-						ar_test_node:peer_ip(peer1), Announcement)
+						ar_test_node:peer_addr(peer1), Announcement)
 			end
 		end,
 		%% Reverse the list so that the peer receives the blocks in the same order they
@@ -75,9 +75,9 @@ test_recent_blocks(Type) ->
 
 	%% Peer1 recent should now have timestamps, but also black out the most recent
 	%% ones.
-	?assertEqual(expected_blocks(peer1, PeerBI), 
-		get_recent(ar_test_node:peer_ip(peer1), blocks)).
-		
+	?assertEqual(expected_blocks(peer1, PeerBI),
+		get_recent(ar_test_node:peer_addr(peer1), blocks)).
+
 expected_blocks(Node, BI) ->
 	expected_blocks(Node, BI, false).
 expected_blocks(Node, BI, ForcePending) ->
@@ -179,7 +179,7 @@ test_recent_forks() ->
     ar_test_node:start_peer(peer2, B0),
     ar_test_node:connect_to_peer(peer1),
     ar_test_node:connect_to_peer(peer2),
-   
+
     %% Mine a few blocks, shared by both peers
     ar_test_node:mine(peer1),
     ar_test_node:wait_until_height(peer1, 1),
@@ -203,7 +203,7 @@ test_recent_forks() ->
 		height = 4,
 		block_ids = Orphans1
 	},
-		
+
     ar_test_node:mine(peer2),
     ar_test_node:wait_until_height(peer2, 4),
     ar_test_node:mine(peer2),
@@ -252,23 +252,23 @@ test_recent_forks() ->
 	ar_test_node:disconnect_from(peer1),
     ar_test_node:disconnect_from(peer2),
 
-	assert_forks_json_equal([Fork2, Fork1], get_recent(ar_test_node:peer_ip(peer1), forks)),
+	assert_forks_json_equal([Fork2, Fork1], get_recent(ar_test_node:peer_addr(peer1), forks)),
 	ok.
 
 assert_forks_json_equal(ExpectedForks) ->
-	assert_forks_json_equal(ExpectedForks, get_recent(ar_test_node:peer_ip(main), forks)).
+	assert_forks_json_equal(ExpectedForks, get_recent(ar_test_node:peer_addr(main), forks)).
 
 assert_forks_json_equal(ExpectedForks, ActualForks) ->
-	ExpectedForksStripped = [ 
+	ExpectedForksStripped = [
 		#{
 			<<"id">> => ar_util:encode(Fork#fork.id),
 			<<"height">> => Fork#fork.height,
 			<<"blocks">> => [ ar_util:encode(BlockID) || BlockID <- Fork#fork.block_ids ]
-		} 
+		}
 		|| Fork <- ExpectedForks],
 	ActualForksStripped = [ maps:remove(<<"timestamp">>, Fork) || Fork <- ActualForks ],
 	?assertEqual(ExpectedForksStripped, ActualForksStripped).
-	
+
 get_recent(Peer, Type) ->
 	case get_recent(Peer) of
 		info_unavailable -> info_unavailable;
@@ -285,7 +285,7 @@ get_recent(Peer) ->
 			timeout => 2 * 1000
 		})
 	of
-		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> 
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} ->
 			case ar_serialize:json_decode(JSON, [return_maps]) of
 				{ok, JsonMap} ->
 					JsonMap;

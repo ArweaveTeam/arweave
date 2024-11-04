@@ -31,14 +31,14 @@ setup_nodes2(#{ addr := MainAddr, peer_addr := PeerAddr } = Options) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	case maps:get(storage_modules, Options, not_found) of
 		not_found ->
-			ar_test_node:start(B0, MainAddr, Config);
+			ar_test_node:start(B0, MainAddr, Config#config{local_peers = [{127,0,0,1, PeerConfig#config.port}]});
 		StorageModules ->
-			ar_test_node:start(B0, MainAddr, Config, StorageModules)
+			ar_test_node:start(B0, MainAddr, Config#config{local_peers = [{127,0,0,1, PeerConfig#config.port}]}, StorageModules)
 	end,
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig),
+	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig#config{local_peers = [{127,0,0,1, Config#config.port}]}),
 	ar_test_node:connect_to_peer(peer1),
 	Wallet.
 
@@ -235,7 +235,7 @@ build_proofs(TX, Chunks, TXs, BlockStartOffset, Height) ->
 	).
 
 get_tx_offset(Node, TXID) ->
-	Peer = ar_test_node:peer_ip(Node),
+	Peer = ar_test_node:peer_addr(Node),
 	ar_http:req(#{
 		method => get,
 		peer => Peer,

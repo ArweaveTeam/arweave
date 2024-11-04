@@ -188,7 +188,7 @@ test_persisted_mempool() ->
 	%% Expect the pending transactions to be picked up and distributed.
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
-		peers = [ar_test_node:peer_ip(peer1)]
+		peers = [ar_test_node:peer_addr(peer1)]
 	}),
 	ar:start_dependencies(),
 	ar_test_node:wait_until_joined(),

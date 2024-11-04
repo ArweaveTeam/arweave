@@ -107,7 +107,7 @@ test_price_per_gib_minute_transition_phases() ->
 		"After 2.7.2 transition end").
 
 test_v2_price() ->
-	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() + 
+	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() +
 		ar_pricing_transition:transition_length(ar_pricing_transition:transition_start_2_7_2()),
 
 	%% 2 chunks per partition when running tests
@@ -130,14 +130,14 @@ test_v2_price() ->
 	do_price_per_gib_minute_post_transition(BeyondTransition, 61440, 122880, 92160).
 
 test_v2_price_with_poa1_diff_multiplier() ->
-	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() + 
+	AtTransitionEnd = ar_pricing_transition:transition_start_2_7_2() +
 		ar_pricing_transition:transition_length(ar_pricing_transition:transition_start_2_7_2()),
 
 	%% 2 chunks per partition when running tests
 	%% If we get 1 solution per chunk (or 2 per partition), then we expect a price of 61440
 	%%   that's our "baseline" for the purposes of this explanation
 	%%
-	%% Note: in these tests teh poa1 difficulty modifier is set to 2, which changes the 
+	%% Note: in these tests teh poa1 difficulty modifier is set to 2, which changes the
 	%%       number of solutions per chunk.
 	%%
 	%% AllOneChunkBaseline: 0.5x baseline
@@ -150,7 +150,7 @@ test_v2_price_with_poa1_diff_multiplier() ->
 	%%   => 3 per partition
 	%% MixedChunkBaseline: 0.5x baseline
 	%%   - 2 1-chunk blocks, 1 2-chunk blocks
-	%%   => 3/4 solutions per chunk 
+	%%   => 3/4 solutions per chunk
 	%%   => 1.5 per partition
 	%%   => Since we deal in integers, that gets rounded to 1 per partition
 	do_price_per_gib_minute_post_transition(AtTransitionEnd, 30720, 92160, 30720),
@@ -159,7 +159,7 @@ test_v2_price_with_poa1_diff_multiplier() ->
 
 do_price_per_gib_minute_post_transition(Height,
 		AllOneChunkBaseline, AllTwoChunkBaseline, MixedChunkBaseline) ->
-	
+
 	PoA1DiffMultiplier = ar_difficulty:poa1_diff_multiplier(Height),
 	B0 = #block{
 		reward_history = reward_history(1, 1), block_time_history = block_time_history(1, 1) },
@@ -653,7 +653,7 @@ assert_new_account_fee() ->
 %% @doc Return the current balance of the given account.
 get_balance(Pub) ->
 	Address = ar_wallet:to_address(Pub),
-	Peer = ar_test_node:peer_ip(main),
+	Peer = ar_test_node:peer_addr(main),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -678,7 +678,7 @@ get_balance(Pub) ->
 
 
 get_reserved_balance(Address) ->
-	Peer = ar_test_node:peer_ip(main),
+	Peer = ar_test_node:peer_addr(main),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
