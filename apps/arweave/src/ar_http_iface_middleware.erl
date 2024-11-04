@@ -2016,8 +2016,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								end, false, Config#config.local_peers),
 								case {IsPackServedChunks, IsLocalPeerAddr} of
 									{true, true} ->
-										ok = ar_semaphore:acquire(get_and_pack_chunk,
-												infinity),
+										ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
 										{RequestedPacking, ok};
 									{_, _} ->
 										{none, {reply, {403, #{}, <<>>, Req}}}
