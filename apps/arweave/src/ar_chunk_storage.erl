@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, put/2, put/3,
+-export([start_link/2, name/1, is_storage_supported/3, put/2, put/3,
 		open_files/1, get/1, get/2, get/5, read_chunk2/5, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, 
 		list_files/2, run_defragmentation/0]).
@@ -35,6 +35,34 @@
 %% @doc Start the server.
 start_link(Name, StoreID) ->
 	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
+
+%% @doc Return the name of the server serving the given StoreID.
+name(StoreID) ->
+	list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)).
+
+%% @doc Return true if we can accept the chunk for storage.
+%% 256 KiB chunks are stored in the blob storage optimized for read speed.
+%% Unpacked chunks smaller than 256 KiB cannot be stored here currently,
+%% because the module does not keep track of the chunk sizes - all chunks
+%% are assumed to be 256 KiB.
+-spec is_storage_supported(
+		Offset :: non_neg_integer(),
+		ChunkSize :: non_neg_integer(),
+		Packing :: term()
+) -> true | false.
+
+is_storage_supported(Offset, ChunkSize, Packing) ->
+	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
+		true ->
+			%% All chunks above ?STRICT_DATA_SPLIT_THRESHOLD are placed in 256 KiB buckets
+			%% so technically can be stored in ar_chunk_storage. However, to avoid
+			%% managing padding in ar_chunk_storage for unpacked chunks smaller than 256 KiB
+			%% (we do not need fast random access to unpacked chunks after
+			%% ?STRICT_DATA_SPLIT_THRESHOLD anyways), we put them to RocksDB.
+			Packing /= unpacked orelse ChunkSize == (?DATA_CHUNK_SIZE);
+		false ->
+			ChunkSize == (?DATA_CHUNK_SIZE)
+	end.
 
 %% @doc Store the chunk under the given end offset,
 %% bytes Offset - ?DATA_CHUNK_SIZE, Offset - ?DATA_CHUNK_SIZE + 1, .., Offset - 1.
@@ -397,7 +425,7 @@ get_chunk_group_size() ->
 	Config#config.chunk_storage_file_size.
 
 read_repack_cursor(StoreID, TargetPacking) ->
-	Filepath = get_filepath("repack_in_place_cursor", StoreID),
+	Filepath = get_filepath("repack_in_place_cursor2", StoreID),
 	case file:read_file(Filepath) of
 		{ok, Bin} ->
 			case catch binary_to_term(Bin) of
@@ -411,7 +439,7 @@ read_repack_cursor(StoreID, TargetPacking) ->
 	end.
 
 remove_repack_cursor(StoreID) ->
-	Filepath = get_filepath("repack_in_place_cursor", StoreID),
+	Filepath = get_filepath("repack_in_place_cursor2", StoreID),
 	case file:delete(Filepath) of
 		ok ->
 			ok;
@@ -424,7 +452,7 @@ remove_repack_cursor(StoreID) ->
 store_repack_cursor(0, _StoreID, _TargetPacking) ->
 	ok;
 store_repack_cursor(Cursor, StoreID, TargetPacking) ->
-	Filepath = get_filepath("repack_in_place_cursor", StoreID),
+	Filepath = get_filepath("repack_in_place_cursor2", StoreID),
 	file:write_file(Filepath, term_to_binary({Cursor, TargetPacking})).
 
 get_filepath(Name, StoreID) ->
@@ -758,23 +786,26 @@ chunk_offset_list_to_map(ChunkOffsets) ->
 	chunk_offset_list_to_map(ChunkOffsets, infinity, 0, #{}).
 
 repack(Cursor, RightBound, Packing, StoreID) ->
-	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ?MODULE, StoreID) of
+	case ar_sync_record:get_next_synced_interval(Cursor, RightBound,
+			ar_data_sync, StoreID) of
 		not_found ->
 			ar:console("~n~nRepacking of ~s is complete! "
 					"We suggest you stop the node, rename "
-					"the storage module folder to reflect the new packing, and start the "
+					"the storage module folder to reflect "
+					"the new packing, and start the "
 					"node with the new storage module.~n", [StoreID]),
 			?LOG_INFO([{event, repacking_complete},
 					{storage_module, StoreID},
-					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
+					{target_packing,
+							ar_serialize:encode_packing(Packing, true)}]),
 			Server = list_to_atom("ar_chunk_storage_"
 					++ ar_storage_module:label_by_id(StoreID)),
 			gen_server:cast(Server, repacking_complete),
 			ok;
 		{End, Start} ->
 			Start2 = max(Cursor, Start),
-			case ar_sync_record:get_next_synced_interval(Start2, End, Packing, ar_data_sync,
-					StoreID) of
+			case ar_sync_record:get_next_synced_interval(Start2, End,
+					Packing, ar_data_sync, StoreID) of
 				not_found ->
 					repack(Start2, End, End, RightBound, Packing, StoreID);
 				{End3, Start3} when Start3 > Start2 ->
@@ -789,7 +820,10 @@ repack(Start, End, NextCursor, RightBound, Packing, StoreID) when Start >= End -
 repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	RepackIntervalSize = ?DATA_CHUNK_SIZE * Config#config.repack_batch_size,
-	Server = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
+	Server = name(StoreID),
+	Start2 = Start + RepackIntervalSize,
+	RepackFurtherArgs = {repack, Start2, End, NextCursor, RightBound,
+			RequiredPacking},
 	CheckPackingBuffer =
 		case ar_packing_server:is_buffer_full() of
 			true ->
@@ -804,104 +838,146 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 			continue ->
 				continue;
 			ok ->
-				case catch get_range(Start, RepackIntervalSize, StoreID) of
-					[] ->
-						Start2 = Start + RepackIntervalSize,
-						gen_server:cast(Server, {repack, Start2, End, NextCursor, RightBound,
-								RequiredPacking}),
-						continue;
-					{'EXIT', _Exc} ->
-						?LOG_ERROR([{event, failed_to_read_chunk_range},
-								{storage_module, StoreID},
-								{start, Start},
-								{size, RepackIntervalSize},
-								{store_id, StoreID}]),
-						Start2 = Start + RepackIntervalSize,
-						gen_server:cast(Server, {repack, Start2, End, NextCursor, RightBound,
-								RequiredPacking}),
-						continue;
-					Range ->
-						{ok, Range}
-				end
+				repack_read_chunk_range(Start, RepackIntervalSize,
+						StoreID, RepackFurtherArgs)
 		end,
 	ReadMetadataRange =
 		case ReadRange of
 			continue ->
 				continue;
 			{ok, Range2} ->
-				{Min, Max, Map} = chunk_offset_list_to_map(Range2),
-				case ar_data_sync:get_chunk_metadata_range(Min, min(Max, End), StoreID) of
-					{ok, MetadataMap} ->
-						{ok, Map, MetadataMap};
-					{error, Error} ->
-						?LOG_ERROR([{event, failed_to_read_chunk_metadata_range},
-								{storage_module, StoreID},
-								{error, io_lib:format("~p", [Error])},
-								{left, Min},
-								{right, Max}]),
-						Start3 = Start + RepackIntervalSize,
-						gen_server:cast(Server, {repack, Start3, End, NextCursor, RightBound,
-								RequiredPacking}),
-						continue
-				end
+				repack_read_chunk_metadata_range(StoreID, Range2, End,
+						RepackFurtherArgs)
 		end,
 	case ReadMetadataRange of
 		continue ->
 			ok;
 		{ok, Map2, MetadataMap2} ->
-			Start4 = Start + RepackIntervalSize,
-			gen_server:cast(Server, {repack, Start4, End, NextCursor, RightBound,
-					RequiredPacking}),
-			maps:fold(
-				fun	(AbsoluteOffset, {_, _TXRoot, _, _, _, ChunkSize}, ok)
-							when ChunkSize /= ?DATA_CHUNK_SIZE,
-									AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD ->
-						ok;
-					(AbsoluteOffset, {_, TXRoot, _, _, _, ChunkSize}, ok) ->
-						PaddedOffset = ar_data_sync:get_chunk_padded_offset(AbsoluteOffset),
-						case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
-							{true, RequiredPacking} ->
-								?LOG_WARNING([{event,
-											repacking_process_chunk_already_repacked},
-										{storage_module, StoreID},
-										{packing,
-											ar_serialize:encode_packing(RequiredPacking,true)},
-										{offset, AbsoluteOffset}]),
-								ok;
-							{true, Packing} ->
-								case maps:get(PaddedOffset, Map2, not_found) of
+			gen_server:cast(Server, {repack, Start2, End, NextCursor,
+					RightBound, RequiredPacking}),
+			Args = {StoreID, RequiredPacking, Map2, Server},
+			repack_send_chunks_for_repacking(MetadataMap2, Args)
+	end.
+
+repack_read_chunk_range(Start, Size, StoreID, RepackFurtherArgs) ->
+	Server = name(StoreID),
+	case catch get_range(Start, Size, StoreID) of
+		[] ->
+			gen_server:cast(Server, RepackFurtherArgs),
+			continue;
+		{'EXIT', _Exc} ->
+			?LOG_ERROR([{event, failed_to_read_chunk_range},
+					{storage_module, StoreID},
+					{start, Start},
+					{size, Size}]),
+			gen_server:cast(Server, RepackFurtherArgs),
+			continue;
+		Range ->
+			{ok, Range}
+	end.
+
+repack_read_chunk_metadata_range(StoreID, Range, End, RepackFurtherArgs) ->
+	Server = name(StoreID),
+	{Min, Max, Map} = chunk_offset_list_to_map(Range), % TODO
+	case ar_data_sync:get_chunk_metadata_range(Min, min(Max, End), StoreID) of
+		{ok, MetadataMap} ->
+			{ok, Map, MetadataMap};
+		{error, Error} ->
+			?LOG_ERROR([{event, failed_to_read_chunk_metadata_range},
+					{storage_module, StoreID},
+					{error, io_lib:format("~p", [Error])},
+					{left, Min},
+					{right, Max}]),
+			gen_server:cast(Server, RepackFurtherArgs),
+			continue
+	end.
+
+repack_send_chunks_for_repacking(MetadataMap, Args) ->
+	maps:fold(repack_send_chunks_for_repacking(Args), ok, MetadataMap).
+
+repack_send_chunks_for_repacking(Args) ->
+	fun	(AbsoluteOffset, {_, _TXRoot, _, _, _, ChunkSize}, ok)
+				when ChunkSize /= ?DATA_CHUNK_SIZE,
+						AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD ->
+			ok;
+		(AbsoluteOffset, {ChunkDataKey, TXRoot, _, _, _, ChunkSize}, ok) ->
+			repack_send_chunk_for_repacking(AbsoluteOffset,
+					ChunkDataKey, TXRoot, ChunkSize, Args)
+	end.
+
+repack_send_chunk_for_repacking(AbsoluteOffset, ChunkDataKey,
+		TXRoot, ChunkSize, Args) ->
+	{StoreID, RequiredPacking, ChunkMap} = Args,
+	Server = name(StoreID),
+	PaddedOffset = ar_data_sync:get_chunk_padded_offset(AbsoluteOffset),
+	case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
+		{true, RequiredPacking} ->
+			?LOG_WARNING([{event, repacking_process_chunk_already_repacked},
+					{storage_module, StoreID},
+					{packing,
+						ar_serialize:encode_packing(RequiredPacking, true)},
+					{offset, AbsoluteOffset}]),
+			ok;
+		{true, Packing} ->
+			Chunk =
+				case maps:get(PaddedOffset, ChunkMap, not_found) of
+					not_found ->
+						case is_storage_supported(PaddedOffset, ChunkSize, Packing) of
+							false ->
+								%% We do not store unpacked chunks in
+								%% ar_chunk_storage. % TODO
+								not_found;
+							true ->
+								case ar_kv:get({chunk_data_db, StoreID}, ChunkDataKey) of
 									not_found ->
 										?LOG_WARNING([{event,
-												chunk_not_found_in_chunk_storage},
-											{storage_module, StoreID},
-											{offset, PaddedOffset}]),
-										ok;
-									Chunk ->
-										Ref = make_ref(),
-										gen_server:cast(Server,
-												{register_packing_ref, Ref, PaddedOffset}),
-										ar_util:cast_after(300000, Server,
-												{expire_repack_request, Ref}),
-										ar_packing_server:request_repack(Ref, whereis(Server),
-												{RequiredPacking, Packing, Chunk,
-													AbsoluteOffset, TXRoot, ChunkSize}),
-										ok
-								end;
-							true ->
-								?LOG_WARNING([{event, no_packing_information_for_the_chunk},
-										{storage_module, StoreID},
-										{offset, PaddedOffset}]),
-								ok;
-							false ->
-								?LOG_WARNING([{event, chunk_not_found_in_sync_record},
-										{storage_module, StoreID},
-										{offset, PaddedOffset}]),
-								ok
-						end
+											entry_not_found_in_chunk_data_db},
+												{type, repack_in_place},
+												{storage_module, StoreID},
+												{offset, AbsoluteOffset},
+												{padded_offset, PaddedOffset}]),
+										not_found;
+									{ok, V} ->
+										case binary_to_term(V) of
+											{Chunk2, _DataPath} ->
+												Chunk2;
+											_ ->
+												?LOG_WARNING([{event,
+						chunk_neither_in_chunk_data_db_nor_in_chunk_storage},
+													{type, repack_in_place},
+													{storage_module, StoreID},
+													{offset, AbsoluteOffset},
+													{padded_offset, PaddedOffset}]),
+												not_found
+										end
+								end
+						end;
+					Chunk3 ->
+							Chunk3
 				end,
-				ok,
-				MetadataMap2
-			)
+			case Chunk of
+				not_found ->
+					ok;
+				_ ->
+					Ref = make_ref(),
+					gen_server:cast(Server,
+							{register_packing_ref, Ref, PaddedOffset}),
+					ar_util:cast_after(300000, Server,
+							{expire_repack_request, Ref}),
+					ar_packing_server:request_repack(Ref, whereis(Server),
+							{RequiredPacking, Packing, Chunk,
+									AbsoluteOffset, TXRoot, ChunkSize})
+			end;
+		true ->
+			?LOG_WARNING([{event, no_packing_information_for_the_chunk},
+					{storage_module, StoreID},
+					{offset, PaddedOffset}]),
+			ok;
+		false ->
+			?LOG_WARNING([{event, chunk_not_found_in_sync_record},
+					{storage_module, StoreID},
+					{offset, PaddedOffset}]),
+			ok
 	end.
 
 chunk_offset_list_to_map([], Min, Max, Map) ->
