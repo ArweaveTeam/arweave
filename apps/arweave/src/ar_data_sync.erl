@@ -2827,6 +2827,11 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					%% The chunk has been synced by another job already.
 					decrement_chunk_cache_size(),
 					{noreply, State};
+				false when Packing =/= unpacked ->
+					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
+					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
+							DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
+							none, none, none}, State);
 				false ->
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
 					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
