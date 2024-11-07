@@ -21,7 +21,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	case ar_config:is_vdf_server() andalso not ar_config:verify() of
+	case ar_config:is_vdf_server() of
 		false ->
 			ignore;
 		true ->
