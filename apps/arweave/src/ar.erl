@@ -678,10 +678,11 @@ start(Config) ->
 			timer:sleep(2000),
 			erlang:halt()
 	end,
-	ok = application:set_env(arweave, config, Config),
-	filelib:ensure_dir(Config#config.log_dir ++ "/"),
+	Config2 = ar_config:set_dependent_flags(Config),
+	ok = application:set_env(arweave, config, Config2),
+	filelib:ensure_dir(Config2#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
-	case Config#config.nonce_limiter_server_trusted_peers of
+	case Config2#config.nonce_limiter_server_trusted_peers of
 		[] ->
 			VDFSpeed = ar_bench_vdf:run_benchmark(),
 			?LOG_INFO([{event, vdf_benchmark}, {vdf_s, VDFSpeed / 1000000}]);

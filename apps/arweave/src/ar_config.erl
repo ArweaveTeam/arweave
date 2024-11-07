@@ -1,6 +1,6 @@
 -module(ar_config).
 
--export([validate_config/1, auto_join/0, verify/0, use_remote_vdf_server/0,
+-export([validate_config/1, set_dependent_flags/1, use_remote_vdf_server/0,
 		pull_from_remote_vdf_server/0, compute_own_vdf/0, is_vdf_server/0,
 		is_public_vdf_server/0, parse/1, parse_storage_module/1, log_config/1]).
 
@@ -13,6 +13,7 @@
 %%% Public interface.
 %%%===================================================================
 
+-spec validate_config(Config :: #config{}) -> boolean().
 validate_config(Config) ->
 	validate_init(Config) andalso
 	validate_storage_modules(Config) andalso
@@ -21,13 +22,11 @@ validate_config(Config) ->
 	validate_packing_difficulty(Config) andalso
 	validate_verify(Config).
 
-auto_join() ->
-	{ok, Config} = application:get_env(arweave, config),
-	Config#config.auto_join andalso not Config#config.verify.
-
-verify() ->
-	{ok, Config} = application:get_env(arweave, config),
-	Config#config.verify.
+-spec set_dependent_flags(Config :: #config{}) -> #config{}.
+%% @doc Some flags force other flags to be set.
+set_dependent_flags(Config) ->
+	Config2 = set_verify_flags(Config),
+	Config2.
 
 use_remote_vdf_server() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -990,3 +989,32 @@ validate_verify(#config{ verify = true,
 	false;
 validate_verify(_Config) ->
 	true.
+
+disable_vdf(Config) ->
+	RemovePublicVDFServer = 
+		lists:filter(fun(Item) -> Item =/= public_vdf_server end, Config#config.enable),
+	Config#config{
+		nonce_limiter_client_peers = [],
+		nonce_limiter_server_trusted_peers = [],
+		enable = RemovePublicVDFServer,
+		disable = [compute_own_vdf | Config#config.disable]
+	}.
+
+set_verify_flags(#config{ verify = false } = Config) ->
+	Config;
+set_verify_flags(Config) ->
+	io:format("~n~nWARNING: The verify flag is set. Forcing the following options:"),
+	io:format("~n  - auto_join = false"),
+	io:format("~n  - start_from_latest_state = true"),
+	io:format("~n  - sync_jobs = 0"),
+	io:format("~n  - block_pollers = 0"),
+	io:format("~n  - header_sync_jobs = 0"),
+	io:format("~n  - all VDF features disabled"),
+	Config2 = disable_vdf(Config),
+	Config2#config{
+		auto_join = false,
+		start_from_latest_state = true,
+		sync_jobs = 0,
+		block_pollers = 0,
+		header_sync_jobs = 0
+	}.
