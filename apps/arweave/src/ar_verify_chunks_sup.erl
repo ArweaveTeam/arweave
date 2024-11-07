@@ -1,4 +1,4 @@
--module(ar_verify_chunk_storage_sup).
+-module(ar_verify_chunks_sup).
 
 -behaviour(supervisor).
 
@@ -30,8 +30,8 @@ init([]) ->
 				fun(StorageModule) ->
 					StoreID = ar_storage_module:id(StorageModule),
 					Label = ar_storage_module:label(StorageModule),
-					Name = list_to_atom("ar_verify_chunk_storage_" ++ Label),
-					?CHILD_WITH_ARGS(ar_verify_chunk_storage, worker, Name, [Name, StoreID])
+					Name = list_to_atom("ar_verify_chunks_" ++ Label),
+					?CHILD_WITH_ARGS(ar_verify_chunks, worker, Name, [Name, StoreID])
 				end,
 				Config#config.storage_modules
 			),
