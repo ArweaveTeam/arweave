@@ -1,5 +1,5 @@
 %%% The blob storage optimized for fast reads.
--module(ar_verify_chunk_storage).
+-module(ar_verify_chunks).
 
 -behaviour(gen_server).
 

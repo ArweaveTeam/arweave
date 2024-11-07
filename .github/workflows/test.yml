@@ -76,6 +76,7 @@ jobs:
             ar_tx_db,
             ar_unbalanced_merkle,
             ar_util,
+            ar_verify_chunks,
             ar_wallet,
             ar_webhook,
             ar_pool,
