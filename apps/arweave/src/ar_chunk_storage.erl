@@ -986,7 +986,7 @@ repack_send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 					RepackArgs = {Packing, MaybeDataPath, RelativeOffset,
 							DataRoot, TXPath, none, none},
 					gen_server:cast(Server,
-							{register_packing_ref, RepackArgs}),
+							{register_packing_ref, Ref, RepackArgs}),
 					ar_util:cast_after(300000, Server,
 							{expire_repack_request, Ref}),
 					ar_packing_server:request_repack(Ref, whereis(Server),
