@@ -867,6 +867,16 @@ handle_cast({pack_and_store_chunk, Args} = Cast,
 			{noreply, State}
 	end;
 
+handle_cast({store_chunk, ChunkArgs, Args} = Cast,
+		#sync_data_state{ store_id = StoreID } = State) ->
+	case is_disk_space_sufficient(StoreID) of
+		true ->
+			{noreply, store_chunk(ChunkArgs, Args, State)};
+		_ ->
+			ar_util:cast_after(30000, self(), Cast),
+			{noreply, State}
+	end;
+
 %% Schedule syncing of the unsynced intervals. Choose a peer for each of the intervals.
 %% There are two message payloads:
 %% 1. collect_peer_intervals
