@@ -93,7 +93,7 @@ init([]) ->
 	validate_trusted_peers(Config),
 	StartFromLocalState = Config#config.start_from_latest_state orelse
 			Config#config.start_from_block /= undefined,
-	case {StartFromLocalState, Config#config.init, ar_config:auto_join()} of
+	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
 		{false, false, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
