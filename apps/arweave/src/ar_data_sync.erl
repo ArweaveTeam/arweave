@@ -730,7 +730,7 @@ handle_cast({join, RecentBI}, State) ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
 			{ok, Config} = application:get_env(arweave, config),
-			[gen_server:cast(name(Module),
+			[gen_server:cast(name(ar_storage_module:id(Module)),
 					{cut, Offset}) || Module <- Config#config.storage_modules],
 			ok = ar_chunk_storage:cut(Offset, StoreID),
 			ok = ar_sync_record:cut(Offset, ?MODULE, StoreID),

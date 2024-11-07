@@ -145,7 +145,7 @@ verify_proof(MetaData, State) ->
 	end.
 
 verify_chunk_storage(Offset, _ChunkSize, {End, Start}, State) 
-		when Offset >= Start andalso Offset =< End ->
+		when Offset - ?DATA_CHUNK_SIZE >= Start andalso Offset =< End ->
 	State;
 verify_chunk_storage(Offset, ChunkSize, _Interval, State) ->
 	#state{ packing = Packing } = State,
