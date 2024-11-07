@@ -29,12 +29,12 @@ init([]) ->
 			Workers = lists:map(
 				fun(StorageModule) ->
 					StoreID = ar_storage_module:id(StorageModule),
-					Label = ar_storage_module:label(StorageModule),
-					Name = list_to_atom("ar_verify_chunks_" ++ Label),
+					Name = ar_verify_chunks:name(StoreID),
 					?CHILD_WITH_ARGS(ar_verify_chunks, worker, Name, [Name, StoreID])
 				end,
 				Config#config.storage_modules
 			),
-			{ok, {{one_for_one, 5, 10}, Workers}}
+			Reporter = ?CHILD(ar_verify_chunks_reporter, worker),
+			{ok, {{one_for_one, 5, 10}, [Reporter | Workers]}}
 	end.
 	

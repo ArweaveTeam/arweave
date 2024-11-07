@@ -1,34 +1,24 @@
-%%% The blob storage optimized for fast reads.
 -module(ar_verify_chunks).
 
 -behaviour(gen_server).
 
-
--export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([start_link/2, name/1]).
+-export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave/include/ar_verify_chunks.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--record(report, {
-	total_error_bytes = 0 :: non_neg_integer(),
-	total_error_chunks = 0 :: non_neg_integer(),
-	error_bytes = #{} :: #{atom() => non_neg_integer()},
-	error_chunks = #{} :: #{atom() => non_neg_integer()}
-}).
 
 -record(state, {
 	store_id :: binary(),
 	packing :: binary(),
-	start_time :: non_neg_integer(),
 	start_offset :: non_neg_integer(),
 	end_offset :: non_neg_integer(),
 	cursor :: non_neg_integer(),
 	ready = false :: boolean(),
-	report = #report{} :: #report{}
+	verify_report = #verify_report{} :: #verify_report{}
 }).
-
--define(REPORT_PROGRESS_INTERVAL, 5000).
 
 %%%===================================================================
 %%% Public interface.
@@ -38,67 +28,41 @@
 start_link(Name, StorageModule) ->
 	gen_server:start_link({local, Name}, ?MODULE, StorageModule, []).
 
+-spec name(binary()) -> atom().
+name(StoreID) ->
+	list_to_atom("ar_verify_chunks_" ++ ar_storage_module:label_by_id(StoreID)).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init(StoreID) ->
-	?LOG_ERROR([{event, verify_chunk_storage_started}, {store_id, StoreID}]),
+	?LOG_INFO([{event, verify_chunk_storage_started}, {store_id, StoreID}]),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),
 	gen_server:cast(self(), verify),
-	ar_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
 	{ok, #state{
 		store_id = StoreID,
 		packing = ar_storage_module:get_packing(StoreID),
-		start_time = erlang:system_time(millisecond),
 		start_offset = StartOffset,
 		end_offset = EndOffset,
 		cursor = StartOffset,
-		ready = is_ready(EndOffset)
+		ready = is_ready(EndOffset),
+		verify_report = #verify_report{
+			start_time = erlang:system_time(millisecond)
+		}
 	}}.
 
 handle_cast(verify, #state{ready = false, end_offset = EndOffset} = State) ->
-	?LOG_ERROR([{event, not_ready}]),
 	ar_util:cast_after(1000, self(), verify),
 	{noreply, State#state{ready = is_ready(EndOffset)}};
 handle_cast(verify,
 		#state{cursor = Cursor, end_offset = EndOffset} = State) when Cursor >= EndOffset ->
 	ar:console("Done!~n"),
 	{noreply, State};
-handle_cast(verify, #state{store_id = StoreID} = State) ->
-	{noreply, verify(State)};
-
-handle_cast(report_progress, #state{ready = false} = State) ->
-	ar_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
-	{noreply, State};
-handle_cast(report_progress, #state{cursor = Cursor, end_offset = EndOffset} = State)
-		when Cursor >= EndOffset ->
-	{noreply, State};
-handle_cast(report_progress, State) ->
-	#state{
-		start_time = StartTime,
-		cursor = Cursor,
-		start_offset = StartOffset,
-		end_offset = EndOffset,
-		report = Report,
-		store_id = StoreID
-	} = State,
-	Bytes = Cursor - StartOffset,
-	MB = Bytes div 1000000,
-	Progress = Bytes * 100 div (EndOffset - StartOffset),
-	ElapsedTime = (erlang:system_time(millisecond) - StartTime) div 1000,
-	Rate = MB div ElapsedTime,
-	Intersection = ar_sync_record:get_intersection_size(EndOffset, StartOffset, invalid_chunks, StoreID),
-	ar:console("============== ~s ==============~n", [StoreID]),
-	ar:console("Verified ~B GB. ~B% done. ~B elapsed. ~B MB/s.~n", [MB div 1000, Progress, ElapsedTime, Rate]),
-	ar:console("Missing chunks: ~B~n", [Report#report.total_error_chunks]),
-	ar:console("Missing bytes: ~B MB~n", [Report#report.total_error_bytes div 1000000]),
-	ar:console("Missing bytes (padded): ~B MB~n", [Report#report.total_error_chunks * ?DATA_CHUNK_SIZE div 1000000]),
-	ar:console("Report: ~p~n", [Report]),
-	ar:console("Intervals: ~p~n", [Intersection]),
-	ar:console("=============================================================================================~n~n"),
-	ar_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
-	{noreply, State};
+handle_cast(verify, State) ->
+	State2 = verify(State),
+	State3 = report_progress(State2),
+	{noreply, State3};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -106,7 +70,7 @@ handle_cast(Cast, State) ->
 
 handle_call(Call, From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {call, Call}, {from, From}]),
-	{noreply, State}.
+	{reply, ok, State}.
 
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
@@ -201,23 +165,23 @@ invalidate_chunk(Type, Offset, ChunkSize, Logs, State) ->
 	log_error(Type, Offset, ChunkSize, Logs, State).
 
 log_error(Type, Offset, ChunkSize, Logs, State) ->
-	#state{ report = Report, store_id = StoreID, cursor = Cursor, packing = Packing } = State,
+	#state{ verify_report = Report, store_id = StoreID, cursor = Cursor, packing = Packing } = State,
 
 	LogMessage = [{event, verify_chunk_storage_error},
 		{type, Type}, {store_id, StoreID},
 		{packing, ar_serialize:encode_packing(Packing, true)},
 		{offset, Offset}, {cursor, Cursor}, {chunk_size, ChunkSize}] ++ Logs,
 	?LOG_INFO(LogMessage),
-	NewBytes = maps:get(Type, Report#report.error_bytes, 0) + ChunkSize,
-	NewChunks = maps:get(Type, Report#report.error_chunks, 0) + 1,
+	NewBytes = maps:get(Type, Report#verify_report.error_bytes, 0) + ChunkSize,
+	NewChunks = maps:get(Type, Report#verify_report.error_chunks, 0) + 1,
 
-	Report2 = Report#report{
-		total_error_bytes = Report#report.total_error_bytes + ChunkSize,
-		total_error_chunks = Report#report.total_error_chunks + 1,
-		error_bytes = maps:put(Type, NewBytes, Report#report.error_bytes),
-		error_chunks = maps:put(Type, NewChunks, Report#report.error_chunks)
+	Report2 = Report#verify_report{
+		total_error_bytes = Report#verify_report.total_error_bytes + ChunkSize,
+		total_error_chunks = Report#verify_report.total_error_chunks + 1,
+		error_bytes = maps:put(Type, NewBytes, Report#verify_report.error_bytes),
+		error_chunks = maps:put(Type, NewChunks, Report#verify_report.error_chunks)
 	},
-	State#state{ report = Report2 }.
+	State#state{ verify_report = Report2 }.
 
 query_intervals(State) ->
 	#state{cursor = Cursor, store_id = StoreID} = State,
@@ -263,6 +227,20 @@ check_interval({End, Start}) when Start > End ->
 	not_found;
 check_interval(Interval) ->
 	Interval.
+
+report_progress(State) ->
+	#state{ 
+		store_id = StoreID, verify_report = Report, cursor = Cursor,
+		start_offset = StartOffset, end_offset = EndOffset
+	} = State,
+	BytesProcessed = Cursor - StartOffset,
+	Progress = BytesProcessed * 100 div (EndOffset - StartOffset),
+	Report2 = Report#verify_report{
+		bytes_processed = BytesProcessed,
+		progress = Progress
+	},
+	ar_verify_chunks_reporter:update(StoreID, Report2),
+	State#state{ verify_report = Report2 }.
 
 %% ar_chunk_storage does not store small chunks before strict_split_data_threshold
 %% (before 30607159107830 = partitions 0-7 and a half of 8
@@ -313,8 +291,8 @@ verify_chunk_test_() ->
 		],
 			fun test_verify_chunk/0
 		)
-		
-	].	
+	].
+
 test_align_intervals() ->
 	?assertEqual(
 		{not_found, not_found},
@@ -402,7 +380,7 @@ test_verify_chunk_storage_should_store() ->
 	Addr = crypto:strong_rand_bytes(32),
 	ExpectedState = #state{ 
 		packing = unpacked,
-		report = #report{
+		verify_report = #verify_report{
 			total_error_bytes = ?DATA_CHUNK_SIZE,
 			total_error_chunks = 1,
 			error_bytes = #{chunk_storage_gap => ?DATA_CHUNK_SIZE},
@@ -426,7 +404,7 @@ test_verify_chunk_storage_should_store() ->
 	?assertEqual(
 		#state{
 			packing = {composite, Addr, 1},
-			report = #report{
+			verify_report = #verify_report{
 				total_error_bytes = ?DATA_CHUNK_SIZE div 2,
 				total_error_chunks = 1,
 				error_bytes = #{chunk_storage_gap => ?DATA_CHUNK_SIZE div 2},
@@ -463,7 +441,7 @@ test_verify_chunk_storage_should_not_store() ->
 test_verify_proof_no_datapath() ->
 	ExpectedState1 = #state{ 
 		packing = unpacked,
-		report = #report{
+		verify_report = #verify_report{
 			total_error_bytes = ?DATA_CHUNK_SIZE,
 			total_error_chunks = 1,
 			error_bytes = #{read_data_path_error => ?DATA_CHUNK_SIZE},
@@ -472,7 +450,7 @@ test_verify_proof_no_datapath() ->
 	},
 	ExpectedState2 = #state{ 
 		packing = unpacked,
-		report = #report{
+		verify_report = #verify_report{
 			total_error_bytes = ?DATA_CHUNK_SIZE div 2,
 			total_error_chunks = 1,
 			error_bytes = #{read_data_path_error => ?DATA_CHUNK_SIZE div 2},
@@ -502,7 +480,7 @@ test_verify_proof_valid_paths() ->
 test_verify_proof_invalid_paths() ->
 	ExpectedState1 = #state{ 
 		packing = unpacked,
-		report = #report{
+		verify_report = #verify_report{
 			total_error_bytes = ?DATA_CHUNK_SIZE,
 			total_error_chunks = 1,
 			error_bytes = #{validate_paths_error => ?DATA_CHUNK_SIZE},
@@ -511,7 +489,7 @@ test_verify_proof_invalid_paths() ->
 	},
 	ExpectedState2 = #state{ 
 		packing = unpacked,
-		report = #report{
+		verify_report = #verify_report{
 			total_error_bytes = ?DATA_CHUNK_SIZE div 2,
 			total_error_chunks = 1,
 			error_bytes = #{validate_paths_error => ?DATA_CHUNK_SIZE div 2},
@@ -550,7 +528,7 @@ test_verify_chunk() ->
 			#state{})),
 	ExpectedState = #state{ 
 		packing = unpacked,
-		report = #report{
+		verify_report = #verify_report{
 			total_error_bytes = ?DATA_CHUNK_SIZE,
 			total_error_chunks = 1,
 			error_bytes = #{get_chunk_error => ?DATA_CHUNK_SIZE},
