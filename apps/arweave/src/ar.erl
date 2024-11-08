@@ -343,7 +343,12 @@ show_help() ->
 					"and you want to monitor them separately on pool"},
 			{"rocksdb_flush_interval", "RocksDB flush interval in seconds"},
 			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"},
-			{"verify", "Run in verify mode. In verify mode, the node won't join the network and won't compute or request VDF steps. Also no mining or packing."}
+			{"verify", "Run in verify mode. The node will run several checks on all listed "
+				"storage_modules, and flag any errors so that the chunks can be resynced and "
+				"repacked. After completing a full verification cycle, you can restart "
+				"the node in normal mode to have it resync and/or repack any flagged chunks. "
+				"When running in verify mode several flags will be forced on and several "
+				"flags are disallowed. See the node output for details."}
 		]
 	),
 	erlang:halt().
