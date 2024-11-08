@@ -94,7 +94,8 @@ verify(State) ->
 	case State2#state.cursor >= State2#state.end_offset of
 		true ->
 			ar:console("Done verifying ~s!~n", [StoreID]),
-			?LOG_INFO([{event, verify_chunk_storage_verify_chunks_done}, {store_id, StoreID}]);
+			?LOG_INFO([{event, verify_chunk_storage_verify_chunks_done}, {store_id, StoreID}]),
+			report_progress(State2);
 		false ->
 			gen_server:cast(self(), verify)
 	end,
@@ -233,11 +234,18 @@ report_progress(State) ->
 		store_id = StoreID, verify_report = Report, cursor = Cursor,
 		start_offset = StartOffset, end_offset = EndOffset
 	} = State,
+
+	Status = case Cursor >= EndOffset of
+		true -> done;
+		false -> running
+	end,
+
 	BytesProcessed = Cursor - StartOffset,
 	Progress = BytesProcessed * 100 div (EndOffset - StartOffset),
 	Report2 = Report#verify_report{
 		bytes_processed = BytesProcessed,
-		progress = Progress
+		progress = Progress,
+		status = Status
 	},
 	ar_verify_chunks_reporter:update(StoreID, Report2),
 	State#state{ verify_report = Report2 }.

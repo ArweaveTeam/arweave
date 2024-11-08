@@ -8,7 +8,8 @@
 	error_bytes = #{} :: #{atom() => non_neg_integer()},
 	error_chunks = #{} :: #{atom() => non_neg_integer()},
 	bytes_processed = 0 :: non_neg_integer(),
-	progress = 0 :: non_neg_integer()
+	progress = 0 :: non_neg_integer(),
+	status = not_ready :: not_ready | running| done
 }).
 
 -endif.
