@@ -2019,7 +2019,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 										ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
 										{RequestedPacking, ok};
 									{_, _} ->
-										{none, {reply, {403, #{}, <<>>, Req}}}
+										{none, {reply, {404, #{}, <<>>, Req}}}
 								end
 						end,
 					case CheckRecords of
