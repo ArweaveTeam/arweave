@@ -52,8 +52,10 @@ for more information on running your own VDF server.
   1. Install [Homebrew](https://brew.sh/)
   2. Install dependencies
   ```sh
-  brew install gmp openssl@1.1 erlang cmake pkg-config
+  brew install gmp openssl@1.1 erlang@24 cmake pkg-config
   ```
+  3. Homebrew may ask you to update your `LDFLAGS` for erlang: don't. You should however
+  update your `PATH` as requested.
 
   **Notes:** 
   1. This process has only been tested on a fresh install of MacOS Ventura running on a Mac Mini M2. It may or may not work on other configurations.

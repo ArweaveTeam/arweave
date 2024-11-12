@@ -25,14 +25,14 @@ ifeq ($(UNAME_SYS), Darwin)
 	OSX_CPU_ARCH ?= x86_64
 	# nix systems may not have sysctl where uname -m will return the correct arch
 	SYSCTL_EXISTS := $(shell which sysctl 2>/dev/null)
-	ifdef SYSCTL_EXISTS
-		ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M(1|2)"),)
-	  	OSX_CPU_ARCH = arm64
-		endif
-  	else
-		ifneq ($(shell uname -m | egrep "arm64"),)
-	  	OSX_CPU_ARCH = arm64
+	ifneq ($(shell uname -m | egrep "arm64"),)
+		OSX_CPU_ARCH = arm64
+	else
+		ifdef SYSCTL_EXISTS
+			ifneq ($(shell sysctl -n machdep.cpu.brand_string | egrep "M(1|2)"),)
+				OSX_CPU_ARCH = arm64
 			endif
+		endif
 	endif
 	CC ?= cc
 	CFLAGS += -std=c99 -arch $(OSX_CPU_ARCH) -finline-functions -Wall -Wmissing-prototypes
