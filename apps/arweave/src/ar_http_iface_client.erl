@@ -431,7 +431,7 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 			}) of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			case ar_serialize:binary_to_reward_history(Body) of
-				{ok, RewardHistory} when length(RewardHistory) == ExpectedLength ->
+				{ok, RewardHistory} -> % when length(RewardHistory) == ExpectedLength ->
 					case ar_rewards:validate_reward_history_hashes(Height, RewardHistory,
 							ExpectedRewardHistoryHashes) of
 						true ->
@@ -448,11 +448,11 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 									{peer, ar_util:format_peer(Peer)}]),
 							get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 					end;
-				{ok, L} ->
-					?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
-							{expected_length, ExpectedLength}, {received_length, length(L)},
-							{peer, ar_util:format_peer(Peer)}]),
-					get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
+				% {ok, L} ->
+				% 	?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
+				% 			{expected_length, ExpectedLength}, {received_length, length(L)},
+				% 			{peer, ar_util:format_peer(Peer)}]),
+				% 	get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
 				{error, _} ->
 					?LOG_WARNING([{event, failed_to_parse_reward_history},
 							{peer, ar_util:format_peer(Peer)}]),
