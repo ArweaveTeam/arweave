@@ -2009,16 +2009,14 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							{{true, _}, _StoreID} ->
 								{ok, Config} = application:get_env(arweave, config),
 								IsPackServedChunks = lists:member(pack_served_chunks, Config#config.enable),
-								Peer = cowboy_req:peer(Req),
-								IsLocalPeerAddr = lists:foldl(fun
-									(_, true) -> true;
-									(LocalPeer, _) -> is_matching_addr(Peer, LocalPeer)
-								end, false, Config#config.local_peers),
-								case {IsPackServedChunks, IsLocalPeerAddr} of
-									{true, true} ->
+								Peer = ar_http_util:arweave_peer(Req),
+								IsLocalPeerAddr = lists:member(Peer, Config#config.local_peers),
+
+								case IsPackServedChunks orelse IsLocalPeerAddr of
+									true ->
 										ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
 										{RequestedPacking, ok};
-									{_, _} ->
+									false ->
 										{none, {reply, {404, #{}, <<>>, Req}}}
 								end
 						end,
@@ -2060,9 +2058,6 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 		_ ->
 			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
 	end.
-
-is_matching_addr({{O1, O2, O3, O4}, _Port1}, {O1, O2, O3, O4, _Port2}) -> true;
-is_matching_addr(_CowboyPeer, _LocalPeer) -> false.
 
 handle_get_chunk_proof(OffsetBinary, Req, Encoding) ->
 	case catch binary_to_integer(OffsetBinary) of
