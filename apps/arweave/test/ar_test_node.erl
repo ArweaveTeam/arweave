@@ -491,7 +491,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
 				double_check_nonce_limiter, serve_wallet_lists,
 				pack_served_chunks | Config#config.enable],
-		local_peers = [peer_addr(Node) || Node <- [main, peer1, peer2, peer3, peer4]],
 		debug = true
 	}),
 	ar:start_dependencies(),
