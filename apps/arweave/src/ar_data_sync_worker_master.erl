@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, is_syncing_enabled/0, ready_for_work/0, read_range/5]).
+-export([start_link/1, is_syncing_enabled/0, ready_for_work/1, read_range/5]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -33,8 +33,10 @@
 	task_queue_len = 0,
 	queued_task_count = 0, %% includes tasks queued in the main queue and in peer queues
 	scheduled_task_count = 0,
-	workers = queue:new(),
+	scheduled_task_count_by_store_id = #{},
+	workers = #{},
 	worker_count = 0,
+	store_count = 0,
 	worker_loads = #{},
 	peer_tasks = #{}
 }).
@@ -52,21 +54,22 @@ is_syncing_enabled() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.sync_jobs > 0.
 
-%% @doc Returns true if we can accept new tasks. Will always return false if syncing is
-%% disabled (i.e. sync_jobs = 0).
-ready_for_work() ->
+%% @doc Returns true if we can accept new tasks for the given StoreID.
+%% Will always return false if syncing is disabled (i.e. sync_jobs = 0).
+ready_for_work(StoreID) ->
 	try
-		gen_server:call(?MODULE, ready_for_work, 1000)
+		gen_server:call(?MODULE, {ready_for_work, StoreID}, 1000)
 	catch
 		exit:{timeout,_} ->
 			false
 	end.
 
 read_range(Start, End, OriginStoreID, TargetStoreID, SkipSmall) ->
-	case ar_data_sync_worker_master:ready_for_work() of
+	case ar_data_sync_worker_master:ready_for_work(TargetStoreID) of
 		true ->
 			gen_server:cast(?MODULE,
-					{read_range, {Start, End, OriginStoreID, TargetStoreID, SkipSmall}}),
+				{read_range,
+					{Start, End, OriginStoreID, TargetStoreID, SkipSmall}}),
 			true;
 		false ->
 			false
@@ -79,14 +82,34 @@ init(Workers) ->
 	gen_server:cast(?MODULE, process_main_queue),
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 
+	{ok, Config} = application:get_env(arweave, config),
+	StoreIDs = ["default" | [ar_storage_module:id(M) || M <- Config#config.storage_modules]],
+	Count = length(Workers),
+	CountByStoreID = Count div length(StoreIDs),
 	{ok, #state{
-		workers = queue:from_list(Workers),
-		worker_count = length(Workers)
+		workers = distribute_workers(CountByStoreID, Workers, StoreIDs, #{}),
+		worker_count = Count,
+		store_count = length(StoreIDs)
 	}}.
 
-handle_call(ready_for_work, _From, State) ->
-	TotalTaskCount = State#state.scheduled_task_count + State#state.queued_task_count,
-	ReadyForWork = TotalTaskCount < max_tasks(State#state.worker_count),
+distribute_workers(_N, [], StoreIDs, Map) ->
+	Map;
+distribute_workers(N, Workers, [StoreID | StoreIDs], Map) ->
+	{L, Rest} = lists:split(N, Workers),
+	distribute_workers(N, Rest, StoreIDs, maps:put(StoreID, queue:from_list(L), Map)).
+
+handle_call({ready_for_work, StoreID}, _From, State) ->
+	#state{ store_count = StoreCount,
+			scheduled_task_count = ScheduledTaskCount,
+			queued_task_count = QueuedTaskCount,
+			scheduled_task_count_by_store_id = ScheduledTaskCountByStoreID
+	} = State,
+	TotalTaskCount = ScheduledTaskCount + QueuedTaskCount,
+	MaxTasksTotal = max_tasks(State#state.worker_count),
+	TaskCountByStoreID = maps:get(StoreID, ScheduledTaskCountByStoreID, 0),
+	MaxTasksByStoreID = MaxTasksTotal div StoreCount,
+	ReadyForWork = TotalTaskCount < max_tasks(State#state.worker_count)
+			andalso TaskCountByStoreID < MaxTasksByStoreID,
 	{reply, ReadyForWork, State};
 
 handle_call(Request, _From, State) ->
@@ -110,14 +133,17 @@ handle_cast({sync_range, _Args}, #state{ worker_count = 0 } = State) ->
 handle_cast({sync_range, Args}, State) ->
 	{noreply, enqueue_main_task(sync_range, Args, State)};
 
-handle_cast({task_completed, {read_range, {Worker, _, _}}}, State) ->
-	State2 = update_scheduled_task_count(Worker, read_range, "localhost", -1, State),
+handle_cast({task_completed, {read_range, {Worker, _, Args}}}, State) ->
+	TargetStoreID = element(4, Args),
+	State2 = update_scheduled_task_count(Worker,
+			read_range, "localhost", -1, TargetStoreID, State),
 	{noreply, State2};
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
-	{Start, End, Peer, _, _} = Args,
+	{Start, End, Peer, TargetStoreID, _} = Args,
 	DataSize = End - Start,
-	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
+	State2 = update_scheduled_task_count(Worker,
+			sync_range, ar_util:format_peer(Peer), -1, TargetStoreID, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
 	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State2),
 	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
@@ -214,7 +240,7 @@ process_peer_queue(PeerTasks, State) ->
 %% @doc the maximum number of tasks we can have in process - including stasks queued here as well
 %% as those scheduled on ar_data_sync_workers.
 max_tasks(WorkerCount) ->
-	WorkerCount * 50.
+	WorkerCount * 5.
 
 %% @doc The maximum number of tasks we can have queued for a given peer.
 max_peer_queue(_Peformance, 0, _WorkerCount) ->
@@ -310,11 +336,13 @@ schedule_read_range(Args, State) ->
 
 %% @doc Schedule a task (either sync_range or read_range) to be run on a worker.
 schedule_task(Task, Args, State) ->
-	{Worker, State2} = get_worker(State),
+	StoreID = element(4, Args),
+	{Worker, State2} = get_worker(StoreID, State),
 	gen_server:cast(Worker, {Task, Args}),
 
 	FormattedPeer = format_peer(Task, Args),
-	State3 = update_scheduled_task_count(Worker, Task, FormattedPeer, 1, State2),
+	State3 = update_scheduled_task_count(Worker,
+			Task, FormattedPeer, 1, StoreID, State2),
 	update_queued_task_count(Task, FormattedPeer, -1, State3).
 
 %%--------------------------------------------------------------------
@@ -427,12 +455,20 @@ update_active(PeerTasks, Performance, TotalMaxActive, TargetLatency, State) ->
 update_queued_task_count(Task, FormattedPeer, N, State) ->
 	prometheus_gauge:inc(sync_tasks, [queued, Task, FormattedPeer], N),
 	State#state{ queued_task_count = State#state.queued_task_count + N }.
-update_scheduled_task_count(Worker, Task, FormattedPeer, N, State) ->
+
+update_scheduled_task_count(Worker, Task, FormattedPeer, N, StoreID, State) ->
+	#state{ scheduled_task_count = ScheduledTaskCount,
+			scheduled_task_count_by_store_id = ScheduledTaskCountByStoreID,
+			worker_loads = WorkerLoads
+		} = State,
 	prometheus_gauge:inc(sync_tasks, [scheduled, Task, FormattedPeer], N),
-	Load = maps:get(Worker, State#state.worker_loads, 0) + N,
+	Load = maps:get(Worker, WorkerLoads, 0) + N,
 	State2 = State#state{
-		scheduled_task_count = State#state.scheduled_task_count + N,
-		worker_loads = maps:put(Worker, Load, State#state.worker_loads)
+		scheduled_task_count = ScheduledTaskCount + N,
+		scheduled_task_count_by_store_id =
+			maps:update_with(StoreID, fun(M) -> M + N end,
+					N, ScheduledTaskCountByStoreID),
+		worker_loads = maps:put(Worker, Load, WorkerLoads)
 	},
 	State2.
 
@@ -444,20 +480,13 @@ set_peer_tasks(PeerTasks, State) ->
 		maps:put(PeerTasks#peer_tasks.peer, PeerTasks, State#state.peer_tasks)
 	}.
 
-get_worker(State) ->
-	AverageLoad = State#state.scheduled_task_count / State#state.worker_count,
-	cycle_workers(AverageLoad, State).
-
-cycle_workers(AverageLoad, #state{ workers = Workers, worker_loads = WorkerLoads} = State) ->
+get_worker(StoreID, #state{ workers = WorkersByStoreID } = State) ->
+	Workers = maps:get(StoreID, WorkersByStoreID),
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	State2 = State#state{ workers = queue:in(Worker, Workers2) },
-	Load = maps:get(Worker, WorkerLoads, 0),
-	case Load =< AverageLoad of
-		true ->
-			{Worker, State2};
-		false ->
-			cycle_workers(AverageLoad, State2)
-	end.
+	Workers3 = queue:in(Worker, Workers2),
+	WorkersByStoreID2 = maps:put(StoreID, Workers3, WorkersByStoreID),
+	State2 = State#state{ workers = WorkersByStoreID2 },
+	{Worker, State2}.
 
 format_peer(Task, Args) ->
 	case Task of
@@ -498,20 +527,20 @@ test_counters() ->
 	?assertEqual(0, State#state.scheduled_task_count),
 	?assertEqual(0, maps:get("worker1", State#state.worker_loads, 0)),
 	?assertEqual(0, State#state.queued_task_count),
-	State2 = update_scheduled_task_count("worker1", sync_range, "localhost", 10, State),
+	State2 = update_scheduled_task_count("worker1", sync_range, "localhost", 10, 1, State),
 	State3 = update_queued_task_count(sync_range, "localhost", 10, State2),
 	?assertEqual(10, State3#state.scheduled_task_count),
 	?assertEqual(10, maps:get("worker1", State3#state.worker_loads, 0)),
 	?assertEqual(10, State3#state.queued_task_count),
-	State4 = update_scheduled_task_count("worker1", sync_range, "localhost", -1, State3),
+	State4 = update_scheduled_task_count("worker1", sync_range, "localhost", -1, 1, State3),
 	State5 = update_queued_task_count(sync_range, "localhost", -1, State4),
 	?assertEqual(9, State5#state.scheduled_task_count),
 	?assertEqual(9, maps:get("worker1", State5#state.worker_loads, 0)),
 	?assertEqual(9, State5#state.queued_task_count),
-	State6 = update_scheduled_task_count("worker2", sync_range, "localhost", 1, State5),
+	State6 = update_scheduled_task_count("worker2", sync_range, "localhost", 1, 1, State5),
 	?assertEqual(10, State6#state.scheduled_task_count),
 	?assertEqual(1, maps:get("worker2", State6#state.worker_loads, 0)),
-	State7 = update_scheduled_task_count("worker1", sync_range, "1.2.3.4:1984", -1, State6),
+	State7 = update_scheduled_task_count("worker1", sync_range, "1.2.3.4:1984", -1, 1, State6),
 	State8 = update_queued_task_count(sync_range, "1.2.3.4:1984", -1, State7),
 	?assertEqual(9, State8#state.scheduled_task_count),
 	?assertEqual(8, maps:get("worker1", State8#state.worker_loads, 0)),
@@ -519,20 +548,21 @@ test_counters() ->
 
 test_get_worker() ->
 	State0 = #state{
-		workers = queue:from_list([worker1, worker2, worker3]),
+		workers = #{ 1 => queue:from_list([worker1, worker2, worker3]) },
 		scheduled_task_count = 6,
+		scheduled_task_count_by_store_id = #{ 1 => 6 },
 		worker_count = 3,
 		worker_loads = #{worker1 => 3, worker2 => 2, worker3 => 1}
 	},
-	%% get_worker will cycle the queue until it finds a worker that has a worker_load =< the 
+	%% get_worker will cycle the queue until it finds a worker that has a worker_load =< the
 	%% average load (i.e. scheduled_task_count / worker_count)
-	{worker2, State1} = get_worker(State0),
-	State2 = update_scheduled_task_count(worker2, sync_range, "localhost", 1, State1),
-	{worker3, State3} = get_worker(State2),
-	State4 = update_scheduled_task_count(worker3, sync_range, "localhost", 1, State3),
-	{worker3, State5} = get_worker(State4),
-	State6 = update_scheduled_task_count(worker3, sync_range, "localhost", 1, State5),
-	{worker1, _} = get_worker(State6).
+	{worker1, State1} = get_worker(1, State0),
+	State2 = update_scheduled_task_count(worker2, sync_range, "localhost", 1, 1, State1),
+	{worker2, State3} = get_worker(1, State2),
+	State4 = update_scheduled_task_count(worker3, sync_range, "localhost", 1, 1, State3),
+	{worker3, State5} = get_worker(1, State4),
+	State6 = update_scheduled_task_count(worker3, sync_range, "localhost", 1, 1, State5),
+	{worker1, _} = get_worker(1, State6).
 
 test_format_peer() ->
 	?assertEqual("localhost", format_peer(read_range, {0, 100, 1, 2, true})),
@@ -545,7 +575,7 @@ test_enqueue_main_task() ->
 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
 	StoreID2 = ar_storage_module:id({?PARTITION_SIZE, 2, default}),
 	State0 = #state{},
-	
+
 	State1 = enqueue_main_task(read_range, {0, 100, StoreID1, StoreID2, true}, State0),
 	State2 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1}, State1),
 	State3 = push_main_task(sync_range, {100, 200, Peer2, StoreID2}, State2),
@@ -574,7 +604,7 @@ test_enqueue_peer_task() ->
 
 	PeerATasks = #peer_tasks{ peer = PeerA },
 	PeerBTasks = #peer_tasks{ peer = PeerB },
-	
+
 	PeerATasks1 = enqueue_peer_task(PeerATasks, sync_range, {0, 100, PeerA, StoreID1}),
 	PeerATasks2 = enqueue_peer_task(PeerATasks1, sync_range, {100, 200, PeerA, StoreID1}),
 	PeerBTasks1 = enqueue_peer_task(PeerBTasks, sync_range, {200, 300, PeerB, StoreID1}),
@@ -602,7 +632,9 @@ test_process_main_queue() ->
 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
 	StoreID2 = ar_storage_module:id({?PARTITION_SIZE, 2, default}),
 	State0 = #state{
-		workers = queue:from_list([worker1, worker2, worker3]), worker_count = 3
+		workers = #{ StoreID1 => queue:from_list([worker1, worker2, worker3]),
+				StoreID2 => queue:from_list([worker4]) },
+		worker_count = 4
 	},
 
 	State1 = enqueue_main_task(read_range, {0, 100, StoreID1, StoreID2, true}, State0),
@@ -628,7 +660,8 @@ test_process_main_queue() ->
 	assert_main_queue([], State14),
 	?assertEqual(1, State14#state.queued_task_count),
 	?assertEqual(13, State14#state.scheduled_task_count),
-	?assertEqual([worker2, worker3, worker1], queue:to_list(State14#state.workers)),
+	?assertEqual([worker2, worker3, worker1],
+			queue:to_list(maps:get(StoreID1, State14#state.workers))),
 
 	PeerTasks = get_peer_tasks(Peer1, State14),
 	assert_peer_tasks(
@@ -661,7 +694,7 @@ test_cut_peer_queue() ->
 			queued_task_count = length(TaskQueue),
 			scheduled_task_count = 10
 		},
-		
+
 		{PeerTasks1, State1} = cut_peer_queue(200, PeerTasks, State),
 		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks1),
 		?assertEqual(100, State1#state.queued_task_count),
@@ -690,7 +723,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 20 }),
 	?assertEqual(11, Result1#peer_tasks.max_active),
-	
+
 	Result2 = update_active(
 		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
 		#performance{average_latency = 300},
@@ -706,7 +739,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 20 }),
 	?assertEqual(11, Result3#peer_tasks.max_active),
-	
+
 	Result4 = update_active(
 		#peer_tasks{max_active = 10, active_count = 20, task_queue_len = 30},
 		#performance{average_latency = 100},
@@ -714,7 +747,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 10 }),
 	?assertEqual(10, Result4#peer_tasks.max_active),
-	
+
 	Result5 = update_active(
 		#peer_tasks{max_active = 10, active_count = 5, task_queue_len = 10},
 		#performance{average_latency = 100},
@@ -722,7 +755,7 @@ test_update_active() ->
 		200,
 		#state{ worker_count = 20 }),
 	?assertEqual(10, Result5#peer_tasks.max_active),
-	
+
 	Result6 = update_active(
 		#peer_tasks{max_active = 10, active_count = 10, task_queue_len = 5},
 		#performance{average_latency = 100},
@@ -750,7 +783,7 @@ test_calculate_targets() ->
 			"peer2" => #performance{current_rating = 0, average_latency = 0}
 		}),
     ?assertEqual({0.0, 0.0}, Result2),
-	
+
 	Result3 = calculate_targets(
 		["peer1", "peer2"],
 		#{

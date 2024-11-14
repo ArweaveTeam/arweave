@@ -65,22 +65,6 @@
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 10 * 60 * 1000).
 -endif.
 
-%% Let at least this many chunks stack up, per storage module, then write them on disk in the
-%% ascending order, to reduce out-of-order disk writes causing fragmentation.
--ifdef(DEBUG).
--define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 2).
--else.
--define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 100). % ~ 25 MB worth of chunks.
--endif.
-
-%% If a chunk spends longer than this in the store queue, write it on disk without waiting
-%% for ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD chunks to stack up.
--ifdef(DEBUG).
--define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 1000).
--else.
--define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000). % 2 seconds.
--endif.
-
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
 	%% The last entries of the block index.
@@ -200,16 +184,6 @@
 	%% storage module to be searched for missing data before attempting to sync the data
 	%% from the network.
 	other_storage_modules_with_unsynced_intervals = [],
-	%% The priority queue of chunks sorted by offset. The motivation is to have chunks
-	%% stack up, per storage module, before writing them on disk so that we can write
-	%% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
-	store_chunk_queue = gb_sets:new(),
-	%% The length of the store chunk queue.
-	store_chunk_queue_len = 0,
-	%% The threshold controlling the brief accumuluation of the chunks in the queue before
-	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
-	%% fragmentation.
-	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
 	%% Cache mapping peers to /data_sync_record responses
 	all_peers_intervals = #{}
 }).

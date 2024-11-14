@@ -458,6 +458,13 @@ get_last_step_prev_output(B) ->
 	end.
 
 validate_poa_against_cached_poa(B, CacheB) ->
+	case CacheB#block.poa_cache of
+		{_, _} ->
+			ok;
+		_ ->
+			ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(2))),
+			file:write_file("/opt/arweave/bad-block-" ++ ID, term_to_binary(B))
+	end,
 	#block{ poa_cache = {ArgCache, ChunkID}, poa2_cache = Cache2 } = CacheB,
 	Args = erlang:append_element(erlang:insert_element(5, ArgCache, B#block.poa), ChunkID),
 	case ar_poa:validate(Args) of

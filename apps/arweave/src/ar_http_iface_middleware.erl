@@ -559,12 +559,18 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
-			{_, Pub} = ar_wallet:new_keyfile(?DEFAULT_KEY_TYPE, WalletAccessCode),
-			ResponseProps = [
-				{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(Pub))},
-				{<<"wallet_access_code">>, WalletAccessCode}
-			],
-			{200, #{}, ar_serialize:jsonify({ResponseProps}), Req};
+			case ar_wallet:new_keyfile(?DEFAULT_KEY_TYPE, WalletAccessCode) of
+				{error, Reason} ->
+					?LOG_ERROR([{event, failed_to_create_new_wallet},
+							{reason, io_lib:format("~p", [Reason])}]),
+					{500, #{}, <<>>, Req};
+				{_, Pub} ->
+					ResponseProps = [
+						{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(Pub))},
+						{<<"wallet_access_code">>, WalletAccessCode}
+					],
+					{200, #{}, ar_serialize:jsonify({ResponseProps}), Req}
+			end;
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
@@ -2426,6 +2432,7 @@ post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestam
 			post_block(enqueue_block, {BShadow, Peer}, Req, ReceiveTimestamp)
 	end;
 post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
+	try
 	B2 =
 		case B#block.height >= ar_fork:height_2_6() of
 			true ->
@@ -2453,6 +2460,12 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 				byte_size(term_to_binary(B)));
 		_ ->
 			ok
+	end
+	catch
+		error:Reason:Stacktrace ->
+			ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
+			file:write_file("/opt/arweave/stacktrace" ++ ID, term_to_binary(Stacktrace)),
+			?LOG_ERROR("CAUGHT ~p ~p", [Reason, Stacktrace])
 	end,
 	{200, #{}, <<"OK">>, Req}.
 
