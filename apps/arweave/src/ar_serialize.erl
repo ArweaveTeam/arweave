@@ -2120,8 +2120,6 @@ encode_packing(spora_2_5, _Strict) ->
 encode_packing(unpacked, _Strict) ->
 	"unpacked".
 
-decode_packing(<<"any">>, _Error) ->
-	any;
 decode_packing(<<"unpacked">>, _Error) ->
 	unpacked;
 decode_packing(<<"spora_2_5">>, _Error) ->

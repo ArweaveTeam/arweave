@@ -2815,7 +2815,7 @@ process_invalid_fetched_chunk(Peer, Byte, State) ->
 
 process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	{Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
+	{FetchedPacking, FetchedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
 			ChunkEndOffset, Peer, Byte} = Args,
 	case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
@@ -2831,16 +2831,18 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					%% The chunk has been synced by another job already.
 					decrement_chunk_cache_size(),
 					{noreply, State};
-				false when Packing =/= unpacked ->
+				false when FetchedPacking =/= unpacked ->
+					%% we don't have unpacked chunk, so possible repack is needed
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
 					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
-							DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
+							DataPath, FetchedPacking, ChunkEndOffset, ChunkSize, Chunk,
 							none, none, none}, State);
 				false ->
+					%% process unpacked chunk
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
 					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
-							DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
-							UnpackedChunk, none, none}, State)
+							DataPath, FetchedPacking, ChunkEndOffset, ChunkSize, Chunk,
+							FetchedChunk, none, none}, State)
 			end
 	end.
 
