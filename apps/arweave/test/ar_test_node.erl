@@ -6,7 +6,7 @@
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4, load_fixture/1,
-		get_default_storage_module_packing/2]).
+		get_default_storage_module_packing/2, generate_genesis_data/1, get_genesis_chunk/1]).
 
 %% The "legacy" interface.
 -export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4,
@@ -1213,3 +1213,32 @@ p2p_headers(Node) ->
 		{<<"x-p2p-port">>, integer_to_binary(peer_port(Node))},
 		{<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}
 	].
+
+%% @doc: generate binary data to be used as genesis data in tests. That data is incrementing
+%% integer data in 4 byte chunks. e.g.
+%% <<0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, ...>>
+%% This makes it easier to assert correct chunk data in tests.
+-spec generate_genesis_data(integer()) -> binary().
+generate_genesis_data(Size) ->
+	FullChunks = Size div 4,
+	LeftoverBytes = Size rem 4,
+	IncrementingData = generate_data(0, FullChunks * 4, <<>>),
+	add_padding(IncrementingData, LeftoverBytes).
+
+%% @doc: get the genesis chunk at a given offset.
+-spec get_genesis_chunk(integer()) -> binary().
+get_genesis_chunk(Offset) ->
+    ChunkIndex = Offset div ?DATA_CHUNK_SIZE,
+    generate_data(ChunkIndex * (?DATA_CHUNK_SIZE div 4), ?DATA_CHUNK_SIZE, <<>>).
+
+generate_data(CurrentValue, RemainingBytes, Acc) when RemainingBytes >= 4 ->
+    Chunk = <<CurrentValue:32/integer>>,
+    generate_data(CurrentValue + 1, RemainingBytes - 4, <<Acc/binary, Chunk/binary>>);
+generate_data(_, RemainingBytes, Acc) ->
+    add_padding(Acc, RemainingBytes).
+
+add_padding(Data, 0) ->
+    Data;
+add_padding(Data, LeftoverBytes) ->
+    Padding = <<16#FF:8, 16#FF:8, 16#FF:8, 16#FF:8>>,
+    <<Data/binary, Padding:LeftoverBytes/unit:8>>.
