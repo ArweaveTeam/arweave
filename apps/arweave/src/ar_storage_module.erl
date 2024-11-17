@@ -16,7 +16,7 @@
 
 %% The overlap makes sure a 100 MiB recall range can always be fetched
 %% from a single storage module.
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(OVERLAP, 262144).
 -else.
 -define(OVERLAP, (?LEGACY_RECALL_RANGE_SIZE)).

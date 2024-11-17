@@ -14,7 +14,7 @@
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
--ifdef(DEBUG).
+-ifdef(TEST).
 calculate(_Height) ->
 	10.
 -else.

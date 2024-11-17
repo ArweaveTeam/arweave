@@ -1,17 +1,17 @@
 -module(ar_test_node).
 
 %% The new, more flexible, and more user-friendly interface.
--export([get_config/1,set_config/2, wait_until_joined/0, restart/0, restart/1,
-		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
+-export([boot_peers/1, wait_for_peers/1, get_config/1,set_config/2, wait_until_joined/0, restart/0, restart/1,
+		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4, load_fixture/1,
 		get_default_storage_module_packing/2, generate_genesis_data/1, get_genesis_chunk/1]).
 
 %% The "legacy" interface.
--export([boot_peers/0, boot_peer/1, start/0, start/1, start/2, start/3, start/4,
+-export([start/0, start/1, start/2, start/3, start/4,
 		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
-		stop_peers/0, stop_peer/1, connect_to_peer/1, disconnect_from/1,
+		stop_peers/1, stop_peer/1, connect_to_peer/1, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 
@@ -53,38 +53,44 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
-all_peers() ->
-	[peer1, peer2, peer3, peer4].
-
-boot_peers() ->
-	boot_peers(all_peers()).
+all_peers(test) ->
+	[{test, peer1}, {test, peer2}, {test, peer3}, {test, peer4}];
+all_peers(e2e) ->
+	[{e2e, peer1}].
 
 boot_peers([]) ->
 	ok;
-boot_peers([Node | Peers]) ->
-	boot_peer(Node),
-	boot_peers(Peers).
+boot_peers([{Build, Node} | Peers]) ->
+	boot_peer(Build, Node),
+	boot_peers(Peers);
+boot_peers(TestType) ->
+	boot_peers(all_peers(TestType)).
 
-boot_peer(Node) ->
-	try_boot_peer(Node, ?MAX_BOOT_RETRIES).
+boot_peer(Build, Node) ->
+	try_boot_peer(Build, Node, ?MAX_BOOT_RETRIES).
 
-try_boot_peer(_Node, 0) ->
+try_boot_peer(_Build, _Node, 0) ->
     %% You might log an error or handle this case specifically as per your application logic.
     {error, max_retries_exceeded};
-try_boot_peer(Node, Retries) ->
+try_boot_peer(Build, Node, Retries) ->
     NodeName = peer_name(Node),
     Port = get_unused_port(),
     Cookie = erlang:get_cookie(),
-    Paths = code:get_path(),
+
+	Path1 = os:cmd("./rebar3 as " ++ atom_to_list(Build) ++ " path"),
+	Path2 = os:cmd("./rebar3 as " ++ atom_to_list(Build) ++ " path --base") ++ "/lib/arweave/test",
+	Paths = Path1 ++ " " ++ Path2,
+
     filelib:ensure_dir("./.tmp"),
 	Schedulers = erlang:system_info(schedulers_online),
     Cmd = io_lib:format(
-        "erl +S ~B:~B -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
+        "erl +S ~B:~B -pa ~s -config config/sys.config -noshell " ++
+		"-name ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s no_auto_join packing_rate 20 " ++
 		"> ~s-~s.out 2>&1 &",
-        [Schedulers, Schedulers, NodeName, string:join(Paths, " "), Cookie, Port, NodeName,
+        [Schedulers, Schedulers, Paths, NodeName, Cookie, Port, NodeName,
 			Node, get_node_namespace()]),
-	io:format("Launching peer: ~s~n", [Cmd]),
+	io:format("Launching peer ~p: ~s~n", [Node, Cmd]),
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->
@@ -92,8 +98,19 @@ try_boot_peer(Node, Retries) ->
             {node(), NodeName};
         {error, Reason} ->
             io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
-            try_boot_peer(Node, Retries - 1)
+            try_boot_peer(Build,Node, Retries - 1)
     end.
+
+wait_for_peers([]) ->
+	ok;
+wait_for_peers([{_Build, Node} | Peers]) ->
+	wait_for_peer(Node),
+	wait_for_peers(Peers);
+wait_for_peers(TestType) ->
+	wait_for_peers(all_peers(TestType)).
+
+wait_for_peer(Node) ->
+	remote_call(Node, application, ensure_all_started, [arweave, permanent], 60000).
 
 self_node() ->
 	list_to_atom(get_node()).
@@ -107,14 +124,13 @@ peer_port(Node) ->
 	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
 	Config#config.port.
 
-stop_peers() ->
-	stop_peers(all_peers()).
-
 stop_peers([]) ->
 	ok;
-stop_peers([Node | Peers]) ->
+stop_peers([{_Build, Node} | Peers]) ->
 	stop_peer(Node),
-	stop_peers(Peers).
+	stop_peers(Peers);
+stop_peers(TestType) ->
+	stop_peers(all_peers(TestType)).
 
 stop_peer(Node) ->
 	try
@@ -145,10 +161,14 @@ get_config(Node) ->
 set_config(Node, Config) ->
 	remote_call(Node, application, set_env, [arweave, config, Config]).
 
+start_other_node(Node, B0, Config, WaitUntilSync) ->
+	remote_call(Node, ar_test_node, start_node, [B0, Config, WaitUntilSync]).
+
 %% @doc Start a node with the given genesis block and configuration.
 start_node(B0, Config) ->
 	start_node(B0, Config, true).
 start_node(B0, Config, WaitUntilSync) ->
+	?LOG_ERROR("Starting node with config: ~p~n", [Config]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	clean_up_and_stop(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
@@ -306,6 +326,7 @@ load_fixture(Fixture) ->
 
 clean_up_and_stop() ->
 	Config = stop(),
+	ok = filelib:ensure_dir(Config#config.data_dir),
 	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
 	lists:foreach(
 		fun	("wallets") ->
@@ -942,21 +963,21 @@ mock_functions(Functions) ->
 						false ->
 							meck:new(Module, [passthrough]),
 							lists:foreach(
-								fun(Node) ->
+								fun({_Build, Node}) ->
 									remote_call(Node, meck, new,
 											[Module, [no_link, passthrough]])
 								end,
-								all_peers()),
+								all_peers(test)),
 							maps:put(Module, true, Mocked);
 						true ->
 							Mocked
 					end,
 					lists:foreach(
-						fun(Node) ->
+						fun({_Build, Node}) ->
 							meck:expect(Module, Fun, Mock),
 							remote_call(Node, meck, expect, [Module, Fun, Mock])
 						end,
-						[main | all_peers()]),
+						[{test, main} | all_peers(test)]),
 					NewMocked
 				end,
 				maps:new(),
@@ -967,10 +988,10 @@ mock_functions(Functions) ->
 			maps:fold(
 				fun(Module, _, _) ->
 					lists:foreach(
-						fun(Node) ->
+						fun({_Build, Node}) ->
 							remote_call(Node, meck, unload, [Module])
 						end,
-						[main | all_peers()])
+						[{test, main} | all_peers(test)])
 				end,
 				noop,
 				Mocked

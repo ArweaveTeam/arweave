@@ -9,7 +9,7 @@
 		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
-		tests/0, tests/1, tests/2, shell/0, stop_shell/0,
+		tests/0, tests/2, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -851,21 +851,22 @@ warn_if_single_scheduler() ->
 
 shell() ->
 	Config = #config{ debug = true },
-	start_for_tests(Config),
-	ar_test_node:boot_peers().
+	start_for_tests(test,Config),
+	ar_test_node:boot_peers(test).
 
 stop_shell() ->
-	ar_test_node:stop_peers(),
+	ar_test_node:stop_peers(test),
 	init:stop().
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
-	tests([], #config{ debug = true }).
+	tests(test, [], #config{ debug = true }).
 
-tests(Mods, Config) when is_list(Mods) ->
+tests(TestType, Mods, Config) when is_list(Mods) ->
 	try
-		start_for_tests(Config),
-		ar_test_node:boot_peers()
+		start_for_tests(TestType, Config),
+		ar_test_node:boot_peers(TestType),
+		ar_test_node:wait_for_peers(TestType)
 	catch
 		Type:Reason ->
 			io:format("Failed to start the peers due to ~p:~p~n", [Type, Reason]),
@@ -875,7 +876,7 @@ tests(Mods, Config) when is_list(Mods) ->
 		try
 			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
 		after
-			ar_test_node:stop_peers()
+			ar_test_node:stop_peers(TestType)
 		end,
 	case Result of
 		ok -> ok;
@@ -883,11 +884,11 @@ tests(Mods, Config) when is_list(Mods) ->
 	end.
 
 
-start_for_tests(Config) ->
+start_for_tests(TestType, Config) ->
 	UniqueName = ar_test_node:get_node_namespace(),
 	TestConfig = Config#config{
 		peers = [],
-		data_dir = ".tmp/data_test_main_" ++ UniqueName,
+		data_dir = ".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
 		packing_rate = 20,
@@ -897,8 +898,8 @@ start_for_tests(Config) ->
 
 %% @doc Run the tests for a set of module(s).
 %% Supports strings so that it can be trivially induced from a unix shell call.
-tests(Mod) when not is_list(Mod) -> tests([Mod]);
-tests(Args) ->
+tests(TestType, Mod) when not is_list(Mod) -> tests(TestType, [Mod]);
+tests(TestType, Args) ->
 	Mods =
 		lists:map(
 			fun(Mod) when is_atom(Mod) -> Mod;
@@ -906,7 +907,10 @@ tests(Args) ->
 			end,
 			Args
 		),
-	tests(Mods, #config{ debug = true }).
+	tests(TestType, Mods, #config{ debug = true }).
+
+e2e(Mod) ->
+	tests(e2e, Mod).
 
 %% @doc Generate the project documentation.
 docs() ->
@@ -946,12 +950,12 @@ commandline_parser_test_() ->
 		)
 	end}.
 
--ifdef(DEBUG).
-console(_) ->
-	ok.
+-ifdef(TEST).
+console(Format) ->
+	?LOG_INFO(io_lib:format(Format, [])).
 
-console(_, _) ->
-	ok.
+console(Format, Params) ->
+	?LOG_INFO(io_lib:format(Format, Params)).
 -else.
 console(Format) ->
 	io:format(Format).

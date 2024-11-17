@@ -31,7 +31,7 @@ unblock_peer_connections() ->
 	ets:delete(?MODULE, block_peer_connections),
 	ok.
 
--ifdef(DEBUG).
+-ifdef(TEST).
 req(#{ peer := {_, _} } = Args) ->
 	req(Args, false);
 req(Args) ->
