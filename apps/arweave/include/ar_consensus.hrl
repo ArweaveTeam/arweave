@@ -33,7 +33,7 @@
 -define(RANDOMX_SCRATCHPAD_SIZE, 2097152).
 
 %% The size in bytes of the total RX2 entropy (# of lanes * scratchpad size).
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(REPLICA_2_9_ENTROPY_SIZE, (3 * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE)).
 -else.
 %% 8_388_608 bytes worth of entropy.
@@ -47,7 +47,7 @@
 %% and REPLICA_2_9_ENTROPY_SIZE constants
 %% such that the sector size (num entropies * sub-chunk size) is evenly divisible
 %% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 11).
 -else.
 %% Extra entropies to be added to each partition so that the partition holds a multiple
@@ -61,38 +61,36 @@
 
 %% The effective packing difficulty of the new replication format (replica_format=1.)
 %% Determines the recall range size and the mining difficulty of the mining nonces.
--ifdef(DEBUG).
--define(REPLICA_2_9_PACKING_DIFFICULTY, 2).
--else.
+-ifndef(REPLICA_2_9_PACKING_DIFFICULTY).
 -define(REPLICA_2_9_PACKING_DIFFICULTY, 10).
 -endif.
 
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
--ifdef(DEBUG).
--define(PARTITION_SIZE, 2097152).
+-ifdef(TEST).
+-define(PARTITION_SIZE, 2097152). % 8 * 256 * 1024
 -else.
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.
 
 %% The size of a recall range. The first range is randomly chosen from the given
 %% mining partition. The second range is chosen from the entire weave.
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(RECALL_RANGE_SIZE, (128 * 1024)).
 -else.
 -define(RECALL_RANGE_SIZE, 26214400). % == 25 * 1024 * 1024
 -endif.
 
 %% The size of a recall range before the fork 2.8.
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(LEGACY_RECALL_RANGE_SIZE, (512 * 1024)).
 -else.
 -define(LEGACY_RECALL_RANGE_SIZE, 104857600). % == 100 * 1024 * 1024
 -endif.
 
 -ifdef(FORKS_RESET).
-	-ifdef(DEBUG).
+	-ifdef(TEST).
 		-define(STRICT_DATA_SPLIT_THRESHOLD, (262144 * 3)).
 	-else.
 		-define(STRICT_DATA_SPLIT_THRESHOLD, 0).
@@ -104,7 +102,7 @@
 -endif.
 
 -ifdef(FORKS_RESET).
-	-ifdef(DEBUG).
+	-ifdef(TEST).
 		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, (?STRICT_DATA_SPLIT_THRESHOLD * 2)).
 	-else.
 		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, 0).
@@ -117,7 +115,7 @@
 
 %% Recall bytes are only picked from the subspace up to the size
 %% of the weave at the block of the depth defined by this constant.
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 3).
 -else.
 -define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 50).
@@ -130,12 +128,8 @@
 )).
 
 %% Increase the difficulty of PoA1 solutions by this multiplier (e.g. 100x).
--ifdef(DEBUG).
--define(POA1_DIFF_MULTIPLIER, 1).
--else.
 -ifndef(POA1_DIFF_MULTIPLIER).
 -define(POA1_DIFF_MULTIPLIER, 100).
--endif.
 -endif.
 
 %% The number of nonce limiter steps sharing the entropy. We add the entropy

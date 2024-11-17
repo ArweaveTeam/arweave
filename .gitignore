@@ -25,7 +25,7 @@ blocks
 txs
 hash_lists
 wallet_lists
-wallets
+/wallets
 logs*
 !bin/logs
 ebin

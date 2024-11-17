@@ -93,7 +93,7 @@ sign_v1(TX, PrivKey, PubKey = {_, Owner}) ->
 verify(TX, Args) ->
 	verify(TX, Args, verify_signature).
 
--ifdef(DEBUG).
+-ifdef(TEST).
 verify(#tx{ signature = <<>> }, _Args, _VerifySignature) ->
 	true;
 verify(TX, Args, VerifySignature) ->
@@ -114,7 +114,7 @@ verify_tx_id(ExpectedID, #tx{ format = 2, id = ID } = TX) ->
 tags_to_list(Tags) ->
 	[[Name, Value] || {Name, Value} <- Tags].
 
--ifdef(DEBUG).
+-ifdef(TEST).
 check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> ->
 	true;
 check_last_tx(WalletList, _TX) when map_size(WalletList) == 0 ->

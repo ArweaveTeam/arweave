@@ -1,5 +1,5 @@
 %% The number of milliseconds the supervisor gives every process for shutdown.
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(SHUTDOWN_TIMEOUT, 30000).
 -else.
 -define(SHUTDOWN_TIMEOUT, 30000).
