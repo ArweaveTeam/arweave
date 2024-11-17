@@ -77,9 +77,7 @@ try_boot_peer(Build, Node, Retries) ->
     Port = get_unused_port(),
     Cookie = erlang:get_cookie(),
 
-	Path1 = os:cmd("./rebar3 as " ++ atom_to_list(Build) ++ " path"),
-	Path2 = os:cmd("./rebar3 as " ++ atom_to_list(Build) ++ " path --base") ++ "/lib/arweave/test",
-	Paths = Path1 ++ " " ++ Path2,
+	Paths = code:get_path(),
 
     filelib:ensure_dir("./.tmp"),
 	Schedulers = erlang:system_info(schedulers_online),
@@ -88,7 +86,7 @@ try_boot_peer(Build, Node, Retries) ->
 		"-name ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_test_~s no_auto_join packing_rate 20 " ++
 		"> ~s-~s.out 2>&1 &",
-        [Schedulers, Schedulers, Paths, NodeName, Cookie, Port, NodeName,
+        [Schedulers, Schedulers, string:join(Paths, " "), NodeName, Cookie, Port, NodeName,
 			Node, get_node_namespace()]),
 	io:format("Launching peer ~p: ~s~n", [Node, Cmd]),
     os:cmd(Cmd),
