@@ -129,7 +129,7 @@ end).
 %% Re-denominate AR (multiply by 1000) when the available supply falls below this
 %% number of units.
 -ifdef(TEST).
--define(REDENOMINATION_THRESHOLD, 135_000_000_000).
+-define(REDENOMINATION_THRESHOLD, 1_350_000_000_000).
 -else.
 -define(REDENOMINATION_THRESHOLD, 1000_000_000_000_000_000).
 -endif.
