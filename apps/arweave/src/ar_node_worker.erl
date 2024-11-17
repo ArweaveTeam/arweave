@@ -23,7 +23,7 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
 -else.
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
@@ -31,7 +31,7 @@
 
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
 
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(BLOCK_INDEX_HEAD_LEN, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
 -else.
 -define(BLOCK_INDEX_HEAD_LEN, 10000).
@@ -47,7 +47,7 @@
 -endif.
 
 %% How frequently (in seconds) to recompute the mining difficulty at the retarget blocks.
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 1).
 -else.
 -define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 10).
@@ -1449,7 +1449,8 @@ log_applied_block(B) ->
 
 log_tip(B) ->
 	?LOG_INFO([{event, new_tip_block}, {indep_hash, ar_util:encode(B#block.indep_hash)},
-			{height, B#block.height}]).
+			{height, B#block.height}, {weave_size, B#block.weave_size},
+			{reward_addr, ar_util:encode(B#block.reward_addr)}]).
 
 maybe_report_n_confirmations(B, BI) ->
 	N = 10,
