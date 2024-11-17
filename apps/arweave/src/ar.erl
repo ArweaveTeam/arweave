@@ -9,7 +9,7 @@
 		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
-		tests/0, tests/2, e2e/1, shell/0, stop_shell/0,
+		tests/0, tests/1, tests/2, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -861,6 +861,9 @@ stop_shell() ->
 %% @doc Run all of the tests associated with the core project.
 tests() ->
 	tests(test, [], #config{ debug = true }).
+
+tests(Mod) ->
+	tests(test, Mod).
 
 tests(TestType, Mods, Config) when is_list(Mods) ->
 	try
