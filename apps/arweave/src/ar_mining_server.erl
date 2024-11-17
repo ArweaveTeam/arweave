@@ -37,7 +37,7 @@
 	packing_difficulty			= 0
 }).
 
--ifdef(DEBUG).
+-ifdef(TEST).
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 0).
 -else.
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 10).
@@ -105,7 +105,7 @@ is_one_chunk_solution(Solution) ->
 ) ->
 	Ret :: ok.
 
--ifdef(DEBUG).
+-ifdef(TEST).
 log_prepare_solution_failure(Solution, stale_step_number, AdditionalLogData) ->
 	ok;
 log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData) ->
@@ -158,7 +158,7 @@ init([]) ->
 
 	?LOG_INFO([{event, mining_server_init},
 			{packing, ar_serialize:encode_packing(Packing, false)},
-			{partitions, length(Partitions)}]),
+			{partitions, [ Partition || {Partition, _, _} <- Partitions]}]),
 
 	{ok, #state{
 		workers = Workers,
@@ -514,18 +514,22 @@ distribute_output(Candidate, State) ->
 	distribute_output(ar_mining_io:get_partitions(), Candidate, State).
 
 distribute_output([], _Candidate, _State) ->
+	?LOG_DEBUG([{event, distribute_output_done}]),
 	ok;
 distribute_output([{_Partition, _MiningAddress, PackingDifficulty} | _Partitions],
 		_Candidate, #state{ allow_composite_packing = false }) when PackingDifficulty >= 1 ->
 	%% Do not mine with the composite packing until some time after the fork 2.8.
+	?LOG_DEBUG([{event, distribute_output_skipping_composite_packing}]),
 	ok;
 distribute_output([{_Partition, _MiningAddress, PackingDifficulty} | _Partitions],
 		_Candidate, #state{ allow_replica_2_9_mining = false })
 			when PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY ->
 	%% Do not mine with replica_2_9 until some time after the fork 2.9.
+	?LOG_DEBUG([{event, distribute_output_skipping_replica_2_9_mining}]),
 	ok;
 distribute_output([{Partition, MiningAddress, PackingDifficulty} | Partitions],
 		Candidate, State) ->
+	?LOG_DEBUG([{event, distribute_output}, {partition, Partition}]),
 	case get_worker({Partition, PackingDifficulty}, State) of
 		not_found ->
 			?LOG_ERROR([{event, worker_not_found}, {partition, Partition}]),
@@ -692,7 +696,10 @@ prepare_solution(steps, Candidate, Solution) ->
 					{start_step_number, PrevStepNumber},
 					{next_step_number, StepNumber},
 					{next_seed, ar_util:safe_encode(PrevNextSeed)},
-					{next_vdf_difficulty, PrevNextVDFDifficulty}]),
+					{next_vdf_difficulty, PrevNextVDFDifficulty},
+					{h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},
+					{h2, ar_util:safe_encode(Candidate#mining_candidate.h2)}
+					]),
 			error
 	end;
 
@@ -1035,7 +1042,8 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
 				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
 				{start_interval_number, StartIntervalNumber},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}])
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{partition_upper_bound, PartitionUpperBound}])
 	end,
 	{noreply, State3}.
 
