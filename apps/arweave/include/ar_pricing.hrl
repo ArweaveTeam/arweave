@@ -118,18 +118,24 @@ end).
 %% Does NOT include the additional emission which may start in the far future if and when
 %% the endowment pool runs empty.
 -ifdef(DEBUG).
-%% The debug constant is not always actually equal to the sum of genesis balances plust
-%% the total emission. We just set a relatively low value so that we can reproduce
-%% autoredenomination in tests.
--define(TOTAL_SUPPLY, 1500000000000).
+	%% The debug constant is not always actually equal to the sum of genesis balances plust
+	%% the total emission. We just set a relatively low value so that we can reproduce
+	%% autoredenomination in tests.
+	-define(TOTAL_SUPPLY, 1500000000000).
 -else.
--define(TOTAL_SUPPLY, 66_000_015_859_279_336_957).
+	-ifdef(FORKS_RESET).
+		%% This value should be ideally adjusted if the genesis balances
+		%% of a new weave differ from those in mainnet.
+		-define(TOTAL_SUPPLY, 66000015859279336957).
+	-else.
+		-define(TOTAL_SUPPLY, 66_000_015_859_279_336_957).
+	-endif.
 -endif.
 
 %% Re-denominate AR (multiply by 1000) when the available supply falls below this
 %% number of units.
 -ifdef(DEBUG).
--define(REDENOMINATION_THRESHOLD, 1_350_000_000_000).
+-define(REDENOMINATION_THRESHOLD, 1350000000000).
 -else.
 -define(REDENOMINATION_THRESHOLD, 1000_000_000_000_000_000).
 -endif.

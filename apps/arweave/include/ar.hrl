@@ -222,9 +222,9 @@
 %% the base delay, the time the transaction spends in the priority
 %% queue, and the time it takes to propagate the transaction to peers.
 -ifdef(DEBUG).
--define(TX_PROPAGATION_BITS_PER_SECOND, 1_000_000_000).
+-define(TX_PROPAGATION_BITS_PER_SECOND, 1000000000).
 -else.
--define(TX_PROPAGATION_BITS_PER_SECOND, 3_000_000). % 3 mbps
+-define(TX_PROPAGATION_BITS_PER_SECOND, 3000000). % 3 mbps
 -endif.
 
 %% The number of peers to send new blocks to in parallel.
@@ -291,6 +291,17 @@
 
 %% The adjustment of difficutly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
+-ifdef(DEBUG).
+-define(RANDOMX_KEY_SWAP_FREQ, (?STORE_BLOCKS_BEHIND_CURRENT + 1)).
+-define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
+-define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
+-define(RANDOMX_KEEP_KEY, 3).
+-else.
+-define(RANDOMX_KEY_SWAP_FREQ, 2000).
+-define(RANDOMX_MIN_KEY_GEN_AHEAD, (30 + ?STORE_BLOCKS_BEHIND_CURRENT)).
+-define(RANDOMX_MAX_KEY_GEN_AHEAD, (90 + ?STORE_BLOCKS_BEHIND_CURRENT)).
+-define(RANDOMX_KEEP_KEY, ?STORE_BLOCKS_BEHIND_CURRENT).
+-endif.
 
 %% Max allowed difficulty multiplication and division factors, before the fork 2.4.
 -define(DIFF_ADJUSTMENT_DOWN_LIMIT, 2).
