@@ -6,7 +6,7 @@
 %% Typical ryzen 5900X iterations for 1 sec
 -define(VDF_SHA_1S, 15_000_000).
 
--ifdef(TEST).
+-ifdef(DEBUG).
 	-define(VDF_DIFFICULTY, 2).
 	% NOTE. VDF_DIFFICULTY_RETARGET should be > 10 because it's > 10 in mainnet
 	% So VDF difficulty should change slower than difficulty

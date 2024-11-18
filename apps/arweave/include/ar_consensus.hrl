@@ -18,7 +18,7 @@
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(PARTITION_SIZE, 2097152). % 8 * 256 * 1024
 -else.
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
@@ -26,21 +26,21 @@
 
 %% The size of a recall range. The first range is randomly chosen from the given
 %% mining partition. The second range is chosen from the entire weave.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(RECALL_RANGE_SIZE, (128 * 1024)).
 -else.
 -define(RECALL_RANGE_SIZE, 26214400). % == 25 * 1024 * 1024
 -endif.
 
 %% The size of a recall range before the fork 2.8.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(LEGACY_RECALL_RANGE_SIZE, (512 * 1024)).
 -else.
 -define(LEGACY_RECALL_RANGE_SIZE, 104857600). % == 100 * 1024 * 1024
 -endif.
 
 -ifdef(FORKS_RESET).
-	-ifdef(TEST).
+	-ifdef(DEBUG).
 		-define(STRICT_DATA_SPLIT_THRESHOLD, (262144 * 3)).
 	-else.
 		-define(STRICT_DATA_SPLIT_THRESHOLD, 0).
@@ -52,7 +52,7 @@
 -endif.
 
 -ifdef(FORKS_RESET).
-	-ifdef(TEST).
+	-ifdef(DEBUG).
 		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, (?STRICT_DATA_SPLIT_THRESHOLD * 2)).
 	-else.
 		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, 0).
@@ -65,7 +65,7 @@
 
 %% Recall bytes are only picked from the subspace up to the size
 %% of the weave at the block of the depth defined by this constant.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 3).
 -else.
 -define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 50).
@@ -90,7 +90,7 @@
 %% adding the entropy at certain blocks (rather than nonce limiter steps) allows
 %% miners to use extra bandwidth (bearing almost no additional costs) to compute
 %% nonces on the short forks with different-entropy nonce limiting chains.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(NONCE_LIMITER_RESET_FREQUENCY, 5).
 -else.
 -ifndef(NONCE_LIMITER_RESET_FREQUENCY).

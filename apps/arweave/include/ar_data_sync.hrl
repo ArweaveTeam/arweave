@@ -26,14 +26,14 @@
 -define(MAX_SERVED_TX_DATA_SIZE, 12 * 1024 * 1024).
 
 %% The time to wait until the next full disk pool scan.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(DISK_POOL_SCAN_DELAY_MS, 2000).
 -else.
 -define(DISK_POOL_SCAN_DELAY_MS, 10000).
 -endif.
 
 %% How often to measure the number of chunks in the disk pool index.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 1000).
 -else.
 -define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
@@ -50,7 +50,7 @@
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 
 %% The maximum number of chunks currently being downloaded or processed.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(SYNC_BUFFER_SIZE, 100).
 -else.
 -define(SYNC_BUFFER_SIZE, 1000).
@@ -59,7 +59,7 @@
 %% Defines how long we keep the interval excluded from syncing.
 %% If we cannot find an interval by peers, we temporarily exclude
 %% it from the sought ranges to prevent the syncing process from slowing down.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 5000).
 -else.
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 10 * 60 * 1000).
@@ -67,7 +67,7 @@
 
 %% Let at least this many chunks stack up, per storage module, then write them on disk in the
 %% ascending order, to reduce out-of-order disk writes causing fragmentation.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 2).
 -else.
 -define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 100). % ~ 25 MB worth of chunks.
@@ -75,7 +75,7 @@
 
 %% If a chunk spends longer than this in the store queue, write it on disk without waiting
 %% for ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD chunks to stack up.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 1000).
 -else.
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000). % 2 seconds.

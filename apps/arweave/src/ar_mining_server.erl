@@ -36,7 +36,7 @@
 	packing_difficulty			= 0
 }).
 
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 0).
 -else.
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 10).

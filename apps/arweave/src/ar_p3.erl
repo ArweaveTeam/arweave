@@ -9,7 +9,7 @@
 -export([start_link/0, allow_request/1, reverse_charge/1, get_balance/3, get_rates_json/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(MAX_BLOCK_SCAN, 4).
 -else.
 -define(MAX_BLOCK_SCAN, 200).

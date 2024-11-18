@@ -15,7 +15,7 @@
 -define(DEFAULT_TOLERANCE_PERCENT, 0.001).
 
 %% Height at which the 1.5.0.0 fork takes effect.
--ifdef(TEST).
+-ifdef(DEBUG).
 %% The inflation tests serve as a documentation of how rewards are computed.
 %% Therefore, we keep the mainnet value in these tests. Other tests have
 %% FORK 1.6 height set to zero from now on.

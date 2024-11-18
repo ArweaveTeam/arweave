@@ -22,7 +22,7 @@
 -define(WAL_COUNT_KEY, <<"wal">>).
 
 %% The frequency of dumping sync records on disk.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(STORE_SYNC_RECORD_FREQUENCY_MS, 1000).
 -else.
 -define(STORE_SYNC_RECORD_FREQUENCY_MS, 60 * 1000).

@@ -19,7 +19,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 %% The frequency of refreshing the blacklist.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(REFRESH_BLACKLISTS_FREQUENCY_MS, 2000).
 -else.
 -define(REFRESH_BLACKLISTS_FREQUENCY_MS, 10 * 60 * 1000).
@@ -31,7 +31,7 @@
 
 %% How long to wait for the response to the previously requested
 %% header or data removal (takedown) before requesting it for a new tx.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(REQUEST_TAKEDOWN_DELAY_MS, 1000).
 -else.
 -define(REQUEST_TAKEDOWN_DELAY_MS, 30000).
@@ -42,7 +42,7 @@
 -define(CHECK_PENDING_ITEMS_INTERVAL_MS, 1000).
 
 %% The frequency of persisting the server state.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(STORE_STATE_FREQUENCY_MS, 20000).
 -else.
 -define(STORE_STATE_FREQUENCY_MS, 10 * 60 * 1000).

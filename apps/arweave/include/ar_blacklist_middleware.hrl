@@ -11,7 +11,7 @@ end).
 	?RPM_BY_PATH(Path, LimitByIP, Config#config.requests_per_minute_limit)()
 end).
 
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(RPM_BY_PATH(Path, LimitByIP, DefaultPathLimit), fun() ->
 	case Path of
 		[<<"chunk">> | _] ->

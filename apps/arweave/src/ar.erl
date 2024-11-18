@@ -953,7 +953,7 @@ commandline_parser_test_() ->
 		)
 	end}.
 
--ifdef(TEST).
+-ifdef(DEBUG).
 console(Format) ->
 	?LOG_INFO(io_lib:format(Format, [])).
 

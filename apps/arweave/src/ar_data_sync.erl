@@ -27,7 +27,7 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_sync_buckets.hrl").
 
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).
 -else.
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300_000).
@@ -496,7 +496,7 @@ is_chunk_cache_full() ->
 			not_initialized
 	end.
 
--ifdef(TEST).
+-ifdef(DEBUG).
 is_disk_space_sufficient(_StoreID) ->
 	true.
 -else.

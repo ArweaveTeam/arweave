@@ -2,14 +2,14 @@
 %% an interval, we process it bucket by bucket: for every bucket, a few peers who are known to
 %% to have some data there are asked for the intervals they have and check which of them
 %% cross the desired interval.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(NETWORK_DATA_BUCKET_SIZE, 10_000_000). % 10 MB
 -else.
 -define(NETWORK_DATA_BUCKET_SIZE, 10_000_000_000). % 10 GB
 -endif.
 
 %% The maximum number of synced intervals shared with peers.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 20).
 -else.
 -define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 10_000).

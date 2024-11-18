@@ -21,7 +21,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 %% The frequency of choosing the peers to poll.
--ifdef(TEST).
+-ifdef(DEBUG).
 -define(COLLECT_PEERS_FREQUENCY_MS, 2000).
 -else.
 -define(COLLECT_PEERS_FREQUENCY_MS, 1000 * 15).
