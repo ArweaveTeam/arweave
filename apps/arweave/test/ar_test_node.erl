@@ -7,7 +7,7 @@
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4, load_fixture/1,
-		get_default_storage_module_packing/2, generate_genesis_data/2, get_genesis_chunk/1]).
+		get_default_storage_module_packing/2, generate_genesis_data/1, get_genesis_chunk/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4,
@@ -1132,7 +1132,6 @@ get_chunk(Node, Offset, Packing) ->
 			PackingBinary = iolist_to_binary(ar_serialize:encode_packing(Packing, false)),
 			[{<<"x-packing">>, PackingBinary}]
 	end,
-	?debugFmt("Headers: ~p~n", [Headers]),
 	ar_http:req(#{
 		method => get,
 		peer => peer_ip(Node),
@@ -1248,19 +1247,29 @@ p2p_headers(Node) ->
 %% integer data in 4 byte chunks. e.g.
 %% <<0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, ...>>
 %% This makes it easier to assert correct chunk data in tests.
--spec generate_genesis_data(integer(), integer()) -> binary().
-generate_genesis_data(StartOffset, EndOffset) ->
-    Size = EndOffset - StartOffset,
-    FullChunks = Size div 4,
-    LeftoverBytes = Size rem 4,
-    IncrementingData = generate_data(StartOffset div 4, FullChunks * 4, <<>>),
+-spec generate_genesis_data(integer()) -> binary().
+generate_genesis_data(DataSize) ->
+    FullChunks = DataSize div 4,
+    LeftoverBytes = DataSize rem 4,
+    IncrementingData = generate_data(0, FullChunks * 4, <<>>),
     add_padding(IncrementingData, LeftoverBytes).
 
-%% @doc: get the genesis chunk at a given offset.
+%% @doc: get the genesis chunk between a given start and end offset.
 -spec get_genesis_chunk(integer()) -> binary().
-get_genesis_chunk(Offset) ->
-    ChunkIndex = Offset div ?DATA_CHUNK_SIZE,
-    generate_data(ChunkIndex * (?DATA_CHUNK_SIZE div 4), ?DATA_CHUNK_SIZE, <<>>).
+-spec get_genesis_chunk(integer(), integer()) -> binary().
+get_genesis_chunk(EndOffset) ->
+	StartOffset = case EndOffset rem ?DATA_CHUNK_SIZE of
+        0 ->
+            EndOffset - ?DATA_CHUNK_SIZE;
+        _ ->
+            (EndOffset div ?DATA_CHUNK_SIZE) * ?DATA_CHUNK_SIZE
+    end,
+	get_genesis_chunk(StartOffset, EndOffset).
+
+get_genesis_chunk(StartOffset, EndOffset) ->
+	Size = EndOffset - StartOffset,
+	StartValue = StartOffset div 4,
+	generate_data(StartValue, Size, <<>>).
 
 generate_data(CurrentValue, RemainingBytes, Acc) when RemainingBytes >= 4 ->
 	Chunk = <<CurrentValue:32/integer>>,

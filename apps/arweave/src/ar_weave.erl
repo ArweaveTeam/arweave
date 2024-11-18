@@ -125,7 +125,7 @@ create_genesis_tx(Key, Size) ->
 		(ar_tx:new())#tx{
 			owner = Pk,
 			reward = 0,
-			data = ar_test_node:generate_genesis_data(0, Size),
+			data = ar_test_node:generate_genesis_data(Size),
 			data_size = Size,
 			target = <<>>,
 			quantity = 0,

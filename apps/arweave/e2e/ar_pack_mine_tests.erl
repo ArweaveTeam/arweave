@@ -49,7 +49,9 @@ test_pack_mine() ->
 	StorageModules = [
 		{?PARTITION_SIZE, 0, {spora_2_6, RewardAddr}},
 		{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}},
-		{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}
+		{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}},
+		{?PARTITION_SIZE, 3, {spora_2_6, RewardAddr}},
+		{?PARTITION_SIZE, 4, {spora_2_6, RewardAddr}}
 	],
 	?LOG_INFO([{event, starting_node}, {node, ar_test_node:peer_name(Node)}]),
 	?debugFmt("Starting node ~s~n", [ar_test_node:peer_name(Node)]),
@@ -62,39 +64,49 @@ test_pack_mine() ->
 	}, true),
 	?debugFmt("Start result: ~p~n", [StartResult]),
 
-	{TX, Chunks} = generate_tx(Wallet),
-	B = ar_test_node:post_and_mine(#{ miner => Node, await_on => Node }, [TX]),
-	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks),
-	
-	ar_test_data_sync:wait_until_syncs_chunks(Node, Proofs, infinity),
-
-	timer:sleep(10000),
+	B1 = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE)),
+	B2 = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE)),
+	B3 = mine_block(Node, Wallet, 8 * ?DATA_CHUNK_SIZE),
 
 	Offset = ?PARTITION_SIZE + ?DATA_CHUNK_SIZE,
 	{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} = ar_test_node:get_chunk(Node, Offset, any),
 	Proof = ar_serialize:json_map_to_poa_map(
 		jiffy:decode(EncodedProof, [return_maps])
 	),
-	?assertEqual(ar_test_node:get_genesis_chunk(Offset), maps:get(chunk, Proof)),
+	{true, Proof2} = ar_test_node:remote_call(Node, ar_poa, validate_paths, [B1#block.tx_root, maps:get(tx_path, Proof), maps:get(data_path, Proof), Offset - 1]),
+	Chunk = maps:get(chunk, Proof),
+	{ok, UnpackedChunk, _} = ar_packing_server:repack(
+		unpacked, {spora_2_6, RewardAddr}, Offset, B1#block.tx_root, Chunk, ?DATA_CHUNK_SIZE),
+	?assertEqual(ar_test_node:get_genesis_chunk(Offset), UnpackedChunk),
 	ok.
 
+mine_block(Node, Wallet, DataSize) ->
+	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
+	?debugFmt("Weave size: ~p~n", [WeaveSize]),
+	{TX, Chunks} = generate_tx(Node, Wallet, WeaveSize, DataSize),
+	B = ar_test_node:post_and_mine(#{ miner => Node, await_on => Node }, [TX]),
+	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks),
+	
+	ar_test_data_sync:wait_until_syncs_chunks(Node, Proofs, infinity),
+	B.
 
-
-generate_tx(Wallet) ->
-	DataSize = 3 * ?DATA_CHUNK_SIZE,
-	Offset1 = ?DATA_CHUNK_SIZE,
-	Offset2 = Offset1 + ?DATA_CHUNK_SIZE,
-	Offset3 = Offset2 + ?DATA_CHUNK_SIZE,
-	Chunk1 = ar_test_node:get_genesis_chunk(?PARTITION_SIZE + Offset1),
-	Chunk2 = ar_test_node:get_genesis_chunk(?PARTITION_SIZE + Offset2),
-	Chunk3 = ar_test_node:get_genesis_chunk(?PARTITION_SIZE + Offset3),
-	{DataRoot, _DataTree} = ar_merkle:generate_tree([
-		{ar_tx:generate_chunk_id(Chunk1), Offset1},
-		{ar_tx:generate_chunk_id(Chunk2), Offset2},
-		{ar_tx:generate_chunk_id(Chunk3), Offset3}]),
-	TX = ar_test_node:sign_tx(peer1, Wallet, #{ 
+generate_tx(Node, Wallet, WeaveSize, DataSize) ->
+	Chunks = generate_chunks(Node, WeaveSize, DataSize, []),
+	{DataRoot, _DataTree} = ar_merkle:generate_tree(
+		[{ar_tx:generate_chunk_id(Chunk), Offset} || {Chunk, Offset} <- Chunks]
+	),
+	TX = ar_test_node:sign_tx(Node, Wallet, #{
 		data_size => DataSize,
-		data_root => DataRoot 
+		data_root => DataRoot
 	}),
-	{TX, [Chunk1, Chunk2, Chunk3]}.
+	{TX, [Chunk || {Chunk, _} <- Chunks]}.
+
+generate_chunks(Node, WeaveSize, DataSize, Acc) when DataSize > 0 ->
+	ChunkSize = min(DataSize, ?DATA_CHUNK_SIZE),
+	EndOffset = (length(Acc) * ?DATA_CHUNK_SIZE) + ChunkSize,
+	Chunk = ar_test_node:get_genesis_chunk(WeaveSize + EndOffset),
+	generate_chunks(Node, WeaveSize, DataSize - ChunkSize, Acc ++ [{Chunk, EndOffset}]);
+generate_chunks(_, _, _, Acc) ->
+	Acc.
+
 
