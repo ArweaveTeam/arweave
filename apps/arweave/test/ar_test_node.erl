@@ -1,12 +1,13 @@
 -module(ar_test_node).
 
 %% The new, more flexible, and more user-friendly interface.
--export([boot_peers/1, wait_for_peers/1, get_config/1,set_config/2, wait_until_joined/0, restart/0, restart/1,
+-export([boot_peers/1, wait_for_peers/1, get_config/1,set_config/2,
+	wait_until_joined/0, wait_until_joined/1, restart/0, restart/1,
 		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4, load_fixture/1,
-		get_default_storage_module_packing/2, generate_genesis_data/1, get_genesis_chunk/1]).
+		get_default_storage_module_packing/2, generate_genesis_data/2, get_genesis_chunk/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4,
@@ -26,7 +27,7 @@
 		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2, assert_post_tx_to_peer/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
-		read_block_when_stored/2, get_chunk/2, get_chunk_proof/2, post_chunk/2,
+		read_block_when_stored/2, get_chunk/2, get_chunk/3, get_chunk_proof/2, post_chunk/2,
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0,
@@ -56,7 +57,7 @@
 all_peers(test) ->
 	[{test, peer1}, {test, peer2}, {test, peer3}, {test, peer4}];
 all_peers(e2e) ->
-	[{e2e, peer1}].
+	[{e2e, peer1}, {e2e, peer2}].
 
 boot_peers([]) ->
 	ok;
@@ -96,7 +97,7 @@ try_boot_peer(Build, Node, Retries) ->
             {node(), NodeName};
         {error, Reason} ->
             io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
-            try_boot_peer(Build,Node, Retries - 1)
+            try_boot_peer(Build, Node, Retries - 1)
     end.
 
 wait_for_peers([]) ->
@@ -1122,11 +1123,21 @@ read_block_when_stored(H, IncludeTXs) ->
 	B.
 
 get_chunk(Node, Offset) ->
+	get_chunk(Node, Offset, undefined).
+
+get_chunk(Node, Offset, Packing) ->
+	Headers = case Packing of
+		undefined -> [];
+		_ -> 
+			PackingBinary = iolist_to_binary(ar_serialize:encode_packing(Packing, false)),
+			[{<<"x-packing">>, PackingBinary}]
+	end,
+	?debugFmt("Headers: ~p~n", [Headers]),
 	ar_http:req(#{
 		method => get,
 		peer => peer_ip(Node),
 		path => "/chunk/" ++ integer_to_list(Offset),
-		headers => [{<<"x-bucket-based-offset">>, <<"true">>}]
+		headers => [{<<"x-bucket-based-offset">>, <<"true">>} | Headers]
 	}).
 
 get_chunk_proof(Node, Offset) ->
@@ -1237,12 +1248,13 @@ p2p_headers(Node) ->
 %% integer data in 4 byte chunks. e.g.
 %% <<0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, ...>>
 %% This makes it easier to assert correct chunk data in tests.
--spec generate_genesis_data(integer()) -> binary().
-generate_genesis_data(Size) ->
-	FullChunks = Size div 4,
-	LeftoverBytes = Size rem 4,
-	IncrementingData = generate_data(0, FullChunks * 4, <<>>),
-	add_padding(IncrementingData, LeftoverBytes).
+-spec generate_genesis_data(integer(), integer()) -> binary().
+generate_genesis_data(StartOffset, EndOffset) ->
+    Size = EndOffset - StartOffset,
+    FullChunks = Size div 4,
+    LeftoverBytes = Size rem 4,
+    IncrementingData = generate_data(StartOffset div 4, FullChunks * 4, <<>>),
+    add_padding(IncrementingData, LeftoverBytes).
 
 %% @doc: get the genesis chunk at a given offset.
 -spec get_genesis_chunk(integer()) -> binary().
@@ -1251,10 +1263,10 @@ get_genesis_chunk(Offset) ->
     generate_data(ChunkIndex * (?DATA_CHUNK_SIZE div 4), ?DATA_CHUNK_SIZE, <<>>).
 
 generate_data(CurrentValue, RemainingBytes, Acc) when RemainingBytes >= 4 ->
-    Chunk = <<CurrentValue:32/integer>>,
-    generate_data(CurrentValue + 1, RemainingBytes - 4, <<Acc/binary, Chunk/binary>>);
+	Chunk = <<CurrentValue:32/integer>>,
+	generate_data(CurrentValue + 1, RemainingBytes - 4, <<Acc/binary, Chunk/binary>>);
 generate_data(_, RemainingBytes, Acc) ->
-    add_padding(Acc, RemainingBytes).
+	add_padding(Acc, RemainingBytes).
 
 add_padding(Data, 0) ->
     Data;

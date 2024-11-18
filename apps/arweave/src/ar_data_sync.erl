@@ -2478,6 +2478,7 @@ get_unsynced_intervals_from_other_storage_modules(_TargetStoreID, _StoreID, Rang
 	Intervals;
 get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeStart,
 		RangeEnd, Intervals) ->
+	?LOG_ERROR([{event, get_unsynced_intervals_from_other_storage_modules}, {RangeStart, RangeEnd}, {StoreID, TargetStoreID}]),
 	FindNextMissing =
 		case ar_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ?MODULE,
 				TargetStoreID) of
