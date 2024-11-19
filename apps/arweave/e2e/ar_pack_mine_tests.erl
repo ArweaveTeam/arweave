@@ -38,15 +38,34 @@ pack_mine_test_() ->
 %% ------------------------------------------------------------------------------------------------
 test_pack_mine() ->
 	SourceNode = peer1,
+	SinkNode = peer2,
 	{Blocks, SourcePacking} = start_source_node(SourceNode, spora_2_6),
 	[B0, B1, B2 | _] = Blocks,
+	assert_syncs_range(SourceNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	
 	FullChunkOffset = ?PARTITION_SIZE + ?DATA_CHUNK_SIZE,
 	PartialChunkOffset = ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE),
-	assert_chunk(
-		SourceNode, B1, FullChunkOffset, SourcePacking, ?DATA_CHUNK_SIZE),
-	assert_chunk(
-		SourceNode, B2, PartialChunkOffset, SourcePacking, floor(0.75 * ?DATA_CHUNK_SIZE)),
+	PartialChunkSize = floor(0.75 * ?DATA_CHUNK_SIZE),
+
+	assert_chunk(SourceNode, B1, FullChunkOffset, SourcePacking, ?DATA_CHUNK_SIZE),
+	assert_chunk(SourceNode, B2, PartialChunkOffset, SourcePacking, PartialChunkSize),
+
+	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, spora_2_6),
+	assert_syncs_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+
+	assert_chunk(SinkNode, B1, FullChunkOffset, SinkPacking, ?DATA_CHUNK_SIZE),
+	assert_chunk(SinkNode, B2, PartialChunkOffset, SinkPacking, PartialChunkSize),
+
+	CurrentHeight = ar_test_node:remote_call(SinkNode, ar_node, get_height, []),
+	ar_test_node:mine(SinkNode),
+
+	SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
+	{ok, SinkBlock} = ar_test_node:http_get_block(element(1, hd(SinkBI)), SinkNode),
+	assert_block(SinkPacking, SinkBlock),
+
+	SourceBI = ar_test_node:wait_until_height(SourceNode, SinkBlock#block.height),
+	{ok, SourceBlock} = ar_test_node:http_get_block(element(1, hd(SourceBI)), SourceNode),
+	?assertEqual(SinkBlock, SourceBlock),
 	ok.
 
 assert_chunk(Node, Block, EndOffset, Packing, ChunkSize) ->
@@ -98,7 +117,6 @@ start_source_node(Node, PackingType) ->
 			storage_modules = StorageModules,
 			auto_join = true,
 			mining_addr = RewardAddr
-			%enable = [pack_served_chunks | Config#config.enable]
 		}, true)
 	),
 
@@ -106,15 +124,33 @@ start_source_node(Node, PackingType) ->
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
 	B1 = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE)),
 	B2 = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE)),
-	B3 = mine_block(Node, Wallet, 8 * ?DATA_CHUNK_SIZE),
-	B4 = mine_block(Node, Wallet, 8 * ?DATA_CHUNK_SIZE),
+	B3 = mine_block(Node, Wallet, ?PARTITION_SIZE),
+	B4 = mine_block(Node, Wallet, ?PARTITION_SIZE),
+	B5 = mine_block(Node, Wallet, ?PARTITION_SIZE),
 
-	{[B0, B1, B2, B3, B4], SourcePacking}.
+	{[B0, B1, B2, B3, B4, B5], SourcePacking}.
 
 start_sink_node(Node, SourceNode, B0, PackingType) ->
-	SinkAddr = crypto:strong_rand_bytes(32),
+	Wallet = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
+	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = packing_type_to_packing(PackingType, SinkAddr),
-	ok.
+	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
+	
+	StorageModules = [
+		{?PARTITION_SIZE, 1, SinkPacking}
+	],
+	?assertEqual(ar_test_node:peer_name(Node),
+		ar_test_node:start_other_node(Node, B0, Config#config{
+			peers = [ar_test_node:peer_ip(SourceNode)],
+			start_from_latest_state = true,
+			storage_modules = StorageModules,
+			auto_join = true,
+			mining_addr = SinkAddr
+		}, true)
+	),
+
+	SinkPacking.
+
 
 mine_block(Node, Wallet, DataSize) ->
 	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
@@ -152,3 +188,49 @@ packing_type_to_packing(PackingType, Address) ->
 		composite_2 -> {composite, Address, 2};
 		unpacked -> unpacked
 	end.
+
+assert_syncs_range(Node, StartOffset, EndOffset) ->
+	?assert(
+		ar_util:do_until(
+			fun() -> has_range(Node, StartOffset, EndOffset) end,
+			100,
+			60 * 1000
+		),
+		iolist_to_binary(io_lib:format(
+			"~s Failed to sync range ~p - ~p", [Node, StartOffset, EndOffset]))).
+
+
+has_range(Node, StartOffset, EndOffset) ->
+	NodeIP = ar_test_node:peer_ip(Node),
+	case ar_http_iface_client:get_sync_record(NodeIP) of
+		{ok, SyncRecord} ->
+			interval_contains(SyncRecord, StartOffset, EndOffset);
+		Error ->
+			?assert(false, 
+				iolist_to_binary(io_lib:format(
+					"Failed to get sync record from ~p: ~p", [Node, Error]))),
+			false
+	end.
+
+interval_contains(Intervals, Start, End) when End > Start ->
+    case gb_sets:iterator_from({Start, Start}, Intervals) of
+        Iter ->
+            interval_contains2(Iter, Start, End)
+    end.
+
+interval_contains2(Iter, Start, End) ->
+    case gb_sets:next(Iter) of
+        none ->
+            false;
+        {{IntervalEnd, IntervalStart}, _} when IntervalStart =< Start andalso IntervalEnd >= End ->
+            true;
+        _ ->
+            false
+    end.
+
+assert_block({spora_2_6, Address}, MinedBlock) ->
+	?assertEqual(Address, MinedBlock#block.reward_addr),
+	?assertEqual(0, MinedBlock#block.packing_difficulty);
+assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
+	?assertEqual(Address, MinedBlock#block.reward_addr),
+	?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty).
