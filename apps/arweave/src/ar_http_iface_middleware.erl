@@ -1989,7 +1989,6 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 						cowboy_req:header(<<"x-packing">>, Req, <<"unpacked">>),
 						any
 					),
-					?LOG_ERROR("RequestedPacking: ~p", [ar_serialize:encode_packing(RequestedPacking, false)]),
 					IsBucketBasedOffset =
 						case cowboy_req:header(<<"x-bucket-based-offset">>, Req, not_set) of
 							not_set ->
@@ -2018,7 +2017,6 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 										{RequestedPacking, ok}
 								end
 						end,
-					?LOG_ERROR("ReadPacking: ~p", [ar_serialize:encode_packing(ReadPacking, false)]),
 					case CheckRecords of
 						{reply, Reply} ->
 							Reply;
