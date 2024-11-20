@@ -132,7 +132,7 @@ assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
 			[EndOffset, ChunkSize]))).
 
 start_source_node(Node, PackingType) ->
-	Wallet = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
+	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_a]),
 	RewardAddr = ar_wallet:to_address(Wallet),
 
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
@@ -181,7 +181,7 @@ start_source_node(Node, PackingType) ->
 	{[B0, B1, B2, B3, B4, B5], SourcePacking, Chunks}.
 
 start_sink_node(Node, SourceNode, B0, PackingType) ->
-	Wallet = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
+	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = packing_type_to_packing(PackingType, SinkAddr),
 	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
@@ -283,3 +283,16 @@ assert_block({spora_2_6, Address}, MinedBlock) ->
 assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
 	?assertEqual(Address, MinedBlock#block.reward_addr),
 	?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty).
+
+
+% generate_fixtures_test_() ->
+% 	[ fun generate_fixtures/0 ].
+generate_fixtures() ->
+	Wallets = [wallet_a, wallet_b, wallet_c, wallet_d],
+	lists:foreach(fun(Wallet) ->
+		WalletName = atom_to_list(Wallet),
+		ar_wallet:new_keyfile(?DEFAULT_KEY_TYPE, WalletName),
+		ar_e2e:install_fixture(
+			ar_wallet:wallet_filepath(Wallet), wallets, WalletName ++ ".json")
+	end, Wallets),
+	ok.
