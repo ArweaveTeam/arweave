@@ -1,6 +1,7 @@
 -module(ar_e2e).
 
--export([fixture_dir/1, install_fixture/3, load_wallet_fixture/1]).
+-export([fixture_dir/1, fixture_dir/2, install_fixture/3, load_wallet_fixture/1,
+	write_chunk_fixture/3, load_chunk_fixture/2]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -9,13 +10,16 @@ fixture_dir(FixtureType) ->
     Dir = filename:dirname(?FILE),
 	filename:join([Dir, "fixtures", atom_to_list(FixtureType)]).
 
+-spec fixture_dir(atom(), [binary()]) -> binary().
+fixture_dir(FixtureType, SubDirs) ->
+    FixtureDir = fixture_dir(FixtureType),
+	filename:join([FixtureDir] ++ SubDirs).
+
 -spec install_fixture(binary(), atom(), string()) -> binary().
 install_fixture(FilePath, FixtureType, FixtureName) ->
     FixtureDir = fixture_dir(FixtureType),
-    ?debugFmt("Fixture dir: ~p", [FixtureDir]),
     ok = filelib:ensure_dir(FixtureDir ++ "/"),
-    FixturePath = fixture_path(FixtureType, FixtureName),
-    ?debugFmt("Fixture path: ~p", [FixturePath]),
+    FixturePath = filename:join([FixtureDir, FixtureName]),
     file:copy(FilePath, FixturePath),
     FixturePath.
 
@@ -23,18 +27,22 @@ install_fixture(FilePath, FixtureType, FixtureName) ->
 load_wallet_fixture(WalletFixture) ->
     ?debugFmt("Loading wallet fixture: ~p", [WalletFixture]),
     WalletName = atom_to_list(WalletFixture),
-    FixturePath = fixture_path(wallets, WalletName ++ ".json"),
+    FixtureDir = fixture_dir(wallets),
+    FixturePath = filename:join([FixtureDir, WalletName ++ ".json"]),
     Wallet = ar_wallet:load_keyfile(FixturePath),
     Address = ar_wallet:to_address(Wallet),
 	WalletPath = ar_wallet:wallet_filepath(ar_util:encode(Address)),
     file:copy(FixturePath, WalletPath),
     ar_wallet:load_keyfile(WalletPath).
 
+-spec write_chunk_fixture(binary(), non_neg_integer(), binary()) -> ok.
+write_chunk_fixture(Packing, EndOffset, Chunk) ->
+    FixtureDir = fixture_dir(chunks, [ar_serialize:encode_packing(Packing, true)]),
+    FixturePath = filename:join([FixtureDir, integer_to_list(EndOffset) ++ ".bin"]),
+    file:write_file(FixturePath, Chunk).
 
-%% --------------------------------------------------------------------------------------------
-%% Private functions
-%% --------------------------------------------------------------------------------------------
-
-
-fixture_path(FixtureType, FixtureName) ->
-    filename:join(fixture_dir(FixtureType), FixtureName).
+-spec load_chunk_fixture(binary(), non_neg_integer()) -> binary().
+load_chunk_fixture(Packing, EndOffset) ->
+    FixtureDir = fixture_dir(chunks, [ar_serialize:encode_packing(Packing, true)]),
+    FixturePath = filename:join([FixtureDir, integer_to_list(EndOffset) ++ ".bin"]),
+    file:read_file(FixturePath).

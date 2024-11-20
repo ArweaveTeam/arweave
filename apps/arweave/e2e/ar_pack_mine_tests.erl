@@ -6,6 +6,10 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% Set to true to update the chunk fixtures.
+%% WARNING: ONLY SET TO true IF YOU KNOW WHAT YOU ARE DOING!
+-define(UPDATE_CHUNK_FIXTURES, false).
+
 %% --------------------------------------------------------------------------------------------
 %% Fixtures
 %% --------------------------------------------------------------------------------------------
@@ -122,11 +126,19 @@ assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
 	]),
 	Chunk = maps:get(chunk, Proof),
 
+	maybe_write_chunk_fixture(Packing, EndOffset, Chunk),
+
+	ExpectedPackedChunk = ar_e2e:load_chunk_fixture(Packing, EndOffset),
+	?assertEqual(ExpectedPackedChunk, Chunk,
+		iolist_to_binary(io_lib:format(
+			"Chunk at offset ~p, size ~p does not match previously packed chunk",
+			[EndOffset, ChunkSize]))),
+
 	{ok, UnpackedChunk} = ar_packing_server:unpack(
 		Packing, EndOffset, Block#block.tx_root, Chunk, ?DATA_CHUNK_SIZE),
 	UnpaddedChunk = ar_packing_server:unpad_chunk(Packing, UnpackedChunk, ChunkSize, byte_size(Chunk)),
-	ExpectedChunk = ar_test_node:get_genesis_chunk(EndOffset),
-	?assertEqual(ExpectedChunk, UnpaddedChunk,
+	ExpectedUnpackedChunk = ar_test_node:get_genesis_chunk(EndOffset),
+	?assertEqual(ExpectedUnpackedChunk, UnpaddedChunk,
 		iolist_to_binary(io_lib:format(
 			"Chunk at offset ~p, size ~p does not match unpacked chunk",
 			[EndOffset, ChunkSize]))).
@@ -285,9 +297,10 @@ assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
 	?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty).
 
 
-% generate_fixtures_test_() ->
-% 	[ fun generate_fixtures/0 ].
-generate_fixtures() ->
+%% --------------------------------------------------------------------------------------------
+%% Test Data Generation
+%% --------------------------------------------------------------------------------------------	
+write_wallet_fixtures() ->
 	Wallets = [wallet_a, wallet_b, wallet_c, wallet_d],
 	lists:foreach(fun(Wallet) ->
 		WalletName = atom_to_list(Wallet),
@@ -295,4 +308,9 @@ generate_fixtures() ->
 		ar_e2e:install_fixture(
 			ar_wallet:wallet_filepath(Wallet), wallets, WalletName ++ ".json")
 	end, Wallets),
+	ok.
+
+maybe_write_chunk_fixture(Packing, EndOffset, Chunk) when ?UPDATE_CHUNK_FIXTURES =:= true ->
+	ar_e2e:write_chunk_fixture(Packing, EndOffset, Chunk);
+maybe_write_chunk_fixture(_, _, _) ->
 	ok.
