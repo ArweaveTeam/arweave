@@ -13,9 +13,31 @@
 %% --------------------------------------------------------------------------------------------
 %% Fixtures
 %% --------------------------------------------------------------------------------------------
+setup_source_node(unpacked) ->
+	SourceNode = peer1,
+	TempNode = peer2,
+	ar_test_node:stop(TempNode),
+	{Blocks, _SourceAddr, Chunks} = start_source_node(TempNode, composite_1),
+	{_, StorageModules} = source_node_storage_modules(SourceNode, unpacked),
+	[B0 | _] = Blocks,
+	{ok, Config} = ar_test_node:get_config(SourceNode),
+	ar_test_node:start_other_node(SourceNode, B0, Config#config{
+		peers = [ar_test_node:peer_ip(TempNode)],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true
+	}, true),
+	assert_syncs_range(SourceNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	assert_chunks(SourceNode, unpacked, Chunks),
+	ar_test_node:stop(TempNode),
+	{Blocks, Chunks, unpacked};
+
 setup_source_node(PackingType) ->
 	SourceNode = peer1,
-	{Blocks, SourcePacking, Chunks} = start_source_node(SourceNode, PackingType),
+	SinkNode = peer2,
+	ar_test_node:stop(SinkNode),
+	{Blocks, SourceAddr, Chunks} = start_source_node(SourceNode, PackingType),
+	SourcePacking = packing_type_to_packing(PackingType, SourceAddr),
 	assert_syncs_range(SourceNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	assert_chunks(SourceNode, SourcePacking, Chunks),
 
@@ -60,16 +82,16 @@ composite_2_sync_pack_mine_test_() ->
 				]
 		end}.
 
-% unpacked_sync_pack_mine_test_() ->
-% 	{setup, fun () -> setup_source_node(unpacked) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-% 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-% 					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
-% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-% 				]
-% 		end}.
+unpacked_sync_pack_mine_test_() ->
+	{setup, fun () -> setup_source_node(unpacked) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+				]
+		end}.
 
 %% --------------------------------------------------------------------------------------------
 %% test_sync_pack_mine
@@ -81,7 +103,7 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 		timer:sleep(1000),
 		io:fwrite(user, <<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType])
 	end),
-	[B0, B1, B2 | _] = Blocks,
+	[B0 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,
 
@@ -128,7 +150,7 @@ assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
 
 	maybe_write_chunk_fixture(Packing, EndOffset, Chunk),
 
-	ExpectedPackedChunk = ar_e2e:load_chunk_fixture(Packing, EndOffset),
+	{ok, ExpectedPackedChunk} = ar_e2e:load_chunk_fixture(Packing, EndOffset),
 	?assertEqual(ExpectedPackedChunk, Chunk,
 		iolist_to_binary(io_lib:format(
 			"Chunk at offset ~p, size ~p does not match previously packed chunk",
@@ -143,17 +165,16 @@ assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
 			"Chunk at offset ~p, size ~p does not match unpacked chunk",
 			[EndOffset, ChunkSize]))).
 
-start_source_node(Node, PackingType) ->
+source_node_storage_modules(_Node, unpacked) ->
+	{undefined, source_node_storage_modules(unpacked)};
+source_node_storage_modules(Node, PackingType) ->
 	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_a]),
 	RewardAddr = ar_wallet:to_address(Wallet),
-
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
+	{Wallet, source_node_storage_modules(SourcePacking)}.
 
-	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ?PARTITION_SIZE),
-
-	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
-	
-	StorageModules = [
+source_node_storage_modules(SourcePacking) ->
+	[
 		{?PARTITION_SIZE, 0, SourcePacking},
 		{?PARTITION_SIZE, 1, SourcePacking},
 		{?PARTITION_SIZE, 2, SourcePacking},
@@ -161,7 +182,17 @@ start_source_node(Node, PackingType) ->
 		{?PARTITION_SIZE, 4, SourcePacking},
 		{?PARTITION_SIZE, 5, SourcePacking},
 		{?PARTITION_SIZE, 6, SourcePacking}
-	],
+	].
+
+start_source_node(_Node, unpacked) ->
+	?assert(false, "Source nodes cannot be unpacked - they need to mine.");
+start_source_node(Node, PackingType) ->
+	{Wallet, StorageModules} = source_node_storage_modules(Node, PackingType),
+	RewardAddr = ar_wallet:to_address(Wallet),
+	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ?PARTITION_SIZE),
+
+	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
+	
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{
 			start_from_latest_state = true,
@@ -190,13 +221,13 @@ start_source_node(Node, PackingType) ->
 		{B3, ?PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		{B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
-	{[B0, B1, B2, B3, B4, B5], SourcePacking, Chunks}.
+	{[B0, B1, B2, B3, B4, B5], RewardAddr, Chunks}.
 
 start_sink_node(Node, SourceNode, B0, PackingType) ->
 	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = packing_type_to_packing(PackingType, SinkAddr),
-	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
+	{ok, Config} = ar_test_node:get_config(Node),
 	
 	StorageModules = [
 		{?PARTITION_SIZE, 1, SinkPacking}

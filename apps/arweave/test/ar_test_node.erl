@@ -2,7 +2,8 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([boot_peers/1, wait_for_peers/1, get_config/1,set_config/2,
-	wait_until_joined/0, wait_until_joined/1, restart/0, restart/1,
+		update_config/2, update_config/1,
+		wait_until_joined/0, wait_until_joined/1, restart/0, restart/1,
 		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
@@ -160,16 +161,11 @@ get_config(Node) ->
 set_config(Node, Config) ->
 	remote_call(Node, application, set_env, [arweave, config, Config]).
 
-start_other_node(Node, B0, Config, WaitUntilSync) ->
-	remote_call(Node, ar_test_node, start_node, [B0, Config, WaitUntilSync]).
+update_config(Node, Config) ->
+	remote_call(Node, ar_test_node, update_config, [Config]).
 
-%% @doc Start a node with the given genesis block and configuration.
-start_node(B0, Config) ->
-	start_node(B0, Config, true).
-start_node(B0, Config, WaitUntilSync) ->
+update_config(Config) ->
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	clean_up_and_stop(),
-	write_genesis_files(BaseConfig#config.data_dir, B0),
 	Config2 = BaseConfig#config{
 		start_from_latest_state = Config#config.start_from_latest_state,
 		auto_join = Config#config.auto_join,
@@ -192,6 +188,19 @@ start_node(B0, Config, WaitUntilSync) ->
 		storage_modules = Config#config.storage_modules
 	},
 	ok = application:set_env(arweave, config, Config2),
+	Config2.
+
+start_other_node(Node, B0, Config, WaitUntilSync) ->
+	remote_call(Node, ar_test_node, start_node, [B0, Config, WaitUntilSync]).
+
+%% @doc Start a node with the given genesis block and configuration.
+start_node(B0, Config) ->
+	start_node(B0, Config, true).
+start_node(B0, Config, WaitUntilSync) ->
+	clean_up_and_stop(),
+	{ok, BaseConfig} = application:get_env(arweave, config),
+	write_genesis_files(BaseConfig#config.data_dir, B0),
+	update_config(Config),
 	ar:start_dependencies(),
 	wait_until_joined(),
 	case WaitUntilSync of
