@@ -1,4 +1,4 @@
--module(ar_pack_mine_tests).
+-module(ar_sync_pack_mine_tests).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
