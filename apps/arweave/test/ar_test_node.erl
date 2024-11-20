@@ -167,7 +167,6 @@ start_other_node(Node, B0, Config, WaitUntilSync) ->
 start_node(B0, Config) ->
 	start_node(B0, Config, true).
 start_node(B0, Config, WaitUntilSync) ->
-	?LOG_ERROR("Starting node with config: ~p~n", [Config]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	clean_up_and_stop(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),

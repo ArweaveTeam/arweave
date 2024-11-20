@@ -768,8 +768,17 @@ network_data_size(Height,
 	TargetTime = ar_testnet:target_block_time(Height),
 	SolutionsPerPartitionPerBlock =
 		(SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * TargetTime) div IntervalTotal,
-	EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
-	EstimatedPartitionCount * (?PARTITION_SIZE).
+	?LOG_DEBUG([{event, network_data_size},
+		{solutions_per_partition_per_vdf_step, SolutionsPerPartitionPerVDFStep},
+		{vdf_interval_total, VDFIntervalTotal}, {target_time, TargetTime},
+		{interval_total, IntervalTotal}, {solutions_per_partition_per_block,
+				SolutionsPerPartitionPerBlock}]),
+	case SolutionsPerPartitionPerBlock of
+		0 -> 0;
+		_ ->
+			EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
+			EstimatedPartitionCount * (?PARTITION_SIZE)
+	end.
 
 %%%===================================================================
 %%% Tests.

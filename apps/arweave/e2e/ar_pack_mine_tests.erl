@@ -6,70 +6,109 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% ------------------------------------------------------------------------------------------------
+%% --------------------------------------------------------------------------------------------
 %% Fixtures
-%% ------------------------------------------------------------------------------------------------
-setup_all() ->
-	ok.
+%% --------------------------------------------------------------------------------------------
+setup_source_node(PackingType) ->
+	SourceNode = peer1,
+	{Blocks, SourcePacking, Chunks} = start_source_node(SourceNode, PackingType),
+	assert_syncs_range(SourceNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	assert_chunks(SourceNode, SourcePacking, Chunks),
 
-cleanup_all(_) ->
-	ok.
+	{Blocks, Chunks, PackingType}.
 
-setup_one() ->
-	ok.
-
-cleanup_one(_) ->
-	ok.
-
-
-%% ------------------------------------------------------------------------------------------------
+instantiator(GenesisData, SinkPackingType, TestFun) ->
+	{timeout, 300, {with, {GenesisData, SinkPackingType}, [TestFun]}}.
+	
+%% --------------------------------------------------------------------------------------------
 %% Test Registration
-%% ------------------------------------------------------------------------------------------------
-pack_mine_test_() ->
-	{setup, fun setup_all/0, fun cleanup_all/1,
-		{foreach, fun setup_one/0, fun cleanup_one/1,
-		[
-			{timeout, 300, fun test_pack_mine/0}
-		]}
-    }.
+%% --------------------------------------------------------------------------------------------
+spora_2_6_sync_pack_mine_test_() ->
+	{setup, fun () -> setup_source_node(spora_2_6) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+				]
+		end}.
 
-%% ------------------------------------------------------------------------------------------------
-%% pack_mine_test_
-%% ------------------------------------------------------------------------------------------------
-test_pack_mine() ->
+composite_1_sync_pack_mine_test_() ->
+	{setup, fun () -> setup_source_node(composite_1) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+				]
+		end}.
+
+composite_2_sync_pack_mine_test_() ->
+	{setup, fun () -> setup_source_node(composite_2) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+				]
+		end}.
+
+% unpacked_sync_pack_mine_test_() ->
+% 	{setup, fun () -> setup_source_node(unpacked) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+% 				]
+% 		end}.
+
+%% --------------------------------------------------------------------------------------------
+%% test_sync_pack_mine
+%% --------------------------------------------------------------------------------------------
+test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
+	%% Print the specific flavor of this test since it isn't captured in the test name.
+	%% Delay the print by 1 second to allow the eunit output to be flushed.
+	spawn(fun() ->
+		timer:sleep(1000),
+		io:fwrite(user, <<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType])
+	end),
+	[B0, B1, B2 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,
-	{Blocks, SourcePacking} = start_source_node(SourceNode, spora_2_6),
-	[B0, B1, B2 | _] = Blocks,
-	assert_syncs_range(SourceNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
-	
-	FullChunkOffset = ?PARTITION_SIZE + ?DATA_CHUNK_SIZE,
-	PartialChunkOffset = ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE),
-	PartialChunkSize = floor(0.75 * ?DATA_CHUNK_SIZE),
 
-	assert_chunk(SourceNode, B1, FullChunkOffset, SourcePacking, ?DATA_CHUNK_SIZE),
-	assert_chunk(SourceNode, B2, PartialChunkOffset, SourcePacking, PartialChunkSize),
-
-	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, spora_2_6),
+	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
 	assert_syncs_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	assert_chunks(SinkNode, SinkPacking, Chunks),
 
-	assert_chunk(SinkNode, B1, FullChunkOffset, SinkPacking, ?DATA_CHUNK_SIZE),
-	assert_chunk(SinkNode, B2, PartialChunkOffset, SinkPacking, PartialChunkSize),
+	case SinkPackingType of
+		unpacked ->
+			ok;
+		_ ->
+			CurrentHeight = ar_test_node:remote_call(SinkNode, ar_node, get_height, []),
+			ar_test_node:mine(SinkNode),
 
-	CurrentHeight = ar_test_node:remote_call(SinkNode, ar_node, get_height, []),
-	ar_test_node:mine(SinkNode),
+			SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
+			{ok, SinkBlock} = ar_test_node:http_get_block(element(1, hd(SinkBI)), SinkNode),
+			assert_block(SinkPacking, SinkBlock),
 
-	SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
-	{ok, SinkBlock} = ar_test_node:http_get_block(element(1, hd(SinkBI)), SinkNode),
-	assert_block(SinkPacking, SinkBlock),
+			SourceBI = ar_test_node:wait_until_height(SourceNode, SinkBlock#block.height),
+			{ok, SourceBlock} = ar_test_node:http_get_block(element(1, hd(SourceBI)), SourceNode),
+			?assertEqual(SinkBlock, SourceBlock),
+			ok
+	end.
 
-	SourceBI = ar_test_node:wait_until_height(SourceNode, SinkBlock#block.height),
-	{ok, SourceBlock} = ar_test_node:http_get_block(element(1, hd(SourceBI)), SourceNode),
-	?assertEqual(SinkBlock, SourceBlock),
-	ok.
 
-assert_chunk(Node, Block, EndOffset, Packing, ChunkSize) ->
+assert_chunks(Node, Packing, Chunks) ->
+	lists:foreach(fun({Block, EndOffset, ChunkSize}) ->
+		assert_chunk(Node, Packing, Block, EndOffset, ChunkSize)
+	end, Chunks).
 
+assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
 	{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} = 
 		ar_test_node:get_chunk(Node, EndOffset, any),
 	Proof = ar_serialize:json_map_to_poa_map(
@@ -128,7 +167,18 @@ start_source_node(Node, PackingType) ->
 	B4 = mine_block(Node, Wallet, ?PARTITION_SIZE),
 	B5 = mine_block(Node, Wallet, ?PARTITION_SIZE),
 
-	{[B0, B1, B2, B3, B4, B5], SourcePacking}.
+	%% List of {Block, EndOffset, ChunkSize}
+	Chunks = [
+		{B1, ?PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE},
+		{B1, ?PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B1, ?PARTITION_SIZE + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
+		{B2, ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
+		{B3, ?PARTITION_SIZE + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?PARTITION_SIZE + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
+	],
+	{[B0, B1, B2, B3, B4, B5], SourcePacking, Chunks}.
 
 start_sink_node(Node, SourceNode, B0, PackingType) ->
 	Wallet = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
@@ -154,7 +204,6 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 
 mine_block(Node, Wallet, DataSize) ->
 	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
-	?debugFmt("Weave size: ~p, data size: ~p", [WeaveSize, DataSize]),
 	{TX, Chunks} = generate_tx(Node, Wallet, WeaveSize, DataSize),
 	B = ar_test_node:post_and_mine(#{ miner => Node, await_on => Node }, [TX]),
 	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks),
