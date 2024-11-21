@@ -9,7 +9,7 @@
 		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
-		tests/0, tests/1, tests/2, e2e/1, shell/0, stop_shell/0,
+		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -912,6 +912,8 @@ tests(TestType, Args) ->
 		),
 	tests(TestType, Mods, #config{ debug = true }).
 
+e2e() ->
+	tests(e2e, [ar_sync_pack_mine_tests]).
 e2e(Mod) ->
 	tests(e2e, Mod).
 
