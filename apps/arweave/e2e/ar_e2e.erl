@@ -4,7 +4,7 @@
 	write_chunk_fixture/3, load_chunk_fixture/2]).
 
 -export([start_source_node/3, source_node_storage_modules/3, packing_type_to_packing/2,
-    assert_syncs_range/3, assert_chunks/3]).
+    max_chunk_offset/1, assert_block/2, assert_syncs_range/3, assert_chunks/3, assert_partition_size/4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -106,6 +106,9 @@ start_source_node(Node, PackingType, WalletFixture) ->
     ],
     {[B0, B1, B2, B3, B4, B5], RewardAddr, Chunks}.
 
+max_chunk_offset(Chunks) ->
+    lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
+
 source_node_storage_modules(_Node, unpacked, _WalletFixture) ->
     {undefined, source_node_storage_modules(unpacked)};
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
@@ -127,8 +130,12 @@ source_node_storage_modules(SourcePacking) ->
     
 mine_block(Node, Wallet, DataSize) ->
     WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
+    Addr = ar_wallet:to_address(Wallet),
     {TX, Chunks} = generate_tx(Node, Wallet, WeaveSize, DataSize),
     B = ar_test_node:post_and_mine(#{ miner => Node, await_on => Node }, [TX]),
+
+    ?assertEqual(Addr, B#block.reward_addr),
+
     Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks),
     
     ar_test_data_sync:wait_until_syncs_chunks(Node, Proofs, infinity),
@@ -153,6 +160,15 @@ generate_chunks(Node, WeaveSize, DataSize, Acc) when DataSize > 0 ->
 generate_chunks(_, _, _, Acc) ->
     Acc.
 
+
+assert_block({spora_2_6, Address}, MinedBlock) ->
+    ?assertEqual(Address, MinedBlock#block.reward_addr),
+    ?assertEqual(0, MinedBlock#block.packing_difficulty);
+assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
+    ?assertEqual(Address, MinedBlock#block.reward_addr),
+    ?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty).
+    
+
 assert_syncs_range(Node, StartOffset, EndOffset) ->
     ?assert(
         ar_util:do_until(
@@ -162,6 +178,21 @@ assert_syncs_range(Node, StartOffset, EndOffset) ->
         ),
         iolist_to_binary(io_lib:format(
             "~s Failed to sync range ~p - ~p", [Node, StartOffset, EndOffset]))).
+
+assert_partition_size(Node, PartitionNumber, Packing, Size) ->
+    ?assert(
+        ar_util:do_until(
+            fun() -> 
+                ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
+                    [PartitionNumber, Packing]) >= Size
+            end,
+            100,
+            60 * 1000
+        ),
+        iolist_to_binary(io_lib:format(
+            "~s partition ~p,~p failed to reach size ~p", [Node, PartitionNumber, 
+                ar_serialize:encode_packing(Packing, true), Size]))).
+
 
 
 has_range(Node, StartOffset, EndOffset) ->

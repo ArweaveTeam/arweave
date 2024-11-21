@@ -528,8 +528,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 restart() ->
 	stop(),
 	ar:start_dependencies(),
-	wait_until_joined(),
-	wait_until_syncs_genesis_data().
+	wait_until_joined().
 
 restart(Node) ->
 	remote_call(Node, ?MODULE, restart, []).

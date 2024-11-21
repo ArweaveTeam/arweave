@@ -115,7 +115,7 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 
 			SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
 			{ok, SinkBlock} = ar_test_node:http_get_block(element(1, hd(SinkBI)), SinkNode),
-			assert_block(SinkPacking, SinkBlock),
+			ar_e2e:assert_block(SinkPacking, SinkBlock),
 
 			SourceBI = ar_test_node:wait_until_height(SourceNode, SinkBlock#block.height),
 			{ok, SourceBlock} = ar_test_node:http_get_block(element(1, hd(SourceBI)), SourceNode),
@@ -143,10 +143,3 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 	),
 
 	SinkPacking.
-
-assert_block({spora_2_6, Address}, MinedBlock) ->
-	?assertEqual(Address, MinedBlock#block.reward_addr),
-	?assertEqual(0, MinedBlock#block.packing_difficulty);
-assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
-	?assertEqual(Address, MinedBlock#block.reward_addr),
-	?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty).
