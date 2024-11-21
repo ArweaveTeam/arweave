@@ -3,7 +3,7 @@
 -export([fixture_dir/1, fixture_dir/2, install_fixture/3, load_wallet_fixture/1,
 	write_chunk_fixture/3, load_chunk_fixture/2]).
 
--export([start_source_node/3, source_node_storage_modules/3, packing_type_to_packing/2,
+-export([delayed_print/2, start_source_node/3, source_node_storage_modules/3, packing_type_to_packing/2,
     max_chunk_offset/1, assert_block/2, assert_syncs_range/3, assert_chunks/3, assert_partition_size/4]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -67,8 +67,25 @@ packing_type_to_packing(PackingType, Address) ->
         unpacked -> unpacked
     end.
 
-start_source_node(_Node, unpacked, _WalletFixture) ->
-    ?assert(false, "Source nodes cannot be unpacked - they need to mine.");
+start_source_node(Node, unpacked, _WalletFixture) ->
+	TempNode = case Node of
+        peer1 -> peer2;
+        peer2 -> peer1
+    end,
+	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(TempNode, composite_1, wallet_a),
+	{_, StorageModules} = ar_e2e:source_node_storage_modules(Node, unpacked, wallet_a),
+	[B0 | _] = Blocks,
+	{ok, Config} = ar_test_node:get_config(Node),
+	ar_test_node:start_other_node(Node, B0, Config#config{
+		peers = [ar_test_node:peer_ip(TempNode)],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true
+	}, true),
+	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_chunks(Node, unpacked, Chunks),
+	ar_test_node:stop(TempNode),
+	{Blocks, undefined, Chunks};
 start_source_node(Node, PackingType, WalletFixture) ->
     {Wallet, StorageModules} = source_node_storage_modules(Node, PackingType, WalletFixture),
     RewardAddr = ar_wallet:to_address(Wallet),
@@ -104,6 +121,11 @@ start_source_node(Node, PackingType, WalletFixture) ->
         {B3, ?PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
         {B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
     ],
+
+    SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
+	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_chunks(Node, SourcePacking, Chunks),
+
     {[B0, B1, B2, B3, B4, B5], RewardAddr, Chunks}.
 
 max_chunk_offset(Chunks) ->
@@ -259,6 +281,13 @@ assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
             "Chunk at offset ~p, size ~p does not match unpacked chunk",
             [EndOffset, ChunkSize]))).
 
+delayed_print(Format, Args) ->
+	%% Print the specific flavor of this test since it isn't captured in the test name.
+	%% Delay the print by 1 second to allow the eunit output to be flushed.
+	spawn(fun() ->
+		timer:sleep(1000),
+		io:fwrite(user, Format, Args)
+	end).
 
 %% --------------------------------------------------------------------------------------------
 %% Test Data Generation
