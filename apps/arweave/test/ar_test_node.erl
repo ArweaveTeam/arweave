@@ -1018,6 +1018,7 @@ test_with_mocked_functions(Functions, TestFun, Timeout) ->
 
 post_and_mine(#{ miner := Node, await_on := AwaitOnNode }, TXs) ->
 	CurrentHeight = remote_call(Node, ar_node, get_height, []),
+	?LOG_INFO("post_and_mine height (~p): ~p", [Node, CurrentHeight+1]),
 	lists:foreach(fun(TX) -> assert_post_tx_to_peer(Node, TX) end, TXs),
 	mine(Node),
 	[{H, _, _} | _] = wait_until_height(AwaitOnNode, CurrentHeight + 1),

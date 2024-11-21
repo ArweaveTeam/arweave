@@ -37,7 +37,6 @@ install_fixture(FilePath, FixtureType, FixtureName) ->
 
 -spec load_wallet_fixture(atom()) -> tuple().
 load_wallet_fixture(WalletFixture) ->
-    ?debugFmt("Loading wallet fixture: ~p", [WalletFixture]),
     WalletName = atom_to_list(WalletFixture),
     FixtureDir = fixture_dir(wallets),
     FixturePath = filename:join([FixtureDir, WalletName ++ ".json"]),

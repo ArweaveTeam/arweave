@@ -661,7 +661,10 @@ prepare_solution(steps, Candidate, Solution) ->
 					{start_step_number, PrevStepNumber},
 					{next_step_number, StepNumber},
 					{next_seed, ar_util:safe_encode(PrevNextSeed)},
-					{next_vdf_difficulty, PrevNextVDFDifficulty}]),
+					{next_vdf_difficulty, PrevNextVDFDifficulty},
+					{h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},
+					{h2, ar_util:safe_encode(Candidate#mining_candidate.h2)}
+					]),
 			error
 	end;
 

@@ -357,9 +357,7 @@
 %% picked as recall chunks and therefore equally incentivize the storage.
 -define(PADDING_NODE_DATA_ROOT, <<>>).
 
--ifdef(DEBUG).
--define(INITIAL_VDF_DIFFICULTY, 2).
--else.
+-ifndef(INITIAL_VDF_DIFFICULTY).
 -define(INITIAL_VDF_DIFFICULTY, 600_000).
 -endif.
 
