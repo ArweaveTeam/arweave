@@ -191,7 +191,7 @@ update_config(Config) ->
 	Config2.
 
 start_other_node(Node, B0, Config, WaitUntilSync) ->
-	remote_call(Node, ar_test_node, start_node, [B0, Config, WaitUntilSync]).
+	remote_call(Node, ar_test_node, start_node, [B0, Config, WaitUntilSync], 90000).
 
 %% @doc Start a node with the given genesis block and configuration.
 start_node(B0, Config) ->
@@ -459,7 +459,7 @@ remote_call(Node, Module, Function, Args, Timeout) ->
 			),
 			case Result of
 				{error, timeout} ->
-					?debugFmt("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
+				 	?debugFmt("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
 							"args: ~p, node: ~p.~n", [Timeout, Module, Function, Args, Node]);
 				_ ->
 					ok
@@ -531,7 +531,7 @@ restart() ->
 	wait_until_joined().
 
 restart(Node) ->
-	remote_call(Node, ?MODULE, restart, []).
+	remote_call(Node, ?MODULE, restart, [], 90000).
 
 start_peer(Node, Args) when is_list(Args) ->
 	remote_call(Node, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
