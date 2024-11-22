@@ -36,6 +36,7 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 
 	RepackInPlaceStorageModules = [ 
 		{Module, ToPacking} || Module <- Config#config.storage_modules ],
+	?LOG_INFO("Repack in place storage modules: ~p", [RepackInPlaceStorageModules]),
 	
 	ar_test_node:update_config(RepackerNode, Config#config{
 		storage_modules = [],

@@ -16,14 +16,14 @@ repack_mine_test_() ->
 		{timeout, 300, {with, {spora_2_6, composite_1}, [fun test_repack_mine/1]}},
 		{timeout, 300, {with, {spora_2_6, composite_2}, [fun test_repack_mine/1]}},
 		{timeout, 300, {with, {spora_2_6, unpacked}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_1, spora_2_6}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_1, composite_1}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_1, composite_2}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_1, unpacked}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_2, spora_2_6}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_2, composite_1}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_2, composite_2}, [fun test_repack_mine/1]}},
-		{timeout, 600, {with, {composite_2, unpacked}, [fun test_repack_mine/1]}}
+		{timeout, 300, {with, {composite_1, spora_2_6}, [fun test_repack_mine/1]}},
+		{timeout, 300, {with, {composite_1, composite_1}, [fun test_repack_mine/1]}},
+		{timeout, 300, {with, {composite_1, composite_2}, [fun test_repack_mine/1]}},
+		{timeout, 300, {with, {composite_1, unpacked}, [fun test_repack_mine/1]}},
+		{timeout, 300, {with, {composite_2, spora_2_6}, [fun test_repack_mine/1]}},
+		{timeout, 300, {with, {composite_2, composite_1}, [fun test_repack_mine/1]}},
+		{timeout, 300, {with, {composite_2, composite_2}, [fun test_repack_mine/1]}},
+		{timeout, 300, {with, {composite_2, unpacked}, [fun test_repack_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------
