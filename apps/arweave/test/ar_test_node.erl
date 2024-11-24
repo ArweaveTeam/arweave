@@ -185,7 +185,8 @@ update_config(Config) ->
 		cm_peers = Config#config.cm_peers,
 		local_peers = Config#config.local_peers,
 		mine = Config#config.mine,
-		storage_modules = Config#config.storage_modules
+		storage_modules = Config#config.storage_modules,
+		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules
 	},
 	ok = application:set_env(arweave, config, Config2),
 	Config2.
