@@ -67,6 +67,7 @@
 -define(MAX_PARALLEL_POST_CHUNK_REQUESTS, 100).
 -define(MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS, 10).
 -define(MAX_PARALLEL_REWARD_HISTORY_REQUESTS, 1).
+-define(MAX_PARALLEL_GET_TX_REQUESTS, 20).
 
 %% The number of parallel tx validation processes.
 -define(MAX_PARALLEL_POST_TX_REQUESTS, 20).
@@ -179,7 +180,8 @@
 		get_wallet_list => ?MAX_PARALLEL_WALLET_LIST_REQUESTS,
 		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS,
 		post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS,
-		get_reward_history => ?MAX_PARALLEL_REWARD_HISTORY_REQUESTS
+		get_reward_history => ?MAX_PARALLEL_REWARD_HISTORY_REQUESTS,
+		get_tx => ?MAX_PARALLEL_GET_TX_REQUESTS
 	},
 	disk_cache_size = ?DISK_CACHE_SIZE,
 	packing_rate,
