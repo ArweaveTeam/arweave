@@ -162,8 +162,11 @@ set_storage_module_data_size(
 	StoreLabel = ar_storage_module:label_by_id(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	try	
+		PackingDifficulty = get_packing_difficulty(Packing),
 		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreLabel, PackingLabel, PartitionNumber, StorageModuleSize, StorageModuleIndex],
+			[StoreLabel, PackingLabel, PartitionNumber,
+			 StorageModuleSize, StorageModuleIndex,
+			 PackingDifficulty],
 			DataSize),
 		ets:insert(?MODULE, {
 			{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize})
