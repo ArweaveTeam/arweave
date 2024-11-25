@@ -1593,6 +1593,7 @@ handle_get_tx(Hash, Req, Encoding) ->
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
 		{ok, ID} ->
+			ok = ar_semaphore:acquire(get_tx, infinity),
 			case ar_storage:read_tx(ID) of
 				unavailable ->
 					maybe_tx_is_pending_response(ID, Req);
