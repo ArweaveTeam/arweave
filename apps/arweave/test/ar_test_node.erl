@@ -404,6 +404,7 @@ get_cm_storage_modules(RewardAddr, 1, 1) ->
 get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 		when MiningNodeCount == 2 orelse MiningNodeCount == 3 ->
 	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
+	%% Note that replica_2_9 modules do not have ?OVERLAP.
 	RangeNumber = lists:nth(N, [0, 2, 4]),
 	[{?PARTITION_SIZE, RangeNumber, get_default_storage_module_packing(RewardAddr, 0)}].
 
@@ -446,18 +447,44 @@ remote_call(Node, Module, Function, Args, Timeout) ->
 
 %% @doc Start a fresh node.
 start() ->
-	[B0] = ar_weave:init(),
-	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-			element(2, application:get_env(arweave, config))).
+	start(#{}).
 
-%% @doc Start a fresh node with the given genesis block.
+start(Options) when is_map(Options) ->
+	B0 =
+		case maps:get(b0, Options, not_set) of
+			not_set ->
+				hd(ar_weave:init());
+			Value ->
+				Value
+		end,
+	RewardAddr =
+		case maps:get(addr, Options, not_set) of
+			not_set ->
+				ar_wallet:to_address(ar_wallet:new_keyfile());
+			Addr ->
+				Addr
+		end,
+	Config =
+		case maps:get(config, Options, not_set) of
+			not_set ->
+				element(2, application:get_env(arweave, config));
+			Value2 ->
+				Value2
+		end,
+	StorageModules =
+		case maps:get(storage_modules, Options, not_set) of
+			not_set ->
+				[{20 * 1024 * 1024, N,
+						get_default_storage_module_packing(RewardAddr, N, Options)}
+					|| N <- lists:seq(0, 8)];
+			Value3 ->
+				Value3
+		end,
+	start(B0, RewardAddr, Config, StorageModules);
 start(B0) ->
-	start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-			element(2, application:get_env(arweave, config))).
-
-%% @doc Start a fresh node with the given genesis block and mining address.
+	start(#{ b0 => B0 }).
 start(B0, RewardAddr) ->
-	start(B0, RewardAddr, element(2, application:get_env(arweave, config))).
+	start(#{ b0 => B0, addr => RewardAddr }).
 
 %% @doc Start a fresh node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
@@ -683,7 +710,7 @@ join(JoinOnNode, Rejoin) ->
 			clean_up_and_stop()
 	end,
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModules = [{20 * 1024 * 1024, N,
+	StorageModules = [{?PARTITION_SIZE, N,
 			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
@@ -696,17 +723,42 @@ join(JoinOnNode, Rejoin) ->
 	whereis(ar_node_worker).
 
 get_default_storage_module_packing(RewardAddr, Index) ->
-	case ar_fork:height_2_8() of
-		infinity ->
+	get_default_storage_module_packing(RewardAddr, Index, #{}).
+
+get_default_storage_module_packing(RewardAddr, Index, Options) ->
+	case {ar_fork:height_2_9(), ar_fork:height_2_8()} of
+		{infinity, infinity} ->
 			{spora_2_6, RewardAddr};
-		0 ->
+		{infinity, 0} ->
 			{composite, RewardAddr, 1};
-		_Height ->
-			case Index rem 2 of
-				0 ->
+		{0, 0} ->
+			case maps:get(packing, Options, not_set) of
+				spora_2_6 ->
 					{spora_2_6, RewardAddr};
-				_ ->
-					{composite, RewardAddr, 1}
+				{composite, PackingDiff} ->
+					{composite, RewardAddr, PackingDiff};
+				replica_2_9 ->
+					{replica_2_9, RewardAddr};
+				not_set ->
+					{replica_2_9, RewardAddr}
+			end;
+		_ ->
+			case maps:get(packing, Options, not_set) of
+				spora_2_6 ->
+					{spora_2_6, RewardAddr};
+				{composite, PackingDiff} ->
+					{composite, RewardAddr, PackingDiff};
+				replica_2_9 ->
+					{replica_2_9, RewardAddr};
+				not_set ->
+					case Index rem 3 of
+						0 ->
+							{spora_2_6, RewardAddr};
+						1 ->
+							{composite, RewardAddr, 1};
+						_ ->
+							{replica_2_9, RewardAddr}
+					end
 			end
 	end.
 
@@ -1140,11 +1192,18 @@ assert_get_tx_data(Node, TXID, ExpectedData) ->
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" }) of
 				{ok, {{<<"200">>, _}, _, ExpectedData, _, _}} ->
 					true;
-				{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
+				{ok, {{<<"404">>, _}, _, _, _, _}} ->
 					false;
-				_UnexpectedResponse ->
-					?debugFmt("Got unexpected tx data response. TXID: ~s. Peer: ~s.~n",
-							[ar_util:encode(TXID), ar_util:format_peer(Peer)]),
+				{ok, {{<<"200">>, _}, _, OtherData, _, _}} ->
+					?debugFmt("Got unexpected tx data response. TXID: ~s. Peer: ~s. "
+							"Expected data size: ~B, got data size: ~B.~n",
+							[ar_util:encode(TXID), ar_util:format_peer(Peer),
+								byte_size(ExpectedData), byte_size(OtherData)]);
+				UnexpectedResponse ->
+					?debugFmt("Got unexpected tx data response. TXID: ~s. Peer: ~s. "
+							" response: ~p.~n",
+							[ar_util:encode(TXID), ar_util:format_peer(Peer),
+									UnexpectedResponse]),
 					false
 			end
 		end,

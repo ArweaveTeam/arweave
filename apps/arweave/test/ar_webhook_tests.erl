@@ -44,6 +44,7 @@ test_webhooks() ->
 	Port = ar_test_node:get_unused_port(),
 	PortBinary = integer_to_binary(Port),
 	TXBlacklistFilename = random_tx_blacklist_filename(),
+	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	Config2 = Config#config{
 		webhooks = [
 			#config_webhook{
@@ -61,7 +62,9 @@ test_webhooks() ->
 		],
 		transaction_blacklist_files = [TXBlacklistFilename]
 	},
-	ar_test_node:start(B0, ar_wallet:to_address(ar_wallet:new_keyfile()), Config2),
+	ar_test_node:start(#{ b0 => B0, addr => Addr, config => Config2,
+			%% Replica 2.9 modules do not support updates.
+			storage_modules =>[{10 * 1024 * 1024, 0, {composite, Addr, 1}}] }),
 	%% Setup a server that would be listening for the webhooks and registering
 	%% them in the ETS table.
 	ets:new(?MODULE, [named_table, set, public]),

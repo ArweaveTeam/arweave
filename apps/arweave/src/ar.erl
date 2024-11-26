@@ -6,7 +6,8 @@
 -behaviour(application).
 
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
-		benchmark_packing/1, benchmark_packing/0, benchmark_vdf/0,
+		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1, 
+		benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, tests/2, shell/0, stop_shell/0,
@@ -97,12 +98,13 @@ show_help() ->
 			{"storage_module", "A storage module is responsible for syncronizing and storing "
 					"a particular data range. The data and metadata related to the module "
 					"are stored in a dedicated folder "
-					"([data_dir]/storage_modules/storage_module_[partition_number]_[packing]/"
-					") where packing is either {mining address}.{packing difficulty} "
-					"(packing difficulty is an integer), or \"unpacked\"."
+					"([data_dir]/storage_modules/storage_module_[partition_number]_[replica_type]/"
+					") where replica_type is either {mining_address} or"
+					" {mining address}.{composite packing difficulty} or"
+					" {mining address}.replica.2.9 or \"unpacked\"."
 					" Example: storage_module 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI.1. "
 					"To configure a module of a custom size, set "
-					"storage_module {number},{size_in_bytes},{packing}. For instance, "
+					"storage_module {number},{size_in_bytes},{replica_type}. For instance, "
 					"storage_module "
 					"22,1000000000000,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI.1 will be "
 					"syncing the weave data between the offsets 22 TB and 23 TB. Make sure "
@@ -154,8 +156,8 @@ show_help() ->
 				" is set but no mining_addr is specified, an RSA PSS key is created"
 				" and stored in the [data_dir]/~s directory. If the directory already"
 				" contains such keys, the one written later is picked, no new files are"
-				" created. After the fork 2.6, the specified address is also a packing key, "
-				"so it is used to pack synced data even if the \"mine\" flag is not "
+				" created. After the fork 2.6, the specified address is also a replication key, "
+				"so it is used to prepare synced data for mining even if the \"mine\" flag is not "
 				"specified. The data already packed with different addresses is not repacked.",
 				[?WALLET_DIR])},
 			{"hashing_threads (num)", io_lib:format("The number of hashing processes to spawn."
@@ -822,6 +824,12 @@ benchmark_hash(Args) ->
 	ar_bench_hash:run_benchmark_from_cli(Args),
 	erlang:halt().
 
+benchmark_2_9() ->
+	ar_bench_2_9:show_help().
+benchmark_2_9(Args) ->
+	ar_bench_2_9:run_benchmark_from_cli(Args),
+	erlang:halt().
+	
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 

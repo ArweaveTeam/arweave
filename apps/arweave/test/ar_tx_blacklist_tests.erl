@@ -51,8 +51,8 @@ test_uses_blacklists() ->
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	ar_test_node:start(B0, RewardAddr,
-			(element(2, application:get_env(arweave, config)))#config{
+	ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
+			config => (element(2, application:get_env(arweave, config)))#config{
 		transaction_blacklist_files = BlacklistFiles,
 		transaction_whitelist_files = [WhitelistFile],
 		sync_jobs = 10,
@@ -64,7 +64,8 @@ test_uses_blacklists() ->
 			%% Serves some valid TX IDs (from the BadTXIDs list) and a line
 			%% with invalid Base64URL.
 			"http://localhost:1985/bad/and/good"
-		]
+		]},
+		storage_modules => [{30 * 1024 * 1024, 0, {composite, RewardAddr, 1}}]
 	}),
 	ar_test_node:connect_to_peer(peer1),
 	BadV1TXIDs = [V1TX#tx.id],

@@ -346,6 +346,7 @@ pre_validate_timestamp(B, PrevB, Peer) ->
 	end.
 
 pre_validate_existing_solution_hash(B, PrevB, Peer) ->
+	Height = B#block.height,
 	SolutionH = B#block.hash,
 	#block{ hash = SolutionH, nonce = Nonce, reward_addr = RewardAddr,
 			hash_preimage = HashPreimage, recall_byte = RecallByte,
@@ -356,7 +357,9 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 					last_step_checkpoints = LastStepCheckpoints },
 			chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
 			unpacked_chunk_hash = UnpackedChunkHash,
-			unpacked_chunk2_hash = UnpackedChunk2Hash } = B,
+			unpacked_chunk2_hash = UnpackedChunk2Hash,
+			packing_difficulty = PackingDifficulty,
+			replica_format = ReplicaFormat } = B,
 	H = B#block.indep_hash,
 	CDiff = B#block.cumulative_diff,
 	PrevCDiff = PrevB#block.cumulative_diff,
@@ -376,11 +379,15 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 					unpacked_chunk_hash = UnpackedChunkHash,
 					unpacked_chunk2_hash = UnpackedChunk2Hash,
 					poa = #poa{ chunk = Chunk }, poa2 = #poa{ chunk = Chunk2 },
-					recall_byte2 = RecallByte2 } = CacheB ->
+					recall_byte2 = RecallByte2,
+					packing_difficulty = PackingDifficulty2,
+					replica_format = ReplicaFormat } = CacheB ->
 				may_be_report_double_signing(B, CacheB),
 				LastStepPrevOutput = get_last_step_prev_output(B),
 				LastStepPrevOutput2 = get_last_step_prev_output(CacheB),
-				case LastStepPrevOutput == LastStepPrevOutput2 of
+				case LastStepPrevOutput == LastStepPrevOutput2
+						andalso (Height < ar_fork:height_2_9()
+							orelse PackingDifficulty == PackingDifficulty2) of
 					true ->
 						B2 = B#block{ poa = (B#block.poa)#poa{ chunk = Chunk },
 								poa2 = (B#block.poa2)#poa{ chunk = Chunk2 } },
@@ -565,7 +572,8 @@ pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer) ->
 	end.
 
 pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer) ->
-	case ar_block:validate_packing_difficulty(B#block.height, B#block.packing_difficulty) of
+	case ar_block:validate_replica_format(B#block.height, B#block.packing_difficulty,
+			B#block.replica_format) of
 		false ->
 			post_block_reject_warn_and_error_dump(B, check_packing_difficulty, Peer),
 			ar_events:send(block, {rejected, invalid_packing_difficulty,
@@ -682,7 +690,9 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 	Nonce = B#block.nonce,
 	%% The packing difficulty >0 is only allowed after the 2.8 hard fork (validated earlier
 	%% here), and the composite packing is only possible for packing difficulty >= 1.
-	Packing = ar_block:get_packing(PackingDifficulty, B#block.reward_addr),
+	%% The new shared entropy format is supported starting from 2.9.
+	Packing = ar_block:get_packing(PackingDifficulty, B#block.reward_addr,
+			B#block.replica_format),
 	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
 	ArgCache = {BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing, SubChunkIndex},
 	case RecallByte1 == B#block.recall_byte andalso

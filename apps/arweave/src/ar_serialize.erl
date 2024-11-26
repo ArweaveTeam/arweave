@@ -34,6 +34,7 @@
 		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_pool.hrl").
@@ -147,7 +148,8 @@ block_to_json_struct(
 			recall_byte2 = RecallByte2,
 			packing_difficulty = PackingDifficulty,
 			unpacked_chunk_hash = UnpackedChunkHash,
-			unpacked_chunk2_hash = UnpackedChunk2Hash } = B) ->
+			unpacked_chunk2_hash = UnpackedChunk2Hash,
+			replica_format = ReplicaFormat } = B) ->
 	{JSONDiff, JSONCDiff} =
 		case Height >= ar_fork:height_1_8() of
 			true ->
@@ -328,7 +330,14 @@ block_to_json_struct(
 							| JSONElements8]
 				end
 		end,
-	{JSONElements9}.
+	JSONElements10 =
+		case Height >= ar_fork:height_2_9() of
+			false ->
+				JSONElements9;
+			true ->
+				[{replica_format, ReplicaFormat} | JSONElements9]
+		end,
+	{JSONElements10}.
 
 reward_history_to_binary(RewardHistory) ->
 	reward_history_to_binary(RewardHistory, []).
@@ -693,7 +702,7 @@ encode_post_2_8_fields(#block{ height = Height,
 		packing_difficulty = PackingDifficulty,
 		unpacked_chunk_hash = UnpackedChunkHash, unpacked_chunk2_hash = UnpackedChunk2Hash,
 		poa = #poa{ unpacked_chunk = UnpackedChunk },
-		poa2 = #poa{ unpacked_chunk = UnpackedChunk2 }}) ->
+		poa2 = #poa{ unpacked_chunk = UnpackedChunk2 }} = B) ->
 	case Height >= ar_fork:height_2_8() of
 		false ->
 			<<>>;
@@ -702,7 +711,16 @@ encode_post_2_8_fields(#block{ height = Height,
 				(ar_serialize:encode_bin(UnpackedChunkHash, 8))/binary,
 				(ar_serialize:encode_bin(UnpackedChunk2Hash, 8))/binary,
 				(ar_serialize:encode_bin(UnpackedChunk, 24))/binary,
-				(ar_serialize:encode_bin(UnpackedChunk2, 24))/binary >>
+				(ar_serialize:encode_bin(UnpackedChunk2, 24))/binary,
+				(encode_post_2_9_fields(B))/binary >>
+	end.
+
+encode_post_2_9_fields(#block{ height = Height, replica_format = ReplicaFormat }) ->
+	case Height >= ar_fork:height_2_9() of
+		false ->
+			<<>>;
+		true ->
+			<< ReplicaFormat:8 >>
 	end.
 
 encode_nonce_limiter_info(#nonce_limiter_info{ output = Output, global_step_number = N,
@@ -947,7 +965,7 @@ parse_post_2_8_fields(Rest, #block{ height = Height, poa = PoA, poa2 = PoA2 } = 
 				UnpackedChunkSize:24,
 				UnpackedChunk:UnpackedChunkSize/binary,
 				UnpackedChunk2Size:24,
-				UnpackedChunk2:UnpackedChunk2Size/binary >>, true} ->
+				UnpackedChunk2:UnpackedChunk2Size/binary, Rest2/binary >>, true} ->
 			UnpackedChunkHash_2 =
 				case UnpackedChunkHash of
 					<<>> -> undefined;
@@ -958,13 +976,23 @@ parse_post_2_8_fields(Rest, #block{ height = Height, poa = PoA, poa2 = PoA2 } = 
 					<<>> -> undefined;
 					_ -> UnpackedChunk2Hash
 				end,
-			{ok, B#block{ packing_difficulty = PackingDifficulty,
+			parse_post_2_9_fields(Rest2, B#block{ packing_difficulty = PackingDifficulty,
 					unpacked_chunk_hash = UnpackedChunkHash_2,
 					unpacked_chunk2_hash = UnpackedChunk2Hash_2,
 					poa = PoA#poa{ unpacked_chunk = UnpackedChunk },
-					poa2 = PoA2#poa{ unpacked_chunk = UnpackedChunk2 } }};
+					poa2 = PoA2#poa{ unpacked_chunk = UnpackedChunk2 } });
 		_ ->
 			{error, invalid_packing_difficulty}
+	end.
+
+parse_post_2_9_fields(Rest, #block{ height = Height } = B) ->
+	case {Rest, Height >= ar_fork:height_2_9()} of
+		{<<>>, false} ->
+			{ok, B};
+		{<< ReplicaFormat:8 >>, true} ->
+			{ok, B#block{ replica_format = ReplicaFormat }};
+		_ ->
+			{error, invalid_replica_format}
 	end.
 
 parse_tx(<< TXID:32/binary >>) ->
@@ -1826,7 +1854,8 @@ candidate_to_json_struct(
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber,
 		label = Label,
-		packing_difficulty = PackingDifficulty
+		packing_difficulty = PackingDifficulty,
+		replica_format = ReplicaFormat
 	}) ->
 	JSON = [
 		{cm_diff, diff_pair_to_json_list(DiffPair)},
@@ -1844,7 +1873,8 @@ candidate_to_json_struct(
 		{step_number, integer_to_binary(StepNumber)},
 		{nonce_limiter_output, ar_util:encode(NonceLimiterOutput)},
 		{label, Label},
-		{packing_difficulty, PackingDifficulty}
+		{packing_difficulty, PackingDifficulty},
+		{replica_format, ReplicaFormat}
 	],
 
 	JSON2 = encode_if_set(JSON, h1, H1, fun ar_util:encode/1),
@@ -1891,7 +1921,11 @@ json_map_to_candidate(JSON) ->
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 	Label = maps:get(<<"label">>, JSON, <<"not_set">>),
 	PackingDifficulty = maps:get(<<"packing_difficulty">>, JSON, 0),
-	true = PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
+	ReplicaFormat = maps:get(<<"replica_format">>, JSON, 0),
+	true = (PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY
+			andalso ReplicaFormat == 0)
+			orelse (ReplicaFormat == 1
+					andalso PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY),
 	#mining_candidate{
 		cm_diff = DiffPair,
 		cm_h1_list = H1List,
@@ -1913,7 +1947,8 @@ json_map_to_candidate(JSON) ->
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber,
 		label = Label,
-		packing_difficulty = PackingDifficulty
+		packing_difficulty = PackingDifficulty,
+		replica_format = ReplicaFormat
 	}.
 
 json_struct_to_h1_list(JSON) ->
@@ -1950,7 +1985,8 @@ solution_to_json_struct(
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber,
 		steps = Steps,
-		packing_difficulty = PackingDifficulty
+		packing_difficulty = PackingDifficulty,
+		replica_format = ReplicaFormat
 	}) ->
 	JSON = [
 		{last_step_checkpoints, ar_util:encode(iolist_to_binary(LastStepCheckpoints))},
@@ -1970,7 +2006,8 @@ solution_to_json_struct(
 		{start_interval_number, integer_to_binary(StartIntervalNumber)},
 		{step_number, integer_to_binary(StepNumber)},
 		{steps, ar_util:encode(iolist_to_binary(Steps))},
-		{packing_difficulty, PackingDifficulty}
+		{packing_difficulty, PackingDifficulty},
+		{replica_format, ReplicaFormat}
 	],
 	{encode_if_set(JSON, recall_byte2, RecallByte2, fun integer_to_binary/1)}.
 
@@ -2002,7 +2039,11 @@ json_map_to_solution(JSON) ->
 	StepNumber = binary_to_integer(maps:get(<<"step_number">>, JSON)),
 	Steps = parse_json_checkpoints(ar_util:decode(maps:get(<<"steps">>, JSON, <<>>))),
 	PackingDifficulty = maps:get(<<"packing_difficulty">>, JSON, 0),
-	true = PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
+	ReplicaFormat = maps:get(<<"replica_format">>, JSON, 0),
+	true = (PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY
+			andalso ReplicaFormat == 0)
+			orelse (ReplicaFormat == 1
+					andalso PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY),
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
 		mining_address = MiningAddress,
@@ -2022,7 +2063,8 @@ json_map_to_solution(JSON) ->
 		start_interval_number = StartIntervalNumber,
 		step_number = StepNumber,
 		steps = Steps,
-		packing_difficulty = PackingDifficulty
+		packing_difficulty = PackingDifficulty,
+		replica_format = ReplicaFormat
 	}.
 
 encode_if_set(JSON, _JSONProperty, not_set, _Encoder) ->
@@ -2120,7 +2162,11 @@ encode_packing({composite, Addr, PackingDifficulty}, _Strict) ->
 encode_packing(spora_2_5, _Strict) ->
 	"spora_2_5";
 encode_packing(unpacked, _Strict) ->
-	"unpacked".
+	"unpacked";
+encode_packing({replica_2_9, Addr}, _Strict) ->
+	"replica_2_9_" ++ binary_to_list(ar_util:encode(Addr));
+encode_packing(unpacked_padded, _Strict) ->
+	"unpacked_padded".
 
 decode_packing(<<"unpacked">>, _Error) ->
 	unpacked;
@@ -2152,6 +2198,15 @@ decode_packing(<<"composite_", Rest/binary>>, Error) ->
 		_ ->
 			Error
 	end;
+decode_packing(<< "replica_2_9_", Addr/binary >>, Error) ->
+	case ar_util:safe_decode(Addr) of
+		{ok, DecodedAddr} ->
+			{replica_2_9, DecodedAddr};
+		_ ->
+			Error
+	end;
+decode_packing(<<"unpacked_padded">>, _Error) ->
+	unpacked_padded;
 decode_packing(_, Error) ->
 	Error.
 
@@ -2174,7 +2229,16 @@ binary_to_packing(<< "composite_", PackingDifficulty:8, Addr/binary >>, Error)
 			{composite, DecodedAddr, PackingDifficulty};
 		_ ->
 			Error
-	end.
+	end;
+binary_to_packing(<< "replica_2_9_", Addr/binary >>, Error) when byte_size(Addr) =< 64 ->
+	case ar_util:safe_decode(Addr) of
+		{ok, DecodedAddr} ->
+			{replica_2_9, DecodedAddr};
+		_ ->
+			Error
+	end;
+binary_to_packing(<<"unpacked_padded">>, _Error) ->
+	unpacked_padded.
 
 packing_to_binary(unpacked) ->
 	<<"unpacked">>;
@@ -2184,7 +2248,11 @@ packing_to_binary({spora_2_6, Addr}) ->
 	iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)]);
 packing_to_binary({composite, Addr, PackingDifficulty}) ->
 	iolist_to_binary([<<"composite_">>, << PackingDifficulty:8 >>,
-						ar_util:encode(Addr)]).
+						ar_util:encode(Addr)]);
+packing_to_binary({replica_2_9, Addr}) ->
+	iolist_to_binary([<<"replica_2_9_">>, ar_util:encode(Addr)]);
+packing_to_binary(unpacked_padded) ->
+	<<"unpacked_padded">>.
 
 pool_cm_jobs_to_json_struct(Jobs) ->
 	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs,

@@ -14,6 +14,7 @@ run_benchmark_from_cli(Args) ->
 	RandomXMode = case RandomX of
 		"512" -> rx512;
 		"4096" -> rx4096;
+		"squared" -> rxsquared;
 		_ -> show_help()
 	end,
 
@@ -52,10 +53,9 @@ run_benchmark(RandomXState, JIT, LargePages, HardwareAES) ->
 	Iterations = 1000,
 	{H0Time, _} = timer:tc(fun() ->
 		lists:foreach(
-			fun(_) ->
-				PartitionNumber = rand:uniform(1000),
+			fun(I) ->
 				Data = << NonceLimiterOutput:32/binary,
-					PartitionNumber:256, Seed:32/binary, MiningAddr/binary >>,
+						I:256, Seed:32/binary, MiningAddr/binary >>,
 				ar_mine_randomx:hash(RandomXState, Data, JIT, LargePages, HardwareAES)
 			end,
 			lists:seq(1, Iterations))

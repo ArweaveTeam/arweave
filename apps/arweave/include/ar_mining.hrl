@@ -30,6 +30,7 @@
 	start_interval_number = not_set, %% serialized
 	step_number = not_set, %% serialized
 	packing_difficulty = 0, %% serialized
+	replica_format = 0, %% serialized
 	label = <<"not_set">> %% not atom, for prevent atom table pollution DoS
 }).
 
@@ -53,7 +54,8 @@
 	seed = << 0:(8 * 48) >>,
 	mining_address = << 0:256 >>,
 	partition_upper_bound = 0,
-	packing_difficulty = 0
+	packing_difficulty = 0,
+	replica_format = 0
 }).
 
 -endif.

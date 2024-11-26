@@ -4,7 +4,13 @@
 		randomx_encrypt_chunk/4,
 		randomx_decrypt_chunk/5,
 		randomx_decrypt_sub_chunk/5,
-		randomx_reencrypt_chunk/7]).
+		randomx_reencrypt_chunk/7,
+
+		randomx_generate_replica_2_9_entropy/2,
+		randomx_encrypt_replica_2_9_sub_chunk/1,
+		randomx_decrypt_replica_2_9_sub_chunk/1,
+		randomx_decrypt_replica_2_9_sub_chunk2/1,
+		encipher_sub_chunk/2]).
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
@@ -97,10 +103,147 @@ randomx_reencrypt_chunk(SourcePacking, TargetPacking,
 	randomx_reencrypt_chunk2(SourcePacking, TargetPacking, 
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize).
 
+%%% DEBUG implementation
+randomx_generate_replica_2_9_entropy({_, {debug_state, _}}, Key) ->
+	%% Make it fast, deterministic, and scoped by Key.
+	%% Note that ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT is
+	%% reduced significantly in the DEBUG mode.
+	lists:foldl(
+		fun(N1, Acc) ->
+			lists:foldl(
+				fun(N2, Acc2) ->
+					<< (crypto:hash(sha256, << N1:16, N2:16, Key/binary >>))/binary,
+						Acc2/binary >>
+				end,
+				Acc,
+				lists:seq(1, ?COMPOSITE_PACKING_SUB_CHUNK_SIZE div 32)
+			)
+		end,
+		<<>>,
+		lists:seq(1, ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT)
+	);
+
+%% Non-DEBUG implementation
+randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
+	Inputs = [crypto:hash(sha256, << Key/binary, LaneNumber:8 >>)
+			|| LaneNumber <- lists:seq(1, ?REPLICA_2_9_RANDOMX_LANE_COUNT)],
+	HashesScratchpads0 = randomx_initialize_replica_2_9_scratchpads(RandomxState, Key, Inputs),
+	randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads0,
+			1, ?REPLICA_2_9_RANDOMX_DEPTH).
+
+
+write_scratchpad_to_disk(Type, Hash0, Scratchpad0) ->
+	HashHex = ar_util:encode(Hash0),
+	FileName = io_lib:format("~s_~s.bin", [Type, HashHex]),
+	file:write_file(FileName, Scratchpad0).
+
+randomx_initialize_replica_2_9_scratchpads(_RandomxState, _Key, []) ->
+	[];
+randomx_initialize_replica_2_9_scratchpads(RandomxState, Key, [Input | Inputs]) ->
+	{ok, Hash0, Scratchpad0} =
+		ar_rxsquared_nif:rsp_init_scratchpad_nif(RandomxState, Input,
+			jit(), large_pages(), hardware_aes(), ?REPLICA_2_9_RANDOMX_ROUND_COUNT),
+	[{Hash0, Scratchpad0} | randomx_initialize_replica_2_9_scratchpads(RandomxState, Key,
+			Inputs)].
+
+randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads,
+		Depth, MaxDepth) ->
+	HashesScratchpads2 = randomx_process_replica_2_9_scratchpads(
+		RandomxState, HashesScratchpads),
+
+	Scratchpad = iolist_to_binary([S || {_H, S} <- HashesScratchpads2]),
+	{ok, MixedScratchpad} = ar_rxsquared_nif:rsp_mix_entropy_far_nif(Scratchpad),
+
+	case Depth == MaxDepth of
+		true ->
+			MixedScratchpad;
+		false ->
+			Scratchpads = split_scratchpads(MixedScratchpad),
+			HashesScratchpads3 = lists:zip([H || {H, _S} <- HashesScratchpads2], Scratchpads),
+			randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads3,
+					Depth + 1, MaxDepth)
+	end.
+
+split_scratchpads(<<>>) ->
+	[];
+split_scratchpads(<< Scratchpad:(?RANDOMX_SCRATCHPAD_SIZE)/binary, Rest/binary >>) ->
+	[Scratchpad | split_scratchpads(Rest)].
+
+randomx_process_replica_2_9_scratchpads(_RandomxState, []) ->
+	[];
+randomx_process_replica_2_9_scratchpads(RandomxState,
+		[{Input, Scratchpad} | HashesScratchpads]) ->
+	{ok, Hash2, Scratchpad2} =
+		ar_rxsquared_nif:rsp_exec_nif(RandomxState,
+				Input, Scratchpad, jit(), large_pages(), hardware_aes(),
+				?REPLICA_2_9_RANDOMX_ROUND_COUNT),
+	[{Hash2, Scratchpad2} | randomx_process_replica_2_9_scratchpads(
+		RandomxState, HashesScratchpads)].
+
+%%% DEBUG implementation
+randomx_decrypt_replica_2_9_sub_chunk({{_, {debug_state, _}} = State, Key, SubChunk,
+		EntropySubChunkIndex}) ->
+	Options = [{encrypt, false}],
+	Entropy = randomx_generate_replica_2_9_entropy(State, Key),
+	%% See randomx_generate_replica_2_9_entropy/1.
+	EntropyPart = binary:part(Entropy,
+			EntropySubChunkIndex * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+			?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
+	%% Make the unpacked sub-chunk deterministically depend on the packed sub-chunk
+	%% and the part of the entropy corresponding to the given 0-based sub-chunk index.
+	Input = crypto:hash(sha256, << EntropyPart:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary >>),
+	IV = << 0:128 >>,
+	{ok, crypto:crypto_one_time(aes_256_cbc, Input, IV, SubChunk, Options)};
+%% Non-DEBUG implementation
+randomx_decrypt_replica_2_9_sub_chunk({{rxsquared, RandomxState}, Key, SubChunk,
+		EntropySubChunkIndex}) ->
+	Entropy = randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key),
+	randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}).
+
+randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}) ->
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
+	ar_rxsquared_nif:rsp_feistel_decrypt_nif(SubChunk, EntropyPart).
+
+%%% DEBUG implementation
+randomx_encrypt_replica_2_9_sub_chunk({{_, {debug_state, _}}, Entropy, SubChunk,
+		EntropySubChunkIndex}) ->
+	Options = [{encrypt, true}],
+	%% See randomx_generate_replica_2_9_entropy/1.
+	EntropyPart = binary:part(Entropy,
+			EntropySubChunkIndex * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+			?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
+	Input = crypto:hash(sha256, << EntropyPart:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary >>),
+	IV = << 0:128 >>,
+	{ok, crypto:crypto_one_time(aes_256_cbc, Input, IV, SubChunk, Options)};
+
+%% Non-DEBUG implementation
+randomx_encrypt_replica_2_9_sub_chunk({{rxsquared, _RandomxState}, Entropy, SubChunk,
+		EntropySubChunkIndex}) ->
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
+	ar_rxsquared_nif:rsp_feistel_encrypt_nif(SubChunk, EntropyPart).
+
+-ifdef(DEBUG).
+encipher_sub_chunk(SubChunk, EntropyPart) ->
+	Options = [{encrypt, true}],
+	Input = crypto:hash(sha256, << EntropyPart:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary >>),
+	IV = << 0:128 >>,
+	crypto:crypto_one_time(aes_256_cbc, Input, IV, SubChunk, Options).
+-else.
+%% @doc Encipher the given sub-chunk using the given 2.9 entropy.
+-spec encipher_sub_chunk(
+		SubChunk :: binary(),
+		EntropyPart :: binary()
+) -> binary().
+encipher_sub_chunk(SubChunk, EntropyPart) ->
+	{ok, Enciphered} = ar_rxsquared_nif:rsp_feistel_encrypt_nif(SubChunk, EntropyPart),
+	Enciphered.
+-endif.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
 
 %% -------------------------------------------------------------------------------------------
 %% Helper functions
@@ -152,6 +295,9 @@ init_fast2(rx512, Key, JIT, LargePages, Threads) ->
 init_fast2(rx4096, Key, JIT, LargePages, Threads) ->
 	{ok, FastState} = ar_rx4096_nif:rx4096_init_nif(Key, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, Threads),
 	{rx4096, FastState};
+init_fast2(rxsquared, Key, JIT, LargePages, Threads) ->
+	{ok, FastState} = ar_rxsquared_nif:rxsquared_init_nif(Key, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, Threads),
+	{rxsquared, FastState};
 init_fast2(RxMode, _Key, _JIT, _LargePages, _Threads) ->
 	?LOG_ERROR([{event, invalid_randomx_mode}, {mode, RxMode}]),
 	{error, invalid_randomx_mode}.
@@ -161,6 +307,9 @@ init_light2(rx512, Key, JIT, LargePages) ->
 init_light2(rx4096, Key, JIT, LargePages) ->
 	{ok, LightState} = ar_rx4096_nif:rx4096_init_nif(Key, ?RANDOMX_HASHING_MODE_LIGHT, JIT, LargePages, 0),
 	{rx4096, LightState};
+init_light2(rxsquared, Key, JIT, LargePages) ->
+	{ok, LightState} = ar_rxsquared_nif:rxsquared_init_nif(Key, ?RANDOMX_HASHING_MODE_LIGHT, JIT, LargePages, 0),
+	{rxsquared, LightState};
 init_light2(RxMode, _Key, _JIT, _LargePages) ->
 	?LOG_ERROR([{event, invalid_randomx_mode}, {mode, RxMode}]),
 	{exceperrortion, invalid_randomx_mode}.
@@ -169,6 +318,8 @@ info2({rx512, State}) ->
 	ar_rx512_nif:rx512_info_nif(State);
 info2({rx4096, State}) ->
 	ar_rx4096_nif:rx4096_info_nif(State);
+info2({rxsquared, State}) ->
+	ar_rxsquared_nif:rxsquared_info_nif(State);
 info2(_) ->
 	{error, invalid_randomx_mode}.
 
@@ -187,6 +338,9 @@ hash2({rx512, State}, Data, JIT, LargePages, HardwareAES) ->
 	Hash;
 hash2({rx4096, State}, Data, JIT, LargePages, HardwareAES) ->
 	{ok, Hash} = ar_rx4096_nif:rx4096_hash_nif(State, Data, JIT, LargePages, HardwareAES),
+	Hash;
+hash2({rxsquared, State}, Data, JIT, LargePages, HardwareAES) ->
+	{ok, Hash} = ar_rxsquared_nif:rxsquared_hash_nif(State, Data, JIT, LargePages, HardwareAES),
 	Hash;
 hash2(_BadState, _Data, _JIT, _LargePages, _HardwareAES) ->
 	{error, invalid_randomx_mode}.

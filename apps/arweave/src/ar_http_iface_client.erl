@@ -24,6 +24,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
@@ -1306,8 +1307,11 @@ handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 								{<<"bucketsize">>, BucketSize},
 								{<<"addr">>, EncodedAddr},
 								{<<"pdiff">>, PackingDifficulty}
-							]} when is_integer(PackingDifficulty), PackingDifficulty >= 1,
-									PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
+							]} when is_integer(PackingDifficulty) andalso (
+								(PackingDifficulty >= 1
+									andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY)
+										orelse
+									(PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY)) ->
 								DecodedPartition = {
 									Bucket,
 									BucketSize,

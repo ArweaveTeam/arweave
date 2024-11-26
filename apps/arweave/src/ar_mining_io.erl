@@ -4,7 +4,7 @@
 
 -export([start_link/0, start_link/1, set_largest_seen_upper_bound/1, 
 			get_packing/0, get_partitions/0, get_partitions/1, read_recall_range/4,
-			garbage_collect/0]).
+			garbage_collect/0, get_replica_format_from_packing_difficulty/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -317,7 +317,8 @@ chunks_read(standalone, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOf
 	Worker ! {chunks_read, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets}.
 
 get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, "default", Intervals) ->
-	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
+	ReplicaFormat = get_replica_format_from_packing_difficulty(PackingDifficulty),
+	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
 	case ar_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, "default") of
 		not_found ->
 			Intervals;
@@ -327,6 +328,15 @@ get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, "default", In
 	end;
 get_packed_intervals(_Start, _End, _MiningAddr, _PackingDifficulty, _StoreID, _Intervals) ->
 	no_interval_check_implemented_for_non_default_store.
+
+%% The protocol allows composite packing with the packing difficulty 25 for now,
+%% but it is not practical and it is convenient to exlude it from the range of
+%% supported storage module configurations and treat it as the 2.9 replication format
+%% in the mining process.
+get_replica_format_from_packing_difficulty(?REPLICA_2_9_PACKING_DIFFICULTY) ->
+	1;
+get_replica_format_from_packing_difficulty(_PackingDifficulty) ->
+	0.
 
 maybe_clear_cached_chunks(Cache, LastClearTime) ->
 	Now = os:system_time(millisecond),
