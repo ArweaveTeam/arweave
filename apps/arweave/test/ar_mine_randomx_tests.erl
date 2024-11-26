@@ -53,7 +53,7 @@ setup() ->
     FastState4096 = ar_mine_randomx:init_fast2(rx4096, ?RANDOMX_PACKING_KEY, 0, 0,
 		erlang:system_info(dirty_cpu_schedulers_online)),
     LightState4096 = ar_mine_randomx:init_light2(rx4096, ?RANDOMX_PACKING_KEY, 0, 0),
-    {FastState512, LightState512, FastState4096, LightState4096}.
+	{FastState512, LightState512, FastState4096, LightState4096}.
 
 test_register(TestFun, Fixture) ->
 	{timeout, 120, {with, Fixture, [TestFun]}}.
@@ -82,7 +82,10 @@ randomx_suite_test_() ->
 %% -------------------------------------------------------------------------------------------
 %% spora_2_6 and composite packing tests
 %% -------------------------------------------------------------------------------------------
-test_state({FastState512, LightState512, FastState4096, LightState4096}) ->
+
+test_state({
+		FastState512, LightState512,
+		FastState4096, LightState4096}) ->
 	%% The legacy dataset size is 568,433,920 bytes. Roughly 30 MiB more than 512 MiB.
 	%% Our nifs don't have access to the raw dataset size used in the RandomX C code, but
 	%% they have access to the dataset item count - which is just the size divided by 64.
@@ -91,22 +94,22 @@ test_state({FastState512, LightState512, FastState4096, LightState4096}) ->
 	%% The new dataset size is 4,326,530,304 bytes. Roughly 30 MiB more than 4 GiB.
 	%% So the expected dataset size is 4,326,530,304 / 64 = 67,602,036 items.
 	?assertEqual(
-		{ok, {rx512, fast, 8881780}},
+		{ok, {rx512, fast, 8881780, 2097152}},
 		ar_mine_randomx:info(FastState512)
 	),
 	?assertEqual(
-		{ok, {rx4096, fast, 67602036}},
+		{ok, {rx4096, fast, 67602036, 2097152}},
 		ar_mine_randomx:info(FastState4096)
 	),
 	%% Unfortunately we don't have access to the cache size. The randomx_info_nif will check
 	%% that in fast mode the cache is not initialized, and in light mode the dataset is not
 	%% initialized and return an error if either check fails.
 	?assertEqual(
-		{ok, {rx512, light, 0}},
+		{ok, {rx512, light, 0, 2097152}},
 		ar_mine_randomx:info(LightState512)
 	),
 	?assertEqual(
-		{ok, {rx4096, light, 0}},
+		{ok, {rx4096, light, 0, 2097152}},
 		ar_mine_randomx:info(LightState4096)
 	).
 
@@ -223,9 +226,9 @@ test_empty_chunk_fails(State, ExtraArgs, Fun) ->
 
 test_nif_wrappers({FastState512, _LightState512, FastState4096, _LightState4096}) ->
 	test_nif_wrappers(FastState512, FastState4096,
-		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 12)),
+			crypto:strong_rand_bytes(?DATA_CHUNK_SIZE - 12)),
 	test_nif_wrappers(FastState512, FastState4096,
-		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)).
+			crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)).
 
 test_nif_wrappers(State512, State4096, Chunk) ->
 	AddrA = crypto:strong_rand_bytes(32),
@@ -562,7 +565,9 @@ test_composite_repack({_FastState512, _LightState512, FastState4096, _LightState
 		ok
 	end.
 
-test_hash({FastState512, LightState512, FastState4096, LightState4096}) ->
+test_hash({
+		FastState512, LightState512,
+		FastState4096, LightState4096}) ->
     ExpectedHash512 = ar_util:decode(?ENCODED_RX512_HASH),
 	ExpectedHash4096 = ar_util:decode(?ENCODED_RX4096_HASH),
     Nonce = ar_util:decode(?ENCODED_NONCE),
@@ -576,3 +581,4 @@ test_hash({FastState512, LightState512, FastState4096, LightState4096}) ->
 		ar_mine_randomx:hash(FastState4096, Input, 0, 0, 0)),
 	?assertEqual(ExpectedHash4096,
 		ar_mine_randomx:hash(LightState4096, Input, 0, 0, 0)).
+

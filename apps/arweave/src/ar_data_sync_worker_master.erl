@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, is_syncing_enabled/0, ready_for_work/0, read_range/5]).
+-export([start_link/1, is_syncing_enabled/0, ready_for_work/0, read_range/7]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -62,11 +62,11 @@ ready_for_work() ->
 			false
 	end.
 
-read_range(Start, End, OriginStoreID, TargetStoreID, SkipSmall) ->
+read_range(Start, End, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef) ->
 	case ar_data_sync_worker_master:ready_for_work() of
 		true ->
-			gen_server:cast(?MODULE,
-					{read_range, {Start, End, OriginStoreID, TargetStoreID, SkipSmall}}),
+			Args = {Start, End, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef},
+			gen_server:cast(?MODULE, {read_range, Args}),
 			true;
 		false ->
 			false
@@ -110,7 +110,14 @@ handle_cast({sync_range, _Args}, #state{ worker_count = 0 } = State) ->
 handle_cast({sync_range, Args}, State) ->
 	{noreply, enqueue_main_task(sync_range, Args, State)};
 
-handle_cast({task_completed, {read_range, {Worker, _, _}}}, State) ->
+handle_cast({task_completed, {read_range, {Worker, _, Args}}}, State) ->
+	{_Start, _End, _OriginStoreID, _TargetStoreID, _SkipSmall, Caller, TaskRef} = Args,
+	case TaskRef of
+		sub_task ->
+			ok;
+		_ ->
+			Caller ! {ar_data_sync_worker_master_read_range_task_complete, TaskRef}
+	end,
 	State2 = update_scheduled_task_count(Worker, read_range, "localhost", -1, State),
 	{noreply, State2};
 
@@ -296,16 +303,23 @@ schedule_sync_range(PeerTasks, Args, State) ->
 	{PeerTasks2, State2}.
 
 schedule_read_range(Args, State) ->
-	{Start, End, OriginStoreID, TargetStoreID, SkipSmall} = Args,
+	{Start, End, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef} = Args,
 	End2 = min(Start + (?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE), End),
-	State2 = schedule_task(
-		read_range, {Start, End2, OriginStoreID, TargetStoreID, SkipSmall}, State),
+	TaskRef2 =
+		case End2 == End of
+			true ->
+				TaskRef;
+			false ->
+				sub_task
+		end,
+	Args2 = {Start, End2, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef2},
+	State2 = schedule_task(read_range, Args2, State),
 	case End2 == End of
 		true ->
 			State2;
 		false ->
-			Args2 = {End2, End, OriginStoreID, TargetStoreID, SkipSmall},
-			push_main_task(read_range, Args2, State2)
+			Args3 = {End2, End, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef},
+			push_main_task(read_range, Args3, State2)
 	end.
 
 %% @doc Schedule a task (either sync_range or read_range) to be run on a worker.
@@ -535,7 +549,8 @@ test_get_worker() ->
 	{worker1, _} = get_worker(State6).
 
 test_format_peer() ->
-	?assertEqual("localhost", format_peer(read_range, {0, 100, 1, 2, true})),
+	?assertEqual("localhost",
+			format_peer(read_range, {0, 100, 1, 2, true, self(), make_ref()})),
 	?assertEqual("localhost", format_peer(read_range, undefined)),
 	?assertEqual("1.2.3.4:1984", format_peer(sync_range, {0, 100, {1, 2, 3, 4, 1984}, 2})).
 
@@ -545,13 +560,15 @@ test_enqueue_main_task() ->
 	StoreID1 = ar_storage_module:id({?PARTITION_SIZE, 1, default}),
 	StoreID2 = ar_storage_module:id({?PARTITION_SIZE, 2, default}),
 	State0 = #state{},
-	
-	State1 = enqueue_main_task(read_range, {0, 100, StoreID1, StoreID2, true}, State0),
+
+	Ref = make_ref(),
+	State1 = enqueue_main_task(read_range,
+			{0, 100, StoreID1, StoreID2, true, self(), Ref}, State0),
 	State2 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1}, State1),
 	State3 = push_main_task(sync_range, {100, 200, Peer2, StoreID2}, State2),
 	assert_main_queue([
 		{sync_range, {100, 200, Peer2, StoreID2}},
-		{read_range, {0, 100, StoreID1, StoreID2, true}},
+		{read_range, {0, 100, StoreID1, StoreID2, true, self(), Ref}},
 		{sync_range, {0, 100, Peer1, StoreID1}}
 	], State3),
 	?assertEqual(3, State3#state.queued_task_count),
@@ -560,7 +577,7 @@ test_enqueue_main_task() ->
 	assert_task(sync_range, {100, 200, Peer2, StoreID2}, Task1, Args1),
 
 	{Task2, Args2, State5} = dequeue_main_task(State4),
-	assert_task(read_range, {0, 100, StoreID1, StoreID2, true}, Task2, Args2),
+	assert_task(read_range, {0, 100, StoreID1, StoreID2, true, self(), Ref}, Task2, Args2),
 	assert_main_queue([
 		{sync_range, {0, 100, Peer1, StoreID1}}
 	], State5),
@@ -605,7 +622,8 @@ test_process_main_queue() ->
 		workers = queue:from_list([worker1, worker2, worker3]), worker_count = 3
 	},
 
-	State1 = enqueue_main_task(read_range, {0, 100, StoreID1, StoreID2, true}, State0),
+	State1 = enqueue_main_task(read_range,
+			{0, 100, StoreID1, StoreID2, true, self(),  make_ref()}, State0),
 	State2 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1}, State1),
 	State3 = enqueue_main_task(sync_range, {100, 200, Peer1, StoreID1}, State2),
 	State4 = enqueue_main_task(sync_range, {200, 300, Peer1, StoreID1}, State3),
@@ -620,7 +638,7 @@ test_process_main_queue() ->
 	State12 = enqueue_main_task(sync_range, {1000, 1100, Peer2, StoreID1}, State11),
 	%% Will get split into 2 tasks when processed
 	State13 = enqueue_main_task(
-		read_range, {100, 20 * 262144, StoreID1, StoreID2, true}, State12),
+		read_range, {100, 20 * 262144, StoreID1, StoreID2, true, self(), make_ref()}, State12),
 	?assertEqual(13, State13#state.queued_task_count),
 	?assertEqual(0, State13#state.scheduled_task_count),
 

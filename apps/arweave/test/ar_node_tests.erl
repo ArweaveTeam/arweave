@@ -22,8 +22,7 @@ test_ar_node_interface() ->
 	?assertEqual(H, ar_node:get_current_block_hash()).
 
 mining_reward_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
-		fun test_mining_reward/0, 120).
+	{timeout, 120, fun test_mining_reward/0}.
 
 test_mining_reward() ->
 	{_Priv1, Pub1} = ar_wallet:new_keyfile(),

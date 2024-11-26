@@ -655,6 +655,11 @@
 	%%
 	%% When packing_difficulty >= 1, both poa1 and poa2 contain the unpacked chunks.
 	%% The values of the "chunk" fields are now 8192-byte packed sub-chunks.
+	%%
+	%% If the block is associated with the new replication format (replica_format=1,)
+	%% the packing difficulty is constant and determines the number of nonces
+	%% (also, sub-chunks) in the recall range and their mining difficulty, in line with
+	%% the chosen computational difficulty of the entropy computation.
 	packing_difficulty = 0,
 	%% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk.
 	%% undefined when packing_difficulty == 0, has a value otherwise.
@@ -663,6 +668,10 @@
 	%% undefined when packing_difficulty == 0 or recall_byte2 == undefined,
 	%% has a value otherwise.
 	unpacked_chunk2_hash,
+
+	%% The replica format 0 is the inefficient "packing" where every chunk is packed
+	%% independently. The replica format 1 is new the blazing fast replication format.
+	replica_format = 0,
 
 	%% Used internally, not gossiped. Convenient for validating potentially non-unique
 	%% merkle proofs assigned to the different signatures of the same solution

@@ -12,7 +12,7 @@
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1, get_chunk_seek_offset/1,
 		read_chunk/4, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
-		get_chunk_padded_offset/1, get_chunk_metadata_range/3,
+		get_chunk_metadata_range/3,
 		get_merkle_rebase_threshold/0, should_store_in_chunk_storage/3]).
 
 -export([debug_get_disk_pool_chunks/0]).
@@ -32,6 +32,12 @@
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5000).
 -else.
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300_000).
+-endif.
+
+-ifdef(DEBUG).
+-define(WAIT_FOR_CHUNK_STORAGE_PREPARE_MS, 500).
+-else.
+-define(WAIT_FOR_CHUNK_STORAGE_PREPARE_MS, 10_000).
 -endif.
 
 %%%===================================================================
@@ -311,7 +317,8 @@ maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
 %% Options:
 %%	_________________________________________________________________________________________
 %%	packing				| required; spora_2_5 or unpacked or {spora_2_6, <Mining Address>}
-%%							or {composite, <MiningAddress>, <Difficulty>;
+%%							or {composite, <Mining Address>, <Difficulty>}
+%%							or {replica_2_9, <Mining Address>}
 %%	_________________________________________________________________________________________
 %%	pack				| if false and a packed chunk is requested but stored unpacked or
 %%						| an unpacked chunk is requested but stored packed, return
@@ -361,7 +368,7 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 							{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}])
 			end,
 			{error, chunk_not_found};
-		_ ->
+		Reply ->
 			case IsMinerRequest of
 				false ->
 					ok;
@@ -376,6 +383,7 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 							{modules_covering_offset, ModuleIDs},
 							{root_sync_records, RootRecords},
 							{seek_offset, SeekOffset},
+							{reply, io_lib:format("~p", [Reply])},
 							{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}])
 			end,
 			{error, chunk_not_found}
@@ -403,14 +411,19 @@ get_chunk_proof(Offset, Options) ->
 %% is disabled in the configuration.
 get_tx_data(TXID) ->
 	{ok, Config} = application:get_env(arweave, config),
-	SizeLimit =
-		case lists:member(serve_tx_data_without_limits, Config#config.enable) of
-			true ->
-				infinity;
-			false ->
-				?MAX_SERVED_TX_DATA_SIZE
-		end,
-	get_tx_data(TXID, SizeLimit).
+	case lists:member(pack_served_chunks, Config#config.enable) of
+		false ->
+			{error, not_found};
+		true ->
+			SizeLimit =
+				case lists:member(serve_tx_data_without_limits, Config#config.enable) of
+					true ->
+						infinity;
+					false ->
+						?MAX_SERVED_TX_DATA_SIZE
+				end,
+			get_tx_data(TXID, SizeLimit)
+	end.
 
 %% @doc Fetch the transaction data. Return {error, tx_data_too_big} if
 %% the size is bigger than SizeLimit.
@@ -584,16 +597,6 @@ decrement_chunk_cache_size() ->
 increment_chunk_cache_size() ->
 	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, 1}, {chunk_cache_size, 1}).
 
-%% @doc Return Offset if it is smaller than or equal to ?STRICT_DATA_SPLIT_THRESHOLD.
-%% Otherwise, return the offset of the last byte of the chunk + the size of the padding.
-get_chunk_padded_offset(Offset) ->
-	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
-		true ->
-			ar_poa:get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD);
-		false ->
-			Offset
-	end.
-
 %% @doc Return {ok, Map} | {error, Error} where
 %% Map is
 %% AbsoluteEndOffset => {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize}
@@ -702,18 +705,19 @@ init({StoreID, RepackInPlacePacking}) ->
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
+	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+	State2 = State#sync_data_state{
+		store_id = StoreID,
+		range_start = RangeStart,
+		range_end = RangeEnd,
+		packing = ar_storage_module:get_packing(StoreID)
+	},
 	case RepackInPlacePacking of
 		none ->
 			gen_server:cast(self(), process_store_chunk_queue),
-			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-			State2 = State#sync_data_state{
-				store_id = StoreID,
-				range_start = RangeStart,
-				range_end = RangeEnd
-			},
 			{ok, may_be_start_syncing(State2)};
 		_ ->
-			{ok, State}
+			{ok, State2}
 	end.
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
@@ -817,19 +821,28 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 handle_cast(sync_data, State) ->
 	#sync_data_state{ store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
-	%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
-	%% storage_module
-	Intervals = get_unsynced_intervals_from_other_storage_modules(OriginStoreID, "default",
-			RangeStart, min(RangeEnd, DiskPoolThreshold)),
-	gen_server:cast(self(), sync_data2),
-	%% Find all storage_modules that might include the target chunks (e.g. neighboring
-	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
-	StorageModules = [ar_storage_module:id(Module)
-			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
-			ar_storage_module:id(Module) /= OriginStoreID],
-	{noreply, State#sync_data_state{
-			unsynced_intervals_from_other_storage_modules = Intervals,
-			other_storage_modules_with_unsynced_intervals = StorageModules }};
+	case ar_chunk_storage:is_prepared(OriginStoreID) of
+		{error, timeout} ->
+			ar_util:cast_after(?WAIT_FOR_CHUNK_STORAGE_PREPARE_MS, self(), sync_data),
+			{noreply, State};
+		false ->
+			ar_util:cast_after(?WAIT_FOR_CHUNK_STORAGE_PREPARE_MS, self(), sync_data),
+			{noreply, State};
+		true ->
+			%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
+			%% storage_module
+			Intervals = get_unsynced_intervals_from_other_storage_modules(
+					OriginStoreID, "default", RangeStart, min(RangeEnd, DiskPoolThreshold)),
+			gen_server:cast(self(), sync_data2),
+			%% Find all storage_modules that might include the target chunks (e.g. neighboring
+			%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
+			StorageModules = [ar_storage_module:id(Module)
+					|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
+					ar_storage_module:id(Module) /= OriginStoreID],
+			{noreply, State#sync_data_state{
+					unsynced_intervals_from_other_storage_modules = Intervals,
+					other_storage_modules_with_unsynced_intervals = StorageModules }}
+	end;
 
 %% @doc No unsynced overlap intervals, proceed with syncing
 handle_cast(sync_data2, #sync_data_state{
@@ -840,9 +853,10 @@ handle_cast(sync_data2, #sync_data_state{
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
 %% unsynced intervals
 handle_cast(sync_data2, #sync_data_state{
-		store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
-		unsynced_intervals_from_other_storage_modules = [],
-		other_storage_modules_with_unsynced_intervals = [StoreID | StoreIDs] } = State) ->
+			store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
+			unsynced_intervals_from_other_storage_modules = [],
+			other_storage_modules_with_unsynced_intervals = [StoreID | StoreIDs]
+		} = State) ->
 	Intervals = get_unsynced_intervals_from_other_storage_modules(OriginStoreID, StoreID,
 			RangeStart, RangeEnd),
 	gen_server:cast(self(), sync_data2),
@@ -854,13 +868,16 @@ handle_cast(sync_data2, #sync_data_state{
 		store_id = OriginStoreID,
 		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
 		} = State) ->
-	State2 = case ar_data_sync_worker_master:read_range(Start, End, StoreID, OriginStoreID, false) of
-		true ->
-			State#sync_data_state{
-				unsynced_intervals_from_other_storage_modules = Intervals };
-		false ->
-			State
-	end,
+	TaskRef = make_ref(),
+	State2 =
+		case ar_data_sync_worker_master:read_range(Start, End, StoreID, OriginStoreID, false,
+				self(), TaskRef) of
+			true ->
+				State#sync_data_state{
+					unsynced_intervals_from_other_storage_modules = Intervals };
+			false ->
+				State
+		end,
 	ar_util:cast_after(50, self(), sync_data2),
 	{noreply, State2};
 
@@ -1244,8 +1261,8 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 			PID ! {removed_range, Ref},
 			{noreply, State};
 		{ok, Key, {AbsoluteOffset, _, _, _, _, _, ChunkSize}} ->
-			PaddedStartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
-			PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
+			PaddedStartOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+			PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 			%% 1) store updated sync record
 			%% 2) remove chunk
 			%% 3) update chunks_index
@@ -1300,7 +1317,8 @@ handle_cast({expire_repack_chunk_request, Key}, State) ->
 					{data_path_hash, ar_util:encode(DataPathHash)},
 					{data_root, ar_util:encode(DataRoot)},
 					{relative_offset, Offset}]),
-			{noreply, State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) }};
+			State2 = State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) },
+			{noreply, State2};
 		_ ->
 			{noreply, State}
 	end;
@@ -1310,7 +1328,8 @@ handle_cast({expire_unpack_fetched_chunk_request, Key}, State) ->
 	case maps:get(Key, PackingMap, not_found) of
 		{unpack_fetched_chunk, _Args} ->
 			decrement_chunk_cache_size(),
-			{noreply, State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) }};
+			State2 = State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) },
+			{noreply, State2};
 		_ ->
 			{noreply, State}
 	end;
@@ -1322,18 +1341,6 @@ handle_cast(store_sync_state, State) ->
 
 handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
 	{noreply, remove_recently_processed_disk_pool_offset(Offset, ChunkDataKey, State)};
-
-handle_cast({request_default_storage_2_5_repacking, Cursor, RightBound}, State) ->
-	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, spora_2_5, ?MODULE,
-			"default") of
-		not_found ->
-			ok;
-		{End, Start} ->
-			ar_data_sync_worker_master:read_range(Start, End, "default", "default", true),
-			gen_server:cast(ar_data_sync_default, {request_default_storage_2_5_repacking,
-					End, RightBound})
-	end,
-	{noreply, State};
 
 handle_cast({request_default_unpacked_packing, Cursor, RightBound}, State) ->
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, unpacked, ?MODULE,
@@ -1400,6 +1407,9 @@ handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({chunk, _}, State) ->
+	{noreply, State};
+
+handle_info({ar_data_sync_worker_master_read_range_task_complete, _Ref}, State) ->
 	{noreply, State};
 
 handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, _Bytes}},
@@ -1489,11 +1499,13 @@ handle_info({'DOWN', _,  process, _, Reason},  #sync_data_state{ store_id = Stor
 	{noreply, State};
 
 handle_info(Message,  #sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {store_id, StoreID}, {message, Message}]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE},
+			{store_id, StoreID}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {store_id, StoreID}, {reason, io_lib:format("~p", [Reason])}]),
+	?LOG_INFO([{event, terminate}, {module, ?MODULE},
+			{store_id, StoreID}, {reason, io_lib:format("~p", [Reason])}]),
 	store_sync_state(State).
 
 %%%===================================================================
@@ -1541,6 +1553,10 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 						%% Requested and stored chunk are in different formats,
 						%% and repacking is disabled.
 						{error, chunk_stored_in_different_packing_only};
+					{_, false, true} ->
+						ar_packing_server:repack(
+							Packing, StoredPacking, AbsoluteOffset,
+							TXRoot, Chunk, ChunkSize);
 					_ ->
 						ar_packing_server:repack(
 							Packing, StoredPacking, AbsoluteOffset, TXRoot, Chunk, ChunkSize)
@@ -1591,6 +1607,8 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, IsMinerRequ
 								false ->
 									?LOG_ERROR([{event, fetched_chunk_invalid_packing_id},
 											{tags, [solution_proofs]},
+											{chunk_size, ChunkSize},
+											{actual_chunk_size, byte_size(MaybeUnpackedChunk)},
 											{packing, ar_serialize:encode_packing(Packing, true)},
 											{stored_packing,
 												ar_serialize:encode_packing(StoredPacking, true)},
@@ -1727,8 +1745,8 @@ invalidate_bad_data_record({Start, End, StoreID, Case}) ->
 			%% Do not invalidate fresh records - a reorg may be in progress.
 			ok;
 		false ->
-			PaddedEnd = get_chunk_padded_offset(End),
-			PaddedStart = get_chunk_padded_offset(Start),
+			PaddedEnd = ar_block:get_chunk_padded_offset(End),
+			PaddedStart = ar_block:get_chunk_padded_offset(Start),
 			PaddedStart2 =
 				case PaddedStart == PaddedEnd of
 					true ->
@@ -2570,7 +2588,6 @@ validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataP
 		{true, ChunkProof} ->
 			#chunk_proof{
 				data_root = DataRoot,
-				absolute_offset = AbsoluteOffset,
 				chunk_id = ChunkID,
 				chunk_start_offset = ChunkStartOffset,
 				chunk_end_offset = ChunkEndOffset,
@@ -2579,7 +2596,7 @@ validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataP
 			} = ChunkProof,
 			TXSize = TXEndOffset - TXStartOffset,
 			ChunkSize = ChunkEndOffset - ChunkStartOffset,
-			AbsoluteEndOffset = AbsoluteOffset + ChunkSize,
+			AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
 			case Packing of
 				unpacked ->
 					case ar_tx:generate_chunk_id(Chunk) == ChunkID of
@@ -2746,7 +2763,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 	Result =
 		case ShouldStoreInChunkStorage of
 			true ->
-				PaddedOffset = get_chunk_padded_offset(Offset),
+				PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
 				ar_chunk_storage:put(PaddedOffset, Chunk, StoreID);
 			false ->
 				ok
@@ -2795,8 +2812,8 @@ update_chunks_index2(Args, State) ->
 	Value = {ChunkDataKey, TXRoot, DataRoot, TXPath, Offset, ChunkSize},
 	case ar_kv:put(ChunksIndex, Key, term_to_binary(Value)) of
 		ok ->
-			StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
-			PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
+			StartOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+			PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 			case ar_sync_record:add(PaddedOffset, StartOffset, Packing, ?MODULE, StoreID) of
 				ok ->
 					ok;
@@ -2969,8 +2986,8 @@ store_chunk2(ChunkArgs, Args, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	{Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{_Packing, DataPath, Offset, DataRoot, TXPath, OriginStoreID, OriginChunkDataKey} = Args,
-	PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
-	StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
+	StartOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
 	DataPathHash = crypto:hash(sha256, DataPath),
 	case ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE, StoreID) of
 		{error, Reason} ->
@@ -2989,8 +3006,15 @@ store_chunk2(ChunkArgs, Args, State) ->
 			case write_chunk(AbsoluteOffset, ChunkDataKey, Chunk, ChunkSize, DataPath,
 					Packing, State) of
 				ok ->
+					Packing2 =
+						case Packing of
+							unpacked_padded ->
+								ar_storage_module:get_packing(StoreID);
+							_ ->
+								Packing
+						end,
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
-							DataRoot, TXPath, ChunkSize, Packing}, State) of
+							DataRoot, TXPath, ChunkSize, Packing2}, State) of
 						ok ->
 							ok;
 						{error, Reason} ->
@@ -2999,11 +3023,51 @@ store_chunk2(ChunkArgs, Args, State) ->
 							{error, Reason}
 					end;
 				{error, Reason} ->
-					log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
-							DataPathHash, StoreID),
-					{error, Reason}
+					case may_be_compare_already_stored(Reason, AbsoluteOffset, TXRoot, Chunk,
+							ChunkSize, StoreID) of
+						already_stored_the_same ->
+							ok;
+						_ ->
+							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
+									DataPathHash, StoreID),
+							{error, Reason}
+					end
 			end
 	end.
+
+-ifdef(DEBUG).
+may_be_compare_already_stored(already_stored, AbsoluteOffset, TXRoot, Chunk, ChunkSize,
+		StoreID) ->
+	Packing = ar_storage_module:get_packing(StoreID),
+	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
+	case ar_chunk_storage:get(AbsoluteOffset - 1, StoreID) of
+		{PaddedOffset, PackedChunk} ->
+			case ar_packing_server:unpack(Packing, AbsoluteOffset, TXRoot, PackedChunk,
+					ChunkSize) of
+				{ok, UnpaddedChunk} ->
+					case ar_packing_server:pad_chunk(UnpaddedChunk) of
+						Chunk ->
+							ar_sync_record:add(PaddedOffset, PaddedOffset - ?DATA_CHUNK_SIZE,
+									Packing, ?MODULE, StoreID),
+							already_stored_the_same;
+						_ ->
+							?LOG_ERROR("Update required for the 2.9 module? "
+								"A different chunk is stored under the same offset.", [])
+					end;
+				Error ->
+					?LOG_ERROR("Unpacking error: ~p", [Error])
+			end;
+		{OtherOffset, _} ->
+			?LOG_ERROR("Update required for the 2.9 module? "
+					" A chunk is stored under different offset. The requested offset: ~B. "
+					"The stored offset: ~B.", [PaddedOffset, OtherOffset])
+	end;
+may_be_compare_already_stored(_Reason, _AbsoluteOffset, _TXRoot, _Chunk, _ChunkSize, _StoreID) ->
+	ok.
+-else.
+may_be_compare_already_stored(_Reason, _AbsoluteOffset, _TXRoot, _Chunk, _ChunkSize, _StoreID) ->
+	ok.
+-endif.
 
 log_stored_chunks(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue_len = EndLen, store_id = StoreID } = State,
@@ -3018,7 +3082,7 @@ log_stored_chunks(State, StartLen) ->
 log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
 	?LOG_ERROR([{event, failed_to_store_chunk},
 			{reason, io_lib:format("~p", [Reason])},
-			{absolute_end_offset, AbsoluteOffset, Offset},
+			{absolute_end_offset, AbsoluteOffset},
 			{relative_offset, Offset},
 			{data_path_hash, ar_util:encode(DataPathHash)},
 			{data_root, ar_util:encode(DataRoot)},
@@ -3033,7 +3097,12 @@ get_required_chunk_packing(Offset, ChunkSize, #sync_data_state{ store_id = Store
 				"default" ->
 					unpacked;
 				_ ->
-					ar_storage_module:get_packing(StoreID)
+					case ar_storage_module:get_packing(StoreID) of
+						{replica_2_9, _Addr} ->
+							unpacked_padded;
+						Packing ->
+							Packing
+					end
 			end
 	end.
 
@@ -3147,8 +3216,9 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 					ChunkArgs = binary_to_term(V),
 					case element(1, ChunkArgs) of
 						ChunkDataKey ->
-							PaddedOffset = get_chunk_padded_offset(AbsoluteOffset),
-							StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+							PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
+							StartOffset = ar_block:get_chunk_padded_offset(
+									AbsoluteOffset - ChunkSize),
 							ok = ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE,
 									StoreID),
 							case ar_sync_record:is_recorded(PaddedOffset, ?MODULE) of
@@ -3299,7 +3369,14 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 						MayConclude, Args}),
 				{noreply, State};
 			StoreID ->
-				StoreID
+				case ar_chunk_storage:is_prepared(StoreID) of
+					false ->
+						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
+								false, Args}),
+						{noreply, State};
+					true ->
+						StoreID
+				end
 		end,
 	IsBlacklisted =
 		case FindStorageModule of

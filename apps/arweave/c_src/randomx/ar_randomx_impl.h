@@ -141,6 +141,7 @@ static ERL_NIF_TERM info_nif(
 {
 	struct state* statePtr;
 	unsigned int datasetSize;
+	unsigned int scratchpadSize;
 	hashing_mode hashingMode;
 	ERL_NIF_TERM hashingModeTerm;
 
@@ -160,8 +161,9 @@ static ERL_NIF_TERM info_nif(
 		if (statePtr->cachePtr != NULL) {
 			return error_tuple(envPtr, "cache is initialized for fast hashing mode");
 		}
-		datasetSize = randomx_dataset_item_count();
 		hashingModeTerm = enif_make_atom(envPtr, "fast");
+		datasetSize = randomx_dataset_item_count();
+		scratchpadSize = randomx_get_scratchpad_size();
 	} else if (hashingMode == HASHING_MODE_LIGHT) {
 		if (statePtr->datasetPtr != NULL) {
 			return error_tuple(envPtr, "dataset is initialized for light hashing mode");
@@ -169,16 +171,18 @@ static ERL_NIF_TERM info_nif(
 		if (statePtr->cachePtr == NULL) {
 			return error_tuple(envPtr, "cache is not initialized for light hashing mode");
 		}
-		datasetSize = 0;
 		hashingModeTerm = enif_make_atom(envPtr, "light");
+		datasetSize = 0;
+		scratchpadSize = randomx_get_scratchpad_size();
 	} else {
 		return error_tuple(envPtr, "invalid hashing mode");
 	}
 
-	ERL_NIF_TERM infoTerm = enif_make_tuple3(envPtr,
+	ERL_NIF_TERM infoTerm = enif_make_tuple4(envPtr,
 		enif_make_atom(envPtr, rxSize),
 		hashingModeTerm,
-		enif_make_uint(envPtr, datasetSize));
+		enif_make_uint(envPtr, datasetSize),
+		enif_make_uint(envPtr, scratchpadSize));
 	return ok_tuple(envPtr, infoTerm);
 }
 

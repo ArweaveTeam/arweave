@@ -19,7 +19,7 @@ validate_config(Config) ->
 	validate_storage_modules(Config) andalso
 	validate_repack_in_place(Config) andalso
 	validate_cm_pool(Config) andalso
-	validate_packing_difficulty(Config) andalso
+	validate_unique_replication_type(Config) andalso
 	validate_verify(Config).
 
 -spec set_dependent_flags(Config :: #config{}) -> #config{}.
@@ -679,9 +679,10 @@ parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | Rest], Config)
 parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | _], _) ->
 	{error, {bad_type, rocksdb_wal_sync_interval, number}, IntervalS};
 
-parse_options([{<<"data_sync_request_packed_chunks">>, Bool} | Rest], Config) when is_boolean(Bool) ->
+parse_options([{<<"data_sync_request_packed_chunks">>, Bool} | Rest], Config)
+		when is_boolean(Bool) ->
 	parse_options(Rest, Config#config{ data_sync_request_packed_chunks = Bool });
-parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | Rest], Config) ->
+parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | _Rest], _Config) ->
 	{error, {bad_type, data_sync_request_packed_chunks, boolean}, InvalidValue};
 
 parse_options([Opt | _], _) ->
@@ -694,10 +695,13 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 		case PackingBin of
 			<<"unpacked">> ->
 				unpacked;
+			<< MiningAddr:43/binary, ".replica.2.9" >> ->
+				{replica_2_9, ar_util:decode(MiningAddr)};
 			<< MiningAddr:43/binary, ".", PackingDifficultyBin/binary >> ->
 				PackingDifficulty = binary_to_integer(PackingDifficultyBin),
 				true = PackingDifficulty >= 1
-						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY,
+						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY
+						andalso PackingDifficulty /= ?REPLICA_2_9_PACKING_DIFFICULTY,
 				{composite, ar_util:decode(MiningAddr), PackingDifficulty};
 			MiningAddr when byte_size(MiningAddr) == 43 ->
 				{spora_2_6, ar_util:decode(MiningAddr)}
@@ -705,6 +709,7 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 	{ok, {RangeSize, RangeNumber, Packing}}.
 
 parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
+	%% We do not support repacking in place to or from the 2.9 replication format.
 	Packing =
 		case PackingBin of
 			<<"unpacked">> ->
@@ -878,6 +883,8 @@ format_storage_module({RangeSize, RangeNumber, {spora_2_6, MiningAddress}}) ->
 	{RangeSize, RangeNumber, {spora_2_6, format_binary(MiningAddress)}};
 format_storage_module({RangeSize, RangeNumber, {composite, MiningAddress, PackingDiff}}) ->
 	{RangeSize, RangeNumber, {composite, format_binary(MiningAddress), PackingDiff}};
+format_storage_module({RangeSize, RangeNumber, {replica_2_9, MiningAddress}}) ->
+	{RangeSize, RangeNumber, {replica_2_9, format_binary(MiningAddress)}};
 format_storage_module(StorageModule) ->
 	StorageModule.
 
@@ -952,15 +959,17 @@ validate_cm_pool(Config) ->
 	end,
 	A andalso B andalso C.
 
-validate_packing_difficulty(#config{ mine = false }) ->
+validate_unique_replication_type(#config{ mine = false }) ->
 	true;
-validate_packing_difficulty(Config) ->
+validate_unique_replication_type(Config) ->
 	MiningAddr = Config#config.mining_addr,
 	UniquePackingDifficulties = lists:foldl(
 		fun({_, _, {composite, Addr, Difficulty}}, Acc) when Addr =:= MiningAddr ->
-			sets:add_element(Difficulty, Acc);
+			sets:add_element({composite, Difficulty}, Acc);
 		({_, _, {spora_2_6, Addr}}, Acc) when Addr =:= MiningAddr ->
-			sets:add_element(0, Acc);
+			sets:add_element(spora_2_6, Acc);
+		({_, _, {replica_2_9, Addr}}, Acc) when Addr =:= MiningAddr ->
+			sets:add_element(replica_2_9, Acc);
 		(_, Acc) ->
 			Acc
 		end,
@@ -971,11 +980,10 @@ validate_packing_difficulty(Config) ->
 		true ->
 			true;
 		false ->
-			io:format("~nThe node cannot mine multiple packing difficulties "
+			io:format("~nThe node cannot mine multiple replication types "
 					"for the same mining address.~n~n"),
 			false
 	end.
-
 
 validate_verify(#config{ verify = false }) ->
 	true;

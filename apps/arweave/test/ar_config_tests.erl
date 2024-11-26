@@ -46,7 +46,8 @@ test_parse_config() ->
 				{?PARTITION_SIZE, 2, {composite, ExpectedMiningAddr, 32}},
 				{?PARTITION_SIZE, 100, unpacked},
 				{1, 0, unpacked},
-				{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}}],
+				{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}},
+				{?PARTITION_SIZE, 0, {replica_2_9, ExpectedMiningAddr}}],
 		repack_in_place_storage_modules = [
 				{{?PARTITION_SIZE, 1, unpacked}, {spora_2_6, ExpectedMiningAddr}},
 				{{?PARTITION_SIZE, 1, unpacked}, {composite, ExpectedMiningAddr, 2}},

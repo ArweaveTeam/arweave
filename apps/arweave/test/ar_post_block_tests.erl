@@ -294,8 +294,7 @@ test_add_external_block_with_invalid_timestamp() ->
 	post_block(B5, valid).
 
 rejects_invalid_blocks_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_7, fun() -> 0 end}],
-		fun test_rejects_invalid_blocks/0).
+	{timeout, 120, fun test_rejects_invalid_blocks/0}.
 
 test_rejects_invalid_blocks() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),

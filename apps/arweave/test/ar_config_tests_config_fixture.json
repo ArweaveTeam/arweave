@@ -28,7 +28,8 @@
     "0,1,unpacked",
     "14,1000000000000,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
     "1,1,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw,repack_in_place,unpacked",
-    "1,1,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw.1,repack_in_place,unpacked"
+    "1,1,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw.1,repack_in_place,unpacked",
+    "0,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw.replica.2.9"
   ],
   "repack_batch_size": 200,
   "polling": 10,

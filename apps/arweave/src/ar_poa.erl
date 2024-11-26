@@ -4,7 +4,7 @@
 
 -export([get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
 		 validate_pre_fork_2_5/4, validate/1, validate_paths/4, validate_paths/7,
-		 get_padded_offset/2]).
+		 get_padded_offset/1, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar.hrl").
@@ -101,8 +101,6 @@ validate(Args) ->
 
 %% @doc Validate the TXPath and DataPath for a chunk. This will return the ChunkID but won't
 %% validate that the ChunkID is correct.
-%% 
-%% AbsoluteOffset: the end offset of the chunk - indexed to the beginning of the weave
 validate_paths(TXRoot, TXPath, DataPath, AbsoluteOffset) ->
 	{BlockStartOffset, BlockEndOffset, TXRoot} =
 		ar_block_index:get_block_bounds(AbsoluteOffset),
@@ -201,7 +199,7 @@ validate2({spora_2_6, _} = Packing, Args) ->
 					{true, ChunkID}
 			end
 	end;
-validate2({composite, _, _} = Packing, Args) ->
+validate2(Packing, Args) ->
 	{_ChunkID, ChunkStartOffset, ChunkEndOffset, _BlockStartOffset, _TXStartOffset,
 			_TXRoot, _Chunk, UnpackedChunk, _SubChunkIndex} = Args,
 	ChunkSize = ChunkEndOffset - ChunkStartOffset,
@@ -218,7 +216,7 @@ validate2({composite, _, _} = Packing, Args) ->
 			end
 	end.
 
-validate3({composite, _Addr, _PackingDifficulty} = Packing, Args) ->
+validate3(Packing, Args) ->
 	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
 			TXRoot, Chunk, UnpackedChunk, SubChunkIndex} = Args,
 	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
@@ -229,8 +227,8 @@ validate3({composite, _Addr, _PackingDifficulty} = Packing, Args) ->
 	UnpackedSubChunk = binary:part(UnpackedChunk, SubChunkStartOffset, SubChunkSize),
 	PackingAtom = ar_packing_server:packing_atom(Packing),
 	prometheus_counter:inc(validating_packed_spora, [PackingAtom]),
-	case ar_packing_server:unpack_sub_chunk(Packing, AbsoluteEndOffset, TXRoot, Chunk,
-			SubChunkStartOffset) of
+	case ar_packing_server:unpack_sub_chunk(Packing, AbsoluteEndOffset,
+			TXRoot, Chunk, SubChunkStartOffset) of
 		{error, _} ->
 			false;
 		{exception, _} ->
@@ -248,8 +246,13 @@ validate3({composite, _Addr, _PackingDifficulty} = Packing, Args) ->
 			false
 	end.
 
-%% @doc Return the smallest multiple of 256 KiB counting from StrictDataSplitThreshold
-%% bigger than or equal to Offset.
+%% @doc Return the smallest multiple of 256 KiB >= Offset
+%% counting from ?STRICT_DATA_SPLIT_THRESHOLD.
+get_padded_offset(Offset) ->
+	get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD).
+
+%% @doc Return the smallest multiple of 256 KiB >= Offset
+%% counting from StrictDataSplitThreshold.
 get_padded_offset(Offset, StrictDataSplitThreshold) ->
 	Diff = Offset - StrictDataSplitThreshold,
 	StrictDataSplitThreshold + ((Diff - 1) div (?DATA_CHUNK_SIZE) + 1) * (?DATA_CHUNK_SIZE).

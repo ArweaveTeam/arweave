@@ -1837,7 +1837,8 @@ handle_found_solution(Args, PrevB, State) ->
 		start_interval_number = IntervalNumber,
 		step_number = StepNumber,
 		steps = SuppliedSteps,
-		packing_difficulty = PackingDifficulty
+		packing_difficulty = PackingDifficulty,
+		replica_format = ReplicaFormat
 	} = Solution,
 	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 
@@ -1876,7 +1877,7 @@ handle_found_solution(Args, PrevB, State) ->
 						mining_address_banned, []),
 				{false, address_banned};
 			false ->
-				case ar_block:validate_packing_difficulty(Height, PackingDifficulty) of
+				case ar_block:validate_replica_format(Height, PackingDifficulty, ReplicaFormat) of
 					false ->
 						ar_events:send(solution, {rejected,
 								#{ reason => invalid_packing_difficulty, source => Source }}),
@@ -2102,6 +2103,7 @@ handle_found_solution(Args, PrevB, State) ->
 				chunk_hash = get_chunk_hash(PoA1, Height),
 				chunk2_hash = get_chunk_hash(PoA2, Height),
 				packing_difficulty = PackingDifficulty,
+				replica_format = ReplicaFormat,
 				unpacked_chunk_hash = get_unpacked_chunk_hash(
 						PoA1, PackingDifficulty, RecallByte1),
 				unpacked_chunk2_hash = get_unpacked_chunk_hash(

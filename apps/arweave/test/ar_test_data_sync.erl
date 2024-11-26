@@ -27,16 +27,19 @@ setup_nodes(Options) ->
 			ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []))),
 	setup_nodes2(Options#{ addr => Addr, peer_addr => PeerAddr }).
 
-setup_nodes2(#{ addr := MainAddr, peer_addr := PeerAddr } = Options) ->
+setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
+	{B0, Options2} =
+		case maps:get(b0, Options, not_set) of
+			not_set ->
+				[Genesis] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
+				{Genesis, Options#{ b0 => Genesis }};
+			Value ->
+				{Value, Options}
+		end,
 	{ok, Config} = application:get_env(arweave, config),
-	case maps:get(storage_modules, Options, not_found) of
-		not_found ->
-			ar_test_node:start(B0, MainAddr, Config);
-		StorageModules ->
-			ar_test_node:start(B0, MainAddr, Config, StorageModules)
-	end,
+	Options3 = Options2#{ config => Config },
+	ar_test_node:start(Options3),
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig),
 	ar_test_node:connect_to_peer(peer1),
@@ -392,6 +395,10 @@ wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 compare_proofs(#{ chunk := C, data_path := D, tx_path := T },
 		#{ chunk := C, data_path := D, tx_path := T }, _EndOffset) ->
 	true;
-compare_proofs(_, _, EndOffset) ->
-	?debugFmt("Proof mismatch for ~B.", [EndOffset]),
+compare_proofs(#{ chunk := C1, data_path := D1, tx_path := T1 } = FetchedProof,
+		#{ chunk := C2, data_path := D2, tx_path := T2 }, EndOffset) ->
+	?debugFmt("Proof mismatch for ~B data_path: ~p tx_path: ~p chunk: ~p "
+			"expected chunk size :~B chunk size: ~B fetched proof packing: ~p.~n",
+			[EndOffset, D1 == D2, T1 == T2, C1 == C2, byte_size(C2), byte_size(C1),
+				maps:get(packing, FetchedProof, not_set)]),
 	false.

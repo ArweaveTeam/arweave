@@ -115,6 +115,17 @@
 %% The default rocksdb WAL sync interval, 1 minute.
 -define(DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S, 60).
 
+%% The maximum allowed total size (in bytes) of the entropies generated
+%% for the 2.9 replication.
+-define(DEFAULT_MAX_REPLICA_2_9_ENTROPY_CACHE_SIZE, 33_554_432). % 8_388_608 * 4.
+
+%% The number of 2.9 storage modules allowed to prepare the storage at a time.
+-ifdef(DEBUG).
+-define(DEFAULT_REPLICA_2_9_WORKERS, 2).
+-else.
+-define(DEFAULT_REPLICA_2_9_WORKERS, 8).
+-endif.
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -211,6 +222,8 @@
 	pool_server_address = not_set,
 	pool_api_key = not_set,
 	pool_worker_name = not_set,
+	replica_2_9_workers = ?DEFAULT_REPLICA_2_9_WORKERS,
+	replica_2_9_entropy_cache_size = ?DEFAULT_MAX_REPLICA_2_9_ENTROPY_CACHE_SIZE,
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
 	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,

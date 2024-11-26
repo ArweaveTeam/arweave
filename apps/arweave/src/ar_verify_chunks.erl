@@ -123,7 +123,7 @@ verify_chunk({ok, _Key, MetaData}, Intervals, State) ->
 		_TXRelativeOffset, ChunkSize} = MetaData,
 	{ChunkStorageInterval, _DataSyncInterval} = Intervals,
 
-	PaddedOffset = ar_data_sync:get_chunk_padded_offset(AbsoluteOffset),
+	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	State2 = verify_chunk_storage(PaddedOffset, ChunkSize, ChunkStorageInterval, State),
 
 	State3 = verify_proof(MetaData, State2),

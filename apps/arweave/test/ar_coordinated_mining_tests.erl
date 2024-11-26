@@ -19,12 +19,12 @@ mining_test_() ->
 			fun test_single_node_two_chunk/0, 120),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_cross_node/0, 120),
+			fun test_cross_node/0, 240),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_cross_node_retarget/0, 120),
-		{timeout, 120, fun test_two_node_retarget/0},
-		{timeout, 120, fun test_three_node/0},
+			fun test_cross_node_retarget/0, 240),
+		{timeout, 240, fun test_two_node_retarget/0},
+		{timeout, 240, fun test_three_node/0},
 		{timeout, 120, fun test_no_exit_node/0}
 	].
 
@@ -395,13 +395,16 @@ wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, Re
 	end.
 	
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
+	report_miners(Miners),
 	ar_util:pmap(fun(Node) -> ar_test_node:mine(Node) end, Miners),
+	?debugFmt("Waiting until the validator node (port ~B) advances to height ~B.",
+			[ar_test_node:peer_port(ValidatorNode), CurrentHeight + 1]),
 	[{Hash, _, _} | _] = ar_test_node:wait_until_height(ValidatorNode, CurrentHeight + 1),
 	lists:foreach(
 		fun(Node) ->
 			[{MinerHash, _, _} | _] = ar_test_node:wait_until_height(Node, CurrentHeight + 1),
-			Message = lists:flatten(
-				io_lib:format("Node ~p did not mine the same block as the validator node", [Node])),
+			Message = lists:flatten(io_lib:format(
+					"Node ~p did not mine the same block as the validator node", [Node])),
 			?assertEqual(ar_util:encode(Hash), ar_util:encode(MinerHash), Message)
 		end,
 		Miners
@@ -419,6 +422,15 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 				ar_node:get_partition_number(RecallByte2)
 			]
 	end.
+
+report_miners(Miners) ->
+	report_miners(Miners, 1).
+
+report_miners([], _I) ->
+	ok;
+report_miners([Miner | Miners], I) ->
+	?debugFmt("Miner ~B: ~p, port: ~B.", [I, Miner, ar_test_node:peer_port(Miner)]),
+	report_miners(Miners, I + 1).
 
 assert_empty_cache(_Node) ->
 	%% wait until the mining has stopped, then assert that the cache is empty

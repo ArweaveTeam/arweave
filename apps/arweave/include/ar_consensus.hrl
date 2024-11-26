@@ -13,13 +13,60 @@
 
 %% Stop supporting the legacy non-composite packing after this number of blocks
 %% passed since the fork 2.8. 365 * 24 * 60 * 60 / 128 = 246375.
--define(LEGACY_PACKING_EXPIRATION_PERIOD_BLOCKS, (246375 * 4)).
+-define(SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS, (246375 * 4)).
+
+%% Stop supporting the composite packing ~60 days have passed since 2.9 fork.
+%% 30 days = 30 * 24 * 60 * 60 / 128 = 20250.
+-define(COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS, (20250 * 2)).
+
+%% The number of times we apply an RX hash in each RX2 lane in-between every pair
+%% of mixings.
+-define(REPLICA_2_9_RANDOMX_ROUND_COUNT, 6).
+
+%% The number of RX2 lanes.
+-define(REPLICA_2_9_RANDOMX_LANE_COUNT, 4).
+
+%% The RX2 depth.
+-define(REPLICA_2_9_RANDOMX_DEPTH, 3).
+
+%% The size in bytes of the component (NOT the total) RX2 scratchpad.
+-define(RANDOMX_SCRATCHPAD_SIZE, 2097152).
+
+%% The number of sub-chunks sharing the entropy in the new replication scheme
+%% (replica_format=1.)
+-ifdef(DEBUG).
+-define(REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT, 3).
+-else.
+-define(REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT, 1024). % 8_388_608 bytes worth of entropy.
+-endif.
+
+%% The additional number of entropy masks generated per partition.
+%% The value is chosen depending on the PARTITION_SIZE
+%% and REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT constants
+%% such that the sector size (mask count * sub-chunk size) is evenly divisible
+%% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
+-ifdef(DEBUG).
+-define(REPLICA_2_9_EXTRA_ENTROPY_MASK_COUNT, 11).
+-else.
+%% 3_600_000_000_000 / 8_388_608 = 429153.4423828125;
+%% (429153 + 31) * 8192 / 262144 == 13412 - the first evenly divisible number of
+%% the form (429153 + X) * 8192.
+-define(REPLICA_2_9_EXTRA_ENTROPY_MASK_COUNT, 31).
+-endif.
+
+%% The effective packing difficulty of the new replication format (replica_format=1.)
+%% Determines the recall range size and the mining difficulty of the mining nonces.
+-ifdef(DEBUG).
+-define(REPLICA_2_9_PACKING_DIFFICULTY, 2).
+-else.
+-define(REPLICA_2_9_PACKING_DIFFICULTY, 10).
+-endif.
 
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
 -ifdef(DEBUG).
--define(PARTITION_SIZE, 2097152). % 8 * 256 * 1024
+-define(PARTITION_SIZE, 2097152).
 -else.
 -define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
 -endif.

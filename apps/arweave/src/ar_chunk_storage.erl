@@ -7,7 +7,7 @@
 		open_files/1, get/1, get/2, get/5, read_chunk2/5, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, 
 		list_files/2, run_defragmentation/0,
-		get_storage_module_path/2, get_chunk_storage_path/2]).
+		get_storage_module_path/2, get_chunk_storage_path/2, is_prepared/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -26,7 +26,12 @@
 	repack_cursor = 0,
 	prev_repack_cursor = 0,
 	target_packing = none,
-	repacking_complete = false
+	repacking_complete = false,
+	range_start,
+	range_end,
+	reward_addr,
+	prepare_replica_2_9_cursor,
+	is_prepared = false
 }).
 
 %%%===================================================================
@@ -45,7 +50,7 @@ put(PaddedOffset, Chunk) ->
 %% @doc Store the chunk under the given end offset,
 %% bytes Offset - ?DATA_CHUNK_SIZE, Offset - ?DATA_CHUNK_SIZE + 1, .., Offset - 1.
 put(PaddedOffset, Chunk, StoreID) ->
-	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = gen_server_id(StoreID),
 	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk}) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -86,14 +91,19 @@ get(Byte, StoreID) ->
 		not_found ->
 			not_found;
 		{_End, IntervalStart} ->
-			Start = Byte - (Byte - IntervalStart) rem ?DATA_CHUNK_SIZE,
-			LeftBorder = ar_util:floor_int(Start, get_chunk_group_size()),
-			case get(Byte, Start, LeftBorder, StoreID, 1) of
-				[] ->
-					not_found;
-				[{EndOffset, Chunk}] ->
-					{EndOffset, Chunk}
-			end
+			get(Byte, IntervalStart, StoreID)
+	end.
+
+get(Byte, IntervalStart, StoreID) ->
+	%% The synced ranges begin at IntervalStart => the chunk
+	%% should begin at a multiple of ?DATA_CHUNK_SIZE to the right of IntervalStart.
+	ChunkStart = Byte - (Byte - IntervalStart) rem ?DATA_CHUNK_SIZE,
+	ChunkFileStart = get_chunk_file_start_by_start_offset(ChunkStart),
+	case get(Byte, ChunkStart, ChunkFileStart, StoreID, 1) of
+		[] ->
+			not_found;
+		[{EndOffset, Chunk}] ->
+			{EndOffset, Chunk}
 	end.
 
 %% @doc Return a list of {AbsoluteEndOffset, Chunk} pairs for the stored chunks
@@ -108,26 +118,29 @@ get_range(Start, Size) ->
 %% very last chunk might be outside of the interval - its start offset is
 %% at most Start + Size + ?DATA_CHUNK_SIZE - 1.
 get_range(Start, Size, StoreID) ->
+	?assert(Size < get_chunk_group_size()),
 	case ar_sync_record:get_next_synced_interval(Start, infinity, ?MODULE, StoreID) of
 		{_End, IntervalStart} when Start + Size > IntervalStart ->
 			Start2 = max(Start, IntervalStart),
 			Size2 = Start + Size - Start2,
-			BucketStart = Start2 - (Start2 - IntervalStart) rem ?DATA_CHUNK_SIZE,
-			LeftBorder = ar_util:floor_int(BucketStart, get_chunk_group_size()),
+			ChunkStart = Start2 - (Start2 - IntervalStart) rem ?DATA_CHUNK_SIZE,
+			ChunkFileStart = get_chunk_file_start_by_start_offset(ChunkStart),
 			End = Start2 + Size2,
-			LastBucketStart = (End - 1) - ((End - 1)- IntervalStart) rem ?DATA_CHUNK_SIZE,
-			case LastBucketStart >= LeftBorder + get_chunk_group_size() of
+			LastChunkStart = (End - 1) - ((End - 1) - IntervalStart) rem ?DATA_CHUNK_SIZE,
+			LastChunkFileStart = get_chunk_file_start_by_start_offset(LastChunkStart),
+			ChunkCount = (LastChunkStart - ChunkStart) div ?DATA_CHUNK_SIZE + 1,
+			case ChunkFileStart /= LastChunkFileStart of
 				false ->
-					ChunkCount = (LastBucketStart - BucketStart) div ?DATA_CHUNK_SIZE + 1,
-					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCount);
+					%% All chunks are from the same chunk file.
+					get(Start2, ChunkStart, ChunkFileStart, StoreID, ChunkCount);
 				true ->
-					SizeBeforeBorder = LeftBorder + get_chunk_group_size() - BucketStart,
+					SizeBeforeBorder = ChunkFileStart + get_chunk_group_size() - ChunkStart,
 					ChunkCountBeforeBorder = SizeBeforeBorder div ?DATA_CHUNK_SIZE
 							+ case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of 0 -> 0; _ -> 1 end,
-					StartAfterBorder = BucketStart + ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE,
+					StartAfterBorder = ChunkStart + ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE,
 					SizeAfterBorder = Size2 - ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE
-							+ (Start2 - BucketStart),
-					get(Start2, BucketStart, LeftBorder, StoreID, ChunkCountBeforeBorder)
+							+ (Start2 - ChunkStart),
+					get(Start2, ChunkStart, ChunkFileStart, StoreID, ChunkCountBeforeBorder)
 						++ get_range(StartAfterBorder, SizeAfterBorder, StoreID)
 			end;
 		_ ->
@@ -157,7 +170,7 @@ delete(Offset) ->
 
 %% @doc Remove the chunk with the given end offset.
 delete(PaddedOffset, StoreID) ->
-	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = gen_server_id(StoreID),
 	case catch gen_server:call(GenServerID, {delete, PaddedOffset}, 20000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -191,6 +204,18 @@ get_storage_module_path(DataDir, StoreID) ->
 
 get_chunk_storage_path(DataDir, StoreID) ->
 	filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
+%% @doc Return true if the storage is ready to accept chunks.
+-spec is_prepared(StoreID :: string()) -> true | false.
+is_prepared(StoreID) ->
+	GenServerID = gen_server_id(StoreID),
+	case catch gen_server:call(GenServerID, is_prepared) of
+		{'EXIT', {noproc, {gen_server, call, _}}} ->
+			{error, timeout};
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -220,9 +245,29 @@ init({StoreID, RepackInPlacePacking}) ->
 		FileIndex
 	),
 	warn_custom_chunk_group_size(StoreID),
+	State = #state{ file_index = FileIndex2, store_id = StoreID },
+	State2 =
+		case ar_storage_module:get_packing(StoreID) of
+			{replica_2_9, RewardAddr} ->
+				{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+				PrepareCursor = read_prepare_replica_2_9_cursor(StoreID, {RangeStart + 1, 0}),
+				IsPrepared =
+					case element(1, PrepareCursor) =< RangeEnd of
+						true ->
+							gen_server:cast(self(), prepare_replica_2_9),
+							false;
+						false ->
+							true
+					end,
+				State#state{ reward_addr = RewardAddr, range_start = RangeStart,
+						range_end = RangeEnd, prepare_replica_2_9_cursor = PrepareCursor,
+						is_prepared = IsPrepared };
+			_ ->
+				State#state{ is_prepared = true }
+		end,
 	case RepackInPlacePacking of
 		none ->
-			{ok, #state{ file_index = FileIndex2, store_id = StoreID }};
+			{ok, State2};
 		Packing ->
 			%% We use the cursor to speed up the search for the place where
 			%% the repacking should start in case the synced intervals are numerous
@@ -243,8 +288,7 @@ init({StoreID, RepackInPlacePacking}) ->
 						C
 				end,
 			gen_server:cast(self(), {repack, infinity, Packing}),
-			{ok, #state{ file_index = FileIndex2, store_id = StoreID,
-					repack_cursor = Cursor, target_packing = Packing }}
+			{ok, State2#state{ repack_cursor = Cursor, target_packing = Packing }}
 	end.
 
 warn_custom_chunk_group_size(StoreID) ->
@@ -260,6 +304,99 @@ warn_custom_chunk_group_size(StoreID) ->
 		false ->
 			ok
 	end.
+
+handle_cast(prepare_replica_2_9, #state{ store_id = StoreID } = State) ->
+	case try_acquire_replica_2_9_formatting_lock(StoreID) of
+		true ->
+			gen_server:cast(self(), do_prepare_replica_2_9);
+		false ->
+			ar_util:cast_after(2000, self(), prepare_replica_2_9)
+	end,
+	{noreply, State};
+
+handle_cast(do_prepare_replica_2_9, State) ->
+	#state{ reward_addr = RewardAddr, prepare_replica_2_9_cursor = {Start, SubChunkStart},
+			range_end = RangeEnd, store_id = StoreID } = State,
+	Offset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
+	Offset = get_chunk_bucket_end(Offset),
+	true = max(0, Offset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(Offset),
+	Partition = ar_block:get_replica_2_9_partition(Offset),
+	CheckRangeEnd =
+		case Offset > RangeEnd of
+			true ->
+				release_replica_2_9_formatting_lock(StoreID),
+				?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
+						{store_id, StoreID}]),
+				ar:console("The storage module ~s is prepared for 2.9 replication.~n",
+						[StoreID]),
+				true;
+			false ->
+				false
+		end,
+	SubChunkStart2 = (SubChunkStart + ?DATA_CHUNK_SIZE) rem ?DATA_CHUNK_SIZE,
+	Start2 = Offset + ?DATA_CHUNK_SIZE,
+	Cursor2 = {Start2, SubChunkStart2},
+	State2 = State#state{ prepare_replica_2_9_cursor = Cursor2 },
+	CheckIsRecorded =
+		case CheckRangeEnd of
+			true ->
+				complete;
+			false ->
+				is_replica_2_9_entropy_sub_chunk_recorded(Offset, SubChunkStart, StoreID)
+		end,
+	StoreEntropy =
+		case CheckIsRecorded of
+			complete ->
+				complete;
+			true ->
+				is_recorded;
+			false ->
+				Entropies = generate_entropies(RewardAddr, Offset, SubChunkStart),
+				EntropyKeys = generate_entropy_keys(RewardAddr, Offset, SubChunkStart),
+				EntropyIndex = ar_block:get_replica_2_9_entropy_sub_chunk_index(Offset),
+				%% If we are not at the beginning of the entropy, shift the offset to
+				%% the left. store_entropy will traverse the entire 2.9 partition shifting
+				%% the offset by sector size. It may happen some sub-chunks will be written
+				%% to the neighbouring storage module(s) on the left or on the right
+				%% since the 2.9 partition is slightly bigger than the recall partitition
+				%% storage modules are commonly set up with.
+				Offset2 = shift_replica_2_9_entropy_offset(Offset, -EntropyIndex),
+				store_entropy(Entropies, Offset2, SubChunkStart, Partition, EntropyKeys,
+						RewardAddr, 0, 0)
+		end,
+	case StoreEntropy of
+		complete ->
+			{noreply, State#state{ is_prepared = true }};
+		is_recorded ->
+			gen_server:cast(self(), do_prepare_replica_2_9),
+			{noreply, State2};
+		{error, Error} ->
+			?LOG_WARNING([{event, failed_to_store_replica_2_9_entropy},
+					{cursor, Start},
+					{store_id, StoreID},
+					{reason, io_lib:format("~p", [Error])}]),
+			ar_util:cast_after(500, self(), do_prepare_replica_2_9),
+			{noreply, State};
+		{ok, SubChunksStored} ->
+			?LOG_DEBUG([{event, stored_replica_2_9_entropy},
+					{sub_chunks_stored, SubChunksStored},
+					{partition, Partition},
+					{store_id, StoreID},
+					{cursor, Start},
+					{offset, Offset}]),
+			gen_server:cast(self(), do_prepare_replica_2_9),
+			case store_prepare_replica_2_9_cursor(Cursor2, StoreID) of
+				ok ->
+					ok;
+				{error, Error} ->
+					?LOG_WARNING([{event, failed_to_store_prepare_replica_2_9_cursor},
+							{chunk_cursor, Start2},
+							{sub_chunk_cursor, SubChunkStart2},
+							{store_id, StoreID},
+							{reason, io_lib:format("~p", [Error])}])
+			end,
+			{noreply, State2}
+	end;
 
 handle_cast(store_repack_cursor, #state{ repacking_complete = true } = State) ->
 	{noreply, State};
@@ -300,7 +437,11 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_call({put, PaddedOffset, Chunk}, _From, State) when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
+handle_call(is_prepared, _From, #state{ is_prepared = IsPrepared } = State) ->
+	{reply, IsPrepared, State};
+
+handle_call({put, PaddedOffset, Chunk}, _From, State)
+		when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
 	#state{ file_index = FileIndex, store_id = StoreID } = State,
 	case handle_store_chunk(PaddedOffset, Chunk, FileIndex, StoreID) of
 		{ok, FileIndex2} ->
@@ -311,18 +452,24 @@ handle_call({put, PaddedOffset, Chunk}, _From, State) when byte_size(Chunk) == ?
 
 handle_call({delete, PaddedOffset}, _From, State) ->
 	#state{	file_index = FileIndex, store_id = StoreID } = State,
-	Key = get_key(PaddedOffset),
-	Filepath = filepath(Key, FileIndex, StoreID),
-	case ar_sync_record:delete(PaddedOffset, PaddedOffset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
+	ChunkFileStart = get_chunk_file_start(PaddedOffset),
+	Filepath = filepath(ChunkFileStart, FileIndex, StoreID),
+	StartOffset = PaddedOffset - ?DATA_CHUNK_SIZE,
+	case ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE, StoreID) of
 		ok ->
-			case delete_chunk(PaddedOffset, Key, Filepath) of
+			case delete_replica_2_9_entropy_record(PaddedOffset, StoreID) of
 				ok ->
-					{reply, ok, State};
+					case delete_chunk(PaddedOffset, ChunkFileStart, Filepath) of
+						ok ->
+							{reply, ok, State};
+						Error ->
+							{reply, Error, State}
+					end;
 				Error2 ->
 					{reply, Error2, State}
 			end;
-		Error ->
-			{reply, Error, State}
+		Error3 ->
+			{reply, Error3, State}
 	end;
 
 handle_call(reset, _, #state{ store_id = StoreID, file_index = FileIndex } = State) ->
@@ -381,6 +528,9 @@ handle_info({Ref, _Reply}, State) when is_reference(Ref) ->
 	%% A stale gen_server:call reply.
 	{noreply, State};
 
+handle_info({'EXIT', _PID, normal}, State) ->
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {info, io_lib:format("~p", [Info])}]),
 	{noreply, State}.
@@ -413,6 +563,21 @@ read_repack_cursor(StoreID, TargetPacking) ->
 			0
 	end.
 
+read_prepare_replica_2_9_cursor(StoreID, Default) ->
+	Filepath = get_filepath("prepare_replica_2_9_cursor", StoreID),
+	case file:read_file(Filepath) of
+		{ok, Bin} ->
+			case catch binary_to_term(Bin) of
+				{ChunkCursor, SubChunkCursor} = Cursor
+						when is_integer(ChunkCursor), is_integer(SubChunkCursor) ->
+					Cursor;
+				_ ->
+					Default
+			end;
+		_ ->
+			Default
+	end.
+
 remove_repack_cursor(StoreID) ->
 	Filepath = get_filepath("repack_in_place_cursor", StoreID),
 	case file:delete(Filepath) of
@@ -430,6 +595,10 @@ store_repack_cursor(Cursor, StoreID, TargetPacking) ->
 	Filepath = get_filepath("repack_in_place_cursor", StoreID),
 	file:write_file(Filepath, term_to_binary({Cursor, TargetPacking})).
 
+store_prepare_replica_2_9_cursor(Cursor, StoreID) ->
+	Filepath = get_filepath("prepare_replica_2_9_cursor", StoreID),
+	file:write_file(Filepath, term_to_binary(Cursor)).
+
 get_filepath(Name, StoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
@@ -437,14 +606,52 @@ get_filepath(Name, StoreID) ->
 	filename:join([ChunkDir, Name]).
 
 handle_store_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
-	Key = get_key(PaddedOffset),
-	case store_chunk(Key, PaddedOffset, Chunk, FileIndex, StoreID) of
+	case ar_storage_module:get_packing(StoreID) of
+		{replica_2_9, _Addr} ->
+			handle_store_chunk_replica_2_9(PaddedOffset, Chunk, FileIndex, StoreID);
+		_ ->
+			handle_store_chunk2(PaddedOffset, Chunk, FileIndex, StoreID)
+	end.
+
+handle_store_chunk_replica_2_9(PaddedOffset, Chunk, FileIndex, StoreID) ->
+	StartOffset = PaddedOffset - ?DATA_CHUNK_SIZE,
+	CheckIsStoredAlready =
+		ar_sync_record:is_recorded(PaddedOffset, ?MODULE, StoreID),
+	CheckIsPrepared =
+		case CheckIsStoredAlready of
+			true ->
+				{error, already_stored};
+			false ->
+				is_replica_2_9_entropy_recorded(PaddedOffset, StoreID)
+		end,
+	ReadEntropy =
+		case CheckIsPrepared of
+			{error, _} = Error ->
+				Error;
+			false ->
+				{error, not_prepared_yet};
+			true ->
+				get(StartOffset, StartOffset, StoreID)
+		end,
+	case ReadEntropy of
+		{error, _} = Error2 ->
+			Error2;
+		not_found ->
+			{error, not_prepared_yet2};
+		{_EndOffset, Entropy} ->
+			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
+			handle_store_chunk2(PaddedOffset, PackedChunk, FileIndex, StoreID)
+	end.
+
+handle_store_chunk2(PaddedOffset, Chunk, FileIndex, StoreID) ->
+	ChunkFileStart = get_chunk_file_start(PaddedOffset),
+	case store_chunk(ChunkFileStart, PaddedOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
 			case ar_sync_record:add(
 					PaddedOffset, PaddedOffset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID) of
 				ok ->
-					ets:insert(chunk_storage_file_index, {{Key, StoreID}, Filepath}),
-					{ok, maps:put(Key, Filepath, FileIndex)};
+					ets:insert(chunk_storage_file_index, {{ChunkFileStart, StoreID}, Filepath}),
+					{ok, maps:put(ChunkFileStart, Filepath, FileIndex)};
 				Error ->
 					Error
 			end;
@@ -452,54 +659,262 @@ handle_store_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
 			Error2
 	end.
 
-get_key(Offset) ->
-	StartOffset = Offset - ?DATA_CHUNK_SIZE,
+get_chunk_file_start(EndOffset) ->
+	StartOffset = EndOffset - ?DATA_CHUNK_SIZE,
+	get_chunk_file_start_by_start_offset(StartOffset).
+
+get_chunk_file_start_by_start_offset(StartOffset) ->
 	ar_util:floor_int(StartOffset, get_chunk_group_size()).
 
-store_chunk(Key, PaddedOffset, Chunk, FileIndex, StoreID) ->
-	Filepath = filepath(Key, FileIndex, StoreID),
-	store_chunk(Key, PaddedOffset, Chunk, Filepath).
+get_chunk_bucket_start(Offset) ->
+	ar_util:floor_int(max(0, Offset - ?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE).
 
-filepath(Key, FileIndex, StoreID) ->
-	case maps:get(Key, FileIndex, not_found) of
+get_chunk_bucket_end(Offset) ->
+	get_chunk_bucket_start(Offset) + ?DATA_CHUNK_SIZE.
+
+%% @doc Return true if the given sub-chunk bucket contains the 2.9 entropy.
+is_replica_2_9_entropy_sub_chunk_recorded(Offset, SubChunkBucketStartOffset, StoreID) ->
+	ID = ar_chunk_storage_replica_2_9_entropy,
+	EntropyBucketStart = get_chunk_bucket_start(Offset),
+	SubChunkBucketStart = EntropyBucketStart + SubChunkBucketStartOffset,
+	ar_sync_record:is_recorded(SubChunkBucketStart + 1, ID, StoreID).
+
+%% @doc Return true if the 2.9 entropy for every sub-chunk of the chunk with the
+%% given offset (> start offset, =< end offset) is recorded.
+%% We check every sub-chunk because the entropy is written on the sub-chunk level.
+is_replica_2_9_entropy_recorded(Offset, StoreID) ->
+	EntropyBucketStart = get_chunk_bucket_start(Offset),
+	is_replica_2_9_entropy_recorded2(EntropyBucketStart,
+			EntropyBucketStart + ?DATA_CHUNK_SIZE, StoreID).
+
+is_replica_2_9_entropy_recorded2(Cursor, BucketEnd, _StoreID)
+		when Cursor >= BucketEnd ->
+	true;
+is_replica_2_9_entropy_recorded2(Cursor, BucketEnd, StoreID) ->
+	ID = ar_chunk_storage_replica_2_9_entropy,
+	case ar_sync_record:is_recorded(Cursor + 1, ID, StoreID) of
+		false ->
+			false;
+		true ->
+			SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+			is_replica_2_9_entropy_recorded2(Cursor + SubChunkSize, BucketEnd, StoreID)
+	end.
+
+update_replica_2_9_entropy_record(Offset, SubChunkStartOffset, StoreID) ->
+	ID = ar_chunk_storage_replica_2_9_entropy,
+	BucketStart = get_chunk_bucket_start(Offset),
+	SubChunkBucketStart = BucketStart + SubChunkStartOffset,
+	BucketEnd = get_chunk_bucket_end(Offset),
+	ar_sync_record:add(BucketEnd, SubChunkBucketStart, ID, StoreID).
+
+delete_replica_2_9_entropy_record(PaddedOffset, StoreID) ->
+	ID = ar_chunk_storage_replica_2_9_entropy,
+	BucketStart = get_chunk_bucket_start(PaddedOffset),
+	ar_sync_record:delete(BucketStart + ?DATA_CHUNK_SIZE, BucketStart, ID, StoreID).
+
+generate_entropies(_RewardAddr, _Offset, SubChunkStart)
+		when SubChunkStart == ?DATA_CHUNK_SIZE ->
+	[];
+generate_entropies(RewardAddr, Offset, SubChunkStart) ->
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	[ar_packing_server:get_replica_2_9_entropy(RewardAddr, Offset, SubChunkStart)
+			| generate_entropies(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
+
+generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
+		when SubChunkStart == ?DATA_CHUNK_SIZE ->
+	[];
+generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	[ar_block:get_replica_2_9_entropy_key(RewardAddr, Offset, SubChunkStart)
+			| generate_entropy_keys(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
+
+store_entropy(Entropies, Offset, SubChunkStartOffset, Partition, Keys, RewardAddr, N, WaitN) ->
+	case take_combined_entropy(Entropies) of
+		{<<>>, []} ->
+			wait_store_entropy_processes(WaitN),
+			{ok, N};
+		{EntropyPart, Rest} ->
+			true = ar_block:get_replica_2_9_partition(Offset) == Partition,
+			sanity_check_replica_2_9_entropy_keys(Offset, RewardAddr,
+					SubChunkStartOffset, Keys),
+			FindModule =
+				case ar_storage_module:get_strict(Offset, {replica_2_9, RewardAddr}) of
+					not_found ->
+						not_found;
+					{ok, StoreID, _StorageModule} ->
+						{ok, StoreID}
+				end,
+			case FindModule of
+				not_found ->
+					Offset2 = shift_replica_2_9_entropy_offset(Offset, 1),
+					store_entropy(Rest, Offset2, SubChunkStartOffset, Partition,
+							Keys, RewardAddr, N, WaitN);
+				{ok, StoreID2} ->
+					From = self(),
+					spawn_link(fun() ->
+						store_entropy2(EntropyPart, Offset, SubChunkStartOffset, StoreID2),
+						From ! {store_entropy_sub_chunk_written, WaitN + 1}
+						end),
+					Offset2 = shift_replica_2_9_entropy_offset(Offset, 1),
+					store_entropy(Rest, Offset2, SubChunkStartOffset, Partition,
+							Keys, RewardAddr, N + length(Keys), WaitN + 1)
+			end
+	end.
+
+take_combined_entropy(Entropies) ->
+	take_combined_entropy(Entropies, [], []).
+
+take_combined_entropy([], Acc, RestAcc) ->
+	{iolist_to_binary(Acc), lists:reverse(RestAcc)};
+take_combined_entropy([<<>> | Entropies], _Acc, _RestAcc) ->
+	true = lists:all(fun(Entropy) -> Entropy == <<>> end, Entropies),
+	{<<>>, []};
+take_combined_entropy([
+		<< EntropyPart:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, Rest/binary >>
+		| Entropies], Acc, RestAcc) ->
+	take_combined_entropy(Entropies, [Acc | [EntropyPart]], [Rest | RestAcc]).
+
+sanity_check_replica_2_9_entropy_keys(_Offset, _RewardAddr, _SubChunkStartOffset, []) ->
+	ok;
+sanity_check_replica_2_9_entropy_keys(Offset, RewardAddr, SubChunkStartOffset, [Key | Keys]) ->
+	Key = ar_block:get_replica_2_9_entropy_key(RewardAddr, Offset, SubChunkStartOffset),
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	sanity_check_replica_2_9_entropy_keys(Offset, RewardAddr,
+			SubChunkStartOffset + SubChunkSize, Keys).
+
+wait_store_entropy_processes(0) ->
+	ok;
+wait_store_entropy_processes(N) ->
+	receive {store_entropy_sub_chunk_written, N} ->
+		wait_store_entropy_processes(N - 1)
+	end.
+
+shift_replica_2_9_entropy_offset(Offset, SectorCount) ->
+	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+	get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Offset + SectorSize * SectorCount)).
+
+store_entropy2(EntropyPart, Offset, SubChunkStartOffset, StoreID) ->
+	ChunkFileStart = get_chunk_file_start(Offset),
+	Filepath = filepath(ChunkFileStart, StoreID),
+	case get_handle_by_filepath(Filepath) of
+		{error, _} = Error ->
+			Error;
+		F ->
+			{Position, _ChunkOffset} = get_position_and_relative_chunk_offset(
+					ChunkFileStart, Offset),
+			{Bin, SubChunkPosition} =
+				case SubChunkStartOffset == 0 of
+					true ->
+						%% The entropy for the first sub-chunk of the chunk.
+						%% The zero-offset does not have a real meaning, it is set
+						%% to make sure we pass offset validation on read.
+						{<< (get_special_zero_offset()):?OFFSET_BIT_SIZE,
+								EntropyPart/binary >>,
+							Position};
+					false ->
+						{EntropyPart,
+							Position
+							+ ?OFFSET_SIZE
+							+ SubChunkStartOffset}
+				end,
+			%% store_entropy is potentially a multi-module operation (StoreID here is not
+			%% necessarily the StoreID from the state,) therefore concurrent writes to the
+			%% same file are possible at the 2.9 replication stage albeit unlikely.
+			acquire_replica_2_9_semaphore(Filepath),
+			case file:pwrite(F, SubChunkPosition, Bin) of
+				{error, Reason} = Error2 ->
+					file:close(F),
+					release_replica_2_9_semaphore(Filepath),
+					?LOG_ERROR([
+						{event, failed_to_replica_2_9_sub_chunk_entropy},
+						{sub_chunk_start_offset, SubChunkStartOffset},
+						{file, Filepath},
+						{position, Position},
+						{sub_chunk_position, SubChunkPosition},
+						{reason, io_lib:format("~p", [Reason])}
+					]),
+					Error2;
+				ok ->
+					file:close(F),
+					release_replica_2_9_semaphore(Filepath),
+					ets:insert(chunk_storage_file_index,
+							{{ChunkFileStart, StoreID}, Filepath}),
+					case update_replica_2_9_entropy_record(Offset,
+							SubChunkStartOffset, StoreID) of
+						ok ->
+							SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+							prometheus_counter:inc(replica_2_9_entropy_sub_chunks_stored,
+									byte_size(EntropyPart) div SubChunkSize);
+						Error3 ->
+							Error3
+					end
+			end
+	end.
+
+acquire_replica_2_9_semaphore(Filepath) ->
+	case ets:insert_new(ar_chunk_storage, {{replica_2_9_semaphore, Filepath}}) of
+		false ->
+			timer:sleep(20),
+			acquire_replica_2_9_semaphore(Filepath);
+		true ->
+			ok
+	end.
+
+release_replica_2_9_semaphore(Filepath) ->
+	ets:delete(ar_chunk_storage, {replica_2_9_semaphore, Filepath}).
+
+store_chunk(ChunkFileStart, PaddedOffset, Chunk, FileIndex, StoreID) ->
+	Filepath = filepath(ChunkFileStart, FileIndex, StoreID),
+	store_chunk2(ChunkFileStart, PaddedOffset, Chunk, Filepath).
+
+filepath(ChunkFileStart, FileIndex, StoreID) ->
+	case maps:get(ChunkFileStart, FileIndex, not_found) of
 		not_found ->
-			get_filepath(integer_to_binary(Key), StoreID);
+			filepath(ChunkFileStart, StoreID);
 		Filepath ->
 			Filepath
 	end.
 
-store_chunk(Key, PaddedOffset, Chunk, Filepath) ->
+filepath(ChunkFileStart, StoreID) ->
+	get_filepath(integer_to_binary(ChunkFileStart), StoreID).
+
+get_handle_by_filepath(Filepath) ->
 	case erlang:get({write_handle, Filepath}) of
 		undefined ->
 			case file:open(Filepath, [read, write, raw]) of
 				{error, Reason} = Error ->
 					?LOG_ERROR([
 						{event, failed_to_open_chunk_file},
-						{padded_offset, PaddedOffset},
 						{file, Filepath},
 						{reason, io_lib:format("~p", [Reason])}
 					]),
 					Error;
 				{ok, F} ->
 					erlang:put({write_handle, Filepath}, F),
-					store_chunk2(Key, PaddedOffset, Chunk, Filepath, F)
+					F
 			end;
 		F ->
-			store_chunk2(Key, PaddedOffset, Chunk, Filepath, F)
+			F
 	end.
 
-store_chunk2(Key, PaddedOffset, Chunk, Filepath, F) ->
-	StartOffset = PaddedOffset - ?DATA_CHUNK_SIZE,
-	LeftChunkBorder = ar_util:floor_int(StartOffset, ?DATA_CHUNK_SIZE),
-	ChunkOffset = StartOffset - LeftChunkBorder,
-	RelativeOffset = LeftChunkBorder - Key,
-	Position = RelativeOffset + ?OFFSET_SIZE * (RelativeOffset div ?DATA_CHUNK_SIZE),
+store_chunk2(ChunkFileStart, PaddedOffset, Chunk, Filepath) ->
+	case get_handle_by_filepath(Filepath) of
+		{error, _} = Error ->
+			Error;
+		F ->
+			store_chunk3(ChunkFileStart, PaddedOffset, Chunk, Filepath, F)
+	end.
+
+store_chunk3(ChunkFileStart, PaddedOffset, Chunk, Filepath, F) ->
+	{Position, ChunkOffset} = get_position_and_relative_chunk_offset(ChunkFileStart,
+			PaddedOffset),
 	ChunkOffsetBinary =
 		case ChunkOffset of
 			0 ->
-				%% Represent 0 as ?DATA_CHUNK_SIZE, to distinguish
-				%% zero offset from not yet written data.
-				<< (?DATA_CHUNK_SIZE):?OFFSET_BIT_SIZE >>;
+				ZeroOffset = get_special_zero_offset(),
+				%% Represent 0 as the largest possible offset plus one,
+				%% to distinguish zero offset from not yet written data.
+				<< ZeroOffset:?OFFSET_BIT_SIZE >>;
 			_ ->
 				<< ChunkOffset:?OFFSET_BIT_SIZE >>
 		end,
@@ -518,13 +933,25 @@ store_chunk2(Key, PaddedOffset, Chunk, Filepath, F) ->
 			{ok, Filepath}
 	end.
 
-delete_chunk(PaddedOffset, Key, Filepath) ->
+get_special_zero_offset() ->
+	?DATA_CHUNK_SIZE.
+
+get_position_and_relative_chunk_offset(ChunkFileStart, Offset) ->
+	BucketPickOffset = Offset - ?DATA_CHUNK_SIZE,
+	get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, BucketPickOffset).
+
+get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, BucketPickOffset) ->
+	BucketStart = ar_util:floor_int(BucketPickOffset, ?DATA_CHUNK_SIZE),
+	ChunkOffset = BucketPickOffset - BucketStart,
+	RelativeOffset = BucketStart - ChunkFileStart,
+	Position = RelativeOffset + ?OFFSET_SIZE * (RelativeOffset div ?DATA_CHUNK_SIZE),
+	{Position, ChunkOffset}.
+
+delete_chunk(PaddedOffset, ChunkFileStart, Filepath) ->
 	case file:open(Filepath, [read, write, raw]) of
 		{ok, F} ->
-			StartOffset = PaddedOffset - ?DATA_CHUNK_SIZE,
-			LeftChunkBorder = ar_util:floor_int(StartOffset, ?DATA_CHUNK_SIZE),
-			RelativeOffset = LeftChunkBorder - Key,
-			Position = RelativeOffset + ?OFFSET_SIZE * (RelativeOffset div ?DATA_CHUNK_SIZE),
+			{Position, _ChunkOffset} =
+					get_position_and_relative_chunk_offset(ChunkFileStart, PaddedOffset),
 			ZeroChunk =
 				case erlang:get(zero_chunk) of
 					undefined ->
@@ -545,20 +972,20 @@ delete_chunk(PaddedOffset, Key, Filepath) ->
 			Error
 	end.
 
-get(Byte, Start, Key, StoreID, ChunkCount) ->
-	case erlang:get({cfile, {Key, StoreID}}) of
+get(Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
+	case erlang:get({cfile, {ChunkFileStart, StoreID}}) of
 		undefined ->
-			case ets:lookup(chunk_storage_file_index, {Key, StoreID}) of
+			case ets:lookup(chunk_storage_file_index, {ChunkFileStart, StoreID}) of
 				[] ->
 					[];
 				[{_, Filepath}] ->
-					read_chunk(Byte, Start, Key, Filepath, ChunkCount)
+					read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount)
 			end;
 		File ->
-			read_chunk2(Byte, Start, Key, File, ChunkCount)
+			read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount)
 	end.
 
-read_chunk(Byte, Start, Key, Filepath, ChunkCount) ->
+read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount) ->
 	case file:open(Filepath, [read, raw, binary]) of
 		{error, enoent} ->
 			[];
@@ -570,23 +997,23 @@ read_chunk(Byte, Start, Key, Filepath, ChunkCount) ->
 			]),
 			[];
 		{ok, File} ->
-			Result = read_chunk2(Byte, Start, Key, File, ChunkCount),
+			Result = read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount),
 			file:close(File),
 			Result
 	end.
 
-read_chunk2(Byte, Start, Key, File, ChunkCount) ->
-	LeftChunkBorder = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
-	RelativeOffset = LeftChunkBorder - Key,
-	Position = RelativeOffset + ?OFFSET_SIZE * RelativeOffset div ?DATA_CHUNK_SIZE,
-	read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount).
+read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount) ->
+	{Position, _ChunkOffset} =
+			get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, Start),
+	BucketStart = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
+	read_chunk3(Byte, Position, BucketStart, File, ChunkCount).
 
-read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount) ->
+read_chunk3(Byte, Position, BucketStart, File, ChunkCount) ->
 	case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
 		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
-			case is_offset_valid(Byte, LeftChunkBorder, ChunkOffset) of
+			case is_offset_valid(Byte, BucketStart, ChunkOffset) of
 				true ->
-					split_binary(Bin, LeftChunkBorder, 1);
+					extract_end_offset_chunk_pairs(Bin, BucketStart, 1);
 				false ->
 					[]
 			end;
@@ -602,21 +1029,32 @@ read_chunk3(Byte, Position, LeftChunkBorder, File, ChunkCount) ->
 			[]
 	end.
 
-split_binary(<< 0:?OFFSET_BIT_SIZE, _ZeroChunk:?DATA_CHUNK_SIZE/binary, Rest/binary >>,
-		LeftChunkBorder, N) ->
-	split_binary(Rest, LeftChunkBorder, N + 1);
-split_binary(<< ChunkOffset:?OFFSET_BIT_SIZE, Chunk:?DATA_CHUNK_SIZE/binary, Rest/binary >>,
-		LeftChunkBorder, N) ->
-	EndOffset = LeftChunkBorder + (ChunkOffset rem ?DATA_CHUNK_SIZE) + (?DATA_CHUNK_SIZE * N),
-	[{EndOffset, Chunk} | split_binary(Rest, LeftChunkBorder, N + 1)];
-split_binary(<<>>, _LeftChunkBorder, _N) ->
+extract_end_offset_chunk_pairs(
+		<< 0:?OFFSET_BIT_SIZE, _ZeroChunk:?DATA_CHUNK_SIZE/binary, Rest/binary >>,
+		BucketStart,
+		Shift
+ ) ->
+	extract_end_offset_chunk_pairs(Rest, BucketStart, Shift + 1);
+extract_end_offset_chunk_pairs(
+		<< ChunkOffset:?OFFSET_BIT_SIZE, Chunk:?DATA_CHUNK_SIZE/binary, Rest/binary >>,
+		BucketStart,
+		Shift
+ ) ->
+	ChunkOffsetLimit = ?DATA_CHUNK_SIZE,
+	EndOffset =
+		BucketStart
+		+ (ChunkOffset rem ChunkOffsetLimit)
+		+ (?DATA_CHUNK_SIZE * Shift),
+	[{EndOffset, Chunk}
+			| extract_end_offset_chunk_pairs(Rest, BucketStart, Shift + 1)];
+extract_end_offset_chunk_pairs(<<>>, _BucketStart, _Shift) ->
 	[].
 
-is_offset_valid(_Byte, _LeftChunkBorder, 0) ->
+is_offset_valid(_Byte, _BucketStart, 0) ->
 	%% 0 is interpreted as "data has not been written yet".
 	false;
-is_offset_valid(Byte, LeftChunkBorder, ChunkOffset) ->
-	Delta = Byte - (LeftChunkBorder + ChunkOffset rem ?DATA_CHUNK_SIZE),
+is_offset_valid(Byte, BucketStart, ChunkOffset) ->
+	Delta = Byte - (BucketStart + ChunkOffset rem ?DATA_CHUNK_SIZE),
 	Delta >= 0 andalso Delta < ?DATA_CHUNK_SIZE.
 
 close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
@@ -760,8 +1198,7 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 			?LOG_INFO([{event, repacking_complete},
 					{storage_module, StoreID},
 					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
-			Server = list_to_atom("ar_chunk_storage_"
-					++ ar_storage_module:label_by_id(StoreID)),
+			Server = gen_server_id(StoreID),
 			gen_server:cast(Server, repacking_complete),
 			ok;
 		{End, Start} ->
@@ -782,7 +1219,7 @@ repack(Start, End, NextCursor, RightBound, Packing, StoreID) when Start >= End -
 repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	RepackIntervalSize = ?DATA_CHUNK_SIZE * Config#config.repack_batch_size,
-	Server = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
+	Server = gen_server_id(StoreID),
 	CheckPackingBuffer =
 		case ar_packing_server:is_buffer_full() of
 			true ->
@@ -851,7 +1288,7 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 									AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD ->
 						ok;
 					(AbsoluteOffset, {_, TXRoot, _, _, _, ChunkSize}, ok) ->
-						PaddedOffset = ar_data_sync:get_chunk_padded_offset(AbsoluteOffset),
+						PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 						case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
 							{true, RequiredPacking} ->
 								?LOG_WARNING([{event,
@@ -903,9 +1340,111 @@ chunk_offset_list_to_map([{Offset, Chunk} | ChunkOffsets], Min, Max, Map) ->
 	chunk_offset_list_to_map(ChunkOffsets, min(Min, Offset), max(Max, Offset),
 			maps:put(Offset, Chunk, Map)).
 
+-ifdef(DEBUG).
+	try_acquire_replica_2_9_formatting_lock(_StoreID) ->
+		true.
+-else.
+try_acquire_replica_2_9_formatting_lock(StoreID) ->
+	case ets:insert_new(ar_chunk_storage, {update_replica_2_9_lock}) of
+		true ->
+			Count = get_replica_2_9_acquired_locks_count(),
+			{ok, Config} = application:get_env(arweave, config),
+			MaxWorkers = Config#config.replica_2_9_workers,
+			case Count + 1 > MaxWorkers of
+				true ->
+					ets:delete(ar_chunk_storage, update_replica_2_9_lock),
+					false;
+				false ->
+					ets:update_counter(ar_chunk_storage, replica_2_9_acquired_locks_count,
+							1, {replica_2_9_acquired_locks_count, 0}),
+					ets:delete(ar_chunk_storage, update_replica_2_9_lock),
+					true
+			end;
+		false ->
+			try_acquire_replica_2_9_formatting_lock(StoreID)
+	end.
+-endif.
+
+get_replica_2_9_acquired_locks_count() ->
+	case ets:lookup(ar_chunk_storage, replica_2_9_acquired_locks_count) of
+		[] ->
+			0;
+		[{_, Count}] ->
+			Count
+	end.
+
+release_replica_2_9_formatting_lock(StoreID) ->
+	case ets:insert_new(ar_chunk_storage, {update_replica_2_9_lock}) of
+		true ->
+			Count = get_replica_2_9_acquired_locks_count(),
+			case Count of
+				0 ->
+					ok;
+				_ ->
+					ets:update_counter(ar_chunk_storage, replica_2_9_acquired_locks_count,
+							-1, {replica_2_9_acquired_locks_count, 0})
+			end,
+			ets:delete(ar_chunk_storage, update_replica_2_9_lock);
+		false ->
+			release_replica_2_9_formatting_lock(StoreID)
+	end.
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+replica_2_9_test_() ->
+	{timeout, 20, fun test_replica_2_9/0}.
+
+test_replica_2_9() ->
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	StorageModules = [
+			{?PARTITION_SIZE, 0, {replica_2_9, RewardAddr}},
+			{?PARTITION_SIZE, 1, {replica_2_9, RewardAddr}}
+	],
+	ar_test_node:start(#{ reward_addr => RewardAddr, storage_modules => StorageModules }),
+	StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
+	StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),
+	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	%% The replica_2_9 storage does not support updates and three chunks are written
+	%% into the first partition when the test node is launched.
+	?assertEqual({error, already_stored},
+			ar_chunk_storage:put(?DATA_CHUNK_SIZE, C1, StoreID1)),
+	?assertEqual({error, already_stored},
+			ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
+	?assertEqual({error, already_stored},
+			ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
+
+	%% Store the new chunk.
+	?assertEqual(ok, ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
+	{ok, P1, _Entropy} =
+			ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 4 * ?DATA_CHUNK_SIZE, C1),
+	assert_get(P1, 4 * ?DATA_CHUNK_SIZE, StoreID1),
+
+	assert_get(not_found, 8 * ?DATA_CHUNK_SIZE, StoreID1),
+	?assertEqual(ok, ar_chunk_storage:put(8 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
+	{ok, P2, _} =
+			ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 8 * ?DATA_CHUNK_SIZE, C1),
+	assert_get(P2, 8 * ?DATA_CHUNK_SIZE, StoreID1),
+
+	%% Store chunks in the second partition.
+	?assertEqual(ok, ar_chunk_storage:put(12 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
+	{ok, P3, Entropy3} =
+			ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 12 * ?DATA_CHUNK_SIZE, C1),
+
+	assert_get(P3, 12 * ?DATA_CHUNK_SIZE, StoreID2),
+	?assertEqual(ok, ar_chunk_storage:put(15 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
+	{ok, P4, Entropy4} =
+			ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 15 * ?DATA_CHUNK_SIZE, C1),
+	assert_get(P4, 15 * ?DATA_CHUNK_SIZE, StoreID2),
+	?assertNotEqual(P3, P4),
+	?assertNotEqual(Entropy3, Entropy4),
+
+	?assertEqual(ok, ar_chunk_storage:put(16 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
+	{ok, P5, Entropy5} =
+			ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 16 * ?DATA_CHUNK_SIZE, C1),
+	assert_get(P5, 16 * ?DATA_CHUNK_SIZE, StoreID2),
+	?assertNotEqual(Entropy4, Entropy5).
 
 well_aligned_test_() ->
 	{timeout, 20, fun test_well_aligned/0}.
@@ -1097,11 +1636,16 @@ test_cross_file_not_aligned() ->
 	?assertEqual(not_found,
 			ar_chunk_storage:get(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2)).
 
+gen_server_id(StoreID) ->
+	list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)).
+
 clear(StoreID) ->
-	GenServerID = list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)),
-	ok = gen_server:call(GenServerID, reset).
+	ok = gen_server:call(gen_server_id(StoreID), reset).
 
 assert_get(Expected, Offset) ->
+	assert_get(Expected, Offset, "default").
+
+assert_get(Expected, Offset, StoreID) ->
 	ExpectedResult =
 		case Expected of
 			not_found ->
@@ -1109,15 +1653,19 @@ assert_get(Expected, Offset) ->
 			_ ->
 				{Offset, Expected}
 		end,
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - 1)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - 2)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE + 2)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 + 1)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 - 1)),
-	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 3)).
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - 1, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - 2, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE + 1, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE + 2, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 + 1, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 - 1, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 3, StoreID)).
 
 defrag_command_test() ->
 	RandomID = crypto:strong_rand_bytes(16),
