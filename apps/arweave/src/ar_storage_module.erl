@@ -1,8 +1,8 @@
 -module(ar_storage_module).
 
--export([id/1, label/1, address_label/1, address_label/2, packing_label/1, label_by_id/1,
-		get_by_id/1, get_range/1, get_packing/1, get_size/1, get/2, get_all/1, get_all/2,
-		has_any/1, has_range/2, get_cover/3]).
+-export([id/1, label/1, address_label/1, address_label/2, address/1, packing_difficulty/1,
+		packing_label/1, label_by_id/1, get_by_id/1, get_range/1, get_packing/1, get_size/1,
+		get/2, get_all/1, get_all/2, has_any/1, has_range/2, get_cover/3]).
 
 -export([get_unique_sorted_intervals/1]).
 
@@ -21,6 +21,9 @@
 -else.
 -define(OVERLAP, (?LEGACY_RECALL_RANGE_SIZE)).
 -endif.
+
+-type storage_module() :: {integer(), integer(), {atom(), binary()}}
+						| {integer(), integer(), {atom(), binary(), integer()}}.
 
 %%%===================================================================
 %%% Public interface.
@@ -84,6 +87,20 @@ address_label(Addr, PackingDifficulty) ->
 		[{_, Label}] ->
 			integer_to_list(Label)
 	end.
+
+-spec address(ar_storage_module:storage_module()) -> binary() | undefined.
+address({_, _, {spora_2_6, Addr}}) ->
+	Addr;
+address({_, _, {composite, Addr, _PackingDifficulty}}) ->
+	Addr;
+address(_StorageModule) ->
+	undefined.
+
+-spec packing_difficulty(ar_storage_module:storage_module()) -> integer().
+packing_difficulty({_, _, {composite, _Addr, PackingDifficulty}}) ->
+	PackingDifficulty;
+packing_difficulty(_StorageModule) ->
+	0.
 
 packing_label({spora_2_6, Addr}) ->
 	AddrLabel = ar_storage_module:address_label(Addr),
