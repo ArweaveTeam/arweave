@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, set_largest_seen_upper_bound/1, 
+-export([start_link/0, start_link/1, set_largest_seen_upper_bound/1, 
 			get_partitions/0, get_partitions/1, read_recall_range/4, garbage_collect/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -16,6 +16,7 @@
 -define(CACHE_TTL_MS, 2000).
 
 -record(state, {
+	mode = miner,
 	partition_upper_bound = 0,
 	io_threads = #{},
 	io_thread_monitor_refs = #{}
@@ -27,7 +28,10 @@
 
 %% @doc Start the gen_server.
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+	start_link(miner).
+
+start_link(Mode) ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, Mode, []).
 
 set_largest_seen_upper_bound(PartitionUpperBound) ->
 	gen_server:call(?MODULE, {set_largest_seen_upper_bound, PartitionUpperBound}, 60000).
@@ -65,14 +69,14 @@ garbage_collect() ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([]) ->
+init(Mode) ->
 	State =
 		lists:foldl(
 			fun	({PartitionNumber, MiningAddress, PackingDifficulty, StoreID}, Acc) ->
 				start_io_thread(PartitionNumber, MiningAddress,
 						PackingDifficulty, StoreID, Acc)
 			end,
-			#state{},
+			#state{ mode = Mode },
 			get_io_channels()
 		),
 	{ok, State}.
@@ -209,7 +213,7 @@ start_io_thread(PartitionNumber, MiningAddress, PackingDifficulty, StoreID,
 		when is_map_key({PartitionNumber, MiningAddress, PackingDifficulty, StoreID}, Threads) ->
 	State;
 start_io_thread(PartitionNumber, MiningAddress, PackingDifficulty, StoreID,
-		#state{ io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
+		#state{ mode = Mode, io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
 	Now = os:system_time(millisecond),
 	Thread =
 		spawn(
@@ -220,7 +224,7 @@ start_io_thread(PartitionNumber, MiningAddress, PackingDifficulty, StoreID,
 					_ ->
 						ar_chunk_storage:open_files(StoreID)
 				end,
-				io_thread(PartitionNumber, MiningAddress, PackingDifficulty, StoreID, #{}, Now)
+				io_thread(Mode, PartitionNumber, MiningAddress, PackingDifficulty, StoreID, #{}, Now)
 			end
 		),
 	Ref = monitor(process, Thread),
@@ -244,17 +248,22 @@ handle_io_thread_down(Ref, Reason,
 	start_io_thread(PartitionNumber, MiningAddress, PackingDifficulty, StoreID,
 			State#state{ io_threads = Threads2, io_thread_monitor_refs = Refs2 }).
 
-io_thread(PartitionNumber, MiningAddress, PackingDifficulty, StoreID, Cache, LastClearTime) ->
+io_thread(Mode, PartitionNumber, MiningAddress, PackingDifficulty, StoreID, Cache, LastClearTime) ->
 	receive
 		{WhichChunk, {Worker, Candidate, RecallRangeStart}} ->
 			{ChunkOffsets, Cache2} =
-				get_chunks(WhichChunk, Candidate, RecallRangeStart, StoreID, Cache),
-			ar_mining_worker:chunks_read(
-				Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets),
+				get_chunks(Mode, WhichChunk, Candidate, RecallRangeStart, StoreID, Cache),
+			chunks_read(Mode, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets),
 			{Cache3, LastClearTime2} = maybe_clear_cached_chunks(Cache2, LastClearTime),
-			io_thread(PartitionNumber, MiningAddress, PackingDifficulty, StoreID,
+			io_thread(Mode, PartitionNumber, MiningAddress, PackingDifficulty, StoreID,
 					Cache3, LastClearTime2)
 	end.
+
+chunks_read(miner, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets) ->
+	ar_mining_worker:chunks_read(
+		Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets);
+chunks_read(standalone, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets) ->
+	Worker ! {chunks_read, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets}.
 
 get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, "default", Intervals) ->
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress),
@@ -297,20 +306,20 @@ maybe_clear_cached_chunks(Cache, LastClearTime) ->
 %% 
 %% However if the request is from our local miner there's no need to cache since the H1
 %% batch is always handled all at once.
-get_chunks(WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
+get_chunks(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
 	case Candidate#mining_candidate.cm_lead_peer of
 		not_set ->
-			ChunkOffsets = read_range(WhichChunk, Candidate, RangeStart, StoreID),
+			ChunkOffsets = read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID),
 			{ChunkOffsets, Cache};
 		_ ->
-			cached_read_range(WhichChunk, Candidate, RangeStart, StoreID, Cache)
+			cached_read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache)
 	end.
 
-cached_read_range(WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
+cached_read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
 	Now = os:system_time(millisecond),
 	case maps:get(RangeStart, Cache, not_found) of
 		not_found ->	
-			ChunkOffsets = read_range(WhichChunk, Candidate, RangeStart, StoreID),
+			ChunkOffsets = read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID),
 			Cache2 = maps:put(RangeStart, {Now, ChunkOffsets}, Cache),
 			{ChunkOffsets, Cache2};
 		{_CachedTime, ChunkOffsets} ->
@@ -326,7 +335,7 @@ cached_read_range(WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
 			{ChunkOffsets, Cache}
 	end.
 
-read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
+read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID) ->
 	StartTime = erlang:monotonic_time(),
 	#mining_candidate{ mining_address = MiningAddress,
 			packing_difficulty = PackingDifficulty } = Candidate,
@@ -335,7 +344,7 @@ read_range(WhichChunk, Candidate, RangeStart, StoreID) ->
 			MiningAddress, PackingDifficulty, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, RecallRangeSize, StoreID),
 	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
-	log_read_range(Candidate, WhichChunk, length(ChunkOffsets), StartTime),
+	log_read_range(Mode, Candidate, WhichChunk, length(ChunkOffsets), StartTime),
 	ChunkOffsets2.
 
 filter_by_packing([], _Intervals, _StoreID) ->
@@ -350,7 +359,9 @@ filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = St
 filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
 	ChunkOffsets.
 
-log_read_range(Candidate, WhichChunk, FoundChunks, StartTime) ->
+log_read_range(standalone, _Candidate, _WhichChunk, _FoundChunks, _StartTime) ->
+	ok;
+log_read_range(_Mode, Candidate, WhichChunk, FoundChunks, StartTime) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
 	ReadRate = case ElapsedTime > 0 of 
@@ -378,6 +389,7 @@ log_read_range(Candidate, WhichChunk, FoundChunks, StartTime) ->
 find_thread(PartitionNumber, MiningAddress, PackingDifficulty, RangeEnd, RangeStart, Threads) ->
 	Keys = find_thread2(PartitionNumber, MiningAddress, PackingDifficulty,
 			maps:iterator(Threads)),
+			
 	case find_thread3(Keys, RangeEnd, RangeStart, 0, not_found) of
 		not_found ->
 			not_found;
