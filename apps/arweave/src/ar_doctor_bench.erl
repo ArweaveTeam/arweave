@@ -5,7 +5,7 @@
 -include_lib("kernel/include/file.hrl").
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_chunk_storage.hrl").
+-include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
 -define(NUM_ITERATIONS, 5).
@@ -41,14 +41,19 @@ bench_read(Args) ->
 	[DurationString, DataDir | StorageModuleConfigs] = Args,
 	Duration = list_to_integer(DurationString),
 
-	StorageModules = parse_storage_modules(StorageModuleConfigs, []),
-	Config = #config{data_dir = DataDir, storage_modules = StorageModules},
+	{StorageModules, Address} = parse_storage_modules(StorageModuleConfigs, [], undefined),
+	ar:console("Assuming mining address: ~p~n", [ar_util:safe_encode(Address)]),
+	Config = #config{
+		data_dir = DataDir,
+		storage_modules = StorageModules,
+		mining_addr = Address},
 	application:set_env(arweave, config, Config),
 
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
 	ar_sync_record_sup:start_link(),
 	ar_chunk_storage_sup:start_link(),
+	ar_mining_io:start_link(standalone),
 
 	ar:console("~n~nDisk read benchmark will run for ~B seconds.~n", [Duration]),
 	ar:console("Data will be logged continuously to ~p in the format:~n", [?OUTPUT_FILENAME]),
@@ -74,11 +79,21 @@ bench_read(Args) ->
 	
 	true.
 
-parse_storage_modules([], StorageModules) ->
-	StorageModules;
-parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModules) ->
+parse_storage_modules([], StorageModules, Address) ->
+	{StorageModules, Address};
+parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModules, Address) ->
 	{ok, StorageModule} = ar_config:parse_storage_module(StorageModuleConfig),
-	parse_storage_modules(StorageModuleConfigs, StorageModules ++ [StorageModule]).
+	Address2 = ar_storage_module:address(StorageModule),
+	case Address2 == Address orelse Address == undefined of
+		true ->
+			ok;
+		false ->
+			ar:console("Warning: multiple mining addresses specified in storage_modules:~n")
+	end,
+	parse_storage_modules(
+		StorageModuleConfigs,	
+		StorageModules ++ [StorageModule],
+		Address2).
 	
 read_storage_module(_DataDir, StorageModule, StopTime) ->
 	StoreID = ar_storage_module:id(StorageModule),
@@ -87,7 +102,7 @@ read_storage_module(_DataDir, StorageModule, StopTime) ->
 
 	OutputFileName = string:replace(?OUTPUT_FILENAME, "<storage_module>", StoreID),
 
-	random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName).
+	random_read(StorageModule, StartOffset, EndOffset, StopTime, OutputFileName).
 
 	% random_chunk_pread(DataDir, StoreID),
 	% random_dev_pread(DataDir, StoreID),
@@ -96,13 +111,13 @@ read_storage_module(_DataDir, StorageModule, StopTime) ->
 	% dd_devs_read(DataDir, StoreID),
 	% dd_dev_read(DataDir, StoreID),
 
-random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName) ->
-	random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName, 0, 0).
-random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName, SumChunks, SumElapsedTime) ->
+random_read(StorageModule, StartOffset, EndOffset, StopTime, OutputFileName) ->
+	random_read(StorageModule, StartOffset, EndOffset, StopTime, OutputFileName, 0, 0).
+random_read(StorageModule, StartOffset, EndOffset, StopTime, OutputFileName, SumChunks, SumElapsedTime) ->
 	StartTime = erlang:monotonic_time(),
 	case StartTime < StopTime of
 		true ->
-			Chunks = read(StoreID, StartOffset, EndOffset, ?RECALL_RANGE_SIZE, ?NUM_FILES),
+			Chunks = read(StorageModule, StartOffset, EndOffset, ?RECALL_RANGE_SIZE, ?NUM_FILES),
 			EndTime = erlang:monotonic_time(),
 			ElapsedTime = erlang:convert_time_unit(EndTime - StartTime, native, millisecond),
 
@@ -112,21 +127,39 @@ random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName, SumChunks
 			Line = io_lib:format("~B,~B,~B,~B~n", [
 				Timestamp, BytesRead, ElapsedTime, BytesRead * 1000 div ElapsedTime]),
 			file:write_file(OutputFileName, Line, [append]),
-			random_read(StoreID, StartOffset, EndOffset, StopTime, OutputFileName,
+			random_read(StorageModule, StartOffset, EndOffset, StopTime, OutputFileName,
 				SumChunks + Chunks, SumElapsedTime + ElapsedTime);
 		false ->
+			StoreID = ar_storage_module:id(StorageModule),
 			{StoreID, SumChunks, SumElapsedTime}
 	end.
 	
-read(StoreID, StartOffset, EndOffset, Size, NumReads) ->
-	read(StoreID, StartOffset, EndOffset, Size, 0, NumReads).
+read(StorageModule, StartOffset, EndOffset, Size, NumReads) ->
+	read(StorageModule, StartOffset, EndOffset, Size, 0, NumReads).
 
-read(_StoreID, _StartOffset, _EndOffset, _Size, NumChunks, 0) ->
+read(_StorageModule, _StartOffset, _EndOffset, _Size, NumChunks, 0) ->
 	NumChunks;
-read(StoreID, StartOffset, EndOffset, Size, NumChunks, NumReads) ->
+read(StorageModule, StartOffset, EndOffset, Size, NumChunks, NumReads) ->
 	Offset = rand:uniform(EndOffset - Size - StartOffset + 1) + StartOffset,
-	Chunks = ar_chunk_storage:get_range(Offset, Size, StoreID),
-	read(StoreID, StartOffset, EndOffset, Size, NumChunks + length(Chunks), NumReads - 1).
+	% Chunks = ar_chunk_storage:get_range(Offset, Size, StoreID),
+	% read(StoreID, StartOffset, EndOffset, Size, NumChunks + length(Chunks), NumReads - 1).
+	MiningAddress = ar_storage_module:address(StorageModule),
+	PackingDifficulty = ar_storage_module:packing_difficulty(StorageModule),
+	Candidate = #mining_candidate{
+		mining_address = MiningAddress,
+		packing_difficulty = PackingDifficulty
+	},
+	RangeExists = ar_mining_io:read_recall_range(chunk1, self(), Candidate, Offset),
+	case RangeExists of
+		true ->
+			receive
+				{chunks_read, _WhichChunk, _Candidate, _RecallRangeStart, ChunkOffsets} ->
+					read(StorageModule, StartOffset, EndOffset, Size, NumChunks + length(ChunkOffsets), NumReads - 1)
+			end;
+		false ->
+			read(StorageModule, StartOffset, EndOffset, Size, NumChunks, NumReads)
+	end.
+
 	
 %% XXX: the following functions are not used, but may be useful in the future to benchmark
 %% different read strategies. They can be deleted when they are no longer useful.
