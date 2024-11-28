@@ -42,7 +42,10 @@ start_link(Name, Workers) ->
 
 init(Workers) ->
 	gen_server:cast(?MODULE, process_chunk),
-	{ok, #state{ workers = queue:from_list(Workers), currently_emitting = sets:new() }}.
+	State = #state{ workers = queue:from_list(Workers)
+		      , currently_emitting = sets:new()
+		      },
+	{ok, State}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -50,18 +53,33 @@ handle_call(Request, _From, State) ->
 
 handle_cast(process_chunk, State) ->
 	#state{ workers = Q, currently_emitting = Emitting } = State,
+
+	% only current (active) peers should be used, using lifetime
+	% peers will create unecessary timeouts. The first to
+	% contact are the trusted peers.
 	TrustedPeers = ar_peers:get_trusted_peers(),
-	Peers = (ar_peers:get_peers(lifetime) -- TrustedPeers) ++ TrustedPeers,
-	{ok, Config} = application:get_env(arweave, config),
-	{Q2, Emitting2} = emit(ar_mempool:get_propagation_queue(), Q, Emitting, Peers,
-			Config#config.max_propagation_peers, ?CHUNK_SIZE),
+	CurrentPeers = ar_peers:get_peers(current),
+	FilteredPeers = ar_peers:filter_peers(CurrentPeers, {timestamp, 60*60*24}),
+	CleanedPeers = FilteredPeers -- TrustedPeers,
+	Peers = TrustedPeers ++ CleanedPeers,
+
+	% prepare to emit chunk(s)
+	PropagationQueue = ar_mempool:get_propagation_queue(),
+	PropagationMax = max_propagation_peers(),
+	{Q2, Emitting2} = emit(PropagationQueue, Q, Emitting, Peers, PropagationMax, ?CHUNK_SIZE),
+
+	% check later if emit/6 returns an empty set
 	case sets:is_empty(Emitting2) of
 		true ->
 			ar_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk);
 		false ->
 			ok
 	end,
-	{noreply, State#state{ workers = Q2, currently_emitting = Emitting2 }};
+
+	NewState = State#state{ workers = Q2
+			      , currently_emitting = Emitting2
+			      },
+	{noreply, NewState};
 
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
@@ -118,6 +136,10 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+max_propagation_peers() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.max_propagation_peers.
+
 emit(_Set, Q, Emitting, _Peers, _MaxPeers, N) when N =< 0 ->
 	{Q, Emitting};
 emit(Set, Q, Emitting, Peers, MaxPeers, N) ->
@@ -125,32 +147,42 @@ emit(Set, Q, Emitting, Peers, MaxPeers, N) ->
 		true ->
 			{Q, Emitting};
 		false ->
-			{{Utility, TXID}, Set2} = gb_sets:take_largest(Set),
-			case ets:member(ar_tx_emitter_recently_emitted, TXID) of
-				true ->
-					emit(Set2, Q, Emitting, Peers, MaxPeers, N);
-				false ->
-					{Emitting2, Q2} =
-						lists:foldl(
-							fun(Peer, {Acc, Workers}) ->
-								{{value, W}, Workers2} = queue:out(Workers),
-								gen_server:cast(W, {emit, TXID, Peer, self()}),
-								erlang:send_after(?WORKER_TIMEOUT, ?MODULE,
-										{timeout, TXID, Peer}),
-								{sets:add_element({TXID, Peer}, Acc),
-										queue:in(W, Workers2)}
-							end,
-							{Emitting, Q},
-							lists:sublist(Peers, MaxPeers)
-						),
-					%% The cache storing recently emitted transactions is used instead
-					%% of an explicit synchronization of the propagation queue updates
-					%% with ar_node_worker - we do not rely on ar_node_worker removing
-					%% emitted transactions from the queue on time.
-					ets:insert(ar_tx_emitter_recently_emitted, {TXID}),
-					erlang:send_after(?CLEANUP_RECENTLY_EMITTED_TIMEOUT, ?MODULE,
-							{remove_from_recently_emitted, TXID}),
-					ar_events:send(tx, {emitting_scheduled, Utility, TXID}),
-					emit(Set2, Q2, Emitting2, Peers, MaxPeers, N - 1)
-			end
+			emit_set_not_empty(Set, Q, Emitting, Peers, MaxPeers, N)
+	end.
+
+emit_set_not_empty(Set, Q, Emitting, Peers, MaxPeers, N) ->
+	{{Utility, TXID}, Set2} = gb_sets:take_largest(Set),
+	case ets:member(ar_tx_emitter_recently_emitted, TXID) of
+		true ->
+			emit(Set2, Q, Emitting, Peers, MaxPeers, N);
+
+		false ->
+			% only a subset of the whole peers list is
+			% taken using max_propagation_peers value.
+			% the first N peers will be used instead of
+			% the whole list. unfortunately, this list can
+			% also have not connected peers.
+			PeersToSync = lists:sublist(Peers, MaxPeers),
+
+			% for each peers in the sublist, a chunk is
+			% sent. The workers are taken one by one from
+			% a FIFO, mainly used to distribute the
+			% messages across all available workers.
+			Foldl = fun(Peer, {Acc, Workers}) ->
+				{{value, W}, Workers2} = queue:out(Workers),
+				gen_server:cast(W, {emit, TXID, Peer, self()}),
+				erlang:send_after(?WORKER_TIMEOUT, ?MODULE, {timeout, TXID, Peer}),
+				{sets:add_element({TXID, Peer}, Acc), queue:in(W, Workers2)}
+			end,
+			{Emitting2, Q2} = lists:foldl(Foldl, {Emitting, Q}, PeersToSync),
+
+			%% The cache storing recently emitted transactions is used instead
+			%% of an explicit synchronization of the propagation queue updates
+			%% with ar_node_worker - we do not rely on ar_node_worker removing
+			%% emitted transactions from the queue on time.
+			ets:insert(ar_tx_emitter_recently_emitted, {TXID}),
+			erlang:send_after(?CLEANUP_RECENTLY_EMITTED_TIMEOUT, ?MODULE,
+				{remove_from_recently_emitted, TXID}),
+			ar_events:send(tx, {emitting_scheduled, Utility, TXID}),
+			emit(Set2, Q2, Emitting2, Peers, MaxPeers, N - 1)
 	end.
