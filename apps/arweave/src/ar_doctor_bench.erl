@@ -83,7 +83,7 @@ parse_storage_modules([], StorageModules, Address) ->
 	{StorageModules, Address};
 parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModules, Address) ->
 	{ok, StorageModule} = ar_config:parse_storage_module(StorageModuleConfig),
-	Address2 = ar_storage_module:address(StorageModule),
+	Address2 = ar_storage_module:module_address(StorageModule),
 	case Address2 == Address orelse Address == undefined of
 		true ->
 			ok;
@@ -98,7 +98,7 @@ parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModul
 read_storage_module(_DataDir, StorageModule, StopTime) ->
 	StoreID = ar_storage_module:id(StorageModule),
 	ar_chunk_storage:open_files(StoreID),
-	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),	
+	{StartOffset, EndOffset} = ar_storage_module:module_range(StorageModule),	
 
 	OutputFileName = string:replace(?OUTPUT_FILENAME, "<storage_module>", StoreID),
 
@@ -141,22 +141,20 @@ read(_StorageModule, _StartOffset, _EndOffset, _Size, NumChunks, 0) ->
 	NumChunks;
 read(StorageModule, StartOffset, EndOffset, Size, NumChunks, NumReads) ->
 	Offset = rand:uniform(EndOffset - Size - StartOffset + 1) + StartOffset,
-	% Chunks = ar_chunk_storage:get_range(Offset, Size, StoreID),
-	% read(StoreID, StartOffset, EndOffset, Size, NumChunks + length(Chunks), NumReads - 1).
-	MiningAddress = ar_storage_module:address(StorageModule),
-	PackingDifficulty = ar_storage_module:packing_difficulty(StorageModule),
 	Candidate = #mining_candidate{
-		mining_address = MiningAddress,
-		packing_difficulty = PackingDifficulty
+		mining_address = ar_storage_module:module_address(StorageModule),
+		packing_difficulty = ar_storage_module:module_packing_difficulty(StorageModule)
 	},
 	RangeExists = ar_mining_io:read_recall_range(chunk1, self(), Candidate, Offset),
 	case RangeExists of
 		true ->
 			receive
 				{chunks_read, _WhichChunk, _Candidate, _RecallRangeStart, ChunkOffsets} ->
-					read(StorageModule, StartOffset, EndOffset, Size, NumChunks + length(ChunkOffsets), NumReads - 1)
+					read(StorageModule, StartOffset, EndOffset, Size,
+						NumChunks + length(ChunkOffsets), NumReads - 1)
 			end;
 		false ->
+			%% Try again with a new random offset
 			read(StorageModule, StartOffset, EndOffset, Size, NumChunks, NumReads)
 	end.
 
