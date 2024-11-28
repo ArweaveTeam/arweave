@@ -6,7 +6,8 @@
 -export([start_link/2, put/2, put/3,
 		open_files/1, get/1, get/2, get/5, read_chunk2/5, get_range/2, get_range/3,
 		close_file/2, close_files/1, cut/2, delete/1, delete/2, 
-		list_files/2, run_defragmentation/0]).
+		list_files/2, run_defragmentation/0,
+		get_storage_module_path/2, get_chunk_storage_path/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -183,6 +184,14 @@ run_defragmentation() ->
 			ok = update_sizes_file(Files, #{})
 	end.
 
+get_storage_module_path(DataDir, "default") ->
+	DataDir;
+get_storage_module_path(DataDir, StoreID) ->
+	filename:join([DataDir, "storage_modules", StoreID]).
+
+get_chunk_storage_path(DataDir, StoreID) ->
+	filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -192,13 +201,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
-	Dir =
-		case StoreID of
-			"default" ->
-				DataDir;
-			_ ->
-				filename:join([DataDir, "storage_modules", StoreID])
-		end,
+	Dir = get_storage_module_path(DataDir, StoreID),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
 	FileIndex = read_file_index(Dir),
@@ -430,12 +433,8 @@ store_repack_cursor(Cursor, StoreID, TargetPacking) ->
 get_filepath(Name, StoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	DataDir = Config#config.data_dir,
-	case StoreID of
-		"default" ->
-			filename:join([DataDir, ?CHUNK_DIR, Name]);
-		_ ->
-			filename:join([DataDir, "storage_modules", StoreID, ?CHUNK_DIR, Name])
-	end.
+	ChunkDir = get_chunk_storage_path(DataDir, StoreID),
+	filename:join([ChunkDir, Name]).
 
 handle_store_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
 	Key = get_key(PaddedOffset),
@@ -658,13 +657,7 @@ sync_and_close_files([]) ->
 	ok.
 
 list_files(DataDir, StoreID) ->
-	Dir =
-		case StoreID of
-			"default" ->
-				DataDir;
-			_ ->
-				filename:join([DataDir, "storage_modules", StoreID])
-		end,
+	Dir = get_storage_module_path(DataDir, StoreID),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
 	StorageIndex = read_file_index(Dir),
