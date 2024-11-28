@@ -22,7 +22,7 @@ start_link(Name) ->
 %%% gen_server callbacks.
 %%%===================================================================
 
-init([]) ->
+init(_) ->
 	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -35,27 +35,15 @@ handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
 			ok;
 		TX ->
 			StartedAt = erlang:timestamp(),
-			TrustedPeers = ar_peers:get_trusted_peers(),
-			PropagatedTX = tx_to_propagated_tx(TX, Peer, TrustedPeers),
-			Release = ar_peers:get_peer_release(Peer),
-			SendFun =
-				case Release >= 42 of
-					true ->
-						fun() ->
-							Bin = ar_serialize:tx_to_binary(PropagatedTX),
-							ar_http_iface_client:send_tx_binary(Peer, TXID, Bin)
-						end;
-					false ->
-						fun() ->
-							JSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(
-									PropagatedTX)),
-							ar_http_iface_client:send_tx_json(Peer, TXID, JSON)
-						end
-				end,
-			Reply = SendFun(),
-			PropagationTimeUs = timer:now_diff(erlang:timestamp(), StartedAt),
-			record_propagation_status(Reply),
-			record_propagation_rate(tx_propagated_size(TX), PropagationTimeUs)
+			Opts = #{ connect_timeout => 1
+				, timeout => 5
+				},
+			emit(#{ tx_id => TXID
+			      , peer => Peer
+			      , tx => TX
+			      , started_at => StartedAt
+			      , opts => Opts
+			      })
 	end,
 	ReplyTo ! {emitted, TXID, Peer},
 	{noreply, State};
@@ -112,8 +100,52 @@ tx_to_propagated_tx(#tx{ format = 2 } = TX, Peer, TrustedPeers) ->
 record_propagation_status(not_sent) ->
 	ok;
 record_propagation_status(Data) ->
-	prometheus_counter:inc(propagated_transactions_total, [ar_metrics:get_status_class(Data)]).
+	StatusClass = ar_metrics:get_status_class(Data),
+	prometheus_counter:inc(propagated_transactions_total, [StatusClass]),
+	StatusClass.
 
 record_propagation_rate(PropagatedSize, PropagationTimeUs) ->
 	BitsPerSecond = PropagatedSize * 1000000 / PropagationTimeUs * 8,
-	prometheus_histogram:observe(tx_propagation_bits_per_second, BitsPerSecond).
+	prometheus_histogram:observe(tx_propagation_bits_per_second, BitsPerSecond),
+	BitsPerSecond.
+
+% retrieve information about peer(s)
+emit(#{ tx := TX, peer := Peer } = Data) ->
+	TrustedPeers = ar_peers:get_trusted_peers(),
+	PropagatedTX = tx_to_propagated_tx(TX, Peer, TrustedPeers),
+	Release = ar_peers:get_peer_release(Peer),
+	NewData = Data#{ propagated_tx => PropagatedTX
+		       , trusted_peers => TrustedPeers
+		       , release => Release
+		       },
+	emit2(NewData).
+
+% depending on the version of the peer, different kind of payload
+% is being used, one in binary, another one in JSON.
+emit2(#{ release := Release, peer := Peer, propagated_tx := PropagatedTX,
+	 tx_id := TXID, opts := Opts } = Data)
+	when Release >= 42 ->
+		Bin = ar_serialize:tx_to_binary(PropagatedTX),
+		Reply = ar_http_iface_client:send_tx_binary(Peer, TXID, Bin, Opts),
+		NewData = Data#{ reply => Reply },
+		emit3(NewData);
+emit2(#{ peer := Peer, propagated_tx := PropagatedTX, tx_id := TXID,
+	 opts := Opts } = Data) ->
+	Serialize = ar_serialize:tx_to_json_struct(PropagatedTX),
+	JSON = ar_serialize:jsonify(Serialize),
+	Reply = ar_http_iface_client:send_tx_json(Peer, TXID, JSON, Opts),
+	NewData = Data#{ reply => Reply },
+	emit3(NewData).
+
+% deal with the reply and update propagation statistics.
+emit3(#{ started_at := StartedAt, reply := Reply, tx := TX } = Data) ->
+	Timestamp = erlang:timestamp(),
+	PropagationTimeUs = timer:now_diff(Timestamp, StartedAt),
+	PropagationStatus = record_propagation_status(Reply),
+	PropagatedSize = tx_propagated_size(TX),
+	PropagationRate = record_propagation_rate(PropagatedSize, PropagationTimeUs),
+	Data#{ propagation_time_us => PropagationTimeUs
+	       , propagation_status => PropagationStatus
+	       , propagated_size => PropagatedSize
+	       , propagation_rate => PropagationRate
+	       }.
