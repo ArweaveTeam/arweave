@@ -20,6 +20,7 @@
 -export([set_tag/3, get_tag/2]).
 -export([connected_peer/1, disconnected_peer/1, is_connected_peer/1]).
 -export([get_connection_timestamp_peer/1]).
+-export([filter_peers/2]).
 
 %% The frequency in seconds of re-resolving DNS of peers configured by domain names.
 -define(STORE_RESOLVED_DOMAIN_S, 60).
