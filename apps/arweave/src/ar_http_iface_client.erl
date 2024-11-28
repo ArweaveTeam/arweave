@@ -4,8 +4,9 @@
 
 -module(ar_http_iface_client).
 
+-export([send_tx_json/3, send_tx_json/4, send_tx_binary/3, send_tx_binary/4]).
 -export([send_block_json/3, send_block_binary/3, send_block_binary/4,
-	 send_tx_json/3, send_tx_binary/3, send_block_announcement/2,
+	 send_block_announcement/2,
 	 get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peer/2,
 	 get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
 	 get_wallet_list/2, add_peer/1, get_info/1, get_info/2, get_peers/1,
@@ -28,28 +29,83 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
-%% @doc Send a JSON-encoded transaction to the given Peer.
+%%--------------------------------------------------------------------
+%% @doc Send a JSON-encoded transaction to the given Peer with default
+%% parameters.
+%%
+%% == Examples ==
+%%
+%% ```
+%% Host = {127,0,0,1},
+%% Port = 1984,
+%% Peer = {Host, Port},
+%% TXID = <<0:256>>,
+%% Bin = ar_serialize:tx_to_binary(#tx{}),
+%% send_tx_json(Peer, TXID, Bin).
+%% '''
+%%
+%% @see send_tx_json/4
+%% @end
+%%--------------------------------------------------------------------
 send_tx_json(Peer, TXID, Bin) ->
+	send_tx_json(Peer, TXID, Bin, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc Send a JSON-encoded transaction to the given Peer.
+%%
+%% == Examples ==
+%%
+%% ```
+%% Host = {127,0,0,1},
+%% Port = 1984,
+%% Peer = {Host, Port},
+%% TXID = <<0:256>>,
+%% Bin = ar_serialize:tx_to_binary(#tx{}),
+%% Opts = #{ connect_timeout => 5
+%%         , timeout => 30
+%%         },
+%% send_tx_json(Peer, TXID, Bin, Opts).
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+send_tx_json(Peer, TXID, Bin, Opts) ->
+	ConnectTimeout = maps:get(connect_timeout, Opts, 5),
+	Timeout = maps:get(timeout, Opts, 30),
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
 		path => "/tx",
 		headers => add_header(<<"arweave-tx-id">>, ar_util:encode(TXID), p2p_headers()),
 		body => Bin,
-		connect_timeout => 5000,
-		timeout => 30 * 1000
+		connect_timeout => ConnectTimeout * 1000,
+		timeout => Timeout * 1000
 	}).
 
-%% @doc Send a binary-encoded transaction to the given Peer.
+%%--------------------------------------------------------------------
+%% @doc Send a binary-encoded transaction to the given Peer with
+%% default parameters.
+%% @see send_tx_binary/4
+%% @end
+%%--------------------------------------------------------------------
 send_tx_binary(Peer, TXID, Bin) ->
+	send_tx_binary(Peer, TXID, Bin, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc Send a binary-encoded transaction to the given Peer.
+%% @end
+%%--------------------------------------------------------------------
+send_tx_binary(Peer, TXID, Bin, Opts) ->
+	ConnectTimeout = maps:get(connect_timeout, Opts, 5),
+	Timeout = maps:get(timeout, Opts, 30),
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
 		path => "/tx2",
 		headers => add_header(<<"arweave-tx-id">>, ar_util:encode(TXID), p2p_headers()),
 		body => Bin,
-		connect_timeout => 5000,
-		timeout => 30 * 1000
+		connect_timeout => ConnectTimeout * 1000,
+		timeout => Timeout * 1000
 	}).
 
 %% @doc Announce a block to Peer.
