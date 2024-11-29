@@ -382,7 +382,7 @@ binary_to_block_time_history(_Rest, _BlockTimeHistory) ->
 %% Note: the #nonce_limiter_update and #vdf_session records are only serialized for communication
 %% between a VDF server and VDF client. Only fields that are required for this communication are
 %% serialized.
-%% 
+%%
 %% For example, the vdf_difficulty and next_vdf_difficulty fields are omitted as they are only used
 %% by nodes that compute their own VDF and never need to be shared from VDF server to VDF client.
 nonce_limiter_update_to_binary(2 = _Format, #nonce_limiter_update{
@@ -611,7 +611,7 @@ binary_to_nonce_limiter_update_response(_Bin) ->
 	{error, invalid2}.
 
 binary_to_nonce_limiter_update_response(
-	SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format) 
+	SessionFoundBin, StepNumberSize, StepNumber, Postpone, Format)
 		when SessionFoundBin == 0; SessionFoundBin == 1 ->
 	SessionFound = case SessionFoundBin of 0 -> false; 1 -> true end,
 	StepNumber2 = case StepNumberSize of 0 -> undefined; _ -> StepNumber end,
@@ -1545,7 +1545,7 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 	}.
 
 json_list_to_diff_pair(List) ->
-	[PoA1DiffBin, DiffBin] = 
+	[PoA1DiffBin, DiffBin] =
 		case List of
 			undefined -> [<<"0">>, <<"0">>];
 			_ -> List
@@ -1553,7 +1553,7 @@ json_list_to_diff_pair(List) ->
 	PoA1Diff = ar_util:binary_to_integer(PoA1DiffBin),
 	Diff = ar_util:binary_to_integer(DiffBin),
 	{PoA1Diff, Diff}.
-	
+
 parse_data_size(1, _TXStruct, Data, true) ->
 	byte_size(Data);
 parse_data_size(_Format, TXStruct, _Data, _ComputeDataSize) ->
@@ -2049,7 +2049,7 @@ jobs_to_json_struct(Jobs) ->
 	#jobs{ jobs = JobList, partial_diff = PartialDiff,
 			seed = Seed, next_seed = NextSeed, interval_number = IntervalNumber,
 			next_vdf_difficulty = NextVDFDiff } = Jobs,
-	
+
 	{[{jobs, [job_to_json_struct(Job) || Job <- JobList]},
 		{partial_diff, diff_pair_to_json_list(PartialDiff)},
 		{seed, ar_util:encode(Seed)},

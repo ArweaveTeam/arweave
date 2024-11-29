@@ -190,7 +190,7 @@ handle(<<"GET">>, [<<"recent">>], Req, _Pid) ->
 		true ->
 			{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req}
 	end;
-	
+
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
 	case ar_util:safe_decode(EncodedTXID) of
 		{error, invalid} ->
@@ -2009,13 +2009,16 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								{Packing, ok};
 							{{true, _}, _StoreID} ->
 								{ok, Config} = application:get_env(arweave, config),
-								case lists:member(pack_served_chunks, Config#config.enable) of
-									false ->
-										{none, {reply, {404, #{}, <<>>, Req}}};
+								IsPackServedChunks = lists:member(pack_served_chunks, Config#config.enable),
+								Peer = ar_http_util:arweave_peer(Req),
+								IsLocalPeerAddr = lists:member(Peer, Config#config.local_peers),
+
+								case IsPackServedChunks orelse IsLocalPeerAddr of
 									true ->
-										ok = ar_semaphore:acquire(get_and_pack_chunk,
-												infinity),
-										{RequestedPacking, ok}
+										ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
+										{RequestedPacking, ok};
+									false ->
+										{none, {reply, {404, #{}, <<>>, Req}}}
 								end
 						end,
 					case CheckRecords of
@@ -2023,7 +2026,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							Reply;
 						ok ->
 							Args = #{ packing => ReadPacking,
-									bucket_based_offset => IsBucketBasedOffset },
+									bucket_based_offset => IsBucketBasedOffset, pack => true },
 							case ar_data_sync:get_chunk(Offset, Args) of
 								{ok, Proof} ->
 									Proof2 = maps:remove(unpacked_chunk,

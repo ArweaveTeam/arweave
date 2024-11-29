@@ -667,7 +667,8 @@ init({"default" = StoreID, _}) ->
 		weave_size = maps:get(weave_size, StateMap),
 		disk_pool_cursor = first,
 		disk_pool_threshold = DiskPoolThreshold,
-		store_id = StoreID
+		store_id = StoreID,
+		local_peers = Config#config.local_peers
 	},
 	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
 			remove_expired_disk_pool_data_roots, []),
@@ -702,18 +703,20 @@ init({StoreID, RepackInPlacePacking}) ->
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
+	{ok, Config} = application:get_env(arweave, config),
+	State2 = State#sync_data_state{local_peers = Config#config.local_peers},
 	case RepackInPlacePacking of
 		none ->
 			gen_server:cast(self(), process_store_chunk_queue),
 			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-			State2 = State#sync_data_state{
+			State3 = State2#sync_data_state{
 				store_id = StoreID,
 				range_start = RangeStart,
 				range_end = RangeEnd
 			},
-			{ok, may_be_start_syncing(State2)};
+			{ok, may_be_start_syncing(State3)};
 		_ ->
-			{ok, State}
+			{ok, State2}
 	end.
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
@@ -1098,6 +1101,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	Offset = SeekByte - BlockStartOffset,
 	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(BlockStartOffset,
 			get_merkle_rebase_threshold()),
+	IsLocalPeer = lists:member(Peer, State#sync_data_state.local_peers),
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathRuleset) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
@@ -1109,6 +1113,8 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 				true ->
 					decrement_chunk_cache_size(),
 					{noreply, State};
+				false when IsLocalPeer ->
+					process_valid_fetched_chunk(ChunkArgs, Args, State);
 				false ->
 					case ar_packing_server:is_buffer_full() of
 						true ->
@@ -1126,8 +1132,9 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 									{AbsoluteOffset, unpacked}}),
 							{noreply, State#sync_data_state{
 									packing_map = PackingMap#{
-										{AbsoluteOffset, unpacked} => {unpack_fetched_chunk,
-												Args} } }}
+										{AbsoluteOffset, unpacked} => {unpack_fetched_chunk, Args}
+									}
+							}}
 					end
 			end;
 		false ->
@@ -1883,8 +1890,11 @@ get_tx_offset_data_in_range2(TXOffsetIndex, TXIndex, Start, End) ->
 get_tx_data(Start, End, Chunks) when Start >= End ->
 	{ok, iolist_to_binary(Chunks)};
 get_tx_data(Start, End, Chunks) ->
-	case get_chunk(Start + 1, #{ pack => true, packing => unpacked,
-			bucket_based_offset => false }) of
+	case get_chunk(Start + 1, #{
+		pack => true,
+		packing => unpacked,
+		bucket_based_offset => false
+	}) of
 		{ok, #{ chunk := Chunk }} ->
 			get_tx_data(Start + byte_size(Chunk), End, [Chunks | Chunk]);
 		{error, chunk_not_found} ->
@@ -2835,7 +2845,7 @@ process_invalid_fetched_chunk(Peer, Byte, State) ->
 
 process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	{Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
+	{FetchedPacking, FetchedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
 			ChunkEndOffset, Peer, Byte} = Args,
 	case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
@@ -2851,11 +2861,19 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					%% The chunk has been synced by another job already.
 					decrement_chunk_cache_size(),
 					{noreply, State};
-				false ->
+				false when FetchedPacking =/= unpacked ->
+					%% we don't have unpacked chunk, so possible repack is needed
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
 					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
-							DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
-							UnpackedChunk, none, none}, State)
+							DataPath, FetchedPacking, ChunkEndOffset, ChunkSize, Chunk,
+							none, none, none}, State);
+				false ->
+					%% process unpacked chunkgst
+					%%
+					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
+					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
+							DataPath, FetchedPacking, ChunkEndOffset, ChunkSize, Chunk,
+							FetchedChunk, none, none}, State)
 			end
 	end.
 
