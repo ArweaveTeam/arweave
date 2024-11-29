@@ -2108,6 +2108,8 @@ partition_to_json_struct(Bucket, BucketSize, Addr, PackingDifficulty) ->
 		end,
 	{Fields2}.
 
+encode_packing(undefined, false) ->
+	"undefined";
 encode_packing(any, false) ->
 	"any";
 encode_packing({spora_2_6, Addr}, _Strict) ->

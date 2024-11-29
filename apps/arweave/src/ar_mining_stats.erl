@@ -162,7 +162,7 @@ set_storage_module_data_size(
 	StoreLabel = ar_storage_module:label_by_id(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	try	
-		PackingDifficulty = get_packing_difficulty(Packing),
+		PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
 		prometheus_gauge:set(v2_index_data_size_by_packing,
 			[StoreLabel, PackingLabel, PartitionNumber,
 			 StorageModuleSize, StorageModuleIndex,
@@ -314,59 +314,6 @@ get_start(Key) ->
 			Start
 	end.
 
-get_packing() ->
-	{ok, Config} = application:get_env(arweave, config),
-	MiningAddress = Config#config.mining_addr,
-	Pattern1 = {
-		partition, '_', storage_module, '_', packing, 
-		{spora_2_6, MiningAddress}
-	},
-	Pattern2 = {
-		partition, '_', storage_module, '_', packing,
-		{composite, MiningAddress, '_'}
-	},
-	
-	Results = 
-		ets:match_object(?MODULE, {Pattern1, '_'}) ++
-		ets:match_object(?MODULE, {Pattern2, '_'}),
-
-	% Extract Packings and create a set
-	Packings = [Packing || {{_, _, _, _, _, Packing}, _} <- Results],
-	PackingsSet = sets:from_list(Packings),
-
-	case sets:to_list(PackingsSet) of
-		[SinglePacking] -> SinglePacking;
-		[] -> 
-			% No results found
-			undefined; 
-		MultiplePackings ->
-			% More than one unique packing found
-			?LOG_WARNING([
-				{event, get_packing_failed}, {reason, multiple_unique_packings},
-				{unique_packings,
-					string:join(
-						[format_packing(Packing) || Packing <- MultiplePackings], ", ")}
-				]),
-			undefined
-	end.
-
-format_packing({spora_2_6, Addr}) ->
-	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
-format_packing({composite, Addr, Difficulty}) ->
-	"composite_" ++ binary_to_list(ar_util:encode(Addr)) ++ "." ++ integer_to_list(Difficulty);
-format_packing(spora_2_5) ->
-	"spora_2_5";
-format_packing(unpacked) ->
-	"unpacked";
-format_packing(Packing) ->
-	?LOG_ERROR("Unexpected packing: ~p", [Packing]),
-	"unknown".
-
-get_packing_difficulty({composite, _, Difficulty}) ->
-	Difficulty;
-get_packing_difficulty(_) ->
-	0.
-
 get_hashrate_divisor(PackingDifficulty) ->
 	%% Raw hashrate varies based on packing difficulty. Assuming a spora_2_6 base hashrate
 	%% of 404, the raw hashrate at different packing difficulties is:
@@ -430,7 +377,7 @@ vdf_speed(Now) ->
 get_hash_hps(PoA1Multiplier, Packing, PartitionNumber, TotalCurrent, Now) ->
 	H1 = get_average_count_by_time({partition, PartitionNumber, h1, TotalCurrent}, Now),
 	H2 = get_average_count_by_time({partition, PartitionNumber, h2, TotalCurrent}, Now),
-	PackingDifficulty = get_packing_difficulty(Packing),
+	PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
 	((H1 / PoA1Multiplier) + H2) / get_hashrate_divisor(PackingDifficulty).
 
 %% @doc calculate the maximum hash rate (in MiB per second read from disk) for the given VDF
@@ -438,7 +385,7 @@ get_hash_hps(PoA1Multiplier, Packing, PartitionNumber, TotalCurrent, Now) ->
 optimal_partition_read_mibps(_Packing, undefined, _PartitionDataSize, _TotalDataSize, _WeaveSize) ->
 	0.0;	
 optimal_partition_read_mibps(Packing, VDFSpeed, PartitionDataSize, TotalDataSize, WeaveSize) ->
-	PackingDifficulty = get_packing_difficulty(Packing),
+	PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
 	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty) / ?MiB,
 	(RecallRangeSize / VDFSpeed) *
 	min(1.0, (PartitionDataSize / ?PARTITION_SIZE)) *
@@ -457,23 +404,24 @@ optimal_partition_hash_hps(PoA1Multiplier, VDFSpeed, PartitionDataSize, TotalDat
 generate_report() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Height = ar_node:get_height(),
+	Packing = ar_mining_io:get_packing(),
+	Partitions = ar_mining_io:get_partitions(),
 	generate_report(
 		Height,
-		ar_mining_io:get_partitions(),
+		Packing,
+		Partitions,
 		Config#config.cm_peers,
 		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
 	).
 
-generate_report(_Height, [], _Peers, _WeaveSize, Now) ->
+generate_report(_Height, _Packing, [], _Peers, _WeaveSize, Now) ->
 	#report{
 		now = Now
 	};
-generate_report(Height, Partitions, Peers, WeaveSize, Now) ->
+generate_report(Height, Packing, Partitions, Peers, WeaveSize, Now) ->
 	PoA1Multiplier = ar_difficulty:poa1_diff_multiplier(Height),
 	VDFSpeed = vdf_speed(Now),
-	%% We currently only  support mining against a single data packing format
-	Packing = get_packing(),
 	TotalDataSize = get_total_minable_data_size(Packing),
 	Report = #report{
 		now = Now,
@@ -996,7 +944,6 @@ test_data_size_stats() ->
 
 do_test_data_size_stats(Mining, Packing) ->
 	reset_all_stats(),
-	?assertEqual(undefined, get_packing()),
 	?assertEqual(0, get_total_minable_data_size(Mining)),
 	?assertEqual(0, get_partition_data_size(1, Mining)),
 	?assertEqual(0, get_partition_data_size(2, Mining)),
@@ -1031,7 +978,6 @@ do_test_data_size_stats(Mining, Packing) ->
 		ar_storage_module:id({?PARTITION_SIZE, 2, Packing}),
 		Packing, 2, ?PARTITION_SIZE, 2, 203),
 
-	?assertEqual(Mining, get_packing()),
 	?assertEqual(214, get_partition_data_size(1, Mining)),
 	?assertEqual(202, get_partition_data_size(2, Mining)),
 	?assertEqual(214, get_total_minable_data_size(Mining)),
@@ -1056,13 +1002,11 @@ do_test_data_size_stats(Mining, Packing) ->
 		ar_storage_module:id({?PARTITION_SIZE, 2, Packing}),
 		Packing, 2, ?PARTITION_SIZE, 2, 53),
 	
-	?assertEqual(Mining, get_packing()),
 	?assertEqual(336, get_partition_data_size(1, Mining)),
 	?assertEqual(52, get_partition_data_size(2, Mining)),
 	?assertEqual(336, get_total_minable_data_size(Mining)),
 
 	reset_all_stats(),
-	?assertEqual(undefined, get_packing()),
 	?assertEqual(0, get_total_minable_data_size(Mining)),
 	?assertEqual(0, get_partition_data_size(1, Mining)),
 	?assertEqual(0, get_partition_data_size(2, Mining)).
@@ -1238,7 +1182,7 @@ test_optimal_stats_poa1_multiple_2() ->
 	test_optimal_stats({composite, <<"MINING">>, 2}, 2).
 
 test_optimal_stats(Packing, PoA1Multiplier) ->
-	PackingDifficulty = get_packing_difficulty(Packing),
+	PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
 	RecallRangeSize = case PackingDifficulty of
 		0 ->
 			0.5;
@@ -1312,7 +1256,7 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 		{composite, Addr, _} ->
 			Addr
 	end,
-	PackingDifficulty = get_packing_difficulty(Mining),
+	PackingDifficulty = ar_mining_server:get_packing_difficulty(Mining),
 	DifficultyDivisor = case PackingDifficulty of
 		0 ->
 			1.0;
@@ -1418,11 +1362,11 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 		ar_mining_stats:h2_received_from_peer(Peer2),
 		ar_mining_stats:h2_received_from_peer(Peer2),
 		
-		Report1 = generate_report(0, [], [], WeaveSize, Now+1000),
+		Report1 = generate_report(0, Mining, [], [], WeaveSize, Now+1000),
 		?assertEqual(#report{ now = Now+1000 }, Report1),
 		log_report(format_report(Report1, WeaveSize)),
 
-		Report2 = generate_report(0, Partitions, Peers, WeaveSize, Now+1000),
+		Report2 = generate_report(0, Mining, Partitions, Peers, WeaveSize, Now+1000),
 		ReportString = format_report(Report2, WeaveSize),
 		log_report(ReportString),
 
