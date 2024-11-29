@@ -9,7 +9,8 @@
 		get_tx_offset/1, get_tx_offset_data_in_range/2, has_data_root/2,
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
-		get_chunk_by_byte/2, get_chunk_seek_offset/1, read_chunk/4, read_data_path/2,
+		get_chunk_by_byte/2, advance_chunks_index_cursor/1, get_chunk_seek_offset/1,
+		read_chunk/4, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_padded_offset/1, get_chunk_metadata_range/3,
 		get_merkle_rebase_threshold/0, should_store_in_chunk_storage/3]).
@@ -528,6 +529,16 @@ get_chunk_by_byte(ChunksIndex, Byte) ->
 				RelativeOffset, ChunkSize},
 			{ok, Key, FullMetaData}
 	end.
+
+%% @doc: handle situation where get_chunks_by_byte returns invalid_iterator, so we can't
+%% use the chunk's end offset to advance the cursor.
+%% 
+%% get_chunk_by_byte looks for a key with the same prefix or the next prefix.
+%% Therefore, if there is no such key, it does not make sense to look for any
+%% key smaller than the prefix + 2 in the next iteration.
+advance_chunks_index_cursor(Cursor) ->
+	PrefixSpaceSize = trunc(math:pow(2, ?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
+	NextCursor = ((Cursor div PrefixSpaceSize) + 2) * PrefixSpaceSize.
 
 read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
 	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
@@ -1270,12 +1281,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 			end,
 			{noreply, State};
 		{error, invalid_iterator} ->
-			%% get_chunk_by_byte looks for a key with the same prefix or the next prefix.
-			%% Therefore, if there is no such key, it does not make sense to look for any
-			%% key smaller than the prefix + 2 in the next iteration.
-			PrefixSpaceSize =
-					trunc(math:pow(2, ?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
-			NextCursor = ((Cursor div PrefixSpaceSize) + 2) * PrefixSpaceSize,
+			NextCursor = advance_chunks_index_cursor(Cursor),
 			gen_server:cast(self(), {remove_range, End, NextCursor, Ref, PID}),
 			{noreply, State};
 		{error, Reason} ->

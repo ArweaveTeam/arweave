@@ -114,7 +114,10 @@ verify_chunks({IntervalEnd, IntervalStart}, Intervals, State) ->
 
 verify_chunk({error, Reason}, _Intervals, State) ->
 	#state{ cursor = Cursor } = State,
-	log_error(get_chunk_error, Cursor, ?DATA_CHUNK_SIZE, [{reason, Reason}], State);
+	NextCursor = ar_data_sync:advance_chunks_index_cursor(Cursor),
+	RangeSkipped = NextCursor - Cursor,
+	State2 = log_error(get_chunk_error, Cursor, RangeSkipped, [{reason, Reason}], State),
+	State2#state{ cursor = NextCursor };
 verify_chunk({ok, _Key, MetaData}, Intervals, State) ->
 	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
 		_TXRelativeOffset, ChunkSize} = MetaData,
