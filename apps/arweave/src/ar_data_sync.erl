@@ -538,7 +538,7 @@ get_chunk_by_byte(ChunksIndex, Byte) ->
 %% key smaller than the prefix + 2 in the next iteration.
 advance_chunks_index_cursor(Cursor) ->
 	PrefixSpaceSize = trunc(math:pow(2, ?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
-	NextCursor = ((Cursor div PrefixSpaceSize) + 2) * PrefixSpaceSize.
+	((Cursor div PrefixSpaceSize) + 2) * PrefixSpaceSize.
 
 read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
 	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
