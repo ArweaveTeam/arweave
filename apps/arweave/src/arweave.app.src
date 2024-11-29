@@ -1,6 +1,6 @@
 {application, arweave, [
 	{description, "Arweave"},
-	{vsn, "2.8.2"},
+	{vsn, "2.8.3"},
 	{mod, {ar, []}},
 	{applications, [
 		kernel,
