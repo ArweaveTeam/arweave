@@ -165,10 +165,14 @@ show_help() ->
 					"kept in memory by the syncing processes."},
 			{"packing_cache_size_limit (num)", "The approximate maximum number of data chunks "
 					"kept in memory by the packing process."},
-			{"mining_server_chunk_cache_size_limit (num)", "The mining server will not read "
-					"new data unless the number of already fetched unprocessed chunks does "
-					"not exceed this number. When omitted, it is determined based on the "
-					"number of mining partitions and available RAM."},
+			{"mining_cache_size_mb (num)", "The total amount of cache "
+				"(in MiB) allocated to store unprocessed chunks while mining. The mining "
+				"server will only read new data when there is room in the cache to store "
+				"more chunks. This cache is subdivided into sub-caches for each mined "
+				"partition. When omitted, it is determined based on the number of "
+				"mining partitions."},
+			{"mining_server_chunk_cache_size_limit (num)", "DEPRECATED. Use "
+				"mining_cache_size_mb instead."},
 			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
 				"processes to spawn. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
 			{"tx_validators (num)", "Ignored. Set the post_tx key in the semaphores object"
@@ -338,7 +342,13 @@ show_help() ->
 					"Useful if you have multiple machines (or replicas) "
 					"and you want to monitor them separately on pool"},
 			{"rocksdb_flush_interval", "RocksDB flush interval in seconds"},
-			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"}
+			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"},
+			{"verify", "Run in verify mode. The node will run several checks on all listed "
+				"storage_modules, and flag any errors so that the chunks can be resynced and "
+				"repacked. After completing a full verification cycle, you can restart "
+				"the node in normal mode to have it resync and/or repack any flagged chunks. "
+				"When running in verify mode several flags will be forced on and several "
+				"flags are disallowed. See the node output for details."}
 		]
 	),
 	erlang:halt().
@@ -369,6 +379,8 @@ read_config_from_file(Path) ->
 parse_cli_args([], C) -> C;
 parse_cli_args(["mine" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ mine = true });
+parse_cli_args(["verify" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ verify = true });
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->
@@ -466,9 +478,14 @@ parse_cli_args(["data_cache_size_limit", Num | Rest], C) ->
 parse_cli_args(["packing_cache_size_limit", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			packing_cache_size_limit = list_to_integer(Num) });
-parse_cli_args(["mining_server_chunk_cache_size_limit", Num | Rest], C) ->
+parse_cli_args(["mining_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
-			mining_server_chunk_cache_size_limit = list_to_integer(Num) });
+			mining_cache_size_mb = list_to_integer(Num) });
+parse_cli_args(["mining_server_chunk_cache_size_limit", _Num | Rest], C) ->
+	?LOG_WARNING("Deprecated option found 'mining_server_chunk_cache_size_limit': "
+			"this option has been removed and is a no-op. Please use mining_cache_size_mb "
+			"instead.", []),
+	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["max_emitters", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
 parse_cli_args(["disk_space", Size | Rest], C) ->
@@ -666,10 +683,11 @@ start(Config) ->
 			timer:sleep(2000),
 			erlang:halt()
 	end,
-	ok = application:set_env(arweave, config, Config),
-	filelib:ensure_dir(Config#config.log_dir ++ "/"),
+	Config2 = ar_config:set_dependent_flags(Config),
+	ok = application:set_env(arweave, config, Config2),
+	filelib:ensure_dir(Config2#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
-	case Config#config.nonce_limiter_server_trusted_peers of
+	case Config2#config.nonce_limiter_server_trusted_peers of
 		[] ->
 			VDFSpeed = ar_bench_vdf:run_benchmark(),
 			?LOG_INFO([{event, vdf_benchmark}, {vdf_s, VDFSpeed / 1000000}]);

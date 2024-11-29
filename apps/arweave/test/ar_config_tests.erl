@@ -62,7 +62,7 @@ test_parse_config() ->
 		hashing_threads = 17,
 		data_cache_size_limit = 10000,
 		packing_cache_size_limit = 20000,
-		mining_server_chunk_cache_size_limit = 3,
+		mining_cache_size_mb = 3,
 		max_propagation_peers = 8,
 		max_block_propagation_peers = 60,
 		tx_validators = 3,

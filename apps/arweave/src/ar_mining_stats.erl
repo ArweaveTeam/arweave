@@ -161,9 +161,12 @@ set_storage_module_data_size(
 		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
 	StoreLabel = ar_storage_module:label_by_id(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
-	try
+	try	
+		PackingDifficulty = get_packing_difficulty(Packing),
 		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreLabel, PackingLabel, PartitionNumber, StorageModuleSize, StorageModuleIndex],
+			[StoreLabel, PackingLabel, PartitionNumber,
+			 StorageModuleSize, StorageModuleIndex,
+			 PackingDifficulty],
 			DataSize),
 		ets:insert(?MODULE, {
 			{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize})
@@ -338,9 +341,11 @@ get_packing() ->
 			undefined;
 		MultiplePackings ->
 			% More than one unique packing found
-			?LOG_ERROR([
+			?LOG_WARNING([
 				{event, get_packing_failed}, {reason, multiple_unique_packings},
-				{unique_packings, [format_packing(Packing) || Packing <- MultiplePackings]}
+				{unique_packings,
+					string:join(
+						[format_packing(Packing) || Packing <- MultiplePackings], ", ")}
 				]),
 			undefined
 	end.

@@ -3,8 +3,10 @@
 -module(ar_poa).
 
 -export([get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
-		 validate_pre_fork_2_5/4, validate/1, get_padded_offset/2]).
+		 validate_pre_fork_2_5/4, validate/1, validate_paths/4, validate_paths/7,
+		 get_padded_offset/2]).
 
+-include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -51,34 +53,123 @@ validate(Args) ->
 	{BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing, SubChunkIndex,
 			ExpectedChunkID} = Args,
 	#poa{ chunk = Chunk, unpacked_chunk = UnpackedChunk } = SPoA,
-	TXPath = SPoA#poa.tx_path,
-	RecallBucketOffset = get_recall_bucket_offset(RecallOffset, BlockStartOffset),
-	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset),
-	case ar_merkle:validate_path(TXRoot, RecallBucketOffset, BlockSize, TXPath) of
-		false ->
+
+	case validate_paths(SPoA, TXRoot, RecallOffset, BlockStartOffset, BlockSize) of
+		{false, _} ->
 			false;
-		{DataRoot, TXStartOffset, TXEndOffset} ->
-			TXSize = TXEndOffset - TXStartOffset,
-			RecallChunkOffset = RecallBucketOffset - TXStartOffset,
-			DataPath = SPoA#poa.data_path,
-			case ar_merkle:validate_path(DataRoot, RecallChunkOffset, TXSize, DataPath,
-					ValidateDataPathRuleset) of
-				false ->
-					false;
-				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
-					case ExpectedChunkID of
-						not_set ->
-							validate2(Packing, {ChunkID, ChunkStartOffset,
-									ChunkEndOffset, BlockStartOffset, TXStartOffset,
-									TXRoot, Chunk, UnpackedChunk, SubChunkIndex});
-						_ ->
-							case ChunkID == ExpectedChunkID of
-								false ->
-									false;
-								true ->
-									{true, ChunkID}
-							end
+		{true, ChunkProof} ->
+			#chunk_proof{
+				chunk_id = ChunkID,
+				chunk_start_offset = ChunkStartOffset,
+				chunk_end_offset = ChunkEndOffset,
+				tx_start_offset = TXStartOffset
+			} = ChunkProof,
+			case ExpectedChunkID of
+				not_set ->
+					validate2(Packing, {ChunkID, ChunkStartOffset,
+							ChunkEndOffset, BlockStartOffset, TXStartOffset,
+							TXRoot, Chunk, UnpackedChunk, SubChunkIndex});
+				_ ->
+					case ChunkID == ExpectedChunkID of
+						false ->
+							false;
+						true ->
+							{true, ChunkID}
 					end
+			end
+	end.
+
+%% @doc Validate the TXPath and DataPath for a chunk. This will return the ChunkID but won't
+%% validate that the ChunkID is correct.
+%% 
+%% SPoA: the proof of access
+%% RecallOffset: the absoluteoffset of the recall byte - 
+ validate_paths(#poa{} = SPoA, TXRoot, RecallOffset, BlockStartOffset, BlockSize) ->
+	BlockRelativeOffset = get_recall_bucket_offset(RecallOffset, BlockStartOffset),
+	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset),
+
+	Proof = #chunk_proof{
+		absolute_offset = BlockStartOffset + BlockRelativeOffset,
+		tx_root = TXRoot,
+		tx_path = SPoA#poa.tx_path,
+		data_path = SPoA#poa.data_path,
+		block_start_offset = BlockStartOffset,
+		block_end_offset = BlockStartOffset + BlockSize,
+		validate_data_path_ruleset = ValidateDataPathRuleset
+	},
+	validate_paths(Proof).
+
+%% @doc Validate the TXPath and DataPath for a chunk. This will return the ChunkID but won't
+%% validate that the ChunkID is correct.
+%% 
+%% AbsoluteOffset: the end offset of the chunk - indexed to the beginning of the weave
+validate_paths(TXRoot, TXPath, DataPath, AbsoluteOffset) ->
+	{BlockStartOffset, BlockEndOffset, TXRoot} =
+		ar_block_index:get_block_bounds(AbsoluteOffset),
+
+	Proof = #chunk_proof{
+		absolute_offset = AbsoluteOffset,
+		tx_root = TXRoot,
+		tx_path = TXPath,
+		data_path = DataPath,
+		block_start_offset = BlockStartOffset,
+		block_end_offset = BlockEndOffset,
+		validate_data_path_ruleset = get_data_path_validation_ruleset(BlockStartOffset)
+	},
+	validate_paths(Proof).
+
+validate_paths(
+		TXRoot, TXPath, DataPath, BlockStartOffset, BlockEndOffset, BlockRelativeOffset,
+		ValidateDataPathRuleset) ->
+	Proof = #chunk_proof{
+		absolute_offset = BlockStartOffset + BlockRelativeOffset,
+		tx_root = TXRoot,
+		tx_path = TXPath,
+		data_path = DataPath,
+		block_start_offset = BlockStartOffset,
+		block_end_offset = BlockEndOffset,
+		validate_data_path_ruleset = ValidateDataPathRuleset
+	},
+	validate_paths(Proof).
+
+validate_paths(Proof) ->
+	#chunk_proof{
+		absolute_offset = AbsoluteOffset,
+		tx_root = TXRoot,
+		tx_path = TXPath,
+		data_path = DataPath,
+		block_start_offset = BlockStartOffset,
+		block_end_offset = BlockEndOffset,
+		validate_data_path_ruleset = ValidateDataPathRuleset
+	} = Proof,
+
+	BlockRelativeOffset = AbsoluteOffset - BlockStartOffset,
+	BlockSize = BlockEndOffset - BlockStartOffset,
+
+	case ar_merkle:validate_path(TXRoot, BlockRelativeOffset, BlockSize, TXPath) of
+		false ->
+			{false, Proof#chunk_proof{ tx_path_is_valid = invalid }};
+		{DataRoot, TXStartOffset, TXEndOffset} ->
+			Proof2 = Proof#chunk_proof{
+				data_root = DataRoot,
+				tx_start_offset = TXStartOffset,
+				tx_end_offset = TXEndOffset,
+				tx_path_is_valid = valid
+			},
+			TXSize = TXEndOffset - TXStartOffset,
+			TXRelativeOffset = BlockRelativeOffset - TXStartOffset,
+			case ar_merkle:validate_path(
+					DataRoot, TXRelativeOffset, TXSize, DataPath, ValidateDataPathRuleset) of
+				false ->
+					{false, Proof2#chunk_proof{ data_path_is_valid = invalid }};
+				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
+					Proof3 = Proof2#chunk_proof{
+						chunk_id = ChunkID,
+						chunk_start_offset = ChunkStartOffset,
+						chunk_end_offset = ChunkEndOffset,
+						data_path_is_valid = valid
+					},
+					{true, Proof3}
 			end
 	end.
 
