@@ -1878,9 +1878,8 @@ get_tx_offset_data_in_range2(TXOffsetIndex, TXIndex, Start, End) ->
 get_tx_data(Start, End, Chunks) when Start >= End ->
 	{ok, iolist_to_binary(Chunks)};
 get_tx_data(Start, End, Chunks) ->
-	{ok, Config} = application:get_env(arweave, config),
 	case get_chunk(Start + 1, #{
-		pack => lists:member(pack_served_chunks, Config#config.enable),
+		pack => true,
 		packing => unpacked,
 		bucket_based_offset => false
 	}) of
@@ -2838,7 +2837,8 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 							DataPath, FetchedPacking, ChunkEndOffset, ChunkSize, Chunk,
 							none, none, none}, State);
 				false ->
-					%% process unpacked chunk
+					%% process unpacked chunkgst
+					%%
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
 					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
 							DataPath, FetchedPacking, ChunkEndOffset, ChunkSize, Chunk,
