@@ -1681,14 +1681,34 @@ start_from_state(BI, Height) ->
 		{Skipped, Blocks} ->
 			BI2 = lists:nthtail(Skipped, BI),
 			Height2 = Height - Skipped,
-			RewardHistoryBI = ar_rewards:trim_buffered_reward_history(Height, BI2),
+
+			%% Until we hit ~2 months post 2.8 hardfork, the reward history accumulated
+			%% by any node will be shorter than the full expected length. Specicifically
+			%% it will be 21,600 blocks plus the number of blocks that have elapsed since
+			%% the 2.8 HF activatin.
+			InterimRewardHistoryLength = (Height - ar_fork:height_2_8()) + 21600,
+			RewardHistoryBI = lists:sublist(
+					ar_rewards:trim_buffered_reward_history(Height, BI2),
+					InterimRewardHistoryLength
+			),
+
 			BlockTimeHistoryBI = lists:sublist(BI2,
 					ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
 			case {ar_storage:read_reward_history(RewardHistoryBI),
 					ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI)} of
 				{not_found, _} ->
+					?LOG_ERROR([{event, start_from_state_error},
+							{reason, reward_history_not_found},
+							{height, Height2},
+							{block_index, length(BI2)},
+							{reward_history, length(RewardHistoryBI)}]),
 					reward_history_not_found;
 				{_, not_found} ->
+					?LOG_ERROR([{event, start_from_state_error},
+							{reason, block_time_history_not_found},
+							{height, Height2},
+							{block_index, length(BI2)},
+							{block_time_history, length(BlockTimeHistoryBI)}]),
 					block_time_history_not_found;
 				{RewardHistory, BlockTimeHistory} ->
 					Blocks2 = ar_rewards:set_reward_history(Blocks, RewardHistory),
