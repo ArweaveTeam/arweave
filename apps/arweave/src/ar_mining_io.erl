@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1, set_largest_seen_upper_bound/1, 
-			get_partitions/0, get_partitions/1, read_recall_range/4, garbage_collect/0]).
+			get_packing/0, get_partitions/0, get_partitions/1, read_recall_range/4,
+			garbage_collect/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -44,6 +45,15 @@ get_partitions() ->
 read_recall_range(WhichChunk, Worker, Candidate, RecallRangeStart) ->
 	gen_server:call(?MODULE,
 			{read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}, 60000).
+
+get_packing() ->
+	{ok, Config} = application:get_env(arweave, config),
+	%% ar_config:validate_storage_modules/1 ensures that we only mine against a single
+	%% packing format. So we can grab it any partition.
+	case Config#config.storage_modules of
+		[] -> undefined;
+        [{_, _, Packing} | _Rest] -> Packing
+    end.
 
 get_partitions(PartitionUpperBound) when PartitionUpperBound =< 0 ->
 	[];
