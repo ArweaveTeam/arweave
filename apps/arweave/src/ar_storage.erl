@@ -72,6 +72,9 @@ read_reward_history([{H, _WeaveSize, _TXRoot} | BI]) ->
 		History ->
 			case ar_kv:get(reward_history_db, H) of
 				not_found ->
+					?LOG_DEBUG([{event, read_reward_history_not_found},
+							{reason, missing_block},
+							{block, ar_util:encode(H)}]),
 					not_found;
 				{ok, Bin} ->
 					Element = binary_to_term(Bin),
