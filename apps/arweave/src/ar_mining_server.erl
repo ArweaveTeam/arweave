@@ -7,7 +7,8 @@
 		start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
 		compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
 		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
-		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/3]).
+		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/3,
+		get_packing_difficulty/1]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -115,6 +116,13 @@ log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData) ->
 			{solution_hash, ar_util:safe_encode(SolutionH)},
 			{packing_difficulty, PackingDifficulty} | AdditionalLogData]).
 
+-spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
+	PackingDifficulty :: non_neg_integer().
+get_packing_difficulty({composite, _, Difficulty}) ->
+	Difficulty;
+get_packing_difficulty(_) ->
+	0.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -126,13 +134,9 @@ init([]) ->
 	ar_chunk_storage:open_files("default"),
 
 	Partitions = ar_mining_io:get_partitions(infinity),
+	Packing = ar_mining_io:get_packing(),
+	PackingDifficulty = get_packing_difficulty(Packing),
 
-	%% ar_config:validate_storage_modules/1 ensures that we only mine against a single
-	%% packing format. So we can grab the packing difficulty from any partition.
-	{MiningAddr, PackingDifficulty} = case Partitions of
-        [{_Partition, Addr, Difficulty} | _Rest] -> {Addr, Difficulty};
-        [] -> {undefined, 0}
-    end,
 	Workers = lists:foldl(
 		fun({Partition, _Addr, Difficulty}, Acc) ->
 			maps:put({Partition, Difficulty},
@@ -143,8 +147,7 @@ init([]) ->
 	),
 
 	?LOG_INFO([{event, mining_server_init},
-			{mining_addr, ar_util:safe_encode(MiningAddr)},
-			{packing_difficulty, PackingDifficulty},
+			{packing, ar_serialize:encode_packing(Packing, false)},
 			{partitions, length(Partitions)}]),
 
 	{ok, #state{
