@@ -97,22 +97,22 @@ post_2_8_test_() ->
 test_mitm_poa_chunk_tamper_warn({_Key, B, _PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa.chunk is tampered with.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:peer_ip(main)),
+	assert_not_banned(ar_test_node:peer_addr(main)),
 	B2 = B#block{ poa = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } },
 	post_block(B2, invalid_first_chunk),
-	assert_not_banned(ar_test_node:peer_ip(main)).
+	assert_not_banned(ar_test_node:peer_addr(main)).
 
 test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
 	%% Verify that, in 2.7, we don't ban a peer if the poa2.chunk is tampered with.
 	%% For this test we have to re-sign the block with the new poa2.chunk - but that's just a
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:peer_ip(main)),
-	B2 = sign_block(B#block{ 
+	assert_not_banned(ar_test_node:peer_addr(main)),
+	B2 = sign_block(B#block{
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_second_chunk),
-	assert_not_banned(ar_test_node:peer_ip(main)).
+	assert_not_banned(ar_test_node:peer_addr(main)).
 
 test_reject_block_invalid_proof_size({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
@@ -246,11 +246,11 @@ test_reject_block_invalid_wallet_list({Key, B, PrevB}) ->
 
 test_reject_block_invalid_packing_difficulty({Key, B, PrevB}) ->
 	ok = ar_events:subscribe(block),
-	assert_not_banned(ar_test_node:peer_ip(main)),
+	assert_not_banned(ar_test_node:peer_addr(main)),
 	B2 = sign_block(B#block{ unpacked_chunk_hash = <<>>,
 			packing_difficulty = 33 }, PrevB, Key),
 	post_block(B2, invalid_first_unpacked_chunk),
-	assert_not_banned(ar_test_node:peer_ip(main)),
+	assert_not_banned(ar_test_node:peer_addr(main)),
 	C = crypto:strong_rand_bytes(262144),
 	PackedC = crypto:strong_rand_bytes(262144 div 32),
 	UH = crypto:hash(sha256, C),
@@ -260,7 +260,7 @@ test_reject_block_invalid_packing_difficulty({Key, B, PrevB}) ->
 		poa = PoA#poa{ unpacked_chunk = C, chunk = PackedC }, unpacked_chunk_hash = UH,
 				chunk_hash = H }, PrevB, Key),
 	post_block(B3, invalid_packing_difficulty),
-	assert_banned(ar_test_node:peer_ip(main)).
+	assert_banned(ar_test_node:peer_addr(main)).
 
 %% ------------------------------------------------------------------------------------------
 %% Others tests
@@ -315,7 +315,7 @@ test_rejects_invalid_blocks() ->
 	%% The valid block with the ID from the failed attempt can still go through.
 	post_block(B1, valid),
 	%% Try to post the same block again.
-	Peer = ar_test_node:peer_ip(main),
+	Peer = ar_test_node:peer_addr(main),
 	?assertMatch({ok, {{<<"208">>, _}, _, _, _, _}}, send_new_block(Peer, B1)),
 	%% Correct hash, but invalid signature.
 	B2Preimage = B1#block{ signature = <<>> },
@@ -580,14 +580,14 @@ test_send_block2() ->
 			previous_block = B0#block.indep_hash,
 			tx_prefixes = [binary:part(TX#tx.id, 0, 8) || TX <- TXs2] },
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
+			peer => ar_test_node:peer_addr(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement) }),
 	Response = ar_serialize:binary_to_block_announcement_response(Body),
 	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
 			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response),
 	Announcement2 = Announcement#block_announcement{ recall_byte = 0 },
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
+			peer => ar_test_node:peer_addr(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement2) }),
 	Response2 = ar_serialize:binary_to_block_announcement_response(Body2),
 	%% We always report missing chunk currently.
@@ -595,16 +595,16 @@ test_send_block2() ->
 			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response2),
 	Announcement3 = Announcement#block_announcement{ recall_byte = 100000000000000 },
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
+			peer => ar_test_node:peer_addr(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(Announcement3) }),
 	{ok, {{<<"418">>, _}, _, Body3, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block2",
+			peer => ar_test_node:peer_addr(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B) }),
 	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
 			[], TXs2 -- EverySecondTX)), Body3),
 	B2 = B#block{ txs = [lists:nth(1, TXs2) | tl(B#block.txs)] },
 	{ok, {{<<"418">>, _}, _, Body4, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block2",
+			peer => ar_test_node:peer_addr(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B2) }),
 	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
 			[], (TXs2 -- EverySecondTX) -- [lists:nth(1, TXs2)])), Body4),
@@ -614,29 +614,29 @@ test_send_block2() ->
 	ar_test_node:mine(),
 	[{H2, _, _}, _, _] = wait_until_height(2),
 	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
+			peer => ar_test_node:peer_addr(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = H2, previous_block = B#block.indep_hash }) }),
 	BTXs = ar_storage:read_tx(B#block.txs),
 	B3 = B#block{ txs = BTXs },
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block2",
+			peer => ar_test_node:peer_addr(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B3) }),
 	{ok, {{<<"200">>, _}, _, SerializedB, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:peer_ip(main), path => "/block2/height/1" }),
+			peer => ar_test_node:peer_addr(main), path => "/block2/height/1" }),
 	?assertEqual({ok, B}, ar_serialize:binary_to_block(SerializedB)),
 	Map = element(2, lists:foldl(fun(TX, {N, M}) -> {N + 1, maps:put(TX#tx.id, N, M)} end,
 			{0, #{}}, TXs2)),
 	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:peer_ip(main), path => "/block2/height/1",
+			peer => ar_test_node:peer_addr(main), path => "/block2/height/1",
 			body => << 1:1, 0:(8 * 125 - 1) >> }),
 	?assertEqual({ok, B#block{ txs = [case maps:get(TX#tx.id, Map) == 0 of true -> TX;
 			_ -> TX#tx.id end || TX <- BTXs] }}, ar_serialize:binary_to_block(Serialized2B)),
 	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:peer_ip(main), path => "/block2/height/1",
+			peer => ar_test_node:peer_addr(main), path => "/block2/height/1",
 			body => << 1:1, 0:7 >> }),
 	{ok, {{<<"200">>, _}, _, Serialized3B, _, _}} = ar_http:req(#{ method => get,
-			peer => ar_test_node:peer_ip(main), path => "/block2/height/1",
+			peer => ar_test_node:peer_addr(main), path => "/block2/height/1",
 			body => << 0:1, 1:1, 0:1, 1:1, 0:4 >> }),
 	?assertEqual({ok, B#block{ txs = [case lists:member(maps:get(TX#tx.id, Map), [1, 3]) of
 			true -> TX; _ -> TX#tx.id end || TX <- BTXs] }},
@@ -644,7 +644,7 @@ test_send_block2() ->
 	B4 = read_block_when_stored(H2, true),
 	timer:sleep(500),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block2",
+			peer => ar_test_node:peer_addr(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B4) }),
 	ar_test_node:connect_to_peer(peer1),
 	lists:foreach(
@@ -656,7 +656,7 @@ test_send_block2() ->
 	),
 	B5 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"208">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
+			peer => ar_test_node:peer_addr(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B5#block.indep_hash,
 					previous_block = B5#block.previous_block }) }),
@@ -665,7 +665,7 @@ test_send_block2() ->
 	[_ | _] = wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
 	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
+			peer => ar_test_node:peer_addr(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,
@@ -675,7 +675,7 @@ test_send_block2() ->
 			missing_tx_indices = [] }},
 			ar_serialize:binary_to_block_announcement_response(Body5)),
 	{ok, {{<<"200">>, _}, _, Body6, _, _}} = ar_http:req(#{ method => post,
-			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
+			peer => ar_test_node:peer_addr(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = B6#block.indep_hash,
 					previous_block = B6#block.previous_block,

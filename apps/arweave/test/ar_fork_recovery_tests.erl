@@ -146,7 +146,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	?debugFmt("Fake block: ~s.", [ar_util:encode(B2H)]),
 	ok = ar_events:subscribe(block),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-			ar_http_iface_client:send_block_binary(ar_test_node:peer_ip(main), B2#block.indep_hash,
+			ar_http_iface_client:send_block_binary(ar_test_node:peer_addr(main), B2#block.indep_hash,
 					ar_serialize:block_to_binary(B2))),
 	receive
 		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
@@ -167,7 +167,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	?assertNotEqual(B2#block.indep_hash, H3),
 	{_Peer, B3, _Time, _Size} =
 	ar_http_iface_client:get_block_shadow(1,
-		ar_test_node:peer_ip(peer1),
+		ar_test_node:peer_addr(peer1),
 		binary, #{}),
 	?assertEqual(H2, B3#block.indep_hash).
 
@@ -224,10 +224,10 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 
 	fork_recovery_test_() ->
 		{timeout, 300, fun test_fork_recovery/0}.
-	
+
 	test_fork_recovery() ->
 		test_fork_recovery(original_split).
-	
+
 	test_fork_recovery(Split) ->
 		Wallet = ar_test_data_sync:setup_nodes(),
 		{TX1, Chunks1} = ar_test_data_sync:tx(Wallet, {Split, 13}, v2, ?AR(10)),
@@ -294,4 +294,3 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 		UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
 		ar_test_data_sync:wait_until_syncs_chunks(Proofs4, UpperBound3),
 		ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2).
-	

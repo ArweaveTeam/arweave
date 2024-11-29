@@ -38,7 +38,7 @@ setup_external_update() ->
 	%% auto-computed VDF steps getting in the way.
 	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_server_trusted_peers = [ 
+		Config#config{ nonce_limiter_server_trusted_peers = [
 			ar_util:format_peer(vdf_server_1()),
 			ar_util:format_peer(vdf_server_2()) ],
 			mine = true}),
@@ -284,20 +284,20 @@ test_vdf_client_fast_block() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1, 
+	ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
-		PeerConfig#config{ nonce_limiter_server_trusted_peers = [ 
-			ar_util:format_peer(ar_test_node:peer_ip(main)) ] }),
+		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
+			ar_util:format_peer(ar_test_node:peer_addr(main)) ] }),
 	%% Start main as a VDF server
 	ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ 
-			ar_util:format_peer(ar_test_node:peer_ip(peer1)) ]}),
+		Config#config{ nonce_limiter_client_peers = [
+			ar_util:format_peer(ar_test_node:peer_addr(peer1)) ]}),
 	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
 	%% isn't aware of the new VDF session yet.
-	send_new_block(ar_test_node:peer_ip(peer1), B1),
+	send_new_block(ar_test_node:peer_addr(peer1), B1),
 	timer:sleep(10000),
 	?assertEqual(1,
 		length(ar_test_node:remote_call(peer1, ar_node, get_blocks, [])),
@@ -306,7 +306,7 @@ test_vdf_client_fast_block() ->
 
 	%% After the VDF server receives the block, it should push the old and new VDF sessions
 	%% to the VDF client allowing it to validate teh block.
-	send_new_block(ar_test_node:peer_ip(main), B1),
+	send_new_block(ar_test_node:peer_addr(main), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
 	%% the VDF clietn to finally validate the block.
 	BI = assert_wait_until_height(peer1, 1).
@@ -331,7 +331,7 @@ test_vdf_client_fast_block_pull_interface() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1, 
+	ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ],
 				enable = [vdf_server_pull | PeerConfig#config.enable] }),
@@ -343,7 +343,7 @@ test_vdf_client_fast_block_pull_interface() ->
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
 	%% isn't aware of the new VDF session yet.
-	send_new_block(ar_test_node:peer_ip(peer1), B1),
+	send_new_block(ar_test_node:peer_addr(peer1), B1),
 	timer:sleep(10000),
 	?assertEqual(1,
 		length(ar_test_node:remote_call(peer1, ar_node, get_blocks, [])),
@@ -352,7 +352,7 @@ test_vdf_client_fast_block_pull_interface() ->
 
 	%% After the VDF server receives the block, it should push the old and new VDF sessions
 	%% to the VDF client allowing it to validate teh block.
-	send_new_block(ar_test_node:peer_ip(main), B1),
+	send_new_block(ar_test_node:peer_addr(main), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
 	%% the VDF clietn to finally validate the block.
 	BI = assert_wait_until_height(peer1, 1).
@@ -376,7 +376,7 @@ test_vdf_client_slow_block() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1, 
+	ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
 			"127.0.0.1:" ++ integer_to_list(Config#config.port)
@@ -392,7 +392,7 @@ test_vdf_client_slow_block() ->
 
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
-	send_new_block(ar_test_node:peer_ip(peer1), B1),
+	send_new_block(ar_test_node:peer_addr(peer1), B1),
 	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_slow_block_pull_interface() ->
@@ -414,7 +414,7 @@ test_vdf_client_slow_block_pull_interface() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1, 
+	ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
 			"127.0.0.1:" ++ integer_to_list(Config#config.port) ],
@@ -431,7 +431,7 @@ test_vdf_client_slow_block_pull_interface() ->
 
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
-	send_new_block(ar_test_node:peer_ip(peer1), B1),
+	send_new_block(ar_test_node:peer_addr(peer1), B1),
 	BI = assert_wait_until_height(peer1, 1).
 
 %%
@@ -702,7 +702,7 @@ test_2_servers_backtrack() ->
 		[20, 20, 20, 20, 20, 20, 20, 20, 10, 10, 10, 10, 10, 20, 30],
 		computed_upper_bounds()).
 
-test_mining_session() -> 
+test_mining_session() ->
 	SessionKey0 = get_current_session_key(),
 	SessionKey1 = {<<"session1">>, 1, 1},
 	SessionKey2 = {<<"session2">>, 2, 1},
@@ -973,8 +973,8 @@ get_current_session_key() ->
 
 mock_add_task() ->
 	{
-		ar_mining_worker, add_task, 
-		fun(Worker, TaskType, Candidate) -> 
+		ar_mining_worker, add_task,
+		fun(Worker, TaskType, Candidate) ->
 			ets:insert(add_task, {Worker, TaskType, Candidate#mining_candidate.step_number})
 		end
 	}.

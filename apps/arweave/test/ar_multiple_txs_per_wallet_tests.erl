@@ -246,7 +246,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	{ok, {{<<"400">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => ar_test_node:peer_ip(peer1),
+			peer => ar_test_node:peer_addr(peer1),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
@@ -396,7 +396,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => ar_test_node:peer_ip(peer1),
+			peer => ar_test_node:peer_addr(peer1),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	Balance = binary_to_integer(Body),
@@ -408,7 +408,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => ar_test_node:peer_ip(peer1),
+			peer => ar_test_node:peer_addr(peer1),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	?assertEqual(0, binary_to_integer(Body2)),
@@ -540,13 +540,13 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 5)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_addr(peer1)),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_addr(peer1)),
 	%% There is no place for the last transaction in the mempool.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
 
@@ -575,13 +575,13 @@ drops_v2_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 10)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_addr(peer1)),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 10)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_addr(peer1)),
 	%% The last TX is twice as big and twice as valuable so it replaces two
 	%% other transactions in the memory pool.
 	?assertEqual([Last#tx.id | [TX#tx.id || TX <- lists:sublist(TXs, 8)]], Mempool2),
@@ -589,7 +589,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	StrippedTX = ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash,
 			data => BigChunk, tags => [{<<"nonce">>, integer_to_binary(12)}] }),
 	ar_test_node:assert_post_tx_to_peer(peer1, StrippedTX#tx{ data = <<>> }),
-	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:peer_addr(peer1)),
 	?assertEqual([Last#tx.id] ++ [TX#tx.id || TX <- lists:sublist(TXs, 8)]
 			++ [StrippedTX#tx.id], Mempool3).
 

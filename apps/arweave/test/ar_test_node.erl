@@ -13,7 +13,7 @@
 		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
 		stop_peers/0, stop_peer/1, connect_to_peer/1, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
-		peer_ip/1, get_node_namespace/0, get_unused_port/0,
+		peer_addr/1, get_node_namespace/0, get_unused_port/0,
 
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
@@ -125,7 +125,7 @@ stop_peer(Node) ->
 			ok
 	end.
 
-peer_ip(Node) ->
+peer_addr(Node) ->
 	{127, 0, 0, 1, peer_port(Node)}.
 
 wait_until_joined(Node) ->
@@ -191,15 +191,15 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
 	%% a solution.
 	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
-	ExitPeer = peer_ip(peer1),
-	ValidatorPeer = peer_ip(main),
+	ExitPeer = peer_addr(peer1),
+	ValidatorPeer = peer_addr(main),
 	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
 
 	BaseCMConfig = base_cm_config([ValidatorPeer]),
 	RewardAddr = BaseCMConfig#config.mining_addr,
 	ExitNodeConfig = BaseCMConfig#config{
 		mine = true,
-		local_peers = [peer_ip(Peer) || Peer <- MinerNodes]
+		local_peers = [peer_addr(Peer) || Peer <- MinerNodes]
 	},
 	ValidatorNodeConfig = BaseCMConfig#config{
 		mine = false,
@@ -210,12 +210,12 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]), %% exit node
 	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]), %% validator node
-	
+
 	lists:foreach(
 		fun(I) ->
 			MinerNode = lists:nth(I, MinerNodes),
 			MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
-			MinerPeerIPs = [peer_ip(Peer) || Peer <- MinerPeers],
+			MinerPeerIPs = [peer_addr(Peer) || Peer <- MinerPeers],
 
 			MinerConfig = BaseCMConfig#config{
 				cm_exit_peer = ExitPeer,
@@ -480,7 +480,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		peers = [],
 		cm_exit_peer = not_set,
 		cm_peers = [],
-		local_peers = [],
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
@@ -532,7 +531,7 @@ get_tx_price(Node, DataSize) ->
 %% @doc Fetch the fee estimation and the denomination (call GET /price2/[size]/[addr])
 %% from the given node.
 get_tx_price(Node, DataSize, Target) ->
-	Peer = peer_ip(Node),
+	Peer = peer_addr(Node),
 	Path = "/price/" ++ integer_to_list(DataSize) ++ "/"
 			++ binary_to_list(ar_util:encode(Target)),
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
@@ -570,7 +569,7 @@ get_optimistic_tx_price(Node, DataSize, Target) ->
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => peer_ip(Node),
+			peer => peer_addr(Node),
 			path => Path
 		}),
 	binary_to_integer(maps:get(<<"fee">>, jiffy:decode(Reply, [return_maps]))).
@@ -674,7 +673,7 @@ join_on(#{ node := Node, join_on := JoinOnNode }, Rejoin) ->
 	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin], 20000).
 
 join(JoinOnNode, Rejoin) ->
-	Peer = peer_ip(JoinOnNode),
+	Peer = peer_addr(JoinOnNode),
 	{ok, Config} = application:get_env(arweave, config),
 	case Rejoin of
 		true ->
@@ -714,7 +713,7 @@ connect_to_peer(Node) ->
 	%% Unblock connections possibly blocked in the prior test code.
 	ar_http:unblock_peer_connections(),
 	remote_call(Node, ar_http, unblock_peer_connections, []),
-	Peer = peer_ip(Node),
+	Peer = peer_addr(Node),
 	Self = self_node(),
 	%% Make requests to the nodes to make them discover each other.
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
@@ -727,7 +726,7 @@ connect_to_peer(Node) ->
 	true = ar_util:do_until(
 		fun() ->
 			Peers = remote_call(Node, ar_peers, get_peers, [lifetime]),
-			lists:member(peer_ip(Self), Peers)
+			lists:member(peer_addr(Self), Peers)
 		end,
 		200,
 		5000
@@ -735,7 +734,7 @@ connect_to_peer(Node) ->
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => peer_ip(Self),
+			peer => peer_addr(Self),
 			path => "/info",
 			headers => p2p_headers(Node)
 		}),
@@ -904,7 +903,7 @@ post_tx_to_peer(Node, TX, Wait) ->
 post_tx_json(Node, JSON) ->
 	ar_http:req(#{
 		method => post,
-		peer => peer_ip(Node),
+		peer => peer_addr(Node),
 		path => "/tx",
 		body => JSON
 	}).
@@ -913,7 +912,7 @@ get_tx_anchor(Node) ->
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => peer_ip(Node),
+			peer => peer_addr(Node),
 			path => "/tx_anchor"
 		}),
 	ar_util:decode(Reply).
@@ -922,7 +921,7 @@ get_tx_confirmations(Node, TXID) ->
 	Response =
 		ar_http:req(#{
 			method => get,
-			peer => peer_ip(Node),
+			peer => peer_addr(Node),
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status"
 		}),
 	case Response of
@@ -997,9 +996,9 @@ post_and_mine(#{ miner := Node, await_on := AwaitOnNode }, TXs) ->
 	remote_call(AwaitOnNode, ar_test_node, read_block_when_stored, [H, true], 20000).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
-	post_block(B, [ExpectedResult], peer_ip(main));
+	post_block(B, [ExpectedResult], peer_addr(main));
 post_block(B, ExpectedResults) ->
-	post_block(B, ExpectedResults, peer_ip(main)).
+	post_block(B, ExpectedResults, peer_addr(main)).
 
 post_block(B, ExpectedResults, Peer) ->
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B)),
@@ -1010,7 +1009,7 @@ send_new_block(Peer, B) ->
 			ar_serialize:block_to_binary(B)).
 
 await_post_block(B, ExpectedResults) ->
-	await_post_block(B, ExpectedResults, peer_ip(main)).
+	await_post_block(B, ExpectedResults, peer_addr(main)).
 
 await_post_block(#block{ indep_hash = H } = B, ExpectedResults, Peer) ->
 	PostGossipFailureCodes = [invalid_denomination,
@@ -1105,7 +1104,7 @@ read_block_when_stored(H, IncludeTXs) ->
 get_chunk(Node, Offset) ->
 	ar_http:req(#{
 		method => get,
-		peer => peer_ip(Node),
+		peer => peer_addr(Node),
 		path => "/chunk/" ++ integer_to_list(Offset),
 		headers => [{<<"x-bucket-based-offset">>, <<"true">>}]
 	}).
@@ -1113,13 +1112,13 @@ get_chunk(Node, Offset) ->
 get_chunk_proof(Node, Offset) ->
 	ar_http:req(#{
 		method => get,
-		peer => peer_ip(Node),
+		peer => peer_addr(Node),
 		path => "/chunk_proof/" ++ integer_to_list(Offset),
 		headers => [{<<"x-bucket-based-offset">>, <<"true">>}]
 	}).
 
 post_chunk(Node, Proof) ->
-	Peer = peer_ip(Node),
+	Peer = peer_addr(Node),
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
@@ -1133,7 +1132,7 @@ random_v1_data(Size) ->
 
 assert_get_tx_data(Node, TXID, ExpectedData) ->
 	?debugFmt("Polling for data of ~s.", [ar_util:encode(TXID)]),
-	Peer = peer_ip(Node),
+	Peer = peer_addr(Node),
 	true = ar_util:do_until(
 		fun() ->
 			case ar_http:req(#{ method => get, peer => Peer,
@@ -1188,7 +1187,7 @@ get_tx_data_in_chunks_traverse_forward(Offset, Start, Peer, Bin) ->
 			[Chunk | Bin]).
 
 assert_data_not_found(Node, TXID) ->
-	Peer = peer_ip(Node),
+	Peer = peer_addr(Node),
 	?assertMatch({ok, {{<<"404">>, _}, _, _Binary, _, _}},
 			ar_http:req(#{ method => get, peer => Peer,
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).

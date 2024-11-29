@@ -186,7 +186,7 @@ get_randomx_state_by_difficulty(PackingDifficulty, PackingState) ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
-	
+
 	ar:console("~nInitialising RandomX dataset for fast packing. Key: ~p. "
 			"The process may take several minutes.~n", [ar_util:encode(?RANDOMX_PACKING_KEY)]),
 	{RandomXState512, _RandomXState4096} = PackingState = init_packing_state(),
@@ -219,7 +219,7 @@ init([]) ->
 				end,
 				{ConfiguredRate, SchedulersRequired2}
 		end,
-	
+
 	record_packing_benchmarks(TheoreticalMaxRate, PackingRate, Schedulers,
 		ActualRatePack2_6, ActualRatePackComposite),
 	SpawnSchedulers = min(SchedulersRequired, Schedulers),

@@ -53,7 +53,7 @@ test_single_node_one_chunk() ->
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa)#poa.data_path) > 0),
 	assert_empty_cache(Node).
-	
+
 %% @doc One-node coordinated mining cluster mining a block with two chunks.
 test_single_node_two_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
@@ -77,7 +77,7 @@ test_two_node_retarget() ->
 %% @doc Three-node coordinated mining cluster mining until all nodes have contributed
 %% to a solution. This test does not force cross-node solutions.
 test_three_node() ->
-	[Node1, Node2, Node3, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(3),	
+	[Node1, Node2, Node3, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(3),
 	wait_for_each_node([Node1, Node2, Node3], ValidatorNode, 0, [0, 2, 4]),
 	assert_empty_cache(Node1),
 	assert_empty_cache(Node2),
@@ -115,54 +115,54 @@ test_no_exit_node() ->
 
 test_no_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
-	Peer = ar_test_node:peer_ip(Node),
+	Peer = ar_test_node:peer_addr(Node),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:get_cm_partition_table(Peer)),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
 
 test_bad_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
-	Peer = ar_test_node:peer_ip(Node),
+	Peer = ar_test_node:peer_addr(Node),
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:set_env(arweave, config,
 			Config#config{ cm_api_secret = <<"this_is_not_the_actual_secret">> }),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:get_cm_partition_table(Peer)),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
 	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
+		{error, {ok, {{<<"421">>, _}, _,
 			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
 
 test_partition_table() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ?PARTITION_SIZE),
 	Config = ar_test_node:base_cm_config([]),
-	
+
 	MiningAddr = Config#config.mining_addr,
 	RandomAddress = crypto:strong_rand_bytes(32),
-	Peer = ar_test_node:peer_ip(main),
+	Peer = ar_test_node:peer_addr(main),
 
 	%% No partitions
 	ar_test_node:start_node(B0, Config, false),
@@ -173,7 +173,7 @@ test_partition_table() ->
 	),
 
 	%% Partition jumble with 2 addresses
-	ar_test_node:start_node(B0, Config#config{ 
+	ar_test_node:start_node(B0, Config#config{
 		storage_modules = [
 			{?PARTITION_SIZE, 0, {spora_2_6, MiningAddr}},
 			{?PARTITION_SIZE, 0, {spora_2_6, RandomAddress}},
@@ -206,7 +206,7 @@ test_partition_table() ->
 	%% Simulate mining start
 	PartitionUpperBound = 35 * ?PARTITION_SIZE, %% less than the highest configured partition
 	ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound),
-	
+
 	?assertEqual(
 		{ok, [
 			{0, ?PARTITION_SIZE, MiningAddr, 0},
@@ -225,14 +225,14 @@ test_peers_by_partition() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(),
 			PartitionUpperBound),
 
-	Peer1 = ar_test_node:peer_ip(peer1),
-	Peer2 = ar_test_node:peer_ip(peer2),
-	Peer3 = ar_test_node:peer_ip(peer3),
+	Peer1 = ar_test_node:peer_addr(peer1),
+	Peer2 = ar_test_node:peer_addr(peer2),
+	Peer3 = ar_test_node:peer_addr(peer3),
 
 	BaseConfig = ar_test_node:base_cm_config([]),
 	Config = BaseConfig#config{ cm_exit_peer = Peer1 },
 	MiningAddr = Config#config.mining_addr,
-	
+
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
 		cm_exit_peer = not_set,
 		cm_peers = [Peer2, Peer3],
@@ -336,7 +336,7 @@ test_peers_by_partition() ->
 	assert_peers([Peer2], peer3, 3),
 	assert_peers([Peer1], peer3, 4),
 	assert_peers([Peer1], peer3, 5),
-	ok.	
+	ok.
 
 %% --------------------------------------------------------------------
 %% Helpers
@@ -383,8 +383,8 @@ wait_for_cross_node(_Miners, _ValidatorNode, _CurrentHeight, ExpectedPartitions,
 wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
 	A = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
 	Partitions = sets:from_list(A),
-	MinedCrossNodeBlock = 
-		sets:is_subset(Partitions, ExpectedPartitions) andalso 
+	MinedCrossNodeBlock =
+		sets:is_subset(Partitions, ExpectedPartitions) andalso
 		sets:is_subset(ExpectedPartitions, Partitions),
 	case MinedCrossNodeBlock of
 		true ->
@@ -393,7 +393,7 @@ wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, Re
 			wait_for_cross_node(
 				Miners, ValidatorNode, CurrentHeight+1, ExpectedPartitions, RetryCount-1)
 	end.
-	
+
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	ar_util:pmap(fun(Node) -> ar_test_node:mine(Node) end, Miners),
 	[{Hash, _, _} | _] = ar_test_node:wait_until_height(ValidatorNode, CurrentHeight + 1),
@@ -409,13 +409,13 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	{ok, Block} = ar_test_node:http_get_block(Hash, ValidatorNode),
 
 	case Block#block.recall_byte2 of
-		undefined -> 
+		undefined ->
 			[
 				ar_node:get_partition_number(Block#block.recall_byte)
 			];
 		RecallByte2 ->
 			[
-				ar_node:get_partition_number(Block#block.recall_byte), 
+				ar_node:get_partition_number(Block#block.recall_byte),
 				ar_node:get_partition_number(RecallByte2)
 			]
 	end.
