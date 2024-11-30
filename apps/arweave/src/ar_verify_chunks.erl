@@ -153,7 +153,7 @@ verify_chunk_storage(PaddedOffset, _ChunkSize, {End, Start}, State)
 	State;
 verify_chunk_storage(PaddedOffset, ChunkSize, _Interval, State) ->
 	#state{ packing = Packing } = State,
-	case ar_data_sync:should_store_in_chunk_storage(PaddedOffset, ChunkSize, Packing) of
+	case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
 		true ->
 			invalidate_chunk(chunk_storage_gap, PaddedOffset, ChunkSize, State);
 		false ->

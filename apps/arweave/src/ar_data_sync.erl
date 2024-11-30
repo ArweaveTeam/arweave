@@ -13,7 +13,7 @@
 		read_chunk/4, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_padded_offset/1, get_chunk_metadata_range/3,
-		get_merkle_rebase_threshold/0, should_store_in_chunk_storage/3]).
+		get_merkle_rebase_threshold/0]).
 
 -export([debug_get_disk_pool_chunks/0]).
 
@@ -873,6 +873,16 @@ handle_cast({pack_and_store_chunk, Args} = Cast,
 	case is_disk_space_sufficient(StoreID) of
 		true ->
 			pack_and_store_chunk(Args, State);
+		_ ->
+			ar_util:cast_after(30000, self(), Cast),
+			{noreply, State}
+	end;
+
+handle_cast({store_chunk, ChunkArgs, Args} = Cast,
+		#sync_data_state{ store_id = StoreID } = State) ->
+	case is_disk_space_sufficient(StoreID) of
+		true ->
+			{noreply, store_chunk(ChunkArgs, Args, State)};
 		_ ->
 			ar_util:cast_after(30000, self(), Cast),
 			{noreply, State}
@@ -2742,7 +2752,7 @@ write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, State) ->
 write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing,
 		State) ->
 	#sync_data_state{ chunk_data_db = ChunkDataDB, store_id = StoreID } = State,
-	ShouldStoreInChunkStorage = should_store_in_chunk_storage(Offset, ChunkSize, Packing),
+	ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
 	Result =
 		case ShouldStoreInChunkStorage of
 			true ->
@@ -2761,21 +2771,6 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			end;
 		_ ->
 			Result
-	end.
-
-%% @doc 256 KiB chunks are stored in the blob storage optimized for read speed.
-%% Return true if we want to place the chunk there.
-should_store_in_chunk_storage(Offset, ChunkSize, Packing) ->
-	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
-		true ->
-			%% All chunks above ?STRICT_DATA_SPLIT_THRESHOLD are placed in 256 KiB buckets
-			%% so technically can be stored in ar_chunk_storage. However, to avoid
-			%% managing padding in ar_chunk_storage for unpacked chunks smaller than 256 KiB
-			%% (we do not need fast random access to unpacked chunks after
-			%% ?STRICT_DATA_SPLIT_THRESHOLD anyways), we put them to RocksDB.
-			Packing /= unpacked orelse ChunkSize == (?DATA_CHUNK_SIZE);
-		false ->
-			ChunkSize == (?DATA_CHUNK_SIZE)
 	end.
 
 update_chunks_index(Args, State) ->
