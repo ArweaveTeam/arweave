@@ -78,12 +78,8 @@
 )).
 
 %% Increase the difficulty of PoA1 solutions by this multiplier (e.g. 100x).
--ifdef(DEBUG).
--define(POA1_DIFF_MULTIPLIER, 1).
--else.
 -ifndef(POA1_DIFF_MULTIPLIER).
 -define(POA1_DIFF_MULTIPLIER, 100).
--endif.
 -endif.
 
 %% The number of nonce limiter steps sharing the entropy. We add the entropy
@@ -94,12 +90,8 @@
 %% adding the entropy at certain blocks (rather than nonce limiter steps) allows
 %% miners to use extra bandwidth (bearing almost no additional costs) to compute
 %% nonces on the short forks with different-entropy nonce limiting chains.
--ifdef(DEBUG).
--define(NONCE_LIMITER_RESET_FREQUENCY, 5).
--else.
 -ifndef(NONCE_LIMITER_RESET_FREQUENCY).
 -define(NONCE_LIMITER_RESET_FREQUENCY, (10 * 120)).
--endif.
 -endif.
 
 %% The maximum number of one-step checkpoints the block header may include.

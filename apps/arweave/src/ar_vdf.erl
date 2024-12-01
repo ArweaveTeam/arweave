@@ -20,6 +20,7 @@ compute(StartStepNumber, PrevOutput, IterationCount) ->
 			IterationCount).
 
 -ifdef(DEBUG).
+%% Slow down VDF calculation on tests since it will complete to fast otherwise.
 compute2(StartStepNumber, PrevOutput, IterationCount) ->
 	{ok, Output, CheckpointBuffer} = compute(StartStepNumber, PrevOutput, IterationCount),
 	Checkpoints = [Output | checkpoint_buffer_to_checkpoints(CheckpointBuffer)],

@@ -29,7 +29,7 @@
 -include_lib("arweave/include/ar_sync_buckets.hrl").
 
 -ifdef(DEBUG).
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5000).
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).
 -else.
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300_000).
 -endif.

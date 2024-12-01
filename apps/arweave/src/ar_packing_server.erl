@@ -141,7 +141,9 @@ unpad_chunk(spora_2_5, Unpacked, ChunkSize, _PackedSize) ->
 unpad_chunk({spora_2_6, _Addr}, Unpacked, ChunkSize, PackedSize) ->
 	unpad_chunk(Unpacked, ChunkSize, PackedSize);
 unpad_chunk({composite, _Addr, _PackingDifficulty}, Unpacked, ChunkSize, PackedSize) ->
-	unpad_chunk(Unpacked, ChunkSize, PackedSize).
+	unpad_chunk(Unpacked, ChunkSize, PackedSize);
+unpad_chunk(unpacked, Unpacked, ChunkSize, _PackedSize) ->
+	binary:part(Unpacked, 0, ChunkSize).
 
 unpad_chunk(Unpacked, ChunkSize, PackedSize) ->
 	Padding = binary:part(Unpacked, ChunkSize, PackedSize - ChunkSize),

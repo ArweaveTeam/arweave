@@ -80,7 +80,7 @@ create_ets() ->
 	ets:new(?MODULE, [set, public, named_table, {keypos, #db.name}]).
 
 
-
+	
 %% @doc Open a key-value store located at the given filesystem path relative to
 %% the data directory and identified by the given Name.
 open(DataDirRelativePath, Name) ->
