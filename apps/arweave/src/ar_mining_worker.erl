@@ -154,6 +154,7 @@ handle_cast({chunks_read, {WhichChunk, Candidate, RangeStart, ChunkOffsets}}, St
 	end;
 
 handle_cast({add_task, {TaskType, Candidate, _ExtraArgs} = Task}, State) ->
+	?LOG_DEBUG([{event, add_task}, {worker, State#state.name}, {task, TaskType}]),
 	case is_session_valid(State, Candidate) of
 		true ->
 			{noreply, add_task(Task, State)};

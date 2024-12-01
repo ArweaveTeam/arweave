@@ -148,7 +148,7 @@ init([]) ->
 
 	?LOG_INFO([{event, mining_server_init},
 			{packing, ar_serialize:encode_packing(Packing, false)},
-			{partitions, length(Partitions)}]),
+			{partitions, [ Partition || {Partition, _, _} <- Partitions]}]),
 
 	{ok, #state{
 		workers = Workers,
@@ -496,13 +496,16 @@ distribute_output(Candidate, State) ->
 	distribute_output(ar_mining_io:get_partitions(), Candidate, State).
 
 distribute_output([], _Candidate, _State) ->
+	?LOG_DEBUG([{event, distribute_output_done}]),
 	ok;
 distribute_output([{_Partition, _MiningAddress, PackingDifficulty} | _Partitions],
 		_Candidate, #state{ allow_composite_packing = false }) when PackingDifficulty >= 1 ->
 	%% Do not mine with the composite packing until some time after the fork 2.8.
+	?LOG_DEBUG([{event, distribute_output_skipping_composite_packing}]),
 	ok;
 distribute_output([{Partition, MiningAddress, PackingDifficulty} | Partitions],
 		Candidate, State) ->
+	?LOG_DEBUG([{event, distribute_output}, {partition, Partition}]),
 	case get_worker({Partition, PackingDifficulty}, State) of
 		not_found ->
 			?LOG_ERROR([{event, worker_not_found}, {partition, Partition}]),

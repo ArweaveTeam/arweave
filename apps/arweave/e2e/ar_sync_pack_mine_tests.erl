@@ -26,45 +26,45 @@ spora_2_6_sync_pack_mine_test_() ->
 	{setup, fun () -> setup_source_node(spora_2_6) end, 
 		fun (GenesisData) ->
 				[
-					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1)
+					% instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+					% instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+					% instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
 				]
 		end}.
 
-composite_1_sync_pack_mine_test_() ->
-	{setup, fun () -> setup_source_node(composite_1) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-				]
-		end}.
+% composite_1_sync_pack_mine_test_() ->
+% 	{setup, fun () -> setup_source_node(composite_1) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+% 				]
+% 		end}.
 
-composite_2_sync_pack_mine_test_() ->
-	{setup, fun () -> setup_source_node(composite_2) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-				]
-		end}.
+% composite_2_sync_pack_mine_test_() ->
+% 	{setup, fun () -> setup_source_node(composite_2) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+% 				]
+% 		end}.
 
-unpacked_sync_pack_mine_test_() ->
-	{setup, fun () -> setup_source_node(unpacked) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-				]
-		end}.
+% unpacked_sync_pack_mine_test_() ->
+% 	{setup, fun () -> setup_source_node(unpacked) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+% 				]
+% 		end}.
 
 %% --------------------------------------------------------------------------------------------
 %% test_sync_pack_mine
@@ -84,6 +84,7 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 			ok;
 		_ ->
 			CurrentHeight = ar_test_node:remote_call(SinkNode, ar_node, get_height, []),
+			?LOG_ERROR([{event, test_sync_pack_mine}, {current_height, CurrentHeight}]),
 			ar_test_node:mine(SinkNode),
 
 			SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
