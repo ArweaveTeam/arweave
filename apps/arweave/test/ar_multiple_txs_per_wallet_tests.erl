@@ -207,7 +207,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	ar_test_node:connect_to_peer(peer1),
 
 	%% Expect the post for all TXs (including the balance exceeding one) to
-	%% succeed. However immeidately after adding each TX to the mempool,
+	%% succeed. However immediately after adding each TX to the mempool,
 	%% we'll check whether any balances are exceeded and eject the TXs that
 	%% exceed the balance. The ordering used is {Utility, TXID} - so TXs with
 	%% the same Utility but with a lower alphanumeric ID will be ejected first.
