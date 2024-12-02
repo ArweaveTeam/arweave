@@ -55,21 +55,6 @@ handle_cast(Msg, State) ->
 handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
-handle_info({gun_down, _, http, normal, _, _}, State) ->
-	{noreply, State};
-handle_info({gun_down, _, http, closed, _, _}, State) ->
-	{noreply, State};
-handle_info({gun_down, _, http, {error,econnrefused}, _, _}, State) ->
-	{noreply, State};
-handle_info({gun_up, _, http}, State) ->
-	{noreply, State};
-handle_info({gun_response, _, _, _, _, _}, State) ->
-	{noreply, State};
-handle_info({gun_data, _, _, _, _}, state) ->
-	{noreply, state};
-handle_info({gun_error, _, _, _}, State) ->
-	{noreply, State};
-
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.

@@ -38,8 +38,7 @@ unblock_peer_connections() ->
 
 req(#{ peer := {_, _} } = Args) ->
 	req(Args, false);
-req(Args) ->
-	#{ peer := Peer } = Args,
+req(#{ peer := Peer } = Args) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.port == element(5, Peer) of
 		true ->
@@ -301,17 +300,21 @@ method_to_list(_) ->
 	"unknown".
 
 request(PID, Args) ->
-	Timer = inet:start_timer(maps:get(timeout, Args, ?HTTP_REQUEST_SEND_TIMEOUT)),
+	Timeout = maps:get(timeout, Args, ?HTTP_REQUEST_SEND_TIMEOUT),
 	Ref = request2(PID, Args),
-	ResponseArgs = #{ pid => PID, stream_ref => Ref,
-			timer => Timer, limit => maps:get(limit, Args, infinity),
-			counter => 0, acc => [], start => os:system_time(microsecond),
-			is_peer_request => maps:get(is_peer_request, Args, true) },
+	ResponseArgs = #{ pid => PID
+			, stream_ref => Ref
+			, timeout => Timeout
+			, limit => maps:get(limit, Args, infinity)
+			, counter => 0
+			, acc => []
+			, start => os:system_time(microsecond)
+			, is_peer_request => maps:get(is_peer_request, Args, true)
+			},
 	Response = await_response(maps:merge(Args, ResponseArgs)),
 	Method = maps:get(method, Args),
 	Path = maps:get(path, Args),
 	record_response_status(Method, Path, Response),
-	inet:stop_timer(Timer),
 	Response.
 
 request2(PID, #{ path := Path } = Args) ->
@@ -328,16 +331,18 @@ request2(PID, #{ path := Path } = Args) ->
 merge_headers(HeadersA, HeadersB) ->
 	lists:ukeymerge(1, lists:keysort(1, HeadersB), lists:keysort(1, HeadersA)).
 
-await_response(Args) ->
-	#{ pid := PID, stream_ref := Ref, timer := Timer, start := Start, limit := Limit,
-			counter := Counter, acc := Acc, method := Method, path := Path } = Args,
-	case gun:await(PID, Ref, inet:timeout(Timer)) of
+await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
+		 , start := Start, limit := Limit, counter := Counter
+		 , acc := Acc, method := Method, path := Path } = Args) ->
+	case gun:await(PID, Ref, Timeout) of
 		{response, fin, Status, Headers} ->
 			End = os:system_time(microsecond),
 			upload_metric(Args),
 			{ok, {{integer_to_binary(Status), <<>>}, Headers, <<>>, Start, End}};
+
 		{response, nofin, Status, Headers} ->
 			await_response(Args#{ status => Status, headers => Headers });
+
 		{data, nofin, Data} ->
 			case Limit of
 				infinity ->
@@ -353,24 +358,32 @@ await_response(Args) ->
 							{error, too_much_data}
 					end
 			end;
+
 		{data, fin, Data} ->
 			End = os:system_time(microsecond),
 			FinData = iolist_to_binary([Acc | Data]),
 			download_metric(FinData, Args),
 			upload_metric(Args),
-			{ok, {gen_code_rest(maps:get(status, Args)), maps:get(headers, Args), FinData,
-					Start, End}};
+			ResponseCode = gen_code_rest(maps:get(status, Args)),
+			ResponseHeaders = maps:get(headers, Args),
+			Response = {ResponseCode, ResponseHeaders, FinData, Start, End},
+			{ok, Response};
+
 		{error, timeout} = Response ->
 			record_response_status(Method, Path, Response),
 			gun:cancel(PID, Ref),
 			log(warn, gun_await_process_down, Args, Response),
 			Response;
+
 		{error, Reason} = Response when is_tuple(Reason) ->
 			record_response_status(Method, Path, Response),
+			gun:cancel(PID, Ref),
 			log(warn, gun_await_process_down, Args, Reason),
 			Response;
+
 		Response ->
 			record_response_status(Method, Path, Response),
+			gun:cancel(PID, Ref),
 			log(warn, gun_await_unknown, Args, Response),
 			Response
 	end.
@@ -420,8 +433,12 @@ gen_code_rest(201) ->
 	{<<"201">>, <<"Created">>};
 gen_code_rest(202) ->
 	{<<"202">>, <<"Accepted">>};
+gen_code_rest(208) ->
+	{<<"208">>, <<"Transaction already processed">>};
 gen_code_rest(400) ->
 	{<<"400">>, <<"Bad Request">>};
+gen_code_rest(419) ->
+	{<<"419">>, <<"419 Missing Chunk">>};
 gen_code_rest(421) ->
 	{<<"421">>, <<"Misdirected Request">>};
 gen_code_rest(429) ->
