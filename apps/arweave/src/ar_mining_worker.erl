@@ -752,6 +752,8 @@ update_sub_chunk_cache_size(0, _SessionKey, State) ->
 	State;
 update_sub_chunk_cache_size(Delta, SessionKey, State) ->
 	CacheSize = maps:get(SessionKey, State#state.sub_chunk_cache_size, 0),
+	% The clamp_lower function ensures that the cache size does not go below 0.
+	% This is temporary until we have a more permanent solution for the chunk cache.
 	NewCacheSize = ar_util:clamp_lower(CacheSize + Delta, 0),
 	prometheus_gauge:inc(mining_server_chunk_cache_size, [State#state.partition_number], NewCacheSize - CacheSize),
 	State#state{ sub_chunk_cache_size = maps:put(SessionKey, NewCacheSize, State#state.sub_chunk_cache_size) }.
