@@ -15,7 +15,7 @@
 -record(state, {
     name = not_set :: atom(),
     partition_number = not_set :: non_neg_integer() | not_set,
-    diff_pair = not_set, % :: ?DIFF_PAIR()
+    diff_pair = not_set :: {non_neg_integer(), non_neg_integer()} | not_set,
     packing_difficulty = 0 :: non_neg_integer(),
     task_queue = gb_sets:new() :: gb_sets:gb_set(),
     active_sessions = sets:new() :: sets:set(),
