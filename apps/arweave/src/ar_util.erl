@@ -4,7 +4,7 @@
 		integer_to_binary/1, binary_to_integer/1, pick_random/1, pick_random/2,
 		encode/1, decode/1, safe_encode/1, safe_decode/1, timestamp_to_seconds/1,
 		parse_peer/1, peer_to_str/1, parse_port/1, safe_parse_peer/1, format_peer/1,
-		unique/1, count/2,
+		unique/1, count/2, clamp_lower/2, clamp_upper/2, clamp/3,
 		genesis_wallets/0, pmap/2, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
@@ -381,3 +381,23 @@ assert_file_exists_and_readable(FilePath) ->
 			io:format("~nThe filepath ~p doesn't exist or isn't readable.~n~n", [FilePath]),
 			erlang:halt(1)
 	end.
+
+%% @doc Clamp a value to a lower bound.
+%% If the value is less than the lower bound, return the lower bound.
+clamp_lower(Value, LowerBound) when Value < LowerBound ->
+	LowerBound;
+clamp_lower(Value, _LowerBound) ->
+	Value.
+
+%% @doc Clamp a value to an upper bound.
+%% If the value is greater than the upper bound, return the upper bound.
+clamp_upper(Value, UpperBound) when Value > UpperBound ->
+	UpperBound;
+clamp_upper(Value, _UpperBound) ->
+	Value.
+
+%% @doc Clamp a value to a lower and upper bound.
+%% If the value is less than the lower bound, return the lower bound.
+%% If the value is greater than the upper bound, return the upper bound.
+clamp(Value, LowerBound, UpperBound) ->
+	clamp_lower(clamp_upper(Value, UpperBound), LowerBound).
