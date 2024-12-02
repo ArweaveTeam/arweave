@@ -753,7 +753,7 @@ update_sub_chunk_cache_size(0, _SessionKey, State) ->
 update_sub_chunk_cache_size(Delta, SessionKey, State) ->
 	CacheSize = maps:get(SessionKey, State#state.sub_chunk_cache_size, 0),
 	NewCacheSize = ar_util:clamp_lower(CacheSize + Delta, 0),
-	prometheus_gauge:inc(mining_server_sub_chunk_cache_size, [State#state.partition_number], NewCacheSize - CacheSize),
+	prometheus_gauge:inc(mining_server_chunk_cache_size, [State#state.partition_number], NewCacheSize - CacheSize),
 	State#state{ sub_chunk_cache_size = maps:put(SessionKey, NewCacheSize, State#state.sub_chunk_cache_size) }.
 
 try_to_reserve_cache_space(SessionKey, State) ->
