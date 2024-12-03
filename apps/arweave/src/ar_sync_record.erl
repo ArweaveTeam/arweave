@@ -112,7 +112,7 @@ add(End, Start, Type, ID, StoreID) ->
 add_async(Event, End, Start, Type, ID, StoreID) ->
 	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
 	gen_server:cast(GenServerID, {add_async, Event, End, Start, Type, ID}).
-	
+
 %% @doc Remove the given interval from the record
 %% with the given ID. Store the changes on disk before
 %% returning ok.
@@ -137,16 +137,22 @@ cut(Offset, ID, StoreID) ->
 			Reply
 	end.
 
-%% @doc Return {true, StoreID} or {{true, Type}, StoreID} if a chunk containing
-%% the given Offset is found in the record with the given ID, false otherwise.
-%% If several types are recorded for the chunk, only one of them is returned,
-%% the choice is not defined. If the chunk is stored in the default storage module,
-%% return the type found there. If not, search for a configured storage
-%% module covering the given Offset. If there are multiple
-%% storage modules with the chunk, the choice is not defined.
+%%--------------------------------------------------------------------
+%% @doc Return `{true, StoreID}' or `{{true, Type}, StoreID}' if a
+%% chunk containing the given Offset is found in the record with the
+%% given ID, false otherwise.  If several types are recorded for the
+%% chunk, only one of them is returned, the choice is not defined.
+%%
+%% If the chunk is stored in the `"default"' storage module, return
+%% the type found there. If not, search for a configured storage
+%% module covering the given Offset. If there are multiple storage
+%% modules with the chunk, the choice is not defined.
+%%
 %% The offset is 1-based - if a chunk consists of a single
-%% byte that is the first byte of the weave, is_recorded(0, ID)
-%% returns false and is_recorded(1, ID) returns true.
+%% byte that is the first byte of the weave, `is_recorded(0, ID)'
+%% returns `false' and `is_recorded(1, ID)' returns `true'.
+%% @end
+%%--------------------------------------------------------------------
 is_recorded(Offset, {ID, Type}) ->
 	case is_recorded(Offset, Type, ID, "default") of
 		true ->
@@ -166,9 +172,39 @@ is_recorded(Offset, ID) ->
 			{Reply, "default"}
 	end.
 
-%% @doc Return true or {true, Type} if a chunk containing
-%% the given Offset is found in the record with the given ID
-%% in the storage module identified by StoreID, false otherwise.
+%%--------------------------------------------------------------------
+%% @doc Return `true' or `{true, Type}' if a chunk containing
+%% the given `Offset' is found in the record with the given `ID'
+%% in the storage module identified by `StoreID', `false' otherwise.
+%%
+%% == Examples ==
+%%
+%% Assuming `storage_module_52_unpacked' has been configured and
+%% is synchronized with the network.
+%%
+%% ```
+%% Offset = 52*3_600_000_000_000.
+%% ID = ar_data_sync.
+%% StoreID = "storage_module_52_unpacked"
+%% ar_sync_record:is_recorded(Offset, ID, StoreID).
+%% % {true,unpacked}
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec is_recorded(Offset, ID, StoreID) -> Return when
+	Offset :: pos_integer(),
+	ID :: ar_chunk_storage
+	    | ar_data_sync
+	    | invalid_chunk
+	    | atom(),
+	StoreID :: string(),
+	Return :: {true, Type}
+	        | false,
+	Type :: unpacked
+	      | {composite, binary(), integer()}
+	      | term().
+
 is_recorded(Offset, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, StoreID}) of
 		[] ->
@@ -187,9 +223,41 @@ is_recorded(Offset, ID, StoreID) ->
 			end
 	end.
 
-%% @doc Return true if a chunk containing the given Offset and Type
-%% is found in the record in the storage module identified by StoreID,
-%% false otherwise.
+%%--------------------------------------------------------------------
+%% @doc Return `true' if a chunk containing the given `Offset' and
+%% `Type' is found in the record in the storage module identified by
+%% `StoreID', `false' otherwise.
+%%
+%% == Examples ==
+%%
+%% Assuming `storage_module_52_unpacked' has been configured.
+%%
+%% ```
+%% Offset = 52*3_600_000_000_000.
+%% Type = unpacked.
+%% ID = ar_data_sync.
+%% StoreID = "storage_module_52_unpacked".
+%% ar_sync_record:is_recorded(Offset, Type, ID, StoreID).
+%% % true
+%%
+%% ar_sync_record:is_recorded(0, Type, ID, StoreID).
+%% % false
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec is_recorded(Offset, Type, ID, StoreID) -> Return when
+	Offset :: pos_integer(),
+	Type :: unpacked
+	      | atom()
+	      | {composite, binary(), integer()},
+	ID :: ar_data_sync
+	    | ar_chunk_storage
+	    | invalid_chunks
+	    | atom(),
+	StoreID :: string(),
+	Return :: boolean().
+
 is_recorded(Offset, Type, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, Type, StoreID}) of
 		[] ->

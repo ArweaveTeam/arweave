@@ -190,7 +190,7 @@ handle(<<"GET">>, [<<"recent">>], Req, _Pid) ->
 		true ->
 			{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req}
 	end;
-	
+
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
 	case ar_util:safe_decode(EncodedTXID) of
 		{error, invalid} ->
@@ -2007,6 +2007,15 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{Packing, ok};
+							{true, _StoreID} ->
+								{ok, Config} = application:get_env(arweave, config),
+								case lists:member(pack_served_chunks, Config#config.enable) of
+									false ->
+										{none, {reply, {404, #{}, <<>>, Req}}};
+									true ->
+										ok = ar_semaphore:acquire(get_and_pack_chunk,
+												infinity),
+								{RequestedPacking, ok};
 							{{true, _}, _StoreID} ->
 								{ok, Config} = application:get_env(arweave, config),
 								case lists:member(pack_served_chunks, Config#config.enable) of
