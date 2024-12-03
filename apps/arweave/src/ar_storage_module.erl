@@ -161,7 +161,7 @@ get_range(ID, [Module | Modules]) ->
 	{non_neg_integer(), non_neg_integer()}.
 module_range(Module) ->
 	module_range(Module, ?OVERLAP).
-module_range(Module, Overlap) ->	
+module_range(Module, Overlap) ->
 	{BucketSize, Bucket, _Packing} = Module,
 	{BucketSize * Bucket, (Bucket + 1) * BucketSize + Overlap}.
 
@@ -193,29 +193,139 @@ get_size(ID, [Module | Modules]) ->
 			get_size(ID, Modules)
 	end.
 
-%% @doc Return a configured storage module covering the given Offset, preferably
-%% with the given Packing. Return not_found if none is found.
+%%--------------------------------------------------------------------
+%% @doc Return a configured storage module covering the given Offset,
+%% preferably with the given Packing. Return `not_found' if none is
+%% found.
+%%
+%% == Examples ==
+%%
+%% ```
+%% ar_storage_module:get(51*3600000000001, unpacked).
+%% % {3600000000000,51,unpacked}
+%%
+%% ar_storage_module:get(11, unpacked).
+%% % not_found
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec get(Offset, Packing) -> Return when
+	Offset :: pos_integer(),
+	Packing :: atom(),
+	Return :: {BucketSize, Bucket, Packing}
+	        | not_found,
+	BucketSize :: pos_integer(),
+	Bucket :: pos_integer(),
+	Packing :: atom().
+
 get(Offset, Packing) ->
 	{ok, Config} = application:get_env(arweave, config),
 	get(Offset, Packing, Config#config.storage_modules, not_found).
 
-%% @doc Return the list of all configured storage modules covering the given Offset.
+%%--------------------------------------------------------------------
+%% @doc Return the list of all configured storage modules covering the
+%% given Offset. This offset is defined by the size of the storage
+%% module (in bytes) and its bucket id (e.g. 51).
+%%
+%% @see get_all/2
+%%
+%% == Examples ==
+%%
+%% We assume the application is configured with storage module `51'
+%% and `52'. This value can be found in `#config{}' record
+%%
+%% ```
+%% StorageModuleId = 52.
+%% OffsetInBytes = 3600000000000.
+%% Offset = StorageModuleId * OffsetInBytes.
+%% ar_storage_module:get_all(Offset).
+%% % [{3600000000000,51,unpacked}]
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec get_all(Offset) -> Return when
+	Offset :: pos_integer(),
+	Return :: [{BucketSize, Bucket, Packing}],
+	BucketSize :: pos_integer(),
+	Bucket :: pos_integer(),
+	Packing :: atom().
+
 get_all(Offset) ->
 	{ok, Config} = application:get_env(arweave, config),
 	get_all(Offset, Config#config.storage_modules, []).
 
-%% @doc Return the list of configured storage modules whose ranges intersect
-%% the given interval.
+%%--------------------------------------------------------------------
+%% @doc Return the list of configured storage modules whose ranges
+%% intersect the given interval.
+%%
+%% @see get_all/1
+%%
+%% == Examples ==
+%%
+%% ```
+%% StartOffset = 51*3600000000001.
+%% EndOffset = 53*3600000000000.
+%% ar_storage_module:get_all(StartOffset, EndOffset).
+%% % [{3600000000000,52,unpacked},{3600000000000,51,unpacked}]
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec get_all(StartOffset, EndOffset) -> Return when
+	StartOffset :: EndOffset,
+	EndOffset :: pos_integer(),
+	Return :: [{BucketSize, Bucket, Packing}],
+	BucketSize :: pos_integer(),
+	Bucket :: pos_integer(),
+	Packing :: atom().
+
 get_all(Start, End) ->
 	{ok, Config} = application:get_env(arweave, config),
 	get_all(Start, End, Config#config.storage_modules, []).
 
-%% @doc Return true if the given Offset belongs to at least one storage module.
+%%--------------------------------------------------------------------
+%% @doc Return true if the given Offset belongs to at least one
+%% storage module.
+%%
+%% == Examples ==
+%%
+%% ```
+%% ar_storage_module:has_any(51*3600000000001).
+%% % true
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec has_any(Offset) -> Return when
+	Offset :: pos_integer(),
+	Return :: boolean().
+
 has_any(Offset) ->
 	{ok, Config} = application:get_env(arweave, config),
 	has_any(Offset, Config#config.storage_modules).
 
-%% @doc Return true if the given range is covered by the configured storage modules.
+%%--------------------------------------------------------------------
+%% @doc Return true if the given range is covered by the configured
+%% storage modules.
+%%
+%% == Examples ==
+%%
+%% ```
+%% StartOffset = 51*3600000000001.
+%% EndOffset = 52*360000000000.
+%% ar_storage_module:has_any(StartOffset, EndOffset).
+%% % true
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec has_range(StartOffset, EndOffset) -> Return when
+	StartOffset :: EndOffset,
+	EndOffset :: pos_integer(),
+	Return :: boolean().
+
 has_range(Start, End) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case ets:lookup(?MODULE, unique_sorted_intervals) of
@@ -227,9 +337,13 @@ has_range(Start, End) ->
 			has_range(Start, End, Intervals)
 	end.
 
-%% @doc Return the list of at least one {Start, End, StoreID} covering the given range
-%% or not_found. The given StoreID (may be none) has a higher chance to be picked in case
-%% there are several storage modules covering the same range.
+%%--------------------------------------------------------------------
+%% @doc Return the list of at least one {Start, End, StoreID} covering
+%% the given range or not_found. The given StoreID (may be none) has a
+%% higher chance to be picked in case there are several storage
+%% modules covering the same range.
+%%
+%% ```
 %%
 %%                            0     6     10    14      20          30
 %%                            |--- sm_1 ---|--- sm_2 ---|--- sm_3 ---|
@@ -244,6 +358,10 @@ has_range(Start, End) ->
 %% 2. returns [{7, 10, sm1}, {10, 13, sm_2}]
 %% 3. returns [{7, 10, sm1}, {10, 20, sm_2}, {20, 25, sm_3}]
 %% 4. returns [{7, 10, sm1}, {10, 20, sm_4}, {20, 25, sm_3}]
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
 get_cover(Start, End, MaybeStoreID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	SortedStorageModules = sort_storage_modules_by_left_bound(
