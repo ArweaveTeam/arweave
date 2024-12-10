@@ -11,22 +11,46 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
+
       - name: Build arweave test sources
+        run: ./ar-rebar3 test compile
+
+      # some artifacts are compiled and only available
+      # in arweave directy (libraries)
+      - name: Prepare artifacts
         run: |
-          rm -rf _build || true
-          ./ar-rebar3 test compile
           chmod -R u+w ./_build
-          tar --dereference -czf /tmp/arweave_build_${{ github.run_id }}.tar.gz _build
+          tar cvfp _build.tar ./_build
+          tar cvfp apps.tar ./apps
+
+      # to avoid reusing artifacts from someone else
+      # and generating issues, an unique artifact is
+      # produced using github checksum.
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+          path: |
+            _build.tar
+            apps.tar
 
   eunit-tests:
     needs: build
     runs-on: self-hosted
     strategy:
       fail-fast: true
-      max-parallel: 12
+
+      # 8 parallel jobs seem to be a correct value. 12
+      # jobs were used previously, but it was requiring
+      # too much CPU and RAM (in particular if more than
+      # one developer is used the pipelines).
+      max-parallel: 8
       matrix:
         core_test_mod: [
-            ## Long-running tests. Put these first to limit the overall runtime of the 
+            ## Long-running tests. Put these first to limit the overall runtime of the
             ## test suite
             ar_coordinated_mining_tests,
             ar_data_sync_tests,
@@ -105,13 +129,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
-      - name: Extract build artifact
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+
+      # Both artifacts (_build and apps dir) are
+      # required.
+      - name: Extract artifact
         run: |
-          if [ ! -d "_build_${{ github.run_id }}" ]; then
-            rm -rf _build || true
-            tar -xzf /tmp/arweave_build_${{ github.run_id }}.tar.gz
-            mv ./_build ./_build_${{ github.run_id }}
-          fi
+          tar xvfp _build.tar
+          tar xvfp apps.tar
+
       - name: Restart epmd
         run: |
           if ! pgrep -x "epmd" > /dev/null
@@ -119,16 +149,19 @@ jobs:
             echo "Starting epmd"
             epmd -relaxed_command_check -daemon
           fi
+
       - name: ${{ matrix.core_test_mod }}.erl
         id: tests
         run: |
-          rm -f *.out || true
           EXIT_CODE=0
-          export PATH=$(pwd)/_build_${{ github.run_id }}/erts/bin:$PATH
+          export PATH=$(pwd)/_build/erts/bin:$PATH
           export ERL_EPMD_ADDRESS=127.0.0.1
           export TIMESTAMP_IN_MILLISECONDS=$(date +%s%3N)
           export NAMESPACE="${{ matrix.core_test_mod }}_${TIMESTAMP_IN_MILLISECONDS}"
-          export ERL_TEST_OPTS="-pa $(echo $(pwd)/_build_${{ github.run_id }}/test/lib/*/ebin) $(pwd)/_build_${{ github.run_id }}/test/lib/arweave/test -config $(pwd)/config/sys.config"
+          export ERL_PATH_ADD="$(echo $(pwd)/_build/test/lib/*/ebin)"
+          export ERL_PATH_TEST="$(pwd)/_build/test/lib/arweave/test"
+          export ERL_PATH_CONF="$(pwd)/config/sys.config"
+          export ERL_TEST_OPTS="-pa ${ERL_PATH_ADD} ${ERL_PATH_TEST} -config ${ERL_PATH_CONF}"
           RETRYABLE=1
           while [[ $RETRYABLE -eq 1 ]]; do
             RETRYABLE=0
@@ -191,20 +224,3 @@ jobs:
           done
           echo "exit_code=$EXIT_CODE" >> $GITHUB_ENV # Set the exit_code output variable using Environment Files
           exit $EXIT_CODE # exit with the exit code of the tests
-      - name: Cleanup successful test
-        if: steps.tests.outputs.exit_code == '0' # Conditional based on the output variable
-        run: rm -rf logs *.out .tmp
-
-  cleanup:
-    needs: eunit-tests
-    runs-on: self-hosted
-    if: ${{ success() && needs.eunit-tests.result == 'success' }}
-    steps:
-      - name: Cleanup build directories
-        run: |
-          rm -rf /tmp/arweave_build_${{ github.run_id }}.tar.gz
-          find /home/runner -type d -name "_build_${{ github.run_id }}" -exec rm -rf {} +
-      - name: Cleanup old build artifacts
-        run: |
-          find /tmp -maxdepth 1 -name "arweave_build_*" -type f -mtime +7 -exec rm -f {} +
-          find /home/runner -name "_build_*" -type d -mtime +7 -exec rm -rf {} +
