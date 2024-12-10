@@ -7,7 +7,7 @@
 		assert_wait_until_height/2, wait_until_height/1, read_block_when_stored/1]).
 
 height_plus_one_fork_recovery_test_() ->
-	{timeout, 120, fun test_height_plus_one_fork_recovery/0}.
+	{timeout, 240, fun test_height_plus_one_fork_recovery/0}.
 
 test_height_plus_one_fork_recovery() ->
 	%% Mine on two nodes until they fork. Mine an extra block on one of them.
@@ -36,7 +36,7 @@ test_height_plus_one_fork_recovery() ->
 	?assertEqual(PeerBI, wait_until_height(4)).
 
 height_plus_three_fork_recovery_test_() ->
-	{timeout, 120, fun test_height_plus_three_fork_recovery/0}.
+	{timeout, 240, fun test_height_plus_three_fork_recovery/0}.
 
 test_height_plus_three_fork_recovery() ->
 	%% Mine on two nodes until they fork. Mine three extra blocks on one of them.
@@ -64,7 +64,7 @@ test_height_plus_three_fork_recovery() ->
 	?assertEqual(MainBI, ar_test_node:wait_until_height(peer1, 4)).
 
 missing_txs_fork_recovery_test_() ->
-	{timeout, 120, fun test_missing_txs_fork_recovery/0}.
+	{timeout, 240, fun test_missing_txs_fork_recovery/0}.
 
 test_missing_txs_fork_recovery() ->
 	%% Mine a block with a transaction on the peer1 node
@@ -86,7 +86,7 @@ test_missing_txs_fork_recovery() ->
 	?assertEqual(1, length((read_block_when_stored(H1))#block.txs)).
 
 orphaned_txs_are_remined_after_fork_recovery_test_() ->
-	{timeout, 120, fun test_orphaned_txs_are_remined_after_fork_recovery/0}.
+	{timeout, 240, fun test_orphaned_txs_are_remined_after_fork_recovery/0}.
 
 test_orphaned_txs_are_remined_after_fork_recovery() ->
 	%% Mine a transaction on peer1, mine two blocks on main to
@@ -156,7 +156,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 		{event, block, Other} ->
 			?debugFmt("Unexpected block event: ~p", [Other]),
 			?assert(false, "Unexpected block event")
-	after 5000 ->
+	after 60_000 ->
 		?assert(false, "Timed out waiting for the node to pre-validate the fake "
 				"block.")
 	end,

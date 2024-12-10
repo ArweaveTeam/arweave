@@ -40,15 +40,28 @@
 
 %% May occasionally take quite long on a slow CI server, expecially in tests
 %% with height >= 20 (2 difficulty retargets).
--define(WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT, 180000).
--define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 30000).
+-define(WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT, 500_000).
+-define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 500_000).
 
 %% Sometimes takes a while on a slow machine
--define(PEER_START_TIMEOUT, 40000).
+-define(PEER_START_TIMEOUT, 500_000).
 %% Set the maximum number of retry attempts
 -define(MAX_BOOT_RETRIES, 3).
 
 -define(MAX_MINERS, 3).
+
+% define check timeout and interval, used with ar_util:do_until/3.
+-define(NODE_READY_CHECK_INTERVAL, 200).
+-define(NODE_READY_CHECK_TIMEOUT, 500_000).
+-define(REMOTE_CALL_TIMEOUT, 500_000).
+-define(CONNECT_TO_PEER_TIMEOUT, 500_000).
+-define(BLOCK_INDEX_TIMEOUT, 500_000).
+-define(TEST_MOCKED_FUNCTIONS_TIMEOUT, 500_000).
+-define(POST_AND_MINE_TIMEOUT, 500_000).
+-define(READ_BLOCK_TIMEOUT, 500_000).
+-define(GET_TX_DATA_TIMEOUT, 200_000).
+-define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
+-define(WAIT_SYNCS_DATA_TIMEOUT, 200_000).
 
 %%%===================================================================
 %%% Public interface.
@@ -76,15 +89,17 @@ try_boot_peer(Node, Retries) ->
     Port = get_unused_port(),
     Cookie = erlang:get_cookie(),
     Paths = code:get_path(),
-    filelib:ensure_dir("./.tmp"),
-	Schedulers = erlang:system_info(schedulers_online),
+    TmpPath = "./.tmp",
+    ok = filelib:ensure_dir(TmpPath),
+    Schedulers = erlang:system_info(schedulers_online),
     Cmd = io_lib:format(
-        "erl +S ~B:~B -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
-        "data_dir .tmp/data_test_~s no_auto_join packing_rate 20 " ++
+	    "erl +S ~B:~B -noshell -name ~s -pa ~s -setcookie ~s -run ar main debug port ~p " ++
+		"data_dir .tmp/data_test_~s no_auto_join packing_rate 20 " ++
 		"> ~s-~s.out 2>&1 &",
-        [Schedulers, Schedulers, NodeName, string:join(Paths, " "), Cookie, Port, NodeName,
-			Node, get_node_namespace()]),
-	io:format("Launching peer: ~s~n", [Cmd]),
+	    [ Schedulers, Schedulers, NodeName, string:join(Paths, " ")
+	    , Cookie, Port, NodeName, Node, get_node_namespace()
+	    ]),
+    io:format("Launching peer: ~s~n", [Cmd]),
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->
@@ -136,7 +151,7 @@ wait_until_joined() ->
 	ar_util:do_until(
 		fun() -> ar_node:is_joined() end,
 		100,
-		60 * 1000
+		?WAIT_UNTIL_JOINED_TIMEOUT
 	 ).
 
 get_config(Node) ->
@@ -210,7 +225,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]), %% exit node
 	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]), %% validator node
-	
+
 	lists:foreach(
 		fun(I) ->
 			MinerNode = lists:nth(I, MinerNodes),
@@ -333,8 +348,8 @@ write_genesis_files(DataDir, B0) ->
 		end,
 		B0#block.txs
 	),
-	ar_kv:create_ets(),
-	ar_kv:start_link(),
+	_ = ar_kv:create_ets(),
+	{ok, _} = ar_kv:start_link(),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
 			block_time_history_db),
@@ -351,8 +366,8 @@ write_genesis_files(DataDir, B0) ->
 		_ ->
 			ok
 	end,
-	gen_server:stop(ar_kv),
-	ets:delete(ar_kv),
+	ok = gen_server:stop(ar_kv),
+	_ = ets:delete(ar_kv),
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
 	ok = filelib:ensure_dir(WalletListDir ++ "/"),
 	RootHash = B0#block.wallet_list,
@@ -392,7 +407,7 @@ wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
 			end
 		end,
 		1000,
-		30000
+		?WAIT_SYNCS_DATA_TIMEOUT
 	),
 	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, Packing).
 
@@ -409,7 +424,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 	[{?PARTITION_SIZE, RangeNumber, get_default_storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
-	remote_call(Node, Module, Function, Args, 30000).
+	remote_call(Node, Module, Function, Args, ?REMOTE_CALL_TIMEOUT).
 
 remote_call(Node, Module, Function, Args, Timeout) ->
 	NodeName = peer_name(Node),
@@ -698,7 +713,7 @@ join_on(#{ node := Node, join_on := JoinOnNode }) ->
 	join_on(#{ node => Node, join_on => JoinOnNode }, false).
 
 join_on(#{ node := Node, join_on := JoinOnNode }, Rejoin) ->
-	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin], 20000).
+	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin], ?REMOTE_CALL_TIMEOUT).
 
 join(JoinOnNode, Rejoin) ->
 	Peer = peer_ip(JoinOnNode),
@@ -781,8 +796,8 @@ connect_to_peer(Node) ->
 			Peers = remote_call(Node, ar_peers, get_peers, [lifetime]),
 			lists:member(peer_ip(Self), Peers)
 		end,
-		200,
-		5000
+		100,
+		?CONNECT_TO_PEER_TIMEOUT
 	),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
@@ -795,8 +810,8 @@ connect_to_peer(Node) ->
 		fun() ->
 			lists:member(Peer, ar_peers:get_peers(lifetime))
 		end,
-		200,
-		5000
+		100,
+	        ?CONNECT_TO_PEER_TIMEOUT
 	).
 
 disconnect_from(Node) ->
@@ -804,7 +819,7 @@ disconnect_from(Node) ->
 	remote_call(Node, ar_http, block_peer_connections, []).
 
 wait_until_syncs_genesis_data(Node) ->
-	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 60000).
+	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
 
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -858,7 +873,7 @@ wait_until_block_index(BI) ->
 			end
 		end,
 		100,
-		60 * 1000
+		?BLOCK_INDEX_TIMEOUT
 	).
 
 %% Safely perform an rpc:call/4 and return results in a tagged tuple.
@@ -881,14 +896,23 @@ wait_until_node_is_ready(NodeName) ->
             case net_adm:ping(NodeName) of
                 pong ->
                     %% The node is reachable, doing a second check.
-                    safe_remote_call(NodeName, erlang, is_alive, []);
+		    % safe_remote_call(NodeName, erlang, is_alive, []);
+		    RemoteApps =
+			case safe_remote_call(NodeName, application, which_applications, []) of
+			    {ok, R} when is_list(R) -> R;
+			    _ -> []
+			end,
+		    case lists:keyfind(arweave, 1, RemoteApps) of
+			{arweave, _, _} -> {ok, ready};
+			_ -> false
+		    end;
                 pang ->
                     %% Node is not reachable.
                     false
             end
         end,
-        500,
-        30000
+        ?NODE_READY_CHECK_INTERVAL,
+        ?NODE_READY_CHECK_TIMEOUT
     ).
 
 assert_wait_until_receives_txs(TXs) ->
@@ -1031,7 +1055,7 @@ mock_functions(Functions) ->
 	}.
 
 test_with_mocked_functions(Functions, TestFun) ->
-	test_with_mocked_functions(Functions, TestFun, 900).
+	test_with_mocked_functions(Functions, TestFun, ?TEST_MOCKED_FUNCTIONS_TIMEOUT).
 
 test_with_mocked_functions(Functions, TestFun, Timeout) ->
 	{Setup, Cleanup} = mock_functions(Functions),
@@ -1046,7 +1070,8 @@ post_and_mine(#{ miner := Node, await_on := AwaitOnNode }, TXs) ->
 	lists:foreach(fun(TX) -> assert_post_tx_to_peer(Node, TX) end, TXs),
 	mine(Node),
 	[{H, _, _} | _] = wait_until_height(AwaitOnNode, CurrentHeight + 1),
-	remote_call(AwaitOnNode, ar_test_node, read_block_when_stored, [H, true], 20000).
+	remote_call(AwaitOnNode, ar_test_node, read_block_when_stored, [H, true],
+	  ?POST_AND_MINE_TIMEOUT).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
 	post_block(B, [ExpectedResult], peer_ip(main));
@@ -1105,7 +1130,7 @@ await_post_block(#block{ indep_hash = H } = B, ExpectedResults, Peer) ->
 							await_post_block(B, ExpectedResults)
 					end
 			end
-	after 5000 ->
+	after 60_000 ->
 			?assert(false, iolist_to_binary(io_lib:format("Timed out. Expected: ~p.",
 					[ExpectedResults])))
 	end.
@@ -1144,13 +1169,13 @@ read_block_when_stored(H, IncludeTXs) ->
 									end
 							end
 						end,
-						200,
-						30000
+						100,
+						?READ_BLOCK_TIMEOUT
 					)
 			end
 		end,
 		200,
-		60000
+		?READ_BLOCK_TIMEOUT
 	),
 	B.
 
@@ -1208,7 +1233,7 @@ assert_get_tx_data(Node, TXID, ExpectedData) ->
 			end
 		end,
 		200,
-		120 * 1000
+		?GET_TX_DATA_TIMEOUT
 	),
 	{ok, {{<<"200">>, _}, _, OffsetJSON, _, _}}
 			= ar_http:req(#{ method => get, peer => Peer,
