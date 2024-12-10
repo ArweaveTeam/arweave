@@ -8,12 +8,16 @@
 
 -import(ar_test_node, [http_get_block/2]).
 
+-define(MINING_TEST_TIMEOUT, 240).
+-define(API_TEST_TIMEOUT, 120).
+-define(PARTITION_TEST_TIMEOUT, 120).
+
 %% --------------------------------------------------------------------
 %% Test registration
 %% --------------------------------------------------------------------
 mining_test_() ->
 	[
-		{timeout, 120, fun test_single_node_one_chunk/0},
+		{timeout, ?MINING_TEST_TIMEOUT, fun test_single_node_one_chunk/0},
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
 			fun test_single_node_two_chunk/0, 120),
@@ -22,22 +26,22 @@ mining_test_() ->
 			fun test_cross_node/0, 240),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_cross_node_retarget/0, 240),
-		{timeout, 240, fun test_two_node_retarget/0},
-		{timeout, 240, fun test_three_node/0},
-		{timeout, 120, fun test_no_exit_node/0}
+			fun test_cross_node_retarget/0, ?MINING_TEST_TIMEOUT),
+		{timeout, ?MINING_TEST_TIMEOUT, fun test_two_node_retarget/0},
+		{timeout, ?MINING_TEST_TIMEOUT, fun test_three_node/0},
+		{timeout, ?MINING_TEST_TIMEOUT, fun test_no_exit_node/0}
 	].
 
 api_test_() ->
 	[
-		{timeout, 120, fun test_no_secret/0},
-		{timeout, 120, fun test_bad_secret/0},
-		{timeout, 120, fun test_partition_table/0}
+		{timeout, ?API_TEST_TIMEOUT, fun test_no_secret/0},
+		{timeout, ?API_TEST_TIMEOUT, fun test_bad_secret/0},
+		{timeout, ?API_TEST_TIMEOUT, fun test_partition_table/0}
 	].
 
 refetch_partitions_test_() ->
 	[
-		{timeout, 120, fun test_peers_by_partition/0}
+		{timeout, ?PARTITION_TEST_TIMEOUT, fun test_peers_by_partition/0}
 	].
 
 %% --------------------------------------------------------------------

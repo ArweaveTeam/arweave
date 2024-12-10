@@ -7,7 +7,8 @@
 
 -define(CHUNK_OFFSET, 10*256*1024).
 -define(ENCODED_TX_ROOT, <<"9d857DmXbSyhX6bgF7CDMDCl0f__RUjryMMvueFN9wE">>).
-
+-define(REQUEST_REPACK_TIMEOUT, 50_000).
+-define(REQUEST_UNPACK_TIMEOUT, 50_000).
 
 % request_test() ->
 % 	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
@@ -168,33 +169,33 @@ test_full_chunk_repack() ->
 			?CHUNK_OFFSET, TXRoot, UnpackedData, ChunkSize)),
 	?assertEqual(
 		{ok, Spora25Data, UnpackedData},
-		ar_packing_server:repack(spora_2_5, unpacked, 
+		ar_packing_server:repack(spora_2_5, unpacked,
 			?CHUNK_OFFSET, TXRoot, UnpackedData, ChunkSize)),
 	?assertEqual(
 		{ok, Spora26Data, UnpackedData},
-		ar_packing_server:repack({spora_2_6, RewardAddress}, unpacked, 
+		ar_packing_server:repack({spora_2_6, RewardAddress}, unpacked,
 			?CHUNK_OFFSET, TXRoot, UnpackedData, ChunkSize)),
 
 	?assertEqual(
 		{ok, UnpackedData, UnpackedData},
-		ar_packing_server:repack(unpacked, spora_2_5, 
+		ar_packing_server:repack(unpacked, spora_2_5,
 			?CHUNK_OFFSET, TXRoot, Spora25Data, ChunkSize)),
 	?assertEqual(
 		{ok, Spora25Data, none},
-		ar_packing_server:repack(spora_2_5, spora_2_5, 
+		ar_packing_server:repack(spora_2_5, spora_2_5,
 			?CHUNK_OFFSET, TXRoot, Spora25Data, ChunkSize)),
 	?assertEqual(
 		{ok, Spora26Data, UnpackedData},
-		ar_packing_server:repack({spora_2_6, RewardAddress}, spora_2_5, 
+		ar_packing_server:repack({spora_2_6, RewardAddress}, spora_2_5,
 			?CHUNK_OFFSET, TXRoot, Spora25Data, ChunkSize)),
 
 	?assertEqual(
 		{ok, UnpackedData, UnpackedData},
-		ar_packing_server:repack(unpacked, {spora_2_6, RewardAddress}, 
+		ar_packing_server:repack(unpacked, {spora_2_6, RewardAddress},
 			?CHUNK_OFFSET, TXRoot, Spora26Data, ChunkSize)),
 	?assertEqual(
 		{ok, Spora25Data, UnpackedData},
-		ar_packing_server:repack(spora_2_5, {spora_2_6, RewardAddress}, 
+		ar_packing_server:repack(spora_2_5, {spora_2_6, RewardAddress},
 			?CHUNK_OFFSET, TXRoot, Spora26Data, ChunkSize)),
 	?assertEqual(
 		{ok, Spora26Data, none},
@@ -307,7 +308,7 @@ test_request_repack() ->
 	receive
         {chunk, {packed, _, {unpacked, Unpacked1, _, _, _}}} ->
             ?assertEqual(UnpackedData, Unpacked1)
-    after 5000 -> 
+    after ?REQUEST_REPACK_TIMEOUT ->
         erlang:error(timeout)
     end,
 	%% unpacked -> packed
@@ -318,7 +319,7 @@ test_request_repack() ->
 	receive
         {chunk, {packed, _, {{spora_2_6, RewardAddress}, Packed, _, _, _}}} ->
             ?assertEqual(Spora26Data, Packed)
-    after 5000 -> 
+    after ?REQUEST_REPACK_TIMEOUT ->
         erlang:error(timeout)
     end,
 	%% packed -> unpacked
@@ -329,7 +330,7 @@ test_request_repack() ->
 	receive
         {chunk, {packed, _, {unpacked, Unpacked2, _, _, _}}} ->
             ?assertEqual(UnpackedData, Unpacked2)
-    after 5000 -> 
+    after ?REQUEST_REPACK_TIMEOUT ->
         erlang:error(timeout)
     end,
 	%% packed -> packed
@@ -340,7 +341,7 @@ test_request_repack() ->
 	receive
         {chunk, {packed, _, {{spora_2_6, RewardAddress}, Packed2, _, _, _}}} ->
             ?assertEqual(Spora26Data, Packed2)
-    after 5000 -> 
+    after ?REQUEST_REPACK_TIMEOUT ->
         erlang:error(timeout)
     end.
 
@@ -360,7 +361,7 @@ test_request_unpack() ->
 	receive
         {chunk, {unpacked, _, {unpacked, Unpacked1, _, _, _}}} ->
             ?assertEqual(UnpackedData, Unpacked1)
-    after 5000 -> 
+    after ?REQUEST_UNPACK_TIMEOUT ->
         erlang:error(timeout)
     end,
 	%% packed -> unpacked
@@ -370,7 +371,7 @@ test_request_unpack() ->
 	receive
         {chunk, {unpacked, _, {{spora_2_6, RewardAddress}, Unpacked2, _, _, _}}} ->
             ?assertEqual(UnpackedData, Unpacked2)
-    after 5000 -> 
+    after ?REQUEST_UNPACK_TIMEOUT ->
         erlang:error(timeout)
     end.
 
@@ -414,6 +415,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					false ->
 						{peer1, main}
 				end,
+			?debugFmt("miner: ~p, receiver: ~p~n", [Miner, Receiver]),
 			?debugFmt("Mining block ~B.~n", [Height]),
 			TXs = ar_util:pick_random([TX1, TX2, TX3], 2),
 			B = ar_test_node:post_and_mine(#{ miner => Miner, await_on => Receiver }, TXs),

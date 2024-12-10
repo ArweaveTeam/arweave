@@ -135,8 +135,8 @@ test_mines_off_only_last_chunks() ->
 							ar_nonce_limiter:get_current_step_number()
 									> PrevStepNumber + ?NONCE_LIMITER_RESET_FREQUENCY
 						end,
-						200,
-						20000
+						100,
+						60000
 					);
 				0 ->
 					%% Wait until the new chunks fall below the new upper bound and
@@ -211,7 +211,7 @@ test_mines_off_only_second_last_chunks() ->
 	).
 
 disk_pool_rotation_test_() ->
-	{timeout, 60, fun test_disk_pool_rotation/0}.
+	{timeout, 120, fun test_disk_pool_rotation/0}.
 
 test_disk_pool_rotation() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),

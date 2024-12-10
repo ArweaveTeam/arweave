@@ -860,7 +860,8 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	timer:sleep(200),
 	ar_test_node:mine(),
 	wait_until_height(LocalHeight + 2),
-	{ok, {_, _, GetTXBody, _, _}} =
+	timer:sleep(200),
+	{ok, {{<<"200">>, <<"OK">>}, _, GetTXBody, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => ar_test_node:peer_ip(main),
