@@ -8,10 +8,20 @@ cd "$SCRIPT_DIR/.."
 
 export ERL_EPMD_ADDRESS=127.0.0.1
 
+if [[ $# -gt 0 ]]; then
+	MODULES=$@
+else
+	SRC_MODULES=$(ls $SCRIPT_DIR/../apps/arweave/src | sed -n 's/.erl$//p' | sort)
+	TEST_MODULE_BASENAMES=$(ls $SCRIPT_DIR/../apps/arweave/test | sed -n 's/_tests.erl$//p' | sort)
+	NON_SRC_TEST_MODULE_BASENAMES=$(comm -13 <(printf "%s\n" $SRC_MODULES) <(printf "%s\n" $TEST_MODULE_BASENAMES))
+	NON_SRC_TEST_MODULES=$(echo $NON_SRC_TEST_MODULE_BASENAMES | xargs -I{} echo '{}_tests')
+	MODULES="$SRC_MODULES $NON_SRC_TEST_MODULES"
+fi
+
 ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/arweave/test -config config/sys.config"
 echo -e "\033[0;32m===> Running tests...\033[0m"
 
 set -x
 set -o pipefail
-stdbuf -oL -eL erl $ERL_TEST_OPTS -noshell -name main-localtest@127.0.0.1 -setcookie test -run ar tests ${@:1} -s init stop 2>&1 | tee main-localtest.out
+stdbuf -oL -eL erl $ERL_TEST_OPTS -noshell -name main-localtest@127.0.0.1 -setcookie test -run ar tests $MODULES -s init stop 2>&1 | tee main-localtest.out
 set +x
