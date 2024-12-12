@@ -26,5 +26,6 @@ CMD set -x && \
     git fetch --all && \
     git pull --force && \
     git checkout --force $GIT_TAG && \
+    git submodule update && \
     ./rebar3 as prod tar && \
     cp _build/prod/rel/arweave/arweave-*.tar.gz /output/arweave.tar.gz
