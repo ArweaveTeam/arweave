@@ -203,7 +203,7 @@ randomx_decrypt_replica_2_9_sub_chunk({{rxsquared, RandomxState}, Key, SubChunk,
 randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
-	ar_rxsquared_nif:rsp_feistel_decrypt_nif(SubChunk, EntropyPart).
+	{ok, crypto:exor(SubChunk, EntropyPart)}.
 
 %%% DEBUG implementation
 randomx_encrypt_replica_2_9_sub_chunk({{_, {debug_state, _}}, Entropy, SubChunk,
@@ -222,7 +222,7 @@ randomx_encrypt_replica_2_9_sub_chunk({{rxsquared, _RandomxState}, Entropy, SubC
 		EntropySubChunkIndex}) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
-	ar_rxsquared_nif:rsp_feistel_encrypt_nif(SubChunk, EntropyPart).
+	{ok, crypto:exor(SubChunk, EntropyPart)}.
 
 -ifdef(DEBUG).
 encipher_sub_chunk(SubChunk, EntropyPart) ->
@@ -237,8 +237,7 @@ encipher_sub_chunk(SubChunk, EntropyPart) ->
 		EntropyPart :: binary()
 ) -> binary().
 encipher_sub_chunk(SubChunk, EntropyPart) ->
-	{ok, Enciphered} = ar_rxsquared_nif:rsp_feistel_encrypt_nif(SubChunk, EntropyPart),
-	Enciphered.
+	crypto:exor(SubChunk, EntropyPart).
 -endif.
 
 %%%===================================================================
