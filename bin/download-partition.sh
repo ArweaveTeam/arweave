@@ -1,28 +1,91 @@
 #!/bin/bash
 ######################################################################
 # Arweave partition synchronization script. The goal of this script
-# is to offert a simple interface to fetch unpacked storage
-# partitions.
+# is to offert a simple and flexible interface to fetch unpacked
+# arweave storage modules partitions.
 #
-# = File Format (v1)
+# = Usage
 #
-# The first version of the file format, simple an url pointing to
-# a web server serving partition files.
+# Help and usage can be printed using `-h` flag or by simply calling
+# the script without any arguments.
 #
-# ```
-# ${url}
-# ```
+#    Usage: ./bin/download-partition.sh [-cdhlpf] [-b BASE_URL] [-P
+#    PREFIX] [-j JOBS] -i INPUT_FILE -I STORAGE_MODULE_INDEX
+#
+# == Download storage module index
+#
+# A storage module index contains a list of files with their size and
+# checksum, available on a remote server (usually a CDN). This CDN is
+# configured in the base_url variable (displayed in help usage). These
+# indexes are stored on the remote end-point using this naming
+# convention:
+#
+#   storage_module_${index}_unpacked.index
+#
+# Where ${index} is a positive integer corresponding to an arweave
+# storage module. This index can be directly downloaded using -I flag
+# from this script.
+#
+#     ./download-partition.sh -I 0
+#
+# The storage module index format is described in "File Format v2"
+# section
+#
+# == Download storage module only (no checksum)
+#
+#     ./download-partition.sh -i ${index_file}
+#
+# == Download storage module and verify (checksum)
+#
+#     ./download-partition.sh -c -i ${index_file}
+#
+# == Check remote file presence
+#
+# This script check if the remote files are present on the CDN:
+#
+#     ./download-partition.sh -p -i ${index_file}
+#
+# == Check local file presence
+#
+# This script can check if the files are present (without doing
+# any checksum):
+#
+#     ./download-partition.sh -l -i ${index_file}
+#
+# == Debug mode
+#
+# To print more information, a debug mode is available when setting
+# `-d` flag or by configuring the `DEBUG` environment variable.
+#
+# == Extra features
+#
+# A local prefix can be set using `-P` flag.
+#
+# A force mode can be used, to overwrite files even if they have
+# the same size.
+#
+# A custom base url can be defined with `-b` flag.
+#
+# A custom number of jobs/workers can be set using `-j` flag.
+#
+# = FAQ
+#
+# == Where to find index files?
+#
+# Indexes can be found on the CDN, example:
+#
+#  - https://s3.zephyrdev.xyz/arweave-pool/storage_module_0_unpacked.index
+#  - https://s3.zephyrdev.xyz/arweave-pool/storage_module_1_unpacked.index
+#  - https://s3.zephyrdev.xyz/arweave-pool/storage_module_${index}_unpacked.index
 #
 # = File Format v2
 #
-# the second version of the file format includes file size and
+# The second version of the file format includes file size and
 # checksum (md5). ${relative_path} will be concatenated with the
 # base_url parameter from the command line (or the one present by
-# default in the script).
+# default in the script):
 #
-# ```
-# ${relative_path} ${content_length} ${checksum}
-# ```
+#     ${relative_path} ${content_length} ${checksum}
 #
 ######################################################################
 set +e
@@ -32,20 +95,26 @@ BASE_URL="https://s3.zephyrdev.xyz/arweave-pool"
 JOBS="8"
 INPUT_FILE=""
 CHECK=""
+PREFIX="./"
 
 _usage() {
-	printf -- "Usage: %s [-hcf] [-b BASE_URL] [-j JOBS] -i INPUT_FILE\n" "${0}"
+	printf -- "Usage: %s [-cdhlpf] [-b BASE_URL] [-P PREFIX] [-j JOBS] -I STORAGE_INDEX -i INPUT_FILE \n" "${0}"
 }
 
 _usage_full() {
 	_usage
 	printf -- "  -h: print full help\n"
+	printf -- "  -d: debug mode\n"
+	printf -- "  -p: check presence of files on CDN\n"
+	printf -- "  -l: check local presence of files\n"
 	printf -- "  -c: check downloaded data (checksum)\n"
 	printf -- "  -f: force download if file size is the same\n"
 	printf -- "  -b BASE_URL: the base url used to fetch partitions\n"
 	printf -- "               set to '%s' by default\n" "${BASE_URL}"
 	printf -- "  -j JOBS: number of parallel jobs (%s)\n" "${JOBS}"
+	printf -- "  -P PREFIX: prefix for local path (%s)\n" "${PREFIX}"
 	printf -- "  -i INPUT_FILE: file containing partitions list\n"
+	printf -- "  -I INDEX: download the storage index from CDN\n"
 }
 
 _debug() {
@@ -67,7 +136,7 @@ then
 fi
 
 # parse arguments using getopt
-args=$(getopt "hcj:i:b:" $*)
+args=$(getopt "cdhlpj:i:b:P:I:" $*)
 
 # check if getopt correctly parsed arguments
 if [ $? -ne 0 ]
@@ -81,12 +150,17 @@ while [ $# -ne 0 ]
 do
 	case "${1}"
 	in
-		-h) flag_help="yes"; shift;;
 		-c) flag_check="yes"; shift;;
+		-d) DEBUG="yes"; shift;;
+		-l) flag_local="yes"; shift;;
+		-p) flag_presence="yes"; shift;;
+		-h) flag_help="yes"; shift;;
 		-f) flag_force="yes"; shift;;
 		-j) flag_jobs="${2}"; shift; shift;;
 		-i) flag_input="${2}"; shift; shift;;
 		-b) flag_base_url="${2}"; shift; shift;;
+		-P) PREFIX="${2}"; shift; shift;;
+		-I) flag_storage_index="${2}"; shift; shift;;
 		--) shift; break;;
 	esac
 done
@@ -99,7 +173,16 @@ then
 fi
 
 # check input files name
-if test "${flag_input}"
+if (test "${flag_input}" && test ! "${flag_storage_index}") \
+	|| (test "${flag_input}" && test ! "${flag_storage_index}")
+then
+	_error "'-I' or '-i' is required"
+	_usage
+	exit 1
+fi
+
+# check flag input
+if test "${flag_input}" 
 then
 	if test -f "${flag_input}"
 	then
@@ -109,10 +192,19 @@ then
 		_usage
 		exit 1
 	fi
-else
-	_error "input file missing"
-	_usage
-	exit 1
+fi
+
+# check input index name
+if test "${flag_storage_index}"
+then
+	if echo "${flag_storage_index}" | grep -E '^[0-9]+$' 2>&1 >/dev/null
+	then
+		INPUT_INDEX="storage_module_${flag_storage_index}_unpacked.index"
+	else
+		_error "'${flag_storage_index}' is not a number"
+		_usage
+		exit 1
+	fi
 fi
 
 # check jobs value
@@ -159,6 +251,10 @@ test -z "${curl}" && _error "curl not found" && exit 1
 # wget is required
 wget=$(which wget)
 test -z "${wget}" && _error "wget not found" && exit 1
+
+# openssl is required
+openssl=$(which openssl)
+test -z "${openssl}" && _error "openssl not found" && exit 1
 
 # md5sum is required
 if test "${CHECK}"
@@ -216,25 +312,9 @@ _download_with_retry() {
 	if [ ${success} -ne 0 ]
 	then
 		_error "Failed to download $path after 5 attempts."
+		exit 1
 	fi
 	return 1
-}
-
-# first version of the script, it will do a first
-# request to have an idea of the file size and then
-# start the download.
-_download_and_verify_v1() {
-	local url=$1
-	local path=$2
-	_debug "(v1) download from ${url} to ${path}"
-
-  	# Fetch the expected file size from the Content-Length HTTP header
-  	local expected_size=$(curl -sI "$url" \
-		| grep -i Content-Length \
-		| awk '{print $2}' \
-		| tr -d '\r')
-
-	_download_with_retry "${url}" "${path}" "${expected_size}"
 }
 
 # wrapper around test to check file size.
@@ -283,9 +363,10 @@ _check_md5() {
 # it also includes a way to check the size and the
 # checksum without asking the server, but by using
 # the data present in the partition list file.
-_download_and_verify_v2() {
+_download_and_verify() {
 	local base_url="${1}"
-	local path="${2}"
+	# set the prefix with the path
+	local path="${PREFIX}${2}"
 	local content_length="${3}"
 	local checksum="${4}"
 	local full_url="${base_url}/${path}"
@@ -362,6 +443,107 @@ _check_v2_line() {
 		> /dev/null
 }
 
+# check if a file is locally present
+_local() {
+	local base_url=${1}
+	local relative_path=${PREFIX}${2}
+	local length=${3}
+	local checksum=${4}
+	if test -e "${relative_path}"
+	then
+		_debug "${relative_path}: ok"
+		return 0
+	else
+		_error "missing ${relative_path}"
+		return 1
+	fi
+}
+
+# convert base64 input to hexadecimal,
+# mainly used to convert md5 base64 checksum
+_base64_to_hex() {
+	openssl base64 -d | xxd -ps
+}
+
+# check if a file a present remotely, and compare
+# it with the values from the index files
+_presence() {
+	local base_url="${1}"
+	local relative_path="${2}"
+	local length=${3}
+	local checksum="${4}"
+	local target="${base_url}/${relative_path}"
+
+	set -o pipefail
+	curl -sfI "${target}" | {
+		while read line
+		do
+			# sanitize line, it seems curl adds special
+			# chars at the end of each line.
+			line=$(echo $line | sed 's![^[:print:]\t]!!g')
+
+			if printf "${line}" | grep "^content-length" 2>&1 >/dev/null
+			then
+				remote_length=$(printf "${line}" \
+					| awk '{ print $NF }')
+			fi
+
+			if printf "${line}" | grep "^x-amz-meta-md5chksum" 2>&1 >/dev/null
+			then
+				remote_checksum=$(printf "${line}" \
+					| awk '{ print $NF }' \
+					| _base64_to_hex)
+			fi
+		done	
+
+		let l=${length}
+		let rl=${remote_length}
+		if [[ "${remote_length}" ]] && [[ $l -ne $rl ]]
+		then
+			_debug "(error) ${relative_path} local_length=${l} remote_checksum=${rl}"
+			return 255
+		fi
+
+		if [[ "${remote_checksum}" && "${checksum}" != "${remote_checksum}" ]]
+		then
+			_debug "(error) ${relative_path} local_checksum=${checksum} remote_checksum=${remote_checksum}"
+			return 254
+		fi
+
+		return 0
+	}
+
+	local ret=$?
+	case "$ret" in
+		0) _debug "${target}: ok";;
+		22) _error "missing ${relative_path} in ${base_url}";;
+		254) _error "${relative_path} checksum issue";;
+		255) _error "${relative_path} length issue";;
+		*) _error "unknow ${relative_path} in ${base_url}";;
+	esac
+	exit ${ret}
+}
+
+# download index from 
+if test "${INPUT_INDEX}"
+then
+	if test -e "${INPUT_INDEX}" && test ! "${flag_force}"
+	then
+		INPUT_FILE="${INPUT_INDEX}"
+	else
+		storage_module_target="${BASE_URL}/${INPUT_INDEX}"
+		_debug "download ${storage_module_target}"
+		curl -sqf "${storage_module_target}" -o "${INPUT_INDEX}"
+		if test $? -ne 0
+		then
+			_error "can't download ${storage_module_target}"
+			exit 1
+		fi
+		INPUT_FILE="${INPUT_INDEX}"
+	fi
+
+fi
+
 # First argument: Maximum number of concurrent downloads
 max_concurrent_downloads="${JOBS}"
 
@@ -377,64 +559,69 @@ lines_processed=0
 line_number=1
 
 # Read each line from the input file
-cat "${INPUT_FILE}" | while read -r line
+while read -r line
 do
-	# Skip empty lines
+	# Skip empty lines and remove comments
 	test -z "${line}" && continue
 	echo "${line}" | grep -E '^#' >/dev/null && continue
 
-	# cleanup variables
-	callback=""
-	params=""
-	base_url=""
-	relative_path=""
-	content_length=""
-	checksum=""
-
-	# Dynamically determine the base URL for the current line,
-	# extracting the first three segments
-	if _check_v1_line "${line}"
+	if ! _check_v2_line "${line}"
 	then
-		# version 1 file
-		callback=_download_and_verify_v1
-		base_url=$(echo "$line" | awk '{print $1}' | cut -d'/' -f1-4)/
-		# Remove the base URL to get the relative path
-		relative_path="./${line#$base_url}"
-		params="${line} ${relative_path}"
-	elif _check_v2_line "${line}"
-	then
-		# version 2 file
-		callback=_download_and_verify_v2
-		relative_path=./$(echo "${line}" | awk '{print $1}')
-		content_length=$(echo "${line}" | awk '{print $2}')
-		checksum=$(echo "${line}" | awk '{print $3}')
-		params="${BASE_URL} ${relative_path} ${content_length} ${checksum}"
-	else
 		_error "unsupported format (line ${line_number}): ${line}"
 		exit 2
 	fi
 
-	# Create the directory structure for the file
-	mkdir -p "$(dirname "${relative_path}")"
+	# Cleanup relative path
+	relative_path=$(echo "${line}" | awk '{print $1}' | sed -E s!^/+!!)
 
-	# Call download_and_verify function in the background
-	echo "Downloading ($((lines_processed+1))/$total_lines) $line to $relative_path"
-	_debug "executing ${callback} ${params}"
-	${callback} ${params} &
+	# Get content length
+	content_length=$(echo "${line}" | awk '{print $2}')
 
-	# Increment the concurrent downloads counter
-	concurrent_downloads=$((concurrent_downloads+1))
-	lines_processed=$((lines_processed+1))
+	# Get the checksum
+	checksum=$(echo "${line}" | awk '{print $3}')
+
+	# Craft the full params list
+	params="${BASE_URL} ${relative_path} ${content_length} ${checksum}"
+
+	if test "${flag_presence}"
+	then
+		_presence ${params} &
+		concurrent_downloads=$((concurrent_downloads+1))
+		lines_processed=$((lines_processed+1))
+	elif test "${flag_local}"
+	then
+		_local ${params} &
+		concurrent_downloads=$((concurrent_downloads+1))
+		lines_processed=$((lines_processed+1))
+	else
+
+		# Create the directory structure for the file
+		mkdir -p "$(dirname "${relative_path}")"
+
+		# Call download_and_verify function in the background
+		echo "Downloading ($((lines_processed+1))/$total_lines) $line to $relative_path"
+		_debug "executing ${callback} ${params}"
+		_download_and_verify ${params} &
+
+		# Increment the concurrent downloads counter
+		concurrent_downloads=$((concurrent_downloads+1))
+		lines_processed=$((lines_processed+1))
+	fi
 
 	# If max concurrent downloads reached, wait for one to finish before continuing
 	if (( concurrent_downloads >= max_concurrent_downloads ))
 	then
 		wait -n
+		ret=$?
+		if [ $ret -ne 0 ]
+		then
+			_error "child process exited with $ret"
+		fi
 		((concurrent_downloads--))
 	fi
 
 	line_number=$((line_number+1))
-done
+done < "${INPUT_FILE}"
 
 # Wait for any remaining background downloads to complete
 wait
