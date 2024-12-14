@@ -11,6 +11,7 @@
 		rsp_mix_entropy_crc32_nif/1,
 		rsp_mix_entropy_far_nif/1,
 		rsp_mix_entropy_far_test_nif/3,
+		rsp_fused_entropy_nif/10,
 		rsp_feistel_encrypt_nif/2,
 		rsp_feistel_decrypt_nif/2]).
 
@@ -61,6 +62,21 @@ rsp_mix_entropy_far_nif(_Entropy) ->
 % NOTE maybe this impl will replace rsp_mix_entropy_far_nif
 rsp_mix_entropy_far_test_nif(_Entropy, _JumpSize, _BlockSize) ->
 	?LOG_ERROR("rsp_mix_entropy_far_test_nif"),
+	erlang:nif_error(nif_not_loaded).
+
+rsp_fused_entropy_nif(
+	_RandomxState,
+	_ReplicaEntropySubChunkCount,
+	_CompositePackingSubChunkSize,
+	_LaneCount,
+	_RxDepth,
+	_JitEnabled,
+	_LargePagesEnabled,
+	_HardwareAESEnabled,
+	_RandomxProgramCount,
+	_Key
+) ->
+	?LOG_ERROR("randomx_generate_replica_2_9_entropy_nif"),
 	erlang:nif_error(nif_not_loaded).
 
 rsp_feistel_encrypt_nif(_InMsg, _Key) ->

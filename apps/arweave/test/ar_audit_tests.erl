@@ -2,12 +2,13 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
 setup_replica_2_9() ->
-    FastState = ar_mine_randomx:init_fast2(rxsquared, ?RANDOMX_PACKING_KEY, 0, 0,
+	FastState = ar_mine_randomx:init_fast2(rxsquared, ?RANDOMX_PACKING_KEY, 0, 0,
 			erlang:system_info(dirty_cpu_schedulers_online)),
-    LightState = ar_mine_randomx:init_light2(rxsquared, ?RANDOMX_PACKING_KEY, 0, 0),
+	LightState = ar_mine_randomx:init_light2(rxsquared, ?RANDOMX_PACKING_KEY, 0, 0),
 	{FastState, LightState}.
 
 test_register(TestFun, Fixture) ->
@@ -91,6 +92,21 @@ test_vectors({FastState, _LightState}) ->
 	{ok, SubChunkReal} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({FastState, Key, PackedOut,
 		EntropySubChunkIndex}),
 	?assertEqual(SubChunk, SubChunkReal),
+
+	{ok, EntropyFused} = ar_rxsquared_nif:rsp_fused_entropy_nif(
+		element(2, FastState),
+		?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
+		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+		?REPLICA_2_9_RANDOMX_LANE_COUNT,
+		?REPLICA_2_9_RANDOMX_DEPTH,
+		0,
+		0,
+		0,
+		?REPLICA_2_9_RANDOMX_ROUND_COUNT,
+		Key
+	),
+	EntropyFusedHash = crypto:hash(sha256, EntropyFused),
+	?assertEqual(EntropyHashExpd, EntropyFusedHash),
 
 	ok.
 

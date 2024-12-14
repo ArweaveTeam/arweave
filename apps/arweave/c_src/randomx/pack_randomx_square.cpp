@@ -1,4 +1,5 @@
 #include <cassert>
+#include <openssl/sha.h>
 #include "crc32.h"
 #include "pack_randomx_square.h"
 #include "feistel_msgsize_key_cipher.h"
@@ -154,6 +155,217 @@ extern "C" {
 				outEntropyPtr += leftover;
 			}
 		}
+	}
+
+	int rsp_fused_entropy(
+		randomx_vm** vmList,
+		size_t scratchpadSize,
+		int replicaEntropySubChunkCount,
+		int compositePackingSubChunkSize,
+		int laneCount,
+		int rxDepth,
+		int randomxProgramCount,
+		int blockSize,
+		const unsigned char* keyData,
+		size_t keySize,
+		unsigned char* outAllScratchpads
+	)
+	{
+		// 1) Define the aligned struct for tempHash
+		struct vm_hash_t {
+			alignas(16) uint64_t tempHash[8]; // 64 bytes
+		};
+
+		// 2) Allocate the vm_hash_t array here in C++
+		vm_hash_t* vmHashes = new (std::nothrow) vm_hash_t[2*laneCount];
+		if (!vmHashes) {
+			return 0; // indicates allocation failure
+		}
+
+		// 3) Initialize each VM scratchpad
+		for (int i = 0; i < laneCount; i++) {
+			unsigned char laneSeed[32];
+			{
+				SHA256_CTX sha256;
+				SHA256_Init(&sha256);
+				SHA256_Update(&sha256, keyData, keySize);
+				unsigned char laneIndex = (unsigned char)i + 1;
+				SHA256_Update(&sha256, &laneIndex, 1);
+				SHA256_Final(laneSeed, &sha256);
+			}
+			int blakeResult = randomx_blake2b(
+				vmHashes[i].tempHash, sizeof(vmHashes[i].tempHash),
+				laneSeed, 32,
+				nullptr, 0
+			);
+			if (blakeResult != 0) {
+				// Free memory and return error if hashing fails
+				delete[] vmHashes;
+				return 0;
+			}
+			fillAes1Rx4<false>(
+				vmHashes[i].tempHash,
+				scratchpadSize,
+				(void*)vmList[i]->getScratchpad()
+			);
+		}
+
+		// 4) Inline exec
+		auto randomx_squared_exec_inplace = [&](randomx_vm* machine, uint64_t* srcTempHash, uint64_t* dstTempHash, int programCount, size_t scratchpadSize) {
+			machine->resetRoundingMode();
+			for (int chain = 0; chain < programCount-1; chain++) {
+				machine->run(srcTempHash);
+				int br = randomx_blake2b(
+					srcTempHash, 64,
+					machine->getRegisterFile(),
+					sizeof(randomx::RegisterFile),
+					nullptr, 0
+				);
+				assert(br == 0);
+			}
+			machine->run(srcTempHash);
+			int br = randomx_blake2b(
+				dstTempHash, 64,
+				machine->getRegisterFile(),
+				sizeof(randomx::RegisterFile),
+				nullptr, 0
+			);
+			assert(br == 0);
+			packing_mix_entropy_crc32(
+				(const unsigned char*)machine->getScratchpad(),
+				(unsigned char*)(void*)machine->getScratchpad(),
+				scratchpadSize);
+		};
+
+		// 5) Inline packing mix
+		auto packing_mix_entropy_far_sets = [&](randomx_vm** inSet,
+												randomx_vm** outSet,
+												int count,
+												size_t scratchpadSize,
+												size_t jumpSize,
+												size_t blockSize)
+		{
+			size_t totalSize = (size_t)count * scratchpadSize;  // total bytes across all lanes
+			// DEBUG
+			// for(int i=0;i<count;i++) {
+			// 	memset((void*)outSet[i]->getScratchpad(), 0, scratchpadSize);
+      // }
+
+			// A helper function to copy `length` bytes from global offset srcPos to dstPos in cross-lane memory.
+			auto copyChunkCrossLane = [&](size_t srcPos, size_t dstPos, size_t length) {
+				while (length > 0) {
+					// Find source lane + offset
+					int srcLane = (int)(srcPos / scratchpadSize);
+					size_t offsetInSrcLane = srcPos % scratchpadSize;
+
+					// Find destination lane + offset
+					int dstLane = (int)(dstPos / scratchpadSize);
+					size_t offsetInDstLane = dstPos % scratchpadSize;
+
+					// How many bytes remain in source lane from offsetInSrcLane?
+					size_t srcLaneRemain = scratchpadSize - offsetInSrcLane;
+					// How many bytes remain in destination lane from offsetInDstLane?
+					size_t dstLaneRemain = scratchpadSize - offsetInDstLane;
+
+					// The chunk we can safely copy (without crossing a lane boundary)
+					size_t chunkSize = length;
+					if (chunkSize > srcLaneRemain) {
+						chunkSize = srcLaneRemain;
+					}
+					if (chunkSize > dstLaneRemain) {
+						chunkSize = dstLaneRemain;
+					}
+
+					// Perform the memcpy for this sub-chunk
+					unsigned char* srcSp = (unsigned char*)(void*) inSet[srcLane]->getScratchpad();
+					unsigned char* dstSp = (unsigned char*)(void*) outSet[dstLane]->getScratchpad();
+					memcpy(dstSp + offsetInDstLane, srcSp + offsetInSrcLane, chunkSize);
+
+					// Advance
+					srcPos += chunkSize;
+					dstPos += chunkSize;
+					length -= chunkSize;
+				}
+			};
+
+			// Now we replicate your leftover logic from the original packing_mix_entropy_far()
+			size_t entropySize = totalSize;
+			size_t numJumps = entropySize / jumpSize;
+			size_t numBlocksPerJump = jumpSize / blockSize;
+			size_t leftover = jumpSize % blockSize;
+
+			size_t outOffset = 0;  // global offset in outSet
+			for (size_t offset = 0; offset < numBlocksPerJump; ++offset) {
+				for (size_t i = 0; i < numJumps; ++i) {
+					size_t srcPos = i * jumpSize + offset * blockSize;  // global source offset
+					copyChunkCrossLane(srcPos, outOffset, blockSize);
+					outOffset += blockSize;
+				}
+			}
+
+			if (leftover > 0) {
+				for (size_t i = 0; i < numJumps; ++i) {
+					size_t srcPos = i * jumpSize + numBlocksPerJump * blockSize;
+					copyChunkCrossLane(srcPos, outOffset, leftover);
+					outOffset += leftover;
+				}
+			}
+		};
+
+		// 6) Main depth iteration
+		for (int d = 0; d < rxDepth; d++) {
+			if ((d % 2) == 0) {
+				// Even iteration => run Set-A, mix -> Set-B
+				for (int lane = 0; lane < laneCount; lane++) {
+					randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash, randomxProgramCount, scratchpadSize);
+				}
+				packing_mix_entropy_far_sets(&vmList[0], &vmList[laneCount],
+											 laneCount, scratchpadSize, scratchpadSize,
+											 blockSize);
+
+				if (d + 1 < rxDepth) {
+					d++; // second iteration in the pair
+					for (int lane = laneCount; lane < 2*laneCount; lane++) {
+						randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane-laneCount].tempHash, randomxProgramCount, scratchpadSize);
+					}
+					packing_mix_entropy_far_sets(&vmList[laneCount], &vmList[0],
+												 laneCount, scratchpadSize, scratchpadSize,
+												 blockSize);
+				}
+			} else {
+				// Odd iteration
+				for (int lane = 0; lane < laneCount; lane++) {
+					randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash, randomxProgramCount, scratchpadSize);
+				}
+				packing_mix_entropy_far_sets(&vmList[0], &vmList[laneCount],
+											 laneCount, scratchpadSize, scratchpadSize,
+											 blockSize);
+			}
+		}
+		// NOTE still unoptimal. Last copy can be performed from scratchpad to output. But requires +1 variation (set to buffer)
+
+		// 7) Copy final scratchpads into outAllScratchpads
+		if ((rxDepth % 2) == 0) {
+			unsigned char* outAllScratchpadsPtr = outAllScratchpads;
+			for (int i = 0; i < laneCount; i++) {
+				void* sp = (void*)vmList[i]->getScratchpad();
+				memcpy(outAllScratchpadsPtr, sp, scratchpadSize);
+				outAllScratchpadsPtr += scratchpadSize;
+			}
+		} else {
+			unsigned char* outAllScratchpadsPtr = outAllScratchpads;
+			for (int i = laneCount; i < 2*laneCount; i++) {
+				void* sp = (void*)vmList[i]->getScratchpad();
+				memcpy(outAllScratchpadsPtr, sp, scratchpadSize);
+				outAllScratchpadsPtr += scratchpadSize;
+			}
+		}
+
+		// 8) Free the vm_hash_t array
+		delete[] vmHashes;
+
+		// If we made it here, success
+		return 1;
 	}
 
 	// TODO optimized packing_apply_to_subchunk (NIF only uses slice)
