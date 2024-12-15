@@ -24,7 +24,8 @@
 ) -> non_neg_integer().
 get_partition(AbsoluteChunkEndOffset) ->
 	EntropyPartitionSize = get_partition_size(),
-	BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
+    PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
+    BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
 	BucketStart div EntropyPartitionSize.
 
 %% @doc Return the key used to generate the entropy for the 2.9 replication format.
@@ -57,7 +58,8 @@ get_entropy_sector_size() ->
 		AbsoluteChunkEndOffset :: non_neg_integer()
 ) -> non_neg_integer().
 get_entropy_sub_chunk_index(AbsoluteChunkEndOffset) ->
-	BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
+    BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	MaskCount = get_entropy_mask_count(),
     SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div SubChunkSize,
@@ -91,7 +93,8 @@ get_entropy_mask_count() ->
     SubChunkStartOffset :: non_neg_integer()
 ) -> non_neg_integer().
 get_entropy_mask_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
-    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
+    PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
+    BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
     SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     MaskCount = get_entropy_mask_count(),
     SectorSize = MaskCount * SubChunkSize,
@@ -99,18 +102,8 @@ get_entropy_mask_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
     SubChunkCount = ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
     ChunkBucket * SubChunkCount + SubChunkStartOffset div SubChunkSize.
 
-
-get_entropy_bucket_start(AbsoluteChunkEndOffset) ->
-    PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
-    PickOffset = max(0, PaddedOffset - ?DATA_CHUNK_SIZE),
-    BucketStart = PickOffset - PickOffset rem ?DATA_CHUNK_SIZE,
-    BucketStart.
-
-
 get_partition_size() ->
     get_entropy_mask_count() * ?REPLICA_2_9_ENTROPY_SIZE.
-
-
 
 %%%===================================================================
 %%% Tests.
