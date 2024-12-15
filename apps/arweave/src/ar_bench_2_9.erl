@@ -108,7 +108,7 @@ prepare_context(replica_2_9, Threads, DataMiB) ->
 	SubChunk = crypto:strong_rand_bytes(?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
 	SubChunkIndex = rand:uniform(32768),
 	Offset = rand:uniform(1024 * 1024 * 1024),
-	Key = ar_block:get_replica_2_9_entropy_key(Address, Offset, SubChunkIndex),
+	Key = ar_replica_2_9:get_entropy_key(Address, Offset, SubChunkIndex),
 	DataPerThread = DataMiB * ?MiB div Threads,
 	EntropyPerThread = DataPerThread div 
 		(?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE),

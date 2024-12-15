@@ -308,8 +308,10 @@ warn_custom_chunk_group_size(StoreID) ->
 handle_cast(prepare_replica_2_9, #state{ store_id = StoreID } = State) ->
 	case try_acquire_replica_2_9_formatting_lock(StoreID) of
 		true ->
+			?LOG_DEBUG([{event, acquired_replica_2_9_formatting_lock}, {store_id, StoreID}]),
 			gen_server:cast(self(), do_prepare_replica_2_9);
 		false ->
+			?LOG_DEBUG([{event, failed_to_acquire_replica_2_9_formatting_lock}, {store_id, StoreID}]),
 			ar_util:cast_after(2000, self(), prepare_replica_2_9)
 	end,
 	{noreply, State};
@@ -320,7 +322,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 	Offset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
 	Offset = get_chunk_bucket_end(Offset),
 	true = max(0, Offset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(Offset),
-	Partition = ar_block:get_replica_2_9_partition(Offset),
+	Partition = ar_replica_2_9:get_partition(Offset),
 	CheckRangeEnd =
 		case Offset > RangeEnd of
 			true ->
@@ -353,7 +355,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			false ->
 				Entropies = generate_entropies(RewardAddr, Offset, SubChunkStart),
 				EntropyKeys = generate_entropy_keys(RewardAddr, Offset, SubChunkStart),
-				EntropyIndex = ar_block:get_replica_2_9_entropy_sub_chunk_index(Offset),
+				EntropyIndex = ar_replica_2_9:get_entropy_sub_chunk_index(Offset),
 				%% If we are not at the beginning of the entropy, shift the offset to
 				%% the left. store_entropy will traverse the entire 2.9 partition shifting
 				%% the offset by sector size. It may happen some sub-chunks will be written
@@ -364,6 +366,10 @@ handle_cast(do_prepare_replica_2_9, State) ->
 				store_entropy(Entropies, Offset2, SubChunkStart, Partition, EntropyKeys,
 						RewardAddr, 0, 0)
 		end,
+	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
+			{offset, Offset}, {range_end, RangeEnd},
+			{partition, Partition}, {start, Start}, {sub_chunk_start, SubChunkStart},
+			{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
 	case StoreEntropy of
 		complete ->
 			{noreply, State#state{ is_prepared = true }};
@@ -725,7 +731,7 @@ generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
 	[];
 generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	[ar_block:get_replica_2_9_entropy_key(RewardAddr, Offset, SubChunkStart)
+	[ar_replica_2_9:get_entropy_key(RewardAddr, Offset, SubChunkStart)
 			| generate_entropy_keys(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
 
 store_entropy(Entropies, Offset, SubChunkStartOffset, Partition, Keys, RewardAddr, N, WaitN) ->
@@ -734,7 +740,7 @@ store_entropy(Entropies, Offset, SubChunkStartOffset, Partition, Keys, RewardAdd
 			wait_store_entropy_processes(WaitN),
 			{ok, N};
 		{EntropyPart, Rest} ->
-			true = ar_block:get_replica_2_9_partition(Offset) == Partition,
+			true = ar_replica_2_9:get_partition(Offset) == Partition,
 			sanity_check_replica_2_9_entropy_keys(Offset, RewardAddr,
 					SubChunkStartOffset, Keys),
 			FindModule =
@@ -777,7 +783,7 @@ take_combined_entropy([
 sanity_check_replica_2_9_entropy_keys(_Offset, _RewardAddr, _SubChunkStartOffset, []) ->
 	ok;
 sanity_check_replica_2_9_entropy_keys(Offset, RewardAddr, SubChunkStartOffset, [Key | Keys]) ->
-	Key = ar_block:get_replica_2_9_entropy_key(RewardAddr, Offset, SubChunkStartOffset),
+	Key = ar_replica_2_9:get_entropy_key(RewardAddr, Offset, SubChunkStartOffset),
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	sanity_check_replica_2_9_entropy_keys(Offset, RewardAddr,
 			SubChunkStartOffset + SubChunkSize, Keys).
@@ -790,7 +796,7 @@ wait_store_entropy_processes(N) ->
 	end.
 
 shift_replica_2_9_entropy_offset(Offset, SectorCount) ->
-	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+	SectorSize = ar_replica_2_9:get_entropy_sector_size(),
 	get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Offset + SectorSize * SectorCount)).
 
 store_entropy2(EntropyPart, Offset, SubChunkStartOffset, StoreID) ->
@@ -821,6 +827,9 @@ store_entropy2(EntropyPart, Offset, SubChunkStartOffset, StoreID) ->
 			%% necessarily the StoreID from the state,) therefore concurrent writes to the
 			%% same file are possible at the 2.9 replication stage albeit unlikely.
 			acquire_replica_2_9_semaphore(Filepath),
+			?LOG_DEBUG([{event, store_entropy2},
+					{offset, Offset}, {sub_chunk_start_offset, SubChunkStartOffset},
+					{sub_chunk_position, SubChunkPosition}, {bin, byte_size(Bin)}]),
 			case file:pwrite(F, SubChunkPosition, Bin) of
 				{error, Reason} = Error2 ->
 					file:close(F),
