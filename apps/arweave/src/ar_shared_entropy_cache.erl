@@ -93,6 +93,7 @@ get(Key, Table) ->
 		[] ->
 			not_found;
 		[{_, Value}] ->
+			?LOG_DEBUG([{event, entropy_cache_hit}, {key, ar_util:safe_encode(Key)}]),
 			%% Track the number of used keys per entropy to estimate the efficiency
 			%% of the cache.
 			ets:update_counter(Table, {fetched_key_count, Key}, 1,
