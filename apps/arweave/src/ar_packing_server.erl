@@ -639,8 +639,7 @@ get_replica_2_9_entropy(Key, RandomXState) ->
 		not_found ->
 			{ok, Config} = application:get_env(arweave, config),
 			MaxCacheSize = Config#config.replica_2_9_entropy_cache_size,
-			SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-			EntropySize = ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT * SubChunkSize,
+			EntropySize = ?REPLICA_2_9_ENTROPY_SIZE,
 			ar_shared_entropy_cache:allocate_space(EntropySize, MaxCacheSize),
 			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
 			ar_shared_entropy_cache:put(Key, Entropy, EntropySize),
