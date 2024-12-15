@@ -7,6 +7,10 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-moduledoc """
+    This module contains functions for the 2.9 replication format.
+""".
+
 
 %%%===================================================================
 %%% Public interface.
@@ -56,8 +60,9 @@ get_entropy_sub_chunk_index(AbsoluteChunkEndOffset) ->
 	BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	MaskCount = get_entropy_mask_count(),
+    SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div SubChunkSize,
 	SectorSize = MaskCount * SubChunkSize,
-	(BucketStart div SectorSize) rem ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT.
+	(BucketStart div SectorSize) rem SubChunkCount.
 
 
 %%%===================================================================
@@ -68,13 +73,12 @@ get_entropy_sub_chunk_index(AbsoluteChunkEndOffset) ->
 %% in the 2.9 replication format.
 -spec get_entropy_mask_count() -> non_neg_integer().
 get_entropy_mask_count() ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	MaskSize = ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT * SubChunkSize,
+	MaskSize = ?REPLICA_2_9_ENTROPY_SIZE,
 	MaskCount = ?PARTITION_SIZE div MaskSize,
 	false = ?PARTITION_SIZE rem MaskSize == 0,
 	%% Add some extra entropies. Some entropy masks will be slightly underused.
 	%% The additional number of entropies (the constant) is chosen depending
-	%% on the PARTITION_SIZE and REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT constants
+	%% on the PARTITION_SIZE and REPLICA_2_9_ENTROPY_SIZE constants
 	%% such that the sector size (mask count * sub-chunk size) is evenly divisible
 	%% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
 	MaskCount + ?REPLICA_2_9_EXTRA_ENTROPY_MASK_COUNT.
@@ -104,9 +108,7 @@ get_entropy_bucket_start(AbsoluteChunkEndOffset) ->
 
 
 get_partition_size() ->
-    SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-    MaskSize = ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT * SubChunkSize,
-    get_entropy_mask_count() * MaskSize.
+    get_entropy_mask_count() * ?REPLICA_2_9_ENTROPY_SIZE.
 
 
 
@@ -118,7 +120,7 @@ get_entropy_mask_index_test() ->
     SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     MaskCount = get_entropy_mask_count(),
     SectorSize = MaskCount * SubChunkSize,
-    PartitionSize = MaskCount * SubChunkSize * ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
+    PartitionSize = MaskCount * ?REPLICA_2_9_ENTROPY_SIZE,
     Addr = << 0:256 >>,
     ?assertEqual(32, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
     ?assertEqual(0, get_entropy_mask_index(1, 0)),
@@ -194,10 +196,9 @@ get_entropy_mask_index_test() ->
     ?assertEqual(31, get_entropy_mask_index(3 * 262144 + 1, 31 * SubChunkSize)).
 
 get_entropy_sub_chunk_index_test() ->
-    SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     MaskCount = get_entropy_mask_count(),
-    MaskSubChunkCount = ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
-    PartitionSize = MaskCount * SubChunkSize * MaskSubChunkCount,
+    MaskSubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+    PartitionSize = MaskCount * ?REPLICA_2_9_ENTROPY_SIZE,
     %% Every sub-chunk of the first chunk has index 0 in its own entropy.
     ?assertEqual(0, get_entropy_sub_chunk_index(1)),
     %% The following are buckets of the same sector.
