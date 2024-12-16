@@ -50,6 +50,9 @@
 -ifdef(DEBUG).
 -define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 11).
 -else.
+%% Extra entropies to be added to each partition so that the partition holds a multiple
+%% of 32 entropies.
+%% 
 %% 3_600_000_000_000 / 8_388_608 = 429153.4423828125;
 %% (429153 + 31) * 8192 / 262144 == 13412 - the first evenly divisible number of
 %% the form (429153 + X) * 8192.
