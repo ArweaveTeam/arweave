@@ -257,9 +257,10 @@ init({StoreID, RepackInPlacePacking}) ->
 		case ar_storage_module:get_packing(StoreID) of
 			{replica_2_9, RewardAddr} ->
 				{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-				PrepareCursor = read_prepare_replica_2_9_cursor(StoreID, {RangeStart + 1, 0}),
+				PrepareCursor = {Start, _SubChunkStart} = 
+					read_prepare_replica_2_9_cursor(StoreID, {RangeStart + 1, 0}),
 				IsPrepared =
-					case element(1, PrepareCursor) =< RangeEnd of
+					case Start =< RangeEnd of
 						true ->
 							gen_server:cast(self(), prepare_replica_2_9),
 							false;
@@ -347,6 +348,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			false ->
 				false
 		end,
+	%% XXX: SubChunkStart2 will always be equal to SubChunkStart, right?
 	SubChunkStart2 = (SubChunkStart + ?DATA_CHUNK_SIZE) rem ?DATA_CHUNK_SIZE,
 	Start2 = PaddedEndOffset + ?DATA_CHUNK_SIZE,
 	Cursor2 = {Start2, SubChunkStart2},
