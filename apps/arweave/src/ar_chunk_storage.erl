@@ -335,7 +335,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 	),
 	%% End of sanity checks.
 
-	Partition = ar_replica_2_9:get_partition(PaddedEndOffset),
+	Partition = ar_replica_2_9:get_entropy_partition(PaddedEndOffset),
 	CheckRangeEnd =
 		case PaddedEndOffset > RangeEnd of
 			true ->
@@ -348,7 +348,9 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			false ->
 				false
 		end,
-	%% XXX: SubChunkStart2 will always be equal to SubChunkStart, right?
+	%% For now the SubChunkStart and SubChunkStart2 values will always be 0. The field
+	%% is used to make future improvemets easier. e.g. have the cursor increment by
+	%% sub-chunk rather than chunk.
 	SubChunkStart2 = (SubChunkStart + ?DATA_CHUNK_SIZE) rem ?DATA_CHUNK_SIZE,
 	Start2 = PaddedEndOffset + ?DATA_CHUNK_SIZE,
 	Cursor2 = {Start2, SubChunkStart2},
@@ -369,7 +371,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			false ->
 				Entropies = generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart),
 				EntropyKeys = generate_entropy_keys(RewardAddr, PaddedEndOffset, SubChunkStart),
-				EntropyIndex = ar_replica_2_9:get_entropy_sub_chunk_index(PaddedEndOffset),
+				EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
 				%% If we are not at the beginning of the entropy, shift the offset to
 				%% the left. store_entropy will traverse the entire 2.9 partition shifting
 				%% the offset by sector size. It may happen some sub-chunks will be written
@@ -755,7 +757,7 @@ store_entropy(
 			wait_store_entropy_processes(WaitN),
 			{ok, N};
 		{EntropyPart, Rest} ->
-			true = ar_replica_2_9:get_partition(PaddedEndOffset) == Partition,
+			true = ar_replica_2_9:get_entropy_partition(PaddedEndOffset) == Partition,
 			sanity_check_replica_2_9_entropy_keys(PaddedEndOffset, RewardAddr,
 					SubChunkStartOffset, Keys),
 			FindModule =
@@ -815,7 +817,7 @@ wait_store_entropy_processes(N) ->
 	end.
 
 shift_replica_2_9_entropy_offset(Offset, SectorCount) ->
-	SectorSize = ar_replica_2_9:get_entropy_sector_size(),
+	SectorSize = ar_replica_2_9:get_sector_size(),
 	get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Offset + SectorSize * SectorCount)).
 
 store_entropy2(EntropyPart, PaddedEndOffset, SubChunkStartOffset, StoreID) ->
