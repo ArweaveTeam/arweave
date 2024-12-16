@@ -38,6 +38,19 @@ RANDOMX_EXPORT int rsp_fused_entropy(
     size_t keySize,
     unsigned char* outAllScratchpads  // We'll pass in a pointer for final scratchpad data
 );
+RANDOMX_EXPORT int rsp_fused_entropy_low_latency(
+    randomx_vm** vmList,
+    size_t scratchpadSize,
+    int replicaEntropySubChunkCount,
+    int compositePackingSubChunkSize,
+    int laneCount,
+    int rxDepth,
+    int randomxProgramCount,
+    int blockSize,
+    const unsigned char* keyData,
+    size_t keySize,
+    unsigned char* outAllScratchpads  // We'll pass in a pointer for final scratchpad data
+);
 
 // TODO optimized packing_apply_to_subchunk (NIF only uses slice)
 

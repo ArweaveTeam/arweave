@@ -75,7 +75,7 @@ test_vectors({FastState, _LightState}) ->
 	Key = << 1 >>,
 	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(FastState, Key),
 	EntropyHash = crypto:hash(sha256, Entropy),
-	EntropyHashExpd = <<56,199,231,119,170,151,220,154,45,204,70,193,80,68,
+	EntropyHashExpd = << 56,199,231,119,170,151,220,154,45,204,70,193,80,68,
 		46,50,136,31,35,102,141,77,19,66,191,127,97,183,230,
 		119,243,151 >>,
 	?assertEqual(EntropyHashExpd, EntropyHash),
@@ -85,9 +85,9 @@ test_vectors({FastState, _LightState}) ->
 	{ok, PackedOut} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk({FastState, Entropy, SubChunk,
 		EntropySubChunkIndex}),
 	PackedOutHashReal = crypto:hash(sha256, PackedOut),
-	PackedOutHashExpd = << 25,148,72,35,27,27,6,222,247,71,104,10,58,78,178,211,
-		204,199,238,124,237,101,100,96,27,64,234,145,250,78,
-		75,207>>,
+	PackedOutHashExpd = << 15,46,184,11,124,31,150,77,199,107,221,0,136,154,61,
+		146,193,198,126,52,19,7,211,28,121,108,176,15,124,33,
+		48,99 >>,
 	?assertEqual(PackedOutHashExpd, PackedOutHashReal),
 	{ok, SubChunkReal} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({FastState, Key, PackedOut,
 		EntropySubChunkIndex}),
@@ -107,6 +107,21 @@ test_vectors({FastState, _LightState}) ->
 	),
 	EntropyFusedHash = crypto:hash(sha256, EntropyFused),
 	?assertEqual(EntropyHashExpd, EntropyFusedHash),
+
+	{ok, EntropyFusedLL} = ar_rxsquared_nif:rsp_fused_entropy_low_latency_nif(
+		element(2, FastState),
+		?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
+		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+		?REPLICA_2_9_RANDOMX_LANE_COUNT,
+		?REPLICA_2_9_RANDOMX_DEPTH,
+		0,
+		0,
+		0,
+		?REPLICA_2_9_RANDOMX_ROUND_COUNT,
+		Key
+	),
+	EntropyFusedLLHash = crypto:hash(sha256, EntropyFusedLL),
+	?assertEqual(EntropyHashExpd, EntropyFusedLLHash),
 
 	ok.
 
