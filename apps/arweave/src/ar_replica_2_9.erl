@@ -29,6 +29,11 @@ get_partition(AbsoluteChunkEndOffset) ->
 	BucketStart div EntropyPartitionSize.
 
 %% @doc Return the key used to generate the entropy for the 2.9 replication format.
+%% RewardAddr: The address of the miner that mined the chunk.
+%% AbsoluteEndOffset: The absolute end offset of the chunk.
+%% SubChunkStartOffset: The start offset of the sub-chunk within the chunk. 0 is the first
+%% sub-chunk of the chunk, (?DATA_CHUNK_SIZE - ?COMPOSITE_PACKING_SUB_CHUNK_SIZE) is the
+%% last sub-chunk of the chunk.
 -spec get_entropy_key(
 		RewardAddr :: binary(),
 		AbsoluteEndOffset :: non_neg_integer(),
@@ -37,8 +42,7 @@ get_partition(AbsoluteChunkEndOffset) ->
 get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 	Partition = get_partition(AbsoluteEndOffset),
 	%% We use the key to generate a large entropy shared by many chunks.
-	EntropyIndex = get_entropy_mask_index(AbsoluteEndOffset,
-			SubChunkStartOffset),
+	EntropyIndex = get_entropy_id(AbsoluteEndOffset, SubChunkStartOffset),
 	crypto:hash(sha256, << Partition:256, EntropyIndex:256, RewardAddr/binary >>).
 
 
@@ -47,7 +51,7 @@ get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 -spec get_entropy_sector_size() -> pos_integer().
 get_entropy_sector_size() ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	get_entropy_mask_count() * SubChunkSize.
+	get_entropy_count() * SubChunkSize.
 
 
 %% @doc Return the 0-based index indicating which area within the 2.9 entropy the
@@ -61,9 +65,8 @@ get_entropy_sub_chunk_index(AbsoluteChunkEndOffset) ->
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
     BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	MaskCount = get_entropy_mask_count(),
     SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div SubChunkSize,
-	SectorSize = MaskCount * SubChunkSize,
+	SectorSize = get_entropy_count() * SubChunkSize,
 	(BucketStart div SectorSize) rem SubChunkCount.
 
 
@@ -73,50 +76,48 @@ get_entropy_sub_chunk_index(AbsoluteChunkEndOffset) ->
 
 %% @doc Return the total number of entropies generated per partition
 %% in the 2.9 replication format.
--spec get_entropy_mask_count() -> non_neg_integer().
-get_entropy_mask_count() ->
-	MaskSize = ?REPLICA_2_9_ENTROPY_SIZE,
-	MaskCount = ?PARTITION_SIZE div MaskSize,
-	false = ?PARTITION_SIZE rem MaskSize == 0,
-	%% Add some extra entropies. Some entropy masks will be slightly underused.
+-spec get_entropy_count() -> non_neg_integer().
+get_entropy_count() ->
+	Count = ?PARTITION_SIZE div ?REPLICA_2_9_ENTROPY_SIZE,
+	false = ?PARTITION_SIZE rem ?REPLICA_2_9_ENTROPY_SIZE == 0,
+	%% Add some extra entropies. Some entropies will be slightly underused.
 	%% The additional number of entropies (the constant) is chosen depending
 	%% on the PARTITION_SIZE and REPLICA_2_9_ENTROPY_SIZE constants
-	%% such that the sector size (mask count * sub-chunk size) is evenly divisible
+	%% such that the sector size (num entropies * sub-chunk size) is evenly divisible
 	%% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
-	MaskCount + ?REPLICA_2_9_EXTRA_ENTROPY_MASK_COUNT.
+	Count + ?REPLICA_2_9_EXTRA_ENTROPY_COUNT.
 
-%% @doc Return the 0-based index of the entropy mask for the sub-chunk with the given
+%% @doc Return the 0-based index of the entropy for the sub-chunk with the given
 %% absolute end offset of its chunk and its own relative start offset within this chunk.
-%% The entropy mask is for the 2.9 replication format.
--spec get_entropy_mask_index(
+%% The entropy id is for the 2.9 replication format.
+-spec get_entropy_id(
     AbsoluteChunkEndOffset :: non_neg_integer(),
     SubChunkStartOffset :: non_neg_integer()
 ) -> non_neg_integer().
-get_entropy_mask_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
+get_entropy_id(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
     PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
     BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
     SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-    MaskCount = get_entropy_mask_count(),
-    SectorSize = MaskCount * SubChunkSize,
+    SectorSize = get_entropy_count() * SubChunkSize,
     ChunkBucket = (BucketStart rem SectorSize) div ?DATA_CHUNK_SIZE,
     SubChunkCount = ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
     ChunkBucket * SubChunkCount + SubChunkStartOffset div SubChunkSize.
 
 get_partition_size() ->
-    get_entropy_mask_count() * ?REPLICA_2_9_ENTROPY_SIZE.
+    get_entropy_count() * ?REPLICA_2_9_ENTROPY_SIZE.
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
-get_entropy_mask_index_test() ->
+get_entropy_id_test() ->
     SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-    MaskCount = get_entropy_mask_count(),
-    SectorSize = MaskCount * SubChunkSize,
-    PartitionSize = MaskCount * ?REPLICA_2_9_ENTROPY_SIZE,
+    EntropyCount = get_entropy_count(),
+    SectorSize = EntropyCount * SubChunkSize,
+    PartitionSize = EntropyCount * ?REPLICA_2_9_ENTROPY_SIZE,
     Addr = << 0:256 >>,
     ?assertEqual(32, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
-    ?assertEqual(0, get_entropy_mask_index(1, 0)),
+    ?assertEqual(0, get_entropy_id(1, 0)),
     EntropyKey = ar_util:encode(get_entropy_key(Addr, 1, 0)),
     ?assertEqual(EntropyKey,
             ar_util:encode(get_entropy_key(Addr, 1, 0))),
@@ -170,28 +171,27 @@ get_entropy_mask_index_test() ->
     ?assertEqual(2, get_partition(3 * PartitionSize)),
     ?assertEqual(9, get_partition(10 * PartitionSize)),
     %% The first bucket, but different sub-chunk offsets.
-    ?assertEqual(1, get_entropy_mask_index(0, SubChunkSize)),
-    ?assertEqual(1, get_entropy_mask_index(0, SubChunkSize + 1)),
-    ?assertEqual(2, get_entropy_mask_index(0, 2 * SubChunkSize)),
-    ?assertEqual(31, get_entropy_mask_index(0, 31 * SubChunkSize)),
+    ?assertEqual(1, get_entropy_id(0, SubChunkSize)),
+    ?assertEqual(1, get_entropy_id(0, SubChunkSize + 1)),
+    ?assertEqual(2, get_entropy_id(0, 2 * SubChunkSize)),
+    ?assertEqual(31, get_entropy_id(0, 31 * SubChunkSize)),
     %% 262144 < 3 * 262144 (the strict data split threshold)
-    ?assertEqual(31, get_entropy_mask_index(262144, 31 * SubChunkSize)),
+    ?assertEqual(31, get_entropy_id(262144, 31 * SubChunkSize)),
 
     %% The first offset mapped to the second bucket.
-    ?assertEqual(32, get_entropy_mask_index(2 * 262144, 0)),
-    ?assertEqual(63, get_entropy_mask_index(2 * 262144, 31 * SubChunkSize)),
+    ?assertEqual(32, get_entropy_id(2 * 262144, 0)),
+    ?assertEqual(63, get_entropy_id(2 * 262144, 31 * SubChunkSize)),
     %% The first offset mapped to the third bucket.
-    ?assertEqual(64, get_entropy_mask_index(3 * 262144, 0)),
-    ?assertEqual(65, get_entropy_mask_index(3 * 262144, SubChunkSize)),
-    ?assertEqual(95, get_entropy_mask_index(3 * 262144, 31 * SubChunkSize)),
-    ?assertEqual(96, MaskCount),
-    ?assertEqual(0, get_entropy_mask_index(3 * 262144 + 1, 0)),
-    ?assertEqual(31, get_entropy_mask_index(3 * 262144 + 1, 31 * SubChunkSize)).
+    ?assertEqual(64, get_entropy_id(3 * 262144, 0)),
+    ?assertEqual(65, get_entropy_id(3 * 262144, SubChunkSize)),
+    ?assertEqual(95, get_entropy_id(3 * 262144, 31 * SubChunkSize)),
+    ?assertEqual(96, EntropyCount),
+    ?assertEqual(0, get_entropy_id(3 * 262144 + 1, 0)),
+    ?assertEqual(31, get_entropy_id(3 * 262144 + 1, 31 * SubChunkSize)).
 
 get_entropy_sub_chunk_index_test() ->
-    MaskCount = get_entropy_mask_count(),
-    MaskSubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-    PartitionSize = MaskCount * ?REPLICA_2_9_ENTROPY_SIZE,
+    SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+    PartitionSize = get_entropy_count() * ?REPLICA_2_9_ENTROPY_SIZE,
     %% Every sub-chunk of the first chunk has index 0 in its own entropy.
     ?assertEqual(0, get_entropy_sub_chunk_index(1)),
     %% The following are buckets of the same sector.
@@ -207,7 +207,7 @@ get_entropy_sub_chunk_index_test() ->
     ?assertEqual(1, get_entropy_sub_chunk_index(262144 * 5)),
     ?assertEqual(1, get_entropy_sub_chunk_index(262144 * 6)),
     ?assertEqual(2, get_entropy_sub_chunk_index(262144 * 7)),
-    ?assertEqual(MaskSubChunkCount - 1,
+    ?assertEqual(SubChunkCount - 1,
             get_entropy_sub_chunk_index(PartitionSize)),
     ?assertEqual(0,
             get_entropy_sub_chunk_index(PartitionSize + 1)).
