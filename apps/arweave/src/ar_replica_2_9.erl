@@ -90,8 +90,7 @@
 ) -> non_neg_integer().
 get_entropy_partition(AbsoluteChunkEndOffset) ->
 	EntropyPartitionSize = get_entropy_partition_size(),
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
-    BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
+    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
 	BucketStart div EntropyPartitionSize.
 
 %% @doc Return the key used to generate the entropy for the 2.9 replication format.
@@ -124,8 +123,7 @@ get_sector_size() ->
 		AbsoluteChunkEndOffset :: non_neg_integer()
 ) -> non_neg_integer().
 get_slice_index(AbsoluteChunkEndOffset) ->
-	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
-    BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
+	BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
     SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	SectorSize = get_sector_size(),
 	(BucketStart div SectorSize) rem SubChunkCount.
@@ -134,6 +132,18 @@ get_slice_index(AbsoluteChunkEndOffset) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+%% @doc Return the start offset of the bucket containing the given chunk offset.
+%% A chunk bucket a 0-based, 256-KiB wide, 256-KiB aligned range that fully contains a chunk.
+-spec get_entropy_bucket_start(non_neg_integer()) -> non_neg_integer().
+get_entropy_bucket_start(AbsoluteChunkEndOffset) ->
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
+	PickOffset = max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE),
+	BucketStart = PickOffset - PickOffset rem ?DATA_CHUNK_SIZE,
+
+    true = BucketStart == ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
+    
+	BucketStart.
 
 %% @doc Return the total number of entropies generated per partition
 %% in the 2.9 replication format.
@@ -168,8 +178,7 @@ get_entropy_count() ->
 get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
     %% Assert that SubChunkStartOffset is less than ?DATA_CHUNK_SIZE
     true = SubChunkStartOffset < ?DATA_CHUNK_SIZE,
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
-    BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
+    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
     SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     SectorSize = get_sector_size(),
     %% Index of this chunk into the sector (i.e. how many chunks into the sector it falls)
