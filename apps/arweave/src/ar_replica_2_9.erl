@@ -156,8 +156,6 @@ get_entropy_count() ->
     %% Ensuring we have a multiple of 32 entropies proves very convenient for chunk-by-chunk
     %% syncing.
     %% 
-    %% Some entropies will be slightly underused.
-    %% 
 	%% The additional number of entropies (the constant) is chosen depending
 	%% on the PARTITION_SIZE and REPLICA_2_9_ENTROPY_SIZE constants
 	%% such that the sector size (num entropies * sub-chunk size) is evenly divisible
@@ -382,7 +380,8 @@ entropy_index_walk_test() ->
     
     %% In tests the strict data split threshold is 262144 * 3, before that offset chunks
     %% were not padded. So each provided end offset is taken as is. After the threshold each
-    %% offset is padded to a multiple of ?DATA_CHUNK_SIZE (i.e. 262144).
+    %% offset is padded to a multiple of ?DATA_CHUNK_SIZE (i.e. 262144) off of the threshold
+    %% value.
 
     %% --------------------------------------------------------------------------
     %% Before the strict data split threshold:
