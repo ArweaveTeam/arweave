@@ -417,7 +417,7 @@ get_chunk_binary(Peer, Offset, RequestedPacking) ->
 		],
 		erlang:monotonic_time() - StartTime),
 
-	handle_chunk_response(Response).
+	handle_chunk_response(Response, RequestedPacking, Peer).
 
 get_mempool(Peer) ->
 	handle_mempool_response(ar_http:req(#{
@@ -833,25 +833,43 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 handle_sync_record_response(Reply, _, _) ->
 	{error, Reply}.
 
-handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
+handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}, RequestedPacking, Peer) ->
 	case catch ar_serialize:binary_to_poa(Body) of
 		{'EXIT', Reason} ->
 			{error, Reason};
 		{error, Reason} ->
 			{error, Reason};
-		{ok, Proof} ->
-			case maps:get(chunk, Proof) of
-				<<>> ->
-					{error, empty_chunk};
-				Chunk when byte_size(Chunk) > ?DATA_CHUNK_SIZE ->
-					{error, chunk_bigger_than_256kib};
-				_ ->
-					{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
+		{ok, #{ packing := Packing } = Proof} ->
+			CheckPacking =
+				case RequestedPacking of
+					any ->
+						true;
+					Packing ->
+						true;
+					_ ->
+						false
+				end,
+			case CheckPacking of
+				true ->
+					case maps:get(chunk, Proof) of
+						<<>> ->
+							{error, empty_chunk};
+						Chunk when byte_size(Chunk) > ?DATA_CHUNK_SIZE ->
+							{error, chunk_bigger_than_256kib};
+						_ ->
+							{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
+					end;
+				false ->
+					?LOG_WARNING([{event, peer_served_proof_with_wrong_packing},
+						{requested_packing, ar_serialize:encode_packing(RequestedPacking)},
+						{got_packing, ar_serialize:encode_packing(Packing)},
+						{peer, ar_util:format_peer(Peer)}]),
+					{error, wrong_packing}
 			end
 	end;
-handle_chunk_response({error, _} = Response) ->
+handle_chunk_response({error, _} = Response, _RequestedPacking, _Peer) ->
 	Response;
-handle_chunk_response(Response) ->
+handle_chunk_response(Response, _RequestedPacking, _Peer) ->
 	{error, Response}.
 
 handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
