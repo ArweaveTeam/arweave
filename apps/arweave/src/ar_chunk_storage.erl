@@ -732,7 +732,8 @@ update_replica_2_9_entropy_record(PaddedEndOffset, SubChunkStartOffset, StoreID)
 	BucketStart = get_chunk_bucket_start(PaddedEndOffset),
 	SubChunkBucketStart = BucketStart + SubChunkStartOffset,
 	BucketEnd = get_chunk_bucket_end(PaddedEndOffset),
-	ar_sync_record:add(BucketEnd, SubChunkBucketStart, ID, StoreID).
+	ar_sync_record:add_async(store_replica_2_9_entropy,
+			BucketEnd, SubChunkBucketStart, ID, StoreID).
 
 delete_replica_2_9_entropy_record(PaddedEndOffset, StoreID) ->
 	ID = ar_chunk_storage_replica_2_9_entropy,
