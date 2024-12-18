@@ -60,8 +60,8 @@
 -define(POST_AND_MINE_TIMEOUT, 500_000).
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
--define(WAIT_UNTIL_JOINED_TIMEOUT, 300_000).
--define(WAIT_SYNCS_DATA_TIMEOUT, 300_000).
+-define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
+-define(WAIT_SYNCS_DATA_TIMEOUT, 200_000).
 
 %%%===================================================================
 %%% Public interface.
@@ -699,9 +699,8 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 
 stop() ->
 	{ok, Config} = application:get_env(arweave, config),
-	ok = application:stop(arweave),
-	ok = ar:stop_dependencies(),
-	timer:sleep(1000),
+	application:stop(arweave),
+	ar:stop_dependencies(),
 	Config.
 
 stop(Node) ->
