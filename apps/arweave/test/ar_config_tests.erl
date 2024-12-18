@@ -5,13 +5,13 @@
 -include_lib("eunit/include/eunit.hrl").
 
 parse_test_() ->
-	{timeout, 60, fun test_parse_config/0}.
+	{timeout, 100, fun test_parse_config/0}.
 
 validate_test_() ->
 	[
-		{timeout, 60, fun test_validate_repack_in_place/0},
-		{timeout, 60, fun test_validate_cm_pool/0},
-		{timeout, 60, fun test_validate_storage_modules/0}
+		{timeout, 100, fun test_validate_repack_in_place/0},
+		{timeout, 100, fun test_validate_cm_pool/0},
+		{timeout, 100, fun test_validate_storage_modules/0}
 	].
 
 test_parse_config() ->

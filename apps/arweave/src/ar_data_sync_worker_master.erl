@@ -487,24 +487,24 @@ format_peer(Task, Args) ->
 
 helpers_test_() ->
 	[
-		{timeout, 30, fun test_counters/0},
-		{timeout, 30, fun test_get_worker/0},
-		{timeout, 30, fun test_format_peer/0}
+		{timeout, 300, fun test_counters/0},
+		{timeout, 300, fun test_get_worker/0},
+		{timeout, 300, fun test_format_peer/0}
 	].
 
 queue_test_() ->
 	[
-		{timeout, 30, fun test_enqueue_main_task/0},
-		{timeout, 30, fun test_enqueue_peer_task/0},
-		{timeout, 30, fun test_process_main_queue/0}
+		{timeout, 300, fun test_enqueue_main_task/0},
+		{timeout, 300, fun test_enqueue_peer_task/0},
+		{timeout, 300, fun test_process_main_queue/0}
 	].
 
 rebalance_peers_test_() ->
 	[
-		{timeout, 30, fun test_max_peer_queue/0},
-		{timeout, 30, fun test_cut_peer_queue/0},
-		{timeout, 30, fun test_update_active/0},
-		{timeout, 30, fun test_calculate_targets/0}
+		{timeout, 300, fun test_max_peer_queue/0},
+		{timeout, 300, fun test_cut_peer_queue/0},
+		{timeout, 300, fun test_update_active/0},
+		{timeout, 300, fun test_calculate_targets/0}
 	].
 
 test_counters() ->

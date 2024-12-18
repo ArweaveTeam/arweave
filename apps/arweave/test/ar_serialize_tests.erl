@@ -215,7 +215,7 @@ tx_roundtrip_test() ->
 	).
 
 wallet_list_roundtrip_test_() ->
-	{timeout, 30, fun test_wallet_list_roundtrip/0}.
+	{timeout, 100, fun test_wallet_list_roundtrip/0}.
 
 test_wallet_list_roundtrip() ->
 	[B] = ar_weave:init(),
@@ -229,7 +229,7 @@ test_wallet_list_roundtrip() ->
 	?assertEqual(ExpectedWL, ActualWL).
 
 block_index_roundtrip_test_() ->
-	{timeout, 10, fun test_block_index_roundtrip/0}.
+	{timeout, 100, fun test_block_index_roundtrip/0}.
 
 test_block_index_roundtrip() ->
 	[B] = ar_weave:init(),

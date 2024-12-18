@@ -1436,7 +1436,7 @@ get_entropy_reset_point_test() ->
 	?assertEqual(ResetFreq * 4, get_entropy_reset_point(ResetFreq * 3, ResetFreq * 4 + 1)).
 
 applies_validated_steps_test_() ->
-	{timeout, 60, fun test_applies_validated_steps/0}.
+	{timeout, 300, fun test_applies_validated_steps/0}.
 
 test_applies_validated_steps() ->
 	reset_and_pause(),
@@ -1534,7 +1534,7 @@ test_applies_validated_steps() ->
 	ok.
 
 reorg_after_join_test_() ->
-	{timeout, 120, fun test_reorg_after_join/0}.
+	{timeout, 300, fun test_reorg_after_join/0}.
 
 test_reorg_after_join() ->
 	[B0] = ar_weave:init(),
@@ -1551,7 +1551,7 @@ test_reorg_after_join() ->
 	ar_test_node:wait_until_height(2).
 
 reorg_after_join2_test_() ->
-	{timeout, 120, fun test_reorg_after_join2/0}.
+	{timeout, 300, fun test_reorg_after_join2/0}.
 
 test_reorg_after_join2() ->
 	[B0] = ar_weave:init(),

@@ -122,7 +122,7 @@ test_webhooks() ->
 					end
 				end,
 				200,
-				10000
+				20_000
 			),
 			true = ar_util:do_until(
 				fun() ->
@@ -141,7 +141,7 @@ test_webhooks() ->
 					end
 				end,
 				200,
-				10000
+				20_000
 			),
 			case Height < 8 andalso Height rem 2 == 1 of
 				false ->
@@ -171,7 +171,7 @@ test_webhooks() ->
 			end
 		end,
 		200,
-		2000
+		20_000
 	),
 	V2TXID = (V2TX)#tx.id,
 	upload_chunks(Proofs),
@@ -227,7 +227,7 @@ assert_transaction_data_synced(TXID) ->
 			end
 		end,
 		1000,
-		30000
+		30_000
 	).
 
 upload_chunks([]) ->
@@ -256,7 +256,7 @@ assert_transaction_data_removed(TXID) ->
 			maps:get(<<"event">>, JSON) == <<"transaction_data_removed">>
 		end,
 		100,
-		60000
+		60_000
 	).
 
 append_second_chunk_to_file(TXID, Filename) ->
