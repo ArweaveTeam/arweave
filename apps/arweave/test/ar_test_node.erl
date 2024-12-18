@@ -56,7 +56,7 @@
 -define(REMOTE_CALL_TIMEOUT, 500_000).
 -define(CONNECT_TO_PEER_TIMEOUT, 500_000).
 -define(BLOCK_INDEX_TIMEOUT, 500_000).
--define(TEST_MOCKED_FUNCTIONS_TIMEOUT, 500_000).
+-define(TEST_MOCKED_FUNCTIONS_TIMEOUT, 500). %% in seconds
 -define(POST_AND_MINE_TIMEOUT, 500_000).
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
@@ -823,7 +823,8 @@ wait_until_syncs_genesis_data(Node) ->
 
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
-	WeaveSize = (ar_node:get_current_block())#block.weave_size,
+	B = ar_node:get_current_block(),
+	WeaveSize = B#block.weave_size,
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, any)
 			|| {Size, N, _Packing} <- Config#config.storage_modules],
 	%% Once the data is stored in the disk pool, make the storage modules
@@ -836,8 +837,29 @@ wait_until_syncs_genesis_data() ->
 	ok.
 
 wait_until_height(Node, TargetHeight) ->
-	remote_call(Node, ?MODULE, wait_until_height, [TargetHeight],
-			?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500).
+	wait_until_height(Node, TargetHeight, true).
+
+wait_until_height(Node, TargetHeight, Strict) ->
+	{BI, Height} = case Node of 
+		main ->
+			{
+				wait_until_height(TargetHeight),
+				ar_node:get_height()
+			};
+		_ -> 
+			{
+				remote_call(Node, ?MODULE, wait_until_height, [TargetHeight],
+					?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500),
+				remote_call(Node, ar_node, get_height, [])
+			}
+	end,
+	case Strict of
+		true ->
+			?assertEqual(TargetHeight, Height);
+		false ->
+			ok
+	end,
+	BI.
 
 wait_until_height(TargetHeight) ->
 	{ok, BI} = ar_util:do_until(
