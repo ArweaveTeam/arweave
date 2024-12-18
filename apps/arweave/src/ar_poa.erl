@@ -189,7 +189,10 @@ validate2({spora_2_6, _} = Packing, Args) ->
 	case ar_packing_server:unpack(Packing, AbsoluteEndOffset, TXRoot, Chunk, ChunkSize) of
 		{error, _} ->
 			false;
-		{exception, _} ->
+		{exception, Exception} ->
+			?LOG_WARNING([{event, validate_unpack_exception},
+				{packing, ar_serialize:encode_packing(Packing, false)},
+				{exception, Exception}]),
 			error;
 		{ok, Unpacked} ->
 			case ChunkID == ar_tx:generate_chunk_id(Unpacked) of
@@ -231,7 +234,10 @@ validate3(Packing, Args) ->
 			TXRoot, Chunk, SubChunkStartOffset) of
 		{error, _} ->
 			false;
-		{exception, _} ->
+		{exception, Exception} ->
+			?LOG_WARNING([{event, validate_unpack_exception},
+				{packing, ar_serialize:encode_packing(Packing, false)},
+				{exception, Exception}]),
 			error;
 		{ok, UnpackedSubChunk} ->
 			ChunkSize = ChunkEndOffset - ChunkStartOffset,
