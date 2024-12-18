@@ -7,6 +7,7 @@
 		get_current_step_number/0, get_current_step_number/1, get_step_triplets/3,
 		get_seed_data/2, get_step_checkpoints/2, get_step_checkpoints/4, get_steps/4,
 		get_seed/1, get_active_partition_upper_bound/2,
+		get_reset_frequency/0,
 		validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_current_session/0,
@@ -20,7 +21,6 @@
 -include_lib("arweave/include/ar_vdf.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
@@ -195,11 +195,14 @@ validate_last_step_checkpoints(#block{
 validate_last_step_checkpoints(_B, _PrevB, _PrevOutput) ->
 	false.
 
+get_reset_frequency() ->
+	?NONCE_LIMITER_RESET_FREQUENCY.
+
 %% @doc Determine whether StepNumber has passed the entropy reset line. If it has return the
 %% reset line, otherwise return none.
 get_entropy_reset_point(PrevStepNumber, StepNumber) ->
-	ResetLine = (PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY + 1)
-			* ?NONCE_LIMITER_RESET_FREQUENCY,
+	ResetLine = (PrevStepNumber div ar_nonce_limiter:get_reset_frequency() + 1)
+			* ar_nonce_limiter:get_reset_frequency(),
 	case ResetLine > StepNumber of
 		true ->
 			none;
@@ -208,7 +211,7 @@ get_entropy_reset_point(PrevStepNumber, StepNumber) ->
 	end.
 
 %% @doc Conditionally add entropy to PrevOutput if the configured number of steps have
-%% passed. See ?NONCE_LIMITER_RESET_FREQUENCY for more details.
+%% passed. See ar_nonce_limiter:get_reset_frequency() for more details.
 maybe_add_entropy(PrevOutput, PrevStepNumber, StepNumber, Seed) ->
 	case get_entropy_reset_point(PrevStepNumber, StepNumber) of
 		StepNumber ->
@@ -218,7 +221,7 @@ maybe_add_entropy(PrevOutput, PrevStepNumber, StepNumber, Seed) ->
 	end.
 
 %% @doc Add entropy to an earlier VDF output to mitigate the impact of a miner with a
-%% fast VDF compute. See ?NONCE_LIMITER_RESET_FREQUENCY for more details.
+%% fast VDF compute. See ar_nonce_limiter:get_reset_frequency() for more details.
 mix_seed(PrevOutput, Seed) ->
 	SeedH = crypto:hash(sha256, Seed),
 	mix_seed2(PrevOutput, SeedH).
@@ -459,7 +462,7 @@ handle_call({get_latest_step_triplets, SessionKey, N}, _From, State) ->
 				step_checkpoints_map = Map,
 				upper_bound = UpperBound, next_upper_bound = NextUpperBound } ->
 			{_, IntervalNumber, _} = SessionKey,
-			IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+			IntervalStart = IntervalNumber * ar_nonce_limiter:get_reset_frequency(),
 			ResetPoint = get_entropy_reset_point(IntervalStart, StepNumber),
 			Triplets = get_triplets(StepNumber, Steps, ResetPoint, UpperBound,
 					NextUpperBound, N),
@@ -496,7 +499,7 @@ handle_call({get_active_partition_upper_bound, StepNumber, SessionKey}, _From, S
 			{reply, not_found, State};
 		#vdf_session{ upper_bound = UpperBound, next_upper_bound = NextUpperBound } ->
 			{_NextSeed, IntervalNumber, _NextVDFDifficulty} = SessionKey,
-			IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+			IntervalStart = IntervalNumber * ar_nonce_limiter:get_reset_frequency(),
 			UpperBound2 =
 				case get_entropy_reset_point(IntervalStart, StepNumber) of
 					none ->
@@ -673,7 +676,7 @@ handle_info({event, node_state, {checkpoint_block, B}}, State) ->
 			#state{ sessions = Sessions, session_by_key = SessionByKey,
 					current_session_key = CurrentSessionKey } = State,
 			StepNumber = ar_block:vdf_step_number(B),
-			BaseInterval = StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
+			BaseInterval = StepNumber div ar_nonce_limiter:get_reset_frequency(),
 			{Sessions2, SessionByKey2} = prune_old_sessions(Sessions, SessionByKey,
 					BaseInterval),
 			true = maps:is_key(CurrentSessionKey, SessionByKey2),
@@ -694,7 +697,7 @@ handle_info({computed, Args}, State) ->
 	Session = get_session(CurrentSessionKey, State),
 	#vdf_session{ next_vdf_difficulty = NextVDFDifficulty, steps = [SessionOutput | _] } = Session,
 	{NextSeed, IntervalNumber, NextVDFDifficulty} = CurrentSessionKey,
-	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+	IntervalStart = IntervalNumber * ar_nonce_limiter:get_reset_frequency(),
 	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
 			SessionOutput, IntervalStart, StepNumber, NextSeed),
 	gen_server:cast(?MODULE, schedule_step),
@@ -734,7 +737,7 @@ session_key(#nonce_limiter_info{ next_seed = NextSeed, global_step_number = Step
 		next_vdf_difficulty = NextVDFDifficulty }) ->
 	session_key(NextSeed, StepNumber, NextVDFDifficulty).
 session_key(NextSeed, StepNumber, NextVDFDifficulty) ->
-	{NextSeed, StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY, NextVDFDifficulty}.
+	{NextSeed, StepNumber div ar_nonce_limiter:get_reset_frequency(), NextVDFDifficulty}.
 
 get_session(SessionKey, #state{ session_by_key = SessionByKey }) ->
 	maps:get(SessionKey, SessionByKey, not_found).
@@ -751,7 +754,7 @@ update_session(Session, StepNumber, Steps) ->
 send_output(SessionKey, Session) ->
 	{_, IntervalNumber, _} = SessionKey,
 	#vdf_session{ step_number = StepNumber, steps = [Output | _] } = Session,
-	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+	IntervalStart = IntervalNumber * ar_nonce_limiter:get_reset_frequency(),
 	UpperBound =
 		case get_entropy_reset_point(IntervalStart, StepNumber) of
 			none ->
@@ -1031,7 +1034,7 @@ schedule_step(State) ->
 		steps = Steps } = get_session(Key, State),
 	PrevOutput = hd(Steps),
 	StepNumber = PrevStepNumber + 1,
-	IntervalStart = IntervalNumber * ?NONCE_LIMITER_RESET_FREQUENCY,
+	IntervalStart = IntervalNumber * ar_nonce_limiter:get_reset_frequency(),
 	PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
 		PrevOutput, IntervalStart, StepNumber, NextSeed),
 	VDFDifficulty2 =
@@ -1117,7 +1120,7 @@ apply_external_update_session_not_found(Update, State) ->
 			%% But start no later than the beginning of the session 2 after PrevSession.
 			%% This is because the steps in that session - which may have been previously
 			%% computed - have now been invalidated.
-			NextSessionStart = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY,
+			NextSessionStart = (SessionInterval + 1) * ar_nonce_limiter:get_reset_frequency(),
 			{_, Steps} = get_step_range(Session,
 					min(RangeStart, NextSessionStart), StepNumber),
 			State2 = apply_external_update4(State, SessionKey, Session, Steps),
@@ -1206,9 +1209,9 @@ apply_external_update4(State, SessionKey, Session, Steps) ->
 %% current fork of B1 -> B2' -> reset line -> B3 i.e. we can query all steps by
 %% B1.next_seed even though on our fork the reset line determined a different
 %% next_seed for the latest session.
-get_step_range(Session, SessionInterval) ->
-	SessionStart = SessionInterval * ?NONCE_LIMITER_RESET_FREQUENCY,
-	SessionEnd = (SessionInterval + 1) * ?NONCE_LIMITER_RESET_FREQUENCY - 1,
+get_step_range_from_interval(Session, SessionInterval, ResetFrequency) ->
+	SessionStart = SessionInterval * ResetFrequency,
+	SessionEnd = (SessionInterval + 1) * ResetFrequency - 1,
 	get_step_range(Session, SessionStart, SessionEnd).
 
 get_step_range(not_found, _RangeStart, _RangeEnd) ->
@@ -1259,7 +1262,8 @@ cache_block_session(State, SessionKey, PrevSessionKey, StepCheckpointsMap, Seed,
 			not_found ->
 				{_, Interval, NextVDFDifficulty} = SessionKey,
 				PrevSession = get_session(PrevSessionKey, State),
-				{StepNumber, Steps} = get_step_range(PrevSession, Interval),
+				{StepNumber, Steps} = get_step_range_from_interval(
+					PrevSession, Interval, ar_nonce_limiter:get_reset_frequency()),
 				?LOG_DEBUG([{event, new_vdf_step}, {source, block},
 					{session_key, encode_session_key(SessionKey)}, {step_number, StepNumber}]),
 				#vdf_session{ step_number = StepNumber, seed = Seed,
@@ -1368,35 +1372,6 @@ filter_step_triplets_with_checkpoints([{_, StepNumber, _} = Triplet | Triplets],
 %%% Tests.
 %%%===================================================================
 
-%% @doc Reset the state and stop computing steps automatically. Used in tests.
-reset_and_pause() ->
-	gen_server:cast(?MODULE, reset_and_pause).
-
-%% @doc Do not emit the initialized event. Used in tests.
-turn_off_initialized_event() ->
-	gen_server:cast(?MODULE, turn_off_initialized_event).
-
-%% @doc Get all steps starting from the latest on the current tip. Used in tests.
-get_steps() ->
-	gen_server:call(?MODULE, get_steps).
-
-%% @doc Compute a single step. Used in tests.
-step() ->
-	Self = self(),
-	spawn(
-		fun() ->
-			ok = ar_events:subscribe(nonce_limiter),
-			gen_server:cast(?MODULE, compute_step),
-			receive
-				{event, nonce_limiter, {computed_output, _}} ->
-					Self ! done
-			end
-		end
-	),
-	receive
-		done ->
-			ok
-	end.
 
 exclude_computed_steps_from_steps_to_validate_test() ->
 	C1 = crypto:strong_rand_bytes(32),
@@ -1427,111 +1402,13 @@ test_exclude_computed_steps_from_steps_to_validate([]) ->
 	ok.
 
 get_entropy_reset_point_test() ->
-	ResetFreq = ?NONCE_LIMITER_RESET_FREQUENCY,
+	ResetFreq = ar_nonce_limiter:get_reset_frequency(),
 	?assertEqual(none, get_entropy_reset_point(1, ResetFreq - 1)),
 	?assertEqual(ResetFreq, get_entropy_reset_point(1, ResetFreq)),
 	?assertEqual(none, get_entropy_reset_point(ResetFreq, ResetFreq + 1)),
 	?assertEqual(2 * ResetFreq, get_entropy_reset_point(ResetFreq, ResetFreq * 2)),
 	?assertEqual(ResetFreq * 3, get_entropy_reset_point(ResetFreq * 3 - 1, ResetFreq * 3 + 2)),
 	?assertEqual(ResetFreq * 4, get_entropy_reset_point(ResetFreq * 3, ResetFreq * 4 + 1)).
-
-applies_validated_steps_test_() ->
-	{timeout, 60, fun test_applies_validated_steps/0}.
-
-test_applies_validated_steps() ->
-	reset_and_pause(),
-	Seed = crypto:strong_rand_bytes(48),
-	NextSeed = crypto:strong_rand_bytes(48),
-	NextSeed2 = crypto:strong_rand_bytes(48),
-	InitialOutput = crypto:strong_rand_bytes(32),
-	B1VDFDifficulty = 3,
-	B1NextVDFDifficulty = 3,
-	B1 = test_block(1, InitialOutput, Seed, NextSeed, [], [],
-			B1VDFDifficulty, B1NextVDFDifficulty),
-	turn_off_initialized_event(),
-	ar_nonce_limiter:account_tree_initialized([B1]),
-	true = ar_util:do_until(fun() -> get_current_step_number() == 1 end, 100, 1000),
-	assert_session(B1, B1),
-	{ok, Output2, _} = compute(2, InitialOutput, B1VDFDifficulty),
-	B2VDFDifficulty = 3,
-	B2NextVDFDifficulty = 4,
-	B2 = test_block(2, Output2, Seed, NextSeed, [], [Output2], 
-			B2VDFDifficulty, B2NextVDFDifficulty),
-	ok = ar_events:subscribe(nonce_limiter),
-	assert_validate(B2, B1, valid),
-	assert_validate(B2, B1, valid),
-	assert_validate(B2#block{ nonce_limiter_info = #nonce_limiter_info{} }, B1, {invalid, 1}),
-	N2 = B2#block.nonce_limiter_info,
-	assert_validate(B2#block{ nonce_limiter_info = N2#nonce_limiter_info{ steps = [] } },
-			B1, {invalid, 4}),
-	assert_validate(B2#block{
-			nonce_limiter_info = N2#nonce_limiter_info{ steps = [Output2, Output2] } },
-			B1, {invalid, 2}),
-	assert_step_number(2),
-	[step() || _ <- lists:seq(1, 3)],
-	assert_step_number(5),
-	ar_events:send(node_state, {new_tip, B2, B1}),
-	%% We have just applied B2 with a VDF difficulty update => a new session has to be opened.
-	assert_step_number(2),
-	assert_session(B2, B1),
-	{ok, Output3, _} = compute(3, Output2, B2VDFDifficulty),
-	{ok, Output4, _} = compute(4, Output3, B2VDFDifficulty),
-	B3VDFDifficulty = 3,
-	B3NextVDFDifficulty = 4,
-	B3 = test_block(4, Output4, Seed, NextSeed, [], [Output4, Output3],
-			B3VDFDifficulty, B3NextVDFDifficulty),
-	assert_validate(B3, B2, valid),
-	assert_validate(B3, B1, valid),
-	%% Entropy reset line crossed at step 5, add entropy and apply next_vdf_difficulty
-	{ok, Output5, _} = compute(5, mix_seed(Output4, NextSeed), B3NextVDFDifficulty),
-	B4VDFDifficulty = 4,
-	B4NextVDFDifficulty = 5,
-	B4 = test_block(5, Output5, NextSeed, NextSeed2, [], [Output5],
-			B4VDFDifficulty, B4NextVDFDifficulty),
-	[step() || _ <- lists:seq(1, 6)],
-	assert_step_number(10),
-	assert_validate(B4, B3, valid),
-	ar_events:send(node_state, {new_tip, B4, B3}),
-	assert_step_number(9),
-	assert_session(B4, B3),
-	assert_validate(B4, B4, {invalid, 1}),
-	% % 5, 6, 7, 8, 9, 10
-	B5VDFDifficulty = 5,
-	B5NextVDFDifficulty = 6,
-	B5 = test_block(10, <<>>, NextSeed, NextSeed2, [], [<<>>],
-			B5VDFDifficulty, B5NextVDFDifficulty),
-	assert_validate(B5, B4, {invalid, 3}),
-	B6VDFDifficulty = 5,
-	B6NextVDFDifficulty = 6,
-	B6 = test_block(10, <<>>, NextSeed, NextSeed2, [],
-			% Steps 10, 9, 8, 7, 6.
-			[<<>> | lists:sublist(get_steps(), 4)],
-			B6VDFDifficulty, B6NextVDFDifficulty),
-	assert_validate(B6, B4, {invalid, 3}),
-	Invalid = crypto:strong_rand_bytes(32),
-	B7VDFDifficulty = 5,
-	B7NextVDFDifficulty = 6,
-	B7 = test_block(10, Invalid, NextSeed, NextSeed2, [],
-			% Steps 10, 9, 8, 7, 6.
-			[Invalid | lists:sublist(get_steps(), 4)],
-			B7VDFDifficulty, B7NextVDFDifficulty),
-	assert_validate(B7, B4, {invalid, 3}),
-	%% Last valid block was B4, so that's the vdf_difficulty to use (not next_vdf_difficulty cause
-	%% the next entropy reset line isn't until step 10)
-	{ok, Output6, _} = compute(6, Output5, B4VDFDifficulty),
-	{ok, Output7, _} = compute(7, Output6, B4VDFDifficulty),
-	{ok, Output8, _} = compute(8, Output7, B4VDFDifficulty),
-	B8VDFDifficulty = 4,
-	%% Change the next_vdf_difficulty to confirm that apply_tip2 handles updating an
-	%% existing VDF session
-	B8NextVDFDifficulty = 6, 
-	B8 = test_block(8, Output8, NextSeed, NextSeed2, [], [Output8, Output7, Output6],
-			B8VDFDifficulty, B8NextVDFDifficulty),
-	ar_events:send(node_state, {new_tip, B8, B4}),
-	timer:sleep(1000),
-	assert_session(B8, B4),
-	assert_validate(B8, B4, valid),
-	ok.
 
 reorg_after_join_test_() ->
 	{timeout, 120, fun test_reorg_after_join/0}.
@@ -1629,15 +1506,16 @@ get_step_range_test() ->
 		get_step_range([8], 8, 8, 8),
 		"Steps length 1"
 	),
+	ResetFrequency = 5,
 	?assertEqual(
 		{9, [9, 8, 7, 6, 5]},
-		get_step_range(
-			#vdf_session{ step_number = 12, steps = lists:seq(12, 0, -1) }, 1),
+		get_step_range_from_interval(
+			#vdf_session{ step_number = 12, steps = lists:seq(12, 0, -1) }, 1, ResetFrequency),
 		"Session and Interval"
 	),
 	?assertEqual(
 		{0, []},
-		get_step_range(not_found, 1),
+		get_step_range_from_interval(not_found, 1, ResetFrequency),
 		"not_found and Interval"
 	),
 	?assertEqual(
@@ -1652,73 +1530,6 @@ get_step_range_test() ->
 		"not_found and Range"
 	),
 	ok.
-
-assert_session(B, PrevB) ->
-	%% vdf_diffic ulty and next_vdf_difficulty in cached VDF sessions should be
-	%% updated whenever a new block is validated.
-	#nonce_limiter_info{
-		vdf_difficulty = PrevBVDFDifficulty, next_vdf_difficulty = PrevBNextVDFDifficulty
-	} = PrevB#block.nonce_limiter_info,
-	#nonce_limiter_info{
-		vdf_difficulty = BVDFDifficulty, next_vdf_difficulty = BNextVDFDifficulty
-	} = B#block.nonce_limiter_info,
-	PrevBSessionKey = session_key(PrevB#block.nonce_limiter_info),
-	BSessionKey = session_key(B#block.nonce_limiter_info),
-
-	BSession = ar_nonce_limiter:get_session(BSessionKey),
-	?assertEqual(BVDFDifficulty, BSession#vdf_session.vdf_difficulty),
-	?assertEqual(BNextVDFDifficulty,
-		BSession#vdf_session.next_vdf_difficulty),
-	case PrevBSessionKey == BSessionKey of
-		true ->
-			ok;
-		false ->
-			PrevBSession = ar_nonce_limiter:get_session(PrevBSessionKey),
-			?assertEqual(PrevBVDFDifficulty,
-				PrevBSession#vdf_session.vdf_difficulty),
-			?assertEqual(PrevBNextVDFDifficulty,
-				PrevBSession#vdf_session.next_vdf_difficulty)
-	end.
-
-assert_validate(B, PrevB, ExpectedResult) ->
-	request_validation(B#block.indep_hash, B#block.nonce_limiter_info,
-			PrevB#block.nonce_limiter_info),
-	BH = B#block.indep_hash,
-	receive
-		{event, nonce_limiter, {valid, BH}} ->
-			case ExpectedResult of
-				valid ->
-					assert_session(B, PrevB),
-					ok;
-				_ ->
-					?assert(false, iolist_to_binary(io_lib:format("Unexpected "
-							"validation success. Expected: ~p.", [ExpectedResult])))
-			end;
-		{event, nonce_limiter, {invalid, BH, Code}} ->
-			case ExpectedResult of
-				{invalid, Code} ->
-					ok;
-				_ ->
-					?assert(false, iolist_to_binary(io_lib:format("Unexpected "
-							"validation failure: ~p. Expected: ~p.",
-							[Code, ExpectedResult])))
-			end
-	after 2000 ->
-		?assert(false, "Validation timeout.")
-	end.
-
-assert_step_number(N) ->
-	timer:sleep(200),
-	?assert(ar_util:do_until(fun() -> get_current_step_number() == N end, 100, 1000)).
-
-test_block(StepNumber, Output, Seed, NextSeed, LastStepCheckpoints, Steps,
-		VDFDifficulty, NextVDFDifficulty) ->
-	#block{ indep_hash = crypto:strong_rand_bytes(48),
-			nonce_limiter_info = #nonce_limiter_info{ output = Output,
-					global_step_number = StepNumber, seed = Seed, next_seed = NextSeed,
-					last_step_checkpoints = LastStepCheckpoints, steps = Steps,
-					vdf_difficulty = VDFDifficulty, next_vdf_difficulty = NextVDFDifficulty }
-	}.
 
 filter_step_triplets_test() ->
 	?assertEqual([], filter_step_triplets([], [a, b])),
@@ -1738,3 +1549,4 @@ get_triplets_test() ->
 	?assertEqual([{a, 2, 3}, {b, 1, 2}], get_triplets(2, [a, b, c], 2, 2, 3, 2)),
 	?assertEqual([{a, 3, 3}, {b, 2, 3}, {c, 1, 3}], get_triplets(3, [a, b, c], 0, 2, 3, 3)),
 	?assertEqual([{a, 3, 2}, {b, 2, 2}, {c, 1, 2}], get_triplets(3, [a, b, c], none, 2, 3, 4)).
+
