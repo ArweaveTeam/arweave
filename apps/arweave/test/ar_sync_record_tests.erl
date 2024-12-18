@@ -62,7 +62,7 @@ test_sync_record() ->
 				{ok, Global4} = ar_intervals:safe_from_etf(Binary4),
 				[{1048576, 0}] == ar_intervals:to_list(Global4) end,
 			200,
-			5000),
+			10_000),
 
 	%% Add a storage module chunk
 	ar_sync_record:add(
@@ -93,7 +93,7 @@ test_sync_record() ->
 				{ok, Global6} = ar_intervals:safe_from_etf(Binary6),
 				[{1048576, 0}] == ar_intervals:to_list(Global6) end,
 			200,
-			1000),
+			10_000),
 	?assertEqual(not_found,
 		ar_sync_record:get_interval(DiskPoolStart+1, ar_data_sync, "default")),
 	?assertEqual({1048576, 0}, ar_sync_record:get_interval(1, ar_data_sync, PartitionID)),

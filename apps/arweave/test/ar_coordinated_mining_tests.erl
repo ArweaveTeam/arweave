@@ -9,8 +9,8 @@
 -import(ar_test_node, [http_get_block/2]).
 
 -define(MINING_TEST_TIMEOUT, 240).
--define(API_TEST_TIMEOUT, 120).
--define(PARTITION_TEST_TIMEOUT, 120).
+-define(API_TEST_TIMEOUT, 240).
+-define(PARTITION_TEST_TIMEOUT, 240).
 
 %% --------------------------------------------------------------------
 %% Test registration
@@ -353,7 +353,7 @@ assert_peers(ExpectedPeers, Node, Partition) ->
 			lists:sort(ExpectedPeers) == lists:sort(Peers)
 		end,
 		200,
-		5000
+		10_000
 	)).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->

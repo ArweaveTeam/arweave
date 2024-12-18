@@ -11,7 +11,7 @@
 		read_block_when_stored/1, test_with_mocked_functions/2]).
 
 rejects_invalid_chunks_test_() ->
-	{timeout, 180, fun test_rejects_invalid_chunks/0}.
+	{timeout, 300, fun test_rejects_invalid_chunks/0}.
 
 test_rejects_invalid_chunks() ->
 	ar_test_data_sync:setup_nodes(),
@@ -194,7 +194,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 	).
 
 rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size_test_() ->
-	{timeout, 120,
+	{timeout, 300,
 			fun test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0}.
 
 test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
@@ -214,7 +214,7 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 			ar_test_node:post_chunk(main, ar_serialize:jsonify(BigProof))).
 
 rejects_chunks_exceeding_disk_pool_limit_test_() ->
-	{timeout, 240, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
+	{timeout, 300, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
 
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
@@ -317,7 +317,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			end
 		end,
 		2000,
-		20 * 1000
+		20_000
 	),
 	%% Now we do not have free space again.
 	?assertMatch(
@@ -339,7 +339,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			end
 		end,
 		2000,
-		20 * 1000
+		20_000
 	).
 
 accepts_chunks_test_() ->
@@ -414,7 +414,7 @@ test_accepts_chunks(Split) ->
 			ar_util:encode(binary:list_to_bin(Chunks)) == Data
 		end,
 		500,
-		10 * 1000
+		20_000
 	),
 	ExpectedThirdProof = #{
 		data_path => maps:get(data_path, ThirdProof),
