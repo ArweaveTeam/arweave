@@ -857,8 +857,16 @@ handle_cast(sync_data2, #sync_data_state{
 			unsynced_intervals_from_other_storage_modules = [],
 			other_storage_modules_with_unsynced_intervals = [StoreID | StoreIDs]
 		} = State) ->
-	Intervals = get_unsynced_intervals_from_other_storage_modules(OriginStoreID, StoreID,
-			RangeStart, RangeEnd),
+	Intervals =
+		case ar_storage_module:get_packing(StoreID) of
+			{replica_2_9, _} ->
+				%% Do not unpack the 2.9 data by default, finding unpacked data
+				%% may be cheaper.
+				[];
+			_ ->
+				get_unsynced_intervals_from_other_storage_modules(OriginStoreID, StoreID,
+						RangeStart, RangeEnd)
+		end,
 	gen_server:cast(self(), sync_data2),
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals,
