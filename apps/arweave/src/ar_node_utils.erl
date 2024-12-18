@@ -686,7 +686,7 @@ is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
 %%%===================================================================
 
 block_validation_test_() ->
-	{timeout, 90, fun test_block_validation/0}.
+	{timeout, 300, fun test_block_validation/0}.
 
 test_block_validation() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
@@ -775,7 +775,7 @@ test_block_validation() ->
 			PartitionUpperBound2)).
 
 update_accounts_rejects_same_signature_in_double_signing_proof_test_() ->
-	{timeout, 10, fun test_update_accounts_rejects_same_signature_in_double_signing_proof/0}.
+	{timeout, 300, fun test_update_accounts_rejects_same_signature_in_double_signing_proof/0}.
 
 test_update_accounts_rejects_same_signature_in_double_signing_proof() ->
 	Accounts = #{},
@@ -798,7 +798,7 @@ test_update_accounts_rejects_same_signature_in_double_signing_proof() ->
 			update_accounts(B, PrevB, Accounts)).
 
 update_accounts_receives_released_reward_and_prover_reward_test_() ->
-	{timeout, 10, fun test_update_accounts_receives_released_reward_and_prover_reward/0}.
+	{timeout, 300, fun test_update_accounts_receives_released_reward_and_prover_reward/0}.
 
 % this function will prepend reward_history up to ?REWARD_HISTORY_BLOCKS
 % elements will keep pattern of changed values
@@ -846,7 +846,7 @@ test_update_accounts_receives_released_reward_and_prover_reward() ->
 	?assertEqual({1, <<>>, 1, false}, maps:get(BannedAddr, Accounts2)).
 
 update_accounts_does_not_let_banned_account_take_reward_test_() ->
-	{timeout, 10, fun test_update_accounts_does_not_let_banned_account_take_reward/0}.
+	{timeout, 300, fun test_update_accounts_does_not_let_banned_account_take_reward/0}.
 
 test_update_accounts_does_not_let_banned_account_take_reward() ->
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),

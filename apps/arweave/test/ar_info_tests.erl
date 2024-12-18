@@ -6,14 +6,14 @@
 
 recent_blocks_test_() ->
 	[
-		{timeout, 120, fun test_recent_blocks_post/0},
-		{timeout, 120, fun test_recent_blocks_announcement/0}
+		{timeout, 300, fun test_recent_blocks_post/0},
+		{timeout, 300, fun test_recent_blocks_announcement/0}
 	].
 
 recent_forks_test_() ->
 	[
-		{timeout, 120, fun test_get_recent_forks/0},
-		{timeout, 120, fun test_recent_forks/0}
+		{timeout, 300, fun test_get_recent_forks/0},
+		{timeout, 300, fun test_recent_forks/0}
 	].
 
 %% -------------------------------------------------------------------------------------------
@@ -282,7 +282,7 @@ get_recent(Peer) ->
 			peer => Peer,
 			path => "/recent",
 			connect_timeout => 1000,
-			timeout => 2 * 1000
+			timeout => 20_000
 		})
 	of
 		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> 

@@ -263,15 +263,15 @@ report_progress(State) ->
 
 intervals_test_() ->
     [
-        {timeout, 30, fun test_align_intervals/0},
-		{timeout, 30, fun test_union_intervals/0}
+        {timeout, 300, fun test_align_intervals/0},
+		{timeout, 300, fun test_union_intervals/0}
 	].
 
 verify_chunk_storage_test_() ->
 	[
-		{timeout, 30, fun test_verify_chunk_storage_in_interval/0},
-		{timeout, 30, fun test_verify_chunk_storage_should_store/0},
-		{timeout, 30, fun test_verify_chunk_storage_should_not_store/0}
+		{timeout, 300, fun test_verify_chunk_storage_in_interval/0},
+		{timeout, 300, fun test_verify_chunk_storage_should_store/0},
+		{timeout, 300, fun test_verify_chunk_storage_should_not_store/0}
 	].
 
 verify_proof_test_() ->

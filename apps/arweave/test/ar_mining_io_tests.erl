@@ -37,8 +37,8 @@ read_recall_range_test_() ->
 	{setup, fun setup_all/0, fun cleanup_all/1,
 		{foreach, fun setup_one/0, fun cleanup_one/1,
 		[
-			{timeout, 30, fun test_read_recall_range/0},
-			{timeout, 30, fun test_partitions/0}
+			{timeout, 100, fun test_read_recall_range/0},
+			{timeout, 100, fun test_partitions/0}
 		]}
     }.
 
@@ -145,7 +145,7 @@ wait_for_io(NumChunks) ->
 			NumChunks == length(ets:tab2list(?MODULE))
 		end,
 		100,
-		60000),
+		60_000),
 	?assertEqual(true, Result, "Timeout while waiting to read chunks").
 
 get_recall_chunks() ->

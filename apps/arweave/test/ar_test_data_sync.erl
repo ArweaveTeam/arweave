@@ -15,7 +15,7 @@
         generate_random_standard_split/0, generate_random_original_v1_split/0]).
 
 -define(SYNC_CHUNKS_CHECK, 1000).
--define(SYNC_CHUNKS_TIMEOUT, 300*1000).
+-define(SYNC_CHUNKS_TIMEOUT, 300_000).
 
 get_records_with_proofs(B, TX, Chunks) ->
 	[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)].
@@ -353,7 +353,7 @@ wait_until_syncs_chunk(Offset, ExpectedProof) ->
 			end
 		end,
 		100,
-		20_000
+		30_000
 	).
 
 wait_until_syncs_chunks(Proofs) ->

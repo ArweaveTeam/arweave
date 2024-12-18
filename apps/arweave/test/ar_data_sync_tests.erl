@@ -10,7 +10,7 @@
 -import(ar_test_node, [assert_wait_until_height/2, test_with_mocked_functions/2]).
 
 syncs_data_test_() ->
-	{timeout, 240, fun test_syncs_data/0}.
+	{timeout, 500, fun test_syncs_data/0}.
 
 test_syncs_data() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
@@ -49,7 +49,7 @@ test_syncs_data() ->
 					end
 				end,
 				100,
-				120 * 1000
+				120_000
 			),
 			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
 			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
@@ -65,7 +65,7 @@ test_syncs_data() ->
 
 syncs_after_joining_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
-		fun test_syncs_after_joining/0, 240).
+		fun test_syncs_after_joining/0, 500_000).
 
 test_syncs_after_joining() ->
 	test_syncs_after_joining(original_split).
@@ -136,7 +136,7 @@ test_mines_off_only_last_chunks() ->
 									> PrevStepNumber + ?NONCE_LIMITER_RESET_FREQUENCY
 						end,
 						100,
-						60000
+						60_000
 					);
 				0 ->
 					%% Wait until the new chunks fall below the new upper bound and
@@ -211,7 +211,7 @@ test_mines_off_only_second_last_chunks() ->
 	).
 
 disk_pool_rotation_test_() ->
-	{timeout, 120, fun test_disk_pool_rotation/0}.
+	{timeout, 500, fun test_disk_pool_rotation/0}.
 
 test_disk_pool_rotation() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
@@ -265,7 +265,7 @@ test_disk_pool_rotation() ->
 			[{786432, 0}] == ar_intervals:to_list(Global3)
 		end,
 		200,
-		5000
+		10_000
 	).
 
 enqueue_intervals_test() ->

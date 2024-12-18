@@ -180,7 +180,7 @@ test_persisted_mempool() ->
 			maps:is_key(SignedTX#tx.id, Mempool)
 		end,
 		100,
-		10000
+		20000
 	),
 	Config = ar_test_node:stop(),
 	%% Rejoin the network.

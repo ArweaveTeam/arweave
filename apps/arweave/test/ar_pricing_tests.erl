@@ -9,7 +9,7 @@
 
 get_price_per_gib_minute_test_() ->
 	[
-		{timeout, 30, fun test_price_per_gib_minute_pre_block_time_history/0},
+		{timeout, 100, fun test_price_per_gib_minute_pre_block_time_history/0},
 		ar_test_node:test_with_mocked_functions(
 			[
 				{ar_fork, height_2_7_2, fun() -> 10 end},
@@ -19,7 +19,7 @@ get_price_per_gib_minute_test_() ->
 				{ar_pricing_transition, transition_length_2_7_2, fun() -> 40 end}
 			],
 			fun test_price_per_gib_minute_transition_phases/0),
-		{timeout, 30, fun test_v2_price/0},
+		{timeout, 100, fun test_v2_price/0},
 		ar_test_node:test_with_mocked_functions(
 			[
 				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}

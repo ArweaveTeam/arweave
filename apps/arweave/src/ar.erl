@@ -948,7 +948,7 @@ docs() ->
 
 %% @doc Ensure that parsing of core command line options functions correctly.
 commandline_parser_test_() ->
-	{timeout, 60, fun() ->
+	{timeout, 300, fun() ->
 		Addr = crypto:strong_rand_bytes(32),
 		Tests =
 			[

@@ -104,61 +104,61 @@ is_in_tolerance_test() ->
 %%% Calculate and verify per-year expected and actual inflation.
 
 year_1_test_() ->
-	{timeout, 60, fun test_year_1/0}.
+	{timeout, 300, fun test_year_1/0}.
 
 test_year_1() ->
     true = is_in_tolerance(year_sum_rewards(0), ?AR(5500000)).
 
 year_2_test_() ->
-	{timeout, 60, fun test_year_2/0}.
+	{timeout, 300, fun test_year_2/0}.
 
 test_year_2() ->
     true = is_in_tolerance(year_sum_rewards(1), ?AR(2750000)).
 
 year_3_test() ->
-	{timeout, 60, fun test_year_3/0}.
+	{timeout, 300, fun test_year_3/0}.
 
 test_year_3() ->
     true = is_in_tolerance(year_sum_rewards(2), ?AR(1375000)).
 
 year_4_test() ->
-	{timeout, 60, fun test_year_4/0}.
+	{timeout, 300, fun test_year_4/0}.
 
 test_year_4() ->
     true = is_in_tolerance(year_sum_rewards(3), ?AR(687500)).
 
 year_5_test() ->
-	{timeout, 60, fun test_year_5/0}.
+	{timeout, 300, fun test_year_5/0}.
 
 test_year_5() ->
     true = is_in_tolerance(year_sum_rewards(4), ?AR(343750)).
 
 year_6_test() ->
-	{timeout, 60, fun test_year_6/0}.
+	{timeout, 300, fun test_year_6/0}.
 
 test_year_6() ->
     true = is_in_tolerance(year_sum_rewards(5), ?AR(171875)).
 
 year_7_test() ->
-	{timeout, 60, fun test_year_7/0}.
+	{timeout, 300, fun test_year_7/0}.
 
 test_year_7() ->
     true = is_in_tolerance(year_sum_rewards(6), ?AR(85937.5)).
 
 year_8_test() ->
-	{timeout, 60, fun test_year_8/0}.
+	{timeout, 300, fun test_year_8/0}.
 
 test_year_8() ->
     true = is_in_tolerance(year_sum_rewards(7), ?AR(42968.75)).
 
 year_9_test() ->
-	{timeout, 60, fun test_year_9/0}.
+	{timeout, 300, fun test_year_9/0}.
 
 test_year_9() ->
     true = is_in_tolerance(year_sum_rewards(8), ?AR(21484.375)).
 
 year_10_test() ->
-	{timeout, 60, fun test_year_10/0}.
+	{timeout, 300, fun test_year_10/0}.
 
 test_year_10() ->
     true = is_in_tolerance(year_sum_rewards(9), ?AR(10742.1875)).

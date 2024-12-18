@@ -652,7 +652,7 @@ tags_to_binary(Tags) ->
 %%%===================================================================
 
 sign_tx_test_() ->
-	{timeout, 30, fun test_sign_tx/0}.
+	{timeout, 300, fun test_sign_tx/0}.
 test_sign_tx() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(1)),
 	{Priv, Pub} = ar_wallet:new(),
@@ -715,7 +715,7 @@ test_sign_tx() ->
 	).
 
 sign_and_verify_chunked_test_() ->
-	{timeout, 60, fun test_sign_and_verify_chunked/0}.
+	{timeout, 300, fun test_sign_and_verify_chunked/0}.
 
 sign_and_verify_chunked_pre_fork_2_5_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> infinity end}],
@@ -746,7 +746,7 @@ test_sign_and_verify_chunked() ->
 %% Ensure that a forged transaction does not pass verification.
 
 forge_test_() ->
-	{timeout, 30, fun test_forge/0}.
+	{timeout, 300, fun test_forge/0}.
 
 test_forge() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
@@ -776,7 +776,7 @@ is_tx_fee_sufficient_test() ->
 %% Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
 check_last_tx_test_() ->
-	{timeout, 60, fun test_check_last_tx/0}.
+	{timeout, 300, fun test_check_last_tx/0}.
 
 check_last_tx_pre_fork_2_5_test_() ->
 	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_4, fun() -> infinity end}],

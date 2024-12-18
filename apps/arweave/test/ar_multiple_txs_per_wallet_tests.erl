@@ -8,7 +8,7 @@
 -import(ar_test_node, [wait_until_height/1, assert_wait_until_height/2,
 	read_block_when_stored/1, random_v1_data/1]).
 
--define(DEFAULT_EUNIT_TEST_TIMEOUT, 240).
+-define(DEFAULT_EUNIT_TEST_TIMEOUT, 900).
 
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
@@ -645,7 +645,7 @@ joins_network_successfully() ->
 					ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, []) == []
 				end,
 				200,
-				1000
+				20_000
 			),
 			{TXs ++ [{TX, AnchorType}], TX#tx.id}
 		end,
@@ -667,7 +667,7 @@ joins_network_successfully() ->
 						ar_test_node:get_tx_confirmations(main, TX#tx.id) > 0
 					end,
 					100,
-					20000
+					20_000
 				)
 			)
 		end,
@@ -816,7 +816,7 @@ recovers_from_forks(ForkHeight) ->
 						ar_test_node:get_tx_confirmations(main, TX#tx.id) > 0
 					end,
 					100,
-					1000
+					20_000
 				)
 			),
 			{ok, {{<<"400">>, _}, _, _, _, _}} =

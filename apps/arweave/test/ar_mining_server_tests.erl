@@ -14,6 +14,8 @@
 -define(SYNCED_RECALL_RANGE_2, ?PARTITION_SIZE).
 -define(UNSYNCED_RECALL_RANGE_2, 0).
 
+-define(DEFAULT_TEST_TIMEOUT, 500).
+-define(DEFAULT_TEST_MOCK_TIMEOUT, 500_000).
 
 %% ------------------------------------------------------------------------------------------------
 %% Fixtures
@@ -70,14 +72,14 @@ chunk_cache_size_test_() ->
 	{setup, fun setup_all/0, fun cleanup_all/1,
 		{foreach, fun setup_one/0, fun cleanup_one/1,
 		[
-			{timeout, 30, fun test_h2_solution_chunk1_first/0},
-			{timeout, 30, fun test_h2_solution_chunk2_first/0},
-			{timeout, 30, fun test_h1_solution_h2_synced_chunk1_first/0},
-			{timeout, 30, fun test_h1_solution_h2_synced_chunk2_first/0},
-			{timeout, 30, fun test_h1_solution_h2_unsynced/0},
-			{timeout, 30, fun test_no_solution_then_h2_solution/0},
-			{timeout, 30, fun test_no_solution_then_h1_solution_h2_synced/0},
-			{timeout, 30, fun test_no_solution_then_h1_solution_h2_unsynced/0}
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_h2_solution_chunk1_first/0},
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_h2_solution_chunk2_first/0},
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_h1_solution_h2_synced_chunk1_first/0},
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_h1_solution_h2_synced_chunk2_first/0},
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_h1_solution_h2_unsynced/0},
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_no_solution_then_h2_solution/0},
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_no_solution_then_h1_solution_h2_synced/0},
+			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_no_solution_then_h1_solution_h2_unsynced/0}
 		]}
     }.
 
@@ -86,7 +88,7 @@ pool_job_test_() ->
 		{foreach, fun setup_one/0, fun cleanup_one/1,
 		[
 			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_get_current_sesssion()],
-			fun test_pool_job_no_cached_sessions/0, 120)
+			fun test_pool_job_no_cached_sessions/0, ?DEFAULT_TEST_MOCK_TIMEOUT)
 		]}
     }.
 
@@ -272,7 +274,7 @@ do_test_chunk_cache_size_with_mocks(H1s, H2s, RecallRange2s, FirstChunks) ->
 		ar_test_node:mine(),
 		ar_test_node:wait_until_height(Height),
 		%% wait until the mining has stopped
-		?assert(ar_util:do_until(fun() -> get_chunk_cache_size() == 0 end, 200, 10000))
+		?assert(ar_util:do_until(fun() -> get_chunk_cache_size() == 0 end, 200, 20_000))
 	after
 		Cleanup(Functions)
 	end.

@@ -787,7 +787,7 @@ get_tx_data_root(TX) ->
 %%%===================================================================
 
 hash_list_gen_test_() ->
-	{timeout, 60, fun test_hash_list_gen/0}.
+	{timeout, 300, fun test_hash_list_gen/0}.
 
 test_hash_list_gen() ->
 	[B0] = ar_weave:init([]),

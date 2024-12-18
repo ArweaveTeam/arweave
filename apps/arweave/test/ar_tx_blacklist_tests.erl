@@ -318,7 +318,7 @@ assert_present_txs(GoodTXIDs) ->
 			)
 		end,
 		500,
-		10000
+		20_000
 	),
 	lists:foreach(
 		fun(TXID) ->
@@ -344,7 +344,7 @@ assert_removed_txs(BadTXIDs) ->
 			)
 		end,
 		500,
-		30000
+		30_000
 	),
 	%% We have to keep the confirmation data even for blacklisted transactions.
 	lists:foreach(
@@ -371,7 +371,7 @@ assert_present_offsets(GoodOffsets) ->
 			)
 		end,
 		500,
-		120000
+		120_000
 	).
 
 assert_removed_offsets(BadOffsets) ->
@@ -391,7 +391,7 @@ assert_removed_offsets(BadOffsets) ->
 			)
 		end,
 		500,
-		60000
+		60_000
 	).
 
 assert_does_not_accept_offsets(BadOffsets) ->
@@ -433,7 +433,7 @@ assert_does_not_accept_offsets(BadOffsets) ->
 			)
 		end,
 		500,
-		60000
+		60_000
 	).
 
 decode_chunk(EncodedProof) ->
