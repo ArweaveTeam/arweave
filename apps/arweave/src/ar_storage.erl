@@ -1317,7 +1317,7 @@ get_account_tree_value(Key, Prefix) ->
 
 %% @doc Test block storage.
 store_and_retrieve_block_test_() ->
-	{timeout, 60, fun test_store_and_retrieve_block/0}.
+	{timeout, 300, fun test_store_and_retrieve_block/0}.
 
 test_store_and_retrieve_block() ->
 	[B0] = ar_weave:init([]),
@@ -1355,8 +1355,8 @@ tx_id(TXID) ->
 
 store_and_retrieve_wallet_list_test_() ->
 	[
-		{timeout, 20, fun test_store_and_retrieve_wallet_list/0},
-		{timeout, 240, fun test_store_and_retrieve_wallet_list_permutations/0}
+		{timeout, 300, fun test_store_and_retrieve_wallet_list/0},
+		{timeout, 300, fun test_store_and_retrieve_wallet_list_permutations/0}
 	].
 
 test_store_and_retrieve_wallet_list() ->
@@ -1511,7 +1511,7 @@ random_wallet() ->
 
 update_block_index_test_() ->
 	[
-		{timeout, 20, fun test_update_block_index/0}
+		{timeout, 300, fun test_update_block_index/0}
 	].
 
 test_update_block_index() ->

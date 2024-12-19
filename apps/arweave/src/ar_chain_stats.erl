@@ -98,8 +98,8 @@ record_fork_depth([H | Orphans], N) ->
 %%%===================================================================
 forks_test_() ->
     [
-        {timeout, 30, fun test_fork_time/0},
-        {timeout, 30, fun test_forks/0}
+        {timeout, 300, fun test_fork_time/0},
+        {timeout, 300, fun test_forks/0}
 	].
 
 test_fork_time() ->

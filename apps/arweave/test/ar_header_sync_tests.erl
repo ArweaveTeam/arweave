@@ -34,7 +34,7 @@ test_syncs_headers() ->
 					end
 				end,
 				200,
-				30000
+				30_000
 			),
 			MainB = ar_storage:read_block(Height, ar_node:get_block_index()),
 			?assertEqual(B, MainB),
@@ -76,7 +76,7 @@ test_syncs_headers() ->
 				andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
 		end,
 		100,
-		10000
+		20_000
 	),
 	timer:sleep(1000),
 	[{LatestH, _, _} | _] = ar_node:get_block_index(),

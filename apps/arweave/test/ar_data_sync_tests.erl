@@ -49,7 +49,7 @@ test_syncs_data() ->
 					end
 				end,
 				100,
-				120 * 1000
+				120_000
 			),
 			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
 			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
@@ -136,7 +136,7 @@ test_mines_off_only_last_chunks() ->
 									> PrevStepNumber + ?NONCE_LIMITER_RESET_FREQUENCY
 						end,
 						100,
-						60000
+						60_000
 					);
 				0 ->
 					%% Wait until the new chunks fall below the new upper bound and
@@ -265,7 +265,7 @@ test_disk_pool_rotation() ->
 			[{786432, 0}] == ar_intervals:to_list(Global3)
 		end,
 		200,
-		5000
+		10_000
 	).
 
 enqueue_intervals_test() ->

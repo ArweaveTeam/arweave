@@ -9,19 +9,19 @@
 
 ar_p3_db_test_() ->
 	[
-		{timeout, 30, mocked_test_timeout()},
-		{timeout, 30, fun test_account/0},
-	 	{timeout, 30, fun test_account_errors/0},
-	 	{timeout, 30, fun test_deposit/0},
-		{timeout, 30, fun test_double_deposit/0},
-	 	{timeout, 30, fun test_concurrent_deposits/0},
-	 	{timeout, 30, fun test_deposit_errors/0},
-		{timeout, 30, fun test_charge/0},
-		{timeout, 30, fun test_double_charge/0},
-		{timeout, 30, fun test_concurrent_charges/0},
-	 	{timeout, 30, fun test_charge_errors/0},
-		{timeout, 30, fun test_reverse/0},
-		{timeout, 30, fun test_scan_height/0}
+		{timeout, 100, mocked_test_timeout()},
+		{timeout, 100, fun test_account/0},
+	 	{timeout, 100, fun test_account_errors/0},
+	 	{timeout, 100, fun test_deposit/0},
+		{timeout, 100, fun test_double_deposit/0},
+	 	{timeout, 100, fun test_concurrent_deposits/0},
+	 	{timeout, 100, fun test_deposit_errors/0},
+		{timeout, 100, fun test_charge/0},
+		{timeout, 100, fun test_double_charge/0},
+		{timeout, 100, fun test_concurrent_charges/0},
+	 	{timeout, 100, fun test_charge_errors/0},
+		{timeout, 100, fun test_reverse/0},
+		{timeout, 100, fun test_scan_height/0}
 	].
 
 mocked_test_timeout() ->

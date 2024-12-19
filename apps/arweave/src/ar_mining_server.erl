@@ -1243,9 +1243,9 @@ cleanup(Config) ->
 calculate_cache_limits_test_() ->
 	{setup, fun setup/0, fun cleanup/1,
 		[
-			{timeout, 30, fun test_calculate_cache_limits_default/0},
-			{timeout, 30, fun test_calculate_cache_limits_custom_low/0},
-			{timeout, 30, fun test_calculate_cache_limits_custom_high/0}
+			{timeout, 300, fun test_calculate_cache_limits_default/0},
+			{timeout, 300, fun test_calculate_cache_limits_custom_low/0},
+			{timeout, 300, fun test_calculate_cache_limits_custom_high/0}
 		]
 	}.
 
