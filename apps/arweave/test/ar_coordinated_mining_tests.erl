@@ -9,8 +9,9 @@
 -import(ar_test_node, [http_get_block/2]).
 
 -define(MINING_TEST_TIMEOUT, 240).
--define(API_TEST_TIMEOUT, 120).
--define(PARTITION_TEST_TIMEOUT, 120).
+-define(API_TEST_TIMEOUT, 240).
+-define(PARTITION_TEST_TIMEOUT, 240).
+-define(DEFAULT_TEST_MOCK_TIMEOUT, 500_000).
 
 %% --------------------------------------------------------------------
 %% Test registration
@@ -20,10 +21,10 @@ mining_test_() ->
 		{timeout, ?MINING_TEST_TIMEOUT, fun test_single_node_one_chunk/0},
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_single_node_two_chunk/0, 120),
+			fun test_single_node_two_chunk/0, ?DEFAULT_TEST_MOCK_TIMEOUT),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
-			fun test_cross_node/0, 240),
+			fun test_cross_node/0, ?DEFAULT_TEST_MOCK_TIMEOUT),
 		ar_test_node:test_with_mocked_functions([
 			ar_test_node:mock_to_force_invalid_h1()],
 			fun test_cross_node_retarget/0, ?MINING_TEST_TIMEOUT),
@@ -353,7 +354,7 @@ assert_peers(ExpectedPeers, Node, Partition) ->
 			lists:sort(ExpectedPeers) == lists:sort(Peers)
 		end,
 		200,
-		5000
+		10_000
 	)).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->

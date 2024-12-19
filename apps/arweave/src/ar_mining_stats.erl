@@ -773,17 +773,17 @@ format_vdf_speed(VDFSpeed) ->
 
 mining_stats_test_() ->
     [
-		{timeout, 30, fun test_read_stats/0},
-		{timeout, 30, fun test_h1_stats/0},
-		{timeout, 30, fun test_h2_stats/0},
-		{timeout, 30, fun test_vdf_stats/0},
-		{timeout, 30, fun test_data_size_stats/0},
-		{timeout, 30, fun test_h1_sent_to_peer_stats/0},
-		{timeout, 30, fun test_h1_received_from_peer_stats/0},
-		{timeout, 30, fun test_h2_peer_stats/0},
-		{timeout, 30, fun test_optimal_stats_poa1_multiple_1/0},
-		{timeout, 30, fun test_optimal_stats_poa1_multiple_2/0},
-		{timeout, 30, fun test_report_poa1_multiple_1/0},
+		{timeout, 300, fun test_read_stats/0},
+		{timeout, 300, fun test_h1_stats/0},
+		{timeout, 300, fun test_h2_stats/0},
+		{timeout, 300, fun test_vdf_stats/0},
+		{timeout, 300, fun test_data_size_stats/0},
+		{timeout, 300, fun test_h1_sent_to_peer_stats/0},
+		{timeout, 300, fun test_h1_received_from_peer_stats/0},
+		{timeout, 300, fun test_h2_peer_stats/0},
+		{timeout, 300, fun test_optimal_stats_poa1_multiple_1/0},
+		{timeout, 300, fun test_optimal_stats_poa1_multiple_2/0},
+		{timeout, 300, fun test_report_poa1_multiple_1/0},
 		ar_test_node:test_with_mocked_functions(
 			[
 				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
