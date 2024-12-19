@@ -821,28 +821,19 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 handle_cast(sync_data, State) ->
 	#sync_data_state{ store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
-	case ar_chunk_storage:is_prepared(OriginStoreID) of
-		{error, timeout} ->
-			ar_util:cast_after(?WAIT_FOR_CHUNK_STORAGE_PREPARE_MS, self(), sync_data),
-			{noreply, State};
-		false ->
-			ar_util:cast_after(?WAIT_FOR_CHUNK_STORAGE_PREPARE_MS, self(), sync_data),
-			{noreply, State};
-		true ->
-			%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
-			%% storage_module
-			Intervals = get_unsynced_intervals_from_other_storage_modules(
-					OriginStoreID, "default", RangeStart, min(RangeEnd, DiskPoolThreshold)),
-			gen_server:cast(self(), sync_data2),
-			%% Find all storage_modules that might include the target chunks (e.g. neighboring
-			%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
-			StorageModules = [ar_storage_module:id(Module)
-					|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
-					ar_storage_module:id(Module) /= OriginStoreID],
-			{noreply, State#sync_data_state{
-					unsynced_intervals_from_other_storage_modules = Intervals,
-					other_storage_modules_with_unsynced_intervals = StorageModules }}
-	end;
+	%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
+	%% storage_module
+	Intervals = get_unsynced_intervals_from_other_storage_modules(
+			OriginStoreID, "default", RangeStart, min(RangeEnd, DiskPoolThreshold)),
+	gen_server:cast(self(), sync_data2),
+	%% Find all storage_modules that might include the target chunks (e.g. neighboring
+	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
+	StorageModules = [ar_storage_module:id(Module)
+			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
+			ar_storage_module:id(Module) /= OriginStoreID],
+	{noreply, State#sync_data_state{
+			unsynced_intervals_from_other_storage_modules = Intervals,
+			other_storage_modules_with_unsynced_intervals = StorageModules }};
 
 %% @doc No unsynced overlap intervals, proceed with syncing
 handle_cast(sync_data2, #sync_data_state{
@@ -3057,6 +3048,25 @@ log_stored_chunks(State, StartLen) ->
 			ok
 	end.
 
+log_failed_to_store_chunk(stored_without_entropy,
+		AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
+	?LOG_DEBUG([{event, chunk_stored_without_entropy},
+			{absolute_end_offset, AbsoluteOffset},
+			{relative_offset, Offset},
+			{data_path_hash, ar_util:encode(DataPathHash)},
+			{data_root, ar_util:encode(DataRoot)},
+			{store_id, StoreID}]);
+log_failed_to_store_chunk(already_stored,
+		AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
+	?LOG_INFO([{event, chunk_already_stored},
+			{absolute_end_offset, AbsoluteOffset},
+			{relative_offset, Offset},
+			{data_path_hash, ar_util:encode(DataPathHash)},
+			{data_root, ar_util:encode(DataRoot)},
+			{store_id, StoreID}]),
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
+	ar_sync_record:add_async(already_store_chunk_ensure_sync_record,
+			PaddedEndOffset, PaddedEndOffset - ?DATA_CHUNK_SIZE, ?MODULE, StoreID);
 log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
 	?LOG_ERROR([{event, failed_to_store_chunk},
 			{reason, io_lib:format("~p", [Reason])},
@@ -3347,14 +3357,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 						MayConclude, Args}),
 				{noreply, State};
 			StoreID ->
-				case ar_chunk_storage:is_prepared(StoreID) of
-					false ->
-						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
-								false, Args}),
-						{noreply, State};
-					true ->
-						StoreID
-				end
+				StoreID
 		end,
 	IsBlacklisted =
 		case FindStorageModule of
