@@ -180,7 +180,7 @@ $ bin/shell
 Run a specific test (the shell offers autocompletion):
 
 ```sh
-(master@127.0.0.1)1> eunit:test(ar_fork_recovery_tests:height_plus_one_fork_recovery_test_()).
+bin/test ar_fork_recovery_tests:height_plus_one_fork_recovery_test_
 ```
 
 If it fails, the nodes keep running so you can inspect them through Erlang shell or HTTP API.
