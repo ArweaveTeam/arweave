@@ -52,7 +52,7 @@ put(PaddedOffset, Chunk) ->
 %% bytes Offset - ?DATA_CHUNK_SIZE, Offset - ?DATA_CHUNK_SIZE + 1, .., Offset - 1.
 put(PaddedOffset, Chunk, StoreID) ->
 	GenServerID = gen_server_id(StoreID),
-	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk}) of
+	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk}, 180_000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
