@@ -871,9 +871,10 @@ tests(Mods, Config) when is_list(Mods) ->
 			io:format("Failed to start the peers due to ~p:~p~n", [Type, Reason]),
 			erlang:halt(1)
 	end,
+	Tests = extract_single_test(Mods),
 	Result =
 		try
-			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
+			eunit:test({timeout, ?TEST_TIMEOUT, [Tests]}, [verbose, {print_depth, 100}])
 		after
 			ar_test_node:stop_peers()
 		end,
@@ -882,6 +883,27 @@ tests(Mods, Config) when is_list(Mods) ->
 		_ -> erlang:halt(1)
 	end.
 
+extract_single_test(Modules) -> 
+	lists:map(
+		fun(TestRep) ->
+			case string:split(atom_to_list(TestRep), ":") of
+				[TestModule, TestFunction] ->
+					parse_generator_or_test(TestModule, TestFunction);
+				_ ->
+					TestRep
+			end
+		end,
+		Modules
+	).
+
+parse_generator_or_test(TestModule, TestFunction) -> 
+	TestType = case string:split(TestFunction, "_test_") of
+		[_, []] ->
+			generator;
+		_ ->
+			test
+	end,
+	{TestType, list_to_atom(TestModule), list_to_atom(TestFunction)}.
 
 start_for_tests(Config) ->
 	UniqueName = ar_test_node:get_node_namespace(),
