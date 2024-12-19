@@ -2997,7 +2997,17 @@ store_chunk2(ChunkArgs, Args, State) ->
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	StartOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
 	DataPathHash = crypto:hash(sha256, DataPath),
-	case ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE, StoreID) of
+	ShouldStoreInChunkStorage = should_store_in_chunk_storage(AbsoluteOffset,
+			ChunkSize, Packing),
+	CleanRecord =
+		case {ShouldStoreInChunkStorage, ar_storage_module:get_packing(StoreID)} of
+			{true, {replica_2_9, _}} ->
+				%% The 2.9 chunk storage is write-once.
+				ok;
+			_ ->
+				ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE, StoreID)
+		end,
+	case CleanRecord of
 		{error, Reason} ->
 			log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash,
 					StoreID),
@@ -3031,51 +3041,11 @@ store_chunk2(ChunkArgs, Args, State) ->
 							{error, Reason}
 					end;
 				{error, Reason} ->
-					case may_be_compare_already_stored(Reason, AbsoluteOffset, TXRoot, Chunk,
-							ChunkSize, StoreID) of
-						already_stored_the_same ->
-							ok;
-						_ ->
-							log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
-									DataPathHash, StoreID),
-							{error, Reason}
-					end
+					log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot,
+							DataPathHash, StoreID),
+					{error, Reason}
 			end
 	end.
-
--ifdef(DEBUG).
-may_be_compare_already_stored(already_stored, AbsoluteOffset, TXRoot, Chunk, ChunkSize,
-		StoreID) ->
-	Packing = ar_storage_module:get_packing(StoreID),
-	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
-	case ar_chunk_storage:get(AbsoluteOffset - 1, StoreID) of
-		{PaddedOffset, PackedChunk} ->
-			case ar_packing_server:unpack(Packing, AbsoluteOffset, TXRoot, PackedChunk,
-					ChunkSize) of
-				{ok, UnpaddedChunk} ->
-					case ar_packing_server:pad_chunk(UnpaddedChunk) of
-						Chunk ->
-							ar_sync_record:add(PaddedOffset, PaddedOffset - ?DATA_CHUNK_SIZE,
-									Packing, ?MODULE, StoreID),
-							already_stored_the_same;
-						_ ->
-							?LOG_ERROR("Update required for the 2.9 module? "
-								"A different chunk is stored under the same offset.", [])
-					end;
-				Error ->
-					?LOG_ERROR("Unpacking error: ~p", [Error])
-			end;
-		{OtherOffset, _} ->
-			?LOG_ERROR("Update required for the 2.9 module? "
-					" A chunk is stored under different offset. The requested offset: ~B. "
-					"The stored offset: ~B.", [PaddedOffset, OtherOffset])
-	end;
-may_be_compare_already_stored(_Reason, _AbsoluteOffset, _TXRoot, _Chunk, _ChunkSize, _StoreID) ->
-	ok.
--else.
-may_be_compare_already_stored(_Reason, _AbsoluteOffset, _TXRoot, _Chunk, _ChunkSize, _StoreID) ->
-	ok.
--endif.
 
 log_stored_chunks(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue_len = EndLen, store_id = StoreID } = State,
