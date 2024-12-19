@@ -475,6 +475,9 @@ register() ->
 			{help, "The number of chunks in the packing server queue."}]),
 	prometheus_gauge:new([{name, chunk_cache_size},
 			{help, "The number of chunks scheduled for downloading."}]),
+	prometheus_counter:new([{name, chunks_without_entropy_stored},
+			{help, "The counter is incremented every time a 2.9 unpacked chunk is written to "
+					"chunk_storage to be enciphered later."}]),
 	prometheus_counter:new([{name, chunks_stored},
 			{help, "The counter is incremented every time a chunk is written to "
 					"chunk_storage."}]),
