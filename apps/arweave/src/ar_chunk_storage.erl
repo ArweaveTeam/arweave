@@ -914,7 +914,8 @@ store_entropy2(EntropyPart, PaddedEndOffset, StoreID) ->
 			{no_unpacked_chunk, Bin3, F2} ->
 				{Bin3, F2, false};
 			{{ok, Bin3}, F2} ->
-				{ar_packing_server:encipher_replica_2_9_chunk(Bin3, Bin), F2, true}
+				{ar_packing_server:encipher_replica_2_9_chunk(iolist_to_binary(Bin3), Bin),
+						F2, true}
 		end,
 	?LOG_DEBUG([{event, store_entropy2}, {padded_end_offset, PaddedEndOffset},
 			{position, Position}]),
