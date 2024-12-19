@@ -105,9 +105,17 @@ new_keyfile(KeyType, WalletName) ->
 				{Pb, Prv, Ky}
 		end,
 	Filename = wallet_filepath(WalletName, Pub, KeyType),
-	filelib:ensure_dir(Filename),
-	ar_storage:write_file_atomic(Filename, Key),
-	{{KeyType, Priv, Pub}, {KeyType, Pub}}.
+	case filelib:ensure_dir(Filename) of
+		ok ->
+			case ar_storage:write_file_atomic(Filename, Key) of
+				ok ->
+					{{KeyType, Priv, Pub}, {KeyType, Pub}};
+				Error2 ->
+					Error2
+			end;
+		Error ->
+			Error
+	end.
 
 wallet_filepath(Wallet) ->
 	{ok, Config} = application:get_env(arweave, config),

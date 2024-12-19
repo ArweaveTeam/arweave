@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, get/2, get/3, add/4, add/5, add_async/6, delete/4, cut/3,
+-export([start_link/2, get/2, get/3, add/4, add/5, add_async/5, add_async/6, delete/4, cut/3,
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
 		get_next_unsynced_interval/4,
@@ -106,6 +106,11 @@ add(End, Start, Type, ID, StoreID) ->
 		Reply ->
 			Reply
 	end.
+
+%% @doc Special case of add/4.
+add_async(Event, End, Start, ID, StoreID) ->
+	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	gen_server:cast(GenServerID, {add_async, Event, End, Start, ID}).
 
 %% @doc Special case of add/5 for repacked chunks. When repacking the ar_sync_record add
 %% happens at the end so we don't need to block on it to complete.
@@ -296,22 +301,8 @@ handle_call({get, Type, ID}, _From, State) ->
 	{reply, maps:get({ID, Type}, SyncRecordByIDType, ar_intervals:new()), State};
 
 handle_call({add, End, Start, ID}, _From, State) ->
-	#state{ sync_record_by_id = SyncRecordByID, state_db = StateDB,
-			store_id = StoreID } = State,
-	SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-	SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
-	SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-	TID = get_or_create_type_tid({ID, StoreID}),
-	ar_ets_intervals:add(TID, End, Start),
-	State2 = State#state{ sync_record_by_id = SyncRecordByID2 },
-	{Reply, State3} = update_write_ahead_log({add, {End, Start, ID}}, StateDB, State2),
-	case Reply of
-		ok ->
-			emit_add_range(Start, End, ID, StoreID);
-		_ ->
-			ok
-	end,
-	{reply, Reply, State3};
+	{Reply, State2} = add2(End, Start, ID, State),
+	{reply, Reply, State2};
 
 handle_call({add, End, Start, Type, ID}, _From, State) ->
 	{Reply, State2} = add2(End, Start, Type, ID, State),
@@ -405,6 +396,23 @@ handle_cast(store_state, State) ->
 		?STORE_SYNC_RECORD_FREQUENCY_MS, gen_server, cast, [self(), store_state]),
 	{noreply, State2};
 
+handle_cast({add_async, Event, End, Start, ID}, State) ->
+	{Reply, State2} = add2(End, Start, ID, State),
+	case Reply of
+		ok ->
+			?LOG_DEBUG([{event, Event},
+					{status, success},
+					{storage_module, ID},
+					{offset, End}]);
+		Error ->
+			?LOG_ERROR([{event, Event},
+					{status, failed},
+					{storage_module, ID},
+					{offset, End},
+					{error, io_lib:format("~p", [Error])}])
+	end,
+	{noreply, State2};
+
 handle_cast({add_async, Event, End, Start, Type, ID}, State) ->
 	{Reply, State2} = add2(End, Start, Type, ID, State),
 	case Reply of
@@ -440,6 +448,23 @@ terminate(Reason, State) ->
 %%% Private functions.
 %%%===================================================================
 
+add2(End, Start, ID, State) ->
+	#state{ sync_record_by_id = SyncRecordByID, state_db = StateDB,
+			store_id = StoreID } = State,
+	SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
+	SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+	SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
+	TID = get_or_create_type_tid({ID, StoreID}),
+	ar_ets_intervals:add(TID, End, Start),
+	State2 = State#state{ sync_record_by_id = SyncRecordByID2 },
+	{Reply, State3} = update_write_ahead_log({add, {End, Start, ID}}, StateDB, State2),
+	case Reply of
+		ok ->
+			emit_add_range(Start, End, ID, StoreID);
+		_ ->
+			ok
+	end,
+	{Reply, State3}.
 
 add2(End, Start, Type, ID, State) ->
 	#state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
@@ -464,7 +489,6 @@ add2(End, Start, Type, ID, State) ->
 			ok
 	end,
 	{Reply, State3}.
-
 
 is_recorded_any_by_type(Offset, ID, [StorageModule | StorageModules]) ->
 	StoreID = ar_storage_module:id(StorageModule),
