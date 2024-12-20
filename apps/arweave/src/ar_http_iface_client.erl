@@ -686,20 +686,30 @@ get_jobs(Peer, PrevOutput) ->
 		"/jobs/" ++ binary_to_list(ar_util:encode(PrevOutput))),
 	handle_get_jobs_response(ar_http:req(Req)).
 
+serialize_solution(Solution) ->
+	Json = ar_serialize:solution_to_json_struct(Solution),
+	{ok, ar_serialize:jsonify(Json)}.
+
+serialize_solution_ify(Solution) ->
+	case is_binary(Solution) of
+		true ->
+			{ok, Solution};
+		false ->
+			serialize_solution(Solution) 
+	end.
+
 %% @doc Post the partial solution to the pool or coordinated mining exit peer.
 post_partial_solution(Peer, Solution) ->
-	Payload =
-		case is_binary(Solution) of
-			true ->
-				Solution;
-			false ->
-				ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution))
-		end,
-	Req = build_cm_or_pool_request(post, Peer, "/partial_solution", Payload),
-	handle_post_partial_solution_response(ar_http:req(Req#{
-		timeout => 20 * 1000,
-		connect_timeout => 5 * 1000
-	})).
+	case catch serialize_solution_ify(Solution) of
+		{ok, Payload} ->
+			Req = build_cm_or_pool_request(post, Peer, "/partial_solution", Payload),
+			handle_post_partial_solution_response(ar_http:req(Req#{
+				timeout => 20 * 1000,
+				connect_timeout => 5 * 1000
+			}));
+		{'EXIT', Reason, _ } -> {error, Reason};
+		_ -> {error, failed_to_serialize_partial_solution}
+	end.
 
 get_pool_cm_jobs(Peer, Jobs) ->
 	JSON = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
