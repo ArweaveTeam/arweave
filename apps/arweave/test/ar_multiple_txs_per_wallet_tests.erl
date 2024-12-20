@@ -702,20 +702,16 @@ joins_network_successfully() ->
 	TX3 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),
-	BI1 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
+	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
 	ar_test_node:connect_to_peer(peer1),
-	%% The fork is recent enough that one node will rebase their solution. Wait for that to
-	%% happen.
-	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
-	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
 	TX4 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
 	ar_test_node:assert_wait_until_receives_txs([TX4]),
 	ar_test_node:mine(peer1),
-	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 3),
-	BI3 = wait_until_height(?MAX_TX_ANCHOR_DEPTH + 3),
+	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
+	BI3 = wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
 	?assertEqual([TX4#tx.id], (read_block_when_stored(hd(BI3)))#block.txs),
-	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI1)))#block.txs).
+	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI2)))#block.txs).
 
 recovers_from_forks(ForkHeight) ->
 	%% Mine a number of blocks with transactions on peer1 and main in sync,
