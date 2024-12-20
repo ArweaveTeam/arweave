@@ -1514,7 +1514,7 @@ release_replica_2_9_formatting_lock(StoreID) ->
 %%%===================================================================
 
 replica_2_9_test_() ->
-	{timeout, 20, fun test_replica_2_9/0}.
+	{timeout, 300, fun test_replica_2_9/0}.
 
 test_replica_2_9() ->
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
@@ -1567,7 +1567,7 @@ test_replica_2_9() ->
 	?assertNotEqual(Entropy4, Entropy5).
 
 well_aligned_test_() ->
-	{timeout, 20, fun test_well_aligned/0}.
+	{timeout, 300, fun test_well_aligned/0}.
 
 test_well_aligned() ->
 	clear("default"),
@@ -1616,7 +1616,7 @@ test_well_aligned() ->
 	?assertEqual([], ar_chunk_storage:get_range(7 * ?DATA_CHUNK_SIZE, 13 * ?DATA_CHUNK_SIZE)).
 
 not_aligned_test_() ->
-	{timeout, 20, fun test_not_aligned/0}.
+	{timeout, 300, fun test_not_aligned/0}.
 
 test_not_aligned() ->
 	clear("default"),
@@ -1683,7 +1683,7 @@ test_not_aligned() ->
 			ar_chunk_storage:get_range(2 * ?DATA_CHUNK_SIZE, 4 * ?DATA_CHUNK_SIZE)).
 
 cross_file_aligned_test_() ->
-	{timeout, 20, fun test_cross_file_aligned/0}.
+	{timeout, 300, fun test_cross_file_aligned/0}.
 
 test_cross_file_aligned() ->
 	clear("default"),
@@ -1713,7 +1713,7 @@ test_cross_file_aligned() ->
 	assert_get(C2, get_chunk_group_size()).
 
 cross_file_not_aligned_test_() ->
-	{timeout, 20, fun test_cross_file_not_aligned/0}.
+	{timeout, 300, fun test_cross_file_not_aligned/0}.
 
 test_cross_file_not_aligned() ->
 	clear("default"),

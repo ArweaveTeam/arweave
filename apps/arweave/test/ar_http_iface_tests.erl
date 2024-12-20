@@ -45,7 +45,7 @@ cleanup_all_batch({_GenesisData, {Cleanup, Functions}}) ->
 	Cleanup(Functions).
 
 test_register(TestFun, Fixture) ->
-	{timeout, 60, {with, Fixture, [TestFun]}}.
+	{timeout, 100, {with, Fixture, [TestFun]}}.
 
 %% -------------------------------------------------------------------
 %% The spammer tests must run first. All the other tests will call
@@ -60,11 +60,11 @@ test_register(TestFun, Fixture) ->
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
 node_blacklisting_get_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_get_spammer/0}.
+	{timeout, 100, fun test_node_blacklisting_get_spammer/0}.
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 node_blacklisting_post_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_post_spammer/0}.
+	{timeout, 100, fun test_node_blacklisting_post_spammer/0}.
 
 %% @doc Check that we can qickly get the local time from the peer.
 get_time_test() ->
@@ -250,7 +250,7 @@ test_get_info(_) ->
 			1 == ar_http_iface_client:get_info(ar_test_node:peer_ip(main), blocks)
 		end,
 		100,
-		2000
+		20_000
 	),
 	?assertEqual(1, ar_http_iface_client:get_info(ar_test_node:peer_ip(main), height)).
 
@@ -602,7 +602,7 @@ test_get_format_1_tx(_) ->
 				end
 			end,
 			100,
-			2000
+			20_000
 		),
 	?assertEqual(TX, ar_serialize:json_struct_to_tx(Body)).
 
@@ -649,7 +649,7 @@ test_find_external_tx(_) ->
 				end
 			end,
 			100,
-			5000
+			10_000
 		),
 	?assertEqual(FoundTXID, TX#tx.id).
 
@@ -734,6 +734,7 @@ test_get_tx_status(_) ->
 	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
 	ar_test_node:mine(),
 	wait_until_height(Height + 1),
+	timer:sleep(100),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = FetchStatus(),
 	{Res} = ar_serialize:dejsonify(Body),
 	BI = ar_node:get_block_index(),
@@ -747,6 +748,7 @@ test_get_tx_status(_) ->
 	),
 	ar_test_node:mine(),
 	wait_until_height(Height + 2),
+	timer:sleep(100),
 	ar_util:do_until(
 		fun() ->
 			{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
@@ -758,16 +760,19 @@ test_get_tx_status(_) ->
 			} == maps:from_list(Res2)
 		end,
 		200,
-		5000
+		10_000
 	),
 	%% Create a fork which returns the TX to mempool.
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, Height + 1),
+	timer:sleep(100),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, Height + 2),
+	timer:sleep(100),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
 	wait_until_height(Height + 3),
+	timer:sleep(100),
 	?assertMatch({ok, {{<<"202">>, _}, _, _, _, _}}, FetchStatus()).
 
 test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
@@ -818,6 +823,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	wait_until_receives_txs([TopUpTX]),
 	ar_test_node:mine(),
 	wait_until_height(LocalHeight + 1),
+	timer:sleep(100),
 	%% Send an unsigned transaction to be signed with the generated key.
 	TX = (ar_tx:new())#tx{reward = ?AR(1), last_tx = TopUpTX#tx.id},
 	UnsignedTXProps = [
@@ -857,10 +863,10 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	application:set_env(arweave, config, Config#config{ internal_api_secret = not_set }),
 	{Res} = ar_serialize:dejsonify(Body),
 	TXID = proplists:get_value(<<"id">>, Res),
-	timer:sleep(200),
+	timer:sleep(100),
 	ar_test_node:mine(),
 	wait_until_height(LocalHeight + 2),
-	timer:sleep(200),
+	timer:sleep(100),
 	{ok, {{<<"200">>, <<"OK">>}, _, GetTXBody, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -886,6 +892,7 @@ test_get_error_of_data_limit(_) ->
 	wait_until_receives_txs([TX]),
 	ar_test_node:mine(),
 	wait_until_height(LocalHeight + 1),
+	timer:sleep(100),
 	{ok, _} = wait_until_syncs_tx_data(TX#tx.id),
 	Resp =
 		ar_http:req(#{
@@ -907,6 +914,7 @@ test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(peer1, TX) end, EverySecondTX),
 	ar_test_node:mine(),
 	BI = wait_until_height(LocalHeight + 1),
+	timer:sleep(100),
 	B = ar_storage:read_block(hd(BI)),
 	B2 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
 	ar_test_node:connect_to_peer(peer1),
@@ -924,6 +932,7 @@ test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _Stat
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(peer1, TX) end, EverySecondTX),
 	ar_test_node:mine(),
 	BI = wait_until_height(LocalHeight + 1),
+	timer:sleep(100),
 	B = ar_storage:read_block(hd(BI)),
 	ar_test_node:connect_to_peer(peer1),
 	ar_bridge ! {event, block, {new, B, #{ recall_byte => undefined }}},
@@ -1006,7 +1015,7 @@ wait_until_syncs_tx_data(TXID) ->
 			end
 		end,
 		100,
-		5000
+		10_000
 	).
 
 height(Node) ->

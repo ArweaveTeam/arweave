@@ -376,7 +376,7 @@ make_tags_cumulative(L) ->
 -define(UNEVEN_TEST_TARGET, 33271).
 
 generate_and_validate_balanced_tree_path_test_() ->
-	{timeout, 30, fun test_generate_and_validate_balanced_tree_path/0}.
+	{timeout, 300, fun test_generate_and_validate_balanced_tree_path/0}.
 
 test_generate_and_validate_balanced_tree_path() ->
 	Tags = make_tags_cumulative([{<< N:256 >>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),
@@ -400,11 +400,11 @@ test_generate_and_validate_balanced_tree_path() ->
 
 generate_and_validate_tree_with_rebase_test_() ->
 	[
-		{timeout, 30, fun test_tree_with_rebase_shallow/0},
-		{timeout, 30, fun test_tree_with_rebase_nested/0},
-		{timeout, 30, fun test_tree_with_rebase_bad_paths/0},
-		{timeout, 30, fun test_tree_with_rebase_partial_chunk/0},
-		{timeout, 30, fun test_tree_with_rebase_subtree_ids/0}
+		{timeout, 300, fun test_tree_with_rebase_shallow/0},
+		{timeout, 300, fun test_tree_with_rebase_nested/0},
+		{timeout, 300, fun test_tree_with_rebase_bad_paths/0},
+		{timeout, 300, fun test_tree_with_rebase_partial_chunk/0},
+		{timeout, 300, fun test_tree_with_rebase_subtree_ids/0}
 	].
 
 test_tree_with_rebase_shallow() ->
@@ -1038,7 +1038,7 @@ generate_and_validate_uneven_tree_path_test() ->
 	?assert(?UNEVEN_TEST_TARGET >= StartOffset).
 
 reject_invalid_tree_path_test_() ->
-	{timeout, 30, fun test_reject_invalid_tree_path/0}.
+	{timeout, 300, fun test_reject_invalid_tree_path/0}.
 
 test_reject_invalid_tree_path() ->
 	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),

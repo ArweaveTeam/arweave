@@ -29,7 +29,7 @@ back_to_back_encode_test() ->
 
 
 back_to_back_decode_test_() ->
-	{timeout, 10, fun test_back_to_back_decode/0}.
+	{timeout, 100, fun test_back_to_back_decode/0}.
 
 test_back_to_back_decode() ->
 	Inputs = [

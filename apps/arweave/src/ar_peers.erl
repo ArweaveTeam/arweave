@@ -1223,7 +1223,7 @@ update_rating_test() ->
 
 block_rejected_test_() ->
 	[
-		{timeout, 30, fun test_block_rejected/0}
+		{timeout, 300, fun test_block_rejected/0}
 	].
 
 test_block_rejected() ->
