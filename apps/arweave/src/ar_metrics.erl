@@ -472,27 +472,44 @@ register() ->
 	]),
 
 	prometheus_gauge:new([{name, packing_buffer_size},
-			{help, "The number of chunks in the packing server queue."}]),
+		{help, "The number of chunks in the packing server queue."}]),
 	prometheus_gauge:new([{name, chunk_cache_size},
 			{help, "The number of chunks scheduled for downloading."}]),
 	prometheus_counter:new([{name, chunks_without_entropy_stored},
 			{help, "The counter is incremented every time a 2.9 unpacked chunk is written to "
 					"chunk_storage to be enciphered later."}]),
 	prometheus_counter:new([{name, chunks_stored},
-			{help, "The counter is incremented every time a chunk is written to "
-					"chunk_storage."}]),
-	prometheus_counter:new([{name, replica_2_9_entropy_sub_chunks_stored},
-			{help, "The counter is incremented every time a sub-chunk of 2.9 entropy "
-				"is written to chunk_storage."}]),
+		{help, "The counter is incremented every time a chunk is written to "
+				"chunk_storage."}]),
+
 
 	prometheus_gauge:new([{name, sync_tasks},
-			{labels, [state, type, peer]},
-			{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
-					"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
-					"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
-	%% --------------------------------------------------------------------------------------------
+		{labels, [state, type, peer]},
+		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
+				"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
+				"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
+	%% ---------------------------------------------------------------------------------------
+	%% Replica 2.9 metrics
+	%% ---------------------------------------------------------------------------------------
+	prometheus_counter:new([{name, replica_2_9_entropy_stored},
+		{labels, [store_id]},
+		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
+	prometheus_gauge:new([{name, replica_2_9_entropy_store_rate},
+		{labels, [store_id]},
+		{help, "The rate at which replica.2.9 is written to chunk storage in MiB/s."}]),
+	prometheus_counter:new([{name, replica_2_9_entropy_cache_query},
+			{labels, [hit_or_miss, partition]},
+			{help, "The counter is incremented everytime an 8 MiB replica.2.9 entropy "
+					"is requested from the cache."}]),
+	prometheus_histogram:new([
+		{name, replica_2_9_entropy_duration_milliseconds},
+		{buckets, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 250, 500, 1000]},
+		{help, "The time, in milliseconds, to generate 8 MiB of replica.2.9 entropy."}
+	]),
+
+	%% ---------------------------------------------------------------------------------------
 	%% Pool related metrics
-	%% --------------------------------------------------------------------------------------------
+	%% ---------------------------------------------------------------------------------------
 	prometheus_counter:new([
 		{name, pool_job_request_count},
 		{help, "The number of requests to pool /job from start of arweave node"}
@@ -503,9 +520,9 @@ register() ->
 		{help, "The number of jobs received from /job requests."}
 	]),
 
-	%% --------------------------------------------------------------------------------------------
+	%% ---------------------------------------------------------------------------------------
 	%% Debug-only metrics
-	%% --------------------------------------------------------------------------------------------
+	%% ---------------------------------------------------------------------------------------
 	prometheus_counter:new([{name, process_functions},
 			{labels, [process]},
 			{help, "Sampling active functions. The 'process' label is a fully qualified "

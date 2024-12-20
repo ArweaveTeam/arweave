@@ -360,7 +360,8 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			true ->
 				complete;
 			false ->
-				is_replica_2_9_entropy_sub_chunk_recorded(PaddedEndOffset, SubChunkStart, StoreID)
+				is_replica_2_9_entropy_sub_chunk_recorded(
+					PaddedEndOffset, SubChunkStart, StoreID)
 		end,
 	StoreEntropy =
 		case CheckIsRecorded of
@@ -370,17 +371,19 @@ handle_cast(do_prepare_replica_2_9, State) ->
 				is_recorded;
 			false ->
 				Entropies = generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart),
-				EntropyKeys = generate_entropy_keys(RewardAddr, PaddedEndOffset, SubChunkStart),
-				EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
+				EntropyKeys = generate_entropy_keys(
+					RewardAddr, PaddedEndOffset, SubChunkStart),
+				SliceIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
 				%% If we are not at the beginning of the entropy, shift the offset to
 				%% the left. store_entropy will traverse the entire 2.9 partition shifting
 				%% the offset by sector size. It may happen some sub-chunks will be written
 				%% to the neighbouring storage module(s) on the left or on the right
 				%% since the 2.9 partition is slightly bigger than the recall partitition
 				%% storage modules are commonly set up with.
-				PaddedEndOffset2 = shift_replica_2_9_entropy_offset(PaddedEndOffset, -EntropyIndex),
-				store_entropy(Entropies, PaddedEndOffset2, SubChunkStart, Partition, EntropyKeys,
-						RewardAddr, 0, 0)
+				PaddedEndOffset2 = shift_replica_2_9_entropy_offset(
+					PaddedEndOffset, -SliceIndex),
+				store_entropy(Entropies, PaddedEndOffset2, SubChunkStart, Partition,
+						EntropyKeys, RewardAddr, 0, 0)
 		end,
 	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
 			{padded_end_offset, PaddedEndOffset}, {range_end, RangeEnd},
@@ -780,13 +783,13 @@ generate_missing_replica_2_9_entropy(PaddedEndOffset, RewardAddr) ->
 	EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
 	take_combined_entropy_by_index(Entropies, EntropyIndex).
 
-generate_entropies(_RewardAddr, _Offset, SubChunkStart)
+generate_entropies(_RewardAddr, _PaddedEndOffset, SubChunkStart)
 		when SubChunkStart == ?DATA_CHUNK_SIZE ->
 	[];
-generate_entropies(RewardAddr, Offset, SubChunkStart) ->
+generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	[ar_packing_server:get_replica_2_9_entropy(RewardAddr, Offset, SubChunkStart)
-			| generate_entropies(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
+	[ar_packing_server:get_replica_2_9_entropy(RewardAddr, PaddedEndOffset, SubChunkStart)
+			| generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart + SubChunkSize)].
 
 generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
 		when SubChunkStart == ?DATA_CHUNK_SIZE ->
@@ -823,7 +826,20 @@ store_entropy(
 				{ok, StoreID2} ->
 					From = self(),
 					spawn_link(fun() ->
+						StartTime = erlang:monotonic_time(),
+
 						store_entropy2(EntropyPart, PaddedEndOffset, StoreID2),
+						
+						EndTime = erlang:monotonic_time(),
+						ElapsedTime = erlang:convert_time_unit(
+							EndTime-StartTime, native, microsecond),
+						%% bytes per second
+						WriteRate = case ElapsedTime > 0 of 
+							true -> 1000000 * byte_size(EntropyPart) div ElapsedTime; 
+							false -> 0
+						end,
+						prometheus_gauge:set(replica_2_9_entropy_store_rate,
+								[StoreID2], WriteRate),
 						From ! {store_entropy_sub_chunk_written, WaitN + 1}
 						end),
 					PaddedEndOffset2 = shift_replica_2_9_entropy_offset(PaddedEndOffset, 1),
@@ -948,9 +964,8 @@ store_entropy2(EntropyPart, PaddedEndOffset, StoreID) ->
 					{{ChunkFileStart, StoreID}, Filepath}),
 			case update_replica_2_9_entropy_record(PaddedEndOffset, StoreID) of
 				ok ->
-					SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-					prometheus_counter:inc(replica_2_9_entropy_sub_chunks_stored,
-							?DATA_CHUNK_SIZE div SubChunkSize),
+					prometheus_counter:inc(replica_2_9_entropy_stored,
+									[StoreID], byte_size(Bin));
 					release_replica_2_9_semaphore(Filepath),
 					case IsComplete2 of
 						false ->

@@ -132,7 +132,6 @@ randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
 	randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads0,
 			1, ?REPLICA_2_9_RANDOMX_DEPTH).
 
-
 write_scratchpad_to_disk(Type, Hash0, Scratchpad0) ->
 	HashHex = ar_util:encode(Hash0),
 	FileName = io_lib:format("~s_~s.bin", [Type, HashHex]),
