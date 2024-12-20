@@ -2,6 +2,7 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([get_config/1,set_config/2, wait_until_joined/0, restart/0, restart/1,
+		stop_all_nodes/0,
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
@@ -68,6 +69,9 @@
 %%%===================================================================
 all_peers() ->
 	[peer1, peer2, peer3, peer4].
+
+all_nodes() ->
+	[main | all_peers()].
 
 boot_peers() ->
 	boot_peers(all_peers()).
@@ -696,6 +700,15 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 		},
 		Wallet
 	).
+
+stop_all_nodes() ->
+	stop_nodes(all_nodes()).
+
+stop_nodes([Node | Nodes]) ->
+	stop(Node),
+	stop_nodes(Nodes);
+stop_nodes([]) ->
+	ok.
 
 stop() ->
 	{ok, Config} = application:get_env(arweave, config),
