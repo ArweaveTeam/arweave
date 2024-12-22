@@ -619,6 +619,7 @@ joins_network_successfully() ->
 		{Addr = crypto:strong_rand_bytes(32), ?AR(200000000), <<>>},
 		{crypto:strong_rand_bytes(32), ?AR(200000000), <<>>}
 	]),
+	ar_test_node:start(B0),
 	_ = ar_test_node:start_peer(peer1, B0),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
@@ -696,6 +697,13 @@ joins_network_successfully() ->
 	),
 	ar_test_node:disconnect_from(peer1),
 
+	%% Mine the block on main first to ensure that it can't be rebased after the 2-block
+	%% fork from peer1 wins.
+	TX2 = ar_test_node:sign_tx(main, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
+	ar_test_node:assert_post_tx_to_peer(main, TX2),
+	ar_test_node:mine(),
+	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
+
 	%% mine two blocks on peer to ensure that the main branch is orphaned.
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
@@ -706,24 +714,16 @@ joins_network_successfully() ->
 	ar_test_node:mine(peer1),
 	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
 
-	TX2 = ar_test_node:sign_tx(main, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
-	ar_test_node:assert_post_tx_to_peer(main, TX2),
-	ar_test_node:mine(),
-	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
-
 	ar_test_node:connect_to_peer(peer1),
 
-	%% Wait for the orphaned main block to be rebased.
-	assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 3),
-	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 3),
+	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
 
-	%% lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI2) since we'll be at at ?MAX_TX_ANCHOR_DEPTH + 4.
-	TX4 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI2)) }),
+	TX4 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
 	ar_test_node:assert_wait_until_receives_txs([TX4]),
 	ar_test_node:mine(peer1),
-	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 4),
-	BI3 = wait_until_height(?MAX_TX_ANCHOR_DEPTH + 4),
+	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 3),
+	BI3 = wait_until_height(?MAX_TX_ANCHOR_DEPTH + 3),
 
 	?assertEqual([TX4#tx.id], (read_block_when_stored(hd(BI3)))#block.txs),
 	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI2)))#block.txs).

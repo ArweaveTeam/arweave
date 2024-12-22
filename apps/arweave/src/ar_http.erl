@@ -4,7 +4,10 @@
 -behaviour(gen_server).
 
 -export([start_link/0, req/1]).
--export([block_peer_connections/0, unblock_peer_connections/0]). % Only used in tests.
+
+-ifdef(DEBUG).
+-export([block_peer_connections/0, unblock_peer_connections/0]).
+-endif.
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -23,6 +26,8 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+
+-ifdef(DEBUG).
 block_peer_connections() ->
 	ets:insert(?MODULE, {block_peer_connections}),
 	ok.
@@ -31,7 +36,6 @@ unblock_peer_connections() ->
 	ets:delete(?MODULE, block_peer_connections),
 	ok.
 
--ifdef(DEBUG).
 req(#{ peer := {_, _} } = Args) ->
 	req(Args, false);
 req(Args) ->
