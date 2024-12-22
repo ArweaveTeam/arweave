@@ -86,10 +86,8 @@ vdf_server_push_test_() ->
 		fun setup/0,
      	fun cleanup/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_server_push_fast_block/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_server_push_slow_block/0, 120)
+			{timeout, 120, fun test_vdf_server_push_fast_block/0},
+			{timeout, 120, fun test_vdf_server_push_slow_block/0}
 		]
     }.
 
@@ -101,14 +99,10 @@ vdf_client_test_() ->
 		fun setup/0,
 		fun cleanup/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_fast_block/0, 180),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_fast_block_pull_interface/0, 180),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_slow_block/0, 180),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_slow_block_pull_interface/0, 180)
+			{timeout, 180, fun test_vdf_client_fast_block/0},
+			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
+			{timeout, 180, fun test_vdf_client_slow_block/0},
+			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
 		]
     }.
 
@@ -134,16 +128,11 @@ external_update_test_() ->
 
 serialize_test_() ->
     [
-		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-			fun test_serialize_update_format_2/0, 120),
-		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-			fun test_serialize_update_format_3/0, 120),
-		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-			fun test_serialize_update_format_4/0, 120),
-		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-			fun test_serialize_response/0, 120),
-		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-			fun test_serialize_response_compatibility/0, 120)
+		{timeout, 120, fun test_serialize_update_format_2/0},
+		{timeout, 120, fun test_serialize_update_format_3/0},
+		{timeout, 120, fun test_serialize_update_format_4/0},
+		{timeout, 120, fun test_serialize_response/0},
+		{timeout, 120, fun test_serialize_response_compatibility/0}
 	].
 
 mining_session_test_() ->
