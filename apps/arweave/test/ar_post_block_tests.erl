@@ -711,10 +711,10 @@ test_resigned_solution() ->
 	B2H = B2#block.indep_hash,
 	?assertNotEqual(B2#block.indep_hash, B4#block.previous_block),
 	PrevStepNumber = ar_block:vdf_step_number(B),
-	PrevInterval = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
+	PrevInterval = PrevStepNumber div ar_nonce_limiter:get_reset_frequency(),
 	Info4 = B4#block.nonce_limiter_info,
 	StepNumber = Info4#nonce_limiter_info.global_step_number,
-	Interval = StepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
+	Interval = StepNumber div ar_nonce_limiter:get_reset_frequency(),
 	B5 =
 		case Interval == PrevInterval of
 			true ->

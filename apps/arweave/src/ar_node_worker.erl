@@ -1910,7 +1910,7 @@ handle_found_solution(Args, PrevB, State) ->
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			next_vdf_difficulty = PrevNextVDFDifficulty,
 			global_step_number = PrevStepNumber } = PrevNonceLimiterInfo,
-	PrevIntervalNumber = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
+	PrevIntervalNumber = PrevStepNumber div ar_nonce_limiter:get_reset_frequency(),
 	PassesSeedCheck =
 		case PassesTimelineCheck of
 			{false, Reason} ->

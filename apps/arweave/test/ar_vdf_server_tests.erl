@@ -51,7 +51,8 @@ setup_external_update() ->
 		end
 	),
 
-	?assert(5 == ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
+	?assert(5 == ar_nonce_limiter:get_reset_frequency(),
+		"If this fails, the test needs to be updated"),
 	{Pid, Config}.
 
 cleanup_external_update({Pid, Config}) ->
@@ -88,8 +89,10 @@ vdf_server_push_test_() ->
 		fun setup/0,
      	fun cleanup/1,
 		[
-			{timeout, 120, fun test_vdf_server_push_fast_block/0},
-			{timeout, 120, fun test_vdf_server_push_slow_block/0}
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+				fun test_vdf_server_push_fast_block/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+				fun test_vdf_server_push_slow_block/0, 120)
 		]
     }.
 
@@ -101,10 +104,14 @@ vdf_client_test_() ->
 		fun setup/0,
 		fun cleanup/1,
 		[
-			{timeout, 180, fun test_vdf_client_fast_block/0},
-			{timeout, 180, fun test_vdf_client_fast_block_pull_interface/0},
-			{timeout, 180, fun test_vdf_client_slow_block/0},
-			{timeout, 180, fun test_vdf_client_slow_block_pull_interface/0}
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+				fun test_vdf_client_fast_block/0, 180),
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+				fun test_vdf_client_fast_block_pull_interface/0, 180),
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+				fun test_vdf_client_slow_block/0, 180),
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+				fun test_vdf_client_slow_block_pull_interface/0, 180)
 		]
     }.
 
@@ -113,28 +120,33 @@ external_update_test_() ->
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
 				fun test_session_overlap/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
 				fun test_client_ahead/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
 				fun test_skip_ahead/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
 				fun test_2_servers_switching/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
 				fun test_backtrack/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
 				fun test_2_servers_backtrack/0, 120)
 		]
     }.
 
 serialize_test_() ->
     [
-		{timeout, 120, fun test_serialize_update_format_2/0},
-		{timeout, 120, fun test_serialize_update_format_3/0},
-		{timeout, 120, fun test_serialize_update_format_4/0},
-		{timeout, 120, fun test_serialize_response/0},
-		{timeout, 120, fun test_serialize_response_compatibility/0}
+		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			fun test_serialize_update_format_2/0, 120),
+		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			fun test_serialize_update_format_3/0, 120),
+		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			fun test_serialize_update_format_4/0, 120),
+		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			fun test_serialize_response/0, 120),
+		ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			fun test_serialize_response_compatibility/0, 120)
 	].
 
 mining_session_test_() ->
@@ -142,7 +154,7 @@ mining_session_test_() ->
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 	[
-		ar_test_node:test_with_mocked_functions([mock_add_task()],
+		ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
 			fun test_mining_session/0, 120)
 	]
     }.
@@ -978,6 +990,15 @@ mock_add_task() ->
 			ets:insert(add_task, {Worker, TaskType, Candidate#mining_candidate.step_number})
 		end
 	}.
+
+mock_reset_frequency() ->
+	{
+		ar_nonce_limiter, get_reset_frequency,
+		fun() ->
+			5
+		end
+	}.
+	
 
 assert_sessions_equal(List, Set) ->
 	?assertEqual(lists:sort(List), lists:sort(sets:to_list(Set))).

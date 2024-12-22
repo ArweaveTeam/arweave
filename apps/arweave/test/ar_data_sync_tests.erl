@@ -133,7 +133,7 @@ test_mines_off_only_last_chunks() ->
 					true = ar_util:do_until(
 						fun() ->
 							ar_nonce_limiter:get_current_step_number()
-									> PrevStepNumber + ?NONCE_LIMITER_RESET_FREQUENCY
+									> PrevStepNumber + ar_nonce_limiter:get_reset_frequency()
 						end,
 						100,
 						60000
