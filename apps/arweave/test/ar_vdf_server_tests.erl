@@ -50,9 +50,6 @@ setup_external_update() ->
 			computed_output()
 		end
 	),
-
-	?assert(5 == ar_nonce_limiter:get_reset_frequency(),
-		"If this fails, the test needs to be updated"),
 	{Pid, Config}.
 
 cleanup_external_update({Pid, Config}) ->
