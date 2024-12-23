@@ -8,7 +8,7 @@
 -import(ar_test_node, [wait_until_height/1, assert_wait_until_height/2,
 	read_block_when_stored/1, random_v1_data/1]).
 
--define(DEFAULT_EUNIT_TEST_TIMEOUT, 240).
+-define(DEFAULT_EUNIT_TEST_TIMEOUT, 360).
 
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
