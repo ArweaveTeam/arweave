@@ -86,8 +86,10 @@ vdf_server_push_test_() ->
 		fun setup/0,
      	fun cleanup/1,
 		[
-			{timeout, 120, fun test_vdf_server_push_fast_block/0},
-			{timeout, 120, fun test_vdf_server_push_slow_block/0}
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_server_push_fast_block/0, 120),
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_server_push_slow_block/0, 120)
 		]
     }.
 
@@ -166,7 +168,6 @@ test_vdf_server_push_fast_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VDFPort) ]}),
-
 	%% Setup a server to listen for VDF pushes
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
@@ -174,12 +175,10 @@ test_vdf_server_push_fast_block() ->
 		[{port, VDFPort}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
-
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
 	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
-
 	%% Post the block to main which will cause it to validate VDF for the block under
 	%% the B0 session and then begin using the B1 VDF session going forward
 	ok = ar_events:subscribe(block),
@@ -900,7 +899,10 @@ handle_update(Update, Req, State) ->
 	case ets:lookup(computed_output, Seed) of
 		[{Seed, FirstStepNumber, LatestStepNumber}] ->
 			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
-					"Partial VDF update did not increase by 1"),
+				lists:flatten(io_lib:format(
+					"Partial VDF update did not increase by 1, "
+					"StepNumber: ~p, LatestStepNumber: ~p",
+					[StepNumber, LatestStepNumber]))),
 
 			ets:insert(computed_output, {Seed, FirstStepNumber, StepNumber}),
 			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
