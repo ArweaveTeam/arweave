@@ -406,10 +406,17 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	[{Hash, _, _} | _] = ar_test_node:wait_until_height(ValidatorNode, CurrentHeight + 1),
 	lists:foreach(
 		fun(Node) ->
-			[{MinerHash, _, _} | _] = ar_test_node:wait_until_height(Node, CurrentHeight + 1),
+			?LOG_DEBUG([{test, ar_coordinated_mining_tests},
+				{waiting_for_height, CurrentHeight+1}, {node, Node}]),
+			%% Since multiple nodes are mining in parallel it's possible that 2 blocks
+			%% get mined one after each other very quickly. In that scenario MinerHashes
+			%% might include 2 (or more) new blocks so we need to check all of them.
+			MinerHashes = ar_test_node:wait_until_height(Node, CurrentHeight + 1),
 			Message = lists:flatten(io_lib:format(
 					"Node ~p did not mine the same block as the validator node", [Node])),
-			?assertEqual(ar_util:encode(Hash), ar_util:encode(MinerHash), Message)
+			?assert(lists:any(fun({MinerHash, _, _}) -> 
+				ar_util:encode(Hash) == ar_util:encode(MinerHash) 
+			end, MinerHashes), Message)
 		end,
 		Miners
 	),
