@@ -1425,7 +1425,7 @@ test_reorg_after_join() ->
 	ar_test_node:mine(peer1),
 	ar_test_node:assert_wait_until_height(peer1, 1),
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(2).
+	ar_test_node:wait_until_height(main, 2).
 
 reorg_after_join2_test_() ->
 	{timeout, 120, fun test_reorg_after_join2/0}.
@@ -1439,7 +1439,7 @@ test_reorg_after_join2() ->
 	ar_test_node:assert_wait_until_height(peer1, 1),
 	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(),
-	ar_test_node:wait_until_height(2),
+	ar_test_node:wait_until_height(main, 2),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:mine(peer1),
@@ -1448,7 +1448,7 @@ test_reorg_after_join2() ->
 	ar_test_node:assert_wait_until_height(peer1, 2),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(3).
+	ar_test_node:wait_until_height(main, 3).
 
 get_step_range_test() ->
 	?assertEqual(

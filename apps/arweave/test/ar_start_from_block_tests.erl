@@ -48,7 +48,7 @@ test_start_from_block() ->
 
     ar_test_node:wait_until_height(peer1, 6),
     ar_test_node:wait_until_height(peer2, 6),
-    ar_test_node:wait_until_height(6),
+    ar_test_node:wait_until_height(main, 6),
 
     ar_test_node:disconnect_from(peer1),
     ar_test_node:disconnect_from(peer2),

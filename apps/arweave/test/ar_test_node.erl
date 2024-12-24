@@ -4,7 +4,8 @@
 -export([get_config/1,set_config/2, wait_until_joined/0, restart/0, restart/1,
 		stop_all_nodes/0,
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
-		wait_until_height/2, http_get_block/2, get_blocks/1,
+		wait_until_height/1, wait_until_height/2, wait_until_height/3, 
+		assert_wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4, load_fixture/1,
 		get_default_storage_module_packing/2]).
@@ -20,7 +21,6 @@
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 
-		wait_until_height/1, assert_wait_until_height/2,
 		wait_until_block_index/1, wait_until_block_index/2,
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,

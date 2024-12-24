@@ -8,7 +8,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -import(ar_test_node, [
-		wait_until_height/1, read_block_when_stored/1]).
+		wait_until_height/2, read_block_when_stored/1]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -93,7 +93,7 @@ test_webhooks() ->
 					end,
 				ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 				ar_test_node:mine(),
-				wait_until_height(Height),
+				wait_until_height(main, Height),
 				SignedTX
 			end,
 			lists:seq(1, 10)
