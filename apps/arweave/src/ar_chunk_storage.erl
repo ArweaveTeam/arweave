@@ -965,7 +965,7 @@ store_entropy2(EntropyPart, PaddedEndOffset, StoreID) ->
 			case update_replica_2_9_entropy_record(PaddedEndOffset, StoreID) of
 				ok ->
 					prometheus_counter:inc(replica_2_9_entropy_stored,
-									[StoreID], byte_size(Bin));
+									[StoreID], byte_size(Bin)),
 					release_replica_2_9_semaphore(Filepath),
 					case IsComplete2 of
 						false ->
