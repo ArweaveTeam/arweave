@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		wait_until_height/1, post_block/2,
+		wait_until_height/2, post_block/2,
 		send_new_block/2, sign_block/3,
 		read_block_when_stored/2,
 		assert_wait_until_height/2,
@@ -23,7 +23,7 @@ reset_node() ->
 	ar_test_node:connect_to_peer(peer1),
 
 	Height = height(peer1),
-	[{PrevH, _, _} | _] = wait_until_height(Height),
+	[{PrevH, _, _} | _] = wait_until_height(main, Height),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
 	[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, Height + 1),
@@ -526,7 +526,7 @@ test_reject_block_invalid_double_signing_proof() ->
 	B5 = sign_block(B1#block{ double_signing_proof = InvalidProof3 }, B0, Key),
 	post_block(B5, invalid_double_signing_proof_not_in_reward_history),
 	ar_test_node:connect_to_peer(peer1),
-	wait_until_height(2),
+	wait_until_height(main, 2),
 	B6 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI2)]),
 	B7 = sign_block(B6, B1, Key),
 	post_block(B7, valid),
@@ -569,7 +569,7 @@ test_send_block2() ->
 	TXs = [ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	ar_test_node:mine(),
-	[{H, _, _}, _] = wait_until_height(1),
+	[{H, _, _}, _] = wait_until_height(main, 1),
 	B = ar_storage:read_block(H),
 	TXs2 = sort_txs_by_block_order(TXs, B),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
@@ -611,7 +611,7 @@ test_send_block2() ->
 			data => crypto:strong_rand_bytes(10 * 1024) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs3),
 	ar_test_node:mine(),
-	[{H2, _, _}, _, _] = wait_until_height(2),
+	[{H2, _, _}, _, _] = wait_until_height(main, 2),
 	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
@@ -661,7 +661,7 @@ test_send_block2() ->
 					previous_block = B5#block.previous_block }) }),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(),
-	[_ | _] = wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
+	[_ | _] = wait_until_height(main, 3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
 	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
 	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
@@ -694,7 +694,7 @@ test_resigned_solution() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	wait_until_height(1),
+	wait_until_height(main, 1),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
 	B = ar_node:get_current_block(),
@@ -729,9 +729,9 @@ test_resigned_solution() ->
 		end,
 	B5H = B5#block.indep_hash,
 	post_block(B5, [valid]),
-	[{B5H, _, _}, {B2H, _, _}, _] = wait_until_height(2),
+	[{B5H, _, _}, {B2H, _, _}, _] = wait_until_height(main, 2),
 	ar_test_node:mine(),
-	[{B6H, _, _}, _, _, _] = wait_until_height(3),
+	[{B6H, _, _}, _, _, _] = wait_until_height(main, 3),
 	ar_test_node:connect_to_peer(peer1),
 	[{B6H, _, _}, {B5H, _, _}, {B2H, _, _}, _] = assert_wait_until_height(peer1, 3).
 

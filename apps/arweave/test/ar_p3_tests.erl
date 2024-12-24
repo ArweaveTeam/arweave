@@ -8,7 +8,7 @@
 -export([raw_request/2, raw_request/3, http_request/1]).
 
 -import(ar_test_node, [
-	stop/0, assert_wait_until_height/2, wait_until_height/1, read_block_when_stored/2]).
+	stop/0, assert_wait_until_height/2, wait_until_height/2, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
 	empty_p3_config/0]).
@@ -493,19 +493,19 @@ e2e_deposit_before_charge() ->
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
 	ar_test_node:mine(),
-	wait_until_height(1),
+	wait_until_height(main, 1),
 
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
 	ar_test_node:mine(),
-	wait_until_height(2),
+	wait_until_height(main, 2),
 
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
 	ar_test_node:mine(),
-	wait_until_height(3),
+	wait_until_height(main, 3),
 
 	timer:sleep(1000),
 
@@ -723,10 +723,10 @@ e2e_charge_before_deposit() ->
 	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	
 	ar_test_node:mine(),
-	wait_until_height(1),
+	wait_until_height(main, 1),
 
 	ar_test_node:mine(),
-	wait_until_height(2),
+	wait_until_height(main, 2),
 
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -747,10 +747,10 @@ e2e_charge_before_deposit() ->
 	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	
 	ar_test_node:mine(),
-	wait_until_height(3),
+	wait_until_height(main, 3),
 
 	ar_test_node:mine(),
-	wait_until_height(4),
+	wait_until_height(main, 4),
 
 	timer:sleep(1000),
 
@@ -819,14 +819,14 @@ e2e_restart_p3_service() ->
 
 	%% Nodes only scan for P3 depostics when a new block is received, so the balance will be 0
 	%% until the next block comes in.
-	wait_until_height(4),
+	wait_until_height(main, 4),
 	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
 	?assertEqual(0, ar_p3_db:get_scan_height(),
 		"Node has seen blocks, but hasn't received a new_tip event yet: scan height 0"),
 
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 5),
-	wait_until_height(5),
+	wait_until_height(main, 5),
 	%% allow time for the new_tip event to be processed
 	timer:sleep(1000),
 	?assertEqual(5, ar_p3_db:get_scan_height(),
@@ -869,7 +869,7 @@ e2e_concurrent_requests() ->
 	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	
 	ar_test_node:mine(),
-	wait_until_height(1),
+	wait_until_height(main, 1),
 
 	timer:sleep(1000),
 
