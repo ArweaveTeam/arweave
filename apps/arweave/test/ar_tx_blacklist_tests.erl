@@ -9,7 +9,7 @@
 
 -import(ar_test_node, [
 		sign_v1_tx/2, random_v1_data/1, 
-		 wait_until_height/1,
+		wait_until_height/2,
 		assert_wait_until_height/2]).
 
 init(Req, State) ->
@@ -82,7 +82,7 @@ test_uses_blacklists() ->
 			end,
 			ar_test_node:mine(peer1),
 			upload_data([TX], DataTrees),
-			wait_until_height(Height)
+			wait_until_height(main, Height)
 		end,
 		lists:zip(TXs, lists:seq(1, length(TXs)))
 	),
@@ -119,7 +119,7 @@ test_uses_blacklists() ->
 			last_tx => ar_test_node:get_tx_anchor(peer1) }),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	ar_test_node:mine(),
-	[{_, WeaveSize, _} | _] = wait_until_height(length(TXs) + 1),
+	[{_, WeaveSize, _} | _] = wait_until_height(main, length(TXs) + 1),
 	assert_present_offsets([[WeaveSize]]),
 	ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),
 	assert_removed_offsets([[WeaveSize]]),
@@ -132,7 +132,7 @@ test_uses_blacklists() ->
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, length(TXs) + 2),
 	ar_test_node:connect_to_peer(peer1),
-	[{_, WeaveSize2, _} | _] = wait_until_height(length(TXs) + 2),
+	[{_, WeaveSize2, _} | _] = wait_until_height(main, length(TXs) + 2),
 	assert_removed_offsets([[WeaveSize2]]),
 	assert_present_offsets([[WeaveSize]]),
 	teardown().
