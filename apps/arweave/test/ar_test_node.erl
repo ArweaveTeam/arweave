@@ -878,7 +878,7 @@ wait_until_height(TargetHeight) ->
 	{ok, BI} = ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks() of
-				BI when length(BI) - 1 == TargetHeight ->
+				BI when length(BI) - 1 >= TargetHeight ->
 					{ok, BI};
 				_ ->
 					false
