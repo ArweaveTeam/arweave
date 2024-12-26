@@ -726,32 +726,38 @@ test_empty_rates_endpoint() ->
 	RewardAddress = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	[B0] = ar_weave:init(),
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	Config = BaseConfig#config{ p3 = empty_p3_config() },
-	ar_test_node:start(B0, RewardAddress, Config),
+	try
+		Config = BaseConfig#config{ p3 = empty_p3_config() },
+		ar_test_node:start(B0, RewardAddress, Config),
 
-	{<<"200">>, Body} = get_rates(),
-	DecodedBody = jiffy:decode(Body, [return_maps]),
-	?assertEqual(
-		#{<<"endpoints">> => [],<<"payment_methods">> => #{}},
-		DecodedBody
-	),
-	ok = application:set_env(arweave, config, BaseConfig).
+		{<<"200">>, Body} = get_rates(),
+		DecodedBody = jiffy:decode(Body, [return_maps]),
+		?assertEqual(
+			#{<<"endpoints">> => [],<<"payment_methods">> => #{}},
+			DecodedBody
+		)
+	after
+		ok = application:set_env(arweave, config, BaseConfig)
+	end.
 
 test_empty_payments_and_services_rates_endpoint() ->
 	RewardAddress = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	[B0] = ar_weave:init(),
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	P3Config = #p3_config{ payments = #{}, services = #{}},
-	Config = BaseConfig#config{ p3 = P3Config },
-	ar_test_node:start(B0, RewardAddress, Config),
+	try
+		P3Config = #p3_config{ payments = #{}, services = #{}},
+		Config = BaseConfig#config{ p3 = P3Config },
+		ar_test_node:start(B0, RewardAddress, Config),
 
-	{<<"200">>, Body} = get_rates(),
-	DecodedBody = jiffy:decode(Body, [return_maps]),
-	?assertEqual(
-		#{<<"endpoints">> => [],<<"payment_methods">> => #{}},
-		DecodedBody
-	),
-	ok = application:set_env(arweave, config, BaseConfig).
+		{<<"200">>, Body} = get_rates(),
+		DecodedBody = jiffy:decode(Body, [return_maps]),
+		?assertEqual(
+			#{<<"endpoints">> => [],<<"payment_methods">> => #{}},
+			DecodedBody
+		)
+	after
+		ok = application:set_env(arweave, config, BaseConfig)
+	end.
 
 test_rates_endpoint() ->
 	{_, Pub1} = ar_wallet:new(),
@@ -760,54 +766,57 @@ test_rates_endpoint() ->
 	EncodedDepositAddress = ar_util:encode(DepositAddress),
 	[B0] = ar_weave:init(),
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
-	ar_test_node:start(B0, RewardAddress, Config),
+	try
+		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
+		ar_test_node:start(B0, RewardAddress, Config),
 
-	{<<"200">>, Body} = get_rates(),
-	DecodedBody = jiffy:decode(Body, [return_maps]),
-	?assertEqual(
-		#{
-			<<"payment_methods">> => #{
-				<<"arweave">> => #{
-					<<"AR">> => #{
-						<<"minimum_balance">> => -100,
-						<<"confirmations">> => 3,
-						<<"address">> => EncodedDepositAddress
+		{<<"200">>, Body} = get_rates(),
+		DecodedBody = jiffy:decode(Body, [return_maps]),
+		?assertEqual(
+			#{
+				<<"payment_methods">> => #{
+					<<"arweave">> => #{
+						<<"AR">> => #{
+							<<"minimum_balance">> => -100,
+							<<"confirmations">> => 3,
+							<<"address">> => EncodedDepositAddress
+						}
 					}
-				}
-			},
-			<<"endpoints">> => [
-				#{
-					<<"rates">> => #{
-						<<"description">> => <<"Price per request">>,
-						<<"arweave">> => #{
-							<<"AR">> => #{
-								<<"price">> => 1000,
-								<<"address">> => EncodedDepositAddress
-							}
-						}
-					},
-					<<"modSeq">> => 1,
-					<<"endpoint">> => <<"/price/{bytes}">>
 				},
-				#{
-					<<"rates">> => #{
-						<<"description">> => <<"Price per request">>,
-						<<"arweave">> => #{
-							<<"AR">> => #{
-								<<"price">> => 100000,
-								<<"address">> => EncodedDepositAddress
+				<<"endpoints">> => [
+					#{
+						<<"rates">> => #{
+							<<"description">> => <<"Price per request">>,
+							<<"arweave">> => #{
+								<<"AR">> => #{
+									<<"price">> => 1000,
+									<<"address">> => EncodedDepositAddress
+								}
 							}
-						}
+						},
+						<<"modSeq">> => 1,
+						<<"endpoint">> => <<"/price/{bytes}">>
 					},
-					<<"modSeq">> => 5,
-					<<"endpoint">> => <<"/chunk/{offset}">>
-				}
-			]
-		},
-		DecodedBody
-	),
-	ok = application:set_env(arweave, config, BaseConfig).
+					#{
+						<<"rates">> => #{
+							<<"description">> => <<"Price per request">>,
+							<<"arweave">> => #{
+								<<"AR">> => #{
+									<<"price">> => 100000,
+									<<"address">> => EncodedDepositAddress
+								}
+							}
+						},
+						<<"modSeq">> => 5,
+						<<"endpoint">> => <<"/chunk/{offset}">>
+					}
+				]
+			},
+			DecodedBody
+		)
+	after
+		ok = application:set_env(arweave, config, BaseConfig)
+	end.
 
 %% ------------------------------------------------------------------
 %% Helper functions

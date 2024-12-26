@@ -27,10 +27,11 @@ setup_all() ->
 		{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}},
 		{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}
 	],
-	ar_test_node:start(B0, RewardAddr, Config, StorageModules).
+	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
+	Config.
 
-cleanup_all(_) ->
-	ok.
+cleanup_all(Config) ->
+	ok = application:set_env(arweave, config, Config).
 
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->

@@ -183,18 +183,21 @@ test_persisted_mempool() ->
 		10000
 	),
 	Config = ar_test_node:stop(),
-	%% Rejoin the network.
-	%% Expect the pending transactions to be picked up and distributed.
-	ok = application:set_env(arweave, config, Config#config{
-		start_from_latest_state = false,
-		peers = [ar_test_node:peer_ip(peer1)]
-	}),
-	ar:start_dependencies(),
-	ar_test_node:wait_until_joined(),
-	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:assert_wait_until_receives_txs(peer1, [SignedTX]),
-	ar_test_node:mine(),
-	[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, 1),
-	B = read_block_when_stored(H),
-	?assertEqual([SignedTX#tx.id], B#block.txs),
-	ok = application:set_env(arweave, config, Config).
+	try
+		%% Rejoin the network.
+		%% Expect the pending transactions to be picked up and distributed.
+		ok = application:set_env(arweave, config, Config#config{
+			start_from_latest_state = false,
+			peers = [ar_test_node:peer_ip(peer1)]
+		}),
+		ar:start_dependencies(),
+		ar_test_node:wait_until_joined(),
+		ar_test_node:connect_to_peer(peer1),
+		ar_test_node:assert_wait_until_receives_txs(peer1, [SignedTX]),
+		ar_test_node:mine(),
+		[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, 1),
+		B = read_block_when_stored(H),
+		?assertEqual([SignedTX#tx.id], B#block.txs)
+	after
+		ok = application:set_env(arweave, config, Config)
+	end.
