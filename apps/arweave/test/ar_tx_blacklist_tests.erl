@@ -51,91 +51,95 @@ test_uses_blacklists() ->
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
-			config => (element(2, application:get_env(arweave, config)))#config{
-		transaction_blacklist_files = BlacklistFiles,
-		transaction_whitelist_files = [WhitelistFile],
-		sync_jobs = 10,
-		transaction_blacklist_urls = [
-			%% Serves empty body.
-			"http://localhost:1985/empty",
-			%% Serves a valid TX ID (one from the BadTXIDs list).
-			"http://localhost:1985/good",
-			%% Serves some valid TX IDs (from the BadTXIDs list) and a line
-			%% with invalid Base64URL.
-			"http://localhost:1985/bad/and/good"
-		]},
-		storage_modules => [{30 * 1024 * 1024, 0, {composite, RewardAddr, 1}}]
-	}),
-	ar_test_node:connect_to_peer(peer1),
-	BadV1TXIDs = [V1TX#tx.id],
-	lists:foreach(
-		fun({TX, Height}) ->
-			ar_test_node:assert_post_tx_to_peer(peer1, TX),
-			ar_test_node:assert_wait_until_receives_txs([TX]),
-			case Height == length(TXs) of
-				true ->
-					ar_test_node:assert_post_tx_to_peer(peer1, V1TX),
-					ar_test_node:assert_wait_until_receives_txs([V1TX]);
-				_ ->
-					ok
+	{ok, Config} = application:get_env(arweave, config),
+	try
+		ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
+				config => Config#config{
+			transaction_blacklist_files = BlacklistFiles,
+			transaction_whitelist_files = [WhitelistFile],
+			sync_jobs = 10,
+			transaction_blacklist_urls = [
+				%% Serves empty body.
+				"http://localhost:1985/empty",
+				%% Serves a valid TX ID (one from the BadTXIDs list).
+				"http://localhost:1985/good",
+				%% Serves some valid TX IDs (from the BadTXIDs list) and a line
+				%% with invalid Base64URL.
+				"http://localhost:1985/bad/and/good"
+			]},
+			storage_modules => [{30 * 1024 * 1024, 0, {composite, RewardAddr, 1}}]
+		}),
+		ar_test_node:connect_to_peer(peer1),
+		BadV1TXIDs = [V1TX#tx.id],
+		lists:foreach(
+			fun({TX, Height}) ->
+				ar_test_node:assert_post_tx_to_peer(peer1, TX),
+				ar_test_node:assert_wait_until_receives_txs([TX]),
+				case Height == length(TXs) of
+					true ->
+						ar_test_node:assert_post_tx_to_peer(peer1, V1TX),
+						ar_test_node:assert_wait_until_receives_txs([V1TX]);
+					_ ->
+						ok
+				end,
+				ar_test_node:mine(peer1),
+				upload_data([TX], DataTrees),
+				wait_until_height(main, Height)
 			end,
-			ar_test_node:mine(peer1),
-			upload_data([TX], DataTrees),
-			wait_until_height(main, Height)
-		end,
-		lists:zip(TXs, lists:seq(1, length(TXs)))
-	),
-	assert_present_txs(GoodTXIDs),
-	assert_present_txs(BadTXIDs), % V2 headers must not be removed.
-	assert_removed_txs(BadV1TXIDs),
-	assert_present_offsets(GoodOffsets),
-	assert_removed_offsets(BadOffsets),
-	assert_does_not_accept_offsets(BadOffsets),
-	%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
-	ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
-	ok = file:write_file(WhitelistFile, ar_util:encode(lists:nth(2, BadTXIDs))),
-	ok = file:write_file(lists:nth(4, BlacklistFiles), io_lib:format("~s~n~s",
-			[ar_util:encode(hd(GoodTXIDs)), ar_util:encode(V1TX#tx.id)])),
-	[UnblacklistedOffsets, WhitelistOffsets | BadOffsets2] = BadOffsets,
-	RestoredOffsets = [UnblacklistedOffsets, WhitelistOffsets] ++
-			[lists:nth(6, lists:reverse(BadOffsets))],
-	BadOffsets3 = BadOffsets2 -- [lists:nth(6, lists:reverse(BadOffsets))],
-	[_UnblacklistedTXID, _WhitelistTXID | BadTXIDs2] = BadTXIDs,
-	%% Expect the transaction data to be resynced.
-	assert_present_offsets(RestoredOffsets),
-	%% Expect the freshly blacklisted transaction to be erased.
-	assert_present_txs([hd(GoodTXIDs)]), % V2 headers must not be removed.
-	assert_removed_offsets([hd(GoodOffsets)]),
-	assert_does_not_accept_offsets([hd(GoodOffsets)]),
-	%% Expect the previously blacklisted transactions to stay blacklisted.
-	assert_present_txs(BadTXIDs2), % V2 headers must not be removed.
-	assert_removed_txs(BadV1TXIDs),
-	assert_removed_offsets(BadOffsets3),
-	assert_does_not_accept_offsets(BadOffsets3),
-	%% Blacklist the last transaction. Fork the weave. Assert the blacklisted offsets are moved.
-	ar_test_node:disconnect_from(peer1),
-	TX = ar_test_node:sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-			last_tx => ar_test_node:get_tx_anchor(peer1) }),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ar_test_node:mine(),
-	[{_, WeaveSize, _} | _] = wait_until_height(main, length(TXs) + 1),
-	assert_present_offsets([[WeaveSize]]),
-	ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),
-	assert_removed_offsets([[WeaveSize]]),
-	TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
-			last_tx => ar_test_node:get_tx_anchor(peer1) }),
-	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, length(TXs) + 1),
-	ar_test_node:assert_post_tx_to_peer(peer1, TX),
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, length(TXs) + 2),
-	ar_test_node:connect_to_peer(peer1),
-	[{_, WeaveSize2, _} | _] = wait_until_height(main, length(TXs) + 2),
-	assert_removed_offsets([[WeaveSize2]]),
-	assert_present_offsets([[WeaveSize]]),
-	teardown().
+			lists:zip(TXs, lists:seq(1, length(TXs)))
+		),
+		assert_present_txs(GoodTXIDs),
+		assert_present_txs(BadTXIDs), % V2 headers must not be removed.
+		assert_removed_txs(BadV1TXIDs),
+		assert_present_offsets(GoodOffsets),
+		assert_removed_offsets(BadOffsets),
+		assert_does_not_accept_offsets(BadOffsets),
+		%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
+		ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
+		ok = file:write_file(WhitelistFile, ar_util:encode(lists:nth(2, BadTXIDs))),
+		ok = file:write_file(lists:nth(4, BlacklistFiles), io_lib:format("~s~n~s",
+				[ar_util:encode(hd(GoodTXIDs)), ar_util:encode(V1TX#tx.id)])),
+		[UnblacklistedOffsets, WhitelistOffsets | BadOffsets2] = BadOffsets,
+		RestoredOffsets = [UnblacklistedOffsets, WhitelistOffsets] ++
+				[lists:nth(6, lists:reverse(BadOffsets))],
+		BadOffsets3 = BadOffsets2 -- [lists:nth(6, lists:reverse(BadOffsets))],
+		[_UnblacklistedTXID, _WhitelistTXID | BadTXIDs2] = BadTXIDs,
+		%% Expect the transaction data to be resynced.
+		assert_present_offsets(RestoredOffsets),
+		%% Expect the freshly blacklisted transaction to be erased.
+		assert_present_txs([hd(GoodTXIDs)]), % V2 headers must not be removed.
+		assert_removed_offsets([hd(GoodOffsets)]),
+		assert_does_not_accept_offsets([hd(GoodOffsets)]),
+		%% Expect the previously blacklisted transactions to stay blacklisted.
+		assert_present_txs(BadTXIDs2), % V2 headers must not be removed.
+		assert_removed_txs(BadV1TXIDs),
+		assert_removed_offsets(BadOffsets3),
+		assert_does_not_accept_offsets(BadOffsets3),
+		%% Blacklist the last transaction. Fork the weave. Assert the blacklisted offsets are moved.
+		ar_test_node:disconnect_from(peer1),
+		TX = ar_test_node:sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+				last_tx => ar_test_node:get_tx_anchor(peer1) }),
+		ar_test_node:assert_post_tx_to_peer(main, TX),
+		ar_test_node:mine(),
+		[{_, WeaveSize, _} | _] = wait_until_height(main, length(TXs) + 1),
+		assert_present_offsets([[WeaveSize]]),
+		ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),
+		assert_removed_offsets([[WeaveSize]]),
+		TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
+				last_tx => ar_test_node:get_tx_anchor(peer1) }),
+		ar_test_node:assert_post_tx_to_peer(peer1, TX2),
+		ar_test_node:mine(peer1),
+		assert_wait_until_height(peer1, length(TXs) + 1),
+		ar_test_node:assert_post_tx_to_peer(peer1, TX),
+		ar_test_node:mine(peer1),
+		assert_wait_until_height(peer1, length(TXs) + 2),
+		ar_test_node:connect_to_peer(peer1),
+		[{_, WeaveSize2, _} | _] = wait_until_height(main, length(TXs) + 2),
+		assert_removed_offsets([[WeaveSize2]]),
+		assert_present_offsets([[WeaveSize]])
+	after
+		teardown(Config)
+	end.
 
 setup() ->
 	{B0, Wallet} = setup(peer1),
@@ -441,11 +445,6 @@ decode_chunk(EncodedProof) ->
 		jiffy:decode(EncodedProof, [return_maps])
 	).
 
-teardown() ->
-	{ok, Config} = application:get_env(arweave, config),
+teardown(Config) ->
 	ok = ar_test_node:remote_call(peer1, cowboy, stop_listener, [ar_tx_blacklist_test_listener]),
-	application:set_env(arweave, config, Config#config{
-		transaction_blacklist_files = [],
-		transaction_blacklist_urls = [],
-		transaction_whitelist_files = []
-	}).
+	application:set_env(arweave, config, Config).

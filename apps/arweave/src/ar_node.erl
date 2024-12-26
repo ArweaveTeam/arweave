@@ -64,7 +64,6 @@ get_block_index() ->
 %% initialized the state.
 get_current_block() ->
 	[{_, Current}] = ets:lookup(node_state, current),
-	?LOG_ERROR([{event, get_current_block}, {current, ar_util:encode(Current)}]),
 	ar_block_cache:get(block_cache, Current).
 
 %% @doc Return the current network difficulty. Assume the node has joined the network and
