@@ -7,7 +7,8 @@
 		wait_until_height/1, wait_until_height/2, wait_until_height/3, 
 		assert_wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, remote_call/4, load_fixture/1,
+		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
+		load_fixture/1,
 		get_default_storage_module_packing/2]).
 
 %% The "legacy" interface.
@@ -1044,6 +1045,30 @@ get_tx_confirmations(Node, TXID) ->
 			-1
 	end.
 
+new_mock(Module, Options) ->
+	try
+		meck:new(Module, Options)
+	catch
+		error:E ->
+			?LOG_ERROR("Error creating mock for ~p: ~p", [Module, E])
+	end.
+
+mock_function(Module, Fun, Mock) ->
+	try
+		meck:expect(Module, Fun, Mock)
+	catch
+		error:E ->
+			?LOG_ERROR("Error setting mock for ~p: ~p", [Module, E])
+	end.
+
+unmock_module(Module) ->
+	try
+		meck:unload(Module)
+	catch
+		error:E ->
+			?LOG_ERROR("Error unloading mock for ~p: ~p", [Module, E])
+	end.
+
 mock_functions(Functions) ->
 	{
 		fun() ->
@@ -1051,10 +1076,10 @@ mock_functions(Functions) ->
 				fun({Module, Fun, Mock}, Mocked) ->
 					NewMocked = case maps:get(Module, Mocked, false) of
 						false ->
-							meck:new(Module, [passthrough]),
+							new_mock(Module, [passthrough]),
 							lists:foreach(
 								fun(Node) ->
-									remote_call(Node, meck, new,
+									remote_call(Node, ar_test_node, new_mock,
 											[Module, [no_link, passthrough]])
 								end,
 								all_peers()),
@@ -1062,12 +1087,13 @@ mock_functions(Functions) ->
 						true ->
 							Mocked
 					end,
+					mock_function(Module, Fun, Mock),
 					lists:foreach(
 						fun(Node) ->
-							meck:expect(Module, Fun, Mock),
-							remote_call(Node, meck, expect, [Module, Fun, Mock])
+							remote_call(Node, ar_test_node, mock_function,
+									[Module, Fun, Mock])
 						end,
-						[main | all_peers()]),
+						all_peers()),
 					NewMocked
 				end,
 				maps:new(),
@@ -1077,11 +1103,12 @@ mock_functions(Functions) ->
 		fun(Mocked) ->
 			maps:fold(
 				fun(Module, _, _) ->
+					unmock_module(Module),
 					lists:foreach(
 						fun(Node) ->
-							remote_call(Node, meck, unload, [Module])
+							remote_call(Node, ar_test_node, unmock_module, [Module])
 						end,
-						[main | all_peers()])
+						all_peers())
 				end,
 				noop,
 				Mocked
