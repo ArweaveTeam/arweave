@@ -101,7 +101,7 @@ start_performance_reports() ->
 
 %% @doc Stop logging performance reports for the given number of milliseconds.
 pause_performance_reports(Time) ->
-	gen_server:cast(?MODULE, {pause_performance_reports, Time}).
+	gen_server:call(?MODULE, {pause_performance_reports, Time}).
 
 vdf_computed() ->
 	increment_count(vdf).
@@ -207,6 +207,12 @@ mining_paused() ->
 init([]) ->
 	{ok, #state{}}.
 
+handle_call({pause_performance_reports, Time}, _From, State) ->
+	Now = os:system_time(millisecond),
+	Timeout = Now + Time,
+	{reply, ok, State#state{ pause_performance_reports = true,
+			pause_performance_reports_timeout = Timeout }};
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
@@ -227,11 +233,7 @@ handle_cast(report_performance, State) ->
 	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
 	{noreply, State};
 
-handle_cast({pause_performance_reports, Time}, State) ->
-	Now = os:system_time(millisecond),
-	Timeout = Now + Time,
-	{noreply, State#state{ pause_performance_reports = true,
-			pause_performance_reports_timeout = Timeout }};
+
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
