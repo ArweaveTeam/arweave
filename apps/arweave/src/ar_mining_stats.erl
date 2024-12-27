@@ -105,45 +105,78 @@ pause_performance_reports(Time) ->
 	gen_server:call(?MODULE, {pause_performance_reports, Time}).
 
 vdf_computed() ->
-	increment_count(vdf).
+	vdf_computed(erlang:monotonic_time(millisecond)).
+
+vdf_computed(Now) ->
+	increment_count(vdf, 1, Now).
 
 raw_read_rate(PartitionNumber, ReadRate) ->
 	prometheus_gauge:set(mining_rate, [raw_read, PartitionNumber], ReadRate).
 
 chunks_read(PartitionNumber, Count) ->
-	increment_count({partition, PartitionNumber, read, total}, Count),
-	increment_count({partition, PartitionNumber, read, current}, Count).
+	chunks_read(PartitionNumber, Count, erlang:monotonic_time(millisecond)).
+
+chunks_read(PartitionNumber, Count, Now) ->
+	increment_count({partition, PartitionNumber, read, total}, Count, Now),
+	increment_count({partition, PartitionNumber, read, current}, Count, Now).
 
 h1_computed(PartitionNumber, Count) ->
-	increment_count({partition, PartitionNumber, h1, total}, Count),
-	increment_count({partition, PartitionNumber, h1, current}, Count).
+	h1_computed(PartitionNumber, Count, erlang:monotonic_time(millisecond)).
+
+h1_computed(PartitionNumber, Count, Now) ->
+	increment_count({partition, PartitionNumber, h1, total}, Count, Now),
+	increment_count({partition, PartitionNumber, h1, current}, Count, Now).
 
 h2_computed(PartitionNumber, Count) ->
-	increment_count({partition, PartitionNumber, h2, total}, Count),
-	increment_count({partition, PartitionNumber, h2, current}, Count).
+	h2_computed(PartitionNumber, Count, erlang:monotonic_time(millisecond)).
+
+h2_computed(PartitionNumber, Count, Now) ->
+	increment_count({partition, PartitionNumber, h2, total}, Count, Now),
+	increment_count({partition, PartitionNumber, h2, current}, Count, Now).
 
 h1_sent_to_peer(Peer, H1Count) ->
-	increment_count({peer, Peer, h1_to_peer, total}, H1Count),
-	increment_count({peer, Peer, h1_to_peer, current}, H1Count).
+	h1_sent_to_peer(Peer, H1Count, erlang:monotonic_time(millisecond)).
+
+h1_sent_to_peer(Peer, H1Count, Now) ->
+	increment_count({peer, Peer, h1_to_peer, total}, H1Count, Now),
+	increment_count({peer, Peer, h1_to_peer, current}, H1Count, Now).
 
 h1_received_from_peer(Peer, H1Count) ->
-	increment_count({peer, Peer, h1_from_peer, total}, H1Count),
-	increment_count({peer, Peer, h1_from_peer, current}, H1Count).
+	h1_received_from_peer(Peer, H1Count, erlang:monotonic_time(millisecond)).
+
+h1_received_from_peer(Peer, H1Count, Now) ->
+	increment_count({peer, Peer, h1_from_peer, total}, H1Count, Now),
+	increment_count({peer, Peer, h1_from_peer, current}, H1Count, Now).
 
 h2_sent_to_peer(Peer) ->
-	increment_count({peer, Peer, h2_to_peer, total}).
+	h2_sent_to_peer(Peer, erlang:monotonic_time(millisecond)).
+
+h2_sent_to_peer(Peer, Now) ->
+	increment_count({peer, Peer, h2_to_peer, total}, 1, Now).
 
 h2_received_from_peer(Peer) ->
-	increment_count({peer, Peer, h2_from_peer, total}).
+	h2_received_from_peer(Peer, erlang:monotonic_time(millisecond)).
+
+h2_received_from_peer(Peer, Now) ->
+	increment_count({peer, Peer, h2_from_peer, total}, 1, Now).
 
 h1_solution() ->
-	increment_count(h1_solution).
+	h1_solution(erlang:monotonic_time(millisecond)).
+
+h1_solution(Now) ->
+	increment_count(h1_solution, 1, Now).
 
 h2_solution() ->
-	increment_count(h2_solution).
+	h2_solution(erlang:monotonic_time(millisecond)).
+
+h2_solution(Now) ->
+	increment_count(h2_solution, 1, Now).
 
 block_found() ->
-	increment_count(confirmed_block).
+	block_found(erlang:monotonic_time(millisecond)).
+
+block_found(Now) ->
+	increment_count(confirmed_block, 1, Now).
 
 set_total_data_size(DataSize) ->
 	try
@@ -257,15 +290,12 @@ reset_all_stats() ->
 %% @doc Atomically increments the count for ETS records stored in the format:
 %% {Key, StartTimestamp, Count}
 %% If the Key doesn't exist, it is initialized with the current timestamp and a count of Amount
-increment_count(Key) ->
-	increment_count(Key, 1).
-
-increment_count(_Key, 0) ->
+increment_count(_Key, 0, _Now) ->
 	ok;
-increment_count(Key, Amount) ->
+increment_count(Key, Amount, Now) ->
 	ets:update_counter(?MODULE, Key,
 		[{3, 1}, {4, Amount}], 						%% increment samples by 1, count by Amount
-		{Key, erlang:monotonic_time(millisecond), 0, 0} %% initialize timestamp, samples, count
+		{Key, Now, 0, 0} %% initialize timestamp, samples, count
 	).
 
 reset_count(Key, Now) ->
@@ -1330,40 +1360,40 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 		ar_mining_stats:set_storage_module_data_size(
 			ar_storage_module:id({?PARTITION_SIZE, 2, Mining}),
 			Mining, 2, ?PARTITION_SIZE, 2, floor(0.25 * ?PARTITION_SIZE)),
-		ar_mining_stats:vdf_computed(),
-		ar_mining_stats:vdf_computed(),
-		ar_mining_stats:vdf_computed(),
-		ar_mining_stats:h1_solution(),
-		ar_mining_stats:h2_solution(),
-		ar_mining_stats:h2_solution(),
-		ar_mining_stats:block_found(),
-		ar_mining_stats:chunks_read(1, 1),
-		ar_mining_stats:chunks_read(1, 2),
-		ar_mining_stats:chunks_read(2, 2),
-		ar_mining_stats:h1_computed(1, 2),
-		ar_mining_stats:h1_computed(1, 1),
-		ar_mining_stats:h2_computed(1, 2),
-		ar_mining_stats:h1_computed(2, 4),
-		ar_mining_stats:h1_sent_to_peer(Peer1, 10),
-		ar_mining_stats:h1_sent_to_peer(Peer1, 5),
-		ar_mining_stats:h1_sent_to_peer(Peer1, 15),
-		ar_mining_stats:h1_sent_to_peer(Peer2, 1),
-		ar_mining_stats:h1_sent_to_peer(Peer2, 19),
-		ar_mining_stats:h1_received_from_peer(Peer2, 10),
-		ar_mining_stats:h1_received_from_peer(Peer2, 5),
-		ar_mining_stats:h1_received_from_peer(Peer2, 15),
-		ar_mining_stats:h1_received_from_peer(Peer1, 1),
-		ar_mining_stats:h1_received_from_peer(Peer1, 19),
-		ar_mining_stats:h2_sent_to_peer(Peer1),
-		ar_mining_stats:h2_sent_to_peer(Peer1),
-		ar_mining_stats:h2_sent_to_peer(Peer1),
-		ar_mining_stats:h2_sent_to_peer(Peer2),
-		ar_mining_stats:h2_sent_to_peer(Peer2),
-		ar_mining_stats:h2_received_from_peer(Peer1),
-		ar_mining_stats:h2_received_from_peer(Peer1),
-		ar_mining_stats:h2_received_from_peer(Peer2),
-		ar_mining_stats:h2_received_from_peer(Peer2),
-		ar_mining_stats:h2_received_from_peer(Peer2),
+		vdf_computed(Now),
+		vdf_computed(Now),
+		vdf_computed(Now),
+		h1_solution(Now),
+		h2_solution(Now),
+		h2_solution(Now),
+		block_found(Now),
+		chunks_read(1, 1, Now),
+		chunks_read(1, 2, Now),
+		chunks_read(2, 2, Now),
+		h1_computed(1, 1, Now),
+		h1_computed(1, 2, Now),
+		h2_computed(1, 2, Now),
+		h1_computed(2, 4, Now),
+		h1_sent_to_peer(Peer1, 10, Now),
+		h1_sent_to_peer(Peer1, 5, Now),
+		h1_sent_to_peer(Peer1, 15, Now),
+		h1_sent_to_peer(Peer2, 1, Now),
+		h1_sent_to_peer(Peer2, 19, Now),
+		h1_received_from_peer(Peer2, 10, Now),
+		h1_received_from_peer(Peer2, 5, Now),
+		h1_received_from_peer(Peer2, 15, Now),
+		h1_received_from_peer(Peer1, 1, Now),
+		h1_received_from_peer(Peer1, 19, Now),
+		h2_sent_to_peer(Peer1, Now),
+		h2_sent_to_peer(Peer1, Now),
+		h2_sent_to_peer(Peer1, Now),
+		h2_sent_to_peer(Peer2, Now),
+		h2_sent_to_peer(Peer2, Now),
+		h2_received_from_peer(Peer1, Now),
+		h2_received_from_peer(Peer1, Now),
+		h2_received_from_peer(Peer2, Now),
+		h2_received_from_peer(Peer2, Now),
+		h2_received_from_peer(Peer2, Now),
 		
 		Report1 = generate_report(0, Mining, [], [], WeaveSize, Now+1000),
 		?assertEqual(#report{ now = Now+1000 }, Report1),
