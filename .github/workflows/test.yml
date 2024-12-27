@@ -118,17 +118,123 @@ jobs:
             _build.tar.gz
             apps.tar.gz
 
-  eunit-tests:
+      # only arweave dependencies are being cached,
+      # those are not updated everyday and this is
+      # unecessary to fetch them everytime.
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: |
+            _build/default/lib/accept
+            _build/default/lib/b64fast
+            _build/default/lib/cowboy
+            _build/default/lib/cowlib
+            _build/default/lib/graphql
+            _build/default/lib/gun
+            _build/default/lib/jiffy
+            _build/default/lib/prometheus
+            _build/default/lib/prometheus_cowboy
+            _build/default/lib/prometheus_httpd
+            _build/default/lib/prometheus_process_collector
+            _build/default/lib/quantile_estimator
+            _build/default/lib/ranch
+            _build/default/lib/.rebar3
+            _build/default/lib/recon
+            _build/default/lib/rocksdb
+            _build/default/plugins/
+            _build/default/plugins/aleppo
+            _build/default/plugins/geas
+            _build/default/plugins/geas_rebar3
+            _build/default/plugins/hex_core
+            _build/default/plugins/katana_code
+            _build/default/plugins/pc
+            _build/default/plugins/.rebar3
+            _build/default/plugins/rebar3_archive_plugin
+            _build/default/plugins/rebar3_elvis_plugin
+            _build/default/plugins/rebar3_hex
+            _build/default/plugins/samovar
+            _build/default/plugins/verl
+            _build/default/plugins/zipper
+          key: deps-cache-${{ hashFiles('rebar.lock') }}
+          restore-keys: |
+            deps-cache-${{ hashFiles('rebar.lock') }}
+
+      - name: Get dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./ar-rebar3 get-deps
+
+      - uses: actions/cache@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            _build/default/lib/accept
+            _build/default/lib/b64fast
+            _build/default/lib/cowboy
+            _build/default/lib/cowlib
+            _build/default/lib/graphql
+            _build/default/lib/gun
+            _build/default/lib/jiffy
+            _build/default/lib/prometheus
+            _build/default/lib/prometheus_cowboy
+            _build/default/lib/prometheus_httpd
+            _build/default/lib/prometheus_process_collector
+            _build/default/lib/quantile_estimator
+            _build/default/lib/ranch
+            _build/default/lib/.rebar3
+            _build/default/lib/recon
+            _build/default/lib/rocksdb
+            _build/default/plugins/
+            _build/default/plugins/aleppo
+            _build/default/plugins/geas
+            _build/default/plugins/geas_rebar3
+            _build/default/plugins/hex_core
+            _build/default/plugins/katana_code
+            _build/default/plugins/pc
+            _build/default/plugins/.rebar3
+            _build/default/plugins/rebar3_archive_plugin
+            _build/default/plugins/rebar3_elvis_plugin
+            _build/default/plugins/rebar3_hex
+            _build/default/plugins/samovar
+            _build/default/plugins/verl
+            _build/default/plugins/zipper
+          key: deps-cache-${{ hashFiles('rebar.lock') }}
+
+      - name: Build arweave test sources
+        run: ./ar-rebar3 test compile
+
+      # some artifacts are compiled and only available
+      # in arweave directy (libraries)
+      - name: Prepare artifacts
+        run: |
+          chmod -R u+w ./_build
+          tar czfp _build.tar.gz ./_build
+          tar czfp apps.tar.gz ./apps
+
+      # to avoid reusing artifacts from someone else
+      # and generating issues, an unique artifact is
+      # produced using github checksum.
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+          overwrite: true
+          path: |
+            _build.tar.gz
+            apps.tar.gz
+
+  ####################################################################
+  # Long-running tests. Put these first to limit the overall runtime
+  # of the test suite
+  ####################################################################
+  eunit-tests-long-running:
     needs: build
     runs-on: self-hosted
     strategy:
       fail-fast: true
-
-      # 8 parallel jobs seem to be a correct value. 12
-      # jobs were used previously, but it was requiring
-      # too much CPU and RAM (in particular if more than
-      # one developer is used the pipelines).
-      max-parallel: 8
+      max-parallel: 4
       matrix:
         core_test_mod: [
             ## Long-running tests. Put these first to limit the overall runtime of the
@@ -141,9 +247,56 @@ jobs:
             ar_poa,
             ar_vdf_server_tests,
             ar_post_block_tests,
-            ar_reject_chunks_tests,
+            ar_reject_chunks_tests
+          ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
 
-            ## Modules containing tests
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+
+      # Both artifacts (_build and apps dir) are
+      # required.
+      - name: Extract artifact
+        run: |
+          tar zxfp _build.tar.gz
+          tar zxfp apps.tar.gz
+
+      - name: ${{ matrix.core_test_mod }}.erl
+        id: tests
+        run: bash scripts/github_workflow.sh "${{ matrix.core_test_mod }}"
+
+      # this part of the job produces test artifacts from logs
+      # generated by the tests. It also collect dumps and the files
+      # present in .tmp (temporary arweave data store)
+      - name: upload artifacts in case of failure
+        uses: actions/upload-artifact@v4
+        if: always() && failure()
+        with:
+          name: "logs-${{ matrix.core_test_mod }}-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
+          retention-days: 7
+          overwrite: true
+          include-hidden-files: true
+          path: |
+            ./logs
+            *.out
+            *.dump
+
+  ####################################################################
+  # Modules containing tests
+  ####################################################################
+  eunit-tests-modules:
+    needs: build
+    runs-on: self-hosted
+    strategy:
+      fail-fast: true
+      max-parallel: 4
+      matrix:
+        core_test_mod: [
             ar,
             ar_block,
             ar_block_cache,
@@ -185,9 +338,57 @@ jobs:
             ar_verify_chunks,
             ar_wallet,
             ar_webhook,
-            ar_pool,
+            ar_pool
+          ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
 
-            ## Test modules (note: that _tests are implicitly run by a matching prefix name
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+
+      # Both artifacts (_build and apps dir) are
+      # required.
+      - name: Extract artifact
+        run: |
+          tar zxfp _build.tar.gz
+          tar zxfp apps.tar.gz
+
+      - name: ${{ matrix.core_test_mod }}.erl
+        id: tests
+        run: bash scripts/github_workflow.sh "${{ matrix.core_test_mod }}"
+
+      # this part of the job produces test artifacts from logs
+      # generated by the tests. It also collect dumps and the files
+      # present in .tmp (temporary arweave data store)
+      - name: upload artifacts in case of failure
+        uses: actions/upload-artifact@v4
+        if: always() && failure()
+        with:
+          name: "logs-${{ matrix.core_test_mod }}-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
+          retention-days: 7
+          overwrite: true
+          include-hidden-files: true
+          path: |
+            ./logs
+            *.out
+            *.dump
+
+  ####################################################################
+  # Test modules (note: that _tests are implicitly run by a matching
+  # prefix name
+  ####################################################################
+  eunit-tests-suite:
+    needs: build
+    runs-on: self-hosted
+    strategy:
+      fail-fast: true
+      max-parallel: 4
+      matrix:
+        core_test_mod: [
             ar_base64_compatibility_tests,
             ar_config_tests,
             ar_difficulty_tests,
@@ -226,74 +427,20 @@ jobs:
 
       - name: ${{ matrix.core_test_mod }}.erl
         id: tests
-        run: |
-          EXIT_CODE=0
-          export PATH=$(pwd)/_build/erts/bin:$PATH
-          export ERL_EPMD_ADDRESS=127.0.0.1
-          export NAMESPACE="${{ matrix.core_test_mod }}"
-          export ERL_PATH_ADD="$(echo $(pwd)/_build/test/lib/*/ebin)"
-          export ERL_PATH_TEST="$(pwd)/_build/test/lib/arweave/test"
-          export ERL_PATH_CONF="$(pwd)/config/sys.config"
-          export ERL_TEST_OPTS="-pa ${ERL_PATH_ADD} ${ERL_PATH_TEST} -config ${ERL_PATH_CONF}"
-          RETRYABLE=1
-          while [[ $RETRYABLE -eq 1 ]]; do
-            RETRYABLE=0
-            set +e
-            set -x
-            erl +S 4:4 $ERL_TEST_OPTS -noshell -name "main-${NAMESPACE}@127.0.0.1" -setcookie "${{ matrix.core_test_mod }}" -run ar tests "${{ matrix.core_test_mod }}" -s init stop 2>&1 | tee main.out
-            EXIT_CODE=${PIPESTATUS[0]}
-            set +x
-            set -e
-            # For debugging purposes, print the peer1 output if the tests failed
-            if [[ $EXIT_CODE -ne 0 ]]; then
-              echo -e "\033[0;32m===> Checking for retry\033[0m"
-              if ls peer1-*.out 1> /dev/null 2>&1; then
-                first_line_peer1=$(head -n 1 peer1-*.out)
-              fi
-              first_line_main=$(head -n 1 main.out)
-              echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
-              echo -e "\033[0;31m===> First line of main node's output: $first_line_main\033[0m"
+        run: bash scripts/github_workflow.sh "${{ matrix.core_test_mod }}"
 
-              # Check if it is a retryable error
-              if [[ "$first_line_peer1" == "Protocol 'inet_tcp': register/listen error: "* ]]; then
-                echo "Retrying test because of inet_tcp error..."
-                RETRYABLE=1
-                sleep 1
-              elif [[ "$first_line_peer1" == "Protocol 'inet_tcp': the name"* ]]; then
-                echo "Retrying test because of inet_tcp clash..."
-                RETRYABLE=1
-                sleep 1
-              elif [[ "$first_line_main" == *"econnrefused"* ]]; then
-                echo "Retrying test because of econnrefused..."
-                RETRYABLE=1
-                sleep 1
-              else
-                if ls peer1-*.out 1> /dev/null 2>&1; then
-                  echo -e "\033[0;31m===> Test failed, printing the peer1 node's output...\033[0m"
-                  cat peer1-*.out
-                else
-                  echo -e "\033[0;31m===> Test failed without peer1 output...\033[0m"
-                fi
-                if ls peer2-*.out 1> /dev/null 2>&1; then
-                  echo -e "\033[0;31m===> Test failed, printing the peer2 node's output...\033[0m"
-                  cat peer2-*.out
-                else
-                  echo -e "\033[0;31m===> Test failed without peer2 output...\033[0m"
-                fi
-                if ls peer3-*.out 1> /dev/null 2>&1; then
-                  echo -e "\033[0;31m===> Test failed, printing the peer3 node's output...\033[0m"
-                  cat peer3-*.out
-                else
-                  echo -e "\033[0;31m===> Test failed without peer3 output...\033[0m"
-                fi
-                if ls peer4-*.out 1> /dev/null 2>&1; then
-                  echo -e "\033[0;31m===> Test failed, printing the peer4 node's output...\033[0m"
-                  cat peer4-*.out
-                else
-                  echo -e "\033[0;31m===> Test failed without peer4 output...\033[0m"
-                fi
-              fi
-            fi
-          done
-          echo "exit_code=$EXIT_CODE" >> $GITHUB_ENV # Set the exit_code output variable using Environment Files
-          exit $EXIT_CODE # exit with the exit code of the tests
+      # this part of the job produces test artifacts from logs
+      # generated by the tests. It also collect dumps and the files
+      # present in .tmp (temporary arweave data store)
+      - name: upload artifacts in case of failure
+        uses: actions/upload-artifact@v4
+        if: always() && failure()
+        with:
+          name: "logs-${{ matrix.core_test_mod }}-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
+          retention-days: 7
+          overwrite: true
+          include-hidden-files: true
+          path: |
+            ./logs
+            *.out
+            *.dump
