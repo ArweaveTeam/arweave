@@ -3,7 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [wait_until_height/1, assert_wait_until_height/2, read_block_when_stored/1]).
+-import(ar_test_node, [wait_until_height/2, assert_wait_until_height/2, read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
 	{timeout, 500, fun test_v1_transactions_after_2_0/0}.
@@ -29,7 +29,7 @@ test_v1_transactions_after_2_0() ->
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
@@ -51,7 +51,7 @@ test_v1_transactions_after_2_0() ->
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			case Height of
 				11 ->
 					assert_txs_mined(MoreTXs, BI);
@@ -87,7 +87,7 @@ test_v2_transactions_after_2_0() ->
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
@@ -109,7 +109,7 @@ test_v2_transactions_after_2_0() ->
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			case Height of
 				11 ->
 					assert_txs_mined(MoreTXs, BI);
@@ -150,7 +150,7 @@ test_recall_byte_on_the_border() ->
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
@@ -205,7 +205,7 @@ test_ignores_transactions_with_invalid_data_root() ->
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);

@@ -15,9 +15,6 @@
 %% we have to wait to let the ar_events get processed whenever we apply a VDF step
 -define(WAIT_TIME, 1000).
 
--define(DEFAULT_TEST_TIMEOUT, 600).
--define(DEFAULT_TEST_MOCK_TIMEOUT, 500_000).
-
 %% -------------------------------------------------------------------------------------------------
 %% Test Fixtures
 %% -------------------------------------------------------------------------------------------------
@@ -39,7 +36,7 @@ setup_external_update() ->
 	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF -
 	%% this is necessary so that we can test the behavior of apply_external_update without any
 	%% auto-computed VDF steps getting in the way.
-	ar_test_node:start(
+	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_server_trusted_peers = [
 			ar_util:format_peer(vdf_server_1()),
@@ -53,8 +50,6 @@ setup_external_update() ->
 			computed_output()
 		end
 	),
-
-	?assert(5 == ?NONCE_LIMITER_RESET_FREQUENCY, "If this fails, the test needs to be updated"),
 	{Pid, Config}.
 
 cleanup_external_update({Pid, Config}) ->
@@ -91,8 +86,10 @@ vdf_server_push_test_() ->
 		fun setup/0,
      	fun cleanup/1,
 		[
-			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_vdf_server_push_fast_block/0},
-			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_vdf_server_push_slow_block/0}
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_server_push_fast_block/0, 120),
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_server_push_slow_block/0, 120)
 		]
     }.
 
@@ -104,10 +101,14 @@ vdf_client_test_() ->
 		fun setup/0,
 		fun cleanup/1,
 		[
-			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_vdf_client_fast_block/0},
-			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_vdf_client_fast_block_pull_interface/0},
-			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_vdf_client_slow_block/0},
-			{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_vdf_client_slow_block_pull_interface/0}
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_client_fast_block/0, 180),
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_client_fast_block_pull_interface/0, 180),
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_client_slow_block/0, 180),
+			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+				fun test_vdf_client_slow_block_pull_interface/0, 180)
 		]
     }.
 
@@ -116,28 +117,28 @@ external_update_test_() ->
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
-				fun test_session_overlap/0, ?DEFAULT_TEST_MOCK_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
-				fun test_client_ahead/0, ?DEFAULT_TEST_MOCK_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
-				fun test_skip_ahead/0, ?DEFAULT_TEST_MOCK_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
-				fun test_2_servers_switching/0, ?DEFAULT_TEST_MOCK_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
-				fun test_backtrack/0, ?DEFAULT_TEST_MOCK_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_add_task()],
-				fun test_2_servers_backtrack/0, ?DEFAULT_TEST_MOCK_TIMEOUT)
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+				fun test_session_overlap/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+				fun test_client_ahead/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+				fun test_skip_ahead/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+				fun test_2_servers_switching/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+				fun test_backtrack/0, 120),
+			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+				fun test_2_servers_backtrack/0, 120)
 		]
     }.
 
 serialize_test_() ->
     [
-		{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_serialize_update_format_2/0},
-		{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_serialize_update_format_3/0},
-		{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_serialize_update_format_4/0},
-		{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_serialize_response/0},
-		{timeout, ?DEFAULT_TEST_TIMEOUT, fun test_serialize_response_compatibility/0}
+		{timeout, 120, fun test_serialize_update_format_2/0},
+		{timeout, 120, fun test_serialize_update_format_3/0},
+		{timeout, 120, fun test_serialize_update_format_4/0},
+		{timeout, 120, fun test_serialize_response/0},
+		{timeout, 120, fun test_serialize_response_compatibility/0}
 	].
 
 mining_session_test_() ->
@@ -145,8 +146,8 @@ mining_session_test_() ->
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 	[
-		ar_test_node:test_with_mocked_functions([mock_add_task()],
-			fun test_mining_session/0, ?DEFAULT_TEST_MOCK_TIMEOUT)
+		ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+			fun test_mining_session/0, 120)
 	]
     }.
 
@@ -163,15 +164,14 @@ test_vdf_server_push_fast_block() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
 	%% Let peer1 get ahead of main in the VDF chain
-	ar_test_node:start_peer(peer1, B0),
+	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 	timer:sleep(3000),
 
 	{ok, Config} = application:get_env(arweave, config),
-	ar_test_node:start(
+	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VDFPort) ]}),
-
 	%% Setup a server to listen for VDF pushes
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
@@ -179,12 +179,10 @@ test_vdf_server_push_fast_block() ->
 		[{port, VDFPort}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
-
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
 	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
-
 	%% Post the block to main which will cause it to validate VDF for the block under
 	%% the B0 session and then begin using the B1 VDF session going forward
 	ok = ar_events:subscribe(block),
@@ -209,13 +207,13 @@ test_vdf_server_push_slow_block() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
 	{ok, Config} = application:get_env(arweave, config),
-	ar_test_node:start(
+	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1986" ]}),
 	timer:sleep(3000),
 
 	%% Let peer1 get ahead of main in the VDF chain
-	ar_test_node:start_peer(peer1, B0),
+	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 
 	%% Setup a server to listen for VDF pushes
@@ -275,7 +273,7 @@ test_vdf_client_fast_block() ->
 	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
-	ar_test_node:start_peer(peer1, B0),
+	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 	timer:sleep(20000),
 
@@ -287,12 +285,12 @@ test_vdf_client_fast_block() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1,
+	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
 			ar_util:format_peer(ar_test_node:peer_ip(main)) ] }),
 	%% Start main as a VDF server
-	ar_test_node:start(
+	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [
 			ar_util:format_peer(ar_test_node:peer_ip(peer1)) ]}),
@@ -311,19 +309,19 @@ test_vdf_client_fast_block() ->
 	%% to the VDF client allowing it to validate teh block.
 	send_new_block(ar_test_node:peer_ip(main), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
-	%% the VDF clietn to finally validate the block.
+	%% the VDF client to finally validate the block.
 	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_fast_block_pull_interface() ->
-  {ok, Config} = application:get_env(arweave, config),
+  	{ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
 	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
-	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
+	_ = ar_test_node:start_peer(peer1, B0),
+	_ = ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 	timer:sleep(20000),
 
 	%% Mine a block that will be ahead of main in the VDF chain
@@ -334,12 +332,12 @@ test_vdf_client_fast_block_pull_interface() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1,
+	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ],
 				enable = [vdf_server_pull | PeerConfig#config.enable] }),
 	%% Start the main as a VDF server
-	ar_test_node:start(
+	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1)) ]}),
 	ar_test_node:connect_to_peer(peer1),
@@ -368,7 +366,7 @@ test_vdf_client_slow_block() ->
 	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
-	ar_test_node:start_peer(peer1, B0),
+	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 
 	%% Mine a block that will be ahead of main in the VDF chain
@@ -379,13 +377,13 @@ test_vdf_client_slow_block() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1,
+	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
 			"127.0.0.1:" ++ integer_to_list(Config#config.port)
 		] }),
 	%% Start the main as a VDF server
-	ar_test_node:start(
+	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [
 			"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
@@ -406,7 +404,7 @@ test_vdf_client_slow_block_pull_interface() ->
 	PeerAddress = ar_wallet:to_address(ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [])),
 
 	%% Let peer1 get ahead of main in the VDF chain
-	ar_test_node:start_peer(peer1, B0),
+	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 
 	%% Mine a block that will be ahead of main in the VDF chain
@@ -417,14 +415,14 @@ test_vdf_client_slow_block_pull_interface() ->
 
 	%% Restart peer1 as a VDF client
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1,
+	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
 			"127.0.0.1:" ++ integer_to_list(Config#config.port) ],
 				enable = [vdf_server_pull | PeerConfig#config.enable] }),
 	%% Start the main as a VDF server
 	{ok, Config} = application:get_env(arweave, config),
-	ar_test_node:start(
+	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ nonce_limiter_client_peers = [
 			"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
@@ -905,7 +903,10 @@ handle_update(Update, Req, State) ->
 	case ets:lookup(computed_output, Seed) of
 		[{Seed, FirstStepNumber, LatestStepNumber}] ->
 			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
-					"Partial VDF update did not increase by 1"),
+				lists:flatten(io_lib:format(
+					"Partial VDF update did not increase by 1, "
+					"StepNumber: ~p, LatestStepNumber: ~p",
+					[StepNumber, LatestStepNumber]))),
 
 			ets:insert(computed_output, {Seed, FirstStepNumber, StepNumber}),
 			{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
@@ -981,6 +982,15 @@ mock_add_task() ->
 			ets:insert(add_task, {Worker, TaskType, Candidate#mining_candidate.step_number})
 		end
 	}.
+
+mock_reset_frequency() ->
+	{
+		ar_nonce_limiter, get_reset_frequency,
+		fun() ->
+			5
+		end
+	}.
+	
 
 assert_sessions_equal(List, Set) ->
 	?assertEqual(lists:sort(List), lists:sort(sets:to_list(Set))).

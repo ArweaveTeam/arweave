@@ -1199,6 +1199,8 @@ validate_solution(Solution, DiffPair) ->
 													Chunk2ID},
 											{true, PoACache, PoA2Cache};
 										error ->
+											log_prepare_solution_failure(Solution,
+												poa2_validation_error, []),
 											error;
 										false ->
 											{false, poa2}
@@ -1207,6 +1209,7 @@ validate_solution(Solution, DiffPair) ->
 					end
 			end;
 		error ->
+			log_prepare_solution_failure(Solution, poa1_validation_error, []),
 			error;
 		false ->
 			{false, poa1}

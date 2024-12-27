@@ -4,7 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		assert_wait_until_height/2, wait_until_height/1, read_block_when_stored/1]).
+		assert_wait_until_height/2, wait_until_height/2, read_block_when_stored/1]).
 
 height_plus_one_fork_recovery_test_() ->
 	{timeout, 240, fun test_height_plus_one_fork_recovery/0}.
@@ -20,20 +20,20 @@ test_height_plus_one_fork_recovery() ->
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 1),
 	ar_test_node:mine(),
-	wait_until_height(1),
+	wait_until_height(main, 1),
 	ar_test_node:mine(),
-	MainBI = wait_until_height(2),
+	MainBI = wait_until_height(main, 2),
 	ar_test_node:connect_to_peer(peer1),
 	?assertEqual(MainBI, ar_test_node:wait_until_height(peer1, 2)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(),
-	wait_until_height(3),
+	wait_until_height(main, 3),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(peer1),
 	PeerBI = ar_test_node:wait_until_height(peer1, 4),
-	?assertEqual(PeerBI, wait_until_height(4)).
+	?assertEqual(PeerBI, wait_until_height(main, 4)).
 
 height_plus_three_fork_recovery_test_() ->
 	{timeout, 240, fun test_height_plus_three_fork_recovery/0}.
@@ -49,18 +49,18 @@ test_height_plus_three_fork_recovery() ->
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 1),
 	ar_test_node:mine(),
-	wait_until_height(1),
+	wait_until_height(main, 1),
 	ar_test_node:mine(),
-	wait_until_height(2),
+	wait_until_height(main, 2),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 2),
 	ar_test_node:mine(),
-	wait_until_height(3),
+	wait_until_height(main, 3),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 3),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	MainBI = wait_until_height(4),
+	MainBI = wait_until_height(main, 4),
 	?assertEqual(MainBI, ar_test_node:wait_until_height(peer1, 4)).
 
 missing_txs_fork_recovery_test_() ->
@@ -82,7 +82,7 @@ test_missing_txs_fork_recovery() ->
 	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	?assertEqual([], ar_mempool:get_all_txids()),
 	ar_test_node:mine(peer1),
-	[{H1, _, _} | _] = wait_until_height(1),
+	[{H1, _, _} | _] = wait_until_height(main, 1),
 	?assertEqual(1, length((read_block_when_stored(H1))#block.txs)).
 
 orphaned_txs_are_remined_after_fork_recovery_test_() ->
@@ -104,9 +104,9 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	H1TXIDs = (ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [H1]))#block.txs,
 	?assertEqual([TXID], H1TXIDs),
 	ar_test_node:mine(),
-	[{H2, _, _} | _] = wait_until_height(1),
+	[{H2, _, _} | _] = wait_until_height(main, 1),
 	ar_test_node:mine(),
-	[{H3, _, _}, {H2, _, _}, {_, _, _}] = wait_until_height(2),
+	[{H3, _, _}, {H2, _, _}, {_, _, _}] = wait_until_height(main, 2),
 	ar_test_node:connect_to_peer(peer1),
 	?assertMatch([{H3, _, _}, {H2, _, _}, {_, _, _}], ar_test_node:wait_until_height(peer1, 2)),
 	ar_test_node:mine(peer1),
@@ -137,7 +137,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	ar_test_node:mine(peer1),
 	[{H1, _, _} | _] = ar_test_node:wait_until_height(peer1, 1),
 	ar_test_node:mine(),
-	[{H2, _, _} | _] = wait_until_height(1),
+	[{H2, _, _} | _] = wait_until_height(main, 1),
 	ar_test_node:connect_to_peer(peer1),
 	?assertNotEqual(H2, H1),
 	B1 = read_block_when_stored(H2),

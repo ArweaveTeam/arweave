@@ -2,10 +2,9 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [wait_until_height/1, assert_wait_until_height/2,
+-import(ar_test_node, [wait_until_height/2, assert_wait_until_height/2,
 	read_block_when_stored/1, random_v1_data/1]).
 
 -define(DEFAULT_EUNIT_TEST_TIMEOUT, 900).
@@ -137,7 +136,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 		TXs
 	),
 	%% Expect the block to be accepted by main.
-	BI = wait_until_height(1),
+	BI = wait_until_height(main, 1),
 	?assertEqual(
 		lists:sort(TXIDs),
 		lists:sort((read_block_when_stored(hd(BI)))#block.txs)
@@ -187,7 +186,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
 	%% Expect main to receive the block.
-	BI = wait_until_height(1),
+	BI = wait_until_height(main, 1),
 	SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
 	?assertEqual(lists:sort(SecondSetTXIDs),
 			lists:sort((read_block_when_stored(hd(BI)))#block.txs)),
@@ -195,7 +194,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	ar_test_node:assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
 	%% Mine a block on main and expect both transactions to be included.
 	ar_test_node:mine(),
-	BI2 = wait_until_height(2),
+	BI2 = wait_until_height(main, 2),
 	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
 	?assertEqual(
 		lists:sort(SetDifferenceTXIDs),
@@ -237,7 +236,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 		lists:sort(TXIDs),
 		lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]))#block.txs)
 	),
-	BI = wait_until_height(1),
+	BI = wait_until_height(main, 1),
 	?assertEqual(
 		lists:sort(TXIDs),
 		lists:sort((read_block_when_stored(hd(BI)))#block.txs)
@@ -493,7 +492,7 @@ mines_format_2_txs_without_size_limit() ->
 		lists:seq(1, ?BLOCK_TX_COUNT_LIMIT + 1)
 	),
 	ar_test_node:mine(),
-	[{H, _, _} | _] = wait_until_height(1),
+	[{H, _, _} | _] = wait_until_height(main, 1),
 	B = read_block_when_stored(H),
 	?assertEqual(?BLOCK_TX_COUNT_LIMIT, length(B#block.txs)),
 	TotalSize = lists:sum([(ar_storage:read_tx(TXID))#tx.data_size || TXID <- B#block.txs]),
@@ -619,6 +618,7 @@ joins_network_successfully() ->
 		{Addr = crypto:strong_rand_bytes(32), ?AR(200000000), <<>>},
 		{crypto:strong_rand_bytes(32), ?AR(200000000), <<>>}
 	]),
+	ar_test_node:start(B0),
 	_ = ar_test_node:start_peer(peer1, B0),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
@@ -695,21 +695,35 @@ joins_network_successfully() ->
 		TXs
 	),
 	ar_test_node:disconnect_from(peer1),
-	TX2 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
+
+	%% Mine the block on main first to ensure that it can't be rebased after the 2-block
+	%% fork from peer1 wins.
+	TX2 = ar_test_node:sign_tx(main, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
 	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	ar_test_node:mine(),
-	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
-	TX3 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
+	wait_until_height(main, ?MAX_TX_ANCHOR_DEPTH + 1),
+
+	%% mine two blocks on peer to ensure that the main branch is orphaned.
+	ar_test_node:mine(peer1),
+	assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
+
+	%% lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI) since we'll be at at ?MAX_TX_ANCHOR_DEPTH + 2.
+	TX3 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),
-	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
+	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
+
 	ar_test_node:connect_to_peer(peer1),
-	TX4 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
+
+	wait_until_height(main, ?MAX_TX_ANCHOR_DEPTH + 2),
+
+	TX4 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
 	ar_test_node:assert_wait_until_receives_txs([TX4]),
 	ar_test_node:mine(peer1),
-	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
-	BI3 = wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
+	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 3),
+	BI3 = wait_until_height(main, ?MAX_TX_ANCHOR_DEPTH + 3),
+
 	?assertEqual([TX4#tx.id], (read_block_when_stored(hd(BI3)))#block.txs),
 	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI2)))#block.txs).
 
@@ -741,7 +755,7 @@ recovers_from_forks(ForkHeight) ->
 			ar_test_node:assert_wait_until_receives_txs([TX]),
 			ar_test_node:mine(peer1),
 			BI = assert_wait_until_height(peer1, Height),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			assert_block_txs(peer1, [TX], BI),
 			assert_block_txs(main, [TX], BI),
 			TXs ++ [TX]
@@ -780,7 +794,7 @@ recovers_from_forks(ForkHeight) ->
 		fun(Height, {MainTXs, PeerTXs}) ->
 			UpdatedMainTXs = MainTXs ++ ([NewMainTX] = PostTXToMain()),
 			ar_test_node:mine(),
-			BI = wait_until_height(Height),
+			BI = wait_until_height(main, Height),
 			assert_block_txs(main, [NewMainTX], BI),
 			UpdatedPeerTXs = PeerTXs ++ ([NewPeerTX] = PostTXToPeer()),
 			ar_test_node:mine(peer1),
@@ -798,7 +812,7 @@ recovers_from_forks(ForkHeight) ->
 	ar_test_node:assert_wait_until_receives_txs([TX2]),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 10),
-	wait_until_height(10),
+	wait_until_height(main, 10),
 	forget_txs(
 		PreForkTXs ++
 		MainPostForkTXs ++

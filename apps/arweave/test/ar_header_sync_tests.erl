@@ -6,7 +6,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
--import(ar_test_node, [sign_v1_tx/3, wait_until_height/1, assert_wait_until_height/2,
+-import(ar_test_node, [sign_v1_tx/3, wait_until_height/2, assert_wait_until_height/2,
 	read_block_when_stored/1, random_v1_data/1
 ]).
 
@@ -52,7 +52,7 @@ test_syncs_headers() ->
 		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
 	ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),
 	ar_test_node:mine(),
-	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),
+	[{NoSpaceH, _, _} | _] = wait_until_height(main, NoSpaceHeight),
 	timer:sleep(1000),
 	%% The cleanup is not expected to kick in yet.
 	NoSpaceB = read_block_when_stored(NoSpaceH),
@@ -70,7 +70,7 @@ test_syncs_headers() ->
 			ar_test_node:assert_post_tx_to_peer(main, TX),
 			ar_test_node:mine(),
 			[{_, Height}] = ets:lookup(test_syncs_header, height),
-			[_ | _] = wait_until_height(Height),
+			[_ | _] = wait_until_height(main, Height),
 			ets:insert(test_syncs_header, {height, Height + 1}),
 			unavailable == ar_storage:read_block(NoSpaceH)
 				andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
@@ -110,7 +110,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 					lists:seq(1, 2)
 				),
 			ar_test_node:mine(),
-			[{H, _, _} | _] = wait_until_height(Height),
+			[{H, _, _} | _] = wait_until_height(main, Height),
 			?assertEqual(length(TXs), length((read_block_when_stored(H))#block.txs)),
 			H
 		end,
