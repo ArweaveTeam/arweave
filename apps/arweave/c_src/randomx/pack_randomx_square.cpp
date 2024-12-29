@@ -169,20 +169,16 @@ extern "C" {
 		const unsigned char* keyData,
 		size_t keySize,
 		unsigned char* outAllScratchpads
-	)
-	{
-		// 1) Define the aligned struct for tempHash
+	) {
 		struct vm_hash_t {
 			alignas(16) uint64_t tempHash[8]; // 64 bytes
 		};
 
-		// 2) Allocate the vm_hash_t array here in C++
 		vm_hash_t* vmHashes = new (std::nothrow) vm_hash_t[2*laneCount];
 		if (!vmHashes) {
-			return 0; // indicates allocation failure
+			return 0;
 		}
 
-		// 3) Initialize each VM scratchpad
 		for (int i = 0; i < laneCount; i++) {
 			unsigned char laneSeed[32];
 			{
@@ -199,7 +195,6 @@ extern "C" {
 				nullptr, 0
 			);
 			if (blakeResult != 0) {
-				// Free memory and return error if hashing fails
 				delete[] vmHashes;
 				return 0;
 			}
@@ -210,7 +205,6 @@ extern "C" {
 			);
 		}
 
-		// 4) Inline exec
 		auto randomx_squared_exec_inplace = [&](randomx_vm* machine, uint64_t* srcTempHash, uint64_t* dstTempHash, int programCount, size_t scratchpadSize) {
 			machine->resetRoundingMode();
 			for (int chain = 0; chain < programCount-1; chain++) {
@@ -237,7 +231,6 @@ extern "C" {
 				scratchpadSize);
 		};
 
-		// 5) Inline packing mix
 		auto packing_mix_entropy_far_sets = [&](randomx_vm** inSet,
 												randomx_vm** outSet,
 												int count,
@@ -245,29 +238,19 @@ extern "C" {
 												size_t jumpSize,
 												size_t blockSize)
 		{
-			size_t totalSize = (size_t)count * scratchpadSize;  // total bytes across all lanes
-			// DEBUG
-			// for(int i=0;i<count;i++) {
-			// 	memset((void*)outSet[i]->getScratchpad(), 0, scratchpadSize);
-      // }
+			size_t totalSize = (size_t)count * scratchpadSize;
 
-			// A helper function to copy `length` bytes from global offset srcPos to dstPos in cross-lane memory.
 			auto copyChunkCrossLane = [&](size_t srcPos, size_t dstPos, size_t length) {
 				while (length > 0) {
-					// Find source lane + offset
 					int srcLane = (int)(srcPos / scratchpadSize);
 					size_t offsetInSrcLane = srcPos % scratchpadSize;
 
-					// Find destination lane + offset
 					int dstLane = (int)(dstPos / scratchpadSize);
 					size_t offsetInDstLane = dstPos % scratchpadSize;
 
-					// How many bytes remain in source lane from offsetInSrcLane?
 					size_t srcLaneRemain = scratchpadSize - offsetInSrcLane;
-					// How many bytes remain in destination lane from offsetInDstLane?
 					size_t dstLaneRemain = scratchpadSize - offsetInDstLane;
 
-					// The chunk we can safely copy (without crossing a lane boundary)
 					size_t chunkSize = length;
 					if (chunkSize > srcLaneRemain) {
 						chunkSize = srcLaneRemain;
@@ -276,28 +259,25 @@ extern "C" {
 						chunkSize = dstLaneRemain;
 					}
 
-					// Perform the memcpy for this sub-chunk
 					unsigned char* srcSp = (unsigned char*)(void*) inSet[srcLane]->getScratchpad();
 					unsigned char* dstSp = (unsigned char*)(void*) outSet[dstLane]->getScratchpad();
 					memcpy(dstSp + offsetInDstLane, srcSp + offsetInSrcLane, chunkSize);
 
-					// Advance
 					srcPos += chunkSize;
 					dstPos += chunkSize;
 					length -= chunkSize;
 				}
 			};
 
-			// Now we replicate your leftover logic from the original packing_mix_entropy_far()
 			size_t entropySize = totalSize;
 			size_t numJumps = entropySize / jumpSize;
 			size_t numBlocksPerJump = jumpSize / blockSize;
 			size_t leftover = jumpSize % blockSize;
 
-			size_t outOffset = 0;  // global offset in outSet
+			size_t outOffset = 0;
 			for (size_t offset = 0; offset < numBlocksPerJump; ++offset) {
 				for (size_t i = 0; i < numJumps; ++i) {
-					size_t srcPos = i * jumpSize + offset * blockSize;  // global source offset
+					size_t srcPos = i * jumpSize + offset * blockSize;
 					copyChunkCrossLane(srcPos, outOffset, blockSize);
 					outOffset += blockSize;
 				}
@@ -312,39 +292,26 @@ extern "C" {
 			}
 		};
 
-		// 6) Main depth iteration
 		for (int d = 0; d < rxDepth; d++) {
-			if ((d % 2) == 0) {
-				// Even iteration => run Set-A, mix -> Set-B
-				for (int lane = 0; lane < laneCount; lane++) {
-					randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash, randomxProgramCount, scratchpadSize);
-				}
-				packing_mix_entropy_far_sets(&vmList[0], &vmList[laneCount],
-											 laneCount, scratchpadSize, scratchpadSize,
-											 blockSize);
+			for (int lane = 0; lane < laneCount; lane++) {
+				randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash, randomxProgramCount, scratchpadSize);
+			}
+			packing_mix_entropy_far_sets(&vmList[0], &vmList[laneCount],
+										 laneCount, scratchpadSize, scratchpadSize,
+										 blockSize);
 
-				if (d + 1 < rxDepth) {
-					d++; // second iteration in the pair
-					for (int lane = laneCount; lane < 2*laneCount; lane++) {
-						randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane-laneCount].tempHash, randomxProgramCount, scratchpadSize);
-					}
-					packing_mix_entropy_far_sets(&vmList[laneCount], &vmList[0],
-												 laneCount, scratchpadSize, scratchpadSize,
-												 blockSize);
+			if (d + 1 < rxDepth) {
+				d++;
+				for (int lane = laneCount; lane < 2*laneCount; lane++) {
+					randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane-laneCount].tempHash, randomxProgramCount, scratchpadSize);
 				}
-			} else {
-				// Odd iteration
-				for (int lane = 0; lane < laneCount; lane++) {
-					randomx_squared_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash, randomxProgramCount, scratchpadSize);
-				}
-				packing_mix_entropy_far_sets(&vmList[0], &vmList[laneCount],
+				packing_mix_entropy_far_sets(&vmList[laneCount], &vmList[0],
 											 laneCount, scratchpadSize, scratchpadSize,
 											 blockSize);
 			}
 		}
 		// NOTE still unoptimal. Last copy can be performed from scratchpad to output. But requires +1 variation (set to buffer)
 
-		// 7) Copy final scratchpads into outAllScratchpads
 		if ((rxDepth % 2) == 0) {
 			unsigned char* outAllScratchpadsPtr = outAllScratchpads;
 			for (int i = 0; i < laneCount; i++) {
@@ -361,10 +328,8 @@ extern "C" {
 			}
 		}
 
-		// 8) Free the vm_hash_t array
 		delete[] vmHashes;
 
-		// If we made it here, success
 		return 1;
 	}
 
