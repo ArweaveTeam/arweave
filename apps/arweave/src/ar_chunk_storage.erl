@@ -376,6 +376,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			true ->
 				is_recorded;
 			false ->
+				%% Get all the entropies needed to encipher the chunk at PaddedEndOffset.
 				Entropies = generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart),
 				EntropyKeys = generate_entropy_keys(
 					RewardAddr, PaddedEndOffset, SubChunkStart),
@@ -393,7 +394,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 		end,
 	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
 			{padded_end_offset, PaddedEndOffset}, {range_end, RangeEnd},
-			{partition, Partition}, {start, Start}, {sub_chunk_start, SubChunkStart},
+			{start, Start}, {sub_chunk_start, SubChunkStart},
 			{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
 	case StoreEntropy of
 		complete ->
@@ -411,7 +412,6 @@ handle_cast(do_prepare_replica_2_9, State) ->
 		{ok, SubChunksStored} ->
 			?LOG_DEBUG([{event, stored_replica_2_9_entropy},
 					{sub_chunks_stored, SubChunksStored},
-					{partition, Partition},
 					{store_id, StoreID},
 					{cursor, Start},
 					{padded_end_offset, PaddedEndOffset}]),
@@ -790,6 +790,9 @@ generate_missing_replica_2_9_entropy(PaddedEndOffset, RewardAddr) ->
 	EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
 	take_combined_entropy_by_index(Entropies, EntropyIndex).
 
+%% @doc Returns all the entropies needed to encipher the chunk at PaddedEndOffset.
+%% ar_packing_server:get_replica_2_9_entropy/3 will query a cached entropy, or generate it
+%% if it is not cached.
 generate_entropies(_RewardAddr, _PaddedEndOffset, SubChunkStart)
 		when SubChunkStart == ?DATA_CHUNK_SIZE ->
 	[];
@@ -809,11 +812,11 @@ generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
 store_entropy(
 		Entropies, PaddedEndOffset, SubChunkStartOffset,
 		Partition, Keys, RewardAddr, N, WaitN) ->
-	case take_combined_entropy(Entropies) of
+	case take_and_combine_entropy_slices(Entropies) of
 		{<<>>, []} ->
 			wait_store_entropy_processes(WaitN),
 			{ok, N};
-		{EntropyPart, Rest} ->
+		{ChunkEntropy, Rest} ->
 			true = ar_replica_2_9:get_entropy_partition(PaddedEndOffset) == Partition,
 			sanity_check_replica_2_9_entropy_keys(PaddedEndOffset, RewardAddr,
 					SubChunkStartOffset, Keys),
@@ -835,14 +838,14 @@ store_entropy(
 					spawn_link(fun() ->
 						StartTime = erlang:monotonic_time(),
 
-						store_entropy2(EntropyPart, PaddedEndOffset, StoreID2),
+						store_entropy2(ChunkEntropy, PaddedEndOffset, StoreID2),
 						
 						EndTime = erlang:monotonic_time(),
 						ElapsedTime = erlang:convert_time_unit(
 							EndTime-StartTime, native, microsecond),
 						%% bytes per second
 						WriteRate = case ElapsedTime > 0 of 
-							true -> 1000000 * byte_size(EntropyPart) div ElapsedTime; 
+							true -> 1000000 * byte_size(ChunkEntropy) div ElapsedTime; 
 							false -> 0
 						end,
 						prometheus_gauge:set(replica_2_9_entropy_store_rate,
@@ -855,18 +858,23 @@ store_entropy(
 			end
 	end.
 
-take_combined_entropy(Entropies) ->
-	take_combined_entropy(Entropies, [], []).
+%% @doc Take the first slice of each entropy and combine into a single binary. This binary
+%% can be used to encipher a single chunk.
+-spec take_and_combine_entropy_slices(Entropies :: [binary()]) ->
+		{ChunkEntropy :: binary(), RemainingSlicesOfEachEntropy :: [binary()]}.
+take_and_combine_entropy_slices(Entropies) ->
+	true = ?COMPOSITE_PACKING_SUB_CHUNK_COUNT == length(Entropies),
+	take_and_combine_entropy_slices(Entropies, [], []).
 
-take_combined_entropy([], Acc, RestAcc) ->
+take_and_combine_entropy_slices([], Acc, RestAcc) ->
 	{iolist_to_binary(Acc), lists:reverse(RestAcc)};
-take_combined_entropy([<<>> | Entropies], _Acc, _RestAcc) ->
+take_and_combine_entropy_slices([<<>> | Entropies], _Acc, _RestAcc) ->
 	true = lists:all(fun(Entropy) -> Entropy == <<>> end, Entropies),
 	{<<>>, []};
-take_combined_entropy([
-		<< EntropyPart:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, Rest/binary >>
+take_and_combine_entropy_slices([
+		<< EntropySlice:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, Rest/binary >>
 		| Entropies], Acc, RestAcc) ->
-	take_combined_entropy(Entropies, [Acc | [EntropyPart]], [Rest | RestAcc]).
+	take_and_combine_entropy_slices(Entropies, [Acc | [EntropySlice]], [Rest | RestAcc]).
 
 take_combined_entropy_by_index(Entropies, Index) ->
 	take_combined_entropy_by_index(Entropies, Index, []).

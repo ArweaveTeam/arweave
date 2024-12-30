@@ -34,6 +34,7 @@
 
 %% The size in bytes of the total RX2 entropy (# of lanes * scratchpad size).
 -ifdef(TEST).
+%% 24_576 bytes worth of entropy.
 -define(REPLICA_2_9_ENTROPY_SIZE, (3 * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE)).
 -else.
 %% 8_388_608 bytes worth of entropy.
@@ -48,12 +49,18 @@
 %% such that the sector size (num entropies * sub-chunk size) is evenly divisible
 %% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
 -ifdef(TEST).
+%% Extra entropies to be added to each partition so that the partition holds a multiple
+%% of 32 entropies.
+%% 
+%% 2_097_152 / 24_576 = 85.33333333333333
+%% (85 + 11) * 8192 / 262144 == 3 - the first evenly divisible number of
+%% the form (85 + X) * 8192.
 -define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 11).
 -else.
 %% Extra entropies to be added to each partition so that the partition holds a multiple
 %% of 32 entropies.
 %% 
-%% 3_600_000_000_000 / 8_388_608 = 429153.4423828125;
+%% 3_600_000_000_000 / 8_388_608 = 429153.4423828125
 %% (429153 + 31) * 8192 / 262144 == 13412 - the first evenly divisible number of
 %% the form (429153 + X) * 8192.
 -define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 31).
@@ -69,9 +76,9 @@
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
 -ifdef(TEST).
--define(PARTITION_SIZE, 2097152). % 8 * 256 * 1024
+-define(PARTITION_SIZE, 2_097_152). % 8 * 256 * 1024
 -else.
--define(PARTITION_SIZE, 3600000000000). % 90% of 4 TB.
+-define(PARTITION_SIZE, 3_600_000_000_000). % 90% of 4 TB.
 -endif.
 
 %% The size of a recall range. The first range is randomly chosen from the given
@@ -79,14 +86,14 @@
 -ifdef(TEST).
 -define(RECALL_RANGE_SIZE, (128 * 1024)).
 -else.
--define(RECALL_RANGE_SIZE, 26214400). % == 25 * 1024 * 1024
+-define(RECALL_RANGE_SIZE, 26_214_400). % == 25 * 1024 * 1024
 -endif.
 
 %% The size of a recall range before the fork 2.8.
 -ifdef(TEST).
 -define(LEGACY_RECALL_RANGE_SIZE, (512 * 1024)).
 -else.
--define(LEGACY_RECALL_RANGE_SIZE, 104857600). % == 100 * 1024 * 1024
+-define(LEGACY_RECALL_RANGE_SIZE, 104_857_600). % == 100 * 1024 * 1024
 -endif.
 
 -ifdef(FORKS_RESET).
@@ -98,7 +105,7 @@
 -else.
 %% The threshold was determined on the mainnet at the 2.5 fork block. The chunks
 %% submitted after the threshold must adhere to stricter validation rules.
--define(STRICT_DATA_SPLIT_THRESHOLD, 30607159107830).
+-define(STRICT_DATA_SPLIT_THRESHOLD, 30_607_159_107_830).
 -endif.
 
 -ifdef(FORKS_RESET).

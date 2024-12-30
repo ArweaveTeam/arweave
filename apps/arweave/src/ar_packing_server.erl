@@ -228,7 +228,7 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
 get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
-	EntropyPartition = ar_replica_2_9:get_entropy_partition(AbsoluteEndOffset),
+	Partition = ar_node:get_partition_number(AbsoluteEndOffset),
 
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
 	PackingState = get_packing_state(),
@@ -236,7 +236,7 @@ get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 	
 	case ar_shared_entropy_cache:get(Key) of
 		not_found ->
-			prometheus_counter:inc(replica_2_9_entropy_cache_query, [miss, EntropyPartition]),
+			prometheus_counter:inc(replica_2_9_entropy_cache_query, [miss, Partition]),
 
 			{ok, Config} = application:get_env(arweave, config),
 			MaxCacheSize = Config#config.replica_2_9_entropy_cache_size,
@@ -250,7 +250,7 @@ get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 			ar_shared_entropy_cache:put(Key, Entropy, EntropySize),
 			Entropy;
 		{ok, Entropy} ->
-			prometheus_counter:inc(replica_2_9_entropy_cache_query, [hit, EntropyPartition]),
+			prometheus_counter:inc(replica_2_9_entropy_cache_query, [hit, Partition]),
 
 			Entropy
 	end.

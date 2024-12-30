@@ -164,7 +164,7 @@ get_entropy_count() ->
 
 %% @doc Returns the index of the entropy containing the slice for specified chunk's sub-chunk. 
 %% An entropy index is 0-based index used to identify a specific entropy within an entropy
-%% partition. It is not unique - the same id will refer to different entropies in differen
+%% partition. It is not unique - the same index will refer to different entropies in different
 %% partitions and for different mining addresses. For a unique entropy identifier see
 %% get_entropy_key/3.
 %% 
