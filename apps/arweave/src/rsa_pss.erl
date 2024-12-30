@@ -14,6 +14,7 @@
 -include_lib("public_key/include/public_key.hrl").
 
 %% API
+-export([new/1, serialize/2, to_public/1, identifier/1, from_identifier/1]).
 -export([sign/3]).
 -export([sign/4]).
 -export([verify/4]).
@@ -22,6 +23,7 @@
 -type rsa_public_key()  :: #'RSAPublicKey'{}.
 -type rsa_private_key() :: #'RSAPrivateKey'{}.
 -type rsa_digest_type() :: 'md5' | 'sha' | 'sha224' | 'sha256' | 'sha384' | 'sha512'.
+-type serialization_formats() :: raw | jwk.
 
 -define(PSS_TRAILER_FIELD, 16#BC).
 
@@ -30,6 +32,59 @@
 %%====================================================================
 %% API functions
 %%====================================================================
+
+-spec new(Size :: integer()) -> public_key:rsa_private_key().
+new(Size) ->
+	public_key:generate_key({rsa, Size, 65537}).
+
+-spec to_public(PrivateKey :: public_key:rsa_private_key()) -> public_key:rsa_public_key().
+to_public(#'RSAPrivateKey'{modulus=M, publicExponent=E}) ->
+     #'RSAPublicKey'{modulus=M, publicExponent=E}.
+
+-spec serialize(Format :: serialization_formats(), Key :: public_key:rsa_private_key() | public_key:rsa_public_key()) -> binary().
+serialize(Format, #'RSAPublicKey'{modulus=M, publicExponent=_}) when Format == raw ->
+    binary:encode_unsigned(M);
+serialize(Format, #'RSAPublicKey'{modulus=M, publicExponent=E})
+  when Format == jwk ->
+    ar_serialize:jsonify(
+        {
+            [
+                {kty, <<"RSA">>},
+                {e, ar_util:encode(binary:encode_unsigned(E))},
+                {n, ar_util:encode(binary:encode_unsigned(M))}
+            ]
+        }
+    );
+serialize(Format, #'RSAPrivateKey'{privateExponent=PrivateBytes})
+  when Format == raw ->
+    binary:encode_unsigned(PrivateBytes);
+serialize(
+	Format,
+	#'RSAPrivateKey'{modulus=M,publicExponent=E,privateExponent=PE, prime1=P1, prime2=P2, exponent1=E1, exponent2=E2, coefficient=C}
+) when Format == jwk ->
+    ar_serialize:jsonify(
+		{
+			[
+				{kty, <<"RSA">>},
+				{e, ar_util:encode(binary:encode_unsigned(E))},
+				{n, ar_util:encode(binary:encode_unsigned(M))},
+				{d, ar_util:encode(binary:encode_unsigned(PE))},
+				{p, ar_util:encode(binary:encode_unsigned(P1))},
+				{q, ar_util:encode(binary:encode_unsigned(P2))},
+				{dp, ar_util:encode(binary:encode_unsigned(E1))},
+				{dq, ar_util:encode(binary:encode_unsigned(E2))},
+				{qi, ar_util:encode(binary:encode_unsigned(C))}
+			]
+		}
+	).
+
+-spec identifier(PublicKey :: public_key:rsa_public_key()) -> binary().
+identifier(PublicKey) ->
+	serialize(raw, PublicKey).
+
+-spec from_identifier(Identifier :: binary()) -> public_key:rsa_public_key().
+from_identifier(Identifier) ->
+	#'RSAPublicKey'{modulus=binary:decode_unsigned(Identifier), publicExponent=65537}.
 
 -spec sign(Message, DigestType, PrivateKey) -> Signature
 	when

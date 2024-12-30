@@ -1,11 +1,12 @@
 %%% @doc Utilities for manipulating wallets.
 -module(ar_wallet).
 
--export([new/0, new_ecdsa/0, new/1, sign/2, verify/3, verify_pre_fork_2_4/3, to_rsa_address/1,
-		to_address/1, to_address/2, load_key/1, load_keyfile/1, new_keyfile/0, new_keyfile/1,
-		new_keyfile/2, base64_address_with_optional_checksum_to_decoded_address/1,
-		base64_address_with_optional_checksum_to_decoded_address_safe/1, wallet_filepath/1,
-		get_or_create_wallet/1]).
+-export([new/0, new/1, new_keyfile/0, new_keyfile/1, new_keyfile/2,
+		serialize/2, load_key/1, load_keyfile/1, wallet_filepath/1, get_or_create_wallet/1,
+		to_address/1, to_address/2, identifier/1, identifier_to_type/1,
+		sign/2, verify/3, verify_pre_fork_2_4/3,
+		base64_address_with_optional_checksum_to_decoded_address/1,
+		base64_address_with_optional_checksum_to_decoded_address_safe/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -21,110 +22,115 @@
 %% @doc Generate a new wallet public key and private key.
 new() ->
 	new(?DEFAULT_KEY_TYPE).
-new(KeyType = {KeyAlg, PublicExpnt}) when KeyType =:= {?RSA_SIGN_ALG, 65537} ->
-    {[_, Pub], [_, Pub, Priv|_]} = {[_, Pub], [_, Pub, Priv|_]}
-		= crypto:generate_key(KeyAlg, {?RSA_PRIV_KEY_SZ, PublicExpnt}),
-    {{KeyType, Priv, Pub}, {KeyType, Pub}};
-new(KeyType = {KeyAlg, KeyCrv}) when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
-    {OrigPub, Priv} = crypto:generate_key(ecdh, KeyCrv),
-	Pub = compress_ecdsa_pubkey(OrigPub),
-    {{KeyType, Priv, Pub}, {KeyType, Pub}};
-new(KeyType = {KeyAlg, KeyCrv}) when KeyAlg =:= ?EDDSA_SIGN_ALG andalso KeyCrv =:= ed25519 ->
-    {Pub, Priv} = crypto:generate_key(KeyAlg, KeyCrv),
-    {{KeyType, Priv, Pub}, {KeyType, Pub}}.
 
-%% @doc Generate a new ECDSA key, store it in a keyfile.
-new_ecdsa() ->
-	new_keyfile({?ECDSA_SIGN_ALG, secp256k1}).
+new({?RSA_SIGN_ALG, 65537} = KeyType) ->
+	PrivateKey = rsa_pss:new(?RSA_PRIV_KEY_SZ),
+	PrivateExponent = rsa_pss:serialize(raw, PrivateKey),
+	Identifier = identifier(to_public(PrivateKey)),
+	{{KeyType, PrivateExponent, Identifier}, {KeyType, Identifier}};
+new(KeyType) ->
+    PrivateKey = case KeyType of
+		{?ECDSA_SIGN_ALG, secp256k1} -> ec_secp256k1:new();
+		{?EDDSA_SIGN_ALG, ed25519} -> ec_secp256k1:new()
+	end,
+	Identifier = identifier(to_public(PrivateKey)),
+	{{KeyType, PrivateKey, Identifier}, {KeyType, Identifier}}.
 
-%% @doc Generate a new wallet public and private key, with a corresponding keyfile.
 new_keyfile() ->
-    new_keyfile(?DEFAULT_KEY_TYPE, wallet_address).
+    new_keyfile(?DEFAULT_KEY_TYPE).
 
 new_keyfile(KeyType) ->
-    new_keyfile(KeyType, wallet_address).
+    new_keyfile(KeyType, local_access).
 
 %% @doc Generate a new wallet public and private key, with a corresponding keyfile.
 %% The provided key is used as part of the file name.
-new_keyfile(KeyType, WalletName) ->
-	{Pub, Priv, Key} =
-		case KeyType of
-			{?RSA_SIGN_ALG, PublicExpnt} ->
-				{[Expnt, Pb], [Expnt, Pb, Prv, P1, P2, E1, E2, C]} =
-					crypto:generate_key(rsa, {?RSA_PRIV_KEY_SZ, PublicExpnt}),
-				Ky =
-					ar_serialize:jsonify(
-						{
-							[
-								{kty, <<"RSA">>},
-								{ext, true},
-								{e, ar_util:encode(Expnt)},
-								{n, ar_util:encode(Pb)},
-								{d, ar_util:encode(Prv)},
-								{p, ar_util:encode(P1)},
-								{q, ar_util:encode(P2)},
-								{dp, ar_util:encode(E1)},
-								{dq, ar_util:encode(E2)},
-								{qi, ar_util:encode(C)}
-							]
-						}
-					),
-				{Pb, Prv, Ky};
-			{?ECDSA_SIGN_ALG, secp256k1} ->
-				{OrigPub, Prv} = crypto:generate_key(ecdh, secp256k1),
-				<<4:8, PubPoint/binary>> = OrigPub,
-				PubPointMid = byte_size(PubPoint) div 2,
-				<<X:PubPointMid/binary, Y:PubPointMid/binary>> = PubPoint,
-				Ky =
-					ar_serialize:jsonify(
-						{
-							[
-								{kty, <<"EC">>},
-								{crv, <<"secp256k1">>},
-								{x, ar_util:encode(X)},
-								{y, ar_util:encode(Y)},
-								{d, ar_util:encode(Prv)}
-							]
-						}
-					),
-				{compress_ecdsa_pubkey(OrigPub), Prv, Ky};
-			{?EDDSA_SIGN_ALG, ed25519} ->
-				{{_, Prv, Pb}, _} = new(KeyType),
-				Ky =
-					ar_serialize:jsonify(
-						{
-							[
-								{kty, <<"OKP">>},
-								{alg, <<"EdDSA">>},
-								{crv, <<"Ed25519">>},
-								{x, ar_util:encode(Pb)},
-								{d, ar_util:encode(Prv)}
-							]
-						}
-					),
-				{Pb, Prv, Ky}
-		end,
-	Filename = wallet_filepath(WalletName, Pub, KeyType),
-	case filelib:ensure_dir(Filename) of
-		ok ->
-			case ar_storage:write_file_atomic(Filename, Key) of
-				ok ->
-					{{KeyType, Priv, Pub}, {KeyType, Pub}};
-				Error2 ->
-					Error2
-			end;
-		Error ->
-			Error
+new_keyfile({?RSA_SIGN_ALG, 65537} = KeyType, AccessMode) ->
+	PrivateKey = rsa_pss:new(?RSA_PRIV_KEY_SZ),
+	JWK = serialize(jwk, PrivateKey),
+	PrivateExponent = rsa_pss:serialize(raw, PrivateKey),
+	Identifier = identifier(to_public(PrivateKey)),
+	Filename = wallet_filepath(AccessMode, Identifier),
+	ar_storage:write_file_atomic(Filename, JWK),
+	{{KeyType, PrivateExponent, Identifier}, {KeyType, Identifier}};
+new_keyfile(KeyType, AccessMode) ->
+	{{_, PrivateKey, Identifier}, _} = Wallet = new(KeyType),
+	JWK = serialize(jwk, PrivateKey),
+	Filename = wallet_filepath(AccessMode, Identifier),
+	ar_storage:write_file_atomic(Filename, JWK),
+	Wallet.
+
+
+%% @doc Convert PrivateKey to PublicKey.
+-spec to_public(Key :: public_key:rsa_private_key() | public_key:ecdsa_private_key()) -> public_key:rsa_public_key() | public_key:ecdsa_public_key().
+to_public(#'RSAPrivateKey'{} = PrivateKey) ->
+	rsa_pss:to_public(PrivateKey);
+to_public(#'ECPrivateKey'{} = PrivateKey) ->
+	ec_secp256k1:to_public(PrivateKey).
+
+%% @doc Serialize PrivateKey or PublicKey
+-spec serialize(Format :: raw | jwk, Key :: public_key:rsa_private_key() | public_key:ecdsa_private_key() | public_key:rsa_public_key() | public_key:ecdsa_public_key()) -> binary().
+serialize(Format, #'RSAPrivateKey'{} = PrivateKey) ->
+	rsa_pss:serialize(Format, PrivateKey);
+serialize(Format, #'RSAPublicKey'{} = PublicKey) ->
+	rsa_pss:serialize(Format, PublicKey);
+serialize(Format, #'ECPrivateKey'{} = PrivateKey) ->
+	ec_secp256k1:serialize(Format, PrivateKey);
+serialize(Format, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey) ->
+	ec_secp256k1:serialize(Format, PublicKey);
+%% backward compatibility for RSA keys
+serialize(raw, Key) when is_binary(Key) ->
+	Key.
+
+%% @doc Convert PrivateKey to PublicKey.
+-spec identifier(PublicKey :: public_key:rsa_public_key() | public_key:ecdsa_public_key()) -> binary().
+identifier(#'RSAPublicKey'{} = PublicKey) ->
+	rsa_pss:identifier(PublicKey);
+identifier({#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey) ->
+	ec_secp256k1:identifier(PublicKey).
+
+%% @doc All identifiers must have an odd byte_size,
+%% except for RSA keys where the Identifier is the raw modulus bytes.
+identifier_to_type(Identifier) when byte_size(Identifier) rem 2 == 0 ->
+	{?RSA_SIGN_ALG, 65537};
+identifier_to_type(Identifier)->
+	<<TypeByte:8, _/binary>> = Identifier,
+	case TypeByte of
+		2 -> {?ECDSA_SIGN_ALG, secp256k1}
 	end.
 
-wallet_filepath(Wallet) ->
+%% @doc Generate a public address from Key's Identifer.
+%% Public addresses are SHA256(Identifier).
+to_address({{_, _, _}, {_, Identifier}}) ->
+	to_address(Identifier);
+to_address({_, Identifier}) ->
+	to_address(Identifier);
+to_address({_, _, Identifier}) ->
+	to_address(Identifier);
+to_address(Identifer) ->
+	crypto:hash(?HASH_ALG, Identifer).
+
+%% Small keys are not secure, nobody is using them, the clause
+%% is for backwards-compatibility.
+to_address(PubKey, {?RSA_SIGN_ALG, 65537}) when bit_size(PubKey) == 256 ->
+	PubKey;
+to_address(PubKey, {?RSA_SIGN_ALG, 65537}) ->
+	to_address(PubKey).
+
+wallet_filepath(WalletAccessCode, Identifier) ->
+	WalletName = case WalletAccessCode of
+		local_access -> ar_util:encode(to_address(Identifier));
+		_ -> WalletAccessCode
+	end,
+	wallet_filepath(WalletName).
+
+wallet_filepath(WalletName) ->
 	{ok, Config} = application:get_env(arweave, config),
-	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(Wallet), ".json"]),
+	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(WalletName), ".json"]),
 	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
-wallet_filepath2(Wallet) ->
+wallet_filepath2(WalletName) ->
 	{ok, Config} = application:get_env(arweave, config),
-	Filename = lists:flatten([binary_to_list(Wallet), ".json"]),
+	Filename = lists:flatten([binary_to_list(WalletName), ".json"]),
 	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
 %% @doc Read the keyfile for the key with the given address from disk.
@@ -149,34 +155,29 @@ load_key(Addr) ->
 load_keyfile(File) ->
 	{ok, Body} = file:read_file(File),
 	{Key} = ar_serialize:dejsonify(Body),
-	{Pub, Priv, KeyType} =
-		case lists:keyfind(<<"kty">>, 1, Key) of
-			{<<"kty">>, <<"EC">>} ->
-				{<<"x">>, XEncoded} = lists:keyfind(<<"x">>, 1, Key),
-				{<<"y">>, YEncoded} = lists:keyfind(<<"y">>, 1, Key),
-				{<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
-				OrigPub = iolist_to_binary([<<4:8>>, ar_util:decode(XEncoded),
-						ar_util:decode(YEncoded)]),
-				Pb = compress_ecdsa_pubkey(OrigPub),
-				Prv = ar_util:decode(PrivEncoded),
-				KyType = {?ECDSA_SIGN_ALG, secp256k1},
-				{Pb, Prv, KyType};
-			{<<"kty">>, <<"OKP">>} ->
-				{<<"x">>, PubEncoded} = lists:keyfind(<<"x">>, 1, Key),
-				{<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
-				Pb = ar_util:decode(PubEncoded),
-				Prv = ar_util:decode(PrivEncoded),
-				KyType = {?EDDSA_SIGN_ALG, ed25519},
-				{Pb, Prv, KyType};
-			_ ->
-				{<<"n">>, PubEncoded} = lists:keyfind(<<"n">>, 1, Key),
-				{<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
-				Pb = ar_util:decode(PubEncoded),
-				Prv = ar_util:decode(PrivEncoded),
-				KyType = {?RSA_SIGN_ALG, 65537},
-				{Pb, Prv, KyType}
-		end,
-	{{KeyType, Priv, Pub}, {KeyType, Pub}}.
+	case lists:keyfind(<<"kty">>, 1, Key) of
+		{<<"kty">>, <<"EC">>} ->
+			KeyType = {?ECDSA_SIGN_ALG, secp256k1},
+			{<<"d">>, PrivB64} = lists:keyfind(<<"d">>, 1, Key),
+			PrivBytes = ar_util:decode(PrivB64),
+			PrivateKey = ec_secp256k1:deserializePrivate(raw, PrivBytes),
+			Identifier = identifier(to_public(PrivateKey)),
+			{{KeyType, PrivateKey, Identifier}, {KeyType, Identifier}};
+		{<<"kty">>, <<"RSA">>} ->
+			KeyType = {?RSA_SIGN_ALG, 65537},
+			{<<"n">>, ModulusB64} = lists:keyfind(<<"n">>, 1, Key),
+			{<<"d">>, PrivateExpB64} = lists:keyfind(<<"d">>, 1, Key),
+			M = ar_util:decode(ModulusB64),
+			PrivateExponent = ar_util:decode(PrivateExpB64),
+			PrivateKey = #'RSAPrivateKey'{
+				modulus = binary:decode_unsigned(M),
+				publicExponent = 65537,
+				privateExponent = binary:decode_unsigned(PrivateExponent)
+			},
+			Identifier = identifier(to_public(PrivateKey)),
+			{{KeyType, PrivateExponent, Identifier}, {KeyType, Identifier}}
+	end.
+
 
 %% @doc Sign some data with a private key.
 sign({{KeyAlg, PublicExpnt}, Priv, Pub}, Data)
@@ -190,68 +191,22 @@ sign({{KeyAlg, PublicExpnt}, Priv, Pub}, Data)
 			privateExponent = binary:decode_unsigned(Priv)
 		}
 	);
-sign({{KeyAlg, KeyCrv}, Priv, _} = Key, Data)
-		when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
-	Sig = crypto:sign(
-		KeyAlg,
-		sha256,
-		Data,
-		[Priv, KeyCrv]
-	),
-	case ecdsa_verify_low_s(Sig) of
-		true ->
-			Sig;
-		false ->
-			sign(Key, Data)
-	end;
-sign({{KeyAlg, KeyCrv}, Priv, _}, Data)
-		when KeyAlg =:= ?EDDSA_SIGN_ALG andalso KeyCrv =:= ed25519 ->
-	crypto:sign(
-		KeyAlg,
-		sha512,
-		Data,
-		[Priv, KeyCrv]
-	).
+sign({_, #'ECPrivateKey'{} = PrivateKey, _}, Data)->
+	ec_secp256k1:sign(Data, sha256, PrivateKey).
 
 %% @doc Verify that a signature is correct.
-verify({{KeyAlg, PublicExpnt}, Pub}, Data, Sig)
-		when KeyAlg =:= ?RSA_SIGN_ALG andalso PublicExpnt =:= 65537 ->
-	rsa_pss:verify(
-		Data,
-		sha256,
-		Sig,
-		#'RSAPublicKey'{
-			publicExponent = PublicExpnt,
-			modulus = binary:decode_unsigned(Pub)
-		}
-	);
-verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig)
-		when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
-	case crypto:verify(
-		KeyAlg,
-		sha256,
-		Data,
-		Sig,
-		[Pub, KeyCrv]
-	) of
-		false ->
-			false;
-		true ->
-			%% The measure against transaction malleability adopted from Ethereum.
-			%% All s-values greater than secp256k1n/2 are considered invalid.
-			%% Otherwise, one may flip the sign on both s and R to create the second
-			%% valid signature.
-			ecdsa_verify_low_s(Sig)
+verify({_, Identifier}, Data, Sig) when is_binary(Identifier) ->
+	verify(Identifier, Data, Sig);
+verify(Identifier, Data, Sig) when is_binary(Identifier) ->
+	case identifier_to_type(Identifier) of
+		{?RSA_SIGN_ALG, 65537} ->
+			rsa_pss:verify(
+				Data, sha256, Sig, rsa_pss:from_identifier(Identifier));
+		{?ECDSA_SIGN_ALG, secp256k1} ->
+			ec_secp256k1:verify(Data, sha256, Sig, ec_secp256k1:from_identifier(Identifier))
 	end;
-verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig)
-		when KeyAlg =:= ?EDDSA_SIGN_ALG andalso KeyCrv =:= ed25519 ->
-	crypto:verify(
-		KeyAlg,
-		sha512,
-		Data,
-		Sig,
-		[Pub, KeyCrv]
-	).
+verify({_, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey}, Data, Sig) ->
+	ec_secp256k1:verify(Data, sha256, Sig, PublicKey).
 
 %% @doc Verify that a signature is correct. The function was used to verify
 %% transactions until the fork 2.4. It rejects a valid transaction when the
@@ -269,26 +224,6 @@ verify_pre_fork_2_4({{KeyAlg, PublicExpnt}, Pub}, Data, Sig)
 			modulus = binary:decode_unsigned(Pub)
 		}
 	).
-
-%% @doc Generate an address from a public key.
-to_address({{SigType, _Priv, Pub}, {SigType, Pub}}) ->
-	to_address(Pub, SigType);
-to_address({SigType, Pub}) ->
-	to_address(Pub, SigType);
-to_address({SigType, _Priv, Pub}) ->
-	to_address(Pub, SigType).
-
-%% @doc Generate an address from a public key.
-to_address(PubKey, {?RSA_SIGN_ALG, 65537}) when bit_size(PubKey) == 256 ->
-	%% Small keys are not secure, nobody is using them, the clause
-	%% is for backwards-compatibility.
-	PubKey;
-to_address(PubKey, {?RSA_SIGN_ALG, 65537}) ->
-	to_rsa_address(PubKey);
-to_address(PubKey, {?ECDSA_SIGN_ALG, secp256k1}) ->
-	<< (?ECDSA_TYPE_BYTE)/binary, (hash_address(PubKey))/binary >>;
-to_address(PubKey, {?EDDSA_SIGN_ALG, ed25519}) ->
-	<< (?EDDSA_TYPE_BYTE)/binary, (hash_address(PubKey))/binary >>.
 
 base64_address_with_optional_checksum_to_decoded_address(AddrBase64) ->
 	Size = byte_size(AddrBase64),
@@ -358,28 +293,6 @@ get_or_create_wallet([{_LastModified, F} | Entries], Types) ->
 %%% Private functions.
 %%%===================================================================
 
-wallet_filepath(WalletName, PubKey, KeyType) ->
-	wallet_filepath(wallet_name(WalletName, PubKey, KeyType)).
-
-wallet_name(wallet_address, PubKey, KeyType) ->
-	ar_util:encode(to_address(PubKey, KeyType));
-wallet_name(WalletName, _, _) ->
-	WalletName.
-
-ecdsa_verify_low_s(Sig) ->
-	<<16#30, _Len0:8, 16#02, Len1:8, Rest/binary>> = Sig,
-	<<_R:Len1/binary, 16#02, _Len2:8, EncodedS/binary>> = Rest,
-	S = binary:decode_unsigned(EncodedS),
-	{_, _, _, EncodedOrder, _} = crypto:ec_curve(secp256k1),
-	Order = binary:decode_unsigned(EncodedOrder),
-	S < Order div 2 + 1.
-
-to_rsa_address(PubKey) ->
-	hash_address(PubKey).
-
-hash_address(PubKey) ->
-	crypto:hash(?HASH_ALG, PubKey).
-
 decoded_address_to_checksum(AddrDecoded) ->
 	Crc = erlang:crc32(AddrDecoded),
 	<< Crc:32 >>.
@@ -390,15 +303,6 @@ decoded_address_to_base64_address_with_checksum(AddrDecoded) ->
 	ChecksumBase64 = ar_util:encode(Checksum),
 	<< AddrBase64/binary, ":", ChecksumBase64/binary >>.
 
-compress_ecdsa_pubkey(<<4:8, PubPoint/binary>>) ->
-	PubPointMid = byte_size(PubPoint) div 2,
-	<<X:PubPointMid/binary, Y:PubPointMid/integer-unit:8>> = PubPoint,
-	PubKeyHeader =
-		case Y rem 2 of
-			0 -> <<2:8>>;
-			1 -> <<3:8>>
-		end,
-	iolist_to_binary([PubKeyHeader, X]).
 
 %%%===================================================================
 %%% Tests.
