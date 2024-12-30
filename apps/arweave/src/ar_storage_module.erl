@@ -161,16 +161,14 @@ get_by_id(ID, [Module | Modules]) ->
 
 %% @doc Return {StartOffset, EndOffset} the given module is responsible for.
 get_range(ID) ->
-	{ok, Config} = application:get_env(arweave, config),
-	get_range(ID, Config#config.storage_modules).
-
-get_range(ID, [Module | Modules]) ->
-	case ar_storage_module:id(Module) == ID of
-		true ->
-			module_range(Module);
-		false ->
-			get_range(ID, Modules)
+	Module = get_by_id(ID),
+	case Module of
+		not_found ->
+			not_found;
+		_ ->
+			module_range(Module)
 	end.
+
 
 -spec module_range(ar_storage_module:storage_module()) ->
 	{non_neg_integer(), non_neg_integer()}.
@@ -186,30 +184,24 @@ module_range(Module, Overlap) ->
 get_packing("default") ->
 	unpacked;
 get_packing(ID) ->
-	{ok, Config} = application:get_env(arweave, config),
-	get_packing(ID, Config#config.storage_modules).
-
-get_packing(ID, [Module | Modules]) ->
-	case ar_storage_module:id(Module) == ID of
-		true ->
+	Module = get_by_id(ID),
+	case Module of
+		not_found ->
+			not_found;
+		_ ->
 			{_BucketSize, _Bucket, Packing} = Module,
-			Packing;
-		false ->
-			get_packing(ID, Modules)
+			Packing
 	end.
 
 %% @doc Return the bucket size configured for the given module.
 get_size(ID) ->
-	{ok, Config} = application:get_env(arweave, config),
-	get_size(ID, Config#config.storage_modules).
-
-get_size(ID, [Module | Modules]) ->
-	case ar_storage_module:id(Module) == ID of
-		true ->
+	Module = get_by_id(ID),
+	case Module of
+		not_found ->
+			not_found;
+		_ ->
 			{BucketSize, _Bucket, _Packing} = Module,
-			BucketSize;
-		false ->
-			get_size(ID, Modules)
+			BucketSize
 	end.
 
 %% @doc Return a configured storage module covering the given Offset, preferably

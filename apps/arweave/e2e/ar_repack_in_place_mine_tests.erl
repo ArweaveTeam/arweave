@@ -9,7 +9,21 @@
 %% --------------------------------------------------------------------------------------------
 repack_in_place_mine_test_() ->
 	[
-		{timeout, 300, {with, {spora_2_6, spora_2_6}, [fun test_repack_in_place_mine/1]}}
+		% {timeout, 300, {with, {unpacked, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		% {timeout, 300, {with, {unpacked, composite_1}, [fun test_repack_in_place_mine/1]}},
+		% {timeout, 300, {with, {unpacked, composite_2}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {spora_2_6, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {spora_2_6, composite_1}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {spora_2_6, composite_2}, [fun test_repack_in_place_mine/1]}},
+		% {timeout, 300, {with, {spora_2_6, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_1, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_1, composite_1}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_1, composite_2}, [fun test_repack_in_place_mine/1]}},
+		% {timeout, 300, {with, {composite_1, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_2, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_2, composite_1}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_2, composite_2}, [fun test_repack_in_place_mine/1]}}
+		% {timeout, 300, {with, {composite_2, unpacked}, [fun test_repack_in_place_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------
@@ -36,7 +50,6 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 
 	RepackInPlaceStorageModules = [ 
 		{Module, ToPacking} || Module <- Config#config.storage_modules ],
-	?LOG_INFO("Repack in place storage modules: ~p", [RepackInPlaceStorageModules]),
 	
 	ar_test_node:update_config(RepackerNode, Config#config{
 		storage_modules = [],
@@ -46,6 +59,21 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 	ar_test_node:restart(RepackerNode),
 
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ?PARTITION_SIZE),
+
+	ar_test_node:stop(RepackerNode),
+
+	%% Rename storage_modules
+	DataDir = Config#config.data_dir,
+	lists:foreach(fun({SourceModule, Packing}) ->
+		{BucketSize, Bucket, _Packing} = SourceModule,
+		SourceID = ar_storage_module:id(SourceModule),
+		SourcePath = ar_chunk_storage:get_storage_module_path(DataDir, SourceID),
+
+		TargetModule = {BucketSize, Bucket, Packing},
+		TargetID = ar_storage_module:id(TargetModule),
+		TargetPath = ar_chunk_storage:get_storage_module_path(DataDir, TargetID),
+		file:rename(SourcePath, TargetPath)
+	end, RepackInPlaceStorageModules),
 
 	ar_test_node:update_config(RepackerNode, Config#config{
 		storage_modules = FinalStorageModules,

@@ -288,6 +288,7 @@ init({StoreID, RepackInPlacePacking}) ->
 								0;
 							Error ->
 								?LOG_ERROR([{event, failed_to_remove_file},
+										{tags, [repack_in_place]},
 										{error, io_lib:format("~p", [Error])}]),
 								timer:sleep(2000),
 								erlang:halt()
@@ -295,6 +296,11 @@ init({StoreID, RepackInPlacePacking}) ->
 					C ->
 						C
 				end,
+			?LOG_INFO([{event, starting_repack_in_place},
+					{tags, [repack_in_place]},
+					{cursor, Cursor},
+					{store_id, StoreID},
+					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
 			gen_server:cast(self(), {repack, infinity, Packing}),
 			{ok, State2#state{ repack_cursor = Cursor, target_packing = Packing }}
 	end.
@@ -435,6 +441,7 @@ handle_cast(store_repack_cursor,
 	ar_util:cast_after(30000, self(), store_repack_cursor),
 	ar:console("Repacked up to ~B, scanning further..~n", [Cursor]),
 	?LOG_INFO([{event, repacked_partially},
+			{tags, [repack_in_place]},
 			{storage_module, StoreID}, {cursor, Cursor}]),
 	store_repack_cursor(Cursor, StoreID, TargetPacking),
 	{noreply, State#state{ prev_repack_cursor = Cursor }};
@@ -1331,6 +1338,7 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 					"the storage module folder to reflect the new packing, and start the "
 					"node with the new storage module.~n", [StoreID]),
 			?LOG_INFO([{event, repacking_complete},
+					{tags, [repack_in_place]},
 					{storage_module, StoreID},
 					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
 			Server = gen_server_id(StoreID),
@@ -1350,8 +1358,23 @@ repack(Cursor, RightBound, Packing, StoreID) ->
 	end.
 
 repack(Start, End, NextCursor, RightBound, Packing, StoreID) when Start >= End ->
+	?LOG_DEBUG([{event, finished_repack_in_place_range},
+			{tags, [repack_in_place]},
+			{s, Start},
+			{e, End},
+			{next_cursor, NextCursor},
+			{right_bound, RightBound},
+			{store_id, StoreID}]),
 	repack(NextCursor, RightBound, Packing, StoreID);
 repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
+	?LOG_DEBUG([{event, repacking_in_place},
+			{tags, [repack_in_place]},
+			{s, Start},
+			{e, End},
+			{next_cursor, NextCursor},
+			{right_bound, RightBound},
+			{required_packing, ar_serialize:encode_packing(RequiredPacking, true)},
+			{store_id, StoreID}]),
 	{ok, Config} = application:get_env(arweave, config),
 	RepackIntervalSize = ?DATA_CHUNK_SIZE * Config#config.repack_batch_size,
 	Server = gen_server_id(StoreID),
@@ -1377,6 +1400,7 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 						continue;
 					{'EXIT', _Exc} ->
 						?LOG_ERROR([{event, failed_to_read_chunk_range},
+								{tags, [repack_in_place]},
 								{storage_module, StoreID},
 								{start, Start},
 								{size, RepackIntervalSize},
@@ -1400,6 +1424,7 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 						{ok, Map, MetadataMap};
 					{error, Error} ->
 						?LOG_ERROR([{event, failed_to_read_chunk_metadata_range},
+								{tags, [repack_in_place]},
 								{storage_module, StoreID},
 								{error, io_lib:format("~p", [Error])},
 								{left, Min},
@@ -1421,6 +1446,11 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 				fun	(AbsoluteOffset, {_, _TXRoot, _, _, _, ChunkSize}, ok)
 							when ChunkSize /= ?DATA_CHUNK_SIZE,
 									AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD ->
+					?LOG_DEBUG([{event, skipping_small_chunk},
+							{tags, [repack_in_place]},
+							{storage_module, StoreID},
+							{offset, AbsoluteOffset},
+							{chunk_size, ChunkSize}]),
 						ok;
 					(AbsoluteOffset, {_, TXRoot, _, _, _, ChunkSize}, ok) ->
 						PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
@@ -1428,6 +1458,7 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 							{true, RequiredPacking} ->
 								?LOG_WARNING([{event,
 											repacking_process_chunk_already_repacked},
+										{tags, [repack_in_place]},
 										{storage_module, StoreID},
 										{packing,
 											ar_serialize:encode_packing(RequiredPacking,true)},
@@ -1438,10 +1469,19 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 									not_found ->
 										?LOG_WARNING([{event,
 												chunk_not_found_in_chunk_storage},
+											{tags, [repack_in_place]},
 											{storage_module, StoreID},
 											{offset, PaddedOffset}]),
 										ok;
 									Chunk ->
+										?LOG_DEBUG([{event, request_repack},
+												{tags, [repack_in_place]},
+												{storage_module, StoreID},
+												{offset, PaddedOffset},
+												{absolute_offset, AbsoluteOffset},
+												{chunk_size, ChunkSize},
+												{required_packing, ar_serialize:encode_packing(RequiredPacking, true)},
+												{packing, ar_serialize:encode_packing(Packing, true)}]),
 										Ref = make_ref(),
 										gen_server:cast(Server,
 												{register_packing_ref, Ref, PaddedOffset}),
@@ -1454,11 +1494,13 @@ repack(Start, End, NextCursor, RightBound, RequiredPacking, StoreID) ->
 								end;
 							true ->
 								?LOG_WARNING([{event, no_packing_information_for_the_chunk},
+										{tags, [repack_in_place]},
 										{storage_module, StoreID},
 										{offset, PaddedOffset}]),
 								ok;
 							false ->
 								?LOG_WARNING([{event, chunk_not_found_in_sync_record},
+										{tags, [repack_in_place]},
 										{storage_module, StoreID},
 										{offset, PaddedOffset}]),
 								ok
