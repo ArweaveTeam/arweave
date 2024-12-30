@@ -20,7 +20,6 @@ randomx_replica_2_9_suite_test_() ->
 			[
 				test_register(fun test_vectors/1, SetupData), % TODO move bottom
 				test_register(fun test_state/1, SetupData),
-				test_register(fun test_quick/1, SetupData),
 				test_register(fun test_pack_unpack_sub_chunks/1, SetupData)
 			]
 		end
@@ -53,10 +52,8 @@ test_vectors({FastState, _LightState}) ->
 		176,71,171,120,18,186,252,150,107,106,65,5,197,85,
 		108,100,151,250 >>,
 
-	{ok, Output2v1} = ar_rxsquared_nif:rsp_mix_entropy_crc32_nif(Output1),
-	Output2v1HashReal = crypto:hash(sha256, Output2v1),
-	{ok, OutHash2Real, Output2v2} = ar_rxsquared_nif:rsp_exec_nif(element(2, FastState), Hash, Scratchpad, 0, 0, 0, 8),
-	Output2v2HashReal = crypto:hash(sha256, Output2v2),
+	{ok, Output2} = ar_rxsquared_nif:rsp_mix_entropy_crc32_nif(Output1),
+	Output2HashReal = crypto:hash(sha256, Output2),
 	Output2HashExpd = << 133,226,122,189,170,63,128,182,242,28,50,204,85,179,
 		230,105,98,187,39,24,30,133,84,135,70,85,220,145,30,
 		165,161,242 >>,
@@ -67,10 +64,8 @@ test_vectors({FastState, _LightState}) ->
 		206,247,3,124,167,34,75 >>,
 
 	?assertEqual(Output1HashExpd, Output1HashReal),
-	?assertEqual(Output2HashExpd, Output2v1HashReal),
-	?assertEqual(Output2HashExpd, Output2v2HashReal),
+	?assertEqual(Output2HashExpd, Output2HashReal),
 	?assertEqual(OutHashExpd, OutHash1Real),
-	?assertEqual(OutHashExpd, OutHash2Real),
 
 	Key = << 1 >>,
 	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(FastState, Key),
@@ -93,34 +88,7 @@ test_vectors({FastState, _LightState}) ->
 		EntropySubChunkIndex}),
 	?assertEqual(SubChunk, SubChunkReal),
 
-	{ok, EntropyFused} = ar_rxsquared_nif:rsp_fused_entropy_nif(
-		element(2, FastState),
-		?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-		?REPLICA_2_9_RANDOMX_LANE_COUNT,
-		?REPLICA_2_9_RANDOMX_DEPTH,
-		0,
-		0,
-		0,
-		?REPLICA_2_9_RANDOMX_ROUND_COUNT,
-		Key
-	),
-	EntropyFusedHash = crypto:hash(sha256, EntropyFused),
-	?assertEqual(EntropyHashExpd, EntropyFusedHash),
-
 	ok.
-
-test_quick({FastState, _LightState}) ->
-	{ok, _, _} = ar_rxsquared_nif:rsp_exec_nif(
-			element(2, FastState), << 0:(8*64) >>, << 0:(8*2097152) >>, 0, 0, 0, 8),
-	{ok, _, _} = ar_rxsquared_nif:rsp_init_scratchpad_nif(
-			element(2, FastState), <<"Some input">>, 0, 0, 0, 8),
-	{ok, _} = ar_rxsquared_nif:rsp_mix_entropy_crc32_nif(<< 0:(8*2097152) >>),
-	{ok, _} = ar_rxsquared_nif:rsp_mix_entropy_far_nif(<< 0:(8*2097152) >>),
-	{ok, _} = ar_rxsquared_nif:rsp_feistel_encrypt_nif(
-			<< 0:(8*2097152) >>, << 0:(8*2097152) >>),
-	{ok, _} = ar_rxsquared_nif:rsp_feistel_decrypt_nif(
-			<< 0:(8*2097152) >>, << 0:(8*2097152) >>).
 
 test_pack_unpack_sub_chunks({State, _LightState}) ->
 	Key = << 0:256 >>,

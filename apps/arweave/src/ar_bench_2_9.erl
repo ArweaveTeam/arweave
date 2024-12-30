@@ -11,7 +11,6 @@ run_benchmark_from_cli(Args) ->
 
 	Format= case get_flag_value(Args, "format", "replica_2_9") of
 		"replica_2_9" -> replica_2_9;
-		"replica_2_9_baseline" -> replica_2_9_baseline;
 		"composite.1" -> {composite, 1};
 		"composite.10" -> {composite, 10};
 		"spora_2_6" -> spora_2_6;
@@ -48,9 +47,9 @@ get_flag_value([_ | Tail], TargetFlag, DefaultValue) ->
 	get_flag_value(Tail, TargetFlag, DefaultValue).
 
 show_help() ->
-	io:format("~nUsage: benchmark-2.9 [format replica_2_9|replica_2_9_baseline|composite.1|composite.10|spora_2_6] [threads N] [mib N] [dir path1 dir path2 dir path3 ...]~n~n"),
+	io:format("~nUsage: benchmark-2.9 [format replica_2_9|composite.1|composite.10|spora_2_6] [threads N] [mib N] [dir path1 dir path2 dir path3 ...]~n~n"),
 
-	io:format("format: format to pack. replica_2_9, replica_2_9_baseline, composite.1, composite.10, or spora_2_6. Default: replica_2_9.~n"),
+	io:format("format: format to pack. replica_2_9, composite.1, composite.10, or spora_2_6. Default: replica_2_9.~n"),
 	io:format("threads: number of threads to run. Default: 1.~n"),
 	io:format("mib: total amount of data to pack in MiB. Default: 1024.~n"),
 	io:format("     Will be divided evenly between threads, so the final number may be~n"),
@@ -115,8 +114,6 @@ prepare_context(replica_2_9, Threads, DataMiB) ->
 		rxsquared, ?RANDOMX_PACKING_KEY, 1, 1, 
 		erlang:system_info(dirty_cpu_schedulers_online)),
 	{RandomXState, SubChunk, Key, EntropyPerThread};
-prepare_context(replica_2_9_baseline, Threads, DataMiB)->
-	prepare_context(replica_2_9, Threads, DataMiB);
 prepare_context(spora_2_6, Threads, DataMiB) ->
 	Root = crypto:strong_rand_bytes(32),
 	Address = crypto:strong_rand_bytes(32),
@@ -142,15 +139,11 @@ prepare_context({composite, Difficulty}, Threads, DataMiB) ->
 
 get_total_data(replica_2_9, Threads, {_,_, _, EntropyPerThread}) ->
 	Threads * EntropyPerThread * ?REPLICA_2_9_ENTROPY_SIZE / ?MiB;
-get_total_data(replica_2_9_baseline, Threads, Context) ->
-	get_total_data(replica_2_9, Threads, Context);
 get_total_data(spora_2_6, Threads, {_, _, _, ChunksPerThread}) ->
 	Threads * ChunksPerThread * ?DATA_CHUNK_SIZE / ?MiB;
 get_total_data({composite, _}, Threads, {_, _, _, ChunksPerThread}) ->
 	Threads * ChunksPerThread * ?DATA_CHUNK_SIZE / ?MiB.
 get_iterations(replica_2_9, _Threads, {_,_, _, EntropyPerThread}) ->
-	EntropyPerThread;
-get_iterations(replica_2_9_baseline, _Threads, {_,_, _, EntropyPerThread}) ->
 	EntropyPerThread;
 get_iterations(spora_2_6, _Threads, {_, _, _, ChunksPerThread}) ->
 	ChunksPerThread;
@@ -159,7 +152,7 @@ get_iterations({composite, _}, _Threads, {_, _, _, ChunksPerThread}) ->
 
 pack_chunks(_Format, _Thread, _Dir, _Context, 0) ->
 	ok;
-pack_chunks(replica_2_9_baseline, Thread, Dir, Context, Count) ->
+pack_chunks(replica_2_9, Thread, Dir, Context, Count) ->
 	{RandomXState, SubChunk, Key, _EntropyPerThread} = Context,
 	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
 	PackedSubChunks = pack_sub_chunks(SubChunk, Entropy, 0, RandomXState, []),
@@ -172,38 +165,7 @@ pack_chunks(replica_2_9_baseline, Thread, Dir, Context, Count) ->
 			Path = filename:join(Dir, Filename),
 			file:write_file(Path, PackedSubChunks)
 	end,
-	pack_chunks(replica_2_9_baseline, Thread, Dir, Context, Count-1);
-pack_chunks(replica_2_9, _Thread, _Dir, _Context, 0) ->
-	ok;
-pack_chunks(replica_2_9, Thread, Dir, Context, Count) ->
-	{RandomXState, SubChunk, Key, _EntropyPerThread} = Context,
-
-	%% This is where we call the new fused NIF:
-	%% Suppose the new NIF returns {ok, EntropyBin} or something similar.
-	{ok, Entropy} = ar_rxsquared_nif:rsp_fused_entropy_nif(
-		element(2, RandomXState),
-		?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-		?REPLICA_2_9_RANDOMX_LANE_COUNT,
-		?REPLICA_2_9_RANDOMX_DEPTH,
-		1,  %% jitEnabled,
-		1,  %% largePagesEnabled
-		1,  %% hardwareAESEnabled
-		?REPLICA_2_9_RANDOMX_ROUND_COUNT,
-		Key
-	),
-
-	%% Then we can reuse pack_sub_chunks as before
-	PackedSubChunks = pack_sub_chunks(SubChunk, Entropy, 0, RandomXState, []),
-	case Dir of
-		undefined ->
-			ok;
-		_ ->
-			Filename = io_lib:format("t~p_e~p.bin", [Thread, Count]),
-			Path = filename:join(Dir, Filename),
-			file:write_file(Path, PackedSubChunks)
-	end,
-	pack_chunks(replica_2_9, Thread, Dir, Context, Count - 1);
+	pack_chunks(replica_2_9, Thread, Dir, Context, Count-1);
 
 pack_chunks(spora_2_6, Thread, Dir, Context, Count) ->
 	{RandomXState, Chunk, Key, _ChunksPerThread} = Context,

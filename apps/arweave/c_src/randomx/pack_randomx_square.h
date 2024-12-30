@@ -7,21 +7,14 @@
 extern "C" {
 #endif
 
-RANDOMX_EXPORT void randomx_squared_exec(
+RANDOMX_EXPORT void rsp_exec_test(
     randomx_vm *machine, const unsigned char *inHash, const unsigned char *inScratchpad,
-    unsigned char *outHash, unsigned char *outScratchpad, const int randomxProgramCount);
-RANDOMX_EXPORT void randomx_squared_exec_test(
-    randomx_vm *machine, const unsigned char *inHash, const unsigned char *inScratchpad,
-    unsigned char *outHash, unsigned char *outScratchpad, const int randomxProgramCount);
-// init_msg + hash
-RANDOMX_EXPORT void randomx_squared_init_scratchpad(
-    randomx_vm *machine, const unsigned char *input, const size_t inputSize,
     unsigned char *outHash, unsigned char *outScratchpad, const int randomxProgramCount);
 
-RANDOMX_EXPORT void packing_mix_entropy_crc32(
+RANDOMX_EXPORT void rsp_mix_entropy_crc32(
     const unsigned char *inEntropy, unsigned char *outEntropy, const size_t entropySize);
 
-RANDOMX_EXPORT void packing_mix_entropy_far(
+RANDOMX_EXPORT void rsp_mix_entropy_far(
     const unsigned char *inEntropy, unsigned char *outEntropy, const size_t entropySize,
     const size_t jumpSize, const size_t blockSize);
 

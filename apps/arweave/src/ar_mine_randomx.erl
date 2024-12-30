@@ -7,7 +7,6 @@
 		randomx_reencrypt_chunk/7,
 
 		randomx_generate_replica_2_9_entropy/2,
-		randomx_generate_replica_2_9_entropy_opt/2,
 		randomx_encrypt_replica_2_9_sub_chunk/1,
 		randomx_decrypt_replica_2_9_sub_chunk/1,
 		randomx_decrypt_replica_2_9_sub_chunk2/1,
@@ -127,17 +126,6 @@ randomx_generate_replica_2_9_entropy({_, {debug_state, _}}, Key) ->
 
 %% Non-DEBUG implementation
 randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
-	Inputs = [crypto:hash(sha256, << Key/binary, LaneNumber:8 >>)
-			|| LaneNumber <- lists:seq(1, ?REPLICA_2_9_RANDOMX_LANE_COUNT)],
-	HashesScratchpads0 = randomx_initialize_replica_2_9_scratchpads(RandomxState, Key, Inputs),
-	randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads0,
-			1, ?REPLICA_2_9_RANDOMX_DEPTH).
-
-%% Optimized wrapper
-randomx_generate_replica_2_9_entropy_opt({_, {debug_state, _}} = State, Key) ->
-	% fallback for tests
-	randomx_generate_replica_2_9_entropy(State, Key);
-randomx_generate_replica_2_9_entropy_opt({rxsquared, RandomxState}, Key) ->
 	{ok, EntropyFused} = ar_rxsquared_nif:rsp_fused_entropy_nif(
 		RandomxState,
 		?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
@@ -151,54 +139,6 @@ randomx_generate_replica_2_9_entropy_opt({rxsquared, RandomxState}, Key) ->
 		Key
 	),
 	EntropyFused.
-
-write_scratchpad_to_disk(Type, Hash0, Scratchpad0) ->
-	HashHex = ar_util:encode(Hash0),
-	FileName = io_lib:format("~s_~s.bin", [Type, HashHex]),
-	file:write_file(FileName, Scratchpad0).
-
-randomx_initialize_replica_2_9_scratchpads(_RandomxState, _Key, []) ->
-	[];
-randomx_initialize_replica_2_9_scratchpads(RandomxState, Key, [Input | Inputs]) ->
-	{ok, Hash0, Scratchpad0} =
-		ar_rxsquared_nif:rsp_init_scratchpad_nif(RandomxState, Input,
-			jit(), large_pages(), hardware_aes(), ?REPLICA_2_9_RANDOMX_ROUND_COUNT),
-	[{Hash0, Scratchpad0} | randomx_initialize_replica_2_9_scratchpads(RandomxState, Key,
-			Inputs)].
-
-randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads,
-		Depth, MaxDepth) ->
-	HashesScratchpads2 = randomx_process_replica_2_9_scratchpads(
-		RandomxState, HashesScratchpads),
-
-	Scratchpad = iolist_to_binary([S || {_H, S} <- HashesScratchpads2]),
-	{ok, MixedScratchpad} = ar_rxsquared_nif:rsp_mix_entropy_far_nif(Scratchpad),
-
-	case Depth == MaxDepth of
-		true ->
-			MixedScratchpad;
-		false ->
-			Scratchpads = split_scratchpads(MixedScratchpad),
-			HashesScratchpads3 = lists:zip([H || {H, _S} <- HashesScratchpads2], Scratchpads),
-			randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads3,
-					Depth + 1, MaxDepth)
-	end.
-
-split_scratchpads(<<>>) ->
-	[];
-split_scratchpads(<< Scratchpad:(?RANDOMX_SCRATCHPAD_SIZE)/binary, Rest/binary >>) ->
-	[Scratchpad | split_scratchpads(Rest)].
-
-randomx_process_replica_2_9_scratchpads(_RandomxState, []) ->
-	[];
-randomx_process_replica_2_9_scratchpads(RandomxState,
-		[{Input, Scratchpad} | HashesScratchpads]) ->
-	{ok, Hash2, Scratchpad2} =
-		ar_rxsquared_nif:rsp_exec_nif(RandomxState,
-				Input, Scratchpad, jit(), large_pages(), hardware_aes(),
-				?REPLICA_2_9_RANDOMX_ROUND_COUNT),
-	[{Hash2, Scratchpad2} | randomx_process_replica_2_9_scratchpads(
-		RandomxState, HashesScratchpads)].
 
 %%% DEBUG implementation
 randomx_decrypt_replica_2_9_sub_chunk({{_, {debug_state, _}} = State, Key, SubChunk,
