@@ -250,8 +250,15 @@ assert_chunks(Node, Packing, Chunks) ->
     end, Chunks).
 
 assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
-    {ok, {{<<"200">>, _}, _, EncodedProof, _, _}} = 
-        ar_test_node:get_chunk(Node, EndOffset, any),
+    ?LOG_INFO("Asserting chunk at offset ~p, size ~p", [EndOffset, ChunkSize]),
+    Result = ar_test_node:get_chunk(Node, EndOffset, any),
+    {ok, {{StatusCode, _}, _, EncodedProof, _, _}} = Result,
+    ?assertEqual(<<"200">>, StatusCode, iolist_to_binary(io_lib:format(
+        "Chunk not found. Node: ~p, Offset: ~p",
+        [Node, EndOffset]))),
+    Proof = ar_serialize:json_map_to_poa_map(
+        jiffy:decode(EncodedProof, [return_maps])
+    ),
     Proof = ar_serialize:json_map_to_poa_map(
         jiffy:decode(EncodedProof, [return_maps])
     ),

@@ -705,19 +705,20 @@ init({StoreID, RepackInPlacePacking}) ->
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
-	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-	State2 = State#sync_data_state{
-		store_id = StoreID,
-		range_start = RangeStart,
-		range_end = RangeEnd,
-		packing = ar_storage_module:get_packing(StoreID)
-	},
+
 	case RepackInPlacePacking of
 		none ->
 			gen_server:cast(self(), process_store_chunk_queue),
+			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+			State2 = State#sync_data_state{
+				store_id = StoreID,
+				range_start = RangeStart,
+				range_end = RangeEnd,
+				packing = ar_storage_module:get_packing(StoreID)
+			},
 			{ok, may_be_start_syncing(State2)};
 		_ ->
-			{ok, State2}
+			{ok, State}
 	end.
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
