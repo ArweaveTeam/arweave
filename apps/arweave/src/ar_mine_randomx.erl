@@ -7,6 +7,7 @@
 		randomx_reencrypt_chunk/7,
 
 		randomx_generate_replica_2_9_entropy/2,
+		randomx_generate_replica_2_9_entropy_opt/2,
 		randomx_encrypt_replica_2_9_sub_chunk/1,
 		randomx_decrypt_replica_2_9_sub_chunk/1,
 		randomx_decrypt_replica_2_9_sub_chunk2/1,
@@ -131,6 +132,24 @@ randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
 	randomx_generate_replica_2_9_entropy(RandomxState, Key, HashesScratchpads0,
 			1, ?REPLICA_2_9_RANDOMX_DEPTH).
 
+%% Optimized wrapper
+randomx_generate_replica_2_9_entropy_opt({_, {debug_state, _}} = State, Key) ->
+	% fallback for tests
+	randomx_generate_replica_2_9_entropy(State, Key);
+randomx_generate_replica_2_9_entropy_opt({rxsquared, RandomxState}, Key) ->
+	{ok, EntropyFused} = ar_rxsquared_nif:rsp_fused_entropy_nif(
+		RandomxState,
+		?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
+		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+		?REPLICA_2_9_RANDOMX_LANE_COUNT,
+		?REPLICA_2_9_RANDOMX_DEPTH,
+		jit(),
+		large_pages(),
+		hardware_aes(),
+		?REPLICA_2_9_RANDOMX_ROUND_COUNT,
+		Key
+	),
+	EntropyFused.
 
 write_scratchpad_to_disk(Type, Hash0, Scratchpad0) ->
 	HashHex = ar_util:encode(Hash0),

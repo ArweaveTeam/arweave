@@ -642,7 +642,7 @@ get_replica_2_9_entropy(Key, RandomXState) ->
 			SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 			EntropySize = ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT * SubChunkSize,
 			ar_shared_entropy_cache:allocate_space(EntropySize, MaxCacheSize),
-			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
+			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy_opt(RandomXState, Key),
 			ar_shared_entropy_cache:put(Key, Entropy, EntropySize),
 			Entropy;
 		{ok, Entropy} ->
