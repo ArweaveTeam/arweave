@@ -149,7 +149,6 @@ jobs:
     needs: build
     runs-on: self-hosted
     strategy:
-      fail-fast: true
       max-parallel: 4
       matrix:
         core_test_mod: [
@@ -209,7 +208,6 @@ jobs:
     needs: build
     runs-on: self-hosted
     strategy:
-      fail-fast: true
       max-parallel: 4
       matrix:
         core_test_mod: [
@@ -301,7 +299,6 @@ jobs:
     needs: build
     runs-on: self-hosted
     strategy:
-      fail-fast: true
       max-parallel: 4
       matrix:
         core_test_mod: [
