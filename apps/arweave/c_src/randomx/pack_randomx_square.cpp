@@ -157,6 +157,102 @@ extern "C" {
 		}
 	}
 
+
+	void randomx_squared_exec_inplace(randomx_vm* machine, uint64_t* srcTempHash, uint64_t* dstTempHash, int programCount, size_t scratchpadSize) {
+		machine->resetRoundingMode();
+		for (int chain = 0; chain < programCount-1; chain++) {
+			machine->run(srcTempHash);
+			int br = randomx_blake2b(
+				srcTempHash, 64,
+				machine->getRegisterFile(),
+				sizeof(randomx::RegisterFile),
+				nullptr, 0
+			);
+			assert(br == 0);
+		}
+		machine->run(srcTempHash);
+		int br = randomx_blake2b(
+			dstTempHash, 64,
+			machine->getRegisterFile(),
+			sizeof(randomx::RegisterFile),
+			nullptr, 0
+		);
+		assert(br == 0);
+		packing_mix_entropy_crc32(
+			(const unsigned char*)machine->getScratchpad(),
+			(unsigned char*)(void*)machine->getScratchpad(),
+			scratchpadSize);
+	}
+
+	void copyChunkCrossLane(
+		randomx_vm** inSet,
+		randomx_vm** outSet,
+		size_t srcPos,
+		size_t dstPos,
+		size_t length,
+		size_t scratchpadSize
+	) {
+		while (length > 0) {
+			int srcLane = (int)(srcPos / scratchpadSize);
+			size_t offsetInSrcLane = srcPos % scratchpadSize;
+
+			int dstLane = (int)(dstPos / scratchpadSize);
+			size_t offsetInDstLane = dstPos % scratchpadSize;
+
+			size_t srcLaneRemain = scratchpadSize - offsetInSrcLane;
+			size_t dstLaneRemain = scratchpadSize - offsetInDstLane;
+
+			size_t chunkSize = length;
+			if (chunkSize > srcLaneRemain) {
+				chunkSize = srcLaneRemain;
+			}
+			if (chunkSize > dstLaneRemain) {
+				chunkSize = dstLaneRemain;
+			}
+
+			unsigned char* srcSp = (unsigned char*)(void*) inSet[srcLane]->getScratchpad();
+			unsigned char* dstSp = (unsigned char*)(void*) outSet[dstLane]->getScratchpad();
+			memcpy(dstSp + offsetInDstLane, srcSp + offsetInSrcLane, chunkSize);
+
+			srcPos += chunkSize;
+			dstPos += chunkSize;
+			length -= chunkSize;
+		}
+	}
+
+	void packing_mix_entropy_far_sets(
+		randomx_vm** inSet,
+		randomx_vm** outSet,
+		int count,
+		size_t scratchpadSize,
+		size_t jumpSize,
+		size_t blockSize)
+	{
+		size_t totalSize = (size_t)count * scratchpadSize;
+
+		size_t entropySize = totalSize;
+		size_t numJumps = entropySize / jumpSize;
+		size_t numBlocksPerJump = jumpSize / blockSize;
+		size_t leftover = jumpSize % blockSize;
+
+		size_t outOffset = 0;
+		for (size_t offset = 0; offset < numBlocksPerJump; ++offset) {
+			for (size_t i = 0; i < numJumps; ++i) {
+				size_t srcPos = i * jumpSize + offset * blockSize;
+				copyChunkCrossLane(inSet, outSet, srcPos, outOffset, blockSize, scratchpadSize);
+				outOffset += blockSize;
+			}
+		}
+
+		if (leftover > 0) {
+			for (size_t i = 0; i < numJumps; ++i) {
+				size_t srcPos = i * jumpSize + numBlocksPerJump * blockSize;
+				copyChunkCrossLane(inSet, outSet, srcPos, outOffset, leftover, scratchpadSize);
+				outOffset += leftover;
+			}
+		}
+	}
+
 	int rsp_fused_entropy(
 		randomx_vm** vmList,
 		size_t scratchpadSize,
@@ -204,93 +300,6 @@ extern "C" {
 				(void*)vmList[i]->getScratchpad()
 			);
 		}
-
-		auto randomx_squared_exec_inplace = [&](randomx_vm* machine, uint64_t* srcTempHash, uint64_t* dstTempHash, int programCount, size_t scratchpadSize) {
-			machine->resetRoundingMode();
-			for (int chain = 0; chain < programCount-1; chain++) {
-				machine->run(srcTempHash);
-				int br = randomx_blake2b(
-					srcTempHash, 64,
-					machine->getRegisterFile(),
-					sizeof(randomx::RegisterFile),
-					nullptr, 0
-				);
-				assert(br == 0);
-			}
-			machine->run(srcTempHash);
-			int br = randomx_blake2b(
-				dstTempHash, 64,
-				machine->getRegisterFile(),
-				sizeof(randomx::RegisterFile),
-				nullptr, 0
-			);
-			assert(br == 0);
-			packing_mix_entropy_crc32(
-				(const unsigned char*)machine->getScratchpad(),
-				(unsigned char*)(void*)machine->getScratchpad(),
-				scratchpadSize);
-		};
-
-		auto packing_mix_entropy_far_sets = [&](randomx_vm** inSet,
-												randomx_vm** outSet,
-												int count,
-												size_t scratchpadSize,
-												size_t jumpSize,
-												size_t blockSize)
-		{
-			size_t totalSize = (size_t)count * scratchpadSize;
-
-			auto copyChunkCrossLane = [&](size_t srcPos, size_t dstPos, size_t length) {
-				while (length > 0) {
-					int srcLane = (int)(srcPos / scratchpadSize);
-					size_t offsetInSrcLane = srcPos % scratchpadSize;
-
-					int dstLane = (int)(dstPos / scratchpadSize);
-					size_t offsetInDstLane = dstPos % scratchpadSize;
-
-					size_t srcLaneRemain = scratchpadSize - offsetInSrcLane;
-					size_t dstLaneRemain = scratchpadSize - offsetInDstLane;
-
-					size_t chunkSize = length;
-					if (chunkSize > srcLaneRemain) {
-						chunkSize = srcLaneRemain;
-					}
-					if (chunkSize > dstLaneRemain) {
-						chunkSize = dstLaneRemain;
-					}
-
-					unsigned char* srcSp = (unsigned char*)(void*) inSet[srcLane]->getScratchpad();
-					unsigned char* dstSp = (unsigned char*)(void*) outSet[dstLane]->getScratchpad();
-					memcpy(dstSp + offsetInDstLane, srcSp + offsetInSrcLane, chunkSize);
-
-					srcPos += chunkSize;
-					dstPos += chunkSize;
-					length -= chunkSize;
-				}
-			};
-
-			size_t entropySize = totalSize;
-			size_t numJumps = entropySize / jumpSize;
-			size_t numBlocksPerJump = jumpSize / blockSize;
-			size_t leftover = jumpSize % blockSize;
-
-			size_t outOffset = 0;
-			for (size_t offset = 0; offset < numBlocksPerJump; ++offset) {
-				for (size_t i = 0; i < numJumps; ++i) {
-					size_t srcPos = i * jumpSize + offset * blockSize;
-					copyChunkCrossLane(srcPos, outOffset, blockSize);
-					outOffset += blockSize;
-				}
-			}
-
-			if (leftover > 0) {
-				for (size_t i = 0; i < numJumps; ++i) {
-					size_t srcPos = i * jumpSize + numBlocksPerJump * blockSize;
-					copyChunkCrossLane(srcPos, outOffset, leftover);
-					outOffset += leftover;
-				}
-			}
-		};
 
 		for (int d = 0; d < rxDepth; d++) {
 			for (int lane = 0; lane < laneCount; lane++) {
