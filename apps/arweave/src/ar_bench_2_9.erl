@@ -108,10 +108,9 @@ prepare_context(replica_2_9, Threads, DataMiB) ->
 	SubChunk = crypto:strong_rand_bytes(?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
 	SubChunkIndex = rand:uniform(32768),
 	Offset = rand:uniform(1024 * 1024 * 1024),
-	Key = ar_block:get_replica_2_9_entropy_key(Address, Offset, SubChunkIndex),
+	Key = ar_replica_2_9:get_entropy_key(Address, Offset, SubChunkIndex),
 	DataPerThread = DataMiB * ?MiB div Threads,
-	EntropyPerThread = DataPerThread div 
-		(?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
+	EntropyPerThread = DataPerThread div ?REPLICA_2_9_ENTROPY_SIZE,
 	RandomXState = ar_mine_randomx:init_fast2(
 		rxsquared, ?RANDOMX_PACKING_KEY, 1, 1, 
 		erlang:system_info(dirty_cpu_schedulers_online)),
@@ -142,8 +141,7 @@ prepare_context({composite, Difficulty}, Threads, DataMiB) ->
 	{RandomXState, Chunk, Key, ChunksPerThread}.
 
 get_total_data(replica_2_9, Threads, {_,_, _, EntropyPerThread}) ->
-	Threads * EntropyPerThread * 
-	?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE / ?MiB;
+	Threads * EntropyPerThread * ?REPLICA_2_9_ENTROPY_SIZE / ?MiB;
 get_total_data(replica_2_9_baseline, Threads, Context) ->
 	get_total_data(replica_2_9, Threads, Context);
 get_total_data(spora_2_6, Threads, {_, _, _, ChunksPerThread}) ->
@@ -184,7 +182,7 @@ pack_chunks(replica_2_9, Thread, Dir, Context, Count) ->
 	%% Suppose the new NIF returns {ok, EntropyBin} or something similar.
 	{ok, Entropy} = ar_rxsquared_nif:rsp_fused_entropy_nif(
 		element(2, RandomXState),
-		?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
+		?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 		?REPLICA_2_9_RANDOMX_LANE_COUNT,
 		?REPLICA_2_9_RANDOMX_DEPTH,
@@ -240,7 +238,7 @@ pack_chunks({composite, Difficulty}, Thread, Dir, Context, Count) ->
 	pack_chunks({composite, Difficulty}, Thread, Dir, Context, Count-1).
 
 pack_sub_chunks(_SubChunk, _Entropy, Index, _State, PackedSubChunks)
-		when Index == ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT ->
+		when Index * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE >= ?REPLICA_2_9_ENTROPY_SIZE ->
 	PackedSubChunks;
 pack_sub_chunks(SubChunk, Entropy, Index, State, PackedSubChunks) ->
 	{ok, PackedSubChunk} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk(

@@ -95,7 +95,7 @@ test_vectors({FastState, _LightState}) ->
 
 	{ok, EntropyFused} = ar_rxsquared_nif:rsp_fused_entropy_nif(
 		element(2, FastState),
-		?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
+		?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 		?REPLICA_2_9_RANDOMX_LANE_COUNT,
 		?REPLICA_2_9_RANDOMX_DEPTH,

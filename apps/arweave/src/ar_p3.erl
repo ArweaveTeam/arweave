@@ -20,6 +20,8 @@
 %%%===================================================================
 allow_request(Req) ->
 	case catch gen_server:call(?MODULE, {allow_request, Req}) of
+		{'EXIT', {noproc, {gen_server, call, _}}} ->
+			{false, noproc};
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{false, timeout};
 		{error, timeout} ->

@@ -8,7 +8,7 @@
 -export([raw_request/2, raw_request/3, http_request/1]).
 
 -import(ar_test_node, [
-	stop/0, assert_wait_until_height/2, wait_until_height/1, read_block_when_stored/2]).
+	stop/0, assert_wait_until_height/2, wait_until_height/2, read_block_when_stored/2]).
 -import(ar_p3_config_tests, [
 	sample_p3_config/0, sample_p3_config/1, sample_p3_config/3, sample_p3_config/4,
 	empty_p3_config/0]).
@@ -476,214 +476,217 @@ e2e_deposit_before_charge() ->
 		{DepositAddress, ?AR(10000), <<>>}
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
-	ar_test_node:start(B0, RewardAddress, Config),
-	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:connect_to_peer(peer1),
-	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 700, data => <<"hello">> }),
-	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
-	TX3 = ar_test_node:sign_tx(Wallet2, #{ target => DepositAddress, quantity => 1000 }),
-	TX4 = ar_test_node:sign_tx(Wallet1, #{ target => OtherAddress, quantity => 500 }),
-	ar_test_node:assert_post_tx_to_peer(main, TX1),
-	ar_test_node:assert_post_tx_to_peer(main, TX2),
-	ar_test_node:assert_post_tx_to_peer(main, TX3),
-	ar_test_node:assert_post_tx_to_peer(main, TX4),
+	try
+		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
+		ar_test_node:start(B0, RewardAddress, Config),
+		ar_test_node:start_peer(peer1, B0),
+		ar_test_node:connect_to_peer(peer1),
+		TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 700, data => <<"hello">> }),
+		TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+		TX3 = ar_test_node:sign_tx(Wallet2, #{ target => DepositAddress, quantity => 1000 }),
+		TX4 = ar_test_node:sign_tx(Wallet1, #{ target => OtherAddress, quantity => 500 }),
+		ar_test_node:assert_post_tx_to_peer(main, TX1),
+		ar_test_node:assert_post_tx_to_peer(main, TX2),
+		ar_test_node:assert_post_tx_to_peer(main, TX3),
+		ar_test_node:assert_post_tx_to_peer(main, TX4),
 
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
-	ar_test_node:mine(),
-	wait_until_height(1),
+		ar_test_node:mine(),
+		wait_until_height(main, 1),
 
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
-	ar_test_node:mine(),
-	wait_until_height(2),
+		ar_test_node:mine(),
+		wait_until_height(main, 2),
 
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender2Address)),
 
-	ar_test_node:mine(),
-	wait_until_height(3),
+		ar_test_node:mine(),
+		wait_until_height(main, 3),
 
-	timer:sleep(1000),
+		timer:sleep(1000),
 
-	?assertEqual({<<"200">>, <<"1900">>}, get_balance(Sender1Address)),
-	?assertEqual({<<"200">>, <<"1000">>}, get_balance(Sender2Address)),
+		?assertEqual({<<"200">>, <<"1900">>}, get_balance(Sender1Address)),
+		?assertEqual({<<"200">>, <<"1000">>}, get_balance(Sender2Address)),
 
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		http_request(
-			raw_request(<<"GET">>, <<"/info">>)
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			http_request(
+				raw_request(<<"GET">>, <<"/info">>)
+			),
+			"Requesting unguarded endpoint with unsigned request"
 		),
-		"Requesting unguarded endpoint with unsigned request"
-	),
 
-	?assertMatch(
-		{ok, {{<<"400">>, _}, _, _, _, _}},
-		http_request(
-			raw_request(<<"GET">>, <<"/tx/%%%!%%">>)
+		?assertMatch(
+			{ok, {{<<"400">>, _}, _, _, _, _}},
+			http_request(
+				raw_request(<<"GET">>, <<"/tx/%%%!%%">>)
+			),
+			"Requesting unguarded endpoint with client error"
 		),
-		"Requesting unguarded endpoint with client error"
-	),
 
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/info">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/info">>,
-					?P3_ADDRESS_HEADER => EncodedSender1Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/info">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/info">>,
+						?P3_ADDRESS_HEADER => EncodedSender1Address
+					}
+				)
+			),
+			"Requesting unguarded endpoint with signed request"
 		),
-		"Requesting unguarded endpoint with signed request"
-	),
 
-	?assertMatch(
-		{ok, {{<<"400">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/info">>,
-					?P3_ADDRESS_HEADER => EncodedSender1Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"400">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/info">>,
+						?P3_ADDRESS_HEADER => EncodedSender1Address
+					}
+				)
+			),
+			"Requesting P3 endpoint bad header"
 		),
-		"Requesting P3 endpoint bad header"
-	),
 
-	?assertMatch(
-		{ok, {{<<"428">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_MOD_SEQ_HEADER => integer_to_binary(2),
-					?P3_ADDRESS_HEADER => EncodedSender1Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"428">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_MOD_SEQ_HEADER => integer_to_binary(2),
+						?P3_ADDRESS_HEADER => EncodedSender1Address
+					}
+				)
+			),
+			"Requesting P3 endpoint stale modSeq"
 		),
-		"Requesting P3 endpoint stale modSeq"
-	),
 
-	?assertEqual(
-		{<<"200">>, <<"1900">>}, get_balance(Sender1Address),
-		"No balance change expected"),
-	?assertEqual(
-		{<<"200">>, <<"1000">>}, get_balance(Sender2Address),
-		"No balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"1900">>}, get_balance(Sender1Address),
+			"No balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"1000">>}, get_balance(Sender2Address),
+			"No balance change expected"),
 
-	?assertMatch(
-		{ok, {{<<"400">>, <<"Bad Request">>}, _, 
-			<<"{\"error\":\"size_must_be_an_integer\"}">>, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/abc">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_MOD_SEQ_HEADER => integer_to_binary(1),
-					?P3_ADDRESS_HEADER => EncodedSender1Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"400">>, <<"Bad Request">>}, _, 
+				<<"{\"error\":\"size_must_be_an_integer\"}">>, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/abc">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_MOD_SEQ_HEADER => integer_to_binary(1),
+						?P3_ADDRESS_HEADER => EncodedSender1Address
+					}
+				)
+			),
+			"Requesting P3 endpoint with client error"
 		),
-		"Requesting P3 endpoint with client error"
-	),
 
-	?assertEqual(
-		{<<"200">>, <<"1900">>}, get_balance(Sender1Address),
-		"No balance change expected"),
-	?assertEqual(
-		{<<"200">>, <<"1000">>}, get_balance(Sender2Address),
-		"No balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"1900">>}, get_balance(Sender1Address),
+			"No balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"1000">>}, get_balance(Sender2Address),
+			"No balance change expected"),
 
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_MOD_SEQ_HEADER => integer_to_binary(1),
-					?P3_ADDRESS_HEADER => EncodedSender1Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_MOD_SEQ_HEADER => integer_to_binary(1),
+						?P3_ADDRESS_HEADER => EncodedSender1Address
+					}
+				)
+			),
+			"Requesting P3 endpoint with sufficient balance"
 		),
-		"Requesting P3 endpoint with sufficient balance"
-	),
 
-	?assertEqual(
-		{<<"200">>, <<"900">>}, get_balance(Sender1Address),
-		"Balance change expected"),
-	?assertEqual(
-		{<<"200">>, <<"1000">>}, get_balance(Sender2Address),
-		"No balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"900">>}, get_balance(Sender1Address),
+			"Balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"1000">>}, get_balance(Sender2Address),
+			"No balance change expected"),
 
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_ADDRESS_HEADER => EncodedSender1Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_ADDRESS_HEADER => EncodedSender1Address
+					}
+				)
+			),
+			"Requesting P3 endpoint with sufficient balance"
 		),
-		"Requesting P3 endpoint with sufficient balance"
-	),
 
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv2,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_ADDRESS_HEADER => EncodedSender2Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv2,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_ADDRESS_HEADER => EncodedSender2Address
+					}
+				)
+			),
+			"Requesting P3 endpoint with sufficient balance"
 		),
-		"Requesting P3 endpoint with sufficient balance"
-	),
 
-	?assertEqual(
-		{<<"200">>, <<"-100">>}, get_balance(Sender1Address),
-		"Balance change expected"),
-	?assertEqual(
-		{<<"200">>, <<"0">>}, get_balance(Sender2Address),
-		"Balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"-100">>}, get_balance(Sender1Address),
+			"Balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"0">>}, get_balance(Sender2Address),
+			"Balance change expected"),
 
-	?assertMatch(
-		{ok, {{<<"402">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_ADDRESS_HEADER => EncodedSender1Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"402">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_ADDRESS_HEADER => EncodedSender1Address
+					}
+				)
+			),
+			"Requesting P3 endpoint with insufficient balance"
 		),
-		"Requesting P3 endpoint with insufficient balance"
-	),
 
-	?assertMatch(
-		{ok, {{<<"402">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv2,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_ADDRESS_HEADER => EncodedSender2Address
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"402">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv2,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_ADDRESS_HEADER => EncodedSender2Address
+					}
+				)
+			),
+			"Requesting P3 endpoint with insufficient balance"
 		),
-		"Requesting P3 endpoint with insufficient balance"
-	),
 
-	?assertEqual(
-		{<<"200">>, <<"-100">>}, get_balance(Sender1Address),
-		"No balance change expected"),
-	?assertEqual(
-		{<<"200">>, <<"0">>}, get_balance(Sender2Address),
-		"No balance change expected"),
-	ok = application:set_env(arweave, config, BaseConfig).
+		?assertEqual(
+			{<<"200">>, <<"-100">>}, get_balance(Sender1Address),
+			"No balance change expected"),
+		?assertEqual(
+			{<<"200">>, <<"0">>}, get_balance(Sender2Address),
+			"No balance change expected")
+	after
+		ok = application:set_env(arweave, config, BaseConfig)
+	end.
 
 e2e_charge_before_deposit() ->
 	Wallet1 = {Priv1, Pub1} = ar_wallet:new(),
@@ -699,78 +702,81 @@ e2e_charge_before_deposit() ->
 		{Address1, ?AR(10000), <<>>}
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -2000, 2) },
-	ar_test_node:start(B0, RewardAddress, Config),
-	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:connect_to_peer(peer1),
+	try
+		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -2000, 2) },
+		ar_test_node:start(B0, RewardAddress, Config),
+		ar_test_node:start_peer(peer1, B0),
+		ar_test_node:connect_to_peer(peer1),
 
-	?assertMatch(
-		{ok, {{<<"400">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_ADDRESS_HEADER => EncodedAddress1
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"400">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_ADDRESS_HEADER => EncodedAddress1
+					}
+				)
+			),
+			"Address has no transactions, so account can't be created"
 		),
-		"Address has no transactions, so account can't be created"
-	),
 
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
 
-	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
-	ar_test_node:assert_post_tx_to_peer(main, TX1),
-	
-	ar_test_node:mine(),
-	wait_until_height(1),
+		TX1 = ar_test_node:sign_tx(Wallet1, #{ target => Address2, quantity => 10 }),
+		ar_test_node:assert_post_tx_to_peer(main, TX1),
+		
+		ar_test_node:mine(),
+		wait_until_height(main, 1),
 
-	ar_test_node:mine(),
-	wait_until_height(2),
+		ar_test_node:mine(),
+		wait_until_height(main, 2),
 
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_ADDRESS_HEADER => EncodedAddress1
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_ADDRESS_HEADER => EncodedAddress1
+					}
+				)
+			),
+			"Requesting P3 endpoint before deposit"
 		),
-		"Requesting P3 endpoint before deposit"
-	),
 
-	?assertEqual({<<"200">>, <<"-1000">>}, get_balance(Address1)),
+		?assertEqual({<<"200">>, <<"-1000">>}, get_balance(Address1)),
 
-	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
-	ar_test_node:assert_post_tx_to_peer(main, TX2),
-	
-	ar_test_node:mine(),
-	wait_until_height(3),
+		TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 1200 }),
+		ar_test_node:assert_post_tx_to_peer(main, TX2),
+		
+		ar_test_node:mine(),
+		wait_until_height(main, 3),
 
-	ar_test_node:mine(),
-	wait_until_height(4),
+		ar_test_node:mine(),
+		wait_until_height(main, 4),
 
-	timer:sleep(1000),
+		timer:sleep(1000),
 
-	?assertEqual({<<"200">>, <<"200">>}, get_balance(Address1)),
+		?assertEqual({<<"200">>, <<"200">>}, get_balance(Address1)),
 
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		http_request(
-			signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-				#{
-					?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-					?P3_ADDRESS_HEADER => EncodedAddress1
-				}
-			)
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			http_request(
+				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+					#{
+						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+						?P3_ADDRESS_HEADER => EncodedAddress1
+					}
+				)
+			),
+			"Requesting P3 endpoint after deposit"
 		),
-		"Requesting P3 endpoint after deposit"
-	),
 
-	?assertEqual({<<"200">>, <<"-800">>}, get_balance(Address1)),
-	ok = application:set_env(arweave, config, BaseConfig).
+		?assertEqual({<<"200">>, <<"-800">>}, get_balance(Address1))
+	after
+		ok = application:set_env(arweave, config, BaseConfig)
+	end.
 
 %% @doc Test that nodes correctly scan old blocks that came in while they were offline.
 e2e_restart_p3_service() ->
@@ -784,65 +790,67 @@ e2e_restart_p3_service() ->
 		{DepositAddress, ?AR(10000), <<>>}
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
-	ar_test_node:start(B0, RewardAddress, Config),
-	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
-	ar_test_node:disconnect_from(peer1),
+	try
+		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
+		ar_test_node:start(B0, RewardAddress, Config),
+		ar_test_node:start_peer(peer1, B0),
+		ar_test_node:join_on(#{ node => main, join_on => peer1 }),
+		ar_test_node:disconnect_from(peer1),
 
-	%% This deposit will be too old and will not be scanned when the main node comes back up.
-	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
-	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
+		%% This deposit will be too old and will not be scanned when the main node comes back up.
+		TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(1), quantity => 100 }),
+		ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 1),
+		ar_test_node:mine(peer1),
+		assert_wait_until_height(peer1, 1),
 
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 2),
+		ar_test_node:mine(peer1),
+		assert_wait_until_height(peer1, 2),
 
-	TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
-	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 3),
+		TX2 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, reward => ?AR(5), quantity => 500 }),
+		ar_test_node:assert_post_tx_to_peer(peer1, TX2),
+		ar_test_node:mine(peer1),
+		assert_wait_until_height(peer1, 3),
 
-	%% Stop the main node. The peer1 will continue to mine. When the main comes back up
-	%% it should correctly scan all the blocks missed since disconnectin
-	%% (up to ?MAX_BLOCK_SCAN blocks)
-	stop(),
+		%% Stop the main node. The peer1 will continue to mine. When the main comes back up
+		%% it should correctly scan all the blocks missed since disconnectin
+		%% (up to ?MAX_BLOCK_SCAN blocks)
+		stop(),
 
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 4),
+		ar_test_node:mine(peer1),
+		assert_wait_until_height(peer1, 4),
 
-	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
-	?assertEqual(0, ar_p3_db:get_scan_height(),
-		"Node hasn't seen any blocks yet: scan height 0"),
+		ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
+		?assertEqual(0, ar_p3_db:get_scan_height(),
+			"Node hasn't seen any blocks yet: scan height 0"),
 
-	%% Nodes only scan for P3 depostics when a new block is received, so the balance will be 0
-	%% until the next block comes in.
-	wait_until_height(4),
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
-	?assertEqual(0, ar_p3_db:get_scan_height(),
-		"Node has seen blocks, but hasn't received a new_tip event yet: scan height 0"),
+		%% Nodes only scan for P3 depostics when a new block is received, so the balance will be 0
+		%% until the next block comes in.
+		wait_until_height(main, 4),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Sender1Address)),
+		?assertEqual(0, ar_p3_db:get_scan_height(),
+			"Node has seen blocks, but hasn't received a new_tip event yet: scan height 0"),
 
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 5),
-	wait_until_height(5),
-	%% allow time for the new_tip event to be processed
-	timer:sleep(1000),
-	?assertEqual(5, ar_p3_db:get_scan_height(),
-		"Node has received a new_tip event: scan height 5"),
+		ar_test_node:mine(peer1),
+		assert_wait_until_height(peer1, 5),
+		wait_until_height(main, 5),
+		%% allow time for the new_tip event to be processed
+		timer:sleep(1000),
+		?assertEqual(5, ar_p3_db:get_scan_height(),
+			"Node has received a new_tip event: scan height 5"),
 
-	%% We should have scanned the second deposit, and omitted the first deposit since it
-	%% occurred before ?MAX_BLOCK_SCAN blocks in the past.
-	?assertEqual({<<"200">>, <<"500">>}, get_balance(Sender1Address)),
+		%% We should have scanned the second deposit, and omitted the first deposit since it
+		%% occurred before ?MAX_BLOCK_SCAN blocks in the past.
+		?assertEqual({<<"200">>, <<"500">>}, get_balance(Sender1Address)),
 
-	ar_test_node:disconnect_from(peer1),
-	stop(),
-	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
-	?assertEqual(5, ar_p3_db:get_scan_height(),
-		"Restarting node should not have reset scan height db: scan height 5"),
-	
-	ok = application:set_env(arweave, config, BaseConfig).
+		ar_test_node:disconnect_from(peer1),
+		stop(),
+		ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
+		?assertEqual(5, ar_p3_db:get_scan_height(),
+			"Restarting node should not have reset scan height db: scan height 5")
+	after
+		ok = application:set_env(arweave, config, BaseConfig)
+	end.
 
 %% @doc Test that a bunch of concurrent requests don't overspend the P3 account and that they
 %% are gated before they are processed (i.e. if the account does not have sufficient balance,
@@ -859,74 +867,76 @@ e2e_concurrent_requests() ->
 		{DepositAddress, ?AR(10000), <<>>}
 	]),
 	{ok, BaseConfig} = application:get_env(arweave, config),
-	Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, 0, 1, 100) },
-	ar_test_node:start(B0, RewardAddress, Config),
-	ar_test_node:start_peer(peer1, B0),
-	ar_test_node:connect_to_peer(peer1),
+	try
+		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, 0, 1, 100) },
+		ar_test_node:start(B0, RewardAddress, Config),
+		ar_test_node:start_peer(peer1, B0),
+		ar_test_node:connect_to_peer(peer1),
 
-	%% Post a 100 winston deposit and wait for it to be picked up.
-	TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),
-	ar_test_node:assert_post_tx_to_peer(main, TX1),
-	
-	ar_test_node:mine(),
-	wait_until_height(1),
+		%% Post a 100 winston deposit and wait for it to be picked up.
+		TX1 = ar_test_node:sign_tx(Wallet1, #{ target => DepositAddress, quantity => 100 }),
+		ar_test_node:assert_post_tx_to_peer(main, TX1),
+		
+		ar_test_node:mine(),
+		wait_until_height(main, 1),
 
-	timer:sleep(1000),
+		timer:sleep(1000),
 
-	?assertEqual({<<"200">>, <<"100">>}, get_balance(Address1)),
+		?assertEqual({<<"200">>, <<"100">>}, get_balance(Address1)),
 
-	%% Post 100 concurrent valid requests which all contain a client error. All of them
-	%% should be reversed.
-	NumThreads = 100,
-	ar_util:pmap(
-		fun(_) ->
-			http_request(
-				signed_request(<<"GET">>, <<"/price/abc">>, Priv1,
-					#{
-						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-						?P3_ADDRESS_HEADER => EncodedAddress1
-					}
+		%% Post 100 concurrent valid requests which all contain a client error. All of them
+		%% should be reversed.
+		NumThreads = 100,
+		ar_util:pmap(
+			fun(_) ->
+				http_request(
+					signed_request(<<"GET">>, <<"/price/abc">>, Priv1,
+						#{
+							?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+							?P3_ADDRESS_HEADER => EncodedAddress1
+						}
+					)
 				)
-			)
-		end,
-		lists:duplicate(NumThreads,Address1)
-	),
+			end,
+			lists:duplicate(NumThreads,Address1)
+		),
 
-	?assertEqual({<<"200">>, <<"100">>}, get_balance(Address1)),
+		?assertEqual({<<"200">>, <<"100">>}, get_balance(Address1)),
 
-	{ok, AccountClientError} = ar_p3_db:get_account(Address1),
-	%% Due to variation in when requests are processed, some requests will be blocked before
-	%% being processed, others will be blocked after being processed. We do know that an
-	%% even nmber of transactions should have been added - for each request that is processed
-	%% there should be a charge and a reversal - and that at least 2 should have been added
-	%% (beyond the earlier deposit trnsaction).
-	Count = AccountClientError#p3_account.count,
-	?assert(Count >= 3),
-	?assertEqual(0, (Count-1) rem 2),
+		{ok, AccountClientError} = ar_p3_db:get_account(Address1),
+		%% Due to variation in when requests are processed, some requests will be blocked before
+		%% being processed, others will be blocked after being processed. We do know that an
+		%% even nmber of transactions should have been added - for each request that is processed
+		%% there should be a charge and a reversal - and that at least 2 should have been added
+		%% (beyond the earlier deposit trnsaction).
+		Count = AccountClientError#p3_account.count,
+		?assert(Count >= 3),
+		?assertEqual(0, (Count-1) rem 2),
 
-	%% Post 100 concurrent valid requests. Only 1 of them should succeed before the P3 balance
-	%% is exhausted. The remaining 99 sould all fail *and* none of them should
-	%% generate a reversal. This is because they should all be blocked before being processed.
-	ar_util:pmap(
-		fun(_) ->
-			http_request(
-				signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
-					#{
-						?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
-						?P3_ADDRESS_HEADER => EncodedAddress1
-					}
+		%% Post 100 concurrent valid requests. Only 1 of them should succeed before the P3 balance
+		%% is exhausted. The remaining 99 sould all fail *and* none of them should
+		%% generate a reversal. This is because they should all be blocked before being processed.
+		ar_util:pmap(
+			fun(_) ->
+				http_request(
+					signed_request(<<"GET">>, <<"/price/1000">>, Priv1,
+						#{
+							?P3_ENDPOINT_HEADER => <<"/price/{bytes}">>,
+							?P3_ADDRESS_HEADER => EncodedAddress1
+						}
+					)
 				)
-			)
-		end,
-		lists:duplicate(NumThreads,Address1)
-	),
+			end,
+			lists:duplicate(NumThreads,Address1)
+		),
 
-	?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
+		?assertEqual({<<"200">>, <<"0">>}, get_balance(Address1)),
 
-	{ok, AccountValid} = ar_p3_db:get_account(Address1),
-	?assertEqual(Count+1, AccountValid#p3_account.count),
-
-	ok = application:set_env(arweave, config, BaseConfig).
+		{ok, AccountValid} = ar_p3_db:get_account(Address1),
+		?assertEqual(Count+1, AccountValid#p3_account.count)
+	after
+		ok = application:set_env(arweave, config, BaseConfig)
+	end.
 
 %% ------------------------------------------------------------------
 %% Private helper functions

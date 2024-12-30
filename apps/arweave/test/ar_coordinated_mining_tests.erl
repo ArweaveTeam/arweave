@@ -53,7 +53,7 @@ refetch_partitions_test_() ->
 test_single_node_one_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
-	BI = ar_test_node:wait_until_height(ValidatorNode, 1),
+	BI = ar_test_node:wait_until_height(ValidatorNode, 1, false),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa)#poa.data_path) > 0),
 	assert_empty_cache(Node).
@@ -62,7 +62,7 @@ test_single_node_one_chunk() ->
 test_single_node_two_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
-	BI = ar_test_node:wait_until_height(ValidatorNode, 1),
+	BI = ar_test_node:wait_until_height(ValidatorNode, 1, false),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa2)#poa.data_path) > 0),
 	assert_empty_cache(Node).
@@ -141,24 +141,28 @@ test_bad_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
 	Peer = ar_test_node:peer_ip(Node),
 	{ok, Config} = application:get_env(arweave, config),
-	ok = application:set_env(arweave, config,
-			Config#config{ cm_api_secret = <<"this_is_not_the_actual_secret">> }),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:get_cm_partition_table(Peer)),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
+	try
+		ok = application:set_env(arweave, config,
+				Config#config{ cm_api_secret = <<"this_is_not_the_actual_secret">> }),
+		?assertMatch(
+			{error, {ok, {{<<"421">>, _}, _, 
+				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
+			ar_http_iface_client:get_cm_partition_table(Peer)),
+		?assertMatch(
+			{error, {ok, {{<<"421">>, _}, _, 
+				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
+			ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
+		?assertMatch(
+			{error, {ok, {{<<"421">>, _}, _, 
+				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
+			ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
+		?assertMatch(
+			{error, {ok, {{<<"421">>, _}, _, 
+				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
+			ar_http_iface_client:cm_publish_send(Peer, dummy_solution()))
+	after
+		ok = application:set_env(arweave, config, Config)
+	end.
 
 test_partition_table() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ?PARTITION_SIZE),
@@ -403,17 +407,30 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	ar_util:pmap(fun(Node) -> ar_test_node:mine(Node) end, Miners),
 	?debugFmt("Waiting until the validator node (port ~B) advances to height ~B.",
 			[ar_test_node:peer_port(ValidatorNode), CurrentHeight + 1]),
-	[{Hash, _, _} | _] = ar_test_node:wait_until_height(ValidatorNode, CurrentHeight + 1),
+	BIValidator = ar_test_node:wait_until_height(ValidatorNode, CurrentHeight + 1, false),
+	%% Since multiple nodes are mining in parallel it's possible that multiple blocks
+	%% were mined. Get the Validator's current height in cas it's more than CurrentHeight+1.
+	NewHeight = ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
+
+	Hashes = [Hash || {Hash, _, _} <- lists:sublist(BIValidator, NewHeight - CurrentHeight)],
+	
 	lists:foreach(
 		fun(Node) ->
-			[{MinerHash, _, _} | _] = ar_test_node:wait_until_height(Node, CurrentHeight + 1),
+			?LOG_DEBUG([{test, ar_coordinated_mining_tests},
+				{waiting_for_height, NewHeight}, {node, Node}]),
+			%% Make sure the miner contains all of the new validator hashes, it's okay if
+			%% the miner contains *more* hashes since it's possible concurrent blocks were
+			%% mined between when the Validator checked and now.
+			BIMiner = ar_test_node:wait_until_height(Node, NewHeight, false),
+			MinerHashes = [Hash || {Hash, _, _} <- BIMiner],
 			Message = lists:flatten(io_lib:format(
 					"Node ~p did not mine the same block as the validator node", [Node])),
-			?assertEqual(ar_util:encode(Hash), ar_util:encode(MinerHash), Message)
+			?assert(lists:all(fun(Hash) -> lists:member(Hash, MinerHashes) end, Hashes), Message)
 		end,
 		Miners
 	),
-	{ok, Block} = ar_test_node:http_get_block(Hash, ValidatorNode),
+	LatestHash = lists:last(Hashes),
+	{ok, Block} = ar_test_node:http_get_block(LatestHash, ValidatorNode),
 
 	case Block#block.recall_byte2 of
 		undefined -> 

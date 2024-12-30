@@ -2,10 +2,13 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([get_config/1,set_config/2, wait_until_joined/0, restart/0, restart/1,
+		stop_all_nodes/0,
 		start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
-		wait_until_height/2, http_get_block/2, get_blocks/1,
+		wait_until_height/1, wait_until_height/2, wait_until_height/3, 
+		assert_wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, remote_call/4, load_fixture/1,
+		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
+		load_fixture/1,
 		get_default_storage_module_packing/2]).
 
 %% The "legacy" interface.
@@ -19,7 +22,6 @@
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 
-		wait_until_height/1, assert_wait_until_height/2,
 		wait_until_block_index/1, wait_until_block_index/2,
 		wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
@@ -56,7 +58,7 @@
 -define(REMOTE_CALL_TIMEOUT, 500_000).
 -define(CONNECT_TO_PEER_TIMEOUT, 500_000).
 -define(BLOCK_INDEX_TIMEOUT, 500_000).
--define(TEST_MOCKED_FUNCTIONS_TIMEOUT, 500_000).
+-define(TEST_MOCKED_FUNCTIONS_TIMEOUT, 500). %% in seconds
 -define(POST_AND_MINE_TIMEOUT, 500_000).
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
@@ -68,6 +70,9 @@
 %%%===================================================================
 all_peers() ->
 	[peer1, peer2, peer3, peer4].
+
+all_nodes() ->
+	[main | all_peers()].
 
 boot_peers() ->
 	boot_peers(all_peers()).
@@ -697,6 +702,15 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 		Wallet
 	).
 
+stop_all_nodes() ->
+	stop_nodes(all_nodes()).
+
+stop_nodes([Node | Nodes]) ->
+	stop(Node),
+	stop_nodes(Nodes);
+stop_nodes([]) ->
+	ok.
+
 stop() ->
 	{ok, Config} = application:get_env(arweave, config),
 	application:stop(arweave),
@@ -823,7 +837,8 @@ wait_until_syncs_genesis_data(Node) ->
 
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
-	WeaveSize = (ar_node:get_current_block())#block.weave_size,
+	B = ar_node:get_current_block(),
+	WeaveSize = B#block.weave_size,
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, any)
 			|| {Size, N, _Packing} <- Config#config.storage_modules],
 	%% Once the data is stored in the disk pool, make the storage modules
@@ -836,14 +851,35 @@ wait_until_syncs_genesis_data() ->
 	ok.
 
 wait_until_height(Node, TargetHeight) ->
-	remote_call(Node, ?MODULE, wait_until_height, [TargetHeight],
-			?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500).
+	wait_until_height(Node, TargetHeight, true).
+
+wait_until_height(Node, TargetHeight, Strict) ->
+	{BI, Height} = case Node of 
+		main ->
+			{
+				wait_until_height(TargetHeight),
+				ar_node:get_height()
+			};
+		_ -> 
+			{
+				remote_call(Node, ?MODULE, wait_until_height, [TargetHeight],
+					?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500),
+				remote_call(Node, ar_node, get_height, [])
+			}
+	end,
+	case Strict of
+		true ->
+			?assertEqual(TargetHeight, Height);
+		false ->
+			ok
+	end,
+	BI.
 
 wait_until_height(TargetHeight) ->
 	{ok, BI} = ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks() of
-				BI when length(BI) - 1 == TargetHeight ->
+				BI when length(BI) - 1 >= TargetHeight ->
 					{ok, BI};
 				_ ->
 					false
@@ -1009,6 +1045,30 @@ get_tx_confirmations(Node, TXID) ->
 			-1
 	end.
 
+new_mock(Module, Options) ->
+	try
+		meck:new(Module, Options)
+	catch
+		error:E ->
+			?LOG_ERROR("Error creating mock for ~p: ~p", [Module, E])
+	end.
+
+mock_function(Module, Fun, Mock) ->
+	try
+		meck:expect(Module, Fun, Mock)
+	catch
+		error:E ->
+			?LOG_ERROR("Error setting mock for ~p: ~p", [Module, E])
+	end.
+
+unmock_module(Module) ->
+	try
+		meck:unload(Module)
+	catch
+		error:E ->
+			?LOG_ERROR("Error unloading mock for ~p: ~p", [Module, E])
+	end.
+
 mock_functions(Functions) ->
 	{
 		fun() ->
@@ -1016,10 +1076,10 @@ mock_functions(Functions) ->
 				fun({Module, Fun, Mock}, Mocked) ->
 					NewMocked = case maps:get(Module, Mocked, false) of
 						false ->
-							meck:new(Module, [passthrough]),
+							new_mock(Module, [passthrough]),
 							lists:foreach(
 								fun(Node) ->
-									remote_call(Node, meck, new,
+									remote_call(Node, ar_test_node, new_mock,
 											[Module, [no_link, passthrough]])
 								end,
 								all_peers()),
@@ -1027,12 +1087,13 @@ mock_functions(Functions) ->
 						true ->
 							Mocked
 					end,
+					mock_function(Module, Fun, Mock),
 					lists:foreach(
 						fun(Node) ->
-							meck:expect(Module, Fun, Mock),
-							remote_call(Node, meck, expect, [Module, Fun, Mock])
+							remote_call(Node, ar_test_node, mock_function,
+									[Module, Fun, Mock])
 						end,
-						[main | all_peers()]),
+						all_peers()),
 					NewMocked
 				end,
 				maps:new(),
@@ -1042,11 +1103,12 @@ mock_functions(Functions) ->
 		fun(Mocked) ->
 			maps:fold(
 				fun(Module, _, _) ->
+					unmock_module(Module),
 					lists:foreach(
 						fun(Node) ->
-							remote_call(Node, meck, unload, [Module])
+							remote_call(Node, ar_test_node, unmock_module, [Module])
 						end,
-						[main | all_peers()])
+						all_peers())
 				end,
 				noop,
 				Mocked

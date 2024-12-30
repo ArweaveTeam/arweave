@@ -98,8 +98,11 @@ test_syncs_after_joining(Split) ->
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs1, infinity).
 
 mines_off_only_last_chunks_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
 			fun test_mines_off_only_last_chunks/0).
+
+mock_reset_frequency() ->
+	{ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
 
 test_mines_off_only_last_chunks() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
@@ -133,7 +136,7 @@ test_mines_off_only_last_chunks() ->
 					true = ar_util:do_until(
 						fun() ->
 							ar_nonce_limiter:get_current_step_number()
-									> PrevStepNumber + ?NONCE_LIMITER_RESET_FREQUENCY
+									> PrevStepNumber + ar_nonce_limiter:get_reset_frequency()
 						end,
 						100,
 						60000
@@ -161,7 +164,7 @@ test_mines_off_only_last_chunks() ->
 	).
 
 mines_off_only_second_last_chunks_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
 			fun test_mines_off_only_second_last_chunks/0).
 
 test_mines_off_only_second_last_chunks() ->

@@ -32,26 +32,31 @@
 %% The size in bytes of the component (NOT the total) RX2 scratchpad.
 -define(RANDOMX_SCRATCHPAD_SIZE, 2097152).
 
-%% The number of sub-chunks sharing the entropy in the new replication scheme
-%% (replica_format=1.)
+%% The size in bytes of the total RX2 entropy (# of lanes * scratchpad size).
 -ifdef(DEBUG).
--define(REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT, 3).
+-define(REPLICA_2_9_ENTROPY_SIZE, (3 * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE)).
 -else.
--define(REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT, 1024). % 8_388_608 bytes worth of entropy.
+%% 8_388_608 bytes worth of entropy.
+-define(REPLICA_2_9_ENTROPY_SIZE, (
+	?REPLICA_2_9_RANDOMX_LANE_COUNT * ?RANDOMX_SCRATCHPAD_SIZE
+)).
 -endif.
 
-%% The additional number of entropy masks generated per partition.
+%% The additional number of entropies generated per partition.
 %% The value is chosen depending on the PARTITION_SIZE
-%% and REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT constants
-%% such that the sector size (mask count * sub-chunk size) is evenly divisible
+%% and REPLICA_2_9_ENTROPY_SIZE constants
+%% such that the sector size (num entropies * sub-chunk size) is evenly divisible
 %% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
 -ifdef(DEBUG).
--define(REPLICA_2_9_EXTRA_ENTROPY_MASK_COUNT, 11).
+-define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 11).
 -else.
+%% Extra entropies to be added to each partition so that the partition holds a multiple
+%% of 32 entropies.
+%% 
 %% 3_600_000_000_000 / 8_388_608 = 429153.4423828125;
 %% (429153 + 31) * 8192 / 262144 == 13412 - the first evenly divisible number of
 %% the form (429153 + X) * 8192.
--define(REPLICA_2_9_EXTRA_ENTROPY_MASK_COUNT, 31).
+-define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 31).
 -endif.
 
 %% The effective packing difficulty of the new replication format (replica_format=1.)
@@ -141,12 +146,8 @@
 %% adding the entropy at certain blocks (rather than nonce limiter steps) allows
 %% miners to use extra bandwidth (bearing almost no additional costs) to compute
 %% nonces on the short forks with different-entropy nonce limiting chains.
--ifdef(DEBUG).
--define(NONCE_LIMITER_RESET_FREQUENCY, 5).
--else.
 -ifndef(NONCE_LIMITER_RESET_FREQUENCY).
 -define(NONCE_LIMITER_RESET_FREQUENCY, (10 * 120)).
--endif.
 -endif.
 
 %% The maximum number of one-step checkpoints the block header may include.

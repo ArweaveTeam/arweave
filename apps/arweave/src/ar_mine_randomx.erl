@@ -107,8 +107,9 @@ randomx_reencrypt_chunk(SourcePacking, TargetPacking,
 %%% DEBUG implementation
 randomx_generate_replica_2_9_entropy({_, {debug_state, _}}, Key) ->
 	%% Make it fast, deterministic, and scoped by Key.
-	%% Note that ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT is
+	%% Note that ?REPLICA_2_9_ENTROPY_SIZE is
 	%% reduced significantly in the DEBUG mode.
+	SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	lists:foldl(
 		fun(N1, Acc) ->
 			lists:foldl(
@@ -121,7 +122,7 @@ randomx_generate_replica_2_9_entropy({_, {debug_state, _}}, Key) ->
 			)
 		end,
 		<<>>,
-		lists:seq(1, ?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT)
+		lists:seq(1, SubChunkCount)
 	);
 
 %% Non-DEBUG implementation
@@ -139,7 +140,7 @@ randomx_generate_replica_2_9_entropy_opt({_, {debug_state, _}} = State, Key) ->
 randomx_generate_replica_2_9_entropy_opt({rxsquared, RandomxState}, Key) ->
 	{ok, EntropyFused} = ar_rxsquared_nif:rsp_fused_entropy_nif(
 		RandomxState,
-		?REPLICA_2_9_ENTROPY_SUB_CHUNK_COUNT,
+		?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 		?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 		?REPLICA_2_9_RANDOMX_LANE_COUNT,
 		?REPLICA_2_9_RANDOMX_DEPTH,
