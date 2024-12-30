@@ -5,11 +5,8 @@
 -on_load(init_nif/0).
 
 -export([rxsquared_hash_nif/5, rxsquared_info_nif/1, rxsquared_init_nif/5,
-		rsp_exec_nif/7,
 		rsp_exec_test_nif/7,
-		rsp_init_scratchpad_nif/6,
-		rsp_mix_entropy_crc32_nif/1,
-		rsp_mix_entropy_far_nif/1,
+		rsp_mix_entropy_crc32_test_nif/1,
 		rsp_mix_entropy_far_test_nif/3,
 		rsp_fused_entropy_nif/10,
 		rsp_feistel_encrypt_nif/2,
@@ -39,27 +36,15 @@ init_nif() ->
 %%% Randomx square packing
 %%%===================================================================
 
-rsp_exec_nif(_State, _Hash, _Scratchpad, _JIT, _LargePages, _HardwareAES, _RoundCount) ->
-	?LOG_ERROR("rsp_exec_nif"),
-	erlang:nif_error(nif_not_loaded).
-
 rsp_exec_test_nif(_State, _Hash, _Scratchpad, _JIT, _LargePages, _HardwareAES, _RoundCount) ->
 	?LOG_ERROR("rsp_exec_test_nif"),
 	erlang:nif_error(nif_not_loaded).
 
-rsp_init_scratchpad_nif(_State, _Input, _JIT, _LargePages, _HardwareAES, _RoundCount) ->
-	?LOG_ERROR("rsp_init_scratchpad_nif"),
+
+rsp_mix_entropy_crc32_test_nif(_Entropy) ->
+	?LOG_ERROR("rsp_mix_entropy_crc32_test_nif"),
 	erlang:nif_error(nif_not_loaded).
 
-rsp_mix_entropy_crc32_nif(_Entropy) ->
-	?LOG_ERROR("rsp_mix_entropy_crc32_nif"),
-	erlang:nif_error(nif_not_loaded).
-
-rsp_mix_entropy_far_nif(_Entropy) ->
-	?LOG_ERROR("rsp_mix_entropy_far_nif"),
-	erlang:nif_error(nif_not_loaded).
-
-% NOTE maybe this impl will replace rsp_mix_entropy_far_nif
 rsp_mix_entropy_far_test_nif(_Entropy, _JumpSize, _BlockSize) ->
 	?LOG_ERROR("rsp_mix_entropy_far_test_nif"),
 	erlang:nif_error(nif_not_loaded).
@@ -76,7 +61,7 @@ rsp_fused_entropy_nif(
 	_RandomxProgramCount,
 	_Key
 ) ->
-	?LOG_ERROR("randomx_generate_replica_2_9_entropy_nif"),
+	?LOG_ERROR("rsp_fused_entropy_nif"),
 	erlang:nif_error(nif_not_loaded).
 
 rsp_feistel_encrypt_nif(_InMsg, _Key) ->

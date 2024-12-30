@@ -243,7 +243,7 @@ get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 			Entropy = prometheus_histogram:observe_duration(
 				replica_2_9_entropy_duration_milliseconds, [], 
 					fun() ->
-						ar_mine_randomx:randomx_generate_replica_2_9_entropy_opt(RandomXState, Key)
+						ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
 					end),
 			ar_shared_entropy_cache:put(Key, Entropy, EntropySize),
 			Entropy;
