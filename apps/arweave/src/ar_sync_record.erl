@@ -402,12 +402,12 @@ handle_cast({add_async, Event, End, Start, ID}, State) ->
 		ok ->
 			?LOG_DEBUG([{event, Event},
 					{status, success},
-					{storage_module, ID},
+					{sync_record_id, ID},
 					{offset, End}]);
 		Error ->
 			?LOG_ERROR([{event, Event},
 					{status, failed},
-					{storage_module, ID},
+					{sync_record_id, ID},
 					{offset, End},
 					{error, io_lib:format("~p", [Error])}])
 	end,
@@ -419,13 +419,13 @@ handle_cast({add_async, Event, End, Start, Type, ID}, State) ->
 		ok ->
 			?LOG_DEBUG([{event, Event},
 					{status, success},
-					{storage_module, ID},
+					{sync_record_id, ID},
 					{offset, End},
 					{packing, ar_serialize:encode_packing(Type, true)}]);
 		Error ->
 			?LOG_ERROR([{event, Event},
 					{status, failed},
-					{storage_module, ID},
+					{sync_record_id, ID},
 					{offset, End},
 					{packing, ar_serialize:encode_packing(Type, true)},
 					{error, io_lib:format("~p", [Error])}])
