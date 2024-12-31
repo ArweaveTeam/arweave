@@ -27,8 +27,12 @@
     2. Each 8 MiB entropy contains 1024 8 KiB slices. To finish packing the sub-chunks we
        will encipher them with the appropriate slice. A sub-chunk's slice index is
        determined by its *chunk* - each sub-chunk in a chunk is assigned to a different
-       *entropy* but has the same *slice index*.
+       *entropy* but has the same *slice index*. A slice index and sector index are the same
+       but are just used in difference contexts (e.g. slices divide up entropy, sectors
+       divide up the partition). A chunk in sector 0 of the partition is enciphered with
+       slice index 0 from its entropies.
 
+         sector0   sector1  sector2           sector1023        sector0  sector1
          chunk0    c12413   c26825            cXXXXXX           chunk1   c12414
          +-------++-------++-------+         +-------+          +-------++-------+
          | | | | || | | | || | | | |   ...   | | | | |          | | | | || | | | |
@@ -74,8 +78,11 @@
     slice index: the index of a slice within an entropy. All of a chunk's sub-chunks have
                  the same slice index.
 
-    sector: 1/32 the size of an entropy partition. 
-        """.
+    sector: Each slice of an entropy is distributed to a different sector such that consecutive
+            slices map to chunks that are as far as possible from each other within a
+            partition. With an entropy size of 8_388_608 bytes and a slice size of 8_192 bytes,
+            there are 1024 slices per entropy, which yields 1024 sectors per partition.
+""".
 
 
 %%%===================================================================
@@ -89,9 +96,8 @@
 		AbsoluteChunkEndOffset :: non_neg_integer()
 ) -> non_neg_integer().
 get_entropy_partition(AbsoluteChunkEndOffset) ->
-	EntropyPartitionSize = get_entropy_partition_size(),
     BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
-	BucketStart div EntropyPartitionSize.
+    ar_node:get_partition_number(BucketStart).
 
 %% @doc Return the key used to generate the entropy for the 2.9 replication format.
 %% RewardAddr: The address of the miner that mined the chunk.
@@ -114,7 +120,7 @@ get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 %% area where the 2.9 entropy of every chunk is unique.
 -spec get_sector_size() -> pos_integer().
 get_sector_size() ->
-	get_entropy_count() * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+	?REPLICA_2_9_ENTROPY_COUNT * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
 
 %% @doc Return the 0-based index indicating which area within a 2.9 entropy the
 %% given sub-chunk is mapped to (aka slice index). Sub-chunks of the same chunk are mapped to
@@ -123,10 +129,10 @@ get_sector_size() ->
 		AbsoluteChunkEndOffset :: non_neg_integer()
 ) -> non_neg_integer().
 get_slice_index(AbsoluteChunkEndOffset) ->
-	BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
+    PartitionRelativeOffset = get_partition_offset(AbsoluteChunkEndOffset),
     SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	SectorSize = get_sector_size(),
-	(BucketStart div SectorSize) rem SubChunkCount.
+	(PartitionRelativeOffset div SectorSize) rem SubChunkCount.
 
 
 %%%===================================================================
@@ -145,22 +151,13 @@ get_entropy_bucket_start(AbsoluteChunkEndOffset) ->
     
 	BucketStart.
 
-%% @doc Return the total number of entropies generated per partition
-%% in the 2.9 replication format.
--spec get_entropy_count() -> non_neg_integer().
-get_entropy_count() ->
-	Count = ?PARTITION_SIZE div ?REPLICA_2_9_ENTROPY_SIZE,
-	false = ?PARTITION_SIZE rem ?REPLICA_2_9_ENTROPY_SIZE == 0,
-	%% Add some extra entropies so that the total count is multiple of 32. There are
-    %% 32 sub-chunks per chunk, and each sub-chunk is enciphered with a different entropy. 
-    %% Ensuring we have a multiple of 32 entropies proves very convenient for chunk-by-chunk
-    %% syncing.
-    %% 
-	%% The additional number of entropies (the constant) is chosen depending
-	%% on the PARTITION_SIZE and REPLICA_2_9_ENTROPY_SIZE constants
-	%% such that the sector size (num entropies * sub-chunk size) is evenly divisible
-	%% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
-	Count + ?REPLICA_2_9_EXTRA_ENTROPY_COUNT.
+%% @doc Return the offset of the chunk within its partition.
+-spec get_partition_offset(AbsoluteChunkEndOffset :: non_neg_integer()) -> non_neg_integer().
+get_partition_offset(AbsoluteChunkEndOffset) ->
+    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
+    Partition = get_entropy_partition(AbsoluteChunkEndOffset),
+    PartitionStart = Partition * ?PARTITION_SIZE,
+    BucketStart - PartitionStart.
 
 %% @doc Returns the index of the entropy containing the slice for specified chunk's sub-chunk. 
 %% An entropy index is 0-based index used to identify a specific entropy within an entropy
@@ -176,18 +173,17 @@ get_entropy_count() ->
 get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
     %% Assert that SubChunkStartOffset is less than ?DATA_CHUNK_SIZE
     true = SubChunkStartOffset < ?DATA_CHUNK_SIZE,
-    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
-    SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+    PartitionRelativeOffset = get_partition_offset(AbsoluteChunkEndOffset),
     SectorSize = get_sector_size(),
     %% Index of this chunk into the sector (i.e. how many chunks into the sector it falls)
-    ChunkBucket = (BucketStart rem SectorSize) div ?DATA_CHUNK_SIZE,
+    ChunkBucket = (PartitionRelativeOffset rem SectorSize) div ?DATA_CHUNK_SIZE,
     %% Index of this sub-chunk into the chunk (i.e. how many sub-chunks into the chunk it
     %% falls)
-    SubChunkBucket = SubChunkStartOffset div SubChunkSize,
+    SubChunkBucket = SubChunkStartOffset div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     ChunkBucket * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT + SubChunkBucket.
 
 get_entropy_partition_size() ->
-    get_entropy_count() * ?REPLICA_2_9_ENTROPY_SIZE.
+    ?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE.
 
 %%%===================================================================
 %%% Tests.
@@ -196,9 +192,11 @@ get_entropy_partition_size() ->
 get_entropy_key_test() ->
     SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     SectorSize = get_sector_size(),
-    PartitionSize = get_entropy_partition_size(),
+    EntropyPartitionSize = get_entropy_partition_size(),
     Addr = << 0:256 >>,
     ?assertEqual(32, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
+    ?assertEqual(?REPLICA_2_9_ENTROPY_COUNT * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE, SectorSize),
+    ?assertEqual(?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE, EntropyPartitionSize),
     ?assertEqual(0, get_entropy_index(1, 0)),
     EntropyKey = ar_util:encode(get_entropy_key(Addr, 1, 0)),
     ?assertEqual(EntropyKey,
@@ -237,21 +235,31 @@ get_entropy_key_test() ->
             ar_util:encode(get_entropy_key(Addr, 262144 * 4 + 1 + SectorSize, 0))),
     ?assertEqual(EntropyKey5,
             ar_util:encode(get_entropy_key(Addr, 262144 * 5 + SectorSize, 0))),
-    %% The partition changes at this point (> 9 chunk sizes.)
+
+    %% Exactly equal to the recall partition size:
     ?assertEqual(0, get_entropy_partition(262144 * 5 + SectorSize)),
-    ?assertEqual(0, get_entropy_partition(262144 * 5 + SectorSize + 1)),
+    %% One greater than the recall partition size:
+    ?assertEqual(1, get_entropy_partition(262144 * 5 + SectorSize + 1)),
+    %% Greater than the entropy partition size (shouldn't matter since we map chunks
+    %% based on recall partition size)
     ?assertEqual(1, get_entropy_partition(262144 * 6 + SectorSize + 1)),
     %% The new partition => the new entropy.
     EntropyKey6 =
             ar_util:encode(get_entropy_key(Addr, 262144 * 5 + 2 * SectorSize, 0)),
     ?assertNotEqual(EntropyKey6, EntropyKey5),
-    %% There is, off course, regularity within every partition.
+    %% There is, of course, regularity within every partition.
     ?assertEqual(EntropyKey6,
             ar_util:encode(get_entropy_key(Addr, 262144 * 5 + 3 * SectorSize, 0))),
-    ?assertEqual(0, get_entropy_partition(PartitionSize)),
-    ?assertEqual(1, get_entropy_partition(2 * PartitionSize)),
-    ?assertEqual(2, get_entropy_partition(3 * PartitionSize)),
-    ?assertEqual(9, get_entropy_partition(10 * PartitionSize)),
+
+    %% Test the edges of recall partition vs. entropy partition.
+    ?assertEqual(0, get_entropy_partition(?PARTITION_SIZE)),    
+    ?assertEqual(1, get_entropy_partition(EntropyPartitionSize)),
+    ?assertEqual(1, get_entropy_partition(2 * ?PARTITION_SIZE)),
+    ?assertEqual(2, get_entropy_partition(?PARTITION_SIZE + EntropyPartitionSize)),
+    ?assertEqual(2, get_entropy_partition(3 * ?PARTITION_SIZE)),
+    ?assertEqual(3, get_entropy_partition(2 * ?PARTITION_SIZE + EntropyPartitionSize)),
+    ?assertEqual(10, get_entropy_partition(11 * ?PARTITION_SIZE)),
+    ?assertEqual(11, get_entropy_partition(10 * ?PARTITION_SIZE + EntropyPartitionSize)),
     %% This sub-chunk offset isn't used in practice, just adding a bounds check.
     ?assertMatch(
         {'EXIT', {{badmatch, false}, _}},  catch get_entropy_index(0, 32 * SubChunkSize)).
@@ -265,7 +273,7 @@ slice_index_walk_test() ->
     ?assertEqual(9 * 262144, get_entropy_partition_size()),
 
     %% Entropies per partition.
-    ?assertEqual(96, get_entropy_count()),
+    ?assertEqual(96, ?REPLICA_2_9_ENTROPY_COUNT),
     %% Sub-chunks per entropy.
     SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     ?assertEqual(3, SubChunkCount),
@@ -320,31 +328,48 @@ slice_index_walk_test() ->
     assert_slice_index(2, [
         7*262144+1, 8*262144-1, 8*262144
     ]),
-    assert_slice_index(2, [
+
+    %% Recall partition start
+    %% Sector start
+    assert_slice_index(0, [
         8*262144+1, 9*262144-1, 9*262144
     ]),
-
-    %% Partition start
-    %% Sector start
     assert_slice_index(0, [
         9*262144+1, 10*262144-1, 10*262144
     ]),
     assert_slice_index(0, [
         10*262144+1, 11*262144-1, 11*262144
     ]),
-    assert_slice_index(0, [
-        11*262144+1, 12*262144-1, 12*262144
-    ]),
 
     %% Sector start
     assert_slice_index(1, [
+        11*262144+1, 12*262144-1, 12*262144
+    ]),
+    assert_slice_index(1, [
         12*262144+1, 13*262144-1, 13*262144
+    ]),
+    assert_slice_index(1, [
+        13*262144+1, 14*262144-1, 14*262144
+    ]),
+    
+    %% Sector start
+    assert_slice_index(2, [
+        14*262144+1, 15*262144-1, 15*262144
+    ]),
+    assert_slice_index(2, [
+        15*262144+1, 16*262144-1, 16*262144
+    ]),
+
+    %% Recall partition start
+    %% Sector start
+    assert_slice_index(0, [
+        16*262144+1, 17*262144-1, 17*262144
     ]),
 
     ?assertEqual(SubChunkCount - 1,
-            get_slice_index(get_entropy_partition_size())),
+            get_slice_index(?PARTITION_SIZE)),
     ?assertEqual(0,
-            get_slice_index(get_entropy_partition_size() + 1)),
+            get_slice_index(?PARTITION_SIZE + 1)),
 
     ok.
 
@@ -365,7 +390,7 @@ entropy_index_walk_test() ->
     ?assertEqual(3 * 8192, ?REPLICA_2_9_ENTROPY_SIZE),
     ?assertEqual(3 * 262144, ?STRICT_DATA_SPLIT_THRESHOLD),
     ?assertEqual(3 * 262144, get_sector_size()),
-    ?assertEqual(96, get_entropy_count()),
+    ?assertEqual(96, ?REPLICA_2_9_ENTROPY_COUNT),
     ?assertEqual(9 * 262144, get_entropy_partition_size()),
     
 
@@ -430,26 +455,44 @@ entropy_index_walk_test() ->
     assert_entropy_index(32, [
         7*262144+1, 8*262144-1, 8*262144
     ]),
-    assert_entropy_index(64, [
+
+    %% Partition start
+    %% Sector start
+    assert_entropy_index(0, [
         8*262144+1, 9*262144-1, 9*262144
+    ]),
+    assert_entropy_index(32, [
+        9*262144+1, 10*262144-1, 10*262144
+    ]),
+    assert_entropy_index(64, [
+        10*262144+1, 11*262144-1, 11*262144
+    ]),
+
+    %% Sector start
+    assert_entropy_index(0, [
+        11*262144+1, 12*262144-1, 12*262144
+    ]),
+    assert_entropy_index(32, [
+        12*262144+1, 13*262144-1, 13*262144
+    ]),
+    assert_entropy_index(64, [
+        13*262144+1, 14*262144-1, 14*262144
+    ]),
+
+    %% Sector start
+    assert_entropy_index(0, [
+        14*262144+1, 15*262144-1, 15*262144
+    ]),
+    assert_entropy_index(32, [
+        15*262144+1, 16*262144-1, 16*262144
     ]),
 
     %% Partition start
     %% Sector start
     assert_entropy_index(0, [
-        9*262144+1, 10*262144-1, 10*262144
-    ]),
-    assert_entropy_index(32, [
-        10*262144+1, 11*262144-1, 11*262144
-    ]),
-    assert_entropy_index(64, [
-        11*262144+1, 12*262144-1, 12*262144
+        16*262144+1, 17*262144-1, 17*262144
     ]),
 
-    %% Sector start
-    assert_entropy_index(0, [
-        12*262144+1, 13*262144-1, 13*262144
-    ]),
 
     ok.
 
