@@ -240,15 +240,17 @@ get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 
 			{ok, Config} = application:get_env(arweave, config),
 			MaxCacheSize = Config#config.replica_2_9_entropy_cache_size,
-			EntropySize = ?REPLICA_2_9_ENTROPY_SIZE,
-			ar_shared_entropy_cache:allocate_space(EntropySize, MaxCacheSize),
+			ar_shared_entropy_cache:allocate_space(?REPLICA_2_9_ENTROPY_SIZE, MaxCacheSize),
 			Entropy = prometheus_histogram:observe_duration(
 				replica_2_9_entropy_duration_milliseconds, [], 
 					fun() ->
 						ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
 					end),
-			ar_shared_entropy_cache:put(Key, Entropy, EntropySize),
-			Entropy;
+			%% Primarily needed for testing where the entropy generated exceeds the entropy
+			%% needed for tests.
+			Entropy2 = binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE),
+			ar_shared_entropy_cache:put(Key, Entropy2, ?REPLICA_2_9_ENTROPY_SIZE),
+			Entropy2;
 		{ok, Entropy} ->
 			prometheus_counter:inc(replica_2_9_entropy_cache_query, [hit, Partition]),
 

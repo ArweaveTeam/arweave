@@ -43,27 +43,36 @@
 )).
 -endif.
 
-%% The additional number of entropies generated per partition.
-%% The value is chosen depending on the PARTITION_SIZE
-%% and REPLICA_2_9_ENTROPY_SIZE constants
-%% such that the sector size (num entropies * sub-chunk size) is evenly divisible
-%% by ?DATA_CHUNK_SIZE. This proves very convenient for chunk-by-chunk syncing.
--ifdef(TEST).
-%% Extra entropies to be added to each partition so that the partition holds a multiple
-%% of 32 entropies.
-%% 
-%% 2_097_152 / 24_576 = 85.33333333333333
-%% (85 + 11) * 8192 / 262144 == 3 - the first evenly divisible number of
-%% the form (85 + X) * 8192.
--define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 11).
--else.
-%% Extra entropies to be added to each partition so that the partition holds a multiple
-%% of 32 entropies.
-%% 
+%% The number of entropies generated per partition.
+%% The value is chosen depending on the PARTITION_SIZE and REPLICA_2_9_ENTROPY_SIZE constants
+%% such that
+%% 1. Entropy Partition Size =
+%%      REPLICA_2_9_ENTROPY_COUNT * REPLICA_2_9_ENTROPY_SIZE >= PARTITION_SIZE
+%% 2. Sector Size =
+%%      REPLICA_2_9_ENTROPY_COUNT * COMPOSITE_PACKING_SUB_CHUNK_SIZE and
+%%      is divisible by DATA_CHUNK_SIZE
+%% This proves very convenient for chunk-by-chunk syncing.
+%%
+%% Equation to solve for REPLICA_2_9_ENTROPY_COUNT:
+%% round(PARTITION_SIZE / REPLICA_2_9_ENTROPY_SIZE) to nearest multiple of 32
+%%
+%% e.g.
 %% 3_600_000_000_000 / 8_388_608 = 429153.4423828125
-%% (429153 + 31) * 8192 / 262144 == 13412 - the first evenly divisible number of
-%% the form (429153 + X) * 8192.
--define(REPLICA_2_9_EXTRA_ENTROPY_COUNT, 31).
+%% (429_153 + 31) = 429_184 (nearest multiple of 32)
+%%
+%% Entropy Partition Size is 429_184 * 8_388_608 = 3_600_256_335_872
+%% Sector Size is 429_184 * 8192 = 3_515_875_328
+%%
+%% Each slice of an entropy is distributed to a different sector such that consecutive slices
+%% map to chunks that are as far as possible from each other within a partition. With
+%% an entropy size of 8_388_608 bytes and a slice size of 8192 bytes, there are 1024 slices per
+%% entropy, which yields 1024 sectors per partition.
+-ifdef(TEST).
+%% 2_097_152 / 24_576 = 85.33333333333333
+%% (85 + 11) = 96 the nearest multiple of 32
+-define(REPLICA_2_9_ENTROPY_COUNT, 96).
+-else.
+-define(REPLICA_2_9_ENTROPY_COUNT, 429_184).
 -endif.
 
 %% The effective packing difficulty of the new replication format (replica_format=1.)
