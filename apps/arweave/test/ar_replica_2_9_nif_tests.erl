@@ -1,8 +1,7 @@
--module(ar_audit_tests).
+-module(ar_replica_2_9_nif_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
--include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
 setup_replica_2_9() ->
@@ -32,7 +31,7 @@ randomx_replica_2_9_suite_test_() ->
 test_state({FastState, LightState}) ->
 
 	?assertEqual(
-		{ok, {rxsquared, fast, 67602036, 2097152}},
+		{ok, {rxsquared, fast, 34047604, 2097152}},
 		ar_mine_randomx:info(FastState)
 	),
 	?assertEqual(
@@ -62,16 +61,16 @@ test_vectors({FastState, _LightState}) ->
 
 	SubChunk = << 255:(8*8192) >>,
 	EntropySubChunkIndex = 1,
-	{ok, PackedOut} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk({FastState, Entropy, SubChunk,
-		EntropySubChunkIndex}),
-	PackedOutHashReal = crypto:hash(sha256, PackedOut),
-	PackedOutHashExpd = << 15,46,184,11,124,31,150,77,199,107,221,0,136,154,61,
+	{ok, Packed} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk(
+		{FastState, Entropy, SubChunk, EntropySubChunkIndex}),
+	PackedHashReal = crypto:hash(sha256, Packed),
+	PackedHashExpd = << 15,46,184,11,124,31,150,77,199,107,221,0,136,154,61,
 		146,193,198,126,52,19,7,211,28,121,108,176,15,124,33,
 		48,99 >>,
-	?assertEqual(PackedOutHashExpd, PackedOutHashReal),
-	{ok, SubChunkReal} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({FastState, Key, PackedOut,
-		EntropySubChunkIndex}),
-	?assertEqual(SubChunk, SubChunkReal),
+	?assertEqual(PackedHashExpd, PackedHashReal),
+	{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk(
+		{FastState, Key, Packed, EntropySubChunkIndex}),
+	?assertEqual(SubChunk, Unpacked),
 
 	ok.
 
@@ -79,14 +78,14 @@ test_pack_unpack_sub_chunks({State, _LightState}) ->
 	Key = << 0:256 >>,
 	SubChunk = << 0:(8192 * 8) >>,
 	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(State, Key),
-	?assertEqual(268435456, byte_size(Entropy)),
+	?assertEqual(8388608, byte_size(Entropy)),
 	PackedSubChunks = pack_sub_chunks(SubChunk, Entropy, 0, SubChunk, State),
 	?assert(lists:all(fun(PackedSubChunk) -> byte_size(PackedSubChunk) == 8192 end,
 			PackedSubChunks)),
 	unpack_sub_chunks(PackedSubChunks, 0, SubChunk, Entropy).
 
 pack_sub_chunks(_SubChunk, _Entropy, Index, _PreviousSubChunk, _State)
-		when Index == 32768 ->
+		when Index == 1024 ->
 	[];
 pack_sub_chunks(SubChunk, Entropy, Index, PreviousSubChunk, State) ->
 	{ok, PackedSubChunk} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk(

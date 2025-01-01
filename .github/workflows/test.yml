@@ -315,6 +315,7 @@ jobs:
             ar_mining_io_tests,
             ar_poller_tests,
             ar_reject_chunks_tests,
+            ar_replica_2_9_nif_tests,
             ar_semaphore_tests,
             ar_start_from_block_tests,
             ar_tx_blacklist_tests,

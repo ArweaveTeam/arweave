@@ -1,7 +1,7 @@
 #include <cassert>
 #include <openssl/sha.h>
 #include "crc32.h"
-#include "pack_randomx_square.h"
+#include "randomx_squared.h"
 #include "feistel_msgsize_key_cipher.h"
 
 // imports from randomx
@@ -10,39 +10,12 @@
 #include "aes_hash.hpp"
 
 extern "C" {
-	void rsp_exec_test(
-			randomx_vm *machine,
-			const unsigned char *inHash, const unsigned char *inScratchpad,
-			unsigned char *outHash, unsigned char *outScratchpad,
-			const int randomxProgramCount) {
-		assert(machine != nullptr);
-		alignas(16) uint64_t tempHash[8];
-		memcpy(tempHash, inHash, sizeof(tempHash));
-		void* scratchpad = (void*)machine->getScratchpad();
-		memcpy(scratchpad, inScratchpad, randomx_get_scratchpad_size());
-		machine->resetRoundingMode();
-		int blakeResult;
-		for (int chain = 0; chain < randomxProgramCount - 1; ++chain) {
-			machine->run(&tempHash);
-			blakeResult = randomx_blake2b(
-				tempHash, sizeof(tempHash), machine->getRegisterFile(),
-				sizeof(randomx::RegisterFile), nullptr, 0);
-			assert(blakeResult == 0);
-		}
-		machine->run(&tempHash);
-		
-		blakeResult = randomx_blake2b(
-			tempHash, sizeof(tempHash), machine->getRegisterFile(),
-			sizeof(randomx::RegisterFile), nullptr, 0);
-		assert(blakeResult == 0);
-		
-		memcpy(outHash, tempHash, sizeof(tempHash));
-		memcpy(outScratchpad, machine->getScratchpad(), randomx_get_scratchpad_size());
-	}
 
-	void rsp_mix_entropy_crc32(
-			const unsigned char *inEntropy,
-			unsigned char *outEntropy, const size_t entropySize) {
+	void _rsp_mix_entropy_crc32(
+		const unsigned char *inEntropy,
+		unsigned char *outEntropy,
+		const size_t entropySize
+	) {
 		// NOTE we can't use _mm_crc32_u64, because it output only final 32-bit result
 		// NOTE commented variant is more readable but unoptimized
 		unsigned int state = ~0;
@@ -80,53 +53,35 @@ extern "C" {
 		}
 	}
 
-	void rsp_mix_entropy_far(
-			const unsigned char *inEntropy,
-			unsigned char *outEntropy, const size_t entropySize,
-			const size_t jumpSize, const size_t blockSize) {
-		unsigned char *outEntropyPtr = outEntropy;
-		size_t numJumps = entropySize / jumpSize;
-		size_t numBlocksPerJump = jumpSize / blockSize;
-		size_t leftover = jumpSize % blockSize;
-
-		for (size_t offset = 0; offset < numBlocksPerJump; ++offset) {
-			for (size_t i = 0; i < numJumps; ++i) {
-				size_t srcPos = i * jumpSize + offset * blockSize;
-				memcpy(outEntropyPtr, &inEntropy[srcPos], blockSize);
-				outEntropyPtr += blockSize;
-			}
-		}
-		if (leftover > 0) {
-			for (size_t i = 0; i < numJumps; ++i) {
-				size_t srcPos = i * jumpSize + numBlocksPerJump * blockSize;
-				memcpy(outEntropyPtr, &inEntropy[srcPos], leftover);
-				outEntropyPtr += leftover;
-			}
-		}
-	}
-
-	// Group of functions related to rsp_fused_entropy
-	void _rsp_exec_inplace(randomx_vm* machine, uint64_t* srcTempHash, uint64_t* dstTempHash, int programCount, size_t scratchpadSize) {
+	// Runs 1 RX2 round of programCount RandomX execs + 1 CRC mix on a single lane.
+	// VM scratchpad is updated in place.
+	void _rsp_exec_inplace(
+		randomx_vm* machine,
+		uint64_t* srcTempHash,
+		uint64_t* dstTempHash,
+		int programCount,
+		size_t scratchpadSize
+	) {
 		machine->resetRoundingMode();
 		for (int chain = 0; chain < programCount-1; chain++) {
 			machine->run(srcTempHash);
-			int br = randomx_blake2b(
+			int blakeResult = randomx_blake2b(
 				srcTempHash, 64,
 				machine->getRegisterFile(),
 				sizeof(randomx::RegisterFile),
 				nullptr, 0
 			);
-			assert(br == 0);
+			assert(blakeResult == 0);
 		}
 		machine->run(srcTempHash);
-		int br = randomx_blake2b(
+		int blakeResult = randomx_blake2b(
 			dstTempHash, 64,
 			machine->getRegisterFile(),
 			sizeof(randomx::RegisterFile),
 			nullptr, 0
 		);
-		assert(br == 0);
-		rsp_mix_entropy_crc32(
+		assert(blakeResult == 0);
+		_rsp_mix_entropy_crc32(
 			(const unsigned char*)machine->getScratchpad(),
 			(unsigned char*)(void*)machine->getScratchpad(),
 			scratchpadSize);
@@ -168,7 +123,7 @@ extern "C" {
 		}
 	}
 
-	void packing_mix_entropy_direct(
+	void _rsp_mix_entropy_far(
 		randomx_vm** inSet,
 		randomx_vm** outSet,
 		int count,
@@ -204,15 +159,15 @@ extern "C" {
 	int rsp_fused_entropy(
 		randomx_vm** vmList,
 		size_t scratchpadSize,
-		int replicaEntropySubChunkCount,
-		int compositePackingSubChunkSize,
+		int subChunkCount,
+		int subChunkSize,
 		int laneCount,
 		int rxDepth,
 		int randomxProgramCount,
 		int blockSize,
 		const unsigned char* keyData,
 		size_t keySize,
-		unsigned char* outAllScratchpads
+		unsigned char* outEntropy
 	) {
 		struct vm_hash_t {
 			alignas(16) uint64_t tempHash[8]; // 64 bytes
@@ -223,7 +178,13 @@ extern "C" {
 			return 0;
 		}
 
+		// Initialize the scratchaps for each lane
 		for (int i = 0; i < laneCount; i++) {
+			// laneSeed = sha256(<<keyData, i>>)
+			// laneSeed should be unique - i.e. now two lanes across all entropies and all
+			// replicas should have the same seed. Current key (as off 2025-01-01) is
+			// <<Partition, EntropyIndex, RewardAddr>> where entropy index is unique within
+			// a given partition.
 			unsigned char laneSeed[32];
 			{
 				SHA256_CTX sha256;
@@ -242,6 +203,8 @@ extern "C" {
 				delete[] vmHashes;
 				return 0;
 			}
+			// This replaces the default `randomx_vm::initScratchpad()` and overwrites
+			// the VM's internal `scratchpad` member variable. 
 			fillAes1Rx4<false>(
 				vmHashes[i].tempHash,
 				scratchpadSize,
@@ -251,37 +214,44 @@ extern "C" {
 
 		for (int d = 0; d < rxDepth; d++) {
 			for (int lane = 0; lane < laneCount; lane++) {
-				_rsp_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash, randomxProgramCount, scratchpadSize);
+				_rsp_exec_inplace(
+					vmList[lane],
+					vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash,
+					randomxProgramCount, scratchpadSize);
 			}
-			packing_mix_entropy_direct(&vmList[0], &vmList[laneCount],
+			_rsp_mix_entropy_far(&vmList[0], &vmList[laneCount],
 										 laneCount, scratchpadSize, scratchpadSize,
 										 blockSize);
 
 			if (d + 1 < rxDepth) {
 				d++;
 				for (int lane = laneCount; lane < 2*laneCount; lane++) {
-					_rsp_exec_inplace(vmList[lane], vmHashes[lane].tempHash, vmHashes[lane-laneCount].tempHash, randomxProgramCount, scratchpadSize);
+					_rsp_exec_inplace(
+						vmList[lane],
+						vmHashes[lane].tempHash, vmHashes[lane-laneCount].tempHash,
+						randomxProgramCount, scratchpadSize);
 				}
-				packing_mix_entropy_direct(&vmList[laneCount], &vmList[0],
+				_rsp_mix_entropy_far(&vmList[laneCount], &vmList[0],
 											 laneCount, scratchpadSize, scratchpadSize,
 											 blockSize);
 			}
 		}
-		// NOTE still unoptimal. Last copy can be performed from scratchpad to output. But requires +1 variation (set to buffer)
+		// NOTE still unoptimal. Last copy can be performed from scratchpad to output.
+		// But requires +1 variation (set to buffer)
 
 		if ((rxDepth % 2) == 0) {
-			unsigned char* outAllScratchpadsPtr = outAllScratchpads;
+			unsigned char* outEntropyPtr = outEntropy;
 			for (int i = 0; i < laneCount; i++) {
 				void* sp = (void*)vmList[i]->getScratchpad();
-				memcpy(outAllScratchpadsPtr, sp, scratchpadSize);
-				outAllScratchpadsPtr += scratchpadSize;
+				memcpy(outEntropyPtr, sp, scratchpadSize);
+				outEntropyPtr += scratchpadSize;
 			}
 		} else {
-			unsigned char* outAllScratchpadsPtr = outAllScratchpads;
+			unsigned char* outEntropyPtr = outEntropy;
 			for (int i = laneCount; i < 2*laneCount; i++) {
 				void* sp = (void*)vmList[i]->getScratchpad();
-				memcpy(outAllScratchpadsPtr, sp, scratchpadSize);
-				outAllScratchpadsPtr += scratchpadSize;
+				memcpy(outEntropyPtr, sp, scratchpadSize);
+				outEntropyPtr += scratchpadSize;
 			}
 		}
 
