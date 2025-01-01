@@ -135,7 +135,7 @@ randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
 		jit(),
 		large_pages(),
 		hardware_aes(),
-		?REPLICA_2_9_RANDOMX_ROUND_COUNT,
+		?REPLICA_2_9_RANDOMX_PROGRAM_COUNT,
 		Key
 	),
 	EntropyFused.

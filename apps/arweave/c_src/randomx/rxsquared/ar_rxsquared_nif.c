@@ -3,7 +3,7 @@
 #include <ar_nif.h>
 #include "../randomx_long_with_entropy.h"
 #include "../feistel_msgsize_key_cipher.h"
-#include "../pack_randomx_square.h"
+#include "../randomx_squared.h"
 
 #include "../ar_randomx_impl.h"
 
@@ -122,13 +122,13 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	}
 
 	// 2. Parse each integer
-	int replicaEntropySubChunkCount;
-	if (!enif_get_int(envPtr, argv[1], &replicaEntropySubChunkCount)) {
+	int subChunkCount;
+	if (!enif_get_int(envPtr, argv[1], &subChunkCount)) {
 		return enif_make_badarg(envPtr);
 	}
 
-	int compositePackingSubChunkSize;
-	if (!enif_get_int(envPtr, argv[2], &compositePackingSubChunkSize)) {
+	int subChunkSize;
+	if (!enif_get_int(envPtr, argv[2], &subChunkSize)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -178,11 +178,11 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	size_t scratchpadSize = randomx_get_scratchpad_size();
 
 	// 5. Pre-allocate the final output binary to store all scratchpads
-	size_t totalSpSize = scratchpadSize * laneCount;
-	ERL_NIF_TERM outScratchpadsTerm;
-	unsigned char* outAllScratchpads =
-		enif_make_new_binary(envPtr, totalSpSize, &outScratchpadsTerm);
-	if (!outAllScratchpads) {
+	size_t outEntropySize = scratchpadSize * laneCount;
+	ERL_NIF_TERM outEntropyTerm;
+	unsigned char* outEntropy =
+		enif_make_new_binary(envPtr, outEntropySize, &outEntropyTerm);
+	if (!outEntropy) {
 		free(vmList);
 		return enif_make_badarg(envPtr);
 	}
@@ -215,15 +215,15 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	int success = rsp_fused_entropy(
 		vmList,
 		scratchpadSize,
-		replicaEntropySubChunkCount,
-		compositePackingSubChunkSize,
+		subChunkCount,
+		subChunkSize,
 		laneCount,
 		rxDepth,
 		randomxProgramCount,
 		6,
 		keyBin.data,
 		keyBin.size,
-		outAllScratchpads  // final buffer for the scratchpads
+		outEntropy  // final buffer for the output entropy
 	);
 
 	// 8. If the function returned false, we interpret that as an error
@@ -238,13 +238,13 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 		return error_tuple(envPtr, "cxx_fused_entropy_failed");
 	}
 
-	// 9. If success, destroy VMs and return {ok, ScratchpadsBin}
+	// 9. If success, destroy VMs and return {ok, outEntropyTerm}
 	for (int i = 0; i < totalVMs; i++) {
 		destroy_vm(statePtr, vmList[i]);
 	}
 	free(vmList);
 
-	return ok_tuple(envPtr, outScratchpadsTerm);
+	return ok_tuple(envPtr, outEntropyTerm);
 }
 
 
