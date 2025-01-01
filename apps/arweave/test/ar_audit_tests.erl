@@ -44,29 +44,6 @@ test_state({FastState, LightState}) ->
 	?assertEqual(?RANDOMX_SCRATCHPAD_SIZE, ScratchpadSize).
 
 test_vectors({FastState, _LightState}) ->
-	Hash = << 255:(8*64) >>,
-	Scratchpad = << 255:(8*2097152) >>,
-	{ok, OutHash1Real, Output1} = ar_rxsquared_nif:rsp_exec_test_nif(element(2, FastState), Hash, Scratchpad, 0, 0, 0, 8),
-	Output1HashReal = crypto:hash(sha256, Output1),
-	Output1HashExpd = << 23,173,31,182,17,62,103,254,86,234,161,194,62,234,
-		176,71,171,120,18,186,252,150,107,106,65,5,197,85,
-		108,100,151,250 >>,
-
-	{ok, Output2} = ar_rxsquared_nif:rsp_mix_entropy_crc32_test_nif(Output1),
-	Output2HashReal = crypto:hash(sha256, Output2),
-	Output2HashExpd = << 133,226,122,189,170,63,128,182,242,28,50,204,85,179,
-		230,105,98,187,39,24,30,133,84,135,70,85,220,145,30,
-		165,161,242 >>,
-	OutHashExpd = << 137,100,229,43,87,136,2,64,101,172,17,65,106,94,24,
-		209,195,201,194,250,35,211,175,73,15,102,11,25,12,
-		147,231,196,194,48,55,194,181,47,41,136,101,215,179,
-		124,181,223,195,140,217,56,206,55,144,184,44,131,86,
-		206,247,3,124,167,34,75 >>,
-
-	?assertEqual(Output1HashExpd, Output1HashReal),
-	?assertEqual(Output2HashExpd, Output2HashReal),
-	?assertEqual(OutHashExpd, OutHash1Real),
-
 	Key = << 1 >>,
 	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(FastState, Key),
 	EntropyHash = crypto:hash(sha256, Entropy),
@@ -74,6 +51,14 @@ test_vectors({FastState, _LightState}) ->
 		46,50,136,31,35,102,141,77,19,66,191,127,97,183,230,
 		119,243,151 >>,
 	?assertEqual(EntropyHashExpd, EntropyHash),
+
+	Key2 = << 2 >>,
+	Entropy2 = ar_mine_randomx:randomx_generate_replica_2_9_entropy(FastState, Key2),
+	EntropyHash2 = crypto:hash(sha256, Entropy2),
+	EntropyHashExpd2 = << 206,47,133,111,139,20,31,64,185,33,107,29,14,10,252,
+		76,201,75,203,186,131,32,20,45,34,125,76,248,64,90,
+		220,196 >>,
+	?assertEqual(EntropyHashExpd2, EntropyHash2),
 
 	SubChunk = << 255:(8*8192) >>,
 	EntropySubChunkIndex = 1,

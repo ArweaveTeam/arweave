@@ -5,9 +5,6 @@
 -on_load(init_nif/0).
 
 -export([rxsquared_hash_nif/5, rxsquared_info_nif/1, rxsquared_init_nif/5,
-		rsp_exec_test_nif/7,
-		rsp_mix_entropy_crc32_test_nif/1,
-		rsp_mix_entropy_far_test_nif/3,
 		rsp_fused_entropy_nif/10,
 		rsp_feistel_encrypt_nif/2,
 		rsp_feistel_decrypt_nif/2]).
@@ -35,19 +32,6 @@ init_nif() ->
 %%%===================================================================
 %%% Randomx square packing
 %%%===================================================================
-
-rsp_exec_test_nif(_State, _Hash, _Scratchpad, _JIT, _LargePages, _HardwareAES, _RoundCount) ->
-	?LOG_ERROR("rsp_exec_test_nif"),
-	erlang:nif_error(nif_not_loaded).
-
-
-rsp_mix_entropy_crc32_test_nif(_Entropy) ->
-	?LOG_ERROR("rsp_mix_entropy_crc32_test_nif"),
-	erlang:nif_error(nif_not_loaded).
-
-rsp_mix_entropy_far_test_nif(_Entropy, _JumpSize, _BlockSize) ->
-	?LOG_ERROR("rsp_mix_entropy_far_test_nif"),
-	erlang:nif_error(nif_not_loaded).
 
 rsp_fused_entropy_nif(
 	_RandomxState,
