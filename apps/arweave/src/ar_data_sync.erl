@@ -2971,18 +2971,27 @@ store_chunk2(ChunkArgs, Args, State) ->
 					_ ->
 						get_chunk_data_key(DataPathHash)
 				end,
-			case write_chunk(AbsoluteOffset, ChunkDataKey, Chunk, ChunkSize, DataPath,
-					Packing, State) of
-				ok ->
-					Packing2 =
-						case Packing of
-							unpacked_padded ->
-								ar_storage_module:get_packing(StoreID);
-							_ ->
-								Packing
-						end,
+			StoreIndex =
+				case write_chunk(AbsoluteOffset, ChunkDataKey, Chunk, ChunkSize, DataPath,
+						Packing, State) of
+					ok ->
+						Packing2 =
+							case Packing of
+								unpacked_padded ->
+									ar_storage_module:get_packing(StoreID);
+								_ ->
+									Packing
+							end,
+						{true, Packing2};
+					{error, stored_without_entropy} ->
+						{true, unpacked_padded};
+					Error ->
+						Error
+				end,
+			case StoreIndex of
+				{true, Packing3} ->
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
-							DataRoot, TXPath, ChunkSize, Packing2}, State) of
+							DataRoot, TXPath, ChunkSize, Packing3}, State) of
 						ok ->
 							ok;
 						{error, Reason} ->
@@ -3007,14 +3016,6 @@ log_stored_chunks(State, StartLen) ->
 			ok
 	end.
 
-log_failed_to_store_chunk(stored_without_entropy,
-		AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
-	?LOG_DEBUG([{event, chunk_stored_without_entropy},
-			{absolute_end_offset, AbsoluteOffset},
-			{relative_offset, Offset},
-			{data_path_hash, ar_util:encode(DataPathHash)},
-			{data_root, ar_util:encode(DataRoot)},
-			{store_id, StoreID}]);
 log_failed_to_store_chunk(already_stored,
 		AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
 	?LOG_INFO([{event, chunk_already_stored},
