@@ -29,6 +29,9 @@ init(WalletList, Diff) ->
 	Size = 262144 * 3, % Matches ?STRICT_DATA_SPLIT_THRESHOLD in tests.
 	init(WalletList, Diff, Size).
 
+init(_WalletList, _Diff, GenesisDataSize) when GenesisDataSize > (4 * ?GiB) ->
+	erlang:error({size_exceeds_limit, "GenesisDataSize exceeds 4 GiB"});
+
 %% @doc Create a genesis block with the given accounts and difficulty.
 init(WalletList, Diff, GenesisDataSize) ->
 	{{_, _, _}, {_, _}} = Key = ar_wallet:new_keyfile(),
@@ -106,7 +109,7 @@ init(WalletList, Diff, GenesisDataSize) ->
 		end,
 	[B2#block{ indep_hash = ar_block:indep_hash(B2) }].
 
--ifdef(DEBUG).
+-ifdef(TEST).
 get_initial_block_time_history() ->
 	[{1, 1, 1}].
 -else.
@@ -114,13 +117,15 @@ get_initial_block_time_history() ->
 	[{120, 1, 1}].
 -endif.
 
+%% @doc: create a genesis transaction with the given key and data size. This is only used
+%% in tests and when launching a localnet node.
 create_genesis_tx(Key, Size) ->
 	{_, {_, Pk}} = Key,
 	UnsignedTX =
 		(ar_tx:new())#tx{
 			owner = Pk,
 			reward = 0,
-			data = crypto:strong_rand_bytes(Size),
+			data = ar_test_node:generate_genesis_data(Size),
 			data_size = Size,
 			target = <<>>,
 			quantity = 0,

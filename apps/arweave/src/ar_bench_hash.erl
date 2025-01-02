@@ -55,7 +55,7 @@ run_benchmark(RandomXState, JIT, LargePages, HardwareAES) ->
 		lists:foreach(
 			fun(I) ->
 				Data = << NonceLimiterOutput:32/binary,
-						I:256, Seed:32/binary, MiningAddr/binary >>,
+				I:256, Seed:32/binary, MiningAddr/binary >>,
 				ar_mine_randomx:hash(RandomXState, Data, JIT, LargePages, HardwareAES)
 			end,
 			lists:seq(1, Iterations))

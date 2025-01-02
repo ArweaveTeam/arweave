@@ -6,7 +6,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 
--ifdef(DEBUG).
+-ifdef(TEST).
 	-define(BLOCK_TIME_HISTORY_BLOCKS, 3).
 -else.
 	-ifndef(BLOCK_TIME_HISTORY_BLOCKS).
