@@ -50,15 +50,13 @@ new_keyfile({?RSA_SIGN_ALG, 65537} = KeyType, AccessMode) ->
 	PrivateExponent = rsa_pss:serialize(raw, PrivateKey),
 	Identifier = identifier(to_public(PrivateKey)),
 	Filename = wallet_filepath(AccessMode, Identifier),
-	ar_storage:write_file_atomic(Filename, JWK),
-	{{KeyType, PrivateExponent, Identifier}, {KeyType, Identifier}};
+	Wallet = {{KeyType, PrivateExponent, Identifier}, {KeyType, Identifier}},
+	create_keyfile(Wallet, Filename, JWK);
 new_keyfile(KeyType, AccessMode) ->
 	{{_, PrivateKey, Identifier}, _} = Wallet = new(KeyType),
 	JWK = serialize(jwk, PrivateKey),
 	Filename = wallet_filepath(AccessMode, Identifier),
-	ar_storage:write_file_atomic(Filename, JWK),
-	Wallet.
-
+	create_keyfile(Wallet, Filename, JWK).
 
 %% @doc Convert PrivateKey to PublicKey.
 -spec to_public(Key :: public_key:rsa_private_key() | public_key:ecdsa_private_key()) -> public_key:rsa_public_key() | public_key:ecdsa_public_key().
@@ -116,21 +114,10 @@ to_address(PubKey, {?RSA_SIGN_ALG, 65537}) when bit_size(PubKey) == 256 ->
 to_address(PubKey, {?RSA_SIGN_ALG, 65537}) ->
 	to_address(PubKey).
 
-wallet_filepath(WalletAccessCode, Identifier) ->
-	WalletName = case WalletAccessCode of
-		local_access -> ar_util:encode(to_address(Identifier));
-		_ -> WalletAccessCode
-	end,
-	wallet_filepath(WalletName).
 
 wallet_filepath(WalletName) ->
 	{ok, Config} = application:get_env(arweave, config),
 	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(WalletName), ".json"]),
-	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
-
-wallet_filepath2(WalletName) ->
-	{ok, Config} = application:get_env(arweave, config),
-	Filename = lists:flatten([binary_to_list(WalletName), ".json"]),
 	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
 %% @doc Read the keyfile for the key with the given address from disk.
@@ -303,7 +290,29 @@ decoded_address_to_base64_address_with_checksum(AddrDecoded) ->
 	ChecksumBase64 = ar_util:encode(Checksum),
 	<< AddrBase64/binary, ":", ChecksumBase64/binary >>.
 
+wallet_filepath(WalletAccessCode, Identifier) ->
+	WalletName = case WalletAccessCode of
+		local_access -> ar_util:encode(to_address(Identifier));
+		_ -> WalletAccessCode
+	end,
+	wallet_filepath(WalletName).
+wallet_filepath2(WalletName) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Filename = lists:flatten([binary_to_list(WalletName), ".json"]),
+	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
+create_keyfile(Wallet, Filename, Content) ->
+	case filelib:ensure_dir(Filename) of
+		ok ->
+			case ar_storage:write_file_atomic(Filename, Content) of
+				ok ->
+					Wallet;
+				Error2 ->
+					Error2
+			end;
+		Error ->
+			Error
+	end.
 %%%===================================================================
 %%% Tests.
 %%%===================================================================

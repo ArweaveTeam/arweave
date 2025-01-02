@@ -190,7 +190,7 @@ handle(<<"GET">>, [<<"recent">>], Req, _Pid) ->
 		true ->
 			{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req}
 	end;
-	
+
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
 	case ar_util:safe_decode(EncodedTXID) of
 		{error, invalid} ->

@@ -351,6 +351,7 @@ collect_validation_results(TXID, Checks) ->
 		[] ->
 			true;
 		ErrorCodes ->
+			?LOG_DEBUG([{event, tx_verification_failed}, {error_codes, ErrorCodes}]),
 			ar_tx_db:put_error_codes(TXID, ErrorCodes),
 			false
 	end.
@@ -362,7 +363,7 @@ do_verify_v2(TX, Args, VerifySignature) ->
 		false ->
 			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
 		true ->
-			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+			From = ar_wallet:to_address(TX#tx.owner),
 			FeeArgs = {TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 					Height, Accounts, TX#tx.target},
 			Checks = [
@@ -483,18 +484,17 @@ ends_with_digit(Data) ->
 
 verify_signature_v2(_TX, do_not_verify_signature) ->
 	true;
-verify_signature_v2(TX = #tx{ signature_type = SigType }, verify_signature) ->
+verify_signature_v2(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
-	ar_wallet:verify({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
+	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v2(_TX, do_not_verify_signature, _Height) ->
 	true;
 verify_signature_v2(TX, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
-	Wallet = {{?RSA_SIGN_ALG, 65537}, TX#tx.owner},
 	case Height >= ar_fork:height_2_4() of
 		true ->
-			ar_wallet:verify(Wallet, SignatureDataSegment, TX#tx.signature);
+			ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature);
 		false ->
 			ar_wallet:verify_pre_fork_2_4({{?RSA_SIGN_ALG, 65537}, TX#tx.owner},
 					SignatureDataSegment, TX#tx.signature)

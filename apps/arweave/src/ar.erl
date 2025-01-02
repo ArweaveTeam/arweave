@@ -6,7 +6,7 @@
 -behaviour(application).
 
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
-		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1, 
+		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1,
 		benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
@@ -461,11 +461,10 @@ parse_cli_args(["mining_addr", Addr | Rest], C) ->
 	case C#config.mining_addr of
 		not_set ->
 			case ar_util:safe_decode(Addr) of
-				{ok, DecodedAddr} when byte_size(DecodedAddr) == 32 ->
+				{ok, DecodedAddr} ->
 					parse_cli_args(Rest, C#config{ mining_addr = DecodedAddr });
 				_ ->
-					io:format("~nmining_addr must be a valid Base64Url string, 43"
-							" characters long.~n~n"),
+					io:format("~nmining_addr must be a valid Base64Url string"),
 					erlang:halt()
 			end;
 		_ ->
@@ -794,12 +793,21 @@ set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer,
 	end.
 
 create_wallet([DataDir]) ->
+	create_wallet([DataDir, "rsa_65537"]);
+create_wallet([DataDir, KeyTypeStr]) ->
 	case filelib:is_dir(DataDir) of
 		false ->
 			create_wallet_fail();
 		true ->
 			ok = application:set_env(arweave, config, #config{ data_dir = DataDir }),
-			case ar_wallet:new_keyfile({?RSA_SIGN_ALG, 65537}) of
+			KeyType = case KeyTypeStr of
+				"rsa_65537" -> {?RSA_SIGN_ALG, 65537};
+				"ec_secp256k1" -> {?ECDSA_SIGN_ALG, secp256k1};
+				_ ->
+					ar:console("KeyType not supported ~s.~n", [KeyTypeStr]),
+					erlang:halt()
+			end,
+			case ar_wallet:new_keyfile(KeyType) of
 				{error, Reason} ->
 					ar:console("Failed to create a wallet, reason: ~p.~n~n",
 							[io_lib:format("~p", [Reason])]),
@@ -843,7 +851,7 @@ benchmark_2_9() ->
 benchmark_2_9(Args) ->
 	ar_bench_2_9:run_benchmark_from_cli(Args),
 	erlang:halt().
-	
+
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 

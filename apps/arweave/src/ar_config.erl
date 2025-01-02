@@ -695,15 +695,15 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 		case PackingBin of
 			<<"unpacked">> ->
 				unpacked;
-			<< MiningAddr:43/binary, ".replica.2.9" >> ->
+			<< MiningAddr, ".replica.2.9" >> ->
 				{replica_2_9, ar_util:decode(MiningAddr)};
-			<< MiningAddr:43/binary, ".", PackingDifficultyBin/binary >> ->
+			<< MiningAddr, ".", PackingDifficultyBin/binary >> ->
 				PackingDifficulty = binary_to_integer(PackingDifficultyBin),
 				true = PackingDifficulty >= 1
 						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY
 						andalso PackingDifficulty /= ?REPLICA_2_9_PACKING_DIFFICULTY,
 				{composite, ar_util:decode(MiningAddr), PackingDifficulty};
-			MiningAddr when byte_size(MiningAddr) == 43 ->
+			MiningAddr ->
 				{spora_2_6, ar_util:decode(MiningAddr)}
 		end,
 	{ok, {RangeSize, RangeNumber, Packing}}.
@@ -999,7 +999,7 @@ validate_verify(_Config) ->
 	true.
 
 disable_vdf(Config) ->
-	RemovePublicVDFServer = 
+	RemovePublicVDFServer =
 		lists:filter(fun(Item) -> Item =/= public_vdf_server end, Config#config.enable),
 	Config#config{
 		nonce_limiter_client_peers = [],

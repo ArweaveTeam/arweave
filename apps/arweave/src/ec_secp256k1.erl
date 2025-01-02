@@ -34,6 +34,14 @@ sign(DigestOrPlainText, DigestType, {_, _, PrivBytes, _, _, _}) ->
 
 
 -spec verify(Message :: binary() | {digest, binary()}, DigestType :: ecdsa_digest_type(), Signature :: binary(), PublicKey :: public_key:ecdsa_public_key()) -> boolean().
+verify(DigestOrPlainText, DigestType, Signature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) when byte_size(Signature) == 64 ->
+    case check_low_s(Signature) of
+        {valid, R, S} ->
+            DERSignature = public_key:der_encode('ECDSA-Sig-Value', #'ECDSA-Sig-Value'{ r = R, s = S}),
+            crypto:verify(ecdsa, DigestType, DigestOrPlainText, DERSignature, [PubBytes, secp256k1]);
+        {invalid, _, _} ->
+            false
+    end;
 verify(DigestOrPlainText, DigestType, DERSignature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) ->
     case check_low_s(DERSignature) of
         {valid, _, _} ->
