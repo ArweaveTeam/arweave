@@ -709,7 +709,7 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 	{ok, {RangeSize, RangeNumber, Packing}}.
 
 parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
-	%% We do not support repacking in place to or from the 2.9 replication format.
+	%% We do not support repacking in place from the 2.9 replication format.
 	Packing =
 		case PackingBin of
 			<<"unpacked">> ->
@@ -726,6 +726,8 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
 		case ToPackingBin of
 			<<"unpacked">> ->
 				unpacked;
+			<< ToMiningAddr:43/binary, ".replica.2.9" >> ->
+				{replica_2_9, ar_util:decode(ToMiningAddr)};
 			<< ToMiningAddr:43/binary, ".", ToPackingDifficultyBin/binary >> ->
 				ToPackingDifficulty = binary_to_integer(ToPackingDifficultyBin),
 				true = ToPackingDifficulty >= 1
