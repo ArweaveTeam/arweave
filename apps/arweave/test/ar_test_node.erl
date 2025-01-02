@@ -884,7 +884,8 @@ wait_until_height(Node, TargetHeight, Strict) ->
 	end,
 	case Strict of
 		true ->
-			?assertEqual(TargetHeight, Height);
+			?assertEqual(TargetHeight, Height, 
+				iolist_to_binary(io_lib:format("Node ~p not at the expected height", [Node])));
 		false ->
 			ok
 	end,
