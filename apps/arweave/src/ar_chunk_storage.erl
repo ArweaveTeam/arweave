@@ -28,6 +28,7 @@
 	prev_repack_cursor = 0,
 	target_packing = none,
 	repacking_complete = false,
+	range_start,
 	range_end,
 	reward_addr,
 	prepare_replica_2_9_cursor,
@@ -266,7 +267,7 @@ init({StoreID, RepackInPlacePacking}) ->
 						false ->
 							true
 					end,
-				State#state{ reward_addr = RewardAddr,
+				State#state{ reward_addr = RewardAddr, range_start = RangeStart,
 						range_end = RangeEnd, prepare_replica_2_9_cursor = PrepareCursor,
 						is_prepared = IsPrepared };
 			_ ->
@@ -758,7 +759,10 @@ get_chunk_bucket_end(PaddedEndOffset) ->
 %% @doc Return true if the given sub-chunk bucket contains the 2.9 entropy.
 is_replica_2_9_entropy_sub_chunk_recorded(
 		PaddedEndOffset, SubChunkBucketStartOffset, StoreID) ->
-	ID = ar_chunk_storage_replica_2_9_entropy,
+	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
+	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
+	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
+	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	ChunkBucketStart = get_chunk_bucket_start(PaddedEndOffset),
 	SubChunkBucketStart = ChunkBucketStart + SubChunkBucketStartOffset,
 	ar_sync_record:is_recorded(SubChunkBucketStart + 1, ID, StoreID).
@@ -775,7 +779,10 @@ is_replica_2_9_entropy_recorded2(Cursor, BucketEnd, _StoreID)
 		when Cursor >= BucketEnd ->
 	true;
 is_replica_2_9_entropy_recorded2(Cursor, BucketEnd, StoreID) ->
-	ID = ar_chunk_storage_replica_2_9_entropy,
+	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
+	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
+	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
+	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	case ar_sync_record:is_recorded(Cursor + 1, ID, StoreID) of
 		false ->
 			false;
@@ -785,13 +792,19 @@ is_replica_2_9_entropy_recorded2(Cursor, BucketEnd, StoreID) ->
 	end.
 
 update_replica_2_9_entropy_record(PaddedEndOffset, StoreID) ->
-	ID = ar_chunk_storage_replica_2_9_entropy,
+	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
+	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
+	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
+	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	BucketEnd = get_chunk_bucket_end(PaddedEndOffset),
 	BucketStart = get_chunk_bucket_start(PaddedEndOffset),
 	ar_sync_record:add_async(replica_2_9_entropy, BucketEnd, BucketStart, ID, StoreID).
 
 delete_replica_2_9_entropy_record(PaddedEndOffset, StoreID) ->
-	ID = ar_chunk_storage_replica_2_9_entropy,
+	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
+	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
+	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
+	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	BucketStart = get_chunk_bucket_start(PaddedEndOffset),
 	ar_sync_record:delete(BucketStart + ?DATA_CHUNK_SIZE, BucketStart, ID, StoreID).
 
