@@ -21,7 +21,7 @@
 		jsonify/1, dejsonify/1, json_decode/1, json_decode/2,
 		query_to_json_struct/1, json_struct_to_query/1,
 		encode_int/2, encode_bin/2,
-		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
+		encode_bin_list/3,
 		reward_history_to_binary/1, binary_to_reward_history/1,
 		block_time_history_to_binary/1, binary_to_block_time_history/1, parse_32b_list/1,
 		nonce_limiter_update_to_binary/2, binary_to_nonce_limiter_update/2,
@@ -268,7 +268,7 @@ block_to_json_struct(
 									B#block.height, B#block.nonce_limiter_info)},
 							{poa2, poa_to_json_struct(B#block.poa2)},
 							{signature, ar_util:encode(B#block.signature)},
-							{reward_key, ar_util:encode(element(2, B#block.reward_key))},
+							{reward_key, ar_util:encode(B#block.reward_key)},
 							{price_per_gib_minute, integer_to_binary(PricePerGiBMinute)},
 							{scheduled_price_per_gib_minute,
 									integer_to_binary(ScheduledPricePerGiBMinute)},
@@ -658,7 +658,7 @@ encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 			denomination = Denomination, redenomination_height = RedenominationHeight,
 			double_signing_proof = DoubleSigningProof,
 			previous_cumulative_diff = PrevCDiff } = B) ->
-	RewardKey = case B#block.reward_key of undefined -> <<>>; {_Type, Key} -> Key end,
+	Identifier = case B#block.reward_key of undefined -> <<>>; Id -> Id end,
 	case Height >= ar_fork:height_2_6() of
 		false ->
 			<<>>;
@@ -668,7 +668,7 @@ encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 				(encode_int(RecallByte2, 16))/binary,
 				(encode_bin(PreviousSolutionHash, 8))/binary, PartitionNumber:256,
 				(encode_nonce_limiter_info(NonceLimiterInfo))/binary,
-				(encode_bin(Chunk, 24))/binary, (encode_bin(RewardKey, 16))/binary,
+				(encode_bin(Chunk, 24))/binary, (encode_bin(Identifier, 16))/binary,
 				(encode_bin(TXPath, 24))/binary, (encode_bin(DataPath, 24))/binary,
 				(encode_int(PricePerGiBMinute, 8))/binary,
 				(encode_int(ScheduledPricePerGiBMinute, 8))/binary,
@@ -770,14 +770,13 @@ encode_transactions([TX | TXs], Encoded, N) ->
 encode_tx(#tx{ format = Format, id = TXID, last_tx = LastTX, owner = Owner,
 		tags = Tags, target = Target, quantity = Quantity, data = Data,
 		data_size = DataSize, data_root = DataRoot, signature = Signature,
-		reward = Reward, signature_type = SignatureType } = TX) ->
+		reward = Reward} = TX) ->
 	<< Format:8, TXID:32/binary,
 			(encode_bin(LastTX, 8))/binary, (encode_bin(Owner, 16))/binary,
 			(encode_bin(Target, 8))/binary, (encode_int(Quantity, 8))/binary,
 			(encode_int(DataSize, 16))/binary, (encode_bin(DataRoot, 8))/binary,
 			(encode_bin(Signature, 16))/binary, (encode_int(Reward, 8))/binary,
 			(encode_bin(Data, 24))/binary, (encode_tx_tags(Tags))/binary,
-			(encode_signature_type(SignatureType))/binary,
 			(may_be_encode_tx_denomination(TX))/binary >>.
 
 encode_tx_tags(Tags) ->
@@ -790,13 +789,6 @@ encode_tx_tags([{Name, Value} | Tags], Encoded, N) ->
 	TagValueSize = byte_size(Value),
 	Tag = << TagNameSize:16, TagValueSize:16, Name/binary, Value/binary >>,
 	encode_tx_tags(Tags, [Tag | Encoded], N + 1).
-
-encode_signature_type(?DEFAULT_KEY_TYPE) ->
-	<<>>;
-encode_signature_type({?ECDSA_SIGN_ALG, secp256k1}) ->
-	<< 1:8 >>;
-encode_signature_type({?EDDSA_SIGN_ALG, ed25519}) ->
-	<< 2:8 >>.
 
 may_be_encode_tx_denomination(#tx{ denomination = 0 }) ->
 	<<>>;
@@ -863,7 +855,7 @@ parse_block_post_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageS
 			reward = Reward, nonce = Nonce, recall_byte2 = RecallByte2_2,
 			previous_solution_hash = PreviousSolutionHash,
 			signature = Sig, partition_number = PartitionNumber,
-			reward_key = {{?RSA_SIGN_ALG, 65537}, RewardKey},
+			reward_key = RewardKey,
 			nonce_limiter_info = NonceLimiterInfo,
 			poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 			price_per_gib_minute = PricePerGiBMinute,
@@ -1046,15 +1038,6 @@ parse_tx_denomination(<< Denomination:24 >>) when Denomination > 0 ->
 	{ok, Denomination};
 parse_tx_denomination(_Rest) ->
 	{error, invalid_denomination}.
-
-%parse_signature_type(<<>>) ->
-%	{ok, ?DEFAULT_KEY_TYPE};
-%parse_signature_type(<< 1:8 >>) ->
-%	{ok, {?ECDSA_SIGN_ALG, secp256k1}};
-%parse_signature_type(<< 2:8 >>) ->
-%	{ok, {?EDDSA_SIGN_ALG, ed25519}};
-%parse_signature_type(_Rest) ->
-%	{error, invalid_input}.
 
 tx_to_binary(TX) ->
 	Bin = encode_tx(TX),
@@ -1813,23 +1796,6 @@ json_map_to_poa_map(JSON) ->
 			Map2;
 		Offset ->
 			Map2#{ offset => binary_to_integer(Offset) }
-	end.
-
-signature_type_to_binary(SigType) ->
-	case SigType of
-		{?RSA_SIGN_ALG, 65537} -> <<"PS256_65537">>;
-		{?ECDSA_SIGN_ALG, secp256k1} -> <<"ES256K">>;
-		{?EDDSA_SIGN_ALG, ed25519} -> <<"Ed25519">>
-	end.
-
-binary_to_signature_type(List) ->
-	case List of
-		undefined -> {?RSA_SIGN_ALG, 65537};
-		<<"PS256_65537">> -> {?RSA_SIGN_ALG, 65537};
-		<<"ES256K">> -> {?ECDSA_SIGN_ALG, secp256k1};
-		<<"Ed25519">> -> {?EDDSA_SIGN_ALG, ed25519};
-		%% For backwards-compatibility.
-		_ -> {?RSA_SIGN_ALG, 65537}
 	end.
 
 candidate_to_json_struct(

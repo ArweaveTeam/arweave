@@ -74,7 +74,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 		false ->
 			{{_, {B, PrevB, SolutionResigned, Peer}},
 					Q2} = gb_sets:take_largest(Q),
-			BlockSize = byte_size(term_to_binary(B)),				
+			BlockSize = byte_size(term_to_binary(B)),
 			Size2 = Size - BlockSize,
 			case ar_ignore_registry:permanent_member(B#block.indep_hash) of
 				true ->
@@ -430,10 +430,10 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 	end.
 
 may_be_report_double_signing(B, B2) ->
-	#block{ reward_key = {_, Key}, signature = Signature1, cumulative_diff = CDiff1,
+	#block{ reward_key = Identifier, signature = Signature1, cumulative_diff = CDiff1,
 			previous_solution_hash = PreviousSolutionH1,
 			previous_cumulative_diff = PrevCDiff } = B,
-	#block{ reward_key = {_, Key}, signature = Signature2, cumulative_diff = CDiff2,
+	#block{ reward_key = Identifier, signature = Signature2, cumulative_diff = CDiff2,
 			previous_cumulative_diff = PrevCDiff2,
 			previous_solution_hash = PreviousSolutionH2 } = B2,
 	case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff) of
@@ -442,10 +442,10 @@ may_be_report_double_signing(B, B2) ->
 					(ar_block:generate_signed_hash(B))/binary >>,
 			Preimage2 = << PreviousSolutionH2/binary,
 					(ar_block:generate_signed_hash(B2))/binary >>,
-			Proof = {Key, Signature1, CDiff1, PrevCDiff, Preimage1, Signature2, CDiff2,
+			Proof = {Identifier, Signature1, CDiff1, PrevCDiff, Preimage1, Signature2, CDiff2,
 					PrevCDiff2, Preimage2},
 			?LOG_INFO([{event, report_double_signing},
-				{key, ar_util:encode(Key)}, 
+				{key, ar_util:encode(Identifier)},
 				{block1, ar_util:encode(B#block.indep_hash)},
 				{block2, ar_util:encode(B2#block.indep_hash)},
 				{height1, B#block.height}, {height2, B2#block.height}]),
@@ -767,7 +767,7 @@ pre_validate_nonce_limiter(B, PrevB, Peer) ->
 
 accept_block(B, Peer, Gossip) ->
 	ar_ignore_registry:add(B#block.indep_hash),
-	ar_events:send(block, {new, B, 
+	ar_events:send(block, {new, B,
 		#{ source => {peer, Peer}, gossip => Gossip }}),
 	?LOG_INFO([{event, accepted_block}, {height, B#block.height},
 			{indep_hash, ar_util:encode(B#block.indep_hash)}]),

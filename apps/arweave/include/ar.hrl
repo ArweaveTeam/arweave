@@ -63,7 +63,7 @@
 -define(EDDSA_SIGN_ALG, eddsa).
 -define(EDDSA_TYPE_BYTE, <<3>>).
 
-%% The default key type used by transactions that do not specify a signature type.
+%% The default key type
 -define(DEFAULT_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
 
 %% The difficulty a new weave is started with.
@@ -572,8 +572,7 @@
 	recall_byte2,
 	%% The block signature.
 	signature = <<>>,
-	%% {KeyType, PubKey} - the public key the block was signed with.
-	%% The only supported KeyType is currently {rsa, 65537}.
+	%% Identifier - The identifier of the key the block was signed with.
 	reward_key,
 	%% The estimated number of Winstons it costs the network to store one gibibyte
 	%% for one minute.
@@ -696,7 +695,7 @@
 	%% the same wallet or the identifier of one of the
 	%% last ?MAX_TX_ANCHOR_DEPTH blocks.
 	last_tx = <<>>,
-	%% The public key the transaction is signed with.
+	%% Identifier - The identifier of the key the block was signed with.
 	owner =	<<>>,
 	%% A list of arbitrary key-value pairs. Keys and values are binaries.
 	tags = [],
@@ -736,11 +735,7 @@
 	%% blocks preceding the redenomination block.
 	%%
 	%% Transaction denomination code must not exceed the block's denomination code.
-	denomination = 0,
-
-	%% The type of signature this transaction was signed with. A system field,
-	%% not used by the protocol yet.
-	signature_type = ?DEFAULT_KEY_TYPE
+	denomination = 0
 }).
 
 %% A macro to convert AR into Winstons.

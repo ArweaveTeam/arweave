@@ -3,7 +3,7 @@
 
 -export([new/0, new/1, new_keyfile/0, new_keyfile/1, new_keyfile/2,
 		serialize/2, load_key/1, load_keyfile/1, wallet_filepath/1, get_or_create_wallet/1,
-		to_address/1, to_address/2, identifier/1, identifier_to_type/1,
+		to_address/1, to_address/2, identifier/1, from_identifier/1, identifier_to_type/1,
 		sign/2, verify/3, verify_pre_fork_2_4/3,
 		base64_address_with_optional_checksum_to_decoded_address/1,
 		base64_address_with_optional_checksum_to_decoded_address_safe/1]).
@@ -93,7 +93,8 @@ identifier_to_type(Identifier) when byte_size(Identifier) rem 2 == 0 ->
 identifier_to_type(Identifier)->
 	<<TypeByte:8, _/binary>> = Identifier,
 	case TypeByte of
-		2 -> {?ECDSA_SIGN_ALG, secp256k1}
+		2 -> {?ECDSA_SIGN_ALG, secp256k1};
+		_ -> {error, invalid_prefix, TypeByte}
 	end.
 
 %% @doc Generate a public address from Key's Identifer.
@@ -190,10 +191,20 @@ verify(Identifier, Data, Sig) when is_binary(Identifier) ->
 			rsa_pss:verify(
 				Data, sha256, Sig, rsa_pss:from_identifier(Identifier));
 		{?ECDSA_SIGN_ALG, secp256k1} ->
-			ec_secp256k1:verify(Data, sha256, Sig, ec_secp256k1:from_identifier(Identifier))
+			ec_secp256k1:verify(Data, sha256, Sig, ec_secp256k1:from_identifier(Identifier));
+		{invalid_prefix, _} -> invalid_identifier
 	end;
 verify({_, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey}, Data, Sig) ->
 	ec_secp256k1:verify(Data, sha256, Sig, PublicKey).
+
+-spec from_identifier(Identifier :: binary()) -> public_key:rsa_public_key() | public_key:ecdsa_public_key().
+from_identifier(Identifier) ->
+	case identifier_to_type(Identifier) of
+		{?RSA_SIGN_ALG, 65537} -> Identifier;
+		{?ECDSA_SIGN_ALG, secp256k1} -> ec_secp256k1:from_identifier(Identifier);
+		{invalid_prefix, _} -> invalid_identifier
+	end.
+
 
 %% @doc Verify that a signature is correct. The function was used to verify
 %% transactions until the fork 2.4. It rejects a valid transaction when the

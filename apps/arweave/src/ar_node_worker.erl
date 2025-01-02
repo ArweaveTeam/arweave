@@ -438,7 +438,7 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {initialized, B}),
-	ar_events:send(node_state, {checkpoint_block, 
+	ar_events:send(node_state, {checkpoint_block,
 		ar_block_cache:get_checkpoint_block(RecentBI)}),
 	ar:console("Joined the Arweave network successfully at the block ~s, height ~B.~n",
 			[ar_util:encode(Current), Height]),
@@ -492,8 +492,8 @@ handle_info({tx_ready_for_mining, TX}, State) ->
 
 handle_info({event, block, {double_signing, Proof}}, State) ->
 	Map = maps:get(double_signing_proofs, State, #{}),
-	Key = element(1, Proof),
-	Addr = ar_wallet:to_address({?DEFAULT_KEY_TYPE, Key}),
+	Identifier = element(1, Proof),
+	Addr = ar_wallet:to_address(Identifier),
 	case is_map_key(Addr, Map) of
 		true ->
 			{noreply, State};
@@ -600,7 +600,7 @@ terminate(Reason, _State) ->
 						maps:put(TXID, {ar_mempool:get_tx(TXID), Status}, Acc)
 					end,
 					#{},
-					ar_mempool:get_priority_set()	
+					ar_mempool:get_priority_set()
 				),
 			dump_mempool(Mempool, MempoolSize);
 		_ ->
@@ -1075,7 +1075,7 @@ pack_block_with_transactions(B, PrevB) ->
 			undefined ->
 				Addresses2;
 			Proof ->
-				[ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}) | Addresses2]
+				[ar_wallet:to_address(element(1, Proof)) | Addresses2]
 		end,
 	Accounts = ar_wallets:get(PrevB#block.wallet_list, Addresses3),
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
@@ -1411,7 +1411,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {new_tip, B, PrevB}),
-	ar_events:send(node_state, {checkpoint_block, 
+	ar_events:send(node_state, {checkpoint_block,
 		ar_block_cache:get_checkpoint_block(RecentBI)}),
 	maybe_reset_miner(State).
 
@@ -1950,7 +1950,7 @@ handle_found_solution(Args, PrevB, State) ->
 				end
 		end,
 
-	RewardKey = case ar_wallet:load_key(MiningAddress) of
+	RewardWallet = case ar_wallet:load_key(MiningAddress) of
 		not_found ->
 			?LOG_WARNING([{event, mined_block_but_no_mining_key_found}, {node, node()},
 					{mining_address, ar_util:encode(MiningAddress)}]),
@@ -1964,7 +1964,7 @@ handle_found_solution(Args, PrevB, State) ->
 			{false, Reason3} ->
 				{false, Reason3};
 			true ->
-				case RewardKey of
+				case RewardWallet of
 					not_found ->
 						ar_events:send(solution,
 							{rejected, #{ reason => missing_key_file, source => Source }}),
@@ -2063,6 +2063,7 @@ handle_found_solution(Args, PrevB, State) ->
 					Denomination, Denomination2),
 			CDiff = ar_difficulty:next_cumulative_diff(PrevB#block.cumulative_diff, Diff,
 					Height),
+			{PrivateKey, {_, Identifier}} = RewardWallet,
 			UnsignedB = pack_block_with_transactions(#block{
 				nonce = Nonce,
 				previous_block = PrevH,
@@ -2076,7 +2077,7 @@ handle_found_solution(Args, PrevB, State) ->
 				height = Height,
 				hash = SolutionH,
 				hash_list_merkle = ar_block:compute_hash_list_merkle(PrevB),
-				reward_addr = ar_wallet:to_address(RewardKey),
+				reward_addr = ar_wallet:to_address(Identifier),
 				tags = [],
 				cumulative_diff = CDiff,
 				previous_cumulative_diff = PrevB#block.cumulative_diff,
@@ -2094,7 +2095,7 @@ handle_found_solution(Args, PrevB, State) ->
 				poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
 				poa2_cache = PoA2Cache,
 				recall_byte2 = RecallByte2,
-				reward_key = element(2, RewardKey),
+				reward_key = Identifier,
 				price_per_gib_minute = PricePerGiBMinute2,
 				scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute2,
 				denomination = Denomination2,
@@ -2110,7 +2111,7 @@ handle_found_solution(Args, PrevB, State) ->
 				unpacked_chunk2_hash = get_unpacked_chunk_hash(
 						PoA2, PackingDifficulty, RecallByte2)
 			}, PrevB),
-			
+
 			BlockTimeHistory2 = lists:sublist(
 				ar_block_time_history:update_history(UnsignedB, PrevB),
 				ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
@@ -2123,7 +2124,7 @@ handle_found_solution(Args, PrevB, State) ->
 			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, (PrevB#block.hash)/binary,
 					SignedH/binary >>,
-			Signature = ar_wallet:sign(element(1, RewardKey), SignaturePreimage),
+			Signature = ar_wallet:sign(PrivateKey, SignaturePreimage),
 			H = ar_block:indep_hash2(SignedH, Signature),
 			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
 			ar_watchdog:mined_block(H, Height, PrevH),

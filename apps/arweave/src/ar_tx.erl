@@ -43,40 +43,28 @@ new(Data, Reward, Last) ->
 		data_size = byte_size(Data),
 		reward = Reward
 	}.
-new({SigType, PubKey}, Reward, Qty, Last) ->
-	new(ar_wallet:to_address(PubKey, SigType), Reward, Qty, Last, SigType);
-new(Dest, Reward, Qty, Last) ->
+new({address, Address}, Reward, Qty, Last) ->
 	#tx{
 		id = crypto:strong_rand_bytes(32),
 		last_tx = Last,
 		quantity = Qty,
-		target = Dest,
+		target = Address,
 		data = <<>>,
 		data_size = 0,
 		reward = Reward
-	}.
-new(Dest, Reward, Qty, Last, SigType) ->
-	#tx{
-		id = crypto:strong_rand_bytes(32),
-		last_tx = Last,
-		quantity = Qty,
-		target = Dest,
-		data = <<>>,
-		data_size = 0,
-		reward = Reward,
-		signature_type = SigType
-	}.
+	};
+new({_, Identifier}, Reward, Qty, Last) ->
+	new({address, ar_wallet:to_address(Identifier)}, Reward, Qty, Last).
+
 
 %% @doc Cryptographically sign (claim ownership of) a v2 transaction.
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
-sign(TX, {PrivKey, PubKey = {KeyType, Owner}}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner,
-			signature_type = KeyType })).
+sign(TX, {PrivKey, PubKey = {_, Identifier}}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Identifier})).
 
-sign(TX, PrivKey, PubKey = {KeyType, Owner}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner,
-			signature_type = KeyType })).
+sign(TX, PrivKey, PubKey = {_, Identifier}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Identifier})).
 
 %% @doc Cryptographically sign (claim ownership of) a v1 transaction.
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
@@ -120,7 +108,7 @@ check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> ->
 check_last_tx(WalletList, _TX) when map_size(WalletList) == 0 ->
 	true;
 check_last_tx(WalletList, TX) ->
-	Addr = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Addr = ar_wallet:to_address(TX#tx.owner),
 	case maps:get(Addr, WalletList, not_found) of
 		not_found ->
 			false;
@@ -135,7 +123,7 @@ check_last_tx(WalletList, TX) ->
 check_last_tx(WalletList, _TX) when map_size(WalletList) == 0 ->
 	true;
 check_last_tx(WalletList, TX) ->
-	Addr = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Addr = ar_wallet:to_address(TX#tx.owner),
 	case maps:get(Addr, WalletList, not_found) of
 		not_found ->
 			false;
@@ -278,8 +266,8 @@ signature_data_segment_v1(TX) ->
 			>>
 	end.
 
-sign(TX, PrivKey, {KeyType, Owner}, SignatureDataSegment) ->
-	NewTX = TX#tx{ owner = Owner, signature_type = KeyType },
+sign(TX, PrivKey, {_, Identifier}, SignatureDataSegment) ->
+	NewTX = TX#tx{ owner = Identifier },
 	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx{ id = ID, signature = Sig }.
@@ -301,7 +289,7 @@ do_verify(TX, _Args, _VerifySignature) ->
 get_addresses([], Addresses) ->
 	sets:to_list(Addresses);
 get_addresses([TX | TXs], Addresses) ->
-	Source = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Source = ar_wallet:to_address(TX#tx.owner),
 	WithSource = sets:add_element(Source, Addresses),
 	WithDest = sets:add_element(TX#tx.target, WithSource),
 	get_addresses(TXs, WithDest).
@@ -320,7 +308,7 @@ do_verify_v1(TX, Args, VerifySignature) ->
 		false ->
 			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
 		true ->
-			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+			From = ar_wallet:to_address(TX#tx.owner),
 			FeeArgs = {TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 					Height, Accounts, TX#tx.target},
 			Checks = [
@@ -416,7 +404,7 @@ verify_signature_v1(_TX, do_not_verify_signature) ->
 	true;
 verify_signature_v1(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
-	ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
+	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v1(_TX, do_not_verify_signature, _Height) ->
 	true;
@@ -424,10 +412,10 @@ verify_signature_v1(TX, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
 	case Height >= ar_fork:height_2_4() of
 		true ->
-			ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment,
+			ar_wallet:verify(TX#tx.owner, SignatureDataSegment,
 					TX#tx.signature);
 		false ->
-			ar_wallet:verify_pre_fork_2_4({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment,
+			ar_wallet:verify_pre_fork_2_4(TX#tx.owner, SignatureDataSegment,
 					TX#tx.signature)
 	end.
 
@@ -501,7 +489,7 @@ verify_signature_v2(TX, verify_signature, Height) ->
 	end.
 
 validate_overspend(TX, Accounts) ->
-	From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	From = ar_wallet:to_address(TX#tx.owner),
 	Addresses = case TX#tx.target of
 		<<>> ->
 			[From];

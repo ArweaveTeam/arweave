@@ -3,7 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 
 -export([reset/0, load_from_disk/0, add_tx/2, drop_txs/1, drop_txs/3,
-		get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, has_tx/1, 
+		get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, has_tx/1,
 		get_priority_set/0, get_last_tx_map/0, get_origin_tx_map/0,
 		get_propagation_queue/0, del_from_propagation_queue/2]).
 
@@ -21,7 +21,7 @@ load_from_disk() ->
 		{ok, {SerializedTXs, _MempoolSize}} ->
 			TXs = maps:map(fun(_, {TX, St}) -> {deserialize_tx(TX), St} end, SerializedTXs),
 
-			{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} = 
+			{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} =
 				maps:fold(
 					fun(TXID, {TX, Status}, {MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap}) ->
 						MetaData = {_, _, Timestamp} = init_tx_metadata(TX, Status),
@@ -79,7 +79,7 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 					add_to_last_tx_map(get_last_tx_map(), TX),
 					add_to_origin_tx_map(get_origin_tx_map(), TX)
 				};
-			{TX, PrevStatus, Timestamp} -> 
+			{TX, PrevStatus, Timestamp} ->
 				{
 					{TX, Status, Timestamp},
 					get_mempool_size(),
@@ -98,7 +98,7 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 		{last_tx_map, LastTXMap},
 		{origin_tx_map, OriginTXMap}
 	]),
-	
+
 	case ar_node:is_joined() of
 		true ->
 			% 1. Drop unconfirmable transactions:
@@ -332,7 +332,7 @@ del_from_last_tx_map(LastTXMap, TX) ->
 %% when resolving overspends.
 add_to_origin_tx_map(OriginTXMap, TX) ->
 	Element = unconfirmed_tx(TX),
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_wallet:to_address(TX#tx.owner),
 	Set2 = case maps:get(Origin, OriginTXMap, not_found) of
 		not_found ->
 			gb_sets:from_list([Element]);
@@ -343,7 +343,7 @@ add_to_origin_tx_map(OriginTXMap, TX) ->
 
 del_from_origin_tx_map(OriginTXMap, TX) ->
 	Element = unconfirmed_tx(TX),
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_wallet:to_address(TX#tx.owner),
 	case maps:get(Origin, OriginTXMap, not_found) of
 		not_found ->
 			OriginTXMap;
@@ -353,7 +353,7 @@ del_from_origin_tx_map(OriginTXMap, TX) ->
 
 unconfirmed_tx(TX = #tx{}) ->
 	{ar_tx:utility(TX), TX#tx.id}.
-	
+
 
 increase_mempool_size(
 	_MempoolSize = {MempoolHeaderSize, MempoolDataSize}, TX = #tx{}) ->
@@ -460,7 +460,7 @@ filter_clashing_txs(ClashingTXIDs) ->
 %% confirmed)
 %%
 %% Note: when doing the overspend calculation any unconfirmed deposit
-%% transactions are ignored. This is to prevent a second potentially 
+%% transactions are ignored. This is to prevent a second potentially
 %% malicious scenario like the following:
 %%
 %% Peer A: receives deposit TX and several spend TXs,
@@ -479,7 +479,7 @@ find_overspent_txs(<<>>) ->
 	[];
 find_overspent_txs(TX)
 		when TX#tx.reward > 0 orelse TX#tx.quantity > 0  ->
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_wallet:to_address(TX#tx.owner),
 	SpentTXIDs = maps:get(Origin, get_origin_tx_map(), gb_sets:new()),
 	% We only care about the origin wallet since we aren't tracking
 	% unconfirmed deposits

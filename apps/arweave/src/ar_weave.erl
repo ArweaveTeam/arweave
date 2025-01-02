@@ -66,15 +66,15 @@ init(WalletList, Diff, GenesisDataSize) ->
 	B1 =
 		case ar_fork:height_2_6() > 0 of
 			false ->
-				RewardKey = element(2, ar_wallet:new()),
-				RewardAddr = ar_wallet:to_address(RewardKey),
+				{_, Identifier} = element(2, ar_wallet:new()),
+				RewardAddr = ar_wallet:to_address(Identifier),
 				HashRate = ar_difficulty:get_hash_rate_fixed_ratio(B0),
 				RewardHistory = [{RewardAddr, HashRate, 10, 1}],
-				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(0, 
+				PricePerGiBMinute = ar_pricing:get_price_per_gib_minute(0,
 						B0#block{ reward_history = RewardHistory, denomination = 1 }),
 				B0#block{ hash = crypto:strong_rand_bytes(32),
 						nonce = 0, recall_byte = 0, partition_number = 0,
-						reward_key = RewardKey, reward_addr = RewardAddr,
+						reward_key = Identifier, reward_addr = RewardAddr,
 						reward = 10,
 						recall_byte2 = 0, nonce_limiter_info = #nonce_limiter_info{
 								output = crypto:strong_rand_bytes(32),

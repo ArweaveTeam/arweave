@@ -301,7 +301,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 		weave_size = WeaveSize, tx_root = TXRoot, wallet_list = WalletList,
 		hash_list_merkle = HashListMerkle, reward_pool = RewardPool,
 		packing_2_5_threshold = Packing_2_5_Threshold, reward_addr = Addr,
-		reward_key = RewardKey, strict_data_split_threshold = StrictChunkThreshold,
+		reward_key = Identifier, strict_data_split_threshold = StrictChunkThreshold,
 		usd_to_ar_rate = {RateDividend, RateDivisor},
 		scheduled_usd_to_ar_rate = {ScheduledRateDividend, ScheduledRateDivisor},
 		tags = Tags, txs = TXs,
@@ -330,7 +330,6 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 	%% The only block where reward_address may be unclaimed
 	%% is the genesis block of a new weave.
 	Addr2 = case Addr of unclaimed -> <<>>; _ -> Addr end,
-	RewardKey2 = case RewardKey of undefined -> undefined; {_Type, Pub} -> Pub end,
 	#nonce_limiter_info{ output = Output, global_step_number = N, seed = Seed,
 			next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
 			next_partition_upper_bound = NextPartitionUpperBound,
@@ -391,7 +390,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			(encode_bin_list([GetTXID(TX) || TX <- TXs], 16, 8))/binary,
 			(encode_int(Reward, 8))/binary,
 			(encode_int(RecallByte, 16))/binary, (encode_bin(HashPreimage, 8))/binary,
-			(encode_int(RecallByte2, 16))/binary, (encode_bin(RewardKey2, 16))/binary,
+			(encode_int(RecallByte2, 16))/binary, (encode_bin(Identifier, 16))/binary,
 			(encode_int(PartitionNumber, 8))/binary, Output:32/binary, N:64,
 			Seed:48/binary, NextSeed:48/binary, PartitionUpperBound:256,
 			NextPartitionUpperBound:256, (encode_bin(PrevOutput, 8))/binary,
@@ -428,15 +427,15 @@ indep_hash(BDS, B) ->
 
 %% @doc Verify the block signature.
 verify_signature(BlockPreimage, PrevCDiff,
-		#block{ signature = Signature, reward_key = {?DEFAULT_KEY_TYPE, Pub} = RewardKey,
+		#block{ signature = Signature, reward_key = Identifier,
 				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
 				cumulative_diff = CDiff })
-		when byte_size(Signature) == 512, byte_size(Pub) == 512 ->
+		when byte_size(Signature) == 512 ->
 	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
 			BlockPreimage/binary >>,
-	ar_wallet:to_address(RewardKey) == RewardAddr andalso
-			ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
+	ar_wallet:to_address(Identifier) == RewardAddr andalso
+			ar_wallet:verify(Identifier, SignaturePreimage, Signature);
 verify_signature(_BlockPreimage, _PrevCDiff, _B) ->
 	false.
 

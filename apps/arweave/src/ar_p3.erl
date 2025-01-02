@@ -242,7 +242,7 @@ try_to_create_account(DecodedAddress) ->
 		unavailable ->
 			{error, not_found};
 		TX ->
-			PublicKey = {TX#tx.signature_type, TX#tx.owner},
+			PublicKey = {ar_wallet:identifier_to_type(TX#tx.owner), TX#tx.owner},
 			ar_p3_db:get_or_create_account(DecodedAddress, PublicKey, ?ARWEAVE_AR)
 	end.
 
@@ -341,8 +341,8 @@ apply_deposits([TX|TXs], DepositAddress) ->
 	apply_deposits(TXs, DepositAddress).
 
 apply_deposit(TX) ->
-	Sender = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
-	PublicKey = {TX#tx.signature_type, TX#tx.owner},
+	Sender = ar_wallet:to_address(TX#tx.owner),
+	PublicKey = {ar_wallet:identifier_to_type(TX#tx.owner), TX#tx.owner},
 	{ok, _} = ar_p3_db:get_or_create_account(Sender, PublicKey, ?ARWEAVE_AR),
 	{ok, _} = ar_p3_db:post_deposit(Sender, TX#tx.quantity, TX#tx.id),
 	?LOG_INFO([{event, ar_p3}, {op, deposit}, {sender, Sender},

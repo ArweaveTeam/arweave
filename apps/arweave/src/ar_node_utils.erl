@@ -20,8 +20,8 @@
 
 %% @doc Update the given accounts by applying a transaction.
 apply_tx(Accounts, Denomination, TX) ->
-	#tx{ owner = From, signature_type = SigType } = TX,
-	Addr = ar_wallet:to_address(From, SigType),
+	#tx{ owner = From} = TX,
+	Addr = ar_wallet:to_address(From),
 	case maps:get(Addr, Accounts, not_found) of
 		not_found ->
 			Accounts;
@@ -154,12 +154,11 @@ update_sender_balance(Accounts, Denomination,
 		#tx{
 			id = ID,
 			owner = From,
-			signature_type = SigType,
 			quantity = Qty,
 			reward = Reward,
 			denomination = TXDenomination
 		}) ->
-	Addr = ar_wallet:to_address(From, SigType),
+	Addr = ar_wallet:to_address(From),
 	case maps:get(Addr, Accounts, not_found) of
 		{Balance, _LastTX} ->
 			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
@@ -249,14 +248,13 @@ may_be_apply_double_signing_proof(B, PrevB, Accounts) ->
 	end.
 
 may_be_apply_double_signing_proof2(B, PrevB, Accounts) ->
-	{Pub, _Signature1, _CDiff1, _PrevCDiff1, _Preimage1, _Signature2, _CDiff2, _PrevCDiff2,
+	{Identifier, _Signature1, _CDiff1, _PrevCDiff1, _Preimage1, _Signature2, _CDiff2, _PrevCDiff2,
 			_Preimage2} = B#block.double_signing_proof,
-	Key = {?DEFAULT_KEY_TYPE, Pub},
-	case B#block.reward_key == Key of
+	case B#block.reward_key == Identifier of
 		true ->
 			{error, invalid_double_signing_proof_same_address};
 		false ->
-			Addr = ar_wallet:to_address(Key),
+			Addr = ar_wallet:to_address(Identifier),
 			case is_account_banned(Addr, Accounts) of
 				true ->
 					{error, invalid_double_signing_proof_already_banned};
@@ -272,15 +270,14 @@ may_be_apply_double_signing_proof2(B, PrevB, Accounts) ->
 	end.
 
 may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
-	{Pub, Signature1, CDiff1, PrevCDiff1, Preimage1, Signature2, CDiff2, PrevCDiff2,
+	{Identifier, Signature1, CDiff1, PrevCDiff1, Preimage1, Signature2, CDiff2, PrevCDiff2,
 			Preimage2} = B#block.double_signing_proof,
 	EncodedCDiff1 = ar_serialize:encode_int(CDiff1, 16),
 	EncodedPrevCDiff1 = ar_serialize:encode_int(PrevCDiff1, 16),
 	SignaturePreimage1 = << EncodedCDiff1/binary, EncodedPrevCDiff1/binary,
 			Preimage1/binary >>,
-	Key = {?DEFAULT_KEY_TYPE, Pub},
-	Addr = ar_wallet:to_address(Key),
-	case ar_wallet:verify(Key, SignaturePreimage1, Signature1) of
+	Addr = ar_wallet:to_address(Identifier),
+	case ar_wallet:verify(Identifier, SignaturePreimage1, Signature1) of
 		false ->
 			{error, invalid_double_signing_proof_invalid_signature};
 		true ->
@@ -288,7 +285,7 @@ may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
 			EncodedPrevCDiff2 = ar_serialize:encode_int(PrevCDiff2, 16),
 			SignaturePreimage2 = << EncodedCDiff2/binary,
 					EncodedPrevCDiff2/binary, Preimage2/binary >>,
-			case ar_wallet:verify(Key, SignaturePreimage2, Signature2) of
+			case ar_wallet:verify(Identifier, SignaturePreimage2, Signature2) of
 				false ->
 					{error, invalid_double_signing_proof_invalid_signature};
 				true ->
@@ -320,7 +317,7 @@ update_accounts4(B, PrevB, Accounts, Args) ->
 			update_accounts5(B, Accounts, Args);
 		Proof ->
 			Denomination = PrevB#block.denomination,
-			BannedAddr = ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}),
+			BannedAddr = ar_wallet:to_address(element(1, Proof)),
 			Sum = ar_rewards:get_total_reward_for_address(BannedAddr, PrevB) - 1,
 			{Dividend, Divisor} = ?DOUBLE_SIGNING_PROVER_REWARD_SHARE,
 			LockedRewards = ar_rewards:get_locked_rewards(PrevB),
@@ -525,7 +522,7 @@ validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 					RecentTXMap});
 		true ->
 			ExpectedNextVDFDifficulty = ar_block:compute_next_vdf_difficulty(OldB),
-			#nonce_limiter_info{ next_vdf_difficulty = NextVDFDifficulty } = 
+			#nonce_limiter_info{ next_vdf_difficulty = NextVDFDifficulty } =
 				NewB#block.nonce_limiter_info,
 			case ExpectedNextVDFDifficulty == NextVDFDifficulty of
 				false ->
@@ -638,7 +635,7 @@ validate_block(merkle_rebase_support_threshold, {NewB, OldB}) ->
 -ifdef(DEBUG).
 is_wallet_invalid(#tx{ signature = <<>> }, _Wallets) ->
 	false;
-is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
+is_wallet_invalid(#tx{ owner = Owner}, Wallets) ->
 	Address = ar_wallet:to_address(Owner, SigType),
 	case maps:get(Address, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
@@ -659,8 +656,8 @@ is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
 			true
 	end.
 -else.
-is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
-	Address = ar_wallet:to_address(Owner, SigType),
+is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
+	Address = ar_wallet:to_address(Owner),
 	case maps:get(Address, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of

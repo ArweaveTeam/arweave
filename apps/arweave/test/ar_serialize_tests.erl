@@ -205,8 +205,7 @@ tx_roundtrip_test() ->
 		TXBase#tx{
 			format = 2,
 			tags = [{<<"Name1">>, <<"Value1">>}],
-			data_root = << 0:256 >>,
-			signature_type = ?DEFAULT_KEY_TYPE
+			data_root = << 0:256 >>
 		},
 	JsonTX = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
 	?assertEqual(

@@ -180,7 +180,7 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 		diff = Diff
 	} = B,
 	B2 = B#block{ cumulative_diff = CDiff },
-	Wallet = ar_wallet:new(),
+	{_, {_, Identifier}} = Wallet = ar_wallet:new(),
 	RewardAddr2 = ar_wallet:to_address(Wallet),
 	H0 = ar_block:compute_h0(B, PrevB),
 	{RecallByte, _RecallRange2Start} = ar_block:get_recall_range(H0, PartitionNumber,
@@ -193,7 +193,7 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 		true ->
 			PoA = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 			B3 = B2#block{ hash = H1, hash_preimage = Preimage, reward_addr = RewardAddr2,
-					reward_key = element(2, Wallet), recall_byte = RecallByte, nonce = 0,
+					reward_key = Identifier, recall_byte = RecallByte, nonce = 0,
 					recall_byte2 = undefined, poa2 = #poa{},
 					unpacked_chunk2_hash = undefined,
 					poa = #poa{ chunk = Chunk, data_path = DataPath,

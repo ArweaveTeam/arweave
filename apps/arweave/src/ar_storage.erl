@@ -564,8 +564,7 @@ migrate_tx_record({tx, Format, ID, LastTX, Owner, Tags, Target, Quantity, Data,
 	#tx{ format = Format, id = ID, last_tx = LastTX,
 			owner = Owner, tags = Tags, target = Target, quantity = Quantity,
 			data = Data, data_size = DataSize, data_root = DataRoot,
-			signature = Signature, signature_type = ?DEFAULT_KEY_TYPE,
-			reward = Reward, data_tree = DataTree }.
+			signature = Signature, reward = Reward, data_tree = DataTree }.
 
 parse_block_kv_binary(Bin) ->
 	case catch ar_serialize:binary_to_block(Bin) of

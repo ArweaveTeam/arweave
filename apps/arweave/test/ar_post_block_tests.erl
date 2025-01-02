@@ -108,7 +108,7 @@ test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
 	%% test limitation. In the wild the poa2 chunk could be modified without resigning.
 	ok = ar_events:subscribe(block),
 	assert_not_banned(ar_test_node:peer_ip(main)),
-	B2 = sign_block(B#block{ 
+	B2 = sign_block(B#block{
 			recall_byte2 = 100000000,
 			poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
 	post_block(B2, invalid_second_chunk),
@@ -349,13 +349,13 @@ test_rejects_invalid_blocks() ->
 			hash = binary:encode_unsigned(B1SolutionNum - 1) }, B1, Key),
 	post_block(B5, invalid_nonce_limiter_global_step_number),
 	%% Correct hash, but invalid PoW.
-	InvalidKey = ar_wallet:new(),
+	{_, {_, Identifier}} = InvalidKey = ar_wallet:new(),
 	InvalidAddr = ar_wallet:to_address(InvalidKey),
 	B6 = sign_block(B1#block{ reward_addr = InvalidAddr,
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
-			reward_key = element(2, InvalidKey) }, B0, element(1, InvalidKey)),
+			reward_key = Identifier }, B0, element(1, InvalidKey)),
 	timer:sleep(100 * 2), % ?THROTTLE_BY_IP_INTERVAL_MS * 2
 	post_block(B6, [invalid_hash_preimage, invalid_pow]),
 	?assertMatch({ok, {{<<"403">>, _}, _,
