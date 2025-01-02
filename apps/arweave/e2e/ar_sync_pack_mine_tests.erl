@@ -23,17 +23,17 @@ instantiator(GenesisData, SinkPackingType, TestFun) ->
 %% Test Registration
 %% --------------------------------------------------------------------------------------------
 
-% replica_2_9_sync_pack_mine_test_() ->
-% 	{setup, fun () -> setup_source_node(replica_2_9) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					% instantiator(GenesisData, replica_2_9, fun test_syncing_blocked/1)
-% 					% instantiator(GenesisData, spora_2_6, fun test_syncing_blocked/1),
-% 					% instantiator(GenesisData, composite_1, fun test_syncing_blocked/1),
-% 					% instantiator(GenesisData, composite_2, fun test_syncing_blocked/1),
-% 					% instantiator(GenesisData, unpacked, fun test_syncing_blocked/1)
-% 				]
-% 		end}.
+replica_2_9_block_sync_test_() ->
+	{setup, fun () -> setup_source_node(replica_2_9) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, fun test_syncing_blocked/1),
+					instantiator(GenesisData, spora_2_6, fun test_syncing_blocked/1),
+					instantiator(GenesisData, composite_1, fun test_syncing_blocked/1),
+					instantiator(GenesisData, composite_2, fun test_syncing_blocked/1),
+					instantiator(GenesisData, unpacked, fun test_syncing_blocked/1)
+				]
+		end}.
 
 spora_2_6_sync_pack_mine_test_() ->
 	{setup, fun () -> setup_source_node(spora_2_6) end, 
@@ -112,6 +112,16 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 			?assertEqual(SinkBlock, SourceBlock),
 			ok
 	end.
+
+test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
+	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	[B0 | _] = Blocks,
+	SourceNode = peer1,
+	SinkNode = peer2,
+
+	start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
+	ar_e2e:assert_does_not_sync_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_no_chunks(SinkNode, Chunks).
 
 start_sink_node(Node, SourceNode, B0, PackingType) ->
 	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_b]),
