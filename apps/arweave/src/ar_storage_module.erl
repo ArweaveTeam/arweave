@@ -160,6 +160,8 @@ get_by_id(ID, [Module | Modules]) ->
 	end.
 
 %% @doc Return {StartOffset, EndOffset} the given module is responsible for.
+get_range("default") ->
+	{0, infinity};
 get_range(ID) ->
 	Module = get_by_id(ID),
 	case Module of
@@ -168,7 +170,6 @@ get_range(ID) ->
 		_ ->
 			module_range(Module)
 	end.
-
 
 -spec module_range(ar_storage_module:storage_module()) ->
 	{non_neg_integer(), non_neg_integer()}.
@@ -211,10 +212,16 @@ get(Offset, Packing) ->
 	get(Offset, Packing, Config#config.storage_modules, not_found).
 
 %% @doc Return a configured storage module with the given Packing covering the given Offset.
-%% Return not_found if none is found.
+%% Return not_found if none is found. If a module is configured with in-place repacking,
+%% pick the target packing (the one we are repacking to.)
 get_strict(Offset, Packing) ->
 	{ok, Config} = application:get_env(arweave, config),
-	get_strict(Offset, Packing, Config#config.storage_modules).
+	RepackInPlaceModulesStoreIDs = [
+			{{BucketSize, Bucket, TargetPacking}, ar_storage_module:id(Module)}
+		|| {{BucketSize, Bucket, _Packing} = Module, TargetPacking} <- Config#config.repack_in_place_storage_modules],
+	ModuleStoreIDs = [ar_storage_module:id(Module)
+			|| Module <- Config#config.storage_modules],
+	get_strict(Offset, Packing, ModuleStoreIDs ++ RepackInPlaceModulesStoreIDs).
 
 %% @doc Return the list of all configured storage modules covering the given Offset.
 get_all(Offset) ->
@@ -301,7 +308,7 @@ get(Offset, Packing, [{BucketSize, Bucket, Packing2} | StorageModules], StorageM
 get(_Offset, _Packing, [], StorageModule) ->
 	StorageModule.
 
-get_strict(Offset, Packing, [{BucketSize, Bucket, Packing2} | StorageModules]) ->
+get_strict(Offset, Packing, [{{BucketSize, Bucket, Packing2}, StoreID} | StorageModules]) ->
 	case Offset =< BucketSize * Bucket
 			orelse Offset > BucketSize * (Bucket + 1) + get_overlap(Packing2) of
 		true ->
@@ -309,15 +316,13 @@ get_strict(Offset, Packing, [{BucketSize, Bucket, Packing2} | StorageModules]) -
 		false ->
 			case Packing == Packing2 of
 				true ->
-					StoreID = ar_storage_module:id({BucketSize, Bucket, Packing}),
-					{ok, StoreID, {BucketSize, Bucket, Packing}};
+					{ok, StoreID};
 				false ->
 					get_strict(Offset, Packing, StorageModules)
 			end
 	end;
 get_strict(_Offset, _Packing, []) ->
 	not_found.
-
 
 get_overlap({replica_2_9, _Addr}) ->
 	?REPLICA_2_9_OVERLAP;
