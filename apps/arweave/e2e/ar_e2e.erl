@@ -49,6 +49,7 @@ load_wallet_fixture(WalletFixture) ->
 -spec write_chunk_fixture(binary(), non_neg_integer(), binary()) -> ok.
 write_chunk_fixture(Packing, EndOffset, Chunk) ->
     FixtureDir = fixture_dir(chunks, [ar_serialize:encode_packing(Packing, true)]),
+    ok = filelib:ensure_dir(FixtureDir ++ "/"),
     FixturePath = filename:join([FixtureDir, integer_to_list(EndOffset) ++ ".bin"]),
     file:write_file(FixturePath, Chunk).
 
@@ -60,6 +61,7 @@ load_chunk_fixture(Packing, EndOffset) ->
 
 packing_type_to_packing(PackingType, Address) ->
     case PackingType of
+        replica_2_9 -> {replica_2_9, Address};
         spora_2_6 -> {spora_2_6, Address};
         composite_1 -> {composite, Address, 1};
         composite_2 -> {composite, Address, 2};
@@ -71,7 +73,7 @@ start_source_node(Node, unpacked, _WalletFixture) ->
         peer1 -> peer2;
         peer2 -> peer1
     end,
-	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(TempNode, composite_1, wallet_a),
+	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(TempNode, spora_2_6, wallet_a),
 	{_, StorageModules} = ar_e2e:source_node_storage_modules(Node, unpacked, wallet_a),
 	[B0 | _] = Blocks,
 	{ok, Config} = ar_test_node:get_config(Node),
@@ -187,7 +189,10 @@ assert_block({spora_2_6, Address}, MinedBlock) ->
     ?assertEqual(0, MinedBlock#block.packing_difficulty);
 assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
     ?assertEqual(Address, MinedBlock#block.reward_addr),
-    ?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty).
+    ?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty);
+assert_block({replica_2_9, Address}, MinedBlock) ->
+    ?assertEqual(Address, MinedBlock#block.reward_addr),
+    ?assertEqual(?REPLICA_2_9_PACKING_DIFFICULTY, MinedBlock#block.packing_difficulty).
     
 
 assert_syncs_range(Node, StartOffset, EndOffset) ->
