@@ -7,11 +7,10 @@
 // imports from randomx
 #include "vm_compiled.hpp"
 #include "blake2/blake2.h"
-#include "aes_hash.hpp"
 
 extern "C" {
 
-	void _rsp_mix_entropy_crc32(
+	void _rsp_mix_entropy_near(
 		const unsigned char *inEntropy,
 		unsigned char *outEntropy,
 		const size_t entropySize
@@ -57,31 +56,30 @@ extern "C" {
 	// VM scratchpad is updated in place.
 	void _rsp_exec_inplace(
 		randomx_vm* machine,
-		uint64_t* srcTempHash,
-		uint64_t* dstTempHash,
+		uint64_t* tempHash,
 		int programCount,
 		size_t scratchpadSize
 	) {
 		machine->resetRoundingMode();
 		for (int chain = 0; chain < programCount-1; chain++) {
-			machine->run(srcTempHash);
+			machine->run(tempHash);
 			int blakeResult = randomx_blake2b(
-				srcTempHash, 64,
+				tempHash, 64,
 				machine->getRegisterFile(),
 				sizeof(randomx::RegisterFile),
 				nullptr, 0
 			);
 			assert(blakeResult == 0);
 		}
-		machine->run(srcTempHash);
+		machine->run(tempHash);
 		int blakeResult = randomx_blake2b(
-			dstTempHash, 64,
+			tempHash, 64,
 			machine->getRegisterFile(),
 			sizeof(randomx::RegisterFile),
 			nullptr, 0
 		);
 		assert(blakeResult == 0);
-		_rsp_mix_entropy_crc32(
+		_rsp_mix_entropy_near(
 			(const unsigned char*)machine->getScratchpad(),
 			(unsigned char*)(void*)machine->getScratchpad(),
 			scratchpadSize);
@@ -173,7 +171,7 @@ extern "C" {
 			alignas(16) uint64_t tempHash[8]; // 64 bytes
 		};
 
-		vm_hash_t* vmHashes = new (std::nothrow) vm_hash_t[2*laneCount];
+		vm_hash_t* vmHashes = new (std::nothrow) vm_hash_t[laneCount];
 		if (!vmHashes) {
 			return 0;
 		}
@@ -203,20 +201,14 @@ extern "C" {
 				delete[] vmHashes;
 				return 0;
 			}
-			// This replaces the default `randomx_vm::initScratchpad()` and overwrites
-			// the VM's internal `scratchpad` member variable. 
-			fillAes1Rx4<false>(
-				vmHashes[i].tempHash,
-				scratchpadSize,
-				(void*)vmList[i]->getScratchpad()
-			);
+			vmList[i]->initScratchpad(&vmHashes[i].tempHash);
 		}
 
 		for (int d = 0; d < rxDepth; d++) {
 			for (int lane = 0; lane < laneCount; lane++) {
 				_rsp_exec_inplace(
 					vmList[lane],
-					vmHashes[lane].tempHash, vmHashes[lane+laneCount].tempHash,
+					vmHashes[lane].tempHash,
 					randomxProgramCount, scratchpadSize);
 			}
 			_rsp_mix_entropy_far(&vmList[0], &vmList[laneCount],
@@ -225,10 +217,10 @@ extern "C" {
 
 			if (d + 1 < rxDepth) {
 				d++;
-				for (int lane = laneCount; lane < 2*laneCount; lane++) {
+				for (int lane = 0; lane < laneCount; lane++) {
 					_rsp_exec_inplace(
-						vmList[lane],
-						vmHashes[lane].tempHash, vmHashes[lane-laneCount].tempHash,
+						vmList[lane+laneCount],
+						vmHashes[lane].tempHash,
 						randomxProgramCount, scratchpadSize);
 				}
 				_rsp_mix_entropy_far(&vmList[laneCount], &vmList[0],
