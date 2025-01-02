@@ -1088,7 +1088,7 @@ handle_cast(sync_intervals, State) ->
 	end;
 
 handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
-	#sync_data_state{ packing_map = PackingMap } = State,
+	{store_fetched_chunk, Peer, Byte, Proof} = Cast,	
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1) - 1,
 	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),
@@ -1099,34 +1099,21 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathRuleset) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
-			{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
-			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
-			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-					Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
-			case maps:is_key({AbsoluteOffset, unpacked}, PackingMap) of
-				true ->
+			case Packing of
+				{replica_2_9, Addr} ->
+					%% Unpacking another peer's replica 2.9 chunk is expensive, so don't do it.
+					%% Note: peers running the reference client won't share replica 2.9 chunks
+					%% anyways, so this check is just a backup.
 					decrement_chunk_cache_size(),
-					{noreply, State};
-				false ->
-					case ar_packing_server:is_buffer_full() of
-						true ->
-							ar_util:cast_after(1000, self(), Cast),
-							{noreply, State};
-						false ->
-							ar_packing_server:request_unpack(AbsoluteOffset, ChunkArgs),
-							?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
-									{data_path_hash, ar_util:encode(crypto:hash(sha256,
-											DataPath))},
-									{data_root, ar_util:encode(DataRoot)},
-									{absolute_end_offset, AbsoluteOffset}]),
-							ar_util:cast_after(600000, self(),
-									{expire_unpack_fetched_chunk_request,
-									{AbsoluteOffset, unpacked}}),
-							{noreply, State#sync_data_state{
-									packing_map = PackingMap#{
-										{AbsoluteOffset, unpacked} => {unpack_fetched_chunk,
-												Args} } }}
-					end
+					process_invalid_fetched_chunk(Peer, Byte, State,
+							got_replica_2_9_chunk_from_peer,
+							[{mining_addr, ar_util:encode(Addr)}]);
+				_ ->
+					{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
+					AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
+					Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
+							Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
+					unpack_fetched_chunk(Cast, AbsoluteOffset, ChunkArgs, Args, State)
 			end;
 		false ->
 			decrement_chunk_cache_size(),
@@ -2533,6 +2520,31 @@ enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 	QIntervals2 = ar_intervals:add(QIntervals, RangeEnd, RangeStart),
 	{Q2, QIntervals2}.
 
+unpack_fetched_chunk(Cast, AbsoluteOffset, ChunkArgs, Args, State) ->
+	#sync_data_state{ packing_map = PackingMap } = State,
+	case maps:is_key({AbsoluteOffset, unpacked}, PackingMap) of
+		true ->
+			decrement_chunk_cache_size(),
+			{noreply, State};
+		false ->
+			case ar_packing_server:is_buffer_full() of
+				true ->
+					ar_util:cast_after(1000, self(), Cast),
+					{noreply, State};
+				false ->
+					ar_packing_server:request_unpack(AbsoluteOffset, ChunkArgs),
+					?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
+							{absolute_end_offset, AbsoluteOffset}]),
+					ar_util:cast_after(600000, self(),
+							{expire_unpack_fetched_chunk_request,
+							{AbsoluteOffset, unpacked}}),
+					{noreply, State#sync_data_state{
+							packing_map = PackingMap#{
+								{AbsoluteOffset, unpacked} => {unpack_fetched_chunk,
+										Args} } }}
+			end
+	end.
+
 validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathRuleset) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 
@@ -2787,11 +2799,13 @@ pick_missing_blocks([{H, WeaveSize, _} | CurrentBI], BlockTXPairs) ->
 	end.
 
 process_invalid_fetched_chunk(Peer, Byte, State) ->
-	#sync_data_state{ weave_size = WeaveSize } = State,
-	?LOG_WARNING([{event, got_invalid_proof_from_peer}, {peer, ar_util:format_peer(Peer)},
-			{byte, Byte}, {weave_size, WeaveSize}]),
 	%% Not necessarily a malicious peer, it might happen
 	%% if the chunk is recent and from a different fork.
+	process_invalid_fetched_chunk(Peer, Byte, State, got_invalid_proof_from_peer, []).
+process_invalid_fetched_chunk(Peer, Byte, State, Event, ExtraLogs) ->
+	#sync_data_state{ weave_size = WeaveSize } = State,
+	?LOG_WARNING([{event, Event}, {peer, ar_util:format_peer(Peer)},
+			{byte, Byte}, {weave_size, WeaveSize} | ExtraLogs]),
 	{noreply, State}.
 
 process_valid_fetched_chunk(ChunkArgs, Args, State) ->

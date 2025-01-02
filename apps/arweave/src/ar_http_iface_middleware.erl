@@ -2010,6 +2010,10 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							{{true, RequestedPacking}, _StoreID} ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{RequestedPacking, ok};
+							{true, {replica_2_9, _}, _StoreID} ->
+								%% Don't serve replica 2.9 chunks as they are expensive to
+								%% unpack.
+								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{Packing, ok};
