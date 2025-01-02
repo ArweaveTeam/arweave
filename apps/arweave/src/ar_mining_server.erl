@@ -8,7 +8,7 @@
 		compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
 		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/3,
-		get_packing_difficulty/1]).
+		get_packing_difficulty/1, get_packing_type/1]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -130,8 +130,21 @@ log_prepare_solution_failure2(Solution, FailureReason, AdditionalLogData) ->
 	PackingDifficulty :: non_neg_integer().
 get_packing_difficulty({composite, _, Difficulty}) ->
 	Difficulty;
+get_packing_difficulty({replica_2_9, _}) ->
+	?REPLICA_2_9_PACKING_DIFFICULTY;
 get_packing_difficulty(_) ->
 	0.
+
+-spec get_packing_type(Packing :: ar_storage_module:packing()) ->
+	PackingType :: atom().
+get_packing_type({composite, _, _}) ->
+	composite;
+get_packing_type({replica_2_9, _}) ->
+	replica_2_9;
+get_packing_type({spora_2_6, _}) ->
+	spora_2_6;
+get_packing_type(Packing) ->
+	Packing.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -1105,21 +1118,12 @@ sub_chunk_belongs_to_chunk(_SubChunk, _Chunk) ->
 	{error, uneven_chunk}.
 
 read_poa(RecallByte, Packing) ->
-	Options = #{ pack => true, packing => Packing, is_miner_request => true },
+	Options = #{ pack => true, packing => Packing, origin => miner },
 	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
 		{ok, Proof} ->
 			#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath } = Proof,
-			case Packing of
-				{composite, _Addr, _PackingDifficulty} ->
-					case maps:get(unpacked_chunk, Proof, not_found) of
-						not_found ->
-							read_unpacked_chunk(RecallByte, Proof);
-						UnpackedChunk ->
-							{ok, #poa{ option = 1, chunk = Chunk,
-								unpacked_chunk = ar_packing_server:pad_chunk(UnpackedChunk),
-								tx_path = TXPath, data_path = DataPath }}
-					end;
-				{replica_2_9, _Addr} ->
+			case get_packing_type(Packing) of
+				Type when Type == replica_2_9; Type == composite ->
 					case maps:get(unpacked_chunk, Proof, not_found) of
 						not_found ->
 							read_unpacked_chunk(RecallByte, Proof);
@@ -1137,7 +1141,7 @@ read_poa(RecallByte, Packing) ->
 	end.
 
 read_unpacked_chunk(RecallByte, Proof) ->
-	Options = #{ pack => true, packing => unpacked, is_miner_request => true },
+	Options = #{ pack => true, packing => unpacked, origin => miner },
 	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
 		{ok, #{ chunk := UnpackedChunk, tx_path := TXPath, data_path := DataPath }} ->
 			{ok, #poa{ option = 1, chunk = maps:get(chunk, Proof),

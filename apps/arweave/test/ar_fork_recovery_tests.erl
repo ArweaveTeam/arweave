@@ -187,7 +187,8 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 			PartitionUpperBound),
 	{ok, #{ data_path := DataPath, tx_path := TXPath,
 			chunk := Chunk } } = ar_data_sync:get_chunk(RecallByte + 1,
-					#{ pack => true, packing => {spora_2_6, RewardAddr2} }),
+					#{ pack => true, packing => {spora_2_6, RewardAddr2},
+					origin => test }),
 	{H1, Preimage} = ar_block:compute_h1(H0, 0, Chunk),
 	case binary:decode_unsigned(H1) > Diff of
 		true ->
@@ -203,7 +204,8 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 				case ar_fork:height_2_8() of
 					0 ->
 						{ok, #{ chunk := UnpackedChunk } } = ar_data_sync:get_chunk(
-								RecallByte + 1, #{ pack => true, packing => unpacked }),
+								RecallByte + 1, #{ pack => true, packing => unpacked,
+								origin => test }),
 						B3#block{ packing_difficulty = 1,
 								poa = PoA#poa{ unpacked_chunk = UnpackedChunk },
 								unpacked_chunk_hash = crypto:hash(sha256, UnpackedChunk) };
