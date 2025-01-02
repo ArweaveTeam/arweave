@@ -180,24 +180,9 @@ randomx_process_replica_2_9_scratchpads(RandomxState,
 	[{Hash2, Scratchpad2} | randomx_process_replica_2_9_scratchpads(
 		RandomxState, HashesScratchpads)].
 
-%%% TEST implementation
-randomx_decrypt_replica_2_9_sub_chunk({{_, {stub_state, _}} = State, Key, SubChunk,
+randomx_decrypt_replica_2_9_sub_chunk({PackingState, Key, SubChunk,
 		EntropySubChunkIndex}) ->
-	Options = [{encrypt, false}],
-	Entropy = randomx_generate_replica_2_9_entropy(State, Key),
-	%% See randomx_generate_replica_2_9_entropy/1.
-	EntropyPart = binary:part(Entropy,
-			EntropySubChunkIndex * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-			?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
-	%% Make the unpacked sub-chunk deterministically depend on the packed sub-chunk
-	%% and the part of the entropy corresponding to the given 0-based sub-chunk index.
-	Input = crypto:hash(sha256, << EntropyPart:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary >>),
-	IV = << 0:128 >>,
-	{ok, crypto:crypto_one_time(aes_256_cbc, Input, IV, SubChunk, Options)};
-%% Non-TEST implementation
-randomx_decrypt_replica_2_9_sub_chunk({{rxsquared, RandomxState}, Key, SubChunk,
-		EntropySubChunkIndex}) ->
-	Entropy = randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key),
+	Entropy = randomx_generate_replica_2_9_entropy(PackingState, Key),
 	randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}).
 
 randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}) ->
@@ -205,32 +190,12 @@ randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}
 	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
 	{ok, crypto:exor(SubChunk, EntropyPart)}.
 
-%%% TEST implementation
-randomx_encrypt_replica_2_9_sub_chunk({{_, {stub_state, _}}, Entropy, SubChunk,
-		EntropySubChunkIndex}) ->
-	Options = [{encrypt, true}],
-	%% See randomx_generate_replica_2_9_entropy/1.
-	EntropyPart = binary:part(Entropy,
-			EntropySubChunkIndex * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-			?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
-	Input = crypto:hash(sha256, << EntropyPart:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary >>),
-	IV = << 0:128 >>,
-	{ok, crypto:crypto_one_time(aes_256_cbc, Input, IV, SubChunk, Options)};
-
-%% Non-TEST implementation
-randomx_encrypt_replica_2_9_sub_chunk({{rxsquared, _RandomxState}, Entropy, SubChunk,
-		EntropySubChunkIndex}) ->
+randomx_encrypt_replica_2_9_sub_chunk(
+		{_PackingState, Entropy, SubChunk, EntropySubChunkIndex}) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
-	{ok, crypto:exor(SubChunk, EntropyPart)}.
+	{ok, encipher_sub_chunk(SubChunk, EntropyPart)}.
 
--ifdef(TEST).
-encipher_sub_chunk(SubChunk, EntropyPart) ->
-	Options = [{encrypt, true}],
-	Input = crypto:hash(sha256, << EntropyPart:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary >>),
-	IV = << 0:128 >>,
-	crypto:crypto_one_time(aes_256_cbc, Input, IV, SubChunk, Options).
--else.
 %% @doc Encipher the given sub-chunk using the given 2.9 entropy.
 -spec encipher_sub_chunk(
 		SubChunk :: binary(),
@@ -238,7 +203,6 @@ encipher_sub_chunk(SubChunk, EntropyPart) ->
 ) -> binary().
 encipher_sub_chunk(SubChunk, EntropyPart) ->
 	crypto:exor(SubChunk, EntropyPart).
--endif.
 
 %%%===================================================================
 %%% Private functions.
