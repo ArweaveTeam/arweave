@@ -2029,7 +2029,8 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							Reply;
 						ok ->
 							Args = #{ packing => ReadPacking,
-									bucket_based_offset => IsBucketBasedOffset },
+									bucket_based_offset => IsBucketBasedOffset,
+									origin => http },
 							case ar_data_sync:get_chunk(Offset, Args) of
 								{ok, Proof} ->
 									Proof2 = maps:remove(unpacked_chunk,

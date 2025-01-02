@@ -645,7 +645,7 @@ unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 			AbsoluteEndOffset, SubChunkStartOffset),
 	EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
 	case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-			[pack_sub_chunk, replica_2_9, internal], fun() ->
+			[unpack_sub_chunk, replica_2_9, internal], fun() ->
 					ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({RandomXState,
 							Key, SubChunk, EntropySubChunkIndex}) end) of
 		{ok, UnpackedSubChunk} ->
@@ -676,6 +676,7 @@ unpack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset,
 							{ok, UnpackedChunk, was_not_already_unpacked}
 					end;
 				Error ->
+					?LOG_ERROR([{event, unpack_replica_2_9_sub_chunks_error}, {error, Error}]),
 					Error
 			end
 	end;

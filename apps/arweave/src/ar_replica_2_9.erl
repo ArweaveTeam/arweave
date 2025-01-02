@@ -114,7 +114,11 @@ get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 	Partition = get_entropy_partition(AbsoluteEndOffset),
 	%% We use the key to generate a large entropy shared by many chunks.
 	EntropyIndex = get_entropy_index(AbsoluteEndOffset, SubChunkStartOffset),
-	crypto:hash(sha256, << Partition:256, EntropyIndex:256, RewardAddr/binary >>).
+	Key = crypto:hash(sha256, << Partition:256, EntropyIndex:256, RewardAddr/binary >>),
+	?LOG_INFO([{event, get_entropy_key}, {partition, Partition}, {entropy_index, EntropyIndex},
+			{end_offset, AbsoluteEndOffset}, {sub_chunk_start_offset, SubChunkStartOffset},
+			{reward_addr, ar_util:encode(RewardAddr)}, {key, ar_util:encode(Key)}]),
+	Key.
 
 %% @doc Return the 2.9 entropy sector size - the largest total size in bytes of the contiguous
 %% area where the 2.9 entropy of every chunk is unique.
