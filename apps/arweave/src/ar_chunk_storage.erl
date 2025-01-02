@@ -28,7 +28,6 @@
 	prev_repack_cursor = 0,
 	target_packing = none,
 	repacking_complete = false,
-	range_start,
 	range_end,
 	reward_addr,
 	prepare_replica_2_9_cursor,
@@ -267,7 +266,7 @@ init({StoreID, RepackInPlacePacking}) ->
 						false ->
 							true
 					end,
-				State#state{ reward_addr = RewardAddr, range_start = RangeStart,
+				State#state{ reward_addr = RewardAddr,
 						range_end = RangeEnd, prepare_replica_2_9_cursor = PrepareCursor,
 						is_prepared = IsPrepared };
 			_ ->
@@ -333,8 +332,10 @@ handle_cast(prepare_replica_2_9, #state{ store_id = StoreID } = State) ->
 handle_cast(do_prepare_replica_2_9, State) ->
 	#state{ reward_addr = RewardAddr, prepare_replica_2_9_cursor = {Start, SubChunkStart},
 			range_end = RangeEnd, store_id = StoreID } = State,
-	%% Sanity checks:
+	
 	PaddedEndOffset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
+	PaddedRangeEnd = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(RangeEnd)),
+	%% Sanity checks:
 	PaddedEndOffset = get_chunk_bucket_end(PaddedEndOffset),
 	true = (
 		max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(PaddedEndOffset)
@@ -343,7 +344,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 
 	Partition = ar_replica_2_9:get_entropy_partition(PaddedEndOffset),
 	CheckRangeEnd =
-		case PaddedEndOffset > RangeEnd of
+		case PaddedEndOffset > PaddedRangeEnd of
 			true ->
 				release_replica_2_9_formatting_lock(StoreID),
 				?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
@@ -385,17 +386,22 @@ handle_cast(do_prepare_replica_2_9, State) ->
 				%% the left. store_entropy will traverse the entire 2.9 partition shifting
 				%% the offset by sector size. It may happen some sub-chunks will be written
 				%% to the neighbouring storage module(s) on the left or on the right
-				%% since the 2.9 partition is slightly bigger than the recall partitition
-				%% storage modules are commonly set up with.
+				%% since the storage module may be configured to be smaller than the
+				%% partition.
 				PaddedEndOffset2 = shift_replica_2_9_entropy_offset(
 					PaddedEndOffset, -SliceIndex),
+				%% The end of a recall partition (3.6TB) may fall in the middle of a chunk, so
+				%% we'll use the padded offset to end the store_entropy iteration.
 				PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
-				store_entropy(Entropies, PaddedEndOffset2, SubChunkStart, PartitionEnd,
+				PaddedPartitionEnd =
+					get_chunk_bucket_end(ar_block:get_chunk_padded_offset(PartitionEnd)),
+				store_entropy(Entropies, PaddedEndOffset2, SubChunkStart, PaddedPartitionEnd,
 						EntropyKeys, RewardAddr, 0, 0)
 		end,
 	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
-			{padded_end_offset, PaddedEndOffset}, {range_end, RangeEnd},
-			{start, Start}, {sub_chunk_start, SubChunkStart},
+			{start, Start}, {padded_end_offset, PaddedEndOffset},
+			{range_end, RangeEnd}, {padded_range_end, PaddedRangeEnd},
+			{sub_chunk_start, SubChunkStart},
 			{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
 	case StoreEntropy of
 		complete ->
@@ -704,7 +710,10 @@ handle_store_chunk_no_entropy(PaddedEndOffset, Chunk, State) ->
 	case store_chunk(ChunkFileStart, PaddedEndOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
 			prometheus_counter:inc(chunks_without_entropy_stored),
-			ID = ar_chunk_storage_replica_2_9_unpacked,
+			%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
+			%% sync_record id (ar_chunk_storage_replica_2_9_1_unpacked) going forward.
+			%% The old id (ar_chunk_storage_replica_2_9_unpacked) should not be used.
+			ID = ar_chunk_storage_replica_2_9_1_unpacked,
 			case ar_sync_record:add(
 					PaddedEndOffset, PaddedEndOffset - ?DATA_CHUNK_SIZE, ID, StoreID) of
 				ok ->
@@ -932,7 +941,10 @@ store_entropy2(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
 	%% If the other counterpart is stored already, we read it, encipher and store the
 	%% packed chunk.
 	acquire_replica_2_9_semaphore(Filepath),
-	ID = ar_chunk_storage_replica_2_9_unpacked,
+	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
+	%% sync_record id (ar_chunk_storage_replica_2_9_1_unpacked) going forward.
+	%% The old id (ar_chunk_storage_replica_2_9_unpacked) should not be used.
+	ID = ar_chunk_storage_replica_2_9_1_unpacked,
 	IsUnpackedChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ID, StoreID),
 	SourceArgs =
 		case get_handle_by_filepath(Filepath) of
