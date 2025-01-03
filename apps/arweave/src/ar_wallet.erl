@@ -1,14 +1,15 @@
 %%% @doc Utilities for manipulating wallets.
 -module(ar_wallet).
 
--export([new/0, new_ecdsa/0, new/1, sign/2, verify/3, verify_pre_fork_2_4/3, to_rsa_address/1,
-		to_address/1, to_address/2, load_key/1, load_keyfile/1, new_keyfile/0, new_keyfile/1,
+-export([new/0, new_ecdsa/0, new/1, sign/2, verify/3, verify_pre_fork_2_4/3,
+		to_address/1, to_address/2, hash_pub_key/1,
+		load_key/1, load_keyfile/1, new_keyfile/0, new_keyfile/1,
 		new_keyfile/2, base64_address_with_optional_checksum_to_decoded_address/1,
 		base64_address_with_optional_checksum_to_decoded_address_safe/1, wallet_filepath/1,
-		get_or_create_wallet/1]).
+		get_or_create_wallet/1, recover_key/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
 
 -include_lib("public_key/include/public_key.hrl").
 
@@ -275,12 +276,11 @@ to_address(PubKey, {?RSA_SIGN_ALG, 65537}) when bit_size(PubKey) == 256 ->
 	%% Small keys are not secure, nobody is using them, the clause
 	%% is for backwards-compatibility.
 	PubKey;
-to_address(PubKey, {?RSA_SIGN_ALG, 65537}) ->
-	to_rsa_address(PubKey);
-to_address(PubKey, {?ECDSA_SIGN_ALG, secp256k1}) ->
-	<< (?ECDSA_TYPE_BYTE)/binary, (hash_address(PubKey))/binary >>;
-to_address(PubKey, {?EDDSA_SIGN_ALG, ed25519}) ->
-	<< (?EDDSA_TYPE_BYTE)/binary, (hash_address(PubKey))/binary >>.
+to_address(PubKey, _SigType) ->
+	hash_pub_key(PubKey).
+
+hash_pub_key(PubKey) ->
+	crypto:hash(?HASH_ALG, PubKey).
 
 base64_address_with_optional_checksum_to_decoded_address(AddrBase64) ->
 	Size = byte_size(AddrBase64),
@@ -346,6 +346,10 @@ get_or_create_wallet([{_LastModified, F} | Entries], Types) ->
 			get_or_create_wallet(Entries, Types)
 	end.
 
+recover_key(Signature, ?ECDSA_KEY_TYPE) ->
+	% TODO do not crash
+	<<>>.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -365,12 +369,6 @@ ecdsa_verify_low_s(Sig) ->
 	{_, _, _, EncodedOrder, _} = crypto:ec_curve(secp256k1),
 	Order = binary:decode_unsigned(EncodedOrder),
 	S < Order div 2 + 1.
-
-to_rsa_address(PubKey) ->
-	hash_address(PubKey).
-
-hash_address(PubKey) ->
-	crypto:hash(?HASH_ALG, PubKey).
 
 decoded_address_to_checksum(AddrDecoded) ->
 	Crc = erlang:crc32(AddrDecoded),

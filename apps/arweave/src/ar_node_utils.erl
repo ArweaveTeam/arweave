@@ -248,10 +248,23 @@ may_be_apply_double_signing_proof(B, PrevB, Accounts) ->
 			may_be_apply_double_signing_proof2(B, PrevB, Accounts)
 	end.
 
+get_reward_key(Pub, Height) ->
+	case Height >= ar_fork:height_2_9() of
+		false ->
+			{?DEFAULT_KEY_TYPE, Pub};
+		true ->
+			case byte_size(Pub) of
+				32 ->
+					{?ECDSA_KEY_TYPE, Pub};
+				_ ->
+					{?RSA_KEY_TYPE, Pub}
+			end
+	end.
+
 may_be_apply_double_signing_proof2(B, PrevB, Accounts) ->
 	{Pub, _Signature1, _CDiff1, _PrevCDiff1, _Preimage1, _Signature2, _CDiff2, _PrevCDiff2,
 			_Preimage2} = B#block.double_signing_proof,
-	Key = {?DEFAULT_KEY_TYPE, Pub},
+	Key = get_reward_key(Pub, B#block.height),
 	case B#block.reward_key == Key of
 		true ->
 			{error, invalid_double_signing_proof_same_address};
@@ -278,7 +291,7 @@ may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
 	EncodedPrevCDiff1 = ar_serialize:encode_int(PrevCDiff1, 16),
 	SignaturePreimage1 = << EncodedCDiff1/binary, EncodedPrevCDiff1/binary,
 			Preimage1/binary >>,
-	Key = {?DEFAULT_KEY_TYPE, Pub},
+	Key = get_reward_key(Pub, B#block.height),
 	Addr = ar_wallet:to_address(Key),
 	case ar_wallet:verify(Key, SignaturePreimage1, Signature1) of
 		false ->
@@ -320,7 +333,7 @@ update_accounts4(B, PrevB, Accounts, Args) ->
 			update_accounts5(B, Accounts, Args);
 		Proof ->
 			Denomination = PrevB#block.denomination,
-			BannedAddr = ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}),
+			BannedAddr = ar_wallet:hash_pub_key(element(1, Proof)),
 			Sum = ar_rewards:get_total_reward_for_address(BannedAddr, PrevB) - 1,
 			{Dividend, Divisor} = ?DOUBLE_SIGNING_PROVER_REWARD_SHARE,
 			LockedRewards = ar_rewards:get_locked_rewards(PrevB),
