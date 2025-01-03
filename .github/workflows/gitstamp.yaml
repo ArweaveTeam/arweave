@@ -1,7 +1,14 @@
 # See: https://github.com/weavery/gitstamp-action
 ---
 name: Gitstamp
-on: [push]
+on: 
+  push:
+  pull_request_target:
+    types: [opened]
+    branches:
+      - 'master'
+      - 'release/**'
+      - 'releases/**'
 jobs:
   gitstamp:
     runs-on: ubuntu-latest

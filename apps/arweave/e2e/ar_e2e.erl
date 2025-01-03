@@ -3,8 +3,10 @@
 -export([fixture_dir/1, fixture_dir/2, install_fixture/3, load_wallet_fixture/1,
 	write_chunk_fixture/3, load_chunk_fixture/2]).
 
--export([delayed_print/2, start_source_node/3, source_node_storage_modules/3, packing_type_to_packing/2,
-    max_chunk_offset/1, assert_block/2, assert_syncs_range/3, assert_chunks/3, assert_partition_size/4]).
+-export([delayed_print/2, packing_type_to_packing/2,
+    start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
+    assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, 
+    assert_chunks/3, assert_no_chunks/2, assert_partition_size/4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -15,6 +17,8 @@
 %% Set to true to update the chunk fixtures.
 %% WARNING: ONLY SET TO true IF YOU KNOW WHAT YOU ARE DOING!
 -define(UPDATE_CHUNK_FIXTURES, false).
+
+-define(E2E_WAIT_TIME, 60 * 1000).
 
 
 -spec fixture_dir(atom()) -> binary().
@@ -49,6 +53,7 @@ load_wallet_fixture(WalletFixture) ->
 -spec write_chunk_fixture(binary(), non_neg_integer(), binary()) -> ok.
 write_chunk_fixture(Packing, EndOffset, Chunk) ->
     FixtureDir = fixture_dir(chunks, [ar_serialize:encode_packing(Packing, true)]),
+    ok = filelib:ensure_dir(FixtureDir ++ "/"),
     FixturePath = filename:join([FixtureDir, integer_to_list(EndOffset) ++ ".bin"]),
     file:write_file(FixturePath, Chunk).
 
@@ -60,6 +65,7 @@ load_chunk_fixture(Packing, EndOffset) ->
 
 packing_type_to_packing(PackingType, Address) ->
     case PackingType of
+        replica_2_9 -> {replica_2_9, Address};
         spora_2_6 -> {spora_2_6, Address};
         composite_1 -> {composite, Address, 1};
         composite_2 -> {composite, Address, 2};
@@ -71,7 +77,7 @@ start_source_node(Node, unpacked, _WalletFixture) ->
         peer1 -> peer2;
         peer2 -> peer1
     end,
-	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(TempNode, composite_1, wallet_a),
+	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(TempNode, spora_2_6, wallet_a),
 	{_, StorageModules} = ar_e2e:source_node_storage_modules(Node, unpacked, wallet_a),
 	[B0 | _] = Blocks,
 	{ok, Config} = ar_test_node:get_config(Node),
@@ -187,7 +193,10 @@ assert_block({spora_2_6, Address}, MinedBlock) ->
     ?assertEqual(0, MinedBlock#block.packing_difficulty);
 assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
     ?assertEqual(Address, MinedBlock#block.reward_addr),
-    ?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty).
+    ?assertEqual(PackingDifficulty, MinedBlock#block.packing_difficulty);
+assert_block({replica_2_9, Address}, MinedBlock) ->
+    ?assertEqual(Address, MinedBlock#block.reward_addr),
+    ?assertEqual(?REPLICA_2_9_PACKING_DIFFICULTY, MinedBlock#block.packing_difficulty).
     
 
 assert_syncs_range(Node, StartOffset, EndOffset) ->
@@ -195,10 +204,21 @@ assert_syncs_range(Node, StartOffset, EndOffset) ->
         ar_util:do_until(
             fun() -> has_range(Node, StartOffset, EndOffset) end,
             100,
-            60 * 1000
+            ?E2E_WAIT_TIME
         ),
         iolist_to_binary(io_lib:format(
             "~s Failed to sync range ~p - ~p", [Node, StartOffset, EndOffset]))).
+
+assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
+    ar_util:do_until(
+        fun() -> has_range(Node, StartOffset, EndOffset) end,
+        1000,
+        ?E2E_WAIT_TIME
+    ),
+    ?assertEqual(false, has_range(Node, StartOffset, EndOffset),
+        iolist_to_binary(io_lib:format(
+            "~s synced range when it should not have: ~p - ~p", 
+            [Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing, Size) ->
     ?assert(
@@ -208,13 +228,11 @@ assert_partition_size(Node, PartitionNumber, Packing, Size) ->
                     [PartitionNumber, Packing]) >= Size
             end,
             100,
-            60 * 1000
+            ?E2E_WAIT_TIME
         ),
         iolist_to_binary(io_lib:format(
             "~s partition ~p,~p failed to reach size ~p", [Node, PartitionNumber, 
                 ar_serialize:encode_packing(Packing, true), Size]))).
-
-
 
 has_range(Node, StartOffset, EndOffset) ->
     NodeIP = ar_test_node:peer_ip(Node),
@@ -250,8 +268,15 @@ assert_chunks(Node, Packing, Chunks) ->
     end, Chunks).
 
 assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
-    {ok, {{<<"200">>, _}, _, EncodedProof, _, _}} = 
-        ar_test_node:get_chunk(Node, EndOffset, any),
+    ?LOG_INFO("Asserting chunk at offset ~p, size ~p", [EndOffset, ChunkSize]),
+    Result = ar_test_node:get_chunk(Node, EndOffset, any),
+    {ok, {{StatusCode, _}, _, EncodedProof, _, _}} = Result,
+    ?assertEqual(<<"200">>, StatusCode, iolist_to_binary(io_lib:format(
+        "Chunk not found. Node: ~p, Offset: ~p",
+        [Node, EndOffset]))),
+    Proof = ar_serialize:json_map_to_poa_map(
+        jiffy:decode(EncodedProof, [return_maps])
+    ),
     Proof = ar_serialize:json_map_to_poa_map(
         jiffy:decode(EncodedProof, [return_maps])
     ),
@@ -279,6 +304,18 @@ assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
         iolist_to_binary(io_lib:format(
             "Chunk at offset ~p, size ~p does not match unpacked chunk",
             [EndOffset, ChunkSize]))).
+
+assert_no_chunks(Node, Chunks) ->
+    lists:foreach(fun({_Block, EndOffset, _ChunkSize}) ->
+        assert_no_chunk(Node, EndOffset)
+    end, Chunks).
+
+assert_no_chunk(Node, EndOffset) ->
+    Result = ar_test_node:get_chunk(Node, EndOffset, any),
+    {ok, {{StatusCode, _}, _, _, _, _}} = Result,
+    ?assertEqual(<<"404">>, StatusCode, iolist_to_binary(io_lib:format(
+        "Chunk found when it should not have been. Node: ~p, Offset: ~p",
+        [Node, EndOffset]))).
 
 delayed_print(Format, Args) ->
 	%% Print the specific flavor of this test since it isn't captured in the test name.

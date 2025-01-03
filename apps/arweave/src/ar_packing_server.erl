@@ -228,7 +228,7 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
 get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
-	EntropyPartition = ar_replica_2_9:get_entropy_partition(AbsoluteEndOffset),
+	Partition = ar_node:get_partition_number(AbsoluteEndOffset),
 
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
 	PackingState = get_packing_state(),
@@ -236,21 +236,23 @@ get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 	
 	case ar_shared_entropy_cache:get(Key) of
 		not_found ->
-			prometheus_counter:inc(replica_2_9_entropy_cache_query, [miss, EntropyPartition]),
+			prometheus_counter:inc(replica_2_9_entropy_cache_query, [miss, Partition]),
 
 			{ok, Config} = application:get_env(arweave, config),
 			MaxCacheSize = Config#config.replica_2_9_entropy_cache_size,
-			EntropySize = ?REPLICA_2_9_ENTROPY_SIZE,
-			ar_shared_entropy_cache:allocate_space(EntropySize, MaxCacheSize),
+			ar_shared_entropy_cache:allocate_space(?REPLICA_2_9_ENTROPY_SIZE, MaxCacheSize),
 			Entropy = prometheus_histogram:observe_duration(
 				replica_2_9_entropy_duration_milliseconds, [], 
 					fun() ->
 						ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
 					end),
-			ar_shared_entropy_cache:put(Key, Entropy, EntropySize),
-			Entropy;
+			%% Primarily needed for testing where the entropy generated exceeds the entropy
+			%% needed for tests.
+			Entropy2 = binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE),
+			ar_shared_entropy_cache:put(Key, Entropy2, ?REPLICA_2_9_ENTROPY_SIZE),
+			Entropy2;
 		{ok, Entropy} ->
-			prometheus_counter:inc(replica_2_9_entropy_cache_query, [hit, EntropyPartition]),
+			prometheus_counter:inc(replica_2_9_entropy_cache_query, [hit, Partition]),
 
 			Entropy
 	end.
@@ -643,7 +645,7 @@ unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 			AbsoluteEndOffset, SubChunkStartOffset),
 	EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
 	case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-			[pack_sub_chunk, replica_2_9, internal], fun() ->
+			[unpack_sub_chunk, replica_2_9, internal], fun() ->
 					ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({RandomXState,
 							Key, SubChunk, EntropySubChunkIndex}) end) of
 		{ok, UnpackedSubChunk} ->
@@ -674,6 +676,7 @@ unpack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset,
 							{ok, UnpackedChunk, was_not_already_unpacked}
 					end;
 				Error ->
+					?LOG_ERROR([{event, unpack_replica_2_9_sub_chunks_error}, {error, Error}]),
 					Error
 			end
 	end;

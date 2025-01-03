@@ -495,14 +495,14 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					?REPLICA_2_9_PACKING_DIFFICULTY ->
 						{ok, #{ chunk := UnpackedChunk }}
 							= ar_data_sync:get_chunk(RecallByte + 1,
-								#{ packing => unpacked, pack => true }),
+								#{ packing => unpacked, pack => true, origin => test }),
 						UnpackedChunk2 = ar_packing_server:pad_chunk(UnpackedChunk),
 						{{replica_2_9, B#block.reward_addr},
 								PoA#poa{ unpacked_chunk = UnpackedChunk2 }};
 					_ ->
 						{ok, #{ chunk := UnpackedChunk }}
 							= ar_data_sync:get_chunk(RecallByte + 1,
-								#{ packing => unpacked, pack => true }),
+								#{ packing => unpacked, pack => true, origin => test }),
 						UnpackedChunk2 = ar_packing_server:pad_chunk(UnpackedChunk),
 						{{composite, B#block.reward_addr, B#block.packing_difficulty},
 								PoA#poa{ unpacked_chunk = UnpackedChunk2 }}

@@ -3,6 +3,12 @@ on:
   workflow_dispatch:
   push:
     branches: ["**"]
+  pull_request_target:
+    types: [opened]
+    branches:
+      - 'master'
+      - 'release/**'
+      - 'releases/**'
 
 jobs:
   build:

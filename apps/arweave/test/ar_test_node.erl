@@ -102,10 +102,10 @@ try_boot_peer(TestType, Node, Retries) ->
     Cmd = io_lib:format(
         "erl +S ~B:~B -pa ~s -config config/sys.config -noshell " ++
 		"-name ~s -setcookie ~s -run ar main debug port ~p " ++
-        "data_dir .tmp/data_test_~s no_auto_join packing_rate 20 " ++
+        "data_dir .tmp/data_~s_~s no_auto_join packing_rate 20 " ++
 		"> ~s-~s.out 2>&1 &",
-        [Schedulers, Schedulers, string:join(Paths, " "), NodeName, Cookie, Port, NodeName,
-			Node, get_node_namespace()]),
+        [Schedulers, Schedulers, string:join(Paths, " "), NodeName, Cookie, Port,
+			atom_to_list(TestType), NodeName, Node, get_node_namespace()]),
 	io:format("Launching peer ~p: ~s~n", [Node, Cmd]),
     os:cmd(Cmd),
     case wait_until_node_is_ready(NodeName) of
@@ -884,7 +884,8 @@ wait_until_height(Node, TargetHeight, Strict) ->
 	end,
 	case Strict of
 		true ->
-			?assertEqual(TargetHeight, Height);
+			?assertEqual(TargetHeight, Height, 
+				iolist_to_binary(io_lib:format("Node ~p not at the expected height", [Node])));
 		false ->
 			ok
 	end,
