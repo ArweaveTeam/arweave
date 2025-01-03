@@ -1,0 +1,196 @@
+name: "Arweave e2e  Tests Suites"
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 13 * * 1"
+  pull_request_target:
+    types: [opened]
+    branches:
+      - 'master'
+      - 'release/**'
+      - 'releases/**'
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      # only arweave dependencies are being cached,
+      # those are not updated everyday and this is
+      # unecessary to fetch them everytime.
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: |
+            _build/default/lib/accept
+            _build/default/lib/b64fast
+            _build/default/lib/cowboy
+            _build/default/lib/cowlib
+            _build/default/lib/graphql
+            _build/default/lib/gun
+            _build/default/lib/jiffy
+            _build/default/lib/prometheus
+            _build/default/lib/prometheus_cowboy
+            _build/default/lib/prometheus_httpd
+            _build/default/lib/prometheus_process_collector
+            _build/default/lib/quantile_estimator
+            _build/default/lib/ranch
+            _build/default/lib/.rebar3
+            _build/default/lib/recon
+            _build/default/lib/rocksdb
+            _build/default/plugins/
+            _build/default/plugins/aleppo
+            _build/default/plugins/geas
+            _build/default/plugins/geas_rebar3
+            _build/default/plugins/hex_core
+            _build/default/plugins/katana_code
+            _build/default/plugins/pc
+            _build/default/plugins/.rebar3
+            _build/default/plugins/rebar3_archive_plugin
+            _build/default/plugins/rebar3_elvis_plugin
+            _build/default/plugins/rebar3_hex
+            _build/default/plugins/samovar
+            _build/default/plugins/verl
+            _build/default/plugins/zipper
+          key: deps-cache-${{ hashFiles('rebar.lock') }}
+          restore-keys: |
+            deps-cache-${{ hashFiles('rebar.lock') }}
+
+      - name: Get dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./ar-rebar3 test get-deps
+
+      - uses: actions/cache@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            _build/default/lib/accept
+            _build/default/lib/b64fast
+            _build/default/lib/cowboy
+            _build/default/lib/cowlib
+            _build/default/lib/graphql
+            _build/default/lib/gun
+            _build/default/lib/jiffy
+            _build/default/lib/prometheus
+            _build/default/lib/prometheus_cowboy
+            _build/default/lib/prometheus_httpd
+            _build/default/lib/prometheus_process_collector
+            _build/default/lib/quantile_estimator
+            _build/default/lib/ranch
+            _build/default/lib/.rebar3
+            _build/default/lib/recon
+            _build/default/lib/rocksdb
+            _build/default/plugins/
+            _build/default/plugins/aleppo
+            _build/default/plugins/geas
+            _build/default/plugins/geas_rebar3
+            _build/default/plugins/hex_core
+            _build/default/plugins/katana_code
+            _build/default/plugins/pc
+            _build/default/plugins/.rebar3
+            _build/default/plugins/rebar3_archive_plugin
+            _build/default/plugins/rebar3_elvis_plugin
+            _build/default/plugins/rebar3_hex
+            _build/default/plugins/samovar
+            _build/default/plugins/verl
+            _build/default/plugins/zipper
+          key: deps-cache-${{ hashFiles('rebar.lock') }}
+
+      - name: Build arweave test sources
+        run: ./ar-rebar3 test compile
+
+      # some artifacts are compiled and only available
+      # in arweave directy (libraries)
+      - name: Prepare artifacts
+        run: |
+          chmod -R u+w ./_build
+          tar czfp _build.tar.gz ./_build
+          tar czfp apps.tar.gz ./apps
+
+      # to avoid reusing artifacts from someone else
+      # and generating issues, an unique artifact is
+      # produced using github checksum.
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+          path: |
+            _build.tar.gz
+            apps.tar.gz
+
+      # some artifacts are compiled and only available
+      # in arweave directy (libraries)
+      - name: Prepare artifacts
+        run: |
+          chmod -R u+w ./_build
+          tar czfp _build.tar.gz ./_build
+          tar czfp apps.tar.gz ./apps
+
+      # to avoid reusing artifacts from someone else
+      # and generating issues, an unique artifact is
+      # produced using github checksum.
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+          overwrite: true
+          path: |
+            _build.tar.gz
+            apps.tar.gz
+
+  e2e-tests:
+    needs: build
+    runs-on: self-hosted
+    strategy:
+      max-parallel: 4
+      matrix:
+        core_test_mod: [
+            ar_sync_pack_mine_tests,
+            ar_repack_mine_tests,
+            ar_repack_in_place_mine_tests
+          ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+
+      # Both artifacts (_build and apps dir) are
+      # required.
+      - name: Extract artifact
+        run: |
+          tar zxfp _build.tar.gz
+          tar zxfp apps.tar.gz
+
+      - name: ${{ matrix.core_test_mod }}.erl
+        id: tests
+        run: bash scripts/github_workflow.sh "${{ matrix.core_test_mod }}"
+
+      # this part of the job produces test artifacts from logs
+      # generated by the tests. It also collect dumps and the files
+      # present in .tmp (temporary arweave data store)
+      - name: upload artifacts in case of failure
+        uses: actions/upload-artifact@v4
+        if: always() && failure()
+        with:
+          name: "logs-${{ matrix.core_test_mod }}-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
+          retention-days: 7
+          overwrite: true
+          include-hidden-files: true
+          path: |
+            ./logs
+            *.out
+            *.dump
