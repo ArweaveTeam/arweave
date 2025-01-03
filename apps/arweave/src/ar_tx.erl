@@ -7,8 +7,9 @@
 		chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
 		get_addresses/1, get_weave_size_increase/2, utility/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_pricing.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% Prioritize format=1 transactions with data size bigger than this
@@ -284,8 +285,33 @@ sign(TX, PrivKey, {KeyType, Owner}, SignatureDataSegment) ->
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx{ id = ID, signature = Sig }.
 
+verify_signature_type(#tx{ format = 1 } = TX, _Height) ->
+	case TX#tx.signature_type of
+		{?RSA_SIGN_ALG, 65537} ->
+			true;
+		_ ->
+			false
+	end;
+verify_signature_type(#tx{ format = 2 } = TX, Height) ->
+	case TX#tx.signature_type of
+		{?RSA_SIGN_ALG, 65537} ->
+			true;
+		{?ECDSA_SIGN_ALG, secp256k1} ->
+			Height >= ar_fork:height_2_9();
+		_ ->
+			false
+	end.
+
 do_verify(#tx{ format = 1 } = TX, Args, VerifySignature) ->
-	do_verify_v1(TX, Args, VerifySignature);
+	{_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
+			_RedenominationHeight, Height, _Accounts, _Timestamp} = Args,
+	case verify_signature_type(TX, Height) of
+		true ->
+			do_verify_v1(TX, Args, VerifySignature);
+		false ->
+			collect_validation_results(TX#tx.id,
+					[{"tx_signature_type_not_supported", false}])
+	end;
 do_verify(#tx{ format = 2 } = TX, Args, VerifySignature) ->
 	{_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
 			_RedenominationHeight, Height, _Accounts, _Timestamp} = Args,
@@ -293,7 +319,13 @@ do_verify(#tx{ format = 2 } = TX, Args, VerifySignature) ->
 		true ->
 			collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]);
 		false ->
-			do_verify_v2(TX, Args, VerifySignature)
+			case verify_signature_type(TX, Height) of
+				true ->
+					do_verify_v2(TX, Args, VerifySignature);
+				false ->
+					collect_validation_results(TX#tx.id,
+							[{"tx_signature_type_not_supported", false}])
+			end
 	end;
 do_verify(TX, _Args, _VerifySignature) ->
 	collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]).
@@ -491,7 +523,13 @@ verify_signature_v2(_TX, do_not_verify_signature, _Height) ->
 	true;
 verify_signature_v2(TX, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
-	Wallet = {{?RSA_SIGN_ALG, 65537}, TX#tx.owner},
+	Wallet =
+		case TX#tx.signature_type of
+			?RSA_KEY_TYPE ->
+				{{?RSA_SIGN_ALG, 65537}, TX#tx.owner};
+			?ECDSA_KEY_TYPE ->
+				{?ECDSA_KEY_TYPE, TX#tx.owner}
+		end,
 	case Height >= ar_fork:height_2_4() of
 		true ->
 			ar_wallet:verify(Wallet, SignatureDataSegment, TX#tx.signature);

@@ -66,6 +66,9 @@
 %% The default key type used by transactions that do not specify a signature type.
 -define(DEFAULT_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
 
+-define(RSA_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
+-define(ECDSA_KEY_TYPE, {?ECDSA_SIGN_ALG, secp256k1}).
+
 %% The difficulty a new weave is started with.
 -define(DEFAULT_DIFF, 6).
 
