@@ -636,7 +636,7 @@ validate_block(merkle_rebase_support_threshold, {NewB, OldB}) ->
 is_wallet_invalid(#tx{ signature = <<>> }, _Wallets) ->
 	false;
 is_wallet_invalid(#tx{ owner = Owner}, Wallets) ->
-	Address = ar_wallet:to_address(Owner, SigType),
+	Address = ar_wallet:to_address(Owner),
 	case maps:get(Address, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of
