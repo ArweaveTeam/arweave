@@ -1,9 +1,9 @@
 -module(ec_secp256k1).
-
+-include("ar.hrl").
 -include_lib("public_key/include/public_key.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--export([new/0, sign/3, verify/4, to_public/1, serialize/2, deserializePublic/2, deserializePrivate/2, identifier/1, from_identifier/1]).
+-export([new/0, sign/2, verify/3, to_public/1, serialize/2, deserializePublic/2, deserializePrivate/2, identifier/1, from_identifier/1]).
 
 -type ecdsa_digest_type() :: sha256.
 -type serialization_formats() :: raw | jwk.
@@ -16,7 +16,19 @@
 
 -spec new() -> PrivateKey :: public_key:ecdsa_private_key().
 new() ->
-    public_key:generate_key({namedCurve, secp256k1}).
+    case secp256k1_nif:generate_key() of
+        {error, Reason} ->
+            ?LOG_ERROR([{event, secp256k1_generate_key}, {reason, Reason}]),
+            erlang:halt();
+        {ok, PrivBytes, PubBytes} ->
+            #'ECPrivateKey'{
+                version=1,
+                privateKey=PrivBytes,
+                parameters={namedCurve, secp256k1},
+                publicKey=PubBytes,
+                attributes=asn1_NOVALUE
+            }
+    end.
 
 
 -spec to_public(PrivateKey :: public_key:ecdsa_private_key()) -> public_key:ecdsa_public_key().
@@ -24,31 +36,48 @@ to_public({_, _, _, _, PubBytes, _}) ->
     ECPoint = #'ECPoint'{point=PubBytes},
     {ECPoint, {namedCurve, secp256k1}}.
 
--spec sign(DigestOrPlainText :: binary() | {digest, binary()}, DigestType :: ecdsa_digest_type(), PrivateKey :: public_key:ecdsa_private_key()) -> binary().
-sign(DigestOrPlainText, DigestType, {_, _, PrivBytes, _, _, _}) ->
-    DERSignature = crypto:sign(ecdsa, DigestType, DigestOrPlainText, [PrivBytes, secp256k1]),
-    case check_low_s(DERSignature) of
-        {valid, _, _} -> DERSignature;
-        {invalid, R, S} -> public_key:der_encode('ECDSA-Sig-Value', #'ECDSA-Sig-Value'{ r = R, s = ?SigDiv - S})
-    end.
-
-
--spec verify(Message :: binary() | {digest, binary()}, DigestType :: ecdsa_digest_type(), Signature :: binary(), PublicKey :: public_key:ecdsa_public_key()) -> boolean().
-verify(DigestOrPlainText, DigestType, Signature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) when byte_size(Signature) == 64 ->
+-spec sign(DigestOrPlainText :: binary() | {digest, binary()}, PrivateKey :: public_key:ecdsa_private_key()) -> binary().
+sign({digest, Digest}, {_, _, PrivBytes, _, _, _}) ->
+    {ok, Signature} = secp256k1_nif:sign(Digest, PrivBytes),
     case check_low_s(Signature) of
-        {valid, R, S} ->
-            DERSignature = public_key:der_encode('ECDSA-Sig-Value', #'ECDSA-Sig-Value'{ r = R, s = S}),
-            crypto:verify(ecdsa, DigestType, DigestOrPlainText, DERSignature, [PubBytes, secp256k1]);
+        {valid, _, _} -> Signature;
+        {invalid, R, S} ->
+            RBin = int_to_bin(R),
+            SBin = int_to_bin(?SigDiv - S),
+            <<RBin/binary, SBin/binary>>
+    end;
+sign(PlainText, PrivateKey) ->
+    Digest = crypto:hash(sha256, PlainText),
+    sign({digest, Digest}, PrivateKey).
+
+
+-spec verify(DigestOrPlainText :: binary() | {digest, binary()}, Signature :: binary(), PublicKey :: public_key:ecdsa_public_key()) -> boolean().
+verify({digest, Digest}, Signature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) when byte_size(Signature) == 64 ->
+    case check_low_s(Signature) of
+        {valid, _, _} ->
+            secp256k1_nif:verify(Digest, Signature, PubBytes);
         {invalid, _, _} ->
             false
     end;
-verify(DigestOrPlainText, DigestType, DERSignature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) ->
-    case check_low_s(DERSignature) of
-        {valid, _, _} ->
-            crypto:verify(ecdsa, DigestType, DigestOrPlainText, DERSignature, [PubBytes, secp256k1]);
-        {invalid, _, _} ->
-            false
-    end.
+verify(PlainText, Signature, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey) when byte_size(Signature) == 64 ->
+    Digest = crypto:hash(sha256, PlainText),
+    verify({digest, Digest}, Signature, PublicKey);
+verify({digest, Digest}, DERSignature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) ->
+    case catch public_key:der_decode('ECDSA-Sig-Value', DERSignature) of
+        {'EXIT', _} -> false;
+        #'ECDSA-Sig-Value'{ r = R, s = S }  ->
+            case check_low_s(R, S) of
+                {valid, R, S} ->
+                    RBin = int_to_bin(R),
+                    SBin = int_to_bin(S),
+                    Sig = <<RBin/binary, SBin/binary>>,
+                    secp256k1_nif:verify(Digest, Sig, PubBytes);
+                {invalid, _, _} -> false
+            end
+    end;
+verify(PlainText, DERSignature, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey) ->
+    Digest = crypto:hash(sha256, PlainText),
+    verify({digest, Digest}, DERSignature, PublicKey).
 
 
 -spec serialize(Format :: serialization_formats(), PublicKey :: public_key:ecdsa_public_key() | public_key:ecdsa_private_key()) -> binary().
@@ -151,6 +180,20 @@ check_low_s(R, S) ->
             {invalid, R, S}
     end.
 
+%% @private
+int_to_bin(X) when X < 0 -> int_to_bin_neg(X, []);
+int_to_bin(X) -> int_to_bin_pos(X, []).
+
+int_to_bin_pos(0,Ds=[_|_]) ->
+	list_to_binary(Ds);
+int_to_bin_pos(X,Ds) ->
+	int_to_bin_pos(X bsr 8, [(X band 255)|Ds]).
+
+int_to_bin_neg(-1, Ds=[MSB|_]) when MSB >= 16#80 ->
+	list_to_binary(Ds);
+int_to_bin_neg(X,Ds) ->
+	int_to_bin_neg(X bsr 8, [(X band 255)|Ds]).
+
 %% @doc Ensure that parsing of core command line options functions correctly.
 de_serialization_test() ->
 	SK = new(),
@@ -163,3 +206,11 @@ de_serialization_test() ->
     ?assertEqual(serialize(raw, deserializePrivate(jwk, SKJWK)), SKRaw),
     PKJWK = serialize(jwk, PK),
     ?assertEqual(serialize(raw, deserializePublic(jwk, PKJWK)), PKRaw).
+
+sign_verify_test() ->
+    SK = new(),
+    PK = to_public(SK),
+    Msg = <<"This is a test message!">>,
+    Sig = sign(Msg, SK),
+    ?assertEqual(byte_size(Sig), 64),
+    ?assert(verify(Msg, Sig, PK)).

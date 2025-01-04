@@ -180,7 +180,7 @@ sign({{KeyAlg, PublicExpnt}, Priv, Pub}, Data)
 		}
 	);
 sign({_, #'ECPrivateKey'{} = PrivateKey, _}, Data)->
-	ec_secp256k1:sign(Data, sha256, PrivateKey).
+	ec_secp256k1:sign(Data, PrivateKey).
 
 %% @doc Verify that a signature is correct.
 verify({_, Identifier}, Data, Sig) when is_binary(Identifier) ->
@@ -191,11 +191,11 @@ verify(Identifier, Data, Sig) when is_binary(Identifier) ->
 			rsa_pss:verify(
 				Data, sha256, Sig, rsa_pss:from_identifier(Identifier));
 		{?ECDSA_SIGN_ALG, secp256k1} ->
-			ec_secp256k1:verify(Data, sha256, Sig, ec_secp256k1:from_identifier(Identifier));
+			ec_secp256k1:verify(Data, Sig, ec_secp256k1:from_identifier(Identifier));
 		{invalid_prefix, _} -> invalid_identifier
 	end;
 verify({_, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey}, Data, Sig) ->
-	ec_secp256k1:verify(Data, sha256, Sig, PublicKey).
+	ec_secp256k1:verify(Data, Sig, PublicKey).
 
 -spec from_identifier(Identifier :: binary()) -> public_key:rsa_public_key() | public_key:ecdsa_public_key().
 from_identifier(Identifier) ->
