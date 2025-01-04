@@ -6,7 +6,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 run_benchmark_from_cli(Args) ->
-    Threads = list_to_integer(get_flag_value(Args, "threads", "1")),
+	Threads = list_to_integer(get_flag_value(Args, "threads", "1")),
 	DataMiB = list_to_integer(get_flag_value(Args, "mib", "1024")),
 
 	Format= case get_flag_value(Args, "format", "replica_2_9") of
@@ -17,35 +17,34 @@ run_benchmark_from_cli(Args) ->
 		_ -> show_help()
 	end,
 
-    % Collect all directory values
-    Dirs = collect_dirs(Args),
-    
-    % Ensure each directory exists
-    lists:foreach(fun(Dir) ->
-        case filelib:ensure_dir(filename:join(Dir, "dummy")) of
-            ok -> ok;
-            {error, Reason} ->
-                io:format("Error: Could not ensure directory ~p exists. Reason: ~p~n", [Dir, Reason]),
-                show_help(),
-                erlang:halt(1)
-        end
-    end, Dirs),
-    
-    run_benchmark({Format, Dirs, Threads, DataMiB}).
+	% Collect all directory values
+	Dirs = collect_dirs(Args),
+
+	% Ensure each directory exists
+	lists:foreach(fun(Dir) ->
+		case filelib:ensure_dir(filename:join(Dir, "dummy")) of
+			ok -> ok;
+			{error, Reason} ->
+				io:format("Error: Could not ensure directory ~p exists. Reason: ~p~n", [Dir, Reason]),
+				show_help(),
+				erlang:halt(1)
+		end
+	end, Dirs),
+	run_benchmark({Format, Dirs, Threads, DataMiB}).
 
 collect_dirs([]) ->
-    [];
+	[];
 collect_dirs(["dir", Dir | Tail]) ->
-    [Dir | collect_dirs(Tail)];
+	[Dir | collect_dirs(Tail)];
 collect_dirs([_ | Tail]) ->
-    collect_dirs(Tail).
+	collect_dirs(Tail).
 
 get_flag_value([], _, DefaultValue) ->
-    DefaultValue;
+	DefaultValue;
 get_flag_value([Flag, Value | Tail], TargetFlag, _DefaultValue) when Flag == TargetFlag ->
-    Value;
+	Value;
 get_flag_value([_ | Tail], TargetFlag, DefaultValue) ->
-    get_flag_value(Tail, TargetFlag, DefaultValue).
+	get_flag_value(Tail, TargetFlag, DefaultValue).
 
 show_help() ->
 	io:format("~nUsage: benchmark-2.9 [format replica_2_9|composite.1|composite.10|spora_2_6] [threads N] [mib N] [dir path1 dir path2 dir path3 ...]~n~n"),
@@ -167,6 +166,7 @@ pack_chunks(replica_2_9, Thread, Dir, Context, Count) ->
 			file:write_file(Path, PackedSubChunks)
 	end,
 	pack_chunks(replica_2_9, Thread, Dir, Context, Count-1);
+
 pack_chunks(spora_2_6, Thread, Dir, Context, Count) ->
 	{RandomXState, Chunk, Key, _ChunksPerThread} = Context,
 	{ok, PackedChunk} = ar_rx512_nif:rx512_encrypt_chunk_nif(

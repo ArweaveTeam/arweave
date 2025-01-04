@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include "pack_randomx_square.h"
+#include "randomx_squared.h"
 
 int main() {
     return 0;
