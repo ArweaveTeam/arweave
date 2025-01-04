@@ -1,7 +1,6 @@
+#include <openssl/rand.h>
 #include <secp256k1.h>
-
-#include "../ar_nif.h"
-#include "./fill_random.h"
+#include <ar_nif.h>
 
 #define SECP256K1_PUBKEY_UNCOMPRESSED_SIZE 65
 #define SECP256K1_PUBKEY_COMPRESSED_SIZE 33
@@ -14,7 +13,7 @@ static int secp256k1_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM load_info) {
 
 static ERL_NIF_TERM generate_key(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     unsigned char seed[SECP256K1_CONTEXT_SEED_SIZE];
-    if (!fill_random(seed, sizeof(seed))) {
+    if (!RAND_bytes(seed, sizeof(seed))) {
         return error_tuple(env, "Failed to generate random seed for context.");
     }
     secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
@@ -23,7 +22,7 @@ static ERL_NIF_TERM generate_key(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
     }
 
     unsigned char privbytes[SECP256K1_PRIVKEY_SIZE];
-    if (!fill_random(privbytes, sizeof(privbytes))) {
+    if (!RAND_bytes(privbytes, sizeof(privbytes))) {
         return error_tuple(env, "Failed to generate random key.");
     }
     if (!secp256k1_ec_seckey_verify(ctx, privbytes)) {
@@ -45,3 +44,9 @@ static ERL_NIF_TERM generate_key(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
     ERL_NIF_TERM pubkey_bin = make_output_binary(env, pubbytes, SECP256K1_PUBKEY_UNCOMPRESSED_SIZE);
     return ok_tuple2(env, privkey_bin, pubkey_bin);
 }
+
+static ErlNifFunc nif_funcs[] = {
+    {"generate_key", 0, generate_key}
+};
+
+ERL_NIF_INIT(secp256k1_nif, nif_funcs, secp256k1_load, NULL, NULL, NULL)

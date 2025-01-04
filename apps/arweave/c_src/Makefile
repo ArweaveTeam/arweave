@@ -66,7 +66,7 @@ C_SRC_DIR = $(CURDIR)
 
 CFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I /usr/local/include -I ../lib/RandomX/src -I $(C_SRC_DIR)
 CXXFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I ../lib/RandomX/src -std=c++11
-LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lei -lssl -lcrypto 
+LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lei -lssl -lcrypto
 
 
 RX512_OUTPUT ?= $(CURDIR)/../priv/rx512_arweave.so
@@ -116,6 +116,19 @@ $(VDF_OUTPUT): $(VDF_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
 	$(link_verbose) $(CXX) $(VDF_OBJECTS) $(LDFLAGS) $(LDLIBS) -shared -o $(VDF_OUTPUT)
 
+SECP256K1_SOURCES = $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/secp256k1/*.c)
+SECP256K1_OBJECTS = $(addsuffix .o, $(basename $(SECP256K1_SOURCES)))
+SECP256K1_CFLAGS = -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I /usr/local/include -I $(CURDIR)/../lib/secp256k1/src -I $(CURDIR)/../lib/secp256k1/include -I $(C_SRC_DIR)
+SECP256K1_LDLIBS = -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lcrypto
+SECP256K1_OUTPUT ?= $(CURDIR)/../priv/secp256k1_arweave.so
+
+$(SECP256K1_OUTPUT): $(SECP256K1_OBJECTS)
+	@mkdir -p $(BASEDIR)/priv/
+	$(link_verbose) $(CXX) $(SECP256K1_OBJECTS) $(SECP256K1_LDLIBS) ../lib/secp256k1/build/lib/libsecp256k1.a -shared -o $(SECP256K1_OUTPUT)
+
+%secp256k1_nif.o: %secp256k1_nif.c
+	$(c_verbose) $(CC) $(SECP256K1_CFLAGS) -c $(OUTPUT_OPTION) $<
+
 %.o: %.c
 	$(COMPILE_C) $(OUTPUT_OPTION) $<
 
@@ -128,12 +141,7 @@ $(VDF_OUTPUT): $(VDF_OBJECTS)
 %.o: %.cpp
 	$(COMPILE_CPP) $(OUTPUT_OPTION) $<
 
-all: $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT)
+all: $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(SECP256K1_OUTPUT)
 
 clean:
-	@rm -f $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(RX512_OBJECTS) $(RX4096_OBJECTS) $(RXSQUARED_OBJECTS) $(VDF_OBJECTS)
-
-
-
-
-
+	@rm -f $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(RX512_OBJECTS) $(RX4096_OBJECTS) $(RXSQUARED_OBJECTS) $(VDF_OBJECTS) $(SECP256K1_OUTPUT) $(SECP256K1_OBJECTS)
