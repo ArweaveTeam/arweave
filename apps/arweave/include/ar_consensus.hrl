@@ -21,15 +21,20 @@
 
 %% The number of times we apply an RX hash in each RX2 lane in-between every pair
 %% of mixings.
--define(REPLICA_2_9_RANDOMX_ROUND_COUNT, 6).
+-define(REPLICA_2_9_RANDOMX_PROGRAM_COUNT, 6).
 
 %% The number of RX2 lanes.
 -define(REPLICA_2_9_RANDOMX_LANE_COUNT, 4).
 
-%% The RX2 depth.
+%% The RX2 depth: the number of RX2 rounds. A round of RX2 has:
+%% 1. REPLICA_2_9_RANDOMX_LANE_COUNT lanes
+%% 2. Each lane evaluates REPLICA_2_9_RANDOMX_PROGRAM_COUNT RandomX programs
+%% 3. The output entropy of each lane is then mixed with crc32 (aka "near mix")
+%% 4. The the mixed output from all lanes is then shuffled (aka "far mix")
 -define(REPLICA_2_9_RANDOMX_DEPTH, 3).
 
-%% The size in bytes of the component (NOT the total) RX2 scratchpad.
+%% The size in bytes of the component RX2 scratchpad (aka the output from each RX2 lane). This
+%% is NOT the total output entropy (that size is defined in REPLICA_2_9_ENTROPY_SIZE).
 -define(RANDOMX_SCRATCHPAD_SIZE, 2097152).
 
 %% The size in bytes of the total RX2 entropy (# of lanes * scratchpad size).

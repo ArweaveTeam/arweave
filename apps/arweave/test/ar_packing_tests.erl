@@ -28,8 +28,7 @@ packing_test_() ->
     {setup, 
      fun setup/0, 
      fun teardown/1, 
-     [fun test_mix_crc/0,
-      fun test_mix_far/0,
+     [fun test_feistel/0,
       fun test_full_chunk/0,
       fun test_partial_chunk/0,
       fun test_full_chunk_repack/0,
@@ -48,40 +47,28 @@ teardown(_) ->
     % optional cleanup code
     ok.
 
-test_mix_crc() ->
-	Input1 = << 0:(8*8)>>,
-	{ok, RealOutput1} = ar_rxsquared_nif:rsp_mix_entropy_crc32_nif(Input1),
-	ExpdOutput1 = << 199,75,103,72,178,6,176,59 >>,
-	?assertEqual(ExpdOutput1, RealOutput1),
+test_feistel()->
+	Unpacked = << 1:(8*2097152) >>,
+	Entropy = << 2:(8*2097152) >>,
+	{ok, Packed} = ar_rxsquared_nif:rsp_feistel_encrypt_nif(Unpacked, Entropy),
+	PackedHashReal = crypto:hash(sha256, Packed),
+	PackedHashExpd = << 73,123,99,202,146,24,95,220,127,228,210,8,106,220,94,
+		251,234,166,63,206,16,213,64,208,35,104,15,144,215,
+		139,183,59 >>,
+	?assertEqual(PackedHashExpd, PackedHashReal),
+	{ok, UnpackedReal} = ar_rxsquared_nif:rsp_feistel_decrypt_nif(Packed, Entropy),
+	?assertEqual(Unpacked, UnpackedReal),
 
-	Input2 = << 1,2,3,4,5,6,7,8 >>,
-	{ok, RealOutput2} = ar_rxsquared_nif:rsp_mix_entropy_crc32_nif(Input2),
-	ExpdOutput2 = << 245,142,51,45,188,173,22,249 >>,
-	?assertEqual(ExpdOutput2, RealOutput2),
-	ok.
-
-test_mix_far() ->
-	% divisible
-	Input1 = << 11, 12, 21, 22, 31, 32, 41, 42 >>,
-	ExodOutput1 = << 11, 21, 31, 41, 12, 22, 32, 42 >>,
-	{ok, RealOutput1} = ar_rxsquared_nif:rsp_mix_entropy_far_test_nif(Input1, 2, 1),
-	?assertEqual(ExodOutput1, RealOutput1),
-
-	Input2 = << 11, 12, 13, 14, 21, 22, 23, 24 >>,
-	ExodOutput2 = << 11, 21, 12, 22, 13, 23, 14, 24 >>,
-	{ok, RealOutput2} = ar_rxsquared_nif:rsp_mix_entropy_far_test_nif(Input2, 4, 1),
-	?assertEqual(ExodOutput2, RealOutput2),
-
-	Input3 = << 11, 12, 13, 14, 21, 22, 23, 24 >>,
-	ExodOutput3 = << 11, 12, 21, 22, 13, 14, 23, 24 >>,
-	{ok, RealOutput3} = ar_rxsquared_nif:rsp_mix_entropy_far_test_nif(Input3, 4, 2),
-	?assertEqual(ExodOutput3, RealOutput3),
-
-	% not divisible
-	Input4 = << 11, 12, 13, 14, 21, 22, 23, 24 >>,
-	ExodOutput4 = << 11, 12, 13, 21, 22, 23, 14, 24 >>,
-	{ok, RealOutput4} = ar_rxsquared_nif:rsp_mix_entropy_far_test_nif(Input4, 4, 3),
-	?assertEqual(ExodOutput4, RealOutput4),
+	Unpacked2 = << 3:(8*2097152) >>,
+	Entropy2 = << 4:(8*2097152) >>,
+	{ok, Packed2} = ar_rxsquared_nif:rsp_feistel_encrypt_nif(Unpacked2, Entropy2),
+	PackedHashReal2 = crypto:hash(sha256, Packed2),
+	PackedHashExpd2 = << 226,95,254,246,118,154,133,215,229,243,245,255,18,48,
+		130,246,98,240,207,197,188,161,222,66,140,47,110,18,
+		193,145,96,210 >>,
+	?assertEqual(PackedHashExpd2, PackedHashReal2),
+	{ok, UnpackedReal2} = ar_rxsquared_nif:rsp_feistel_decrypt_nif(Packed2, Entropy2),
+	?assertEqual(Unpacked2, UnpackedReal2),
 	ok.
 
 test_full_chunk() ->
