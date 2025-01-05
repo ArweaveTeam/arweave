@@ -196,21 +196,82 @@ int_to_bin_neg(X,Ds) ->
 
 %% @doc Ensure that parsing of core command line options functions correctly.
 de_serialization_test() ->
-	SK = new(),
+	{_, _, PrivBytes, _, PubBytes, _} = SK = new(),
     PK = to_public(SK),
     SKRaw = serialize(raw, SK),
     ?assert(byte_size(SKRaw) =:= 32),
-    PKRaw = serialize(raw, PK),
-    ?assert(byte_size(PKRaw) =:= 33),
+    ?assertEqual(PrivBytes, SKRaw),
+    PKCompressed = serialize(raw, PK),
+    ?assert(byte_size(PKCompressed) =:= 33),
+    <<4:8, X:32/binary, Y:32/binary >> = PubBytes,
+    <<Prefix:1/binary, X:32/binary>> = PKCompressed,
+    case binary:last(Y) rem 2 of
+        0 -> ?assertEqual(Prefix, <<2:8>>);
+        1 -> ?assertEqual(Prefix, <<3:8>>)
+    end,
     SKJWK = serialize(jwk, SK),
     ?assertEqual(serialize(raw, deserializePrivate(jwk, SKJWK)), SKRaw),
     PKJWK = serialize(jwk, PK),
-    ?assertEqual(serialize(raw, deserializePublic(jwk, PKJWK)), PKRaw).
+    ?assertEqual(serialize(raw, deserializePublic(jwk, PKJWK)), PKCompressed),
+
+    Identifier = identifier(PK),
+    ?assertEqual(byte_size(Identifier), 35),
+    <<2:8, PKCompressed:33/binary, 0:8>> = Identifier.
 
 sign_verify_test() ->
-    SK = new(),
+    {_, _, PrivBytes, _, PubBytes, _} = SK = new(),
     PK = to_public(SK),
+    Identifier = identifier(PK),
     Msg = <<"This is a test message!">>,
     Sig = sign(Msg, SK),
     ?assertEqual(byte_size(Sig), 64),
-    ?assert(verify(Msg, Sig, PK)).
+    ?assert(verify(Msg, Sig, PK)),
+    ?assert(verify(Msg, Sig, from_identifier(Identifier))),
+    % deterministic Sig
+    NewSig = sign(Msg, SK),
+    ?assertEqual(NewSig, Sig),
+    % different Message
+    Msg2 = <<"This is another test message!">>,
+    Sig2 = sign(Msg2, SK),
+    ?assertEqual(byte_size(Sig2), 64),
+    ?assertNotEqual(Sig, Sig2),
+    ?assert(verify(Msg2, Sig2, PK)),
+    ?assertNot(verify(Msg, Sig2, PK)),
+    ?assertNot(verify(Msg2, Sig, PK)),
+
+    % different key
+    {_, _, OtherPrivBytes, _, OtherPubBytes, _} = SKOther = new(),
+    OtherIdentifier = identifier(to_public(SKOther)),
+    ?assertNotEqual(Identifier, OtherIdentifier),
+    ?assertNotEqual(PrivBytes, OtherPrivBytes),
+    ?assertNotEqual(PubBytes, OtherPubBytes),
+    OtherSig = sign(Msg, SKOther),
+    ?assertEqual(byte_size(OtherSig), 64),
+    ?assert(verify(Msg, OtherSig, to_public(SKOther))),
+    ?assertNot(verify(Msg, OtherSig, to_public(SK))),
+    ?assertNot(verify(Msg, OtherSig, from_identifier(Identifier))),
+    ?assertNotEqual(Sig, OtherSig).
+
+fixtures_test() ->
+    Test = fun(Root) ->
+        fun() ->
+            {ok, Msg} = file:read_file(filename:join(Root, "msg.bin")),
+            {ok, Sig} = file:read_file(filename:join(Root, "sig.bin")),
+            io:format("~p~n", [filename:join(Root, "sk.json")]),
+            Wallet = ar_wallet:load_keyfile(filename:join(Root, "sk.json")),
+            {{_, SK, Identifier}, {_, Identifier}} = Wallet,
+            ?assert(verify(Msg, Sig, from_identifier(Identifier))),
+            NewSig = sign(Msg, SK),
+            ?assert(verify(Msg, NewSig, to_public(SK))),
+            % fixture signatures created with random nonce
+            ?assertNotEqual(Sig, NewSig),
+            % deterministic signatures
+            AnotherSig = sign(Msg, SK),
+            ?assertEqual(AnotherSig, NewSig)
+        end
+    end,
+    {ok, Cwd} = file:get_cwd(),
+    [
+        {"Erlang OpenSSL", Test(filename:join(Cwd, "./apps/arweave/test/fixtures/secp256k1/erlang"))},
+        {"RustCrypto K256 Crate", Test(filename:join(Cwd, "./apps/arweave/test/fixtures/secp256k1/RustCrypto-k256"))}
+    ].
