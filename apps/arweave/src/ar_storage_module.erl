@@ -219,7 +219,7 @@ get_strict(Offset, Packing) ->
 	RepackInPlaceModulesStoreIDs = [
 			{{BucketSize, Bucket, TargetPacking}, ar_storage_module:id(Module)}
 		|| {{BucketSize, Bucket, _Packing} = Module, TargetPacking} <- Config#config.repack_in_place_storage_modules],
-	ModuleStoreIDs = [ar_storage_module:id(Module)
+	ModuleStoreIDs = [{Module, ar_storage_module:id(Module)}
 			|| Module <- Config#config.storage_modules],
 	get_strict(Offset, Packing, ModuleStoreIDs ++ RepackInPlaceModulesStoreIDs).
 

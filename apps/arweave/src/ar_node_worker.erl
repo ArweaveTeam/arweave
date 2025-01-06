@@ -2132,6 +2132,8 @@ handle_found_solution(Args, PrevB, State) ->
 					{solution, ar_util:encode(SolutionH)}, {height, Height},
 					{step_number, StepNumber}, {steps, length(Steps)},
 					{txs, length(B#block.txs)},
+					{recall_byte1, B#block.recall_byte},
+					{recall_byte2, B#block.recall_byte2},
 					{chunks,
 						case B#block.recall_byte2 of
 							undefined -> 1;
