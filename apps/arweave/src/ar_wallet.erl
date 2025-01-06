@@ -15,6 +15,9 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-define(SigUpperBound, binary:decode_unsigned(<<16#7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0:256>>)).
+-define(SigDiv, binary:decode_unsigned(<<16#FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141:256>>)).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -185,17 +188,13 @@ sign({{KeyAlg, PublicExpnt}, Priv, Pub}, Data)
 	);
 sign({{KeyAlg, KeyCrv}, Priv, _} = Key, Data)
 		when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
-	Sig = crypto:sign(
-		KeyAlg,
-		sha256,
-		Data,
-		[Priv, KeyCrv]
-	),
+	Digest = crypto:hash(sha256, Data),
+	Sig = secp256k1_nif:sign(Digest, Priv),
 	case ecdsa_verify_low_s(Sig) of
 		true ->
 			Sig;
 		false ->
-			sign(Key, Data)
+			ecdsa_fix_low_s(Sig)
 	end;
 sign({{KeyAlg, KeyCrv}, Priv, _}, Data)
 		when KeyAlg =:= ?EDDSA_SIGN_ALG andalso KeyCrv =:= ed25519 ->
@@ -366,9 +365,39 @@ ecdsa_verify_low_s(Sig) ->
 	<<16#30, _Len0:8, 16#02, Len1:8, Rest/binary>> = Sig,
 	<<_R:Len1/binary, 16#02, _Len2:8, EncodedS/binary>> = Rest,
 	S = binary:decode_unsigned(EncodedS),
-	{_, _, _, EncodedOrder, _} = crypto:ec_curve(secp256k1),
-	Order = binary:decode_unsigned(EncodedOrder),
-	S < Order div 2 + 1.
+	S =< ?SigUpperBound.
+
+int_to_bin(X) when X < 0 -> int_to_bin_neg(X, []);
+int_to_bin(X) -> int_to_bin_pos(X, []).
+
+int_to_bin_pos(0,Ds=[_|_]) ->
+	list_to_binary(Ds);
+int_to_bin_pos(X,Ds) ->
+	int_to_bin_pos(X bsr 8, [(X band 255)|Ds]).
+
+int_to_bin_neg(-1, Ds=[MSB|_]) when MSB >= 16#80 ->
+	list_to_binary(Ds);
+int_to_bin_neg(X,Ds) ->
+	int_to_bin_neg(X bsr 8, [(X band 255)|Ds]).
+
+encode_der_integer(Val) ->
+	Raw = int_to_bin(Val),
+	case Raw of
+		<<First:8, _Rest/binary>> when (First band 16#80) =/= 0 ->
+			<<0, Raw/binary>>;
+		_ ->
+			Raw
+	end.
+
+ecdsa_fix_low_s(Sig) ->
+	<<16#30, _Len0:8, 16#02, LenR:8, Rest/binary>> = Sig,
+	<<R:LenR/binary, 16#02, _LenS:8, EncodedS/binary>> = Rest,
+	S = binary:decode_unsigned(EncodedS),
+	SFixVal = int_to_bin(?SigDiv - S),
+	SFixBin = encode_der_integer(SFixVal),
+	LenSFix  = byte_size(SFixBin),
+	NewSeqLen = 2 + LenR + 2 + LenSFix,
+	<<16#30, NewSeqLen:8, 16#02, LenR:8, R:LenR/binary, 16#02, LenSFix:8, SFixBin/binary>>.
 
 decoded_address_to_checksum(AddrDecoded) ->
 	Crc = erlang:crc32(AddrDecoded),
