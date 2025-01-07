@@ -81,6 +81,11 @@
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000). % 2 seconds.
 -endif.
 
+%% By default we prevent syncing replica 2.9 chunks since they are too expensive to unpack.
+-ifndef(BLOCK_2_9_SYNCING).
+-define(BLOCK_2_9_SYNCING, true).
+-endif.
+
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
 	%% The last entries of the block index.
