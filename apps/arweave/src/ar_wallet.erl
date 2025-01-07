@@ -6,7 +6,7 @@
 		load_key/1, load_keyfile/1, new_keyfile/0, new_keyfile/1,
 		new_keyfile/2, base64_address_with_optional_checksum_to_decoded_address/1,
 		base64_address_with_optional_checksum_to_decoded_address_safe/1, wallet_filepath/1,
-		get_or_create_wallet/1, recover_key/2]).
+		get_or_create_wallet/1, recover_key/3]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_config.hrl").
@@ -183,20 +183,9 @@ sign({{KeyAlg, PublicExpnt}, Priv, Pub}, Data)
 			privateExponent = binary:decode_unsigned(Priv)
 		}
 	);
-sign({{KeyAlg, KeyCrv}, Priv, _} = Key, Data)
+sign({{KeyAlg, KeyCrv}, Priv, _}, Data)
 		when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
-	Sig = crypto:sign(
-		KeyAlg,
-		sha256,
-		Data,
-		[Priv, KeyCrv]
-	),
-	case ecdsa_verify_low_s(Sig) of
-		true ->
-			Sig;
-		false ->
-			sign(Key, Data)
-	end;
+	secp256k1_nif:sign(Data, Priv);
 sign({{KeyAlg, KeyCrv}, Priv, _}, Data)
 		when KeyAlg =:= ?EDDSA_SIGN_ALG andalso KeyCrv =:= ed25519 ->
 	crypto:sign(
@@ -218,24 +207,12 @@ verify({{KeyAlg, PublicExpnt}, Pub}, Data, Sig)
 			modulus = binary:decode_unsigned(Pub)
 		}
 	);
+% NOTE. We will not write pubkey for ECDSA signature. So don't use verify function for ECDSA, use ecrecover
+% So this function will return always false if called with no Pub
 verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig)
 		when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
-	case crypto:verify(
-		KeyAlg,
-		sha256,
-		Data,
-		Sig,
-		[Pub, KeyCrv]
-	) of
-		false ->
-			false;
-		true ->
-			%% The measure against transaction malleability adopted from Ethereum.
-			%% All s-values greater than secp256k1n/2 are considered invalid.
-			%% Otherwise, one may flip the sign on both s and R to create the second
-			%% valid signature.
-			ecdsa_verify_low_s(Sig)
-	end;
+	{Pass, PubExtracted} = secp256k1_nif:ecrecover(Data, Sig),
+	Pass andalso PubExtracted =:= Pub;
 verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig)
 		when KeyAlg =:= ?EDDSA_SIGN_ALG andalso KeyCrv =:= ed25519 ->
 	crypto:verify(
@@ -346,9 +323,10 @@ get_or_create_wallet([{_LastModified, F} | Entries], Types) ->
 			get_or_create_wallet(Entries, Types)
 	end.
 
-recover_key(Signature, ?ECDSA_KEY_TYPE) ->
-	% TODO do not crash
-	<<>>.
+recover_key(Data, Signature, ?ECDSA_KEY_TYPE) ->
+	{_Pass, PubKey} = secp256k1_nif:ecrecover(Data, Signature),
+	% Note. if Pass = false, then PubKey will be <<>>
+	PubKey.
 
 %%%===================================================================
 %%% Private functions.
@@ -361,14 +339,6 @@ wallet_name(wallet_address, PubKey, KeyType) ->
 	ar_util:encode(to_address(PubKey, KeyType));
 wallet_name(WalletName, _, _) ->
 	WalletName.
-
-ecdsa_verify_low_s(Sig) ->
-	<<16#30, _Len0:8, 16#02, Len1:8, Rest/binary>> = Sig,
-	<<_R:Len1/binary, 16#02, _Len2:8, EncodedS/binary>> = Rest,
-	S = binary:decode_unsigned(EncodedS),
-	{_, _, _, EncodedOrder, _} = crypto:ec_curve(secp256k1),
-	Order = binary:decode_unsigned(EncodedOrder),
-	S < Order div 2 + 1.
 
 decoded_address_to_checksum(AddrDecoded) ->
 	Crc = erlang:crc32(AddrDecoded),

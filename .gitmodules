@@ -1,3 +1,6 @@
 [submodule "lib/RandomX"]
 	path = apps/arweave/lib/RandomX
 	url = https://github.com/ArweaveTeam/RandomX.git
+[submodule "apps/arweave/lib/secp256k1"]
+	path = apps/arweave/lib/secp256k1
+	url = https://github.com/bitcoin-core/secp256k1
