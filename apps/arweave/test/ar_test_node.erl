@@ -205,6 +205,8 @@ update_config(Config) ->
 		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules
 	},
 	ok = application:set_env(arweave, config, Config2),
+	?LOG_INFO("Updated Config:"),
+	ar_config:log_config(Config2),
 	Config2.
 
 start_other_node(Node, B0, Config, WaitUntilSync) ->
@@ -570,6 +572,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	wait_until_syncs_genesis_data().
 
 restart() ->
+	?LOG_INFO("Restarting node"),
 	stop(),
 	ar:start_dependencies(),
 	wait_until_joined().
