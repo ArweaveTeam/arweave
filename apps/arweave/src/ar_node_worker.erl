@@ -23,7 +23,7 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
 -else.
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
@@ -31,7 +31,7 @@
 
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(BLOCK_INDEX_HEAD_LEN, (?STORE_BLOCKS_BEHIND_CURRENT * 2)).
 -else.
 -define(BLOCK_INDEX_HEAD_LEN, 10000).
@@ -47,7 +47,7 @@
 -endif.
 
 %% How frequently (in seconds) to recompute the mining difficulty at the retarget blocks.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 1).
 -else.
 -define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 10).

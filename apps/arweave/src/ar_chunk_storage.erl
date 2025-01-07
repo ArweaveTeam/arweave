@@ -1384,7 +1384,7 @@ chunk_offset_list_to_map([{Offset, Chunk} | ChunkOffsets], Min, Max, Map) ->
 	chunk_offset_list_to_map(ChunkOffsets, min(Min, Offset), max(Max, Offset),
 			maps:put(Offset, Chunk, Map)).
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 	try_acquire_replica_2_9_formatting_lock(_StoreID) ->
 		true.
 -else.

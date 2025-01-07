@@ -9,7 +9,7 @@
 
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
-	-ifdef(TEST).
+	-ifdef(AR_TEST).
 		-define(NETWORK_NAME, "arweave.localtest").
 	-else.
 		-define(NETWORK_NAME, "arweave.N.1").
@@ -101,14 +101,14 @@
 
 %% How far into the past or future the block can be in order to be accepted for
 %% processing.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 -else.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
 -endif.
 
 %% The maximum lag when fork recovery (chain reorganisation) is performed.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(CHECKPOINT_DEPTH, 4).
 -else.
 -define(CHECKPOINT_DEPTH, 18).
@@ -116,14 +116,14 @@
 
 %% The recommended depth of the block to use as an anchor for transactions.
 %% The corresponding block hash is returned by the GET /tx_anchor endpoint.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(SUGGESTED_TX_ANCHOR_DEPTH, 5).
 -else.
 -define(SUGGESTED_TX_ANCHOR_DEPTH, 6).
 -endif.
 
 %% The number of blocks returned in the /info 'recent' field
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 2).
 -else.
 -define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 5).
@@ -145,7 +145,7 @@
 -define(BLOCK_TX_DATA_SIZE_LIMIT, ?TX_DATA_SIZE_LIMIT).
 
 %% The maximum number of transactions (both format=1 and format=2) in a block.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(BLOCK_TX_COUNT_LIMIT, 10).
 -else.
 -define(BLOCK_TX_COUNT_LIMIT, 1000).
@@ -169,7 +169,7 @@
 %% The maximum allowed size of transaction headers stored in mempool.
 %% The data field of a format=1 transaction is considered to belong to
 %% its headers.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * 1024 * 1024).
 -else.
 -define(MEMPOOL_HEADER_SIZE_LIMIT, 250 * 1024 * 1024).
@@ -178,7 +178,7 @@
 %% The maximum allowed size of transaction data stored in mempool.
 %% The format=1 transactions are not counted as their data is considered
 %% to be part of the header.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(MEMPOOL_DATA_SIZE_LIMIT, 50 * 1024 * 1024).
 -else.
 -define(MEMPOOL_DATA_SIZE_LIMIT, 500 * 1024 * 1024).
@@ -209,7 +209,7 @@
 -define(BAD_BLOCK_BAN_TIME, 24 * 60 * 60).
 
 %% A part of transaction propagation delay independent from the size, in seconds.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(BASE_TX_PROPAGATION_DELAY, 0).
 -else.
 -ifndef(BASE_TX_PROPAGATION_DELAY).
@@ -221,7 +221,7 @@
 %% estimate the transaction propagation delay. It does not include
 %% the base delay, the time the transaction spends in the priority
 %% queue, and the time it takes to propagate the transaction to peers.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(TX_PROPAGATION_BITS_PER_SECOND, 1000000000).
 -else.
 -define(TX_PROPAGATION_BITS_PER_SECOND, 3000000). % 3 mbps
@@ -291,7 +291,7 @@
 
 %% The adjustment of difficutly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(RANDOMX_KEY_SWAP_FREQ, (?STORE_BLOCKS_BEHIND_CURRENT + 1)).
 -define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
 -define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
@@ -335,7 +335,7 @@
 -define(NOTE_SIZE, 32).
 
 %% Disk cache size in MB
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DISK_CACHE_SIZE, 1).
 -define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).
 -else.
@@ -344,7 +344,7 @@
 -endif.
 
 %% The speed in chunks/s of moving the fork 2.5 packing threshold.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND, 1).
 -else.
 -define(PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND, 10).

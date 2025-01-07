@@ -37,7 +37,7 @@
 
 %% The number of blocks which have to pass since the 2.6.8 fork before we
 %% start mixing in the new fee calculation method.
--ifdef(TEST).
+-ifdef(AR_TEST).
 	-define(PRICE_2_6_8_TRANSITION_START, 2).
 -else.
 	-ifndef(PRICE_2_6_8_TRANSITION_START).
@@ -62,7 +62,7 @@
 %% Let A = height - TransitionStart + 1.
 %% Let B = TransitionStart + ?PRICE_2_6_8_TRANSITION_BLOCKS - (height + 1).
 %% Then price per GiB-minute = price old * B / (A + B) + price new * A / (A + B).
--ifdef(TEST).
+-ifdef(AR_TEST).
 	-define(PRICE_2_6_8_TRANSITION_BLOCKS, 2).
 -else.
 	-ifndef(PRICE_2_6_8_TRANSITION_BLOCKS).
@@ -81,7 +81,7 @@
 %%
 %% Note: Even though this constant is related to the *2.7.2* fork we count the blocks
 %% since the *2.6.8* fork for easier comparison with ?PRICE_2_6_8_TRANSITION_START
--ifdef(TEST).
+-ifdef(AR_TEST).
 	-define(PRICE_2_7_2_TRANSITION_START, 4).
 -else.
 	-ifndef(PRICE_2_7_2_TRANSITION_START).
@@ -106,7 +106,7 @@
 %% Let A = height - TransitionStart + 1.
 %% Let B = TransitionStart + ?PRICE_2_7_2_TRANSITION_START - (height + 1).
 %% Then price per GiB-minute = price cap * B / (A + B) + price new * A / (A + B).
--ifdef(TEST).
+-ifdef(AR_TEST).
 	-define(PRICE_2_7_2_TRANSITION_BLOCKS, 2).
 -else.
 	-ifndef(PRICE_2_7_2_TRANSITION_BLOCKS).
@@ -120,7 +120,7 @@
 	-endif.
 -endif.
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, 8162).
 -else.
 	%% STATIC_2_6_8_FEE_WINSTON / (200 (years) * 365 (days) * 24 * 60) / 20 (replicas)
@@ -128,7 +128,7 @@
 	-define(PRICE_PER_GIB_MINUTE_PRE_TRANSITION, 400).
 -endif.
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 	-define(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND, 30000).
 -else.
 	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_UPPER_BOUND).
@@ -138,7 +138,7 @@
 	-endif.
 -endif.
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 	-define(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND, 0).
 -else.
 	-ifndef(PRICE_2_7_2_PER_GIB_MINUTE_LOWER_BOUND).

@@ -103,11 +103,11 @@ randomx_reencrypt_chunk(SourcePacking, TargetPacking,
 	randomx_reencrypt_chunk2(SourcePacking, TargetPacking, 
 		RandomxState, UnpackKey, PackKey, Chunk, ChunkSize).
 
-%%% TEST implementation
+%%% AR_TEST implementation
 randomx_generate_replica_2_9_entropy({_, {stub_state, _}}, Key) ->
 	%% Make it fast, deterministic, and scoped by Key.
 	%% Note that ?REPLICA_2_9_ENTROPY_SIZE is
-	%% reduced significantly in the TEST mode.
+	%% reduced significantly in the AR_TEST mode.
 	SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	lists:foldl(
 		fun(N1, Acc) ->
@@ -124,7 +124,7 @@ randomx_generate_replica_2_9_entropy({_, {stub_state, _}}, Key) ->
 		lists:seq(1, SubChunkCount)
 	);
 
-%% Non-TEST implementation
+%% Non-AR_TEST implementation
 randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
 	{ok, EntropyFused} = ar_rxsquared_nif:rsp_fused_entropy_nif(
 		RandomxState,

@@ -977,7 +977,7 @@ commandline_parser_test_() ->
 		)
 	end}.
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 console(Format) ->
 	?LOG_INFO(io_lib:format(Format, [])).
 

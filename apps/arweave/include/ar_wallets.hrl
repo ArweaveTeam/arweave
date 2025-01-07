@@ -1,5 +1,5 @@
 %% @doc The maximum number of wallets served via /wallet_list/<root_hash>[/<cursor>].
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(WALLET_LIST_CHUNK_SIZE, 2).
 -else.
 -define(WALLET_LIST_CHUNK_SIZE, 2500).

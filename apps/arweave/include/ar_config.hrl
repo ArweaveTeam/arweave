@@ -21,7 +21,7 @@
 
 %% The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DEFAULT_SYNC_JOBS, 10).
 -else.
 -define(DEFAULT_SYNC_JOBS, 100).
@@ -40,14 +40,14 @@
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 30 * 60).
 
 %% The default size limit for unconfirmed and seeded chunks, per data root.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 50).
 -else.
 -define(DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 10000).
 -endif.
 
 %% The default total size limit for unconfirmed and seeded chunks.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 100).
 -else.
 -define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 100000).
@@ -86,14 +86,14 @@
 		max(1, (erlang:system_info(schedulers_online) - 1))).
 
 %% Accept a block from the given IP only once in so many milliseconds.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS, 10).
 -else.
 -define(DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS, 1000).
 -endif.
 
 %% Accept a block with the given solution hash only once in so many milliseconds.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS, 10).
 -else.
 -define(DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS, 2000).
@@ -120,7 +120,7 @@
 -define(DEFAULT_MAX_REPLICA_2_9_ENTROPY_CACHE_SIZE, 33_554_432). % 8_388_608 * 4.
 
 %% The number of 2.9 storage modules allowed to prepare the storage at a time.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DEFAULT_REPLICA_2_9_WORKERS, 2).
 -else.
 -define(DEFAULT_REPLICA_2_9_WORKERS, 8).

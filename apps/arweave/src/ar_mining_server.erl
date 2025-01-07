@@ -37,7 +37,7 @@
 	packing_difficulty			= 0
 }).
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 0).
 -else.
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 10).
@@ -105,7 +105,7 @@ is_one_chunk_solution(Solution) ->
 ) ->
 	Ret :: ok.
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 log_prepare_solution_failure(Solution, stale_step_number, AdditionalLogData) ->
 	ok;
 log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData) ->
