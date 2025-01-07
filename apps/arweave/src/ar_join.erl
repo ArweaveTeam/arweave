@@ -11,7 +11,7 @@
 
 %% The number of block index elements to fetch per request.
 %% Must not exceed ?MAX_BLOCK_INDEX_RANGE_SIZE defined in ar_http_iface_middleware.erl.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(REQUEST_BLOCK_INDEX_RANGE_SIZE, 2).
 -else.
 -define(REQUEST_BLOCK_INDEX_RANGE_SIZE, 10000).

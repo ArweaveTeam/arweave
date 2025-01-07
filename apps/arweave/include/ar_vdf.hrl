@@ -10,7 +10,7 @@
 	-define(VDF_DIFFICULTY, ?VDF_SHA_1S div ?VDF_CHECKPOINT_COUNT_IN_STEP).
 -endif.
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 	% NOTE. VDF_DIFFICULTY_RETARGET should be > 10 because it's > 10 in mainnet
 	% So VDF difficulty should change slower than difficulty
 	-define(VDF_DIFFICULTY_RETARGET, 20).

@@ -120,7 +120,7 @@ sub_diff(Diff, N) ->
 	Divisor = 2 * N * N * MaxDiffSquared,
 	(MaxDiff * Divisor - Dividend  * MaxDiff) div Divisor.
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 min_difficulty(_Height) ->
 	1.
 switch_to_randomx_fork_diff(_) ->
