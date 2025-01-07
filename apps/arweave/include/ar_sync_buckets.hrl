@@ -3,7 +3,7 @@
 %% encountered when asking peers about the presence of particular chunks.
 %% If the serialized buckets do not fit in ?MAX_SYNC_BUCKETS_SIZE, the bucket
 %% size is doubled until they fit.
--ifdef(TEST).
+-ifdef(AR_TEST).
 -define(DEFAULT_SYNC_BUCKET_SIZE, 10000000).
 -else.
 -define(DEFAULT_SYNC_BUCKET_SIZE, 10_000_000_000). % 10 GB
