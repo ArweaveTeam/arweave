@@ -26,7 +26,6 @@
 	store_id,
 	packing_map = #{},
 	repack_cursor = 0,
-	prev_repack_cursor = 0,
 	target_packing = none,
 	repacking_complete = false,
 	range_start,
@@ -525,17 +524,10 @@ handle_cast(do_prepare_replica_2_9, State) ->
 handle_cast(store_repack_cursor, #state{ repacking_complete = true } = State) ->
 	{noreply, State};
 handle_cast(store_repack_cursor,
-		#state{ repack_cursor = Cursor, prev_repack_cursor = Cursor } = State) ->
-	{noreply, State};
-handle_cast(store_repack_cursor,
 		#state{ repack_cursor = Cursor, store_id = StoreID,
 				target_packing = TargetPacking } = State) ->
-	ar:console("Repacked up to ~p, scanning further..~n", [Cursor]),
-	?LOG_INFO([{event, repacked_partially},
-			{tags, [repack_in_place]},
-			{storage_module, StoreID}, {cursor, Cursor}]),
 	store_repack_cursor(Cursor, StoreID, TargetPacking),
-	{noreply, State#state{ prev_repack_cursor = Cursor }};
+	{noreply, State};
 
 handle_cast(repacking_complete, State) ->
 	{noreply, State#state{ repacking_complete = true }};
@@ -575,7 +567,7 @@ handle_call({put, PaddedEndOffset, Chunk}, _From, State)
 	end;
 
 handle_call({delete, PaddedEndOffset}, _From, State) ->
-	#state{	file_index = FileIndex, store_id = StoreID } = State,
+	#state{	store_id = StoreID } = State,
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID) of
 		ok ->
@@ -610,7 +602,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_info({chunk, {packed, Ref, ChunkArgs}},
-	#state{ packing_map = Map, store_id = StoreID, repack_cursor = PrevCursor } = State) ->
+	#state{ packing_map = Map, store_id = StoreID } = State) ->
 	case maps:get(Ref, Map, not_found) of
 		not_found ->
 			{noreply, State};
@@ -649,17 +641,14 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 					DataSyncServer = ar_data_sync:name(StoreID),
 					gen_server:cast(DataSyncServer,
 							{store_chunk, ChunkArgs, Args}),
-					{noreply, State2#state{ repack_cursor = PaddedEndOffset,
-							prev_repack_cursor = PrevCursor }};
+					{noreply, State};
 				store ->
 					case handle_store_chunk(PaddedEndOffset, Chunk, State2) of
 						{ok, FileIndex2, NewPacking} ->
 							ar_sync_record:add_async(repacked_chunk,
 									PaddedEndOffset, StartOffset,
 									NewPacking, ar_data_sync, StoreID),
-							{noreply, State2#state{ file_index = FileIndex2,
-									repack_cursor = PaddedEndOffset,
-									prev_repack_cursor = PrevCursor }};
+							{noreply, State2#state{ file_index = FileIndex2 }};
 						Error3 ->
 							PackingStr = ar_serialize:encode_packing(Packing, true),
 							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
@@ -1134,8 +1123,10 @@ shift_repack_cursor(Cursor, RangeStart, RangeEnd) ->
 	case Cursor2 > get_chunk_bucket_start(RangeEnd) of
 		true ->
 			RangeStart2 = get_chunk_bucket_start(RangeStart + 1),
-			RelativeOffset = Cursor + RepackIntervalSize - RangeStart2,
-			Cursor3 = RangeStart2 + (RelativeOffset rem SectorSize),
+			RelativeSectorOffset = (Cursor - RangeStart2) rem SectorSize,
+			Cursor3 = RangeStart2
+				+ RelativeSectorOffset
+				+ min(RepackIntervalSize, SectorSize - RelativeSectorOffset),
 			case Cursor3 > RangeStart2 + SectorSize of
 				true ->
 					none;
@@ -1167,8 +1158,9 @@ repack(Cursor, RangeStart, RangeEnd, Packing, StoreID) ->
 	case ar_sync_record:get_next_synced_interval(Cursor, RightBound,
 			ar_data_sync, StoreID) of
 		not_found ->
+			Server = gen_server_id(StoreID),
 			Cursor2 = shift_repack_cursor(Cursor, RangeStart, RangeEnd),
-			repack(Cursor2, RangeStart, RangeEnd, Packing, StoreID);
+			gen_server:cast(Server, {repack, Cursor2, RangeStart, RangeEnd, Packing});
 		{_End, _Start} ->
 			repack_batch(Cursor, RangeStart, RangeEnd, Packing, StoreID)
 	end.
@@ -1297,7 +1289,7 @@ repack_send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 								ChunkDataKey, AbsoluteOffset, no_chunk);
 					Chunk3 ->
 						case is_storage_supported(AbsoluteOffset,
-								ChunkSize, Packing) of
+								ChunkSize, RequiredPacking) of
 							false ->
 								%% We are going to move this chunk to
 								%% RocksDB after repacking so we read
@@ -1320,8 +1312,8 @@ repack_send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 						case RequiredPacking of
 							{replica_2_9, _} ->
 								unpacked_padded;
-							Packing ->
-								Packing
+							Packing2 ->
+								Packing2
 						end,
 					?LOG_DEBUG([{event, request_repack},
 							{tags, [repack_in_place]},
@@ -1462,31 +1454,36 @@ test_replica_2_9() ->
 				ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
 
 		%% Store the new chunk.
-		?assertEqual(ok, ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
 		{ok, P1, _Entropy} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 4 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P1, 4 * ?DATA_CHUNK_SIZE, StoreID1),
 
 		assert_get(not_found, 8 * ?DATA_CHUNK_SIZE, StoreID1),
-		?assertEqual(ok, ar_chunk_storage:put(8 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(8 * ?DATA_CHUNK_SIZE, C1, StoreID1)),
 		{ok, P2, _} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 8 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P2, 8 * ?DATA_CHUNK_SIZE, StoreID1),
 
 		%% Store chunks in the second partition.
-		?assertEqual(ok, ar_chunk_storage:put(12 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(12 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
 		{ok, P3, Entropy3} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 12 * ?DATA_CHUNK_SIZE, C1),
 
 		assert_get(P3, 12 * ?DATA_CHUNK_SIZE, StoreID2),
-		?assertEqual(ok, ar_chunk_storage:put(15 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(15 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
 		{ok, P4, Entropy4} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 15 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P4, 15 * ?DATA_CHUNK_SIZE, StoreID2),
 		?assertNotEqual(P3, P4),
 		?assertNotEqual(Entropy3, Entropy4),
 
-		?assertEqual(ok, ar_chunk_storage:put(16 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(16 * ?DATA_CHUNK_SIZE, C1, StoreID2)),
 		{ok, P5, Entropy5} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 16 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P5, 16 * ?DATA_CHUNK_SIZE, StoreID2),
@@ -1503,7 +1500,7 @@ test_well_aligned() ->
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	ok = ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1),
+	{ok, unpacked} = ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE),
 	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE + 1)),
