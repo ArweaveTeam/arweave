@@ -3,7 +3,15 @@
 -include_lib("public_key/include/public_key.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--export([new/0, sign/2, verify/3, to_public/1, serialize/2, deserializePublic/2, deserializePrivate/2, identifier/1, from_identifier/1]).
+-export([
+    new/0,
+    sign/2, sign_recoverable/2,
+    verify/3, verify/2,
+    to_public/1,
+    serialize/2, deserializePublic/2, deserializePrivate/2,
+    identifier/1, from_identifier/1,
+    recover_pk/2
+]).
 
 -type ecdsa_digest_type() :: sha256.
 -type serialization_formats() :: raw | jwk.
@@ -20,7 +28,7 @@ new() ->
         {error, Reason} ->
             ?LOG_ERROR([{event, secp256k1_generate_key}, {reason, Reason}]),
             erlang:halt();
-        {ok, PrivBytes, PubBytes} ->
+        {ok, {PrivBytes, PubBytes}} ->
             #'ECPrivateKey'{
                 version=1,
                 privateKey=PrivBytes,
@@ -36,48 +44,59 @@ to_public({_, _, _, _, PubBytes, _}) ->
     ECPoint = #'ECPoint'{point=PubBytes},
     {ECPoint, {namedCurve, secp256k1}}.
 
--spec sign(DigestOrPlainText :: binary() | {digest, binary()}, PrivateKey :: public_key:ecdsa_private_key()) -> binary().
-sign({digest, Digest}, {_, _, PrivBytes, _, _, _}) ->
+-spec sign(PlainText :: binary() | {digest, Digest :: binary()}, PrivateKey :: public_key:ecdsa_private_key()) -> binary().
+sign({digest, Digest}, {_, _, PrivBytes, _, _, _}) when byte_size(Digest) == 32 ->
     {ok, Signature} = secp256k1_nif:sign(Digest, PrivBytes),
-    case check_low_s(Signature) of
-        {valid, _, _} -> Signature;
-        {invalid, R, S} ->
-            RBin = int_to_bin(R),
-            SBin = int_to_bin(?SigDiv - S),
-            <<RBin/binary, SBin/binary>>
-    end;
+    Signature;
 sign(PlainText, PrivateKey) ->
     Digest = crypto:hash(sha256, PlainText),
     sign({digest, Digest}, PrivateKey).
 
+-spec sign_recoverable(PlainText :: binary() | {digest, Digest :: binary()}, PrivateKey :: public_key:ecdsa_private_key()) -> binary().
+sign_recoverable({digest, Digest}, {_, _, PrivBytes, _, _, _}) when byte_size(Digest) == 32 ->
+    {ok, Signature} = secp256k1_nif:sign_recoverable(Digest, PrivBytes),
+    Signature;
+sign_recoverable(PlainText, PrivateKey) ->
+    Digest = crypto:hash(sha256, PlainText),
+    sign_recoverable({digest, Digest}, PrivateKey).
 
--spec verify(DigestOrPlainText :: binary() | {digest, binary()}, Signature :: binary(), PublicKey :: public_key:ecdsa_public_key()) -> boolean().
-verify({digest, Digest}, Signature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) when byte_size(Signature) == 64 ->
-    case check_low_s(Signature) of
-        {valid, _, _} ->
-            secp256k1_nif:verify(Digest, Signature, PubBytes);
-        {invalid, _, _} ->
-            false
+
+-spec verify(PlainText :: binary() | {digest, Digest :: binary()}, Signature :: binary(), PublicKey :: public_key:ecdsa_public_key()) -> boolean().
+verify({digest, Digest}, Signature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) when byte_size(Signature) == 64, byte_size(Digest) == 32  ->
+    case secp256k1_nif:verify(Digest, Signature, PubBytes) of
+        {ok, Result} -> Result;
+        {error, _Reason} -> false
     end;
-verify(PlainText, Signature, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey) when byte_size(Signature) == 64 ->
-    Digest = crypto:hash(sha256, PlainText),
-    verify({digest, Digest}, Signature, PublicKey);
-verify({digest, Digest}, DERSignature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) ->
-    case catch public_key:der_decode('ECDSA-Sig-Value', DERSignature) of
-        {'EXIT', _} -> false;
-        #'ECDSA-Sig-Value'{ r = R, s = S }  ->
-            case check_low_s(R, S) of
-                {valid, R, S} ->
-                    RBin = int_to_bin(R),
-                    SBin = int_to_bin(S),
-                    Sig = <<RBin/binary, SBin/binary>>,
-                    secp256k1_nif:verify(Digest, Sig, PubBytes);
-                {invalid, _, _} -> false
-            end
+verify({digest, Digest}, Signature, {#'ECPoint'{point=PubBytes}, {namedCurve, secp256k1}}) when byte_size(Signature) == 65, byte_size(Digest) == 32 ->
+    case secp256k1_nif:verify_recoverable(Digest, Signature, PubBytes) of
+        {ok, Result} -> Result;
+        {error, _Reason} -> false
     end;
-verify(PlainText, DERSignature, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey) ->
+verify(PlainText, Signature, {#'ECPoint'{}, {namedCurve, secp256k1}} = PublicKey) ->
     Digest = crypto:hash(sha256, PlainText),
-    verify({digest, Digest}, DERSignature, PublicKey).
+    verify({digest, Digest}, Signature, PublicKey).
+
+-spec verify(PlainText :: binary() | {digest, Digest :: binary()}, Signature :: binary()) -> {boolean(), binary()}.
+verify({digest, Digest}, Signature) when byte_size(Signature) == 65, byte_size(Digest) == 32  ->
+    case secp256k1_nif:recover_pk_and_verify(Digest, Signature) of
+        {ok, Result} -> Result;
+        {error, _Reason} -> {false, <<>>}
+    end;
+verify(PlainText, Signature) ->
+    Digest = crypto:hash(sha256, PlainText),
+    verify({digest, Digest}, Signature).
+
+-spec recover_pk(PlainText :: binary() | {digest, Digest :: binary()}, RecoverableSignature :: binary()) -> public_key:ecdsa_public_key().
+recover_pk({digest, Digest}, RecoverableSignature) when byte_size(RecoverableSignature) == 65, byte_size(Digest) == 32 ->
+    case secp256k1_nif:recover_pk(Digest, RecoverableSignature) of
+        {ok, PubBytes} ->
+            ECPoint = #'ECPoint'{point=PubBytes},
+            {ok, {ECPoint, {namedCurve, secp256k1}}};
+        {error, _} = Err -> Err
+    end;
+recover_pk(PlainText, RecoverableSignature) ->
+    Digest = crypto:hash(sha256, PlainText),
+    recover_pk({digest, Digest}, RecoverableSignature).
 
 
 -spec serialize(Format :: serialization_formats(), PublicKey :: public_key:ecdsa_public_key() | public_key:ecdsa_private_key()) -> binary().
@@ -160,41 +179,11 @@ deserializePrivate(Format, PrivateKeyJWK) when Format == jwk ->
     PrivBytes = ar_util:decode(PrivB64),
     deserializePrivate(raw, PrivBytes).
 
-%% @private
-%% ensures compatible signatures according to https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
-check_low_s(Signature) when byte_size(Signature) == 64 ->
-    <<RBin:32/binary, SBin:32/binary>> = Signature,
-    check_low_s(binary:decode_unsigned(RBin), binary:decode_unsigned(SBin));
-check_low_s(Signature) ->
-    case catch public_key:der_decode('ECDSA-Sig-Value', Signature) of
-        {'EXIT', _} -> {invalid, undefined, undefined};
-        #'ECDSA-Sig-Value'{ r = R, s = S }  -> check_low_s(R, S)
-    end.
 
-%% @private
-check_low_s(R, S) ->
-    case S =< ?SigUpperBound of
-        true ->
-            {valid, R, S};
-        false ->
-            {invalid, R, S}
-    end.
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
 
-%% @private
-int_to_bin(X) when X < 0 -> int_to_bin_neg(X, []);
-int_to_bin(X) -> int_to_bin_pos(X, []).
-
-int_to_bin_pos(0,Ds=[_|_]) ->
-	list_to_binary(Ds);
-int_to_bin_pos(X,Ds) ->
-	int_to_bin_pos(X bsr 8, [(X band 255)|Ds]).
-
-int_to_bin_neg(-1, Ds=[MSB|_]) when MSB >= 16#80 ->
-	list_to_binary(Ds);
-int_to_bin_neg(X,Ds) ->
-	int_to_bin_neg(X bsr 8, [(X band 255)|Ds]).
-
-%% @doc Ensure that parsing of core command line options functions correctly.
 de_serialization_test() ->
 	{_, _, PrivBytes, _, PubBytes, _} = SK = new(),
     PK = to_public(SK),
@@ -227,9 +216,11 @@ sign_verify_test() ->
     ?assertEqual(byte_size(Sig), 64),
     ?assert(verify(Msg, Sig, PK)),
     ?assert(verify(Msg, Sig, from_identifier(Identifier))),
+
     % deterministic Sig
     NewSig = sign(Msg, SK),
     ?assertEqual(NewSig, Sig),
+
     % different Message
     Msg2 = <<"This is another test message!">>,
     Sig2 = sign(Msg2, SK),
@@ -251,6 +242,59 @@ sign_verify_test() ->
     ?assertNot(verify(Msg, OtherSig, to_public(SK))),
     ?assertNot(verify(Msg, OtherSig, from_identifier(Identifier))),
     ?assertNotEqual(Sig, OtherSig).
+
+sign_verify_recoverable_test() ->
+    {_, _, _, _, PubBytes, _} = SK = new(),
+    PK = to_public(SK),
+    Identifier = identifier(PK),
+    Msg = <<"This is a test message!">>,
+    SigRecoverable = sign_recoverable(Msg, SK),
+    ?assertEqual(byte_size(SigRecoverable), 65),
+    ?assert(verify(Msg, SigRecoverable, PK)),
+    ?assert(verify(Msg, SigRecoverable, from_identifier(Identifier))),
+
+    % recid byte
+    Sig = sign(Msg, SK),
+    <<CompactSig:64/binary, RecId:8>> = SigRecoverable,
+    ?assertEqual(CompactSig, Sig),
+    ?assert(lists:member(RecId, [0, 1, 2, 3])),
+    ?assert(verify(Msg, Sig, PK)),
+
+    % deterministic Sig
+    NewSig = sign_recoverable(Msg, SK),
+    ?assertEqual(NewSig, SigRecoverable),
+
+    % Recover pk
+    {ok, {#'ECPoint'{point=RecoveredBytes}, _} = RecoveredPK} = recover_pk(Msg, SigRecoverable),
+    ?assert(verify(Msg, SigRecoverable, RecoveredPK)),
+    ?assertEqual(RecoveredBytes, PubBytes),
+
+    % Needs 65 byte long sig
+    ?assertException(error, badarg, recover_pk(Msg, Sig)),
+
+    BadSig = <<0:8, CompactSig:63/binary, RecId:8>>,
+    case recover_pk(Msg, BadSig) of
+        {error, Reason} -> ?assertEqual(Reason, "Failed to recover public key.");
+        {ok, {#'ECPoint'{point=BadSigBytes}, _} } -> ?assertNotEqual(BadSigBytes, PubBytes)
+    end,
+    BadRecidSig = <<CompactSig:64/binary, 4:8>>,
+    ?assertEqual({error,  "Invalid signature recid. recid >= 0 && recid <= 3."}, recover_pk(Msg, BadRecidSig)),
+
+    BadMsg = <<"This is a bad test message!">>,
+    {ok,  {#'ECPoint'{point=BadMsgBytes}, _} = BadPublicKey} = recover_pk(BadMsg, SigRecoverable),
+    ?assertNotEqual(BadMsgBytes, PubBytes),
+    % bad public key will verify the bad message
+    ?assert(verify(BadMsg, SigRecoverable, BadPublicKey)),
+    % bad public key will NOT verify the correct message
+    ?assertNot(verify(Msg, SigRecoverable, BadPublicKey)),
+
+    % recover and verify at once
+    ?assertEqual({true, PubBytes}, verify(Msg, SigRecoverable)),
+    ?assertEqual({false, <<>>}, verify(Msg, BadRecidSig)),
+
+    % recover and verify returns true for arbitrary message, but non matching PK
+    {true, ArbitraryPubBytes} = verify(crypto:strong_rand_bytes(100), SigRecoverable),
+    ?assertNotEqual(PubBytes, ArbitraryPubBytes).
 
 fixtures_test() ->
     Test = fun(Root) ->
