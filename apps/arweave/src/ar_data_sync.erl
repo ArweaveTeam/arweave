@@ -20,13 +20,13 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_poa.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_sync_buckets.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_poa.hrl").
+-include("../include/ar_data_discovery.hrl").
+-include("../include/ar_data_sync.hrl").
+-include("../include/ar_sync_buckets.hrl").
 
 -ifdef(AR_TEST).
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).
@@ -1110,16 +1110,11 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathRuleset) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
-			case Packing of
-				{replica_2_9, Addr} ->
-					%% Unpacking another peer's replica 2.9 chunk is expensive, so don't do it.
-					%% Note: peers running the reference client won't share replica 2.9 chunks
-					%% anyways, so this check is just a backup.
+			case should_unpack(Packing) of
+				{false, Reason, ReasonArgs} ->
 					decrement_chunk_cache_size(),
-					process_invalid_fetched_chunk(Peer, Byte, State,
-							got_replica_2_9_chunk_from_peer,
-							[{mining_addr, ar_util:encode(Addr)}]);
-				_ ->
+					process_invalid_fetched_chunk(Peer, Byte, State, Reason, ReasonArgs);
+				true ->
 					{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
 					AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 					Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
@@ -2815,6 +2810,13 @@ pick_missing_blocks([{H, WeaveSize, _} | CurrentBI], BlockTXPairs) ->
 		_ ->
 			{WeaveSize, lists:reverse(After)}
 	end.
+should_unpack({replica_2_9, Addr}) when ?BLOCK_2_9_SYNCING ->
+	%% Unpacking another peer's replica 2.9 chunk is expensive, so don't do it.
+	%% Note: peers running the reference client won't share replica 2.9 chunks
+	%% anyways, so this check is just a backup.
+	{false, got_replica_2_9_chunk_from_peer, [{mining_addr, ar_util:encode(Addr)}]};
+should_unpack(_) ->
+	true.
 
 process_invalid_fetched_chunk(Peer, Byte, State) ->
 	%% Not necessarily a malicious peer, it might happen
