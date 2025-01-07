@@ -833,7 +833,7 @@ handle_cast(sync_data2, #sync_data_state{
 		} = State) ->
 	Intervals =
 		case ar_storage_module:get_packing(StoreID) of
-			{replica_2_9, _} ->
+			{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
 				%% Do not unpack the 2.9 data by default, finding unpacked data
 				%% may be cheaper.
 				[];
@@ -1734,7 +1734,8 @@ invalidate_bad_data_record({Start, End, StoreID, Case}) ->
 						PaddedStart
 				end,
 			?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Case},
-					{range_start, PaddedStart2}, {range_end, PaddedEnd}]),
+					{range_start, PaddedStart2}, {range_end, PaddedEnd},
+					{store_id, StoreID}]),
 			case ar_sync_record:delete(PaddedEnd, PaddedStart2, ar_data_sync, StoreID) of
 				ok ->
 					ar_sync_record:add(PaddedEnd, PaddedStart2, invalid_chunks, StoreID),
@@ -2748,10 +2749,6 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 							Error
 					end;
 				_ ->
-					?LOG_ERROR([{event, failed_to_write_not_blacklisted_chunk_to_chunk_data_db},
-							{offset, Offset}, {chunk_size, ChunkSize},
-							{packing, ar_serialize:encode_packing(Packing, true)},
-							{store_id, StoreID}]),
 					Result
 			end;
 		false ->
