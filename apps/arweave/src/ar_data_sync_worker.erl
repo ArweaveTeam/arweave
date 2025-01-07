@@ -135,6 +135,8 @@ read_range2(MessagesRemaining,
 		case CheckIsRecordedAlready of
 			ok ->
 				ok;
+			recast ->
+				ok;
 			false ->
 				case ar_sync_record:is_recorded(Start + 1, ar_data_sync, OriginStoreID) of
 					{true, Packing} ->
