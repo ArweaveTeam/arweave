@@ -3031,10 +3031,7 @@ log_failed_to_store_chunk(already_stored,
 			{relative_offset, Offset},
 			{data_path_hash, ar_util:encode(DataPathHash)},
 			{data_root, ar_util:encode(DataRoot)},
-			{store_id, StoreID}]),
-	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
-	ar_sync_record:add_async(already_store_chunk_ensure_sync_record,
-			PaddedEndOffset, PaddedEndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID);
+			{store_id, StoreID}]);
 log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
 	?LOG_ERROR([{event, failed_to_store_chunk},
 			{reason, io_lib:format("~p", [Reason])},
