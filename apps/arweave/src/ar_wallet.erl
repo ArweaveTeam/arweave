@@ -331,6 +331,8 @@ get_or_create_wallet([{_LastModified, F} | Entries], Types) ->
 			get_or_create_wallet(Entries, Types)
 	end.
 
+recover_key(Data, <<>>, ?ECDSA_KEY_TYPE) ->
+	<<>>;
 recover_key(Data, Signature, ?ECDSA_KEY_TYPE) ->
 	{_Pass, PubKey} = secp256k1_nif:ecrecover(Data, Signature),
 	% Note. if Pass = false, then PubKey will be <<>>

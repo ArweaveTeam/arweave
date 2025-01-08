@@ -670,7 +670,7 @@ encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 			denomination = Denomination, redenomination_height = RedenominationHeight,
 			double_signing_proof = DoubleSigningProof,
 			previous_cumulative_diff = PrevCDiff } = B) ->
-	RewardKey = element(2, B#block.reward_key),
+	RewardKey = case B#block.reward_key of undefined -> <<>>; {_Type, Key} -> Key end,
 	case Height >= ar_fork:height_2_6() of
 		false ->
 			<<>>;
