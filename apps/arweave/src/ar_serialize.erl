@@ -1048,13 +1048,7 @@ parse_tx(<< Format:8, TXID:32/binary,
 		{error, Reason} ->
 			{error, Reason};
 		{ok, Tags, Rest2} ->
-			SigType =
-				case OwnerSize of
-					0 ->
-						?ECDSA_KEY_TYPE;
-					_ ->
-						?RSA_KEY_TYPE
-				end,
+			SigType = set_sig_type_from_pub_key(Owner, Signature),
 			case parse_tx_denomination(Rest2) of
 				{ok, Denomination} ->
 					DataSize2 = case Format of 1 -> byte_size(Data); _ -> DataSize end,
@@ -1602,13 +1596,7 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 	32 = byte_size(TXID),
 	Owner = ar_util:decode(find_value(<<"owner">>, TXStruct)),
 	Sig = ar_util:decode(find_value(<<"signature">>, TXStruct)),
-	SigType =
-		case Owner of
-			<<>> ->
-				?ECDSA_KEY_TYPE;
-			_ ->
-				?RSA_KEY_TYPE
-		end,
+	SigType = set_sig_type_from_pub_key(Owner, Sig),
 	TX = #tx{
 		format = Format,
 		id = TXID,
@@ -1639,6 +1627,18 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 			TX#tx{ owner = Owner2 };
 		?RSA_KEY_TYPE ->
 			TX
+	end.
+
+set_sig_type_from_pub_key(Owner, <<>>) ->
+	%% Transactions with the empty signatures are used in some old tests,
+	%% e.g., ar_http_iface_tests.erl.
+	?RSA_KEY_TYPE;
+set_sig_type_from_pub_key(Owner, _Sig) ->
+	case Owner of
+		<<>> ->
+			?ECDSA_KEY_TYPE;
+		_ ->
+			?RSA_KEY_TYPE
 	end.
 
 json_list_to_diff_pair(List) ->
