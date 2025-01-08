@@ -5,7 +5,8 @@
 
 -behaviour(application).
 
--export([main/0, main/1, create_wallet/0, create_wallet/1, create_ecdsa_wallet/1,
+-export([main/0, main/1, create_wallet/0, create_wallet/1,
+		create_ecdsa_wallet/0, create_ecdsa_wallet/1,
 		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1, 
 		benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
@@ -797,6 +798,9 @@ create_wallet([DataDir]) ->
 	create_wallet(DataDir, ?RSA_KEY_TYPE);
 create_wallet(_) ->
 	create_wallet_fail(?RSA_KEY_TYPE).
+
+create_ecdsa_wallet() ->
+	create_wallet_fail(?ECDSA_KEY_TYPE).
 
 create_ecdsa_wallet([DataDir]) ->
 	create_wallet(DataDir, ?ECDSA_KEY_TYPE);
