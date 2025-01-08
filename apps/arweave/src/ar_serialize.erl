@@ -796,7 +796,6 @@ encode_tx(#tx{ format = Format, id = TXID, last_tx = LastTX, owner = Owner,
 			(encode_int(DataSize, 16))/binary, (encode_bin(DataRoot, 8))/binary,
 			(encode_bin(Signature, 16))/binary, (encode_int(Reward, 8))/binary,
 			(encode_bin(Data, 24))/binary, (encode_tx_tags(Tags))/binary,
-			(encode_signature_type(SignatureType))/binary,
 			(may_be_encode_tx_denomination(TX))/binary >>.
 
 encode_tx_tags(Tags) ->
@@ -809,13 +808,6 @@ encode_tx_tags([{Name, Value} | Tags], Encoded, N) ->
 	TagValueSize = byte_size(Value),
 	Tag = << TagNameSize:16, TagValueSize:16, Name/binary, Value/binary >>,
 	encode_tx_tags(Tags, [Tag | Encoded], N + 1).
-
-encode_signature_type(?DEFAULT_KEY_TYPE) ->
-	<<>>;
-encode_signature_type({?ECDSA_SIGN_ALG, secp256k1}) ->
-	<< 1:8 >>;
-encode_signature_type({?EDDSA_SIGN_ALG, ed25519}) ->
-	<< 2:8 >>.
 
 may_be_encode_tx_denomination(#tx{ denomination = 0 }) ->
 	<<>>;
@@ -1106,15 +1098,6 @@ parse_tx_denomination(<< Denomination:24 >>) when Denomination > 0 ->
 	{ok, Denomination};
 parse_tx_denomination(_Rest) ->
 	{error, invalid_denomination}.
-
-%parse_signature_type(<<>>) ->
-%	{ok, ?DEFAULT_KEY_TYPE};
-%parse_signature_type(<< 1:8 >>) ->
-%	{ok, {?ECDSA_SIGN_ALG, secp256k1}};
-%parse_signature_type(<< 2:8 >>) ->
-%	{ok, {?EDDSA_SIGN_ALG, ed25519}};
-%parse_signature_type(_Rest) ->
-%	{error, invalid_input}.
 
 tx_to_binary(TX) ->
 	Bin = encode_tx(TX),
