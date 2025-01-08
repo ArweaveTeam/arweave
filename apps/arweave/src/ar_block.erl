@@ -432,7 +432,8 @@ verify_signature(BlockPreimage, PrevCDiff,
 		#block{ signature = Signature, reward_key = {?RSA_KEY_TYPE, Pub} = RewardKey,
 				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
 				cumulative_diff = CDiff })
-		when byte_size(Signature) == 512, byte_size(Pub) == 512 ->
+		when byte_size(Signature) == ?RSA_BLOCK_SIG_SIZE,
+				byte_size(Pub) == ?RSA_BLOCK_SIG_SIZE ->
 	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
 			BlockPreimage/binary >>,
@@ -442,7 +443,7 @@ verify_signature(BlockPreimage, PrevCDiff,
 		#block{ signature = Signature, reward_key = {?ECDSA_KEY_TYPE, Pub} = RewardKey,
 				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
 				cumulative_diff = CDiff, height = Height })
-		when byte_size(Signature) == 64, byte_size(Pub) == 32 ->
+		when byte_size(Signature) == ?ECDSA_SIG_SIZE, byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE ->
 	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
 			BlockPreimage/binary >>,

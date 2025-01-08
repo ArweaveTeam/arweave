@@ -254,7 +254,7 @@ get_reward_key(Pub, Height) ->
 			{?DEFAULT_KEY_TYPE, Pub};
 		true ->
 			case byte_size(Pub) of
-				32 ->
+				?ECDSA_PUB_KEY_SIZE ->
 					{?ECDSA_KEY_TYPE, Pub};
 				_ ->
 					{?RSA_KEY_TYPE, Pub}

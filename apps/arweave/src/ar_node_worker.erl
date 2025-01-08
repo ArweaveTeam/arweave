@@ -1022,11 +1022,12 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
 			{Key, Sig1, _CDiff1, _PrevCDiff1, _Preimage1,
 					Sig2, _CDiff2, _PrevCDiff2, _Preimage2} = Proof2,
 			CheckKeyType =
-				case {byte_size(Key) == 32, Height >= ar_fork:height_2_9()} of
+				case {byte_size(Key) == ?ECDSA_PUB_KEY_SIZE, Height >= ar_fork:height_2_9()} of
 					{true, false} ->
 						false;
 					{true, true} ->
-						byte_size(Sig1) == 64 andalso byte_size(Sig2) == 64;
+						byte_size(Sig1) == ?ECDSA_SIG_SIZE
+							andalso byte_size(Sig2) == ?ECDSA_SIG_SIZE;
 					_ ->
 						true
 				end,

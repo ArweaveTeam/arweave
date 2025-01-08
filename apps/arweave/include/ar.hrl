@@ -69,6 +69,10 @@
 -define(RSA_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
 -define(ECDSA_KEY_TYPE, {?ECDSA_SIGN_ALG, secp256k1}).
 
+-define(RSA_BLOCK_SIG_SIZE, 512).
+-define(ECDSA_PUB_KEY_SIZE, 33).
+-define(ECDSA_SIG_SIZE, 65).
+
 %% The difficulty a new weave is started with.
 -define(DEFAULT_DIFF, 6).
 
