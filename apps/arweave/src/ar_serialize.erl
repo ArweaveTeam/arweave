@@ -670,13 +670,7 @@ encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
 			denomination = Denomination, redenomination_height = RedenominationHeight,
 			double_signing_proof = DoubleSigningProof,
 			previous_cumulative_diff = PrevCDiff } = B) ->
-	RewardKey =
-		case B#block.reward_key of
-			{?RSA_KEY_TYPE, Key} ->
-				Key;
-			{?ECDSA_KEY_TYPE, _Key} ->
-				<<>>
-		end,
+	RewardKey = element(2, B#block.reward_key),
 	case Height >= ar_fork:height_2_6() of
 		false ->
 			<<>>;
@@ -884,18 +878,18 @@ parse_block_post_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageS
 			last_step_checkpoints = parse_checkpoints(LastCheckpoints, Height),
 			steps = parse_checkpoints(Steps, Height) },
 	RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
-	{SigType, RewardKey2} =
-		case RewardKeySize of
-			0 ->
-				{?ECDSA_KEY_TYPE, ar_wallet:recover_key(Sig, ?ECDSA_KEY_TYPE)};
+	SigType =
+		case {RewardKeySize, Height >= ar_fork:height_2_9()} of
+			{32, true} ->
+				?ECDSA_KEY_TYPE;
 			_ ->
-				{?RSA_KEY_TYPE, RewardKey}
+				?RSA_KEY_TYPE
 		end,
 	B2 = B#block{ hash_preimage = HashPreimage, recall_byte = RecallByte_2,
 			reward = Reward, nonce = Nonce, recall_byte2 = RecallByte2_2,
 			previous_solution_hash = PreviousSolutionHash,
 			signature = Sig, partition_number = PartitionNumber,
-			reward_key = {SigType, RewardKey2},
+			reward_key = {SigType, RewardKey},
 			nonce_limiter_info = NonceLimiterInfo,
 			poa2 = #poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath },
 			price_per_gib_minute = PricePerGiBMinute,
@@ -1062,22 +1056,29 @@ parse_tx(<< Format:8, TXID:32/binary,
 		{error, Reason} ->
 			{error, Reason};
 		{ok, Tags, Rest2} ->
-			{SigType, Owner2} =
+			SigType =
 				case OwnerSize of
 					0 ->
-						{?ECDSA_KEY_TYPE,
-								ar_wallet:recover_key(Signature, ?ECDSA_KEY_TYPE)};
+						?ECDSA_KEY_TYPE;
 					_ ->
-						{?RSA_KEY_TYPE, Owner}
+						?RSA_KEY_TYPE
 				end,
 			case parse_tx_denomination(Rest2) of
 				{ok, Denomination} ->
 					DataSize2 = case Format of 1 -> byte_size(Data); _ -> DataSize end,
-					{ok, #tx{ format = Format, id = TXID, last_tx = LastTX, owner = Owner2,
+					TX = #tx{ format = Format, id = TXID, last_tx = LastTX, owner = Owner,
 							target = Target, quantity = Quantity, data_size = DataSize2,
 							data_root = DataRoot, signature = Signature, reward = Reward,
 							data = Data, tags = Tags, denomination = Denomination,
-							signature_type = SigType }};
+							signature_type = SigType },
+					case SigType of
+						{?ECDSA_SIGN_ALG, secp256k1} ->
+							DataSegment = ar_tx:generate_signature_data_segment(TX),
+							Owner2 = ar_wallet:recover_key(DataSegment, Signature, SigType),
+							{ok, TX#tx{ owner = Owner2 }};
+						{?RSA_SIGN_ALG, 65537} ->
+							{ok, TX}
+					end;
 				{error, Reason} ->
 					{error, Reason}
 			end
@@ -1618,18 +1619,18 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 	32 = byte_size(TXID),
 	Owner = ar_util:decode(find_value(<<"owner">>, TXStruct)),
 	Sig = ar_util:decode(find_value(<<"signature">>, TXStruct)),
-	{SigType, Owner2} =
+	SigType =
 		case Owner of
 			<<>> ->
-				{?ECDSA_KEY_TYPE, ar_wallet:recover_key(Sig, ?ECDSA_KEY_TYPE)};
+				?ECDSA_KEY_TYPE;
 			_ ->
-				{?RSA_KEY_TYPE, Owner}
+				?RSA_KEY_TYPE
 		end,
-	#tx{
+	TX = #tx{
 		format = Format,
 		id = TXID,
 		last_tx = ar_util:decode(find_value(<<"last_tx">>, TXStruct)),
-		owner = Owner2,
+		owner = Owner,
 		tags = [{ar_util:decode(Name), ar_util:decode(Value)}
 				%% Only the elements matching this pattern are included in the list.
 				|| {[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags],
@@ -1647,7 +1648,15 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 				DR -> ar_util:decode(DR)
 			end,
 		denomination = Denomination
-	}.
+	},
+	case SigType of
+		?ECDSA_KEY_TYPE ->
+			DataSegment = ar_tx:generate_signature_data_segment(TX),
+			Owner2 = ar_wallet:recover_key(DataSegment, Sig, SigType),
+			TX#tx{ owner = Owner2 };
+		?RSA_KEY_TYPE ->
+			TX
+	end.
 
 json_list_to_diff_pair(List) ->
 	[PoA1DiffBin, DiffBin] = 

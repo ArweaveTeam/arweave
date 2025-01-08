@@ -14,13 +14,14 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
--include_lib("arweave/include/ar_mining.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_pricing.hrl").
+-include("../include/ar_data_sync.hrl").
+-include("../include/ar_vdf.hrl").
+-include("../include/ar_mining.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(AR_TEST).
@@ -1018,8 +1019,8 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
 		none ->
 			undefined;
 		{Addr, {_Timestamp, Proof2}, Iterator2} ->
-			{Key, Sig1, CDiff1, PrevCDiff1, Preimage1,
-					Sig2, CDiff2, PrevCDiff2, Preimage2} = Proof2,
+			{Key, Sig1, _CDiff1, _PrevCDiff1, _Preimage1,
+					Sig2, _CDiff2, _PrevCDiff2, _Preimage2} = Proof2,
 			CheckKeyType =
 				case {byte_size(Key) == 32, Height >= ar_fork:height_2_9()} of
 					{true, false} ->
@@ -2180,16 +2181,16 @@ assert_key_type(RewardKey, Height) ->
 	case Height >= ar_fork:height_2_9() of
 		false ->
 			case RewardKey of
-				{?RSA_KEY_TYPE, _} ->
+				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, _}} ->
 					ok;
 				_ ->
 					exit(invalid_reward_key)
 			end;
 		true ->
 			case RewardKey of
-				{?RSA_KEY_TYPE, _} ->
+				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, _}} ->
 					ok;
-				{?ECDSA_KEY_TYPE, _} ->
+				{{?ECDSA_KEY_TYPE, _, _}, {?ECDSA_KEY_TYPE, _}} ->
 					ok;
 				_ ->
 					exit(invalid_reward_key)

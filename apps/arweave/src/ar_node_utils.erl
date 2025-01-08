@@ -6,10 +6,10 @@
 	block_passes_diff_check/1, block_passes_diff_check/2, passes_diff_check/4,
 	update_account/6, is_account_banned/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_mining.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_pricing.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_mining.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 

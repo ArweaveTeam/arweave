@@ -23,10 +23,11 @@
 		get_sub_chunk_index/2,
 		get_chunk_padded_offset/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_block.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_block.hrl").
+-include("../include/ar_vdf.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
