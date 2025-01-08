@@ -4,8 +4,9 @@
 	delete_record/2, generate_entropies/3, generate_missing_entropy/2, generate_entropy_keys/3,
 	shift_entropy_offset/2, store_entropy/8, record_chunk/6]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_chunk_storage.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_chunk_storage.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Return true if the given sub-chunk bucket contains the 2.9 entropy.
@@ -139,16 +140,16 @@ store_entropy(Entropies,
 												  RewardAddr,
 												  SubChunkStartOffset,
 												  Keys),
-			FindModule =
-				case ar_storage_module:get_strict(PaddedEndOffset, {replica_2_9, RewardAddr}) of
-					not_found ->
-						?LOG_WARNING([{event, failed_to_find_storage_module_for_2_9_entropy},
+			FindModules =
+				case ar_storage_module:get_all_packed(PaddedEndOffset, {replica_2_9, RewardAddr}) of
+					[] ->
+						?LOG_WARNING([{event, failed_to_find_storage_modules_for_2_9_entropy},
 									  {padded_end_offset, PaddedEndOffset}]),
 						not_found;
-					{ok, StoreID} ->
-						{ok, StoreID}
+					StoreIDs ->
+						{ok, StoreIDs}
 				end,
-			case FindModule of
+			case FindModules of
 				not_found ->
 					PaddedEndOffset2 = shift_entropy_offset(PaddedEndOffset, 1),
 					store_entropy(Rest,
@@ -159,32 +160,38 @@ store_entropy(Entropies,
 								  RewardAddr,
 								  N,
 								  WaitN);
-				{ok, StoreID2} ->
+				{ok, StoreIDs2} ->
 					From = self(),
-					spawn_link(fun() ->
-								  StartTime = erlang:monotonic_time(),
+					WaitN2 = lists:foldl(fun(StoreID2, WaitNAcc) ->
+							spawn_link(fun() ->
+									StartTime = erlang:monotonic_time(),
 
-								  record_entropy(ChunkEntropy,
-												 PaddedEndOffset,
-												 StoreID2,
-												 RewardAddr),
+									record_entropy(ChunkEntropy,
+													PaddedEndOffset,
+													StoreID2,
+													RewardAddr),
 
-								  EndTime = erlang:monotonic_time(),
-								  ElapsedTime =
-									  erlang:convert_time_unit(EndTime - StartTime,
-															   native,
-															   microsecond),
-								  %% bytes per second
-								  WriteRate =
-									  case ElapsedTime > 0 of
-										  true -> 1000000 * byte_size(ChunkEntropy) div ElapsedTime;
-										  false -> 0
-									  end,
-								  prometheus_gauge:set(replica_2_9_entropy_store_rate,
-													   [StoreID2],
-													   WriteRate),
-								  From ! {store_entropy_sub_chunk_written, WaitN + 1}
-							   end),
+									EndTime = erlang:monotonic_time(),
+									ElapsedTime =
+										erlang:convert_time_unit(EndTime - StartTime,
+																native,
+																microsecond),
+									%% bytes per second
+									WriteRate =
+										case ElapsedTime > 0 of
+											true -> 1000000 * byte_size(ChunkEntropy) div ElapsedTime;
+											false -> 0
+										end,
+									prometheus_gauge:set(replica_2_9_entropy_store_rate,
+														[StoreID2],
+														WriteRate),
+									From ! {store_entropy_sub_chunk_written, WaitNAcc + 1}
+								end),
+							WaitNAcc + 1
+						end,
+						WaitN,
+						StoreIDs2
+					),
 					PaddedEndOffset2 = shift_entropy_offset(PaddedEndOffset, 1),
 					store_entropy(Rest,
 								  PaddedEndOffset2,
@@ -193,7 +200,7 @@ store_entropy(Entropies,
 								  Keys,
 								  RewardAddr,
 								  N + length(Keys),
-								  WaitN + 1)
+								  WaitN2)
 			end
 	end.
 

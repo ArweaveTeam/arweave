@@ -3,15 +3,14 @@
 -export([id/1, label/1, address_label/2, module_address/1,
 		module_packing_difficulty/1, packing_label/1, label_by_id/1, get_by_id/1,
 		get_range/1, module_range/1, module_range/2, get_packing/1, get_size/1,
-		get/2, get_strict/2, get_all/1, get_all/2, has_any/1, has_range/2, get_cover/3]).
+		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/2,
+		has_any/1, has_range/2, get_cover/3]).
 
 -export([get_unique_sorted_intervals/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("eunit/include/eunit.hrl").
-
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -228,6 +227,18 @@ get_all(Offset) ->
 	{ok, Config} = application:get_env(arweave, config),
 	get_all(Offset, Config#config.storage_modules, []).
 
+%% @doc Return the list of identifiers of all configured storage modules
+%% covering the given Offset and Packing. If a module is configured with
+%% in-place repacking, pick the target packing (the one we are repacking to.)
+get_all_packed(Offset, Packing) ->
+	{ok, Config} = application:get_env(arweave, config),
+	RepackInPlaceModulesStoreIDs = [
+			{{BucketSize, Bucket, TargetPacking}, ar_storage_module:id(Module)}
+		|| {{BucketSize, Bucket, _Packing} = Module, TargetPacking} <- Config#config.repack_in_place_storage_modules],
+	ModuleStoreIDs = [{Module, ar_storage_module:id(Module)}
+			|| Module <- Config#config.storage_modules],
+	get_all_packed(Offset, Packing, ModuleStoreIDs ++ RepackInPlaceModulesStoreIDs).
+
 %% @doc Return the list of configured storage modules whose ranges intersect
 %% the given interval.
 get_all(Start, End) ->
@@ -339,6 +350,20 @@ get_all(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules]
 	end;
 get_all(_Offset, [], FoundModules) ->
 	FoundModules.
+
+get_all_packed(Offset, Packing,
+		[{{BucketSize, Bucket, Packing}, StoreID} | StorageModules]) ->
+	case Offset =< BucketSize * Bucket
+			orelse Offset > BucketSize * (Bucket + 1) + get_overlap(Packing) of
+		true ->
+			get_all_packed(Offset, Packing, StorageModules);
+		false ->
+			[StoreID | get_all_packed(Offset, Packing, StorageModules)]
+	end;
+get_all_packed(Offset, Packing, [_Element | StorageModules]) ->
+	get_all_packed(Offset, Packing, StorageModules);
+get_all_packed(_Offset, _Packing, []) ->
+	[].
 
 get_all(Start, End, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case End =< BucketSize * Bucket
