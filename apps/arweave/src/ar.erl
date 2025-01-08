@@ -5,7 +5,7 @@
 
 -behaviour(application).
 
--export([main/0, main/1, create_wallet/0, create_wallet/1,
+-export([main/0, main/1, create_wallet/0, create_wallet/1, create_ecdsa_wallet/1,
 		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1, 
 		benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
@@ -13,9 +13,9 @@
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -794,12 +794,22 @@ set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer,
 	end.
 
 create_wallet([DataDir]) ->
+	create_wallet(DataDir, ?RSA_KEY_TYPE);
+create_wallet(_) ->
+	create_wallet_fail(?RSA_KEY_TYPE).
+
+create_ecdsa_wallet([DataDir]) ->
+	create_wallet(DataDir, ?ECDSA_KEY_TYPE);
+create_ecdsa_wallet(_) ->
+	create_wallet_fail(?ECDSA_KEY_TYPE).
+
+create_wallet(DataDir, KeyType) ->
 	case filelib:is_dir(DataDir) of
 		false ->
-			create_wallet_fail();
+			create_wallet_fail(KeyType);
 		true ->
 			ok = application:set_env(arweave, config, #config{ data_dir = DataDir }),
-			case ar_wallet:new_keyfile({?RSA_SIGN_ALG, 65537}) of
+			case ar_wallet:new_keyfile(KeyType) of
 				{error, Reason} ->
 					ar:console("Failed to create a wallet, reason: ~p.~n~n",
 							[io_lib:format("~p", [Reason])]),
@@ -810,15 +820,16 @@ create_wallet([DataDir]) ->
 					ar:console("Created a wallet with address ~s.~n", [ar_util:encode(Addr)]),
 					erlang:halt()
 			end
-	end;
-create_wallet(_) ->
-	create_wallet_fail().
+	end.
 
 create_wallet() ->
-	create_wallet_fail().
+	create_wallet_fail(?RSA_KEY_TYPE).
 
-create_wallet_fail() ->
+create_wallet_fail(?RSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-wallet [data_dir]~n"),
+	erlang:halt();
+create_wallet_fail(?ECDSA_KEY_TYPE) ->
+	io:format("Usage: ./bin/create-ecdsa-wallet [data_dir]~n"),
 	erlang:halt().
 
 benchmark_packing() ->
