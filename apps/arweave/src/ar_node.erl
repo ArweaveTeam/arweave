@@ -210,7 +210,7 @@ get_balance({SigType, PubKey}) ->
 	get_balance(ar_wallet:to_address(PubKey, SigType));
 get_balance(MaybeRSAPub) when byte_size(MaybeRSAPub) == 512 ->
 	%% A legacy feature where we may search the public key instead of address.
-	ar_wallets:get_balance(ar_wallet:to_rsa_address(MaybeRSAPub));
+	ar_wallets:get_balance(ar_wallet:hash_pub_key(MaybeRSAPub));
 get_balance(Addr) ->
 	ar_wallets:get_balance(Addr).
 
@@ -220,7 +220,7 @@ get_last_tx({SigType, PubKey}) ->
 	get_last_tx(ar_wallet:to_address(PubKey, SigType));
 get_last_tx(MaybeRSAPub) when byte_size(MaybeRSAPub) == 512 ->
 	%% A legacy feature where we may search the public key instead of address.
-	get_last_tx(ar_wallet:to_rsa_address(MaybeRSAPub));
+	get_last_tx(ar_wallet:hash_pub_key(MaybeRSAPub));
 get_last_tx(Addr) ->
 	{ok, ar_wallets:get_last_tx(Addr)}.
 

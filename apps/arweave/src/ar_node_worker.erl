@@ -14,13 +14,14 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
--include_lib("arweave/include/ar_mining.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_pricing.hrl").
+-include("../include/ar_data_sync.hrl").
+-include("../include/ar_vdf.hrl").
+-include("../include/ar_mining.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(AR_TEST).
@@ -493,7 +494,7 @@ handle_info({tx_ready_for_mining, TX}, State) ->
 handle_info({event, block, {double_signing, Proof}}, State) ->
 	Map = maps:get(double_signing_proofs, State, #{}),
 	Key = element(1, Proof),
-	Addr = ar_wallet:to_address({?DEFAULT_KEY_TYPE, Key}),
+	Addr = ar_wallet:hash_pub_key(Key),
 	case is_map_key(Addr, Map) of
 		true ->
 			{noreply, State};
@@ -1010,21 +1011,43 @@ may_be_get_double_signing_proof(PrevB, State) ->
 	LockedRewards = ar_rewards:get_locked_rewards(PrevB),
 	Proofs = maps:get(double_signing_proofs, State, #{}),
 	RootHash = PrevB#block.wallet_list,
-	may_be_get_double_signing_proof2(maps:iterator(Proofs), RootHash, LockedRewards).
+	Height = PrevB#block.height + 1,
+	may_be_get_double_signing_proof2(maps:iterator(Proofs), RootHash, LockedRewards, Height).
 
-may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards) ->
+may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
 	case maps:next(Iterator) of
 		none ->
 			undefined;
 		{Addr, {_Timestamp, Proof2}, Iterator2} ->
-			case ar_rewards:has_locked_reward(Addr, LockedRewards) of
+			{Key, Sig1, _CDiff1, _PrevCDiff1, _Preimage1,
+					Sig2, _CDiff2, _PrevCDiff2, _Preimage2} = Proof2,
+			CheckKeyType =
+				case {byte_size(Key) == ?ECDSA_PUB_KEY_SIZE, Height >= ar_fork:height_2_9()} of
+					{true, false} ->
+						false;
+					{true, true} ->
+						byte_size(Sig1) == ?ECDSA_SIG_SIZE
+							andalso byte_size(Sig2) == ?ECDSA_SIG_SIZE;
+					_ ->
+						true
+				end,
+			HasLockedReward =
+				case CheckKeyType of
+					false ->
+						false;
+					true ->
+						ar_rewards:has_locked_reward(Addr, LockedRewards)
+				end,
+			case HasLockedReward of
 				false ->
-					may_be_get_double_signing_proof2(Iterator2, RootHash, LockedRewards);
+					may_be_get_double_signing_proof2(Iterator2,
+							RootHash, LockedRewards, Height);
 				true ->
 					Accounts = ar_wallets:get(RootHash, [Addr]),
 					case ar_node_utils:is_account_banned(Addr, Accounts) of
 						true ->
-							may_be_get_double_signing_proof2(Iterator2, RootHash, LockedRewards);
+							may_be_get_double_signing_proof2(Iterator2,
+									RootHash, LockedRewards, Height);
 						false ->
 							Proof2
 					end
@@ -1075,7 +1098,7 @@ pack_block_with_transactions(B, PrevB) ->
 			undefined ->
 				Addresses2;
 			Proof ->
-				[ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}) | Addresses2]
+				[ar_wallet:hash_pub_key(element(1, Proof)) | Addresses2]
 		end,
 	Accounts = ar_wallets:get(PrevB#block.wallet_list, Addresses3),
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
@@ -2124,6 +2147,7 @@ handle_found_solution(Args, PrevB, State) ->
 			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, (PrevB#block.hash)/binary,
 					SignedH/binary >>,
+			assert_key_type(RewardKey, Height),
 			Signature = ar_wallet:sign(element(1, RewardKey), SignaturePreimage),
 			H = ar_block:indep_hash2(SignedH, Signature),
 			B = UnsignedB2#block{ indep_hash = H, signature = Signature },
@@ -2152,6 +2176,26 @@ handle_found_solution(Args, PrevB, State) ->
 					{prev_next_seed, ar_util:encode(PrevNextSeed)},
 					{output, ar_util:encode(NonceLimiterOutput)}]),
 			{noreply, State}
+	end.
+
+assert_key_type(RewardKey, Height) ->
+	case Height >= ar_fork:height_2_9() of
+		false ->
+			case RewardKey of
+				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, _}} ->
+					ok;
+				_ ->
+					exit(invalid_reward_key)
+			end;
+		true ->
+			case RewardKey of
+				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, _}} ->
+					ok;
+				{{?ECDSA_KEY_TYPE, _, _}, {?ECDSA_KEY_TYPE, _}} ->
+					ok;
+				_ ->
+					exit(invalid_reward_key)
+			end
 	end.
 
 update_solution_cache(H, Args, State) ->

@@ -2,13 +2,15 @@
 -module(ar_tx).
 
 -export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, sign_v1/2, sign_v1/3, verify/2,
-		verify/3, verify_tx_id/2, tags_to_list/1, get_tx_fee/1, get_tx_fee2/1, check_last_tx/2,
+		verify/3, verify_tx_id/2, generate_signature_data_segment/1,
+		tags_to_list/1, get_tx_fee/1, get_tx_fee2/1, check_last_tx/2,
 		generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
 		chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
 		get_addresses/1, get_weave_size_increase/2, utility/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_pricing.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% Prioritize format=1 transactions with data size bigger than this
@@ -110,6 +112,17 @@ verify_tx_id(ExpectedID, #tx{ format = 1, id = ID } = TX) ->
 	ExpectedID == ID andalso verify_signature_v1(TX, verify_signature) andalso verify_hash(TX);
 verify_tx_id(ExpectedID, #tx{ format = 2, id = ID } = TX) ->
 	ExpectedID == ID andalso verify_signature_v2(TX, verify_signature) andalso verify_hash(TX).
+
+%% @doc Generate the data segment to be signed for a given TX.
+generate_signature_data_segment(#tx{ format = 2 } = TX) ->
+	case TX#tx.signature_type of
+		{?ECDSA_SIGN_ALG, secp256k1} ->
+			signature_data_segment_v2_no_public_key(TX);
+		{?RSA_SIGN_ALG, 65537} ->
+			signature_data_segment_v2(TX)
+	end;
+generate_signature_data_segment(#tx{ format = 1 } = TX) ->
+	signature_data_segment_v1(TX).
 
 tags_to_list(Tags) ->
 	[[Name, Value] || {Name, Value} <- Tags].
@@ -253,6 +266,26 @@ signature_data_segment_v2(TX) ->
 		end,
 	ar_deep_hash:hash(List2).
 
+signature_data_segment_v2_no_public_key(TX) ->
+	List = [
+		<< (integer_to_binary(TX#tx.format))/binary >>,
+		<< (TX#tx.target)/binary >>,
+		<< (list_to_binary(integer_to_list(TX#tx.quantity)))/binary >>,
+		<< (list_to_binary(integer_to_list(TX#tx.reward)))/binary >>,
+		<< (TX#tx.last_tx)/binary >>,
+		tags_to_list(TX#tx.tags),
+		<< (integer_to_binary(TX#tx.data_size))/binary >>,
+		<< (TX#tx.data_root)/binary >>
+	],
+	List2 =
+		case TX#tx.denomination > 0 of
+			true ->
+				[<< (integer_to_binary(TX#tx.denomination))/binary >> | List];
+			false ->
+				List
+		end,
+	ar_deep_hash:hash(List2).
+
 %% @doc Generate the data segment to be signed for a given v1 TX.
 signature_data_segment_v1(TX) ->
 	case TX#tx.denomination > 0 of
@@ -284,8 +317,33 @@ sign(TX, PrivKey, {KeyType, Owner}, SignatureDataSegment) ->
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx{ id = ID, signature = Sig }.
 
+verify_signature_type(#tx{ format = 1 } = TX, _Height) ->
+	case TX#tx.signature_type of
+		{?RSA_SIGN_ALG, 65537} ->
+			true;
+		_ ->
+			false
+	end;
+verify_signature_type(#tx{ format = 2 } = TX, Height) ->
+	case TX#tx.signature_type of
+		{?RSA_SIGN_ALG, 65537} ->
+			true;
+		{?ECDSA_SIGN_ALG, secp256k1} ->
+			Height >= ar_fork:height_2_9();
+		_ ->
+			false
+	end.
+
 do_verify(#tx{ format = 1 } = TX, Args, VerifySignature) ->
-	do_verify_v1(TX, Args, VerifySignature);
+	{_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
+			_RedenominationHeight, Height, _Accounts, _Timestamp} = Args,
+	case verify_signature_type(TX, Height) of
+		true ->
+			do_verify_v1(TX, Args, VerifySignature);
+		false ->
+			collect_validation_results(TX#tx.id,
+					[{"tx_signature_type_not_supported", false}])
+	end;
 do_verify(#tx{ format = 2 } = TX, Args, VerifySignature) ->
 	{_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
 			_RedenominationHeight, Height, _Accounts, _Timestamp} = Args,
@@ -293,7 +351,13 @@ do_verify(#tx{ format = 2 } = TX, Args, VerifySignature) ->
 		true ->
 			collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]);
 		false ->
-			do_verify_v2(TX, Args, VerifySignature)
+			case verify_signature_type(TX, Height) of
+				true ->
+					do_verify_v2(TX, Args, VerifySignature);
+				false ->
+					collect_validation_results(TX#tx.id,
+							[{"tx_signature_type_not_supported", false}])
+			end
 	end;
 do_verify(TX, _Args, _VerifySignature) ->
 	collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]).
@@ -414,13 +478,13 @@ verify_hash(#tx{ signature = Sig, id = ID }) ->
 verify_signature_v1(_TX, do_not_verify_signature) ->
 	true;
 verify_signature_v1(TX, verify_signature) ->
-	SignatureDataSegment = signature_data_segment_v1(TX),
+	SignatureDataSegment = generate_signature_data_segment(TX),
 	ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v1(_TX, do_not_verify_signature, _Height) ->
 	true;
 verify_signature_v1(TX, verify_signature, Height) ->
-	SignatureDataSegment = signature_data_segment_v1(TX),
+	SignatureDataSegment = generate_signature_data_segment(TX),
 	case Height >= ar_fork:height_2_4() of
 		true ->
 			ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment,
@@ -484,14 +548,20 @@ ends_with_digit(Data) ->
 verify_signature_v2(_TX, do_not_verify_signature) ->
 	true;
 verify_signature_v2(TX = #tx{ signature_type = SigType }, verify_signature) ->
-	SignatureDataSegment = signature_data_segment_v2(TX),
+	SignatureDataSegment = generate_signature_data_segment(TX),
 	ar_wallet:verify({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v2(_TX, do_not_verify_signature, _Height) ->
 	true;
 verify_signature_v2(TX, verify_signature, Height) ->
-	SignatureDataSegment = signature_data_segment_v2(TX),
-	Wallet = {{?RSA_SIGN_ALG, 65537}, TX#tx.owner},
+	SignatureDataSegment = generate_signature_data_segment(TX),
+	Wallet =
+		case TX#tx.signature_type of
+			?RSA_KEY_TYPE ->
+				{{?RSA_SIGN_ALG, 65537}, TX#tx.owner};
+			?ECDSA_KEY_TYPE ->
+				{?ECDSA_KEY_TYPE, TX#tx.owner}
+		end,
 	case Height >= ar_fork:height_2_4() of
 		true ->
 			ar_wallet:verify(Wallet, SignatureDataSegment, TX#tx.signature);

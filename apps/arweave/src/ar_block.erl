@@ -23,10 +23,11 @@
 		get_sub_chunk_index/2,
 		get_chunk_padded_offset/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_block.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_block.hrl").
+-include("../include/ar_vdf.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -403,7 +404,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
 			RewardHistoryHash:32/binary, (encode_int(DebtSupply, 8))/binary,
 			KryderPlusRateMultiplier:24, KryderPlusRateMultiplierLatch:8, Denomination:24,
 			(encode_int(RedenominationHeight, 8))/binary,
-			(ar_serialize:encode_double_signing_proof(DoubleSigningProof))/binary,
+			(ar_serialize:encode_double_signing_proof(DoubleSigningProof, Height))/binary,
 			(encode_int(PrevCDiff, 16))/binary, RebaseThresholdBin/binary,
 			DataPathBin/binary, TXPathBin/binary, DataPath2Bin/binary, TXPath2Bin/binary,
 			ChunkHashBin/binary, Chunk2HashBin/binary, BlockTimeHistoryHashBin/binary,
@@ -428,15 +429,31 @@ indep_hash(BDS, B) ->
 
 %% @doc Verify the block signature.
 verify_signature(BlockPreimage, PrevCDiff,
-		#block{ signature = Signature, reward_key = {?DEFAULT_KEY_TYPE, Pub} = RewardKey,
+		#block{ signature = Signature, reward_key = {?RSA_KEY_TYPE, Pub} = RewardKey,
 				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
 				cumulative_diff = CDiff })
-		when byte_size(Signature) == 512, byte_size(Pub) == 512 ->
+		when byte_size(Signature) == ?RSA_BLOCK_SIG_SIZE,
+				byte_size(Pub) == ?RSA_BLOCK_SIG_SIZE ->
 	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
 			BlockPreimage/binary >>,
 	ar_wallet:to_address(RewardKey) == RewardAddr andalso
 			ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
+verify_signature(BlockPreimage, PrevCDiff,
+		#block{ signature = Signature, reward_key = {?ECDSA_KEY_TYPE, Pub} = RewardKey,
+				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
+				cumulative_diff = CDiff, height = Height })
+		when byte_size(Signature) == ?ECDSA_SIG_SIZE, byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE ->
+	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
+			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
+			BlockPreimage/binary >>,
+	case Height >= ar_fork:height_2_9() of
+		true ->
+			ar_wallet:to_address(RewardKey) == RewardAddr andalso
+					ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
+		false ->
+			false
+	end;
 verify_signature(_BlockPreimage, _PrevCDiff, _B) ->
 	false.
 
