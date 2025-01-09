@@ -118,7 +118,7 @@ handle_cast({task_completed, {read_range, {Worker, _, Args}}}, State) ->
 		_ ->
 			Caller ! {ar_data_sync_worker_master_read_range_task_complete, TaskRef}
 	end,
-	State2 = update_scheduled_task_count(Worker, read_range, "localhost", -1, State),
+	State2 = update_scheduled_task_count(Worker, read_range, format_peer(read_range, Args), -1, State),
 	{noreply, State2};
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
@@ -475,7 +475,7 @@ cycle_workers(AverageLoad, #state{ workers = Workers, worker_loads = WorkerLoads
 
 format_peer(Task, Args) ->
 	case Task of
-		read_range -> "localhost";
+		read_range -> element(3, Args);
 		sync_range ->
 			ar_util:format_peer(element(3, Args))
 	end.

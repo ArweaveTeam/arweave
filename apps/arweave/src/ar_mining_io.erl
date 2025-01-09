@@ -94,7 +94,8 @@ garbage_collect() ->
 %%%===================================================================
 
 init(Mode) ->
-	{ok, start_io_threads(#state{ mode = Mode })}.
+	gen_server:cast(self(), initialize_state),
+	{ok, #state{ mode = Mode }}.
 
 handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) ->
 	#state{ partition_upper_bound = CurrentUpperBound } = State,
@@ -124,6 +125,16 @@ handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast(initialize_state, State) ->
+	State2 = case ar_device_lock:is_ready() of
+		false ->
+			ar_util:cast_after(1000, self(), initialize_state),
+			State;
+		true ->
+			start_io_threads(State)
+	end,
+	{noreply, State2};
 
 handle_cast(garbage_collect, State) ->
 	erlang:garbage_collect(self(),
@@ -175,51 +186,35 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-get_system_device(StorageModule) ->
-	{ok, Config} = application:get_env(arweave, config),
-	StoreID = ar_storage_module:id(StorageModule),
-	Path = ar_chunk_storage:get_chunk_storage_path(Config#config.data_dir, StoreID),
-	Command = "df -P " ++ Path ++ " | awk 'NR==2 {print $1}'",
-	Device = os:cmd(Command),
-	TrimmedDevice = string:trim(Device),
-	case TrimmedDevice of
-		"" -> StoreID;  % If the command fails or returns an empty string, return StoreID
-		_ -> TrimmedDevice
-	end.
-
 start_io_threads(State) ->
 	#state{ mode = Mode } = State,
 
     % Step 1: Group StoreIDs by their system device
-    DeviceToStoreIDs = map_device_to_store_ids(),
+    DeviceToStoreIDs = ar_device_lock:get_device_to_store_ids_map(),
 
     % Step 2: Start IO threads for each device and populate map indices
-	maps:fold(
+	State2 = maps:fold(
 		fun(Device, StoreIDs, StateAcc) ->
 			#state{ io_threads = Threads, io_thread_monitor_refs = Refs,
-				store_id_to_device = StoreIDToDevice,
 				partition_to_store_ids = PartitionToStoreIDs } = StateAcc,
+
+			StoreIDs2 = sets:to_list(StoreIDs),
 			
-			Thread = start_io_thread(Mode, StoreIDs),
+			Thread = start_io_thread(Mode, StoreIDs2),
 			ThreadRef = monitor(process, Thread),
 
-			StoreIDToDevice2 = lists:foldl(
-				fun(StoreID, Acc) -> 
-					maps:put(StoreID, Device, Acc) 
-				end,
-				StoreIDToDevice, StoreIDs),
-
-			PartitionToStoreIDs2 = map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs),
+			PartitionToStoreIDs2 = map_partition_to_store_ids(StoreIDs2, PartitionToStoreIDs),
 			StateAcc#state{
 				io_threads = maps:put(Device, Thread, Threads),
 				io_thread_monitor_refs = maps:put(ThreadRef, Device, Refs),
-				store_id_to_device = StoreIDToDevice2,
 				partition_to_store_ids = PartitionToStoreIDs2
 			}
 		end,
 		State,
 		DeviceToStoreIDs
-	).
+	),
+
+	State2#state{ store_id_to_device = ar_device_lock:get_store_id_to_device_map() }.
 
 start_io_thread(Mode, StoreIDs) ->
 	Now = os:system_time(millisecond),
@@ -244,30 +239,6 @@ map_partition_to_store_ids([StoreID | StoreIDs], PartitionToStoreIDs) ->
 		end,
 		PartitionToStoreIDs, Partitions),
 	map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs2).
-
-map_device_to_store_ids() ->
-	{ok, Config} = application:get_env(arweave, config),
-	lists:foldl(
-        fun(Module, Acc) ->
-			StoreID = ar_storage_module:id(Module),
-            Device = get_system_device(Module),
-            maps:update_with(Device, fun(StoreIDs) -> [StoreID | StoreIDs] end, [StoreID], Acc)
-        end,
-        #{},
-        Config#config.storage_modules
-    ).
-
-get_store_ids_for_device(Device, #state{store_id_to_device = StoreIDToDevice}) ->
-	maps:fold(
-		fun(StoreID, MappedDevice, Acc) ->
-			case MappedDevice == Device of
-				true -> [StoreID | Acc];
-				false -> Acc
-			end
-		end,
-		[],
-		StoreIDToDevice
-	).
 
 get_store_id_partitions({Start, End}, Partitions) when Start >= End ->
 	Partitions;
@@ -294,8 +265,8 @@ handle_io_thread_down(Ref, Reason,
 	Refs2 = maps:remove(Ref, Refs),
 	Threads2 = maps:remove(Device, Threads),
 
-	StoreIDs = get_store_ids_for_device(Device, State),
-	Thread = start_io_thread(Mode, StoreIDs),
+	StoreIDs = ar_device_lock:get_store_ids_for_device(Device),
+	Thread = start_io_thread(Mode, sets:to_list(StoreIDs)),
 	ThreadRef = monitor(process, Thread),
 	State#state{ io_threads = maps:put(Device, Thread, Threads2),	
 		io_thread_monitor_refs = maps:put(ThreadRef, Device, Refs2) }.
