@@ -77,7 +77,6 @@ init([]) ->
 		?CHILD(ar_watchdog, worker),
 		?CHILD(ar_tx_blacklist, worker),
 		?CHILD_SUP(ar_bridge_sup, supervisor),
-		?CHILD(ar_shared_entropy_cache, worker),
 		?CHILD(ar_packing_server, worker),
 		?CHILD_SUP(ar_sync_record_sup, supervisor),
 		?CHILD(ar_data_discovery, worker),

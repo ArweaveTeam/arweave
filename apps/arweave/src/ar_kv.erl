@@ -433,7 +433,6 @@ new_dbrec(CfNames, CfDescriptors, DataDirRelativePath, UserOptions) ->
 open(#db{db_handle = undefined, cf_descriptors = undefined, filepath = Filepath, db_options = DbOptions} = DbRec0) ->
 	case rocksdb:open(Filepath, DbOptions) of
 		{ok, Db} ->
-			?LOG_DEBUG([{event, db_operation}, {op, open}, {name, io_lib:format("~p", [DbRec0#db.name])}]),
 			DbRec1 = DbRec0#db{db_handle = Db},
 			true = ets:insert(?MODULE, DbRec1),
 			ok;
@@ -452,7 +451,6 @@ open(#db{
 		{ok, Db, Cfs} ->
 			FirstDbRec = lists:foldr(
 				fun({Cf, CfName}, _) ->
-					?LOG_DEBUG([{event, db_operation}, {op, open}, {name, io_lib:format("~p", [CfName])}]),
 					DbRec1 = DbRec0#db{name = CfName, db_handle = Db, cf_handle = Cf},
 					true = ets:insert(?MODULE, DbRec1),
 					DbRec1
@@ -489,8 +487,7 @@ close(#db{db_handle = Db, name = Name}) ->
 	try
 		case rocksdb:close(Db) of
 			ok ->
-				true = ets:match_delete(?MODULE, #db{db_handle = Db, _ = '_'}),
-				?LOG_DEBUG([{event, db_operation}, {op, close}, {name, io_lib:format("~p", [Name])}]);
+				true = ets:match_delete(?MODULE, #db{db_handle = Db, _ = '_'});
 			{error, CloseError} ->
 				?LOG_ERROR([
 					{event, db_operation_failed}, {op, close}, {name, io_lib:format("~p", [Name])},
@@ -521,7 +518,6 @@ db_flush(#db{name = Name, db_handle = Db}) ->
 				{reason, io_lib:format("~p", [FlushError])}]),
 			{error, failed};
 		_ ->
-			?LOG_DEBUG([{event, db_operation}, {op, db_flush}, {name, io_lib:format("~p", [Name])}]),
 			ok
 	end.
 
@@ -541,7 +537,6 @@ wal_sync(#db{name = Name, db_handle = Db}) ->
 				{reason, io_lib:format("~p", [SyncError])}]),
 			{error, failed};
 		_ ->
-			?LOG_DEBUG([{event, db_operation}, {op, wal_sync}, {name, io_lib:format("~p", [Name])}]),
 			ok
 	end.
 
