@@ -26,8 +26,7 @@ init([]) ->
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
-			Label = ar_storage_module:label(StorageModule),
-			Name = list_to_atom("ar_chunk_storage_" ++ Label),
+			Name = ar_chunk_storage:name(StoreID),
 			?CHILD_WITH_ARGS(ar_chunk_storage, worker, Name, [Name, {StoreID, none}])
 		end,
 		Config#config.storage_modules
@@ -40,8 +39,7 @@ init([]) ->
             %% Note: the config validation will prevent a StoreID from being used in both
             %% `storage_modules` and `repack_in_place_storage_modules`, so there's
             %% no risk of a `Name` clash with the workers spawned above.
-			Label = ar_storage_module:label(StorageModule),
-			Name = list_to_atom("ar_chunk_storage_" ++ Label),
+			Name = ar_chunk_storage:name(StoreID),
 			?CHILD_WITH_ARGS(ar_chunk_storage, worker, Name, [Name, {StoreID, Packing}])
 		end,
 		Config#config.repack_in_place_storage_modules

@@ -7,8 +7,8 @@
 		pack/4, unpack/5, repack/6, unpack_sub_chunk/5,
 		is_buffer_full/0, record_buffer_size_metric/0,
 		pad_chunk/1, unpad_chunk/3, unpad_chunk/4,
-		encipher_replica_2_9_chunk/2, get_replica_2_9_entropy/3,
-		pack_replica_2_9_chunk/3]).
+		encipher_replica_2_9_chunk/2, generate_replica_2_9_entropy/3,
+		pack_replica_2_9_chunk/3, request_entropy_generation/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -20,9 +20,6 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
-
-%% The packing latency as it is chosen for the protocol.
--define(PACKING_LATENCY_MS, 60).
 
 -record(state, {
 	workers,
@@ -53,6 +50,9 @@ request_repack(Ref, Args) ->
 
 request_repack(Ref, ReplyTo, Args) ->
 	gen_server:cast(?MODULE, {repack_request, ReplyTo, Ref, Args}).
+
+request_entropy_generation(Ref, ReplyTo, Args) ->
+	gen_server:cast(?MODULE, {generate_entropy, ReplyTo, Ref, Args}).
 
 %% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
@@ -220,42 +220,25 @@ get_randomx_state_for_h0(PackingDifficulty, PackingState) ->
 encipher_replica_2_9_chunk(Chunk, Entropy) ->
 	iolist_to_binary(encipher_replica_2_9_sub_chunks(Chunk, Entropy)).
 
-%% @doc Generate or take from the cache the 2.9 entropy. If new entropy is generated,
-%% cache it.
--spec get_replica_2_9_entropy(
+%% @doc Generate the 2.9 entropy.
+-spec generate_replica_2_9_entropy(
 		RewardAddr :: binary(),
 		AbsoluteEndOffset :: non_neg_integer(),
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
-get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
-	Partition = ar_node:get_partition_number(AbsoluteEndOffset),
-
+generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
 	PackingState = get_packing_state(),
 	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
 	
-	case ar_shared_entropy_cache:get(Key) of
-		not_found ->
-			prometheus_counter:inc(replica_2_9_entropy_cache_query, [miss, Partition]),
-
-			{ok, Config} = application:get_env(arweave, config),
-			MaxCacheSize = Config#config.replica_2_9_entropy_cache_size,
-			ar_shared_entropy_cache:allocate_space(?REPLICA_2_9_ENTROPY_SIZE, MaxCacheSize),
-			Entropy = prometheus_histogram:observe_duration(
-				replica_2_9_entropy_duration_milliseconds, [], 
-					fun() ->
-						ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
-					end),
-			%% Primarily needed for testing where the entropy generated exceeds the entropy
-			%% needed for tests.
-			Entropy2 = binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE),
-			ar_shared_entropy_cache:put(Key, Entropy2, ?REPLICA_2_9_ENTROPY_SIZE),
-			Entropy2;
-		{ok, Entropy} ->
-			prometheus_counter:inc(replica_2_9_entropy_cache_query, [hit, Partition]),
-
-			Entropy
-	end.
+	Entropy = prometheus_histogram:observe_duration(
+		replica_2_9_entropy_duration_milliseconds, ["1"], 
+			fun() ->
+				ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
+			end),
+	%% Primarily needed for testing where the entropy generated exceeds the entropy
+	%% needed for tests.
+	binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE).
 
 %% @doc Pad (to ?DATA_CHUNK_SIZE) and pack the chunk according to the 2.9 replication format.
 %% Return the chunk and the combined entropy used on that chunk.
@@ -291,39 +274,11 @@ init([]) ->
 	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
 	?LOG_INFO([{event, hash_benchmark}, {h0_ms, H0String}, {h1_ms, H1String}]),
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
-	{ActualRatePack2_6, ActualRatePackComposite} = get_packing_latency(PackingState),
-	PackingLatency = ActualRatePackComposite,
-	MaxRate = Schedulers * 1000 / PackingLatency,
-	TheoreticalMaxRate = Schedulers * 1000 / (?PACKING_LATENCY_MS),
-	{PackingRate, SchedulersRequired} =
-		case Config#config.packing_rate of
-			undefined ->
-				ChosenRate = max(1, ceil(2 * MaxRate / 3)),
-				ChosenRate2 = ar_util:ceil_int(ChosenRate, 10),
-				log_packing_rate(ChosenRate2, MaxRate),
-				SchedulersRequired2 = ceil(ChosenRate2 / (1000 / (?PACKING_LATENCY_MS))),
-				{ChosenRate2, SchedulersRequired2};
-			ConfiguredRate ->
-				SchedulersRequired2 = ceil(ConfiguredRate / (1000 / PackingLatency)),
-				case SchedulersRequired2 > Schedulers of
-					true ->
-						log_insufficient_core_count(Schedulers, ConfiguredRate, MaxRate);
-					false ->
-						log_packing_rate(ConfiguredRate, MaxRate)
-				end,
-				{ConfiguredRate, SchedulersRequired2}
-		end,
-	
-	record_packing_benchmarks(TheoreticalMaxRate, PackingRate, Schedulers,
-		ActualRatePack2_6, ActualRatePackComposite),
-	SpawnSchedulers = min(SchedulersRequired, Schedulers),
+	SpawnSchedulers = Schedulers,
 	ar:console("~nStarting ~B packing threads.~n", [SpawnSchedulers]),
-	%% Since the total rate of spawned processes might exceed the desired rate,
-	%% artificially throttle processes uniformly.
-	ThrottleDelay = calculate_throttle_delay(SpawnSchedulers, PackingRate),
+	?LOG_INFO([{event, starting_packing_threads}, {num_threads, SpawnSchedulers}]),
 	Workers = queue:from_list(
-		[spawn_link(fun() -> worker(ThrottleDelay, PackingState) end)
-			|| _ <- lists:seq(1, SpawnSchedulers)]),
+		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, SpawnSchedulers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
 	{ok, Config} = application:get_env(arweave, config),
 	MaxSize =
@@ -384,6 +339,11 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 			},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }}
 	end;
+handle_cast({generate_entropy, From, Ref, Args}, State) ->
+	#state{ workers = Workers } = State,
+	{{value, Worker}, Workers2} = queue:out(Workers),
+	Worker ! {generate_entropy, Ref, From, Args},
+	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -418,47 +378,15 @@ get_randomx_state_by_packing({spora_2_6, _}, {RandomXState, _, _}) ->
 get_randomx_state_by_packing(spora_2_5, {RandomXState, _, _}) ->
 	RandomXState.
 
-log_insufficient_core_count(Schedulers, PackingRate, Max) ->
-	ar:console("~nThe number of cores on your machine (~B) is not sufficient for "
-		"packing ~B chunks per second. Estimated maximum rate: ~.2f chunks/s.~n",
-		[Schedulers, PackingRate, Max]),
-	?LOG_WARNING([{event, insufficient_core_count_to_sustain_desired_packing_rate},
-			{cores, Schedulers}, {packing_rate, PackingRate}]).
-
-log_packing_rate(PackingRate, Max) ->
-	ar:console("~nThe node is configured to pack around ~B chunks per second. "
-			"To increase the packing rate, start with `packing_rate [number]`. "
-			"Estimated maximum rate: ~.2f chunks/s.~n",
-			[PackingRate, Max]).
-
-calculate_throttle_delay(0, _PackingRate) ->
-	0;
-calculate_throttle_delay(_SpawnSchedulers, 0) ->
-	0;
-calculate_throttle_delay(SpawnSchedulers, PackingRate) ->
-	Load = PackingRate / (SpawnSchedulers * (1000 / (?PACKING_LATENCY_MS))),
-	case Load >= 1 of
-		true ->
-			0;
-		false ->
-			trunc((1 - Load) * (?PACKING_LATENCY_MS))
-	end.
-
-worker(ThrottleDelay, PackingState) ->
+worker(PackingState) ->
 	receive
 		{unpack, Ref, From, Args} ->
 			{Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 			case unpack(Packing, AbsoluteOffset, TXRoot, Chunk, ChunkSize,
 					PackingState, internal) of
-				{ok, U, AlreadyUnpacked} ->
+				{ok, U, _AlreadyUnpacked} ->
 					From ! {chunk, {unpacked, Ref, {Packing, U, AbsoluteOffset, TXRoot,
-							ChunkSize}}},
-					case AlreadyUnpacked of
-						already_unpacked ->
-							ok;
-						_ ->
-							timer:sleep(ThrottleDelay)
-					end;
+							ChunkSize}}};
 				{error, invalid_packed_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}]);
 				{error, invalid_chunk_size} ->
@@ -472,19 +400,13 @@ worker(ThrottleDelay, PackingState) ->
 							{error, io_lib:format("~p", [Error])}])
 			end,
 			decrement_buffer_size(),
-			worker(ThrottleDelay, PackingState);
+			worker(PackingState);
 		{pack, Ref, From, Args} ->
 			{Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 			case pack(Packing, AbsoluteOffset, TXRoot, Chunk, PackingState, internal) of
-				{ok, Packed, AlreadyPacked} ->
+				{ok, Packed, _AlreadyPacked} ->
 					From ! {chunk, {packed, Ref, {Packing, Packed, AbsoluteOffset, TXRoot,
-							ChunkSize}}},
-					case AlreadyPacked of
-						already_packed ->
-							ok;
-						_ ->
-							timer:sleep(ThrottleDelay)
-					end;
+							ChunkSize}}};
 				{error, invalid_unpacked_size} ->
 					?LOG_WARNING([{event, got_unpacked_chunk_of_invalid_size}]);
 				{exception, Error} ->
@@ -493,23 +415,14 @@ worker(ThrottleDelay, PackingState) ->
 							{error, io_lib:format("~p", [Error])}])
 			end,
 			decrement_buffer_size(),
-			worker(ThrottleDelay, PackingState);
+			worker(PackingState);
 		{repack, Ref, From, Args} ->
 			{RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
 			case repack(RequestedPacking, Packing,
 					AbsoluteOffset, TXRoot, Chunk, ChunkSize, PackingState, internal) of
 				{ok, Packed, _RepackInput} ->
 					From ! {chunk, {packed, Ref,
-							{RequestedPacking, Packed, AbsoluteOffset, TXRoot, ChunkSize}}},
-					case RequestedPacking == Packing of
-						true ->
-							%% When RequestdPacking and Packing are the same
-							%% the repack does no work and just returns
-							%% the original chunk. In this case we don't need a throttle.
-							ok;
-						_ ->
-							timer:sleep(ThrottleDelay)
-					end;
+							{RequestedPacking, Packed, AbsoluteOffset, TXRoot, ChunkSize}}};
 				{error, invalid_packed_size} ->
 					?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}]);
 				{error, invalid_chunk_size} ->
@@ -525,7 +438,11 @@ worker(ThrottleDelay, PackingState) ->
 							{error, io_lib:format("~p", [Error])}])
 			end,
 			decrement_buffer_size(),
-			worker(ThrottleDelay, PackingState)
+			worker(PackingState);
+		{generate_entropy, Ref, From, {RewardAddr, PaddedEndOffset, SubChunkStart}} ->
+			Entropy = ar_packing_server:generate_replica_2_9_entropy(RewardAddr, PaddedEndOffset, SubChunkStart),
+			From ! {entropy_generated, Ref, Entropy},
+			worker(PackingState)
 	end.
 
 chunk_key(spora_2_5, ChunkOffset, TXRoot) ->
@@ -616,7 +533,7 @@ pack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _RandomXState,
 pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 		SubChunkStartOffset, [SubChunk | SubChunks], PackedSubChunks, EntropyParts) ->
 	EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
-	Entropy = get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
+	Entropy = generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
 	case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 			[pack_sub_chunk, replica_2_9, internal], fun() ->
 					ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk({RandomXState,
@@ -866,49 +783,6 @@ record_buffer_size_metric() ->
 			ok
 	end.
 
-get_packing_latency(PackingState) ->
-	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	Key = crypto:hash(sha256, crypto:strong_rand_bytes(256)),
-	Addr = crypto:strong_rand_bytes(32),
-	Spora2_6Packing = {spora_2_6, Addr},
-	CompositePacking = {composite, Addr, 1},
-	Spora2_6RandomXState = get_randomx_state_by_packing(Spora2_6Packing, PackingState),
-	CompositeRandomXState = get_randomx_state_by_packing(CompositePacking, PackingState),
-	%% Run each randomx routine Repetitions times and return the minimum runtime. We use
-	%% minimum rather than average since it more closely approximates the fastest that this
-	%% machine can do the calculation.
-	Repetitions = 5,
-	{minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk,
-			[Spora2_6Packing, Spora2_6RandomXState, Key, Chunk], Repetitions),
-		minimum_run_time(ar_mine_randomx, randomx_encrypt_chunk,
-			[CompositePacking, CompositeRandomXState, Key, Chunk], Repetitions)}.
-
-record_packing_benchmarks(TheoreticalMaxRate, ChosenRate, Schedulers,
-		ActualRatePack2_6, ActualRatePackComposite) ->
-	prometheus_gauge:set(packing_latency_benchmark,
-		[protocol, pack, spora_2_6], ?PACKING_LATENCY_MS),
-	prometheus_gauge:set(packing_latency_benchmark,
-		[protocol, unpack, spora_2_6], ?PACKING_LATENCY_MS),
-	prometheus_gauge:set(packing_rate_benchmark,
-		[protocol], TheoreticalMaxRate),
-	prometheus_gauge:set(packing_rate_benchmark,
-		[configured], ChosenRate),
-	prometheus_gauge:set(packing_schedulers,
-		Schedulers),
-	prometheus_gauge:set(packing_latency_benchmark,
-		[init, pack, spora_2_6], ActualRatePack2_6),
-	prometheus_gauge:set(packing_latency_benchmark,
-		[init, pack, composite], ActualRatePackComposite).
-
-minimum_run_time(Module, Function, Args, Repetitions) ->
-	minimum_run_time(Module, Function, Args, Repetitions, infinity).
-minimum_run_time(_Module, _Function, _Args, 0, MinTime) ->
-	%% round microseconds to the nearest millisecond
-	max(1, (MinTime + 500) div 1000);
-minimum_run_time(Module, Function, Args, Repetitions, MinTime) ->
-	{RunTime, _} = timer:tc(Module, Function, Args),
-	minimum_run_time(Module, Function, Args, Repetitions-1, erlang:min(MinTime, RunTime)).
-
 %% @doc Walk up the stack trace to the parent of the current function. E.g.
 %% example() ->
 %%     get_caller().
@@ -1029,18 +903,3 @@ pack_test() ->
 		Cases
 	)),
 	?assertEqual(length(PackedList), sets:size(sets:from_list(PackedList))).
-
-calculate_throttle_delay_test() ->
-	%% 1000 / ?PACKING_LATENCY_MS = 16.666666
-	?assertEqual(0, calculate_throttle_delay(1, 17),
-		"PackingRate > SpawnSchedulers capacity -> no throttle"),
-	?assertEqual(0, calculate_throttle_delay(8, 1000),
-		"PackingRate > SpawnSchedulers capacity -> no throttle"),
-	?assertEqual(2, calculate_throttle_delay(1, 16),
-		"PackingRate < SpawnSchedulers capacity -> throttle"),
-	?assertEqual(15, calculate_throttle_delay(8, 100),
-		"PackingRate < SpawnSchedulers capacity -> throttle"),
-	?assertEqual(0, calculate_throttle_delay(0, 100),
-		"0 schedulers -> no throttle"),
-	?assertEqual(0, calculate_throttle_delay(8, 0),
-		"no packing -> no throttle").

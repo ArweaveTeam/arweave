@@ -6,8 +6,6 @@
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/2,
 		has_any/1, has_range/2, get_cover/3]).
 
--export([get_unique_sorted_intervals/1]).
-
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
 -include("../include/ar_config.hrl").
@@ -30,7 +28,6 @@
 
 -type storage_module() :: {integer(), integer(), {atom(), binary()}}
 						| {integer(), integer(), {atom(), binary(), integer()}}.
-
 
 %%%===================================================================
 %%% Public interface.
