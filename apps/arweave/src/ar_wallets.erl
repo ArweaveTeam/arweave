@@ -319,7 +319,7 @@ apply_block2(B, PrevB, DAG) ->
 			undefined ->
 				Addresses2;
 			Proof ->
-				[ar_wallet:to_address({?DEFAULT_KEY_TYPE, element(1, Proof)}) | Addresses2]
+				[ar_wallet:hash_pub_key(element(1, Proof)) | Addresses2]
 		end,
 	Accounts = get_map(Tree, Addresses3),
 	case ar_node_utils:update_accounts(B, PrevB, Accounts) of
