@@ -120,8 +120,8 @@ $(VDF_OUTPUT): $(VDF_OBJECTS)
 
 SECP256K1_SOURCES = $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/secp256k1/*.c)
 SECP256K1_OBJECTS = $(addsuffix .o, $(basename $(SECP256K1_SOURCES)))
-SECP256K1_CFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I /usr/local/include -I $(CURDIR)/../lib/secp256k1/src -I $(CURDIR)/../lib/secp256k1/include -I $(C_SRC_DIR)
-SECP256K1_LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lssl -lcrypto
+SECP256K1_CFLAGS = -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I /usr/local/include -I $(CURDIR)/../lib/secp256k1/src -I $(CURDIR)/../lib/secp256k1/include -I $(C_SRC_DIR)
+SECP256K1_LDLIBS = -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lcrypto
 SECP256K1_OUTPUT ?= $(CURDIR)/../priv/secp256k1_arweave.so
 
 $(SECP256K1_OUTPUT): $(SECP256K1_OBJECTS)
