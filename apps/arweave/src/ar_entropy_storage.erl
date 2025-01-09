@@ -1,13 +1,20 @@
 -module(ar_entropy_storage).
 
--export([acquire_semaphore/1, release_semaphore/1, is_recorded/2, is_sub_chunk_recorded/3,
-	delete_record/2, generate_entropies/3, generate_missing_entropy/2, generate_entropy_keys/3,
-	shift_entropy_offset/2, store_entropy/8, record_chunk/6]).
+-export([is_entropy_packing/1, acquire_semaphore/1, release_semaphore/1, is_recorded/2,
+	is_sub_chunk_recorded/3, delete_record/2, generate_entropies/3, generate_missing_entropy/2,
+	generate_entropy_keys/3, shift_entropy_offset/2, store_entropy/8, record_chunk/6]).
 
 -include("../include/ar.hrl").
--include("../include/ar_chunk_storage.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
+
+-spec is_entropy_packing(ar_chunk_storage:packing()) -> boolean().
+is_entropy_packing(unpacked_padded) ->
+	true;
+is_entropy_packing({replica_2_9, _}) ->
+	true;
+is_entropy_packing(_) ->
+	false.
 
 %% @doc Return true if the given sub-chunk bucket contains the 2.9 entropy.
 is_sub_chunk_recorded(PaddedEndOffset, SubChunkBucketStartOffset, StoreID) ->
@@ -234,6 +241,16 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 		end,
 	case ReadEntropy of
 		{error, _} = Error2 ->
+			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+				{context, error_recording_chunk_to_entropy_storage},
+				{error, io_lib:format("~p", [Error2])},
+				{padded_offset, PaddedEndOffset},
+				{start_offset, StartOffset},
+				{check_is_stored_already, CheckIsStoredAlready},
+				{check_is_entropy_recorded, CheckIsEntropyRecorded},
+				{store_id, StoreID},
+				{filepath, Filepath}
+			]),
 			release_semaphore(Filepath),
 			Error2;
 		not_found ->
@@ -243,18 +260,21 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			Packing = {replica_2_9, RewardAddr},
 			Entropy = generate_missing_entropy(PaddedEndOffset, RewardAddr),
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-			Result = ar_chunk_storage:record_chunk(PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex),
+			Result = ar_chunk_storage:record_chunk(
+				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex),
 			release_semaphore(Filepath),
 			Result;
 		no_entropy_yet ->
-			Result = ar_chunk_storage:record_chunk(PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex),
+			Result = ar_chunk_storage:record_chunk(
+				PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex),
 			release_semaphore(Filepath),
 			Result;
 		{_EndOffset, Entropy} ->
 			Packing = {replica_2_9, RewardAddr},
 			release_semaphore(Filepath),
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-			ar_chunk_storage:record_chunk(PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
+			ar_chunk_storage:record_chunk(
+				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
 	end.
 
 record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
@@ -277,7 +297,26 @@ record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
 		true ->
 			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 			case ar_chunk_storage:get(StartOffset, StartOffset, StoreID) of
+				not_found ->
+					?LOG_DEBUG([{event, details_failed_to_store_chunk},
+						{context, unpacked_padded_chunk_not_found},
+						{padded_offset, PaddedEndOffset},
+						{start_offset, StartOffset},
+						{store_id, StoreID},
+						{filepath, Filepath},
+						{is_unpacked_chunk_recorded, IsUnpackedChunkRecorded}
+					]),
+					{error, not_found};
 				{error, _} = Error ->
+					?LOG_DEBUG([{event, details_failed_to_store_chunk},
+						{context, unpacked_padded_chunk_error},
+						{error, io_lib:format("~p", [Error])},
+						{padded_offset, PaddedEndOffset},
+						{start_offset, StartOffset},
+						{store_id, StoreID},
+						{filepath, Filepath},
+						{is_unpacked_chunk_recorded, IsUnpackedChunkRecorded}
+					]),
 					Error;
 				{_, UnpackedChunk} ->
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
@@ -294,8 +333,10 @@ record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
 		_ ->
 			case ar_chunk_storage:write_chunk(PaddedEndOffset, Chunk, #{}, StoreID) of
 				{ok, Filepath} ->
-					ets:insert(chunk_storage_file_index, {{ChunkFileStart, StoreID}, Filepath}),
-					update_sync_records(IsUnpackedChunkRecorded, PaddedEndOffset, StoreID, RewardAddr);
+					ets:insert(chunk_storage_file_index,
+						{{ChunkFileStart, StoreID}, Filepath}),
+					update_sync_records(
+						IsUnpackedChunkRecorded, PaddedEndOffset, StoreID, RewardAddr);
 				Error2 ->
 					Error2
 			end

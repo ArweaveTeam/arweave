@@ -2015,8 +2015,6 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								%% unpack.
 								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
-								?LOG_INFO([{event, get_chunk3}, {requested_packing, ar_serialize:encode_packing(Packing, false)},
-									{store_id, _StoreID}, {offset, Offset}]),
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{Packing, ok};
 							{{true, _}, _StoreID} ->

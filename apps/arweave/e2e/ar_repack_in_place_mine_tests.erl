@@ -9,21 +9,30 @@
 %% --------------------------------------------------------------------------------------------
 repack_in_place_mine_test_() ->
 	[
-		% {timeout, 300, {with, {unpacked, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		% {timeout, 300, {with, {unpacked, composite_1}, [fun test_repack_in_place_mine/1]}},
-		% {timeout, 300, {with, {unpacked, composite_2}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, 300, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, 300, {with, {unpacked, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, 300, {with, {unpacked, composite_1}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, 300, {with, {unpacked, composite_2}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {replica_2_9, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {replica_2_9, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {replica_2_9, composite_1}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {replica_2_9, composite_2}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, 300, {with, {replica_2_9, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {spora_2_6, spora_2_6}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {spora_2_6, composite_1}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {spora_2_6, composite_2}, [fun test_repack_in_place_mine/1]}},
-		% {timeout, 300, {with, {spora_2_6, unpacked}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, 300, {with, {spora_2_6, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {composite_1, spora_2_6}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {composite_1, composite_1}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {composite_1, composite_2}, [fun test_repack_in_place_mine/1]}},
-		% {timeout, 300, {with, {composite_1, unpacked}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, 300, {with, {composite_1, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, 300, {with, {composite_2, replica_2_9}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {composite_2, spora_2_6}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {composite_2, composite_1}, [fun test_repack_in_place_mine/1]}},
 		{timeout, 300, {with, {composite_2, composite_2}, [fun test_repack_in_place_mine/1]}}
-		% {timeout, 300, {with, {composite_2, unpacked}, [fun test_repack_in_place_mine/1]}}
+		% XXX {timeout, 300, {with, {composite_2, unpacked}, [fun test_repack_in_place_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------
@@ -39,17 +48,18 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 	[B0 | _] = Blocks,
 	start_validator_node(ValidatorNode, RepackerNode, B0),
 
-	{WalletB, FinalStorageModules} = ar_e2e:source_node_storage_modules(
+	{WalletB, SourceStorageModules} = ar_e2e:source_node_storage_modules(
 		RepackerNode, ToPackingType, wallet_b),
 	AddrB = case WalletB of
 		undefined -> undefined;
 		_ -> ar_wallet:to_address(WalletB)
 	end,
+	FinalStorageModules = lists:sublist(SourceStorageModules, 2),
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
 	{ok, Config} = ar_test_node:get_config(RepackerNode),
 
-	RepackInPlaceStorageModules = [ 
-		{Module, ToPacking} || Module <- Config#config.storage_modules ],
+	RepackInPlaceStorageModules = lists:sublist([ 
+		{Module, ToPacking} || Module <- Config#config.storage_modules ], 2),
 	
 	ar_test_node:update_config(RepackerNode, Config#config{
 		storage_modules = [],
@@ -58,6 +68,7 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 	}),
 	ar_test_node:restart(RepackerNode),
 
+	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ?PARTITION_SIZE),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ?PARTITION_SIZE),
 
 	ar_test_node:stop(RepackerNode),
