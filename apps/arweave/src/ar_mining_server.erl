@@ -854,6 +854,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 							{error, io_lib:format("~p", [Error])},
 							{tags, [solution_proofs]},
 							{recall_byte, RecallByte},
+							{packing, ar_serialize:encode_packing(Packing, true)},
 							{packing_difficulty, PackingDifficulty},
 							{modules_covering_recall_byte, ModuleIDs}]),
 					ChunkBinary = case Chunk of
@@ -871,6 +872,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 									{nonce, Nonce},
 									{partition, PartitionNumber},
 									{mining_address, ar_util:safe_encode(MiningAddress)},
+									{packing, ar_serialize:encode_packing(Packing, true)},
 									{packing_difficulty, PackingDifficulty}]),
 							{error, Error};
 						PoA ->

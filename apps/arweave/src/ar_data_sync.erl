@@ -2746,6 +2746,18 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 						ok ->
 							{ok, NewPacking};
 						Error ->
+							?LOG_DEBUG([{event, details_failed_to_store_chunk},
+								{context, error_writing_to_chunk_data_db},
+								{error, io_lib:format("~p", [Error])},
+								{offset, Offset},
+								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
+								{db, ChunkDataDB},
+								{chunk_data_key, ar_util:encode(ChunkDataKey)},
+								{data_path_hash, ar_util:encode(crypto:hash(sha256, DataPath))},
+								{chunk_size, ChunkSize},
+								{packing, ar_serialize:encode_packing(Packing, true)},
+								{store_id, StoreID}
+							]),
 							Error
 					end;
 				_ ->
@@ -2756,6 +2768,18 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 				ok ->
 					{ok, Packing};
 				Error ->
+					?LOG_DEBUG([{event, details_failed_to_store_chunk},
+								{context, error_writing_to_chunk_data_db},
+								{error, io_lib:format("~p", [Error])},
+								{offset, Offset},
+								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
+								{db, ChunkDataDB},
+								{chunk_data_key, ar_util:encode(ChunkDataKey)},
+								{data_path_hash, ar_util:encode(crypto:hash(sha256, DataPath))},
+								{chunk_size, ChunkSize},
+								{packing, ar_serialize:encode_packing(Packing, true)},
+								{store_id, StoreID}
+							]),
 					Error
 			end
 	end.
@@ -2784,18 +2808,35 @@ update_chunks_index2(Args, State) ->
 				ok ->
 					ok;
 				{error, Reason} ->
-					?LOG_ERROR([{event, failed_to_update_sync_record}, {reason, Reason},
-							{chunk, ar_util:encode(ChunkDataKey)},
-							{absolute_end_offset, AbsoluteOffset},
-							{data_root, ar_util:encode(DataRoot)},
-							{store_id, StoreID}]),
+					?LOG_DEBUG([{event, details_failed_to_store_chunk},
+						{context, error_adding_sync_record},
+						{error, io_lib:format("~p", [Reason])},
+						{sync_record_id, ar_data_sync},
+						{absolute_end_offset, AbsoluteOffset},
+						{offset, Offset},
+						{padded_offset, PaddedOffset},
+						{start_offset, StartOffset},
+						{chunk_data_key, ar_util:encode(ChunkDataKey)},
+						{data_root, ar_util:encode(DataRoot)},
+						{chunk_size, ChunkSize},
+						{packing, ar_serialize:encode_packing(Packing, true)},
+						{store_id, StoreID}
+					]),
 					{error, Reason}
 			end;
 		{error, Reason} ->
-			?LOG_ERROR([{event, failed_to_update_chunk_index}, {reason, Reason},
-					{chunk_data_key, ar_util:encode(ChunkDataKey)},
-					{data_root, ar_util:encode(DataRoot)},
-					{absolute_end_offset, AbsoluteOffset}, {store_id, StoreID}]),
+			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+				{context, error_writing_to_chunks_index_db},
+				{error, io_lib:format("~p", [Reason])},
+				{absolute_end_offset, AbsoluteOffset},
+				{offset, Offset},
+				{db, ChunksIndex},
+				{chunk_data_key, ar_util:encode(ChunkDataKey)},
+				{data_root, ar_util:encode(DataRoot)},
+				{chunk_size, ChunkSize},
+				{packing, ar_serialize:encode_packing(Packing, true)},
+				{store_id, StoreID}
+			]),
 			{error, Reason}
 	end.
 
@@ -2976,6 +3017,18 @@ store_chunk2(ChunkArgs, Args, State) ->
 		end,
 	case CleanRecord of
 		{error, Reason} ->
+			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+				{context, error_deleting_sync_record},
+				{error, io_lib:format("~p", [Reason])},
+				{padded_offset, PaddedOffset},
+				{start_offset, StartOffset},
+				{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
+				{data_root, DataRoot},
+				{data_path_hash, ar_util:encode(DataPathHash)},
+				{chunk_size, ChunkSize},
+				{packing, ar_serialize:encode_packing(Packing, true)},
+				{store_id, StoreID}
+			]),
 			log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash,
 					StoreID),
 			{error, Reason};
@@ -2997,9 +3050,9 @@ store_chunk2(ChunkArgs, Args, State) ->
 						Error
 				end,
 			case StoreIndex of
-				{true, Packing3} ->
+				{true, Packing2} ->
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
-							DataRoot, TXPath, ChunkSize, Packing3}, State) of
+							DataRoot, TXPath, ChunkSize, Packing2}, State) of
 						ok ->
 							ok;
 						{error, Reason} ->
