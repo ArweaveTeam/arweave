@@ -87,11 +87,17 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 		storage_modules = StorageModules,
 		auto_join = true
 	}, true),
+
+	ar_e2e:assert_partition_size(Node, 0, unpacked, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(Node, 1, unpacked, ?PARTITION_SIZE),
+
 	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, unpacked, Chunks),
 	ar_test_node:stop(TempNode),
 	{Blocks, undefined, Chunks};
 start_source_node(Node, PackingType, WalletFixture) ->
+	?LOG_INFO("Starting source node ~p with packing type ~p and wallet fixture ~p",
+		[Node, PackingType, WalletFixture]),
 	{Wallet, StorageModules} = source_node_storage_modules(Node, PackingType, WalletFixture),
 	RewardAddr = ar_wallet:to_address(Wallet),
 	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ?PARTITION_SIZE),
@@ -127,10 +133,17 @@ start_source_node(Node, PackingType, WalletFixture) ->
 		{B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
 
-	SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
-	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	?LOG_INFO("Source node ~p started.", [Node]),
 
+	SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
+
+	ar_e2e:assert_partition_size(Node, 0, SourcePacking, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(Node, 1, SourcePacking, ?PARTITION_SIZE),
+
+	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, SourcePacking, Chunks),
+
+	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
 	{[B0, B1, B2, B3, B4, B5], RewardAddr, Chunks}.
 
