@@ -241,6 +241,50 @@ get_chunk_data(ChunkDataKey, StoreID) ->
 delete_chunk_data(ChunkDataKey, StoreID) ->
 	ar_kv:delete({chunk_data_db, StoreID}, ChunkDataKey).
 
+-spec put_chunk_metadata(
+	AbsoluteOffset :: non_neg_integer(),
+	StoreID :: term(),
+	Metadata :: term()) -> ok | {error, term()}.
+put_chunk_metadata(AbsoluteOffset, StoreID, 
+	{_ChunkDataKey, _TXRoot, _DataRoot, _TXPath, _Offset, _ChunkSize} = Metadata) ->
+	Key = << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>,
+	ar_kv:put({chunks_index, StoreID}, Key, term_to_binary(Metadata)).
+
+get_chunk_metadata(AbsoluteOffset, StoreID) ->
+	case ar_kv:get({chunks_index, StoreID}, << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>) of
+		{ok, Value} ->
+			{ok, binary_to_term(Value)};
+		not_found ->
+			not_found
+	end.
+
+delete_chunk_metadata(AbsoluteOffset, StoreID) ->
+	ar_kv:delete({chunks_index, StoreID}, << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>).
+
+%% @doc Return {ok, Map} | {error, Error} where
+%% Map is
+%% AbsoluteEndOffset => {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize}
+%% map with all the chunk metadata found within the given range AbsoluteEndOffset >= Start,
+%% AbsoluteEndOffset =< End. Return the empty map if no metadata is found.
+get_chunk_metadata_range(Start, End, StoreID) ->
+	case ar_kv:get_range({chunks_index, StoreID},
+			<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>) of
+		{ok, Map} ->
+			{ok, maps:fold(
+					fun(K, V, Acc) ->
+						<< Offset:?OFFSET_KEY_BITSIZE >> = K,
+						maps:put(Offset, binary_to_term(V), Acc)
+					end,
+					#{},
+					Map)};
+		Error ->
+			Error
+	end.
+delete_chunk_metadata_range(Start, End, State) ->
+	#sync_data_state{ chunks_index = ChunksIndex } = State,
+	ar_kv:delete_range(ChunksIndex, << (Start + 1):?OFFSET_KEY_BITSIZE >>,
+			<< (End + 1):?OFFSET_KEY_BITSIZE >>).
+
 %% @doc Return true if we expect the chunk with the given data root index value and
 %% relative end offset to end up in one of the configured storage modules.
 is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset) ->
@@ -530,17 +574,17 @@ is_disk_space_sufficient(StoreID) ->
 	end.
 -endif.
 
-get_chunk_by_byte(ChunksIndex, Byte) ->
-	Chunk = ar_kv:get_next_by_prefix(ChunksIndex, ?OFFSET_KEY_PREFIX_BITSIZE,
+get_chunk_by_byte(Byte, StoreID) ->
+	Result = ar_kv:get_next_by_prefix({chunks_index, StoreID}, ?OFFSET_KEY_PREFIX_BITSIZE,
 		?OFFSET_KEY_BITSIZE, << Byte:?OFFSET_KEY_BITSIZE >>),
-	case Chunk of
+	case Result of
 		{error, Reason} ->
 			{error, Reason};
-		{ok, Key, MetaData} ->
+		{ok, Key, Metadata} ->
 			<< AbsoluteOffset:?OFFSET_KEY_BITSIZE >> = Key,
 			{
 				ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize
-			} = binary_to_term(MetaData),
+			} = binary_to_term(Metadata),
 			FullMetaData = {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
 				RelativeOffset, ChunkSize},
 			{ok, Key, FullMetaData}
@@ -599,26 +643,6 @@ decrement_chunk_cache_size() ->
 
 increment_chunk_cache_size() ->
 	ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, 1}, {chunk_cache_size, 1}).
-
-%% @doc Return {ok, Map} | {error, Error} where
-%% Map is
-%% AbsoluteEndOffset => {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize}
-%% map with all the chunk metadata found within the given range AbsoluteEndOffset >= Start,
-%% AbsoluteEndOffset =< End. Return the empty map if no metadata is found.
-get_chunk_metadata_range(Start, End, StoreID) ->
-	case ar_kv:get_range({chunks_index, StoreID},
-			<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>) of
-		{ok, Map} ->
-			{ok, maps:fold(
-					fun(K, V, Acc) ->
-						<< Offset:?OFFSET_KEY_BITSIZE >> = K,
-						maps:put(Offset, binary_to_term(V), Acc)
-					end,
-					#{},
-					Map)};
-		Error ->
-			Error
-	end.
 
 debug_get_disk_pool_chunks() ->
 	debug_get_disk_pool_chunks(first).
@@ -786,7 +810,7 @@ handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 					timer:sleep(2000),
 					erlang:halt();
 				true ->
-					ok = remove_chunks_index_range(Start, End, State),
+					ok = delete_chunk_metadata_range(Start, End, State),
 					ok = ar_chunk_storage:cut(Start, StoreID),
 					ok = ar_sync_record:cut(Start, ar_data_sync, StoreID)
 			end
@@ -1250,13 +1274,13 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
 	PID ! {removed_range, Ref},
 	{noreply, State};
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
-	#sync_data_state{ chunks_index = ChunksIndex, store_id = StoreID } = State,
-	case get_chunk_by_byte(ChunksIndex, Cursor) of
+	#sync_data_state{ store_id = StoreID } = State,
+	case get_chunk_by_byte(Cursor, StoreID) of
 		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}}
 				when AbsoluteOffset > End ->
 			PID ! {removed_range, Ref},
 			{noreply, State};
-		{ok, Key, {AbsoluteOffset, _, _, _, _, _, ChunkSize}} ->
+		{ok, _Key, {AbsoluteOffset, _, _, _, _, _, ChunkSize}} ->
 			PaddedStartOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
 			PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 			%% 1) store updated sync record
@@ -1278,7 +1302,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 			RemoveFromChunksIndex =
 				case RemoveFromChunkStorage of
 					ok ->
-						ar_kv:delete(ChunksIndex, Key);
+						delete_chunk_metadata(AbsoluteOffset, StoreID);
 					Error2 ->
 						Error2
 				end,
@@ -1665,7 +1689,7 @@ get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID, RequestOrigin) ->
 %% {ok, DataPath, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
 read_chunk_with_metadata(
 		Offset, SeekOffset, StoredPacking, StoreID, ReadChunk, RequestOrigin) ->
-	case get_chunk_by_byte({chunks_index, StoreID}, SeekOffset) of
+	case get_chunk_by_byte(SeekOffset, StoreID) of
 		{error, Err} ->
 			Modules = ar_storage_module:get_all(SeekOffset),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
@@ -1761,7 +1785,7 @@ invalidate_bad_data_record({Start, End, StoreID, Case}) ->
 			case ar_sync_record:delete(PaddedEnd, PaddedStart2, ar_data_sync, StoreID) of
 				ok ->
 					ar_sync_record:add(PaddedEnd, PaddedStart2, invalid_chunks, StoreID),
-					case ar_kv:delete({chunks_index, StoreID}, << End:?OFFSET_KEY_BITSIZE >>) of
+					case delete_chunk_metadata(End, StoreID) of
 						ok ->
 							ok;
 						Error2 ->
@@ -2169,7 +2193,7 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	ok = remove_tx_index_range(BlockStartOffset, WeaveSize, State),
 	{ok, OrphanedDataRoots} = remove_data_root_index_range(BlockStartOffset, WeaveSize, State),
 	ok = remove_data_root_offset_index_range(BlockStartOffset, WeaveSize, State),
-	ok = remove_chunks_index_range(BlockStartOffset, WeaveSize, State),
+	ok = delete_chunk_metadata_range(BlockStartOffset, WeaveSize, State),
 	{ok, OrphanedDataRoots}.
 
 remove_tx_index_range(Start, End, State) ->
@@ -2195,11 +2219,6 @@ remove_tx_index_range(Start, End, State) ->
 	end,
 	ar_kv:delete_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
 			<< End:?OFFSET_KEY_BITSIZE >>).
-
-remove_chunks_index_range(Start, End, State) ->
-	#sync_data_state{ chunks_index = ChunksIndex } = State,
-	ar_kv:delete_range(ChunksIndex, << (Start + 1):?OFFSET_KEY_BITSIZE >>,
-			<< (End + 1):?OFFSET_KEY_BITSIZE >>).
 
 remove_data_root_index_range(Start, End, State) ->
 	#sync_data_state{ data_root_offset_index = DataRootOffsetIndex,
@@ -2818,9 +2837,8 @@ update_chunks_index2(Args, State) ->
 	{AbsoluteOffset, Offset, ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkSize,
 			Packing} = Args,
 	#sync_data_state{ chunks_index = ChunksIndex, store_id = StoreID } = State,
-	Key = << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>,
-	Value = {ChunkDataKey, TXRoot, DataRoot, TXPath, Offset, ChunkSize},
-	case ar_kv:put(ChunksIndex, Key, term_to_binary(Value)) of
+	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, Offset, ChunkSize},
+	case put_chunk_metadata(AbsoluteOffset, StoreID, Metadata) of
 		ok ->
 			StartOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
 			PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
@@ -3215,7 +3233,7 @@ parse_disk_pool_chunk(Bin) ->
 	end.
 
 delete_disk_pool_chunk(Iterator, Args, State) ->
-	#sync_data_state{ chunks_index = ChunksIndex,
+	#sync_data_state{ 
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
 	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
 	case data_root_index_next_v2(Iterator, 10) of
@@ -3232,12 +3250,10 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 		{TXArgs, Iterator2} ->
 			{TXStartOffset, _TXRoot, _TXPath} = TXArgs,
 			AbsoluteOffset = TXStartOffset + Offset,
-			ChunksIndexKey = << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>,
-			case ar_kv:get(ChunksIndex, ChunksIndexKey) of
+			case get_chunk_metadata(AbsoluteOffset, StoreID) of
 				not_found ->
 					ok;
-				{ok, V} ->
-					ChunkArgs = binary_to_term(V),
+				{ok, ChunkArgs} ->
 					case element(1, ChunkArgs) of
 						ChunkDataKey ->
 							PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
@@ -3252,7 +3268,7 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 								_ ->
 									ok
 							end,
-							ok = ar_kv:delete(ChunksIndex, ChunksIndexKey);
+							ok = delete_chunk_metadata(AbsoluteOffset, StoreID);
 						_ ->
 							%% The entry has been written by the 2.5 version thus has
 							%% a different key. We do not want to remove chunks from
