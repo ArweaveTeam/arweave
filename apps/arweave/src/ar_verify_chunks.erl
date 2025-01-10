@@ -135,7 +135,7 @@ verify_proof(MetaData, State) ->
 	{AbsoluteOffset, ChunkDataKey, TXRoot, _DataRoot, TXPath,
 		_TXRelativeOffset, ChunkSize} = MetaData,
 
-	case ar_data_sync:read_data_path({chunk_data_db, StoreID}, ChunkDataKey) of
+	case ar_data_sync:read_data_path(ChunkDataKey, StoreID) of
 		{ok, DataPath} ->
 			case ar_poa:validate_paths(TXRoot, TXPath, DataPath, AbsoluteOffset - 1) of
 				{false, _Proof} ->

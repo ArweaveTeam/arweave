@@ -5,12 +5,12 @@
 -export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2,
 		invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
-		get_chunk/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
+		get_chunk/2, get_chunk_data/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
 		get_tx_offset/1, get_tx_offset_data_in_range/2, has_data_root/2,
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1, get_chunk_seek_offset/1,
-		read_chunk/4, read_data_path/2,
+		read_chunk/3, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3,
 		get_merkle_rebase_threshold/0]).
@@ -86,7 +86,6 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	DataRootIndex = {data_root_index, "default"},
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	DiskPoolChunksIndex = {disk_pool_chunks_index, "default"},
-	ChunkDataDB = {chunk_data_db, "default"},
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
 	DataRootOffsetReply = get_data_root_offset(DataRootKey, "default"),
 	DataRootInDiskPool = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
@@ -187,7 +186,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesBase3, PassesStrict3,
 				PassesRebase3, DiskPoolDataRootValue2}}} ->
 			ChunkDataKey = get_chunk_data_key(DataPathHash2),
-			case ar_kv:put(ChunkDataDB, ChunkDataKey, term_to_binary({Chunk, DataPath})) of
+			case put_chunk_data(ChunkDataKey, "default", {Chunk, DataPath}) of
 				{error, Reason2} ->
 					?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
 						{reason, io_lib:format("~p", [Reason2])},
@@ -226,6 +225,21 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 					end
 			end
 	end.
+
+%% @doc Store the given value in the chunk data DB.
+-spec put_chunk_data(
+	ChunkDataKey :: binary(),
+	StoreID :: term(),
+	Value :: DataPath :: binary() | {Chunk :: binary(), DataPath :: binary()}) -> 
+		ok | {error, term()}.
+put_chunk_data(ChunkDataKey, StoreID, Value) ->
+	ar_kv:put({chunk_data_db, StoreID}, ChunkDataKey, term_to_binary(Value)).
+
+get_chunk_data(ChunkDataKey, StoreID) ->
+	ar_kv:get({chunk_data_db, StoreID}, ChunkDataKey).
+
+delete_chunk_data(ChunkDataKey, StoreID) ->
+	ar_kv:delete({chunk_data_db, StoreID}, ChunkDataKey).
 
 %% @doc Return true if we expect the chunk with the given data root index value and
 %% relative end offset to end up in one of the configured storage modules.
@@ -347,6 +361,13 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 		end,
 	case IsRecorded of
 		{{true, StoredPacking}, StoreID} ->
+			?LOG_DEBUG([{event, get_chunk}, {offset, Offset},
+					{request_origin, RequestOrigin},
+					{pack, Pack},
+					{options, Options},
+					{packing, ar_serialize:encode_packing(Packing, true)},
+					{stored_packing, ar_serialize:encode_packing(StoredPacking, true)},
+					{store_id, StoreID}]),
 			get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
 				RequestOrigin);
 		{true, StoreID} ->
@@ -535,8 +556,8 @@ advance_chunks_index_cursor(Cursor) ->
 	PrefixSpaceSize = trunc(math:pow(2, ?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
 	((Cursor div PrefixSpaceSize) + 2) * PrefixSpaceSize.
 
-read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
-	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
+read_chunk(Offset, ChunkDataKey, StoreID) ->
+	case get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
 			not_found;
 		{ok, Value} ->
@@ -555,11 +576,11 @@ read_chunk(Offset, ChunkDataDB, ChunkDataKey, StoreID) ->
 			Error
 	end.
 
-read_data_path(ChunkDataDB, ChunkDataKey) ->
-	read_data_path(undefined, ChunkDataDB, ChunkDataKey, undefined).
-%% The first and last arguments are introduced to match the read_chunk/4 signature.
-read_data_path(_Offset, ChunkDataDB, ChunkDataKey, _StoreID) ->
-	case ar_kv:get(ChunkDataDB, ChunkDataKey) of
+read_data_path(ChunkDataKey, StoreID) ->
+	read_data_path(undefined, ChunkDataKey, StoreID).
+%% The first argument is introduced to match the read_chunk/3 signature.
+read_data_path(_Offset, ChunkDataKey, StoreID) ->
+	case get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
 			not_found;
 		{ok, Value} ->
@@ -802,21 +823,21 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	{noreply, State2};
 
 handle_cast(sync_data, State) ->
-	#sync_data_state{ store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
+	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
-	%% See if any of OriginStoreID's unsynced intervals can be found in the "default"
+	%% See if any of StoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
-			OriginStoreID, "default", RangeStart, min(RangeEnd, DiskPoolThreshold)),
+		StoreID, "default", RangeStart, min(RangeEnd, DiskPoolThreshold)),
 	gen_server:cast(self(), sync_data2),
 	%% Find all storage_modules that might include the target chunks (e.g. neighboring
 	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
-	StorageModules = [ar_storage_module:id(Module)
+	OtherStorageModules = [ar_storage_module:id(Module)
 			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
-			ar_storage_module:id(Module) /= OriginStoreID],
+			ar_storage_module:id(Module) /= StoreID],
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals,
-			other_storage_modules_with_unsynced_intervals = StorageModules }};
+			other_storage_modules_with_unsynced_intervals = OtherStorageModules }};
 
 %% @doc No unsynced overlap intervals, proceed with syncing
 handle_cast(sync_data2, #sync_data_state{
@@ -827,32 +848,33 @@ handle_cast(sync_data2, #sync_data_state{
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
 %% unsynced intervals
 handle_cast(sync_data2, #sync_data_state{
-			store_id = OriginStoreID, range_start = RangeStart, range_end = RangeEnd,
+			store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
 			unsynced_intervals_from_other_storage_modules = [],
-			other_storage_modules_with_unsynced_intervals = [StoreID | StoreIDs]
+			other_storage_modules_with_unsynced_intervals = [OtherStoreID | OtherStoreIDs]
 		} = State) ->
 	Intervals =
-		case ar_storage_module:get_packing(StoreID) of
+		case ar_storage_module:get_packing(OtherStoreID) of
 			{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
 				%% Do not unpack the 2.9 data by default, finding unpacked data
 				%% may be cheaper.
 				[];
 			_ ->
-				get_unsynced_intervals_from_other_storage_modules(OriginStoreID, StoreID,
+				get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 						RangeStart, RangeEnd)
 		end,
 	gen_server:cast(self(), sync_data2),
 	{noreply, State#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = Intervals,
-			other_storage_modules_with_unsynced_intervals = StoreIDs }};
+			other_storage_modules_with_unsynced_intervals = OtherStoreIDs }};
 %% @doc Read an unsynced interval from the disk of a neighboring storage_module
 handle_cast(sync_data2, #sync_data_state{
-		store_id = OriginStoreID,
-		unsynced_intervals_from_other_storage_modules = [{StoreID, {Start, End}} | Intervals]
+		store_id = StoreID,
+		unsynced_intervals_from_other_storage_modules =
+			[{OtherStoreID, {Start, End}} | Intervals]
 		} = State) ->
 	TaskRef = make_ref(),
 	State2 =
-		case ar_data_sync_worker_master:read_range(Start, End, StoreID, OriginStoreID, false,
+		case ar_data_sync_worker_master:read_range(Start, End, OtherStoreID, StoreID, false,
 				self(), TaskRef) of
 			true ->
 				State#sync_data_state{
@@ -1666,11 +1688,11 @@ read_chunk_with_metadata(
 			ReadFun =
 				case ReadChunk of
 					true ->
-						fun read_chunk/4;
+						fun read_chunk/3;
 					_ ->
-						fun read_data_path/4
+						fun read_data_path/3
 				end,
-			case ReadFun(AbsoluteOffset, {chunk_data_db, StoreID}, ChunkDataKey, StoreID) of
+			case ReadFun(AbsoluteOffset, ChunkDataKey, StoreID) of
 				not_found ->
 					Modules = ar_storage_module:get_all(SeekOffset),
 					ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
@@ -2734,7 +2756,7 @@ write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, State) ->
 
 write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing,
 		State) ->
-	#sync_data_state{ chunk_data_db = ChunkDataDB, store_id = StoreID } = State,
+	#sync_data_state{ store_id = StoreID } = State,
 	ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
 	case ShouldStoreInChunkStorage of
 		true ->
@@ -2742,7 +2764,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			Result = ar_chunk_storage:put(PaddedOffset, Chunk, StoreID),
 			case Result of
 				{ok, NewPacking} ->
-					case ar_kv:put(ChunkDataDB, ChunkDataKey, term_to_binary(DataPath)) of
+					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
 						ok ->
 							{ok, NewPacking};
 						Error ->
@@ -2751,7 +2773,6 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 								{error, io_lib:format("~p", [Error])},
 								{offset, Offset},
 								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-								{db, ChunkDataDB},
 								{chunk_data_key, ar_util:encode(ChunkDataKey)},
 								{data_path_hash, ar_util:encode(crypto:hash(sha256, DataPath))},
 								{chunk_size, ChunkSize},
@@ -2764,7 +2785,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 					Result
 			end;
 		false ->
-			case ar_kv:put(ChunkDataDB, ChunkDataKey, term_to_binary({Chunk, DataPath})) of
+			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
 					{ok, Packing};
 				Error ->
@@ -2773,7 +2794,6 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 								{error, io_lib:format("~p", [Error])},
 								{offset, Offset},
 								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-								{db, ChunkDataDB},
 								{chunk_data_key, ar_util:encode(ChunkDataKey)},
 								{data_path_hash, ar_util:encode(crypto:hash(sha256, DataPath))},
 								{chunk_size, ChunkSize},
@@ -3033,7 +3053,6 @@ store_chunk2(ChunkArgs, Args, State) ->
 					StoreID),
 			{error, Reason};
 		ok ->
-			DataPathHash = crypto:hash(sha256, DataPath),
 			ChunkDataKey =
 				case StoreID == OriginStoreID of
 					true ->
@@ -3114,8 +3133,7 @@ get_required_chunk_packing(Offset, ChunkSize, #sync_data_state{ store_id = Store
 
 process_disk_pool_item(State, Key, Value) ->
 	#sync_data_state{ disk_pool_chunks_index = DiskPoolChunksIndex,
-			data_root_index = DataRootIndex, store_id = StoreID,
-			chunk_data_db = ChunkDataDB } = State,
+			data_root_index = DataRootIndex, store_id = StoreID } = State,
 	prometheus_counter:inc(disk_pool_processed_chunks),
 	<< Timestamp:256, DataPathHash/binary >> = Key,
 	DiskPoolChunk = parse_disk_pool_chunk(Value),
@@ -3144,7 +3162,7 @@ process_disk_pool_item(State, Key, Value) ->
 							{data_path_hash, ar_util:encode(DataPathHash)},
 							{data_doot, ar_util:encode(DataRoot)},
 							{relative_offset, Offset}]),
-					ok = ar_kv:delete(ChunkDataDB, ChunkDataKey),
+					ok = delete_chunk_data(ChunkDataKey, StoreID),
 					decrease_occupied_disk_pool_size(ChunkSize, DataRootKey);
 				false ->
 					%% Do not remove the chunk from the disk pool until the data root index
@@ -3197,13 +3215,13 @@ parse_disk_pool_chunk(Bin) ->
 	end.
 
 delete_disk_pool_chunk(Iterator, Args, State) ->
-	#sync_data_state{ chunks_index = ChunksIndex, chunk_data_db = ChunkDataDB,
+	#sync_data_state{ chunks_index = ChunksIndex,
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
 	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
 	case data_root_index_next_v2(Iterator, 10) of
 		none ->
 			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
-			ok = ar_kv:delete(ChunkDataDB, ChunkDataKey),
+			ok = delete_chunk_data(ChunkDataKey, StoreID),
 			?LOG_DEBUG([{event, removed_chunk_from_disk_pool},
 					{reason, rotation},
 					{data_path_hash, ar_util:encode(DataPathHash)},
@@ -3365,7 +3383,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 	%% the next offset. If there are several suitable storage modules, we choose one.
 	%% The other modules will either sync the chunk themselves or copy it over from the
 	%% other module the next time the node is restarted.
-	#sync_data_state{ chunk_data_db = ChunkDataDB, store_id = DefaultStoreID } = State,
+	#sync_data_state{ store_id = DefaultStoreID } = State,
 	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _PassedBaseValidation,
 			_PassedStrictValidation, _PassedRebaseValidation} = Args,
 	FindStorageModule =
@@ -3439,7 +3457,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 		{noreply, State6} ->
 			{noreply, State6};
 		StoreID6 ->
-			case read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey, DefaultStoreID) of
+			case read_chunk(AbsoluteOffset, ChunkDataKey, DefaultStoreID) of
 				not_found ->
 					?LOG_ERROR([{event, disk_pool_chunk_not_found},
 							{data_path_hash, ar_util:encode(DataPathHash)},
