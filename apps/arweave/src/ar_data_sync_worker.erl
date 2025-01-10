@@ -152,8 +152,7 @@ read_range2(MessagesRemaining,
 			ok ->
 				ok;
 			{true, Packing2} ->
-				ChunksIndex = {chunks_index, OriginStoreID},
-				{Packing2, ar_data_sync:get_chunk_by_byte(ChunksIndex, Start + 1)}
+				{Packing2, ar_data_sync:get_chunk_by_byte(Start + 1, OriginStoreID)}
 		end,
 	case ReadChunkMetadata of
 		ok ->

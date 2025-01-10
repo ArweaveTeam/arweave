@@ -24,8 +24,8 @@ load_from_disk() ->
 			{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} = 
 				maps:fold(
 					fun(TXID, {TX, Status}, {MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap}) ->
-						MetaData = {_, _, Timestamp} = init_tx_metadata(TX, Status),
-						ets:insert(node_state, {{tx, TXID}, MetaData}),
+						Metadata = {_, _, Timestamp} = init_tx_metadata(TX, Status),
+						ets:insert(node_state, {{tx, TXID}, Metadata}),
 						ets:insert(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
 						Q = case Status of
 							ready_for_mining ->
@@ -66,7 +66,7 @@ load_from_disk() ->
 	end.
 
 add_tx(#tx{ id = TXID } = TX, Status) ->
-	{MetaData, MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap} =
+	{Metadata, MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap} =
 		case get_tx_metadata(TXID) of
 			not_found ->
 				{_, _, Timestamp} = init_tx_metadata(TX, Status),
@@ -91,7 +91,7 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 		end,
 	% Insert all data at the same time to ensure atomicity
 	ets:insert(node_state, [
-		{{tx, TXID}, MetaData},
+		{{tx, TXID}, Metadata},
 		{mempool_size, MempoolSize},
 		{tx_priority_set, PrioritySet},
 		{tx_propagation_queue, PropagationQueue},
