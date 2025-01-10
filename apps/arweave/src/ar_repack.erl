@@ -290,7 +290,7 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 	end.
 
 read_chunk_and_data_path(StoreID, ChunkDataKey, AbsoluteOffset, MaybeChunk) ->
-	case ar_kv:get({chunk_data_db, StoreID}, ChunkDataKey) of
+	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
 			?LOG_WARNING([{event, chunk_not_found_in_chunk_data_db},
 					{tags, [repack_in_place]},
