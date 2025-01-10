@@ -1,17 +1,5 @@
 #!/usr/bin/env bash
-
-
-SCRIPT_DIR="$(dirname "$0")"
-cd "$SCRIPT_DIR/.."
-
-./ar-rebar3 e2e compile
-
-export ERL_EPMD_ADDRESS=127.0.0.1
-
-ERL_TEST_OPTS="-pa `./rebar3 as e2e path` `./rebar3 as e2e path --base`/lib/arweave/test -config config/sys.config"
-echo -e "\033[0;32m===> Running tests...\033[0m"
-
-set -x
-set -o pipefail
-stdbuf -oL -eL erl $ERL_TEST_OPTS -noshell -name main-e2e@127.0.0.1 -setcookie e2e -run ar e2e ${@:1} -s init stop 2>&1 | tee main-e2e.out
-set +x
+set -e
+SCRIPT_DIR=$(dirname ${0})
+ARWEAVE=${SCRIPT_DIR}/arweave
+${ARWEAVE} test_e2e ${*}
