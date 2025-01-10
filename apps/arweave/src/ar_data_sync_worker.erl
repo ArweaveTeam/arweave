@@ -114,8 +114,6 @@ read_range2(_MessagesRemaining,
 	ok;
 read_range2(MessagesRemaining,
 		{Start, End, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef}) ->
-	ChunksIndex = {chunks_index, OriginStoreID},
-	ChunkDataDB = {chunk_data_db, OriginStoreID},
 	CheckIsRecordedAlready =
 		case ar_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
 			{true, _} ->
@@ -154,6 +152,7 @@ read_range2(MessagesRemaining,
 			ok ->
 				ok;
 			{true, Packing2} ->
+				ChunksIndex = {chunks_index, OriginStoreID},
 				{Packing2, ar_data_sync:get_chunk_by_byte(ChunksIndex, Start + 1)}
 		end,
 	case ReadChunkMetadata of
@@ -182,8 +181,7 @@ read_range2(MessagesRemaining,
 					true ->
 						skip;
 					false ->
-						ar_data_sync:read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey,
-								OriginStoreID)
+						ar_data_sync:read_chunk(AbsoluteOffset, ChunkDataKey, OriginStoreID)
 				end,
 			case ReadChunk of
 				skip ->
