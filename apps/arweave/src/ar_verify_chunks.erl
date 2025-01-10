@@ -108,7 +108,7 @@ verify_chunks({End, _Start}, _Intervals, #state{cursor = Cursor} = State) when C
 verify_chunks({IntervalEnd, IntervalStart}, Intervals, State) ->
 	#state{cursor = Cursor, store_id = StoreID} = State,
 	Cursor2 = max(IntervalStart, Cursor),
-	ChunkData = ar_data_sync:get_chunk_by_byte({chunks_index, StoreID}, Cursor2+1),
+	ChunkData = ar_data_sync:get_chunk_by_byte(Cursor2+1, StoreID),
 	State2 = verify_chunk(ChunkData, Intervals, State#state{ cursor = Cursor2 }),
 	verify_chunks({IntervalEnd, IntervalStart}, Intervals, State2).
 
@@ -118,22 +118,22 @@ verify_chunk({error, Reason}, _Intervals, State) ->
 	RangeSkipped = NextCursor - Cursor,
 	State2 = log_error(get_chunk_error, Cursor, RangeSkipped, [{reason, Reason}], State),
 	State2#state{ cursor = NextCursor };
-verify_chunk({ok, _Key, MetaData}, Intervals, State) ->
+verify_chunk({ok, _Key, Metadata}, Intervals, State) ->
 	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
-		_TXRelativeOffset, ChunkSize} = MetaData,
+		_TXRelativeOffset, ChunkSize} = Metadata,
 	{ChunkStorageInterval, _DataSyncInterval} = Intervals,
 
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	State2 = verify_chunk_storage(PaddedOffset, ChunkSize, ChunkStorageInterval, State),
 
-	State3 = verify_proof(MetaData, State2),
+	State3 = verify_proof(Metadata, State2),
 
 	State3#state{ cursor = PaddedOffset }.
 
-verify_proof(MetaData, State) ->
+verify_proof(Metadata, State) ->
 	#state{ store_id = StoreID } = State,
 	{AbsoluteOffset, ChunkDataKey, TXRoot, _DataRoot, TXPath,
-		_TXRelativeOffset, ChunkSize} = MetaData,
+		_TXRelativeOffset, ChunkSize} = Metadata,
 
 	case ar_data_sync:read_data_path(ChunkDataKey, StoreID) of
 		{ok, DataPath} ->
