@@ -10,7 +10,7 @@
 		list_files/2, run_defragmentation/0,
 		get_storage_module_path/2, get_chunk_storage_path/2, is_prepared/1,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
-		sync_record_id/1, write_chunk/4, write_chunk2/6, record_chunk/5]).
+		sync_record_id/1, store_chunk/7, write_chunk/4, write_chunk2/6, record_chunk/5]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -574,7 +574,7 @@ handle_call(is_prepared, _From, #state{ is_prepared = IsPrepared } = State) ->
 
 handle_call({put, PaddedEndOffset, Chunk, Packing}, _From, State)
 		when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
-	case handle_store_chunk(PaddedEndOffset, Chunk, Packing, State) of
+	case store_chunk(PaddedEndOffset, Chunk, Packing, State) of
 		{ok, FileIndex2, NewPacking} ->
 			{reply, {ok, NewPacking}, State#state{ file_index = FileIndex2 }};
 		Error ->
@@ -616,76 +616,23 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
+%% @doc This is only called during repack_in_place. Called when a chunk has been repacked
+%% from the old format to the new format and is ready to be stored in the chunk storage.
 handle_info({chunk, {packed, Ref, ChunkArgs}},
-	#state{ packing_map = Map, store_id = StoreID } = State) ->
+	#state{ packing_map = Map } = State) ->
 	case maps:get(Ref, Map, not_found) of
 		not_found ->
 			{noreply, State};
 		Args ->
 			State2 = State#state{ packing_map = maps:remove(Ref, Map) },
-			{Packing, Chunk, Offset, _, ChunkSize} = ChunkArgs,
-			PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
-			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-			RemoveFromSyncRecordResult = ar_sync_record:delete(PaddedEndOffset,
-					StartOffset, ar_data_sync, StoreID),
-			IsStorageSupported =
-				case RemoveFromSyncRecordResult of
-					ok ->
-						is_storage_supported(PaddedEndOffset, ChunkSize, Packing);
-					Error ->
-						Error
-				end,
-			RemoveFromChunkStorageSyncRecordResult =
-				case IsStorageSupported of
-					true ->
-						store;
-					false ->
-						%% Based on the new packing we do not want to
-						%% store the chunk in the chunk storage anymore so
-						%% we also remove the record from the
-						%% chunk-storage specific sync record and
-						%% send the chunk to the corresponding ar_data_sync
-						%% module to store it in RocksDB.
-						ar_sync_record:delete(PaddedEndOffset, StartOffset,
-								ar_chunk_storage, StoreID);
-					Error2 ->
-						Error2
-				end,
-			case RemoveFromChunkStorageSyncRecordResult of
-				ok ->
-					DataSyncServer = ar_data_sync:name(StoreID),
-					gen_server:cast(DataSyncServer,
-							{store_chunk, ChunkArgs, Args}),
-					{noreply, State};
-				store ->
-					case handle_store_chunk(PaddedEndOffset, Chunk, Packing, State2) of
-						{ok, FileIndex2, NewPacking} ->
-							?LOG_DEBUG([{event, ar_chunk_storage_packed}, {e, PaddedEndOffset},
-									{s, StartOffset}, {id, ar_data_sync}, {store_id, StoreID},
-									{old_packing, ar_serialize:encode_packing(Packing, true)},
-									{new_packing, ar_serialize:encode_packing(NewPacking, true)}]),
-							ar_sync_record:add_async(repacked_chunk,
-									PaddedEndOffset, StartOffset,
-									NewPacking, ar_data_sync, StoreID),
-							{noreply, State2#state{ file_index = FileIndex2 }};
-						Error3 ->
-							PackingStr = ar_serialize:encode_packing(Packing, true),
-							?LOG_ERROR([{event, failed_to_store_repacked_chunk},
-									{tags, [repack_in_place]},
-									{storage_module, StoreID},
-									{padded_end_offset, PaddedEndOffset},
-									{packing, PackingStr},
-									{error, io_lib:format("~p", [Error3])}]),
-							{noreply, State2}
-					end;
-				Error4 ->
-					PackingStr = ar_serialize:encode_packing(Packing, true),
-					?LOG_ERROR([{event, failed_to_store_repacked_chunk},
-							{tags, [repack_in_place]},
-							{storage_module, StoreID},
-							{padded_end_offset, PaddedEndOffset},
-							{packing, PackingStr},
-							{error, io_lib:format("~p", [Error4])}]),
+			#state{ store_id = StoreID, reward_addr = RewardAddr, is_prepared = IsPrepared,
+				file_index = FileIndex } = State2,
+			case ar_repack:chunk_repacked(
+					ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) of
+				{ok, FileIndex2} ->
+					{noreply, State2#state{ file_index = FileIndex2 }};
+				Error ->
+					?LOG_ERROR([{event, failed_to_repack_chunk}, {error, Error}]),
 					{noreply, State2}
 			end
 	end;
@@ -740,9 +687,12 @@ get_filepath(Name, StoreID) ->
 	ChunkDir = get_chunk_storage_path(DataDir, StoreID),
 	filename:join([ChunkDir, Name]).
 
-handle_store_chunk(PaddedEndOffset, Chunk, Packing, State) ->
+store_chunk(PaddedEndOffset, Chunk, Packing, State) ->
 	#state{ store_id = StoreID, reward_addr = RewardAddr, is_prepared = IsPrepared,
 		file_index = FileIndex } = State,
+	store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr).
+
+store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 	case ar_entropy_storage:is_entropy_packing(Packing) of
 		true ->
 			ar_entropy_storage:record_chunk(
@@ -1125,15 +1075,6 @@ read_chunks_sizes(DataDir) ->
 
 modules_to_defrag(#config{defragmentation_modules = [_ | _] = Modules}) -> Modules;
 modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
-
-chunk_offset_list_to_map(ChunkOffsets) ->
-	chunk_offset_list_to_map(ChunkOffsets, infinity, 0, #{}).
-
-chunk_offset_list_to_map([], Min, Max, Map) ->
-	{Min, Max, Map};
-chunk_offset_list_to_map([{Offset, Chunk} | ChunkOffsets], Min, Max, Map) ->
-	chunk_offset_list_to_map(ChunkOffsets, min(Min, Offset), max(Max, Offset),
-			maps:put(Offset, Chunk, Map)).
 
 -ifdef(AR_TEST).
 try_acquire_replica_2_9_formatting_lock(_StoreID) ->
