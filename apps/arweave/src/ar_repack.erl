@@ -1,6 +1,6 @@
 -module(ar_repack).
 
--export([read_cursor/3, store_cursor/3, repack/5]).
+-export([read_cursor/3, store_cursor/3, repack/5, chunk_repacked/6]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -130,6 +130,15 @@ repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
 		end,
 	case ReadMetadataRange of
 		continue ->
+			?LOG_DEBUG([{event, repack_in_place_continue},
+					{tags, [repack_in_place]},
+					{storage_module, StoreID},
+					{s, Cursor2},
+					{range_start, RangeStart},
+					{range_end, RangeEnd},
+					{required_packing, ar_serialize:encode_packing(RequiredPacking, true)},
+					{check_packing_buffer, CheckPackingBuffer},
+					{read_range, ReadRange}]),
 			ok;
 		{ok, Map2, MetadataMap2} ->
 			?LOG_DEBUG([{event, repack_further},
@@ -167,7 +176,7 @@ read_chunk_metadata_range(Start, Size, End,
 		Range, StoreID, RepackFurtherArgs) ->
 	Server = ar_chunk_storage:name(StoreID),
 	End2 = min(Start + Size, End),
-	{_, _, Map} = ar_chunk_storage:chunk_offset_list_to_map(Range),
+	{_, _, Map} = chunk_offset_list_to_map(Range),
 	case ar_data_sync:get_chunk_metadata_range(Start, End2, StoreID) of
 		{ok, MetadataMap} ->
 			{ok, Map, MetadataMap};
@@ -201,6 +210,13 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	{ChunkDataKey, TXRoot, DataRoot, TXPath,
 			RelativeOffset, ChunkSize} = ChunkMeta,
+	?LOG_DEBUG([{event, send_chunk_for_repacking},
+			{tags, [repack_in_place]},
+			{storage_module, StoreID},
+			{offset, AbsoluteOffset},
+			{padded_offset, PaddedOffset},
+			{chunk_size, ChunkSize},
+			{required_packing, ar_serialize:encode_packing(RequiredPacking, true)}]),
 	case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
 		{true, unpacked_padded} ->
 			%% unpacked_padded is a special internal packing used
@@ -289,6 +305,79 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 			ok
 	end.
 
+chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
+	{Packing, Chunk, Offset, _, ChunkSize} = ChunkArgs,
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
+	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
+	RemoveFromSyncRecordResult = ar_sync_record:delete(PaddedEndOffset,
+			StartOffset, ar_data_sync, StoreID),
+	IsStorageSupported =
+		case RemoveFromSyncRecordResult of
+			ok ->
+				ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing);
+			Error ->
+				Error
+		end,
+	RemoveFromChunkStorageSyncRecordResult =
+		case IsStorageSupported of
+			true ->
+				store;
+			false ->
+				%% Based on the new packing we do not want to
+				%% store the chunk in the chunk storage anymore so
+				%% we also remove the record from the
+				%% chunk-storage specific sync record and
+				%% send the chunk to the corresponding ar_data_sync
+				%% module to store it in RocksDB.
+				ar_sync_record:delete(PaddedEndOffset, StartOffset,
+						ar_chunk_storage, StoreID);
+			Error2 ->
+				Error2
+		end,
+	?LOG_DEBUG([{event, chunk_repacked},
+			{padded_end_offset, PaddedEndOffset},
+			{chunk_size, ChunkSize},
+			{packing, ar_serialize:encode_packing(Packing, true)},
+			{remove_from_chunk_storage_sync_record_result, RemoveFromChunkStorageSyncRecordResult},
+			{remove_from_sync_record_result, RemoveFromSyncRecordResult},
+			{is_storage_supported, IsStorageSupported}]),
+	case RemoveFromChunkStorageSyncRecordResult of
+		ok ->
+			gen_server:cast(ar_data_sync:name(StoreID), {store_chunk, ChunkArgs, Args}),
+			{ok, FileIndex};
+		store ->
+			case ar_chunk_storage:store_chunk(PaddedEndOffset, Chunk, Packing,
+					StoreID, FileIndex, IsPrepared, RewardAddr) of
+				{ok, FileIndex2, NewPacking} ->
+					?LOG_DEBUG([{event, ar_chunk_storage_packed}, {e, PaddedEndOffset},
+							{s, StartOffset}, {id, ar_data_sync}, {store_id, StoreID},
+							{old_packing, ar_serialize:encode_packing(Packing, true)},
+							{new_packing, ar_serialize:encode_packing(NewPacking, true)}]),
+					ar_sync_record:add_async(repacked_chunk,
+							PaddedEndOffset, StartOffset,
+							NewPacking, ar_data_sync, StoreID),
+					{ok, FileIndex2};
+				Error3 ->
+					PackingStr = ar_serialize:encode_packing(Packing, true),
+					?LOG_ERROR([{event, failed_to_store_repacked_chunk},
+							{tags, [repack_in_place]},
+							{storage_module, StoreID},
+							{padded_end_offset, PaddedEndOffset},
+							{packing, PackingStr},
+							{error, io_lib:format("~p", [Error3])}]),
+					{ok, FileIndex}
+			end;
+		Error4 ->
+			PackingStr = ar_serialize:encode_packing(Packing, true),
+			?LOG_ERROR([{event, failed_to_store_repacked_chunk},
+					{tags, [repack_in_place]},
+					{storage_module, StoreID},
+					{padded_end_offset, PaddedEndOffset},
+					{packing, PackingStr},
+					{error, io_lib:format("~p", [Error4])}]),
+			{ok, FileIndex}
+	end.
+
 read_chunk_and_data_path(StoreID, ChunkDataKey, AbsoluteOffset, MaybeChunk) ->
 	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
@@ -315,4 +404,12 @@ read_chunk_and_data_path(StoreID, ChunkDataKey, AbsoluteOffset, MaybeChunk) ->
 get_repack_interval_size() ->
 	{ok, Config} = application:get_env(arweave, config),
 	?DATA_CHUNK_SIZE * Config#config.repack_batch_size.
-	
+
+chunk_offset_list_to_map(ChunkOffsets) ->
+	chunk_offset_list_to_map(ChunkOffsets, infinity, 0, #{}).
+
+chunk_offset_list_to_map([], Min, Max, Map) ->
+	{Min, Max, Map};
+chunk_offset_list_to_map([{Offset, Chunk} | ChunkOffsets], Min, Max, Map) ->
+	chunk_offset_list_to_map(ChunkOffsets, min(Min, Offset), max(Max, Offset),
+			maps:put(Offset, Chunk, Map)).
