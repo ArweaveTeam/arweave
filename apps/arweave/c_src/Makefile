@@ -57,9 +57,9 @@ else ifeq ($(UNAME_SYS), Linux)
 endif
 
 ifneq (, $(shell which pkg-config))
-	CFLAGS += `pkg-config --cflags openssl`
-	CXXFLAGS += `pkg-config --cflags openssl`
-	LDFLAGS += `pkg-config --libs openssl`
+	CFLAGS += $(shell pkg-config --cflags openssl)
+	CXXFLAGS += $(shell pkg-config --cflags openssl)
+	LDFLAGS += $(shell pkg-config --libs openssl)
 endif
 
 C_SRC_DIR = $(CURDIR)
