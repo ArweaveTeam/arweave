@@ -872,7 +872,7 @@ parse_block_post_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageS
 	RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
 	SigType =
 		case {RewardKeySize, Height >= ar_fork:height_2_9()} of
-			{?ECDSA_PUB_KEY_SIZE, true} ->
+			{32, true} ->
 				?ECDSA_KEY_TYPE;
 			_ ->
 				?RSA_KEY_TYPE
