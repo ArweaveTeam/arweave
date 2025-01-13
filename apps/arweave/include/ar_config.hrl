@@ -105,7 +105,11 @@
 -define(CHUNK_GROUP_SIZE, (256 * 1024 * 8000)). % 2 GiB.
 
 %% The default number of chunks fetched from disk at a time during in-place repacking.
+-ifdef(AR_TEST).
+-define(DEFAULT_REPACK_BATCH_SIZE, 2).
+-else.
 -define(DEFAULT_REPACK_BATCH_SIZE, 100).
+-endif.
 
 %% default filtering value for the peer list (30days)
 -define(CURRENT_PEERS_LIST_FILTER, 30*60*60*24).
