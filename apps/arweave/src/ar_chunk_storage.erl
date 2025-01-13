@@ -389,7 +389,6 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			store_id = StoreID, repack_cursor = RepackCursor } = State,
 
 	?LOG_DEBUG([{event, do_prepare_replica_2_9},
-			{tags, [repack_in_place]},
 			{storage_module, StoreID},
 			{start, Start},
 			{sub_chunk_start, SubChunkStart},

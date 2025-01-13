@@ -31,18 +31,22 @@ store_cursor(Cursor, StoreID, TargetPacking) ->
 	Filepath = ar_chunk_storage:get_filepath("repack_in_place_cursor2", StoreID),
 	file:write_file(Filepath, term_to_binary({Cursor, TargetPacking})).
 
+%% @doc Advance the repack cursor in SectorSize increments. This will optimize the use of
+%% any entropy that has been generated. Once we hit the end of the range, restart at the
+%% beginning, but offset by the repack interval size. Repeat this loop back process until
+%% the looped back position is greater than the sector size.
 advance_cursor(Cursor, RangeStart, RangeEnd) ->
-	RepackIntervalSize = get_repack_interval_size(),
 	SectorSize = ar_replica_2_9:get_sector_size(),
 	Cursor2 = ar_chunk_storage:get_chunk_bucket_start(Cursor + SectorSize + ?DATA_CHUNK_SIZE),
 	case Cursor2 > ar_chunk_storage:get_chunk_bucket_start(RangeEnd) of
 		true ->
+			RepackIntervalSize = get_repack_interval_size(Cursor, RangeStart),
 			RangeStart2 = ar_chunk_storage:get_chunk_bucket_start(RangeStart + 1),
 			RelativeSectorOffset = (Cursor - RangeStart2) rem SectorSize,
 			Cursor3 = RangeStart2
 				+ RelativeSectorOffset
-				+ min(RepackIntervalSize, SectorSize - RelativeSectorOffset),
-			case Cursor3 > RangeStart2 + SectorSize of
+				+ RepackIntervalSize,
+			case Cursor3 >= RangeStart2 + SectorSize of
 				true ->
 					none;
 				false ->
@@ -64,7 +68,7 @@ repack(none, _RangeStart, _RangeEnd, Packing, StoreID) ->
 	Server = ar_chunk_storage:name(StoreID),
 	gen_server:cast(Server, repacking_complete);
 repack(Cursor, RangeStart, RangeEnd, Packing, StoreID) ->
-	RightBound = Cursor + get_repack_interval_size(),
+	RightBound = Cursor + get_repack_interval_size(Cursor, RangeStart),
 	?LOG_DEBUG([{event, repacking_in_place},
 			{tags, [repack_in_place]},
 			{s, Cursor},
@@ -91,8 +95,7 @@ repack(Cursor, RangeStart, RangeEnd, Packing, StoreID) ->
 	end.
 
 repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
-	{ok, Config} = application:get_env(arweave, config),
-	RepackIntervalSize = ?DATA_CHUNK_SIZE * Config#config.repack_batch_size,
+	RepackIntervalSize = get_repack_interval_size(Cursor, RangeStart),
 	Server = ar_chunk_storage:name(StoreID),
 	Cursor2 = advance_cursor(Cursor, RangeStart, RangeEnd),
 	RepackFurtherArgs = {repack, Cursor2, RangeStart, RangeEnd, RequiredPacking},
@@ -101,6 +104,7 @@ repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
 			true ->
 				?LOG_DEBUG([{event, repack_in_place_buffer_full},
 						{tags, [repack_in_place]},
+						{pid, self()},
 						{storage_module, StoreID},
 						{s, Cursor},
 						{range_start, RangeStart},
@@ -112,45 +116,47 @@ repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
 			false ->
 				ok
 		end,
-	ReadRange =
+	OffsetToChunkMap =
 		case CheckPackingBuffer of
 			continue ->
 				continue;
 			ok ->
-				read_chunk_range(Cursor, RepackIntervalSize,
-						StoreID, RepackFurtherArgs)
+				read_chunk_range(Cursor, RepackIntervalSize, StoreID, RepackFurtherArgs)
 		end,
-	ReadMetadataRange =
-		case ReadRange of
+	OffsetToMetadataMap =
+		case OffsetToChunkMap of
 			continue ->
 				continue;
-			{ok, Range2} ->
+			_ ->
 				read_chunk_metadata_range(Cursor, RepackIntervalSize, RangeEnd,
-						Range2, StoreID, RepackFurtherArgs)
+						StoreID, RepackFurtherArgs)
 		end,
-	case ReadMetadataRange of
+	case OffsetToMetadataMap of
 		continue ->
 			?LOG_DEBUG([{event, repack_in_place_continue},
 					{tags, [repack_in_place]},
+					{pid, self()},
 					{storage_module, StoreID},
 					{s, Cursor2},
 					{range_start, RangeStart},
 					{range_end, RangeEnd},
 					{required_packing, ar_serialize:encode_packing(RequiredPacking, true)},
-					{check_packing_buffer, CheckPackingBuffer},
-					{read_range, ReadRange}]),
+					{check_packing_buffer, CheckPackingBuffer}]),
 			ok;
-		{ok, Map2, MetadataMap2} ->
+		_ ->
 			?LOG_DEBUG([{event, repack_further},
 						{tags, [repack_in_place]},
+						{pid, self()},
 						{storage_module, StoreID},
 						{s, Cursor2},
 						{range_start, RangeStart},
 						{range_end, RangeEnd},
+						{num_chunks, maps:size(OffsetToChunkMap)},
+						{repack_interval_size, RepackIntervalSize},
 						{required_packing, ar_serialize:encode_packing(RequiredPacking, true)}]),
 			gen_server:cast(Server, RepackFurtherArgs),
-			Args = {StoreID, RequiredPacking, Map2},
-			send_chunks_for_repacking(MetadataMap2, Args)
+			Args = {StoreID, RequiredPacking, OffsetToChunkMap},
+			send_chunks_for_repacking(OffsetToMetadataMap, Args)
 	end.
 
 read_chunk_range(Start, Size, StoreID, RepackFurtherArgs) ->
@@ -169,17 +175,17 @@ read_chunk_range(Start, Size, StoreID, RepackFurtherArgs) ->
 			gen_server:cast(Server, RepackFurtherArgs),
 			continue;
 		Range ->
-			{ok, Range}
+			{_, _, Map} = chunk_offset_list_to_map(Range),
+			Map
 	end.
 
-read_chunk_metadata_range(Start, Size, End,
-		Range, StoreID, RepackFurtherArgs) ->
+read_chunk_metadata_range(Start, Size, End, StoreID, RepackFurtherArgs) ->
 	Server = ar_chunk_storage:name(StoreID),
 	End2 = min(Start + Size, End),
-	{_, _, Map} = chunk_offset_list_to_map(Range),
-	case ar_data_sync:get_chunk_metadata_range(Start, End2, StoreID) of
+	
+	case ar_data_sync:get_chunk_metadata_range(Start+1, End2, StoreID) of
 		{ok, MetadataMap} ->
-			{ok, Map, MetadataMap};
+			MetadataMap;
 		{error, Error} ->
 			?LOG_ERROR([{event, failed_to_read_chunk_metadata_range},
 					{storage_module, StoreID},
@@ -212,9 +218,11 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 			RelativeOffset, ChunkSize} = ChunkMeta,
 	?LOG_DEBUG([{event, send_chunk_for_repacking},
 			{tags, [repack_in_place]},
+			{pid, self()},
 			{storage_module, StoreID},
 			{offset, AbsoluteOffset},
 			{padded_offset, PaddedOffset},
+			{start_offset, ar_chunk_storage:get_chunk_bucket_start(AbsoluteOffset)},
 			{chunk_size, ChunkSize},
 			{required_packing, ar_serialize:encode_packing(RequiredPacking, true)}]),
 	case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
@@ -274,6 +282,7 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 						end,
 					?LOG_DEBUG([{event, request_repack},
 							{tags, [repack_in_place]},
+							{pid, self()},
 							{storage_module, StoreID},
 							{offset, PaddedOffset},
 							{absolute_offset, AbsoluteOffset},
@@ -309,43 +318,31 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 	{Packing, Chunk, Offset, _, ChunkSize} = ChunkArgs,
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
+	IsStorageSupported =
+		ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
+
 	RemoveFromSyncRecordResult = ar_sync_record:delete(PaddedEndOffset,
 			StartOffset, ar_data_sync, StoreID),
-	IsStorageSupported =
+	RemoveFromSyncRecordResult2 =
 		case RemoveFromSyncRecordResult of
 			ok ->
-				ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing);
+				ar_sync_record:delete(PaddedEndOffset,
+					StartOffset, ar_chunk_storage, StoreID);
 			Error ->
 				Error
-		end,
-	RemoveFromChunkStorageSyncRecordResult =
-		case IsStorageSupported of
-			true ->
-				store;
-			false ->
-				%% Based on the new packing we do not want to
-				%% store the chunk in the chunk storage anymore so
-				%% we also remove the record from the
-				%% chunk-storage specific sync record and
-				%% send the chunk to the corresponding ar_data_sync
-				%% module to store it in RocksDB.
-				ar_sync_record:delete(PaddedEndOffset, StartOffset,
-						ar_chunk_storage, StoreID);
-			Error2 ->
-				Error2
 		end,
 	?LOG_DEBUG([{event, chunk_repacked},
 			{padded_end_offset, PaddedEndOffset},
 			{chunk_size, ChunkSize},
 			{packing, ar_serialize:encode_packing(Packing, true)},
-			{remove_from_chunk_storage_sync_record_result, RemoveFromChunkStorageSyncRecordResult},
 			{remove_from_sync_record_result, RemoveFromSyncRecordResult},
+			{remove_from_sync_record_result2, RemoveFromSyncRecordResult2},
 			{is_storage_supported, IsStorageSupported}]),
-	case RemoveFromChunkStorageSyncRecordResult of
-		ok ->
+	case {RemoveFromSyncRecordResult2, IsStorageSupported} of
+		{ok, false} ->
 			gen_server:cast(ar_data_sync:name(StoreID), {store_chunk, ChunkArgs, Args}),
 			{ok, FileIndex};
-		store ->
+		{ok, true} ->
 			case ar_chunk_storage:store_chunk(PaddedEndOffset, Chunk, Packing,
 					StoreID, FileIndex, IsPrepared, RewardAddr) of
 				{ok, FileIndex2, NewPacking} ->
@@ -367,7 +364,7 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 							{error, io_lib:format("~p", [Error3])}]),
 					{ok, FileIndex}
 			end;
-		Error4 ->
+		{Error4, _} ->
 			PackingStr = ar_serialize:encode_packing(Packing, true),
 			?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 					{tags, [repack_in_place]},
@@ -401,9 +398,15 @@ read_chunk_and_data_path(StoreID, ChunkDataKey, AbsoluteOffset, MaybeChunk) ->
 			end
 	end.
 
-get_repack_interval_size() ->
+%% @doc By default we repack `repack_batch_size` chunks at a time. However we don't want
+%% a single repack batch to cross a sector boundary.
+get_repack_interval_size(Cursor, RangeStart) ->
 	{ok, Config} = application:get_env(arweave, config),
-	?DATA_CHUNK_SIZE * Config#config.repack_batch_size.
+	SectorSize = ar_replica_2_9:get_sector_size(),
+	RepackBatchSize = ?DATA_CHUNK_SIZE * Config#config.repack_batch_size,
+	RangeStart2 = ar_chunk_storage:get_chunk_bucket_start(RangeStart + 1),
+	RelativeSectorOffset = (Cursor - RangeStart2) rem SectorSize,
+	min(RepackBatchSize, SectorSize - RelativeSectorOffset).
 
 chunk_offset_list_to_map(ChunkOffsets) ->
 	chunk_offset_list_to_map(ChunkOffsets, infinity, 0, #{}).

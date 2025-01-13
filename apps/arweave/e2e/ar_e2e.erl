@@ -18,9 +18,6 @@
 %% WARNING: ONLY SET TO true IF YOU KNOW WHAT YOU ARE DOING!
 -define(UPDATE_CHUNK_FIXTURES, false).
 
--define(E2E_WAIT_TIME, 60 * 1000).
-
-
 -spec fixture_dir(atom()) -> binary().
 fixture_dir(FixtureType) ->
 	Dir = filename:dirname(?FILE),
@@ -218,7 +215,7 @@ assert_syncs_range(Node, StartOffset, EndOffset) ->
 		ar_util:do_until(
 			fun() -> has_range(Node, StartOffset, EndOffset) end,
 			100,
-			?E2E_WAIT_TIME
+			60_000
 		),
 		iolist_to_binary(io_lib:format(
 			"~s Failed to sync range ~p - ~p", [Node, StartOffset, EndOffset]))).
@@ -227,7 +224,7 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 	ar_util:do_until(
 		fun() -> has_range(Node, StartOffset, EndOffset) end,
 		1000,
-		?E2E_WAIT_TIME
+		60_000
 	),
 	?assertEqual(false, has_range(Node, StartOffset, EndOffset),
 		iolist_to_binary(io_lib:format(
@@ -242,11 +239,13 @@ assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 					[PartitionNumber, Packing]) >= Size
 			end,
 			100,
-			?E2E_WAIT_TIME
+			60_000
 		),
 		iolist_to_binary(io_lib:format(
-			"~s partition ~p,~p failed to reach size ~p", [Node, PartitionNumber, 
-				ar_serialize:encode_packing(Packing, true), Size]))).
+			"~s partition ~p,~p failed to reach size ~p. Current size: ~p.", 
+				[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size,
+				ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
+					[PartitionNumber, Packing])]))).
 
 assert_empty_partition(Node, PartitionNumber, Packing) ->
 	ar_util:do_until(
@@ -255,7 +254,7 @@ assert_empty_partition(Node, PartitionNumber, Packing) ->
 				[PartitionNumber, Packing]) > 0
 		end,
 		100,
-		?E2E_WAIT_TIME
+		30_000
 	),
 	?assertEqual(
 		0,
