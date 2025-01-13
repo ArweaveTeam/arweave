@@ -4,35 +4,36 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(REPACK_IN_PLACE_MINE_TEST_TIMEOUT, 600).
+
 %% --------------------------------------------------------------------------------------------
 %% Test Registration
 %% --------------------------------------------------------------------------------------------
+%%
+%% Note:
+%% Repacking in place *from* replica_2_9 to any format is not currently supported.
 repack_in_place_mine_test_() ->
+	Timeout = ?REPACK_IN_PLACE_MINE_TEST_TIMEOUT,
 	[
-		% XXX {timeout, 300, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		% XXX {timeout, 300, {with, {unpacked, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		% XXX {timeout, 300, {with, {unpacked, composite_1}, [fun test_repack_in_place_mine/1]}},
-		% XXX {timeout, 300, {with, {unpacked, composite_2}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {replica_2_9, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {replica_2_9, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {replica_2_9, composite_1}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {replica_2_9, composite_2}, [fun test_repack_in_place_mine/1]}},
-		% XXX {timeout, 300, {with, {replica_2_9, unpacked}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {spora_2_6, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {spora_2_6, composite_1}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {spora_2_6, composite_2}, [fun test_repack_in_place_mine/1]}},
-		% XXX {timeout, 300, {with, {spora_2_6, unpacked}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_1, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_1, composite_1}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_1, composite_2}, [fun test_repack_in_place_mine/1]}},
-		% XXX {timeout, 300, {with, {composite_1, unpacked}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_2, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_2, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_2, composite_1}, [fun test_repack_in_place_mine/1]}},
-		{timeout, 300, {with, {composite_2, composite_2}, [fun test_repack_in_place_mine/1]}}
-		% XXX {timeout, 300, {with, {composite_2, unpacked}, [fun test_repack_in_place_mine/1]}}
+		% XXX {timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, Timeout, {with, {unpacked, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, Timeout, {with, {unpacked, composite_1}, [fun test_repack_in_place_mine/1]}},
+		% XXX {timeout, Timeout, {with, {unpacked, composite_2}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {spora_2_6, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {spora_2_6, composite_1}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {spora_2_6, composite_2}, [fun test_repack_in_place_mine/1]}},
+		% % % % % XXX {timeout, Timeout, {with, {spora_2_6, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_1, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_1, composite_1}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_1, composite_2}, [fun test_repack_in_place_mine/1]}},
+		% % % % % XXX {timeout, Timeout, {with, {composite_1, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_2, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_2, spora_2_6}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_2, composite_1}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_2, composite_2}, [fun test_repack_in_place_mine/1]}}
+		% % % % % XXX {timeout, Timeout, {with, {composite_2, unpacked}, [fun test_repack_in_place_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------

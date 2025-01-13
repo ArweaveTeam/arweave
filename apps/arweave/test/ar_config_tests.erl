@@ -161,7 +161,31 @@ test_validate_repack_in_place() ->
 		ar_config:validate_config(#config{
 			storage_modules = [{?PARTITION_SIZE, 0, {spora_2_6, Addr1}}],
 			repack_in_place_storage_modules = [
-				{{?PARTITION_SIZE, 0, {spora_2_6, Addr1}}, {spora_2_6, Addr2}}]})).
+				{{?PARTITION_SIZE, 0, {spora_2_6, Addr1}}, {spora_2_6, Addr2}}]})),
+	%% Repacking in place *from* replica_2_9 to any format is not currently supported.
+	?assertEqual(false,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{?PARTITION_SIZE, 0, {replica_2_9, Addr1}}, {replica_2_9, Addr2}}]})),
+	?assertEqual(false,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{?PARTITION_SIZE, 0, {replica_2_9, Addr1}}, {spora_2_6, Addr2}}]})),
+	?assertEqual(false,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{?PARTITION_SIZE, 0, {replica_2_9, Addr2}}, unpacked}]})),
+	?assertEqual(false,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{?PARTITION_SIZE, 0, {replica_2_9, Addr2}}, {composite, Addr1, 1}}]})).
+		
+		
+		
 	
 test_validate_cm_pool() ->
 	?assertEqual(false,
