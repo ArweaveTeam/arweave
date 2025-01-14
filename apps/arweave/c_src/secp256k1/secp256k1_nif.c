@@ -84,7 +84,7 @@ static ERL_NIF_TERM sign_recoverable(ErlNifEnv *env, int argc, const ERL_NIF_TER
 		goto cleanup;
 	}
 
-	if (!RAND_priv_bytes(seed, sizeof(seed))) {
+	if (RAND_priv_bytes(seed, sizeof(seed)) <= 0) {
 		error = "Failed to generate random seed for context.";
 		goto cleanup;
 	}
