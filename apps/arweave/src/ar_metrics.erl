@@ -479,6 +479,13 @@ register() ->
 		{labels, [packing]},
 		{help, "The counter is incremented every time a chunk is written to "
 				"chunk_storage."}]),
+	prometheus_histogram:new([
+		{name, chunk_store_duration_milliseconds},
+		{buckets, [1, 2, 3, 4, 5, 10, 50, 100, 500, 1000]},
+		{help, "The time, in milliseconds, to store one chunk. Includes time to update all "
+				"relevant indexes."}
+	]),
+		
 
 
 	prometheus_gauge:new([{name, sync_tasks},

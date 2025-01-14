@@ -692,18 +692,28 @@ store_chunk(PaddedEndOffset, Chunk, Packing, State) ->
 	store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr).
 
 store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr) ->
+	StartTime = erlang:monotonic_time(),
 	case ar_entropy_storage:is_entropy_packing(Packing) of
 		true ->
-			ar_entropy_storage:record_chunk(
-				PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared);
+			Result = ar_entropy_storage:record_chunk(
+				PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared),
+			?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_entropy_storage_record_chunk},
+				{store_id, StoreID}, {offset, PaddedEndOffset}, {elapsed,
+				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
+			Result;
 		false ->
-			record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex)
+			Result = record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex),
+			?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_chunk_storage_record_chunk},
+				{store_id, StoreID}, {offset, PaddedEndOffset}, {elapsed,
+				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
+			Result
 	end.
 
 record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex) ->
 	case write_chunk(PaddedEndOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
-			prometheus_counter:inc(chunks_stored, [Packing]),
+			prometheus_counter:inc(chunks_stored,
+				[ar_serialize:encode_packing(Packing, true)]),
 			case ar_sync_record:add(
 					PaddedEndOffset, PaddedEndOffset - ?DATA_CHUNK_SIZE,
 					sync_record_id(Packing), StoreID) of

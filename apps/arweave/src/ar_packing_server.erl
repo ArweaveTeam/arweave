@@ -253,7 +253,6 @@ get_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
 			Entropy2;
 		{ok, Entropy} ->
 			prometheus_counter:inc(replica_2_9_entropy_cache_query, [hit, Partition]),
-
 			Entropy
 	end.
 

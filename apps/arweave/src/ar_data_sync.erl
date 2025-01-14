@@ -2780,12 +2780,25 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 	case ShouldStoreInChunkStorage of
 		true ->
 			PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
+			StartPut = erlang:monotonic_time(),
 			Result = ar_chunk_storage:put(PaddedOffset, Chunk, StoreID),
+			PutTime = erlang:convert_time_unit(erlang:monotonic_time() - StartPut, native, microsecond) / 1000.0,
 			case Result of
 				{ok, NewPacking} ->
+					StartKV = erlang:monotonic_time(),
 					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
 						ok ->
-							{ok, NewPacking};
+							KVTime = erlang:convert_time_unit(erlang:monotonic_time() - StartKV, native, microsecond) / 1000.0,
+						?LOG_DEBUG([{event, details_stored_chunk},
+							{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
+							{offset, Offset},
+							{chunk_size, ChunkSize},
+							{packing, ar_serialize:encode_packing(Packing, true)},
+							{store_id, StoreID},
+							{put_time, PutTime},
+							{kv_time, KVTime}
+						]),
+						{ok, NewPacking};
 						Error ->
 							?LOG_DEBUG([{event, details_failed_to_store_chunk},
 								{context, error_writing_to_chunk_data_db},
@@ -2804,8 +2817,18 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 					Result
 			end;
 		false ->
+			StartKV = erlang:monotonic_time(),
 			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
+					KVTime = erlang:convert_time_unit(erlang:monotonic_time() - StartKV, native, microsecond) / 1000.0,
+					?LOG_DEBUG([{event, details_stored_chunk},
+						{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
+						{offset, Offset},
+						{chunk_size, ChunkSize},
+						{packing, ar_serialize:encode_packing(Packing, true)},
+						{store_id, StoreID},
+						{kv_time, KVTime}
+					]),
 					{ok, Packing};
 				Error ->
 					?LOG_DEBUG([{event, details_failed_to_store_chunk},
@@ -2995,7 +3018,7 @@ process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State,
 	State;
 process_store_chunk_queue(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len,
-			store_chunk_queue_threshold = Threshold } = State,
+			store_chunk_queue_threshold = Threshold, store_id = StoreID } = State,
 	Timestamp = element(2, gb_sets:smallest(Q)),
 	Now = os:system_time(millisecond),
 	Threshold2 =
@@ -3010,17 +3033,28 @@ process_store_chunk_queue(State, StartLen) ->
 						Threshold
 				end
 		end,
+	?LOG_DEBUG([{event, process_store_chunk_queue}, {len, Len}, {start_len, StartLen},
+		{threshold, Threshold}, {threshold2, Threshold2}, {timestamp, Timestamp}, {now, Now},
+		{elapsed, Now - Timestamp}, {store_id, StoreID}]),
 	case Len > Threshold2
 			orelse Now - Timestamp > ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD of
 		true ->
 			{{_Offset, _Timestamp, _Ref, ChunkArgs, Args}, Q2} = gb_sets:take_smallest(Q),
-			store_chunk2(ChunkArgs, Args, State),
+
+			StartChunkStore = erlang:monotonic_time(),
+			prometheus_histogram:observe_duration(chunk_store_duration_milliseconds, [],
+					fun() -> store_chunk2(ChunkArgs, Args, State) end),
+			ChunkStoreTime = erlang:convert_time_unit(erlang:monotonic_time() - StartChunkStore, native, microsecond) / 1000.0,
+			{Packing, _Chunk, AbsoluteOffset, _TXRoot, ChunkSize} = ChunkArgs,
+			?LOG_DEBUG([{event, chunk_store_duration_milliseconds}, {store_id, StoreID},
+				{elapsed, ChunkStoreTime}, {absolute_offset, AbsoluteOffset},
+				{chunk_size, ChunkSize}, {packing, ar_serialize:encode_packing(Packing, true)}]),
 			decrement_chunk_cache_size(),
 			State2 = State#sync_data_state{ store_chunk_queue = Q2,
 					store_chunk_queue_len = Len - 1,
 					store_chunk_queue_threshold = min(Threshold2 + 1,
 							?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD) },
-			process_store_chunk_queue(State2);
+			process_store_chunk_queue(State2, StartLen);
 		false ->
 			log_stored_chunks(State, StartLen),
 			State
@@ -3107,6 +3141,7 @@ store_chunk2(ChunkArgs, Args, State) ->
 log_stored_chunks(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue_len = EndLen, store_id = StoreID } = State,
 	StoredCount = StartLen - EndLen,
+	?LOG_DEBUG([{event, stored_chunks}, {count, StoredCount}, {store_id, StoreID}]),
 	case StoredCount > 0 of
 		true ->
 			?LOG_DEBUG([{event, stored_chunks}, {count, StoredCount}, {store_id, StoreID}]);
