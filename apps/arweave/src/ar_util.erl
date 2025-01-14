@@ -9,7 +9,7 @@
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
 		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1,
-		assert_file_exists_and_readable/1]).
+		assert_file_exists_and_readable/1, get_system_device/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -357,6 +357,12 @@ terminal_clear() ->
 			false ->  os:cmd(clear)
 		end
 	).
+
+-spec get_system_device(string()) -> string().
+get_system_device(Path) ->
+	Command = "df -P " ++ Path ++ " | awk 'NR==2 {print $1}'",
+	Device = os:cmd(Command),
+	string:trim(Device).
 
 print_stacktrace() ->
     try
