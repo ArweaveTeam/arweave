@@ -110,9 +110,9 @@ initialize_state(StorageModules) ->
 refresh_state(State) ->
 	StoreIDToStatus = maps:map(
 		fun(StoreID, Status) -> 
-			Prepare = refresh_prepare_status(StoreID),
-			Sync = refresh_sync_status(StoreID),
-			Repack = refresh_repack_status(StoreID),
+			Prepare = query_prepare_status(StoreID),
+			Sync = query_sync_status(StoreID),
+			Repack = query_repack_status(StoreID),
 			Status#module_status{ prepare = Prepare, sync = Sync, repack = Repack }
 		end,
 		State#state.store_id_to_status
@@ -131,7 +131,7 @@ get_system_device(StorageModule) ->
 		_ -> Device
 	end.
 
-refresh_prepare_status(StoreID) ->
+query_prepare_status(StoreID) ->
 	NeedsPrepare = ar_chunk_storage:needs_prepare(StoreID),
 	IsPrepared = ar_chunk_storage:is_prepared(StoreID),
 	case {NeedsPrepare, IsPrepared} of
@@ -149,7 +149,7 @@ refresh_prepare_status(StoreID) ->
 			off
 	end.
 
-refresh_sync_status(StoreID) ->
+query_sync_status(StoreID) ->
 	SyncingEnabled = ar_data_sync_worker_master:is_syncing_enabled(),
 	IsSyncing = ar_data_sync:is_syncing(StoreID),
 	case {SyncingEnabled, IsSyncing} of
@@ -167,18 +167,18 @@ refresh_sync_status(StoreID) ->
 			off
 	end.
 
-refresh_repack_status(StoreID) ->
+query_repack_status(StoreID) ->
 	off.
 
 push_state(State) ->
-	DeviceStatuses = get_all_device_statuses(2, State),
-	State2 = enforce_device_statuses(DeviceStatuses, State),
+	DeviceStatuses = get_all_device_modes(2, State),
+	State2 = enforce_device_modes(DeviceStatuses, State),
 	State2.
 
-get_all_device_statuses(MaxPrepareModules, State) ->
+get_all_device_modes(MaxPrepareModules, State) ->
 	DeviceStatuses = maps:fold(
 		fun(Device, StoreIDs, Acc) ->
-			Status = get_device_status(StoreIDs, State),
+			Status = get_device_mode(StoreIDs, State),
 			CurrentDevices = maps:get(Status, Acc, []),
 			UpdatedDevices = [Device | CurrentDevices],
 			maps:put(Status, UpdatedDevices, Acc)
@@ -208,7 +208,7 @@ get_all_device_statuses(MaxPrepareModules, State) ->
 	end.
 	
 
-get_device_status(StoreIDs, State) ->
+get_device_mode(StoreIDs, State) ->
 	StoreIDToStatus = State#state.store_id_to_status,
 	IsPreparing = lists:any(
 		fun(StoreID) ->
@@ -232,27 +232,21 @@ get_device_status(StoreIDs, State) ->
 		_ -> sync
 	end.
 
-enforce_device_statuses(DeviceStatuses, State) ->
+enforce_device_modes(DeviceStatuses, State) ->
 	maps:fold(
 		fun(Status, Devices, Acc) ->
 			case Status of
-				prepare -> prepare_devices(Devices, Acc);
-				repack -> repack_devices(Devices, Acc);
-				sync -> sync_devices(Devices, Acc);
-				off -> off_devices(Devices, Acc)
+				prepare -> set_prepare_mode(Devices, Acc);
+				repack -> set_repack_mode(Devices, Acc);
+				sync -> set_sync_mode(Devices, Acc);
+				off -> set_off_mode(Devices, Acc)
 			end
 		end,
 		State,
 		DeviceStatuses
 	).
 
-prepare_devices([Device | Devices], State) ->
-	State2 = prepare_device(Device, State),
-	prepare_devices(Devices, State2);
-prepare_devices([], State) ->
-	State.
-
-prepare_device(Device, State) ->
+set_prepare_mode([Device | Devices], State) ->
 	StoreIDs = maps:get(Device, State#state.device_to_store_ids, []),
 	StoreIDToStatus = lists:foldl(
 		fun(StoreID, {HasOnePrepareModule, Acc}) ->
@@ -278,24 +272,17 @@ prepare_device(Device, State) ->
 		{false, State#state.store_id_to_status},
 		StoreIDs
 	),
-	State#state{store_id_to_status = StoreIDToStatus}.
-
-repack_devices([Device | Devices], State) ->
-	State2 = repack_device(Device, State),
-	repack_devices(Devices, State2);
-repack_devices([], State) ->
+	State2 = State#state{store_id_to_status = StoreIDToStatus},
+	set_prepare_mode(Devices, State2);
+set_prepare_mode([], State) ->
 	State.
 
-repack_device(_Device, State) ->
+set_repack_mode([Device | Devices], State) ->
+	set_repack_mode(Devices, State);
+set_repack_mode([], State) ->
 	State.
 
-sync_devices([Device | Devices], State) ->
-	State2 = sync_device(Device, State),
-	sync_devices(Devices, State2);
-sync_devices([], State) ->
-	State.
-
-sync_device(Device, State) ->
+set_sync_mode([Device | Devices], State) ->
 	StoreIDs = maps:get(Device, State#state.device_to_store_ids, []),
 	StoreIDToStatus = lists:foldl(
 		fun(StoreID, Acc) ->
@@ -310,15 +297,12 @@ sync_device(Device, State) ->
 		State#state.store_id_to_status,
 		StoreIDs
 	),
-	State#state{store_id_to_status = StoreIDToStatus}.
-
-off_devices([Device | Devices], State) ->
-	State2 = off_device(Device, State),
-	off_devices(Devices, State2);
-off_devices([], State) ->
+	State2 = State#state{store_id_to_status = StoreIDToStatus},
+	set_sync_mode(Devices, State2);
+set_sync_mode([], State) ->
 	State.
 
-off_device(Device, State) ->
+set_off_mode([Device | Devices], State) ->
 	StoreIDs = maps:get(Device, State#state.device_to_store_ids, []),
 	StoreIDToStatus = lists:foldl(
 		fun(StoreID, Acc) ->
@@ -329,7 +313,10 @@ off_device(Device, State) ->
 		State#state.store_id_to_status,
 		StoreIDs
 	),
-	State#state{store_id_to_status = StoreIDToStatus}.
+	State2 = State#state{store_id_to_status = StoreIDToStatus},
+	set_off_mode(Devices, State2);
+set_off_mode([], State) ->
+	State.
 
 pause_status(active) ->
 	paused;
@@ -443,11 +430,11 @@ test_refresh_state() ->
 
 device_statuses_test_() ->
 	[
-		{timeout, 30, fun test_basic_device_statuses/0},
-		{timeout, 30, fun test_rebalance_prepare_devices/0}
+		{timeout, 30, fun test_basic_device_modes/0},
+		{timeout, 30, fun test_rebalance_prepare_modes/0}
 	].
 
-test_basic_device_statuses() ->
+test_basic_device_modes() ->
 	State = #state{
 		device_to_store_ids = #{
 			"device1" => [
@@ -532,15 +519,15 @@ test_basic_device_statuses() ->
 				}
 		}
 	},
-	ExpectedDeviceStatuses = #{
+	ExpectedDeviceModes = #{
 		prepare => ["device1"],
 		sync => ["device2"],
 		off => ["device3"]
 	},
-	?assertEqual(ExpectedDeviceStatuses, get_all_device_statuses(1, State)).
+	?assertEqual(ExpectedDeviceModes, get_all_device_modes(1, State)).
 
 
-	test_rebalance_prepare_devices() ->
+test_rebalance_prepare_modes() ->
 	State = #state{
 		device_to_store_ids = #{
 			"device1" => [
@@ -651,31 +638,31 @@ test_basic_device_statuses() ->
 				}
 		}
 	},
-	ExpectedDeviceStatuses1 = #{
+	ExpectedDeviceModes1 = #{
 		prepare => ["device2", "device1"],
 		sync => ["device4", "device3"]
 	},
-	?assertEqual(ExpectedDeviceStatuses1, get_all_device_statuses(2, State)),
-	ExpectedDeviceStatuses2 = #{
+	?assertEqual(ExpectedDeviceModes1, get_all_device_modes(2, State)),
+	ExpectedDeviceModes2 = #{
 		prepare => ["device4", "device2", "device1"],
 		sync => ["device3"]
 	},
-	?assertEqual(ExpectedDeviceStatuses2, get_all_device_statuses(3, State)),
-	ExpectedDeviceStatuses3 = #{
+	?assertEqual(ExpectedDeviceModes2, get_all_device_modes(3, State)),
+	ExpectedDeviceModes3 = #{
 		prepare => ["device4", "device3", "device2", "device1"],
 		sync => []
 	},
-	?assertEqual(ExpectedDeviceStatuses3, get_all_device_statuses(4, State)),
-	ExpectedDeviceStatuses4 = #{
+	?assertEqual(ExpectedDeviceModes3, get_all_device_modes(4, State)),
+	ExpectedDeviceModes4 = #{
 		prepare => ["device1"],
 		sync => ["device2", "device4", "device3"]
 	},
-	?assertEqual(ExpectedDeviceStatuses4, get_all_device_statuses(1, State)),
-	ExpectedDeviceStatuses5 = #{
+	?assertEqual(ExpectedDeviceModes4, get_all_device_modes(1, State)),
+	ExpectedDeviceModes5 = #{
 		prepare => [],
 		sync => ["device2", "device1", "device4", "device3"]
 	},
-	?assertEqual(ExpectedDeviceStatuses5, get_all_device_statuses(0, State)).
+	?assertEqual(ExpectedDeviceModes5, get_all_device_modes(0, State)).
 
 
 	
