@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2,
+-export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2, is_syncing/1,
 		invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_chunk_data/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
@@ -55,6 +55,10 @@ add_tip_block(BlockTXPairs, RecentBI) ->
 invalidate_bad_data_record(Start, End, StoreID, Case) ->
 	gen_server:cast(name(StoreID), {invalidate_bad_data_record,
 		{Start, End, StoreID, Case}}).
+
+is_syncing(StoreID) ->
+	State = gen_server:call(name(StoreID), get_state, infinity),
+	State#sync_data_state.started_syncing.
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -665,7 +669,7 @@ init({"default" = StoreID, _}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
-	[ok, ok] = ar_events:subscribe([node_state, disksup]),
+	[ok] = ar_events:subscribe([disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
 	move_data_root_index(State),
@@ -743,7 +747,7 @@ init({StoreID, RepackInPlacePacking}) ->
 				range_end = RangeEnd,
 				packing = ar_storage_module:get_packing(StoreID)
 			},
-			{ok, may_be_start_syncing(State2)};
+			{ok, State2};
 		_ ->
 			{ok, State}
 	end.
@@ -1390,12 +1394,6 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
-
-handle_info({event, node_state, {initialized, _B}},
-		#sync_data_state{ store_id = "default" } = State) ->
-	{noreply, State};
-handle_info({event, node_state, {initialized, _B}}, State) ->
-	{noreply, may_be_start_syncing(State)};
 
 handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
 	{noreply, State#sync_data_state{ disk_pool_threshold = Bound }};
@@ -2133,26 +2131,6 @@ read_data_sync_state() ->
 					disk_pool_threshold => 0 }
 	end.
 
-may_be_start_syncing(#sync_data_state{ started_syncing = StartedSyncing } = State) ->
-	case ar_node:is_joined() of
-		false ->
-			State;
-		true ->
-			case StartedSyncing of
-				true ->
-					State;
-				false ->
-					case ar_data_sync_worker_master:is_syncing_enabled() of
-						true ->
-							gen_server:cast(self(), sync_intervals),
-							gen_server:cast(self(), sync_data),
-							State#sync_data_state{ started_syncing = true };
-						false ->
-							State
-					end
-			end
-	end.
-
 recalculate_disk_pool_size(DataRootMap, State) ->
 	#sync_data_state{ disk_pool_chunks_index = Index } = State,
 	DataRootMap2 = maps:map(fun(_DataRootKey, {_Size, Timestamp, TXIDSet}) ->
@@ -2789,15 +2767,17 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
 						ok ->
 							KVTime = erlang:convert_time_unit(erlang:monotonic_time() - StartKV, native, microsecond) / 1000.0,
-						?LOG_DEBUG([{event, details_stored_chunk},
-							{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-							{offset, Offset},
-							{chunk_size, ChunkSize},
-							{packing, ar_serialize:encode_packing(Packing, true)},
-							{store_id, StoreID},
-							{put_time, PutTime},
-							{kv_time, KVTime}
-						]),
+							?LOG_DEBUG([{event, details_stored_chunk},
+								{context, chunk_storage_put},
+								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
+								{offset, Offset},
+								{chunk_size, ChunkSize},
+								{packing, ar_serialize:encode_packing(Packing, true)},
+								{new_packing, ar_serialize:encode_packing(NewPacking, true)},
+								{store_id, StoreID},
+								{put_time, PutTime},
+								{kv_time, KVTime}
+							]),
 						{ok, NewPacking};
 						Error ->
 							?LOG_DEBUG([{event, details_failed_to_store_chunk},

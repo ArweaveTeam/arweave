@@ -25,5 +25,5 @@ init([]) ->
 	ets:new(ar_storage_module, [set, public, named_table]),
 	{ok, {{one_for_one, 5, 10}, [
 		?CHILD(ar_storage, worker),
-		?CHILD(ar_storage_module, worker)
+		?CHILD(ar_device_mode, worker)
 	]}}.

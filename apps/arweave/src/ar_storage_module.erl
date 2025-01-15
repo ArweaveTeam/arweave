@@ -1,15 +1,10 @@
 -module(ar_storage_module).
 
--behaviour(gen_server).
-
 -export([id/1, label/1, address_label/2, module_address/1,
 		module_packing_difficulty/1, packing_label/1, label_by_id/1, get_by_id/1,
 		get_range/1, module_range/1, module_range/2, get_packing/1, get_size/1,
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/2,
-		has_any/1, has_range/2, get_cover/3, get_device_to_store_ids_map/0,
-		get_store_id_to_device_map/0, get_store_ids_for_device/1]).
-
--export([start_link/0, init/1, handle_call/3]).
+		has_any/1, has_range/2, get_cover/3]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -33,11 +28,6 @@
 
 -type storage_module() :: {integer(), integer(), {atom(), binary()}}
 						| {integer(), integer(), {atom(), binary(), integer()}}.
-
--record(state, {
-	store_id_to_device = #{},
-	device_to_store_ids = #{}
-}).
 
 %%%===================================================================
 %%% Public interface.
@@ -299,79 +289,9 @@ get_cover(Start, End, MaybeStoreID) ->
 			Cover
 	end.
 
-get_device_to_store_ids_map() ->
-	State = gen_server:call(?MODULE, get_state),
-	State#state.device_to_store_ids.
-
-get_store_id_to_device_map() ->
-	State = gen_server:call(?MODULE, get_state),
-	State#state.store_id_to_device.
-
-get_store_ids_for_device(Device) ->
-	DeviceToStoreIDs = get_device_to_store_ids_map(),
-	maps:get(Device, DeviceToStoreIDs, []).
-
-%%%===================================================================
-%%% Generic server callbacks.
-%%%===================================================================
-start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-init([]) ->
-	%% Map devices to store ids.
-	{ok, Config} = application:get_env(arweave, config),
-	{DeviceToStoreIDs, StoreIDToDevice} =
-		build_device_store_id_maps(Config#config.storage_modules),
-
-	{ok, #state{
-		device_to_store_ids = DeviceToStoreIDs,
-		store_id_to_device = StoreIDToDevice
-	}}.
-	
-
-handle_call(get_state, _From, State) ->
-	{reply, State, State};
-handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-	{reply, ok, State}.
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-build_device_store_id_maps(StorageModules) ->
-	DeviceToStoreIDs = lists:foldl(
-        fun(Module, Acc) ->
-			StoreID = ar_storage_module:id(Module),
-            Device = get_system_device(Module),
-            maps:update_with(Device, fun(StoreIDs) -> [StoreID | StoreIDs] end, [StoreID], Acc)
-        end,
-        #{},
-        StorageModules
-    ),
-
-	StoreIDToDevice = maps:fold(
-		fun(Device, StoreIDs, Acc) ->
-			lists:foldl(
-				fun(StoreID, Acc) -> 
-					maps:put(StoreID, Device, Acc) 
-				end,
-				Acc, StoreIDs)
-		end,
-		#{},
-		DeviceToStoreIDs
-	),
-	{DeviceToStoreIDs, StoreIDToDevice}.
-
-get_system_device(StorageModule) ->
-	{ok, Config} = application:get_env(arweave, config),
-	StoreID = id(StorageModule),
-	Path = ar_chunk_storage:get_chunk_storage_path(Config#config.data_dir, StoreID),
-	Device = ar_util:get_system_device(Path),
-	case Device of
-		"" -> StoreID;  % If the command fails or returns an empty string, return StoreID
-		_ -> Device
-	end.
 
 id(BucketSize, Bucket, PackingString) when BucketSize == ?PARTITION_SIZE ->
 	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
@@ -609,48 +529,3 @@ get_cover2_test() ->
 			get_cover2(0, 2, [{2, 0, p}, {1, 0, p}])),
 	?assertEqual([{0, 2, "storage_module_2_0_p"}, {2, 3, "storage_module_3_0_p"}],
 			get_cover2(0, 3, [{2, 0, p}, {3, 0, p}])).
-
-build_device_store_id_maps_test_() ->
-	[
-		ar_test_node:test_with_mocked_functions([
-			{ar_util, get_system_device, fun mocked_get_system_device/1}
-		],
-		fun test_build_device_store_id_maps/0, 30)
-	].
-
-mocked_get_system_device(Path) ->
-	Map = #{ 
-		".tmp/data_test_main_localtest/storage_modules/storage_module_0_unpacked/chunk_storage"
-			=> "device1",
-		".tmp/data_test_main_localtest/storage_modules/storage_module_1_unpacked/chunk_storage"
-			=> "device2",
-		".tmp/data_test_main_localtest/storage_modules/storage_module_2_unpacked/chunk_storage"
-			=> "device1"
-	},
-	maps:get(Path, Map).
-
-test_build_device_store_id_maps() ->
-	ExpectedDeviceToStoreIDs = #{
-		"device1" => [
-			"storage_module_2_unpacked",
-			"storage_module_0_unpacked"
-		],
-		"device2" => [
-			"storage_module_1_unpacked"
-		]
-	},
-	ExpectedStoreIDToDevice = #{
-		"storage_module_2_unpacked" => "device1",
-		"storage_module_1_unpacked" => "device2",
-		"storage_module_0_unpacked" => "device1"
-	},
-	StorageModules = [
-		{?PARTITION_SIZE, 0, unpacked},
-		{?PARTITION_SIZE, 1, unpacked},
-		{?PARTITION_SIZE, 2, unpacked}
-	],
-	{DeviceToStoreIDs, StoreIDToDevice} =
-		build_device_store_id_maps(StorageModules),
-	?assertEqual(ExpectedDeviceToStoreIDs, DeviceToStoreIDs),
-	?assertEqual(ExpectedStoreIDToDevice, StoreIDToDevice).
-

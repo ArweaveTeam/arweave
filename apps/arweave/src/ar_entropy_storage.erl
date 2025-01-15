@@ -223,8 +223,7 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 		ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
 	SemaphoreStartTime = erlang:monotonic_time(),
 	acquire_semaphore(Filepath),
-	?LOG_DEBUG([{event, details_stored_chunk}, {section, record_chunk_semaphore}, {offset, PaddedEndOffset},
-		{store_id, StoreID}, {filepath, Filepath}, {elapsed, erlang:convert_time_unit(erlang:monotonic_time() - SemaphoreStartTime, native, microsecond) / 1000.0}]),
+	SemaphoreElapsed = erlang:convert_time_unit(erlang:monotonic_time() - SemaphoreStartTime, native, microsecond) / 1000.0,
 	CheckIsStoredAlready =
 		ar_sync_record:is_recorded(PaddedEndOffset, ar_chunk_storage, StoreID),
 	CheckIsEntropyRecorded =
@@ -250,8 +249,9 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 				ar_chunk_storage:get(StartOffset, StartOffset, StoreID)
 		end,
 	ReadEntropyTime = erlang:convert_time_unit(erlang:monotonic_time() - ReadEntropyStartTime, native, microsecond) / 1000.0,
-	?LOG_DEBUG([{event, details_stored_chunk}, {section, record_chunk_read_entropy}, {offset, PaddedEndOffset},
-		{store_id, StoreID}, {filepath, Filepath}, {elapsed, ReadEntropyTime}]),
+	?LOG_DEBUG([{event, details_stored_chunk}, {section, record_chunk_read_entropy},
+		{check_is_stored_already, CheckIsStoredAlready}, {check_is_entropy_recorded, CheckIsEntropyRecorded}, {offset, PaddedEndOffset},
+		{store_id, StoreID}, {filepath, Filepath}, {semaphore_elapsed, SemaphoreElapsed}, {read_elapsed, ReadEntropyTime}]),
 	case ReadEntropy of
 		{error, _} = Error2 ->
 			?LOG_DEBUG([{event, details_failed_to_store_chunk},
@@ -287,7 +287,7 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 				PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex),
 			release_semaphore(Filepath),
 			RecordChunkTime = erlang:convert_time_unit(erlang:monotonic_time() - RecordChunkStartTime, native, microsecond) / 1000.0,
-			?LOG_DEBUG([{event, details_stored_chunk}, {section, record_chunk_record_chunk}, {offset, PaddedEndOffset},
+			?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_entropy_storage_no_entropy_yet}, {offset, PaddedEndOffset},
 				{store_id, StoreID}, {filepath, Filepath}, {elapsed, RecordChunkTime}]),
 			Result;
 		{_EndOffset, Entropy} ->
@@ -398,7 +398,7 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 			end
 	end,
 	RecordChunkTime = erlang:convert_time_unit(erlang:monotonic_time() - RecordChunkStartTime, native, microsecond) / 1000.0,
-	?LOG_DEBUG([{event, details_stored_chunk}, {section, record_chunk_record_chunk}, {offset, PaddedEndOffset},
+	?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_entropy_storage_record_entropy}, {offset, PaddedEndOffset},
 		{store_id, StoreID}, {filepath, Filepath}, {elapsed, RecordChunkTime}]),
 
 	case Result of

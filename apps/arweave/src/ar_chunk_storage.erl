@@ -8,7 +8,7 @@
 		get_range/2, get_range/3, cut/2, delete/1, delete/2, 
 		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1, 
 		list_files/2, run_defragmentation/0,
-		get_storage_module_path/2, get_chunk_storage_path/2, is_prepared/1,
+		get_storage_module_path/2, get_chunk_storage_path/2, is_prepared/1, needs_prepare/1,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
 		sync_record_id/1, store_chunk/7, write_chunk/4, write_chunk2/6, record_chunk/5]).
 
@@ -33,6 +33,7 @@
 	range_end,
 	reward_addr,
 	prepare_replica_2_9_cursor,
+	needs_prepare = false,
 	is_prepared = false
 }).
 
@@ -249,17 +250,25 @@ get_storage_module_path(DataDir, StoreID) ->
 
 get_chunk_storage_path(DataDir, StoreID) ->
 	filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
+
 %% @doc Return true if the storage is ready to accept chunks.
 -spec is_prepared(StoreID :: string()) -> true | false.
 is_prepared(StoreID) ->
-	GenServerID = name(StoreID),
-	case catch gen_server:call(GenServerID, is_prepared) of
-		{'EXIT', {noproc, {gen_server, call, _}}} ->
-			{error, timeout};
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			{error, timeout};
-		Reply ->
-			Reply
+	case get_state(StoreID) of
+		{error, _} = Error ->
+			Error;
+		State ->
+			State#state.is_prepared
+	end.
+
+%% @doc Return true if the storage needs to be prepared before it can accept chunks.
+-spec needs_prepare(StoreID :: string()) -> true | false.
+needs_prepare(StoreID) ->
+	case get_state(StoreID) of
+		{error, _} = Error ->
+			Error;
+		State ->
+			State#state.needs_prepare
 	end.
 
 %% @doc Return the start offset of the bucket containing the given offset.
@@ -333,16 +342,16 @@ init({StoreID, RepackInPlacePacking}) ->
 				IsPrepared =
 					case Start =< RangeEnd of
 						true ->
-							gen_server:cast(self(), prepare_replica_2_9),
 							false;
 						false ->
 							true
 					end,
 				State#state{ reward_addr = RewardAddr,
 						prepare_replica_2_9_cursor = PrepareCursor,
+						needs_prepare = true,
 						is_prepared = IsPrepared };
 			_ ->
-				State#state{ is_prepared = true }
+				State#state{ needs_prepare = false, is_prepared = true }
 		end,
 	case RepackInPlacePacking of
 		none ->
@@ -387,14 +396,6 @@ handle_cast(do_prepare_replica_2_9, State) ->
 	#state{ reward_addr = RewardAddr, prepare_replica_2_9_cursor = {Start, SubChunkStart},
 			range_start = RangeStart, range_end = RangeEnd,
 			store_id = StoreID, repack_cursor = RepackCursor } = State,
-
-	?LOG_DEBUG([{event, do_prepare_replica_2_9},
-			{storage_module, StoreID},
-			{start, Start},
-			{sub_chunk_start, SubChunkStart},
-			{range_start, RangeStart},
-			{range_end, RangeEnd},
-			{repack_cursor, RepackCursor}]),
 	
 	BucketEndOffset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
 	PaddedRangeEnd = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(RangeEnd)),
@@ -568,8 +569,9 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_call(is_prepared, _From, #state{ is_prepared = IsPrepared } = State) ->
-	{reply, IsPrepared, State};
+
+handle_call(get_state, _From, State) ->
+	{reply, State, State};
 
 handle_call({put, PaddedEndOffset, Chunk, Packing}, _From, State)
 		when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
@@ -657,6 +659,17 @@ terminate(_Reason, #state{ repack_cursor = Cursor, store_id = StoreID,
 %%% Private functions.
 %%%===================================================================
 
+get_state(StoreID) ->
+	GenServerID = name(StoreID),
+	case catch gen_server:call(GenServerID, get_state) of
+		{'EXIT', {noproc, {gen_server, call, _}}} ->
+			{error, timeout};
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		State ->
+			State
+	end.
+
 get_chunk_group_size() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.chunk_storage_file_size.
@@ -698,13 +711,13 @@ store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, Rew
 			Result = ar_entropy_storage:record_chunk(
 				PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared),
 			?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_entropy_storage_record_chunk},
-				{store_id, StoreID}, {offset, PaddedEndOffset}, {elapsed,
+				{store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}, {offset, PaddedEndOffset}, {elapsed,
 				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
 			Result;
 		false ->
 			Result = record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex),
 			?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_chunk_storage_record_chunk},
-				{store_id, StoreID}, {offset, PaddedEndOffset}, {elapsed,
+				{store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}, {offset, PaddedEndOffset}, {elapsed,
 				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
 			Result
 	end.
