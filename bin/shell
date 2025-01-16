@@ -16,5 +16,11 @@ export ERL_EPMD_ADDRESS=127.0.0.1
 ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/arweave/test -config config/sys.config"
 echo -e "\033[0;32m===> Running tests...\033[0m"
 
-erl $ERL_TEST_OPTS -name main-localtest@127.0.0.1 -setcookie test -run ar shell 2>&1
+# Check if BEAM process is running
+if pgrep -f "beam.smp" > /dev/null; then
+    echo "BEAM is already running. Exiting."
+    exit 1
+else
+    erl $ERL_TEST_OPTS -name main-localtest@127.0.0.1 -setcookie test -run ar shell 2>&1
+fi
 kill 0
