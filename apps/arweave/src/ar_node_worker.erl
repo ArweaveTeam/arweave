@@ -2187,16 +2187,19 @@ assert_key_type(RewardKey, Height) ->
 	case Height >= ar_fork:height_2_9() of
 		false ->
 			case RewardKey of
-				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, _}} ->
+				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, Pub}} ->
+					true = byte_size(Pub) == 512,
 					ok;
 				_ ->
 					exit(invalid_reward_key)
 			end;
 		true ->
 			case RewardKey of
-				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, _}} ->
+				{{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, Pub}} ->
+					true = byte_size(Pub) == 512,
 					ok;
-				{{?ECDSA_KEY_TYPE, _, _}, {?ECDSA_KEY_TYPE, _}} ->
+				{{?ECDSA_KEY_TYPE, _, _}, {?ECDSA_KEY_TYPE, Pub}} ->
+					true = byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE,
 					ok;
 				_ ->
 					exit(invalid_reward_key)
