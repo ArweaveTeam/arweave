@@ -1,7 +1,8 @@
--module(ar_multiple_txs_per_wallet_tests).
+-module(ar_tx_tests).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [wait_until_height/2, assert_wait_until_height/2,
@@ -73,11 +74,11 @@ returns_error_when_txs_exceed_balance_test_() ->
 		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
 			"Three transactions with block anchor",
 			PrepareTestFor(fun block_anchor_txs_spending_balance_plus_one_more/0)
-		}}
-		% {timeout, 120, {
-		% 	"Five transactions with mixed anchors",
-		% 	PrepareTestFor(fun mixed_anchor_txs_spending_balance_plus_one_more/0)
-		% }}
+		}},
+		{timeout, 120, {
+			"Five transactions with mixed anchors",
+			PrepareTestFor(fun mixed_anchor_txs_spending_balance_plus_one_more/0)
+			}}
 	].
 
 mines_blocks_under_the_size_limit_test_() ->
@@ -244,7 +245,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
 	ar_test_node:remote_call(peer1, ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
-	{ok, {{<<"400">>, _}, _, Body, _, _}} =
+	{ok, {{<<"400">>, _}, _, _Body, _, _}} =
 		ar_http:req(#{
 			method => post,
 			peer => ar_test_node:peer_ip(peer1),
@@ -919,7 +920,7 @@ grouped_txs() ->
 mine_blocks(Node, TargetHeight) ->
 	mine_blocks(Node, 1, TargetHeight).
 
-mine_blocks(Node, Height, TargetHeight) when Height == TargetHeight + 1 ->
+mine_blocks(_Node, Height, TargetHeight) when Height == TargetHeight + 1 ->
 	ok;
 mine_blocks(Node, Height, TargetHeight) ->
 	ar_test_node:mine(Node),
