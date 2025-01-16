@@ -465,10 +465,13 @@ handle_call(Request, _From, State) ->
 %% from the old format to the new format and is ready to be stored in the chunk storage.
 handle_info({chunk, {packed, Ref, ChunkArgs}},
 	#state{ packing_map = Map } = State) ->
+	?LOG_DEBUG([{event, chunk_packed}, {prepare_status, State#state.prepare_status}]),
 	case maps:get(Ref, Map, not_found) of
 		not_found ->
+			?LOG_DEBUG([{event, chunk_packed_not_found}, {prepare_status, State#state.prepare_status}]),
 			{noreply, State};
 		Args ->
+			?LOG_DEBUG([{event, chunk_packed_found}, {prepare_status, State#state.prepare_status}]),
 			State2 = State#state{ packing_map = maps:remove(Ref, Map) },
 			#state{ store_id = StoreID, reward_addr = RewardAddr,
 				prepare_status = PrepareStatus, file_index = FileIndex } = State2,
@@ -476,6 +479,7 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 			case ar_repack:chunk_repacked(
 					ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) of
 				{ok, FileIndex2} ->
+					?LOG_DEBUG([{event, chunk_packed_repacked}, {prepare_status, State#state.prepare_status}]),
 					{noreply, State2#state{ file_index = FileIndex2 }};
 				Error ->
 					?LOG_ERROR([{event, failed_to_repack_chunk}, {error, Error}]),
