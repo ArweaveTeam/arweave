@@ -163,7 +163,7 @@
 	migrations_index,
 	%% A flag indicating the process has started collecting the intervals for syncing.
 	%% We consult the other storage modules first, then search among the network peers.
-	started_syncing = false,
+	sync_status = undefined,
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},

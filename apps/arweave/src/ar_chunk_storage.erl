@@ -333,6 +333,7 @@ init({StoreID, RepackInPlacePacking}) ->
 				PrepareStatus =
 					case Start =< RangeEnd of
 						true ->
+							gen_server:cast(self(), prepare_replica_2_9),
 							paused;
 						false ->
 							complete

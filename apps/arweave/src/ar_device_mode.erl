@@ -155,18 +155,13 @@ query_prepare_status(StoreID) ->
 				{store_id, StoreID},
 				{error, Error}
 			]),
-			off;
+			paused;
 		Status -> Status
 	end.
 
 query_sync_status(StoreID) ->
-	SyncingEnabled = ar_data_sync_worker_master:is_syncing_enabled(),
-	IsSyncing = ar_data_sync:is_syncing(StoreID),
-	case {SyncingEnabled, IsSyncing} of
-		{false, _} -> off;
-		{true, true} -> active;
-		{true, false} -> paused;
-		Error ->
+	case ar_data_sync:get_sync_status(StoreID) of
+		{error, _} = Error ->
 			?LOG_WARNING([
 				{event, error_refreshing_state},
 				{module, ?MODULE},
@@ -174,7 +169,8 @@ query_sync_status(StoreID) ->
 				{store_id, StoreID},
 				{error, Error}
 			]),
-			off
+			paused;
+		Status -> Status
 	end.
 
 query_repack_status(StoreID) ->
@@ -185,24 +181,15 @@ push_state(State) ->
 	State2 = enforce_device_modes(DeviceModes, State),
 	maps:fold(
 		fun(StoreID, Status) -> 
-			push_prepare_status(StoreID, Status#module_status.prepare),
-			push_sync_status(StoreID, Status#module_status.sync),
-			push_repack_status(StoreID, Status#module_status.repack)
+			ar_chunk_storage:set_prepare_status(StoreID, Status#module_status.prepare),
+			ar_data_sync:set_sync_status(StoreID, Status#module_status.sync)
+			% ar_chunk_storage:set_repack_status(StoreID, Status#module_status.repack)
 		end,
 		ok,
 		State2#state.store_id_to_status
 	),
 	log_state(State2),
 	State2.
-
-push_prepare_status(StoreID, Status) ->
-	ar_chunk_storage:set_prepare_status(StoreID, Status).
-
-push_sync_status(StoreID, Status) ->
-	ok.
-
-push_repack_status(StoreID, Status) ->
-	ok.
 
 get_all_device_modes(MaxPrepareModules, State) ->
 	% Map devices to their mode. e.g. #{ sync => ["device1", "device2"] }
@@ -443,8 +430,7 @@ refresh_state_test_() ->
 		ar_test_node:test_with_mocked_functions([
 			{ar_util, get_system_device, fun mocked_get_system_device/1},
 			{ar_chunk_storage, get_prepare_status, fun mocked_get_prepare_status/1},
-			{ar_data_sync_worker_master, is_syncing_enabled, fun mocked_is_syncing_enabled/0},
-			{ar_data_sync, is_syncing, fun mocked_is_syncing/1}
+			{ar_data_sync, get_sync_status, fun mocked_get_sync_status/1}
 		],
 		fun test_refresh_state/0, 30)
 	].
@@ -471,15 +457,12 @@ mocked_get_prepare_status(StoreID) ->
 	},
 	maps:get(StoreID, Map).
 
-mocked_is_syncing_enabled() ->
-	true.
-
-mocked_is_syncing(StoreID) ->
+mocked_get_sync_status(StoreID) ->
 	Map = #{
 		"storage_module_0_unpacked" => {error, timeout},
-		"storage_module_1_unpacked" => false,
-		"storage_module_2_unpacked" => true,
-		"storage_module_3_unpacked" => false
+		"storage_module_1_unpacked" => paused,
+		"storage_module_2_unpacked" => active,
+		"storage_module_3_unpacked" => off
 	},
 	maps:get(StoreID, Map).
 
@@ -516,13 +499,13 @@ test_refresh_state() ->
 
 	ExpectedStoreIDToStatus2 = #{
 		"storage_module_0_unpacked" => #module_status{
-			device = "device1", prepare = complete, sync = off, repack = off},
+			device = "device1", prepare = complete, sync = paused, repack = off},
 		"storage_module_1_unpacked" => #module_status{
 			device = "device2", prepare = paused, sync = paused, repack = off},
 		"storage_module_2_unpacked" => #module_status{
 			device = "device1", prepare = off, sync = active, repack = off},
 		"storage_module_3_unpacked" => #module_status{
-			device = "device1", prepare = off, sync = paused, repack = off}
+			device = "device1", prepare = paused, sync = off, repack = off}
 	},
 	?assertEqual(ExpectedStoreIDToStatus2, State2#state.store_id_to_status).
 
