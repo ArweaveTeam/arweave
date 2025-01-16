@@ -693,7 +693,7 @@ insert_root(Params) ->
 	end.
 
 sign_tx(Node, Wallet, Args, SignFun) ->
-	{_, {_, Pub}} = Wallet,
+	{_, {KeyType, Pub}} = Wallet,
 	Data = maps:get(data, Args, <<>>),
 	DataSize = maps:get(data_size, Args, byte_size(Data)),
 	Format = maps:get(format, Args, 1),
@@ -1022,12 +1022,26 @@ post_tx_to_peer(Node, TX, Wait) ->
 					Other ->
 						Other
 				end,
+			Addr =
+				case TX#tx.owner of
+					<<>> ->
+						DataSegment = ar_tx:generate_signature_data_segment(TX),
+						ar_wallet:to_address(
+							ar_wallet:recover_key(DataSegment, TX#tx.signature, TX#tx.signature_type),
+							TX#tx.signature_type);
+					_ ->
+						ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type)
+			end,
 			?debugFmt(
-				"Failed to post transaction. TX: ~s. TX format: ~B. TX fee: ~B. TX size: ~B. "
-				"TX last_tx: ~s. Error(s): ~p. Reply: ~p.~n",
-				[ar_util:encode(TX#tx.id), TX#tx.format, TX#tx.reward, TX#tx.data_size,
-					ar_util:encode(TX#tx.last_tx),
-					remote_call(Node, ar_tx_db, get_error_codes, [TX#tx.id]), ErrorInfo]),
+				"Failed to post transaction.~nTX: ~s.~nTX format: ~B.~nTX fee: ~B.~n"
+				"TX size: ~B.~nTX last_tx: ~s.~nTX owner: ~s.~nTX owner address: ~s.~n"
+				"Error(s): ~p.~nReply: ~p.~n",
+				[ar_util:encode(TX#tx.id), TX#tx.format, TX#tx.reward,
+					TX#tx.data_size, ar_util:encode(TX#tx.last_tx),
+					ar_util:encode(TX#tx.owner),
+					ar_util:encode(Addr),
+					remote_call(Node, ar_tx_db, get_error_codes, [TX#tx.id]),
+					ErrorInfo]),
 			noop
 	end,
 	Reply.
@@ -1216,14 +1230,15 @@ await_post_block(#block{ indep_hash = H } = B, ExpectedResults, Peer) ->
 					[ExpectedResults])))
 	end.
 
-sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, Key) ->
-	SignedH = ar_block:generate_signed_hash(B),
+sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, {Priv, Pub}) ->
+	B2 = B#block{ reward_key = Pub, reward_addr = ar_wallet:to_address(Pub) },
+	SignedH = ar_block:generate_signed_hash(B2),
 	PrevCDiff = PrevB#block.cumulative_diff,
-	Signature = ar_wallet:sign(Key, << (ar_serialize:encode_int(CDiff, 16))/binary,
+	Signature = ar_wallet:sign(Priv, << (ar_serialize:encode_int(CDiff, 16))/binary,
 		(ar_serialize:encode_int(PrevCDiff, 16))/binary,
 		(B#block.previous_solution_hash)/binary, SignedH/binary >>),
 	H = ar_block:indep_hash2(SignedH, Signature),
-	B#block{ indep_hash = H, signature = Signature }.
+	B2#block{ indep_hash = H, signature = Signature }.
 
 read_block_when_stored(H) ->
 	read_block_when_stored(H, false).

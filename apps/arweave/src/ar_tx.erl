@@ -73,12 +73,14 @@ new(Dest, Reward, Qty, Last, SigType) ->
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
 sign(TX, {PrivKey, PubKey = {KeyType, Owner}}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner,
-			signature_type = KeyType })).
+	TX2 = TX#tx{ owner = Owner, signature_type = KeyType },
+	SignatureDataSegment = generate_signature_data_segment(TX2),
+	sign(TX2, PrivKey, PubKey, SignatureDataSegment).
 
 sign(TX, PrivKey, PubKey = {KeyType, Owner}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner,
-			signature_type = KeyType })).
+	TX2 = TX#tx{ owner = Owner, signature_type = KeyType },
+	SignatureDataSegment = generate_signature_data_segment(TX2),
+	sign(TX2, PrivKey, PubKey, SignatureDataSegment).
 
 %% @doc Cryptographically sign (claim ownership of) a v1 transaction.
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is

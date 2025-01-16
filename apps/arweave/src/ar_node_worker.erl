@@ -1021,6 +1021,11 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
 		{Addr, {_Timestamp, Proof2}, Iterator2} ->
 			{Key, Sig1, _CDiff1, _PrevCDiff1, _Preimage1,
 					Sig2, _CDiff2, _PrevCDiff2, _Preimage2} = Proof2,
+			?LOG_INFO([{event, evaluating_double_signing_proof},
+				{key_size, byte_size(Key)},
+				{sig1_size, byte_size(Sig1)},
+				{sig2_size, byte_size(Sig2)},
+				{height, Height}]),
 			CheckKeyType =
 				case {byte_size(Key) == ?ECDSA_PUB_KEY_SIZE, Height >= ar_fork:height_2_9()} of
 					{true, false} ->
