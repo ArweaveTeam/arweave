@@ -255,18 +255,26 @@ start_other_node(Node, B0, Config, WaitUntilSync) ->
 start_node(B0, Config) ->
 	start_node(B0, Config, true).
 start_node(B0, Config, WaitUntilSync) ->
+	?LOG_DEBUG("start_node A"),
 	clean_up_and_stop(),
+	?LOG_DEBUG("start_node B"),
 	{ok, BaseConfig} = application:get_env(arweave, config),
+	?LOG_DEBUG("start_node C"),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
+	?LOG_DEBUG("start_node D"),
 	update_config(Config),
+	?LOG_DEBUG("start_node E"),
 	ar:start_dependencies(),
+	?LOG_DEBUG("start_node F"),
 	wait_until_joined(),
+	?LOG_DEBUG("start_node G"),
 	case WaitUntilSync of
 		true ->
 			wait_until_syncs_genesis_data();
 		false ->
 			ok
 	end,
+	?LOG_DEBUG("start_node H"),
 	erlang:node().
 
 %% @doc Launch the given number (>= 1, =< ?MAX_MINERS) of the mining nodes in the coordinated

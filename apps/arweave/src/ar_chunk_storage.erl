@@ -36,6 +36,12 @@
 	prepare_status = undefined
 }).
 
+-ifdef(AR_TEST).
+-define(DEVICE_LOCK_WAIT, 100).
+-else.
+-define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -82,7 +88,7 @@ put(PaddedOffset, Chunk, Packing, StoreID) ->
 	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk, Packing}, 180_000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+			?LOG_DEBUG([{event, details_store_chunk},
 				{context, gen_server_timeout_putting_chunk},
 				{error, timeout},
 				{padded_offset, PaddedOffset},
@@ -287,6 +293,8 @@ init({StoreID, RepackInPlacePacking}) ->
 	Dir = get_storage_module_path(DataDir, StoreID),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
+	?LOG_DEBUG([{event, init_chunk_storage}, {store_id, StoreID},
+		{chunk_dir, filename:join(Dir, ?CHUNK_DIR) ++ "/"}]),
 	FileIndex = read_file_index(Dir),
 	FileIndex2 = maps:map(
 		fun(Key, Filepath) ->
@@ -363,13 +371,13 @@ warn_custom_chunk_group_size(StoreID) ->
 
 handle_cast(prepare_replica_2_9, State) ->
 	#state{ store_id = StoreID } = State,
-	NewStatus = ar_device_mode:acquire_lock(prepare, StoreID, State#state.prepare_status),
+	NewStatus = ar_device_lock:acquire_lock(prepare, StoreID, State#state.prepare_status),
 	State2 = State#state{ prepare_status = NewStatus },
 	State3 = case NewStatus of
 		active ->
 			do_prepare_replica_2_9(State2);
 		paused ->
-			ar_util:cast_after(2000, self(), prepare_replica_2_9),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), prepare_replica_2_9),
 			State2;
 		_ ->
 			State2
@@ -408,10 +416,6 @@ handle_cast({expire_repack_request, Ref}, #state{ packing_map = Map } = State) -
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
-
-
-handle_call(get_state, _From, State) ->
-	{reply, State, State};
 
 handle_call({put, PaddedEndOffset, Chunk, Packing}, _From, State)
 		when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
@@ -499,18 +503,6 @@ terminate(_Reason, #state{ repack_cursor = Cursor, store_id = StoreID,
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-get_state(StoreID) ->
-	GenServerID = name(StoreID),
-	case catch gen_server:call(GenServerID, get_state) of
-		{'EXIT', {noproc, {gen_server, call, _}}} ->
-			{error, timeout};
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			{error, timeout};
-		State ->
-			State
-	end.
-
 get_chunk_group_size() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.chunk_storage_file_size.
@@ -533,7 +525,7 @@ do_prepare_replica_2_9(State) ->
 	CheckRangeEnd =
 	case PaddedEndOffset > PaddedRangeEnd of
 		true ->
-			ar_device_mode:release_lock(prepare, StoreID),
+			ar_device_lock:release_lock(prepare, StoreID),
 			?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
 					{store_id, StoreID}]),
 			ar:console("The storage module ~s is prepared for 2.9 replication.~n",
@@ -699,13 +691,13 @@ store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, Rew
 		true ->
 			Result = ar_entropy_storage:record_chunk(
 				PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared),
-			?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_entropy_storage_record_chunk},
+			?LOG_DEBUG([{event, details_store_chunk}, {section, ar_entropy_storage_record_chunk},
 				{store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}, {offset, PaddedEndOffset}, {elapsed,
 				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
 			Result;
 		false ->
 			Result = record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex),
-			?LOG_DEBUG([{event, details_stored_chunk}, {section, ar_chunk_storage_record_chunk},
+			?LOG_DEBUG([{event, details_store_chunk}, {section, ar_chunk_storage_record_chunk},
 				{store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}, {offset, PaddedEndOffset}, {elapsed,
 				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
 			Result
@@ -725,7 +717,7 @@ record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex) ->
 						{{ChunkFileStart, StoreID}, Filepath}),
 					{ok, maps:put(ChunkFileStart, Filepath, FileIndex), Packing};
 				Error ->
-					?LOG_DEBUG([{event, details_failed_to_store_chunk},
+					?LOG_DEBUG([{event, details_store_chunk},
 						{context, error_adding_sync_record},
 						{error, io_lib:format("~p", [Error])},
 						{sync_record_id, sync_record_id(Packing)},
@@ -763,7 +755,7 @@ write_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
 		locate_chunk_on_disk(PaddedOffset, StoreID, FileIndex),
 	case get_handle_by_filepath(Filepath) of
 		{error, _} = Error ->
-			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+			?LOG_DEBUG([{event, details_store_chunk},
 				{context, error_opening_chunk_file},
 				{error, io_lib:format("~p", [Error])},
 				{padded_offset, PaddedOffset},
@@ -819,7 +811,7 @@ write_chunk2(PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
 	Result = file:pwrite(F, Position, [ChunkOffsetBinary | Chunk]),
 	case Result of
 		{error, Reason} = Error ->
-			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+			?LOG_DEBUG([{event, details_store_chunk},
 				{context, error_writing_chunk_to_file},
 				{error, io_lib:format("~p", [Reason])},
 				{padded_offset, PaddedOffset},

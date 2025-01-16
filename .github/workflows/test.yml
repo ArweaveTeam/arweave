@@ -224,7 +224,7 @@ jobs:
             ar_chunk_storage,
             ar_data_sync_worker_master,
             ar_deep_hash,
-            ar_device_mode,
+            ar_device_lock,
             ar_diff_dag,
             ar_ets_intervals,
             ar_events,

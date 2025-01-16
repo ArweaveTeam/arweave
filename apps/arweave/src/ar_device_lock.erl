@@ -1,4 +1,4 @@
--module(ar_device_mode).
+-module(ar_device_lock).
 
 -behaviour(gen_server).
 
@@ -38,19 +38,27 @@ get_store_ids_for_device(Device) ->
 %% @doc Helper function to wrap common logic around acquiring a device lock.
 -spec acquire_lock(device_mode(), string(), atom()) -> atom().
 acquire_lock(Mode, StoreID, CurrentStatus) ->
-	case CurrentStatus of
-		paused ->
+	NewStatus = case CurrentStatus of
+		_ when CurrentStatus == complete; CurrentStatus == off ->
+			% No change needed when we're done or off.
+			CurrentStatus;
+		_ ->
 			case gen_server:call(?MODULE, {acquire_lock, Mode, StoreID}) of
 				true ->
 					active;
 				false ->
-					CurrentStatus
-			end;
-		_ ->
-			%% We already have the lock (e.g. 'active'),
-			%% or don't really want it (e.g. 'complete', or 'off').
-			CurrentStatus
-	end.
+					paused
+			end
+	end,
+
+	case NewStatus == CurrentStatus of
+		true ->
+			ok;
+		false ->
+			?LOG_DEBUG([{event, acquire_lock}, {mode, Mode}, {store_id, StoreID},
+					{old_status, CurrentStatus}, {new_status, NewStatus}])
+	end,
+	NewStatus.
 
 release_lock(Mode, StoreID) ->
 	gen_server:cast(?MODULE, {release_lock, Mode, StoreID}).
@@ -62,22 +70,43 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
-	{ok, initialize_state(Config#config.storage_modules)}.
+	gen_server:cast(self(), initialize_state),
+	{ok, #state{}}.
 
 handle_call(get_state, _From, State) ->
 	{reply, State, State};
 handle_call({acquire_lock, Mode, StoreID}, _From, State) ->
-	{Acquired, State2} = do_acquire_lock(Mode, StoreID, State),
-	{reply, Acquired, State2};
+	case maps:size(State#state.store_id_to_device) of
+		0 ->
+			% Not yet initialized.
+			{reply, false, State};
+		_ ->
+			{Acquired, State2} = do_acquire_lock(Mode, StoreID, State),
+			{reply, Acquired, State2}
+	end;
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-
-handle_cast({release_lock, Mode, StoreID}, State) ->
-	State2 = do_release_lock(Mode, StoreID, State),
+handle_cast(initialize_state, State) ->
+	State2 = case ar_node:is_joined() of
+		false ->
+			ar_util:cast_after(1000, self(), initialize_state),
+			State;
+		true ->
+			initialize_state(State)
+	end,
 	{noreply, State2};
+handle_cast({release_lock, Mode, StoreID}, State) ->
+	case maps:size(State#state.store_id_to_device) of
+		0 ->
+			% Not yet initialized.
+			{noreply, State};
+		_ ->
+			State2 = do_release_lock(Mode, StoreID, State),
+			?LOG_DEBUG([{event, release_lock}, {mode, Mode}, {store_id, StoreID}]),
+			{noreply, State2}
+	end;
 handle_cast(Request, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
@@ -90,18 +119,22 @@ handle_info(Message, State) ->
 %%% Private functions.
 %%%===================================================================
 
-initialize_state(StorageModules) ->
+initialize_state(State) ->
+	{ok, Config} = application:get_env(arweave, config),
+	StorageModules = Config#config.storage_modules,
 	StoreIDToDevice = lists:foldl(
 		fun(Module, Acc) ->
 			StoreID = ar_storage_module:id(Module),
 			Device = get_system_device(Module),
+			?LOG_INFO([
+				{event, storage_module_device}, {storage_module, Module}, {device, Device}]),
 			maps:put(StoreID, Device, Acc)
 		end,
 		#{},
 		StorageModules
 	),
 
-	#state{
+	State#state{
 		store_id_to_device = StoreIDToDevice
 	}.
 

@@ -34,6 +34,12 @@
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300_000).
 -endif.
 
+-ifdef(AR_TEST).
+-define(DEVICE_LOCK_WAIT, 100).
+-else.
+-define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -749,6 +755,8 @@ init({StoreID, RepackInPlacePacking}) ->
 				packing = ar_storage_module:get_packing(StoreID),
 				sync_status = SyncStatus
 			},
+			gen_server:cast(self(), sync_intervals),
+			gen_server:cast(self(), sync_data),
 			{ok, State2};
 		_ ->
 			State2 = State#sync_data_state{
@@ -857,63 +865,139 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 
 handle_cast(sync_data, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
+			?LOG_DEBUG([{event, sync_data_active}, {store_id, StoreID}]),
 			do_sync_data(State);
 		paused ->
-			ar_util:cast_after(2000, self(), sync_data),
+			?LOG_DEBUG([{event, sync_data_paused}, {store_id, StoreID}]),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_data),
 			State2;
 		_ ->
+			?LOG_DEBUG([{event, sync_data_stopped}, {store_id, StoreID}]),
 			State2
 	end,
 	{noreply, State3};
 
 handle_cast(sync_data2, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
+			?LOG_DEBUG([{event, sync_data2_active}, {store_id, StoreID}]),
 			do_sync_data2(State2);
 		paused ->
-			ar_util:cast_after(2000, self(), sync_data2),
+			?LOG_DEBUG([{event, sync_data2_paused}, {store_id, StoreID}]),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_data2),
 			State2;
 		_ ->
+			?LOG_DEBUG([{event, sync_data2_stopped}, {store_id, StoreID}]),
 			State2
 	end,
 	{noreply, State3};
 
+%% Schedule syncing of the unsynced intervals. Choose a peer for each of the intervals.
+%% There are two message payloads:
+%% 1. collect_peer_intervals
+%%    Start the collection process over the full storage_module range.
+%% 2. {collect_peer_intervals, Start, End}
+%%    Collect intervals for the specified range. This interface is used to pick up where
+%%    we left off after a pause. There are 2 main conditions that can trigger a pause:
+%%    a. Insufficient disk space. Will pause until disk space frees up
+%%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
+%%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
-	State2 = State#sync_data_state{ sync_status = Status },
-	State3 = case Status of
-		active ->
-			do_collect_peer_intervals(State2);
-		paused ->
-			ar_util:cast_after(2000, self(), collect_peer_intervals),
-			State2;
-		_ ->
-			State2
-	end,
-	{noreply, State3};
+	#sync_data_state{ range_start = Start, range_end = End } = State,
+	gen_server:cast(self(), {collect_peer_intervals, Start, End}),
+	{noreply, State};
 
+handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
+		#sync_data_state{ store_id = StoreID } = State,
+	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID},
+		{range_end, End}]),
+	%% We've finished collecting intervals for the whole storage_module range. Schedule
+	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS and
+	%% clear the all_peers_intervals cache so we can start fresh and requery peers for
+	%% their advertised intervals.
+	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
+	{noreply, State#sync_data_state{ all_peers_intervals = #{} }};
 handle_cast({collect_peer_intervals, Start, End}, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
-	State2 = State#sync_data_state{ sync_status = Status },
-	State3 = case Status of
-		active ->
-			do_collect_peer_intervals(State2, End, State);
-		paused ->
-			ar_util:cast_after(2000, self(), {collect_peer_intervals, Start, End}),
-			State2;
-		_ ->
-			State2
+	#sync_data_state{ sync_intervals_queue = Q,
+			store_id = StoreID, disk_pool_threshold = DiskPoolThreshold,
+			all_peers_intervals = AllPeersIntervals } = State,
+	IsJoined =
+		case ar_node:is_joined() of
+			false ->
+				ar_util:cast_after(1000, self(), {collect_peer_intervals, Start, End}),
+				false;
+			true ->
+				true
+		end,
+	IsDiskSpaceSufficient =
+		case IsJoined of
+			false ->
+				false;
+			true ->
+				case is_disk_space_sufficient(StoreID) of
+					true ->
+						true;
+					_ ->
+						ar_util:cast_after(30_000, self(), {collect_peer_intervals, Start, End}),
+						false
+				end
+		end,
+	IsSyncQueueBusy =
+		case IsDiskSpaceSufficient of
+			false ->
+				true;
+			true ->
+				%% Q is the number of chunks that we've already queued for syncing. We need
+				%% to manage the queue length.
+				%% 1. Periodically sync_intervals will pull from Q and send work to
+				%%    ar_data_sync_worker_master. We need to make sure Q is long enough so
+				%%    that we never starve ar_data_sync_worker_master of work.
+				%% 2. On the flip side we don't want Q to get so long as to trigger an
+				%%    out-of-memory condition. In the extreme case we could collect and
+				%%    enqueue all chunks in a full 3.6TB storage_module. A Q of this length
+				%%    would have a roughly 500MB memory footprint per storage_module. For a
+				%%    node that is syncing multiple storage modules, this can add up fast.
+				%% 3. We also want to make sure we are using the most up to date information
+				%%    we can. Every time we add a task to the Q we're locking in a specific
+				%%    view of Peer data availability. If that peer goes offline before we
+				%%    get to the task it can result in wasted work or syncing stalls. A
+				%%    shorter queue helps ensure we're always syncing from the "best" peers
+				%%    at any point in time.
+				%%
+				%% With all that in mind, we'll pause collection once the Q hits roughly
+				%% a bucket size worth of chunks. This number is slightly arbitrary and we
+				%% should feel free to adjust as necessary.
+				case gb_sets:size(Q) > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
+					true ->
+						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
+						true;
+					false ->
+						false
+				end
+		end,
+	case IsSyncQueueBusy of
+		true ->
+			ok;
+		false ->
+			case Start >= DiskPoolThreshold of
+				true ->
+					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
+				false ->
+					%% All checks have passed, find and enqueue intervals for one
+					%% sync bucket worth of chunks starting at offset Start
+					ar_peer_intervals:fetch(
+						Start, min(End, DiskPoolThreshold), StoreID, AllPeersIntervals)
+			end
 	end,
-	{noreply, State3};
+
+	{noreply, State};
 
 handle_cast({update_all_peers_intervals, AllPeersIntervals}, State) ->
 	%% While we are working through the storage_module range we'll maintain a cache
@@ -965,15 +1049,18 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 
 handle_cast(sync_intervals, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
+			?LOG_DEBUG([{event, sync_intervals_active}, {store_id, StoreID}]),
 			do_sync_intervals(State2);
 		paused ->
-			ar_util:cast_after(2000, self(), sync_intervals),
+			?LOG_DEBUG([{event, sync_intervals_paused}, {store_id, StoreID}]),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_intervals),
 			State2;
 		_ ->
+			?LOG_DEBUG([{event, sync_intervals_off}, {store_id, StoreID}]),
 			State2
 	end,
 	{noreply, State3};
@@ -984,6 +1071,7 @@ handle_cast({invalidate_bad_data_record, Args}, State) ->
 
 handle_cast({pack_and_store_chunk, Args} = Cast,
 			#sync_data_state{ store_id = StoreID } = State) ->
+	?LOG_DEBUG([{event, pack_and_store_chunk}, {store_id, StoreID}]),
 	case is_disk_space_sufficient(StoreID) of
 		true ->
 			pack_and_store_chunk(Args, State);
@@ -1519,108 +1607,6 @@ do_sync_data2(#sync_data_state{
 		end,
 	ar_util:cast_after(50, self(), sync_data2),
 	State2.
-
-%% Schedule syncing of the unsynced intervals. Choose a peer for each of the intervals.
-%% There are two message payloads:
-%% 1. collect_peer_intervals
-%%    Start the collection process over the full storage_module range.
-%% 2. {collect_peer_intervals, Start, End}
-%%    Collect intervals for the specified range. This interface is used to pick up where
-%%    we left off after a pause. There are 2 main conditions that can trigger a pause:
-%%    a. Insufficient disk space. Will pause until disk space frees up
-%%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
-%%       ar_data_sync_worker_master for syncing.
-do_collect_peer_intervals(State) ->
-	#sync_data_state{ range_start = Start, range_end = End } = State,
-	gen_server:cast(self(), {collect_peer_intervals, Start, End}),
-	State.
-
-do_collect_peer_intervals(Start, End, State) when Start >= End ->
-		#sync_data_state{ store_id = StoreID } = State,
-	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID},
-		{range_end, End}]),
-	%% We've finished collecting intervals for the whole storage_module range. Schedule
-	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS and
-	%% clear the all_peers_intervals cache so we can start fresh. We'll start fresh by 
-	%% checking neighboring storage_modules for unsynced intervals, and then move on to
-	%% querying peers.
-	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), sync_data),
-	State#sync_data_state{ all_peers_intervals = #{} };
-do_collect_peer_intervals(Start, End, State) ->
-	#sync_data_state{ sync_intervals_queue = Q,
-			store_id = StoreID, disk_pool_threshold = DiskPoolThreshold,
-			all_peers_intervals = AllPeersIntervals } = State,
-	IsJoined =
-		case ar_node:is_joined() of
-			false ->
-				ar_util:cast_after(1000, self(), {collect_peer_intervals, Start, End}),
-				false;
-			true ->
-				true
-		end,
-	IsDiskSpaceSufficient =
-		case IsJoined of
-			false ->
-				false;
-			true ->
-				case is_disk_space_sufficient(StoreID) of
-					true ->
-						true;
-					_ ->
-						ar_util:cast_after(30_000, self(), {collect_peer_intervals, Start, End}),
-						false
-				end
-		end,
-	IsSyncQueueBusy =
-		case IsDiskSpaceSufficient of
-			false ->
-				true;
-			true ->
-				%% Q is the number of chunks that we've already queued for syncing. We need
-				%% to manage the queue length.
-				%% 1. Periodically sync_intervals will pull from Q and send work to
-				%%    ar_data_sync_worker_master. We need to make sure Q is long enough so
-				%%    that we never starve ar_data_sync_worker_master of work.
-				%% 2. On the flip side we don't want Q to get so long as to trigger an
-				%%    out-of-memory condition. In the extreme case we could collect and
-				%%    enqueue all chunks in a full 3.6TB storage_module. A Q of this length
-				%%    would have a roughly 500MB memory footprint per storage_module. For a
-				%%    node that is syncing multiple storage modules, this can add up fast.
-				%% 3. We also want to make sure we are using the most up to date information
-				%%    we can. Every time we add a task to the Q we're locking in a specific
-				%%    view of Peer data availability. If that peer goes offline before we
-				%%    get to the task it can result in wasted work or syncing stalls. A
-				%%    shorter queue helps ensure we're always syncing from the "best" peers
-				%%    at any point in time.
-				%%
-				%% With all that in mind, we'll pause collection once the Q hits roughly
-				%% a bucket size worth of chunks. This number is slightly arbitrary and we
-				%% should feel free to adjust as necessary.
-				case gb_sets:size(Q) > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
-					true ->
-						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
-						true;
-					false ->
-						false
-				end
-		end,
-	case IsSyncQueueBusy of
-		true ->
-			ok;
-		false ->
-			case Start >= DiskPoolThreshold of
-				true ->
-					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
-				false ->
-					%% All checks have passed, find and enqueue intervals for one
-					%% sync bucket worth of chunks starting at offset Start
-					ar_peer_intervals:fetch(
-						Start, min(End, DiskPoolThreshold), StoreID, AllPeersIntervals)
-			end
-	end,
-
-	State.
-
 
 remove_expired_disk_pool_data_roots() ->
 	Now = os:system_time(microsecond),
@@ -2851,7 +2837,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
 						ok ->
 							KVTime = erlang:convert_time_unit(erlang:monotonic_time() - StartKV, native, microsecond) / 1000.0,
-							?LOG_DEBUG([{event, details_stored_chunk},
+							?LOG_DEBUG([{event, details_store_chunk},
 								{context, chunk_storage_put},
 								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
 								{offset, Offset},
@@ -2864,7 +2850,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 							]),
 						{ok, NewPacking};
 						Error ->
-							?LOG_DEBUG([{event, details_failed_to_store_chunk},
+							?LOG_DEBUG([{event, details_store_chunk},
 								{context, error_writing_to_chunk_data_db},
 								{error, io_lib:format("~p", [Error])},
 								{offset, Offset},
@@ -2885,7 +2871,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
 					KVTime = erlang:convert_time_unit(erlang:monotonic_time() - StartKV, native, microsecond) / 1000.0,
-					?LOG_DEBUG([{event, details_stored_chunk},
+					?LOG_DEBUG([{event, details_store_chunk},
 						{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
 						{offset, Offset},
 						{chunk_size, ChunkSize},
@@ -2895,7 +2881,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 					]),
 					{ok, Packing};
 				Error ->
-					?LOG_DEBUG([{event, details_failed_to_store_chunk},
+					?LOG_DEBUG([{event, details_store_chunk},
 								{context, error_writing_to_chunk_data_db},
 								{error, io_lib:format("~p", [Error])},
 								{offset, Offset},
@@ -2933,7 +2919,7 @@ update_chunks_index2(Args, State) ->
 				ok ->
 					ok;
 				{error, Reason} ->
-					?LOG_DEBUG([{event, details_failed_to_store_chunk},
+					?LOG_DEBUG([{event, details_store_chunk},
 						{context, error_adding_sync_record},
 						{error, io_lib:format("~p", [Reason])},
 						{sync_record_id, ar_data_sync},
@@ -2950,7 +2936,7 @@ update_chunks_index2(Args, State) ->
 					{error, Reason}
 			end;
 		{error, Reason} ->
-			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+			?LOG_DEBUG([{event, details_store_chunk},
 				{context, error_writing_to_chunks_index_db},
 				{error, io_lib:format("~p", [Reason])},
 				{absolute_end_offset, AbsoluteOffset},
@@ -3153,7 +3139,7 @@ store_chunk2(ChunkArgs, Args, State) ->
 		end,
 	case CleanRecord of
 		{error, Reason} ->
-			?LOG_DEBUG([{event, details_failed_to_store_chunk},
+			?LOG_DEBUG([{event, details_store_chunk},
 				{context, error_deleting_sync_record},
 				{error, io_lib:format("~p", [Reason])},
 				{padded_offset, PaddedOffset},

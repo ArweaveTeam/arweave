@@ -179,7 +179,7 @@ start_io_threads(State) ->
 	#state{ mode = Mode } = State,
 
     % Step 1: Group StoreIDs by their system device
-    DeviceToStoreIDs = ar_device_mode:get_device_to_store_ids_map(),
+    DeviceToStoreIDs = ar_device_lock:get_device_to_store_ids_map(),
 
     % Step 2: Start IO threads for each device and populate map indices
 	State2 = maps:fold(
@@ -203,7 +203,7 @@ start_io_threads(State) ->
 		DeviceToStoreIDs
 	),
 
-	State2#state{ store_id_to_device = ar_device_mode:get_store_id_to_device_map() }.
+	State2#state{ store_id_to_device = ar_device_lock:get_store_id_to_device_map() }.
 
 start_io_thread(Mode, StoreIDs) ->
 	Now = os:system_time(millisecond),
@@ -254,7 +254,7 @@ handle_io_thread_down(Ref, Reason,
 	Refs2 = maps:remove(Ref, Refs),
 	Threads2 = maps:remove(Device, Threads),
 
-	StoreIDs = ar_device_mode:get_store_ids_for_device(Device),
+	StoreIDs = ar_device_lock:get_store_ids_for_device(Device),
 	Thread = start_io_thread(Mode, sets:to_list(StoreIDs)),
 	ThreadRef = monitor(process, Thread),
 	State#state{ io_threads = maps:put(Device, Thread, Threads2),	
