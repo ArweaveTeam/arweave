@@ -11,12 +11,12 @@
 -define(DEFAULT_EUNIT_TEST_TIMEOUT, 360).
 
 accepts_gossips_and_mines_test_() ->
-	PrepareTestFor = fun(BuildTXSetFun) ->
+	PrepareTestFor = fun(BuildTXSetFun, KeyType) ->
 		fun() ->
 			%% The weave has to be initialised under the fork so that
 			%% we can get the correct price estimations according
 			%% to the new pricinig model.
-			Key = {_, Pub} = ar_wallet:new(),
+			Key = {_, Pub} = ar_wallet:new(KeyType),
 			Wallets = [{ar_wallet:to_address(Pub), ?AR(5), <<>>}],
 			[B0] = ar_weave:init(Wallets),
 			accepts_gossips_and_mines(B0, BuildTXSetFun(Key, B0))
@@ -24,12 +24,20 @@ accepts_gossips_and_mines_test_() ->
 	end,
 	[
 		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
-			"One transaction with wallet list anchor followed by one with block anchor",
-			PrepareTestFor(fun one_wallet_list_one_block_anchored_txs/2)
+			"One RSA transaction with wallet list anchor followed by one with block anchor",
+			PrepareTestFor(fun one_wallet_list_one_block_anchored_txs/2, ?RSA_KEY_TYPE)
 		}},
 		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
-			"Two transactions with block anchor",
-			PrepareTestFor(fun two_block_anchored_txs/2)
+			"One ECDSA transaction with wallet list anchor followed by one with block anchor",
+			PrepareTestFor(fun one_wallet_list_one_block_anchored_txs/2, ?ECDSA_KEY_TYPE)
+		}},
+		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+			"Two RSA transactions with block anchor",
+			PrepareTestFor(fun two_block_anchored_txs/2, ?RSA_KEY_TYPE)
+		}},
+		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+			"Two ECDSA transactions with block anchor",
+			PrepareTestFor(fun two_block_anchored_txs/2, ?ECDSA_KEY_TYPE)
 		}}
 	].
 
@@ -858,18 +866,49 @@ recovers_from_forks(ForkHeight) ->
 one_wallet_list_one_block_anchored_txs(Key, B0) ->
 	%% Sign only after the node has started to get the correct price
 	%% estimation from it.
-	TX1Fun = fun() -> ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1) }) end,
-	TX2Fun = fun() -> ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
-			last_tx => B0#block.indep_hash }) end,
+	{_, {KeyType, _}} = Key,
+	TX1Fun = fun() ->
+		case KeyType of
+			?RSA_KEY_TYPE ->
+				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1) });
+			?ECDSA_KEY_TYPE ->
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1), last_tx => <<>> })
+		end end,
+	TX2Fun = fun() ->
+		case KeyType of
+			?RSA_KEY_TYPE ->
+				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+						last_tx => B0#block.indep_hash });
+			?ECDSA_KEY_TYPE ->
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
+						last_tx => B0#block.indep_hash })
+		end end,
 	[TX1Fun, TX2Fun].
 
 two_block_anchored_txs(Key, B0) ->
 	%% Sign only after the node has started to get the correct price
 	%% estimation from it.
-	TX1Fun = fun() -> ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
-			last_tx => B0#block.indep_hash }) end,
-	TX2Fun = fun() -> ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
-			last_tx => B0#block.indep_hash }) end,
+	{_, {KeyType, _}} = Key,
+	TX1Fun = fun() ->
+		case KeyType of
+			?RSA_KEY_TYPE ->
+				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+						last_tx => B0#block.indep_hash });
+			?ECDSA_KEY_TYPE ->
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
+						last_tx => B0#block.indep_hash })
+		end end,
+	TX2Fun = fun() ->
+		case KeyType of
+			?RSA_KEY_TYPE ->
+				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+						last_tx => B0#block.indep_hash });
+			?ECDSA_KEY_TYPE ->
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
+						last_tx => B0#block.indep_hash,
+						%% A tag to distinguish deterministic ECDSA transactions.
+						tags => [{<<"id">>, <<>>}] })
+		end end,
 	[TX1Fun, TX2Fun].
 
 empty_tx_set(_Key, _B0) ->
