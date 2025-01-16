@@ -1,7 +1,8 @@
 -module(ar_post_block_tests).
 
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
@@ -30,8 +31,7 @@ reset_node() ->
 	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
 	PrevB = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, PrevH]),
 	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	Key = element(1,
-		ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
+	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
 	{Key, B, PrevB}.
 
 setup_all_post_2_7() ->
@@ -323,7 +323,7 @@ test_rejects_invalid_blocks() ->
 	%% Nonce limiter output too far in the future.
 	Info1 = B1#block.nonce_limiter_info,
 	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	Key = element(1, ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
+	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
 	B3 = sign_block(B1#block{
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
@@ -355,7 +355,7 @@ test_rejects_invalid_blocks() ->
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
 			hash = crypto:strong_rand_bytes(32),
-			reward_key = element(2, InvalidKey) }, B0, element(1, InvalidKey)),
+			reward_key = element(2, InvalidKey) }, B0, InvalidKey),
 	timer:sleep(100 * 2), % ?THROTTLE_BY_IP_INTERVAL_MS * 2
 	post_block(B6, [invalid_hash_preimage, invalid_pow]),
 	?assertMatch({ok, {{<<"403">>, _}, _,
@@ -467,19 +467,26 @@ test_rejects_invalid_blocks() ->
 	ar_blacklist_middleware:reset().
 
 rejects_blocks_with_invalid_double_signing_proof_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	test_with_mocked_functions([{ar_fork, height_2_9, fun() -> 0 end}],
 		fun test_reject_block_invalid_double_signing_proof/0).
 
 test_reject_block_invalid_double_signing_proof() ->
+	[test_reject_block_invalid_double_signing_proof(KeyType)
+		|| KeyType <- [?RSA_KEY_TYPE, ?ECDSA_KEY_TYPE]].
+
+test_reject_block_invalid_double_signing_proof(KeyType) ->
+	?debugFmt("KeyType: ~p~n", [KeyType]),
+	FullKey = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, [KeyType]),
+	MiningAddr = ar_wallet:to_address(FullKey),
 	Key0 = ar_wallet:new(),
 	Addr0 = ar_wallet:to_address(Key0),
 	[B0] = ar_weave:init([{Addr0, ?AR(1000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
+	?debugFmt("Genesis address: ~s, initial balance: ~B AR.~n", [ar_util:encode(Addr0), 1000]),
 	ar_test_node:start(B0),
-	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start_peer(peer1, B0, MiningAddr),
 	ar_test_node:disconnect_from(peer1),
-	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	ok = ar_events:subscribe(block),
-	{Key, _} = FullKey = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
+	{Priv, _} = Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
 	TX0 = ar_test_node:sign_tx(Key0, #{ target => ar_wallet:to_address(Key), quantity => ?AR(10) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX0),
 	ar_test_node:assert_post_tx_to_peer(main, TX0),
@@ -502,9 +509,9 @@ test_reject_block_invalid_double_signing_proof() ->
 	Preimage2 = << (B0#block.hash)/binary, (crypto:strong_rand_bytes(32))/binary >>,
 	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, Preimage2/binary >>,
-	Signature2 = ar_wallet:sign(Key, SignaturePreimage),
+	Signature2 = ar_wallet:sign(Priv, SignaturePreimage),
 	%% We cannot ban ourselves.
-	InvalidProof2 = {element(3, Key), B1#block.signature, CDiff, PrevCDiff, Preimage1,
+	InvalidProof2 = {element(3, Priv), B1#block.signature, CDiff, PrevCDiff, Preimage1,
 			Signature2, CDiff, PrevCDiff, Preimage2},
 	B3 = sign_block(B1#block{ double_signing_proof = InvalidProof2 }, B0, Key),
 	post_block(B3, invalid_double_signing_proof_same_address),
@@ -518,18 +525,21 @@ test_reject_block_invalid_double_signing_proof() ->
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, Preimage3/binary >>,
 	SignaturePreimage4 = << (ar_serialize:encode_int(CDiff, 16))/binary,
 					(ar_serialize:encode_int(PrevCDiff, 16))/binary, Preimage4/binary >>,
-	Signature3 = ar_wallet:sign(Key, SignaturePreimage3),
-	Signature4 = ar_wallet:sign(Key, SignaturePreimage4),
+	Signature3 = ar_wallet:sign(Priv, SignaturePreimage3),
+	Signature4 = ar_wallet:sign(Priv, SignaturePreimage4),
 	%% The account address is not in the reward history.
 	InvalidProof3 = {element(3, Key2), Signature3, CDiff, PrevCDiff, Preimage3,
 			Signature4, CDiff, PrevCDiff, Preimage4},
 	B5 = sign_block(B1#block{ double_signing_proof = InvalidProof3 }, B0, Key),
 	post_block(B5, invalid_double_signing_proof_not_in_reward_history),
-	ar_test_node:connect_to_peer(peer1),
-	wait_until_height(main, 2),
-	B6 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI2)]),
-	B7 = sign_block(B6, B1, Key),
+	B6 = ar_test_node:remote_call(peer1, ar_storage, read_block, [lists:nth(2, BI2)]),
+	B7 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI2)]),
+	%% ECDSA signatures are deterministic - we add a new tag to get a new signature here.
+	B7_2 = sign_block(B7#block{ tags = [<<"new_tag">>] }, B6, Key),
+	post_block(B6, valid),
 	post_block(B7, valid),
+	post_block(B7_2, valid),
+	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
 	BI3 = assert_wait_until_height(peer1, 3),
 	B8 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI3)]),
@@ -699,7 +709,7 @@ test_resigned_solution() ->
 	ar_test_node:mine(peer1),
 	B = ar_node:get_current_block(),
 	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	Key = element(1, ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr])),
+	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
 	ok = ar_events:subscribe(block),
 	B2 = sign_block(B#block{ tags = [<<"tag1">>] }, B0, Key),
 	post_block(B2, [valid]),
