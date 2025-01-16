@@ -869,14 +869,11 @@ handle_cast(sync_data, State) ->
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
-			?LOG_DEBUG([{event, sync_data_active}, {store_id, StoreID}]),
 			do_sync_data(State2);
 		paused ->
-			?LOG_DEBUG([{event, sync_data_paused}, {store_id, StoreID}]),
 			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_data),
 			State2;
 		_ ->
-			?LOG_DEBUG([{event, sync_data_stopped}, {store_id, StoreID}]),
 			State2
 	end,
 	{noreply, State3};
@@ -887,14 +884,11 @@ handle_cast(sync_data2, State) ->
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
-			?LOG_DEBUG([{event, sync_data2_active}, {store_id, StoreID}]),
 			do_sync_data2(State2);
 		paused ->
-			?LOG_DEBUG([{event, sync_data2_paused}, {store_id, StoreID}]),
 			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_data2),
 			State2;
 		_ ->
-			?LOG_DEBUG([{event, sync_data2_stopped}, {store_id, StoreID}]),
 			State2
 	end,
 	{noreply, State3};
@@ -915,9 +909,6 @@ handle_cast(collect_peer_intervals, State) ->
 	{noreply, State};
 
 handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
-		#sync_data_state{ store_id = StoreID } = State,
-	?LOG_DEBUG([{event, collect_peer_intervals_end}, {pid, self()}, {store_id, StoreID},
-		{range_end, End}]),
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS and
 	%% clear the all_peers_intervals cache so we can start fresh and requery peers for
@@ -931,7 +922,6 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 	IsJoined =
 		case ar_node:is_joined() of
 			false ->
-				?LOG_DEBUG([{event, collect_peer_intervals_not_joined}]),
 				ar_util:cast_after(1000, self(), {collect_peer_intervals, Start, End}),
 				false;
 			true ->
@@ -946,7 +936,6 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 					true ->
 						true;
 					_ ->
-						?LOG_DEBUG([{event, collect_peer_intervals_disk_space_insufficient}]),
 						ar_util:cast_after(30_000, self(), {collect_peer_intervals, Start, End}),
 						false
 				end
@@ -978,7 +967,6 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 				%% should feel free to adjust as necessary.
 				case gb_sets:size(Q) > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
 					true ->
-						?LOG_DEBUG([{event, collect_peer_intervals_queue_too_large}]),
 						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
 						true;
 					false ->
@@ -987,15 +975,13 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 		end,
 	case IsSyncQueueBusy of
 		true ->
-			?LOG_DEBUG([{event, collect_peer_intervals_sync_queue_busy}]),
 			ok;
 		false ->
 			case Start >= DiskPoolThreshold of
 				true ->
-					?LOG_DEBUG([{event, collect_peer_intervals_disk_pool_threshold_reached}]),
 					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
 				false ->
-					?LOG_DEBUG([{event, collect_peer_intervals_disk_pool_threshold_not_reached}]),
+					%% All checks have passed, find and enqueue intervals for one
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start
 					ar_peer_intervals:fetch(
@@ -1006,7 +992,6 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 	{noreply, State};
 
 handle_cast({update_all_peers_intervals, AllPeersIntervals}, State) ->
-	?LOG_DEBUG([{event, update_all_peers_intervals}]),
 	%% While we are working through the storage_module range we'll maintain a cache
 	%% of the mapping of peers to their advertised intervals. This ensures we don't query
 	%% each peer's /data_sync_record endpoint too often. Once we've made a full pass through
@@ -1015,12 +1000,10 @@ handle_cast({update_all_peers_intervals, AllPeersIntervals}, State) ->
 	{noreply, State#sync_data_state{ all_peers_intervals = AllPeersIntervals }};
 
 handle_cast({enqueue_intervals, []}, State) ->
-	?LOG_DEBUG([{event, enqueue_peer_intervals_empty}]),
 	{noreply, State};
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	?LOG_DEBUG([{event, enqueue_peer_intervals_not_empty}]),
 	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
 	%% so that:
 	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
@@ -1062,14 +1045,11 @@ handle_cast(sync_intervals, State) ->
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
-			?LOG_DEBUG([{event, sync_intervals_active}, {store_id, StoreID}]),
 			do_sync_intervals(State2);
 		paused ->
-			?LOG_DEBUG([{event, sync_intervals_paused}, {store_id, StoreID}]),
 			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_intervals),
 			State2;
 		_ ->
-			?LOG_DEBUG([{event, sync_intervals_off}, {store_id, StoreID}]),
 			State2
 	end,
 	{noreply, State3};
@@ -1080,13 +1060,10 @@ handle_cast({invalidate_bad_data_record, Args}, State) ->
 
 handle_cast({pack_and_store_chunk, Args} = Cast,
 			#sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_DEBUG([{event, pack_and_store_chunk}, {store_id, StoreID}]),
 	case is_disk_space_sufficient(StoreID) of
 		true ->
-			?LOG_DEBUG([{event, pack_and_store_chunk_sufficient_space}, {store_id, StoreID}]),
 			pack_and_store_chunk(Args, State);
 		_ ->
-			?LOG_DEBUG([{event, pack_and_store_chunk_insufficient_space}, {store_id, StoreID}]),
 			ar_util:cast_after(30000, self(), Cast),
 			{noreply, State}
 	end;
@@ -1497,7 +1474,6 @@ do_sync_intervals(State) ->
 	IsQueueEmpty =
 		case gb_sets:is_empty(Q) of
 			true ->
-				?LOG_DEBUG([{event, do_sync_intervals_queue_empty}]),
 				ar_util:cast_after(500, self(), sync_intervals),
 				true;
 			false ->
@@ -1510,7 +1486,6 @@ do_sync_intervals(State) ->
 			false ->
 				case is_disk_space_sufficient(StoreID) of
 					false ->
-						?LOG_DEBUG([{event, do_sync_intervals_disk_space_insufficient}]),
 						ar_util:cast_after(30000, self(), sync_intervals),
 						false;
 					true ->
@@ -1524,7 +1499,6 @@ do_sync_intervals(State) ->
 			true ->
 				case is_chunk_cache_full() of
 					true ->
-						?LOG_DEBUG([{event, do_sync_intervals_chunk_cache_full}]),
 						ar_util:cast_after(1000, self(), sync_intervals),
 						true;
 					false ->
@@ -1538,7 +1512,6 @@ do_sync_intervals(State) ->
 			false ->
 				case ar_data_sync_worker_master:ready_for_work() of
 					false ->
-						?LOG_DEBUG([{event, do_sync_intervals_sync_queue_busy}]),
 						ar_util:cast_after(200, self(), sync_intervals),
 						true;
 					true ->
@@ -1547,10 +1520,8 @@ do_sync_intervals(State) ->
 		end,
 	case AreSyncWorkersBusy of
 		true ->
-			?LOG_DEBUG([{event, do_sync_intervals_sync_queue_busy}]),
 			State;
 		false ->
-			?LOG_DEBUG([{event, do_sync_intervals_sync_queue_not_busy}]),
 			gen_server:cast(self(), sync_intervals),
 			{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
@@ -1582,7 +1553,6 @@ do_sync_data(State) ->
 do_sync_data2(#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [],
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
-	?LOG_DEBUG([{event, do_sync_data2_no_unsynced_intervals}]),
 	ar_util:cast_after(2000, self(), collect_peer_intervals),
 	State;
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
@@ -3024,7 +2994,6 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 pack_and_store_chunk({_, AbsoluteOffset, _, _, _, _, _, _, _, _, _, _},
 		#sync_data_state{ disk_pool_threshold = DiskPoolThreshold } = State)
 		when AbsoluteOffset > DiskPoolThreshold ->
-	?LOG_DEBUG([{event, pack_and_store_chunk_disk_pool_threshold}]),
 	%% We do not put data into storage modules unless it is well confirmed.
 	decrement_chunk_cache_size(),
 	{noreply, State};
@@ -3042,7 +3011,6 @@ pack_and_store_chunk(Args, State) ->
 		end,
 	case PackingStatus of
 		{ready, {StoredPacking, StoredChunk}} ->
-			?LOG_DEBUG([{event, pack_and_store_chunk_ready}]),
 			ChunkArgs = {StoredPacking, StoredChunk, AbsoluteOffset, TXRoot, ChunkSize},
 			{noreply, store_chunk(ChunkArgs, {StoredPacking, DataPath, Offset, DataRoot,
 					TXPath, OriginStoreID, OriginChunkDataKey}, State)};
@@ -3064,7 +3032,6 @@ pack_and_store_chunk(Args, State) ->
 									_ ->
 										{unpacked, UnpackedChunk}
 								end,
-							?LOG_DEBUG([{event, pack_and_store_chunk_repack_request}]),
 							ar_packing_server:request_repack(AbsoluteOffset,
 									{RequiredPacking, Packing2, Chunk2, AbsoluteOffset,
 										TXRoot, ChunkSize}),
@@ -3104,9 +3071,6 @@ process_store_chunk_queue(State, StartLen) ->
 						Threshold
 				end
 		end,
-	?LOG_DEBUG([{event, process_store_chunk_queue}, {len, Len}, {start_len, StartLen},
-		{threshold, Threshold}, {threshold2, Threshold2}, {timestamp, Timestamp}, {now, Now},
-		{elapsed, Now - Timestamp}, {store_id, StoreID}]),
 	case Len > Threshold2
 			orelse Now - Timestamp > ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD of
 		true ->

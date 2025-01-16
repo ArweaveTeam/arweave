@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([get_device_to_store_ids_map/0, get_store_id_to_device_map/0,
-		get_store_ids_for_device/1, acquire_lock/3, release_lock/2]).
+		get_store_ids_for_device/1, is_ready/0, acquire_lock/3, release_lock/2]).
 
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2]).
 
@@ -15,7 +15,8 @@
 
 -record(state, {
 	store_id_to_device = #{},
-	device_locks = #{}
+	device_locks = #{},
+	initialized = false
 }).
 
 -type device_mode() :: prepare | sync | repack.
@@ -34,6 +35,10 @@ get_store_id_to_device_map() ->
 get_store_ids_for_device(Device) ->
 	DeviceToStoreIDs = get_device_to_store_ids_map(),
 	maps:get(Device, DeviceToStoreIDs, sets:new()).
+
+is_ready() ->
+	State = gen_server:call(?MODULE, get_state),
+	State#state.initialized.
 
 %% @doc Helper function to wrap common logic around acquiring a device lock.
 -spec acquire_lock(device_mode(), string(), atom()) -> atom().
@@ -76,8 +81,8 @@ init([]) ->
 handle_call(get_state, _From, State) ->
 	{reply, State, State};
 handle_call({acquire_lock, Mode, StoreID}, _From, State) ->
-	case maps:size(State#state.store_id_to_device) of
-		0 ->
+	case State#state.initialized of
+		false ->
 			% Not yet initialized.
 			{reply, false, State};
 		_ ->
@@ -98,8 +103,8 @@ handle_cast(initialize_state, State) ->
 	end,
 	{noreply, State2};
 handle_cast({release_lock, Mode, StoreID}, State) ->
-	case maps:size(State#state.store_id_to_device) of
-		0 ->
+	case State#state.initialized of
+		false ->
 			% Not yet initialized.
 			{noreply, State};
 		_ ->
@@ -127,7 +132,7 @@ initialize_state(State) ->
 			StoreID = ar_storage_module:id(Module),
 			Device = get_system_device(Module),
 			?LOG_INFO([
-				{event, storage_module_device}, {storage_module, Module}, {device, Device}]),
+				{event, storage_module_device}, {store_id, StoreID}, {device, Device}]),
 			maps:put(StoreID, Device, Acc)
 		end,
 		#{},
@@ -135,7 +140,8 @@ initialize_state(State) ->
 	),
 
 	State#state{
-		store_id_to_device = StoreIDToDevice
+		store_id_to_device = StoreIDToDevice,
+		initialized = true
 	}.
 
 get_system_device(StorageModule) ->

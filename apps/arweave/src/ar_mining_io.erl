@@ -94,7 +94,8 @@ garbage_collect() ->
 %%%===================================================================
 
 init(Mode) ->
-	{ok, start_io_threads(#state{ mode = Mode })}.
+	gen_server:cast(self(), initialize_state),
+	{ok, #state{ mode = Mode }}.
 
 handle_call({set_largest_seen_upper_bound, PartitionUpperBound}, _From, State) ->
 	#state{ partition_upper_bound = CurrentUpperBound } = State,
@@ -124,6 +125,16 @@ handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast(initialize_state, State) ->
+	State2 = case ar_device_lock:is_ready() of
+		false ->
+			ar_util:cast_after(1000, self(), initialize_state),
+			State;
+		true ->
+			start_io_threads(State)
+	end,
+	{noreply, State2};
 
 handle_cast(garbage_collect, State) ->
 	erlang:garbage_collect(self(),
