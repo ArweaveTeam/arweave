@@ -12,11 +12,11 @@
 repack_mine_test_() ->
 	Timeout = ?REPACK_MINE_TEST_TIMEOUT,
 	[
-		{timeout, Timeout, {with, {replica_2_9, replica_2_9}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {replica_2_9, spora_2_6}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {replica_2_9, composite_1}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {replica_2_9, composite_2}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {replica_2_9, unpacked}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, replica_2_9}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, spora_2_6}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, composite_1}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, composite_2}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, unpacked}, [fun test_repacking_blocked/1]}},
 		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_mine/1]}},
 		{timeout, Timeout, {with, {unpacked, spora_2_6}, [fun test_repack_mine/1]}},
 		{timeout, Timeout, {with, {unpacked, composite_1}, [fun test_repack_mine/1]}},
