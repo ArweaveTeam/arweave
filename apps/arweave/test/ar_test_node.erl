@@ -9,7 +9,8 @@
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
 		load_fixture/1,
-		get_default_storage_module_packing/2, generate_genesis_data/1, get_genesis_chunk/1]).
+		get_default_storage_module_packing/2, generate_genesis_data/1, get_genesis_chunk/1,
+		all_nodes/1, new_custom_size_rsa_wallet/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4,
@@ -35,9 +36,10 @@
 
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% May occasionally take quite long on a slow CI server, expecially in tests
@@ -75,6 +77,42 @@ all_peers(e2e) ->
 
 all_nodes(TestType) ->
 	[{TestType, main} | all_peers(TestType)].
+
+new_custom_size_rsa_wallet(Size) ->
+	KeyType = ?RSA_KEY_TYPE,
+	KeyAlg = element(1, KeyType),
+	PublicExpnt = 65537,
+	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
+		crypto:generate_key(rsa, {Size * 8, PublicExpnt}),
+	Key =
+		ar_serialize:jsonify(
+			{
+				[
+					{kty, <<"RSA">>},
+					{ext, true},
+					{e, ar_util:encode(Expnt)},
+					{n, ar_util:encode(Pub)},
+					{d, ar_util:encode(Priv)},
+					{p, ar_util:encode(P1)},
+					{q, ar_util:encode(P2)},
+					{dp, ar_util:encode(E1)},
+					{dq, ar_util:encode(E2)},
+					{qi, ar_util:encode(C)}
+				]
+			}
+		),
+	Filename = ar_wallet:wallet_filepath(wallet_address, Pub, KeyType),
+	case filelib:ensure_dir(Filename) of
+		ok ->
+			case ar_storage:write_file_atomic(Filename, Key) of
+				ok ->
+					{{KeyType, Priv, Pub}, {KeyType, Pub}};
+				Error2 ->
+					Error2
+			end;
+		Error ->
+			Error
+	end.
 
 boot_peers([]) ->
 	ok;
@@ -693,7 +731,7 @@ insert_root(Params) ->
 	end.
 
 sign_tx(Node, Wallet, Args, SignFun) ->
-	{_, {KeyType, Pub}} = Wallet,
+	{_, {_, Pub}} = Wallet,
 	Data = maps:get(data, Args, <<>>),
 	DataSize = maps:get(data_size, Args, byte_size(Data)),
 	Format = maps:get(format, Args, 1),

@@ -470,6 +470,26 @@ rejects_blocks_with_invalid_double_signing_proof_test_() ->
 	test_with_mocked_functions([{ar_fork, height_2_9, fun() -> 0 end}],
 		fun test_reject_block_invalid_double_signing_proof/0).
 
+rejects_blocks_with_small_rsa_keys_test_() ->
+	{timeout, 60, fun test_rejects_blocks_with_small_rsa_keys/0}.
+
+test_rejects_blocks_with_small_rsa_keys() ->
+	[B0] = ar_weave:init(),
+	ar_test_node:start(B0),
+	ok = ar_events:subscribe(block),
+	ar_test_node:mine(main),
+	BI = ar_test_node:assert_wait_until_height(main, 1),
+	B1 = ar_storage:read_block(hd(BI)),
+	Key2 = ar_test_node:new_custom_size_rsa_wallet(512), % normal 512-byte key
+	B2 = sign_block(B1, B0, Key2),
+	post_block(B2, invalid_resigned_solution_hash), % because reward_addr changed
+	Key3 = ar_test_node:new_custom_size_rsa_wallet(66), % 66-byte key
+	B3 = sign_block(B1, B0, Key3),
+	post_block(B3, invalid_signature),
+	Key4 = ar_test_node:new_custom_size_rsa_wallet(511),
+	B4 = sign_block(B1, B0, Key4),
+	post_block(B4, invalid_signature).
+
 test_reject_block_invalid_double_signing_proof() ->
 	[test_reject_block_invalid_double_signing_proof(KeyType)
 		|| KeyType <- [?RSA_KEY_TYPE, ?ECDSA_KEY_TYPE]].

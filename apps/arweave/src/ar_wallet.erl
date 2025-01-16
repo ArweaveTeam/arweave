@@ -6,6 +6,7 @@
 		load_key/1, load_keyfile/1, new_keyfile/0, new_keyfile/1,
 		new_keyfile/2, base64_address_with_optional_checksum_to_decoded_address/1,
 		base64_address_with_optional_checksum_to_decoded_address_safe/1, wallet_filepath/1,
+		wallet_filepath/3,
 		get_or_create_wallet/1, recover_key/3]).
 
 -include("../include/ar.hrl").
