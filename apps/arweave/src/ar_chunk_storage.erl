@@ -8,7 +8,8 @@
 		get_range/2, get_range/3, cut/2, delete/1, delete/2, 
 		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1, 
 		list_files/2, run_defragmentation/0,
-		get_storage_module_path/2, get_chunk_storage_path/2, is_prepared/1, needs_prepare/1,
+		get_storage_module_path/2, get_chunk_storage_path/2,
+		get_prepare_status/1, set_prepare_status/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
 		sync_record_id/1, store_chunk/7, write_chunk/4, write_chunk2/6, record_chunk/5]).
 
@@ -33,8 +34,7 @@
 	range_end,
 	reward_addr,
 	prepare_replica_2_9_cursor,
-	needs_prepare = false,
-	is_prepared = false
+	prepare_status = undefined
 }).
 
 %%%===================================================================
@@ -251,25 +251,16 @@ get_storage_module_path(DataDir, StoreID) ->
 get_chunk_storage_path(DataDir, StoreID) ->
 	filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
 
-%% @doc Return true if the storage is ready to accept chunks.
--spec is_prepared(StoreID :: string()) -> true | false.
-is_prepared(StoreID) ->
+get_prepare_status(StoreID) ->
 	case get_state(StoreID) of
 		{error, _} = Error ->
 			Error;
 		State ->
-			State#state.is_prepared
+			State#state.prepare_status
 	end.
 
-%% @doc Return true if the storage needs to be prepared before it can accept chunks.
--spec needs_prepare(StoreID :: string()) -> true | false.
-needs_prepare(StoreID) ->
-	case get_state(StoreID) of
-		{error, _} = Error ->
-			Error;
-		State ->
-			State#state.needs_prepare
-	end.
+set_prepare_status(StoreID, Status) ->
+	gen_server:cast(name(StoreID), {set_prepare_status, Status}).
 
 %% @doc Return the start offset of the bucket containing the given offset.
 %% A chunk bucket a 0-based, 256-KiB wide, 256-KiB aligned range that fully contains a chunk.
@@ -339,19 +330,18 @@ init({StoreID, RepackInPlacePacking}) ->
 			{true, RewardAddr} ->
 				PrepareCursor = {Start, _SubChunkStart} = 
 					read_prepare_replica_2_9_cursor(StoreID, {RangeStart + 1, 0}),
-				IsPrepared =
+				PrepareStatus =
 					case Start =< RangeEnd of
 						true ->
-							false;
+							paused;
 						false ->
-							true
+							complete
 					end,
 				State#state{ reward_addr = RewardAddr,
 						prepare_replica_2_9_cursor = PrepareCursor,
-						needs_prepare = true,
-						is_prepared = IsPrepared };
+						prepare_status = PrepareStatus };
 			_ ->
-				State#state{ needs_prepare = false, is_prepared = true }
+				State#state{ prepare_status = off }
 		end,
 	case RepackInPlacePacking of
 		none ->
@@ -381,160 +371,33 @@ warn_custom_chunk_group_size(StoreID) ->
 			ok
 	end.
 
-handle_cast(prepare_replica_2_9, #state{ store_id = StoreID } = State) ->
-	case try_acquire_replica_2_9_formatting_lock(StoreID) of
-		true ->
-			?LOG_DEBUG([{event, acquired_replica_2_9_formatting_lock}, {store_id, StoreID}]),
-			gen_server:cast(self(), do_prepare_replica_2_9);
-		false ->
-			?LOG_DEBUG([{event, failed_to_acquire_replica_2_9_formatting_lock}, {store_id, StoreID}]),
-			ar_util:cast_after(2000, self(), prepare_replica_2_9)
+handle_cast({set_prepare_status, Status}, State) ->
+	State2 = case State#state.prepare_status of
+		off when Status /= off ->
+			?LOG_ERROR([{event, invalid_prepare_status},
+				{store_id, State#state.store_id}, {current_status, off},
+				{new_status, Status}]),
+			State;
+		complete when Status /= complete ->
+			?LOG_ERROR([{event, invalid_prepare_status},
+				{store_id, State#state.store_id}, {current_status, complete},
+				{new_status, Status}]);
+		_ ->
+			State#state{ prepare_status = Status }
 	end,
-	{noreply, State};
+	{noreply, State2};
 
-handle_cast(do_prepare_replica_2_9, State) ->
-	#state{ reward_addr = RewardAddr, prepare_replica_2_9_cursor = {Start, SubChunkStart},
-			range_start = RangeStart, range_end = RangeEnd,
-			store_id = StoreID, repack_cursor = RepackCursor } = State,
-	
-	BucketEndOffset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
-	PaddedRangeEnd = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(RangeEnd)),
-	%% Sanity checks:
-	BucketEndOffset = get_chunk_bucket_end(BucketEndOffset),
-	true = (
-		max(0, BucketEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(BucketEndOffset)
-	),
-	%% End of sanity checks.
-
-	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
-	CheckRangeEnd =
-		case BucketEndOffset > PaddedRangeEnd of
-			true ->
-				release_replica_2_9_formatting_lock(StoreID),
-				?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
-						{store_id, StoreID}]),
-				ar:console("The storage module ~s is prepared for 2.9 replication.~n",
-						[StoreID]),
-				complete;
-			false ->
-				false
-		end,
-	%% For now the SubChunkStart and SubChunkStart2 values will always be 0. The field
-	%% is used to make future improvemets easier. e.g. have the cursor increment by
-	%% sub-chunk rather than chunk.
-	SubChunkStart2 = (SubChunkStart + ?DATA_CHUNK_SIZE) rem ?DATA_CHUNK_SIZE,
-	Start2 = BucketEndOffset + ?DATA_CHUNK_SIZE,
-	Cursor2 = {Start2, SubChunkStart2},
-	State2 = State#state{ prepare_replica_2_9_cursor = Cursor2 },
-	CheckRepackCursor =
-		case CheckRangeEnd of
-			complete ->
-				complete;
-			false ->
-				case RepackCursor of
-					none ->
-						false;
-					_ ->
-						SectorSize = ar_replica_2_9:get_sector_size(),
-						RangeStart2 = get_chunk_bucket_start(RangeStart + 1),
-						RepackCursor2 = get_chunk_bucket_start(RepackCursor + 1),
-						RepackSectorShift = (RepackCursor2 - RangeStart2) rem SectorSize,
-						SectorShift = (BucketEndOffset - RangeStart2) rem SectorSize,
-						case SectorShift > RepackSectorShift of
-							true ->
-								waiting_for_repack;
-							false ->
-								false
-						end
-				end
-		end,
-	CheckIsRecorded =
-		case CheckRepackCursor of
-			complete ->
-				complete;
-			waiting_for_repack ->
-				waiting_for_repack;
-			false ->
-				ar_entropy_storage:is_sub_chunk_recorded(
-					BucketEndOffset, SubChunkStart, StoreID)
-		end,
-	StoreEntropy =
-		case CheckIsRecorded of
-			complete ->
-				complete;
-			waiting_for_repack ->
-				waiting_for_repack;
-			true ->
-				is_recorded;
-			false ->
-				%% Get all the entropies needed to encipher the chunk at BucketEndOffset.
-				Entropies = ar_entropy_storage:generate_entropies(RewardAddr, BucketEndOffset, SubChunkStart),
-				EntropyKeys = ar_entropy_storage:generate_entropy_keys(
-					RewardAddr, BucketEndOffset, SubChunkStart),
-				SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
-				%% If we are not at the beginning of the entropy, shift the offset to
-				%% the left. store_entropy will traverse the entire 2.9 partition shifting
-				%% the offset by sector size. It may happen some sub-chunks will be written
-				%% to the neighbouring storage module(s) on the left or on the right
-				%% since the storage module may be configured to be smaller than the
-				%% partition.
-				BucketEndOffset2 = ar_entropy_storage:shift_entropy_offset(
-					BucketEndOffset, -SliceIndex),
-				%% The end of a recall partition (3.6TB) may fall in the middle of a chunk, so
-				%% we'll use the padded offset to end the store_entropy iteration.
-				PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
-				PaddedPartitionEnd =
-					get_chunk_bucket_end(ar_block:get_chunk_padded_offset(PartitionEnd)),
-				ar_entropy_storage:store_entropy(Entropies, BucketEndOffset2, SubChunkStart, PaddedPartitionEnd,
-						EntropyKeys, RewardAddr, 0, 0)
-		end,
-	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
-			{start, Start}, {bucket_end_offset, BucketEndOffset},
-			{range_end, RangeEnd}, {padded_range_end, PaddedRangeEnd},
-			{sub_chunk_start, SubChunkStart},
-			{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
-	case StoreEntropy of
-		complete ->
-			{noreply, State#state{ is_prepared = true }};
-		waiting_for_repack ->
-			?LOG_INFO([{event, waiting_for_repacking},
-					{store_id, StoreID},
-					{bucket_end_offset, BucketEndOffset},
-					{repack_cursor, RepackCursor},
-					{cursor, Start},
-					{range_start, RangeStart},
-					{range_end, RangeEnd}]),
-			ar_util:cast_after(10000, self(), do_prepare_replica_2_9),
-			{noreply, State};
-		is_recorded ->
-			gen_server:cast(self(), do_prepare_replica_2_9),
-			{noreply, State2};
-		{error, Error} ->
-			?LOG_WARNING([{event, failed_to_store_replica_2_9_entropy},
-					{cursor, Start},
-					{store_id, StoreID},
-					{reason, io_lib:format("~p", [Error])}]),
-			ar_util:cast_after(500, self(), do_prepare_replica_2_9),
-			{noreply, State};
-		{ok, SubChunksStored} ->
-			?LOG_DEBUG([{event, stored_replica_2_9_entropy},
-					{sub_chunks_stored, SubChunksStored},
-					{store_id, StoreID},
-					{cursor, Start},
-					{bucket_end_offset,	BucketEndOffset}]),
-			gen_server:cast(self(), do_prepare_replica_2_9),
-			case store_prepare_replica_2_9_cursor(Cursor2, StoreID) of
-				ok ->
-					ok;
-				{error, Error} ->
-					?LOG_WARNING([{event, failed_to_store_prepare_replica_2_9_cursor},
-							{chunk_cursor, Start2},
-							{sub_chunk_cursor, SubChunkStart2},
-							{store_id, StoreID},
-							{reason, io_lib:format("~p", [Error])}])
-			end,
-			{noreply, State2}
-	end;
+handle_cast(prepare_replica_2_9, #state{ prepare_status = PrepareStatus } = State) ->
+	State2 = case PrepareStatus of
+		active ->
+			do_prepare_replica_2_9(State);
+		paused ->
+			ar_util:cast_after(2000, self(), prepare_replica_2_9),
+			State;
+		_ ->
+			ok
+	end,
+	{noreply, State2};
 
 handle_cast(store_repack_cursor, #state{ repacking_complete = true } = State) ->
 	{noreply, State};
@@ -626,8 +489,9 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 			{noreply, State};
 		Args ->
 			State2 = State#state{ packing_map = maps:remove(Ref, Map) },
-			#state{ store_id = StoreID, reward_addr = RewardAddr, is_prepared = IsPrepared,
-				file_index = FileIndex } = State2,
+			#state{ store_id = StoreID, reward_addr = RewardAddr,
+				prepare_status = PrepareStatus, file_index = FileIndex } = State2,
+			IsPrepared = PrepareStatus == complete,
 			case ar_repack:chunk_repacked(
 					ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) of
 				{ok, FileIndex2} ->
@@ -674,6 +538,153 @@ get_chunk_group_size() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.chunk_storage_file_size.
 
+do_prepare_replica_2_9(State) ->
+	#state{ reward_addr = RewardAddr, prepare_replica_2_9_cursor = {Start, SubChunkStart},
+	range_start = RangeStart, range_end = RangeEnd,
+	store_id = StoreID, repack_cursor = RepackCursor } = State,
+
+	PaddedEndOffset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
+	PaddedRangeEnd = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(RangeEnd)),
+	%% Sanity checks:
+	PaddedEndOffset = get_chunk_bucket_end(PaddedEndOffset),
+	true = (
+	max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(PaddedEndOffset)
+	),
+	%% End of sanity checks.
+
+	Partition = ar_replica_2_9:get_entropy_partition(PaddedEndOffset),
+	CheckRangeEnd =
+	case PaddedEndOffset > PaddedRangeEnd of
+		true ->
+			?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
+					{store_id, StoreID}]),
+			ar:console("The storage module ~s is prepared for 2.9 replication.~n",
+					[StoreID]),
+			complete;
+		false ->
+			false
+	end,
+	%% For now the SubChunkStart and SubChunkStart2 values will always be 0. The field
+	%% is used to make future improvemets easier. e.g. have the cursor increment by
+	%% sub-chunk rather than chunk.
+	SubChunkStart2 = (SubChunkStart + ?DATA_CHUNK_SIZE) rem ?DATA_CHUNK_SIZE,
+	Start2 = PaddedEndOffset + ?DATA_CHUNK_SIZE,
+	Cursor2 = {Start2, SubChunkStart2},
+	State2 = State#state{ prepare_replica_2_9_cursor = Cursor2 },
+	CheckRepackCursor =
+		case CheckRangeEnd of
+			complete ->
+				complete;
+			false ->
+				case RepackCursor of
+					none ->
+						false;
+					_ ->
+						SectorSize = ar_replica_2_9:get_sector_size(),
+						RangeStart2 = get_chunk_bucket_start(RangeStart + 1),
+						RepackCursor2 = get_chunk_bucket_start(RepackCursor + 1),
+						RepackSectorShift = (RepackCursor2 - RangeStart2) rem SectorSize,
+						SectorShift = (PaddedEndOffset - RangeStart2) rem SectorSize,
+						case SectorShift > RepackSectorShift of
+							true ->
+								waiting_for_repack;
+							false ->
+								false
+						end
+				end
+		end,
+	CheckIsRecorded =
+		case CheckRepackCursor of
+			complete ->
+				complete;
+			waiting_for_repack ->
+				waiting_for_repack;
+			false ->
+				ar_entropy_storage:is_sub_chunk_recorded(
+					PaddedEndOffset, SubChunkStart, StoreID)
+		end,
+	StoreEntropy =
+		case CheckIsRecorded of
+			complete ->
+				complete;
+			waiting_for_repack ->
+				waiting_for_repack;
+			true ->
+				is_recorded;
+			false ->
+				%% Get all the entropies needed to encipher the chunk at PaddedEndOffset.
+				Entropies = ar_entropy_storage:generate_entropies(
+					RewardAddr, PaddedEndOffset, SubChunkStart),
+				EntropyKeys = ar_entropy_storage:generate_entropy_keys(
+					RewardAddr, PaddedEndOffset, SubChunkStart),
+				SliceIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
+				%% If we are not at the beginning of the entropy, shift the offset to
+				%% the left. store_entropy will traverse the entire 2.9 partition shifting
+				%% the offset by sector size. It may happen some sub-chunks will be written
+				%% to the neighbouring storage module(s) on the left or on the right
+				%% since the storage module may be configured to be smaller than the
+				%% partition.
+				PaddedEndOffset2 = ar_entropy_storage:shift_entropy_offset(
+					PaddedEndOffset, -SliceIndex),
+				%% The end of a recall partition (3.6TB) may fall in the middle of a chunk, so
+				%% we'll use the padded offset to end the store_entropy iteration.
+				PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
+				PaddedPartitionEnd =
+					get_chunk_bucket_end(ar_block:get_chunk_padded_offset(PartitionEnd)),
+				ar_entropy_storage:store_entropy(
+					Entropies, PaddedEndOffset2, SubChunkStart, PaddedPartitionEnd,
+					EntropyKeys, RewardAddr, 0, 0)
+		end,
+	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
+		{start, Start}, {padded_end_offset, PaddedEndOffset},
+		{range_start, RangeStart}, {range_end, RangeEnd},
+		{repack_cursor, RepackCursor},
+		{padded_range_end, PaddedRangeEnd}, {sub_chunk_start, SubChunkStart},
+		{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
+	case StoreEntropy of
+		complete ->
+			ar_device_mode:sync_state(),
+			State#state{ prepare_status = complete };
+		waiting_for_repack ->
+			?LOG_INFO([{event, waiting_for_repacking},
+					{store_id, StoreID},
+					{padded_end_offset, PaddedEndOffset},
+					{repack_cursor, RepackCursor},
+					{cursor, Start},
+					{range_start, RangeStart},
+					{range_end, RangeEnd}]),
+			ar_util:cast_after(10000, self(), prepare_replica_2_9),
+			State;
+		is_recorded ->
+			gen_server:cast(self(), prepare_replica_2_9),
+			State2;
+		{error, Error} ->
+			?LOG_WARNING([{event, failed_to_store_replica_2_9_entropy},
+					{cursor, Start},
+					{store_id, StoreID},
+					{reason, io_lib:format("~p", [Error])}]),
+			ar_util:cast_after(500, self(), prepare_replica_2_9),
+			State;
+		{ok, SubChunksStored} ->
+			?LOG_DEBUG([{event, stored_replica_2_9_entropy},
+					{sub_chunks_stored, SubChunksStored},
+					{store_id, StoreID},
+					{cursor, Start},
+					{padded_end_offset, PaddedEndOffset}]),
+			gen_server:cast(self(), prepare_replica_2_9),
+			case store_prepare_replica_2_9_cursor(Cursor2, StoreID) of
+				ok ->
+					ok;
+				{error, Error} ->
+					?LOG_WARNING([{event, failed_to_store_prepare_replica_2_9_cursor},
+							{chunk_cursor, Start2},
+							{sub_chunk_cursor, SubChunkStart2},
+							{store_id, StoreID},
+							{reason, io_lib:format("~p", [Error])}])
+			end,
+			State2
+	end.
+
 read_prepare_replica_2_9_cursor(StoreID, Default) ->
 	Filepath = get_filepath("prepare_replica_2_9_cursor", StoreID),
 	case file:read_file(Filepath) of
@@ -700,8 +711,9 @@ get_filepath(Name, StoreID) ->
 	filename:join([ChunkDir, Name]).
 
 store_chunk(PaddedEndOffset, Chunk, Packing, State) ->
-	#state{ store_id = StoreID, reward_addr = RewardAddr, is_prepared = IsPrepared,
+	#state{ store_id = StoreID, reward_addr = RewardAddr, prepare_status = PrepareStatus,
 		file_index = FileIndex } = State,
+	IsPrepared = PrepareStatus == complete,
 	store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr).
 
 store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr) ->
@@ -1097,55 +1109,6 @@ read_chunks_sizes(DataDir) ->
 
 modules_to_defrag(#config{defragmentation_modules = [_ | _] = Modules}) -> Modules;
 modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
-
--ifdef(AR_TEST).
-try_acquire_replica_2_9_formatting_lock(_StoreID) ->
-	true.
--else.
-try_acquire_replica_2_9_formatting_lock(StoreID) ->
-	case ets:insert_new(ar_chunk_storage, {update_replica_2_9_lock}) of
-		true ->
-			Count = get_replica_2_9_acquired_locks_count(),
-			{ok, Config} = application:get_env(arweave, config),
-			MaxWorkers = Config#config.replica_2_9_workers,
-			case Count + 1 > MaxWorkers of
-				true ->
-					ets:delete(ar_chunk_storage, update_replica_2_9_lock),
-					false;
-				false ->
-					ets:update_counter(ar_chunk_storage, replica_2_9_acquired_locks_count,
-							1, {replica_2_9_acquired_locks_count, 0}),
-					ets:delete(ar_chunk_storage, update_replica_2_9_lock),
-					true
-			end;
-		false ->
-			try_acquire_replica_2_9_formatting_lock(StoreID)
-	end.
--endif.
-
-get_replica_2_9_acquired_locks_count() ->
-	case ets:lookup(ar_chunk_storage, replica_2_9_acquired_locks_count) of
-		[] ->
-			0;
-		[{_, Count}] ->
-			Count
-	end.
-
-release_replica_2_9_formatting_lock(StoreID) ->
-	case ets:insert_new(ar_chunk_storage, {update_replica_2_9_lock}) of
-		true ->
-			Count = get_replica_2_9_acquired_locks_count(),
-			case Count of
-				0 ->
-					ok;
-				_ ->
-					ets:update_counter(ar_chunk_storage, replica_2_9_acquired_locks_count,
-							-1, {replica_2_9_acquired_locks_count, 0})
-			end,
-			ets:delete(ar_chunk_storage, update_replica_2_9_lock);
-		false ->
-			release_replica_2_9_formatting_lock(StoreID)
-	end.
 
 %%%===================================================================
 %%% Tests.

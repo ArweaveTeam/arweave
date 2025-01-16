@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([get_device_to_store_ids_map/0, get_store_id_to_device_map/0,
-		get_store_ids_for_device/1]).
+		get_store_ids_for_device/1, sync_state/0]).
 
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2]).
 
@@ -45,6 +45,9 @@ get_store_ids_for_device(Device) ->
 	DeviceToStoreIDs = get_device_to_store_ids_map(),
 	maps:get(Device, DeviceToStoreIDs, []).
 
+sync_state() ->
+	gen_server:cast(?MODULE, sync_state).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -65,6 +68,10 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
+handle_cast(sync_state, State) ->
+	State2 = refresh_state(State),
+	State3 = push_state(State2),
+	{noreply, State3};
 handle_cast(Request, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
@@ -139,13 +146,8 @@ get_system_device(StorageModule) ->
 	end.
 
 query_prepare_status(StoreID) ->
-	NeedsPrepare = ar_chunk_storage:needs_prepare(StoreID),
-	IsPrepared = ar_chunk_storage:is_prepared(StoreID),
-	case {NeedsPrepare, IsPrepared} of
-		{true, true} -> complete;
-		{true, false} -> paused;
-		{false, _} -> off;
-		Error ->
+	case ar_chunk_storage:get_prepare_status(StoreID) of
+		{error, _} = Error ->
 			?LOG_WARNING([
 				{event, error_refreshing_state},
 				{module, ?MODULE},
@@ -153,7 +155,8 @@ query_prepare_status(StoreID) ->
 				{store_id, StoreID},
 				{error, Error}
 			]),
-			off
+			off;
+		Status -> Status
 	end.
 
 query_sync_status(StoreID) ->
@@ -180,7 +183,26 @@ query_repack_status(StoreID) ->
 push_state(State) ->
 	DeviceModes = get_all_device_modes(2, State),
 	State2 = enforce_device_modes(DeviceModes, State),
+	maps:fold(
+		fun(StoreID, Status) -> 
+			push_prepare_status(StoreID, Status#module_status.prepare),
+			push_sync_status(StoreID, Status#module_status.sync),
+			push_repack_status(StoreID, Status#module_status.repack)
+		end,
+		ok,
+		State2#state.store_id_to_status
+	),
+	log_state(State2),
 	State2.
+
+push_prepare_status(StoreID, Status) ->
+	ar_chunk_storage:set_prepare_status(StoreID, Status).
+
+push_sync_status(StoreID, Status) ->
+	ok.
+
+push_repack_status(StoreID, Status) ->
+	ok.
 
 get_all_device_modes(MaxPrepareModules, State) ->
 	% Map devices to their mode. e.g. #{ sync => ["device1", "device2"] }
@@ -206,7 +228,7 @@ get_all_device_modes(MaxPrepareModules, State) ->
 			maps:put(sync, UpdatedSyncDevices, DeviceModes2);
 		Length when Length < MaxPrepareModules ->
 			% Move devices from SyncDevices to PrepareDevices
-			EligibleSyncDevices = needs_prepare(SyncDevices, State),
+			EligibleSyncDevices = eligible_for_prepare(SyncDevices, State),
 			NumToMove = MaxPrepareModules - Length,
 			{DevicesToMove, _} = 
 				case NumToMove > length(EligibleSyncDevices) of
@@ -262,7 +284,7 @@ enforce_device_modes(DeviceStatuses, State) ->
 		DeviceStatuses
 	).
 
-needs_prepare(Devices, State) ->
+eligible_for_prepare(Devices, State) ->
 	lists:filter(
 		fun(Device) ->
 			lists:any(
@@ -399,6 +421,19 @@ compare_status(complete, _) -> true;
 compare_status(_, complete) -> false;
 compare_status(_, _) -> true.
 
+log_state(State) ->
+	maps:fold(
+		fun(StoreID, Status, _) ->
+			?LOG_INFO([{event, device_mode}, {store_id, StoreID}, 
+				{device, Status#module_status.device},
+				{prepare, Status#module_status.prepare},
+				{sync, Status#module_status.sync},
+				{repack, Status#module_status.repack}])
+		end,
+		ok,
+		State#state.store_id_to_status
+	).
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -407,8 +442,7 @@ refresh_state_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_util, get_system_device, fun mocked_get_system_device/1},
-			{ar_chunk_storage, needs_prepare, fun mocked_needs_prepare/1},
-			{ar_chunk_storage, is_prepared, fun mocked_is_prepared/1},
+			{ar_chunk_storage, get_prepare_status, fun mocked_get_prepare_status/1},
 			{ar_data_sync_worker_master, is_syncing_enabled, fun mocked_is_syncing_enabled/0},
 			{ar_data_sync, is_syncing, fun mocked_is_syncing/1}
 		],
@@ -427,20 +461,13 @@ mocked_get_system_device(Path) ->
 			=> "device1"
 	},
 	maps:get(Path, Map).
-mocked_needs_prepare(StoreID) ->
+
+mocked_get_prepare_status(StoreID) ->
 	Map = #{
-		"storage_module_0_unpacked" => true,
-		"storage_module_1_unpacked" => true,
-		"storage_module_2_unpacked" => false,
+		"storage_module_0_unpacked" => complete,
+		"storage_module_1_unpacked" => paused,
+		"storage_module_2_unpacked" => off,
 		"storage_module_3_unpacked" => {error, timeout}
-	},
-	maps:get(StoreID, Map).
-mocked_is_prepared(StoreID) ->
-	Map = #{
-		"storage_module_0_unpacked" => true,
-		"storage_module_1_unpacked" => false,
-		"storage_module_2_unpacked" => false,
-		"storage_module_3_unpacked" => false
 	},
 	maps:get(StoreID, Map).
 
