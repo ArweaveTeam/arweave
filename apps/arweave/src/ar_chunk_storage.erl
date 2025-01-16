@@ -9,7 +9,6 @@
 		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1, 
 		list_files/2, run_defragmentation/0,
 		get_storage_module_path/2, get_chunk_storage_path/2,
-		get_prepare_status/1, set_prepare_status/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
 		sync_record_id/1, store_chunk/7, write_chunk/4, write_chunk2/6, record_chunk/5]).
 
@@ -251,17 +250,6 @@ get_storage_module_path(DataDir, StoreID) ->
 get_chunk_storage_path(DataDir, StoreID) ->
 	filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
 
-get_prepare_status(StoreID) ->
-	case get_state(StoreID) of
-		{error, _} = Error ->
-			Error;
-		State ->
-			State#state.prepare_status
-	end.
-
-set_prepare_status(StoreID, Status) ->
-	gen_server:cast(name(StoreID), {set_prepare_status, Status}).
-
 %% @doc Return the start offset of the bucket containing the given offset.
 %% A chunk bucket a 0-based, 256-KiB wide, 256-KiB aligned range that fully contains a chunk.
 -spec get_chunk_bucket_start(PaddedEndOffset :: non_neg_integer()) -> non_neg_integer().
@@ -372,33 +360,21 @@ warn_custom_chunk_group_size(StoreID) ->
 			ok
 	end.
 
-handle_cast({set_prepare_status, Status}, State) ->
-	State2 = case State#state.prepare_status of
-		off when Status /= off ->
-			?LOG_ERROR([{event, invalid_prepare_status},
-				{store_id, State#state.store_id}, {current_status, off},
-				{new_status, Status}]),
-			State;
-		complete when Status /= complete ->
-			?LOG_ERROR([{event, invalid_prepare_status},
-				{store_id, State#state.store_id}, {current_status, complete},
-				{new_status, Status}]);
-		_ ->
-			State#state{ prepare_status = Status }
-	end,
-	{noreply, State2};
 
-handle_cast(prepare_replica_2_9, #state{ prepare_status = PrepareStatus } = State) ->
-	State2 = case PrepareStatus of
+handle_cast(prepare_replica_2_9, State) ->
+	#state{ store_id = StoreID } = State,
+	NewStatus = ar_device_mode:acquire_lock(prepare, StoreID, State#state.prepare_status),
+	State2 = State#state{ prepare_status = NewStatus },
+	State3 = case NewStatus of
 		active ->
-			do_prepare_replica_2_9(State);
+			do_prepare_replica_2_9(State2);
 		paused ->
 			ar_util:cast_after(2000, self(), prepare_replica_2_9),
-			State;
+			State2;
 		_ ->
-			ok
+			State2
 	end,
-	{noreply, State2};
+	{noreply, State3};
 
 handle_cast(store_repack_cursor, #state{ repacking_complete = true } = State) ->
 	{noreply, State};
@@ -557,6 +533,7 @@ do_prepare_replica_2_9(State) ->
 	CheckRangeEnd =
 	case PaddedEndOffset > PaddedRangeEnd of
 		true ->
+			ar_device_mode:release_lock(prepare, StoreID),
 			?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
 					{store_id, StoreID}]),
 			ar:console("The storage module ~s is prepared for 2.9 replication.~n",
@@ -644,7 +621,6 @@ do_prepare_replica_2_9(State) ->
 		{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
 	case StoreEntropy of
 		complete ->
-			ar_device_mode:sync_state(),
 			State#state{ prepare_status = complete };
 		waiting_for_repack ->
 			?LOG_INFO([{event, waiting_for_repacking},

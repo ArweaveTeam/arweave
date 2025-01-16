@@ -2,8 +2,8 @@
 
 -behaviour(gen_server).
 
--export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2, get_sync_status/1,
-		set_sync_status/2, invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
+-export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2, 
+		invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_chunk_data/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
 		get_tx_offset/1, get_tx_offset_data_in_range/2, has_data_root/2,
@@ -55,13 +55,6 @@ add_tip_block(BlockTXPairs, RecentBI) ->
 invalidate_bad_data_record(Start, End, StoreID, Case) ->
 	gen_server:cast(name(StoreID), {invalidate_bad_data_record,
 		{Start, End, StoreID, Case}}).
-
-get_sync_status(StoreID) ->
-	State = gen_server:call(name(StoreID), get_state, infinity),
-	State#sync_data_state.sync_status.
-
-set_sync_status(StoreID, Status) ->
-	gen_server:cast(name(StoreID), {set_sync_status, Status}).
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -764,22 +757,6 @@ init({StoreID, RepackInPlacePacking}) ->
 			{ok, State2}
 	end.
 
-handle_cast({set_sync_status, Status}, State) ->
-	State2 = case State#sync_data_state.sync_status of
-	off when Status /= off ->
-		?LOG_ERROR([{event, invalid_sync_status},
-			{store_id, State#sync_data_state.store_id}, {current_status, off},
-			{new_status, Status}]),
-		State;
-	complete when Status /= complete ->
-		?LOG_ERROR([{event, invalid_sync_status},
-			{store_id, State#sync_data_state.store_id}, {current_status, complete},
-			{new_status, Status}]);
-	_ ->
-		State#sync_data_state{ sync_status = Status }
-	end,
-	{noreply, State2};
-
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
 	{noreply, State};
@@ -878,54 +855,65 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	store_sync_state(State2),
 	{noreply, State2};
 
-handle_cast(sync_data, #sync_data_state{ sync_status = SyncStatus } = State) ->
-	State2 = case SyncStatus of
+handle_cast(sync_data, State) ->
+	#sync_data_state{ store_id = StoreID } = State,
+	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	State2 = State#sync_data_state{ sync_status = Status },
+	State3 = case Status of
 		active ->
 			do_sync_data(State);
 		paused ->
 			ar_util:cast_after(2000, self(), sync_data),
-			State;
+			State2;
 		_ ->
-			ok
+			State2
 	end,
-	{noreply, State2};
+	{noreply, State3};
 
-handle_cast(sync_data2, #sync_data_state{ sync_status = SyncStatus } = State) ->
-	State2 = case SyncStatus of
+handle_cast(sync_data2, State) ->
+	#sync_data_state{ store_id = StoreID } = State,
+	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	State2 = State#sync_data_state{ sync_status = Status },
+	State3 = case Status of
 		active ->
-			do_sync_data2(State);
+			do_sync_data2(State2);
 		paused ->
 			ar_util:cast_after(2000, self(), sync_data2),
-			State;
+			State2;
 		_ ->
-			ok
+			State2
 	end,
-	{noreply, State2};
+	{noreply, State3};
 
-handle_cast(collect_peer_intervals, #sync_data_state{ sync_status = SyncStatus } = State) ->
-	State2 = case SyncStatus of
+handle_cast(collect_peer_intervals, State) ->
+	#sync_data_state{ store_id = StoreID } = State,
+	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	State2 = State#sync_data_state{ sync_status = Status },
+	State3 = case Status of
 		active ->
-			do_collect_peer_intervals(State);
+			do_collect_peer_intervals(State2);
 		paused ->
 			ar_util:cast_after(2000, self(), collect_peer_intervals),
-			State;
+			State2;
 		_ ->
-			ok
+			State2
 	end,
-	{noreply, State2};
+	{noreply, State3};
 
-handle_cast({collect_peer_intervals, Start, End}, 
-		#sync_data_state{ sync_status = SyncStatus } = State) ->
-	State2 = case SyncStatus of
+handle_cast({collect_peer_intervals, Start, End}, State) ->
+	#sync_data_state{ store_id = StoreID } = State,
+	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	State2 = State#sync_data_state{ sync_status = Status },
+	State3 = case Status of
 		active ->
-			do_collect_peer_intervals(Start, End, State);
+			do_collect_peer_intervals(State2, End, State);
 		paused ->
 			ar_util:cast_after(2000, self(), {collect_peer_intervals, Start, End}),
-			State;
+			State2;
 		_ ->
-			ok
+			State2
 	end,
-	{noreply, State2};
+	{noreply, State3};
 
 handle_cast({update_all_peers_intervals, AllPeersIntervals}, State) ->
 	%% While we are working through the storage_module range we'll maintain a cache
@@ -976,16 +964,43 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 			sync_intervals_queue_intervals = QIntervals2 }};
 
 handle_cast(sync_intervals, State) ->
-	State2 = case State#sync_data_state.sync_status of
+	#sync_data_state{ store_id = StoreID } = State,
+	Status = ar_device_mode:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
+	State2 = State#sync_data_state{ sync_status = Status },
+	State3 = case Status of
 		active ->
-			do_sync_intervals(State);
+			do_sync_intervals(State2);
 		paused ->
 			ar_util:cast_after(2000, self(), sync_intervals),
-			State;
+			State2;
 		_ ->
-			ok
+			State2
 	end,
-	{noreply, State2};
+	{noreply, State3};
+
+handle_cast({invalidate_bad_data_record, Args}, State) ->
+	invalidate_bad_data_record(Args),
+	{noreply, State};
+
+handle_cast({pack_and_store_chunk, Args} = Cast,
+			#sync_data_state{ store_id = StoreID } = State) ->
+	case is_disk_space_sufficient(StoreID) of
+		true ->
+			pack_and_store_chunk(Args, State);
+		_ ->
+			ar_util:cast_after(30000, self(), Cast),
+			{noreply, State}
+	end;
+
+handle_cast({store_chunk, ChunkArgs, Args} = Cast,
+		#sync_data_state{ store_id = StoreID } = State) ->
+	case is_disk_space_sufficient(StoreID) of
+		true ->
+			{noreply, store_chunk(ChunkArgs, Args, State)};
+		_ ->
+			ar_util:cast_after(30000, self(), Cast),
+			{noreply, State}
+	end;
 
 handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	{store_fetched_chunk, Peer, Byte, Proof} = Cast,	
@@ -3190,7 +3205,6 @@ store_chunk2(ChunkArgs, Args, State) ->
 log_stored_chunks(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue_len = EndLen, store_id = StoreID } = State,
 	StoredCount = StartLen - EndLen,
-	?LOG_DEBUG([{event, stored_chunks}, {count, StoredCount}, {store_id, StoreID}]),
 	case StoredCount > 0 of
 		true ->
 			?LOG_DEBUG([{event, stored_chunks}, {count, StoredCount}, {store_id, StoreID}]);

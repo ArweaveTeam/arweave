@@ -186,11 +186,13 @@ start_io_threads(State) ->
 		fun(Device, StoreIDs, StateAcc) ->
 			#state{ io_threads = Threads, io_thread_monitor_refs = Refs,
 				partition_to_store_ids = PartitionToStoreIDs } = StateAcc,
+
+			StoreIDs2 = sets:to_list(StoreIDs),
 			
-			Thread = start_io_thread(Mode, StoreIDs),
+			Thread = start_io_thread(Mode, StoreIDs2),
 			ThreadRef = monitor(process, Thread),
 
-			PartitionToStoreIDs2 = map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs),
+			PartitionToStoreIDs2 = map_partition_to_store_ids(StoreIDs2, PartitionToStoreIDs),
 			StateAcc#state{
 				io_threads = maps:put(Device, Thread, Threads),
 				io_thread_monitor_refs = maps:put(ThreadRef, Device, Refs),
@@ -253,7 +255,7 @@ handle_io_thread_down(Ref, Reason,
 	Threads2 = maps:remove(Device, Threads),
 
 	StoreIDs = ar_device_mode:get_store_ids_for_device(Device),
-	Thread = start_io_thread(Mode, StoreIDs),
+	Thread = start_io_thread(Mode, sets:to_list(StoreIDs)),
 	ThreadRef = monitor(process, Thread),
 	State#state{ io_threads = maps:put(Device, Thread, Threads2),	
 		io_thread_monitor_refs = maps:put(ThreadRef, Device, Refs2) }.
