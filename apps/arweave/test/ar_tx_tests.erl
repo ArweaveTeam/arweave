@@ -45,12 +45,14 @@ keeps_txs_after_new_block_test_() ->
 	PrepareTestFor = fun(BuildFirstTXSetFun, BuildSecondTXSetFun) ->
 		fun() ->
 			Key = {_, Pub} = ar_wallet:new(),
-			Wallets = [{ar_wallet:to_address(Pub), ?AR(5), <<>>}],
+			Key2 = {_, Pub2} = ar_test_node:new_custom_size_rsa_wallet(66),
+			Wallets = [{ar_wallet:to_address(Pub), ?AR(5), <<>>},
+					{ar_wallet:to_address(Pub2), ?AR(5), <<>>}],
 			[B0] = ar_weave:init(Wallets),
 			keeps_txs_after_new_block(
 				B0,
 				BuildFirstTXSetFun(Key, B0),
-				BuildSecondTXSetFun(Key, B0)
+				BuildSecondTXSetFun(Key2, B0)
 			)
 		end
 	end,
