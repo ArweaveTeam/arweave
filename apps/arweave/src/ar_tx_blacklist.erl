@@ -515,7 +515,8 @@ load_from_urls(URLs) ->
 
 load_from_url(URL) ->
 	try
-		#{ host := Host, path := Path, scheme := Scheme } = M = uri_string:parse(URL),
+		#{ host := Host, path := RawPath, scheme := Scheme } = M = uri_string:parse(URL),
+		Path = case RawPath of "" -> "/"; Elsewise -> Elsewise end,
 		Query = case maps:get(query, M, not_found) of not_found -> <<>>; Q -> [<<"?">>, Q] end,
 		Port = maps:get(port, M, case Scheme of "http" -> 80; "https" -> 443 end),
 		Reply =
