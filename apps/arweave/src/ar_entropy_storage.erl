@@ -63,14 +63,6 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	case IsComplete of
 		true ->
 			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-<<<<<<< HEAD
-			%% update_sync_records is only called when an unpacked_padded chunks has
-			%% been written to disk before entropy was generated. In this case we have
-			%% to remove the unpacked_padded sync record before we add the replica_2_9
-			%% sync record.
-			ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID),
-=======
->>>>>>> d37f869a (WIP)
 			ar_sync_record:add_async(replica_2_9_entropy_with_chunk,
 										PaddedEndOffset,
 										StartOffset,
