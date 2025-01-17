@@ -5,6 +5,7 @@
 	generate_entropy_keys/3, shift_entropy_offset/2, store_entropy/8, record_chunk/6]).
 
 -include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -62,7 +63,7 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	case IsComplete of
 		true ->
 			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-			%% update_sync_records is only called when an unpmacked_padded chunks has
+			%% update_sync_records is only called when an unpacked_padded chunks has
 			%% been written to disk before entropy was generated. In this case we have
 			%% to remove the unpacked_padded sync record before we add the replica_2_9
 			%% sync record.
@@ -117,14 +118,14 @@ generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
 	 | generate_entropy_keys(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
 
 store_entropy(_Entropies,
-			  PaddedEndOffset,
-			  _SubChunkStartOffset,
-			  RangeEnd,
-			  _Keys,
-			  _RewardAddr,
-			  N,
-			  WaitN)
-	when PaddedEndOffset > RangeEnd ->
+			BucketEndOffset,
+			_SubChunkStartOffset,
+			RangeEnd,
+			_Keys,
+			_RewardAddr,
+			N,
+			WaitN)
+	when BucketEndOffset > RangeEnd ->
 	%% The amount of entropy generated per partition is slightly more than the amount needed.
 	%% So at the end of a partition we will have finished processing chunks, but still have
 	%% some entropy left. In this case we stop the recursion early and wait for the writes
@@ -132,13 +133,13 @@ store_entropy(_Entropies,
 	wait_store_entropy_processes(WaitN),
 	{ok, N};
 store_entropy(Entropies,
-			  PaddedEndOffset,
-			  SubChunkStartOffset,
-			  RangeEnd,
-			  Keys,
-			  RewardAddr,
-			  N,
-			  WaitN) ->
+			BucketEndOffset,
+			SubChunkStartOffset,
+			RangeEnd,
+			Keys,
+			RewardAddr,
+			N,
+			WaitN) ->
 	case take_and_combine_entropy_slices(Entropies) of
 		{<<>>, []} ->
 			%% We've finished processing all the entropies, wait for the writes to complete.
@@ -146,32 +147,32 @@ store_entropy(Entropies,
 			{ok, N};
 		{ChunkEntropy, Rest} ->
 			true =
-				ar_replica_2_9:get_entropy_partition(PaddedEndOffset)
+				ar_replica_2_9:get_entropy_partition(BucketEndOffset)
 				== ar_replica_2_9:get_entropy_partition(RangeEnd),
-			sanity_check_replica_2_9_entropy_keys(PaddedEndOffset,
-												  RewardAddr,
-												  SubChunkStartOffset,
-												  Keys),
+			sanity_check_replica_2_9_entropy_keys(BucketEndOffset,
+												RewardAddr,
+												SubChunkStartOffset,
+												Keys),
 			FindModules =
-				case ar_storage_module:get_all_packed(PaddedEndOffset, {replica_2_9, RewardAddr}) of
+				case ar_storage_module:get_all_packed(BucketEndOffset, {replica_2_9, RewardAddr}) of
 					[] ->
 						?LOG_WARNING([{event, failed_to_find_storage_modules_for_2_9_entropy},
-									  {padded_end_offset, PaddedEndOffset}]),
+									{padded_end_offset, BucketEndOffset}]),
 						not_found;
 					StoreIDs ->
 						{ok, StoreIDs}
 				end,
 			case FindModules of
 				not_found ->
-					PaddedEndOffset2 = shift_entropy_offset(PaddedEndOffset, 1),
+					BucketEndOffset2 = shift_entropy_offset(BucketEndOffset, 1),
 					store_entropy(Rest,
-								  PaddedEndOffset2,
-								  SubChunkStartOffset,
-								  RangeEnd,
-								  Keys,
-								  RewardAddr,
-								  N,
-								  WaitN);
+								BucketEndOffset2,
+								SubChunkStartOffset,
+								RangeEnd,
+								Keys,
+								RewardAddr,
+								N,
+								WaitN);
 				{ok, StoreIDs2} ->
 					From = self(),
 					WaitN2 = lists:foldl(fun(StoreID2, WaitNAcc) ->
@@ -179,7 +180,7 @@ store_entropy(Entropies,
 									StartTime = erlang:monotonic_time(),
 
 									record_entropy(ChunkEntropy,
-													PaddedEndOffset,
+													BucketEndOffset,
 													StoreID2,
 													RewardAddr),
 
@@ -204,15 +205,15 @@ store_entropy(Entropies,
 						WaitN,
 						StoreIDs2
 					),
-					PaddedEndOffset2 = shift_entropy_offset(PaddedEndOffset, 1),
+					BucketEndOffset2 = shift_entropy_offset(BucketEndOffset, 1),
 					store_entropy(Rest,
-								  PaddedEndOffset2,
-								  SubChunkStartOffset,
-								  RangeEnd,
-								  Keys,
-								  RewardAddr,
-								  N + length(Keys),
-								  WaitN2)
+								BucketEndOffset2,
+								SubChunkStartOffset,
+								RangeEnd,
+								Keys,
+								RewardAddr,
+								N + length(Keys),
+								WaitN2)
 			end
 	end.
 
@@ -283,14 +284,38 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			Result
 	end.
 
-record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
+%% @doc Return the byte (>= ChunkStartOffset, < ChunkEndOffset)
+%% that necessarily belongs to the chunk stored
+%% in the bucket with the given bucket end offset.
+get_chunk_byte_from_bucket_end(BucketEndOffset) ->
+	case BucketEndOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
+		true ->
+			?STRICT_DATA_SPLIT_THRESHOLD
+			+ ar_util:floor_int(BucketEndOffset - ?STRICT_DATA_SPLIT_THRESHOLD,
+					?DATA_CHUNK_SIZE);
+		false ->
+			BucketEndOffset - 1
+	end.
+
+record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	true = byte_size(ChunkEntropy) == ?DATA_CHUNK_SIZE,
 
-	IsUnpackedChunkRecorded = ar_sync_record:is_recorded(
-		PaddedEndOffset, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID),
+	Byte = get_chunk_byte_from_bucket_end(BucketEndOffset),
+	CheckUnpackedChunkRecorded = ar_sync_record:get_interval(
+		Byte + 1, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID),
+
+	{IsUnpackedChunkRecorded, EndOffset} =
+		case CheckUnpackedChunkRecorded of
+			not_found ->
+				{false, BucketEndOffset};
+			{_IntervalEnd, IntervalStart} ->
+				{true, IntervalStart
+					+ ar_util:floor_int(Byte - IntervalStart, ?DATA_CHUNK_SIZE)
+					+ ?DATA_CHUNK_SIZE}
+		end,
 
 	{ChunkFileStart, Filepath, _Position, _ChunkOffset} =
-		ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
+		ar_chunk_storage:locate_chunk_on_disk(EndOffset, StoreID),
 
 	%% We allow generating and filling it the 2.9 entropy and storing unpacked chunks (to
 	%% be enciphered later) asynchronously. Whatever comes first, is stored.
@@ -300,13 +325,12 @@ record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
 
 	Chunk = case IsUnpackedChunkRecorded of
 		true ->
-			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-			case ar_chunk_storage:get(StartOffset, StartOffset, StoreID) of
+			case ar_chunk_storage:get(Byte, Byte, StoreID) of
 				not_found ->
 					?LOG_DEBUG([{event, details_failed_to_store_chunk},
 						{context, unpacked_padded_chunk_not_found},
-						{padded_offset, PaddedEndOffset},
-						{start_offset, StartOffset},
+						{bucket_end_offset, BucketEndOffset},
+						{byte, Byte},
 						{store_id, StoreID},
 						{filepath, Filepath},
 						{is_unpacked_chunk_recorded, IsUnpackedChunkRecorded}
@@ -316,8 +340,8 @@ record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
 					?LOG_DEBUG([{event, details_failed_to_store_chunk},
 						{context, unpacked_padded_chunk_error},
 						{error, io_lib:format("~p", [Error])},
-						{padded_offset, PaddedEndOffset},
-						{start_offset, StartOffset},
+						{bucket_end_offset, BucketEndOffset},
+						{byte, Byte},
 						{store_id, StoreID},
 						{filepath, Filepath},
 						{is_unpacked_chunk_recorded, IsUnpackedChunkRecorded}
@@ -336,12 +360,12 @@ record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
 		{error, _} = Error2 ->
 			Error2;
 		_ ->
-			case ar_chunk_storage:write_chunk(PaddedEndOffset, Chunk, #{}, StoreID) of
+			case ar_chunk_storage:write_chunk(EndOffset, Chunk, #{}, StoreID) of
 				{ok, Filepath} ->
 					ets:insert(chunk_storage_file_index,
 						{{ChunkFileStart, StoreID}, Filepath}),
 					update_sync_records(
-						IsUnpackedChunkRecorded, PaddedEndOffset, StoreID, RewardAddr);
+						IsUnpackedChunkRecorded, EndOffset, StoreID, RewardAddr);
 				Error2 ->
 					Error2
 			end
@@ -351,7 +375,8 @@ record_entropy(ChunkEntropy, PaddedEndOffset, StoreID, RewardAddr) ->
 		{error, Reason} ->
 			?LOG_ERROR([{event, failed_to_store_replica_2_9_sub_chunk_entropy},
 							{filepath, Filepath},
-							{padded_end_offset, PaddedEndOffset},
+							{padded_end_offset, EndOffset},
+							{bucket_end_offset, BucketEndOffset},
 							{store_id, StoreID},
 							{reason, io_lib:format("~p", [Reason])}]);
 		_ ->
