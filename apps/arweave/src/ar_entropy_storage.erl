@@ -308,13 +308,9 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	%% packed chunk.
 	acquire_semaphore(Filepath),
 
-	IsUnpackedChunkRecorded = ar_sync_record:is_recorded(
-		PaddedEndOffset, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID),
-
-	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	Chunk = case IsUnpackedChunkRecorded of
 		true ->
-			case ar_chunk_storage:get(StartOffset, StartOffset, StoreID) of
+			case ar_chunk_storage:get(Byte, Byte, StoreID) of
 				not_found ->
 					{error, not_found};
 				{error, _} = Error ->
@@ -334,11 +330,11 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 		_ ->
 			case IsUnpackedChunkRecorded of
 				true ->
-					ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+					ar_sync_record:delete(EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID);
 				false ->
 					ok
 			end,
-			case ar_chunk_storage:write_chunk(PaddedEndOffset, Chunk, #{}, StoreID) of
+			case ar_chunk_storage:write_chunk(EndOffset, Chunk, #{}, StoreID) of
 				{ok, Filepath} ->
 					ets:insert(chunk_storage_file_index,
 						{{ChunkFileStart, StoreID}, Filepath}),
