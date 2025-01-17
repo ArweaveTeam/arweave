@@ -2812,11 +2812,11 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			StartPut = erlang:monotonic_time(),
 			Result = ar_chunk_storage:put(PaddedOffset, Chunk, StoreID),
 			PutTime = erlang:convert_time_unit(erlang:monotonic_time() - StartPut, native, microsecond) / 1000.0,
-			case PutTime > 100 of
+			case PutTime > 500 of
 				true ->
-					?LOG_DEBUG([{event, chunk_store_duration_milliseconds}, {store_id, StoreID},
+					?LOG_DEBUG([{event, chunk_put_duration_milliseconds}, {elapsed, PutTime}, {store_id, StoreID},
 						{pid, self()}, {name, name(StoreID)}, {chunk_storage_name, ar_chunk_storage:name(StoreID)},
-						{elapsed, PutTime}, {offset, Offset}, {absolute_offset, PaddedOffset},
+						{offset, Offset}, {absolute_offset, PaddedOffset},
 						{chunk_size, ChunkSize}, {packing, ar_serialize:encode_packing(Packing, true)}]);
 				false ->
 					ok
@@ -3007,14 +3007,8 @@ process_store_chunk_queue(State, StartLen) ->
 		true ->
 			{{_Offset, _Timestamp, _Ref, ChunkArgs, Args}, Q2} = gb_sets:take_smallest(Q),
 
-			StartChunkStore = erlang:monotonic_time(),
 			prometheus_histogram:observe_duration(chunk_store_duration_milliseconds, [],
 					fun() -> store_chunk2(ChunkArgs, Args, State) end),
-			ChunkStoreTime = erlang:convert_time_unit(erlang:monotonic_time() - StartChunkStore, native, microsecond) / 1000.0,
-			{Packing, _Chunk, AbsoluteOffset, _TXRoot, ChunkSize} = ChunkArgs,
-			?LOG_DEBUG([{event, chunk_store_duration_milliseconds}, {store_id, StoreID},
-				{elapsed, ChunkStoreTime}, {absolute_offset, AbsoluteOffset},
-				{chunk_size, ChunkSize}, {packing, ar_serialize:encode_packing(Packing, true)}]),
 			decrement_chunk_cache_size(),
 			State2 = State#sync_data_state{ store_chunk_queue = Q2,
 					store_chunk_queue_len = Len - 1,
