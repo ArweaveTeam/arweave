@@ -2,7 +2,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 
--export([register/0, get_status_class/1]).
+-export([register/0, get_status_class/1, record_rate_metric/4]).
 
 %%%===================================================================
 %%% Public interface.
@@ -446,30 +446,6 @@ register() ->
 				"The packing label can be 'spora_2_5', 'spora_2_6', 'composite', "
 				" or replica_2_9."}
 	]),
-	prometheus_gauge:new([
-		{name, packing_latency_benchmark},
-		{labels, [benchmark, type, packing]},
-		{help, "The benchmark packing latency. The benchmark label indicates which "
-				"benchmark is being recorded - 'protocol' records the ?PACKING_LATENCY "
-				"value, and 'init' records the latency sampled at node startup. "
-				"The type label can be 'pack' or 'unpack'. The packing label can be "
-				"'spora_2_5', 'spora_2_6', 'composite', or 'replica_2_9'. "
-				"The 'packing_duration_milliseconds' metric "
-				"records the actual latency observed during node operation."}
-	]),
-	prometheus_gauge:new([
-		{name, packing_rate_benchmark},
-		{labels, [benchmark]},
-		{help, "The benchmark packing rate. The benchmark label indicates which "
-				"benchmark is being recorded - 'protocol' records the maximum rate allowed by "
-				"the protocol, 'configured' records the packing rate configured by the user. "
-				"The 'packing_duration_milliseconds' metric records the actual rate observed "
-				"during node operation."}
-	]),
-	prometheus_gauge:new([
-		{name, packing_schedulers},
-		{help, "The number of schedulers available for packing."}
-	]),
 
 	prometheus_gauge:new([{name, packing_buffer_size},
 		{help, "The number of chunks in the packing server queue."}]),
@@ -479,15 +455,12 @@ register() ->
 		{labels, [packing]},
 		{help, "The counter is incremented every time a chunk is written to "
 				"chunk_storage."}]),
-	prometheus_histogram:new([
-		{name, chunk_store_duration_milliseconds},
-		{buckets, [1, 2, 3, 4, 5, 10, 50, 100, 500, 1000]},
+	prometheus_gauge:new([{name, chunk_store_rate},
+		{labels, [store_id]},
 		{help, "The time, in milliseconds, to store one chunk. Includes time to update all "
 				"relevant indexes."}
 	]),
 		
-
-
 	prometheus_gauge:new([{name, sync_tasks},
 		{labels, [state, type, peer]},
 		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
@@ -499,17 +472,18 @@ register() ->
 	prometheus_counter:new([{name, replica_2_9_entropy_stored},
 		{labels, [store_id]},
 		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
-	prometheus_gauge:new([{name, replica_2_9_entropy_store_rate},
+	prometheus_gauge:new([{name, replica_2_9_entropy_write_rate},
 		{labels, [store_id]},
-		{help, "The rate at which replica.2.9 is written to chunk storage in MiB/s."}]),
-	prometheus_counter:new([{name, replica_2_9_entropy_cache_query},
-			{labels, [hit_or_miss, partition]},
-			{help, "The counter is incremented everytime an 8 MiB replica.2.9 entropy "
-					"is requested from the cache."}]),
+		{help, "The rate at which replica.2.9 entropy is written to chunk storage in "
+				"bytes per second. This considers only the time to write the entropy, "
+				"excluding the time to generate it."}]),
 	prometheus_histogram:new([
 		{name, replica_2_9_entropy_duration_milliseconds},
+		{labels, [count]},
 		{buckets, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 250, 500, 1000]},
-		{help, "The time, in milliseconds, to generate 8 MiB of replica.2.9 entropy."}
+		{help, "The time, in milliseconds, to generate replica.2.9 entropy. The count label "
+				"indicates whether this is the time to generate a single 8 MiB entropy or "
+				"the time to generate all 32 entropies needed for full chunks."}
 	]),
 
 	%% ---------------------------------------------------------------------------------------
@@ -545,6 +519,20 @@ register() ->
 	prometheus_gauge:new([{name, allocator},
 			{labels, [type, instance, section, metric]},
 			{help, "Erlang VM memory allocator metrics. Only set when debug=true."}]).
+
+record_rate_metric(StartTime, Bytes, Metric, Labels) ->
+	EndTime = erlang:monotonic_time(),
+	ElapsedTime =
+		erlang:convert_time_unit(EndTime - StartTime,
+								native,
+								microsecond),
+	%% bytes per second
+	Rate =
+		case ElapsedTime > 0 of
+			true -> 1_000_000 * Bytes div ElapsedTime;
+			false -> 0
+		end,
+	prometheus_gauge:set(Metric, Labels, Rate).
 
 
 %% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total

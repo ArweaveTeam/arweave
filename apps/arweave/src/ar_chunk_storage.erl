@@ -580,27 +580,37 @@ do_prepare_replica_2_9(State) ->
 				is_recorded;
 			false ->
 				%% Get all the entropies needed to encipher the chunk at BucketEndOffset.
-				Entropies = ar_entropy_storage:generate_entropies(
-					RewardAddr, BucketEndOffset, SubChunkStart),
-				EntropyKeys = ar_entropy_storage:generate_entropy_keys(
-					RewardAddr, BucketEndOffset, SubChunkStart),
-				SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
-				%% If we are not at the beginning of the entropy, shift the offset to
-				%% the left. store_entropy will traverse the entire 2.9 partition shifting
-				%% the offset by sector size. It may happen some sub-chunks will be written
-				%% to the neighbouring storage module(s) on the left or on the right
-				%% since the storage module may be configured to be smaller than the
-				%% partition.
-				BucketEndOffset2 = ar_entropy_storage:shift_entropy_offset(
-					BucketEndOffset, -SliceIndex),
-				%% The end of a recall partition (3.6TB) may fall in the middle of a chunk, so
-				%% we'll use the padded offset to end the store_entropy iteration.
-				PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
-				PaddedPartitionEnd =
-					get_chunk_bucket_end(ar_block:get_chunk_padded_offset(PartitionEnd)),
-				ar_entropy_storage:store_entropy(
-					Entropies, BucketEndOffset2, SubChunkStart, PaddedPartitionEnd,
-					EntropyKeys, RewardAddr, 0, 0)
+				Entropies = prometheus_histogram:observe_duration(
+					replica_2_9_entropy_duration_milliseconds, ["32"], 
+						fun() ->
+							ar_entropy_storage:generate_entropies(
+								RewardAddr, BucketEndOffset, SubChunkStart)
+						end),
+				
+				case Entropies of
+					{error, Reason} ->
+						{error, Reason};
+					_ ->
+						EntropyKeys = ar_entropy_storage:generate_entropy_keys(
+							RewardAddr, BucketEndOffset, SubChunkStart),
+						SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
+						%% If we are not at the beginning of the entropy, shift the offset to
+						%% the left. store_entropy will traverse the entire 2.9 partition shifting
+						%% the offset by sector size. It may happen some sub-chunks will be written
+						%% to the neighbouring storage module(s) on the left or on the right
+						%% since the storage module may be configured to be smaller than the
+						%% partition.
+						BucketEndOffset2 = ar_entropy_storage:shift_entropy_offset(
+							BucketEndOffset, -SliceIndex),
+						%% The end of a recall partition (3.6TB) may fall in the middle of a chunk, so
+						%% we'll use the padded offset to end the store_entropy iteration.
+						PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
+						PaddedPartitionEnd =
+							get_chunk_bucket_end(ar_block:get_chunk_padded_offset(PartitionEnd)),
+						ar_entropy_storage:store_entropy(
+							Entropies, BucketEndOffset2, SubChunkStart, PaddedPartitionEnd,
+							EntropyKeys, RewardAddr, 0, 0)
+				end
 		end,
 	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
 		{start, Start}, {padded_end_offset, BucketEndOffset},

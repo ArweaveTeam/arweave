@@ -3006,9 +3006,15 @@ process_store_chunk_queue(State, StartLen) ->
 			orelse Now - Timestamp > ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD of
 		true ->
 			{{_Offset, _Timestamp, _Ref, ChunkArgs, Args}, Q2} = gb_sets:take_smallest(Q),
+			{_Packing, _Chunk, _AbsoluteOffset, _TXRoot, ChunkSize} = ChunkArgs,
 
-			prometheus_histogram:observe_duration(chunk_store_duration_milliseconds, [],
-					fun() -> store_chunk2(ChunkArgs, Args, State) end),
+			StartTime = erlang:monotonic_time(),	
+
+			store_chunk2(ChunkArgs, Args, State),
+
+			ar_metrics:record_rate_metric(
+				StartTime, ChunkSize, chunk_store_rate, [StoreID]),
+
 			decrement_chunk_cache_size(),
 			State2 = State#sync_data_state{ store_chunk_queue = Q2,
 					store_chunk_queue_len = Len - 1,

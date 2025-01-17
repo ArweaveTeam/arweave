@@ -168,7 +168,7 @@ do_acquire_lock(Mode, StoreID, State) ->
 	Device = maps:get(StoreID, State#state.store_id_to_device),
 	DeviceLock = maps:get(Device, State#state.device_locks, sync),
 	PrepareLocks = count_prepare_locks(State),
-	MaxPrepareLocks = 128,
+	MaxPrepareLocks = 4,
 	{Acquired, NewDeviceLock} = case Mode of
 		sync ->
 			%% Can only aquire a sync lock if the device is in sync mode
@@ -254,8 +254,16 @@ count_prepare_locks(State) ->
 log_device_locks(State) ->
 	StoreIDToDevice = State#state.store_id_to_device,
 	DeviceLocks = State#state.device_locks,
-	maps:fold(
-		fun(StoreID, Device, _) ->
+	SortedStoreIDList = lists:sort(
+		fun({StoreID1, Device1}, {StoreID2, Device2}) ->
+			case Device1 =:= Device2 of
+				true -> StoreID1 =< StoreID2;
+				false -> Device1 < Device2
+			end
+		end,
+		maps:to_list(StoreIDToDevice)),
+	lists:foreach(
+		fun({StoreID, Device}) ->
 			DeviceLock = maps:get(Device, DeviceLocks, sync),
 			Status = case DeviceLock of
 				sync -> sync;
@@ -263,10 +271,9 @@ log_device_locks(State) ->
 				{repack, StoreID} -> repack;
 				_ -> paused
 			end,
-			?LOG_INFO([{event, device_lock_status}, {store_id, StoreID}, {status, Status}])
+			?LOG_INFO([{event, device_lock_status}, {device, Device}, {store_id, StoreID}, {status, Status}])
 		end,
-		ok,
-		StoreIDToDevice
+		SortedStoreIDList
 	).
 
 %%%===================================================================

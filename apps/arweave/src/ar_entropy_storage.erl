@@ -90,19 +90,60 @@ delete_record(PaddedEndOffset, StoreID) ->
 
 generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
 	Entropies = generate_entropies(RewardAddr, PaddedEndOffset, 0),
-	EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
-	take_combined_entropy_by_index(Entropies, EntropyIndex).
+	case Entropies of
+		{error, Reason} ->
+			{error, Reason};
+		_ ->
+			EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
+			take_combined_entropy_by_index(Entropies, EntropyIndex)
+	end.
 
 %% @doc Returns all the entropies needed to encipher the chunk at PaddedEndOffset.
-%% ar_packing_server:get_replica_2_9_entropy/3 will query a cached entropy, or generate it
-%% if it is not cached.
 generate_entropies(_RewardAddr, _PaddedEndOffset, SubChunkStart)
 	when SubChunkStart == ?DATA_CHUNK_SIZE ->
 	[];
 generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	[ar_packing_server:get_replica_2_9_entropy(RewardAddr, PaddedEndOffset, SubChunkStart)
-	 | generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart + SubChunkSize)].
+	EntropyTasks = lists:map(
+		fun(Offset) ->
+			Ref = make_ref(),
+			ar_packing_server:request_entropy_generation(
+				Ref, self(), {RewardAddr, PaddedEndOffset, Offset}),
+			Ref
+		end,
+		lists:seq(SubChunkStart, ?DATA_CHUNK_SIZE - SubChunkSize, SubChunkSize)
+	),
+	Entropies = collect_entropies(EntropyTasks, []),
+	case Entropies of
+		{error, _Reason} ->
+			flush_entropy_messages();
+		_ ->
+			ok
+	end,
+	Entropies.
+
+collect_entropies([], Acc) ->
+	lists:reverse(Acc);
+collect_entropies([Ref | Rest], Acc) ->
+	receive
+		{entropy_generated, Ref, {error, Reason}} ->
+			?LOG_ERROR([{event, failed_to_generate_replica_2_9_entropy}, {error, Reason}]),
+			{error, Reason};
+		{entropy_generated, Ref, Entropy} ->
+			collect_entropies(Rest, [Entropy | Acc])
+	after 60000 ->
+		?LOG_ERROR([{event, entropy_generation_timeout}, {ref, Ref}]),
+		{error, timeout}
+	end.
+
+flush_entropy_messages() ->
+	?LOG_INFO([{event, flush_entropy_messages}]),
+	receive
+		{entropy_generated, _, _} ->
+			flush_entropy_messages()
+	after 0 ->
+		ok
+	end.
 
 generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
 	when SubChunkStart == ?DATA_CHUNK_SIZE ->
@@ -179,20 +220,10 @@ store_entropy(Entropies,
 													StoreID2,
 													RewardAddr),
 
-									EndTime = erlang:monotonic_time(),
-									ElapsedTime =
-										erlang:convert_time_unit(EndTime - StartTime,
-																native,
-																microsecond),
-									%% bytes per second
-									WriteRate =
-										case ElapsedTime > 0 of
-											true -> 1000000 * byte_size(ChunkEntropy) div ElapsedTime;
-											false -> 0
-										end,
-									prometheus_gauge:set(replica_2_9_entropy_store_rate,
-														[StoreID2],
-														WriteRate),
+									ar_metrics:record_rate_metric(StartTime,
+													byte_size(ChunkEntropy),
+													replica_2_9_entropy_write_rate,
+													[StoreID2]),
 									From ! {store_entropy_sub_chunk_written, WaitNAcc + 1}
 								end),
 							WaitNAcc + 1
@@ -240,34 +271,33 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			true ->
 				ar_chunk_storage:get(StartOffset, StartOffset, StoreID)
 		end,
-	case ReadEntropy of
+	RecordChunk = case ReadEntropy of
 		{error, _} = Error2 ->
-			release_semaphore(Filepath),
 			Error2;
 		not_found ->
-			release_semaphore(Filepath),
 			{error, not_prepared_yet2};
 		missing_entropy ->
 			Packing = {replica_2_9, RewardAddr},
 			Entropy = generate_missing_entropy(PaddedEndOffset, RewardAddr),
-			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-			Result = ar_chunk_storage:record_chunk(
-				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex),
-			release_semaphore(Filepath),
-			Result;
+			case Entropy of
+				{error, Reason} ->
+					{error, Reason};
+				_ ->
+					PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
+					ar_chunk_storage:record_chunk(
+						PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
+			end;
 		no_entropy_yet ->
-			Result = ar_chunk_storage:record_chunk(
-				PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex),
-			release_semaphore(Filepath),
-			Result;
+			ar_chunk_storage:record_chunk(
+				PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex);
 		{_EndOffset, Entropy} ->
 			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-			Result = ar_chunk_storage:record_chunk(
-				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex),
-			release_semaphore(Filepath),
-			Result
-	end.
+			ar_chunk_storage:record_chunk(
+				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
+	end,
+	release_semaphore(Filepath),
+	RecordChunk.
 
 %% @doc Return the byte (>= ChunkStartOffset, < ChunkEndOffset)
 %% that necessarily belongs to the chunk stored
@@ -316,6 +346,7 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 				{error, _} = Error ->
 					Error;
 				{_, UnpackedChunk} ->
+					ar_sync_record:delete(EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;
 		false ->
@@ -328,12 +359,6 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 		{error, _} = Error2 ->
 			Error2;
 		_ ->
-			case IsUnpackedChunkRecorded of
-				true ->
-					ar_sync_record:delete(EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID);
-				false ->
-					ok
-			end,
 			case ar_chunk_storage:write_chunk(EndOffset, Chunk, #{}, StoreID) of
 				{ok, Filepath} ->
 					ets:insert(chunk_storage_file_index,
@@ -347,8 +372,9 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 
 	case Result of
 		{error, Reason} ->
-			?LOG_ERROR([{event, failed_to_store_replica_2_9_sub_chunk_entropy},
+			?LOG_ERROR([{event, failed_to_store_replica_2_9_chunk_entropy},
 							{filepath, Filepath},
+							{byte, Byte},
 							{padded_end_offset, EndOffset},
 							{bucket_end_offset, BucketEndOffset},
 							{store_id, StoreID},
@@ -423,7 +449,8 @@ shift_entropy_offset(Offset, SectorCount) ->
 acquire_semaphore(Filepath) ->
 	case ets:insert_new(ar_entropy_storage, {{semaphore, Filepath}}) of
 		false ->
-			?LOG_DEBUG([{event, details_store_chunk}, {section, waiting_on_semaphore}, {filepath, Filepath}]),
+			?LOG_DEBUG([
+				{event, details_store_chunk}, {section, waiting_on_semaphore}, {filepath, Filepath}]),
 			timer:sleep(20),
 			acquire_semaphore(Filepath);
 		true ->
