@@ -396,18 +396,18 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			{range_end, RangeEnd},
 			{repack_cursor, RepackCursor}]),
 	
-	PaddedEndOffset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
+	BucketEndOffset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
 	PaddedRangeEnd = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(RangeEnd)),
 	%% Sanity checks:
-	PaddedEndOffset = get_chunk_bucket_end(PaddedEndOffset),
+	BucketEndOffset = get_chunk_bucket_end(BucketEndOffset),
 	true = (
-		max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(PaddedEndOffset)
+		max(0, BucketEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(BucketEndOffset)
 	),
 	%% End of sanity checks.
 
-	Partition = ar_replica_2_9:get_entropy_partition(PaddedEndOffset),
+	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
 	CheckRangeEnd =
-		case PaddedEndOffset > PaddedRangeEnd of
+		case BucketEndOffset > PaddedRangeEnd of
 			true ->
 				release_replica_2_9_formatting_lock(StoreID),
 				?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
@@ -422,7 +422,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 	%% is used to make future improvemets easier. e.g. have the cursor increment by
 	%% sub-chunk rather than chunk.
 	SubChunkStart2 = (SubChunkStart + ?DATA_CHUNK_SIZE) rem ?DATA_CHUNK_SIZE,
-	Start2 = PaddedEndOffset + ?DATA_CHUNK_SIZE,
+	Start2 = BucketEndOffset + ?DATA_CHUNK_SIZE,
 	Cursor2 = {Start2, SubChunkStart2},
 	State2 = State#state{ prepare_replica_2_9_cursor = Cursor2 },
 	CheckRepackCursor =
@@ -438,7 +438,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 						RangeStart2 = get_chunk_bucket_start(RangeStart + 1),
 						RepackCursor2 = get_chunk_bucket_start(RepackCursor + 1),
 						RepackSectorShift = (RepackCursor2 - RangeStart2) rem SectorSize,
-						SectorShift = (PaddedEndOffset - RangeStart2) rem SectorSize,
+						SectorShift = (BucketEndOffset - RangeStart2) rem SectorSize,
 						case SectorShift > RepackSectorShift of
 							true ->
 								waiting_for_repack;
@@ -455,7 +455,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 				waiting_for_repack;
 			false ->
 				ar_entropy_storage:is_sub_chunk_recorded(
-					PaddedEndOffset, SubChunkStart, StoreID)
+					BucketEndOffset, SubChunkStart, StoreID)
 		end,
 	StoreEntropy =
 		case CheckIsRecorded of
@@ -466,29 +466,29 @@ handle_cast(do_prepare_replica_2_9, State) ->
 			true ->
 				is_recorded;
 			false ->
-				%% Get all the entropies needed to encipher the chunk at PaddedEndOffset.
-				Entropies = ar_entropy_storage:generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart),
+				%% Get all the entropies needed to encipher the chunk at BucketEndOffset.
+				Entropies = ar_entropy_storage:generate_entropies(RewardAddr, BucketEndOffset, SubChunkStart),
 				EntropyKeys = ar_entropy_storage:generate_entropy_keys(
-					RewardAddr, PaddedEndOffset, SubChunkStart),
-				SliceIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
+					RewardAddr, BucketEndOffset, SubChunkStart),
+				SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
 				%% If we are not at the beginning of the entropy, shift the offset to
 				%% the left. store_entropy will traverse the entire 2.9 partition shifting
 				%% the offset by sector size. It may happen some sub-chunks will be written
 				%% to the neighbouring storage module(s) on the left or on the right
 				%% since the storage module may be configured to be smaller than the
 				%% partition.
-				PaddedEndOffset2 = ar_entropy_storage:shift_entropy_offset(
-					PaddedEndOffset, -SliceIndex),
+				BucketEndOffset2 = ar_entropy_storage:shift_entropy_offset(
+					BucketEndOffset, -SliceIndex),
 				%% The end of a recall partition (3.6TB) may fall in the middle of a chunk, so
 				%% we'll use the padded offset to end the store_entropy iteration.
 				PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
 				PaddedPartitionEnd =
 					get_chunk_bucket_end(ar_block:get_chunk_padded_offset(PartitionEnd)),
-				ar_entropy_storage:store_entropy(Entropies, PaddedEndOffset2, SubChunkStart, PaddedPartitionEnd,
+				ar_entropy_storage:store_entropy(Entropies, BucketEndOffset2, SubChunkStart, PaddedPartitionEnd,
 						EntropyKeys, RewardAddr, 0, 0)
 		end,
 	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
-			{start, Start}, {padded_end_offset, PaddedEndOffset},
+			{start, Start}, {bucket_end_offset, BucketEndOffset},
 			{range_end, RangeEnd}, {padded_range_end, PaddedRangeEnd},
 			{sub_chunk_start, SubChunkStart},
 			{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
@@ -498,7 +498,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 		waiting_for_repack ->
 			?LOG_INFO([{event, waiting_for_repacking},
 					{store_id, StoreID},
-					{padded_end_offset, PaddedEndOffset},
+					{bucket_end_offset, BucketEndOffset},
 					{repack_cursor, RepackCursor},
 					{cursor, Start},
 					{range_start, RangeStart},
@@ -520,7 +520,7 @@ handle_cast(do_prepare_replica_2_9, State) ->
 					{sub_chunks_stored, SubChunksStored},
 					{store_id, StoreID},
 					{cursor, Start},
-					{padded_end_offset, PaddedEndOffset}]),
+					{bucket_end_offset,	BucketEndOffset}]),
 			gen_server:cast(self(), do_prepare_replica_2_9),
 			case store_prepare_replica_2_9_cursor(Cursor2, StoreID) of
 				ok ->
