@@ -63,11 +63,14 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	case IsComplete of
 		true ->
 			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
+<<<<<<< HEAD
 			%% update_sync_records is only called when an unpacked_padded chunks has
 			%% been written to disk before entropy was generated. In this case we have
 			%% to remove the unpacked_padded sync record before we add the replica_2_9
 			%% sync record.
 			ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID),
+=======
+>>>>>>> d37f869a (WIP)
 			ar_sync_record:add_async(replica_2_9_entropy_with_chunk,
 										PaddedEndOffset,
 										StartOffset,
@@ -221,9 +224,7 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	{_ChunkFileStart, Filepath, _Position, _ChunkOffset} =
 		ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
-	SemaphoreStartTime = erlang:monotonic_time(),
 	acquire_semaphore(Filepath),
-	SemaphoreElapsed = erlang:convert_time_unit(erlang:monotonic_time() - SemaphoreStartTime, native, microsecond) / 1000.0,
 	CheckIsStoredAlready =
 		ar_sync_record:is_recorded(PaddedEndOffset, ar_chunk_storage, StoreID),
 	CheckIsEntropyRecorded =
@@ -233,7 +234,6 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			false ->
 				is_recorded(PaddedEndOffset, StoreID)
 		end,
-	ReadEntropyStartTime = erlang:monotonic_time(),
 	ReadEntropy =
 		case CheckIsEntropyRecorded of
 			{error, _} = Error ->
@@ -248,58 +248,32 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			true ->
 				ar_chunk_storage:get(StartOffset, StartOffset, StoreID)
 		end,
-	ReadEntropyTime = erlang:convert_time_unit(erlang:monotonic_time() - ReadEntropyStartTime, native, microsecond) / 1000.0,
-	?LOG_DEBUG([{event, details_store_chunk}, {section, record_chunk_read_entropy},
-		{check_is_stored_already, CheckIsStoredAlready}, {check_is_entropy_recorded, CheckIsEntropyRecorded}, {offset, PaddedEndOffset},
-		{store_id, StoreID}, {filepath, Filepath}, {semaphore_elapsed, SemaphoreElapsed}, {read_elapsed, ReadEntropyTime}]),
 	case ReadEntropy of
 		{error, _} = Error2 ->
-			?LOG_DEBUG([{event, details_store_chunk},
-				{context, error_recording_chunk_to_entropy_storage},
-				{error, io_lib:format("~p", [Error2])},
-				{padded_offset, PaddedEndOffset},
-				{start_offset, StartOffset},
-				{check_is_stored_already, CheckIsStoredAlready},
-				{check_is_entropy_recorded, CheckIsEntropyRecorded},
-				{store_id, StoreID},
-				{filepath, Filepath}
-			]),
 			release_semaphore(Filepath),
 			Error2;
 		not_found ->
 			release_semaphore(Filepath),
 			{error, not_prepared_yet2};
 		missing_entropy ->
-			GenerateMissingEntropyStartTime = erlang:monotonic_time(),
 			Packing = {replica_2_9, RewardAddr},
 			Entropy = generate_missing_entropy(PaddedEndOffset, RewardAddr),
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 			Result = ar_chunk_storage:record_chunk(
 				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex),
 			release_semaphore(Filepath),
-			GenerateMissingEntropyTime = erlang:convert_time_unit(erlang:monotonic_time() - GenerateMissingEntropyStartTime, native, microsecond) / 1000.0,
-			?LOG_DEBUG([{event, details_store_chunk}, {section, record_chunk_generate_missing_entropy}, {offset, PaddedEndOffset},
-				{store_id, StoreID}, {filepath, Filepath}, {elapsed, GenerateMissingEntropyTime}]),
 			Result;
 		no_entropy_yet ->
-			RecordChunkStartTime = erlang:monotonic_time(),
 			Result = ar_chunk_storage:record_chunk(
 				PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex),
 			release_semaphore(Filepath),
-			RecordChunkTime = erlang:convert_time_unit(erlang:monotonic_time() - RecordChunkStartTime, native, microsecond) / 1000.0,
-			?LOG_DEBUG([{event, details_store_chunk}, {section, ar_entropy_storage_no_entropy_yet}, {offset, PaddedEndOffset},
-				{store_id, StoreID}, {filepath, Filepath}, {elapsed, RecordChunkTime}]),
 			Result;
 		{_EndOffset, Entropy} ->
-			EncipherStartTime = erlang:monotonic_time(),
 			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 			Result = ar_chunk_storage:record_chunk(
 				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex),
 			release_semaphore(Filepath),
-			EncipherTime = erlang:convert_time_unit(erlang:monotonic_time() - EncipherStartTime, native, microsecond) / 1000.0,
-			?LOG_DEBUG([{event, details_store_chunk}, {section, record_chunk_encipher}, {offset, PaddedEndOffset},
-				{store_id, StoreID}, {filepath, Filepath}, {elapsed, EncipherTime}]),
 			Result
 	end.
 
@@ -340,35 +314,18 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	%% be enciphered later) asynchronously. Whatever comes first, is stored.
 	%% If the other counterpart is stored already, we read it, encipher and store the
 	%% packed chunk.
-	StartTime = erlang:monotonic_time(),
 	acquire_semaphore(Filepath),
-	?LOG_DEBUG([{event, details_store_chunk}, {section, record_entropy_semaphore}, {offset, PaddedEndOffset},
-		{store_id, StoreID}, {filepath, Filepath}, {elapsed, erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
 
-	ReadUnpackedChunkStartTime = erlang:monotonic_time(),
+	IsUnpackedChunkRecorded = ar_sync_record:is_recorded(
+		PaddedEndOffset, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID),
+
+	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	Chunk = case IsUnpackedChunkRecorded of
 		true ->
-			case ar_chunk_storage:get(Byte, Byte, StoreID) of
+			case ar_chunk_storage:get(StartOffset, StartOffset, StoreID) of
 				not_found ->
-					?LOG_DEBUG([{event, details_store_chunk},
-						{context, unpacked_padded_chunk_not_found},
-						{bucket_end_offset, BucketEndOffset},
-						{byte, Byte},
-						{store_id, StoreID},
-						{filepath, Filepath},
-						{is_unpacked_chunk_recorded, IsUnpackedChunkRecorded}
-					]),
 					{error, not_found};
 				{error, _} = Error ->
-					?LOG_DEBUG([{event, details_store_chunk},
-						{context, unpacked_padded_chunk_error},
-						{error, io_lib:format("~p", [Error])},
-						{bucket_end_offset, BucketEndOffset},
-						{byte, Byte},
-						{store_id, StoreID},
-						{filepath, Filepath},
-						{is_unpacked_chunk_recorded, IsUnpackedChunkRecorded}
-					]),
 					Error;
 				{_, UnpackedChunk} ->
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
@@ -379,15 +336,17 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 			%% to make sure we pass offset validation on read.
 			ChunkEntropy
 	end,
-	ReadUnpackedChunkTime = erlang:convert_time_unit(erlang:monotonic_time() - ReadUnpackedChunkStartTime, native, microsecond) / 1000.0,
-	?LOG_DEBUG([{event, details_store_chunk}, {section, record_entropy_read_unpacked_chunk}, {offset, PaddedEndOffset},
-		{store_id, StoreID}, {filepath, Filepath}, {elapsed, ReadUnpackedChunkTime}]),
-	RecordChunkStartTime = erlang:monotonic_time(),
 	Result = case Chunk of
 		{error, _} = Error2 ->
 			Error2;
 		_ ->
-			case ar_chunk_storage:write_chunk(EndOffset, Chunk, #{}, StoreID) of
+			case IsUnpackedChunkRecorded of
+				true ->
+					ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+				false ->
+					ok
+			end,
+			case ar_chunk_storage:write_chunk(PaddedEndOffset, Chunk, #{}, StoreID) of
 				{ok, Filepath} ->
 					ets:insert(chunk_storage_file_index,
 						{{ChunkFileStart, StoreID}, Filepath}),
@@ -397,9 +356,6 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 					Error2
 			end
 	end,
-	RecordChunkTime = erlang:convert_time_unit(erlang:monotonic_time() - RecordChunkStartTime, native, microsecond) / 1000.0,
-	?LOG_DEBUG([{event, details_store_chunk}, {section, ar_entropy_storage_record_entropy}, {offset, PaddedEndOffset},
-		{store_id, StoreID}, {filepath, Filepath}, {elapsed, RecordChunkTime}]),
 
 	case Result of
 		{error, Reason} ->
@@ -479,6 +435,7 @@ shift_entropy_offset(Offset, SectorCount) ->
 acquire_semaphore(Filepath) ->
 	case ets:insert_new(ar_entropy_storage, {{semaphore, Filepath}}) of
 		false ->
+			?LOG_DEBUG([{event, details_store_chunk}, {section, waiting_on_semaphore}, {filepath, Filepath}]),
 			timer:sleep(20),
 			acquire_semaphore(Filepath);
 		true ->

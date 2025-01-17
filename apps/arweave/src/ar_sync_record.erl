@@ -400,10 +400,7 @@ handle_cast({add_async, Event, End, Start, ID}, State) ->
 	{Reply, State2} = add2(End, Start, ID, State),
 	case Reply of
 		ok ->
-			?LOG_DEBUG([{event, Event},
-					{status, success},
-					{sync_record_id, ID},
-					{offset, End}]);
+			ok;
 		Error ->
 			?LOG_ERROR([{event, Event},
 					{status, failed},
@@ -417,11 +414,7 @@ handle_cast({add_async, Event, End, Start, Packing, ID}, State) ->
 	{Reply, State2} = add2(End, Start, Packing, ID, State),
 	case Reply of
 		ok ->
-			?LOG_DEBUG([{event, Event},
-					{status, success},
-					{sync_record_id, ID},
-					{offset, End},
-					{packing, ar_serialize:encode_packing(Packing, true)}]);
+			ok;
 		Error ->
 			?LOG_ERROR([{event, Event},
 					{status, failed},

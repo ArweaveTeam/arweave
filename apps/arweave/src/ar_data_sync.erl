@@ -411,13 +411,6 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 		end,
 	case IsRecorded of
 		{{true, StoredPacking}, StoreID} ->
-			?LOG_DEBUG([{event, get_chunk}, {offset, Offset},
-					{request_origin, RequestOrigin},
-					{pack, Pack},
-					{options, Options},
-					{packing, ar_serialize:encode_packing(Packing, true)},
-					{stored_packing, ar_serialize:encode_packing(StoredPacking, true)},
-					{store_id, StoreID}]),
 			get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
 				RequestOrigin);
 		{true, StoreID} ->
@@ -2819,67 +2812,31 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			StartPut = erlang:monotonic_time(),
 			Result = ar_chunk_storage:put(PaddedOffset, Chunk, StoreID),
 			PutTime = erlang:convert_time_unit(erlang:monotonic_time() - StartPut, native, microsecond) / 1000.0,
+			case PutTime > 100 of
+				true ->
+					?LOG_DEBUG([{event, chunk_store_duration_milliseconds}, {store_id, StoreID},
+						{pid, self()}, {name, name(StoreID)}, {chunk_storage_name, ar_chunk_storage:name(StoreID)},
+						{elapsed, PutTime}, {offset, Offset}, {absolute_offset, PaddedOffset},
+						{chunk_size, ChunkSize}, {packing, ar_serialize:encode_packing(Packing, true)}]);
+				false ->
+					ok
+			end,
 			case Result of
 				{ok, NewPacking} ->
-					StartKV = erlang:monotonic_time(),
 					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
 						ok ->
-							KVTime = erlang:convert_time_unit(erlang:monotonic_time() - StartKV, native, microsecond) / 1000.0,
-							?LOG_DEBUG([{event, details_store_chunk},
-								{context, chunk_storage_put},
-								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-								{offset, Offset},
-								{chunk_size, ChunkSize},
-								{packing, ar_serialize:encode_packing(Packing, true)},
-								{new_packing, ar_serialize:encode_packing(NewPacking, true)},
-								{store_id, StoreID},
-								{put_time, PutTime},
-								{kv_time, KVTime}
-							]),
-						{ok, NewPacking};
+							{ok, NewPacking};
 						Error ->
-							?LOG_DEBUG([{event, details_store_chunk},
-								{context, error_writing_to_chunk_data_db},
-								{error, io_lib:format("~p", [Error])},
-								{offset, Offset},
-								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-								{chunk_data_key, ar_util:encode(ChunkDataKey)},
-								{data_path_hash, ar_util:encode(crypto:hash(sha256, DataPath))},
-								{chunk_size, ChunkSize},
-								{packing, ar_serialize:encode_packing(Packing, true)},
-								{store_id, StoreID}
-							]),
 							Error
 					end;
 				_ ->
 					Result
 			end;
 		false ->
-			StartKV = erlang:monotonic_time(),
 			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
-					KVTime = erlang:convert_time_unit(erlang:monotonic_time() - StartKV, native, microsecond) / 1000.0,
-					?LOG_DEBUG([{event, details_store_chunk},
-						{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-						{offset, Offset},
-						{chunk_size, ChunkSize},
-						{packing, ar_serialize:encode_packing(Packing, true)},
-						{store_id, StoreID},
-						{kv_time, KVTime}
-					]),
 					{ok, Packing};
 				Error ->
-					?LOG_DEBUG([{event, details_store_chunk},
-								{context, error_writing_to_chunk_data_db},
-								{error, io_lib:format("~p", [Error])},
-								{offset, Offset},
-								{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-								{chunk_data_key, ar_util:encode(ChunkDataKey)},
-								{data_path_hash, ar_util:encode(crypto:hash(sha256, DataPath))},
-								{chunk_size, ChunkSize},
-								{packing, ar_serialize:encode_packing(Packing, true)},
-								{store_id, StoreID}
-							]),
 					Error
 			end
 	end.
@@ -2897,7 +2854,7 @@ update_chunks_index(Args, State) ->
 update_chunks_index2(Args, State) ->
 	{AbsoluteOffset, Offset, ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkSize,
 			Packing} = Args,
-	#sync_data_state{ chunks_index = ChunksIndex, store_id = StoreID } = State,
+	#sync_data_state{ store_id = StoreID } = State,
 	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, Offset, ChunkSize},
 	case put_chunk_metadata(AbsoluteOffset, StoreID, Metadata) of
 		ok ->
@@ -2907,35 +2864,9 @@ update_chunks_index2(Args, State) ->
 				ok ->
 					ok;
 				{error, Reason} ->
-					?LOG_DEBUG([{event, details_store_chunk},
-						{context, error_adding_sync_record},
-						{error, io_lib:format("~p", [Reason])},
-						{sync_record_id, ar_data_sync},
-						{absolute_end_offset, AbsoluteOffset},
-						{offset, Offset},
-						{padded_offset, PaddedOffset},
-						{start_offset, StartOffset},
-						{chunk_data_key, ar_util:encode(ChunkDataKey)},
-						{data_root, ar_util:encode(DataRoot)},
-						{chunk_size, ChunkSize},
-						{packing, ar_serialize:encode_packing(Packing, true)},
-						{store_id, StoreID}
-					]),
 					{error, Reason}
 			end;
 		{error, Reason} ->
-			?LOG_DEBUG([{event, details_store_chunk},
-				{context, error_writing_to_chunks_index_db},
-				{error, io_lib:format("~p", [Reason])},
-				{absolute_end_offset, AbsoluteOffset},
-				{offset, Offset},
-				{db, ChunksIndex},
-				{chunk_data_key, ar_util:encode(ChunkDataKey)},
-				{data_root, ar_util:encode(DataRoot)},
-				{chunk_size, ChunkSize},
-				{packing, ar_serialize:encode_packing(Packing, true)},
-				{store_id, StoreID}
-			]),
 			{error, Reason}
 	end.
 
@@ -3124,18 +3055,6 @@ store_chunk2(ChunkArgs, Args, State) ->
 		end,
 	case CleanRecord of
 		{error, Reason} ->
-			?LOG_DEBUG([{event, details_store_chunk},
-				{context, error_deleting_sync_record},
-				{error, io_lib:format("~p", [Reason])},
-				{padded_offset, PaddedOffset},
-				{start_offset, StartOffset},
-				{should_store_in_chunk_storage, ShouldStoreInChunkStorage},
-				{data_root, DataRoot},
-				{data_path_hash, ar_util:encode(DataPathHash)},
-				{chunk_size, ChunkSize},
-				{packing, ar_serialize:encode_packing(Packing, true)},
-				{store_id, StoreID}
-			]),
 			log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash,
 					StoreID),
 			{error, Reason};

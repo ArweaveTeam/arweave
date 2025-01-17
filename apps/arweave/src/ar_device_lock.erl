@@ -21,6 +21,8 @@
 
 -type device_mode() :: prepare | sync | repack.
 
+-define(DEVICE_LOCK_LOG_INTERVAL_MS, 60000).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -60,7 +62,7 @@ acquire_lock(Mode, StoreID, CurrentStatus) ->
 		true ->
 			ok;
 		false ->
-			?LOG_DEBUG([{event, acquire_lock}, {mode, Mode}, {store_id, StoreID},
+			?LOG_INFO([{event, acquire_device_lock}, {mode, Mode}, {store_id, StoreID},
 					{old_status, CurrentStatus}, {new_status, NewStatus}])
 	end,
 	NewStatus.
@@ -109,12 +111,17 @@ handle_cast({release_lock, Mode, StoreID}, State) ->
 			{noreply, State};
 		_ ->
 			State2 = do_release_lock(Mode, StoreID, State),
-			?LOG_DEBUG([{event, release_lock}, {mode, Mode}, {store_id, StoreID}]),
+			?LOG_INFO([{event, release_device_lock}, {mode, Mode}, {store_id, StoreID}]),
 			{noreply, State2}
 	end;
+handle_cast(log_device_locks, State) ->
+	log_device_locks(State),
+	ar_util:cast_after(?DEVICE_LOCK_LOG_INTERVAL_MS, ?MODULE, log_device_locks), 
+	{noreply, State};
 handle_cast(Request, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
+
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
@@ -139,6 +146,9 @@ initialize_state(State) ->
 		StorageModules
 	),
 
+	log_device_locks(State),
+	ar_util:cast_after(?DEVICE_LOCK_LOG_INTERVAL_MS, ?MODULE, log_device_locks), 
+
 	State#state{
 		store_id_to_device = StoreIDToDevice,
 		initialized = true
@@ -157,7 +167,8 @@ get_system_device(StorageModule) ->
 do_acquire_lock(Mode, StoreID, State) ->
 	Device = maps:get(StoreID, State#state.store_id_to_device),
 	DeviceLock = maps:get(Device, State#state.device_locks, sync),
-
+	PrepareLocks = count_prepare_locks(State),
+	MaxPrepareLocks = 128,
 	{Acquired, NewDeviceLock} = case Mode of
 		sync ->
 			%% Can only aquire a sync lock if the device is in sync mode
@@ -168,9 +179,9 @@ do_acquire_lock(Mode, StoreID, State) ->
 		prepare ->
 			%% Can only acquire a prepare lock if the device is in sync mode or this
 			%% StoreID already has the prepare lock
-			case DeviceLock of
-				sync -> {true, {prepare, StoreID}};
-				{prepare, StoreID} -> {true, DeviceLock};
+			case {DeviceLock, PrepareLocks} of
+				{sync, _} when PrepareLocks < MaxPrepareLocks -> {true, {prepare, StoreID}};
+				{{prepare, StoreID}, _} -> {true, DeviceLock};
 				_ -> {false, DeviceLock}
 			end;
 		repack ->
@@ -227,6 +238,36 @@ do_release_lock(Mode, StoreID, State) ->
 
 	DeviceLocks = maps:put(Device, NewDeviceLock, State#state.device_locks),
 	State#state{device_locks = DeviceLocks}.
+
+count_prepare_locks(State) ->
+	maps:fold(
+		fun(_Device, Lock, Acc) ->
+			case Lock of
+				{prepare, _} -> Acc + 1;
+				_ -> Acc
+			end
+		end,
+		0,
+		State#state.device_locks
+	).
+
+log_device_locks(State) ->
+	StoreIDToDevice = State#state.store_id_to_device,
+	DeviceLocks = State#state.device_locks,
+	maps:fold(
+		fun(StoreID, Device, _) ->
+			DeviceLock = maps:get(Device, DeviceLocks, sync),
+			Status = case DeviceLock of
+				sync -> sync;
+				{prepare, StoreID} -> prepare;
+				{repack, StoreID} -> repack;
+				_ -> paused
+			end,
+			?LOG_INFO([{event, device_lock_status}, {store_id, StoreID}, {status, Status}])
+		end,
+		ok,
+		StoreIDToDevice
+	).
 
 %%%===================================================================
 %%% Tests.

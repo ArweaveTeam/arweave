@@ -88,9 +88,7 @@ put(PaddedOffset, Chunk, Packing, StoreID) ->
 	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk, Packing}, 180_000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			?LOG_DEBUG([{event, details_store_chunk},
-				{context, gen_server_timeout_putting_chunk},
-				{error, timeout},
+			?LOG_ERROR([{event, gen_server_timeout_putting_chunk},
 				{padded_offset, PaddedOffset},
 				{store_id, StoreID}
 			]),
@@ -482,6 +480,7 @@ handle_info({chunk, {packed, Ref, ChunkArgs}},
 	end;
 
 handle_info({Ref, _Reply}, State) when is_reference(Ref) ->
+	?LOG_ERROR([{event, stale_gen_server_call_reply}, {ref, Ref}, {reply, _Reply}]),
 	%% A stale gen_server:call reply.
 	{noreply, State};
 
@@ -515,7 +514,7 @@ do_prepare_replica_2_9(State) ->
 	%% Sanity checks:
 	PaddedEndOffset = get_chunk_bucket_end(PaddedEndOffset),
 	true = (
-	max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(PaddedEndOffset)
+		max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(PaddedEndOffset)
 	),
 	%% End of sanity checks.
 
@@ -684,20 +683,13 @@ store_chunk(PaddedEndOffset, Chunk, Packing, State) ->
 	store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr).
 
 store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr) ->
-	StartTime = erlang:monotonic_time(),
 	case ar_entropy_storage:is_entropy_packing(Packing) of
 		true ->
 			Result = ar_entropy_storage:record_chunk(
 				PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared),
-			?LOG_DEBUG([{event, details_store_chunk}, {section, ar_entropy_storage_record_chunk},
-				{store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}, {offset, PaddedEndOffset}, {elapsed,
-				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
 			Result;
 		false ->
 			Result = record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex),
-			?LOG_DEBUG([{event, details_store_chunk}, {section, ar_chunk_storage_record_chunk},
-				{store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}, {offset, PaddedEndOffset}, {elapsed,
-				erlang:convert_time_unit(erlang:monotonic_time() - StartTime, native, microsecond) / 1000.0}]),
 			Result
 	end.
 
@@ -715,15 +707,6 @@ record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex) ->
 						{{ChunkFileStart, StoreID}, Filepath}),
 					{ok, maps:put(ChunkFileStart, Filepath, FileIndex), Packing};
 				Error ->
-					?LOG_DEBUG([{event, details_store_chunk},
-						{context, error_adding_sync_record},
-						{error, io_lib:format("~p", [Error])},
-						{sync_record_id, sync_record_id(Packing)},
-						{padded_offset, PaddedEndOffset},
-						{packing, ar_serialize:encode_packing(Packing, true)},
-						{store_id, StoreID},
-						{filepath, Filepath}
-					]),
 					Error
 			end;
 		Error2 ->
@@ -753,13 +736,6 @@ write_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
 		locate_chunk_on_disk(PaddedOffset, StoreID, FileIndex),
 	case get_handle_by_filepath(Filepath) of
 		{error, _} = Error ->
-			?LOG_DEBUG([{event, details_store_chunk},
-				{context, error_opening_chunk_file},
-				{error, io_lib:format("~p", [Error])},
-				{padded_offset, PaddedOffset},
-				{store_id, StoreID},
-				{filepath, Filepath}
-			]),
 			Error;
 		F ->
 			write_chunk2(PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position)
@@ -795,7 +771,7 @@ get_handle_by_filepath(Filepath) ->
 			F
 	end.
 
-write_chunk2(PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
+write_chunk2(_PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
 	ChunkOffsetBinary =
 		case ChunkOffset of
 			0 ->
@@ -808,15 +784,7 @@ write_chunk2(PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
 		end,
 	Result = file:pwrite(F, Position, [ChunkOffsetBinary | Chunk]),
 	case Result of
-		{error, Reason} = Error ->
-			?LOG_DEBUG([{event, details_store_chunk},
-				{context, error_writing_chunk_to_file},
-				{error, io_lib:format("~p", [Reason])},
-				{padded_offset, PaddedOffset},
-				{chunk_offset, ChunkOffset},
-				{filepath, Filepath},
-				{position, Position}
-			]),
+		{error, _Reason} = Error ->
 			Error;
 		ok ->
 			{ok, Filepath}
