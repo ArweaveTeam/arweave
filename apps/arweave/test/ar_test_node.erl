@@ -80,7 +80,6 @@ all_nodes(TestType) ->
 
 new_custom_size_rsa_wallet(Size) ->
 	KeyType = ?RSA_KEY_TYPE,
-	KeyAlg = element(1, KeyType),
 	PublicExpnt = 65537,
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {Size * 8, PublicExpnt}),
@@ -195,6 +194,8 @@ stop_peer(Node) ->
 			ok
 	end.
 
+peer_ip({external, Peer}) ->
+	Peer;
 peer_ip(Node) ->
 	{127, 0, 0, 1, peer_port(Node)}.
 
