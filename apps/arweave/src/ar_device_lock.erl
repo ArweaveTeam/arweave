@@ -2,13 +2,11 @@
 
 -behaviour(gen_server).
 
--export([get_device_to_store_ids_map/0, get_store_id_to_device_map/0,
-		get_store_ids_for_device/1, is_ready/0, acquire_lock/3, release_lock/2]).
+-export([get_store_id_to_device_map/0, is_ready/0, acquire_lock/3, release_lock/2]).
 
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2]).
 
 -include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
 -include("../include/ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
@@ -21,26 +19,29 @@
 
 -type device_mode() :: prepare | sync | repack.
 
--define(DEVICE_LOCK_LOG_INTERVAL_MS, 60000).
+-define(DEVICE_LOCK_LOG_INTERVAL_MS, 600_000). %% 10 minutes
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
-get_device_to_store_ids_map() ->
-	State = gen_server:call(?MODULE, get_state),
-	ar_util:invert_map(State#state.store_id_to_device).
 
 get_store_id_to_device_map() ->
-	State = gen_server:call(?MODULE, get_state),
-	State#state.store_id_to_device.
-
-get_store_ids_for_device(Device) ->
-	DeviceToStoreIDs = get_device_to_store_ids_map(),
-	maps:get(Device, DeviceToStoreIDs, sets:new()).
+	case catch gen_server:call(?MODULE, get_state) of
+		{'EXIT', {Reason, {gen_server, call, _}}} ->
+			{error, Reason};
+		State ->
+			State#state.store_id_to_device
+	end.
 
 is_ready() ->
-	State = gen_server:call(?MODULE, get_state),
-	State#state.initialized.
+	case catch gen_server:call(?MODULE, get_state) of
+		{'EXIT', {Reason, {gen_server, call, _}}} ->
+			?LOG_WARNING([{event, error_getting_device_lock_state},
+					{module, ?MODULE}, {reason, Reason}]),
+			false;
+		State ->
+			State#state.initialized
+	end.
 
 %% @doc Helper function to wrap common logic around acquiring a device lock.
 -spec acquire_lock(device_mode(), string(), atom()) -> atom().
@@ -50,7 +51,11 @@ acquire_lock(Mode, StoreID, CurrentStatus) ->
 			% No change needed when we're done or off.
 			CurrentStatus;
 		_ ->
-			case gen_server:call(?MODULE, {acquire_lock, Mode, StoreID}) of
+			case catch gen_server:call(?MODULE, {acquire_lock, Mode, StoreID}) of
+				{'EXIT', {Reason, {gen_server, call, _}}} ->
+					?LOG_WARNING([{event, error_acquiring_device_lock},
+							{module, ?MODULE}, {reason, Reason}]),
+					CurrentStatus;
 				true ->
 					active;
 				false ->
@@ -168,7 +173,7 @@ do_acquire_lock(Mode, StoreID, State) ->
 	Device = maps:get(StoreID, State#state.store_id_to_device),
 	DeviceLock = maps:get(Device, State#state.device_locks, sync),
 	PrepareLocks = count_prepare_locks(State),
-	MaxPrepareLocks = 4,
+	MaxPrepareLocks = 8,
 	{Acquired, NewDeviceLock} = case Mode of
 		sync ->
 			%% Can only aquire a sync lock if the device is in sync mode

@@ -232,7 +232,7 @@ generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset)
 	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
 	
 	Entropy = prometheus_histogram:observe_duration(
-		replica_2_9_entropy_duration_milliseconds, ["1"], 
+		replica_2_9_entropy_duration_milliseconds, [1], 
 			fun() ->
 				ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
 			end),

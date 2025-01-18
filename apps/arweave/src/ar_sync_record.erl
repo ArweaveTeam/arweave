@@ -619,8 +619,10 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
 			end
 	end.
 
-emit_add_range(Start, End, ID, StoreID) ->
-	ar_events:send(sync_record, {add_range, Start, End, ID, StoreID}).
+emit_add_range(Start, End, ar_data_sync, StoreID) ->
+	ar_events:send(sync_record, {add_range, Start, End, ar_data_sync, StoreID});
+emit_add_range(_Start, _End, _ID, _StoreID) ->
+	ok.
 
 emit_remove_range(Start, End, StoreID) ->
 	ar_events:send(sync_record, {remove_range, Start, End, StoreID}).
@@ -658,6 +660,7 @@ store_state(State) ->
 			partition_number = PartitionNumber,
 			storage_module_size = StorageModuleSize,
 			storage_module_index = StorageModuleIndex } = State,
+	StartTime = erlang:monotonic_time(),
 	StoreSyncRecords =
 		ar_kv:put(
 			StateDB,

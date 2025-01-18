@@ -1,13 +1,78 @@
 -module(ar_entropy_storage).
 
--export([is_entropy_packing/1, acquire_semaphore/1, release_semaphore/1, is_recorded/2,
-	is_sub_chunk_recorded/3, delete_record/2, generate_entropies/3, generate_missing_entropy/2,
-	generate_entropy_keys/3, shift_entropy_offset/2, store_entropy/8, record_chunk/6]).
+-behaviour(gen_server).
+
+-export([name/1, is_entropy_packing/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
+	is_recorded/2, is_sub_chunk_recorded/3, delete_record/2, generate_entropies/3,
+	generate_missing_entropy/2, generate_entropy_keys/3, shift_entropy_offset/2,
+	store_entropy/7, record_chunk/6]).
+
+-export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
+
+-record(state, {
+	store_id,
+	module_ranges
+}).
+
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
+
+%% @doc Start the server.
+start_link(Name, StoreID) ->
+	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
+
+%% @doc Return the name of the server serving the given StoreID.
+name(StoreID) ->
+	list_to_atom("ar_entropy_storage_" ++ ar_storage_module:label_by_id(StoreID)).
+
+init(StoreID) ->
+	?LOG_INFO([{event, ar_entropy_storage_init}, {store_id, StoreID}]),
+	ModuleRanges = ar_storage_module:get_all_module_ranges(),
+	{ok, #state{ store_id = StoreID, module_ranges = ModuleRanges }}.
+
+store_entropy(
+	StoreID, Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr) ->
+	gen_server:cast(name(StoreID), {store_entropy,
+		Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr}).
+
+is_ready(StoreID) ->
+	gen_server:call(name(StoreID), is_ready, infinity).
+
+handle_cast({store_entropy,
+		Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr},
+		State) ->
+	StoreEntropyStartTime = erlang:monotonic_time(),
+	do_store_entropy(
+		Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr, State),
+	BytesStored = length(Entropies) * ?REPLICA_2_9_ENTROPY_SIZE,
+	ar_metrics:record_rate_metric(
+		StoreEntropyStartTime, BytesStored, chunk_write_rate, [entropy, State#state.store_id]),
+	{noreply, State};
+handle_cast(Cast, State) ->
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	{noreply, State}.
+
+handle_call(is_ready, _From, State) ->
+	{reply, true, State};
+handle_call(Call, From, State) ->
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {call, Call}]),
+	{reply, {error, unhandled_call}, State}.
+
+terminate(Reason, State) ->
+	?LOG_INFO([{event, ar_entropy_storage_terminate}, {reason, Reason}, {store_id, State#state.store_id}]),
+	ok.
+
+handle_info(Info, State) ->
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
+	{noreply, State}.
+
+
 
 -spec is_entropy_packing(ar_chunk_storage:packing()) -> boolean().
 is_entropy_packing(unpacked_padded) ->
@@ -122,6 +187,14 @@ generate_entropies(RewardAddr, PaddedEndOffset, SubChunkStart) ->
 	end,
 	Entropies.
 
+generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
+	when SubChunkStart == ?DATA_CHUNK_SIZE ->
+	[];
+generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	[ar_replica_2_9:get_entropy_key(RewardAddr, Offset, SubChunkStart)
+	 | generate_entropy_keys(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
+
 collect_entropies([], Acc) ->
 	lists:reverse(Acc);
 collect_entropies([Ref | Rest], Acc) ->
@@ -145,52 +218,42 @@ flush_entropy_messages() ->
 		ok
 	end.
 
-generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
-	when SubChunkStart == ?DATA_CHUNK_SIZE ->
-	[];
-generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	[ar_replica_2_9:get_entropy_key(RewardAddr, Offset, SubChunkStart)
-	 | generate_entropy_keys(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
-
-store_entropy(_Entropies,
+do_store_entropy(_Entropies,
 			BucketEndOffset,
 			_SubChunkStartOffset,
 			RangeEnd,
 			_Keys,
 			_RewardAddr,
-			N,
-			WaitN)
+			_State)
 	when BucketEndOffset > RangeEnd ->
 	%% The amount of entropy generated per partition is slightly more than the amount needed.
 	%% So at the end of a partition we will have finished processing chunks, but still have
 	%% some entropy left. In this case we stop the recursion early and wait for the writes
 	%% to complete.
-	wait_store_entropy_processes(WaitN),
-	{ok, N};
-store_entropy(Entropies,
+	ok;
+do_store_entropy(Entropies,
 			BucketEndOffset,
 			SubChunkStartOffset,
 			RangeEnd,
 			Keys,
 			RewardAddr,
-			N,
-			WaitN) ->
+			State) ->
 	case take_and_combine_entropy_slices(Entropies) of
 		{<<>>, []} ->
 			%% We've finished processing all the entropies, wait for the writes to complete.
-			wait_store_entropy_processes(WaitN),
-			{ok, N};
+			ok;
 		{ChunkEntropy, Rest} ->
+			%% Sanity checks
 			true =
 				ar_replica_2_9:get_entropy_partition(BucketEndOffset)
 				== ar_replica_2_9:get_entropy_partition(RangeEnd),
-			sanity_check_replica_2_9_entropy_keys(BucketEndOffset,
-												RewardAddr,
-												SubChunkStartOffset,
-												Keys),
+			sanity_check_replica_2_9_entropy_keys(BucketEndOffset, RewardAddr,
+				SubChunkStartOffset, Keys),
+			%% End sanity checks
+
 			FindModules =
-				case ar_storage_module:get_all_packed(BucketEndOffset, {replica_2_9, RewardAddr}) of
+				case ar_storage_module:get_all_packed(BucketEndOffset,
+						{replica_2_9, RewardAddr}, State#state.module_ranges) of
 					[] ->
 						?LOG_WARNING([{event, failed_to_find_storage_modules_for_2_9_entropy},
 									{padded_end_offset, BucketEndOffset}]),
@@ -198,48 +261,37 @@ store_entropy(Entropies,
 					StoreIDs ->
 						{ok, StoreIDs}
 				end,
+
 			case FindModules of
 				not_found ->
 					BucketEndOffset2 = shift_entropy_offset(BucketEndOffset, 1),
-					store_entropy(Rest,
+					do_store_entropy(Rest,
 								BucketEndOffset2,
 								SubChunkStartOffset,
 								RangeEnd,
 								Keys,
 								RewardAddr,
-								N,
-								WaitN);
+								State);
 				{ok, StoreIDs2} ->
-					From = self(),
-					WaitN2 = lists:foldl(fun(StoreID2, WaitNAcc) ->
-							spawn_link(fun() ->
-									StartTime = erlang:monotonic_time(),
-
-									record_entropy(ChunkEntropy,
-													BucketEndOffset,
-													StoreID2,
-													RewardAddr),
-
-									ar_metrics:record_rate_metric(StartTime,
-													byte_size(ChunkEntropy),
-													replica_2_9_entropy_write_rate,
-													[StoreID2]),
-									From ! {store_entropy_sub_chunk_written, WaitNAcc + 1}
-								end),
-							WaitNAcc + 1
+					lists:foldl(
+						fun(StoreID2, _Acc) ->
+							record_entropy(ChunkEntropy,
+											BucketEndOffset,
+											StoreID2,
+											RewardAddr)
 						end,
-						WaitN,
+						ok,
 						StoreIDs2
 					),
+
 					BucketEndOffset2 = shift_entropy_offset(BucketEndOffset, 1),
-					store_entropy(Rest,
+					do_store_entropy(Rest,
 								BucketEndOffset2,
 								SubChunkStartOffset,
 								RangeEnd,
 								Keys,
 								RewardAddr,
-								N + length(Keys),
-								WaitN2)
+								State)
 			end
 	end.
 
@@ -257,6 +309,7 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			false ->
 				is_recorded(PaddedEndOffset, StoreID)
 		end,
+	StartTime = erlang:monotonic_time(),
 	ReadEntropy =
 		case CheckIsEntropyRecorded of
 			{error, _} = Error ->
@@ -291,6 +344,8 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			ar_chunk_storage:record_chunk(
 				PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex);
 		{_EndOffset, Entropy} ->
+			ar_metrics:record_rate_metric(
+				StartTime, ?DATA_CHUNK_SIZE, chunk_read_rate, [entropy, StoreID]),
 			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 			ar_chunk_storage:record_chunk(
@@ -340,12 +395,15 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 
 	Chunk = case IsUnpackedChunkRecorded of
 		true ->
+			StartTime = erlang:monotonic_time(),
 			case ar_chunk_storage:get(Byte, Byte, StoreID) of
 				not_found ->
 					{error, not_found};
 				{error, _} = Error ->
 					Error;
 				{_, UnpackedChunk} ->
+					ar_metrics:record_rate_metric(
+						StartTime, ?DATA_CHUNK_SIZE, chunk_read_rate, [entropy, StoreID]),
 					ar_sync_record:delete(EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;
@@ -355,11 +413,13 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 			%% to make sure we pass offset validation on read.
 			ChunkEntropy
 	end,
+
 	Result = case Chunk of
 		{error, _} = Error2 ->
 			Error2;
 		_ ->
-			case ar_chunk_storage:write_chunk(EndOffset, Chunk, #{}, StoreID) of
+			WriteChunkResult = ar_chunk_storage:write_chunk(EndOffset, Chunk, #{}, StoreID),
+			case WriteChunkResult of
 				{ok, Filepath} ->
 					ets:insert(chunk_storage_file_index,
 						{{ChunkFileStart, StoreID}, Filepath}),
@@ -418,29 +478,17 @@ take_combined_entropy_by_index([Entropy | Entropies], Index, Acc) ->
 								   Index,
 								   [Acc, binary:part(Entropy, Index * SubChunkSize, SubChunkSize)]).
 
-sanity_check_replica_2_9_entropy_keys(_PaddedEndOffset,
-									  _RewardAddr,
-									  _SubChunkStartOffset,
-									  []) ->
+sanity_check_replica_2_9_entropy_keys(
+		_PaddedEndOffset, _RewardAddr, _SubChunkStartOffset, []) ->
 	ok;
-sanity_check_replica_2_9_entropy_keys(PaddedEndOffset,
-									  RewardAddr,
-									  SubChunkStartOffset,
-									  [Key | Keys]) ->
-	Key = ar_replica_2_9:get_entropy_key(RewardAddr, PaddedEndOffset, SubChunkStartOffset),
+sanity_check_replica_2_9_entropy_keys(
+		PaddedEndOffset, RewardAddr, SubChunkStartOffset, [Key | Keys]) ->
+ 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, PaddedEndOffset, SubChunkStartOffset),
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	sanity_check_replica_2_9_entropy_keys(PaddedEndOffset,
-										  RewardAddr,
-										  SubChunkStartOffset + SubChunkSize,
-										  Keys).
-
-wait_store_entropy_processes(0) ->
-	ok;
-wait_store_entropy_processes(N) ->
-	receive
-		{store_entropy_sub_chunk_written, N} ->
-			wait_store_entropy_processes(N - 1)
-	end.
+										RewardAddr,
+										SubChunkStartOffset + SubChunkSize,
+										Keys).
 
 shift_entropy_offset(Offset, SectorCount) ->
 	SectorSize = ar_replica_2_9:get_sector_size(),
