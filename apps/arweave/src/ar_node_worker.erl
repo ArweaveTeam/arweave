@@ -1034,7 +1034,9 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
 						byte_size(Sig1) == ?ECDSA_SIG_SIZE
 							andalso byte_size(Sig2) == ?ECDSA_SIG_SIZE;
 					_ ->
-						true
+						byte_size(Key) == ?RSA_BLOCK_SIG_SIZE
+							andalso byte_size(Sig1) == ?RSA_BLOCK_SIG_SIZE
+							andalso byte_size(Sig2) == ?RSA_BLOCK_SIG_SIZE
 				end,
 			HasLockedReward =
 				case CheckKeyType of
@@ -2149,9 +2151,8 @@ handle_found_solution(Args, PrevB, State) ->
 			},
 			SignedH = ar_block:generate_signed_hash(UnsignedB2),
 			PrevCDiff = PrevB#block.cumulative_diff,
-			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
-					(ar_serialize:encode_int(PrevCDiff, 16))/binary, (PrevB#block.hash)/binary,
-					SignedH/binary >>,
+			SignaturePreimage = ar_block:get_block_signature_preimage(CDiff, PrevCDiff,
+					<< (PrevB#block.hash)/binary, SignedH/binary >>, Height),
 			assert_key_type(RewardKey, Height),
 			Signature = ar_wallet:sign(element(1, RewardKey), SignaturePreimage),
 			H = ar_block:indep_hash2(SignedH, Signature),

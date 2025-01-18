@@ -959,7 +959,13 @@ parse_double_signing_proof(Bin, #block{ height = Height } = B) ->
 				Preimage1:64/binary, Sig2Size:16, Sig2:Sig2Size/binary,
 				CDiff2Size:16, CDiff2:(CDiff2Size * 8),
 				PrevCDiff2Size:16, PrevCDiff2:(PrevCDiff2Size * 8),
-				Preimage2:64/binary, Rest/binary >>, true} ->
+				Preimage2:64/binary, Rest/binary >>, true}
+					when (KeySize == ?RSA_BLOCK_SIG_SIZE andalso
+							Sig1Size == ?RSA_BLOCK_SIG_SIZE andalso
+							Sig2Size == ?RSA_BLOCK_SIG_SIZE) orelse
+						(KeySize == ?ECDSA_PUB_KEY_SIZE andalso
+							Sig1Size == ?ECDSA_SIG_SIZE andalso
+							Sig2Size == ?ECDSA_SIG_SIZE) ->
 			Proof = {Key, Sig1, CDiff1, PrevCDiff1, Preimage1,
 					Sig2, CDiff2, PrevCDiff2, Preimage2},
 			B2 = B#block{ double_signing_proof = Proof },

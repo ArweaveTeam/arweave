@@ -5,7 +5,7 @@
 		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
 		compute_h0/2, compute_h0/5, compute_h0/6,
 		compute_h1/3, compute_h2/3, compute_solution_h/2,
-		indep_hash/1, indep_hash/2, indep_hash2/2,
+		indep_hash/1, indep_hash/2, indep_hash2/2, get_block_signature_preimage/4,
 		generate_signed_hash/1, verify_signature/3,
 		generate_block_data_segment/1, generate_block_data_segment/2,
 		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
@@ -427,16 +427,28 @@ indep_hash(BDS, B) ->
 			ar_deep_hash:hash([BDS, B#block.hash, B#block.nonce])
 	end.
 
+%% @doc Return the signed block signature preimage.
+get_block_signature_preimage(CDiff, PrevCDiff, Preimage, Height) ->
+	EncodedCDiff = ar_serialize:encode_int(CDiff, 16),
+	EncodedPrevCDiff = ar_serialize:encode_int(PrevCDiff, 16),
+	SignaturePreimage = << EncodedCDiff/binary,
+			EncodedPrevCDiff/binary, Preimage/binary >>,
+	case Height >= ar_fork:height_2_9() of
+		false ->
+			SignaturePreimage;
+		true ->
+			<< 0:(32 * 8), SignaturePreimage/binary >>
+	end.
+
 %% @doc Verify the block signature.
 verify_signature(BlockPreimage, PrevCDiff,
 		#block{ signature = Signature, reward_key = {?RSA_KEY_TYPE, Pub} = RewardKey,
 				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
-				cumulative_diff = CDiff })
+				cumulative_diff = CDiff, height = Height })
 		when byte_size(Signature) == ?RSA_BLOCK_SIG_SIZE,
 				byte_size(Pub) == ?RSA_BLOCK_SIG_SIZE ->
-	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
-			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
-			BlockPreimage/binary >>,
+	SignaturePreimage = get_block_signature_preimage(CDiff, PrevCDiff,
+			<< PrevSolutionH/binary, BlockPreimage/binary >>, Height),
 	ar_wallet:to_address(RewardKey) == RewardAddr andalso
 			ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
 verify_signature(BlockPreimage, PrevCDiff,
@@ -444,9 +456,8 @@ verify_signature(BlockPreimage, PrevCDiff,
 				reward_addr = RewardAddr, previous_solution_hash = PrevSolutionH,
 				cumulative_diff = CDiff, height = Height })
 		when byte_size(Signature) == ?ECDSA_SIG_SIZE, byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE ->
-	SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
-			(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
-			BlockPreimage/binary >>,
+	SignaturePreimage = get_block_signature_preimage(CDiff, PrevCDiff,
+			<< PrevSolutionH/binary, BlockPreimage/binary >>, Height),
 	case Height >= ar_fork:height_2_9() of
 		true ->
 			ar_wallet:to_address(RewardKey) == RewardAddr andalso

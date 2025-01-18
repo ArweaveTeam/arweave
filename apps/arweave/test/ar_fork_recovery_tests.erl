@@ -173,6 +173,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 
 fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 	#block{
+		height = Height,
 		partition_number = PartitionNumber,
 		previous_solution_hash = PrevSolutionH,
 		nonce_limiter_info = #nonce_limiter_info{
@@ -214,9 +215,8 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 				end,
 			PrevCDiff = PrevB#block.cumulative_diff,
 			SignedH = ar_block:generate_signed_hash(B4),
-			SignaturePreimage = << (ar_serialize:encode_int(CDiff, 16))/binary,
-					(ar_serialize:encode_int(PrevCDiff, 16))/binary, PrevSolutionH/binary,
-					SignedH/binary >>,
+			SignaturePreimage = ar_block:get_block_signature_preimage(CDiff, PrevCDiff,
+				<< PrevSolutionH/binary, SignedH/binary >>, Height),
 			Signature = ar_wallet:sign(element(1, Wallet), SignaturePreimage),
 			B4#block{ indep_hash = ar_block:indep_hash2(SignedH, Signature),
 					signature = Signature };
