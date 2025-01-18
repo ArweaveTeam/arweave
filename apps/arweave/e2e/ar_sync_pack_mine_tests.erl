@@ -30,7 +30,6 @@ replica_2_9_block_sync_test_() ->
 					instantiator(GenesisData, replica_2_9, fun test_syncing_blocked/1),
 					instantiator(GenesisData, spora_2_6, fun test_syncing_blocked/1),
 					instantiator(GenesisData, composite_1, fun test_syncing_blocked/1),
-					instantiator(GenesisData, composite_2, fun test_syncing_blocked/1),
 					instantiator(GenesisData, unpacked, fun test_syncing_blocked/1)
 				]
 		end}.
@@ -42,7 +41,6 @@ spora_2_6_sync_pack_mine_test_() ->
 					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
 				]
 		end}.
@@ -54,19 +52,6 @@ composite_1_sync_pack_mine_test_() ->
 					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-				]
-		end}.
-
-composite_2_sync_pack_mine_test_() ->
-	{setup, fun () -> setup_source_node(composite_2) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
 				]
 		end}.
@@ -78,7 +63,6 @@ unpacked_sync_pack_mine_test_() ->
 					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, composite_1, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, composite_2, fun test_sync_pack_mine/1),
 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
 				]
 		end}.

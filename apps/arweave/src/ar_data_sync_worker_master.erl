@@ -118,15 +118,18 @@ handle_cast({task_completed, {read_range, {Worker, _, Args}}}, State) ->
 		_ ->
 			Caller ! {ar_data_sync_worker_master_read_range_task_complete, TaskRef}
 	end,
-	State2 = update_scheduled_task_count(Worker, read_range, format_peer(read_range, Args), -1, State),
+	State2 = update_scheduled_task_count(
+		Worker, read_range, format_peer(read_range, Args), -1, State),
 	{noreply, State2};
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
 	{Start, End, Peer, _, _} = Args,
 	DataSize = End - Start,
-	State2 = update_scheduled_task_count(Worker, sync_range, ar_util:format_peer(Peer), -1, State),
+	State2 = update_scheduled_task_count(
+		Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
-	{PeerTasks2, State3} = complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State2),
+	{PeerTasks2, State3} = complete_sync_range(
+		PeerTasks, Result, ElapsedNative, DataSize, State2),
 	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
 	{noreply, set_peer_tasks(PeerTasks3, State4)};
 

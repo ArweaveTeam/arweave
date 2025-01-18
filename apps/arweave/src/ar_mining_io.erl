@@ -127,14 +127,20 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast(initialize_state, State) ->
-	State2 = case ar_device_lock:is_ready() of
+	State3 = case ar_device_lock:is_ready() of
 		false ->
 			ar_util:cast_after(1000, self(), initialize_state),
 			State;
 		true ->
-			start_io_threads(State)
+			case start_io_threads(State) of
+				{error, _} ->
+					ar_util:cast_after(1000, self(), initialize_state),
+					State;
+				State2 ->
+					State2
+			end
 	end,
-	{noreply, State2};
+	{noreply, State3};
 
 handle_cast(garbage_collect, State) ->
 	erlang:garbage_collect(self(),
@@ -190,31 +196,37 @@ start_io_threads(State) ->
 	#state{ mode = Mode } = State,
 
     % Step 1: Group StoreIDs by their system device
-    DeviceToStoreIDs = ar_device_lock:get_device_to_store_ids_map(),
+	case ar_device_lock:get_store_id_to_device_map() of
+		{error, Reason} ->
+			?LOG_ERROR([{event, error_initializing_state}, {module, ?MODULE},
+				{reason, io_lib:format("~p", [Reason])}]),
+			{error, Reason};
+		StoreIDToDevice ->
+			DeviceToStoreIDs = ar_util:invert_map(StoreIDToDevice),
+			% Step 2: Start IO threads for each device and populate map indices
+			State2 = maps:fold(
+				fun(Device, StoreIDs, StateAcc) ->
+					#state{ io_threads = Threads, io_thread_monitor_refs = Refs,
+						partition_to_store_ids = PartitionToStoreIDs } = StateAcc,
 
-    % Step 2: Start IO threads for each device and populate map indices
-	State2 = maps:fold(
-		fun(Device, StoreIDs, StateAcc) ->
-			#state{ io_threads = Threads, io_thread_monitor_refs = Refs,
-				partition_to_store_ids = PartitionToStoreIDs } = StateAcc,
+					StoreIDs2 = sets:to_list(StoreIDs),
+					
+					Thread = start_io_thread(Mode, StoreIDs2),
+					ThreadRef = monitor(process, Thread),
 
-			StoreIDs2 = sets:to_list(StoreIDs),
-			
-			Thread = start_io_thread(Mode, StoreIDs2),
-			ThreadRef = monitor(process, Thread),
+					PartitionToStoreIDs2 = map_partition_to_store_ids(StoreIDs2, PartitionToStoreIDs),
+					StateAcc#state{
+						io_threads = maps:put(Device, Thread, Threads),
+						io_thread_monitor_refs = maps:put(ThreadRef, Device, Refs),
+						partition_to_store_ids = PartitionToStoreIDs2
+					}
+				end,
+				State,
+				DeviceToStoreIDs
+			),
 
-			PartitionToStoreIDs2 = map_partition_to_store_ids(StoreIDs2, PartitionToStoreIDs),
-			StateAcc#state{
-				io_threads = maps:put(Device, Thread, Threads),
-				io_thread_monitor_refs = maps:put(ThreadRef, Device, Refs),
-				partition_to_store_ids = PartitionToStoreIDs2
-			}
-		end,
-		State,
-		DeviceToStoreIDs
-	),
-
-	State2#state{ store_id_to_device = ar_device_lock:get_store_id_to_device_map() }.
+			State2#state{ store_id_to_device = StoreIDToDevice }
+	end.
 
 start_io_thread(Mode, StoreIDs) ->
 	Now = os:system_time(millisecond),
@@ -258,14 +270,16 @@ open_files(StoreIDs) ->
 		end,
 		StoreIDs).
 
-handle_io_thread_down(Ref, Reason,
-		#state{ mode = Mode, io_threads = Threads, io_thread_monitor_refs = Refs } = State) ->
+handle_io_thread_down(Ref, Reason, State) ->
+	#state{ mode = Mode, io_threads = Threads, io_thread_monitor_refs = Refs,
+		store_id_to_device = StoreIDToDevice } = State,
 	?LOG_WARNING([{event, mining_io_thread_down}, {reason, io_lib:format("~p", [Reason])}]),
 	Device = maps:get(Ref, Refs),
 	Refs2 = maps:remove(Ref, Refs),
 	Threads2 = maps:remove(Device, Threads),
 
-	StoreIDs = ar_device_lock:get_store_ids_for_device(Device),
+	DeviceToStoreIDs = ar_util:invert_map(StoreIDToDevice),
+	StoreIDs = maps:get(Device, DeviceToStoreIDs, sets:new()),
 	Thread = start_io_thread(Mode, sets:to_list(StoreIDs)),
 	ThreadRef = monitor(process, Thread),
 	State#state{ io_threads = maps:put(Device, Thread, Threads2),	

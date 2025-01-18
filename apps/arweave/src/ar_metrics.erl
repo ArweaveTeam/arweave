@@ -455,28 +455,34 @@ register() ->
 		{labels, [packing]},
 		{help, "The counter is incremented every time a chunk is written to "
 				"chunk_storage."}]),
-	prometheus_gauge:new([{name, chunk_store_rate},
-		{labels, [store_id]},
-		{help, "The time, in milliseconds, to store one chunk. Includes time to update all "
-				"relevant indexes."}
+	prometheus_histogram:new([{name, chunk_write_rate},
+		{labels, [type, store_id]},
+		{buckets, [1048576, 10*1048576, 25*1048576, 50*1048576, 75*1048576, 100*1048576,
+					125*1048576, 150*1048576, 175*1048576, 200*1048576, 300*1048576]},
+		{help, "The rate achieved, in bytes per second, when storing chunks. The 'type' label "
+				"indicates what process initiated the store operation: 'sync', 'entropy', or "
+				"'repack'."}
 	]),
-		
+	prometheus_histogram:new([{name, chunk_read_rate},
+		{labels, [type, store_id]},
+		{buckets, [1048576, 10*1048576, 25*1048576, 50*1048576, 75*1048576, 100*1048576,
+					125*1048576, 150*1048576, 175*1048576, 200*1048576, 300*1048576]},
+		{help, "The rate achieved, in bytes per second, when reading chunks. The 'type' label "
+				"indicates what process initiated the store operation: 'sync', 'entropy', or "
+				"'repack'."}
+	]),
 	prometheus_gauge:new([{name, sync_tasks},
 		{labels, [state, type, peer]},
 		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
 				"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
 				"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
+
 	%% ---------------------------------------------------------------------------------------
 	%% Replica 2.9 metrics
 	%% ---------------------------------------------------------------------------------------
 	prometheus_counter:new([{name, replica_2_9_entropy_stored},
 		{labels, [store_id]},
 		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
-	prometheus_gauge:new([{name, replica_2_9_entropy_write_rate},
-		{labels, [store_id]},
-		{help, "The rate at which replica.2.9 entropy is written to chunk storage in "
-				"bytes per second. This considers only the time to write the entropy, "
-				"excluding the time to generate it."}]),
 	prometheus_histogram:new([
 		{name, replica_2_9_entropy_duration_milliseconds},
 		{labels, [count]},
@@ -529,10 +535,10 @@ record_rate_metric(StartTime, Bytes, Metric, Labels) ->
 	%% bytes per second
 	Rate =
 		case ElapsedTime > 0 of
-			true -> 1_000_000 * Bytes div ElapsedTime;
+			true -> 1_000_000 * Bytes / ElapsedTime;
 			false -> 0
 		end,
-	prometheus_gauge:set(Metric, Labels, Rate).
+	prometheus_histogram:observe(Metric, Labels, Rate).
 
 
 %% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total
