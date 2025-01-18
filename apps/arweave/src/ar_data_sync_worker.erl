@@ -180,7 +180,12 @@ read_range2(MessagesRemaining,
 					true ->
 						skip;
 					false ->
-						ar_data_sync:read_chunk(AbsoluteOffset, ChunkDataKey, OriginStoreID)
+						StartTime = erlang:monotonic_time(),
+						Result = ar_data_sync:read_chunk(
+							AbsoluteOffset, ChunkDataKey, OriginStoreID),
+						ar_metrics:record_rate_metric(
+							StartTime, ChunkSize, chunk_read_rate, [sync, OriginStoreID]),
+						Result
 				end,
 			case ReadChunk of
 				skip ->

@@ -44,5 +44,14 @@ init([]) ->
 		end,
 		Config#config.repack_in_place_storage_modules
 	),
-	Workers = [DefaultChunkStorageWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers,
+
+	EntropyStorageWorkers = lists:map(
+		fun(StorageModule) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			Name = ar_entropy_storage:name(StoreID),
+			?CHILD_WITH_ARGS(ar_entropy_storage, worker, Name, [Name, StoreID])
+		end,
+		Config#config.storage_modules
+	),
+	Workers = [DefaultChunkStorageWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers ++ EntropyStorageWorkers,
 	{ok, {{one_for_one, 5, 10}, Workers}}.

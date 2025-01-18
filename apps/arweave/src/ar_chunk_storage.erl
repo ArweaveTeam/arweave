@@ -10,7 +10,7 @@
 		list_files/2, run_defragmentation/0,
 		get_storage_module_path/2, get_chunk_storage_path/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
-		sync_record_id/1, store_chunk/7, write_chunk/4, write_chunk2/6, record_chunk/5]).
+		sync_record_id/1, store_chunk/7, write_chunk/4, record_chunk/5]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -581,12 +581,11 @@ do_prepare_replica_2_9(State) ->
 			false ->
 				%% Get all the entropies needed to encipher the chunk at BucketEndOffset.
 				Entropies = prometheus_histogram:observe_duration(
-					replica_2_9_entropy_duration_milliseconds, ["32"], 
+					replica_2_9_entropy_duration_milliseconds, [32], 
 						fun() ->
 							ar_entropy_storage:generate_entropies(
 								RewardAddr, BucketEndOffset, SubChunkStart)
 						end),
-				
 				case Entropies of
 					{error, Reason} ->
 						{error, Reason};
@@ -602,17 +601,21 @@ do_prepare_replica_2_9(State) ->
 						%% partition.
 						BucketEndOffset2 = ar_entropy_storage:shift_entropy_offset(
 							BucketEndOffset, -SliceIndex),
-						%% The end of a recall partition (3.6TB) may fall in the middle of a chunk, so
-						%% we'll use the padded offset to end the store_entropy iteration.
+						%% The end of a recall partition (3.6TB) may fall in the middle of a
+						%% chunk, so we'll use the padded offset to end the store_entropy
+						%% iteration.
 						PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
 						PaddedPartitionEnd =
-							get_chunk_bucket_end(ar_block:get_chunk_padded_offset(PartitionEnd)),
+							get_chunk_bucket_end(
+								ar_block:get_chunk_padded_offset(PartitionEnd)),
+						%% Wait for the previous store_entropy to complete.
+						true = ar_entropy_storage:is_ready(StoreID),
 						ar_entropy_storage:store_entropy(
-							Entropies, BucketEndOffset2, SubChunkStart, PaddedPartitionEnd,
-							EntropyKeys, RewardAddr, 0, 0)
+							StoreID, Entropies, BucketEndOffset2, SubChunkStart,
+							PaddedPartitionEnd, EntropyKeys, RewardAddr)
 				end
 		end,
-	?LOG_DEBUG([{event, do_prepare_replica_2_9}, {store_id, StoreID},
+	?LOG_DEBUG([{event, stored_replica_2_9_entropy}, {store_id, StoreID},
 		{start, Start}, {padded_end_offset, BucketEndOffset},
 		{range_start, RangeStart}, {range_end, RangeEnd},
 		{repack_cursor, RepackCursor},
@@ -641,12 +644,7 @@ do_prepare_replica_2_9(State) ->
 					{reason, io_lib:format("~p", [Error])}]),
 			ar_util:cast_after(500, self(), prepare_replica_2_9),
 			State;
-		{ok, SubChunksStored} ->
-			?LOG_DEBUG([{event, stored_replica_2_9_entropy},
-					{sub_chunks_stored, SubChunksStored},
-					{store_id, StoreID},
-					{cursor, Start},
-					{padded_end_offset, BucketEndOffset}]),
+		ok ->
 			gen_server:cast(self(), prepare_replica_2_9),
 			case store_prepare_replica_2_9_cursor(Cursor2, StoreID) of
 				ok ->
