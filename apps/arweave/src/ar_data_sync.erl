@@ -1527,6 +1527,8 @@ do_sync_intervals(State) ->
 do_sync_data(State) ->
 	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
+	?LOG_INFO([{event, sync_data}, {store_id, StoreID}, {range_start, RangeStart},
+			{range_end, RangeEnd}, {disk_pool_threshold, DiskPoolThreshold}]),
 	%% See if any of StoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
@@ -1546,6 +1548,10 @@ do_sync_data(State) ->
 do_sync_data2(#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [],
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
+	#sync_data_state{ store_id = StoreID,
+		range_start = RangeStart, range_end = RangeEnd } = State,
+	?LOG_INFO([{event, sync_data_complete}, {store_id, StoreID}, {range_start, RangeStart},
+			{range_end, RangeEnd}]),
 	ar_util:cast_after(2000, self(), collect_peer_intervals),
 	State;
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
@@ -1565,6 +1571,7 @@ do_sync_data2(#sync_data_state{
 				get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 						RangeStart, RangeEnd)
 		end,
+	% ?LOG_DEBUG([{event, sync_data2}, {store_id, StoreID}, {intervals, Intervals}]),
 	gen_server:cast(self(), sync_data2),
 	State#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = Intervals,
@@ -2521,23 +2528,23 @@ store_sync_state(_State) ->
 
 %% @doc Look to StoreID to find data that TargetStoreID is missing.
 %% Args:
-%%   TargetStoreID - The ID of the storage module to sync to (this module is missing data)
-%%   StoreID - The ID of the storage module to sync from (this module might have the data)
+%%   StoreID - The ID of the storage module to sync to (this module is missing data)
+%%   OtherStoreID - The ID of the storage module to sync from (this module might have the data)
 %%   RangeStart - The start offset of the range to check
 %%   RangeEnd - The end offset of the range to check
-get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeStart,
+get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
 		RangeEnd) ->
-	get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeStart,
+	get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
 			RangeEnd, []).
 
-get_unsynced_intervals_from_other_storage_modules(_TargetStoreID, _StoreID, RangeStart,
+get_unsynced_intervals_from_other_storage_modules(_StoreID, _OtherStoreID, RangeStart,
 		RangeEnd, Intervals) when RangeStart >= RangeEnd ->
 	Intervals;
-get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeStart,
+get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
 		RangeEnd, Intervals) ->
 	FindNextMissing =
 		case ar_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ar_data_sync,
-				TargetStoreID) of
+		StoreID) of
 			not_found ->
 				{request, {RangeStart, RangeEnd}};
 			{End, Start} when Start =< RangeStart ->
@@ -2547,18 +2554,18 @@ get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, RangeS
 		end,
 	case FindNextMissing of
 		{skip, End2} ->
-			get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID, End2,
+			get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, End2,
 					RangeEnd, Intervals);
 		{request, {Cursor, RightBound}} ->
 			case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ar_data_sync,
-					StoreID) of
+					OtherStoreID) of
 				not_found ->
-					get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID,
+					get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 							RightBound, RangeEnd, Intervals);
 				{End2, Start2} ->
 					Start3 = max(Start2, Cursor),
-					Intervals2 = [{StoreID, {Start3, End2}} | Intervals],
-					get_unsynced_intervals_from_other_storage_modules(TargetStoreID, StoreID,
+					Intervals2 = [{OtherStoreID, {Start3, End2}} | Intervals],
+					get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 							End2, RangeEnd, Intervals2)
 			end
 	end.
@@ -3013,7 +3020,7 @@ process_store_chunk_queue(State, StartLen) ->
 			store_chunk2(ChunkArgs, Args, State),
 
 			ar_metrics:record_rate_metric(
-				StartTime, ChunkSize, chunk_store_rate, [StoreID]),
+				StartTime, ChunkSize, chunk_write_rate, [sync, StoreID]),
 
 			decrement_chunk_cache_size(),
 			State2 = State#sync_data_state{ store_chunk_queue = Q2,
