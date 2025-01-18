@@ -1273,9 +1273,10 @@ sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, {Priv, Pub}) ->
 	B2 = B#block{ reward_key = Pub, reward_addr = ar_wallet:to_address(Pub) },
 	SignedH = ar_block:generate_signed_hash(B2),
 	PrevCDiff = PrevB#block.cumulative_diff,
-	Signature = ar_wallet:sign(Priv, << (ar_serialize:encode_int(CDiff, 16))/binary,
-		(ar_serialize:encode_int(PrevCDiff, 16))/binary,
-		(B#block.previous_solution_hash)/binary, SignedH/binary >>),
+	SignaturePreimage = ar_block:get_block_signature_preimage(CDiff, PrevCDiff,
+			<< (B#block.previous_solution_hash)/binary, SignedH/binary >>,
+			B#block.height),
+	Signature = ar_wallet:sign(Priv, SignaturePreimage),
 	H = ar_block:indep_hash2(SignedH, Signature),
 	B2#block{ indep_hash = H, signature = Signature }.
 

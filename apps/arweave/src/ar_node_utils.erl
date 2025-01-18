@@ -285,22 +285,19 @@ may_be_apply_double_signing_proof2(B, PrevB, Accounts) ->
 	end.
 
 may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
+	#block{ height = Height } = B,
 	{Pub, Signature1, CDiff1, PrevCDiff1, Preimage1, Signature2, CDiff2, PrevCDiff2,
 			Preimage2} = B#block.double_signing_proof,
-	EncodedCDiff1 = ar_serialize:encode_int(CDiff1, 16),
-	EncodedPrevCDiff1 = ar_serialize:encode_int(PrevCDiff1, 16),
-	SignaturePreimage1 = << EncodedCDiff1/binary, EncodedPrevCDiff1/binary,
-			Preimage1/binary >>,
+	SignaturePreimage1 = ar_block:get_block_signature_preimage(CDiff1, PrevCDiff1,
+			Preimage1, Height),
 	Key = get_reward_key(Pub, B#block.height),
 	Addr = ar_wallet:to_address(Key),
 	case ar_wallet:verify(Key, SignaturePreimage1, Signature1) of
 		false ->
 			{error, invalid_double_signing_proof_invalid_signature};
 		true ->
-			EncodedCDiff2 = ar_serialize:encode_int(CDiff2, 16),
-			EncodedPrevCDiff2 = ar_serialize:encode_int(PrevCDiff2, 16),
-			SignaturePreimage2 = << EncodedCDiff2/binary,
-					EncodedPrevCDiff2/binary, Preimage2/binary >>,
+			SignaturePreimage2 = ar_block:get_block_signature_preimage(CDiff2, PrevCDiff2,
+					Preimage2, Height),
 			case ar_wallet:verify(Key, SignaturePreimage2, Signature2) of
 				false ->
 					{error, invalid_double_signing_proof_invalid_signature};
@@ -308,7 +305,7 @@ may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
 					?LOG_INFO([{event, banning_account},
 							{address, ar_util:encode(Addr)},
 							{previous_block, ar_util:encode(B#block.previous_block)},
-							{height, B#block.height}]),
+							{height, Height}]),
 					{ok, ban_account(Addr, Accounts, PrevB#block.denomination)}
 			end
 	end.
@@ -837,7 +834,7 @@ test_update_accounts_receives_released_reward_and_prover_reward() ->
 	Key = ar_wallet:new(),
 	Pub = element(2, element(2, Key)),
 	Random = crypto:strong_rand_bytes(64),
-	Preimage = << (ar_serialize:encode_int(1, 16))/binary,
+	Preimage = << 0:256, (ar_serialize:encode_int(1, 16))/binary,
 			(ar_serialize:encode_int(1, 16))/binary, Random/binary >>,
 	Sig1 = ar_wallet:sign(element(1, Key), Preimage),
 	Sig2 = ar_wallet:sign(element(1, Key), Preimage),
@@ -869,7 +866,7 @@ test_update_accounts_does_not_let_banned_account_take_reward() ->
 	Key = ar_wallet:new(),
 	Pub = element(2, element(2, Key)),
 	Random = crypto:strong_rand_bytes(64),
-	Preimage = << (ar_serialize:encode_int(1, 16))/binary,
+	Preimage = << 0:256, (ar_serialize:encode_int(1, 16))/binary,
 			(ar_serialize:encode_int(1, 16))/binary, Random/binary >>,
 	Sig1 = ar_wallet:sign(element(1, Key), Preimage),
 	Sig2 = ar_wallet:sign(element(1, Key), Preimage),
