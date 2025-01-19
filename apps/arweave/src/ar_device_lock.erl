@@ -14,7 +14,8 @@
 -record(state, {
 	store_id_to_device = #{},
 	device_locks = #{},
-	initialized = false
+	initialized = false,
+	num_replica_2_9_workers = 0
 }).
 
 -type device_mode() :: prepare | sync | repack.
@@ -83,7 +84,10 @@ start_link() ->
 
 init([]) ->
 	gen_server:cast(self(), initialize_state),
-	{ok, #state{}}.
+	{ok, Config} = application:get_env(arweave, config),
+	?LOG_INFO([{event, starting_device_lock_server},
+		{num_replica_2_9_workers, Config#config.replica_2_9_workers}]),
+	{ok, #state{num_replica_2_9_workers = Config#config.replica_2_9_workers}}.
 
 handle_call(get_state, _From, State) ->
 	{reply, State, State};
@@ -170,10 +174,10 @@ get_system_device(StorageModule) ->
 	end.
 
 do_acquire_lock(Mode, StoreID, State) ->
+	MaxPrepareLocks = State#state.num_replica_2_9_workers,
 	Device = maps:get(StoreID, State#state.store_id_to_device),
 	DeviceLock = maps:get(Device, State#state.device_locks, sync),
 	PrepareLocks = count_prepare_locks(State),
-	MaxPrepareLocks = 8,
 	{Acquired, NewDeviceLock} = case Mode of
 		sync ->
 			%% Can only aquire a sync lock if the device is in sync mode
