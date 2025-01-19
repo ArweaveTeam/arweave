@@ -126,6 +126,9 @@
 -define(DEFAULT_REPLICA_2_9_WORKERS, 8).
 -endif.
 
+%% The number of packing workers.
+-define(DEFAULT_PACKING_WORKERS, erlang:system_info(dirty_cpu_schedulers_online)).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -195,7 +198,6 @@
 		get_tx => ?MAX_PARALLEL_GET_TX_REQUESTS
 	},
 	disk_cache_size = ?DISK_CACHE_SIZE,
-	packing_rate,
 	max_nonce_limiter_validation_thread_count
 			= ?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
 	max_nonce_limiter_last_step_validation_thread_count
@@ -222,6 +224,7 @@
 	pool_server_address = not_set,
 	pool_api_key = not_set,
 	pool_worker_name = not_set,
+	packing_workers = ?DEFAULT_PACKING_WORKERS,
 	replica_2_9_workers = ?DEFAULT_REPLICA_2_9_WORKERS,
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,

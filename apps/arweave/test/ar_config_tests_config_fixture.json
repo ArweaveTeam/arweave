@@ -100,6 +100,8 @@
     "gateway_arql": 3
   },
   "packing_rate": 20,
+  "replica_2_9_workers": 16,
+  "packing_workers": 25,
   "max_nonce_limiter_validation_thread_count": 2,
   "max_nonce_limiter_last_step_validation_thread_count": 3,
   "vdf_server_trusted_peer": "127.0.0.1",

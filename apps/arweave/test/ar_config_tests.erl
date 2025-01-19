@@ -69,6 +69,8 @@ test_parse_config() ->
 		tx_validators = 3,
 		post_tx_timeout = 50,
 		max_emitters = 4,
+		replica_2_9_workers = 16,
+		packing_workers = 25,
 		tx_propagation_parallelization = undefined,
 		sync_jobs = 10,
 		header_sync_jobs = 1,
@@ -117,7 +119,6 @@ test_parse_config() ->
 			gateway_arql := 3,
 			get_sync_record := 10
 		},
-		packing_rate = 20,
 		max_nonce_limiter_validation_thread_count = 2,
 		max_nonce_limiter_last_step_validation_thread_count = 3,
 		nonce_limiter_server_trusted_peers = ["127.0.0.1", "2.3.4.5", "6.7.8.9:1982"],
