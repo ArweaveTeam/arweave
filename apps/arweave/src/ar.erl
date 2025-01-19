@@ -266,8 +266,16 @@ show_help() ->
 				)
 			)},
 			{"packing_rate",
-				"The maximum number of chunks per second to pack or unpack. "
-				"The default value is determined based on the number of CPU cores."},
+				"DEPRECATED. Does not affect anything. Use packing_workers instead."},
+			{"packing_workers (num)",
+				"The number of packing workers to spawn. The default is the number of "
+				"logical CPU cores."},
+			{"replica_2_9_workers (num)", io_lib:format(
+				"The number of replica 2.9 workers to spawn. Replica 2.9 workers are used "
+				"to generate entropy the replica.2.9 format. At most one worker will be "
+				"active per physical disk at a time. Default: ~B",
+				[?DEFAULT_REPLICA_2_9_WORKERS]
+			)},
 			{"max_vdf_validation_thread_count", io_lib:format("\tThe maximum number "
 					"of threads used for VDF validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
@@ -565,8 +573,10 @@ parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["disk_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ disk_cache_size = list_to_integer(Num) });
-parse_cli_args(["packing_rate", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ packing_rate = list_to_integer(Num) });
+parse_cli_args(["packing_rate", _Num | Rest], C) ->
+	?LOG_WARNING("Deprecated option found 'packing_rate': "
+		" this option has been removed and is now a no-op.", []),
+	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
@@ -931,7 +941,6 @@ start_for_tests(TestType, Config) ->
 		data_dir = ".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
-		packing_rate = 20,
 		auto_join = false
 	},
 	start(TestConfig).
