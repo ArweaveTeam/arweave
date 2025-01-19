@@ -273,14 +273,12 @@ init([]) ->
 	H1String = io_lib:format("~.3f", [H1 / 1000]),
 	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
 	?LOG_INFO([{event, hash_benchmark}, {h0_ms, H0String}, {h1_ms, H1String}]),
-	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
-	SpawnSchedulers = Schedulers,
-	ar:console("~nStarting ~B packing threads.~n", [SpawnSchedulers]),
-	?LOG_INFO([{event, starting_packing_threads}, {num_threads, SpawnSchedulers}]),
+	NumWorkers = Config#config.packing_workers,
+	ar:console("~nStarting ~B packing threads.~n", [NumWorkers]),
+	?LOG_INFO([{event, starting_packing_threads}, {num_threads, NumWorkers}]),
 	Workers = queue:from_list(
-		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, SpawnSchedulers)]),
+		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, NumWorkers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
-	{ok, Config} = application:get_env(arweave, config),
 	MaxSize =
 		case Config#config.packing_cache_size_limit of
 			undefined ->
@@ -296,7 +294,7 @@ init([]) ->
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
 	{ok, #state{
-		workers = Workers, num_workers = SpawnSchedulers }}.
+		workers = Workers, num_workers = NumWorkers }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),

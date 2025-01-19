@@ -518,7 +518,9 @@ parse_options([{<<"disk_cache_size_mb">>, D} | Rest], Config) when is_integer(D)
 	parse_options(Rest, Config#config{ disk_cache_size = D });
 
 parse_options([{<<"packing_rate">>, D} | Rest], Config) when is_integer(D) ->
-	parse_options(Rest, Config#config{ packing_rate = D });
+	?LOG_WARNING("Deprecated option found 'packing_rate': "
+			" this option has been removed and is a no-op.", []),
+	parse_options(Rest, Config);
 
 parse_options([{<<"max_nonce_limiter_validation_thread_count">>, D} | Rest], Config)
 		when is_integer(D) ->

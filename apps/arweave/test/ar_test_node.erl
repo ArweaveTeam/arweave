@@ -139,7 +139,7 @@ try_boot_peer(TestType, Node, Retries) ->
     Cmd = io_lib:format(
         "erl +S ~B:~B -pa ~s -config config/sys.config -noshell " ++
 		"-name ~s -setcookie ~s -run ar main debug port ~p " ++
-        "data_dir .tmp/data_~s_~s no_auto_join packing_rate 20 " ++
+        "data_dir .tmp/data_~s_~s no_auto_join " ++
 		"> ~s-~s.out 2>&1 &",
         [Schedulers, Schedulers, string:join(Paths, " "), NodeName, Cookie, Port,
 			atom_to_list(TestType), NodeName, Node, get_node_namespace()]),
@@ -226,7 +226,6 @@ update_config(Config) ->
 		auto_join = Config#config.auto_join,
 		mining_addr = Config#config.mining_addr,
 		sync_jobs = Config#config.sync_jobs,
-		packing_rate = Config#config.packing_rate,
 		disk_pool_jobs = Config#config.disk_pool_jobs,
 		header_sync_jobs = Config#config.header_sync_jobs,
 		enable = Config#config.enable ++ BaseConfig#config.enable,
@@ -322,7 +321,6 @@ base_cm_config(Peers) ->
 		auto_join = true,
 		mining_addr = RewardAddr,
 		sync_jobs = 2,
-		packing_rate = 20,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
@@ -598,7 +596,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
 		sync_jobs = 2,
-		packing_rate = 20,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
