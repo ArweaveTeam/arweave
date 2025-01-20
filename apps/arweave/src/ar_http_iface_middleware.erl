@@ -2060,7 +2060,13 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 									{404, #{}, <<>>, Req};
 								{error, not_joined} ->
 									not_joined(Req);
-								{error, failed_to_read_chunk} ->
+								{error, Error} ->
+									?LOG_ERROR([{event, get_chunk_error}, {offset, Offset},
+										{requested_packing, 
+											ar_serialize:encode_packing(RequestedPacking, false)},
+										{read_packing, 
+											ar_serialize:encode_packing(ReadPacking, false)},
+										{error, Error}]),
 									{500, #{}, <<>>, Req}
 							end
 					end;
