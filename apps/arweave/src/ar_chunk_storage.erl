@@ -500,6 +500,14 @@ handle_info({Ref, _Reply}, State) when is_reference(Ref) ->
 handle_info({'EXIT', _PID, normal}, State) ->
 	{noreply, State};
 
+handle_info({entropy_generated, _Ref, {error, Reason}}, State) ->
+	?LOG_ERROR([{event, failed_to_generate_replica_2_9_entropy_and_timeout},
+			{error, Reason}]),
+	{noreply, State};
+handle_info({entropy_generated, _Ref, _Entropy}, State) ->
+	?LOG_WARNING([{event, entropy_generation_timed_out}]),
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {info, io_lib:format("~p", [Info])}]),
 	{noreply, State}.
