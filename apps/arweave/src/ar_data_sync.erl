@@ -2632,8 +2632,6 @@ unpack_fetched_chunk(Cast, AbsoluteOffset, ChunkArgs, Args, State) ->
 					{noreply, State};
 				false ->
 					ar_packing_server:request_unpack(AbsoluteOffset, ChunkArgs),
-					?LOG_DEBUG([{event, requested_fetched_chunk_unpacking},
-							{absolute_end_offset, AbsoluteOffset}]),
 					ar_util:cast_after(600000, self(),
 							{expire_unpack_fetched_chunk_request,
 							{AbsoluteOffset, unpacked}}),
@@ -2992,7 +2990,6 @@ process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = StartLen } =
 	process_store_chunk_queue(State, StartLen).
 
 process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State, StartLen) ->
-	log_stored_chunks(State, StartLen),
 	State;
 process_store_chunk_queue(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len,
@@ -3025,7 +3022,6 @@ process_store_chunk_queue(State, StartLen) ->
 							?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD) },
 			process_store_chunk_queue(State2, StartLen);
 		false ->
-			log_stored_chunks(State, StartLen),
 			State
 	end.
 
@@ -3093,16 +3089,6 @@ store_chunk2(ChunkArgs, Args, State) ->
 							DataPathHash, StoreID),
 					{error, Reason}
 			end
-	end.
-
-log_stored_chunks(State, StartLen) ->
-	#sync_data_state{ store_chunk_queue_len = EndLen, store_id = StoreID } = State,
-	StoredCount = StartLen - EndLen,
-	case StoredCount > 0 of
-		true ->
-			?LOG_DEBUG([{event, stored_chunks}, {count, StoredCount}, {store_id, StoreID}]);
-		false ->
-			ok
 	end.
 
 log_failed_to_store_chunk(already_stored,
