@@ -516,7 +516,7 @@ remote_call(Node, Module, Function, Args, Timeout) ->
 			),
 			case Result of
 				{error, timeout} ->
-					?debugFmt("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
+					?LOG_ERROR("Timed out (~pms) waiting for the rpc reply; module: ~p, function: ~p, "
 							"args: ~p, node: ~p.~n", [Timeout, Module, Function, Args, Node]);
 				_ ->
 					ok
@@ -890,11 +890,13 @@ wait_until_syncs_genesis_data(Node) ->
 	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
 
 wait_until_syncs_genesis_data() ->
+	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_started}]),
 	{ok, Config} = application:get_env(arweave, config),
 	B = ar_node:get_current_block(),
 	WeaveSize = B#block.weave_size,
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, any)
 			|| {Size, N, _Packing} <- Config#config.storage_modules],
+	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_complete}]),
 	%% Once the data is stored in the disk pool, make the storage modules
 	%% copy the missing data over from each other. This procedure is executed on startup
 	%% but the disk pool did not have any data at the time.
@@ -902,6 +904,7 @@ wait_until_syncs_genesis_data() ->
 			sync_data) || Module <- Config#config.storage_modules],
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)
 			|| {Size, N, Packing} <- Config#config.storage_modules],
+	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, cross_module_sync_complete}]),
 	ok.
 
 wait_until_height(Node, TargetHeight) ->
