@@ -180,12 +180,8 @@ read_range2(MessagesRemaining,
 					true ->
 						skip;
 					false ->
-						StartTime = erlang:monotonic_time(),
-						Result = ar_data_sync:read_chunk(
-							AbsoluteOffset, ChunkDataKey, OriginStoreID),
-						ar_metrics:record_rate_metric(
-							StartTime, ChunkSize, chunk_read_rate, [sync, OriginStoreID]),
-						Result
+						ar_data_sync:read_chunk(
+							AbsoluteOffset, ChunkDataKey, OriginStoreID)
 				end,
 			case ReadChunk of
 				skip ->
@@ -291,8 +287,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args, State) ->
 							%% chunks will be then requested later.
 							Start3 = ar_block:get_chunk_padded_offset(
 									Start2 + byte_size(Chunk)) + 1,
-							Label = ar_storage_module:label_by_id(TargetStoreID),
-							gen_server:cast(list_to_atom("ar_data_sync_" ++ Label),
+							gen_server:cast(ar_data_sync:name(TargetStoreID),
 									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range({Start3, End, Peer, TargetStoreID, RetryCount}, State);

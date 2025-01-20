@@ -10,7 +10,7 @@
 		list_files/2, run_defragmentation/0,
 		get_storage_module_path/2, get_chunk_storage_path/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
-		sync_record_id/1, store_chunk/7, write_chunk/4, record_chunk/5]).
+		sync_record_id/1, store_chunk/7, write_chunk/4, record_chunk/7]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -25,6 +25,8 @@
 -record(state, {
 	file_index,
 	store_id,
+	store_id_label,
+	packing_labels = #{},
 	packing_map = #{},
 	repack_cursor = 0,
 	target_packing = none,
@@ -282,7 +284,9 @@ init({"default" = StoreID, _}) ->
 		FileIndex
 	),
 	warn_custom_chunk_group_size(StoreID),
-	{ok, #state{ file_index = FileIndex2, store_id = StoreID }};
+	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
+	{ok, #state{
+		file_index = FileIndex2, store_id = StoreID, store_id_label = StoreIDLabel }};
 init({StoreID, RepackInPlacePacking}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
@@ -301,8 +305,9 @@ init({StoreID, RepackInPlacePacking}) ->
 	),
 	warn_custom_chunk_group_size(StoreID),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
 	State = #state{ file_index = FileIndex2, store_id = StoreID,
-			range_start = RangeStart, range_end = RangeEnd },
+			range_start = RangeStart, range_end = RangeEnd, store_id_label = StoreIDLabel },
 	RunEntropyProcess =
 		case RepackInPlacePacking of
 			none ->
@@ -415,11 +420,19 @@ handle_cast(Cast, State) ->
 
 handle_call({put, PaddedEndOffset, Chunk, Packing}, _From, State)
 		when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
-	case store_chunk(PaddedEndOffset, Chunk, Packing, State) of
+	#state{ store_id = StoreID, store_id_label = StoreIDLabel, reward_addr = RewardAddr,
+		prepare_status = PrepareStatus, file_index = FileIndex } = State,
+
+	IsPrepared = PrepareStatus == complete,
+	{PackingLabel, State2} = get_packing_label(Packing, State),
+	Result = store_chunk(
+		PaddedEndOffset, Chunk, Packing, StoreID,
+		StoreIDLabel, PackingLabel, FileIndex, IsPrepared, RewardAddr),
+	case Result of
 		{ok, FileIndex2, NewPacking} ->
-			{reply, {ok, NewPacking}, State#state{ file_index = FileIndex2 }};
+			{reply, {ok, NewPacking}, State2#state{ file_index = FileIndex2 }};
 		Error ->
-			{reply, Error, State}
+			{reply, Error, State2}
 	end;
 
 handle_call({delete, PaddedEndOffset}, _From, State) ->
@@ -684,28 +697,31 @@ get_filepath(Name, StoreID) ->
 	ChunkDir = get_chunk_storage_path(DataDir, StoreID),
 	filename:join([ChunkDir, Name]).
 
-store_chunk(PaddedEndOffset, Chunk, Packing, State) ->
-	#state{ store_id = StoreID, reward_addr = RewardAddr, prepare_status = PrepareStatus,
-		file_index = FileIndex } = State,
-	IsPrepared = PrepareStatus == complete,
-	store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr).
-
 store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, IsPrepared, RewardAddr) ->
+	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
+	PackingLabel = ar_storage_module:packing_label(Packing),
+	store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, 
+		StoreIDLabel, PackingLabel, FileIndex, IsPrepared, RewardAddr).	
+
+store_chunk(
+		PaddedEndOffset, Chunk, Packing, StoreID, StoreIDLabel,
+		PackingLabel, FileIndex, IsPrepared, RewardAddr) ->
 	case ar_entropy_storage:is_entropy_packing(Packing) of
 		true ->
-			Result = ar_entropy_storage:record_chunk(
-				PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared),
-			Result;
+			ar_entropy_storage:record_chunk(
+				PaddedEndOffset, Chunk, RewardAddr, StoreID,
+				StoreIDLabel, PackingLabel, FileIndex, IsPrepared);
 		false ->
-			Result = record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex),
-			Result
+			record_chunk(
+				PaddedEndOffset, Chunk, Packing, StoreID, 
+				StoreIDLabel, PackingLabel, FileIndex)
 	end.
 
-record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex) ->
+record_chunk(
+		PaddedEndOffset, Chunk, Packing, StoreID, StoreIDLabel, PackingLabel, FileIndex) ->
 	case write_chunk(PaddedEndOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
-			prometheus_counter:inc(chunks_stored,
-				[ar_serialize:encode_packing(Packing, true)]),
+			prometheus_counter:inc(chunks_stored, [PackingLabel, StoreIDLabel]),
 			case ar_sync_record:add(
 					PaddedEndOffset, PaddedEndOffset - ?DATA_CHUNK_SIZE,
 					sync_record_id(Packing), StoreID) of
@@ -1052,6 +1068,16 @@ read_chunks_sizes(DataDir) ->
 
 modules_to_defrag(#config{defragmentation_modules = [_ | _] = Modules}) -> Modules;
 modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
+
+get_packing_label(Packing, State) ->
+	case maps:get(Packing, State#state.packing_labels, not_found) of
+		not_found ->
+			Label = ar_storage_module:packing_label(Packing),
+			Map = maps:put(Packing, Label, State#state.packing_labels),
+			{Label, State#state{ packing_labels = Map }};
+		Label ->
+			{Label, State}
+	end.
 
 %%%===================================================================
 %%% Tests.
