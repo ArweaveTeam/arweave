@@ -689,7 +689,6 @@ store_state(State) ->
 			partition_number = PartitionNumber,
 			storage_module_size = StorageModuleSize,
 			storage_module_index = StorageModuleIndex } = State,
-	StartTime = erlang:monotonic_time(),
 	StoreSyncRecords =
 		ar_kv:put(
 			StateDB,

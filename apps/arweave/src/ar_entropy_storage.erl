@@ -402,8 +402,8 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 				{error, _} = Error ->
 					Error;
 				{_, UnpackedChunk} ->
-					ar_sync_record:delete_async(record_entropy,
-							EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID),
+					ar_sync_record:delete(
+						EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;
 		false ->
