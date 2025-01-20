@@ -250,6 +250,16 @@ parse_options([{<<"join_workers">>, N} | Rest], Config) when is_integer(N)->
 parse_options([{<<"join_workers">>, Opt} | _], _) ->
 	{error, {bad_type, join_workers, number}, Opt};
 
+parse_options([{<<"packing_workers">>, N} | Rest], Config) when is_integer(N)->
+	parse_options(Rest, Config#config{ packing_workers = N });
+parse_options([{<<"packing_workers">>, Opt} | _], _) ->
+	{error, {bad_type, packing_workers, number}, Opt};
+
+parse_options([{<<"replica_2_9_workers">>, N} | Rest], Config) when is_integer(N)->
+	parse_options(Rest, Config#config{ replica_2_9_workers = N });
+parse_options([{<<"replica_2_9_workers">>, Opt} | _], _) ->
+	{error, {bad_type, replica_2_9_workers, number}, Opt};
+
 parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 	parse_options(Rest, Config#config{ diff = Diff });
 parse_options([{<<"diff">>, Diff} | _], _) ->
