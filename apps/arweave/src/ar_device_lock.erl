@@ -143,6 +143,8 @@ handle_info(Message, State) ->
 initialize_state(State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	StorageModules = Config#config.storage_modules,
+	RepackInPlaceModules = [element(1, El)
+			|| El <- Config#config.repack_in_place_storage_modules],
 	StoreIDToDevice = lists:foldl(
 		fun(Module, Acc) ->
 			StoreID = ar_storage_module:id(Module),
@@ -152,7 +154,7 @@ initialize_state(State) ->
 			maps:put(StoreID, Device, Acc)
 		end,
 		#{},
-		StorageModules
+		StorageModules ++ RepackInPlaceModules
 	),
 
 	log_device_locks(State),
