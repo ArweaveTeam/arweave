@@ -121,11 +121,7 @@ repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
 			continue ->
 				continue;
 			ok ->
-				StartTime = erlang:monotonic_time(),
-				ChunkRange = read_chunk_range(Cursor, RepackIntervalSize, StoreID, RepackFurtherArgs),
-				ar_metrics:record_rate_metric(
-					StartTime, RepackIntervalSize, chunk_read_rate, [repack, StoreID]),
-				ChunkRange
+				read_chunk_range(Cursor, RepackIntervalSize, StoreID, RepackFurtherArgs)
 		end,
 	OffsetToMetadataMap =
 		case OffsetToChunkMap of
@@ -341,14 +337,8 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 			gen_server:cast(ar_data_sync:name(StoreID), {store_chunk, ChunkArgs, Args}),
 			{ok, FileIndex};
 		{ok, true} ->
-			StartTime = erlang:monotonic_time(),
-
 			StoreResults = ar_chunk_storage:store_chunk(PaddedEndOffset, Chunk, Packing,
 					StoreID, FileIndex, IsPrepared, RewardAddr),
-
-			ar_metrics:record_rate_metric(
-				StartTime, ChunkSize, chunk_write_rate, [repack, StoreID]),
-
 			case StoreResults of
 				{ok, FileIndex2, NewPacking} ->
 					?LOG_DEBUG([{event, ar_chunk_storage_packed}, {e, PaddedEndOffset},

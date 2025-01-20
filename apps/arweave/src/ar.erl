@@ -577,6 +577,10 @@ parse_cli_args(["packing_rate", _Num | Rest], C) ->
 	?LOG_WARNING("Deprecated option found 'packing_rate': "
 		" this option has been removed and is now a no-op.", []),
 	parse_cli_args(Rest, C#config{ });
+parse_cli_args(["packing_workers", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ packing_workers = list_to_integer(Num) });
+parse_cli_args(["replica_2_9_workers", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ replica_2_9_workers = list_to_integer(Num) });
 parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
