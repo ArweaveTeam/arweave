@@ -1458,6 +1458,8 @@ log_chunk_error(Event, ExtraLogData) ->
 
 log_chunk_error(http, _, _) ->
 	ok;
+log_chunk_error(tx_data, _, _) ->
+	ok;
 log_chunk_error(RequestOrigin, Event, ExtraLogData) ->
 	log_chunk_error(Event, [{request_origin, RequestOrigin} | ExtraLogData]).
 
