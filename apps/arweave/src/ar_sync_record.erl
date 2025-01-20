@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, get/2, get/3, add/4, add/5, add_async/5, add_async/6, delete/4, cut/3,
+-export([start_link/2, get/2, get/3, add/4, add/5, add_async/5, add_async/6, delete/4, delete_async/5, cut/3,
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
 		get_next_unsynced_interval/4,
@@ -66,7 +66,7 @@ start_link(Name, StoreID) ->
 
 %% @doc Return the set of intervals.
 get(ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {get, ID}, 20000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -76,7 +76,7 @@ get(ID, StoreID) ->
 
 %% @doc Return the set of intervals.
 get(ID, Packing, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {get, Packing, ID}, 20000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -87,7 +87,7 @@ get(ID, Packing, StoreID) ->
 %% @doc Add the given interval to the record with the
 %% given ID. Store the changes on disk before returning ok.
 add(End, Start, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {add, End, Start, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -99,7 +99,7 @@ add(End, Start, ID, StoreID) ->
 %% given ID and Packing. Store the changes on disk before
 %% returning ok.
 add(End, Start, Packing, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {add, End, Start, Packing, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -109,20 +109,20 @@ add(End, Start, Packing, ID, StoreID) ->
 
 %% @doc Special case of add/4.
 add_async(Event, End, Start, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	gen_server:cast(GenServerID, {add_async, Event, End, Start, ID}).
 
 %% @doc Special case of add/5 for repacked chunks. When repacking the ar_sync_record add
 %% happens at the end so we don't need to block on it to complete.
 add_async(Event, End, Start, Packing, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	gen_server:cast(GenServerID, {add_async, Event, End, Start, Packing, ID}).
 	
 %% @doc Remove the given interval from the record
 %% with the given ID. Store the changes on disk before
 %% returning ok.
 delete(End, Start, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {delete, End, Start, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -130,11 +130,15 @@ delete(End, Start, ID, StoreID) ->
 			Reply
 	end.
 
+delete_async(Event, End, Start, ID, StoreID) ->
+	GenServerID = name(StoreID),
+	gen_server:cast(GenServerID, {delete_async, Event, End, Start, ID}).
+
 %% @doc Remove everything strictly above the given
 %% Offset from the record. Store the changes on disk
 %% before returning ok.
 cut(Offset, ID, StoreID) ->
-	GenServerID = list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)),
+	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {cut, Offset, ID}, 120000) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
@@ -309,43 +313,8 @@ handle_call({add, End, Start, Packing, ID}, _From, State) ->
 	{reply, Reply, State2};
 
 handle_call({delete, End, Start, ID}, _From, State) ->
-	#state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
-			state_db = StateDB, store_id = StoreID } = State,
-	SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-	SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
-	SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-	TID = get_or_create_type_tid({ID, StoreID}),
-	ar_ets_intervals:delete(TID, End, Start),
-	SyncRecordByIDType2 =
-		maps:map(
-			fun
-				({ID2, _}, ByType) when ID2 == ID ->
-					ar_intervals:delete(ByType, End, Start);
-				(_, ByType) ->
-					ByType
-			end,
-			SyncRecordByIDType
-		),
-	ets:foldl(
-		fun
-			({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
-				ar_ets_intervals:delete(TypeTID, End, Start);
-			(_, _) ->
-				ok
-		end,
-		ok,
-		sync_records
-	),
-	State2 = State#state{ sync_record_by_id = SyncRecordByID2,
-			sync_record_by_id_type = SyncRecordByIDType2 },
-	{Reply, State3} = update_write_ahead_log({delete, {End, Start, ID}}, StateDB, State2),
-	case Reply of
-		ok ->
-			emit_remove_range(Start, End, StoreID);
-		_ ->
-			ok
-	end,
-	{reply, Reply, State3};
+	{Reply, State2} = delete2(End, Start, ID, State),
+	{reply, Reply, State2};
 
 handle_call({cut, Offset, ID}, _From, State) ->
 	#state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
@@ -403,6 +372,7 @@ handle_cast({add_async, Event, End, Start, ID}, State) ->
 			ok;
 		Error ->
 			?LOG_ERROR([{event, Event},
+					{operation, add_async},
 					{status, failed},
 					{sync_record_id, ID},
 					{offset, End},
@@ -417,11 +387,28 @@ handle_cast({add_async, Event, End, Start, Packing, ID}, State) ->
 			ok;
 		Error ->
 			?LOG_ERROR([{event, Event},
+					{operation, add_async},
 					{status, failed},
 					{sync_record_id, ID},
 					{offset, End},
 					{packing, ar_serialize:encode_packing(Packing, true)},
 					{error, io_lib:format("~p", [Error])}])
+	end,
+	{noreply, State2};
+
+handle_cast({delete_async, Event, End, Start, ID}, State) ->
+	{Reply, State2} = delete2(End, Start, ID, State),
+	case Reply of
+		ok ->
+			ok;
+		Error ->
+			?LOG_ERROR([{event, Event},
+					{operation, delete_async},
+					{status, failed},
+					{sync_record_id, ID},
+					{offset, End},
+					{error, io_lib:format("~p", [Error])},
+					{module, ?MODULE}])
 	end,
 	{noreply, State2};
 
@@ -440,6 +427,9 @@ terminate(Reason, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+name(StoreID) ->
+	list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)).
 
 add2(End, Start, ID, State) ->
 	#state{ sync_record_by_id = SyncRecordByID, state_db = StateDB,
@@ -478,6 +468,45 @@ add2(End, Start, Packing, ID, State) ->
 	case Reply of
 		ok ->
 			emit_add_range(Start, End, ID, StoreID);
+		_ ->
+			ok
+	end,
+	{Reply, State3}.
+
+delete2(End, Start, ID, State) ->
+	#state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
+			state_db = StateDB, store_id = StoreID } = State,
+	SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
+	SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
+	SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
+	TID = get_or_create_type_tid({ID, StoreID}),
+	ar_ets_intervals:delete(TID, End, Start),
+	SyncRecordByIDType2 =
+		maps:map(
+			fun
+				({ID2, _}, ByType) when ID2 == ID ->
+					ar_intervals:delete(ByType, End, Start);
+				(_, ByType) ->
+					ByType
+			end,
+			SyncRecordByIDType
+		),
+	ets:foldl(
+		fun
+			({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
+				ar_ets_intervals:delete(TypeTID, End, Start);
+			(_, _) ->
+				ok
+		end,
+		ok,
+		sync_records
+	),
+	State2 = State#state{ sync_record_by_id = SyncRecordByID2,
+			sync_record_by_id_type = SyncRecordByIDType2 },
+	{Reply, State3} = update_write_ahead_log({delete, {End, Start, ID}}, StateDB, State2),
+	case Reply of
+		ok ->
+			emit_remove_range(Start, End, StoreID);
 		_ ->
 			ok
 	end,

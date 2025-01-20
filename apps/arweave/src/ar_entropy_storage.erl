@@ -5,7 +5,7 @@
 -export([name/1, is_entropy_packing/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
 	is_recorded/2, is_sub_chunk_recorded/3, delete_record/2, generate_entropies/3,
 	generate_missing_entropy/2, generate_entropy_keys/3, shift_entropy_offset/2,
-	store_entropy/7, record_chunk/6]).
+	store_entropy/7, record_chunk/8]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -47,12 +47,8 @@ is_ready(StoreID) ->
 handle_cast({store_entropy,
 		Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr},
 		State) ->
-	StoreEntropyStartTime = erlang:monotonic_time(),
 	do_store_entropy(
 		Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr, State),
-	BytesStored = length(Entropies) * ?REPLICA_2_9_ENTROPY_SIZE,
-	ar_metrics:record_rate_metric(
-		StoreEntropyStartTime, BytesStored, chunk_write_rate, [entropy, State#state.store_id]),
 	{noreply, State};
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -124,10 +120,13 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	BucketEnd = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
 	BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
 	ar_sync_record:add_async(replica_2_9_entropy, BucketEnd, BucketStart, ID, StoreID),
-	prometheus_counter:inc(replica_2_9_entropy_stored, [StoreID], ?DATA_CHUNK_SIZE),
+	prometheus_counter:inc(replica_2_9_entropy_stored,
+		[ar_storage_module:label_by_id(StoreID)], ?DATA_CHUNK_SIZE),
 	case IsComplete of
 		true ->
+			Packing = {replica_2_9, RewardAddr},
 			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
+			prometheus_counter:inc(chunks_stored, [ar_storage_module:packing_label(Packing), ar_storage_module:label_by_id(StoreID)]),
 			ar_sync_record:add_async(replica_2_9_entropy_with_chunk,
 										PaddedEndOffset,
 										StartOffset,
@@ -295,7 +294,9 @@ do_store_entropy(Entropies,
 			end
 	end.
 
-record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared) ->
+record_chunk(
+		PaddedEndOffset, Chunk, RewardAddr, StoreID,
+		StoreIDLabel, PackingLabel, FileIndex, IsPrepared) ->
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	{_ChunkFileStart, Filepath, _Position, _ChunkOffset} =
 		ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
@@ -309,7 +310,6 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 			false ->
 				is_recorded(PaddedEndOffset, StoreID)
 		end,
-	StartTime = erlang:monotonic_time(),
 	ReadEntropy =
 		case CheckIsEntropyRecorded of
 			{error, _} = Error ->
@@ -338,18 +338,19 @@ record_chunk(PaddedEndOffset, Chunk, RewardAddr, StoreID, FileIndex, IsPrepared)
 				_ ->
 					PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 					ar_chunk_storage:record_chunk(
-						PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
+						PaddedEndOffset, PackedChunk, Packing, StoreID,
+						StoreIDLabel, PackingLabel, FileIndex)
 			end;
 		no_entropy_yet ->
 			ar_chunk_storage:record_chunk(
-				PaddedEndOffset, Chunk, unpacked_padded, StoreID, FileIndex);
+				PaddedEndOffset, Chunk, unpacked_padded, StoreID,
+				StoreIDLabel, PackingLabel, FileIndex);
 		{_EndOffset, Entropy} ->
-			ar_metrics:record_rate_metric(
-				StartTime, ?DATA_CHUNK_SIZE, chunk_read_rate, [entropy, StoreID]),
 			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 			ar_chunk_storage:record_chunk(
-				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
+				PaddedEndOffset, PackedChunk, Packing, StoreID,
+				StoreIDLabel, PackingLabel, FileIndex)
 	end,
 	release_semaphore(Filepath),
 	RecordChunk.
@@ -395,16 +396,14 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 
 	Chunk = case IsUnpackedChunkRecorded of
 		true ->
-			StartTime = erlang:monotonic_time(),
 			case ar_chunk_storage:get(Byte, Byte, StoreID) of
 				not_found ->
 					{error, not_found};
 				{error, _} = Error ->
 					Error;
 				{_, UnpackedChunk} ->
-					ar_metrics:record_rate_metric(
-						StartTime, ?DATA_CHUNK_SIZE, chunk_read_rate, [entropy, StoreID]),
-					ar_sync_record:delete(EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID),
+					ar_sync_record:delete_async(record_entropy,
+							EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;
 		false ->

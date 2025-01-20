@@ -452,25 +452,9 @@ register() ->
 	prometheus_gauge:new([{name, chunk_cache_size},
 			{help, "The number of chunks scheduled for downloading."}]),
 	prometheus_counter:new([{name, chunks_stored},
-		{labels, [packing]},
+		{labels, [packing, store_id]},
 		{help, "The counter is incremented every time a chunk is written to "
 				"chunk_storage."}]),
-	prometheus_histogram:new([{name, chunk_write_rate},
-		{labels, [type, store_id]},
-		{buckets, [1048576, 10*1048576, 25*1048576, 50*1048576, 75*1048576, 100*1048576,
-					125*1048576, 150*1048576, 175*1048576, 200*1048576, 300*1048576]},
-		{help, "The rate achieved, in bytes per second, when storing chunks. The 'type' label "
-				"indicates what process initiated the store operation: 'sync', 'entropy', or "
-				"'repack'."}
-	]),
-	prometheus_histogram:new([{name, chunk_read_rate},
-		{labels, [type, store_id]},
-		{buckets, [1048576, 10*1048576, 25*1048576, 50*1048576, 75*1048576, 100*1048576,
-					125*1048576, 150*1048576, 175*1048576, 200*1048576, 300*1048576]},
-		{help, "The rate achieved, in bytes per second, when reading chunks. The 'type' label "
-				"indicates what process initiated the store operation: 'sync', 'entropy', or "
-				"'repack'."}
-	]),
 	prometheus_gauge:new([{name, sync_tasks},
 		{labels, [state, type, peer]},
 		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
