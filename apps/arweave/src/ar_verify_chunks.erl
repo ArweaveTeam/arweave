@@ -165,7 +165,7 @@ invalidate_chunk(Type, Offset, ChunkSize, State) ->
 
 invalidate_chunk(Type, Offset, ChunkSize, Logs, State) ->
 	#state{ store_id = StoreID } = State,
-	ar_data_sync:invalidate_bad_data_record(Offset - ChunkSize, Offset, StoreID, 5),
+	ar_data_sync:invalidate_bad_data_record(Offset - ChunkSize, Offset, StoreID, Type),
 	log_error(Type, Offset, ChunkSize, Logs, State).
 
 log_error(Type, Offset, ChunkSize, Logs, State) ->

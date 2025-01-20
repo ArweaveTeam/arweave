@@ -32,7 +32,7 @@ name(StoreID) ->
 	list_to_atom("ar_entropy_storage_" ++ ar_storage_module:label_by_id(StoreID)).
 
 init(StoreID) ->
-	?LOG_INFO([{event, ar_entropy_storage_init}, {store_id, StoreID}]),
+	?LOG_INFO([{event, ar_entropy_storage_init}, {name, name(StoreID)}, {store_id, StoreID}]),
 	ModuleRanges = ar_storage_module:get_all_module_ranges(),
 	{ok, #state{ store_id = StoreID, module_ranges = ModuleRanges }}.
 
@@ -42,7 +42,14 @@ store_entropy(
 		Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr}).
 
 is_ready(StoreID) ->
-	gen_server:call(name(StoreID), is_ready, infinity).
+	case catch gen_server:call(name(StoreID), is_ready, infinity) of
+		{'EXIT', {Reason, {gen_server, call, _}}} ->
+			?LOG_WARNING([{event, is_ready_error}, {module, ?MODULE},
+				{name, name(StoreID)}, {store_id, StoreID}, {reason, Reason}]),
+			false;
+		Reply ->
+			Reply
+	end.
 
 handle_cast({store_entropy,
 		Entropies, BucketEndOffset, SubChunkStartOffset, RangeEnd, Keys, RewardAddr},
@@ -61,14 +68,14 @@ handle_call(Call, From, State) ->
 	{reply, {error, unhandled_call}, State}.
 
 terminate(Reason, State) ->
-	?LOG_INFO([{event, ar_entropy_storage_terminate}, {reason, Reason}, {store_id, State#state.store_id}]),
+	?LOG_INFO([{event, terminate}, {module, ?MODULE},
+		{reason, Reason}, {name, name(State#state.store_id)},
+		{store_id, State#state.store_id}]),
 	ok.
 
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
-
-
 
 -spec is_entropy_packing(ar_chunk_storage:packing()) -> boolean().
 is_entropy_packing(unpacked_padded) ->
@@ -255,7 +262,9 @@ do_store_entropy(Entropies,
 						{replica_2_9, RewardAddr}, State#state.module_ranges) of
 					[] ->
 						?LOG_WARNING([{event, failed_to_find_storage_modules_for_2_9_entropy},
-									{padded_end_offset, BucketEndOffset}]),
+									{store_id, State#state.store_id},
+									{padded_end_offset, BucketEndOffset}, 
+									{range_end, RangeEnd}]),
 						not_found;
 					StoreIDs ->
 						{ok, StoreIDs}
