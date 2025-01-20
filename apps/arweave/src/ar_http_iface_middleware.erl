@@ -2007,6 +2007,9 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 						case ar_sync_record:is_recorded(Offset, ar_data_sync) of
 							false ->
 								{none, {reply, {404, #{}, <<>>, Req}}};
+							{true, _} ->
+								%% Chunk is recorded but packing is unknown.
+								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, RequestedPacking}, _StoreID} ->
 								ok = ar_semaphore:acquire(get_chunk, infinity),
 								{RequestedPacking, ok};
