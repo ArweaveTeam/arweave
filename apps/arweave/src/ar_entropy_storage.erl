@@ -370,9 +370,18 @@ record_chunk(
 get_chunk_byte_from_bucket_end(BucketEndOffset) ->
 	case BucketEndOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
 		true ->
-			?STRICT_DATA_SPLIT_THRESHOLD
-			+ ar_util:floor_int(BucketEndOffset - ?STRICT_DATA_SPLIT_THRESHOLD,
-					?DATA_CHUNK_SIZE);
+			RelativeBucketEndOffset = BucketEndOffset - ?STRICT_DATA_SPLIT_THRESHOLD,
+			case RelativeBucketEndOffset rem ?DATA_CHUNK_SIZE of
+				0 ->
+					%% The chunk beginning at this offset is the rightmost possible
+					%% chunk that will be routed to this bucket.
+					%% The chunk ending at this offset plus one is the leftmost possible
+					%% chunk routed to this bucket.
+					BucketEndOffset - ?DATA_CHUNK_SIZE;
+				_ ->
+					?STRICT_DATA_SPLIT_THRESHOLD
+							+ ar_util:floor_int(RelativeBucketEndOffset, ?DATA_CHUNK_SIZE)
+			end;
 		false ->
 			BucketEndOffset - 1
 	end.
@@ -389,9 +398,22 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 			not_found ->
 				{false, BucketEndOffset};
 			{_IntervalEnd, IntervalStart} ->
-				{true, IntervalStart
+				EndOffset2 = IntervalStart
 					+ ar_util:floor_int(Byte - IntervalStart, ?DATA_CHUNK_SIZE)
-					+ ?DATA_CHUNK_SIZE}
+					+ ?DATA_CHUNK_SIZE,
+				case ar_chunk_storage:get_chunk_bucket_end(
+						ar_block:get_chunk_padded_offset(EndOffset2)) of
+					BucketEndOffset ->
+						{true, EndOffset2};
+					_ ->
+						%% This chunk is from a different bucket. It may happen near the
+						%% strict data split threshold where there is no single byte
+						%% unambiguosly determining the bucket the chunk will be routed to.
+						?LOG_INFO([{event, record_entropy_read_chunk_from_another_bucket},
+								{bucket_end_offset, BucketEndOffset},
+								{chunk_end_offset, EndOffset2}]),
+						{false, BucketEndOffset}
+				end
 		end,
 
 	{ChunkFileStart, Filepath, _Position, _ChunkOffset} =
