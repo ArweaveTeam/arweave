@@ -327,6 +327,8 @@ init({StoreID, RepackInPlacePacking}) ->
 			{true, RewardAddr} ->
 				PrepareCursor = {Start, _SubChunkStart} = 
 					read_prepare_replica_2_9_cursor(StoreID, {RangeStart + 1, 0}),
+				?LOG_INFO([{event, read_prepare_replica_2_9_cursor}, {store_id, StoreID},
+						{cursor, Start}, {range_start, RangeStart}, {range_end, RangeEnd}]),
 				PrepareStatus =
 					case Start =< RangeEnd of
 						true ->
@@ -629,16 +631,23 @@ do_prepare_replica_2_9(State) ->
 						PaddedPartitionEnd =
 							get_chunk_bucket_end(
 								ar_block:get_chunk_padded_offset(PartitionEnd)),
-						%% Wait for the previous store_entropy to complete.
-						true = ar_entropy_storage:is_ready(StoreID),
-						ar_entropy_storage:store_entropy(
-							StoreID, Entropies, BucketEndOffset2, SubChunkStart,
-							PaddedPartitionEnd, EntropyKeys, RewardAddr)
+						%% Wait for the previous store_entropy to complete. Should only
+						%% return 'false' if the entropy storage process is down (e.g. during
+						%% shutdown)
+						case ar_entropy_storage:is_ready(StoreID) of
+							true ->
+								ar_entropy_storage:store_entropy(
+									StoreID, Entropies, BucketEndOffset2, SubChunkStart,
+									PaddedPartitionEnd, EntropyKeys, RewardAddr);
+							false ->
+								{error, entropy_storage_not_ready}
+						end
 				end
 		end,
 	?LOG_DEBUG([{event, stored_replica_2_9_entropy}, {store_id, StoreID},
-		{start, Start}, {padded_end_offset, BucketEndOffset},
+		{start, Start}, {bucket_end_offset, BucketEndOffset},
 		{range_start, RangeStart}, {range_end, RangeEnd},
+		{partition, Partition},
 		{repack_cursor, RepackCursor},
 		{padded_range_end, PaddedRangeEnd}, {sub_chunk_start, SubChunkStart},
 		{check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
@@ -940,6 +949,11 @@ extract_end_offset_chunk_pairs(
 	[{EndOffset, Chunk}
 			| extract_end_offset_chunk_pairs(Rest, BucketStart, Shift + 1)];
 extract_end_offset_chunk_pairs(<<>>, _BucketStart, _Shift) ->
+	[];
+extract_end_offset_chunk_pairs(<< ChunkOffset:?OFFSET_BIT_SIZE, Chunk/binary >>,
+		BucketStart, Shift) ->
+	?LOG_ERROR([{event, unexpected_chunk_data}, {chunk_offset, ChunkOffset},
+			{bucket_start, BucketStart}, {shift, Shift}, {chunk_size, byte_size(Chunk)}]),
 	[].
 
 is_offset_valid(_Byte, _BucketStart, 0) ->
