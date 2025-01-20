@@ -3054,7 +3054,7 @@ store_chunk2(ChunkArgs, Args, State) ->
 				%% The 2.9 chunk storage is write-once.
 				ok;
 			_ ->
-				ar_sync_record:delete_async(store_chunk, PaddedOffset, StartOffset, ar_data_sync, StoreID)
+				ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID)
 		end,
 	case CleanRecord of
 		{error, Reason} ->
