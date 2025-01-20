@@ -478,7 +478,7 @@ cycle_workers(AverageLoad, #state{ workers = Workers, worker_loads = WorkerLoads
 
 format_peer(Task, Args) ->
 	case Task of
-		read_range -> element(3, Args);
+		read_range -> "localhost";
 		sync_range ->
 			ar_util:format_peer(element(3, Args))
 	end.
