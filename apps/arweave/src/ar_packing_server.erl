@@ -183,6 +183,8 @@ unpad_chunk(Unpacked, ChunkSize, PackedSize) ->
 		_ ->
 			case is_zero(Padding) of
 				false ->
+					?LOG_WARNING([{event, unpad_chunk_error}, {packed_size, PackedSize},
+							{chunk_size, ChunkSize}, {padding, Padding}]),
 					error;
 				true ->
 					binary:part(Unpacked, 0, ChunkSize)
@@ -549,15 +551,15 @@ pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 	end.
 
 unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState, SubChunks) ->
-	unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState, 0, SubChunks, []).
+	unpack_replica_2_9_sub_chunks(
+		RewardAddr, AbsoluteEndOffset, RandomXState, 0, SubChunks, []).
 
 unpack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _RandomXState,
 		_SubChunkStartOffset, [], UnpackedSubChunks) ->
 	{ok, iolist_to_binary(lists:reverse(UnpackedSubChunks))};
 unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 		SubChunkStartOffset, [SubChunk | SubChunks], UnpackedSubChunks) ->
-	Key = ar_replica_2_9:get_entropy_key(RewardAddr,
-			AbsoluteEndOffset, SubChunkStartOffset),
+	Key = ar_replica_2_9:get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
 	EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
 	case prometheus_histogram:observe_duration(packing_duration_milliseconds,
 			[unpack_sub_chunk, replica_2_9, internal], fun() ->
