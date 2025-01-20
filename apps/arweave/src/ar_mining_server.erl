@@ -106,7 +106,7 @@ is_one_chunk_solution(Solution) ->
 	Ret :: ok.
 
 -ifdef(AR_TEST).
-log_prepare_solution_failure(Solution, stale_step_number, AdditionalLogData) ->
+log_prepare_solution_failure(_Solution, stale_step_number, _AdditionalLogData) ->
 	ok;
 log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData) ->
 	log_prepare_solution_failure2(Solution, FailureReason, AdditionalLogData).
@@ -1073,6 +1073,8 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 				true ->
 					{ok, PoA#poa{ chunk = ChunkOrSubChunk }};
 				false ->
+					dump_invalid_solution_data({sub_chunk_mismatch, RecallByte,
+							ChunkOrSubChunk, PoA, Packing, PoAReply, Nonce}),
 					{error, sub_chunk_mismatch};
 				Error2 ->
 					Error2
@@ -1082,6 +1084,8 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 				true ->
 					{ok, PoA#poa{ chunk = ChunkOrSubChunk }};
 				false ->
+					dump_invalid_solution_data({sub_chunk_mismatch, RecallByte,
+							ChunkOrSubChunk, PoA, Packing, PoAReply, Nonce}),
 					{error, sub_chunk_mismatch};
 				Error2 ->
 					Error2
@@ -1090,11 +1094,19 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 			{ok, PoA};
 		{_ChunkOrSubChunk, {ok, #poa{ chunk = ChunkOrSubChunk } = PoA}, _Packing} ->
 			{ok, PoA};
-		{_ChunkOrSubChunk, {ok, #poa{}}, _Packing} ->
+		{_ChunkOrSubChunk, {ok, #poa{} = PoA}, _Packing} ->
+			dump_invalid_solution_data({chunk_mismatch, RecallByte,
+					ChunkOrSubChunk, PoA, Packing, PoAReply, Nonce}),
 			{error, chunk_mismatch};
 		{_ChunkOrSubChunk, Error, _Packing} ->
 			Error
 	end.
+
+dump_invalid_solution_data(Data) ->
+	{ok, Config} = application:get_env(arweave, config),
+	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
+	File = filename:join(Config#config.data_dir, "invalid_solution_data_dump_" ++ ID),
+	file:write_file(File, term_to_binary(Data)).
 
 get_sub_chunk(Chunk, 0, _Nonce) ->
 	Chunk;
