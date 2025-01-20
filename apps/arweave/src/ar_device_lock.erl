@@ -314,7 +314,8 @@ test_acquire_lock() ->
 			"device1" => sync,
 			"device2" => {prepare, "storage_module_2_unpacked"},
 			"device3" => {repack, "storage_module_4_unpacked"}
-		}
+		},
+		num_replica_2_9_workers = 2
 	},
 
 	?assertEqual(
