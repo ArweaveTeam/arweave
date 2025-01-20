@@ -1527,8 +1527,6 @@ do_sync_intervals(State) ->
 do_sync_data(State) ->
 	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
 			disk_pool_threshold = DiskPoolThreshold } = State,
-	?LOG_INFO([{event, sync_data}, {store_id, StoreID}, {range_start, RangeStart},
-			{range_end, RangeEnd}, {disk_pool_threshold, DiskPoolThreshold}]),
 	%% See if any of StoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
@@ -1539,6 +1537,10 @@ do_sync_data(State) ->
 	OtherStorageModules = [ar_storage_module:id(Module)
 			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
 			ar_storage_module:id(Module) /= StoreID],
+	?LOG_INFO([{event, sync_data}, {store_id, StoreID}, {range_start, RangeStart},
+			{range_end, RangeEnd}, {disk_pool_threshold, DiskPoolThreshold},
+			{default_intervals, length(Intervals)},
+			{other_storage_modules, length(OtherStorageModules)}]),
 	State#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = Intervals,
 		other_storage_modules_with_unsynced_intervals = OtherStorageModules
