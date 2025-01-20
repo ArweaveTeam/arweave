@@ -1456,10 +1456,10 @@ terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
 log_chunk_error(Event, ExtraLogData) ->
 	?LOG_ERROR([{event, Event}, {tags, [solution_proofs]} | ExtraLogData]).
 
-log_chunk_error(miner, Event, ExtraLogData) ->
-	log_chunk_error(Event, [{request_origin, miner} | ExtraLogData]);
-log_chunk_error(_RequestOrigin, _, _) ->
-	ok.
+log_chunk_error(http, _, _) ->
+	ok;
+log_chunk_error(RequestOrigin, Event, ExtraLogData) ->
+	log_chunk_error(Event, [{request_origin, RequestOrigin} | ExtraLogData]).
 
 do_sync_intervals(State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
@@ -1702,7 +1702,7 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 											{expected_chunk_id, ar_util:encode(ChunkID)},
 											{chunk_id, ar_util:encode(ComputedChunkID)}]),
 									invalidate_bad_data_record({AbsoluteOffset - ChunkSize,
-										AbsoluteOffset, StoreID, 4}),
+										AbsoluteOffset, StoreID, get_chunk_invalid_id}),
 									{error, chunk_not_found}
 							end
 					end
@@ -1787,7 +1787,8 @@ read_chunk_with_metadata(
 						{modules_covering_seek_offset, ModuleIDs},
 						{chunk_data_key, ar_util:encode(ChunkDataKey)},
 						{read_fun, ReadFun}]),
-					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset, StoreID, 1}),
+					invalidate_bad_data_record({SeekOffset - 1, AbsoluteOffset, StoreID,
+						failed_to_read_chunk_data_path}),
 					{error, chunk_not_found};
 				{error, Error} ->
 					log_chunk_error(failed_to_read_chunk,
@@ -1821,7 +1822,7 @@ read_chunk_with_metadata(
 			end
 	end.
 
-invalidate_bad_data_record({Start, End, StoreID, Case}) ->
+invalidate_bad_data_record({Start, End, StoreID, Type}) ->
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case End > T of
 		true ->
@@ -1837,7 +1838,7 @@ invalidate_bad_data_record({Start, End, StoreID, Case}) ->
 					false ->
 						PaddedStart
 				end,
-			?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Case},
+			?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Type},
 					{range_start, PaddedStart2}, {range_end, PaddedEnd},
 					{store_id, StoreID}]),
 			case ar_sync_record:delete(PaddedEnd, PaddedStart2, ar_data_sync, StoreID) of
@@ -1880,14 +1881,16 @@ validate_fetched_chunk(Args) ->
 							log_chunk_error(RequestOrigin, failed_to_validate_chunk_proofs,
 								[{absolute_end_offset, Offset}, {store_id, StoreID}]),
 							StartOffset = Offset - ChunkSize,
-							invalidate_bad_data_record({StartOffset, Offset, StoreID, 2}),
+							invalidate_bad_data_record({StartOffset, Offset, StoreID, 
+								failed_to_validate_chunk_proofs}),
 							false
 					end;
 				{_BlockStart, _BlockEnd, TXRoot2} ->
 					log_chunk_error(stored_chunk_invalid_tx_root,
 						[{end_offset, Offset}, {tx_root, ar_util:encode(TXRoot2)},
 						{stored_tx_root, ar_util:encode(TXRoot)}, {store_id, StoreID}]),
-					invalidate_bad_data_record({Offset - ChunkSize, Offset, StoreID, 3}),
+					invalidate_bad_data_record({Offset - ChunkSize, Offset, StoreID,
+						stored_chunk_invalid_tx_root}),
 					false
 			end
 	end.

@@ -141,9 +141,10 @@ read_range2(MessagesRemaining,
 						{true, Packing};
 					SyncRecordReply ->
 						?LOG_ERROR([{event, cannot_read_requested_range},
-								{store_id, OriginStoreID},
+								{origin_store_id, OriginStoreID},
 								{missing_start_offset, Start + 1},
-								{reading_for_store_id, TargetStoreID},
+								{end_offset, End},
+								{target_store_id, TargetStoreID},
 								{sync_record_reply, io_lib:format("~p", [SyncRecordReply])}])
 				end
 		end,
@@ -190,7 +191,7 @@ read_range2(MessagesRemaining,
 									Caller, TaskRef});
 				not_found ->
 					ar_data_sync:invalidate_bad_data_record(
-						Start, AbsoluteOffset, OriginStoreID, 1),
+						Start, AbsoluteOffset, OriginStoreID, read_range_chunk_not_found),
 					read_range2(MessagesRemaining-1,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall,
 									Caller, TaskRef});
