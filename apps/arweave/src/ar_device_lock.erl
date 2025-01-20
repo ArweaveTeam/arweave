@@ -160,14 +160,15 @@ initialize_state(State) ->
 		#{},
 		StorageModules ++ RepackInPlaceModules
 	),
-
-	log_device_locks(State),
-	ar_util:cast_after(?DEVICE_LOCK_LOG_INTERVAL_MS, ?MODULE, log_device_locks), 
-
-	State#state{
+	State2 = State#state{
 		store_id_to_device = StoreIDToDevice,
 		initialized = true
-	}.
+	},
+	
+	log_device_locks(State2),
+	ar_util:cast_after(?DEVICE_LOCK_LOG_INTERVAL_MS, ?MODULE, log_device_locks), 
+
+	State2.
 
 get_system_device(StorageModule) ->
 	{ok, Config} = application:get_env(arweave, config),
