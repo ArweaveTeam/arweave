@@ -34,6 +34,8 @@ repack_mine_test_() ->
 %% --------------------------------------------------------------------------------------------
 test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [FromPackingType, ToPackingType]),
+	?LOG_INFO([{event, test_repack_mine}, {module, ?MODULE},
+		{from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
 	ValidatorNode = peer1,
 	RepackerNode = peer2,
 	{Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
@@ -85,6 +87,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 
 test_repacking_blocked({FromPackingType, ToPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [FromPackingType, ToPackingType]),
+	?LOG_INFO([{event, test_repacking_blocked}, {module, ?MODULE},
+		{from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
 	ValidatorNode = peer1,
 	RepackerNode = peer2,
 	{Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
