@@ -306,7 +306,7 @@ do_store_entropy(Entropies,
 record_chunk(
 		PaddedEndOffset, Chunk, RewardAddr, StoreID,
 		StoreIDLabel, PackingLabel, FileIndex, IsPrepared) ->
-	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
+	StartOffset = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
 	{_ChunkFileStart, Filepath, _Position, _ChunkOffset} =
 		ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
 	acquire_semaphore(Filepath),

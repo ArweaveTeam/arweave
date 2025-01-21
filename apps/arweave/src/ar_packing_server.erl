@@ -493,7 +493,7 @@ pack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset, _TXRoot, Chunk, Pac
 			SubChunks = get_sub_chunks(PaddedChunk),
 			case pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset,
 					RandomXState, SubChunks) of
-				{ok, Packed} ->
+				{ok, Packed, _Entropy} ->
 					{ok, Packed, was_not_already_packed};
 				Error ->
 					Error
