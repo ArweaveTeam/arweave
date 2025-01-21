@@ -937,22 +937,25 @@ validate_repack_in_place(Config) ->
 
 validate_repack_in_place([], _Modules) ->
 	true;
-validate_repack_in_place([{Module, _ToPacking} | L], Modules) ->
+validate_repack_in_place([{Module, ToPacking} | L], Modules) ->
 	{_BucketSize, _Bucket, Packing} = Module,
 	ID = ar_storage_module:id(Module),
-	PackingType = ar_mining_server:get_packing_type(Packing),
 	ModuleInUse = lists:member(ID, Modules),
-	RepackingFromReplica29 = PackingType == replica_2_9,
-	case {ModuleInUse, RepackingFromReplica29} of
-		{true, _} ->
+	FromPackingType = ar_mining_server:get_packing_type(Packing),
+	ToPackingType = ar_mining_server:get_packing_type(ToPacking),
+	case {ModuleInUse, FromPackingType, ToPackingType} of
+		{true, _, _} ->
 			io:format("~nCannot use the storage module ~s "
 					"while it is being repacked in place.~n~n", [ID]),
 			false;
-		{_, true} ->
+		{_, replica_2_9, _} ->
 			io:format("~nCannot repack in place from replica_2_9 to any format.~n~n"),
 			false;
+		{_, _, replica_2_9} ->
+			validate_repack_in_place(L, Modules);
 		_ ->
-			validate_repack_in_place(L, Modules)
+			io:format("~nCan only repack in place to replica_2_9.~n~n"),
+			false
 	end.
 
 validate_cm_pool(Config) ->
