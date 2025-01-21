@@ -559,6 +559,15 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	post_block(B6, valid),
 	post_block(B7, valid),
 	post_block(B7_2, valid),
+	%% Wait until the node records conflicting proofs.
+	ar_util:do_until(
+		fun() ->
+			map_size(maps:get(double_signing_proofs,
+					sys:get_state(ar_node_worker), #{})) > 0
+		end,
+		200,
+		2000
+	),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
 	BI3 = assert_wait_until_height(peer1, 3),
