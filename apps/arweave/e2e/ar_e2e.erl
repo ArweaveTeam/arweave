@@ -211,14 +211,21 @@ assert_block({replica_2_9, Address}, MinedBlock) ->
 	
 
 assert_syncs_range(Node, StartOffset, EndOffset) ->
-	?assert(
-		ar_util:do_until(
-			fun() -> has_range(Node, StartOffset, EndOffset) end,
-			100,
-			60_000
-		),
-		iolist_to_binary(io_lib:format(
-			"~s Failed to sync range ~p - ~p", [Node, StartOffset, EndOffset]))).
+	HasRange = ar_util:do_until(
+		fun() -> has_range(Node, StartOffset, EndOffset) end,
+		100,
+		60_000
+	),
+	case HasRange of
+		true ->
+			ok;
+		false ->
+			SyncRecord = ar_http_iface_client:get_sync_record(Node, json),
+			?assert(false, 
+				iolist_to_binary(io_lib:format(
+					"~s failed to sync range ~p - ~p. Sync record: ~p", 
+					[Node, StartOffset, EndOffset, SyncRecord])))
+	end.
 
 assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 	ar_util:do_until(
