@@ -256,11 +256,16 @@ get_storage_module_path(DataDir, StoreID) ->
 get_chunk_storage_path(DataDir, StoreID) ->
 	filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
 
-%% @doc Return the start offset of the bucket containing the given offset.
+%% @doc Return the start and end offset of the bucket containing the given offset.
 %% A chunk bucket a 0-based, 256-KiB wide, 256-KiB aligned range that fully contains a chunk.
 -spec get_chunk_bucket_start(PaddedEndOffset :: non_neg_integer()) -> non_neg_integer().
 get_chunk_bucket_start(PaddedEndOffset) ->
 	ar_util:floor_int(max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE).
+
+-spec get_chunk_bucket_end(Offset :: non_neg_integer()) -> non_neg_integer().
+get_chunk_bucket_end(EndOffset) ->
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(EndOffset),
+	get_chunk_bucket_start(PaddedEndOffset) + ?DATA_CHUNK_SIZE.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -529,31 +534,36 @@ get_chunk_group_size() ->
 
 do_prepare_replica_2_9(State) ->
 	#state{ reward_addr = RewardAddr, prepare_replica_2_9_cursor = {Start, SubChunkStart},
-	range_start = RangeStart, range_end = RangeEnd,
-	store_id = StoreID, repack_cursor = RepackCursor } = State,
+		range_start = RangeStart, range_end = RangeEnd,
+		store_id = StoreID, repack_cursor = RepackCursor } = State,
 
-	BucketEndOffset = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(Start)),
-	PaddedRangeEnd = get_chunk_bucket_end(ar_block:get_chunk_padded_offset(RangeEnd)),
+	BucketEndOffset = get_chunk_bucket_end(Start),
+	PaddedRangeEnd = get_chunk_bucket_end(RangeEnd),
+
 	%% Sanity checks:
 	BucketEndOffset = get_chunk_bucket_end(BucketEndOffset),
+	true = (
+		get_chunk_bucket_start(ar_block:get_chunk_padded_offset(Start)) ==
+		get_chunk_bucket_start(BucketEndOffset)
+	),
 	true = (
 		max(0, BucketEndOffset - ?DATA_CHUNK_SIZE) == get_chunk_bucket_start(BucketEndOffset)
 	),
 	%% End of sanity checks.
-
-	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
+	
 	CheckRangeEnd =
-	case BucketEndOffset > PaddedRangeEnd of
-		true ->
-			ar_device_lock:release_lock(prepare, StoreID),
-			?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
-					{store_id, StoreID}]),
-			ar:console("The storage module ~s is prepared for 2.9 replication.~n",
-					[StoreID]),
-			complete;
-		false ->
-			false
-	end,
+		case BucketEndOffset > PaddedRangeEnd of
+			true ->
+				ar_device_lock:release_lock(prepare, StoreID),
+				?LOG_INFO([{event, storage_module_replica_2_9_preparation_complete},
+						{store_id, StoreID}]),
+				ar:console("The storage module ~s is prepared for 2.9 replication.~n",
+						[StoreID]),
+				complete;
+			false ->
+				false
+		end,
+
 	%% For now the SubChunkStart and SubChunkStart2 values will always be 0. The field
 	%% is used to make future improvemets easier. e.g. have the cursor increment by
 	%% sub-chunk rather than chunk.
@@ -593,6 +603,9 @@ do_prepare_replica_2_9(State) ->
 				ar_entropy_storage:is_sub_chunk_recorded(
 					BucketEndOffset, SubChunkStart, StoreID)
 		end,
+
+	%% get_entropy_partition will use bucket *start* offset to determine the partition.
+	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
 	StoreEntropy =
 		case CheckIsRecorded of
 			complete ->
@@ -615,15 +628,7 @@ do_prepare_replica_2_9(State) ->
 					_ ->
 						EntropyKeys = ar_entropy_storage:generate_entropy_keys(
 							RewardAddr, BucketEndOffset, SubChunkStart),
-						SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
-						%% If we are not at the beginning of the entropy, shift the offset to
-						%% the left. store_entropy will traverse the entire 2.9 partition shifting
-						%% the offset by sector size. It may happen some sub-chunks will be written
-						%% to the neighbouring storage module(s) on the left or on the right
-						%% since the storage module may be configured to be smaller than the
-						%% partition.
-						BucketEndOffset2 = ar_entropy_storage:shift_entropy_offset(
-							BucketEndOffset, -SliceIndex),
+						
 						%% The end of a recall partition (3.6TB) may fall in the middle of a
 						%% chunk, so we'll use the padded offset to end the store_entropy
 						%% iteration.
@@ -637,7 +642,7 @@ do_prepare_replica_2_9(State) ->
 						case ar_entropy_storage:is_ready(StoreID) of
 							true ->
 								ar_entropy_storage:store_entropy(
-									StoreID, Entropies, BucketEndOffset2, SubChunkStart,
+									StoreID, Entropies, BucketEndOffset, SubChunkStart,
 									PaddedPartitionEnd, EntropyKeys, RewardAddr);
 							false ->
 								{error, entropy_storage_not_ready}
@@ -768,9 +773,6 @@ get_chunk_file_start(EndOffset) ->
 
 get_chunk_file_start_by_start_offset(StartOffset) ->
 	ar_util:floor_int(StartOffset, get_chunk_group_size()).
-
-get_chunk_bucket_end(PaddedEndOffset) ->
-	get_chunk_bucket_start(PaddedEndOffset) + ?DATA_CHUNK_SIZE.
 
 write_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
 	{_ChunkFileStart, Filepath, Position, ChunkOffset} =
@@ -1104,6 +1106,84 @@ get_packing_label(Packing, State) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+chunk_bucket_test() ->
+	?assertEqual(786432, ?STRICT_DATA_SPLIT_THRESHOLD),
+
+	%% get_chunk_bucket_end pads the provided offset
+	%% get_chunk_bucket_start does not padd the provided offset
+
+	%% At and before the STRICT_DATA_SPLIT_THRESHOLD, offsets are not padded.
+	?assertEqual(262144, get_chunk_bucket_end(0)),
+	?assertEqual(0, get_chunk_bucket_start(0)),
+
+	?assertEqual(262144, get_chunk_bucket_end(1)),
+	?assertEqual(0, get_chunk_bucket_start(1)),
+
+	?assertEqual(262144, get_chunk_bucket_end(?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(0, get_chunk_bucket_start(?DATA_CHUNK_SIZE - 1)),
+
+	?assertEqual(262144, get_chunk_bucket_end(?DATA_CHUNK_SIZE)),
+	?assertEqual(0, get_chunk_bucket_start(?DATA_CHUNK_SIZE)),
+
+	?assertEqual(262144, get_chunk_bucket_end(?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(0, get_chunk_bucket_start(?DATA_CHUNK_SIZE + 1)),
+
+	?assertEqual(524288, get_chunk_bucket_end(2 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(262144, get_chunk_bucket_start(2 * ?DATA_CHUNK_SIZE)),
+
+	?assertEqual(524288, get_chunk_bucket_end(2 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(262144, get_chunk_bucket_start(2 * ?DATA_CHUNK_SIZE + 1)),
+
+	?assertEqual(524288, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(262144, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE - 1)),
+
+	?assertEqual(786432, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(524288, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE)),
+
+	%% After the STRICT_DATA_SPLIT_THRESHOLD, offsets are padded.
+	?assertEqual(1048576, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(524288, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE + 1)),
+
+	?assertEqual(1048576, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(524288, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE - 1)),
+
+	?assertEqual(1048576, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE)),
+
+	?assertEqual(1310720, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE + 1)),
+
+	?assertEqual(1310720, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(786432, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE - 1)),
+
+	?assertEqual(1310720, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE)),
+
+	?assertEqual(1572864, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE + 1)),
+
+	?assertEqual(1572864, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(1048576, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE - 1)),
+
+	?assertEqual(1572864, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(1310720, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE)),
+
+	?assertEqual(1835008, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1310720, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE + 1)),
+	
+	?assertEqual(1835008, get_chunk_bucket_end(7 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(1572864, get_chunk_bucket_start(7 * ?DATA_CHUNK_SIZE)),
+
+	?assertEqual(2097152, get_chunk_bucket_end(8 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(1835008, get_chunk_bucket_start(8 * ?DATA_CHUNK_SIZE)),
+
+	?assertEqual(2359296, get_chunk_bucket_end(9 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(2097152, get_chunk_bucket_start(9 * ?DATA_CHUNK_SIZE)),
+
+	?assertEqual(2621440, get_chunk_bucket_end(10 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(2359296, get_chunk_bucket_start(10 * ?DATA_CHUNK_SIZE)).
+	
 
 replica_2_9_test_() ->
 	{timeout, 20, fun test_replica_2_9/0}.
