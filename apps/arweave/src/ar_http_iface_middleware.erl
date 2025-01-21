@@ -2054,6 +2054,8 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 									{200, #{}, Reply, Req};
 								{error, chunk_not_found} ->
 									{404, #{}, <<>>, Req};
+								{error, invalid_padding} ->
+									{404, #{}, <<>>, Req};
 								{error, chunk_failed_validation} ->
 									{404, #{}, <<>>, Req};
 								{error, chunk_stored_in_different_packing_only} ->
