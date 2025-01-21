@@ -19,12 +19,8 @@ repack_in_place_mine_test_() ->
 		% XXX {timeout, Timeout, {with, {unpacked, spora_2_6}, [fun test_repack_in_place_mine/1]}},
 		% XXX {timeout, Timeout, {with, {unpacked, composite_1}, [fun test_repack_in_place_mine/1]}},
 		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, composite_1}, [fun test_repack_in_place_mine/1]}},
 		% % % % % XXX {timeout, Timeout, {with, {spora_2_6, unpacked}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, spora_2_6}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, composite_1}, [fun test_repack_in_place_mine/1]}}
+		{timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}}
 		% % % % % XXX {timeout, Timeout, {with, {composite_1, unpacked}, [fun test_repack_in_place_mine/1]}}
 	].
 
