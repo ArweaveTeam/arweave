@@ -58,9 +58,9 @@ join(RecentBI) ->
 add_tip_block(BlockTXPairs, RecentBI) ->
 	gen_server:cast(ar_data_sync_default, {add_tip_block, BlockTXPairs, RecentBI}).
 
-invalidate_bad_data_record(Start, End, StoreID, Case) ->
+invalidate_bad_data_record(Byte, AbsoluteEndOffset, StoreID, Case) ->
 	gen_server:cast(name(StoreID), {invalidate_bad_data_record,
-		{Start, End, StoreID, Case}}).
+		{Byte, AbsoluteEndOffset, StoreID, Case}}).
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -1824,41 +1824,45 @@ read_chunk_with_metadata(
 			end
 	end.
 
-invalidate_bad_data_record({Start, End, StoreID, Type}) ->
+invalidate_bad_data_record({Byte, AbsoluteEndOffset, StoreID, Type}) ->
+	true = AbsoluteEndOffset - Byte =< ?DATA_CHUNK_SIZE,
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
-	case End > T of
+	case AbsoluteEndOffset > T of
 		true ->
 			%% Do not invalidate fresh records - a reorg may be in progress.
 			ok;
 		false ->
-			PaddedEnd = ar_block:get_chunk_padded_offset(End),
-			PaddedStart = ar_block:get_chunk_padded_offset(Start),
-			PaddedStart2 =
-				case PaddedStart == PaddedEnd of
-					true ->
-						PaddedEnd - ?DATA_CHUNK_SIZE;
-					false ->
-						PaddedStart
-				end,
-			?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Type},
-					{range_start, PaddedStart2}, {range_end, PaddedEnd},
-					{store_id, StoreID}]),
-			case ar_sync_record:delete(PaddedEnd, PaddedStart2, ar_data_sync, StoreID) of
+			invalidate_bad_data_record2({Byte, AbsoluteEndOffset, StoreID, Type})
+	end.
+
+invalidate_bad_data_record2({Byte, AbsoluteEndOffset, StoreID, Type}) ->
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+	MaybePaddedStartOffset = ar_block:get_chunk_padded_offset(Byte),
+	StartOffset =
+		case MaybePaddedStartOffset == PaddedEndOffset of
+			true ->
+				PaddedEndOffset - ?DATA_CHUNK_SIZE;
+			false ->
+				MaybePaddedStartOffset
+		end,
+	?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Type},
+			{range_start, StartOffset}, {range_end, PaddedEndOffset},
+			{store_id, StoreID}]),
+	case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
+		ok ->
+			ar_sync_record:add(PaddedEndOffset, StartOffset, invalid_chunks, StoreID),
+			case delete_chunk_metadata(AbsoluteEndOffset, StoreID) of
 				ok ->
-					ar_sync_record:add(PaddedEnd, PaddedStart2, invalid_chunks, StoreID),
-					case delete_chunk_metadata(End, StoreID) of
-						ok ->
-							ok;
-						Error2 ->
-							?LOG_WARNING([{event, failed_to_remove_chunks_index_key},
-									{absolute_end_offset, End},
-									{error, io_lib:format("~p", [Error2])}])
-					end;
-				Error ->
-					?LOG_WARNING([{event, failed_to_remove_sync_record_range},
-							{range_end, PaddedEnd}, {range_start, PaddedStart2},
-							{error, io_lib:format("~p", [Error])}])
-			end
+					ok;
+				Error2 ->
+					?LOG_WARNING([{event, failed_to_remove_chunks_index_key},
+							{absolute_end_offset, AbsoluteEndOffset},
+							{error, io_lib:format("~p", [Error2])}])
+			end;
+		Error ->
+			?LOG_WARNING([{event, failed_to_remove_sync_record_range},
+					{range_end, PaddedEndOffset}, {range_start, StartOffset},
+					{error, io_lib:format("~p", [Error])}])
 	end.
 
 validate_fetched_chunk(Args) ->
