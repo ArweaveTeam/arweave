@@ -1,7 +1,7 @@
 -module(ar_replica_2_9).
 
 -export([get_entropy_partition/1, get_entropy_key/3, get_sector_size/0, 
-    get_slice_index/1]).
+    get_slice_index/1, get_partition_offset/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -130,9 +130,9 @@ get_sector_size() ->
 ) -> non_neg_integer().
 get_slice_index(AbsoluteChunkEndOffset) ->
     PartitionRelativeOffset = get_partition_offset(AbsoluteChunkEndOffset),
-    SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+    SubChunksPerEntropy = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	SectorSize = get_sector_size(),
-	(PartitionRelativeOffset div SectorSize) rem SubChunkCount.
+	(PartitionRelativeOffset div SectorSize) rem SubChunksPerEntropy.
 
 
 %%%===================================================================
