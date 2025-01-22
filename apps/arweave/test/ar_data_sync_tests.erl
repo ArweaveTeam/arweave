@@ -2,11 +2,24 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
 
 -import(ar_test_node, [assert_wait_until_height/2, test_with_mocked_functions/2]).
+
+recovers_from_corruption_test_() ->
+	{timeout, 140, fun test_recovers_from_corruption/0}.
+
+test_recovers_from_corruption() ->
+	ar_test_data_sync:setup_nodes(),
+	{ok, Config} = application:get_env(arweave, config),
+	StoreID = ar_storage_module:id(hd(ar_storage_module:get_all(262144 * 3))),
+	?debugFmt("Corrupting ~s...", [StoreID]),
+	[ar_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
+			|| PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)],
+	ar_test_node:mine(),
+	ar_test_node:assert_wait_until_height(main, 1).
 
 syncs_data_test_() ->
 	{timeout, 240, fun test_syncs_data/0}.

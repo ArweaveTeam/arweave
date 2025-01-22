@@ -1848,7 +1848,7 @@ invalidate_bad_data_record2({Byte, AbsoluteEndOffset, StoreID, Type}) ->
 	?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Type},
 			{range_start, StartOffset}, {range_end, PaddedEndOffset},
 			{store_id, StoreID}]),
-	case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
+	case remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) of
 		ok ->
 			ar_sync_record:add(PaddedEndOffset, StartOffset, invalid_chunks, StoreID),
 			case delete_chunk_metadata(AbsoluteEndOffset, StoreID) of
@@ -1863,6 +1863,33 @@ invalidate_bad_data_record2({Byte, AbsoluteEndOffset, StoreID, Type}) ->
 			?LOG_WARNING([{event, failed_to_remove_sync_record_range},
 					{range_end, PaddedEndOffset}, {range_start, StartOffset},
 					{error, io_lib:format("~p", [Error])}])
+	end.
+
+remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
+	Remove1 = ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID),
+	IsSmallChunk = PaddedEndOffset - StartOffset < ?DATA_CHUNK_SIZE,
+	Remove2 =
+		case {Remove1, IsSmallChunk} of
+			{ok, false} ->
+				ar_sync_record:delete(PaddedEndOffset, StartOffset,
+						ar_chunk_storage, StoreID);
+			_ ->
+				Remove1
+		end,
+	Remove3 =
+		case {Remove2, IsSmallChunk} of
+			{ok, false} ->
+				ar_sync_record:delete(PaddedEndOffset, StartOffset,
+						ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+			_ ->
+				Remove2
+		end,
+	case {Remove3, IsSmallChunk} of
+		{ok, false} ->
+			ar_sync_record:delete(PaddedEndOffset, StartOffset,
+					ar_chunk_storage_replica_2_9_1_unpacked, StoreID);
+		_ ->
+			Remove3
 	end.
 
 validate_fetched_chunk(Args) ->
