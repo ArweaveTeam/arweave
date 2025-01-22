@@ -1,9 +1,10 @@
 -module(ar_mining_io_tests).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_mining.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_mining.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -define(WEAVE_SIZE, trunc(2.5 * ?PARTITION_SIZE)).
@@ -18,8 +19,13 @@ setup_all() ->
 	StorageModules = lists:flatten(
 		[[{?PARTITION_SIZE, N, {spora_2_6, RewardAddr}}] || N <- lists:seq(0, 8)]),
 	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
+	MockGetNextSyncedInterval =
+		fun(Start, End, _Packing, _ID, _StoreID) ->
+			{infinity, Start}
+		end,
 	{Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_mining_worker, chunks_read, fun chunks_read/5}
+		{ar_mining_worker, chunks_read, fun chunks_read/5},
+		{ar_sync_record, get_next_synced_interval, MockGetNextSyncedInterval}
 	]),
 	Functions = Setup(),
 	{Cleanup, Functions}.
