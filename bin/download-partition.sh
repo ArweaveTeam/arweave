@@ -95,7 +95,7 @@ BASE_URL="https://s3.zephyrdev.xyz/arweave-pool"
 JOBS="8"
 INPUT_FILE=""
 CHECK=""
-PREFIX="./"
+PREFIX=""
 
 _usage() {
 	printf -- "Usage: %s [-cdhlpf] [-b BASE_URL] [-P PREFIX] [-j JOBS] -I STORAGE_INDEX -i INPUT_FILE \n" "${0}"
@@ -159,7 +159,7 @@ do
 		-j) flag_jobs="${2}"; shift; shift;;
 		-i) flag_input="${2}"; shift; shift;;
 		-b) flag_base_url="${2}"; shift; shift;;
-		-P) PREFIX="${2}"; shift; shift;;
+		-P) flag_prefix="${2}"; shift; shift;;
 		-I) flag_storage_index="${2}"; shift; shift;;
 		--) shift; break;;
 	esac
@@ -172,6 +172,28 @@ then
 	exit 0
 fi
 
+# check prefix path. it should be a directory
+if test "${flag_prefix}"
+then
+	if ! test -e "${flag_prefix}"
+	then
+		_error "prefix ${flag_prefix} does not exist"
+		exit 1
+	fi
+	# prefix MUST BE a directory
+	if ! test -d "${flag_prefix}"
+	then
+		_error "prefix ${flag_prefix} is not a directory"
+		exit 1
+	fi
+
+	# prefix MUST END with /
+	if ! echo "${flag_prefix}" | grep -E '/$' 2>&1 >/dev/null
+	then
+		PREFIX=${flag_prefix}/
+	fi
+fi
+
 # check input files name
 if (test "${flag_input}" && test ! "${flag_storage_index}") \
 	|| (test "${flag_input}" && test ! "${flag_storage_index}")
@@ -182,7 +204,7 @@ then
 fi
 
 # check flag input
-if test "${flag_input}" 
+if test "${flag_input}"
 then
 	if test -f "${flag_input}"
 	then
@@ -345,15 +367,15 @@ _check_md5() {
 	original_checksum="${2}"
 	if test "${CHECK}"
 	then
-		_debug "check ${path} with ${original_checksum}"
+		_debug "${path} check with ${original_checksum}"
 		payload="${original_checksum} ${path}"
 		echo ${payload} | md5sum -c 2>&1 >/dev/null
 		if test $? -eq 0
 		then
-			_debug "md5 for ${path} is valid"
+			_debug "${path} md5 is valid"
 			return 0
 		else
-			_error "md5 for ${path} is invalid"
+			_error "${path} md5 is invalid"
 			return 1
 		fi
 	fi
@@ -366,11 +388,12 @@ _check_md5() {
 _download_and_verify() {
 	local base_url="${1}"
 	# set the prefix with the path
-	local path="${PREFIX}${2}"
+	local path="${2}"
+	local path_prefix="${PREFIX}${path}"
 	local content_length="${3}"
 	local checksum="${4}"
 	local full_url="${base_url}/${path}"
-	_debug "(v2) download from ${full_url} to ${path}"
+	_debug "${path_prefix} to check and download"
 
 	# only used for local check, using exit code from function
 	local check_file_exist=1
@@ -379,20 +402,20 @@ _download_and_verify() {
 
 	# check if the local file already exist
 	# and if it's the case then check its size
-	if test -f "${path}"
+	if test -f "${path_prefix}"
 	then
 		check_file_exist=0
 
 		# if the file exists, extract its size
-		file_size=$(stat -c '%s' "${path}")
-		_check_size ${path} ${content_length} ${file_size}
+		file_size=$(stat -c '%s' "${path_prefix}")
+		_check_size ${path_prefix} ${content_length} ${file_size}
 		check_file_size=$?
 	fi
 
 	# check the checksum using md5sum
-	if test "${flag_check}" && test "${check_file_exists}"
+	if test "${flag_check}" && test "${check_file_exist}" -eq 0
 	then
-		_check_md5 ${path} ${checksum}
+		_check_md5 ${path_prefix} ${checksum}
 		check_file_checksum=$?
 	fi
 
@@ -400,29 +423,29 @@ _download_and_verify() {
 	# even if the size or the checksums are valid
 	if test "${flag_force}"
 	then
-		_debug "force download..."
-		_download_with_retry "${full_url}" "${path}" "${content_length}"
+		_debug "${path_prefix} force download..."
+		_download_with_retry "${full_url}" "${path_prefix}" "${content_length}"
 	else
 		if test ${check_file_exist} -ne 0
 		then
-			_debug "download file, it does not exist"
-			_download_with_retry "${full_url}" "${path}" "${content_length}"
+			_debug "${path_prefix} download file, it does not exist"
+			_download_with_retry "${full_url}" "${path_prefix}" "${content_length}"
 		elif test ${flag_check} && test ${check_file_checksum} -eq 0
 		then
-			_debug "checksum is the same, don't download"
+			_debug "${path_prefix} checksums are the same, don't download ${full_url}"
 			return 0
 		elif test ${flag_check} && test ${check_file_checksum} -ne 0
 		then
-			_debug "checksum is not the same, download"
-			_download_with_retry "${full_url}" "${path}" "${content_length}"
-		elif test ${check_file_size} -eq 0 
+			_debug "${path_prefix} checksums are not the same, download ${full_url}"
+			_download_with_retry "${full_url}" "${path_prefix}" "${content_length}"
+		elif test ${check_file_size} -eq 0
 		then
-			_debug "same size don't download"
+			_debug "${path_prefix} files don't have size size, download ${full_url}"
 			return 0
 		elif test ${check_file_size} -eq 0
 		then
-			_debug "files are not the same, download"
-			_download_with_retry "${full_url}" "${path}" "${content_length}"
+			_debug "${path_prefix} files are not the same, download ${full_url}"
+			_download_with_retry "${full_url}" "${path_prefix}" "${content_length}"
 		fi
 	fi
 }
@@ -454,7 +477,7 @@ _local() {
 		_debug "${relative_path}: ok"
 		return 0
 	else
-		_error "missing ${relative_path}"
+		_error "${relative_path}: missing"
 		return 1
 	fi
 }
@@ -494,19 +517,19 @@ _presence() {
 					| awk '{ print $NF }' \
 					| _base64_to_hex)
 			fi
-		done	
+		done
 
 		let l=${length}
 		let rl=${remote_length}
 		if [[ "${remote_length}" ]] && [[ $l -ne $rl ]]
 		then
-			_debug "(error) ${relative_path} local_length=${l} remote_checksum=${rl}"
+			_debug "${relative_path} (error) local_length=${l} remote_checksum=${rl}"
 			return 255
 		fi
 
 		if [[ "${remote_checksum}" && "${checksum}" != "${remote_checksum}" ]]
 		then
-			_debug "(error) ${relative_path} local_checksum=${checksum} remote_checksum=${remote_checksum}"
+			_debug "${relative_path} (error) local_checksum=${checksum} remote_checksum=${remote_checksum}"
 			return 254
 		fi
 
@@ -515,16 +538,16 @@ _presence() {
 
 	local ret=$?
 	case "$ret" in
-		0) _debug "${target}: ok";;
-		22) _error "missing ${relative_path} in ${base_url}";;
+		0) _debug "${relative_path} ${target}: ok";;
+		22) _error "${relative_path} missing in ${base_url}";;
 		254) _error "${relative_path} checksum issue";;
 		255) _error "${relative_path} length issue";;
-		*) _error "unknow ${relative_path} in ${base_url}";;
+		*) _error "${relative_path} unknown error in ${base_url}";;
 	esac
 	exit ${ret}
 }
 
-# download index from 
+# download index from
 if test "${INPUT_INDEX}"
 then
 	if test -e "${INPUT_INDEX}" && test ! "${flag_force}"
@@ -532,11 +555,11 @@ then
 		INPUT_FILE="${INPUT_INDEX}"
 	else
 		storage_module_target="${BASE_URL}/${INPUT_INDEX}"
-		_debug "download ${storage_module_target}"
+		_debug "${storage_module_target} download"
 		curl -sqf "${storage_module_target}" -o "${INPUT_INDEX}"
 		if test $? -ne 0
 		then
-			_error "can't download ${storage_module_target}"
+			_error "${storage_module_target} can't be downloaded"
 			exit 1
 		fi
 		INPUT_FILE="${INPUT_INDEX}"
