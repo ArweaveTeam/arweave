@@ -294,6 +294,7 @@ log_device_locks(State) ->
 				sync -> sync;
 				{prepare, StoreID} -> prepare;
 				{repack, StoreID} -> repack;
+				{prepare_and_repack, StoreID} -> prepare_and_repack;
 				_ -> paused
 			end,
 			?LOG_INFO([{event, device_lock_status}, {device, Device}, {store_id, StoreID}, {status, Status}])
