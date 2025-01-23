@@ -70,6 +70,8 @@ packing_type_to_packing(PackingType, Address) ->
 	end.
 
 start_source_node(Node, unpacked, _WalletFixture) ->
+	?LOG_INFO("Starting source node ~p with packing type ~p and wallet fixture ~p",
+		[Node, unpacked, _WalletFixture]),
 	TempNode = case Node of
 		peer1 -> peer2;
 		peer2 -> peer1
@@ -85,11 +87,16 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 		auto_join = true
 	}, true),
 
+	?LOG_INFO("Source node ~p started.", [Node]),
+
 	ar_e2e:assert_partition_size(Node, 0, unpacked),
 	ar_e2e:assert_partition_size(Node, 1, unpacked),
 
 	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, unpacked, Chunks),
+
+	?LOG_INFO("Source node ~p assertions passed.", [Node]),
+
 	ar_test_node:stop(TempNode),
 	{Blocks, undefined, Chunks};
 start_source_node(Node, PackingType, WalletFixture) ->

@@ -14,8 +14,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	store_id,
-	module_ranges
+	store_id
 }).
 
 %%%===================================================================
@@ -32,8 +31,7 @@ name(StoreID) ->
 
 init(StoreID) ->
 	?LOG_INFO([{event, ar_entropy_storage_init}, {name, name(StoreID)}, {store_id, StoreID}]),
-	ModuleRanges = ar_storage_module:get_all_module_ranges(),
-	{ok, #state{ store_id = StoreID, module_ranges = ModuleRanges }}.
+	{ok, #state{ store_id = StoreID }}.
 
 store_entropy(
 	StoreID, Entropies, BucketEndOffset, RangeEnd, Keys, RewardAddr) ->
