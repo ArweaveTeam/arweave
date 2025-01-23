@@ -216,15 +216,6 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	{ChunkDataKey, TXRoot, DataRoot, TXPath,
 			RelativeOffset, ChunkSize} = ChunkMeta,
-	?LOG_DEBUG([{event, send_chunk_for_repacking},
-			{tags, [repack_in_place]},
-			{pid, self()},
-			{storage_module, StoreID},
-			{end_offset, AbsoluteOffset},
-			{padded_end_offset, PaddedOffset},
-			{bucket_start_offset, ar_chunk_storage:get_chunk_bucket_start(AbsoluteOffset)},
-			{chunk_size, ChunkSize},
-			{required_packing, ar_serialize:encode_packing(RequiredPacking, true)}]),
 	case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
 		{true, unpacked_padded} ->
 			%% unpacked_padded is a special internal packing used
@@ -341,11 +332,6 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 					StoreID, FileIndex, IsPrepared, RewardAddr),
 			case StoreResults of
 				{ok, FileIndex2, NewPacking} ->
-					?LOG_DEBUG([{event, ar_chunk_storage_packed}, {e, PaddedEndOffset},
-							{s, StartOffset}, {store_id, StoreID},
-							{chunk_size, ChunkSize},
-							{requested_packing, ar_serialize:encode_packing(Packing, true)},
-							{stored_packing, ar_serialize:encode_packing(NewPacking, true)}]),
 					ar_sync_record:add_async(repacked_chunk,
 							PaddedEndOffset, StartOffset,
 							NewPacking, ar_data_sync, StoreID),

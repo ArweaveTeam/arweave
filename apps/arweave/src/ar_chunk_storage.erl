@@ -597,13 +597,14 @@ do_prepare_replica_2_9(State) ->
 			%%
 			%% In practice we only expect pending writes to be a problem in tests. It can
 			%% hypothetically happen in production but is unlikely.
+			?LOG_DEBUG([{event, prepare_replica_2_9_slice_changed}, {store_id, StoreID},
+					{bucket_end_offset, BucketEndOffset},
+					{previous_slice_index, PreviousSliceIndex},
+					{slice_index, SliceIndex}]),
 			ar_entropy_storage:is_ready(StoreID);
 		_ ->
 			ok
 	end,
-
-	%% Only block here when we start a new slice index
-	true = ar_entropy_storage:is_ready(StoreID),
 
 	CheckRangeEnd =
 		case BucketEndOffset > PaddedRangeEnd of
