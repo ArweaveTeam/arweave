@@ -240,17 +240,23 @@ start_io_thread(Mode, StoreIDs) ->
 map_partition_to_store_ids([], PartitionToStoreIDs) ->
 	PartitionToStoreIDs;
 map_partition_to_store_ids([StoreID | StoreIDs], PartitionToStoreIDs) ->
-	StorageModule = ar_storage_module:get_by_id(StoreID),
-	{Start, End} = ar_storage_module:module_range(StorageModule, 0),
-	Partitions = get_store_id_partitions({Start, End}, []),
-	PartitionToStoreIDs2 = lists:foldl(
-		fun(Partition, Acc) ->
-			maps:update_with(Partition,
-				fun(PartitionStoreIDs) -> [StoreID | PartitionStoreIDs] end,
-			[StoreID], Acc)
-		end,
-		PartitionToStoreIDs, Partitions),
-	map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs2).
+	case ar_storage_module:get_by_id(StoreID) of
+		not_found ->
+			%% Occasionally happens in tests.
+			?LOG_ERROR([{event, mining_storage_module_not_found}, {store_id, StoreID}]),
+			map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs);
+		StorageModule ->
+			{Start, End} = ar_storage_module:module_range(StorageModule, 0),
+			Partitions = get_store_id_partitions({Start, End}, []),
+			PartitionToStoreIDs2 = lists:foldl(
+				fun(Partition, Acc) ->
+					maps:update_with(Partition,
+						fun(PartitionStoreIDs) -> [StoreID | PartitionStoreIDs] end,
+						[StoreID], Acc)
+				end,
+				PartitionToStoreIDs, Partitions),
+			map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs2)
+	end.
 
 get_store_id_partitions({Start, End}, Partitions) when Start >= End ->
 	Partitions;
