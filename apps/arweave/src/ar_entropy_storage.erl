@@ -291,48 +291,23 @@ record_chunk(
 					{error, Reason};
 				_ ->
 					PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-					Result = ar_chunk_storage:record_chunk(
+					ar_chunk_storage:record_chunk(
 						PaddedEndOffset, PackedChunk, Packing, StoreID,
-						StoreIDLabel, PackingLabel, FileIndex),
-					log_stored_chunk(generate_missing_entropy_and_encipher,
-							Chunk, Entropy, PackedChunk, PaddedEndOffset, Result),
-					Result
+						StoreIDLabel, PackingLabel, FileIndex)
 			end;
 		no_entropy_yet ->
-			Result = ar_chunk_storage:record_chunk(
+			ar_chunk_storage:record_chunk(
 				PaddedEndOffset, Chunk, unpacked_padded, StoreID,
-				StoreIDLabel, PackingLabel, FileIndex),
-			log_stored_chunk(store_unpacked_padded_chunk,
-					Chunk, n, n, PaddedEndOffset, Result),
-			Result;
+				StoreIDLabel, PackingLabel, FileIndex);
 		{_EndOffset, Entropy} ->
 			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-			Result = ar_chunk_storage:record_chunk(
+			ar_chunk_storage:record_chunk(
 				PaddedEndOffset, PackedChunk, Packing, StoreID,
-				StoreIDLabel, PackingLabel, FileIndex),
-			log_stored_chunk(read_entropy_and_encipher,
-					Chunk, Entropy, PackedChunk, PaddedEndOffset, Result),
-			Result
+				StoreIDLabel, PackingLabel, FileIndex)
 	end,
 	release_semaphore(Filepath),
 	RecordChunk.
-
-log_stored_chunk(Stage, Chunk, Entropy, Packed, PaddedEndOffset, Result) ->
-	ChunkID = case Chunk of n -> <<>>;
-		_ -> ar_util:encode(ar_tx:generate_chunk_id(Chunk)) end,
-	EntropyID = case Entropy of n -> <<>>;
-		_ -> ar_util:encode(ar_tx:generate_chunk_id(Entropy)) end,
-	PackedID = case Packed of n -> <<>>;
-		_ -> ar_util:encode(ar_tx:generate_chunk_id(Packed)) end,
-	Result2 = case Result of {ok, _, _} -> ok; {error, Error} -> Error end,
-	?LOG_DEBUG([{event, stored_replica_2_9_data},
-		{stage, read_entropy_and_encipher},
-		{padded_end_offset, PaddedEndOffset},
-		{chunk_id, ChunkID},
-		{entropy_id, EntropyID},
-		{packed_chunk_id, PackedID},
-		{result, io_lib:format("~p", [Result])}]).
 
 %% @doc Return the byte (>= ChunkStartOffset, < ChunkEndOffset)
 %% that necessarily belongs to the chunk stored
