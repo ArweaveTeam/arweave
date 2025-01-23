@@ -6,7 +6,7 @@
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
 	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, 
-	assert_chunks/3, assert_no_chunks/2, assert_partition_size/4, assert_empty_partition/3]).
+	assert_chunks/3, assert_no_chunks/2, assert_partition_size/3, assert_empty_partition/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -85,8 +85,8 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 		auto_join = true
 	}, true),
 
-	ar_e2e:assert_partition_size(Node, 0, unpacked, ?PARTITION_SIZE),
-	ar_e2e:assert_partition_size(Node, 1, unpacked, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(Node, 0, unpacked),
+	ar_e2e:assert_partition_size(Node, 1, unpacked),
 
 	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, unpacked, Chunks),
@@ -134,10 +134,12 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
 
-	ar_e2e:assert_partition_size(Node, 0, SourcePacking, ?PARTITION_SIZE),
-	ar_e2e:assert_partition_size(Node, 1, SourcePacking, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(Node, 0, SourcePacking),
+	ar_e2e:assert_partition_size(Node, 1, SourcePacking),
 
-	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(Node, 
+		?PARTITION_SIZE,
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SourcePacking)),
 	ar_e2e:assert_chunks(Node, SourcePacking, Chunks),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
@@ -238,7 +240,10 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			"~s synced range when it should not have: ~p - ~p", 
 			[Node, StartOffset, EndOffset]))).
 
-assert_partition_size(Node, PartitionNumber, Packing, Size) ->
+assert_partition_size(Node, PartitionNumber, Packing) ->
+	Size = ?PARTITION_SIZE,
+	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
+		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
 	?assert(
 		ar_util:do_until(
 			fun() -> 
@@ -337,17 +342,18 @@ assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
 	{ok, ExpectedPackedChunk} = ar_e2e:load_chunk_fixture(Packing, EndOffset),
 	?assertEqual(ExpectedPackedChunk, Chunk,
 		iolist_to_binary(io_lib:format(
-			"Chunk at offset ~p, size ~p does not match previously packed chunk",
-			[EndOffset, ChunkSize]))),
+			"~p: Chunk at offset ~p, size ~p does not match previously packed chunk",
+			[Node, EndOffset, ChunkSize]))),
 
 	{ok, UnpackedChunk} = ar_packing_server:unpack(
 		Packing, EndOffset, Block#block.tx_root, Chunk, ?DATA_CHUNK_SIZE),
-	UnpaddedChunk = ar_packing_server:unpad_chunk(Packing, UnpackedChunk, ChunkSize, byte_size(Chunk)),
+	UnpaddedChunk = ar_packing_server:unpad_chunk(
+		Packing, UnpackedChunk, ChunkSize, byte_size(Chunk)),
 	ExpectedUnpackedChunk = ar_test_node:get_genesis_chunk(EndOffset),
 	?assertEqual(ExpectedUnpackedChunk, UnpaddedChunk,
 		iolist_to_binary(io_lib:format(
-			"Chunk at offset ~p, size ~p does not match unpacked chunk",
-			[EndOffset, ChunkSize]))).
+			"~p: Chunk at offset ~p, size ~p does not match unpacked chunk",
+			[Node, EndOffset, ChunkSize]))).
 
 assert_no_chunks(Node, Chunks) ->
 	lists:foreach(fun({_Block, EndOffset, _ChunkSize}) ->

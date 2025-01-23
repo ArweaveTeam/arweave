@@ -58,14 +58,16 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	}),
 	ar_test_node:restart(RepackerNode),
 
-	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
 
 	ar_test_node:update_config(RepackerNode, Config#config{
 		storage_modules = StorageModules,
 		mining_addr = AddrB
 	}),
 	ar_test_node:restart(RepackerNode),
-	ar_e2e:assert_syncs_range(RepackerNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(RepackerNode,
+		?PARTITION_SIZE,
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(ToPacking)),
 	
 	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
 

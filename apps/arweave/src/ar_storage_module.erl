@@ -4,7 +4,7 @@
 		module_packing_difficulty/1, packing_label/1, label_by_id/1, get_by_id/1,
 		get_range/1, module_range/1, module_range/2, get_packing/1, get_size/1,
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/3, get_all_module_ranges/0,
-		has_any/1, has_range/2, get_cover/3]).
+		has_any/1, has_range/2, get_cover/3, get_overlap/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -23,7 +23,7 @@
 -ifdef(AR_TEST).
 -define(REPLICA_2_9_OVERLAP, 262144).
 -else.
--define(REPLICA_2_9_OVERLAP, (262144 * 20)).
+-define(REPLICA_2_9_OVERLAP, (262144 * 10)).
 -endif.
 
 -type storage_module() :: {integer(), integer(), {atom(), binary()}}

@@ -198,14 +198,18 @@ do_acquire_lock(Mode, StoreID, State) ->
 			case {DeviceLock, PrepareLocks} of
 				{sync, _} when PrepareLocks < MaxPrepareLocks -> {true, {prepare, StoreID}};
 				{{prepare, StoreID}, _} -> {true, DeviceLock};
+				{{prepare_and_repack, StoreID}, _} -> {true, DeviceLock};
+				{{repack, StoreID}, _} when PrepareLocks < MaxPrepareLocks -> {true, {prepare_and_repack, StoreID}};
 				_ -> {false, DeviceLock}
 			end;
 		repack ->
 			%% Can only acquire a repack lock if the device is in sync mode or this
 			%% StoreID already has the repack lock
-			case DeviceLock of
-				sync -> {true, {repack, StoreID}};
-				{repack, StoreID} -> {true, DeviceLock};
+			case {DeviceLock, PrepareLocks} of
+				{sync, _} when PrepareLocks < MaxPrepareLocks -> {true, {repack, StoreID}};
+				{{prepare, StoreID}, _} -> {true, {prepare_and_repack, StoreID}};
+				{{prepare_and_repack, StoreID}, _} -> {true, DeviceLock};
+				{{repack, StoreID}, _} -> {true, {repack, StoreID}};
 				_ -> {false, DeviceLock}
 			end
 	end,
@@ -227,6 +231,8 @@ do_release_lock(Mode, StoreID, State) ->
 					%% put the device back in sync mode so it's ready to be locked again
 					%% if needed.
 					sync;
+				{prepare_and_repack, StoreID} ->
+					{repack, StoreID};
 				_ ->
 					%% We should only be able to release a prepare lock if we previously
 					%% held it. If we hit this branch something is wrong.
@@ -242,6 +248,8 @@ do_release_lock(Mode, StoreID, State) ->
 					%% put the device back in sync mode so it's ready to be locked again
 					%% if needed.
 					sync;
+				{prepare_and_repack, StoreID} ->
+					{prepare, StoreID};
 				_ ->
 					%% We should only be able to release a repack lock if we previously
 					%% held it. If we hit this branch something is wrong.
@@ -260,6 +268,7 @@ count_prepare_locks(State) ->
 		fun(_Device, Lock, Acc) ->
 			case Lock of
 				{prepare, _} -> Acc + 1;
+				{prepare_and_repack, _} -> Acc + 1;
 				_ -> Acc
 			end
 		end,
@@ -347,7 +356,11 @@ test_acquire_lock() ->
 		{false, State}, 
 		do_acquire_lock(prepare, "storage_module_3_unpacked", State)),
 	?assertEqual(
-		{false, State}, 
+		{true, State#state{device_locks = #{
+			"device1" => sync,
+			"device2" => {prepare, "storage_module_2_unpacked"},
+			"device3" => {prepare_and_repack, "storage_module_4_unpacked"}
+		}}}, 
 		do_acquire_lock(prepare, "storage_module_4_unpacked", State)),
 	
 	?assertEqual(
@@ -358,7 +371,11 @@ test_acquire_lock() ->
 		}}}, 
 		do_acquire_lock(repack, "storage_module_0_unpacked", State)),
 	?assertEqual(
-		{false, State}, 
+		{true, State#state{device_locks = #{
+			"device1" => sync,
+			"device2" => {prepare_and_repack, "storage_module_2_unpacked"},
+			"device3" => {repack, "storage_module_4_unpacked"}
+		}}}, 
 		do_acquire_lock(repack, "storage_module_2_unpacked", State)),
 	?assertEqual(
 		{false, State}, 
@@ -378,12 +395,14 @@ test_release_lock() ->
 			"storage_module_2_unpacked" => "device2",
 			"storage_module_3_unpacked" => "device2",
 			"storage_module_4_unpacked" => "device3",
-			"storage_module_5_unpacked" => "device3"
+			"storage_module_5_unpacked" => "device3",
+			"storage_module_6_unpacked" => "device4"
 		},
 		device_locks = #{
 			"device1" => sync,
 			"device2" => {prepare, "storage_module_2_unpacked"},
-			"device3" => {repack, "storage_module_4_unpacked"}
+			"device3" => {repack, "storage_module_4_unpacked"},
+			"device4" => {prepare_and_repack, "storage_module_6_unpacked"}
 		}
 	},
 
@@ -399,6 +418,9 @@ test_release_lock() ->
 	?assertEqual(
 		State, 
 		do_release_lock(sync, "storage_module_4_unpacked", State)),
+	?assertEqual(
+		State, 
+		do_release_lock(sync, "storage_module_6_unpacked", State)),
 
 	?assertEqual(
 		State, 
@@ -407,7 +429,8 @@ test_release_lock() ->
 		State#state{device_locks = #{
 			"device1" => sync,
 			"device2" => sync,
-			"device3" => {repack, "storage_module_4_unpacked"}
+			"device3" => {repack, "storage_module_4_unpacked"},
+			"device4" => {prepare_and_repack, "storage_module_6_unpacked"}
 		}}, 
 		do_release_lock(prepare, "storage_module_2_unpacked", State)),
 	?assertEqual(
@@ -416,6 +439,14 @@ test_release_lock() ->
 	?assertEqual(
 		State, 
 		do_release_lock(prepare, "storage_module_4_unpacked", State)),
+	?assertEqual(
+		State#state{device_locks = #{
+			"device1" => sync,
+			"device2" => {prepare, "storage_module_2_unpacked"},
+			"device3" => {repack, "storage_module_4_unpacked"},
+			"device4" => {repack, "storage_module_6_unpacked"}
+		}}, 
+		do_release_lock(prepare, "storage_module_6_unpacked", State)),
 
 	?assertEqual(
 		State, 
@@ -430,9 +461,19 @@ test_release_lock() ->
 		State#state{device_locks = #{
 			"device1" => sync,
 			"device2" => {prepare, "storage_module_2_unpacked"},
-			"device3" => sync
+			"device3" => sync,
+			"device4" => {prepare_and_repack, "storage_module_6_unpacked"}
 		}}, 
 		do_release_lock(repack, "storage_module_4_unpacked", State)),
 	?assertEqual(
 		State, 
-		do_release_lock(repack, "storage_module_5_unpacked", State)).
+		do_release_lock(repack, "storage_module_5_unpacked", State)),
+	?assertEqual(
+		State#state{device_locks = #{
+			"device1" => sync,
+			"device2" => {prepare, "storage_module_2_unpacked"},
+			"device3" => {repack, "storage_module_4_unpacked"},
+			"device4" => {prepare, "storage_module_6_unpacked"}
+		}}, 
+		do_release_lock(repack, "storage_module_6_unpacked", State)).
+

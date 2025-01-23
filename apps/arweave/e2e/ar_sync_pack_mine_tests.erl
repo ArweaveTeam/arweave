@@ -86,14 +86,22 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	SinkNode = peer2,
 
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
-	ar_e2e:assert_syncs_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(
+		SinkNode,
+		?PARTITION_SIZE,
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 
 	case SinkPackingType of
 		unpacked ->
 			ok;
 		_ ->
-			CurrentHeight = ar_test_node:remote_call(SinkNode, ar_node, get_height, []),
+			CurrentHeight = max(
+				ar_test_node:remote_call(SourceNode, ar_node, get_height, []),
+				ar_test_node:remote_call(SinkNode, ar_node, get_height, [])
+			),
+			ar_test_node:wait_until_height(SourceNode, CurrentHeight),
+			ar_test_node:wait_until_height(SinkNode, CurrentHeight),
 			ar_test_node:mine(SinkNode),
 
 			SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
@@ -123,9 +131,12 @@ test_unpacked_and_packed_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, Pa
 	SinkNode = peer2,
 
 	{SinkPacking, unpacked} = start_sink_node(SinkNode, SourceNode, B0, PackingType, unpacked),
-	ar_e2e:assert_syncs_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, ?PARTITION_SIZE),
-	ar_e2e:assert_partition_size(SinkNode, 1, unpacked, ?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(
+		SinkNode,
+		?PARTITION_SIZE,
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
+	ar_e2e:assert_partition_size(SinkNode, 1, unpacked),
 
 	CurrentHeight = ar_test_node:remote_call(SinkNode, ar_node, get_height, []),
 	ar_test_node:mine(SinkNode),
