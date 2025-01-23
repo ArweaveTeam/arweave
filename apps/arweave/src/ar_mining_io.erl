@@ -307,19 +307,18 @@ chunks_read(miner, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets
 chunks_read(standalone, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets) ->
 	Worker ! {chunks_read, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets}.
 
-get_packed_intervals(Start, End, _MiningAddress, _PackingDifficulty, _StoreID, Intervals)
-		when Start >= End ->
-	Intervals;
-get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, StoreID, Intervals) ->
+get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, "default", Intervals) ->
 	ReplicaFormat = get_replica_format_from_packing_difficulty(PackingDifficulty),
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
-	case ar_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, StoreID) of
+	case ar_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, "default") of
 		not_found ->
 			Intervals;
 		{Right, Left} ->
-			get_packed_intervals(Right, End, MiningAddress, PackingDifficulty, StoreID,
+			get_packed_intervals(Right, End, MiningAddress, PackingDifficulty, "default",
 					ar_intervals:add(Intervals, Right, Left))
-	end.
+	end;
+get_packed_intervals(_Start, _End, _MiningAddr, _PackingDifficulty, _StoreID, _Intervals) ->
+	no_interval_check_implemented_for_non_default_store.
 
 %% The protocol allows composite packing with the packing difficulty 25 for now,
 %% but it is not practical and it is convenient to exlude it from the range of
@@ -396,19 +395,21 @@ read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID) ->
 	Intervals = get_packed_intervals(RangeStart, RangeStart + RecallRangeSize,
 			MiningAddress, PackingDifficulty, StoreID, ar_intervals:new()),
 	ChunkOffsets = ar_chunk_storage:get_range(RangeStart, RecallRangeSize, StoreID),
-	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals),
+	ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
 	log_read_range(Mode, Candidate, WhichChunk, length(ChunkOffsets), StartTime),
 	ChunkOffsets2.
 
-filter_by_packing([], _Intervals) ->
+filter_by_packing([], _Intervals, _StoreID) ->
 	[];
-filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals) ->
+filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = StoreID) ->
 	case ar_intervals:is_inside(Intervals, EndOffset) of
 		false ->
-			filter_by_packing(ChunkOffsets, Intervals);
+			filter_by_packing(ChunkOffsets, Intervals, StoreID);
 		true ->
-			[{EndOffset, Chunk} | filter_by_packing(ChunkOffsets, Intervals)]
-	end.
+			[{EndOffset, Chunk} | filter_by_packing(ChunkOffsets, Intervals, StoreID)]
+	end;
+filter_by_packing(ChunkOffsets, _Intervals, _StoreID) ->
+	ChunkOffsets.
 
 log_read_range(standalone, _Candidate, _WhichChunk, _FoundChunks, _StartTime) ->
 	ok;
