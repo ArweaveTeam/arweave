@@ -184,7 +184,8 @@ unpad_chunk(Unpacked, ChunkSize, PackedSize) ->
 			case is_zero(Padding) of
 				false ->
 					?LOG_WARNING([{event, unpad_chunk_error}, {packed_size, PackedSize},
-							{chunk_size, ChunkSize}, {padding, Padding}]),
+							{chunk_size, ChunkSize}, {padding, binary_part(Padding, 0, 64)},
+							{unpacked, binary_part(Unpacked, 0, 64)}]),
 					error;
 				true ->
 					binary:part(Unpacked, 0, ChunkSize)
@@ -388,11 +389,11 @@ worker(PackingState) ->
 					From ! {chunk, {unpacked, Ref, {Packing, U, AbsoluteOffset, TXRoot,
 							ChunkSize}}};
 				{error, invalid_packed_size} ->
-					?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}]);
+					?LOG_WARNING([{event, got_unpacked_chunk_of_invalid_size}]);
 				{error, invalid_chunk_size} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
+					?LOG_WARNING([{event, got_unpacked_chunk_with_invalid_chunk_size}]);
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding},
+					?LOG_WARNING([{event, got_unpacked_chunk_with_invalid_padding},
 						{absolute_end_offset, AbsoluteOffset}]);
 				{exception, Error} ->
 					?LOG_ERROR([{event, failed_to_unpack_chunk},

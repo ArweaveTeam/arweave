@@ -220,9 +220,9 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 			{tags, [repack_in_place]},
 			{pid, self()},
 			{storage_module, StoreID},
-			{offset, AbsoluteOffset},
-			{padded_offset, PaddedOffset},
-			{start_offset, ar_chunk_storage:get_chunk_bucket_start(AbsoluteOffset)},
+			{end_offset, AbsoluteOffset},
+			{padded_end_offset, PaddedOffset},
+			{bucket_start_offset, ar_chunk_storage:get_chunk_bucket_start(AbsoluteOffset)},
 			{chunk_size, ChunkSize},
 			{required_packing, ar_serialize:encode_packing(RequiredPacking, true)}]),
 	case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync, StoreID) of
@@ -342,30 +342,29 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 			case StoreResults of
 				{ok, FileIndex2, NewPacking} ->
 					?LOG_DEBUG([{event, ar_chunk_storage_packed}, {e, PaddedEndOffset},
-							{s, StartOffset}, {id, ar_data_sync}, {store_id, StoreID},
-							{old_packing, ar_serialize:encode_packing(Packing, true)},
-							{new_packing, ar_serialize:encode_packing(NewPacking, true)}]),
+							{s, StartOffset}, {store_id, StoreID},
+							{chunk_size, ChunkSize},
+							{requested_packing, ar_serialize:encode_packing(Packing, true)},
+							{stored_packing, ar_serialize:encode_packing(NewPacking, true)}]),
 					ar_sync_record:add_async(repacked_chunk,
 							PaddedEndOffset, StartOffset,
 							NewPacking, ar_data_sync, StoreID),
 					{ok, FileIndex2};
 				Error3 ->
-					PackingStr = ar_serialize:encode_packing(Packing, true),
 					?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 							{tags, [repack_in_place]},
 							{storage_module, StoreID},
 							{padded_end_offset, PaddedEndOffset},
-							{packing, PackingStr},
+							{requested_packing, ar_serialize:encode_packing(Packing, true)},
 							{error, io_lib:format("~p", [Error3])}]),
 					{ok, FileIndex}
 			end;
 		{Error4, _} ->
-			PackingStr = ar_serialize:encode_packing(Packing, true),
 			?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 					{tags, [repack_in_place]},
 					{storage_module, StoreID},
 					{padded_end_offset, PaddedEndOffset},
-					{packing, PackingStr},
+					{requested_packing, ar_serialize:encode_packing(Packing, true)},
 					{error, io_lib:format("~p", [Error4])}]),
 			{ok, FileIndex}
 	end.
