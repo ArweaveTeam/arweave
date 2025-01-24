@@ -63,7 +63,7 @@ repack(none, _RangeStart, _RangeEnd, Packing, StoreID) ->
 			"the new packing, and start the "
 			"node with the new storage module.~n", [StoreID]),
 	?LOG_INFO([{event, repacking_complete},
-			{storage_module, StoreID},
+			{store_id, StoreID},
 			{target_packing, ar_serialize:encode_packing(Packing, true)}]),
 	Server = ar_chunk_storage:name(StoreID),
 	gen_server:cast(Server, repacking_complete);
@@ -82,7 +82,7 @@ repack(Cursor, RangeStart, RangeEnd, Packing, StoreID) ->
 		not_found ->
 			?LOG_DEBUG([{event, repack_in_place_no_synced_interval},
 					{tags, [repack_in_place]},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{s, Cursor},
 					{e, RightBound},
 					{range_start, RangeStart},
@@ -105,7 +105,7 @@ repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
 				?LOG_DEBUG([{event, repack_in_place_buffer_full},
 						{tags, [repack_in_place]},
 						{pid, self()},
-						{storage_module, StoreID},
+						{store_id, StoreID},
 						{s, Cursor},
 						{range_start, RangeStart},
 						{range_end, RangeEnd},
@@ -136,7 +136,7 @@ repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
 			?LOG_DEBUG([{event, repack_in_place_continue},
 					{tags, [repack_in_place]},
 					{pid, self()},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{s, Cursor2},
 					{range_start, RangeStart},
 					{range_end, RangeEnd},
@@ -147,16 +147,16 @@ repack_batch(Cursor, RangeStart, RangeEnd, RequiredPacking, StoreID) ->
 			?LOG_DEBUG([{event, repack_further},
 						{tags, [repack_in_place]},
 						{pid, self()},
-						{storage_module, StoreID},
+						{store_id, StoreID},
 						{s, Cursor2},
 						{range_start, RangeStart},
 						{range_end, RangeEnd},
 						{num_chunks, maps:size(OffsetToChunkMap)},
 						{repack_interval_size, RepackIntervalSize},
 						{required_packing, ar_serialize:encode_packing(RequiredPacking, true)}]),
-			gen_server:cast(Server, RepackFurtherArgs),
 			Args = {StoreID, RequiredPacking, OffsetToChunkMap},
-			send_chunks_for_repacking(OffsetToMetadataMap, Args)
+			send_chunks_for_repacking(OffsetToMetadataMap, Args),
+			gen_server:cast(Server, RepackFurtherArgs)
 	end.
 
 read_chunk_range(Start, Size, StoreID, RepackFurtherArgs) ->
@@ -168,7 +168,7 @@ read_chunk_range(Start, Size, StoreID, RepackFurtherArgs) ->
 		{'EXIT', _Exc} ->
 			?LOG_ERROR([{event, failed_to_read_chunk_range},
 					{tags, [repack_in_place]},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{start, Start},
 					{size, Size},
 					{store_id, StoreID}]),
@@ -188,7 +188,7 @@ read_chunk_metadata_range(Start, Size, End, StoreID, RepackFurtherArgs) ->
 			MetadataMap;
 		{error, Error} ->
 			?LOG_ERROR([{event, failed_to_read_chunk_metadata_range},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{error, io_lib:format("~p", [Error])}]),
 			gen_server:cast(Server, RepackFurtherArgs),
 			continue
@@ -201,8 +201,10 @@ send_chunks_for_repacking(Args) ->
 	fun	(AbsoluteOffset, {_, _TXRoot, _, _, _, ChunkSize}, ok)
 				when ChunkSize /= ?DATA_CHUNK_SIZE,
 						AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD ->
+			{StoreID, _RequiredPacking, _ChunkMap} = Args,
 			?LOG_DEBUG([{event, skipping_small_chunk},
 					{tags, [repack_in_place]},
+					{store_id, StoreID},
 					{offset, AbsoluteOffset},
 					{chunk_size, ChunkSize}]),
 			ok;
@@ -224,7 +226,7 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 			?LOG_WARNING([
 				{event, repack_in_place_found_unpacked_padded},
 				{tags, [repack_in_place]},
-				{storage_module, StoreID},
+				{store_id, StoreID},
 				{packing,
 					ar_serialize:encode_packing(RequiredPacking,true)},
 				{offset, AbsoluteOffset}]),
@@ -232,7 +234,7 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 		{true, RequiredPacking} ->
 			?LOG_WARNING([{event, repack_in_place_found_already_repacked},
 					{tags, [repack_in_place]},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{packing,
 						ar_serialize:encode_packing(RequiredPacking, true)},
 					{offset, AbsoluteOffset}]),
@@ -274,7 +276,7 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 					?LOG_DEBUG([{event, request_repack},
 							{tags, [repack_in_place]},
 							{pid, self()},
-							{storage_module, StoreID},
+							{store_id, StoreID},
 							{offset, PaddedOffset},
 							{absolute_offset, AbsoluteOffset},
 							{chunk_size, ChunkSize},
@@ -294,13 +296,13 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 		true ->
 			?LOG_WARNING([{event, repack_in_place_found_no_packing_information},
 					{tags, [repack_in_place]},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{offset, PaddedOffset}]),
 			ok;
 		false ->
 			?LOG_WARNING([{event, repack_in_place_chunk_not_found},
 					{tags, [repack_in_place]},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{offset, PaddedOffset}]),
 			ok
 	end.
@@ -339,7 +341,7 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 				Error3 ->
 					?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 							{tags, [repack_in_place]},
-							{storage_module, StoreID},
+							{store_id, StoreID},
 							{padded_end_offset, PaddedEndOffset},
 							{requested_packing, ar_serialize:encode_packing(Packing, true)},
 							{error, io_lib:format("~p", [Error3])}]),
@@ -348,7 +350,7 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 		{Error4, _} ->
 			?LOG_ERROR([{event, failed_to_store_repacked_chunk},
 					{tags, [repack_in_place]},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{padded_end_offset, PaddedEndOffset},
 					{requested_packing, ar_serialize:encode_packing(Packing, true)},
 					{error, io_lib:format("~p", [Error4])}]),
@@ -360,7 +362,7 @@ read_chunk_and_data_path(StoreID, ChunkDataKey, AbsoluteOffset, MaybeChunk) ->
 		not_found ->
 			?LOG_WARNING([{event, chunk_not_found_in_chunk_data_db},
 					{tags, [repack_in_place]},
-					{storage_module, StoreID},
+					{store_id, StoreID},
 					{offset, AbsoluteOffset}]),
 			not_found;
 		{ok, V} ->
@@ -372,7 +374,7 @@ read_chunk_and_data_path(StoreID, ChunkDataKey, AbsoluteOffset, MaybeChunk) ->
 				_ ->
 					?LOG_WARNING([{event, chunk_not_found2},
 						{tags, [repack_in_place]},
-						{storage_module, StoreID},
+						{store_id, StoreID},
 						{offset, AbsoluteOffset}]),
 					not_found
 			end

@@ -83,7 +83,12 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 		unpacked ->
 			ok;
 		_ ->
-			CurrentHeight = ar_test_node:remote_call(RepackerNode, ar_node, get_height, []),
+			CurrentHeight = max(
+				ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
+				ar_test_node:remote_call(RepackerNode, ar_node, get_height, [])
+			),
+			ar_test_node:wait_until_height(ValidatorNode, CurrentHeight),
+			ar_test_node:wait_until_height(RepackerNode, CurrentHeight),
 			ar_test_node:mine(RepackerNode),
 
 			RepackerBI = ar_test_node:wait_until_height(RepackerNode, CurrentHeight + 1),

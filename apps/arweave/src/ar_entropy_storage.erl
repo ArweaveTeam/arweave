@@ -104,7 +104,9 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 		true ->
 			Packing = {replica_2_9, RewardAddr},
 			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-			prometheus_counter:inc(chunks_stored, [ar_storage_module:packing_label(Packing), ar_storage_module:label_by_id(StoreID)]),
+			prometheus_counter:inc(chunks_stored,
+				[ar_storage_module:packing_label(Packing),
+				ar_storage_module:label_by_id(StoreID)]),
 			ar_sync_record:add_async(replica_2_9_entropy_with_chunk,
 										PaddedEndOffset,
 										StartOffset,
