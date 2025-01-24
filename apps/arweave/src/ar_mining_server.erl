@@ -689,7 +689,9 @@ prepare_solution(steps, Candidate, Solution) ->
 						{start_step_number, PrevStepNumber},
 						{next_step_number, StepNumber},
 						{next_seed, ar_util:safe_encode(PrevNextSeed)},
-						{next_vdf_difficulty, PrevNextVDFDifficulty}],
+						{next_vdf_difficulty, PrevNextVDFDifficulty},
+						{h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},
+						{h2, ar_util:safe_encode(Candidate#mining_candidate.h2)}],
 					?LOG_INFO([{event, found_solution_but_failed_to_find_checkpoints}
 						| LogData]),
 					may_be_leave_it_to_exit_peer(
@@ -946,7 +948,7 @@ post_solution(not_set, Solution, State) ->
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
 					"details~n");
 		{true, PoACache, PoA2Cache} ->
-			ar_events:send(miner, {found_solution, miner, Solution, PoACache, PoA2Cache})
+			ar_node_worker:found_solution(miner, Solution, PoACache, PoA2Cache)
 	end;
 post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
 	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution) of

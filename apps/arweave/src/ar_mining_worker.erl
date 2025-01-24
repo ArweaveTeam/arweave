@@ -461,6 +461,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 				{step, Candidate#mining_candidate.step_number},
 				{worker, State2#state.name},
 				{h1, ar_util:encode(H1)}, 
+				{p1, Candidate#mining_candidate.partition_number},
 				{difficulty, get_difficulty(State2, Candidate)}]),
 			ar_mining_stats:h1_solution(),
 			%% Decrement 1 for chunk1:
@@ -524,6 +525,8 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 					{worker, State#state.name},
 					{step, Candidate#mining_candidate.step_number},
 					{h2, ar_util:encode(H2)},
+					{p1, Candidate#mining_candidate.partition_number},
+					{p2, Candidate#mining_candidate.partition_number2},
 					{difficulty, get_difficulty(State2, Candidate)},
 					{partial_difficulty, get_partial_difficulty(State2, Candidate)}]),
 			ar_mining_stats:h2_solution();
@@ -532,6 +535,8 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 					{worker, State2#state.name},
 					{step, Candidate#mining_candidate.step_number},
 					{h2, ar_util:encode(H2)},
+					{p1, Candidate#mining_candidate.partition_number},
+					{p2, Candidate#mining_candidate.partition_number2},
 					{partial_difficulty, get_partial_difficulty(State2, Candidate)}])
 	end,
 	case {PassesDiffChecks, Peer} of
