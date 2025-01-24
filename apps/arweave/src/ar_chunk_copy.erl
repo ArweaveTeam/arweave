@@ -239,9 +239,9 @@ test_ready_for_work() ->
 	State = #state{
 		workers = #{
 			"store1" => #worker_tasks{
-				task_queue = queue:from_list(lists:seq(1, 100))},
+				task_queue = queue:from_list(lists:seq(1, ?MAX_QUEUED_TASKS - 1))},
 			"store2" => #worker_tasks{
-				task_queue = queue:from_list(lists:seq(1, 1001))}
+				task_queue = queue:from_list(lists:seq(1, ?MAX_QUEUED_TASKS))}
 		}
 	},
 	?assertEqual(true, do_ready_for_work("store1", State)),
@@ -250,16 +250,29 @@ test_ready_for_work() ->
 test_enqueue_read_range() ->
 	ExpectedWorker = #worker_tasks{
 		task_queue = queue:from_list(
-					[{floor(2.5 * ?DATA_CHUNK_SIZE), floor(12.5 * ?DATA_CHUNK_SIZE),
-						"store1", "store2"},
-					{floor(12.5 * ?DATA_CHUNK_SIZE), floor(22.5 * ?DATA_CHUNK_SIZE),
-						"store1", "store2"},
-					{floor(22.5 * ?DATA_CHUNK_SIZE), floor(30 * ?DATA_CHUNK_SIZE),
-						"store1", "store2"}]
+					[{
+						floor(2.5 * ?DATA_CHUNK_SIZE),
+						floor((2.5 + ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
+						"store1", "store2"
+					},
+					{
+						floor((2.5 + ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
+						floor((2.5 + 2 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
+						"store1", "store2"
+					},
+					{
+						floor((2.5 + 2 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
+						floor((2.5 + 3 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
+						"store1", "store2"
+					}]
 				)
 			},
 	Worker = do_enqueue_read_range(
-		{floor(2.5 * ?DATA_CHUNK_SIZE), 30 * ?DATA_CHUNK_SIZE, "store1", "store2"},
+		{
+			floor(2.5 * ?DATA_CHUNK_SIZE),
+			floor((2.5 + 3 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
+			"store1", "store2"
+		},
 		#worker_tasks{task_queue = queue:new()}
 	),
 	?assertEqual(

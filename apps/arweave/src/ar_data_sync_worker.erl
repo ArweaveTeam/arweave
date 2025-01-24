@@ -176,7 +176,7 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 			case ReadChunk of
 				not_found ->
 					ar_data_sync:invalidate_bad_data_record(
-						Start, AbsoluteOffset, OriginStoreID, read_range_chunk_not_found),
+						AbsoluteOffset, ChunkSize, OriginStoreID, read_range_chunk_not_found),
 					read_range2(MessagesRemaining-1,
 							{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
 				{error, Error} ->
