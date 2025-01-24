@@ -890,10 +890,11 @@ wait_until_syncs_genesis_data(Node) ->
 	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
 
 wait_until_syncs_genesis_data() ->
-	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_started}]),
 	{ok, Config} = application:get_env(arweave, config),
 	B = ar_node:get_current_block(),
 	WeaveSize = B#block.weave_size,
+	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_started},
+		{weave_size, WeaveSize}]),
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, any)
 			|| {Size, N, _Packing} <- Config#config.storage_modules],
 	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_complete}]),
