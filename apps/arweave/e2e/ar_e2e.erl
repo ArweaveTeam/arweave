@@ -117,6 +117,8 @@ start_source_node(Node, PackingType, WalletFixture) ->
 		}, true)
 	),
 
+	?LOG_INFO("Source node ~p started.", [Node]),
+
 	%% Note: small chunks will be padded to 256 KiB. So B1 actually contains 3 chunks of data
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
 	B1 = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE)),
@@ -137,7 +139,7 @@ start_source_node(Node, PackingType, WalletFixture) ->
 		{B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
 
-	?LOG_INFO("Source node ~p started.", [Node]),
+	?LOG_INFO("Source node ~p blocks mined.", [Node]),
 
 	SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
 

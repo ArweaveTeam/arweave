@@ -585,8 +585,7 @@ process_partial_solution_vdf(Solution, Ref, PoACache, PoA2Cache) ->
 					%% ar_node_worker will fetch the required steps based on the prev block.
 					steps = not_found
 				},
-			ar_events:send(miner, {found_solution, {pool, Ref},
-					Solution2, PoACache, PoA2Cache}),
+			ar_node_worker:found_solution({pool, Ref}, Solution2, PoACache, PoA2Cache),
 			noreply;
 		_ ->
 			%% {Output, Seed, PartitionUpperBound} mismatch (pattern matching against
@@ -996,7 +995,8 @@ process_solution_test_() ->
 						1
 				end
 			end},
-		{ar_events, send, fun(_Type, _Payload) -> ok end}],
+		{ar_events, send, fun(_Type, _Payload) -> ok end},
+		{ar_node_worker, found_solution, fun(_, _, _, _) -> ok end}],
 		fun test_process_solution/0
 	).
 

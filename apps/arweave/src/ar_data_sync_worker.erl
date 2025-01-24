@@ -52,7 +52,7 @@ handle_cast({read_range, Args}, State) ->
 		recast ->
 			ok;
 		ReadResult ->
-			gen_server:cast(ar_data_sync_worker_master,
+			gen_server:cast(ar_chunk_copy,
 				{task_completed, {read_range, {State#state.name, ReadResult, Args}}})
 	end,
 	{noreply, State};
@@ -85,10 +85,10 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-read_range({Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall, _Caller, _Ref})
+read_range({Start, End, _OriginStoreID, _TargetStoreID})
 		when Start >= End ->
 	ok;
-read_range({Start, End, _OriginStoreID, TargetStoreID, _SkipSmall, _Caller, _Ref} = Args) ->
+read_range({Start, End, _OriginStoreID, TargetStoreID} = Args) ->
 	case ar_data_sync:is_chunk_cache_full() of
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
@@ -109,11 +109,10 @@ read_range2(0, Args) ->
 	ar_util:cast_after(1000, self(), {read_range, Args}),
 	recast;
 read_range2(_MessagesRemaining,
-		{Start, End, _OriginStoreID, _TargetStoreID, _SkipSmall, _Caller, _TaskRef})
+		{Start, End, _OriginStoreID, _TargetStoreID})
 		when Start >= End ->
 	ok;
-read_range2(MessagesRemaining,
-		{Start, End, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef}) ->
+read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 	CheckIsRecordedAlready =
 		case ar_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
 			{true, _} ->
@@ -123,8 +122,7 @@ read_range2(MessagesRemaining,
 						ok;
 					{_, Start2} ->
 						read_range2(MessagesRemaining,
-								{Start2, End, OriginStoreID, TargetStoreID, SkipSmall,
-										Caller, TaskRef})
+								{Start2, End, OriginStoreID, TargetStoreID})
 				end;
 			_ ->
 				false
@@ -166,7 +164,7 @@ read_range2(MessagesRemaining,
 					?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
 			Start3 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
 			read_range2(MessagesRemaining,
-					{Start3, End, OriginStoreID, TargetStoreID, SkipSmall, Caller, TaskRef});
+					{Start3, End, OriginStoreID, TargetStoreID});
 		{_, {error, Reason}} ->
 			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
 					{reason, io_lib:format("~p", [Reason])}]);
@@ -174,35 +172,20 @@ read_range2(MessagesRemaining,
 			ok;
 		{Packing3, {ok, _Key, {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
 				RelativeOffset, ChunkSize}}} ->
-			Skip = SkipSmall andalso AbsoluteOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
-					andalso ChunkSize < ?DATA_CHUNK_SIZE,
-			ReadChunk =
-				case Skip of
-					true ->
-						skip;
-					false ->
-						ar_data_sync:read_chunk(
-							AbsoluteOffset, ChunkDataKey, OriginStoreID)
-				end,
+			ReadChunk = ar_data_sync:read_chunk(AbsoluteOffset, ChunkDataKey, OriginStoreID),
 			case ReadChunk of
-				skip ->
-					read_range2(MessagesRemaining,
-							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall,
-									Caller, TaskRef});
 				not_found ->
 					ar_data_sync:invalidate_bad_data_record(
 						Start, AbsoluteOffset, OriginStoreID, read_range_chunk_not_found),
 					read_range2(MessagesRemaining-1,
-							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall,
-									Caller, TaskRef});
+							{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
 				{error, Error} ->
 					?LOG_ERROR([{event, failed_to_read_chunk},
 							{absolute_end_offset, AbsoluteOffset},
 							{chunk_data_key, ar_util:encode(ChunkDataKey)},
 							{reason, io_lib:format("~p", [Error])}]),
 					read_range2(MessagesRemaining,
-							{Start + ChunkSize, End, OriginStoreID, TargetStoreID, SkipSmall,
-									Caller, TaskRef});
+							{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
 				{ok, {Chunk, DataPath}} ->
 					case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
 							OriginStoreID) of
@@ -221,21 +204,18 @@ read_range2(MessagesRemaining,
 							gen_server:cast(ar_data_sync:name(TargetStoreID),
 									{pack_and_store_chunk, Args}),
 							read_range2(MessagesRemaining-1,
-								{Start + ChunkSize, End, OriginStoreID, TargetStoreID,
-										SkipSmall, Caller, TaskRef});
+								{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
 						{true, _DifferentPacking} ->
 							%% Unlucky timing - the chunk should have been repacked
 							%% in the meantime.
 							read_range2(MessagesRemaining,
-									{Start, End, OriginStoreID, TargetStoreID, SkipSmall,
-											Caller, TaskRef});
+									{Start, End, OriginStoreID, TargetStoreID});
 						Reply ->
 							?LOG_ERROR([{event, chunk_record_not_found},
 									{absolute_end_offset, AbsoluteOffset},
 									{ar_sync_record_reply, io_lib:format("~p", [Reply])}]),
 							read_range2(MessagesRemaining,
-									{Start + ChunkSize, End, OriginStoreID, TargetStoreID,
-											SkipSmall, Caller, TaskRef})
+									{Start + ChunkSize, End, OriginStoreID, TargetStoreID})
 					end
 			end
 	end.

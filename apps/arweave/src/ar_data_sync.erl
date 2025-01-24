@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, start_link/2, join/1, add_tip_block/2, add_block/2, 
+-export([name/1, start_link/2, register_workers/0, join/1, add_tip_block/2, add_block/2, 
 		invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_chunk_data/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
@@ -21,6 +21,7 @@
 -export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
 
 -include("../include/ar.hrl").
+-include("../include/ar_sup.hrl").
 -include("../include/ar_consensus.hrl").
 -include("../include/ar_config.hrl").
 -include("../include/ar_poa.hrl").
@@ -49,6 +50,30 @@ name(StoreID) ->
 
 start_link(Name, StoreID) ->
 	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
+
+%% @doc Register the workers that will be monitored by ar_data_sync_sup.erl.
+register_workers() ->
+	{ok, Config} = application:get_env(arweave, config),
+	StorageModuleWorkers = lists:map(
+		fun(StorageModule) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			StoreLabel = ar_storage_module:label(StorageModule),
+			Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
+			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
+		end,
+		Config#config.storage_modules
+	),
+	DefaultStorageModuleWorker = ?CHILD_WITH_ARGS(ar_data_sync, worker,
+		ar_data_sync_default, [ar_data_sync_default, {"default", none}]),
+	RepackInPlaceWorkers = lists:map(
+		fun({StorageModule, TargetPacking}) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			Name = ar_data_sync:name(StoreID),
+			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
+		end,
+		Config#config.repack_in_place_storage_modules
+	),
+	StorageModuleWorkers ++ [DefaultStorageModuleWorker] ++ RepackInPlaceWorkers.
 
 %% @doc Notify the server the node has joined the network on the given block index.
 join(RecentBI) ->
@@ -1289,23 +1314,6 @@ handle_cast(store_sync_state, State) ->
 handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
 	{noreply, remove_recently_processed_disk_pool_offset(Offset, ChunkDataKey, State)};
 
-handle_cast({request_default_unpacked_packing, Cursor, RightBound}, State) ->
-	case ar_sync_record:get_next_synced_interval(Cursor, RightBound, unpacked, ar_data_sync,
-			"default") of
-		not_found ->
-			ok;
-		{End, Start} when End - Start < ?DATA_CHUNK_SIZE,
-				End =< ?STRICT_DATA_SPLIT_THRESHOLD ->
-			gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, End,
-					RightBound});
-		{End, Start} ->
-			gen_server:cast(ar_data_sync_default, {read_range, {Start, End, "default",
-					"default", true}}),
-			gen_server:cast(ar_data_sync_default, {request_default_unpacked_packing, End,
-					RightBound})
-	end,
-	{noreply, State};
-
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -1348,9 +1356,6 @@ handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({chunk, _}, State) ->
-	{noreply, State};
-
-handle_info({ar_data_sync_worker_master_read_range_task_complete, _Ref}, State) ->
 	{noreply, State};
 
 handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, _Bytes}},
@@ -1587,10 +1592,8 @@ do_sync_data2(#sync_data_state{
 		unsynced_intervals_from_other_storage_modules =
 			[{OtherStoreID, {Start, End}} | Intervals]
 		} = State) ->
-	TaskRef = make_ref(),
 	State2 =
-		case ar_data_sync_worker_master:read_range(Start, End, OtherStoreID, StoreID, false,
-				self(), TaskRef) of
+		case ar_chunk_copy:read_range(Start, End, OtherStoreID, StoreID) of
 			true ->
 				State#sync_data_state{
 					unsynced_intervals_from_other_storage_modules = Intervals };
@@ -1825,14 +1828,20 @@ read_chunk_with_metadata(
 	end.
 
 invalidate_bad_data_record({Byte, AbsoluteEndOffset, StoreID, Type}) ->
-	true = AbsoluteEndOffset - Byte =< ?DATA_CHUNK_SIZE,
-	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
-	case AbsoluteEndOffset > T of
+	case AbsoluteEndOffset - Byte =< ?DATA_CHUNK_SIZE of
 		true ->
-			%% Do not invalidate fresh records - a reorg may be in progress.
-			ok;
+			[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
+			case AbsoluteEndOffset > T of
+				true ->
+					%% Do not invalidate fresh records - a reorg may be in progress.
+					ok;
+				false ->
+					invalidate_bad_data_record2({Byte, AbsoluteEndOffset, StoreID, Type})
+			end;
 		false ->
-			invalidate_bad_data_record2({Byte, AbsoluteEndOffset, StoreID, Type})
+			?LOG_WARNING([{event, bad_offset_while_invalidating_data_record}, {type, Type},
+					{range_start, Byte}, {range_end, AbsoluteEndOffset}, {store_id, StoreID}]),
+			ok
 	end.
 
 invalidate_bad_data_record2({Byte, AbsoluteEndOffset, StoreID, Type}) ->

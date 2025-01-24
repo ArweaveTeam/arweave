@@ -9,7 +9,7 @@
 -module(ar_node_worker).
 
 -export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,
-		tx_id_prefix/1]).
+		tx_id_prefix/1, found_solution/4]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
@@ -79,6 +79,9 @@ is_mempool_or_block_cache_tx(TXID) ->
 set_reward_addr(Addr) ->
 	gen_server:call(?MODULE, {set_reward_addr, Addr}).
 
+found_solution(Source, Solution, PoACache, PoA2Cache) ->
+	gen_server:cast(?MODULE, {found_solution, Source, Solution, PoACache, PoA2Cache}).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -86,7 +89,7 @@ set_reward_addr(Addr) ->
 init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
-	[ok, ok, ok, ok, ok] = ar_events:subscribe([tx, block, nonce_limiter, miner, node_state]),
+	[ok, ok, ok, ok] = ar_events:subscribe([tx, block, nonce_limiter, node_state]),
 	%% Read persisted mempool.
 	ar_mempool:load_from_disk(),
 	%% Join the network.
@@ -318,6 +321,16 @@ calculate_delay(Bytes) ->
 handle_call({set_reward_addr, Addr}, _From, State) ->
 	{reply, ok, State#{ reward_addr => Addr }}.
 
+
+handle_cast({found_solution, miner, _Solution, _PoACache, _PoA2Cache},
+		#{ automine := false, miner_2_6 := undefined } = State) ->
+	{noreply, State};
+handle_cast({found_solution, Source, Solution, PoACache, PoA2Cache}, State) ->
+	[{_, PrevH}] = ets:lookup(node_state, current),
+	PrevB = ar_block_cache:get(block_cache, PrevH),
+	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, PrevB, State);
+
+
 handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
 	RunTask =
 		case gb_sets:is_empty(TaskQueue) of
@@ -473,17 +486,6 @@ handle_info({event, nonce_limiter, {refuse_validation, H}}, State) ->
 	{noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
 
 handle_info({event, nonce_limiter, _}, State) ->
-	{noreply, State};
-
-handle_info({event, miner, {found_solution, miner, _Solution, _PoACache, _PoA2Cache}},
-		#{ automine := false, miner_2_6 := undefined } = State) ->
-	{noreply, State};
-handle_info({event, miner, {found_solution, Source, Solution, PoACache, PoA2Cache}}, State) ->
-	[{_, PrevH}] = ets:lookup(node_state, current),
-	PrevB = ar_block_cache:get(block_cache, PrevH),
-	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, PrevB, State);
-
-handle_info({event, miner, _}, State) ->
 	{noreply, State};
 
 handle_info({tx_ready_for_mining, TX}, State) ->
@@ -1872,6 +1874,7 @@ handle_found_solution(Args, PrevB, State) ->
 		packing_difficulty = PackingDifficulty,
 		replica_format = ReplicaFormat
 	} = Solution,
+	?LOG_INFO([{event, handle_found_solution}, {solution, ar_util:encode(SolutionH)}]),
 	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 
 	#block{ indep_hash = PrevH, timestamp = PrevTimestamp,
@@ -1952,7 +1955,14 @@ handle_found_solution(Args, PrevB, State) ->
 					false ->
 						ar_events:send(solution, {stale, #{ source => Source }}),
 						ar_mining_server:log_prepare_solution_failure(Solution,
-								vdf_seed_data_does_not_match_current_block, []),
+							vdf_seed_data_does_not_match_current_block, [
+								{interval_number, IntervalNumber},
+								{prev_interval_number, PrevIntervalNumber},
+								{nonce_limiter_next_seed, ar_util:encode(NonceLimiterNextSeed)},
+								{prev_nonce_limiter_next_seed, ar_util:encode(PrevNextSeed)},
+								{nonce_limiter_next_vdf_difficulty, NonceLimiterNextVDFDifficulty},
+								{prev_nonce_limiter_next_vdf_difficulty, PrevNextVDFDifficulty}
+							]),
 						{false, seed_data};
 					true ->
 						true
