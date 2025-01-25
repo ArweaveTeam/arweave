@@ -2,9 +2,8 @@
 
 -behaviour(gen_server).
 
--export([name/1, is_entropy_packing/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
-	is_entropy_recorded/2, delete_record/2, generate_entropies/2,
-	generate_missing_entropy/2, generate_entropy_keys/2, store_entropy/6, record_chunk/8]).
+-export([name/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
+	is_entropy_recorded/2, delete_record/2, store_entropy/6, record_chunk/7]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -22,7 +21,7 @@
 %%%===================================================================
 
 %% @doc Start the server.
-start_link(Name, StoreID) ->
+start_link(Name, {StoreID, _}) ->
 	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
 
 %% @doc Return the name of the server serving the given StoreID.
@@ -72,14 +71,6 @@ terminate(Reason, State) ->
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
-
--spec is_entropy_packing(ar_chunk_storage:packing()) -> boolean().
-is_entropy_packing(unpacked_padded) ->
-	true;
-is_entropy_packing({replica_2_9, _}) ->
-	true;
-is_entropy_packing(_) ->
-	false.
 
 %% @doc Return true if the 2.9 entropy with the given offset is recorded.
 is_entropy_recorded(PaddedEndOffset, StoreID) ->
@@ -131,67 +122,13 @@ delete_record(PaddedEndOffset, StoreID) ->
 	ar_sync_record:delete(BucketStart + ?DATA_CHUNK_SIZE, BucketStart, ID, StoreID).
 
 generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
-	Entropies = generate_entropies(RewardAddr, PaddedEndOffset),
+	Entropies = ar_entropy_gen:generate_entropies(RewardAddr, PaddedEndOffset),
 	case Entropies of
 		{error, Reason} ->
 			{error, Reason};
 		_ ->
 			EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
 			take_combined_entropy_by_index(Entropies, EntropyIndex)
-	end.
-
-%% @doc Returns all the entropies needed to encipher the chunk at PaddedEndOffset.
-generate_entropies(RewardAddr, PaddedEndOffset) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	EntropyTasks = lists:map(
-		fun(Offset) ->
-			Ref = make_ref(),
-			ar_packing_server:request_entropy_generation(
-				Ref, self(), {RewardAddr, PaddedEndOffset, Offset}),
-			Ref
-		end,
-		lists:seq(0, ?DATA_CHUNK_SIZE - SubChunkSize, SubChunkSize)
-	),
-	Entropies = collect_entropies(EntropyTasks, []),
-	case Entropies of
-		{error, _Reason} ->
-			flush_entropy_messages();
-		_ ->
-			ok
-	end,
-	Entropies.
-
-generate_entropy_keys(RewardAddr, Offset) ->
-	generate_entropy_keys(RewardAddr, Offset, 0).
-generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
-	when SubChunkStart == ?DATA_CHUNK_SIZE ->
-	[];
-generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	[ar_replica_2_9:get_entropy_key(RewardAddr, Offset, SubChunkStart)
-	 | generate_entropy_keys(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
-
-collect_entropies([], Acc) ->
-	lists:reverse(Acc);
-collect_entropies([Ref | Rest], Acc) ->
-	receive
-		{entropy_generated, Ref, {error, Reason}} ->
-			?LOG_ERROR([{event, failed_to_generate_replica_2_9_entropy}, {error, Reason}]),
-			{error, Reason};
-		{entropy_generated, Ref, Entropy} ->
-			collect_entropies(Rest, [Entropy | Acc])
-	after 60000 ->
-		?LOG_ERROR([{event, entropy_generation_timeout}, {ref, Ref}]),
-		{error, timeout}
-	end.
-
-flush_entropy_messages() ->
-	?LOG_INFO([{event, flush_entropy_messages}]),
-	receive
-		{entropy_generated, _, _} ->
-			flush_entropy_messages()
-	after 0 ->
-		ok
 	end.
 
 do_store_entropy(_Entropies,
@@ -243,8 +180,8 @@ do_store_entropy(Entropies,
 	end.
 
 record_chunk(
-		PaddedEndOffset, Chunk, RewardAddr, StoreID,
-		StoreIDLabel, PackingLabel, FileIndex, IsPrepared) ->
+		PaddedEndOffset, Chunk, StoreID,
+		StoreIDLabel, PackingLabel, FileIndex, {IsPrepared, RewardAddr}) ->
 	%% Sanity checks
 	true = PaddedEndOffset == ar_block:get_chunk_padded_offset(PaddedEndOffset),
 	%% End sanity checks
@@ -568,3 +505,95 @@ assert_reset_entropy_offset(ExpectedShiftedOffset, Offset) ->
 		iolist_to_binary(io_lib:format("Offset: ~p, BucketEndOffset: ~p",
 			[Offset, BucketEndOffset]))
 	).
+
+
+replica_2_9_test_() ->
+	{timeout, 20, fun test_replica_2_9/0}.
+
+test_replica_2_9() ->
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Packing = {replica_2_9, RewardAddr},
+	StorageModules = [
+			{?PARTITION_SIZE, 0, Packing},
+			{?PARTITION_SIZE, 1, Packing}
+	],
+	{ok, Config} = application:get_env(arweave, config),
+	try
+		ar_test_node:start(#{ reward_addr => RewardAddr, storage_modules => StorageModules }),
+		StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
+		StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),
+		C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+		%% The replica_2_9 storage does not support updates and three chunks are written
+		%% into the first partition when the test node is launched.
+		?assertEqual({error, already_stored},
+				ar_chunk_storage:put(?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+		?assertEqual({error, already_stored},
+				ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+		?assertEqual({error, already_stored},
+				ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+
+		%% Store the new chunk.
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+		{ok, P1, _Entropy} =
+				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 4 * ?DATA_CHUNK_SIZE, C1),
+		assert_get(P1, 4 * ?DATA_CHUNK_SIZE, StoreID1),
+
+		assert_get(not_found, 8 * ?DATA_CHUNK_SIZE, StoreID1),
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(8 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+		{ok, P2, _} =
+				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 8 * ?DATA_CHUNK_SIZE, C1),
+		assert_get(P2, 8 * ?DATA_CHUNK_SIZE, StoreID1),
+
+		%% Store chunks in the second partition.
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(12 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID2)),
+		{ok, P3, Entropy3} =
+				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 12 * ?DATA_CHUNK_SIZE, C1),
+
+		assert_get(P3, 12 * ?DATA_CHUNK_SIZE, StoreID2),
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(15 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID2)),
+		{ok, P4, Entropy4} =
+				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 15 * ?DATA_CHUNK_SIZE, C1),
+		assert_get(P4, 15 * ?DATA_CHUNK_SIZE, StoreID2),
+		?assertNotEqual(P3, P4),
+		?assertNotEqual(Entropy3, Entropy4),
+
+		?assertEqual({ok, {replica_2_9, RewardAddr}},
+				ar_chunk_storage:put(16 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID2)),
+		{ok, P5, Entropy5} =
+				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 16 * ?DATA_CHUNK_SIZE, C1),
+		assert_get(P5, 16 * ?DATA_CHUNK_SIZE, StoreID2),
+		?assertNotEqual(Entropy4, Entropy5)
+	after
+		ok = application:set_env(arweave, config, Config)
+	end.
+	
+	
+
+assert_get(Expected, Offset) ->
+	assert_get(Expected, Offset, "default").
+
+assert_get(Expected, Offset, StoreID) ->
+	ExpectedResult =
+		case Expected of
+			not_found ->
+				not_found;
+			_ ->
+				{Offset, Expected}
+		end,
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - 1, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - 2, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE + 1, StoreID)),
+	?assertEqual(ExpectedResult, ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE + 2, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 + 1, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 2 - 1, StoreID)),
+	?assertEqual(ExpectedResult,
+			ar_chunk_storage:get(Offset - ?DATA_CHUNK_SIZE div 3, StoreID)).
