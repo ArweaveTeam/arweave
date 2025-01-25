@@ -85,6 +85,8 @@ register_workers(Module) ->
 
     ConfiguredWorkers ++ RepackInPlaceWorkers.
 
+-spec initialize_context(ar_storage_module:store_id(), ar_chunk_storage:packing()) ->
+    {IsPrepared :: boolean(), RewardAddr :: none | ar_wallet:address()}.
 initialize_context(StoreID, Packing) ->
     case Packing of
         {replica_2_9, Addr} ->
@@ -124,22 +126,21 @@ init({StoreID, Packing}) ->
     {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 
     Cursor = read_cursor(StoreID, RangeStart + 1),
-    ?LOG_INFO([{event, read_entropy_gen_cursor}, {store_id, StoreID},
+    ?LOG_INFO([{event, read_prepare_replica_2_9_cursor}, {store_id, StoreID},
             {cursor, Cursor}, {range_start, RangeStart},
             {range_end, RangeEnd}]),
     PrepareStatus = 
         case initialize_context(StoreID, Packing) of
-            {_, none} ->
+            {_IsPrepared, none} ->
                 %% ar_entropy_gen is only used for replica_2_9 packing
                 ?LOG_ERROR([{event, invalid_packing_for_entropy}, {module, ?MODULE},
                     {store_id, StoreID},
                     {packing, ar_serialize:encode_packing(Packing, true)}]),
                 off;
             {false, _} ->
-                %% Entropy generation is not complete
                 gen_server:cast(self(), prepare_entropy),
                 paused;
-            _ ->
+            {true, _} ->
                 %% Entropy generation is complete
                 complete
         end,
@@ -252,7 +253,7 @@ do_prepare_entropy(State) ->
                         {store_id, StoreID}]),
                 ar:console("The storage module ~s is prepared for 2.9 replication.~n",
                         [StoreID]),
-                ar_chunk_storage:set_entropy_context(StoreID, {true, RewardAddr}),
+                ar_chunk_storage:set_entropy_complete(StoreID),
                 complete;
             false ->
                 false

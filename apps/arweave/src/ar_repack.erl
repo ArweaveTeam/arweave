@@ -56,17 +56,8 @@ advance_cursor(Cursor, RangeStart, RangeEnd) ->
 			Cursor2
 	end.
 
-repack(none, _RangeStart, _RangeEnd, Packing, StoreID) ->
-	ar:console("~n~nRepacking of ~s is complete! "
-			"We suggest you stop the node, rename "
-			"the storage module folder to reflect "
-			"the new packing, and start the "
-			"node with the new storage module.~n", [StoreID]),
-	?LOG_INFO([{event, repacking_complete},
-			{store_id, StoreID},
-			{target_packing, ar_serialize:encode_packing(Packing, true)}]),
-	Server = ar_chunk_storage:name(StoreID),
-	gen_server:cast(Server, repacking_complete);
+repack(none, _RangeStart, _RangeEnd, _Packing, StoreID) ->
+	ar_chunk_storage:set_repacking_complete(StoreID);
 repack(Cursor, RangeStart, RangeEnd, Packing, StoreID) ->
 	RightBound = Cursor + get_repack_interval_size(Cursor, RangeStart),
 	?LOG_DEBUG([{event, repacking_in_place},
