@@ -554,6 +554,7 @@ terminate(_Reason, #state{ repack_cursor = Cursor, store_id = StoreID,
 		target_packing = TargetPacking }) ->
 	sync_and_close_files(),
 	ar_repack:store_cursor(Cursor, StoreID, TargetPacking),
+	ar_entropy_gen:set_repack_cursor(StoreID, Cursor),
 	ok.
 
 %%%===================================================================

@@ -124,7 +124,7 @@ init({StoreID, Packing}) ->
     {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 
     Cursor = read_cursor(StoreID, RangeStart + 1),
-    ?LOG_INFO([{event, read_prepare_replica_2_9_cursor}, {store_id, StoreID},
+    ?LOG_INFO([{event, read_entropy_gen_cursor}, {store_id, StoreID},
             {cursor, Cursor}, {range_start, RangeStart},
             {range_end, RangeEnd}]),
     PrepareStatus = 
@@ -136,9 +136,11 @@ init({StoreID, Packing}) ->
                     {packing, ar_serialize:encode_packing(Packing, true)}]),
                 off;
             {false, _} ->
+                %% Entropy generation is not complete
                 gen_server:cast(self(), prepare_entropy),
                 paused;
             _ ->
+                %% Entropy generation is complete
                 complete
         end,
     BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
