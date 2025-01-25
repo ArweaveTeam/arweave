@@ -1,6 +1,6 @@
 -module(ar_repack).
 
--export([read_cursor/3, store_cursor/3, repack/5, chunk_repacked/6]).
+-export([read_cursor/3, store_cursor/3, repack/5, chunk_repacked/5]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -307,7 +307,7 @@ send_chunk_for_repacking(AbsoluteOffset, ChunkMeta, Args) ->
 			ok
 	end.
 
-chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
+chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, EntropyContext) ->
 	{Packing, Chunk, Offset, _, ChunkSize} = ChunkArgs,
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
@@ -331,7 +331,7 @@ chunk_repacked(ChunkArgs, Args, StoreID, FileIndex, IsPrepared, RewardAddr) ->
 			{ok, FileIndex};
 		{ok, true} ->
 			StoreResults = ar_chunk_storage:store_chunk(PaddedEndOffset, Chunk, Packing,
-					StoreID, FileIndex, IsPrepared, RewardAddr),
+					StoreID, FileIndex, EntropyContext),
 			case StoreResults of
 				{ok, FileIndex2, NewPacking} ->
 					ar_sync_record:add_async(repacked_chunk,
