@@ -5,7 +5,8 @@
 
 -export([start_link/2, name/1, register_workers/0, is_storage_supported/3, put/3, put/4,
 		open_files/1, get/1, get/2, get/3, get/5, locate_chunk_on_disk/2,
-		get_range/2, get_range/3, cut/2, delete/1, delete/2, set_entropy_context/2,
+		get_range/2, get_range/3, cut/2, delete/1, delete/2, set_repacking_complete/1,
+		set_entropy_complete/1,
 		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1, 
 		list_files/2, run_defragmentation/0,
 		get_storage_module_path/2, get_chunk_storage_path/2,
@@ -297,8 +298,11 @@ get_chunk_bucket_end(EndOffset) ->
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(EndOffset),
 	get_chunk_bucket_start(PaddedEndOffset) + ?DATA_CHUNK_SIZE.
 
-set_entropy_context(StoreID, EntropyContext) ->
-	gen_server:cast(name(StoreID), {set_entropy_context, EntropyContext}).
+set_entropy_complete(StoreID) ->
+	gen_server:cast(name(StoreID), entropy_complete).
+
+set_repacking_complete(StoreID) ->
+	gen_server:cast(name(StoreID), repacking_complete).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -403,11 +407,6 @@ handle_cast(store_repack_cursor,
 	ar_entropy_gen:set_repack_cursor(StoreID, Cursor),
 	{noreply, State};
 
-handle_cast(repacking_complete, State) ->
-	#state{ store_id = StoreID } = State,
-	ar_device_lock:release_lock(repack, StoreID),
-	{noreply, State#state{ repack_status = complete }};
-
 handle_cast({repack, Packing},
 		#state{ store_id = StoreID, repack_cursor = Cursor,
 				range_start = RangeStart, range_end = RangeEnd } = State) ->
@@ -447,8 +446,18 @@ handle_cast({register_packing_ref, Ref, Args}, #state{ packing_map = Map } = Sta
 handle_cast({expire_repack_request, Ref}, #state{ packing_map = Map } = State) ->
 	{noreply, State#state{ packing_map = maps:remove(Ref, Map) }};
 
-handle_cast({set_entropy_context, EntropyContext}, State) ->
-	{noreply, State#state{ entropy_context = EntropyContext }};
+handle_cast(repacking_complete, State) ->
+	#state{ store_id = StoreID } = State,
+	ar_device_lock:release_lock(repack, StoreID),
+	State2 = State#state{ repack_status = complete },
+	maybe_log_repacking_complete(State2),
+	{noreply, State2};
+
+handle_cast(entropy_complete, State) ->
+	#state{ entropy_context = {_, RewardAddr} } = State,
+	State2 = State#state{ entropy_context = {true, RewardAddr} },
+	maybe_log_repacking_complete(State2),
+	{noreply, State2};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -554,12 +563,33 @@ terminate(_Reason, #state{ repack_cursor = Cursor, store_id = StoreID,
 		target_packing = TargetPacking }) ->
 	sync_and_close_files(),
 	ar_repack:store_cursor(Cursor, StoreID, TargetPacking),
-	ar_entropy_gen:set_repack_cursor(StoreID, Cursor),
 	ok.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+maybe_log_repacking_complete(State) ->
+	#state{
+		store_id = StoreID,
+		target_packing = TargetPacking,
+		repack_status = RepackStatus,
+		entropy_context = {IsPrepared, _RewardAddr}
+	} = State,
+	case RepackStatus == complete andalso IsPrepared of
+		true ->
+			ar:console("~n~nRepacking of ~s is complete! "
+			"We suggest you stop the node, rename "
+			"the storage module folder to reflect "
+			"the new packing, and start the "
+			"node with the new storage module.~n", [StoreID]),
+			?LOG_INFO([{event, repacking_complete},
+					{store_id, StoreID},
+					{target_packing, ar_serialize:encode_packing(TargetPacking, true)}]);
+		_ ->
+			ok
+	end.
+
 get_chunk_group_size() ->
 	{ok, Config} = application:get_env(arweave, config),
 	Config#config.chunk_storage_file_size.
@@ -570,20 +600,20 @@ get_filepath(Name, StoreID) ->
 	ChunkDir = get_chunk_storage_path(DataDir, StoreID),
 	filename:join([ChunkDir, Name]).
 
-store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, PrepareContext) ->
+store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, EntropyContext) ->
 	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, 
-		StoreIDLabel, PackingLabel, FileIndex, PrepareContext).	
+		StoreIDLabel, PackingLabel, FileIndex, EntropyContext).	
 
 store_chunk(
 		PaddedEndOffset, Chunk, Packing, StoreID, StoreIDLabel,
-		PackingLabel, FileIndex, PrepareContext) ->
+		PackingLabel, FileIndex, EntropyContext) ->
 	case ar_entropy_gen:is_entropy_packing(Packing) of
 		true ->
 			ar_entropy_storage:record_chunk(
 				PaddedEndOffset, Chunk, StoreID,
-				StoreIDLabel, PackingLabel, FileIndex, PrepareContext);
+				StoreIDLabel, PackingLabel, FileIndex, EntropyContext);
 		false ->
 			record_chunk(
 				PaddedEndOffset, Chunk, Packing, StoreID, 
