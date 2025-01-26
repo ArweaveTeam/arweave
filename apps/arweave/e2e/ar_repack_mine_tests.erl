@@ -75,21 +75,7 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 		unpacked ->
 			ok;
 		_ ->
-			CurrentHeight = max(
-				ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
-				ar_test_node:remote_call(RepackerNode, ar_node, get_height, [])
-			),
-			ar_test_node:wait_until_height(ValidatorNode, CurrentHeight),
-			ar_test_node:wait_until_height(RepackerNode, CurrentHeight),
-			ar_test_node:mine(RepackerNode),
-
-			RepackerBI = ar_test_node:wait_until_height(RepackerNode, CurrentHeight + 1),
-			{ok, RepackerBlock} = ar_test_node:http_get_block(element(1, hd(RepackerBI)), RepackerNode),
-			ar_e2e:assert_block(ToPacking, RepackerBlock),
-
-			ValidatorBI = ar_test_node:wait_until_height(ValidatorNode, RepackerBlock#block.height),
-			{ok, ValidatorBlock} = ar_test_node:http_get_block(element(1, hd(ValidatorBI)), ValidatorNode),
-			?assertEqual(RepackerBlock, ValidatorBlock)
+			ar_e2e:assert_mine_and_validate(RepackerNode, ValidatorNode, ToPacking)
 	end.
 
 test_repacking_blocked({FromPackingType, ToPackingType}) ->

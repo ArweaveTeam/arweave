@@ -2852,18 +2852,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 	case ShouldStoreInChunkStorage of
 		true ->
 			PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
-			StartPut = erlang:monotonic_time(),
 			Result = ar_chunk_storage:put(PaddedOffset, Chunk, StoreID),
-			PutTime = erlang:convert_time_unit(erlang:monotonic_time() - StartPut, native, microsecond) / 1000.0,
-			case PutTime > 500 of
-				true ->
-					?LOG_DEBUG([{event, chunk_put_duration_milliseconds}, {elapsed, PutTime}, {store_id, StoreID},
-						{pid, self()}, {name, name(StoreID)}, {chunk_storage_name, ar_chunk_storage:name(StoreID)},
-						{offset, Offset}, {absolute_offset, PaddedOffset},
-						{chunk_size, ChunkSize}, {packing, ar_serialize:encode_packing(Packing, true)}]);
-				false ->
-					ok
-			end,
 			case Result of
 				{ok, NewPacking} ->
 					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of

@@ -5,8 +5,9 @@
 
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
-	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, 
-	assert_chunks/3, assert_no_chunks/2, assert_partition_size/3, assert_empty_partition/3]).
+	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, assert_has_entropy/4,
+	assert_chunks/3, assert_no_chunks/2, assert_partition_size/3, assert_empty_partition/3,
+	assert_mine_and_validate/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -220,6 +221,31 @@ assert_block({replica_2_9, Address}, MinedBlock) ->
 	?assertEqual(Address, MinedBlock#block.reward_addr),
 	?assertEqual(?REPLICA_2_9_PACKING_DIFFICULTY, MinedBlock#block.packing_difficulty).
 	
+assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
+	RangeSize = EndOffset - StartOffset,
+	HasEntropy = ar_util:do_until(
+		fun() -> 
+			Intersection = ar_test_node:remote_call(
+				Node, ar_sync_record, get_intersection_size,
+				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+			?LOG_INFO("Intersection: ~p, RangeSize: ~p, StoreID: ~p", [Intersection, RangeSize, StoreID]),
+			Intersection >= RangeSize
+		end,
+		100,
+		60_000
+	),
+	case HasEntropy of
+		true ->
+			ok;
+		false ->
+			Intersection = ar_test_node:remote_call(
+				Node, ar_sync_record, get_intersection_size,
+				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+			?assert(false, 
+				iolist_to_binary(io_lib:format(
+					"~s failed to prepare entropy range ~p - ~p. Intersection: ~p", 
+					[Node, StartOffset, EndOffset, Intersection])))
+	end.
 
 assert_syncs_range(Node, StartOffset, EndOffset) ->
 	HasRange = ar_util:do_until(
@@ -284,6 +310,23 @@ assert_empty_partition(Node, PartitionNumber, Packing) ->
 		iolist_to_binary(io_lib:format(
 			"~s partition ~p,~p os not empty", [Node, PartitionNumber, 
 				ar_serialize:encode_packing(Packing, true)]))).
+
+assert_mine_and_validate(MinerNode, ValidatorNode, MinerPacking) ->
+	CurrentHeight = max(
+		ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
+		ar_test_node:remote_call(MinerNode, ar_node, get_height, [])
+	),
+	ar_test_node:wait_until_height(ValidatorNode, CurrentHeight),
+	ar_test_node:wait_until_height(MinerNode, CurrentHeight),
+	ar_test_node:mine(MinerNode),
+
+	MinerBI = ar_test_node:wait_until_height(MinerNode, CurrentHeight + 1),
+	{ok, MinerBlock} = ar_test_node:http_get_block(element(1, hd(MinerBI)), MinerNode),
+	ar_e2e:assert_block(MinerPacking, MinerBlock),
+
+	ValidatorBI = ar_test_node:wait_until_height(ValidatorNode, MinerBlock#block.height),
+	{ok, ValidatorBlock} = ar_test_node:http_get_block(element(1, hd(ValidatorBI)), ValidatorNode),
+	?assertEqual(MinerBlock, ValidatorBlock).
 
 has_range(Node, StartOffset, EndOffset) ->
 	NodeIP = ar_test_node:peer_ip(Node),

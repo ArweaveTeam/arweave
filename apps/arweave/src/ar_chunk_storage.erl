@@ -289,14 +289,14 @@ get_chunk_storage_path(DataDir, StoreID) ->
 
 %% @doc Return the start and end offset of the bucket containing the given offset.
 %% A chunk bucket a 0-based, 256-KiB wide, 256-KiB aligned range that fully contains a chunk.
--spec get_chunk_bucket_start(PaddedEndOffset :: non_neg_integer()) -> non_neg_integer().
-get_chunk_bucket_start(PaddedEndOffset) ->
+-spec get_chunk_bucket_start(Offset :: non_neg_integer()) -> non_neg_integer().
+get_chunk_bucket_start(Offset) ->
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
 	ar_util:floor_int(max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE).
 
 -spec get_chunk_bucket_end(Offset :: non_neg_integer()) -> non_neg_integer().
-get_chunk_bucket_end(EndOffset) ->
-	PaddedEndOffset = ar_block:get_chunk_padded_offset(EndOffset),
-	get_chunk_bucket_start(PaddedEndOffset) + ?DATA_CHUNK_SIZE.
+get_chunk_bucket_end(Offset) ->
+	get_chunk_bucket_start(Offset) + ?DATA_CHUNK_SIZE.
 
 set_entropy_complete(StoreID) ->
 	gen_server:cast(name(StoreID), entropy_complete).
@@ -369,6 +369,8 @@ init({StoreID, RepackInPlacePacking}) ->
 			gen_server:cast(self(), {repack, Packing}),
 			?LOG_INFO([{event, starting_repack_in_place},
 					{tags, [repack_in_place]},
+					{range_start, RangeStart},
+					{range_end, RangeEnd},
 					{cursor, RepackCursor},
 					{store_id, StoreID},
 					{target_packing, ar_serialize:encode_packing(Packing, true)}]),

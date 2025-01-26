@@ -103,16 +103,13 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({read_range, Args}, State) ->
-	?LOG_DEBUG([{event, read_range}, {module, ?MODULE}, {args, Args}]),
 	{noreply, enqueue_read_range(Args, State)};
 
 handle_cast(process_queues, State) ->
-	?LOG_DEBUG([{event, process_queues}, {module, ?MODULE}]),
 	ar_util:cast_after(1000, self(), process_queues),
 	{noreply, process_queues(State)};
 
 handle_cast({task_completed, {read_range, {Worker, _, Args}}}, State) ->
-	?LOG_DEBUG([{event, task_completed}, {module, ?MODULE}, {worker, Worker}, {args, Args}]),
 	{noreply, task_completed(Args, State)};
 
 handle_cast(Cast, State) ->
@@ -161,7 +158,6 @@ do_enqueue_read_range(Args, Worker) ->
 	{Start, End, OriginStoreID, TargetStoreID} = Args,
 	End2 = min(Start + (?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE), End),
 	Args2 = {Start, End2, OriginStoreID, TargetStoreID},
-	?LOG_DEBUG([{event, enqueue_read_range}, {module, ?MODULE}, {args, Args2}]),
 	TaskQueue = queue:in(Args2, Worker#worker_tasks.task_queue),
 	Worker2 = Worker#worker_tasks{task_queue = TaskQueue},
 	case End2 == End of
@@ -211,9 +207,6 @@ task_completed(Args, State) ->
 				{store_id, OriginStoreID}]),
 			State;
 		_ ->
-			?LOG_DEBUG([{event, task_completed}, {module, ?MODULE},
-				{worker, Worker#worker_tasks.worker},
-				{active_count, Worker#worker_tasks.active_count}, {args, Args}]),
 			ActiveCount = Worker#worker_tasks.active_count - 1,
 			Worker2 = Worker#worker_tasks{active_count = ActiveCount},
 			Worker3 = process_queue(Worker2),
