@@ -216,7 +216,7 @@ do_prepare_entropy(State) ->
     %% Sanity checks:
     BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
     true = (
-        ar_chunk_storage:get_chunk_bucket_start(ar_block:get_chunk_padded_offset(Start)) ==
+        ar_chunk_storage:get_chunk_bucket_start(Start) ==
         ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset)
     ),
     true = (
@@ -343,14 +343,6 @@ do_prepare_entropy(State) ->
                         end
                 end
         end,
-    ?LOG_DEBUG([{event, stored_entropy}, {store_id, StoreID},
-        {start, Start}, {bucket_end_offset, BucketEndOffset},
-        {slice_index, ar_replica_2_9:get_slice_index(BucketEndOffset)},
-        {range_start, RangeStart}, {range_end, RangeEnd},
-        {partition, Partition},
-        {repack_cursor, RepackCursor},
-        {padded_range_end, PaddedRangeEnd},
-        {check_is_recorded, CheckIsRecorded}, {store_entropy, StoreEntropy}]),
     case StoreEntropy of
         complete ->
             State#state{ prepare_status = complete };

@@ -226,6 +226,7 @@ update_config(Config) ->
 		auto_join = Config#config.auto_join,
 		mining_addr = Config#config.mining_addr,
 		sync_jobs = Config#config.sync_jobs,
+		replica_2_9_workers = Config#config.replica_2_9_workers,
 		disk_pool_jobs = Config#config.disk_pool_jobs,
 		header_sync_jobs = Config#config.header_sync_jobs,
 		enable = Config#config.enable ++ BaseConfig#config.enable,

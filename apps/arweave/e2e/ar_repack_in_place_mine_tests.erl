@@ -15,9 +15,9 @@
 repack_in_place_mine_test_() ->
 	Timeout = ?REPACK_IN_PLACE_MINE_TEST_TIMEOUT,
 	[
-		% {timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}}
-		% {timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}}
+		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------
@@ -83,21 +83,7 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 		unpacked ->
 			ok;
 		_ ->
-			CurrentHeight = max(
-				ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
-				ar_test_node:remote_call(RepackerNode, ar_node, get_height, [])
-			),
-			ar_test_node:wait_until_height(ValidatorNode, CurrentHeight),
-			ar_test_node:wait_until_height(RepackerNode, CurrentHeight),
-			ar_test_node:mine(RepackerNode),
-
-			RepackerBI = ar_test_node:wait_until_height(RepackerNode, CurrentHeight + 1),
-			{ok, RepackerBlock} = ar_test_node:http_get_block(element(1, hd(RepackerBI)), RepackerNode),
-			ar_e2e:assert_block(ToPacking, RepackerBlock),
-
-			ValidatorBI = ar_test_node:wait_until_height(ValidatorNode, RepackerBlock#block.height),
-			{ok, ValidatorBlock} = ar_test_node:http_get_block(element(1, hd(ValidatorBI)), ValidatorNode),
-			?assertEqual(RepackerBlock, ValidatorBlock)
+			ar_e2e:assert_mine_and_validate(RepackerNode, ValidatorNode, ToPacking)
 	end.
 
 

@@ -67,14 +67,33 @@ unpacked_sync_pack_mine_test_() ->
 				]
 		end}.
 
-unpacked_and_packed_sync_pack_mine_test_() ->
+unpacked_edge_case_test_() ->
 	{setup, fun () -> setup_source_node(unpacked) end, 
 		fun (GenesisData) ->
 				[
 					instantiator(GenesisData, replica_2_9, 
-						fun test_unpacked_and_packed_sync_pack_mine/1)
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_first_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_last_sync_pack_mine/1)
 				]
 		end}.
+
+spora_2_6_edge_case_test_() ->
+	{setup, fun () -> setup_source_node(spora_2_6) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_first_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_last_sync_pack_mine/1)
+
+				]
+		end}.
+
 
 %% --------------------------------------------------------------------------------------------
 %% test_sync_pack_mine
@@ -90,27 +109,14 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 		SinkNode,
 		?PARTITION_SIZE,
 		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 
 	case SinkPackingType of
 		unpacked ->
 			ok;
 		_ ->
-			CurrentHeight = max(
-				ar_test_node:remote_call(SourceNode, ar_node, get_height, []),
-				ar_test_node:remote_call(SinkNode, ar_node, get_height, [])
-			),
-			ar_test_node:wait_until_height(SourceNode, CurrentHeight),
-			ar_test_node:wait_until_height(SinkNode, CurrentHeight),
-			ar_test_node:mine(SinkNode),
-
-			SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
-			{ok, SinkBlock} = ar_test_node:http_get_block(element(1, hd(SinkBI)), SinkNode),
-			ar_e2e:assert_block(SinkPacking, SinkBlock),
-
-			SourceBI = ar_test_node:wait_until_height(SourceNode, SinkBlock#block.height),
-			{ok, SourceBlock} = ar_test_node:http_get_block(element(1, hd(SourceBI)), SourceNode),
-			?assertEqual(SinkBlock, SourceBlock),
+			ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
 			ok
 	end.
 
@@ -135,21 +141,116 @@ test_unpacked_and_packed_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, Pa
 		SinkNode,
 		?PARTITION_SIZE,
 		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
+	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_partition_size(SinkNode, 1, unpacked),
-
-	CurrentHeight = ar_test_node:remote_call(SinkNode, ar_node, get_height, []),
-	ar_test_node:mine(SinkNode),
-
-	SinkBI = ar_test_node:wait_until_height(SinkNode, CurrentHeight + 1),
-	{ok, SinkBlock} = ar_test_node:http_get_block(element(1, hd(SinkBI)), SinkNode),
-	ar_e2e:assert_block(SinkPacking, SinkBlock),
-
-	SourceBI = ar_test_node:wait_until_height(SourceNode, SinkBlock#block.height),
-	{ok, SourceBlock} = ar_test_node:http_get_block(element(1, hd(SourceBI)), SourceNode),
-	?assertEqual(SinkBlock, SourceBlock),
+	
+	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
 	ok.
 	
+
+test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
+	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	[B0 | _] = Blocks,
+	SourceNode = peer1,
+	SinkNode = peer2,
+
+	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
+	SinkAddr = ar_wallet:to_address(Wallet),
+	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
+	{ok, Config} = ar_test_node:get_config(SinkNode),
+	
+	Module = {?PARTITION_SIZE, 1, SinkPacking},
+	StoreID = ar_storage_module:id(Module),
+	StorageModules = [ Module ],
+
+
+	%% 1. Run node with no sync jobs so that it only prepares entropy
+	Config2 = Config#config{
+		peers = [ar_test_node:peer_ip(SourceNode)],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true,
+		mining_addr = SinkAddr,
+		sync_jobs = 0
+	},
+	?assertEqual(ar_test_node:peer_name(SinkNode),
+		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+	),
+	ar_e2e:assert_has_entropy(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE, StoreID),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
+
+	%% 2. Run node with sync jobs so that it syncs and packs data
+	ar_test_node:update_config(SinkNode, Config2#config{
+		sync_jobs = 100
+	}),
+	ar_test_node:restart(SinkNode),
+
+	ar_e2e:assert_syncs_range(SinkNode,
+		?PARTITION_SIZE,
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
+	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
+
+	%% 3. Make sure the data is minable
+	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
+	ok.
+
+test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
+	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	[B0 | _] = Blocks,
+	SourceNode = peer1,
+	SinkNode = peer2,
+
+	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
+	SinkAddr = ar_wallet:to_address(Wallet),
+	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
+	{ok, Config} = ar_test_node:get_config(SinkNode),
+	
+	Module = {?PARTITION_SIZE, 1, SinkPacking},
+	StoreID = ar_storage_module:id(Module),
+	StorageModules = [ Module ],
+
+	%% 1. Run node with no replica_2_9 workers so that it only syncs chunks
+	Config2 = Config#config{
+		peers = [ar_test_node:peer_ip(SourceNode)],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true,
+		mining_addr = SinkAddr,
+		replica_2_9_workers = 0
+	},
+	?assertEqual(ar_test_node:peer_name(SinkNode),
+		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+	),
+
+	ar_e2e:assert_syncs_range(SinkNode,
+		?PARTITION_SIZE,
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
+	ar_e2e:assert_partition_size(SinkNode, 1, unpacked_padded),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
+
+	%% 2. Run node with sync jobs so that it syncs and packs data
+	ar_test_node:update_config(SinkNode, Config2#config{
+		replica_2_9_workers = 8
+	}),
+	ar_test_node:restart(SinkNode),
+
+	ar_e2e:assert_has_entropy(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE, StoreID),
+	ar_e2e:assert_syncs_range(SinkNode,
+		?PARTITION_SIZE,
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
+	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
+
+	%% 3. Make sure the data is minable
+	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
+	ok.
 
 start_sink_node(Node, SourceNode, B0, PackingType) ->
 	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_b]),
