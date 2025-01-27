@@ -25,6 +25,8 @@ repack_in_place_mine_test_() ->
 %% --------------------------------------------------------------------------------------------
 test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [FromPackingType, ToPackingType]),
+	?LOG_INFO([{event, test_repack_in_place_mine}, {module, ?MODULE},
+		{from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
 	ValidatorNode = peer1,
 	RepackerNode = peer2,
 	{Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
