@@ -9,7 +9,7 @@
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
 		load_fixture/1,
-		get_default_storage_module_packing/2, generate_genesis_data/1, get_genesis_chunk/1,
+		get_default_storage_module_packing/2, get_genesis_chunk/1,
 		all_nodes/1, new_custom_size_rsa_wallet/1]).
 
 %% The "legacy" interface.
@@ -1445,17 +1445,6 @@ p2p_headers(Node) ->
 		{<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}
 	].
 
-%% @doc: generate binary data to be used as genesis data in tests. That data is incrementing
-%% integer data in 4 byte chunks. e.g.
-%% <<0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, ...>>
-%% This makes it easier to assert correct chunk data in tests.
--spec generate_genesis_data(integer()) -> binary().
-generate_genesis_data(DataSize) ->
-    FullChunks = DataSize div 4,
-    LeftoverBytes = DataSize rem 4,
-    IncrementingData = generate_data(0, FullChunks * 4, <<>>),
-    add_padding(IncrementingData, LeftoverBytes).
-
 %% @doc: get the genesis chunk between a given start and end offset.
 -spec get_genesis_chunk(integer()) -> binary().
 -spec get_genesis_chunk(integer(), integer()) -> binary().
@@ -1471,16 +1460,4 @@ get_genesis_chunk(EndOffset) ->
 get_genesis_chunk(StartOffset, EndOffset) ->
 	Size = EndOffset - StartOffset,
 	StartValue = StartOffset div 4,
-	generate_data(StartValue, Size, <<>>).
-
-generate_data(CurrentValue, RemainingBytes, Acc) when RemainingBytes >= 4 ->
-	Chunk = <<CurrentValue:32/integer>>,
-	generate_data(CurrentValue + 1, RemainingBytes - 4, <<Acc/binary, Chunk/binary>>);
-generate_data(_, RemainingBytes, Acc) ->
-	add_padding(Acc, RemainingBytes).
-
-add_padding(Data, 0) ->
-    Data;
-add_padding(Data, LeftoverBytes) ->
-    Padding = <<16#FF:8, 16#FF:8, 16#FF:8, 16#FF:8>>,
-    <<Data/binary, Padding:LeftoverBytes/unit:8>>.
+	ar_weave:generate_data(StartValue, Size, <<>>).
