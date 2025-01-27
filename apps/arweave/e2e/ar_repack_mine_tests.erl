@@ -52,19 +52,17 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	end,
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
 	{ok, Config} = ar_test_node:get_config(RepackerNode),
-	ar_test_node:update_config(RepackerNode, Config#config{
+	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = Config#config.storage_modules ++ StorageModules,
 		mining_addr = AddrB
 	}),
-	ar_test_node:restart(RepackerNode),
 
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
 
-	ar_test_node:update_config(RepackerNode, Config#config{
+	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = StorageModules,
 		mining_addr = AddrB
 	}),
-	ar_test_node:restart(RepackerNode),
 	ar_e2e:assert_syncs_range(RepackerNode,
 		?PARTITION_SIZE,
 		2*?PARTITION_SIZE + ar_storage_module:get_overlap(ToPacking)),
@@ -98,20 +96,18 @@ test_repacking_blocked({FromPackingType, ToPackingType}) ->
 	end,
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
 	{ok, Config} = ar_test_node:get_config(RepackerNode),
-	ar_test_node:update_config(RepackerNode, Config#config{
+	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = Config#config.storage_modules ++ StorageModules,
 		mining_addr = AddrB
 	}),
-	ar_test_node:restart(RepackerNode),
 
 	ar_e2e:assert_empty_partition(RepackerNode, 1, ToPacking),
 	ar_e2e:assert_no_chunks(RepackerNode, Chunks),
 
-	ar_test_node:update_config(RepackerNode, Config#config{
+	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = StorageModules,
 		mining_addr = AddrB
 	}),
-	ar_test_node:restart(RepackerNode),
 
 	ar_e2e:assert_empty_partition(RepackerNode, 1, ToPacking),
 	ar_e2e:assert_no_chunks(RepackerNode, Chunks).

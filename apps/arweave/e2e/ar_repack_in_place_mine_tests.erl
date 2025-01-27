@@ -48,12 +48,11 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 	RepackInPlaceStorageModules = lists:sublist([ 
 		{Module, ToPacking} || Module <- Config#config.storage_modules ], 2),
 	
-	ar_test_node:update_config(RepackerNode, Config#config{
+	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = [],
 		repack_in_place_storage_modules = RepackInPlaceStorageModules,
 		mining_addr = undefined
 	}),
-	ar_test_node:restart(RepackerNode),
 
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
@@ -73,12 +72,11 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 		file:rename(SourcePath, TargetPath)
 	end, RepackInPlaceStorageModules),
 
-	ar_test_node:update_config(RepackerNode, Config#config{
+	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = FinalStorageModules,
 		repack_in_place_storage_modules = [],
 		mining_addr = AddrB
 	}),
-	ar_test_node:restart(RepackerNode),
 	
 	case FromPackingType of
 		unpacked ->

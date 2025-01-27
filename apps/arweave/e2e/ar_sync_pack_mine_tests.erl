@@ -196,10 +196,9 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
-	ar_test_node:update_config(SinkNode, Config2#config{
+	ar_test_node:restart_with_config(SinkNode, Config2#config{
 		sync_jobs = 100
 	}),
-	ar_test_node:restart(SinkNode),
 
 	ar_e2e:assert_syncs_range(SinkNode,
 		?PARTITION_SIZE,
@@ -250,10 +249,9 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
-	ar_test_node:update_config(SinkNode, Config2#config{
+	ar_test_node:restart_with_config(SinkNode, Config2#config{
 		replica_2_9_workers = 8
 	}),
-	ar_test_node:restart(SinkNode),
 
 	ar_e2e:assert_has_entropy(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE, StoreID),
 	ar_e2e:assert_syncs_range(SinkNode,

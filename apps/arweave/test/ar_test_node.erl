@@ -2,8 +2,8 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([boot_peers/1, wait_for_peers/1, get_config/1,set_config/2,
-		update_config/2, update_config/1,
-		wait_until_joined/0, wait_until_joined/1, restart/0, restart/1,
+		wait_until_joined/0, wait_until_joined/1, 
+		restart/0, restart/1, restart_with_config/1, restart_with_config/2,
 		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/1, wait_until_height/2, wait_until_height/3, assert_wait_until_height/2, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
@@ -215,9 +215,6 @@ get_config(Node) ->
 
 set_config(Node, Config) ->
 	remote_call(Node, application, set_env, [arweave, config, Config]).
-
-update_config(Node, Config) ->
-	remote_call(Node, ar_test_node, update_config, [Config]).
 
 update_config(Config) ->
 	{ok, BaseConfig} = application:get_env(arweave, config),
@@ -614,8 +611,20 @@ restart() ->
 	ar:start_dependencies(),
 	wait_until_joined().
 
+restart_with_config(Config) ->
+	?LOG_INFO("Restarting node with new config"),
+	stop(),
+
+	update_config(Config),
+
+	ar:start_dependencies(),
+	wait_until_joined().
+
 restart(Node) ->
 	remote_call(Node, ?MODULE, restart, [], 90000).
+
+restart_with_config(Node, Config) ->
+	remote_call(Node, ?MODULE, restart_with_config, [Config], 90000).
 
 start_peer(Node, Args) when is_list(Args) ->
 	remote_call(Node, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
