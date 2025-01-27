@@ -310,14 +310,14 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 
 	Chunk = case IsUnpackedChunkRecorded of
 		true ->
-			case ar_chunk_storage:get(Byte, Byte, StoreID) of
+			StartOffset = EndOffset - ?DATA_CHUNK_SIZE,
+			case ar_chunk_storage:get(Byte, StartOffset, StoreID) of
 				not_found ->
 					{error, not_found};
 				{error, _} = Error ->
 					Error;
 				{_, UnpackedChunk} ->
-					ar_sync_record:delete(
-						EndOffset, EndOffset - ?DATA_CHUNK_SIZE, ar_data_sync, StoreID),
+					ar_sync_record:delete(EndOffset, StartOffset, ar_data_sync, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;
 		false ->
