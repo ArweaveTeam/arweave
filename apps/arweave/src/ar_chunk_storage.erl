@@ -288,7 +288,9 @@ get_chunk_storage_path(DataDir, StoreID) ->
 	filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
 
 %% @doc Return the start and end offset of the bucket containing the given offset.
-%% A chunk bucket a 0-based, 256-KiB wide, 256-KiB aligned range that fully contains a chunk.
+%% A chunk bucket is a 0-based, 256-KiB wide, 256-KiB aligned range that
+%% ar_chunk_storage uses to index chunks. The bucket start does NOT necessarily
+%% match the chunk's start offset.
 -spec get_chunk_bucket_start(Offset :: non_neg_integer()) -> non_neg_integer().
 get_chunk_bucket_start(Offset) ->
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
