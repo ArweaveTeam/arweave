@@ -1,6 +1,6 @@
 {application, arweave, [
 	{description, "Arweave"},
-	{vsn, "2.9.0-early-adopter"},
+	{vsn, "2.9.1"},
 	{mod, {ar, []}},
 	{applications, [
 		kernel,
