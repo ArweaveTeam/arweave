@@ -1028,34 +1028,34 @@ chunk_bucket_test() ->
 
 	%% After the STRICT_DATA_SPLIT_THRESHOLD, offsets are padded.
 	?assertEqual(1048576, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(524288, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(786432, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE + 1)),
 
 	?assertEqual(1048576, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE - 1)),
-	?assertEqual(524288, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE - 1)),
 
 	?assertEqual(1048576, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE)),
 
 	?assertEqual(1310720, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1048576, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE + 1)),
 
 	?assertEqual(1310720, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE - 1)),
-	?assertEqual(786432, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE - 1)),
 
 	?assertEqual(1310720, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE)),
 
 	?assertEqual(1572864, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1310720, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE + 1)),
 
 	?assertEqual(1572864, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE - 1)),
-	?assertEqual(1048576, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(1310720, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE - 1)),
 
 	?assertEqual(1572864, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(1310720, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE)),
 
 	?assertEqual(1835008, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(1310720, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1572864, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE + 1)),
 	
 	?assertEqual(1835008, get_chunk_bucket_end(7 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(1572864, get_chunk_bucket_start(7 * ?DATA_CHUNK_SIZE)),
