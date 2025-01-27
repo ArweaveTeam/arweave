@@ -1,6 +1,6 @@
 -module(ar_weave).
 
--export([init/0, init/1, init/2, init/3, create_mainnet_genesis_txs/0,
+-export([init/0, init/1, init/2, init/3, create_mainnet_genesis_txs/0, generate_data/3,
 		add_mainnet_v1_genesis_txs/0]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -125,7 +125,7 @@ create_genesis_tx(Key, Size) ->
 		(ar_tx:new())#tx{
 			owner = Pk,
 			reward = 0,
-			data = ar_test_node:generate_genesis_data(Size),
+			data = generate_genesis_data(Size),
 			data_size = Size,
 			target = <<>>,
 			quantity = 0,
@@ -134,6 +134,29 @@ create_genesis_tx(Key, Size) ->
 			format = 1
 		},
 	ar_tx:sign_v1(UnsignedTX, Key).
+
+%% @doc: generate binary data to be used as genesis data in tests. That data is incrementing
+%% integer data in 4 byte chunks. e.g.
+%% <<0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, ...>>
+%% This makes it easier to assert correct chunk data in tests.
+-spec generate_genesis_data(integer()) -> binary().
+generate_genesis_data(DataSize) ->
+    FullChunks = DataSize div 4,
+    LeftoverBytes = DataSize rem 4,
+    IncrementingData = generate_data(0, FullChunks * 4, <<>>),
+    add_padding(IncrementingData, LeftoverBytes).
+
+generate_data(CurrentValue, RemainingBytes, Acc) when RemainingBytes >= 4 ->
+	Chunk = <<CurrentValue:32/integer>>,
+	generate_data(CurrentValue + 1, RemainingBytes - 4, <<Acc/binary, Chunk/binary>>);
+generate_data(_, RemainingBytes, Acc) ->
+	add_padding(Acc, RemainingBytes).
+
+add_padding(Data, 0) ->
+    Data;
+add_padding(Data, LeftoverBytes) ->
+    Padding = <<16#FF:8, 16#FF:8, 16#FF:8, 16#FF:8>>,
+    <<Data/binary, Padding:LeftoverBytes/unit:8>>.
 
 add_mainnet_v1_genesis_txs() ->
 	case filelib:is_dir("data/genesis_txs") of
