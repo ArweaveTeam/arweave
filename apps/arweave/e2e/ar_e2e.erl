@@ -6,7 +6,8 @@
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
 	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, assert_has_entropy/4,
-	assert_chunks/3, assert_no_chunks/2, assert_partition_size/3, assert_empty_partition/3,
+	assert_chunks/3, assert_chunks/4, assert_no_chunks/2,
+	assert_partition_size/3, assert_empty_partition/3,
 	assert_mine_and_validate/3]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -357,19 +358,22 @@ interval_contains2(Iter, Start, End) ->
 	end.
 
 assert_chunks(Node, Packing, Chunks) ->
-	lists:foreach(fun({Block, EndOffset, ChunkSize}) ->
-		assert_chunk(Node, Packing, Block, EndOffset, ChunkSize)
-	end, Chunks).
-
-assert_chunk(Node, Packing, Block, EndOffset, ChunkSize) ->
-	?LOG_INFO("Asserting chunk at offset ~p, size ~p", [EndOffset, ChunkSize]),
-
 	%% Normally we can't sync replica_2_9 data since it's too expensive to unpack. The
 	%% one exception is if you request the exact format stored by the node.
 	RequestPacking = case Packing of
 		{replica_2_9, _} -> Packing;
 		_ -> any
 	end,
+	assert_chunks(Node, RequestPacking, Packing, Chunks).
+
+assert_chunks(Node, RequestPacking, Packing, Chunks) ->
+	lists:foreach(fun({Block, EndOffset, ChunkSize}) ->
+		assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize)
+	end, Chunks).
+
+assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
+	?LOG_INFO("Asserting chunk at offset ~p, size ~p", [EndOffset, ChunkSize]),
+
 	Result = ar_test_node:get_chunk(Node, EndOffset, RequestPacking),
 	{ok, {{StatusCode, _}, _, EncodedProof, _, _}} = Result,
 	?assertEqual(<<"200">>, StatusCode, iolist_to_binary(io_lib:format(
