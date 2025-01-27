@@ -100,6 +100,8 @@ spora_2_6_edge_case_test_() ->
 %% --------------------------------------------------------------------------------------------
 test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	?LOG_INFO([{event, test_sync_pack_mine}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
 	[B0 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,
@@ -122,6 +124,8 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 
 test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	?LOG_INFO([{event, test_syncing_blocked}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
 	[B0 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,
@@ -130,8 +134,10 @@ test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:assert_does_not_sync_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	ar_e2e:assert_no_chunks(SinkNode, Chunks).
 
-test_unpacked_and_packed_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, PackingType}) ->
+test_unpacked_and_packed_sync_pack_mine({{Blocks, _Chunks, SourcePackingType}, PackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> {~p, ~p} ">>, [SourcePackingType, PackingType, unpacked]),
+	?LOG_INFO([{event, test_unpacked_and_packed_sync_pack_mine}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, PackingType}]),
 	[B0 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,
@@ -157,6 +163,8 @@ test_unpacked_and_packed_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, Pa
 
 test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	?LOG_INFO([{event, test_entropy_first_sync_pack_mine}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
 	[B0 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,
@@ -207,6 +215,8 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 
 test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	?LOG_INFO([{event, test_entropy_last_sync_pack_mine}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
 	[B0 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,

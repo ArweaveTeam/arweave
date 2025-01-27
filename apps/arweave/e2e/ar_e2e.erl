@@ -112,6 +112,7 @@ start_source_node(Node, PackingType, WalletFixture) ->
 	
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{
+			peers = [],
 			start_from_latest_state = true,
 			storage_modules = StorageModules,
 			auto_join = true,
