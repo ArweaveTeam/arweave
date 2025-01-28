@@ -190,7 +190,7 @@ handle_cast(pause, State) ->
 	ar:console("Pausing mining.~n"),
 	?LOG_INFO([{event, pause_mining}]),
 	ar_mining_stats:mining_paused(),
-	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be 
+	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be
 	%% distributed. Setting diff to infinity ensures that no solutions are found.
 	State2 = set_difficulty({infinity, infinity}, State),
 	{noreply, State2#state{ paused = true }};
@@ -204,12 +204,12 @@ handle_cast({start_mining, Args}, State) ->
 
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:reset(Worker, DiffPair)
+			ar_mining_worker:reset_difficulty(Worker, DiffPair)
 		end,
 		State#state.workers
 	),
 
-	{noreply, State#state{ 
+	{noreply, State#state{
 		paused = false,
 		active_sessions	= sets:new(),
 		diff_pair = DiffPair,
@@ -254,8 +254,8 @@ handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = Stat
 	%% references to that data is spread among all the different mining processes. Because of
 	%% this it can take the default garbage collection to clean up all references and
 	%% deallocate the memory - which in turn can cause memory to be exhausted.
-	%% 
-	%% To address this the mining server will force a garbage collection on all mining 
+	%%
+	%% To address this the mining server will force a garbage collection on all mining
 	%% processes every time we process a few VDF steps. The exact number of VDF steps is
 	%% determined by the chunk cache size limit in order to roughly align garbage collection
 	%% with when we expect all references to a recall range's chunks to be evicted from
@@ -402,7 +402,7 @@ add_sessions([SessionKey | AddedSessions], State) ->
 	ar:console("Starting new mining session: "
 		"next entropy nonce: ~s, interval number: ~B, next vdf difficulty: ~B.~n",
 		[ar_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty]),
-	?LOG_INFO([{event, new_mining_session}, 
+	?LOG_INFO([{event, new_mining_session},
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
 	add_sessions(AddedSessions, add_seed(SessionKey, State)).
 
@@ -469,7 +469,7 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 	%% Convert the overall cache limit from MiB to sub-chunks. Each partition will track
 	%% their cache in terms of sub-chunks where a spora_2_6 sub-chunk is the same as a chunk,
 	%% and a composite sub-chunk is much smaller than a chunk.
-	OverallCacheLimitSubChunks = (OverallCacheLimitMiB * ?MiB) div 
+	OverallCacheLimitSubChunks = (OverallCacheLimitMiB * ?MiB) div
 		ar_block:get_sub_chunk_size(PackingDifficulty),
 
 	%% We shard the chunk cache across every active worker. Only workers that mine a partition
@@ -623,7 +623,7 @@ prepare_solution(Solution, State) ->
 prepare_solution_from_candidate(Candidate, State) ->
 	#state{ merkle_rebase_threshold = RebaseThreshold, is_pool_client = IsPoolClient } = State,
 	#mining_candidate{
-		mining_address = MiningAddress, next_seed = NextSeed, 
+		mining_address = MiningAddress, next_seed = NextSeed,
 		next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound, poa2 = PoA2, preimage = Preimage,
@@ -658,7 +658,7 @@ prepare_solution_from_candidate(Candidate, State) ->
 
 prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 	#mining_candidate{
-		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
+		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty,
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
 	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
 			StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficulty),
@@ -778,7 +778,7 @@ prepare_solution(poa1, Candidate, Solution) ->
 									%% If we are a coordinated miner and not an exit node -
 									%% the exit node will fetch the proofs.
 									may_be_leave_it_to_exit_peer(
-											Solution#mining_solution{ 
+											Solution#mining_solution{
 												poa1 = #poa{ chunk = SubChunk } },
 											chunk1_proofs_for_h2_solution_not_found,
 											LogData)
@@ -835,7 +835,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 		poa1 -> {RecallByte1, Chunk1};
 		poa2 -> {RecallByte2, Chunk2}
 	end,
-	
+
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
 	case is_poa_complete(CurrentPoA, PackingDifficulty) of
 		true ->
