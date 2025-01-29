@@ -17,9 +17,6 @@ endif
 # _mm_crc32_u32 support
 CFLAGS += -msse4.2
 CXXFLAGS += -msse4.2
-# simd_lcg
-CFLAGS += -mavx2
-CXXFLAGS += -mavx2
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~ts/erts-~ts/include/", [code:root_dir(), erlang:system_info(version)]).' -s init stop)
 ERL_INTERFACE_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~ts", [code:lib_dir(erl_interface, include)]).' -s init stop)
