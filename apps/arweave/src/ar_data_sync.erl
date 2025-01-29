@@ -1399,12 +1399,12 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 							log_sufficient_disk_space(StoreID);
 						_ ->
 							ok
-					end,
-					ets:insert(ar_data_sync_state,
-							{{is_disk_space_sufficient, StoreID}, true});
+					end;
 				false ->
 					ok
-			end
+			end,
+			ets:insert(ar_data_sync_state,
+					{{is_disk_space_sufficient, StoreID}, true})
 	end,
 	{noreply, State};
 handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, Bytes}},
@@ -1440,12 +1440,12 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 							log_sufficient_disk_space(StoreID);
 						_ ->
 							ok
-					end,
-					ets:insert(ar_data_sync_state,
-							{{is_disk_space_sufficient, StoreID}, true});
+					end;
 				false ->
 					ok
-			end
+			end,
+			ets:insert(ar_data_sync_state,
+					{{is_disk_space_sufficient, StoreID}, true})
 	end,
 	{noreply, State};
 
@@ -1507,11 +1507,11 @@ do_sync_intervals(State) ->
 				false;
 			false ->
 				case is_disk_space_sufficient(StoreID) of
-					false ->
-						ar_util:cast_after(30000, self(), sync_intervals),
-						false;
 					true ->
-						true
+						true;
+					_ ->
+						ar_util:cast_after(30000, self(), sync_intervals),
+						false
 				end
 		end,
 	IsChunkCacheFull =
