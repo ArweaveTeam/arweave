@@ -120,6 +120,9 @@ put(PaddedOffset, Chunk, StoreID) ->
 put(PaddedOffset, Chunk, Packing, StoreID) ->
 	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk, Packing}, 180_000) of
+		{'EXIT', {shutdown, {gen_server, call, _}}} ->
+			%% Handle to avoid the large badmatch log on shutdown.
+			{error, shutdown};
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			?LOG_ERROR([{event, gen_server_timeout_putting_chunk},
 				{padded_offset, PaddedOffset},
@@ -254,6 +257,9 @@ delete(Offset) ->
 delete(PaddedOffset, StoreID) ->
 	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {delete, PaddedOffset}, 20000) of
+		{'EXIT', {shutdown, {gen_server, call, _}}} ->
+			%% Handle to avoid the large badmatch log on shutdown.
+			{error, shutdown};
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
