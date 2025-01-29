@@ -461,6 +461,13 @@ register() ->
 				"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
 				"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
 
+	prometheus_gauge:new([{name, sync_status},
+		{labels, [store_id]},
+		{help, "The syncing status of the storage module."}]),
+	prometheus_gauge:new([{name, sync_intervals_queue_size},
+		{labels, [store_id]},
+		{help, "The size of the syncing intervals queue."}]),
+
 	%% ---------------------------------------------------------------------------------------
 	%% Replica 2.9 metrics
 	%% ---------------------------------------------------------------------------------------
@@ -475,6 +482,9 @@ register() ->
 				"indicates whether this is the time to generate a single 8 MiB entropy or "
 				"the time to generate all 32 entropies needed for full chunks."}
 	]),
+	prometheus_gauge:new([{name, prepare_replica_2_9_status},
+		{labels, [store_id]},
+		{help, "The replica 2.9 preparation status."}]),
 
 	%% ---------------------------------------------------------------------------------------
 	%% Pool related metrics

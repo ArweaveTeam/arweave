@@ -724,6 +724,7 @@ init({"default" = StoreID, _}) ->
 		store_id = StoreID,
 		sync_status = off
 	},
+	record_sync_status_metric(off, StoreID),
 	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
 			remove_expired_disk_pool_data_roots, []),
 	lists:foreach(
@@ -773,6 +774,7 @@ init({StoreID, RepackInPlacePacking}) ->
 				packing = ar_storage_module:get_packing(StoreID),
 				sync_status = SyncStatus
 			},
+			record_sync_status_metric(SyncStatus, StoreID),
 			gen_server:cast(self(), sync_intervals),
 			gen_server:cast(self(), sync_data),
 			{ok, State2};
@@ -780,8 +782,22 @@ init({StoreID, RepackInPlacePacking}) ->
 			State2 = State#sync_data_state{
 				sync_status = off
 			},
+			record_sync_status_metric(off, StoreID),
 			{ok, State2}
 	end.
+
+record_sync_status_metric(off, StoreID) ->
+	record_sync_status_metric2(-1, StoreID);
+record_sync_status_metric(active, StoreID) ->
+	record_sync_status_metric2(1, StoreID);
+record_sync_status_metric(paused, StoreID) ->
+	record_sync_status_metric2(0, StoreID);
+record_sync_status_metric(_, StoreID) ->
+	record_sync_status_metric2(-2, StoreID).
+
+record_sync_status_metric2(StatusCode, StoreID) ->
+	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
+	prometheus_gauge:set(sync_status, [StoreIDLabel], StatusCode).
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
@@ -885,6 +901,7 @@ handle_cast(sync_data, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
+	record_sync_status_metric(Status, StoreID),
 	State3 = case Status of
 		active ->
 			do_sync_data(State2);
@@ -900,6 +917,7 @@ handle_cast(sync_data2, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
+	record_sync_status_metric(Status, StoreID),
 	State3 = case Status of
 		active ->
 			do_sync_data2(State2);
@@ -983,7 +1001,10 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 				%% With all that in mind, we'll pause collection once the Q hits roughly
 				%% a bucket size worth of chunks. This number is slightly arbitrary and we
 				%% should feel free to adjust as necessary.
-				case gb_sets:size(Q) > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
+				IntervalsQueueSize = gb_sets:size(Q),
+				StoreIDLabel = ar_storage_module:label_by_id(StoreID),
+				prometheus_gauge:set(sync_intervals_queue_size, [StoreIDLabel], IntervalsQueueSize),
+				case IntervalsQueueSize > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
 					true ->
 						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
 						true;
@@ -1061,6 +1082,7 @@ handle_cast(sync_intervals, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
+	record_sync_status_metric(Status, StoreID),
 	State3 = case Status of
 		active ->
 			do_sync_intervals(State2);
