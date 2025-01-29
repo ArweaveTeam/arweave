@@ -273,7 +273,7 @@ do_prepare_entropy(State) ->
                 false
         end,
 
-    Start2 = BucketEndOffset + ?DATA_CHUNK_SIZE,
+    Start2 = advance_entropy_offset(BucketEndOffset, StoreID),
     State2 = State#state{ cursor = Start2, slice_index = SliceIndex },
     CheckRepackCursor =
         case CheckRangeEnd of
@@ -415,6 +415,16 @@ generate_entropies(RewardAddr, PaddedEndOffset) ->
 			ok
 	end,
 	Entropies.
+
+advance_entropy_offset(BucketEndOffset, StoreID) ->
+    ID = ar_chunk_storage_replica_2_9_1_entropy,
+    case ar_sync_record:get_next_unsynced_interval(
+            BucketEndOffset, infinity, ID, StoreID) of
+        not_found ->
+            BucketEndOffset + ?DATA_CHUNK_SIZE;
+        {_, Start} ->
+            Start + ?DATA_CHUNK_SIZE
+    end.
 
 generate_entropy_keys(RewardAddr, Offset) ->
 	generate_entropy_keys(RewardAddr, Offset, 0).
