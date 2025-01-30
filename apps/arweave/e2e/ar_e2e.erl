@@ -4,10 +4,10 @@
 	write_chunk_fixture/3, load_chunk_fixture/2]).
 
 -export([delayed_print/2, packing_type_to_packing/2,
-	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
+	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1, mine_block/4,
 	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, assert_has_entropy/4,
 	assert_chunks/3, assert_chunks/4, assert_no_chunks/2,
-	assert_partition_size/3, assert_empty_partition/3,
+	assert_partition_size/3, assert_partition_size/4, assert_empty_partition/3,
 	assert_mine_and_validate/3]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -93,8 +93,10 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 
 	ar_e2e:assert_partition_size(Node, 0, unpacked),
 	ar_e2e:assert_partition_size(Node, 1, unpacked),
+	ar_e2e:assert_partition_size(Node, 2, unpacked, floor(0.5*?PARTITION_SIZE)),
+	ar_e2e:assert_empty_partition(Node, 3, unpacked),
 
-	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, unpacked, Chunks),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
@@ -124,11 +126,11 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	%% Note: small chunks will be padded to 256 KiB. So B1 actually contains 3 chunks of data
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
-	B1 = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE)),
-	B2 = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE)),
-	B3 = mine_block(Node, Wallet, ?PARTITION_SIZE),
-	B4 = mine_block(Node, Wallet, ?PARTITION_SIZE),
-	B5 = mine_block(Node, Wallet, ?PARTITION_SIZE),
+	B1 = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), false), %% p1
+	B2 = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), false), %% p1
+	B3 = mine_block(Node, Wallet, ?PARTITION_SIZE, false), %% p1 to p2
+	B4 = mine_block(Node, Wallet, floor(0.5 * ?PARTITION_SIZE), false), %% p2
+	B5 = mine_block(Node, Wallet, ?PARTITION_SIZE, true), %% p3 chunks are stored in disk pool
 
 	%% List of {Block, EndOffset, ChunkSize}
 	Chunks = [
@@ -148,10 +150,10 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	ar_e2e:assert_partition_size(Node, 0, SourcePacking),
 	ar_e2e:assert_partition_size(Node, 1, SourcePacking),
+	ar_e2e:assert_partition_size(Node, 2, SourcePacking, floor(0.5*?PARTITION_SIZE)),
+	ar_e2e:assert_empty_partition(Node, 3, SourcePacking),
 
-	ar_e2e:assert_syncs_range(Node, 
-		?PARTITION_SIZE,
-		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SourcePacking)),
+	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, SourcePacking, Chunks),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
@@ -175,12 +177,10 @@ source_node_storage_modules(SourcePacking) ->
 		{?PARTITION_SIZE, 1, SourcePacking},
 		{?PARTITION_SIZE, 2, SourcePacking},
 		{?PARTITION_SIZE, 3, SourcePacking},
-		{?PARTITION_SIZE, 4, SourcePacking},
-		{?PARTITION_SIZE, 5, SourcePacking},
-		{?PARTITION_SIZE, 6, SourcePacking}
+		{?PARTITION_SIZE, 4, SourcePacking}
 	].
 	
-mine_block(Node, Wallet, DataSize) ->
+mine_block(Node, Wallet, DataSize, IsTemporary) ->
 	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
 	Addr = ar_wallet:to_address(Wallet),
 	{TX, Chunks} = generate_tx(Node, Wallet, WeaveSize, DataSize),
@@ -188,7 +188,7 @@ mine_block(Node, Wallet, DataSize) ->
 
 	?assertEqual(Addr, B#block.reward_addr),
 
-	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks),
+	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks, IsTemporary),
 	
 	ar_test_data_sync:wait_until_syncs_chunks(Node, Proofs, infinity),
 	B.
@@ -258,8 +258,9 @@ assert_syncs_range(Node, StartOffset, EndOffset) ->
 	case HasRange of
 		true ->
 			ok;
-		false ->
-			SyncRecord = ar_http_iface_client:get_sync_record(Node, json),
+		_ ->
+			SyncRecord = ar_http_iface_client:get_sync_record(
+				ar_test_node:peer_ip(Node)),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s failed to sync range ~p - ~p. Sync record: ~p", 
@@ -270,7 +271,7 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 	ar_util:do_until(
 		fun() -> has_range(Node, StartOffset, EndOffset) end,
 		1000,
-		60_000
+		15_000
 	),
 	?assertEqual(false, has_range(Node, StartOffset, EndOffset),
 		iolist_to_binary(io_lib:format(
@@ -278,7 +279,8 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			[Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
-	Size = ?PARTITION_SIZE,
+	assert_partition_size(Node, PartitionNumber, Packing, ?PARTITION_SIZE).
+assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
 		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
 	?assert(
@@ -303,14 +305,14 @@ assert_empty_partition(Node, PartitionNumber, Packing) ->
 				[PartitionNumber, Packing]) > 0
 		end,
 		100,
-		30_000
+		15_000
 	),
 	?assertEqual(
 		0,
 		ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
 			[PartitionNumber, Packing]),
 		iolist_to_binary(io_lib:format(
-			"~s partition ~p,~p os not empty", [Node, PartitionNumber, 
+			"~s partition ~p,~p is not empty", [Node, PartitionNumber, 
 				ar_serialize:encode_packing(Packing, true)]))).
 
 assert_mine_and_validate(MinerNode, ValidatorNode, MinerPacking) ->

@@ -202,7 +202,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						{error, failed_to_store_chunk}
 				end
 		end,
-	case CheckSynced of
+	Result = case CheckSynced of
 		synced ->
 			ok;
 		{synced_disk_pool, EndOffset4} ->
@@ -241,6 +241,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							?LOG_DEBUG([{event, stored_chunk_in_disk_pool},
 									{data_path_hash, ar_util:encode(DataPathHash2)},
 									{data_root, ar_util:encode(DataRoot)},
+									{offset, Offset},
 									{relative_offset, EndOffset3}]),
 							ets:insert(ar_disk_pool_data_roots,
 									{DataRootKey, DiskPoolDataRootValue2}),
@@ -255,7 +256,15 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							end
 					end
 			end
-	end.
+	end,
+	case Result of
+		{error, _} ->
+			?LOG_ERROR([{event, failed_to_add_chunk_to_disk_pool},
+				{offset, Offset}, {error, Result}]);
+		_ ->
+			ok
+	end,
+	Result.
 
 %% @doc Store the given value in the chunk data DB.
 -spec put_chunk_data(
@@ -685,7 +694,6 @@ debug_get_disk_pool_chunks(Cursor) ->
 %%%===================================================================
 
 init({"default" = StoreID, _}) ->
-	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
@@ -722,9 +730,14 @@ init({"default" = StoreID, _}) ->
 		disk_pool_cursor = first,
 		disk_pool_threshold = DiskPoolThreshold,
 		store_id = StoreID,
-		sync_status = off
+		sync_status = paused,
+		range_start = DiskPoolThreshold,
+		range_end = DiskPoolThreshold
 	},
-	record_sync_status_metric(off, StoreID),
+	ar_device_lock:set_device_lock_metric(StoreID, sync, paused),
+	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
+		{range_start, State2#sync_data_state.range_start},
+		{range_end, State2#sync_data_state.range_end}]),
 	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
 			remove_expired_disk_pool_data_roots, []),
 	lists:foreach(
@@ -751,6 +764,8 @@ init({"default" = StoreID, _}) ->
 	ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
 	timer:apply_interval(200, ?MODULE, record_chunk_cache_size_metric, []),
 	gen_server:cast(self(), process_store_chunk_queue),
+	gen_server:cast(self(), sync_intervals),
+	gen_server:cast(self(), collect_peer_intervals),
 	{ok, State2};
 init({StoreID, RepackInPlacePacking}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
@@ -774,7 +789,7 @@ init({StoreID, RepackInPlacePacking}) ->
 				packing = ar_storage_module:get_packing(StoreID),
 				sync_status = SyncStatus
 			},
-			record_sync_status_metric(SyncStatus, StoreID),
+			ar_device_lock:set_device_lock_metric(StoreID, sync, SyncStatus),
 			gen_server:cast(self(), sync_intervals),
 			gen_server:cast(self(), sync_data),
 			{ok, State2};
@@ -782,22 +797,9 @@ init({StoreID, RepackInPlacePacking}) ->
 			State2 = State#sync_data_state{
 				sync_status = off
 			},
-			record_sync_status_metric(off, StoreID),
+			ar_device_lock:set_device_lock_metric(StoreID, sync, off),
 			{ok, State2}
 	end.
-
-record_sync_status_metric(off, StoreID) ->
-	record_sync_status_metric2(-1, StoreID);
-record_sync_status_metric(active, StoreID) ->
-	record_sync_status_metric2(1, StoreID);
-record_sync_status_metric(paused, StoreID) ->
-	record_sync_status_metric2(0, StoreID);
-record_sync_status_metric(_, StoreID) ->
-	record_sync_status_metric2(-2, StoreID).
-
-record_sync_status_metric2(StatusCode, StoreID) ->
-	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
-	prometheus_gauge:set(sync_status, [StoreIDLabel], StatusCode).
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
@@ -835,13 +837,12 @@ handle_cast({join, RecentBI}, State) ->
 	repair_data_root_offset_index(BI, State),
 	DiskPoolThreshold = get_disk_pool_threshold(RecentBI),
 	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
-	State2 =
+	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = RecentBI,
 			disk_pool_threshold = DiskPoolThreshold
-		},
-	store_sync_state(State2),
+		}),
 	{noreply, State2};
 
 handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
@@ -892,16 +893,18 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	ar_events:send(sync_record, {global_cut, BlockStartOffset}),
 	DiskPoolThreshold = get_disk_pool_threshold(BI),
 	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
-	State2 = State#sync_data_state{ weave_size = WeaveSize,
-			block_index = BI, disk_pool_threshold = DiskPoolThreshold },
-	store_sync_state(State2),
+	State2 = store_sync_state(
+		State#sync_data_state{
+			weave_size = WeaveSize,
+			block_index = BI,
+			disk_pool_threshold = DiskPoolThreshold 
+		}),
 	{noreply, State2};
 
 handle_cast(sync_data, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
-	record_sync_status_metric(Status, StoreID),
 	State3 = case Status of
 		active ->
 			do_sync_data(State2);
@@ -917,7 +920,6 @@ handle_cast(sync_data2, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
-	record_sync_status_metric(Status, StoreID),
 	State3 = case Status of
 		active ->
 			do_sync_data2(State2);
@@ -1016,15 +1018,20 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 		true ->
 			ok;
 		false ->
-			case Start >= DiskPoolThreshold of
+			End2 = case StoreID == "default" of
+				true ->
+					End;
+				false ->
+					min(End, DiskPoolThreshold)
+			end,
+			
+			case Start >= End2 of
 				true ->
 					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
-					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start
-					ar_peer_intervals:fetch(
-						Start, min(End, DiskPoolThreshold), StoreID, AllPeersIntervals)
+					ar_peer_intervals:fetch(Start, End2, StoreID, AllPeersIntervals)
 			end
 	end,
 
@@ -1082,7 +1089,6 @@ handle_cast(sync_intervals, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
-	record_sync_status_metric(Status, StoreID),
 	State3 = case Status of
 		active ->
 			do_sync_intervals(State2);
@@ -1602,7 +1608,6 @@ do_sync_data2(#sync_data_state{
 				get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 						RangeStart, RangeEnd)
 		end,
-	% ?LOG_DEBUG([{event, sync_data2}, {store_id, StoreID}, {intervals, Intervals}]),
 	gen_server:cast(self(), sync_data2),
 	State#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = Intervals,
@@ -2568,7 +2573,11 @@ reset_orphaned_data_roots_disk_pool_timestamps(DataRootKeySet) ->
 	).
 
 store_sync_state(#sync_data_state{ store_id = "default" } = State) ->
-	#sync_data_state{ block_index = BI } = State,
+	#sync_data_state{
+		block_index = BI, disk_pool_threshold = DiskPoolThreshold,
+		weave_size = WeaveSize } = State,
+	%% default storage_module syncs the disk pool.
+	State2 = State#sync_data_state{ range_start = DiskPoolThreshold, range_end = WeaveSize },
 	DiskPoolDataRoots = ets:foldl(
 			fun({DataRootKey, V}, Acc) -> maps:put(DataRootKey, V, Acc) end, #{},
 			ar_disk_pool_data_roots),
@@ -2582,9 +2591,10 @@ store_sync_state(#sync_data_state{ store_id = "default" } = State) ->
 			ok;
 		ok ->
 			ok
-	end;
-store_sync_state(_State) ->
-	ok.
+	end,
+	State2;
+store_sync_state(State) ->
+	State.
 
 %% @doc Look to StoreID to find data that TargetStoreID is missing.
 %% Args:
@@ -2973,9 +2983,16 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					{noreply, State};
 				false ->
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
-					pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
-							DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
-							UnpackedChunk, none, none}, State)
+					case StoreID == "default" of
+						true ->
+							add_chunk(
+								DataRoot, DataPath, UnpackedChunk, ChunkEndOffset - 1, TXSize),
+							{noreply, State};
+						false ->
+							pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
+									DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
+									UnpackedChunk, none, none}, State)
+					end
 			end
 	end.
 
@@ -3158,21 +3175,21 @@ log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash
 			{data_root, ar_util:encode(DataRoot)},
 			{store_id, StoreID}]).
 
-get_required_chunk_packing(Offset, ChunkSize, #sync_data_state{ store_id = StoreID }) ->
-	case Offset =< ?STRICT_DATA_SPLIT_THRESHOLD andalso ChunkSize < ?DATA_CHUNK_SIZE of
+get_required_chunk_packing(_Offset, _ChunkSize, #sync_data_state{ store_id = "default" }) ->
+	unpacked;
+get_required_chunk_packing(Offset, ChunkSize, State) ->
+	#sync_data_state{ store_id = StoreID } = State,
+	IsEarlySmallChunk = 
+		Offset =< ?STRICT_DATA_SPLIT_THRESHOLD andalso ChunkSize < ?DATA_CHUNK_SIZE,
+	case IsEarlySmallChunk of
 		true ->
 			unpacked;
 		false ->
-			case StoreID of
-				"default" ->
-					unpacked;
-				_ ->
-					case ar_storage_module:get_packing(StoreID) of
-						{replica_2_9, _Addr} ->
-							unpacked_padded;
-						Packing ->
-							Packing
-					end
+			case ar_storage_module:get_packing(StoreID) of
+				{replica_2_9, _Addr} ->
+					unpacked_padded;
+				Packing ->
+					Packing
 			end
 	end.
 

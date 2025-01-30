@@ -17,7 +17,7 @@ setup_source_node(PackingType) ->
 	{Blocks, Chunks, PackingType}.
 
 instantiator(GenesisData, SinkPackingType, TestFun) ->
-	{timeout, 300, {with, {GenesisData, SinkPackingType}, [TestFun]}}.
+	{timeout, 600, {with, {GenesisData, SinkPackingType}, [TestFun]}}.
 	
 %% --------------------------------------------------------------------------------------------
 %% Test Registration
@@ -71,7 +71,9 @@ unpacked_edge_case_test_() ->
 	{setup, fun () -> setup_source_node(unpacked) end, 
 		fun (GenesisData) ->
 				[
-					instantiator(GenesisData, replica_2_9, 
+					instantiator(GenesisData, {replica_2_9, unpacked}, 
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, {unpacked, replica_2_9}, 
 						fun test_unpacked_and_packed_sync_pack_mine/1),
 					instantiator(GenesisData, replica_2_9, 
 						fun test_entropy_first_sync_pack_mine/1),
@@ -84,16 +86,25 @@ spora_2_6_edge_case_test_() ->
 	{setup, fun () -> setup_source_node(spora_2_6) end, 
 		fun (GenesisData) ->
 				[
-					instantiator(GenesisData, replica_2_9, 
+					instantiator(GenesisData, {replica_2_9, unpacked}, 
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, {unpacked, replica_2_9}, 
 						fun test_unpacked_and_packed_sync_pack_mine/1),
 					instantiator(GenesisData, replica_2_9, 
 						fun test_entropy_first_sync_pack_mine/1),
 					instantiator(GenesisData, replica_2_9, 
 						fun test_entropy_last_sync_pack_mine/1)
-
 				]
 		end}.
 
+disk_pool_threshold_test_() ->
+	[
+		instantiator(unpacked, replica_2_9, fun test_disk_pool_threshold/1),
+		instantiator(unpacked, spora_2_6, fun test_disk_pool_threshold/1),
+		instantiator(spora_2_6, replica_2_9, fun test_disk_pool_threshold/1),
+		instantiator(spora_2_6, spora_2_6, fun test_disk_pool_threshold/1),
+		instantiator(spora_2_6, unpacked, fun test_disk_pool_threshold/1)
+	].
 
 %% --------------------------------------------------------------------------------------------
 %% test_sync_pack_mine
@@ -107,6 +118,7 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	SinkNode = peer2,
 
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
+	%% Partition 1 and half of partition 2 are below the disk pool threshold
 	ar_e2e:assert_syncs_range(
 		SinkNode,
 		?PARTITION_SIZE,
@@ -134,30 +146,36 @@ test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:assert_does_not_sync_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	ar_e2e:assert_no_chunks(SinkNode, Chunks).
 
-test_unpacked_and_packed_sync_pack_mine({{Blocks, _Chunks, SourcePackingType}, PackingType}) ->
-	ar_e2e:delayed_print(<<" ~p -> {~p, ~p} ">>, [SourcePackingType, PackingType, unpacked]),
+test_unpacked_and_packed_sync_pack_mine(
+		{{Blocks, _Chunks, SourcePackingType}, {PackingType1, PackingType2}}) ->
+	ar_e2e:delayed_print(<<" ~p -> {~p, ~p} ">>, [SourcePackingType, PackingType1, PackingType2]),
 	?LOG_INFO([{event, test_unpacked_and_packed_sync_pack_mine}, {module, ?MODULE},
-		{from_packing_type, SourcePackingType}, {to_packing_type, PackingType}]),
+		{from_packing_type, SourcePackingType}, {to_packing_type, {PackingType1, PackingType2}}]),
 	[B0 | _] = Blocks,
 	SourceNode = peer1,
 	SinkNode = peer2,
 
-	{SinkPacking, unpacked} = start_sink_node(SinkNode, SourceNode, B0, PackingType, unpacked),
+	{SinkPacking1, SinkPacking2} = start_sink_node(
+		SinkNode, SourceNode, B0, PackingType1, PackingType2),
 	ar_e2e:assert_syncs_range(
 		SinkNode,
 		?PARTITION_SIZE,
-		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking)),
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
-	ar_e2e:assert_partition_size(SinkNode, 1, unpacked),
+		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking1)),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking1),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking2),
 	%% XXX: we should be able to assert the chunks here, but since we have two
-	%% storage modules configurd and are querying the replica_2_9 chunk, GET /chunk gets
+	%% storage modules configured and are querying the replica_2_9 chunk, GET /chunk gets
 	%% confused and tries to load the unpacked chunk, which then fails within the middleware
 	%% handler and 404s. To fix we'd need to update GET /chunk to query all matching
 	%% storage modules and then find the best one to return. But since this is a rare edge
 	%% case, we'll just disable the assertion for now.
 	%% ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 	
-	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
+	MinablePacking = case PackingType1 of
+		unpacked -> SinkPacking2;
+		_ -> SinkPacking1
+	end,
+	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, MinablePacking),
 	ok.
 	
 
@@ -266,6 +284,52 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
 	ok.
 
+test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
+	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	?LOG_INFO([{event, test_disk_pool_threshold}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+
+	SourceNode = peer1,
+	SinkNode = peer2,
+
+	%% When the source packing type is unpacked, this setup process performs some
+	%% extra disk pool checks:
+	%% 1. spin up a spora_2_6 node and mine some blocks
+	%% 2. some chunks are below the disk pool threshold and some above
+	%% 3. spin up an unpacked node and sync from spora_2_6
+	%% 4. shut down the spora_2_6 node
+	%% 5. now the unpacked node should have synced all of the chunks, both above and below
+	%%    the disk pool threshold
+	%% 6. proceed with test and spin up the sink node and confirm it too can sink all chunks
+	%%    from the unpacked source node - both above and below the disk pool threshold
+	{Blocks, Chunks, SourcePackingType} = setup_source_node(SourcePackingType),
+	[B0 | _] = Blocks,
+
+	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
+	%% Partition 1 and half of partition 2 are below the disk pool threshold
+	ar_e2e:assert_syncs_range(SinkNode, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
+	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, floor(0.5*?PARTITION_SIZE)),
+	ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
+	ar_e2e:assert_does_not_sync_range(SinkNode, 0, ?PARTITION_SIZE),
+	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
+
+	case SinkPackingType of
+		unpacked ->
+			ok;
+		_ ->
+			ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
+
+			%% Now that we mined a block, the rest of partition 2 is below the disk pool
+			%% threshold
+			ar_e2e:assert_syncs_range(SinkNode, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
+			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking),
+			%% All of partition 3 is still above the disk pool threshold
+			ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
+			ar_e2e:assert_does_not_sync_range(SinkNode, 0, ?PARTITION_SIZE),
+			ok
+	end.
+
 start_sink_node(Node, SourceNode, B0, PackingType) ->
 	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
@@ -273,7 +337,13 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 	{ok, Config} = ar_test_node:get_config(Node),
 	
 	StorageModules = [
-		{?PARTITION_SIZE, 1, SinkPacking}
+		{?PARTITION_SIZE, 1, SinkPacking},
+		{?PARTITION_SIZE, 2, SinkPacking},
+		{?PARTITION_SIZE, 3, SinkPacking},
+		{?PARTITION_SIZE, 4, SinkPacking},
+		{?PARTITION_SIZE, 5, SinkPacking},
+		{?PARTITION_SIZE, 6, SinkPacking},
+		{?PARTITION_SIZE, 10, SinkPacking}
 	],
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{

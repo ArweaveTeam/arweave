@@ -11,7 +11,7 @@
 	 get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
 	 get_wallet_list/2, add_peer/1, get_info/1, get_info/2, get_peers/1,
 	 get_time/2, get_height/1, get_block_index/3,
-	 get_sync_record/1, get_sync_record/2, get_sync_record/3,
+	 get_sync_record/1, get_sync_record/3,
 	 get_chunk_binary/3, get_mempool/1,
 	 get_sync_buckets/1, get_recent_hash_list/1,
 	 get_recent_hash_list_diff/2, get_reward_history/3,
@@ -361,14 +361,7 @@ decode_block_index(Bin, json) ->
 	end.
 
 get_sync_record(Peer) ->
-	get_sync_record(Peer, binary).
-
-get_sync_record(Peer, Encoding) ->
-	ContentType = case Encoding of
-		binary -> <<"application/etf">>;
-		json -> <<"application/json">>
-	end,
-	Headers = [{<<"Content-Type">>, ContentType}],
+	Headers = [{<<"Content-Type">>, <<"application/etf">>}],
 	handle_sync_record_response(ar_http:req(#{
 		peer => Peer,
 		method => get,
@@ -869,8 +862,8 @@ handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}, RequestedPack
 					end;
 				false ->
 					?LOG_WARNING([{event, peer_served_proof_with_wrong_packing},
-						{requested_packing, ar_serialize:encode_packing(RequestedPacking)},
-						{got_packing, ar_serialize:encode_packing(Packing)},
+						{requested_packing, ar_serialize:encode_packing(RequestedPacking, false)},
+						{got_packing, ar_serialize:encode_packing(Packing, false)},
 						{peer, ar_util:format_peer(Peer)}]),
 					{error, wrong_packing}
 			end
