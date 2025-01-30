@@ -379,6 +379,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	
 	State2 = case RepackInPlacePacking of
 		none ->
+			ar_device_lock:set_device_lock_metric(StoreID, repack, off),
 			State#state{
 				repack_cursor = none,
 				repack_status = off,
@@ -394,6 +395,7 @@ init({StoreID, RepackInPlacePacking}) ->
 					{cursor, RepackCursor},
 					{store_id, StoreID},
 					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
+			ar_device_lock:set_device_lock_metric(StoreID, repack, paused),
 			State#state{ 
 				repack_cursor = RepackCursor, 
 				target_packing = Packing,
@@ -471,6 +473,7 @@ handle_cast({expire_repack_request, Ref}, #state{ packing_map = Map } = State) -
 handle_cast(repacking_complete, State) ->
 	#state{ store_id = StoreID } = State,
 	ar_device_lock:release_lock(repack, StoreID),
+	ar_device_lock:set_device_lock_metric(StoreID, repack, complete),
 	State2 = State#state{ repack_status = complete },
 	maybe_log_repacking_complete(State2),
 	{noreply, State2};

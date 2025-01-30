@@ -451,7 +451,7 @@ add2(End, Start, ID, State) ->
 
 add2(End, Start, Packing, ID, State) ->
 	#state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
-	state_db = StateDB, store_id = StoreID } = State,
+			state_db = StateDB, store_id = StoreID } = State,
 	ByType = maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()),
 	ByType2 = ar_intervals:add(ByType, End, Start),
 	SyncRecordByIDType2 = maps:put({ID, Packing}, ByType2, SyncRecordByIDType),

@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, register_workers/0, ready_for_work/1, read_range/4]).
+-export([start_link/1, register_workers/0, read_range/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -68,7 +68,7 @@ ready_for_work(StoreID) ->
 	end.
 
 read_range(Start, End, OriginStoreID, TargetStoreID) ->
-	case ar_chunk_copy:ready_for_work(OriginStoreID) of
+	case ready_for_work(OriginStoreID) of
 		true ->
 			Args = {Start, End, OriginStoreID, TargetStoreID},
 			gen_server:cast(?MODULE, {read_range, Args}),
@@ -185,8 +185,6 @@ process_queue(Worker) ->
 				{empty, _} ->
 					Worker;
 				{{value, Args}, Q2}->
-					?LOG_DEBUG([{event, process_queue}, {module, ?MODULE},
-						{active_count, Worker#worker_tasks.active_count}, {args, Args}]),
 					gen_server:cast(Worker#worker_tasks.worker, {read_range, Args}),
 					Worker2 = Worker#worker_tasks{
 						task_queue = Q2,

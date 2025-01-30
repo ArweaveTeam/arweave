@@ -144,6 +144,7 @@ init({StoreID, Packing}) ->
                 %% Entropy generation is complete
                 complete
         end,
+    
     BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
     RepackCursor =
         case Packing == ar_storage_module:get_packing(StoreID) of
@@ -164,27 +165,14 @@ init({StoreID, Packing}) ->
         prepare_status = PrepareStatus,
         repack_cursor = RepackCursor
     },
-    record_prepare_status_metric(PrepareStatus, StoreID),
+    ar_device_lock:set_device_lock_metric(StoreID, prepare, PrepareStatus),
 	{ok, State}.
 
-record_prepare_status_metric(paused, StoreID) ->
-	record_prepare_status_metric2(0, StoreID);
-record_prepare_status_metric(active, StoreID) ->
-	record_prepare_status_metric2(1, StoreID);
-record_prepare_status_metric(complete, StoreID) ->
-	record_prepare_status_metric2(2, StoreID);
-record_prepare_status_metric(_, StoreID) ->
-	record_prepare_status_metric2(-1, StoreID).
-
-record_prepare_status_metric2(StatusCode, StoreID) ->
-	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
-	prometheus_gauge:set(prepare_replica_2_9_status, [StoreIDLabel], StatusCode).
 
 handle_cast(prepare_entropy, State) ->
     #state{ store_id = StoreID } = State,
     NewStatus = ar_device_lock:acquire_lock(prepare, StoreID, State#state.prepare_status),
     State2 = State#state{ prepare_status = NewStatus },
-    record_prepare_status_metric(NewStatus, StoreID),
     State3 = case NewStatus of
         active ->
             do_prepare_entropy(State2);
@@ -359,7 +347,7 @@ do_prepare_entropy(State) ->
         end,
     case StoreEntropy of
         complete ->
-            record_prepare_status_metric(complete, StoreID),
+            ar_device_lock:set_device_lock_metric(StoreID, prepare, complete),
             State#state{ prepare_status = complete };
         waiting_for_repack ->
             ?LOG_INFO([{event, waiting_for_repacking},
