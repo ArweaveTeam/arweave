@@ -128,7 +128,9 @@ verify_chunk({ok, _Key, Metadata}, Intervals, State) ->
 
 	State3 = verify_proof(Metadata, State2),
 
-	State3#state{ cursor = PaddedOffset }.
+	State4 = verify_packing(Metadata, State3),
+
+	State4#state{ cursor = PaddedOffset }.
 
 verify_proof(Metadata, State) ->
 	#state{ store_id = StoreID } = State,
@@ -147,6 +149,42 @@ verify_proof(Metadata, State) ->
 			invalidate_chunk(
 				read_data_path_error, AbsoluteOffset, ChunkSize, [{reason, Error}], State)
 	end.
+
+verify_packing(Metadata, State) ->
+	#state{packing=Packing, store_id=StoreID} = State,
+	{AbsoluteOffset, ChunkDataKey, TXRoot, _DataRoot, TXPath,
+			_TXRelativeOffset, ChunkSize} = Metadata,
+	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
+	StoredPackingCheck = ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
+	ExpectedPacking =
+		case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
+			true ->
+				Packing;
+			false ->
+				unpacked
+		end,
+	case {StoredPackingCheck, ExpectedPacking} of
+		{{true, ExpectedPacking}, _} ->
+			%% Chunk is recorded in ar_sync_record under the expected Packing.
+			ok;
+		{{true, unpacked_padded}, {replica_2_9, _}} ->
+			%% The module is in the process of entropy generation and has
+			%% synced some chunks to offsets which do not yet have the entropy.
+			ok;
+		{{true, StoredPacking}, _} ->
+			?LOG_WARNING([{event, verify_chunk_storage_unexpected_packing},
+				{expected_packing, ar_storage_module:packing_label(Packing)},
+				{stored_packing, ar_storage_module:packing_label(StoredPacking)},
+				{offset, AbsoluteOffset}]),
+			invalidate_chunk(unexpected_packing, AbsoluteOffset, ChunkSize, State);
+		{Reply, _} ->
+			?LOG_WARNING([{event, verify_chunk_storage_missing_packing_info},
+				{expected_packing, ar_storage_module:packing_label(Packing)},
+				{packing_reply, io_lib:format("~p", [Reply])},
+				{offset, AbsoluteOffset}]),
+			invalidate_chunk(missing_packing_info, AbsoluteOffset, ChunkSize, State)
+	end,
+	State.
 
 verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, {End, Start}, State)
 		when PaddedOffset - ?DATA_CHUNK_SIZE >= Start andalso PaddedOffset =< End ->
@@ -548,17 +586,17 @@ test_verify_chunk() ->
 	IntervalEnd = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE,
 	Interval = {IntervalEnd, IntervalStart},
 	?assertEqual(
-		#state{cursor = PreSplitOffset},
+		#state{cursor = PreSplitOffset, packing=unpacked},
 		verify_chunk(
 			{ok, <<>>, {PreSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
 			{Interval, not_found},
-			#state{})),
+			#state{packing=unpacked})),
 	?assertEqual(
-		#state{cursor = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE},
+		#state{cursor = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE, packing=unpacked},
 		verify_chunk(
 			{ok, <<>>, {PostSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
 			{Interval, not_found},
-			#state{})),
+			#state{packing=unpacked})),
 	ExpectedState = #state{ 
 		cursor = 33554432, %% = 2 * 2^24. From ar_data_sync:advance_chunks_index_cursor/1
 		packing = unpacked,
