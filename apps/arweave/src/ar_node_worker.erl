@@ -1689,7 +1689,7 @@ read_hash_list_2_0_for_1_0_blocks() ->
 	Fork_2_0 = ar_fork:height_2_0(),
 	case Fork_2_0 > 0 of
 		true ->
-			File = filename:join(["data", "hash_list_1_0"]),
+			File = filename:join(["genesis_data", "hash_list_1_0"]),
 			{ok, Binary} = file:read_file(File),
 			HL = lists:map(fun ar_util:decode/1, jiffy:decode(Binary)),
 			Fork_2_0 = length(HL),

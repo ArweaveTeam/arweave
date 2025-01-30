@@ -214,7 +214,7 @@ pfilter(Fun, List) ->
 
 %% @doc Generate a list of GENESIS wallets, from the CSV file.
 genesis_wallets() ->
-	{ok, Bin} = file:read_file("data/genesis_wallets.csv"),
+	{ok, Bin} = file:read_file("genesis_data/genesis_wallets.csv"),
 	lists:map(
 		fun(Line) ->
 			[Addr, RawQty] = string:tokens(Line, ","),
