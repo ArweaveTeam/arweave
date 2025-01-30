@@ -79,11 +79,12 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 					add_to_last_tx_map(get_last_tx_map(), TX),
 					add_to_origin_tx_map(get_origin_tx_map(), TX)
 				};
-			{TX, PrevStatus, Timestamp} -> 
+			{KnownTX, PrevStatus, Timestamp} ->
+				TX2 = assert_same_tx(TX, KnownTX),
 				{
-					{TX, Status, Timestamp},
+					{TX2, Status, Timestamp},
 					get_mempool_size(),
-					add_to_priority_set(get_priority_set(),TX, PrevStatus, Status, Timestamp),
+					add_to_priority_set(get_priority_set(), TX2, PrevStatus, Status, Timestamp),
 					get_propagation_queue(),
 					get_last_tx_map(),
 					get_origin_tx_map()
@@ -115,6 +116,17 @@ add_tx(#tx{ id = TXID } = TX, Status) ->
 			noop
 	end,
 	ok.
+
+assert_same_tx(#tx{ format = 1 } = TX, #tx{ format = 1 } = TX) ->
+	TX;
+assert_same_tx(#tx{ format = 2, data = Data } = TX, #tx{ format = 2 } = TX2) ->
+	true = TX#tx{ data = <<>> } == TX2#tx{ data = <<>> },
+	case byte_size(Data) == 0 of
+		true ->
+			TX2;
+		false ->
+			TX
+	end.
 
 drop_txs(DroppedTXs) ->
 	drop_txs(DroppedTXs, true, true).
