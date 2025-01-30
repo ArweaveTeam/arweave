@@ -95,7 +95,7 @@ verify(State) ->
 		true ->
 			ar:console("Done verifying ~s!~n", [StoreID]),
 			?LOG_INFO([{event, verify_chunk_storage_verify_chunks_done}, {store_id, StoreID}]),
-			report_progress(State2);
+			State2;
 		false ->
 			gen_server:cast(self(), verify)
 	end,
@@ -124,7 +124,7 @@ verify_chunk({ok, _Key, Metadata}, Intervals, State) ->
 	{ChunkStorageInterval, _DataSyncInterval} = Intervals,
 
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
-	State2 = verify_chunk_storage(PaddedOffset, ChunkSize, ChunkStorageInterval, State),
+	State2 = verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, ChunkStorageInterval, State),
 
 	State3 = verify_proof(Metadata, State2),
 
@@ -148,14 +148,22 @@ verify_proof(Metadata, State) ->
 				read_data_path_error, AbsoluteOffset, ChunkSize, [{reason, Error}], State)
 	end.
 
-verify_chunk_storage(PaddedOffset, _ChunkSize, {End, Start}, State) 
+verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, {End, Start}, State)
 		when PaddedOffset - ?DATA_CHUNK_SIZE >= Start andalso PaddedOffset =< End ->
+	#state{store_id = StoreID} = State,
+	case ar_chunk_storage:read_offset(PaddedOffset, StoreID) of
+		{ok, << 0:24 >>} ->
+			%% The chunk is recorded in the ar_chunk_storage sync record, but not stored.
+			invalidate_chunk(no_chunk_in_chunk_storage, AbsoluteOffset, ChunkSize, State);
+		_ ->
+			ok
+	end,
 	State;
-verify_chunk_storage(PaddedOffset, ChunkSize, _Interval, State) ->
+verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, _Interval, State) ->
 	#state{ packing = Packing } = State,
 	case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
 		true ->
-			invalidate_chunk(chunk_storage_gap, PaddedOffset, ChunkSize, State);
+			invalidate_chunk(chunk_storage_gap, AbsoluteOffset, ChunkSize, State);
 		false ->
 			State
 	end.
@@ -269,9 +277,15 @@ intervals_test_() ->
 
 verify_chunk_storage_test_() ->
 	[
-		{timeout, 30, fun test_verify_chunk_storage_in_interval/0},
-		{timeout, 30, fun test_verify_chunk_storage_should_store/0},
-		{timeout, 30, fun test_verify_chunk_storage_should_not_store/0}
+		ar_test_node:test_with_mocked_functions(
+			[{ar_chunk_storage, read_offset, fun(_Offset, _StoreID) -> << 1:24 >> end}],
+			fun test_verify_chunk_storage_in_interval/0),
+		ar_test_node:test_with_mocked_functions(
+			[{ar_chunk_storage, read_offset, fun(_Offset, _StoreID) -> << 1:24 >> end}],
+			fun test_verify_chunk_storage_should_store/0),
+		ar_test_node:test_with_mocked_functions(
+			[{ar_chunk_storage, read_offset, fun(_Offset, _StoreID) -> << 1:24 >> end}],
+			fun test_verify_chunk_storage_should_not_store/0)
 	].
 
 verify_proof_test_() ->
@@ -368,12 +382,14 @@ test_verify_chunk_storage_in_interval() ->
 		#state{},
 		verify_chunk_storage(
 			10*?DATA_CHUNK_SIZE,
+			10*?DATA_CHUNK_SIZE,
 			?DATA_CHUNK_SIZE,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{})),
 	?assertEqual(
 		#state{},
 		verify_chunk_storage(
+			6*?DATA_CHUNK_SIZE - 1,
 			6*?DATA_CHUNK_SIZE,
 			?DATA_CHUNK_SIZE div 2,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
@@ -381,6 +397,7 @@ test_verify_chunk_storage_in_interval() ->
 	?assertEqual(
 		#state{},
 		verify_chunk_storage(
+			20*?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE div 2,
 			20*?DATA_CHUNK_SIZE,
 			?DATA_CHUNK_SIZE div 2,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
@@ -402,12 +419,14 @@ test_verify_chunk_storage_should_store() ->
 		ExpectedState,
 		verify_chunk_storage(
 			0,
+			0,
 			?DATA_CHUNK_SIZE,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
+			?STRICT_DATA_SPLIT_THRESHOLD + 1,
 			?STRICT_DATA_SPLIT_THRESHOLD + 1,
 			?DATA_CHUNK_SIZE,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
@@ -424,6 +443,7 @@ test_verify_chunk_storage_should_store() ->
 		},
 		verify_chunk_storage(
 			?STRICT_DATA_SPLIT_THRESHOLD + 1,
+			?STRICT_DATA_SPLIT_THRESHOLD + 1,
 			?DATA_CHUNK_SIZE div 2,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = {composite, Addr, 1} })),
@@ -437,12 +457,14 @@ test_verify_chunk_storage_should_not_store() ->
 		ExpectedState,
 		verify_chunk_storage(
 			0,
+			0,
 			?DATA_CHUNK_SIZE div 2,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
+			?STRICT_DATA_SPLIT_THRESHOLD + 1,
 			?STRICT_DATA_SPLIT_THRESHOLD + 1,
 			?DATA_CHUNK_SIZE div 2,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},

@@ -11,7 +11,7 @@
 		list_files/2, run_defragmentation/0,
 		get_storage_module_path/2, get_chunk_storage_path/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
-		sync_record_id/1, store_chunk/6, write_chunk/4, record_chunk/7]).
+		sync_record_id/1, store_chunk/6, write_chunk/4, record_chunk/7, read_offset/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -311,6 +311,18 @@ set_entropy_complete(StoreID) ->
 
 set_repacking_complete(StoreID) ->
 	gen_server:cast(name(StoreID), repacking_complete).
+
+read_offset(PaddedOffset, StoreID) ->
+	{_ChunkFileStart, Filepath, Position, _ChunkOffset} =
+			ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
+	case file:open(Filepath, [read, raw]) of
+		{ok, F} ->
+			Result = file:pread(F, Position, ?OFFSET_SIZE),
+			file:close(F),
+			Result;
+		Error ->
+			Error
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
