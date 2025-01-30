@@ -1149,7 +1149,6 @@ ensure_directories(DataDir) ->
 	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
 
 get_same_disk_storage_modules_total_size() ->

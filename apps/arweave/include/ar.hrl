@@ -265,9 +265,6 @@
 %% Transaction headers directory, relative to the disk cache directory.
 -define(DISK_CACHE_TX_DIR, "txs").
 
-%% Directory with files indicating completed storage migrations, relative to the data dir.
--define(STORAGE_MIGRATIONS_DIR, "data/storage_migrations").
-
 %% Backup block hash list storage directory, relative to the data dir.
 -define(HASH_LIST_DIR, "hash_lists").
 
