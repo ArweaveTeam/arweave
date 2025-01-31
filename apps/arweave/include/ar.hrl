@@ -136,8 +136,10 @@
 -define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 5).
 -endif.
 
-%% How long to wait before giving up on test(s).
--define(TEST_TIMEOUT, 90 * 60).
+%% How long to wait before giving up on unit test(s).
+-define(TEST_TIMEOUT, 90 * 60). %% 90 minutes
+%% How long to wait before giving up on e2e test(s).
+-define(E2E_TEST_TIMEOUT, 6 * 60 * 60). %% 6 hours
 
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).

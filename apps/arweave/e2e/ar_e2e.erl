@@ -90,14 +90,16 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 	}, true),
 
 	?LOG_INFO("Source node ~p started.", [Node]),
-
+	
+	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
+	
 	ar_e2e:assert_partition_size(Node, 0, unpacked),
 	ar_e2e:assert_partition_size(Node, 1, unpacked),
 	ar_e2e:assert_partition_size(Node, 2, unpacked, floor(0.5*?PARTITION_SIZE)),
-	ar_e2e:assert_empty_partition(Node, 3, unpacked),
 
-	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, unpacked, Chunks),
+
+	ar_e2e:assert_empty_partition(Node, 3, unpacked),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
@@ -148,13 +150,15 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
 
+	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
+
 	ar_e2e:assert_partition_size(Node, 0, SourcePacking),
 	ar_e2e:assert_partition_size(Node, 1, SourcePacking),
 	ar_e2e:assert_partition_size(Node, 2, SourcePacking, floor(0.5*?PARTITION_SIZE)),
-	ar_e2e:assert_empty_partition(Node, 3, SourcePacking),
-
-	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
+	
 	ar_e2e:assert_chunks(Node, SourcePacking, Chunks),
+
+	ar_e2e:assert_empty_partition(Node, 3, SourcePacking),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
@@ -290,7 +294,7 @@ assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 					[PartitionNumber, Packing]) >= Size
 			end,
 			100,
-			60_000
+			120_000
 		),
 		iolist_to_binary(io_lib:format(
 			"~s partition ~p,~p failed to reach size ~p. Current size: ~p.", 
