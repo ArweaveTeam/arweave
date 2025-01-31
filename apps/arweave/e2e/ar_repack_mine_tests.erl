@@ -61,8 +61,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking, floor(0.5*?PARTITION_SIZE)),
-	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
+	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
 	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = StorageModules,
@@ -72,8 +72,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking, floor(0.5*?PARTITION_SIZE)),
-	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
+	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
 	case ToPackingType of
 		unpacked ->

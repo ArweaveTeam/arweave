@@ -911,6 +911,10 @@ tests(Mod) ->
 	tests(test, Mod).
 
 tests(TestType, Mods, Config) when is_list(Mods) ->
+	TotalTimeout = case TestType of
+		e2e -> ?E2E_TEST_TIMEOUT;
+		_ -> ?TEST_TIMEOUT
+	end,
 	try
 		start_for_tests(TestType, Config),
 		ar_test_node:boot_peers(TestType),
@@ -922,7 +926,7 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 	end,
 	Result =
 		try
-			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
+			eunit:test({timeout, TotalTimeout, [Mods]}, [verbose, {print_depth, 100}])
 		after
 			ar_test_node:stop_peers(TestType)
 		end,
