@@ -730,11 +730,10 @@ init({"default" = StoreID, _}) ->
 		disk_pool_cursor = first,
 		disk_pool_threshold = DiskPoolThreshold,
 		store_id = StoreID,
-		sync_status = paused,
+		sync_status = init_sync_status(StoreID),
 		range_start = DiskPoolThreshold,
 		range_end = DiskPoolThreshold
 	},
-	ar_device_lock:set_device_lock_metric(StoreID, sync, paused),
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
 		{range_start, State2#sync_data_state.range_start},
 		{range_end, State2#sync_data_state.range_end}]),
@@ -778,18 +777,13 @@ init({StoreID, RepackInPlacePacking}) ->
 		none ->
 			gen_server:cast(self(), process_store_chunk_queue),
 			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-			SyncStatus = case ar_data_sync_worker_master:is_syncing_enabled() of
-				true -> paused;
-				false -> off
-			end,
 			State2 = State#sync_data_state{
 				store_id = StoreID,
 				range_start = RangeStart,
 				range_end = RangeEnd,
 				packing = ar_storage_module:get_packing(StoreID),
-				sync_status = SyncStatus
+				sync_status = init_sync_status(StoreID)
 			},
-			ar_device_lock:set_device_lock_metric(StoreID, sync, SyncStatus),
 			gen_server:cast(self(), sync_intervals),
 			gen_server:cast(self(), sync_data),
 			{ok, State2};
@@ -1486,6 +1480,13 @@ terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
 %%% Private functions.
 %%%===================================================================
 
+init_sync_status(StoreID) ->
+	SyncStatus = case ar_data_sync_worker_master:is_syncing_enabled() of
+		true -> paused;
+		false -> off
+	end,
+	ar_device_lock:set_device_lock_metric(StoreID, sync, SyncStatus),
+	SyncStatus.
 log_chunk_error(Event, ExtraLogData) ->
 	?LOG_ERROR([{event, Event}, {tags, [solution_proofs]} | ExtraLogData]).
 
