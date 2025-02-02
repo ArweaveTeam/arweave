@@ -258,12 +258,15 @@ cut_peer_queue(MaxQueue, PeerTasks, State) ->
 		TasksToCut when TasksToCut > 0 ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
 			%% oldest tasks.
+			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
 			?LOG_DEBUG([{event, cut_peer_queue},
 				{peer, ar_util:format_peer(Peer)},
+				{task_queue_len, queue:len(TaskQueue)},
 				{active_count, PeerTasks#peer_tasks.active_count},
 				{scheduled_tasks, State#state.scheduled_task_count},
-				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut}]),
-			{TaskQueue2, _} = queue:split(MaxQueue, TaskQueue),
+				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut},
+				{task_queue_len2, queue:len(TaskQueue2)}
+			]),
 			{
 				PeerTasks#peer_tasks{ 
 					task_queue = TaskQueue2, task_queue_len = queue:len(TaskQueue2) },

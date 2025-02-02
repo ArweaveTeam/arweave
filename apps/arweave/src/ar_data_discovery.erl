@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, get_bucket_peers/1, collect_peers/0]).
+-export([start_link/0, get_bucket_peers/1, collect_peers/0, pick_peers/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -66,6 +66,12 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
 			PickedPeers
 	end.
+
+%% @doc Return a list of peers where 80% of the peers are randomly chosen
+%% from the first 20% of Peers and the other 20% of the peers are randomly
+%% chosen from the other 80% of Peers.
+pick_peers(Peers, N) ->
+	pick_peers(Peers, length(Peers), N).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -176,17 +182,11 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-%% @doc Return a list of peers where 80% of the peers are randomly chosen
-%% from the first 20% of Peers and the other 20% of the peers are randomly
-%% chosen from the other 80% of Peers.
-pick_peers(Peers, N) ->
-	pick_peers(Peers, length(Peers), N).
-
 pick_peers(Peers, PeerLen, N) when N >= PeerLen ->
 	Peers;
 pick_peers([], _PeerLen, _N) ->
 	[];
-pick_peers(_Peers, _PeerLen, 0) ->
+pick_peers(_Peers, _PeerLen, N) when N =< 0 ->
 	[];
 pick_peers(Peers, PeerLen, N) ->
 	%% N: the target number of peers to pick
@@ -204,7 +204,7 @@ pick_peers(Peers, PeerLen, N) ->
 
 collect_peers() ->
 	N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-	%% rank peers by their current rating since we care about their recent throughput performance
+	%% rank peers by current rating since we care about their recent throughput performance
 	collect_peers(lists:sublist(ar_peers:get_peers(current), N)).
 
 collect_peers([Peer | Peers]) ->

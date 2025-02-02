@@ -329,7 +329,7 @@ stats(Ranking, Peers) ->
 	).
 
 discover_peers() ->
-	case get_peers(lifetime) of
+	case get_peers(current) of
 		[] ->
 			ok;
 		Peers ->
@@ -427,7 +427,7 @@ handle_cast({warning, Peer}, State) ->
 	Performance = update_rating(Peer, false),
 	case Performance#performance.average_success < ?MINIMUM_SUCCESS of
 		true ->
-			remove_peer(Peer);
+			remove_peer(low_success, Peer);
 		false ->
 			ok
 	end,
@@ -445,7 +445,7 @@ handle_info({event, block, {rejected, Reason, _H, Peer}}, State) when Peer /= no
 	case {IssueBan, IssueWarning, Ignore} of
 		{true, false, false} ->
 			ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
-			remove_peer(Peer);
+			remove_peer(banned, Peer);
 		{false, true, false} ->
 			issue_warning(Peer, block_rejected, Reason);
 		{false, false, true} ->
@@ -664,7 +664,7 @@ maybe_rotate_peer_ports(Peer) ->
 							PortMap2 = shift_port_map_left(PortMap),
 							PortMap3 = erlang:setelement(MaxSize, PortMap2, Port),
 							ets:insert(?MODULE, {{peer_ip, IP}, {PortMap3, MaxSize}}),
-							remove_peer(RemovedPeer)
+							remove_peer(rotated, RemovedPeer)
 					end
 			end
 	end.
@@ -874,6 +874,8 @@ calculate_ema(OldEMA, Value, Alpha) ->
 
 maybe_add_peer(Peer, Release) ->
 	maybe_rotate_peer_ports(Peer),
+	%% If we've just added his peer, flag it as active and connected.
+	connected_peer(Peer),
 	case ets:lookup(?MODULE, {peer, Peer}) of
 		[{_, #performance{ release = Release }}] ->
 			ok;
@@ -888,10 +890,11 @@ maybe_add_peer(Peer, Release) ->
 			end
 	end.
 
-remove_peer(RemovedPeer) ->
+remove_peer(Reason, RemovedPeer) ->
 	?LOG_DEBUG([
 		{event, remove_peer},
-		{peer, ar_util:format_peer(RemovedPeer)}
+		{peer, ar_util:format_peer(RemovedPeer)},
+		{reason, Reason}
 	]),
 	Performance = get_or_init_performance(RemovedPeer),
 	TotalLifetimeRating = get_total_rating(lifetime),
@@ -1072,7 +1075,7 @@ rotate_peer_ports_test() ->
 	maybe_rotate_peer_ports(Peer),
 	[{_, {PortMap, 1}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(1, element(1, PortMap)),
-	remove_peer(Peer),
+	remove_peer(test, Peer),
 	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})),
 	maybe_rotate_peer_ports(Peer),
 	Peer2 = {2, 2, 2, 2, 2},
@@ -1080,7 +1083,7 @@ rotate_peer_ports_test() ->
 	[{_, {PortMap2, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(1, element(1, PortMap2)),
 	?assertEqual(2, element(2, PortMap2)),
-	remove_peer(Peer),
+	remove_peer(test, Peer),
 	[{_, {PortMap3, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(empty_slot, element(1, PortMap3)),
 	?assertEqual(2, element(2, PortMap3)),
@@ -1128,22 +1131,22 @@ rotate_peer_ports_test() ->
 	?assertEqual(4, element(3, PortMap7)),
 	?assertEqual(5, element(4, PortMap7)),
 	?assertEqual(11, element(10, PortMap7)),
-	remove_peer(Peer4),
+	remove_peer(test, Peer4),
 	[{_, {PortMap8, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(empty_slot, element(3, PortMap8)),
 	?assertEqual(3, element(2, PortMap8)),
 	?assertEqual(5, element(4, PortMap8)),
-	remove_peer(Peer2),
-	remove_peer(Peer3),
-	remove_peer(Peer5),
-	remove_peer(Peer6),
-	remove_peer(Peer7),
-	remove_peer(Peer8),
-	remove_peer(Peer9),
-	remove_peer(Peer10),
+	remove_peer(test, Peer2),
+	remove_peer(test, Peer3),
+	remove_peer(test, Peer5),
+	remove_peer(test, Peer6),
+	remove_peer(test, Peer7),
+	remove_peer(test, Peer8),
+	remove_peer(test, Peer9),
+	remove_peer(test, Peer10),
 	[{_, {PortMap9, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
 	?assertEqual(11, element(10, PortMap9)),
-	remove_peer(Peer11),
+	remove_peer(test, Peer11),
 	?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})).
 
 update_rating_test() ->
