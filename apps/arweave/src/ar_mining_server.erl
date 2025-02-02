@@ -89,7 +89,7 @@ active_sessions() ->
 encode_sessions(Sessions) ->
 	lists:map(fun(SessionKey) ->
 		ar_nonce_limiter:encode_session_key(SessionKey)
-	end, sets:to_list(Sessions)).
+	end, Sessions).
 
 is_one_chunk_solution(Solution) ->
 	Solution#mining_solution.recall_byte2 == undefined.
@@ -1037,7 +1037,7 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}, {reason, stale_session},
 				{step_number, StepNumber},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-				{active_sessions, encode_sessions(State#state.active_sessions)}]);
+				{active_sessions, encode_sessions(sets:to_list(State#state.active_sessions))}]);
 		true ->
 			{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 			Candidate = #mining_candidate{
