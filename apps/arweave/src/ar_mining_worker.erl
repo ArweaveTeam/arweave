@@ -39,7 +39,7 @@
 
 -define(MSG_RESET_DIFFICULTY(DiffPair), {reset_difficulty, DiffPair}).
 -define(MSG_SET_SESSIONS(ActiveSessions), {set_sessions, ActiveSessions}).
--define(MSG_ADD_TASK(TaskType, Candidate, ExtraArgs), {add_task, {TaskType, Candidate, ExtraArgs}}).
+-define(MSG_ADD_TASK(Task), {add_task, Task}).
 -define(MSG_CHUNKS_READ(WhichChunk, Candidate, RangeStart, ChunkOffsets), {chunks_read, {WhichChunk, Candidate, RangeStart, ChunkOffsets}}).
 -define(MSG_SET_DIFFICULTY(DiffPair), {set_difficulty, DiffPair}).
 -define(MSG_SET_CACHE_LIMITS(SubChunkCacheLimitBytes, VDFQueueLimit), {set_cache_limits, SubChunkCacheLimitBytes, VDFQueueLimit}).
@@ -77,7 +77,7 @@ add_task(Worker, TaskType, Candidate) ->
 
 -spec add_task(Worker :: pid(), TaskType :: atom(), Candidate :: #mining_candidate{}, ExtraArgs :: [term()]) -> ok.
 add_task(Worker, TaskType, Candidate, ExtraArgs) ->
-	gen_server:cast(Worker, ?MSG_ADD_TASK(TaskType, Candidate, ExtraArgs)).
+	gen_server:cast(Worker, ?MSG_ADD_TASK({TaskType, Candidate, ExtraArgs})).
 
 -spec add_delayed_task(Worker :: pid(), TaskType :: atom(), Candidate :: #mining_candidate{}) -> ok.
 add_delayed_task(Worker, TaskType, Candidate) ->
@@ -86,7 +86,7 @@ add_delayed_task(Worker, TaskType, Candidate) ->
 	%% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
 	%% to be delayed at about the same time.
 	Delay = rand:uniform(?TASK_CHECK_FREQUENCY_MS) + ?TASK_CHECK_FREQUENCY_MS,
-	ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK(TaskType, Candidate, [])).
+	ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, []})).
 
 -spec chunks_read(
 	Worker :: pid(),
@@ -189,7 +189,7 @@ handle_cast(?MSG_CHUNKS_READ(WhichChunk, Candidate, RangeStart, ChunkOffsets), S
 			{noreply, State}
 	end;
 
-handle_cast(?MSG_ADD_TASK(TaskType, Candidate, _ExtraArgs) = Task, State) ->
+handle_cast(?MSG_ADD_TASK({TaskType, Candidate, _ExtraArgs} = Task), State) ->
 	case is_session_valid(State, Candidate) of
 		true ->
 			{noreply, add_task(Task, State)};
@@ -280,7 +280,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Mining tasks.
 %%%===================================================================
-add_task(?MSG_ADD_TASK(TaskType, Candidate, _ExtraArgs) = Task, State) ->
+add_task({TaskType, Candidate, _ExtraArgs} = Task, State) ->
 	#state{ task_queue = Q } = State,
 	StepNumber = Candidate#mining_candidate.step_number,
 	Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
