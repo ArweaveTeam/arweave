@@ -385,7 +385,7 @@ update_sessions(NewActiveSessions, CurrentActiveSessions, State) ->
 
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:set_sessions(Worker, NewActiveSessions)
+			ar_mining_worker:set_sessions(Worker, sets:to_list(NewActiveSessions))
 		end,
 		State#state.workers
 	),

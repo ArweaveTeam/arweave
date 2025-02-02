@@ -54,26 +54,32 @@
 %%% Public interface.
 %%%===================================================================
 
-name(Partition, PackingDifficulty) ->
-	list_to_atom(lists:flatten(["ar_mining_worker_", integer_to_list(Partition), "_", integer_to_list(PackingDifficulty)])).
-
 %% @doc Start the gen_server.
 start_link(Partition, PackingDifficulty) ->
 	Name = name(Partition, PackingDifficulty),
 	gen_server:start_link({local, Name}, ?MODULE, {Partition, PackingDifficulty}, []).
 
+-spec name(Partition :: non_neg_integer(), PackingDifficulty :: non_neg_integer()) -> atom().
+name(Partition, PackingDifficulty) ->
+	list_to_atom(lists:flatten(["ar_mining_worker_", integer_to_list(Partition), "_", integer_to_list(PackingDifficulty)])).
+
+-spec reset_difficulty(Worker :: pid(), DiffPair :: {non_neg_integer(), non_neg_integer()}) -> ok.
 reset_difficulty(Worker, DiffPair) ->
 	gen_server:cast(Worker, ?MSG_RESET_DIFFICULTY(DiffPair)).
 
+-spec set_sessions(Worker :: pid(), ActiveSessions :: [ar_nonce_limiter:session_key()]) -> ok.
 set_sessions(Worker, ActiveSessions) ->
 	gen_server:cast(Worker, ?MSG_SET_SESSIONS(ActiveSessions)).
 
+-spec add_task(Worker :: pid(), TaskType :: atom(), Candidate :: #mining_candidate{}) -> ok.
 add_task(Worker, TaskType, Candidate) ->
 	add_task(Worker, TaskType, Candidate, []).
 
+-spec add_task(Worker :: pid(), TaskType :: atom(), Candidate :: #mining_candidate{}, ExtraArgs :: [term()]) -> ok.
 add_task(Worker, TaskType, Candidate, ExtraArgs) ->
 	gen_server:cast(Worker, ?MSG_ADD_TASK(TaskType, Candidate, ExtraArgs)).
 
+-spec add_delayed_task(Worker :: pid(), TaskType :: atom(), Candidate :: #mining_candidate{}) -> ok.
 add_delayed_task(Worker, TaskType, Candidate) ->
 	%% Delay task by random amount between ?TASK_CHECK_FREQUENCY_MS and 2*?TASK_CHECK_FREQUENCY_MS
 	%% The reason for the randomization to avoid a glut tasks to all get added at the same time -
@@ -82,10 +88,24 @@ add_delayed_task(Worker, TaskType, Candidate) ->
 	Delay = rand:uniform(?TASK_CHECK_FREQUENCY_MS) + ?TASK_CHECK_FREQUENCY_MS,
 	ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK(TaskType, Candidate, [])).
 
+-spec chunks_read(
+	Worker :: pid(),
+	WhichChunk :: atom(),
+	Candidate :: #mining_candidate{},
+	RangeStart :: non_neg_integer(),
+	ChunkOffsets :: [non_neg_integer()]
+) -> ok.
 chunks_read(Worker, WhichChunk, Candidate, RangeStart, ChunkOffsets) ->
 	add_task(Worker, WhichChunk, Candidate, [RangeStart, ChunkOffsets]).
 
 %% @doc Callback from the hashing threads when a hash is computed
+-spec computed_hash(
+	Worker :: pid(),
+	TaskType :: atom(),
+	Hash :: binary(),
+	Preimage :: binary(),
+	Candidate :: #mining_candidate{}
+) -> ok.
 computed_hash(Worker, computed_h0, H0, undefined, Candidate) ->
 	add_task(Worker, computed_h0, Candidate#mining_candidate{ h0 = H0 });
 computed_hash(Worker, computed_h1, H1, Preimage, Candidate) ->
@@ -98,12 +118,15 @@ computed_hash(Worker, computed_h2, H2, Preimage, Candidate) ->
 %% ordering. The previous block is chosen only after the mining solution is found (if
 %% we choose it in advance we may miss a better option arriving in the process).
 %% Also, a mining session may (in practice, almost always will) span several blocks.
+-spec set_difficulty(Worker :: pid(), DiffPair :: {non_neg_integer(), non_neg_integer()}) -> ok.
 set_difficulty(Worker, DiffPair) ->
 	gen_server:cast(Worker, ?MSG_SET_DIFFICULTY(DiffPair)).
 
+-spec set_cache_limits(Worker :: pid(), SubChunkCacheLimitBytes :: non_neg_integer(), VDFQueueLimit :: non_neg_integer()) -> ok.
 set_cache_limits(Worker, SubChunkCacheLimitBytes, VDFQueueLimit) ->
 	gen_server:cast(Worker, ?MSG_SET_CACHE_LIMITS(SubChunkCacheLimitBytes, VDFQueueLimit)).
 
+-spec garbage_collect(Worker :: pid()) -> ok.
 garbage_collect(Worker) ->
 	gen_server:cast(Worker, ?MSG_GARBAGE_COLLECT).
 
@@ -143,7 +166,7 @@ handle_cast(?MSG_SET_DIFFICULTY(DiffPair), State) ->
 	{noreply, State#state{ diff_pair = DiffPair }};
 
 handle_cast(?MSG_RESET_DIFFICULTY(DiffPair), State) ->
-	State2 = update_sessions(sets:new(), State),
+	State2 = update_sessions([], State),
 	{noreply, State2#state{ diff_pair = DiffPair }};
 
 handle_cast(?MSG_SET_SESSIONS(ActiveSessions), State) ->
