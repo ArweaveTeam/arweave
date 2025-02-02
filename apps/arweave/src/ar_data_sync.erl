@@ -2988,6 +2988,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 						true ->
 							add_chunk(
 								DataRoot, DataPath, UnpackedChunk, ChunkEndOffset - 1, TXSize),
+							decrement_chunk_cache_size(),
 							{noreply, State};
 						false ->
 							pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
