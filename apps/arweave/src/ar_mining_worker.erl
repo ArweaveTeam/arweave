@@ -280,7 +280,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 %%% Mining tasks.
 %%%===================================================================
-add_task({TaskType, Candidate, _ExtraArgs} = Task, State) ->
+add_task(?MSG_ADD_TASK(TaskType, Candidate, _ExtraArgs) = Task, State) ->
 	#state{ task_queue = Q } = State,
 	StepNumber = Candidate#mining_candidate.step_number,
 	Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
