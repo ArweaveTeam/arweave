@@ -127,11 +127,18 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	CheckDiskPool =
 		case {DataRootOffsetReply, DataRootInDiskPool} of
 			{not_found, []} ->
+				?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+					{reason, data_root_not_found}, {offset, Offset}]),
 				{error, data_root_not_found};
 			{not_found, [{_, {Size, Timestamp, TXIDSet}}]} ->
 				case Size + ChunkSize > DataRootLimit
 						orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
 					true ->
+						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+							{reason, exceeds_disk_pool_size_limit1}, {offset, Offset},
+							{data_root_size, Size}, {chunk_size, ChunkSize},
+							{data_root_limit, DataRootLimit}, {disk_pool_size, DiskPoolSize},
+							{disk_pool_limit, DiskPoolLimit}]),
 						{error, exceeds_disk_pool_size_limit};
 					false ->
 						{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
@@ -139,6 +146,10 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			_ ->
 				case DiskPoolSize + ChunkSize > DiskPoolLimit of
 					true ->
+						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+							{reason, exceeds_disk_pool_size_limit2}, {offset, Offset},
+							{chunk_size, ChunkSize}, {disk_pool_size, DiskPoolSize},
+							{disk_pool_limit, DiskPoolLimit}]),
 						{error, exceeds_disk_pool_size_limit};
 					false ->
 						Timestamp =
@@ -158,6 +169,8 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			{ok, DiskPoolDataRootValue} ->
 				case validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
 					false ->
+						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+							{reason, invalid_proof}, {offset, Offset}]),
 						{error, invalid_proof};
 					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
 						{ok, {EndOffset, PassesBase, PassesStrict, PassesRebase,
@@ -202,7 +215,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						{error, failed_to_store_chunk}
 				end
 		end,
-	Result = case CheckSynced of
+	case CheckSynced of
 		synced ->
 			ok;
 		{synced_disk_pool, EndOffset4} ->
@@ -256,15 +269,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							end
 					end
 			end
-	end,
-	case Result of
-		{error, _} ->
-			?LOG_ERROR([{event, failed_to_add_chunk_to_disk_pool},
-				{offset, Offset}, {error, Result}]);
-		_ ->
-			ok
-	end,
-	Result.
+	end.
 
 %% @doc Store the given value in the chunk data DB.
 -spec put_chunk_data(
@@ -2976,7 +2981,6 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 			decrement_chunk_cache_size(),
 			{noreply, State};
 		true ->
-			#sync_data_state{ store_id = StoreID } = State,
 			case ar_sync_record:is_recorded(Byte + 1, ar_data_sync, StoreID) of
 				{true, _} ->
 					%% The chunk has been synced by another job already.
@@ -3058,11 +3062,11 @@ pack_and_store_chunk(Args, State) ->
 process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = StartLen } = State) ->
 	process_store_chunk_queue(State, StartLen).
 
-process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State, StartLen) ->
+process_store_chunk_queue(#sync_data_state{ store_chunk_queue_len = 0 } = State, _StartLen) ->
 	State;
 process_store_chunk_queue(State, StartLen) ->
 	#sync_data_state{ store_chunk_queue = Q, store_chunk_queue_len = Len,
-			store_chunk_queue_threshold = Threshold, store_id = StoreID } = State,
+			store_chunk_queue_threshold = Threshold } = State,
 	Timestamp = element(2, gb_sets:smallest(Q)),
 	Now = os:system_time(millisecond),
 	Threshold2 =
