@@ -34,9 +34,8 @@ init(StoreID) ->
 
 store_entropy(
 	StoreID, Entropies, BucketEndOffset, RangeEnd, Keys, RewardAddr) ->
-	BucketEndOffset2 = reset_entropy_offset(BucketEndOffset),
 	gen_server:cast(name(StoreID), {store_entropy,
-		Entropies, BucketEndOffset2, RangeEnd, Keys, RewardAddr}).
+		Entropies, BucketEndOffset, RangeEnd, Keys, RewardAddr}).
 
 is_ready(StoreID) ->
 	case catch gen_server:call(name(StoreID), is_ready, infinity) of
@@ -358,20 +357,6 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 
 	release_semaphore(Filepath).
 	
-%% @doc If we are not at the beginning of the entropy, shift the offset to
-%% the left. store_entropy will traverse the entire 2.9 partition shifting
-%% the offset by sector size. It may happen some sub-chunks will be written
-%% to the neighbouring storage module(s) on the left or on the right
-%% since the storage module may be configured to be smaller than the
-%% partition.
-reset_entropy_offset(BucketEndOffset) ->
-	%% Sanity checks
-	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
-	%% End sanity checks
-
-	SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
-	shift_entropy_offset(BucketEndOffset, -SliceIndex).
-
 %% @doc Take the first slice of each entropy and combine into a single binary. This binary
 %% can be used to encipher a single chunk.
 -spec take_and_combine_entropy_slices(Entropies :: [binary()]) ->
@@ -441,71 +426,6 @@ release_semaphore(Filepath) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
-
-
-reset_entropy_offset_test() ->
-	?assertEqual(786432, ar_replica_2_9:get_sector_size()),
-	?assertEqual(786432, ?STRICT_DATA_SPLIT_THRESHOLD),
-
-	%% Slice index of 0 means no shift (all offsets at or below the strict data split
-	%% threshold are not padded)
-	assert_reset_entropy_offset(262144, 0),
-	assert_reset_entropy_offset(262144, 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE - 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE + 1),
-
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 2),
-
-	assert_reset_entropy_offset(786432, ?DATA_CHUNK_SIZE * 3),
-
-	%% Slice index of 1 shift down a sector
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 3 + 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 4 - 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 4),
-
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 4 + 1),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 5 - 1),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 5),
-
-	assert_reset_entropy_offset(786432, ?DATA_CHUNK_SIZE * 5 + 1),
-	assert_reset_entropy_offset(786432, ?DATA_CHUNK_SIZE * 6),
-
-	%% Slice index of 2 shift down 2 sectors
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 7),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 8),
-
-	%% First chunk of new partition, restart slice index at 0, so no shift
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 8 + 1),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 9 - 1),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 9),
-
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 9 + 1),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 10),
-
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 11, ?DATA_CHUNK_SIZE * 11),
-
-	%% Slice index of 1 shift down a sector
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 12),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 13),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 11, ?DATA_CHUNK_SIZE * 14),
-
-	%% Slice index of 2 shift down 2 sectors
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 15),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 16),
-
-	%% First chunk of new partition, restart slice index at 0, so no shift
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 17, ?DATA_CHUNK_SIZE * 17).
-
-assert_reset_entropy_offset(ExpectedShiftedOffset, Offset) ->
-	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Offset),
-	?assertEqual(
-		ExpectedShiftedOffset,
-		reset_entropy_offset(BucketEndOffset),
-		iolist_to_binary(io_lib:format("Offset: ~p, BucketEndOffset: ~p",
-			[Offset, BucketEndOffset]))
-	).
-
 
 replica_2_9_test_() ->
 	{timeout, 20, fun test_replica_2_9/0}.
