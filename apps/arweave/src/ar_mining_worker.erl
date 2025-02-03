@@ -248,7 +248,7 @@ handle_cast(?MSG_GARBAGE_COLLECT, State) ->
 	{noreply, State};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info(?MSG_GARBAGE_COLLECT(StartTime, GCResult), State) ->
@@ -271,7 +271,7 @@ handle_info(?MSG_FETCHED_LAST_MOMENT_PROOF(_), State) ->
 	{noreply, State};
 
 handle_info(Message, State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->
