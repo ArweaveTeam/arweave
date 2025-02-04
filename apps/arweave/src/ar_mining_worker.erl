@@ -531,7 +531,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 					%% Decrement 1 for chunk1:
 					%% do_not_cache indicates chunk2 was not and will not be read or cached
 					{noreply, State3};
-				{{chunk2, Chunk2}, State3} ->
+				{{Chunk2, #{chunk2 := true}}, State3} ->
 					%% Chunk2 has already been read, so we can compute H2 now.
 					ar_mining_hash:compute_h2(
 						self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
@@ -794,8 +794,8 @@ cycle_sub_chunk_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, Chu
 		{error, chunk_not_found} ->
 			{ok, ChunkCache2} = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, State#state.chunk_cache),
 			{cached, State#state{ chunk_cache = ChunkCache2 }};
-		{ok, {Data, _}, ChunkCache1} ->
-			{Data, State#state{ chunk_cache = ChunkCache1 }}
+		{ok, RetVal, ChunkCache1} ->
+			{RetVal, State#state{ chunk_cache = ChunkCache1 }}
 	end.
 
 %% @doc Remove SubChunkCount sub-chunks from the cache starting at
