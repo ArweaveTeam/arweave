@@ -61,7 +61,11 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking, floor(0.5*?PARTITION_SIZE)),
-	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
+	%% Don't assert chunks here. Since we have two storage modules defined we won't know
+	%% which packing format will be found - which complicates the assertion. We'll rely
+	%% on the assert_chunks later (after we restart with only a single set of storage modules)
+	%% to verify that the chunks are present.
+	%% ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
 	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
 	ar_test_node:restart_with_config(RepackerNode, Config#config{

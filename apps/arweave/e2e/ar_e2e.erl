@@ -84,7 +84,6 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 	{ok, Config} = ar_test_node:get_config(Node),
 	ar_test_node:start_other_node(Node, B0, Config#config{
 		peers = [ar_test_node:peer_ip(TempNode)],
-		start_from_latest_state = true,
 		storage_modules = StorageModules,
 		auto_join = true
 	}, true),
@@ -104,6 +103,16 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
 	ar_test_node:stop(TempNode),
+
+	ar_test_node:restart_with_config(Node, Config#config{
+		peers = [],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true
+	}),
+
+	?LOG_INFO("Source node ~p restarted.", [Node]),
+
 	{Blocks, undefined, Chunks};
 start_source_node(Node, PackingType, WalletFixture) ->
 	?LOG_INFO("Starting source node ~p with packing type ~p and wallet fixture ~p",
@@ -136,13 +145,21 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	%% List of {Block, EndOffset, ChunkSize}
 	Chunks = [
-		{B1, ?PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE},
-		{B1, ?PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 2359296
+		{B1, ?PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
+		%% PaddedEndOffset: 2621440
+		{B1, ?PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
+		%% PaddedEndOffset: 2883584
 		{B1, ?PARTITION_SIZE + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
+		%% PaddedEndOffset: 3145728
 		{B2, ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
+		%% PaddedEndOffset: 3407872
 		{B3, ?PARTITION_SIZE + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 3670016
 		{B3, ?PARTITION_SIZE + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 3932160
 		{B3, ?PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 4194304
 		{B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
 
@@ -405,8 +422,8 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 	{ok, ExpectedPackedChunk} = ar_e2e:load_chunk_fixture(Packing, EndOffset),
 	?assertEqual(ExpectedPackedChunk, Chunk,
 		iolist_to_binary(io_lib:format(
-			"~p: Chunk at offset ~p, size ~p does not match previously packed chunk",
-			[Node, EndOffset, ChunkSize]))),
+			"~p: Chunk at offset ~p, size ~p, packing ~p does not match packed chunk",
+			[Node, EndOffset, ChunkSize, ar_serialize:encode_packing(Packing, true)]))),
 
 	{ok, UnpackedChunk} = ar_packing_server:unpack(
 		Packing, EndOffset, Block#block.tx_root, Chunk, ?DATA_CHUNK_SIZE),
