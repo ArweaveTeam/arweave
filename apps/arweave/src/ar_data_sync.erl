@@ -496,19 +496,14 @@ get_chunk_proof(Offset, Options) ->
 %% is disabled in the configuration.
 get_tx_data(TXID) ->
 	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(pack_served_chunks, Config#config.enable) of
-		false ->
-			{error, not_found};
-		true ->
-			SizeLimit =
-				case lists:member(serve_tx_data_without_limits, Config#config.enable) of
-					true ->
-						infinity;
-					false ->
-						?MAX_SERVED_TX_DATA_SIZE
-				end,
-			get_tx_data(TXID, SizeLimit)
-	end.
+	SizeLimit =
+		case lists:member(serve_tx_data_without_limits, Config#config.enable) of
+			true ->
+				infinity;
+			false ->
+				?MAX_SERVED_TX_DATA_SIZE
+		end,
+	get_tx_data(TXID, SizeLimit).
 
 %% @doc Fetch the transaction data. Return {error, tx_data_too_big} if
 %% the size is bigger than SizeLimit.
@@ -523,7 +518,9 @@ get_tx_data(TXID, SizeLimit) ->
 				true ->
 					{error, tx_data_too_big};
 				false ->
-					get_tx_data(Offset - Size, Offset, [])
+					{ok, Config} = application:get_env(arweave, config),
+					Pack = lists:member(pack_served_chunks, Config#config.enable),
+					get_tx_data(Offset - Size, Offset, [], Pack)
 			end
 	end.
 
@@ -2034,13 +2031,13 @@ get_tx_offset_data_in_range2(TXOffsetIndex, TXIndex, Start, End) ->
 			Error
 	end.
 
-get_tx_data(Start, End, Chunks) when Start >= End ->
+get_tx_data(Start, End, Chunks, _Pack) when Start >= End ->
 	{ok, iolist_to_binary(Chunks)};
-get_tx_data(Start, End, Chunks) ->
-	case get_chunk(Start + 1, #{ pack => true, packing => unpacked,
+get_tx_data(Start, End, Chunks, Pack) ->
+	case get_chunk(Start + 1, #{ pack => Pack, packing => unpacked,
 			bucket_based_offset => false, origin => tx_data }) of
 		{ok, #{ chunk := Chunk }} ->
-			get_tx_data(Start + byte_size(Chunk), End, [Chunks | Chunk]);
+			get_tx_data(Start + byte_size(Chunk), End, [Chunks | Chunk], Pack);
 		{error, chunk_not_found} ->
 			{error, not_found};
 		{error, Reason} ->

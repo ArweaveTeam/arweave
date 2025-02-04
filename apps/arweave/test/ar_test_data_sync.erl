@@ -40,10 +40,12 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 				{Value, Options}
 		end,
 	{ok, Config} = application:get_env(arweave, config),
-	Options3 = Options2#{ config => Config },
+	Options3 = Options2#{ config => Config#config{ 
+		enable = Config#config.enable ++ [pack_served_chunks] } },
 	ar_test_node:start(Options3),
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig),
+	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig#config{ 
+		enable = Config#config.enable ++ [pack_served_chunks] }),
 	ar_test_node:connect_to_peer(peer1),
 	Wallet.
 

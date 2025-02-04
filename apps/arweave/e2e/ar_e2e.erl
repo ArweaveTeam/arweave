@@ -4,7 +4,7 @@
 	write_chunk_fixture/3, load_chunk_fixture/2]).
 
 -export([delayed_print/2, packing_type_to_packing/2,
-	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1, mine_block/4,
+	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
 	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, assert_has_entropy/4,
 	assert_chunks/3, assert_chunks/4, assert_no_chunks/2,
 	assert_partition_size/3, assert_partition_size/4, assert_empty_partition/3,
@@ -80,7 +80,7 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 	end,
 	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(TempNode, spora_2_6, wallet_a),
 	{_, StorageModules} = ar_e2e:source_node_storage_modules(Node, unpacked, wallet_a),
-	[B0 | _] = Blocks,
+	[B0, _, {TX2, _} | _] = Blocks,
 	{ok, Config} = ar_test_node:get_config(Node),
 	ar_test_node:start_other_node(Node, B0, Config#config{
 		peers = [ar_test_node:peer_ip(TempNode)],
@@ -111,6 +111,18 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 		auto_join = true
 	}),
 
+	%% pack_served_chunks is not enabled but the data is stored unpacked, so we should
+	%% return it
+	{ok, {{<<"200">>, _}, _, Data, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => ar_test_node:peer_ip(Node),
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX2#tx.id)) ++ "/data"
+		}),
+	{ok, ExpectedData} = ar_e2e:load_chunk_fixture(
+		unpacked, ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(ExpectedData, ar_util:decode(Data)),
+
 	?LOG_INFO("Source node ~p restarted.", [Node]),
 
 	{Blocks, undefined, Chunks};
@@ -137,11 +149,11 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	%% Note: small chunks will be padded to 256 KiB. So B1 actually contains 3 chunks of data
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
-	B1 = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), false), %% p1
-	B2 = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), false), %% p1
-	B3 = mine_block(Node, Wallet, ?PARTITION_SIZE, false), %% p1 to p2
-	B4 = mine_block(Node, Wallet, floor(0.5 * ?PARTITION_SIZE), false), %% p2
-	B5 = mine_block(Node, Wallet, ?PARTITION_SIZE, true), %% p3 chunks are stored in disk pool
+	{TX1, B1} = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), false), %% p1
+	{TX2, B2} = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), false), %% p1
+	{TX3, B3} = mine_block(Node, Wallet, ?PARTITION_SIZE, false), %% p1 to p2
+	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ?PARTITION_SIZE), false), %% p2
+	{TX5, B5} = mine_block(Node, Wallet, ?PARTITION_SIZE, true), %% p3 chunks are stored in disk pool
 
 	%% List of {Block, EndOffset, ChunkSize}
 	Chunks = [
@@ -177,9 +189,17 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	ar_e2e:assert_empty_partition(Node, 3, SourcePacking),
 
+	%% pack_served_chunks is not enabled so we shouldn't return unpacked data
+	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
+		ar_http:req(#{
+			method => get,
+			peer => ar_test_node:peer_ip(Node),
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX1#tx.id)) ++ "/data"
+		})),
+
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
-	{[B0, B1, B2, B3, B4, B5], RewardAddr, Chunks}.
+	{[B0, {TX1, B1}, {TX2, B2}, {TX3, B3}, {TX4, B4}, {TX5, B5}], RewardAddr, Chunks}.
 
 max_chunk_offset(Chunks) ->
 	lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
@@ -212,7 +232,7 @@ mine_block(Node, Wallet, DataSize, IsTemporary) ->
 	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks, IsTemporary),
 	
 	ar_test_data_sync:wait_until_syncs_chunks(Node, Proofs, infinity),
-	B.
+	{TX, B}.
 
 generate_tx(Node, Wallet, WeaveSize, DataSize) ->
 	Chunks = generate_chunks(Node, WeaveSize, DataSize, []),

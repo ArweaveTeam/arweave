@@ -66,7 +66,8 @@ test_uses_blacklists() ->
 				%% Serves some valid TX IDs (from the BadTXIDs list) and a line
 				%% with invalid Base64URL.
 				"http://localhost:1985/bad/and/good"
-			]},
+			],
+			enable = [pack_served_chunks | Config#config.enable]},
 			storage_modules => [{30 * 1024 * 1024, 0, {composite, RewardAddr, 1}}]
 		}),
 		ar_test_node:connect_to_peer(peer1),
@@ -211,9 +212,13 @@ setup() ->
 	}.
 
 setup(Node) ->
-	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100000000), <<>>}]),
-	ar_test_node:start_peer(Node, B0),
+	{ok, Config} = ar_test_node:get_config(Node),
+	Wallet = {_, Pub} = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
+	RewardAddr = ar_wallet:to_address(Pub),
+	[B0] = ar_weave:init([{RewardAddr, ?AR(100000000), <<>>}]),
+	ar_test_node:start_peer(Node, B0, RewardAddr, Config#config{
+		enable = [pack_served_chunks | Config#config.enable]
+	}),
 	{B0, Wallet}.
 
 create_txs(Wallet) ->
