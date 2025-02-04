@@ -2,7 +2,7 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([boot_peers/1, wait_for_peers/1, get_config/1,set_config/2,
-		wait_until_joined/0, wait_until_joined/1, 
+		wait_until_joined/0, wait_until_joined/1,
 		restart/0, restart/1, restart_with_config/1, restart_with_config/2,
 		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/1, wait_until_height/2, wait_until_height/3, assert_wait_until_height/2, http_get_block/2, get_blocks/1,
@@ -922,13 +922,13 @@ wait_until_height(Node, TargetHeight) ->
 	wait_until_height(Node, TargetHeight, true).
 
 wait_until_height(Node, TargetHeight, Strict) ->
-	{BI, Height} = case Node of 
+	{BI, Height} = case Node of
 		main ->
 			{
 				wait_until_height(TargetHeight),
 				ar_node:get_height()
 			};
-		_ -> 
+		_ ->
 			{
 				remote_call(Node, ?MODULE, wait_until_height, [TargetHeight],
 					?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500),
@@ -937,7 +937,7 @@ wait_until_height(Node, TargetHeight, Strict) ->
 	end,
 	case Strict of
 		true ->
-			?assertEqual(TargetHeight, Height, 
+			?assertEqual(TargetHeight, Height,
 				iolist_to_binary(io_lib:format("Node ~p not at the expected height", [Node])));
 		false ->
 			ok
@@ -1332,7 +1332,7 @@ get_chunk(Node, Offset) ->
 get_chunk(Node, Offset, Packing) ->
 	Headers = case Packing of
 		undefined -> [];
-		_ -> 
+		_ ->
 			PackingBinary = iolist_to_binary(ar_serialize:encode_packing(Packing, false)),
 			[{<<"x-packing">>, PackingBinary}]
 	end,

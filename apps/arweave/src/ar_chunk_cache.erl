@@ -10,6 +10,10 @@
 
 
 
+-define(CACHE_VALUE(Chunk, Meta), {Chunk, Meta}).
+
+
+
 %%%===================================================================
 %%% Public API.
 %%%===================================================================
@@ -125,14 +129,14 @@ get_groups(Cache0) ->
 ) ->
   {ok, Cache1 :: #ar_chunk_cache{}} | {error, Reason :: term()}.
 
-add_chunk_to_existing_group(GroupId, ChunkId, {Chunk, ChunkMeta}, Cache0) ->
+add_chunk_to_existing_group(GroupId, ChunkId, ?CACHE_VALUE(Chunk, ChunkMeta), Cache0) ->
   case (byte_size(Chunk) + cache_size(Cache0)) >  Cache0#ar_chunk_cache.chunk_cache_limit_bytes of
     true when Cache0#ar_chunk_cache.chunk_cache_limit_bytes =/= 0 -> {error, cache_limit_exceeded};
     _ -> map_chunk_cache_group(GroupId, add_chunk_map_fun(ChunkId, Chunk, ChunkMeta), Cache0)
   end;
 
 add_chunk_to_existing_group(GroupId, ChunkId, Chunk, Cache0) ->
-  add_chunk_to_existing_group(GroupId, ChunkId, {Chunk, #{}}, Cache0).
+  add_chunk_to_existing_group(GroupId, ChunkId, ?CACHE_VALUE(Chunk, #{}), Cache0).
 
 
 
@@ -144,14 +148,14 @@ add_chunk_to_existing_group(GroupId, ChunkId, Chunk, Cache0) ->
 ) ->
   {ok, Cache1 :: #ar_chunk_cache{}} | {error, Reason :: term()}.
 
-add_chunk(GroupId, ChunkId, {Chunk, ChunkMeta}, Cache0) ->
+add_chunk(GroupId, ChunkId, ?CACHE_VALUE(Chunk, ChunkMeta), Cache0) ->
   case (byte_size(Chunk) + cache_size(Cache0)) >  Cache0#ar_chunk_cache.chunk_cache_limit_bytes of
     true when Cache0#ar_chunk_cache.chunk_cache_limit_bytes =/= 0 -> {error, cache_limit_exceeded};
     _ -> map_chunk_cache_group(GroupId, add_chunk_map_fun(ChunkId, Chunk, ChunkMeta), Cache0, true)
   end;
 
 add_chunk(GroupId, ChunkId, Chunk, Cache0) ->
-  add_chunk(GroupId, ChunkId, {Chunk, #{}}, Cache0).
+  add_chunk(GroupId, ChunkId, ?CACHE_VALUE(Chunk, #{}), Cache0).
 
 
 
@@ -160,11 +164,13 @@ add_chunk(GroupId, ChunkId, Chunk, Cache0) ->
 
 take_chunk(GroupId, ChunkId, Cache0) ->
   map_chunk_cache_group(GroupId, fun(#ar_chunk_cache_group{
-    chunk_cache = ChunkCache0
+    chunk_cache = ChunkCache0,
+    chunk_cache_size_bytes = ChunkCacheSize0
   } = Group0) ->
     case maps:take(ChunkId, ChunkCache0) of
-      {Chunk, ChunkCache1} -> {ok, Chunk, Group0#ar_chunk_cache_group{
-        chunk_cache = ChunkCache1
+      {?CACHE_VALUE(Chunk, _Meta) = RetVal, ChunkCache1} -> {ok, RetVal, Group0#ar_chunk_cache_group{
+        chunk_cache = ChunkCache1,
+        chunk_cache_size_bytes = ChunkCacheSize0 - byte_size(Chunk)
       }};
       error -> {error, chunk_not_found}
     end
@@ -176,19 +182,11 @@ take_chunk(GroupId, ChunkId, Cache0) ->
   {ok, Cache1 :: #ar_chunk_cache{}} | {error, Reason :: term()}.
 
 drop_chunk(GroupId, ChunkId, Cache0) ->
-  map_chunk_cache_group(GroupId, fun(#ar_chunk_cache_group{
-    chunk_cache = ChunkCache0,
-    chunk_cache_size_bytes = ChunkCacheSize0
-  } = Group0) ->
-    case maps:find(ChunkId, ChunkCache0) of
-      {ok, {Chunk, _ChunkMeta}} ->
-        {ok, Group0#ar_chunk_cache_group{
-          chunk_cache = maps:remove(ChunkId, ChunkCache0),
-          chunk_cache_size_bytes = ChunkCacheSize0 - byte_size(Chunk)
-        }};
-      error -> {ok, Group0}
-    end
-  end, Cache0).
+  case take_chunk(GroupId, ChunkId, Cache0) of
+    {ok, _, Cache1} -> {ok, Cache1};
+    {error, chunk_not_found} -> {ok, Cache0};
+    {error, Reason} -> {error, Reason}
+  end.
 
 
 -spec chunk_exists(GroupId :: term(), ChunkId :: term(), Cache0 :: #ar_chunk_cache{}) ->
@@ -273,7 +271,7 @@ map_chunk_cache_group(GroupId, Fun, Cache0, InsertIfNotFound) ->
           Cache1 = Cache0#ar_chunk_cache{
             chunk_cache_groups = maps:put(GroupId, Group1, Cache0#ar_chunk_cache.chunk_cache_groups)
           },
-          {ok, {RetVal, Cache1}};
+          {ok, RetVal, Cache1};
         {error, Reason} -> {error, Reason}
       end;
     error when InsertIfNotFound ->
@@ -392,6 +390,18 @@ add_chunk_meta_test() ->
   {ok, Cache2} = add_chunk(GroupId1, ChunkId, {Data, Meta}, Cache1),
   ?assertEqual({ok, true}, chunk_exists(GroupId1, ChunkId, Cache2)),
   ?assertEqual(byte_size(Data) * 2, cache_size(Cache2)).
+
+
+
+take_chunk_test() ->
+  Cache0 = new(1024),
+  GroupId0 = session0,
+  ChunkId0 = chunk0,
+  Data = <<"chunk_data">>,
+  {ok, Cache1} = add_chunk(GroupId0, ChunkId0, Data, Cache0),
+  ?assertEqual(byte_size(Data), cache_size(Cache1)),
+  {ok, {Data, #{}}, Cache2} = take_chunk(GroupId0, ChunkId0, Cache1),
+  ?assertEqual(0, cache_size(Cache2)).
 
 
 

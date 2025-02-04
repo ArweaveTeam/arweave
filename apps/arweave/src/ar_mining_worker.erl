@@ -788,13 +788,13 @@ cycle_sub_chunk_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, Chu
   		when CacheRef /= not_set ->
 	#mining_candidate{ nonce = Nonce, session_key = SessionKey } = Candidate,
 	case ar_chunk_cache:take_chunk(SessionKey, {CacheRef, Nonce}, State#state.chunk_cache) of
-		{ok, {<<>>, ChunkCache1}} ->
-			ChunkCache2 = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, ChunkCache1),
+		{ok, {<<>>, _}, ChunkCache1} ->
+			{ok, ChunkCache2} = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, ChunkCache1),
 			{do_not_cache, State#state{ chunk_cache = ChunkCache2 }};
 		{error, chunk_not_found} ->
-			ChunkCache2 = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, State#state.chunk_cache),
+			{ok, ChunkCache2} = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, State#state.chunk_cache),
 			{cached, State#state{ chunk_cache = ChunkCache2 }};
-		{ok, {Data, ChunkCache1}} ->
+		{ok, {Data, _}, ChunkCache1} ->
 			{Data, State#state{ chunk_cache = ChunkCache1 }}
 	end.
 
@@ -809,14 +809,14 @@ remove_sub_chunks_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candida
 	%% We may decrement the cache size further depending on what's already cached.
 	State2 = State,
 	State3 = case ar_chunk_cache:take_chunk(SessionKey, {CacheRef, Nonce}, State#state.chunk_cache) of
-		{ok, {{<<>>, _}, ChunkCache1}} ->
+		{ok, {<<>>, _}, ChunkCache1} ->
 			State2#state{ chunk_cache = ChunkCache1 };
 		{error, chunk_not_found} ->
 			cache_chunk(<<>>, Candidate, State2);
-		{{_Chunk, #{chunk1 := true, h1 := _H1}}, ChunkCache1} ->
+		{ok, {_Chunk, #{chunk1 := true, h1 := _H1}}, ChunkCache1} ->
 			%% If we find data from a CM peer, discard it but don't decrement the cache size
 			State2#state{ chunk_cache = ChunkCache1 };
-		{_, ChunkCache1} ->
+		{ok, _, ChunkCache1} ->
 			%% if we find any cached data, discard it and decrement the cache size
 			State2#state{ chunk_cache = ChunkCache1 }
 	end,
@@ -825,8 +825,9 @@ remove_sub_chunks_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candida
 
 cache_chunk(Data, Candidate, State) ->
 	#mining_candidate{ cache_ref = CacheRef, nonce = Nonce, session_key = SessionKey } = Candidate,
+	{ok, Cache1} = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, Data, State#state.chunk_cache),
 	State#state{
-		chunk_cache = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, Data, State#state.chunk_cache)
+		chunk_cache = Cache1
 	}.
 
 cache_h1_list(_Candidate, [], State) ->

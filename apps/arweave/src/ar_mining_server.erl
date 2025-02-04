@@ -452,51 +452,44 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 	IdealRangesPerStep = 2,
 	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
 
-	MinimumCacheLimitMiB = max(
+	MinimumCacheLimitBytes = max(
 		1,
 		(IdealStepsPerPartition * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
-			div ?MiB
 	),
 
 	{ok, Config} = application:get_env(arweave, config),
-	OverallCacheLimitMiB = case Config#config.mining_cache_size_mb of
+	OverallCacheLimitBytes = case Config#config.mining_cache_size_mb of
 		undefined ->
-			MinimumCacheLimitMiB;
+			MinimumCacheLimitBytes;
 		N ->
-			N
+			N * ?MiB
 	end,
-
-	%% Convert the overall cache limit from MiB to sub-chunks. Each partition will track
-	%% their cache in terms of sub-chunks where a spora_2_6 sub-chunk is the same as a chunk,
-	%% and a composite sub-chunk is much smaller than a chunk.
-	OverallCacheLimitSubChunks = (OverallCacheLimitMiB * ?MiB) div
-		ar_block:get_sub_chunk_size(PackingDifficulty),
 
 	%% We shard the chunk cache across every active worker. Only workers that mine a partition
 	%% included in the current weave are active.
-	PartitionCacheLimit = max(1, OverallCacheLimitSubChunks div NumActivePartitions),
+	PartitionCacheLimitBytes = OverallCacheLimitBytes div NumActivePartitions,
 
 	%% Allow enough compute_h0 tasks to be queued to completely refill the chunk cache.
 	VDFQueueLimit = max(
 		1,
-		PartitionCacheLimit div (2 * ar_block:get_nonces_per_recall_range(PackingDifficulty))
+		PartitionCacheLimitBytes div (2 * ar_block:get_recall_range_size(PackingDifficulty))
 	),
 
 	GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
 
-	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
+	{MinimumCacheLimitBytes, OverallCacheLimitBytes, PartitionCacheLimitBytes, VDFQueueLimit,
 		GarbageCollectionFrequency}.
 
 maybe_update_cache_limits({_, _, PartitionCacheLimit, _, _},
 		#state{chunk_cache_limit = PartitionCacheLimit} = State) ->
 	State;
 maybe_update_cache_limits(Limits, State) ->
-	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
+	{MinimumCacheLimitBytes, OverallCacheLimitBytes, PartitionCacheLimitBytes, VDFQueueLimit,
 		GarbageCollectionFrequency} = Limits,
 	maps:foreach(
 		fun(_Partition, Worker) ->
 			ar_mining_worker:set_cache_limits(
-				Worker, PartitionCacheLimit, VDFQueueLimit)
+				Worker, PartitionCacheLimitBytes, VDFQueueLimit)
 		end,
 		State#state.workers
 	),
@@ -504,23 +497,23 @@ maybe_update_cache_limits(Limits, State) ->
 	ar:console(
 		"~nSetting the mining chunk cache size limit to ~B MiB "
 		"(~B sub-chunks per partition).~n",
-			[OverallCacheLimitMiB, PartitionCacheLimit]),
+			[OverallCacheLimitBytes div ?MiB, PartitionCacheLimitBytes div ?MiB]),
 	?LOG_INFO([{event, update_mining_cache_limits},
-		{overall_limit_mb, OverallCacheLimitMiB},
-		{per_partition_sub_chunks, PartitionCacheLimit},
+		{overall_limit_mb, OverallCacheLimitBytes div ?MiB},
+		{per_partition_sub_chunks, PartitionCacheLimitBytes div ?MiB},
 		{vdf_queue_limit_steps, VDFQueueLimit}]),
-	case OverallCacheLimitMiB < MinimumCacheLimitMiB of
+		case OverallCacheLimitBytes < MinimumCacheLimitBytes of
 		true ->
 			ar:console("~nChunk cache size limit (~p MiB) is below minimum limit of "
 				"~p MiB. Mining performance may be impacted.~n"
 				"Consider changing the 'mining_cache_size_mb' option.",
-				[OverallCacheLimitMiB, MinimumCacheLimitMiB]);
+				[OverallCacheLimitBytes div ?MiB, MinimumCacheLimitBytes div ?MiB]);
 		false -> ok
 	end,
 
 	State2 = reset_gc_timer(GarbageCollectionFrequency, State),
 	State2#state{
-		chunk_cache_limit = PartitionCacheLimit
+		chunk_cache_limit = PartitionCacheLimitBytes
 	}.
 
 distribute_output(Candidate, State) ->
