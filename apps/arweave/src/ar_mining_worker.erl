@@ -375,7 +375,7 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 			%% we're computing h2 for a peer so chunk1 was not previously read or cached
 			%% on this node
 			State2;
-		{Chunk, #{chunk1 := true, h1 := H1}, State2} ->
+		{{Chunk, #{chunk1 := true, h1 := H1}}, State2} ->
 			ar_mining_hash:compute_h2(
 				self(), Candidate2#mining_candidate{ chunk1 = Chunk, h1 = H1 }),
 			%% Decrement 2 for chunk1 and chunk2:
@@ -533,8 +533,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 					{noreply, State3};
 				{{Chunk2, #{chunk2 := true}}, State3} ->
 					%% Chunk2 has already been read, so we can compute H2 now.
-					ar_mining_hash:compute_h2(
-						self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
+					ar_mining_hash:compute_h2(self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
 					%% Decrement 2 for chunk1 and chunk2:
 					%% 1. chunk2 was previously read and cached
 					%% 2. chunk1 that was just read and used to compute H1
