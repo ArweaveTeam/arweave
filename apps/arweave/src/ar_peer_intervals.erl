@@ -93,23 +93,19 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals, AllPeersIntervals)
 			end,
 			Peers
 		),
-	{EnqueueIntervals, _} =
+	EnqueueIntervals =
 		lists:foldl(
-			fun	({Peer, SoughtIntervals, _, _}, {Acc, AlreadyPicked}) ->
-					%% Ensure each interval is only enqueued with a single peer,
-					%% i.e. don't query the same interval from two different peers.
-					SoughtIntervals2 = ar_intervals:outerjoin(AlreadyPicked, SoughtIntervals),
-					AlreadyPicked2 = ar_intervals:union(SoughtIntervals2, AlreadyPicked),
-					case ar_intervals:is_empty(SoughtIntervals2) of
+			fun	({Peer, SoughtIntervals, _, _}, Acc) ->
+					case ar_intervals:is_empty(SoughtIntervals) of
 						true ->
-							{Acc, AlreadyPicked2};
+							Acc;
 						false ->
-							{[{Peer, SoughtIntervals2} | Acc], AlreadyPicked2}
+							[{Peer, SoughtIntervals} | Acc]
 					end;
 				(_, Acc) ->
 					Acc
 			end,
-			{[], ar_intervals:new()},
+			[],
 			Intervals
 		),
 	gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
