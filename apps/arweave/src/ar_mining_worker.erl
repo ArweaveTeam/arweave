@@ -514,7 +514,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 					%% Chunk2 hasn't been read yet, so we cache Chunk1 and wait for
 					%% Chunk2 to be read.
 					{noreply, State3};
-				{do_not_cache, State3} ->
+				{{<<>>, _Meta}, State3} ->
 					%% This node does not store Chunk2. If we're part of a coordinated
 					%% mining set, we can try one of our peers, otherwise we're done.
 					case Config#config.coordinated_mining of
