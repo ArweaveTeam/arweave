@@ -124,7 +124,7 @@ get_groups(Cache0) ->
 -spec add_chunk_to_existing_group(
   GroupId :: term(),
   ChunkId :: term(),
-  Chunk :: binary() | {binary(), #{}},
+  Chunk :: binary() | ?CACHE_VALUE(binary(), #{}),
   Cache0 :: #ar_chunk_cache{}
 ) ->
   {ok, Cache1 :: #ar_chunk_cache{}} | {error, Reason :: term()}.
