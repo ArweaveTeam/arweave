@@ -798,6 +798,8 @@ cycle_sub_chunk_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, Chu
 						{worker, State#state.name}, {partition, State#state.partition_number},
 						{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 						{sessions, length(ar_chunk_cache:get_groups(State#state.chunk_cache))},
+						{cache_size, ar_chunk_cache:cache_size(State#state.chunk_cache)},
+						{chunk_size, byte_size(Chunk)},
 						{nonce, Nonce}, {reason, Reason}]),
 					{error, Reason}
 			end;
