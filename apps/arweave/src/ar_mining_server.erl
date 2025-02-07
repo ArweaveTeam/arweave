@@ -1275,51 +1275,51 @@ test_calculate_cache_limits_default() ->
 		mining_cache_size_mb = undefined
 	}),
 	?assertEqual(
-		{4, 4, 16, 4, 16000},
+		{4 * ?MiB, 4 * ?MiB, 4 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1, 0)
 	),
 	?assertEqual(
-		{8, 8, 16, 4, 16000},
+		{8 * ?MiB, 8 * ?MiB, 4 * ?MiB, 4, 16_000},
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4000, 4000, 16, 4, 16000},
+		{4_000 * ?MiB, 4_000 * ?MiB, 4 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
-		{1, 1, 128, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1, 1)
 	),
 	?assertEqual(
-		{2, 2, 128, 4, 16000},
+		{2 * ?MiB, 2 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1000, 1000, 128, 4, 16000},
+		{1_000 * ?MiB, 1_000 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
-		{1, 1, 128, 8, 32000},
+		{512 * ?KiB, 512 * ?KiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1, 2)
 	),
 	?assertEqual(
-		{1, 1, 64, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{500, 500, 64, 4, 16000},
+		{500 * ?MiB, 500 * ?MiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
-		{1, 1, 128, 64, 256000},
+		{32 * ?KiB, 32 * ?KiB, 32 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1, 32)
 	),
 	?assertEqual(
-		{1, 1, 64, 32, 128000},
+		{64 * ?KiB, 64 * ?KiB, 32 * ?KiB, 4, 16_000},
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{31, 31, 3, 1, 4000},
+		{32_000 * ?KiB, 32_000 * ?KiB, 32 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1000, 32)
 	).
 
@@ -1329,51 +1329,51 @@ test_calculate_cache_limits_custom_low() ->
 		mining_cache_size_mb = 1
 	}),
 	?assertEqual(
-		{4, 1, 4, 1, 4000},
+		{4 * ?MiB, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
 		calculate_cache_limits(1, 0)
 	),
 	?assertEqual(
-		{8, 1, 2, 1, 4000},
+		{8 * ?MiB, 1 * ?MiB, 512 * ?KiB, 1, 4_000},
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4000, 1, 1, 1, 4000},
+		{4_000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
-		{1, 1, 128, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1, 1)
 	),
 	?assertEqual(
-		{2, 1, 64, 2, 8000},
+		{2 * ?MiB, 1 * ?MiB, 512 * ?KiB, 2, 8_000},
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1000, 1, 1, 1, 4000},
+		{1_000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
-		{1, 1, 128, 8, 32000},
+		{512 * ?KiB, 1 * ?MiB, 1 * ?MiB, 8, 32_000},
 		calculate_cache_limits(1, 2)
 	),
 	?assertEqual(
-		{1, 1, 64, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{500, 1, 1, 1, 4000},
+		{512_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
-		{1, 1, 128, 64, 256000},
+		{32 * ?KiB, 1 * ?MiB, 1 * ?MiB, 128, 512_000},
 		calculate_cache_limits(1, 32)
 	),
 	?assertEqual(
-		{1, 1, 64, 32, 128000},
+		{64 * ?KiB, 1 * ?MiB, 512 * ?KiB, 64, 256_000},
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{31, 1, 1, 1, 4000},
+		{32_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 32)
 	).
 
@@ -1383,50 +1383,50 @@ test_calculate_cache_limits_custom_high() ->
 		mining_cache_size_mb = 500_000
 	}),
 	?assertEqual(
-		{4, 500_000, 2_000_000, 500_000, 2_000_000_000},
+		{4 * ?MiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
 		calculate_cache_limits(1, 0)
 	),
 	?assertEqual(
-		{8, 500_000, 1_000_000, 250_000, 1_000_000_000},
+		{8 * ?MiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 250_000, 1_000_000_000},
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4000, 500_000, 2_000, 500, 2_000_000},
+		{4_000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 500, 2_000_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
-		{1, 500_000, 64_000_000, 2_000_000, 8_000_000_000},
+		{1 * ?MiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 2_000_000, 8_000_000_000},
 		calculate_cache_limits(1, 1)
 	),
 	?assertEqual(
-		{2, 500_000, 32_000_000, 1_000_000, 4_000_000_000},
+		{2 * ?MiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 1_000_000, 4_000_000_000},
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1000, 500_000, 64_000, 2_000, 8_000_000},
+		{1000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 2_000, 8_000_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
-		{1, 500_000, 64_000_000, 4_000_000, 16_000_000_000},
+		{512 * ?KiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 4_000_000, 16_000_000_000},
 		calculate_cache_limits(1, 2)
 	),
 	?assertEqual(
-		{1, 500_000, 32_000_000, 2_000_000, 8_000_000_000},
+		{1 * ?MiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 2_000_000, 8_000_000_000},
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{500, 500_000, 64_000, 4_000, 16_000_000},
+		{512_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 4_000, 16_000_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
-		{1, 500_000, 64_000_000, 32_000_000, 128_000_000_000},
+		{32 * ?KiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 64_000_000, 256_000_000_000},
 		calculate_cache_limits(1, 32)
 	),
 	?assertEqual(
-		{1, 500_000, 32_000_000, 16_000_000, 64_000_000_000},
+		{64 * ?KiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 32_000_000, 128_000_000_000},
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{31, 500_000, 64_000, 32_000, 128_000_000},
+		{32_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 64_000, 256_000_000},
 		calculate_cache_limits(1000, 32)
 	).
