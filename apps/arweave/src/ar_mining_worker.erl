@@ -210,7 +210,7 @@ handle_cast(?MSG_ADD_TASK({TaskType, Candidate, _ExtraArgs} = Task), State) ->
 handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
-			ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, self(), handle_task),
+			ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, self(), ?MSG_HANDLE_TASK),
 			{noreply, State};
 		_ ->
 			{{_Priority, _ID, Task}, Q2} = gb_sets:take_smallest(Q),
