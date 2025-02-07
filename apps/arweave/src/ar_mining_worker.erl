@@ -790,8 +790,17 @@ cycle_sub_chunk_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, Chu
 			{ok, ChunkCache2} = ar_chunk_cache:add_chunk_to_existing_group(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, ChunkCache1),
 			{{<<>>, Meta}, State#state{ chunk_cache = ChunkCache2 }};
 		{error, chunk_not_found} ->
-			{ok, ChunkCache2} = ar_chunk_cache:add_chunk_to_existing_group(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, State#state.chunk_cache),
-			{cached, State#state{ chunk_cache = ChunkCache2 }};
+			case ar_chunk_cache:add_chunk_to_existing_group(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, State#state.chunk_cache) of
+				{ok, ChunkCache2} ->
+					{cached, State#state{ chunk_cache = ChunkCache2 }};
+				{error, Reason} ->
+					?LOG_ERROR([{event, mining_worker_failed_to_add_chunk_to_cache},
+						{worker, State#state.name}, {partition, State#state.partition_number},
+						{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+						{sessions, length(ar_chunk_cache:get_groups(State#state.chunk_cache))},
+						{nonce, Nonce}, {reason, Reason}]),
+					{error, Reason}
+			end;
 		{ok, RetVal, ChunkCache1} ->
 			{RetVal, State#state{ chunk_cache = ChunkCache1 }}
 	end.
