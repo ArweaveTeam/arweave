@@ -29,14 +29,14 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
+handle_cast({emit, TXID, Peer, ConnectTimeout, Timeout, ReplyTo}, State) ->
 	case ar_mempool:get_tx(TXID) of
 		not_found ->
 			ok;
 		TX ->
 			StartedAt = erlang:timestamp(),
-			Opts = #{ connect_timeout => 1
-				, timeout => 5
+			Opts = #{ connect_timeout => ConnectTimeout div 1000
+				, timeout => Timeout div 1000
 				},
 			emit(#{ tx_id => TXID
 			      , peer => Peer
