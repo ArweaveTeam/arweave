@@ -1775,6 +1775,17 @@ get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID, RequestOrigin) ->
 %% Otherwise, the format is
 %% {ok, DataPath, AbsoluteOffset, TXRoot, ChunkSize, TXPath}
 read_chunk_with_metadata(
+		Offset, SeekOffset, unpacked_padded, StoreID, _ReadChunk, RequestOrigin) ->
+	%% unpacked_padded is an intermediate format and should not be read. Since not all
+	%% the records and indices have been fully setup, trying to read the chunk can cause
+	%% its offset to be invalidated.
+	log_chunk_error(RequestOrigin, read_unpacked_padded_chunk,
+			[{seek_offset, SeekOffset},
+			{offset, Offset},
+			{store_id, StoreID},
+			{stored_packing, unpacked_padded}]),
+	{error, chunk_not_found};
+read_chunk_with_metadata(
 		Offset, SeekOffset, StoredPacking, StoreID, ReadChunk, RequestOrigin) ->
 	case get_chunk_by_byte(SeekOffset, StoreID) of
 		{error, Err} ->
@@ -3267,7 +3278,7 @@ parse_disk_pool_chunk(Bin) ->
 delete_disk_pool_chunk(Iterator, Args, State) ->
 	#sync_data_state{ 
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
-	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
+	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
 	case data_root_index_next_v2(Iterator, 10) of
 		none ->
 			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
