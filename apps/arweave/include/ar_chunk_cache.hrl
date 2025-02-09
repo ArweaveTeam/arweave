@@ -7,5 +7,6 @@
 
 -record(ar_chunk_cache, {
   chunk_cache_groups = #{} :: #{term() => #ar_chunk_cache_group{}},
+  chunk_cache_groups_queue = queue:new() :: queue:queue(),
   chunk_cache_limit_bytes = 0 :: non_neg_integer()
 }).

@@ -10,6 +10,10 @@
 
 
 
+-define(CACHE_GROUPS_LIMIT, 4).
+
+
+
 -define(CACHE_VALUE(Chunk, Meta), {Chunk, Meta}).
 
 
@@ -78,7 +82,7 @@ reserved_size(GroupId, Cache0) ->
 add_group(GroupId, Cache0) ->
   case maps:is_key(GroupId, Cache0#ar_chunk_cache.chunk_cache_groups) of
     true -> Cache0;
-    false -> Cache0#ar_chunk_cache{chunk_cache_groups = maps:put(GroupId, #ar_chunk_cache_group{}, Cache0#ar_chunk_cache.chunk_cache_groups)}
+    false -> add_chunk_cache_group(GroupId, #ar_chunk_cache_group{}, Cache0)
   end.
 
 
@@ -101,7 +105,13 @@ reserve(GroupId, Size, Cache0) ->
   Cache1 :: #ar_chunk_cache{}.
 
 drop_group(GroupId, Cache0) ->
-  Cache0#ar_chunk_cache{chunk_cache_groups = maps:remove(GroupId, Cache0#ar_chunk_cache.chunk_cache_groups)}.
+  Cache0#ar_chunk_cache{
+    chunk_cache_groups = maps:remove(GroupId, Cache0#ar_chunk_cache.chunk_cache_groups),
+    chunk_cache_groups_queue = queue:filter(
+      fun(GroupId0) -> GroupId0 =/= GroupId end,
+      Cache0#ar_chunk_cache.chunk_cache_groups_queue
+    )
+  }.
 
 
 
@@ -117,7 +127,7 @@ group_exists(GroupId, Cache0) ->
   Groups :: [term()].
 
 get_groups(Cache0) ->
-  maps:keys(Cache0#ar_chunk_cache.chunk_cache_groups).
+  queue:to_list(Cache0#ar_chunk_cache.chunk_cache_groups_queue).
 
 
 
@@ -282,14 +292,28 @@ map_chunk_cache_group(GroupId, Fun, Cache0, InsertIfNotFound) ->
     error when InsertIfNotFound ->
       case Fun(#ar_chunk_cache_group{}) of
         {ok, Group1} ->
-          Cache1 = Cache0#ar_chunk_cache{
-            chunk_cache_groups = maps:put(GroupId, Group1, Cache0#ar_chunk_cache.chunk_cache_groups)
-          },
+          Cache1 = add_chunk_cache_group(GroupId, Group1, Cache0),
           {ok, Cache1};
         {error, Reason} -> {error, Reason}
       end;
     error ->
       {error, group_not_found}
+  end.
+
+
+
+add_chunk_cache_group(GroupId, Group, Cache0) ->
+  Cache1 = Cache0#ar_chunk_cache{
+    chunk_cache_groups = maps:put(GroupId, Group, Cache0#ar_chunk_cache.chunk_cache_groups),
+    chunk_cache_groups_queue = queue:in(GroupId, Cache0#ar_chunk_cache.chunk_cache_groups_queue)
+  },
+  case queue:len(Cache1#ar_chunk_cache.chunk_cache_groups_queue) > ?CACHE_GROUPS_LIMIT of
+    true ->
+      {{value, LastGroupId}, Queue1} = queue:out(Cache1#ar_chunk_cache.chunk_cache_groups_queue),
+      Cache2 = drop_group(LastGroupId, Cache1),
+      Cache2#ar_chunk_cache{chunk_cache_groups_queue = Queue1};
+    false ->
+      Cache1
   end.
 
 
@@ -318,6 +342,21 @@ add_group_test() ->
   ?assertEqual(0, cache_size(Cache1)),
   Cache1 = add_group(GroupId0, Cache1),
   ?assertEqual([GroupId0], get_groups(Cache1)).
+
+
+
+add_group_limit_test() ->
+  Cache0 = new(1024),
+  Data = <<"chunk_data">>,
+  {ok, Cache1} = add_chunk(session0, chunk0, Data, Cache0),
+  {ok, Cache2} = add_chunk(session1, chunk0, Data, Cache1),
+  {ok, Cache3} = add_chunk(session2, chunk0, Data, Cache2),
+  {ok, Cache4} = add_chunk(session3, chunk0, Data, Cache3),
+  ?assertEqual([session0, session1, session2, session3], get_groups(Cache4)),
+  ?assertEqual(4 * byte_size(Data), cache_size(Cache4)),
+  {ok, Cache5} = add_chunk(session4, chunk0, Data, Cache4),
+  ?assertEqual([session1, session2, session3, session4], get_groups(Cache5)),
+  ?assertEqual(4 * byte_size(Data), cache_size(Cache5)).
 
 
 
@@ -356,7 +395,8 @@ add_chunk_to_existing_group_test() ->
   {ok, Cache2} = add_chunk_to_existing_group(GroupId0, ChunkId, Data, Cache1),
   ?assertEqual({ok, true}, chunk_exists(GroupId0, ChunkId, Cache2)),
   ?assertEqual(byte_size(Data), cache_size(Cache2)),
-  {error, chunk_already_exists} = add_chunk_to_existing_group(GroupId0, ChunkId, Data, Cache2),
+  {ok, Cache3} = add_chunk_to_existing_group(GroupId0, ChunkId, Data, Cache2),
+  ?assertEqual(Cache3, Cache2),
 
   GroupId1 = session1,
   {error, group_not_found} = add_chunk_to_existing_group(GroupId1, ChunkId, Data, Cache2).
