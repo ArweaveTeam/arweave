@@ -402,7 +402,13 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 						{nonce, Candidate2#mining_candidate.nonce},
 						{session, ar_nonce_limiter:encode_session_key(SessionKey)}])
 			end,
-			State2
+			State2;
+		{error, Reason} ->
+			?LOG_ERROR([{event, mining_worker_failed_to_cycle_chunk_cache},
+				{worker, State#state.name}, {partition, State#state.partition_number},
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{reason, Reason}]),
+			State
 	end.
 
 priority(computed_h2, StepNumber) ->
@@ -787,10 +793,21 @@ cycle_sub_chunk_cache(#mining_candidate{ cache_ref = CacheRef } = Candidate, Chu
 	#mining_candidate{ nonce = Nonce, session_key = SessionKey } = Candidate,
 	case ar_chunk_cache:take_chunk(SessionKey, {CacheRef, Nonce}, State#state.chunk_cache) of
 		{ok, {<<>>, Meta}, ChunkCache1} ->
-			{ok, ChunkCache2} = ar_chunk_cache:add_chunk_to_existing_group(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, ChunkCache1),
-			{{<<>>, Meta}, State#state{ chunk_cache = ChunkCache2 }};
+			case ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, ChunkCache1) of
+				{ok, ChunkCache2} ->
+					{{<<>>, Meta}, State#state{ chunk_cache = ChunkCache2 }};
+				{error, Reason} ->
+					?LOG_ERROR([{event, mining_worker_failed_to_add_chunk_to_cache},
+						{worker, State#state.name}, {partition, State#state.partition_number},
+						{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+						{sessions, length(ar_chunk_cache:get_groups(State#state.chunk_cache))},
+						{cache_size, ar_chunk_cache:cache_size(State#state.chunk_cache)},
+						{chunk_size, byte_size(Chunk)},
+						{nonce, Nonce}, {reason, Reason}]),
+					{error, Reason}
+			end;
 		{error, chunk_not_found} ->
-			case ar_chunk_cache:add_chunk_to_existing_group(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, State#state.chunk_cache) of
+			case ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, {Chunk, ChunkMeta}, State#state.chunk_cache) of
 				{ok, ChunkCache2} ->
 					{cached, State#state{ chunk_cache = ChunkCache2 }};
 				{error, Reason} ->
@@ -834,7 +851,7 @@ remove_sub_chunks_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candida
 
 cache_chunk(Data, Candidate, State) ->
 	#mining_candidate{ cache_ref = CacheRef, nonce = Nonce, session_key = SessionKey } = Candidate,
-	{ok, Cache1} = ar_chunk_cache:add_chunk_to_existing_group(SessionKey, {CacheRef, Nonce}, Data, State#state.chunk_cache),
+	{ok, Cache1} = ar_chunk_cache:add_chunk(SessionKey, {CacheRef, Nonce}, Data, State#state.chunk_cache),
 	State#state{
 		chunk_cache = Cache1
 	}.
