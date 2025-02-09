@@ -15,6 +15,9 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
+%% Used in tests.
+-export([delete_chunk/2]).
+
 -include("../include/ar.hrl").
 -include("../include/ar_sup.hrl").
 -include("../include/ar_config.hrl").
