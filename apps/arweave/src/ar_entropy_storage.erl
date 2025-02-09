@@ -227,7 +227,8 @@ record_chunk(
 		{error, _} = Error2 ->
 			Error2;
 		not_found ->
-			{error, not_prepared_yet2};
+			delete_record(PaddedEndOffset, StoreID),
+			{error, not_prepared_yet};
 		missing_entropy ->
 			Packing = {replica_2_9, RewardAddr},
 			?LOG_WARNING([{event, missing_entropy}, {padded_end_offset, PaddedEndOffset},

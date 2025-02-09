@@ -59,8 +59,6 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 		mining_addr = AddrB
 	}),
 
-	Overlap = ar_storage_module:get_overlap(ToPacking),
-
 	ar_e2e:assert_syncs_range(RepackerNode, 0, 4*?PARTITION_SIZE),
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),

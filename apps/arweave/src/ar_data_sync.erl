@@ -3170,6 +3170,14 @@ log_failed_to_store_chunk(already_stored,
 			{data_path_hash, ar_util:encode(DataPathHash)},
 			{data_root, ar_util:encode(DataRoot)},
 			{store_id, StoreID}]);
+log_failed_to_store_chunk(not_prepared_yet,
+		AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
+	?LOG_WARNING([{event, chunk_not_prepared_yet},
+			{absolute_end_offset, AbsoluteOffset},
+			{relative_offset, Offset},
+			{data_path_hash, ar_util:encode(DataPathHash)},
+			{data_root, ar_util:encode(DataRoot)},
+			{store_id, StoreID}]);
 log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash, StoreID) ->
 	?LOG_ERROR([{event, failed_to_store_chunk},
 			{reason, io_lib:format("~p", [Reason])},

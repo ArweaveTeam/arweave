@@ -68,7 +68,7 @@ unpacked_sync_pack_mine_test_() ->
 				]
 		end}.
 
-%% Note: we should limit the number of tests run per setup_source_node to ~4, if it gets
+%% Note: we should limit the number of tests run per setup_source_node to 5, if it gets
 %% too long then the source node may hit a difficulty adjustment, which can impact the
 %% results.
 unpacked_edge_case_test_() ->
@@ -251,6 +251,16 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
+
+	%% Delete two chunks of entropy from storage to test that the node will heal itself.
+	%% 1. Delete the chunk from disk as well as all sync records.
+	%% 2. Delete the chunk only from disk, but keep it in the sync records.
+	DeleteOffset1 = RangeStart + ?DATA_CHUNK_SIZE,
+	ar_test_node:remote_call(SinkNode, ar_chunk_storage, delete,
+		[DeleteOffset1, StoreID]),
+	DeleteOffset2 = DeleteOffset1 + ?DATA_CHUNK_SIZE,
+	ar_test_node:remote_call(SinkNode, ar_chunk_storage, delete_chunk,
+		[DeleteOffset2, StoreID]),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
 	ar_test_node:restart_with_config(SinkNode, Config2#config{
