@@ -215,7 +215,12 @@ add_chunk_map_fun(ChunkId, Chunk, ChunkMeta) ->
     reserved_chunk_cache_bytes = ReservedChunkCacheBytes0
   } = Group0) ->
     case maps:find(ChunkId, ChunkCache0) of
-      {ok, _} -> {error, chunk_already_exists};
+      {ok, ?CACHE_VALUE(Chunk0, _Meta)} ->
+        {ok, Group0#ar_chunk_cache_group{
+          chunk_cache = maps:put(ChunkId, {Chunk, ChunkMeta}, ChunkCache0),
+          chunk_cache_size_bytes = ChunkCacheSize0 + byte_size(Chunk) - byte_size(Chunk0),
+          reserved_chunk_cache_bytes = max(0, ReservedChunkCacheBytes0 - byte_size(Chunk) + byte_size(Chunk0))
+        }};
       error when ReservedChunkCacheBytes0 > 0 ->
         {ok, Group0#ar_chunk_cache_group{
           chunk_cache = maps:put(ChunkId, {Chunk, ChunkMeta}, ChunkCache0),
