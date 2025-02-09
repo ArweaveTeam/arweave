@@ -282,7 +282,7 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	%% Sanity checks
 	true = byte_size(ChunkEntropy) == ?DATA_CHUNK_SIZE,
 	%% End sanity checks
-	%% 
+
 	Byte = get_chunk_byte_from_bucket_end(BucketEndOffset),
 	CheckUnpackedChunkRecorded = ar_sync_record:get_interval(
 		Byte + 1, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID),
@@ -370,10 +370,7 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 
 %% @doc If we are not at the beginning of the entropy, shift the offset to
 %% the left. store_entropy will traverse the entire 2.9 partition shifting
-%% the offset by sector size. It may happen some sub-chunks will be written
-%% to the neighbouring storage module(s) on the left or on the right
-%% since the storage module may be configured to be smaller than the
-%% partition.
+%% the offset by sector size.
 reset_entropy_offset(BucketEndOffset) ->
 	%% Sanity checks
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
