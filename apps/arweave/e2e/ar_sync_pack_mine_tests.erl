@@ -12,6 +12,7 @@ setup_source_node(PackingType) ->
 	SourceNode = peer1,
 	SinkNode = peer2,
 	ar_test_node:stop(SinkNode),
+	ar_test_node:stop(SourceNode),
 	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(SourceNode, PackingType, wallet_a),
 
 	{Blocks, Chunks, PackingType}.
@@ -67,6 +68,9 @@ unpacked_sync_pack_mine_test_() ->
 				]
 		end}.
 
+%% Note: we should limit the number of tests run per setup_source_node to ~4, if it gets
+%% too long then the source node may hit a difficulty adjustment, which can impact the
+%% results.
 unpacked_edge_case_test_() ->
 	{setup, fun () -> setup_source_node(unpacked) end, 
 		fun (GenesisData) ->
@@ -78,11 +82,7 @@ unpacked_edge_case_test_() ->
 					instantiator(GenesisData, replica_2_9, 
 						fun test_entropy_first_sync_pack_mine/1),
 					instantiator(GenesisData, replica_2_9, 
-						fun test_entropy_last_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_small_module_aligned_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_small_module_unaligned_sync_pack_mine/1)
+						fun test_entropy_last_sync_pack_mine/1)
 				]
 		end}.
 
@@ -97,7 +97,25 @@ spora_2_6_edge_case_test_() ->
 					instantiator(GenesisData, replica_2_9, 
 						fun test_entropy_first_sync_pack_mine/1),
 					instantiator(GenesisData, replica_2_9, 
-						fun test_entropy_last_sync_pack_mine/1),
+						fun test_entropy_last_sync_pack_mine/1)
+				]
+		end}.
+
+unpacked_small_module_test_() ->
+	{setup, fun () -> setup_source_node(unpacked) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_aligned_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_unaligned_sync_pack_mine/1)
+				]
+	end}.
+	
+spora_2_6_small_module_test_() ->
+	{setup, fun () -> setup_source_node(spora_2_6) end, 
+		fun (GenesisData) ->
+				[
 					instantiator(GenesisData, replica_2_9, 
 						fun test_small_module_aligned_sync_pack_mine/1),
 					instantiator(GenesisData, replica_2_9, 
@@ -337,11 +355,11 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	RangeSize = RangeEnd - RangeStart,
 
 	%% Make sure the expected data was synced
-	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 1, 4)),
+	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
@@ -384,12 +402,12 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	RangeEnd = floor(2 * ?PARTITION_SIZE) + ar_storage_module:get_overlap(SinkPacking),
 	RangeSize = RangeEnd - RangeStart,
 
-	%% Make sure the expected data was synced
-	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
+	%% Make sure the expected data was synced	
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 8)),
+	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
@@ -438,7 +456,7 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 			%% Now that we mined a block, the rest of partition 2 is below the disk pool
 			%% threshold
 			ar_e2e:assert_syncs_range(SinkNode, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
-			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking),
+			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, ?PARTITION_SIZE),
 			%% All of partition 3 is still above the disk pool threshold
 			ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
 			ar_e2e:assert_does_not_sync_range(SinkNode, 0, ?PARTITION_SIZE),

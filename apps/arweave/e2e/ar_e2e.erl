@@ -182,8 +182,9 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
 
-	ar_e2e:assert_partition_size(Node, 0, SourcePacking),
-	ar_e2e:assert_partition_size(Node, 1, SourcePacking),
+	%% No overlap since we aren't syncing or repacking chunks.
+	ar_e2e:assert_partition_size(Node, 0, SourcePacking, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(Node, 1, SourcePacking, ?PARTITION_SIZE),
 	ar_e2e:assert_partition_size(Node, 2, SourcePacking, floor(0.5*?PARTITION_SIZE)),
 	
 	ar_e2e:assert_chunks(Node, SourcePacking, Chunks),
@@ -345,7 +346,8 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			[Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
-	assert_partition_size(Node, PartitionNumber, Packing, ?PARTITION_SIZE).
+	Overlap = ar_storage_module:get_overlap(Packing),
+	assert_partition_size(Node, PartitionNumber, Packing, ?PARTITION_SIZE + Overlap).
 assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
 		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
