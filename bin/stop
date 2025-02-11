@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-
 set -e
-
-SCRIPT_DIR="$(dirname "$0")"
-
-# Sets $ARWEAVE and $ARWEAVE_* variables
-SKIP_BUILD=yes
-source $SCRIPT_DIR/arweave.env
-
-$ARWEAVE stop
+SCRIPT_DIR=$(dirname ${0})
+ARWEAVE=${SCRIPT_DIR}/arweave
+${ARWEAVE} stop ${*}

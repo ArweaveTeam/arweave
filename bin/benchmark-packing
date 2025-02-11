@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-
 set -e
-
-SCRIPT_DIR="$(dirname "$0")"
-
-# Sets $ARWEAVE and $ARWEAVE_* variables
-source $SCRIPT_DIR/arweave.env
-
-$ARWEAVE foreground $ARWEAVE_OPTS -run ar benchmark_packing ${@:1}
-
+SCRIPT_DIR=$(dirname ${0})
+ARWEAVE=${SCRIPT_DIR}/arweave
+${ARWEAVE} benchmark packing ${*}

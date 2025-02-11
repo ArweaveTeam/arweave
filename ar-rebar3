@@ -11,7 +11,6 @@ COMMAND=$2
 
 echo Removing build artifacts...
 set -x
-rm -f "${SCRIPT_DIR}/bin/arweave-dev"
 rm -f "${SCRIPT_DIR}/lib"
 rm -f "${SCRIPT_DIR}/releases"
 { set +x; } 2>/dev/null
@@ -24,6 +23,7 @@ if [ "${COMMAND}" = "release" ]; then
     echo
     echo Copying and linking build artifacts
     set -x
+    cp ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave
     cp ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave-dev
     ln -s ${RELEASE_PATH}/arweave/releases ${SCRIPT_DIR}/releases
     ln -s ${RELEASE_PATH}/arweave/lib ${SCRIPT_DIR}/lib
