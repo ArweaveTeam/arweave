@@ -295,13 +295,10 @@ arweave_doctor_help() {
 ######################################################################
 # when ARWEAVE_DEV environment variable is set, the release is rebuild
 arweave_developer_mode() {
-    if test "${ARWEAVE_DEV}"
-    then
 	(
 	    cd ${PARENT_DIR} \
 		&& ./ar-rebar3 ${ARWEAVE_BUILD_TARGET:-default} release
 	)
-    fi
 }
 
 ######################################################################
@@ -920,6 +917,13 @@ process_internal_args() {
     done
 }
 
+# if ARWEAVE_DEV environment is defined, then
+# we start by rebuild a release.
+if test "${ARWEAVE_DEV}"
+then
+    arweave_developer_mode
+fi
+
 # process internal arguments
 process_internal_args "$@"
 
@@ -1002,6 +1006,7 @@ esac
 unset TMP_NAME_ARG
 unset TMP_NAME_ARG_RC
 set -e
+
 
 # Perform replacement of variables in ${NAME_ARG}
 NAME_ARG=$(eval echo "${NAME_ARG}")
@@ -1110,7 +1115,6 @@ case "$1" in
 	;;
 
     daemon|daemon_boot)
-	arweave_developer_mode
 	arweave_check
 	case "$1" in
 	    daemon)
@@ -1267,7 +1271,6 @@ case "$1" in
 	case "$1" in
 	    console)
 		shift
-		arweave_developer_mode
 		if [ -f "$REL_DIR/$REL_NAME.boot" ]; then
 		  BOOTFILE="$REL_DIR/$REL_NAME"
 		else
@@ -1277,7 +1280,6 @@ case "$1" in
 		;;
 	    foreground|foreground_clean|benchmark|wallet|doctor)
 		shift
-		arweave_developer_mode
 		# start up the release in the foreground for use by runit
 		# or other supervision services
 		if [ -f "$REL_DIR/$REL_NAME.boot" ]; then
@@ -1313,7 +1315,6 @@ case "$1" in
 		;;
 	    console_clean)
 		shift
-		arweave_developer_mode
 		# if not set by user use interactive mode for console_clean
 		CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
 		BOOTFILE="$REL_DIR/start_clean"
@@ -1321,7 +1322,6 @@ case "$1" in
 		;;
 	    console_boot)
 		shift
-		arweave_developer_mode
 		BOOTFILE="$1"
 		shift
 		ARGS=${*}
