@@ -40,8 +40,8 @@ init_console(Config) ->
 %%--------------------------------------------------------------------
 init_default(Config) ->
     Level = info,
-    FileName = "arweave.log",
-    FilePath = lists:flatten(filename:join(Config#config.log_dir, FileName)),
+    FileName = log_filename(#{ level => Level }),
+    FilePath = filename:flatten(filename:join(Config#config.log_dir, FileName)),
     LoggerConfigDisk = #{ file => FilePath
 			, type => file
 			, max_no_files => 10
@@ -67,8 +67,8 @@ init_default(Config) ->
 %%--------------------------------------------------------------------
 init_debug(#config{ debug = true } = Config) ->
     Level = debug,
-    FileName = "debug.log",
-    FilePath = lists:flatten(filename:join([Config#config.log_dir, "debug.log"])),
+    FileName = log_filename(#{ level => Level }),
+    FilePath = lists:flatten(filename:join([Config#config.log_dir, FileName])),
     DebugLoggerConfigDisk = #{ file => FilePath
 			     , type => file
 			     , max_no_files => 20
@@ -81,3 +81,15 @@ init_debug(#config{ debug = true } = Config) ->
 init_debug(_) ->
     Level = info,
     logger:set_application_level(arweave, Level).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc returns a log filename.
+%% @end
+%%--------------------------------------------------------------------
+log_filename(Opts) ->
+    Prefix = maps:get(prefix, Opts, "arweave"),
+    Level = maps:get(level, Opts, info),
+    NodeName = erlang:node(),
+    RawFileName = lists:join("-", ["arweave", NodeName, Level]),
+    filename:flatten(RawFileName) ++ ".log".
