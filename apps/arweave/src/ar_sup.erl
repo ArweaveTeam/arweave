@@ -89,6 +89,7 @@ init([]) ->
 		?CHILD_SUP(ar_mining_sup, supervisor),
 		?CHILD(ar_coordination, worker),
 		?CHILD_SUP(ar_tx_emitter_sup, supervisor),
+		?CHILD(ar_tx_poller, worker),
 		?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
 		?CHILD_SUP(ar_poller_sup, supervisor),
 		?CHILD_SUP(ar_node_sup, supervisor),
