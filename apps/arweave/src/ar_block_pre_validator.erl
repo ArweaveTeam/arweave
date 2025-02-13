@@ -46,8 +46,16 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 		true ->
 			skipped;
 		false ->
+			Ref = make_ref(),
+			ar_ignore_registry:add_ref(H, Ref),
 			B2 = B#block{ receive_timestamp = ReceiveTimestamp },
-			pre_validate_is_peer_banned(B2, Peer)
+			case pre_validate_is_peer_banned(B2, Peer) of
+				enqueued ->
+					enqueued;
+				Other ->
+					ar_ignore_registry:remove_ref(H, Ref),
+					Other
+			end
 	end.
 
 %%%===================================================================
@@ -176,7 +184,7 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-pre_validate_is_peer_banned(B, Peer) ->
+pre_validate_is_peer_banned(#block{ indep_hash = H } = B, Peer) ->
 	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
 			pre_validate_previous_block(B, Peer);
@@ -319,7 +327,6 @@ pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer) ->
 				true ->
 					skipped;
 				false ->
-					ar_ignore_registry:add_temporary(H, 5000),
 					pre_validate_timestamp(B, PrevB, Peer)
 			end;
 		{error, invalid_signature} ->
@@ -341,7 +348,6 @@ pre_validate_timestamp(B, PrevB, Peer) ->
 			post_block_reject_warn(B, check_timestamp, Peer, [{block_time,
 					B#block.timestamp}, {current_time, os:system_time(seconds)}]),
 			ar_events:send(block, {rejected, invalid_timestamp, H, Peer}),
-			ar_ignore_registry:remove_temporary(B#block.indep_hash),
 			invalid
 	end.
 
@@ -517,7 +523,6 @@ pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) 
 			H = B#block.indep_hash,
 			ar_events:send(block,
 					{rejected, invalid_nonce_limiter_global_step_number, H, Peer}),
-			ar_ignore_registry:remove_temporary(B#block.indep_hash),
 			invalid;
 		true ->
 			prometheus_gauge:set(block_vdf_advance, StepNumber - CurrentStepNumber),
@@ -750,7 +755,6 @@ pre_validate_nonce_limiter(B, PrevB, Peer) ->
 	PrevOutput = get_last_step_prev_output(B),
 	case ar_nonce_limiter:validate_last_step_checkpoints(B, PrevB, PrevOutput) of
 		{false, cache_mismatch} ->
-			ar_ignore_registry:add(B#block.indep_hash),
 			post_block_reject_warn_and_error_dump(B, check_nonce_limiter, Peer),
 			ar_events:send(block, {rejected, invalid_nonce_limiter_cache_mismatch,
 					B#block.indep_hash, Peer}),
