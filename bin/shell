@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR="$(dirname "$0")"
+cd "$SCRIPT_DIR/.."
+
+./ar-rebar3 test compile
+
+if [ `uname -s` == "Darwin" ]; then
+    RANDOMX_JIT="disable randomx_jit"
+else
+    RANDOMX_JIT=
+fi
+
+export ERL_EPMD_ADDRESS=127.0.0.1
+
+ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/arweave/test -config config/sys.config"
+echo -e "\033[0;32m===> Running tests...\033[0m"
+
+# Check if BEAM process is running
+if pgrep -f "beam.smp" > /dev/null; then
+    echo "BEAM is already running. Exiting."
+    exit 1
+else
+    erl $ERL_TEST_OPTS -name main-localtest@127.0.0.1 -setcookie test -run ar shell 2>&1
+fi
+kill 0

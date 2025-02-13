@@ -9,13 +9,49 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROFILE=$1
 COMMAND=$2
 
+create_overlay_var() {
+  local target="_vars.config"
+  local name="${1}"
+  local value="$(eval ${2} 2>/dev/null || echo undefined)"
+
+  if ! echo "${name}" | grep -E '^[a-z]+[0-9A-Za-z_]+$' >/dev/null
+  then
+    echo "invalid variable ${name}" 1>&2
+    return 1
+  fi
+
+  if ! echo "${value}" | grep -E '^[[:print:]]+$' >/dev/null
+  then
+    echo "invalid value ${value}" 1>&2
+    return 1
+  fi
+
+  if test -e "${target}"
+  then
+    printf '{%s, "%s"}.\n' "${name}" "${value}" >> "${target}"
+    return 0
+  fi
+
+  printf '{%s, "%s"}.\n' "${name}" "${value}" > "${target}"
+  return 0
+}
+
 echo Removing build artifacts...
 set -x
+rm -f "_vars.config"
 rm -f "${SCRIPT_DIR}/lib"
 rm -f "${SCRIPT_DIR}/releases"
 { set +x; } 2>/dev/null
 echo
 
+echo "Crafting overlay variables..."
+create_overlay_var git_rev "git rev-parse HEAD"
+create_overlay_var datetime "date -u '+%Y-%m-%dT%H:%M:%SZ'"
+create_overlay_var cc_version "cc --version | head -n1"
+create_overlay_var gmake_version "gmake --version | head -n1"
+create_overlay_var cmake_version "cmake --version | head -n1"
+
+echo "Executing rebar3 as ${PROFILE} ${COMMAND}"
 ${SCRIPT_DIR}/rebar3 as ${PROFILE} ${COMMAND}
 
 if [ "${COMMAND}" = "release" ]; then
