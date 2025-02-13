@@ -4,13 +4,13 @@
 
 -export([execute/2, read_body_chunk/4]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_mining.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_mining.hrl").
+-include("../include/ar_data_sync.hrl").
+-include("../include/ar_data_discovery.hrl").
 
--include_lib("arweave/include/ar_pool.hrl").
+-include("../include/ar_pool.hrl").
 
 
 -define(HANDLER_TIMEOUT, 55000).
@@ -1946,7 +1946,7 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	ar_peers:rate_gossiped_data(Peer, tx,
 		erlang:convert_time_unit(BodyReadTime, native, microsecond),
 		byte_size(term_to_binary(TX))),
-	ar_events:send(tx, {new, TX, Peer}),
+	ar_events:send(tx, {new, TX, {pushed, Peer}}),
 	TXID = TX#tx.id,
 	ar_ignore_registry:remove_temporary(TXID),
 	ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000),
@@ -2932,14 +2932,6 @@ find_block(<<"hash">>, ID) ->
 			unavailable
 	end.
 
-is_tx_already_processed(TXID) ->
-	case ar_ignore_registry:member(TXID) of
-		true ->
-			true;
-		false ->
-			ar_mempool:has_tx(TXID)
-	end.
-
 post_tx_parse_id({Req, Pid, Encoding}) ->
 	post_tx_parse_id(check_header, {Req, Pid, Encoding}).
 
@@ -2956,7 +2948,7 @@ post_tx_parse_id(check_header, {Req, Pid, Encoding}) ->
 			end
 	end;
 post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
-	case is_tx_already_processed(TXID) of
+	case ar_mempool:is_known_tx(TXID) of
 		true ->
 			{error, tx_already_processed, TXID, Req};
 		false ->
@@ -3044,7 +3036,7 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 				true ->
 					{error, invalid_hash, Req};
 				false ->
-					case is_tx_already_processed(TXID) of
+					case ar_mempool:is_known_tx(TXID) of
 						true ->
 							{error, tx_already_processed, TXID, Req};
 						false ->
