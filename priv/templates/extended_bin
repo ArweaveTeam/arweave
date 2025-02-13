@@ -50,6 +50,12 @@ REL_VSN="{{ release_version }}"
 # export these to match mix release environment variables
 export RELEASE_NAME="{{ release_name }}"
 export RELEASE_VSN="{{ release_version }}"
+export RELEASE_GIT_REV="{{ git_rev }}"
+export RELEASE_DATETIME="{{ datetime }}"
+export RELEASE_ERTS="{{ release_erts_version }}"
+export RELEASE_CC="{{ cc_version }}"
+export RELEASE_CMAKE="{{ cmake_version }}"
+export RELEASE_GMAKE="{{ gmake_version }}"
 export RELEASE_PROG="${SCRIPT}"
 
 ERTS_VSN="{{ erts_vsn }}"
@@ -312,7 +318,11 @@ arweave_version() {
 }
 
 arweave_version_light() {
-    echo "{{ release_name }} {{ release_version }} (erts {{ erts_vsn }})"
+    echo "${RELEASE_NAME} ${RELEASE_VSN} (${RELEASE_GIT_REV}) ${RELEASE_DATETIME}"
+    echo "   erts ${RELEASE_ERTS}"
+    echo "   ${RELEASE_CC}"
+    echo "   ${RELEASE_GMAKE}"
+    echo "   ${RELEASE_CMAKE}"
     exit 0
 }
 
