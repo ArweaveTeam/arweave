@@ -1356,8 +1356,12 @@ handle_info({chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
-	#sync_data_state{ packing_map = PackingMap } = State,
+	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
 	Packing = element(1, ChunkArgs),
+	?LOG_DEBUG([{event, chunk_packed},
+		{offset, Offset},
+		{store_id, StoreID},
+		{packing, ar_serialize:encode_packing(Packing, true)}]),
 	Key = {Offset, Packing},
 	case maps:get(Key, PackingMap, not_found) of
 		{pack_chunk, Args} when element(1, Args) == Packing ->
@@ -1464,7 +1468,8 @@ handle_info(Message,  #sync_data_state{ store_id = StoreID } = State) ->
 terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
 	?LOG_INFO([{event, terminate}, {module, ?MODULE},
 			{store_id, StoreID}, {reason, io_lib:format("~p", [Reason])}]),
-	store_sync_state(State).
+	store_sync_state(State),
+	ok.
 
 %%%===================================================================
 %%% Private functions.
@@ -1789,6 +1794,10 @@ read_chunk_with_metadata(
 read_chunk_with_metadata(
 		Offset, SeekOffset, StoredPacking, StoreID, ReadChunk, RequestOrigin) ->
 	case get_chunk_by_byte(SeekOffset, StoreID) of
+		{error, invalid_iterator} ->
+			%% No error log needed since this is expected behavior when the chunk simply
+			%% isn't stored.
+			{error, chunk_not_found};
 		{error, Err} ->
 			Modules = ar_storage_module:get_all(SeekOffset),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
@@ -2900,11 +2909,15 @@ write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, State) ->
 write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing,
 		State) ->
 	#sync_data_state{ store_id = StoreID } = State,
+	?LOG_DEBUG([{event, write_not_blacklisted_chunk},
+		{offset, Offset},
+		{store_id, StoreID},
+		{packing, ar_serialize:encode_packing(Packing, true)}]),
 	ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
 	case ShouldStoreInChunkStorage of
 		true ->
 			PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
-			Result = ar_chunk_storage:put(PaddedOffset, Chunk, StoreID),
+			Result = ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID),
 			case Result of
 				{ok, NewPacking} ->
 					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
