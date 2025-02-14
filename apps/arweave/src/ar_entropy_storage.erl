@@ -3,8 +3,7 @@
 -behaviour(gen_server).
 
 -export([name/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
-	is_entropy_recorded/2, delete_record/2, store_entropy/7, record_chunk/7,
-	generate_missing_entropy/2]).
+	is_entropy_recorded/2, delete_record/2, store_entropy/7, record_entropy/4, record_chunk/7]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -50,8 +49,17 @@ is_ready(StoreID) ->
 
 handle_cast({store_entropy,
 		Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr}, State) ->
-	do_store_entropy(
-		Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr, State),
+	#state{ store_id = StoreID } = State,
+	ar_entropy_gen:map_entropies(
+		Entropies,
+		EntropyOffsets,
+		RangeStart,
+		RangeEnd,
+		Keys,
+		RewardAddr,
+		fun record_entropy/5,
+		[StoreID, RewardAddr],
+		ok),
 	{noreply, State};
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -78,18 +86,18 @@ is_entropy_recorded(PaddedEndOffset, StoreID) ->
 	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
 	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
 	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
-	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	ChunkBucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:is_recorded(ChunkBucketStart + 1, ID, StoreID).
+	ar_sync_record:is_recorded(
+		ChunkBucketStart + 1, ar_chunk_storage_replica_2_9_1_entropy, StoreID).
 
 update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
 	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
 	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
-	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	BucketEnd = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
 	BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:add_async(replica_2_9_entropy, BucketEnd, BucketStart, ID, StoreID),
+	ar_sync_record:add_async(replica_2_9_entropy,
+		BucketEnd, BucketStart, ar_chunk_storage_replica_2_9_1_entropy, StoreID),
 	prometheus_counter:inc(replica_2_9_entropy_stored,
 		[ar_storage_module:label_by_id(StoreID)], ?DATA_CHUNK_SIZE),
 	case IsComplete of
@@ -118,9 +126,10 @@ delete_record(PaddedEndOffset, StoreID) ->
 	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
 	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
 	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
-	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:delete(BucketStart + ?DATA_CHUNK_SIZE, BucketStart, ID, StoreID).
+	ar_sync_record:delete(
+		BucketStart + ?DATA_CHUNK_SIZE, BucketStart,
+		ar_chunk_storage_replica_2_9_1_entropy, StoreID).
 
 generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
 	Entropies = ar_entropy_gen:generate_entropies(RewardAddr, PaddedEndOffset),
@@ -130,69 +139,6 @@ generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
 		_ ->
 			EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
 			take_combined_entropy_by_index(Entropies, EntropyIndex)
-	end.
-
-do_store_entropy(<<>>,
-			[],
-			_RangeStart,
-			_RangeEnd,
-			_Keys,
-			_RewardAddr,
-			_State) ->
-	%% We've finished processing all the entropies, wait for the writes to complete.
-	ok;
-do_store_entropy(_Entropies,
-			[BucketEndOffset | _EntropyOffsets],
-			_RangeStart,
-			RangeEnd,
-			_Keys,
-			_RewardAddr,
-			_State)
-		when BucketEndOffset > RangeEnd ->
-	%% The amount of entropy generated per partition is slightly more than the amount needed.
-	%% So at the end of a partition we will have finished processing chunks, but still have
-	%% some entropy left. In this case we stop the recursion early and wait for the writes
-	%% to complete.
-	ok;
-do_store_entropy(Entropies,
-			[BucketEndOffset | EntropyOffsets],
-			RangeStart,
-			RangeEnd,
-			Keys,
-			RewardAddr,
-			State) ->
-	case take_and_combine_entropy_slices(Entropies) of
-		{ChunkEntropy, Rest} ->
-			%% Sanity checks
-			true =
-				ar_replica_2_9:get_entropy_partition(BucketEndOffset)
-				== ar_replica_2_9:get_entropy_partition(RangeEnd),
-			sanity_check_replica_2_9_entropy_keys(BucketEndOffset, RewardAddr, Keys),
-			lists:foldl(fun(Bin, Acc) -> byte_size(Bin) + Acc end, 0, Rest) div ?DATA_CHUNK_SIZE == length(EntropyOffsets),
-			%% End sanity checks
-
-			case BucketEndOffset > RangeStart of
-				true ->
-					#state{ store_id = StoreID } = State,
-					record_entropy(
-						ChunkEntropy,
-						BucketEndOffset,
-						StoreID,
-						RewardAddr);
-				false ->
-					%% Don't write entropy before the start of the storage module.
-					ok
-			end,
-
-			%% Jump to the next sector covered by this entropy.
-			do_store_entropy(
-				Rest,
-				EntropyOffsets,
-				RangeStart,
-				RangeEnd,
-				Keys,
-				RewardAddr,
-				State)
 	end.
 
 record_chunk(
@@ -263,34 +209,14 @@ record_chunk(
 	release_semaphore(Filepath),
 	RecordChunk.
 
-%% @doc Return the byte (>= ChunkStartOffset, < ChunkEndOffset)
-%% that necessarily belongs to the chunk stored
-%% in the bucket with the given bucket end offset.
-get_chunk_byte_from_bucket_end(BucketEndOffset) ->
-	case BucketEndOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
-		true ->
-			RelativeBucketEndOffset = BucketEndOffset - ?STRICT_DATA_SPLIT_THRESHOLD,
-			case RelativeBucketEndOffset rem ?DATA_CHUNK_SIZE of
-				0 ->
-					%% The chunk beginning at this offset is the rightmost possible
-					%% chunk that will be routed to this bucket.
-					%% The chunk ending at this offset plus one is the leftmost possible
-					%% chunk routed to this bucket.
-					BucketEndOffset - ?DATA_CHUNK_SIZE;
-				_ ->
-					?STRICT_DATA_SPLIT_THRESHOLD
-							+ ar_util:floor_int(RelativeBucketEndOffset, ?DATA_CHUNK_SIZE)
-			end;
-		false ->
-			BucketEndOffset - 1
-	end.
-
+record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr, ok) ->
+	record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr).
 record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	%% Sanity checks
 	true = byte_size(ChunkEntropy) == ?DATA_CHUNK_SIZE,
 	%% End sanity checks
 
-	Byte = get_chunk_byte_from_bucket_end(BucketEndOffset),
+	Byte = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
 	CheckUnpackedChunkRecorded = ar_sync_record:get_interval(
 		Byte + 1, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID),
 
@@ -373,29 +299,9 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 			ok
 	end,
 
-	release_semaphore(Filepath).
+	release_semaphore(Filepath),
+	ok.
 	
-%% @doc Take the first slice of each entropy and combine into a single binary. This binary
-%% can be used to encipher a single chunk.
--spec take_and_combine_entropy_slices(Entropies :: [binary()]) ->
-										 {ChunkEntropy :: binary(),
-										  RemainingSlicesOfEachEntropy :: [binary()]}.
-take_and_combine_entropy_slices(Entropies) ->
-	true = ?COMPOSITE_PACKING_SUB_CHUNK_COUNT == length(Entropies),
-	take_and_combine_entropy_slices(Entropies, [], []).
-
-take_and_combine_entropy_slices([], Acc, RestAcc) ->
-	{iolist_to_binary(Acc), lists:reverse(RestAcc)};
-take_and_combine_entropy_slices([<<>> | Entropies], _Acc, _RestAcc) ->
-	true = lists:all(fun(Entropy) -> Entropy == <<>> end, Entropies),
-	{<<>>, []};
-take_and_combine_entropy_slices([<<EntropySlice:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary,
-								   Rest/binary>>
-								 | Entropies],
-								Acc,
-								RestAcc) ->
-	take_and_combine_entropy_slices(Entropies, [Acc, EntropySlice], [Rest | RestAcc]).
-
 take_combined_entropy_by_index(Entropies, Index) ->
 	take_combined_entropy_by_index(Entropies, Index, []).
 
@@ -407,21 +313,6 @@ take_combined_entropy_by_index([Entropy | Entropies], Index, Acc) ->
 		Entropies,
 		Index,
 		[Acc, binary:part(Entropy, Index * SubChunkSize, SubChunkSize)]).
-
-sanity_check_replica_2_9_entropy_keys(PaddedEndOffset, RewardAddr, Keys) ->
-	sanity_check_replica_2_9_entropy_keys(PaddedEndOffset, RewardAddr, 0, Keys).
-
-sanity_check_replica_2_9_entropy_keys(
-		_PaddedEndOffset, _RewardAddr, _SubChunkStartOffset, []) ->
-	ok;
-sanity_check_replica_2_9_entropy_keys(
-		PaddedEndOffset, RewardAddr, SubChunkStartOffset, [Key | Keys]) ->
- 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, PaddedEndOffset, SubChunkStartOffset),
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	sanity_check_replica_2_9_entropy_keys(PaddedEndOffset,
-										RewardAddr,
-										SubChunkStartOffset + SubChunkSize,
-										Keys).
 
 acquire_semaphore(Filepath) ->
 	case ets:insert_new(ar_entropy_storage, {{semaphore, Filepath}}) of

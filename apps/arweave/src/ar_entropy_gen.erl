@@ -2,9 +2,11 @@
 
 -behaviour(gen_server).
 
--export([name/1, register_workers/1, initialize_context/2, is_entropy_packing/1,
-	set_repack_cursor/2, generate_entropies/2, entropy_offsets/1, reset_entropy_offset/1,
-	shift_entropy_offset/2]).
+-export([name/1, register_workers/1,  initialize_context/2, is_entropy_packing/1,
+	iteration_end/2, map_entropies/9, entropy_offsets/1,
+	generate_entropies/2, generate_entropies/4, generate_entropy_keys/2, 
+	reset_entropy_offset/1, shift_entropy_offset/2]).
+
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("../include/ar.hrl").
@@ -20,9 +22,7 @@
 	range_start,
 	range_end,
 	cursor,
-	slice_index,
-	prepare_status = undefined,
-	repack_cursor
+	prepare_status = undefined
 }).
 
 -ifdef(AR_TEST).
@@ -90,7 +90,7 @@ initialize_context(StoreID, Packing) ->
 	case Packing of
 		{replica_2_9, Addr} ->
 			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-			Cursor = read_cursor(StoreID, RangeStart + 1),
+			Cursor = read_cursor(StoreID, RangeStart),
 			case Cursor =< RangeEnd of
 				true ->
 					{false, Addr};
@@ -109,6 +109,22 @@ is_entropy_packing({replica_2_9, _}) ->
 is_entropy_packing(_) ->
 	false.
 
+iteration_end(BucketEndOffset, RangeEnd) ->
+	%% get_entropy_partition will use bucket *start* offset to determine the partition.
+	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
+	%% A set of generated entropies covers slighly more than 3.6TB of
+	%% chunks, however we only want to use the first 3.6TB
+	%% (+ chunk padding) of it.
+	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
+	PaddedPartitionEnd =
+		ar_chunk_storage:get_chunk_bucket_end(
+			ar_block:get_chunk_padded_offset(PartitionEnd)),
+	%% In addition to limiting this iteration to the PaddedPartitionEnd,
+	%% we also want to limit it to the current storage module's range.
+	%% This allows us to handle both the storage module range as well
+	%% as the small overlap region.
+	min(PaddedPartitionEnd, RangeEnd).
+
 %% @doc Return a list of all BucketEndOffsets covered by the entropy needed to encipher
 %% the chunk at the given offset. The list returned may include offsets that occur before
 %% the provided offset. This is expected if Offset does not refer to a sector 0 chunk.
@@ -121,6 +137,9 @@ entropy_offsets(Offset) ->
 	PaddedPartitionEnd =
 		ar_chunk_storage:get_chunk_bucket_end(
 			ar_block:get_chunk_padded_offset(PartitionEnd)),
+	?LOG_DEBUG([{event, entropy_offsets}, {bucket_end_offset, BucketEndOffset},
+		{bucket_end_offset2, BucketEndOffset2}, {partition, Partition},
+		{partition_end, PartitionEnd}, {padded_partition_end, PaddedPartitionEnd}]),
 	entropy_offsets(BucketEndOffset2, PaddedPartitionEnd).
 
 entropy_offsets(BucketEndOffset, PaddedPartitionEnd)
@@ -144,81 +163,160 @@ shift_entropy_offset(Offset, SectorCount) ->
 	SectorSize = ar_replica_2_9:get_sector_size(),
 	ar_chunk_storage:get_chunk_bucket_end(Offset + SectorSize * SectorCount).
 
-set_repack_cursor(StoreID, RepackCursor) ->
-	gen_server:cast(name(StoreID), {set_repack_cursor, RepackCursor}).
+generate_entropies(StoreID, RewardAddr, BucketEndOffset, ReplyTo) ->
+	gen_server:cast(name(StoreID), {generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}).
+
+map_entropies(_Entropies,
+			[],
+			_RangeStart,
+			_RangeEnd,
+			_Keys,
+			_RewardAddr,
+			_Fun,
+			_Args,
+			Acc) ->
+	%% The amount of entropy generated per partition is slightly more than the amount needed.
+	%% So at the end of a partition we will have finished processing chunks, but still have
+	%% some entropy left. In this case we stop the recursion early and wait for the writes
+	%% to complete.
+	Acc;
+map_entropies(_Entropies,
+			[BucketEndOffset | _EntropyOffsets],
+			_RangeStart,
+			RangeEnd,
+			_Keys,
+			_RewardAddr,
+			_Fun,
+			_Args,
+			Acc)
+		when BucketEndOffset > RangeEnd ->
+	%% The amount of entropy generated per partition is slightly more than the amount needed.
+	%% So at the end of a partition we will have finished processing chunks, but still have
+	%% some entropy left. In this case we stop the recursion early and wait for the writes
+	%% to complete.
+	Acc;
+map_entropies(Entropies,
+			[BucketEndOffset | EntropyOffsets],
+			RangeStart,
+			RangeEnd,
+			Keys,
+			RewardAddr,
+			Fun,
+			Args,
+			Acc) ->
+	% ?LOG_DEBUG([{event, map_entropies}, {bucket_end_offset, BucketEndOffset},
+	% 	{entropy_offsets, EntropyOffsets}, {range_start, RangeStart},
+	% 	{range_end, RangeEnd}, {partition1, ar_replica_2_9:get_entropy_partition(BucketEndOffset)},
+	% 	{partition2, ar_replica_2_9:get_entropy_partition(RangeEnd)}]),
+	
+	case take_and_combine_entropy_slices(Entropies) of
+		{ChunkEntropy, Rest} ->
+			%% Sanity checks
+			true =
+				ar_replica_2_9:get_entropy_partition(BucketEndOffset)
+				== ar_replica_2_9:get_entropy_partition(RangeEnd),
+			sanity_check_replica_2_9_entropy_keys(BucketEndOffset, RewardAddr, Keys),
+			%% End sanity checks
+
+			Acc2 = case BucketEndOffset > RangeStart of
+				true ->
+					erlang:apply(Fun, [ChunkEntropy, BucketEndOffset] ++ Args ++ [Acc]);
+				false ->
+					%% Don't write entropy before the start of the storage module.
+					Acc
+			end,
+
+			%% Jump to the next sector covered by this entropy.
+			map_entropies(
+				Rest,
+				EntropyOffsets,
+				RangeStart,
+				RangeEnd,
+				Keys,
+				RewardAddr,
+				Fun,
+				Args,
+				Acc2)
+	end.
+
 
 init({StoreID, Packing}) ->
 	?LOG_INFO([{event, ar_entropy_storage_init},
-		  {name, name(StoreID)}, {store_id, StoreID},
-		  {packing, ar_serialize:encode_packing(Packing, true)}]),
+		{name, name(StoreID)}, {store_id, StoreID},
+		{packing, ar_serialize:encode_packing(Packing, true)}]),
 
 	%% Senity checks
 	{replica_2_9, _} = Packing,
 	%% End sanity checks
-	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 
-	Cursor = read_cursor(StoreID, RangeStart + 1),
-	?LOG_INFO([{event, read_prepare_replica_2_9_cursor},
-				{store_id, StoreID},
-				{cursor, Cursor},
-				{range_start, RangeStart},
-				{range_end, RangeEnd}]),
-	PrepareStatus =
-		case initialize_context(StoreID, Packing) of
-			{_IsPrepared, none} ->
-				%% ar_entropy_gen is only used for replica_2_9 packing
-				?LOG_ERROR([{event, invalid_packing_for_entropy},
-							{module, ?MODULE},
+	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+	PaddedRangeEnd = ar_chunk_storage:get_chunk_bucket_end(RangeEnd),
+
+	%% Provided Packing will only differ from the StoreID packing when this
+	%% module is configured to repack in place.
+	IsRepackInPlace = Packing /= ar_storage_module:get_packing(StoreID),
+	State = case IsRepackInPlace of
+		true ->
+			#state{};
+		false ->
+			%% Only kick of the prepare entropy process if we're not repacking in place.
+			Cursor = read_cursor(StoreID, RangeStart),
+			?LOG_INFO([{event, read_prepare_replica_2_9_cursor}, {store_id, StoreID},
+					{cursor, Cursor}, {range_start, RangeStart},
+					{range_end, RangeEnd}, {padded_range_end, PaddedRangeEnd}]),
+			PrepareStatus = 
+				case initialize_context(StoreID, Packing) of
+					{_IsPrepared, none} ->
+						%% ar_entropy_gen is only used for replica_2_9 packing
+						?LOG_ERROR([{event, invalid_packing_for_entropy}, {module, ?MODULE},
 							{store_id, StoreID},
 							{packing, ar_serialize:encode_packing(Packing, true)}]),
-				off;
-			{false, _} ->
-				gen_server:cast(self(), prepare_entropy),
-				paused;
-			{true, _} ->
-				%% Entropy generation is complete
-				complete
-		end,
-
-	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
-	RepackCursor =
-		case Packing == ar_storage_module:get_packing(StoreID) of
-			true ->
-				none;
-			false ->
-				%% Provided Packing will only differ from the StoreID packing when this
-				%% module is configured to repack in place.
-				ar_repack:read_cursor(StoreID, Packing, RangeStart)
-		end,
-	State =
-		#state{store_id = StoreID,
-				packing = Packing,
-				range_start = RangeStart,
-				range_end = RangeEnd,
+						off;
+					{false, _} ->
+						gen_server:cast(self(), prepare_entropy),
+						paused;
+					{true, _} ->
+						%% Entropy generation is complete
+						complete
+				end,
+			ar_device_lock:set_device_lock_metric(StoreID, prepare, PrepareStatus),
+			#state{
 				cursor = Cursor,
-				slice_index = ar_replica_2_9:get_slice_index(BucketEndOffset),
-				prepare_status = PrepareStatus,
-				repack_cursor = RepackCursor},
-	ar_device_lock:set_device_lock_metric(StoreID, prepare, PrepareStatus),
-	{ok, State}.
+				prepare_status = PrepareStatus
+			}
+	end,
+
+	State2 = State#state{
+		store_id = StoreID,
+		packing = Packing, 
+		range_start = RangeStart,
+		range_end = PaddedRangeEnd
+	},
+
+	{ok, State2}.
 
 handle_cast(prepare_entropy, State) ->
-	#state{store_id = StoreID} = State,
+	#state{ store_id = StoreID } = State,
 	NewStatus = ar_device_lock:acquire_lock(prepare, StoreID, State#state.prepare_status),
-	State2 = State#state{prepare_status = NewStatus},
-	State3 =
-		case NewStatus of
-			active ->
-				do_prepare_entropy(State2);
-			paused ->
-				ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), prepare_entropy),
-				State2;
-			_ ->
-				State2
-		end,
+	State2 = State#state{ prepare_status = NewStatus },
+	State3 = case NewStatus of
+		active ->
+			do_prepare_entropy(State2);
+		paused ->
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), prepare_entropy),
+			State2;
+		_ ->
+			State2
+	end,
 	{noreply, State3};
-handle_cast({set_repack_cursor, RepackCursor}, State) ->
-	{noreply, State#state{repack_cursor = RepackCursor}};
+
+handle_cast({generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}, State) ->
+	?LOG_DEBUG([{event, generate_entropies}, {store_id, State#state.store_id},
+			{bucket_end_offset, BucketEndOffset}]),
+	Entropies = generate_entropies(RewardAddr, BucketEndOffset),
+	ReplyTo ! {entropy, BucketEndOffset, Entropies},
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -240,38 +338,37 @@ terminate(Reason, State) ->
 	ok.
 
 do_prepare_entropy(State) ->
-	#state{cursor = Start,
-			range_start = RangeStart,
-			range_end = RangeEnd,
-			packing = {replica_2_9, RewardAddr},
-			store_id = StoreID,
-			repack_cursor = RepackCursor} =
-		State,
+	#state{ 
+		cursor = Start, range_start = RangeStart, range_end = RangeEnd,
+		packing = {replica_2_9, RewardAddr},
+		store_id = StoreID
+	} = State,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Start),
-	PaddedRangeEnd = ar_chunk_storage:get_chunk_bucket_end(RangeEnd),
 
 	%% Sanity checks:
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
-	true =
-		ar_chunk_storage:get_chunk_bucket_start(Start)
-		== ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset),
-	true =
-		max(0, BucketEndOffset - ?DATA_CHUNK_SIZE)
-		== ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset),
+	true = (
+		ar_chunk_storage:get_chunk_bucket_start(Start) ==
+		ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset)
+	),
+	true = (
+		max(0, BucketEndOffset - ?DATA_CHUNK_SIZE) == 
+		ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset)
+	),
 	%% End of sanity checks.
-	SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
 
 	%% Make sure all prior entropy writes are complete.
 	ar_entropy_storage:is_ready(StoreID),
 
 	CheckRangeEnd =
-		case BucketEndOffset > PaddedRangeEnd of
+		case BucketEndOffset > RangeEnd of
 			true ->
 				ar_device_lock:release_lock(prepare, StoreID),
 				?LOG_INFO([{event, storage_module_entropy_preparation_complete},
-							{store_id, StoreID}]),
-				ar:console("The storage module ~s is prepared for 2.9 replication.~n", [StoreID]),
+						{store_id, StoreID}]),
+				ar:console("The storage module ~s is prepared for 2.9 replication.~n",
+						[StoreID]),
 				ar_chunk_storage:set_entropy_complete(StoreID),
 				complete;
 			false ->
@@ -279,111 +376,51 @@ do_prepare_entropy(State) ->
 		end,
 
 	Start2 = advance_entropy_offset(BucketEndOffset, StoreID),
-	State2 = State#state{cursor = Start2, slice_index = SliceIndex},
-	CheckRepackCursor =
+	State2 = State#state{ cursor = Start2 },
+	CheckIsRecorded =
 		case CheckRangeEnd of
 			complete ->
 				complete;
 			false ->
-				case RepackCursor of
-					none ->
-						false;
-					_ ->
-						SectorSize = ar_replica_2_9:get_sector_size(),
-						RangeStart2 = ar_chunk_storage:get_chunk_bucket_start(RangeStart + 1),
-						RepackCursor2 = ar_chunk_storage:get_chunk_bucket_start(RepackCursor + 1),
-						RepackSectorShift = (RepackCursor2 - RangeStart2) rem SectorSize,
-						SectorShift = (BucketEndOffset - RangeStart2) rem SectorSize,
-						case SectorShift > RepackSectorShift of
-							true ->
-								waiting_for_repack;
-							false ->
-								false
-						end
-				end
-		end,
-	CheckIsRecorded =
-		case CheckRepackCursor of
-			complete ->
-				complete;
-			waiting_for_repack ->
-				waiting_for_repack;
-			false ->
 				ar_entropy_storage:is_entropy_recorded(BucketEndOffset, StoreID)
 		end,
 
-	%% get_entropy_partition will use bucket *start* offset to determine the partition.
-	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
 	StoreEntropy =
 		case CheckIsRecorded of
 			complete ->
 				complete;
-			waiting_for_repack ->
-				waiting_for_repack;
 			true ->
 				is_recorded;
 			false ->
 				%% Get all the entropies needed to encipher the chunk at BucketEndOffset.
-				Entropies =
-					prometheus_histogram:observe_duration(replica_2_9_entropy_duration_milliseconds,
-														  [32],
-														  fun() ->
-															 generate_entropies(RewardAddr,
-																				BucketEndOffset)
-														  end),
+				Entropies = generate_entropies(RewardAddr, BucketEndOffset),
 				case Entropies of
 					{error, Reason} ->
 						{error, Reason};
 					_ ->
 						EntropyKeys = generate_entropy_keys(RewardAddr, BucketEndOffset),
 						EntropyOffsets = entropy_offsets(BucketEndOffset),
-
-						%% A set of generated entropies covers slighly more than 3.6TB of
-						%% chunks, however we only want to use the first 3.6TB
-						%% (+ chunk padding) of it.
-						PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
-						PaddedPartitionEnd =
-							ar_chunk_storage:get_chunk_bucket_end(
-								ar_block:get_chunk_padded_offset(PartitionEnd)),
-						%% In addition to limiting this iteration to the PaddedPartitionEnd,
-						%% we also want to limit it to the current storage module's range.
-						%% This allows us to handle both the storage module range as well
-						%% as the small overlap region.
-						IterationEnd = min(PaddedPartitionEnd, RangeEnd),
 						%% Wait for the previous store_entropy to complete. Should only
 						%% return 'false' if the entropy storage process is down (e.g. during
 						%% shutdown)
-						ar_entropy_storage:store_entropy(StoreID,
-														 Entropies,
-														 EntropyOffsets,
-														 RangeStart,
-														 IterationEnd,
-														 EntropyKeys,
-														 RewardAddr)
+						ar_entropy_storage:store_entropy(
+							StoreID, Entropies, EntropyOffsets,
+							RangeStart, iteration_end(BucketEndOffset, RangeEnd),
+							EntropyKeys, RewardAddr)
 				end
 		end,
 	case StoreEntropy of
 		complete ->
 			ar_device_lock:set_device_lock_metric(StoreID, prepare, complete),
-			State#state{prepare_status = complete};
-		waiting_for_repack ->
-			?LOG_INFO([{event, waiting_for_repacking},
-						{store_id, StoreID},
-						{padded_end_offset, BucketEndOffset},
-						{repack_cursor, RepackCursor},
-						{cursor, Start},
-						{range_start, RangeStart},
-						{range_end, RangeEnd}]),
-			ar_util:cast_after(10000, self(), prepare_entropy),
-			State;
+			State#state{ prepare_status = complete };
 		is_recorded ->
 			gen_server:cast(self(), prepare_entropy),
 			State2;
 		{error, Error} ->
 			?LOG_WARNING([{event, failed_to_store_entropy},
-						  {cursor, Start},
-						  {store_id, StoreID},
-						  {reason, io_lib:format("~p", [Error])}]),
+					{cursor, Start},
+					{store_id, StoreID},
+					{reason, io_lib:format("~p", [Error])}]),
 			ar_util:cast_after(500, self(), prepare_entropy),
 			State;
 		ok ->
@@ -393,27 +430,31 @@ do_prepare_entropy(State) ->
 					ok;
 				{error, Error} ->
 					?LOG_WARNING([{event, failed_to_store_prepare_entropy_cursor},
-								  {chunk_cursor, Start2},
-								  {store_id, StoreID},
-								  {reason, io_lib:format("~p", [Error])}])
+							{chunk_cursor, Start2},
+							{store_id, StoreID},
+							{reason, io_lib:format("~p", [Error])}])
 			end,
 			State2
 	end.
 
 %% @doc Returns all the entropies needed to encipher the chunk at PaddedEndOffset.
-generate_entropies(RewardAddr, PaddedEndOffset) ->
+generate_entropies(RewardAddr, BucketEndOffset) ->
+	prometheus_histogram:observe_duration(replica_2_9_entropy_duration_milliseconds, [], 
+		fun() ->
+			do_generate_entropies(RewardAddr, BucketEndOffset)
+		end).
+
+do_generate_entropies(RewardAddr, BucketEndOffset) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyTasks =
-		lists:map(fun(Offset) ->
-					 Ref = make_ref(),
-					 ar_packing_server:request_entropy_generation(Ref,
-																  self(),
-																  {RewardAddr,
-																	PaddedEndOffset,
-																	Offset}),
-					 Ref
-				  end,
-				  lists:seq(0, ?DATA_CHUNK_SIZE - SubChunkSize, SubChunkSize)),
+		lists:map(
+			fun(Offset) ->
+				Ref = make_ref(),
+				ar_packing_server:request_entropy_generation(
+					Ref, self(), {RewardAddr, BucketEndOffset, Offset}),
+				Ref
+			end,
+			lists:seq(0, ?DATA_CHUNK_SIZE - SubChunkSize, SubChunkSize)),
 	Entropies = collect_entropies(EntropyTasks, []),
 	case Entropies of
 		{error, _Reason} ->
@@ -423,9 +464,46 @@ generate_entropies(RewardAddr, PaddedEndOffset) ->
 	end,
 	Entropies.
 
+%% @doc Take the first slice of each entropy and combine into a single binary. This binary
+%% can be used to encipher a single chunk.
+-spec take_and_combine_entropy_slices(Entropies :: [binary()]) ->
+										 {ChunkEntropy :: binary(),
+										  RemainingSlicesOfEachEntropy :: [binary()]}.
+take_and_combine_entropy_slices(Entropies) ->
+	true = ?COMPOSITE_PACKING_SUB_CHUNK_COUNT == length(Entropies),
+	take_and_combine_entropy_slices(Entropies, [], []).
+
+take_and_combine_entropy_slices([], Acc, RestAcc) ->
+	{iolist_to_binary(Acc), lists:reverse(RestAcc)};
+take_and_combine_entropy_slices([<<>> | Entropies], _Acc, _RestAcc) ->
+	true = lists:all(fun(Entropy) -> Entropy == <<>> end, Entropies),
+	{<<>>, []};
+take_and_combine_entropy_slices([<<EntropySlice:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary,
+								   Rest/binary>>
+								 | Entropies],
+								Acc,
+								RestAcc) ->
+	take_and_combine_entropy_slices(Entropies, [Acc, EntropySlice], [Rest | RestAcc]).
+
+sanity_check_replica_2_9_entropy_keys(PaddedEndOffset, RewardAddr, Keys) ->
+	sanity_check_replica_2_9_entropy_keys(PaddedEndOffset, RewardAddr, 0, Keys).
+
+sanity_check_replica_2_9_entropy_keys(
+		_PaddedEndOffset, _RewardAddr, _SubChunkStartOffset, []) ->
+	ok;
+sanity_check_replica_2_9_entropy_keys(
+		PaddedEndOffset, RewardAddr, SubChunkStartOffset, [Key | Keys]) ->
+		Key = ar_replica_2_9:get_entropy_key(RewardAddr, PaddedEndOffset, SubChunkStartOffset),
+	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	sanity_check_replica_2_9_entropy_keys(PaddedEndOffset,
+										RewardAddr,
+										SubChunkStartOffset + SubChunkSize,
+										Keys).
+
 advance_entropy_offset(BucketEndOffset, StoreID) ->
-	ID = ar_chunk_storage_replica_2_9_1_entropy,
-	case ar_sync_record:get_next_unsynced_interval(BucketEndOffset, infinity, ID, StoreID) of
+	Interval = ar_sync_record:get_next_unsynced_interval(
+		BucketEndOffset, infinity, ar_chunk_storage_replica_2_9_1_entropy, StoreID),
+	case Interval of
 		not_found ->
 			BucketEndOffset + ?DATA_CHUNK_SIZE;
 		{_, Start} ->
@@ -466,8 +544,9 @@ flush_entropy_messages() ->
 		ok
 	end.
 
-read_cursor(StoreID, Default) ->
+read_cursor(StoreID, RangeStart) ->
 	Filepath = ar_chunk_storage:get_filepath("prepare_replica_2_9_cursor", StoreID),
+	Default = RangeStart + 1,
 	case file:read_file(Filepath) of
 		{ok, Bin} ->
 			case catch binary_to_term(Bin) of
