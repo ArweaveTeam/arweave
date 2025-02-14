@@ -84,14 +84,6 @@ register() ->
 	prometheus_gauge:new([{name, outbound_connections},
 			{help, "The current number of the open outbound network connections"}]),
 
-	%% SQLite.
-	prometheus_histogram:new([
-		{name, sqlite_query_time},
-		{buckets, [1, 10, 100, 500, 1000, 2000, 10000, 30000]},
-		{labels, [query_type]},
-		{help, "The time in milliseconds of SQLite queries."}
-	]),
-
 	%% Transaction and block propagation.
 	prometheus_gauge:new([
 		{name, tx_queue_size},
@@ -212,12 +204,7 @@ register() ->
 		{buckets, lists:seq(1, 50)},
 		{help, "Fork recovery depth metric"}
 	]),
-	prometheus_histogram:new([
-		{name, block_construction_time_milliseconds},
-		{buckets, [1, 10, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 10000, 30000]},
-		{help, "The time it takes to pick and validate transactions for a block and generate"
-				" a preimage to use in mining."}
-	]),
+
 	prometheus_gauge:new([
 		{name, wallet_list_size},
 		{
@@ -299,9 +286,7 @@ register() ->
 	]),
 	prometheus_histogram:new([
 		{name, vdf_step_time_milliseconds},
-		{buckets, [100, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2500, 3000, 3500, 4000,
-				4500, 5000, 5500, 6000, 6500, 7000, 7500, 8000, 8500, 9000, 9500, 10000, 15000,
-				20000, 30000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{labels, []},
 		{help, "The time in milliseconds it took to compute a VDF step."}
 	]),
@@ -413,7 +398,7 @@ register() ->
 	prometheus_histogram:new([
 		{name, packing_duration_milliseconds},
 		{labels, [type, packing, trigger]},
-		{buckets, [1, 5, 10, 50, 100, 500, 1000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The packing/unpacking time in milliseconds. The type label indicates what "
 				"type of operation was requested either: 'pack', 'unpack',"
 				"'unpack_sub_chunk', or 'pack_sub_chunk'. The packing "
@@ -455,6 +440,18 @@ register() ->
 		{labels, [packing, store_id]},
 		{help, "The counter is incremented every time a chunk is written to "
 				"chunk_storage."}]),
+	prometheus_histogram:new([
+		{name, chunk_read_duration_milliseconds},
+		{labels, [store_id]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
+		{help, "The time, in milliseconds, to read a chunk from chunk storage."}
+	]),
+	prometheus_histogram:new([
+		{name, chunk_write_duration_milliseconds},
+		{labels, [store_id]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
+		{help, "The time, in milliseconds, to write a chunk from chunk storage."}
+	]),
 	prometheus_gauge:new([{name, sync_tasks},
 		{labels, [state, type, peer]},
 		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
@@ -477,11 +474,8 @@ register() ->
 		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
 	prometheus_histogram:new([
 		{name, replica_2_9_entropy_duration_milliseconds},
-		{labels, [count]},
-		{buckets, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 250, 500, 1000]},
-		{help, "The time, in milliseconds, to generate replica.2.9 entropy. The count label "
-				"indicates whether this is the time to generate a single 8 MiB entropy or "
-				"the time to generate all 32 entropies needed for full chunks."}
+		{buckets, [infinity]}, %% we don't care about the histogram portion
+		{help, "The time, in milliseconds, to generate 256 MiB of replica.2.9 entropy."}
 	]),
 
 	%% ---------------------------------------------------------------------------------------
