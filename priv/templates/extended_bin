@@ -338,7 +338,8 @@ arweave_version_help() {
 arweave_test() {
     TEST_CONFIG="./config/sys.config"
     TEST_PROFILE="test"
-    TEST_NODE_NAME="main-localtest@127.0.0.1"
+    TEST_NODE_NAME="main-localtest"
+    TEST_NODE_HOST="127.0.0.1"
     TEST_COOKIE="test"
     TEST_MODULE="tests"
     TEST_LOG="main-localtest.out"
@@ -353,7 +354,8 @@ arweave_test_help() {
 arweave_e2e() {
     TEST_CONFIG="./config/sys.config"
     TEST_PROFILE="e2e"
-    TEST_NODE_NAME="main-e2e@127.0.0.1"
+    TEST_NODE_NAME="main-e2e"
+    TEST_NODE_HOST="127.0.0.1"
     TEST_COOKIE="e2e"
     TEST_MODULE="e2e"
     TEST_LOG="main-e2e.out"
@@ -365,23 +367,33 @@ arweave_e2e_help() {
     echo "Run Arweave e2e Test Suite for module MODULE"
 }
 
+# test and e2e features are sharing the same procedures.
 arweave_test_run() {
-    cd ${PARENT_DIR}
-    ./ar-rebar3 "${TEST_PROFILE}" compile
-    TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
-    TEST_PATH_BASE="$(./rebar3 as ${TEST_PROFILE} path --base)/lib/arweave/test"
-    set -x
-    stdbuf -oL -eL \
-      erl \
-        -pa ${TEST_PATH} ${TEST_PATH_BASE} \
-        -config "${TEST_CONFIG}" \
-        -noshell \
-        -name "${TEST_NODE_NAME}" \
-        -setcookie "${TEST_COOKIE}" \
-        -run ar "${TEST_MODULE}" ${*} \
-        -s init stop 2>&1 \
-      | tee ${TEST_LOG}
-    set +x
+    (
+	echo -e "\033[0;32m===> Enter into ${PARENT_DIR}\033[0m"
+	cd ${PARENT_DIR}
+
+	echo -e "\033[0;32m===> Compile ${TEST_PROFILE} profile\033[0m"
+	./ar-rebar3 "${TEST_PROFILE}" compile
+
+	# if a specific test is specified
+	if test "${1}"
+	then
+	    TEST_NODE="${TEST_NODE_NAME}-${1}@${TEST_NODE_HOST}"
+	else
+	    TEST_NODE="${TEST_NDOE_NAME}@${TEST_NODE_HOST}"
+	fi
+	
+	TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
+	TEST_PATH_BASE="$(./rebar3 as ${TEST_PROFILE} path --base)/lib/arweave/test"
+	PARAMS="-pa ${TEST_PATH} ${TEST_PATH_BASE} -config ${TEST_CONFIG} -noshell"	
+	ENTRY_POINT="-run ar ${TEST_MODULE} ${*} -s init stop"
+	command="erl ${PARAMS} -name ${TEST_NODE} -setcookie ${TEST_COOKIE} ${ENTRY_POINT}"
+	set -x	
+	echo -e "\033[0;32m===> Execute command ${command}\033[0m"
+	stdbuf -oL -eL ${command} 2>&1 | tee "${TEST_LOG}"
+	set +x
+    )
 }
 
 ######################################################################
@@ -486,7 +498,7 @@ relx_usage() {
 	    arweave_test_help
 	    ;;
 	test_e2e)
-            arweave_e2e_help
+	    arweave_e2e_help
 	    ;;
 	*)
 	    # check for extension
