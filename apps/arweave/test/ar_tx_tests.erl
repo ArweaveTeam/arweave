@@ -108,7 +108,7 @@ returns_error_when_txs_exceed_balance_test_() ->
 			"Three transactions with block anchor",
 			PrepareTestFor(fun block_anchor_txs_spending_balance_plus_one_more/0)
 		}},
-		{timeout, 120, {
+		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
 			"Five transactions with mixed anchors",
 			PrepareTestFor(fun mixed_anchor_txs_spending_balance_plus_one_more/0)
 			}}
