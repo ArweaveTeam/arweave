@@ -13,24 +13,24 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	name						= not_set,
-	partition_number			= not_set,
-	diff_pair					= not_set,
-	packing_difficulty			= 0,
-	task_queue					= gb_sets:new(),
-	active_sessions				= sets:new(),
-	%% The sub_chunk_cache stores either the first or second sub-chunk for a given nonce. This
-	%% is because we process both the first and second recall ranges in parallel and don't know
-	%% which data will be available first. For spora_2_6 packing (aka difficulty 0), sub-chunks
-	%% and chunks are the same size (256KiB), for composite packing each sub-chunk is 8KiB.
-	sub_chunk_cache 			= #{},
-	sub_chunk_cache_size		= #{},
-	sub_chunk_cache_limit		= 0,
-	vdf_queue_limit				= 0,
-	latest_vdf_step_number		= 0,
-	is_pool_client				= false,
-	h1_hashes					= #{},
-	h2_hashes					= #{}
+    name = not_set :: atom(),
+    partition_number = not_set :: non_neg_integer() | not_set,
+    diff_pair = not_set :: {non_neg_integer(), non_neg_integer()} | not_set,
+    packing_difficulty = 0 :: non_neg_integer(),
+    task_queue = gb_sets:new() :: gb_sets:gb_set(),
+    active_sessions = sets:new() :: sets:set(),
+    %% The sub_chunk_cache stores either the first or second sub-chunk for a given nonce. This
+    %% is because we process both the first and second recall ranges in parallel and don't know
+    %% which data will be available first. For spora_2_6 packing (aka difficulty 0), sub-chunks
+    %% and chunks are the same size (256KiB), for composite packing each sub-chunk is 8KiB.
+    sub_chunk_cache = #{} :: maps:map(),
+    sub_chunk_cache_size = #{} :: maps:map(),
+    sub_chunk_cache_limit = 0 :: non_neg_integer(),
+    vdf_queue_limit = 0 :: non_neg_integer(),
+    latest_vdf_step_number = 0 :: non_neg_integer(),
+    is_pool_client = false,
+    h1_hashes = #{} :: maps:map(),
+    h2_hashes = #{} :: maps:map()
 }).
 
 -define(TASK_CHECK_FREQUENCY_MS, 200).
@@ -63,7 +63,7 @@ add_task(Worker, TaskType, Candidate, ExtraArgs) ->
 
 add_delayed_task(Worker, TaskType, Candidate) ->
 	%% Delay task by random amount between ?TASK_CHECK_FREQUENCY_MS and 2*?TASK_CHECK_FREQUENCY_MS
-	%% The reason for the randomization to avoid a glut tasks to all get added at the same time - 
+	%% The reason for the randomization to avoid a glut tasks to all get added at the same time -
 	%% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
 	%% to be delayed at about the same time.
 	Delay = rand:uniform(?TASK_CHECK_FREQUENCY_MS) + ?TASK_CHECK_FREQUENCY_MS,
@@ -146,7 +146,7 @@ handle_cast({chunks_read, {WhichChunk, Candidate, RangeStart, ChunkOffsets}}, St
 				{worker, State#state.name},
 				{active_sessions,
 					ar_mining_server:encode_sessions(State#state.active_sessions)},
-				{candidate_session, 
+				{candidate_session,
 					ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
 				{partition_number, Candidate#mining_candidate.partition_number},
 				{step_number, Candidate#mining_candidate.step_number}]),
@@ -163,14 +163,14 @@ handle_cast({add_task, {TaskType, Candidate, _ExtraArgs} = Task}, State) ->
 				{task, TaskType},
 				{active_sessions,
 					ar_mining_server:encode_sessions(State#state.active_sessions)},
-				{candidate_session, 
+				{candidate_session,
 					ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
 				{partition_number, Candidate#mining_candidate.partition_number},
 				{step_number, Candidate#mining_candidate.step_number},
 				{nonce, Candidate#mining_candidate.nonce}]),
 			{noreply, State}
 	end;
-	
+
 handle_cast(handle_task, #state{ task_queue = Q } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
@@ -305,7 +305,7 @@ process_chunks(WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk, NonceMa
 		ChunkOffsets, SubChunkSize, Count + 1, State2).
 
 process_all_sub_chunks(_WhichChunk, <<>>, _Candidate, _Nonce, State) ->
-	State;	
+	State;
 process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State) ->
 	{SubChunk, Rest} = extract_sub_chunk(Chunk, Candidate),
 	Candidate2 = Candidate#mining_candidate{ nonce = Nonce },
@@ -344,7 +344,7 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 		{{chunk1, H1}, State2} ->
 			ar_mining_hash:compute_h2(self(), Candidate2#mining_candidate{ h1 = H1 }),
 			%% Decrement 1 for chunk2:
-			%% we're computing h2 for a peer so chunk1 was not previously read or cached 
+			%% we're computing h2 for a peer so chunk1 was not previously read or cached
 			%% on this node
 			update_sub_chunk_cache_size(-1, SessionKey, State2);
 		{do_not_cache, State2} ->
@@ -433,7 +433,7 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 			Range2Exists = ar_mining_io:read_recall_range(
 					chunk2, self(), Candidate3, RecallRange2Start),
 			case Range2Exists of
-				true -> 
+				true ->
 					State;
 				false ->
 					%% Release just the Range2 cache space we reserved with
@@ -638,7 +638,7 @@ maybe_warn_about_lag(Q, Name) ->
 					%% Since we sample the queue asynchronously, we expect there to regularly
 					%% be a queue of length 1 (i.e. a task may have just been added to the
 					%% queue when we run this check).
-					%% 
+					%%
 					%% To further reduce log spam, we'll only warn if the queue is greater
 					%% than 2. We really only care if a queue is consistently long or if
 					%% it's getting longer. Temporary blips are fine. We may incrase
@@ -672,7 +672,7 @@ count_h0_tasks(Q) ->
 	end.
 
 maybe_warn_about_stale_chunks(State) ->
-	TotalChunkKeys = 
+	TotalChunkKeys =
 		maps:fold(
 		fun(_SesssionKey, SessionCache, Acc) ->
 			Acc + maps:size(SessionCache)
@@ -762,11 +762,11 @@ update_sub_chunk_cache_size(0, _SessionKey, State) ->
 	State;
 update_sub_chunk_cache_size(Delta, SessionKey, State) ->
 	CacheSize = maps:get(SessionKey, State#state.sub_chunk_cache_size, 0),
-	prometheus_gauge:inc(mining_server_chunk_cache_size,
-			[State#state.partition_number], Delta),
-	State#state{
-		sub_chunk_cache_size = maps:put(SessionKey, CacheSize + Delta,
-		State#state.sub_chunk_cache_size) }.
+	% The clamp_lower function ensures that the cache size does not go below 0.
+	% This is temporary until we have a more permanent solution for the chunk cache.
+	NewCacheSize = ar_util:clamp_lower(CacheSize + Delta, 0),
+	prometheus_gauge:inc(mining_server_chunk_cache_size, [State#state.partition_number], NewCacheSize - CacheSize),
+	State#state{ sub_chunk_cache_size = maps:put(SessionKey, NewCacheSize, State#state.sub_chunk_cache_size) }.
 
 try_to_reserve_cache_space(SessionKey, State) ->
 	#state{ packing_difficulty = PackingDifficulty } = State,
