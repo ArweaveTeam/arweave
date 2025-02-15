@@ -2045,7 +2045,6 @@ handle_found_solution(Args, PrevB, State) ->
 	HaveSteps2 =
 		case HaveSteps of
 			not_found ->
-				% TODO verify
 				SuppliedSteps;
 			_ ->
 				HaveSteps
