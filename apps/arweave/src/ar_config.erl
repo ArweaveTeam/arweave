@@ -639,7 +639,7 @@ parse_options([{<<"cm_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
 
 parse_options([{<<"cm_exit_peer">>, Peer} | Rest], Config) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ParsedPeer} ->
+		{ok, [ParsedPeer|_]} ->
 			parse_options(Rest, Config#config{ cm_exit_peer = ParsedPeer });
 		{error, _} ->
 			{error, bad_cm_exit_peer, Peer}
@@ -767,11 +767,13 @@ safe_map(Fun, List) ->
 
 parse_peers([Peer | Rest], ParsedPeers) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ParsedPeer} -> parse_peers(Rest, [ParsedPeer | ParsedPeers]);
+		{ok, ParsedPeer} -> parse_peers(Rest, ParsedPeer ++ ParsedPeers);
 		{error, _} -> error
 	end;
 parse_peers([], ParsedPeers) ->
-	{ok, lists:reverse(ParsedPeers)}.
+	Flatten = lists:flatten(ParsedPeers),
+	Reverse = lists:reverse(Flatten),
+	{ok, Reverse}.
 
 parse_webhooks([{WebhookConfig} | Rest], ParsedWebhookConfigs) when is_list(WebhookConfig) ->
 	case parse_webhook(WebhookConfig, #config_webhook{}) of
