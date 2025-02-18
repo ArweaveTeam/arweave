@@ -388,8 +388,9 @@ parse_cli_args(["verify" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify = true });
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ peers = [ValidPeer|Ps] });
+		{ok, ValidPeers} when is_list(ValidPeers) ->
+			NewConfig = C#config{peers = ValidPeers ++ Ps},
+			parse_cli_args(Rest, NewConfig);
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
