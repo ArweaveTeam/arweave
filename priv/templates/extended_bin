@@ -381,7 +381,7 @@ arweave_test_run() {
 	then
 	    TEST_NODE="${TEST_NODE_NAME}-${1}@${TEST_NODE_HOST}"
 	else
-	    TEST_NODE="${TEST_NDOE_NAME}@${TEST_NODE_HOST}"
+	    TEST_NODE="${TEST_NODE_NAME}@${TEST_NODE_HOST}"
 	fi
 	
 	TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
