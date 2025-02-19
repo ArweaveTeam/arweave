@@ -760,8 +760,10 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 pre_validate_nonce_limiter(B, PrevB, Peer) ->
 	PrevOutput = get_last_step_prev_output(B),
 	case ar_nonce_limiter:validate_last_step_checkpoints(B, PrevB, PrevOutput) of
-		{false, cache_mismatch} ->
-			post_block_reject_warn_and_error_dump(B, check_nonce_limiter, Peer),
+		{false, cache_mismatch, CachedSteps} ->
+			ar_ignore_registry:add(B#block.indep_hash),
+			post_block_reject_warn_and_error_dump(B, check_nonce_limiter_cache_mismatch,
+					Peer, #{ prev_b => PrevB, cached_steps => CachedSteps }),
 			ar_events:send(block, {rejected, invalid_nonce_limiter_cache_mismatch,
 					B#block.indep_hash, Peer}),
 			invalid;
@@ -794,10 +796,13 @@ compute_hash(B, PrevCDiff) ->
 	end.
 
 post_block_reject_warn_and_error_dump(B, Step, Peer) ->
+	post_block_reject_warn_and_error_dump(B, Step, Peer, #{}).
+
+post_block_reject_warn_and_error_dump(B, Step, Peer, ExtraData) ->
 	{ok, Config} = application:get_env(arweave, config),
 	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
 	File = filename:join(Config#config.data_dir, "invalid_block_dump_" ++ ID),
-	file:write_file(File, term_to_binary(B)),
+	file:write_file(File, term_to_binary({B, ExtraData})),
 	post_block_reject_warn(B, Step, Peer),
 	?LOG_WARNING([{event, post_block_rejected},
 			{hash, ar_util:encode(B#block.indep_hash)}, {step, Step},

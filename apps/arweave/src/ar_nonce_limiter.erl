@@ -7,7 +7,7 @@
 		get_current_step_number/0, get_current_step_number/1, get_step_triplets/3,
 		get_seed_data/2, get_step_checkpoints/2, get_step_checkpoints/4, get_steps/4,
 		get_seed/1, get_active_partition_upper_bound/2,
-		get_reset_frequency/0,
+		get_reset_frequency/0, get_entropy_reset_point/2,
 		validate_last_step_checkpoints/3, request_validation/3,
 		get_or_init_nonce_limiter_info/1, get_or_init_nonce_limiter_info/2,
 		apply_external_update/2, get_session/1, get_current_session/0,
@@ -17,10 +17,11 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_vdf.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
@@ -189,8 +190,8 @@ validate_last_step_checkpoints(#block{
 				false ->
 					false
 			end;
-		_ ->
-			{false, cache_mismatch}
+		CachedSteps ->
+			{false, cache_mismatch, CachedSteps}
 	end;
 validate_last_step_checkpoints(_B, _PrevB, _PrevOutput) ->
 	false.
@@ -631,7 +632,8 @@ handle_cast({validated_steps, Args}, State) ->
 						{_, Steps2} =
 							get_step_range(Steps, StepNumber, CurrentStepNumber + 1, StepNumber),
 						update_session(Session, StepNumber,
-								#{ StepNumber => LastStepCheckpoints }, Steps2);
+								#{ StepNumber => LastStepCheckpoints }, Steps2,
+								validated_steps);
 					false ->
 						Session
 				end,
@@ -693,7 +695,7 @@ handle_info({'DOWN', Ref, process, _, Reason}, #state{ worker_monitor_ref = Ref 
 
 handle_info({computed, Args}, State) ->
 	#state{ current_session_key = CurrentSessionKey } = State,
-	{StepNumber, PrevOutput, Output, Checkpoints} = Args,
+	{StepNumber, PrevOutput, Output, Checkpoints, SessionKey} = Args,
 	Session = get_session(CurrentSessionKey, State),
 	#vdf_session{ next_vdf_difficulty = NextVDFDifficulty, steps = [SessionOutput | _] } = Session,
 	{NextSeed, IntervalNumber, NextVDFDifficulty} = CurrentSessionKey,
@@ -701,8 +703,11 @@ handle_info({computed, Args}, State) ->
 	SessionOutput2 = ar_nonce_limiter:maybe_add_entropy(
 			SessionOutput, IntervalStart, StepNumber, NextSeed),
 	gen_server:cast(?MODULE, schedule_step),
-	case PrevOutput == SessionOutput2 of
-		false ->
+	case {PrevOutput == SessionOutput2, SessionKey == CurrentSessionKey} of
+		{true, false} ->
+			?LOG_INFO([{event, received_computed_output_for_different_session_key}]),
+			{noreply, State};
+		{false, _} ->
 			case ar_config:use_remote_vdf_server() of
 				true ->
 					ok;
@@ -711,9 +716,9 @@ handle_info({computed, Args}, State) ->
 						{output, ar_util:encode(Output)}])
 			end,
 			{noreply, State};
-		true ->
+		{true, true} ->
 			Session2 = update_session(Session, StepNumber,
-					#{ StepNumber => Checkpoints }, [Output]),
+					#{ StepNumber => Checkpoints }, [Output], computed_step),
 			State2 = cache_session(State, CurrentSessionKey, Session2),
 			?LOG_DEBUG([{event, new_vdf_step}, {source, computed},
 				{session_key, encode_session_key(CurrentSessionKey)}, {step_number, StepNumber}]),
@@ -742,10 +747,31 @@ session_key(NextSeed, StepNumber, NextVDFDifficulty) ->
 get_session(SessionKey, #state{ session_by_key = SessionByKey }) ->
 	maps:get(SessionKey, SessionByKey, not_found).
 
-update_session(Session, StepNumber, StepCheckpointsMap, Steps) ->
+update_session(Session, StepNumber, StepCheckpointsMap, Steps, Source) ->
 	#vdf_session{ step_checkpoints_map = Map } = Session,
+	case find_step_checkpoints_mismatch(StepCheckpointsMap, Map) of
+		{true, MismatchStepNumber} ->
+			?LOG_ERROR([{event, step_checkpoints_mismatch},
+					{step_number, StepNumber},
+					{mismatch_step_number, MismatchStepNumber},
+					{source, Source}]);
+		false ->
+			false
+	end,
 	Map2 = maps:merge(StepCheckpointsMap, Map),
 	update_session(Session#vdf_session{ step_checkpoints_map = Map2 }, StepNumber, Steps).
+
+find_step_checkpoints_mismatch(StepCheckpointsMap, Map) ->
+	maps:fold(fun(StepNumber, Checkpoints, Acc) ->
+		case maps:get(StepNumber, Map, not_found) of
+			not_found ->
+				Acc;
+			Checkpoints ->
+				Acc;
+			_Checkpoints2 ->
+				{true, StepNumber}
+		end
+	end, false, StepCheckpointsMap).
 
 update_session(Session, StepNumber, Steps) ->
 	#vdf_session{ steps = CurrentSteps } = Session,
@@ -988,11 +1014,11 @@ verify_no_reset(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes
 
 worker() ->
 	receive
-		{compute, {StepNumber, PrevOutput, VDFDifficulty}, From} ->
+		{compute, {StepNumber, PrevOutput, VDFDifficulty, SessionKey}, From} ->
 			{ok, Output, Checkpoints} = prometheus_histogram:observe_duration(
 					vdf_step_time_milliseconds, [], fun() -> compute(StepNumber, PrevOutput,
 							VDFDifficulty) end),
-			From ! {computed, {StepNumber, PrevOutput, Output, Checkpoints}},
+			From ! {computed, {StepNumber, PrevOutput, Output, Checkpoints, SessionKey}},
 			worker();
 		stop ->
 			ok
@@ -1047,7 +1073,7 @@ schedule_step(State) ->
 					{next_vdf_difficulty, NextVDFDifficulty}]),
 				NextVDFDifficulty
 		end,
-	Worker ! {compute, {StepNumber, PrevOutput2, VDFDifficulty2}, self()},
+	Worker ! {compute, {StepNumber, PrevOutput2, VDFDifficulty2, Key}, self()},
 	State.
 
 get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpperBound) ->
@@ -1144,7 +1170,7 @@ apply_external_update3(Update, CurrentSession, State) ->
 			Steps2 = lists:sublist(Steps,
 					StepNumber - max(CurrentStepNumber, StartStepNumber)),
 			CurrentSession2 = update_session(CurrentSession, StepNumber,
-					StepCheckpointsMap, Steps2),
+					StepCheckpointsMap, Steps2, apply_external_update),
 			State2 = apply_external_update4(State, SessionKey, CurrentSession2, Steps2),
 			{reply, ok, State2};
 		false ->
