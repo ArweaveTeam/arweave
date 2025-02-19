@@ -3,15 +3,16 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, update/2]).
+-export([start_link/0, update/2, sample_update/2]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_verify_chunks.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_verify_chunks.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	reports = #{} :: #{binary() => #verify_report{}}
+	reports = #{} :: #{string() => #verify_report{}},
+	sample_reports = #{} :: #{string() => #sample_report{}}
 }).
 
 -define(REPORT_PROGRESS_INTERVAL, 10000).
@@ -24,9 +25,13 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
--spec update(binary(), #verify_report{}) -> ok.
+-spec update(string(), #verify_report{}) -> ok.
 update(StoreID, Report) ->
 	gen_server:cast(?MODULE, {update, StoreID, Report}).
+
+-spec sample_update(string(), #sample_report{}) -> ok.
+sample_update(StoreID, SampleReport) ->
+	gen_server:cast(?MODULE, {sample_update, StoreID, SampleReport}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -48,6 +53,12 @@ handle_cast(report_progress, State) ->
 	print_reports(Reports),
 	ar_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
 	{noreply, State};
+
+handle_cast({sample_update, StoreID, SampleReport}, State) ->
+	NewSampleReports = maps:put(StoreID, SampleReport, State#state.sample_reports),
+	print_sampling_header(),
+	print_sample_report(StoreID, SampleReport),
+	{noreply, State#state{sample_reports = NewSampleReports}};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -103,3 +114,17 @@ print_report(StoreID, Report) ->
 			Status
 		]
 	).
+
+print_sample_report(StoreID, #sample_report{
+	total = Total,
+	success = Success,
+	not_found = NotFound,
+	failure = Failure
+}) ->
+	ar:console("| ~-65s | ~7B | ~7B | ~7B | ~8B |~n",
+		[StoreID, Total, Success, NotFound, Failure]).
+
+print_sampling_header() ->
+	ar:console("|-------------------------------------------------------------------+---------+---------+---------+----------|~n", []),
+	ar:console("|                                                    Storage Module |  Total  | Success | Missing | Failure  |~n", []),
+	ar:console("|-------------------------------------------------------------------+---------+---------+---------+----------|~n", []).
