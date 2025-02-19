@@ -153,6 +153,8 @@ arweave_check_nofile() {
 }
 
 arweave_check_hugepages() {
+    # execute this check only on linux
+    test ${SYSTEM_NAME} != "Linux" && return 0
     recommendation="3500"
     value=$(sysctl -n vm.nr_hugepages)
 
