@@ -97,6 +97,11 @@ INPUT_FILE=""
 CHECK=""
 PREFIX=""
 
+# configure default curl parameters, an user can add
+# its own flag by setting CURL_EXTRA_OPTS variable.
+CURL_DEFAULT_OPTS="--retry 5 --retry-max-time 60 --fail-early -f --http1.1 --limit-rate 20M"
+CURL_OPTS="${CURL_DEFAULT_OPTS} ${CURL_EXTRA_OPTS}"
+
 _usage() {
 	printf -- "Usage: %s [-cdhlpf] [-b BASE_URL] [-P PREFIX] [-j JOBS] -I STORAGE_INDEX -i INPUT_FILE \n" "${0}"
 }
@@ -136,7 +141,7 @@ then
 fi
 
 # parse arguments using getopt
-args=$(getopt "cdhlpj:i:b:P:I:" $*)
+args=$(getopt "cdfhlpj:i:b:P:I:" $*)
 
 # check if getopt correctly parsed arguments
 if [ $? -ne 0 ]
@@ -270,10 +275,6 @@ fi
 curl=$(which curl)
 test -z "${curl}" && _error "curl not found" && exit 1
 
-# wget is required
-wget=$(which wget)
-test -z "${wget}" && _error "wget not found" && exit 1
-
 # openssl is required
 openssl=$(which openssl)
 test -z "${openssl}" && _error "openssl not found" && exit 1
@@ -290,41 +291,71 @@ _download_with_retry() {
 	local url="${1}"
 	local path="${2}"
 	local expected_size="${3}"
+	local expected_checksum="${4}"
 	local attempt=0
 	local max_attempts=5
 	local success=1
+	local partial=0
 
-	while [ $attempt -lt ${max_attempts} ]
+	while test ${attempt} -lt ${max_attempts}
 	do
-		# Download the file using wget, preserving the
-		# directory structure
-		wget_output=$(wget -c -O "$path" "$url" 2>&1)
-		wget_exit_code=$?
+		# Download the file using curl, preserving the directory structure
+		# A list of all curl exit code is available in the
+		# official documentation:
+		# https://everything.curl.dev/cmdline/exitcode.html
+		command="curl -sq --create-dirs ${CURL_OPTS} ${url} -o ${path}"
+		_debug "execute ${command}"
+		eval ${command}
+		curl_exit_code=${?}
+		_debug "curl exit code: ${curl_exit_code}"
 
-		if [ $wget_exit_code -eq 0 ]
+		# curl successfully downloaded the
+		# whole file. To be sure, let check
+		# at least the size.
+		if test "${curl_exit_code}" -eq 0
 		then
-			# Get the actual size of the downloaded file
-			local actual_size=$(stat -c %s "$path")
-			if [[ "$expected_size" == "$actual_size" ]]
+			local actual_size=$(stat -c "%s" "$path")
+			if ! test "$expected_size" -eq "$actual_size"
 			then
-				success=0
-				return 0
-			elif [[ "$actual_size" -gt "$expected_size" ]]
-			then
-				_error "Actual size greater than expected for $path. Expected $expected_size, got $actual_size. Deleting file and retrying..."
-				rm -f "$path"
-			else
 				_error "File size mismatch for $path. Expected $expected_size, got $actual_size. Retrying..."
+				continue
 			fi
-		else
-			if echo "$wget_output" | grep -q "416 Requested Range Not Satisfiable"
-			then
-				_error "Received 416 error for $path. Deleting the file and retrying..."
-				rm -f "$path"
-			else
-				_error "Failed to download $path. Error: $wget_output. Retrying..."
-			fi
+
+			# this was a partial download,
+			# we should ensure the file is
+			# correct with the checksum
+			# if ! test ${partial} -eq 0
+			# then
+			# 	_debug "Partial download detected: check integrity (${checksum})"
+			# 	_check_md5 ${path} ${checksum}
+			# 	test $? -ne 0 \
+			# 		&& _error "Failed to download $path (cheksum error)." \
+			# 		&& continue
+			# fi
+
+			# the download seems correct, we can
+			# break the loop.
+			success=0
+			break
 		fi
+
+		# curl downloaded a partial content of
+		# the file. In this case, curl exits
+		# and the download should use
+		# continuation (configured by default)
+		if test "${curl_exit_code}" -eq 18
+		then
+			_debug "Partial download detected. Continue downloading ${path}..."
+			partial=1
+			CURL_OPTS="${CURL_OPTS} -C -"
+			continue
+		fi
+
+		# curl exited with non-supported error
+		# code, then we retry to download the
+		# file and we assume it was corrupted.
+		_error "Failed to download $path.  Error (${curl_exit_code}): $curl_output. Retrying..."
+		rm -f "${path}"
 
 		# wait 3 second and then retry
 		sleep 3
@@ -333,10 +364,10 @@ _download_with_retry() {
 
 	if [ ${success} -ne 0 ]
 	then
-		_error "Failed to download $path after 5 attempts."
+		_error "Failed to download ${path} after 5 attempts."
 		exit 1
 	fi
-	return 1
+	exit 0
 }
 
 # wrapper around test to check file size.
@@ -407,7 +438,7 @@ _download_and_verify() {
 		check_file_exist=0
 
 		# if the file exists, extract its size
-		file_size=$(stat -c '%s' "${path_prefix}")
+		file_size=$(stat -c "%s" "${path_prefix}")
 		_check_size ${path_prefix} ${content_length} ${file_size}
 		check_file_size=$?
 	fi
@@ -423,8 +454,8 @@ _download_and_verify() {
 	# even if the size or the checksums are valid
 	if test "${flag_force}"
 	then
-		_debug "${path_prefix} force download..."
-		_download_with_retry "${full_url}" "${path_prefix}" "${content_length}"
+		_debug "${path_prefix} force download from ${full_url}..."
+		_download_with_retry "${full_url}" "${path_prefix}" "${content_length}" "${checksum}"
 	else
 		if test ${check_file_exist} -ne 0
 		then
@@ -437,15 +468,17 @@ _download_and_verify() {
 		elif test ${flag_check} && test ${check_file_checksum} -ne 0
 		then
 			_debug "${path_prefix} checksums are not the same, download ${full_url}"
+			rm -f "${path_prefix}"
 			_download_with_retry "${full_url}" "${path_prefix}" "${content_length}"
-		elif test ${check_file_size} -eq 0
-		then
-			_debug "${path_prefix} files don't have size size, download ${full_url}"
-			return 0
-		elif test ${check_file_size} -eq 0
+		elif test ${check_file_size} -ne 0
 		then
 			_debug "${path_prefix} files are not the same, download ${full_url}"
+			rm -f "${path_prefix}"
 			_download_with_retry "${full_url}" "${path_prefix}" "${content_length}"
+		elif test ${check_file_size} -eq 0
+		then
+			_debug "${path_prefix} file has a correct size."
+			return 0
 		fi
 	fi
 }
@@ -521,13 +554,13 @@ _presence() {
 
 		let l=${length}
 		let rl=${remote_length}
-		if [[ "${remote_length}" ]] && [[ $l -ne $rl ]]
+		if [ "${remote_length}" ] && [ $l -ne $rl ]
 		then
 			_debug "${relative_path} (error) local_length=${l} remote_checksum=${rl}"
 			return 255
 		fi
 
-		if [[ "${remote_checksum}" && "${checksum}" != "${remote_checksum}" ]]
+		if [ "${remote_checksum}" ] && [ "${checksum}" != "${remote_checksum}" ]
 		then
 			_debug "${relative_path} (error) local_checksum=${checksum} remote_checksum=${remote_checksum}"
 			return 254
@@ -556,7 +589,7 @@ then
 	else
 		storage_module_target="${BASE_URL}/${INPUT_INDEX}"
 		_debug "${storage_module_target} download"
-		curl -sqf "${storage_module_target}" -o "${INPUT_INDEX}"
+		curl -sqf ${CURL_OPTS} "${storage_module_target}" -o "${INPUT_INDEX}"
 		if test $? -ne 0
 		then
 			_error "${storage_module_target} can't be downloaded"
@@ -604,7 +637,7 @@ do
 	checksum=$(echo "${line}" | awk '{print $3}')
 
 	# Craft the full params list
-	params="${BASE_URL} ${relative_path} ${content_length} ${checksum}"
+	params="${BASE_URL} ${relative_path} ${content_length} ${checksum} ${PREFIX}"
 
 	if test "${flag_presence}"
 	then
