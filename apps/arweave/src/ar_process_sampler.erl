@@ -135,14 +135,26 @@ average_utilization(Util) ->
 	
 process_function(Pid) ->
 	case process_info(Pid, [current_function, current_stacktrace, registered_name,
-		status, memory, reductions, message_queue_len]) of
-	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _] ->
+		status, memory, reductions, message_queue_len, messages]) of
+	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _, _] ->
 		false;
-	[{current_function, _CurrentFunction}, {current_stacktrace, Stack},
+	[{current_function, CurrentFunction}, {current_stacktrace, Stack},
 			{registered_name, Name}, {status, Status},
 			{memory, Memory}, {reductions, Reductions},
-			{message_queue_len, MsgQueueLen}] ->
+			{message_queue_len, MsgQueueLen}, {messages, Messages}] ->
 		ProcessName = process_name(Name, Stack),
+		case MsgQueueLen > 1000 of
+			true ->
+				FormattedMessages =
+					[format_message(Msg) || Msg <- lists:sublist(Messages, 10)],
+				?LOG_DEBUG([{event, process_long_message_queue}, {pid, Pid},
+					{process_name, ProcessName}, {current_function, CurrentFunction},
+					{current_stacktrace, Stack}, {memory, Memory},
+					{reductions, Reductions}, {message_queue_len, MsgQueueLen},
+					{head_messages, FormattedMessages}]);
+			false ->
+				ok
+		end,
 		{true, {Status, ProcessName, Memory, Reductions, MsgQueueLen}};
 	_ ->
 		false
@@ -227,3 +239,37 @@ initial_call([{proc_lib, init_p_do_apply, _A, _Location} | Stack]) ->
 	initial_call(Stack);
 initial_call([InitialCall | _Stack]) ->
 	InitialCall.
+
+
+format_message(Msg) ->
+    TruncatedMsg = truncate_term(Msg),
+    Formatted = io_lib:format("~p", [TruncatedMsg]),
+    OutputStr = lists:flatten(Formatted),
+    LimitedOutput = limit_output(OutputStr, 1000),
+    io_lib:format("~s~n", [LimitedOutput]).
+
+limit_output(Str, Limit) ->
+    if
+        length(Str) > Limit -> lists:sublist(Str, Limit);
+        true -> Str
+    end.
+
+truncate_term(Term) when is_binary(Term) ->
+    if
+        byte_size(Term) > 8 ->
+            <<Head:8/binary, _/binary>> = Term,
+            %% Append ellipsis (three periods) to indicate truncation.
+            <<Head/binary, 46,46,46>>;
+        true ->
+            Term
+    end;
+truncate_term(Term) when is_list(Term) ->
+    [truncate_term(Elem) || Elem <- Term];
+truncate_term(Term) when is_tuple(Term) ->
+    List = tuple_to_list(Term),
+    TruncatedList = [truncate_term(Elem) || Elem <- List],
+    list_to_tuple(TruncatedList);
+truncate_term(Term) when is_map(Term) ->
+    maps:map(fun(_Key, Value) -> truncate_term(Value) end, Term);
+truncate_term(Term) ->
+    Term.
