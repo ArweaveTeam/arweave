@@ -1,0 +1,108 @@
+######################################################################
+## Default vm arguments templates used by Arweave.
+##
+## Some useful links to configure emulator flags:
+##   https://www.erlang.org/doc/apps/erts/erl_cmd.html#emulator-flags
+##
+## Some useful links on Erlang's memory management:
+##   https://www.erlang-factory.com/static/upload/media/139454517145429lukaslarsson.pdf
+##   https://www.youtube.com/watch?v=nuCYL0X-8f4
+##
+## Note for testing it's sometimes useful to limit the number of
+## schedulers that will be used, to do that: +S 16:16
+######################################################################
+## Name of the node
+-name arweave@127.0.0.1
+
+## Cookie for distributed erlang
+-setcookie arweave
+
+## This is now the default as of OTP-26
+## Multi-time warp mode in combination with time correction is the
+## preferred configuration.
+## It is only not the default in Erlang itself because it could break
+## older systems.
+# +C multi_time_warp
+
+## Uncomment the following line if running in a container.
+## +sbwt none
+
+## Increase number of concurrent ports/sockets
+##-env ERL_MAX_PORTS 4096
+
+## Tweak GC to run more often
+##-env ERL_FULLSWEEP_AFTER 10
+
+## +B [c | d | i]
+## Option c makes Ctrl-C interrupt the current shell instead of
+## invoking the emulator break
+## handler. Option d (same as specifying +B without an extra option)
+## disables the break handler. # Option i makes the emulator ignore any
+## break signal.
+## If option c is used with oldshell on Unix, Ctrl-C will restart the
+## shell process rather than
+## interrupt it.
+## Disable the emulator break handler
+## it easy to accidentally type ctrl-c when trying
+## to reach for ctrl-d. ctrl-c on a live node can
+## have very undesirable results
++Bi
+
+## Enables the kernel poll functionality.
++Ktrue
+
+## +A1024: emulator number of threads in the Async long thread pool for linked
+## in drivers, mostly unused
++A1024
+
+## +SDio1024: emulator Scheduler thread count for Dirty I/O, 200
+## threads for file access
++SDio1024
+
+## +MBsbct 103424: binary_alloc singleblock carrier threshold (in KiB)
+## (101MiB, default 512KiB). Blocks larger than the threshold are
+## placed in singleblock carriers. However multi-block carriers are
+## more efficient. Since we have so many 100MiB binary blocks due to
+## the recall range, set the threshold so that they are all placed in
+## multi-block carriers and not single-block carriers.
++MBsbct 103424
+
+## +MBsmbcs 10240: binary_alloc smallest multi-block carrier size (in
+## KiB) (10MiB, default 256KiB).
++MBsmbcs 10240
+
+## MBlmbcs 410629: binary_alloc largest multi-block carrier size (in
+## KiB) (~401MiB, default 5MiB). Set so that a single multi-block
+## carrier can hold roughly 4 full recall ranges.
++MBlmbcs 410629
+
+## +MBmmsbc 1024: binary_alloc maximum mseg_alloc singleblock carriers
+## (1024 carriers, default 256). Once exhausted, the emulator will start
+## using sys_alloc rather than mseg_alloc for singleblock carriers.
+## This can be slower.
++MBmmmbc 1024
+
+## +MBas aobf: emulator Memory Binary Allocation Strategy set to Address
+## Order Best Fit.
+## see: https://www.erlang.org/doc/man/erts_alloc.html#strategy
++MBas aobf
+
+## Sets scheduler busy wait threshold. Defaults to medium. The
+## threshold determines how long schedulers are to busy wait when
+## running out of work before going to sleep.
++sbwt very_long
+
+## Sets dirty scheduler busy wait threshold.
++sbwtdcpu very_long
+
+## Sets dirty IO scheduler busy wait threshold
++sbwtdio very_long
+
+##  Sets scheduler wakeup threshold.
++swt very_low
+
+##  Sets dirty scheduler wakeup threshold.
++swtdcpu very_low
+
+## Sets dirty IO scheduler wakeup threshold.
++swtdio very_low

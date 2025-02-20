@@ -65,21 +65,21 @@ PARENT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd  -P)"
 SYSTEM_NAME="$(uname -s)"
 RELEASE_ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 # Make the value available to variable substitution calls below
-export REL_NAME="{{ release_name }}"
-REL_VSN="{{ release_version }}"
+export REL_NAME="arweave"
+REL_VSN="2.9.4"
 
 # export these to match mix release environment variables
-export RELEASE_NAME="{{ release_name }}"
-export RELEASE_VSN="{{ release_version }}"
-export RELEASE_GIT_REV="{{ git_rev }}"
-export RELEASE_DATETIME="{{ datetime }}"
-export RELEASE_ERTS="{{ release_erts_version }}"
-export RELEASE_CC="{{ cc_version }}"
-export RELEASE_CMAKE="{{ cmake_version }}"
-export RELEASE_GMAKE="{{ gmake_version }}"
+export RELEASE_NAME="arweave"
+export RELEASE_VSN="2.9.4"
+export RELEASE_GIT_REV="f5642b0fdab3f2a82a80d107ea6878bb85a7617e"
+export RELEASE_DATETIME="2025-03-06T14:22:51Z"
+export RELEASE_ERTS="12.2.1"
+export RELEASE_CC="cc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0"
+export RELEASE_CMAKE="cmake version 3.22.1"
+export RELEASE_GMAKE="GNU Make 4.3"
 export RELEASE_PROG="${SCRIPT}"
 
-ERTS_VSN="{{ erts_vsn }}"
+ERTS_VSN="12.2.1"
 REL_DIR="$RELEASE_ROOT_DIR/releases/$REL_VSN"
 RUNNER_LOG_DIR="${RUNNER_LOG_DIR:-$RELEASE_ROOT_DIR/logs}"
 export ESCRIPT_NAME="${ESCRIPT_NAME-$SCRIPT}"
@@ -100,14 +100,14 @@ export RELX_RPC_TIMEOUT
 
 
 # start/stop/install/upgrade pre/post hooks
-PRE_START_HOOKS="{{{ pre_start_hooks }}}"
-POST_START_HOOKS="{{{ post_start_hooks }}}"
-PRE_STOP_HOOKS="{{{ pre_stop_hooks }}}"
-POST_STOP_HOOKS="{{{ post_stop_hooks }}}"
-PRE_INSTALL_UPGRADE_HOOKS="{{{ pre_install_upgrade_hooks }}}"
-POST_INSTALL_UPGRADE_HOOKS="{{{ post_install_upgrade_hooks }}}"
-STATUS_HOOK="{{{ status_hook }}}"
-EXTENSIONS="{{{ extensions }}}"
+PRE_START_HOOKS=""
+POST_START_HOOKS=""
+PRE_STOP_HOOKS=""
+POST_STOP_HOOKS=""
+PRE_INSTALL_UPGRADE_HOOKS=""
+POST_INSTALL_UPGRADE_HOOKS=""
+STATUS_HOOK=""
+EXTENSIONS=""
 
 _warning() {
     printf -- "warning: %s\n" "${*}" 1>&2
@@ -954,7 +954,7 @@ relx_disable_hooks() {
 relx_is_extension() {
     EXTENSION=$1
     case "$EXTENSION" in
-	# {{ extensions }})
+	# )
 	#    echo "1"
 	# ;;
 	*)
@@ -968,7 +968,7 @@ relx_get_extension_script() {
     # below are the extensions declarations
     # of the form:
     # foo_extension="path/to/foo_script";bar_extension="path/to/bar_script"
-    {{{extension_declarations}}}
+
     # get the command extension (eg. foo) and
     # obtain the actual script filename that it
     # refers to (eg. "path/to/foo_script"
