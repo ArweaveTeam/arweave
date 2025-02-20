@@ -12,7 +12,16 @@ COMMAND=$2
 create_overlay_var() {
   local target="_vars.config"
   local name="${1}"
-  local value="$(eval ${2} 2>/dev/null || echo undefined)"
+  local value
+
+  # if DEFAULT variable is set we configure all value with
+  # its value
+  if test "${DEFAULT}"
+  then
+    value="${DEFAULT}"
+  else
+    value="$(eval ${2} 2>/dev/null || echo undefined)"
+  fi
 
   if ! echo "${name}" | grep -E '^[a-z]+[0-9A-Za-z_]+$' >/dev/null
   then
