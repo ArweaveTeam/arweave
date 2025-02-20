@@ -1938,8 +1938,13 @@ validate_fetched_chunk(Args) ->
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case Offset > T orelse not ar_node:is_joined() of
 		true ->
-			log_chunk_error(RequestOrigin, miner_requested_disk_pool_chunk,
-				[{disk_pool_threshold, T}, {end_offset, Offset}]),
+			case RequestOrigin of
+				miner ->
+					log_chunk_error(RequestOrigin, miner_requested_disk_pool_chunk,
+							[{disk_pool_threshold, T}, {end_offset, Offset}]);
+				_ ->
+					ok
+			end,
 			{true, none};
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
