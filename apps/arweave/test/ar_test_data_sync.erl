@@ -10,7 +10,7 @@
         tx/2, tx/3, tx/4, wait_until_syncs_chunk/2,
         wait_until_syncs_chunks/1, wait_until_syncs_chunks/2, wait_until_syncs_chunks/3,
         get_tx_offset/2, get_tx_data/1,
-        post_random_blocks/1, get_records_with_proofs/3, post_proofs/4,
+        post_random_blocks/1, get_records_with_proofs/3, post_proofs/4, post_proofs/5,
         generate_random_split/1, generate_random_original_split/1,
         generate_random_standard_split/0, generate_random_original_v1_split/0]).
 
@@ -40,10 +40,12 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 				{Value, Options}
 		end,
 	{ok, Config} = application:get_env(arweave, config),
-	Options3 = Options2#{ config => Config },
+	Options3 = Options2#{ config => Config#config{ 
+		enable = Config#config.enable ++ [pack_served_chunks] } },
 	ar_test_node:start(Options3),
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig),
+	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig#config{ 
+		enable = Config#config.enable ++ [pack_served_chunks] }),
 	ar_test_node:connect_to_peer(peer1),
 	Wallet.
 
@@ -316,10 +318,18 @@ post_blocks(Wallet, BlockMap) ->
 	).
 
 post_proofs(Peer, B, TX, Chunks) ->
+	post_proofs(Peer, B, TX, Chunks, false).
+post_proofs(Peer, B, TX, Chunks, IsTemporary) ->
 	Proofs = build_proofs(B, TX, Chunks),
+
+	HttpStatus = case IsTemporary of
+		true -> <<"303">>;
+		false -> <<"200">>
+	end,
+
 	lists:foreach(
 		fun({_, Proof}) ->
-			{ok, {{<<"200">>, _}, _, _, _, _}} =
+			{ok, {{HttpStatus, _}, _, _, _, _}} =
 				ar_test_node:post_chunk(Peer, ar_serialize:jsonify(Proof))
 		end,
 		Proofs

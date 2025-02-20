@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([get_store_id_to_device_map/0, is_ready/0, acquire_lock/3, release_lock/2]).
+-export([get_store_id_to_device_map/0, is_ready/0, acquire_lock/3, release_lock/2,
+	set_device_lock_metric/3]).
 
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2]).
 
@@ -72,6 +73,7 @@ acquire_lock(Mode, StoreID, CurrentStatus) ->
 		true ->
 			ok;
 		false ->
+			set_device_lock_metric(StoreID, Mode, NewStatus),
 			?LOG_INFO([{event, acquire_device_lock}, {mode, Mode}, {store_id, StoreID},
 					{old_status, CurrentStatus}, {new_status, NewStatus}])
 	end,
@@ -79,6 +81,17 @@ acquire_lock(Mode, StoreID, CurrentStatus) ->
 
 release_lock(Mode, StoreID) ->
 	gen_server:cast(?MODULE, {release_lock, Mode, StoreID}).
+
+set_device_lock_metric(StoreID, Mode, Status) ->
+	StatusCode = case Status of
+		off -> -1;
+		paused -> 0;
+		active -> 1;
+		complete -> 2;
+		_ -> -2		
+	end,
+	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
+	prometheus_gauge:set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -180,6 +193,14 @@ get_system_device(StorageModule) ->
 		_ -> Device
 	end.
 
+do_acquire_lock(Mode, "default", State) ->
+	%% "default" storage module is a special case. It can only be in sync mode.
+	case Mode of
+		sync ->
+			{true, State};
+		_ ->
+			{false, State}
+	end;
 do_acquire_lock(Mode, StoreID, State) ->
 	MaxPrepareLocks = State#state.num_replica_2_9_workers,
 	Device = maps:get(StoreID, State#state.store_id_to_device),

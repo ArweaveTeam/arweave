@@ -144,6 +144,7 @@ init({StoreID, Packing}) ->
                 %% Entropy generation is complete
                 complete
         end,
+    
     BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
     RepackCursor =
         case Packing == ar_storage_module:get_packing(StoreID) of
@@ -164,6 +165,7 @@ init({StoreID, Packing}) ->
         prepare_status = PrepareStatus,
         repack_cursor = RepackCursor
     },
+    ar_device_lock:set_device_lock_metric(StoreID, prepare, PrepareStatus),
 	{ok, State}.
 
 
@@ -207,7 +209,7 @@ do_prepare_entropy(State) ->
     #state{ 
         cursor = Start, range_start = RangeStart, range_end = RangeEnd,
         packing = {replica_2_9, RewardAddr},
-        store_id = StoreID, repack_cursor = RepackCursor, slice_index = PreviousSliceIndex
+        store_id = StoreID, repack_cursor = RepackCursor
     } = State,
 
     BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Start),
@@ -226,24 +228,9 @@ do_prepare_entropy(State) ->
     %% End of sanity checks.
 
     SliceIndex = ar_replica_2_9:get_slice_index(BucketEndOffset),
-    case SliceIndex of
-        _ when SliceIndex /= PreviousSliceIndex ->
-            %% Whenever the slice changes BucketEndOffset might be an offset that was
-            %% written to in a previous iteration. Furthermore it's possible (though unlikely),
-            %% that the write is still in process. So to make sure our "is recorded" checks
-            %% below consider all pending writes, we'll wait for the entropy storage process
-            %% to complete before proceeding. 
-            %%
-            %% In practice we only expect pending writes to be a problem in tests. It can
-            %% hypothetically happen in production but is unlikely.
-            ?LOG_DEBUG([{event, prepare_replica_2_9_slice_changed}, {store_id, StoreID},
-                    {bucket_end_offset, BucketEndOffset},
-                    {previous_slice_index, PreviousSliceIndex},
-                    {slice_index, SliceIndex}]),
-            ar_entropy_storage:is_ready(StoreID);
-        _ ->
-            ok
-    end,
+
+    %% Make sure all prior entropy writes are complete.
+    ar_entropy_storage:is_ready(StoreID),
 
     CheckRangeEnd =
         case BucketEndOffset > PaddedRangeEnd of
@@ -259,7 +246,7 @@ do_prepare_entropy(State) ->
                 false
         end,
 
-    Start2 = BucketEndOffset + ?DATA_CHUNK_SIZE,
+    Start2 = advance_entropy_offset(BucketEndOffset, StoreID),
     State2 = State#state{ cursor = Start2, slice_index = SliceIndex },
     CheckRepackCursor =
         case CheckRangeEnd of
@@ -333,18 +320,14 @@ do_prepare_entropy(State) ->
                         %% Wait for the previous store_entropy to complete. Should only
                         %% return 'false' if the entropy storage process is down (e.g. during
                         %% shutdown)
-                        case ar_entropy_storage:is_ready(StoreID) of
-                            true ->
-                                ar_entropy_storage:store_entropy(
-                                    StoreID, Entropies, BucketEndOffset,
-                                    IterationEnd, EntropyKeys, RewardAddr);
-                            false ->
-                                {error, entropy_storage_not_ready}
-                        end
+                        ar_entropy_storage:store_entropy(
+                            StoreID, Entropies, BucketEndOffset, RangeStart,
+                            IterationEnd, EntropyKeys, RewardAddr)
                 end
         end,
     case StoreEntropy of
         complete ->
+            ar_device_lock:set_device_lock_metric(StoreID, prepare, complete),
             State#state{ prepare_status = complete };
         waiting_for_repack ->
             ?LOG_INFO([{event, waiting_for_repacking},
@@ -401,6 +384,16 @@ generate_entropies(RewardAddr, PaddedEndOffset) ->
 	end,
 	Entropies.
 
+advance_entropy_offset(BucketEndOffset, StoreID) ->
+    ID = ar_chunk_storage_replica_2_9_1_entropy,
+    case ar_sync_record:get_next_unsynced_interval(
+            BucketEndOffset, infinity, ID, StoreID) of
+        not_found ->
+            BucketEndOffset + ?DATA_CHUNK_SIZE;
+        {_, Start} ->
+            Start + ?DATA_CHUNK_SIZE
+    end.
+
 generate_entropy_keys(RewardAddr, Offset) ->
 	generate_entropy_keys(RewardAddr, Offset, 0).
 generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
@@ -433,8 +426,6 @@ flush_entropy_messages() ->
 	after 0 ->
 		ok
 	end.
-
-    
 
 read_cursor(StoreID, Default) ->
     Filepath = ar_chunk_storage:get_filepath("prepare_replica_2_9_cursor", StoreID),

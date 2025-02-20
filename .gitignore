@@ -35,3 +35,4 @@ release/output
 .tmp
 node_modules
 screenlog.0
+_*

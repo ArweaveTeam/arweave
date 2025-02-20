@@ -707,54 +707,11 @@ start(Config) ->
 	end,
 	start_dependencies().
 
+
 start(normal, _Args) ->
 	{ok, Config} = application:get_env(arweave, config),
-	%% Configure logging for console output.
-	LoggerFormatterConsole = #{
-		legacy_header => false,
-		single_line => true,
-		chars_limit => 16256,
-		max_size => 8128,
-		depth => 256,
-		template => [time," [",level,"] ",mfa,":",line," ",msg,"\n"]
-	},
-	logger:set_handler_config(default, formatter, {logger_formatter, LoggerFormatterConsole}),
-	logger:set_handler_config(default, level, error),
-	%% Configure logging to the logfile.
-	LoggerConfigDisk = #{
-		file => lists:flatten(filename:join(Config#config.log_dir, atom_to_list(node()))),
-		type => wrap,
-		max_no_files => 10,
-		max_no_bytes => 51418800 % 10 x 5MB
-	},
-	logger:add_handler(disk_log, logger_disk_log_h,
-			#{ config => LoggerConfigDisk, level => info }),
-	Level =
-		case Config#config.debug of
-			false ->
-				info;
-			true ->
-				DebugLoggerConfigDisk = #{
-					file => lists:flatten(filename:join([Config#config.log_dir, "debug_logs",
-							atom_to_list(node())])),
-					type => wrap,
-					max_no_files => 20,
-					max_no_bytes => 51418800 % 10 x 5MB
-				},
-				logger:add_handler(disk_debug_log, logger_disk_log_h,
-						#{ config => DebugLoggerConfigDisk, level => debug }),
-				debug
-		end,
-	LoggerFormatterDisk = #{
-		chars_limit => 16256,
-		max_size => 8128,
-		depth => 256,
-		legacy_header => false,
-		single_line => true,
-		template => [time," [",level,"] ",mfa,":",line," ",msg,"\n"]
-	},
-	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
-	logger:set_application_level(arweave, Level),
+	%% Configure logger
+	ar_logger:init(Config),
 	%% Start the Prometheus metrics subsystem.
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
@@ -911,6 +868,10 @@ tests(Mod) ->
 	tests(test, Mod).
 
 tests(TestType, Mods, Config) when is_list(Mods) ->
+	TotalTimeout = case TestType of
+		e2e -> ?E2E_TEST_TIMEOUT;
+		_ -> ?TEST_TIMEOUT
+	end,
 	try
 		start_for_tests(TestType, Config),
 		ar_test_node:boot_peers(TestType),
@@ -922,7 +883,7 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 	end,
 	Result =
 		try
-			eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}])
+			eunit:test({timeout, TotalTimeout, [Mods]}, [verbose, {print_depth, 100}])
 		after
 			ar_test_node:stop_peers(TestType)
 		end,

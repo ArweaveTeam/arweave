@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, register_workers/0, ready_for_work/1, read_range/4]).
+-export([start_link/1, register_workers/0, read_range/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -42,18 +42,21 @@ register_workers() ->
 
 register_read_workers() ->
 	{ok, Config} = application:get_env(arweave, config),
+	StoreIDs = [
+		ar_storage_module:id(StorageModule) || StorageModule <- Config#config.storage_modules
+	] ++ ["default"],
 	{Workers, WorkerMap} = 
 		lists:foldl(
-			fun(StorageModule, {AccWorkers, AccWorkerMap}) ->
-				StoreID = ar_storage_module:id(StorageModule),
-				Name = list_to_atom("ar_data_sync_worker_" ++ StoreID),
+			fun(StoreID, {AccWorkers, AccWorkerMap}) ->
+				Label = ar_storage_module:label_by_id(StoreID),
+				Name = list_to_atom("ar_data_sync_worker_" ++ Label),
 
 				Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name]),
 
 				{[ Worker | AccWorkers], AccWorkerMap#{StoreID => Name}}
 			end,
 			{[], #{}},
-			Config#config.storage_modules
+			StoreIDs
 		),
 	{Workers, WorkerMap}.
 
@@ -68,7 +71,7 @@ ready_for_work(StoreID) ->
 	end.
 
 read_range(Start, End, OriginStoreID, TargetStoreID) ->
-	case ar_chunk_copy:ready_for_work(OriginStoreID) of
+	case ready_for_work(OriginStoreID) of
 		true ->
 			Args = {Start, End, OriginStoreID, TargetStoreID},
 			gen_server:cast(?MODULE, {read_range, Args}),
@@ -185,8 +188,6 @@ process_queue(Worker) ->
 				{empty, _} ->
 					Worker;
 				{{value, Args}, Q2}->
-					?LOG_DEBUG([{event, process_queue}, {module, ?MODULE},
-						{active_count, Worker#worker_tasks.active_count}, {args, Args}]),
 					gen_server:cast(Worker#worker_tasks.worker, {read_range, Args}),
 					Worker2 = Worker#worker_tasks{
 						task_queue = Q2,
@@ -225,7 +226,8 @@ helpers_test_() ->
 	[
 		{timeout, 30, fun test_ready_for_work/0},
 		{timeout, 30, fun test_enqueue_read_range/0},
-		{timeout, 30, fun test_process_queue/0}
+		{timeout, 30, fun test_process_queue/0},
+		{timeout, 30, fun test_register_workers/0}
 	].
 
 test_ready_for_work() ->
@@ -308,3 +310,13 @@ test_process_queue() ->
 		queue:to_list(ExpectedWorker3#worker_tasks.task_queue),
 		queue:to_list(Worker3#worker_tasks.task_queue)).
 
+test_register_workers() ->
+	{ok, Config} = application:get_env(arweave, config),
+	StoreIDs = [
+		ar_storage_module:id(StorageModule) || StorageModule <- Config#config.storage_modules],
+	lists:foreach(
+		fun(StoreID) ->
+			?assertEqual(true, ready_for_work(StoreID))
+		end,
+		StoreIDs ++ ["default"]
+	).

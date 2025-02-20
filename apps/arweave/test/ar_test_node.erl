@@ -597,8 +597,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
-				double_check_nonce_limiter, serve_wallet_lists,
-				pack_served_chunks | Config#config.enable],
+				double_check_nonce_limiter, serve_wallet_lists | Config#config.enable],
 		debug = true
 	}),
 	ar:start_dependencies(),
@@ -626,23 +625,22 @@ restart(Node) ->
 restart_with_config(Node, Config) ->
 	remote_call(Node, ?MODULE, restart_with_config, [Config], 90000).
 
-start_peer(Node, Args) when is_list(Args) ->
-	remote_call(Node, ?MODULE, start , Args, ?PEER_START_TIMEOUT),
+start_peer(Node, Args) when is_map(Args) ->
+	remote_call(Node, ?MODULE, start, [Args], ?PEER_START_TIMEOUT),
 	wait_until_joined(Node),
 	wait_until_syncs_genesis_data(Node);
 
 %% @doc Start a fresh peer node with the given genesis block.
 start_peer(Node, B0) ->
-	start_peer(Node, [B0]).
+	start_peer(Node, #{ b0 => B0 }).
 
 %% @doc Start a fresh peer node with the given genesis block and mining address.
 start_peer(Node, B0, RewardAddr) ->
-	start_peer(Node, [B0, RewardAddr]).
+	start_peer(Node, #{ b0 => B0, addr => RewardAddr }).
 
 %% @doc Start a fresh peer node with the given genesis block, mining address, and config.
 start_peer(Node, B0, RewardAddr, Config) ->
-	start_peer(Node, [B0, RewardAddr, Config]).
-
+	start_peer(Node, #{ b0 => B0, addr => RewardAddr, config => Config }).
 
 %% @doc Fetch the fee estimation and the denomination (call GET /price2/[size])
 %% from the given node.

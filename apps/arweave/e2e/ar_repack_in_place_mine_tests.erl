@@ -29,6 +29,8 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 		{from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
 	ValidatorNode = peer1,
 	RepackerNode = peer2,
+	ar_test_node:stop(ValidatorNode),
+	ar_test_node:stop(RepackerNode),
 	{Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
 		RepackerNode, FromPackingType, wallet_a),
 
@@ -54,8 +56,17 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 		mining_addr = undefined
 	}),
 
-	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
-	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
+	%% Due to how we launch the unpacked source node it *does* end up syncing data in 
+	%% the overlap. Main difference is that with the unpacked source node we launch a
+	%% spora node, and then sync data to the unpacked node. It's the syncing process that
+	%% writes data to the overlap.
+	ExpectedPartitionSize = case FromPackingType of
+		unpacked -> ?PARTITION_SIZE +  ar_storage_module:get_overlap(unpacked);
+		_ -> ?PARTITION_SIZE
+	end,
+
+	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ExpectedPartitionSize),
+	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ExpectedPartitionSize),
 
 	ar_test_node:stop(RepackerNode),
 

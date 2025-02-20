@@ -11,9 +11,12 @@
 		list_files/2, run_defragmentation/0,
 		get_storage_module_path/2, get_chunk_storage_path/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
-		sync_record_id/1, store_chunk/6, write_chunk/4, record_chunk/7]).
+		sync_record_id/1, store_chunk/6, write_chunk/4, record_chunk/7, read_offset/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+
+%% Used in tests.
+-export([delete_chunk/2]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_sup.hrl").
@@ -120,6 +123,9 @@ put(PaddedOffset, Chunk, StoreID) ->
 put(PaddedOffset, Chunk, Packing, StoreID) ->
 	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk, Packing}, 180_000) of
+		{'EXIT', {shutdown, {gen_server, call, _}}} ->
+			%% Handle to avoid the large badmatch log on shutdown.
+			{error, shutdown};
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			?LOG_ERROR([{event, gen_server_timeout_putting_chunk},
 				{padded_offset, PaddedOffset},
@@ -254,6 +260,9 @@ delete(Offset) ->
 delete(PaddedOffset, StoreID) ->
 	GenServerID = name(StoreID),
 	case catch gen_server:call(GenServerID, {delete, PaddedOffset}, 20000) of
+		{'EXIT', {shutdown, {gen_server, call, _}}} ->
+			%% Handle to avoid the large badmatch log on shutdown.
+			{error, shutdown};
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -305,6 +314,18 @@ set_entropy_complete(StoreID) ->
 
 set_repacking_complete(StoreID) ->
 	gen_server:cast(name(StoreID), repacking_complete).
+
+read_offset(PaddedOffset, StoreID) ->
+	{_ChunkFileStart, Filepath, Position, _ChunkOffset} =
+			ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
+	case file:open(Filepath, [read, raw]) of
+		{ok, F} ->
+			Result = file:pread(F, Position, ?OFFSET_SIZE),
+			file:close(F),
+			Result;
+		Error ->
+			Error
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -361,6 +382,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	
 	State2 = case RepackInPlacePacking of
 		none ->
+			ar_device_lock:set_device_lock_metric(StoreID, repack, off),
 			State#state{
 				repack_cursor = none,
 				repack_status = off,
@@ -376,6 +398,7 @@ init({StoreID, RepackInPlacePacking}) ->
 					{cursor, RepackCursor},
 					{store_id, StoreID},
 					{target_packing, ar_serialize:encode_packing(Packing, true)}]),
+			ar_device_lock:set_device_lock_metric(StoreID, repack, paused),
 			State#state{ 
 				repack_cursor = RepackCursor, 
 				target_packing = Packing,
@@ -453,6 +476,7 @@ handle_cast({expire_repack_request, Ref}, #state{ packing_map = Map } = State) -
 handle_cast(repacking_complete, State) ->
 	#state{ store_id = StoreID } = State,
 	ar_device_lock:release_lock(repack, StoreID),
+	ar_device_lock:set_device_lock_metric(StoreID, repack, complete),
 	State2 = State#state{ repack_status = complete },
 	maybe_log_repacking_complete(State2),
 	{noreply, State2};

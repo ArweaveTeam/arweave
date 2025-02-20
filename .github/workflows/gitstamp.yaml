@@ -3,12 +3,13 @@
 name: Gitstamp
 on: 
   push:
-  pull_request_target:
-    types: [opened]
     branches:
       - 'master'
       - 'release/**'
       - 'releases/**'
+  pull_request_target:
+    types: [closed]
+
 jobs:
   gitstamp:
     runs-on: ubuntu-latest

@@ -5,9 +5,10 @@
 
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
-	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3, assert_has_entropy/4,
+	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3,
+	assert_has_entropy/4, assert_no_entropy/4,
 	assert_chunks/3, assert_chunks/4, assert_no_chunks/2,
-	assert_partition_size/3, assert_empty_partition/3,
+	assert_partition_size/3, assert_partition_size/4, assert_empty_partition/3,
 	assert_mine_and_validate/3]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -80,26 +81,51 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 	end,
 	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(TempNode, spora_2_6, wallet_a),
 	{_, StorageModules} = ar_e2e:source_node_storage_modules(Node, unpacked, wallet_a),
-	[B0 | _] = Blocks,
+	[B0, _, {TX2, _} | _] = Blocks,
 	{ok, Config} = ar_test_node:get_config(Node),
 	ar_test_node:start_other_node(Node, B0, Config#config{
 		peers = [ar_test_node:peer_ip(TempNode)],
-		start_from_latest_state = true,
 		storage_modules = StorageModules,
 		auto_join = true
 	}, true),
 
 	?LOG_INFO("Source node ~p started.", [Node]),
-
+	
+	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
+	
 	ar_e2e:assert_partition_size(Node, 0, unpacked),
 	ar_e2e:assert_partition_size(Node, 1, unpacked),
+	ar_e2e:assert_partition_size(Node, 2, unpacked, floor(0.5*?PARTITION_SIZE)),
 
-	ar_e2e:assert_syncs_range(Node, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
 	ar_e2e:assert_chunks(Node, unpacked, Chunks),
+
+	ar_e2e:assert_empty_partition(Node, 3, unpacked),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
 	ar_test_node:stop(TempNode),
+
+	ar_test_node:restart_with_config(Node, Config#config{
+		peers = [],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true
+	}),
+
+	%% pack_served_chunks is not enabled but the data is stored unpacked, so we should
+	%% return it
+	{ok, {{<<"200">>, _}, _, Data, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => ar_test_node:peer_ip(Node),
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX2#tx.id)) ++ "/data"
+		}),
+	{ok, ExpectedData} = ar_e2e:load_chunk_fixture(
+		unpacked, ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE)),
+	?assertEqual(ExpectedData, ar_util:decode(Data)),
+
+	?LOG_INFO("Source node ~p restarted.", [Node]),
+
 	{Blocks, undefined, Chunks};
 start_source_node(Node, PackingType, WalletFixture) ->
 	?LOG_INFO("Starting source node ~p with packing type ~p and wallet fixture ~p",
@@ -124,21 +150,29 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	%% Note: small chunks will be padded to 256 KiB. So B1 actually contains 3 chunks of data
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
-	B1 = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE)),
-	B2 = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE)),
-	B3 = mine_block(Node, Wallet, ?PARTITION_SIZE),
-	B4 = mine_block(Node, Wallet, ?PARTITION_SIZE),
-	B5 = mine_block(Node, Wallet, ?PARTITION_SIZE),
+	{TX1, B1} = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), false), %% p1
+	{TX2, B2} = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), false), %% p1
+	{TX3, B3} = mine_block(Node, Wallet, ?PARTITION_SIZE, false), %% p1 to p2
+	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ?PARTITION_SIZE), false), %% p2
+	{TX5, B5} = mine_block(Node, Wallet, ?PARTITION_SIZE, true), %% p3 chunks are stored in disk pool
 
 	%% List of {Block, EndOffset, ChunkSize}
 	Chunks = [
-		{B1, ?PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE},
-		{B1, ?PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 2359296
+		{B1, ?PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
+		%% PaddedEndOffset: 2621440
+		{B1, ?PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
+		%% PaddedEndOffset: 2883584
 		{B1, ?PARTITION_SIZE + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
+		%% PaddedEndOffset: 3145728
 		{B2, ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
+		%% PaddedEndOffset: 3407872
 		{B3, ?PARTITION_SIZE + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 3670016
 		{B3, ?PARTITION_SIZE + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 3932160
 		{B3, ?PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		%% PaddedEndOffset: 4194304
 		{B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
 
@@ -146,17 +180,28 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
 
-	ar_e2e:assert_partition_size(Node, 0, SourcePacking),
-	ar_e2e:assert_partition_size(Node, 1, SourcePacking),
+	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
 
-	ar_e2e:assert_syncs_range(Node, 
-		?PARTITION_SIZE,
-		2*?PARTITION_SIZE + ar_storage_module:get_overlap(SourcePacking)),
+	%% No overlap since we aren't syncing or repacking chunks.
+	ar_e2e:assert_partition_size(Node, 0, SourcePacking, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(Node, 1, SourcePacking, ?PARTITION_SIZE),
+	ar_e2e:assert_partition_size(Node, 2, SourcePacking, floor(0.5*?PARTITION_SIZE)),
+	
 	ar_e2e:assert_chunks(Node, SourcePacking, Chunks),
+
+	ar_e2e:assert_empty_partition(Node, 3, SourcePacking),
+
+	%% pack_served_chunks is not enabled so we shouldn't return unpacked data
+	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
+		ar_http:req(#{
+			method => get,
+			peer => ar_test_node:peer_ip(Node),
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX1#tx.id)) ++ "/data"
+		})),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
-	{[B0, B1, B2, B3, B4, B5], RewardAddr, Chunks}.
+	{[B0, {TX1, B1}, {TX2, B2}, {TX3, B3}, {TX4, B4}, {TX5, B5}], RewardAddr, Chunks}.
 
 max_chunk_offset(Chunks) ->
 	lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
@@ -175,12 +220,10 @@ source_node_storage_modules(SourcePacking) ->
 		{?PARTITION_SIZE, 1, SourcePacking},
 		{?PARTITION_SIZE, 2, SourcePacking},
 		{?PARTITION_SIZE, 3, SourcePacking},
-		{?PARTITION_SIZE, 4, SourcePacking},
-		{?PARTITION_SIZE, 5, SourcePacking},
-		{?PARTITION_SIZE, 6, SourcePacking}
+		{?PARTITION_SIZE, 4, SourcePacking}
 	].
 	
-mine_block(Node, Wallet, DataSize) ->
+mine_block(Node, Wallet, DataSize, IsTemporary) ->
 	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
 	Addr = ar_wallet:to_address(Wallet),
 	{TX, Chunks} = generate_tx(Node, Wallet, WeaveSize, DataSize),
@@ -188,10 +231,10 @@ mine_block(Node, Wallet, DataSize) ->
 
 	?assertEqual(Addr, B#block.reward_addr),
 
-	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks),
+	Proofs = ar_test_data_sync:post_proofs(Node, B, TX, Chunks, IsTemporary),
 	
 	ar_test_data_sync:wait_until_syncs_chunks(Node, Proofs, infinity),
-	B.
+	{TX, B}.
 
 generate_tx(Node, Wallet, WeaveSize, DataSize) ->
 	Chunks = generate_chunks(Node, WeaveSize, DataSize, []),
@@ -230,7 +273,6 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
-			?LOG_INFO("Intersection: ~p, RangeSize: ~p, StoreID: ~p", [Intersection, RangeSize, StoreID]),
 			Intersection >= RangeSize
 		end,
 		100,
@@ -239,7 +281,7 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 	case HasEntropy of
 		true ->
 			ok;
-		false ->
+		_ ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
@@ -247,6 +289,31 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 				iolist_to_binary(io_lib:format(
 					"~s failed to prepare entropy range ~p - ~p. Intersection: ~p", 
 					[Node, StartOffset, EndOffset, Intersection])))
+	end.
+
+assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
+	HasEntropy = ar_util:do_until(
+		fun() -> 
+			Intersection = ar_test_node:remote_call(
+				Node, ar_sync_record, get_intersection_size,
+				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+			Intersection > 0
+		end,
+		100,
+		15_000
+	),
+	case HasEntropy of
+		true ->
+			Intersection = ar_test_node:remote_call(
+				Node, ar_sync_record, get_intersection_size,
+				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+			?assert(false, 
+				iolist_to_binary(io_lib:format(
+					"~s found entropy when it should not have. Range: ~p - ~p. "
+					"Intersection: ~p", 
+					[Node, StartOffset, EndOffset, Intersection])));
+		_ ->
+			ok
 	end.
 
 assert_syncs_range(Node, StartOffset, EndOffset) ->
@@ -258,8 +325,9 @@ assert_syncs_range(Node, StartOffset, EndOffset) ->
 	case HasRange of
 		true ->
 			ok;
-		false ->
-			SyncRecord = ar_http_iface_client:get_sync_record(Node, json),
+		_ ->
+			SyncRecord = ar_http_iface_client:get_sync_record(
+				ar_test_node:peer_ip(Node)),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s failed to sync range ~p - ~p. Sync record: ~p", 
@@ -270,7 +338,7 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 	ar_util:do_until(
 		fun() -> has_range(Node, StartOffset, EndOffset) end,
 		1000,
-		60_000
+		15_000
 	),
 	?assertEqual(false, has_range(Node, StartOffset, EndOffset),
 		iolist_to_binary(io_lib:format(
@@ -278,23 +346,26 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			[Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
-	Size = ?PARTITION_SIZE,
+	Overlap = ar_storage_module:get_overlap(Packing),
+	assert_partition_size(Node, PartitionNumber, Packing, ?PARTITION_SIZE + Overlap).
+assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
 		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
-	?assert(
-		ar_util:do_until(
-			fun() -> 
-				ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
-					[PartitionNumber, Packing]) >= Size
-			end,
-			100,
-			60_000
-		),
+	ar_util:do_until(
+		fun() -> 
+			ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
+				[PartitionNumber, Packing]) >= Size
+		end,
+		100,
+		120_000
+	),
+	?assertEqual(
+		Size,
+		ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
+			[PartitionNumber, Packing]),
 		iolist_to_binary(io_lib:format(
-			"~s partition ~p,~p failed to reach size ~p. Current size: ~p.", 
-				[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size,
-				ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
-					[PartitionNumber, Packing])]))).
+			"~s partition ~p,~p was not the expected size.", 
+			[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true)]))).
 
 assert_empty_partition(Node, PartitionNumber, Packing) ->
 	ar_util:do_until(
@@ -303,14 +374,14 @@ assert_empty_partition(Node, PartitionNumber, Packing) ->
 				[PartitionNumber, Packing]) > 0
 		end,
 		100,
-		30_000
+		15_000
 	),
 	?assertEqual(
 		0,
 		ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
 			[PartitionNumber, Packing]),
 		iolist_to_binary(io_lib:format(
-			"~s partition ~p,~p os not empty", [Node, PartitionNumber, 
+			"~s partition ~p,~p is not empty", [Node, PartitionNumber, 
 				ar_serialize:encode_packing(Packing, true)]))).
 
 assert_mine_and_validate(MinerNode, ValidatorNode, MinerPacking) ->
@@ -399,8 +470,8 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 	{ok, ExpectedPackedChunk} = ar_e2e:load_chunk_fixture(Packing, EndOffset),
 	?assertEqual(ExpectedPackedChunk, Chunk,
 		iolist_to_binary(io_lib:format(
-			"~p: Chunk at offset ~p, size ~p does not match previously packed chunk",
-			[Node, EndOffset, ChunkSize]))),
+			"~p: Chunk at offset ~p, size ~p, packing ~p does not match packed chunk",
+			[Node, EndOffset, ChunkSize, ar_serialize:encode_packing(Packing, true)]))),
 
 	{ok, UnpackedChunk} = ar_packing_server:unpack(
 		Packing, EndOffset, Block#block.tx_root, Chunk, ?DATA_CHUNK_SIZE),

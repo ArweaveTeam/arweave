@@ -75,36 +75,27 @@ _set_github_env() {
 ######################################################################
 # main script
 ######################################################################
-NAMESPACE_FLAG="${1}"
+export TEST="${1}"
+export NAMESPACE="${2}"
 PWD=$(pwd)
 EXIT_CODE=0
-export PATH="${PWD}/_build/erts/bin:${PATH}"
-export ERL_EPMD_ADDRESS="127.0.0.1"
-export NAMESPACE="${NAMESPACE_FLAG}"
-export ERL_PATH_ADD="$(echo ${PWD}/_build/test/lib/*/ebin)"
-export ERL_PATH_TEST="${PWD}/_build/test/lib/arweave/test"
-export ERL_PATH_CONF="${PWD}/config/sys.config"
-export ERL_TEST_OPTS="-pa ${ERL_PATH_ADD} ${ERL_PATH_TEST} -config ${ERL_PATH_CONF}"
+
+# bootstrap arweave
+test -e ./bin/arweave || ./ar-rebar3 default release
+test -e ./releases || ./ar-rebar3 default release
 
 RETRYABLE=1
-while [[ $RETRYABLE -eq 1 ]]
+while [ ${RETRYABLE} -eq 1 ]
 do
 	RETRYABLE=0
 	set +e
 	set -x
-	NODE_NAME="main-${NAMESPACE}@127.0.0.1"
-	COOKIE=${NAMESPACE}
-	erl +S 4:4 $ERL_TEST_OPTS \
-		-noshell \
-		-name "${NODE_NAME}" \
-		-setcookie "${COOKIE}" \
-		-run ar tests "${NAMESPACE}" \
-		-s init stop 2>&1 | tee main.out
-	EXIT_CODE=${PIPESTATUS[0]}
+	eval "./bin/${TEST}" ${NAMESPACE}
+	EXIT_CODE=$?
 	set +x
 	set -e
 
-	if [[ ${EXIT_CODE} -ne 0 ]]
+	if [ ${EXIT_CODE} -ne 0 ]
 	then
 		_check_retry
 	fi

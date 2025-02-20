@@ -461,6 +461,14 @@ register() ->
 				"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
 				"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
 
+	prometheus_gauge:new([{name, device_lock_status},
+		{labels, [store_id, mode]},
+		{help, "The device lock status of the storage module. "
+				"-1: off, 0: paused, 1: active, 2: complete -2: unknown"}]),
+	prometheus_gauge:new([{name, sync_intervals_queue_size},
+		{labels, [store_id]},
+		{help, "The size of the syncing intervals queue."}]),
+
 	%% ---------------------------------------------------------------------------------------
 	%% Replica 2.9 metrics
 	%% ---------------------------------------------------------------------------------------

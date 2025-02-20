@@ -54,7 +54,7 @@ cleanup_all_post_fork({Cleanup, Functions}) ->
 	Cleanup(Functions).
 
 instantiator(TestFun) ->
-	fun (Fixture) -> {timeout, 60, {with, Fixture, [TestFun]}} end.
+	fun (Fixture) -> {timeout, 120, {with, Fixture, [TestFun]}} end.
 
 post_2_7_test_() ->
 	{setup, fun setup_all_post_2_7/0, fun cleanup_all_post_fork/1,

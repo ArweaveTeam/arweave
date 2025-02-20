@@ -41,6 +41,29 @@ accepts_gossips_and_mines_test_() ->
 		}}
 	].
 
+polls_for_transactions_and_gossips_and_mines_test_() ->
+	PrepareTestFor = fun(BuildTXSetFun, KeyType) ->
+		fun() ->
+			%% The weave has to be initialised under the fork so that
+			%% we can get the correct price estimations according
+			%% to the new pricinig model.
+			Key = {_, Pub} = ar_wallet:new(KeyType),
+			Wallets = [{ar_wallet:to_address(Pub), ?AR(5), <<>>}],
+			[B0] = ar_weave:init(Wallets),
+			polls_for_transactions_and_gossips_and_mines(B0, BuildTXSetFun(Key, B0))
+		end
+	end,
+	[
+		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+			"Two RSA transactions with block anchor",
+			PrepareTestFor(fun two_block_anchored_txs/2, ?RSA_KEY_TYPE)
+		}},
+		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+			"Two ECDSA transactions with block anchor",
+			PrepareTestFor(fun two_block_anchored_txs/2, ?ECDSA_KEY_TYPE)
+		}}
+	].
+
 keeps_txs_after_new_block_test_() ->
 	PrepareTestFor = fun(BuildFirstTXSetFun, BuildSecondTXSetFun) ->
 		fun() ->
@@ -85,7 +108,7 @@ returns_error_when_txs_exceed_balance_test_() ->
 			"Three transactions with block anchor",
 			PrepareTestFor(fun block_anchor_txs_spending_balance_plus_one_more/0)
 		}},
-		{timeout, 120, {
+		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
 			"Five transactions with mixed anchors",
 			PrepareTestFor(fun mixed_anchor_txs_spending_balance_plus_one_more/0)
 			}}
@@ -159,6 +182,60 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 		TXs
 	).
 
+polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
+	%% Post the given transactions made from the given wallets to a node.
+	%%
+	%% Expect them to be accepted, fetched by the peer we did not push them to
+	%% and included into the block.
+	%% Expect the block to be accepted by the peer.
+	{ok, Config} = application:get_env(arweave, config),
+	Config2 = Config#config{ max_propagation_peers = 0 },
+	_ = ar_test_node:start(#{ b0 => B0, config => Config2 }),
+	{ok, Config3} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	Config4 = Config3#config{ max_propagation_peers = 0 },
+	_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => Config4 }),
+	%% Sign here after the node has started to get the correct price
+	%% estimation from it.
+	TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
+	ar_test_node:connect_to_peer(peer1),
+	%% Post the transactions to peer1.
+	lists:foreach(
+		fun(TX) ->
+			ar_test_node:assert_post_tx_to_peer(peer1, TX),
+			%% Expect transactions to be fetched by main.
+			ar_test_node:assert_wait_until_receives_txs([TX])
+		end,
+		TXs
+	),
+	%% Mine a block.
+	ar_test_node:mine(peer1),
+	%% Expect both transactions to be included into block.
+	PeerBI = assert_wait_until_height(peer1, 1),
+	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
+	?assertEqual(
+		lists:sort(TXIDs),
+		lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]))#block.txs)
+	),
+	lists:foreach(
+		fun(TX) ->
+			?assertEqual(TX, ar_test_node:remote_call(peer1, ar_storage, read_tx, [TX#tx.id]))
+		end,
+		TXs
+	),
+	%% Expect the block to be accepted by main.
+	BI = wait_until_height(main, 1),
+	?assertEqual(
+		lists:sort(TXIDs),
+		lists:sort((read_block_when_stored(hd(BI)))#block.txs)
+	),
+	lists:foreach(
+		fun(TX) ->
+			?assertEqual(TX, ar_storage:read_tx(TX#tx.id))
+		end,
+		TXs
+	).
+
+
 keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Post the transactions from the first set to a node but do not gossip them.
 	%% Post transactions from the second set to both nodes.
@@ -168,8 +245,12 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect the block to be accepted.
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
-	_ = ar_test_node:start(B0),
-	_ = ar_test_node:start_peer(peer1, B0),
+	{ok, Config} = application:get_env(arweave, config),
+	Config2 = Config#config{ disable = [tx_poller | Config#config.disable] },
+	_ = ar_test_node:start(#{ b0 => B0, config => Config2 }),
+	{ok, Config3} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	Config4 = Config3#config{ disable = [tx_poller | Config3#config.disable] },
+	_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => Config4 }),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
