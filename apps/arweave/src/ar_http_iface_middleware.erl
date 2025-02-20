@@ -292,7 +292,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 				{ok, ID} ->
 					case ar_storage:read_tx(ID) of
 						unavailable ->
-							{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("data/not_found.html"), Req};
+							{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
 						#tx{} = TX ->
 							serve_tx_html_data(Req, TX)
 					end
@@ -1666,7 +1666,7 @@ serve_tx_data(Req, #tx{ format = 2, id = ID, data_size = DataSize } = TX) ->
 				{error, not_found} when DataSize == 0 ->
         	{200, #{}, <<>>, Req};
 				{error, not_found} ->
-					{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("data/not_found.html"), Req};
+					{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
 				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
@@ -1700,7 +1700,7 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 				{error, not_found} when TX#tx.data_size == 0 ->
         	{200, #{ <<"content-type">> => ContentType }, <<>>, Req};
 				{error, not_found} ->
-					{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("data/not_found.html"), Req};
+					{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
 				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end

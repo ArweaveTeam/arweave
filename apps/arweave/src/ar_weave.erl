@@ -159,13 +159,13 @@ add_padding(Data, LeftoverBytes) ->
     <<Data/binary, Padding:LeftoverBytes/unit:8>>.
 
 add_mainnet_v1_genesis_txs() ->
-	case filelib:is_dir("data/genesis_txs") of
+	case filelib:is_dir("genesis_data/genesis_txs") of
 		true ->
-			{ok, Files} = file:list_dir("data/genesis_txs"),
+			{ok, Files} = file:list_dir("genesis_data/genesis_txs"),
 			{ok, Config} = application:get_env(arweave, config),
 			lists:foldl(
 				fun(F, Acc) ->
-					SourcePath = "data/genesis_txs/" ++ F,
+					SourcePath = "genesis_data/genesis_txs/" ++ F,
 					TargetPath = Config#config.data_dir ++ "/" ++ ?TX_DIR ++ "/" ++ F,
 					file:copy(SourcePath, TargetPath),
 					[ar_util:decode(hd(string:split(F, ".")))|Acc]
@@ -174,7 +174,7 @@ add_mainnet_v1_genesis_txs() ->
 				Files
 			);
 		false ->
-			?LOG_WARNING("data/genesis_txs directory not found. Node might not index the genesis "
+			?LOG_WARNING("genesis_data/genesis_txs directory not found. Node might not index the genesis "
 						 "block transactions."),
 			[]
 	end.
