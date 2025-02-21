@@ -459,12 +459,17 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
 			RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
 					|| ID <- ModuleIDs],
-			log_chunk_error(RequestOrigin, chunk_record_not_found,
-					[{modules_covering_offset, ModuleIDs},
-					{root_sync_records, RootRecords},
-					{seek_offset, SeekOffset},
-					{reply, io_lib:format("~p", [Reply])},
-					{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}]),
+			case RequestOrigin of
+				miner ->
+					log_chunk_error(RequestOrigin, chunk_record_not_found,
+							[{modules_covering_offset, ModuleIDs},
+							{root_sync_records, RootRecords},
+							{seek_offset, SeekOffset},
+							{reply, io_lib:format("~p", [Reply])},
+							{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}]);
+				_ ->
+					ok
+			end,
 			{error, chunk_not_found}
 	end.
 
@@ -1933,8 +1938,13 @@ validate_fetched_chunk(Args) ->
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case Offset > T orelse not ar_node:is_joined() of
 		true ->
-			log_chunk_error(RequestOrigin, miner_requested_disk_pool_chunk,
-				[{disk_pool_threshold, T}, {end_offset, Offset}]),
+			case RequestOrigin of
+				miner ->
+					log_chunk_error(RequestOrigin, miner_requested_disk_pool_chunk,
+							[{disk_pool_threshold, T}, {end_offset, Offset}]);
+				_ ->
+					ok
+			end,
 			{true, none};
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
