@@ -204,7 +204,7 @@ handle_cast({start_mining, Args}, State) ->
 
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:reset_difficulty(Worker, DiffPair)
+			ar_mining_worker:reset_mining_session(Worker, DiffPair)
 		end,
 		State#state.workers
 	),
