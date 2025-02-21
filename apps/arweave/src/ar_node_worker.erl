@@ -945,6 +945,8 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 			case validate_wallet_list(B, PrevB) of
 				error ->
 					BH = B#block.indep_hash,
+					?LOG_WARNING([{event, failed_to_validate_wallet_list},
+							{h, ar_util:encode(BH)}]),
 					ar_block_cache:remove(block_cache, BH),
 					ar_ignore_registry:add(BH),
 					gen_server:cast(?MODULE, apply_block),

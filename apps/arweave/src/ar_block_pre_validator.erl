@@ -48,6 +48,7 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 		false ->
 			Ref = make_ref(),
 			ar_ignore_registry:add_ref(H, Ref),
+			erlang:put(ignore_registry_ref, Ref),
 			B2 = B#block{ receive_timestamp = ReceiveTimestamp },
 			case pre_validate_is_peer_banned(B2, Peer) of
 				enqueued ->
@@ -80,11 +81,11 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			ar_util:cast_after(50, ?MODULE, pre_validate),
 			{noreply, State};
 		false ->
-			{{_, {B, PrevB, SolutionResigned, Peer}},
-					Q2} = gb_sets:take_largest(Q),
+			{{_, {B, PrevB, SolutionResigned, Peer, Ref}}, Q2} = gb_sets:take_largest(Q),
 			BlockSize = byte_size(term_to_binary(B)),				
 			Size2 = Size - BlockSize,
-			case ar_ignore_registry:permanent_member(B#block.indep_hash) of
+			BH = B#block.indep_hash,
+			case ar_ignore_registry:permanent_member(BH) of
 				true ->
 					gen_server:cast(?MODULE, pre_validate),
 					{noreply, State#state{ pqueue = Q2, size = Size2 }};
@@ -94,6 +95,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 					{IPTimestamps3, HashTimestamps3} =
 						case ThrottleByIPResult of
 							false ->
+								ar_ignore_registry:remove_ref(BH, Ref),
 								{IPTimestamps, HashTimestamps};
 							{true, IPTimestamps2} ->
 								case throttle_by_solution_hash(B#block.hash, HashTimestamps,
@@ -114,21 +116,23 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 												B#block.receive_timestamp),
 										{IPTimestamps2, HashTimestamps2};
 									false ->
+										ar_ignore_registry:remove_ref(BH, Ref),
 										{IPTimestamps2, HashTimestamps}
 								end
 						end,
 					gen_server:cast(?MODULE, pre_validate),
 					{noreply, State#state{ pqueue = Q2, size = Size2,
-							ip_timestamps = IPTimestamps3, hash_timestamps = HashTimestamps3 }}
+							ip_timestamps = IPTimestamps3,
+							hash_timestamps = HashTimestamps3 }}
 			end
 	end;
 
-handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer}}, State) ->
+handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer, Ref}}, State) ->
 	#state{ pqueue = Q, size = Size } = State,
 	Priority = priority(B, Peer),
 	BlockSize = byte_size(term_to_binary(B)),
 	Size2 = Size + BlockSize,
-	Q2 = gb_sets:add_element({Priority, {B, PrevB, SolutionResigned, Peer}}, Q),
+	Q2 = gb_sets:add_element({Priority, {B, PrevB, SolutionResigned, Peer, Ref}}, Q),
 	{Q3, Size3} =
 		case Size2 > ?MAX_PRE_VALIDATION_QUEUE_SIZE of
 			true ->
@@ -184,7 +188,7 @@ terminate(_Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-pre_validate_is_peer_banned(#block{ indep_hash = H } = B, Peer) ->
+pre_validate_is_peer_banned(B, Peer) ->
 	case ar_blacklist_middleware:is_peer_banned(Peer) of
 		not_banned ->
 			pre_validate_previous_block(B, Peer);
@@ -587,7 +591,8 @@ pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer) ->
 		true ->
 			case SolutionResigned of
 				true ->
-					gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer}}),
+					Ref = erlang:get(ignore_registry_ref),
+					gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer, Ref}}),
 					enqueued;
 				false ->
 					pre_validate_quick_pow(B, PrevB, false, Peer)
@@ -605,7 +610,8 @@ pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
 					B#block.indep_hash, Peer}),
 			invalid;
 		true ->
-			gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer}}),
+			Ref = erlang:get(ignore_registry_ref),
+			gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer, Ref}}),
 			enqueued
 	end.
 
@@ -828,7 +834,8 @@ get_peer_score(_Peer, [], N) ->
 drop_tail(Q, Size) when Size =< ?MAX_PRE_VALIDATION_QUEUE_SIZE ->
 	{Q, 0};
 drop_tail(Q, Size) ->
-	{{_Priority, {B, _PrevB, _SolutionResigned, _Peer}}, Q2} = gb_sets:take_smallest(Q),
+	{{_Priority, {B, _PrevB, _SolutionResigned, _Peer, Ref}}, Q2} = gb_sets:take_smallest(Q),
+	ar_ignore_registry:remove_ref(B#block.indep_hash, Ref),
 	BlockSize = byte_size(term_to_binary(B)),
 	drop_tail(Q2, Size - BlockSize).
 
