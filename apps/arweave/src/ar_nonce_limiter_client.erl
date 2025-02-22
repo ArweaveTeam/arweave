@@ -11,7 +11,11 @@
 
 -record(state, {
 	remote_servers,
-	latest_session_keys = #{}
+	latest_session_keys = #{},
+	%% request_sessions is set to true when the node is unable to validate a block due
+	%% to a gap in its cached step numbers. When true, the node will query the full
+	%% session and previous session from a VDF server.
+	request_sessions = false
 }).
 
 -define(PULL_FREQUENCY_MS, 800).
@@ -82,11 +86,22 @@ handle_cast(pull, State) ->
 									session = #vdf_session{
 											step_number = SessionStepNumber } } = Update,
 							State2 = update_latest_session_key(Peer, SessionKey, State),
-							case ar_nonce_limiter:apply_external_update(Update, Peer) of
-								ok ->
-									ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
-									{noreply, State2};
+							UpdateResponse =
+								ar_nonce_limiter:apply_external_update(Update, Peer),
+
+							SessionFound = case UpdateResponse of
 								#nonce_limiter_update_response{ session_found = false } ->
+									false;
+								_ ->
+									true
+							end,
+							RequestSessions = (
+								State2#state.request_sessions == true orelse
+								not SessionFound
+							),
+
+							case RequestSessions of
+								true ->
 									case fetch_and_apply_session_and_previous_session(Peer) of
 										{error, _} ->
 											gen_server:cast(?MODULE, pull),
@@ -95,36 +110,42 @@ handle_cast(pull, State) ->
 										_ ->
 											ar_util:cast_after(?PULL_FREQUENCY_MS,
 													?MODULE, pull),
-											{noreply, State2}
+											{noreply, State2#state{ request_sessions = false }}
 									end;
-								#nonce_limiter_update_response{ step_number = StepNumber }
-										when StepNumber > SessionStepNumber ->
-									%% We are ahead of the server - may be, it is not
-									%% the fastest server in the list so try another one,
-									%% if there are more servers in the configuration
-									%% and they are not on timeout.
-									gen_server:cast(?MODULE, pull),
-									{noreply, State2#state{
-											remote_servers = RotatedServers }};
-								#nonce_limiter_update_response{ step_number = StepNumber }
-										when StepNumber == SessionStepNumber ->
-									%% We are in sync with the server. Re-try soon.
-									ar_util:cast_after(?NO_UPDATE_PULL_FREQUENCY_MS,
-											?MODULE, pull),
-									{noreply, State2};
-								_ ->
-									%% We have received a partial session, but there's a gap
-									%% in the step numbers, e.g., the update we received is at
-									%% step 100, but our last seen step was 90.
-									case fetch_and_apply_session(Peer) of
-										{error, _} ->
+								false ->
+									case UpdateResponse of
+										ok ->
+											ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
+											{noreply, State2};
+										#nonce_limiter_update_response{ step_number = StepNumber }
+												when StepNumber > SessionStepNumber ->
+											%% We are ahead of the server - may be, it is not
+											%% the fastest server in the list so try another one,
+											%% if there are more servers in the configuration
+											%% and they are not on timeout.
 											gen_server:cast(?MODULE, pull),
 											{noreply, State2#state{
 													remote_servers = RotatedServers }};
-										_ ->
-											ar_util:cast_after(?PULL_FREQUENCY_MS,
+										#nonce_limiter_update_response{ step_number = StepNumber }
+												when StepNumber == SessionStepNumber ->
+											%% We are in sync with the server. Re-try soon.
+											ar_util:cast_after(?NO_UPDATE_PULL_FREQUENCY_MS,
 													?MODULE, pull),
-											{noreply, State2}
+											{noreply, State2};
+										_ ->
+											%% We have received a partial session, but there's a gap
+											%% in the step numbers, e.g., the update we received is at
+											%% step 100, but our last seen step was 90.
+											case fetch_and_apply_session(Peer) of
+												{error, _} ->
+													gen_server:cast(?MODULE, pull),
+													{noreply, State2#state{
+															remote_servers = RotatedServers }};
+												_ ->
+													ar_util:cast_after(?PULL_FREQUENCY_MS,
+															?MODULE, pull),
+													{noreply, State2}
+											end
 									end
 							end;
 						{error, not_found} ->
@@ -150,23 +171,21 @@ handle_cast({maybe_request_sessions, SessionKey}, State) ->
 	#state{ remote_servers = Q } = State,
 	{{value, {RawPeer, _Timestamp}}, Q2} = queue:out(Q),
 	Now = erlang:system_time(millisecond),
-	State2 = State#state{ remote_servers = queue:in({RawPeer, Now}, Q2) },
+	RotatedServers = queue:in({RawPeer, Now}, Q2),
 	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
 		{error, _} ->
-			%% Push the peer to the back of the queue.
-			{noreply, State2};
+			%% Push the peer to the back of the queue. We'll also wait and see if another
+			%% `maybe_request_sessions` message comes in before we fetch the full session.
+			{noreply, State#state{ remote_servers = RotatedServers }};
 		{ok, Peer} ->
 			case get_latest_session_key(Peer, State) of
 				SessionKey ->
-					%% No reason to make extra requests.
+					%% No reason to make extra requests. And don't rotate the peers.
 					{noreply, State};
 				_ ->
-					case fetch_and_apply_session_and_previous_session(Peer) of
-						{error, _} ->
-							{noreply, State2};
-						_ ->
-							{noreply, State}
-					end
+					%% Ensure the current and previous sessions are fetched and applied on
+					%% the next `pull` message.
+					{noreply, State#state{ request_sessions = true }}
 			end
 	end;
 
