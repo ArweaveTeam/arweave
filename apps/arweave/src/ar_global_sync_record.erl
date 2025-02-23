@@ -124,11 +124,16 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, _StoreID}}, State) ->
-	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
-	SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
-	SyncBuckets2 = ar_sync_buckets:add(End, Start, SyncBuckets),
-	{noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }};
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, StoreID}}, State) ->
+	case ar_storage_module:get_packing(StoreID) of
+		{replica_2_9, _} ->
+			{noreply, State};
+		_ ->
+			#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
+			SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+			SyncBuckets2 = ar_sync_buckets:add(End, Start, SyncBuckets),
+			{noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }}
+	end;
 
 handle_info({event, sync_record, {global_cut, Offset}}, State) ->
 	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
