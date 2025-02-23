@@ -144,7 +144,7 @@ download_and_verify_tx(TXID) ->
 		{TX, Peer, Time, Size} ->
 			case ar_tx_validator:validate(TX) of
 				{invalid, Code} ->
-					log_invalid_tx(Code, TXID, Peer);
+					log_invalid_tx(Code, TXID, TX, Peer);
 				{valid, TX2} ->
 					ar_peers:rate_fetched_data(Peer, tx, Time, Size),
 					ar_data_sync:add_data_root_to_disk_pool(TX2#tx.data_root,
@@ -156,15 +156,34 @@ download_and_verify_tx(TXID) ->
 			end
 	end.
 
-log_invalid_tx(tx_already_in_weave, TXID, Peer) ->
-	?LOG_WARNING(format_invalid_tx_message(tx_already_in_weave, TXID, Peer));
-log_invalid_tx(Code, TXID, Peer) ->
-	?LOG_ERROR(format_invalid_tx_message(Code, TXID, Peer)).
+log_invalid_tx(tx_bad_anchor, TXID, TX, Peer) ->
+	LastTX = ar_util:encode(TX#tx.last_tx),
+	CurrentHeight = ar_node:get_height(),
+	CurrentBlockHash = ar_util:encode(ar_node:get_current_block_hash()),
+	?LOG_INFO(format_invalid_tx_message(tx_bad_anchor, TXID, Peer, [
+		{last_tx, LastTX},
+		{current_height, CurrentHeight},
+		{current_block_hash, CurrentBlockHash}
+	]));
+log_invalid_tx(tx_verification_failed, TXID, TX, Peer) ->
+	LastTX = ar_util:encode(TX#tx.last_tx),
+	CurrentHeight = ar_node:get_height(),
+	CurrentBlockHash = ar_util:encode(ar_node:get_current_block_hash()),
+	ErrorCodes = ar_tx_db:get_error_codes(TXID),
+	?LOG_INFO(format_invalid_tx_message(tx_verification_failed, TXID, Peer, [
+		{last_tx, LastTX},
+		{current_height, CurrentHeight},
+		{current_block_hash, CurrentBlockHash},
+		{error_codes, ErrorCodes}
+	]));
+log_invalid_tx(Code, TXID, _TX, Peer) ->
+	?LOG_INFO(format_invalid_tx_message(Code, TXID, Peer, [])).
 
-format_invalid_tx_message(Code, TXID, Peer) ->
+format_invalid_tx_message(Code, TXID, Peer, ExtraLogs) ->
 	[
 		{event, fetched_invalid_tx},
 		{txid, ar_util:encode(TXID)},
 		{code, Code},
 		{peer, ar_util:format_peer(Peer)}
+		| ExtraLogs
 	].
