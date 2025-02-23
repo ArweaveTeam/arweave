@@ -144,11 +144,7 @@ download_and_verify_tx(TXID) ->
 		{TX, Peer, Time, Size} ->
 			case ar_tx_validator:validate(TX) of
 				{invalid, Code} ->
-					?LOG_ERROR([{event, fetched_invalid_tx},
-							{txid, ar_util:encode(TXID)},
-							{code, Code},
-							{peer, ar_util:format_peer(Peer)}
-					]);
+					log_invalid_tx(Code, TXID, Peer);
 				{valid, TX2} ->
 					ar_peers:rate_fetched_data(Peer, tx, Time, Size),
 					ar_data_sync:add_data_root_to_disk_pool(TX2#tx.data_root,
@@ -159,3 +155,16 @@ download_and_verify_tx(TXID) ->
 					ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000)
 			end
 	end.
+
+log_invalid_tx(tx_already_in_weave, TXID, Peer) ->
+	?LOG_WARNING(format_invalid_tx_message(tx_already_in_weave, TXID, Peer));
+log_invalid_tx(Code, TXID, Peer) ->
+	?LOG_ERROR(format_invalid_tx_message(Code, TXID, Peer)).
+
+format_invalid_tx_message(Code, TXID, Peer) ->
+	[
+		{event, fetched_invalid_tx},
+		{txid, ar_util:encode(TXID)},
+		{code, Code},
+		{peer, ar_util:format_peer(Peer)}
+	].
