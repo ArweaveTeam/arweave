@@ -44,9 +44,10 @@ cache_size(Cache) ->
 	).
 
 %% @doc Returns the available size for the mining cache.
-%% Note, that this value does not take into account the reserved space for sessions,
+%% Note, that this value does not include the reserved space for sessions,
 %% as this space is considered already used.
 %% @see reserved_size/1,2
+%% @see cache_size/1
 -spec available_size(Cache :: #ar_mining_cache{}) ->
 	Size :: non_neg_integer().
 available_size(Cache) ->
@@ -170,8 +171,12 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 	with_mining_cache_session(SessionId, fun(Session) ->
 		Value0 = maps:get(Key, Session#ar_mining_cache_session.mining_cache, #ar_mining_cache_value{}),
 		case Fun(Value0) of
-			{ok, Value0} ->
-				{ok, Session};
+			{error, Reason} -> {error, Reason};
+			{ok, drop} ->
+				{ok, Session#ar_mining_cache_session{
+					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache)
+				}};
+			{ok, Value0} -> {ok, Session};
 			{ok, Value1} ->
 				SizeDiff = cached_size(Value1) - cached_size(Value0),
 				SessionAvailableSize = available_size(Cache0) + reserved_size(SessionId, Cache0),
@@ -182,12 +187,7 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
 							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + SizeDiff)
 						}}
-				end;
-			{ok, drop} ->
-				{ok, Session#ar_mining_cache_session{
-					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache)
-				}};
-			{error, Reason} -> {error, Reason}
+				end
 		end
 	end, Cache0).
 
