@@ -76,8 +76,9 @@ init([]) ->
 			fun(Module, Acc) ->
 				case Module of
 					"default" -> ar_intervals:union(ar_sync_record:get(ar_data_sync, "default"), Acc);
-					%% Ignore replica storage modules, which is a temporary solution.
-					%% Will be fixed when data sharing incentives are implemented.
+					%% Ignore replica.2.9 packing. This is a temporary solution until
+					%% we can support data syncing in batches corresponding to the
+					%% replica.2.9 entropy footprint
 					{_, _, {replica_2_9, _}} -> Acc;
 					_ -> ar_intervals:union(ar_sync_record:get(ar_data_sync, ar_storage_module:id(Module)), Acc)
 				end
@@ -127,8 +128,9 @@ handle_cast(Cast, State) ->
 handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, StoreID}}, State) ->
 	case ar_storage_module:get_packing(StoreID) of
 		{replica_2_9, _} ->
-			%% Ignore replica storage modules, which is a temporary solution.
-			%% Will be fixed when data sharing incentives are implemented.
+			%% Ignore replica.2.9 packing. This is a temporary solution until
+			%% we can support data syncing in batches corresponding to the
+			%% replica.2.9 entropy footprint
 			{noreply, State};
 		_ ->
 			#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
