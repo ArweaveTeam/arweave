@@ -74,15 +74,13 @@ init([]) ->
 	SyncRecord =
 		lists:foldl(
 			fun(Module, Acc) ->
-				StoreID =
-					case Module of
-						"default" ->
-							"default";
-						_ ->
-							ar_storage_module:id(Module)
-					end,
-				R = ar_sync_record:get(ar_data_sync, StoreID),
-				ar_intervals:union(R, Acc)
+				case Module of
+					"default" -> ar_intervals:union(ar_sync_record:get(ar_data_sync, "default"), Acc);
+					%% Ignore replica storage modules, which is a temporary solution.
+					%% Will be fixed when data sharing incentives are implemented.
+					{_, _, {replica_2_9, _}} -> Acc;
+					_ -> ar_intervals:union(ar_sync_record:get(ar_data_sync, ar_storage_module:id(Module)), Acc)
+				end
 			end,
 			ar_intervals:new(),
 			["default" | Config#config.storage_modules]
