@@ -156,7 +156,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast(start_taking_down, State) ->
-	?LOG_DEBUG([{event, start_taking_down}, {module, ar_tx_blacklist}]),
+	?LOG_DEBUG([{event, start_taking_down}, {tags, [tx_blacklist]}]),
 	gen_server:cast(?MODULE, maybe_restore),
 	gen_server:cast(?MODULE, maybe_request_takedown),
 	{noreply, State};
@@ -595,6 +595,7 @@ request_data_takedown(State) ->
 							blacklist_offsets(TXID, End, Start, State);
 						{error, Reason} ->
 							?LOG_WARNING([{event, failed_to_find_blocklisted_tx_in_the_index},
+									{tags, [tx_blacklist]},
 									{tx, ar_util:encode(TXID)},
 									{reason, io_lib:format("~p", [Reason])}]),
 							ets:delete(ar_tx_blacklist_pending_data, TXID),
