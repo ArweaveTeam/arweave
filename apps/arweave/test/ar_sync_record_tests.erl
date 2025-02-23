@@ -21,7 +21,7 @@ test_sync_record() ->
 		CompositePartition = {?PARTITION_SIZE, 0, {composite, RewardAddr, 1}},
 		CompositePartitionID = ar_storage_module:id(CompositePartition),
 		%% Add a replica.2.9 partition, which should be ignored
-		ReplicaPartition = {?PARTITION_SIZE, 0, {replica_2_9, RewardAddr}},
+		ReplicaPartition = {?PARTITION_SIZE * 2, ?PARTITION_SIZE, {replica_2_9, RewardAddr}},
 		ReplicaPartitionID = ar_storage_module:id(ReplicaPartition),
 		StorageModules = [CompositePartition, ReplicaPartition],
 		ar_test_node:start(B0, RewardAddr, Config, StorageModules),
@@ -37,10 +37,11 @@ test_sync_record() ->
 		?assertEqual({1048576, 0}, ar_sync_record:get_interval(1, ar_data_sync, CompositePartitionID)),
 
 		%% Add a replica.2.9 chunk, which should be ignored
-		ar_sync_record:add(DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, ar_data_sync, ReplicaPartitionID),
+		ar_sync_record:add(
+			DiskPoolStart + ?DATA_CHUNK_SIZE * 2, DiskPoolStart + ?DATA_CHUNK_SIZE, ar_data_sync, ReplicaPartitionID),
 		%% Add a diskpool chunk
 		ar_sync_record:add(
-			DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, ar_data_sync, "default"),
+			DiskPoolStart + ?DATA_CHUNK_SIZE, DiskPoolStart, ar_data_sync, "default"),
 		timer:sleep(SleepTime),
 		{ok, Binary2} = ar_global_sync_record:get_serialized_sync_record(Options),
 		{ok, Global2} = ar_intervals:safe_from_etf(Binary2),
