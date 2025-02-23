@@ -127,6 +127,8 @@ handle_cast(Cast, State) ->
 handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, StoreID}}, State) ->
 	case ar_storage_module:get_packing(StoreID) of
 		{replica_2_9, _} ->
+			%% Ignore replica storage modules, which is a temporary solution.
+			%% Will be fixed when data sharing incentives are implemented.
 			{noreply, State};
 		_ ->
 			#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
