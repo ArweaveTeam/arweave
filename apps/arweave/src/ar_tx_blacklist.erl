@@ -142,6 +142,7 @@ notify_about_added_tx(TXID, End, Start) ->
 %%%===================================================================
 
 init([]) ->
+	?LOG_DEBUG([{event, initializing_tx_blacklist}, {tags, [tx_blacklist]}]),
 	ok = initialize_state(),
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
@@ -155,6 +156,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast(start_taking_down, State) ->
+	?LOG_DEBUG([{event, start_taking_down}, {module, ar_tx_blacklist}]),
 	gen_server:cast(?MODULE, maybe_restore),
 	gen_server:cast(?MODULE, maybe_request_takedown),
 	{noreply, State};
@@ -225,6 +227,7 @@ handle_cast(maybe_restore, #ar_tx_blacklist_state{ pending_restore_cursor = Curs
 							unblacklist_timeout = Now }};
 				TXID ->
 					?LOG_DEBUG([{event, preparing_transaction_unblacklisting},
+							{tags, [tx_blacklist]},
 							{tx, ar_util:encode(TXID)}]),
 					ar_events:send(tx, {preparing_unblacklisting, TXID}),
 					{noreply, State#ar_tx_blacklist_state{ pending_restore_cursor = TXID,
@@ -297,7 +300,9 @@ handle_info({removed_range, Ref}, State) ->
 	end;
 
 handle_info({event, tx, {ready_for_unblacklisting, TXID}}, State) ->
-	?LOG_DEBUG([{event, unblacklisting_transaction}, {tx, ar_util:encode(TXID)}]),
+	?LOG_DEBUG([{event, unblacklisting_transaction},
+		{tags, [tx_blacklist]},
+		{tx, ar_util:encode(TXID)}]),
 	ets:delete(ar_tx_blacklist_pending_restore_headers, TXID),
 	{noreply, State#ar_tx_blacklist_state{ unblacklist_timeout = os:system_time(second) }};
 
@@ -445,6 +450,18 @@ refresh_blacklist(Whitelist, Blacklist) ->
 		end,
 		Restored
 	),
+	?LOG_DEBUG([{event, refreshed_blacklist},
+		{tags, [tx_blacklist]},
+		{whitelist, sets:size(Whitelist)},
+		{blacklist, sets:size(Blacklist)},
+		{removed, length(Removed)},
+		{restored, length(Restored)},
+		{ar_tx_blacklist, ets:info(ar_tx_blacklist, size)},
+		{ar_tx_blacklist_pending_headers, ets:info(ar_tx_blacklist_pending_headers, size)},
+		{ar_tx_blacklist_pending_data, ets:info(ar_tx_blacklist_pending_data, size)},
+		{ar_tx_blacklist_pending_restore_headers,
+			ets:info(ar_tx_blacklist_pending_restore_headers, size)}
+	]),
 	ok.
 
 load_from_files(Files) ->
@@ -463,6 +480,7 @@ load_from_file(File) ->
 	catch Type:Pattern ->
 		Warning = [
 			{event, failed_to_load_and_parse_file},
+			{tags, [tx_blacklist]},
 			{file, File},
 			{exception, {Type, Pattern}}
 		],
@@ -486,13 +504,15 @@ parse_binary(Binary) ->
 									{true, {End, Start}};
 								_ ->
 									?LOG_WARNING([{event, failed_to_parse_line},
-													{line, Line}]),
+											{tags, [tx_blacklist]},
+											{line, Line}]),
 									false
 							end;
 						_ ->
 							case ar_util:safe_decode(TXIDOrRange) of
 								{error, invalid} ->
 									?LOG_WARNING([{event, failed_to_parse_line},
+											{tags, [tx_blacklist]},
 											{line, Line}]),
 									false;
 								{ok, TXID} ->
@@ -532,16 +552,18 @@ load_from_url(URL) ->
 			{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 				parse_binary(Body);
 			_ ->
-				?LOG_INFO([
+				?LOG_WARNING([
 					{event, failed_to_download_tx_blacklist},
+					{tags, [tx_blacklist]},
 					{url, URL},
 					{reply, Reply}
 				]),
 				error
 		end
 	catch Type:Pattern ->
-		?LOG_INFO([
+		?LOG_WARNING([
 			{event, failed_to_load_and_parse_tx_blacklist},
+			{tags, [tx_blacklist]},
 			{url, URL},
 			{exception, {Type, Pattern}}
 		]),
@@ -600,7 +622,16 @@ store_state() ->
 				ets:to_dets(Name, Name)
 		end,
 		Names
-	).
+	),
+	?LOG_DEBUG([{event, stored_state},
+		{tags, [tx_blacklist]},
+		{ar_tx_blacklist, ets:info(ar_tx_blacklist, size)},
+		{ar_tx_blacklist_pending_headers, ets:info(ar_tx_blacklist_pending_headers, size)},
+		{ar_tx_blacklist_pending_data, ets:info(ar_tx_blacklist_pending_data, size)},
+		{ar_tx_blacklist_offsets, ets:info(ar_tx_blacklist_offsets, size)},
+		{ar_tx_blacklist_pending_restore_headers,
+			ets:info(ar_tx_blacklist_pending_restore_headers, size)}
+	]).
 
 restore_offsets(End, Start) ->
 	ar_ets_intervals:delete(ar_tx_blacklist_offsets, End, Start).
@@ -609,6 +640,10 @@ blacklist_offsets(End, Start, State) ->
 	ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
 	Ref = make_ref(),
 	erlang:put(Ref, {range, {Start, End}}),
+	?LOG_DEBUG([{event, requesting_data_removal},
+		{tags, [tx_blacklist]},
+		{s, Start},
+		{e, End}]),
 	ar_data_sync:request_data_removal(Start, End, Ref, self()),
 	State#ar_tx_blacklist_state{
 		data_takedown_request_timestamp = os:system_time(millisecond)
@@ -618,6 +653,11 @@ blacklist_offsets(TXID, End, Start, State) ->
 	ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
 	Ref = make_ref(),
 	erlang:put(Ref, {tx, {TXID, Start, End}}),
+	?LOG_DEBUG([{event, requesting_tx_data_removal},
+		{tags, [tx_blacklist]},
+		{tx, ar_util:encode(TXID)},
+		{s, Start},
+		{e, End}]),
 	ar_data_sync:request_tx_data_removal(TXID, Ref, self()),
 	State#ar_tx_blacklist_state{
 		data_takedown_request_timestamp = os:system_time(millisecond)
@@ -640,6 +680,7 @@ close_dets() ->
 					{error, Reason} ->
 						?LOG_ERROR([
 							{event, failed_to_close_dets_table},
+							{tags, [tx_blacklist]},
 							{name, Name},
 							{reason, Reason}
 						])
