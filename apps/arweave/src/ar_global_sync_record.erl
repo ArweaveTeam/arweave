@@ -113,7 +113,7 @@ handle_cast(Cast, State) ->
 
 handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, StoreID}}, State) ->
 	case ar_storage_module:get_packing(StoreID) of
-		{replica_2_9, _} ->
+		{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
 			%% Ignore replica.2.9 packing. This is a temporary solution until
 			%% we can support data syncing in batches corresponding to the
 			%% replica.2.9 entropy footprint
