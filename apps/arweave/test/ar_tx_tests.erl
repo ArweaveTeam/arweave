@@ -10,6 +10,10 @@
 
 -define(DEFAULT_EUNIT_TEST_TIMEOUT, 360).
 
+%% -------------------------------------------------------------------------------------------
+%% Test registration
+%% -------------------------------------------------------------------------------------------
+
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun, KeyType) ->
 		fun() ->
@@ -99,18 +103,17 @@ keeps_txs_after_new_block_test_() ->
 returns_error_when_txs_exceed_balance_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
 		fun() ->
-			{B0, TXs} = BuildTXSetFun(),
-			returns_error_when_txs_exceed_balance(B0, TXs)
+			returns_error_when_txs_exceed_balance(BuildTXSetFun)
 		end
 	end,
 	[
 		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
 			"Three transactions with block anchor",
-			PrepareTestFor(fun block_anchor_txs_spending_balance_plus_one_more/0)
+			PrepareTestFor(fun block_anchor_txs_spending_balance_plus_one_more/2)
 		}},
 		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
 			"Five transactions with mixed anchors",
-			PrepareTestFor(fun mixed_anchor_txs_spending_balance_plus_one_more/0)
+			PrepareTestFor(fun mixed_anchor_txs_spending_balance_plus_one_more/2)
 			}}
 	].
 
@@ -133,6 +136,48 @@ joins_network_successfully_test_() ->
 
 recovers_from_forks_test_() ->
 	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun() -> recovers_from_forks(7) end}.
+
+rejects_transactions_above_the_size_limit_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_rejects_transactions_above_the_size_limit/0}.
+
+accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
+
+does_not_allow_to_spend_mempool_tokens_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_does_not_allow_to_spend_mempool_tokens/0}.
+
+does_not_allow_to_replay_empty_wallet_txs_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_does_not_allow_to_replay_empty_wallet_txs/0}.
+
+rejects_txs_with_outdated_anchors_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun() ->
+		%% Post a transaction anchoring the block at ?MAX_TX_ANCHOR_DEPTH + 1.
+		%%
+		%% Expect the transaction to be rejected.
+		Key = {_, Pub} = ar_wallet:new(),
+		[B0] = ar_weave:init([
+			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
+		]),
+		_ = ar_test_node:start_peer(peer1, B0),
+		mine_blocks(peer1, ?MAX_TX_ANCHOR_DEPTH),
+		assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH),
+		TX1 = ar_test_node:sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
+		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+			ar_test_node:post_tx_to_peer(peer1, TX1)
+	end}.
+
+drops_v1_txs_exceeding_mempool_limit_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_drops_v1_txs_exceeding_mempool_limit/0}.
+
+drops_v2_txs_exceeding_mempool_limit_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun drops_v2_txs_exceeding_mempool_limit/0}.
+
+mines_format_2_txs_without_size_limit_test_() ->
+	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun mines_format_2_txs_without_size_limit/0}.
+
+%% -------------------------------------------------------------------------------------------
+%% Test functions
+%% -------------------------------------------------------------------------------------------
 
 accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Post the given transactions made from the given wallets to a node.
@@ -188,52 +233,57 @@ polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
 	%% Expect them to be accepted, fetched by the peer we did not push them to
 	%% and included into the block.
 	%% Expect the block to be accepted by the peer.
-	{ok, Config} = application:get_env(arweave, config),
-	Config2 = Config#config{ max_propagation_peers = 0 },
-	_ = ar_test_node:start(#{ b0 => B0, config => Config2 }),
-	{ok, Config3} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	Config4 = Config3#config{ max_propagation_peers = 0 },
-	_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => Config4 }),
-	%% Sign here after the node has started to get the correct price
-	%% estimation from it.
-	TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
-	ar_test_node:connect_to_peer(peer1),
-	%% Post the transactions to peer1.
-	lists:foreach(
-		fun(TX) ->
-			ar_test_node:assert_post_tx_to_peer(peer1, TX),
-			%% Expect transactions to be fetched by main.
-			ar_test_node:assert_wait_until_receives_txs([TX])
-		end,
-		TXs
-	),
-	%% Mine a block.
-	ar_test_node:mine(peer1),
-	%% Expect both transactions to be included into block.
-	PeerBI = assert_wait_until_height(peer1, 1),
-	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	?assertEqual(
-		lists:sort(TXIDs),
-		lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]))#block.txs)
-	),
-	lists:foreach(
-		fun(TX) ->
-			?assertEqual(TX, ar_test_node:remote_call(peer1, ar_storage, read_tx, [TX#tx.id]))
-		end,
-		TXs
-	),
-	%% Expect the block to be accepted by main.
-	BI = wait_until_height(main, 1),
-	?assertEqual(
-		lists:sort(TXIDs),
-		lists:sort((read_block_when_stored(hd(BI)))#block.txs)
-	),
-	lists:foreach(
-		fun(TX) ->
-			?assertEqual(TX, ar_storage:read_tx(TX#tx.id))
-		end,
-		TXs
-	).
+	{ok, MainConfig} = application:get_env(arweave, config),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	try
+		MainConfig2 = MainConfig#config{ max_propagation_peers = 0 },
+		_ = ar_test_node:start(#{ b0 => B0, config => MainConfig2 }),
+		PeerConfig2 = PeerConfig#config{ max_propagation_peers = 0 },
+		_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => PeerConfig2 }),
+		%% Sign here after the node has started to get the correct price
+		%% estimation from it.
+		TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
+		ar_test_node:connect_to_peer(peer1),
+		%% Post the transactions to peer1.
+		lists:foreach(
+			fun(TX) ->
+				ar_test_node:assert_post_tx_to_peer(peer1, TX),
+				%% Expect transactions to be fetched by main.
+				ar_test_node:assert_wait_until_receives_txs([TX])
+			end,
+			TXs
+		),
+		%% Mine a block.
+		ar_test_node:mine(peer1),
+		%% Expect both transactions to be included into block.
+		PeerBI = assert_wait_until_height(peer1, 1),
+		TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
+		?assertEqual(
+			lists:sort(TXIDs),
+			lists:sort((ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]))#block.txs)
+		),
+		lists:foreach(
+			fun(TX) ->
+				?assertEqual(TX, ar_test_node:remote_call(peer1, ar_storage, read_tx, [TX#tx.id]))
+			end,
+			TXs
+		),
+		%% Expect the block to be accepted by main.
+		BI = wait_until_height(main, 1),
+		?assertEqual(
+			lists:sort(TXIDs),
+			lists:sort((read_block_when_stored(hd(BI)))#block.txs)
+		),
+		lists:foreach(
+			fun(TX) ->
+				?assertEqual(TX, ar_storage:read_tx(TX#tx.id))
+			end,
+			TXs
+		)
+	after
+		application:set_env(arweave, config, MainConfig),
+		ar_test_node:set_config(peer1, PeerConfig)
+	end.
 
 
 keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
@@ -245,57 +295,68 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect the block to be accepted.
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
-	{ok, Config} = application:get_env(arweave, config),
-	Config2 = Config#config{ disable = [tx_poller | Config#config.disable] },
-	_ = ar_test_node:start(#{ b0 => B0, config => Config2 }),
-	{ok, Config3} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
-	Config4 = Config3#config{ disable = [tx_poller | Config3#config.disable] },
-	_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => Config4 }),
-	%% Sign here after the node has started to get the correct price
-	%% estimation from it.
-	FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
-	SecondTXSet = lists:map(fun(TXFun) -> TXFun() end, SecondTXSetFuns),
-	%% Disconnect the nodes so that peer1 does not receive txs.
-	ar_test_node:disconnect_from(peer1),
-	%% Post transactions from the first set to main.
-	lists:foreach(
-		fun(TX) ->
-			ar_test_node:post_tx_to_peer(main, TX)
-		end,
-		SecondTXSet ++ FirstTXSet
-	),
-	?assertEqual([], ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
-	%% Post transactions from the second set to peer1.
-	lists:foreach(
-		fun(TX) ->
-			ar_test_node:assert_post_tx_to_peer(peer1, TX)
-		end,
-		SecondTXSet
-	),
-	%% Wait to make sure the tx will not be gossiped upon reconnect.
-	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
-	%% Connect the nodes and mine a block on peer1.
-	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:mine(peer1),
-	%% Expect main to receive the block.
-	BI = wait_until_height(main, 1),
-	SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
-	?assertEqual(lists:sort(SecondSetTXIDs),
-			lists:sort((read_block_when_stored(hd(BI)))#block.txs)),
-	%% Expect main to have the set difference in the mempool.
-	ar_test_node:assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
-	%% Mine a block on main and expect both transactions to be included.
-	ar_test_node:mine(),
-	BI2 = wait_until_height(main, 2),
-	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
-	?assertEqual(
-		lists:sort(SetDifferenceTXIDs),
-		lists:sort((read_block_when_stored(hd(BI2)))#block.txs)
-	).
+	{ok, MainConfig} = application:get_env(arweave, config),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 
-returns_error_when_txs_exceed_balance(B0, TXs) ->
+	try
+		MainConfig2 = MainConfig#config{ disable = [tx_poller | MainConfig#config.disable] },
+		_ = ar_test_node:start(#{ b0 => B0, config => MainConfig2 }),
+		PeerConfig2 = PeerConfig#config{ disable = [tx_poller | PeerConfig#config.disable] },
+		_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => PeerConfig2 }),
+		%% Sign here after the node has started to get the correct price
+		%% estimation from it.
+		FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
+		SecondTXSet = lists:map(fun(TXFun) -> TXFun() end, SecondTXSetFuns),
+		%% Disconnect the nodes so that peer1 does not receive txs.
+		ar_test_node:disconnect_from(peer1),
+		%% Post transactions from the first set to main.
+		lists:foreach(
+			fun(TX) ->
+				ar_test_node:post_tx_to_peer(main, TX)
+			end,
+			SecondTXSet ++ FirstTXSet
+		),
+		?assertEqual([], ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
+		%% Post transactions from the second set to peer1.
+		lists:foreach(
+			fun(TX) ->
+				ar_test_node:assert_post_tx_to_peer(peer1, TX)
+			end,
+			SecondTXSet
+		),
+		%% Wait to make sure the tx will not be gossiped upon reconnect.
+		timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
+		%% Connect the nodes and mine a block on peer1.
+		ar_test_node:connect_to_peer(peer1),
+		ar_test_node:mine(peer1),
+		%% Expect main to receive the block.
+		BI = wait_until_height(main, 1),
+		SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
+		?assertEqual(lists:sort(SecondSetTXIDs),
+				lists:sort((read_block_when_stored(hd(BI)))#block.txs)),
+		%% Expect main to have the set difference in the mempool.
+		ar_test_node:assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
+		%% Mine a block on main and expect both transactions to be included.
+		ar_test_node:mine(),
+		BI2 = wait_until_height(main, 2),
+		SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
+		?assertEqual(
+			lists:sort(SetDifferenceTXIDs),
+			lists:sort((read_block_when_stored(hd(BI2)))#block.txs)
+		)
+	after
+		application:set_env(arweave, config, MainConfig),
+		ar_test_node:set_config(peer1, PeerConfig)
+	end.
+
+returns_error_when_txs_exceed_balance(BuildTXSetFun) ->
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
+
 	_ = ar_test_node:start(B0),
 	_ = ar_test_node:start_peer(peer1, B0),
+
+	TXs = BuildTXSetFun(Key, B0),
 
 	ar_test_node:connect_to_peer(peer1),
 
@@ -319,6 +380,7 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 		end,
 		TXs
 	),
+
 	ar_test_node:assert_wait_until_receives_txs(BelowBalanceTXs),
 	%% Expect only the first two to be included into the block.
 	ar_test_node:mine(peer1),
@@ -346,8 +408,6 @@ returns_error_when_txs_exceed_balance(B0, TXs) ->
 	?assertEqual({ok, ["overspend"]}, ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes,
 			[ExceedBalanceTX#tx.id])).
 
-rejects_transactions_above_the_size_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_rejects_transactions_above_the_size_limit/0}.
 
 test_rejects_transactions_above_the_size_limit() ->
 	%% Create a genesis block with a wallet.
@@ -373,9 +433,6 @@ test_rejects_transactions_above_the_size_limit() ->
 		{ok, ["tx_fields_too_large"]},
 		ar_test_node:remote_call(peer1, ar_tx_db, get_error_codes, [BadTX#tx.id])
 	).
-
-accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
 
 test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	%% Post a TX, mine a block.
@@ -407,9 +464,6 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	PeerBI = assert_wait_until_height(peer1, 2),
 	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]),
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
-
-does_not_allow_to_spend_mempool_tokens_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_does_not_allow_to_spend_mempool_tokens/0}.
 
 test_does_not_allow_to_spend_mempool_tokens() ->
 	%% Post a transaction sending tokens to a wallet with few tokens.
@@ -463,9 +517,6 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 	PeerBI2 = assert_wait_until_height(peer1, 2),
 	B2 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI2)]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
-
-does_not_allow_to_replay_empty_wallet_txs_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_does_not_allow_to_replay_empty_wallet_txs/0}.
 
 test_does_not_allow_to_replay_empty_wallet_txs() ->
 	%% Create a new wallet by sending some tokens to it. Mine a block.
@@ -590,26 +641,6 @@ mines_format_2_txs_without_size_limit() ->
 	TotalSize = lists:sum([(ar_storage:read_tx(TXID))#tx.data_size || TXID <- B#block.txs]),
 	?assert(TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT).
 
-rejects_txs_with_outdated_anchors_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun() ->
-		%% Post a transaction anchoring the block at ?MAX_TX_ANCHOR_DEPTH + 1.
-		%%
-		%% Expect the transaction to be rejected.
-		Key = {_, Pub} = ar_wallet:new(),
-		[B0] = ar_weave:init([
-			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
-		]),
-		_ = ar_test_node:start_peer(peer1, B0),
-		mine_blocks(peer1, ?MAX_TX_ANCHOR_DEPTH),
-		assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH),
-		TX1 = ar_test_node:sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
-		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-			ar_test_node:post_tx_to_peer(peer1, TX1)
-	end}.
-
-drops_v1_txs_exceeding_mempool_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_drops_v1_txs_exceeding_mempool_limit/0}.
-
 test_drops_v1_txs_exceeding_mempool_limit() ->
 	%% Post transactions which exceed the mempool size limit.
 	%%
@@ -642,9 +673,6 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	%% There is no place for the last transaction in the mempool.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
-
-drops_v2_txs_exceeding_mempool_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun drops_v2_txs_exceeding_mempool_limit/0}.
 
 drops_v2_txs_exceeding_mempool_limit() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -685,9 +713,6 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
 	?assertEqual([Last#tx.id] ++ [TX#tx.id || TX <- lists:sublist(TXs, 8)]
 			++ [StrippedTX#tx.id], Mempool3).
-
-mines_format_2_txs_without_size_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun mines_format_2_txs_without_size_limit/0}.
 
 joins_network_successfully() ->
 	%% Start a node and mine ?MAX_TX_ANCHOR_DEPTH blocks, some of them
@@ -997,20 +1022,16 @@ two_block_anchored_txs(Key, B0) ->
 empty_tx_set(_Key, _B0) ->
 	[].
 
-block_anchor_txs_spending_balance_plus_one_more() ->
-	Key = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
+block_anchor_txs_spending_balance_plus_one_more(Key, B0) ->
 	TX1 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(10), last_tx => B0#block.indep_hash }),
 	TX2 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(10), last_tx => B0#block.indep_hash }),
 	TX3 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(1), last_tx => B0#block.indep_hash }),
-	{B0, [TX1, TX2, TX3]}.
+	[TX1, TX2, TX3].
 
-mixed_anchor_txs_spending_balance_plus_one_more() ->
-	Key = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
+mixed_anchor_txs_spending_balance_plus_one_more(Key, B0) ->
 	TX1 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(10), last_tx => <<>> }),
 	TX2 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(5),
 			last_tx => B0#block.indep_hash }),
@@ -1020,7 +1041,7 @@ mixed_anchor_txs_spending_balance_plus_one_more() ->
 			reward => ?AR(3), last_tx => B0#block.indep_hash }),
 	TX5 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
 			reward => ?AR(1), last_tx => B0#block.indep_hash }),
-	{B0, [TX1, TX2, TX3, TX4, TX5]}.
+	[TX1, TX2, TX3, TX4, TX5].
 
 grouped_txs() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
