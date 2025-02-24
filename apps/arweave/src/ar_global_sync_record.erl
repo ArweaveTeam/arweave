@@ -71,7 +71,22 @@ get_serialized_sync_buckets() ->
 init([]) ->
 	ok = ar_events:subscribe(sync_record),
 	{ok, Config} = application:get_env(arweave, config),
-	SyncRecord = init_sync_record(Config),
+	SyncRecord = lists:foldl(
+		fun(Module, Acc) ->
+			case Module of
+				{_, _, {replica_2_9, _}} when ?BLOCK_2_9_SYNCING ->
+					%% Ignore replica.2.9 packing. This is a temporary solution until
+					%% we can support data syncing in batches corresponding to the
+					%% replica.2.9 entropy footprint
+					Acc;
+				_ ->
+					StoreID = ar_storage_module:id(Module),
+					ar_intervals:union(ar_sync_record:get(ar_data_sync, StoreID), Acc)
+			end
+		end,
+		ar_intervals:new(),
+		["default" | Config#config.storage_modules]
+	),
 	SyncBuckets = ar_sync_buckets:from_intervals(SyncRecord),
 	{SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,
 					?MAX_SYNC_BUCKETS_SIZE),
@@ -146,34 +161,3 @@ handle_info(Message, State) ->
 
 terminate(Reason, _State) ->
 	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, io_lib:format("~p", [Reason])}]).
-
-%%%===================================================================
-%%% Internal functions.
-%%%===================================================================
-
-init_sync_record(Config) when ?BLOCK_2_9_SYNCING ->
-	lists:foldl(
-		fun(Module, Acc) ->
-			case Module of
-				%% Ignore replica.2.9 packing. This is a temporary solution until
-				%% we can support data syncing in batches corresponding to the
-				%% replica.2.9 entropy footprint
-				{_, _, {replica_2_9, _}} -> Acc;
-				_ ->
-					StoreID = ar_storage_module:id(Module),
-					ar_intervals:union(ar_sync_record:get(ar_data_sync, StoreID), Acc)
-			end
-		end,
-		ar_intervals:new(),
-		["default" | Config#config.storage_modules]
-	);
-
-init_sync_record(Config) ->
-	lists:foldl(
-		fun(Module, Acc) ->
-			StoreID = ar_storage_module:id(Module),
-			ar_intervals:union(ar_sync_record:get(ar_data_sync, StoreID), Acc)
-		end,
-		ar_intervals:new(),
-		["default" | Config#config.storage_modules]
-	).
