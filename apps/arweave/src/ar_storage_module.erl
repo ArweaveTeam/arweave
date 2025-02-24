@@ -34,6 +34,7 @@
 %%%===================================================================
 
 %% @doc Return the storage module identifier.
+id("default") -> "default";
 id({BucketSize, Bucket, Packing}) ->
 	PackingString =
 		case Packing of
@@ -180,11 +181,11 @@ get_range(ID) ->
 
 -spec module_range(ar_storage_module:storage_module()) ->
 	{non_neg_integer(), non_neg_integer()}.
-module_range(Module) ->	
+module_range(Module) ->
 	{_BucketSize, _Bucket, Packing} = Module,
 	module_range(Module, get_overlap(Packing)).
 
-module_range(Module, Overlap) ->	
+module_range(Module, Overlap) ->
 	{BucketSize, Bucket, _Packing} = Module,
 	{BucketSize * Bucket, (Bucket + 1) * BucketSize + Overlap}.
 
