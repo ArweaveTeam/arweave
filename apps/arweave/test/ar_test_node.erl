@@ -1432,13 +1432,23 @@ assert_data_not_found(Node, TXID) ->
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).
 
 get_node_namespace() ->
-	lists:nth(2, split_node_name()). % Retrieve the element between the '-' and '@'
+	% Return the namespace part (everything after first - and before @)
+	{_, Namespace} = split_node_name(),
+	Namespace.
 
 get_node() ->
-	lists:nth(1, split_node_name()). % Retrieve the element before the '-'
+	% Return the name part (everything before first -)
+	{Name, _} = split_node_name(),
+	Name.
 
 split_node_name() ->
-	string:tokens(atom_to_list(node()), "-@").
+	% First split by '@' to separate host part
+	[NamePart, _Host] = string:split(atom_to_list(node()), "@"),
+	% Then split by first '-' to get name and namespace
+	case string:split(NamePart, "-", leading) of
+		[Name, Namespace] -> {Name, Namespace};
+		[Name] -> {Name, ""}  % Handle case where there is no '-'
+	end.
 
 get_unused_port() ->
   {ok, ListenSocket} = gen_tcp:listen(0, [{port, 0}]),
