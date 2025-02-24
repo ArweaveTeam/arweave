@@ -5,6 +5,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
+-include_lib("arweave/include/ar_global_sync_record.hrl").
 
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0]).
 
@@ -68,24 +69,10 @@ get_serialized_sync_buckets() ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([]) ->
+init([]) when ?AR_GLOBAL_SYNC_RECORD_SKIP_REPLICA_2_9 ->
 	ok = ar_events:subscribe(sync_record),
 	{ok, Config} = application:get_env(arweave, config),
-	SyncRecord =
-		lists:foldl(
-			fun(Module, Acc) ->
-				case Module of
-					"default" -> ar_intervals:union(ar_sync_record:get(ar_data_sync, "default"), Acc);
-					%% Ignore replica.2.9 packing. This is a temporary solution until
-					%% we can support data syncing in batches corresponding to the
-					%% replica.2.9 entropy footprint
-					{_, _, {replica_2_9, _}} -> Acc;
-					_ -> ar_intervals:union(ar_sync_record:get(ar_data_sync, ar_storage_module:id(Module)), Acc)
-				end
-			end,
-			ar_intervals:new(),
-			["default" | Config#config.storage_modules]
-		),
+	SyncRecord = init_sync_record(Config),
 	SyncBuckets = ar_sync_buckets:from_intervals(SyncRecord),
 	{SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,
 					?MAX_SYNC_BUCKETS_SIZE),
@@ -160,3 +147,34 @@ handle_info(Message, State) ->
 
 terminate(Reason, _State) ->
 	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, io_lib:format("~p", [Reason])}]).
+
+%%%===================================================================
+%%% Internal functions.
+%%%===================================================================
+
+init_sync_record(Config) when ?AR_GLOBAL_SYNC_RECORD_SKIP_REPLICA_2_9 ->
+	lists:foldl(
+		fun(Module, Acc) ->
+			case Module of
+				%% Ignore replica.2.9 packing. This is a temporary solution until
+				%% we can support data syncing in batches corresponding to the
+				%% replica.2.9 entropy footprint
+				{_, _, {replica_2_9, _}} -> Acc;
+				_ ->
+					StoreID = ar_storage_module:id(Module),
+					ar_intervals:union(ar_sync_record:get(ar_data_sync, StoreID), Acc)
+			end
+		end,
+		ar_intervals:new(),
+		["default" | Config#config.storage_modules]
+	);
+
+init_sync_record(Config) ->
+	lists:foldl(
+		fun(Module, Acc) ->
+			StoreID = ar_storage_module:id(Module),
+			ar_intervals:union(ar_sync_record:get(ar_data_sync, StoreID), Acc)
+		end,
+		ar_intervals:new(),
+		["default" | Config#config.storage_modules]
+	).

@@ -3,6 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave/include/ar_global_sync_record.hrl").
 
 sync_record_test_() ->
 	[
@@ -140,7 +141,7 @@ test_sync_record() ->
 	end.
 
 
-test_sync_record_with_replica_2_9() ->
+test_sync_record_with_replica_2_9() when ?AR_GLOBAL_SYNC_RECORD_SKIP_REPLICA_2_9 ->
 	SleepTime = 1000,
 	PartitionStart = ?PARTITION_SIZE - ?DATA_CHUNK_SIZE,
 	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
@@ -176,4 +177,5 @@ test_sync_record_with_replica_2_9() ->
 		ar_test_node:stop()
 	after
 		ok = application:set_env(arweave, config, Config)
-	end.
+	end;
+test_sync_record_with_replica_2_9() -> ok.
