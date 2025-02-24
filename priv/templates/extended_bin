@@ -340,9 +340,9 @@ arweave_version_help() {
 arweave_test() {
     TEST_CONFIG="./config/sys.config"
     TEST_PROFILE="test"
-    TEST_NODE_NAME="main-localtest"
-    TEST_NODE_HOST="127.0.0.1"
-    TEST_COOKIE="test"
+    TEST_NODE_NAME="${NODE_NAME:-main-localtest}"
+    TEST_NODE_HOST="${NODE_HOST:-127.0.0.1}"
+    TEST_COOKIE="${COOKIE:-test}"
     TEST_MODULE="tests"
     TEST_LOG="main-localtest.out"
     arweave_test_run ${*}
@@ -356,9 +356,9 @@ arweave_test_help() {
 arweave_e2e() {
     TEST_CONFIG="./config/sys.config"
     TEST_PROFILE="e2e"
-    TEST_NODE_NAME="main-e2e"
-    TEST_NODE_HOST="127.0.0.1"
-    TEST_COOKIE="e2e"
+    TEST_NODE_NAME="${NODE_NAME:-main-e2e}"
+    TEST_NODE_HOST="${NODE_HOST:-127.0.0.1}"
+    TEST_COOKIE="${COOKIE:-e2e}"
     TEST_MODULE="e2e"
     TEST_LOG="main-e2e.out"
     arweave_test_run ${*}
@@ -391,10 +391,11 @@ arweave_test_run() {
 	PARAMS="-pa ${TEST_PATH} ${TEST_PATH_BASE} -config ${TEST_CONFIG} -noshell"	
 	ENTRY_POINT="-run ar ${TEST_MODULE} ${*} -s init stop"
 	command="erl ${PARAMS} -name ${TEST_NODE} -setcookie ${TEST_COOKIE} ${ENTRY_POINT}"
+	set +e
 	set -x	
 	echo -e "\033[0;32m===> Execute command ${command}\033[0m"
-	stdbuf -oL -eL ${command} 2>&1 | tee "${TEST_LOG}"
-	set +x
+	${command} 2>&1 > "${TEST_LOG}"
+	exit $?
     )
 }
 
