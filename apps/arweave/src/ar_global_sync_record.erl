@@ -5,7 +5,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
--include_lib("arweave/include/ar_global_sync_record.hrl").
 
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0]).
 
@@ -69,7 +68,7 @@ get_serialized_sync_buckets() ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([]) when ?AR_GLOBAL_SYNC_RECORD_SKIP_REPLICA_2_9 ->
+init([]) ->
 	ok = ar_events:subscribe(sync_record),
 	{ok, Config} = application:get_env(arweave, config),
 	SyncRecord = init_sync_record(Config),
@@ -152,7 +151,7 @@ terminate(Reason, _State) ->
 %%% Internal functions.
 %%%===================================================================
 
-init_sync_record(Config) when ?AR_GLOBAL_SYNC_RECORD_SKIP_REPLICA_2_9 ->
+init_sync_record(Config) when ?BLOCK_2_9_SYNCING ->
 	lists:foldl(
 		fun(Module, Acc) ->
 			case Module of
