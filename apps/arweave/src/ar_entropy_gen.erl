@@ -123,7 +123,7 @@ iteration_end(BucketEndOffset, RangeEnd) ->
 	%% we also want to limit it to the current storage module's range.
 	%% This allows us to handle both the storage module range as well
 	%% as the small overlap region.
-	IterationEnd = min(PaddedPartitionEnd, RangeEnd).
+	min(PaddedPartitionEnd, RangeEnd).
 
 %% @doc Return a list of all BucketEndOffsets covered by the entropy needed to encipher
 %% the chunk at the given offset. The list returned may include offsets that occur before
@@ -311,7 +311,7 @@ handle_cast(prepare_entropy, State) ->
 	{noreply, State3};
 
 handle_cast({generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}, State) ->
-	?LOG_INFO([{event, generate_entropies}, {store_id, State#state.store_id},
+	?LOG_DEBUG([{event, generate_entropies}, {store_id, State#state.store_id},
 			{bucket_end_offset, BucketEndOffset}]),
 	Entropies = generate_entropies(RewardAddr, BucketEndOffset),
 	ReplyTo ! {entropy, BucketEndOffset, Entropies},
