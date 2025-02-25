@@ -1789,6 +1789,10 @@ read_chunk_with_metadata(
 read_chunk_with_metadata(
 		Offset, SeekOffset, StoredPacking, StoreID, ReadChunk, RequestOrigin) ->
 	case get_chunk_by_byte(SeekOffset, StoreID) of
+		{error, invalid_iterator} ->
+			%% No error log needed since this is expected behavior when the chunk simply
+			%% isn't stored.
+			{error, chunk_not_found};
 		{error, Err} ->
 			Modules = ar_storage_module:get_all(SeekOffset),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
