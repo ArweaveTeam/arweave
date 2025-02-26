@@ -105,6 +105,9 @@ jobs:
       - name: Build arweave test sources
         run: ./ar-rebar3 test compile
 
+      - name: Build arweave e2e test sources
+        run: ./ar-rebar3 e2e compile
+
       # some artifacts are compiled and only available
       # in arweave directy (libraries)
       - name: Prepare artifacts
