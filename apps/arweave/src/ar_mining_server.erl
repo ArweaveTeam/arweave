@@ -790,6 +790,10 @@ prepare_solution(poa1, Candidate, Solution) ->
 							error
 					end;
 				_ ->
+					?LOG_DEBUG([{event, prepare_solution_poa1_chunk1_not_set},
+						{recall_byte, RecallByte1},
+						{error, Error},
+						{chunk, binary:part(Chunk1, 0, 10)}]),
 					%% If we are a coordinated miner and not an exit node - the exit
 					%% node will fetch the proofs.
 					may_be_leave_it_to_exit_peer(
@@ -807,6 +811,10 @@ prepare_solution(poa2, Candidate, Solution) ->
 		{ok, PoA2} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
 		{error, _Error} ->
+			?LOG_DEBUG([{event, prepare_solution_poa2_chunk2_not_set},
+				{recall_byte, RecallByte2},
+				{error, _Error},
+				{chunk, binary:part(Chunk2, 0, 10)}]),
 			Modules = ar_storage_module:get_all(RecallByte2 + 1),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
 			LogData = [{recall_byte2, RecallByte2}, {modules_covering_recall_byte, ModuleIDs}],
@@ -1101,6 +1109,10 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 					ChunkOrSubChunk, PoA, Packing, PoAReply, Nonce}),
 			{error, chunk_mismatch};
 		{_ChunkOrSubChunk, Error, _Packing} ->
+			?LOG_DEBUG([{event, read_poa_reply},
+			{recall_byte, RecallByte},
+			{poa_reply, Error},
+			{packing, ar_serialize:encode_packing(Packing, true)}]),
 			Error
 	end.
 
@@ -1160,6 +1172,9 @@ read_unpacked_chunk(RecallByte, Proof) ->
 				unpacked_chunk = ar_packing_server:pad_chunk(UnpackedChunk),
 				tx_path = TXPath, data_path = DataPath }};
 		Error ->
+			?LOG_DEBUG([{event, read_unpacked_chunk_error},
+				{recall_byte, RecallByte},
+				{error, Error}]),
 			Error
 	end.
 

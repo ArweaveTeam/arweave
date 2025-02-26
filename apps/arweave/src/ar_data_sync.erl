@@ -1826,7 +1826,7 @@ read_chunk_with_metadata(
 							ar_serialize:encode_packing(StoredPacking, true)},
 						{modules_covering_seek_offset, ModuleIDs},
 						{chunk_data_key, ar_util:encode(ChunkDataKey)},
-						{read_fun, ReadFun}]),
+						{read_fun, ReadChunk}]),
 					invalidate_bad_data_record({AbsoluteOffset, ChunkSize, StoreID,
 						failed_to_read_chunk_data_path}),
 					{error, chunk_not_found};
@@ -2917,6 +2917,8 @@ update_chunks_index(Args, State) ->
 	AbsoluteChunkOffset = element(1, Args),
 	case ar_tx_blacklist:is_byte_blacklisted(AbsoluteChunkOffset) of
 		true ->
+			?LOG_DEBUG([{event, update_chunks_index_blacklisted},
+				{absolute_chunk_offset, AbsoluteChunkOffset}]),
 			ok;
 		false ->
 			update_chunks_index2(Args, State)
@@ -2933,11 +2935,34 @@ update_chunks_index2(Args, State) ->
 			PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 			case ar_sync_record:add(PaddedOffset, StartOffset, Packing, ar_data_sync, StoreID) of
 				ok ->
+					?LOG_DEBUG([{event, update_chunks_index2_ok},
+						{absolute_offset, AbsoluteOffset},
+						{padded_offset, PaddedOffset},
+						{start_offset, StartOffset},
+						{offset, Offset},
+						{packing, ar_serialize:encode_packing(Packing, true)},
+						{offset, Offset},
+						{chunk_size, ChunkSize},
+						{store_id, StoreID}]),
 					ok;
 				{error, Reason} ->
+					?LOG_ERROR([{event, update_chunks_index2_error},
+						{absolute_offset, AbsoluteOffset},
+						{padded_offset, PaddedOffset},
+						{start_offset, StartOffset},
+						{offset, Offset},
+						{chunk_size, ChunkSize},
+						{store_id, StoreID},
+						{reason, Reason}]),
 					{error, Reason}
 			end;
 		{error, Reason} ->
+			?LOG_ERROR([{event, update_chunks_index2_error},
+				{absolute_offset, AbsoluteOffset},
+				{offset, Offset},
+				{chunk_size, ChunkSize},
+				{store_id, StoreID},
+				{reason, Reason}]),
 			{error, Reason}
 	end.
 

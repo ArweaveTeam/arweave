@@ -658,6 +658,12 @@ record_chunk(
 					sync_record_id(Packing), StoreID) of
 				ok ->
 					ChunkFileStart = get_chunk_file_start(PaddedEndOffset),
+					?LOG_DEBUG([{event, record_chunk},
+						{padded_end_offset, PaddedEndOffset},
+						{packing, ar_serialize:encode_packing(Packing, true)},
+						{store_id, StoreID},
+						{chunk_file_start, ChunkFileStart},
+						{filepath, Filepath}]),
 					ets:insert(chunk_storage_file_index,
 						{{ChunkFileStart, StoreID}, Filepath}),
 					{ok, maps:put(ChunkFileStart, Filepath, FileIndex), Packing};
@@ -724,6 +730,11 @@ get_handle_by_filepath(Filepath) ->
 	end.
 
 write_chunk2(_PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
+	?LOG_DEBUG([{event, write_chunk2},
+		{padded_offset, _PaddedOffset},
+		{chunk_offset, ChunkOffset},
+		{filepath, Filepath},
+		{position, Position}]),
 	ChunkOffsetBinary =
 		case ChunkOffset of
 			0 ->

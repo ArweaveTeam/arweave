@@ -239,17 +239,38 @@ record_chunk(
 					{error, Reason};
 				_ ->
 					PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
+					?LOG_DEBUG([{event, enciphered_chunk1},
+						{padded_end_offset, PaddedEndOffset},
+						{packing, ar_serialize:encode_packing(Packing, true)},
+						{store_id, StoreID},
+						{file_index, FileIndex},
+						{chunk, binary:part(Chunk, 0, 10)},
+						{entropy, binary:part(Entropy, 0, 10)},
+						{packed_chunk, binary:part(PackedChunk, 0, 10)}]),
 					ar_chunk_storage:record_chunk(
 						PaddedEndOffset, PackedChunk, Packing, StoreID,
 						StoreIDLabel, PackingLabel, FileIndex)
 			end;
 		no_entropy_yet ->
+			?LOG_DEBUG([{event, no_entropy_yet},
+						{padded_end_offset, PaddedEndOffset},
+						{packing, ar_serialize:encode_packing(unpacked_padded, true)},
+						{store_id, StoreID},
+						{file_index, FileIndex}]),
 			ar_chunk_storage:record_chunk(
 				PaddedEndOffset, Chunk, unpacked_padded, StoreID,
 				StoreIDLabel, PackingLabel, FileIndex);
 		{_EndOffset, Entropy} ->
 			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
+			?LOG_DEBUG([{event, enciphered_chunk2},
+						{padded_end_offset, PaddedEndOffset},
+						{packing, ar_serialize:encode_packing(Packing, true)},
+						{store_id, StoreID},
+						{file_index, FileIndex},
+						{chunk, binary:part(Chunk, 0, 10)},
+						{entropy, binary:part(Entropy, 0, 10)},
+						{packed_chunk, binary:part(PackedChunk, 0, 10)}]),
 			ar_chunk_storage:record_chunk(
 				PaddedEndOffset, PackedChunk, Packing, StoreID,
 				StoreIDLabel, PackingLabel, FileIndex)
@@ -328,6 +349,15 @@ record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 				{error, _} = Error ->
 					Error;
 				{_, UnpackedChunk} ->
+					?LOG_DEBUG([{event, enciphered_chunk3},
+						{padded_end_offset, EndOffset},
+						{start_offset, StartOffset},
+						{store_id, StoreID},
+						{chunk_file_start, ChunkFileStart},
+						{filepath, Filepath},
+						{chunk, binary:part(UnpackedChunk, 0, 10)},
+						{entropy, binary:part(ChunkEntropy, 0, 10)},
+						{packed_chunk, binary:part(ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy), 0, 10)}]),
 					ar_sync_record:delete(EndOffset, StartOffset, ar_data_sync, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;

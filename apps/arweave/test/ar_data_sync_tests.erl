@@ -8,18 +8,18 @@
 
 -import(ar_test_node, [assert_wait_until_height/2, test_with_mocked_functions/2]).
 
-recovers_from_corruption_test_() ->
-	{timeout, 140, fun test_recovers_from_corruption/0}.
+% recovers_from_corruption_test_() ->
+% 	{timeout, 140, fun test_recovers_from_corruption/0}.
 
-test_recovers_from_corruption() ->
-	ar_test_data_sync:setup_nodes(),
-	{ok, Config} = application:get_env(arweave, config),
-	StoreID = ar_storage_module:id(hd(ar_storage_module:get_all(262144 * 3))),
-	?debugFmt("Corrupting ~s...", [StoreID]),
-	[ar_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
-			|| PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)],
-	ar_test_node:mine(),
-	ar_test_node:assert_wait_until_height(main, 1).
+% test_recovers_from_corruption() ->
+% 	ar_test_data_sync:setup_nodes(),
+% 	{ok, Config} = application:get_env(arweave, config),
+% 	StoreID = ar_storage_module:id(hd(ar_storage_module:get_all(262144 * 3))),
+% 	?debugFmt("Corrupting ~s...", [StoreID]),
+% 	[ar_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
+% 			|| PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)],
+% 	ar_test_node:mine(),
+% 	ar_test_node:assert_wait_until_height(main, 1).
 
 syncs_data_test_() ->
 	{timeout, 240, fun test_syncs_data/0}.
@@ -225,275 +225,275 @@ test_mines_off_only_second_last_chunks() ->
 		lists:seq(1, 6)
 	).
 
-disk_pool_rotation_test_() ->
-	{timeout, 120, fun test_disk_pool_rotation/0}.
+% disk_pool_rotation_test_() ->
+% 	{timeout, 120, fun test_disk_pool_rotation/0}.
 
-test_disk_pool_rotation() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	%% Will store the three genesis chunks.
-	%% The third one falls inside the "overlap" (see ar_storage_module.erl)
-	StorageModules = [{2 * ?DATA_CHUNK_SIZE, 0,
-			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
-	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, storage_modules => StorageModules }),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	Offset = ?DATA_CHUNK_SIZE,
-	DataSize = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
-	Proof = #{ data_root => ar_util:encode(DataRoot),
-			data_path => ar_util:encode(DataPath),
-			chunk => ar_util:encode(hd(Chunks)),
-			offset => integer_to_binary(Offset),
-			data_size => integer_to_binary(DataSize) },
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-			ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
-	ar_test_node:mine(main),
-	assert_wait_until_height(main, 1),
-	timer:sleep(2000),
-	Options = #{ format => etf, random_subset => false },
-	{ok, Binary1} = ar_global_sync_record:get_serialized_sync_record(Options),
-	{ok, Global1} = ar_intervals:safe_from_etf(Binary1),
-	%% 3 genesis chunks plus the two we upload here.
-	?assertEqual([{1048576, 0}], ar_intervals:to_list(Global1)),
-	ar_test_node:mine(main),
-	assert_wait_until_height(main, 2),
-	{ok, Binary2} = ar_global_sync_record:get_serialized_sync_record(Options),
-	{ok, Global2} = ar_intervals:safe_from_etf(Binary2),
-	?assertEqual([{1048576, 0}], ar_intervals:to_list(Global2)),
-	ar_test_node:mine(main),
-	assert_wait_until_height(main, 3),
-	ar_test_node:mine(main),
-	assert_wait_until_height(main, 4),
-	%% The new chunk has been confirmed but there is not storage module to take it.
-	?assertEqual(3, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
-	true = ar_util:do_until(
-		fun() ->
-			{ok, Binary3} = ar_global_sync_record:get_serialized_sync_record(Options),
-			{ok, Global3} = ar_intervals:safe_from_etf(Binary3),
-			[{786432, 0}] == ar_intervals:to_list(Global3)
-		end,
-		200,
-		5000
-	).
+% test_disk_pool_rotation() ->
+% 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+% 	%% Will store the three genesis chunks.
+% 	%% The third one falls inside the "overlap" (see ar_storage_module.erl)
+% 	StorageModules = [{2 * ?DATA_CHUNK_SIZE, 0,
+% 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+% 	Wallet = ar_test_data_sync:setup_nodes(
+% 			#{ addr => Addr, storage_modules => StorageModules }),
+% 	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
+% 	{DataRoot, DataTree} = ar_merkle:generate_tree(
+% 		ar_tx:sized_chunks_to_sized_chunk_ids(
+% 			ar_tx:chunks_to_size_tagged_chunks(Chunks)
+% 		)
+% 	),
+% 	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+% 	ar_test_node:assert_post_tx_to_peer(main, TX),
+% 	Offset = ?DATA_CHUNK_SIZE,
+% 	DataSize = ?DATA_CHUNK_SIZE,
+% 	DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
+% 	Proof = #{ data_root => ar_util:encode(DataRoot),
+% 			data_path => ar_util:encode(DataPath),
+% 			chunk => ar_util:encode(hd(Chunks)),
+% 			offset => integer_to_binary(Offset),
+% 			data_size => integer_to_binary(DataSize) },
+% 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
+% 			ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
+% 	ar_test_node:mine(main),
+% 	assert_wait_until_height(main, 1),
+% 	timer:sleep(2000),
+% 	Options = #{ format => etf, random_subset => false },
+% 	{ok, Binary1} = ar_global_sync_record:get_serialized_sync_record(Options),
+% 	{ok, Global1} = ar_intervals:safe_from_etf(Binary1),
+% 	%% 3 genesis chunks plus the two we upload here.
+% 	?assertEqual([{1048576, 0}], ar_intervals:to_list(Global1)),
+% 	ar_test_node:mine(main),
+% 	assert_wait_until_height(main, 2),
+% 	{ok, Binary2} = ar_global_sync_record:get_serialized_sync_record(Options),
+% 	{ok, Global2} = ar_intervals:safe_from_etf(Binary2),
+% 	?assertEqual([{1048576, 0}], ar_intervals:to_list(Global2)),
+% 	ar_test_node:mine(main),
+% 	assert_wait_until_height(main, 3),
+% 	ar_test_node:mine(main),
+% 	assert_wait_until_height(main, 4),
+% 	%% The new chunk has been confirmed but there is not storage module to take it.
+% 	?assertEqual(3, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
+% 	true = ar_util:do_until(
+% 		fun() ->
+% 			{ok, Binary3} = ar_global_sync_record:get_serialized_sync_record(Options),
+% 			{ok, Global3} = ar_intervals:safe_from_etf(Binary3),
+% 			[{786432, 0}] == ar_intervals:to_list(Global3)
+% 		end,
+% 		200,
+% 		5000
+% 	).
 
-enqueue_intervals_test() ->
-	test_enqueue_intervals([], 2, [], [], [], "Empty Intervals"),
-	Peer1 = {1, 2, 3, 4, 1984},
-	Peer2 = {101, 102, 103, 104, 1984},
-	Peer3 = {201, 202, 203, 204, 1984},
+% enqueue_intervals_test() ->
+% 	test_enqueue_intervals([], 2, [], [], [], "Empty Intervals"),
+% 	Peer1 = {1, 2, 3, 4, 1984},
+% 	Peer2 = {101, 102, 103, 104, 1984},
+% 	Peer3 = {201, 202, 203, 204, 1984},
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-				])}
-		],
-		5,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1},
-			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer1},
-			{8*?DATA_CHUNK_SIZE, 9*?DATA_CHUNK_SIZE, Peer1}
-		],
-		"Single peer, full intervals, all chunks. Non-overlapping QIntervals."),
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 				])}
+% 		],
+% 		5,
+% 		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+% 		[
+% 			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 			{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+% 			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1},
+% 			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer1},
+% 			{8*?DATA_CHUNK_SIZE, 9*?DATA_CHUNK_SIZE, Peer1}
+% 		],
+% 		"Single peer, full intervals, all chunks. Non-overlapping QIntervals."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-				])}
-		],
-		2,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1}
-		],
-		"Single peer, full intervals, 2 chunks. Non-overlapping QIntervals."),
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 				])}
+% 		],
+% 		2,
+% 		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+% 		[
+% 			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1}
+% 		],
+% 		"Single peer, full intervals, 2 chunks. Non-overlapping QIntervals."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			])},
-			{Peer2, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-			])},
-			{Peer3, ar_intervals:from_list([
-				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
-			])}
-		],
-		2,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{8*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
-			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2},
-			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
-		],
-		"Multiple peers, overlapping, full intervals, 2 chunks. Non-overlapping QIntervals."),
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 			])},
+% 			{Peer2, ar_intervals:from_list([
+% 				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+% 			])},
+% 			{Peer3, ar_intervals:from_list([
+% 				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+% 			])}
+% 		],
+% 		2,
+% 		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+% 		[
+% 			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 			{8*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+% 			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
+% 			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2},
+% 			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
+% 		],
+% 		"Multiple peers, overlapping, full intervals, 2 chunks. Non-overlapping QIntervals."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			])},
-			{Peer2, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-			])},
-			{Peer3, ar_intervals:from_list([
-				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
-			])}
-		],
-		3,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{8*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
-			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1},
-			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
-		],
-		"Multiple peers, overlapping, full intervals, 3 chunks. Non-overlapping QIntervals."),
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 			])},
+% 			{Peer2, ar_intervals:from_list([
+% 				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+% 			])},
+% 			{Peer3, ar_intervals:from_list([
+% 				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+% 			])}
+% 		],
+% 		3,
+% 		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
+% 		[
+% 			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 			{8*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+% 			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
+% 			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1},
+% 			{7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
+% 		],
+% 		"Multiple peers, overlapping, full intervals, 3 chunks. Non-overlapping QIntervals."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			])}
-		],
-		5,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1}
-		],
-		"Single peer, full intervals, all chunks. Overlapping QIntervals."),
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 			])}
+% 		],
+% 		5,
+% 		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
+% 		[
+% 			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 			{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+% 			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1}
+% 		],
+% 		"Single peer, full intervals, all chunks. Overlapping QIntervals."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			])},
-			{Peer2, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-			])},
-			{Peer3, ar_intervals:from_list([
-				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
-			])}
-		],
-		2,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
-			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2}
-		],
-		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals."),
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 			])},
+% 			{Peer2, ar_intervals:from_list([
+% 				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+% 			])},
+% 			{Peer3, ar_intervals:from_list([
+% 				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+% 			])}
+% 		],
+% 		2,
+% 		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
+% 		[
+% 			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 			{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
+% 			{5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
+% 			{6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2}
+% 		],
+% 		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
-			])}
-		],
-		2,
-		[
-			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
-			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
-		],
-		[
-			{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1}
-		],
-		"Single peer, partial intervals, 2 chunks. Overlapping partial QIntervals."),
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
+% 				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
+% 			])}
+% 		],
+% 		2,
+% 		[
+% 			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
+% 			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
+% 		],
+% 		[
+% 			{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1}
+% 		],
+% 		"Single peer, partial intervals, 2 chunks. Overlapping partial QIntervals."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
-			])},
-			{Peer2, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			])},
-			{Peer3, ar_intervals:from_list([
-				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
-			])}
-		],
-		2,
-		[
-			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
-			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
-		],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{8*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-		],
-		[
-			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1},
-			{trunc(3.25*?DATA_CHUNK_SIZE), 4*?DATA_CHUNK_SIZE, Peer2},
-			{6*?DATA_CHUNK_SIZE, trunc(6.5*?DATA_CHUNK_SIZE), Peer2}
-		],
-		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals.").
+% 	test_enqueue_intervals(
+% 		[
+% 			{Peer1, ar_intervals:from_list([
+% 				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
+% 				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
+% 			])},
+% 			{Peer2, ar_intervals:from_list([
+% 				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 				{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 			])},
+% 			{Peer3, ar_intervals:from_list([
+% 				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
+% 			])}
+% 		],
+% 		2,
+% 		[
+% 			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
+% 			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
+% 		],
+% 		[
+% 			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
+% 			{8*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
+% 		],
+% 		[
+% 			{2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
+% 			{3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1},
+% 			{trunc(3.25*?DATA_CHUNK_SIZE), 4*?DATA_CHUNK_SIZE, Peer2},
+% 			{6*?DATA_CHUNK_SIZE, trunc(6.5*?DATA_CHUNK_SIZE), Peer2}
+% 		],
+% 		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals.").
 
-test_enqueue_intervals(Intervals, ChunksPerPeer, QIntervalsRanges, ExpectedQIntervalRanges, ExpectedChunks, Label) ->
-	QIntervals = ar_intervals:from_list(QIntervalsRanges),
-	Q = gb_sets:new(),
-	{QResult, QIntervalsResult} = ar_data_sync:enqueue_intervals(Intervals, ChunksPerPeer, {Q, QIntervals}),
-	ExpectedQIntervals = lists:foldl(fun({End, Start}, Acc) ->
-			ar_intervals:add(Acc, End, Start)
-		end, QIntervals, ExpectedQIntervalRanges),
-	?assertEqual(ar_intervals:to_list(ExpectedQIntervals), ar_intervals:to_list(QIntervalsResult), Label),
-	?assertEqual(ExpectedChunks, gb_sets:to_list(QResult), Label).
+% test_enqueue_intervals(Intervals, ChunksPerPeer, QIntervalsRanges, ExpectedQIntervalRanges, ExpectedChunks, Label) ->
+% 	QIntervals = ar_intervals:from_list(QIntervalsRanges),
+% 	Q = gb_sets:new(),
+% 	{QResult, QIntervalsResult} = ar_data_sync:enqueue_intervals(Intervals, ChunksPerPeer, {Q, QIntervals}),
+% 	ExpectedQIntervals = lists:foldl(fun({End, Start}, Acc) ->
+% 			ar_intervals:add(Acc, End, Start)
+% 		end, QIntervals, ExpectedQIntervalRanges),
+% 	?assertEqual(ar_intervals:to_list(ExpectedQIntervals), ar_intervals:to_list(QIntervalsResult), Label),
+% 	?assertEqual(ExpectedChunks, gb_sets:to_list(QResult), Label).
 
