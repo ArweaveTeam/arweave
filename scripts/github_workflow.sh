@@ -82,17 +82,18 @@ EXIT_CODE=0
 export PATH="${PWD}/_build/erts/bin:${PATH}"
 export ERL_EPMD_ADDRESS="127.0.0.1"
 export NAMESPACE="${NAMESPACE_FLAG}"
-export ERL_PATH_ADD="$(echo ${PWD}/_build/test/lib/*/ebin)"
-export ERL_PATH_TEST="${PWD}/_build/test/lib/arweave/test"
+
+if test "${MODE}" = "e2e"
+then
+	export ERL_PATH_ADD="$(echo ${PWD}/_build/e2e/lib/*/ebin)"
+	export ERL_PATH_TEST="${PWD}/_build/e2e/lib/arweave/e2e"
+else
+	export ERL_PATH_ADD="$(echo ${PWD}/_build/test/lib/*/ebin)"
+	export ERL_PATH_TEST="${PWD}/_build/test/lib/arweave/test"
+fi
+
 export ERL_PATH_CONF="${PWD}/config/sys.config"
 export ERL_TEST_OPTS="-pa ${ERL_PATH_ADD} ${ERL_PATH_TEST} -config ${ERL_PATH_CONF}"
-
-if test "${1}" = "e2e"
-then
-	export ERL_PATH_E2E_ADD="$(echo ${PWD}/_build/e2e/lib/*/ebin)"
-	export ERL_PATH_E2E_TEST="${PWD}/_build/e2e/lib/arweave/e2e"
-	export ERL_TEST_OPTS="-pa ${ERL_PATH_E2E_ADD} ${ERL_PATH_E2E_TEST} ${ERL_TEST_OPTS}"
-fi
 
 RETRYABLE=1
 while [[ $RETRYABLE -eq 1 ]]

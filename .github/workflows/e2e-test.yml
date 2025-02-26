@@ -2,13 +2,7 @@ name: "Arweave e2e  Tests Suites"
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 13 * * 1"
-  pull_request_target:
-    types: [opened]
-    branches:
-      - 'master'
-      - 'release/**'
-      - 'releases/**'
+    - cron: "0 13 * * *"
 
 jobs:
   build:
