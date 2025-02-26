@@ -29,7 +29,6 @@ jobs:
             _build/default/lib/b64fast
             _build/default/lib/cowboy
             _build/default/lib/cowlib
-            _build/default/lib/graphql
             _build/default/lib/gun
             _build/default/lib/jiffy
             _build/default/lib/prometheus
@@ -71,7 +70,6 @@ jobs:
             _build/default/lib/b64fast
             _build/default/lib/cowboy
             _build/default/lib/cowlib
-            _build/default/lib/graphql
             _build/default/lib/gun
             _build/default/lib/jiffy
             _build/default/lib/prometheus
