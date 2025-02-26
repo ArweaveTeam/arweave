@@ -75,7 +75,7 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 		storage_modules = StorageModules,
 		mining_addr = AddrB
 	}),
-	ar_e2e:assert_syncs_range(RepackerNode, 0, 4*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(RepackerNode, ToPacking, 0, 4*?PARTITION_SIZE),
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
 	ar_e2e:assert_partition_size(
@@ -91,7 +91,7 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 
 			%% Now that we mined a block, the rest of partition 2 is below the disk pool
 			%% threshold
-			ar_e2e:assert_syncs_range(RepackerNode, 0, 4*?PARTITION_SIZE),
+			ar_e2e:assert_syncs_range(RepackerNode, ToPacking, 0, 4*?PARTITION_SIZE),
 			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),			
 			ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking, ?PARTITION_SIZE),
