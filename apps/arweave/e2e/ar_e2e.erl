@@ -5,7 +5,7 @@
 
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
-	assert_block/2, assert_syncs_range/3, assert_does_not_sync_range/3,
+	assert_block/2, assert_syncs_range/3, assert_syncs_range/4, assert_does_not_sync_range/3,
 	assert_has_entropy/4, assert_no_entropy/4,
 	assert_chunks/3, assert_chunks/4, assert_no_chunks/2,
 	assert_partition_size/3, assert_partition_size/4, assert_empty_partition/3,
@@ -180,7 +180,7 @@ start_source_node(Node, PackingType, WalletFixture) ->
 
 	SourcePacking = ar_e2e:packing_type_to_packing(PackingType, RewardAddr),
 
-	ar_e2e:assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(Node, SourcePacking, 0, 4*?PARTITION_SIZE),
 
 	%% No overlap since we aren't syncing or repacking chunks.
 	ar_e2e:assert_partition_size(Node, 0, SourcePacking, ?PARTITION_SIZE),
@@ -315,6 +315,13 @@ assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
 		_ ->
 			ok
 	end.
+
+assert_syncs_range(Node, {replica_2_9, _}, StartOffset, EndOffset) ->
+	%% For now GET /data_sync_record does not work for replica_2_9. So we'll assert
+	%% tat the node *does not* sync the range.
+	assert_does_not_sync_range(Node, StartOffset, EndOffset);
+assert_syncs_range(Node, _Packing, StartOffset, EndOffset) ->
+	assert_syncs_range(Node, StartOffset, EndOffset).
 
 assert_syncs_range(Node, StartOffset, EndOffset) ->
 	HasRange = ar_util:do_until(

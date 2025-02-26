@@ -68,9 +68,9 @@ unpacked_sync_pack_mine_test_() ->
 				]
 		end}.
 
-%% Note: we should limit the number of tests run per setup_source_node to 5, if it gets
-%% too long then the source node may hit a difficulty adjustment, which can impact the
-%% results.
+% Note: we should limit the number of tests run per setup_source_node to 5, if it gets
+% too long then the source node may hit a difficulty adjustment, which can impact the
+% results.
 unpacked_edge_case_test_() ->
 	{setup, fun () -> setup_source_node(unpacked) end, 
 		fun (GenesisData) ->
@@ -150,7 +150,7 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	RangeSize = RangeEnd - RangeStart,
 
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
-	ar_e2e:assert_syncs_range(SinkNode,	RangeStart, RangeEnd),
+	ar_e2e:assert_syncs_range(SinkNode,	SinkPacking, RangeStart, RangeEnd),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 
@@ -194,6 +194,8 @@ test_unpacked_and_packed_sync_pack_mine(
 	RangeEnd2 = 2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking2),
 	RangeSize2 = RangeEnd2 - RangeStart2,
 
+	%% Data exists as both packed and unmpacked, so will exist in the global sync record
+	%% even though replica_2_9 data is filtered out.
 	ar_e2e:assert_syncs_range(SinkNode, RangeStart1, RangeEnd1),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking1, RangeSize1),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking2, RangeSize2),
@@ -267,7 +269,7 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 		sync_jobs = 100
 	}),
 
-	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
+	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
@@ -311,7 +313,7 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	RangeEnd = 2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking),
 	RangeSize = RangeEnd - RangeStart,
 
-	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
+	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
 	ar_e2e:assert_partition_size(SinkNode, 1, unpacked_padded, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 
@@ -321,7 +323,7 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	}),
 
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
-	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
+	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
@@ -369,7 +371,7 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 1, 4)),
-	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
+	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
@@ -417,6 +419,8 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 8)),
+	%% Even though the packing type is replica_2_9, the data will still exist in the
+	%% default partition as unpacked - and so will exist in the global sync record.
 	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
@@ -450,7 +454,7 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
-	ar_e2e:assert_syncs_range(SinkNode, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, floor(0.5*?PARTITION_SIZE)),
 	ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
@@ -465,7 +469,7 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 
 			%% Now that we mined a block, the rest of partition 2 is below the disk pool
 			%% threshold
-			ar_e2e:assert_syncs_range(SinkNode, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
+			ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
 			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, ?PARTITION_SIZE),
 			%% All of partition 3 is still above the disk pool threshold
 			ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
