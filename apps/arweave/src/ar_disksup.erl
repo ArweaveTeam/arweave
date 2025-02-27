@@ -51,13 +51,13 @@ get_disk_space_check_frequency() ->
 	Config#config.disk_space_check_frequency.
 
 get_disk_data() ->
-	gen_server:call(?MODULE, get_disk_data, infinity).
+	gen_server:call(?MODULE, get_disk_data, 600000).
 
 pause() ->
-	gen_server:call(?MODULE, pause, infinity).
+	gen_server:call(?MODULE, pause, 600000).
 
 resume() ->
-	gen_server:call(?MODULE, resume, infinity).
+	gen_server:call(?MODULE, resume, 600000).
 
 %%%===================================================================
 %%% Generic server callbacks.
