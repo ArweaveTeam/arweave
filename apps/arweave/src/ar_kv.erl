@@ -80,7 +80,7 @@ create_ets() ->
 	ets:new(?MODULE, [set, public, named_table, {keypos, #db.name}]).
 
 
-	
+
 %% @doc Open a key-value store located at the given filesystem path relative to
 %% the data directory and identified by the given Name.
 open(DataDirRelativePath, Name) ->
@@ -91,7 +91,7 @@ open(DataDirRelativePath, Name) ->
 %% @doc Open a key-value store with the given options located at the given filesystem path
 %% relative to the data directory and identified by the given Name.
 open(DataDirRelativePath, UserOptions, Name) ->
-	gen_server:call(?MODULE, {open, {DataDirRelativePath, UserOptions, Name}}, infinity).
+	gen_server:call(?MODULE, {open, {DataDirRelativePath, UserOptions, Name}}, 600000).
 
 
 
@@ -99,7 +99,7 @@ open(DataDirRelativePath, UserOptions, Name) ->
 %% relative to the data directory and identified by the given Name.
 open(DataDirRelativePath, CfDescriptors, UserOptions, CfNames) ->
 	gen_server:call(
-		?MODULE, {open, {DataDirRelativePath, CfDescriptors, UserOptions, CfNames}}, infinity
+		?MODULE, {open, {DataDirRelativePath, CfDescriptors, UserOptions, CfNames}}, 600000
 	).
 
 
