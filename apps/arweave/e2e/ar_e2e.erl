@@ -5,6 +5,7 @@
 
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
+	assert_recall_byte/3,
 	assert_block/2, assert_syncs_range/3, assert_syncs_range/4, assert_does_not_sync_range/3,
 	assert_has_entropy/4, assert_no_entropy/4,
 	assert_chunks/3, assert_chunks/4, assert_no_chunks/2,
@@ -255,7 +256,21 @@ generate_chunks(Node, WeaveSize, DataSize, Acc) when DataSize > 0 ->
 generate_chunks(_, _, _, Acc) ->
 	Acc.
 
-
+assert_recall_byte(Node, RangeStart, RangeEnd) when RangeStart > RangeEnd ->
+	ok;
+assert_recall_byte(Node, RangeStart, RangeEnd) ->
+	Options = #{ pack => true, packing => unpacked, origin => miner },
+	Result = ar_test_node:remote_call(
+		Node, ar_data_sync, get_chunk, [RangeStart + 1, Options]),
+	case Result of
+		{ok, _} ->
+			?LOG_INFO("Recall byte found at ~p", [RangeStart + 1]),
+			assert_recall_byte(Node, RangeStart + 1, RangeEnd);
+		Error ->
+			?LOG_ERROR([{event, recall_byte_not_found}, 
+						{recall_byte, RangeStart}, 
+						{error, Error}])
+	end.
 assert_block({spora_2_6, Address}, MinedBlock) ->
 	?assertEqual(Address, MinedBlock#block.reward_addr),
 	?assertEqual(0, MinedBlock#block.packing_difficulty);

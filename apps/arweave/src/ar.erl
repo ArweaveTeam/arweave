@@ -17,6 +17,7 @@
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
 -include("../include/ar_config.hrl").
+-include("../include/ar_verify_chunks.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -171,7 +172,7 @@ show_help() ->
 			{"mining_server_chunk_cache_size_limit (num)", "DEPRECATED. Use "
 				"mining_cache_size_mb instead."},
 			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
-				"processes to spawn. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
+				"processes to spawn. Must be at least 1. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
 			{"tx_validators (num)", "Ignored. Set the post_tx key in the semaphores object"
 				" in the configuration file instead."},
 			{"post_tx_timeout", io_lib:format("The time in seconds to wait for the available"
@@ -352,12 +353,15 @@ show_help() ->
 					"and you want to monitor them separately on pool"},
 			{"rocksdb_flush_interval", "RocksDB flush interval in seconds"},
 			{"rocksdb_wal_sync_interval", "RocksDB WAL sync interval in seconds"},
-			{"verify", "Run in verify mode. The node will run several checks on all listed "
-				"storage_modules, and flag any errors so that the chunks can be resynced and "
-				"repacked. After completing a full verification cycle, you can restart "
-				"the node in normal mode to have it resync and/or repack any flagged chunks. "
-				"When running in verify mode several flags will be forced on and several "
-				"flags are disallowed. See the node output for details."}
+			{"verify", "Run in verify. There are two valid values 'purge' or 'log'. "
+				"The node will run several checks on all listed storage_modules, and flag any "
+				"errors. In 'log' mode the error are just logged, in 'purge' node the chunks "
+				"are invalidated so that they have to be repacked. After completing a full "
+				"verification cycle, you can restart the node in normal mode to have it "
+				"resync and/or repack any flagged chunks. When running in verify mode several "
+				"flags are disallowed. See the node output for details."},
+			{"verify_samples (num)", io_lib:format("Number of chunks to sample and unpack "
+				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])}
 		]
 	),
 	erlang:halt().
@@ -388,8 +392,16 @@ read_config_from_file(Path) ->
 parse_cli_args([], C) -> C;
 parse_cli_args(["mine" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ mine = true });
-parse_cli_args(["verify" | Rest], C) ->
-	parse_cli_args(Rest, C#config{ verify = true });
+parse_cli_args(["verify", "purge" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ verify = purge });
+parse_cli_args(["verify", "log" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ verify = log });
+parse_cli_args(["verify", _ | _], C) ->
+	io:format("Invalid verify mode. Valid modes are 'purge' or 'log'.~n"),
+	timer:sleep(1000),
+	erlang:halt();
+parse_cli_args(["verify_samples", N | Rest], C) ->
+	parse_cli_args(Rest, C#config{ verify_samples = list_to_integer(N) });
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->

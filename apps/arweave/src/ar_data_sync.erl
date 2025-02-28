@@ -1673,10 +1673,6 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 						%% Requested and stored chunk are in different formats,
 						%% and repacking is disabled.
 						{error, chunk_stored_in_different_packing_only};
-					{_, false, true} ->
-						ar_packing_server:repack(
-							Packing, StoredPacking, AbsoluteOffset,
-							TXRoot, Chunk, ChunkSize);
 					_ ->
 						ar_packing_server:repack(
 							Packing, StoredPacking, AbsoluteOffset, TXRoot, Chunk, ChunkSize)
@@ -1732,9 +1728,12 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 											{stored_packing,
 												ar_serialize:encode_packing(StoredPacking, true)},
 											{absolute_end_offset, AbsoluteOffset},
+											{offset, Offset},
+											{seek_offset, SeekOffset},
 											{store_id, StoreID},
 											{expected_chunk_id, ar_util:encode(ChunkID)},
-											{chunk_id, ar_util:encode(ComputedChunkID)}]),
+											{chunk_id, ar_util:encode(ComputedChunkID)},
+											{actual_chunk, binary:part(MaybeUnpackedChunk, 0, 32)}]),
 									invalidate_bad_data_record({AbsoluteOffset, ChunkSize,
 										StoreID, get_chunk_invalid_id}),
 									{error, chunk_not_found}

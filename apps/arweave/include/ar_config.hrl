@@ -3,6 +3,7 @@
 
 -include_lib("ar.hrl").
 -include_lib("ar_p3.hrl").
+-include_lib("ar_verify_chunks.hrl").
 
 -record(config_webhook, {
 	events = [],
@@ -135,6 +136,7 @@
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	mine = false,
 	verify = false,
+	verify_samples = ?SAMPLE_CHUNK_COUNT,
 	peers = [],
 	block_gossip_peers = [],
 	local_peers = [],
