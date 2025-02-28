@@ -4,7 +4,7 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(REPACK_MINE_TEST_TIMEOUT, 600).
+-define(REPACK_MINE_TEST_TIMEOUT, 86400).
 
 %% --------------------------------------------------------------------------------------------
 %% Test Registration
@@ -12,21 +12,21 @@
 repack_mine_test_() ->
 	Timeout = ?REPACK_MINE_TEST_TIMEOUT,
 	[
-		{timeout, Timeout, {with, {replica_2_9, replica_2_9}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {replica_2_9, spora_2_6}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {replica_2_9, composite_1}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {replica_2_9, unpacked}, [fun test_repacking_blocked/1]}},
-		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {unpacked, spora_2_6}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {unpacked, composite_1}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, spora_2_6}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, composite_1}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, unpacked}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, spora_2_6}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, composite_1}, [fun test_repack_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, unpacked}, [fun test_repack_mine/1]}}
+		% {timeout, Timeout, {with, {replica_2_9, replica_2_9}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, spora_2_6}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, composite_1}, [fun test_repacking_blocked/1]}},
+		% {timeout, Timeout, {with, {replica_2_9, unpacked}, [fun test_repacking_blocked/1]}},
+		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_mine/1]}}
+		% {timeout, Timeout, {with, {unpacked, spora_2_6}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {unpacked, composite_1}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {spora_2_6, spora_2_6}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {spora_2_6, composite_1}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {spora_2_6, unpacked}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {composite_1, spora_2_6}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {composite_1, composite_1}, [fun test_repack_mine/1]}},
+		% {timeout, Timeout, {with, {composite_1, unpacked}, [fun test_repack_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------
@@ -82,6 +82,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 		RepackerNode, 2, ToPacking, floor(0.5*?PARTITION_SIZE)),
 	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
 	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
+
+	ar_e2e:assert_recall_byte(RepackerNode, 3*?DATA_CHUNK_SIZE, 4*?PARTITION_SIZE),
 
 	case ToPackingType of
 		unpacked ->

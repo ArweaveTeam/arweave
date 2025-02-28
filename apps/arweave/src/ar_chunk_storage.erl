@@ -318,7 +318,7 @@ set_repacking_complete(StoreID) ->
 read_offset(PaddedOffset, StoreID) ->
 	{_ChunkFileStart, Filepath, Position, _ChunkOffset} =
 			ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
-	case file:open(Filepath, [read, raw]) of
+	case file:open(Filepath, [read, raw, binary]) of
 		{ok, F} ->
 			Result = file:pread(F, Position, ?OFFSET_SIZE),
 			file:close(F),
@@ -823,6 +823,9 @@ read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount) ->
 read_chunk3(Byte, Position, BucketStart, File, ChunkCount) ->
 	case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
 		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
+			% ?LOG_DEBUG([{event, read_chunk3},
+			% 	{byte, Byte}, {position, Position},
+			% 	{bucket_start, BucketStart}, {chunk_offset, ChunkOffset}]),
 			case is_offset_valid(Byte, BucketStart, ChunkOffset) of
 				true ->
 					extract_end_offset_chunk_pairs(Bin, BucketStart, 1);

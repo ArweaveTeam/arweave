@@ -9,6 +9,7 @@
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
+-include("../include/ar_chunk_storage.hrl").
 -include("../include/ar_verify_chunks.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
@@ -48,7 +49,7 @@ init(StoreID) ->
 		packing = ar_storage_module:get_packing(StoreID),
 		start_offset = StartOffset,
 		end_offset = EndOffset,
-		cursor = StartOffset,
+		cursor = 72533004558582,
 		ready = is_ready(EndOffset),
 		verify_report = #verify_report{
 			start_time = erlang:system_time(millisecond)
@@ -66,8 +67,8 @@ handle_cast(sample, State) ->
 	%% Sample ?SAMPLE_CHUNK_COUNT random chunks, read them, unpack them and verify them.
 	%% Report the collected statistics and continue with the "verify" procedure.
 	sample_random_chunks(?SAMPLE_CHUNK_COUNT, State#state.packing,
-			State#state.start_offset, State#state.end_offset, State#state.store_id),
-	gen_server:cast(self(), verify),
+			State#state.cursor, State#state.end_offset, State#state.store_id),
+	% gen_server:cast(self(), verify),
 	{noreply, State};
 
 handle_cast(verify, #state{ready = false, end_offset = EndOffset} = State) ->
@@ -207,12 +208,14 @@ verify_packing(Metadata, State) ->
 verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, {End, Start}, State)
 		when PaddedOffset - ?DATA_CHUNK_SIZE >= Start andalso PaddedOffset =< End ->
 	#state{store_id = StoreID} = State,
+	{ChunkFileStart, Filepath, Position, ExpectedChunkOffset} =
+				ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
 	case ar_chunk_storage:read_offset(PaddedOffset, StoreID) of
-		{ok, << 0:24 >>} ->
-			%% The chunk is recorded in the ar_chunk_storage sync record, but not stored.
-			invalidate_chunk(no_chunk_in_chunk_storage, AbsoluteOffset, ChunkSize, State);
+		{ok, << ExpectedChunkOffset:?OFFSET_BIT_SIZE >>} ->
+			ok;
 		_ ->
-			ok
+			%% The chunk is recorded in the ar_chunk_storage sync record, but not stored.
+			invalidate_chunk(invalid_chunk_offset, AbsoluteOffset, ChunkSize, State)
 	end,
 	State;
 verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, _Interval, State) ->
@@ -229,7 +232,7 @@ invalidate_chunk(Type, Offset, ChunkSize, State) ->
 
 invalidate_chunk(Type, Offset, ChunkSize, Logs, State) ->
 	#state{ store_id = StoreID } = State,
-	ar_data_sync:invalidate_bad_data_record(Offset, ChunkSize, StoreID, Type),
+	% ar_data_sync:invalidate_bad_data_record(Offset, ChunkSize, StoreID, Type),
 	log_error(Type, Offset, ChunkSize, Logs, State).
 
 log_error(Type, Offset, ChunkSize, Logs, State) ->
@@ -352,11 +355,55 @@ pick_offsets_batch(Len, Candidates, BatchSize) ->
 %% Use generate_sample_offsets/3 to obtain offsets (with exclusion)
 %% and then queries ar_data_sync:get_chunk/2 with options to trigger unpacking.
 sample_random_chunks(Count, Packing, Start, End, StoreID) ->
-	Offsets = generate_sample_offsets(Start, End, Count),
-	lists:foldl(fun(Offset, Acc) ->
-		report_sample(StoreID, Acc),
+	io:format("Sampling ~p chunks from ~p to ~p~n", [Count, Start, End]),
+	Offsets = lists:seq(Start + 1, End, ?DATA_CHUNK_SIZE), %% generate_sample_offsets(Start, End, Count),
+	{ok, File} = file:open("chunk_samples.csv", [write]),
+	Result = lists:foldl(fun(Offset, Acc) ->
+		% report_sample(StoreID, Acc),
 		case ar_data_sync:get_chunk(Offset, #{pack => true, packing => Packing}) of
-			{ok, _Proof} ->
+			{ok, Proof} ->
+				AbsoluteEndOffset = maps:get(absolute_end_offset, Proof),
+				PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+				BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
+				MinerAddress = ar_util:decode(<<"nPTRMuxljIVBiDRsyI54RbOcppLSE5yBXeJWqPIUaKo">>),
+				MinerPacking = {replica_2_9, MinerAddress},
+				TXRoot = maps:get(tx_root, Proof),
+				Chunk = maps:get(chunk, Proof),
+				ChunkSize = maps:get(chunk_size, Proof),
+				PaddedChunk = ar_packing_server:pad_chunk(Chunk),
+				UnpaddedChunk = ar_packing_server:unpad_chunk(unpacked, Chunk, ChunkSize, ChunkSize),
+				{_, PackedChunk, _} = ar_packing_server:repack(MinerPacking, Packing, Offset, TXRoot, Chunk, ChunkSize),
+				Entropy = ar_entropy_storage:generate_missing_entropy(PaddedEndOffset, MinerAddress),
+				PreviousEntropy = ar_entropy_storage:generate_missing_entropy(PaddedEndOffset - ?DATA_CHUNK_SIZE, MinerAddress),
+				NextEntropy = ar_entropy_storage:generate_missing_entropy(PaddedEndOffset + ?DATA_CHUNK_SIZE, MinerAddress),
+
+				PackedToPrevious = ar_packing_server:encipher_replica_2_9_chunk(Chunk, PreviousEntropy),
+				PackedToNext = ar_packing_server:encipher_replica_2_9_chunk(Chunk, NextEntropy),
+
+				ChunkID = ar_tx:generate_chunk_id(Chunk),
+				PaddedChunkID = ar_tx:generate_chunk_id(PaddedChunk),
+				UnpaddedChunkID = ar_tx:generate_chunk_id(UnpaddedChunk),
+				PackedChunkID = ar_tx:generate_chunk_id(PackedChunk),
+				EntropyID = ar_tx:generate_chunk_id(Entropy),
+				PreviousEntropyID = ar_tx:generate_chunk_id(PreviousEntropy),
+				NextEntropyID = ar_tx:generate_chunk_id(NextEntropy),
+				PackedToPreviousID = ar_tx:generate_chunk_id(PackedToPrevious),
+				PackedToNextID = ar_tx:generate_chunk_id(PackedToNext),
+				
+				io:format(File, "~s,~s,~s,~s,~s,~s,~s,~s,~s,~p,~p,~p~n", [
+					ar_util:encode(ChunkID),
+					ar_util:encode(PaddedChunkID),
+					ar_util:encode(UnpaddedChunkID),
+					ar_util:encode(PackedChunkID),
+					ar_util:encode(EntropyID),
+					ar_util:encode(PreviousEntropyID),
+					ar_util:encode(NextEntropyID),
+					ar_util:encode(PackedToPreviousID),
+					ar_util:encode(PackedToNextID),
+					Offset,
+					AbsoluteEndOffset,
+					BucketEndOffset]),
+				file:sync(File), % Flush after each write
 				Acc#sample_report{
 					total = Acc#sample_report.total + 1,
 					success = Acc#sample_report.success + 1
@@ -372,7 +419,9 @@ sample_random_chunks(Count, Packing, Start, End, StoreID) ->
 					failure = Acc#sample_report.failure + 1
 				}
 		end
-	end, #sample_report{}, Offsets).
+	end, #sample_report{}, Offsets),
+	file:close(File),
+	Result.
 
 %% ar_chunk_storage does not store small chunks before strict_split_data_threshold
 %% (before 30607159107830 = partitions 0-7 and a half of 8
