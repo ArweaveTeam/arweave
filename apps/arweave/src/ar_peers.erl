@@ -378,8 +378,6 @@ resolve_and_cache_peer(RawPeer, Type) ->
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.verify of
-		true ->
-			ok;
 		false ->
 			%% Trap exit to avoid corrupting any open files on quit.
 			process_flag(trap_exit, true),
@@ -387,7 +385,9 @@ init([]) ->
 			load_peers(),
 			gen_server:cast(?MODULE, rank_peers),
 			gen_server:cast(?MODULE, ping_peers),
-			timer:apply_interval(?GET_MORE_PEERS_FREQUENCY_MS, ?MODULE, discover_peers, [])
+			timer:apply_interval(?GET_MORE_PEERS_FREQUENCY_MS, ?MODULE, discover_peers, []);
+		_ ->
+			ok
 	end,
 	
 	{ok, #state{}}.

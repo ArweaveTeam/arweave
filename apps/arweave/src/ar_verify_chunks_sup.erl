@@ -25,7 +25,7 @@ init([]) ->
 	case Config#config.verify of
 		false ->
 			ignore;
-		true ->
+		_ ->
 			Workers = lists:map(
 				fun(StorageModule) ->
 					StoreID = ar_storage_module:id(StorageModule),

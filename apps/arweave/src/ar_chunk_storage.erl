@@ -318,7 +318,7 @@ set_repacking_complete(StoreID) ->
 read_offset(PaddedOffset, StoreID) ->
 	{_ChunkFileStart, Filepath, Position, _ChunkOffset} =
 			ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
-	case file:open(Filepath, [read, raw]) of
+	case file:open(Filepath, [read, raw, binary]) of
 		{ok, F} ->
 			Result = file:pread(F, Position, ?OFFSET_SIZE),
 			file:close(F),
@@ -724,17 +724,7 @@ get_handle_by_filepath(Filepath) ->
 	end.
 
 write_chunk2(_PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
-	ChunkOffsetBinary =
-		case ChunkOffset of
-			0 ->
-				ZeroOffset = get_special_zero_offset(),
-				%% Represent 0 as the largest possible offset plus one,
-				%% to distinguish zero offset from not yet written data.
-				<< ZeroOffset:?OFFSET_BIT_SIZE >>;
-			_ ->
-				<< ChunkOffset:?OFFSET_BIT_SIZE >>
-		end,
-	Result = file:pwrite(F, Position, [ChunkOffsetBinary | Chunk]),
+	Result = file:pwrite(F, Position, [<< ChunkOffset:?OFFSET_BIT_SIZE >> | Chunk]),
 	case Result of
 		{error, _Reason} = Error ->
 			Error;
@@ -751,7 +741,14 @@ get_position_and_relative_chunk_offset(ChunkFileStart, Offset) ->
 
 get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, BucketPickOffset) ->
 	BucketStart = ar_util:floor_int(BucketPickOffset, ?DATA_CHUNK_SIZE),
-	ChunkOffset = BucketPickOffset - BucketStart,
+	ChunkOffset = case BucketPickOffset - BucketStart of
+		0 ->
+			%% Represent 0 as the largest possible offset plus one,
+			%% to distinguish zero offset from not yet written data.
+			get_special_zero_offset();
+		Offset ->
+			Offset
+	end,
 	RelativeOffset = BucketStart - ChunkFileStart,
 	Position = RelativeOffset + ?OFFSET_SIZE * (RelativeOffset div ?DATA_CHUNK_SIZE),
 	{Position, ChunkOffset}.
