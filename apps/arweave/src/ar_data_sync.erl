@@ -459,12 +459,17 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
 			RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
 					|| ID <- ModuleIDs],
-			log_chunk_error(RequestOrigin, chunk_record_not_found,
-					[{modules_covering_offset, ModuleIDs},
-					{root_sync_records, RootRecords},
-					{seek_offset, SeekOffset},
-					{reply, io_lib:format("~p", [Reply])},
-					{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}]),
+			case RequestOrigin of
+				miner ->
+					log_chunk_error(RequestOrigin, chunk_record_not_found,
+							[{modules_covering_offset, ModuleIDs},
+							{root_sync_records, RootRecords},
+							{seek_offset, SeekOffset},
+							{reply, io_lib:format("~p", [Reply])},
+							{is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}]);
+				_ ->
+					ok
+			end,
 			{error, chunk_not_found}
 	end.
 
@@ -1668,10 +1673,6 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 						%% Requested and stored chunk are in different formats,
 						%% and repacking is disabled.
 						{error, chunk_stored_in_different_packing_only};
-					{_, false, true} ->
-						ar_packing_server:repack(
-							Packing, StoredPacking, AbsoluteOffset,
-							TXRoot, Chunk, ChunkSize);
 					_ ->
 						ar_packing_server:repack(
 							Packing, StoredPacking, AbsoluteOffset, TXRoot, Chunk, ChunkSize)
@@ -1727,9 +1728,12 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 											{stored_packing,
 												ar_serialize:encode_packing(StoredPacking, true)},
 											{absolute_end_offset, AbsoluteOffset},
+											{offset, Offset},
+											{seek_offset, SeekOffset},
 											{store_id, StoreID},
 											{expected_chunk_id, ar_util:encode(ChunkID)},
-											{chunk_id, ar_util:encode(ComputedChunkID)}]),
+											{chunk_id, ar_util:encode(ComputedChunkID)},
+											{actual_chunk, binary:part(MaybeUnpackedChunk, 0, 32)}]),
 									invalidate_bad_data_record({AbsoluteOffset, ChunkSize,
 										StoreID, get_chunk_invalid_id}),
 									{error, chunk_not_found}
@@ -1933,8 +1937,13 @@ validate_fetched_chunk(Args) ->
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
 	case Offset > T orelse not ar_node:is_joined() of
 		true ->
-			log_chunk_error(RequestOrigin, miner_requested_disk_pool_chunk,
-				[{disk_pool_threshold, T}, {end_offset, Offset}]),
+			case RequestOrigin of
+				miner ->
+					log_chunk_error(RequestOrigin, miner_requested_disk_pool_chunk,
+							[{disk_pool_threshold, T}, {end_offset, Offset}]);
+				_ ->
+					ok
+			end,
 			{true, none};
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
