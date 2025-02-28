@@ -13,9 +13,9 @@
 }).
 
 -record(sample_report, {
+	samples = 0 :: non_neg_integer(),
 	total = 0 :: non_neg_integer(),
 	success = 0 :: non_neg_integer(),
-	not_found = 0 :: non_neg_integer(),
 	failure = 0 :: non_neg_integer()
 }).
 

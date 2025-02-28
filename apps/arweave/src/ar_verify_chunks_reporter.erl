@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, update/2, sample_update/2]).
+-export([start_link/0, update/2]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("../include/ar.hrl").
@@ -11,7 +11,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	reports = #{} :: #{string() => #verify_report{}},
+	verify_reports = #{} :: #{string() => #verify_report{}},
 	sample_reports = #{} :: #{string() => #sample_report{}}
 }).
 
@@ -25,13 +25,9 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
--spec update(string(), #verify_report{}) -> ok.
+-spec update(string(), #verify_report{} | #sample_report{}) -> ok.
 update(StoreID, Report) ->
 	gen_server:cast(?MODULE, {update, StoreID, Report}).
-
--spec sample_update(string(), #sample_report{}) -> ok.
-sample_update(StoreID, SampleReport) ->
-	gen_server:cast(?MODULE, {sample_update, StoreID, SampleReport}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -42,23 +38,28 @@ init([]) ->
 	{ok, #state{}}.
 
 
-handle_cast({update, StoreID, Report}, State) ->
-	{noreply, State#state{ reports = maps:put(StoreID, Report, State#state.reports) }};
+handle_cast({update, StoreID, #verify_report{} = Report}, State) ->
+	{noreply, State#state{ verify_reports = maps:put(StoreID, Report, State#state.verify_reports) }};
+
+handle_cast({update, StoreID, #sample_report{} = Report}, State) ->
+	{noreply, State#state{ sample_reports = maps:put(StoreID, Report, State#state.sample_reports) }};
 
 handle_cast(report_progress, State) ->
 	#state{
-		reports = Reports
+		verify_reports = VerifyReports,
+		sample_reports = SampleReports
 	} = State,
 
-	print_reports(Reports),
+	print_sample_reports(SampleReports),
+	print_verify_reports(VerifyReports),
 	ar_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
 	{noreply, State};
 
-handle_cast({sample_update, StoreID, SampleReport}, State) ->
-	NewSampleReports = maps:put(StoreID, SampleReport, State#state.sample_reports),
-	print_sampling_header(),
-	print_sample_report(StoreID, SampleReport),
-	{noreply, State#state{sample_reports = NewSampleReports}};
+% handle_cast({sample_update, StoreID, SampleReport}, State) ->
+% 	NewSampleReports = maps:put(StoreID, SampleReport, State#state.sample_reports),
+% 	print_sampling_header(),
+% 	print_sample_report(StoreID, SampleReport),
+% 	{noreply, State#state{sample_reports = NewSampleReports}};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -75,30 +76,31 @@ handle_info(Info, State) ->
 terminate(_Reason, _State) ->
 	ok.
 
-print_reports(Reports) when map_size(Reports) == 0 ->
+print_verify_reports(Reports) when map_size(Reports) == 0 ->
 	ok;
-print_reports(Reports) ->
-	print_header(),
+print_verify_reports(Reports) ->
+	print_verify_header(),
 	maps:foreach(
 		fun(StoreID, Report) ->
-			print_report(StoreID, Report)
+			print_verify_report(StoreID, Report)
 		end,
 		Reports
 	),
-	print_footer(),
+	print_verify_footer(),
 	ok.
 
-print_header() ->
+print_verify_header() ->
 	ar:console("Verification Report~n", []),
-	ar:console("+-------------------------------------------------------------------+-----------+------+----------+-------------+---------+~n", []),
-	ar:console("|                                                    Storage Module | Processed |    % |   Errors | Verify Rate |  Status |~n", []),
-	ar:console("+-------------------------------------------------------------------+-----------+------+----------+-------------+---------+~n", []).
+	ar:console("+-------------------------------------------------------------------+-----------+------+------------+------------+-------------+---------+~n", []),
+	ar:console("|                                                    Storage Module | Processed |    % | Errors (#) | Errors (%) | Verify Rate |  Status |~n", []),
+	ar:console("+-------------------------------------------------------------------+-----------+------+------------+------------+-------------+---------+~n", []).
 
-print_footer() ->
-	ar:console("+-------------------------------------------------------------------+-----------+------+----------+-------------+---------+~n~n", []).
+print_verify_footer() ->
+	ar:console("+-------------------------------------------------------------------+-----------+------+------------+------------+-------------+---------+~n~n", []).
 
-print_report(StoreID, Report) ->
+print_verify_report(StoreID, Report) ->
 	#verify_report{
+		total_error_chunks = TotalErrorChunks,
 		total_error_bytes = TotalErrorBytes,
 		bytes_processed = BytesProcessed,
 		progress = Progress,
@@ -107,24 +109,48 @@ print_report(StoreID, Report) ->
 	} = Report,
 	Duration = erlang:system_time(millisecond) - StartTime,
 	Rate = 1000 * BytesProcessed / Duration,
-	ar:console("| ~65s |   ~4B GB | ~3B% | ~5.1f GB | ~6.1f MB/s | ~7s |~n", 
+	ar:console("| ~65s |   ~4B GB | ~3B% | ~10B | ~9.2f% | ~6.1f MB/s | ~7s |~n", 
 		[
 			StoreID, BytesProcessed div 1000000000, Progress,
-			TotalErrorBytes / 1000000000, Rate / 1000000,
+			TotalErrorChunks, (TotalErrorBytes * 100) / BytesProcessed, Rate / 1000000,
 			Status
 		]
 	).
 
-print_sample_report(StoreID, #sample_report{
-	total = Total,
-	success = Success,
-	not_found = NotFound,
-	failure = Failure
-}) ->
-	ar:console("| ~-65s | ~7B | ~7B | ~7B | ~8B |~n",
-		[StoreID, Total, Success, NotFound, Failure]).
+print_sample_reports(Reports) when map_size(Reports) == 0 ->
+	ok;
+print_sample_reports(Reports) ->
+	print_sample_header(),
+	maps:foreach(
+		fun(StoreID, Report) ->
+			print_sample_report(StoreID, Report)
+		end,
+		Reports
+	),
+	print_sample_footer(),
+	ok.
 
-print_sampling_header() ->
-	ar:console("|-------------------------------------------------------------------+---------+---------+---------+----------|~n", []),
-	ar:console("|                                                    Storage Module |  Total  | Success | Missing | Failure  |~n", []),
-	ar:console("|-------------------------------------------------------------------+---------+---------+---------+----------|~n", []).
+print_sample_report(StoreID, Report) ->
+	#sample_report{
+		total = Total,
+		success = Success,
+		failure = Failure
+	} = Report,
+	Count = ?SAMPLE_CHUNK_COUNT,
+	ar:console("| ~65s | ~9B | ~3B% | ~6.1f% | ~4.1f% |~n",
+		[
+			StoreID,
+			Total,
+			(Total * 100) div Count,
+			(Success * 100) / Total,
+			(Failure * 100) / Total
+		]).
+
+print_sample_header() ->
+	ar:console("Chunk Sample Report~n", []),
+	ar:console("+-------------------------------------------------------------------+-----------+------+---------+-------+~n", []),
+	ar:console("|                                                    Storage Module | Processed |    % | Success | Error |~n", []),
+	ar:console("+-------------------------------------------------------------------+-----------+------+---------+-------+~n", []).
+
+print_sample_footer() ->
+	ar:console("+-------------------------------------------------------------------+-----------+------+---------+-------+~n~n", []).
