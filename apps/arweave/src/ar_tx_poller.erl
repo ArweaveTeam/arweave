@@ -134,7 +134,7 @@ check_for_received_txs(#state{ pending_txids = [] } = State) ->
 download_and_verify_tx(TXID) ->
 	ar_ignore_registry:add_temporary(TXID, 10_000),
 	Peers = lists:sublist(ar_peers:get_peers(current), ?QUERY_PEERS_COUNT),
-	case ar_http_iface_client:get_tx_from_remote_peer(Peers, TXID, false) of
+	case ar_http_iface_client:get_tx_from_remote_peers(Peers, TXID, false) of
 		not_found ->
 			ar_ignore_registry:remove_temporary(TXID),
 			?LOG_DEBUG([{event, failed_to_get_tx_from_peers},
