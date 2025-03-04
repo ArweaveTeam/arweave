@@ -8,7 +8,7 @@
 %%% @end
 -module(ar_ignore_registry).
 
--export([add/1, add_ref/2, remove/1, remove_ref/2,
+-export([add/1, add_ref/2, add_ref/3, remove/1, remove_ref/2,
 		add_temporary/2, remove_temporary/1, member/1,
 		permanent_member/1]).
 
@@ -23,7 +23,11 @@ remove(ID) ->
 %% @doc Put a referenced ID record into the registry.
 %% The record may be removed by ar_ignore_registry:remove_ref/2.
 add_ref(ID, Ref) when is_reference(Ref) ->
-	ets:insert(ignored_ids, {ID, {ref, Ref}}).
+	add_ref(ID, Ref, 10000).
+
+add_ref(ID, Ref, Timeout) when is_reference(Ref) ->
+	ets:insert(ignored_ids, {ID, {ref, Ref}}),
+	timer:apply_after(Timeout, ar_ignore_registry, remove_ref, [ID, Ref]).
 
 %% @doc Remove a referenced ID record from the registry.
 remove_ref(ID, Ref) when is_reference(Ref) ->
