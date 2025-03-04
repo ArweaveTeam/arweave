@@ -77,7 +77,7 @@ start_http_iface_listener(Config) ->
 		{max_connections, Config#config.max_connections}
 	],
 	ProtocolOpts = #{
-		idle_timeout => 3000,
+		idle_timeout => 10000,
 		middlewares => ?HTTP_IFACE_MIDDLEWARES,
 		env => #{ dispatch => Dispatch },
 		metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
