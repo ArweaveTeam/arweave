@@ -74,7 +74,9 @@ start_http_iface_listener(Config) ->
 		{linger, {true, 10}},
 		{port, Config#config.port},
 		{keepalive, true},
-		{max_connections, Config#config.max_connections}
+		{max_connections, Config#config.max_connections},
+		{send_timeout, 3000},
+		{send_timeput_close, true}
 	],
 	ProtocolOpts = #{
 		idle_timeout => 3000,
