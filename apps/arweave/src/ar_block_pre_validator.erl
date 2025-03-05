@@ -858,7 +858,7 @@ get_peer_score(_Peer, [], N) ->
 	N - rand:uniform(100).
 
 drop_tail(Q, Size) when Size =< ?MAX_PRE_VALIDATION_QUEUE_SIZE ->
-	{Q, 0};
+	{Q, Size};
 drop_tail(Q, Size) ->
 	{{_Priority, {B, _PrevB, _SolutionResigned, _Peer, Ref}}, Q2} = gb_sets:take_smallest(Q),
 	ar_ignore_registry:remove_ref(B#block.indep_hash, Ref),
