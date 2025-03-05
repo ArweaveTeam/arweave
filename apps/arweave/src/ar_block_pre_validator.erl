@@ -52,6 +52,9 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 			B2 = B#block{ receive_timestamp = ReceiveTimestamp },
 			case pre_validate_is_peer_banned(B2, Peer) of
 				enqueued ->
+					?LOG_DEBUG([{event, enqueued_block},
+							{hash, ar_util:encode(H)},
+							{peer, ar_util:format_peer(Peer)}]),
 					ok;
 				Other ->
 					ar_ignore_registry:remove_ref(H, Ref),
@@ -95,6 +98,10 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 					{IPTimestamps3, HashTimestamps3} =
 						case ThrottleByIPResult of
 							false ->
+								?LOG_DEBUG([{event, dropping_block},
+										{reason, throttle_by_ip},
+										{hash, ar_util:encode(BH)},
+										{peer, ar_util:format_peer(Peer)}]),
 								ar_ignore_registry:remove_ref(BH, Ref),
 								{IPTimestamps, HashTimestamps};
 							{true, IPTimestamps2} ->
@@ -121,6 +128,10 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 												B#block.receive_timestamp),
 										{IPTimestamps2, HashTimestamps2};
 									false ->
+										?LOG_DEBUG([{event, dropping_block},
+												{reason, throttle_by_solution_hash},
+												{hash, ar_util:encode(BH)},
+												{peer, ar_util:format_peer(Peer)}]),
 										ar_ignore_registry:remove_ref(BH, Ref),
 										{IPTimestamps2, HashTimestamps}
 								end
