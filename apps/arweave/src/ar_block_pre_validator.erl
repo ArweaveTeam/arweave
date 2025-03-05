@@ -110,8 +110,13 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 														ar_util:encode(B#block.reward_addr)},
 												{previous_block,
 													ar_util:encode(PrevB#block.indep_hash)}]),
-										pre_validate_nonce_limiter_seed_data(B, PrevB,
-												SolutionResigned, Peer),
+										case pre_validate_nonce_limiter_seed_data(B, PrevB,
+												SolutionResigned, Peer) of
+											ok ->
+												ok;
+											_ ->
+												ar_ignore_registry:remove_ref(BH, Ref)
+										end,
 										record_block_pre_validation_time(
 												B#block.receive_timestamp),
 										{IPTimestamps2, HashTimestamps2};
