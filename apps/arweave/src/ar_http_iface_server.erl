@@ -71,7 +71,6 @@ start_http_iface_listener(Config) ->
 	TlsCertfilePath = Config#config.tls_cert_file,
 	TlsKeyfilePath = Config#config.tls_key_file,
 	TransportOpts = [
-		{linger, {true, 10}},
 		{port, Config#config.port},
 		{keepalive, true},
 		{max_connections, Config#config.max_connections}
