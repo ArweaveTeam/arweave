@@ -6,9 +6,9 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
 
 -record(state, {
 	%% The priority queue storing the validation requests.
@@ -405,33 +405,49 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 							{true, B3} ->
 								{valid, B3};
 							false ->
-								invalid
+								{invalid, #{
+									code => check_resigned_solution_hash_poa_mismatch,
+									b2 => B2, cache_b => CacheB, prev_b => PrevB }}
 						end;
 					false ->
-						invalid
+						{invalid, #{ code => check_resigned_solution_hash_last_step_prev_output_mismatch,
+									packing_difficulty => PackingDifficulty,
+									packing_difficulty2 => PackingDifficulty2,
+									last_step_prev_output => LastStepPrevOutput,
+									last_step_prev_output2 => LastStepPrevOutput2,
+									b => B, cache_b => CacheB, prev_b => PrevB }}
 				end;
-			_ ->
-				invalid
+			CacheB2 ->
+				{invalid, #{ code => check_resigned_solution_hash_block_mismatch,
+							cache_b => CacheB2, b => B, prev_b => PrevB }}
 		end,
 	ValidatedCachedSolutionDiff =
 		case GetCachedSolution of
 			not_found ->
 				not_found;
-			invalid ->
-				invalid;
+			{invalid, ExtraData} ->
+				{invalid, ExtraData};
 			{valid, B4} ->
 				case ar_node_utils:block_passes_diff_check(B) of
 					true ->
 						{valid, B4};
 					false ->
-						invalid
+						{invalid, #{ code => check_resigned_solution_hash_diff_mismatch,
+									b => B }}
 				end
 		end,
 	case ValidatedCachedSolutionDiff of
 		not_found ->
 			pre_validate_nonce_limiter_global_step_number(B, PrevB, false, Peer);
-		invalid ->
-			post_block_reject_warn(B, check_resigned_solution_hash, Peer),
+		{invalid, ExtraData2} ->
+			Code = maps:get(code, ExtraData2, check_resigned_solution_hash),
+			{ok, Config} = application:get_env(arweave, config),
+			case lists:member(extended_block_validation_trace, Config#config.enable) of
+				true ->
+					post_block_reject_warn_and_error_dump(B, Code, Peer, ExtraData2);
+				false ->
+					post_block_reject_warn(B, Code, Peer)
+			end,
 			ar_events:send(block, {rejected, invalid_resigned_solution_hash,
 					B#block.indep_hash, Peer}),
 			invalid;
