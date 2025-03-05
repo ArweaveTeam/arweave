@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([name/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
-	is_entropy_recorded/2, delete_record/2, store_entropy/7, record_chunk/7]).
+	is_entropy_recorded/2, delete_record/2, store_entropy/7, record_chunk/7,
+	generate_missing_entropy/2]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 

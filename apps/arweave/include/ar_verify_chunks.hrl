@@ -12,4 +12,13 @@
 	status = not_ready :: not_ready | running| done
 }).
 
+-record(sample_report, {
+	samples = 0 :: non_neg_integer(),
+	total = 0 :: non_neg_integer(),
+	success = 0 :: non_neg_integer(),
+	failure = 0 :: non_neg_integer()
+}).
+
+-define(SAMPLE_CHUNK_COUNT, 1000).
+
 -endif.

@@ -5,18 +5,23 @@
 -export([start_link/2, name/1]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_verify_chunks.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_chunk_storage.hrl").
+-include("../include/ar_verify_chunks.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	store_id :: binary(),
-	packing :: binary(),
+	mode :: purge | log,
+	store_id :: string(),
+	packing :: term(),
 	start_offset :: non_neg_integer(),
 	end_offset :: non_neg_integer(),
 	cursor :: non_neg_integer(),
 	ready = false :: boolean(),
+	chunk_samples = ?SAMPLE_CHUNK_COUNT :: non_neg_integer(),
 	verify_report = #verify_report{} :: #verify_report{}
 }).
 
@@ -37,20 +42,42 @@ name(StoreID) ->
 %%%===================================================================
 
 init(StoreID) ->
-	?LOG_INFO([{event, verify_chunk_storage_started}, {store_id, StoreID}]),
+	{ok, Config} = application:get_env(arweave, config),
+	?LOG_INFO([{event, verify_chunk_storage_started},
+		{store_id, StoreID}, {mode, Config#config.verify},
+		{chunk_samples, Config#config.verify_samples}]),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),
-	gen_server:cast(self(), verify),
+	gen_server:cast(self(), sample),
 	{ok, #state{
+		mode = Config#config.verify,
 		store_id = StoreID,
 		packing = ar_storage_module:get_packing(StoreID),
 		start_offset = StartOffset,
 		end_offset = EndOffset,
 		cursor = StartOffset,
 		ready = is_ready(EndOffset),
+		chunk_samples = Config#config.verify_samples,
 		verify_report = #verify_report{
 			start_time = erlang:system_time(millisecond)
 		}
 	}}.
+
+handle_cast(sample, #state{ready = false, end_offset = EndOffset} = State) ->
+	ar_util:cast_after(1000, self(), sample),
+	{noreply, State#state{ready = is_ready(EndOffset)}};
+handle_cast(sample,
+		#state{cursor = Cursor, end_offset = EndOffset} = State) when Cursor >= EndOffset ->
+	ar:console("Done!~n"),
+	{noreply, State};
+handle_cast(sample, State) ->
+	%% Sample ?SAMPLE_CHUNK_COUNT random chunks, read them, unpack them and verify them.
+	%% Report the collected statistics and continue with the "verify" procedure.
+	io:format("Sampling ~p chunks from ~p to ~p~n",
+		[State#state.chunk_samples, State#state.start_offset, State#state.end_offset]),
+	sample_random_chunks(State#state.chunk_samples, sets:new(), 
+		#sample_report{samples = State#state.chunk_samples}, State),
+	gen_server:cast(self(), verify),
+	{noreply, State};
 
 handle_cast(verify, #state{ready = false, end_offset = EndOffset} = State) ->
 	ar_util:cast_after(1000, self(), verify),
@@ -116,6 +143,7 @@ verify_chunk({error, Reason}, _Intervals, State) ->
 	#state{ cursor = Cursor } = State,
 	NextCursor = ar_data_sync:advance_chunks_index_cursor(Cursor),
 	RangeSkipped = NextCursor - Cursor,
+	%% XXX we should invalidate here right?
 	State2 = log_error(get_chunk_error, Cursor, RangeSkipped, [{reason, Reason}], State),
 	State2#state{ cursor = NextCursor };
 verify_chunk({ok, _Key, Metadata}, Intervals, State) ->
@@ -151,8 +179,8 @@ verify_proof(Metadata, State) ->
 	end.
 
 verify_packing(Metadata, State) ->
-	#state{packing=Packing, store_id=StoreID} = State,
-	{AbsoluteOffset, ChunkDataKey, TXRoot, _DataRoot, TXPath,
+	#state{packing = Packing, store_id = StoreID} = State,
+	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
 			_TXRelativeOffset, ChunkSize} = Metadata,
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	StoredPackingCheck = ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
@@ -189,14 +217,25 @@ verify_packing(Metadata, State) ->
 verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, {End, Start}, State)
 		when PaddedOffset - ?DATA_CHUNK_SIZE >= Start andalso PaddedOffset =< End ->
 	#state{store_id = StoreID} = State,
+	{_ChunkFileStart, _Filepath, _Position, ExpectedChunkOffset} =
+				ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
 	case ar_chunk_storage:read_offset(PaddedOffset, StoreID) of
-		{ok, << 0:24 >>} ->
+		{ok, << ExpectedChunkOffset:?OFFSET_BIT_SIZE >>} ->
+			State;
+		{ok, << ActualChunkOffset:?OFFSET_BIT_SIZE >>} ->
 			%% The chunk is recorded in the ar_chunk_storage sync record, but not stored.
-			invalidate_chunk(no_chunk_in_chunk_storage, AbsoluteOffset, ChunkSize, State);
-		_ ->
-			ok
-	end,
-	State;
+			invalidate_chunk(
+				invalid_chunk_offset, AbsoluteOffset, ChunkSize, [
+					{expected_chunk_offset, ExpectedChunkOffset}, 
+					{actual_chunk_offset, ActualChunkOffset}
+				], State);
+		Error ->
+			invalidate_chunk(
+				invalid_chunk_offset, AbsoluteOffset, ChunkSize, [
+					{expected_chunk_offset, ExpectedChunkOffset}, 
+					{error, Error}
+				], State)
+	end;
 verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, _Interval, State) ->
 	#state{ packing = Packing } = State,
 	case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
@@ -210,8 +249,13 @@ invalidate_chunk(Type, Offset, ChunkSize, State) ->
 	invalidate_chunk(Type, Offset, ChunkSize, [], State).
 
 invalidate_chunk(Type, Offset, ChunkSize, Logs, State) ->
-	#state{ store_id = StoreID } = State,
-	ar_data_sync:invalidate_bad_data_record(Offset, ChunkSize, StoreID, Type),
+	#state{ mode = Mode, store_id = StoreID } = State,
+	case Mode of
+		purge ->
+			ar_data_sync:invalidate_bad_data_record(Offset, ChunkSize, StoreID, Type);
+		log ->
+			ok
+	end,
 	log_error(Type, Offset, ChunkSize, Logs, State).
 
 log_error(Type, Offset, ChunkSize, Logs, State) ->
@@ -240,8 +284,11 @@ query_intervals(State) ->
 	{UnionInterval, {ChunkStorageInterval, DataSyncInterval}}.
 
 align_intervals(Cursor, StoreID) ->
+	%% XXX what if cursor is before the stric data split threshold?
 	ChunkStorageInterval = ar_sync_record:get_next_synced_interval(
 		Cursor, infinity, ar_chunk_storage, StoreID),
+	%% XXX maybe only query for the store_id packing so that we invalidate anything
+	%% that has the wrong packing format or hasn't been packed yet?
 	DataSyncInterval = ar_sync_record:get_next_synced_interval(
 		Cursor, infinity, ar_data_sync, StoreID),
 	align_intervals(Cursor, ChunkStorageInterval, DataSyncInterval).
@@ -299,9 +346,66 @@ report_progress(State) ->
 	ar_verify_chunks_reporter:update(StoreID, Report2),
 	State#state{ verify_report = Report2 }.
 
-%% ar_chunk_storage does not store small chunks before strict_split_data_threshold
-%% (before 30607159107830 = partitions 0-7 and a half of 8
-%% 
+%% Generate offset in the range [Start, End]
+%% (i.e. offsets greater than or equal to Start and less than or equal to End)
+%% Offsets are normalized to a bucket boundary such that if that bucket boundary has
+%% been sampled before, it won't be sampled again.
+generate_sample_offset(Start, End, SampledOffsets, Retry) when Retry > 0 ->
+	Range = End - Start,
+	Offset = Start + rand:uniform(Range),
+	BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Offset),
+	SampleOffset = BucketStartOffset + 1,
+	?LOG_INFO([{event, generate_sample_offset}, {offset, Offset}, {bucket_start_offset, BucketStartOffset}, {sample_offset, SampleOffset}]),
+	case sets:is_element(SampleOffset, SampledOffsets) of
+		true ->
+			generate_sample_offset(Start, End, SampledOffsets, Retry - 1);
+		false ->
+			SampleOffset
+	end.
+
+sample_random_chunks(0, _SampledOffsets, SampleReport, _State) ->
+	SampleReport;
+sample_random_chunks(Count, SampledOffsets, SampleReport, State) ->
+	#state{ store_id = StoreID, start_offset = Start, end_offset = End } = State,
+
+	SampleOffset = generate_sample_offset(Start+1, End, SampledOffsets, 100),
+	SampledOffsets2 = sets:add_element(SampleOffset, SampledOffsets),
+
+	IsRecorded = case ar_sync_record:is_recorded(SampleOffset, ar_data_sync, StoreID) of
+		{true, _} ->
+			true;
+		true ->
+			true;
+		false ->
+			false
+	end,
+
+	case IsRecorded of
+		true ->
+			SampleReport2 = case ar_data_sync:get_chunk(
+					SampleOffset, #{pack => true, packing => unpacked}) of
+				{ok, _Proof} ->
+					?LOG_INFO([
+						{event, sample_chunk}, {offset, SampleOffset}, {status, success}]),
+					SampleReport#sample_report{
+						total = SampleReport#sample_report.total + 1,
+						success = SampleReport#sample_report.success + 1
+					};
+				{error, Reason} ->
+					?LOG_INFO([
+						{event, sample_chunk}, {offset, SampleOffset}, {status, Reason}]),
+					SampleReport#sample_report{
+						total = SampleReport#sample_report.total + 1,
+						failure = SampleReport#sample_report.failure + 1
+					}
+			end,
+
+			ar_verify_chunks_reporter:update(StoreID, SampleReport2),
+			sample_random_chunks(Count - 1, SampledOffsets2, SampleReport2, State);
+		false ->
+			?LOG_INFO([{event, sample_chunk}, {offset, SampleOffset}, {status, skipping}]),
+			sample_random_chunks(Count, SampledOffsets2, SampleReport, State)
+	end.
 
 %%%===================================================================
 %%% Tests.
@@ -316,13 +420,16 @@ intervals_test_() ->
 verify_chunk_storage_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions(
-			[{ar_chunk_storage, read_offset, fun(_Offset, _StoreID) -> << 1:24 >> end}],
+			[{ar_chunk_storage, read_offset,
+				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}],
 			fun test_verify_chunk_storage_in_interval/0),
 		ar_test_node:test_with_mocked_functions(
-			[{ar_chunk_storage, read_offset, fun(_Offset, _StoreID) -> << 1:24 >> end}],
+			[{ar_chunk_storage, read_offset,
+				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}],
 			fun test_verify_chunk_storage_should_store/0),
 		ar_test_node:test_with_mocked_functions(
-			[{ar_chunk_storage, read_offset, fun(_Offset, _StoreID) -> << 1:24 >> end}],
+			[{ar_chunk_storage, read_offset,
+				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}],
 			fun test_verify_chunk_storage_should_not_store/0)
 	].
 
@@ -350,7 +457,9 @@ verify_chunk_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
-			{ar_poa, validate_paths, fun(_, _, _, _) -> {true, <<>>} end}
+			{ar_poa, validate_paths, fun(_, _, _, _) -> {true, <<>>} end},
+			{ar_chunk_storage, read_offset,
+				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}
 		],
 			fun test_verify_chunk/0
 		)
@@ -417,29 +526,29 @@ test_union_intervals() ->
 
 test_verify_chunk_storage_in_interval() ->
 	?assertEqual(
-		#state{},
+		#state{ packing = unpacked },
 		verify_chunk_storage(
 			10*?DATA_CHUNK_SIZE,
 			10*?DATA_CHUNK_SIZE,
 			?DATA_CHUNK_SIZE,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
-			#state{})),
+			#state{ packing = unpacked })),
 	?assertEqual(
-		#state{},
+		#state{ packing = unpacked },
 		verify_chunk_storage(
 			6*?DATA_CHUNK_SIZE - 1,
 			6*?DATA_CHUNK_SIZE,
 			?DATA_CHUNK_SIZE div 2,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
-			#state{})),
+			#state{ packing = unpacked })),
 	?assertEqual(
-		#state{},
+		#state{ packing = unpacked },
 		verify_chunk_storage(
 			20*?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE div 2,
 			20*?DATA_CHUNK_SIZE,
 			?DATA_CHUNK_SIZE div 2,
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
-			#state{})),
+			#state{ packing = unpacked })),
 	ok.
 
 test_verify_chunk_storage_should_store() ->
@@ -614,3 +723,81 @@ test_verify_chunk() ->
 			{Interval, not_found},
 			#state{ cursor = 0, packing = unpacked })),
 	ok.
+
+%% Verify that generate_sample_offsets/3 samples without replacement.
+sample_offsets_loop(Start, End, Count) ->
+    %% Compute the number of available unique candidates.
+    Candidates = lists:seq(Start + 1, End, ?DATA_CHUNK_SIZE),
+    ActualCount = erlang:min(Count, length(Candidates)),
+    sample_offsets_loop(Start, End, ActualCount, sets:new()).
+
+sample_offsets_loop(_Start, _End, 0, _SampledSet) ->
+    [];
+sample_offsets_loop(Start, End, Count, SampledSet) ->
+    Offset = generate_sample_offset(Start, End, SampledSet, 100),
+    NewSet = sets:add_element(Offset, SampledSet),
+    [Offset | sample_offsets_loop(Start, End, Count - 1, NewSet)].
+
+sample_offsets_without_replacement_test() ->
+    ChunkSize = ?DATA_CHUNK_SIZE,
+    Count = 5,
+    %% Use the helper function to generate a list of offsets.
+    Offsets = sample_offsets_loop(ChunkSize * 10, ChunkSize * 1000, Count),
+    %% Check that exactly Count unique offsets are produced.
+    ?assertEqual(Count, length(Offsets)),
+    %% For every pair, ensure the absolute difference is at least ?DATA_CHUNK_SIZE.
+    lists:foreach(fun(A) ->
+        lists:foreach(fun(B) ->
+            case {A == B, abs(A - B) < ?DATA_CHUNK_SIZE} of
+                {true, _} -> ok;
+                {false, true} -> ?assert(false);
+                _ -> ok
+            end
+        end, Offsets)
+    end, Offsets),
+    %% When the available candidates are fewer than Count,
+    %% only one unique offset should be returned.
+    Offsets2 = sample_offsets_loop(0, ChunkSize, Count),
+    ?assertEqual(1, length(Offsets2)).
+
+%% Verify sample_random_chunks/4 aggregates outcomes correctly.
+%%
+%% We mock ar_data_sync:get_chunk/2 such that:
+%%   - The first call returns {error, chunk_not_found},
+%%   - The second call returns {ok, <<"valid_proof">>},
+%%   - The third call returns {error, invalid_chunk}.
+%% Note: Using atoms for partition borders triggers the fallback in generate_sample_offsets/3.
+sample_random_chunks_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions(
+			[{ar_data_sync, get_chunk, fun(_Offset, _Opts) ->
+				%% Use process dictionary to simulate sequential responses.
+				Counter = case erlang:get(sample_counter) of
+					undefined -> 0;
+					C -> C
+				end,
+				erlang:put(sample_counter, Counter + 1),
+				case Counter of
+					0 -> {error, chunk_not_found};
+					1 -> {ok, <<"valid_proof">>};
+					2 -> {error, invalid_chunk}
+				end
+			end},
+			{ar_sync_record, is_recorded,
+				fun(_, _, _) -> true end}
+			],
+			fun test_sample_random_chunks/0)
+	].
+
+test_sample_random_chunks() ->
+	%% Initialize counter.
+	erlang:put(sample_counter, 0),
+	State = #state{
+		packing = unpacked,
+		start_offset = 0,
+		end_offset = ?DATA_CHUNK_SIZE * 10 ,
+		store_id = "test"
+	},
+	Report = sample_random_chunks(3, sets:new(), #sample_report{}, State),
+	ExpectedReport = #sample_report{total = 3, success = 1, failure = 2},
+	?assertEqual(ExpectedReport, Report).
