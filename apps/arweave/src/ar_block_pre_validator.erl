@@ -52,7 +52,7 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 			B2 = B#block{ receive_timestamp = ReceiveTimestamp },
 			case pre_validate_is_peer_banned(B2, Peer) of
 				enqueued ->
-					enqueued;
+					ok;
 				Other ->
 					ar_ignore_registry:remove_ref(H, Ref),
 					Other
