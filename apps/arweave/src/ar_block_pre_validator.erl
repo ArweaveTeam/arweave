@@ -6,9 +6,9 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
 
 -record(state, {
 	%% The priority queue storing the validation requests.
@@ -52,7 +52,10 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 			B2 = B#block{ receive_timestamp = ReceiveTimestamp },
 			case pre_validate_is_peer_banned(B2, Peer) of
 				enqueued ->
-					enqueued;
+					?LOG_DEBUG([{event, enqueued_block},
+							{hash, ar_util:encode(H)},
+							{peer, ar_util:format_peer(Peer)}]),
+					ok;
 				Other ->
 					ar_ignore_registry:remove_ref(H, Ref),
 					Other
@@ -95,6 +98,10 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 					{IPTimestamps3, HashTimestamps3} =
 						case ThrottleByIPResult of
 							false ->
+								?LOG_DEBUG([{event, dropping_block},
+										{reason, throttle_by_ip},
+										{hash, ar_util:encode(BH)},
+										{peer, ar_util:format_peer(Peer)}]),
 								ar_ignore_registry:remove_ref(BH, Ref),
 								{IPTimestamps, HashTimestamps};
 							{true, IPTimestamps2} ->
@@ -110,12 +117,21 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 														ar_util:encode(B#block.reward_addr)},
 												{previous_block,
 													ar_util:encode(PrevB#block.indep_hash)}]),
-										pre_validate_nonce_limiter_seed_data(B, PrevB,
-												SolutionResigned, Peer),
+										case pre_validate_nonce_limiter_seed_data(B, PrevB,
+												SolutionResigned, Peer) of
+											ok ->
+												ok;
+											_ ->
+												ar_ignore_registry:remove_ref(BH, Ref)
+										end,
 										record_block_pre_validation_time(
 												B#block.receive_timestamp),
 										{IPTimestamps2, HashTimestamps2};
 									false ->
+										?LOG_DEBUG([{event, dropping_block},
+												{reason, throttle_by_solution_hash},
+												{hash, ar_util:encode(BH)},
+												{peer, ar_util:format_peer(Peer)}]),
 										ar_ignore_registry:remove_ref(BH, Ref),
 										{IPTimestamps2, HashTimestamps}
 								end
@@ -405,33 +421,49 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 							{true, B3} ->
 								{valid, B3};
 							false ->
-								invalid
+								{invalid, #{
+									code => check_resigned_solution_hash_poa_mismatch,
+									b2 => B2, cache_b => CacheB, prev_b => PrevB }}
 						end;
 					false ->
-						invalid
+						{invalid, #{ code => check_resigned_solution_hash_last_step_prev_output_mismatch,
+									packing_difficulty => PackingDifficulty,
+									packing_difficulty2 => PackingDifficulty2,
+									last_step_prev_output => LastStepPrevOutput,
+									last_step_prev_output2 => LastStepPrevOutput2,
+									b => B, cache_b => CacheB, prev_b => PrevB }}
 				end;
-			_ ->
-				invalid
+			CacheB2 ->
+				{invalid, #{ code => check_resigned_solution_hash_block_mismatch,
+							cache_b => CacheB2, b => B, prev_b => PrevB }}
 		end,
 	ValidatedCachedSolutionDiff =
 		case GetCachedSolution of
 			not_found ->
 				not_found;
-			invalid ->
-				invalid;
+			{invalid, ExtraData} ->
+				{invalid, ExtraData};
 			{valid, B4} ->
 				case ar_node_utils:block_passes_diff_check(B) of
 					true ->
 						{valid, B4};
 					false ->
-						invalid
+						{invalid, #{ code => check_resigned_solution_hash_diff_mismatch,
+									b => B }}
 				end
 		end,
 	case ValidatedCachedSolutionDiff of
 		not_found ->
 			pre_validate_nonce_limiter_global_step_number(B, PrevB, false, Peer);
-		invalid ->
-			post_block_reject_warn(B, check_resigned_solution_hash, Peer),
+		{invalid, ExtraData2} ->
+			Code = maps:get(code, ExtraData2, check_resigned_solution_hash),
+			{ok, Config} = application:get_env(arweave, config),
+			case lists:member(extended_block_validation_trace, Config#config.enable) of
+				true ->
+					post_block_reject_warn_and_error_dump(B, Code, Peer, ExtraData2);
+				false ->
+					post_block_reject_warn(B, Code, Peer)
+			end,
 			ar_events:send(block, {rejected, invalid_resigned_solution_hash,
 					B#block.indep_hash, Peer}),
 			invalid;
@@ -760,8 +792,10 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 pre_validate_nonce_limiter(B, PrevB, Peer) ->
 	PrevOutput = get_last_step_prev_output(B),
 	case ar_nonce_limiter:validate_last_step_checkpoints(B, PrevB, PrevOutput) of
-		{false, cache_mismatch} ->
-			post_block_reject_warn_and_error_dump(B, check_nonce_limiter, Peer),
+		{false, cache_mismatch, CachedSteps} ->
+			ar_ignore_registry:add(B#block.indep_hash),
+			post_block_reject_warn_and_error_dump(B, check_nonce_limiter_cache_mismatch,
+					Peer, #{ prev_b => PrevB, cached_steps => CachedSteps }),
 			ar_events:send(block, {rejected, invalid_nonce_limiter_cache_mismatch,
 					B#block.indep_hash, Peer}),
 			invalid;
@@ -794,10 +828,13 @@ compute_hash(B, PrevCDiff) ->
 	end.
 
 post_block_reject_warn_and_error_dump(B, Step, Peer) ->
+	post_block_reject_warn_and_error_dump(B, Step, Peer, #{}).
+
+post_block_reject_warn_and_error_dump(B, Step, Peer, ExtraData) ->
 	{ok, Config} = application:get_env(arweave, config),
 	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
 	File = filename:join(Config#config.data_dir, "invalid_block_dump_" ++ ID),
-	file:write_file(File, term_to_binary(B)),
+	file:write_file(File, term_to_binary({B, ExtraData})),
 	post_block_reject_warn(B, Step, Peer),
 	?LOG_WARNING([{event, post_block_rejected},
 			{hash, ar_util:encode(B#block.indep_hash)}, {step, Step},
@@ -832,7 +869,7 @@ get_peer_score(_Peer, [], N) ->
 	N - rand:uniform(100).
 
 drop_tail(Q, Size) when Size =< ?MAX_PRE_VALIDATION_QUEUE_SIZE ->
-	{Q, 0};
+	{Q, Size};
 drop_tail(Q, Size) ->
 	{{_Priority, {B, _PrevB, _SolutionResigned, _Peer, Ref}}, Q2} = gb_sets:take_smallest(Q),
 	ar_ignore_registry:remove_ref(B#block.indep_hash, Ref),
