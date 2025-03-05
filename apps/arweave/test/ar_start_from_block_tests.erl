@@ -57,7 +57,6 @@ test_start_from_block() ->
 
     StartFrom = get_block_hash(4, MainBI),
     StartMinus1 = get_block_hash(3, MainBI),
-    StartPlus1 = get_block_hash(5, MainBI),
 
     assert_block_index(peer1, 6, MainBI),
     assert_block_index(peer2, 6, MainBI),
@@ -81,7 +80,7 @@ test_start_from_block() ->
     assert_start_from(main, peer2, 3),
 
     %% disconnect peer2 and mine a block on peer1
-    ar_test_node:remote_call(peer2, ar_test_node, disonnect_from, [peer1]),
+    ar_test_node:remote_call(peer2, ar_test_node, disconnect_from, [peer1]),
     ar_test_node:mine(peer1),
     ar_test_node:wait_until_height(peer1, 4),
 
@@ -113,12 +112,13 @@ restart_from_block(Peer, BH) ->
     {ok, Config} = ar_test_node:get_config(Peer),
     ok = ar_test_node:set_config(Peer, Config#config{
         start_from_latest_state = false,
-        start_from_block = BH }),
+        start_from_block = BH,
+        block_pollers = 0
+    }),
     ar_test_node:restart(Peer),
     ar_test_node:remote_call(Peer, ar_test_node, wait_until_syncs_genesis_data, []).
 
 assert_start_from(ExpectedPeer, Peer, Height) ->
-    ?LOG_ERROR([{event, assert_start_from}, {expected_peer, ExpectedPeer}, {peer, Peer}, {height, Height}]),
     BI = get_block_index(Peer),
     StartFrom = get_block_hash(Height, BI),
     StartMinus1 = get_block_hash(Height-1, BI),
