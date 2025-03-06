@@ -276,14 +276,14 @@ validate_pre_fork_2_5(BlockOffset, TXRoot, BlockEndOffset, POA) ->
 		false -> false;
 		{DataRoot, StartOffset, EndOffset} ->
 			TXOffset = BlockOffset - StartOffset,
-			validate_data_path(DataRoot, TXOffset, EndOffset - StartOffset, POA)
+			validate_data_path_pre_fork_2_5(DataRoot, TXOffset, EndOffset - StartOffset, POA)
 	end.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
-validate_data_path(DataRoot, TXOffset, EndOffset, POA) ->
+validate_data_path_pre_fork_2_5(DataRoot, TXOffset, EndOffset, POA) ->
 	Validation =
 		ar_merkle:validate_path(
 			DataRoot,
@@ -294,8 +294,8 @@ validate_data_path(DataRoot, TXOffset, EndOffset, POA) ->
 	case Validation of
 		false -> false;
 		{ChunkID, _, _} ->
-			validate_chunk(ChunkID, POA)
+			validate_chunk_pre_fork_2_5(ChunkID, POA)
 	end.
 
-validate_chunk(ChunkID, POA) ->
+validate_chunk_pre_fork_2_5(ChunkID, POA) ->
 	ChunkID == ar_tx:generate_chunk_id(POA#poa.chunk).
