@@ -115,18 +115,14 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 												{peer, ar_util:format_peer(Peer)},
 												{height, B#block.height},
 												{step_number, ar_block:vdf_step_number(B)},
-												{block, ar_util:encode(B#block.indep_hash)},
+												{block, ar_util:encode(BH)},
 												{miner_address,
 														ar_util:encode(B#block.reward_addr)},
 												{previous_block,
 													ar_util:encode(PrevB#block.indep_hash)}]),
-										case pre_validate_nonce_limiter_seed_data(B, PrevB,
-												SolutionResigned, Peer) of
-											ok ->
-												ok;
-											_ ->
-												ar_ignore_registry:remove_ref(BH, Ref)
-										end,
+										pre_validate_nonce_limiter_seed_data(B, PrevB,
+												SolutionResigned, Peer),
+										ar_ignore_registry:remove_ref(BH, Ref),
 										record_block_pre_validation_time(
 												B#block.receive_timestamp),
 										{IPTimestamps2, HashTimestamps2};
