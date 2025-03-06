@@ -1,68 +1,93 @@
 #!/bin/bash
+set -e
+set -x
 
-if [ $# -ne 2 ]; then
+if [ $# -ne 2 ]
+then
 	echo "ar-rebar3 <profile> <command>"
-    exit 1
+	exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROFILE=$1
 COMMAND=$2
+OVERLAY_TARGET="${SCRIPT_DIR}/_vars.config"
 
+# helper function to create erlang like value from the shell
+# and stored them into a specific file.
 create_overlay_var() {
-  local target="_vars.config"
-  local name="${1}"
-  local value="$(eval ${2} 2>/dev/null || echo undefined)"
+	local target="${OVERLAY_TARGET}"
+	local name="${1}"
+	local value="$(eval ${2} 2>/dev/null || echo undefined)"
 
-  if ! echo "${name}" | grep -E '^[a-z]+[0-9A-Za-z_]+$' >/dev/null
-  then
-    echo "invalid variable ${name}" 1>&2
-    return 1
-  fi
+	if ! echo "${name}" | grep -E '^[a-z]+[0-9A-Za-z_]+$' >/dev/null
+	then
+		echo "invalid variable ${name}" 1>&2
+		return 1
+	fi
 
-  if ! echo "${value}" | grep -E '^[[:print:]]+$' >/dev/null
-  then
-    echo "invalid value ${value}" 1>&2
-    return 1
-  fi
+	if ! echo "${value}" | grep -E '^[[:print:]]+$' >/dev/null
+	then
+		echo "invalid value ${value}" 1>&2
+		return 1
+	fi
 
-  if test -e "${target}"
-  then
-    printf '{%s, "%s"}.\n' "${name}" "${value}" >> "${target}"
-    return 0
-  fi
+	if test -e "${target}"
+	then
+		printf '{%s, "%s"}.\n' "${name}" "${value}" >> "${target}"
+		return 0
+	fi
 
-  printf '{%s, "%s"}.\n' "${name}" "${value}" > "${target}"
-  return 0
+	printf '{%s, "%s"}.\n' "${name}" "${value}" > "${target}"
+	return 0
 }
 
-echo Removing build artifacts...
-set -x
-rm -f "_vars.config"
-rm -f "${SCRIPT_DIR}/lib"
-rm -f "${SCRIPT_DIR}/releases"
-{ set +x; } 2>/dev/null
-echo
+# create variables required for the overlay, it will contain
+# various information regarding the build and will be 
+# hardcoded in the final release.
+rebar3_overlay_variables() {
+	echo "Crafting overlay variables..."
+	create_overlay_var git_rev "git rev-parse HEAD"
+	create_overlay_var datetime "date -u '+%Y-%m-%dT%H:%M:%SZ'"
+	create_overlay_var cc_version "cc --version | head -n1"
+	create_overlay_var gmake_version "gmake --version | head -n1"
+	create_overlay_var cmake_version "cmake --version | head -n1"
+}
 
-echo "Crafting overlay variables..."
-create_overlay_var git_rev "git rev-parse HEAD"
-create_overlay_var datetime "date -u '+%Y-%m-%dT%H:%M:%SZ'"
-create_overlay_var cc_version "cc --version | head -n1"
-create_overlay_var gmake_version "gmake --version | head -n1"
-create_overlay_var cmake_version "cmake --version | head -n1"
+# remove old artifacts that must be recreated everytime.
+rebar3_clean_artifacts() {
+	echo Removing build artifacts...
+	rm -vf "_vars.config"
+	rm -vf "${SCRIPT_DIR}/lib"
+	rm -vf "${SCRIPT_DIR}/releases"
+}
 
-echo "Executing rebar3 as ${PROFILE} ${COMMAND}"
-${SCRIPT_DIR}/rebar3 as ${PROFILE} ${COMMAND}
+# execute rebar3 using the profile and the command previously
+# configured
+rebar3_invocation() {
+	echo "Executing rebar3 as ${PROFILE} ${COMMAND}"
+	${SCRIPT_DIR}/rebar3 as ${PROFILE} ${COMMAND}
+}
 
-if [ "${COMMAND}" = "release" ]; then
+# create artifacts required to run the code locally, only useful
+# in case of release.
+rebar3_create_artifacts() {
+	echo Copying and linking build artifacts
+	cp -v ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave
+	cp -v ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave-dev
+	ln -vsf ${RELEASE_PATH}/arweave/releases ${SCRIPT_DIR}/releases
+	ln -vsf ${RELEASE_PATH}/arweave/lib ${SCRIPT_DIR}/lib
+}
+
+######################################################################
+# main script
+######################################################################
+rebar3_clean_artifacts
+rebar3_overlay_variables
+rebar3_invocation
+
+if [ "${COMMAND}" = "release" ]
+then
 	RELEASE_PATH=$(${SCRIPT_DIR}/rebar3 as ${ARWEAVE_BUILD_TARGET:-default} path --rel)
-    echo
-    echo Copying and linking build artifacts
-    set -x
-    cp ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave
-    cp ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave-dev
-    ln -s ${RELEASE_PATH}/arweave/releases ${SCRIPT_DIR}/releases
-    ln -s ${RELEASE_PATH}/arweave/lib ${SCRIPT_DIR}/lib
-    { set +x; } 2>/dev/null
-    echo
+	rebar3_create_artifacts
 fi
