@@ -91,12 +91,12 @@ print_verify_reports(Reports) ->
 
 print_verify_header() ->
 	ar:console("Verification Report~n", []),
-	ar:console("+-------------------------------------------------------------------+-----------+------+------------+------------+-------------+---------+~n", []),
-	ar:console("|                                                    Storage Module | Processed |    % | Errors (#) | Errors (%) | Verify Rate |  Status |~n", []),
-	ar:console("+-------------------------------------------------------------------+-----------+------+------------+------------+-------------+---------+~n", []).
+	ar:console("+-------------------------------------------------------------------+-----------+-------+------------+------------+-------------+---------+~n", []),
+	ar:console("|                                                    Storage Module | Processed |     % | Errors (#) | Errors (%) | Verify Rate |  Status |~n", []),
+	ar:console("+-------------------------------------------------------------------+-----------+-------+------------+------------+-------------+---------+~n", []).
 
 print_verify_footer() ->
-	ar:console("+-------------------------------------------------------------------+-----------+------+------------+------------+-------------+---------+~n~n", []).
+	ar:console("+-------------------------------------------------------------------+-----------+-------+------------+------------+-------------+---------+~n~n", []).
 
 print_verify_report(StoreID, Report) ->
 	#verify_report{
@@ -109,7 +109,7 @@ print_verify_report(StoreID, Report) ->
 	} = Report,
 	Duration = erlang:system_time(millisecond) - StartTime,
 	Rate = 1000 * BytesProcessed / Duration,
-	ar:console("| ~65s |   ~4B GB | ~3B% | ~10B | ~9.2f% | ~6.1f MB/s | ~7s |~n", 
+	ar:console("| ~65s |   ~4B GB | ~4B% | ~10B | ~9.2f% | ~6.1f MB/s | ~7s |~n", 
 		[
 			StoreID, BytesProcessed div 1000000000, Progress,
 			TotalErrorChunks, (TotalErrorBytes * 100) / BytesProcessed, Rate / 1000000,
@@ -132,25 +132,25 @@ print_sample_reports(Reports) ->
 
 print_sample_report(StoreID, Report) ->
 	#sample_report{
+		samples = MaxSamples,
 		total = Total,
 		success = Success,
 		failure = Failure
 	} = Report,
-	Count = ?SAMPLE_CHUNK_COUNT,
-	ar:console("| ~65s | ~9B | ~3B% | ~6.1f% | ~4.1f% |~n",
+	ar:console("| ~65s | ~9B | ~4B% | ~6.1f% | ~6.1f% |~n",
 		[
 			StoreID,
 			Total,
-			(Total * 100) div Count,
+			(Total * 100) div MaxSamples,
 			(Success * 100) / Total,
 			(Failure * 100) / Total
 		]).
 
 print_sample_header() ->
 	ar:console("Chunk Sample Report~n", []),
-	ar:console("+-------------------------------------------------------------------+-----------+------+---------+-------+~n", []),
-	ar:console("|                                                    Storage Module | Processed |    % | Success | Error |~n", []),
-	ar:console("+-------------------------------------------------------------------+-----------+------+---------+-------+~n", []).
+	ar:console("+-------------------------------------------------------------------+-----------+-------+---------+---------+~n", []),
+	ar:console("|                                                    Storage Module | Processed |     % | Success |   Error |~n", []),
+	ar:console("+-------------------------------------------------------------------+-----------+-------+---------+---------+~n", []).
 
 print_sample_footer() ->
-	ar:console("+-------------------------------------------------------------------+-----------+------+---------+-------+~n~n", []).
+	ar:console("+-------------------------------------------------------------------+-----------+-------+---------+---------+~n~n", []).

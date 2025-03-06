@@ -1488,15 +1488,23 @@ init_sync_status(StoreID) ->
 	end,
 	ar_device_lock:set_device_lock_metric(StoreID, sync, SyncStatus),
 	SyncStatus.
-log_chunk_error(Event, ExtraLogData) ->
-	?LOG_ERROR([{event, Event}, {tags, [solution_proofs]} | ExtraLogData]).
+do_log_chunk_error(LogType, Event, ExtraLogData) ->
+	LogData = [{event, Event}, {tags, [solution_proofs]} | ExtraLogData],
+	case LogType of
+		error ->
+			?LOG_ERROR(LogData);
+		info ->
+			?LOG_INFO(LogData)
+	end.
 
 log_chunk_error(http, _, _) ->
 	ok;
 log_chunk_error(tx_data, _, _) ->
 	ok;
+log_chunk_error(verify, Event, ExtraLogData) ->
+	do_log_chunk_error(info, Event, [{request_origin, verify} | ExtraLogData]);
 log_chunk_error(RequestOrigin, Event, ExtraLogData) ->
-	log_chunk_error(Event, [{request_origin, RequestOrigin} | ExtraLogData]).
+	do_log_chunk_error(error, Event, [{request_origin, RequestOrigin} | ExtraLogData]).
 
 do_sync_intervals(State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
@@ -1679,7 +1687,7 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 				end,
 			case {PackResult, ChunkID} of
 				{{error, Reason}, _} ->
-					log_chunk_error(failed_to_repack_chunk,
+					log_chunk_error(RequestOrigin, failed_to_repack_chunk,
 							[{packing, ar_serialize:encode_packing(Packing, true)},
 							{stored_packing, ar_serialize:encode_packing(StoredPacking, true)},
 							{absolute_end_offset, AbsoluteOffset},
@@ -1720,7 +1728,7 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 								true ->
 									{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }};
 								false ->
-									log_chunk_error(get_chunk_invalid_id,
+									log_chunk_error(RequestOrigin, get_chunk_invalid_id,
 											[{chunk_size, ChunkSize},
 											{actual_chunk_size, byte_size(MaybeUnpackedChunk)},
 											{requested_packing,
@@ -1835,7 +1843,7 @@ read_chunk_with_metadata(
 						failed_to_read_chunk_data_path}),
 					{error, chunk_not_found};
 				{error, Error} ->
-					log_chunk_error(failed_to_read_chunk,
+					log_chunk_error(RequestOrigin, failed_to_read_chunk,
 							[{reason, io_lib:format("~p", [Error])},
 							{chunk_data_key, ar_util:encode(ChunkDataKey)},
 							{absolute_end_offset, Offset}]),
@@ -1848,7 +1856,7 @@ read_chunk_with_metadata(
 							ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
 							RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
 									|| ID <- ModuleIDs],
-							log_chunk_error(chunk_metadata_read_sync_record_race_condition,
+							log_chunk_error(RequestOrigin, chunk_metadata_read_sync_record_race_condition,
 								[{seek_offset, SeekOffset},
 								{storeID, StoreID},
 								{modules_covering_seek_offset, ModuleIDs},
@@ -1891,7 +1899,7 @@ invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
 	case remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) of
 		ok ->
 			ar_sync_record:add(PaddedEndOffset, StartOffset, invalid_chunks, StoreID),
-			case delete_chunk_metadata(AbsoluteEndOffset, StoreID) of
+			case delete_invalid_metadata(AbsoluteEndOffset, StoreID) of
 				ok ->
 					ok;
 				Error2 ->
@@ -1932,6 +1940,16 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
 			Remove3
 	end.
 
+delete_invalid_metadata(AbsoluteEndOffset, StoreID) ->
+	case get_chunk_metadata(AbsoluteEndOffset, StoreID) of
+		not_found ->
+			ok;
+		{ok, Metadata} ->
+			{ChunkDataKey, _, _, _, _, _} = Metadata,
+			delete_chunk_data(ChunkDataKey, StoreID),
+			delete_chunk_metadata(AbsoluteEndOffset, StoreID)
+	end.
+
 validate_fetched_chunk(Args) ->
 	{Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID, RequestOrigin} = Args,
 	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
@@ -1963,7 +1981,7 @@ validate_fetched_chunk(Args) ->
 							false
 					end;
 				{_BlockStart, _BlockEnd, TXRoot2} ->
-					log_chunk_error(stored_chunk_invalid_tx_root,
+					log_chunk_error(RequestOrigin, stored_chunk_invalid_tx_root,
 						[{end_offset, Offset}, {tx_root, ar_util:encode(TXRoot2)},
 						{stored_tx_root, ar_util:encode(TXRoot)}, {store_id, StoreID}]),
 					invalidate_bad_data_record({Offset, ChunkSize, StoreID,

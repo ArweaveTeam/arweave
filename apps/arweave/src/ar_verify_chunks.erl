@@ -14,7 +14,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	mode :: purge | log,
+	mode = log :: purge | log,
 	store_id :: string(),
 	packing :: term(),
 	start_offset :: non_neg_integer(),
@@ -114,6 +114,14 @@ is_ready(EndOffset) ->
 			WeaveSize >= EndOffset
 	end.
 
+%% @doc verify runs through a series of checks:
+%% 1. All chunks covered by the ar_chunk_storage or ar_data_sync sync records exist.
+%% 2. All chunks in the ar_data_sync sync record are also in the ar_chunk_storage sync record.
+%% 3. All chunks have valid proofs.
+%% 4. The ar_data_sync record has the expected packing format.
+%% 5. All chunks in the ar_chunk_storage sync record are also in the ar_data_sync sync record.
+%% 
+%% For any chunk that fails one of the above checks: invalidate it so that it can be resynced.
 verify(State) ->
 	#state{store_id = StoreID} = State,
 	{UnionInterval, Intervals} = query_intervals(State),
@@ -121,8 +129,7 @@ verify(State) ->
 	case State2#state.cursor >= State2#state.end_offset of
 		true ->
 			ar:console("Done verifying ~s!~n", [StoreID]),
-			?LOG_INFO([{event, verify_chunk_storage_verify_chunks_done}, {store_id, StoreID}]),
-			State2;
+			?LOG_INFO([{event, verify_chunk_storage_verify_chunks_done}, {store_id, StoreID}]);
 		false ->
 			gen_server:cast(self(), verify)
 	end,
@@ -130,35 +137,56 @@ verify(State) ->
 
 verify_chunks(not_found, _Intervals, State) ->
 	State#state{ cursor = State#state.end_offset };
-verify_chunks({End, _Start}, _Intervals, #state{cursor = Cursor} = State) when Cursor >= End ->
+verify_chunks({End, _Start}, _Intervals, #state{cursor = Cursor} = State)
+		when Cursor >= End ->
 	State;
 verify_chunks({IntervalEnd, IntervalStart}, Intervals, State) ->
-	#state{cursor = Cursor, store_id = StoreID} = State,
+	#state{ cursor = Cursor } = State,
 	Cursor2 = max(IntervalStart, Cursor),
-	ChunkData = ar_data_sync:get_chunk_by_byte(Cursor2+1, StoreID),
-	State2 = verify_chunk(ChunkData, Intervals, State#state{ cursor = Cursor2 }),
-	verify_chunks({IntervalEnd, IntervalStart}, Intervals, State2).
+	State3 = case verify_chunks_index(State#state{ cursor = Cursor2 }) of
+		{error, State2} ->
+			State2;
+		{ChunkData, State2} ->
+			verify_chunk(ChunkData, Intervals, State2)
+	end,
+	verify_chunks({IntervalEnd, IntervalStart}, Intervals, State3).
 
-verify_chunk({error, Reason}, _Intervals, State) ->
+verify_chunks_index(State) ->
+	#state{ cursor = Cursor, store_id = StoreID } = State,
+	ChunkData = ar_data_sync:get_chunk_by_byte(Cursor, StoreID),
+	verify_chunks_index2(ChunkData, State).
+
+verify_chunks_index2({error, Reason}, State) ->
 	#state{ cursor = Cursor } = State,
 	NextCursor = ar_data_sync:advance_chunks_index_cursor(Cursor),
-	RangeSkipped = NextCursor - Cursor,
-	%% XXX we should invalidate here right?
-	State2 = log_error(get_chunk_error, Cursor, RangeSkipped, [{reason, Reason}], State),
-	State2#state{ cursor = NextCursor };
+	State2 = invalidate_sync_record(
+		chunks_index_error, Cursor, NextCursor, [{reason, Reason}], State),
+	{error, State2#state{ cursor = NextCursor }};
+verify_chunks_index2(
+	{AbsoluteOffset, _, _, _, _, _, ChunkSize}, #state{cursor = Cursor} = State)
+		when AbsoluteOffset - Cursor >= ChunkSize ->
+	NextCursor = AbsoluteOffset - ChunkSize,
+	State2 = invalidate_sync_record(chunks_index_gap, Cursor, NextCursor, [], State),
+	{error, State2#state{ cursor = NextCursor + 1 }};
+verify_chunks_index2(ChunkData, State) ->	
+	{ChunkData, State}.
+
 verify_chunk({ok, _Key, Metadata}, Intervals, State) ->
 	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
-		_TXRelativeOffset, ChunkSize} = Metadata,
+		_TXRelativeOffset, _ChunkSize} = Metadata,
 	{ChunkStorageInterval, _DataSyncInterval} = Intervals,
 
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
-	State2 = verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, ChunkStorageInterval, State),
+	
+	State2 = verify_chunk_storage(PaddedOffset, Metadata, ChunkStorageInterval, State),
 
 	State3 = verify_proof(Metadata, State2),
 
 	State4 = verify_packing(Metadata, State3),
 
-	State4#state{ cursor = PaddedOffset }.
+	State4#state{ cursor = PaddedOffset + 1 };
+verify_chunk(_ChunkData, _Intervals, State) ->
+	State.
 
 verify_proof(Metadata, State) ->
 	#state{ store_id = StoreID } = State,
@@ -178,6 +206,9 @@ verify_proof(Metadata, State) ->
 				read_data_path_error, AbsoluteOffset, ChunkSize, [{reason, Error}], State)
 	end.
 
+%% @doc Verify that the ar_data_sync record is configured correctly - namely that it has
+%% entry in the expected packing format. This also indirectly detects the case where an
+%% interval exists in the ar_chunk_storage record, but not the ar_data_sync record.
 verify_packing(Metadata, State) ->
 	#state{packing = Packing, store_id = StoreID} = State,
 	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
@@ -194,29 +225,29 @@ verify_packing(Metadata, State) ->
 	case {StoredPackingCheck, ExpectedPacking} of
 		{{true, ExpectedPacking}, _} ->
 			%% Chunk is recorded in ar_sync_record under the expected Packing.
-			ok;
-		{{true, unpacked_padded}, {replica_2_9, _}} ->
-			%% The module is in the process of entropy generation and has
-			%% synced some chunks to offsets which do not yet have the entropy.
-			ok;
+			State;
 		{{true, StoredPacking}, _} ->
-			?LOG_WARNING([{event, verify_chunk_storage_unexpected_packing},
-				{expected_packing, ar_storage_module:packing_label(Packing)},
-				{stored_packing, ar_storage_module:packing_label(StoredPacking)},
-				{offset, AbsoluteOffset}]),
-			invalidate_chunk(unexpected_packing, AbsoluteOffset, ChunkSize, State);
+			%% This check will invalidate chunks that are not packed to the expected
+			%% *final* packing format. A storage module that is in the process of being
+			%% packed to replica_2_8 may have chunks that are stored in the intermediate
+			%% unpacked_padded format. This check will invalidate those chunks as well.
+			%% Miners should make sure to only run `verify` in the `purge` mode after they
+			%% have completed packing.
+			invalidate_chunk(unexpected_packing, AbsoluteOffset, ChunkSize, 
+				[{stored_packing, ar_storage_module:packing_label(StoredPacking)}], State);
 		{Reply, _} ->
-			?LOG_WARNING([{event, verify_chunk_storage_missing_packing_info},
-				{expected_packing, ar_storage_module:packing_label(Packing)},
-				{packing_reply, io_lib:format("~p", [Reply])},
-				{offset, AbsoluteOffset}]),
-			invalidate_chunk(missing_packing_info, AbsoluteOffset, ChunkSize, State)
-	end,
-	State.
+			invalidate_chunk(missing_packing_info, AbsoluteOffset, ChunkSize,
+				[{packing_reply, io_lib:format("~p", [Reply])}], State)
+	end.
 
-verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, {End, Start}, State)
+%% @doc Verify that chunk exists on disk or in chunk_data_db. This also indirectly detects the
+%% case where an interval exists in the ar_data_sync record, but not the ar_chunk_storage
+%% record.
+verify_chunk_storage(PaddedOffset, Metadata, {End, Start}, State)
 		when PaddedOffset - ?DATA_CHUNK_SIZE >= Start andalso PaddedOffset =< End ->
 	#state{store_id = StoreID} = State,
+	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
+		_TXRelativeOffset, ChunkSize} = Metadata,
 	{_ChunkFileStart, _Filepath, _Position, ExpectedChunkOffset} =
 				ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
 	case ar_chunk_storage:read_offset(PaddedOffset, StoreID) of
@@ -236,35 +267,71 @@ verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, {End, Start}, Stat
 					{error, Error}
 				], State)
 	end;
-verify_chunk_storage(AbsoluteOffset, PaddedOffset, ChunkSize, _Interval, State) ->
+verify_chunk_storage(PaddedOffset, Metadata, _Interval, State) ->
 	#state{ packing = Packing } = State,
+	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
+		_TXRelativeOffset, ChunkSize} = Metadata,
 	case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
 		true ->
 			invalidate_chunk(chunk_storage_gap, AbsoluteOffset, ChunkSize, State);
 		false ->
-			State
+			verify_chunk_data(Metadata, State)
 	end.
 
-invalidate_chunk(Type, Offset, ChunkSize, State) ->
-	invalidate_chunk(Type, Offset, ChunkSize, [], State).
+verify_chunk_data(Metadata, State) ->
+	#state{ store_id = StoreID } = State,
+	{AbsoluteOffset, ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
+		_TXRelativeOffset, ChunkSize} = Metadata,
+	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
+		not_found ->
+			invalidate_chunk(chunk_data_not_found, AbsoluteOffset, ChunkSize, [], State);
+		{ok, Value} ->
+			case binary_to_term(Value) of
+				{_Chunk, _DataPath} ->
+					State;
+				_DataPath ->
+					invalidate_chunk(
+						chunk_data_no_chunk, AbsoluteOffset, ChunkSize, [], State)
+			end;
+		Error ->
+			invalidate_chunk(
+				chunk_data_error, AbsoluteOffset, ChunkSize, [{reason, Error}], State)
+	end.
 
-invalidate_chunk(Type, Offset, ChunkSize, Logs, State) ->
+invalidate_chunk(Type, AbsoluteOffset, ChunkSize, State) ->
+	invalidate_chunk(Type, AbsoluteOffset, ChunkSize, [], State).
+
+invalidate_chunk(Type, AbsoluteOffset, ChunkSize, Logs, State) ->
 	#state{ mode = Mode, store_id = StoreID } = State,
 	case Mode of
 		purge ->
-			ar_data_sync:invalidate_bad_data_record(Offset, ChunkSize, StoreID, Type);
+			ar_data_sync:invalidate_bad_data_record(AbsoluteOffset, ChunkSize, StoreID, Type);
 		log ->
 			ok
 	end,
-	log_error(Type, Offset, ChunkSize, Logs, State).
+	log_error(Type, AbsoluteOffset, ChunkSize, Logs, State).
 
-log_error(Type, Offset, ChunkSize, Logs, State) ->
-	#state{ verify_report = Report, store_id = StoreID, cursor = Cursor, packing = Packing } = State,
+invalidate_sync_record(Type, Cursor, NextCursor, Logs, State) ->
+	#state{ mode = Mode, store_id = StoreID } = State,
+	case Mode of
+		purge ->
+			ar_sync_record:delete(NextCursor, Cursor, ar_data_sync, StoreID);
+		log ->
+			ok
+	end,
+	Range = NextCursor - Cursor,
+	log_error(Type, Cursor, Range, Logs, State).
 
-	LogMessage = [{event, verify_chunk_storage_error},
+log_error(Type, AbsoluteOffset, ChunkSize, Logs, State) ->
+	#state{ 
+		verify_report = Report, store_id = StoreID, cursor = Cursor, packing = Packing 
+	} = State,
+
+	LogMessage = [{event, verify_chunk_error},
 		{type, Type}, {store_id, StoreID},
-		{packing, ar_serialize:encode_packing(Packing, true)},
-		{offset, Offset}, {cursor, Cursor}, {chunk_size, ChunkSize}] ++ Logs,
+		{expected_packing, ar_serialize:encode_packing(Packing, true)},
+		{absolute_end_offset, AbsoluteOffset}, {cursor, Cursor}, {chunk_size, ChunkSize}]
+		++ Logs,
 	?LOG_INFO(LogMessage),
 	NewBytes = maps:get(Type, Report#verify_report.error_bytes, 0) + ChunkSize,
 	NewChunks = maps:get(Type, Report#verify_report.error_chunks, 0) + 1,
@@ -277,21 +344,24 @@ log_error(Type, Offset, ChunkSize, Logs, State) ->
 	},
 	State#state{ verify_report = Report2 }.
 
+%% @doc Returns 3 sets of intervals:
+%% 1. ar_chunk_storage: should cover all chunks that have been stored on disk.
+%% 2. ar_data_sync, Packing: should cover all chunks of the specified packing that have been
+%%                           synced
+%% 3. The union of the above two intervals.
+%% 
+%% We will use these intervals to determine errors in the node state (e.g. a chunk that
+%% exists in ar_chunk_storage but not ar_data_sync - or vice versa).
 query_intervals(State) ->
 	#state{cursor = Cursor, store_id = StoreID} = State,
-	{ChunkStorageInterval, DataSyncInterval} = align_intervals(Cursor, StoreID),
-	UnionInterval = union_intervals(ChunkStorageInterval, DataSyncInterval),
-	{UnionInterval, {ChunkStorageInterval, DataSyncInterval}}.
-
-align_intervals(Cursor, StoreID) ->
-	%% XXX what if cursor is before the stric data split threshold?
 	ChunkStorageInterval = ar_sync_record:get_next_synced_interval(
 		Cursor, infinity, ar_chunk_storage, StoreID),
-	%% XXX maybe only query for the store_id packing so that we invalidate anything
-	%% that has the wrong packing format or hasn't been packed yet?
 	DataSyncInterval = ar_sync_record:get_next_synced_interval(
 		Cursor, infinity, ar_data_sync, StoreID),
-	align_intervals(Cursor, ChunkStorageInterval, DataSyncInterval).
+	{ChunkStorageInterval2, DataSyncInterval2} = align_intervals(
+		Cursor, ChunkStorageInterval, DataSyncInterval),
+	UnionInterval = union_intervals(ChunkStorageInterval2, DataSyncInterval2),
+	{UnionInterval, {ChunkStorageInterval2, DataSyncInterval2}}.
 
 align_intervals(_Cursor, not_found, not_found) ->
 	{not_found, not_found};
@@ -382,17 +452,19 @@ sample_random_chunks(Count, SampledOffsets, SampleReport, State) ->
 	case IsRecorded of
 		true ->
 			SampleReport2 = case ar_data_sync:get_chunk(
-					SampleOffset, #{pack => true, packing => unpacked}) of
+					SampleOffset, #{pack => true, packing => unpacked, origin => verify}) of
 				{ok, _Proof} ->
 					?LOG_INFO([
-						{event, sample_chunk}, {offset, SampleOffset}, {status, success}]),
+						{event, sample_chunk}, {offset, SampleOffset}, {status, success},
+						{remaining, Count-1}]),
 					SampleReport#sample_report{
 						total = SampleReport#sample_report.total + 1,
 						success = SampleReport#sample_report.success + 1
 					};
 				{error, Reason} ->
 					?LOG_INFO([
-						{event, sample_chunk}, {offset, SampleOffset}, {status, Reason}]),
+						{event, sample_chunk}, {offset, SampleOffset}, {status, Reason},
+						{remaining, Count-1}]),
 					SampleReport#sample_report{
 						total = SampleReport#sample_report.total + 1,
 						failure = SampleReport#sample_report.failure + 1
@@ -402,7 +474,8 @@ sample_random_chunks(Count, SampledOffsets, SampleReport, State) ->
 			ar_verify_chunks_reporter:update(StoreID, SampleReport2),
 			sample_random_chunks(Count - 1, SampledOffsets2, SampleReport2, State);
 		false ->
-			?LOG_INFO([{event, sample_chunk}, {offset, SampleOffset}, {status, skipping}]),
+			?LOG_INFO([{event, sample_chunk}, {offset, SampleOffset}, {status, skipping},
+				{remaining, Count}]),
 			sample_random_chunks(Count, SampledOffsets2, SampleReport, State)
 	end.
 
@@ -420,15 +493,17 @@ verify_chunk_storage_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions(
 			[{ar_chunk_storage, read_offset,
-				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}],
+				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end}],
 			fun test_verify_chunk_storage_in_interval/0),
 		ar_test_node:test_with_mocked_functions(
 			[{ar_chunk_storage, read_offset,
-				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}],
+				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end}],
 			fun test_verify_chunk_storage_should_store/0),
 		ar_test_node:test_with_mocked_functions(
 			[{ar_chunk_storage, read_offset,
-				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}],
+				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
+			{ar_data_sync, get_chunk_data,
+				fun(_, _) -> {ok, term_to_binary({<<>>, <<>>})} end}],
 			fun test_verify_chunk_storage_should_not_store/0)
 	].
 
@@ -458,7 +533,9 @@ verify_chunk_test_() ->
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
 			{ar_poa, validate_paths, fun(_, _, _, _) -> {true, <<>>} end},
 			{ar_chunk_storage, read_offset,
-				fun(_Offset, _StoreID) -> << ?DATA_CHUNK_SIZE:24 >> end}
+				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
+			{ar_data_sync, get_chunk_data,
+				fun(_, _) -> {ok, term_to_binary({<<>>, <<>>})} end}
 		],
 			fun test_verify_chunk/0
 		)
@@ -528,24 +605,21 @@ test_verify_chunk_storage_in_interval() ->
 		#state{ packing = unpacked },
 		verify_chunk_storage(
 			10*?DATA_CHUNK_SIZE,
-			10*?DATA_CHUNK_SIZE,
-			?DATA_CHUNK_SIZE,
+			{10*?DATA_CHUNK_SIZE, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		#state{ packing = unpacked },
 		verify_chunk_storage(
-			6*?DATA_CHUNK_SIZE - 1,
 			6*?DATA_CHUNK_SIZE,
-			?DATA_CHUNK_SIZE div 2,
+			{6*?DATA_CHUNK_SIZE - 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		#state{ packing = unpacked },
 		verify_chunk_storage(
-			20*?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE div 2,
 			20*?DATA_CHUNK_SIZE,
-			?DATA_CHUNK_SIZE div 2,
+			{20*?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE div 2, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	ok.
@@ -565,16 +639,14 @@ test_verify_chunk_storage_should_store() ->
 		ExpectedState,
 		verify_chunk_storage(
 			0,
-			0,
-			?DATA_CHUNK_SIZE,
+			{0, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
 			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			?DATA_CHUNK_SIZE,
+			{?STRICT_DATA_SPLIT_THRESHOLD + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
@@ -589,8 +661,7 @@ test_verify_chunk_storage_should_store() ->
 		},
 		verify_chunk_storage(
 			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			?DATA_CHUNK_SIZE div 2,
+			{?STRICT_DATA_SPLIT_THRESHOLD + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = {composite, Addr, 1} })),
 	ok.
@@ -603,16 +674,14 @@ test_verify_chunk_storage_should_not_store() ->
 		ExpectedState,
 		verify_chunk_storage(
 			0,
-			0,
-			?DATA_CHUNK_SIZE div 2,
+			{0, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
 			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			?DATA_CHUNK_SIZE div 2,
+			{?STRICT_DATA_SPLIT_THRESHOLD + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	ok.
@@ -694,13 +763,13 @@ test_verify_chunk() ->
 	IntervalEnd = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE,
 	Interval = {IntervalEnd, IntervalStart},
 	?assertEqual(
-		#state{cursor = PreSplitOffset, packing=unpacked},
+		#state{cursor = PreSplitOffset + 1, packing=unpacked},
 		verify_chunk(
 			{ok, <<>>, {PreSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
 			{Interval, not_found},
 			#state{packing=unpacked})),
 	?assertEqual(
-		#state{cursor = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE, packing=unpacked},
+		#state{cursor = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE + 1, packing=unpacked},
 		verify_chunk(
 			{ok, <<>>, {PostSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
 			{Interval, not_found},
@@ -711,15 +780,14 @@ test_verify_chunk() ->
 		verify_report = #verify_report{
 			total_error_bytes = 33554432,
 			total_error_chunks = 1,
-			error_bytes = #{get_chunk_error => 33554432},
-			error_chunks = #{get_chunk_error => 1}
+			error_bytes = #{chunks_index_error => 33554432},
+			error_chunks = #{chunks_index_error => 1}
 		}
 	},
 	?assertEqual(
-		ExpectedState,
-		verify_chunk(
+		{error, ExpectedState},
+		verify_chunks_index2(
 			{error, some_error},
-			{Interval, not_found},
 			#state{ cursor = 0, packing = unpacked })),
 	ok.
 
