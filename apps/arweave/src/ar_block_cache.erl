@@ -15,7 +15,7 @@
 
 %% The expiration time in seconds for every "alternative" block (a block with non-unique
 %% solution).
--define(ALTERNATIVE_BLOCK_EXPIRATION_TIME_SECONDS, 5).
+-define(ALTERNATIVE_BLOCK_EXPIRATION_TIME_SECONDS, 10).
 
 %% @doc Block validation status
 %% on_chain: block is validated and belongs to the tip fork
@@ -130,6 +130,9 @@ remove_expired_alternative_blocks2(Tab, [H | Hs]) ->
 			ExpirationTimestamp = {MegaSecs, Secs + LifetimeSeconds, MicroSecs},
 			case timer:now_diff(erlang:timestamp(), ExpirationTimestamp) >= 0 of
 				true ->
+					?LOG_INFO([{event, removing_expired_alternative_block_from_cache},
+							{block, ar_util:encode(H)},
+							{status, Status}]),
 					remove(Tab, H),
 					remove_expired_alternative_blocks2(Tab, Hs);
 				false ->
