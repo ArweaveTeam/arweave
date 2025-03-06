@@ -73,8 +73,6 @@ rebar3_invocation() {
 # in case of release.
 rebar3_create_artifacts() {
 	echo Copying and linking build artifacts
-	cp -v ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave
-	cp -v ${RELEASE_PATH}/arweave/bin/arweave ${SCRIPT_DIR}/bin/arweave-dev
 	ln -vsf ${RELEASE_PATH}/arweave/releases ${SCRIPT_DIR}/releases
 	ln -vsf ${RELEASE_PATH}/arweave/lib ${SCRIPT_DIR}/lib
 }
