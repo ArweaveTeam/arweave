@@ -90,6 +90,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			BH = B#block.indep_hash,
 			case ar_ignore_registry:permanent_member(BH) of
 				true ->
+					ar_ignore_registry:remove_ref(BH, Ref),
 					gen_server:cast(?MODULE, pre_validate),
 					{noreply, State#state{ pqueue = Q2, size = Size2 }};
 				false ->
