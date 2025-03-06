@@ -100,7 +100,14 @@ init({StoreID, ToPacking}) ->
 
     %% Sanity checks
 	%% We curently only support repacking in place to replica_2_9 from non-replica_2_9
-	true = {replica_2_9, '_'} =/= FromPacking,
+	case FromPacking of
+		{replica_2_9, _} ->
+			?LOG_ERROR([{event, repack_in_place_from_replica_2_9_not_supported}]),
+			timer:sleep(5_000),
+			erlang:halt();
+		_ ->
+			ok
+	end,
     %% End sanity checks
 	
 	{replica_2_9, RewardAddr} = ToPacking,

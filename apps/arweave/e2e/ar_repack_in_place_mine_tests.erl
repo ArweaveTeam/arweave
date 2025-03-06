@@ -1,7 +1,8 @@
 -module(ar_repack_in_place_mine_tests).
 
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -define(REPACK_IN_PLACE_MINE_TEST_TIMEOUT, 600).
