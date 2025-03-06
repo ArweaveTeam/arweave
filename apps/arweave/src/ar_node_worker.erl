@@ -1837,12 +1837,23 @@ set_poa_cache(B) ->
 			B2#block{ poa2_cache = PoA2Cache }
 	end.
 
+compute_poa_cache(#block{ height = 0 }, _PoA, _RecallByte, _Nonce, _Packing) ->
+	undefined;
 compute_poa_cache(B, PoA, RecallByte, Nonce, Packing) ->
 	PackingDifficulty = B#block.packing_difficulty,
 	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
 	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte),
 	BlockSize = BlockEnd - BlockStart,
-	ChunkID = ar_tx:generate_chunk_id(PoA#poa.chunk),
+	ChunkID =
+		case PoA#poa.unpacked_chunk of
+			<<>> ->
+				Args = {BlockStart, RecallByte, TXRoot, BlockSize, PoA, Packing,
+					SubChunkIndex, not_set},
+				{true, ComputedChunkID} = ar_poa:validate(Args),
+				ComputedChunkID;
+			_ ->
+				ar_tx:generate_chunk_id(PoA#poa.unpacked_chunk)
+		end,
 	{{BlockStart, RecallByte, TXRoot, BlockSize, Packing, SubChunkIndex}, ChunkID}.
 
 dump_mempool(TXs, MempoolSize) ->
