@@ -90,6 +90,8 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 			BH = B#block.indep_hash,
 			case ar_ignore_registry:permanent_member(BH) of
 				true ->
+					?LOG_DEBUG([{event, indep_hash_already_processed2},
+							{hash, ar_util:encode(BH)}]),
 					ar_ignore_registry:remove_ref(BH, Ref),
 					gen_server:cast(?MODULE, pre_validate),
 					{noreply, State#state{ pqueue = Q2, size = Size2 }};
@@ -210,6 +212,8 @@ pre_validate_is_peer_banned(B, Peer) ->
 		not_banned ->
 			pre_validate_previous_block(B, Peer);
 		banned ->
+			?LOG_DEBUG([{event, peer_banned},
+					{hash, ar_util:encode(B#block.indep_hash)}]),
 			skipped
 	end.
 
@@ -221,10 +225,18 @@ pre_validate_previous_block(B, Peer) ->
 			%% successive blocks are distributed at the same time. Do not
 			%% ban the peer as the block might be valid. If the network adopts
 			%% this block, ar_poller will catch up.
+			?LOG_DEBUG([{event, previous_block_not_found},
+					{hash, ar_util:encode(B#block.indep_hash)},
+					{prev_hash, ar_util:encode(PrevH)}]),
 			skipped;
 		#block{ height = PrevHeight } = PrevB ->
 			case B#block.height == PrevHeight + 1 of
 				false ->
+					?LOG_DEBUG([{event, previous_block_height_mismatch},
+							{hash, ar_util:encode(B#block.indep_hash)},
+							{prev_hash, ar_util:encode(PrevH)},
+							{height, B#block.height},
+							{prev_height, PrevHeight}]),
 					invalid;
 				true ->
 					true = B#block.height >= ar_fork:height_2_6(),
@@ -233,6 +245,11 @@ pre_validate_previous_block(B, Peer) ->
 						true ->
 							pre_validate_proof_sizes(B, PrevB, Peer);
 						false ->
+							?LOG_DEBUG([{event, previous_block_cumulative_diff_mismatch},
+									{hash, ar_util:encode(B#block.indep_hash)},
+									{prev_hash, ar_util:encode(PrevH)},
+									{cumulative_diff, PrevCDiff},
+									{prev_cumulative_diff, PrevB#block.cumulative_diff}]),
 							invalid
 					end
 			end
@@ -346,6 +363,8 @@ pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer) ->
 		{ok, H} ->
 			case ar_ignore_registry:permanent_member(H) of
 				true ->
+					?LOG_DEBUG([{event, indep_hash_already_processed},
+							{hash, ar_util:encode(H)}]),
 					skipped;
 				false ->
 					pre_validate_timestamp(B, PrevB, Peer)
