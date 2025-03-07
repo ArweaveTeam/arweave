@@ -15,8 +15,7 @@ start_link(Name, InitCapacity) ->
 		{name, Name},
 		{help, "The size of the corresponding semaphore queue."}
 	]),
-	{ok, _} = gen_server:start_link({local, Name}, ?MODULE, [InitCapacity], []),
-	ok.
+	gen_server:start_link({local, Name}, ?MODULE, [InitCapacity], []).
 
 %% @doc Acquire the semaphore, willing to wait for the provided
 %% Timeout.

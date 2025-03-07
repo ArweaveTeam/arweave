@@ -87,6 +87,7 @@ found_solution(Source, Solution, PoACache, PoA2Cache) ->
 %%%===================================================================
 
 init([]) ->
+	?LOG_INFO([{start, ?MODULE}, {pid,self()}]),
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	[ok, ok, ok, ok] = ar_events:subscribe([tx, block, nonce_limiter, node_state]),
@@ -157,8 +158,6 @@ init([]) ->
 		{is_joined,						false},
 		{hash_list_2_0_for_1_0_blocks,	read_hash_list_2_0_for_1_0_blocks()}
 	]),
-	%% Start the HTTP server.
-	ok = ar_http_iface_server:start(),
 	gen_server:cast(?MODULE, compute_mining_difficulty),
 	{ok, #{
 		miner_2_6 => undefined,
@@ -587,12 +586,14 @@ handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
 handle_info({'EXIT', _PID, normal}, State) ->
 	{noreply, State};
 
+handle_info(shutdown, State) ->
+	{stop, shutdown, State};
+
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
 	{noreply, State}.
 
 terminate(Reason, _State) ->
-	ar_http_iface_server:stop(),
 	case ets:lookup(node_state, is_joined) of
 		[{_, true}] ->
 			[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
