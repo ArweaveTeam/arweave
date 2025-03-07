@@ -1,5 +1,6 @@
 -module(ar_semaphore_tests).
 
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 one_wait_per_process_test_() ->

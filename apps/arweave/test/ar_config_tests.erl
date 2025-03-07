@@ -133,7 +133,8 @@ test_parse_config() ->
 			{1000000000000, 14, {spora_2_6, ExpectedMiningAddr}}
 		],
 		block_throttle_by_ip_interval = 5_000,
-		block_throttle_by_solution_interval = 12_000
+		block_throttle_by_solution_interval = 12_000,
+		http_api_transport_idle_timeout = 15_000
 	}, ParsedConfig).
 
 config_fixture() ->
@@ -216,9 +217,9 @@ test_validate_repack_in_place() ->
 			repack_in_place_storage_modules = [
 				{{?PARTITION_SIZE, 0, {composite, Addr1, 1}}, {spora_2_6, Addr2}}]})).
 
-		
-		
-	
+
+
+
 test_validate_cm_pool() ->
 	?assertEqual(false,
 		ar_config:validate_config(
@@ -232,28 +233,28 @@ test_validate_cm_pool() ->
 	?assertEqual(true,
 		ar_config:validate_config(
 			#config{coordinated_mining = false, is_pool_server = false})),
-	?assertEqual(false, 
+	?assertEqual(false,
 		ar_config:validate_config(
 			#config{is_pool_server = true, is_pool_client = true, mine = true})),
-	?assertEqual(true, 
+	?assertEqual(true,
 		ar_config:validate_config(
 			#config{is_pool_server = true, is_pool_client = false})),
-	?assertEqual(true, 
+	?assertEqual(true,
 		ar_config:validate_config(
 			#config{is_pool_server = false, is_pool_client = true, mine = true})),
-	?assertEqual(true, 
+	?assertEqual(true,
 		ar_config:validate_config(
 			#config{is_pool_server = false, is_pool_client = false, mine = true})),
-	?assertEqual(false, 
+	?assertEqual(false,
 		ar_config:validate_config(
 			#config{is_pool_client = true, mine = false})),
-	?assertEqual(true, 
+	?assertEqual(true,
 		ar_config:validate_config(
 			#config{is_pool_client = true, mine = true})),
-	?assertEqual(true, 
+	?assertEqual(true,
 		ar_config:validate_config(
 			#config{is_pool_client = false, mine = true})),
-	?assertEqual(true, 
+	?assertEqual(true,
 		ar_config:validate_config(
 			#config{is_pool_client = false, mine = false})).
 

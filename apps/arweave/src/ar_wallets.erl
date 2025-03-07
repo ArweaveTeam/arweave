@@ -10,8 +10,6 @@
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_header_sync.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
 %%%===================================================================
