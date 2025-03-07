@@ -524,6 +524,7 @@ handle_info({event, block, {new, B, _Source}}, State) ->
 							{previous_block, ar_util:encode(B#block.previous_block)},
 							{previous_height, B#block.height - 1},
 							{block, ar_util:encode(H)}]),
+					ar_ignore_registry:remove(H),
 					{noreply, State};
 				_PrevB ->
 					ar_block_cache:add(block_cache, B),
