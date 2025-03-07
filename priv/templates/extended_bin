@@ -16,9 +16,6 @@ in
   arweave-dev)
     export ARWEAVE_DEV=1
     ;;
-  *)
-    unset ARWEAVE_DEV
-    ;;
 esac
 
 ######################################################################
