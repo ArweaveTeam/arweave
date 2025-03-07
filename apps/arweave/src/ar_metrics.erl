@@ -344,6 +344,18 @@ register() ->
 		{help, "The amount of Winston in the endowment pool."}
 	]),
 	prometheus_gauge:new([
+		{name, kryder_plus_rate_multiplier},
+		{help, "Kryder+ rate multiplier."}
+	]),
+	prometheus_gauge:new([
+		{name, endowment_pool_take},
+		{help, "Value we take from endowment pool to miner to compensate difference between expected and real reward."}
+	]),
+	prometheus_gauge:new([
+		{name, endowment_pool_give},
+		{help, "Value we give to endowment pool from transaction fees."}
+	]),
+	prometheus_gauge:new([
 		{name, available_supply},
 		{help, "The total supply minus the endowment, in Winston."}
 	]),
@@ -375,27 +387,6 @@ register() ->
 		{name, network_hashrate},
 		{help, "An estimation of the network hash rate based on the mining difficulty "
 				"of the latest block."}
-	]),
-	prometheus_gauge:new([
-		{name, network_burden},
-		{help, "The legacy (2.5) estimation of the cost of storing the current weave "
-				"assuming the 0.5% storage costs decline rate, in Winston."}
-	]),
-	prometheus_gauge:new([
-		{name, network_burden_10_usd_ar},
-		{help, "The legacy (2.5) estimation of the cost of storing the current weave "
-				"assuming the 0.5% storage costs decline rate and 10 $/AR, in Winston."}
-	]),
-	prometheus_gauge:new([
-		{name, network_burden_200_years},
-		{help, "The legacy (2.5) estimation of the cost of storing the current weave for "
-				"200 years assuming the 0.5% storage costs decline rate, in Winston."}
-	]),
-	prometheus_gauge:new([
-		{name, network_burden_200_years_10_usd_ar},
-		{help, "The legacy (2.5) estimation of the cost of storing the current weave for "
-				"200 years assuming the 0.5% storage costs decline rate and 10 $/AR, "
-				"in Winston."}
 	]),
 	prometheus_gauge:new([
 		{name, expected_minimum_200_years_storage_costs_decline_rate},

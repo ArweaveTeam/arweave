@@ -204,9 +204,11 @@ get_miner_reward_and_endowment_pool(Args) ->
 	true = Height >= ar_fork:height_2_4(),
 	case ar_pricing_transition:is_v2_pricing_height(Height) of
 		true ->
-			ar_pricing:get_miner_reward_endowment_pool_debt_supply({EndowmentPool, DebtSupply,
+			{MinerReward, EndowmentPool2, DebtSupply2, KryderPlusRateMultiplierLatch2,
+					KryderPlusRateMultiplier2, _, _} = ar_pricing:get_miner_reward_endowment_pool_debt_supply({EndowmentPool, DebtSupply,
 					TXs, WeaveSize, Height, PricePerGiBMinute, KryderPlusRateMultiplierLatch,
-					KryderPlusRateMultiplier, Denomination, BlockInterval});
+					KryderPlusRateMultiplier, Denomination, BlockInterval}),
+			{MinerReward, EndowmentPool2, DebtSupply2, KryderPlusRateMultiplierLatch2, KryderPlusRateMultiplier2};
 		false ->
 			{MinerReward, EndowmentPool2} = ar_pricing:get_miner_reward_and_endowment_pool({
 					EndowmentPool, TXs, RewardAddr, WeaveSize, Height, Timestamp, Rate}),
