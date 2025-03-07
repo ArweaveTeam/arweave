@@ -361,7 +361,9 @@ show_help() ->
 				"resync and/or repack any flagged chunks. When running in verify mode several "
 				"flags are disallowed. See the node output for details."},
 			{"verify_samples (num)", io_lib:format("Number of chunks to sample and unpack "
-				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])}
+				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])},
+			{"shutdown_tcp_connection_timeout", "shutdown tcp connection timeout in seconds.",
+				"Default is ~Bs.", [?SHUTDOWN_TCP_CONNECTION_TIMEOUT]}
 		]
 	),
 	erlang:halt().
@@ -681,6 +683,10 @@ parse_cli_args(["rocksdb_flush_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_flush_interval_s = list_to_integer(Seconds) });
 parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_wal_sync_interval_s = list_to_integer(Seconds) });
+
+%% tcp shutdown procedure
+parse_cli_args(["shutdown_tcp_connection_timeout", Delay|Rest], C) ->
+		parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
