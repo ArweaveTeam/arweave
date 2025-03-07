@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -e
 SCRIPT_DIR="$(dirname "$0")"
-ARWEAVE_DEV=1
+export ARWEAVE_DEV=1
 "$SCRIPT_DIR/bin/start" "$@"
