@@ -155,7 +155,7 @@ get_self_plus_external_partitions_list() ->
 %%   {pdiff, PackingDifficulty}
 %% ]}
 get_cluster_partitions_list() ->
-	gen_server:call(?MODULE, get_cluster_partitions_list, 600000).
+	gen_server:call(?MODULE, get_cluster_partitions_list, ?DEFAULT_CALL_TIMEOUT).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -363,7 +363,7 @@ terminate(_Reason, _State) ->
 %% @doc Return the list of the partitions of the given Peer, to the best
 %% of our knowledge.
 get_peer_partitions(Peer) ->
-	gen_server:call(?MODULE, {get_peer_partitions, Peer}, 600000).
+	gen_server:call(?MODULE, {get_peer_partitions, Peer}, ?DEFAULT_CALL_TIMEOUT).
 
 check_out_batches(#state{out_batches = OutBatches}) when map_size(OutBatches) == 0 ->
 	OutBatches;

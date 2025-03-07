@@ -60,34 +60,34 @@ is_ahead_on_the_timeline(NonceLimiterInfo1, NonceLimiterInfo2) ->
 
 %% @doc Return the nonce limiter session with the given key.
 get_session(SessionKey) ->
-	gen_server:call(?MODULE, {get_session, SessionKey}, 600000).
+	gen_server:call(?MODULE, {get_session, SessionKey}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return {SessionKey, Session} for the current VDF session.
 get_current_session() ->
-	gen_server:call(?MODULE, get_current_session, 600000).
+	gen_server:call(?MODULE, get_current_session, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return a list of up to two {SessionKey, Session} pairs
 %% where the first pair corresponds to the current VDF session
 %% and the second pair is its previous session, if any.
 get_current_sessions() ->
-	gen_server:call(?MODULE, get_current_sessions, 600000).
+	gen_server:call(?MODULE, get_current_sessions, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the latest known step number.
 get_current_step_number() ->
-	gen_server:call(?MODULE, get_current_step_number, 600000).
+	gen_server:call(?MODULE, get_current_step_number, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the latest known step number in the session of the given (previous) block.
 %% Return not_found if the session is not found.
 get_current_step_number(B) ->
 	SessionKey = session_key(B#block.nonce_limiter_info),
-	gen_server:call(?MODULE, {get_current_step_number, SessionKey}, 600000).
+	gen_server:call(?MODULE, {get_current_step_number, SessionKey}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return {Output, StepNumber, PartitionUpperBound} for up to N latest steps
 %% from the VDF session of Info, if any. If PrevOutput is among the N latest steps,
 %% return only the steps strictly above PrevOutput.
 get_step_triplets(Info, PrevOutput, N) ->
 	SessionKey = session_key(Info),
-	Steps = gen_server:call(?MODULE, {get_latest_step_triplets, SessionKey, N}, 600000),
+	Steps = gen_server:call(?MODULE, {get_latest_step_triplets, SessionKey, N}, ?DEFAULT_CALL_TIMEOUT),
 	filter_step_triplets(Steps, [PrevOutput, Info#nonce_limiter_info.output]).
 
 %% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
@@ -133,12 +133,12 @@ get_step_checkpoints(StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficult
 	SessionKey = {NextSeed, StartIntervalNumber, NextVDFDifficulty},
 	get_step_checkpoints(StepNumber, SessionKey).
 get_step_checkpoints(StepNumber, SessionKey) ->
-	gen_server:call(?MODULE, {get_step_checkpoints, StepNumber, SessionKey}, 600000).
+	gen_server:call(?MODULE, {get_step_checkpoints, StepNumber, SessionKey}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the entropy seed of the given session.
 %% Return not_found if the VDF session is not found.
 get_seed(SessionKey) ->
-	gen_server:call(?MODULE, {get_seed, SessionKey}, 600000).
+	gen_server:call(?MODULE, {get_seed, SessionKey}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the active partition upper bound for the given step (chosen among
 %% session's upper_bound and next_upper_bound depending on whether the step number has
@@ -146,7 +146,7 @@ get_seed(SessionKey) ->
 %% Return not_found if the VDF session is not found.
 get_active_partition_upper_bound(StepNumber, SessionKey) ->
 	gen_server:call(?MODULE, {get_active_partition_upper_bound, StepNumber, SessionKey},
-			600000).
+			?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the steps of the given interval. The steps are chosen
 %% according to the protocol. Return not_found if the corresponding hash chain is not
@@ -155,7 +155,7 @@ get_steps(StartStepNumber, EndStepNumber, NextSeed, NextVDFDifficulty)
 		when EndStepNumber > StartStepNumber ->
 	SessionKey = session_key(NextSeed, StartStepNumber, NextVDFDifficulty),
 	gen_server:call(?MODULE, {get_steps, StartStepNumber, EndStepNumber, SessionKey},
-			600000).
+			?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Quickly validate the checkpoints of the latest step.
 validate_last_step_checkpoints(#block{ nonce_limiter_info = #nonce_limiter_info{
@@ -250,7 +250,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 	%% The steps that fall at the intersection of the PrevStepNumber to StepNumber range
 	%% and the SessionKey session.
 	SessionSteps = gen_server:call(?MODULE, {get_session_steps, PrevStepNumber, StepNumber,
-			SessionKey}, 600000),
+			SessionKey}, ?DEFAULT_CALL_TIMEOUT),
 	NextSessionKey = session_key(Info),
 
 	%% We need to validate all the steps from PrevStepNumber to StepNumber:
@@ -404,7 +404,7 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, RecentBI) ->
 
 %% @doc Apply the nonce limiter update provided by the configured trusted peer.
 apply_external_update(Update, Peer) ->
-	gen_server:call(?MODULE, {apply_external_update, Update, Peer}, 600000).
+	gen_server:call(?MODULE, {apply_external_update, Update, Peer}, ?DEFAULT_CALL_TIMEOUT).
 
 %%%===================================================================
 %%% Generic server callbacks.

@@ -70,16 +70,16 @@ is_client() ->
 
 %% @doc Return a list of up to two most recently cached VDF session key, seed pairs.
 get_current_session_key_seed_pairs() ->
-	gen_server:call(?MODULE, get_current_session_key_seed_pairs, 600000).
+	gen_server:call(?MODULE, get_current_session_key_seed_pairs, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return a set of the most recent cached jobs.
 get_jobs(PrevOutput) ->
-	gen_server:call(?MODULE, {get_jobs, PrevOutput}, 600000).
+	gen_server:call(?MODULE, {get_jobs, PrevOutput}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the most recent cached #job{}. Return an empty record if the
 %% cache is empty.
 get_latest_job() ->
-	gen_server:call(?MODULE, get_latest_job, 600000).
+	gen_server:call(?MODULE, get_latest_job, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Cache the given jobs.
 cache_jobs(Jobs) ->
@@ -88,7 +88,7 @@ cache_jobs(Jobs) ->
 %% @doc Validate the given (partial) solution. If the solution is eligible for
 %% producing a block, produce and publish a block.
 process_partial_solution(Solution) ->
-	gen_server:call(?MODULE, {process_partial_solution, Solution}, 600000).
+	gen_server:call(?MODULE, {process_partial_solution, Solution}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Send the partial solution to the pool.
 post_partial_solution(Solution) ->

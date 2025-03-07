@@ -7,7 +7,7 @@
 
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
 		create_ecdsa_wallet/0, create_ecdsa_wallet/1,
-		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1, 
+		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1,
 		benchmark_vdf/0,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
@@ -309,6 +309,10 @@ show_help() ->
 			{"tls_key_file",
 				"The path to the TLS key file for TLS support, depends "
 				"on 'tls_cert_file' being set as well."},
+			{"http_api_transport_idle_timeout_seconds",
+				"The number of seconds allowed for incoming API client connections to be idle "
+				"before closing them. Default is 10 seconds. Please, do not set this value too low "
+				"as it will negatively affect the performance of the node."},
 			{"coordinated_mining", "Enable coordinated mining. If you are a solo pool miner "
 					"coordinating on a replica with other pool miners, set this flag too. "
 					"To connect the internal nodes, set cm_api_secret, cm_peer, "
@@ -616,6 +620,8 @@ parse_cli_args(["tls_key_file", KeyFilePath | Rest], C) ->
     AbsKeyFilePath = filename:absname(KeyFilePath),
     ar_util:assert_file_exists_and_readable(AbsKeyFilePath),
     parse_cli_args(Rest, C#config{ tls_key_file = AbsKeyFilePath });
+parse_cli_args(["http_api_transport_idle_timeout_seconds", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { http_api_transport_idle_timeout = list_to_integer(Num) * 1000 });
 parse_cli_args(["coordinated_mining" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ coordinated_mining = true });
 parse_cli_args(["cm_api_secret", CMSecret | Rest], C)
@@ -823,7 +829,7 @@ benchmark_2_9() ->
 benchmark_2_9(Args) ->
 	ar_bench_2_9:run_benchmark_from_cli(Args),
 	erlang:halt().
-	
+
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 

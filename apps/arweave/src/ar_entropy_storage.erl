@@ -39,7 +39,7 @@ store_entropy(
 		Entropies, BucketEndOffset2, RangeStart, RangeEnd, Keys, RewardAddr}).
 
 is_ready(StoreID) ->
-	case catch gen_server:call(name(StoreID), is_ready, 600000) of
+	case catch gen_server:call(name(StoreID), is_ready, ?DEFAULT_CALL_TIMEOUT) of
 		{'EXIT', {Reason, {gen_server, call, _}}} ->
 			?LOG_WARNING([{event, is_ready_error}, {module, ?MODULE},
 				{name, name(StoreID)}, {store_id, StoreID}, {reason, Reason}]),
