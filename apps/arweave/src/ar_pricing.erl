@@ -264,7 +264,7 @@ get_miner_reward_endowment_pool_debt_supply(Args) ->
 	case BaseReward >= ExpectedReward of
 		true ->
 			{BaseReward, EndowmentPool2, DebtSupply, KryderPlusRateMultiplierLatch,
-					KryderPlusRateMultiplier};
+					KryderPlusRateMultiplier, EndowmentPoolFeeShare, 0};
 		false ->
 			Take = ExpectedReward - BaseReward,
 			{EndowmentPool3, DebtSupply2} =
@@ -291,7 +291,7 @@ get_miner_reward_endowment_pool_debt_supply(Args) ->
 						{KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier}
 				end,
 			{BaseReward + Take, EndowmentPool3, DebtSupply2, KryderPlusRateMultiplierLatch2,
-					KryderPlusRateMultiplier2}
+					KryderPlusRateMultiplier2, EndowmentPoolFeeShare, Take}
 	end.
 
 %% @doc Return the denominated amount.

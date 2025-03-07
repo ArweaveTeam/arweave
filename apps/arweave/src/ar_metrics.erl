@@ -344,6 +344,18 @@ register() ->
 		{help, "The amount of Winston in the endowment pool."}
 	]),
 	prometheus_gauge:new([
+		{name, kryder_plus_rate_multiplier},
+		{help, "Kryder+ rate multiplier."}
+	]),
+	prometheus_gauge:new([
+		{name, endowment_pool_take},
+		{help, "Value we take from endowment pool to miner to compensate difference between expected and real reward."}
+	]),
+	prometheus_gauge:new([
+		{name, endowment_pool_give},
+		{help, "Value we give to endowment pool from transaction fees."}
+	]),
+	prometheus_gauge:new([
 		{name, available_supply},
 		{help, "The total supply minus the endowment, in Winston."}
 	]),
