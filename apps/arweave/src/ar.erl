@@ -353,7 +353,8 @@ show_help() ->
 				"repacked. After completing a full verification cycle, you can restart "
 				"the node in normal mode to have it resync and/or repack any flagged chunks. "
 				"When running in verify mode several flags will be forced on and several "
-				"flags are disallowed. See the node output for details."}
+				"flags are disallowed. See the node output for details."},
+			{"shutdown_tcp_connection_timeout", "shutdown tcp connection timeout."}
 		]
 	),
 	erlang:halt().
@@ -663,6 +664,18 @@ parse_cli_args(["rocksdb_flush_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_flush_interval_s = list_to_integer(Seconds) });
 parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_wal_sync_interval_s = list_to_integer(Seconds) });
+
+%% shutdown procedure
+parse_cli_args(["shutdown_tcp_connection_timeout", Delay|Rest], C) ->
+	try
+		IntegerDelay = list_to_integer(Delay),
+		NewConfig = C#config{ shutdown_tcp_connection_timeout = IntegerDelay },
+		parse_cli_args(Rest, NewConfig)
+	catch
+		_:_ ->
+			io:format("shutdown_tcp_connection_timeout is invalid"),
+			 parse_cli_args(Rest, C)
+	end;
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->

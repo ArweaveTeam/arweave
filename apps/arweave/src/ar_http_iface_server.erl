@@ -94,8 +94,181 @@ start_http_iface_listener(Config) ->
 	end,
 	ok.
 
+%%--------------------------------------------------------------------
+%% @doc stop the application and execute the shutdown procedure.
+%% @end
+%%--------------------------------------------------------------------
 stop() ->
-	cowboy:stop_listener(ar_http_iface_listener).
+	{ok, Config} = application:get_env(arweave, config),
+	Delay = Config#config.shutdown_tcp_connection_timeout,
+	ok = ranch:suspend_listener(ar_http_iface_listener),
+	Pids = terminate_connections(Delay),
+	terminate_listener(Pids, Delay).
+
+%%--------------------------------------------------------------------
+%% @doc ensure all connections have been closed before stopping the
+%%      cowboy listener.
+%% @end
+%%--------------------------------------------------------------------
+terminate_listener(Pids, Delay) ->
+	AfterDelay = Delay*3,
+	receive
+		{'DOWN', Ref, process, Pid, _} ->
+			Filter = fun({Pid, Ref}) -> false; (_) -> true end,
+			NewPids = lists:filter(Filter, Pids),
+			terminate_listener(NewPids, Delay);
+		_ -> terminate_listener(Pids, Delay)
+	after
+		AfterDelay ->
+			cowboy:stop_listener(ar_http_iface_listener)
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc terminate all connections. A delay can be set to force close
+%%      or kill the remaining connections.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connections(Delay) -> Return when
+	Delay :: pos_integer(),
+	Return :: [{pid(), reference()}, ...].
+
+terminate_connections(Delay) ->
+	Processes = ranch:procs(ar_http_iface_listener, connections),
+	[ terminate_connection(P, Delay) || P <- Processes ].
+
+%%--------------------------------------------------------------------
+%% @doc terminate a ranch/cowboy connection. this follows the drain
+%%      procedure explaining in ranch and cowboy documentation.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connection(Connection, Delay) -> Return when
+	Connection :: ranch:ref(),
+	Delay :: pos_integer(),
+	Return :: pid().
+
+terminate_connection(Connection, Delay) ->
+	spawn_monitor(fun() ->
+		terminate_connection_init(Connection, Delay)
+	end).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc terminate connection init procedure.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connection_init(Connection, Delay) -> Return when
+	Connection :: ranch:ref(),
+	Delay :: pos_integer(),
+	Return :: pid().
+
+terminate_connection_init(Connection, Delay) ->
+	% let monitor the connection first. a ranch connection is a process
+	% used as "interface" to a socket. the procedure must know if the
+	% process is still alive.
+	_Ref = erlang:monitor(process, Connection),
+
+	% it seems ranch_tcp does not have a way to "kill" or "close" the
+	% connection from the process. The port needs to be extracted, to
+	% accomplish that, one can check using process_info/2 functions or
+	% extract the process state with sys:get_state/1.
+	{links, Links} = erlang:process_info(Connection, links),
+
+	% in normal situation, a ranch connection process must have only one
+	% port (socket). If it's not the case, this is abnormal.
+	[Socket|_] = [ P || P <- Links, is_port(P) ],
+
+	% let check if information about the sockets can be retrieved, in this
+	% case, the address/port is the information required. It also check if
+	% the socket is still active. If an exception is returned, we assume
+	% the socket is already down.
+	try inet:peername(Socket) of
+		{ok, {PeerAddress, PeerPort}} ->
+			% let  prepare the state used for the termination loop procedure.
+			Peer = string:join([inet:ntoa(PeerAddress), integer_to_list(PeerPort)], ":"),
+			State = #{
+				socket => Socket,
+				peer => Peer,
+				delay => Delay,
+				connection => Connection
+			},
+
+			% now everything is ready, the socket is set in read-only mode. the
+			% remote peer will receive this information and will try to fetch
+			% the last piece of data from the buffer. It does not guarantee the
+			% socket will be closed, in particular if the connection is slow.
+			logger:warning(#{ connection => Peer, socket => Connection, reason => "shutdown", msg => "shutdown (read-only)"}),
+			ranch_tcp:shutdown(Socket, write),
+
+			% in this case, two timeouts are configured, one simply closing the
+			% socket to announce another time to the remote peer that the node is
+			% shutting down...
+			{ok, _} = timer:send_after(Delay, {timeout, close}),
+
+			% ... and a second delay. This time, the socket is killed. linger
+			% option is set to 0 on the port and we reclose the socket.
+			{ok, _} = timer:send_after(Delay*2, {timeout, kill}),
+
+			% let start the terminate loop to shutdown properly the connection
+			terminate_connection_loop(State);
+		_ ->
+			ok
+	catch
+		_:_ ->
+			ok
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc shutdown procedure loop, in charge of dealing with monitoring
+%%      messages and timeouts.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connection_loop(State) -> Return when
+	Socket :: port(),
+	Connection :: pid(),
+	Peer :: string(),
+	Delay :: pos_integer(),
+	State :: #{
+		socket => Socket,
+		connection => Connection,
+		peer => Peer,
+		delay => Delay
+	},
+	Return :: ok.
+
+terminate_connection_loop(State) ->
+	Socket = maps:get(socket, State),
+	Connection = maps:get(connection, State),
+	Peer = maps:get(peer, State),
+	Delay = maps:get(delay, State),
+	AfterDelay = Delay*3,
+	receive
+		{timeout, close} ->
+			% the first timeout simply close the socket a
+			% socket time.
+			logger:warning(#{ connection => Peer, socket => Connection, reason => "shutdown", msg => "closed (timeout)"}),
+			ranch_tcp:close(Socket),
+			terminate_connection_loop(State);
+
+		{timeout, kill} ->
+			% the second timeout set linger tcp parameter
+			% to 0 and close the connection (again). At
+			% this stage, the connection should be closed.
+			% and we should receive a message from
+			% monitoring.
+			logger:warning(#{ connection => Peer, socket => Connection, reason => "shutdown", msg => "killed (timeout)"}),
+			ranch_tcp:setopts(Socket, [{linger, {true, 0}}]),
+			ranch_tcp:close(Socket),
+			terminate_connection_loop(State);
+
+		{'DOWN', _Ref, process, Connection, _} ->
+			logger:notice(#{ connection => Peer, socket => Connection, reason => "shutdown", msg => "terminated"});
+	Msg ->
+		logger:warning("received: ~p", [Msg])
+	after
+		AfterDelay ->
+			logger:error(#{ connection => Peer, socket => Connection, reason => "shutdown", msg => "can't kill"})
+	end.
 
 name_route([]) ->
 	"/";
