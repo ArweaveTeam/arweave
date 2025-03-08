@@ -190,7 +190,7 @@ handle(<<"GET">>, [<<"recent">>], Req, _Pid) ->
 		true ->
 			{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req}
 	end;
-	
+
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
 	case ar_util:safe_decode(EncodedTXID) of
 		{error, invalid} ->
@@ -304,7 +304,7 @@ handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			ok = ar_semaphore:acquire(get_sync_record, infinity),
+			ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
 			case ar_global_sync_record:get_serialized_sync_buckets() of
 				{ok, Binary} ->
 					{200, #{}, Binary, Req};
@@ -327,7 +327,7 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 					_ ->
 						etf
 			end,
-			ok = ar_semaphore:acquire(get_sync_record, infinity),
+			ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
 			Options = #{ format => Format, random_subset => true },
 			case ar_global_sync_record:get_serialized_sync_record(Options) of
 				{ok, Binary} ->
@@ -350,7 +350,7 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 						true ->
 							{400, #{}, jiffy:encode(#{ error => limit_too_big }), Req};
 						false ->
-							ok = ar_semaphore:acquire(get_sync_record, infinity),
+							ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
 							handle_get_data_sync_record(Start, Limit, Req)
 					end
 			end
@@ -847,7 +847,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			ok = ar_semaphore:acquire(get_reward_history, infinity),
+			ok = ar_semaphore:acquire(get_reward_history, ?DEFAULT_CALL_TIMEOUT),
 			case ar_util:safe_decode(EncodedBH) of
 				{ok, BH} ->
 					Fork_2_6 = ar_fork:height_2_6(),
@@ -896,7 +896,7 @@ handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
 
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_block_index, infinity),
+	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -919,7 +919,7 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 %% Return the current binary-encoded block index held by the node.
 %% GET request to endpoint /block_index2.
 handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_block_index, infinity),
+	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -945,7 +945,7 @@ handle(<<"GET">>, [<<"block_index2">>, From, To], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
 
 handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_block_index, infinity),
+	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -1018,7 +1018,7 @@ handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			ok = ar_semaphore:acquire(get_wallet_list, infinity),
+			ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
 			B = ar_node:get_current_block(),
 			TotalSupply = get_total_supply(B#block.wallet_list, first, 0,
 					B#block.denomination),
@@ -1185,7 +1185,7 @@ handle(<<"GET">>, [<<"block">>, Type, ID, Field], Req, _Pid)
 %% Return the balance of the given wallet at the given block.
 handle(<<"GET">>, [<<"block">>, <<"height">>, Height, <<"wallet">>, Addr, <<"balance">>], Req,
 		_Pid) ->
-	ok = ar_semaphore:acquire(get_wallet_list, infinity),
+	ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
 	handle_get_block_wallet_balance(Height, Addr, Req);
 
 %% Return the current block.
@@ -1599,7 +1599,7 @@ handle_get_tx(Hash, Req, Encoding) ->
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
 		{ok, ID} ->
-			ok = ar_semaphore:acquire(get_tx, infinity),
+			ok = ar_semaphore:acquire(get_tx, ?DEFAULT_CALL_TIMEOUT),
 			case ar_storage:read_tx(ID) of
 				unavailable ->
 					maybe_tx_is_pending_response(ID, Req);
@@ -1657,7 +1657,7 @@ serve_tx_data(Req, #tx{ format = 2, id = ID, data_size = DataSize } = TX) ->
 		true ->
 			{200, #{}, sendfile(DataFilename), Req};
 		false ->
-			ok = ar_semaphore:acquire(get_tx_data, infinity),
+			ok = ar_semaphore:acquire(get_tx_data, ?DEFAULT_CALL_TIMEOUT),
 			case ar_data_sync:get_tx_data(ID) of
 				{ok, Data} ->
 					{200, #{}, ar_util:encode(Data), Req};
@@ -1691,7 +1691,7 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 		{ok, Data} ->
 			{200, #{ <<"content-type">> => ContentType }, Data, Req};
 		{error, enoent} ->
-			ok = ar_semaphore:acquire(get_tx_data, infinity),
+			ok = ar_semaphore:acquire(get_tx_data, ?DEFAULT_CALL_TIMEOUT),
 			case ar_data_sync:get_tx_data(TX#tx.id) of
 				{ok, Data} ->
 					{200, #{ <<"content-type">> => ContentType }, Data, Req};
@@ -2011,14 +2011,14 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								%% Chunk is recorded but packing is unknown.
 								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, RequestedPacking}, _StoreID} ->
-								ok = ar_semaphore:acquire(get_chunk, infinity),
+								ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
 								{RequestedPacking, ok};
 							{{true, {replica_2_9, _}}, _StoreID} when ?BLOCK_2_9_SYNCING ->
 								%% Don't serve replica 2.9 chunks as they are expensive to
 								%% unpack.
 								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
-								ok = ar_semaphore:acquire(get_chunk, infinity),
+								ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
 								{Packing, ok};
 							{{true, _}, _StoreID} ->
 								{ok, Config} = application:get_env(arweave, config),
@@ -2027,7 +2027,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 										{none, {reply, {404, #{}, <<>>, Req}}};
 									true ->
 										ok = ar_semaphore:acquire(get_and_pack_chunk,
-												infinity),
+												?DEFAULT_CALL_TIMEOUT),
 										{RequestedPacking, ok}
 								end
 						end,
@@ -2064,9 +2064,9 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 									not_joined(Req);
 								{error, Error} ->
 									?LOG_ERROR([{event, get_chunk_error}, {offset, Offset},
-										{requested_packing, 
+										{requested_packing,
 											ar_serialize:encode_packing(RequestedPacking, false)},
-										{read_packing, 
+										{read_packing,
 											ar_serialize:encode_packing(ReadPacking, false)},
 										{error, Error}]),
 									{500, #{}, <<>>, Req}
@@ -2101,7 +2101,7 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
 			_ ->
 				true
 		end,
-	ok = ar_semaphore:acquire(get_chunk, infinity),
+	ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
 	CheckRecords =
 		case ar_sync_record:is_recorded(Offset, ar_data_sync) of
 			false ->
@@ -2722,7 +2722,7 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 		unavailable ->
 			{404, #{}, <<"Not Found.">>, Req};
 		B ->
-			ok = ar_semaphore:acquire(get_block_index, infinity),
+			ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
 			case ar_node:get_height() >= ar_fork:height_2_6() of
 				true ->
 					{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
@@ -2748,7 +2748,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
 						Req};
 				{true, _} ->
-					ok = ar_semaphore:acquire(get_wallet_list, infinity),
+					ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
 					case ar_storage:read_wallet_list(B#block.wallet_list) of
 						{ok, Tree} ->
 							{200, #{}, ar_serialize:jsonify(

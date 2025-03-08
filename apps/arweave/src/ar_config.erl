@@ -602,6 +602,9 @@ parse_options([{<<"p3">>, {P3Config}} | Rest], Config) ->
 			P3Config}
 	end;
 
+parse_options([{<<"http_api_transport_idle_timeout_seconds">>, D} | Rest], Config) when is_integer(D) ->
+	parse_options(Rest, Config#config{ http_api_transport_idle_timeout = D * 1000 });
+
 parse_options([{<<"coordinated_mining">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ coordinated_mining = true });
 parse_options([{<<"coordinated_mining">>, false} | Rest], Config) ->
@@ -1024,7 +1027,7 @@ validate_verify(_Config) ->
 	true.
 
 disable_vdf(Config) ->
-	RemovePublicVDFServer = 
+	RemovePublicVDFServer =
 		lists:filter(fun(Item) -> Item =/= public_vdf_server end, Config#config.enable),
 	Config#config{
 		nonce_limiter_client_peers = [],

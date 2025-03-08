@@ -66,9 +66,9 @@ req(Args) ->
 req(Args, ReestablishedConnection) ->
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
-	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, infinity) of
+	ok = ar_rate_limiter:throttle(Peer, Path),
+	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
 		{ok, PID} ->
-			ar_rate_limiter:throttle(Peer, Path),
 			case request(PID, Args) of
 				{error, Error} when Error == {shutdown, normal}; Error == noproc ->
 					case ReestablishedConnection of
@@ -80,10 +80,8 @@ req(Args, ReestablishedConnection) ->
 				Reply ->
 					Reply
 			end;
-		{'EXIT', _} ->
-			{error, client_error};
-		Error ->
-			Error
+		{'EXIT', _} -> {error, client_error};
+		Error -> Error
 	end,
 	EndTime = erlang:monotonic_time(),
 	%% Only log the metric for the top-level call to req/2 - not the recursive call
@@ -104,6 +102,7 @@ req(Args, ReestablishedConnection) ->
 				], EndTime - StartTime)
 	end,
 	Response.
+
 %%% ==================================================================
 %%% gen_server callbacks.
 %%% ==================================================================

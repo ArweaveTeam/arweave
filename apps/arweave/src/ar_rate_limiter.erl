@@ -40,7 +40,7 @@ throttle2(Peer, Path) ->
 			%% Do not throttle transaction gossip.
 			ok;
 		_ ->
-			case catch gen_server:call(?MODULE, {throttle, Peer, P}, infinity) of
+			case catch gen_server:call(?MODULE, {throttle, Peer, P}, 15000) of
 				{'EXIT', {noproc, {gen_server, call, _}}} ->
 					ok;
 				{'EXIT', Reason} ->
@@ -63,7 +63,6 @@ on() ->
 %%%===================================================================
 
 init([]) ->
-	process_flag(trap_exit, true),
 	{ok, #state{ traces = #{}, off = false }}.
 
 handle_call({throttle, _Peer, _Path}, _From, #state{ off = true } = State) ->

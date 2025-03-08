@@ -117,5 +117,6 @@
     "14,1000000000000,LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
   ],
   "block_throttle_by_ip_interval": 5000,
-  "block_throttle_by_solution_interval": 12000
+  "block_throttle_by_solution_interval": 12000,
+  "http_api_transport_idle_timeout_seconds": 15
 }

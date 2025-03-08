@@ -10,8 +10,6 @@
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_header_sync.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
 %%%===================================================================
@@ -26,51 +24,51 @@ start_link(Args) ->
 get(Address) when is_binary(Address) ->
 	ar_wallets:get([Address]);
 get(Addresses) ->
-	gen_server:call(?MODULE, {get, Addresses}, infinity).
+	gen_server:call(?MODULE, {get, Addresses}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the map mapping the given addresses to the corresponding wallets
 %% from the wallet tree with the given root hash.
 get(RootHash, Address) when is_binary(Address) ->
 	get(RootHash, [Address]);
 get(RootHash, Addresses) ->
-	gen_server:call(?MODULE, {get, RootHash, Addresses}, infinity).
+	gen_server:call(?MODULE, {get, RootHash, Addresses}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the map containing the wallets, up to ?WALLET_LIST_CHUNK_SIZE, starting
 %% from the given cursor (first or an address). The wallets are picked in the ascending
 %% alphabetical order, from the tree with the given root hash.
 get_chunk(RootHash, Cursor) ->
-	gen_server:call(?MODULE, {get_chunk, RootHash, Cursor}, infinity).
+	gen_server:call(?MODULE, {get_chunk, RootHash, Cursor}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return balance of the given wallet in the latest wallet tree.
 get_balance(Address) ->
-	gen_server:call(?MODULE, {get_balance, Address}, infinity).
+	gen_server:call(?MODULE, {get_balance, Address}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return balance of the given wallet in the given wallet tree.
 get_balance(RootHash, Address) ->
-	gen_server:call(?MODULE, {get_balance, RootHash, Address}, infinity).
+	gen_server:call(?MODULE, {get_balance, RootHash, Address}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the anchor (last_tx) of the given wallet in the latest wallet tree.
 get_last_tx(Address) ->
-	gen_server:call(?MODULE, {get_last_tx, Address}, infinity).
+	gen_server:call(?MODULE, {get_last_tx, Address}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Compute and cache the account tree for the given new block and its previous block.
 apply_block(B, PrevB) ->
-	gen_server:call(?MODULE, {apply_block, B, PrevB}, infinity).
+	gen_server:call(?MODULE, {apply_block, B, PrevB}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Cache the wallets to be upserted into the tree with the given root hash. Return
 %% the root hash of the new wallet tree.
 add_wallets(RootHash, Wallets, Height, Denomination) ->
-	gen_server:call(?MODULE, {add_wallets, RootHash, Wallets, Height, Denomination}, infinity).
+	gen_server:call(?MODULE, {add_wallets, RootHash, Wallets, Height, Denomination}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Make the wallet tree with the given root hash "the current tree". The current tree
 %% is used by get/1, get_balance/1, and get_last_tx/1.
 set_current(RootHash, Height, PruneDepth) when is_binary(RootHash) ->
 	Call = {set_current, RootHash, Height, PruneDepth},
-	gen_server:call(?MODULE, Call, infinity).
+	gen_server:call(?MODULE, Call, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return the number of accounts in the latest state.
 get_size() ->
-	gen_server:call(?MODULE, get_size, infinity).
+	gen_server:call(?MODULE, get_size, ?DEFAULT_CALL_TIMEOUT).
 
 %%%===================================================================
 %%% Generic server callbacks.

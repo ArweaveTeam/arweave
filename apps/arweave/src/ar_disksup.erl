@@ -29,6 +29,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {
@@ -51,13 +52,13 @@ get_disk_space_check_frequency() ->
 	Config#config.disk_space_check_frequency.
 
 get_disk_data() ->
-	gen_server:call(?MODULE, get_disk_data, infinity).
+	gen_server:call(?MODULE, get_disk_data, ?DEFAULT_CALL_TIMEOUT).
 
 pause() ->
-	gen_server:call(?MODULE, pause, infinity).
+	gen_server:call(?MODULE, pause, ?DEFAULT_CALL_TIMEOUT).
 
 resume() ->
-	gen_server:call(?MODULE, resume, infinity).
+	gen_server:call(?MODULE, resume, ?DEFAULT_CALL_TIMEOUT).
 
 %%%===================================================================
 %%% Generic server callbacks.

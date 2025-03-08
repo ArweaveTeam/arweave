@@ -78,7 +78,7 @@ send_h1_batch_to_peer() ->
 
 %% @doc Compute h2 for a remote peer
 compute_h2_for_peer(Peer, Candidate) ->
-	gen_server:cast(?MODULE, {compute_h2_for_peer, 
+	gen_server:cast(?MODULE, {compute_h2_for_peer,
 		Candidate#mining_candidate{ cm_lead_peer = Peer }}).
 
 computed_h2_for_peer(Candidate) ->
@@ -155,7 +155,7 @@ get_self_plus_external_partitions_list() ->
 %%   {pdiff, PackingDifficulty}
 %% ]}
 get_cluster_partitions_list() ->
-	gen_server:call(?MODULE, get_cluster_partitions_list, infinity).
+	gen_server:call(?MODULE, get_cluster_partitions_list, ?DEFAULT_CALL_TIMEOUT).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -163,7 +163,7 @@ get_cluster_partitions_list() ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
-	
+
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
 	State = #state{
 		last_peer_response = #{}
@@ -363,7 +363,7 @@ terminate(_Reason, _State) ->
 %% @doc Return the list of the partitions of the given Peer, to the best
 %% of our knowledge.
 get_peer_partitions(Peer) ->
-	gen_server:call(?MODULE, {get_peer_partitions, Peer}, infinity).
+	gen_server:call(?MODULE, {get_peer_partitions, Peer}, ?DEFAULT_CALL_TIMEOUT).
 
 check_out_batches(#state{out_batches = OutBatches}) when map_size(OutBatches) == 0 ->
 	OutBatches;
@@ -460,7 +460,7 @@ remove_mining_peer(Peer, State) ->
 
 refetch_peer_partitions(Peers) ->
 	spawn(fun() ->
-		
+
 		ar_util:pmap(
 			fun(Peer) ->
 				case ar_http_iface_client:get_cm_partition_table(Peer) of

@@ -7,6 +7,12 @@
 %% (e.g. bin/test or bin/shell)
 -define(IS_TEST, erlang:get_cookie() == test).
 
+%% Default gen_server:call timeout.
+%% Is used to safely replace deprecated `infinity` timeout, that was used in
+%% multiple places, with a more reasonable value.
+%% Is a subject for future changes.
+-define(DEFAULT_CALL_TIMEOUT, 600000).
+
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
 	-ifdef(AR_TEST).

@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, start_link/2, register_workers/0, join/1, add_tip_block/2, add_block/2, 
+-export([name/1, start_link/2, register_workers/0, join/1, add_tip_block/2, add_block/2,
 		invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
 		add_chunk/5, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 		get_chunk/2, get_chunk_data/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
@@ -270,7 +270,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 -spec put_chunk_data(
 	ChunkDataKey :: binary(),
 	StoreID :: term(),
-	Value :: DataPath :: binary() | {Chunk :: binary(), DataPath :: binary()}) -> 
+	Value :: DataPath :: binary() | {Chunk :: binary(), DataPath :: binary()}) ->
 		ok | {error, term()}.
 put_chunk_data(ChunkDataKey, StoreID, Value) ->
 	ar_kv:put({chunk_data_db, StoreID}, ChunkDataKey, term_to_binary(Value)).
@@ -285,7 +285,7 @@ delete_chunk_data(ChunkDataKey, StoreID) ->
 	AbsoluteOffset :: non_neg_integer(),
 	StoreID :: term(),
 	Metadata :: term()) -> ok | {error, term()}.
-put_chunk_metadata(AbsoluteOffset, StoreID, 
+put_chunk_metadata(AbsoluteOffset, StoreID,
 	{_ChunkDataKey, _TXRoot, _DataRoot, _TXPath, _Offset, _ChunkSize} = Metadata) ->
 	Key = << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>,
 	ar_kv:put({chunks_index, StoreID}, Key, term_to_binary(Metadata)).
@@ -550,7 +550,7 @@ has_data_root(DataRoot, DataSize) ->
 
 %% @doc Record the metadata of the given block.
 add_block(B, SizeTaggedTXs) ->
-	gen_server:call(ar_data_sync_default, {add_block, B, SizeTaggedTXs}, infinity).
+	gen_server:call(ar_data_sync_default, {add_block, B, SizeTaggedTXs}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Request the removal of the transaction data.
 request_tx_data_removal(TXID, Ref, ReplyTo) ->
@@ -622,7 +622,7 @@ get_chunk_by_byte(Byte, StoreID) ->
 
 %% @doc: handle situation where get_chunks_by_byte returns invalid_iterator, so we can't
 %% use the chunk's end offset to advance the cursor.
-%% 
+%%
 %% get_chunk_by_byte looks for a key with the same prefix or the next prefix.
 %% Therefore, if there is no such key, it does not make sense to look for any
 %% key smaller than the prefix + 2 in the next iteration.
@@ -887,7 +887,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = BI,
-			disk_pool_threshold = DiskPoolThreshold 
+			disk_pool_threshold = DiskPoolThreshold
 		}),
 	{noreply, State2};
 
@@ -1109,7 +1109,7 @@ handle_cast({store_chunk, ChunkArgs, Args} = Cast,
 	end;
 
 handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
-	{store_fetched_chunk, Peer, Byte, Proof} = Cast,	
+	{store_fetched_chunk, Peer, Byte, Proof} = Cast,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1) - 1,
 	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),
@@ -1849,7 +1849,7 @@ read_chunk_with_metadata(
 								{storeID, StoreID},
 								{modules_covering_seek_offset, ModuleIDs},
 								{root_sync_records, RootRecords},
-								{stored_packing, 
+								{stored_packing,
 									ar_serialize:encode_packing(StoredPacking, true)}]),
 							%% The chunk should have been re-packed
 							%% in the meantime - very unlucky timing.
@@ -3191,7 +3191,7 @@ get_required_chunk_packing(_Offset, _ChunkSize, #sync_data_state{ store_id = "de
 	unpacked;
 get_required_chunk_packing(Offset, ChunkSize, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	IsEarlySmallChunk = 
+	IsEarlySmallChunk =
 		Offset =< ?STRICT_DATA_SPLIT_THRESHOLD andalso ChunkSize < ?DATA_CHUNK_SIZE,
 	case IsEarlySmallChunk of
 		true ->
@@ -3284,7 +3284,7 @@ parse_disk_pool_chunk(Bin) ->
 	end.
 
 delete_disk_pool_chunk(Iterator, Args, State) ->
-	#sync_data_state{ 
+	#sync_data_state{
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
 	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
 	case data_root_index_next_v2(Iterator, 10) of
