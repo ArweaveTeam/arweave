@@ -63,11 +63,11 @@ SYSTEM_NAME="$(uname -s)"
 RELEASE_ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 # Make the value available to variable substitution calls below
 export REL_NAME="arweave"
-REL_VSN="2.9.4"
+REL_VSN="2.9.5-alpha1"
 
 # export these to match mix release environment variables
 export RELEASE_NAME="arweave"
-export RELEASE_VSN="2.9.4"
+export RELEASE_VSN="2.9.5-alpha1"
 export RELEASE_GIT_REV="f5642b0fdab3f2a82a80d107ea6878bb85a7617e"
 export RELEASE_DATETIME="2025-03-06T14:22:51Z"
 export RELEASE_ERTS="12.2.1"
