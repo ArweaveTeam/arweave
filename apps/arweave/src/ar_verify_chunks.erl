@@ -763,13 +763,31 @@ test_verify_chunk() ->
 	IntervalEnd = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE,
 	Interval = {IntervalEnd, IntervalStart},
 	?assertEqual(
-		#state{cursor = PreSplitOffset + 1, packing=unpacked},
+		#state{ 
+			cursor = PreSplitOffset + 1,
+			packing = unpacked,
+			verify_report = #verify_report{
+				total_error_bytes = ?DATA_CHUNK_SIZE div 2,
+				total_error_chunks = 1,
+				error_bytes = #{missing_packing_info => ?DATA_CHUNK_SIZE div 2},
+				error_chunks = #{missing_packing_info => 1}
+			}
+		},
 		verify_chunk(
 			{ok, <<>>, {PreSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
 			{Interval, not_found},
 			#state{packing=unpacked})),
 	?assertEqual(
-		#state{cursor = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE + 1, packing=unpacked},
+		#state{ 
+			cursor = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE + 1,
+			packing = unpacked,
+			verify_report = #verify_report{
+				total_error_bytes = ?DATA_CHUNK_SIZE div 2,
+				total_error_chunks = 1,
+				error_bytes = #{missing_packing_info => ?DATA_CHUNK_SIZE div 2},
+				error_chunks = #{missing_packing_info => 1}
+			}
+		},
 		verify_chunk(
 			{ok, <<>>, {PostSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
 			{Interval, not_found},
