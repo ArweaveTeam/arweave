@@ -3,8 +3,8 @@
 -behaviour(gen_server).
 
 -export([name/1, register_workers/1,  initialize_context/2, is_entropy_packing/1,
-	iteration_end/2,
-	generate_entropies/4, generate_entropy_keys/2, map_entropies/9, entropy_offsets/1,
+	iteration_end/2, map_entropies/9, entropy_offsets/1,
+	generate_entropies/2, generate_entropies/4, generate_entropy_keys/2, 
 	reset_entropy_offset/1, shift_entropy_offset/2]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
