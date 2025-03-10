@@ -8,6 +8,7 @@ then
 	exit 1
 fi
 
+SYSTEM=$(uname -s)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROFILE=$1
 COMMAND=$2
@@ -47,11 +48,16 @@ create_overlay_var() {
 # hardcoded in the final release.
 rebar3_overlay_variables() {
 	echo "Crafting overlay variables..."
-	create_overlay_var git_rev "git rev-parse HEAD"
-	create_overlay_var datetime "date -u '+%Y-%m-%dT%H:%M:%SZ'"
-	create_overlay_var cc_version "cc --version | head -n1"
-	create_overlay_var gmake_version "gmake --version | head -n1"
-	create_overlay_var cmake_version "cmake --version | head -n1"
+	if test "${SYSTEM}" = "Linux"
+	then
+		create_overlay_var git_rev "git rev-parse HEAD"
+		create_overlay_var datetime "date -u '+%Y-%m-%dT%H:%M:%SZ'"
+		create_overlay_var cc_version "cc --version | head -n1"
+		create_overlay_var gmake_version "gmake --version | head -n1"
+		create_overlay_var cmake_version "cmake --version | head -n1"
+	else
+		touch $OVERLAY_TARGET
+	fi
 }
 
 # remove old artifacts that must be recreated everytime.
