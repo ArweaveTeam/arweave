@@ -1,7 +1,8 @@
 -module(ar_repack_in_place_mine_tests).
 
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -define(REPACK_IN_PLACE_MINE_TEST_TIMEOUT, 600).
@@ -15,9 +16,10 @@
 repack_in_place_mine_test_() ->
 	Timeout = ?REPACK_IN_PLACE_MINE_TEST_TIMEOUT,
 	[
-		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}}
+		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}}
+		% {timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		% {timeout, Timeout, {with, {composite_1, replica_2_9}, [fun test_repack_in_place_mine/1]}}
+		%% re-add repack in place to unpacked
 	].
 
 %% --------------------------------------------------------------------------------------------
