@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([name/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
-	is_entropy_recorded/2, delete_record/2, store_entropy/7, record_entropy/4, record_chunk/7]).
+	is_entropy_recorded/2, delete_record/2, store_entropy_footprint/7, store_entropy/4, record_chunk/7]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -32,10 +32,23 @@ init(StoreID) ->
 	?LOG_INFO([{event, ar_entropy_storage_init}, {name, name(StoreID)}, {store_id, StoreID}]),
 	{ok, #state{ store_id = StoreID }}.
 
-store_entropy(
-		StoreID, Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr) ->
-	gen_server:cast(name(StoreID), {store_entropy,
+%% @doc Write all of the entropies in a full 256 MiB entropy footprint to disk.
+-spec store_entropy_footprint(	
+	StoreID :: ar_storage_module:store_id(),
+	Entropies :: [binary()],
+	EntropyOffsets :: [non_neg_integer()],
+	RangeStart :: non_neg_integer(),
+	RangeEnd :: non_neg_integer(),
+	Keys :: [binary()],
+	RewardAddr :: ar_wallet:address()) -> ok.
+store_entropy_footprint(
+	StoreID, Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr) ->
+	gen_server:cast(name(StoreID), {store_entropy_footprint,
 		Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr}).
+
+store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
+	gen_server:cast(name(StoreID), {store_entropy,
+		ChunkEntropy, BucketEndOffset, StoreID, RewardAddr}).
 
 is_ready(StoreID) ->
 	case catch gen_server:call(name(StoreID), is_ready, ?DEFAULT_CALL_TIMEOUT) of
@@ -47,7 +60,7 @@ is_ready(StoreID) ->
 			Reply
 	end.
 
-handle_cast({store_entropy,
+handle_cast({store_entropy_footprint,
 		Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr}, State) ->
 	#state{ store_id = StoreID } = State,
 	ar_entropy_gen:map_entropies(
@@ -57,10 +70,17 @@ handle_cast({store_entropy,
 		RangeEnd,
 		Keys,
 		RewardAddr,
-		fun record_entropy/5,
+		fun do_store_entropy/5,
 		[StoreID, RewardAddr],
 		ok),
 	{noreply, State};
+
+handle_cast({store_entropy,
+	ChunkEntropy, BucketEndOffset, StoreID, RewardAddr}, State) ->
+	#state{ store_id = StoreID } = State,
+	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -209,9 +229,9 @@ record_chunk(
 	release_semaphore(Filepath),
 	RecordChunk.
 
-record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr, ok) ->
-	record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr).
-record_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
+do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr, ok) ->
+	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr).
+do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	%% Sanity checks
 	true = byte_size(ChunkEntropy) == ?DATA_CHUNK_SIZE,
 	%% End sanity checks
