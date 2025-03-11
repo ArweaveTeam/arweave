@@ -86,18 +86,18 @@ is_entropy_recorded(PaddedEndOffset, StoreID) ->
 	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
 	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
 	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
-	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	ChunkBucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:is_recorded(ChunkBucketStart + 1, ID, StoreID).
+	ar_sync_record:is_recorded(
+		ChunkBucketStart + 1, ar_chunk_storage_replica_2_9_1_entropy, StoreID).
 
 update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
 	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
 	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
-	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	BucketEnd = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
 	BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:add_async(replica_2_9_entropy, BucketEnd, BucketStart, ID, StoreID),
+	ar_sync_record:add_async(replica_2_9_entropy,
+		BucketEnd, BucketStart, ar_chunk_storage_replica_2_9_1_entropy, StoreID),
 	prometheus_counter:inc(replica_2_9_entropy_stored,
 		[ar_storage_module:label_by_id(StoreID)], ?DATA_CHUNK_SIZE),
 	case IsComplete of
@@ -126,9 +126,10 @@ delete_record(PaddedEndOffset, StoreID) ->
 	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
 	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
 	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
-	ID = ar_chunk_storage_replica_2_9_1_entropy,
 	BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:delete(BucketStart + ?DATA_CHUNK_SIZE, BucketStart, ID, StoreID).
+	ar_sync_record:delete(
+		BucketStart + ?DATA_CHUNK_SIZE, BucketStart,
+		ar_chunk_storage_replica_2_9_1_entropy, StoreID).
 
 generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
 	Entropies = ar_entropy_gen:generate_entropies(RewardAddr, PaddedEndOffset),

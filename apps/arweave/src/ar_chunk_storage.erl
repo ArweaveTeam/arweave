@@ -601,6 +601,9 @@ get_handle_by_filepath(Filepath) ->
 	end.
 
 write_chunk2(_PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
+	?LOG_DEBUG([{event, write_chunk2}, {filepath, Filepath}, {position, Position},
+			{chunk_offset, ChunkOffset}, {padded_offset, _PaddedOffset},
+			{chunk_size, byte_size(Chunk)}, {chunk, binary:part(Chunk, 0, 10)}]),
 	Result = file:pwrite(F, Position, [<< ChunkOffset:?OFFSET_BIT_SIZE >> | Chunk]),
 	case Result of
 		{error, _Reason} = Error ->

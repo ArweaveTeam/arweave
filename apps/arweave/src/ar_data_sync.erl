@@ -1367,9 +1367,12 @@ handle_info({chunk, {unpacked, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({chunk, {packed, Offset, ChunkArgs}}, State) ->
-	#sync_data_state{ packing_map = PackingMap } = State,
+	#sync_data_state{ packing_map = PackingMap, store_id = StoreID } = State,
 	Packing = element(1, ChunkArgs),
-	?LOG_DEBUG([{event, chunk_packed}, {offset, Offset}, {packing, ar_serialize:encode_packing(Packing, true)}]),
+	?LOG_DEBUG([{event, chunk_packed},
+		{offset, Offset},
+		{store_id, StoreID},
+		{packing, ar_serialize:encode_packing(Packing, true)}]),
 	Key = {Offset, Packing},
 	case maps:get(Key, PackingMap, not_found) of
 		{pack_chunk, Args} when element(1, Args) == Packing ->
@@ -1476,7 +1479,8 @@ handle_info(Message,  #sync_data_state{ store_id = StoreID } = State) ->
 terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
 	?LOG_INFO([{event, terminate}, {module, ?MODULE},
 			{store_id, StoreID}, {reason, io_lib:format("~p", [Reason])}]),
-	store_sync_state(State).
+	store_sync_state(State),
+	ok.
 
 %%%===================================================================
 %%% Private functions.
@@ -2916,7 +2920,10 @@ write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, State) ->
 write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing,
 		State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	?LOG_DEBUG([{event, write_not_blacklisted_chunk}, {offset, Offset}, {packing, ar_serialize:encode_packing(Packing, true)}]),
+	?LOG_DEBUG([{event, write_not_blacklisted_chunk},
+		{offset, Offset},
+		{store_id, StoreID},
+		{packing, ar_serialize:encode_packing(Packing, true)}]),
 	ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
 	case ShouldStoreInChunkStorage of
 		true ->

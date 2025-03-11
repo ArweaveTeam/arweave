@@ -196,13 +196,14 @@ handle_info({entropy, BucketEndOffset, Entropies}, State) ->
 		iteration_start = IterationStart, iteration_end = IterationEnd,
 		reward_addr = RewardAddr, store_id = StoreID } = State,
 
-	log_debug(repack_batch_entropy_generated, StoreID, [
-		{bucket_end_offset, BucketEndOffset},
-		{entropies, length(Entropies)}
-	]),
-
 	EntropyKeys = ar_entropy_gen:generate_entropy_keys(RewardAddr, BucketEndOffset),
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
+	log_debug(repack_batch_entropy_generated, StoreID, [
+		{bucket_end_offset, BucketEndOffset},
+		{entropies, length(Entropies)},
+		{entropy_offsets, EntropyOffsets}
+	]),
+
 	State2 = ar_entropy_gen:map_entropies(
 		Entropies, 
 		EntropyOffsets,
@@ -258,7 +259,8 @@ handle_info(Request, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
 
-terminate(_Reason, State) ->
+terminate(Reason, State) ->
+	?LOG_DEBUG([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
 	store_cursor(State),
 	ok.
 
@@ -268,24 +270,35 @@ terminate(_Reason, State) ->
 
 repack(#state{ cursor = Cursor, range_end = RangeEnd } = State)
 		when Cursor > RangeEnd ->
-	#state{ store_id = StoreID, target_packing = TargetPacking } = State,
-	ar_device_lock:release_lock(repack, StoreID),
-	ar_device_lock:set_device_lock_metric(StoreID, repack, complete),
-	State2 = State#state{ repack_status = complete },
-	ar:console("~n~nRepacking of ~s is complete! "
-			"We suggest you stop the node, rename "
-			"the storage module folder to reflect "
-			"the new packing, and start the "
-			"node with the new storage module.~n", [StoreID]),
-	?LOG_INFO([{event, repacking_complete},
-			{store_id, StoreID},
-			{target_packing, ar_serialize:encode_packing(TargetPacking, true)}]),
-	{noreply, State2};
+	#state{ chunk_info_map = Map, store_id = StoreID, target_packing = TargetPacking } = State,
+
+	case maps:size(Map) of
+		0 ->
+			ar_device_lock:release_lock(repack, StoreID),
+			ar_device_lock:set_device_lock_metric(StoreID, repack, complete),
+			State2 = State#state{ repack_status = complete },
+			ar:console("~n~nRepacking of ~s is complete! "
+					"We suggest you stop the node, rename "
+					"the storage module folder to reflect "
+					"the new packing, and start the "
+					"node with the new storage module.~n", [StoreID]),
+			?LOG_INFO([{event, repacking_complete},
+					{store_id, StoreID},
+					{target_packing, ar_serialize:encode_packing(TargetPacking, true)}]),
+			State2;
+		_ ->
+			?LOG_DEBUG([{event, repacking_complete_but_waiting},
+					{store_id, StoreID},
+					{target_packing, ar_serialize:encode_packing(TargetPacking, true)},
+					{chunk_info_map_size, maps:size(Map)}]),
+			ar_util:cast_after(5000, self(), repack),
+			State
+	end;
+
 
 repack(State) ->
 	#state{ cursor = Cursor, range_start = RangeStart, range_end = RangeEnd,
-		target_packing = TargetPacking, reward_addr = RewardAddr, 
-		store_id = StoreID, batch_size = BatchSize } = State,
+		target_packing = TargetPacking, store_id = StoreID, batch_size = BatchSize } = State,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
 	BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
@@ -363,6 +376,7 @@ get_batch_interval(BucketEndOffset, RangeStart, IterationEnd) ->
 		BucketEndOffset + (N * ?DATA_CHUNK_SIZE) =< BatchEnd],
 
 	{BatchStart, BatchEnd, BucketEndOffsets}.
+
 remove_recorded_offsets(BucketEndOffsets, Packing, StoreID) ->
     lists:filter(
         fun(BucketEndOffset) ->
@@ -637,6 +651,7 @@ chunk_repacked(ChunkInfo, TargetPacking, StoreID) ->
 		chunk = Chunk,
 		absolute_offset = AbsoluteOffset,
 		padded_end_offset = PaddedEndOffset,
+		bucket_end_offset = BucketEnd,
 		relative_offset = RelativeOffset,
 		tx_root = TXRoot,
 		chunk_size = ChunkSize,
@@ -671,6 +686,10 @@ chunk_repacked(ChunkInfo, TargetPacking, StoreID) ->
 		{ok, true} ->
 			case ar_chunk_storage:put(PaddedEndOffset, Chunk, TargetPacking, StoreID) of
 				{ok, NewPacking} ->
+					BucketStart = BucketEnd - ?DATA_CHUNK_SIZE,
+					ar_sync_record:add_async(repacked_chunk,
+						BucketEnd, BucketStart,
+						ar_chunk_storage_replica_2_9_1_entropy, StoreID),
 					ar_sync_record:add_async(repacked_chunk,
 							PaddedEndOffset, StartOffset,
 							NewPacking, ar_data_sync, StoreID);
@@ -700,7 +719,10 @@ entropy_generated(Entropy, BucketEndOffset, State) ->
 			]),
 			State;
 		ChunkInfo ->
-			log_debug(entropy_generated, ChunkInfo, State#state.store_id, []),
+			log_debug(entropy_generated, ChunkInfo, State#state.store_id, [
+				{chunk, binary:part(ChunkInfo#chunk_info.chunk, 0, 10)},
+				{entropy, binary:part(Entropy, 0, 10)}
+			]),
 
 			case ChunkInfo#chunk_info.status of
 				needs_repack ->
