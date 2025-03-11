@@ -514,33 +514,7 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 
 			ChunkInfo = maps:get(BucketEndOffset2, Acc),
 
-			ReadChunk = Status == unpacked_padded orelse Status == needs_repack,
-			Chunk =  maps:get(PaddedEndOffset, OffsetChunkMap, not_found),
-
-			ChunkInfo2 = case {ReadChunk, Chunk} of
-				{false, _} -> ChunkInfo;
-				{true, not_found} ->
-					%% Chunk doesn't exist on disk, try chunk data db.
-					read_chunk_and_data_path(ChunkInfo, no_chunk, StoreID);
-				{true, Chunk} ->
-					case ar_chunk_storage:is_storage_supported(AbsoluteEndOffset,
-							ChunkSize, TargetPacking) of
-						false ->
-							%% We are going to move this chunk to RocksDB after repacking so
-							%% we read its DataPath here to pass it later on to store_chunk.
-							read_chunk_and_data_path(ChunkInfo, Chunk, StoreID);
-						true ->
-							%% We are going to repack the chunk and keep it in the chunk
-							%% storage - no need to make an extra disk access to read
-							%% the data path.
-							ChunkInfo#chunk_info{
-								chunk = Chunk,
-								data_path = none
-							}
-					end
-			end,
-
-			ChunkInfo3 = ChunkInfo2#chunk_info{
+			ChunkInfo2 = ChunkInfo#chunk_info{
 				status = Status,
 				source_packing = Packing,
 				absolute_offset = AbsoluteEndOffset,
@@ -553,6 +527,33 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 				tx_path = TXPath,
 				chunk_size = ChunkSize
 			},
+
+			ReadChunk = Status == unpacked_padded orelse Status == needs_repack,
+			Chunk =  maps:get(PaddedEndOffset, OffsetChunkMap, not_found),
+
+			ChunkInfo3 = case {ReadChunk, Chunk} of
+				{false, _} -> ChunkInfo;
+				{true, not_found} ->
+					%% Chunk doesn't exist on disk, try chunk data db.
+					read_chunk_and_data_path(ChunkInfo2, no_chunk, StoreID);
+				{true, Chunk} ->
+					case ar_chunk_storage:is_storage_supported(AbsoluteEndOffset,
+							ChunkSize, TargetPacking) of
+						false ->
+							%% We are going to move this chunk to RocksDB after repacking so
+							%% we read its DataPath here to pass it later on to store_chunk.
+							read_chunk_and_data_path(ChunkInfo2, Chunk, StoreID);
+						true ->
+							%% We are going to repack the chunk and keep it in the chunk
+							%% storage - no need to make an extra disk access to read
+							%% the data path.
+							ChunkInfo2#chunk_info{
+								chunk = Chunk,
+								data_path = none
+							}
+					end
+			end,
+
 
 			log_debug(read_chunk_range_offset_metadata, ChunkInfo3, State#state.store_id, []),
 
@@ -741,8 +742,7 @@ maybe_repack_next_batch(State) ->
 	State.
 
 read_chunk_and_data_path(ChunkInfo, MaybeChunk, StoreID) ->
-	#chunk_info{ 
-		chunk_data_key = ChunkDataKey } = ChunkInfo,
+	#chunk_info{ chunk_data_key = ChunkDataKey } = ChunkInfo,
 	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
 			log_warning(chunk_not_found_in_chunk_data_db, ChunkInfo, StoreID, []),
