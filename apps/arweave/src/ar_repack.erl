@@ -268,6 +268,9 @@ terminate(Reason, State) ->
 %%% Private functions.
 %%%===================================================================
 
+%% @doc Outer repack loop. Called via `gen_server:cast(self(), repack)`. Each call
+%% repacks another batch of chunks. A batch of chunks is N entropy footprints where N
+%% is the repack batch size.
 repack(#state{ cursor = Cursor, range_end = RangeEnd } = State)
 		when Cursor > RangeEnd ->
 	#state{ chunk_info_map = Map, store_id = StoreID, target_packing = TargetPacking } = State,
@@ -294,7 +297,6 @@ repack(#state{ cursor = Cursor, range_end = RangeEnd } = State)
 			ar_util:cast_after(5000, self(), repack),
 			State
 	end;
-
 
 repack(State) ->
 	#state{ cursor = Cursor, range_start = RangeStart, range_end = RangeEnd,
@@ -328,13 +330,10 @@ repack(State) ->
 				BucketStartOffset+1, TargetPacking, ar_data_sync, StoreID),
 			case IsRecorded of
 				true ->
-					log_debug(bucket_end_offset_already_recorded, StoreID, [
-						{cursor, Cursor},
-						{bucket_end_offset, BucketEndOffset},
-						{bucket_start_offset, BucketStartOffset},
-						{target_packing, ar_serialize:encode_packing(TargetPacking, true)}
-					]),
 					%% BucketEndOffset has already been repacked, advance and try again.
+					%% Note: we expect this to happen a lot since we iterate through all
+					%% chunks in the partition, but for each chunk we will repack N
+					%% entropy footprints.
 					gen_server:cast(self(), repack),
 					State2;
 				_ ->
@@ -349,7 +348,7 @@ repack(State) ->
 						{iteration_end, State2#state.iteration_end},
 						{range_start, RangeStart}
 					]),
-					%% Generate BatchSize batches of 256 MiB of entropy and repack the
+					%% Generate BatchSize batches of 256 MiB entropy footprints and repack the
 					%% corresponding chunks.
 					generate_entropies(BucketEndOffset, State2, BatchSize),
 					repack_chunks(EntropyOffsets, State2)
@@ -513,6 +512,14 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 			end,
 
 			ChunkInfo = maps:get(BucketEndOffset2, Acc),
+
+			?LOG_DEBUG([{event, zip_metadata},
+					{status, Status},
+					{absolute_offset, AbsoluteEndOffset},
+					{bucket_end_offset, BucketEndOffset},
+					{bucket_end_offset2, BucketEndOffset2},
+					{padded_end_offset, PaddedEndOffset},
+					{metadata, OffsetMetadataMap}]),
 
 			ChunkInfo2 = ChunkInfo#chunk_info{
 				status = Status,
