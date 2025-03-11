@@ -2271,7 +2271,9 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	#{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
 			data_root := DataRoot } = Proof,
 	spawn(fun() ->
-			Parent ! ar_data_sync:add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) end),
+			Parent ! ar_data_sync:add_chunk_to_disk_pool(
+				DataRoot, DataPath, Chunk, Offset, TXSize)
+			end),
 	receive
 		ok ->
 			{200, #{}, <<>>, Req};

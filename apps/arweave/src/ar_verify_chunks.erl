@@ -234,7 +234,7 @@ verify_packing(Metadata, State) ->
 			%% Miners should make sure to only run `verify` in the `purge` mode after they
 			%% have completed packing.
 			invalidate_chunk(unexpected_packing, AbsoluteOffset, ChunkSize, 
-				[{stored_packing, ar_storage_module:packing_label(StoredPacking)}], State);
+				[{stored_packing, ar_serialize:encode_packing(StoredPacking, true)}], State);
 		{Reply, _} ->
 			invalidate_chunk(missing_packing_info, AbsoluteOffset, ChunkSize,
 				[{packing_reply, io_lib:format("~p", [Reply])}], State)
