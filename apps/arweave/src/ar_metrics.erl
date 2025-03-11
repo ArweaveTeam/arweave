@@ -448,16 +448,10 @@ register() ->
 		{help, "The counter is incremented every time a chunk is written to "
 				"chunk_storage."}]),
 	prometheus_histogram:new([
-		{name, chunk_read_duration_milliseconds},
+		{name, chunk_read_rate_bytes_per_second},
 		{labels, [store_id]},
 		{buckets, [infinity]}, %% we don't care about the histogram portion
-		{help, "The time, in milliseconds, to read a chunk from chunk storage."}
-	]),
-	prometheus_histogram:new([
-		{name, chunk_write_duration_milliseconds},
-		{labels, [store_id]},
-		{buckets, [infinity]}, %% we don't care about the histogram portion
-		{help, "The time, in milliseconds, to write a chunk from chunk storage."}
+		{help, "The rate, in bytes per second, at which chunks are read from storage."}
 	]),
 	prometheus_gauge:new([{name, sync_tasks},
 		{labels, [state, type, peer]},

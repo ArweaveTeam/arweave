@@ -4,6 +4,7 @@
 
 -export([start_link/0, packing_atom/1, get_packing_state/0, get_randomx_state_for_h0/2,
 		request_unpack/2, request_unpack/3, request_repack/2, request_repack/3,
+		request_encipher/2, request_encipher/3,
 		pack/4, unpack/5, repack/6, unpack_sub_chunk/5,
 		is_buffer_full/0, record_buffer_size_metric/0,
 		pad_chunk/1, unpad_chunk/3, unpad_chunk/4,
@@ -43,16 +44,26 @@ request_unpack(Ref, Args) ->
 	request_unpack(Ref, self(), Args).
 
 request_unpack(Ref, ReplyTo, Args) ->
+	ar_util:cast_after(600000, ReplyTo, {expire_unpack_request, Ref}),
 	gen_server:cast(?MODULE, {unpack_request, ReplyTo, Ref, Args}).
 
 request_repack(Ref, Args) ->
 	request_repack(Ref, self(), Args).
 
 request_repack(Ref, ReplyTo, Args) ->
+	ar_util:cast_after(600000, ReplyTo, {expire_repack_request, Ref}),
 	gen_server:cast(?MODULE, {repack_request, ReplyTo, Ref, Args}).
 
-request_entropy_generation(Ref, ReplyTo, Args) ->
-	gen_server:cast(?MODULE, {generate_entropy, ReplyTo, Ref, Args}).
+request_encipher(Ref, {Chunk, Entropy}) ->
+	request_encipher(Ref, self(), {Chunk, Entropy}).
+
+request_encipher(Ref, ReplyTo, {Chunk, Entropy}) ->
+	ar_util:cast_after(600000, ReplyTo, {expire_encipher_request, Ref}),
+	gen_server:cast(?MODULE, {encipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
+
+request_entropy_generation(Ref, ReplyTo, {RewardAddr, BucketEndOffset, SubChunkStart}) ->
+	gen_server:cast(?MODULE,
+		{generate_entropy, ReplyTo, Ref, {RewardAddr, BucketEndOffset, SubChunkStart}}).
 
 %% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
@@ -226,7 +237,7 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 %% @doc Generate the 2.9 entropy.
 -spec generate_replica_2_9_entropy(
 		RewardAddr :: binary(),
-		AbsoluteEndOffset :: non_neg_integer(),
+		BucketEndOffset :: non_neg_integer(),
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
@@ -336,10 +347,16 @@ handle_cast({repack_request, From, Ref, Args}, State) ->
 			},
 			{noreply, State#state{ workers = queue:in(Worker, Workers2) }}
 	end;
-handle_cast({generate_entropy, From, Ref, Args}, State) ->
+handle_cast({encipher_request, From, Ref, {Chunk, Entropy}}, State) ->
 	#state{ workers = Workers } = State,
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	Worker ! {generate_entropy, Ref, From, Args},
+	Worker ! {encipher, Ref, From, {Chunk, Entropy}},
+	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
+handle_cast(
+		{generate_entropy, From, Ref, {RewardAddr, BucketEndOffset, SubChunkStart}}, State) ->
+	#state{ workers = Workers } = State,
+	{{value, Worker}, Workers2} = queue:out(Workers),
+	Worker ! {generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -436,8 +453,13 @@ worker(PackingState) ->
 			end,
 			decrement_buffer_size(),
 			worker(PackingState);
-		{generate_entropy, Ref, From, {RewardAddr, PaddedEndOffset, SubChunkStart}} ->
-			Entropy = ar_packing_server:generate_replica_2_9_entropy(RewardAddr, PaddedEndOffset, SubChunkStart),
+		{encipher, Ref, From, {Chunk, Entropy}} ->
+			PackedChunk = encipher_replica_2_9_chunk(Chunk, Entropy),
+			From ! {chunk, {enciphered, Ref, PackedChunk}},
+			worker(PackingState);
+		{generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}} ->
+			Entropy = ar_packing_server:generate_replica_2_9_entropy(
+				RewardAddr, BucketEndOffset, SubChunkStart),
 			From ! {entropy_generated, Ref, Entropy},
 			worker(PackingState)
 	end.

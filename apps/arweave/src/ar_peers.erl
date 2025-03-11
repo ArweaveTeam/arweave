@@ -891,11 +891,16 @@ maybe_add_peer(Peer, Release) ->
 	end.
 
 remove_peer(Reason, RemovedPeer) ->
-	?LOG_DEBUG([
-		{event, remove_peer},
-		{peer, ar_util:format_peer(RemovedPeer)},
-		{reason, Reason}
-	]),
+	case Reason of
+		rotated ->
+			ok;
+		_ ->
+			?LOG_DEBUG([
+				{event, remove_peer},
+				{peer, ar_util:format_peer(RemovedPeer)},
+				{reason, Reason}
+			])
+	end,
 	Performance = get_or_init_performance(RemovedPeer),
 	TotalLifetimeRating = get_total_rating(lifetime),
 	TotalCurrentRating = get_total_rating(current),

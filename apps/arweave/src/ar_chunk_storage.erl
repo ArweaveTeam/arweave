@@ -161,13 +161,7 @@ get(Byte, IntervalStart, StoreID) ->
 	ChunkStart = Byte - (Byte - IntervalStart) rem ?DATA_CHUNK_SIZE,
 	ChunkFileStart = get_chunk_file_start_by_start_offset(ChunkStart),
 
-	Result =
-		prometheus_histogram:observe_duration(chunk_read_duration_milliseconds, [StoreID], 
-			fun() ->
-				get(Byte, ChunkStart, ChunkFileStart, StoreID, 1)
-			end),
-
-	case Result of
+	case get(Byte, ChunkStart, ChunkFileStart, StoreID, 1) of
 		[] ->
 			not_found;
 		[{PaddedEndOffset, Chunk}] ->
@@ -558,17 +552,14 @@ get_chunk_file_start_by_start_offset(StartOffset) ->
 	ar_util:floor_int(StartOffset, get_chunk_group_size()).
 
 write_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
-	prometheus_histogram:observe_duration(chunk_write_duration_milliseconds, [StoreID],
-		fun() ->
-			{_ChunkFileStart, Filepath, Position, ChunkOffset} =
+	{_ChunkFileStart, Filepath, Position, ChunkOffset} =
 				locate_chunk_on_disk(PaddedOffset, StoreID, FileIndex),
-			case get_handle_by_filepath(Filepath) of
-				{error, _} = Error ->
-					Error;
-				F ->
-					write_chunk2(PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position)
-			end
-		end).
+	case get_handle_by_filepath(Filepath) of
+		{error, _} = Error ->
+			Error;
+		F ->
+			write_chunk2(PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position)
+	end.
 
 filepath(ChunkFileStart, FileIndex, StoreID) ->
 	case maps:get(ChunkFileStart, FileIndex, not_found) of
@@ -601,9 +592,6 @@ get_handle_by_filepath(Filepath) ->
 	end.
 
 write_chunk2(_PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position) ->
-	?LOG_DEBUG([{event, write_chunk2}, {filepath, Filepath}, {position, Position},
-			{chunk_offset, ChunkOffset}, {padded_offset, _PaddedOffset},
-			{chunk_size, byte_size(Chunk)}, {chunk, binary:part(Chunk, 0, 10)}]),
 	Result = file:pwrite(F, Position, [<< ChunkOffset:?OFFSET_BIT_SIZE >> | Chunk]),
 	case Result of
 		{error, _Reason} = Error ->
@@ -669,14 +657,14 @@ get(Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
 					[] ->
 						[];
 					[{_, Filepath}] ->
-						read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount)
+						read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount, StoreID)
 				end;
 			File ->
-				read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount)
+				read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID)
 		end,
 	filter_by_sync_record(ReadChunks, Byte, Start, ChunkFileStart, StoreID, ChunkCount).
 
-read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount) ->
+read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount, StoreID) ->
 	case file:open(Filepath, [read, raw, binary]) of
 		{error, enoent} ->
 			[];
@@ -688,20 +676,23 @@ read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount) ->
 			]),
 			[];
 		{ok, File} ->
-			Result = read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount),
+			Result = read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID),
 			file:close(File),
 			Result
 	end.
 
-read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount) ->
+read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID) ->
 	{Position, _ChunkOffset} =
 			get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, Start),
 	BucketStart = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
-	read_chunk3(Byte, Position, BucketStart, File, ChunkCount).
+	read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID).
 
-read_chunk3(Byte, Position, BucketStart, File, ChunkCount) ->
+read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
+	StartTime = erlang:monotonic_time(),
 	case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
 		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
+			ar_metrics:record_rate_metric(
+				StartTime, byte_size(Bin), chunk_read_rate_bytes_per_second, [StoreID]),
 			case is_offset_valid(Byte, BucketStart, ChunkOffset) of
 				true ->
 					extract_end_offset_chunk_pairs(Bin, BucketStart, 1);
