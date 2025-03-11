@@ -347,8 +347,7 @@ repack(State) ->
 						{target_packing, ar_serialize:encode_packing(TargetPacking, true)},
 						{range_end, RangeEnd},
 						{iteration_end, State2#state.iteration_end},
-						{range_start, RangeStart},
-						{entropy_offsets, EntropyOffsets}
+						{range_start, RangeStart}
 					]),
 					%% Generate BatchSize batches of 256 MiB of entropy and repack the
 					%% corresponding chunks.
@@ -377,16 +376,6 @@ get_batch_interval(BucketEndOffset, RangeStart, IterationEnd) ->
 
 	{BatchStart, BatchEnd, BucketEndOffsets}.
 
-remove_recorded_offsets(BucketEndOffsets, Packing, StoreID) ->
-    lists:filter(
-        fun(BucketEndOffset) ->
-            BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset),
-            not ar_sync_record:is_recorded(
-				BucketStartOffset + 1, Packing, ar_data_sync, StoreID)
-        end,
-        BucketEndOffsets
-    ).	
-
 generate_entropies(_BucketEndOffset, _State, Count)
 		when Count =< 0 ->
 	ok;
@@ -411,6 +400,7 @@ repack_chunks([BucketEndOffset | EntropyOffsets],
 		{bucket_end_offset, BucketEndOffset},
 		{range_start, State#state.range_start},
 		{range_end, State#state.range_end},
+		{iteration_start, IterationStart},
 		{iteration_end, State#state.iteration_end}
 	]),
 	%% Advance until we hit a chunk covered by the current storage module
@@ -446,7 +436,7 @@ repack_chunks([BucketEndOffset | EntropyOffsets], State) ->
 read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 	#state{
 		target_packing = TargetPacking, store_id = StoreID,
-		chunk_info_map = Map, iteration_end = IterationEnd
+		chunk_info_map = Map, iteration_start = IterationStart, iteration_end = IterationEnd
 	} = State,
 	
 	BatchSize = BatchEnd - BatchStart,
@@ -455,11 +445,12 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 
 	log_debug(read_chunk_range, State#state.store_id, [
 		{bucket_end_offset, BucketEndOffset},
+		{iteration_start, IterationStart},
 		{iteration_end, IterationEnd},
 		{batch_start, BatchStart}, {batch_end, BatchEnd}, {batch_size, BatchSize}
 	]),
 
-	OffsetChunks =
+	OffsetChunkMap =
 		case catch ar_chunk_storage:get_range(BatchStart, BatchSize, StoreID) of
 			[] ->
 				log_debug(no_chunks_to_repack1, StoreID, [
@@ -476,7 +467,7 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 				]),
 				[];
 			Range ->
-				Range
+				maps:from_list(Range)
 		end,
 
 	OffsetMetadataMap = 
@@ -522,68 +513,17 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 			end,
 
 			ChunkInfo = maps:get(BucketEndOffset2, Acc),
-			
-			ChunkInfo2 = ChunkInfo#chunk_info{
-				status = Status,
-				source_packing = Packing,
-				absolute_offset = AbsoluteEndOffset,
-				bucket_end_offset = BucketEndOffset2,
-				padded_end_offset = PaddedEndOffset,
-				relative_offset = RelativeOffset,
-				chunk_data_key = ChunkDataKey,
-				tx_root = TXRoot,
-				data_root = DataRoot,
-				tx_path = TXPath,
-				chunk_size = ChunkSize
-			},
 
-			log_debug(read_chunk_range_offset_metadata, ChunkInfo2, State#state.store_id, []),
+			ReadChunk = Status == unpacked_padded orelse Status == needs_repack,
+			Chunk =  maps:get(PaddedEndOffset, OffsetChunkMap, not_found),
 
-			maps:put(BucketEndOffset2, ChunkInfo2, Acc)
-
-		end,
-		Map2, OffsetMetadataMap),
-
-	Maps4 = lists:foldl(
-		fun({AbsoluteEndOffset, Chunk}, Acc) ->
-			PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
-			BucketEndOffset3 = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
-			ChunkInfo = maps:get(BucketEndOffset3, Acc),
-			ChunkInfo2 = ChunkInfo#chunk_info{
-				chunk = Chunk
-			},
-			log_debug(read_chunk_range_offset_chunk, ChunkInfo2, State#state.store_id, []),
-			maps:put(BucketEndOffset3, ChunkInfo2, Acc)
-		end,
-		Map3, OffsetChunks),
-
-	State#state{ chunk_info_map = Maps4 }.
-
-
-repack_chunk_range([], State) ->
-	State;
-repack_chunk_range([Offset | Offsets], State) ->
-	#state{ chunk_info_map = Map, store_id = StoreID, target_packing = TargetPacking } = State,
-	ChunkInfo = maps:get(Offset, Map),
-	#chunk_info{
-		status = Status,
-		absolute_offset = AbsoluteOffset,
-		chunk_size = ChunkSize
-	} = ChunkInfo,
-
-	ReadChunk = Status == unpacked_padded orelse Status == needs_repack,
-
-	ChunkInfo2 = case ReadChunk of
-		false ->
-			%% Chunk either doesn't exist or has already been repacked.
-			ChunkInfo;
-		true ->
-			case ar_chunk_storage:get(AbsoluteOffset - 1, StoreID) of
-				not_found ->
+			ChunkInfo2 = case {ReadChunk, Chunk} of
+				{false, _} -> ChunkInfo;
+				{true, not_found} ->
 					%% Chunk doesn't exist on disk, try chunk data db.
 					read_chunk_and_data_path(ChunkInfo, no_chunk, StoreID);
-				{_, Chunk} ->
-					case ar_chunk_storage:is_storage_supported(AbsoluteOffset,
+				{true, Chunk} ->
+					case ar_chunk_storage:is_storage_supported(AbsoluteEndOffset,
 							ChunkSize, TargetPacking) of
 						false ->
 							%% We are going to move this chunk to RocksDB after repacking so
@@ -598,13 +538,42 @@ repack_chunk_range([Offset | Offsets], State) ->
 								data_path = none
 							}
 					end
-			end
-	end,
-	log_debug(repack_chunk, ChunkInfo2, StoreID, [{offset, Offset}]),
-	repack_chunk(ChunkInfo2),
-	repack_chunk_range(Offsets, State#state{ chunk_info_map =
-		maps:put(Offset, ChunkInfo2, State#state.chunk_info_map)
-	}).
+			end,
+
+			ChunkInfo3 = ChunkInfo2#chunk_info{
+				status = Status,
+				source_packing = Packing,
+				absolute_offset = AbsoluteEndOffset,
+				bucket_end_offset = BucketEndOffset2,
+				padded_end_offset = PaddedEndOffset,
+				relative_offset = RelativeOffset,
+				chunk_data_key = ChunkDataKey,
+				tx_root = TXRoot,
+				data_root = DataRoot,
+				tx_path = TXPath,
+				chunk_size = ChunkSize
+			},
+
+			log_debug(read_chunk_range_offset_metadata, ChunkInfo3, State#state.store_id, []),
+
+			maps:put(BucketEndOffset2, ChunkInfo3, Acc)
+
+		end,
+		Map2, OffsetMetadataMap),
+
+	State#state{ chunk_info_map = Map3 }.
+
+
+repack_chunk_range([], State) ->
+	State;
+repack_chunk_range([Offset | Offsets], State) ->
+	#state{ chunk_info_map = Map, store_id = StoreID } = State,
+	
+	ChunkInfo = maps:get(Offset, Map),
+
+	log_debug(repack_chunk, ChunkInfo, StoreID, [{offset, Offset}]),
+	repack_chunk(ChunkInfo),
+	repack_chunk_range(Offsets, State).
 
 repack_chunk(#chunk_info{ status = needs_repack } = ChunkInfo) ->
 	#chunk_info{
